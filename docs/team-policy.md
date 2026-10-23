@@ -89,10 +89,13 @@ local value where yours is looser than a soft team cap.
 
 A policy can add **marketplaces** (metadata only, done automatically once; a marketplace you
 remove is remembered and not re-added) and require **plugins** with a minimum version. Installing
-runs code, so Worca never installs without your click: the Marketplace page shows a "Required by team
-policy" strip and a setup checklist with one combined consent per plugin (source, commit,
-inventory). A plugin that is installed but below the policy's floor gets **Update…** (the normal
-update preview) instead of Install…; **Install all…** / **Update all…** / **Install & update all…**
+runs code, so Worca never installs without your click: the Marketplace page's **Installed** tab shows
+a **Team policy** card — each missing, outdated, switched-off or not-yet-set-up plugin with
+**Install**, **Update**, **Turn on** or **Set up** — and its **Set up…** opens the setup checklist
+with one combined consent per plugin (source, commit, inventory). A plugin that is installed but
+below the policy's floor gets **Update** instead of Install (applied at once when the new version
+asks for no new access, else its update review opens);
+**Install all…** / **Update all…** / **Install & update all…**
 runs those dialogs one after another — each still waits for its own click, and cancelling one moves
 on to the next. A per-home **trust switch** on this machine may install and update required plugins
 automatically; it is off by default and revocable. Versions are floors, not pins: update whenever

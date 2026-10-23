@@ -17,7 +17,8 @@ import { linkPlugin, uninstallPlugin } from '../src/core/plugin-store.mjs';
 import { readPluginsLock } from '../src/core/plugins-lock.mjs';
 import { readMcpStore, withMcpLock } from '../src/core/mcp/store.mjs';
 import { reconcileMcpStore } from '../src/core/mcp/catalog.mjs';
-import { renderPluginList } from '../ui/public/plugins-view.mjs';
+import { removeChanges } from '../ui/public/marketplace/installed-model.mjs';
+import { renderRemoveDialog } from '../ui/public/marketplace/remove-view.mjs';
 
 useTempHome(after);
 const run = promisify(execFile);
@@ -79,12 +80,13 @@ test('GET /api/plugins names the sets that hold each plugin\'s servers; the Remo
   assert.deepEqual(by['acme-tools'].mcpSets, ['Billing', 'General', 'Team · acme/platform']);
   assert.deepEqual(by['dev-tools'].mcpSets, ['Billing']);
   const doc = new JSDOM('<!doctype html><body></body>').window.document;
-  const list = renderPluginList(rows, { doc });
-  assert.equal(list.querySelector('.pl-remove[data-name="acme-tools"]').dataset.mcpSets, 'Billing, General, Team · acme/platform');
-  assert.equal(renderPluginList([{ name: 'x', contributions: {} }], { doc }).querySelector('.pl-remove').dataset.mcpSets, undefined);
-  const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
-  const at = app.indexOf("title: 'Uninstall plugin'");
-  assert.match(app.slice(at, at + 300), /Its MCP servers leave these sets[^`]*\$\{t\.dataset\.mcpSets\}/, 'the confirm lists them');
+  const { body } = renderRemoveDialog(doc, { name: 'acme-tools', iconKind: 'mcpServers', goesAway: [], changes: removeChanges(by['acme-tools'], { mcpServers: [{ name: 'jira' }] }) });
+  assert.deepEqual([...body.querySelectorAll('.mk-changes > li')].map((li) => [li.querySelector('.badge').textContent, li.querySelector('.mk-meta').textContent]), [
+    ['Billing', 'loses the jira server with its values and secrets'],
+    ['General', 'loses the jira server with its values and secrets'],
+    ['Team · acme/platform', 'loses the jira server with its values and secrets'],
+  ], 'the Remove dialog lists every set that loses the server');
+  assert.deepEqual(removeChanges({ name: 'x', contributions: {} }, null), []);
 });
 
 test('disable, any locked write, re-enable: every membership, value and secret (Team token included) stays', async () => {

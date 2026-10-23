@@ -52,7 +52,7 @@ a fresh child. **Pipeline templates are the exception** — they are DB rows, im
 (and at `install`/`update`), so after editing `workflows/*.json` run `worca plugin reimport <name>`.
 Reimport upserts: a template file you DELETE keeps its row until the plugin is removed.
 
-`plugin list`, `plugin doctor` and its Marketplace card name every contribution worca **ignored** —
+`plugin list`, `plugin doctor` and its row under Marketplace › Installed › Needs attention name every contribution worca **ignored** —
 an agent key that collides with an existing agent, a sidecar that fails the meta v2 gate, a template
 that fails graph validation. If your agent or flow is missing, that line says why.
 
@@ -63,13 +63,13 @@ Only `name` is required. Unknown fields are warnings (errors under `--strict`).
 | Field | Notes |
 |---|---|
 | `name` | kebab-case, ≤64 chars, machine-unique, used as a dir name |
-| `version` | optional — absent means the pinned SHA **is** the version |
+| `version` | optional — absent means the pinned SHA **is** the version; the Marketplace offers an update only when the marketplace lists a higher `x.y.z` on the branch your install follows |
 | `engines.worca-cc-api` | `">=4 <5"` (what `plugin init` writes); `">=5 <6"` to ship MCP servers. Integer host API. Unparseable → fails closed, won't install. Host APIs are a SET ([1, 2, 3, 4, 5]); the highest version your range admits is **negotiated**, and that is what decides which features you get. API 3 adds meta v2 sidecars and v2 graph templates; **API 4 honours an agent's `ask.forms`**; **API 5 honours the manifest's `mcpServers`** |
 | `setup.node` | `true` → `npm ci --ignore-scripts --omit=dev` at install. **Lockfile mandatory** |
 | `setup.python` | only `"pyproject"` → `uv sync`. Worca CC never *runs* python; your JS spawns it |
 | `taskSources[].id` | kebab-case |
 | `taskSources[].module` | must start `./`, no `..`, no backslashes |
-| `taskSources[].configSchema[]` | persistent config — `text` \| `select`, plus `secret`/`required`/`default`/`help`/`options` |
+| `taskSources[].configSchema[]` | persistent config — `text` \| `select`, plus `secret`/`required`/`default`/`help`/`options`/`advanced` (`advanced: true` folds an optional tuning field under **More options**; hosts older than this ignore it with an unknown-field warning) |
 | `taskSources[].multiProfile` | `true` → one install holds several independent configurations (two Jira servers, two orgs), each with its own config/secrets/state. Users create profiles in the UI and bind each project/workspace to one. Omit it and the source uses a single implicit `default` profile — identical to before profiles existed |
 | `taskSources[].inputs[]` | per-run UI — see next table. **Exactly one `task-browser` required** |
 | `models[]` | catalog entries: `id`, `label`, `efforts`, `env` (literal or `{"secret": "<key>"}`), `cost` (`{free:true}` \| `{perMtok:{…}}`), and `upstream` for a bridged model — `{provider: "copilot"\|"openai"\|"anthropic", api: "anthropic"\|"openai-chat"\|"openai-responses", model, baseUrl?, apiKey? (a `${VAR}` ref only, never a literal), headers?, capabilities? (toolCalls, vision, reasoning, maxPromptTokens, maxOutputTokens, reasoningEfforts)}`. A `copilot` entry resolves against each user's own sign-in |
@@ -86,7 +86,7 @@ A repo can declare itself a **marketplace** with `worca-cc-marketplace.json` at 
 
 Listed dirs (any depth, no `..`) each contain a `worca-cc-plugin.json`; when the file is
 present it is the complete plugin list (the depth 0–1 auto-scan is skipped). Repos without
-it still work as implicit marketplaces via the scan. The worca-cc repo itself is a
+it still work as implicit marketplaces via the scan, named `owner/repo` (a local folder by its folder name). The worca-cc repo itself is a
 marketplace (its bundled plugins live under `plugins/`), registered by default.
 
 ## UI is schema-driven — pick from these widgets
@@ -168,7 +168,8 @@ An agent sidecar is meta v2: typed PORTS replace the v1 channel vocabulary.
 - `placeable: false` keeps an agent off the composer canvas (off-pipeline scanners).
 - `agentFile`: optional; the prompt file for this agent. It is a **plain basename inside
   `agents/`** — no `/`, no `..`, never absolute. Defaults to nothing (the scaffold writes
-  `"<key>.md"`). The install consent card reads the tools of exactly this file.
+  `"<key>.md"`). The install sheet's Review step (and the Team policy consent) reads the tools of
+  exactly this file.
 
 A workflow template is a v2 graph, and `worca plugin init` scaffolds this shape:
 
@@ -205,7 +206,7 @@ Your manifest must **negotiate** API 4 or later (`">=5 <6"` honours forms too) o
 
 A plugin declaring `">=3 <4"` keeps working: its agents load, its ports are intact, and it asks with
 generic questions. The ignored block is named in `worca plugin list`, `worca plugin doctor` and its
-Marketplace card, the same way an ignored sidecar is.
+row under Marketplace › Installed › Needs attention, the same way an ignored sidecar is.
 
 ### The declaration
 
@@ -417,7 +418,7 @@ worca plugin validate ./my-plugin --strict
 Errors name the item by its reading position — `ask.forms."review-findings" layout#2: …` — and every
 failed rule is listed, not just the first.
 
-The install consent card and `worca plugin install`'s receipt name, per agent, how many forms ship
+The install sheet's Review step, the Team policy consent and `worca plugin install`'s receipt name, per agent, how many forms ship
 and which file types they may display from the run folder — on a host that will honour them, so only
 when your manifest negotiates API 4 (below that the line is absent and the ignored-contributions line
 names the block instead). That list is read from your `accept` patterns alone, before anything is
@@ -633,11 +634,11 @@ device names (`con`, `nul`, `com1`, …).
 | Self-managed storage not keyed by `ctx.profile` | Two profiles share one cache/cookie jar/CLI config dir → one instance silently answers with the other's data. Hang every path you own off the profile id |
 | `getTask().body` not markdown | It becomes the pipeline prompt verbatim |
 | Symlinks pointing outside the plugin dir | Deleted during export, reported as a warning |
-| A v1 sidecar (`consumes`/`produces`/`connectsTo`) | Ignored at load with a note on its Marketplace card — port it to `metaVersion: 2` |
-| A v1 `steps` workflow template | Ignored at load with a note on its Marketplace card — rewrite it as a graph (`version: 2`) |
+| A v1 sidecar (`consumes`/`produces`/`connectsTo`) | Ignored at load with a note under Marketplace › Installed — port it to `metaVersion: 2` |
+| A v1 `steps` workflow template | Ignored at load with a note under Marketplace › Installed — rewrite it as a graph (`version: 2`) |
 | `agentFile` pointing outside `agents/` (`../`, absolute) | Install-blocking validation error; the loader also refuses to read it |
 | A template referencing a key whose sidecar was rejected | ONE line naming the sidecar — the template is not re-reported rule by rule |
-| An agent key that collides with a built-in or user agent | Yours is dropped; `plugin list`/`doctor`/its Marketplace card name it under "contributions ignored" |
+| An agent key that collides with a built-in or user agent | Yours is dropped; `plugin list`/`doctor`/Marketplace › Installed name it under "contributions ignored" |
 | Editing `workflows/*.json` in a linked dir | The DB row is stale until `worca plugin reimport <name>` |
 | A shipped case with `"cwd": {"kind": "project"}` | Install-blocking validation error — a shipped case runs in a scratch folder |
 | `<key>.tests.json` with no `<key>.meta.json` beside it | Validation error — nothing would ever read it |
@@ -645,10 +646,10 @@ device names (`con`, `nul`, `com1`, …).
 | A node/python script that writes no value for a declared output | Execution error `output "<port>" was not written` |
 | A script key a built-in script or agent already holds (`shell`, `planner`, …) | Yours is dropped at load; `worca plugin new-script` refuses the key up front |
 | `process.stdout.write` in a `node` script | Corrupts the result frame. `console.*` is safe — it is routed to the run log |
-| An `ask` block on a plugin declaring API 3 | The block is ignored, the agent asks with generic questions; `plugin list`/`doctor`/its Marketplace card say so. Declare `">=4 <5"` |
+| An `ask` block on a plugin declaring API 3 | The block is ignored, the agent asks with generic questions; `plugin list`/`doctor`/Marketplace › Installed say so. Declare `">=4 <5"` |
 | A form with no `example` | Validation error — `example` is what proves the declaration and what the Agents view previews |
 | A `type:'file'` with a wide `accept` | Every reviewer sees it on the consent card. Narrow it to what the form actually shows |
-| `mcpServers` on a plugin declaring API 4 | The block is ignored — no server reaches the catalog; `plugin list`/`doctor`/its Marketplace card say so. Declare `">=5 <6"` |
+| `mcpServers` on a plugin declaring API 4 | The block is ignored — no server reaches the catalog; `plugin list`/`doctor`/Marketplace › Installed say so. Declare `">=5 <6"` |
 | A secret field referenced from `args` | Validation error — argv is readable by every local user. Pass it through `env` |
 
 ## The example worth reading
@@ -697,7 +698,7 @@ worca plugin validate ./my-plugin --strict && worca plugin doctor my-plugin
 Both clean, plus at least one real (non-mock) `exec` per op.
 Then push and let users register the repo as a marketplace:
 `worca marketplace add <repo-url>` (or Marketplace › Add marketplace in the UI) →
-install from the Available list or `worca plugin install <name>`.
+install from the Marketplace's Browse tab or `worca plugin install <name>`.
 Removing a marketplace never removes installed plugins.
 From the UI or `worca workflow export <id> --format plugin --marketplace <id>`, Worca opens the PR for you:
 `plugins/<name>/` plus its `worca-cc-marketplace.json` entry (or `<name>/` at the root when the repo has no index).

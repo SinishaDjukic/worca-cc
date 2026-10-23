@@ -230,8 +230,8 @@ The **Auto** workflow option is available for both targets — a project and a w
 
 An open github.com or Azure DevOps pull request shows its state as GitHub's merge box would
 (Draft, Merge conflicts, Changes requested, checks failed or running, Review
-required, Out of date, Blocked, Ready to merge) in two places: the footer of the
-run page's pull request button, and a "Pull request" row under the review verdict
+required, Out of date, Blocked, Ready to merge) in two places: the run page's PR bar
+under the facts, and a "Pull request" row under the review verdict
 on the Overview tab (one row per repository for a workspace run). Both show at
 every level; the Watch switch in them is advanced.
 
@@ -292,7 +292,7 @@ inside the view.
 
 | Element | Level |
 |---|---|
-| Projects list, add, project page Overview, remove | S |
+| Projects list, add, project page Overview, remove, Use git (Folder projects) and Link remote (Git projects without origin) | S |
 | Project Memory tab (view and edit files) | A |
 | Project page Actions tab | A |
 | Workspaces list, create wizard (with its Add… / paste-box import), workspace page Overview (projects, description, re-scan, delete) | A |
@@ -325,8 +325,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 
 | Element | Level |
 |---|---|
-| Marketplace page: installed, available, install | A |
-| Marketplace page: Add marketplace, the Marketplaces list, Doctor, leftover data | E |
+| Marketplace page: the Browse, Installed and Marketplaces tabs, install, update, Add marketplace, Health (Check health), leftover data and Purge | A |
 | Connectors page: the Sets, Servers and Skills views | A |
 | Models page: the catalog, and the Engines card (Default engine, Models per engine: Step models and Helper jobs tables, including titles, Auto classifier, PR description, Memory defragment, Agent generation and, behind the `requirements` flag, Requirements interview) | E |
 | Models page: the catalog toolbar (search, filter chips, folding groups), the editor dialog's Connection section, the Import-models dialog (Copilot and OpenAI-compatible sources) | E |
@@ -367,12 +366,12 @@ missing (`data-needs-git`), at every level.
 | Team metrics page and every surface of it elsewhere | E |
 | Team policy page and its Policy / Plugins / Catalog tabs | E |
 | Team-policy notes on New pipeline; the team caps readout under Budget & cost limits | all — a team cap applies in every mode, so the reason it applies is never hidden |
-| Required-plugins strip and setup checklist (the Marketplace page) | A — with the page that holds them |
+| The Installed tab's Team policy card and the setup checklist (the Marketplace page) | A — with the page that holds them |
 | Ask: chat, history, attachments, run card (its progress bar and stage text), proposal title / project / workflow / brief / Start | S |
 | Pinpoint (#669): select text in a chat answer, a Markdown artifact or the Diff tab for Copy · Explain · Alternatives · Disagree · Note / Comment · Quote / Send to chat; the composer's quote chip; an artifact's pending-changes tray (sent back to the run as one direction while it still takes directions); the diff's open-comments tray (Propose fix run) | all — follows the surface it is on |
 | Ask: the run card's Pause / Resume / Stop, its answer receipt, its result (verdict, changes, top changed files) and the composer's "→ run" direction chip | S — the run card's controls, as on the Running card |
 | Ask: the run card's question (clarify, form, cycle gate, recovery, Auto proposal) | all (rule 1) — its own controls keep the run page's levels (Auto proposal Revise A, tunables E) |
-| Ask: Chat home default pin "Shaper" (gated; help line, Labs badge; can be unpinned, see [Chat home](chat-home.md)) | S |
+| Ask: Chat home default pin "Shaper" (gated; help line, Beta badge; can be unpinned, see [Chat home](chat-home.md)) | S |
 | Ask: run card, perspective chips and the Shaper nudge (open decisions, Run as is / Shaper with estimates) | S |
 | Ask: Shaper proposal card — title + label, clamped brief, Project, Base branch, Perspectives, What happens, Advanced (collapsed; its fields keep their own levels), Start planning / Not now / Open in New run | S |
 | Ask: the run card's question, "Use defaults" / "Answer" (shaping runs) | all (rule 1) |

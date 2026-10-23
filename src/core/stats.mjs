@@ -21,7 +21,7 @@ import { actorLabel } from './identity.mjs';
 import { readTagsFor } from './run-tags-store.mjs';
 import {
   budgetStatus, costWindowStart, costWindowEnd, allTimeTotals, roundUsd,
-  askWindowedSpendUsd, requirementsWindowedSpendUsd,
+  askWindowedSpendUsd, requirementsWindowedSpendUsd, utilityTotals,
 } from './cost-budget.mjs';
 import { savedUsd } from '../shared/human-estimate.mjs';
 import { effectiveHumanRateUsd } from './human-rate.mjs';
@@ -602,6 +602,8 @@ export function getStats({ range = 'month', now = new Date(), from = null, to = 
     windowStartMs: windowStart.getTime(), windowEndMs: windowEnd.getTime(),
     totals, prev, budget, series, humanRateUsd: rate,
     filter, filtered, groupBy: group ? groupBy : null, groups, tagGroups, people: peopleInUse(),
+    // Spend with no run behind it (Smart run naming): its own line, never part of spentUsd.
+    utility: filtered ? { naming: { usd: 0, count: 0 } } : utilityTotals(range === 'all' ? 0 : windowStart.getTime(), windowEnd.getTime()),
   };
   if (report) {
     const winOf = range === 'today' ? WINDOWS.active : WINDOWS.cohort;

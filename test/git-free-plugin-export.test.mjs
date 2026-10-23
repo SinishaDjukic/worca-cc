@@ -7,7 +7,7 @@ import { structuredPatch } from 'diff';
 import { chmodSync, existsSync, readFileSync, readdirSync, lstatSync, readlinkSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { addPluginRepo, exportVersion, fetchCandidate, repoSnapshotRoot } from '../src/core/plugin-repo.mjs';
+import { addPluginRepo, exportVersion, fetchCandidate, repoSnapshotRoot, emptyManifestDelta } from '../src/core/plugin-repo.mjs';
 import { inventoryFromCache } from '../src/core/plugin-inventory.mjs';
 import { installPlugin, runSetup, uninstallPlugin } from '../src/core/plugin-store.mjs';
 import { readPluginsLock, writePluginsLock, pluginDir } from '../src/core/plugins-lock.mjs';
@@ -80,9 +80,14 @@ test('update preview over HTTPS: commits newest first, the plugin-scoped diffsta
     row('plugins/alpha/index.mjs', 1, '+'), ' 3 files changed, 5 insertions(+)'].join('\n'));
   assert.equal(p.diffFull, '');
   assert.deepEqual(p.manifestDelta.newAgents, ['helper']);
+  assert.deepEqual([p.pinnedVersion, p.candidateVersion, p.access], ['0.1.0', '0.1.0', [{ kind: 'agent', id: 'helper', red: false }]]);
+  assert.match(p.previewedAt, /^\d{4}-\d{2}-\d{2}T/);
   assert.deepEqual(gh.calls.slice(n).filter((c) => c.path.includes('/tarball/')).map((c) => c.path), [`/repos/acme/upd/tarball/${c3}`]);
   const full = await fetchCandidate('alpha-plugin', { fullDiff: true });
   assert.match(full.diffFull, /^diff --git a\/plugins\/alpha\/agents\/helper\.md b\/plugins\/alpha\/agents\/helper\.md\n/);
+  writePluginsLock({ ...readPluginsLock(), 'alpha-plugin': { ...readPluginsLock()['alpha-plugin'], pinnedSha: c3 } });
+  const same = await fetchCandidate('alpha-plugin');
+  assert.deepEqual([same.commits, same.candidateVersion, same.access, same.manifestDelta], [[], '0.1.0', [], emptyManifestDelta()]);
 });
 
 test('formatDiffstat: git\'s summary words; a large change scales its bar to 50 columns', async () => {
@@ -470,4 +475,53 @@ test('uninstall renames the snapshot root aside before removing it: a removal th
     const trash = readdirSync(dirname(root)).filter((n) => n.startsWith(`${basename(root)}.trash-`)).map((n) => join(dirname(root), n));
     for (const d of [root, ...trash]) if (existsSync(ro(d))) chmodSync(ro(d), 0o755);
   }
+});
+
+test('update preview lists only the plugin folder\'s commits, over git and over HTTPS alike', async (t) => {
+  const { bare, sha: v1 } = gh.repo('acme/scope', { files: {
+    'plugins/alpha/worca-cc-plugin.json': MANIFEST('scope-alpha'), 'plugins/alpha/index.mjs': INDEX, 'other/x.md': 'x\n' } });
+  await installPlugin({ repoUrl: bare, subdir: 'plugins/alpha', name: 'scope-git', sha: v1 });
+  const c2 = gh.commit('acme/scope', { message: 'alpha change', files: { 'plugins/alpha/index.mjs': `${INDEX}// v2\n` } });
+  gh.commit('acme/scope', { message: 'other only', files: { 'other/x.md': 'y\n' } });
+  const c4 = gh.commit('acme/scope', { message: 'both', files: { 'other/x.md': 'z\n', 'plugins/alpha/index.mjs': `${INDEX}// v3\n`,
+    'plugins/alpha/worca-cc-plugin.json': MANIFEST('scope-alpha').replace('0.1.0', '0.2.0') } });
+  const viaGit = await fetchCandidate('scope-git');
+  withNoGit(t);
+  await installPlugin({ repoUrl: 'https://github.com/acme/scope', subdir: 'plugins/alpha', name: 'scope-https', sha: v1 });
+  const n = gh.calls.length;
+  const viaHttps = await fetchCandidate('scope-https');
+  const pick = (p) => [p.commits, p.manifestDelta, p.access, p.pinnedVersion, p.candidateVersion];
+  assert.deepEqual(viaGit.commits.map((c) => [c.sha, c.subject]), [[c4, 'both'], [c2, 'alpha change']]);
+  assert.deepEqual([viaGit.pinnedVersion, viaGit.candidateVersion], ['0.1.0', '0.2.0'], 'the candidate commit\'s own version');
+  assert.deepEqual(pick(viaHttps), pick(viaGit));
+  assert.ok(gh.calls.slice(n).some((c) => c.path === '/repos/acme/scope/commits' && /path=plugins%2Falpha/.test(c.query)),
+    'the folder\'s commits came from GitHub\'s commit list');
+});
+
+test('update preview over HTTPS pages GitHub\'s folder commit list: a range of 101 folder commits needs a second page', async (t) => {
+  const { sha: v1 } = gh.repo('acme/pages', { files: { 'p/worca-cc-plugin.json': MANIFEST('pages-plugin'), 'p/index.mjs': INDEX } });
+  const shas = [];
+  for (let i = 0; i < 101; i++) shas.unshift(gh.commit('acme/pages', { message: `c${i}`, files: { 'p/index.mjs': `${INDEX}// ${i}\n` } }));
+  withNoGit(t);
+  await installPlugin({ repoUrl: 'https://github.com/acme/pages', subdir: 'p', name: 'pages-plugin', sha: v1 });
+  const n = gh.calls.length;
+  const p = await fetchCandidate('pages-plugin');
+  assert.deepEqual(p.commits.map((c) => c.sha), shas);
+  assert.deepEqual(gh.calls.slice(n).filter((c) => c.path === '/repos/acme/pages/commits').map((c) => new URLSearchParams(c.query).get('page')), ['1', '2']);
+});
+
+test('update preview over HTTPS: an answer that is not a commit list scopes nothing — the range stays whole, never empty', async (t) => {
+  const { sha: v1 } = gh.repo('acme/odd', { files: { 'p/worca-cc-plugin.json': MANIFEST('odd-plugin'), 'p/index.mjs': INDEX, 'q.md': 'q\n' } });
+  withNoGit(t);
+  await installPlugin({ repoUrl: 'https://github.com/acme/odd', subdir: 'p', name: 'odd-plugin', sha: v1 });
+  const c2 = gh.commit('acme/odd', { message: 'p change', files: { 'p/index.mjs': `${INDEX}// v2\n` } });
+  const c3 = gh.commit('acme/odd', { message: 'q only', files: { 'q.md': 'r\n' } });
+  ghTesting.setFetch(async (url, init) => {
+    if (!new URL(String(url)).pathname.endsWith('/commits')) return gh.fetch(url, init);
+    return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+  });
+  try {
+    const p = await fetchCandidate('odd-plugin');
+    assert.deepEqual(p.commits.map((c) => [c.sha, c.subject]), [[c3, 'q only'], [c2, 'p change']]);
+  } finally { ghTesting.setFetch(gh.fetch); }
 });

@@ -70,6 +70,7 @@ import {
   humanRateUsdPerHour, setHumanRateUsdPerHour, assertHumanRateInput,
   askMaxTurns, askMaxBudgetUsd, setAskMaxTurns, setAskMaxBudgetUsd, assertAskLimitInputs,
   askWeb, assertAskWebInput, setAskWeb, addAskWebHost,
+  smartNaming, assertSmartNamingInput, setSmartNaming,
   chatPrefs, setChatPrefs,
   debugSpawnEnabled as storedDebugSpawnEnabled, effectiveDebugSpawn, setDebugSpawnEnabled, assertDebugSpawnInput, SETTINGS_POST_KEYS,
   resumeAfterUsageLimit, assertResumeAfterUsageLimitInput, setResumeAfterUsageLimit,
@@ -81,6 +82,7 @@ import {
   prDescriptionModel as storedPrDescriptionModel, setPrDescriptionModel, assertPrDescriptionModelInput,
   memoryDefragModel, setMemoryDefragModel, assertMemoryDefragModelInput,
   agentGenModel as storedAgentGenModel, setAgentGenModel, assertAgentGenModelInput,
+  namingModel as storedNamingModel, setNamingModel, assertNamingModelInput,
   workspaceScanModels, setWorkspaceScanModels, assertWorkspaceScanInput,
   scheduleDefaults, setScheduleDefaults,
   userTagDimensions, setUserTagDimensions, userEnforceTags, setUserEnforceTags,
@@ -156,7 +158,8 @@ import { cancelSuggestion } from '../src/core/ask/suggest.mjs';
 import { validateMcpOff, resolveAskMcp, askMcpPromptInput, askMcpPreview, askMcpJoinNotice, resolveAskSkills } from '../src/core/ask/mcp.mjs';
 import { attachRunFollower } from '../src/core/ask/follow.mjs';
 import { mockEnabled, MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
-import { budgetStatus, readCostCapOverride, setCostCapOverride } from '../src/core/cost-budget.mjs';
+import { budgetStatus, readCostCapOverride, setCostCapOverride, recordUtilityCost } from '../src/core/cost-budget.mjs';
+import { resolveNamingModel, suggestNames, mockSuggestion, estimateNamingUsd, legacyBranchHint } from '../src/core/naming.mjs';
 import { getStats, budgetWindowSavings, shapingGroups } from '../src/core/stats.mjs';
 import {
   enableTeamMetrics, setRecordMyRuns, flushSlug, flushAll, flushProject, scheduleFlush, discoverProject,
@@ -232,12 +235,12 @@ import { checkBrokerAtBoot } from '../src/core/broker-boot.mjs';
 import { modelSlot, missingCredentials, describeMissing, workflowNeedsModel } from '../src/core/broker-routing.mjs';
 import { syncPluginSlots } from '../src/core/plugin-broker-slots.mjs';
 import { planClone, cloneProject, CloneError } from '../src/core/clone-project.mjs';
-import { createProject, addProjectFolder, probeFolder, ProjectAddError, PROJECT_ADD_STATUS } from '../src/core/project-create.mjs';
+import { createProject, addProjectFolder, probeFolder, makeGitProject, ProjectAddError, PROJECT_ADD_STATUS } from '../src/core/project-create.mjs';
 import { listFolders } from '../src/core/fs-browse.mjs';
 import { realRoots, realOrNull, checkInside, insideRoots, outsideAllowedMessage, FS_OUTSIDE_ALLOWED } from '../src/core/fs-scope.mjs';
 import { importCandidates, parsePathList, IMPORT_MAX_INPUTS } from '../src/core/workspace-import.mjs';
 import {
-  readConfig, setStep, addCustomModel, removeCustomModel, listModels,
+  readConfig, setStep, addCustomModel, removeCustomModel, listModels, modelCostConfig,
   PREDEFINED_MODELS, CODEX_BUILTIN_MODELS, COPILOT_BUILTIN_MODELS, agentSteps, EFFORTS, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, foreignRunModel, assertSlotModels, stepSlotDefaults,
   readRunConfig, setNodeModel, setFeedbackCycles, setWireCycles, setActiveWorkflow, setHumanInLoop, resetWorkflowConfig,
   globalModelRefs, removeGlobalModelAndRefs, promoteCustomModel, costUnreliableModelIds,
@@ -411,8 +414,9 @@ import { PORT_ID_RE } from '../src/shared/graph/constants.mjs';
 import {
   listInstalledPlugins, installPlugin, updatePlugin, uninstallPlugin, pythonNoticeFor,
   setPluginEnabled, doctorPlugin, linkPlugin,
-  listOrphanPluginData, purgePluginData,
+  listOrphanPluginData, purgePluginData, installedInventory, pluginReferences,
 } from '../src/core/plugin-store.mjs';
+import { githubWebUrl } from '../src/shared/plugin-access.mjs';
 import { fetchCandidate } from '../src/core/plugin-repo.mjs';
 import { reconcileMcpStore } from '../src/core/mcp/catalog.mjs';
 import { readMcpStore } from '../src/core/mcp/store.mjs';
@@ -420,6 +424,7 @@ import { mcpFootprint, skillFootprint } from '../src/core/mcp/plugin-lifecycle.m
 import {
   addMarketplace, listMarketplaces, syncMarketplace, refreshAllMarketplaces,
   removeMarketplace, readMarketplaces, seedBuiltinMarketplace, marketplaceNeedsGit,
+  presentMarketplace, checkMarketplaceAdd, redactUserinfo, safeErrorText,
 } from '../src/core/marketplaces.mjs';
 import {
   redactedConfig, writePluginConfig, readPluginConfig, listProfiles, listProfileIds,
@@ -1026,6 +1031,9 @@ function askFrameComposer(obj) {
 function emitChanged(type, action) {
   broadcast({ type, action: action || null });
 }
+// CONTRACT §1.7: every open Marketplace tab re-reads its lists after a plugin action (install, update, enable, remove,
+// purge, link, config; P2 adds the marketplace actions).
+function emitPluginsChanged(action) { emitChanged('plugins-changed', action); }
 
 metricsEvents.on('changed', (e) => emitChanged('team-metrics-changed', e && e.action ? e.action : null));
 policyEvents.on('changed', (e) => emitChanged('team-policy-changed', e && e.action ? e.action : null));
@@ -1672,6 +1680,7 @@ app.use((req, _res, next) => withBillTo(resolveIdentity(req).name, next));
 const gitMissing = (res) => res.status(409).json({ error: GIT_MISSING.message, code: GIT_MISSING.code });
 const GIT_ONLY_ROUTES = Object.freeze([
   ['post', '/api/projects/clone'], ['delete', '/api/projects/:key/terminal/worktrees'],
+  ['post', '/api/projects/:key/git-init'],   // Use git / Link remote: git init and git remote add
   ['post', '/api/runs/:id/checkout'], ['delete', '/api/runs/:id/checkout'], ['get', '/api/runs/:id/checkout/diff'],
   ['post', '/api/projects/:key/actions/:actionId/try'],
   ['get', '/api/pr/remotes'], ['post', '/api/pr'], ['post', '/api/pr/resolve'], ['post', '/api/runs/:id/publish'],
@@ -2465,6 +2474,12 @@ const startRunHandler = async (req, res) => {
     if (body.sameAsSource !== undefined && body.sameAsSource !== null && typeof body.sameAsSource !== 'boolean') {
       return badRequest(res, 'sameAsSource must be true or false');
     }
+    // Smart run naming markers (flag smartRunNaming): explicit booleans, validated before a schedule stores the body.
+    for (const k of ['featureBranchSuggested', 'featureBranchFallback']) {
+      if (body[k] !== undefined && body[k] !== null && typeof body[k] !== 'boolean') return badRequest(res, `${k} must be true or false`);
+    }
+    // The form's untouched fallback name: today's name is derived by the harness (with the run id), not sent.
+    if (flagEnabled('smartRunNaming') && body.featureBranchFallback === true) delete body.featureBranch;
     // The same name for both, without the flag: refuse now with the way out, instead of accepting the run
     // and failing it at setup ("they must differ") — or, on a repeating schedule, silently running on a
     // date-suffixed copy. Never inferred: chains, schedules and Ask carry the mode as data.
@@ -2701,6 +2716,9 @@ const startRunHandler = async (req, res) => {
     // auto-names its hidden branch, so a typed feature name is ignored (and never date-suffixed).
     // A Workspace scan or a memory defragment lands no work: the flag does not apply there.
     const sameAsSource = body.sameAsSource === true && !scanTarget && !memoryScope;
+    // Smart run naming: a title that was given is kept (typed, or suggested on the form); read at start and at fire time.
+    const smartNamingOn = flagEnabled('smartRunNaming');
+    const titleLocked = smartNamingOn && typeof body.title === 'string' && !!body.title.trim();
     const branch = {
       source: typeof body.sourceBranch === 'string' && body.sourceBranch.trim()
         ? body.sourceBranch.trim() : null,
@@ -2709,6 +2727,8 @@ const startRunHandler = async (req, res) => {
       ...(resolveOf ? { resolves: { runId: resolveOf.runId, member: resolveOf.member || null } } : {}),
       ...(roundOf ? { roundOf } : {}),
       ...(sameAsSource ? { sameAsSource: true } : {}),
+      ...(smartNamingOn && !sameAsSource && body.featureBranchSuggested === true ? { suggested: true } : {}),
+      ...(smartNamingOn && !sameAsSource && body.featureBranchFallback === true ? { legacy: true } : {}),
     };
     const syncBody = {
       before: typeof body.syncBeforeStart === 'boolean' ? body.syncBeforeStart : null,         // null = project default
@@ -2893,6 +2913,7 @@ const startRunHandler = async (req, res) => {
         startedBy,
         ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),
         branch,
+        ...(titleLocked ? { titleLocked: true } : {}),
         sync,
         // Human in the loop is per run on a workspace (D-W1): the body wins, else on.
         humanInLoop: bodyHumanInLoop ?? true,
@@ -3059,6 +3080,7 @@ const startRunHandler = async (req, res) => {
         startedBy,
         ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),
         branch,
+        ...(titleLocked ? { titleLocked: true } : {}),
         sync,
         humanInLoop,
         ...(memoryScope ? { memoryScope } : {}),
@@ -9581,9 +9603,9 @@ function projectAddFail(res, err, extra = {}) {
   return res.status(PROJECT_ADD_STATUS[code] || 500).json(body);
 }
 
-/** After New / Use git registered a project: the list broadcast, then discovery for a Git project only. */
-function afterProjectRegistered(project) {
-  emitChanged('projects-changed', 'created');
+/** After New / Use git registered (or converted) a project: the list broadcast, then discovery for a Git project only. */
+function afterProjectRegistered(project, action = 'created') {
+  emitChanged('projects-changed', action);
   if (!project || project.vcs !== 'git') return;   // a Folder project has no origin to discover
   discoverProject(project.path, { force: true })
     .then(() => emitChanged('team-metrics-changed', 'discovered'))
@@ -9763,6 +9785,31 @@ app.delete('/api/projects', async (req, res) => {
     res.json(out);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// Use git (a Folder project → Git in place) or Link remote (a Git project without origin): makeGitProject picks by the
+// stored vcs. A live Folder run works IN the folder, so the init path waits for it.
+app.post('/api/projects/:key/git-init', async (req, res) => {
+  try {
+    const p = await tmProject(req, res); if (!p) return;
+    if (!(await requireFsAllowed(req, res, [p.path]))) return;
+    if (p.vcs === 'none') {
+      const busy = runHoldingProject(p);
+      if (busy) {
+        const how = busy.status === 'paused' ? 'is paused' : 'is still running';
+        return res.status(409).json({
+          error: `“${p.name}” has a run that ${how}${busy.title ? ` (“${busy.title}”)` : ''}. Stop it first, then use git here.`,
+          code: 'PROJECT_BUSY', pipelineId: busy.id,
+        });
+      }
+    }
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const out = await makeGitProject({ key: p.key, remoteUrl: body.remoteUrl });
+    afterProjectRegistered(out.project, 'updated');
+    res.json({ ...out, projects: await projectsForApi(await listProjects()) });
+  } catch (err) {
+    if (!res.headersSent) projectAddFail(res, err);
   }
 });
 
@@ -10717,6 +10764,7 @@ const settingsState = () => ({
   askMaxTurns: askMaxTurns(),
   askMaxBudgetUsd: askMaxBudgetUsd(),
   askWeb: askWeb(),                                       // Chat web access (off by default)
+  smartNaming: smartNaming(),                             // Smart run naming (flag smartRunNaming)
   debugSpawnEnabled: storedDebugSpawnEnabled(),          // what is STORED (the checkbox)
   debugSpawnEffective: effectiveDebugSpawn(),             // what the next spawn will DO, and why
   resumeAfterUsageLimit: resumeAfterUsageLimit(),
@@ -10782,6 +10830,12 @@ async function prDescriptionModelState() {
 async function agentGenModelState() {
   const stored = storedAgentGenModel();
   return { agentGenModel: stored, agentGenModelEffective: resolveAgentGenModel(stored, await listModels('')) };
+}
+
+/** Models › Helper jobs › Run naming: the stored pair + what a suggestion will actually run on. */
+async function namingModelState() {
+  const stored = storedNamingModel();
+  return { namingModel: stored, namingModelEffective: resolveNamingModel(stored, await listModels(''), modelCostConfig) };
 }
 
 // ---------------------------------------------------------------------------
@@ -11192,7 +11246,7 @@ app.post('/api/shutdown', (req, res) => {
 
 app.get('/api/settings', async (req, res) => {
   const person = awayPersonOf(req);   // B4: a signed-in person sees their own Away switch
-  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(), app: APP_INFO });
+  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(), app: APP_INFO });
 });
 
 app.get('/api/budget', (_req, res) => {
@@ -11207,7 +11261,7 @@ app.get('/api/budget', (_req, res) => {
 
 /**
  * The Models page's utility pickers (title, Auto classifier, PR description, memory defragment,
- * agent generation, workspace scan) are Claude's slots (cascading-settings-design.md D10/§3.1): a Codex or Cursor id there is
+ * agent generation, run naming, workspace scan) are Claude's slots (cascading-settings-design.md D10/§3.1): a Codex or Cursor id there is
  * a 400 that names it. A Codex run's utility jobs run on Codex's own default for now.
  * @throws {Error}
  */
@@ -11229,7 +11283,7 @@ app.post('/api/settings', async (req, res) => {
     has('projectsRoot') ? normalizeProjectPath(body.projectsRoot) : null]))) return;
   try {
     const { actionsWarnings } = await applySettingsPatch(body, { person: awayPersonOf(req) });
-    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(),
+    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(),
       ...(actionsWarnings ? { actionsWarnings } : {}) });
   } catch (err) {
     // 400 with the user's words and, when known, the body path of the bad field (#555).
@@ -11253,6 +11307,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasHumanRateKey = has('humanRateUsdPerHour');
   const hasAskKey = has('askMaxTurns') || has('askMaxBudgetUsd');
   const hasAskWeb = has('askWeb');                // null clears back to unset (a team default applies)
+  const hasSmartNaming = has('smartNaming');      // null clears the stored block
   const hasDebugSpawnKey = has('debugSpawnEnabled');
   const hasLimitResumeKey = has('resumeAfterUsageLimit');
   const hasTitleModelKey = has('titleModel');
@@ -11272,6 +11327,8 @@ async function applySettingsPatch(body, { person = null } = {}) {
   // The agent wizard's Generate pair: agent generation has no project, so the project-less catalog.
   const hasAgentGenKey = has('agentGenModel');
   const agentGenModels = hasAgentGenKey ? (autoModels || defragModels || await listModels('')) : null;
+  const hasNamingModelKey = has('namingModel');
+  const namingModels = hasNamingModelKey ? (autoModels || defragModels || agentGenModels || await listModels('')) : null;
   const hasWorkspaceScanKey = has('workspaceScan');
   const hasRunEngineKey = has('runEngine');
   const hasStepModelsKey = has('stepModels');
@@ -11304,7 +11361,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   if (has('askMaxTurns')) ask.askMaxTurns = body.askMaxTurns ?? '';
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   {   // was the route's try: a refusal now reaches the caller (the route maps it to 400, the chat to a notice)
-    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'workspaceScan', ...(hasRequirementsInterviewKey ? ['requirementsInterview'] : [])]) {
+    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'namingModel', 'workspaceScan', ...(hasRequirementsInterviewKey ? ['requirementsInterview'] : [])]) {
       if (has(key)) asSettingsField(key, () => refuseNonClaudeUtilityModel(key, body[key]));
     }
     // Each validator / setter that can refuse a value runs tagged with the body key it checks,
@@ -11325,6 +11382,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
       }
     }
     if (hasAskWeb && body.askWeb !== null) asSettingsField('askWeb', () => assertAskWebInput(body.askWeb));
+    if (hasSmartNaming && body.smartNaming !== null) asSettingsField('smartNaming', () => assertSmartNamingInput(body.smartNaming));
     if (hasDebugSpawnKey) asSettingsField('debugSpawnEnabled', () => assertDebugSpawnInput(body.debugSpawnEnabled));
     if (hasLimitResumeKey) asSettingsField('resumeAfterUsageLimit', () => assertResumeAfterUsageLimitInput(body.resumeAfterUsageLimit));
     if (hasTitleModelKey) asSettingsField('titleModel', () => {
@@ -11340,6 +11398,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasPrDescKey) asSettingsField('prDescriptionModel', () => assertPrDescriptionModelInput(body.prDescriptionModel ?? '', prDescModels));
     if (hasMemoryDefragKey) asSettingsField('memoryDefrag', () => assertMemoryDefragModelInput(body.memoryDefrag, defragModels));
     if (hasAgentGenKey) asSettingsField('agentGenModel', () => assertAgentGenModelInput(body.agentGenModel, agentGenModels));
+    if (hasNamingModelKey) asSettingsField('namingModel', () => assertNamingModelInput(body.namingModel, namingModels));
     if (hasWorkspaceScanKey) asSettingsField('workspaceScan', () => assertWorkspaceScanInput(body.workspaceScan, wsScanModels));
     if (hasRunEngineKey) asSettingsField('runEngine', () => assertRunEngineInput(body.runEngine));
     if (hasAskEngineKey) asSettingsField('askEngine', () => assertAskEngineInput(body.askEngine));
@@ -11399,6 +11458,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (has('askMaxTurns')) await setAskMaxTurns(ask.askMaxTurns);
     if (has('askMaxBudgetUsd')) await setAskMaxBudgetUsd(ask.askMaxBudgetUsd);
     if (hasAskWeb) await setAskWeb(body.askWeb);
+    if (hasSmartNaming) await setSmartNaming(body.smartNaming);
     if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
     if (hasLimitResumeKey) await setResumeAfterUsageLimit(body.resumeAfterUsageLimit);
     if (hasTitleModelKey) await setTitleModel(titleModelInput);
@@ -11410,6 +11470,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasPrDescKey) await setPrDescriptionModel(body.prDescriptionModel ?? '', { models: prDescModels });
     if (hasMemoryDefragKey) await setMemoryDefragModel(body.memoryDefrag, { models: defragModels });
     if (hasAgentGenKey) await setAgentGenModel(body.agentGenModel, { models: agentGenModels });
+    if (hasNamingModelKey) await setNamingModel(body.namingModel, { models: namingModels });
     if (hasWorkspaceScanKey) await setWorkspaceScanModels(body.workspaceScan, { models: wsScanModels });
     if (hasRunEngineKey) await asSettingsField('runEngine', () => setRunEngineSetting(body.runEngine));
     if (hasStepModelsKey) await asSettingsField('stepModels', () => setStepModels(body.stepModels));
@@ -11430,7 +11491,8 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasBudgetKey) emitChanged('budget-changed');
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
-    if (hasAskKey || hasAskWeb || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
+    if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -12047,8 +12109,8 @@ app.post('/api/models/export-plugin', async (req, res) => {
     '',
     '## Install (teammates)',
     '',
-    'Worca CC → Marketplace → Add marketplace → paste the repo URL → Install.',
-    'Model secrets are prompted in the plugin\'s configuration panel.',
+    'worca → Marketplace → Add marketplace → paste the repo URL → Add → Install.',
+    'Model secrets are asked for in the install\'s Set up step.',
     '',
   ].join('\n');
 
@@ -14220,6 +14282,63 @@ app.get('/api/extension/status', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Smart run naming (flag smartRunNaming, docs/feature-flags.md): the New run form asks for a title, a branch type and
+// a slug. Both routes answer 404 while the flag is off. Naming never blocks a start: a refusal, a budget stop and a
+// model failure all answer { source: 'fallback' } with today's name as a hint.
+// ---------------------------------------------------------------------------
+const namingOn = requireFlag('smartRunNaming');
+const namingBucket = new TokenBucket(30);
+let cachedPick;
+let cachedPickAt = 0;
+const NAMING_PICK_TTL_MS = 60_000;
+const warnedStaleNaming = new Set();
+async function namingCatalog() {
+  const rows = await listModels('');
+  const picked = resolveNamingModel(storedNamingModel(), rows, modelCostConfig);
+  if (picked.stale && !warnedStaleNaming.has(picked.stale)) {
+    warnedStaleNaming.add(picked.stale);
+    console.warn(`[worca] namingModel ${JSON.stringify(picked.stale)} is no longer in the catalog — run naming uses the cheapest ready Claude model`);
+  }
+  return { rows, picked };
+}
+async function namingPick() {
+  if (cachedPick === undefined || Date.now() - cachedPickAt > NAMING_PICK_TTL_MS) { cachedPick = (await namingCatalog()).picked; cachedPickAt = Date.now(); }
+  return cachedPick;
+}
+
+app.get('/api/naming/config', namingOn, async (req, res) => {
+  try {
+    const cfg = smartNaming(req.query.projectDir ? { projectDir: String(req.query.projectDir) } : undefined);
+    const { rows, picked } = await namingCatalog();
+    res.json({ ...cfg, picked, estimatedUsd: estimateNamingUsd(picked, rows, modelCostConfig) });
+  } catch (err) { if (!res.headersSent) res.status(500).json({ error: 'naming config failed' }); }
+});
+
+app.post('/api/naming/suggest', namingOn, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const prompt = typeof b.prompt === 'string' ? b.prompt : '';
+    if (!prompt.trim()) return badRequest(res, 'prompt is required');
+    if (!namingBucket.tryConsume()) return res.status(429).json({ error: 'too many suggestions, try again in a moment' });
+    const projectDir = typeof b.projectDir === 'string' && b.projectDir ? b.projectDir : undefined;
+    const title = typeof b.title === 'string' ? b.title : '';
+    const cfg = smartNaming(projectDir ? { projectDir } : undefined);
+    if (!cfg.suggestTitle && !cfg.suggestBranch) return res.json({ source: 'off' });
+    const fallback = (error) => res.json({ source: 'fallback', error, branchHint: legacyBranchHint(prompt, title) });
+    if (budgetStatus().blocked) return fallback('total cost limit reached');
+    const ac = new AbortController();
+    res.on('close', () => { if (!res.writableEnded) ac.abort(); });
+    const pick = mockEnabled({}) ? null : await namingPick();
+    const r = mockEnabled({})
+      ? mockSuggestion(prompt, cfg)       // deterministic, spawns nothing (tests, CDP proofs)
+      : await suggestNames({ prompt, title, projectDir, signal: ac.signal },
+        { pickModel: () => pick, onCost: (c) => { try { recordUtilityCost('naming', c); } catch { /* a ledger write never fails a suggestion */ } } });
+    if (r.source !== 'model') return fallback(r.error);
+    res.json({ ...r, title: cfg.suggestTitle ? r.title : undefined, branch: cfg.suggestBranch ? r.branch : undefined });
+  } catch (err) { if (!res.headersSent) res.status(500).json({ error: 'suggestion failed' }); }   // Express 4 swallows async throws
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/pinpoint  -> Pinpoint (#669): Explain / Alternatives on a selected span.
 // Body {action:'explain'|'alternatives', quote, context?, surface?, source?}. 200 is NDJSON, one object per line:
 // {type:'delta', text} (Explain, streamed) · {type:'alternatives', alternatives} · {type:'done'} · {type:'error', error}.
@@ -15607,7 +15726,7 @@ app.put('/api/scripts/:key/cases', async (req, res) => {
 const PLUGIN_NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
 function requirePlugin(req, res) {
   const name = req.params.name;
-  if (!PLUGIN_NAME_RE.test(name) || !readPluginsLock()[name]) {
+  if (!PLUGIN_NAME_RE.test(name) || !Object.hasOwn(readPluginsLock(), name)) {   // own keys: "constructor" is not installed
     res.status(404).json({ error: 'plugin not found' });
     return null;
   }
@@ -15639,6 +15758,7 @@ function pluginErrorStatus(code) {
   if (code === 'REFERENCED') return 409;
   if (code === 'EXISTS') return 409;
   if (code === 'GIT_MISSING') return 409;
+  if (code === 'STALE_PREVIEW') return 409;
   if (typeof code === 'string' && code.startsWith('GITHUB_')) return 502;   // P6: GitHub answered (or not) over HTTPS
   return 500;
 }
@@ -15647,6 +15767,8 @@ function sendPluginError(res, err) {
   if (err && (err.name === 'ReferencedError' || err.code === 'REFERENCED')) {
     return res.status(409).json({ error: message, references: err.references || [] });
   }
+  if (err?.code === 'STALE_PREVIEW') return res.status(409).json({ error: message, code: 'STALE_PREVIEW', candidateSha: err.candidateSha ?? null });
+  if (err?.code === 'EXISTS') return res.status(409).json({ error: message, code: 'EXISTS', ...(err.existing ? { existing: err.existing } : {}) });
   res.status(pluginErrorStatus(err && err.code)).json({ error: message, ...(err?.code === 'GIT_MISSING' ? { code: 'GIT_MISSING' } : {}) });
 }
 
@@ -15662,24 +15784,29 @@ function readInstalledManifest(name) {
   }
 }
 
+// The API row: core's installed row plus what only the server knows (the marketplace's name, this host's python
+// notice, the MCP and skill sets an uninstall leaves). Shared by the list and the one-plugin route (SEAMS SM9).
+async function pluginApiRows(rows, mkts) {
+  // The python notice (spec §8.1) is a fact about THIS host: resolved once per
+  // request, and only when some plugin ships a python script (the probe caches 60 s).
+  const anyPython = rows.some((p) => Number((p.scriptRuntimes || {}).python) > 0);
+  const notice = anyPython ? await pythonNoticeFor([{ runtime: 'python' }]) : null;
+  const mcp = await readMcpStore();
+  return rows.map((p) => ({
+    ...p,
+    marketplaceName: p.marketplace && mkts[p.marketplace] ? presentMarketplace(mkts[p.marketplace]).name : null,
+    pythonMissing: !!(notice && Number((p.scriptRuntimes || {}).python) > 0),
+    // The uninstall confirm names the MCP sets its servers leave (§4.6), and the sets its skills leave (skills §5).
+    mcpSets: mcpFootprint(mcp, (id) => id.startsWith(`plugin:${p.name}/`)).sets,
+    skillSets: skillFootprint(mcp, (id) => id.startsWith(`skill:plugin:${p.name}/`)).sets,
+  }));
+}
+
 app.get('/api/plugins', async (req, res) => {
   try {
     const mkts = readMarketplaces().marketplaces;
-    const rows = listInstalledPlugins();
-    // The python notice (spec §8.1) is a fact about THIS host: resolved once per
-    // request, and only when some plugin ships a python script (the probe caches 60 s).
-    const anyPython = rows.some((p) => Number((p.scriptRuntimes || {}).python) > 0);
-    const notice = anyPython ? await pythonNoticeFor([{ runtime: 'python' }]) : null;
-    const mcp = await readMcpStore();
     res.json({
-      plugins: rows.map((p) => ({
-        ...p,
-        marketplaceName: p.marketplace && mkts[p.marketplace] ? mkts[p.marketplace].name : null,
-        pythonMissing: !!(notice && Number((p.scriptRuntimes || {}).python) > 0),
-        // The uninstall confirm names the MCP sets its servers leave (§4.6), and the sets its skills leave (skills §5).
-        mcpSets: mcpFootprint(mcp, (id) => id.startsWith(`plugin:${p.name}/`)).sets,
-        skillSets: skillFootprint(mcp, (id) => id.startsWith(`skill:plugin:${p.name}/`)).sets,
-      })),
+      plugins: await pluginApiRows(listInstalledPlugins({ marketplaces: mkts }), mkts),
       orphans: listOrphanPluginData(),
     });
   } catch (err) {
@@ -15687,17 +15814,42 @@ app.get('/api/plugins', async (req, res) => {
   }
 });
 
-// Marketplaces (spec §4.7): the persisted repo registry behind the Plugins
-// view's Available/Marketplaces sections. Snapshots are cached in
+// GET /api/plugins/:name — one installed plugin for its sheet (CONTRACT §1.2): the row, what it ships (installed
+// inventory, `<plugin-dir>` placeholder) and where it came from. Zero network.
+app.get('/api/plugins/:name', async (req, res) => {
+  const name = requirePlugin(req, res);
+  if (!name) return;
+  try {
+    const mkts = readMarketplaces().marketplaces;
+    const [plugin] = await pluginApiRows(listInstalledPlugins({ marketplaces: mkts }).filter((p) => p.name === name), mkts);
+    if (!plugin) return res.status(404).json({ error: 'plugin not found' });   // removed since requirePlugin read the lock
+    const e = readPluginsLock()[name] || {};
+    res.json({
+      plugin, inventory: installedInventory(name), repo: e.repo ?? null, subdir: e.subdir ?? '', sha: e.pinnedSha ?? null,
+      installedAt: e.installedAt ?? null, updatedAt: e.updatedAt ?? null, webUrl: githubWebUrl(e.repo, e.pinnedSha, e.subdir ?? ''),
+    });
+  } catch (err) { sendPluginError(res, err); }
+});
+
+// GET /api/plugins/:name/references — the Remove dialog's dry run (CONTRACT §1.3): every uninstall guard, nothing thrown.
+app.get('/api/plugins/:name/references', (req, res) => {
+  const name = requirePlugin(req, res);
+  if (!name) return;
+  try { res.json({ references: pluginReferences(name) }); } catch (err) { sendPluginError(res, err); }
+});
+
+// Marketplaces (spec §4.7): the persisted repo registry behind the Marketplace
+// page's Browse and Marketplaces tabs. Snapshots are cached in
 // marketplaces.json, so GET is zero-network; refresh routes do the git work.
 
 // Merge lock membership onto each snapshot plugin. MUST wrap every response that
 // returns marketplace snapshots — refresh routes return raw entries whose plugins
-// have no `installed` key, and renderAvailableList would re-offer Install on them.
+// have no `installed` key, and the Browse tiles would re-offer Install on them.
+// A source that needs git reads Needs git, never Can't reach: it carries lastError: null (SEAMS SM4).
 function withInstalled(list) {
   const lock = readPluginsLock();
   return (list || []).map((m) => ({
-    ...m, ...(marketplaceNeedsGit(m.url) ? { needsGit: true } : {}), plugins: (m.plugins || []).map((p) => ({ ...p, installed: !!lock[p.name] })),
+    ...m, ...(marketplaceNeedsGit(m.url) ? { needsGit: true, lastError: null } : {}), plugins: (m.plugins || []).map((p) => ({ ...p, installed: !!lock[p.name] })),
   }));
 }
 
@@ -15735,6 +15887,7 @@ async function linkPluginDir(dir) {
   try { out = await linkPlugin(v.manifest.name, abs); }
   catch (err) { throw Object.assign(err instanceof Error ? err : new Error(String(err)), { code: err?.code || 'BAD_REQUEST' }); }
   reloadChatWorkers(v.manifest.name);
+  emitPluginsChanged('link');
   return out; // { ok, name, dir, workflows: { imported, skipped } }
 }
 
@@ -15744,11 +15897,69 @@ app.post('/api/plugins/link', async (req, res) => {
   } catch (err) { sendPluginError(res, err); }
 });
 
+// POST /api/marketplaces {url, progress:true} -> 202 {jobId, job} (CONTRACT §2.1–2.2, U3): the add as a job whose
+// phases reach every tab as 'marketplace-add-changed'; GET /api/marketplaces/jobs/:id reads it. Refusals known up
+// front answer at once, exactly as the blocking add. No abort (L6). A job carries what GET /api/marketplaces shows
+// plus the typed url and a short error, URL credentials masked. Finished jobs are kept an hour.
+const MARKET_JOBS = new Map();   // jobId -> { job: MarketplaceAddJob, marketId }
+const MARKET_JOB_TTL_MS = 3600_000;
+const MARKET_JOB_KEYS = ['id', 'url', 'state', 'phase', 'resolvedUrl', 'sha', 'done', 'total', 'plugin', 'error', 'code', 'existing', 'marketplace', 'startedAt', 'endedAt'];
+const publicMarketJob = (j) => Object.fromEntries(MARKET_JOB_KEYS.map((k) => [k, j[k] ?? null]));
+// A typed url can be megabytes (express.json takes 8 MB): a job keeps, and sends to every tab, at most 2 000 characters of it.
+const jobUrlText = (s) => { const r = redactUserinfo(s); return r.length > 2000 ? `${r.slice(0, 1999)}…` : r; };
+function pruneMarketJobs(now = Date.now()) {
+  for (const [id, { job }] of MARKET_JOBS) {
+    if (job.state !== 'running' && Date.parse(job.endedAt) + MARKET_JOB_TTL_MS <= now) MARKET_JOBS.delete(id);
+  }
+}
+function marketJobFailure(err) {
+  if (err?.code === 'EXISTS') return { code: 'EXISTS', error: safeErrorText(err.message), existing: err.existing ?? null };
+  if (err?.syncError) return { code: err.syncError.code, error: err.syncError.message };
+  return { code: typeof err?.code === 'string' ? err.code : 'ERROR', error: safeErrorText(err?.message || String(err)) };
+}
+function startMarketplaceAddJob(url, plan) {
+  for (const rec of MARKET_JOBS.values()) {
+    if (rec.marketId === plan.id && rec.job.state === 'running') return publicMarketJob(rec.job);   // a second click joins
+  }
+  const job = { id: `mkt_${randomBytes(4).toString('hex')}`, url: jobUrlText(url), state: 'running', phase: 'resolving',
+    resolvedUrl: jobUrlText(plan.url), sha: null, done: 0, total: null, plugin: null, error: null, code: null,
+    existing: null, marketplace: null, startedAt: new Date().toISOString(), endedAt: null };
+  MARKET_JOBS.set(job.id, { job, marketId: plan.id });
+  const send = () => broadcast({ type: 'marketplace-add-changed', job: publicMarketJob(job) });
+  const onProgress = (p) => {
+    job.phase = p.phase;
+    if (p.resolvedUrl !== undefined) job.resolvedUrl = jobUrlText(p.resolvedUrl);
+    for (const k of ['sha', 'done', 'total', 'plugin']) if (p[k] !== undefined) job[k] = p[k];
+    send();
+  };
+  // The 202 answers the job as created, and the work starts on the next turn, after the route has written that 202,
+  // so the tab that asked holds the job id before core's first progress frame (resolving, then fetching).
+  const created = publicMarketJob(job);
+  send();
+  setImmediate(async () => {
+    try {
+      const entry = await addMarketplace(url, { onProgress });
+      Object.assign(job, { state: 'done', phase: 'saved', marketplace: withInstalled([entry])[0] });
+      emitPluginsChanged('marketplace-add');
+    } catch (err) {
+      Object.assign(job, { state: 'error', ...marketJobFailure(err) });
+    }
+    job.endedAt = new Date().toISOString();
+    send();
+  });
+  return created;
+}
+
 app.post('/api/marketplaces', async (req, res) => {
   const url = req.body && typeof req.body.url === 'string' ? req.body.url.trim() : '';
   if (!url) return badRequest(res, 'url is required');
   try {
-    res.json({ ok: true, marketplace: withInstalled([await addMarketplace(url)])[0] });
+    if (req.body.progress === true) {
+      pruneMarketJobs();
+      const job = startMarketplaceAddJob(url, checkMarketplaceAdd(url));   // a refusal throws here and is answered below, at once
+      return res.status(202).json({ jobId: job.id, job });
+    }
+    const entry = await addMarketplace(url); emitPluginsChanged('marketplace-add'); res.json({ ok: true, marketplace: withInstalled([entry])[0] });
   } catch (err) {
     if (err && err.code === 'PLUGIN_FOLDER') {
       // Not a marketplace but a plugin folder: link it, and SAY that is what happened.
@@ -15759,10 +15970,17 @@ app.post('/api/marketplaces', async (req, res) => {
   }
 });
 
+app.get('/api/marketplaces/jobs/:id', (req, res) => {
+  pruneMarketJobs();
+  const rec = MARKET_JOBS.get(String(req.params.id));
+  if (!rec) return res.status(404).json({ error: 'marketplace add job not found' });
+  res.json({ job: publicMarketJob(rec.job) });
+});
+
 // refresh-all (a distinct path from :id/refresh, so registration order is irrelevant).
 app.post('/api/marketplaces/refresh', async (req, res) => {
   try {
-    res.json({ ok: true, marketplaces: withInstalled(await refreshAllMarketplaces()) });
+    const marketplaces = withInstalled(await refreshAllMarketplaces()); emitPluginsChanged('marketplace-refresh'); res.json({ ok: true, marketplaces });
   } catch (err) { sendPluginError(res, err); }
 });
 
@@ -15770,7 +15988,7 @@ app.post('/api/marketplaces/:id/refresh', async (req, res) => {
   const id = requireMarketplace(req, res);
   if (!id) return;
   try {
-    res.json({ ok: true, marketplace: withInstalled([await syncMarketplace(id)])[0] });
+    const marketplace = withInstalled([await syncMarketplace(id)])[0]; emitPluginsChanged('marketplace-refresh'); res.json({ ok: true, marketplace });
   } catch (err) { sendPluginError(res, err); }
 });
 
@@ -15778,7 +15996,7 @@ app.delete('/api/marketplaces/:id', (req, res) => {
   const id = requireMarketplace(req, res);
   if (!id) return;
   try {
-    res.json(removeMarketplace(id));
+    const out = removeMarketplace(id); emitPluginsChanged('marketplace-remove'); res.json(out);
   } catch (err) { sendPluginError(res, err); }
 });
 
@@ -15804,6 +16022,7 @@ app.post('/api/plugins/install', async (req, res) => {
       repoUrl: body.repoUrl.trim(), subdir, name: body.name.trim(), sha: body.sha.trim(), marketplace,
     });
     reloadChatWorkers(body.name.trim());
+    emitPluginsChanged('install');
     res.json(out); // { ok: true, inventory, warnings, ignored }
   } catch (err) {
     sendPluginError(res, err);
@@ -15816,13 +16035,18 @@ app.post('/api/plugins/install', async (req, res) => {
 app.post('/api/plugins/:name/update', async (req, res) => {
   const name = requirePlugin(req, res);
   if (!name) return;
+  const body = req.body || {};
+  // The commit the user reviewed (CONTRACT §1.4): the apply refuses STALE_PREVIEW when the tip moved since. Absent = today.
+  if (body.confirm === true && body.candidateSha !== undefined
+    && !(typeof body.candidateSha === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(body.candidateSha))) {
+    return badRequest(res, 'candidateSha must be a commit sha');
+  }
   try {
-    if (!(req.body && req.body.confirm === true)) {
-      return res.json({ preview: await fetchCandidate(name) });
-    }
-    const updated = await updatePlugin(name);
+    if (body.confirm !== true) return res.json({ preview: await fetchCandidate(name) });
+    const updated = await updatePlugin(name, { expectSha: body.candidateSha });
     reloadChatWorkers(name);
     void retestServers((s) => s.startsWith(`plugin:${name}/`));   // MCP registry §7.3
+    emitPluginsChanged('update');
     res.json(updated);
   } catch (err) {
     sendPluginError(res, err);
@@ -15838,6 +16062,7 @@ app.post('/api/plugins/:name/enable', (req, res) => {
   try {
     setPluginEnabled(name, req.body.enabled);
     reloadChatWorkers(name);
+    emitPluginsChanged('enable');
     res.json({ ok: true, enabled: req.body.enabled });
   } catch (err) {
     sendPluginError(res, err);
@@ -15856,6 +16081,7 @@ app.delete('/api/plugins/:name', async (req, res) => {
     // the CLI's `worca plugin remove` clears them identically).
     await uninstallPlugin(name, { purge });
     reloadChatWorkers(name);
+    emitPluginsChanged('remove');
     res.json({ ok: true, purged: purge });
   } catch (err) {
     sendPluginError(res, err);
@@ -15870,7 +16096,9 @@ app.delete('/api/plugins/:name/data', (req, res) => {
   const name = req.params.name;
   if (!PLUGIN_NAME_RE.test(name)) return res.status(404).json({ error: 'plugin not found' });
   try {
-    res.json(purgePluginData(name));
+    const out = purgePluginData(name);
+    emitPluginsChanged('purge');
+    res.json(out);
   } catch (err) {
     if (err && err.code === 'INSTALLED') return res.status(409).json({ error: err.message });
     if (err && /nothing to purge/.test(err.message || '')) return res.status(404).json({ error: err.message });
@@ -15975,7 +16203,9 @@ app.post('/api/plugins/:name/profiles', (req, res) => {
     return badRequest(res, `profile id "${DEFAULT_PROFILE}" is reserved. Pick another name`);
   }
   try {
-    res.json({ ok: true, profile: createProfile(name, body.id, body.label) });
+    const profile = createProfile(name, body.id, body.label);
+    emitPluginsChanged('config');
+    res.json({ ok: true, profile });
   } catch (err) {
     sendPluginError(res, err);
   }
@@ -16016,6 +16246,7 @@ app.delete('/api/plugins/:name/profiles/:id', (req, res) => {
   try {
     deleteProfile(name, req.params.id);
     const unbound = clearBindingsForProfile(name, req.params.id);
+    emitPluginsChanged('config');
     res.json({ ok: true, unbound });
   } catch (err) {
     sendPluginError(res, err);
@@ -16046,6 +16277,7 @@ app.put('/api/plugins/:name/config', (req, res) => {
     }
     try {
       writePluginConfig(name, schema, body.values);
+      emitPluginsChanged('config');
       return res.json({ ok: true });
     } catch (err) {
       return sendPluginError(res, err);
@@ -16080,6 +16312,7 @@ app.put('/api/plugins/:name/config', (req, res) => {
   try {
     writePluginConfig(name, schema, body.values, profile);
     reloadChatWorkers(name);
+    emitPluginsChanged('config');
     res.json({ ok: true });
   } catch (err) {
     sendPluginError(res, err);
@@ -17571,7 +17804,7 @@ export const _testing = {
   wireRun, summarizeRuns, scanRequest, fireTicket, afterMembersChanged, markResumedRescan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, answerRun,
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
-  startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES,
+  startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES, MARKET_JOBS, pruneMarketJobs, marketJobFailure,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
   askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
   uiControl, bearerMatches,

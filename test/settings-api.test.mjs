@@ -8,7 +8,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -152,13 +152,14 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
     // key, each with a value its setter accepts as "no change / default".
     const probes = {
       projectsRoot: '', chat: {}, pipelineCostLimitUsd: '', totalCostLimitUsd: '', costLimitResetPeriod: '', humanRateUsdPerHour: '',
-      askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, debugSpawnEnabled: false, resumeAfterUsageLimit: false,
+      askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, smartNaming: null, debugSpawnEnabled: false, resumeAfterUsageLimit: false,
       titleModel: '', hideBuiltinModels: false, theme: '', uiLevel: '',
       autoWorkflowModel: '',
       prDescriptionModel: '',
       memoryDefrag: null,
       requirementsInterview: null,
       agentGenModel: null,
+      namingModel: null,
       workspaceScan: null,
       schedule: {},
       nightMode: {}, nightModeToggle: 'auto',
@@ -244,6 +245,38 @@ test('GET has askWeb; POST askWeb validates, saves, and null clears', async () =
   const bad = await postJson({ askWeb: { enabled: true, allowedDomains: ['nope'] } });
   assert.equal(bad.status, 400); assert.match((await bad.json()).error, /not a host name/);
   assert.deepEqual((await (await postJson({ askWeb: null })).json()).askWeb, { enabled: false, anyHost: false, allowedDomains: [], search: null });
+});
+
+test('smartNaming: GET has defaults, POST saves a partial block, rejects a bad pattern, null clears', async () => {
+  const get = async () => (await fetch(`${base}/api/settings`)).json();
+  const g = (await get()).smartNaming;
+  assert.equal(g.pattern, '{type}/{slug}'); assert.equal(g.trigger, 'debounce'); assert.equal(g.addRunId, false);
+  assert.equal('model' in g, false, 'the model is a helper job of its own (namingModel)');
+  const ok = await postJson({ smartNaming: { pattern: '{type}/{ticket}-{slug}', types: ['fix', 'feat'] } });
+  assert.equal(ok.status, 200);
+  const saved = (await get()).smartNaming;
+  assert.equal(saved.pattern, '{type}/{ticket}-{slug}'); assert.deepEqual(saved.types, ['fix', 'feat']);
+  const bad = await postJson({ smartNaming: { pattern: '{type}/no-slug' } });
+  assert.equal(bad.status, 400);
+  const body = await bad.json();
+  assert.match(body.error, /\{slug\}/); assert.equal(body.field, 'smartNaming');
+  assert.equal((await postJson({ smartNaming: { types: ['Bad Type'] } })).status, 400);
+  assert.equal((await get()).smartNaming.pattern, '{type}/{ticket}-{slug}', 'a refused save writes nothing');
+  assert.deepEqual((await (await postJson({ smartNaming: null })).json()).smartNaming.types, ['feat', 'fix', 'chore', 'docs', 'refactor', 'test']);
+});
+
+test('smartNaming: a leftover stored model is ignored on read and dropped on the next save; a posted one is ignored', async () => {
+  const file = join(home, '.worca-cc', 'settings.json');
+  const cur = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {};
+  mkdirSync(join(home, '.worca-cc'), { recursive: true });
+  writeFileSync(file, JSON.stringify({ ...cur, smartNaming: { model: { model: 'x' }, pattern: '{type}/{slug}-b' } }));
+  const g = (await (await fetch(`${base}/api/settings`)).json()).smartNaming;
+  assert.equal('model' in g, false); assert.equal(g.pattern, '{type}/{slug}-b');
+  const r = await postJson({ smartNaming: { suggestTitle: false, model: { model: 'y' } } });
+  assert.equal(r.status, 200);
+  const stored = JSON.parse(readFileSync(file, 'utf8')).smartNaming;
+  assert.deepEqual(stored, { pattern: '{type}/{slug}-b', suggestTitle: false });
+  assert.equal((await postJson({ smartNaming: null })).status, 200);
 });
 
 // #555: a POST /api/settings validation failure answers 400 { error, field }, where `field` is the

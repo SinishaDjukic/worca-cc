@@ -287,10 +287,13 @@ Worca's small helper calls — the title and the Auto workflow classifier — re
 too; a classifier that still fails falls back to the default workflow instead of
 failing the run. The Models page picks the model for each helper call — *Title model*,
 *Auto workflow model* (`WORCA_AUTO_MODEL` overrides it), *PR description model*
-(the Create PR dialog's Generate with AI; Sonnet-class by default) and *Agent generation*
+(the Create PR dialog's Generate with AI; Sonnet-class by default), *Agent generation*
 (Workflows › Agents › + › Generate; a model and an effort, the Claude tab only, since agent
 generation always runs on Claude; unset, or a model since removed from the catalog, uses
-the Claude CLI's default model) — so pointing them at a steadier model leaves a flaky
+the Claude CLI's default model) and *Run naming* (Smart run naming's title and branch
+suggestion on the New run form, shown while the smartRunNaming flag is on; a model and an
+effort, the Claude tab only; unset, or a model since removed from the catalog, uses the
+cheapest ready Claude model at its lowest effort) — so pointing them at a steadier model leaves a flaky
 free model touching only the pipeline steps.
 
 The *Requirements interview* helper (the Requirements page's product briefs, code looks and interview

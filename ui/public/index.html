@@ -378,9 +378,15 @@
 
                 <!-- Title: names the run, so it sits with the task, not behind Advanced. -->
                 <div class="field field-compact">
-                  <label for="title">Title <span class="opt">(optional)</span></label>
-                  <input id="title" name="title" class="input" type="text" placeholder="Short name for this run" spellcheck="false" />
-                  <small class="hint">Leave empty and Worca will propose one.</small>
+                  <label for="title">Title <span class="opt">(optional)</span><span class="sn-chip-slot" id="titleSnChip"></span></label>
+                  <div class="sn-adorn">
+                    <input id="title" name="title" class="input" type="text" placeholder="Short name for this run" spellcheck="false" />
+                    <span class="sn-actions" data-flag="smartRunNaming">
+                      <button type="button" class="sn-btn" id="titleSnRetry" aria-label="Suggest again" title="Suggest again"></button>
+                      <button type="button" class="sn-btn" id="titleSnClear" aria-label="Clear suggestion" title="Clear suggestion"></button>
+                    </span>
+                  </div>
+                  <small class="hint" id="titleHint">Leave empty and Worca will propose one.</small>
                 </div>
                 <!-- Run tags (#718): who the work is for, so its cost can be allocated. Chips from tag-input.mjs. -->
                 <div class="field field-compact run-tags-field" data-flag="runTags" data-flag-chip>
@@ -525,8 +531,19 @@
                     <span class="txt">Branch off the run before it</span>
                   </div>
                   <div class="branches-new">
-                    <label for="featureBranch">New branch <span class="opt">(optional)</span></label>
-                    <input id="featureBranch" class="input" type="text" placeholder="e.g. feat/rate-limiter" spellcheck="false" />
+                    <label for="featureBranch">New branch <span class="opt">(optional)</span><span class="sn-chip-slot" id="branchSnChip"></span></label>
+                    <div class="sn-branch-row">
+                      <span class="select-wrap sn-type" id="branchTypeWrap" data-flag="smartRunNaming" hidden>
+                        <select id="branchType" class="select" aria-label="Branch type"></select>
+                      </span>
+                      <div class="sn-adorn">
+                        <input id="featureBranch" class="input" type="text" placeholder="e.g. feat/rate-limiter" spellcheck="false" />
+                        <span class="sn-actions" data-flag="smartRunNaming">
+                          <button type="button" class="sn-btn" id="branchSnRetry" aria-label="Suggest again" title="Suggest again"></button>
+                          <button type="button" class="sn-btn" id="branchSnClear" aria-label="Clear suggestion" title="Clear suggestion"></button>
+                        </span>
+                      </div>
+                    </div>
                     <small class="hint" id="featureBranchHint">Leave empty and Worca will propose one.</small>
                     <label class="switch-row same-src-row">
                       <input id="sameAsSource" class="sw-input" type="checkbox" role="switch" aria-describedby="sameAsSourceHint">
@@ -831,7 +848,8 @@
                   </header>
                 </div>
                 <div class="rd-sheet">
-                  <!-- The card's head: the status line top left, the Live view switch top right. -->
+                  <!-- The card's head: the status line top left; top right the Live view switch while the run is live,
+                       the pull request button once it ended. -->
                   <div class="rd-sheet-head">
                     <!-- The shared status block (run-status-card.mjs, slice 4 D19): dot or symbol, status line, the run's
                          bar. It keeps the rd-now-top class: the click-to-question handler and the guide tour find it. -->
@@ -842,6 +860,9 @@
                       <span class="txt">Live view</span>
                       <div class="switch rd-live-switch" role="switch" tabindex="0" aria-checked="false" aria-label="Live view"></div>
                     </div>
+                    <!-- The pull request button beside the status (Create PR, View PR, Push): one node for the screen's
+                         life, outside the result (rebuilt), so its loading placeholder can morph (paintPrCta). -->
+                    <div class="rd-pr-slot" data-needs-git hidden></div>
                   </div>
                   <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
                        old meta line (paintPageHead owns its first text node); the branch chip copies the name (paintPageBranch). -->
@@ -852,10 +873,8 @@
                     <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
                   </dl>
-                  <!-- The PR bar (run 3 D11): the run's own PR, its checks and Watch; or the Create pull request button. One node
-                       for the screen's life, outside the result (rebuilt), so its loading placeholder can morph (paintPrCta). -->
+                  <!-- The PR bar (run 3 D11): the run's own PR, its checks and Watch. Its button is in the head (.rd-pr-slot). -->
                   <div class="rd-pr-box" data-needs-git>
-                    <div class="rd-pr-slot" hidden></div>
                     <!-- The open PR's chip, checks, conflicts and Watch PR (paintRdPrStatus). -->
                     <div class="rd-pr-status" hidden></div>
                   </div>
@@ -1006,6 +1025,8 @@
                 <div class="rd-sheet">
                   <div class="rd-sheet-head">
                     <div class="rd-now-top run-status"></div>
+                    <!-- The pull request button beside the status: one node for the screen's life (paintPrCta). -->
+                    <div class="rd-pr-slot" data-needs-git hidden></div>
                   </div>
                   <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
                        old meta line (paintPageHead owns its first text node); the branch chip copies the name (paintPageBranch). -->
@@ -1016,10 +1037,8 @@
                     <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
                   </dl>
-                  <!-- The PR bar (run 3 D11): the run's own PR, its checks and Watch; or the Create pull request button. One node
-                       for the screen's life, outside the result (rebuilt), so its loading placeholder can morph (paintPrCta). -->
+                  <!-- The PR bar (run 3 D11): the run's own PR, its checks and Watch. Its button is in the head (.rd-pr-slot). -->
                   <div class="rd-pr-box" data-needs-git>
-                    <div class="rd-pr-slot" hidden></div>
                     <!-- The open PR's chip, checks, conflicts and Watch PR (paintRdPrStatus). -->
                     <div class="rd-pr-status" hidden></div>
                   </div>
@@ -1051,7 +1070,7 @@
                   <!-- Publish branch (#618): push a finished run's branch without a PR. Painted by paintHdPublish. -->
                   <button type="button" class="hd-publish btn" hidden data-min-level="advanced" data-needs-git>Publish branch</button>
                   <span class="act-pill-slot"></span>
-                  <a class="hd-pr-link" hidden data-min-level="advanced" data-needs-git target="_blank" rel="noopener"></a>
+                  <a class="btn hd-pr-link" hidden data-min-level="advanced" data-needs-git target="_blank" rel="noopener"></a>
                   <button type="button" class="btn btn-primary hd-push" hidden data-min-level="advanced" data-needs-git></button>
                 </div>
                 <!-- "Published to <remote>/<branch>" (#618): its own line, so a long branch never squeezes the title. -->
@@ -1060,7 +1079,7 @@
                 <div class="hd-base-check" data-needs-git hidden>
                   <ul class="hd-base-members"></ul>
                 </div>
-                <!-- Workspace runs: one line per member repo (View PR / Merged / No changes).
+                <!-- Workspace runs: one line per member repo (View PR, open or merged / No changes).
                      Painted by paintHdPr; never shown for a single-project run. -->
                 <ul class="hd-pr-repos" hidden data-min-level="advanced" data-needs-git aria-label="Pull requests per repository"></ul>
                 <!-- Status pip leads the META line, not row 1: it reads as the icon
@@ -1450,6 +1469,12 @@
                   <button type="button" class="pd-history btn">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                     Show in Runs
+                  </button>
+                  <!-- Use git (a Folder project) / Link remote (a Git project without origin): paintProjGitButton
+                       shows it and sets the word; POST /api/projects/:key/git-init. -->
+                  <button type="button" class="pd-git btn" data-needs-git hidden>
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.2"></circle><circle cx="6" cy="18" r="2.2"></circle><circle cx="18" cy="9" r="2.2"></circle><path d="M6 8.2v7.6M18 11.2c0 3-3 3.8-9.8 5.6"></path></svg>
+                    <span class="pd-git-label">Use git</span>
                   </button>
                   <span class="pd-spacer"></span>
                   <!-- The label lives in its own span so a busy state can swap the word and keep the icon. -->
@@ -2026,6 +2051,62 @@
               </div>
             </section>
 
+            <!-- Smart run naming (Labs): the smartRunNaming flag, the same value as its Settings › Labs row. -->
+            <section class="card settings-card" id="smart-naming-settings-card" data-min-level="simple">
+              <div class="card-head">
+                <div class="label-row"><h2>Smart run naming</h2></div>
+              </div>
+              <div class="drows" id="smartNamingRows">
+                <div class="drow switch-drow" id="smartNamingMasterRow">
+                  <span class="drow-label" id="smartNamingTxt" data-flag-chip="smartRunNaming">Suggest a title and a branch name for new runs</span>
+                  <small class="hint drow-help">A very low effort model reads the task. You can edit both before Start.</small>
+                  <div class="drow-control"><div class="switch" role="switch" tabindex="0" id="smartNamingSwitch" aria-checked="false" aria-labelledby="smartNamingTxt"></div></div>
+                </div>
+                <label class="drow switch-drow" id="smartNamingTitleRow">
+                  <span class="drow-label">Suggest the run title</span>
+                  <span class="drow-control"><input id="smartNamingTitle" data-setting="smartNaming.suggestTitle" class="sw-input" type="checkbox" role="switch" checked><span class="switch"></span></span>
+                </label>
+                <label class="drow switch-drow" id="smartNamingBranchRow">
+                  <span class="drow-label">Suggest the branch name</span>
+                  <span class="drow-control"><input id="smartNamingBranch" data-setting="smartNaming.suggestBranch" class="sw-input" type="checkbox" role="switch" checked><span class="switch"></span></span>
+                </label>
+                <div class="field drow" id="smartNamingModelRow">
+                  <span class="drow-label">Model</span>
+                  <small class="hint drow-help" id="smartNamingModelHint"><span data-min-level="expert"><a href="#models">Models › Helper jobs › Run naming</a>. </span><span id="smartNamingCost"></span></small>
+                </div>
+                <div class="field drow" id="smartNamingPatternRow">
+                  <label class="drow-label" for="smartNamingPattern">Branch pattern</label>
+                  <div class="drow-control"><input id="smartNamingPattern" class="input mono" type="text" spellcheck="false" data-setting="smartNaming.pattern" /></div>
+                  <small class="hint drow-help" id="smartNamingPreview"></small>
+                </div>
+                <div class="field drow" id="smartNamingTypesRow">
+                  <span class="drow-label" id="smartNamingTypesTxt">Types the model may pick</span>
+                  <div class="drow-control sn-types" id="smartNamingTypes" role="group" aria-labelledby="smartNamingTypesTxt"></div>
+                  <input id="smartNamingTypesValue" type="hidden" data-setting="smartNaming.types" />
+                </div>
+                <div class="field drow" id="smartNamingTriggerRow">
+                  <label class="drow-label" for="smartNamingTrigger">When to suggest</label>
+                  <div class="drow-control select-wrap">
+                    <select id="smartNamingTrigger" class="select" data-setting="smartNaming.trigger">
+                      <option value="debounce">While I type the task</option>
+                      <option value="manual">Only when I press Suggest again</option>
+                    </select>
+                  </div>
+                </div>
+                <label class="drow switch-drow" id="smartNamingRunIdRow">
+                  <span class="drow-label">Add the run id to the branch</span>
+                  <small class="hint drow-help">Appends a dash and the short run id when the pattern has no id placeholder.</small>
+                  <span class="drow-control"><input id="smartNamingRunId" data-setting="smartNaming.addRunId" class="sw-input" type="checkbox" role="switch"><span class="switch"></span></span>
+                </label>
+              </div>
+              <p class="hint" id="smartNamingProjectNote">A project can override the pattern and the types in its own Settings.</p>
+              <div class="add-project-actions" style="margin-top:14px">
+                <button type="button" id="smartNamingReset" class="btn btn-sm">Use defaults</button>
+                <button type="button" id="smartNamingSave" class="btn btn-primary btn-sm">Save</button>
+              </div>
+              <p class="form-msg" id="smartNamingMsg" role="status"></p>
+            </section>
+
             <!-- Scheduled runs: the defaults a NEW schedule inherits. Each schedule keeps
                  its own copy, so a change here never rewrites an existing one. -->
             <!-- Sync before run (#527): the instance defaults each project inherits. -->
@@ -2396,32 +2477,11 @@
         </section>
         <!-- /view settings -->
 
-        <!-- ===== VIEW: MARKETPLACE (sidebar › Add-ons; the Plugins view, then a Settings tab, before that) ===== -->
+        <!-- ===== VIEW: MARKETPLACE (sidebar › Add-ons): Browse · Installed · Marketplaces, painted by ui/public/marketplace/
+             (marketplace CONTRACT §5). The tabs are its header: no page intro (docs/design-system.md › Marketplace exceptions). ===== -->
         <section class="view hidden" data-view="marketplace">
-            <div class="topbar">
-              <div>
-                <div class="sub page-intro">Plugins from your marketplaces: task sources, agents, skills and workflow packs.</div>
-              </div>
-              <button type="button" id="plugin-add-btn" class="btn btn-primary" data-min-level="expert">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
-                Add marketplace
-              </button>
-            </div>
             <p id="plugins-msg" class="form-msg" aria-live="polite"></p>
-            <div class="card hidden" id="marketplace-add-row" data-min-level="expert" style="padding:16px 20px;margin-bottom:14px">
-              <div class="path-row">
-                <input id="marketplace-url" class="input" type="text" placeholder="https://github.com/owner/repo · owner/repo · /abs/path/to/repo · /path/to/a/plugin-folder" spellcheck="false" />
-                <button type="button" id="marketplace-add" class="btn btn-primary btn-sm">Add</button>
-              </div>
-            </div>
-            <!-- Team policy (design board 10): what a policy home expects on this machine. -->
-            <div id="plugins-policy"></div>
-            <h3 class="section-title pl-sec-title">Installed</h3>
-            <div class="run-list" id="plugins-list"></div>
-            <h3 class="section-title pl-sec-title">Available</h3>
-            <div class="run-list" id="plugins-available"></div>
-            <h3 class="section-title pl-sec-title" data-min-level="expert">Marketplaces</h3>
-            <div class="run-list" id="marketplaces-list" data-min-level="expert"></div>
+            <div id="mk-root"></div>
         </section>
         <!-- /view marketplace -->
 
@@ -3048,6 +3108,26 @@
         <div class="confirm-actions">
           <button type="button" id="proj-add-cancel" class="btn">Cancel</button>
           <button type="button" id="proj-add-save" class="btn btn-primary">Add project</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Use git / Link remote modal (POST /api/projects/:key/git-init) ===== -->
+    <div id="project-git-modal" class="viewer-modal confirm-modal hidden" role="dialog" aria-modal="true" aria-labelledby="proj-git-title" aria-describedby="proj-git-lead">
+      <div class="card">
+        <div class="card-head">
+          <h2 id="proj-git-title">Use git for this project</h2>
+        </div>
+        <p class="confirm-message" id="proj-git-lead"></p>
+        <div class="field">
+          <!-- type=text: type=url would mark the scp form git@host:owner/repo.git invalid. -->
+          <label for="proj-git-url">Remote URL <span class="opt" id="proj-git-url-opt">(optional)</span></label>
+          <input id="proj-git-url" class="input" type="text" spellcheck="false" autocomplete="off" placeholder="https://github.com/owner/repo or git@github.com:owner/repo.git" />
+        </div>
+        <small class="hint" id="proj-git-msg" aria-live="polite"></small>
+        <div class="confirm-actions">
+          <button type="button" id="proj-git-cancel" class="btn">Cancel</button>
+          <button type="button" id="proj-git-save" class="btn btn-primary">Use git</button>
         </div>
       </div>
     </div>

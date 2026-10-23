@@ -45,3 +45,13 @@ test('home-icons is the same set; homeIcon keeps its sized, aria-hidden chat-ic 
   assert.equal(span.querySelector('svg').getAttribute('stroke-width'), '2');
   assert.equal(icon(doc, 'x', 12).className, 'ic');
 });
+
+test('the set has the Marketplace glyphs (marketplace CONTRACT §3.2); cube is the model cube; script stays the code glyph (L20)', () => {
+  for (const name of ['search', 'key', 'external', 'git', 'folder', 'link', 'shield', 'pulse', 'gear', 'trash', 'spinner', 'bag',
+    'tray', 'chat', 'plug', 'cube', 'agent', 'skill', 'layers', 'none']) assert.ok(Object.hasOwn(ICONS, name), name);
+  assert.equal(ICONS.cube, ICONS.model);
+  assert.equal(ICONS.script, '<path d="M8.5 8 4.5 12l4 4M15.5 8l4 4-4 4M13.5 5.5l-3 13"></path>');
+  assert.equal(ICONS.none, '<rect x="5" y="5" width="14" height="14" rx="3" stroke-dasharray="3 3"></rect>');
+  assert.equal(ICONS.tray, '<path d="M4 13h4l1.5 2.5h5L16 13h4"></path><path d="M5.5 5h13L21 13v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-5z"></path>');
+  assert.equal(ICONS.bag, '<path d="M5 8h14l-1.2 12H6.2L5 8z"></path><path d="M9 10V6.5a3 3 0 0 1 6 0V10"></path>');
+});

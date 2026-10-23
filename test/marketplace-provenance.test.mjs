@@ -101,7 +101,8 @@ test('installing from a marketplace that tracks a branch pins that branch and re
 
   await git(root, 'commit', '-q', '--allow-empty', '-m', 'main 2');
   await git(root, 'checkout', '-q', 'dev');
-  await git(root, 'commit', '-q', '--allow-empty', '-m', 'dev 2');
+  writeFileSync(join(root, 'plugins', 'br', 'index.mjs'), 'export default () => ({ v: 2 });\n');
+  await git(root, 'commit', '-qam', 'dev 2');
   const dev2 = await git(root, 'rev-parse', 'HEAD');
   await git(root, 'checkout', '-q', 'main');
   const cand = await fetchCandidate('branch-plugin');

@@ -158,10 +158,11 @@ import { previewAskFromDef, previewFileUrl } from './ask/form-preview.mjs';
 import { projectForm } from '../../src/shared/forms/project.mjs';
 import { installSessionGuard } from './session-guard.mjs';
 import {
-  renderPluginList, renderInstallConsent, renderUpdatePreview,
-  renderConfigForm, collectConfigForm, renderConnectResult, renderDoctorReport, renderReferences409,
-  renderOrphanList, channelBadge, renderAvailableList, renderMarketplaceList, renderNeedsGit,
+  renderInstallConsent, renderUpdatePreview,
+  renderConfigForm, collectConfigForm, renderConnectResult,
+  channelBadge, renderNeedsGit,
 } from './plugins-view.mjs';
+import { mountMarketplace, tabFromParam } from './marketplace/index.mjs';
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
@@ -236,7 +237,7 @@ import { renderScopeOptions, renderSyncChip, renderTeamMetricsBody, renderTmEmpt
 import {
   renderProjectTpCell, renderProjectTpChip, projectTpSummary, renderPolicyEnableDialogBody, renderEffectiveTable, renderPolicyEditor, docFromEditor, editorDirty,
   renderPolicyEmptyState, renderPolicySyncChip, renderWsPolicyLine, renderTeamCapsReadout, renderTeamChip, renderPolicyNotesLine,
-  renderRequiredStrip, renderSetupChecklist, relTime as tpRelTime,
+  renderSetupChecklist, relTime as tpRelTime,
   renderPolicyHeader, renderPolicyStats, renderPolicyPluginsPanel, renderPolicyCatalogPanel, renderMcpStrip, renderMcpConsent, handleTeamSkillClick,
 } from './team-policy-view.mjs';
 import { mcpRunsLabel, renderMcpRunsPop, renderRunSkills } from './mcp-run-picker.mjs';
@@ -252,8 +253,9 @@ import { renderReasonOptions, renderOptIns, previewText, reportBlobParts, REPORT
 import { openScheduleSheet, closeScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
 import {
   freshSyncState, ago, listRowModel, projectBarModel, wsRollupModel, ffRefusalCopy, syncStageLabel, fetchedAgo, isSyncableBranchName,
-  runOutcomeModel, openSyncDialog, chooseSyncRefusal,
+  runOutcomeModel, openSyncDialog, chooseSyncRefusal, NO_COMMITS_HINT,
 } from './branch-sync.mjs';
+import { gitActionFor, GIT_DIALOG, gitDoneMessage } from './project-git.mjs';
 import { baseCheckModel, baseRowNote, newerBaseCheck } from './base-check.mjs';
 import { describeRule } from '../../src/shared/schedule/recurrence.mjs';
 import { statusActions, RUN_SWITCH_OPTIONS, RUN_SWITCH_TIP, kindShort, awayAnswerRows, awayAnswerCounts, checksFirst, awayAnswersSummary, decidedByText, awayAskCaption } from '../../src/shared/away-mode/labels.mjs';
@@ -276,6 +278,8 @@ import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, crea
 import { normaliseTags, formatTag, parseTag } from '../../src/shared/run-tags.mjs';
 import { splitByDimensions, tagGroupOptions, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
 import { createFlagsView, bindFlagSwitch } from './flags-view.mjs';
+import { createSmartNaming } from './smart-naming.mjs';
+import { renderPattern, patternProblem, PRESET_TYPES, TYPE_RE } from '../../src/shared/naming/pattern.mjs';
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
@@ -625,9 +629,13 @@ const readyFor = (pause, onLoad) => (pause?.reason === 'usage_limit' && pause?.l
 // ---------------------------------------------------------------------------
 // Elements
 // ---------------------------------------------------------------------------
+// Smart run naming (flag smartRunNaming): the New run form's title / branch suggestion controller, built at boot.
+// Declared above everything that reads it, so an early paint finds null instead of a TDZ.
+let smartNaming = null;
 const el = {
   form: $('#run-form'),
   acctKeepAwake: $('#acct-keepawake'),
+  smartNamingSwitch: $('#smartNamingSwitch'),
   projectSelect: $('#projectSelect'),
   projectHint: $('#projectHint'),
   addProject: $('#add-project'),
@@ -651,8 +659,10 @@ const el = {
   folderMsg: $('#folderMsg'),
   folderScope: $('#folderScope'),
   title: $('#title'),
+  titleRetry: $('#titleSnRetry'), titleClear: $('#titleSnClear'),
   sourceBranch: $('#sourceBranch'),
   featureBranch: $('#featureBranch'),
+  branchType: $('#branchType'), branchTypeWrap: $('#branchTypeWrap'), branchRetry: $('#branchSnRetry'), branchClear: $('#branchSnClear'),
   sameAsSource: $('#sameAsSource'),
   presetSelect: $('#presetSelect'),
   presetChip: $('#preset-chip'),
@@ -799,7 +809,6 @@ const el = {
   mcpRunsField: $('#mcpRunsField'),
   mcpRunsLabel: $('#mcpRunsLabel'),
   mcpRunsPop: $('#mcpRunsPop'),
-  pluginsPolicy: $('#plugins-policy'),
   tpBody: $('#tp-body'),
   tpScope: $('#tp-scope'),
   tpSync: $('#tp-sync'),
@@ -838,6 +847,16 @@ const el = {
   scanModelOk: $('#scan-model-ok'),
   scanModelCancel: $('#scan-model-cancel'),
   scanModelClear: $('#scan-model-clear'),
+
+  // Use git / Link remote modal
+  projectGitModal: $('#project-git-modal'),
+  projGitTitle: $('#proj-git-title'),
+  projGitLead: $('#proj-git-lead'),
+  projGitUrl: $('#proj-git-url'),
+  projGitUrlOpt: $('#proj-git-url-opt'),
+  projGitMsg: $('#proj-git-msg'),
+  projGitSave: $('#proj-git-save'),
+  projGitCancel: $('#proj-git-cancel'),
 
   // Add-project modal
   projectAddModal: $('#project-add-modal'),
@@ -888,14 +907,7 @@ const el = {
   agwClose: $('#agw-close'),
 
   // Plugins view
-  pluginsList: $('#plugins-list'),
   pluginsMsg: $('#plugins-msg'),
-  pluginsAvailable: $('#plugins-available'),
-  marketplacesList: $('#marketplaces-list'),
-  pluginAddBtn: $('#plugin-add-btn'),
-  marketplaceAddRow: $('#marketplace-add-row'),
-  marketplaceUrl: $('#marketplace-url'),
-  marketplaceAdd: $('#marketplace-add'),
   pluginModal: $('#plugin-modal'),
   pluginModalTitle: $('#plugin-modal-title'),
   pluginModalBody: $('#plugin-modal-body'),
@@ -1814,6 +1826,13 @@ function handleServerMessage(msg) {
     if (msg.action !== 'flush-failed' && currentView() === 'team-metrics') loadTeamMetricsView();
     return;
   }
+  // A plugin or marketplace changed — another tab, the CLI, or this page's own action (CONTRACT §1.7): re-read while
+  // the page is open; never a refresh (SM6). Off the page, the next entry loads anyway.
+  if (msg.type === 'plugins-changed') {
+    if (currentView() === 'marketplace') void marketplacePage.load({ background: true });
+    return;
+  }
+  if (msg.type === 'marketplace-add-changed') { marketplacePage?.act('marketplaceAddChanged', msg.job); return; }
   // Team policy (team-policy design §11): discovery, an enable, a publish or a home change
   // elsewhere — refetch the scopes and repaint every open policy surface.
   if (msg.type === 'team-policy-changed') {
@@ -1823,7 +1842,7 @@ function handleServerMessage(msg) {
     if (currentView() === 'workspaces') paintWsPolicyLines(true);
     if (currentView() === 'team-policy' && !tpState.editing) loadTeamPolicyView();
     if (currentView() === 'settings' && currentSettingsTab === 'runs') paintTeamCapsReadout(true);
-    if (currentView() === 'marketplace') paintPluginsPolicy(true);
+    if (currentView() === 'marketplace') { void paintPluginsPolicy(true); void marketplacePage?.load(); }
     if (currentView() === 'connectors') refreshMcpSurfaces();   // the MCP strip and the Team set
     if (currentView() === 'new') schedulePolicyLine();
     return;
@@ -7283,6 +7302,7 @@ function setTask(t) {
   if (el.sameAsSource && el.sameAsSource.checked !== !!t.sameAsSource) { el.sameAsSource.checked = !!t.sameAsSource; paintSameAsSource(); }
   scheduleMentionHighlight(el.prompt);
   scheduleMentionHighlight(el.promptMarkdown);
+  smartNaming?.reset({ keep: !!(t.title || '').trim() });   // a restored or cleared task drops our suggestions, keeps typed names
 }
 /** After a start: clear the submitted task — unless something new was typed while it started. */
 function clearTask(submitted) {
@@ -8140,6 +8160,7 @@ function projectOutcome() {
 /** New branch hint: the real names the run creates — one per project in a workspace, suffixed. */
 function paintFeatureHint() {
   if (!el.featureBranchHint) return;
+  if (smartNaming?.ownsBranchHint()) return;   // Smart run naming shows its own reason / warning there
   if (el.sameAsSource && el.sameAsSource.checked) { el.featureBranchHint.textContent = ''; return; }   // #sameAsSourceHint says what happens
   const f = el.featureBranch ? el.featureBranch.value.trim() : '';
   const ws = state.runTarget === 'workspace' ? state.workspaces.find((w) => w && w.id === state.selectedWorkspaceId) : null;
@@ -12288,6 +12309,20 @@ function buildProjectRow(p) {
     const nogit = document.createElement('div');
     nogit.className = 'proj-nogit';
     nogit.append(wsIcon('folder', 15), Object.assign(document.createElement('span'), { className: 'proj-nogit-txt', textContent: 'No git' }));
+    if (p.key && p.exists) {
+      const use = document.createElement('button');
+      use.type = 'button';
+      use.className = 'btn btn-sm proj-nogit-act';
+      use.textContent = GIT_DIALOG.init.button;
+      use.setAttribute('aria-label', `Use git for ${p.name}`);
+      const key = p.key;
+      use.addEventListener('click', (e) => {
+        e.stopPropagation();   // the row opens its page on click
+        openProjectGitModal(key, 'init', () => document.querySelector(`#projects-list .pl-item[data-key="${cssEscape(key)}"] .proj-nogit-act`));
+      });
+      use.addEventListener('keydown', (e) => e.stopPropagation());   // Enter / Space press this button, not the row
+      nogit.append(use);
+    }
     sync.appendChild(nogit);
   } else if (p.key) {
     const syncSlot = document.createElement('div');
@@ -12351,6 +12386,7 @@ function paintSyncChips() {
   paintSyncChecked();
   for (const item of document.querySelectorAll('.ws-item[data-workspace-id]')) paintWsSyncItem(item);
   paintPdBranchCards();
+  if (projDetail) paintProjGitButton(projDetail.screen, projectByKey(projDetail.key));   // Link remote follows the chips
 }
 /** A short name for the strip: "ACME Web" in workspace "ACME" reads "Web". */
 function wsShortName(full, wsName) {
@@ -12689,6 +12725,7 @@ setInterval(() => { if (document.querySelector('.sync-checked:not([hidden])')) p
 const SYNC_CHIPS_MS = 300;
 let syncChipsTimer = null;
 let syncChipsLoaded = false;   // the Branch cards say "checking…" until the first status read lands
+const syncChipsAwait = new Set();   // keys converted by Use git whose new block has not landed yet
 let syncChipsBusy = false;
 let syncChipsQueued = false;
 function refreshSyncChips() {
@@ -12704,6 +12741,7 @@ function refreshSyncChips() {
       // The server's status read reports a standing fetch failure (background or Sync) as stale.
       state.syncChips = data && data.projects && typeof data.projects === 'object' ? data.projects : {};
       syncChipsLoaded = true;
+      syncChipsAwait.clear();
       paintSyncChips();
     } catch { /* the chips keep their last state */ }
     finally {
@@ -12793,6 +12831,8 @@ if (el.projectsSyncAll) {
 function renderProjectsList() {
   const host = el.projectsList;
   if (!host) return;
+  // A rebuild (a projects-changed broadcast after Use git, say) must not drop a focused row to <body>.
+  const focusKey = host.contains(document.activeElement) ? document.activeElement.closest('.pl-item')?.dataset.key : null;
   host.innerHTML = '';
   if (!state.projects.length) {
     const zero = document.createElement('section');
@@ -12848,6 +12888,7 @@ function renderProjectsList() {
 
   card.append(head, cols, list, empty);
   host.appendChild(card);
+  if (focusKey) host.querySelector(`.pl-item[data-key="${cssEscape(focusKey)}"] .pl-row`)?.focus({ preventScroll: true });
   paintProjectTmCells();
   paintProjectPolicyCells();
   paintSyncChips();
@@ -12955,6 +12996,10 @@ function openProjDetail(p, parsed, { instant = false } = {}) {
   screen.querySelector('.pd-new').addEventListener('click', () => { newPipelineForProject(p.key); });
   screen.querySelector('.pd-history').addEventListener('click', () => { openRunsForProject(p.key); });
   screen.querySelector('.pd-remove').addEventListener('click', () => { void removeProjectFromPage(p.key); });
+  screen.querySelector('.pd-git').addEventListener('click', (e) => {
+    const action = e.currentTarget.dataset.action;
+    if (action) openProjectGitModal(p.key, action, () => projDetail && projDetail.screen.querySelector('.pd-git'));
+  });
   paintProjHeader(screen, p);
   terminalPane?.syncOpeners();             // the cloned header's terminal button says whether the pane is open
   initPdTabs(screen, p);
@@ -13011,6 +13056,17 @@ function paintProjHeader(screen, p) {
   fresh.disabled = !p.exists;
   fresh.title = p.exists ? 'Start a pipeline in this project' : 'The folder is missing on disk';
   syncProjHistoryButton(screen, p.key);
+  paintProjGitButton(screen, p);
+}
+
+/** The header's Use git / Link remote (project-git.mjs#gitActionFor); hidden when neither applies. */
+function paintProjGitButton(screen, p) {
+  const btn = screen && screen.querySelector('.pd-git');
+  if (!btn) return;
+  const action = gitActionFor(p, p ? state.syncChips[p.key] : undefined, syncChipsLoaded);
+  btn.hidden = !action;
+  btn.dataset.action = action || '';
+  if (action) btn.querySelector('.pd-git-label').textContent = GIT_DIALOG[action].button;
 }
 
 // "Show in Runs" is live only while History has rows for this project: without rows the
@@ -13285,11 +13341,11 @@ function paintPdBranchCards() {
     const status = pcard.querySelector('.pd-ov-status');
     const sub = pcard.querySelector('.pd-ov-sub');
     const act = pcard.querySelector('.pd-ov-actrow');
-    if (!syncChipsLoaded) {
+    if (!syncChipsLoaded || syncChipsAwait.has(key)) {
       value.textContent = '…'; status.replaceChildren(); sub.textContent = 'checking…'; act.replaceChildren();
     } else if (!b || !b.remote) {
       value.textContent = (b && b.base) || '—';
-      status.replaceChildren(); sub.textContent = 'No remote · runs use your local copy'; act.replaceChildren();
+      status.replaceChildren(); sub.textContent = b && b.noCommits ? NO_COMMITS_HINT : 'No remote · runs use your local copy'; act.replaceChildren();
     } else {
       const m = listRowModel(b);
       const c = syncRowCells(key, m, '', projDetail.name);
@@ -13708,6 +13764,87 @@ function setProjAddMsg(text, kind) {
 let projAddBusy = false;
 // The "Cloning in the background" note a Hide raised; the clone's own result closes it.
 let cloneHideToast = null;
+
+// ---- Use git / Link remote (POST /api/projects/:key/git-init) ----
+let projGitTarget = null;   // { key, action, opener } while the dialog is open; opener re-queries the button
+let projGitBusy = false;
+const projGitGuard = el.projectGitModal ? guardModal(el.projectGitModal, {
+  kind: 'form',
+  close: () => closeProjectGitModal(),
+  busy: () => projGitBusy,
+}) : null;
+
+function setProjGitMsg(text, kind) {
+  el.projGitMsg.textContent = text || '';
+  el.projGitMsg.className = 'hint' + (kind ? ' ' + kind : '');
+}
+
+function openProjectGitModal(key, action, opener) {
+  const copy = GIT_DIALOG[action];
+  if (!copy || !el.projectGitModal || !projectByKey(key)) return;
+  projGitTarget = { key, action, opener };
+  el.projGitTitle.textContent = copy.title;
+  el.projGitLead.textContent = copy.lead;
+  el.projGitUrlOpt.hidden = !copy.optional;
+  el.projGitUrl.value = '';
+  el.projGitSave.textContent = copy.save;
+  setProjGitMsg('');
+  el.projectGitModal.classList.remove('hidden');
+  projGitGuard?.opened();
+  el.projGitUrl.focus();
+}
+
+function closeProjectGitModal({ refocus = true } = {}) {
+  el.projectGitModal.classList.add('hidden');
+  const t = projGitTarget;
+  projGitTarget = null;
+  const back = refocus && t && typeof t.opener === 'function' ? t.opener() : null;
+  if (back) back.focus({ preventScroll: true });
+}
+
+async function saveProjectGit() {
+  const t = projGitTarget;
+  if (!t || projGitBusy) return;
+  const copy = GIT_DIALOG[t.action];
+  const url = el.projGitUrl.value.trim();
+  if (!url && !copy.optional) { setProjGitMsg('Remote URL is required.', 'err'); el.projGitUrl.focus(); return; }
+  projGitBusy = true;
+  el.projGitSave.disabled = true;   // focus is in the URL field or on Save; either way it goes back to the field below
+  setProjGitMsg(copy.busy);
+  let data = null;
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(t.key)}/git-init`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(url ? { remoteUrl: url } : {}),
+    });
+    data = await safeJson(res);
+    if (!res.ok) { setProjGitMsg((data && data.error) || `HTTP ${res.status}`, 'err'); data = null; }
+  } catch (e) {
+    setProjGitMsg(e.message, 'err');
+  } finally {
+    projGitBusy = false;
+    el.projGitSave.disabled = false;
+  }
+  if (!data) { el.projGitUrl.focus(); return; }
+  closeProjectGitModal({ refocus: false });
+  afterProjectGit(t, data);
+}
+
+/** Repaint after Use git / Link remote: the list, the New-run select and an open page, then focus a control that stays. */
+function afterProjectGit(t, data) {
+  if (Array.isArray(data.projects)) state.projects = data.projects;
+  delete state.syncChips[t.key];   // the old block (no remote, folder) must not drive Link remote; the refresh brings the new one
+  syncChipsAwait.add(t.key);        // the Branch card reads "checking…" until that refresh lands (not the folder's "No remote")
+  renderProjectsList();             // rebuilds the row
+  refreshSyncChips();               // coalesced by its own timer when renderProjectsList already asked
+  renderProjectOptions(localStorage.getItem(LAST_PROJECT_KEY) || '');
+  const p = projectByKey(t.key);
+  setProjectsMsg(gitDoneMessage(t.action, p ? p.name : '', data.remote), 'ok');
+  const page = projDetail && projDetail.key === t.key ? projDetail.screen : null;
+  if (page && p) { paintProjHeader(page, p); refreshProjOverview(); }
+  const next = page ? page.querySelector('.pd-new')
+    : document.querySelector(`#projects-list .pl-item[data-key="${cssEscape(t.key)}"] .pl-row`);
+  next?.focus({ preventScroll: true });
+}
 
 // A form: a backdrop click never closes it. Escape asks first once something was typed or picked here —
 // except over a running clone: its fields are locked and its work goes on, so Hide loses nothing.
@@ -14351,6 +14488,9 @@ if (el.projDetail) {
   });
 }
 if (el.projectAddBtn) el.projectAddBtn.addEventListener('click', () => { void addProjectFlow(); });
+el.projGitSave?.addEventListener('click', () => { void saveProjectGit(); });
+el.projGitCancel?.addEventListener('click', () => projGitGuard?.cancel());
+el.projGitUrl?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void saveProjectGit(); } });
 if (el.projAddSave) {
   el.projAddSave.addEventListener('click', saveProjectAdd);
   el.projAddCancel.addEventListener('click', () => projAddGuard.cancel());   // Cancel / Hide: at once, never asks
@@ -14424,7 +14564,7 @@ if (el.projectBulkModal) {
 if (typeof window !== 'undefined') {
   window.__projects = {
     loadProjectsView, renderProjectsList, buildProjectRow, deleteProject,
-    confirmModal, promptModal, addProjectFlow, openProjectAddModal, saveProjectAdd,
+    confirmModal, promptModal, addProjectFlow, openProjectAddModal, saveProjectAdd, openProjectGitModal, saveProjectGit,
     openProjectBulkModal, saveProjectBulk, closeProjectBulkModal, openFolderBrowser,
     openAddProject: () => chatDeps.openAddProject(),
   };
@@ -14705,6 +14845,7 @@ function buildRunBody() {
   };
   // Run on the source branch: a flag on the wire, never a feature name (the run auto-names its hidden branch).
   if (el.sameAsSource && el.sameAsSource.checked) { body.sameAsSource = true; delete body.featureBranch; }
+  else if (smartNaming) Object.assign(body, smartNaming.bodyExtras());   // Smart run naming: a still-suggested branch is marked
   if (target === 'workspace') {
     body.workspaceId = workspaceId;
     // Per-project source branches: { [projectKey]: branch }. Omit empties (the
@@ -14818,9 +14959,9 @@ el.form.addEventListener('submit', async (e) => {
     if (schedSync && typeof schedSync.beforeRun === 'boolean') body.syncBeforeStart = schedSync.beforeRun;
     if (schedSync && (schedSync.onDiverged === 'origin' || schedSync.onDiverged === 'fail')) body.syncOnDiverged = schedSync.onDiverged;
   }
-  if (!gitOn()) for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];
-  if (target === 'none') for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];   // schedule fields stay: the server's 400 shows in the card
-  if ((target === 'project' || target === 'workspace') && el.form.dataset.workMode === 'folder') for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];
+  if (!gitOn()) for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'featureBranchSuggested', 'featureBranchFallback', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];
+  if (target === 'none') for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'featureBranchSuggested', 'featureBranchFallback', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];   // schedule fields stay: the server's 400 shows in the card
+  if ((target === 'project' || target === 'workspace') && el.form.dataset.workMode === 'folder') for (const k of ['sourceBranch', 'sourceBranchByKey', 'featureBranch', 'featureBranchSuggested', 'featureBranchFallback', 'sameAsSource', 'sourceFromPrevious', 'syncBeforeStart', 'syncOnDiverged']) delete body[k];
   // Run presets (#712): the run-only lane. Agent picks and loop budgets ride the per-run overlay and
   // human-in-the-loop its body key, so the project config never changes; every other key came from the form.
   if (state.preset) {
@@ -15309,6 +15450,7 @@ async function loadSettings() {
     paintNightSettings(data);
     paintSyncSettings(data);
     paintNetworkWaitSettings(data);
+    paintSmartNamingSettings(data);
     paintActionsSettings(data);
     paintDebugSpawnSettings(data);
     await paintEngineSettings(data);
@@ -15538,10 +15680,13 @@ if (el.chatSettingsHost) el.chatSettingsHost.addEventListener('click', async (e)
 // cards + the settings card) without a refetch.
 function onChannelStatus(msg) {
   const key = `${msg.plugin}/${msg.channelId}`;
-  for (const b of document.querySelectorAll(`.pl-channel[data-channel-key="${CSS.escape(key)}"]`)) {
+  // The Marketplace page repaints from its state (a tab switch, a refresh): keep its row current, or the old chip returns.
+  const row = (marketplacePage?.state?.channelStatus || []).find((c) => c.plugin === msg.plugin && c.channelId === msg.channelId);
+  if (row) Object.assign(row, { state: msg.state, detail: msg.detail ?? null });
+  for (const b of document.querySelectorAll(`.pl-channel[data-channel-key="${cssEscape(key)}"]`)) {
     b.replaceWith(channelBadge(document, { ...msg, displayName: b.textContent.split(' · ')[0] }));
   }
-  for (const b of document.querySelectorAll(`.chat-state[data-channel-key="${CSS.escape(key)}"]`)) {
+  for (const b of document.querySelectorAll(`.chat-state[data-channel-key="${cssEscape(key)}"]`)) {
     const stateCls = { connected: 'green', degraded: 'waiting', connecting: 'waiting', unconfigured: 'waiting' }[msg.state] || 'red';
     b.className = `badge ${stateCls} chat-state`;
     b.textContent = msg.state;
@@ -16198,6 +16343,118 @@ document.getElementById('networkWaitReset')?.addEventListener('click', (e) => po
   { networkWait: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('networkWaitSave');
 
+// Settings › Runs › Smart run naming (Labs, flag smartRunNaming). The rows stay editable while the flag is off (muted), so a
+// team can prepare them. The master switch is the flag itself (bindFlagSwitch, below the Keep awake one).
+const snCard = () => document.getElementById('smart-naming-settings-card');
+const SN_PREVIEW = { type: 'fix', slug: 'safari-sso-redirect-loop', ticket: 'proj-123' };
+let snTypesOn = [];            // the enabled types, in order
+let snTypesAll = [];           // the toggles shown: the presets, then any custom type
+function snPaintMuted() {
+  const card = snCard();
+  if (!card) return;
+  const off = !flagOn('smartRunNaming');
+  for (const row of card.querySelectorAll('.drows > :not(#smartNamingMasterRow)')) row.setAttribute('aria-disabled', off ? 'true' : 'false');
+}
+function snPaintPreview() {
+  const input = document.getElementById('smartNamingPattern');
+  const out = document.getElementById('smartNamingPreview');
+  if (!input || !out) return;
+  const problem = patternProblem(input.value.trim());
+  out.textContent = problem ? `Not usable: ${problem}.` : `Preview: ${renderPattern(input.value.trim(), SN_PREVIEW)}`;
+  out.classList.toggle('warn', !!problem);
+}
+function snPaintTypes() {
+  const host = document.getElementById('smartNamingTypes');
+  const value = document.getElementById('smartNamingTypesValue');
+  if (!host || !value) return;
+  value.value = snTypesOn.join(',');
+  host.replaceChildren(...snTypesAll.map((t) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'filter-chip'; b.textContent = t;
+    b.setAttribute('aria-pressed', String(snTypesOn.includes(t)));
+    b.addEventListener('click', () => {
+      const msg = document.getElementById('smartNamingMsg');
+      if (snTypesOn.includes(t) && snTypesOn.length === 1) { if (msg) msg.textContent = 'At least one type stays on.'; return; }
+      if (msg) msg.textContent = '';
+      snTypesOn = snTypesAll.filter((x) => (x === t ? !snTypesOn.includes(t) : snTypesOn.includes(x)));
+      snPaintTypes();
+      value.dispatchEvent(new window.Event('change', { bubbles: true }));
+    });
+    return b;
+  }), (() => {
+    const add = document.createElement('button');
+    add.type = 'button'; add.className = 'filter-chip'; add.textContent = 'Add type';
+    add.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'text'; input.className = 'input mono'; input.maxLength = 16; input.setAttribute('aria-label', 'New type'); input.size = 10;
+      const take = () => {
+        const t = input.value.trim().toLowerCase();
+        const msg = document.getElementById('smartNamingMsg');
+        if (!t) { snPaintTypes(); return; }
+        if (!TYPE_RE.test(t)) { if (msg) msg.textContent = 'A type is a short lowercase word, such as perf.'; input.focus(); return; }
+        if (msg) msg.textContent = '';
+        if (!snTypesAll.includes(t)) snTypesAll = [...snTypesAll, t];
+        if (!snTypesOn.includes(t)) snTypesOn = [...snTypesOn, t];
+        snPaintTypes();
+        value.dispatchEvent(new window.Event('change', { bubbles: true }));
+      };
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); take(); } else if (e.key === 'Escape') snPaintTypes(); });
+      input.addEventListener('blur', take);
+      add.replaceWith(input);
+      input.focus();
+    });
+    return add;
+  })());
+}
+// The model is a helper job (Models › Engines › Helper jobs › Run naming); the card only says which one runs and
+// what a suggestion costs. /api/naming/config answers 404 while the flag is off, so the cost line waits for it.
+async function snPaintCost(naming) {
+  const out = document.getElementById('smartNamingCost');
+  if (!out) return;
+  const base = 'Shown in Statistics as Naming, never billed to the run.';
+  out.textContent = base;
+  if (flagOn('smartRunNaming')) {
+    const c = naming || await safeJson(await fetch('/api/naming/config').catch(() => null));
+    const model = c?.picked?.model ? `${c.picked.model}${c.picked.source === 'auto' ? ' (cheapest ready)' : ''}. ` : '';
+    if (c && typeof c.estimatedUsd === 'number') out.textContent = `${model}About 300 tokens in, 30 out: ≈ $${c.estimatedUsd.toFixed(5)} per suggestion. ${base}`;
+    else if (model) out.textContent = `${model}${base}`;
+  }
+  settingsCardPainted('smartNamingSave');
+}
+function paintSmartNamingSettings(data) {
+  const d = data && data.smartNaming;
+  const card = snCard();
+  if (!d || !card) return;
+  const set = (id, v) => { const n = document.getElementById(id); if (n) n.checked = !!v; };
+  set('smartNamingTitle', d.suggestTitle); set('smartNamingBranch', d.suggestBranch); set('smartNamingRunId', d.addRunId);
+  const trig = document.getElementById('smartNamingTrigger'); if (trig) trig.value = d.trigger;
+  const pat = document.getElementById('smartNamingPattern'); if (pat) pat.value = d.pattern;
+  snTypesOn = [...d.types];
+  snTypesAll = [...new Set([...PRESET_TYPES, ...d.types])];
+  snPaintPreview(); snPaintTypes(); snPaintMuted();
+  settingsCardPainted('smartNamingSave');
+  void snPaintCost(null);
+}
+function readSmartNamingForm() {
+  return {
+    suggestTitle: document.getElementById('smartNamingTitle').checked,
+    suggestBranch: document.getElementById('smartNamingBranch').checked,
+    addRunId: document.getElementById('smartNamingRunId').checked,
+    trigger: document.getElementById('smartNamingTrigger').value,
+    pattern: document.getElementById('smartNamingPattern').value.trim(),
+    types: [...snTypesOn],
+  };
+}
+function postSmartNaming(body, opts = {}) {
+  return postSettingsCard(body, { card: snCard(), paint: paintSmartNamingSettings, dirty: settingsCardDirty('smartNamingSave'), ...opts });
+}
+document.getElementById('smartNamingPattern')?.addEventListener('input', snPaintPreview);
+document.getElementById('smartNamingSave')?.addEventListener('click', (e) => postSmartNaming({ smartNaming: readSmartNamingForm() }, { button: e.currentTarget }));
+document.getElementById('smartNamingReset')?.addEventListener('click', (e) => postSmartNaming(
+  { smartNaming: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
+settingsCardDirty('smartNamingSave');
+onFlagChange('smartRunNaming', () => { snPaintMuted(); void snPaintCost(null); void paintHelperModelCards(); });
+
 function paintAskSettings(data) {
   const turns = document.getElementById('askMaxTurns');
   const budget = document.getElementById('askMaxBudgetUsd');
@@ -16540,7 +16797,7 @@ function pluginModal(title, bodyEl, actions = [], guard = {}) {
   el.pluginModal.classList.remove('hidden');
   pluginGuard?.opened(guard);
 }
-function closePluginModal() { el.pluginModal.classList.add('hidden'); pluginDismissHooks.clear(); }
+function closePluginModal() { el.pluginModal.classList.add('hidden'); pluginDismissHooks.clear(); document.dispatchEvent(new window.CustomEvent('mk-layer-closed', { detail: { layer: 'plugin-modal' } })); }
 
 // Team metrics "Enable" dialog. Reuses the generic slot modal above; the body re-renders
 // when the "Where to record" radio changes.
@@ -16635,95 +16892,37 @@ async function pluginApi(method, url, body) {
 const isGitMissing = (r) => !!(r && !r.ok && r.status === 409 && r.data && r.data.code === 'GIT_MISSING');
 function needsGitModal(title) { pluginModal(title, renderNeedsGit(document)); }
 
-// Snapshot of the last GET /api/marketplaces payload — the delegated install
-// listener resolves the consent inventory from here (no re-fetch, no network).
+// The Marketplace page (ui/public/marketplace/, CONTRACT §3.5). `pluginsViewMarketplaces` stays the snapshot the consent
+// dialog's needs-git lookup, Team policy installs (marketplaceEntryFor), ensureMarketplacesLoaded and the policy editor read.
 let pluginsViewMarketplaces = [];
-
-function renderMarketplaceSections(list, { fromBackground = false } = {}) {
-  if (fromBackground && el.pluginModal && !el.pluginModal.classList.contains('hidden')) {
-    pluginsViewMarketplaces = list || []; // keep the data; skip the DOM swap under an open modal
-    return;
-  }
-  pluginsViewMarketplaces = list || [];
-  el.pluginsAvailable.replaceChildren(renderAvailableList(pluginsViewMarketplaces));
-  el.marketplacesList.replaceChildren(renderMarketplaceList(pluginsViewMarketplaces));
-}
-
+let marketplacePage = null;   // SM15: P5–P7 read it (e.g. the marketplace-add-changed forward)
+marketplacePage = mountMarketplace({ doc: document, win: window, deps: {
+  api: pluginApi, notify, confirmModal, promptModal, openMenu, gitOn, invalidateAgentCaches, openSetupChecklist, setMsg: setPluginsMsg,
+  loadPolicy: () => loadTpScopes({ force: true }),   // SM35: state.policy (P5's Team policy card)
+  navigate: (hash) => { const t = String(hash).replace(/^#/, ''); if (location.hash.slice(1) !== t) location.hash = t; },
+  fallbacks: { openInstallConsent },
+} });
+// A trusted home's installs re-run when the synced marketplaces change under the open page (a card refresh, Retry,
+// Refresh all, a finished Add, another tab): a required plugin may be listed now. Never on every read — a failing
+// install would repeat on each background re-read.
+let marketplaceSyncSig = null;
+const marketplacesSyncSig = (ms) => (ms || []).filter((m) => m && m.lastSync).map((m) => `${m.id}@${m.lastSync.sha}`).sort().join('|');
+marketplacePage.onChange((s) => {
+  pluginsViewMarketplaces = s.marketplaces;
+  const sig = marketplacesSyncSig(s.marketplaces);
+  const prev = marketplaceSyncSig;
+  marketplaceSyncSig = sig;
+  if (prev !== null && sig !== prev && currentView() === 'marketplace') void paintPluginsPolicy(false);
+});
+// Every caller (Team policy, the action flows) reloads the page here; only a route entry passes refresh.
 async function loadPluginsView({ refresh = false } = {}) {
-  setPluginsMsg('');
-  try {
-    const [pRes, mRes] = await Promise.all([fetch('/api/plugins'), fetch('/api/marketplaces')]);
-    const data = await safeJson(pRes);
-    if (!pRes.ok) { renderMarketplaceSections([]); return setPluginsMsg(data.error || `HTTP ${pRes.status}`, 'err-inline'); }
-    let channelStatus = [];
-    try {
-      const cs = await safeJson(await fetch('/api/chat/status'));
-      channelStatus = cs.channels || [];
-    } catch { /* chat host unavailable: cards render without badges */ }
-    const parts = [renderPluginList(data.plugins || [], { channelStatus })];
-    if (Array.isArray(data.orphans) && data.orphans.length) parts.push(renderOrphanList(data.orphans));
-    el.pluginsList.replaceChildren(...parts);
-    const mData = await safeJson(mRes);
-    renderMarketplaceSections(mRes.ok ? mData.marketplaces || [] : []);
-  } catch (e) { setPluginsMsg(e.message, 'err-inline'); }
-  if (refresh) refreshMarketplacesInBackground(); // C3: only the view-open path kicks the background refresh
-  paintPluginsPolicy(refresh);                   // team policy (design board 10): the required-by strip
+  await marketplacePage.load({ refresh });
+  paintPluginsPolicy(false);                     // team policy (design board 10): a trusted home's installs, from the scopes load() just read
 }
-
-// Stale-while-revalidate (spec §4.6): render cached snapshots instantly, then
-// one background refresh-all; re-render on completion. Failures keep the stale
-// snapshot (per-marketplace warnings arrive in the payload).
-let marketplaceRefreshInFlight = false;
-async function refreshMarketplacesInBackground() {
-  if (marketplaceRefreshInFlight) return;
-  marketplaceRefreshInFlight = true;
-  setPluginsMsg('Refreshing marketplaces…');
-  try {
-    const { ok, data } = await pluginApi('POST', '/api/marketplaces/refresh');
-    if (ok) renderMarketplaceSections(data.marketplaces || [], { fromBackground: true });
-  } catch { /* keep stale */ } finally {
-    marketplaceRefreshInFlight = false;
-    // Clear only OUR status line — an install/remove error posted while the
-    // background refresh was in flight must survive it.
-    if (el.pluginsMsg && el.pluginsMsg.textContent === 'Refreshing marketplaces…') setPluginsMsg('');
-  }
-}
-
-async function addMarketplaceFromInput() {
-  const url = (el.marketplaceUrl.value || '').trim();
-  if (!url) return setPluginsMsg('Enter a marketplace repo (https://github.com/owner/repo, owner/repo, or a local path).', 'err');
-  el.marketplaceAdd.disabled = true;
-  setPluginsMsg('Adding marketplace…');
-  let res;
-  try {
-    res = await pluginApi('POST', '/api/marketplaces', { url });
-  } catch (e) {
-    return setPluginsMsg(e.message || 'add failed', 'err'); // fetch-level failure must not strand the button
-  } finally {
-    el.marketplaceAdd.disabled = false;
-  }
-  if (isGitMissing(res)) {   // a source off GitHub, no git here: one chip in the add row, the message line stays empty
-    setPluginsMsg('');
-    const row = el.marketplaceAddRow.querySelector('.path-row');
-    if (row && !row.querySelector('.pl-needs-git')) row.appendChild(renderNeedsGit(document));
-    return;
-  }
-  const { ok, data } = res;
-  if (!ok) return setPluginsMsg(data.error || 'add failed', 'err');
-  el.marketplaceUrl.value = '';
-  el.marketplaceAddRow.querySelector('.pl-needs-git')?.remove();
-  el.marketplaceAddRow.classList.add('hidden');
-  // Reload FIRST: loadPluginsView() clears the message line as it starts, so a
-  // message set before it never survived.
-  await loadPluginsView();
-  if (data.linked) {
-    // The path was a single plugin folder (an Export… → Worca plugin result):
-    // the server linked it instead of registering a marketplace.
-    const n = (data.plugin.workflows?.imported || []).length;
-    setPluginsMsg(`Linked plugin "${data.plugin.name}" from ${data.plugin.dir}: ${n} pipeline template${n === 1 ? '' : 's'} added to your saved pipelines.`, 'ok');
-  } else {
-    setPluginsMsg(`Added ${data.marketplace.name} (${data.marketplace.plugins.length} plugins).`, 'ok');
-  }
+// One entry, one load (CONTRACT §4): a tab hop inside the page only selects the tab.
+function enterMarketplace(param, prevView) {
+  marketplacePage.setTab(tabFromParam(param));
+  if (prevView !== 'marketplace') void loadPluginsView({ refresh: true });
 }
 
 // #555 D5: the consent dialog closes before the request, so its result is a keyed toast that
@@ -17024,128 +17223,6 @@ async function openPluginSettings(name, profile, { seeds = null } = {}) {
   ]);
 }
 
-// One delegated listener: enable toggle + Settings/Doctor/Update/Remove + orphan Purge.
-if (el.pluginsList) el.pluginsList.addEventListener('click', async (e) => {
-  const t = e.target;
-  const name = t && t.dataset ? t.dataset.name : '';
-  if (!name) return;
-  if (t.classList.contains('pl-toggle')) {
-    const { ok, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/enable`, { enabled: t.checked });
-    if (!ok) { setPluginsMsg(data.error || 'toggle failed', 'err'); t.checked = !t.checked; return; }
-    invalidateAgentCaches();                   // disabled plugin's agents leave the registry
-    loadPluginsView();
-  } else if (t.classList.contains('pl-settings')) {
-    openPluginSettings(name);
-  } else if (t.classList.contains('pl-doctor')) {
-    setPluginsMsg(`Running doctor on ${name}…`);
-    const { ok, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/doctor`);
-    setPluginsMsg('');
-    // No footer actions — the modal header already has a Close button.
-    pluginModal(`Doctor: ${name}`,
-      renderDoctorReport(ok ? data : { ok: false, checks: [{ id: 'request', ok: false, detail: data.error || 'doctor failed' }] }));
-  } else if (t.classList.contains('pl-update')) {
-    const { ok, status, data } = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, {});
-    if (isGitMissing({ ok, status, data })) return needsGitModal(`Update ${name}`);
-    if (!ok) return setPluginsMsg(data.error || 'update preview failed', 'err');
-    const body = renderUpdatePreview(data);
-    pluginModal(`Update ${name}`, body);  // header Close only
-    const confirmBtn = body.querySelector('.pl-confirm-update');
-    if (confirmBtn) confirmBtn.addEventListener('click', async () => {
-      confirmBtn.disabled = true;
-      const r2 = await pluginApi('POST', `/api/plugins/${encodeURIComponent(name)}/update`, { confirm: true });
-      closePluginModal();
-      if (!r2.ok) return setPluginsMsg(r2.data.error || 'update failed', 'err');
-      setPluginsMsg(`Updated ${name}.`, 'ok');
-      invalidateAgentCaches();
-      loadPluginsView();
-    });
-  } else if (t.classList.contains('pl-remove')) {
-    const res = await confirmModal({
-      title: 'Uninstall plugin',
-      message: `Uninstall "${name}"?${t.dataset.mcpSets
-        ? `\n\nIts MCP servers leave these sets, with their values, secrets and test results: ${t.dataset.mcpSets}.` : ''}${t.dataset.skillSets
-        ? `\n\nIt also removes its skills from ${t.dataset.skillSets}.` : ''}`,
-      confirmLabel: 'Uninstall',
-      checkbox: { label: 'Also delete config, secrets and state (purge, cannot be undone)' },
-    });
-    if (!res.ok) return;
-    const purge = res.checked;
-    const { ok, status, data } = await pluginApi(
-      'DELETE', `/api/plugins/${encodeURIComponent(name)}${purge ? '?purge=1' : ''}`,
-    );
-    if (status === 409) {
-      const refs = data.references || [];
-      notify({ tone: 'err', title: `Cannot uninstall ${name}`, detail: String(data.error || '').split('\n')[0],
-        action: { label: 'Details', run: () => pluginModal(`Cannot uninstall ${name}`, renderReferences409(refs)) } });
-      return;
-    }
-    if (!ok) return setPluginsMsg(data.error || 'uninstall failed', 'err');
-    setPluginsMsg(
-      purge
-        ? `Uninstalled ${name} and purged its data.`
-        : `Uninstalled ${name}. Leftover data kept under ~/.worca-cc/plugins/${name}/data.`,
-      'ok',
-    );
-    invalidateAgentCaches();
-    loadPluginsView();
-  } else if (t.classList.contains('pl-purge-orphan')) {
-    const sure = await confirmModal({
-      title: 'Purge plugin data',
-      message: `Delete config, secrets and state for "${name}"? This cannot be undone.`,
-      confirmLabel: 'Purge',
-    });
-    if (!sure) return;
-    const { ok, data } = await pluginApi('DELETE', `/api/plugins/${encodeURIComponent(name)}/data`);
-    if (!ok) return setPluginsMsg(data.error || 'purge failed', 'err');
-    setPluginsMsg(`Purged leftover data for ${name}.`, 'ok');
-    loadPluginsView();
-  }
-});
-
-// Available section: Install… resolves the snapshot entry from the last
-// /api/marketplaces payload and opens the same consent modal as before.
-if (el.pluginsAvailable) el.pluginsAvailable.addEventListener('click', (e) => {
-  const t = e.target instanceof Element ? e.target.closest('.pl-install-avail') : null;
-  if (!t) return;
-  const m = pluginsViewMarketplaces.find((x) => x.id === t.dataset.marketplace);
-  const p = m && (m.plugins || []).find((x) => x.name === t.dataset.name);
-  if (!m || !p || !m.lastSync) return;
-  openInstallConsent({
-    name: p.name, subdir: p.subdir, repoUrl: m.url, sha: m.lastSync.sha,
-    inventory: p.inventory || {}, marketplace: m.id,
-  });
-});
-
-// Marketplaces section: Refresh / Remove.
-if (el.marketplacesList) el.marketplacesList.addEventListener('click', async (e) => {
-  const t = e.target instanceof Element ? e.target.closest('.pl-mkt-refresh,.pl-mkt-remove') : null;
-  const id = t && t.dataset ? t.dataset.id : '';
-  if (!id) return;
-  if (t.classList.contains('pl-mkt-refresh')) {
-    setPluginsMsg('Refreshing marketplace…');
-    const { ok, data } = await pluginApi('POST', `/api/marketplaces/${encodeURIComponent(id)}/refresh`, {});
-    setPluginsMsg(ok ? '' : (data.error || 'refresh failed'), ok ? undefined : 'err');
-    if (ok) loadPluginsView();
-  } else if (t.classList.contains('pl-mkt-remove')) {
-    const sure = await confirmModal({
-      title: 'Remove marketplace',
-      message: 'Removes plugin discovery from this marketplace. Installed plugins are not affected.',
-      confirmLabel: 'Remove',
-    });
-    if (!sure) return;
-    const { ok, data } = await pluginApi('DELETE', `/api/marketplaces/${encodeURIComponent(id)}`);
-    if (!ok) return setPluginsMsg(data.error || 'remove failed', 'err');
-    setPluginsMsg('Marketplace removed. Installed plugins remain.', 'ok');
-    loadPluginsView();
-  }
-});
-
-if (el.pluginAddBtn) el.pluginAddBtn.addEventListener('click', () => {
-  el.marketplaceAddRow.classList.toggle('hidden');
-  if (!el.marketplaceAddRow.classList.contains('hidden')) el.marketplaceUrl.focus();
-});
-if (el.marketplaceAdd) el.marketplaceAdd.addEventListener('click', addMarketplaceFromInput);
-if (el.marketplaceUrl) el.marketplaceUrl.addEventListener('input', () => el.marketplaceAddRow.querySelector('.pl-needs-git')?.remove());
 if (el.pluginModalClose) el.pluginModalClose.addEventListener('click', () => pluginGuard?.cancel());
 
 // ---- Guardrails view (named sets: list + two-step wizard popup) ----
@@ -18420,13 +18497,15 @@ const CODEX_HELPER_JOBS = ['title', 'classifier', 'overview', 'prDescription', '
 // src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the engines with helper slots of their own.
 const HELPER_ENGINES = ['claude', 'codex'];
 // Claude's helper slots at user level are their own settings keys (settings-cascade.mjs CLAUDE_USER): a model id for
-// titles, Auto and PR descriptions (no effort), and the Memory defragment and Agent generation pairs. No user-level
-// overview slot. Agent generation is Claude's alone (it always runs on Claude), so no other tab has its row.
-const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen'];
+// titles, Auto and PR descriptions (no effort), and the Memory defragment, Agent generation and Run naming pairs. No
+// user-level overview slot. Agent generation and Run naming are Claude's alone (they always run on Claude), so no other
+// tab has their rows; Run naming shows only while smartRunNaming is on.
+const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen', 'naming'];
 const helperPair = (p) => (p && p.model ? { model: p.model, ...(p.effort ? { effort: p.effort } : {}) } : undefined);
-// The Requirements interview is a user-only slot (settings key requirementsInterview), listed only while its flag is on:
-// asked at paint time, never a module constant.
-const claudeUserHelperJobs = () => (flagOn('requirements') ? [...CLAUDE_USER_HELPER_JOBS, 'requirementsInterview'] : CLAUDE_USER_HELPER_JOBS);
+// Run naming shows only while smartRunNaming is on; the Requirements interview is a user-only slot (settings key
+// requirementsInterview), listed only while its flag is on. Both asked at paint time, never a module constant.
+const claudeUserHelperJobs = () => [...CLAUDE_USER_HELPER_JOBS.filter((job) => job !== 'naming' || flagOn('smartRunNaming')),
+  ...(flagOn('requirements') ? ['requirementsInterview'] : [])];
 const CLAUDE_USER_HELPER_OWN = (data) => ({
   title: data.titleModel ? { model: data.titleModel } : undefined,
   classifier: data.autoWorkflowModel ? { model: data.autoWorkflowModel } : undefined,
@@ -18435,6 +18514,7 @@ const CLAUDE_USER_HELPER_OWN = (data) => ({
   agentGen: helperPair(data.agentGenModel),
   requirementsInterview: data.requirementsInterview && (data.requirementsInterview.model || data.requirementsInterview.effort)
     ? { ...(data.requirementsInterview.model ? { model: data.requirementsInterview.model } : {}), ...(data.requirementsInterview.effort ? { effort: data.requirementsInterview.effort } : {}) } : undefined,
+  naming: helperPair(data.namingModel),
 });
 let lastEngineSettingsData = null;
 async function paintEngineSettings(data) {
@@ -20877,17 +20957,15 @@ async function resumePipelineOnEngine(p, runEngine, btn, engine) {
   return resumePipeline(p, p.projectDir || null, btn, { engine });
 }
 
-// Plugins page (boards 10–11): the required-by strip, installs through the SAME consent flow as
-// Available, the setup checklist, and the per-home trust switch.
+// Plugins page (boards 10–11): installs through the SAME consent flow as Available, the setup
+// checklist, and the per-home trust switch.
 const TP_TRUST_PREFIX = 'worca.policy.trust.';
 const policyHomeTrusted = (home) => { try { return localStorage.getItem(TP_TRUST_PREFIX + home) === '1'; } catch { return false; } };
 let pluginsPolicyAutoBusy = false;
 async function paintPluginsPolicy(force = false) {
-  if (!el.pluginsPolicy) return;
   const data = await loadTpScopes({ force });
-  const strip = renderRequiredStrip(data.requirements || [], data.blockedPlugins || [], { doc: document });
-  el.pluginsPolicy.replaceChildren(strip || '');
-  // A trusted home (the developer's own switch, per machine) installs its missing plugins here.
+  // A trusted home (the developer's own switch, per machine) installs its missing plugins here; the Installed
+  // tab's Team policy card reads the same scopes from the page state.
   const missing = (data.requirements || []).filter((r) => r.state === 'missing' && (r.homes || []).some(policyHomeTrusted));
   if (missing.length && !pluginsPolicyAutoBusy) {
     pluginsPolicyAutoBusy = true;
@@ -20927,7 +21005,7 @@ async function handlePolicyPluginClick(e) {
   // secrets blank) — the same pane the Plugins page opens from the card.
   if (t.classList.contains('pl-policy-configure')) {
     closePluginModal();
-    if (location.hash.slice(1) !== 'marketplace') location.hash = 'marketplace';
+    if (currentView() !== 'marketplace') location.hash = 'marketplace/installed';
     const req = ((tpCache.data && tpCache.data.requirements) || []).find((r) => r.name === name);
     await openPluginSettings(name, undefined, { seeds: req && req.config ? req.config : null });
     return true;
@@ -20963,7 +21041,6 @@ async function updateRequiredPlugin(name) {
   });
   return true;
 }
-if (el.pluginsPolicy) el.pluginsPolicy.addEventListener('click', (e) => { void handlePolicyPluginClick(e); });
 async function openSetupChecklist() {
   const data = await loadTpScopes({ force: true });
   const reqs = data.requirements || [];
@@ -21069,11 +21146,15 @@ const skillTeamDeps = () => ({
     if (checklist) void openSetupChecklist(); else refreshMcpSurfaces();
   },
 });
+// Resolves once #plugin-modal is closed: a chain of dialogs waits on it (one install or update preview at a time).
+function pluginModalClosed() {
+  return new Promise((res) => { const iv = setInterval(() => { if (!el.pluginModal || el.pluginModal.classList.contains('hidden')) { clearInterval(iv); res(); } }, 200); });
+}
 // One dialog after another — a consent dialog for each missing plugin, an update preview for each
 // one below the floor — the next opens when the previous closes (done or cancelled). Nothing runs
 // without its own click; cancelling one moves on to the next.
 async function installAllRequired(reqs) {
-  const modalClosed = () => new Promise((res) => { const iv = setInterval(() => { if (!el.pluginModal || el.pluginModal.classList.contains('hidden')) { clearInterval(iv); res(); } }, 200); });
+  const modalClosed = pluginModalClosed;
   for (const r of reqs) {
     let opened = false;
     if (r.state === 'missing') opened = await installRequiredPlugin(r.name, { marketplace: r.marketplace || '' });
@@ -23746,12 +23827,18 @@ function setShipItRowOpened(row, pr) {
   row.statusEl.replaceChildren();
   row.statusEl.classList.remove('err');
   const merged = prStateOf(pr) === 'MERGED';
+  row.statusEl.append(merged ? 'PR merged: ' : 'PR open: ', prRepoLink(pr));
+  row.statusEl.hidden = false;
+}
+
+// One repository's PR as a text link (design system, PR controls): "View PR", led by the merge glyph once merged.
+function prRepoLink(pr) {
+  const merged = prStateOf(pr) === 'MERGED';
   const a = document.createElement('a');
   a.className = merged ? 'hd-pr-repo-link merged' : 'hd-pr-repo-link';
   a.href = pr.url; a.target = '_blank'; a.rel = 'noopener';
-  a.textContent = merged ? 'Merged' : 'View PR';
-  row.statusEl.append(merged ? 'PR merged: ' : 'PR open: ', a);
-  row.statusEl.hidden = false;
+  a.append(icon(document, merged ? 'merge' : 'pull-request', 14), 'View PR');
+  return a;
 }
 
 function setShipItRowDisabled(row, on) {
@@ -24096,7 +24183,7 @@ function paintHdPush(screen, record) {
   if (!btn || record.target === 'workspace' || !record.sourceBranch || !record.mergeBack || record.mergeBack.merged !== true) return true;
   btn.hidden = false;
   btn.disabled = false;
-  btn.textContent = `Push ${record.sourceBranch}`;
+  setCtaContent(btn, 'arrow-up', `Push ${record.sourceBranch}`);
   // The run summary's CTA (.hd-g-push) clicks this button: keep its label and state in step with it.
   const mirror = (label, disabled) => {
     const g = screen.querySelector('.hd-g-push');
@@ -24106,7 +24193,7 @@ function paintHdPush(screen, record) {
   };
   btn.onclick = async () => {               // property, not addEventListener: paintHdPr re-runs (as its own btn.onclick, :18315)
     btn.disabled = true;
-    btn.textContent = 'Pushing…';
+    setCtaContent(btn, 'arrow-up', 'Pushing…');
     mirror('Pushing…', true);
     try {
       const res = await fetch('/api/push', {
@@ -24117,11 +24204,11 @@ function paintHdPush(screen, record) {
       });
       const dd = await safeJson(res);
       if (!res.ok) throw new Error((dd && dd.error) || `HTTP ${res.status}`);
-      btn.textContent = `Pushed to ${dd.remote || 'the remote'}`;
+      setCtaContent(btn, 'arrow-up', `Pushed to ${dd.remote || 'the remote'}`);
       mirror(btn.textContent, true);
     } catch (err) {
       btn.disabled = false;
-      btn.textContent = `Push ${record.sourceBranch}`;
+      setCtaContent(btn, 'arrow-up', `Push ${record.sourceBranch}`);
       btn.title = err && err.message ? err.message : String(err);
       mirror(`Push failed: ${btn.title}`, false);
     }
@@ -24235,7 +24322,8 @@ function paintHdGlance(screen, record, data) {
     // The one wiring: the header's button opens the ship-it modal (re-read at click time).
     paintPrCta(slot, { state: 'create', cls: 'hd-g-pr', onClick: () => { const b = screen.querySelector('.hd-pr'); if (b) b.click(); } });
   } else if (shown(pushBtn) && !pushBtn.hidden) {
-    paintPrCta(slot, { state: 'push', cls: 'hd-g-push', onClick: () => { const b = screen.querySelector('.hd-push'); if (b) b.click(); } });
+    paintPrCta(slot, { state: 'push', cls: 'hd-g-push', label: `Push ${record.sourceBranch}`,
+      onClick: () => { const b = screen.querySelector('.hd-push'); if (b) b.click(); } });
   } else if (pr === 'PENDING' && shown(createBtn)) {
     paintPrCta(slot, { state: 'pending' });
   } else {
@@ -24543,6 +24631,7 @@ function paintHdPr(screen, record, data) {
   if (!btn || !link) return;
   btn.hidden = true;
   link.hidden = true;
+  if (!btn.querySelector('.ic')) setCtaContent(btn, 'pr-create', CREATE_PR_LABEL);
   const repos = screen.querySelector('.hd-pr-repos');
   if (repos) { repos.hidden = true; repos.replaceChildren(); }
   if (!(gitOn() && isGitRun(hdRunOf(record, data)))) { paintHdPush(screen, null); return; }
@@ -24554,7 +24643,7 @@ function paintHdPr(screen, record, data) {
   if (pr && (prState === 'OPEN' || prState === 'MERGED') && pr.url) {
     link.hidden = false;
     link.href = pr.url;
-    link.textContent = prState === 'MERGED' ? 'Merged' : 'View PR';
+    setCtaContent(link, prState === 'MERGED' ? 'merge' : 'pull-request', 'View PR');
     link.classList.toggle('merged', prState === 'MERGED');
     return;
   }
@@ -24613,12 +24702,7 @@ function hdWsRepoItem(m) {
   // textContent (screen readers' fallback, copy/paste, the tests) would read "apiMerged".
   li.append(name, ' ');
   if (prLive(m.pr)) {
-    const merged = prStateOf(m.pr) === 'MERGED';
-    const a = document.createElement('a');
-    a.className = merged ? 'hd-pr-repo-link merged' : 'hd-pr-repo-link';
-    a.href = m.pr.url; a.target = '_blank'; a.rel = 'noopener';
-    a.textContent = merged ? 'Merged' : 'View PR';
-    li.appendChild(a);
+    li.appendChild(prRepoLink(m.pr));
     const pill = document.createElement('span');     // post-ship mergeability, like the single header pill
     pill.className = 'hist-merge';
     pill.dataset.minLevel = 'expert';
@@ -34949,29 +35033,21 @@ function glancePrInput(record) {
   return histPrEligible(record) ? 'NONE' : 'UNAVAILABLE';
 }
 
-// The glance's action buttons lead with a glyph: 24-unit, stroked like HD_TAB_ICONS.
-const CTA_ICONS = {
-  // A pull request with a plus where its head will be.
-  'pr-create': '<circle cx="6" cy="6" r="2.5"/><path d="M6 8.5V21M13 6h3a2 2 0 0 1 2 2v3M18 15v6M15 18h6"/>',
-  // An open pull request is on the code host: a box with an arrow leaving it (a new tab).
-  external: '<path d="M18 13.5V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4.5"/><path d="M14 4h6v6M20 4l-9 9"/>',
-  // Merged: two lines joining into one.
-  merged: '<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5V21M6 9a9 9 0 0 0 9 9h.5"/>',
-};
-function setCtaContent(node, icon, label) {
-  node.innerHTML = `<svg class="rd-cta-ico" data-icon="${icon}" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${CTA_ICONS[icon]}</svg>`;
+// A page's PR button (design system, PR controls): its icons.mjs glyph at 16px, then its label.
+function setCtaContent(node, name, label) {
   const tx = document.createElement('span');
   tx.textContent = label;
-  node.appendChild(tx);
+  node.replaceChildren(icon(document, name, 16), tx);
 }
 
 // The glance's pull request button, in its slot: one node per screen (the templates'
 // .rd-pr-slot, outside the result hosts their painters rebuild), because a recreated node
 // cannot morph. `state`: 'pending' (the lookup runs: a white placeholder with a spinner at
 // the button's height, nothing to click), 'create' | 'view' | 'merged' (the button in its
-// colour; View and Merged link to `href`, Create calls `onClick`), 'none' (no slot).
+// colour; View and Merged link to `href`, Create calls `onClick`), 'push' (Create's look, its
+// `label` the header's "Push <branch>"), 'none' (no slot).
 // Pending -> a button morphs: the colour grows as a circle from the spinner (.rd-pr-fill),
-// the spinner fades, the icon and label come in. Pending -> none fades out and collapses.
+// the spinner fades, the icon and label come in. Pending -> none fades out in place.
 // Any other change paints the end state at once, so a known state (a cached row) never
 // animates and a repaint never replays. Every animation is CSS; these timers only end them
 // (the slowest CSS animation is shorter) and remove the spinner and the colour layer.
@@ -34979,52 +35055,52 @@ const PR_CTA_MORPH_MS = 420;
 const PR_CTA_OUT_MS = 380;
 const PR_CTA_LOOK = {
   create: { look: '', icon: 'pr-create', label: CREATE_PR_LABEL },
-  push: { look: '', icon: 'pr-create', label: 'Push the source branch' },   // a run on its source branch (paintHdPush)
-  view: { look: 'pr-view', icon: 'external', label: 'View PR' },
-  merged: { look: 'pr-merged', icon: 'merged', label: 'View PR' },
+  push: { look: '', icon: 'arrow-up', label: '' },   // a run on its source branch: the caller's label (paintHdPush)
+  view: { look: 'pr-view', icon: 'pull-request', label: 'View PR' },
+  merged: { look: 'pr-merged', icon: 'merge', label: 'View PR' },
 };
-function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '' } = {}) {
+function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '', label: own = '' } = {}) {
   if (!slot) return;
   slot._prClick = onClick;                         // read at click time: a repaint re-binds it
-  const sig = `${state}|${href}|${cls}`;
+  const sig = `${state}|${href}|${cls}|${own}`;
   if (slot.dataset.sig === sig) return;
   const from = slot.dataset.state || 'none';
   slot.dataset.sig = sig;
   slot.dataset.state = state;
   clearTimeout(slot._prTimer);
   slot.classList.remove('is-pending', 'is-morph', 'is-out');
-  slot.style.removeProperty('--h');
   slot.removeAttribute('aria-busy');
+  slot.removeAttribute('aria-label');
   const done = (fn) => { slot._prTimer = setTimeout(fn, state === 'none' ? PR_CTA_OUT_MS : PR_CTA_MORPH_MS); };
 
   if (state === 'pending') {
     const spin = document.createElement('span');
     spin.className = 'rd-pr-spin';
-    // The button's own glyph and line, invisible, hold its final height.
+    // The button's own glyph and label, invisible, hold its final size; the sentence is for assistive tech.
     const wait = document.createElement('div');
     wait.className = 'rd-pr-wait';
-    setCtaContent(wait, 'pr-create', 'Checking the pull request…');
+    wait.setAttribute('aria-hidden', 'true');
+    setCtaContent(wait, 'pr-create', CREATE_PR_LABEL);
     slot.replaceChildren(spin, wait);
     slot.classList.add('is-pending');
     slot.setAttribute('aria-busy', 'true');
+    slot.setAttribute('aria-label', 'Checking the pull request…');
     slot.hidden = false;
     return;
   }
 
   if (state === 'none') {
     if (from !== 'pending') { slot.replaceChildren(); slot.hidden = true; return; }
-    slot.style.setProperty('--h', `${slot.offsetHeight}px`);
     slot.classList.add('is-out');
     done(() => {
       slot.classList.remove('is-out');
-      slot.style.removeProperty('--h');
       slot.replaceChildren();
       slot.hidden = true;
     });
     return;
   }
 
-  const { look, icon, label } = PR_CTA_LOOK[state];
+  const { look, icon: glyph, label } = PR_CTA_LOOK[state];
   let ctl;
   if (state === 'create' || state === 'push') {
     ctl = document.createElement('button');
@@ -35036,9 +35112,9 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '' 
     ctl.target = '_blank';
     ctl.rel = 'noopener';
   }
-  ctl.className = ['btn', 'btn-block', look ? '' : 'btn-primary', look, cls].filter(Boolean).join(' ');
+  ctl.className = ['btn', look ? '' : 'btn-primary', look, cls].filter(Boolean).join(' ');
   ctl.setAttribute('data-rd-cta', '');
-  setCtaContent(ctl, icon, label);
+  setCtaContent(ctl, glyph, own || label);
   slot.hidden = false;
   const wait = from === 'pending' && slot.querySelector('.rd-pr-wait');
   if (!wait) { slot.replaceChildren(ctl); return; }
@@ -37309,7 +37385,7 @@ function showView(name, param = '') {
   if (name === 'chat') enterChatView(param, prevView);
   if (name === 'workflows') void enterWorkflowsView(param, prevView);
   if (name === 'settings') showSettingsTab(param);
-  if (name === 'marketplace') loadPluginsView({ refresh: true });
+  if (name === 'marketplace') enterMarketplace(param, prevView);
   if (name === 'connectors') void mcpTab().show(param);
   if (name === 'models') {
     // The Engines card (its Helper jobs rows included) is painted from GET /api/settings, so a link
@@ -37912,6 +37988,7 @@ async function applyAskPrefill() {
   if (el.advancedConfig) el.advancedConfig.open = true;
   if (el.sameAsSource && el.sameAsSource.checked) { el.sameAsSource.checked = false; paintSameAsSource(); }
   if (el.featureBranch) el.featureBranch.value = p.featureBranch || '';
+  smartNaming?.reset({ keep: true });   // a prefilled name counts as typed: a later suggestion never overwrites it
   if (p.target === 'workspace') {
     // the per-member selects are rebuilt asynchronously on the change above
     // populateBranchSelect rebuilds each member select's options when its fetch
@@ -38383,6 +38460,30 @@ const offPresetsFlag = onFlagChange('runPresets', (on) => {
 });
 // Test hook: flags.mjs's listener map outlives a jsdom boot, so a suite unsubscribes the previous app first.
 if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { offPresetsFlag });
+
+// Smart run naming (Labs): built once; every handler checks flagOn('smartRunNaming') itself, so it is inert while off.
+if (el.title && el.featureBranch && el.prompt && el.branchType && el.titleRetry) {
+  window.__np.offSmartNaming?.();
+  smartNaming = createSmartNaming({
+    doc: document, el, flagOn, icon,
+    getProjectDir: () => (state.runTarget === 'project' ? selectedProjectPath() || undefined : undefined),
+    api: async (method, path, body, signal) => {
+      try {
+        const res = await fetch(path, body === undefined ? { method, signal }
+          : { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
+        return res.ok ? await safeJson(res) : null;
+      } catch (err) { return err?.name === 'AbortError' ? { aborted: true } : null; }
+    },
+  });
+  window.__np.offSmartNaming = () => smartNaming?.dispose();
+}
+
+// Settings › Runs › Smart run naming: the master switch is the flag itself, one source with Settings › Labs.
+if (el.smartNamingSwitch) {
+  window.__np.offSmartNamingSwitch?.();
+  window.__np.offSmartNamingSwitch = bindFlagSwitch(el.smartNamingSwitch, 'smartRunNaming', {
+    api: (method, body) => mcpApi(method, '/api/flags', body), msgEl: $('#smartNamingMsg') });
+}
 
 // The account menu's Keep awake row (UI/UX review F): the keepAwake flag, one source with Settings › Labs.
 // The whole row is the switch; a refused change shows in its tip and as a toast, a lock in its tip.

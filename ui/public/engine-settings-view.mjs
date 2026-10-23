@@ -8,11 +8,11 @@ export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', '
 const engineName = (v) => (v == null ? null : engineLabel(v));
 const CURSOR_HELPERS_NOTE = "Cursor runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. See the Claude tab.";
 const COPILOT_HELPERS_NOTE = "Copilot runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on its own default model.";
-export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', agentGen: 'Agent generation', workspaceScan: 'Workspace scan', requirementsInterview: 'Requirements interview' });
+export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', agentGen: 'Agent generation', naming: 'Run naming', workspaceScan: 'Workspace scan', requirementsInterview: 'Requirements interview' });
 // The setting id of an engine's helper slot, as settings-cascade.mjs names it: memory defragment
 // and workspace scan are runs of their own (spec §3.1 "own-run models"), the rest are utility jobs.
-// Agent generation has no cascade entry (user-only, Claude-only); its id is the Chat registry's. The
-// requirements interview is a bare id: a user-only slot of its own, not a cascade utility job.
+// Agent generation and Run naming have no cascade entry (user-only, Claude-only); their ids are the Chat registry's.
+// The requirements interview is a bare id: a user-only slot of its own, not a cascade utility job.
 const OWN_RUN_JOBS = new Set(['memoryDefrag', 'workspaceScan', 'requirementsInterview']);
 export const utilityId = (engine, job) => (OWN_RUN_JOBS.has(job) ? `models.${engine}.${job}` : `models.${engine}.utility.${job}`);
 const EMPTY = Object.freeze({ own: undefined, inherited: { value: undefined, source: 'default' } });
@@ -24,6 +24,7 @@ export const JOB_HINTS = Object.freeze({
   prDescription: 'Drafts the pull request description ("Generate with AI").',
   memoryDefrag: 'Runs Memory defragment, which restructures saved memory.',
   agentGen: 'Drafts a new agent\'s prompt and metadata in Workflows › Agents (Generate).',
+  naming: 'Suggests the title and branch name on the New run form (Smart run naming). Unset: the cheapest ready Claude model.',
   workspaceScan: 'Runs the workspace scan that maps how member projects connect.',
   requirementsInterview: 'Makes product briefs, looks at the code for a feature and runs the interview rounds on the Requirements page.',
 });
@@ -150,8 +151,8 @@ export function renderEngineSection(host, options) {
   return {};
 }
 export const readEngineSection = (host) => readDirtyFields(host);
-const CLAUDE_HELPER_KEYS = Object.freeze({ title: 'titleModel', classifier: 'autoWorkflowModel', prDescription: 'prDescriptionModel', memoryDefrag: 'memoryDefrag', agentGen: 'agentGenModel' });
-const CLAUDE_PAIR_KEYS = new Set(['memoryDefrag', 'agentGenModel']);
+const CLAUDE_HELPER_KEYS = Object.freeze({ title: 'titleModel', classifier: 'autoWorkflowModel', prDescription: 'prDescriptionModel', memoryDefrag: 'memoryDefrag', agentGen: 'agentGenModel', naming: 'namingModel' });
+const CLAUDE_PAIR_KEYS = new Set(['memoryDefrag', 'agentGenModel', 'namingModel']);
 export function enginePatchToSettingsBody(patch) {
   const body = {};
   for (const [id, value] of Object.entries(patch || {})) {
@@ -159,12 +160,12 @@ export function enginePatchToSettingsBody(patch) {
     let match = /^models\.(claude|codex|cursor)\.steps\.(.+)$/.exec(id); if (match) { ((body.stepModels ||= {})[match[1]] ||= {})[match[2]] = value; continue; }
     match = /^models\.(codex)\.(?:utility\.)?(title|classifier|overview|prDescription|memoryDefrag|workspaceScan)$/.exec(id); if (match) ((body.utilityModels ||= {})[match[1]] ||= {})[match[2]] = value;
     // Claude's helper slots live in their own settings keys: a model id (title, Auto, PR description), and the
-    // Memory defragment and Agent generation pairs; the Requirements interview pair is its own key.
+    // Memory defragment, Agent generation and Run naming pairs; the Requirements interview pair is its own key.
     if (id === 'models.claude.requirementsInterview') {
       const pair = {}; if (value && value.model) pair.model = value.model; if (value && value.effort) pair.effort = value.effort;
       body.requirementsInterview = Object.keys(pair).length ? pair : null; continue;
     }
-    match = /^models\.claude\.(?:utility\.)?(title|classifier|prDescription|memoryDefrag|agentGen)$/.exec(id);
+    match = /^models\.claude\.(?:utility\.)?(title|classifier|prDescription|memoryDefrag|agentGen|naming)$/.exec(id);
     if (match) { const key = CLAUDE_HELPER_KEYS[match[1]]; body[key] = CLAUDE_PAIR_KEYS.has(key) ? (value && value.model ? { model: value.model, effort: value.effort || '' } : null) : (value && value.model) || ''; }
   }
   return body;

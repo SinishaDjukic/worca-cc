@@ -60,15 +60,19 @@
   --blue-bg:light-dark(#DEEFF7,#1A2A33);   --blue:#5BA6CC;   --blue-ink:light-dark(#3782A8,#86C4E3);
   --blue-ink-strong:light-dark(#2B6A8C,#86C4E3);   /* inline link text at small sizes: 5.9:1 on white (--blue-ink is 3.8:1) */
   --violet-bg:light-dark(#EAE6F8,#262336); --violet:#8C7FD6; --violet-ink:light-dark(#6353B8,#B3A8EE);
+  --violet-ink-strong:light-dark(#5B4BB0,#B3A8EE);   /* glyph on --violet-bg at tile size: 5.6:1 */
   --amber-bg:light-dark(#FCE8C8,#332715);  --amber:#E6962A;  --amber-ink:light-dark(#A66510,#F0B45A);
   --amber-ink-strong:light-dark(#8E550B,#F0B45A);
-  /* Script-only families (script-wizard plan S10): the same lightness as the six above, both themes. */
+  /* Script, agent and Marketplace kind families (script-wizard plan S10; marketplace P3): the same lightness as the six above, both themes. */
   --teal-bg:light-dark(#DDF2EF,#1A2E2B);   --teal:#4FB3A9;   --teal-ink:light-dark(#2A8A80,#86D3CA);   --teal-ink-strong:light-dark(#1F6B63,#9FE0D8);   /* teal text on --teal-bg at chip size: 5.4:1 light, 9.6:1 dark (--teal-ink is 3.6:1) */
   --pink-bg:light-dark(#FBE4EE,#33202A);   --pink:#E27BA8;   --pink-ink:light-dark(#B84A7C,#F0A2C3);
+  --pink-ink-strong:light-dark(#A63E6E,#F0A2C3);   /* glyph on --pink-bg at tile size: 4.9:1 */
   --indigo-bg:light-dark(#E3E7F9,#232739); --indigo:#6A7FD8; --indigo-ink:light-dark(#4457B5,#A3B0EE);
   --lime-bg:light-dark(#EEF4D5,#262E15);   --lime:#A3BF3A;   --lime-ink:light-dark(#6E8A14,#C7DB6E);
+  --lime-ink-strong:light-dark(#56700E,#C7DB6E);   /* glyph on --lime-bg at tile size: 5.0:1 */
   --cocoa-bg:light-dark(#F1E7DB,#2F2620);  --cocoa:#B08A5E;  --cocoa-ink:light-dark(#7E5D33,#D2B08A);
   --slate-bg:light-dark(#E8ECF0,#262A2E);  --slate:#8A96A3;  --slate-ink:light-dark(#58646F,#B3BEC8);
+  --slate-ink-strong:light-dark(#4A5661,#B3BEC8);   /* glyph on --slate-bg at tile size: 6.3:1 */
   --seq:light-dark(#B7B7BC,#8E8E92);   /* text role too (.ask-thinking-meter): 4.85:1 on panel */
   --t-md:light-dark(#5B8DEF,#7FA6F5);
   --t-md-bg:light-dark(#E4ECFD,#1E2A44);
@@ -137,6 +141,7 @@
   --btn-hover:color-mix(in srgb,var(--ink) 7%,var(--panel));
   --quiet-hover:color-mix(in srgb,var(--ink) 7%,transparent);
   --danger-hover:color-mix(in srgb,var(--ink) 7%,var(--red-bg));
+  --danger-solid-hover:color-mix(in srgb,var(--ink) 12%,var(--red-ink-strong));
   --amber-ring:color-mix(in srgb,var(--amber) 55%,var(--line-2));
   --red-ring:color-mix(in srgb,var(--red) 50%,var(--line-2));
   --red-tint:color-mix(in srgb,var(--red) 13%,transparent);
@@ -792,7 +797,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* Solid red only in a confirm dialog (spec §1.2). The hover rule is needed: .btn-danger:hover:not(:disabled) is (0,3,0)
    and would otherwise beat .confirm-modal .btn-danger (0,2,0) and flip the button back to the light fill. */
 .confirm-modal .btn-danger{background:var(--red-ink-strong);color:var(--panel);}
-.confirm-modal .btn-danger:hover:not(:disabled){background-color:color-mix(in srgb,var(--ink) 12%,var(--red-ink-strong));color:var(--panel);}
+.confirm-modal .btn-danger:hover:not(:disabled){background-color:var(--danger-solid-hover);color:var(--panel);}
 @media (pointer:coarse){.btn{min-height:40px;}.btn-icon{min-width:40px;}}
 /* An icon from ui/public/icons.mjs (icon()): the span is sized inline, its svg fills it. */
 .ic{display:inline-flex;flex:none;align-items:center;justify-content:center;}
@@ -1783,15 +1788,6 @@ dialog.discard-modal::backdrop{background:transparent;}
 .hist-merge.bad{background:var(--red-bg);color:var(--red-ink);}
 .hist-merge.unknown{background:var(--amber-bg);color:var(--amber-ink);}
 
-/* The PR link (the saved run's Details header). Without these rules it ships as a
-   default UA anchor — browser blue, underlined. A pill beside .hd-pr in the glance
-   PR states' colours (.rd-pr-fill.pr-view / .pr-merged): blue while the PR is open, violet
-   once merged. Its font and flex sizing sit with .hd-pr's rules. */
-.hd-pr-link{display:inline-flex;align-items:center;padding:9px 18px;border:1.5px solid transparent;border-radius:var(--r-sm);
-  background:var(--blue-bg);color:var(--blue-ink-strong);text-decoration:none;white-space:nowrap;}
-.hd-pr-link:hover{border-color:currentColor;}
-.hd-pr-link.merged{background:var(--slate-bg);color:var(--slate-ink);}
-
 /* Discard-worktree button. The class moved from the retired card accordion to the
    detail screen's banner block; nothing about it was card-position-dependent. */
 .hist-discard{display:inline-flex;align-items:center;
@@ -2620,6 +2616,7 @@ input.bench-case-name{width:100%;padding:9px 12px;font-size:13px;}
 #projects-list .pl-sync:not(:has(> .proj-sync:not([hidden]), > .proj-nogit)){display:none;}
 .proj-nogit{display:flex;align-items:center;gap:10px;min-height:58px;padding:9px 12px 9px 14px;border:1px solid var(--line-2);border-radius:var(--r-card);background:var(--panel);color:var(--ink-3);}
 .proj-nogit-txt{font-family:var(--mono);font-size:13px;color:var(--ink-2);}
+.proj-nogit-act{margin-left:auto;}
 #projects-list .proj-zero{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 20px;}
 #projects-list .pl-team{grid-area:team;min-width:0;}
 #projects-list .proj-open{grid-area:chev;}
@@ -2817,17 +2814,8 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .results-trunc{font-size:11px;color:var(--trunc-ink);margin-top:6px;}
 
 /* ---- Plugins view ---- */
-/* Available/Marketplaces render as one wrapper div inside the .run-list, so the
-   list's gap doesn't reach the cards — the wrappers repeat it. */
-.pl-list,.pl-orphans,.pl-available,.pl-mkts{display:flex;flex-direction:column;}
-/* Card actions live top-right of the head row. */
-.pl-mkt-actions{margin-left:auto;display:flex;align-items:center;gap:8px;}
-.pl-mkt-actions .btn svg{display:block;}
-.pl-avail-card .pl-install-avail,.pl-avail-card .pl-installed{margin-left:auto;}
-.plugin-card.pl-disabled{opacity:.62;}
 .pl-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
 .pl-head .pl-name{font-size:var(--fs-body);font-weight:600;}
-.pl-version{color:var(--ink-3);font-size:12px;}
 .pl-enable{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-body);color:var(--ink-3);cursor:pointer;}
 .pl-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
 .pl-pick-row{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);}
@@ -2842,19 +2830,12 @@ button.pd-ov-card:hover{border-color:var(--ink-3);}
 .pl-uptodate{display:flex;align-items:baseline;gap:8px;padding:4px 0;}
 .pl-uptodate .hint{margin-top:0;font-size:13px;}
 .pl-refs-list{margin:6px 0 0 18px;font-size:12px;}
-.plugin-card .mono,.pl-consent .mono,.pl-update .mono,.pl-doc-row .mono,.pl-refs .mono{font-family:var(--mono);}
+.pl-consent .mono,.pl-update .mono,.pl-doc-row .mono,.pl-refs .mono{font-family:var(--mono);}
 .pl-consent-src .pl-needs-git{font-family:var(--sans);}
 .pl-manifest-delta{margin:8px 0;}
 .pl-delta{font-size:12px;}
 .pl-delta-secret{font-size:12px;font-weight:700;color:var(--red-ink);background:var(--red-bg);border-radius:var(--r-sm);padding:3px 8px;margin:2px 0;display:inline-block;}
 #plugin-modal .card{max-width:640px;width:min(92vw,640px);max-height:80vh;overflow:auto;}
-.pl-sec-title{margin:24px 0 8px;}
-.pl-provenance{display:block;margin-top:4px;}
-.pl-mkt-url{display:block;margin-top:2px;overflow-wrap:anywhere;}
-.pl-mkt-sync{display:block;margin-top:2px;}
-.pl-mkt-warning{margin-top:4px;}
-.pl-avail-card .pl-mkt-badge{margin-left:6px;}
-.pl-avail-card .mono,.pl-mkt-row .mono{font-family:var(--mono);}
 
 /* ---- Pluggable source pane (New Pipeline) ---- */
 .sp-pane{margin-top:11px;}
@@ -3562,7 +3543,6 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 }
 
 /* ── Chat connectivity (chat-connectivity-design.md §4.8) ─────────────────── */
-.pl-channels { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 8px; }
 .pl-channel-warn { color: var(--red); font-weight: 600; }
 .pl-config-h { font-weight: 600; margin: 14px 0 6px; font-size: 13px; }
 .chat-events, .chat-channels { margin: 8px 0; }
@@ -4425,19 +4405,18 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .hd-sec-logs .log-filters{margin-bottom:10px;}
 
 /* ---------- History detail: PR controls + the "Ship it?" modal ---------- */
-/* Detail-header PR controls (spec §5.2: black pill). `.hd-pr-link`'s pill, its removed
-   underline and its open/merged colours live beside .hist-merge. */
+/* Detail-header PR controls (design system, PR controls): Create PR and Push are .btn-primary, View PR (`.hd-pr-link`,
+   open or merged) a secondary .btn; each leads with its icons.mjs glyph. These rules only place them. */
 .hd-pr,.hd-push{flex:0 0 auto;}
 .hd-pr[hidden],.hd-push[hidden]{display:none;}
-.hd-pr-link{flex:0 0 auto;font:600 var(--fs-body) var(--sans);}
+.hd-pr-link{flex:0 0 auto;}
 .hd-pr-link[hidden]{display:none;}
 /* Workspace runs: one line per member repo under the header row. */
 .hd-pr-repos{display:flex;flex-wrap:wrap;gap:6px 16px;margin:10px 0 0;padding:0;list-style:none;font:500 var(--fs-body) var(--sans);}
 .hd-pr-repos[hidden]{display:none;}
 .hd-pr-repo{display:inline-flex;align-items:center;gap:8px;}
-.hd-pr-repo-link{font-weight:600;color:var(--green-ink);text-decoration:none;}
+.hd-pr-repo-link{display:inline-flex;align-items:center;gap:4px;font-weight:600;color:var(--blue-ink-strong);text-decoration:none;}
 .hd-pr-repo-link:hover{text-decoration:underline;}
-.hd-pr-repo-link.merged{color:var(--ink-3);}
 .hd-pr-repo-note{color:var(--ink-3);}
 /* Watch PR (#619): a member row's failed toggle alert takes its own line under the row. */
 .hd-pr-repo{flex-wrap:wrap;}
@@ -4633,7 +4612,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
    node openHistDetail focuses programmatically, and for the `.hd-tab` tablist.
    `.hd-diff-file` already has its own (inset) ring and is not repeated here. */
 .hd-back:focus-visible,.pd-back:focus-visible,.pd-new:focus-visible,.pd-history:focus-visible,.pd-sec:focus-visible,.proj-open:focus-visible,.pd-ov-link:focus-visible,
-.hd-report:focus-visible,.hd-archive:focus-visible,.hd-pr-link:focus-visible,.hd-sec:focus-visible,.shipit-cancel:focus-visible{
+.hd-report:focus-visible,.hd-archive:focus-visible,.hd-sec:focus-visible,.shipit-cancel:focus-visible{
   outline:2px solid var(--ink);outline-offset:2px;}
 
 /* ---------- Run rows (.rc-*): the Schedules view's ticket and schedule rows ----------
@@ -4703,11 +4682,10 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 /* The sidebar nav item's corner (decided); the row's own divider would bend at it, so it turns transparent. */
 .runs-item.is-needs{background:color-mix(in srgb,var(--amber) 8%,transparent);border-radius:var(--r-sm);border-bottom-color:transparent;}
 .runs-item:has(> a.runs-row.selected){background:var(--field);border-radius:var(--r-sm);border-bottom-color:transparent;}
-/* Run 3 (D4): a group whose run is open — its own row's cells take the lighter fill; its member list keeps the panel. */
-.runs-item:has(> a.runs-row.member-open) > :is(.runs-pick,a.runs-row,.runs-row-tail){background:var(--row-open);align-self:stretch;}
-.runs-item:has(> a.runs-row.member-open) > .runs-pick{border-radius:var(--r-sm) 0 0 var(--r-sm);}
-.runs-item:has(> a.runs-row.member-open) > .runs-row-tail{border-radius:0 var(--r-sm) var(--r-sm) 0;}
-.runs-item:has(> a.runs-row.member-open){border-bottom-color:transparent;}
+/* One highlight at a time: a group whose run is open takes the lighter fill as one block over its whole row only while
+   collapsed (no .runs-members); expanded, the open member row is the highlight (it is .selected) and the group keeps
+   its divider. The item is painted, not its cells: .runs-pick/.runs-row-tail have fixed heights and would notch it. */
+.runs-item:has(> a.runs-row.member-open):not(:has(> .runs-members)){background:var(--row-open);border-radius:var(--r-sm);border-bottom-color:transparent;}
 .runs-pick{display:grid;place-items:center;height:36px;}
 .runs-pick .runs-check{display:none;margin:0;}
 /* Only the row itself flips its dot: hovering or focusing an expanded member must not flip its group's dot too. */
@@ -4722,8 +4700,9 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-row-sub{flex:1 0 100%;color:var(--ink-2);font-size:12px;}
 .runs-row > .runs-stage,.runs-row > .runs-row-prog{flex:1 0 100%;margin-top:6px;}
 .runs-row-tail{display:inline-flex;justify-content:flex-end;align-items:center;height:36px;}
-.runs-members{grid-column:1 / -1;list-style:none;margin:0;padding:0;border-top:1px solid var(--line);}
-.runs-members > .runs-item:last-child{border-bottom:0;}
+.runs-members{grid-column:1 / -1;list-style:none;margin:0;padding:0;}
+/* Rows inside a group draw no dividers; the group item's own bottom border separates it from the next top-level row. */
+.runs-members > .runs-item{border-bottom:0;}
 .runs-members .runs-pick,.runs-members .runs-row-title,.runs-members .runs-row-sub{padding-left:16px;}
 .runs-pr{display:inline-flex;gap:4px;align-items:center;font-size:12px;}
 .runs-pr.is-draft{color:var(--ink-2);}
@@ -4964,10 +4943,17 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-page-branch.copied .ico-copy{display:none;}
 .rd-page-branch.copied .ico-check{display:inline;color:var(--green-ink);}
 /* The card's head: the status line top left, the Live view switch (app.js paintRdLive)
-   top right, level with the state word. */
-.rd-sheet-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;min-width:0;}
+   top right, level with the state word; after it the pull request button (.rd-pr-slot, paintPrCta). The live row
+   shows only while the run has not ended and the button only once it has, so the two never meet; if they did, the
+   button takes its own column after the row. */
+.rd-sheet-head{container:rd-head / inline-size;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:start;min-width:0;}
 .rd-sheet-head > .rd-now-top{grid-area:1 / 1;}
 .rd-sheet-head > .rd-live-row{grid-area:1 / 2;height:23px;margin-left:16px;}   /* the state word's line box (18px × 1.3) */
+/* Centred on the 13px × 1.5 status line: the 32px button overhangs it by 6.25px each way, so the head is the status
+   line's height with or without the button, and its fade-out moves nothing. */
+.rd-sheet-head > .rd-pr-slot{grid-area:1 / 3;margin:-6.25px 0 -6.25px 16px;}
+/* A narrow card: the button wraps onto its own row under the status, on the left edge. */
+@container rd-head (max-width:420px){.rd-sheet-head > .rd-pr-slot{grid-area:2 / 1 / 3 / -1;justify-self:start;margin:12px 0 0;}}
 /* The status line (.rd-now-top) is the shared status block (run-status-card.mjs, .run-status below). */
 
 /* The status glyph (run-glance.mjs renderOrb): colour is the state. */
@@ -5054,22 +5040,22 @@ button.rd-srow:hover{background:var(--hover-on-field);}
 .rd-stats .rd-stat-link{color:inherit;text-decoration:none;}
 .rd-stats .rd-stat-link:hover b{text-decoration:underline;}
 .rd-stats > div > span{font-size:var(--fs-meta);color:var(--ink-2);}
-.rd-cta-ico{flex:0 0 auto;}
 /* The pull request button's slot (app.js paintPrCta): one node for the screen's life, so the
-   lookup's placeholder can become the button. Pending: a white button with a hairline and a
-   spinner, at the button's own height (.rd-pr-wait holds its glyph and line, invisible). On
-   the answer, the state's colour grows as a circle from the spinner (.rd-pr-fill, the size of
-   the slot's diagonal and more, clipped by the slot's radius), the spinner fades, then the icon
-   and label come in. Compositor-only: transform and opacity, will-change only on the nodes
-   that animate; the slot's height never changes during the morph. With no button after all,
-   the placeholder fades out and the slot then folds away (the one height change, at the end). */
-.rd-pr-slot{position:relative;border-radius:var(--r-ctrl);}
+   lookup's placeholder can become the button. It is as wide as its button, never the card.
+   Pending: a white button with a hairline and a spinner, at the button's own size (.rd-pr-wait
+   holds its glyph and line, invisible). On the answer, the state's colour grows as a circle from
+   the spinner (.rd-pr-fill, the size of the slot's diagonal and more, clipped by the slot's
+   radius), the spinner fades, then the icon and label come in. Compositor-only: transform and
+   opacity, will-change only on the nodes that animate; the slot's height never changes during
+   the morph. With no button after all, the placeholder fades out in place (in a narrow head, where
+   the slot is a row of its own, that row then closes at once: accepted, it is a rare case). */
+.rd-pr-slot{position:relative;width:fit-content;border-radius:var(--r-ctrl);}
 .rd-pr-slot[hidden]{display:none;}
 .rd-pr-status[hidden]{display:none;}
-/* An open PR with a status: the button and its footer are one card. */
+/* The PR bar: the run's own PR, its checks and Watch, as one card; nothing (no gap) without them. */
 .rd-pr-box:has(> .rd-pr-status:not([hidden])){border-radius:var(--r-ctrl);overflow:hidden;background:var(--blue-wash);
   box-shadow:inset 0 0 0 1px var(--blue-line);}
-.rd-pr-box:has(> .rd-pr-status:not([hidden])) [data-rd-cta]{border-radius:var(--r-sm) var(--r-sm) 0 0;}
+.rd-pr-box:not(:has(> .rd-pr-status:not([hidden]))){display:none;}
 .rd-pr-status{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;
   border-top:1px solid var(--blue-line);font-size:13px;color:var(--ink-2);}
 .rd-prs-sum{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0;}
@@ -5096,7 +5082,7 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 .rd-prs-watch{display:flex;align-items:center;gap:8px;flex:0 0 auto;margin-left:auto;cursor:pointer;font-weight:500;}
 .rd-pr-slot:is(.is-pending,.is-morph,.is-out){overflow:hidden;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);}
 .rd-pr-slot > [data-rd-cta]{position:relative;}   /* above the colour layer */
-.rd-pr-wait{display:flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;width:100%;height:32px;padding:0 12px;
+.rd-pr-wait{display:flex;align-items:center;justify-content:center;gap:6px;box-sizing:border-box;height:32px;padding:0 12px;
   font:500 13px var(--sans);color:var(--ink-2);cursor:default;}
 .rd-pr-wait > *{opacity:0;}
 .rd-pr-spin{position:absolute;left:50%;top:50%;width:20px;height:20px;margin:-10px 0 0 -10px;box-sizing:border-box;
@@ -5109,14 +5095,11 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 .rd-pr-slot.is-morph > [data-rd-cta]{background:transparent;transition:none;}
 .rd-pr-slot.is-morph > [data-rd-cta] > *{will-change:transform,opacity;animation:rd-pr-in .18s ease-out .22s both;}
 .rd-pr-slot.is-morph > .rd-pr-spin{animation:ws-spin .9s linear infinite,rd-pr-fade .15s ease-out both;}
-.rd-pr-slot.is-out{will-change:opacity;animation:rd-pr-fade .18s ease-out both,rd-pr-fold .2s ease-in-out .18s both;}
+.rd-pr-slot.is-out{will-change:opacity;animation:rd-pr-fade .18s ease-out both;}
 @keyframes rd-pr-grow{from{transform:scale(0);}to{transform:scale(1);}}
 @keyframes rd-pr-fade{to{opacity:0;}}
 @keyframes rd-pr-in{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:none;}}
 @keyframes rd-pr-show{from{opacity:0;}to{opacity:1;}}
-/* The no-button exit: from the slot's height (app.js sets --h) to nothing, the sheet's 16px gap
-   above it included, so hiding it afterwards moves nothing. */
-@keyframes rd-pr-fold{from{height:var(--h);}to{height:0;margin-top:-16px;}}
 @media (prefers-reduced-motion: reduce){
   .rd-pr-fill{animation-name:rd-pr-show;}
   .rd-pr-slot.is-morph > [data-rd-cta] > *{animation-name:rd-pr-show;}
@@ -7910,7 +7893,6 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 /* Connectors › Sets and Servers (mcp-view.mjs, mcp-definition-form.mjs): layout only; cards, chips, badges,
    switches and buttons are the shared ones. */
 [data-view="connectors"] .topbar{flex-wrap:wrap;}
-[data-view="marketplace"] .topbar{flex-wrap:wrap;}
 .mcp-sets{display:grid;grid-template-columns:minmax(220px,300px) minmax(0,1fr);gap:18px;align-items:start;}
 .mcp-setlist{padding:var(--pad-tile);display:flex;flex-direction:column;gap:2px;}
 .mcp-setrow{display:flex;flex-direction:column;gap:3px;text-align:left;padding:10px 12px;border:0;border-radius:var(--r-sm);background:none;font:inherit;color:inherit;cursor:pointer;}
@@ -8713,14 +8695,15 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .ask-prcard-branch{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;min-width:0;}
 .ask-prcard-stat{font-size:12px;color:var(--ink-2);}
 .ask-prcard-links{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;}
-.ask-prcard-link{color:var(--blue-ink-strong);}
+.ask-prcard-link{color:var(--blue-ink-strong);font-weight:600;}
 .ask-prcard-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm);}
 /* Shaper s4: the Ship card (ui/public/shape/ship-card.mjs), in the chat and on the group page / Plans tab, and its
    release row (ui/public/shape/release-row.mjs), also in the Ship it dialog. Tight radii, no pills. */
 .ask-shipcard-stats{font-size:var(--fs-body);color:var(--ink);font-variant-numeric:tabular-nums;}
 .ask-shipcard-why,.ask-shipcard-closed{font-size:12px;color:var(--ink-2);}
 .ask-shipcard-done{font-weight:600;color:var(--green-ink);}
-.ask-shipcard-pr,.ask-shipcard-rel a{color:var(--blue-ink-strong);font-weight:400;}
+.ask-shipcard-pr{color:var(--blue-ink-strong);font-weight:600;}
+.ask-shipcard-rel a{color:var(--blue-ink-strong);font-weight:400;}
 .ask-shipcard-rel{font-size:12px;color:var(--ink-2);overflow-wrap:anywhere;}
 .ask-shipcard-rel.is-failed{color:var(--red-ink);}
 .ask-shipcard-wait{font-size:var(--fs-meta);color:var(--ink-2);}
@@ -8763,7 +8746,7 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-rc-notes[hidden]{display:none;}
 .chat-rc-watch{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;margin-top:6px;font-size:12px;color:var(--red-ink);min-width:0;}
 .chat-rc-watch[hidden]{display:none;}
-.chat-rc-watch-pr{color:var(--blue-ink-strong);}
+.chat-rc-watch-pr{color:var(--blue-ink-strong);font-weight:600;}
 .chat-rc-watch-ask{padding:0;border:0;background:none;color:var(--blue-ink-strong);font:inherit;cursor:pointer;}
 .chat-rc-watch-pr:focus-visible,.chat-rc-watch-ask:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm);}
 .chat-rc-changes[hidden]{display:none;}
@@ -8919,10 +8902,10 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-rc-res-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:12px;}
 .chat-rc-res-err{margin-right:auto;font-size:12px;color:var(--red-ink-soft);}
 .chat-rc-res-err[hidden]{display:none;}
-.chat-rc-create-pr,.chat-rc-view-pr,.chat-rc-apply{display:inline-flex;align-items:center;height:30px;padding:0 14px;border:0;border-radius:var(--r-sm);background:var(--ink);color:var(--panel);font:inherit;font-weight:600;font-size:12px;text-decoration:none;white-space:nowrap;cursor:pointer;}
-.chat-rc-create-pr:hover,.chat-rc-view-pr:hover,.chat-rc-apply:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);}
-.chat-rc-create-pr:disabled,.chat-rc-apply:disabled{opacity:.5;cursor:default;}
-.chat-rc-create-pr:focus-visible,.chat-rc-view-pr:focus-visible,.chat-rc-apply:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.chat-rc-apply{display:inline-flex;align-items:center;height:30px;padding:0 14px;border:0;border-radius:var(--r-sm);background:var(--ink);color:var(--panel);font:inherit;font-weight:600;font-size:12px;text-decoration:none;white-space:nowrap;cursor:pointer;}
+.chat-rc-apply:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);}
+.chat-rc-apply:disabled{opacity:.5;cursor:default;}
+.chat-rc-apply:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .chat-rc-foot{display:flex;align-items:center;gap:8px;margin-top:14px;}
 .chat-rc-foot[hidden]{display:none;}
 .chat-rc-factions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
@@ -9607,6 +9590,9 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .rd-kv-row[hidden]{display:none;}
 .rd-kv-k{font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);}
 .rd-kv-v{margin:0;min-width:0;font-size:var(--fs-body);line-height:var(--lh-body);color:var(--ink);display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;overflow-wrap:anywhere;}
+/* A quiet button that leads a value (Add to group…, the branch chip) pulls back by its padding and border, so its text
+   sits on the value column like Project's; its hover fill still shows. Trailing Add/Edit buttons keep their place. */
+.rd-kv-v > .btn-sm.btn-quiet:first-child{margin-inline-start:-11px;}
 @container rd-kv (max-width:420px){.rd-kv-row{grid-template-columns:minmax(0,1fr);gap:2px;}}
 .rd-kv:not(:has(> .rd-kv-row:not([hidden]))){display:none;}
 /* D30, run 4 D1: while a shaped run waits on the person (Clarify or the plan), the question card is the page: the status
@@ -9854,6 +9840,371 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .ask-ref-pill.tone-blue{color:var(--h-blue-ink);}
 .ask-ref-pill.tone-slate{color:var(--slate-ink);}
 
+/* ── marketplace P3 ── */
+/* Plugin icons (U7, board 0.1): the kind colour lives only in this tile; hue families carry the dark arms. */
+.mk-mt{display:inline-flex;align-items:center;justify-content:center;flex:none;width:40px;height:40px;border-radius:var(--r-md);}
+.mk-mt-sm{width:30px;height:30px;border-radius:var(--r-sm);}
+.mk-mt-lg{width:56px;height:56px;}
+.mk-t-src{background:var(--blue-bg);color:var(--blue-ink-strong);}
+.mk-t-chat{background:var(--violet-bg);color:var(--violet-ink-strong);}
+.mk-t-mcp{background:var(--teal-bg);color:var(--teal-ink-strong);}
+.mk-t-model{background:var(--indigo-bg);color:var(--indigo-ink);}
+.mk-t-agent{background:var(--peach-bg);color:var(--h-peach-ink);}
+.mk-t-script{background:var(--cocoa-bg);color:var(--cocoa-ink);}
+.mk-t-skill{background:var(--lime-bg);color:var(--lime-ink-strong);}
+.mk-t-wf{background:var(--slate-bg);color:var(--slate-ink-strong);}
+.mk-t-mix{background:var(--pink-bg);color:var(--pink-ink-strong);}
+.mk-t-none{background:var(--field);color:var(--ink-2);}
+.mk-t-n{background:var(--field);color:var(--ink-2);box-shadow:inset 0 0 0 1px var(--line-2);}
+.mk-t-mkt{background:var(--ink);color:var(--on-ink);}
+/* Facet dots (L13): the kind's flat hue. */
+.mk-facet-dot{width:8px;height:8px;border-radius:50%;flex:none;}
+.mk-dot-src{background:var(--blue);}
+.mk-dot-chat{background:var(--violet);}
+.mk-dot-mcp{background:var(--teal);}
+.mk-dot-model{background:var(--indigo);}
+.mk-dot-agent{background:var(--peach);}
+.mk-dot-script{background:var(--cocoa);}
+.mk-dot-skill{background:var(--lime);}
+.mk-dot-wf{background:var(--slate);}
+/* Chips (SM19): the one .badge; status tones on the -ink-strong shades (L19, >= 4.5:1). The global .badge tones are unchanged. */
+.badge.mk-chip{gap:4px;}
+.badge.mk-chip-n{background:var(--field);color:var(--ink-2);}
+.badge.mk-chip-ok{background:var(--green-bg);color:var(--green-ink-strong);}
+.badge.mk-chip-upd{background:var(--blue-bg);color:var(--blue-ink-strong);}
+.badge.mk-chip-warn{background:var(--amber-bg);color:var(--amber-ink-strong);}
+.badge.mk-chip-bad{background:var(--red-bg);color:var(--red-ink-strong);}
+.badge.mk-chip-off{background:var(--hover);color:var(--ink-2);}
+.badge.mk-chip-built{background:var(--slate-bg);color:var(--slate-ink-strong);}
+
+/* Sheet and dialog (CONTRACT §3.3): body-level .viewer-modal hosts, so dialogOpen() and modal-guard see them. */
+.viewer-modal.mk-sheet-host{display:block;padding:0;background:var(--scrim-soft);}
+.mk-sheet{position:absolute;top:0;right:0;bottom:0;width:min(600px,100%);display:flex;flex-direction:column;background:var(--panel);box-shadow:var(--shadow-sheet);}
+.mk-sheet:focus,.mk-dialog:focus{outline:none;}
+.mk-sheet-head,.mk-dialog-head{display:flex;align-items:flex-start;gap:12px;}
+.mk-sheet-head{padding:24px 24px 16px;border-bottom:1px solid var(--line);}
+.mk-sheet-slot{flex:1;min-width:0;display:flex;flex-direction:column;gap:16px;}
+.mk-sheet-body{flex:1;min-height:0;overflow:auto;padding:24px;display:flex;flex-direction:column;gap:24px;}
+/* A long body scrolls; its rows keep their height (a .btn or .input placed straight in it would shrink to its text). */
+.mk-sheet-body > *,.mk-dialog-body > *{flex-shrink:0;}
+.mk-sheet-foot,.mk-dialog-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;}
+.mk-sheet-foot{padding:16px 24px;border-top:1px solid var(--line);}
+.mk-sheet-foot:empty,.mk-dialog-foot:empty{display:none;}
+.mk-close{flex:none;}
+.mk-dialog-head > .mk-dlg-close{margin-left:auto;flex:none;}
+.viewer-modal.mk-dialog-host{z-index:52;background:var(--scrim-soft);}
+.mk-dialog{width:min(520px,100%);max-height:calc(100vh - 48px);display:flex;flex-direction:column;background:var(--panel);border-radius:var(--r-card);box-shadow:var(--shadow-pop);}
+.mk-dialog[data-width="sm"]{width:min(420px,100%);}
+.mk-dialog[data-width="lg"]{width:min(600px,100%);}
+.mk-dialog-head{padding:24px 24px 0;}
+.mk-dialog-body{min-height:0;overflow:auto;padding:16px 24px;display:flex;flex-direction:column;gap:16px;}
+.mk-dialog-foot{padding:8px 24px 24px;}
+/* Destructive actions live in dialogs (U8): solid red there, as in a confirm (.btn-danger is tinted elsewhere). */
+.mk-dialog .btn-danger{background:var(--red-ink-strong);color:var(--panel);}
+.mk-dialog .btn-danger:hover:not(:disabled){background-color:var(--danger-solid-hover);color:var(--panel);}
+/* A ⋯ menu (menu.mjs appends to <body>, z 45) opened from a sheet or dialog floats above it; #confirm-modal (60) stays on top. */
+body:has(> .mk-layer:not(.hidden)) > .wfv-menu{z-index:58;}
+.wfv-menu-ic{color:var(--ink-2);}
+.wfv-menu-item.is-danger{color:var(--red-ink-strong);}
+.wfv-menu-item.is-danger .wfv-menu-ic{color:inherit;}
+@media (max-width:600px){.mk-sheet-head,.mk-sheet-body,.mk-sheet-foot{padding-left:16px;padding-right:16px;}}
+
+/* Page shell (CONTRACT §5): the tabs are the header (no page intro, L18); counts in tabs and section heads. */
+.mk-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;}
+/* The tab strip keeps one height on every tab, with header actions or without: 4px over the 32px tabs = the actions' 4px. */
+.mk-tabs{flex:1 1 auto;padding-top:4px;}
+a.tab.mk-tab{text-decoration:none;}
+.mk-head-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-bottom:4px;}
+.mk-head-actions:empty{display:none;}
+.mk-count{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--r-xs);background:var(--line);color:var(--ink-2);font:500 var(--fs-caption)/1 var(--sans);font-variant-numeric:tabular-nums;}
+.mk-panel{margin-top:24px;}
+/* The page's message line takes no room until it has something to say: the tabs start where every page's first line does. */
+[data-view="marketplace"] > .form-msg:empty{margin:0;min-height:0;}
+/* The shared meta line (SM23 values; defined here because Browse paints it first — P4/P5 reuse it, no second rule). */
+.mk-meta{margin:0;font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);overflow-wrap:anywhere;}
+/* Versions everywhere on the page (SM30, SM57): sans with tabular figures, never mono. P4–P7 reuse span.mk-ver. */
+.mk-ver{font-variant-numeric:tabular-nums;}
+/* A sha standing in for a missing version is a code-like value (SM30): mono. */
+.mk-ver.mk-sha{font-family:var(--mono);font-variant-numeric:normal;}
+
+/* Browse (board 1.1, L9): a page-scoped search and facet rail beside a 270px-minimum tile grid (docs/design-system.md › Marketplace exceptions). */
+.mk-browse{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start;}
+.mk-rail{flex:1 1 200px;max-width:216px;min-width:0;display:flex;flex-direction:column;gap:2px;}
+.mk-search{position:relative;margin-bottom:12px;}
+.mk-search > .ic{position:absolute;left:10px;top:8px;color:var(--ink-2);pointer-events:none;}
+.mk-search .input{padding-left:32px;padding-right:32px;}
+#mk-search::-webkit-search-cancel-button{-webkit-appearance:none;appearance:none;}
+.mk-search-clear{position:absolute;right:2px;top:2px;}
+.mk-rail-label{padding:0 10px 4px;color:var(--ink-2);font:600 var(--fs-meta)/var(--lh-body) var(--sans);}
+.mk-rail-label.mk-from-label{padding-top:16px;}
+.mk-facet{display:flex;align-items:center;gap:8px;width:100%;min-height:32px;padding:6px 10px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:500 var(--fs-body)/var(--lh-title) var(--sans);text-align:left;cursor:pointer;}
+.mk-facet:hover{background:var(--hover);color:var(--ink);}
+.mk-facet[aria-pressed="true"]{background:var(--panel);color:var(--ink);}
+.mk-facet:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.mk-facet-name{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0;overflow-wrap:anywhere;}
+.mk-facet-label{min-width:0;overflow-wrap:anywhere;}
+.mk-facet-n{margin-left:auto;color:var(--ink-2);font-size:var(--fs-meta);font-variant-numeric:tabular-nums;}
+.mk-rail-sep{height:1px;margin:12px 10px;background:var(--line-2);}
+.mk-hide{display:flex;align-items:center;gap:8px;min-height:32px;padding:0 10px;color:var(--ink-2);cursor:pointer;}
+.mk-groups{flex:999 1 560px;min-width:0;display:flex;flex-direction:column;gap:24px;}
+.mk-group{display:flex;flex-direction:column;gap:12px;}
+.mk-group-head{display:flex;align-items:center;gap:8px;}
+.mk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(270px,100%),1fr));gap:12px;}
+.mk-tile{display:flex;flex-direction:column;gap:12px;min-width:0;padding:16px;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.mk-tile:hover{border-color:var(--hover-outline);}
+.mk-tile:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.mk-tile-top{display:flex;align-items:center;gap:12px;min-width:0;}
+.mk-tile-id{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;}
+.mk-tile-name{font:600 var(--fs-body)/var(--lh-title) var(--sans);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mk-tile-meta{display:flex;align-items:center;gap:6px;min-width:0;color:var(--ink-2);font-size:var(--fs-meta);}
+.mk-tile-mkt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mk-tile-meta > .mk-ver{flex:none;max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mk-tile-desc{min-height:36px;color:var(--ink-2);font-size:var(--fs-meta);line-height:var(--lh-body);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;}
+/* 28px: an Install button and the 18px chips sit on one line across a row of tiles. */
+.mk-tile-foot{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-height:28px;margin-top:auto;}
+.mk-tile-status{margin-left:auto;}
+/* Refresh marketplaces while a refresh runs (LC-P3-15): its glyph turns, as History's refresh does. */
+.mk-refresh[aria-busy="true"]{cursor:progress;}
+.mk-refresh[aria-busy="true"] svg{animation:ws-spin .9s linear infinite;}
+@media (prefers-reduced-motion:reduce){.mk-refresh[aria-busy="true"] svg{animation:none;}}
+a.badge.mk-health{text-decoration:none;}
+a.badge.mk-health:hover{text-decoration:underline;}
+a.badge.mk-health:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* Centred empty states (board 4.2): a 56px tile, a title, one line, one action. */
+.mk-empty{display:flex;flex-direction:column;align-items:center;gap:12px;max-width:420px;margin:48px auto;text-align:center;}
+.mk-empty-title{margin:0;font:600 var(--fs-section)/var(--lh-title) var(--sans);}
+.mk-empty-add{display:flex;align-items:flex-start;gap:8px;width:100%;text-align:left;}
+.mk-empty-field{flex:1;min-width:0;}
+.mk-empty-add > .btn{margin-top:2px;}   /* the 28px Add centred on the 32px field */
+.mk-empty-add > .btn[aria-busy="true"]{cursor:progress;opacity:.55;}
+@media (max-width:760px){.mk-rail{max-width:none;flex-basis:100%;}}
+
+/* ── marketplace P4 ── */
+/* Plugin sheet, install mode (Review → Install → Set up → Done) and the shared Set up fields. Tokens and scale sizes only. */
+.mk-stack{display:flex;flex-direction:column;gap:24px;}
+.mk-sheet-id{display:flex;align-items:flex-start;gap:12px;}
+.mk-sheet-id-main{flex:1;min-width:0;padding-top:4px;}
+.mk-sheet-id-main .subpage-title{overflow-wrap:anywhere;}
+.mk-steps{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0;padding:0;list-style:none;}
+.mk-step{display:inline-flex;align-items:center;gap:8px;font-size:var(--fs-body);color:var(--ink-2);}
+.mk-step[aria-current="step"]{color:var(--ink);font-weight:600;}
+.mk-step-n{display:grid;place-items:center;width:20px;height:20px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font-size:var(--fs-caption);font-weight:600;}
+.mk-step.is-done .mk-step-n{background:var(--green-bg);color:var(--green-ink-strong);}
+.mk-step[aria-current="step"] .mk-step-n{background:var(--ink);color:var(--on-ink);}
+.mk-step-sep{width:16px;height:1px;background:var(--line-2);}
+.mk-desc{margin:0;color:var(--ink);}
+.mk-sec{display:flex;flex-direction:column;gap:8px;}
+.mk-list{margin:0;padding:0 12px;list-style:none;border:1px solid var(--line);border-radius:var(--r-md);}
+.mk-list-row{display:flex;align-items:center;gap:12px;padding:12px 0;}
+.mk-list-row + .mk-list-row{border-top:1px solid var(--line);}
+.mk-row-main{flex:1;min-width:0;overflow-wrap:anywhere;}
+.mk-row-title{font-weight:600;overflow-wrap:anywhere;}
+.mk-mono{font-family:var(--mono);}
+.mk-ico{display:grid;place-items:center;flex:none;width:30px;height:30px;border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);}
+.mk-wash{display:flex;align-items:center;gap:8px;padding:12px;border-radius:var(--r-sm);background:var(--field);color:var(--ink);font-size:var(--fs-body);}
+.mk-wash > .ic{flex:none;}
+.mk-wash-ok{background:var(--green-bg);color:var(--green-ink-strong);}
+.mk-wash-bad{background:var(--red-bg);color:var(--red-ink-strong);}
+.mk-wash-title{font-weight:600;}
+.mk-wash-text{min-width:0;overflow-wrap:anywhere;}
+.mk-wash-end{margin-left:auto;}
+.mk-setup-line{overflow-wrap:anywhere;}
+.mk-src{display:flex;align-items:center;flex-wrap:wrap;gap:8px;color:var(--ink-2);}
+.mk-src-main{flex:1;min-width:0;display:flex;flex-wrap:wrap;align-items:baseline;column-gap:8px;}
+.mk-src-url{color:var(--ink);overflow-wrap:anywhere;}
+.mk-src .pl-needs-git{color:var(--amber-ink-strong);}
+.mk-link{display:inline-flex;align-items:center;gap:4px;flex:none;font-size:var(--fs-meta);font-weight:500;color:var(--blue-ink-strong);white-space:nowrap;}
+.mk-setup-h{margin:0 0 16px;}
+.mk-req{margin-left:8px;font-size:var(--fs-caption);font-weight:400;color:var(--ink-2);}
+.mk-secret{position:relative;}
+.mk-secret > .ic{position:absolute;left:10px;top:8px;color:var(--ink-3);pointer-events:none;}
+.mk-secret > .input{padding-left:32px;}
+.mk-secret-set{display:flex;align-items:center;gap:8px;}
+.mk-secret-dots{display:flex;align-items:center;flex:1;min-width:0;color:var(--ink-2);}
+.mk-disc{align-self:flex-start;}
+.mk-disc[aria-expanded="true"] > .ic{transform:rotate(90deg);}
+.mk-done-hero{display:flex;flex-direction:column;align-items:center;gap:12px;padding:16px 0 4px;text-align:center;}
+.mk-ok-tile{display:grid;place-items:center;width:56px;height:56px;border-radius:var(--r-md);background:var(--green-bg);color:var(--green-ink-strong);}
+.mk-chips{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;}
+.mk-links{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;}
+.mk-lrow{display:flex;align-items:center;gap:12px;min-height:40px;padding:0 12px;color:var(--ink);font-weight:500;text-decoration:none;}
+.mk-lrow + .mk-lrow{border-top:1px solid var(--line);}
+.mk-lrow:hover{background:var(--hover);color:var(--ink);text-decoration:none;}
+.mk-lrow:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.mk-lrow > .ic{margin-left:auto;color:var(--ink-3);}
+.mk-foot-start{margin-right:auto;}
+
+/* ── marketplace P5 ── */
+/* Installed tab (board 3.1): one column; each list is ONE card of divided rows (canvas .card.rows). P4's
+   .mk-row-main / .mk-meta / .mk-mono / .mk-list* / .mk-sec / .mk-link are reused as they are (SM23). */
+.mk-installed{display:flex;flex-direction:column;gap:24px;}
+.mk-sec-head{display:flex;align-items:center;gap:8px;margin:0 0 12px;}
+.mk-sec-head .section-title{margin:0;}
+.mk-rows{list-style:none;margin:0;padding:0;}
+.mk-rows.card{padding:0;}
+.mk-row{display:flex;align-items:center;gap:12px;padding:12px 16px;min-width:0;}
+.mk-rows > .mk-row + .mk-row{border-top:1px solid var(--line);}
+.mk-row > .mk-row-main{display:flex;flex-direction:column;gap:2px;}
+.mk-row-line{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-width:0;}
+.mk-pname{font-size:var(--fs-body);font-weight:600;color:var(--ink);overflow-wrap:anywhere;}
+button.mk-name{background:none;border:0;padding:0;margin:0;font:inherit;font-size:var(--fs-body);font-weight:600;color:var(--ink);text-align:left;cursor:pointer;overflow-wrap:anywhere;}
+button.mk-name:hover{text-decoration:underline;}
+button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+.mk-row-line .mk-ver,.mk-id{font-size:var(--fs-meta);color:var(--ink-2);overflow-wrap:anywhere;}
+.mk-meta a{color:var(--blue-ink-strong);}
+.mk-lines{list-style:none;margin:2px 0 0;padding:0;font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);overflow-wrap:anywhere;}
+/* A problem row with server text: tile and button on the first line; on a phone the button drops below the text. */
+.mk-row:has(> .mk-row-main > .mk-lines){flex-wrap:wrap;align-items:flex-start;}
+.mk-row:has(> .mk-row-main > .mk-lines) > .mk-row-main{flex:1 1 240px;}
+.mk-row:has(> .mk-row-main > .mk-lines) > .btn{margin-left:auto;}
+.mk-meta a:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+.pl-channel .mk-live-dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:none;}
+.mk-switch{display:inline-flex;align-items:center;flex:none;min-height:28px;padding:0 4px;cursor:pointer;}
+.mk-policy{padding:0;}
+.mk-policy-head{display:flex;align-items:center;gap:12px;padding:12px 16px;}
+.mk-policy-title{font-size:var(--fs-body);font-weight:600;}
+.mk-policy-id{display:flex;flex-wrap:wrap;align-items:baseline;gap:0 12px;flex:1;min-width:0;}
+.mk-policy .mk-rows{border-top:1px solid var(--line);}
+.mk-leftover{display:flex;flex-direction:column;gap:8px;}
+/* Remove / Blocked / Purge (board 3.4) inside P3's .mk-dialog. */
+#mk-dialog:is([data-kind="remove"],[data-kind="blocked"],[data-kind="purge"]) > .mk-dialog-head{align-items:center;}
+.mk-dlg-body{display:flex;flex-direction:column;gap:16px;}
+#mk-dialog[data-kind="purge"] .mk-dlg-body{gap:4px;}
+.mk-dlg-body p,.mk-dlg-body .subsection-title{margin:0;}
+.mk-goes,.mk-changes{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;}
+.mk-goes > li,.mk-changes > li{display:flex;align-items:center;gap:8px;min-width:0;}
+.mk-goes-k{font-weight:500;}
+.mk-purge-opt{display:flex;flex-direction:column;gap:4px;padding-top:12px;border-top:1px solid var(--line);}
+.mk-check{display:flex;align-items:center;gap:8px;cursor:pointer;}
+.mk-purge-opt .mk-consequence{padding-left:26px;}
+
+/* ── marketplace P6 ── */
+/* The installed plugin sheet (board 3.3) and the Update review sheet (board 3.2). The sheet head, sections, washes,
+   links and source row are P4's shared classes; chips and tiles are P3's. Tokens and scale sizes only. */
+.mk-manage-head{display:flex;flex-direction:column;gap:12px;}
+.mk-manage-meta{display:flex;align-items:center;flex-wrap:wrap;gap:4px;}
+.mk-manage-switch{flex:none;gap:8px;min-height:32px;font-weight:500;}
+.mk-manage-upd{display:flex;align-items:center;flex-wrap:wrap;gap:8px;}
+.mk-manage-body>.mk-sec{gap:12px;padding:16px 0;}
+.mk-manage-body>.mk-sec+.mk-sec{border-top:1px solid var(--line);}
+.mk-manage-body>.mk-sec:first-child{padding-top:0;}
+.mk-manage-body>.mk-sec:last-child{padding-bottom:0;}
+.mk-manage-body>.mk-sec>.mk-chip{align-self:flex-start;}
+.mk-manage-body .mk-sec-head{align-items:baseline;margin:0;}
+.mk-sec-head .mk-health-run{margin-left:auto;}
+.mk-setup-group{display:flex;flex-direction:column;gap:12px;}
+.mk-setup-group+.mk-setup-group{padding-top:12px;border-top:1px solid var(--line);}
+.mk-profile-actions,.mk-test-row,.mk-test-out,.mk-chan-row,.mk-broker{display:flex;align-items:center;flex-wrap:wrap;gap:8px;}
+.mk-profile-actions{margin-top:8px;}
+.mk-test-err{color:var(--red-ink-strong);font-size:var(--fs-meta);}
+.mk-checks{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;}
+.mk-checks>.mk-check{display:flex;align-items:center;gap:8px;min-height:28px;cursor:default;}
+.mk-checks>.mk-check+.mk-check{border-top:1px solid var(--line);}
+.mk-check-ic{display:inline-flex;flex:none;color:var(--green-ink-strong);}
+.mk-check-fail .mk-check-ic,.mk-check-fail .mk-meta{color:var(--red-ink-strong);}
+/* 108px for the board's ids; a longer one (channel-module:slack, model-secret:<KEY>) grows the column and wraps, never an ellipsis. */
+.mk-check-id{flex:0 0 auto;min-width:108px;max-width:50%;overflow-wrap:anywhere;}
+.mk-add-row{gap:12px;}
+.mk-add-row>div{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;}
+.mk-add-name{font-weight:500;}
+.mk-remove-row{flex-direction:row;}
+.mk-upd-list{display:flex;flex-direction:column;gap:12px;}
+.mk-upd{display:flex;flex-direction:column;border:1px solid var(--line-2);border-radius:var(--r-md);overflow:hidden;}
+.mk-upd-top{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-height:64px;padding:12px 16px;}
+.mk-upd-name{min-width:0;font-weight:600;overflow-wrap:anywhere;}
+.mk-upd-ver{color:var(--ink-2);white-space:nowrap;}
+.mk-incl{display:inline-flex;align-items:center;gap:8px;margin-left:auto;font-weight:500;cursor:pointer;}
+.mk-upd>.mk-upd-err{margin:0 16px 12px;}
+.mk-upd>.mk-disc{display:flex;align-items:center;align-self:stretch;gap:8px;width:100%;min-height:40px;margin:0;padding:0 16px;border:0;
+  border-top:1px solid var(--line);border-radius:0;background:none;color:var(--ink);font:inherit;font-weight:500;text-align:left;cursor:pointer;}
+.mk-upd>.mk-disc:hover{background:var(--hover);}
+.mk-upd>.mk-disc:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.mk-upd>.mk-disc .mk-mono{color:var(--ink-2);font-weight:400;}
+.mk-upd-panel{display:flex;flex-direction:column;gap:16px;padding:4px 16px 16px;}
+.mk-upd-panel[hidden]{display:none;}
+.mk-commits{margin:8px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:4px;}
+.mk-commits .mk-sha{color:var(--ink-2);}
+.mk-diffstat{margin:0;color:var(--ink-2);}
+.mk-ins{color:var(--green-ink-strong);}
+.mk-del{color:var(--red-ink-strong);}
+.mk-deltas{display:flex;flex-direction:column;gap:8px;}
+.mk-delta{display:flex;align-items:center;gap:8px;min-height:40px;padding:8px 12px;border-radius:var(--r-sm);background:var(--field);color:var(--ink);}
+.mk-delta.is-red{background:var(--red-bg);color:var(--red-ink-strong);}
+.mk-review{display:flex;align-items:center;gap:8px;min-height:40px;padding:0 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);font-weight:500;cursor:pointer;}
+/* The review's foot wraps (board 3.2), and a label with a long plugin name wraps inside its button: "k of n ready" and
+   "Update <x> only" never run off the sheet on a narrow screen. Remove <x>… in the manage sheet likewise. */
+#mk-sheet[data-mode="update"]>.mk-sheet-foot{flex-wrap:wrap;}
+.mk-upd-only,.mk-upd-go,.mk-remove{max-width:100%;white-space:normal;overflow-wrap:anywhere;}
+/* Needs git on an update card: the -ink-strong shade, as in P4's source row (--amber-ink on --amber-bg is 3.9:1). */
+.mk-upd-top .pl-needs-git{color:var(--amber-ink-strong);}
+/* "Model secrets" sits as close to its row as a source group's name does (P4's 16px margin + the 12px gap was 28px). */
+.mk-setup-group>.mk-setup-h{margin-bottom:4px;}
+/* The plugin sheet's links (Adds landings, Key page, View on GitHub) take the worca ring, not the browser's, and a control
+   Tab scrolls to the edge of the sheet body keeps its whole ring in view. Scoped to P6's mode: .mk-link and .mk-sheet-body are
+   P4's and P3's. */
+#mk-sheet[data-mode="manage"] .mk-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+#mk-sheet[data-mode="manage"]>.mk-sheet-body{scroll-padding-block:8px;}
+
+/* ── marketplace P7 ── */
+/* Marketplaces tab (board 4.1): one card per marketplace; Remove lives in its ⋯ menu. Tokens and scale sizes only. */
+.mk-mkts{display:flex;flex-direction:column;gap:12px;}
+.mk-mkt{display:flex;align-items:flex-start;gap:12px;padding:16px 20px;}
+.mk-mkt:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.mk-mkt-main{flex:1;min-width:0;display:flex;flex-direction:column;}
+.mk-mkt-head{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-height:40px;}
+/* Scoped (0,2,0): `.card h2` (0,1,1) would add its 18px bottom margin and lift the name off the actions row. */
+.mk-mkt .mk-mkt-name{margin:0;overflow-wrap:anywhere;}
+/* At 290px Browse · Needs git · ⋯ is wider than the card's column: ⋯ (the only way to Remove…) wraps inside the card. */
+.mk-mkt-actions{margin-left:auto;display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:4px;}
+.mk-mkt-url{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:4px;min-width:0;overflow-wrap:anywhere;}
+.mk-mkt-url > .mk-mono{color:var(--ink-2);min-width:0;}
+.mk-mkt-health{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;margin-top:8px;font-size:var(--fs-meta);color:var(--ink-2);}
+.mk-mkt-synced{display:inline-flex;align-items:center;gap:8px;color:var(--ink);font-weight:500;}
+/* .badge is nowrap, never shrinks and is one 18px line: a long "Can't reach · …" or branch chip wraps inside the card,
+   and its box grows with its lines (one line stays 18px). Its icon keeps to the first line. */
+.mk-mkt-health > .mk-chip, .mk-mkt-url > .mk-chip{flex:0 1 auto;min-width:0;height:auto;min-height:18px;padding-block:2px;line-height:14px;align-items:flex-start;text-wrap-mode:wrap;overflow-wrap:anywhere;}
+.mk-mkt-health > .mk-chip > .ic, .mk-mkt-url > .mk-chip > .ic{flex:none;margin-top:1px;}
+.mk-mkt .mk-disc{margin-top:4px;}
+.mk-notes{display:flex;flex-direction:column;gap:4px;margin-top:4px;padding:12px 16px;border-radius:var(--r-sm);background:var(--field);}
+.mk-note{font-size:var(--fs-meta);color:var(--ink-2);overflow-wrap:anywhere;}
+.mk-note b{color:var(--ink);font-weight:500;}
+/* Add marketplace dialog (boards 2.1–2.3): field, real progress lines, result list, errors inside. */
+.mk-add-field{margin:0;}   /* .field's 18px bottom margin would add to the body's 16px gap under the field */
+.mk-add-field .input{font-family:var(--mono);}
+.mk-add-field .fe-text{min-width:0;overflow-wrap:anywhere;}   /* a 400 names a path: it wraps, never widening the dialog */
+.mk-add-git:empty{display:none;}
+#mk-dialog[data-kind="add-marketplace"] > .mk-dialog-head{align-items:center;}
+#mk-dialog[data-kind="add-marketplace"] > .mk-dialog-head > .section-title{min-width:0;overflow-wrap:anywhere;}
+/* Under ~390px the result's foot ("Add another" + "Browse these N plugins") and its plugin rows are wider than the
+   screen; one-line, they widened the dialog's grid track past it (Close and Install off-screen). Both wrap instead. */
+#mk-dialog[data-kind="add-marketplace"] > .mk-dialog-foot{flex-wrap:wrap;}
+.mk-progress{list-style:none;margin:0;padding:12px 16px;display:flex;flex-direction:column;gap:8px;border-radius:var(--r-sm);background:var(--field);}
+/* Pending lines keep --ink-2 (--ink-3 on --field is 2.58:1 in light); the dot and the check tell them from done ones.
+   Only the value wraps: overflow-wrap on the row would let the label (an anonymous flex item) break per letter. */
+.mk-phase{display:flex;align-items:center;gap:8px;min-width:0;color:var(--ink-2);}
+.mk-phase[data-state="current"]{color:var(--ink);font-weight:500;}
+.mk-phase .mk-mono{min-width:0;font-size:var(--fs-meta);color:var(--ink);overflow-wrap:anywhere;}
+.mk-phase-spin{width:12px;height:12px;flex:none;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;animation:ws-spin .8s linear infinite;}
+.mk-phase-dot{width:12px;height:12px;flex:none;border-radius:50%;border:2px solid var(--line-2);}
+@media (prefers-reduced-motion:reduce){.mk-phase-spin{animation:none;}}
+/* Forced colours paint a transparent border in CanvasText: the spinner would close into the pending dot's full ring. */
+@media (forced-colors:active){.mk-phase-spin{border-right-color:Canvas;}}
+.mk-add-msg{align-items:flex-start;}
+.mk-add-msg-body{display:flex;flex-direction:column;gap:4px;min-width:0;overflow-wrap:anywhere;}
+.mk-add-msg-detail{font-size:var(--fs-meta);}
+/* One line: only the path or URL wraps, so its icon never sits alone above it. */
+.mk-add-meta{display:flex;align-items:center;gap:8px;color:var(--ink-2);font-size:var(--fs-meta);}
+.mk-add-meta > .mk-add-path{min-width:0;overflow-wrap:anywhere;}
+.mk-add-meta > :not(.mk-add-path){flex:none;}
+.mk-prow-main{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;}
+.mk-plist > .mk-prow{flex-wrap:wrap;}   /* Install / Installed drops under the name, right-aligned, on a narrow screen */
+.mk-plist > .mk-prow > .mk-prow-main{flex:1 1 120px;}
+.mk-plist > .mk-prow > :last-child:not(.mk-prow-main){margin-left:auto;}
+.mk-t-ok{background:var(--green-bg);color:var(--green-ink-strong);}
+/* Remove marketplace dialog: P5's dialog skin (.mk-dlg-body, .mk-dlg-err); its head centres like P5's remove dialog. */
+#mk-dialog[data-kind="remove-marketplace"] > .mk-dialog-head{align-items:center;}
+#mk-dialog[data-kind="remove-marketplace"] > .mk-dialog-head > .section-title{min-width:0;overflow-wrap:anywhere;}
+
 /* Run 4 (D21): the Chat run card is one box of divided sections (docs/design-system.md › Cards versus divided rows):
    stats, the graph, the question, the result and the footer each sit under one --line, with no fill, border or corner
    of their own. At (0,3,0) and up these beat the in-card override below, which stays last. */
@@ -9863,6 +10214,25 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .ask-card.chat-rc > .chat-rc-result{padding:12px 0 0;border:0;border-top:1px solid var(--line);border-radius:0;background:none;}
 .ask-card.chat-rc > .chat-rc-q :is(.qpanel,.qblock){padding-left:0;padding-right:0;border-radius:0;background:none;}
 .ask-card.chat-rc .chat-rc-art-rows{border:0;border-radius:0;}
+
+/* Smart run naming (Labs, flag smartRunNaming): the Suggested chip, the ↻ / × buttons inside the title and branch
+   inputs, the branch type select. The violet chip is the permitted Labs use (docs/design-system.md). */
+.sn-adorn{position:relative}
+.sn-adorn .input{padding-right:64px}
+.sn-actions{position:absolute;right:6px;top:50%;transform:translateY(-50%);display:inline-flex;gap:4px}
+.sn-btn{width:24px;height:24px;border:0;background:var(--line-2);color:var(--ink-2);border-radius:var(--r-xs);display:inline-grid;place-items:center;cursor:pointer;padding:0}
+.sn-btn:hover{color:var(--ink)}
+.sn-chip{margin-left:8px;background:var(--violet-bg);color:var(--violet-ink)}
+.sn-adorn.sn-loading .input{background:linear-gradient(90deg,var(--field),var(--violet-wash),var(--field));background-size:200% 100%;animation:ask-shimmer 1.4s linear infinite}
+.sn-branch-row{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:start}
+.sn-branch-row .sn-type[hidden]{display:none}
+.sn-branch-row .sn-type .select,.sn-branch-row .input{font-family:var(--mono)}
+.sn-branch-row:has(.sn-type[hidden]){grid-template-columns:1fr}
+.hint.warn{color:var(--amber-ink-strong)}
+#smart-naming-settings-card [aria-disabled="true"]{opacity:.55}
+.sn-types{display:flex;flex-wrap:wrap;gap:6px}
+@media (max-width:480px){.sn-branch-row{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){.sn-adorn.sn-loading .input{animation:none}}
 
 /* Requirements page (plans/requirements-design.md section 6). Tokens only. */
 /* The list: the filter tabs and New feature, then one card of rows per project / workspace. A row is

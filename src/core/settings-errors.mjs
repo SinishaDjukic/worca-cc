@@ -16,6 +16,7 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   askMaxTurns: 'Turn limit',
   askMaxBudgetUsd: 'Per-turn cost cap',
   askWeb: 'Web access',
+  smartNaming: 'Smart run naming',
   'askWeb.enabled': 'Web access',
   'askWeb.anyHost': 'Web access',
   'askWeb.allowedDomains': 'Allowed domains',
@@ -35,6 +36,9 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   agentGenModel: 'Agent generation model',
   'agentGenModel.model': 'Agent generation model',
   'agentGenModel.effort': 'Effort',
+  namingModel: 'Run naming model',
+  'namingModel.model': 'Run naming model',
+  'namingModel.effort': 'Effort',
   workspaceScan: 'Workspace scan models',
   'workspaceScan.scanModel': 'Scan agent',
   'workspaceScan.scanEffort': 'Effort',
@@ -103,7 +107,7 @@ const SPECIAL = [
 
 // An internal key that must never reach the user: camelCase (askMaxTurns) or a dotted path
 // under a settings key (sync.remote). Plain dotted text ("e.g.", "worca.dev") is fine.
-const INTERNAL_KEY = /\b[a-z]+[A-Z][a-z]\w*\b|\b(?:askWeb|memoryDefrag|workspaceScan|nightMode|actions|sync|schedule|criteria|chat|search)\.\w+/;
+const INTERNAL_KEY = /\b[a-z]+[A-Z][a-z]\w*\b|\b(?:askWeb|smartNaming|memoryDefrag|workspaceScan|nightMode|actions|sync|schedule|criteria|chat|search)\.\w+/;
 const VERB = /^(?:must|is|are|needs?|has|have|holds?|cannot|can’t|can't|should)\b/;
 
 const labelOf = (path) => SETTINGS_FIELD_LABELS[path] || null;

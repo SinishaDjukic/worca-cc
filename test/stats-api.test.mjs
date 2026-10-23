@@ -14,7 +14,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { getStats, shapingGroups } from '../src/core/stats.mjs';
-import { recordCostDelta, recordAskCostDelta, recordRequirementsCostDelta, budgetStatus } from '../src/core/cost-budget.mjs';
+import { recordCostDelta, recordAskCostDelta, recordRequirementsCostDelta, recordUtilityCost, budgetStatus } from '../src/core/cost-budget.mjs';
 import { app, runs } from '../ui/server.mjs';
 
 useTempHome(after); // DB sandbox (WORCA_HOME)
@@ -326,4 +326,14 @@ test('GET /api/stats?report=1 adds report (runs, prevRuns, buckets, ask); withou
   assert.equal(body.report.buckets.length, body.series.length);
   res = await fetch(`${base}/api/stats?range=month`);
   assert.equal('report' in (await res.json()), false);
+});
+
+test('Smart run naming spend is reported as utility.naming and never joins the spend totals', () => {
+  const before = getStats({ range: 'week', now: NOW });
+  recordUtilityCost('naming', { costUsd: 0.0004, tsMs: +new Date(2026, 7, 5, 12) });
+  recordUtilityCost('naming', { costUsd: 0.0001, tsMs: +new Date(2026, 7, 5, 13) });
+  const after = getStats({ range: 'week', now: NOW });
+  assert.deepEqual(after.utility, { naming: { usd: 0.0005, count: 2 } });
+  assert.equal(after.totals.spentUsd, before.totals.spentUsd);
+  assert.deepEqual(getStats({ range: 'month', now: NOW }).utility.naming.count, 2);
 });

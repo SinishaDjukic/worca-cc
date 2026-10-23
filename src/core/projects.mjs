@@ -117,6 +117,14 @@ export function countProjects() {
   return row ? Number(row.n) : 0;
 }
 
+/** Folder → Git, once (Use git, docs/storage.md): the only write of projects.vcs after insert. True when the row moved. */
+export function markProjectGit(key) {
+  getDb();
+  let changes = 0;
+  tx(() => { changes = Number(prepare("UPDATE projects SET vcs = 'git' WHERE key = ? AND vcs = 'none'").run(key).changes); });
+  return changes === 1;
+}
+
 /**
  * Validate one {name, path, vcs?} and insert it in its own tx(). Synchronous (node:sqlite): callers
  * await gitState() first. `vcs` omitted → detectVcs(path) when the path exists, else 'git' (a path

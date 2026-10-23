@@ -9,6 +9,7 @@ import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { renderEngineSection, renderAskEngineSection, enginePatchToSettingsBody, ENGINE_EFFORTS, utilityId } from '../ui/public/engine-settings-view.mjs';
 import { EFFORTS, CODEX_EFFORTS } from '../src/core/model-env.mjs';
+import { applyFlags } from '../ui/public/flags.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
@@ -39,6 +40,11 @@ test('enginePatchToSettingsBody maps setting ids onto the settings keys', () => 
   assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.utility.agentGen': { model: 'claude-opus-5-5', effort: 'high' } }),
     { agentGenModel: { model: 'claude-opus-5-5', effort: 'high' } });
   assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.utility.agentGen': null }), { agentGenModel: null });
+  // So is Run naming (Smart run naming's model), on namingModel; Codex has no such slot.
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.utility.naming': { model: 'claude-opus-5-5', effort: 'high' } }),
+    { namingModel: { model: 'claude-opus-5-5', effort: 'high' } });
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.utility.naming': null }), { namingModel: null });
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.codex.utility.naming': { model: 'gpt-5.5' } }), {});
 });
 
 test('renderEngineSection: a row per role and job, each engine\'s models only', () => {
@@ -247,6 +253,29 @@ test('the Models page: the Agent generation row paints the stored pair and saves
   doc.getElementById('engineSettingsSave').click();
   for (let i = 0; i < 6; i++) await tick();
   assert.deepEqual(posts.at(-1), { agentGenModel: null }, 'a cleared row clears the setting');
+});
+
+test('the Models page: Run naming is a Claude Helper jobs row only while smartRunNaming is on', async () => {
+  const { doc, window, posts, tick } = await boot({ namingModel: { model: 'claude-opus-5-5', effort: 'high' } }, { hash: 'models' });
+  const sel = '[data-setting="models.claude.utility.naming"]';
+  assert.equal(doc.querySelector(sel), null, 'flag off: no Run naming row');
+  applyFlags({ smartRunNaming: true }, doc);
+  for (let i = 0; i < 8; i++) await tick();
+  const claude = doc.querySelector('.engine-card[data-engine="claude"]');
+  const row = claude.querySelector(`.engine-helpers ${sel}`);
+  assert.ok(row, 'flag on: a Claude Helper jobs row');
+  assert.match(row.textContent, /Run naming/);
+  assert.equal(row.querySelector('.inherit-model').value, 'claude-opus-5-5');
+  assert.equal(row.querySelector('.inherit-effort').value, 'high');
+  assert.equal(doc.querySelector(`[data-setting*=".naming"]:not(${sel})`), null, 'Claude only: no Codex/Cursor row');
+  const model = row.querySelector('.inherit-model');
+  model.value = ''; model.dispatchEvent(new window.Event('change', { bubbles: true }));
+  doc.getElementById('engineSettingsSave').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.deepEqual(posts.at(-1), { namingModel: null }, 'a cleared row clears the setting');
+  applyFlags({ smartRunNaming: false }, doc);
+  for (let i = 0; i < 8; i++) await tick();
+  assert.equal(doc.querySelector(sel), null, 'flag off again: the row is gone');
 });
 
 test('opening the Models page directly paints the Engines card (a link or a reload lands there)', async () => {

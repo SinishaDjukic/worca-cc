@@ -18,6 +18,9 @@ import { renderPlanBody } from '../ui/public/shape/plan-body.mjs';
 import { renderOutlineBody } from '../ui/public/shape/outline-body.mjs';
 import { noteAnswer, namedAnswer, forgetAnswer } from '../ui/public/shape/step-receipt.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
+import { ICONS } from '../ui/public/icons.mjs';
+/** The icons.mjs glyph a control leads with (its first child, an .ic span); '' when none. */
+const glyphOf = (el) => { const svg = el && el.firstElementChild && el.firstElementChild.matches('.ic') ? el.firstElementChild.querySelector('svg') : null; return svg ? Object.keys(ICONS).find((k) => ICONS[k] === svg.innerHTML) || '' : ''; };
 
 const RECORDED = JSON.parse(readFileSync(new URL('./fixtures/role-review/recorded-run.json', import.meta.url), 'utf8')).plan.roleReviews;
 
@@ -259,6 +262,11 @@ test('chat run card controls: Pause / Resume / Stop through `controls`, disabled
       card.update(done(null));
       assert.equal($('.chat-rc-foot').hidden, true, 'the footer holds nothing: Ship it is the result\'s button');
       assert.equal($('.chat-rc-create-pr').dataset.modelAction, 'ship');
+      // PR controls (design system): a small primary button led by the pr-create glyph at 14px.
+      assert.deepEqual([...$('.chat-rc-create-pr').classList], ['btn', 'btn-sm', 'btn-primary', 'chat-rc-create-pr']);
+      assert.equal(glyphOf($('.chat-rc-create-pr')), 'pr-create');
+      assert.equal($('.chat-rc-create-pr .ic').style.width, '14px');
+      assert.equal($('.chat-rc-create-pr').textContent, 'Create PR');
     } },
   ]);
 });
@@ -427,8 +435,17 @@ test('chat run card result region: words, churn, top files → Diff, artifact ch
       assert.equal(a.target, '_blank');
       assert.equal(a.rel, 'noopener');
       assert.equal($('.chat-rc-create-pr'), null);
+      // PR controls: View PR is a small secondary button with the open PR's glyph, and the card's only View PR.
+      assert.deepEqual([...a.classList], ['btn', 'btn-sm', 'chat-rc-view-pr']);
+      assert.equal(glyphOf(a), 'pull-request');
+      assert.equal(a.textContent, 'View PR');
+      assert.deepEqual([...card.el.querySelectorAll('a, button')].filter((b) => !b.hidden && b.textContent === 'View PR'), [a]);
+      assert.equal(a.dataset.modelAction, 'open-pr', 'the result\'s link is the model\'s open-pr');
       card.update(done({ ...EXTRAS, pr: { url: 'https://github.com/o/r/pull/7', number: 7, state: 'MERGED' } }));
       assert.equal($('.chat-rc-res-title').textContent, 'Merged');
+      assert.equal($('a.chat-rc-view-pr').textContent, 'View PR');
+      assert.equal(glyphOf($('a.chat-rc-view-pr')), 'merge');
+      assert.equal($('a.chat-rc-view-pr').hidden, false);
       card.update(done({ ...EXTRAS, pr: { url: 'javascript:alert(1)', number: 1, state: 'OPEN' } }));
       assert.equal($('a.chat-rc-view-pr'), null);
     } },
@@ -1525,7 +1542,10 @@ test('chat run card, a folder run: no Apply to folder when nothing changed or th
   assert.equal($('.chat-rc-apply'), null, 'nothing to apply');
   card.update(done(EX, { workMode: 'folder', archived: true, changes: { state: 'pending', counts: { added: 2 } } }));
   assert.equal($('.chat-rc-apply'), null, 'an archived run has no copy');
-  assert.match(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'), /\.chat-rc-create-pr,\.chat-rc-view-pr,\.chat-rc-apply\{/);
+  // Apply keeps its own look; Create PR and View PR are the shared .btn (no rule of their own).
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /(^|\})\.chat-rc-apply\{/m);
+  assert.doesNotMatch(css, /\.chat-rc-(?:create|view)-pr[^{}]*\{/);
 });
 
 test('progressIdent: a started No project proposal names the reserved key and No project before its first frame', () => {

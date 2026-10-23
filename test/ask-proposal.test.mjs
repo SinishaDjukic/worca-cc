@@ -420,3 +420,26 @@ test('workspace target with git missing: a Git member runs on a copy — its sou
   const card = ok(await v({ workspaceId: 'wks-mixed-0000abcd', brief: 'x', sourceBranchByKey: { 'alpha-00000001': 'main' } }));
   assert.equal(card.sourceBranchByKey, null);
 });
+
+test('smart naming on: a derived branch uses the pattern and the card hex, and is marked; a given branch is not', async () => {
+  const prev = process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = 'smartRunNaming';
+  try {
+    const card = ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'Add a README badge' }, { cardId: 'card_3f2a9c01' }));
+    assert.equal(card.featureBranch, 'feat/add-a-readme-badge');
+    assert.equal(card.featureBranchDerived, true);
+    const given = ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'Add a README badge', featureBranch: 'fix/typed' }, { cardId: 'card_3f2a9c01' }));
+    assert.equal(given.featureBranch, 'fix/typed');
+    assert.equal('featureBranchDerived' in given, false);
+  } finally { if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev; }
+});
+
+test('smart naming off: the card carries no marker and keeps today\'s name', async () => {
+  const prev = process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = '-smartRunNaming';
+  try {
+    const card = ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'Add a README badge' }, { cardId: 'card_3f2a9c01' }));
+    assert.match(card.featureBranch, /^worca-cc\/.+-3f2a9c01$/);
+    assert.equal('featureBranchDerived' in card, false);
+  } finally { if (prev === undefined) delete process.env.WORCA_FLAGS; else process.env.WORCA_FLAGS = prev; }
+});

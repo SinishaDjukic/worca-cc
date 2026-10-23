@@ -9,7 +9,7 @@ import { basename, join } from 'node:path';
 import { Worker } from 'node:worker_threads';
 import { wholeFileHunk, PATCH_MAX_EDIT_LENGTH, PATCH_DIFF_TIMEOUT_MS } from '../folder-copy.mjs';
 import { gitMissingError } from '../git-available.mjs';
-import { repoSnapshotRoot, discoverPlugins, assembleManifestDelta, manifestMcp } from '../plugin-repo.mjs';
+import { repoSnapshotRoot, discoverPlugins, assembleManifestDelta, manifestMcp, emptyManifestDelta, manifestVersion, finishPreview } from '../plugin-repo.mjs';
 import { buildInstallInventory } from '../plugin-store.mjs';
 import { findEscapingSymlinks } from '../plugin-manifest.mjs';
 import { readPluginsLock, pluginDir } from '../plugins-lock.mjs';
@@ -130,7 +130,7 @@ export async function pluginSnapshot(repoUrl, rev) {
 }
 
 /** addPluginRepo without git: same result shape, read from the commit's snapshot. */
-export async function addPluginRepoHttps(repoUrl, { ref = null } = {}) {
+export async function addPluginRepoHttps(repoUrl, { ref = null, onProgress = null } = {}) {
   const c = clientFor(repoUrl);
   let sha;
   if (ref) {
@@ -142,6 +142,7 @@ export async function addPluginRepoHttps(repoUrl, { ref = null } = {}) {
     sha = await resolveCommit(c, null);
   }
   const snap = await pluginSnapshot(repoUrl, sha);
+  onProgress?.({ phase: 'reading', sha });
   const { paths } = snapshotMeta(repoUrl, sha);
   // git's `show` hands a committed symlink's target text, never the file it points at: refuse links the same way.
   const readText = async (p) => {
@@ -308,6 +309,25 @@ async function treeChanges(pinRoot, candRoot, subdir) {
   return out;
 }
 
+/** git log <pin>..<cand> -- <subdir> without git: compare's range (newest first) kept to the commits GitHub lists for the
+ *  folder from the candidate. Pages of 100, at most 3 (compare itself stops at 250), until every commit of the range is
+ *  found, a page is short, or a page holds none of them (a merged branch's older commits, and a range compare cut short,
+ *  sit past the first older one).
+ *  A root plugin is the whole repository: the range as it is. */
+async function scopeCommits(c, candidateSha, subdir, range) {
+  if (!subdir || !range.length) return range;
+  const inRange = new Set(range.map((x) => x.sha));
+  const touched = new Set();
+  for (let page = 1; page <= 3; page++) {
+    const rows = await c.json('GET', `/commits?sha=${candidateSha}&path=${encodeURIComponent(subdir)}&per_page=100&page=${page}`);
+    if (!Array.isArray(rows)) return range;   // not a commit list: scope nothing rather than hide a commit
+    const hits = rows.filter((r) => inRange.has(r?.sha));
+    for (const r of hits) touched.add(r.sha);
+    if (touched.size === inRange.size || rows.length < 100 || !hits.length) break;
+  }
+  return range.filter((x) => touched.has(x.sha));
+}
+
 /** fetchCandidate without git. GitHub's compare gives the commit list only (at most 250 commits; 404 when a rewritten
  *  history shares no commit with the pin). What the review shows and flags — the diffstat, the full diff, the new agents,
  *  the manifest delta — is read from the two commits' snapshots, as git reads the two trees: no compare cap (300 files),
@@ -330,16 +350,13 @@ export async function fetchCandidateHttps(name, { fullDiff = false } = {}) {
   let commits = [];
   let diffstat = '';
   let diffFull = '';
-  let manifestDelta = {
-    newSecrets: [], newTaskSources: [], newAgents: [], setupChanged: false,
-    newModels: [], removedModels: [], envChangedModels: [], newModelSecrets: [],
-    newMcpServers: [], removedMcpServers: [], changedMcpServers: [], mcpLines: [],
-    newSkills: [], removedSkills: [], changedSkills: [], skillLines: [],
-  };
+  let manifestDelta = emptyManifestDelta();
+  let candidateVersion = null;
   if (candidateSha !== pinnedSha) {
     let cmp = null;
     try { cmp = await c.json('GET', `/compare/${pinnedSha}...${candidateSha}`); } catch (err) { if (err.code !== 'GITHUB_NOT_FOUND') throw err; }
-    commits = (cmp?.commits || []).slice().reverse().map((x) => ({ sha: x.sha, subject: commitSubject(x.commit?.message) }));
+    const range = (cmp?.commits || []).slice().reverse().map((x) => ({ sha: x.sha, subject: commitSubject(x.commit?.message) }));
+    commits = await scopeCommits(c, candidateSha, subdir, range);
     // The pinned commit's snapshot stays while a plugin is pinned to it (prune); one installed with git is fetched once.
     const pinRoot = nativeJoin(await pluginSnapshot(entry.repo, pinnedSha), subdir);
     const candRoot = nativeJoin(await pluginSnapshot(entry.repo, candidateSha), subdir);
@@ -371,13 +388,14 @@ export async function fetchCandidateHttps(name, { fullDiff = false } = {}) {
         .map((f) => f.filename.split('/').pop().replace(/\.meta\.json$/, ''));
       const pin = readManifestRaw(pinDir);
       const cand = readManifestRaw(candDir);
+      candidateVersion = manifestVersion(cand);
       const lifecycle = await mcpUpdatePreview(name, manifestMcp(pin), manifestMcp(cand), { pinDir, candDir });
       manifestDelta = assembleManifestDelta({ pin, cand, newAgents, lifecycle });
     } finally {
       await rm(scratch, { recursive: true, force: true }).catch(() => {});
     }
   }
-  return { pinnedSha, candidateSha, commits, diffstat, diffFull, manifestDelta };
+  return finishPreview({ entry, pinnedSha, candidateSha, candidateVersion, commits, diffstat, diffFull, manifestDelta });
 }
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;

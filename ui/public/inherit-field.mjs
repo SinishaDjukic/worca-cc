@@ -39,6 +39,7 @@ export function renderInheritField(doc, spec) {
   // A model field's Effort has its own select: the Model's inherited choice names the model alone ("Opus 5.5 (default)").
   const shown = spec.kind === 'model' ? formatPair(inherited.value?.model ? { model: inherited.value.model } : null, spec.catalog, spec.defaultLabel || null) : format(inherited.value); let controls;
   if (spec.kind === 'number') { const input = node(doc, 'input', 'input inherit-input'); input.type = 'number'; if (spec.min != null) input.min = String(spec.min); if (spec.step != null) input.step = String(spec.step); input.value = spec.own == null ? '' : String(spec.own); input.placeholder = inheritText(inherited.source, shown); controls = [input]; }
+  else if (spec.kind === 'text') { const input = node(doc, 'input', 'input inherit-input'); input.type = 'text'; input.spellcheck = false; if (spec.mono) input.classList.add('mono'); input.value = spec.own == null ? '' : String(spec.own); input.placeholder = inheritText(inherited.source, shown); controls = [input]; }
   else if (spec.kind === 'select') { const select = node(doc, 'select', 'select inherit-input'); select.append(option(doc, '', inheritText(inherited.source, shown))); for (const item of spec.options || []) select.append(option(doc, item.value, item.label)); select.value = spec.own == null ? '' : (spec.fromValue || String)(spec.own); if (inherited.value != null) dropInheritedTwin(select, (spec.fromValue || String)(inherited.value)); controls = [select]; }
   else { const model = node(doc, 'select', 'select inherit-model'); model.setAttribute('aria-label', `${spec.label} model`);
     // Nothing inherited: the empty choice is the fallback phrase itself ("The workflow's model"), not a value with a source.
@@ -58,6 +59,7 @@ export function renderInheritField(doc, spec) {
 export function readInheritField(wrap) {
   const spec = STATE.get(wrap)?.spec; if (!spec) return null;
   if (spec.kind === 'number') { const value = wrap.querySelector('.inherit-input').value.trim(); return value === '' ? null : Number(value); }
+  if (spec.kind === 'text') { const value = wrap.querySelector('.inherit-input').value.trim(); return value === '' ? null : spec.toValue ? spec.toValue(value) : value; }
   if (spec.kind === 'select') { const value = wrap.querySelector('.inherit-input').value; return value === '' ? null : spec.toValue ? spec.toValue(value) : value; }
   const model = wrap.querySelector('.inherit-model').value; const effort = wrap.querySelector('.inherit-effort').value; return !model && !effort ? null : { ...(model ? { model } : {}), ...(effort ? { effort } : {}) };
 }

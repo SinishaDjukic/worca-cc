@@ -313,10 +313,8 @@ test('no in-app link, route call or tab check names an old address', () => {
   assert.deepEqual(offenders, []);
 });
 
-// U7: the four pages are named as pages ("the Providers page", "Connectors › Skills"); no string, prompt,
-// comment or user doc still sends anyone to a Settings tab that is gone. (docs/superpowers, docs/plans and
-// docs/changelog are history: they keep the words of their day.)
-test('no copy in the app, the server or the docs points at Settings › Plugins / Sets / Models / Providers', () => {
+/** The files the copy sweeps read: the app, the server, the user docs and each plugin's README. */
+function copyFiles() {
   const root = fileURLToPath(new URL('../', import.meta.url));
   const walk = (dir) => readdirSync(root + dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory()
     ? (e.name === 'vendor' ? [] : walk(`${dir}/${e.name}`)) : [`${dir}/${e.name}`]));
@@ -324,6 +322,14 @@ test('no copy in the app, the server or the docs points at Settings › Plugins 
     ...readdirSync(root + 'docs').filter((f) => f.endsWith('.md')).map((f) => `docs/${f}`),
     ...readdirSync(root + 'plugins').map((d) => `plugins/${d}/README.md`).filter((f) => { try { readFileSync(root + f); return true; } catch { return false; } })];
   const files = [...walk('ui/public'), ...walk('src'), 'ui/server.mjs'].filter((f) => /\.(m?js|html|css)$/.test(f)).concat(docs);
+  return { root, files, docs };
+}
+
+// U7: the four pages are named as pages ("the Providers page", "Connectors › Skills"); no string, prompt,
+// comment or user doc still sends anyone to a Settings tab that is gone. (docs/superpowers, docs/plans and
+// docs/changelog are history: they keep the words of their day.)
+test('no copy in the app, the server or the docs points at Settings › Plugins / Sets / Models / Providers', () => {
+  const { root, files, docs } = copyFiles();
   assert.ok(files.length > 50 && docs.length > 10, 'the sweep reads the tree');
   const offenders = [];
   for (const f of files) {
@@ -331,6 +337,22 @@ test('no copy in the app, the server or the docs points at Settings › Plugins 
     for (const m of src.matchAll(/Settings\s*[›>→▸]\s*(Plugins|Sets|Models|Providers)\b/g)) offenders.push(`${f}: ${m[0]}`);
     // A path through the old Plugins place ("worca → Plugins → <plugin> → Settings"); "Plugins → Marketplace" names the rename.
     for (const m of src.matchAll(/\bPlugins\s*[›>→▸]\s*(?!Marketplace\b)\S+/g)) offenders.push(`${f}: ${m[0]}`);
+  }
+  assert.deepEqual(offenders, []);
+});
+
+// P7 (final sweep): nothing names the Marketplace page's old sections — the Available list, a plugin card, a plugin's
+// Settings reached straight from the page (it lives under Installed now).
+test('no copy points at the Marketplace page\'s old Available list, plugin cards or a Settings path past Installed', () => {
+  const { root, files } = copyFiles();
+  const offenders = [];
+  for (const f of files) {
+    const src = readFileSync(root + f, 'utf8');
+    for (const re of [/Marketplace\s*[›>→▸]\s*Available\b/g, /\bAvailable list\b/g, /\*\*Available\*\*/g, /\bMarketplace card\b/g,
+      /Marketplace\s*[›>→▸]\s*(?!Installed\b|Browse\b|Marketplaces\b|Add marketplace\b)\S+\s*[›>→▸]\s*Settings\b/g,
+      /Marketplace page:\s*(?!Installed\b)\S+\s*›\s*Settings\b/g]) {
+      for (const m of src.matchAll(re)) offenders.push(`${f}: ${m[0]}`);
+    }
   }
   assert.deepEqual(offenders, []);
 });
@@ -365,7 +387,8 @@ test('an Add-ons row opens its page, lights itself and names the page in the top
       assert.deepEqual(shownView(doc), [view]);
       assert.ok(row.classList.contains('active'));
       assert.equal(row.getAttribute('aria-current'), 'page');
-      assert.deepEqual([...doc.querySelectorAll('[aria-current="page"]')], [row], 'only the open page is lit: Settings is not');
+      // The Marketplace page's own tab strip marks its selected tab too (marketplace CONTRACT §5); the sidebar lights one row.
+      assert.deepEqual([...doc.querySelectorAll('[aria-current="page"]:not(.mk-tab)')].map((n) => n === row), [true], 'only the open page is lit: Settings is not');
       assert.equal(doc.getElementById('topnav-title').textContent, label);
     } })),
     { name: 'at Simple the Models row stays on screen while Models is open, and goes when you leave', run: async () => {

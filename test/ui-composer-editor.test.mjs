@@ -539,6 +539,13 @@ test('MAJ-19: Backspace aimed at the save dialog or confirm modal never edits th
     { name: 'MAJ-19: the modal guard is not over-broad — closed overlays leave the keyboard live', run: async () => {
       const s = await open();
       appConfirmModal(s, { open: false });                 // .hidden CLASS = closed
+      // The Marketplace sheet host (marketplace/layers.mjs): hidden on the HOST, aria-modal on the panel inside it.
+      const mkHost = s.doc.createElement('div');
+      mkHost.className = 'viewer-modal mk-layer mk-sheet-host hidden';
+      const mkPanel = s.doc.createElement('section');
+      mkPanel.setAttribute('role', 'dialog'); mkPanel.setAttribute('aria-modal', 'true');
+      mkHost.appendChild(mkPanel);
+      s.doc.body.appendChild(mkHost);
       const sheet = s.doc.createElement('section');        // Chat sheet: hidden ATTRIBUTE
       sheet.setAttribute('role', 'dialog'); sheet.hidden = true;
       s.doc.body.appendChild(sheet);

@@ -21,7 +21,7 @@ for a pinned workflow, then **More**.
 - **Unpin from the tile.** Right-click a pinned tile (or focus it and press Shift+F10 or the menu key)
   and pick **Unpin**. The next pin moves into the slot.
 - **Shaper is pinned by default.** Someone who never pinned anything gets Shaper, which shows while
-  [Shape it first](shape-it-first.md) is on, with its **Labs** badge. It can be unpinned like any
+  [Shape it first](shape-it-first.md) is on, with its **Beta** badge. It can be unpinned like any
   other pin, and it stays unpinned.
 - **Per person.** Pins are kept for each signed-in person (one list on a local install), in
   `settings.json` under `chatHomePins`, through `GET` / `PUT /api/chat-home/pins`.

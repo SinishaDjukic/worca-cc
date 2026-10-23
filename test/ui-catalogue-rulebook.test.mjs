@@ -5,7 +5,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { renderPluginList, renderAvailableList, renderMarketplaceList } from '../ui/public/plugins-view.mjs';
+import { renderMarketplaceCard } from '../ui/public/marketplace/marketplaces-view.mjs';
+import { renderAllInstalled } from '../ui/public/marketplace/installed-view.mjs';
+import { renderRemoveDialog } from '../ui/public/marketplace/remove-view.mjs';
 import { renderProvidersCard } from '../ui/public/bridge-view.mjs';
 import { renderModelsList } from '../ui/public/models-view.mjs';
 import { renderPolicySyncChip } from '../ui/public/team-policy-view.mjs';
@@ -47,21 +49,18 @@ test('Workflows Library: shared filter chips, divided rows, shared icons', () =>
 
 const PLUGIN = { name: 'acme', version: '1.0.0', enabled: true };
 const MKT = { id: 'worca-cc', name: 'Worca CC Official', url: 'https://x/y.git', builtin: true, lastSync: { sha: 'abcdef0123', at: '2026-10-20T10:00:00Z' }, plugins: [{ name: 'acme', installed: false }] };
-test('Marketplace: divided rows, Remove on .btn-danger, no amber name badge', () => {
-  for (const [root, item] of [[renderPluginList([PLUGIN], { doc }), '.plugin-card'], [renderAvailableList([MKT], { doc }), '.pl-avail-card'], [renderMarketplaceList([MKT], { doc }), '.pl-mkt-row']]) {
-    assert.ok(root.classList.contains('drows'), `${item} host is .drows`);
-    const row = root.querySelector(item);
-    assert.ok(row.classList.contains('drow') && row.classList.contains('drow-stack') && !row.classList.contains('card'), item);
-  }
-  const rm = renderPluginList([PLUGIN], { doc }).querySelector('.pl-remove');
-  assert.deepEqual([...rm.classList], ['btn', 'btn-sm', 'btn-danger', 'pl-remove']);
-  const mrm = renderMarketplaceList([MKT], { doc }).querySelector('.pl-mkt-remove');
-  assert.ok(mrm.classList.contains('btn') && mrm.classList.contains('btn-danger'));
-  assert.ok(renderAvailableList([MKT], { doc }).querySelector('.pl-mkt-badge').classList.contains('slate'));
-  assert.ok(renderMarketplaceList([MKT], { doc }).querySelector('.pl-mkt-builtin').classList.contains('grey'));
+test('Marketplace: Installed is one card of divided rows, a marketplace is one card, Remove only in its ⋯ menu and dialog, no amber name badge, no page intro (L18)', () => {
+  const all = renderAllInstalled(doc, [PLUGIN]);
+  assert.ok(all.querySelector('ul.mk-rows.card > li.mk-row') && !all.querySelector('li.mk-row.card'), 'one card of divided rows, never a card per row');
+  assert.equal(all.querySelector('.btn-danger'), null, 'Remove lives in the ⋯ menu and its dialog');
+  assert.deepEqual(renderRemoveDialog(doc, { name: 'acme', iconKind: 'none', goesAway: [], changes: [] }).foot.map((b) => b.className),
+    ['btn btn-quiet', 'btn btn-danger mk-confirm']);
+  const card = renderMarketplaceCard(doc, MKT);
+  assert.ok(card.classList.contains('card') && card.classList.contains('mk-mkt'), 'a card frames the marketplace you act on');
+  assert.equal(card.querySelector('.btn-danger'), null, 'Remove lives in the ⋯ menu and its dialog');
+  assert.equal(card.querySelector('.badge.mk-chip-built').textContent, 'Built-in');
   assert.deepEqual(rules('.pl-remove'), [], 'the solid red skin is gone');
-  const intro = page.querySelector('[data-view="marketplace"] .page-intro');
-  assert.ok(intro && ONE_SENTENCE(intro.textContent), 'one intro sentence');
+  assert.equal(page.querySelector('[data-view="marketplace"] .page-intro'), null, 'the tabs are the header (docs/design-system.md › Marketplace exceptions)');
 });
 
 test('Providers: one intro line, four divided rows, shared buttons', () => {
@@ -139,11 +138,11 @@ test('Team policy: sentence-case labels, a sans sync chip, grey "not installed",
   assert.match(rules('.tp-chip').join(), /padding-block:0;/, 'the 28px × sets the chip height');
 });
 
-// The 16 dialogs in index.html. The model editor's card and the plugin modal's actions are JS-built, so their static
+// The 18 dialogs in index.html. The model editor's card and the plugin modal's actions are JS-built, so their static
 // markup has no footer button; the proof's dialog-sizes state and the source pins below cover them.
 const DIALOGS = ['#model-editor-modal', '#model-import-modal', '#viewer-card', '#folder-browser', '#mode-modal', '#confirm-modal',
   '#report-modal', '#export-modal', '#shipit-modal', '#publish-modal', '#welcome-modal', '#claude-setup-modal', '#stop-modal',
-  '#project-add-modal', '#project-bulk-modal', '#plugin-modal', '#scan-model-modal'];
+  '#project-add-modal', '#project-git-modal', '#project-bulk-modal', '#plugin-modal', '#scan-model-modal'];
 // D12: the action rows, and the head Close / Full screen buttons.
 const FOOT = ['.confirm-actions', '.stop-actions', '.add-project-actions', '.mode-foot', '.report-head-actions', '.publish-actions',
   '.shipit-actions', '.mv-editor-btns', '.viewer-actions', '[data-card-actions]'].map((s) => `${s} .btn`).concat('#plugin-modal-close', '#claude-setup-close').join(', ');
@@ -156,7 +155,7 @@ test('dialogs: footer actions are 32px .btn, cards keep the shared 24px padding,
     for (const b of m.querySelectorAll(FOOT)) if (b.classList.contains('btn-sm')) small.push(`${id} ${b.textContent.trim()}`);
   }
   assert.deepEqual(small, []);
-  for (const id of ['#confirm-modal', '#folder-browser', '#mode-modal', '#publish-modal', '#project-add-modal', '#stop-modal'])
+  for (const id of ['#confirm-modal', '#folder-browser', '#mode-modal', '#publish-modal', '#project-add-modal', '#project-git-modal', '#stop-modal'])
     assert.ok(page.querySelector(id).querySelector(FOOT), `${id} has a footer the selector sees`);
   for (const sel of ['.ob-welcome', '.mode-modal .card', '.shipit-card', '.gs-card', '.mv-editor'])
     assert.deepEqual(rules(sel).filter((b) => /(?:^|;)\s*padding\s*:/.test(b)), [], `${sel} keeps the shared .card padding (phone rules too)`);
@@ -222,6 +221,18 @@ test('the typed-plus ratchet lost the four slice-3 files', () => {
 });
 
 test('sideways scroll: the Marketplace header wraps and a long marketplace URL breaks at 290 and 375px', () => {
-  assert.match(CSS, /\[data-view="marketplace"\] \.topbar\{flex-wrap:wrap;\}/);
-  assert.match(CSS, /\.pl-mkt-url\{display:block;margin-top:2px;overflow-wrap:anywhere;\}/);
+  assert.match(CSS, /\.mk-head\{[^}]*flex-wrap:wrap;/);
+  assert.match(CSS, /\.mk-grid\{display:grid;grid-template-columns:repeat\(auto-fill,minmax\(min\(270px,100%\),1fr\)\);/);
+  assert.match(CSS, /\.mk-mkt-url\{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:4px;min-width:0;overflow-wrap:anywhere;\}/);
+});
+
+test('docs/design-system.md names the Marketplace exceptions once (L18)', () => {
+  const g = read('docs/design-system.md');
+  const at = g.indexOf('\n### Marketplace exceptions\n');
+  assert.ok(at > 0 && g.indexOf('\n### Marketplace exceptions\n', at + 1) < 0, 'one block');
+  const block = g.slice(at, g.indexOf('\n## ', at + 1));
+  for (const w of ['tile grid', 'Search plugins', 'facet rail', 'not filter chips', 'No page intro', 'Centred empty states', '`.mk-t-*`', '-ink-strong'])
+    assert.ok(block.includes(w), w);
+  assert.match(g, /Search is the top bar's "Search or ask" only\.(?:(?!\n- )[\s\S]){0,300}?\(Marketplace exceptions\)/);
+  assert.match(g, /A full-bleed editor \(Workflows\) has\s+no page header; the Marketplace's tabs are its header \(Marketplace exceptions\)\./);
 });

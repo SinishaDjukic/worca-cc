@@ -63,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 73;
+export const SCHEMA_VERSION = 74;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -836,7 +836,7 @@ ${STEP_QUESTIONS_DDL}
  * against the live schema so the gap can be healed regardless of the stamp.
  */
 const INCREMENTAL_COLUMNS = {
-  req_cost_ledger:        { brief_id: 'INTEGER' },   // v73: a brief look's spend (feature_seq is 0 then)
+  req_cost_ledger:        { brief_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then)
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
@@ -1080,6 +1080,21 @@ CREATE TABLE IF NOT EXISTS run_labels (
 CREATE INDEX IF NOT EXISTS idx_run_labels_label ON run_labels (label);
 `;
 
+// v71 (Smart run naming): spend that happens before a run exists (the New run form's name suggestion). Never joins
+// cost_ledger, so it is never billed to a run or counted toward a budget. NO foreign key: it is a permanent fact.
+const UTILITY_COST_LEDGER_DDL = `
+CREATE TABLE IF NOT EXISTS utility_cost_ledger (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind       TEXT NOT NULL,
+  amount_usd REAL NOT NULL,
+  tokens_in  INTEGER,
+  tokens_out INTEGER,
+  model      TEXT,
+  ts         INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_utility_cost_ledger_ts ON utility_cost_ledger (ts);
+`;
+
 // v59 (#718; 57-58 are Shaper's): run tags. One row per (run, key); the plain tag `spike` is value ''. Written at run
 // creation and by the tag-edit route only — writeState never touches them. pipelines rows are never
 // DELETEd (pipeline-delete.mjs), so the CASCADE is convention, and tags survive archive/restore.
@@ -1208,7 +1223,7 @@ CREATE INDEX IF NOT EXISTS idx_shape_feature_notes_feature ON shape_feature_note
 export const ROUND_OF_EXPR = "json_extract(CASE WHEN json_valid(branch) THEN branch END, '$.roundOf.pipelineId')";
 const ROUND_OF_INDEX_DDL = `CREATE INDEX IF NOT EXISTS idx_pipelines_round_of ON pipelines (${ROUND_OF_EXPR})`;
 
-// v71 Requirements (plans/requirements-design.md §3): product-owner feature specs (FEAT-<seq>), their append-only
+// v72 Requirements (plans/requirements-design.md §3): product-owner feature specs (FEAT-<seq>), their append-only
 // interview thread, the shared context per project/workspace, and the spend counted toward the limit (D9).
 // Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES.
 const REQUIREMENTS_DDL = `
@@ -1264,8 +1279,8 @@ CREATE TABLE IF NOT EXISTS req_cost_ledger (
 CREATE INDEX IF NOT EXISTS req_cost_ledger_ts ON req_cost_ledger(ts);
 `;
 
-// v72 Requirements A2 (plans/requirements-a2-design.md §3): one row per "Start in Worca" of a feature, with the
-// frozen spec. IF NOT EXISTS + an INCREMENTAL_TABLES entry: reconcile-safe (see v71 above).
+// v73 Requirements A2 (plans/requirements-a2-design.md §3): one row per "Start in Worca" of a feature, with the
+// frozen spec. IF NOT EXISTS + an INCREMENTAL_TABLES entry: reconcile-safe (see v72 above).
 const REQUIREMENTS_STARTS_DDL = `
 CREATE TABLE IF NOT EXISTS req_starts (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1286,7 +1301,7 @@ CREATE INDEX IF NOT EXISTS req_starts_feature ON req_starts(feature_seq, version
 CREATE INDEX IF NOT EXISTS req_starts_pipeline ON req_starts(pipeline_id);
 `;
 
-// v73 Requirements A7 (plans/requirements-a7-design.md §3): the optional Product brief, one row per project or
+// v74 Requirements A7 (plans/requirements-a7-design.md §3): the optional Product brief, one row per project or
 // workspace. Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES.
 const REQUIREMENTS_BRIEFS_DDL = `
 CREATE TABLE IF NOT EXISTS req_briefs (
@@ -1338,6 +1353,7 @@ const INCREMENTAL_TABLES = {
   run_tags:       RUN_TAGS_DDL,
   run_tag_events: RUN_TAGS_DDL,
   run_labels:     RUN_LABELS_DDL,
+  utility_cost_ledger: UTILITY_COST_LEDGER_DDL,
   run_presets:    RUN_PRESETS_DDL,
   run_groups:        RUN_GROUPS_DDL,
   run_group_members: RUN_GROUPS_DDL,
@@ -2483,11 +2499,12 @@ export function migrate(db) {
     if (current < 68) db.exec(RUN_LABELS_DDL);   // v68 run labels
     if (current < 69) applySchemaV69(db);
     // v70: ask_attachments.source_run_id / source_project_key / source_rel (Show in folder's fallback) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
-    if (current < 71) db.exec(REQUIREMENTS_DDL);     // v71 requirements: features, thread, contexts, spend — reconcile-safe
-    if (current < 72) db.exec(REQUIREMENTS_STARTS_DDL);   // v72 requirements: one row per Start in Worca — reconcile-safe
-    // v73 requirements: the product brief + ledger.brief_id. The repair runs again here: req_cost_ledger is created at
-    // v71, after the hoisted repair, so a DB coming from below 71 gets brief_id only from this call.
-    if (current < 73) { db.exec(REQUIREMENTS_BRIEFS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
+    if (current < 71) db.exec(UTILITY_COST_LEDGER_DDL);   // v71 utility spend (Smart run naming)
+    if (current < 72) db.exec(REQUIREMENTS_DDL);     // v72 requirements: features, thread, contexts, spend — reconcile-safe
+    if (current < 73) db.exec(REQUIREMENTS_STARTS_DDL);   // v73 requirements: one row per Start in Worca — reconcile-safe
+    // v74 requirements: the product brief + ledger.brief_id. The repair runs again here: req_cost_ledger is created at
+    // v72, after the hoisted repair, so a DB coming from below 72 gets brief_id only from this call.
+    if (current < 74) { db.exec(REQUIREMENTS_BRIEFS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

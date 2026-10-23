@@ -73,6 +73,7 @@ test('Auto never mints the id; the Ask catalog lists the built-ins default first
     listProjects: async () => [], listWorkspaces: async () => [],
     listWorkflows: async () => [{ ...GRAPH_MEMORY_DEFRAG_WORKFLOW, name: 'Shadow' }, { id: 'wf_x', name: 'X', version: 2, domain: 'coding', nodes: [], wires: [] }],
     loadAgentRegistry: () => loadAgentRegistry(),
+    shapeFirst: () => false,   // Shaper is on by default; wf_shape's place is test/ask-catalog-shape.test.mjs
   });
   const cat = await buildCatalog();
   assert.deepEqual(cat.workflows.map((w) => w.id), [GRAPH_DEFAULT_WORKFLOW.id, 'wf_memory_defrag', 'wf_x'], 'a stored twin of the built-in id is dropped');

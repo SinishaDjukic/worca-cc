@@ -66,6 +66,23 @@ export function recordAskCostDelta({ threadId, messageId = null, amountUsd,
     VALUES (?, ?, ?, ?, ?, ?)`).run(threadId, messageId, amountUsd, tokens, model, tsMs);
 }
 
+/** Append one utility cost event: spend with no run behind it (Smart run naming, kind 'naming'). Never touches
+ *  cost_ledger, so it is not billed to a run and does not count toward a budget. A $0 or unpriced result leaves no row. */
+export function recordUtilityCost(kind, { costUsd, usage = null, model = null, tsMs = Date.now() } = {}) {
+  if (!kind || !Number.isFinite(costUsd) || costUsd <= 0) return;
+  prepare(`INSERT INTO utility_cost_ledger (kind, amount_usd, tokens_in, tokens_out, model, ts)
+    VALUES (?, ?, ?, ?, ?, ?)`).run(kind, costUsd, usage?.input_tokens ?? null, usage?.output_tokens ?? null, model, tsMs);
+}
+
+/** Utility spend per kind in [fromMs, toMs): { naming: { usd, count } }. */
+export function utilityTotals(fromMs, toMs) {
+  const rows = prepare(`SELECT kind, COALESCE(SUM(amount_usd), 0) AS s, COUNT(*) AS n
+    FROM utility_cost_ledger WHERE ts >= ? AND ts < ? GROUP BY kind`).all(fromMs, toMs);
+  const out = { naming: { usd: 0, count: 0 } };
+  for (const r of rows) out[r.kind] = { usd: roundUsd(r.s || 0), count: r.n || 0 };
+  return out;
+}
+
 /** Windowed Ask Worca spend; toMs null = open-ended (budget windows), else ts < toMs. */
 export function askWindowedSpendUsd(fromMs, toMs = null) {
   const row = toMs == null

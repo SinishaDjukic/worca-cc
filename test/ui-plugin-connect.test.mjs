@@ -59,13 +59,12 @@ async function waitFor(fn, what, { timeoutMs = 3000, everyMs = 10 } = {}) {
   }
 }
 
-// The Plugins list has one delegated click listener; a .pl-settings button with
-// data-name is all it takes to open the Settings modal (no list render needed).
+// Team policy › Configure… is the one entry that keeps the Settings modal (L2): the section's own delegated listener.
 function openSettings(doc, window, name) {
   const btn = doc.createElement('button');
-  btn.className = 'pl-settings';
+  btn.className = 'pl-policy-configure';
   btn.dataset.name = name;
-  doc.querySelector('#plugins-list').appendChild(btn);
+  doc.querySelector('section[data-view="team-policy"]').appendChild(btn);
   btn.click();
 }
 

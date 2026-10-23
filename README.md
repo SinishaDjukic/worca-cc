@@ -445,17 +445,21 @@ level and has no **Diff**, **Changes** or **Actions**.
   Azure Boards),
   agents (with their ask forms), scripts, skills, workflow templates, models,
   chat channels, and MCP servers for the [registry](docs/mcp-servers.md).
-  Install from the **Marketplace** page (Advanced) or `worca plugin install`;
-  **Add marketplace** (a GitHub URL, `owner/repo` or a local path) is Expert.
+  Install from the **Marketplace** page's Browse tab (Advanced) or `worca plugin install`;
+  **Add marketplace** takes a GitHub URL, `owner/repo` or a local path.
   On a machine without git, marketplaces and installs work for GitHub
   repositories over HTTPS, a local plugin folder is linked, and other sources
   say `Needs git`.
   Installing from the UI is an explicit consent ceremony pinned to the commit
   you saw: what's installed, which ask forms an agent can show and which file
   types they may display, which secrets each part requests, where models
-  route, which setup commands run. **Update** previews the commits and a
-  diffstat, and flags new secrets, changed setup and changed model env, before
-  you accept (`worca plugin update --diff` adds the full diff). Package your
+  route, which setup commands run. **Update all** reviews every update in one
+  sheet — the plugin folder's commits, a diffstat and what changes; an update
+  that asks for new access (a new secret, changed setup or model env, a new
+  source, channel, agent or model, an MCP server or skill change) waits until
+  you tick it as reviewed, and each applies exactly the commit you reviewed
+  (`worca plugin update --diff` adds the full diff; `worca plugin purge <name>`
+  deletes a removed plugin's leftover settings and secrets). Package your
   own with **Export…** on a saved workflow or **Share as plugin…** on the
   Models page; see the [authoring guide](.claude/skills/creating-worca-cc-plugins/SKILL.md).
 - **Built-in marketplace** — **Worca CC Official**, Worca's GitHub repository on
@@ -773,9 +777,10 @@ level and has no **Diff**, **Changes** or **Actions**.
 - **Off until you turn them on** — unfinished features ship behind machine-wide
   flags: **Settings › Labs**, `worca flags on|off <key>`, or
   `WORCA_FLAGS=<key>` at start. See [`docs/feature-flags.md`](docs/feature-flags.md).
-- **Shaper** (`shapeFirst`) — Worca shapes a thin or large task first: at most 3
+- **Shaper** (`shapeFirst`, beta, on by default) — Worca shapes a thin or large task first: at most 3
   questions, a plan for the perspectives you pick, rule checks on the plan, and
   your approval before anything is built; a large task can be cut into slices.
+  Turn it off in **Settings › Labs** or with `worca flags off shapeFirst`.
   See [`docs/shape-it-first.md`](docs/shape-it-first.md).
 - **Run tags** (`runTags`) — `key:value` tags such as `client:acme` on New
   pipeline, run pages and Ask run cards (`--tag` on the CLI), optional
@@ -982,9 +987,9 @@ worca plugin validate ./my-plugin --run-cases
 # the browser extension packaged with Worca
 worca extension --open          # the packaged browser extension folder
 
-# experimental features
+# feature flags
 worca flags                     # list them
-worca flags on shapeFirst
+worca flags off shapeFirst      # Shaper is beta and on by default
 ```
 
 Run `worca --help` for every subcommand — projects (`add`, `list`,
@@ -1027,7 +1032,7 @@ The skill starts the same deterministic orchestrator as the CLI;
 - [Architecture](docs/ARCHITECTURE.md) — the whole stack in one picture, and how Auto picks a run's topology
 - [Scripts](docs/scripts.md) — script cards that run your own program instead of an agent, the Library's Scripts tab, testing a script by itself
 - [Scheduled runs](docs/scheduled-runs.md) — start a run later, once or on a repeat, from the web UI, the CLI or the API
-- [Shaper](docs/shape-it-first.md) — plan a task with Worca before it builds, in Chat, and cut a large one into slices (experimental)
+- [Shaper](docs/shape-it-first.md) — plan a task with Worca before it builds, in Chat, and cut a large one into slices (beta, on by default)
 - [Feature flags](docs/feature-flags.md) — the experimental features, and how to turn them on and off
 - [Guardrails](docs/guardrails.md) — per-run policy sets (Permissive, Normal, Strict), enforcement, honest limitations
 - [Workspace map](docs/workspace-map.md) — how a workspace scan maps relations, reviewing them, measuring a scan

@@ -134,6 +134,16 @@ function keywordSlug(text) {
   return (kept.length ? kept : words).slice(0, MAX_BRANCH_WORDS).join('-');
 }
 
+/** The title-first slug suggestBranchName uses (no prefix, no id). '' when there is nothing to slug. */
+export function deriveBranchSlug({ prompt, title } = {}) {
+  // A title is explicit intent — slugify it verbatim (only word-cap for length),
+  // never strip stopwords (would mangle deliberate names like "A/B Testing").
+  const fromTitle = title
+    ? slugify(title).split('-').filter(Boolean).slice(0, MAX_BRANCH_WORDS).join('-')
+    : '';
+  return fromTitle || keywordSlug(prompt);
+}
+
 /**
  * Propose a feature branch name WITHOUT an LLM (so preflight stays free and
  * fully deterministic). Title-first: a caller-supplied title is the clearest
@@ -142,12 +152,7 @@ function keywordSlug(text) {
  */
 export function suggestBranchName({ prompt, title, pipelineId } = {}) {
   const shortId = String(pipelineId || '').slice(0, 8) || 'run';
-  // A title is explicit intent — slugify it verbatim (only word-cap for length),
-  // never strip stopwords (would mangle deliberate names like "A/B Testing").
-  const fromTitle = title
-    ? slugify(title).split('-').filter(Boolean).slice(0, MAX_BRANCH_WORDS).join('-')
-    : '';
-  const core = fromTitle || keywordSlug(prompt) || 'feature';
+  const core = deriveBranchSlug({ prompt, title }) || 'feature';
   return sanitizeBranchName(`${BRANCH_PREFIX}${core}-${shortId}`);
 }
 
@@ -164,6 +169,14 @@ export async function currentBranch(projectDir, { timeout } = {}) {
   if (!r.ok) return null;
   const name = r.stdout.trim();
   return name && name !== 'HEAD' ? name : null;
+}
+
+/** An unborn HEAD (git init, no commit yet): the branch the first commit lands on; null once HEAD has a commit or outside a repo. */
+export async function unbornBranch(projectDir) {
+  if ((await git(projectDir, ['rev-parse', '--verify', '-q', 'HEAD'])).ok) return null;
+  const r = await git(projectDir, ['symbolic-ref', '--short', '-q', 'HEAD']);
+  const name = r.ok ? r.stdout.trim() : '';
+  return name || null;
 }
 
 /**

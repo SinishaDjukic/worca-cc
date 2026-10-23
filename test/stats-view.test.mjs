@@ -308,3 +308,15 @@ test('renderGroupsCard: the Requirements row is muted like the Chat row and has 
   for (const i of [3, 4, 5, 6, 7]) assert.equal(tr.cells[i].textContent, '—');
   assert.match(readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8'), /\.groups-table tr\.groups-row-requirements td/);
 });
+
+test('renderKpiRow: the Naming line shows under Chat only when there is naming spend', () => {
+  const none = renderKpiRow(MODEL, { doc }).querySelectorAll('.stat-tile')[3];
+  assert.match(none.querySelector('.stat-label').textContent, /Chat/);
+  assert.equal(none.querySelectorAll('.stat-sub').length, 1);
+  const zero = renderKpiRow({ ...MODEL, utility: { naming: { usd: 0, count: 0 } } }, { doc }).querySelectorAll('.stat-tile')[3];
+  assert.equal(zero.querySelectorAll('.stat-sub').length, 1);
+  const some = renderKpiRow({ ...MODEL, utility: { naming: { usd: 0.0005, count: 2 } } }, { doc }).querySelectorAll('.stat-tile')[3];
+  const subs = some.querySelectorAll('.stat-sub');
+  assert.equal(subs.length, 2);
+  assert.equal(subs[1].textContent, 'Naming $0.0005 · 2 suggestions');
+});

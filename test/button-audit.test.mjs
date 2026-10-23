@@ -75,10 +75,10 @@ test('a .tab button is a control, not a stray button (D4)', () => {
   assert.deepEqual(run('<div class="tabs"><button class="tab on">General</button></div>'), []);
 });
 
-test('long-label: more than 3 words of visible text fail; "Approve with N open issue(s)" and long aria-labels pass (A14)', () => {
+test('long-label: more than 3 words of visible text fail; "Approve with N open issue(s)", "Browse these N plugins", "N notes from the manifest" and long aria-labels pass (A14)', () => {
   assert.deepEqual(run('<button class="btn">Continue with what you have</button>').map((v) => [v.rule, v.got]),
     [['long-label', 'Continue with what you have']]);
-  assert.deepEqual(run('<button class="btn">Approve with 1 open issue</button><button class="btn">Approve with 3 open issues</button>'), []);
+  assert.deepEqual(run('<button class="btn">Approve with 1 open issue</button><button class="btn">Approve with 3 open issues</button><button class="btn">Browse these 3 plugins</button><button class="btn btn-sm btn-quiet" data-h="28">1 note from the manifest</button><button class="btn btn-sm btn-quiet" data-h="28">2 notes from the manifest</button>'), []);
   assert.deepEqual(run('<button class="btn btn-icon" aria-label="Open the run in a new window right now"></button>'), []);
 });
 
@@ -204,4 +204,18 @@ test('auditStray is self-contained (it runs in the page as its source)', () => {
 });
 test('typed-plus: no label is excused any more (slice 3 emptied plusDebt)', () => {
   assert.deepEqual(BUTTON_SPEC.plusDebt, []);
+});
+
+test('the Marketplace tile and facet rows are controls, not §1.2 buttons (marketplace L10)', () => {
+  const doc = new JSDOM('<div id="v"><button class="mk-tile" data-key="off/a">a</button><button class="mk-facet" aria-pressed="true">All plugins</button></div>').window.document;
+  const controls = BUTTON_SPEC.controls.join(',');
+  assert.deepEqual([...doc.querySelectorAll('button')].filter((b) => !b.closest(controls)).map((b) => b.className), []);
+  assert.deepEqual(auditStray(doc.getElementById('v'), STRAY_SPEC, { rect: () => ({ width: 10, height: 10 }) }), []);
+});
+
+test('the Update review card\'s commits row is a disclosure control, not a §1.2 button (marketplace P6)', () => {
+  assert.ok(BUTTON_SPEC.controls.includes('.mk-upd > button.mk-disc') && STRAY_SPEC.allow.includes('.mk-upd > button.mk-disc'));
+  const doc = new JSDOM('<section class="mk-upd"><button type="button" class="mk-disc" aria-expanded="false">2 commits 2441b36 → 735b354</button></section>').window.document;
+  const controls = BUTTON_SPEC.controls.join(',');
+  assert.deepEqual([...doc.querySelectorAll('button')].filter((b) => !b.classList.contains('btn') && !b.closest(controls)).map((b) => b.className), []);
 });

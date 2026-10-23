@@ -78,3 +78,16 @@ test('--on-source-branch: the run lands on main (checked out + clean), no run br
   assert.notEqual(spawnSync('git', ['-C', repo, 'rev-parse', 'main'], { encoding: 'utf8' }).stdout.trim(), before, 'main moved');
   assert.equal(spawnSync('git', ['-C', repo, 'merge-base', '--is-ancestor', before, 'main']).status, 0, 'main only moved forward');
 });
+
+test('smart run naming on: no --branch gives the pattern name; off gives worca-cc/', async () => {
+  for (const [flags, re] of [['smartRunNaming', /^feat\/demo/m], ['-smartRunNaming', /^worca-cc\/demo/m]]) {
+    const repo = await freshRepo();
+    const r = spawnSync(
+      process.execPath,
+      [CLI, '--project', repo, '--prompt', 'demo', '--mock', '--yes'],
+      { env: { ...process.env, WORCA_MOCK: '1', WORCA_FLAGS: flags }, encoding: 'utf8' },
+    );
+    assert.equal(r.status, 0, `cli failed: ${r.stderr}`);
+    assert.match(spawnSync('git', ['-C', repo, 'branch', '--format=%(refname:short)']).stdout.toString(), re);
+  }
+});
