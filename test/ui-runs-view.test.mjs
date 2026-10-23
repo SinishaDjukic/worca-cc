@@ -761,6 +761,67 @@ test('Archive skips a live run and names it; Undo restores the archived ones', a
   assert.deepEqual(posts.at(-1), { action: 'restore', targets: [{ pipelineId: 'aaaa0001' }], groups: [] });
 });
 
+test('an interrupted run that could resume: its ⋯ menu archives (never stops) after a confirm that says it can\'t resume', async () => {
+  const parked = { id: 'dddd0004', projectKey: KEY, projectName: 'proj', projectDir: PROJECT, title: 'Parked thing', status: 'interrupted',
+    resumable: true, startedAt: '2026-09-29T10:00:00Z', mtime: 4 };
+  const { window, doc, posts, confirmWith } = await boot({ history: [...HIST, parked],
+    bulk: () => ({ ok: true, action: 'archive', done: [{ id: 'dddd0004', title: 'Parked thing' }], cancelled: [], skipped: [] }) });
+  go(window, 'runs'); await settle(window);
+  const menu = () => {
+    click(window, itemOf(doc, '[data-pipeline-id="dddd0004"]').querySelector(':scope > .runs-row-tail .runs-more'));
+    return Object.fromEntries([...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].map((n) => [n.textContent.trim(), n]));
+  };
+  let items = menu();
+  assert.equal(items.Stop.getAttribute('aria-disabled') === 'true' || items.Stop.disabled === true, true, 'Stop stays disabled');
+  assert.equal(items.Archive.getAttribute('aria-disabled') === 'true' || items.Archive.disabled === true, false);
+  click(window, items.Archive);
+  await settle(window);
+  const modal = doc.getElementById('confirm-modal');
+  assert.equal(modal.classList.contains('hidden'), false, 'Archive asks first');
+  assert.match(modal.textContent, /Archive 1 run\?/);
+  assert.match(modal.textContent, /1 interrupted run can't be resumed afterwards: Parked thing\./);
+  await confirmWith(false);
+  assert.equal(posts.length, 0, 'cancel posts nothing');
+  items = menu();
+  click(window, items.Archive);
+  await settle(window);
+  await confirmWith(true);
+  assert.deepEqual(posts.at(-1).action, 'archive');
+  assert.match(JSON.stringify(posts.at(-1).targets), /dddd0004/);
+});
+
+test('an archived live interrupted run leaves Running: in the acting tab, and in another tab from the broadcast', async () => {
+  const parked = { id: 'dddd0004', projectKey: KEY, projectName: 'proj', projectDir: PROJECT, title: 'Parked thing', status: 'interrupted',
+    resumable: true, startedAt: '2026-09-29T10:00:00Z', mtime: 4 };
+  let rows = [...HIST, parked];
+  const card = live('r-park', { pipelineId: 'dddd0004', title: 'Parked thing', status: 'interrupted' });
+  // The acting tab: the ⋯ menu's Archive drops the live card as soon as the bulk answer names its pipeline.
+  // It finished live (an agent died mid-run), so it lingers in Running until acknowledged.
+  const storage = { 'worca-cc.lingerRuns': JSON.stringify(['r-park']) };
+  const a = await boot({ history: () => rows, storage,
+    bulk: () => { rows = [...HIST]; return { ok: true, action: 'archive', done: [{ id: 'dddd0004', title: 'Parked thing' }], cancelled: [], skipped: [] }; } });
+  a.recv({ type: 'hello', runs: [card] });
+  go(a.window, 'runs'); await settle(a.window);
+  assert.ok(rowEl(a.doc, '[data-run-id="r-park"]'), 'the interrupted run is listed live');
+  click(a.window, itemOf(a.doc, '[data-run-id="r-park"]').querySelector(':scope > .runs-row-tail .runs-more'));
+  click(a.window, [...a.doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.textContent.trim() === 'Archive'));
+  await settle(a.window);
+  await a.confirmWith(true);
+  assert.equal(a.posts.at(-1).action, 'archive');
+  assert.equal(rowEl(a.doc, '[data-run-id="r-park"]'), null, 'no ghost card in Running');
+  assert.equal(a.doc.querySelector('#runs-list [data-pipeline-id="dddd0004"]'), null, 'nor a History row');
+  // Another open tab: it learns from the pipelines-changed frame, which names the runs the server evicted.
+  rows = [...HIST, parked];
+  const b = await boot({ history: () => rows, storage });
+  b.recv({ type: 'hello', runs: [card] });
+  go(b.window, 'runs'); await settle(b.window);
+  assert.ok(rowEl(b.doc, '[data-run-id="r-park"]'));
+  rows = [...HIST];
+  b.recv({ type: 'pipelines-changed', action: 'bulk-archive', removedRunIds: ['r-park'] });
+  await settle(b.window, 8);
+  assert.equal(rowEl(b.doc, '[data-run-id="r-park"]'), null, 'the other tab drops it too');
+});
+
 test('Delete (Advanced): one confirm naming what goes and what stays', async () => {
   const { window, doc, posts, confirmWith } = await boot();
   go(window, 'runs'); await settle(window);

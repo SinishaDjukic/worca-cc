@@ -240,6 +240,14 @@ test('§5.3 boot: stale buttons never linger — done hides Pause; pausing disab
   ]);
 });
 
+// The saved run page's ⋯ (slice 2): Archive lives there, never in the bar. Opens it and returns its items.
+const hdMore = (ctx) => {
+  const doc = ctx.window.document;
+  doc.querySelector('#hist-detail .hd-bar-more').dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
+  return [...doc.querySelectorAll('body > .wfv-menu .menu-item')];
+};
+const menuLabel = (b) => b.querySelector('.wfv-menu-l').textContent;
+
 async function finishedPage({ row, detail, ghAvailable = false, more = () => null } = {}) {
   const arms = (url) => (url.endsWith('/api/history') ? hd.ok({ pipelines: [row], ghAvailable }) : more(url));
   const ctx = await hd.bootDetail({ rows: [row], detail, arms });
@@ -268,6 +276,27 @@ test('§5.3 boot: the finished page owns its Resume for a resumable paused row, 
         detail: { ...hd.DETAIL, state: { ...hd.DETAIL.state, status: 'paused', archivedAt: '2026-10-18T10:00:00Z' } } });
       assert.equal(end.querySelector('.hd-resume').hidden, true);
       assert.equal(end.querySelector('.rd-actions [data-model-action="resume"]'), null, 'slice 2: never a Resume that cannot work');
+    } },
+    { name: 'interrupted, its project gone (not resumable): Archive, never Resume or Stop', run: async () => {
+      const { ctx, end } = await finishedPage({ row: { ...hd.ROW, status: 'interrupted', resumable: false },
+        detail: { ...hd.DETAIL, state: { ...hd.DETAIL.state, status: 'interrupted', resumable: false } } });
+      const shown = [...end.querySelectorAll('[data-model-action]')].filter((b) => !b.hidden).map((b) => b.dataset.modelAction);
+      assert.deepEqual(shown, [], 'slice 2: no Resume or Stop in the bar, and Archive lives in the ⋯');
+      assert.equal(end.querySelector('.hd-resume').hidden, true);
+      assert.ok(hdMore(ctx).some((b) => menuLabel(b) === 'Archive'), 'Archive is reachable from the ⋯');
+    } },
+    { name: 'interrupted, resumable: Resume and Archive, never Stop; Archive asks first and says it can\'t resume', run: async () => {
+      const { ctx, end, doc } = await finishedPage({ row: { ...hd.ROW, status: 'interrupted' },
+        detail: { ...hd.DETAIL, state: { ...hd.DETAIL.state, status: 'interrupted', resumable: true } } });
+      const shown = [...end.querySelectorAll('[data-model-action]')].filter((b) => !b.hidden).map((b) => b.dataset.modelAction);
+      assert.deepEqual(shown, ['resume'], 'slice 2: Resume in the bar, never Stop; Archive lives in the ⋯');
+      hdMore(ctx).find((b) => menuLabel(b) === 'Archive').click();
+      await hd.settle(ctx.window, 6);
+      const modal = doc.getElementById('confirm-modal');
+      assert.equal(modal.classList.contains('hidden'), false, 'Archive asks first');
+      assert.match(modal.textContent, /It is interrupted and can't be resumed afterwards\./);
+      doc.getElementById('confirm-cancel').click();
+      await hd.settle(ctx.window, 4);
     } },
     { name: 'failed: the saved state\'s ledger gives the card\'s line (stage and failed step), not a bare "Failed"', run: async () => {
       const failed = RUN_STATE_ROWS.find((r) => r.state === 'failed').run;

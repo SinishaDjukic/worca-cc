@@ -298,7 +298,9 @@ export function runModel(run, opts = {}) {
   const meta = RUN_STATES[state];
   // A PR-driven Needs you has no question to answer; its line is the chip's reason (QA 3) and its action View PR (D31).
   const prNeeds = state === 'needs-you' && r.pendingQuestion == null && (watchNeeds || !!(pr && pr.needsYou));
-  const actions = fin ? [] : watchNeeds ? ['open-pr', 'ask-changes'] : prNeeds ? ['open-pr'] : ACTIONS[state];
+  const actions = fin ? [] : watchNeeds ? ['open-pr', 'ask-changes'] : prNeeds ? ['open-pr']
+    // An interrupted run is never stopped: it archives, and resumes too unless it never can (no resume point, its project gone).
+    : r.status === 'interrupted' ? (r.resumable === false ? ['archive'] : ['resume', 'archive']) : ACTIONS[state];
   const base = fin ? fin.line : state === 'starting' && mode === 'folder' ? 'Copying the folder'
     : watchNeeds ? watch.line : prNeeds ? prReasonLine(pr) : singleLine(state, r, prog, pr, opts);
   const round = roundOf(r);

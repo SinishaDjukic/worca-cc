@@ -69,7 +69,7 @@ test('labelTargets: a chain expands to its members\' pipeline ids, deduped; a sc
   assert.deepEqual(labelTargets([chain, solo, other, ticket]), [{ pipelineId: 'p1', labels: ['hotfix'] }, { pipelineId: 'p2', labels: [] }]);
 });
 
-test('an interrupted History row with no resume point offers Archive and Delete; one that can resume does not', () => {
+test('an interrupted History row offers Archive and Delete, resume point or not, and never Stop', () => {
   const history = [
     { id: 'p1', projectKey: 'k', title: 'Dead', status: 'interrupted', resumable: false, startedAt: '2026-08-01T00:00:00Z' },
     { id: 'p2', projectKey: 'k', title: 'Parked', status: 'interrupted', resumable: true, startedAt: '2026-08-02T00:00:00Z' },
@@ -77,6 +77,6 @@ test('an interrupted History row with no resume point offers Archive and Delete;
   const rows = buildRunsModel({ history }).sections.flatMap((s) => s.rows);
   const by = Object.fromEntries(rows.map((r) => [r.pipelineId, barModel([rowTarget(r)])]));
   assert.deepEqual([by.p1.archive.count, by.p1.delete.count, by.p1.stop.count], [1, 1, 0]);
-  assert.deepEqual([by.p2.archive.count, by.p2.delete.count, by.p2.stop.count], [0, 0, 0]);
-  assert.equal(by.p2.archive.title, 'Skipped 1 interrupted — resume it first: Parked.');
+  assert.deepEqual([by.p2.archive.count, by.p2.delete.count, by.p2.stop.count], [1, 1, 0]);
+  assert.equal(by.p2.stop.title, 'Skipped 1 interrupted — resume it first: Parked.');
 });

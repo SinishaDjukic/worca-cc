@@ -11,7 +11,9 @@ import { join } from 'node:path';
 import { listAllPipelines, readPipelineByKey } from '../src/core/artifacts.mjs';
 import { archivePipeline, restorePipeline } from '../src/core/pipeline-delete.mjs';
 import { predecessorState } from '../src/core/scheduler.mjs';
-import { projectKey } from '../src/core/store.mjs';
+import { projectKey, NO_PROJECT_KEY } from '../src/core/store.mjs';
+import { addProject, removeProject, runOnboarded } from '../src/core/projects.mjs';
+import { createWorkspace } from '../src/core/workspaces.mjs';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 
@@ -23,6 +25,7 @@ before(async () => {
   _resetForTests();                                                 // DB singleton opens under this home
   projectDir = await mkdtemp(join(tmpdir(), 'worca-cc-archived-proj-'));
   key = projectKey(projectDir);
+  await addProject({ name: 'archived-proj', path: projectDir });   // a resumable run needs its project onboarded
 });
 after(async () => {
   _resetForTests();
@@ -124,4 +127,46 @@ test('the chain gate: an archived predecessor is gone ("was archived"), a restor
   await restorePipeline({ projectDir, id });
   assert.equal(predecessorState({ kind: 'pipeline', id }, { now: Date.now() }).state, 'ok',
     'restore un-strands them: the gate is open again');
+});
+
+test('an interrupted run whose project was removed is not resumable, in History and in the detail', async () => {
+  const gone = await mkdtemp(join(tmpdir(), 'worca-cc-gone-proj-'));
+  try {
+    await addProject({ name: 'calculator', path: gone });
+    const { id } = await seedPipeline(gone, { title: 'stuck', status: 'interrupted', resumePoint: { version: 2 } });
+    const listed = async () => (await listAllPipelines()).find((r) => r.id === id).resumable;
+    assert.equal(await listed(), true, 'project onboarded: resumable');
+    assert.equal((await readPipelineByKey(projectKey(gone), id)).state.resumable, true);
+    await removeProject('calculator', { pruneWaitMs: 0 });
+    assert.equal(await listed(), false, 'project gone: Archive / Delete take it');
+    assert.equal((await readPipelineByKey(projectKey(gone), id)).state.resumable, false, 'the detail hides Resume');
+  } finally { await rm(gone, { recursive: true, force: true }); }
+});
+
+test('runOnboarded: a run without a project always is; a workspace run needs its workspace and every member still in it', async () => {
+  assert.equal(runOnboarded({ id: 'x', project_key: NO_PROJECT_KEY }), true, 'its own work folder, never misclassified');
+  assert.equal(runOnboarded({ id: 'x', project_key: key }), true);
+  assert.equal(runOnboarded({ id: 'x', project_key: 'calculator-00000000' }), false);
+  const other = await mkdtemp(join(tmpdir(), 'worca-cc-ws-member-'));
+  const dropped = await mkdtemp(join(tmpdir(), 'worca-cc-ws-dropped-'));
+  try {
+    await addProject({ name: 'ws-other', path: other });
+    const ws = await createWorkspace({ name: 'WS onboarded', projectPaths: [projectDir, other] });
+    // A member is any repo: dropping it from the projects registry leaves it a member of the workspace.
+    await removeProject('ws-other', { pruneWaitMs: 0 });
+    const meta = (dirs) => JSON.stringify({ projects: dirs.map((d) => ({ projectKey: projectKey(d), projectDir: d })) });
+    const row = (wk, dirs, id = 'w') => ({ id, project_key: key, target: 'workspace', workspace_key: wk, workspace_meta: meta(dirs) });
+    assert.equal(runOnboarded(row(ws.id, [projectDir, other])), true, 'the workspace and every member it ran with');
+    assert.equal(runOnboarded(row(ws.id, [projectDir, dropped])), false, 'a member no longer in the workspace');
+    assert.equal(runOnboarded(row('wks-gone-00000000', [projectDir])), false, 'the workspace itself is gone');
+    assert.equal(runOnboarded({ ...row(ws.id, []), workspace_meta: null }), false, 'no members to resume');
+    // A first scan's workspace does not exist until the scan finishes: its member folders decide.
+    const scan = await seedPipeline(projectDir, { title: 'first scan', status: 'interrupted', resumePoint: { version: 2, workflowId: 'wf_workspace_scan' } });
+    assert.equal(runOnboarded(row('wks-new-00000000', [projectDir, dropped], scan.id)), true);
+    await rm(dropped, { recursive: true, force: true });
+    assert.equal(runOnboarded(row('wks-new-00000000', [projectDir, dropped], scan.id)), false, 'a member folder is gone');
+  } finally {
+    await rm(other, { recursive: true, force: true });
+    await rm(dropped, { recursive: true, force: true });
+  }
 });

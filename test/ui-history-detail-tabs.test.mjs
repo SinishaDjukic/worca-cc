@@ -1100,11 +1100,10 @@ test('History bar per finished/paused status: Run after, Resume split only when 
       assert.ok(end.querySelector('.hd-resume svg'), 'Resume leads with the play glyph');
       assert.equal(end.querySelector('.hd-resume-more').dataset.levelKeep, undefined, 'no usage limit: the caret stays Advanced');
       assert.equal(end.querySelector('.hd-pause').hidden, true, 'no live run: nothing to pause');
-      // The run model lists Stop for every parked row (paused, interrupted); only a paused one stops through its row.
-      const parked = status === 'paused' || status === 'interrupted';
-      assert.equal(end.querySelector('.hd-stop').hidden, !parked, parked ? 'the model lists Stop' : 'no live run: nothing to stop');
-      if (parked) assert.equal(end.querySelector('.hd-stop').disabled, status !== 'paused',
-        status === 'paused' ? 'a paused saved run is stopped through its row' : 'an interrupted run is never stopped');
+      // The run model lists Stop for a paused row, which stops through its row; an interrupted one is never stopped (it archives).
+      const parked = status === 'paused';
+      assert.equal(end.querySelector('.hd-stop').hidden, !parked, parked ? 'the model lists Stop' : 'nothing to stop');
+      if (parked) assert.equal(end.querySelector('.hd-stop').disabled, false, 'a paused saved run is stopped through its row');
       const header = hd.querySelector('.hd-header');
       for (const sel of ['.hd-after', '.hd-resume-split', '.hd-resume', '.hd-resume-switch', '.hd-pause', '.hd-stop']) {
         assert.equal(header.querySelector(sel), null, `${sel} is not in the Details header`);
@@ -1388,9 +1387,9 @@ test("History bar after a server restart: an old boot's running/paused/stopped r
       assert.equal(resume.hidden, false);
       assert.equal(resume.disabled, false);
       assert.equal(pause.hidden, true, 'no Pause on a run the server lost');
-      assert.equal(stop.hidden, false, 'the run model lists Stop for a parked row');
-      assert.equal(stop.disabled, saved !== 'paused',
-        saved === 'paused' ? 'a paused saved run is stopped through its row' : 'no Stop on an interrupted run');
+      // A paused row stops through its row; an interrupted one lists no Stop (it archives).
+      assert.equal(stop.hidden, saved !== 'paused', saved === 'paused' ? 'the run model lists Stop for a paused row' : 'no Stop on an interrupted run');
+      if (saved === 'paused') assert.equal(stop.disabled, false, 'a paused saved run is stopped through its row');
       // The new server resumes the pipeline: that run is live.
       frame({ type: 'run-created', runId: 'r-2', title: ROW.title, projectDir: PROJECT, status: 'running', kind: 'run' });
       frame({ type: 'state', runId: 'r-2', id: ROW.id, status: 'running', ...STEPPING });
