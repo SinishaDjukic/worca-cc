@@ -43,8 +43,8 @@ runs started from Requirements: **New run**, Chat, schedules and the CLI are unc
 
 ## 3. Data
 
-Migration v72 (v71 is A1's; both were v57/v58 before the merge with `dev`, where Shaper had taken 57/58 — see
-A1 §3), in `INCREMENTAL_TABLES`:
+Migration v73 (v72 is A1's; they were v57/v58 before the merges with `dev`, where Shaper had taken 57/58 and
+Smart run naming 71 — see A1 §3), in `INCREMENTAL_TABLES`:
 
 ```sql
 CREATE TABLE IF NOT EXISTS req_starts (
@@ -125,7 +125,7 @@ Auto) and the branches (`/api/branches?projectDir=`; for a workspace, one defaul
 - `start.mjs` (new): `startFeature(seq, input, { by }, deps)`, `runStateHook(deps)`.
 - `markdown.mjs`: `renderTaskMarkdown`.
 - `routes.mjs`: the routes of §4, `featureView`/`summary` additions, deps `startRun`, `runSummary`.
-- `src/core/db.mjs`: `req_starts`, v72 (was v58 before the merge with `dev`).
+- `src/core/db.mjs`: `req_starts`, v73 (was v58, then v72, before the merges with `dev`).
 - `ui/server.mjs`: deps wiring (`startRun`, `runSummary`), the hook in `wireRun`.
 - `ui/public/requirements-view.mjs`: the screens of §5; `ui/public/style.css`; `ui/public/index.html` (the
   inline chip); `ui/public/stats-view.mjs` (the tile).
@@ -137,7 +137,7 @@ Auto) and the branches (`/api/branches?projectDir=`; for a workspace, one defaul
 - **ready.mjs:** each check passing and failing; rejected-and-asked vs rejected-not-asked; target missing;
   `displayState` for every combination the list shows; `changedSince` for goal, list sections, criteria
   (added / removed / text), assumptions (status), and none.
-- **Store / migration:** `test/db-migrate-v72.test.mjs`; versions per feature; `linkPipeline` fills once;
+- **Store / migration:** `test/db-migrate-v73.test.mjs`; versions per feature; `linkPipeline` fills once;
   `startByRunId`.
 - **Follow-up:** refused without unasked rejections; runs past the cap with questions; the prompt names the
   rejected assumptions; the next round past the cap is final; thread lines.

@@ -50,13 +50,14 @@ is kept. The brief records the commit and branch it was made from and says when 
 
 ## 3. Data
 
-Migration **v73** (A1.1 adds no schema). It was v59 on this branch; on the merge with `dev` 1.12.0 (at v70,
-where 57-58 are Shaper's and 59 is run tags) A1 became v71, A2 v72 and this v73. The table is `IF NOT EXISTS`
-and in `INCREMENTAL_TABLES`; the ledger column is in `INCREMENTAL_COLUMNS`, and the v73 rung runs
-`repairSchemaGaps` after its DDL so a database coming from below v71 (whose ledger is created at v71, after the
-ladder's hoisted repair) gets the column in the same migration. A database stamped 59 by the old local
-numbering, one at 72 and one at upstream's 70 all reach 73 with every table, column and index
-(`test/db-migrate-v73.test.mjs`).
+Migration **v74** (A1.1 adds no schema). It was v59 on this branch; on the merge with `dev` 1.12.0 (at v70,
+where 57-58 are Shaper's and 59 is run tags) A1 became v71, A2 v72 and this v73, and on the merge with `dev`
+1.13.1 (whose v71 is Smart run naming's `utility_cost_ledger`) A1 v72, A2 v73 and this **v74**. The table is
+`IF NOT EXISTS` and in `INCREMENTAL_TABLES`; the ledger column is in `INCREMENTAL_COLUMNS`, and the v74 rung runs
+`repairSchemaGaps` after its DDL so a database coming from below v72 (whose ledger is created at v72, after the
+ladder's hoisted repair) gets the column in the same migration. A database at 73, at upstream's 70 or 71, or
+stamped 71-73 by the earlier numbering all reach 74 with every table, column and index
+(`test/db-migrate-v74.test.mjs`, `test/db-migrate-v72.test.mjs`).
 
 ```sql
 CREATE TABLE IF NOT EXISTS req_briefs (
@@ -278,15 +279,15 @@ and the feature page of a feature in that scope repaint; the New feature form do
 - `src/core/git-info.mjs`: `commitFilesSince`.
 - `src/core/cost-budget.mjs`: `briefId` in `recordRequirementsCostDelta`. `src/core/stats.mjs`: the
   distinct-feature count ignores 0.
-- `src/core/db.mjs`: `req_briefs`, `req_cost_ledger.brief_id`, v73 (was v59 before the merge with `dev`).
+- `src/core/db.mjs`: `req_briefs`, `req_cost_ledger.brief_id`, v74 (was v59, then v73, before the merges with `dev`).
 - `ui/server.mjs`: `recoverBriefs()` at boot next to `recoverRequirements()`.
 - `ui/public/requirements-view.mjs`, `ui/public/style.css`, `ui/public/app.js` (pass `msg.brief`).
 - `tools/verify-requirements-cdp.mjs`; `docs/requirements.md` (a **Product brief** section).
 
 ## 8. Testing
 
-- **Store / migration:** `test/db-migrate-v73.test.mjs` (table on a fresh db and on one stamped 72, the
-  ledger column on both, plus 59-by-the-old-numbering and upstream 70); `test/db-migrate-v71.test.mjs`'s pinned
+- **Store / migration:** `test/db-migrate-v74.test.mjs` (table on a fresh db and on one stamped 73, the
+  ledger column on both, plus upstream 70 and 71); `test/db-migrate-v72.test.mjs`'s pinned
   ledger columns gain `brief_id`; one row per
   scope; JSON round trips; `briefUsers` (current brief id only); `recentBriefCosts`; Statistics' feature count
   ignores brief spend; budget totals include it.

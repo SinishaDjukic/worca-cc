@@ -38,7 +38,7 @@
 
 ### Task 1: Schema v58 and the starts store
 
-> Renumbered on the merge with `dev`: `req_starts` is **v72** and its test `test/db-migrate-v72.test.mjs`
+> Renumbered on the merges with `dev`: `req_starts` is **v73** and its test `test/db-migrate-v73.test.mjs`
 > (Shaper took 57/58 upstream; see the A2 design §3). The steps below are the original record.
 
 **Files:**

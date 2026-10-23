@@ -36,8 +36,8 @@
 
 ### Task 1: Schema — four requirements tables at v57
 
-> Renumbered on the merge with `dev`: Shaper took 57/58 upstream, so these tables are **v71** and the test is
-> `test/db-migrate-v71.test.mjs` (see design §3). The steps below are the original record.
+> Renumbered on the merges with `dev`: Shaper took 57/58 and Smart run naming 71 upstream, so these tables are
+> **v72** and the test is `test/db-migrate-v72.test.mjs` (see design §3). The steps below are the original record.
 
 **Files:**
 - Modify: `src/core/db.mjs` (`SCHEMA_VERSION` line 63; new DDL after `PR_WATCH_DDL` ~line 1034; `INCREMENTAL_TABLES` ~1036; ladder after `if (current < 56)` ~2139)
