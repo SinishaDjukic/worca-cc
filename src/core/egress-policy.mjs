@@ -13,18 +13,38 @@
 // What this does NOT cover (docs/remote-access.md, "Outbound network policy"): a program that
 // ignores the proxy variables or opens a raw socket goes direct. Only a network that has no
 // route out (the Docker overlay) stops that.
+//
+// With the corporateProxy flag on, the same proxy also chains to one corporate (upstream) proxy
+// (src/core/upstream-proxy.mjs): from settings.json networkProxy, else the HTTP(S)_PROXY that was
+// set. Children then get a credential-free http://127.0.0.1:<port>. Under a policy, the policy
+// decides first and allowed hosts are forwarded to the upstream instead of replacing it.
 
-import { createProxy, readEgressPolicy } from './egress-proxy.mjs';
+import { createProxy, readEgressPolicy, normalizeHost } from './egress-proxy.mjs';
+import { createUpstreamConnector, resolveUpstream, AUTH_LABELS } from './upstream-proxy.mjs';
+import { flagEnabled } from './flags.mjs';
+import { readSettings } from './settings.mjs';
 
 /** Set by the worca that runs the proxy, so a worca CLI started under it reuses it. */
 export const EGRESS_PROXY_VAR = 'WORCA_EGRESS_PROXY_URL';
 
 const PROXY_NAMES = ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy'];
 const LOOPBACK = '127.0.0.1,localhost,::1';
+const OPEN_POLICY = Object.freeze({ mode: 'open', enforced: false, allow: [], deny: [] });
 
-/** The variables a child needs to go through the proxy at `url`; loopback only goes direct. */
-export function egressChildEnv(url) {
-  const env = { [EGRESS_PROXY_VAR]: url, NO_PROXY: LOOPBACK, no_proxy: LOOPBACK };
+/** True when `value` is an http URL with a user name whose host:port is the upstream's (D21). */
+function loginFor(value, upstream) {
+  if (typeof value !== 'string' || !value.includes('@')) return false;
+  let u;
+  try { u = new URL(value.trim()); } catch { return false; }
+  return u.protocol === 'http:' && !!u.username
+    && normalizeHost(u.hostname) === upstream.host && Number(u.port || 80) === upstream.port;
+}
+
+/** The variables a child needs to go through the proxy at `url`; loopback and `direct` go direct
+ *  (`direct` = ['*'] means everything does, written as NO_PROXY='*' alone). */
+export function egressChildEnv(url, direct = []) {
+  const noProxy = direct.includes('*') ? '*' : [LOOPBACK, ...direct].join(',');
+  const env = { [EGRESS_PROXY_VAR]: url, NO_PROXY: noProxy, no_proxy: noProxy };
   for (const k of PROXY_NAMES) env[k] = url;
   return env;
 }
@@ -49,34 +69,67 @@ export function egressSummary(env = process.env) {
 }
 
 /**
- * Enforce the policy in `env` for this process and its children.
- *   off        not enforced: env untouched.
+ * Enforce the policy in `env` for this process and its children, and (corporateProxy flag)
+ * chain to the corporate proxy.
+ *   off        nothing to do (no policy, flag off or no upstream): env untouched.
  *   inherited  a parent worca's proxy is already in env: reused, nothing started.
  *   on         proxy listening on 127.0.0.1:<port>; the proxy variables are now in env.
- * A proxy that cannot start rejects: the caller must not go on without it.
- * @param {{env?: Record<string, string|undefined>, log?: (line: string) => void, unref?: boolean}} [opts]
- * @returns {Promise<{status: 'off'|'inherited'|'on', policy: object, url?: string, replacedProxy?: boolean, close: () => Promise<void>}>}
+ * A policy proxy that cannot start rejects; a corporate-proxy-only one returns off + upstreamError.
+ * @param {{env?: Record<string, string|undefined>, log?: (line: string) => void, unref?: boolean,
+ *   corporateProxy?: () => boolean, settings?: () => object}} [opts]
+ * @returns {Promise<{status: 'off'|'inherited'|'on', policy: object, url?: string, replacedProxy?: boolean,
+ *   upstreamError?: string, connector?: object, boundAddress?: string, scrubbedKeys?: string[], upstream?: object,
+ *   close: () => Promise<void>}>}
  */
-export async function startEgressPolicy({ env = process.env, log = () => {}, unref = false } = {}) {
+export async function startEgressPolicy({ env = process.env, log = () => {}, unref = false,
+  corporateProxy = () => flagEnabled('corporateProxy'), settings = readSettings } = {}) {
   const policy = readEgressPolicy(env);
   const none = async () => {};
-  if (!policy.enforced) return { status: 'off', policy, close: none };
+  const corp = !!corporateProxy();
+  if (!policy.enforced && !corp) return { status: 'off', policy, close: none };
   if (inheritsEgressProxy(env)) return { status: 'inherited', policy, url: env[EGRESS_PROXY_VAR], close: none };
-  // Only refusals are logged: an agent's every package download would otherwise be a line.
-  const server = createProxy({ policy, log: (line) => { if (/ DENY /.test(line)) log(line); } });
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => { server.off('error', reject); resolve(); });
+  const s = corp ? settings() : null;
+  const upstream = corp ? resolveUpstream({ env, settings: s && typeof s === 'object' ? s.networkProxy : undefined }) : null;
+  const upstreamError = upstream && upstream.error ? upstream.error : undefined;
+  const usable = upstream && !upstream.error ? upstream : null;
+  const extra = upstreamError ? { upstreamError } : {};
+  if (!policy.enforced && !usable) return { status: 'off', policy, ...extra, close: none };
+  const connector = usable ? createUpstreamConnector(usable, { log: (l) => log(`corporate proxy: ${l}`) }) : null;
+  const server = createProxy({
+    policy: policy.enforced ? policy : OPEN_POLICY,
+    connector,
+    limits: usable ? { connectTimeoutMs: usable.timeouts.connectMs, idleTimeoutMs: usable.timeouts.idleMs } : {},
+    // Only refusals are logged: an agent's every package download would otherwise be a line.
+    log: (line) => { if (/ DENY /.test(line)) log(line); },
   });
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => { server.off('error', reject); resolve(); });
+    });
+  } catch (err) {
+    connector?.close();
+    if (policy.enforced) throw err;
+    return { status: 'off', policy, upstreamError: `the local proxy could not start (${err && err.code ? err.code : 'error'})`, close: none };
+  }
   if (unref) server.unref();
   const port = server.address().port;
   const url = `http://127.0.0.1:${port}`;
-  const replacedProxy = PROXY_NAMES.some((k) => env[k] && env[k] !== url);
-  Object.assign(env, egressChildEnv(url));
+  const replacedProxy = !connector && PROXY_NAMES.some((k) => env[k] && env[k] !== url);
+  const direct = !policy.enforced && usable ? (usable.noProxy.all ? ['*'] : usable.noProxy.list) : [];
+  // D21: read before the swap. Any variable whose value is an http URL with userinfo pointing at
+  // the upstream host:port (ALL_PROXY, npm_config_https_proxy, a differently encoded copy, ...)
+  // would let a child bypass the local proxy with the password.
+  const credentialed = connector ? Object.keys(env).filter((k) => !PROXY_NAMES.includes(k) && loginFor(env[k], usable)) : [];
+  Object.assign(env, egressChildEnv(url, direct));
+  const scrubbedKeys = [];
+  for (const k of credentialed) { env[k] = url; scrubbedKeys.push(k); }
   const sup = superviseProxy(server, port, { log });
   return {
-    status: 'on', policy, url, replacedProxy,
-    close: () => sup.stop(),
+    status: 'on', policy, url, replacedProxy, ...extra,
+    ...(connector ? { connector, boundAddress: server.address().address, scrubbedKeys,
+      upstream: { ...connector.status(), warnings: usable.warnings } } : {}),
+    close: async () => { await sup.stop(); connector?.close(); },
   };
 }
 
@@ -119,10 +172,21 @@ export function superviseProxy(server, port, { log = () => {}, host = '127.0.0.1
   };
 }
 
-/** The boot line for startEgressPolicy()'s result, or null for 'off'. */
+/** The boot line for startEgressPolicy()'s result, or null when there is nothing to say. */
 export function egressNotice(result) {
-  if (!result || result.status === 'off') return null;
+  if (!result) return null;
+  if (result.status === 'off') {
+    return result.upstreamError ? { level: 'warn', text: `corporate proxy: ${result.upstreamError}; it is not used` } : null;
+  }
   const p = result.policy;
+  const up = result.upstream;
+  const warnings = up ? up.warnings : [];
+  if (!p.enforced) {
+    const text = result.status === 'inherited'
+      ? `corporate proxy: outbound connections go through the parent Worca's proxy at ${result.url}`
+      : [`corporate proxy: outbound connections go through ${up.upstream} (${AUTH_LABELS[up.auth]}) via ${result.url}; NO_PROXY hosts and loopback go direct`, ...warnings].join('; ');
+    return { level: warnings.length ? 'warn' : 'info', text };
+  }
   const n = (k, list) => `${k} ${list.length} host${list.length === 1 ? '' : 's'}`;
   const deny = p.deny.filter((h) => h !== '.invalid');
   const lists = p.mode === 'allow' ? `${n('allow', p.allow)}, ${n('deny', deny)}` : n('deny', deny);
@@ -130,6 +194,9 @@ export function egressNotice(result) {
   if (p.invalidMode) parts.push(`WORCA_EGRESS_MODE=${JSON.stringify(p.invalidMode)} is not open, block or allow, so allow applies`);
   if (result.status === 'inherited') parts.push('enforced by the parent worca\'s proxy');
   else parts.push(`enforced through the proxy at ${result.url} for every child process`);
+  if (up) parts.push(`then forwarded to the corporate proxy ${up.upstream} (${AUTH_LABELS[up.auth]})`, ...warnings);
+  if (result.upstreamError) parts.push(`corporate proxy: ${result.upstreamError}; it is not used`);
   if (result.replacedProxy) parts.push('the HTTP(S)_PROXY that was set is replaced');
-  return { level: p.invalidMode || result.replacedProxy ? 'warn' : 'info', text: parts.join('; ') };
+  const warn = p.invalidMode || result.replacedProxy || warnings.length || result.upstreamError;
+  return { level: warn ? 'warn' : 'info', text: parts.join('; ') };
 }

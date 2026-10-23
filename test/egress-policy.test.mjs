@@ -451,3 +451,144 @@ test('supervisor: a proxy that stops listening comes back on the same port; stop
     o.server.close();
   }
 });
+
+// --- the corporate proxy (flag corporateProxy) -------------------------------------------------
+
+import { execFile } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import { startFakeUpstream } from './helpers/fake-upstream-proxy.mjs';
+
+const FLAG_OFF = () => false;
+const FLAG_ON = () => true;
+const CORP_SECRETS = ['Password', 'a4f49c406510bdcab6824ee7c30fd852', Buffer.from('Domain\\User:Password').toString('base64')];
+const assertNoCorpSecrets = (text) => { for (const s of CORP_SECRETS) assert.ok(!String(text).includes(s), `secret in: ${text}`); };
+
+/** Run `fn` with WORCA_FLAGS set to `value`, restored afterwards (the real flagEnabled reads it per call). */
+async function withFlagsEnv(value, fn) {
+  const had = Object.prototype.hasOwnProperty.call(process.env, 'WORCA_FLAGS');
+  const before = process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = value;
+  try { return await fn(); } finally { if (had) process.env.WORCA_FLAGS = before; else delete process.env.WORCA_FLAGS; }
+}
+
+test('corporate proxy: the default gate is the real corporateProxy flag (no injection)', async () => {
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'none', originPort: o.port });
+  try {
+    // '-corporateProxy' locks it off even if the developer's own settings.json turned it on.
+    const offEnv = { HTTPS_PROXY: fake.url() };
+    let settingsRead = 0;
+    const counting = () => { settingsRead += 1; return {}; };
+    const off = await withFlagsEnv('-corporateProxy', () => startEgressPolicy({ env: offEnv, settings: counting }));
+    assert.equal(off.status, 'off');
+    assert.deepEqual(offEnv, { HTTPS_PROXY: fake.url() });
+    assert.equal(settingsRead, 0, 'the real flag off: settings are not read');
+    const onEnv = { HTTPS_PROXY: fake.url() };
+    const on = await withFlagsEnv('corporateProxy', () => startEgressPolicy({ env: onEnv, settings: () => ({}) }));
+    try {
+      assert.equal(on.status, 'on');
+      assert.equal(onEnv.HTTPS_PROXY, on.url);
+    } finally { await on.close(); }
+  } finally { await fake.close(); o.server.close(); }
+});
+
+test('corporate proxy, flag off: env untouched whatever HTTP(S)_PROXY or settings say', async () => {
+  const env = { HTTPS_PROXY: 'http://ACME%5Cjdoe:pw@corp.example:8080', NO_PROXY: 'intranet.example', PATH: '/bin' };
+  const before = { ...env };
+  let settingsRead = 0;
+  const r = await startEgressPolicy({ env, corporateProxy: FLAG_OFF, settings: () => { settingsRead += 1; return { networkProxy: { upstream: 'http://x:1' } }; } });
+  assert.equal(r.status, 'off');
+  assert.deepEqual(env, before);
+  assert.equal(settingsRead, 0, 'flag off: settings are not even read');
+  assert.equal(egressNotice(r), null);
+});
+
+test('corporate proxy, flag on: HTTP(S)_PROXY becomes the upstream and children get a credential-free loopback URL', async () => {
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'ntlm', originPort: o.port });
+  const corpUrl = fake.url('Domain%5CUser:Password@');
+  const env = { HTTPS_PROXY: corpUrl, NO_PROXY: 'intranet.example', ALL_PROXY: corpUrl, npm_config_https_proxy: corpUrl,
+    npm_config_proxy: corpUrl.replace('%5C', '%5c'), PATH: '/bin' };   // a differently encoded copy is caught too
+  const r = await startEgressPolicy({ env, corporateProxy: FLAG_ON, settings: () => ({}) });
+  try {
+    assert.equal(r.status, 'on');
+    assert.equal(r.boundAddress, '127.0.0.1', 'loopback only, never 0.0.0.0');
+    for (const k of ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy', 'ALL_PROXY', 'npm_config_https_proxy', 'npm_config_proxy']) {
+      assert.equal(env[k], r.url, k);
+      assert.ok(!env[k].includes('@'), `${k} carries no credentials`);
+    }
+    assert.deepEqual([...r.scrubbedKeys].sort(), ['ALL_PROXY', 'npm_config_https_proxy', 'npm_config_proxy']);
+    assert.equal(egressChildEnv(r.url, ['*']).NO_PROXY, '*', 'noProxy "*" is written alone');
+    assert.equal(env.PATH, '/bin');
+    assert.equal(env.NO_PROXY, '127.0.0.1,localhost,::1,intranet.example');
+    assert.equal(r.replacedProxy, false);
+    assert.match(egressNotice(r).text, /^corporate proxy: outbound connections go through 127\.0\.0\.1:\d+ \(NTLMv2\) via http:\/\/127\.0\.0\.1:\d+/);
+    assertNoCorpSecrets(egressNotice(r).text);
+    assertNoCorpSecrets(JSON.stringify(r.upstream));
+    const tunnel = await rawRequest(Number(new URL(r.url).port), 'CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\nGET /t HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+    assert.match(tunnel, /^HTTP\/1\.1 200 Connection Established/);
+    assert.match(tunnel, /origin saw \/t/);
+    assert.equal(fake.stats.type3, 1);
+
+    const child = { ...env };
+    const again = await startEgressPolicy({ env: child, corporateProxy: FLAG_ON, settings: () => ({}) });
+    assert.equal(again.status, 'inherited', 'a worca under this one reuses the proxy, never chains to it');
+  } finally { await r.close(); await fake.close(); o.server.close(); }
+});
+
+test('corporate proxy + allow mode: allowed hosts are forwarded to the upstream, denied hosts never reach it', async () => {
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'none', originPort: o.port });
+  const env = { WORCA_EGRESS_MODE: 'allow', WORCA_EGRESS_ALLOW: PLATFORM_ALLOW, WORCA_EGRESS_DENY: '.invalid', HTTPS_PROXY: fake.url() };
+  const r = await startEgressPolicy({ env, corporateProxy: FLAG_ON, settings: () => ({}) });
+  try {
+    const port = Number(new URL(r.url).port);
+    const ok = await rawRequest(port, 'CONNECT app.worca.dev:443 HTTP/1.1\r\nHost: app.worca.dev:443\r\n\r\nGET /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+    assert.match(ok, /origin saw \/a/);
+    const denied = await rawRequest(port, 'CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n');
+    assert.match(denied, /^HTTP\/1\.1 403/);
+    assert.deepEqual(fake.stats.heads.map((h) => h.line), ['CONNECT app.worca.dev:443 HTTP/1.1']);
+    assert.equal(env.NO_PROXY, '127.0.0.1,localhost,::1', 'the policy keeps loopback as the only bypass');
+    const n = egressNotice(r);
+    assert.doesNotMatch(n.text, /replaced/);
+    assert.match(n.text, /then forwarded to the corporate proxy 127\.0\.0\.1:\d+ \(no login\)/);
+  } finally { await r.close(); await fake.close(); o.server.close(); }
+});
+
+test('corporate proxy end to end: a child process fetch with the child env reaches the NTLM upstream', async () => {
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'ntlm', originPort: o.port });
+  const env = { HTTPS_PROXY: fake.url('Domain%5CUser:Password@') };
+  const r = await startEgressPolicy({ env, corporateProxy: FLAG_ON, settings: () => ({}) });
+  try {
+    const envProxy = pathToFileURL(fileURLToPath(new URL('../src/core/env-proxy.mjs', import.meta.url))).href;
+    const script = `import { useEnvProxy } from ${JSON.stringify(envProxy)}; useEnvProxy();
+      const res = await fetch('http://example.test/x'); console.log(res.status, await res.text());`;
+    // async execFile, never spawnSync: the local proxy runs on THIS process's event loop.
+    const out = await new Promise((resolve, reject) => {
+      execFile(process.execPath, ['--input-type=module', '-e', script],
+        { env: { ...process.env, ...env, WORCA_HOST_PID: '' }, timeout: 20_000 },
+        (err, stdout, stderr) => (err ? reject(new Error(`${err.message}\n${stderr}`)) : resolve(stdout.trim())));
+    });
+    // undici's EnvHttpProxyAgent tunnels http:// targets with CONNECT too, so the fake relays the
+    // GET to the origin instead of answering it itself.
+    assert.equal(out, '200 origin saw /x');
+    assert.ok(fake.stats.heads.some((h) => h.line === 'CONNECT example.test:80 HTTP/1.1'), JSON.stringify(fake.stats.heads));
+    assert.equal(fake.stats.type3, 1);
+    assert.ok(!JSON.stringify(env).includes('@'), 'the child env carries no credentials');
+  } finally { await r.close(); await fake.close(); o.server.close(); }
+});
+
+test('corporate proxy, flag on: no upstream anywhere is off; a bad one is a warning without the URL', async () => {
+  const env = { PATH: '/bin' };
+  const r = await startEgressPolicy({ env, corporateProxy: FLAG_ON, settings: () => ({}) });
+  assert.equal(r.status, 'off');
+  assert.deepEqual(env, { PATH: '/bin' });
+  const bad = await startEgressPolicy({ env: { HTTPS_PROXY: 'http://u:s3cret@corp.example:1' }, corporateProxy: FLAG_ON,
+    settings: () => ({ networkProxy: { upstream: 'https://corp.example:8443' } }) });
+  assert.equal(bad.status, 'off');
+  const n = egressNotice(bad);
+  assert.equal(n.level, 'warn');
+  assert.match(n.text, /^corporate proxy: the upstream proxy must be an http:\/\/ URL/);
+  assert.doesNotMatch(n.text, /s3cret|corp\.example:8443/);
+});
