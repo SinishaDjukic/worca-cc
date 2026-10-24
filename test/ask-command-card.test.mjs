@@ -164,6 +164,22 @@ test('summary mode: no summary shows the raw command in mono', () => {
   assert.ok(s.classList.contains('is-raw'));
 });
 
+test('setSummary: a raw row takes the generated line in place; a chat-given summary is never replaced', () => {
+  const doc = dom();
+  const c = createCommandCard({ doc, card: { ...CARD, summary: null }, onStop: () => {}, summarise: true });
+  c.update({ status: 'done', exitCode: 0, durationMs: 400, tail: '' });
+  const s = c.el.querySelector('.ask-cmd-sum');
+  c.setSummary('Running the tests');
+  assert.equal(c.el.querySelector('.ask-cmd-sum'), s, 'same element');
+  assert.equal(s.textContent, 'Running the tests');
+  assert.ok(!s.classList.contains('is-raw'));
+  assert.equal(s.title, 'npm test', 'the hover still names the exact command');
+  assert.match(c.el.querySelector('.ask-cmd-row-btn').getAttribute('aria-label'), /Running the tests/);
+  const given = createCommandCard({ doc, card: SUM, onStop: () => {}, summarise: true });
+  given.setSummary('Something else');
+  assert.equal(given.el.querySelector('.ask-cmd-sum').textContent, SUM.summary);
+});
+
 test('summary mode: a failure opens itself with its output, red ! dot, "exit 1 · 38s"', () => {
   const doc = dom(); const rows = []; const folds = [];
   const c = createCommandCard({ doc, card: SUM, onStop: () => {}, summarise: true, onRowToggle: (o) => rows.push(o), onToggle: (o) => folds.push(o) });

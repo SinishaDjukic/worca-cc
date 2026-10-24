@@ -270,6 +270,8 @@ class AskTurn extends EventEmitter {
       resolveMentions: deps.resolveMentions ?? null,
       generateTitle: deps.generateTitle ?? generateTitle,
       generateSuggestion: deps.generateSuggestion ?? generateSuggestion,
+      // #911 slice 2: ({ cardId, blockId, command }) → void, fire-and-forget (ui/server.mjs, ask/command-summary.mjs). null = none.
+      summariseCommand: deps.summariseCommand ?? null,
       suggestionModel: deps.suggestionModel ?? suggestionModel,
       // Read per kickoff: a Settings save reaches the very next suggestion.
       suggestionsEnabled: deps.suggestionsEnabled ?? (() => chatPrefs().suggestions !== false),
@@ -423,7 +425,12 @@ class AskTurn extends EventEmitter {
       summary: typeof r.summary === 'string' && r.summary ? r.summary.slice(0, ASK_LIMITS.commandSummaryMaxChars) : null };
     // textAt: the card sits in the answer where the command ran, not below it.
     const block = this.reducer.addBlock({ kind: 'card', id: this.deps.newAskId('card'), state: 'command', textAt: this.reducer.textLength(), card });
-    if (block) this._persistBlocks();
+    if (!block) return;
+    this._persistBlocks();
+    // #911 slice 2: no summary from the chat → the Command summaries helper job may write one (never awaited).
+    if (!card.summary && typeof this.deps.summariseCommand === 'function') {
+      try { this.deps.summariseCommand({ cardId: block.id, blockId: card.blockId, command: card.command }); } catch { /* cosmetic */ }
+    }
   }
 
   /** show_files RESULT → a display-only files card, inline where the answer stands (textAt). The card is rebuilt from

@@ -6714,6 +6714,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       applyCommandFrame(frame.command);
       return;
     }
+    if (frame.type === 'ask-command-summary') {                 // #911 slice 2: the helper job's line for one row, in place
+      if (frame.threadId !== st.threadId) return;
+      // flipCard's ask-card / ask-message frame already put it on st.model's block, so a later build paints it too;
+      // this frame repaints the row that is mounted now (buildCard keeps a cached row while mode and state hold).
+      st.commands.get(String(frame.blockId || ''))?.setSummary?.(frame.summary);
+      return;
+    }
     if (frame.type === 'ask-scope') {                           // Projects, any way P4 (CONTRACT §4): a server-side switch
       // The open chat's pill follows it with no PATCH (the server stored it), so the next send keeps the new scope.
       if (frame.threadId === st.threadId && frame.scope && typeof frame.scope === 'object') {

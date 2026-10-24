@@ -406,7 +406,7 @@ const CARD_PATCH_KEYS = ['state', 'runId', 'error', 'workflowId', 'scheduledFor'
 
 /** Patch ⊆ {state, runId, error, workflowId} on one card block. A WORKFLOW card (card.type === 'workflow') and a
  *  METRICS, POLICY, SCHEDULE or MODEL card (card.type 'metrics' | 'policy' | 'schedule' | 'model', whose `result` lands at Apply),
- *  and a PR fix-run `progress` card, whose outcome lands later, also take a SHALLOW `card` sub-patch; a run
+ *  a COMMAND card (its helper-job `summary`, #911 slice 2), and a PR fix-run `progress` card, whose outcome lands later, also take a SHALLOW `card` sub-patch; a run
  *  card's `card` is never touched (its key set is pinned). The 'proposed' precondition is the caller's (route) business. */
 export function updateCardBlock(threadId, cardId, patch = {}) {
   return tx(() => {
@@ -423,7 +423,7 @@ export function updateCardBlock(threadId, cardId, patch = {}) {
         || b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request' || b.card.type === 'ship'
         || b.card.type === 'changes' || b.card.type === 'route'
         || b.card.type === 'canvas-edit' || b.card.type === 'workflow-build' || b.card.type === 'agent-draft' || b.card.type === 'script-draft'
-        || b.card.type === 'scope-switch' || b.card.type === 'project'
+        || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'command'
         || (b.card.type === 'progress' && !!b.card.fix)));
       return { ...b, ...allowed, ...(sub && subPatchable ? { card: { ...(b.card || {}), ...sub } } : {}) };
     });

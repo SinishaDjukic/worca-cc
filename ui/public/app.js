@@ -18937,10 +18937,11 @@ const CODEX_HELPER_JOBS = ['title', 'classifier', 'overview', 'prDescription', '
 // src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the engines with helper slots of their own.
 const HELPER_ENGINES = ['claude', 'codex'];
 // Claude's helper slots at user level are their own settings keys (settings-cascade.mjs CLAUDE_USER): a model id for
-// titles, Auto and PR descriptions (no effort), and the Memory defragment, Agent generation and Run naming pairs. No
-// user-level overview slot. Agent generation and Run naming are Claude's alone (they always run on Claude), so no other
-// tab has their rows; Run naming shows only while smartRunNaming is on.
-const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen', 'naming'];
+// titles, Auto and PR descriptions (no effort), and the Memory defragment, Agent generation, Run naming and Command
+// summaries pairs. No user-level overview slot. Agent generation, Run naming and Command summaries are Claude's alone
+// (they always run on Claude), so no other tab has their rows; Run naming shows only while smartRunNaming is on, Command
+// summaries only while commandSummaries is on.
+const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen', 'naming', 'commandSummary'];
 const helperPair = (p) => (p && p.model ? { model: p.model, ...(p.effort ? { effort: p.effort } : {}) } : undefined);
 const CLAUDE_USER_HELPER_OWN = (data) => ({
   title: data.titleModel ? { model: data.titleModel } : undefined,
@@ -18949,8 +18950,10 @@ const CLAUDE_USER_HELPER_OWN = (data) => ({
   memoryDefrag: helperPair(data.memoryDefrag),
   agentGen: helperPair(data.agentGenModel),
   naming: helperPair(data.namingModel),
+  commandSummary: helperPair(data.commandSummaryModel),
 });
-const claudeHelperJobs = () => CLAUDE_USER_HELPER_JOBS.filter((job) => job !== 'naming' || flagOn('smartRunNaming'));
+const claudeHelperJobs = () => CLAUDE_USER_HELPER_JOBS.filter((job) => (job !== 'naming' || flagOn('smartRunNaming'))
+  && (job !== 'commandSummary' || flagOn('commandSummaries')));
 async function paintEngineSettings(data) {
   const root = document.getElementById('engine-settings-root');
   if (!root) return;
@@ -18966,6 +18969,11 @@ async function paintEngineSettings(data) {
   const claudeOwn = CLAUDE_USER_HELPER_OWN(data || {});
   const claudeJobs = claudeHelperJobs();
   for (const job of claudeJobs) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
+  // Command summaries: unset runs on the cheapest ready Claude model, so the empty option names it ("Haiku 5.5 (default)").
+  const csAuto = data?.commandSummaryModelEffective;
+  if (fields[utilityId('claude', 'commandSummary')] && csAuto && csAuto.source === 'auto' && csAuto.model) {
+    fields[utilityId('claude', 'commandSummary')].inherited = { value: { model: csAuto.model }, source: 'default' };
+  }
   renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
     noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
     defaultLabels: { claude: 'the default model' },
@@ -39963,7 +39971,7 @@ askPanel = createAskPanel({
 ($('section.view[data-view="chat"]') || document.body).appendChild(askPanel.root);
 // Command summaries (#911): read the person's switch once, and follow the flag.
 Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).then((d) => setChatSummariesPref(d && d.chat)).catch(() => { /* keep: on */ });
-onFlagChange('commandSummaries', () => askPanel?.refreshCommandCards());
+onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); void paintHelperModelCards(); });
 // Pinpoint (#669) on the chat's answers: Disagree, Use this and Go deeper send at once with the quote.
 pinpoint.addSurface(askPanel.root, {
   kind: 'chat',
