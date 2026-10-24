@@ -12,7 +12,9 @@ import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { app, runs } from '../ui/server.mjs';
+import { EventEmitter } from 'node:events';
+import { WebSocket } from 'ws';
+import { app, runs, server, _testing } from '../ui/server.mjs';
 import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 
@@ -50,4 +52,44 @@ test('DELETE /api/runs/:id archives: 200 {archived:true}, row survives, history 
   assert.ok(getDb().prepare('SELECT id FROM pipelines WHERE id = ?').get(id), 'row survives');
   const hist = await (await fetch(`${base}/api/history`)).json();
   assert.ok(!JSON.stringify(hist).includes(id), 'history omits archived');
+});
+
+// Archive lets a paused pipeline through, and the server EVICTS its lingering entry from the live set
+// (dropParkedEntries): the pipelines-changed frame names it (removedRunIds) so the open tabs drop their copies,
+// and hello stops listing it. Nothing lingers, so no entry is ever marked archived and hello carries no such field.
+test('archiving a paused run evicts its lingering entry: open tabs get removedRunIds, hello drops it, nothing is marked', async () => {
+  const { id } = await seedPipeline(seededProjectDir, { status: 'paused' });
+  const entry = { id: 'uuid-arch-paused', orch: new EventEmitter(), pipelineId: id, projectDir: seededProjectDir,
+    title: 't', status: 'paused', startedAt: new Date().toISOString(), events: [], pendingQuestion: null };
+  const other = { id: 'uuid-other-live', orch: new EventEmitter(), pipelineId: 'p-other', projectDir: seededProjectDir,
+    title: 'o', status: 'running', startedAt: new Date().toISOString(), events: [], pendingQuestion: null };
+  runs.set(entry.id, entry);
+  runs.set(other.id, other);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const ws = new WebSocket(`ws://127.0.0.1:${server.address().port}/ws`, { headers: { host: '127.0.0.1', origin: 'http://127.0.0.1' } });
+  try {
+    const frames = [];
+    ws.on('message', (d) => frames.push(JSON.parse(String(d))));
+    await new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); });
+    const res = await del(id);
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).archived, true);
+    const evicted = (f) => f.type === 'pipelines-changed' && Array.isArray(f.removedRunIds);
+    for (let i = 0; i < 100 && !frames.some(evicted); i++) await new Promise((r) => setTimeout(r, 10));
+    const frame = frames.find(evicted);
+    assert.ok(frame, 'the open tabs hear which entries left');
+    assert.deepEqual(frame.removedRunIds, [entry.id]);
+    assert.equal(runs.has(entry.id), false, 'the entry left the live set');
+    assert.equal(runs.has(other.id), true, "another pipeline's entry stays");
+    assert.ok(!frames.some((f) => f.type === 'archived'), 'nothing lingers, so nothing is marked');
+    const summaries = _testing.summarizeRuns();
+    assert.equal(summaries.some((r) => r.runId === entry.id), false, 'hello no longer lists it');
+    const live = summaries.find((r) => r.runId === other.id);
+    assert.ok(live && !('archivedAt' in live), 'hello carries no archived mark: an archived entry is gone, never marked');
+  } finally {
+    ws.close();
+    await new Promise((r) => server.close(r));
+    runs.delete(entry.id);
+    runs.delete(other.id);
+  }
 });

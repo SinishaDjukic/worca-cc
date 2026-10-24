@@ -1457,3 +1457,22 @@ test('R4 reattach re-runs a paused role-review shell as a composite fan-out, hol
   assert.equal(again[0].executionId, 'x:n_roles:1');
   assert.deepEqual(shape(again), ['1:expand', '1:phase:running', '1:slice:role-ux', '1:slice:role-qa', '1:phase:done', '1:finish']);
 });
+
+// ── the ready set: nodes whose inputs are in but that wait for an agent slot ──────────
+test('getState().ready names an agent node that is ready to fire but capped by the agent pool, and empties once it fires', async () => {
+  const hold = deferred();
+  const h = harness({ template: FLOW_TPL, maxParallel: 1, script: {
+    n_a: () => hold.promise.then(() => ({})),
+    n_b: () => hold.promise.then(() => ({})),
+  } });
+  const run = h.scheduler.run();
+  await tick();
+  const st = h.scheduler.getState();
+  assert.equal(st.active.length, 1, 'one maker took the only slot');
+  const capped = ['n_a', 'n_b'].filter((id) => !st.active.some((a) => a.nodeId === id));
+  assert.deepEqual(st.ready, capped, 'the other maker is ready, has no row and no slot');
+  assert.ok(!st.ready.includes(st.active[0].nodeId), 'a running node is never ready');
+  hold.resolve();
+  assert.equal(await run, 'done');
+  assert.deepEqual(h.scheduler.getState().ready, [], 'nothing waits once the run ended');
+});

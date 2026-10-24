@@ -1,0 +1,196 @@
+// test/model-switch-action.test.mjs
+import { test, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { useTempHome } from './helpers/temp-home.mjs';
+import { gitDir } from './helpers/git-dir.mjs';
+import { seedPipeline } from './helpers/db-seed.mjs';
+import { graphResumePoint } from './helpers/graph-templates.mjs';
+import { readPipelineForResume } from '../src/core/artifacts.mjs';
+import { CODEX_BUILTIN_MODELS } from '../src/core/config.mjs';
+import { switchPausedRunModels, describeModelSwitch } from '../src/core/model-switch.mjs';
+
+useTempHome(after);
+
+async function paused(name, { status = 'paused', steps = [] } = {}) {
+  const dir = gitDir(name);
+  const rp = graphResumePoint({ pipelineDir: dir, pausedBy: 'tok-1' });
+  const { id } = await seedPipeline(dir, { status, stepper: rp.manifest, resumePoint: rp, steps });
+  return { dir, id, projectDirFor: () => dir };
+}
+const STEPS = [
+  { key: 'x:n_clarify:1', executionId: 'x:n_clarify:1', nodeId: 'n_clarify', status: 'done' },
+  { key: 'x:n_plan:1', executionId: 'x:n_plan:1', nodeId: 'n_plan', status: 'paused', sessionId: 'sess-plan' },
+];
+
+test('switching the paused stage rewrites both copies, marks it fresh and hands the row off', async () => {
+  const { id, projectDirFor } = await paused('msw-ok', { steps: STEPS });
+  const out = await switchPausedRunModels(id, {
+    changes: { n_plan: { model: 'claude-opus-5-5', effort: 'high', subagentModel: 'opus', subagentEffort: 'medium' } },
+    by: 'tester', projectDirFor,
+  });
+  assert.deepEqual(out.changed.map((c) => c.nodeId), ['n_plan']);
+  const saved = readPipelineForResume(id);
+  const cell = saved.resumePoint.manifest.graph.nodes.find((n) => n.id === 'n_plan');
+  assert.deepEqual([cell.model, cell.effort, cell.subagentModel, cell.subagentEffort], ['claude-opus-5-5', 'high', 'opus', 'medium']);
+  assert.equal(JSON.parse(saved.row.stepper).graph.nodes.find((n) => n.id === 'n_plan').model, 'claude-opus-5-5');
+  assert.deepEqual(saved.resumePoint.freshSessionNodes, ['n_plan']);
+  assert.match(saved.resumePoint.pausedBy, /^switch:/);
+});
+
+test('an effort-only change keeps the session re-attach (no fresh marker)', async () => {
+  const { id, projectDirFor } = await paused('msw-effort', { steps: STEPS });
+  await switchPausedRunModels(id, { changes: { n_plan: { subagentEffort: 'high' } }, projectDirFor });
+  assert.equal(readPipelineForResume(id).resumePoint.freshSessionNodes, undefined);
+});
+
+test('refusals: completed stage, unknown stage, bad field, not paused', async () => {
+  const { id, projectDirFor } = await paused('msw-refuse', { steps: STEPS });
+  await assert.rejects(switchPausedRunModels(id, { changes: { n_clarify: { model: 'claude-opus-5-5' } }, projectDirFor }),
+    (e) => e.code === 'STAGE_COMPLETED' && e.status === 409 && /already completed and cannot run again/.test(e.message));
+  await assert.rejects(switchPausedRunModels(id, { changes: { n_nope: { model: 'claude-opus-5-5' } }, projectDirFor }),
+    (e) => e.code === 'UNKNOWN_STAGE' && e.status === 400);
+  await assert.rejects(switchPausedRunModels(id, { changes: { n_plan: { fanOut: true } }, projectDirFor }),
+    (e) => e.code === 'BAD_FIELD');
+  const other = await paused('msw-int', { status: 'interrupted' });
+  await assert.rejects(switchPausedRunModels(other.id, { changes: { n_plan: { model: 'claude-opus-5-5' } }, projectDirFor: other.projectDirFor }),
+    (e) => e.code === 'NOT_SWITCHABLE_STATUS' && e.status === 409);
+});
+
+test('describeModelSwitch returns stages + the run project catalog', async () => {
+  const { id, projectDirFor } = await paused('msw-desc', { steps: STEPS });
+  const d = await describeModelSwitch(id, { projectDirFor });
+  assert.equal(d.pipelineId, id);
+  assert.ok(d.models.some((m) => m.id === 'claude-opus-5-5'));
+  assert.deepEqual(d.efforts, ['medium', 'high', 'xhigh', 'max']);
+  assert.equal(d.stages.find((s) => s.nodeId === 'n_plan').state, 'paused');
+  assert.deepEqual([d.engine, d.subagents, d.subagentModels, d.subagentEfforts],
+    ['claude', true, ['sonnet', 'opus', 'fable', 'auto', 'inherit'], ['medium', 'high', 'xhigh', 'max']]);
+});
+
+test('a running row driven elsewhere with no resume point yet is described on its own engine (outcome.runEngine)', async () => {
+  const dir = gitDir('msw-run-codex');
+  const { manifest } = graphResumePoint({ pipelineDir: dir });
+  const { id } = await seedPipeline(dir, { status: 'running', stepper: manifest, runEngine: 'codex', steps: [STEPS[0]] });
+  assert.equal(readPipelineForResume(id).resumePoint, null, 'no clean snapshot yet');
+  const d = await describeModelSwitch(id, { projectDirFor: () => dir });
+  assert.equal(d.engine, 'codex');
+  assert.ok(d.models.some((m) => m.id === CODEX_BUILTIN_MODELS[0].id));
+  assert.ok(!d.models.some((m) => m.id === 'claude-opus-5-5'));
+  assert.deepEqual(d.efforts, ['minimal', 'low', 'medium', 'high']);
+});
+
+test('the widened rule: a paused run\'s loop stage that already ran is switchable', async () => {
+  const steps = [...STEPS.map((s) => ({ ...s, status: 'done' })),
+    { key: 'x:n_refine:1', executionId: 'x:n_refine:1', nodeId: 'n_refine', status: 'done' },
+    { key: 'x:n_impl:1', executionId: 'x:n_impl:1', nodeId: 'n_impl', status: 'done' },
+    { key: 'x:n_review:1', executionId: 'x:n_review:1', nodeId: 'n_review', status: 'done' },
+    { key: 'x:n_impl:2', executionId: 'x:n_impl:2', nodeId: 'n_impl', status: 'paused', sessionId: 'sess-impl' }];
+  const { id, projectDirFor } = await paused('msw-loop', { steps });
+  const d = await describeModelSwitch(id, { projectDirFor });
+  assert.equal(d.status, 'paused');
+  assert.equal(d.stages.find((s) => s.nodeId === 'n_review').state, 'may-rerun');
+  const out = await switchPausedRunModels(id, { changes: { n_review: { model: 'claude-opus-5-5' } }, projectDirFor });
+  assert.deepEqual(out.changed.map((c) => c.nodeId), ['n_review']);
+  await assert.rejects(switchPausedRunModels(id, { changes: { n_plan: { model: 'claude-opus-5-5' } }, projectDirFor }),
+    (e) => e.code === 'STAGE_COMPLETED');
+});
+
+test('a loop paused at its cycle-cap gate (rp.snapshot.gates) is still going: its stages switch', async () => {
+  const steps = [...STEPS.map((s) => ({ ...s, status: 'done' })),
+    { key: 'x:n_refine:1', executionId: 'x:n_refine:1', nodeId: 'n_refine', status: 'done' },
+    ...[1, 2, 3].flatMap((n) => ['n_impl', 'n_review'].map((nodeId) =>
+      ({ key: `x:${nodeId}:${n}`, executionId: `x:${nodeId}:${n}`, nodeId, status: 'done' })))];
+  const dir = gitDir('msw-gate');
+  const rp = graphResumePoint({ pipelineDir: dir, pausedBy: 'tok-1', snapshot: { gates: [{ wireId: 'w9', askId: 'q1' }] } });
+  const { id } = await seedPipeline(dir, { status: 'paused', stepper: rp.manifest, resumePoint: rp, steps });
+  const projectDirFor = () => dir;
+  const d = await describeModelSwitch(id, { projectDirFor });
+  assert.deepEqual(['n_impl', 'n_review', 'n_refine'].map((n) => d.stages.find((s) => s.nodeId === n).state),
+    ['may-rerun', 'may-rerun', 'completed']);
+  const out = await switchPausedRunModels(id, { changes: { n_impl: { model: 'claude-opus-5-5' } }, projectDirFor });
+  assert.deepEqual(out.changed.map((c) => c.nodeId), ['n_impl']);
+  assert.equal(out.stages.find((s) => s.nodeId === 'n_review').state, 'may-rerun', 'the reply reads the same hold');
+  await assert.rejects(switchPausedRunModels(id, { changes: { n_refine: { model: 'claude-opus-5-5' } }, projectDirFor }),
+    (e) => e.code === 'STAGE_COMPLETED');
+});
+
+test('a running row driven elsewhere: describe reads the held gate from the row\'s resume point', async () => {
+  const steps = [...STEPS.map((s) => ({ ...s, status: 'done' })),
+    { key: 'x:n_refine:1', executionId: 'x:n_refine:1', nodeId: 'n_refine', status: 'done' },
+    { key: 'x:n_refine:2', executionId: 'x:n_refine:2', nodeId: 'n_refine', status: 'done' },
+    { key: 'x:n_refine:3', executionId: 'x:n_refine:3', nodeId: 'n_refine', status: 'done' }];
+  const dir = gitDir('msw-gate-run');
+  const rp = graphResumePoint({ pipelineDir: dir, snapshot: { gates: [{ wireId: 'w5', askId: 'q1' }] } });
+  const { id } = await seedPipeline(dir, { status: 'running', stepper: rp.manifest, resumePoint: rp, steps });
+  const d = await describeModelSwitch(id, { projectDirFor: () => dir });
+  assert.equal(d.status, 'running');
+  assert.deepEqual([d.stages.find((s) => s.nodeId === 'n_refine').state, d.stages.find((s) => s.nodeId === 'n_plan').state],
+    ['may-rerun', 'completed']);
+});
+
+test('a running row: describe reads it from the store; the paused store edit refuses it as CHANGED', async () => {
+  const steps = [STEPS[0], { key: 'x:n_plan:1', executionId: 'x:n_plan:1', nodeId: 'n_plan', status: 'start' }];
+  const { id, projectDirFor } = await paused('msw-run', { status: 'running', steps });
+  const d = await describeModelSwitch(id, { projectDirFor });
+  assert.equal(d.status, 'running'); assert.equal(d.pauseReason, null);
+  assert.equal(d.stages.find((s) => s.nodeId === 'n_plan').state, 'running');
+  await assert.rejects(switchPausedRunModels(id, { changes: { n_impl: { model: 'claude-opus-5-5' } }, projectDirFor }),
+    (e) => e.code === 'CHANGED');
+});
+
+test('a row that reads "pausing" is refused as NOT_RUNNING (switch it once paused)', async () => {
+  const { id, projectDirFor } = await paused('msw-pausing', { status: 'pausing', steps: STEPS });
+  await assert.rejects(describeModelSwitch(id, { projectDirFor }),
+    (e) => e.code === 'NOT_RUNNING' && /once it is paused/.test(e.message));
+});
+
+test('describe with `live` uses the caller\'s manifest, steps and scheduler view', async () => {
+  const { id, projectDirFor } = await paused('msw-live-d', { status: 'running', steps: [] });
+  const { manifest } = graphResumePoint({ pipelineDir: 'x' });
+  const d = await describeModelSwitch(id, { projectDirFor, live: { manifest, steps: [], active: ['n_clarify'], runDefault: 'claude-opus-5-5' } });
+  assert.equal(d.runDefault, 'claude-opus-5-5');
+  assert.equal(d.stages.find((s) => s.nodeId === 'n_clarify').state, 'running');
+});
+
+test('a paused Codex run refuses a Claude model and is described with the Codex catalog', async () => {
+  const dir = gitDir('msw-codex');
+  const rp = graphResumePoint({ pipelineDir: dir, pausedBy: 'tok-1', claude: { engine: 'codex' } });
+  const { id } = await seedPipeline(dir, { status: 'paused', stepper: rp.manifest, resumePoint: rp, steps: STEPS });
+  const projectDirFor = () => dir;
+  await assert.rejects(switchPausedRunModels(id, { changes: { n_impl: { model: 'claude-opus-5-5' } }, projectDirFor }),
+    (e) => e.code === 'INVALID_SELECTION' && /not on Codex/.test(e.message));
+  const codexId = CODEX_BUILTIN_MODELS[0].id;
+  const out = await switchPausedRunModels(id, { changes: { n_impl: { model: codexId, effort: 'low' } }, projectDirFor });
+  assert.deepEqual(out.changed.map((c) => c.nodeId), ['n_impl']);
+  const d = await describeModelSwitch(id, { projectDirFor });
+  assert.equal(d.engine, 'codex');
+  assert.ok(d.models.some((m) => m.id === codexId));
+  assert.ok(!d.models.some((m) => m.id === 'claude-opus-5-5'));
+  assert.deepEqual(d.efforts, ['minimal', 'low', 'medium', 'high']);
+  assert.deepEqual([d.subagents, d.subagentModels, d.subagentEfforts], [true, [], ['medium', 'high']]);
+  await assert.rejects(switchPausedRunModels(id, { changes: { n_impl: { subagentEffort: 'low' } }, projectDirFor }),
+    (e) => e.code === 'INVALID_SELECTION' && /unknown sub-agent effort "low" on Codex/.test(e.message));
+  await assert.rejects(switchPausedRunModels(id, { changes: { n_impl: { subagentModel: 'opus' } }, projectDirFor }),
+    (e) => e.code === 'INVALID_SELECTION' && /Codex does not take a sub-agent model/.test(e.message));
+});
+
+test('a paused Copilot run is described with no sub-agent values to pick and refuses one', async () => {
+  const dir = gitDir('msw-copilot');
+  const rp = graphResumePoint({ pipelineDir: dir, pausedBy: 'tok-1', claude: { engine: 'copilot' } });
+  const { id } = await seedPipeline(dir, { status: 'paused', stepper: rp.manifest, resumePoint: rp, steps: STEPS });
+  const projectDirFor = () => dir;
+  const d = await describeModelSwitch(id, { projectDirFor });
+  assert.deepEqual([d.engine, d.subagents, d.subagentModels, d.subagentEfforts], ['copilot', true, [], []]);
+  await assert.rejects(switchPausedRunModels(id, { changes: { n_impl: { subagentEffort: 'high' } }, projectDirFor }),
+    (e) => e.code === 'INVALID_SELECTION' && /Copilot does not take a sub-agent effort/.test(e.message));
+});
+
+test('a paused run resumed with one model for every stage refuses a per-stage model, says why in describe', async () => {
+  const dir = gitDir('msw-all');
+  const rp = graphResumePoint({ pipelineDir: dir, pausedBy: 'tok-1', claude: { model: 'claude-sonnet-5-5', modelForAll: true } });
+  const { id } = await seedPipeline(dir, { status: 'paused', stepper: rp.manifest, resumePoint: rp, steps: STEPS });
+  const projectDirFor = () => dir;
+  await assert.rejects(switchPausedRunModels(id, { changes: { n_impl: { model: 'claude-opus-5-5' } }, projectDirFor }),
+    (e) => e.code === 'MODEL_FOR_ALL');
+  assert.equal((await describeModelSwitch(id, { projectDirFor })).modelForAll, 'claude-sonnet-5-5');
+});

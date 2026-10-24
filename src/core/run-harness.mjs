@@ -31,7 +31,7 @@ import {
 } from './artifacts.mjs';
 import { diffNameStatus, diffNumstat, diffPatch, untrackedFiles, untrackedPatch } from './git-info.mjs';
 import { clearStaleGitLocks, staleGitLockNote } from './git-lock.mjs';
-import { claimPipelineCommand, discardPendingPipelineCommands, controlCheckIntervalMs } from './pipeline-commands.mjs';
+import { claimPipelineCommand, discardPendingPipelineCommands, controlCheckIntervalMs, completePipelineCommand } from './pipeline-commands.mjs';
 import {
   assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary,
   retainedWorkPatchName, sizeOfChange,
@@ -1852,7 +1852,7 @@ export class RunHarness extends EventEmitter {
   }
 
   async _resume() {
-    this._pausedHandoff = false; this._handedOff = false; this._pauseToken = null;   // this harness owns its row again
+    this._pausedHandoff = false; this._handedOff = false; this._pauseToken = null; this._pauseOrigin = null;   // this harness owns its row again
     const saved = this.resumeOpts;
     if (!saved?.row || !saved?.resumePoint) throw new Error('resume(): no saved pipeline provided');
     const { row, resumePoint: rp, steps } = saved;
@@ -3777,15 +3777,18 @@ export class RunHarness extends EventEmitter {
     if (this._isWorkspaceScan() || this.workflowId === MEMORY_DEFRAG_WORKFLOW_ID) return null;
     const { target, teamKey } = this._registryTarget();
     const required = requiredOf(this.policyRun);
+    const toolNameLimit = toolNameLimitFor([...this._mcpModels()]);
     const [result, catalog] = await Promise.all([
       resolveRegistry({
         surface: 'pipeline', targets: [target],
         teams: { [teamKey]: team !== undefined ? team : required.length ? { home: this.policyRun.home, required } : null },
-        optOut: this.mcpOptOut, toolNameLimit: toolNameLimitFor([...this._mcpModels()]), copyCap: 24, taken,
+        optOut: this.mcpOptOut, toolNameLimit, copyCap: 24, taken,
         mcpTimeoutMs: MCP_STARTUP_MS.pipeline,
       }),
       loadCatalog(),
     ]);
+    // GraphOrchestrator.switchModels warns when a switch needs less; with no server resolved there is nothing to re-resolve.
+    this._mcpToolNameLimit = Object.keys(result.servers || {}).length ? toolNameLimit : null;
     return { result, catalog };
   }
 
@@ -8059,18 +8062,29 @@ export class RunHarness extends EventEmitter {
       .catch(() => { /* generateTitle already swallows; this is a final backstop */ });
   }
 
+  /** The saved point with this harness's pause token. While the token is an adopted switch token,
+   *  `pausedFrom` keeps the lineage (the original pause) so the NEXT switch stays adoptable; a
+   *  harness pausing under its own token never carries a lineage. */
+  _stampedPoint(rp) {
+    const out = { ...rp, pausedBy: this._pauseToken };
+    if (this._pauseOrigin && this._pauseToken !== this._pauseOrigin) out.pausedFrom = this._pauseOrigin;
+    else delete out.pausedFrom;
+    return out;
+  }
+
   /** @returns {Promise<boolean>} whether the state reached the row. */
   async _persist() {
     const rpNow = this.state.resumePoint;
     if (rpNow && typeof rpNow === 'object' && this._metricsIv) rpNow.interventions = { ...this._metricsIv };
     if (!this.pipeline) return false;
     if (this._rowHandedOff()) return false;
+    const rpOut = this.state.resumePoint;   // adopting a store edit (above) replaced the object rpNow names
     if (this._shapeRec) this.state.shapeStats = buildShapeStats(this._shapeRec, this.state.steps);
     try {
       // A paused harness names itself in the saved point (`pausedBy`, written here only, never kept
       // in state): _rowHandedOff reads it back. A resumed run's new harness never writes this token.
-      const st = this._pauseToken && rpNow && typeof rpNow === 'object'
-        ? { ...this.state, resumePoint: { ...rpNow, pausedBy: this._pauseToken } } : this.state;
+      const st = this._pauseToken && rpOut && typeof rpOut === 'object'
+        ? { ...this.state, resumePoint: this._stampedPoint(rpOut) } : this.state;
       await writeState(this.pipeline.dir, st);
       return true;
     } catch {
@@ -8092,8 +8106,40 @@ export class RunHarness extends EventEmitter {
     if (this._handedOff) return true;
     let row = null;
     try { row = pipelineRowStamp(this.pipeline.id); } catch { return false; }
-    this._handedOff = !row || row.status !== 'paused' || row.pausedBy !== this._pauseToken;
-    return this._handedOff;
+    if (row && row.status === 'paused' && row.pausedBy === this._pauseToken) return false;
+    // A model-switch store edit re-tokens the row without resuming it: re-adopt (any process may have made it).
+    // A refused adoption never latches: it may be a moment's failure (a busy read) or another harness's
+    // lineage, and either way the NEXT write re-reads the row instead of every later write being dropped.
+    if (row?.status === 'paused' && String(row.pausedBy || '').startsWith('switch:')) {
+      return !this.adoptPausedStoreEdit();
+    }
+    this._handedOff = true;   // resumed, stopped or re-paused under a resume's own token: a genuine hand-off
+    return true;
+  }
+
+  /** A model-switch store edit of this PAUSED run's row (model-switch.mjs: a `switch:` token) is not a
+   *  resume: take the edited point as this harness's own, under the edit's token, so its later writes
+   *  (the Away switch, a booking, the title) land instead of being dropped as a hand-off. Never throws.
+   *  @returns {boolean} whether it adopted */
+  adoptPausedStoreEdit() {
+    if (!this._pausedHandoff || !this.pipeline?.id || this.state.status !== 'paused') return false;
+    let saved = null;
+    try { saved = readPipelineForResume(this.pipeline.id); } catch { return false; }
+    const token = saved?.resumePoint?.pausedBy;
+    if (!saved || saved.row?.status !== 'paused' || typeof token !== 'string' || !token.startsWith('switch:')) return false;
+    // Only the harness whose pause this edit descends from: a row another harness resumed and re-paused
+    // carries that harness's lineage, and writing to it would overwrite that run.
+    if (!this._pauseOrigin || saved.resumePoint.pausedFrom !== this._pauseOrigin) return false;
+    // The edit owns ONLY the manifest and the fresh-session marks (switchPausedRunModels). Everything else
+    // stays this harness's: setNightOverride mutates state.resumePoint.night BEFORE the _persist that
+    // lands here, so taking the row's whole point would drop the very switch being saved.
+    const { manifest, freshSessionNodes } = saved.resumePoint;
+    const own = this.state.resumePoint && typeof this.state.resumePoint === 'object' ? this.state.resumePoint : {};
+    this.state.resumePoint = { ...own, ...(manifest ? { manifest } : {}), ...(Array.isArray(freshSessionNodes) ? { freshSessionNodes } : {}) };
+    if (manifest) this.state.stepper = manifest;
+    this._pauseToken = token;   // _persist stamps it back as pausedBy
+    this._handedOff = false;
+    return true;
   }
 
   /**
@@ -8136,12 +8182,13 @@ export class RunHarness extends EventEmitter {
 
   /**
    * Claim and execute ONE command from the control mailbox. Claiming IS
-   * consuming (the guarded UPDATE), so the row is gone whoever acts next; an
-   * action whose moment has passed (a `pause` while the run is no longer
-   * `running`) is therefore an honest no-op consumption — the issuing client
-   * reads the run's status, not the command, for what actually happened. The
-   * command's `by` (who issued it) rides into stop()/pause(), so
-   * state.lastAction — and every audit that reads it — names the real actor.
+   * consuming (the guarded UPDATE sets `consumed_at`; the row stays), so
+   * whoever acts next sees it taken; an action whose moment has passed (a `pause` while
+   * the run is no longer `running`) is therefore an honest no-op consumption. The
+   * issuing client reads the run's status for stop/pause, and the row's `result`
+   * for switch-models (switchModels' answer, or its refusal). The command's `by`
+   * (who issued it) rides into stop()/pause()/switchModels(), so state.lastAction
+   * and every audit that reads it name the real actor.
    */
   _checkControlSlot() {
     if (!this.pipeline?.id) return;
@@ -8159,6 +8206,26 @@ export class RunHarness extends EventEmitter {
     if (cmd.action === 'pause') {
       this._log('orchestrator', 'info', `control: pause requested by ${by} (via the run-control mailbox)`);
       this.pause(by);
+      return;
+    }
+    if (cmd.action === 'switch-models') {
+      this._log('orchestrator', 'info', `control: model switch requested by ${by} (via the run-control mailbox)`);
+      // The issuing client polls pipeline_commands.result (model-switch.mjs requestLiveModelSwitch).
+      // Best-effort: a lost write reads as "received" there.
+      const answer = (result) => { try { completePipelineCommand(cmd.id, result); } catch { /* best-effort */ } };
+      if (typeof this.switchModels !== 'function') {
+        answer({ ok: false, code: 'ENGINE_RETIRED', error: 'this run cannot switch models while it runs', httpStatus: 409 });
+        return;
+      }
+      // Not awaited: the tick stays synchronous. switchModels re-checks the run after its one await,
+      // so a pause claimed by a later tick meanwhile still refuses it (NOT_RUNNING). Only the fields a
+      // client prints go into the row (no stages / stepper).
+      Promise.resolve()
+        .then(() => this.switchModels(cmd.payload?.changes, { by }))
+        .then(
+          (r) => answer({ ok: true, changed: r.changed, skipped: r.skipped, warnings: r.warnings }),
+          (err) => answer({ ok: false, code: err?.code || 'ERROR', error: err?.message || String(err), httpStatus: err?.status || 500 }),
+        );
       return;
     }
     this._log('orchestrator', 'warn', `control: unknown command action "${cmd.action}" — consumed, ignored`);
@@ -8215,6 +8282,7 @@ export class RunHarness extends EventEmitter {
       else delete rp.autoLimitResumes;
       // The token this pause is written with (_persist stamps it into the saved point as `pausedBy`).
       this._pauseToken ||= randomUUID();
+      this._pauseOrigin ||= this._pauseToken;
     }
     this._setStatus('paused');
     const persisted = await this._persist();
