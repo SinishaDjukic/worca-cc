@@ -1,6 +1,8 @@
 # Dependabot: the lockfile (npm-shrinkwrap.json, which the published package and the image
 # install from), the Dockerfile's digest-pinned base image and the SHA-pinned actions only
-# move through reviewed PRs.
+# move through reviewed PRs. The CI Playwright container (ci.yml extension-e2e) is not watched here: its tag
+# must equal devDependencies["@playwright/test"], so the npm bump of that package trips
+# test/extension-packaging.test.mjs, and the tag and its digest are moved with it.
 version: 2
 updates:
   - package-ecosystem: npm

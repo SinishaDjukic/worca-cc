@@ -346,3 +346,12 @@ test('gateway: close 4007 (invalid seq) drops the session and re-IDENTIFIES', as
   assert.equal(s2.sent.find((f) => f.op === 6), undefined, 'no RESUME with a dead session');
   client.stop();
 });
+
+test('V20: the README never promises DMs while the gateway lacks the DIRECT_MESSAGES intent', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const readme = await readFile(new URL('../plugins/discord-chat/README.md', import.meta.url), 'utf8');
+  const DIRECT_MESSAGES = 1 << 12;
+  assert.equal(INTENTS & DIRECT_MESSAGES, 0);
+  assert.doesNotMatch(readme, /direct\s+message to the bot always works/);
+  assert.match(readme, /DIRECT_MESSAGES intent/);
+});

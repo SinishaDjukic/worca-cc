@@ -205,11 +205,17 @@ export function isLoopbackPeer(address) {
   return a === '::1' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(a);
 }
 
-/** The IPv4 gateways in a /proc/net/route table (Linux, hex little-endian), deduped. */
+/** The IPv4 gateway of the default route (destination and mask 0, flags UP and GATEWAY) in a /proc/net/route
+ *  table (Linux, hex little-endian). Other routes are left out: a second network, a VPN or a static route can
+ *  name a LAN router, which is a network caller, not Docker's published-port proxy (V15). Under
+ *  `network_mode: host` the default route itself is the LAN's, so the image must bind 127.0.0.1 there
+ *  (docs/docker.md "Network"). */
 export function routeGateways(table) {
   const out = [];
   for (const line of String(table || '').split('\n').slice(1)) {
-    const hex = line.trim().split(/\s+/)[2];
+    const f = line.trim().split(/\s+/);
+    const [dest, hex, flags, mask] = [f[1], f[2], parseInt(f[3], 16), f[7]];
+    if (!/^0+$/.test(dest || '-') || !/^0+$/.test(mask || '-') || (flags & 3) !== 3) continue;
     if (!/^[0-9a-f]{8}$/i.test(hex || '') || /^0+$/.test(hex)) continue;
     const ip = [6, 4, 2, 0].map((i) => parseInt(hex.slice(i, i + 2), 16)).join('.');
     if (!out.includes(ip)) out.push(ip);

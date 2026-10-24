@@ -182,6 +182,27 @@ export function scriptApprovalCardView(b, { h, button, onAnswer }) {
     win.appendChild(h('pre', 'mono', p.sourceWin32));
     el.appendChild(win);
   }
+  // Which exit codes count as clean or blocking, and the saved test cases, change what a check reports: show them too.
+  // A save that removes them (exitCodes null, no cases) says so: an absent section would read as "unchanged".
+  const codes = m.exitCodes && typeof m.exitCodes === 'object' ? m.exitCodes : null;
+  const codesRemoved = isSave && m.exitCodes === null;
+  if (codes || codesRemoved) {
+    const ec = h('details', 'wfc-src');
+    ec.open = b.state === 'proposed';
+    ec.appendChild(h('summary', '', codesRemoved ? 'Exit codes: removed' : 'Exit codes'));
+    const list = (v) => (Array.isArray(v) && v.length ? v.join(', ') : 'none');
+    ec.appendChild(h('pre', 'mono', codesRemoved ? 'The saved exit codes are removed: the script falls back to the default rule.'
+      : `clean: ${list(codes.clean)}\nblocking: ${list(codes.blocking)}`));
+    el.appendChild(ec);
+  }
+  if (Array.isArray(p.cases)) {
+    const casesRemoved = isSave && p.cases.length === 0;
+    const tc = h('details', 'wfc-src');
+    tc.open = b.state === 'proposed';
+    tc.appendChild(h('summary', '', casesRemoved ? 'Test cases: removed' : `Test cases (${p.cases.length})`));
+    tc.appendChild(h('pre', 'mono', casesRemoved ? 'Every saved test case of this script is deleted.' : JSON.stringify(p.cases, null, 2)));
+    el.appendChild(tc);
+  }
   const err = h('p', 'wfc-err');
   err.hidden = true;
   err.setAttribute('role', 'status');

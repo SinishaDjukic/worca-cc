@@ -147,6 +147,19 @@ test('routeGateways reads the IPv4 gateways of /proc/net/route; none where it is
   ].join('\n');
   assert.deepEqual(routeGateways(table), ['172.19.0.1']);
   assert.deepEqual(routeGateways(''), []);
+});
+
+test('routeGateways keeps only the default route: a LAN router on a longer route is no Docker gateway (V15)', () => {
+  // A second network or a static route: the LAN router (192.168.1.1) is the gateway of a narrower route.
+  const table = [
+    'Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT',
+    'eth0\t00000000\t010013AC\t0003\t0\t0\t0\t00000000\t0\t0\t0',
+    'eth1\t0000A8C0\t0101A8C0\t0003\t0\t0\t0\t0000FFFF\t0\t0\t0',
+    'eth1\t00000A0A\t0101A8C0\t0003\t0\t0\t0\t0000FFFF\t0\t0\t0',
+  ].join('\n');
+  assert.deepEqual(routeGateways(table), ['172.19.0.1']);
+  // a default route that is down (no UP flag) is not trusted either
+  assert.deepEqual(routeGateways(table.replace('0003\t0\t0\t0\t00000000', '0002\t0\t0\t0\t00000000')), []);
   assert.deepEqual(readRouteGateways(() => { throw new Error('ENOENT'); }), []);
 });
 

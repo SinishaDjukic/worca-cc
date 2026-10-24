@@ -107,3 +107,27 @@ test('G19 call sites: createPipeline and the no-project run root are claimed for
   await withPool(() => orch._setupNoProjectRoot());
   assert.equal(statSync(orch.runRoot).mode & 0o7777, 0o2770, 'runs/<id> of a no-project run');
 });
+
+test('G19 call sites: a detached git run root and a folder run root are claimed for the run owner', POSIX, async () => {
+  const { createOrchestrator } = await import('../src/core/orchestrator.mjs');
+  const prevMode = process.env.WORCA_RUN_ROOT;
+  process.env.WORCA_RUN_ROOT = 'detached';
+  try {
+    const git = createOrchestrator({ projectDir: mkdtempSync(join(dir, 'proj-')), prompt: 'x', claude: { mock: true } });
+    git.pipeline = { id: 'detgit01', dir: mkdtempSync(join(dir, 'pipe-')) };
+    git.state.id = 'detgit01';
+    git._persist = async () => {};
+    // Stop right after the claim: no git runs under the pool env.
+    git._resolveSingleBranches = async () => { throw new Error('stop after claim'); };
+    await withPool(() => git._setupRunRoot()).catch(() => {});
+    assert.equal(statSync(git.runRoot).mode & 0o7777, 0o2770, 'runs/<id> of a detached git run');
+  } finally {
+    if (prevMode === undefined) delete process.env.WORCA_RUN_ROOT; else process.env.WORCA_RUN_ROOT = prevMode;
+  }
+  const folder = createOrchestrator({ projectDir: mkdtempSync(join(dir, 'fold-')), workMode: 'folder', prompt: 'x', claude: { mock: true } });
+  folder.pipeline = { id: 'folder01', dir: mkdtempSync(join(dir, 'pipe-')) };
+  folder._persist = async () => {};
+  folder._setupFolderMember = async () => ({ workMode: 'folder' });
+  await withPool(() => folder._setupFolderRunRoot()).catch(() => {});
+  assert.equal(statSync(folder.runRoot).mode & 0o7777, 0o2770, 'runs/<id> of a folder run');
+});

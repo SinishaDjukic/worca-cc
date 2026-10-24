@@ -306,7 +306,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     container:
-      image: mcr.microsoft.com/playwright:v1.56.0-noble   # == devDependencies["@playwright/test"] (pinned by a test)
+      # == devDependencies["@playwright/test"], by tag and digest (pinned by a test; move both together on a bump).
+      image: mcr.microsoft.com/playwright:v1.56.0-noble@sha256:35246d87a7c88ea9b771c65d33171b2611b02a8253b4b12ce6f94376c55f99f2
       options: --ipc=host
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0

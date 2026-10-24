@@ -348,3 +348,10 @@ out({ type: 'result', result: JSON.stringify({ base: process.env.ANTHROPIC_BASE_
     assert.deepEqual({ ...usage }, { bill_to: 'alice@acme.dev', slot: 'p-acme-acmekey' });
   });
 });
+
+test('V19: the docs record that the _ORIGIN approval binds an origin, not a path, and why that is accepted', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const doc = await readFile(new URL('../docs/credential-broker.md', import.meta.url), 'utf8');
+  assert.match(doc, /The approval binds an origin \(scheme, host and port\), not a path prefix, and that is accepted/);
+  assert.match(doc, /takes the broker's shared secret/);
+});

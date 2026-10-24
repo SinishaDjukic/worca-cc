@@ -230,6 +230,88 @@ test('guardEntries: safe local shapes are kept, pinned; first-wins keys refuse t
   for (const v of ['ssh -i k; evil', 'sh -c evil', 'ssh -F cfg', 'ssh $(evil)']) assert.equal(safeLocalSshCommand(v), false, v);
   assert.equal(guardEntries([L('remote.origin.uploadpack', 'evil')], { env: {} }).refused, 'remote.origin.uploadpack');
   assert.equal(guardEntries([L('core.gitProxy', 'evil')], { env: {} }).refused, 'core.gitproxy');
+  // core.worktree moves the work tree, so a checkout or reset writes files wherever the repository says, as worca.
+  assert.deepEqual(guardEntries([L('core.worktree', '/tmp/elsewhere')], { env: {} }).worktrees, [{ scope: 'local', value: '/tmp/elsewhere' }]);
+  assert.deepEqual(guardEntries([{ scope: 'worktree', key: 'core.worktree', value: '/x' }], { env: {} }).worktrees, [{ scope: 'worktree', value: '/x' }]);
+  assert.deepEqual(guardEntries([G('core.worktree', '/x')], { env: {} }).worktrees, [], 'a person\'s own global config is theirs');
+  // extensions.worktreeConfig decides whether a linked worktree reads the shared core.worktree; git's boolean spelling.
+  for (const v of [null, 'true', 'YES', 'on', '1', '2']) assert.equal(guardEntries([L('extensions.worktreeConfig', v)], { env: {} }).worktreeConfig, true, String(v));
+  for (const v of ['false', 'No', 'off', '0', '']) assert.equal(guardEntries([L('extensions.worktreeConfig', v)], { env: {} }).worktreeConfig, false, v);
+  assert.equal(guardEntries([], { env: {} }).worktreeConfig, false);
+  // Git reads the flag from the shared config file's own lines only, so a later `false` (an include, a worktree's
+  // config.worktree) does not turn it off there: any row that turns it on counts.
+  assert.equal(guardEntries([L('extensions.worktreeConfig', 'true'), L('extensions.worktreeConfig', 'false')], { env: {} }).worktreeConfig, true);
+  assert.equal(guardEntries([L('extensions.worktreeConfig', 'true'), { scope: 'worktree', key: 'extensions.worktreeConfig', value: 'false' }],
+    { env: {} }).worktreeConfig, true);
+});
+
+test('core.worktree naming the checkout itself (a submodule) is no refusal; anywhere else is', POSIX, async () => {
+  const { repo } = repoWithOrigin();
+  const sub = tmp('worca-cc-g2-sub-');
+  git(sub, 'init', '-q');
+  git(sub, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', repo, 'vendor/lib');
+  const lib = join(sub, 'vendor', 'lib');
+  assert.match(git(lib, 'config', '--local', 'core.worktree'), /vendor\/lib/, 'git set core.worktree for the submodule');
+  assert.ok(Number(guardedGitEnvSync(lib).GIT_CONFIG_COUNT) > 0, 'a submodule checkout is guarded, not refused');
+  assert.ok(Number((await guardedGitEnv(lib)).GIT_CONFIG_COUNT) > 0);
+  git(repo, 'config', 'core.worktree', '.');   // relative to the git dir: the .git folder itself
+  assert.throws(() => guardedGitEnvSync(repo), { code: 'GIT_CONFIG_REFUSED', key: 'core.worktree' });
+  git(repo, 'config', 'core.worktree', '..');  // the checkout itself
+  assert.ok(Number(guardedGitEnvSync(repo).GIT_CONFIG_COUNT) > 0);
+});
+
+test('core.worktree from a conditional include or a worktree\'s config.worktree never moves a checkout', POSIX, async () => {
+  for (const kind of ['gitdir', 'onbranch']) {
+    const { repo } = repoWithOrigin();
+    git(repo, 'branch', 'feature');
+    const victim = tmp('worca-cc-g2-victim-');
+    const inc = join(victim, '..', `${victim.split('/').pop()}.cfg`);
+    writeFileSync(inc, `[core]\n\tworktree = ${victim}\n`);
+    created.push(inc);
+    git(repo, 'config', '--add', kind === 'gitdir' ? 'includeIf.gitdir:**/.git/worktrees/**.path' : 'includeIf.onbranch:feature.path', inc);
+    // Git finds the work tree before it follows includes, so an included value is listed but never used.
+    const dir = join(tmp('worca-cc-g2-wt-'), 'wt');
+    const r = await guardedWorktreeAdd(repo, dir, 'feature');
+    assert.equal(r.ok, true, `${kind}: ${r.stderr}`);
+    assert.ok(existsSync(join(dir, 'seed.txt')), `${kind}: the files are checked out where worca asked`);
+    assert.deepEqual(readdirSync(victim), [], `${kind}: nothing written where the include points`);
+    // A linked worktree's own config.worktree IS read: it is refused before any git call runs there.
+    git(repo, 'config', 'extensions.worktreeConfig', 'true');
+    writeFileSync(join(git(dir, 'rev-parse', '--absolute-git-dir'), 'config.worktree'), `[core]\n\tworktree = ${victim}\n`);
+    await assert.rejects(guardedGitEnv(dir), { code: 'GIT_CONFIG_REFUSED', key: 'core.worktree' });
+    assert.throws(() => guardedGitEnvSync(dir), /sets core\.worktree, which would make git write files outside the checkout/);
+  }
+});
+
+test('a shared core.worktree moves a linked worktree once extensions.worktreeConfig is on: refused there too', POSIX, async () => {
+  const { repo } = repoWithOrigin();
+  git(repo, 'branch', 'feature');
+  const dir = join(tmp('worca-cc-g2-wt-'), 'wt');
+  assert.equal((await guardedWorktreeAdd(repo, dir, 'feature')).ok, true);
+  const own = git(dir, 'rev-parse', '--absolute-git-dir');
+  const victim = tmp('worca-cc-g2-victim-');
+  git(repo, 'config', 'core.worktree', victim);
+  // worktreeConfig off: a linked worktree reads only its own config.worktree, so the shared value cannot move it.
+  assert.equal(git(dir, 'rev-parse', '--show-toplevel'), dir);
+  assert.ok(Number(guardedGitEnvSync(dir).GIT_CONFIG_COUNT) > 0, 'worktreeConfig off: the linked checkout is guarded, not refused');
+  // An agent turns it on in the shared config: git now applies the shared value in every linked worktree.
+  git(repo, 'config', 'core.repositoryformatversion', '1');
+  git(repo, 'config', 'extensions.worktreeConfig', 'true');
+  assert.equal(git(dir, 'rev-parse', '--show-toplevel'), victim, 'this git moves the linked worktree to the shared value');
+  await assert.rejects(guardedGitEnv(dir), { code: 'GIT_CONFIG_REFUSED', key: 'core.worktree' });
+  assert.throws(() => guardedGitEnvSync(dir), { code: 'GIT_CONFIG_REFUSED', key: 'core.worktree' });
+  // Git reads the flag only from the shared file's own lines. A later `false` in the worktree's config.worktree or in
+  // an include is listed after the `true`, yet git keeps the flag on and still moves the worktree: still refused.
+  const off = join(victim, '..', `${victim.split('/').pop()}.off.cfg`);
+  writeFileSync(off, '[extensions]\n\tworktreeConfig = false\n');
+  created.push(off);
+  for (const leg of ['config.worktree', 'include']) {
+    if (leg === 'config.worktree') writeFileSync(join(own, 'config.worktree'), '[extensions]\n\tworktreeConfig = false\n');
+    else { rmSync(join(own, 'config.worktree')); git(repo, 'config', '--add', 'include.path', off); }
+    assert.equal(git(dir, 'rev-parse', '--show-toplevel'), victim, `${leg}: git still moves the linked worktree`);
+    await assert.rejects(guardedGitEnv(dir), { code: 'GIT_CONFIG_REFUSED', key: 'core.worktree' }, leg);
+    assert.throws(() => guardedGitEnvSync(dir), { code: 'GIT_CONFIG_REFUSED', key: 'core.worktree' }, leg);
+  }
 });
 
 test('parseConfigList reads -z output, keys without a value included', () => {

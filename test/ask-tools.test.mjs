@@ -1317,3 +1317,17 @@ test('show_files: gated by deps.showFiles; validates counts; hands rows through 
   assert.equal(calls[0].caption, 'Home');
   assert.match(calls[1], /show_files: run not found/);
 });
+
+test('defaultToolDeps: list_presets shows a preset naming no guardrails as the install default (V21 wiring)', async () => {
+  const { prepare, GUARDRAILS_DEFAULT_META_KEY } = await import('../src/core/db.mjs');
+  prepare('INSERT OR REPLACE INTO store_meta (key, kind, data) VALUES (?, ?, ?)').run(GUARDRAILS_DEFAULT_META_KEY, 'setting', JSON.stringify('secure'));
+  try {
+    const deps = defaultToolDeps({ threadId: 'ask_00000001' });
+    assert.equal(deps.defaultGuardrailsId?.(), 'secure');
+    const t = createAskTools({ ...deps, pinnedScope: () => null,
+      listPresets: () => [{ id: 'rp_aaaaaaaaaaaa', name: 'Bare', scope: { kind: 'global', ref: null }, setup: {} }] });
+    assert.equal((await t.call('list_presets', {})).presets[0].guardrailsId, 'secure');
+  } finally {
+    prepare('DELETE FROM store_meta WHERE key = ?').run(GUARDRAILS_DEFAULT_META_KEY);
+  }
+});

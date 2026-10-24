@@ -3909,8 +3909,8 @@ async function fireTicket(ticket) {
     const keep = Array.isArray(stored.presetOverrides) ? stored.presetOverrides.filter((k) => typeof k === 'string') : [];
     body = bodyFollowingPreset(body, preset, { keep });
     // An Ask card can never propose Permissive (D9 / R-sec-2), so an unattended run from one never starts on it,
-    // whatever the preset says now. (A missing guardrailsId starts as Permissive.)
-    if (ticket.askCardId && (!body.guardrailsId || body.guardrailsId === 'permissive')) {
+    // whatever the preset says now. (A missing guardrailsId starts on the install default, defaultGuardrailSetId.)
+    if (ticket.askCardId && (body.guardrailsId || defaultGuardrailSetId()) === 'permissive') {
       return { ok: false, error: `it was scheduled from Chat and the run preset "${name}" now resolves to Permissive guardrails; pick a stricter set in the preset or schedule it again`, transient: false };
     }
   }
@@ -6234,6 +6234,17 @@ async function sendArtifactRaw(res, row, rel, { download = false } = {}) {
   const hit = await resolveIndexedArtifactFileForRow(row, rel);
   if (!hit) return res.status(404).json({ error: 'artifact not found' });
   const mime = mimeForPath(hit.rel);
+  // V16: the shell's CSP `script-src 'self'` admits any script on this origin. Agent-written JS is served
+  // from here, so a script load from the worca origin itself is refused, and the JS is a script only for a
+  // deck's sandboxed frame (an opaque origin: cross-site). Anything else gets it as text, which nosniff never
+  // runs: the viewer reads it as text, and a browser that sends no fetch metadata cannot be told apart.
+  const fetchHeader = (name) => String(res.req?.headers?.[name] || '').toLowerCase();
+  const isScript = mime?.startsWith('text/javascript') && !download;
+  if (isScript && fetchHeader('sec-fetch-site') === 'same-origin'
+      && ['script', 'worker', 'sharedworker', 'serviceworker'].includes(fetchHeader('sec-fetch-dest'))) {
+    return res.status(403).json({ error: 'artifact scripts do not run in the worca page' });
+  }
+  const servedMime = isScript && fetchHeader('sec-fetch-site') !== 'cross-site' ? 'text/plain; charset=utf-8' : mime;
   if (!mime && !download) return res.status(415).json({ error: 'no preview for this file type', rel: hit.rel });
   // Served from the file the link check passed, never by path again (V9: openArtifactUnder).
   const fh = await openArtifactUnder(hit.base, hit.rel);
@@ -6268,7 +6279,7 @@ async function sendArtifactRaw(res, row, rel, { download = false } = {}) {
     }
     res.status(status);
     res.set('Content-Length', String(size ? end - start + 1 : 0));
-    res.set('Content-Type', mime || 'application/octet-stream');
+    res.set('Content-Type', servedMime || 'application/octet-stream');
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('Content-Disposition', download ? attachmentDisposition(hit.rel)
       : `${kind === 'binary' ? 'attachment' : 'inline'}; filename="${safeFilename(hit.rel)}"`);
@@ -6920,7 +6931,7 @@ app.get('/api/policy/notes', async (req, res) => {
     const { meta, r, workspaceRun } = await policyForScope(scope);
     if (!r.ok) return res.json({ scope: meta, policy: null, notes: [] });
     const fields = fieldsForRun(r.doc, { workspaceRun });
-    const guardrailsId = typeof req.query.guardrailsId === 'string' && req.query.guardrailsId ? req.query.guardrailsId : 'permissive';
+    const guardrailsId = typeof req.query.guardrailsId === 'string' && req.query.guardrailsId ? req.query.guardrailsId : defaultGuardrailSetId();
     const set = await readGuardrailSet(guardrailsId);
     const models = typeof req.query.models === 'string' && req.query.models ? req.query.models.split(',').filter(Boolean).map((m) => ({ role: null, model: m })) : [];
     const dev = deviationsFor(fields, { guardrailsId, guardrailSet: set, stepModels: models, installed: installedPluginsMap(), worcaVersion: POLICY_WORCA_VERSION, metricsRecord: null });
@@ -13498,7 +13509,7 @@ async function presetScopeExists(scope) {
 
 /** The engine gate's early refusal for a setup on a target, without starting anything (pick-time check only). */
 async function presetEngineRefusal(setup, target, runEngine) {
-  const base = { prompt: 'probe', agentsDir: AGENTS_DIR, workflowId: setup.workflowId || 'wf_default', guardrailsId: setup.guardrailsId || 'permissive', claude: { mock: !!setup.mock, ...runEngine } };
+  const base = { prompt: 'probe', agentsDir: AGENTS_DIR, workflowId: setup.workflowId || 'wf_default', guardrailsId: setup.guardrailsId || defaultGuardrailSetId(), claude: { mock: !!setup.mock, ...runEngine } };
   const probe = await createOrchestratorFor(target.workspaceId
     ? { ...base, workspace: { id: target.workspaceId, key: target.workspaceId, name: target.workspaceId, projects: [] } }
     : { ...base, projectDir: target.projectDir });
@@ -13518,6 +13529,7 @@ async function presetCheckCtx(scope, target, setup, { probeEngine }) {
     engine: runEngine.engine || 'claude',
     assertWorkflow: (id) => assertRunnableWorkflow(id),
     guardrailExists: async (id) => !!(await readGuardrailSet(id)),
+    defaultGuardrailsId: defaultGuardrailSetId,
     engineRefusal: engineError ? async () => engineError
       // Same rule as the start gate: only a non-Claude engine is probed, so a Claude preset's check builds no orchestrator.
       : probeEngine && runEngine.engine && runEngine.engine !== 'claude' && (t.workspaceId || t.projectDir) ? () => presetEngineRefusal(setup, t, runEngine) : null,

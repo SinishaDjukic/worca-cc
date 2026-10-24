@@ -16,12 +16,12 @@ const SECRET = 's'.repeat(48);
 const closers = [];
 after(async () => { for (const c of closers.reverse()) await c(); });
 
-async function broker(extra = {}, { upstream, slots: extraSlots = [] } = {}) {
+async function broker(extra = {}, { upstream, slots: extraSlots = [], env = {} } = {}) {
   const up = upstream || await startFakeUpstream({ validKeys: [GOOD_KEY, ''] });
   if (!upstream) closers.push(() => up.close());
   const { config } = readBrokerConfig({
     WORCA_BROKER_MODE: 'single', WORCA_BROKER_SECRET: SECRET, WORCA_BROKER_HOST: '127.0.0.1',
-    WORCA_BROKER_PORT: '0', WORCA_BROKER_UI_PORT: '1', WORCA_BROKER_KEY_ANTHROPIC: GOOD_KEY,
+    WORCA_BROKER_PORT: '0', WORCA_BROKER_UI_PORT: '1', WORCA_BROKER_KEY_ANTHROPIC: GOOD_KEY, ...env,
   });
   const slots = mergeSlots(builtinSlots(), [{ id: 'anthropic', upstream: up.url }, ...extraSlots.map((s) => ({ ...s, upstream: up.url }))]);
   const b = await startBroker({ config: { ...config, port: 0, ...extra }, slots, log: () => {} });
@@ -122,4 +122,79 @@ test('V12: a slot that sends no key is keyless and never priced, whatever its cr
   const rows = await usage(spawnId);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].usd, 0);
+});
+
+// An upstream that reads the whole body, then waits `headerDelayMs` before its SSE headers and holds the
+// stream open until the test ends. A Copilot token exchange is served on the same origin.
+async function slowUpstream({ headerDelayMs = 400, failFirst = 0 } = {}) {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const bodies = [];
+  let fails = failFirst;
+  const server = http.createServer((req, res) => {
+    const parts = [];
+    req.on('data', (c) => parts.push(c));
+    req.on('end', () => {
+      if (req.url === '/copilot_internal/v2/token') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ token: 'cp-tok', expires_at: Math.floor(Date.now() / 1000) + 1800 }));
+        return;
+      }
+      bodies.push(Buffer.concat(parts));
+      if (fails > 0) { fails--; res.writeHead(401, { 'content-type': 'application/json' }); res.end('{}'); return; }
+      setTimeout(() => {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.write('event: ping\ndata: {}\n\n');
+        gate.then(() => res.end());
+      }, headerDelayMs);
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${server.address().port}`;
+  closers.push(() => new Promise((r) => { release(); server.closeAllConnections?.(); server.close(r); }));
+  return { url, bodies, release };
+}
+// Posts BODY and resolves with the status as soon as the response headers arrive.
+function postStatus(port, token, path = '/p/anthropic/v1/messages') {
+  return new Promise((resolveP) => {
+    const req = http.request({ host: '127.0.0.1', port, method: 'POST', path,
+      headers: { 'content-type': 'application/json', 'anthropic-version': '2023-06-01', authorization: `Bearer ${token}`, 'content-length': String(Buffer.byteLength(BODY)) } });
+    req.on('response', (res) => { resolveP(res.statusCode); res.resume(); });
+    req.on('error', () => resolveP(0));
+    req.end(BODY);
+  });
+}
+
+test('V13: the shared body budget is given back once the body is forwarded, before the answer starts', async () => {
+  const up = await slowUpstream({ headerDelayMs: 600 });
+  const { port, mint } = await broker({ inflightBodyBytes: 500 }, { upstream: { url: up.url } });
+  const first = postStatus(port, (await mint()).token);
+  await wait(200);   // the first body is forwarded; its answer has not started
+  assert.equal(await postStatus(port, (await mint()).token), 200, 'a forwarded body no longer holds the budget');
+  assert.equal(await first, 200);
+});
+
+test('V13: a Copilot body stays in the budget until its answer arrives, then is given back', async () => {
+  const up = await slowUpstream({ headerDelayMs: 600 });
+  const copilot = { id: 'copilot', exchangeUrl: `${up.url}/copilot_internal/v2/token` };
+  const { port, mint } = await broker({ inflightBodyBytes: 500 },
+    { upstream: { url: up.url }, slots: [copilot], env: { WORCA_BROKER_KEY_COPILOT: 'gho_test' } });
+  const path = '/p/copilot/v1/messages';
+  const first = postStatus(port, (await mint(['copilot'])).token, path);
+  await wait(200);
+  assert.equal(await postStatus(port, (await mint(['copilot'])).token, path), 503,
+    'Copilot may resend after a 401, so its body still holds the budget');
+  assert.equal(await first, 200);
+  assert.equal(await postStatus(port, (await mint(['copilot'])).token, path), 200,
+    'once the answer has started, the budget is free while the stream runs');
+});
+
+test('V13: a Copilot 401 retry still sends the whole body', { timeout: 10_000 }, async () => {
+  const up = await slowUpstream({ headerDelayMs: 0, failFirst: 1 });
+  const copilot = { id: 'copilot', exchangeUrl: `${up.url}/copilot_internal/v2/token` };
+  const { port, mint } = await broker({}, { upstream: { url: up.url }, slots: [copilot], env: { WORCA_BROKER_KEY_COPILOT: 'gho_test' } });
+  assert.equal(await postStatus(port, (await mint(['copilot'])).token, '/p/copilot/v1/messages'), 200);
+  assert.equal(up.bodies.length, 2);
+  assert.ok(up.bodies[0].length > 0);
+  assert.deepEqual(up.bodies[1], up.bodies[0], 'the retry carries the same body');
 });

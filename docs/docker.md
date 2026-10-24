@@ -204,6 +204,20 @@ machine with `ssh -L 4317:127.0.0.1:4317 box` or Tailscale, both of which
 arrive through the published port. A dev server an agent starts inside the box is not published; add a
 `ports:` line in a `compose.override.yml` if you need to see one.
 
+Only the gateway of the container's default route is trusted, never the gateway of another route
+(`/proc/net/route`). Two setups need care:
+
+- **`network_mode: host`.** The box then shares the host's routes, so its default-route gateway is your
+  LAN router, and worca would trust the router as if it were Docker's port proxy. A router that forwards a
+  port with source NAT would then pass internet callers through. With host networking, set
+  `WORCA_HOST=127.0.0.1`: there is no published port to serve, and only callers on the host get in.
+- **Docker Desktop, rootless Docker and Podman.** Rootful Docker on Linux was checked with real sockets
+  (`tools/docker-linux-pass.sh`): the published port arrives from the default-route gateway. Docker
+  Desktop's port proxy, rootlesskit and Podman's pasta/slirp4netns can present another source address.
+  Then every request through the published port answers 403 (`worca is a localhost-only tool`), and
+  nothing is let in that should not be. If you see that, run the image under rootful Docker, or use
+  `network_mode: host` with `WORCA_HOST=127.0.0.1` as above.
+
 **Outbound**, open by default (agents run `npm install`):
 `api.anthropic.com` (the only Anthropic host; telemetry is off in the image),
 your git host, package registries, and the chat platforms (Telegram, Slack,

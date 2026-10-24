@@ -191,6 +191,10 @@ broker sends it only to the origin `WORCA_BROKER_KEY_P_…_ORIGIN` names (for ex
 its host is not the operator's word: without that variable, or when the slot moves elsewhere,
 the call is refused with the variable to set.
 
+The approval binds an origin (scheme, host and port), not a path prefix, and that is accepted: a plugin slot
+may point at any path on the approved origin. Abusing that takes the broker's shared secret, which registers the
+slot, and the origin is the one the operator named, so the key never leaves a host the operator approved.
+
 Refused by name, so the model can't be used with the broker on (its plugin author can fix
 it): a base URL that is a `${VAR}` or missing, a secret in any other variable (such as
 `ANTHROPIC_CUSTOM_HEADERS`), both key variables at once, and one secret used for two hosts.

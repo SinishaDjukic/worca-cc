@@ -2667,9 +2667,9 @@ export function createAskTools(deps) {
       const pin = pinnedScope();
       const fits = (p) => p.scope.kind === 'global' || (pin && (pin.projectKey ? p.scope.kind === 'project' && p.scope.ref === pin.projectKey
         : p.scope.kind === 'workspace' && p.scope.ref === pin.workspaceId));
-      // engine: null = the target's default engine (not necessarily Claude); guardrails: none = Permissive (run-presets-check.mjs).
+      // engine: null = the target's default engine (not necessarily Claude); guardrails: none = the install default a start runs on.
       return { presets: all.filter((p) => !pin || fits(p)).map((p) => ({ id: p.id, name: p.name, scope: p.scope,
-        workflowId: p.setup.workflowId || 'wf_default', engine: p.setup.engine || null, guardrailsId: p.setup.guardrailsId || 'permissive' })) };
+        workflowId: p.setup.workflowId || 'wf_default', engine: p.setup.engine || null, guardrailsId: p.setup.guardrailsId || deps.defaultGuardrailsId?.() || null })) };
     },
     async get_task(input) {
       const { src, ref } = await sourceRef('get_task', input);

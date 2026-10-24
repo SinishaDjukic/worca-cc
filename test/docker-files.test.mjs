@@ -5,7 +5,7 @@
 // tools/docker-smoke.mjs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import http from 'node:http';
@@ -355,4 +355,11 @@ test('docs/docker.md: the drain command reads the token from where the server wr
   } finally {
     if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
   }
+});
+
+test('V15/V18: docs/docker.md says host networking binds 127.0.0.1, and which runtimes the gateway trust was checked on', () => {
+  const doc = read('docs/docker.md');
+  assert.match(doc, /\*\*`network_mode: host`\.\*\*[^]*?LAN router[^]*?`WORCA_HOST=127\.0\.0\.1`/);
+  assert.match(doc, /Docker Desktop, rootless Docker and Podman[^]*?tools\/docker-linux-pass\.sh[^]*?answers 403/);
+  assert.ok(existsSync(join(ROOT, 'tools/docker-linux-pass.sh')), 'the Linux pass script the doc names');
 });

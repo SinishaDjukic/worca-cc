@@ -112,6 +112,16 @@ test('a preset run with only a prompt sends the hand-made body plus the run-only
   assert.deepEqual(cfgAfter, cfgBefore, 'Agents rows, active workflow and human-in-the-loop unchanged');
 });
 
+test('the pick-time engine probe checks a preset naming no guardrails against the install default (V21)', async () => {
+  // A fresh install starts runs on Normal, which carries rules codex cannot enforce; Permissive carries none.
+  const { preset } = await (await post('/api/presets', { name: 'Codex bare', setup: { workflowId: 'wf_default', engine: 'codex', mock: true },
+    basis: { projectDir: project.path } })).json();
+  const check = await (await post(`/api/presets/${preset.id}/check`, { projectDir: project.path })).json();
+  assert.deepEqual(check.broken.map((b) => b.item), ['engine'], JSON.stringify(check));
+  assert.match(check.broken[0].message, /guardrail set "normal" has permission rules this engine cannot enforce/);
+  await send('DELETE', `/api/presets/${preset.id}`).then((r) => r.body?.cancel());
+});
+
 test('a preset whose guardrail set or model is gone is refused with named items', async () => {
   const gr = await (await post('/api/guardrails', { name: 'Tight', settings: {} })).json();
   const { preset } = await (await post('/api/presets', { name: 'Tight run', setup: { workflowId: 'wf_default', guardrailsId: gr.guardrails.id,

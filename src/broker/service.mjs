@@ -539,6 +539,10 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
       });
       up.on('response', (ur) => onResponse(ur, attempt));
       up.end(body);
+      // The body is forwarded: its bytes leave the shared budget now, not when a long stream ends (V13),
+      // and the reference goes with them, so a long stream does not keep an uncounted Buffer alive.
+      // Copilot may send it again after a 401, so its bytes stay until the answer is past that.
+      if (slot.auth !== 'copilot') { body = null; hold.release(); }
     };
 
     const onResponse = (ur, attempt) => {
@@ -549,6 +553,7 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
         send(1);
         return;
       }
+      body = null; hold.release();
       if (status >= 300 && status < 400) {
         ur.resume();
         finish(502, null);

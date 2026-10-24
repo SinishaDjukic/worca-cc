@@ -20,8 +20,19 @@
 //    …) cannot be named in advance: they come from `git config --list --show-scope`, read just before the
 //    call. A config rewritten in the moment between that read and the call is not seen (a narrow race that
 //    needs an agent process still running; making .git/config not agent-writable on hosted setups closes it).
+//    The listing is never cached: a cache would widen that race to its whole lifetime, and what it lists can
+//    change without any file worca could watch changing (an `includeIf.onbranch` flips with HEAD, an include
+//    can point at any agent-writable file, and an agent sets mtimes). One short extra spawn per call is the price.
 //  - Keys git reads first-wins (remote.<x>.uploadpack/receivepack, core.gitProxy) cannot be overridden at all:
 //    a repository that sets them locally is refused.
+//  - core.worktree moves the work tree, so checkout and reset write files wherever it points, as worca. Git reads
+//    it while finding the repository, before GIT_CONFIG_* and -c apply, so no pin can override it either: a
+//    repository that sets it in scope local or worktree (`config.worktree`, or an include) is refused, unless it
+//    names the checkout that holds the cwd's `.git` (git sets that itself for a submodule: `.git/modules/<x>`).
+//    A linked worktree reads the shared config's value too once extensions.worktreeConfig is on, so only with it
+//    off is a shared value seen there harmless. Git reads that flag from the shared config file's own lines only
+//    (no include, never config.worktree), so a later `false` elsewhere does not turn it off: any row that turns it
+//    on counts.
 //
 // Two safe local shapes are kept, pinned to the value read: a per-repo `core.sshCommand` that only picks a
 // key (`ssh -i <path>`, deploy keys) and `git lfs install --local`'s exact filter commands.
@@ -35,7 +46,8 @@
 
 import { execFile, execFileSync } from 'node:child_process';
 import { devNull, homedir } from 'node:os';
-import { join } from 'node:path';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { agentIdentity } from './agent-user.mjs';
 
 const LIST_ARGS = ['config', '--list', '--show-scope', '-z'];
@@ -111,8 +123,11 @@ export function envProxy(env, url = '') {
 
 /**
  * The GIT_CONFIG_* entries that keep repository-local config from choosing a command, for one listing.
- * Pure. `refused` names a first-wins key set locally (the call must not run).
- * @returns {{ entries: Array<[string,string]>, refused: string|null }}
+ * Pure. `refused` names a first-wins key set locally (the call must not run); `worktrees` are the local
+ * core.worktree values, which finish() lets through only when they name the checkout itself; `worktreeConfig`
+ * is whether any local or worktree row turns extensions.worktreeConfig on (git's boolean: anything but
+ * false/no/off/0/empty). Git reads the flag from the shared file's own lines, so a later `false` never turns it off.
+ * @returns {{ entries: Array<[string,string]>, refused: string|null, worktrees: Array<{scope: string, value: string}>, worktreeConfig: boolean }}
  */
 export function guardEntries(list, { env = process.env, hooks = false, isolated = agentIdentity() !== null } = {}) {
   const all = (list || []).map((e) => ({ ...e, key: norm(e.key) }));
@@ -120,6 +135,8 @@ export function guardEntries(list, { env = process.env, hooks = false, isolated 
   const local = all.filter((e) => UNTRUSTED.has(e.scope));
   const lastOf = (rows, ...keys) => { let v; for (const e of rows) if (keys.includes(e.key)) v = valueOf(e); return v; };
   const refused = local.find((e) => FIRST_WINS.some((re) => re.test(e.key)))?.key ?? null;
+  const worktrees = local.filter((e) => e.key === 'core.worktree').map((e) => ({ scope: e.scope, value: valueOf(e) }));
+  const worktreeConfig = local.some((e) => e.key === 'extensions.worktreeconfig' && !/^(false|no|off|0|)$/i.test(valueOf(e).trim()));
   const entries = [];
   const pin = (key, fallback) => entries.push([key, lastOf(trusted, key) ?? fallback]);
   const replay = (match) => { for (const e of trusted) if (match(e.key)) entries.push([e.key, valueOf(e)]); };
@@ -165,7 +182,7 @@ export function guardEntries(list, { env = process.env, hooks = false, isolated 
     if (/curloptresolve$/.test(e.key)) { entries.push([e.key, '']); replay((k) => k === e.key); continue; }
     pin(e.key, named[1]);
   }
-  return { entries, refused };
+  return { entries, refused, worktrees, worktreeConfig };
 }
 
 /** `env` plus `entries` as GIT_CONFIG_* (after any the env already has, so they win over it but not over `-c`). */
@@ -179,14 +196,36 @@ export function withGitConfig(env, entries) {
 }
 
 const refusal = (cwd, key) => Object.assign(
-  new Error(`worca will not run git in ${cwd}: its repository config sets ${key}, which would make git run a command as worca. Remove it (git config --unset-all ${key}) and try again.`),
+  new Error(`worca will not run git in ${cwd}: its repository config sets ${key}, which would make git ${key === 'core.worktree'
+    ? 'write files outside the checkout' : 'run a command'} as worca. Remove it (git config --unset-all ${key}) and try again.`),
   { code: 'GIT_CONFIG_REFUSED', key },
 );
 
+/** A local core.worktree that cannot move cwd's checkout: it names the checkout that holds cwd's `.git` (a folder,
+ *  or a file naming the git dir, as in a submodule; a relative value is read from the git dir, as git does), or it
+ *  is the shared config's value seen from a linked worktree while `worktreeConfig` is off, where git reads only
+ *  that worktree's config.worktree. With it on, git applies the shared value there too, so it must name the checkout. */
+export function worktreeIsOwnCheckout(cwd, value, scope = 'local', worktreeConfig = false) {
+  try {
+    let top = resolve(cwd);
+    while (!existsSync(join(top, '.git'))) {
+      const up = dirname(top);
+      if (up === top) return false;
+      top = up;
+    }
+    const dotGit = join(top, '.git');
+    const pointer = /^gitdir:\s*(.+?)\s*$/m.exec(existsSync(join(dotGit, 'HEAD')) ? '' : readFileSync(dotGit, 'utf8'));
+    const gitDir = pointer ? resolve(top, pointer[1]) : dotGit;
+    if (scope === 'local' && !worktreeConfig && existsSync(join(gitDir, 'commondir'))) return true;
+    return realpathSync(resolve(gitDir, value)) === realpathSync(top);
+  } catch { return false; }
+}
+
 function finish(cwd, env, opts, listed) {
   if (listed.error) throw Object.assign(new Error(`git config could not be read in ${cwd}: ${listed.error}`), { code: 'GIT_CONFIG_UNREADABLE' });
-  const { entries, refused } = guardEntries(parseConfigList(listed.stdout), { env, hooks: opts.hooks });
+  const { entries, refused, worktrees, worktreeConfig } = guardEntries(parseConfigList(listed.stdout), { env, hooks: opts.hooks });
   if (refused) throw refusal(cwd, refused);
+  if (worktrees.some((w) => !worktreeIsOwnCheckout(cwd, w.value, w.scope, worktreeConfig))) throw refusal(cwd, 'core.worktree');
   return withGitConfig(env, entries);
 }
 // A cwd that does not exist cannot be listed; git itself then fails the same way, so list nothing.

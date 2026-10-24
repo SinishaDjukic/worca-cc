@@ -204,6 +204,37 @@ test('card view: the program is shown; Run and Don\u2019t run post the two verbs
   const sv = scriptApprovalCardView({ id: 'card_2', state: 'proposed', card: save }, { h, button, onAnswer: async () => '' });
   assert.deepEqual([...sv.querySelectorAll('button')].map((b) => b.textContent), ['Don\u2019t save', 'Save']);
   assert.match(sv.textContent, /Chat wants to replace your script/);
+  assert.doesNotMatch(sv.textContent, /Exit codes|Test cases/, 'nothing to show when the save sets neither');
+});
+
+test('card view: a save that changes exitCodes or cases shows them before the click', () => {
+  const doc = new JSDOM('<!doctype html><body></body>').window.document;
+  const { h, button } = cardKit(doc);
+  const meta = { ...META, runtime: 'shell', exitCodes: { clean: [0, 3], blocking: [2] } };
+  const cases = [{ id: 'c1', name: 'flags a bad diff', expect: { verdict: 'blocking' } }];
+  const save = scriptApprovalCard('save_script', { key: 'mark', meta, source: SRC, cases }, { pin: null }).card;
+  const sv = scriptApprovalCardView({ id: 'card_3', state: 'proposed', card: save }, { h, button, onAnswer: async () => '' });
+  const sections = new Map([...sv.querySelectorAll('details')].map((d) => [d.querySelector('summary').textContent, d]));
+  const codes = sections.get('Exit codes');
+  assert.ok(codes, 'an exit-code section');
+  assert.equal(codes.open, true);
+  assert.match(codes.textContent, /clean: 0, 3/);
+  assert.match(codes.textContent, /blocking: 2/);
+  const tc = sections.get('Test cases (1)');
+  assert.ok(tc, 'a test-case section');
+  assert.equal(tc.open, true);
+  assert.match(tc.textContent, /flags a bad diff/);
+  assert.match(tc.textContent, /"verdict": "blocking"/);
+});
+
+test('card view: a save that removes exitCodes or cases says so, never reads as unchanged', () => {
+  const doc = new JSDOM('<!doctype html><body></body>').window.document;
+  const { h, button } = cardKit(doc);
+  const save = scriptApprovalCard('save_script', { key: 'mark', meta: { ...META, runtime: 'shell', exitCodes: null }, source: SRC, cases: [] }, { pin: null }).card;
+  const sv = scriptApprovalCardView({ id: 'card_4', state: 'proposed', card: save }, { h, button, onAnswer: async () => '' });
+  const sections = new Map([...sv.querySelectorAll('details')].map((d) => [d.querySelector('summary').textContent, d]));
+  assert.match(sections.get('Exit codes: removed')?.textContent ?? '', /exit codes are removed/);
+  assert.match(sections.get('Test cases: removed')?.textContent ?? '', /test case of this script is deleted/);
 });
 
 // ── the route, over the real server (WORCA_MOCK) ─────────────────────────────
