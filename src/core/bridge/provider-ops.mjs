@@ -19,7 +19,7 @@ import {
   listCopilotModels, copilotUsage, catalogEntryForCopilotModel, copilotApiFor,
   copilotHeaders, normalizeCopilotModel,
 } from './providers/copilot.mjs';
-import { keyOptional } from './registry.mjs';
+import { keyOptional, providerKeyFor } from './registry.mjs';
 import { listEndpointModels, catalogEntryForEndpointModel, importableModel } from './providers/endpoint.mjs';
 import { brokerEnabled, brokerInfo, cachedBrokerInfo, mintSpawnToken, revokeSpawnToken, slotBaseUrl, personSlots } from '../broker-client.mjs';
 import { routeUpstream } from '../broker-routing.mjs';
@@ -315,11 +315,17 @@ function endpointBase(baseUrl) {
 /**
  * What an OpenAI-compatible endpoint serves, each row with `catalogId` and `inCatalog` (§8.4's
  * Copilot import, for a server you run: llama.cpp, Ollama, LM Studio, vLLM, a gateway).
- * @param {{baseUrl?:string, fetch?:typeof fetch}} [opts]
+ * `apiKey` is the endpoint's own key (a `${VAR}` reference or a literal), for an endpoint that is not the provider's
+ * (Gemini, Qwen next to OpenRouter): it is used for the listing and stored on every imported entry. Without one, the
+ * provider's key goes along only when the endpoint is on the provider's own host (registry.mjs providerKeyFor).
+ * @param {{baseUrl?:string, apiKey?:string, fetch?:typeof fetch}} [opts]
  */
-export async function endpointModelsForImport({ baseUrl, fetch: f } = {}) {
+export async function endpointModelsForImport({ baseUrl, apiKey: entryKey = '', fetch: f } = {}) {
   const base = endpointBase(baseUrl);
   const p = providerConfig('openai');
+  const ownKey = typeof entryKey === 'string' ? entryKey.trim() : '';
+  if (ownKey && brokerEnabled()) refuseWithBroker('store a model key');
+  if (ownKey && modelEnvRef(ownKey) && !resolveProviderSecret(ownKey)) throw new Error(`${ownKey} is not set in worca's environment — export it where worca starts`);
   let out;
   const route = brokerEnabled() ? routeUpstream({ provider: 'openai', baseUrl: base }, { slots: (await brokerInfo()).slots || [] }) : null;
   if (route && route.error) throw new Error(route.error);
@@ -330,14 +336,14 @@ export async function endpointModelsForImport({ baseUrl, fetch: f } = {}) {
     out = { ...out, baseUrl: base };
   } else {
     // Keyless local endpoints are reached directly, as without the broker.
-    const key = brokerEnabled() ? '' : resolveProviderSecret(p.apiKey);
+    const key = brokerEnabled() ? '' : (ownKey ? resolveProviderSecret(ownKey) : providerKeyFor({ baseUrl: base }, p));
     out = await listEndpointModels(base, { apiKey: key, fetch: f });
   }
   const have = new Set(listGlobalModels().map((m) => m.id.toLowerCase()));
   return {
     ...out,
     models: out.models.map((m) => {
-      const entry = catalogEntryForEndpointModel(m, { server: out.server, baseUrl: out.baseUrl, providerBaseUrl: p.baseUrl });
+      const entry = catalogEntryForEndpointModel(m, { server: out.server, baseUrl: out.baseUrl, providerBaseUrl: p.baseUrl, apiKey: ownKey });
       const usable = importableModel(m);
       const existing = existingEndpointEntry(m.id, out.baseUrl, p.baseUrl);
       const catalogId = existing ? existing.id : entry.id;
@@ -367,10 +373,11 @@ function existingEndpointEntry(upstreamId, baseUrl, providerBaseUrl) {
  * @param {string[]} ids  model ids as the endpoint reports them (not catalog ids)
  * @returns {Promise<{created:string[], updated:string[], skipped:Array<{id:string, why:string}>, server:string, baseUrl:string}>}
  */
-export async function importEndpointModels(ids, { baseUrl, fetch: f } = {}) {
+export async function importEndpointModels(ids, { baseUrl, apiKey = '', fetch: f } = {}) {
   const wanted = new Set((Array.isArray(ids) ? ids : []).map((s) => String(s)));
   if (!wanted.size) throw new Error('pick at least one model to import');
-  const out = await endpointModelsForImport({ baseUrl, fetch: f });
+  const ownKey = typeof apiKey === 'string' ? apiKey.trim() : '';
+  const out = await endpointModelsForImport({ baseUrl, apiKey: ownKey, fetch: f });
   const byId = new Map(out.models.map((m) => [m.id, m]));
   const p = providerConfig('openai');
   const created = []; const updated = []; const skipped = [];
@@ -378,12 +385,12 @@ export async function importEndpointModels(ids, { baseUrl, fetch: f } = {}) {
     const m = byId.get(id);
     if (!m) { skipped.push({ id, why: 'the endpoint does not serve it' }); continue; }
     if (!m.importable) { skipped.push({ id, why: m.blocked || 'not usable in a pipeline' }); continue; }
-    const entry = catalogEntryForEndpointModel(m, { server: out.server, baseUrl: out.baseUrl, providerBaseUrl: p.baseUrl });
+    const entry = catalogEntryForEndpointModel(m, { server: out.server, baseUrl: out.baseUrl, providerBaseUrl: p.baseUrl, apiKey: ownKey });
     const current = existingEndpointEntry(m.id, out.baseUrl, p.baseUrl)
       || listGlobalModels().find((x) => x.id.toLowerCase() === entry.id.toLowerCase());
     if (current) {
       if (!current.upstream || current.upstream.provider !== 'openai') { skipped.push({ id, why: `"${current.id}" already exists and is not an OpenAI-compatible entry` }); continue; }
-      await updateGlobalModel(current.id, { upstream: { ...current.upstream, model: entry.upstream.model, ...(entry.upstream.baseUrl ? { baseUrl: entry.upstream.baseUrl } : {}), ...(entry.upstream.capabilities ? { capabilities: entry.upstream.capabilities } : {}) } });
+      await updateGlobalModel(current.id, { upstream: { ...current.upstream, model: entry.upstream.model, ...(entry.upstream.baseUrl ? { baseUrl: entry.upstream.baseUrl } : {}), ...(entry.upstream.apiKey ? { apiKey: entry.upstream.apiKey } : {}), ...(entry.upstream.capabilities ? { capabilities: entry.upstream.capabilities } : {}) } });
       updated.push(current.id);
     } else {
       await addGlobalModel(entry);

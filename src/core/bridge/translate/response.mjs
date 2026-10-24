@@ -7,9 +7,10 @@ import { CHAT_REASONING_SIGNATURE, chatReasoningText } from './common.mjs';
 
 /**
  * @param {object} completion  the upstream JSON body
- * @param {{model:string}} opts  catalog id the CLI expects back
+ * @param {{model:string, onExtraContent?:(id:string, extra:object)=>void}} opts  catalog id the CLI expects back;
+ *   onExtraContent gets each tool call's `extra_content` (a Gemini thought signature) under the id the CLI sees
  */
-export function toMessagesResponse(completion, { model } = {}) {
+export function toMessagesResponse(completion, { model, onExtraContent = null } = {}) {
   const choice = completion && Array.isArray(completion.choices) ? completion.choices[0] : null;
   const msg = (choice && choice.message) || {};
   const content = [];
@@ -31,7 +32,9 @@ export function toMessagesResponse(completion, { model } = {}) {
     if (typeof fn.arguments === 'string' && fn.arguments.trim()) {
       try { input = JSON.parse(fn.arguments); } catch { input = { _raw: fn.arguments }; }
     }
-    content.push({ type: 'tool_use', id: tc.id || newToolUseId(), name: String(fn.name || ''), input });
+    const id = tc.id || newToolUseId();
+    if (onExtraContent && tc.extra_content && typeof tc.extra_content === 'object') onExtraContent(id, tc.extra_content);
+    content.push({ type: 'tool_use', id, name: String(fn.name || ''), input });
     toolUses += 1;
   }
   let stop = mapStopReason(finish, { emitted: content.length > 0 }) || 'end_turn';

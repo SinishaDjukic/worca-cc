@@ -3742,7 +3742,9 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mimp{width:min(980px,100%);max-height:86vh;display:flex;flex-direction:column;gap:14px;overflow:hidden;}
 .mimp-src{display:grid;grid-template-columns:minmax(190px,250px) minmax(0,1fr);align-items:start;gap:12px 16px;}
 .mimp-src .mv-field{min-width:0;}
-.mimp-src .mimp-base-field.hidden{display:none;}
+.mimp-src .mimp-base-field.hidden,.mimp-src .mimp-key-field.hidden{display:none;}
+.mimp-src .mimp-key-field{grid-column:2;}
+@media (max-width:560px){.mimp-src{grid-template-columns:minmax(0,1fr);}.mimp-src .mimp-key-field{grid-column:auto;}}
 /* One source: the picker takes the row rather than leaving a gap where a URL would be. */
 .mimp-src:has(.mimp-base-field.hidden) .mimp-source-field{grid-column:1 / -1;}
 .mimp-base-row{display:flex;gap:8px;min-width:0;}

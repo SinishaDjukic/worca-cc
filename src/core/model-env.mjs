@@ -528,6 +528,22 @@ export function isOpenRouterBaseUrl(v) {
   return host === 'openrouter.ai' || host.endsWith('.openrouter.ai');
 }
 
+/** Google's OpenAI-compatible Gemini endpoint (generativelanguage.googleapis.com/v1beta/openai), the base URL of a
+ *  Gemini model bridged with an AI Studio key. Gemini 3 wants each tool call's thought signature back (bridge/gemini.mjs). */
+export const GEMINI_OPENAI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai';
+export function isGeminiBaseUrl(v) {
+  if (!isUpstreamBaseUrl(v)) return false;
+  return new URL(v.trim()).hostname.toLowerCase() === 'generativelanguage.googleapis.com';
+}
+
+/** Alibaba Model Studio's OpenAI-compatible Qwen endpoints (DashScope compatible mode): international and mainland China. */
+export const QWEN_OPENAI_BASE_URL = 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
+export const QWEN_CN_OPENAI_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+export function isQwenBaseUrl(v) {
+  if (!isUpstreamBaseUrl(v)) return false;
+  return /^dashscope(?:-[a-z]+)?\.aliyuncs\.com$/.test(new URL(v.trim()).hostname.toLowerCase());
+}
+
 /** OpenRouter's provider sort orders (provider routing). */
 export const OPENROUTER_SORTS = Object.freeze(['price', 'throughput', 'latency']);
 

@@ -12579,7 +12579,9 @@ app.get('/api/providers/copilot/models', async (req, res) => {
 // saving it first. Same reach as Test connection: the UI is loopback-only.
 app.get('/api/providers/openai/models', async (req, res) => {
   try {
-    res.json(await endpointModelsForImport({ baseUrl: typeof req.query.baseUrl === 'string' ? req.query.baseUrl : '' }));
+    // The endpoint's own key (Gemini, Qwen) arrives in a header, never the query string.
+    const apiKey = typeof req.get('x-worca-endpoint-key') === 'string' ? req.get('x-worca-endpoint-key') : '';
+    res.json(await endpointModelsForImport({ baseUrl: typeof req.query.baseUrl === 'string' ? req.query.baseUrl : '', apiKey }));
   } catch (err) {
     return providerError(res, err);
   }
@@ -12588,7 +12590,7 @@ app.get('/api/providers/openai/models', async (req, res) => {
 app.post('/api/providers/openai/import-models', async (req, res) => {
   const b = req.body || {};
   try {
-    const result = await importEndpointModels(b.ids, { baseUrl: typeof b.baseUrl === 'string' ? b.baseUrl : '' });
+    const result = await importEndpointModels(b.ids, { baseUrl: typeof b.baseUrl === 'string' ? b.baseUrl : '', apiKey: typeof b.apiKey === 'string' ? b.apiKey : '' });
     emitChanged('settings-changed');
     res.json({ ...result, models: maskedGlobalModels() });
   } catch (err) {

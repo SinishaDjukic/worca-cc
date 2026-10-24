@@ -100,7 +100,8 @@ the API host when the sign-in does not name one.
 
 **OpenAI-compatible** and **Anthropic-compatible.** A base URL, an API key
 (stored masked, or `${VAR}`), and *Test connection*. A model can override
-either under its Connection's *Advanced* disclosure. An OpenAI-compatible base
+either under its Connection's *Advanced* disclosure; a model whose base URL is on
+another host never gets the provider's key ([Gemini and Qwen models](#gemini-and-qwen-models)). An OpenAI-compatible base
 URL on this machine or a private network (`localhost`, `127.x`, `10.x`,
 `192.168.x`, `172.16–31.x`, `*.local`) — llama.cpp's `llama-server`, Ollama,
 LM Studio, a LAN vLLM — needs no key: leave it empty and the bridge sends no
@@ -358,6 +359,53 @@ as ambiguous — is left out of that model's requests instead, also logged once;
 pipeline agent does not need it. This applies to any OpenAI-compatible endpoint,
 not only OpenRouter.
 
+### Gemini and Qwen models
+
+With an API key, Gemini and Qwen models run on Claude Code through the bridge, like
+any OpenAI-compatible model, so they work **in Chat** and in every pipeline step,
+with Claude Code's own tool lockdown and guardrails. Google and Alibaba each serve
+an OpenAI-compatible endpoint:
+
+| | Base URL | Key |
+|---|---|---|
+| **Gemini** (Google AI Studio) | `https://generativelanguage.googleapis.com/v1beta/openai` | an AI Studio key, as `${GEMINI_API_KEY}` |
+| **Qwen** (Alibaba Model Studio) | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` (mainland China: `https://dashscope.aliyuncs.com/compatible-mode/v1`) | a Model Studio key, as `${DASHSCOPE_API_KEY}` |
+
+On the Models page, *Import models…* → *OpenAI-compatible server* → **Gemini** or
+**Qwen** fills the base URL and the key's `${VAR}` and lists what the endpoint serves.
+The key is stored on each imported model (its Connection), not on the Providers
+card, so the OpenAI-compatible card can stay pointed at OpenRouter or anything else.
+Export the variable where Worca starts. From a terminal:
+
+```
+worca models import gemini [--api-key '${GEMINI_API_KEY}'] [--search flash] [--pick id,id | --all] [--yes]
+worca models import qwen   [--api-key '${DASHSCOPE_API_KEY}'] [--base-url https://dashscope.aliyuncs.com/compatible-mode/v1] …
+```
+
+- **Gemini**: Worca reads Google's own model list, so each entry gets the window
+  Google serves, its output cap and whether it thinks; embedding, image, video and
+  speech models are listed but cannot be ticked. Gemini 3 signs each tool call
+  (a *thought signature*) and refuses the next request without it. Claude Code has
+  nowhere to keep it, so the bridge keeps it per tool call and puts it back. A call
+  the bridge no longer has (Worca restarted mid-conversation) gets Google's
+  documented stand-in, which skips the check for that call instead of failing it.
+- **Qwen**: Model Studio's list carries ids only, so set each model's Prompt limit
+  by hand after importing.
+- Neither lists a price: imported entries show *cost not verified* until you set one.
+- The same models are on OpenRouter (`google/…`, `qwen/…`), with OpenRouter's price
+  and cost reporting, if you would rather keep one key.
+- This route needs an API key. To use a Google account or Qwen's own sign-in, run
+  Gemini CLI or Qwen Code as the engine instead ([Gemini CLI and Qwen Code](#gemini-cli-and-qwen-code));
+  Chat does not run on those yet.
+
+**A provider's key only goes to the provider's own host.** A model whose base URL
+is on another host than the OpenAI-compatible (or Anthropic-compatible) provider's
+uses its own key or none; it never borrows the provider's. So an OpenRouter key on
+the Providers card is never sent to Google, Alibaba or a gateway a model points at.
+A model that relied on that before shows **needs sign-in** with the reason; give it
+its own key on its Connection (*Advanced*). The import dialog follows the same rule
+when it lists an endpoint.
+
 ### Import from Copilot
 
 Pick *GitHub Copilot* and the dialog shows Copilot's chat models with vendor,
@@ -573,7 +621,7 @@ worca can run pipelines on Cursor's headless CLI agent. Chat does not run on Cur
 
 ## Gemini CLI and Qwen Code
 
-worca can run pipelines on Google's Gemini CLI (`gemini`) and on Qwen Code (`qwen`). Qwen Code is a fork of Gemini CLI, and worca runs both the same way; where they differ, this section says so. Both are in **beta**. Chat does not run on either.
+worca can run pipelines on Google's Gemini CLI (`gemini`) and on Qwen Code (`qwen`). Qwen Code is a fork of Gemini CLI, and worca runs both the same way; where they differ, this section says so. Both are in **beta**. Chat does not run on either; with an API key, Gemini and Qwen models run in Chat on Claude Code instead ([Gemini and Qwen models](#gemini-and-qwen-models)).
 
 Verified on Gemini CLI 0.63.0 and Qwen Code 0.25.0. The captured streams and every fact the adapters rely on are in `test/fixtures/gemini/README.md` and `test/fixtures/qwen/README.md`.
 
@@ -674,7 +722,7 @@ click Apply.
 | `get_providers` | The Providers card's state: Copilot sign-in and notice, each key-based provider's base URL, whether a key is set (and from where), whether it is optional | read |
 | `test_provider` | *Test connection* for one provider | read (contacts it) |
 | `list_copilot_models` | What *Import models…* would list | read (contacts GitHub) |
-| `list_endpoint_models` | What an OpenAI-compatible server of yours serves, with the window each model really gets | read (contacts it) |
+| `list_endpoint_models` | What an OpenAI-compatible server of yours, Gemini or Qwen serves, with the window each model really gets; a hosted API's key is passed as a `${VAR}` | read (contacts it) |
 | `propose_model_change` | `add_model`, `edit_model`, `remove_model` (user entries only), `provider` (base URL, key, concurrency, account type), `import_copilot`, `import_endpoint` | card |
 
 - The card shows the change as a before → after list, and the **warnings** that
