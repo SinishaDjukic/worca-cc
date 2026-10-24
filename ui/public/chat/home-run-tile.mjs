@@ -77,9 +77,12 @@ export function createRunTile({ doc, snap, onOpen = null, onAnswer = null }) {
   const el = h('article', 'chat-run-tile');
   const head = h('div', 'chat-run-tile-head');
   const tt = h('div', 'chat-run-tile-tt');
-  // The title IS the tile's open control: a button whose ::after (style.css) stretches over the tile.
+  // The title IS the tile's open control: a button whose ::after (style.css) stretches over the tile. Its words sit in
+  // an inner span: the title style (600, --ink) and the ellipsis (a .btn is inline-flex and cannot ellipsize itself).
   const open = h('button', 'btn btn-quiet chat-run-tile-open');
   open.type = 'button';
+  const name = h('span', 'chat-run-tile-name');
+  open.append(name);
   const sub = h('span', 'chat-run-tile-sub');
   tt.append(open, sub);
   const pill = h('span', 'chat-run-tile-pill st-peach');
@@ -135,7 +138,7 @@ export function createRunTile({ doc, snap, onOpen = null, onAnswer = null }) {
     el.classList.toggle('is-need', needsWash(s));
     // D16: a slice under its feature: "Slice 2 of 3 · Run tags".
     const title = s.slice ? `Slice ${s.slice.index} of ${s.slice.total} · ${s.slice.title}` : String(s.title || 'Run');
-    put(open, title);
+    put(name, title);
     open.title = title;
     put(sub, tileSub(s));
     pill.className = `chat-run-tile-pill st-${p.family}`;

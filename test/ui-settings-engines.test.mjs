@@ -54,7 +54,7 @@ test('renderEngineSection: a row per role and job, each engine\'s models only', 
     'run.engine': { own: 'codex', inherited: { value: 'claude', source: 'default' } },
   }, jobs: { claude: [], codex: ['title', 'workspaceScan'] } });
   assert.equal(host.querySelector('[data-setting="run.engine"] .inherit-input').value, 'codex');
-  assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'copilot', 'cursor']);
+  assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen']);
   const codexPlan = host.querySelector('.engine-card[data-engine="codex"] [data-setting="models.codex.steps.planner"] .inherit-model');
   assert.deepEqual([...codexPlan.options].map((o) => o.value), ['', 'gpt-5.5']);
   assert.ok(host.querySelector('[data-setting="models.codex.workspaceScan"]'));
@@ -67,8 +67,8 @@ test('renderEngineSection: the Cursor card has step rows, no helper rows, its ow
   const host = doc.getElementById('h');
   renderEngineSection(host, { level: 'user', roles: STEPS, catalog: [...CATALOG, { id: 'my-cursor-m', label: 'my-cursor-m', engine: 'cursor', efforts: [], custom: 'global' }],
     fields: {}, jobs: { claude: [], codex: ['title'], cursor: [] } });
-  assert.deepEqual([...host.querySelectorAll('[data-setting="run.engine"] option')].map((o) => o.value).filter(Boolean), ['claude', 'codex', 'copilot', 'cursor']);
-  assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'copilot', 'cursor']);
+  assert.deepEqual([...host.querySelectorAll('[data-setting="run.engine"] option')].map((o) => o.value).filter(Boolean), ['claude', 'codex', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen']);
+  assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen']);
   const copilot = host.querySelector('.engine-card[data-engine="copilot"]');
   assert.ok(copilot.querySelector('[data-setting="models.copilot.steps.planner"]'), 'Copilot has step rows');
   assert.match(copilot.querySelector('.engine-helpers .engine-slot-rest').textContent, /^Copilot runs its helper jobs .* on its own default model\.$/);
@@ -86,6 +86,24 @@ test('renderEngineSection: the Cursor card has step rows, no helper rows, its ow
   assert.deepEqual(enginePatchToSettingsBody({ 'models.cursor.steps.planner': { model: 'my-cursor-m' } }), { stepModels: { cursor: { planner: { model: 'my-cursor-m' } } } });
 });
 
+for (const [engine, label] of [['gemini', 'Gemini CLI'], ['qwen', 'Qwen Code']]) {
+  test(`renderEngineSection: the ${label} card is Cursor's shape: steps only, its default label, the Claude-helpers note`, () => {
+    const doc = new JSDOM('<!doctype html><div id="h"></div>').window.document;
+    const host = doc.getElementById('h');
+    renderEngineSection(host, { level: 'user', roles: STEPS, catalog: [...CATALOG, { id: 'm1', label: 'm1', engine, efforts: [], custom: 'global' }], fields: {} });
+    const card = host.querySelector(`.engine-card[data-engine="${engine}"]`);
+    assert.equal(card.querySelector('h3').firstChild.textContent, label);
+    assert.equal(card.querySelector('h3 .beta-badge')?.textContent, 'Beta');
+    const plan = card.querySelector(`[data-setting="models.${engine}.steps.planner"] .inherit-model`);
+    assert.deepEqual([...plan.options].map((o) => o.value), ['', 'm1']);
+    assert.match(plan.options[0].textContent, new RegExp(`${label}'s default model`));
+    assert.equal(card.querySelector('.engine-helpers .engine-slot'), null, 'no helper rows');
+    assert.equal(card.querySelector('.engine-helpers .engine-slot-rest').textContent,
+      `${label} runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. See the Claude tab.`);
+    assert.deepEqual(enginePatchToSettingsBody({ [`models.${engine}.steps.planner`]: { model: 'm1' } }), { stepModels: { [engine]: { planner: { model: 'm1' } } } });
+  });
+}
+
 test('renderAskEngineSection offers no Cursor engine', () => {
   const doc = new JSDOM('<!doctype html><div id="h"></div>').window.document;
   const host = doc.getElementById('h');
@@ -93,14 +111,15 @@ test('renderAskEngineSection offers no Cursor engine', () => {
   assert.deepEqual([...host.querySelectorAll('[data-setting="askEngine"] option')].map((o) => o.value).filter(Boolean), ['codex', 'copilot'], 'Claude is the default option, listed once');
 });
 
-async function boot(settings = {}, { hash = 'settings', engines = null } = {}) {
+async function boot(settings = {}, { hash = 'settings', engines = null, flags = '' } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
   const { window } = dom;
+  if (flags) window.document.documentElement.dataset.flags = flags;
   window.Element.prototype.scrollIntoView = function () {};
   window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
   const posts = [];
   const body = () => ({ root: '/w', projectsRoot: '/p', projectsRootDefault: '/p', default: {}, chat: {}, titleModel: null,
-    titleModelEffective: { model: null, source: 'run', stale: null }, hideBuiltinModels: false, ...settings });
+    titleModelEffective: { model: null, source: 'run', stale: null }, hideBuiltinModels: false, ...(typeof settings === 'function' ? settings(window) : settings) });
   window.fetch = (url, opts = {}) => {
     const u = String(url);
     const method = (opts.method || 'GET').toUpperCase();
@@ -166,6 +185,76 @@ test('the Models page: a Claude helper row saves onto its legacy key (titleModel
   assert.equal(posts.at(-1).utilityModels, undefined, 'never under utilityModels.claude');
 });
 
+test('requirementsInterview is a bare-id helper job and maps onto its own settings key (Codex never produces it)', () => {
+  assert.equal(utilityId('claude', 'requirementsInterview'), 'models.claude.requirementsInterview');
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.requirementsInterview': { model: 'claude-opus-5-5', effort: 'high' } }), { requirementsInterview: { model: 'claude-opus-5-5', effort: 'high' } });
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.requirementsInterview': { model: 'claude-opus-5-5' } }), { requirementsInterview: { model: 'claude-opus-5-5' } });
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.requirementsInterview': { effort: 'high' } }), { requirementsInterview: { effort: 'high' } });
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.requirementsInterview': { model: '', effort: '' } }), { requirementsInterview: null });
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.requirementsInterview': null }), { requirementsInterview: null });
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.codex.requirementsInterview': { model: 'gpt-5.5' } }), {});
+});
+
+const INTERVIEW_DEFAULT = { requirementsInterviewDefault: { model: 'claude-opus-5-5', effort: 'medium' } };
+
+// As the server answers: the interview keys only while the requirements flag is on (ui/server.mjs settingsState).
+const flagAware = (w) => (/(?:^|\s)requirements(?:\s|$)/.test(w.document.documentElement.dataset.flags || '') ? { ...INTERVIEW_DEFAULT } : {});
+
+test('the Models page: the flag turning on while it is open refetches the settings, so the row shows its default', async () => {
+  const off = await boot(flagAware, { hash: 'models' });
+  assert.equal(off.doc.querySelector('[data-setting="models.claude.requirementsInterview"]'), null);
+  const { applyFlags } = await import(pathToFileURL(fileURLToPath(new URL('../ui/public/flags.mjs', import.meta.url))).href);
+  applyFlags({ requirements: true }, off.doc);
+  for (let i = 0; i < 8; i++) await off.tick();
+  const row = off.doc.querySelector('[data-setting="models.claude.requirementsInterview"]');
+  assert.ok(row, 'the row appears');
+  assert.equal(row.querySelector('.inherit-model').options[0].textContent, 'Opus 5.5 (default)');
+  assert.match(row.querySelector('.inherit-effort').options[0].textContent, /medium \(default\)/);
+});
+
+test('the Models page: the Requirements interview row shows only while the requirements flag is on', async () => {
+  const off = await boot(flagAware, { hash: 'models' });
+  assert.equal(off.doc.querySelector('[data-setting="models.claude.requirementsInterview"]'), null);
+  const { doc, tick } = await boot({ ...INTERVIEW_DEFAULT }, { hash: 'models', flags: 'requirements' });
+  const row = doc.querySelector('.engine-card[data-engine="claude"] .engine-helpers [data-setting="models.claude.requirementsInterview"]');
+  assert.ok(row, 'a Claude Helper jobs row');
+  assert.equal(row.querySelector('.label-row label').textContent, 'Requirements interview');
+  assert.equal(row.querySelector('.label-row label').title, 'Makes product briefs, looks at the code for a feature and runs the interview rounds on the Requirements page.');
+  assert.equal(row.querySelector('.inherit-model').options[0].textContent, 'Opus 5.5 (default)');
+  assert.ok(row.querySelector('.inherit-effort'), 'it has an Effort');
+  assert.match(row.querySelector('.inherit-effort').options[0].textContent, /medium \(default\)/);
+  assert.equal(doc.querySelector('.engine-card[data-engine="codex"] [data-setting="models.codex.requirementsInterview"]'), null);
+  // The flag flipping repaints the card while the Models page is open.
+  const { applyFlags } = await import(pathToFileURL(fileURLToPath(new URL('../ui/public/flags.mjs', import.meta.url))).href);
+  applyFlags({ requirements: false }, doc);
+  for (let i = 0; i < 6; i++) await tick();
+  assert.equal(doc.querySelector('[data-setting="models.claude.requirementsInterview"]'), null, 'flag off: the row goes');
+  applyFlags({ requirements: true }, doc);
+  for (let i = 0; i < 6; i++) await tick();
+  assert.ok(doc.querySelector('[data-setting="models.claude.requirementsInterview"]'), 'flag on: the row is back');
+});
+
+test('the Models page: the interview row saves its pair, clears with x, and repaints from the answer', async () => {
+  const { doc, window, posts, tick } = await boot({ ...INTERVIEW_DEFAULT, requirementsInterview: { model: 'claude-opus-5-5', effort: 'high' } }, { hash: 'models', flags: 'requirements' });
+  const root = doc.getElementById('engine-settings-root');
+  const row = () => root.querySelector('[data-setting="models.claude.requirementsInterview"]');
+  assert.equal(row().querySelector('.inherit-model').value, 'claude-opus-5-5', 'the stored pick paints');
+  assert.equal(row().querySelector('.inherit-effort').value, 'high');
+  const change = (el, value) => { el.value = value; el.dispatchEvent(new window.Event('change', { bubbles: true })); };
+  change(row().querySelector('.inherit-effort'), 'xhigh');
+  doc.getElementById('engineSettingsSave').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.deepEqual(posts.at(-1), { requirementsInterview: { model: 'claude-opus-5-5', effort: 'xhigh' } });
+  assert.equal(row().querySelector('.inherit-effort').value, 'xhigh', 'repainted from the answer');
+  assert.equal(row().querySelector('.inherit-model').options[0].textContent, 'Opus 5.5 (default)', 'default labels intact');
+  row().querySelector('.inherit-clear').click();
+  doc.getElementById('engineSettingsSave').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.deepEqual(posts.at(-1), { requirementsInterview: null });
+  assert.equal(row().hidden, true, 'cleared: back to the folded default');
+  assert.equal(row().querySelector('.inherit-model').options[0].textContent, 'Opus 5.5 (default)');
+});
+
 test('the Models page: the Agent generation row paints the stored pair and saves onto agentGenModel', async () => {
   const { doc, window, posts, tick } = await boot({ agentGenModel: { model: 'claude-opus-5-5', effort: 'high' } }, { hash: 'models' });
   const row = doc.querySelector('[data-setting="models.claude.utility.agentGen"]');
@@ -205,6 +294,36 @@ test('the Models page: Run naming is a Claude Helper jobs row only while smartRu
   applyFlags({ smartRunNaming: false }, doc);
   for (let i = 0; i < 8; i++) await tick();
   assert.equal(doc.querySelector(sel), null, 'flag off again: the row is gone');
+});
+
+test('enginePatchToSettingsBody: Command summaries saves onto commandSummaryModel (Claude only)', () => {
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.utility.commandSummary': { model: 'claude-opus-5-5', effort: 'high' } }),
+    { commandSummaryModel: { model: 'claude-opus-5-5', effort: 'high' } });
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.utility.commandSummary': null }), { commandSummaryModel: null });
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.codex.utility.commandSummary': { model: 'gpt-5.5' } }), {});
+});
+
+test('the Models page: Command summaries is a Claude Helper jobs row while commandSummaries is on, the cheapest ready model by default', async () => {
+  const { doc, window, posts, tick } = await boot({ commandSummaryModel: { model: null, effort: null },
+    commandSummaryModelEffective: { model: 'claude-opus-5-5', effort: 'medium', source: 'auto', stale: null } }, { hash: 'models' });
+  const sel = '[data-setting="models.claude.utility.commandSummary"]';
+  applyFlags({ commandSummaries: false }, doc);
+  for (let i = 0; i < 8; i++) await tick();
+  assert.equal(doc.querySelector(sel), null, 'flag off: no row');
+  applyFlags({ commandSummaries: true }, doc);
+  for (let i = 0; i < 8; i++) await tick();
+  const claude = doc.querySelector('.engine-card[data-engine="claude"]');
+  const row = claude.querySelector(`.engine-helpers ${sel}`);
+  assert.ok(row);
+  assert.match(row.textContent, /Command summaries/);
+  assert.ok([...claude.querySelectorAll('.engine-helpers .engine-slot-add option')].some((o) => o.textContent === 'Command summaries'), 'listed under Override a helper job');
+  assert.equal(row.querySelector('.inherit-model').options[0].textContent, 'Opus 5.5 (default)', 'the cheapest ready Claude model, selected by default');
+  assert.equal(doc.querySelector(`[data-setting*=".commandSummary"]:not(${sel})`), null, 'Claude only');
+  const model = row.querySelector('.inherit-model');
+  model.value = 'claude-opus-5-5'; model.dispatchEvent(new window.Event('change', { bubbles: true }));
+  doc.getElementById('engineSettingsSave').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.deepEqual(posts.at(-1), { commandSummaryModel: { model: 'claude-opus-5-5', effort: '' } });
 });
 
 test('opening the Models page directly paints the Engines card (a link or a reload lands there)', async () => {

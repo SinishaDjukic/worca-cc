@@ -5,8 +5,29 @@ import { parseRemoteUrl, forgeOf } from './forge.mjs';
 import { githubEnv, stripGithubCredentials, readGithubCredentials, asPersonMode } from './github-credentials.mjs';
 import { azureEnv, stripAzureCredentials, readAzureCredentials } from './azure-credentials.mjs';
 
+/**
+ * Tracker tokens worca never hands to a child: the documented {"$env":…} targets of task-source plugin token
+ * fields (plugin-config.mjs resolves them in the host at read time, so stripping every spawn is safe).
+ * WORCA_JIRA_TOKEN is jira-source's, and WORCA_JIRA_TOKEN_<NAME> gives each further profile (one per Jira site)
+ * its own variable. Strip-only: worca itself never reads them.
+ */
+export const TRACKER_STRIP_ONLY_KEYS = Object.freeze(['WORCA_JIRA_TOKEN']);
+export const TRACKER_STRIP_ONLY_PREFIXES = Object.freeze(['WORCA_JIRA_TOKEN_']);
+
+/** Ignoring case: Windows environment names are case-insensitive, and stripping one too many is harmless. */
+export function isTrackerTokenKey(key) {
+  const k = String(key).toUpperCase();
+  return TRACKER_STRIP_ONLY_KEYS.includes(k) || TRACKER_STRIP_ONLY_PREFIXES.some((p) => k.startsWith(p) && k.length > p.length);
+}
+
+function stripTrackerTokens(env) {
+  const out = { ...env };
+  for (const k of Object.keys(out)) if (isTrackerTokenKey(k)) delete out[k];
+  return out;
+}
+
 export function stripHostCredentials(env) {
-  return stripAzureCredentials(stripGithubCredentials(env));
+  return stripTrackerTokens(stripAzureCredentials(stripGithubCredentials(env)));
 }
 
 /**
@@ -33,9 +54,9 @@ export async function gitEnvFor(role, remoteUrl, { base, githubEnvImpl = githubE
   switch (forgeOf(p)) {
     case 'github': {
       const r = await githubEnvImpl(role, { ...githubOpts, ...(base ? { base } : {}), repo: `${p.owner}/${p.repo}` });
-      return { ...r, env: stripAzureCredentials(r.env) };
+      return { ...r, env: stripTrackerTokens(stripAzureCredentials(r.env)) };
     }
-    case 'azure': return { env: azureEnv(role, env0), error: null };
+    case 'azure': return { env: stripTrackerTokens(azureEnv(role, env0)), error: null };
     default: return { env: stripHostCredentials(env0), error: null };
   }
 }
@@ -43,10 +64,10 @@ export async function gitEnvFor(role, remoteUrl, { base, githubEnvImpl = githubE
 /**
  * Today's host-blind GitHub env (the closed-gate path of pushEnv/metricsGitEnv), with every Azure key removed.
  * With the gate closed no Azure credential is configured, so this only drops the strip-only Boards token,
- * which a project's pre-push/post-checkout hook could otherwise read (s4, D21).
+ * which a project's pre-push/post-checkout hook could otherwise read (s4, D21); likewise the tracker tokens.
  * @returns {Promise<{env: object, error: string|null}>}
  */
 export async function githubOnlyEnv(role, opts = {}) {
   const r = await githubEnv(role, opts);
-  return { ...r, env: stripAzureCredentials(r.env) };
+  return { ...r, env: stripTrackerTokens(stripAzureCredentials(r.env)) };
 }

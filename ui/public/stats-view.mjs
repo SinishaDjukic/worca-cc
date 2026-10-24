@@ -9,6 +9,7 @@
 // Formatters are injected via opts.fmt = { usd, usd4, duration, hours, estTitle };
 // DEFAULT_FMT keeps pure tests standalone.
 
+import { flagOn } from './flags.mjs';
 import { renderTeamCapPauseBanner, POLICY_PAUSE_REASONS } from './team-policy-view.mjs';
 import { rowsToCsv } from '../../src/shared/csv.mjs';
 
@@ -73,6 +74,8 @@ const ICONS = {
   finished: 'M20 7 9 18l-5-5',
   // Money bag resting on an open hand (not a board glyph): bag tie, knot, body; thumb, fingers, cuff.
   saved: 'M9.6 4.6h3.8 M9.9 4.6c.3-1.5 2.9-1.5 3.2 0 M9.6 4.6C7.8 6.2 6.8 7.8 6.8 9.4c0 1.6.6 2.9 1.4 3.8h6.6c.8-.9 1.4-2.2 1.4-3.8 0-1.6-1-3.2-2.8-4.8 M8.2 13.2c-.5 0-1 .2-1.3.6L3 17.6 M7 21l1.6-1.4c.3-.4.8-.6 1.4-.6h4c1.1 0 2.1-.4 2.8-1.2l4.6-4.4a2 2 0 0 0-2.75-2.91L14.8 13.2 M2 16.6l6 6',
+  // The Requirements nav entry's glyph (index.html), the three paths joined.
+  requirements: 'M8 4h8l3 3v13H5V4h3M9 11h6M9 15h4M9 4v2h6V4',
   prs: 'M6 8.6v6.8M18 15.4V11a4 4 0 0 0-4-4h-2M6 3.4a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2ZM6 15.4a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2ZM18 15.4a2.6 2.6 0 1 1 0 5.2 2.6 2.6 0 0 1 0-5.2Z',
 };
 
@@ -129,12 +132,16 @@ function subEl(doc, str) {
   return el;
 }
 
-function tile(doc, { iconD, label, chip, valueNodes, meter, sub, title }) {
+function tile(doc, { iconD, label, href, chip, valueNodes, meter, sub, title }) {
   const card = h(doc, 'section', 'card stat-tile');
   if (title) card.title = title;
   const lab = h(doc, 'div', 'stat-label');
   lab.appendChild(icon(doc, iconD));
-  lab.appendChild(h(doc, 'span', null, label));
+  if (href) {
+    const a = h(doc, 'a', 'stat-link', label);
+    a.href = href;
+    lab.appendChild(a);
+  } else lab.appendChild(h(doc, 'span', null, label));
   if (chip) lab.appendChild(chip);
   card.appendChild(lab);
   const value = h(doc, 'div', 'stat-value');
@@ -154,7 +161,8 @@ function meterEl(doc, cls, pct) {
 }
 
 /** KPI row: Spent · Pipeline spend · Ask Worca · Time worked · Pipelines finished · PRs merged (D4). */
-export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_FMT } = {}) {
+export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_FMT, requirementsEnabled } = {}) {
+  const reqOn = requirementsEnabled ?? flagOn('requirements', doc);
   const { totals, prev, budget, range } = model;
   const row = h(doc, 'div', 'stat-row');
 
@@ -238,6 +246,18 @@ export function renderKpiRow(model, { doc = globalThis.document, fmt = DEFAULT_F
     chatTile.appendChild(subEl(doc, `Naming $${cents} · ${naming.count} suggestion${naming.count === 1 ? '' : 's'}`));
   }
   row.appendChild(chatTile);
+
+  // Requirements (A2): interview/orientation spend, already inside Spent. Flag-gated; absent data = no tile.
+  if (reqOn && totals.requirements) {
+    const rq = totals.requirements;
+    row.appendChild(tile(doc, {
+      iconD: ICONS.requirements, label: 'Requirements', href: '#requirements',
+      chip: prev?.requirements ? deltaChip(doc, rq.spendUsd, prev.requirements.spendUsd, range) : null,
+      valueNodes: [doc.createTextNode(fmt.usd(rq.spendUsd))],
+      sub: `${rq.features} feature${rq.features === 1 ? '' : 's'}`,
+      title: fmt.estTitle(rq.spendUsd),
+    }));
+  }
 
   // Time worked
   row.appendChild(tile(doc, {
@@ -674,7 +694,9 @@ export function renderGroupsCard(groups, rangeLabel, { doc = globalThis.document
   const thead = h(doc, 'thead', null); thead.appendChild(head); table.appendChild(thead);
   const tbody = h(doc, 'tbody', null);
   for (const r of groups.rows) {
-    const tr = h(doc, 'tr', r.kind === 'none' ? 'groups-row-none' : r.kind === 'ask' ? 'groups-row-ask' : null);
+    // Chat and Requirements spend rows carry no runs (their spend is not per run)
+    const noRuns = r.kind === 'ask' || r.kind === 'requirements';
+    const tr = h(doc, 'tr', r.kind === 'none' ? 'groups-row-none' : noRuns ? `groups-row-${r.kind}` : null);
     tr.appendChild(h(doc, 'td', 'people-name', r.label));
     const spend = h(doc, 'td', 'people-spend');
     const bar = h(doc, 'span', 'people-bar');
@@ -686,7 +708,7 @@ export function renderGroupsCard(groups, rangeLabel, { doc = globalThis.document
     tr.appendChild(spend);
     tr.appendChild(h(doc, 'td', 'num', totalUsd > 0 ? `${Math.round((r.spentUsd / totalUsd) * 100)}%` : '—'));
     for (const c of ['runs', 'finished', 'stopped', 'failed', 'prsMerged']) {
-      tr.appendChild(h(doc, 'td', 'num', r.kind === 'ask' ? '—' : String(r[c])));
+      tr.appendChild(h(doc, 'td', 'num', noRuns ? '—' : String(r[c])));
     }
     labelCells(tr, heads);
     tbody.appendChild(tr);

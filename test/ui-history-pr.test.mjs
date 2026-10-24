@@ -224,7 +224,7 @@ test('same-branch, merged back: Push replaces Create PR and posts /api/push; the
   assert.equal(doc.querySelector('#hist-detail .hd-base').textContent, 'Merged into main');
   assert.equal(doc.querySelector('#hist-detail .hd-branch-copy').hidden, true);
   assert.equal(doc.querySelector('#hist-detail .hd-publish').hidden, true);
-  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-branch-name').textContent, 'main');
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-route .rd-route-name').textContent, 'main', 'the route\'s source row');
   const cta = doc.querySelector('#hist-detail .hd-glance .rd-head-acts .rd-pr-slot [data-rd-cta]');
   assert.ok(cta, 'the card head offers Push');
   // PR controls (design system): Push is a primary .btn led by arrow-up, and the head says the header's words.
@@ -233,7 +233,7 @@ test('same-branch, merged back: Push replaces Create PR and posts /api/push; the
   assert.ok(cta.classList.contains('btn-primary'), cta.className);
   for (const b of [push, cta]) assert.equal(b.querySelector(':scope > .ic svg').innerHTML, ICONS['arrow-up'], b.className);
   // Slice 3: the head's Push shares the header's flow (pushSourceFlow) and shows its outcome.
-  assert.equal(doc.querySelector('#hist-detail .hd-glance .run-status').dataset.line, 'Ready to ship · in main here, not on the remote');
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .run-status').dataset.line, 'Ready to ship', 'the tracker\'s Push path says where the work is');
   cta.click();
   await ctx.settle();
   assert.deepEqual(pushes[0], { projectKey: DONE.projectKey, projectDir: DONE.projectDir, id: 'ps' });

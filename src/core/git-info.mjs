@@ -69,10 +69,32 @@ export async function diffShortstat(projectDir, source, feature) {
   return parseShortstat(r.stdout);
 }
 
-/** Commits on `feature` not on `source` (`git rev-list --count source..feature`), or null on any failure. */
-export async function commitsAhead(projectDir, source, feature) {
+/**
+ * Commits in `fromSha..toRef` (newest first) with the files each touched, or null on any failure
+ * (an unknown sha, a timeout, bad input). Short timeout by default: the brief's staleness check
+ * runs on page load. A merge commit lists no files (`--name-only` shows none without -m).
+ * @returns {Promise<{commits:Array<{sha:string, files:string[]}>}|null>}
+ */
+export async function commitFilesSince(projectDir, fromSha, toRef, { max = 2000, timeout = 10_000 } = {}) {
+  if (!projectDir || typeof fromSha !== 'string' || !/^[0-9a-f]{7,64}$/i.test(fromSha)) return null;
+  if (typeof toRef !== 'string' || !toRef || toRef.startsWith('-')) return null;
+  const r = await _run('git', ['-c', 'core.quotePath=false', 'log', '--format=%x1e%H', '--name-only', '--no-renames', '-n', String(max), `${fromSha}..${toRef}`, '--'], { cwd: projectDir, timeout });
+  if (!r.ok) return null;
+  const commits = [];
+  for (const chunk of String(r.stdout || '').split('\x1e')) {
+    const lines = chunk.split('\n').map((l) => l.replace(/\r$/, ''));
+    const sha = (lines.shift() || '').trim();
+    if (!sha) continue;
+    commits.push({ sha, files: lines.filter((l) => l !== '') });
+  }
+  return { commits };
+}
+
+/** Commits on `feature` not on `source` (`git rev-list --count source..feature`), or null on any failure.
+ *  `timeout` (ms, default none) bounds the call; a timeout is a failure. */
+export async function commitsAhead(projectDir, source, feature, { timeout = 0 } = {}) {
   if (!projectDir || !source || !feature) return null;
-  const r = await _run('git', ['rev-list', '--count', `${source}..${feature}`], { cwd: projectDir });
+  const r = await _run('git', ['rev-list', '--count', `${source}..${feature}`], { cwd: projectDir, ...(timeout > 0 ? { timeout } : {}) });
   if (!r.ok) return null;
   const n = Number.parseInt(String(r.stdout || '').trim(), 10);
   return Number.isInteger(n) && n >= 0 ? n : null;

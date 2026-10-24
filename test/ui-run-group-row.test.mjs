@@ -97,3 +97,24 @@ test('the finished page has no Group row: its kind chip links the group', async 
   assert.equal(chip.getAttribute('href'), '#feature/feat_1');
   assert.deepEqual([...ctx.window.document.querySelectorAll('#hist-detail .hd-bar .rd-crumbs .rd-crumb')].map(text), ['Runs', 'Run tags', 'Run 2']);
 });
+
+test('s2: a feature run built on Run 1\'s branch reads "Merged into dev" in its route, never Run 1\'s branch', async () => {
+  const PR915 = { state: 'MERGED', url: 'https://github.com/o/r/pull/915', number: 915 };
+  const run1 = { ...ROW, id: 'p1', title: 'Slice 1', branch: 'feat/run-1', sourceBranch: 'dev', pr: PR915 };
+  const run2 = { ...ROW, branch: 'feat/run-2', sourceBranch: 'feat/run-1', pr: PR915 };   // one PR for the feature
+  const groups = { groups: [{ ...GROUPS.groups[0], planning: null, members: [
+    { ...GROUPS.groups[0].members[0], pipelineId: 'p1', status: 'done', pr: PR915 },
+    { ...GROUPS.groups[0].members[1], pipelineId: ROW.id, status: 'done', pr: PR915 }] }] };
+  const ctx = await bootDetail({ rows: [run1, run2], arms: (url) => (url.startsWith('/api/run-groups') ? ok(groups) : null) });
+  ctx.window.localStorage.removeItem('worca-cc.run.showRoute');   // start folded
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', runs: [] }) });
+  await settle(ctx.window, 4);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const route = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-route');
+  assert.equal(text(route.querySelector('.rd-route-fold')), 'Merged into dev · o/r#915');
+  route.querySelector('.rd-route-toggle').click();
+  assert.equal(text(route.querySelector('ol .rd-route-row:last-child .rd-route-place')), 'dev');
+  assert.ok(!route.textContent.includes('feat/run-1'), 'Run 1\'s branch appears nowhere in the route');
+  assert.ok(!ctx.window.document.querySelector('#hist-detail .hd-glance .run-status').textContent.includes('feat/run-1'));
+});

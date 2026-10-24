@@ -4,6 +4,7 @@
   "plugins": [
     "plugins/github-source",
     "plugins/azure-boards-source",
+    "plugins/jira-source",
     "plugins/telegram-chat",
     "plugins/slack-chat",
     "plugins/discord-chat",

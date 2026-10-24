@@ -64,7 +64,8 @@ test('one PR where the forge answers with slice 3\'s draft: it is adopted, not c
 test('refusals: no PR yet (409, nothing called), changelog (409) and push (500) failures stop before any PR call, a bad mode 400', async () => {
   const f = fake();
   const noPr = FEATURE(); noPr.slices[1].pr = null;
-  assert.deepEqual(await shipFeature({ feature: noPr, mode: 'one' }, f.deps), { ok: false, status: 409, error: 'slice 2 has no pull request yet' });
+  // One ship flow: only stacked needs every slice PR (One makes its own).
+  assert.deepEqual(await shipFeature({ feature: noPr, mode: 'stacked' }, f.deps), { ok: false, status: 409, error: 'slice 2 has no pull request yet' });
   assert.deepEqual(f.calls, []);
   const cl = fake({ commitChangelog: { ok: false, error: 'dirty' } });
   assert.equal((await shipFeature({ feature: FEATURE(), mode: 'one' }, cl.deps)).status, 409);
@@ -100,6 +101,37 @@ test('onePrBody: over maxBody the checklists are left out with a note; without i
   const small = onePrBody(slices, null, { maxChars: 400 });
   assert.ok(!small.includes('## Perspective checklist'));
   assert.ok(small.endsWith('Each slice\'s checklist is in its closed draft.'));
+});
+
+// ── One ship flow (slice 2): slices open no PR on their own, so One may meet slices without one ──────────────────
+const slice = (index, sp) => ({ index, title: `S${index}`, pipelineId: `p${index}`, pr: sp, summary: `sum ${index}`, checklistMd: '' });
+
+test('one: no slice has a PR → 1 openOnePr, 0 close, a body with no Draft line', async () => {
+  const f = fake();
+  const feature = { id: 'f', title: 'Charts', slices: [slice(1, null), slice(2, null)] };
+  const out = await shipFeature({ feature, mode: 'one' }, f.deps);
+  assert.equal(out.ok, true);
+  const opened = f.calls.filter((c) => c[0] === 'openOnePr');
+  assert.equal(opened.length, 1);
+  assert.doesNotMatch(opened[0][1].body, /Draft:/);
+  assert.equal(f.calls.filter((c) => c[0] === 'close').length, 0);
+});
+
+test('one: only the slices that have a PR are closed; stacked still needs every slice PR', async () => {
+  const f = fake();
+  const feature = { id: 'f', title: 'Charts', slices: [slice(1, { url: 'https://github.com/o/r/pull/1' }), slice(2, null)] };
+  const out = await shipFeature({ feature, mode: 'one' }, f.deps);
+  assert.equal(out.ok, true);
+  assert.deepEqual(f.calls.filter((c) => c[0] === 'close').map((c) => c[1]), ['https://github.com/o/r/pull/1']);
+  assert.match(f.calls.find((c) => c[0] === 'openOnePr')[1].body, /Draft: https:\/\/github\.com\/o\/r\/pull\/1 \(closed\)/);
+  assert.equal((await shipFeature({ feature, mode: 'stacked' }, fake().deps)).status, 409);
+});
+
+test('onePrBody: a slice without a PR gets its section and no Draft line', () => {
+  const body = onePrBody([slice(1, null), slice(2, { url: 'u2' })], 'u2');
+  assert.match(body, /## Slice 1: S1\n\nsum 1/);
+  assert.equal((body.match(/Draft:/g) || []).length, 1);
+  assert.match(body, /Draft: this pull request/);
 });
 
 test('shipCardVerb (s4): ship-one / ship-stacked / not-now, every other body 400', () => {

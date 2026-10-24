@@ -25,6 +25,7 @@ export const SETTING_EXCLUSIONS = Object.freeze([
   { match: ['nightMode', 'nightModeToggle'], what: 'Away mode settings', why: 'Away mode keeps its own card (propose_away_mode_change) and switch (set_away_now)' },
   { match: ['providers', 'models', 'speech', 'credentials', 'mcp', 'plugins', 'marketplaces'], what: 'Providers, model catalog entries, speech, credentials, MCP servers and plugins', why: 'they hold keys and tokens, or run outside code' },
   { match: ['policy', 'metrics'], what: 'Team policy and team metrics', why: 'they publish to the team' },
+  { match: ['memory.team'], what: 'Team memory sharing', why: 'it publishes to the team' },
   { match: ['guardrails'], what: 'Guardrail sets', why: 'editing a set can loosen it' },
   { match: ['hideBuiltinModels'], what: 'Hide built-in models', why: 'once set it overrides the team default, and a Revert could not bring that back — the Models page sets it' },
 ]);
@@ -75,6 +76,7 @@ const PROJECT_ONLY = Object.freeze({
   watchNewPrs: { label: 'Watch new pull requests', group: 'Runs', fmt: onOff, allowed: 'true | false' },
   'memory.softBytesPerFile': { label: 'Memory: flag files above', group: 'Memory', fmt: bytes, allowed: 'a whole number of bytes' },
   'memory.maxBytesPerFile': { label: 'Memory: largest file', group: 'Memory', fmt: bytes, allowed: 'a whole number of bytes' },
+  'memory.teamMaxFiles': { label: 'Memory: most team notes loaded', group: 'Memory', fmt: String, allowed: 'a whole number' },
   'memory.maxFilesPerScope': { label: 'Memory: most files', group: 'Memory', fmt: String, allowed: 'a whole number' },
   'memory.hookMaxChars': { label: 'Memory: hook length', group: 'Memory', fmt: (n) => `${n} characters`, allowed: 'a whole number of characters' },
   'memory.defrag.writes': { label: 'Memory defragment due after writes', group: 'Memory', fmt: String, allowed: 'a whole number' },
@@ -221,7 +223,7 @@ function buildUserDefs(roles, scanDefaults) {
 const MODEL_ID_RE = new RegExp(`^models\\.(${MODEL_ENGINES.join('|')})\\.(?:steps\\.(.+)|utility\\.(title|classifier|overview|prDescription)|(memoryDefrag|workspaceScan))$`);
 function buildProjectDefs(ids, userDefs, roles) {
   const twins = new Map(userDefs.map((d) => [d.id, d]));
-  return ids.filter((id) => id !== 'askWeb' && !id.startsWith('nightMode.')).map((id) => {
+  return ids.filter((id) => id !== 'askWeb' && id !== 'memory.team' && !id.startsWith('nightMode.')).map((id) => {
     const twin = twins.get(id) || null;
     const own = PROJECT_ONLY[id] || null;
     const m = MODEL_ID_RE.exec(id);

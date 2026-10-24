@@ -11,7 +11,7 @@ import { getDb } from '../src/core/db.mjs';
 import { artifactPaths, createPipeline } from '../src/core/artifacts.mjs';
 import { writePluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { setMockSourceResponses } from '../src/core/plugin-shim.mjs';
-import { listTaskSources, resolveTaskInput, statusToResult } from '../src/core/sources.mjs';
+import { listTaskSources, resolveTaskInput, statusToResult, ticketRunTitle, sourcePlaceholderTitle } from '../src/core/sources.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 useTempHome(after);
@@ -101,6 +101,27 @@ test('plugin source: getTask -> "# title\\n\\nbody" + fenced json meta + sourceM
     delete process.env.WORCA_MOCK;
     setMockSourceResponses(null);
   }
+});
+
+test('ticketRunTitle: "[ref] title", the ref after the last "/"; null without a title', async () => {
+  await checkRows([
+    { name: 'Jira key', run: () => assert.equal(ticketRunTitle({ taskId: 'TECH-104', title: 'Fix the login redirect' }), '[TECH-104] Fix the login redirect') },
+    { name: 'GitHub and Azure ids drop the owner/org', run: () => {
+      assert.equal(ticketRunTitle({ taskId: 'acme/shop#12', title: 'Crash' }), '[shop#12] Crash');
+      assert.equal(ticketRunTitle({ taskId: 'acme/My Project#7', title: 'Crash' }), '[My Project#7] Crash');
+    } },
+    { name: 'whitespace collapsed, long titles clipped to 120', run: () => {
+      assert.equal(ticketRunTitle({ taskId: 'A-1', title: '  two\n lines ' }), '[A-1] two lines');
+      const t = ticketRunTitle({ taskId: 'A-1', title: 'x'.repeat(300) });
+      assert.equal(t.length, 120);
+      assert.ok(t.endsWith('…'));
+    } },
+    { name: 'no title → null (the placeholder stays and the AI title runs)', run: () => {
+      assert.equal(ticketRunTitle({ taskId: 'A-1', title: '' }), null);
+      assert.equal(ticketRunTitle(null), null);
+    } },
+    { name: 'placeholder', run: () => assert.equal(sourcePlaceholderTitle({ plugin: 'jira-source', taskId: 'TECH-104' }), 'jira-source: TECH-104') },
+  ]);
 });
 
 // ── persistence through createPipeline ─────────────────────────────────────────

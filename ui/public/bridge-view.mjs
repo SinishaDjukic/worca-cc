@@ -10,6 +10,7 @@
 import { icon } from './icons.mjs';
 import { makeSwitch } from './switch.mjs';
 import { codexReaches, runsOnText } from '../../src/shared/connections.mjs';
+import { SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -805,11 +806,11 @@ function collectOpenRouter(conn) {
 }
 
 /** Each connection mode's title and hint. A new entry offers all three (the sign-in picks its harness below); an entry
- *  being edited keeps its engine, so a Codex one has no env mode (codex ignores routing env) and a Cursor one only its own
- *  sign-in (no env, no endpoint). A mode with no text is hidden. */
+ *  being edited keeps its engine, so a Codex one has no env mode (codex ignores routing env) and an own-sign-in engine's one (Cursor, Gemini CLI, Goose, OpenCode, Qwen Code) only its
+ *  own sign-in (no env, no endpoint). A mode with no text is hidden. */
 const MODE_TEXT = {
   claude: {
-    direct: ["A harness's own sign-in", "The subscription you are signed in with: Claude Code's login, Codex's ChatGPT sign-in, Cursor's or the Copilot CLI's. It runs only in that harness."],
+    direct: ["A harness's own sign-in", "The subscription you are signed in with: Claude Code's login, Codex's ChatGPT sign-in, Cursor's, the Copilot CLI's, Gemini CLI's, Qwen Code's, or Goose's or OpenCode's providers. It runs only in that harness."],
     env: ['Custom endpoint via env (Claude Code)', 'For endpoints that already speak the Anthropic API (LiteLLM, Bedrock, Vertex, a gateway). Set the routing env below.'],
     provider: ['Through a provider', "GitHub Copilot, an OpenAI-compatible or an Anthropic-compatible endpoint. Claude Code reaches each through worca's bridge; Codex reaches an OpenAI Responses endpoint itself."],
   },
@@ -822,6 +823,18 @@ const MODE_TEXT = {
   },
   copilot: {
     direct: ['Copilot default', "the Copilot CLI's own sign-in (`copilot login`, or COPILOT_GITHUB_TOKEN) reaches GitHub Copilot."],
+  },
+  gemini: {
+    direct: ['Gemini CLI default', "gemini's own sign-in (GEMINI_API_KEY, Vertex AI, or the sign-in you chose in `gemini`) reaches Google."],
+  },
+  qwen: {
+    direct: ['Qwen Code default', "qwen's own sign-in (the auth type you chose in `qwen`, or a provider's env such as OPENAI_API_KEY, OPENAI_BASE_URL and OPENAI_MODEL)."],
+  },
+  goose: {
+    direct: ['Goose providers', "Goose's own providers (`goose configure`, or a provider key in worca's environment) reach the model the id names."],
+  },
+  opencode: {
+    direct: ['OpenCode providers', "OpenCode's own providers (`opencode auth login`, or a provider key in worca's environment) reach the model the id names."],
   },
 };
 
@@ -1000,13 +1013,13 @@ export function applyConnectionMode(connEl) {
   if (!conn) return;
   // A Codex model (conn.dataset.engine, set by models-view setModelEngine): no env mode, the OpenAI-compatible
   // provider only, the Responses API only, and none of the bridge's capability pins.
-  // A Cursor model: its own sign-in only (MODE_TEXT.cursor), so the provider body never shows.
+  // An own-sign-in engine's model (Cursor, Gemini CLI, Goose, OpenCode, Qwen Code): its own sign-in only (MODE_TEXT), so the provider body never shows.
   // A new entry is on no engine until its connection says so (src/shared/connections.mjs): the sign-in mode asks which
   // harness, env and provider make it Claude Code's. Only an entry being edited is held to the engine it was added under.
   const eng = conn.dataset.engine || 'claude';
   const held = conn.dataset.editing === '1' ? eng : 'claude';
   const codex = held === 'codex';
-  const cursor = held === 'cursor' || held === 'copilot';   // a sign-in only: no endpoint fields
+  const ownSignIn = SIGN_IN_ENGINE_NAMES.includes(held) || held === 'copilot';   // a sign-in only: no endpoint fields
   for (const lab of conn.querySelectorAll('.mv-conn-mode')) {
     const rb = lab.querySelector('.mv-conn-mode-rb');
     const text = (MODE_TEXT[held] || MODE_TEXT.claude)[rb.value];
@@ -1026,7 +1039,7 @@ export function applyConnectionMode(connEl) {
     runs.textContent = runsOnText(connection);
   }
   const body = conn.querySelector('.mv-conn-body');
-  if (body) body.hidden = cursor || mode !== 'provider';
+  if (body) body.hidden = ownSignIn || mode !== 'provider';
   const provSel = conn.querySelector('.mv-conn-provider');
   if (provSel) {
     for (const o of provSel.options) o.hidden = o.disabled = codex && o.value !== 'openai';
@@ -1042,9 +1055,9 @@ export function applyConnectionMode(connEl) {
   const adv = conn.querySelector('.mv-conn-adv');
   if (adv) adv.hidden = provider === 'copilot';
   const orBox = conn.querySelector('.mv-conn-or');
-  if (orBox) orBox.hidden = codex || cursor || !openRouterApplies(conn);
+  if (orBox) orBox.hidden = codex || ownSignIn || !openRouterApplies(conn);
   const capsBox = conn.querySelector('.mv-conn-caps');
-  if (capsBox) capsBox.hidden = codex || cursor;
+  if (capsBox) capsBox.hidden = codex || ownSignIn;
   const hint = conn.querySelector('.mv-conn-provider-hint');
   const p = conn._providers;
   if (hint) {

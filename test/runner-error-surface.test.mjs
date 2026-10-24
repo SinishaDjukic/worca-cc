@@ -263,6 +263,29 @@ test('a usage-limit marker that scrolled past the tail cap still classifies', PO
   });
 });
 
+test('public runner terminates a lingering CLI on a synthetic subscription-limit frame', POSIX_SHIM, async () => {
+  const dir = await makeTmpDir();
+  const line = "You've hit your session limit · resets 6pm (Europe/Sofia)";
+  const frame = JSON.stringify({
+    type: 'assistant',
+    isApiErrorMessage: true,
+    message: { model: '<synthetic>', content: [{ type: 'text', text: line }] },
+    error: 'rate_limit',
+  });
+  const bin = await fakeShell(dir, [
+    `printf '%s\\n' ${JSON.stringify(frame)}`,
+    'exec sleep 30',
+  ]);
+  const started = Date.now();
+  await assert.rejects(() => runClaude({ bin, prompt: 'hi', cwd: dir }), (err) => {
+    assert.equal(err.errorClass, 'usage_limit');
+    assert.equal(classifyError(err), 'usage_limit');
+    assert.match(err.message, /session limit.*resets 6pm/i);
+    return true;
+  });
+  assert.ok(Date.now() - started < 2000, 'the public runner does not wait for the lingering CLI');
+});
+
 test('an early auth error is not misrouted to network by connection chatter in the tail', POSIX_SHIM, async () => {
   const dir = await makeTmpDir();
   const bin = await fakeShell(dir, [

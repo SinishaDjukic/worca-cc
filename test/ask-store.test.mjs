@@ -314,6 +314,17 @@ test('cards: findCard / updateCardBlock patch only state, runId, error', () => {
   assert.deepEqual(chained.after, { kind: 'pipeline', id: 'p1', title: 'Refactor' });
 });
 
+test('updateCardBlock: a command card takes a card sub-patch (#911 summary), keeping its other keys', () => {
+  const t = createThread();
+  const card = { kind: 'card', id: 'card_0000c001', state: 'command',
+    card: { type: 'command', blockId: 't-0000000001:1', sessionId: 't-0000000001', seq: 1, command: 'npm test', folder: 'p', cwd: '/w', warning: null, summary: null } };
+  const m = appendMessage(t.id, { role: 'assistant', status: 'done', blocks: [card] });
+  const b = updateCardBlock(t.id, 'card_0000c001', { card: { summary: 'Running the tests' } });
+  assert.equal(b.card.summary, 'Running the tests');
+  assert.equal(b.card.command, 'npm test');
+  assert.equal(getMessage(m.id).blocks[0].card.summary, 'Running the tests');
+});
+
 test('addThreadTotals: sums every turn (null cost adds 0 but counts), usage.ctx and ctxWindow REPLACE the stored values, garbage leaves them', async () => {
   await checkRows([
     { name: 'addThreadTotals sums every turn; null cost adds 0 but counts the turn', run: () => {

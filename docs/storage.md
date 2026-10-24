@@ -91,6 +91,21 @@ project's working tree, so nothing is ever committed to your repo.
   policy/
     repos/<owner~repo>/                  git worktree of the project repo, detached at origin/worca-policy
     locks/<owner~repo>.lock              cross-process lock for enable / follow / publish
+  team-memory/                          team memory (phases 1a and 1b; projects/ only for projects with memory.team on)
+    projects/<projectKey>/
+      team.json                         last fetched snapshot of origin/worca-memory (what runs and chats load)
+      sync.json  outbox/  inflight/     fetch/push record; queued intents (never note text); intents being pushed
+      status/<name>.json                per-note verdict: pending | deleting | blocked (rule + line, never the value) | shared | kept | held
+      seed.json                         the last seeding (phase 1b): decided notes and their texts before it, for Undo
+      worktree/                         git worktree of the project repo, detached at origin/worca-memory
+    locks/<projectKey>.lock             cross-process lock for flush / refresh / switch-off
+    offers/<projectKey>.json            the one-time "share existing notes" offer: done | dismissed (kept by a switch-off)
+    available/<projectKey>.json         whether origin had worca-memory when the project was added, and the Overview
+                                        line's answer: pending | dismissed | accepted (kept by a switch-off and an unregister)
+  memory-usage/                         memory note usage counts (collect-only; local, never shared): hit / read / edit per
+    projects/<projectKey>.json          note and day (90 days), last 5 repo-relative trigger paths; global.json for global
+    global.json                         notes. Written once per sync-back; a run's hook files sit in
+                                        <pipeline>/memory-loads/<execution>.jsonl until then
   mcp/                                  the MCP registry: servers for worca only, never written to
                                         ~/.claude.json or .mcp.json; every file mode 0600, written
                                         atomically under mcp/.lock; a file with schema > 1 stops the
@@ -143,7 +158,8 @@ The Runs list's groups (runs redesign §3.3) are the one new named state of the 
 - `run_group_members` holds one row per ad-hoc member: `pipeline_id` is the primary key, so a run is in one group at a
   time. Its `group_id` names either a `run_groups.id` or a Shaper feature (`shape_features.id`); it has no foreign key,
   `src/core/run-groups.mjs` checks it. A feature's own slices are not rows here: they come from `shape_feature_slices`.
-  Removing the last member of a user group deletes the group.
+  Removing the last member of a user group deletes the group. Shipping a user group as one PR writes a branch named
+  after the group (`worca-cc/` + slug + group id) and records the PR on every member's `pr_url`; no new column.
 - `pipelines.deleted_at` marks a run deleted from the Runs list. Delete keeps an anonymised row (title "deleted run",
   no prompt, no starter, no tags, no group) so its cost stays in Statistics; every feed skips it.
 - `pipelines.pr_verdict` is the last CI, mergeability, draft and review verdict the PR refresh read for an open GitHub

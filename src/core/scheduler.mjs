@@ -685,22 +685,40 @@ export function stackedPrBaseOf(pipelineId, chain) {
 
 // ── run progress: chains (spec 2026-10-14 run-progress P8) ───────────────────
 
-const CHAIN_TICKET_SQL = 'SELECT id, title, status, after_kind, after_id, pipeline_id, resume_pipeline_id, project_key, project_dir, workspace_id, created_at FROM scheduled_runs';
-const CHAIN_PIPELINE_SQL = 'SELECT id, title, status, target, project_key, workspace_key, pr_url FROM pipelines WHERE id = ?';
+const CHAIN_TICKET_SQL = 'SELECT id, title, status, after_kind, after_id, pipeline_id, resume_pipeline_id, source_from_previous, project_key, project_dir, workspace_id, created_at FROM scheduled_runs';
+const CHAIN_PIPELINE_SQL = 'SELECT id, title, status, target, project_key, workspace_key, branch, pr_url, pr_state, archived_at, started_at, updated_at FROM pipelines WHERE id = ?';
 const WAITING_TICKET = new Set(['scheduled', 'firing']);
 const PR_URL_RE = /^https:\/\/\S+$/i;   // the expander makes it a link: never a javascript:/data: href
 
+// A finished chain with a run still without a PR reads Ready to ship this long after its last run; older ones (every
+// chain that ended before the one ship flow, one nobody ships) stay out of the Runs list.
+export const CHAIN_SHIP_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** One ship flow (D8): an all-done chain still has work while no run is archived and some PR is still open, or, within
+ *  the ship window, some PR is missing on a chain whose every run can have one (a project run with its own branch). */
+function chainStillShipping(members, now) {
+  if (members.some((m) => m.archived)) return false;
+  const ended = new Map();                               // url → ended; a chain's One PR is recorded on every run
+  for (const m of members.filter((x) => x.prUrl)) ended.set(m.prUrl, ended.get(m.prUrl) || m.prState === 'MERGED' || m.prState === 'CLOSED');
+  if ([...ended.values()].some((e) => !e)) return true;
+  if (!members.some((m) => !m.prUrl) || !members.every((m) => m.canPr)) return false;
+  const last = Math.max(...members.map((m) => Date.parse(m.endedAt || '') || 0));
+  return now - last <= CHAIN_SHIP_WINDOW_MS;
+}
+
 /**
- * Every "Run after" chain with a run still going or waiting, root first. A chain is one tree of
+ * Every "Run after" chain with a run still going or waiting, or, with keepDone, an all-done chain still shipping, root first. A chain is one tree of
  * `after` links (a ticket waits on a ticket or a pipeline; a fired ticket IS its pipeline), read in
  * pre-order with siblings by creation time: a plain line reads in its own order, a fork lists each
  * branch whole. A link whose predecessor ticket was purged starts its own chain; a hand-made cycle
  * has no root and is never listed. Read-only.
- * Member: { ticketId, pipelineId, title, state: done|current|waiting|failed, prUrl, historyKey, projectKey, workspaceId, projectDir }.
- * @param {{isLive?: (q:{id:string, pipelineId:string|null}) => boolean}} [opts]
+ * Member: { ticketId, pipelineId, title, state: done|current|waiting|failed, prUrl, prState, archived, historyKey, projectKey,
+ * workspaceId, projectDir }.
+ * `keepDone: 'all'` keeps every all-done chain (the ship route's lookup; its own checks say what is left to ship).
+ * @param {{isLive?: (q:{id:string, pipelineId:string|null}) => boolean, keepDone?: boolean|'all', now?: number}} [opts]
  * @returns {Array<{id:string, title:string|null, members:object[]}>}
  */
-export function runChains({ isLive = null } = {}) {
+export function runChains({ isLive = null, keepDone = false, now = Date.now() } = {}) {
   const db = getDb();
   const linked = db.prepare(`${CHAIN_TICKET_SQL} WHERE after_id IS NOT NULL ORDER BY created_at ASC, id ASC`).all();
   if (!linked.length) return [];
@@ -749,9 +767,14 @@ export function runChains({ isLive = null } = {}) {
     else if (t.status === 'fired') state = 'current';   // fired, its pipeline not linked yet
     else state = 'failed';                              // canceled | skipped | failed | missed
     const projectKey = (row && row.target === 'project' ? row.project_key : null) || (t && t.project_key) || null;
+    const branch = row && row.target === 'project' ? parseJson(row.branch, null) : null;
     return {
       ticketId: t ? t.id : null, pipelineId: n.pipelineId, title: (t && t.title) || (row && row.title) || null, state,
       prUrl: row && typeof row.pr_url === 'string' && PR_URL_RE.test(row.pr_url) ? row.pr_url : null,
+      prState: row && row.pr_state ? String(row.pr_state).toUpperCase() : null, archived: !!(row && row.archived_at),
+      // One ship flow: Create PR needs a project run on its own branch; `stacks` = it started from the previous run's.
+      canPr: !!(branch && branch.feature), stacks: !!(t && t.source_from_previous),
+      endedAt: (row && (row.updated_at || row.started_at)) || null,
       // The `#history/<key>/<id>` key, exactly as listAllPipelines builds it (artifacts.mjs ~2339).
       historyKey: !row ? null : row.target === 'workspace' && row.workspace_key ? `workspaces/${row.workspace_key}` : row.project_key || null,
       projectKey, workspaceId: (row && row.workspace_key) || (t && t.workspace_id) || null, projectDir: (t && t.project_dir) || null,
@@ -775,7 +798,10 @@ export function runChains({ isLive = null } = {}) {
     const members = order.map(member);
     // D29: the 1-based position of the member this one runs after (null for the root), for "starts after run N".
     order.forEach((n, i) => { const j = n.parent ? order.findIndex((x) => x.key === n.parent) : -1; members[i].after = j >= 0 ? j + 1 : null; });
-    if (!members.some((m) => m.state === 'current' || m.state === 'waiting')) continue;
+    const live = members.some((m) => m.state === 'current' || m.state === 'waiting');
+    // One ship flow (D8): an all-done chain stays listed (asked for by GET /api/schedules) until it is shipped and its
+    // PRs end, or a run is archived; so it can read Ready to ship, then In review.
+    if (!live && !(keepDone && members.every((m) => m.state === 'done') && (keepDone === 'all' || chainStillShipping(members, now)))) continue;
     out.push({ id: root.key, title: members[0].title, members });
   }
   return out;

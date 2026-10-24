@@ -12,7 +12,7 @@ import { defaultToolDeps } from '../src/core/ask/tool-deps.mjs';
 import { defaultMemoryDeps, refreshAskMemoryMount } from '../src/core/ask/memory-deps.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { gitDir } from './helpers/git-dir.mjs';
-import { memoryRoot, GLOBAL_SCOPE, projectScope, readMemory, listSnapshots, MemoryError } from '../src/core/memory-store.mjs';
+import { memoryRoot, GLOBAL_SCOPE, projectScope, readMemory, listMemory, listSnapshots, MemoryError } from '../src/core/memory-store.mjs';
 import { addProject, worcaHome } from '../src/core/projects.mjs';
 import { createThread, updateThread } from '../src/core/ask/store.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -20,7 +20,7 @@ import { scopeRefusalText } from '../src/core/ask/scope.mjs';
 
 useTempHome(after);
 
-function fakeTools({ pin = { projectKey: 'demo-00000001' }, store = new Map() } = {}) {
+function fakeTools({ pin = { projectKey: 'demo-00000001' }, store = new Map(), memoryExtra = {} } = {}) {
   const calls = [];
   const key = (scope, name) => `${scope.kind === 'global' ? 'global' : `projects/${scope.projectKey}`}/${name}`;
   const memory = {
@@ -36,6 +36,7 @@ function fakeTools({ pin = { projectKey: 'demo-00000001' }, store = new Map() } 
       return { created: !prev, bytes: next.body.length };
     },
     forget: async (scope, name) => { calls.push(['forget', key(scope, name)]); return store.delete(key(scope, name)); },
+    ...memoryExtra,
   };
   const tools = createAskTools({
     buildCatalog: async () => ({ projects: [], workspaces: [], workflows: [] }),
@@ -179,4 +180,100 @@ test('the REAL memory bundle: remember/forget through the store (ask: source, sn
         /remember: the pinned scope is a workspace — pass projectKey for the member project this belongs to/);
     } },
   ]);
+});
+
+test('team memory: list_memory adds the read-only team rows only when the deps provide them; read_memory falls back to a team note; forget names it', async () => {
+  const team = [{ name: 'deploy-trap', description: 'Read before deploying', paths: [], updated: '2026-10-16T09:00:00.000Z', author: 'Ana', shadowed: false }];
+  const { tools } = fakeTools({ pin: { projectKey: 'demo-00000001' }, memoryExtra: {
+    listTeam: async () => team,
+    readTeam: async (_k, name) => (name === 'deploy-trap' ? { meta: { name, description: 'Read before deploying', paths: [], updated: team[0].updated }, body: 'Migrate first.\n', author: 'Ana' } : null),
+  } });
+  const listed = await tools.call('list_memory', { scope: 'project' });
+  assert.deepEqual(listed.project.team.map((t) => [t.name, t.author]), [['deploy-trap', 'Ana']]);
+  const read = await tools.call('read_memory', { scope: 'project', name: 'deploy-trap' });
+  assert.equal(read.layer, 'team');
+  assert.equal(read.readOnly, true);
+  assert.match(read.body, /Migrate first/);
+  await assert.rejects(tools.call('forget', { scope: 'project', name: 'deploy-trap' }), /teammate's shared note with no copy on this machine/);
+  const { tools: plain } = fakeTools({ pin: { projectKey: 'demo-00000001' } });
+  assert.equal('team' in (await plain.call('list_memory', { scope: 'project' })).project, false, 'no team deps (or off): the result shape is unchanged');
+  const { tools: broken } = fakeTools({ pin: { projectKey: 'demo-00000001' }, memoryExtra: { listTeam: async () => { throw new Error('team.json unreadable'); } } });
+  const half = (await broken.call('list_memory', { scope: 'project' })).project;
+  assert.deepEqual([Array.isArray(half.files), 'team' in half], [true, false], 'a broken team snapshot never costs list_memory its local half');
+});
+
+test('team memory, the REAL bundle: the Ask mount carries an opted-in project\'s team folder (local names shadow), list/read show the team rows, remember changes a team note whole, off empties the folder', async () => {
+  const { writeProjectSettings } = await import('../src/core/settings-cascade.mjs');
+  const { teamNoteText, _testing: team } = await import('../src/core/memory-team.mjs');
+  const { writeMemory } = await import('../src/core/memory-store.mjs');
+  const { readdirSync } = await import('node:fs');
+  const p = (await addProject({ name: 'teamask', path: gitDir('teamask') })).find((x) => x.name === 'teamask');
+  writeProjectSettings({ projectKey: p.key }, { 'memory.team': true });
+  const at = new Date().toISOString();   // a fresh snapshot: the turn's background refresh does not fetch
+  const entry = (name, body) => team.noteEntry(name, teamNoteText({ name, description: `About ${name}`, paths: [], updated: at }, body, { author: 'Ana' }));
+  team.writeSnapshot(p.key, { schema: 1, branch: 'worca-memory', headSha: 'f'.repeat(40), fetchedAt: at, missing: false,
+    notes: { deploy: entry('deploy', 'Migrate first.'), style: entry('style', 'Team style.') } });
+  await writeMemory(memoryRoot(), projectScope(p.key), 'style', '---\nname: style\ndescription: Mine\n---\nMy style.\n', { source: 'user' });
+  const base = await refreshAskMemoryMount({ projectKey: p.key, projectName: 'teamask' });
+  const teamDir = join(base, '.claude', 'rules', 'worca', 'team');
+  assert.deepEqual(readdirSync(teamDir), ['deploy.md'], 'style is shadowed by the local note');
+  const th = createThread();
+  updateThread(th.id, { context: { pinned: true, projectKey: p.key } });   // P4: writes go to the chat's own project
+  const tools = createAskTools({ ...defaultToolDeps({ threadId: th.id }), ...defaultMemoryDeps({ threadId: th.id }) });
+  const listed = await tools.call('list_memory', { scope: 'project', projectKey: p.key });
+  assert.deepEqual(listed.project.team.map((t) => [t.name, t.author, t.shadowed]), [['deploy', 'Ana', false], ['style', 'Ana', true]]);
+  const read = await tools.call('read_memory', { scope: 'project', projectKey: p.key, name: 'deploy' });
+  assert.deepEqual([read.layer, read.readOnly, read.author], ['team', true, 'Ana']);
+  // remember on a team-only note changes THAT note (D2): append adds under the team's body, an omitted hook keeps the
+  // team's — the write replaces the team version for everyone, so it must never drop the teammate's text.
+  await tools.call('remember', { scope: 'project', projectKey: p.key, name: 'deploy', mode: 'append', body: 'Also warm the cache.' });
+  const changed = await readMemory(memoryRoot(), projectScope(p.key), 'deploy');
+  assert.match(changed.body, /Migrate first\.\n\nAlso warm the cache\./);
+  assert.equal(changed.meta.description, 'About deploy');
+  assert.equal(changed.meta.extra.author, undefined, 'never the team\'s extras');
+  writeProjectSettings({ projectKey: p.key }, { 'memory.team': null });
+  await refreshAskMemoryMount({ projectKey: p.key, projectName: 'teamask' });
+  assert.deepEqual(readdirSync(teamDir), [], 'off: the team folder is emptied');
+  assert.equal('team' in (await tools.call('list_memory', { scope: 'project', projectKey: p.key })).project, false, 'off: the shape before team memory');
+});
+
+test('team memory, the REAL bundle: remember of a teammate\'s note keeps a hook longer than this machine\'s cap whole (D4, D13)', async () => {
+  const { writeProjectSettings } = await import('../src/core/settings-cascade.mjs');
+  const { teamNoteText, _testing: team } = await import('../src/core/memory-team.mjs');
+  const p = (await addProject({ name: 'teamhook', path: gitDir('teamhook') })).find((x) => x.name === 'teamhook');
+  writeProjectSettings({ projectKey: p.key }, { 'memory.team': true });
+  const at = new Date().toISOString();
+  const hook = `Read before deploying: ${'the staging pipeline needs a manual approval, '.repeat(4)}end.`;   // a teammate's cap is higher
+  assert.ok(hook.length > 160);
+  team.writeSnapshot(p.key, { schema: 1, branch: 'worca-memory', headSha: 'f'.repeat(40), fetchedAt: at, missing: false, deleted: [],
+    notes: { longhook: team.noteEntry('longhook', teamNoteText({ name: 'longhook', description: hook, paths: [], updated: at }, 'Team body.', { author: 'Ana' })) } });
+  const th = createThread();
+  updateThread(th.id, { context: { pinned: true, projectKey: p.key } });   // P4: writes go to the chat's own project
+  const tools = createAskTools({ ...defaultToolDeps({ threadId: th.id }), ...defaultMemoryDeps({ threadId: th.id }) });
+  await tools.call('remember', { scope: 'project', projectKey: p.key, name: 'longhook', mode: 'append', body: 'Also warm the cache.' });
+  const changed = await readMemory(memoryRoot(), projectScope(p.key), 'longhook');
+  assert.equal(changed.meta.description, hook, 'the team\'s hook, whole: clipped here, the share would cut it for everyone');
+  assert.match(changed.body, /Team body\.\n\nAlso warm the cache\./);
+});
+
+test('team memory, the REAL bundle: a case variant of a teammate\'s note name reads, appends to and names the team\'s note (m1, D4, D9)', async () => {
+  const { writeProjectSettings } = await import('../src/core/settings-cascade.mjs');
+  const { teamNoteText, _testing: team } = await import('../src/core/memory-team.mjs');
+  const p = (await addProject({ name: 'teamcase', path: gitDir('teamcase') })).find((x) => x.name === 'teamcase');
+  writeProjectSettings({ projectKey: p.key }, { 'memory.team': true });
+  const at = new Date().toISOString();
+  team.writeSnapshot(p.key, { schema: 1, branch: 'worca-memory', headSha: 'f'.repeat(40), fetchedAt: at, missing: false, deleted: [],
+    notes: { Deploy: team.noteEntry('Deploy', teamNoteText({ name: 'Deploy', description: 'Read before deploying', paths: ['infra/**'], updated: at }, 'Migrate first.', { author: 'Ana' })) } });
+  const th = createThread();
+  updateThread(th.id, { context: { pinned: true, projectKey: p.key } });
+  const tools = createAskTools({ ...defaultToolDeps({ threadId: th.id }), ...defaultMemoryDeps({ threadId: th.id }) });
+  const read = await tools.call('read_memory', { scope: 'project', projectKey: p.key, name: 'deploy' });
+  assert.deepEqual([read.layer, read.name], ['team', 'Deploy'], 'read_memory finds the team\'s note under its own spelling');
+  await assert.rejects(tools.call('forget', { scope: 'project', projectKey: p.key, name: 'DEPLOY' }), /"Deploy" is a teammate's shared note/);
+  const r = await tools.call('remember', { scope: 'project', projectKey: p.key, name: 'deploy', mode: 'append', body: 'Also warm the cache.' });
+  assert.equal(r.name, 'Deploy', 'the write keeps the team\'s spelling');
+  assert.deepEqual((await listMemory(memoryRoot(), projectScope(p.key))).map((e) => e.name), ['Deploy'], 'never a second spelling that would replace the team\'s note');
+  const changed = await readMemory(memoryRoot(), projectScope(p.key), 'Deploy');
+  assert.match(changed.body, /Migrate first\.\n\nAlso warm the cache\./, 'append adds under the team\'s body');
+  assert.deepEqual([changed.meta.description, changed.meta.paths], ['Read before deploying', ['infra/**']]);
 });

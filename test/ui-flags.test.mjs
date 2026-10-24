@@ -78,6 +78,29 @@ test('first paint, live flip, events, and flags × levels', async () => {
       chip(b);
       assert.equal(b.nextElementSibling.className, 'flag-chip flag-chip-experimental');
     } },
+    { name: 'chip: a sidebar row wears it inside, right after its label, as text (a sibling would be a rail row of its own)', run: () => {
+      const { document: doc } = page({ flags: { requirements: true } });
+      decorateFlagChips(doc);
+      const b = doc.querySelector('.nav > button[data-nav="requirements"]');
+      const c = b.querySelector(':scope > .flag-chip');
+      assert.ok(c, 'the chip is inside the row');
+      assert.equal(c.tagName, 'SPAN', 'no link inside a button');
+      assert.equal(b.querySelector('a'), null);
+      assert.equal(c.previousElementSibling.textContent, 'Requirements', 'right after the label');
+      assert.equal(c.className, 'flag-chip flag-chip-experimental');
+      assert.equal(c.dataset.flag, 'requirements');
+      assert.match(c.title, /Requirements is in Labs/);
+      // the stage word as everywhere else (Labs, like the Chat home's Shaper badge): short enough for the rail row
+      assert.equal(c.textContent, 'Labs');
+      assert.ok(!(b.nextElementSibling && b.nextElementSibling.classList.contains('flag-chip')), 'no chip row under it');
+      assert.equal(doc.querySelectorAll('.nav > .flag-chip').length, 0, 'no flagged row of the rail gets a sibling chip');
+      decorateFlagChips(doc);
+      assert.equal(b.querySelectorAll('.flag-chip').length, 1, 'idempotent');
+      // the label rule (flex:1, ellipsis) must not take the chip: it keeps its own width
+      const at = (sel) => css.indexOf(sel);
+      assert.match(css, /\.nav button > span\.flag-chip\{[^}]*flex:none/);
+      assert.ok(at('.nav button > span.flag-chip{') > at('.nav button > span:not(.nav-count){'), 'after the label rule, so it wins the tie');
+    } },
   ]);
 });
 

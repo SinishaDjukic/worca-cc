@@ -24,8 +24,8 @@
           "type": "select",
           "label": "Close issue on completion",
           "default": "no",
-          "options": ["yes", "no"],
-          "help": "yes = close the issue (state_reason: completed) when a pipeline finishes successfully"
+          "options": [{ "value": "yes", "label": "Yes" }, { "value": "no", "label": "No" }],
+          "help": "Yes closes the issue (state_reason: completed) when a pipeline finishes successfully"
         }
       ],
       "inputs": [

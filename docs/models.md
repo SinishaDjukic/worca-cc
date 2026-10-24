@@ -27,19 +27,19 @@ before it closes on unsaved changes.
 
 ### Harnesses, providers and models
 
-A **harness** runs the agents: Claude Code, Codex, Copilot or Cursor, picked per
+A **harness** runs the agents: Claude Code, Codex, Copilot, Cursor or Goose, picked per
 run. A **provider** is where a model's tokens are billed: a harness's own
 sign-in, or an endpoint. A **model** sits on one provider. Which harnesses can
 run a model follows from its connection, never from a setting:
 
 | Connection | Runs on |
 |---|---|
-| A harness's own sign-in (Claude Code's login, Codex's ChatGPT sign-in, Cursor's, the Copilot CLI's) | that harness only — a subscription works only in its own CLI |
+| A harness's own sign-in (Claude Code's login, Codex's ChatGPT sign-in, Cursor's, the Copilot CLI's, Goose's providers) | that harness only — a subscription works only in its own CLI |
 | Custom endpoint via env (`ANTHROPIC_BASE_URL` …) | Claude Code |
 | Through a provider: an OpenAI-compatible endpoint on the Responses API | Claude Code (through the bridge) **and** Codex (directly) |
 | Through a provider: chat completions, OpenRouter routing, GitHub Copilot, Anthropic-compatible | Claude Code (through the bridge) |
 
-Copilot and Cursor take no endpoint: they run their own sign-in's models.
+Copilot, Cursor and Goose take no endpoint: they run their own sign-in's models.
 
 - A model that runs on two harnesses is added once. Its card names both
   (*Claude · Codex*), every picker on a run of either harness offers it, and a
@@ -287,15 +287,27 @@ Worca's small helper calls — the title and the Auto workflow classifier — re
 too; a classifier that still fails falls back to the default workflow instead of
 failing the run. The Models page picks the model for each helper call — *Title model*,
 *Auto workflow model* (`WORCA_AUTO_MODEL` overrides it), *PR description model*
-(the Create PR dialog's Generate with AI, which Settings › Runs › Pull requests can run each
+(the Create PR dialog's Generate, which Settings › Runs › Pull requests can run each
 time the dialog opens; Sonnet-class by default), *Agent generation*
 (Workflows › Agents › + › Generate; a model and an effort, the Claude tab only, since agent
 generation always runs on Claude; unset, or a model since removed from the catalog, uses
-the Claude CLI's default model) and *Run naming* (Smart run naming's title and branch
+the Claude CLI's default model), *Run naming* (Smart run naming's title and branch
 suggestion on the New run form, shown while the smartRunNaming flag is on; a model and an
 effort, the Claude tab only; unset, or a model since removed from the catalog, uses the
-cheapest ready Claude model at its lowest effort) — so pointing them at a steadier model leaves a flaky
-free model touching only the pipeline steps.
+cheapest ready Claude model at its lowest effort) and *Command summaries* (the one-line
+summary of a chat command the chat gave none, from the command alone with secrets redacted,
+never its output; shown while the commandSummaries flag is on; a model and an effort, the
+Claude tab only; unset, the cheapest ready Claude model at its lowest effort; none ready, the
+chat keeps the raw command) — so pointing them at a steadier model leaves a flaky
+free model touching only the pipeline steps. Command summaries' redaction is best-effort
+(token shapes and `Bearer` values, not a `--password foo` flag), and the Summarise commands
+switch in Settings › Chat turns the job off. A changed Command summaries model applies to new
+commands within a minute, while lines already written stay until a restart.
+
+The *Requirements interview* helper (the Requirements page's product briefs, code looks and interview
+rounds) runs on Claude only and is set per user. Unlike Memory defragment, it takes an effort without a
+model: the default model then runs at that effort. A model picked with no effort runs at that model's own default effort. A model removed from the
+catalog falls back to the default model but keeps a stored effort.
 
 **The daily allowance.** Separately, OpenRouter caps how many `:free` requests a key
 sends per day: **1000** on an account that has bought at least $10 of credit, **50**
@@ -571,6 +583,96 @@ worca can run pipelines on Cursor's headless CLI agent. Chat does not run on Cur
 
 **Chat on Cursor is not available.** A chat needs every shell and disk tool switched off, and no Cursor switch for that is known. Cursor models are not offered in Chat.
 
+## Gemini CLI and Qwen Code
+
+worca can run pipelines on Google's Gemini CLI (`gemini`) and on Qwen Code (`qwen`). Qwen Code is a fork of Gemini CLI, and worca runs both the same way; where they differ, this section says so. Both are in **beta**. Chat does not run on either.
+
+Verified on Gemini CLI 0.63.0 and Qwen Code 0.25.0. The captured streams and every fact the adapters rely on are in `test/fixtures/gemini/README.md` and `test/fixtures/qwen/README.md`.
+
+1. Install the CLI (`npm i -g @google/gemini-cli` or `npm i -g @qwen-code/qwen-code`) and make sure worca finds it: on `PATH`, or `WORCA_GEMINI_BIN` / `WORCA_QWEN_BIN` in worca's environment.
+2. Sign in:
+   - **Gemini CLI:** set `GEMINI_API_KEY` (or Vertex AI's variables) in worca's environment or in `~/.gemini/.env`, or run `gemini` once in a terminal and sign in with Google.
+   - **Qwen Code:** run `qwen` once in a terminal and choose how it signs in, or set a whole provider in worca's environment or `~/.qwen/.env` (for example `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL`). A key alone is not enough: Qwen Code then stops with "No auth type is selected".
+
+   Neither CLI has a status command, so the engine card's readiness line only checks that the binary runs and that a sign-in is configured. worca never reads the credentials.
+3. Pick the engine per run on New pipeline, or as a default on the Models page (Engines).
+
+**Models.** worca ships none. With no model set, the CLI runs its own default (Gemini CLI: `auto`). To pick one, add a model on the Models page with Engine **Gemini CLI** or **Qwen Code** and the id the CLI expects (for example `gemini-3.8-flash` or `qwen3-coder-plus`). These models take no env, no endpoint and no effort; which provider a Qwen Code model reaches is Qwen Code's own setting.
+
+**Cost.** Neither CLI reports a cost, only tokens, so the run's cost shows as *cost unknown*, never $0.00. A pipeline cost limit cannot count their spend; the run log says so.
+
+**Helper jobs run on Claude**, as on Cursor: titles, the run overview, the PR description, the Auto workflow classifier and Away mode's night decider. They read text worca did not write, and worca does not lock these CLIs down. The memory defrag and a workspace scan run on the engine itself.
+
+**What they hold, and what they do not.**
+
+- Both run every tool without asking (`--approval-mode yolo`). worca's deny rules are the guard:
+  - **Gemini CLI**: an `--admin-policy` file in worca's own temp folder, at the admin tier, so it outranks your own policies. A bare `Bash`, `WebFetch`, `WebSearch`, a bare `Read`/`Edit`/`Write` and MCP server or tool rules are held. Command rules (`Bash(git push:*)`) are matched against the start of the command, so `env git push` gets past them, and path rules stop Gemini CLI's file tools, not its shell: both are held **only in part**, and need **Allow unguarded** (`--allow-unguarded-engine`). If Gemini CLI reports that it could not read the policy file, the run stops (Gemini would otherwise run with no rule). If your machine's system policy folder already holds policy files, Gemini CLI ignores worca's, so the run refuses.
+  - **Qwen Code** reads Claude's rule syntax itself, so worca hands it the rules as written. Command rules are held only in part (the same `env` gap), and so are `Edit(…)`/`Write(…)` path rules: they stop Qwen Code's file tools, not its shell, which can still write that path. Both need **Allow unguarded** (`--allow-unguarded-engine`). A `Read` rule also stops the shell from reading that file. Rules on tools Qwen Code does not have are not held.
+- Under a set that scrubs the environment, Qwen Code gets the environment names of the provider it is set to (its chosen sign-in, else the provider its environment names) and no other's: worca's own keys for other providers stay out of its shell.
+- No per-role tool restriction, effort, sub-agents, hook telemetry, native skills or turn cap. The run log lists each one at start. Research fan-out runs serially. Gemini CLI has no flag to add to its system prompt, so worca's system prompt is folded into the prompt; Qwen Code takes it with `--append-system-prompt`.
+- The folders worca hands an agent (its outputs, the pipeline folder) are added as workspace folders, the only places their file tools reach outside the checkout. As with Copilot, a run refuses to start when one of them would sit inside worca's own home outside the run store. Their shell can still reach any file you can; container mode is the containment.
+- MCP servers: only the run's servers attach (`--allowed-mcp-server-names`); your own servers in `~/.gemini` or `~/.qwen`, and the checkout's, stay off. Secrets stay `${NAME}` references whose values reach the CLI through its environment, never a file.
+  - **Gemini CLI** reads them from the checkout's `.gemini/settings.json`, which worca writes for the run (handled like Cursor's files: hidden by a line under `# worca: Gemini CLI engine config` in `.git/info/exclude`, removed when the run ends, never in the diff or commit). If the checkout tracks its own `.gemini/settings.json`, or holds one worca did not write, a run that attaches MCP servers stops instead of changing it.
+  - **Qwen Code** reads them, with the deny rules, from a system settings file in worca's temp folder (`QWEN_CODE_SYSTEM_SETTINGS_PATH`). Your machine's own system settings file, if there is one, is copied into it first, so nothing of it is dropped.
+- Gemini CLI only runs headless in a trusted folder, so worca sets `GEMINI_CLI_TRUST_WORKSPACE=true`. The checkout's own `.gemini/` settings then apply, as the checkout's `.claude/settings.json` does on Claude.
+- The host guard's kill-check hook does not run on either; its instructions to the agent still apply.
+
+**Resume.** worca names each session (`--session-id`) and resumes it after a pause. A session the CLI no longer knows starts fresh, and the run log says so.
+
+## Goose
+
+worca can run pipelines on [Goose](https://github.com/aaif-goose/goose)'s headless CLI (`goose run`), checked against goose 1.54.0. Chat does not run on Goose.
+
+1. Install the Goose CLI (`brew install block-goose-cli`) and make sure worca finds it: on `PATH`, or `WORCA_GOOSE_BIN=/path/to/goose` in worca's environment.
+2. Set up a provider once: `goose configure`, or put the provider's key (for example `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) in worca's own environment. worca stores no Goose key. With guardrails that scrub the environment, add the key's name to the project's allowlist; `GOOSE_` variables always pass.
+3. Pick Goose per run on New pipeline, or as a default on the Models page (Engines). The engine card only checks that `goose --version` runs: a missing provider key shows up when the first step fails.
+
+**Models.** worca ships no Goose models. With no model set, Goose runs the provider and model of its own config. To pick one, add a model on the Models page with Engine **Goose** and the id `provider/model` (for example `google/gemini-2.5-flash`, `openai/gpt-4o`, `ollama/qwen2.5-coder`, `openrouter/anthropic/claude-sonnet-4`). worca splits it at the first `/` into goose's `--provider` and `--model`. Goose models take no env and no endpoint. Their efforts (low, medium, high, max) set `GOOSE_THINKING_EFFORT`; what each one does is up to the provider, and some ignore it.
+
+**Cost.** Goose prices a run itself when it knows the model (`cost_usd`), and worca shows that. A model Goose cannot price (a local Ollama model, a subscription) reports no cost: its steps show $0.00 and the run log warns on each one that no cost was reported, as a Codex model on an unpriced endpoint does.
+
+**A Claude subscription through Goose.** Goose's `claude-acp` provider runs Claude Code under your Claude login through the ACP adapter: install it (`npm install -g @agentclientprotocol/claude-agent-acp`), make sure `claude` is signed in, and use the model id `claude-acp/sonnet` (or `claude-acp/opus`). Claude Code then runs its own tools: they show in the run as Bash, Read, Edit and so on, without their arguments, and your own Claude Code settings, hooks and MCP servers apply to them. worca's MCP servers reach it too. Goose's older `claude-code` provider is deprecated (Goose's own words) and shows no tool calls at all. Running Claude through Goose is mainly a way to test the Goose engine: a Claude run on the Claude engine holds worca's guardrails, Goose's does not.
+
+**Helper jobs run on Claude**, as on Cursor: titles, the run overview, the PR description, the Auto workflow classifier and Away mode's night decider. Goose has no verified read-only mode for text worca did not write.
+
+**What Goose holds, and what it does not.**
+
+- Guardrails: none. Goose has no per-run permission rules worca can set, so any set other than Permissive needs **Allow unguarded** (`--allow-unguarded-engine`), and so do the project's own `.claude/settings.json` deny rules. Goose has no sandbox: an unguarded Goose run can read and change worca's own state in `~/.worca-cc` through its shell. Container mode is the containment.
+- Every tool call runs without asking (`GOOSE_MODE=auto`): Goose's approve modes wait for a terminal.
+- Your Goose extensions do not load (`--no-profile`): a run gets Goose's developer tools (shell, write, edit, tree, read_image) and the run's MCP servers only. Your provider settings in `~/.config/goose` still apply.
+- MCP servers: stdio servers only. worca starts each through a small wrapper script named after the server (in a temporary folder under `~/.worca-cc/tmp/goose`, removed after the step), so its tools keep their names; secret values reach the server through Goose's environment, never a file or the command line. A remote (http) server is not attached. On Windows there is no wrapper: each server's command goes to Goose as it is, with its env values in Goose's environment under their own names (two servers that set one name to different values stop the step), and its tools keep the names Goose derives from the command's path. MCP on Goose under Windows has not been tested.
+- No sub-agents (research fan-out runs serially), no skills folder, no hook telemetry. The host guard's kill-check hook does not run on Goose; its instructions to the agent still apply.
+- Goose keeps each step's session in its own database (`~/.local/share/goose/sessions`), named `worca-…`; a paused step resumes it.
+
+**Chat on Goose is not available.** Goose's chat mode skips every tool call, worca's own included, so it cannot lock a chat down the way Ask needs. Goose models are not offered in Chat.
+
+## OpenCode
+
+worca can run pipelines on [OpenCode](https://opencode.ai) (`opencode run`). OpenCode is in beta in worca. Chat does not run on OpenCode. Checked against opencode 1.18.23.
+
+1. Install OpenCode and make sure worca finds it: on `PATH`, or `WORCA_OPENCODE_BIN=/path/to/opencode` in worca's environment. worca runs OpenCode 1.x (npm `opencode-ai`). OpenCode 2 (npm `@opencode/cli`, and Homebrew's `opencode` formula) changed how `opencode run` works, so worca refuses it until it is supported.
+2. Connect a provider once in a terminal: `opencode auth login`, or set the provider's key (for example `ANTHROPIC_API_KEY`) in worca's own environment. `opencode providers list` shows what OpenCode sees. Without either, only OpenCode Zen's free models run, and they send the code to opencode.ai, so the engine card shows OpenCode as not ready and a run is refused, unless every step names its model or you opt in (below). worca checks the credentials in the environment the agent gets: under a set that scrubs the environment, a key only worca has does not count. For Google models, set `GOOGLE_GENERATIVE_AI_API_KEY`: OpenCode 1.18 lists a `GEMINI_API_KEY` under `providers list` but does not use it, so a run stops with "Google Generative AI API key is missing".
+3. Pick OpenCode per run on New pipeline, or as a default on the Models page (Engines).
+
+**Models.** worca ships no OpenCode models. With no model set, OpenCode runs its own default (your `opencode.json` `model`, else its first provider's), which can be a free OpenCode Zen model that sends the code to opencode.ai. So worca refuses a run in which any step names no model, and never starts OpenCode without one. To run on OpenCode's own default anyway, set `WORCA_OPENCODE_ALLOW_DEFAULT_MODEL=1` in worca's environment. To pick one, add a model on the Models page with Engine **OpenCode** and the id `opencode models` lists, `provider/model` (for example `anthropic/claude-sonnet-4-5`). An OpenCode model takes no env and no endpoint: OpenCode's own providers connect it. Its efforts are OpenCode's `--variant` values (`minimal`, `low`, `medium`, `high`, `max`); a variant the model does not have is ignored by OpenCode without a word.
+
+**Cost.** OpenCode prices every step from its own price table, and worca books that cost, sub-agents included (worca reads each sub-agent session's cost with `opencode export`). A provider OpenCode has no prices for (a custom one in your `opencode.json`) reports $0: add a price to the model on the Models page, and worca uses it.
+
+**Helper jobs run on Claude.** On an OpenCode run, titles, the run overview, the PR description, the Auto workflow classifier and Away mode's night decider run on Claude, as on a Claude run: they read text worca did not write, and no read-only mode of OpenCode has been verified. The memory defrag and a workspace scan run on OpenCode itself.
+
+**What OpenCode holds, and what it does not.**
+
+- No per-role tool restriction or hook telemetry. The run log lists each one at start. A node's turn cap becomes the agent's `steps` limit: after that many tool steps OpenCode asks for a text reply, and worca fails the step as capped. Research fan-out runs through OpenCode's `task` tool as worca's investigator agent, which has no edit, write or shell tool and no sub-agents of its own, and the node's turn cap as its `steps` limit. worca removes OpenCode's built-in `general` and `explore` sub-agents, and a node without fan-out has no `task` tool. The investigator's tool calls reach the run log and the audit, read back with `opencode export` after the step. Skills are mounted at `.agents/skills`, which OpenCode lists for the agent. The system prompt reaches OpenCode as an agent's prompt.
+- Guardrails go into OpenCode's permission config. A bare `Bash` removes the shell, and `WebSearch` and MCP tool rules (`mcp__server__tool`) remove those tools: held in full. `WebFetch` is held only when the same set denies the shell and web search too. Command rules (`Bash(git push:*)`) match each command OpenCode reads out of a shell line, but not one inside `$(…)`, a variable or `bash -c "…"`. `Read(…)` and `Edit(…)`/`Write(…)` path rules hold for OpenCode's file tools, and the shell can still reach those paths. So those count as held only in part: any set other than Permissive needs **Allow unguarded** (`--allow-unguarded-engine`).
+- The Normal and Secure sets' rules for worca's own state in `~/.worca-cc` are read and edit rules held only in part, as on Cursor. OpenCode has no sandbox, so a run with **Allow unguarded** can read and change those files through its shell. Container mode is the containment.
+- A set that denies the whole shell (a bare `Bash` rule) cannot run OpenCode Zen's free models: they refuse a request without the shell tool. The run stops and says so.
+- worca writes nothing into the run checkout: the agent, the rules and the MCP servers ride the `OPENCODE_CONFIG_CONTENT` variable, with MCP secrets as `{env:NAME}` references whose values reach OpenCode through its environment. worca turns off the checkout's own `opencode.json` (`OPENCODE_DISABLE_PROJECT_CONFIG`) and names the checkout's `AGENTS.md` and `CLAUDE.md` to OpenCode itself. That also turns off the checkout's `.opencode/` folder, so its plugin scripts do not load. worca runs OpenCode with `--pure`, so the plugins in your own `~/.config/opencode` and npm plugins named in your config do not load either. OpenCode's built-in sign-in plugins stay on.
+- Your own OpenCode settings still apply: providers, agents and MCP servers in `~/.config/opencode/opencode.json`. worca's rules are merged over them.
+- Under the Secure set (environment scrubbed), provider keys in worca's environment do not reach OpenCode: use `opencode auth login`, or add the key's name to the set's environment allowlist.
+- The host guard's kill-check hook does not run on OpenCode; its instructions to the agent still apply.
+
+**Chat on OpenCode is not available.** A chat needs every shell and disk tool switched off, and no OpenCode lockdown has been verified. OpenCode models are not offered in Chat.
+
 ## Chat
 
 Chat can read the catalog and the providers, explain why a model is not
@@ -727,6 +829,13 @@ talks to answers at all.
 - **401 / "not signed in"** — sign in again on the Providers card; Copilot
   tokens can be revoked on GitHub's side.
 - **`engine cursor: cannot run cursor-agent (ENOENT)`** — install the Cursor CLI or set `WORCA_CURSOR_BIN`.
+- **`engine gemini: cannot run gemini (ENOENT)`** / **`engine qwen: cannot run qwen (ENOENT)`** — install the CLI or set `WORCA_GEMINI_BIN` / `WORCA_QWEN_BIN`.
+- **`engine goose: cannot run goose (ENOENT)`** — install the Goose CLI or set `WORCA_GOOSE_BIN`.
+- **A Goose step fails with "Ran into this error: … API key not valid"** — Goose reached the provider without a working key: run `goose configure`, or set the provider's key in worca's environment (and allowlist it under a scrubbing guardrail set).
+- **`engine opencode: cannot run opencode (ENOENT)`** — install OpenCode or set `WORCA_OPENCODE_BIN`.
+- **`engine opencode: a step of this run names no model`** or **`refusing to start OpenCode without a model`** — set a model for the run (or each step), or set `WORCA_OPENCODE_ALLOW_DEFAULT_MODEL=1` to let OpenCode pick its own default.
+- **`engine opencode: no provider credentials in the agent's environment`** — run `opencode auth login`, or set the provider's key in worca's environment (and in the set's environment allowlist when it scrubs the environment).
+- **`OpenCode's free tier can only be used from within OpenCode`** — the run's guardrail set denies the whole shell; pick a model of another provider, or a set without a bare `Bash` rule.
 - **OpenRouter 429 on a `:free` model** — OpenRouter's shared free pool is busy,
   not your concurrency cap; see [OpenRouter](#openrouter).
 - **"OpenRouter's free-model requests for today are used up"** — the key's daily

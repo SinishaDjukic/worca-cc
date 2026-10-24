@@ -153,7 +153,7 @@ test('chatPrefs/setChatPrefs: defaults ON, merge-patch, unknown keys rejected', 
   const home = mkdtempSync(join(tmpdir(), 'worca-cc-chatprefs-'));
   process.env.HOME = home;
   try {
-    assert.deepEqual(chatPrefs(), { notify: { done: true, error: true, question: true, paused: true, away: true, prWatch: true }, channels: {}, scriptTools: true, suggestions: true });
+    assert.deepEqual(chatPrefs(), { notify: { done: true, error: true, question: true, paused: true, away: true, prWatch: true }, channels: {}, scriptTools: true, suggestions: true, summariseCommands: true });
     await setChatPrefs({ notify: { done: false }, channels: { 'tg-chat/main': { enabled: false } } });
     const p = chatPrefs();
     assert.equal(p.notify.done, false);

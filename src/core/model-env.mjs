@@ -12,7 +12,7 @@
 // import contract; that is why the constant does NOT live next to
 // SPAWN_ENV_BASE in claude-runner.mjs.
 
-import { ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES } from '../shared/engine-switch.mjs';
+import { ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES } from '../shared/engine-switch.mjs';
 
 /** Reasoning-effort vocabulary. Canonical home is HERE (not config.mjs, which
  *  re-exports it) so settings.mjs can validate a catalog entry's `efforts`
@@ -21,6 +21,10 @@ export const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
 export const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
 /** Cursor has no effort flag (engines/cursor.mjs capability `effort: false`). */
 export const CURSOR_EFFORTS = [];
+/** Goose's GOOSE_THINKING_EFFORT values (engines/goose.mjs); the provider decides what each one does. */
+export const GOOSE_EFFORTS = ['low', 'medium', 'high', 'max'];
+/** OpenCode's `--variant` values (engines/opencode.mjs): the union of its providers' reasoning variants. */
+export const OPENCODE_EFFORTS = ['minimal', 'low', 'medium', 'high', 'max'];
 /** Copilot's `--reasoning-effort` values (engines/copilot.mjs COPILOT_EFFORTS; kept equal by a test). */
 export const COPILOT_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 /** A Copilot built-in's catalog id is `copilot/<the id copilot --model takes>`: the bare ids clash with Codex's built-ins
@@ -37,16 +41,37 @@ export const MODEL_ENGINES = [...MODEL_ENGINE_NAMES];
 export const RUN_ENGINES = [...ENGINE_NAMES];
 /** Engines with helper-model slots of their own (title, overview, PR description, Auto classifier, night decider). */
 export const HELPER_ENGINES = ['claude', 'codex'];
-/** The engine a run's helper jobs run on. A Cursor run hands them to Claude: they read untrusted text, and Cursor's
- *  shell cannot be switched off. Copilot runs its own on its default model (no helper slots). The memory defrag and
+/** The engine a run's helper jobs run on. A run on an own-sign-in engine (OWN_SIGNIN_ENGINES: Cursor, Gemini CLI, Goose,
+ *  OpenCode, Qwen Code) hands them to Claude: they read untrusted text, and those engines' shells cannot be switched off (no verified read-only mode). Copilot runs its own on its default model (no helper slots). The memory defrag and
  *  the workspace scan are agent nodes of the run, not helper jobs. */
 export function helperEngineFor(engine) { return RUN_ENGINES.includes(engine) && ENGINES[engine].helpers ? engine : 'claude'; }
+/** Engines whose models connect through the engine's own sign-in (engine-switch.mjs ENGINES `signin`): a catalog entry
+ *  takes no routing env and no upstream, and worca ships none of theirs (cursor-agent's login; gemini's and qwen's own
+ *  sign-in; Goose's providers, `goose configure`; OpenCode's providers, `opencode auth login`). Cursor, Gemini CLI and
+ *  Qwen Code have no effort flag either (effortsForEngine). */
+export const OWN_SIGNIN_ENGINES = [...SIGN_IN_ENGINE_NAMES];
+const OWN_SIGNIN_NOTE = Object.freeze({ cursor: 'cursor-agent connects with its own sign-in', gemini: 'gemini connects with its own sign-in',
+  goose: 'Goose connects through its own providers', opencode: 'OpenCode connects through its own providers', qwen: 'qwen connects with its own sign-in' });
+/** 'a cursor model' / 'an opencode model', for the messages that name an engine's catalog entry. */
+export function aModelOf(engine) { return `${/^[aeiou]/i.test(String(engine)) ? 'an' : 'a'} ${engine} model`; }
+/** How an OWN_SIGNIN_ENGINES model connects, for the messages that refuse its env or upstream. */
+export function ownSignInNote(engine) { return OWN_SIGNIN_NOTE[engine] || ''; }
+/** A Goose or OpenCode model id is `provider/model`: goose's --provider and --model, split at the first `/`; OpenCode's as
+ *  `opencode models` lists it (`-m` takes nothing else). */
+const PROVIDER_MODEL_ID_RE = /^[^/\s]+\/\S+$/;
+const MODEL_ID_HINT = Object.freeze({ goose: 'a goose model id is provider/model (for example google/gemini-2.5-flash)',
+  opencode: 'an opencode model id is provider/model (as `opencode models` lists it)' });
+/** Why `id` cannot be a model of `engine`, or null. */
+export function modelIdProblem(engine, id) {
+  return MODEL_ID_HINT[engine] && !PROVIDER_MODEL_ID_RE.test(String(id ?? '')) ? MODEL_ID_HINT[engine] : null;
+}
 /** Engines an Ask Worca chat may run on: those whose shell and disk tools can be switched off (Codex: CODEX_ASK_LOCKDOWN,
  *  and a codex that has every flag in it, ask/turn.mjs; Copilot: only worca's MCP server through --available-tools,
- *  COPILOT_ASK_FLAGS). Cursor: no such switch is known (CURSOR_ASK_LOCKDOWN = null). */
+ *  COPILOT_ASK_FLAGS). The own-sign-in engines: none is known (CURSOR_ASK_LOCKDOWN, GOOSE_ASK_LOCKDOWN, OPENCODE_ASK_LOCKDOWN = null;
+ *  worca does not lock Gemini CLI or Qwen Code down). */
 export const ASK_ENGINES = ['claude', 'codex', 'copilot'];
 export function effortsForEngine(engine) {
-  return engine === 'codex' ? CODEX_EFFORTS : engine === 'cursor' ? CURSOR_EFFORTS : engine === 'copilot' ? COPILOT_EFFORTS : EFFORTS;
+  return engine === 'codex' ? CODEX_EFFORTS : engine === 'copilot' ? COPILOT_EFFORTS : engine === 'goose' ? GOOSE_EFFORTS : engine === 'opencode' ? OPENCODE_EFFORTS : OWN_SIGNIN_ENGINES.includes(engine) ? CURSOR_EFFORTS : EFFORTS;
 }
 export const ALL_EFFORTS = [...new Set([...EFFORTS, ...CODEX_EFFORTS, ...COPILOT_EFFORTS])];
 

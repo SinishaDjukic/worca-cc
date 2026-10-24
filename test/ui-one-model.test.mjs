@@ -36,7 +36,7 @@ function cardFacts(doc, run) {
       modelOpts: () => ({ now: NOW, timeZone: 'UTC' }) } });   // the same clock as pageFacts: the waiting line carries a time
   card.update({ source: 'live', runId: 'r1', pipelineId: 'p1', title: 'Store tags', status: run.status || '', pendingQuestion: run.pendingQuestion || null, run });
   const st = card.el.querySelector('.run-status');
-  return { state: st.dataset.state, word: st.dataset.word, line: st.dataset.line, text: st.querySelector('.run-status-text').textContent,
+  return { state: st.dataset.state, word: st.dataset.word, line: st.dataset.line, text: st.dataset.text,
     dot: card.el.querySelector('.ask-rc-head > .status-dot'),
     actions: [...card.el.querySelectorAll('[data-model-action]')].filter((b) => !b.hidden && !b.closest('[hidden]')).map((b) => b.dataset.modelAction) };
 }
@@ -48,7 +48,7 @@ function pageFacts(doc, run) {
   const m = runModel(run, { memo: {}, now: NOW, timeZone: 'UTC' });
   paintRunStatus(card, m);
   syncActions(acts, m, { onAction: () => {} });
-  return { state: card.dataset.state, word: card.dataset.word, line: card.dataset.line, text: card.querySelector('.run-status-text').textContent,
+  return { state: card.dataset.state, word: card.dataset.word, line: card.dataset.line, text: card.dataset.text,
     dot: card.querySelector('.status-dot'), actions: [...acts.querySelectorAll('[data-model-action]')].map((b) => b.dataset.modelAction) };
 }
 

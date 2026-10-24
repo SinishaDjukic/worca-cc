@@ -130,7 +130,7 @@ run it. It reads the same records for the same scope; nothing extra is recorded.
   the repository is known, including the ones no Worca run opened. Those appear as work items of
   their own, tagged *outside Worca*: the bar is the pull request itself, from opened (a hollow dot)
   to merged, in the status colour. They count in
-  Shipped, In review, Needs attention and lead time (PR opened to merge), never in spend. The
+  Shipped, In review, Needs attention and lead time (PR created to merge), never in spend. The
   **PRs outside Worca** switch hides them; the choice is remembered per browser. A PR is "outside"
   when no recorded run's branch is its head branch and no run was matched to its number. A bar spans the item's first run to its last, with each run drawn
   inside it (red when it failed). When the item has a pull request, a dashed line runs from the

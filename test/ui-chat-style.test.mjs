@@ -145,3 +145,16 @@ test('the run proposal card fits the 760px text column and its kicker is not mon
   assert.doesNotMatch(width, /chat-card-max/);
   for (const sel of ['.ask-rp-kicker', '.ask-rp-from', '.ask-rp-summary']) assert.doesNotMatch(ruleBody(sel), /var\(--mono\)/, sel);
 });
+
+test('command cards take the 760px text column, like the run proposal (#911)', () => {
+  const width = ruleBody('.chat-convo .ask-msg > .ask-card.ask-cmd');
+  assert.match(width, /^width:min\(var\(--chat-text-max\),100cqi\);margin-left:calc\(\(100% - min\(var\(--chat-text-max\),100cqi\)\) \/ 2\);/);
+  assert.doesNotMatch(width, /chat-card-max/);
+});
+
+test('summary rows: one line, joined in a group, the raw command in mono (#911)', () => {
+  assert.match(ruleBody('.ask-cmd-sum'), /white-space:nowrap;/);
+  assert.match(ruleBody('.ask-cmd-sum.is-raw'), /font-family:var\(--mono\)/);
+  assert.match(ruleBody('.ask-cmd.in-group:not(.is-g-first)'), /margin-top:-7px;/);
+  assert.match(ruleBody('.ask-cmd-row:hover'), /background:var\(--hover\)/);
+});

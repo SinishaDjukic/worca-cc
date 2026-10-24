@@ -797,6 +797,90 @@ export async function startConflictMerge(wt, { feature, baseSha, baseRef, remote
   return { ok: true, started: true, files };
 }
 
+// Dangling step commits of the combine check only: a fixed identity, so the check never needs the person's user.name.
+const COMBINE_STEP_IDENTITY = Object.freeze({ GIT_AUTHOR_NAME: 'worca', GIT_AUTHOR_EMAIL: 'worca@localhost',
+  GIT_COMMITTER_NAME: 'worca', GIT_COMMITTER_EMAIL: 'worca@localhost' });
+
+/**
+ * One ship flow (slice 3): would a user group's member branches combine? Folds `git merge-tree --write-tree` over
+ * `branches` in order in `dir` (no checkout, no ref moves): each step after the first merges into a dangling
+ * commit-tree of the previous result, which nothing points at. Never throws.
+ * → { status:'clean', tree, heads, branches, files:[], fileCount:0 }
+ *   | { status:'conflicts', files, fileCount, branch, with }   (branch: the one that clashed with `with`)
+ *   | { status:'no-branch', branch, files:[], fileCount:0 } | { status:'error', kind, error, files:[], fileCount:0 }
+ */
+export async function checkCombine(dir, { branches, remote = 'origin' } = {}) {
+  const fail = (kind, error) => ({ status: 'error', kind, error: scrubGitText(error, 500), files: [], fileCount: 0 });
+  if (!dir) return fail('failed', 'projectDir is required');
+  if (!Array.isArray(branches) || branches.length < 2) return fail('bad-request', 'at least two branches are required');
+  const bad = branches.find((b) => !isSafeBranchName(b));
+  if (bad !== undefined) return fail('bad-branch', `not a branch name: ${String(bad).slice(0, 80)}`);
+  const heads = [];
+  for (const b of branches) {
+    const sha = await shaOf(dir, `refs/heads/${b}`);
+    if (!sha) return { status: 'no-branch', branch: b, files: [], fileCount: 0 };
+    heads.push(sha);
+  }
+  const env = await readEnvFor(dir, remote);            // a blobless clone fetches blobs lazily (NETWORK_CMDS)
+  const stepEnv = { ...stripHostCredentials(process.env), ...COMBINE_STEP_IDENTITY };
+  let acc = heads[0];
+  let tree = null;
+  for (let i = 1; i < heads.length; i++) {
+    const m = await _run(['merge-tree', '--write-tree', '-z', '--name-only', '--no-messages', acc, heads[i]],
+      { cwd: dir, timeoutMs: MERGE_TREE_TIMEOUT_MS, env });
+    const [t, ...rest] = nulNames(m.stdout);
+    // checkBaseMerge's reading: a result counts only with a tree OID (git exits 1 for an unknown object too).
+    if (SHA_RE.test(t || '') && m.code === 1 && rest.length) {
+      return { status: 'conflicts', files: rest.slice(0, CONFLICT_FILES_CAP), fileCount: rest.length,
+        branch: branches[i], with: branches.slice(0, i) };
+    }
+    if (!(SHA_RE.test(t || '') && m.code === 0)) {
+      if (m.code === 129 || /usage: git merge-tree/.test(m.stderr)) {
+        return fail('git-too-old', 'The combine check needs git 2.38 or newer (git merge-tree --write-tree).');
+      }
+      return fail(m.timedOut ? 'timeout' : 'failed', m.stderr || `git merge-tree exited ${m.code}`);
+    }
+    tree = t;
+    if (i < heads.length - 1) {
+      const c = await _run(['commit-tree', t, '-p', acc, '-p', heads[i], '-m', 'worca combine check'], { cwd: dir, env: stepEnv });
+      if (!c.ok || !SHA_RE.test(c.stdout.trim())) return fail('failed', c.stderr || 'git commit-tree failed');
+      acc = c.stdout.trim();
+    }
+  }
+  return { status: 'clean', tree, heads, branches: [...branches], files: [], fileCount: 0 };
+}
+
+/**
+ * One ship flow (slice 3): put a clean checkCombine result on `branch` as ONE merge commit whose parents are every
+ * distinct member head (in order) and whose tree is the result. Create-only: an existing branch whose tip has exactly
+ * these parents is reused (a retried ship); any other existing branch is refused. No checkout moves. Never throws.
+ * → { ok:true, sha, via:'created'|'reused' } | { ok:false, kind:'bad-request'|'exists'|'identity'|'failed', error }
+ */
+export async function writeCombinedBranch(dir, { branch, combine, message }) {
+  if (!isSafeBranchName(branch) || !combine || combine.status !== 'clean' || !SHA_RE.test(combine.tree || '')) {
+    return { ok: false, kind: 'bad-request', error: 'a clean combine check and a branch name are required' };
+  }
+  const parents = [...new Set(combine.heads)];          // commit-tree drops a repeated parent; compare the same list
+  const tip = await shaOf(dir, `refs/heads/${branch}`);
+  if (tip) {
+    const p = await _run(['rev-list', '--parents', '-n', '1', tip], { cwd: dir });
+    const had = p.ok ? p.stdout.trim().split(/\s+/).slice(1) : [];
+    const same = had.length === parents.length && parents.every((h, i) => had[i] === h);
+    return same ? { ok: true, sha: tip, via: 'reused' }
+      : { ok: false, kind: 'exists', error: `${branch} already exists with other commits: delete it, or rename the group` };
+  }
+  const c = await _run(['commit-tree', combine.tree, ...parents.flatMap((h) => ['-p', h]), '-m', message], { cwd: dir });
+  if (!c.ok || !SHA_RE.test(c.stdout.trim())) {
+    const identity = /Author identity unknown|tell me who you are|unable to auto-detect email/i.test(c.stderr);
+    return { ok: false, kind: identity ? 'identity' : 'failed', error: scrubGitText(c.stderr) || 'git commit-tree failed' };
+  }
+  const sha = c.stdout.trim();
+  // An empty old value: the ref must not exist, so a branch made meanwhile is never moved.
+  const u = await _run(['update-ref', '-m', `worca: ${message}`, `refs/heads/${branch}`, sha, ''], { cwd: dir });
+  return u.ok ? { ok: true, sha, via: 'created' }
+    : { ok: false, kind: 'exists', error: scrubGitText(u.stderr) || `${branch} was created meanwhile: try again` };
+}
+
 /** Resolve a user/model-named source: local ref first, then (after a TTL fetch) <remote>/<name>. */
 export async function resolveSourceRef(dir, name, { remote = 'origin', fetch = true, maxAgeMs = INTERACTIVE_TTL_MS, timeoutMs = INTERACTIVE_TIMEOUT_MS } = {}) {
   if (typeof name !== 'string' || !name || name.startsWith('-')) return { ok: false, kind: 'bad-ref' };

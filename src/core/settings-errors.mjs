@@ -40,6 +40,9 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   namingModel: 'Run naming model',
   'namingModel.model': 'Run naming model',
   'namingModel.effort': 'Effort',
+  commandSummaryModel: 'Command summaries model',
+  'commandSummaryModel.model': 'Command summaries model',
+  'commandSummaryModel.effort': 'Effort',
   workspaceScan: 'Workspace scan models',
   'workspaceScan.scanModel': 'Scan agent',
   'workspaceScan.scanEffort': 'Effort',
@@ -79,6 +82,8 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   utilityModels: 'Helper models',
   askEngine: 'Engine for new chats',
   askModels: 'Chat model',
+  requirementsInterview: 'Requirements interview',
+  'requirementsInterview.effort': 'Effort',
 });
 
 // Stored-key spellings the schedule setter uses in its messages.
@@ -95,6 +100,8 @@ const SPECIAL = [
     (m) => `The model “${m[1]}” is not in the catalog. Pick another one.`],
   [/^utilityModels\.claude: Claude's helper models are /, 'utilityModels.claude',
     'Claude’s helper models are set in Title generation model, Auto workflow model, PR description model and Defragment model.'],
+  [/^utilityModels\.(\w+): unknown job "requirementsInterview"/, 'utilityModels',
+    'The requirements interview runs on Claude: set it on the Claude tab.'],
   [/^path does not exist$/, null, 'That folder does not exist.'],
   [/^path is not a directory$/, null, 'That path is not a folder.'],
   [/^cannot use this folder as the Worca CC root: (.*)$/, null, (m) => `This folder can’t be the Worca root: ${m[1]}`],

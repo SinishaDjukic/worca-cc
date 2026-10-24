@@ -1897,6 +1897,7 @@ export class GraphOrchestrator extends RunHarness {
       memoryBlock: this.memoryBlock || '',              // §4.3: the pointer block, rendered once per mount (names the WRITABLE dirs)
       memoryMount: this.memory?.mount || null,          // the WRITABLE copy: <pipeline.dir>/memory (agents, the defrag mock and tests write here; runOpts passes it as --add-dir)
       memoryRules: this.memory?.rules || null,          // the read-only rules copy inside the cwd (tests read it; agents never write it)
+      memoryLoadLog: this._memoryLoadLogFor(executionId),   // memory usage: this execution's InstructionsLoaded hook file, or null
       agentPrompts: this.agentPrompts,
       checkpointRef: this.checkpointRef,
       workMode: this.workMode,

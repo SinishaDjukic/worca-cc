@@ -47,7 +47,7 @@ for (const a of [['init', '-q', '-b', 'main'], ['config', 'user.email', 'proof@w
 await writeFile(path.join(proj, 'README.md'), '# runs list proof\n');
 execFileSync('git', ['add', '-A'], { cwd: proj });
 execFileSync('git', ['commit', '-qm', 'init'], { cwd: proj });
-const { server } = await import(new URL('../ui/server.mjs', import.meta.url).href);
+const { server, runs } = await import(new URL('../ui/server.mjs', import.meta.url).href);
 const { getDb } = await import(new URL('../src/core/db.mjs', import.meta.url).href);
 const { projectKey } = await import(new URL('../src/core/store.mjs', import.meta.url).href);
 const { writeStoreMeta } = await import(new URL('../src/core/artifacts.mjs', import.meta.url).href);
@@ -82,6 +82,21 @@ pipeline('rl000005', 'stopped', 'Billing: refunds');
 const grp = createRunGroup({ title: 'Billing', pipelineId: 'rl000004' });
 addToGroup({ groupId: grp.id, pipelineId: 'rl000005' });
 pipeline('rl000006', 'done', 'A loose run to add to a group');
+// Live rows (the mock engine ends runs at once): two running runs and a running group of two, so the divider check below
+// has adjacent running rows and a group.
+const { EventEmitter } = await import('node:events');
+const liveRun = (id, title) => {
+  pipeline(id, 'running', title);
+  const orch = new EventEmitter();
+  orch.state = { status: 'running', steps: [{ nodeId: 'implement', status: 'running' }] };
+  orch.getState = () => orch.state;
+  runs.set(`run-${id}`, { id: `run-${id}`, kind: 'run', pipelineId: id, status: 'running', events: [], pendingQuestion: null,
+    projectDir: proj, startedAt: Date.now(), orch, title, tags: [] });
+};
+liveRun('rl000010', 'Running one'); liveRun('rl000011', 'Running two');
+liveRun('rl000012', 'Running group: first'); liveRun('rl000013', 'Running group: second');
+const liveGrp = createRunGroup({ title: 'Running group', pipelineId: 'rl000012' });
+addToGroup({ groupId: liveGrp.id, pipelineId: 'rl000013' });
 log(`server ${base}`);
 
 // ---- chrome + cdp
@@ -234,6 +249,28 @@ for (const width of [290, 375, 1440]) {
     check(corners.nav === '6px' && corners.needs === corners.nav && corners.selected === corners.nav,
       `${at}: a selected and a Needs-you row have the nav item's corner`, JSON.stringify(corners));
     check(corners.lines.every((c) => c === 'rgba(0, 0, 0, 0)'), `${at}: a highlighted row hides its own divider`, JSON.stringify(corners.lines));
+    // Dividers: every top-level running row and running group draws one 1px --line bottom border, nothing paints over
+    // it, and its edge pixel is the same colour as a finished row's.
+    const div = await ev(`(() => {
+      const cs = (el) => getComputedStyle(el);
+      const top = [...document.querySelectorAll('#runs-list .runs-item[data-level="top"]')];
+      const ref = top.find((n) => n.closest('.runs-sec-recent') && !n.querySelector(':scope > a.runs-row.selected'));
+      const run = top.filter((n) => n.closest('.runs-sec-running') && !n.matches('.is-needs')
+        && !n.querySelector(':scope > a.runs-row.selected, :scope > a.runs-row.member-open'));
+      const bad = run.map((n) => {
+        const r = n.getBoundingClientRect(); const s = cs(n);
+        const low = Math.max(...[...n.querySelectorAll('*')].filter((d) => d.offsetParent || d.getClientRects().length)
+          .map((d) => d.getBoundingClientRect().bottom));
+        const hit = document.elementFromPoint(r.left + 3, r.bottom - 0.5);
+        const ok = !!ref && s.borderBottomStyle === 'solid' && s.borderBottomWidth === '1px'
+          && s.borderBottomColor === cs(ref).borderBottomColor
+          && cs(n).borderTopStyle === 'none' && low <= r.bottom - 1 + 0.01 && (!hit || hit === n || !n.contains(hit));
+        return ok ? null : { key: n.dataset.rowKey, border: s.borderBottom, top: cs(n).borderTop, low, bottom: r.bottom, hit: hit && hit.className };
+      }).filter(Boolean);
+      return { ref: !!ref, n: run.length, groups: run.filter((n) => n.dataset.rowKey.startsWith('chain:')).length, bad }; })()`);
+    const okDiv = div.ref && div.n >= 3 && div.groups >= 1 && div.bad.length === 0;
+    check(okDiv, `${at}: running rows and running groups each draw one --line divider`, JSON.stringify(div));
+    if (okDiv) log(`PASS running dividers ${at}`);
     const offType = await ev(TYPE_AUDIT);
     check(offType.length === 0, `${at}: every text is on the type scale`, JSON.stringify(offType.slice(0, 8)));
     const bad = await ev(BUTTON_AUDIT);

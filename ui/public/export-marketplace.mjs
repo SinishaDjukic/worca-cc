@@ -3,7 +3,7 @@
 // marketplace <select>, the request body, the Preview extras and the done view. DOM through the
 // passed `doc`, so tests drive them under jsdom without booting app.js. app.js owns the wiring.
 
-const VERB = { opened: 'opened', updated: 'updated' };
+const VERB = { opened: 'created', updated: 'updated' };
 
 /** Fill the marketplace <select>; keeps `keep` selected when still offered. → number of targets.
  *  `emptyText` replaces the "add one" option when the list is empty for another reason (it could not be loaded). */
@@ -49,7 +49,7 @@ export function marketplaceLoadError(detail) {
   return `Could not load marketplaces${detail ? `: ${detail}` : ''}`;
 }
 
-/** Preview and Open pull request: both off while a marketplace request is in flight (a publish takes about a minute;
+/** Preview and Create PR: both off while a marketplace request is in flight (a publish takes about a minute;
  *  a second click would start a second export that ends in a lease refusal overwriting the first one's message), and
  *  afterwards back to the dialog's rule — both stay off when there is no marketplace to send to. */
 export function syncMarketplaceButtons({ plan, apply }, { busy = false, targets = 0 } = {}) {
@@ -129,7 +129,7 @@ export function marketplaceDoneView(r, { doc = document } = {}) {
   const v = r.newVersion ? ` v${r.newVersion}` : '';      // D18: never "vnull"
   if (r.status === 'unchanged') {
     lines.push(['Plugin', `${r.name} (${r.versionText})`], ['Branch', r.base], ...warnings);
-    return { title: 'No changes', lines, next: `${r.marketplace.name} already has this export of "${r.name}". No pull request was opened.` };
+    return { title: 'No changes', lines, next: `${r.marketplace.name} already has this export of "${r.name}". No PR was created.` };
   }
   const from = r.pushTo === 'fork' && r.fork ? ` (from ${r.fork.repo})` : '';
   lines.push(['Pull request', link(doc, r.prUrl)]);
@@ -142,5 +142,5 @@ export function marketplaceDoneView(r, { doc = document } = {}) {
   lines.push(['Files', `${n} changed${r.index.added ? ', listed in worca-cc-marketplace.json' : ''}`]);
   if (r.draft) lines.push(['Draft', 'yes']);
   lines.push(...warnings);
-  return { title: `Pull request ${VERB[r.status] || r.status} for plugin "${r.name}"${v}`, lines, next: 'After it merges, Refresh on the Marketplace page lists the plugin and Install works.' };
+  return { title: `PR ${VERB[r.status] || r.status} for plugin "${r.name}"${v}`, lines, next: 'After it merges, Refresh on the Marketplace page lists the plugin and Install works.' };
 }

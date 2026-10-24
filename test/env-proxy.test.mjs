@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { useEnvProxy } from '../src/core/env-proxy.mjs';
+import { egressChildEnv } from '../src/core/egress-policy.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const LOOPBACK = 'localhost,127.0.0.1,::1,[::1]';
@@ -101,4 +102,14 @@ test('real fetch: an outside host goes through the proxy, loopback (v4 and v6) g
     const servers = has6 ? [proxy, direct, direct6] : [proxy, direct];
     await Promise.all(servers.map((s) => new Promise((done) => { s.closeAllConnections?.(); s.close(done); })));
   }
+});
+
+test('corporate proxy: the child env of the local proxy turns fetch proxying on, noProxy hosts and loopback direct', () => {
+  const api = fakeApi();
+  const r = useEnvProxy({ env: egressChildEnv('http://127.0.0.1:41234', ['intranet.example']), api });
+  assert.equal(r.status, 'on');
+  assert.equal(api.calls.length, 1);
+  const noProxy = api.calls[0].NO_PROXY.split(',');
+  for (const h of ['intranet.example', '127.0.0.1', 'localhost', '::1', '[::1]']) assert.ok(noProxy.includes(h), h);
+  assert.equal(api.calls[0].HTTPS_PROXY, 'http://127.0.0.1:41234');
 });

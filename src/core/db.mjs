@@ -63,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 71;
+export const SCHEMA_VERSION = 74;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -836,6 +836,7 @@ ${STEP_QUESTIONS_DDL}
  * against the live schema so the gap can be healed regardless of the stamp.
  */
 const INCREMENTAL_COLUMNS = {
+  req_cost_ledger:        { brief_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then)
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
@@ -1222,6 +1223,106 @@ CREATE INDEX IF NOT EXISTS idx_shape_feature_notes_feature ON shape_feature_note
 export const ROUND_OF_EXPR = "json_extract(CASE WHEN json_valid(branch) THEN branch END, '$.roundOf.pipelineId')";
 const ROUND_OF_INDEX_DDL = `CREATE INDEX IF NOT EXISTS idx_pipelines_round_of ON pipelines (${ROUND_OF_EXPR})`;
 
+// v72 Requirements (plans/requirements-design.md §3): product-owner feature specs (FEAT-<seq>), their append-only
+// interview thread, the shared context per project/workspace, and the spend counted toward the limit (D9).
+// Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES.
+const REQUIREMENTS_DDL = `
+CREATE TABLE IF NOT EXISTS req_features (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope_type TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  epic_seq INTEGER,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  status TEXT NOT NULL,
+  spec_json TEXT NOT NULL,
+  orientation_json TEXT,
+  criteria_seq INTEGER NOT NULL DEFAULT 0,
+  assumption_seq INTEGER NOT NULL DEFAULT 0,
+  rounds INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  saved_path TEXT,
+  created_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_by TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS req_features_scope ON req_features(scope_type, scope_key);
+CREATE TABLE IF NOT EXISTS req_turns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  feature_seq INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  model TEXT,
+  cost_usd REAL,
+  created_by TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS req_turns_feature ON req_turns(feature_seq, id);
+CREATE TABLE IF NOT EXISTS req_contexts (
+  scope_type TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  look_at_code INTEGER NOT NULL DEFAULT 1,
+  updated_by TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (scope_type, scope_key)
+);
+CREATE TABLE IF NOT EXISTS req_cost_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  feature_seq INTEGER NOT NULL,
+  turn_id INTEGER,
+  amount_usd REAL NOT NULL,
+  model TEXT,
+  ts INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS req_cost_ledger_ts ON req_cost_ledger(ts);
+`;
+
+// v73 Requirements A2 (plans/requirements-a2-design.md §3): one row per "Start in Worca" of a feature, with the
+// frozen spec. IF NOT EXISTS + an INCREMENTAL_TABLES entry: reconcile-safe (see v72 above).
+const REQUIREMENTS_STARTS_DDL = `
+CREATE TABLE IF NOT EXISTS req_starts (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  feature_seq   INTEGER NOT NULL,
+  version       INTEGER NOT NULL,
+  run_id        TEXT NOT NULL UNIQUE,
+  pipeline_id   TEXT,
+  spec_json     TEXT NOT NULL,
+  title         TEXT NOT NULL,
+  ready         INTEGER NOT NULL,
+  failing_json  TEXT NOT NULL DEFAULT '[]',
+  reason        TEXT,
+  workflow_id   TEXT, source_branch TEXT,
+  started_by    TEXT, started_at TEXT NOT NULL,
+  UNIQUE (feature_seq, version)
+);
+CREATE INDEX IF NOT EXISTS req_starts_feature ON req_starts(feature_seq, version);
+CREATE INDEX IF NOT EXISTS req_starts_pipeline ON req_starts(pipeline_id);
+`;
+
+// v74 Requirements A7 (plans/requirements-a7-design.md §3): the optional Product brief, one row per project or
+// workspace. Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES.
+const REQUIREMENTS_BRIEFS_DDL = `
+CREATE TABLE IF NOT EXISTS req_briefs (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope_type    TEXT NOT NULL,
+  scope_key     TEXT NOT NULL,
+  status        TEXT NOT NULL,
+  sections_json TEXT NOT NULL DEFAULT '{}',
+  edited_json   TEXT NOT NULL DEFAULT '{}',
+  sources_json  TEXT NOT NULL DEFAULT '[]',
+  files_json    TEXT NOT NULL DEFAULT '[]',
+  seed_json     TEXT,
+  model         TEXT,
+  cost_usd      REAL NOT NULL DEFAULT 0,
+  error_json    TEXT,
+  made_by TEXT, made_at TEXT,
+  created_by TEXT, created_at TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL,
+  UNIQUE (scope_type, scope_key)
+);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1261,6 +1362,12 @@ const INCREMENTAL_TABLES = {
   terminal_blocks:    TERMINAL_DDL,
   terminal_audit:     TERMINAL_DDL,
   terminal_worktrees: TERMINAL_DDL,
+  req_features:      REQUIREMENTS_DDL,
+  req_turns:         REQUIREMENTS_DDL,
+  req_contexts:      REQUIREMENTS_DDL,
+  req_cost_ledger:   REQUIREMENTS_DDL,
+  req_starts:        REQUIREMENTS_STARTS_DDL,
+  req_briefs:        REQUIREMENTS_BRIEFS_DDL,
 };
 
 /**
@@ -1282,6 +1389,11 @@ const INCREMENTAL_INDEXES = {
   },
   // An expression index on pipelines.branch: a minimal hand-seeded pipelines(id) has no such column to index.
   idx_pipelines_round_of: { table: 'pipelines', column: 'branch', ddl: ROUND_OF_INDEX_DDL },
+  // A2: a resumed run finds its start by pipeline id (startByPipelineId); added after req_starts shipped.
+  req_starts_pipeline: {
+    table: 'req_starts',
+    ddl: 'CREATE INDEX IF NOT EXISTS req_starts_pipeline ON req_starts (pipeline_id)',
+  },
 };
 
 /**
@@ -2388,6 +2500,11 @@ export function migrate(db) {
     if (current < 69) applySchemaV69(db);
     // v70: ask_attachments.source_run_id / source_project_key / source_rel (Show in folder's fallback) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     if (current < 71) db.exec(UTILITY_COST_LEDGER_DDL);   // v71 utility spend (Smart run naming)
+    if (current < 72) db.exec(REQUIREMENTS_DDL);     // v72 requirements: features, thread, contexts, spend — reconcile-safe
+    if (current < 73) db.exec(REQUIREMENTS_STARTS_DDL);   // v73 requirements: one row per Start in Worca — reconcile-safe
+    // v74 requirements: the product brief + ledger.brief_id. The repair runs again here: req_cost_ledger is created at
+    // v72, after the hoisted repair, so a DB coming from below 72 gets brief_id only from this call.
+    if (current < 74) { db.exec(REQUIREMENTS_BRIEFS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

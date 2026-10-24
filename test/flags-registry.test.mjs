@@ -66,3 +66,10 @@ test('registryProblems flags every rule', async () => {
     { name: 'docs must be a docs/*.md path', run: () => assert.match(probs([{ ...ok, docs: 'http://x' }]), /docs must be a docs\/\*\.md path/) },
   ]);
 });
+
+test('commandSummaries is a beta flag, on by default (#911)', () => {
+  const f = FLAGS.find((x) => x.key === 'commandSummaries');
+  assert.ok(f, 'commandSummaries is registered');
+  assert.deepEqual([f.stage, f.default], ['beta', true]);
+  assert.equal(f.docs, 'docs/feature-flags.md');
+});

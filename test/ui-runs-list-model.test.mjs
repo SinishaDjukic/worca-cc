@@ -272,6 +272,18 @@ test('a chain member that needs you raises its group row into Needs you (needs b
   assert.equal(countNeedsYou({ live: [{ pipelineId: 'p2', status: 'running', ask: true }] }), 1);
 });
 
+test('one ship flow (D8): a kept all-done chain without PRs adds 0 to Needs you', () => {
+  const history = [histIt('k1', { pr: null, run: { status: 'done' } }), histIt('k2', { pr: null, run: { status: 'done' } })];
+  const groups = [{ id: 'p:k1', groupKind: 'chain', title: 'Kept', members: [
+    { position: 1, title: 'One', pipelineId: 'k1', kind: 'hist', run: { status: 'done' } },
+    { position: 2, title: 'Two', pipelineId: 'k2', kind: 'hist', run: { status: 'done' } }] }];
+  const m = buildRunsModel({ history, groups, now: NOW });
+  assert.equal(m.counts.needs, 0);
+  assert.equal(m.sections.some((sec) => sec.id === 'needs'), false);
+  assert.equal(groupRow(groups[0], { now: NOW }).model.state, 'ready', 'it reads Ready to ship');
+  assert.equal(countNeedsYou({ history: history.map((h) => ({ id: h.id, status: h.status, pr: null })) }), 0);
+});
+
 test('a finished run whose PR fails checks needs you (D31): Needs you, the badge count, Finished under Show', () => {
   const pr = { url: 'https://github.com/o/r/pull/781', number: 781, state: 'OPEN', checks: { state: 'failing', total: 12, failed: 3, pending: 0 } };
   const m = buildRunsModel({ history: [histIt('h1', { run: { status: 'done', pr } })], now: NOW });

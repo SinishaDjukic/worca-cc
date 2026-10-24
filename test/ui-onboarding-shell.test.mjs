@@ -83,7 +83,7 @@ test('boot: the pill mounts at the top of the sidebar and routes to the page (wh
   assert.ok(pillHost && pillHost.classList.contains('gs-pill-host'), 'the pill host is the first child of the nav (New run has no row)');
   assert.equal(pillHost.nextElementSibling.dataset.nav, 'chat', 'right above Chat');
   assert.equal(pillHost.querySelector('.gs-pill .nav-count').textContent, '1/9');
-  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 13, 'the nav census (Chat, Schedules, Team policy, Workflows and the four Add-ons pages included; Running and History are one Runs item; Settings is in the account menu; New run is the top bar\'s button)');
+  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 14, 'the nav census (Chat, Schedules, Team policy, Workflows, Requirements and the four Add-ons pages included; Running and History are one Runs item; Settings is in the account menu; New run is the top bar\'s button)');
   assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false, 'first visit to the home page (Chat): welcome up');
   assert.deepEqual(posts, [], 'showing the welcome writes nothing until a choice');
   click(window, doc.querySelector('#welcome-modal .ob-skip'));
@@ -148,7 +148,8 @@ test('welcome at 375px: the nav drawer is closed behind it (F-21)', async () => 
   assert.equal(doc.body.classList.contains('nav-open'), false);
   assert.equal(doc.querySelector('.main').hasAttribute('inert'), false);
   const css = readFileSync(join(root, 'style.css'), 'utf8');
-  assert.match(css, /@media \(max-width:760px\)\{\s*\.ob-welcome\{max-height:calc\(100dvh - 24px\)/);
+  // The .dlg card selector beats `.viewer-modal .card`'s 86vh, so the phone allowance takes effect.
+  assert.match(css, /@media \(max-width:760px\)\{\s*\.viewer-modal \.card\.dlg\.ob-welcome\{max-height:calc\(100dvh - 24px\)/);
 });
 
 test('Hide posts {hidden:true} and removes the pill (the page stays); Settings › Show again posts {hidden:false} and opens the page', async () => {

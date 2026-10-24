@@ -140,7 +140,7 @@ test('glance state and copy for every status', () => {
   assert.deepEqual(fin({ pr: 'CLOSED' }), ['PR closed', 'pr-closed']);
   assert.deepEqual(fin({ pr: 'NONE', checks: 0, files: 2 }), ['Ready to ship', 'ship']);
   assert.deepEqual(fin({ pr: 'NONE', checks: 2, files: 2 }), ['Ready to review', 'review']);
-  assert.equal(glanceCopy({ status: 'done' }, { checks: 2 }).sub, '2 things to check before you open a pull request');
+  assert.equal(glanceCopy({ status: 'done' }, { checks: 2 }).sub, '2 things to check before you create a PR');
   assert.deepEqual(fin({ files: 0, checks: 0 }), ['Finished', 'finished'], 'nothing changed: nothing to ship');
   assert.equal(glanceCopy({ status: 'done' }, { pr: 'PENDING', checks: 0 }).sub, 'Checking for a pull request…', 'never guesses while the lookup runs');
   assert.deepEqual(fin({ pr: 'UNAVAILABLE', checks: 0, files: 2 }), ['Finished', 'finished'], 'no gh: never "Ready to ship"');
