@@ -27,6 +27,8 @@ export const RUN_STATES = Object.freeze({
   ready: Object.freeze({ word: 'Ready', dot: 'green', pulse: false, symbol: null }),
   'in-review': Object.freeze({ word: 'In review', dot: 'green', pulse: false, symbol: null }),
   merged: Object.freeze({ word: 'Merged', dot: 'violet', pulse: false, symbol: null }),
+  // S2: a done run slice 1 flagged unsuccessful. Reuses the amber dot (as needs-you) and the 'alert' glyph (as failed).
+  unsuccessful: Object.freeze({ word: 'Unsuccessful', dot: 'amber', pulse: false, symbol: 'alert' }),
 });
 
 export const ACTION_LABEL = Object.freeze({
@@ -45,7 +47,7 @@ export const HEAD_ACTIONS = Object.freeze(['ship', 'open-pr', 'retry', 'ask-chan
 const ACTIONS = Object.freeze({
   starting: ['stop'], working: ['pause', 'stop'], 'needs-you': ['answer', 'stop'], paused: ['resume', 'stop'],
   waiting: ['start-now', 'cancel'], failed: ['retry', 'report'], stopped: ['archive'], ready: ['ship'],
-  'in-review': ['open-pr'], merged: ['archive'],
+  'in-review': ['open-pr'], merged: ['archive'], unsuccessful: ['report'],
 });
 
 // The pause reasons (src/core/failure-policy.mjs REASON) that ui/public/runs-list.mjs PAUSE_WORDS names, lower-cased.
@@ -73,7 +75,7 @@ const gitIcon = (s, pr) => (s === 'MERGED' ? 'merge' : s === 'CLOSED' ? 'pull-re
 const ENDED = new Set(['done', 'stopped', 'error']);
 const PARKED = new Set(['paused', 'pausing', 'interrupted']);
 const LIVE = new Set(['starting', 'working', 'needs-you', 'paused']);
-const FINISHED = new Set(['ready', 'in-review', 'merged']);
+const FINISHED = new Set(['ready', 'in-review', 'merged', 'unsuccessful']);
 const TICKET_STATE = Object.freeze({ scheduled: 'waiting', missed: 'waiting', firing: 'starting', fired: 'starting',
   failed: 'failed', canceled: 'stopped', skipped: 'stopped' });
 
@@ -132,8 +134,11 @@ function stateOf(run, pr) {
   if (s === 'created' || s === 'starting') return 'starting';
   if (PARKED.has(s)) return 'paused';
   if (s === 'error') return 'failed';
-  if (s === 'done') return pr && pr.id === 'merged' ? 'merged' : pr && pr.needsYou ? 'needs-you'
-    : pr && pr.id !== 'closed' ? 'in-review' : 'ready';
+  if (s === 'done') {
+    if (run.successful === false) return 'unsuccessful';     // S2: the outcome outranks the PR state
+    return pr && pr.id === 'merged' ? 'merged' : pr && pr.needsYou ? 'needs-you'
+      : pr && pr.id !== 'closed' ? 'in-review' : 'ready';
+  }
   if (s === 'running') {
     const rows = (run.steps || []).filter((r) => r && r.nodeId != null);
     return !rows.length && !(run.active || []).length ? 'starting' : 'working';
@@ -186,6 +191,7 @@ function singleLine(state, run, prog, pr, opts) {
     case 'failed': return join(where, 'failed', failedStep(run, where));
     case 'stopped': return where ? `Stopped at ${where}` : 'Stopped';
     case 'ready': return 'Ready to ship';
+    case 'unsuccessful': return 'Done · unsuccessful';
     case 'in-review': return pr && pr.number != null ? `In review · PR #${pr.number}` : 'In review';
     default: return pr && pr.inBase ? pr.word : 'Merged';
   }
@@ -291,6 +297,7 @@ export function runModel(run, opts = {}) {
   const pr = prOf(r, watch);
   // D23: a Watch PR that stopped for a person raises a finished run to Needs you; a merged or closed PR has ended it.
   const watchNeeds = !!(watch && watch.stopped) && String(r.status || '') === 'done' && r.pendingQuestion == null
+    && r.successful !== false                                // S2: an unsuccessful outcome outranks a stopped Watch PR
     && !(pr && (pr.id === 'merged' || pr.id === 'closed'));
   const state = watchNeeds ? 'needs-you' : stateOf(r, pr);
   const mode = workModeOf(r);
@@ -312,6 +319,7 @@ export function runModel(run, opts = {}) {
   // Review A12: the live role-review rows (or the Refine line) under the status line; null when there are none.
   // QA 6: "?" means Worca is asking. A run in Needs you through its PR (or a stopped Watch PR) is a plain amber dot.
   return { state, ...meta, ...(fin ? { word: fin.word } : {}), symbol: prNeeds ? null : meta.symbol, line, lineSaysState, barLine, actions: [...actions], pr, prNeeds,
+    reasonNote: state === 'unsuccessful' ? (r.outcomeReason || null) : null,
     round, progress: prog, roles: liveRoleRows(r, { stage: prog ? prog.stage : null }) };
 }
 

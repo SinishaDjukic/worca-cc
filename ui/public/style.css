@@ -3781,6 +3781,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hist-sic.st-done{background:var(--green-bg);color:var(--green-ink);}
 .hist-sic.st-stopped,.hist-sic.st-error{background:var(--red-bg);color:var(--red-ink);}
 .hist-sic.st-paused{background:var(--amber-bg);color:var(--amber-ink);}
+.hist-sic.st-unsuccessful{background:var(--amber-bg);color:var(--amber);}   /* S2: a finished-unsuccessful run (amber, the alert glyph) */
 
 /* ---------- History detail: meta line, branch row, actions, banners ---------- */
 /* .diff-add/.diff-del exist ONLY as `.hist-diff .diff-add|.diff-del` (837-838).
@@ -3865,6 +3866,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hd-status-word.st-done{color:var(--green-ink);}
 .hd-status-word.st-stopped,.hd-status-word.st-error{color:var(--red-ink);}
 .hd-status-word.st-paused{color:var(--amber-ink);}
+.hd-status-word.st-unsuccessful{color:var(--amber-ink);}   /* S2 */
 /* 14px -> 6px: the branch chip and the Resume/Archive buttons carry ~8px of their
    own vertical padding, so the row reads far further from the meta line than the
    number says. 6px + that padding lands on the same optical gap as row1->row2. */
@@ -9774,6 +9776,8 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .run-status{display:grid;gap:8px;min-width:0;}
 .run-status-head{display:flex;align-items:center;gap:8px;min-width:0;}
 .run-status-text{font-size:13px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* S2: the finished-unsuccessful reason note, a quiet amber line under the status line. */
+.run-status-reason{margin-top:-2px;font-size:12px;color:var(--amber-ink);}
 /* A12: live role-review rows under the status line, divider rows, no box. */
 .run-status-roles{display:flex;flex-direction:column;}
 .run-role-row{display:flex;align-items:center;gap:8px;min-height:24px;font-size:12px;color:var(--ink-2);}

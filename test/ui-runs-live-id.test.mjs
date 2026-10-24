@@ -7,6 +7,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { app, runs, _testing } from '../ui/server.mjs';
+import { useTempHome } from './helpers/temp-home.mjs';
+
+useTempHome(after);   // S2: summarizeRuns reads run labels from the store (liveLabels → getDb)
 
 let srv, base;
 const tmpDirs = [];
@@ -141,6 +144,53 @@ test('/api/runs: live entries expose the pipeline short id when known', async ()
     assert.equal(body.live[0].id, 'ab12cd34', 'id is the short pipeline id');
     assert.equal(body.live[0].runId, 'uuid-BBBB', 'runId remains the UUID for WS routing');
     assert.equal(body.live[0].live, true);
+  } finally {
+    runs.delete(entry.id);
+  }
+});
+
+// ── S2: summarizeRuns carries slice 1's outcome for a finished-unsuccessful run; pauseReason stays clean ──
+test('summarizeRuns: a finished-unsuccessful entry exposes successful/outcomeReason; a successful one omits them', () => {
+  const bad = makeEntry({
+    id: 'uuid-DDDD', pipelineId: 'bad00001', title: 'Did nothing', status: 'done',
+    successful: false, outcomeReason: 'Implement produced no changes to the worktree.', pauseReason: null,
+  });
+  const good = makeEntry({ id: 'uuid-EEEE', pipelineId: 'good0001', title: 'Shipped', status: 'done' });
+  runs.set(bad.id, bad);
+  runs.set(good.id, good);
+  try {
+    const rows = _testing.summarizeRuns();
+    const badRow = rows.find((r) => r.runId === 'uuid-DDDD');
+    const goodRow = rows.find((r) => r.runId === 'uuid-EEEE');
+    assert.equal(badRow.successful, false);
+    assert.equal(badRow.outcomeReason, 'Implement produced no changes to the worktree.');
+    assert.equal(badRow.pauseReason, null, 'the outcome sentence did not leak into pauseReason');
+    // A successful/legacy run is byte-identical to today: neither field present.
+    assert.equal('successful' in goodRow, false);
+    assert.equal('outcomeReason' in goodRow, false);
+  } finally {
+    runs.delete(bad.id);
+    runs.delete(good.id);
+  }
+});
+
+// ── S2: the done handler stashes the outcome onto the entry and keeps the sentence out of pauseReason ──
+test('wireRun done handler: an unsuccessful done stashes successful/outcomeReason, pauseReason null; later success reverts', () => {
+  const entry = makeEntry({ id: 'uuid-FFFF' });
+  runs.set(entry.id, entry);
+  try {
+    _testing.wireRun(entry);
+    entry.orch.emit('done', { status: 'done', successful: false, reason: 'Implement produced no changes to the worktree.' });
+    assert.equal(entry.successful, false);
+    assert.equal(entry.outcomeReason, 'Implement produced no changes to the worktree.');
+    assert.equal(entry.pauseReason, null, 'the outcome sentence is not a pause reason');
+    // A later successful done clears the outcome.
+    entry.orch.emit('done', { status: 'done', successful: true });
+    assert.equal(entry.successful, true);
+    assert.equal(entry.outcomeReason, null);
+    // A plain paused frame still records its reason (hygiene guard only gates the unsuccessful case).
+    entry.orch.emit('done', { status: 'paused', reason: 'cost_pipeline' });
+    assert.equal(entry.pauseReason, 'cost_pipeline');
   } finally {
     runs.delete(entry.id);
   }

@@ -53,6 +53,16 @@ test('snapshotFromState: a REST row becomes a frozen snapshot with decor, progre
   assert.equal(v1.decor, null, 'a v1 row draws no graph');
   assert.deepEqual(v1.active, [], 'and names no active agent (decorFromState would still list state.active — guarded)');
   assert.equal(snapshotFromState(null), null);
+  // S2: slice 1's outcome rides the snapshot on both the outer object and the nested run the model reads.
+  const bad = snapshotFromState(STATE({ status: 'done', successful: false, outcomeReason: 'Implement produced no changes to the worktree.' }));
+  assert.equal(bad.successful, false);
+  assert.equal(bad.outcomeReason, 'Implement produced no changes to the worktree.');
+  assert.equal(bad.run.successful, false);
+  assert.equal(bad.run.outcomeReason, 'Implement produced no changes to the worktree.');
+  // Absent-safe: a successful/legacy done carries neither field.
+  const okSnap = snapshotFromState(STATE({ status: 'done' }));
+  assert.equal(okSnap.successful, undefined);
+  assert.equal(okSnap.run.successful, undefined);
 });
 
 test('runPill table and progressRoute (live → #running, rest → History, unknown → started link)', async () => {
@@ -70,6 +80,7 @@ test('runPill table and progressRoute (live → #running, rest → History, unkn
       assert.deepEqual(runPill({ ...base, status: 'done', pendingQuestion: { kind: 'workflow' } }), { family: 'amber', text: 'Waiting · your decision' }, 'the question outranks a terminal status (hello can seed both)');
       assert.deepEqual(runPill({ ...base, status: 'starting' }), { family: 'peach', text: 'Starting' });
       assert.deepEqual(runPill({ ...base, status: 'done' }), { family: 'green', text: 'Done' });
+      assert.deepEqual(runPill({ ...base, status: 'done', successful: false }), { family: 'amber', text: 'Done · unsuccessful' }, 'S2: an unsuccessful done is amber, not green');
       assert.deepEqual(runPill({ ...base, status: 'error' }), { family: 'red', text: 'Error' });
       assert.deepEqual(runPill({ ...base, status: 'stopped' }), { family: 'red', text: 'Stopped' });
       assert.deepEqual(runPill(null), { family: 'peach', text: 'Starting' });

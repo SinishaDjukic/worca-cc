@@ -930,6 +930,18 @@ test('chat run card: one flagged thing reads "Ready to review · 1 thing to chec
   assert.deepEqual(resultWord({ status: 'done', results: null }), { key: 'ship', tone: 'green', glyph: 'check', title: 'Finished', sub: '' });
 });
 
+test('S2: an unsuccessful done is its own amber result headline with the reason, outranking the green verdicts', () => {
+  assert.deepEqual(resultWord({ status: 'done', successful: false, outcomeReason: 'Implement produced no changes to the worktree.' }),
+    { key: 'unsuccessful', tone: 'amber', glyph: 'alert', title: 'Unsuccessful', sub: 'Implement produced no changes to the worktree.' });
+  // It outranks a would-be-green verdict (results present).
+  assert.equal(resultWord({ status: 'done', successful: false, results: { filesChanged: 3, checks: 0 } }).title, 'Unsuccessful');
+  const { card, $ } = mk();
+  card.update(done(null, { successful: false, outcomeReason: 'Implement produced no changes to the worktree.' }));
+  assert.equal($('.chat-rc-res-title').textContent, 'Unsuccessful');
+  assert.equal($('.chat-rc-res-sub').textContent, 'Implement produced no changes to the worktree.');
+  assert.equal($('.chat-rc-create-pr'), null, 'no green Create-PR affordance for an unsuccessful run');
+});
+
 test('chat run card CSS: an answer label wider than the whole row wraps inside its button, never out of the card', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const p3 = css.slice(css.indexOf('/* ===== Chat P3: run card ===== */'));

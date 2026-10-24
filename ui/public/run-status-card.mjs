@@ -50,19 +50,23 @@ export function paintRunStatus(host, m) {
     const dot = doc.createElement('span');
     const text = textEl(doc, 'span', 'run-status-text', '');
     head.append(dot, text);
+    const reason = textEl(doc, 'div', 'run-status-reason', '');       // S2: the outcome reason note
+    reason.hidden = true;
     const group = textEl(doc, 'div', 'run-prog-chain run-status-group', '');
     const bar = textEl(doc, 'div', 'run-prog run-status-bar', '');
     group.hidden = true;
     bar.hidden = true;
     const roles = textEl(doc, 'div', 'run-status-roles', '');
     roles.hidden = true;
-    host.append(head, roles, group, bar);
-    host.__rs = { dot, text, group, bar, roles };
+    host.append(head, reason, roles, group, bar);
+    host.__rs = { dot, text, group, bar, roles, reason };
   }
-  const { dot, text, group, bar } = host.__rs;
+  const { dot, text, group, bar, reason } = host.__rs;
   host.dataset.state = m.state;
   host.dataset.word = m.word;
   host.dataset.line = m.line;
+  reason.textContent = m.reasonNote || '';
+  reason.hidden = !m.reasonNote;   // the amber note only for an unsuccessful run; re-hidden on repaint
   const g = isGroup(m);
   const cur = g ? m.current : m;
   // A run in Needs you only through its PR has finished its pipeline, so it has no bar (an empty one read as 0%).

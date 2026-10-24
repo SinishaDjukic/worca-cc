@@ -53,5 +53,13 @@ test('facts block: one row per fact, hidden while empty', () => {
   assert.equal(kv.querySelector('[data-fact="project"]').hidden, false);
   assert.equal(kv.querySelector('[data-fact="cost"]').hidden, true);
   assert.equal(kv.querySelector('[data-fact="labels"]').hidden, true);
-  assert.deepEqual(RUN_FACTS.map(([k]) => k), ['group', 'project', 'branch', 'labels', 'tags']);
+  assert.deepEqual(RUN_FACTS.map(([k]) => k), ['group', 'project', 'branch', 'outcome', 'labels', 'tags']);
+  // S2: the Outcome fact stays hidden for a successful/legacy run (empty value).
+  const rk = buildFacts(d, RUN_FACTS);
+  syncFacts(rk);
+  assert.equal(rk.querySelector('[data-fact="outcome"]').hidden, true, 'Outcome hidden when empty');
+  setFactText(rk, 'outcome', 'Unsuccessful');
+  syncFacts(rk);
+  assert.equal(rk.querySelector('[data-fact="outcome"]').hidden, false);
+  assert.equal(rk.querySelector('[data-fact="outcome"] .rd-kv-v').textContent, 'Unsuccessful');
 });

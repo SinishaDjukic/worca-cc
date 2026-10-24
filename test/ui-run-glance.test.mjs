@@ -170,6 +170,20 @@ test('a finished row in the Runs list says what the glance headline says (D12): 
   assert.equal(histRowState({ status: 'completed', pr: 'MERGED' }).word, glanceCopy({ status: 'done' }, { pr: 'MERGED' }).lead);
 });
 
+test('S2: an unsuccessful done headline is "Unsuccessful" with its reason, via opts or the run object', () => {
+  const viaOpts = glanceCopy({ status: 'done' }, { successful: false, outcomeReason: 'Implement produced no changes to the worktree.' });
+  assert.deepEqual([viaOpts.lead, viaOpts.icon, viaOpts.sub],
+    ['Unsuccessful', 'unsuccessful', 'Implement produced no changes to the worktree.']);
+  // The live run page passes its run object, not these opts: the run-object fallback reads the same.
+  const viaRun = glanceCopy({ status: 'done', successful: false, outcomeReason: 'Implement produced no changes to the worktree.' });
+  assert.deepEqual([viaRun.lead, viaRun.icon, viaRun.sub],
+    ['Unsuccessful', 'unsuccessful', 'Implement produced no changes to the worktree.']);
+  // No reason: a quiet fallback sub.
+  assert.equal(glanceCopy({ status: 'done' }, { successful: false }).sub, 'Finished without delivering the work');
+  // Row/glance parity: the History list row word matches the glance lead.
+  assert.equal(histRowState({ status: 'done', successful: false, outcomeReason: 'r' }).word, 'Unsuccessful');
+});
+
 test('DOM: trail stacks and the orb carries its state class', () => {
   const { document } = new JSDOM('').window;
   const node = renderTrail(document, trailColumns(loopedBranched));

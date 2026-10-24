@@ -62,6 +62,22 @@ test('paintRunStatus: symbol states never paint a plain dot; bars follow D20', a
   } })));
 });
 
+test('unsuccessful run: amber alert badge + reason note; ready run hides the note', () => {
+  const host = dom().createElement('div');
+  const bad = runModel({ status: 'done', successful: false, outcomeReason: 'Implement produced no changes to the worktree.',
+    steps: [], active: [] }, { now: NOW, timeZone: 'UTC' });
+  paintRunStatus(host, bad);
+  assert.equal(host.dataset.state, 'unsuccessful');
+  assert.equal(host.querySelectorAll('.status-dot')[0].dataset.symbol, 'alert');
+  const note = host.querySelector('.run-status-reason');
+  assert.equal(note.hidden, false);
+  assert.equal(note.textContent, 'Implement produced no changes to the worktree.');
+  // Repaint the SAME host from unsuccessful to a ready run: the note re-hides.
+  paintRunStatus(host, runModel({ status: 'done', successful: true, steps: [], active: [] }, { now: NOW, timeZone: 'UTC' }));
+  assert.equal(host.querySelector('.run-status-reason').hidden, true);   // re-hidden
+  assert.equal(host.querySelectorAll('.run-status-reason').length, 1, 'made once');
+});
+
 test('paintRunStatus: live role rows under the status line, the Refine line, hidden without roles (A12)', () => {
   const doc = dom();
   const host = doc.createElement('div');
