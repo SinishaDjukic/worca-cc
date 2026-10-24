@@ -19,7 +19,7 @@ every local user can do that too.
 ## Set it up
 
 1. Turn the flag on: `worca flags on corporateProxy`.
-2. Open Settings › Network proxy (Advanced level). Enter the proxy host and port, choose
+2. Open Settings › Runs › Network proxy (Advanced level). Enter the proxy host and port, choose
    **Login: NTLMv2**, list the hosts that go direct, and change the timeouts if you need to.
    Press **Save**.
 3. Restart Worca. The proxy host, port, login mode, direct hosts and timeouts are read at startup.
@@ -140,6 +140,26 @@ runs the same check. A wrong password costs one login attempt for the whole test
 
 Both commands take `--json`.
 
+## From Chat
+
+The Chat assistant can read, test and change the proxy settings for you, the way it handles Away mode and Actions:
+
+- **Read**: `get_network_proxy` reports whether the flag is on, the saved settings, the proxy in use and where it came
+  from (settings, or `HTTPS_PROXY` / `HTTP_PROXY` at start), the local proxy URL and its status, who is logged in
+  (`DOMAIN\user`; whether the login was rejected), whether a restart is needed and why, and the live proxy's state.
+  It never sees the password or the saved hash.
+- **Test**: `test_network_proxy` runs the same check as the Test button, with the same rules: one test at a time,
+  and no test of a proxy saved since Worca started (restart first, so the saved login is never sent to a host the
+  running proxy does not use yet). A login the proxy rejects is marked "needs login".
+- **Change**: the assistant proposes a card with each setting before → after and "Restart Worca to apply". Nothing
+  changes until you press Apply; Apply saves exactly as the Save button does.
+- **Turn it on**: with the flag off, the assistant can offer a card that turns on Labs › Corporate proxy (then restart).
+- **Log in and out yourself**: the chat never asks for, takes or repeats your password. Use Log in / Log out on
+  Settings › Runs › Network proxy, or `worca proxy login` / `worca proxy logout`.
+
+Under agent isolation the assistant can read the proxy status but not test it; use the Test button through Worca's
+published address.
+
 ## "proxy needs login"
 
 When the corporate proxy rejects the login once, Worca stops sending credentials at once, so a
@@ -178,6 +198,6 @@ Not supported (Negotiate works only with the NTLM login inside it). Run [Px](htt
 - **The fixed port cannot be used on Windows (EACCES).** Hyper-V and WSL reserve port ranges. List
   them with `netsh interface ipv4 show excludedportrange protocol=tcp` and pick a port outside them.
 - **PAC or WPAD.** Not supported. Ask your IT team for the proxy host and port, and enter them in
-  Settings › Network proxy.
+  Settings › Runs › Network proxy.
 - **"proxy-login.json can be read by other users".** The file's mode changed (a backup restore, a
   copy). Run `worca proxy login` again.

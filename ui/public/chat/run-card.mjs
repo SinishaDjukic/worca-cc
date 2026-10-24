@@ -23,7 +23,7 @@ import { gitOn } from '../git-gate.mjs';
 import { formatBytes } from '../artifacts/common.mjs';
 import { fixOutcomeText } from './pr-watch-words.mjs';
 import { runModel } from '../../../src/shared/run-model.mjs';
-import { paintRunStatus, kindLabel, syncActions, pauseResumeOwn, renderMemberRows } from '../run-status-card.mjs';
+import { paintRunStatus, statusText, kindLabel, syncActions, pauseResumeOwn, renderMemberRows } from '../run-status-card.mjs';
 import { delegateQuestion } from '../question-delegate.mjs';
 import { paintStatusDot } from '../status-dot.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
@@ -119,7 +119,7 @@ const nodeLabelOf = (stepper, id) => {
 /** The result headline for a run that is over (mockup §5e), from real facts only; null while the run is not over. */
 export function resultWord(snap) {
   if (!snap || !RESULT_STATUS.has(String(snap.status || ''))) return null;
-  if (snap.status === 'stopped') return { key: 'stopped', tone: 'red', glyph: 'stop', title: 'Stopped', sub: 'Stopped before it finished' };
+  if (snap.status === 'stopped') return { key: 'stopped', tone: 'red', glyph: 'stop', title: 'Stopped', sub: '' };
   if (!DONE_STATUS.has(snap.status)) {
     const status = (snap.decor && snap.decor.status) || {};
     const failed = Object.keys(status).find((id) => status[id] === 'error');
@@ -128,8 +128,8 @@ export function resultWord(snap) {
   }
   if (snap.workMode === 'folder') { const c = changesCounts(snap.changes); const w = folderDoneWords(snap.changes && snap.changes.state, c ? c.total : null); return { key: 'folder', tone: 'green', glyph: 'check', title: w.lead, sub: w.sub }; }
   const pr = snap.pr && snap.pr.url ? String(snap.pr.state || '').toUpperCase() : '';
-  if (pr === 'MERGED') return { key: 'merged', tone: 'slate', glyph: 'merged', title: 'Merged', sub: 'The pull request was merged' };
-  if (pr === 'OPEN') return { key: 'review', tone: 'blue', glyph: 'review', title: 'In review', sub: 'The pull request is open' };
+  if (pr === 'MERGED') return { key: 'merged', tone: 'slate', glyph: 'merged', title: 'Merged', sub: '' };
+  if (pr === 'OPEN') return { key: 'review', tone: 'blue', glyph: 'review', title: 'In review', sub: '' };
   if (pr === 'CLOSED') return { key: 'closed', tone: 'red', glyph: 'stop', title: 'PR closed', sub: 'Closed without merging' };
   const r = snap.results;
   if (r && !r.filesChanged) return { key: 'done', tone: 'green', glyph: 'check', title: 'Done', sub: 'No files changed' };
@@ -140,6 +140,17 @@ export function resultWord(snap) {
   const checks = Number(r.checks) || 0;
   return { key: 'ship', tone: 'green', glyph: 'ship', title: checks ? 'Ready to review' : 'Ready to ship',
     sub: checks ? `${checks} thing${checks === 1 ? '' : 's'} to check` : 'Clean: no blocking issues flagged' };
+}
+
+/** Say each thing once (design system, Card head): the result block drops a title that repeats the state the status
+ *  line leads with ("In review" under "In review"), and a sub the status detail already says ("14 files changed"
+ *  under "Applied · 14 files changed"). `st`: statusText(m) of the card's status line. */
+export function resultLines(word, st) {
+  const head = String((st && st.head) || '').toLowerCase();
+  const said = String((st && st.text) || '').toLowerCase();
+  const title = word.title && !(head && word.title.toLowerCase().startsWith(head)) ? word.title : '';
+  const sub = word.sub && !said.includes(word.sub.toLowerCase()) ? word.sub : '';
+  return { title, sub };
 }
 
 /** The receipt line a question collapses into once it is resolved (mockup §5c/§5d): the named decision this tab sent
@@ -592,7 +603,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     return box;
   }
 
-  function paintResult(s) {
+  function paintResult(s, m) {
     const word = resultWord(s);
     if (!word) {
       if (!resultSec.hidden || resultSig) { resultSec.hidden = true; resultSec.replaceChildren(); resultSig = ''; }
@@ -608,7 +619,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const ws = s.kind === 'workspace-run' || !!s.workspaceId;
     const total = (changesCounts(s.changes) || {}).total || 0; const canApply = word.key === 'folder' && !ws && !s.archived && !!s.changes && s.changes.state === 'pending' && total > 0 && typeof controls.openApply === 'function';
     const np = isNoProjectRun(s);
-    const sig = JSON.stringify([word, r, arts.map((a) => [a.relPath, a.bytes]), !!s.moreArtifacts, s.artifactsTotal, np, prUrl, canCreate, canApply, shapeFirstOn()]);
+    const lines = resultLines(word, statusText(m || lastM || {}));
+    const sig = JSON.stringify([word, lines, r, arts.map((a) => [a.relPath, a.bytes]), !!s.moreArtifacts, s.artifactsTotal, np, prUrl, canCreate, canApply, shapeFirstOn()]);
     if (sig === resultSig) return;
     resultSig = sig;
     createPrBtn = null;
@@ -618,11 +630,15 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const glyph = h('span', `chat-rc-res-glyph tone-${word.tone}`);
     glyph.appendChild(icon(doc, word.glyph));
     const text = h('div', 'chat-rc-res-text');
-    text.appendChild(h('div', 'chat-rc-res-title', word.title));
-    if (word.sub) text.appendChild(h('div', 'chat-rc-res-sub', word.sub));
-    rhead.append(glyph, text);
-    if (r && r.filesChanged) rhead.appendChild(churnEl(r));
-    resultSec.appendChild(rhead);
+    if (lines.title) text.appendChild(h('div', 'chat-rc-res-title', lines.title));
+    // A sub that stands alone takes the title's class, so the block keeps one headline.
+    if (lines.sub) text.appendChild(h('div', lines.title ? 'chat-rc-res-sub' : 'chat-rc-res-title', lines.sub));
+    // Nothing left to say and no churn: no head row at all (the status line has said it).
+    if (text.childNodes.length || (r && r.filesChanged)) {
+      rhead.append(glyph, ...(text.childNodes.length ? [text] : []));
+      if (r && r.filesChanged) rhead.appendChild(churnEl(r));
+      resultSec.appendChild(rhead);
+    }
     // Spec D7 / s3: the shaped run's checklist score; pressing it unfolds the run page's Perspective checklists in place.
     const tally = r && r.checklist && r.checklist.total && shapeFirstOn() ? r.checklist : null;
     if (tally) {
@@ -923,7 +939,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     paintAgents(s);
     paintGraph(s, chip);
     paintQuestion(s);       // draws only when ownIsCurrent(), or the feature's open step
-    paintResult(s);         // sets createPrBtn
+    paintResult(s, m);      // sets createPrBtn; m: the status line it must not repeat
     paintChanges(s, m, !!lr);
     paintWatch(m, (fm && fm.watch) || rm.watch);
     paintFoot(s);           // labels and disabled rules only

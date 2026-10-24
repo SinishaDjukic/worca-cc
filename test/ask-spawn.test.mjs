@@ -404,6 +404,22 @@ test('buildAskSpawnOptions: the command token rides spawnEnv; the sub-agent note
   assert.deepEqual(o.permissionRules.deny, [...ASK_DENY_RULES]);          // Edit/Write/Bash still denied
 });
 
+test('the corporate proxy bridge: the token rides spawnEnv for every engine, the URL (never the token) rides the mcp env; none ⇒ unchanged', () => {
+  const proxy = { url: 'http://127.0.0.1:1/api/ask/proxy', token: 'pt' };
+  const base = { thread: { id: 'ask_0000aaaa' }, turn: {}, limits: {}, mcpConfigPath: '/m.json', scratchDir: '/t' };
+  for (const engine of ['claude', 'codex', 'copilot']) {
+    assert.equal(buildAskSpawnOptions({ ...base, engine, proxy }).spawnEnv.ASK_PROXY_TOKEN, 'pt', engine);
+    assert.deepEqual(buildAskSpawnOptions({ ...base, engine, proxy: null }), buildAskSpawnOptions({ ...base, engine }), engine);
+    assert.equal(buildAskSpawnOptions({ ...base, engine, proxy: null }).spawnEnv, undefined, engine);
+  }
+  const both = buildAskSpawnOptions({ ...base, proxy, commands: { url: 'u', token: 'ct' } }).spawnEnv;
+  assert.deepEqual([both.ASK_COMMAND_TOKEN, both.ASK_PROXY_TOKEN], ['ct', 'pt']);
+  const doc = buildMcpConfig({ homeBase: '/h', threadId: 'ask_0000aaaa', serverPath: '/s.mjs', env: {}, proxy });
+  assert.deepEqual(JSON.parse(doc.mcpServers.worca.env.WORCA_ASK_PROXY), { url: 'http://127.0.0.1:1/api/ask/proxy' });
+  assert.doesNotMatch(JSON.stringify(doc), /"pt"/);
+  assert.equal(buildMcpConfig({ homeBase: '/h', threadId: 'ask_0000aaaa', serverPath: '/s.mjs', env: {} }).mcpServers.worca.env.WORCA_ASK_PROXY, undefined);
+});
+
 test('without commands the sub-agent note and the mcp env are unchanged (#574)', () => {
   assert.equal(sandboxNote({ commands: false }), SANDBOX_NOTE);
   const doc = buildMcpConfig({ homeBase: '/h', threadId: 'ask_0000aaaa', serverPath: '/s.mjs', env: {} });

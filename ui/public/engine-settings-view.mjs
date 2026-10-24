@@ -1,19 +1,21 @@
 import { icon } from './icons.mjs';
 import { renderInheritField, readDirtyFields } from './inherit-field.mjs';
-import { engineLabel, engineChoiceLabel, isBetaEngine, ENGINE_NAMES, MODEL_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, engineChoiceLabel, isBetaEngine, ENGINE_NAMES, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 import { applyEngineLocks, engineLock } from './engine-locks.mjs';
-export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', 'high', 'xhigh', 'max']), codex: Object.freeze(['minimal', 'low', 'medium', 'high']), cursor: Object.freeze([]),
-  copilot: Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']), opencode: Object.freeze(['minimal', 'low', 'medium', 'high', 'max']) });
+// The own-sign-in engines have no effort flag, except Goose and OpenCode.
+export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', 'high', 'xhigh', 'max']), codex: Object.freeze(['minimal', 'low', 'medium', 'high']),
+  copilot: Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']),
+  ...Object.fromEntries(SIGN_IN_ENGINE_NAMES.map((e) => [e, Object.freeze([])])),
+  goose: Object.freeze(['low', 'medium', 'high', 'max']), opencode: Object.freeze(['minimal', 'low', 'medium', 'high', 'max']) });
 // An inherited value's label; an unset one stays null, so the field shows its bare heading.
 const engineName = (v) => (v == null ? null : engineLabel(v));
-// src/core/model-env.mjs helperEngineFor (the browser cannot load /src/core): these engines' helper jobs run on Claude.
-const CLAUDE_HELPED = Object.freeze(['cursor', 'opencode']);
 const helpersNote = (engine) => (engine === 'copilot' ? "Copilot runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on its own default model."
   : `${engineLabel(engine)} runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. See the Claude tab.`);
-export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', agentGen: 'Agent generation', naming: 'Run naming', workspaceScan: 'Workspace scan' });
+export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', agentGen: 'Agent generation', naming: 'Run naming', commandSummary: 'Command summaries', workspaceScan: 'Workspace scan' });
 // The setting id of an engine's helper slot, as settings-cascade.mjs names it: memory defragment
 // and workspace scan are runs of their own (spec §3.1 "own-run models"), the rest are utility jobs.
-// Agent generation and Run naming have no cascade entry (user-only, Claude-only); their ids are the Chat registry's.
+// Agent generation, Run naming and Command summaries have no cascade entry (user-only, Claude-only); their ids are the
+// Chat registry's (Command summaries has no registry entry: only the Models page sets it).
 const OWN_RUN_JOBS = new Set(['memoryDefrag', 'workspaceScan']);
 export const utilityId = (engine, job) => (OWN_RUN_JOBS.has(job) ? `models.${engine}.${job}` : `models.${engine}.utility.${job}`);
 const EMPTY = Object.freeze({ own: undefined, inherited: { value: undefined, source: 'default' } });
@@ -26,6 +28,7 @@ export const JOB_HINTS = Object.freeze({
   memoryDefrag: 'Runs Memory defragment, which restructures saved memory.',
   agentGen: 'Drafts a new agent\'s prompt and metadata in Workflows › Agents (Generate).',
   naming: 'Suggests the title and branch name on the New run form (Smart run naming). Unset: the cheapest ready Claude model.',
+  commandSummary: 'Writes the one-line summary of a chat command when the chat gave none, from the command alone (secrets hidden, never its output). Turn it off in Settings › Chat › Summarise commands. Unset: the cheapest ready Claude model; with none ready, commands keep their raw text.',
   workspaceScan: 'Runs the workspace scan that maps how member projects connect.',
 });
 
@@ -127,13 +130,13 @@ export function renderEngineSection(host, options) {
     if (engine !== 'claude') { const status = doc.createElement('small'); status.className = 'engine-card-status'; card.append(status); }
     if (options.notes?.[engine]) { const note = doc.createElement('small'); note.className = 'hint engine-card-note'; note.textContent = options.notes[engine]; card.append(note); }
     const row = (id, label, defaultLabel, hint = null) => { const value = field(id); return { id, label, hint, set: value.own !== undefined && value.own !== null, el: renderInheritField(doc, { id, label, kind: 'model', level: options.level, engine, catalog: options.catalog || [], efforts: ENGINE_EFFORTS[engine], own: value.own, inherited: value.inherited, defaultLabel, noEffort: noEffort.has(id) }) }; };
-    const steps = (options.roles || []).map((role) => row(`models.${engine}.steps.${role.key}`, role.label || role.key, options.defaultLabels?.steps || (CLAUDE_HELPED.includes(engine) ? `${engineLabel(engine)}'s default model` : "the workflow's model")));
+    const steps = (options.roles || []).map((role) => row(`models.${engine}.steps.${role.key}`, role.label || role.key, options.defaultLabels?.steps || (SIGN_IN_ENGINE_NAMES.includes(engine) ? `${engineLabel(engine)}'s default model` : "the workflow's model")));
     card.append(slotTable(doc, 'engine-steps', 'Step models', steps, { what: 'step', from, onTest: options.onTest }));
     const jobs = options.jobs?.[engine] || [];
     if (jobs.length) {
       const helpers = jobs.map((job) => row(utilityId(engine, job), JOB_LABELS[job] || job, options.defaultLabels?.[engine] || (engine === 'codex' ? "Codex's default model (GPT-5.6 Sol)" : 'the default model'), JOB_HINTS[job]));
       card.append(slotTable(doc, 'engine-helpers', 'Helper jobs', helpers, { what: 'helper job', from, onTest: options.onTest }));
-    } else if (CLAUDE_HELPED.includes(engine) || engine === 'copilot') {
+    } else if (SIGN_IN_ENGINE_NAMES.includes(engine) || engine === 'copilot') {
       const sec = doc.createElement('section'); sec.className = 'engine-slots engine-helpers';
       const bar = doc.createElement('div'); bar.className = 'engine-slot-bar'; bar.append(Object.assign(doc.createElement('h4'), { textContent: 'Helper jobs' }));
       sec.append(bar, Object.assign(doc.createElement('small'), { className: 'hint engine-slot-rest', textContent: helpersNote(engine) }));
@@ -151,17 +154,17 @@ export function renderEngineSection(host, options) {
   return {};
 }
 export const readEngineSection = (host) => readDirtyFields(host);
-const CLAUDE_HELPER_KEYS = Object.freeze({ title: 'titleModel', classifier: 'autoWorkflowModel', prDescription: 'prDescriptionModel', memoryDefrag: 'memoryDefrag', agentGen: 'agentGenModel', naming: 'namingModel' });
-const CLAUDE_PAIR_KEYS = new Set(['memoryDefrag', 'agentGenModel', 'namingModel']);
+const CLAUDE_HELPER_KEYS = Object.freeze({ title: 'titleModel', classifier: 'autoWorkflowModel', prDescription: 'prDescriptionModel', memoryDefrag: 'memoryDefrag', agentGen: 'agentGenModel', naming: 'namingModel', commandSummary: 'commandSummaryModel' });
+const CLAUDE_PAIR_KEYS = new Set(['memoryDefrag', 'agentGenModel', 'namingModel', 'commandSummaryModel']);
 export function enginePatchToSettingsBody(patch) {
   const body = {};
   for (const [id, value] of Object.entries(patch || {})) {
     if (id === 'run.engine') { body.runEngine = value; continue; }
-    let match = /^models\.(claude|codex|cursor|opencode)\.steps\.(.+)$/.exec(id); if (match) { ((body.stepModels ||= {})[match[1]] ||= {})[match[2]] = value; continue; }
+    let match = new RegExp(`^models\\.(${MODEL_ENGINE_NAMES.join('|')})\\.steps\\.(.+)$`).exec(id); if (match) { ((body.stepModels ||= {})[match[1]] ||= {})[match[2]] = value; continue; }
     match = /^models\.(codex)\.(?:utility\.)?(title|classifier|overview|prDescription|memoryDefrag|workspaceScan)$/.exec(id); if (match) ((body.utilityModels ||= {})[match[1]] ||= {})[match[2]] = value;
     // Claude's helper slots live in their own settings keys: a model id (title, Auto, PR description), and the
     // Memory defragment, Agent generation and Run naming pairs.
-    match = /^models\.claude\.(?:utility\.)?(title|classifier|prDescription|memoryDefrag|agentGen|naming)$/.exec(id);
+    match = /^models\.claude\.(?:utility\.)?(title|classifier|prDescription|memoryDefrag|agentGen|naming|commandSummary)$/.exec(id);
     if (match) { const key = CLAUDE_HELPER_KEYS[match[1]]; body[key] = CLAUDE_PAIR_KEYS.has(key) ? (value && value.model ? { model: value.model, effort: value.effort || '' } : null) : (value && value.model) || ''; }
   }
   return body;

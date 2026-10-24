@@ -24,8 +24,9 @@ export const RUN_MANIFEST_FILE = 'run.json';
 export const RETAIN_REASONS = Object.freeze({ COMMIT_FAILED: 'commit_failed', CHECKOUT: 'checkout', FOLDER_APPLY: 'folder-apply', WORK_COPY_FAILED: 'work_copy_failed' });
 
 /** Entries worca-cc itself owns at a run root. Anything else there is a STRAY (§8.11).
- *  `.cursor`: a Cursor run's engine config at a workspace run root (engines/cursor.mjs, run-harness _registerEngineConfig). */
-export const RUN_ROOT_KNOWN_SET = new Set(['CLAUDE.md', 'mcp.json', RUN_MANIFEST_FILE, '.claude', '.cursor', 'repos', 'work']);
+ *  `.cursor`, `.gemini`: a Cursor or Gemini CLI run's engine config at a workspace run root (engines/project-files.mjs,
+ *  run-harness _registerEngineConfig). */
+export const RUN_ROOT_KNOWN_SET = new Set(['CLAUDE.md', 'mcp.json', RUN_MANIFEST_FILE, '.claude', '.cursor', '.gemini', 'repos', 'work']);
 
 // The V3 CLAUDE.md fallback's delimiter-fenced section (§4.1). The begin marker
 // carries the pipelineId so two concurrent runs over the same real dir can never

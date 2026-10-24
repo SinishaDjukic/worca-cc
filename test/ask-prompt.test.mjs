@@ -480,6 +480,8 @@ const MUST_STATE = [
   [2, () => ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('   - Asking to switch')), 'fairly certain'],
   [2, () => ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('   - Asking to switch')), 'Continue without project'],
   [2, () => ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('   - Asking to switch')), 'Never switch on your own'],
+  [25, () => ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('25. Network proxy')), 'Never ask for, accept, store or repeat a proxy password'],
+  [25, () => ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('25. Network proxy')), 'never claim it was applied'],
 ];
 
 test('system rules: rule 1 advertises every model tool (compare against the mcp-stdio tools/list names, minus the W20-gated script writers), rules are numbered 1–22 with no agent key, and SANDBOX_NOTE forbids sub-agent memory/proposal/script writes', async () => {
@@ -488,7 +490,7 @@ test('system rules: rule 1 advertises every model tool (compare against the mcp-
       // Every conditional family on but web (renderWebSection names those): the list
       // test/ask-mcp-stdio.test.mjs pins name for name on the real child.
       const served = createAskTools({ limits: ASK_LIMITS, redact: (s) => s, scripts: { enabled: true },
-        models: {}, clones: {}, projectChanges: {}, workspaceChanges: {}, actions: {}, chatActions: {}, composer: {}, scopeSwitch: {}, listPresets: () => [], showFiles: {} }).list().map((t) => t.name);
+        models: {}, clones: {}, projectChanges: {}, workspaceChanges: {}, actions: {}, chatActions: {}, composer: {}, scopeSwitch: {}, listPresets: () => [], showFiles: {}, proxy: {} }).list().map((t) => t.name);
       const rule1 = ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('1. '));
       const listed = rule1.slice(rule1.indexOf('(') + 1, rule1.indexOf(')')).split(', ');
       const elsewhere = ['propose_run', 'propose_workflow', 'save_script', 'test_script'];
@@ -930,4 +932,9 @@ test('Ask proposes graphs and drafts like the composer: rule 11 teaches build_wo
   assert.ok(Buffer.byteLength(on, 'utf8') <= SCRIPTS_SECTION_MAX_BYTES, `${Buffer.byteLength(on, 'utf8')} bytes`);
   assert.equal(renderScriptsSection({ runtimes: ['node', 'shell'], composer: true, edits: true }).includes('save_script'), false, 'the Workflows chat never saves');
   assert.ok(SANDBOX_NOTE.includes('Never call build_workflow, draft_agent or draft_script yourself'));
+});
+
+test('the commands section asks for a short summary on run_command (#911)', () => {
+  assert.match(renderCommandsSection(), /summary/);
+  assert.match(renderCommandsSection(), /under 80 characters/);
 });

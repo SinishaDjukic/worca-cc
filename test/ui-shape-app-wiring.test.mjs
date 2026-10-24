@@ -354,7 +354,7 @@ test('#feature/feat_1 fetches the feature and renders the page view', async () =
   const { page } = await openFeaturePage({ server });
   assert.deepEqual(server.gets, ['feat_1', 'feat_1'], 'the replaced-id lookup (F47), then the Shaper view');
   assert.ok(page.querySelector('.gpage .gpage-overview .shape-feature'));
-  assert.equal(page.querySelectorAll('.gpage-card .run-status-text').length, 1, 'one status line: the group model\'s');
+  assert.equal(page.querySelectorAll('.gpage-card .run-status-word').length, 1, 'one status line: the group model\'s');
   assert.equal(page.querySelector('.shape-feature-head'), null, 'the Shaper view draws no head');
 });
 
@@ -417,11 +417,11 @@ test('the page\'s ask host survives a repaint; a state frame repaints the line w
   await ctx.settle(6);
   assert.equal(server.gets.length, 3, 'the replaced-id lookup, the first view, the repaint');
   assert.equal(page.querySelector('.gpage-card .gpage-question .qpanel'), qp, 'the same panel: a typed answer survives');
-  const line = page.querySelector('.gpage-card .run-status-text');
+  const line = page.querySelector('.gpage-card .run-status-word');
   line.textContent = 'stale';
   ctx.dispatch({ type: 'state', runId: 'r2', status: 'running' });
   await ctx.settle(4);
-  assert.notEqual(page.querySelector('.gpage-card .run-status-text').textContent, 'stale',
+  assert.notEqual(page.querySelector('.gpage-card .run-status-word').textContent, 'stale',
     'the state frame repainted the group model\'s line (scheduleGroupPagePaint)');
   assert.equal(server.gets.length, 3, 'a state frame does not refetch the feature');
 });

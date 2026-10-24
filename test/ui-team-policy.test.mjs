@@ -381,14 +381,20 @@ test('New pipeline: MCP servers paints under Guardrails; an unticked membership 
   const CONFIG = { config: { steps: { planner: { model: 'gw-gpt' } }, customModels: [] }, models: [], efforts: [], branches: [], workspaces: [], agents: [], channels: [], plugins: [], marketplaces: [] };
   let previewFails = false;
   const { doc, go, settle, window, fetchCalls } = await boot({ fetchHandler: (u) => (u === '/api/mcp/preview' ? (previewFails ? json({ error: 'boom' }, 500) : json(PREVIEW)) : u.startsWith('/api/config') ? json(CONFIG) : null) });
+  // The preview paints behind a debounce that every late load restarts: wait for the refetch, not a fixed time.
+  const previews = () => fetchCalls.filter((c) => c.url === '/api/mcp/preview').length;
+  const nextPreview = async (n) => {
+    for (let i = 0; i < 250 && previews() === n; i++) await new Promise((r) => setTimeout(r, 20));
+    await settle();
+  };
   await go('new');
   await settle();
   assert.equal(doc.getElementById('mcpRunsField').hidden, true, 'no target yet');
   const sel = doc.getElementById('projectSelect');
   sel.value = PROJECT;
+  const before = previews();
   sel.dispatchEvent(new window.Event('change', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 200));
-  await settle();
+  await nextPreview(before);
   assert.equal(doc.getElementById('mcpRunsField').hidden, false);
   assert.equal(doc.getElementById('mcpRunsLabel').textContent, '2 of 2 MCP servers');
   assert.deepEqual(JSON.parse(fetchCalls.findLast((c) => c.url === '/api/mcp/preview').opts.body), { target: { projectKey: 'gateway-00000001' }, models: ['gw-gpt'], engine: 'claude' }, 'the form\'s models set the preview\'s tool-name limit, its engine the set skills\' names');
@@ -403,9 +409,9 @@ test('New pipeline: MCP servers paints under Guardrails; an unticked membership 
   assert.ok(fetchCalls.some((c) => c.url.includes('/api/policy/notes') && new URL(c.url, 'http://x').searchParams.get('mcpOptOut') === 'billing|manual:pg'));
   // A failed preview refetch hides the control but keeps the opt-out (the server drops unknown entries).
   const repaint = async () => {
+    const n = previews();
     sel.dispatchEvent(new window.Event('change', { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 200));
-    await settle();
+    await nextPreview(n);
   };
   previewFails = true;
   await repaint();

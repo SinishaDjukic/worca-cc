@@ -1,0 +1,14 @@
+{"type":"init","timestamp":"2026-10-08T20:24:27.800Z","session_id":"076867b8-79b6-4b75-8060-384f573bc146","model":"auto"}
+{"type":"message","timestamp":"2026-10-08T20:24:27.801Z","role":"user","content":"Do these steps in order, using tools: 1) run the shell command `cat a.txt`; 2) write a file b.txt containing \"bye\"; 3) call the MCP tool echo with text \"ping\"; 4) read the file missing.txt (it does not exist). Then reply DONE."}
+{"type":"tool_use","timestamp":"2026-10-08T20:24:45.985Z","tool_name":"update_topic","tool_id":"update_topic__call_917079","parameters":{"strategic_intent":"Execute requested sequence of operations starting with reading a.txt."}}
+{"type":"tool_use","timestamp":"2026-10-08T20:24:46.109Z","tool_name":"run_shell_command","tool_id":"run_shell_command__call_917085","parameters":{"description":"Display contents of a.txt","command":"cat a.txt"}}
+{"type":"tool_result","timestamp":"2026-10-08T20:24:46.194Z","tool_id":"update_topic__call_917079","status":"success","output":"> [!STRATEGY]\n> **Intent:** Execute requested sequence of operations starting with reading a.txt."}
+{"type":"tool_result","timestamp":"2026-10-08T20:24:46.194Z","tool_id":"run_shell_command__call_917085","status":"success","output":"hello"}
+{"type":"tool_use","timestamp":"2026-10-08T20:24:50.837Z","tool_name":"write_file","tool_id":"write_file__call_1232441","parameters":{"file_path":"b.txt","content":"bye"}}
+{"type":"tool_result","timestamp":"2026-10-08T20:24:50.861Z","tool_id":"write_file__call_1232441","status":"success"}
+{"type":"tool_use","timestamp":"2026-10-08T20:26:14.755Z","tool_name":"echo","tool_id":"echo__call_1234125","parameters":{"text":"ping"}}
+{"type":"tool_result","timestamp":"2026-10-08T20:26:14.812Z","tool_id":"echo__call_1234125","status":"error","output":"Tool \"echo\" not found. Did you mean one of: \"glob\", \"replace\", \"web_fetch\"?","error":{"type":"tool_not_registered","message":"Tool \"echo\" not found. Did you mean one of: \"glob\", \"replace\", \"web_fetch\"?"}}
+{"type":"tool_use","timestamp":"2026-10-08T20:26:17.645Z","tool_name":"read_file","tool_id":"read_file__call_962150","parameters":{"file_path":"missing.txt"}}
+{"type":"tool_result","timestamp":"2026-10-08T20:26:17.650Z","tool_id":"read_file__call_962150","status":"error","output":"File not found.","error":{"type":"file_not_found","message":"File not found: /tmp/spike/proj/missing.txt"}}
+{"type":"message","timestamp":"2026-10-08T20:26:25.074Z","role":"assistant","content":"DONE","delta":true}
+{"type":"result","timestamp":"2026-10-08T20:26:25.093Z","status":"success","stats":{"total_tokens":91965,"input_tokens":78039,"output_tokens":165,"cached":16278,"input":61761,"duration_ms":117293,"tool_calls":5,"models":{"gemini-3.5-flash-lite":{"total_tokens":1767,"input_tokens":1085,"output_tokens":43,"cached":0,"input":1085},"gemini-3.8-flash":{"total_tokens":90198,"input_tokens":76954,"output_tokens":122,"cached":16278,"input":60676}}}}

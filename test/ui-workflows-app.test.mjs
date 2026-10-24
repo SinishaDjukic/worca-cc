@@ -391,7 +391,8 @@ test('#workflows/<id> of no saved workflow: one error toast, the hash normalised
   const said = [...w.document.querySelectorAll('#toasts > .toast')].filter((t) => t.textContent.includes('wf_gone'));
   assert.equal(said.length, 1, 'said once');
   assert.equal(lastToast(w.document).tone, 'err');
-  assert.match(lastToast(w.document).title, /^Could not open workflow "wf_gone"/);
+  assert.equal(lastToast(w.document).title, 'Could not open the workflow', 'a short static title');
+  assert.match(lastToast(w.document).detail, /^"wf_gone" was deleted or renamed/, 'the id is in the detail');
   assert.equal(JSON.stringify(c.template()), before, 'the canvas is unchanged');
 });
 
@@ -435,7 +436,8 @@ test('#workflows/<id> opens any id the server keeps; a head that is no id says s
       const said = [...w.document.querySelectorAll('#toasts > .toast')].filter((t) => t.textContent.includes('no%20such!'));
       assert.equal(said.length, 1, 'said once');
       assert.equal(lastToast(w.document).tone, 'err');
-      assert.match(lastToast(w.document).title, /^Could not open "no%20such!"/);
+      assert.equal(lastToast(w.document).title, 'Could not open the workflow');
+      assert.match(lastToast(w.document).detail, /^"no%20such!" is not a workflow id/);
       assert.equal(JSON.stringify(c.template()), before, 'the canvas is unchanged');
     } },
   ]);

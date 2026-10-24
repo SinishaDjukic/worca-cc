@@ -140,7 +140,7 @@ test('the Ship card: the waiting line until every run is done, no buttons; the r
   assert.deepEqual(btns.map((b) => b.textContent), ['Create PR'], 'no Not now on the group page');
   assert.ok(el.querySelector('[data-act="ship-create"]').classList.contains('btn-primary'));
   assert.equal([...el.querySelectorAll('button')].filter((b) => /Stacked PRs|One PR/.test(b.textContent)).length, 0);
-  assert.equal(el.querySelector('.ask-shipcard-stats').textContent, 'Ready to ship · 3 runs · 12 files · +840 \u2212120');
+  assert.equal(el.querySelector('.ask-shipcard-stats').textContent, '3 runs · 12 files · +840 \u2212120');
   assert.match(el.querySelector('.ask-shipcard-why').textContent, /840 lines: one PR is easier to review/);
   const acts = d.acts.length;
   el.querySelector('[data-act="ship-create"]').click(); await flush();
@@ -149,11 +149,11 @@ test('the Ship card: the waiting line until every run is done, no buttons; the r
   setShipDialogOpener(null);
 });
 
-test('the Ship card once shipped: Shipped as stacked PRs with View PR on the last run\'s PR', () => {
+test('the Ship card once shipped: As stacked PRs with View PR on the last run\'s PR', () => {
   const done = { ...PAGE(), status: 'done', done: 3, slices: PAGE().slices.map((s) => ({ ...s, state: 'done', pr: s.pr && { ...s.pr, draft: false } })) };
   const shipped = mount({ ...done, ship: { ready: false, mode: 'stacked', prUrl: null, lastPrUrl: 'https://github.com/o/r/pull/2',
     result: { mode: 'stacked', prUrl: 'https://github.com/o/r/pull/2', closed: 0, release: null } } }, PLANS()).el;
-  assert.match(shipped.querySelector('.ask-shipcard-done').textContent, /^Shipped as stacked PRs · View PR$/);
+  assert.match(shipped.querySelector('.ask-shipcard-done').textContent, /^As stacked PRs · View PR$/);
   assert.equal(shipped.querySelector('.ask-shipcard-pr').getAttribute('href'), 'https://github.com/o/r/pull/2');
   assert.equal(shipped.querySelectorAll('button[data-act^="ship-"]').length, 0);
 });

@@ -425,7 +425,10 @@
                         <option value="codex">Codex</option>
                         <option value="copilot">Copilot</option>
                         <option value="cursor">Cursor</option>
+                        <option value="gemini">Gemini CLI</option>
+                        <option value="goose">Goose</option>
                         <option value="opencode">OpenCode</option>
+                        <option value="qwen">Qwen Code</option>
                       </select>
                     </div>
                   </div>
@@ -763,8 +766,9 @@
           </div>
 
           <!-- The live-log bar (filters + auto-scroll switch), cloned by the run page's Logs tab and by History. -->
+          <!-- Its Summaries / Raw switch (#911 slice 3, flag commandSummaries): wired by a delegated click in app.js (log-view.mjs). -->
           <template id="log-bar-tpl">
-            <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" data-min-level="expert" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" data-min-level="expert" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" data-min-level="expert" title="Filter by step" aria-label="Filter by step"></select><select class="log-f log-f-cycle" data-min-level="expert" title="Filter by cycle" aria-label="Filter by cycle"></select><button type="button" class="log-f log-f-exec btn btn-sm" hidden title="Showing one execution. Click to clear"><span class="lfe-text"></span><span class="lfe-x" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7 7 17"></path></svg></span></button><input type="search" class="log-f log-search" placeholder="search" title="Search the log text" aria-label="Search the log text"><button type="button" class="log-f log-copy btn btn-sm btn-quiet" title="Copy the visible log lines" aria-label="Copy the visible log lines">copy</button></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
+            <div class="run-log-head"><span class="ll-label">Live log</span><div class="log-filters"><select class="log-f log-f-source" data-min-level="expert" title="Filter by source" aria-label="Filter by source"></select><select class="log-f log-f-level" data-min-level="expert" title="Filter by level" aria-label="Filter by level"></select><select class="log-f log-f-step" data-min-level="expert" title="Filter by step" aria-label="Filter by step"></select><select class="log-f log-f-cycle" data-min-level="expert" title="Filter by cycle" aria-label="Filter by cycle"></select><button type="button" class="log-f log-f-exec btn btn-sm" hidden title="Showing one execution. Click to clear"><span class="lfe-text"></span><span class="lfe-x" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M7 7l10 10M17 7 7 17"></path></svg></span></button><span class="seg seg-sm log-view-seg" role="group" aria-label="Show commands as" data-flag="commandSummaries"><button type="button" data-log-view="summary" aria-pressed="true" class="on" title="Show what each command does">Summaries</button><button type="button" data-log-view="raw" aria-pressed="false" title="Show the commands as run">Raw</button></span><input type="search" class="log-f log-search" placeholder="search" title="Search the log text" aria-label="Search the log text"><button type="button" class="log-f log-copy btn btn-sm btn-quiet" title="Copy the visible log lines" aria-label="Copy the visible log lines">copy</button></div><div class="switch-row"><div class="switch on autoscroll" role="switch" aria-checked="true" tabindex="0"></div><span class="txt">Auto-scroll</span></div></div>
           </template>
 
           <!-- clone target for the live run in the pane (#running/<runId>) -->
@@ -2449,6 +2453,8 @@
               <!-- Scripts workbench W20: the chat's save_script / test_script switch. Body
                    rendered by chat-settings-view.mjs; saved with this card's Save button. -->
               <div class="field drow drow-stack" id="ask-script-tools-host"></div>
+              <!-- Summarise commands (#911, flag commandSummaries): rendered by chat-settings-view.mjs; saved with this card's Save. -->
+              <div class="field drow drow-stack" id="ask-summaries-host" data-flag="commandSummaries"></div>
               <!-- Ask next-prompt suggestions (ghost text after each reply): rendered by chat-settings-view.mjs; saved with
                    this card's Save button. -->
               <div class="field drow drow-stack" id="ask-suggestions-host"></div>

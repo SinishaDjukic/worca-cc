@@ -65,7 +65,7 @@ test('controller: a card goes live from the run store, repaints on frames (never
   await settle();
   assert.equal(built.el.querySelector('.chat-rc-status').dataset.state, 'ready');
   assert.deepEqual(fetches, ['/api/ask/runs/abcd1234'], 'the finished run\'s facts, once');
-  assert.equal(built.el.querySelector('.chat-rc-res-title').textContent, 'Ready to ship', 'REST facts merged into the live snapshot');
+  assert.equal(built.el.querySelector('.chat-rc-res-title').textContent, 'Clean: no blocking issues flagged', 'REST facts merged into the live snapshot');
   assert.equal(built.el.querySelector('.chat-rc-file-path').textContent, 'a.mjs');
   store.poke('run-uuid-1', 'state');
   await settle();
@@ -377,7 +377,7 @@ test('controller: a REST read taken before a resume (interrupted) never paints o
       store.poke(null, 'hello');
       await settle();
       assert.equal(built.el.dataset.runStatus, 'done');
-      assert.equal(built.el.querySelector('.chat-rc-res-title').textContent, 'Ready to ship');
+      assert.equal(built.el.querySelector('.chat-rc-res-title').textContent, 'Clean: no blocking issues flagged');
       assert.equal(fetches.length, 2);
       ctl.destroy();
     } },

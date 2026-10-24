@@ -54,7 +54,7 @@ test('renderEngineSection: a row per role and job, each engine\'s models only', 
     'run.engine': { own: 'codex', inherited: { value: 'claude', source: 'default' } },
   }, jobs: { claude: [], codex: ['title', 'workspaceScan'] } });
   assert.equal(host.querySelector('[data-setting="run.engine"] .inherit-input').value, 'codex');
-  assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'copilot', 'cursor', 'opencode']);
+  assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen']);
   const codexPlan = host.querySelector('.engine-card[data-engine="codex"] [data-setting="models.codex.steps.planner"] .inherit-model');
   assert.deepEqual([...codexPlan.options].map((o) => o.value), ['', 'gpt-5.5']);
   assert.ok(host.querySelector('[data-setting="models.codex.workspaceScan"]'));
@@ -67,8 +67,8 @@ test('renderEngineSection: the Cursor card has step rows, no helper rows, its ow
   const host = doc.getElementById('h');
   renderEngineSection(host, { level: 'user', roles: STEPS, catalog: [...CATALOG, { id: 'my-cursor-m', label: 'my-cursor-m', engine: 'cursor', efforts: [], custom: 'global' }],
     fields: {}, jobs: { claude: [], codex: ['title'], cursor: [] } });
-  assert.deepEqual([...host.querySelectorAll('[data-setting="run.engine"] option')].map((o) => o.value).filter(Boolean), ['claude', 'codex', 'copilot', 'cursor', 'opencode']);
-  assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'copilot', 'cursor', 'opencode']);
+  assert.deepEqual([...host.querySelectorAll('[data-setting="run.engine"] option')].map((o) => o.value).filter(Boolean), ['claude', 'codex', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen']);
+  assert.deepEqual([...host.querySelectorAll('.engine-card')].map((c) => c.dataset.engine), ['claude', 'codex', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen']);
   const copilot = host.querySelector('.engine-card[data-engine="copilot"]');
   assert.ok(copilot.querySelector('[data-setting="models.copilot.steps.planner"]'), 'Copilot has step rows');
   assert.match(copilot.querySelector('.engine-helpers .engine-slot-rest').textContent, /^Copilot runs its helper jobs .* on its own default model\.$/);
@@ -85,6 +85,24 @@ test('renderEngineSection: the Cursor card has step rows, no helper rows, its ow
   assert.equal(host.querySelector('.engine-card[data-engine="claude"] .engine-card-status'), null);
   assert.deepEqual(enginePatchToSettingsBody({ 'models.cursor.steps.planner': { model: 'my-cursor-m' } }), { stepModels: { cursor: { planner: { model: 'my-cursor-m' } } } });
 });
+
+for (const [engine, label] of [['gemini', 'Gemini CLI'], ['qwen', 'Qwen Code']]) {
+  test(`renderEngineSection: the ${label} card is Cursor's shape: steps only, its default label, the Claude-helpers note`, () => {
+    const doc = new JSDOM('<!doctype html><div id="h"></div>').window.document;
+    const host = doc.getElementById('h');
+    renderEngineSection(host, { level: 'user', roles: STEPS, catalog: [...CATALOG, { id: 'm1', label: 'm1', engine, efforts: [], custom: 'global' }], fields: {} });
+    const card = host.querySelector(`.engine-card[data-engine="${engine}"]`);
+    assert.equal(card.querySelector('h3').firstChild.textContent, label);
+    assert.equal(card.querySelector('h3 .beta-badge')?.textContent, 'Beta');
+    const plan = card.querySelector(`[data-setting="models.${engine}.steps.planner"] .inherit-model`);
+    assert.deepEqual([...plan.options].map((o) => o.value), ['', 'm1']);
+    assert.match(plan.options[0].textContent, new RegExp(`${label}'s default model`));
+    assert.equal(card.querySelector('.engine-helpers .engine-slot'), null, 'no helper rows');
+    assert.equal(card.querySelector('.engine-helpers .engine-slot-rest').textContent,
+      `${label} runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. See the Claude tab.`);
+    assert.deepEqual(enginePatchToSettingsBody({ [`models.${engine}.steps.planner`]: { model: 'm1' } }), { stepModels: { [engine]: { planner: { model: 'm1' } } } });
+  });
+}
 
 test('renderAskEngineSection offers no Cursor engine', () => {
   const doc = new JSDOM('<!doctype html><div id="h"></div>').window.document;
@@ -205,6 +223,36 @@ test('the Models page: Run naming is a Claude Helper jobs row only while smartRu
   applyFlags({ smartRunNaming: false }, doc);
   for (let i = 0; i < 8; i++) await tick();
   assert.equal(doc.querySelector(sel), null, 'flag off again: the row is gone');
+});
+
+test('enginePatchToSettingsBody: Command summaries saves onto commandSummaryModel (Claude only)', () => {
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.utility.commandSummary': { model: 'claude-opus-5-5', effort: 'high' } }),
+    { commandSummaryModel: { model: 'claude-opus-5-5', effort: 'high' } });
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.claude.utility.commandSummary': null }), { commandSummaryModel: null });
+  assert.deepEqual(enginePatchToSettingsBody({ 'models.codex.utility.commandSummary': { model: 'gpt-5.5' } }), {});
+});
+
+test('the Models page: Command summaries is a Claude Helper jobs row while commandSummaries is on, the cheapest ready model by default', async () => {
+  const { doc, window, posts, tick } = await boot({ commandSummaryModel: { model: null, effort: null },
+    commandSummaryModelEffective: { model: 'claude-opus-5-5', effort: 'medium', source: 'auto', stale: null } }, { hash: 'models' });
+  const sel = '[data-setting="models.claude.utility.commandSummary"]';
+  applyFlags({ commandSummaries: false }, doc);
+  for (let i = 0; i < 8; i++) await tick();
+  assert.equal(doc.querySelector(sel), null, 'flag off: no row');
+  applyFlags({ commandSummaries: true }, doc);
+  for (let i = 0; i < 8; i++) await tick();
+  const claude = doc.querySelector('.engine-card[data-engine="claude"]');
+  const row = claude.querySelector(`.engine-helpers ${sel}`);
+  assert.ok(row);
+  assert.match(row.textContent, /Command summaries/);
+  assert.ok([...claude.querySelectorAll('.engine-helpers .engine-slot-add option')].some((o) => o.textContent === 'Command summaries'), 'listed under Override a helper job');
+  assert.equal(row.querySelector('.inherit-model').options[0].textContent, 'Opus 5.5 (default)', 'the cheapest ready Claude model, selected by default');
+  assert.equal(doc.querySelector(`[data-setting*=".commandSummary"]:not(${sel})`), null, 'Claude only');
+  const model = row.querySelector('.inherit-model');
+  model.value = 'claude-opus-5-5'; model.dispatchEvent(new window.Event('change', { bubbles: true }));
+  doc.getElementById('engineSettingsSave').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.deepEqual(posts.at(-1), { commandSummaryModel: { model: 'claude-opus-5-5', effort: '' } });
 });
 
 test('opening the Models page directly paints the Engines card (a link or a reload lands there)', async () => {

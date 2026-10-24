@@ -16,7 +16,7 @@ const trackDom = useDomRelease(afterEach);
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 
-async function bootLive({ resumeFails = false, hooks = null } = {}) {
+async function bootLive({ resumeFails = false, hooks = null, beforeImport = null } = {}) {
   let lastWs = null;
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
   const { window } = dom;
@@ -50,6 +50,7 @@ async function bootLive({ resumeFails = false, hooks = null } = {}) {
   }
   globalThis.window = window; globalThis.document = window.document;
   if (hooks) window.__worcaTestHooks = { ...hooks };
+  beforeImport?.(window);
   await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
   await new Promise((r) => setTimeout(r, 0));
   (lastWs._listeners.open || []).forEach((fn) => fn());
@@ -196,4 +197,73 @@ test('MIN-37: per-node cycle ordinals — interleaved nodes draw no rule, a re-r
       assert.equal(seps[0].textContent, 'Cycle 2');
     } },
   ]);
+});
+
+const BASH = { source: 'implementer', level: 'debug', ts: Date.now(),
+  text: '→ Bash node --test test/naming.test.mjs', desc: 'Run the naming tests' };
+const CODEX = { source: 'implementer', level: 'debug', ts: Date.now(), text: "→ Bash /bin/zsh -lc 'cat a.txt'" };
+const READ = { source: 'implementer', level: 'debug', ts: Date.now(), text: '→ Read src/a.js' };
+const msgs = (pane) => [...pane.querySelectorAll('.log-line .log-msg')].map((m) => m.textContent);
+
+test('commandSummaries on: Summaries shows the Bash description, Raw the command on the same line; search matches the command; Codex and Read stay raw', async () => {
+  const ctx = await bootLive();
+  ctx.recv({ type: 'flags', flags: { commandSummaries: true } });
+  const { np, r, sec, pane } = await openLogs(ctx, 'r1');
+  ctx.recv({ type: 'log', runId: 'r1', ...BASH });   // the WS frame path: onLog must keep desc
+  np.onLog(r, CODEX);
+  np.onLog(r, READ);
+  await settle();
+  assert.deepEqual(msgs(pane), ['→ Run the naming tests', "→ Bash /bin/zsh -lc 'cat a.txt'", '→ Read src/a.js']);
+  const seg = sec.querySelector('.log-view-seg');
+  assert.equal(seg.querySelector('[data-log-view="summary"]').getAttribute('aria-pressed'), 'true');
+
+  const first = pane.querySelector('.log-line .log-msg');
+  seg.querySelector('[data-log-view="raw"]').click();
+  assert.equal(pane.querySelector('.log-line .log-msg'), first, 'same line, swapped in place');
+  assert.equal(first.textContent, '→ Bash node --test test/naming.test.mjs');
+  assert.equal(seg.querySelector('[data-log-view="raw"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(ctx.window.localStorage.getItem('worca-cc.logs.view'), 'raw');
+
+  seg.querySelector('[data-log-view="summary"]').click();
+  const box = sec.querySelector('.log-search');
+  box.value = 'naming.test';
+  box.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  await new Promise((res) => setTimeout(res, 200));   // LOG_SEARCH_DEBOUNCE_MS is 120
+  assert.deepEqual(msgs(pane), ['→ Run the naming tests']);
+  assert.notEqual(pane.dataset.empty, '1');
+});
+
+test('commandSummaries off: lines read as today and #flag-gates hides the switch', async () => {
+  const ctx = await bootLive();
+  ctx.recv({ type: 'flags', flags: { commandSummaries: false } });   // writes #flag-gates
+  const { sec, pane } = await openLogs(ctx, 'r1');
+  ctx.recv({ type: 'log', runId: 'r1', ...BASH });
+  await settle();
+  assert.deepEqual(msgs(pane), ['→ Bash node --test test/naming.test.mjs']);
+  assert.equal(sec.querySelector('.log-view-seg').dataset.flag, 'commandSummaries');
+  assert.match(ctx.window.document.getElementById('flag-gates').textContent,
+    /\[data-flag~="commandSummaries"\]\{display:none!important\}/);
+});
+
+test('turning commandSummaries off and on repaints the open pane without a reload', async () => {
+  const ctx = await bootLive();
+  ctx.recv({ type: 'flags', flags: { commandSummaries: true } });
+  const { pane } = await openLogs(ctx, 'r1');
+  ctx.recv({ type: 'log', runId: 'r1', ...BASH });
+  await settle();
+  assert.deepEqual(msgs(pane), ['→ Run the naming tests']);
+  ctx.recv({ type: 'flags', flags: { commandSummaries: false } });
+  assert.deepEqual(msgs(pane), ['→ Bash node --test test/naming.test.mjs']);
+  ctx.recv({ type: 'flags', flags: { commandSummaries: true } });
+  assert.deepEqual(msgs(pane), ['→ Run the naming tests']);
+});
+
+test('a stored Raw choice is read on the next load', async () => {
+  const ctx = await bootLive({ beforeImport: (w) => w.localStorage.setItem('worca-cc.logs.view', 'raw') });
+  ctx.recv({ type: 'flags', flags: { commandSummaries: true } });
+  const { pane, sec } = await openLogs(ctx, 'r1');
+  ctx.recv({ type: 'log', runId: 'r1', ...BASH });
+  await settle();
+  assert.deepEqual(msgs(pane), ['→ Bash node --test test/naming.test.mjs']);
+  assert.equal(sec.querySelector('[data-log-view="raw"]').getAttribute('aria-pressed'), 'true');
 });
