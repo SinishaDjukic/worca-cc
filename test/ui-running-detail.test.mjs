@@ -10,6 +10,7 @@ import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
+import { ASK_IN_CHAT } from '../ui/public/run-head.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -386,7 +387,7 @@ test('a recovery-patch artifact adds the alternate-recovery link once', async ()
   await settle(window);
 
   // The facts list's Kept work row carries the recovery patch.
-  const patchLinks = () => [...window.document.querySelectorAll('#run-detail .rd-kv [data-fact="kept"] a.rd-fact-link')].filter((a) => a.textContent === 'Download patch');
+  const patchLinks = () => [...window.document.querySelectorAll('#run-detail .rd-route .rd-route-second a.rd-fact-link')].filter((a) => a.textContent === 'Download patch');
   let links = patchLinks();
   assert.equal(links.length, 1, 'the link renders off the recorded artifact');
   assert.match(links[0].getAttribute('href'), /\/api\/runs\/p1\/recovery-patch/);
@@ -1149,8 +1150,9 @@ test('a finished run: its headline, the facts, what to check, Create pull reques
   assert.deepEqual([...pr.classList], ['btn', 'btn-primary', 'rd-create-pr']);
   assert.equal(pr.querySelector('.ic').style.width, '16px');
   assert.equal(pr.closest('.rd-head-acts').parentElement, rd.querySelector('.rd-sheet-head'));
-  assert.deepEqual([...rd.querySelectorAll('.rd-track .rd-track-step')].map((x) => x.className.replace('rd-track-step ', '')),
-    ['is-current is-ready', 'is-future', 'is-future']);
+  const route = rd.querySelector('.rd-route');
+  assert.deepEqual([...route.querySelectorAll('.rd-route-row .rd-route-dot')].map((d) => d.getAttribute('aria-label')), ['Done', 'Not yet', 'Not yet']);
+  assert.equal(route.querySelectorAll('.rd-route-row')[1].querySelector('.rd-route-second').textContent, 'Not opened yet · Create PR from the button above');
   assert.equal(rd.querySelector('.rd-actions [data-model-action="ship"]'), null, 'no second Create PR in the bar');
   assert.equal(result.querySelector('.rd-follow-up'), null, 'no follow-up CTA on the card');
   const after = rd.querySelector('.rd-bar .rd-after');
@@ -1185,7 +1187,8 @@ test('a finished run whose branch has only a closed pull request: Create pull re
   const pr = rd.querySelector('.rd-head-acts .rd-pr-slot .rd-create-pr');
   assert.ok(pr, 'a closed PR still offers Create pull request');
   assert.equal(rd.querySelector('.rd-sheet .run-status').dataset.line, 'Ready to ship · the PR was closed');
-  assert.ok(rd.querySelectorAll('.rd-track .rd-track-step')[1].classList.contains('is-closed'));
+  // Folded (a fresh store's default): the end state's one line.
+  assert.equal(rd.querySelector('.rd-route .rd-route-fold.is-closed').textContent, 'o/r#7 closed without merging');
   click(window, pr);
   assert.equal(window.location.hash, `#history/${KEY}/p1`);
   window.dispatchEvent(new window.Event('hashchange'));
@@ -1232,7 +1235,7 @@ const fail500 = () => Promise.resolve({ ok: false, status: 500, json: async () =
 const itemsOf = (menu) => [...menu.querySelectorAll('[role^="menuitem"]')];
 const labelOf = (b) => (b.querySelector('b') || b.querySelector('.wfv-menu-l') || b).textContent;
 
-test('slice 3: an open PR is View PR │ ▾ in the card head and the Pull request fact; no PR bar, no View PR in the bar', async () => {
+test('slice 3: an open PR is View PR │ ▾ in the card head and the route\'s pull request row; no PR bar, no View PR in the bar', async () => {
   const { scr, calls } = await prGlance();
   assert.equal(scr.querySelector('.rd-pr-box'), null, 'no PR bar');
   const main = scr.querySelector('.rd-head-acts .rd-pr-slot .btn-split.mini.rd-pr-split > a[data-rd-cta]');
@@ -1247,23 +1250,26 @@ test('slice 3: an open PR is View PR │ ▾ in the card head and the Pull reque
   assert.equal(caret.getAttribute('aria-haspopup'), 'menu');
   assert.equal(caret.getAttribute('aria-expanded'), 'false');
   assert.equal(scr.querySelector('.rd-bar-end .rd-actions [data-model-action="open-pr"]'), null, 'the bar has no View PR');
-  const steps = [...scr.querySelectorAll('.rd-track .rd-track-step')];
-  assert.deepEqual(steps.map((x) => x.className.replace('rd-track-step ', '')), ['is-done', 'is-current is-ready', 'is-future']);
-  assert.equal(steps[1].textContent, 'Pull request', 'the step carries its label only');
-  const chip = scr.querySelector('.rd-kv [data-fact="pr"] a.runs-pr');
-  assert.equal(chip.querySelector('.runs-pr-num').textContent, 'PR #781');
-  assert.equal(chip.querySelector('.runs-pr-word').textContent, 'Checks failing');
-  assert.equal(scr.querySelector('.rd-kv [data-fact="checks"] .rd-kv-v').textContent, '1 of 15 checks failed');
+  const rows = [...scr.querySelectorAll('.rd-route .rd-route-row')];
+  assert.deepEqual(rows.map((x) => x.className.replace('rd-route-row ', '').replace(' is-linked', '')), ['is-done', 'is-review', 'is-future']);
+  assert.equal(rows[1].getAttribute('aria-current'), 'step');
+  const link = rows[1].querySelector('.rd-route-place a.rd-fact-link');
+  assert.match(link.textContent, /#\d+$/);
+  assert.equal(link.target, '_blank');
+  assert.match(rows[1].querySelector('.rd-route-second').textContent, /1 of 15 checks failed/);
   assert.ok(calls.checks.length >= 1, 'the feed read the PR status');
   assert.equal(scr.querySelector('.rd-result [data-rd-cta]'), null, 'nothing PR-shaped under Results');
 });
 
-test('a live run\'s tracker reads Merged last, and shows no Merged fact until the work is in its base', async () => {
+test('a live run\'s route ends at its base branch, where the work lands once the pull request is merged; no fold', async () => {
   const ctx = await bootRunning();
   const rd = await openGlance(ctx, 'running/r1', { branch: { source: 'main', feature: 'worca-cc/rate-p1', worktreeDir: '/tmp/wt' } });
-  assert.equal(rd.querySelectorAll('.rd-track .rd-track-step').length, 3, 'a live git run paints the tracker');
-  assert.equal([...rd.querySelectorAll('.rd-track .rd-track-step')].at(-1).querySelector('.rd-track-label').textContent, 'Merged');
-  assert.equal(rd.querySelector('.rd-kv [data-fact="merged"]').hidden, true);
+  const R = rd.querySelector('.rd-route');
+  const rows = R.querySelectorAll('.rd-route-row');
+  assert.equal(rows.length, 3, 'a live git run paints the route');
+  assert.equal(rows[2].querySelector('.rd-route-place').textContent, 'main');
+  assert.equal(rows[2].querySelector('.rd-route-second').textContent, 'Lands here when the pull request is merged');
+  assert.equal(R.querySelector('.rd-route-fold'), null);
 });
 
 test('needle (c): at Advanced and Expert the ▾ lists one Watch switch, whose click POSTs /api/pr/watch', async () => {
@@ -1283,7 +1289,7 @@ test('needle (c): at Advanced and Expert the ▾ lists one Watch switch, whose c
   } })));
 });
 
-test('slice 3: at Simple an in-review run still shows View PR, the ▾ has no Watch, and the tracker has 3 steps', async () => {
+test('slice 3: at Simple an in-review run still shows View PR, the ▾ has no Watch, and the route has 3 rows', async () => {
   // Passing checks, waiting for a review: the run is In review (failing checks would make it Needs you).
   const review = { checks: { state: 'success', failed: 0, total: 15 }, mergeable: 'MERGEABLE',
     status: { tone: 'wait', label: 'Review required' }, watch: { watching: false, status: 'idle' } };
@@ -1291,7 +1297,8 @@ test('slice 3: at Simple an in-review run still shows View PR, the ▾ has no Wa
   assert.equal(scr.querySelector('.rd-sheet .run-status').dataset.state, 'in-review');
   assert.equal(scr.querySelector('.rd-sheet .run-status').dataset.line, 'In review · waiting for a review');
   assert.ok(scr.querySelector('.rd-head-acts .rd-pr-split a[data-rd-cta]'), 'View PR at Simple');
-  assert.equal(scr.querySelectorAll('.rd-track .rd-track-step').length, 3);
+  assert.equal(scr.querySelectorAll('.rd-route .rd-route-row').length, 3);
+  assert.equal(scr.querySelector('.rd-route').hidden, false);
   assert.equal(scr.querySelector('.rd-actions [data-model-action="open-pr"]'), null);
   const m = await openMenu();
   assert.equal(m.querySelectorAll('[role="menuitemcheckbox"]').length, 0);
@@ -1377,7 +1384,7 @@ test('slice 3: conflicts offer Fix conflicts in the head and the ▾; Watch stop
       assert.equal(scr.querySelector('.rd-sheet .run-status').dataset.line, 'Needs you · conflicts with main');
       const fix = scr.querySelector('.rd-head-acts [data-head="fix-conflicts"]');
       assert.ok(fix && fix.classList.contains('btn-primary'));
-      assert.ok(scr.querySelectorAll('.rd-track .rd-track-step')[1].classList.contains('is-problem'));
+      assert.ok(scr.querySelectorAll('.rd-route .rd-route-row')[1].classList.contains('is-problem'));
       const m = await openMenu();
       assert.ok(itemsOf(m).some((b) => labelOf(b) === 'Fix conflicts'));
     } },
@@ -1389,7 +1396,7 @@ test('slice 3: conflicts offer Fix conflicts in the head and the ▾; Watch stop
       assert.ok(ask && ask.disabled);
       assert.equal(ask.title, "Ask for changes from the run's chat");
       assert.equal(scr.querySelector('.rd-head-acts [data-head="fix-conflicts"]'), null);
-      assert.match(scr.querySelector('.rd-kv [data-fact="watch"] .rd-kv-v').textContent, /Ask for changes from the run's chat/);
+      assert.equal(scr.querySelector('.rd-route .rd-route-second .is-line').textContent, ASK_IN_CHAT);
       const m = await openMenu();
       assert.equal(itemsOf(m).some((b) => labelOf(b) === 'Fix conflicts'), false);
     } },
@@ -1397,12 +1404,18 @@ test('slice 3: conflicts offer Fix conflicts in the head and the ▾; Watch stop
 });
 
 test('slice 3: a merged PR is View PR │ ▾ with the merge glyph, no checks fetch and no Watch', async () => {
-  const { scr, calls, openMenu } = await prGlance({ row: prRow('MERGED') });
+  const { ctx, scr, calls, openMenu } = await prGlance({ row: prRow('MERGED') });
   const main = scr.querySelector('.rd-head-acts .rd-pr-split > a[data-rd-cta]');
   assert.equal(main.textContent, 'View PR');
   assert.equal(main.querySelector(':scope > .ic svg').innerHTML, ICONS.merge);
   assert.deepEqual(calls.checks, [], 'no checks fetch');
-  assert.ok(scr.querySelectorAll('.rd-track .rd-track-step')[2].classList.contains('is-merged'));
+  ctx.window.localStorage.removeItem('worca-cc.run.showRoute');
+  assert.ok(scr.querySelector('.rd-route .rd-route-fold.is-merged'), 'folded: one merged line');
+  ctx.window.localStorage.setItem('worca-cc.run.showRoute', '1');
+  frame(ctx, { type: 'pipelines-changed' });
+  await settle(ctx.window, 10);
+  assert.ok(scr.querySelectorAll('.rd-route .rd-route-row')[2].classList.contains('is-merged'));
+  ctx.window.localStorage.removeItem('worca-cc.run.showRoute');
   const m = await openMenu();
   assert.equal(m.querySelectorAll('[role="menuitemcheckbox"]').length, 0, 'no Watch on a merged PR');
   assert.equal(itemsOf(m).some((b) => /Watch/.test(b.textContent)), false);
@@ -1437,9 +1450,10 @@ test('slice 3: a PR that merges while its page is open never gets its checks wor
   const rd = await openGlance(ctx);
   frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
   await settle(ctx.window, 10);
-  const row$ = (key) => rd.querySelector(`.rd-kv [data-fact="${key}"]`);
-  assert.ok(row$('watch').querySelector('.rd-fact-watch'), 'the open PR reads Watching');
-  assert.match(row$('checks').textContent, /3 of 15 checks running/);
+  const R = rd.querySelector('.rd-route');
+  const rows = () => R.querySelectorAll('.rd-route-row');
+  assert.ok(rows()[1].querySelector('button.rd-fact-watch'), 'the open PR reads Watching');
+  assert.match(rows()[1].querySelector('.rd-route-second').textContent, /3 of 15 checks running/);
   hold = true;
   frame(ctx, { type: 'pr-watch-changed', projectKey: row.projectKey, pipelineId: 'p1' });
   await settle(ctx.window, 4);
@@ -1447,15 +1461,13 @@ test('slice 3: a PR that merges while its page is open never gets its checks wor
   row.pr = { state: 'MERGED', url, number: 790 };
   frame(ctx, { type: 'pipelines-changed' });
   await settle(ctx.window, 10);
-  assert.ok(rd.querySelectorAll('.rd-track .rd-track-step')[2].classList.contains('is-merged'));
-  assert.equal(row$('watch').hidden, true, 'merged: no Watch');
-  assert.equal(row$('checks').hidden, true, 'merged: no Checks');
-  assert.equal(row$('merged').hidden, false, 'merged: the Merged fact names the base');
-  assert.equal(row$('merged').querySelector('.rd-page-branch-name').textContent, 'main');
+  assert.match(R.querySelector('.rd-route-fold').textContent, /^Merged into main · /, 'merged: the fold names the base');
+  assert.equal(R.querySelector('button.rd-fact-watch'), null, 'merged: no Watch');
+  assert.doesNotMatch(R.textContent, /checks running/, 'merged: no checks words');
   held.shift()();
   await settle(ctx.window, 10);
-  assert.equal(row$('watch').hidden, true, 'the late answer paints no Watch');
-  assert.equal(row$('checks').hidden, true, 'the late answer paints no checks words');
+  assert.equal(R.querySelector('button.rd-fact-watch'), null, 'the late answer paints no Watch');
+  assert.doesNotMatch(R.textContent, /checks running/, 'the late answer paints no checks words');
   hold = false;
   const before = reads;
   frame(ctx, { type: 'pr-watch-changed', projectKey: row.projectKey, pipelineId: 'p1' });
@@ -1463,10 +1475,10 @@ test('slice 3: a PR that merges while its page is open never gets its checks wor
   assert.equal(reads, before, 'a refresh reads no checks for a merged PR');
 });
 
-test('slice 3: a pr-watch-changed frame re-reads the PR and the Watch fact shows it fixing', async () => {
+test('slice 3: a pr-watch-changed frame re-reads the PR and the route\'s pull request row shows it fixing', async () => {
   let answer = { ...CHECKS, watch: { watching: true, status: 'idle' } };
   const { ctx, scr } = await prGlance({ checks: () => ok(answer) });
-  const watch = () => scr.querySelector('.rd-kv [data-fact="watch"] .rd-kv-v');
+  const watch = () => scr.querySelectorAll('.rd-route .rd-route-row')[1].querySelector('.rd-route-second');
   assert.equal(watch().querySelector('button.rd-fact-watch').textContent, 'Watching');
   answer = { ...CHECKS, watch: { watching: true, status: 'fixing', activePipelineId: 'fx1' } };
   frame(ctx, { type: 'pr-watch-changed', projectKey: KEY, pipelineId: 'p1' });
@@ -2057,4 +2069,46 @@ test('slice 2, live: a running run lists Away mode in ⋯, and no Archive or Rep
   const menu = doc.querySelector('body > .wfv-menu');
   assert.match(menu.textContent, /Away mode on this run/);
   assert.deepEqual([...menu.querySelectorAll('.menu-item')].map(rdLabel).filter((l) => l === 'Archive' || l === 'Report this run'), []);
+});
+
+// s2 (D2, D7): the route of a live chain run lands in the chain's base, never in Run 1's branch; the route adds no
+// second chain lookup, and a failed one ends the pending state.
+const CHAIN_OF_TWO = () => [{ id: 'p:p1', title: 'Chain', members: [
+  { pipelineId: 'p1', ticketId: null, state: 'done', title: 'One', projectDir: PROJECT },
+  { pipelineId: 'p2', ticketId: null, state: 'current', title: 'Two', projectDir: PROJECT, stacks: true },
+] }];
+const RUN1_ROW = { ...HISTORY_ROW, id: 'p1', title: 'One', branch: 'feat/c1', sourceBranch: 'dev' };
+async function openChainRoute(ctx) {
+  frame(ctx, { type: 'run-created', runId: 'r2', title: 'Two', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+  frame(ctx, { type: 'state', runId: 'r2', id: 'p2', status: 'running', stepper: GLANCE_MANIFEST, active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }],
+    steps: GLANCE_STEPS(), subAgents: [], totalCostUsd: 0.5, branch: { source: 'feat/c1', feature: 'feat/c2', worktreeDir: '/tmp/wt' } });
+  go(ctx.window, 'running/r2');
+  await settle(ctx.window, 8);
+  return ctx.window.document.querySelector('#run-detail .rd-route');
+}
+
+test('s2: a deep-linked live chain run builds on Run 1 and lands when the chain ships; one /api/schedules ask', async () => {
+  const ctx = await bootRunning({ rows: [RUN1_ROW] });
+  ctx.box.chains = CHAIN_OF_TWO();
+  const route = await openChainRoute(ctx);
+  const rows = route.querySelectorAll('.rd-route-row');
+  assert.equal(rows[0].querySelector('.rd-route-second').textContent, "This run's branch · builds on Run 1 · the agents are working here");
+  assert.equal(rows[2].querySelector('.rd-route-second').textContent, 'Lands here when the chain ships');
+  assert.equal(rows[2].querySelector('.rd-route-place').textContent, 'dev');
+  assert.ok(![...route.querySelectorAll('.rd-route-row:not(:first-child) .rd-route-place')].some((p) => p.textContent.includes('feat/c1')), 'Run 1\'s branch is never the target');
+  const asked = () => ctx.calls.filter((c) => c.url.endsWith('/api/schedules')).length;
+  assert.equal(asked(), 1, 'the Runs-section entry load only');
+  for (let i = 0; i < 2; i++) {
+    frame(ctx, { type: 'state', runId: 'r2', id: 'p2', status: 'running', stepper: GLANCE_MANIFEST, active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:1' }],
+      steps: GLANCE_STEPS(), subAgents: [], totalCostUsd: 1 + i });
+    await settle(ctx.window, 4);
+  }
+  assert.equal(asked(), 1, 'state frames add no chain lookup');
+});
+
+test('s2: a failed chain load ends the pending state: the target names the base branch, not "The base branch"', async () => {
+  const ctx = await bootRunning({ rows: [] });
+  ctx.box.schedulesFail = true;
+  const route = await openChainRoute(ctx);
+  assert.equal(route.querySelectorAll('.rd-route-row')[2].querySelector('.rd-route-place').textContent, 'feat/c1');
 });

@@ -108,7 +108,7 @@ import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './grou
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
 import { setShipDialogOpener, shipReason } from './shape/ship-card.mjs';
 import { runPositionLabel, groupKindWord, pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
-import { headModel, trackerModel, factsModel, renderHeadButtons, renderTracker, renderFacts, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
+import { headModel, routeModel, routeGroupOf, renderHeadButtons, renderRoute, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
   hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip } from './run-head.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
 import { loadRunsView, saveRunsView, viewChip, viewMenuItems } from './runs-view-menu.mjs';
@@ -24970,7 +24970,7 @@ function paintHdGlance(screen, record, data) {
   paintRunKindChip(glance.querySelector('.rd-page-meta'), mode);
 
   // Runs redesign slice 4: the one status block and the Group row, as on the live page (no bar: the run is finished).
-  // Slice 3: the status block is the card head's (paintHdHead: status line, head buttons, tracker).
+  // Slice 3: the status block is the card head's (paintHdHead: status line, head buttons, route).
   paintHdHead(screen, record, data);
   const home = groupHomeOf(record.id || '');
   paintGroupLine(glance.querySelector('.rd-kv .rd-group-line'), record.id || '', record.title || '', home);
@@ -25797,7 +25797,7 @@ function paintHdHeaderMeta(screen, record, data) {
     }));
   }
   // Branch row.
-  if (!(gitOn() && isGitRun(hdRunOf(record, data)))) { screen.querySelector('.hd-base').hidden = true; screen.querySelector('.hd-branch-copy').hidden = true; paintPageBranch(screen.querySelector('.hd-glance'), ''); return; }
+  if (!(gitOn() && isGitRun(hdRunOf(record, data)))) { screen.querySelector('.hd-base').hidden = true; screen.querySelector('.hd-branch-copy').hidden = true; return; }
   const base = screen.querySelector('.hd-base');
   const copyBtn = screen.querySelector('.hd-branch-copy');
   const br = st.branch && typeof st.branch === 'object' ? st.branch : {};
@@ -25814,7 +25814,6 @@ function paintHdHeaderMeta(screen, record, data) {
     : (source ? (mergedBack ? `Merged into ${source}` : `${source} ${same ? '←' : '→'}`) : '');
   base.hidden = !dropped && !source;
   copyBtn.hidden = dropped || mergedBack || !feature;
-  paintPageBranch(screen.querySelector('.hd-glance'), mergedBack ? source : feature);
   if (feature && !dropped && !mergedBack) {
     screen.querySelector('.hd-branch-name').textContent = feature;
     if (copyBtn.dataset.bound !== '1') {              // paintHdHeaderMeta re-runs (refreshHdFromRow)
@@ -26128,7 +26127,7 @@ function paintHdBanners(screen, record, data) {
   }
 
   // Kept work (the end-of-run commit failed); a live checkout is the Actions row. Slice 3 (D13): the card head carries
-  // Discard · Apply to branch and the tracker its patch and commands (screen._headKept). A PROVISIONAL retention (deep
+  // Discard · Apply to branch and the route its patch and commands (screen._headKept). A PROVISIONAL retention (deep
   // link, cache-warm row) offers no action: Apply and Discard must act on the authoritative row, which arrives one
   // fetch later and re-runs this painter. Handlers read the record at click time (hdCurrentRecord): refreshHdFromRow
   // REPLACES histDetailState.record.
@@ -31352,7 +31351,7 @@ const chatRunControls = {
     // so a chain's card finds its group off those views too. The card repaints on its next frame or poll.
     if (!schedulesView.isLoaded() && !chatRunControls.__chainsAsked) {
       chatRunControls.__chainsAsked = true;
-      void withWorkspaces().then(() => schedulesView.load()).catch(() => {});
+      void withWorkspaces().then(() => schedulesView.load()).catch(() => {}).then(() => { routeChainsSettled = true; repaintOpenRunGroupLine(); });
     }
     // `shaping` is memory-only: after a reload only withShaper's card knows the feature.
     const fid = (snap && snap.shaper && snap.shaper.card && snap.shaper.card.feature && snap.shaper.card.feature.id)
@@ -34906,8 +34905,9 @@ function crpShow(target, tab = '', { replace = false } = {}) {
   crp.kind = target.kind;
   crp.id = id;
   // A usage-limit pause's "Resume at" reads the resume tickets, which only the Runs views and Schedules load: Chat
-  // boots without them, and a second resume for a run that already has one booked is refused.
-  if (!schedulesView.isLoaded()) void withWorkspaces().then(() => schedulesView.load()).then(() => repaintLimitNotices());
+  // boots without them, and a second resume for a run that already has one booked is refused. s2 (D2): the load also
+  // ends the route's pending state, so the open run's head and route repaint with the landing branch.
+  if (!schedulesView.isLoaded()) void withWorkspaces().then(() => schedulesView.load()).then(() => { routeChainsSettled = true; repaintOpenRunGroupLine(); repaintLimitNotices(); });
   // P1: the page context moved — a boot deep link resolving, a hand-off or a resume follow write no hash, so the
   // composer's own hashchange refresh (its MCP preview) never runs for them.
   if (askPanel && typeof askPanel.contextChanged === 'function') askPanel.contextChanged();
@@ -35294,7 +35294,7 @@ const rdModel = (r) => runModel(rdModelRun(r), { memo: memoFor(r.pipelineId || r
 function paintRdStatus(screen, r) {
   const m = rdModel(r);
   const block = screen.querySelector('.rd-sheet .run-status');
-  paintRdHead(screen, r, m);                                 // slice 3: the card head (status line, head buttons, tracker)
+  paintRdHead(screen, r, m);                                 // slice 3: the card head (status line, head buttons, route)
   // The run page's bar takes over the removed .rd-prog's focus stop ("Run progress"): the D30 one-line wait state
   // shows only its stage words and gives it the focus ring.
   const bar = block && block.querySelector('.run-status-bar');
@@ -35421,6 +35421,7 @@ function repaintOpenRunGroupLine() {
     const home = groupHomeOf(hd.record.id || '');
     paintGroupLine(hd.screen.querySelector('.hd-glance .rd-kv .rd-group-line'), hd.record.id || '', hd.record.title || '', home);
     paintRunPlace(hd.screen, home);
+    if (hd.data) paintHdHead(hd.screen, hdCurrentRecord(hd.record), hd.data);   // s2: the route reads the group
   }
 }
 
@@ -35636,31 +35637,6 @@ function paintPageHead(glance, title, meta) {
     const node = m.firstChild && m.firstChild.nodeType === 3 ? m.firstChild : null;
     if (!node) m.prepend(document.createTextNode(text)); else if (node.data !== text) node.data = text;
   }
-}
-
-// The run's feature branch in the glance's meta line: the template's one chip, updated in
-// place (paintPageHead owns the line's first text node, the Running page appends a person
-// chip after it), hidden when there is none. Copies like the Details header's button. Bound
-// once; the click reads the PAINTED name, never the one this paint saw (the stale-capture
-// note in paintHdHeaderMeta). `fact`: the facts row it sits in, Branch or Merged (the base branch the work is in).
-function paintPageBranch(glance, name, fact = 'branch') {
-  const btn = glance && glance.querySelector(`.rd-kv-row[data-fact="${fact}"] .rd-page-branch`);
-  if (!btn) return;
-  btn.hidden = !name;
-  const row = btn.closest('.rd-kv-row');            // run 3 (D8): the facts block's Branch row
-  if (row) row.hidden = !name;
-  const label = btn.querySelector('.rd-page-branch-name');
-  if (name && label.textContent !== name) {
-    label.textContent = name;
-    btn.title = name;
-    btn.setAttribute('aria-label', `Copy ${fact === 'merged' ? 'the branch it was merged into' : 'branch name'} ${name}`);
-  }
-  if (btn.dataset.bound === '1') return;
-  btn.dataset.bound = '1';
-  btn.addEventListener('click', () => {
-    const painted = label.textContent || '';
-    if (painted) copyBranchToClipboard(btn, painted, painted);
-  });
 }
 
 // Projects, any way: the run's kind chip on a run page's meta line (RUN_KIND_CHIP). A span with no handler, so it is
@@ -35943,11 +35919,11 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
   });
 }
 
-/** Slice 3 (D4): what the card head and tracker read, the same on both run pages. `rec` is the History row (null while
+/** Slice 3 (D4): what the card head and route read, the same on both run pages. `rec` is the History row (null while
  *  a live run has none), `m` the page model, `kept` screen._headKept, `repaint` the page's head painter.
  *  Side effect: it starts the PR status reads it needs (the feed's, and each open workspace member's through
  *  ensurePrStatus); a landed member read calls `repaint`, which then finds it cached, so it cannot loop. */
-function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, repaint, liveSource = '' }) {
+function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, repaint, liveSource = '', liveBranch = '', pipelineId = '' }) {
   const ws = !!rec && rec.target === 'workspace' && hasWsMembers(rec);
   const own = !ws && rec && rec.pr && typeof rec.pr === 'object' && rec.pr.url ? rec.pr : null;
   const open = !!own && String(own.state || '').toUpperCase() === 'OPEN';
@@ -35963,14 +35939,22 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, re
       if (!hit || Date.now() - hit.at > PR_STATUS_STALE_MS) void ensurePrStatus(memberScope(x)).then((st) => { if (st && st !== hit && screen.isConnected) repaint(); });
     }
   }
+  const source = (rec && rec.sourceBranch) || liveSource || '';
+  const group = routeGroupOf(groupHomeOf((rec && rec.id) || pipelineId), { sourceBranch: source, histOf });
   return {
     m, mode, gitChrome, folder, canTry, kept, level: currentLevel(),
     workspace: ws ? { members: histWsMembers(rec).map((x) => ({
       key: x.memberKey, name: (names && names[x.memberKey]) || String(x.projectKey || x.memberKey).replace(/-[0-9a-f]{8}$/, ''),
       pr: x.pr && typeof x.pr === 'object' ? x.pr : null,
-      prStatus: prStatusCache.get(prStatusKey(memberScope(x))) || null })) } : null,
-    base: (prStatus && prStatus.base) || (rec && rec.sourceBranch) || liveSource || '',
-    source: (rec && rec.sourceBranch) || liveSource || '',
+      prStatus: prStatusCache.get(prStatusKey(memberScope(x))) || null,
+      // s2: the route's member row (branch → target; an unchanged member says so).
+      branch: x.branch || '', target: x.sourceBranch || '', affected: x.affected !== false })) } : null,
+    base: (prStatus && prStatus.base) || source,
+    source,
+    // s2: the route's own-branch row and its place in a feature or chain (read-only, from loaded data).
+    branch: (rec && rec.branch) || liveBranch || '',
+    group,
+    groupPending: !group && routeGroupsPending(),   // D2: never guess the landing branch before the groups answer
     pr: own, prInput: glancePrInput(rec), prStatus, watch: (rec && rec.watch) || null,
     canCreatePr: !!rec && histPrEligible(rec) && !(own && open),
     push: !!rec && !!rec.sameAsSource && rec.target !== 'workspace' && rec.mergeBack?.merged === true && !!rec.sourceBranch,
@@ -35979,7 +35963,16 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, re
   };
 }
 
-/** Slice 3: the card's status line, head buttons and tracker. `h`: the page's calls (headHandlers). */
+// D2/D7: the chains come from the Runs-section entry load (showView, RUNS_VIEWS holds `running` and `history`) or, in
+// Chat, the run panel's and chatRunControls.groupOf's loads; each sets this when it settles, success or not
+// (schedulesView.load() catches its own errors and resolves) and repaints the open run's head.
+let routeChainsSettled = false;
+/** D2: true until both group sources have answered once (loadRunGroups sets runGroupsLoaded on every outcome). */
+function routeGroupsPending() {
+  return !state.runGroupsLoaded || !(schedulesView.isLoaded() || routeChainsSettled);
+}
+
+/** Slice 3: the card's status line, head buttons and route. `h`: the page's calls (headHandlers). */
 function paintRunHead(screen, f, h) {
   const head = headModel(f);
   const block = screen.querySelector('.rd-sheet .run-status');
@@ -35993,8 +35986,8 @@ function paintRunHead(screen, f, h) {
   if (slot) slot._prMenu = (anchor) => h.onMenu(anchor, f);
   renderHeadButtons(screen.querySelector('.rd-head-acts'), head, slot, h);
   if (slot && slot._prMenuOpen) slot._prMenuOpen(f);
-  renderTracker(screen.querySelector('.rd-track'), trackerModel(f));
-  renderFacts(screen.querySelector('.rd-kv'), factsModel(f), { ...h, onMerged: (name) => paintPageBranch(screen, name, 'merged') });
+  // storage: app.js's guarded localStorage (reading window.localStorage throws with site data blocked).
+  renderRoute(screen.querySelector('.rd-route'), routeModel(f), { ...h, storage: localStorage, onCopy: (btn, name) => copyBranchToClipboard(btn, name, name) });
   return head;
 }
 
@@ -36014,15 +36007,15 @@ function paintHdHead(screen, record, data) {
   const m = pageModel(runModel(hdModelRun(rec, data), { memo: memoFor(record.id) }));
   const repaint = () => { if (glance.isConnected && histDetailState && histDetailState.screen === screen) paintHdHead(screen, hdCurrentRecord(record), histDetailState.data || data); };
   const f = headFactsOf(glance, record, {
-    m, mode, gitChrome: gitOn() && isGitRun(hdRunOf(record, data)), kept, repaint,
-    folder: bar ? { state: bar.state, total: changesCounts(changes).total } : null,
+    m, mode, gitChrome: gitOn() && isGitRun(hdRunOf(record, data)), kept, repaint, pipelineId: record.id,
+    folder: bar ? { state: bar.state, total: changesCounts(changes).total, dir: record.projectDir || '' } : null,
     canTry: hdCanTry(record, st, held.retained, held.provisional) && !hdCheckoutFor(record),
   });
   paintRunHead(glance, f, headHandlers(glance, () => hdCurrentRecord(record), { kept, ctaCls: 'hd-g-pr', folderTotal: f.folder ? f.folder.total : 0,
     onCreate: () => { const b = screen.querySelector('.hd-pr'); if (b) b.click(); } }));
 }
 
-/** Slice 3 (D11): the head buttons' and the tracker's calls. `cur()` re-reads the record at click time. */
+/** Slice 3 (D11): the head buttons' and the route's calls. `cur()` re-reads the record at click time. */
 function headHandlers(screen, cur, { onCreate, kept, ctaCls = '', folderTotal = 0 }) {
   const scopeOf = (memberKey) => { const rec = cur(); return { id: rec.id, projectKey: rec.projectKey, ...(memberKey ? { memberKey } : {}) }; };
   const feed = () => screen.querySelector('.rd-pr-feed');
@@ -36315,7 +36308,7 @@ async function loadRdPrStatus(host, scope) {
   }
 }
 /** Slice 3 (D10): the glance's hidden .rd-pr-feed is a paintRdPrStatus host whose answers repaint the card head and
- *  tracker (feed._prRender) instead of drawing a PR bar. Every other host draws its status line as before. */
+ *  route (feed._prRender) instead of drawing a PR bar. Every other host draws its status line as before. */
 function renderPrHost(host, scope, s) {
   if (!host._prRender) { renderRdPrStatus(host, scope, s); return; }
   const sig = JSON.stringify([s.checks, s.status, s.watch, s.resolveError]);
@@ -36549,7 +36542,9 @@ function paintRdHead(screen, r, m = rdModel(r)) {
     m: pageModel(m), mode, gitChrome: gitOn() && isGitRun(r), kept, repaint,
     // A live run has no History row yet: the state frame keeps its branch record and the sticky source (onState).
     liveSource: r.branchSource || (r.branch && typeof r.branch === 'object' && r.branch.source) || '',
-    folder: bar ? { state: bar.state, total: changesCounts(changes).total } : null,
+    liveBranch: (r.branch && typeof r.branch === 'object' && r.branch.feature) || r.branchFeature || '',
+    pipelineId: r.pipelineId || '',
+    folder: bar ? { state: bar.state, total: changesCounts(changes).total, dir: r.projectDir || '' } : null,
     canTry: !!(rec && rec.branch) && terminal && !kept && !!r.pipelineId && !hdCheckoutFor(rec),
   });
   paintRunHead(screen, f, headHandlers(screen, () => rdNoticeCarrier(r), { kept, ctaCls: 'rd-create-pr', folderTotal: f.folder ? f.folder.total : 0, onCreate: () => {
@@ -36811,7 +36806,7 @@ function paintRdWorktreeNotice(screen, r) {
     const open = runDetailState.screen;
     if (open && runDetailState.runId === r.runId) paintRdBanners(open, r);
   };
-  // Slice 3 (D13): the card head carries Discard · Apply to branch, the tracker the patch and the commands.
+  // Slice 3 (D13): the card head carries Discard · Apply to branch, the route the patch and the commands.
   screen._headKept = model && model.kind === 'retained' ? { provisional: !!model.provisional,
     recovery: r.pipelineId ? recoveryLinkOf(r.projectDir || null, rdNoticeCarrier(r), model) : null, commands: retainedCommands(model),
     onApply: (btn) => applyRetainedFlow(btn, rdNoticeCarrier(r), model, () => { r._retainedApplied = true; repaint(); }),
@@ -37113,8 +37108,7 @@ function paintRdHeader(screen, r) {
   const copyBtn = screen.querySelector('.rd-branch-copy');
   copyBtn.hidden = !feature;
   if (feature) screen.querySelector('.rd-branch-name').textContent = feature;
-  paintPageBranch(screen.querySelector('.rd-glance'), feature);
-  } else { for (const sel of ['.rd-base', '.rd-branch-copy', '.rd-sync']) { const n = screen.querySelector(sel); if (n) n.hidden = true; } paintPageBranch(screen.querySelector('.rd-glance'), ''); }
+  } else { for (const sel of ['.rd-base', '.rd-branch-copy', '.rd-sync']) { const n = screen.querySelector(sel); if (n) n.hidden = true; } }
 
   // Actions. A terminal run offers neither (D8); a later task adds the History
   // link here.
@@ -38402,7 +38396,7 @@ function showView(name, param = '') {
       // enrichment and blanks resolved PR words mid-navigation (was the History rule).
       loadHistoryView();
       // The open run's Group row reads the chains too (a Run-after chain is a group, runs redesign slice 4 D18).
-      void withWorkspaces().then(() => schedulesView.load()).then(() => { if (inRunsView()) { paintRunsList(); repaintOpenRunGroupLine(); } repaintLimitNotices(); });
+      void withWorkspaces().then(() => schedulesView.load()).then(() => { routeChainsSettled = true; if (inRunsView()) { paintRunsList(); repaintOpenRunGroupLine(); } repaintLimitNotices(); });
     }
     if (name === 'running') {
       routeRunDetail(param, { instant: entering });

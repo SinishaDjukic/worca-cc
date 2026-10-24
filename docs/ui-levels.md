@@ -175,7 +175,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | "Scheduled" group (runs due within 24 h) | S — it only exists when something is scheduled |
 | Needs-input pill and banner; clarify questions; Auto proposal ("Review the workflow": preview that opens a pan/zoom popup, Accept) — all answered on the run page | S |
 | Recovery prompt, cycle gate, cost-pause banner | all |
-| Run page card head: the status line, the head buttons (Try it, Create PR, Push, View PR │ ▾, Fix conflicts, Ask for changes, Discard / Apply to branch, How to merge, Discard / Apply to folder, Report) and the tracker | S |
+| Run page card head: the status line, the head buttons (Try it, Create PR, Push, View PR │ ▾, Fix conflicts, Ask for changes, Discard / Apply to branch, How to merge, Discard / Apply to folder, Report) and the route (Where the work is) | S |
 | View PR ▾ › Watch | A |
 | Summary card › a live checkout: the Results row with Discard / Unlink | S |
 | Summary card › the Actions row value (`Local copy open · since 18:12`, `Try it on this machine`) and the Actions tab's Download patch | A |
@@ -235,7 +235,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 An open github.com or Azure DevOps pull request shows its state as GitHub's merge box would
 (Draft, Merge conflicts, Changes requested, checks failed or running, Review
 required, Out of date, Blocked, Ready to merge) in two places: the run page card's
-status line (its checks line in the facts list's Checks row), and a "Pull request" row under the review verdict
+status line (its checks line in the route's pull request row), and a "Pull request" row under the review verdict
 on the Overview tab (one row per repository for a workspace run). Both show at
 every level. Watch is changed from the View PR ▾ menu (Advanced) and from the
 Overview row's switch (Advanced).

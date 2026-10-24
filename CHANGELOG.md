@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Run page: a 'Where the work is' route replaces the tracker, the Branch row and the PR fact rows; a feature run no longer reads 'Merged into' the previous run's branch.
+
 ### Command summaries in chat (#911)
 
 - Chat: one-line command summaries, grouped cards, 760px column: Clean: the cycle-1 web UI major (the group head total froze while a grouped command ran) is fixed.
