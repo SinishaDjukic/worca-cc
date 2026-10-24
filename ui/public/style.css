@@ -1128,6 +1128,11 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* run card: pills drop to a full-width second row under "Live log" (order puts
    the bar after the autoscroll switch so row 1 stays label ⟷ switch) */
 .run-log-head .log-filters{order:1;flex-basis:100%;}
+/* With the Summaries / Raw switch the one-row bar cut the selects and search to 14px on a phone, so it wraps
+   (only when it overflows) and search shares the switch row with copy. */
+:root[data-flags~="commandSummaries"] .log-filters:has(> .log-view-seg){flex-wrap:wrap;row-gap:6px;}
+:root[data-flags~="commandSummaries"] .log-filters:has(> .log-view-seg) select.log-f{flex:0 0 auto;}
+:root[data-flags~="commandSummaries"] .log-filters:has(> .log-view-seg) .log-search{flex-basis:80px;}
 
 /* needs-attention flag */
 .attn-flag{display:inline-flex;align-items:center;gap:5px;margin-left:10px;background:var(--amber-bg);
@@ -8404,6 +8409,16 @@ button.act-srow-name{cursor:pointer}
 .run-flow.gv-host .gv-world .node[aria-current="true"],.hd-graph .run-node[aria-current="true"]{outline:2px solid var(--blue);outline-offset:3px;}
 @media (max-width:760px){
   .wf-log-drawer{height:var(--wf-log-h,50vh);}
+}
+/* With the Summaries / Raw switch the controls keep their size and the title ellipsizes (× had shrunk to 16px). */
+:root[data-flags~="commandSummaries"] .wf-log-head:has(> .log-view-seg) :is(.wf-log-full,.wf-log-close){flex:none;}
+/* A phone: the Summaries / Raw switch, Open in Logs and × fill the head, so the title takes its own row. */
+@media (max-width:480px){
+  :root[data-flags~="commandSummaries"] .wf-log-head:has(> .log-view-seg){flex-wrap:wrap;gap:3px 6px;}
+  :root[data-flags~="commandSummaries"] .wf-log-head:has(> .log-view-seg) .wf-log-title{max-width:calc(100% - 40px);}
+  :root[data-flags~="commandSummaries"] .wf-log-head:has(> .log-view-seg) .wf-log-spacer{flex-basis:100%;}
+  :root[data-flags~="commandSummaries"] .wf-log-head:has(> .log-view-seg) .log-view-seg{margin-left:auto;}
+  :root[data-flags~="commandSummaries"] .wf-log-head:has(> .log-view-seg) .log-view-seg button{padding:0 7px;}
 }
 
 /* ========================================================================== */

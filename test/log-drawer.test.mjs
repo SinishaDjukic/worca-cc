@@ -3,6 +3,7 @@
 // its persistence (and a throwing storage), keyboard resize on the handle.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { createLogDrawer, clampHeight, HEIGHT_KEY, MIN_H } from '../ui/public/log-drawer.mjs';
 
@@ -105,4 +106,40 @@ test('a throwing storage never breaks the drawer', () => {
   assert.doesNotThrow(() => d.open({ label: 'Planner' }));
   assert.doesNotThrow(() => key(d.el.querySelector('.wf-log-resize'), 'ArrowUp'));
   assert.doesNotThrow(() => d.close());
+});
+
+test('a tools node sits in the head before Open in Logs', () => {
+  const { document } = new JSDOM('<!DOCTYPE html><body></body>').window;
+  const tools = document.createElement('span');
+  tools.className = 'log-view-seg';
+  const d = createLogDrawer({ doc: document, tools });
+  const head = d.el.querySelector('.wf-log-head');
+  assert.equal(tools.parentNode, head);
+  assert.equal(tools.nextElementSibling, head.querySelector('.wf-log-full'));
+  assert.equal(createLogDrawer({ doc: document }).el.querySelectorAll('.log-view-seg').length, 0, 'no tools: head as today');
+});
+
+test('narrow drawer with the Summaries / Raw switch: the title takes its own row, the controls stay on one', () => {
+  // At 375px the switch, Open in Logs and × fill the head and squeezed the title to 0px (web UI review, cycle 1).
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const block = [...css.matchAll(/@media \(max-width:480px\)\{([^@]*?)\n\}/g)].find((m) => m[1].includes('.wf-log-head'));
+  assert.ok(block, 'a max-width:480px block for the drawer head');
+  const head = ':root[data-flags~="commandSummaries"] .wf-log-head:has(> .log-view-seg)';
+  assert.ok(block[1].includes(`${head}{flex-wrap:wrap;`), 'the head wraps only while the switch shows');
+  assert.ok(block[1].includes(`${head} .wf-log-spacer{flex-basis:100%;`), 'the spacer breaks the row after the title');
+  assert.ok(block[1].includes(`${head} .wf-log-title{max-width:calc(100% - 40px);}`), 'a long title ellipsizes and leaves room for the live chip');
+  assert.ok(block[1].includes(`${head} .log-view-seg{margin-left:auto;}`), 'the controls row is right-aligned');
+  // The History drawer is 311px wide at 375px (head content 283px): 10px padding left × alone on a third row (cycle 2).
+  assert.ok(block[1].includes(`${head} .log-view-seg button{padding:0 7px;}`), 'a tighter switch keeps × on the controls row');
+  assert.ok(css.includes(`${head} :is(.wf-log-full,.wf-log-close){flex:none;}`), '× and Open in Logs never shrink; the title ellipsizes');
+});
+
+test('narrow Logs bar with the Summaries / Raw switch: the bar wraps instead of crushing the selects and search', () => {
+  // At 375px the nowrap bar cut the four selects and search to 14px and pushed copy out of the bar (web UI review, cycle 2).
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  // At 481px the selects were still 33px: the bar wraps at every width, which changes nothing while it fits.
+  const bar = ':root[data-flags~="commandSummaries"] .log-filters:has(> .log-view-seg)';
+  assert.ok(css.includes(`${bar}{flex-wrap:wrap;row-gap:6px;}`), 'the bar wraps only while the switch shows');
+  assert.ok(css.includes(`${bar} select.log-f{flex:0 0 auto;}`), 'the selects keep their content width');
+  assert.ok(css.includes(`${bar} .log-search{flex-basis:80px;}`), 'search shares the switch row with copy');
 });
