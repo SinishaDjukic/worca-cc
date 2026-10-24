@@ -5045,19 +5045,20 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
    control .rd-pr-slot among them). The live row shows only while the run has not ended and the buttons only once it
    has, so the two never meet; if they did, the buttons take their own column after the row. */
 .rd-sheet-head{container:rd-head / inline-size;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:start;min-width:0;
-  --rd-word-line:calc(var(--fs-section) * var(--lh-title));}
+  --rd-word-line:calc(var(--fs-section) * var(--lh-title));--rd-btn-h:32px;}
+@media (pointer:coarse){.rd-sheet-head{--rd-btn-h:40px;}}   /* the touch .btn's min-height */
 /* The status block spans every head column so its bar (and the group bar, role rows) take the card's width; a subgrid
-   keeps the state word and its detail in column 1, so they stop where the switch or the buttons begin. Run page only: the
-   chat card and the group page lay the shared block out themselves. */
-.rd-sheet-head > .rd-now-top{grid-area:1 / 1 / 2 / -1;grid-template-columns:subgrid;column-gap:0;}
-.rd-sheet-head > .rd-now-top > *{grid-column:1 / -1;}
-.rd-sheet-head > .rd-now-top > .run-status-head{grid-column:1;}
+   keeps the state word and its detail in column 1, so they stop where the switch or the buttons begin. The run page
+   (.rd-now-top.run-status) and the group page (a bare .run-status) share it; the chat card lays the block out itself. */
+.rd-sheet-head > .run-status{grid-area:1 / 1 / 2 / -1;grid-template-columns:subgrid;column-gap:0;}
+.rd-sheet-head > .run-status > *{grid-column:1 / -1;}
+.rd-sheet-head > .run-status > .run-status-head{grid-column:1;}
 .rd-sheet-head > .rd-live-row{grid-area:1 / 2;height:var(--rd-word-line);margin-left:16px;}   /* the state word's line box */
-/* Slice 3: centred on the state word's line (the detail may add lines under it): the 32px buttons overhang that line
-   each way, so the head is the status block's height with or without them, and the PR control's fade-out moves
+/* Slice 3: centred on the state word's line (the detail may add lines under it): the buttons (32px, 40px on touch screens) overhang
+   that line each way, so the head is the status block's height with or without them, and the PR control's fade-out moves
    nothing. A narrow card wraps them under the status. */
 .rd-sheet-head > .rd-head-acts{grid-area:1 / 3;display:flex;align-items:center;gap:8px;
-  margin:calc((var(--rd-word-line) - 32px) / 2) 0 calc((var(--rd-word-line) - 32px) / 2) 16px;}
+  margin:calc((var(--rd-word-line) - var(--rd-btn-h)) / 2) 0 calc((var(--rd-word-line) - var(--rd-btn-h)) / 2) 16px;}
 .rd-sheet-head > .rd-head-acts[hidden]{display:none;}
 /* The PR slot may shrink in the row (its own max-width caps the label; style below), never past the card. */
 .rd-head-acts > .rd-pr-slot{min-width:0;}
