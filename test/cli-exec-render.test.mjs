@@ -179,6 +179,7 @@ test('formatResumeHints: the resume command, plus each other engine after a usag
     'Or continue now on Claude: worca resume ab12cd34 --engine claude',
     'Or continue now on Copilot: worca resume ab12cd34 --engine copilot',
     'Or continue now on Cursor: worca resume ab12cd34 --engine cursor',
+    'Or continue now on OpenCode: worca resume ab12cd34 --engine opencode',
     'Or continue now with another model: worca resume ab12cd34 --model <id>',
   ]);
   const bold = formatResumeHints({ reason: 'usage_limit', limitEngine: 'claude' }, 'x', { color: (n, s) => `<${n}>${s}` });

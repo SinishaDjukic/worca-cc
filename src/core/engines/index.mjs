@@ -3,7 +3,7 @@
 // error at run start, never a silent fallback; mock mode (WORCA_MOCK or
 // opts.mock) resolves every known engine to the offline mock. An adapter is
 // {name, capabilities, run, classifyError[, preflight, unenforcedRules, partialRules,
-// ruleReach, ruleKind, unattachableMcp]}: see the codex, copilot and cursor entries below.
+// ruleReach, ruleKind, unattachableMcp]}: see the codex, copilot, cursor and opencode entries below.
 import { runClaudeAdapter, claudeCapabilities } from './claude.mjs';
 import { runMock } from './mock.mjs';
 import { normalizingOnEvent } from './claude-events.mjs';
@@ -12,6 +12,7 @@ import { runCodexProcess, codexCapabilities, classifyCodexError, codexPreflight,
 import * as copilot from './copilot.mjs';
 import { runCursorProcess, cursorCapabilities, classifyCursorError, cursorPreflight,
   unenforcedRules as cursorUnenforced, partialRules as cursorPartial, CURSOR_RULE_TERMS } from './cursor.mjs';
+import * as opencode from './opencode.mjs';
 
 export { CAPABILITY_KEYS, CAPABILITY_FALLBACKS, describeUnattachableMcp } from './capabilities.mjs';
 
@@ -58,6 +59,10 @@ const copilotAdapter = Object.freeze({ name: 'copilot', capabilities: copilot.co
 const cursorAdapter = Object.freeze({ name: 'cursor', capabilities: cursorCapabilities, run: runCursorProcess, classifyError: classifyCursorError,
   preflight: cursorPreflight, unenforcedRules: cursorUnenforced, partialRules: cursorPartial,
   ruleReach: CURSOR_RULE_TERMS.reach, ruleKind: CURSOR_RULE_TERMS.kind });
+// OpenCode (engines/opencode.mjs) emits the normalized vocabulary itself; its rules ride OPENCODE_CONFIG_CONTENT.
+const opencodeAdapter = Object.freeze({ name: 'opencode', capabilities: opencode.opencodeCapabilities, run: opencode.runOpencodeProcess,
+  classifyError: opencode.classifyOpencodeError, preflight: opencode.opencodePreflight, unenforcedRules: opencode.unenforcedRules,
+  partialRules: opencode.partialRules, ruleReach: opencode.OPENCODE_RULE_TERMS.reach, ruleKind: opencode.OPENCODE_RULE_TERMS.kind });
 // The mock stands in for Claude in tests and smokes, so it declares Claude's map.
 const mockAdapter = Object.freeze({ name: 'mock', capabilities: claudeCapabilities, run: normalized(runMock), classifyError });
 
@@ -66,6 +71,7 @@ const ENGINES = new Map([
   ['codex', codexAdapter],
   ['copilot', copilotAdapter],
   ['cursor', cursorAdapter],
+  ['opencode', opencodeAdapter],
   ['mock', mockAdapter],
 ]);
 

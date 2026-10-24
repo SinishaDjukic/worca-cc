@@ -49,6 +49,14 @@ export function normalizeHost(host) {
   return h.replace(/\.+$/, '');
 }
 
+/** The client's headers minus the hop-by-hop proxy ones, for a direct route behind a connector. */
+function withoutProxyHeaders(headers) {
+  const out = { ...headers };
+  delete out['proxy-authorization'];
+  delete out['proxy-connection'];
+  return out;
+}
+
 /** "host", "host:443", "[::1]:443" -> { host, port } (port null when absent). */
 export function splitHostPort(target) {
   const s = String(target ?? '').trim();
@@ -164,10 +172,15 @@ const HOST_RE = /^(?:[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?(?:\.[a-z0-9_](?:[a-z0-9_
 /**
  * Build (not start) the proxy server. `log` receives one line per decision.
  * @param {{allow?: string[], policy?: {mode: string, allow: string[], deny: string[]},
- *   log?: (line: string) => void, limits?: Partial<typeof PROXY_LIMITS>}} opts
+ *   log?: (line: string) => void, limits?: Partial<typeof PROXY_LIMITS>,
+ *   connector?: null | {route: (host: string) => 'direct'|'upstream', directAgent?: import('node:http').Agent,
+ *     tunnel: (t: {host: string, port: number}) => Promise<{socket: import('node:net').Socket, rest?: Buffer}>,
+ *     forward: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, t: {host: string, port: number, url: URL}) => void}}} opts
  *   `policy` (a platform mode) or `allow` (the overlay's list, legacy matching).
+ *   `connector` (src/core/upstream-proxy.mjs, the corporateProxy flag): hosts it routes to the
+ *   upstream go through it; the policy still decides first. null: everything direct, as before.
  */
-export function createProxy({ allow, policy = null, log = () => {}, limits = {} }) {
+export function createProxy({ allow, policy = null, log = () => {}, limits = {}, connector = null }) {
   const L = { ...PROXY_LIMITS, ...limits };
   const permits = policy ? (host) => decide(host, policy).ok : (host) => isAllowed(host, allow);
   const say = (line) => { try { log(line); } catch { /* a logger must not take the proxy down */ } };
@@ -181,6 +194,34 @@ export function createProxy({ allow, policy = null, log = () => {}, limits = {} 
     try { if (socket.writable) socket.end(`HTTP/1.1 ${status}\r\n${lines}connection: close\r\n\r\n${body}`); } catch { /* gone */ }
     socket.destroy?.();
   };
+  // A tunnel through the corporate proxy: the connector logs in on the upstream socket, then the
+  // two sockets are piped exactly like a direct tunnel. Its refusals keep their status (407
+  // "proxy needs login", 502, 504) and say why in plain text.
+  function upstreamTunnel(clientSocket, head, host, port) {
+    let up = null;
+    clientSocket.on('close', () => { if (up) up.destroy(); });
+    connector.tunnel({ host, port }).then(({ socket, rest }) => {
+      up = socket;
+      if (clientSocket.destroyed) { socket.destroy(); return; }
+      socket.setTimeout(L.idleTimeoutMs, () => { socket.destroy(); clientSocket.destroy(); });
+      socket.on('error', () => clientSocket.destroy());
+      socket.on('close', () => clientSocket.destroy());
+      try {
+        clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        if (rest && rest.length) clientSocket.write(rest);
+        if (head && head.length) socket.write(head);
+      } catch { socket.destroy(); clientSocket.destroy(); return; }
+      socket.pipe(clientSocket);
+      clientSocket.pipe(socket);
+    }, (err) => {
+      const status = Number(err && err.status) || 502;
+      const body = `Worca: ${err && err.message ? err.message : 'the corporate proxy failed'}\n`;
+      rawReply(clientSocket, `${status} ${http.STATUS_CODES[status] || 'Bad Gateway'}`, {
+        'content-type': 'text/plain; charset=utf-8', 'content-length': Buffer.byteLength(body),
+        ...(err && err.needsLogin ? { 'x-worca-proxy': 'needs-login' } : {}),
+      }, body);
+    });
+  }
   // The proxy relaying to itself would loop; nothing legitimate asks for that.
   const isSelf = (host, port) => {
     const a = server.address();
@@ -198,7 +239,8 @@ export function createProxy({ allow, policy = null, log = () => {}, limits = {} 
     }
     const host = normalizeHost(url.hostname);
     const port = url.port ? Number(url.port) : 80;
-    if (isSelf(host, port)) { res.writeHead(400).end(); return; }
+    // The header tells another Worca that this port is a Worca local proxy (fixed port, D12).
+    if (isSelf(host, port)) { res.writeHead(400, { 'x-worca-proxy': 'local' }).end(); return; }
     if (!permits(host)) {
       verdict(false, req.method, url.host);
       const r = refusal(host);
@@ -206,7 +248,10 @@ export function createProxy({ allow, policy = null, log = () => {}, limits = {} 
       return;
     }
     verdict(true, req.method, url.host);
-    const up = http.request({ host, port, method: req.method, path: url.pathname + url.search, headers: req.headers, timeout: L.connectTimeoutMs });
+    if (connector && connector.route(host) === 'upstream') { connector.forward(req, res, { host, port, url }); return; }
+    const up = http.request({ host, port, method: req.method, path: url.pathname + url.search,
+      headers: connector ? withoutProxyHeaders(req.headers) : req.headers, timeout: L.connectTimeoutMs,
+      ...(connector && connector.directAgent ? { agent: connector.directAgent } : {}) });
     up.on('timeout', () => up.destroy(new Error('upstream timeout')));
     up.on('error', () => {
       if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain' }).end(`bad gateway: ${host} did not answer\n`);
@@ -240,6 +285,7 @@ export function createProxy({ allow, policy = null, log = () => {}, limits = {} 
       return;
     }
     verdict(true, 'CONNECT', req.url);
+    if (connector && connector.route(host) === 'upstream') { upstreamTunnel(clientSocket, head, host, port); return; }
     let connected = false;
     const up = net.connect({ port, host });
     up.setTimeout(L.connectTimeoutMs, () => up.destroy(new Error('upstream timeout')));

@@ -128,7 +128,7 @@ export function mergeEditPatch(current, patch) {
   return out;
 }
 
-const connectionOf = (m) => (m.engine === 'cursor' ? "cursor-agent's own sign-in" : m.engine === 'copilot' ? "the Copilot CLI's own sign-in" : m.upstream && m.engine === 'codex' ? 'codex, direct to an OpenAI-compatible endpoint' : m.upstream ? `through provider ${m.upstream.provider}` : m.env && m.env.ANTHROPIC_BASE_URL ? 'custom endpoint via env' : 'Anthropic API / CLI default');
+const connectionOf = (m) => (m.engine === 'cursor' ? "cursor-agent's own sign-in" : m.engine === 'copilot' ? "the Copilot CLI's own sign-in" : m.engine === 'opencode' ? "OpenCode's own providers" : m.upstream && m.engine === 'codex' ? 'codex, direct to an OpenAI-compatible endpoint' : m.upstream ? `through provider ${m.upstream.provider}` : m.env && m.env.ANTHROPIC_BASE_URL ? 'custom endpoint via env' : 'Anthropic API / CLI default');
 const fmtEfforts = (e) => (Array.isArray(e) && e.length ? e.join(', ') : 'all');
 const fmtCost = (c) => (!c ? null : c.free ? 'free' : c.perMtok ? Object.entries(c.perMtok).map(([k, v]) => `${k} $${v}`).join(' · ') : JSON.stringify(c));
 const fmtCaps = (c) => (!c ? null : Object.entries(c).map(([k, v]) => `${k} ${v}`).join(' · '));

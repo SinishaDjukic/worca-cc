@@ -425,6 +425,7 @@
                         <option value="codex">Codex</option>
                         <option value="copilot">Copilot</option>
                         <option value="cursor">Cursor</option>
+                        <option value="opencode">OpenCode</option>
                       </select>
                     </div>
                   </div>
@@ -878,6 +879,12 @@
                     <div class="rd-kv-row" data-fact="group" hidden><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line"></dd></div>
                     <div class="rd-kv-row" data-fact="project" hidden><dt class="rd-kv-k">Project</dt><dd class="rd-kv-v rd-page-meta"></dd></div>
                     <div class="rd-kv-row" data-fact="branch" data-min-level="advanced" data-needs-git hidden><dt class="rd-kv-k">Branch</dt><dd class="rd-kv-v"><button type="button" class="btn btn-sm btn-quiet rd-page-branch" hidden data-min-level="advanced" data-needs-git aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></dd></div>
+                    <!-- The PR rows (run-head.mjs factsModel / renderFacts): the tracker's steps carry labels only. -->
+                    <div class="rd-kv-row" data-fact="merged" data-min-level="advanced" data-needs-git hidden><dt class="rd-kv-k">Merged</dt><dd class="rd-kv-v"><button type="button" class="btn btn-sm btn-quiet rd-page-branch rd-merged-branch" hidden data-min-level="advanced" data-needs-git aria-label="Copy the branch it was merged into"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></dd></div>
+                    <div class="rd-kv-row" data-fact="kept" hidden><dt class="rd-kv-k">Kept work</dt><dd class="rd-kv-v"></dd></div>
+                    <div class="rd-kv-row" data-fact="pr" hidden><dt class="rd-kv-k">Pull request</dt><dd class="rd-kv-v"></dd></div>
+                    <div class="rd-kv-row" data-fact="checks" hidden><dt class="rd-kv-k">Checks</dt><dd class="rd-kv-v"></dd></div>
+                    <div class="rd-kv-row" data-fact="watch" hidden><dt class="rd-kv-k">Watch</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
                   </dl>
@@ -1042,6 +1049,12 @@
                     <div class="rd-kv-row" data-fact="group" hidden><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line"></dd></div>
                     <div class="rd-kv-row" data-fact="project" hidden><dt class="rd-kv-k">Project</dt><dd class="rd-kv-v rd-page-meta"></dd></div>
                     <div class="rd-kv-row" data-fact="branch" data-min-level="advanced" data-needs-git hidden><dt class="rd-kv-k">Branch</dt><dd class="rd-kv-v"><button type="button" class="btn btn-sm btn-quiet rd-page-branch" hidden data-min-level="advanced" data-needs-git aria-label="Copy branch name"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></dd></div>
+                    <!-- The PR rows (run-head.mjs factsModel / renderFacts): the tracker's steps carry labels only. -->
+                    <div class="rd-kv-row" data-fact="merged" data-min-level="advanced" data-needs-git hidden><dt class="rd-kv-k">Merged</dt><dd class="rd-kv-v"><button type="button" class="btn btn-sm btn-quiet rd-page-branch rd-merged-branch" hidden data-min-level="advanced" data-needs-git aria-label="Copy the branch it was merged into"><span class="rd-page-branch-name"></span><svg class="ico-copy" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"></rect><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5" stroke-linecap="round"></path></svg><svg class="ico-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M4 12.5l5.5 5.5L20 6.5" stroke-linecap="round" stroke-linejoin="round"></path></svg></button></dd></div>
+                    <div class="rd-kv-row" data-fact="kept" hidden><dt class="rd-kv-k">Kept work</dt><dd class="rd-kv-v"></dd></div>
+                    <div class="rd-kv-row" data-fact="pr" hidden><dt class="rd-kv-k">Pull request</dt><dd class="rd-kv-v"></dd></div>
+                    <div class="rd-kv-row" data-fact="checks" hidden><dt class="rd-kv-k">Checks</dt><dd class="rd-kv-v"></dd></div>
+                    <div class="rd-kv-row" data-fact="watch" hidden><dt class="rd-kv-k">Watch</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
                   </dl>
@@ -2253,6 +2266,21 @@
                 <button type="button" id="networkWaitReset" class="btn btn-sm">Use defaults</button>
                 <button type="button" id="networkWaitSave" class="btn btn-primary btn-sm">Save</button>
               </div>
+            </section>
+
+            <!-- Network proxy (docs/network-proxy.md, corporateProxy flag): the corporate proxy Worca's local
+                 proxy logs in to, and the saved login (domain, user, NT hash). The body is built by
+                 settings-network-proxy.mjs only while the flag is on. -->
+            <section class="card settings-card" id="network-proxy-settings-card" data-min-level="advanced" data-flag="corporateProxy" data-flag-chip>
+              <div class="card-head">
+                <div class="label-row">
+                  <h2>Network proxy</h2>
+                  <button type="button" class="info-tip" aria-label="About the network proxy">i<span class="tip-content hidden">
+                    Worca logs in to your corporate proxy (NTLMv2) for every agent, tool and plugin. It saves your domain, user name and the NT hash of your password, never the password itself, in a file only you can read. A wrong password stops all logins at once, so your account is not locked.
+                  </span></button>
+                </div>
+              </div>
+              <div id="networkProxyBody"></div>
             </section>
 
             <!-- Actions (issue #529): keep policy for finished-run checkouts, the port range for
