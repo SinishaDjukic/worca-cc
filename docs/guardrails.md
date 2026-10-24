@@ -26,7 +26,8 @@ for Strict, or a saved set's id); an unknown id exits before the run starts.
 A resumed run keeps the set it started with, so `worca resume` has no such flag.
 Only Claude holds all of Normal's rules: on a new install a run on any other
 engine is refused unless you start it with `--guardrails permissive` or accept
-the gap with `--allow-unguarded-engine`.
+the gap with `--allow-unguarded-engine`. A refused resume names a new run with
+`--guardrails permissive`, or `worca resume <id> --allow-unguarded-engine`.
 A team policy's default set preselects the picker over it. Protection stays a
 per-run choice, not a persistent project property: there is no per-project
 default, and one set applies to all workspace members.

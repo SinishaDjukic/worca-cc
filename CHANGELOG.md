@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Engine gate refusals name the options that exist
+
+- `worca --guardrails <id>` picks a run's guardrail set. A run the engine gate refuses for its set's rules names that flag (`--guardrails permissive`) and `--allow-unguarded-engine` on the CLI, and the Permissive set and Allow unguarded in the UI. A resume keeps the set its run pinned, so its refusal points at a new run on the Permissive set instead.
+
 ### Security: one owner per engine boundary (core protection layer, part 1)
 
 - Every engine's agents get an allowlist environment, Claude's included and with env scrub off: the base names, the engine's own exact names from its catalog entry (`src/shared/engine-switch.mjs`), its sign-in names and the guardrail set's allowlist. No prefix family (`CLAUDE_*`, `COPILOT_*`) passes any more, locally or in a sandbox, so `COPILOT_ALLOW_ALL` and another engine's keys never reach an agent. Each run names what it withheld in one log line (`env: N variables not passed to <engine> (allowlist): …`), names only.

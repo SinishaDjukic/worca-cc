@@ -356,12 +356,13 @@ export function engineSwitchNote(engine) {
 }
 
 /** The engine gate's refusal worded for where it is read. The run writes it for the CLI ("run it with
- *  --guardrails permissive", "pass --allow-unguarded-engine"); the UI names the set and its checkbox, and chat
- *  sends the person to the UI (it never sends the consent). Any other text is returned as is. */
+ *  --guardrails permissive", on a resume "start a new run with --guardrails permissive", "pass
+ *  --allow-unguarded-engine"); the UI names the set and its checkbox, and chat sends the person to the UI (it
+ *  never sends the consent). Any other text is returned as is. */
 export function engineRefusalFor(text, surface) {
   const s = String(text ?? '');
   if (surface !== 'ui' && surface !== 'chat') return s;
-  const set = s.replace(/run it with --guardrails permissive/g, 'run it with the Permissive set');
+  const set = s.replace(/ with --guardrails permissive/g, ' with the Permissive set');
   if (surface === 'ui') return set.replace(/pass --allow-unguarded-engine/g, 'tick Allow unguarded');
   return set.replace(/pass --allow-unguarded-engine/g, 'resume it in the Worca UI with Allow unguarded');
 }

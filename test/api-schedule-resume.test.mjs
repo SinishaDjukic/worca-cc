@@ -169,6 +169,8 @@ test('engine: a scheduled resume on another engine stores it, fires on it, and a
   const body = await refused.json();
   assert.equal(body.code, 'engine-refused');
   assert.doesNotMatch(body.error, /--allow-unguarded-engine/, 'worded for the UI');
+  assert.doesNotMatch(body.error, /--guardrails/, 'the UI never names the CLI flag');
+  assert.match(body.error, /start a new run with the Permissive set, or tick Allow unguarded/);
   assert.equal(getDb().prepare('SELECT COUNT(*) AS n FROM scheduled_runs WHERE json_extract(request, \'$.internal.resumePipelineId\') = ?').get(guarded.id).n, 0);
 });
 

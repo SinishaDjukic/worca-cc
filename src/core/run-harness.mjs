@@ -3325,8 +3325,8 @@ export class RunHarness extends EventEmitter {
     const brokerRefusal = brokerEngineRefusal(name);
     if (brokerRefusal) return brokerRefusal;
     // The CLI's wording, like "pass --allow-unguarded-engine" (engineRefusalFor rewords both for the UI and chat). A resume
-    // keeps the set its run pinned, so `worca resume` has no --guardrails to name.
-    const permissive = this.resumeOpts ? 'run it with the Permissive set' : 'run it with --guardrails permissive';
+    // keeps the set its run pinned (`worca resume` takes no --guardrails), so only a new run can pick Permissive.
+    const permissive = this.resumeOpts ? 'start a new run with --guardrails permissive' : 'run it with --guardrails permissive';
     if (caps.permissionRules === false && hasPermissionRules(rules) && !allowed) {
       return `guardrail set "${guardrailsId}" has permission rules this engine cannot enforce — ${permissive}, or pass --allow-unguarded-engine to run it without them`;
     }
