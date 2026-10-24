@@ -49,7 +49,7 @@ test('a finished run without a project: its Overview never says it did not compl
   assert.ok(sec && sec.querySelector('.hd-ov-grid'), 'the Overview painted');
   assert.equal(sec.querySelector('.hd-ov-verdict'), null, 'no results.json: its files are the result, no verdict line');
   assert.doesNotMatch(sec.textContent, /did not complete/);
-  assert.equal(doc.querySelector('#hist-detail .rd-sheet .run-status .run-status-text').textContent, 'Finished', 'never Ready to ship');
+  assert.equal(doc.querySelector('#hist-detail .rd-sheet .run-status').dataset.text, 'Finished', 'never Ready to ship');
   assert.equal(doc.querySelectorAll('#hist-detail [data-model-action="ship"]').length, 0, 'no Ship it');
   click(ctx.window, doc.querySelector('#hist-detail .hd-archive'));
   await settle(ctx.window, 4);

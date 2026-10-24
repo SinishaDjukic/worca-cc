@@ -15145,8 +15145,8 @@ async function saveWorkflowCard(threadId, block, body = {}) {
       for (const [nid, sel] of Object.entries(ans.nodes)) nodes[nid] = { ...(nodes[nid] || {}), ...sel };
     }
   }
-  // `adopted` tells the saved card which line to show ("Uses your saved workflow"
-  // vs "Saved as a new workflow, tagged Auto") — card.match is set on BOTH paths.
+  // `adopted` tells the saved card whether to add "Uses a workflow you already had" (a new workflow has no line:
+  // its chip says Saved, its tag Auto) — card.match is set on BOTH paths.
   const flipped = flipCard(threadId, block.id, {
     state: 'saved', workflowId, card: { name, nodes, match: { id: workflowId, name }, adopted: matched },
   });

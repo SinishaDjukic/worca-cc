@@ -240,7 +240,7 @@ const page = await ev(`(() => {
   const el = document.querySelector('${OV}');
   const main = document.querySelector('#runs-pane');
   return {
-    statusLines: main.querySelectorAll('.run-status-text').length,
+    statusLines: main.querySelectorAll('.run-status-word').length,
     memberLists: main.querySelectorAll('ol.run-members').length,
     dupes: el.querySelectorAll('.shape-feature-head, .shape-feature-status, .shape-feature-runs, ol.chat-rc-members').length,
     replanButton: !!el.querySelector('[data-act="feature-replan"]'), more: !!el.querySelector('.shape-feature-more'),

@@ -1122,7 +1122,7 @@ test('a finished run: its headline, the facts, what to check, Create pull reques
   const st = rd.querySelector('.rd-sheet .run-status');
   assert.equal(st.dataset.state, 'ready');
   // Slice 3 (D5): the page's own detail; the Runs list keeps "Ready to ship".
-  assert.equal(st.querySelector('.run-status-text').textContent, 'Ready to ship · not in main yet');
+  assert.equal(st.dataset.text, 'Ready to ship · not in main yet');
   assert.equal(rd.querySelector('.rd-orb'), null, 'no glance orb: the status dot says it');
   // Time · Cost · Changes, each labelled once.
   const facts = rd.querySelector('.rd-facts .rd-stats');
@@ -1741,8 +1741,8 @@ test('the run page carries the progress bar in its status block, and no chain ba
   assert.equal(screen.querySelector('.rd-prog-chain'), null, 'a run page draws only its own bar (D19)');
   assert.equal(screen.querySelector('.rd-slice-line'), null);
   assert.equal(statusOf(screen).dataset.state, 'working');
-  assert.match(statusOf(screen).querySelector('.run-status-text').textContent, /^Working · .*Implementer/, 'the model line, word first');
-  assert.doesNotMatch(statusOf(screen).querySelector('.run-status-text').textContent, /· step ·|(^|· )(Plan|Build|Review|Ready) ·/,
+  assert.match(statusOf(screen).dataset.text, /^Working · .*Implementer/, 'the model line, word first');
+  assert.doesNotMatch(statusOf(screen).dataset.text, /· step ·|(^|· )(Plan|Build|Review|Ready) ·/,
     'beside the stage bar the live page names only the step');
   assert.equal(statusOf(screen).dataset.line, 'Implementer', 'a nodes-mode run (V2_MANIFEST has no stages): no "Step ·" either');
   assert.equal(screen.querySelector('.rd-meta .rd-step').textContent, 'Implementer', 'the header step segment keeps the P5 text');
@@ -1777,7 +1777,7 @@ test('a question turns the run page bar amber and the status line says what need
   await settle(ctx.window, 6);
   assert.equal(runBarOf(screen).dataset.tone, 'amber');
   assert.equal(statusOf(screen).dataset.state, 'needs-you');
-  assert.match(statusOf(screen).querySelector('.run-status-text').textContent, /needs you/i);
+  assert.match(statusOf(screen).dataset.text, /needs you/i);
   assert.equal(statusOf(screen).querySelector('.status-dot').getAttribute('aria-label'), 'Needs you');
 });
 

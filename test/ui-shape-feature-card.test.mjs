@@ -157,7 +157,7 @@ test('pre-upgrade feature: the REST snapshot (no shaping) renders the feature ca
       { doc: dom.window.document, win: dom.window, shaperCard: () => cardJson });
     dom.window.document.body.appendChild(built.el);
     const $ = (sel) => built.el.querySelector(sel);
-    assert.equal($('.run-status-text').textContent, 'Run 2 of 3 · needs you');
+    assert.equal($('.run-status').dataset.text, 'Run 2 of 3 · needs you');
     assert.equal(painted.at(-1), 'bbbb0002');
     assert.deepEqual([...built.el.querySelectorAll('.run-member-title')].map((n) => n.textContent),
       ['Planning', 'Store charts', 'Chart in Chat', 'Charts on the run page']);
