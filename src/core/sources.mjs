@@ -87,6 +87,24 @@ function taskPromptText(task) {
   return text;
 }
 
+/** The title a plugin-source run starts with, before its task is read (ui/server.mjs fallbackRunTitle). */
+export function sourcePlaceholderTitle(source) {
+  return `${source.plugin}: ${source.taskId}`;
+}
+
+/**
+ * A run's title from its tracker task: "[TECH-104] Fix the login redirect". The ref is the task id after its last
+ * "/", so GitHub's "acme/shop#12" reads "shop#12" and Azure's "acme/Shop#12" "Shop#12". null without a task title.
+ * @param {{taskId?:string, title?:string}|null} meta  resolveTaskInput's sourceMeta
+ */
+export function ticketRunTitle(meta) {
+  const title = String(meta?.title || '').replace(/\s+/g, ' ').trim();
+  if (!title) return null;
+  const ref = String(meta?.taskId || '').trim().split('/').pop();
+  const full = ref ? `[${ref}] ${title}` : title;
+  return full.length > 120 ? `${full.slice(0, 119).trimEnd()}…` : full;
+}
+
 /**
  * Resolve a source descriptor to the pipeline's task input.
  *   { type:'prompt', prompt } | { type:'markdown', promptText?, promptFile? }

@@ -11,10 +11,14 @@ export const SHIP_MODES = Object.freeze(['stacked', 'one']);
  * are left out; each stays in its slice's closed draft.
  */
 export function onePrBody(slices, keptUrl = null, { maxChars = Infinity } = {}) {
+  // One ship flow: a slice without a PR (the normal case now) has no Draft line.
+  const draftLine = (s) => (!s.pr || !s.pr.url ? '' : s.pr.url === keptUrl ? 'Draft: this pull request' : `Draft: ${s.pr.url} (closed)`);
   const build = (withLists) => slices.map((s) => `## Slice ${s.index}: ${s.title}\n\n${s.summary ? `${s.summary}\n\n` : ''}`
-    + `${withLists && s.checklistMd ? `${s.checklistMd}\n\n` : ''}${s.pr.url === keptUrl ? 'Draft: this pull request' : `Draft: ${s.pr.url} (closed)`}`).join('\n\n');
+    + `${withLists && s.checklistMd ? `${s.checklistMd}\n\n` : ''}${draftLine(s)}`.trimEnd()).join('\n\n');
   const full = build(true);
-  return full.length <= maxChars ? full : `${build(false)}\n\nEach slice's checklist is in its closed draft.`;
+  const closedAny = slices.some((s) => s.pr && s.pr.url && s.pr.url !== keptUrl);
+  return full.length <= maxChars ? full
+    : `${build(false)}\n\n${closedAny ? "Each slice's checklist is in its closed draft." : "The slices' checklists are left out to fit."}`;
 }
 
 /**
@@ -26,12 +30,14 @@ export function onePrBody(slices, keptUrl = null, { maxChars = Infinity } = {}) 
  *   refreshBody(prUrl, pipelineId):Promise<unknown>}} deps
  * @returns {Promise<{ok:true, mode, prUrl:string|null, closed?:number, warnings:string[]}|{ok:false, status:number, error:string}>}
  *   closed (mode 'one'): how many drafts were closed. The one PR replaces the last row's PR, so the rows cannot tell.
+ *   One: slices may have no PR (the one ship flow opens none per slice); stacked needs every slice's PR.
  */
 export async function shipFeature({ feature, mode, maxBody = Infinity }, deps) {
   if (!SHIP_MODES.includes(mode)) return { ok: false, status: 400, error: 'mode must be stacked or one' };
   const slices = feature.slices;
   const last = slices[slices.length - 1];
-  const missing = slices.find((s) => !s.pr || !s.pr.url);
+  // One ship flow: stacked marks every slice PR ready, so each needs one; One makes its own and closes only those that exist.
+  const missing = mode === 'stacked' && slices.find((s) => !s.pr || !s.pr.url);
   if (missing) return { ok: false, status: 409, error: `slice ${missing.index} has no pull request yet` };
   // D25 first, so the entry is part of what ships (the one PR, or the last stacked PR). changelogWithFeature leaves a
   // text that already has this feature's entry as it is, so a retry after a later failure adds no second entry.
@@ -49,7 +55,7 @@ export async function shipFeature({ feature, mode, maxBody = Infinity }, deps) {
     return { ok: true, mode, prUrl: null, warnings };
   }
   const one = await deps.openOnePr({ pipelineId: last.pipelineId, title: feature.title, body: onePrBody(slices, null, { maxChars: maxBody }) });
-  if (!one.ok) return { ok: false, status: 500, error: `could not open the pull request: ${one.error}` };
+  if (!one.ok) return { ok: false, status: 500, error: `could not create the PR: ${one.error}` };
   // P16: the forge answered with an open PR from the same head into the same base (the last slice's draft already
   // targets the root): that PR is the one PR. Make it ready and give it the combined body; never close it.
   let kept = null;
@@ -60,7 +66,7 @@ export async function shipFeature({ feature, mode, maxBody = Infinity }, deps) {
   }
   let closed = 0;
   for (const s of slices) {
-    if (s.pr.url === kept) continue;
+    if (!s.pr || !s.pr.url || s.pr.url === kept) continue;   // a slice without a PR has nothing to close
     const c = await deps.close(s.pr.url, `Shipped as one pull request: ${one.url}`, s.pipelineId);
     if (c.ok) closed++;
     else warnings.push(`could not close slice ${s.index}'s draft: ${c.error}`);

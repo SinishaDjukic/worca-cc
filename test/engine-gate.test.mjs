@@ -20,6 +20,7 @@ import { CODEX_DEFAULT_MODEL } from '../src/core/engines/codex.mjs';
 import { writableRootsInWorcaHome } from '../src/core/engines/spawn.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { writeCursorProjectFiles } from '../src/core/engines/cursor.mjs';
+import { writeProjectFiles } from '../src/core/engines/project-files.mjs';
 import { fakeCursor } from './helpers/fake-cursor.mjs';
 import { removeInjectedPaths, writeRunManifest, readRunManifest } from '../src/core/run-manifest.mjs';
 import { readGuardrailSet } from '../src/core/guardrail-store.mjs';
@@ -43,7 +44,7 @@ const CMD_RULES = { deny: ['Bash(curl:*)', 'Bash(git push)', 'WebSearch'] };
 test('an unknown engine fails at construction', () => {
   assert.throws(() => orch({ engine: 'codx' }), /unknown engine "codx"/);
   // The mock stands in for Claude under --mock only; it is not a run engine.
-  assert.throws(() => orch({ engine: 'mock' }), /"mock" is not a run engine \(choose one of: claude, codex, copilot, cursor\); the offline mock runs under --mock/);
+  assert.throws(() => orch({ engine: 'mock' }), /"mock" is not a run engine \(choose one of: claude, codex, copilot, cursor, gemini, goose, opencode, qwen\); the offline mock runs under --mock/);
 });
 
 test('claude (the default) passes the gate with nothing to say', () => {
@@ -617,6 +618,33 @@ test('engineStartRefusal reports a failed preflight as not liftable', POSIX, asy
   assert.match(r.error, /^engine codex: .*codex-out is not signed in/);
 });
 
+test('an opencode run refuses when a spawn names no model, and checks credentials in the env its agent gets', POSIX, async () => {
+  const dir = tmp();
+  const bin = join(dir, 'opencode');
+  writeFileSync(bin, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 1.18.23; exit 0; fi\n' +
+    'if [ -n "$ANTHROPIC_API_KEY" ]; then echo "0 credentials"; echo "1 environment variables"; else echo "0 credentials"; echo "0 environment variables"; fi\n');
+  chmodSync(bin, 0o755);
+  const keep = { key: process.env.ANTHROPIC_API_KEY, optIn: process.env.WORCA_OPENCODE_ALLOW_DEFAULT_MODEL };
+  process.env.ANTHROPIC_API_KEY = 'worca-only';
+  delete process.env.WORCA_OPENCODE_ALLOW_DEFAULT_MODEL;
+  try {
+    const r = await createOrchestrator({ projectDir: dir, claude: { engine: 'opencode', bin } }).engineStartRefusal();
+    assert.equal(r.overridable, false);
+    assert.match(r.error, /^engine opencode: .*names no model: .*OpenCode Zen/);
+    const named = createOrchestrator({ projectDir: dir, claude: { engine: 'opencode', bin, model: 'anthropic/claude-sonnet-4-5' } });
+    assert.equal(await named._opencodeOnDefaultModel(), false);
+    assert.equal(await named.engineStartRefusal(), null);
+    // A set that scrubs the env keeps worca's key from the agent: OpenCode would have no credential.
+    const logs = [];
+    named.on('log', (l) => logs.push(l));
+    await named._engineChecks(() => true, { guardrails: { envScrub: true, envAllowlist: [] } });
+    assert.ok(logs.some((l) => /no provider credentials in the agent's environment/.test(l.text)), JSON.stringify(logs));
+  } finally {
+    if (keep.key === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = keep.key;
+    if (keep.optIn !== undefined) process.env.WORCA_OPENCODE_ALLOW_DEFAULT_MODEL = keep.optIn;
+  }
+});
+
 test('engineStartRefusal logs nothing: a preflight warning is left to run()', POSIX, async () => {
   // A binary whose `login status` says nothing recognizable: the preflight warns, it
   // does not refuse. Logged here, the line would sit in the log writer's pre-bind buffer
@@ -750,6 +778,33 @@ test('engineStartRefusal: a signed-out cursor-agent is not liftable', POSIX, asy
   }
 });
 
+// ── Goose (engines/goose.mjs) ────────────────────────────────────────────────
+
+test('goose: Permissive passes, one audit line per missing capability; cost is reported', () => {
+  const lines = withNodes(orch({ engine: 'goose' }), {})._engineGate();
+  const caps = lines.filter((l) => /^engine goose: no \w+ — /.test(l));
+  assert.deepEqual(caps.map((l) => l.split(':')[1].trim().split(' ')[1]).sort(),
+    ['allowedTools', 'hookTelemetry', 'permissionRules', 'skills', 'subagentSystemPrompt', 'subagents', 'turnBudget']);
+});
+
+test('goose holds no rule: the Normal set needs --allow-unguarded-engine, then says none is enforced', async () => {
+  const rules = await NORMAL_RULES();
+  const o = withNodes(orch({ engine: 'goose' }), {});
+  o.guardrailPermissionRules = rules;
+  o.guardrailsId = 'normal';
+  assert.throws(() => o._engineGate(), /cannot enforce/);
+  const allowed = withNodes(orch({ engine: 'goose', allowUnguardedEngine: true }), {});
+  allowed.guardrailPermissionRules = rules;
+  allowed.guardrailsId = 'normal';
+  assert.ok(allowed._engineGate().includes('engine goose: guardrail set "normal": permission rules NOT enforced on goose (--allow-unguarded-engine)'));
+});
+
+test('engineStartRefusal: a missing goose binary is not liftable', POSIX, async () => {
+  const r = await createOrchestrator({ projectDir: tmp(), claude: { engine: 'goose', bin: join(tmp(), 'no-goose') } }).engineStartRefusal();
+  assert.equal(r.overridable, false);
+  assert.match(r.error, /WORCA_GOOSE_BIN/);
+});
+
 test('a result with no cost warns on a reporting engine, not on cursor; a per-Mtok model warns on any engine', async () => {
   await withCatalogHome(async () => {
     await addGlobalModel({ id: 'gate-priced', cost: { perMtok: { input: 1, output: 2 } } });
@@ -764,6 +819,34 @@ test('a result with no cost warns on a reporting engine, not on cursor; a per-Mt
     assert.equal(warns('cursor').some((t) => /no cost estimate/.test(t)), false);
     assert.ok(warns('cursor', 'gate-priced').some((t) => /priced per-Mtok but the result carried no token usage/.test(t)));
   });
+});
+
+// ── OpenCode (engines/opencode.mjs) ──────────────────────────────────────────
+
+test('opencode: Permissive passes, one audit line per missing capability; cost is reported', () => {
+  const lines = withNodes(orch({ engine: 'opencode' }), {})._engineGate();
+  const caps = lines.filter((l) => /^engine opencode: no \w+ — /.test(l));
+  assert.deepEqual(caps.map((l) => l.split(':')[1].trim().split(' ')[1]).sort(), ['allowedTools', 'hookTelemetry']);
+});
+
+test('opencode: the Normal set holds in part — it needs --allow-unguarded-engine, then names its permission rules', async () => {
+  const rules = await NORMAL_RULES();
+  const o = withNodes(orch({ engine: 'opencode' }), {});
+  o.guardrailPermissionRules = rules;
+  o.guardrailsId = 'normal';
+  assert.throws(() => o._engineGate(), (err) => /holds only in part/.test(err.message) && /permission rules/.test(err.message));
+  const allowed = withNodes(orch({ engine: 'opencode', allowUnguardedEngine: true }), {});
+  allowed.guardrailPermissionRules = rules;
+  allowed.guardrailsId = 'normal';
+  const lines = allowed._engineGate();
+  assert.ok(lines.some((l) => l.startsWith('engine opencode: deny rules held on opencode only in part, as permission rules — command rules match each command')), lines.join('\n'));
+  assert.equal(lines.some((l) => /NOT enforced on opencode/.test(l)), false, 'every Normal rule reaches OpenCode');
+});
+
+test('engineStartRefusal: a missing opencode binary is not liftable', POSIX, async () => {
+  const r = await createOrchestrator({ projectDir: tmp(), claude: { engine: 'opencode', bin: join(tmp(), 'no-opencode') } }).engineStartRefusal();
+  assert.equal(r.overridable, false);
+  assert.match(r.error, /WORCA_OPENCODE_BIN/);
 });
 
 // The Cursor files in the §8.8 set, the commit and the diffs (run-harness _registerEngineConfig, _injectedFor,
@@ -1020,7 +1103,7 @@ test('stopPaused registers the Cursor files even when memory never mounted, and 
   o3.on('log', (l) => logs.push(String(l.text)));
   o3._registerEngineConfig = async () => { throw new Error('boom'); };
   assert.equal((await o3.stopPaused('ada')).status, 'stopped');
-  assert.ok(logs.some((t) => /stop: Cursor's \.cursor config was not registered for removal \(boom\)/.test(t)), logs.join('\n'));
+  assert.ok(logs.some((t) => /stop: the engine's checkout config was not registered for removal \(boom\)/.test(t)), logs.join('\n'));
 });
 
 test('legacy teardown on a cursor run: the kept branch carries the agent\'s .cursor/mcp.json and never worca\'s cli.json', { timeout: 120000 }, async () => {
@@ -1055,4 +1138,32 @@ test('legacy teardown on a cursor run: the kept branch carries the agent\'s .cur
   } finally {
     if (prevMode === undefined) delete process.env.WORCA_RUN_ROOT; else process.env.WORCA_RUN_ROOT = prevMode;
   }
+});
+
+// Gemini CLI reads its MCP servers from the checkout's .gemini/settings.json (engines/project-files.mjs): the same
+// §8.8 handling as Cursor's files, from the engine-neutral list.
+const GEMINI_SETTINGS = '{"mcpServers":{"gh":{"command":"gh-mcp"}}}\n';
+test('a Gemini CLI run registers .gemini/settings.json; teardown commits the agent\'s work and removes worca\'s file', async () => {
+  const { wt } = linkedWorktree();
+  const o = harnessOn(wt, { engine: 'gemini' });
+  await o._registerEngineConfig();
+  assert.deepEqual(o.injectedPaths.pk, [{ path: '.gemini/settings.json', kind: 'engineConfig', source: null }]);
+  writeProjectFiles('gemini', wt, { '.gemini/settings.json': GEMINI_SETTINGS });
+  writeFileSync(join(wt, 'a.txt'), 'agent work\n');
+  assert.deepEqual(await o._engineConfigState(wt), { owned: ['.gemini/settings.json'], forced: [] });
+  const commit = await teardownCommit(o, wt);
+  assert.equal(commit.committed, true, JSON.stringify(commit));
+  assert.ok(!tree(wt, 'HEAD').includes('.gemini/settings.json'), 'worca\'s file stays out');
+  assert.ok(!existsSync(join(wt, '.gemini', 'settings.json')), 'and is removed');
+});
+
+test('a resume that switched a Gemini CLI run to Claude still registers the earlier segment\'s file; an agent\'s own one is never worca\'s', async () => {
+  const { wt } = linkedWorktree();
+  writeProjectFiles('gemini', wt, { '.gemini/settings.json': GEMINI_SETTINGS });
+  const switched = harnessOn(wt, { engine: 'claude' });
+  await switched._registerEngineConfig();
+  assert.deepEqual(switched.injectedPaths.pk, [{ path: '.gemini/settings.json', kind: 'engineConfig', source: null }]);
+  writeFileSync(join(wt, '.gemini', 'settings.json'), '{"agent":true}\n');
+  assert.deepEqual(switched._injectedFor('pk', wt), [], 'the agent\'s file survives teardown');
+  assert.deepEqual(await switched._engineConfigState(wt), { owned: [], forced: ['.gemini/settings.json'] });
 });

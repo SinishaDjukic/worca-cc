@@ -151,3 +151,30 @@ test('assertMemoryDefragModelInput: the pair rule, the catalog casing, and the m
   assert.throws(() => assertMemoryDefragModelInput({ model: 'claude-haiku-4-5', effort: 'max' }, models), /claude-haiku-4-5 does not offer effort "max"/);
   assert.ok(SETTINGS_POST_KEYS.includes('memoryDefrag'), 'registered beside its setter (the root-clearing guard reads this list)');
 });
+
+import { writeProjectSettings, assertProjectSettingsPatch } from '../src/core/settings-cascade.mjs';
+import { teamMemoryEnabled, teamMemoryLoad } from '../src/core/settings.mjs';
+
+test('team memory: off by default, per project only; memory.teamMaxFiles is a cap of its own', () => {
+  const projectKey = 'teamdemo-0000000a';
+  assert.equal(teamMemoryEnabled({ projectKey }), false, 'off by default');
+  assert.equal(teamMemoryEnabled(null), false, 'no scope (global, a workspace) is never on');
+  writeProjectSettings({ projectKey }, { 'memory.team': true, 'memory.teamMaxFiles': 7 });
+  assert.equal(teamMemoryEnabled({ projectKey }), true);
+  assert.equal(memoryCaps({ projectKey }).teamMaxFiles, 7);
+  assert.equal(memoryCaps({ projectKey }).maxFilesPerScope, 50, 'the local cap is separate');
+  assert.equal(memoryCaps(null).teamMaxFiles, 50, 'default');
+  assert.equal(teamMemoryLoad({ projectKey }), 'both', 'true loads local and team notes');
+  writeProjectSettings({ projectKey }, { 'memory.team': 'only' });
+  assert.deepEqual([teamMemoryEnabled({ projectKey }), teamMemoryLoad({ projectKey })], [true, 'team'], '"only": on, team notes only');
+  assert.throws(() => assertProjectSettingsPatch({ 'memory.team': 'yes' }), /memory\.team must be true, false or "only"/);
+  writeProjectSettings({ projectKey }, { 'memory.team': null });
+  assert.deepEqual([teamMemoryEnabled({ projectKey }), teamMemoryLoad({ projectKey })], [false, 'local']);
+});
+
+test('team memory: settings.json cannot switch it on — the user layer is not read', async () => {
+  const cur = JSON.parse(await readFile(settingsFile(), 'utf8').catch(() => '{}'));
+  await writeFile(settingsFile(), JSON.stringify({ ...cur, memory: { team: true, teamMaxFiles: 9 } }, null, 2));
+  assert.equal(teamMemoryEnabled({ projectKey: 'teamdemo-0000000b' }), false);
+  assert.equal(memoryCaps({ projectKey: 'teamdemo-0000000b' }).teamMaxFiles, 9, 'the CAP does take a user default');
+});

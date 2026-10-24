@@ -8,27 +8,12 @@ import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
+import { cssRules as rules } from './helpers/css-rules.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 // Comments blanked but newlines kept, so a rule's line number is its real line.
 const css = readFileSync(join(ROOT, 'ui/public/style.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
 
-/** Every style rule as { sel, body, line }; @media/@container wrappers are walked through, @keyframes skipped. */
-function rules(text) {
-  const out = []; const stack = []; let start = 0; let line = 1;
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    if (ch === '\n') line += 1;
-    else if (ch === '{') { stack.push({ head: text.slice(start, i).trim(), at: i + 1, line }); start = i + 1; }
-    else if (ch === '}') {
-      const open = stack.pop();
-      const inKeyframes = stack.some((s) => /^@(-webkit-)?keyframes/.test(s.head));
-      if (open && !open.head.startsWith('@') && !inKeyframes) out.push({ sel: open.head.replace(/\s+/g, ' '), body: text.slice(open.at, i), line: open.line });
-      start = i + 1;
-    } else if (ch === ';' && (!stack.length || stack.at(-1).head.startsWith('@'))) start = i + 1;
-  }
-  return out;
-}
 /** Split on top-level commas only: commas inside color-mix(…), var(…) or :is(…) stay. */
 function splitTop(v) {
   const out = []; let depth = 0; let cur = '';
@@ -842,7 +827,7 @@ test('charts: the guide sets their heights and text steps; off-scale SVG text si
 
 // F-8: a typed uppercase kicker is a string literal of capitals set as visible text.
 const STATE_CODES = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPEN', 'MERGED', 'CLOSED', 'UNKNOWN', 'UNAVAILABLE', 'FAILED', 'DRAFT',
-  'BUTTON', 'SELECT', 'SPAN', 'MERGEABLE', 'CONFLICTING', 'PENDING', 'NONE'];
+  'BUTTON', 'SELECT', 'SPAN', 'MERGEABLE', 'CONFLICTING', 'PENDING', 'NONE', 'STALE'];
 const KICKER = new RegExp(`(['"\`])(?!(?:${STATE_CODES.join('|')})\\1)[A-Z][A-Z0-9 ·&/-]{2,}[A-Z0-9]\\1`);
 const KICKER_FILES = ['ui/public/app.js', 'ui/public/team-metrics-view.mjs'].map((f) => join(ROOT, f));
 test('no typed uppercase kicker in app.js or team-metrics-view.mjs (F-8, spec §1.3)', () => {
@@ -901,4 +886,20 @@ test('slice 3 (D18): the run page tiles read in the stat face, 22px sans with ta
   assert.match(body, /tabular-nums/);
   const tile = ALL.filter((x) => splitTop(x.sel).map((t) => t.trim()).includes('.rd-stats > div')).map((x) => x.body).join(';');
   assert.match(tile, /padding:var\(--pad-tile\) 8px/);
+});
+
+test('card head: the state word is a 15px/600 headline that never truncates; the detail is 12px --ink-2, 2 lines', () => {
+  const body = (sel) => ALL.filter((r) => splitTop(r.sel).map((t) => t.trim()).includes(sel)).map((r) => r.body).join(';');
+  const word = body('.run-status-word');
+  assert.match(word, /font-size:var\(--fs-section\)/);
+  assert.match(word, /font-weight:600/);
+  assert.doesNotMatch(word, /text-overflow|white-space:nowrap/, 'the headline is never cut');
+  const detail = body('.run-status-detail');
+  assert.match(detail, /font-size:var\(--fs-meta\)/);
+  assert.match(detail, /color:var\(--ink-2\)/);
+  assert.match(detail, /-webkit-line-clamp:2/);
+  // The old 13px one-line status head must not come back under any name.
+  assert.ok(!ALL.some((r) => /\.run-status-(?:head|word|text)\b/.test(r.sel) && /white-space:nowrap/.test(r.body) && /text-overflow:ellipsis/.test(r.body)),
+    'no status head is a nowrap ellipsis line');
+  assert.match(body('.chat-rc-status .run-status-word'), /font-size:var\(--fs-body\)/, 'beside a card title the state is 13px');
 });

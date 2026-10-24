@@ -148,7 +148,8 @@ test('welcome at 375px: the nav drawer is closed behind it (F-21)', async () => 
   assert.equal(doc.body.classList.contains('nav-open'), false);
   assert.equal(doc.querySelector('.main').hasAttribute('inert'), false);
   const css = readFileSync(join(root, 'style.css'), 'utf8');
-  assert.match(css, /@media \(max-width:760px\)\{\s*\.ob-welcome\{max-height:calc\(100dvh - 24px\)/);
+  // The .dlg card selector beats `.viewer-modal .card`'s 86vh, so the phone allowance takes effect.
+  assert.match(css, /@media \(max-width:760px\)\{\s*\.viewer-modal \.card\.dlg\.ob-welcome\{max-height:calc\(100dvh - 24px\)/);
 });
 
 test('Hide posts {hidden:true} and removes the pill (the page stays); Settings › Show again posts {hidden:false} and opens the page', async () => {

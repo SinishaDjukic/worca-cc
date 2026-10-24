@@ -571,7 +571,7 @@ export function renderPolicyEmptyState({ doc = globalThis.document } = {}) {
 const KIND_LABEL = { default: 'Default', soft: 'Soft', hard: 'Hard' };
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
-const EFFORTS_BY_ENGINE = { claude: EFFORTS, codex: CODEX_EFFORTS, cursor: [], copilot: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] };
+const EFFORTS_BY_ENGINE = { claude: EFFORTS, codex: CODEX_EFFORTS, cursor: [], copilot: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'], goose: ['low', 'medium', 'high', 'max'], opencode: ['minimal', 'low', 'medium', 'high', 'max'] };
 
 function listChips(doc, row, items, labelOf) {
   const list = row.querySelector('.tp-list');

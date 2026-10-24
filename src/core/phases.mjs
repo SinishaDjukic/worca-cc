@@ -319,8 +319,9 @@ function relRepo(p) {
  */
 export function fanOutDirective(fanOut, { omitProjectAgents = false, subagentModel = '', endpointRouted = false, investigator = false, engine = 'claude' } = {}) {
   if (!fanOut) return '';
-  // Codex and Copilot have their own sub-agent tools; Cursor has none (fan-out never reaches it: _engineNodeOpts), so nothing.
+  // Codex, Copilot and OpenCode have their own sub-agent tools; Cursor has none (fan-out never reaches it: _engineNodeOpts), so nothing.
   if (engine === 'copilot') return copilotFanOutDirective();
+  if (engine === 'opencode') return opencodeFanOutDirective();
   if (engine && engine !== 'claude') return engine === 'codex' ? codexFanOutDirective() : '';
   // Endpoint-routed: the usual "prefer a purpose-built agent" steering would
   // walk the agent straight into frontmatter-pinned definitions whose model the
@@ -392,26 +393,43 @@ export function codexFanOutDirective() {
 }
 
 /**
- * fanOutDirective on Copilot: its own `task` tool, and worca's investigator defined as the custom agent
- * `worca-investigator` (engines/copilot.mjs copilotInvestigatorAgent: read-only instructions and tools, the
- * memory pointers; it runs on the node's model). Skills come from `.agents/skills`, which copilot lists for
- * the agent itself. Pure + exported for testing.
+ * The fan-out directive of an engine whose `task` tool dispatches worca's investigator by name: `field` is the tool's
+ * agent parameter, `defines` what the operator's agent carries.
  */
-export function copilotFanOutDirective() {
+function taskToolFanOutDirective(field, defines) {
   return (
     '## Fan-out ENABLED — parallelize your research\n\n' +
     'You can dispatch sub-agents this run (the `task` tool). For any non-trivial task that spans more than one ' +
     'file or area, DISPATCH parallel read-only research sub-agents NOW — one per distinct area (e.g. UI vs. ' +
     'server vs. store vs. tests) — let them explore concurrently, then synthesize their reports yourself. Do ' +
     'NOT investigate every area serially when the work splits into independent areas.\n\n' +
-    'Dispatch EVERY sub-agent with `agent_type: "worca-investigator"` — the operator defined it for this run ' +
-    '(read-only instructions and tools, and this run\'s memory pointers). Use no other `agent_type`. Give each ' +
+    `Dispatch EVERY sub-agent with \`${field}: "worca-investigator"\` — the operator defined it for this run ` +
+    `(${defines}). Use no other \`${field}\`. Give each ` +
     'one a self-contained task: the area, the question, and the directories to look in.\n\n' +
     'Skills are available too: the skills listed for you (this run\'s `.agents/skills`) — use any that fit ' +
     '(e.g. design, framework-pattern, knowledge-graph) instead of guessing conventions.\n\n' +
     'Sub-agents are strictly READ-ONLY investigators: YOU write every artifact. Skip fan-out only for a ' +
     'trivial, single-file change.\n\n'
   );
+}
+
+/**
+ * OpenCode's fan-out directive: its `task` tool, and worca's investigator defined as the config agent
+ * `worca-investigator` (engines/opencode.mjs: read-only instructions, the memory pointers; it runs on the node's
+ * model). Skills come from `.agents/skills`, which OpenCode lists for the agent itself. Pure + exported for testing.
+ */
+export function opencodeFanOutDirective() {
+  return taskToolFanOutDirective('subagent_type', "read-only instructions and this run's memory pointers");
+}
+
+/**
+ * fanOutDirective on Copilot: its own `task` tool, and worca's investigator defined as the custom agent
+ * `worca-investigator` (engines/copilot.mjs copilotInvestigatorAgent: read-only instructions and tools, the
+ * memory pointers; it runs on the node's model). Skills come from `.agents/skills`, which copilot lists for
+ * the agent itself. Pure + exported for testing.
+ */
+export function copilotFanOutDirective() {
+  return taskToolFanOutDirective('agent_type', "read-only instructions and tools, and this run's memory pointers");
 }
 
 /**
@@ -879,6 +897,9 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // plugins under <pipeline.dir>/skills; Agent-tool children see them too). undefined without set
     // skills or with a blocked layer ⇒ nothing emitted ⇒ argv byte-identical.
     pluginDirs: ctx.skillPluginDirs?.length ? ctx.skillPluginDirs : undefined,
+    // Memory usage (memory-usage.mjs, U3): the execution's InstructionsLoaded hook file — null unless the run's rules
+    // copy holds a note with `paths:` ⇒ nothing in --settings and the argv stays byte-identical.
+    memoryLoadLog: typeof ctx.memoryLoadLog === 'string' && ctx.memoryLoadLog ? ctx.memoryLoadLog : undefined,
     // Guardrails: worca policy + lifted repo deny rules as {deny,...} rules ->
     // ONE --settings payload; envScrub/envAllowlist -> spawn env. All undefined
     // when the project has no guardrails, so the argv and env stay byte-identical
@@ -959,9 +980,9 @@ export function taskHeader(ctx, title) {
   // project + root skills are COPIED into `<cwd>/.claude/skills` for the run (§5.7);
   // legacy delivers neither (skills.mjs copies bundle/plugin entries only), so the
   // legacy sentence stays exactly as today.
-  // Codex lists the .agents/skills mount natively; another non-Claude engine (Cursor) is only told where it is.
+  // Codex and OpenCode list the .agents/skills mount natively; another non-Claude engine (Cursor) is only told where it is.
   const nodeEngine = ctx.node?.engine || 'claude';
-  const skillsHint = nodeEngine === 'codex'
+  const skillsHint = nodeEngine === 'codex' || nodeEngine === 'opencode'
     ? `Project, root, set and your personal skills are mounted at .agents/skills for this run and are listed for ` +
       `you — read a skill's SKILL.md and use any that fit (e.g. design, framework-pattern, or knowledge-graph ` +
       `skills) rather than guessing conventions.\n\n`

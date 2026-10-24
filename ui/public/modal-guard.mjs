@@ -21,6 +21,7 @@
 // each open stacks nothing — and the state is per document: like feedback.mjs, this module stays cached
 // while the app.js jsdom suites boot a fresh document per test.
 import { controlSnapshot } from './feedback.mjs';
+import { layoutDialog } from './dialog-layout.mjs';
 
 export const DISCARD_MESSAGE = 'Your changes in this dialog will be lost.';
 
@@ -168,6 +169,7 @@ export function askDiscard(doc, message = DISCARD_MESSAGE) {
     actions.append(keep, go);
     const card = make('div', 'card');
     card.append(head, msg, actions);
+    layoutDialog(card, { head: [head], foot: [actions] });
     dlg.append(card);
     const back = doc.activeElement;
     let settled = false;

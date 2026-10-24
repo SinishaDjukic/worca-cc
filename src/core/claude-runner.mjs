@@ -173,6 +173,9 @@ export async function runClaude(o = {}) {
     agents,
     pluginDirs,
     extraSettings,
+    // Memory usage (memory-usage.mjs): this execution's hook file; set only when the mounted rules hold a note
+    // with `paths:`. Claude only (the InstructionsLoaded hook); other engines ignore it. Never a spawn flag of its own.
+    memoryLoadLog,
     argvInlineLimit,
     // The user's own project folder whose approvals decide the cwd's committed `.mcp.json` servers on Claude
     // (mcpjson-approval.mjs). A pipeline node's cwd is a run checkout, which holds neither the untracked
@@ -268,6 +271,7 @@ export async function runClaude(o = {}) {
     agents,
     pluginDirs,
     extraSettings: settings,
+    memoryLoadLog,
     argvInlineLimit,
     asAgent,
     billTo,

@@ -245,17 +245,117 @@ const iso = (ms) => new Date(ms).toISOString();
 // incorrect old value provided" (git 2.53) — the flush then aborted with records ready to push.
 const LOCAL_REF_RACE = /cannot lock ref|incorrect old value provided|unable to update local ref|Unable to create '[^']*\.lock'/;
 
-export async function fetchMetricsBranch(dir, { timeoutMs = 120_000 } = {}) {
+// ---- team branches (metrics, team memory) ---------------------------------------------
+/** origin has no such branch — fetch / ls-remote wordings across git versions. */
+export const MISSING_REMOTE_REF = /couldn't find remote ref|no such ref|not our ref/i;
+
+/** Fetch ONE team branch into refs/remotes/origin/<branch>: never FETCH_HEAD, never another ref (§4.5). */
+export async function fetchTeamBranch(dir, branch, { timeoutMs = 120_000 } = {}) {
+  const refspec = `+refs/heads/${branch}:refs/remotes/origin/${branch}`;
   let r;
   for (let i = 0; i < 3; i++) {
-    // --no-write-fetch-head (git ≥ 2.29, below MIN_GIT): a metrics fetch must not overwrite the
-    // developer's .git/FETCH_HEAD, which a concurrent `git pull` in the project reads (§4.5
-    // "invisible to the project's tooling").
-    r = await _git(dir, ['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', 'origin', FETCH_REFSPEC], { timeoutMs });
+    // --no-write-fetch-head (git ≥ 2.29, below MIN_GIT): a team-branch fetch must not overwrite the
+    // developer's .git/FETCH_HEAD, which a concurrent `git pull` in the project reads (§4.5).
+    r = await _git(dir, ['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', 'origin', refspec], { timeoutMs });
     if (r.ok || !LOCAL_REF_RACE.test(r.stderr)) return r;
     await new Promise((res) => setTimeout(res, 50 + Math.floor(Math.random() * 200)));
   }
   return r;
+}
+export function fetchMetricsBranch(dir, opts) { return fetchTeamBranch(dir, METRICS_BRANCH, opts); }
+
+/** A git worktree of the project repo at `dir`, detached at origin/<branch> (the branch must exist on origin).
+ *  A corrupted checkout is removed and recreated (§4.7 — it holds nothing not on the remote/outbox). */
+export async function ensureBranchWorktree(dir, projectDir, branch, { onRecreated = null } = {}) {
+  if (existsSync(dir)) {
+    if (!gitAvailable()) return dir;   // no git: a health check that cannot run finds no broken checkout — keep the cache
+    const top = await _git(dir, ['rev-parse', '--show-toplevel'], { timeoutMs: 10_000 });
+    let healthy = false;
+    // .native on both sides: JS realpathSync keeps the caller's case, git reports the on-disk case
+    // (a WORCA_HOME spelled with different case / 8.3 names would otherwise recreate it on every flush).
+    try { healthy = top.ok && realpathSync.native(top.stdout.trim()) === realpathSync.native(dir); } catch { healthy = false; }
+    if (healthy) return dir;
+    await removeWorktreeDir(dir, projectDir);
+    onRecreated?.();
+  }
+  await mkdir(dirname(dir), { recursive: true });
+  const f = await fetchTeamBranch(projectDir, branch);
+  if (!f.ok) throw metricsError('FETCH_FAILED', firstLine(f.stderr) || 'git fetch failed', { stderr: f.stderr });
+  const ref = `refs/remotes/origin/${branch}`;
+  // defaultGit already disables hooks (a failing post-checkout would otherwise fail `worktree add`).
+  let add = await _git(projectDir, ['worktree', 'add', '--detach', '--force', dir, ref]);
+  if (!add.ok) {
+    // A half-created directory from the first attempt makes the retry fail with "already exists".
+    await rm(dir, { recursive: true, force: true, maxRetries: 10 });
+    await _git(projectDir, ['worktree', 'prune']);
+    add = await _git(projectDir, ['worktree', 'add', '--detach', '--force', dir, ref]);
+    if (!add.ok) throw metricsError('WORKTREE_FAILED', firstLine(add.stderr), { stderr: add.stderr });
+  }
+  return dir;
+}
+/** git worktree of the project repo at metrics/repos/<slug>, detached at origin/worca-metrics. */
+export async function ensureWorktree(slug, projectDir) {
+  return ensureBranchWorktree(worktreePath(slug), projectDir, METRICS_BRANCH, { onRecreated: () => emit(slug, 'worktree-recreated') });
+}
+
+export async function removeWorktreeDir(dir, projectDir) {   // now exported (team memory's switch-off cleanup)
+  if (projectDir) await _git(projectDir, ['worktree', 'remove', '--force', dir]);
+  await rm(dir, { recursive: true, force: true, maxRetries: 10 });
+  if (projectDir) await _git(projectDir, ['worktree', 'prune']);
+}
+
+// In-process serialization per lock file, then the cross-process lock file (§4.5).
+const _queues = new Map();
+export function withQueuedLock(lockFile, fn) {
+  const prev = _queues.get(lockFile) || Promise.resolve();
+  const run = prev.catch(() => {}).then(() => withLock(lockFile, fn));
+  const tail = run.catch(() => {});
+  _queues.set(lockFile, tail);
+  tail.then(() => { if (_queues.get(lockFile) === tail) _queues.delete(lockFile); });
+  return run;
+}
+export function withSlugLock(slug, fn) { return withQueuedLock(join(outboxDir(slug), '.lock'), fn); }
+
+/**
+ * The team-branch write loop (§4.5), one implementation for every branch kind (metrics runs, team-memory notes).
+ * Per attempt: fetch → reset --hard origin/<branch> → clean → `apply(dir)` (writes AND stages; returns null, or
+ * {code, stderr} to stop) → nothing staged ⇒ `verify(dir)` (null, or why origin does NOT already hold it) → commit →
+ * push HEAD:<branch>; a non-fast-forward push sleeps backoffMs and starts over, ≤ MAX_PUSH_ATTEMPTS. Throws only what
+ * `apply` / `verify` throw (the caller's catch owns that); the caller owns its outbox, prefs and events.
+ * @returns {Promise<{ok:true, attempts:number, pushed:boolean} | {ok:false, code:string, stderr:string, attempts:number, missing?:boolean}>}
+ */
+export async function commitToTeamBranch({ dir, projectDir, branch, apply, verify = null, message, identity = [], hooks = {}, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), random = Math.random }) {
+  const ref = `refs/remotes/origin/${branch}`;
+  for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
+    const f = await fetchTeamBranch(dir, branch);
+    if (!f.ok) return { ok: false, code: 'FETCH_FAILED', stderr: f.stderr, attempts: attempt, missing: MISSING_REMOTE_REF.test(f.stderr) };
+    const reset = await _git(dir, ['reset', '--hard', ref]);
+    if (!reset.ok) {
+      await removeWorktreeDir(dir, projectDir);   // recreated on the next trigger (§4.7)
+      return { ok: false, code: 'WORKTREE_FAILED', stderr: reset.stderr, attempts: attempt };
+    }
+    await _git(dir, ['clean', '-fdq']);
+    const stop = await apply(dir);
+    if (stop) return { ok: false, code: stop.code || 'COMMIT_FAILED', stderr: stop.stderr || '', attempts: attempt };
+    // Nothing STAGED is nothing to commit. Not `status --porcelain`: a case-insensitive checkout (macOS, Windows) of a
+    // branch holding case twins (`Deploy.md`, `deploy.md`) reads as modified right after the reset, and a commit of
+    // nothing then fails on every flush. Exit 1 (staged changes) or a git error goes on to the commit, which says why.
+    const staged = await _git(dir, ['diff', '--cached', '--quiet']);
+    if (staged.ok) {
+      const problem = verify ? await verify(dir) : null;
+      if (problem) return { ok: false, code: 'COMMIT_FAILED', stderr: problem, attempts: attempt };
+      return { ok: true, attempts: attempt, pushed: false };
+    }
+    const commit = await _git(dir, [...identity, 'commit', '-q', '--no-verify', '-m', message]);
+    if (!commit.ok) return { ok: false, code: 'COMMIT_FAILED', stderr: commit.stderr, attempts: attempt };
+    if (hooks.beforePush) await hooks.beforePush({ attempt, dir });
+    const push = await _git(dir, ['push', '--no-verify', 'origin', `HEAD:refs/heads/${branch}`], { timeoutMs: 120_000 });
+    if (push.ok) return { ok: true, attempts: attempt, pushed: true };
+    if (!isNonFastForward(push.stderr)) return { ok: false, code: 'PUSH_REJECTED', stderr: push.stderr, attempts: attempt };
+    if (attempt === MAX_PUSH_ATTEMPTS) return { ok: false, code: 'PUSH_RETRIES_EXHAUSTED', stderr: push.stderr, attempts: attempt };
+    await sleep(backoffMs(attempt, random));
+  }
+  return { ok: false, code: 'PUSH_RETRIES_EXHAUSTED', stderr: '', attempts: MAX_PUSH_ATTEMPTS };   // unreachable
 }
 
 async function readRemoteConfig(dir) {
@@ -521,41 +621,6 @@ export async function resolveWorkspaceSink(workspaceId, { discover = true } = {}
 }
 
 // ---- worktree, enable/join, delegation marker (§5.7) --------------------------
-/** git worktree of the project repo at metrics/repos/<slug>, detached at origin/worca-metrics.
- *  A corrupted checkout is removed and recreated (§4.7 — it holds nothing not on the remote/outbox). */
-export async function ensureWorktree(slug, projectDir) {
-  const dir = worktreePath(slug);
-  if (existsSync(dir)) {
-    if (!gitAvailable()) return dir;   // no git: a health check that cannot run finds no broken checkout — keep the cache
-    const top = await _git(dir, ['rev-parse', '--show-toplevel'], { timeoutMs: 10_000 });
-    let healthy = false;
-    // .native on both sides: JS realpathSync keeps the caller's case, git reports the on-disk case
-    // (a WORCA_HOME spelled with different case / 8.3 names would otherwise recreate it on every flush).
-    try { healthy = top.ok && realpathSync.native(top.stdout.trim()) === realpathSync.native(dir); } catch { healthy = false; }
-    if (healthy) return dir;
-    await removeWorktreeDir(dir, projectDir);
-    emit(slug, 'worktree-recreated');
-  }
-  await mkdir(dirname(dir), { recursive: true });
-  const f = await fetchMetricsBranch(projectDir);
-  if (!f.ok) throw metricsError('FETCH_FAILED', firstLine(f.stderr) || 'git fetch failed', { stderr: f.stderr });
-  // defaultGit already disables hooks (a failing post-checkout would otherwise fail `worktree add`).
-  let add = await _git(projectDir, ['worktree', 'add', '--detach', '--force', dir, REMOTE_REF]);
-  if (!add.ok) {
-    // A half-created directory from the first attempt makes the retry fail with "already exists".
-    await rm(dir, { recursive: true, force: true, maxRetries: 10 });
-    await _git(projectDir, ['worktree', 'prune']);
-    add = await _git(projectDir, ['worktree', 'add', '--detach', '--force', dir, REMOTE_REF]);
-    if (!add.ok) throw metricsError('WORKTREE_FAILED', firstLine(add.stderr), { stderr: add.stderr });
-  }
-  return dir;
-}
-
-async function removeWorktreeDir(dir, projectDir) {
-  if (projectDir) await _git(projectDir, ['worktree', 'remove', '--force', dir]);
-  await rm(dir, { recursive: true, force: true, maxRetries: 10 });
-  if (projectDir) await _git(projectDir, ['worktree', 'prune']);
-}
 
 /** Build a parentless commit holding `files` ({relPath: content}) in projectDir's object store.
  *  Exported for the team-policy branch (policy/sync.mjs): same orphan-branch enable recipe. */
@@ -599,9 +664,10 @@ export function isNonFastForward(stderr) {
 }
 
 /** Exported: the page's sync chip must show the same §4.7 hint the Projects cell does. */
-export function pushHint(stderr) {
+export function pushHint(stderr, hint = PROTECTION_HINT) {
   // GH006 = protected branch, GH013 = repository rulesets, GL-HOOK-ERR = GitLab, pre-receive = bare/self-hosted.
-  return /protected|hook declined|pre-receive|GH006|GH013|rule violation|push declined|GL-HOOK|denied/i.test(String(stderr || '')) ? PROTECTION_HINT : null;
+  // `hint`: another team branch's own wording (team memory) — the same rejection classes.
+  return /protected|hook declined|pre-receive|GH006|GH013|rule violation|push declined|GL-HOOK|denied/i.test(String(stderr || '')) ? hint : null;
 }
 
 /** @returns {Promise<{slug:string, attribution:'git-user'|'none'}>} the validated delegate. */
@@ -786,18 +852,6 @@ export async function listOutboxSlugs() {
 
 const runIdOf = (name) => OUTBOX_FILE_RE.exec(name)?.[2] ?? null;
 
-// In-process serialization per slug, then the cross-process lock file (§4.5).
-const _queues = new Map();
-export function withSlugLock(slug, fn) {
-  const lockFile = join(outboxDir(slug), '.lock');
-  const prev = _queues.get(lockFile) || Promise.resolve();
-  const run = prev.catch(() => {}).then(() => withLock(lockFile, fn));
-  const tail = run.catch(() => {});
-  _queues.set(lockFile, tail);
-  tail.then(() => { if (_queues.get(lockFile) === tail) _queues.delete(lockFile); });
-  return run;
-}
-
 export function backoffMs(attempt, random = Math.random) {
   const base = 250 * 2 ** (attempt - 1);
   return Math.round(base / 2 + random() * base);
@@ -874,64 +928,45 @@ export async function flushSlug(slug, { hooks: testHooks = {}, sleep = (ms) => n
       catch (err) { return recordFailure(ownerKey, slug, err.code || 'WORKTREE_FAILED', err.stderr || err.message, files.length); }
       const identity = await identityArgs(owner.path, normAttribution(prefs?.config?.attribution));
 
-      for (let attempt = 1; attempt <= MAX_PUSH_ATTEMPTS; attempt++) {
-        const f = await fetchMetricsBranch(dir);
-        if (!f.ok) {
-          // The branch is gone on origin. The cached verdict can be up to an hour old (the
-          // discover above is TTL-gated), so refresh it now: otherwise §4.7's 30-day retention
-          // clock (prefs.disabledAt) starts late and the cell shows a raw git error instead of
-          // "branch missing" (verified with a fresh cache after a branch deletion).
-          if (/couldn't find remote ref|no such ref|not our ref/i.test(f.stderr)) {
-            const fresh = (await discoverProject(owner.path, { force: true }).catch(() => null)) || {};
-            if (fresh.enabled === false) {
-              files = await dropExpired(slug, files, now, fresh);
-              return recordFailure(ownerKey, slug, 'BRANCH_MISSING', `origin has no ${METRICS_BRANCH} branch any more`, files.length);
-            }
+      const r = await commitToTeamBranch({
+        dir, projectDir: owner.path, branch: METRICS_BRANCH, identity, hooks: testHooks, sleep, random,
+        message: `metrics: ${files.length} run(s)`,
+        apply: async (wt) => {
+          for (const name of files) {
+            const dest = join(wt, runFilePath(name));
+            await mkdir(dirname(dest), { recursive: true });
+            await copyFile(join(outboxDir(slug), name), dest);
           }
-          return recordFailure(ownerKey, slug, 'FETCH_FAILED', f.stderr, files.length);
-        }
-        const reset = await _git(dir, ['reset', '--hard', REMOTE_REF]);
-        if (!reset.ok) {
-          await removeWorktreeDir(dir, owner.path); // recreated on the next trigger (§4.7)
-          return recordFailure(ownerKey, slug, 'WORKTREE_FAILED', reset.stderr, files.length);
-        }
-        await _git(dir, ['clean', '-fdq']);
-        for (const name of files) {
-          const dest = join(dir, runFilePath(name));
-          await mkdir(dirname(dest), { recursive: true });
-          await copyFile(join(outboxDir(slug), name), dest);
-        }
-        // -f: info/exclude (shared by every worktree) or a global excludes file matching *.jsonl
-        // would otherwise drop the records silently — and the clean-tree branch below would
-        // then delete them from the outbox as "already pushed" (data loss).
-        // posix pathspec: join() yields `.worca-metrics\\runs` on win32, which git does not match.
-        const add = await _git(dir, ['add', '-A', '-f', `${METRICS_DIR}/runs`]);
-        if (!add.ok) return recordFailure(ownerKey, slug, 'COMMIT_FAILED', add.stderr, files.length);
-        const status = await _git(dir, ['status', '--porcelain']);
-        if (status.ok && !status.stdout.trim()) {
-          // Nothing to commit: only trust it if every file really is in HEAD (an earlier push whose cleanup failed).
+          // -f: info/exclude (shared by every worktree) or a global excludes file matching *.jsonl would otherwise
+          // drop the records silently — and the clean-tree verify would then delete them from the outbox (data loss).
+          // posix pathspec: join() yields `.worca-metrics\\runs` on win32, which git does not match.
+          const add = await _git(wt, ['add', '-A', '-f', `${METRICS_DIR}/runs`]);
+          return add.ok ? null : { code: 'COMMIT_FAILED', stderr: add.stderr };
+        },
+        // Nothing to commit: only trust it if every file really is in HEAD (an earlier push whose cleanup failed).
+        verify: async (wt) => {
           const missing = [];
           for (const name of files) {
-            const inHead = await _git(dir, ['cat-file', '-e', `HEAD:${runFilePath(name).split('\\').join('/')}`]);
+            const inHead = await _git(wt, ['cat-file', '-e', `HEAD:${runFilePath(name).split('\\').join('/')}`]);
             if (!inHead.ok) missing.push(name);
           }
-          if (missing.length) return recordFailure(ownerKey, slug, 'COMMIT_FAILED', `git did not stage ${missing.length} record file(s): ${missing[0]}`, files.length);
-          await finishFlushed(slug, files, ownerKey);
-          return { ok: true, slug, pushed: 0, pending: 0, attempts: attempt };
-        }
-        const commit = await _git(dir, [...identity, 'commit', '-q', '--no-verify', '-m', `metrics: ${files.length} run(s)`]);
-        if (!commit.ok) return recordFailure(ownerKey, slug, 'COMMIT_FAILED', commit.stderr, files.length);
-        if (testHooks.beforePush) await testHooks.beforePush({ attempt, dir });
-        const push = await _git(dir, ['push', '--no-verify', 'origin', `HEAD:refs/heads/${METRICS_BRANCH}`], { timeoutMs: 120_000 });
-        if (push.ok) {
-          await finishFlushed(slug, files, ownerKey);
-          return { ok: true, slug, pushed: files.length, pending: 0, attempts: attempt };
-        }
-        if (!isNonFastForward(push.stderr)) return recordFailure(ownerKey, slug, 'PUSH_REJECTED', push.stderr, files.length);
-        if (attempt === MAX_PUSH_ATTEMPTS) return recordFailure(ownerKey, slug, 'PUSH_RETRIES_EXHAUSTED', push.stderr, files.length);
-        await sleep(backoffMs(attempt, random));
+          return missing.length ? `git did not stage ${missing.length} record file(s): ${missing[0]}` : null;
+        },
+      });
+      if (r.ok) {
+        await finishFlushed(slug, files, ownerKey);
+        return { ok: true, slug, pushed: r.pushed ? files.length : 0, pending: 0, attempts: r.attempts };
       }
-      return recordFailure(ownerKey, slug, 'PUSH_RETRIES_EXHAUSTED', '', files.length); // unreachable
+      if (r.code === 'FETCH_FAILED' && r.missing) {
+        // The branch is gone on origin. The cached verdict can be up to an hour old, so refresh it now: otherwise
+        // §4.7's 30-day retention clock (prefs.disabledAt) starts late and the cell shows a raw git error.
+        const fresh = (await discoverProject(owner.path, { force: true }).catch(() => null)) || {};
+        if (fresh.enabled === false) {
+          files = await dropExpired(slug, files, now, fresh);
+          return recordFailure(ownerKey, slug, 'BRANCH_MISSING', `origin has no ${METRICS_BRANCH} branch any more`, files.length);
+        }
+      }
+      return recordFailure(ownerKey, slug, r.code, r.stderr, files.length);
     });
   } catch (err) {
     return { ok: false, slug, code: err?.code || 'FLUSH_FAILED', stderr: String(err?.message || err), hint: null, pending: (await listOutbox(slug)).length, pushed: 0 };

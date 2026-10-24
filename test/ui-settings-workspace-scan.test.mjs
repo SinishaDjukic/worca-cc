@@ -77,7 +77,7 @@ test('the Workspaces card (Runs tab) shows the defaults; Save posts the four pic
   await checkRows([
     { name: 'the Workspaces card sits on the Runs tab between Scheduled runs and Chat notifications and shows the defaults', run: async () => {
       const runsIds = [...doc.querySelectorAll('.settings-pane[data-tab="runs"] section.card.settings-card')].map((c) => c.id);
-      assert.deepEqual(runsIds, ['budget-settings-card', 'night-settings-card', 'smart-naming-settings-card', 'sync-settings-card', 'schedule-settings-card', 'network-wait-settings-card', 'actions-settings-card', 'pr-settings-card', 'ws-scan-models-card', 'chat-settings-card']);
+      assert.deepEqual(runsIds, ['budget-settings-card', 'night-settings-card', 'smart-naming-settings-card', 'sync-settings-card', 'schedule-settings-card', 'network-wait-settings-card', 'network-proxy-settings-card', 'actions-settings-card', 'pr-settings-card', 'ws-scan-models-card', 'chat-settings-card']);
       assert.equal(doc.querySelector('#ws-scan-models-card h2').textContent.trim(), 'Workspaces');
       assert.equal(doc.getElementById('ws-scan-models-card').dataset.minLevel, 'advanced');
       assert.deepEqual(vals(doc), ['claude-sonnet-5', 'medium', 'sonnet', 'medium']);

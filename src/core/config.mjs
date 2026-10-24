@@ -133,7 +133,8 @@ export const COPILOT_BUILTIN_MODELS = Object.freeze(COPILOT_MODEL_LABELS.map(([i
   id: `${COPILOT_MODEL_PREFIX}${id}`, label, efforts: Object.freeze(['low', 'medium', 'high']),
 })));
 const engineTag = (m) => (m && MODEL_ENGINES.includes(m.engine) ? m.engine : 'claude');
-const CLAUDE_ID_RE = /^(claude-|opus|sonnet|haiku|fable)/i;
+// No `/`: a provider/model id (Goose's `claude-acp/sonnet`, an OpenRouter-style `anthropic/claude-…`) is never a Claude Code id.
+const CLAUDE_ID_RE = /^(claude-|opus|sonnet|haiku|fable)[^/]*$/i;
 
 /** @deprecated config moved to the DB (project_config). Kept for import-compat only. */
 export function configDir(projectDir) { return String(projectDir ?? ''); }

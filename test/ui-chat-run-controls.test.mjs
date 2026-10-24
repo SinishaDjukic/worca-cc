@@ -531,7 +531,7 @@ test('a finished run card painted before the first History load offers Create pu
     { doc, win: ctx.window, fetch: (...a) => ctx.window.fetch(...a), openRunPanel: () => {}, openArtifact: () => {}, announce: () => {} });
   doc.body.appendChild(built.el);
   await ctx.settle(6);
-  assert.equal(built.el.querySelector('.chat-rc-res-title').textContent, 'Ready to ship');
+  assert.equal(built.el.querySelector('.chat-rc-res-title').textContent, 'Clean: no blocking issues flagged');
   assert.equal(built.el.querySelector('.chat-rc-create-pr'), null, 'no PR host known yet');
   release();
   await ctx.settle(10);

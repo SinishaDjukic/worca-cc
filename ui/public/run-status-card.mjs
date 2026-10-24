@@ -8,6 +8,7 @@ import { prChip } from './runs-list.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
 import { ACTION_LABEL } from '../../src/shared/run-model.mjs';
 import { icon } from './icons.mjs';
+import { CREATE_PR_LABEL } from './ship-words.mjs';
 
 const BAR_STATES = new Set(['starting', 'working', 'needs-you', 'paused']);       // D20: the states the list draws a bar for
 const GROUP_ENDED = new Set(['ready', 'in-review', 'merged']);
@@ -19,17 +20,35 @@ const ACTION_ICON = Object.freeze({ ship: 'pr-create', 'open-pr': 'pull-request'
 // reason. Ask for changes has one now (Shaper): each host says when it is not available there (disable['ask-changes']).
 const UNAVAILABLE = Object.freeze({ retry: 'Start a new run to try again' });
 const isGroup = (m) => !!(m && m.count && Array.isArray(m.members));
+/** The group bar shows (and carries "{done} done") while a group of 2 or more runs has not ended. */
+export function groupBarShows(m) {
+  return isGroup(m) && !GROUP_ENDED.has(m.state) && !!m.progress && m.progress.total >= 2;
+}
 const textEl = (doc, tag, cls, text) => { const e = doc.createElement(tag); e.className = cls; e.textContent = text; return e; };
 
+const SEP = ' · ';
 /** D2: the visible status text. The word leads only when the line does not already state it (the model marks a
  *  round line, whose "Running" stands for Working, with lineSaysState). Beside a bar that names the stages
- *  (`stageBar`), a working run's line is `barLine`: the step alone, the stage being on the bar. */
+ *  (`stageBar`), a working run's line is `barLine`: the step alone, the stage being on the bar.
+ *  `text` is the one-line "State · detail" form (lists, tooltips, data-text). A card head draws `head` (1–3 words: the
+ *  line's own first segment when it states the state, "Ready to ship", "Running"; else the model's word) and
+ *  `detail` (the rest, '' when nothing is left). */
 export function statusText(m, { stageBar = false } = {}) {
   const own = m && (stageBar && m.barLine != null ? m.barLine : m.line);
   const line = String(own || '');
   const word = String((m && m.word) || '');
   const said = !word || !!(m && m.lineSaysState) || line.toLowerCase().includes(word.toLowerCase());
-  return { word, line, text: said ? line || word : line ? `${word} · ${line}` : word };
+  const text = said ? line || word : line ? `${word}${SEP}${line}` : word;
+  const segs = line ? line.split(SEP) : [];
+  const lw = word.toLowerCase();
+  let head; let rest;
+  if (segs.length && (!word || (m && m.lineSaysState) || segs[0].toLowerCase().startsWith(lw))) {
+    [head, ...rest] = segs;
+  } else {
+    head = word;
+    rest = segs.filter((x) => x.toLowerCase() !== lw);       // "Build · failed · Implementation" → "Build · Implementation"
+  }
+  return { word, line, text, head, detail: rest.join(SEP) };
 }
 
 /** D10: the kind chip. `row` is runs-list.mjs groupRow's output, or null for a single run. */
@@ -48,8 +67,10 @@ export function paintRunStatus(host, m) {
     host.classList.add('run-status');
     const head = textEl(doc, 'div', 'run-status-head', '');
     const dot = doc.createElement('span');
-    const text = textEl(doc, 'span', 'run-status-text', '');
-    head.append(dot, text);
+    const word = textEl(doc, 'span', 'run-status-word', '');
+    const detail = textEl(doc, 'span', 'run-status-detail', '');
+    detail.hidden = true;
+    head.append(dot, word, detail);
     const group = textEl(doc, 'div', 'run-prog-chain run-status-group', '');
     const bar = textEl(doc, 'div', 'run-prog run-status-bar', '');
     group.hidden = true;
@@ -57,9 +78,9 @@ export function paintRunStatus(host, m) {
     const roles = textEl(doc, 'div', 'run-status-roles', '');
     roles.hidden = true;
     host.append(head, roles, group, bar);
-    host.__rs = { dot, text, group, bar, roles };
+    host.__rs = { dot, word, detail, group, bar, roles };
   }
-  const { dot, text, group, bar } = host.__rs;
+  const { dot, word, detail, group, bar } = host.__rs;
   host.dataset.state = m.state;
   host.dataset.word = m.word;
   host.dataset.line = m.line;
@@ -68,8 +89,13 @@ export function paintRunStatus(host, m) {
   // A run in Needs you only through its PR has finished its pipeline, so it has no bar (an empty one read as 0%).
   const show = !!(cur && cur.progress && BAR_STATES.has(cur.state) && !cur.prNeeds);
   paintStatusDot(dot, m);
-  text.textContent = statusText(m, { stageBar: !g && show }).text;
-  if (g && !GROUP_ENDED.has(m.state) && m.progress) {
+  const st = statusText(m, { stageBar: !g && show });
+  host.dataset.text = st.text;                       // the one-line "State · detail" (lists and tests read this form)
+  if (word.textContent !== st.head) word.textContent = st.head;
+  detail.textContent = st.detail;
+  detail.title = st.detail;                           // clamped at 2 lines: the full text on hover
+  detail.hidden = !st.detail;
+  if (groupBarShows(m)) {
     paintChainBar(group, { total: m.progress.total, fraction: m.progress.fraction, text: `${m.count.done} done` });
   } else group.hidden = true;
   // A12: one row per role while role reviews run, or the one Refine line (role-review.mjs liveRoleRows).
@@ -211,15 +237,29 @@ export function renderMemberRows(doc, row) {
   return ol;
 }
 
-/** D17: the group page's one ship line (feature groups only; the Ship card is the Shaper feature's). */
+/** D17: the group page's one ship line (a feature, or a chain in the one ship flow). */
 export function groupShipLine(row) {
-  if (!row || row.groupKind !== 'feature' || !row.model) return '';
+  if (!row || !['feature', 'chain', 'user'].includes(row.groupKind) || !row.model) return '';
   const { done, total } = row.model.count;
   const native = (row.members || []).filter((mb) => !mb.adhoc);
   const order = native.map((mb) => mb.position).join(' → ');
   const indep = (row.members || []).filter((mb) => mb.adhoc).map((mb) => mb.position);
-  if (done < total) return `Ship card comes when all ${total} runs are done, here and in the chat.`;
-  if (row.model.state === 'ready' && native.length >= 2) return `Merge in order ${order}, or ship as one PR${indep.length ? ` · ${indep.join(', ')} independent` : ''}`;
-  if (row.model.state === 'in-review' && !row.model.pr && native.length >= 2) return `Merge in order ${order}`;
+  if (done < total) {
+    return row.groupKind === 'feature' ? `Ship card comes when all ${total} runs are done, here and in the chat.`
+      : `${CREATE_PR_LABEL} comes when all ${total} runs are done.`;
+  }
+  // A run that already has its own PR disables One in the dialog (groupShipChoice), so the line stops offering it.
+  // A feature's legacy slice draft is not such a PR.
+  const owned = (row.members || []).some((mb) => { const pr = mb.model && mb.model.pr;
+    return !!(pr && pr.url && pr.id !== 'closed' && !(row.groupKind === 'feature' && pr.id === 'draft')); });
+  // Slice 3: a user group's runs are independent (every member is ad hoc): any merge order; One only when they combine.
+  if (row.groupKind === 'user') {
+    if (row.model.state === 'ready' && total >= 2) return owned ? 'Any order' : 'Any order, or as one PR when the runs combine';
+    return row.model.state === 'in-review' && row.model.prCount >= 2 ? 'Any order' : '';
+  }
+  const tail = `${owned ? '' : ', or ship as one PR'}${indep.length ? ` · ${indep.join(', ')} independent` : ''}`;
+  if (row.model.state === 'ready' && native.length >= 2) return `Merge in order ${order}${tail}`;
+  // Stacked PRs (2 or more) merge in order; one PR (a feature's, or a chain's recorded on every run) has no order.
+  if (row.model.state === 'in-review' && row.model.prCount >= 2 && native.length >= 2) return `Merge in order ${order}`;
   return '';
 }

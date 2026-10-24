@@ -60,7 +60,7 @@ import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import {
-  EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
+  EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, OWN_SIGNIN_ENGINES, aModelOf, ownSignInNote, modelIdProblem, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
   assertModelUpstream, upstreamEnvConflict, modelEnvRef, codexUpstreamProblem,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
   COPILOT_TERMS_VERSION, isUpstreamBaseUrl,
@@ -330,6 +330,7 @@ export const DEFAULT_MEMORY_SOFT_BYTES_PER_FILE = 8192;    // flagged in health 
 export const DEFAULT_MEMORY_HARD_BYTES_PER_FILE = 32768;   // rejected at sync-back / write above this
 export const DEFAULT_MEMORY_MAX_FILES_PER_SCOPE = 50;
 export const DEFAULT_MEMORY_HOOK_MAX_CHARS = 160;
+export const DEFAULT_MEMORY_TEAM_MAX_FILES = 50;   // team notes a run or chat LOADS per project, newest first (team memory 1a)
 
 export const DEFAULT_MEMORY_DEFRAG_WRITES = 10;     // writesSinceDefrag at which a scope is "due"
 export const DEFAULT_MEMORY_DEFRAG_FILES = 30;      // file count at which a scope is "due"
@@ -377,6 +378,7 @@ export function memoryCaps(scope) {
     hardBytesPerFile: projectOverride('memory.maxBytesPerFile', scope) ?? readMemoryCap('maxBytesPerFile', DEFAULT_MEMORY_HARD_BYTES_PER_FILE),
     maxFilesPerScope: projectOverride('memory.maxFilesPerScope', scope) ?? readMemoryCap('maxFilesPerScope', DEFAULT_MEMORY_MAX_FILES_PER_SCOPE),
     hookMaxChars: projectOverride('memory.hookMaxChars', scope) ?? readMemoryCap('hookMaxChars', DEFAULT_MEMORY_HOOK_MAX_CHARS),
+    teamMaxFiles: projectOverride('memory.teamMaxFiles', scope) ?? readMemoryCap('teamMaxFiles', DEFAULT_MEMORY_TEAM_MAX_FILES),
     defrag: {
       writes: projectOverride('memory.defrag.writes', scope) ?? readDefragThreshold('writes', DEFAULT_MEMORY_DEFRAG_WRITES),
       files: projectOverride('memory.defrag.files', scope) ?? readDefragThreshold('files', DEFAULT_MEMORY_DEFRAG_FILES),
@@ -385,6 +387,19 @@ export function memoryCaps(scope) {
     },
   };
 }
+
+/** Team memory (phase 1a) is on for this project. The PROJECT layer only — no settings.json default, no team-policy
+ *  field: sharing is opted into one project at a time. No scope (a global note, a workspace run) is always off.
+ *  `memory.team` is `true` (on, runs and chats load local and team notes) or `"only"` (on, they load team notes only:
+ *  team-memory-load-choice.md); anything else is off. */
+export function teamMemoryEnabled(scope) { return teamMemoryLoad(scope) !== 'local'; }
+/** Which notes of this project a run or chat loads: 'local' (team memory off), 'both' (`memory.team: true`) or 'team'
+ *  (`memory.team: "only"`). */
+export function teamMemoryLoad(scope) {
+  const v = projectOverride('memory.team', scope);
+  return v === true ? 'both' : v === TEAM_MEMORY_ONLY ? 'team' : 'local';
+}
+export const TEAM_MEMORY_ONLY = 'only';
 
 // ── Memory defragment model (Settings › Memory) ─────────────────────────────
 // `memory.defrag.model` / `memory.defrag.effort`: the pair EVERY Memory defragment run uses
@@ -1408,6 +1423,8 @@ export function normalizeModelPair(engine, input, label = 'model') {
 }
 export const SETTING_CHECKS = Object.freeze({
   usdCap: (value) => isUsdCap(value), byteCap: (value) => isByteCap(value),
+  bool: (value) => typeof value === 'boolean',
+  teamMemory: (value) => typeof value === 'boolean' || value === TEAM_MEMORY_ONLY,
   pct: (value) => isByteCap(value) && value <= 100,
   askMaxTurns: (value) => isAskMaxTurns(value), askMaxBudgetUsd: (value) => value === null || isAskMaxBudget(value),
   skillMount: (value) => SKILL_MOUNTS.includes(value), engine: (value) => MODEL_ENGINES.includes(value), runEngine: (value) => RUN_ENGINES.includes(value),
@@ -1856,9 +1873,9 @@ function sanitizeGlobalModel(raw) {
     const why = codexUpstreamProblem(upstream);
     if (why) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — ${why}`); upstream = undefined; }
   }
-  if (engine === 'cursor') {
-    for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — a cursor model takes no routing env`); delete env[k]; }
-    if (upstream) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — a cursor model runs through cursor-agent's own sign-in`); upstream = undefined; }
+  if (OWN_SIGNIN_ENGINES.includes(engine)) {
+    for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — ${aModelOf(engine)} takes no routing env`); delete env[k]; }
+    if (upstream) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — ${ownSignInNote(engine)}`); upstream = undefined; }
   }
   if (engine === 'copilot') {
     for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — a copilot model takes no routing env`); delete env[k]; }
@@ -1876,7 +1893,7 @@ function sanitizeGlobalModel(raw) {
   return {
     id,
     label,
-    efforts: engine === 'cursor' ? [] : (efforts.length ? efforts : [...effortsForEngine(engine)]),
+    efforts: effortsForEngine(engine).length ? (efforts.length ? efforts : [...effortsForEngine(engine)]) : [],
     ...(engine !== 'claude' ? { engine } : {}),
     ...(Object.keys(env).length ? { env } : {}),
     ...(cost ? { cost } : {}),
@@ -1971,11 +1988,11 @@ function assertModelEngine(input) {
   if (MODEL_ENGINES.includes(input)) return input;
   throw new Error(`engine must be one of ${MODEL_ENGINES.join(' | ')}`);
 }
-/** A Cursor model takes no routing env and no upstream: cursor-agent connects with its own sign-in. */
-function assertCursorFields(engine, env, upstream) {
-  if (engine !== 'cursor') return;
-  if (Object.keys(env || {}).length) throw new Error('a cursor model takes no env');
-  if (upstream) throw new Error('a cursor model takes no upstream — cursor-agent connects with its own sign-in');
+/** A model of an own-sign-in engine (OWN_SIGNIN_ENGINES) takes no routing env and no upstream: the engine connects with its own sign-in. */
+function assertOwnSignInFields(engine, env, upstream) {
+  if (!OWN_SIGNIN_ENGINES.includes(engine)) return;
+  if (Object.keys(env || {}).length) throw new Error(`${aModelOf(engine)} takes no env`);
+  if (upstream) throw new Error(`${aModelOf(engine)} takes no upstream — ${ownSignInNote(engine)}`);
 }
 /** A Copilot model takes no routing env and no upstream: the Copilot CLI connects with its own sign-in. */
 function assertCopilotFields(engine, env, upstream) {
@@ -2002,11 +2019,13 @@ function assertIdForEngine(id, engine, conn = {}) {
   // A built-in id names a harness's own sign-in (ChatGPT for Codex's): an entry on another connection — a gateway, a
   // provider — that serves the same model takes an id of its own; the endpoint still gets the model's own id.
   if (engine === 'claude' && CODEX_PRICES[id.toLowerCase()]) throw new Error(`"${id}" is the id of Codex's built-in ${id} (ChatGPT sign-in) — ${handleHint(id, conn)}`);
-  // Cursor's own ids may look like Claude's (sonnet-4.5): the catalog row decides the owner. Only a built-in id is taken
-  // (a Claude built-in has a list price; settings.mjs cannot import config.mjs's PREDEFINED_MODELS).
-  if ((engine === 'cursor' || engine === 'copilot') && (CODEX_PRICES[id.toLowerCase()] || listPriceFor(id))) throw new Error(`"${id}" is a built-in model id${engine === 'copilot' ? ` — Copilot's own models are copilot/<id>, such as "copilot/${id}"` : ''}`);
+  // A sign-in engine's own ids may look like Claude's (Cursor's sonnet-4.5): the catalog row decides the owner. Only a
+  // built-in id is taken (a Claude built-in has a list price; settings.mjs cannot import config.mjs's PREDEFINED_MODELS).
+  if ((OWN_SIGNIN_ENGINES.includes(engine) || engine === 'copilot') && (CODEX_PRICES[id.toLowerCase()] || listPriceFor(id))) throw new Error(`"${id}" is a built-in model id${engine === 'copilot' ? ` — Copilot's own models are copilot/<id>, such as "copilot/${id}"` : ''}`);
   // copilot/<id> names a Copilot built-in (model-env.mjs COPILOT_MODEL_PREFIX): only a Copilot row may take one.
   if (engine !== 'copilot' && id.toLowerCase().startsWith('copilot/')) throw new Error(`"${id}" names a Copilot model — a copilot/ id is for the Copilot engine`);
+  const why = modelIdProblem(engine, id);   // a Goose or OpenCode id is provider/model, so it never collides with a built-in
+  if (why) throw new Error(why);
 }
 
 /** @throws {Error} on a reserved key or a non-string value. `allowNull` admits
@@ -2086,7 +2105,7 @@ export async function addGlobalModel({ id, label, efforts, env, cost, upstream, 
   const vcost = assertModelCost(cost);
   const vupstream = assertModelUpstream(upstream);
   assertCodexFields(vengine, venv, vupstream);
-  assertCursorFields(vengine, venv, vupstream);
+  assertOwnSignInFields(vengine, venv, vupstream);
   assertCopilotFields(vengine, venv, vupstream);
   assertUpstreamEnvCompatible(venv, vupstream);
   const settings = readSettings();
@@ -2149,7 +2168,7 @@ export async function updateGlobalModel(id, { label, efforts, env, cost, upstrea
   if (upstream !== undefined) nextUpstream = isClearInput(upstream) ? undefined : assertModelUpstream(upstream);
   assertUpstreamEnvCompatible(nextEnv, nextUpstream);
   assertCodexFields(curEngine, nextEnv, nextUpstream);
-  assertCursorFields(curEngine, nextEnv, nextUpstream);
+  assertOwnSignInFields(curEngine, nextEnv, nextUpstream);
   assertCopilotFields(curEngine, nextEnv, nextUpstream);
 
   if (dryRun) return sanitizeGlobalModel(storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost, nextUpstream, curEngine));
@@ -2766,4 +2785,80 @@ export function effectiveNetworkWait(env = process.env) {
   const n = Number(raw);
   const maxWaitMs = raw != null && raw !== '' && Number.isFinite(n) && n >= 0 ? n : s.maxWaitMin * 60_000;
   return { enabled, maxWaitMs };
+}
+
+// Settings › Network proxy (corporateProxy flag; read at boot by egress-policy.mjs).
+// The same list as upstream-proxy.mjs AUTH_MODES: this module imports nothing from the core graph (test pins it).
+export const NETWORK_PROXY_AUTH = Object.freeze(['auto', 'none', 'basic', 'ntlm', 'digest']);
+const NETWORK_PROXY_TIMEOUTS = ['connectMs', 'authMs', 'idleMs'];
+const isProxyMs = (v) => Number.isInteger(v) && v >= 500 && v <= 3_600_000;
+// The same range as upstream-proxy.mjs fixedPortOf (D17; a test feeds both the same values).
+const isFixedPort = (v) => Number.isInteger(v) && v >= 1024 && v <= 65535;
+
+export function networkProxySettings() {
+  const v = readSettings().networkProxy;
+  return v && typeof v === 'object' && !Array.isArray(v) ? { ...v } : {};
+}
+
+/** "host:port" or "http://host:port" -> "http://host:port"; throws on userinfo or another scheme. */
+function normalizeProxyUpstream(raw) {
+  const s = String(raw).trim();
+  let u;
+  try { u = new URL(s.includes('://') ? s : `http://${s}`); } catch { throw new Error('networkProxy.upstream is not a valid host:port'); }
+  if (u.protocol !== 'http:') throw new Error('networkProxy.upstream must be an http:// proxy');
+  if (u.username || u.password) throw new Error('networkProxy.upstream must not carry a user name or password (a password never goes into settings.json; use Log in)');
+  if (!u.hostname) throw new Error('networkProxy.upstream has no host');
+  return `http://${u.host}`;
+}
+
+export function assertNetworkProxyInput(patch) {
+  if (patch === null || patch === '') return;
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('networkProxy must be an object');
+  for (const k of Object.keys(patch)) if (!['upstream', 'auth', 'noProxy', 'timeouts', 'fixedPort'].includes(k)) throw new Error(`unknown networkProxy setting: ${k}`);
+  if (patch.upstream != null && patch.upstream !== '') normalizeProxyUpstream(patch.upstream);
+  if (patch.auth != null && !NETWORK_PROXY_AUTH.includes(patch.auth)) throw new Error(`networkProxy.auth must be one of ${NETWORK_PROXY_AUTH.join(', ')}`);
+  if (patch.fixedPort != null && !isFixedPort(patch.fixedPort)) throw new Error('networkProxy.fixedPort must be a port from 1024 to 65535');
+  if (patch.noProxy != null) {
+    const ok = typeof patch.noProxy === 'string' ? patch.noProxy.length <= 4096
+      : Array.isArray(patch.noProxy) && patch.noProxy.length <= 200 && patch.noProxy.every((e) => typeof e === 'string' && e.length <= 253);
+    if (!ok) throw new Error('networkProxy.noProxy must be a comma-separated list of hosts');
+  }
+  if (patch.timeouts != null) {
+    if (typeof patch.timeouts !== 'object' || Array.isArray(patch.timeouts)) throw new Error('networkProxy.timeouts must be an object');
+    for (const [k, v] of Object.entries(patch.timeouts)) {
+      if (!NETWORK_PROXY_TIMEOUTS.includes(k)) throw new Error(`unknown networkProxy timeout: ${k}`);
+      if (v !== null && !isProxyMs(v)) throw new Error(`networkProxy.timeouts.${k} must be 500 to 3600000 ms`);
+    }
+  }
+}
+
+/** The merge PUT /api/proxy/settings applies (null/'' drops a key; the whole patch null/'' drops it all). Pure. */
+export function mergeNetworkProxy(current, patch) {
+  if (patch === null || patch === '') return {};
+  const next = { ...(current || {}) };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null || v === '') delete next[k];
+    else if (k === 'upstream') next.upstream = normalizeProxyUpstream(v);
+    else if (k === 'timeouts') {
+      const t = { ...(next.timeouts || {}) };
+      for (const [tk, tv] of Object.entries(v)) { if (tv === null) delete t[tk]; else t[tk] = tv; }
+      if (Object.keys(t).length) next.timeouts = t; else delete next.timeouts;
+    } else next[k] = v;
+  }
+  return next;
+}
+
+/** What setNetworkProxy(patch) would store, without writing (the chat card's validator). Throws like it. */
+export function previewNetworkProxy(patch) {
+  assertNetworkProxyInput(patch);
+  return mergeNetworkProxy(networkProxySettings(), patch);
+}
+
+export async function setNetworkProxy(patch) {
+  assertNetworkProxyInput(patch);
+  const settings = readSettings();
+  const next = mergeNetworkProxy(networkProxySettings(), patch);
+  if (Object.keys(next).length) settings.networkProxy = next; else delete settings.networkProxy;
+  await persistSettings(settings);
+  return networkProxySettings();
 }

@@ -9,12 +9,18 @@
 
 const SECRET_WORDS = 'pass(?:word)?|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|auth|account[_-]?key|signature';
 const KEY = `[\\w.-]{0,120}(?:${SECRET_WORDS})[\\w.-]{0,120}`;
-/** Well-known credential shapes (GitHub, GitLab, Slack, Stripe, Google, OpenAI / Anthropic, npm),
- *  one capture group per prefix (TOKEN_GROUPS of them); every tail is bounded. */
+/** Well-known credential shapes (GitHub, GitLab, Slack, Stripe, Google, OpenAI / Anthropic, npm, and the providers
+ *  below), one capture group per prefix (TOKEN_GROUPS of them); every tail is bounded. */
 const TOKEN_SHAPES = '(gh[pousr]_)[A-Za-z0-9]{20,255}|(github_pat_)[A-Za-z0-9_]{20,255}|(glpat-)[A-Za-z0-9_-]{20,255}'
-  + '|(xox[abposr]-)[A-Za-z0-9-]{10,255}|((?:sk|rk)_(?:live|test)_)[A-Za-z0-9]{10,255}|(AIza)[A-Za-z0-9_-]{35,255}'
-  + '|(whsec_)[A-Za-z0-9]{20,255}|(sk-(?:proj-|ant-[a-z0-9]{2,8}-)?)[A-Za-z0-9_-]{32,255}|(npm_)[A-Za-z0-9]{36}';
-const TOKEN_GROUPS = 9;
+  + '|(xox[abeposr]-)[A-Za-z0-9-]{10,255}|((?:sk|rk)_(?:live|test)_)[A-Za-z0-9]{10,255}|(AIza)[A-Za-z0-9_-]{35,255}'
+  + '|(whsec_)[A-Za-z0-9]{20,255}|(sk-(?:proj-|ant-[a-z0-9]{2,8}-)?)[A-Za-z0-9_-]{32,255}|(npm_)[A-Za-z0-9]{36}'
+  // PyPI, GitLab runner / deploy / trigger / CI / feed / SCIM / OAuth-app / agent tokens, Hugging Face, Docker Hub,
+  // Vault, SendGrid, age, Shopify, Databricks, New Relic, Linear (the Slack class above includes xoxe- refresh tokens).
+  + '|(pypi-)AgEI[A-Za-z0-9_-]{50,255}|(gl(?:dt|rt|ptt|cbt|imt|ft|soat|ffct|oas|agent)-)[A-Za-z0-9_-]{20,255}'
+  + '|(hf_)[A-Za-z]{30,255}|(dckr_pat_)[A-Za-z0-9_-]{20,255}|(hv[sb]\\.)[A-Za-z0-9_-]{24,255}'
+  + '|(SG\\.)[A-Za-z0-9_-]{22}\\.[A-Za-z0-9_-]{43}|(AGE-SECRET-KEY-1)[0-9A-Z]{58}'
+  + '|(shp(?:at|ca|pa|ss)_)[a-fA-F0-9]{32}|(dapi)[a-f0-9]{32}|(NRAK-)[A-Z0-9]{27}|(lin_api_)[A-Za-z0-9]{40}';
+const TOKEN_GROUPS = 20;
 const PEM_BLOCK = /-----BEGIN ([A-Z0-9 ]{1,64})-----(?:(?!-----BEGIN )[\s\S]){0,65536}?-----END \1-----/g;
 const PEM_LINE = /-----(BEGIN|END) [A-Z0-9 ]{0,64}[A-Z0-9]-----/g;
 // Userinfo starts at `://` (the scheme in front is untouched text): no scheme-shaped run is scanned at
@@ -307,3 +313,25 @@ export function redactLines(lines) {
     return redactSecrets(line);
   });
 }
+
+/** The context-free credential shapes above, plus `curl -u user:pass`, any `Authorization:` scheme and an encoded `user:pass` (`btoa('…')`), as [rule, label, RegExp] — for
+ *  src/core/secret-scan.mjs, a detector that REPORTS instead of redacting (the team-memory gate). The key/value heuristics (QUOTED_KV, BARE_KV, LINE_KV,
+ *  NAME_VALUE, HEADER_PAIR, …) stay private: they are tuned for config files and flag prose such as
+ *  "design tokens: `--space-*`". The RegExps are the /g constants themselves: copy one before .test or .exec. */
+export const CREDENTIAL_SHAPES = Object.freeze([
+  ['api-token', 'an API token', TOKEN],
+  ['aws-key', 'an AWS access key id', AWS_KEY],
+  ['jwt', 'a JWT', JWT],
+  ['url-credentials', 'credentials in a URL', USERINFO],
+  ['url-token', 'a token in a URL', USER_TOKEN],
+  ['url-token', 'a token in a URL', NATS_USER],
+  ['auth-header', 'an Authorization credential', AUTH_HEADER],
+  ['auth-scheme', 'an Authorization credential', AUTH_SCHEME],
+  ...WEBHOOKS.map((re) => ['webhook-url', 'a webhook URL with its secret', re]),
+  ...WEBHOOK_PATHS.map(([re]) => ['webhook-url', 'a webhook URL with its secret', re]),
+  ['query-credential', 'a credential in a URL query', QUERY_CRED],
+  ['dsn-credentials', 'credentials in a connection string', GO_DSN],
+  ['dsn-credentials', 'credentials in a connection string', ORACLE],
+  ['cli-credentials', 'a password on a command line', CLI_USER],
+  ['basic-credentials', 'credentials encoded for a Basic header', BASIC_ENCODED],
+]);

@@ -15,7 +15,8 @@ import { fileURLToPath } from 'node:url';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { writePluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { writePluginConfig, writePluginState, readPluginState, createProfile, deleteProfile } from '../src/core/plugin-config.mjs';
-import { callSource, PluginOpError, setMockSourceResponses, _resetWithheldProxyNotice } from '../src/core/plugin-shim.mjs';
+import { callSource, PluginOpError, setMockSourceResponses, _resetWithheldProxyNotice, scrubbedEnv } from '../src/core/plugin-shim.mjs';
+import { egressChildEnv } from '../src/core/egress-policy.mjs';
 import { startProxyNet, setProxyEnv, assertProxyRouting, NO_PROXY_HOST } from './helpers/proxy-net.mjs';
 import { importClosure } from './helpers/import-closure.mjs';
 
@@ -321,4 +322,16 @@ test('WORCA_MOCK=1 short-circuits without spawning (plugin need not exist)', asy
     delete process.env.WORCA_MOCK;
     setMockSourceResponses(null);
   }
+});
+
+test('corporate proxy: the credential-free loopback URL reaches plugins, nothing is withheld', () => {
+  const vars = egressChildEnv('http://127.0.0.1:41234', ['intranet.example']);
+  const restore = setProxyEnv({ HTTPS_PROXY: vars.HTTPS_PROXY, HTTP_PROXY: vars.HTTP_PROXY, https_proxy: vars.https_proxy,
+    http_proxy: vars.http_proxy, NO_PROXY: vars.NO_PROXY, no_proxy: vars.no_proxy });
+  try {
+    const env = scrubbedEnv('linux');
+    for (const k of ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy']) assert.equal(env[k], 'http://127.0.0.1:41234', k);
+    assert.equal(env.NO_PROXY, '127.0.0.1,localhost,::1,intranet.example');
+    assert.equal(scrubbedEnv('win32').HTTPS_PROXY, 'http://127.0.0.1:41234', 'same on Windows');
+  } finally { restore(); }
 });

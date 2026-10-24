@@ -124,8 +124,8 @@ level and has no **Diff**, **Changes** or **Actions**.
   notifications and a tab badge when a run waits for you. **Archived runs**
   (Advanced) lists deleted runs and restores them.
 - **One-click PRs** — a finished run's page offers **Create PR**:
-  *Create pull request* shows the files and +/− lines, lets you write the description or
-  **Generate with AI** (Settings › Runs › **Pull requests** can draft it as soon as the
+  *Create PR* lets you edit the title, write the description or
+  **Generate** it (Settings › Runs › **Pull requests** can draft it as soon as the
   dialog opens), open it as a draft and watch it, then pushes the branch
   and opens the PR with the GitHub CLI (`gh`), or on
   [Azure DevOps](docs/azure-devops.md) with a personal access token. A run
@@ -145,7 +145,7 @@ level and has no **Diff**, **Changes** or **Actions**.
 
 ![Runs in Simple mode: three runs waiting on clarify questions under Needs you, the rest grouped by project, and a finished run's summary open — Ready to ship, 21m 32s, $4.82, +36 −0 across 4 files](docs/screenshots/running.png)
 
-![The Create pull request dialog for the finished run CSV export for contacts: 4 files, +36 −0, its worca-cc/ branch into main, Push branch to and Open PR in (GitHub) pickers set to origin — nimbus/nimbus-crm, a PR description previewed as What and How to test, Open as draft unticked and Watch PR ticked, Try it first with the Run, Test and Cursor buttons, and Cancel beside Create pull request](docs/screenshots/ship-it.png)
+![The Create PR dialog for the finished run CSV export for contacts: 4 files, +36 −0, its worca-cc/ branch into main, Push remote and Into (GitHub) pickers set to origin — nimbus/nimbus-crm, a PR description previewed as What and How to test, Open as draft unticked and Watch PR ticked, Try it first with the Run, Test and Cursor buttons, and Cancel beside Create PR](docs/screenshots/ship-it.png)
 
 ### Agents
 
@@ -476,8 +476,8 @@ level and has no **Diff**, **Changes** or **Actions**.
   GitHub issue URL or `owner/repo#123`, and the ticket becomes the run's task.
   Each source can close its issue or work item when the run succeeds; Ask
   Worca can find a ticket and propose a run for it. See
-  [GitHub Issues](plugins/github-source/README.md) and
-  [Azure Boards](docs/azure-devops.md).
+  [GitHub Issues](plugins/github-source/README.md),
+  [Azure Boards](docs/azure-devops.md) and [Jira](plugins/jira-source/README.md).
 - **Drive runs from chat** — two-way **Telegram**, **Slack**, **Discord** and
   **Microsoft Teams** channels (Teams needs a public HTTPS endpoint through a
   tunnel; the others dial out). Pick the events that notify — questions and
@@ -515,7 +515,7 @@ level and has no **Diff**, **Changes** or **Actions**.
   until you apply one. A started run becomes a live card — status, elapsed, cost, its agents and
   its workflow graph, with **Open run** — where you **Pause**, **Resume** or **Stop** the run and
   answer its questions; once it ends, the card shows the result, the top changed files, its
-  artifacts and **Create pull request**. While the chat follows a live run, the composer's **→**
+  artifacts and **Create PR**. While the chat follows a live run, the composer's **→**
   chip (named after the run) sends it a direction instead of a message. The chat still posts when
   the run waits for an answer, pauses, fails or finishes. A pull request opened from a chat card keeps reporting
   there: the card shows its Watch PR status, and each fix run that Watch PR or Resolve starts on it appears in the

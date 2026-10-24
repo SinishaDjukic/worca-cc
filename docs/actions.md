@@ -15,7 +15,7 @@ a ready check and a live log come with them.
 | Place | What it holds |
 | --- | --- |
 | Run page and History detail › **Actions** tab | Check out / Discard, setup state, each action's Start / Stop, ports, Open link and log; Open in editor, terminal, file manager; Copy command; Download patch |
-| Run Overview › actions strip, Ship It › **Try it first** | The same actions, one click from the result |
+| Run Overview › actions strip, Create PR › **Try it first** (the Try it first button at the left of the Create PR dialog's footer; once checked out, the strip above it) | The same actions, one click from the result |
 | Run page and History detail › summary card **Results › Actions row** | `Local copy open · since 18:12` (or `Linked to your folder · since 18:12`, `2 local copies open · since 18:12`) once checked out, `Try it on this machine` before; opens the Actions tab. Advanced, like the tab. At Simple a plain row with the same words carries Discard / Unlink while a checkout exists |
 | Run page and History detail › summary card **worktree notice** | Work kept after a failed end-of-run commit (Apply to branch, recovery patch, Discard worktree). Every level |
 | Project page › **Actions** tab | The project's setup command, its actions and the built-in buttons |
@@ -69,7 +69,7 @@ headline does not change, so read the notice. It offers:
 - **Apply to branch**: commits the staged work in that worktree, exactly as the end of the run would have.
   It tries the repository's identity, then a local one. For a detached run it tries once more with commit
   hooks off, as the run's own teardown did. Then it removes the worktree (the branch is kept) and refreshes
-  the base check. Check out and Create pull request then work as for any finished run. For a run on its
+  the base check. Check out and Create PR then work as for any finished run. For a run on its
   source branch, Apply also fast-forwards the source branch onto the work and deletes the run's hidden
   branch. If the source moved on in the meantime, the merge-back notice explains how to merge by hand. If
   the commit fails again, nothing changes and git's message is shown.

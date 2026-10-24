@@ -3893,7 +3893,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const rootEl = make('div', `ask-card ask-wfcard is-${block.state}`);
     rootEl.setAttribute('data-ask-wfcard', block.state);
     const head = make('div', 'ask-wfcard-head');
-    head.appendChild(make('span', 'ask-wfcard-title', block.state === 'saved' ? 'Saved workflow' : 'Proposed workflow'));
+    // The name (body) is the card's one headline; the head says the state as a chip, with the round and, once saved, Auto.
+    head.appendChild(make('span', 'ask-wfcard-state', block.state === 'saved' ? 'Saved' : 'Proposed workflow'));
     head.appendChild(make('span', 'ask-wfcard-round', `round ${card.round || 1}`));
     if (block.state === 'saved') { head.appendChild(make('span', 'ask-wfcard-spacer')); head.appendChild(make('span', 'ask-wfcard-tag', 'Auto')); }
     rootEl.appendChild(head);
@@ -3919,9 +3920,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const saved = make('div', 'ask-wfcard-saved');
       saved.appendChild(svgIcon(WF_ICO.check, 15, 2.4));
       saved.appendChild(make('span', null, name));
-      const line = make('div', 'ask-wfcard-savedline', card.adopted ? 'Uses your saved workflow' : 'Saved as a new workflow, tagged Auto');
       handle.parts.name.replaceWith(saved);
-      saved.after(line);
+      // The chip says Saved and the tag says Auto: the line stays only when it says something new.
+      if (card.adopted) saved.after(make('div', 'ask-wfcard-savedline', 'Uses a workflow you already had'));
     } else if (matched) {
       const hint = make('div', 'ask-wfcard-hint', 'Model and effort come from that saved workflow. Edit them in the Workflows view.');
       handle.parts.match.after(hint);
@@ -4065,6 +4066,48 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     return line;
   }
+  /** The corporate proxy card (propose_network_proxy_change / propose_corporate_proxy_on): before → after, the restart note. */
+  function buildProxyCard(block) {
+    const card = block.card || {};
+    const summary = card.summary || '';
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
+    const rootEl = make('div', `ask-card ask-mcard ask-pxcard is-${block.state}`);
+    rootEl.setAttribute('data-ask-pxcard', block.state);
+    const head = make('div', 'ask-mcard-head');
+    head.appendChild(make('span', 'ask-mcard-title', card.kind === 'flag' ? 'Turn on the corporate proxy?' : 'Change the network proxy?'));
+    rootEl.appendChild(head);
+    const body = make('div', 'ask-mcard-body');
+    if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
+    const list = make('ul', 'ask-mcard-changes');
+    for (const c of Array.isArray(card.changes) ? card.changes : []) list.appendChild(make('li', '', `${c.label}: ${c.before} → ${c.after}`));
+    body.appendChild(list);
+    const result = card.result || null;
+    if (block.state === 'failed') body.appendChild(make('div', 'ask-mcard-failed', `Could not apply: ${block.error || (result && result.error) || 'unknown error'}`));
+    else if (block.state === 'applied') {
+      body.appendChild(make('div', 'ask-awcard-saved', result && result.detail ? result.detail : `Saved. ${card.restartNote || 'Restart Worca to apply.'}`));
+      const open = make('a', 'ask-card-sched-link', card.kind === 'flag' ? 'Open Settings › Labs' : 'Open Settings › Runs › Network proxy');
+      open.href = card.kind === 'flag' ? '#settings/experimental/corporateProxy' : '#settings/runs/network-proxy';
+      body.appendChild(open);
+    } else body.appendChild(make('div', 'ask-pxcard-restart', card.restartNote || 'Restart Worca to apply.'));
+    rootEl.appendChild(body);
+    rootEl.appendChild(make('div', 'ask-card-err'));   // postCard writes a failed POST here (every card has one)
+    if (block.state === 'proposed') {
+      const actions = make('div', 'ask-mcard-actions');
+      const btn = (cls, text, attr, icon) => {
+        const b = make('button', cls, text); b.type = 'button'; b.setAttribute(attr, '');
+        if (icon) b.prepend(svgIcon(icon, 12, 2.2));
+        return b;
+      };
+      const keep = btn('btn btn-sm btn-quiet ask-card-not-now', 'Keep as is', 'data-ask-px-decline');
+      keep.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, keep));
+      const apply = btn('btn btn-sm btn-primary', 'Apply', 'data-ask-px-apply', WF_ICO.save);
+      apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
+      actions.append(make('span', 'ask-card-actions-spacer'), keep, apply);
+      rootEl.appendChild(actions);
+    }
+    return { el: rootEl };
+  }
+
   function buildAwayCard(block) {
     const card = block.card || {};
     const summary = card.summary || 'Away mode change';
@@ -4072,10 +4115,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const rootEl = make('div', `ask-card ask-mcard ask-awcard is-${block.state}`);
     rootEl.setAttribute('data-ask-awcard', block.state);
     const head = make('div', 'ask-mcard-head');
-    const where = card.level === 'project' ? `(project ${card.projectName || card.projectKey || ''})` : '(user settings)';
-    head.appendChild(make('span', 'ask-mcard-title', `Change Away mode? ${where}`));
+    head.appendChild(make('span', 'ask-mcard-title', 'Change Away mode?'));
     rootEl.appendChild(head);
     const body = make('div', 'ask-mcard-body');
+    // The scope is the target line, as on the other receipt cards: a long project name never widens the title.
+    body.appendChild(make('div', 'ask-mcard-target', card.level === 'project' ? `project ${card.projectName || card.projectKey || ''}` : 'user settings'));
     if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
     const before = Array.isArray(card.before) ? card.before : [];
     const after = Array.isArray(card.after) ? card.after : [];
@@ -5663,7 +5707,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (card.type === PROGRESS_CARD_TYPE) return true;
     if (card.type && chatCardBuilder(card.type)) return false;      // an extension type is never a run card, whatever its state
     if (ASK_COMPOSER_CARD_TYPES.includes(card.type)) return false;   // Ask's draft / graph cards are never run cards
-    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project') return false;
+    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy') return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
   function buildCard(block) {
@@ -5704,6 +5748,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isWeb = !!(block.card && block.card.type === 'web');
     const isActions = !!(block.card && block.card.type === 'actions');
     const isAway = !!(block.card && block.card.type === 'away');
+    const isProxy = !!(block.card && block.card.type === 'proxy');
     const isCommand = !!(block.card && block.card.type === COMMAND_CARD_TYPE);
     const isComposer = !!(block.card && ASK_COMPOSER_CARD_TYPES.includes(block.card.type));
     const isProgress = isProgressBlock(block);
@@ -5713,7 +5758,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Ask's draft cards also change with the cards AROUND them (a newer draft of the key replaces one): rebuilt when
     // what they show changes, not only their state.
     const view = isComposer ? composerCards().view(block) : '';
-    if (cached && !nudgeStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isAway || isCommand || isComposer || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached && !nudgeStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isAway || isProxy || isCommand || isComposer || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
@@ -5725,6 +5770,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isWorkspace ? buildWorkspaceCard(block)
       : isActions ? buildActionsCard(block)
       : isAway ? buildAwayCard(block)
+      : isProxy ? buildProxyCard(block)
       : isCommand ? buildCommandCard(block)
       : isComposer ? composerCards().render(block)
       : isProgress ? buildProgressCard(block)
