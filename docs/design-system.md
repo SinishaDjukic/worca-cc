@@ -261,6 +261,10 @@ on purpose. Under 640px of height the head compacts (smaller hero, tighter gap) 
   `--ink-2` labels, 13px values, one row per fact and one place to edit it; a quiet button that leads a value pulls back
   by its padding so its text sits on the value column), then the tiles (`--fs-stat` sans values with tabular figures,
   `--pad-tile` padding). No PR bar, no kept-work, merge-back or Apply box: their actions are head buttons.
+  On the group page a live update never moves the card. Once a stage bar has painted, between two runs or before a
+  run's stages are known, it keeps its last paint (its edge still) until the next run has a bar. It hides only when a
+  run needs you through its PR, or the group fails, stops or ends. This is the group page's one exception to "waiting
+  runs have no bar"; list rows and the run page keep that rule.
 - The run page's ⋯ holds run-scope actions, the same on the live and saved pages at every level: Away mode (while
   live), Save as preset, Terminal (Ctrl+`), then Report this run and Archive (Restore once archived). Archive asks
   "Archive this run?" and is disabled, with the reason as its tooltip, while a local copy is open or kept work waits.

@@ -8,7 +8,7 @@ import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { runModel, groupModel } from '../src/shared/run-model.mjs';
 import { statusText, memberStatusText, kindLabel, paintRunStatus, syncActions, pauseResumeOwn, renderMemberRows, groupShipLine } from '../ui/public/run-status-card.mjs';
-import { RUN_STATE_ROWS, NOW } from './helpers/run-states.mjs';
+import { RUN_STATE_ROWS, NOW, REPLAY_FRAMES } from './helpers/run-states.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const dom = () => trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
@@ -299,4 +299,15 @@ test('paintRunStatus: beside the stage bar a working run reads "Working · STEP"
   assert.equal(statusText(m, { stageBar: true }).line, m.barLine);
   // A model whose bar is hidden (prNeeds) or a non-working state never reads barLine.
   assert.equal(statusText({ ...m, barLine: null }, { stageBar: true }).line, m.line);
+});
+
+test('slice 3: without `hold` (the chat card, the run page) a group between runs hides its bar as before', () => {
+  const doc = dom();
+  const host = doc.createElement('div');
+  const F = REPLAY_FRAMES;
+  const WAIT2 = { ticket: { status: 'scheduled', after: { index: 1 } } };
+  paintRunStatus(host, groupModel({ kind: 'feature', title: 'T', members: [F[15], WAIT2] }, { now: NOW }));
+  assert.equal(host.querySelector('.run-status-bar').hidden, false);
+  paintRunStatus(host, groupModel({ kind: 'feature', title: 'T', members: [F.at(-1), WAIT2] }, { now: NOW }));
+  assert.equal(host.querySelector('.run-status-bar').hidden, true, 'no hold: the waiting group has no bar');
 });
