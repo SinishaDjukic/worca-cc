@@ -1,7 +1,7 @@
 ---
 name: review-baseline-and-suite-noise
 description: Read before reviewing a worca run's diff or judging a red full suite — the prompt's checkpoint may not be the branch base, and several suite failures are enviro
-updated: 2026-10-24T12:29:23.383Z
+updated: 2026-10-24T18:03:24.605Z
 author: Bulibas
 ---
 
@@ -113,7 +113,9 @@ cycle-1 tree. Do two things:
 - On a `git archive HEAD | tar -x` scratch copy (real checkout's `node_modules` symlinked), three files fail on base
   AND head alike (seen 2026-10-16 at 73f99f0b): `test/cli-marketplace.test.mjs` C5 ("plugin \"github-source\" not
   found"), and the whole of `test/extension-build.test.mjs` and `test/extension-icons.test.mjs`. They are artifacts
-  of the archive copy, not regressions; everything else in the suite runs green there.
+  of the archive copy, not regressions; everything else in the suite runs green there. Same class (seen 2026-10-24,
+  checking one commit of a stack standalone): `test/settings-api.test.mjs:172` "GET /api/app/version" row "the real
+  detection on this checkout" expects `'source'` and gets `'unknown'`: the copy has no `.git`.
 - In a run worktree on this machine (seen 2026-10-19, origin/dev 735b354a), five tests fail on a clean
   `git archive origin/dev` copy too, every run, alone or in the full suite: `test/git-sync.test.mjs:371`
   "a timed-out fetch kills its whole process group" (ENOENT on its `ssh-<n>.pid` file), three in
