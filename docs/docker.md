@@ -11,7 +11,10 @@ host credentials (`~/.ssh`, `~/.aws`, keychains, browser profiles), cannot touch
 files outside the project folders you mount, cannot see host processes, and
 with the egress overlay cannot reach hosts you did not allow. What it does
 **not** give you: protection of the mounted project itself (the agent is meant
-to edit it) — see *Clone-in mode* for that.
+to edit it) — see *Clone-in mode* for that. By default every project under
+`WORCA_PROJECTS` is mounted, secret files included; a *Project-scoped box*
+mounts one project with its secret files masked: one box per project, shared by
+every run of that project, not a separate mount per run.
 
 ## Quick start
 
@@ -31,7 +34,9 @@ worca container down
 `.env` is seeded with the common parent of your registered projects (or
 `~/dev`), your timezone and git identity; edit it for tokens and tags. `--with
 egress,ssh,teams,clonein` on `up` adds overlays and is remembered for the other
-verbs. `worca container help` lists everything.
+verbs. `--project <dir>` on `up` mounts only that project, its secret files
+masked (see [Project-scoped box](#project-scoped-box)), and is remembered too.
+`worca container help` lists everything.
 
 **Without npm**, the compose file alone:
 
@@ -176,6 +181,54 @@ Two rules:
   the container.
 - The native folder dialog does not exist in the box. **Add project** opens on **New** (a project by name in your projects root); its **Folder**
   tab's **Choose folder…** uses the in-app folder browser, which starts at your projects root.
+
+### Project-scoped box
+
+By default the box mounts the whole `WORCA_PROJECTS` folder: a run in one project can read every other project in
+it, and every `.env` or key file is readable by every agent. To mount one project only:
+
+```bash
+worca container up --project ~/dev/api       # remembered; every later verb keeps it
+worca container run -- add --path "$(cd ~/dev/api && pwd -P)"   # register it in the box at its real path
+worca container up --no-project              # back to the whole folder
+```
+
+- Only that folder is mounted, at its real path, so run worktrees stay valid. Other projects are not visible; a
+  workspace run spanning several projects does not work in such a box.
+- One box per project, not per run: every run of the project shares this box, its mount and its volumes. A true
+  per-run mount would need per-run sibling containers (the Docker socket, root on the host) or per-spawn mount
+  namespaces (`CAP_SYS_ADMIN`); the box does neither (`plans/core-5-per-run-container-mount-design.md` §1).
+- It is a box of its own (`worca-<name>-<hash>`, printed by `up`), with its own volumes: log in once
+  (`worca container login`) and register the project once. That keeps the runs and history of other projects,
+  which live in a box's volume, out of it. `up` stops the box this dir ran before (its active runs pause, as on
+  any stop); `--no-project` brings the whole-folder box back with its history.
+- The box's projects root is the project's parent, which holds only the project there: **Add project → Folder**
+  opens on it; **New** and clones fail, rather than writing a new repository into your project.
+- Its **untracked and ignored** files that look like secrets are covered by an empty read-only file: `cat .env`
+  prints nothing, and writing or deleting it fails. The list is `.env*`, `*.pem`, `*.key`, `.npmrc`, `.netrc`,
+  `id_*`, plus the project's `secretPaths` setting. `up` prints what it masked.
+- **Committed** files that look like secrets are not masked (git would see them as changed, and a commit could
+  empty them); they are in the git history the box has anyway. `up` names them: remove them from the repository.
+- Installed packages are never masked: `node_modules`, and any `site-packages`, `dist-packages`, `vendor` or
+  `.pixi` folder. Their CA bundles and test keys are public, and an empty CA bundle would break TLS in the box.
+  For another tool's CA bundle, leave it unmasked with `secretPathsUnmask` (e.g. `["cacert.pem"]`).
+- A link named like a secret is masked at its target when that is a file in the project. A link that leads out of
+  the project is not masked; the box does not have its target.
+- `secretPathsUnmask` (a project setting, a list of patterns like `secretPaths`) leaves matches unmasked, for
+  example `[".env.example"]`. Both settings are read from **this machine's** worca: the project's settings
+  (`PATCH /api/projects/<key>/settings`) or `secretPaths` / `secretPathsUnmask` in `~/.worca-cc/settings.json`. The
+  box's own Settings page cannot change its mounts. In this release `secretPathsUnmask` applies to this mount only.
+- Masks are set when the box starts. A secret file added on this machine afterwards, or saved by an editor that
+  replaces the file, is readable until you run `worca container up` again.
+- A Folder (non-git) project's run copies the whole folder, so a masked file arrives in the run as an empty file;
+  a change an agent makes to it cannot be applied back.
+- Not with `--with clonein` (clone-in mounts no host folder at all, and stays the strongest mode).
+- More than 500 masks is refused; narrow them with `secretPathsUnmask`.
+- Two projects at the same time need two container dirs: `worca container init --dir ~/worca-web`, set
+  `WORCA_PORT=4318` in that dir's `.env`, and pass `--dir ~/worca-web` to every verb.
+
+Check it by hand on a Docker host: `worca container shell`, then `cat <project>/.env` prints nothing,
+`echo x > <project>/.env` fails, and `ls <a sibling project>` fails.
 
 ### Clone-in mode
 

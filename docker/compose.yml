@@ -29,6 +29,9 @@ services:
       - claude-config:/home/worca/.claude       # Claude Code login, settings, memory
       # Your repositories. Same path on both sides (path parity) so git
       # worktree metadata stays valid on the host; see docs/docker.md.
+      # Unmasked: every project in this folder and its secret files (.env, keys)
+      # are readable by every agent. `worca container up --project <dir>` binds one
+      # project instead, with its secret files masked (docs/docker.md, "Project-scoped box").
       - ${WORCA_PROJECTS:-${HOME}/dev}:${WORCA_PROJECTS_MOUNT:-${WORCA_PROJECTS:-${HOME}/dev}}
     environment:
       TZ: ${TZ:-UTC}

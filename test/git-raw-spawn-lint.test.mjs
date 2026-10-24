@@ -40,6 +40,7 @@ const ALLOWED = {
   'src/core/plugin-repo.mjs': [2, 'a worca-owned bare cache of a plugin repository (--git-dir), no work tree'],
   'src/core/plugin-inventory.mjs': [1, 'git archive from the same worca-owned bare cache'],
   'src/cli/container.mjs': [1, 'git config --get from the CLI user\'s own shell, outside any checkout'],
+  'src/cli/container-mounts.mjs': [1, 'trackedFiles(): env from guardedGitEnv'],
 };
 
 function* files(dir) {

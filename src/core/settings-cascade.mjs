@@ -64,6 +64,8 @@ const SCALARS = [
   scalar({ id: 'watchNewPrs', check: (value) => typeof value === 'boolean', def: false, hint: 'must be true or false' }),
   // Files the project adds to the secret-path list (secret-paths.mjs DEFAULT_SECRET_PATHS): kept out of a sandbox upload.
   scalar({ id: 'secretPaths', check: isSecretPathList, def: Object.freeze([]), hint: 'must be a list of project-relative file patterns, one line each (dir/** for a folder; no ~/, / or ./ start)' }),
+  // Patterns a project-scoped container box leaves unmasked (`worca container up --project`, src/cli/container-mounts.mjs).
+  scalar({ id: 'secretPathsUnmask', check: isSecretPathList, def: Object.freeze([]), hint: 'must be a list of project-relative file patterns, one line each (dir/** for a folder; no ~/, / or ./ start)' }),
   scalar({ id: 'memory.softBytesPerFile', path: ['memory', 'softBytesPerFile'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_SOFT_BYTES_PER_FILE }),
   scalar({ id: 'memory.maxBytesPerFile', path: ['memory', 'maxBytesPerFile'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_HARD_BYTES_PER_FILE }),
   // Team memory (phase 1a): project-only opt-in — no user layer (readUser off), no team key.

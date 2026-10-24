@@ -4,6 +4,8 @@
 // it writes the package's compose files into <worcaHome>/container/, seeds a
 // .env once, and shells out to `docker compose` (or `podman compose`). Nothing
 // here talks to the engine; the box runs its own Worca with its own home.
+// `up --project` narrows the box to one project with its secret files masked
+// (container-mounts.mjs; plans/core-5-per-run-container-mount-design.md).
 //
 // Every verb takes { out, c, fail } from the CLI and an injectable `exec` so
 // tests never spawn a runtime.
@@ -20,6 +22,9 @@ import { gitAvailable } from '../core/git-available.mjs';
 import { readSettings } from '../core/settings.mjs';
 import { readProxyLogin } from '../core/proxy-credentials.mjs';
 import { resolveUpstream, upstreamLabel } from '../core/upstream-proxy.mjs';
+import {
+  MOUNT_FILE, MAX_MASKS, boxName, resolveProjectDir, maskSettingsFor, planProjectMasks, writeProjectMount, removeProjectMount, maskLines,
+} from './container-mounts.mjs';
 
 /** The compose files shipped in the package (package.json `files`). */
 export const COMPOSE_SRC_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'docker');
@@ -34,9 +39,12 @@ const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0
 export const CONTAINER_HELP = `worca container — run Worca in a container (docs/docker.md)
 
   worca container init [--projects <dir>]        Write the compose files and a .env into the container dir
-  worca container up [--with <overlays>] [--tag <t>]
+  worca container up [--with <overlays>] [--tag <t>] [--project <dir> | --no-project]
                                                  Start the box in the background and print the URL.
                                                  --with: comma-separated egress,ssh,teams,clonein (remembered)
+                                                 --project: mount only this project, its secret files masked,
+                                                 in its own box (remembered); --no-project: the whole
+                                                 WORCA_PROJECTS folder again
   worca container down                           Stop and remove the containers (volumes are kept)
   worca container status                         Which containers are up
   worca container logs [--follow]                Server logs
@@ -59,6 +67,10 @@ Options:
 The box has its own Worca home and its own Claude Code login: nothing from
 ~/.worca-cc or ~/.claude is mounted. Your repositories are mounted at the same
 path as on the host (WORCA_PROJECTS in .env), so run worktrees stay valid here.
+That folder is mounted whole and unmasked. With --project only that one folder
+is mounted, in a box of its own (own volumes, own login), and its untracked
+secret files (.env*, *.pem, *.key, .npmrc, .netrc, id_*, plus the project's
+secretPaths) read as empty files in the box.
 `;
 
 /** Default exec: run and inherit the terminal. Returns { status }. */
@@ -79,7 +91,7 @@ export function detectRuntime(exec, want) {
 }
 
 function parse(argv) {
-  const o = { verb: argv[0] || 'help', dir: null, runtime: null, projects: null, with: null, tag: null, follow: false, passthrough: [], _: [] };
+  const o = { verb: argv[0] || 'help', dir: null, runtime: null, projects: null, with: null, tag: null, project: null, noProject: false, follow: false, passthrough: [], _: [] };
   const rest = argv.slice(1);
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -89,6 +101,9 @@ function parse(argv) {
     else if (a === '--projects') o.projects = rest[++i];
     else if (a === '--with') o.with = rest[++i];
     else if (a === '--tag') o.tag = rest[++i];
+    // Only `up` takes these: `run --project <p> …` without `--` passes the worca CLI's own --project through.
+    else if (a === '--project' && o.verb === 'up') o.project = rest[++i] ?? '';
+    else if (a === '--no-project' && o.verb === 'up') o.noProject = true;
     else if (a === '--follow' || a === '-f') o.follow = true;
     else o._.push(a);
   }
@@ -131,10 +146,12 @@ function writeState(dir, state) {
   writeFileSync(join(dir, STATE_FILE), JSON.stringify(state, null, 2) + '\n');
 }
 
-/** `-f compose.yml -f compose.<overlay>.yml …` for the remembered or requested overlays. */
-export function composeFileArgs(overlays) {
+/** `-f compose.yml -f compose.<overlay>.yml …` for the remembered or requested overlays, then the generated project
+ *  mount (container-mounts.mjs) last, so its masks land on top of every bind. */
+export function composeFileArgs(overlays, { project = false } = {}) {
   const args = ['-f', 'compose.yml'];
   for (const o of overlays) args.push('-f', `compose.${o}.yml`);
+  if (project) args.push('-f', MOUNT_FILE);
   return args;
 }
 
@@ -277,9 +294,11 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
   if (rt.error) { fail(rt.error); return 1; }
   const state = readState(dir);
   let overlays = Array.isArray(state.with) ? state.with : [];
+  let project = typeof state.project === 'string' && state.project ? state.project : null;
+  const mountFile = () => !!project && existsSync(join(dir, MOUNT_FILE));
   // Every compose call interpolates the same env (shell before .env), so the proxy and CA
   // fixes apply to up, run, login and shell alike. Resolved after init so a fresh .env counts.
-  let composeEnv;
+  let composeEnv;   // unset until prepare(): down, status, logs and pull inherit the shell
   let extra = [];
   const prepare = () => {
     const envFile = (k) => readEnvValue(dir, k);
@@ -293,8 +312,13 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
     composeEnv = Object.fromEntries(Object.entries({ ...hostEnv, ...proxy.set, ...caEnv }).filter(([, v]) => v !== undefined));
     if (a.tag) composeEnv.WORCA_TAG = a.tag;
   };
-  const files = () => composeFileArgs([...overlays, ...extra]);
-  const compose = (args, opts = {}) => exec(rt.bin, ['compose', ...files(), ...args], { cwd: dir, env: composeEnv, ...opts }).status;
+  // A project-scoped box is its own compose project (boxName: own containers and volumes) and binds only `p`, at the
+  // same path (compose.yml builds its bind from both variables), on every verb: `run`, `login` and `shell` start
+  // one-off containers that must not see the whole tree either.
+  const nameArgs = (p) => (p ? ['-p', boxName(p)] : []);
+  const envFor = (p) => (p ? { ...(composeEnv || hostEnv), WORCA_PROJECTS: p, WORCA_PROJECTS_MOUNT: p } : composeEnv);
+  const compose = (args, opts = {}) => exec(rt.bin, ['compose', ...nameArgs(project), ...composeFileArgs([...overlays, ...extra], { project: mountFile() }), ...args],
+    { cwd: dir, env: envFor(project), ...opts }).status;
 
   if (a.verb === 'init' || a.verb === 'up') {
     const r = await initDir(dir, { projects: a.projects, exec });
@@ -302,21 +326,59 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
     if (a.verb === 'init') return 0;
   }
   if (!existsSync(join(dir, 'compose.yml'))) { fail(`no compose files in ${dir}; run: worca container init`); return 1; }
+  if (project && !mountFile() && ['login', 'shell', 'run'].includes(a.verb)) {
+    fail(`the project mount for ${project} is missing; run: worca container up`);
+    return 1;
+  }
   if (!['down', 'status', 'logs', 'pull'].includes(a.verb)) prepare();
 
   switch (a.verb) {
     case 'up': {
+      const before = { project, overlays };
       if (a.with !== null) {
         const parsed = parseWith(a.with);
         if (parsed.error) { fail(parsed.error); return 1; }
         overlays = parsed;
-        writeState(dir, { ...state, with: overlays });
       }
+      if (a.project !== null && a.noProject) { fail('--project and --no-project cannot go together'); return 1; }
+      if (a.noProject) project = null;
+      else if (a.project !== null || project) {
+        // A remembered project is checked again: compose would create a missing bind source as an empty folder.
+        const r = resolveProjectDir(a.project ?? project, { worcaHomeDir: worcaHome() });
+        if (r.error) { fail(a.project !== null ? r.error : `${r.error} (remembered from an earlier up: pass --project <dir> or --no-project)`); return 1; }
+        project = r.dir;
+      }
+      if (project && overlays.includes('clonein')) {
+        fail('--project mounts a host folder and clone-in mounts none: use one of them (--no-project, or --with without clonein)');
+        return 1;
+      }
+      let plan = null;
+      if (project) {
+        plan = await planProjectMasks(project, maskSettingsFor(project));
+        if (plan.masks.length > MAX_MASKS) {
+          fail(`--project: ${plan.masks.length} secret files to mask (the limit is ${MAX_MASKS}); leave some unmasked with the project's secretPathsUnmask setting, or move them out of ${project}`);
+          return 1;
+        }
+        for (const line of maskLines({ projectDir: project, ...plan })) out(line.level === 'warn' ? c('yellow', line.text) : line.text);
+      } else if (!overlays.includes('clonein')) {
+        out(c('yellow', `projects  ${readEnvValue(dir, 'WORCA_PROJECTS') || '$HOME/dev'}   the whole folder is mounted, unmasked: every project in it and its secret files are readable in the box (narrow it: --project <dir>)`));
+      }
+      if (before.project !== project) {
+        // Another box (boxName): stop the one this dir ran before, or it keeps its own mounts and holds the port.
+        // `down` keeps its volumes; `up --project <it>` or `--no-project` brings it back.
+        out(`stopping the box for ${before.project || 'the whole folder'} first (its volumes are kept)`);
+        const stopped = exec(rt.bin, ['compose', ...nameArgs(before.project), ...composeFileArgs(before.overlays), 'down'],
+          { cwd: dir, env: envFor(before.project) }).status;
+        if (stopped !== 0) { fail(`could not stop the box for ${before.project || 'the whole folder'}; nothing was started`); return stopped; }
+      }
+      if (project) writeProjectMount(dir, { projectDir: project, masks: plan.masks });
+      else removeProjectMount(dir);
+      if (a.with !== null || a.project !== null || a.noProject || project !== before.project) writeState(dir, { ...state, with: overlays, project });
       const port = readEnvValue(dir, 'WORCA_PORT') || '4317';
-      const code = compose(['up', '-d']);
+      const code = exec(rt.bin, ['compose', ...nameArgs(project), ...composeFileArgs([...overlays, ...extra], { project: !!project }), 'up', '-d'], { cwd: dir, env: envFor(project) }).status;
       if (code !== 0) return code;
       const shown = [...overlays, ...extra];
-      out(`${c('bold', 'Worca')}  http://localhost:${port}${shown.length ? `   overlays: ${shown.join(', ')}` : ''}`);
+      out(`${c('bold', 'Worca')}  http://localhost:${port}${shown.length ? `   overlays: ${shown.join(', ')}` : ''}${project ? `   box: ${boxName(project)}` : ''}`);
       out(`  Log in once:  ${c('bold', 'worca container login')}`);
       out(`  Stop:         ${c('bold', 'worca container down')}`);
       return 0;
