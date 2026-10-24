@@ -9,9 +9,10 @@ import { dirname, join } from 'node:path';
 import { isWithin } from '../fs-scope.mjs';
 
 /**
- * Remove every entry under `root` (down to `depth` directory levels, links never followed) whose name `match`es.
+ * Remove every entry under `root` (down to `depth` directory levels, links never followed) whose name `match`es
+ * (`match(name, path)`: a matcher may also read a regular file it is handed).
  * @param {string} root  the session store
- * @param {(name: string) => boolean} match
+ * @param {(name: string, path: string) => boolean} match
  * @returns {Promise<{removed: string[], failed: {path: string, error: string}[]}>}
  */
 export async function removeSessionEntries(root, match, { depth = 0 } = {}) {
@@ -24,7 +25,7 @@ export async function removeSessionEntries(root, match, { depth = 0 } = {}) {
     try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const e of entries) {
       const p = join(dir, e.name);
-      if (match(e.name)) { hits.push(p); continue; }
+      if (match(e.name, p)) { hits.push(p); continue; }
       if (level < depth && e.isDirectory() && !e.isSymbolicLink()) walk(p, level + 1);
     }
   };

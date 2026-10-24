@@ -34,3 +34,22 @@ Other facts from the same spike (not files):
 - Without trust (`--skip-trust` or `GEMINI_CLI_TRUST_WORKSPACE=true`) a headless run exits 55; with `--skip-trust` the
   checkout's MCP servers stay off, so the adapter sets the env var.
 - `result.stats` carries tokens per model and no cost.
+
+Denials that are not worca's rules (read in the `@google/gemini-cli-core` 0.64.0 source, 2026-10-24; not captured live,
+since this change runs no real CLI): with no terminal, Gemini turns a call it would ask about into
+`Tool execution denied by policy.`, and no setting switches this off.
+
+- `scheduler/scheduler.js` + `utils/untrustedContextTracker.js`: a shell command that the policy allows is denied when
+  one of its flags (other than a short list of read-only ones such as `--oneline`) or a path or URL argument appeared in
+  earlier tool output. Shell, MCP and web output are wrapped in `<untrusted_context>`. This is the sporadic
+  `node --test x.mjs` denial seen in worca runs that set no rule: an earlier `npm test` or `cat package.json` printed
+  `--test`. The message names no rule. A build or test command (`npm`, `npx`, `python`, `go`, `make`, `cargo`, …)
+  after a build file was edited in the session is denied the same way.
+- `policy/policy-engine.js` "Build File Protection": `write_file` / `replace` on a build file (`package.json`, lockfiles,
+  `Makefile`, `Dockerfile`, `pyproject.toml`, `go.mod`, `Cargo.toml`, …) is denied with "Modifying build configuration
+  files requires explicit user confirmation", even in YOLO mode. The agent can still edit such a file from its shell.
+
+worca's own rules carry `worca guardrail: <rule>` in their message (`geminiPolicyToml`). The normalizer adds a run-log
+line for any other refusal saying it is Gemini's own check (`test/gemini-adapter.test.mjs`). The read and write
+refusals in `policy-denied.jsonl` carry no rule message, so the rule-proof fixtures (`../engine-rules/gemini/`) rest on
+what that capture's prompt and TOML asked for, not on the message.

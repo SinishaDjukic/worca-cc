@@ -63,8 +63,10 @@ test('Qwen chat spawn: the lockdown settings over the machine\'s, the pinned env
 
 test('Qwen chat spawn: a session Qwen no longer knows is the turn\'s to handle (no silent fresh start)', POSIX, async () => {
   const dir = tmp();
-  const fake = fakeQwen(dir, 'x', { resumeError: 'No saved session found with ID s-9' });
-  await assert.rejects(runQwenProcess({ cwd: dir, bin: fake.bin, prompt: 'p', askLockdown: true, mcpConfigPath: mcpFile(dir), resumeSessionId: 'qwen:s-9' }),
+  // A stored id is an engine-qualified uuid (engines/qwen.mjs): one Qwen no longer has fails the turn, never a fresh start.
+  const id = '0b7c2d9e-4f1a-4c3b-9e2d-5a6b7c8d9e0f';
+  const fake = fakeQwen(dir, 'x', { resumeError: `No saved session found with ID ${id}` });
+  await assert.rejects(runQwenProcess({ cwd: dir, bin: fake.bin, prompt: 'p', askLockdown: true, mcpConfigPath: mcpFile(dir), resumeSessionId: `qwen:${id}` }),
     (err) => qwenChat.resumeNotFound(err));
 });
 

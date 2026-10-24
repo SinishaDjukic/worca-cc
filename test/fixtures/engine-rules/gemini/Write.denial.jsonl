@@ -1,0 +1,3 @@
+{"type":"init","timestamp":"2026-10-08T20:33:13.279Z","session_id":"9eb0eef4-1a9d-4fe6-8c7d-d7273705b0cc","model":"auto"}
+{"type":"tool_use","timestamp":"2026-10-08T20:33:58.377Z","tool_name":"write_file","tool_id":"write_file__call_858810","parameters":{"content":"bye","file_path":"b.txt"}}
+{"type":"tool_result","timestamp":"2026-10-08T20:33:58.396Z","tool_id":"write_file__call_858810","status":"error","output":"Tool execution denied by policy.","error":{"type":"policy_violation","message":"Tool execution denied by policy."}}

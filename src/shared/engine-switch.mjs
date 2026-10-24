@@ -52,13 +52,16 @@
  *   relay     how the model relay carries its calls ({protocol, upstream, modelCheck, auxModels, needsModel}), or null.
  *             `needsModel`: its CLI has no model of its own once pointed at a relay or broker slot (a step with none is
  *             refused)
+ *   provider  who serves its model calls when no relay says so ('google'), or null; a sign-in mode's own `provider`
+ *             wins (the run's and each step's `provider` column)
  *   shell     it runs an unrestricted shell, so its path rules bind its own tools only (decision 10)
  *   rules     per permission-rule kind (Read, Grep, Glob, Edit, Write, Bash, WebFetch, WebSearch, mcp): 'held' (a
  *             translation fixture AND a recorded denial under test/fixtures/engine-rules/<engine>/), 'partial',
  *             'unverified' or 'unenforced'. A kind not listed is unenforced; the gate refuses every kind but 'held'
  *             without --allow-unguarded-engine (decision 9)
- *   subagents its sub-agent tool (null: none), whether its sub-agents inherit its rules ('yes' only with `proof`, a
- *             recorded denial from inside a sub-agent under test/fixtures/engine-rules/), else the core denies the tool
+ *   subagents its sub-agent tool (null: none) and `extraTools`, the tools that reach a sub-agent another way, whether
+ *             its sub-agents inherit its rules ('yes' only with `proof`, a recorded denial from inside a sub-agent under
+ *             test/fixtures/engine-rules/), else the core denies them all
  *   requiresExplicitModel  a step with no model is refused at start
  *   sessions  where it keeps run sessions ('managed-home', 'user-store' or 'none'); archiving a run removes them
  *   defaultModel  the model it runs when a step names none, or null (its CLI's own default)
@@ -229,25 +232,33 @@ export const ENGINES = deepFreeze({
     helpersNote: "Gemini CLI runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. See the Claude tab.",
     helperSlots: false, modelConnection: "gemini's own sign-in",
     modelRule: "a gemini model takes no env, no upstream and no efforts (gemini's own sign-in)", modelIdHint: null, signInTitle: null,
-    // GEMINI_CLI_TRUST_WORKSPACE is set per spawn; GEMINI_SYSTEM_MD and GEMINI_CLI_SYSTEM_SETTINGS_PATH are never listed
-    // (either replaces what worca hands it).
-    env: { names: ['GEMINI_CLI_TRUST_WORKSPACE'], hostOnly: ['GEMINI_CLI_HOME'],
+    // GEMINI_CLI_TRUST_WORKSPACE is set per spawn; GEMINI_CLI_HOME (the home holding its .gemini) and GEMINI_MODEL are
+    // its own config. GEMINI_SYSTEM_MD and GEMINI_CLI_SYSTEM_SETTINGS_PATH are never listed (either replaces what worca
+    // hands it). GOOGLE_APPLICATION_CREDENTIALS (Vertex AI through ADC) names a file, not a key: it passes like the
+    // other endpoint names.
+    env: { names: ['GEMINI_CLI_TRUST_WORKSPACE', 'GEMINI_CLI_HOME', 'GEMINI_MODEL'], hostOnly: ['GEMINI_CLI_HOME'],
       relayOwned: ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GEMINI_BASE_URL', 'GOOGLE_VERTEX_BASE_URL', 'GOOGLE_GENAI_USE_VERTEXAI',
         'GOOGLE_GENAI_USE_GCA', 'GOOGLE_CLOUD_ACCESS_TOKEN', 'CODE_ASSIST_ENDPOINT', 'GEMINI_CLI_AUTH_OVERRIDE',
         'GOOGLE_APPLICATION_CREDENTIALS', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION', 'GCE_METADATA_HOST'], home: null },
+    // The sign-in its settings choose (security.auth.selectedType) wins (engines/gemini.mjs geminiConfiguredMode).
     signIn: { modes: [
       { id: 'api-key', kind: 'key', env: ['GEMINI_API_KEY'] },
-      { id: 'vertex-key', kind: 'key', env: ['GOOGLE_API_KEY'], requires: ['GOOGLE_GENAI_USE_VERTEXAI'] },
-      { id: 'access-token', kind: 'key', env: ['GOOGLE_CLOUD_ACCESS_TOKEN'] },
-      { id: 'adc', kind: 'own', env: ['GOOGLE_APPLICATION_CREDENTIALS'] },
-      { id: 'google-login', kind: 'own', env: ['GEMINI_CLI_HOME'], files: ['oauth_creds.json', 'google_accounts.json'] },
+      { id: 'vertex-key', kind: 'key', env: ['GOOGLE_API_KEY'], requires: ['GOOGLE_GENAI_USE_VERTEXAI'], provider: 'vertex' },
+      { id: 'access-token', kind: 'key', env: ['GOOGLE_CLOUD_ACCESS_TOKEN'], provider: 'vertex' },
+      { id: 'google-login', kind: 'own', env: [], files: ['oauth_creds.json', 'google_accounts.json'] },
     ] },
-    relay: null,
+    relay: null, provider: 'google',
     shell: true,
-    rules: {},
-    // No sub-agent tool in its 0.63 captures.
+    // Captured on 0.63 (test/fixtures/engine-rules/gemini/, from test/fixtures/gemini/policy-denied.jsonl): read_file and
+    // write_file refused by path rules. No `replace` refusal was captured, so Edit is partial until one is. A command rule
+    // matches the start of the command (policy-bypass.jsonl: `env git log` runs), so Bash is partial. Grep and Glob are
+    // translated, never captured; WebFetch, WebSearch and MCP rules take the tool out of the session, so no refusal can
+    // be recorded.
+    rules: { Read: 'held', Edit: 'partial', Write: 'held', Bash: 'partial', Grep: 'partial', Glob: 'partial',
+      WebFetch: 'unverified', WebSearch: 'unverified', mcp: 'unverified' },
+    // No sub-agent tool in its 0.63 captures (no `agents` setting is written).
     subagents: { tool: null, inheritsRules: 'unverified', proof: null },
-    requiresExplicitModel: false, sessions: 'none', defaultModel: null, loadsClaudeMcp: false,
+    requiresExplicitModel: false, sessions: 'user-store', defaultModel: null, loadsClaudeMcp: false,
   },
   goose: {
     label: 'Goose', models: true, cost: true, helpers: false, beta: true, signin: true, remote: false,
@@ -330,26 +341,32 @@ export const ENGINES = deepFreeze({
     helperSlots: false, modelConnection: "qwen's own sign-in",
     modelRule: "a qwen model takes no env, no upstream and no efforts (qwen's own sign-in)", modelIdHint: null, signInTitle: null,
     // QWEN_CODE_SUPPRESS_YOLO_WARNING and QWEN_CODE_SYSTEM_SETTINGS_PATH are set per spawn (the latter to worca's own
-    // settings file, built over this machine's).
-    // The model names say which model an env-only sign-in uses (Qwen's getAuthTypeFromEnv needs one).
-    env: { names: ['QWEN_CODE_SUPPRESS_YOLO_WARNING', 'OPENAI_MODEL', 'QWEN_MODEL', 'ANTHROPIC_MODEL', 'GEMINI_MODEL', 'GOOGLE_MODEL'],
-      hostOnly: ['QWEN_HOME'],
+    // settings file, built over this machine's); QWEN_HOME (its .qwen) and QWEN_MODEL are its own config.
+    env: { names: ['QWEN_CODE_SUPPRESS_YOLO_WARNING', 'QWEN_HOME', 'QWEN_MODEL'], hostOnly: ['QWEN_HOME'],
       relayOwned: ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'GEMINI_API_KEY',
         'GOOGLE_GEMINI_BASE_URL', 'GOOGLE_API_KEY', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_GENAI_USE_VERTEXAI', 'GOOGLE_VERTEX_BASE_URL',
         'QWEN_OAUTH'], home: null },
-    // The mode ids are Qwen's auth types: a child keeps the names of the one it is set to (engines/qwen.mjs).
+    // The mode ids are Qwen's auth types. The one its settings choose wins (engines/qwen.mjs qwenConfiguredMode); else,
+    // as Qwen's getAuthTypeFromEnv, the env signs in only when it names a whole provider (`requires`).
     signIn: { modes: [
-      { id: 'openai', kind: 'key', env: ['OPENAI_API_KEY'] },
-      { id: 'anthropic', kind: 'key', env: ['ANTHROPIC_API_KEY'] },
-      { id: 'gemini', kind: 'key', env: ['GEMINI_API_KEY'] },
-      { id: 'vertex-ai', kind: 'key', env: ['GOOGLE_API_KEY'] },
-      { id: 'qwen-oauth', kind: 'own', env: ['QWEN_HOME'], files: ['oauth_creds.json'] },
+      { id: 'openai', kind: 'key', env: ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_MODEL'], requires: ['OPENAI_BASE_URL', 'OPENAI_MODEL'], provider: 'openai' },
+      { id: 'gemini', kind: 'key', env: ['GEMINI_API_KEY', 'GEMINI_MODEL'], requires: ['GEMINI_MODEL'], provider: 'google' },
+      { id: 'vertex-ai', kind: 'key', env: ['GOOGLE_API_KEY', 'GOOGLE_MODEL'], requires: ['GOOGLE_MODEL'], provider: 'vertex' },
+      { id: 'anthropic', kind: 'key', env: ['ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL', 'ANTHROPIC_BASE_URL'], requires: ['ANTHROPIC_MODEL', 'ANTHROPIC_BASE_URL'], provider: 'anthropic' },
+      { id: 'qwen-oauth', kind: 'own', env: [], files: ['oauth_creds.json'], provider: 'qwen' },
     ] },
-    relay: null,
+    relay: null, provider: null,
     shell: true,
-    rules: {},
-    subagents: { tool: 'agent', inheritsRules: 'unverified', proof: null },
-    requiresExplicitModel: false, sessions: 'none', defaultModel: null, loadsClaudeMcp: false,
+    // Captured on 0.25 (test/fixtures/engine-rules/qwen/, from test/fixtures/qwen/denied.jsonl and mcp-denied.jsonl):
+    // read_file and write_file refused by Read and Edit rules, an MCP tool by its rule. A command rule matches the start of
+    // the command (`env git log` runs), so Bash is partial. Write, Grep, Glob, WebFetch and WebSearch were never refused
+    // in a capture.
+    rules: { Read: 'held', Edit: 'held', mcp: 'held', Bash: 'partial',
+      Write: 'unverified', Grep: 'unverified', Glob: 'unverified', WebFetch: 'unverified', WebSearch: 'unverified' },
+    // Its `agent` tool starts a sub-agent; send_message talks to a running one and cron_create starts a prompt later:
+    // all three are off unless the catalog proves its sub-agents keep the rules (engines/qwen.mjs --exclude-tools).
+    subagents: { tool: 'agent', extraTools: ['send_message', 'cron_create'], inheritsRules: 'unverified', proof: null },
+    requiresExplicitModel: false, sessions: 'user-store', defaultModel: null, loadsClaudeMcp: false,
   },
 });
 

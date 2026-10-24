@@ -46,15 +46,15 @@ import { join } from 'node:path';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { createClaudeNormalizer } from './claude-events.mjs';
 import { argValue } from '../spawn.mjs';
-import { ENGINES } from '../../shared/engine-switch.mjs';
 import {
   claudeToolName, commandRuleBody, familyMcpServers, classifyFamilyError, familyPreflight, runFamilyProcess,
   homeOf, readDotenv, settingsAuthType, foldSystemPrompt, NO_MCP_SERVER, FAMILY_ARGV_LIMIT, absolutePaths,
-  familyAskSupport, mergeSettings,
+  familyAskSupport, mergeSettings, removeFamilySessions, familyChatSignInMode,
 } from './gemini-family.mjs';
 import { makeChatDescriptor } from './chat-descriptor.mjs';
 import { QWEN_EFFORTS } from '../model-env.mjs';
 import { chatSelfTest, SELF_TEST_MODEL } from './chat-selftest.mjs';
+import { ENGINES, engineEntry } from '../../shared/engine-switch.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const qwenDefaultBin = () => process.env.WORCA_QWEN_BIN || 'qwen';
@@ -108,8 +108,8 @@ export const QWEN_ASK_MIN_VERSION = ENGINES.qwen.chat.minVersion;
 
 /** What the gate and the run log say about the rules Qwen Code holds only in part. */
 export const QWEN_RULE_TERMS = Object.freeze({
-  kind: 'command and file-write rules',
-  reach: 'Qwen Code matches a command rule against the start of the command, so a wrapper (env, a VAR= prefix) or another program gets past it, and an Edit or Write rule stops Qwen Code\'s file tools, not its shell',
+  kind: 'command rules',
+  reach: 'Qwen Code matches a command rule against the start of the command, so a wrapper (env, a VAR= prefix) or another program gets past it',
 });
 
 export const QWEN_RESUME_NOT_FOUND_RE = /No saved session found/i;
@@ -127,8 +127,9 @@ const QWEN_RULE_TOOLS = new Set(['Bash', 'Read', 'Edit', 'Write', 'WebFetch', 'W
 
 /**
  * What Qwen Code can be told of a run's DENY rules (allow / ask are never lifted): the rule as written, in Claude's
- * syntax. Command rules (other than one over every command) and Edit / Write / NotebookEdit rules on a path are partial
- * (QWEN_RULE_TERMS: the shell writes what the file tools may not); a rule on a tool Qwen does not know is unenforced.
+ * syntax. Command rules (other than one over every command) are partial (QWEN_RULE_TERMS); a path rule binds Qwen's own
+ * file tools (its shell reaching the path is every shell engine's baseline, decision 10); a rule on a tool Qwen does not
+ * know is unenforced.
  * @returns {{deny:string[], partial:string[], unenforced:string[]}}
  */
 export function qwenRulePlan(permissionRules) {
@@ -141,7 +142,6 @@ export function qwenRulePlan(permissionRules) {
     if (!rule.startsWith('mcp__') && !QWEN_RULE_TOOLS.has(head)) { out.unenforced.push(String(raw).trim()); continue; }
     if (!out.deny.includes(rule)) out.deny.push(rule);
     if (head === 'Bash' && rule !== 'Bash' && commandRuleBody(rule) !== '') out.partial.push(String(raw).trim());
-    else if (/^(?:Edit|Write|NotebookEdit)\(.*\S.*\)$/s.test(rule)) out.partial.push(String(raw).trim());
   }
   return out;
 }
@@ -179,8 +179,9 @@ function machineSystemSettings(bin) {
 // ── argv ─────────────────────────────────────────────────────────────────────
 
 /** `qwen --output-format stream-json --approval-mode yolo (--session-id S | --resume S) [--model M]
- *  [--append-system-prompt P] [--include-directories D]… --allowed-mcp-server-names N…`. The prompt travels on stdin. */
-export function buildQwenArgs({ sessionId, resume = false, model, systemPrompt, includeDirs = [], mcpNames = [], ask = false } = {}) {
+ *  [--append-system-prompt P] [--include-directories D]… --allowed-mcp-server-names N… [--exclude-tools T]…`. The prompt
+ *  travels on stdin. */
+export function buildQwenArgs({ sessionId, resume = false, model, systemPrompt, includeDirs = [], mcpNames = [], ask = false, excludeTools = [] } = {}) {
   const args = ['--output-format', 'stream-json', '--approval-mode', 'yolo', resume ? '--resume' : '--session-id', String(sessionId)];
   if (model) args.push('--model', argValue(String(model), 'model'));
   if (systemPrompt) args.push('--append-system-prompt', systemPrompt);
@@ -188,6 +189,7 @@ export function buildQwenArgs({ sessionId, resume = false, model, systemPrompt, 
   for (const n of mcpNames.length ? mcpNames : [NO_MCP_SERVER]) args.push('--allowed-mcp-server-names', n);
   // A chat (QWEN_ASK_LOCKDOWN): no core built-in, every other one excluded (one comma-separated value).
   if (ask) args.push('--core-tools', QWEN_ASK_LOCKDOWN.coreTools.join(','), '--exclude-tools', QWEN_ASK_LOCKDOWN.excludeTools.join(','));
+  for (const t of excludeTools) args.push('--exclude-tools', t);
   return args;
 }
 
@@ -265,27 +267,66 @@ export function qwenSignedIn(given = process.env) {
   return !!qwenAuthType(given);
 }
 
-/** The catalog sign-in mode (src/shared/engine-switch.mjs ENGINES.qwen.signIn) whose names a Qwen child keeps: the
- *  auth type it is set to (the mode ids are Qwen's auth types), else none. Qwen runs in YOLO mode with a free shell, so
- *  another provider's key (worca's own Anthropic or OpenAI key) must never reach it. */
-export const qwenSignInMode = (given = process.env) => qwenAuthType(given) || 'none';
+/** The catalog sign-in mode Qwen Code's own settings choose (`security.auth.selectedType`: the mode ids are Qwen's auth
+ *  types), or null when they choose none, so the catalog order decides (credentials.mjs resolveModelRoute: as Qwen's
+ *  getAuthTypeFromEnv, a mode whose `requires` names a whole provider). Qwen runs in YOLO mode with a free shell: only
+ *  that one provider's key reaches it, never worca's other keys. */
+export function qwenConfiguredMode(given = process.env) {
+  const dir = (typeof given.QWEN_HOME === 'string' && given.QWEN_HOME.trim()) || join(homeOf(given), '.qwen');
+  return settingsAuthType(join(dir, 'settings.json'));
+}
 
 /** The run-start check (engines/index.mjs `preflight`). Never rejects: {refusal} | {warning} | {}. */
 export function qwenPreflight({ bin = qwenDefaultBin(), timeoutMs = 10000, env = process.env, envAllowlist = [] } = {}) {
   return familyPreflight({ bin, engine: 'qwen', env, envAllowlist, timeoutMs, label: 'Qwen Code (npm i -g @qwen-code/qwen-code)', binEnv: 'WORCA_QWEN_BIN',
-    signedIn: qwenSignedIn, signInHint: QWEN_SIGNED_OUT_HINT, signInMode: qwenSignInMode });
+    signedIn: qwenSignedIn, signInHint: QWEN_SIGNED_OUT_HINT, configuredMode: qwenConfiguredMode });
+}
+
+// ── rule proof and sessions ──────────────────────────────────────────────────
+
+const DENIED_RE = /^This "([^"]+)" invocation was denied by permission rules\./;
+/**
+ * The refusals in a captured Qwen Code stream (test/fixtures/engine-rules/qwen/): a tool result Qwen's permission rules
+ * refused ("This "<tool>" invocation was denied by permission rules"), and each call `result.permission_denials` lists.
+ * One inside a sub-agent carries its parent tool call (`parent_tool_use_id`).
+ * @returns {{tool: string, subagent: boolean}[]}
+ */
+export function qwenDenials(lines) {
+  const out = [];
+  for (const raw of lines || []) {
+    let e; try { e = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { continue; }
+    const sub = !!e?.parent_tool_use_id;
+    for (const b of Array.isArray(e?.message?.content) ? e.message.content : []) {
+      const text = typeof b?.content === 'string' ? b.content : Array.isArray(b?.content) ? b.content.map((c) => c?.text || '').join('') : '';
+      const m = b?.type === 'tool_result' && b.is_error ? DENIED_RE.exec(text) : null;
+      if (m) out.push({ tool: m[1], subagent: sub });
+    }
+    if (e?.type === 'result') for (const d of Array.isArray(e.permission_denials) ? e.permission_denials : []) out.push({ tool: String(d?.tool_name || 'unknown'), subagent: false });
+  }
+  return out;
+}
+
+/** Archive (catalog `sessions: 'user-store'`): Qwen Code keeps a session under `<QWEN_HOME or ~/.qwen>` (its project
+ *  chats and checkpoints). Removes exactly those of `sessionIds` (`qwen:<uuid>`). */
+export function removeQwenSessions({ sessionIds = [], env = process.env } = {}) {
+  const dir = (typeof env.QWEN_HOME === 'string' && env.QWEN_HOME.trim()) || join(homeOf(env), '.qwen');
+  return removeFamilySessions({ sessionIds, prefix: QWEN_SESSION_PREFIX, roots: [join(dir, 'projects'), join(dir, 'tmp')], depth: 2 });
 }
 
 // ── spawn ────────────────────────────────────────────────────────────────────
 
+/** Qwen's sub-agent tools as its catalog entry names them (ENGINES.qwen.subagents: `agent`, send_message, cron_create),
+ *  in the names --exclude-tools takes. */
+const qwenSubagentTools = () => { const s = engineEntry('qwen')?.subagents; return s?.tool ? [s.tool, ...(s.extraTools || [])] : []; };
+
 const QWEN_SPEC = Object.freeze({
   name: 'qwen', label: 'Qwen Code', prefix: QWEN_SESSION_PREFIX,
-  // Qwen signs in through whichever provider it is set to: the child keeps that provider's names, no other's.
-  signInMode: qwenSignInMode,
+  // Qwen signs in through whichever provider its settings choose: the child keeps that provider's names, no other's.
+  configuredMode: qwenConfiguredMode,
   classify: classifyQwenError, resumeNotFoundRe: QWEN_RESUME_NOT_FOUND_RE,
   createNormalizer: createQwenNormalizer,
   askLockdown: QWEN_ASK_LOCKDOWN,
-  prepare({ bin, sys, prompt, model, effort, servers, permissionRules, includeDirs, scratchDir, ask, probe }) {
+  prepare({ bin, sys, prompt, model, effort, servers, permissionRules, includeDirs, scratchDir, ask, probe, subagentsOff }) {
     const plan = qwenRulePlan(permissionRules);
     const mcpServers = servers ? familyMcpServers(servers) : {};
     const env = { QWEN_CODE_SUPPRESS_YOLO_WARNING: '1', ...(ask ? QWEN_ASK_ENV : {}) };
@@ -307,7 +348,9 @@ const QWEN_SPEC = Object.freeze({
     return {
       stdin: byFlag ? prompt : foldSystemPrompt(sys, prompt),
       env,
-      argsFor: (sessionId, resume) => buildQwenArgs({ sessionId, resume, model, systemPrompt: byFlag ? sys : '', includeDirs, mcpNames, ask }),
+      // Decision 11: its sub-agent tools are off unless the catalog proves its sub-agents keep the rules (subagentsOff).
+      argsFor: (sessionId, resume) => buildQwenArgs({ sessionId, resume, model, systemPrompt: byFlag ? sys : '', includeDirs, mcpNames, ask,
+        excludeTools: subagentsOff ? qwenSubagentTools() : [] }),
     };
   },
 });
@@ -349,5 +392,5 @@ export const qwenChat = makeChatDescriptor({
   selfTest: (o, impl = qwenChatSelfTest) => impl(o),
   preflight: (_ctx, impl = qwenPreflight) => impl(),
   resumeNotFound: (err) => QWEN_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
-  signInMode: (_model, env) => qwenSignInMode(env),
+  signInMode: (model) => familyChatSignInMode(QWEN_SPEC, model),
 });

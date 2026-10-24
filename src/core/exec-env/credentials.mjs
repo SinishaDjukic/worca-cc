@@ -70,7 +70,8 @@ export function engineCredential(engine, env = process.env) {
  *   catalog model's env (under the broker: runViaBroker's slot URL + spawn token); endpoint: the codex model sits on
  *   its own endpoint (codex-endpoint.mjs hasCodexEndpoint); broker: whether the broker is on (default: worca's own
  *   process env — the broker is a property of the server, never of a sandbox env) and its slot ids;
- *   checkModel: false skips the needsModel refusals (the caller does not know the step's model).
+ *   checkModel: false skips the needsModel refusals (the caller does not know the step's model); configured: the sign-in
+ *   mode id the CLI's own settings choose (a local spawn of Gemini CLI or Qwen Code), which wins over the catalog order.
  * @returns {{kind:'relayed'|'brokered'|'own'|'direct', engine:string, signInMode:string|null, credential:string|null,
  *   source:'server'|'model'|'endpoint'|'broker'|'login'|null, slot:string|null, provider:string|null,
  *   models:string[], warning:string|null, refusal:string|null}}
@@ -79,7 +80,7 @@ export function engineCredential(engine, env = process.env) {
  *   keeps (direct/own), else null.
  */
 export function resolveModelRoute({ engine, remote = false, serverEnv = process.env, modelEnv = null, model = null,
-  endpoint = false, broker = null, checkModel = true } = {}) {
+  endpoint = false, broker = null, checkModel = true, configured = null } = {}) {
   const name = engine || 'claude';
   const entry = engineEntry(name);
   const label = entry?.label ?? name;   // engineLabel reads ENGINES, not the test seam
@@ -91,6 +92,8 @@ export function resolveModelRoute({ engine, remote = false, serverEnv = process.
   // An engine the catalog does not know (the mock adapter): nothing to decide; childEnv keeps its default (null mode).
   if (!entry) return done({ kind: 'own', signInMode: null });
   const upstream = entry.relay?.upstream ?? null;
+  // Who serves the calls of a mode: the relay's upstream, else the mode's own provider, else the entry's.
+  const providerOf = (mode) => upstream ?? mode?.provider ?? entry.provider ?? null;
   const brokerSlot = entry.signIn.modes.find((m) => m.kind !== 'own' && m.brokerSlot && slots.includes(m.brokerSlot))?.brokerSlot ?? null;
   const modelKey = ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY'].find((k) => filled(modelEnv?.[k])) ?? null;
   const modelBase = str(modelEnv?.ANTHROPIC_BASE_URL);
@@ -137,15 +140,23 @@ export function resolveModelRoute({ engine, remote = false, serverEnv = process.
   if (modelBase && hostOf(modelBase) !== hostOf(ANTHROPIC) && modelBase !== str(serverEnv.ANTHROPIC_BASE_URL)) {
     return done({ kind: 'direct', signInMode: 'model', source: 'model', provider: hostOf(modelBase) });
   }
+  const direct = (mode, key) => done({ kind: 'direct', signInMode: mode.id, credential: key, source: 'server', provider: providerOf(mode),
+    warning: `${name} signs in with ${key} from worca's environment; the agent can read it. Use a sandbox or the credential broker to keep it out.` });
+  // The mode the CLI's own settings choose (Gemini CLI's and Qwen Code's security.auth.selectedType) is the one it signs
+  // in with, whatever else is set: only its credential is kept, and when worca's env does not hold it (the CLI's own
+  // files do), none is. A setting the catalog does not name keeps none either.
+  if (configured != null) {
+    const mode = entry.signIn.modes.find((m) => m.id === configured) ?? null;
+    const key = modeCredential(mode);
+    if (key && filled(serverEnv[key])) return direct(mode, key);
+    return done({ kind: 'own', signInMode: mode ? mode.id : String(configured), source: 'login', provider: providerOf(mode) });
+  }
   for (const mode of entry.signIn.modes) {
     const key = modeCredential(mode);
-    if (key && filled(serverEnv[key]) && (mode.requires || []).every((r) => filled(serverEnv[r]))) {
-      return done({ kind: 'direct', signInMode: mode.id, credential: key, source: 'server', provider: upstream,
-        warning: `${name} signs in with ${key} from worca's environment; the agent can read it. Use a sandbox or the credential broker to keep it out.` });
-    }
+    if (key && filled(serverEnv[key]) && (mode.requires || []).every((r) => filled(serverEnv[r]))) return direct(mode, key);
   }
   const own = entry.signIn.modes.find((m) => m.kind === 'own');
-  return done({ kind: 'own', signInMode: own ? own.id : 'own', source: 'login', provider: upstream });
+  return done({ kind: 'own', signInMode: own ? own.id : 'own', source: 'login', provider: providerOf(own) });
 }
 
 /** What a LOCAL spawn's sign-in is decided on: worca's own env plus the run env (`runEnv`, cleanRunEnv), which may carry

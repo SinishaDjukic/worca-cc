@@ -100,10 +100,9 @@ conformanceRow('C-ENV-EXACT', 'the child gets base, catalog, sign-in and declare
 // A chat's model where the engine's chat needs one that names its provider; else the CLI's own default.
 const CHAT_MODEL = { goose: 'anthropic/claude-sonnet-5', opencode: 'anthropic/claude-sonnet-5' };
 const chatOn = (engine) => !!ENGINES[engine].chat && ENGINES[engine].chat.verified !== false;
-// Chat engines whose chat spawn moves onto the catalog in that engine's own commit (Gemini CLI and Qwen Code: the
-// chat sign-in their model names; Goose: that, and its MCP servers' env moves to a file beside the wrapper): the
-// chat rows wait for it.
-const CHAT_PENDING = new Set(['gemini', 'goose', 'qwen']);
+// Chat engines whose chat spawn moves onto the catalog in that engine's own commit (Goose: its MCP servers' env
+// moves to a file beside the wrapper): the chat rows wait for it.
+const CHAT_PENDING = new Set(['goose']);
 /** A chat turn's MCP config: worca's own server, its token and a set's secret by reference (ask/spawn.mjs buildMcpConfig). */
 function chatMcpConfig() {
   const file = join(tmp('worca-conf-chat-mcp-'), 'mcp.json');
@@ -277,6 +276,9 @@ const STORES = {
   codex: { at: (h, id) => join(h, '.codex', 'sessions', '2026', '10', '22', `rollout-2026-10-22T10-00-00-${id}.jsonl`), id: (x) => `codex:${x}`, signIn: (h) => join(h, '.codex', 'auth.json') },
   copilot: { at: (h, id) => join(h, '.copilot', 'session-state', id, 'events.jsonl'), id: (x) => `copilot:${x}`, signIn: (h) => join(h, '.copilot', 'config.json') },
   cursor: { at: (h, id) => join(h, '.cursor', 'chats', 'ws', id, 'store.db'), id: (x) => `cursor:${x}`, signIn: (h) => join(h, '.cursor', 'cli-config.json') },
+  // Gemini names a chat by the id's first 8 characters; the file holds the whole id.
+  gemini: { at: (h, id) => join(h, '.gemini', 'tmp', 'proj', 'chats', `session-2026-10-22T10-00-${id.slice(0, 8)}.json`), data: (id) => JSON.stringify({ sessionId: id }), id: (x) => `gemini:${x}`, signIn: (h) => join(h, '.gemini', 'oauth_creds.json') },
+  qwen: { at: (h, id) => join(h, '.qwen', 'projects', 'proj', 'chats', `${id}.jsonl`), id: (x) => `qwen:${x}`, signIn: (h) => join(h, '.qwen', 'oauth_creds.json') },
 };
 
 conformanceRow('C-SESSIONS', "archiving removes the run's sessions and never the sign-in", async (engine) => {
@@ -286,12 +288,13 @@ conformanceRow('C-SESSIONS', "archiving removes the run's sessions and never the
   const home = mkdtempSync(join(tmpdir(), 'worca-conf-home-'));
   try {
     process.env.HOME = home;
-    for (const k of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'COPILOT_HOME', 'CURSOR_CONFIG_DIR']) delete process.env[k];
+    for (const k of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'COPILOT_HOME', 'CURSOR_CONFIG_DIR', 'GEMINI_CLI_HOME', 'QWEN_HOME']) delete process.env[k];
     const put = (p, d) => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, d); return p; };
-    const mine = put(store.at(home, SID), 'a'); const theirs = put(store.at(home, OTHER), 'b'); const signIn = put(store.signIn(home), 'secret');
+    const other = store.data ? store.data(OTHER) : 'b';
+    const mine = put(store.at(home, SID), store.data ? store.data(SID) : 'a'); const theirs = put(store.at(home, OTHER), other); const signIn = put(store.signIn(home), 'secret');
     await removeRunSessions({ sessionIds: [store.id(SID)] });
     assert.equal(existsSync(mine), false);
-    assert.equal(readFileSync(theirs, 'utf8'), 'b');
+    assert.equal(readFileSync(theirs, 'utf8'), other);
     assert.equal(readFileSync(signIn, 'utf8'), 'secret');
   } finally { rmSync(home, { recursive: true, force: true }); }
 }, POSIX);
@@ -308,7 +311,11 @@ const canaryOf = (k) => (k === 'COPILOT_GITHUB_TOKEN' ? `github_pat_canary9f3a${
 const setCanaries = (names = CANARY_NAMES) => { for (const k of names) process.env[k] = canaryOf(k); };
 const clearCredentials = () => { for (const k of CANARY_NAMES) delete process.env[k]; };
 // A model the step names where the engine needs one behind a slot or the relay (Copilot), else its CLI's own default.
-const STEP_MODEL = { claude: undefined, codex: undefined, copilot: 'copilot/gpt-4.1', cursor: 'composer-1' };
+const STEP_MODEL = { claude: undefined, codex: undefined, copilot: 'copilot/gpt-4.1', cursor: 'composer-1', gemini: undefined, qwen: undefined };
+/** The legs a row runs, by what the catalog says the engine has: a broker slot for one of its keys, a sandbox. An engine
+ *  without them is refused there instead, and the row checks that. */
+const brokerable = (engine) => ENGINES[engine].signIn.modes.some((m) => m.kind !== 'own' && m.brokerSlot);
+const sandboxed = (engine) => ENGINES[engine].remote && !!ENGINES[engine].relay;
 /** The env var a brokered spawn's token sits in, and how its base names the slot. */
 const BROKERED = {
   claude: { name: 'ANTHROPIC_AUTH_TOKEN', base: (r) => r.env.ANTHROPIC_BASE_URL, slot: '/p/anthropic' },
@@ -412,11 +419,19 @@ conformanceRow('C-CANARY', 'the agent sees no credential worca holds, except the
   // and the run env carries every catalog credential and every K1 name; the spawn holds its broker token and no canary.
   const brokered = await brokeredRun(engine, { keepCanaries: CANARY_NAMES.filter((k) => !MODEL_CREDENTIAL_ENV_KEYS.includes(k)),
     allow: CATALOG_CREDENTIAL_NAMES, spawnEnv: Object.fromEntries([...CATALOG_CREDENTIAL_NAMES, ...MODEL_CREDENTIAL_ENV_KEYS].map((k) => [k, canaryOf(k)])) });
-  assertOnlyPicked(engine, brokered.rec?.env || {}, { argv: brokered.rec?.argv, files: brokered.rec?.files }, null, BROKERED[engine].name);
-  await assertBrokered(engine, brokered);
+  if (!brokerable(engine)) {
+    // No slot holds any of its keys: the spawn is refused before anything runs, so no canary can leak.
+    assert.equal(brokered.rec, null, 'the CLI never ran under the broker');
+    assert.match(String(brokered.error?.message), /credential broker is on/);
+  } else {
+    assertOnlyPicked(engine, brokered.rec?.env || {}, { argv: brokered.rec?.argv, files: brokered.rec?.files }, null, BROKERED[engine].name);
+    await assertBrokered(engine, brokered);
+  }
   if (engine === 'codex') assert.ok(!brokered.rec.argv.some((a) => /^mcp_servers\..*env_vars=.*WORCA_RELAY_KEY/.test(a)), 'no MCP server is handed the broker token');
 
-  // A sandbox: the server env holds every canary; nothing of it reaches the sandbox's env, argv or files.
+  // A sandbox: the server env holds every canary; nothing of it reaches the sandbox's env, argv or files. (An engine no
+  // sandbox runs yet is refused at run start: exec-env-config.test.mjs.)
+  if (!sandboxed(engine)) return;
   clearCredentials();
   const serverEnv = Object.fromEntries(CANARY_NAMES.map((k) => [k, canaryOf(k)]));
   const box = await relaySandbox(t, { engine, tmp, serverEnv });
@@ -459,8 +474,8 @@ conformanceRow('C-SIGNIN', 'each sign-in mode sees exactly its declared credenti
     }
   }
   const k1 = Object.fromEntries([...CATALOG_CREDENTIAL_NAMES, ...MODEL_CREDENTIAL_ENV_KEYS].map((k) => [k, 'v']));
-  const token = BROKERED[engine].name;
-  const b = childEnv({ engine, signInMode: 'brokered', base: { ...k1, PATH: '/usr/bin' }, allowlist: Object.keys(k1), runEnv: k1, overlay: { [token]: 'wbt_x' } });
+  const token = BROKERED[engine]?.name ?? null;
+  const b = childEnv({ engine, signInMode: 'brokered', base: { ...k1, PATH: '/usr/bin' }, allowlist: Object.keys(k1), runEnv: k1, overlay: token ? { [token]: 'wbt_x' } : {} });
   assert.deepEqual(Object.keys(k1).filter((k) => k in b.env && k !== token), [], `${engine}/brokered`);
 
   // Each mode, spawned: the mode's credential, plus decoys (the engine's other credentials that leave the pick
@@ -499,11 +514,12 @@ conformanceRow('C-SIGNIN', 'each sign-in mode sees exactly its declared credenti
   const brokered = await brokeredRun(engine, { allow: sources, spawnEnv: ambient });
   for (const k of sources) assert.notEqual(brokered.rec?.env[k], 'ambient-9f3a', `${engine}: ${k} is the pointing's own or absent`);
   for (const k of sources) delete process.env[k];
-  await assertBrokered(engine, brokered);
+  if (brokerable(engine)) await assertBrokered(engine, brokered);
+  else assert.match(String(brokered.error?.message), /credential broker is on/, `${engine}: no slot, so the broker refuses it`);
   if (engine === 'claude') assert.equal(brokered.rec.env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
   // An engine whose CLI keeps its config dir apart under the broker (Cursor: the HTTP/1.1 agent stream): worca's own
   // dir for this person's work, never the user's.
-  const brokerHome = brokered.rec.env.CURSOR_CONFIG_DIR;
+  const brokerHome = brokered.rec?.env.CURSOR_CONFIG_DIR;
   if (engine === 'cursor') {
     assert.equal(brokerHome, join(worcaHome(), 'engines', 'cursor', 'broker-home', 'local'));
     assert.equal(readFileSync(join(brokerHome, 'cli-config.json'), 'utf8'), CURSOR_CLI_CONFIG);
@@ -520,6 +536,7 @@ conformanceRow('C-SIGNIN', 'each sign-in mode sees exactly its declared credenti
   } finally { setCatalogForTest(null); delete process.env.WORCA_BROKER_URL; resetBrokerClient(); }
 
   // A sandbox: the CLI holds the relay's URL and a dummy (Claude: the route id), never the server's credential.
+  if (!sandboxed(engine)) return;
   clearCredentials();
   const real = { claude: { CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-signin-0123456789abcdef' }, codex: { CODEX_API_KEY: CODEX_KEY },
     copilot: { COPILOT_GITHUB_TOKEN: PAT }, cursor: { CURSOR_API_KEY: CURSOR_KEY } }[engine];
@@ -549,7 +566,7 @@ async function replay(engine, events, model = undefined) {
 /** The events that carried tokens worca books: a result's non-empty relay take, a spend with messages or usage. */
 const carriers = (events) => events.filter((e) => (e.type === 'result' && e.relay?.messages) || (e.type === 'spend' && (e.messages || e.usage)));
 /** The line of each fixture stream that carries a result (codex: its turn.completed). */
-const RESULT_LINE = { claude: /"type":"result"/, codex: /"type":"turn\.completed"/, copilot: /"type":"result"/, cursor: /"type":"result"/ };
+const RESULT_LINE = { claude: /"type":"result"/, codex: /"type":"turn\.completed"/, copilot: /"type":"result"/, cursor: /"type":"result"/, gemini: /"type":"result"/, qwen: /"type":"result"/ };
 /** The relay's price of one 100-in/20-out reply (list-prices.mjs, per Mtok): Sonnet 5 $2/$10, GPT-5.5 $5/$30. */
 const RELAY_PRICE = { claude: 0.0004, codex: 0.0011 };
 /** The way a spawn ended is the one the case set up: exit 0, exit code 1, the turn cap, a stop. */
@@ -571,49 +588,52 @@ function assertOutcome(engine, x, { result, error, events, argv }) {
 
 conformanceRow('C-LEDGER', 'spend is booked exactly once on every exit', async (engine, t) => {
   const reportsCost = ENGINES[engine].cost !== false;
-  // Relayed: the CLI makes one model call through worca's relay (100 in / 20 out), then ends in each of four ways.
-  const upstream = await startEngineUpstream({ usage: { input_tokens: 100, output_tokens: 20 } });
-  t.after(() => upstream.close());
-  const stepModel = { claude: 'claude-sonnet-5', codex: 'gpt-5.5', copilot: 'copilot/gpt-4.1', cursor: 'composer-1' }[engine];
-  const wire = { claude: 'claude-sonnet-5', codex: 'gpt-5.5', copilot: 'gpt-4.1', cursor: undefined }[engine];
   const fixture = (name) => join(HERE, 'fixtures', 'engines', engine, name);
-  const box = await relaySandbox(t, { engine, tmp, upstream, serverEnv: upstream.serverEnv, fake: {} });
-  // The stream without its result line: a spawn that ends before any result leaves its take to the route's close.
-  const noResult = join(tmp('worca-conf-noresult-'), 'stream.jsonl');
-  writeFileSync(noResult, `${readFileSync(fixture('stream.jsonl'), 'utf8').split('\n').filter((l) => l && !RESULT_LINE[engine].test(l)).join('\n')}\n`);
-  const exits = [
-    { name: 'exit 0', outcome: 'ok', knobs: { FAKE_STREAM: fixture('stream.jsonl') } },
-    { name: 'exit 1 (no result line)', outcome: 'exit1', spend: true, knobs: { FAKE_STREAM: noResult, FAKE_EXIT: '1' } },
-    { name: 'turn cap', outcome: 'turnCap', knobs: { FAKE_STREAM: fixture('turncap.jsonl') }, opts: { maxTurns: 1 } },
-    { name: 'abort (before any result)', outcome: 'abort', spend: true, knobs: { FAKE_STREAM: noResult, FAKE_HOLD: '1' }, abort: true },
-  ];
-  for (const x of exits) {
-    const out = join(tmp('worca-conf-ledger-'), 'rec.json');
-    box.setFake({ FAKE_OUT: out, FAKE_CALL: '1', FAKE_CALL_MODEL: wire, FAKE_GRANDCHILD: '0', ...x.knobs });
-    const events = []; const ac = new AbortController();
-    const run = runClaude({ engine, cwd: box.f.repo, prompt: 'P', execEnv: box.env, model: stepModel, signal: ac.signal, bin: `/nonexistent/worca-test/${engine}`,
-      ...(engine === 'claude' ? { modelEnv: { ANTHROPIC_BASE_URL: upstream.url, ANTHROPIC_API_KEY: ANTHROPIC_KEY } } : {}), ...(x.opts || {}),
-      onEvent: (e) => events.push(e) }).then((result) => ({ result, error: null }), (error) => ({ result: null, error }));
-    if (x.abort) {
-      await waitFor(() => { try { return JSON.parse(readFileSync(out, 'utf8')).call; } catch { return null; } }, 30000);
-      ac.abort();
+  // Relayed: the CLI makes one model call through worca's relay (100 in / 20 out), then ends in each of four ways (an
+  // engine no sandbox runs has no relayed spawn).
+  if (sandboxed(engine)) {
+    const upstream = await startEngineUpstream({ usage: { input_tokens: 100, output_tokens: 20 } });
+    t.after(() => upstream.close());
+    const stepModel = { claude: 'claude-sonnet-5', codex: 'gpt-5.5', copilot: 'copilot/gpt-4.1', cursor: 'composer-1' }[engine];
+    const wire = { claude: 'claude-sonnet-5', codex: 'gpt-5.5', copilot: 'gpt-4.1', cursor: undefined }[engine];
+    const box = await relaySandbox(t, { engine, tmp, upstream, serverEnv: upstream.serverEnv, fake: {} });
+    // The stream without its result line: a spawn that ends before any result leaves its take to the route's close.
+    const noResult = join(tmp('worca-conf-noresult-'), 'stream.jsonl');
+    writeFileSync(noResult, `${readFileSync(fixture('stream.jsonl'), 'utf8').split('\n').filter((l) => l && !RESULT_LINE[engine].test(l)).join('\n')}\n`);
+    const exits = [
+      { name: 'exit 0', outcome: 'ok', knobs: { FAKE_STREAM: fixture('stream.jsonl') } },
+      { name: 'exit 1 (no result line)', outcome: 'exit1', spend: true, knobs: { FAKE_STREAM: noResult, FAKE_EXIT: '1' } },
+      { name: 'turn cap', outcome: 'turnCap', knobs: { FAKE_STREAM: fixture('turncap.jsonl') }, opts: { maxTurns: 1 } },
+      { name: 'abort (before any result)', outcome: 'abort', spend: true, knobs: { FAKE_STREAM: noResult, FAKE_HOLD: '1' }, abort: true },
+    ];
+    for (const x of exits) {
+      const out = join(tmp('worca-conf-ledger-'), 'rec.json');
+      box.setFake({ FAKE_OUT: out, FAKE_CALL: '1', FAKE_CALL_MODEL: wire, FAKE_GRANDCHILD: '0', ...x.knobs });
+      const events = []; const ac = new AbortController();
+      const run = runClaude({ engine, cwd: box.f.repo, prompt: 'P', execEnv: box.env, model: stepModel, signal: ac.signal, bin: `/nonexistent/worca-test/${engine}`,
+        ...(engine === 'claude' ? { modelEnv: { ANTHROPIC_BASE_URL: upstream.url, ANTHROPIC_API_KEY: ANTHROPIC_KEY } } : {}), ...(x.opts || {}),
+        onEvent: (e) => events.push(e) }).then((result) => ({ result, error: null }), (error) => ({ result: null, error }));
+      if (x.abort) {
+        await waitFor(() => { try { return JSON.parse(readFileSync(out, 'utf8')).call; } catch { return null; } }, 30000);
+        ac.abort();
+      }
+      const { result, error } = await run;
+      const rec = JSON.parse(readFileSync(out, 'utf8'));
+      assertOutcome(engine, x, { result, error, events, argv: rec.argv });
+      assert.equal(rec.call?.status, 200, `${x.name}: the call went through the relay (${rec.call?.body?.slice(0, 200)})`);
+      const carried = carriers(events);
+      assert.equal(carried.length, 1, `${x.name}: exactly one event carried the tokens (${events.map((e) => e.type).join(',')})`);
+      // No result line (or Copilot, whose result comes after the spawn settled): the route's close carried the take.
+      if (x.spend || engine === 'copilot') assert.equal(carried[0].type, 'spend', `${x.name}: the route's close carried it`);
+      const h = await replay(engine, events, stepModel);
+      assert.deepEqual(h.step.usage, { input: 100, output: 20, cacheRead: 0, cacheWrite: 0 }, x.name);
+      if (reportsCost) {
+        assert.equal(h.booked(), 1, `${x.name}: one booking at the relay's price`);
+        assert.ok(Math.abs(h.step.costUsd - RELAY_PRICE[engine]) < 1e-9, `${x.name}: the relay's price for ${stepModel}, ${h.step.costUsd}`);
+      } else { assert.equal(h.step.costKnown, false, x.name); assert.equal(h.booked(), 0, x.name); }
     }
-    const { result, error } = await run;
-    const rec = JSON.parse(readFileSync(out, 'utf8'));
-    assertOutcome(engine, x, { result, error, events, argv: rec.argv });
-    assert.equal(rec.call?.status, 200, `${x.name}: the call went through the relay (${rec.call?.body?.slice(0, 200)})`);
-    const carried = carriers(events);
-    assert.equal(carried.length, 1, `${x.name}: exactly one event carried the tokens (${events.map((e) => e.type).join(',')})`);
-    // No result line (or Copilot, whose result comes after the spawn settled): the route's close carried the take.
-    if (x.spend || engine === 'copilot') assert.equal(carried[0].type, 'spend', `${x.name}: the route's close carried it`);
-    const h = await replay(engine, events, stepModel);
-    assert.deepEqual(h.step.usage, { input: 100, output: 20, cacheRead: 0, cacheWrite: 0 }, x.name);
-    if (reportsCost) {
-      assert.equal(h.booked(), 1, `${x.name}: one booking at the relay's price`);
-      assert.ok(Math.abs(h.step.costUsd - RELAY_PRICE[engine]) < 1e-9, `${x.name}: the relay's price for ${stepModel}, ${h.step.costUsd}`);
-    } else { assert.equal(h.step.costKnown, false, x.name); assert.equal(h.booked(), 0, x.name); }
+    await box.close();
   }
-  await box.close();
 
   // Local: the engine's own figures, booked once on every exit.
   const local = [
@@ -637,6 +657,8 @@ conformanceRow('C-LEDGER', 'spend is booked exactly once on every exit', async (
       codex: { usd: 0.0022 },
       cursor: { tokens: x.name === 'turn cap' ? null : { input: 10, output: 2, cacheRead: 0, cacheWrite: 0 } },
       copilot: {},
+      gemini: {},
+      qwen: {},
     }[engine];
     if (reportsCost) {
       assert.equal(h.booked(), 1, `${engine} ${x.name}: booked once`);
@@ -681,8 +703,9 @@ conformanceRow('C-LEDGER', 'spend is booked exactly once on every exit', async (
 
 conformanceRow('C-MODEL', 'the step\'s model is checked and recorded', async (engine, t) => {
   const entry = ENGINES[engine];
-  // The relay checks a body-checked engine's calls against the step's model.
-  if (entry.relay.modelCheck === 'body') {
+  // The relay checks a body-checked engine's calls against the step's model (an engine no sandbox runs has no relay).
+  if (!entry.relay) assert.equal(sandboxed(engine), false, `${engine}: no relay, no sandbox`);
+  else if (entry.relay.modelCheck === 'body') {
     const upstream = await startEngineUpstream();
     t.after(() => upstream.close());
     const box = await relaySandbox(t, { engine, tmp, upstream, serverEnv: upstream.serverEnv });
@@ -704,7 +727,7 @@ conformanceRow('C-MODEL', 'the step\'s model is checked and recorded', async (en
   const remote = createOrchestrator({ projectDir: '/tmp/conf-proj', guardrailsId: 'permissive', execEnv: 'e2b', claude: { mock: true, engine } });
   remote.resolved = { nodeCtx: { a: { nodeId: 'a', kind: 'agent', model: null } } };
   const refusal = remote._engineRefusal({ nodes: Object.values(remote.resolved.nodeCtx) });
-  if (entry.relay.needsModel) assert.equal(refusal, `${entry.label} in a sandbox needs a model; pick one for this step.`);
+  if (entry.relay?.needsModel) assert.equal(refusal, `${entry.label} in a sandbox needs a model; pick one for this step.`);
   else assert.equal(refusal, null);
   setCatalogForTest({ ...ENGINES, [engine]: { ...ENGINES[engine], requiresExplicitModel: true } });
   try {
@@ -720,7 +743,9 @@ conformanceRow('C-MODEL', 'the step\'s model is checked and recorded', async (en
   const id = `c${engine.slice(0, 3)}0001`.padEnd(8, '0');
   o.state.id = id;
   o._execStep({ executionId: 'x:a:1', nodeId: 'a', ordinal: 1, uiPhase: 'implement', node: { kind: 'agent', key: 'implementer' }, claudeOpts: { model: null } }, 'start');
-  const provider = entry.relay.upstream;
+  // The relay's upstream, else whom the resolver's sign-in names (credentials.mjs: a mode's provider, the entry's).
+  const provider = entry.relay?.upstream ?? resolveModelRoute({ engine, serverEnv: process.env, broker: { on: false }, checkModel: false }).provider;
+  assert.ok(provider, `${engine}: a provider is known`);
   assert.equal(o.state.steps[0].provider, provider);
   await writeState(`/d-${id}`, { ...o.getState(), id, projectKey: 'proj-conf' });
   assert.equal(prepare('SELECT provider FROM pipeline_steps WHERE pipeline_id = ? AND key = ?').get(id, 'x:a:1').provider, provider);

@@ -141,3 +141,32 @@ test('copilot\'s own provider is refused by exact name in a sandbox, never by a 
   }
   assert.doesNotThrow(() => buildRelayRoute(d, { serverEnv: { COPILOT_GITHUB_TOKEN: pat }, spawnEnv: { COPILOT_PROVIDER_NOTE: 'x' }, label: 'x' }), 'a name the catalog does not list');
 });
+
+// ── a sign-in the CLI's own settings choose (Gemini CLI, Qwen Code: security.auth.selectedType) ─────────────────
+
+test('a configured mode wins over the catalog order: its credential only, set or not', () => {
+  const serverEnv = { PATH: 'p', GEMINI_API_KEY: 'g', GOOGLE_API_KEY: 'v', GOOGLE_GENAI_USE_VERTEXAI: 'true' };
+  assert.equal(resolveModelRoute({ engine: 'gemini', serverEnv, broker: OFF }).signInMode, 'api-key', 'no setting: the catalog order');
+  const vertex = resolveModelRoute({ engine: 'gemini', serverEnv, broker: OFF, configured: 'vertex-key' });
+  assert.deepEqual([vertex.kind, vertex.signInMode, vertex.credential], ['direct', 'vertex-key', 'GOOGLE_API_KEY']);
+  const login = resolveModelRoute({ engine: 'gemini', serverEnv, broker: OFF, configured: 'google-login' });
+  assert.deepEqual([login.kind, login.signInMode, login.credential], ['own', 'google-login', null], 'its own login: no key of worca\'s');
+  const { env } = childEnv({ engine: 'gemini', signInMode: login.signInMode, base: serverEnv });
+  assert.deepEqual(credentialNamesOf('gemini').filter((k) => k in env), []);
+  // A chosen mode whose credential is not in worca's env (it is in the CLI's own files): own, keeping none.
+  const unset = resolveModelRoute({ engine: 'qwen', serverEnv: { OPENAI_API_KEY: 'o' }, broker: OFF, configured: 'anthropic' });
+  assert.deepEqual([unset.kind, unset.signInMode, unset.credential], ['own', 'anthropic', null]);
+  // A setting the catalog does not know keeps no credential.
+  const none = resolveModelRoute({ engine: 'qwen', serverEnv: { OPENAI_API_KEY: 'o' }, broker: OFF, configured: 'none' });
+  assert.deepEqual([none.kind, none.signInMode, none.credential], ['own', 'none', null]);
+  // The broker refuses an own sign-in, configured or not.
+  assert.match(resolveModelRoute({ engine: 'gemini', serverEnv, broker: { on: true, slots: [] }, configured: 'api-key' }).refusal, /signs in with its own credentials/);
+});
+
+test('who serves the calls of an engine without a relay: its mode\'s provider, else the entry\'s', () => {
+  assert.equal(resolveModelRoute({ engine: 'gemini', serverEnv: { GEMINI_API_KEY: 'g' }, broker: OFF }).provider, 'google');
+  assert.equal(resolveModelRoute({ engine: 'gemini', serverEnv: {}, broker: OFF }).provider, 'google');
+  assert.equal(resolveModelRoute({ engine: 'qwen', serverEnv: {}, broker: OFF, configured: 'anthropic' }).provider, 'anthropic');
+  assert.equal(resolveModelRoute({ engine: 'qwen', serverEnv: {}, broker: OFF, configured: 'qwen-oauth' }).provider, 'qwen');
+  assert.equal(resolveModelRoute({ engine: 'codex', serverEnv: { OPENAI_API_KEY: 'k' }, broker: OFF }).provider, 'openai', 'a relay engine: its upstream');
+});

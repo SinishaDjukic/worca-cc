@@ -11,7 +11,7 @@ import { isCopilotHost } from '../../broker/copilot.mjs';
 import { pinnedEngineClis } from './backends/e2b-template.mjs';
 import { cursorAccessToken, invalidateCursorToken, CURSOR_PATHS, CURSOR_FORWARD } from '../../broker/cursor.mjs';
 import { COPILOT_CLI_API_VERSION } from '../../broker/copilot-token.mjs';
-export { resolveModelRoute, isResolved } from './credentials.mjs';
+export { resolveModelRoute, isResolved, localServerEnv } from './credentials.mjs';
 
 const ANTHROPIC = 'https://api.anthropic.com';
 const SIGNING_FLAGS = ['BEDROCK', 'VERTEX', 'FOUNDRY'];

@@ -19,7 +19,7 @@ import { removeSessionEntries } from '../src/core/engines/sessions.mjs';
 useTempHome(after);
 const POSIX = process.platform === 'win32' ? { skip: 'POSIX file modes' } : {};
 const UA = '11111111-1111-4111-8111-111111111111'; const UB = '22222222-2222-4222-8222-222222222222';
-const VARS = ['HOME', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'COPILOT_HOME', 'CURSOR_CONFIG_DIR'];
+const VARS = ['HOME', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'COPILOT_HOME', 'CURSOR_CONFIG_DIR', 'GEMINI_CLI_HOME', 'QWEN_HOME'];
 let saved; let home;
 beforeEach(() => {
   saved = Object.fromEntries(VARS.map((k) => [k, process.env[k]]));
@@ -49,10 +49,16 @@ function seedStores() {
       signIn: [put(join(home, '.copilot', 'config.json'), 'secret-copilot')] },
     cursor: { a: [put(join(home, '.cursor', 'chats', 'ws1', 'chat-a', 'store.db'))], b: [put(join(home, '.cursor', 'chats', 'ws1', 'chat-b', 'store.db'))],
       signIn: [put(join(home, '.cursor', 'cli-config.json'), 'secret-cursor')] },
+    // Gemini names a chat by the id's first 8 characters and keeps the whole id inside it.
+    gemini: { a: [put(join(home, '.gemini', 'tmp', 'proj', 'chats', `session-2026-10-22T10-00-${UA.slice(0, 8)}.json`), JSON.stringify({ sessionId: UA }))],
+      b: [put(join(home, '.gemini', 'tmp', 'proj', 'chats', `session-2026-10-22T11-00-${UB.slice(0, 8)}.json`), JSON.stringify({ sessionId: UB }))],
+      signIn: [put(join(home, '.gemini', 'oauth_creds.json'), 'secret-gemini'), put(join(home, '.gemini', 'google_accounts.json'), 'secret-gemini-accounts')] },
+    qwen: { a: [put(join(home, '.qwen', 'projects', 'proj', 'chats', `${UA}.jsonl`)), put(join(home, '.qwen', 'tmp', 'proj', UA, 'checkpoint.json'))],
+      b: [put(join(home, '.qwen', 'projects', 'proj', 'chats', `${UB}.jsonl`))], signIn: [put(join(home, '.qwen', 'oauth_creds.json'), 'secret-qwen')] },
   };
   return f;
 }
-const RUN_A = [UA, `codex:${UA}`, `copilot:${UA}`, 'cursor:chat-a'];
+const RUN_A = [UA, `codex:${UA}`, `copilot:${UA}`, 'cursor:chat-a', `gemini:${UA}`, `qwen:${UA}`];
 
 test('every engine that keeps sessions can remove them', () => {
   for (const e of ENGINE_NAMES) if (ENGINES[e].sessions !== 'none') assert.ok(ENGINES[e].sessions, e);

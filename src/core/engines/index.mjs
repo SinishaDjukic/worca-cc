@@ -93,9 +93,13 @@ const cursorAdapter = Object.freeze({ name: 'cursor', capabilities: cursorCapabi
   denySubagentTool: () => null, removeSessions: removeCursorSessions, chat: cursorChat });
 // Gemini CLI and Qwen Code (engines/gemini.mjs, engines/qwen.mjs on the shared engines/gemini-family.mjs runner):
 // emit the normalized vocabulary themselves; command rules (and Gemini's path rules) are partial.
+// Its rule plan is the policy rules it is told (the home fixed, so a fixture's `~/` paths read the same everywhere); it
+// has no sub-agent tool to switch off.
 const geminiAdapter = Object.freeze({ name: 'gemini', capabilities: gemini.geminiCapabilities, run: gemini.runGeminiProcess,
   classifyError: gemini.classifyGeminiError, preflight: gemini.geminiPreflight, unenforcedRules: gemini.unenforcedRules,
-  partialRules: gemini.partialRules, ruleReach: gemini.GEMINI_RULE_TERMS.reach, ruleKind: gemini.GEMINI_RULE_TERMS.kind, chat: gemini.geminiChat });
+  partialRules: gemini.partialRules, ruleReach: gemini.GEMINI_RULE_TERMS.reach, ruleKind: gemini.GEMINI_RULE_TERMS.kind,
+  rulePlan: (rules) => gemini.geminiRulePlan(rules, { home: '/home/u' }), denials: gemini.geminiDenials, denySubagentTool: () => null,
+  removeSessions: gemini.removeGeminiSessions, chat: gemini.geminiChat });
 // Goose (engines/goose.mjs) emits the normalized vocabulary itself. It holds no permission rule (capability false).
 const gooseAdapter = Object.freeze({ name: 'goose', capabilities: goose.gooseCapabilities, run: goose.runGooseProcess,
   classifyError: goose.classifyGooseError, preflight: goose.goosePreflight, unattachableMcp: goose.gooseMcpProblems, chat: goose.gooseChat });
@@ -103,9 +107,11 @@ const gooseAdapter = Object.freeze({ name: 'goose', capabilities: goose.gooseCap
 const opencodeAdapter = Object.freeze({ name: 'opencode', capabilities: opencode.opencodeCapabilities, run: opencode.runOpencodeProcess,
   classifyError: opencode.classifyOpencodeError, preflight: opencode.opencodePreflight, unenforcedRules: opencode.unenforcedRules,
   partialRules: opencode.partialRules, ruleReach: opencode.OPENCODE_RULE_TERMS.reach, ruleKind: opencode.OPENCODE_RULE_TERMS.kind, chat: opencode.opencodeChat });
+// Qwen Code (engines/qwen.mjs): its sub-agent tools are excluded by flag (--exclude-tools).
 const qwenAdapter = Object.freeze({ name: 'qwen', capabilities: qwen.qwenCapabilities, run: qwen.runQwenProcess,
   classifyError: qwen.classifyQwenError, preflight: qwen.qwenPreflight, unenforcedRules: qwen.unenforcedRules,
-  partialRules: qwen.partialRules, ruleReach: qwen.QWEN_RULE_TERMS.reach, ruleKind: qwen.QWEN_RULE_TERMS.kind, chat: qwen.qwenChat });
+  partialRules: qwen.partialRules, ruleReach: qwen.QWEN_RULE_TERMS.reach, ruleKind: qwen.QWEN_RULE_TERMS.kind,
+  rulePlan: qwen.qwenRulePlan, denials: qwen.qwenDenials, denySubagentTool: subagentsOff, removeSessions: qwen.removeQwenSessions, chat: qwen.qwenChat });
 // The mock stands in for Claude in tests and smokes, so it declares Claude's map.
 const mockAdapter = Object.freeze({ name: 'mock', capabilities: claudeCapabilities, run: normalized(runMock), classifyError });
 

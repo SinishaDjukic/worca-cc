@@ -1,0 +1,17 @@
+{
+  "rules": {
+    "deny": [
+      "Grep"
+    ]
+  },
+  "expected": {
+    "rules": [
+      {
+        "toolName": "grep_search",
+        "rule": "Grep"
+      }
+    ],
+    "partial": [],
+    "unenforced": []
+  }
+}

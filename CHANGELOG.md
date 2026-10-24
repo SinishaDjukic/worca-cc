@@ -6,6 +6,13 @@
 
 - `worca --guardrails <id>` picks a run's guardrail set. A run the engine gate refuses for its set's rules names that flag (`--guardrails permissive`) and `--allow-unguarded-engine` on the CLI, and the Permissive set and Allow unguarded in the UI. A resume keeps the set its run pinned, so its refusal points at a new run on the Permissive set instead.
 
+### Security: the merged engines move onto the engine catalog (core protection layer)
+
+- Gemini CLI and Qwen Code: each gets one sign-in's names and never worca's other keys: the sign-in its own settings choose, else the first one worca's environment names. Of the run's environment, only the values its MCP servers reference reach it. Qwen Code's sub-agent tools (`agent`, `send_message`, `cron_create`) are switched off. Archiving a run removes their sessions (`~/.gemini/tmp`, `~/.qwen`), never a sign-in file. When Gemini CLI refuses a tool call on its own (with no terminal it refuses a shell command that reuses a flag or path from earlier tool output, and edits to build files such as `package.json`), the run log says it was not a worca rule.
+- **Upgrade notes.**
+  - Gemini CLI and Qwen Code do not run in an E2B sandbox yet: such a run is refused at start.
+  - Gemini CLI holds `Edit`, `Bash`, `Grep` and `Glob` rules only in part (no edit refusal was captured), and `WebFetch`, `WebSearch` and MCP rules are unverified; Qwen Code holds `Bash` only in part, and `Write`, `Grep`, `Glob`, `WebFetch` and `WebSearch` are unverified. Each of those needs `--allow-unguarded-engine`.
+
 ### Security: one owner per engine boundary (core protection layer, part 1)
 
 - Every engine's agents get an allowlist environment, Claude's included and with env scrub off: the base names, the engine's own exact names from its catalog entry (`src/shared/engine-switch.mjs`), its sign-in names and the guardrail set's allowlist. No prefix family (`CLAUDE_*`, `COPILOT_*`) passes any more, locally or in a sandbox, so `COPILOT_ALLOW_ALL` and another engine's keys never reach an agent. Each run names what it withheld in one log line (`env: N variables not passed to <engine> (allowlist): …`), names only.

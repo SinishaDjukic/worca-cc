@@ -1,0 +1,14 @@
+{
+  "rules": {
+    "deny": [
+      "Read(./secret.txt)"
+    ]
+  },
+  "expected": {
+    "deny": [
+      "Read(./secret.txt)"
+    ],
+    "partial": [],
+    "unenforced": []
+  }
+}

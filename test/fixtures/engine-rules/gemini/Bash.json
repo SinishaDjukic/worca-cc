@@ -1,0 +1,20 @@
+{
+  "rules": {
+    "deny": [
+      "Bash(git log:*)"
+    ]
+  },
+  "expected": {
+    "rules": [
+      {
+        "toolName": "run_shell_command",
+        "commandPrefix": "git log",
+        "rule": "Bash(git log:*)"
+      }
+    ],
+    "partial": [
+      "Bash(git log:*)"
+    ],
+    "unenforced": []
+  }
+}

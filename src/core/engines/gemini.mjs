@@ -18,9 +18,10 @@
 //   above yolo's allow-all; a TOML file Gemini cannot parse is reported on stderr ("Policy file error") and IGNORED, so
 //   the adapter stops the run on that line. Admin policies passed by flag are skipped when the system policy folder
 //   already holds a .toml file (GEMINI_SYSTEM_POLICY_DIRS), so the adapter refuses then.
-// - Deny rules hold for whole tools (run_shell_command, web_fetch, google_web_search, an MCP server or tool). A
-//   `commandPrefix` rule matches the command's start, so `env git log` and `VAR=x git log` get past a `git log` rule;
-//   a path rule (argsPattern on the file tools' arguments) does not stop the shell.
+// - Deny rules hold for whole tools (run_shell_command, web_fetch, google_web_search, an MCP server or tool) and for
+//   path rules on the file tools (argsPattern; the shell is every shell engine's baseline). A `commandPrefix` rule
+//   matches the command's start, so `env git log` and `VAR=x git log` get past a `git log` rule; it is checked against
+//   each command of a compound one too (`cd . && git log` and `bash -c "git log"` are refused: policy-bypass.jsonl).
 // - MCP servers come from settings files; `GEMINI_CLI_SYSTEM_SETTINGS_PATH` is refused unless root owns its folder, so
 //   worca writes the checkout's `.gemini/settings.json`. `${VAR}` in it is filled from gemini's env.
 //   `--allowed-mcp-server-names` keeps every other server (the user's ~/.gemini ones, the checkout's) off.
@@ -51,10 +52,10 @@ import { homedir } from 'node:os';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { writeProjectFiles } from './project-files.mjs';
 import { argValue } from '../spawn.mjs';
-import { ENGINES } from '../../shared/engine-switch.mjs';
+import { ENGINES, ruleKind } from '../../shared/engine-switch.mjs';
 import {
   claudeToolName, commandRuleBody, mcpRuleParts, familyMcpServers, classifyFamilyError, familyPreflight, runFamilyProcess,
-  homeOf, readDotenv, settingsAuthType, foldSystemPrompt, NO_MCP_SERVER, absolutePaths, familyAskSupport, mergeSettings,
+  homeOf, readDotenv, settingsAuthType, foldSystemPrompt, NO_MCP_SERVER, absolutePaths, familyAskSupport, mergeSettings, removeFamilySessions, familyChatSignInMode,
 } from './gemini-family.mjs';
 import { makeChatDescriptor } from './chat-descriptor.mjs';
 import { chatSelfTest, SELF_TEST_MODEL } from './chat-selftest.mjs';
@@ -106,8 +107,8 @@ export function geminiAskPolicyToml(mcpNames) {
 
 /** What the gate and the run log say about the rules Gemini CLI holds only in part. */
 export const GEMINI_RULE_TERMS = Object.freeze({
-  kind: 'command and path rules',
-  reach: 'a command rule matches the start of the command, so a wrapper (env, a VAR= prefix) or another program gets past it, and a Read, Edit or Write rule stops Gemini CLI\'s file tools, not its shell',
+  kind: 'command rules',
+  reach: 'a command rule matches the start of the command, so a wrapper (env, a VAR= prefix) or another program gets past it',
 });
 
 export const GEMINI_RESUME_NOT_FOUND_RE = /Invalid session identifier|Error resuming session/i;
@@ -150,8 +151,9 @@ const WRITE_TOOLS = Object.freeze(['write_file', 'replace']);
 
 /**
  * What Gemini CLI can be told of a run's DENY rules (allow / ask are never lifted), as policy rules.
- * held: bare Bash (the shell), bare Read/Edit/Write/Glob/Grep, WebFetch, WebSearch, MCP server and tool rules.
- * partial (GEMINI_RULE_TERMS): command rules and path rules. unenforced: everything else.
+ * told whole: bare Bash (the shell), bare Read/Edit/Write/Glob/Grep, WebFetch, WebSearch, MCP server and tool rules, and
+ * path rules on the file tools (their shell reaching the path is every shell engine's baseline, decision 10).
+ * partial (GEMINI_RULE_TERMS): command rules. unenforced: everything else.
  * @returns {{rules:object[], partial:string[], unenforced:string[]}}
  */
 export function geminiRulePlan(permissionRules, { home } = {}) {
@@ -166,7 +168,7 @@ export function geminiRulePlan(permissionRules, { home } = {}) {
     const bare = { Read: READ_TOOLS, Edit: WRITE_TOOLS, Write: WRITE_TOOLS, MultiEdit: WRITE_TOOLS, Glob: 'glob', Grep: 'grep_search', WebFetch: 'web_fetch', WebSearch: 'google_web_search' }[rule];
     if (bare) { add({ toolName: bare }, rule); continue; }
     const path = /^(Read|Edit|Write|MultiEdit)\((.+)\)$/.exec(rule);
-    if (path && path[2].trim()) { add({ toolName: path[1] === 'Read' ? READ_TOOLS : WRITE_TOOLS, argsPattern: geminiPathPattern(path[2].trim(), home) }, rule, true); continue; }
+    if (path && path[2].trim()) { add({ toolName: path[1] === 'Read' ? READ_TOOLS : WRITE_TOOLS, argsPattern: geminiPathPattern(path[2].trim(), home) }, rule); continue; }
     const mcp = mcpRuleParts(rule);
     if (mcp) { add(mcp.tool ? { toolName: mcp.tool, mcpName: mcp.server } : { mcpName: mcp.server }, rule); continue; }
     out.unenforced.push(rule);
@@ -216,14 +218,35 @@ function usageOf(stats) {
   return Object.fromEntries(Object.entries(u).filter(([, v]) => v !== undefined));
 }
 
+// worca's policy rules name themselves in their denyMessage (geminiPolicyToml); Gemini CLI's own checks refuse too. With
+// no terminal (worca's spawns) Gemini 0.64 turns a call it would ask about into a denial: a shell command reusing a flag
+// or path that earlier tool output showed (its untrusted context: shell, MCP and web output), and an edit to a build
+// file. No setting switches them off; the agent usually retries another way. This is the sporadic `node --test x.mjs`
+// "denied by policy" seen in worca runs with no rule.
+// Gemini 0.63 drops a rule's denyMessage for its file tools (test/fixtures/gemini/policy-denied.jsonl: the read_file and
+// write_file refusals of worca's own Read and Write rules say only "denied by policy"), so a refusal with no rule text on
+// a tool worca has a rule for (`ruleKinds`) is never called Gemini's own; its shell refusals do carry the text.
+const BUILD_FILE_REFUSAL = /Modifying build configuration files/;
+function ownRefusal(tool, message, ruleKinds) {
+  if (/worca guardrail:/.test(message)) return null;
+  const build = BUILD_FILE_REFUSAL.test(message);
+  if (!build && tool !== 'Bash' && ruleKinds.has(ruleKind(tool || ''))) return null;
+  const why = build
+    ? 'it refuses edits to build files (package.json, lockfiles, Makefile, Dockerfile, …)'
+    : 'it refuses a shell command that reuses a flag or path from earlier tool output';
+  return `[worca] gemini: Gemini CLI refused ${tool || 'a tool'} on its own, not by a worca rule: in a run with no terminal ${why}`;
+}
+
 /**
  * stream-json lines in, normalized events out (src/core/engines/events.mjs). push(line|object) returns the events for
  * that line; finish() returns { text, error } for the run. Assistant deltas are joined into one text event per message
  * (a message ends at the next tool call or the result). `error` is set by a failed result, or by the last `error`
- * event when no result arrived.
+ * event when no result arrived. `ruleKinds`: the kinds of the spawn's worca deny rules (engine-switch.mjs ruleKind).
  */
-export function createGeminiNormalizer({ model, mcpNames = [], cwd = null } = {}) {
+export function createGeminiNormalizer({ model, mcpNames = [], cwd = null, ruleKinds = [] } = {}) {
+  const kinds = new Set(ruleKinds);
   const texts = [];
+  const toolNames = new Map();
   let buf = [];
   let failed = null; let lastError = null; let resulted = false;
   const flush = () => {
@@ -251,14 +274,18 @@ export function createGeminiNormalizer({ model, mcpNames = [], cwd = null } = {}
         const id = str(evt.tool_id);
         if (!id) return flush();
         const input = absolutePaths(evt.parameters && typeof evt.parameters === 'object' ? evt.parameters : {}, cwd);
-        return [...flush(), { type: 'tool', parentId: null, calls: [{ name: claudeToolName(evt.tool_name, mcpNames), input, toolUseId: id }] }];
+        const name = claudeToolName(evt.tool_name, mcpNames);
+        toolNames.set(id, name);
+        return [...flush(), { type: 'tool', parentId: null, calls: [{ name, input, toolUseId: id }] }];
       }
       case 'tool_result': {
         const id = str(evt.tool_id);
         if (!id) return flush();
         const isError = evt.status !== 'success';
         const text = str(evt.output) || (isError ? str(evt.error?.message) : '');
-        return [...flush(), { type: 'toolResult', parentId: null, meta: null, results: [{ toolUseId: id, isError, text, content: text }] }];
+        const own = isError && evt.error?.type === 'policy_violation' ? ownRefusal(toolNames.get(id), str(evt.error.message), kinds) : null;
+        return [...flush(), { type: 'toolResult', parentId: null, meta: null, results: [{ toolUseId: id, isError, text, content: text }] },
+          ...(own ? [{ type: 'stderr', stream: 'err', text: own }] : [])];
       }
       case 'error':
         lastError = str(evt.message) || str(evt.error?.message) || 'gemini reported an error';
@@ -294,10 +321,46 @@ export function geminiSignedIn(given = process.env) {
   return !!settingsAuthType(join(base, '.gemini', 'settings.json'));
 }
 
+// Its settings' sign-in choices (security.auth.selectedType) as catalog sign-in modes (ENGINES.gemini.signIn).
+const GEMINI_AUTH_MODES = Object.freeze({ 'gemini-api-key': 'api-key', 'vertex-ai': 'vertex-key', 'oauth-personal': 'google-login',
+  'login-with-google': 'google-login', 'cloud-shell': 'google-login', 'compute-default-credentials': 'google-login' });
+/** The catalog sign-in mode Gemini CLI's own settings choose (its user settings' `security.auth.selectedType`), or null
+ *  when they choose none (the catalog order decides: credentials.mjs resolveModelRoute). A choice worca does not know
+ *  keeps no key of worca's ('none'). */
+export function geminiConfiguredMode(given = process.env) {
+  const base = (typeof given.GEMINI_CLI_HOME === 'string' && given.GEMINI_CLI_HOME.trim()) || homeOf(given);
+  const t = settingsAuthType(join(base, '.gemini', 'settings.json'));
+  return t ? (GEMINI_AUTH_MODES[t] ?? 'none') : null;
+}
+
 /** The run-start check (engines/index.mjs `preflight`). Never rejects: {refusal} | {warning} | {}. */
 export function geminiPreflight({ bin = geminiDefaultBin(), timeoutMs = 10000, env = process.env, envAllowlist = [] } = {}) {
   return familyPreflight({ bin, engine: 'gemini', env, envAllowlist, timeoutMs, label: 'Gemini CLI (npm i -g @google/gemini-cli)', binEnv: 'WORCA_GEMINI_BIN',
-    signedIn: geminiSignedIn, signInHint: GEMINI_SIGNED_OUT_HINT });
+    signedIn: geminiSignedIn, signInHint: GEMINI_SIGNED_OUT_HINT, configuredMode: geminiConfiguredMode });
+}
+
+// ── rule proof and sessions ──────────────────────────────────────────────────
+
+/**
+ * The refusals in a captured Gemini CLI stream (test/fixtures/engine-rules/gemini/): a `tool_result` with error type
+ * `policy_violation`, named by its `tool_use`. Gemini has no sub-agents, so none is inside one.
+ * @returns {{tool: string, subagent: boolean}[]}
+ */
+export function geminiDenials(lines) {
+  const tools = new Map(); const out = [];
+  for (const raw of lines || []) {
+    let e; try { e = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { continue; }
+    if (e?.type === 'tool_use' && e.tool_id) tools.set(e.tool_id, e.tool_name);
+    if (e?.type === 'tool_result' && e.status === 'error' && e.error?.type === 'policy_violation') out.push({ tool: tools.get(e.tool_id) || 'unknown', subagent: false });
+  }
+  return out;
+}
+
+/** Archive (catalog `sessions: 'user-store'`): Gemini CLI keeps a session as a chat file under
+ *  `<GEMINI_CLI_HOME or HOME>/.gemini/tmp/<project>/chats/`. Removes exactly those of `sessionIds` (`gemini:<uuid>`). */
+export function removeGeminiSessions({ sessionIds = [], env = process.env } = {}) {
+  const base = (typeof env.GEMINI_CLI_HOME === 'string' && env.GEMINI_CLI_HOME.trim()) || homeOf(env);
+  return removeFamilySessions({ sessionIds, prefix: GEMINI_SESSION_PREFIX, roots: [join(base, '.gemini', 'tmp')], depth: 2 });
 }
 
 // ── spawn ────────────────────────────────────────────────────────────────────
@@ -337,7 +400,7 @@ function prepareAsk({ cwd, bin, sys, prompt, model, effort, servers, scratchDir,
 }
 
 const GEMINI_SPEC = Object.freeze({
-  name: 'gemini', label: 'Gemini CLI', prefix: GEMINI_SESSION_PREFIX,
+  name: 'gemini', label: 'Gemini CLI', prefix: GEMINI_SESSION_PREFIX, configuredMode: geminiConfiguredMode,
   classify: classifyGeminiError, resumeNotFoundRe: GEMINI_RESUME_NOT_FOUND_RE,
   fatalStderrRe: GEMINI_POLICY_ERROR_RE, fatalMessage: 'Gemini CLI could not load worca\'s policy file, so the guardrail rules would not hold — stopped',
   createNormalizer: createGeminiNormalizer,
@@ -412,5 +475,5 @@ export const geminiChat = makeChatDescriptor({
   selfTest: (o, impl = geminiChatSelfTest) => impl(o),
   preflight: (_ctx, impl = geminiPreflight) => impl(),
   resumeNotFound: (err) => GEMINI_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
-  signInMode: () => null,
+  signInMode: (model) => familyChatSignInMode(GEMINI_SPEC, model),
 });

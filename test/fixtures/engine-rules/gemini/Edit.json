@@ -1,0 +1,21 @@
+{
+  "rules": {
+    "deny": [
+      "Edit(./b.txt)"
+    ]
+  },
+  "expected": {
+    "rules": [
+      {
+        "toolName": [
+          "write_file",
+          "replace"
+        ],
+        "argsPattern": "\"(?:[^\"]*/)?b\\.txt\"",
+        "rule": "Edit(./b.txt)"
+      }
+    ],
+    "partial": [],
+    "unenforced": []
+  }
+}

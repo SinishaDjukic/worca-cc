@@ -7,13 +7,17 @@
 // files and sign-ins differ; those stay in the per-engine files.
 //
 // Verified on gemini 0.63.0 and qwen 0.25.0 (test/fixtures/gemini/README.md, test/fixtures/qwen/README.md).
-import { mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join, relative, resolve, sep, isAbsolute } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { superviseSpawn, childEnv, execCheck, runCapture, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from '../spawn.mjs';
+import { resolveModelRoute, localServerEnv } from '../exec-env/relay-route.mjs';
+import { brokerEnabled } from '../broker-client.mjs';
+import { removeSessionEntries } from './sessions.mjs';
+import { ruleKind } from '../../shared/engine-switch.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 
@@ -21,11 +25,44 @@ const str = (v) => (typeof v === 'string' ? v : '');
 
 // ── sessions ─────────────────────────────────────────────────────────────────
 
-/** The engine's own session in a stored session id (`gemini:<uuid>`), or null when the id is another engine's. */
+// worca names every session with a uuid (`--session-id`, randomUUID): a stored id of any other shape is not one of
+// them, and never reaches argv (`--resume -oX`) or a session path.
+const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The engine's own session in a stored session id (`gemini:<uuid>`), or null when the id is another engine's or not a
+ *  uuid worca named. */
 export function familySessionOf(prefix, sessionId) {
-  return typeof sessionId === 'string' && sessionId.startsWith(prefix) && sessionId.length > prefix.length
-    ? sessionId.slice(prefix.length) : null;
+  if (typeof sessionId !== 'string' || !sessionId.startsWith(prefix)) return null;
+  const id = sessionId.slice(prefix.length);
+  return SESSION_ID_RE.test(id) ? id : null;
 }
+
+/**
+ * Archive (catalog `sessions: 'user-store'`): remove the sessions named by a run's session ids (`<prefix><uuid>`) from
+ * the CLI's own store, `roots` (each walked `depth` folders down, links never followed). An entry is the run's when its
+ * name holds the uuid, or when it is a session file (.json / .jsonl) whose name holds the uuid's first block and whose
+ * text names the whole uuid (Gemini CLI names its chat files by a timestamp and that block). Never a sign-in file: none
+ * holds a session id.
+ * @returns {Promise<{removed: string[], failed: {path: string, error: string}[]}>}
+ */
+export async function removeFamilySessions({ sessionIds = [], prefix, roots = [], depth = 2 }) {
+  const ids = [...new Set(sessionIds.map((s) => familySessionOf(prefix, s)).filter(Boolean))];
+  const out = { removed: [], failed: [] };
+  if (!ids.length) return out;
+  const names = (text) => ids.some((id) => text.includes(id));
+  const match = (name, path) => {
+    if (names(name)) return true;
+    if (!/\.jsonl?$/.test(name) || !ids.some((id) => name.includes(id.slice(0, 8)))) return false;
+    try { return statSync(path).size <= SESSION_FILE_MAX && names(readFileSync(path, 'utf8')); } catch { return false; }
+  };
+  for (const root of roots) {
+    const r = await removeSessionEntries(root, match, { depth });
+    out.removed.push(...r.removed); out.failed.push(...r.failed);
+  }
+  return out;
+}
+// The largest session file read to find its id (a long chat is a few MB).
+const SESSION_FILE_MAX = 64 * 1024 * 1024;
 
 // ── tools ────────────────────────────────────────────────────────────────────
 
@@ -176,8 +213,9 @@ export function settingsAuthType(file) {
  * run's); `signedIn(env)` says whether a sign-in is configured in that env (neither CLI has a status command, so this
  * reads its env and settings files, never its credentials).
  */
-export async function familyPreflight({ bin, engine, env = process.env, envAllowlist = [], timeoutMs = 10000, label, binEnv, signedIn, signInHint, signInMode = null }) {
-  const spec = { engine, signInMode: signInMode ? signInMode(env) : null, allowlist: envAllowlist, base: env };
+export async function familyPreflight({ bin, engine, env = process.env, envAllowlist = [], timeoutMs = 10000, label, binEnv, signedIn, signInHint, configuredMode = null }) {
+  const d = resolveModelRoute({ engine, serverEnv: env, broker: { on: brokerEnabled() }, checkModel: false, configured: configuredMode ? configuredMode(env) : null });
+  const spec = { engine, signInMode: d.signInMode, allowlist: envAllowlist, base: env };
   const { code, error } = await execCheck(bin, ['--version'], { spec, timeoutMs });
   if (error) {
     return /^(ENOENT|EACCES|EINVAL)$/.test(String(error.code))
@@ -250,6 +288,29 @@ export function withEnvRefs(servers, names) {
 
 // ── spawn ────────────────────────────────────────────────────────────────────
 
+/** The env names an MCP server config references (`$VAR`, `${VAR}`, `${VAR:-default}`), sorted. */
+export function envRefNames(servers) {
+  if (!servers) return [];
+  return [...new Set([...JSON.stringify(servers).matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)/g)].map((m) => m[1]))].sort();
+}
+const pickEnv = (env, names) => Object.fromEntries(names.filter((k) => typeof env[k] === 'string').map((k) => [k, env[k]]));
+
+/** The sign-in mode a spawn of `spec`'s engine keeps (credentials.mjs resolveModelRoute over worca's env and the run's):
+ *  the one the CLI's own settings choose (spec.configuredMode), else the catalog order. */
+function familySignInMode(spec, runEnv, model) {
+  const serverEnv = localServerEnv(runEnv);
+  const d = resolveModelRoute({ engine: spec.name, serverEnv, model: model || null, broker: { on: brokerEnabled() }, checkModel: false,
+    configured: spec.configuredMode ? spec.configuredMode(serverEnv) : null });
+  if (d.refusal) throw Object.assign(new Error(`${spec.label}: ${d.refusal}`), { errorClass: 'config' });
+  return d.signInMode;
+}
+
+/** The sign-in mode a chat on `spec`'s engine signs in with for `model` (chat descriptor `signInMode`): the one its spawn
+ *  keeps (familySignInMode over worca's env); '' (no names) when the route is refused, as the spawn itself is. */
+export function familyChatSignInMode(spec, model) {
+  try { return familySignInMode(spec, {}, model); } catch { return ''; }
+}
+
 /** The store project folders (`<worca home>/store/<project>`) that hold any of `dirs`. */
 export function storeProjectDirs(dirs, home = worcaHome()) {
   const store = resolve(home, 'store');
@@ -286,15 +347,18 @@ export const foldSystemPrompt = (sys, prompt) => (sys ? `=== SYSTEM ===\n${sys}\
  * - spec.prepare writes the engine's config (a scratch folder under Worca's home, or the checkout) and returns
  *   {argsFor(session, resume), stdin, env}; spec.fatalStderrRe stops the child on a stderr line that means its rules
  *   did not load.
- * @param {object} spec {name, label, prefix, signInMode? (a function of worca's env: the catalog sign-in mode whose names
- *   the child keeps, null for every mode's), classify,
- *   resumeNotFoundRe, fatalStderrRe?, fatalMessage?, askLockdown?, createNormalizer({model, mcpNames}), prepare(ctx)};
+ * - The child's env is the catalog allowlist (src/core/spawn.mjs childEnv) with the one sign-in the route resolver picks
+ *   (credentials.mjs resolveModelRoute; the one the CLI's own settings choose wins, spec.configuredMode), and of the run
+ *   env only what its MCP servers reference and the git ceiling: never the run's other registry secrets.
+ * @param {object} spec {name, label, prefix, configuredMode? (a function of worca's env: the catalog sign-in mode id the
+ *   CLI's own settings choose, or null), classify,
+ *   resumeNotFoundRe, fatalStderrRe?, fatalMessage?, askLockdown?, createNormalizer({model, mcpNames, cwd, ruleKinds}), prepare(ctx)};
  *   prepare's result may carry cleanup(), run when the spawn is over
  */
 export async function runFamilyProcess(spec, {
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, effort, onEvent = () => {}, signal, bin, resumeSessionId,
   addDirs, writableDirs, sandbox, askLockdown, envAllowlist, asAgent, mcpConfigPath, spawnEnv: runSpawnEnv,
-  redactValues, maxTurns, permissionRules, noGit = false, probe = null, workRoot = null,
+  redactValues, maxTurns, permissionRules, noGit = false, probe = null, workRoot = null, subagentsOff = false,
 } = {}) {
   const { name, label, prefix } = spec;
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
@@ -341,18 +405,18 @@ export async function runFamilyProcess(spec, {
 
   let prepared = null;
   try {
-    prepared = spec.prepare({ cwd, bin, sys, prompt: String(prompt ?? ''), model, effort, servers, permissionRules, includeDirs, scratchDir, noGit, ask, probe, workRoot });
-    // The catalog allowlist (src/core/spawn.mjs childEnv: the engine's exact names and sign-in names); the run env
-    // carries the MCP servers' ${VAR} values.
-    const signInMode = spec.signInMode ? spec.signInMode(process.env) : null;
-    const { env } = childEnv({ engine: name, signInMode, allowlist: envAllowlist, cwd, root: workRoot, runEnv: cleanRunEnv(runSpawnEnv),
-      overlay: prepared.env, hostPid: guardOn ? process.pid : null });
+    prepared = spec.prepare({ cwd, bin, sys, prompt: String(prompt ?? ''), model, effort, servers, permissionRules, includeDirs, scratchDir, noGit, ask, probe, workRoot, subagentsOff });
+    // The catalog allowlist with the one sign-in the resolver picks; of the run env, the values the attached servers
+    // reference (both CLIs fill `$VAR` / `${VAR}` from their own env) and the git ceiling of a run without a project.
+    const runEnv = cleanRunEnv(runSpawnEnv) || {};
+    const { env } = childEnv({ engine: name, signInMode: familySignInMode(spec, runEnv, model), allowlist: envAllowlist, cwd, root: workRoot,
+      runEnv: pickEnv(runEnv, [...envRefNames(servers), 'GIT_CEILING_DIRECTORIES']), overlay: prepared.env, hostPid: guardOn ? process.pid : null });
     const mcpNames = Object.keys(servers || {});
     const cap = Number.isInteger(maxTurns) && maxTurns > 0 ? maxTurns : null;
     const turnCap = () => Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true });
 
     const attempt = async (id, resume) => {
-      const normalizer = spec.createNormalizer({ model, mcpNames, cwd });
+      const normalizer = spec.createNormalizer({ model, mcpNames, cwd, ruleKinds: (permissionRules?.deny || []).map((r) => ruleKind(String(r))) });
       const ctrl = new AbortController();
       let toolCalls = 0; let capped = false; let fatal = null; let sawOutput = false;
       const spawnSignal = signal ? AbortSignal.any([signal, ctrl.signal]) : ctrl.signal;
