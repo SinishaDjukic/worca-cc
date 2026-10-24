@@ -1,7 +1,7 @@
 ---
 name: review-baseline-and-suite-noise
 description: Read before reviewing a worca run's diff or judging a red full suite — the prompt's checkpoint may not be the branch base, and several suite failures are enviro
-updated: 2026-10-24T07:31:20.902Z
+updated: 2026-10-24T12:29:23.383Z
 author: Bulibas
 ---
 
@@ -46,6 +46,10 @@ cycle-1 tree. Do two things:
   provider patch (`refuseWithBroker`), a new `findLocalCredentials` key, and a typed request-body ID that goes into a
   URL next to a stored token. The broker-refusal precedent to copy is `test/bridge-broker.test.mjs` "provider keys,
   tests and the Copilot sign-in move to the key page"; `patchSpeech`'s refusal is untested there too.
+  Also revert the CALL-SITE option, not only the helper's guard. On R14 (2026-10-24), every helper guard went red,
+  including cursor's `writeCursorProjectFiles(..., { root })`. But dropping `root: workRoot` where `runCursorProcess`
+  passes it stayed green, because the new test calls the helper directly. An implementer's "N/N guards red" claim
+  counts helper guards only.
 
 **Full-suite failures that are not the change's fault** (seen 2026-10-01, run under the worca host):
 - `test/host-guard-wiring.test.mjs` "WORCA_HOST_GUARD=0 spawns the legacy argv" fails because the shell
