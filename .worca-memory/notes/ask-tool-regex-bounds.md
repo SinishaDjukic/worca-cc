@@ -2,7 +2,7 @@
 name: ask-tool-regex-bounds
 description: Read when adding or reviewing code that turns model or user input into a regex or glob (Ask tools, deny rules, secret-path patterns, any setting that holds patt
 paths: src/core/ask/file-deps.mjs, src/core/ask/deny-rules.mjs, src/core/ask/tools.mjs, src/core/secret-paths.mjs, src/core/settings-cascade.mjs
-updated: 2026-10-24T10:04:35.069Z
+updated: 2026-10-24T10:29:22.068Z
 author: Bulibas
 ---
 
@@ -27,3 +27,9 @@ out of ask/tools.mjs) gives each `*` a `[^/]*`. The project setting `secretPaths
 `overlayFiles` matches every tracked and untracked file synchronously at sandbox start, so the run hangs. When a
 setting starts holding patterns for an existing matcher, the matcher's input is no longer trusted: bound it, or move to a
 linear wildcard match, and add a timing test.
+
+Fixed in the core-3 fix cycle: `secret-paths.mjs` now has `globSteps` + `globMatch`, a set-of-states walk (time is
+name length x pattern steps). Reuse it for any other glob that takes user or model input, e.g. `deny-rules.mjs`
+`globToRegExp`. It is about 5x slower than the regex on plain patterns (100,000 paths x 6 defaults: 229 ms vs 46 ms),
+which is fine next to the git calls around it. Pin it with a timing test that would hang on the old matcher:
+`'*a'.repeat(8) + '*b'` against 200 `a`s under 50 ms (`test/secret-paths.test.mjs`).
