@@ -189,6 +189,9 @@ export async function runClaude(o = {}) {
     runId,
     threadId,
     bin = DEFAULT_BIN,
+    // S3: the node-runner path (phases.mjs#runOpts) sets this so a zero-exit is_error result
+    // rejects through _recover instead of finishing 'done'. Every other caller leaves it false.
+    rejectOnErrorResult = false,
   } = o;
 
   if (signal?.aborted) {
@@ -267,5 +270,6 @@ export async function runClaude(o = {}) {
     spawnKind,
     runId,
     threadId,
+    rejectOnErrorResult,
   });
 }

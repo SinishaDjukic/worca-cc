@@ -396,3 +396,115 @@ test('a bridged spawn with only the notice reports the bridge failure for its mo
     return true;
   });
 });
+
+// ── S3: a ZERO-exit is_error result rerouted through _recover (gated) ────────
+// The CLI reports some failures (max-turns, error_during_execution, a retry-exhausted
+// "API Error:" block) as a terminal result with is_error:true but EXIT 0. That used to
+// resolve empty and let the graph finish 'done'. With rejectOnErrorResult set (the
+// node-runner path), it must now reject with a classified error so _runNodeAttempts/_recover
+// can decide. Every existing is_error case above uses code:1, so these are red on HEAD.
+
+test('S3: zero exit + is_error result rejects (gated) and classifies the stream cause', POSIX_SHIM, async () => {
+  const dir = await makeTmpDir();
+  const bin = await fakeBin(dir, {
+    code: 0,
+    stdout:
+      '{"type":"system","subtype":"init"}\n' +
+      '{"type":"result","is_error":true,"result":"API Error: Request rejected (429) · overloaded"}',
+  });
+  await assert.rejects(
+    () => runClaude({ bin, prompt: 'hi', cwd: dir, rejectOnErrorResult: true }),
+    (err) => {
+      assert.match(err.message, /reported an error result/);
+      assert.match(err.message, /429/, 'the real cause rides the message');
+      assert.equal(err.errorClass, 'rate_limit', 'classified from the result detail');
+      assert.equal(classifyError(err), 'rate_limit', 'the stamp is authoritative for the gate');
+      assert.equal(err.stream, undefined, 'a stdout-borne failure is not an stderr line');
+      return true;
+    },
+  );
+});
+
+test('S3: zero exit + is_error with an auth detail classifies auth (pauses, never blind-retries)', POSIX_SHIM, async () => {
+  const dir = await makeTmpDir();
+  const bin = await fakeBin(dir, {
+    code: 0,
+    stdout: '{"type":"result","is_error":true,"result":"Not logged in · Please run /login"}',
+  });
+  await assert.rejects(() => runClaude({ bin, prompt: 'hi', cwd: dir, rejectOnErrorResult: true }), (err) => {
+    assert.equal(err.errorClass, 'auth');
+    assert.equal(classifyError(err), 'auth');
+    return true;
+  });
+});
+
+test('S3: a long is_error detail is tail-capped but keeps its class', POSIX_SHIM, async () => {
+  const dir = await makeTmpDir();
+  const detail = 'API Error: Request rejected (429) overloaded. ' + 'chatter '.repeat(400); // 429 marker at HEAD, text > cap
+  const bin = await fakeBin(dir, {
+    code: 0,
+    stdout: JSON.stringify({ type: 'result', is_error: true, result: detail }),
+  });
+  await assert.rejects(() => runClaude({ bin, prompt: 'hi', cwd: dir, rejectOnErrorResult: true }), (err) => {
+    assert.ok(err.message.length < 2200, `message stays bounded (got ${err.message.length})`);
+    assert.equal(err.errorClass, 'rate_limit', 'classified against the full detail, not the capped message');
+    return true;
+  });
+});
+
+// Empty is_error detail → the explicit, non-stuttering fallback reason (ux-1-1).
+test('S3: zero exit + is_error with no detail rejects with the fallback reason', POSIX_SHIM, async () => {
+  const dir = await makeTmpDir();
+  const bin = await fakeBin(dir, { code: 0, stdout: '{"type":"result","is_error":true}' });
+  await assert.rejects(() => runClaude({ bin, prompt: 'hi', cwd: dir, rejectOnErrorResult: true }), (err) => {
+    assert.match(err.message, /reported an error result: no error text was provided/);
+    return true;
+  });
+});
+
+// Redaction: the detail is redacted BEFORE the tail cut (same order spawn.mjs uses).
+test('S3: a secret in the is_error detail is redacted from the rejected message', POSIX_SHIM, async () => {
+  const dir = await makeTmpDir();
+  const bin = await fakeBin(dir, {
+    code: 0,
+    stdout: '{"type":"result","is_error":true,"result":"API Error: token sk-SECRET-123 rejected (429)"}',
+  });
+  await assert.rejects(
+    () => runClaude({ bin, prompt: 'hi', cwd: dir, rejectOnErrorResult: true, redactValues: ['sk-SECRET-123'] }),
+    (err) => {
+      assert.doesNotMatch(err.message, /sk-SECRET-123/);
+      assert.equal(err.errorClass, 'rate_limit', 'classification survives redaction (429 is not a secret)');
+      return true;
+    },
+  );
+});
+
+// GATE: without rejectOnErrorResult, a zero-exit is_error result STILL RESOLVES (every non-node caller unchanged).
+test('S3: zero exit + is_error WITHOUT the flag still resolves (non-node callers unchanged)', POSIX_SHIM, async () => {
+  const dir = await makeTmpDir();
+  const bin = await fakeBin(dir, { code: 0, stdout: '{"type":"result","is_error":true,"result":"API Error: 429"}' });
+  const out = await runClaude({ bin, prompt: 'hi', cwd: dir }); // no rejectOnErrorResult
+  assert.equal(out.exitCode, 0, 'unflagged caller resolves exactly as today');
+});
+
+// Regression: a CLEAN zero-exit result is NOT a swallow — it resolves even with the flag set.
+test('S3: zero exit + clean result still resolves (no swallow to reroute)', POSIX_SHIM, async () => {
+  const dir = await makeTmpDir();
+  const bin = await fakeBin(dir, { code: 0, stdout: '{"type":"result","result":"done"}' });
+  const out = await runClaude({ bin, prompt: 'hi', cwd: dir, rejectOnErrorResult: true });
+  assert.equal(out.exitCode, 0, 'the run still succeeds');
+  assert.match(out.text, /done/);
+});
+
+// Regression: an is_error result followed by a CLEAN later result resolves (last result wins; stale flag cleared).
+test('S3: a later clean result clears a stale is_error flag and resolves', POSIX_SHIM, async () => {
+  const dir = await makeTmpDir();
+  const bin = await fakeBin(dir, {
+    code: 0,
+    stdout:
+      '{"type":"result","is_error":true,"result":"transient"}\n' +
+      '{"type":"result","result":"recovered"}',
+  });
+  const out = await runClaude({ bin, prompt: 'hi', cwd: dir, rejectOnErrorResult: true });
+  assert.equal(out.exitCode, 0);
+});

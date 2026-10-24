@@ -448,7 +448,7 @@ export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_IN
   return { ...plan, dir };
 }
 
-export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, argvInlineLimit, asAgent }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
+export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, argvInlineLimit, asAgent, rejectOnErrorResult = false }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
   // MCP registry §5.5.3: with registry secrets in this spawn's env, every emit, the result text and the error
   // message leave redacted — wrapped once here, so the broker path (which calls runClaudeProcess) is covered too.
   const redactor = Array.isArray(redactValues) && redactValues.length ? createRedactor(redactValues) : null;
@@ -612,6 +612,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     // as model-test.mjs does. The last fallback before the CLI's bare notice, so
     // a CLI that exits without an API Error line still names the real cause.
     let bridgeFailureText = '';
+    let resultIsError = false;   // S3: the terminal result's is_error verdict (last result wins)
     const bridgeKey = bridgeSpawnKey(modelEnv);
     const onBridgeFailure = (e) => {
       if (e && e.message && String(e.catalogId || '').toLowerCase() === bridgeKey.catalogId && (e.tag || '') === bridgeKey.tag) {
@@ -628,6 +629,16 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
         cleanupStaged();
       },
       stdoutErrorDetail: () => errorDetail || apiErrorText || bridgeFailureText,
+      // S3: route a swallowed step failure (zero exit + is_error result) through the normal
+      // failure/recovery path. ONLY the node-runner path opts in (rejectOnErrorResult); every other
+      // runClaude caller passes null here and resolves on is_error exactly as today. Same precedence
+      // as stdoutErrorDetail, with an explicit, non-stuttering fallback so the reject fires even on
+      // an empty detail.
+      errorResultDetail: rejectOnErrorResult
+        ? () => (resultIsError
+            ? (errorDetail || apiErrorText || bridgeFailureText || 'no error text was provided')
+            : null)
+        : null,
       classify: classifyError,
       isBenignStderr: isBenignStderrLine,
       redactText: redactor ? redactor.text : null,
@@ -653,6 +664,8 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
           if (API_ERROR_TEXT_RE.test(text.trim())) apiErrorText = text.trim();
         }
         if (evt?.type === 'result' && typeof evt.result === 'string') resultText += evt.result;
+        // S3: remember the terminal result's verdict; a later clean result clears a stale flag.
+        if (evt?.type === 'result') resultIsError = evt.is_error === true;
         // Remember the most specific error text we see, for the non-zero-exit path.
         if (evt?.type === 'result' && evt.is_error) {
           errorDetail =
