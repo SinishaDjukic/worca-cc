@@ -108,7 +108,7 @@ export const FLAGS = Object.freeze([
   entry({
     key: 'gitAutomations',
     title: 'Git event automations',
-    description: 'Start a workflow when an issue or pull request is opened in a project: rules, the Auto-handle switches (propose a fix, full fix, automatic review) and the GitHub webhook. Off: nothing polls GitHub and the routes answer 404.',
+    description: 'Start a workflow when an issue or pull request is opened in a project or a workspace: rules, the Auto-handle switches (propose a fix, full fix, automatic review) and the GitHub webhook. Off: nothing polls GitHub and the routes answer 404.',
     stage: 'experimental',
     default: false,
     owner: 'denislavprinov',

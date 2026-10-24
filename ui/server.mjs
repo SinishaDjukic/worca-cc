@@ -332,7 +332,7 @@ import { mapWithCap, fanoutCap } from '../src/core/fanout.mjs';
 import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, listRemoteBranches, prBaseBranch, sameRepo, readPrBody, editPrBody, branchPushedTo, branchTips, tipsRelation,
   prProviderFor, prHostsAvailable, anyPrHost, issueClosingLine, parseGithubIssueUrl,
   prWatchSnapshot, prChecks, prWatchJobLog, prWatchRerun, prWatchReply, prWatchComment, commitSubjects, checkConflictMerge,
-  markPrReady, closePr, uncommittedPatch, ghItemSummaries, ghApi } from '../src/core/git-info.mjs';
+  markPrReady, closePr, uncommittedPatch, ghItemSummaries, ghApi, branchExists, commitsAhead } from '../src/core/git-info.mjs';
 import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
 import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID, stoppedWatchFact } from '../src/core/pr-watch.mjs';
 import {
@@ -340,6 +340,7 @@ import {
   updateRule as updateAutomationRule, deleteRule as deleteAutomationRule, validateRule as validateAutomationRule, listEvents as listAutomationEvents,
   autoHandleState, setAutoHandle, AUTO_HANDLE, verifyGithubSignature, recordDelivery, normalizeFilter as normalizeAutomationFilter,
   normalizeLimits as normalizeAutomationLimits, forgeOfRepo, DEFAULT_LIMITS as AUTOMATION_DEFAULT_LIMITS, TRIAGE_SYSTEM, triagePrompt, parseTriage, mockTriage,
+  DEFAULT_WORKSPACE_LIMITS as AUTOMATION_WORKSPACE_LIMITS, workspaceOwnerKey, memberForEvent, limitsError as automationLimitsError,
 } from '../src/core/automations.mjs';
 import { ensureAutomationTemplate, listAutomationTemplates, TEMPLATE_FOR_ACTION } from '../src/core/automation-templates.mjs';
 import { createAzureAutomationHost, azureWebhookItems } from '../src/core/automation-azure.mjs';
@@ -1590,8 +1591,7 @@ app.post('/api/ingress/azure', express.raw({ type: '*/*', limit: '1mb' }), (req,
   const delivery = typeof payload?.id === 'string' ? `ado:${payload.id.slice(0, 90)}` : '';
   if (delivery && !recordDelivery(delivery)) return res.status(200).json({ ok: true, duplicate: true });
   res.status(202).json({ ok: true });
-  const repos = [...new Set(listAutomationRules({ enabledOnly: true }).map((r) => r.repo).filter((r) => forgeOfRepo(r) === 'azure'))];
-  Promise.resolve().then(() => automations.handleItems(azureWebhookItems(payload, repos)))
+  Promise.resolve().then(async () => automations.handleItems(azureWebhookItems(payload, await automationAzureRepos())))
     .catch((err) => console.warn(`[worca-ui] Azure DevOps service hook ${payload?.eventType || '?'}: ${err?.message || err}`));
 });
 
@@ -7759,6 +7759,46 @@ async function projectAutomationRepo(projectDir) {
   return (hosted.find((r) => r.name === 'origin') || hosted[0])?.slug || null;
 }
 const NO_FORGE_REMOTE = 'this project has no GitHub or Azure DevOps remote: automations watch a repository on one of them';
+const NO_MEMBER_REMOTE = 'no project in this workspace has a GitHub or Azure DevOps remote: automations watch repositories on them';
+// A workspace's members as the engine reads them (createAutomationEngine's workspaceMembers): each member's directory,
+// key and repository, in the canonical member order (by project key). Cached a minute: the poll asks every tick.
+const automationWsCache = new Map();
+async function automationWorkspaceMembers(id, { fresh = false } = {}) {
+  const hit = automationWsCache.get(id);
+  if (!fresh && hit && Date.now() - hit.at < 60_000) return hit.value;
+  const ws = await readWorkspace(id);
+  const value = ws ? {
+    name: ws.name || null,
+    members: (await Promise.all(ws.projectPaths.map(async (dir) => ({
+      name: getProjectByPath(dir)?.name || path.basename(dir), projectDir: dir, projectKey: projectKey(dir),
+      repo: await projectAutomationRepo(dir).catch(() => null),
+    })))).sort((a, b) => (a.projectKey < b.projectKey ? -1 : a.projectKey > b.projectKey ? 1 : 0)),
+  } : null;
+  automationWsCache.set(id, { at: Date.now(), value });
+  return value;
+}
+/** Every Azure DevOps repository a rule watches: project rules' own, and workspace rules' members' (the service hook's
+ *  work items are offered to each; the engine claims a workspace's once per Azure project). */
+async function automationAzureRepos() {
+  const out = new Set(listAutomationRules({ enabledOnly: true, scope: 'project' }).map((r) => r.repo).filter((r) => forgeOfRepo(r) === 'azure'));
+  for (const id of new Set(listAutomationRules({ enabledOnly: true, scope: 'workspace' }).map((r) => r.workspaceId))) {
+    for (const m of (await automationWorkspaceMembers(id))?.members || []) if (m.repo && forgeOfRepo(m.repo) === 'azure') out.add(m.repo);
+  }
+  return [...out];
+}
+/** The workspaces whose enabled rules take a project's repository over, per event (the project tab says so). */
+async function automationOverrides(repo) {
+  if (!repo) return [];
+  const by = new Map();
+  for (const r of listAutomationRules({ enabledOnly: true, scope: 'workspace' })) {
+    const w = await automationWorkspaceMembers(r.workspaceId);
+    if (!w || !memberForEvent(w.members, { kind: r.event === 'issue.opened' ? 'issue' : 'pr', repo })) continue;
+    if (!by.has(r.workspaceId)) by.set(r.workspaceId, { workspaceId: r.workspaceId, name: w.name || r.workspaceId, events: [] });
+    const o = by.get(r.workspaceId);
+    if (!o.events.includes(r.event)) o.events.push(r.event);
+  }
+  return [...by.values()];
+}
 async function automationPlanText(pipelineId) {
   const row = findPipelineRowById(pipelineId);
   if (!row) return null;
@@ -7768,11 +7808,13 @@ async function automationPlanText(pipelineId) {
   const hit = await resolveIndexedArtifactForRow(row, plans[plans.length - 1].relPath);
   return hit ? hit.text : null;
 }
-/** Open the fix run's draft PR (createRunPr: the issue source adds `Closes #N`) and turn on Watch PR for it. */
+/** Open the fix run's draft PR (createRunPr: the issue source adds `Closes #N`) and turn on Watch PR for it. A
+ *  workspace run opens one per changed member (automationWorkspacePrs). */
 async function automationDraftPr(pipelineId) {
   if (!(await anyPrHost())) return { ok: false, error: 'no pull request host is available (install the GitHub CLI)' };
   const state = readPipelineStateById(pipelineId);
   if (!state) return { ok: false, error: 'the run is gone' };
+  if (state.target === 'workspace') return automationWorkspacePrs(pipelineId, state);
   const target = prTargetFor(state);
   if (target.error || !target.repoDir) return { ok: false, error: target.error || 'the run has no project' };
   const walked = chainBaseBranchesOf(pipelineId);
@@ -7790,6 +7832,42 @@ async function automationDraftPr(pipelineId) {
     } catch (err) { console.error(`[worca-ui] automation: could not watch ${out.pr.url}: ${err?.message || err}`); }
   }
   return { ok: true, url: out.pr.url };
+}
+/**
+ * A workspace fix's PRs: one draft per member whose branch has commits (a member the planner left untouched gets
+ * none), each on its own base, Watch PR on each, then the PRs cross-linked. Only the issue's own repository's PR
+ * closes the issue (runSourceIssue; on Azure DevOps, links the work item). → { ok, url, prs } with `url` that PR's
+ * (else the first), or { ok:false, error } when no member changed or none opened.
+ */
+async function automationWorkspacePrs(pipelineId, state) {
+  const prs = []; let changed = 0;
+  for (const m of prStateMembers(state)) {
+    if (m.workMode === 'folder' || !m.projectDir || !m.feature || !m.source) continue;
+    if (!(await branchExists(m.projectDir, m.feature)) || !((await commitsAhead(m.projectDir, m.source, m.feature)) > 0)) continue;
+    changed++;
+    const target = prTargetFor(state, m.memberKey);
+    if (target.error) { prs.push({ name: m.name, repo: null, url: null, error: target.error }); continue; }
+    const open = (draft) => createRunPr({ id: pipelineId, state, target, base: m.source, memberKey: m.memberKey, draft, actor: 'automation' });
+    let out = await open(true);
+    if (!out.ok && /draft/i.test(out.error || '')) out = await open(false);
+    if (!out.ok) { prs.push({ name: m.name, repo: null, url: null, error: out.error }); continue; }
+    prs.push({ name: m.name, repo: out.repo, url: out.pr.url, closes: !!out.closes });
+    if (watchablePrUrl(out.pr.url)) {
+      try {
+        setWatch({ prUrl: out.pr.url, pipelineId: out.pipelineIdForPr, memberKey: m.memberKey, pushRemote: out.pushRemote, enabled: true, enabledBy: 'automation' });
+        broadcast(prWatchFrame(out.pipelineIdForPr, m.memberKey));
+      } catch (err) { console.error(`[worca-ui] automation: could not watch ${out.pr.url}: ${err?.message || err}`); }
+    }
+  }
+  if (!changed) return { ok: false, error: 'the run changed no repository' };
+  const opened = prs.filter((p) => p.url);
+  if (!opened.length) return { ok: false, error: prs.map((p) => `${p.name}: ${p.error}`).join('; ') };
+  kickPrWatch();
+  if (opened.length >= 2) {
+    const r = await crosslinkMemberPrs(pipelineId, readPipelineStateById(pipelineId) || state).catch((err) => ({ failed: [{ error: err?.message || String(err) }] }));
+    if (r.edited?.length) appendAuditById(pipelineId, `Cross-linked ${r.edited.length} pull requests to their siblings (automation).`, { actor: 'automation' });
+  }
+  return { ok: true, url: (opened.find((p) => p.closes) || opened[0]).url, prs };
 }
 const automationHost = {
   listIssues: async ({ repo, since, etag }) => {
@@ -7890,6 +7968,7 @@ const automations = createAutomationEngine({
   planText: automationPlanText,
   reviews: (pipelineId) => readPipelineExtras(pipelineId).reviews.filter((r) => r.kind === 'impl' || r.kind === 'impl-review' || !r.kind),
   openDraftPr: (pipelineId) => automationDraftPr(pipelineId),
+  workspaceMembers: (id) => automationWorkspaceMembers(id),
   runUrl: () => null,
   notify: automationNotify,
   onChange: () => broadcast({ type: 'automations-changed' }),
@@ -7907,38 +7986,60 @@ async function automationProject(req, res, dirIn) {
   const project = dir ? await registeredProjectForDir(dir) : null;
   if (!project) { badRequest(res, 'projectDir must be a registered project'); return null; }
   const repo = await projectAutomationRepo(project.path);
-  return { project, projectDir: project.path, projectKey: projectKey(project.path), repo };
+  return { scope: 'project', project, projectDir: project.path, projectKey: projectKey(project.path), repo };
+}
+/** What a request automates: a workspace (workspaceId: its members' repositories) or a project (projectDir). Answers
+ *  the error itself. A workspace's members are read fresh: a page that just added one sees it. */
+async function automationScope(req, res, { projectDir, workspaceId }) {
+  if (workspaceId === undefined || workspaceId === null || workspaceId === '') return automationProject(req, res, projectDir);
+  if (projectDir) { badRequest(res, 'provide workspaceId OR projectDir, not both'); return null; }
+  const ws = typeof workspaceId === 'string' && WORKSPACE_KEY_RE.test(workspaceId) ? await readWorkspace(workspaceId) : null;
+  if (!ws) { badRequest(res, 'workspaceId must name a workspace'); return null; }
+  const w = await automationWorkspaceMembers(ws.id, { fresh: true });
+  return { scope: 'workspace', workspaceId: ws.id, name: ws.name, projectKey: workspaceOwnerKey(ws.id),
+    projectDir: w.members[0]?.projectDir || '', members: w.members, hasRepo: w.members.some((m) => m.repo) };
 }
 
 app.use('/api/automations', requireFlag('gitAutomations'));
-// GET /api/automations?projectDir=  -> { rules, events, autoHandle, repo, templates, webhook }; no projectDir: every rule.
+// GET /api/automations?projectDir=|workspaceId=  -> { scope, rules, events, autoHandle, repo | repos, templates, webhook,
+// overriddenBy (a project's: the workspaces that take its events over) }; neither: every rule (the overview).
 app.get('/api/automations', syncRoute(async (req, res) => {
   let scope = null;
-  if (req.query.projectDir) { scope = await automationProject(req, res, req.query.projectDir); if (!scope) return; }
+  if (req.query.projectDir || req.query.workspaceId) {
+    scope = await automationScope(req, res, { projectDir: req.query.projectDir, workspaceId: req.query.workspaceId });
+    if (!scope) return;
+  }
   const key = scope ? scope.projectKey : null;
+  const ws = scope?.scope === 'workspace';
   res.json({
     rules: listAutomationRules({ projectKey: key }),
     events: listAutomationEvents({ projectKey: key, limit: Number(req.query.limit) || 50 }),
-    ...(scope ? { autoHandle: autoHandleState(key), repo: scope.repo, forge: scope.repo ? forgeOfRepo(scope.repo) : null } : {}),
+    // Waiting over a limit, in the order they start (oldest first).
+    queue: listAutomationEvents({ projectKey: key, status: 'queued', oldestFirst: true, limit: 200 }),
+    ...(scope ? { scope: scope.scope, autoHandle: autoHandleState(key) } : {}),
+    ...(scope && !ws ? { repo: scope.repo, forge: scope.repo ? forgeOfRepo(scope.repo) : null, overriddenBy: await automationOverrides(scope.repo) } : {}),
+    ...(ws ? { workspaceId: scope.workspaceId, name: scope.name,
+      repos: scope.members.map((m) => ({ name: m.name, projectKey: m.projectKey, repo: m.repo, forge: m.repo ? forgeOfRepo(m.repo) : null })) } : {}),
     switches: Object.entries(AUTO_HANDLE).map(([k, v]) => ({ key: k, label: v.label, help: v.help })),
     templates: listAutomationTemplates(),
-    defaultLimits: AUTOMATION_DEFAULT_LIMITS,
+    defaultLimits: ws ? AUTOMATION_WORKSPACE_LIMITS : AUTOMATION_DEFAULT_LIMITS,
     webhook: { configured: !!webhookSecret(), path: '/api/ingress/github' },
     azureWebhook: { configured: !!adoWebhookSecret(), path: '/api/ingress/azure' },
     polling: String(process.env.WORCA_AUTOMATIONS_POLL ?? '1') !== '0',
   });
 }));
-// POST /api/automations/rules { projectDir, event, action, workflowId?, filter?, limits?, guardrailsId?, enabled? }
+// POST /api/automations/rules { projectDir | workspaceId, event, action, workflowId?, filter?, limits?, guardrailsId?, enabled? }
 app.post('/api/automations/rules', syncRoute(async (req, res) => {
   const body = req.body || {};
-  const scope = await automationProject(req, res, body.projectDir);
+  const scope = await automationScope(req, res, body);
   if (!scope) return;
-  if (!scope.repo) return res.status(409).json({ error: NO_FORGE_REMOTE });
-  const v = validateAutomationRule(body);
+  if (scope.scope === 'workspace' ? !scope.hasRepo : !scope.repo) return res.status(409).json({ error: scope.scope === 'workspace' ? NO_MEMBER_REMOTE : NO_FORGE_REMOTE });
+  const v = validateAutomationRule(body, { scope: scope.scope });
   if (!v.ok) return badRequest(res, v.error);
   if (v.rule.workflowId) { try { await assertRunnableWorkflow(v.rule.workflowId); } catch (err) { return badRequest(res, err.message); } }
   if (!(await readGuardrailSet(v.rule.guardrailsId))) return badRequest(res, `unknown guardrailsId "${v.rule.guardrailsId}"`);
-  const rule = createAutomationRule({ ...v.rule, projectKey: scope.projectKey, projectDir: scope.projectDir, repo: scope.repo, createdBy: actorOf(req) });
+  const rule = createAutomationRule({ ...v.rule, projectKey: scope.projectKey, projectDir: scope.projectDir, repo: scope.repo || null,
+    workspaceId: scope.workspaceId || null, createdBy: actorOf(req) });
   broadcast({ type: 'automations-changed' }); kickAutomations();
   res.status(201).json({ rule });
 }));
@@ -7950,7 +8051,8 @@ app.patch('/api/automations/rules/:id', syncRoute(async (req, res) => {
   const patch = {};
   if (b.enabled !== undefined) { if (typeof b.enabled !== 'boolean') return badRequest(res, 'enabled must be true or false'); patch.enabled = b.enabled; }
   if (b.filter !== undefined) patch.filter = normalizeAutomationFilter(b.filter);
-  if (b.limits !== undefined) patch.limits = normalizeAutomationLimits(b.limits);
+  if (b.limits !== undefined && automationLimitsError(b.limits)) return badRequest(res, automationLimitsError(b.limits));
+  if (b.limits !== undefined) patch.limits = normalizeAutomationLimits(b.limits, cur.scope === 'workspace' ? AUTOMATION_WORKSPACE_LIMITS : AUTOMATION_DEFAULT_LIMITS);
   if (b.workflowId !== undefined) {
     if (cur.action !== 'run') return badRequest(res, 'only a "run" rule names its workflow');
     try { await assertRunnableWorkflow(b.workflowId); } catch (err) { return badRequest(res, err.message); }
@@ -7969,15 +8071,17 @@ app.delete('/api/automations/rules/:id', (req, res) => {
   broadcast({ type: 'automations-changed' });
   res.json({ ok: true });
 });
-// PUT /api/automations/auto-handle { projectDir, key: propose|fix|review, on }
+// PUT /api/automations/auto-handle { projectDir | workspaceId, key: propose|fix|review, on }
 app.put('/api/automations/auto-handle', syncRoute(async (req, res) => {
   const body = req.body || {};
   if (!Object.hasOwn(AUTO_HANDLE, body.key)) return badRequest(res, `key must be one of ${Object.keys(AUTO_HANDLE).join(', ')}`);
   if (typeof body.on !== 'boolean') return badRequest(res, 'on must be true or false');
-  const scope = await automationProject(req, res, body.projectDir);
+  const scope = await automationScope(req, res, body);
   if (!scope) return;
-  if (body.on && !scope.repo) return res.status(409).json({ error: NO_FORGE_REMOTE });
-  const autoHandle = setAutoHandle({ projectKey: scope.projectKey, projectDir: scope.projectDir, repo: scope.repo, key: body.key, on: body.on, by: actorOf(req) });
+  const ws = scope.scope === 'workspace';
+  if (body.on && (ws ? !scope.hasRepo : !scope.repo)) return res.status(409).json({ error: ws ? NO_MEMBER_REMOTE : NO_FORGE_REMOTE });
+  const autoHandle = setAutoHandle({ projectKey: scope.projectKey, projectDir: scope.projectDir, repo: scope.repo || null,
+    workspaceId: scope.workspaceId || null, key: body.key, on: body.on, by: actorOf(req) });
   broadcast({ type: 'automations-changed' }); kickAutomations();
   res.json({ autoHandle });
 }));
@@ -7988,6 +8092,23 @@ app.post('/api/automations/events/:id/approve', syncRoute(async (req, res) => {
   if (!r.ok) return res.status(409).json({ error: { NOT_WAITING: 'this item is not waiting for approval', CLOSED: 'the issue is closed', READ_FAILED: 'GitHub could not be read; try again' }[r.code] || 'the fix did not start', event: r.event });
   res.json({ ok: true, event: r.event });
 }));
+// POST /api/automations/events/:id/start -> a waiting (queued) event starts now, past its limits.
+app.post('/api/automations/events/:id/start', syncRoute(async (req, res) => {
+  const r = await automations.startNow(req.params.id, { by: actorOf(req) });
+  if (r.code === 'NOT_FOUND') return res.status(404).json({ error: 'not found' });
+  if (!r.ok) {
+    return res.status(409).json({ error: { NOT_QUEUED: 'this item is not waiting', CLOSED: 'it was closed meanwhile', SUPERSEDED: 'the pull request moved on to a newer push',
+      READ_FAILED: 'GitHub could not be read; try again' }[r.code] || 'the run did not start', event: r.event });
+  }
+  res.json({ ok: true, event: r.event });
+}));
+// POST /api/automations/events/:id/remove -> a waiting (queued) event leaves the queue and never starts.
+app.post('/api/automations/events/:id/remove', (req, res) => {
+  const r = automations.removeQueued(req.params.id, { by: actorOf(req) });
+  if (r.code === 'NOT_FOUND') return res.status(404).json({ error: 'not found' });
+  if (!r.ok) return res.status(409).json({ error: 'this item is not waiting', event: r.event });
+  res.json({ ok: true, event: r.event });
+});
 // POST /api/automations/poll -> one poll now (the Check now button).
 app.post('/api/automations/poll', syncRoute(async (req, res) => {
   await automations.tick({ force: true });
@@ -9039,8 +9160,11 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   const footer = prAttributionFooter(state.startedBy);
   const pipelineIdForPr = state?.id || id;   // prefer the canonical state id
   // A run from the Azure Boards source links its work item to the PR.
-  const workItemId = provider.forge === 'azure'
-    ? workItemIdFromSourceRef(findPipelineRowById(pipelineIdForPr)?.source_ref ?? null, baseR) : null;
+  const sourceRef = provider.forge === 'azure' ? findPipelineRowById(pipelineIdForPr)?.source_ref ?? null : null;
+  let workItemId = provider.forge === 'azure' ? workItemIdFromSourceRef(sourceRef, baseR) : null;
+  // A workspace automation's work item (#711) is linked by the PR of the member it came through only, as only the
+  // issue's own repository's PR closes a GitHub issue.
+  if (workItemId && memberKey && !automationSourceIsRepo(sourceRef, baseR)) workItemId = null;
   // The run's GitHub issue, closed on merge: after the description, before the footer.
   const closing = runSourceIssue(pipelineIdForPr, { baseRemote: baseR, memberKey })
     ? issueClosingLine({ sourceUrl: runSourceUrl(pipelineIdForPr), baseRepo: repo, body: description }) : '';
@@ -9080,7 +9204,16 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
     const where = memberKey ? ` in \`${target.memberName}\`` : '';
     appendAuditById(pipelineIdForPr, `Pull request ${pr.existed ? 'linked' : (newDraft ? 'opened (draft)' : 'opened')}${where}${byActor(actor)}: ${pr.url}`, { actor });
   }
-  return { ok: true, pr, newDraft, remotes, pushRemote, baseRemote, repo, headOwner, baseR, pipelineIdForPr };
+  return { ok: true, pr, newDraft, remotes, pushRemote, baseRemote, repo, headOwner, baseR, pipelineIdForPr, closes: !!closing || !!workItemId };
+}
+
+/** Did a run's automation source (pipelines.source_ref, sources.mjs) come through this base remote's repository? A
+ *  source with no recorded repository (the Azure Boards source) answers true: its linking is unchanged. */
+function automationSourceIsRepo(sourceRef, baseR) {
+  let ref = null;
+  try { ref = typeof sourceRef === 'string' ? JSON.parse(sourceRef) : sourceRef; } catch { return true; }
+  if (ref?.forge !== 'azure' || !ref.repo) return true;
+  return String(ref.repo).toLowerCase() === String(baseR?.slug || '').toLowerCase();
 }
 
 // ---------------------------------------------------------------------------
@@ -9718,6 +9851,16 @@ app.post('/api/pr/crosslink', async (req, res) => {
   const { id, state } = resolved;
   if (state.target !== 'workspace') return badRequest(res, 'cross-linking applies to workspace runs only');
   const pipelineId = state.id || id;
+  const { edited, failed } = await crosslinkMemberPrs(pipelineId, state);
+  if (edited.length) {
+    const by = actorOf(req);
+    appendAuditById(pipelineId, `Cross-linked ${edited.length} pull request${edited.length === 1 ? '' : 's'} to their siblings${byActor(by)}.`, { actor: by });
+  }
+  res.json({ ok: true, edited, failed });
+});
+
+/** Write each OPEN member PR's related-PRs block (POST /api/pr/crosslink, and a workspace automation's fix). */
+async function crosslinkMemberPrs(pipelineId, state) {
   const known = readMemberPrStates(pipelineId);
   const linked = prStateMembers(state).filter((m) => known[m.memberKey]).map((m) => ({ ...m, pr: known[m.memberKey] }));
   const edited = [];
@@ -9737,12 +9880,8 @@ app.post('/api/pr/crosslink', async (req, res) => {
       if (r.ok) edited.push(m.memberKey); else failed.push({ memberKey: m.memberKey, error: r.error });
     }
   }
-  if (edited.length) {
-    const by = actorOf(req);
-    appendAuditById(pipelineId, `Cross-linked ${edited.length} pull request${edited.length === 1 ? '' : 's'} to their siblings${byActor(by)}.`, { actor: by });
-  }
-  res.json({ ok: true, edited, failed });
-});
+  return { edited, failed };
+}
 
 // ---------------------------------------------------------------------------
 // POST /api/install  -> copy agents + skill into <projectDir>/.claude
@@ -18080,7 +18219,7 @@ export const _testing = {
   broadcast, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
-  askCommandBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, automations, automationHost, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
+  askCommandBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, automations, automationHost, automationDraftPr, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   prWatcherDeps, askPrFixRun, askLinkIsPrFix, prFixRoundOf,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps, askShapeAction,
   openSliceDraft, afterRunSettled, offerShipCard, syncShipCard, draftReleasesOnMerge,

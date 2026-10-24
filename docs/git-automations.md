@@ -5,7 +5,8 @@
 > `/api/automations` route and both webhooks answer 404, and rules you already made stay stored but do nothing.
 
 Worca can start a run when something happens on GitHub or Azure DevOps, without anyone opening New run. An automation
-works like a hook: **when an event happens in a project and matches a filter, Worca runs a workflow.**
+works like a hook: **when an event happens in a project and matches a filter, Worca runs a workflow.** A workspace
+can have automations too: they watch every member's repository (see [Workspaces](#workspaces)).
 
 Two events are supported today:
 
@@ -22,8 +23,8 @@ that is. On Azure DevOps see [Azure DevOps](#azure-devops) for what each event m
 ## Auto-handle
 
 Each project's **Automations** tab (on its project page) has three switches, each with a line on what it does and
-the limits it runs under. **Settings › Automations** is the overview: which projects automate what, how events
-arrive, and the latest activity across projects.
+the limits it runs under. A workspace page has the same tab. **Settings › Automations** is the overview: which
+projects and workspaces automate what, how events arrive, and the latest activity across them.
 
 - **New issue → triage and propose.** Worca first decides what kind of issue it is (see [Triage](#triage)):
   - a **bug**: it reproduces the issue where it can, finds the root cause and writes a fix plan;
@@ -71,7 +72,56 @@ workflow), and optionally:
 - **Limits** — runs per day (default 10), a cost cap per run (default $5) and how many event runs may
   run at once in the project (default 1).
 
+Each switch and each rule shows its limits on a line of their own. **Edit limits** changes them: on every rule, and
+on a switch once it has been turned on (before that it shows the defaults it starts with). Runs per day accepts 1 to
+200, the cost cap $0.10 to $1000, runs at a time 1 to 10; anything else is refused. When a limit is reached:
+
+- **Runs at a time:** the event waits in the queue and starts when a run ends.
+- **Runs per day:** the event waits in the queue and starts the next day (the count resets at midnight UTC). A run
+  counts on the day it starts, so a backlog drains at the daily limit, not all at once.
+- **Cost cap:** a run that passes it is stopped and its event fails.
+
+### Waiting
+
+The **Waiting** section of each Automations tab (and of Settings › Automations, across projects and workspaces)
+lists what waits, in the order it starts: oldest first, each with why it waits and when it starts. Before an item
+starts, Worca reads it again: one closed meanwhile is dropped, and a review of a PR that has a newer push gives way to
+the newer one. **Start now** starts an item at once, past the line and the limits (it still counts toward the day's
+runs). **Remove** takes it out; it never starts. A rule holds at most 100 waiting items: past that a new one is
+skipped as "too many waiting". Waiting items are kept by the automation, not as scheduled runs: they become runs only
+when they start, with the issue or PR read fresh.
+
 A rule that is turned off and on again does not pick up what was opened while it was off.
+
+## Workspaces
+
+A workspace page has its own **Automations** tab with the same switches and rules. It watches the repository of every
+member project that has a GitHub or Azure DevOps remote (the tab lists them, and names a member it cannot watch).
+
+- **An issue starts a workspace run.** For an issue in any member repository, a workspace rule always starts a run
+  across the whole workspace, never a project run. The task names every repository and says which one the issue was
+  opened in; the planner may leave repositories untouched.
+- **Full fix, and the fix after an approval,** end with one **draft** pull request per member the run changed (a
+  member it left untouched gets none). The PRs are linked to each other (each one's description lists the others,
+  on GitHub), and Watch PR follows each of them. Only the PR in the issue's own repository says `Closes #N`; one
+  issue comment lists all the PRs.
+- **Triage and propose** works as in a project: the plan covers the workspace, and the fix after an approval is a
+  workspace run that implements it.
+- **Automatic review stays per PR.** A pull request belongs to one repository: its review runs in that member's
+  project, as a project rule's would.
+- **Limits.** A workspace rule's defaults are **5 runs a day, $15 per run, 1 at a time** (in the whole workspace).
+  Each rule's own limits can be changed when it is added.
+
+**Workspace and project rules on the same repository.** When a repository has project rules and also belongs to a
+workspace with rules for the **same event**, the workspace's rules win for that event: the project's rules for it do
+nothing while the workspace's are on (its rules for other events still run). The project's Automations tab says
+which workspace takes which events over. A repository in two workspaces with rules is handled by both.
+
+On Azure DevOps a work item belongs to the Azure DevOps project, not to a repository: a workspace with a member
+repository in that project is the single owner of its work items. One work item is one event and one run, whichever
+repository it is seen through, and project rules on repositories of that Azure DevOps project leave its work items to
+the workspace. The PR of the workspace's first member in that project (in member order) links the work item; the
+other members' PRs do not.
 
 ## Ready-made workflows
 
@@ -91,7 +141,8 @@ None of them has a Clarify step: nobody is watching an event run.
 ## Delivery
 
 - **Local install (polling).** Worca checks each repository that has an enabled rule once a minute, using
-  conditional requests and a stored cursor. A project with no rules polls nothing.
+  conditional requests and a stored cursor; a workspace rule adds every member's repository, each with its own
+  cursor, and a repository is read once however many rules watch it. A project with no rules polls nothing.
 - **Hosted (webhooks).** Set `WORCA_GH_WEBHOOK_SECRET` and point a GitHub webhook at
   `https://<your worca>/api/ingress/github` with the same secret (content type `application/json`;
   events: Issues, Pull requests, Issue comments). With a GitHub App, set the App's webhook URL and secret
@@ -140,7 +191,8 @@ in the rule list). What changes:
 - **Issue opened is a work item created** in the repository's Azure DevOps project (any type), and a work item
   whose tags change is looked at again. Tags are the labels of a rule's filters. A work item belongs to the
   project, not a repository: when several Worca projects use repositories of the same Azure DevOps project, each
-  one's rules see it, so narrow them with a tag filter.
+  one's rules see it, so narrow them with a tag filter, or put the projects in a workspace with automations, which
+  then owns the project's work items (see [Workspaces](#workspaces)).
 - **Who can start a run:** every author counts as a member. Azure DevOps has no outside contributors: only
   people in your organization can open a work item or a PR, or comment.
 - **Triage and propose** reads the work item type first; it posts the plan as a work item comment; `/worca approve` in a comment starts the fix.
@@ -163,12 +215,12 @@ GitHub App). Per-project GitHub identities (#705) will be used once they exist.
 
 ## Not covered yet
 
-- GitHub Enterprise Server and Azure DevOps Server (on-premises), and workspace (multi-project) runs.
+- GitHub Enterprise Server and Azure DevOps Server (on-premises).
 - More events: label added as its own event, `/worca` comment commands besides `approve`, PR review
   comments, pushes to a branch, and CI failing on the default branch.
 - An Automations step in Add project (use the project page's **Automations** tab).
-- Workspace automations: rules on a workspace that start workspace runs for issues needing changes in several
-  repositories, and own an Azure DevOps project's work items.
+- Assignee filters (start only for issues assigned to someone).
+- Cross-linking the PRs of a workspace fix on Azure DevOps (their descriptions do not list each other yet).
 - Waking a suspended hosted instance on a webhook.
 
 ## API
@@ -177,12 +229,16 @@ All routes need the flag; they answer 404 while it is off.
 
 | Route | |
 |---|---|
-| `GET /api/automations?projectDir=` | `{ rules, events, autoHandle, repo, forge, switches, templates, webhook, azureWebhook, polling }` |
-| `POST /api/automations/rules` | `{ projectDir, event, action, workflowId?, filter?, limits?, guardrailsId?, enabled? }` → 201 `{ rule }` |
-| `PATCH /api/automations/rules/:id` | `{ enabled?, filter?, limits?, workflowId?, guardrailsId? }` |
+| `GET /api/automations?projectDir=` | `{ scope: 'project', rules, events, queue, autoHandle, repo, forge, overriddenBy, switches, templates, defaultLimits, webhook, azureWebhook, polling }`; `overriddenBy` is `[{ workspaceId, name, events }]`, the workspaces whose rules take this repository's events over |
+| `GET /api/automations?workspaceId=` | `{ scope: 'workspace', workspaceId, name, repos: [{ name, projectKey, repo, forge }], rules, events, autoHandle, … }` |
+| `GET /api/automations` | Every rule and the latest events (the overview); a workspace's are keyed `workspaces/<id>` |
+| `POST /api/automations/rules` | `{ projectDir \| workspaceId, event, action, workflowId?, filter?, limits?, guardrailsId?, enabled? }` → 201 `{ rule }` (`rule.scope` is `project` or `workspace`) |
+| `PATCH /api/automations/rules/:id` | `{ enabled?, filter?, limits?, workflowId?, guardrailsId? }` (an Auto-handle switch's rule too); a limit outside its range → 400 |
 | `DELETE /api/automations/rules/:id` | |
-| `PUT /api/automations/auto-handle` | `{ projectDir, key: propose \| fix \| review, on }` → `{ autoHandle }` |
+| `PUT /api/automations/auto-handle` | `{ projectDir \| workspaceId, key: propose \| fix \| review, on }` → `{ autoHandle }` |
 | `POST /api/automations/events/:id/approve` | Start the fix of a proposed plan |
+| `POST /api/automations/events/:id/start` | Start a waiting item now, past its limits |
+| `POST /api/automations/events/:id/remove` | Take a waiting item out of the queue |
 | `POST /api/automations/poll` | Poll now |
 | `POST /api/ingress/github` | The signed GitHub webhook |
 | `POST /api/ingress/azure` | The Azure DevOps service hook (Basic authentication) |

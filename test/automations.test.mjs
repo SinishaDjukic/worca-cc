@@ -9,7 +9,7 @@ import {
   validateRule, normalizeFilter, normalizeLimits, decide, isTrusted, limitDecision, verifyGithubSignature, webhookEvents,
   issueEvent, prEvent, subjectFor, buildTask, buildReview, foldReview, isApproval, planComment, createRule, updateRule, listRules,
   claimEvent, getEvent, listEvents, recordDelivery, setAutoHandle, autoHandleState, pollTargets, createAutomationEngine,
-  AUTOMATION_MARKER, MISSED_GRACE_MS, DEFAULT_GUARDRAILS,
+  AUTOMATION_MARKER, MISSED_GRACE_MS, DEFAULT_GUARDRAILS, MAX_QUEUED_PER_RULE,
 } from '../src/core/automations.mjs';
 import { WATCH_MARKER } from '../src/core/pr-watch.mjs';
 
@@ -87,7 +87,7 @@ test('isTrusted and limitDecision', () => {
   assert.equal(isTrusted({ authorAssociation: 'CONTRIBUTOR', labels: [] }, { triggerLabel: '' }), false);
   const r = { limits: { dailyRuns: 2, maxConcurrent: 1, maxCostUsd: 1 } };
   assert.equal(limitDecision(r, { startedToday: 1, liveInProject: 0 }), null);
-  assert.deepEqual(limitDecision(r, { startedToday: 2 }), { reason: 'daily-cap', queue: false });
+  assert.deepEqual(limitDecision(r, { startedToday: 2 }), { reason: 'daily-cap', queue: true });
   assert.deepEqual(limitDecision(r, { startedToday: 0, liveInProject: 1 }), { reason: 'concurrency', queue: true });
 });
 
@@ -292,13 +292,13 @@ test('engine: an outsider\'s issue costs nothing and is logged once; a maintaine
   assert.equal(listEvents().length, 1);
 });
 
-test('engine: the daily cap skips; the concurrency cap queues until a slot frees', async () => {
+test('engine: the concurrency cap queues until a slot frees; the daily cap queues until the next day (UTC)', async () => {
   const h = harness();
   const r = rule({ limits: normalizeLimits({ dailyRuns: 2, maxConcurrent: 1 }) });
   await h.engine.handleEvent(issueEvent(REPO, issue(1)));
   await h.engine.handleEvent(issueEvent(REPO, issue(2)));
   assert.equal(h.calls.start.length, 1);
-  assert.equal(listEvents({ status: 'queued' }).length, 1);
+  assert.equal(listEvents({ status: 'queued' })[0].reason, 'concurrency');
   h.finish(1);
   await h.engine.tick();          // the first run settles, the queued one starts (re-read from GitHub)
   assert.equal(h.calls.start.length, 1, 'a queued issue is re-read before it starts');
@@ -307,9 +307,67 @@ test('engine: the daily cap skips; the concurrency cap queues until a slot frees
   assert.equal(h.calls.start.length, 2);
   h.finish(2);
   await h.engine.tick();
+  // Two runs today: the third waits for tomorrow instead of being dropped.
   await h.engine.handleEvent(issueEvent(REPO, issue(3)));
   assert.equal(h.calls.start.length, 2);
-  assert.equal(listEvents({ status: 'skipped' })[0].reason, 'daily-cap');
+  const waiting = listEvents({ status: 'queued' });
+  assert.deepEqual(waiting.map((e) => [e.number, e.reason]), [[3, 'daily-cap']]);
+  assert.match(h.calls.notify.at(-1).message, /^Queued issue #3 · the rule's daily run limit is reached\. It starts the next day \(UTC\)\.$/);
+  h.gh.issues.set(3, issue(3));
+  await h.engine.tick();
+  assert.equal(h.calls.start.length, 2, 'still today');
+  h.clock.t = Date.parse('2026-10-23T00:05:00Z');      // the next day (UTC)
+  await h.engine.tick();
+  assert.equal(h.calls.start.length, 3);
+  assert.equal(getEvent(waiting[0].id).status, 'starting');
+  assert.ok(r);
+});
+
+test('engine: a queued run counts on the day it STARTS; the queue starts oldest first, past 50 waiting', async () => {
+  const h = harness();
+  rule({ limits: normalizeLimits({ dailyRuns: 1, maxConcurrent: 5 }) });
+  for (let n = 1; n <= 60; n++) { h.gh.issues.set(n, issue(n)); await h.engine.handleEvent(issueEvent(REPO, issue(n))); }
+  assert.equal(h.calls.start.length, 1);
+  assert.equal(listEvents({ status: 'queued', limit: 500 }).length, 59);
+  h.clock.t = Date.parse('2026-10-23T00:05:00Z');
+  await h.engine.tick();
+  await h.engine.tick();
+  // One a day: issue #2 (the oldest waiting) started, and it counts today, so nothing else does.
+  assert.deepEqual(h.calls.start.slice(1).map((c) => c.body.source.number), [2]);
+  h.clock.t = Date.parse('2026-10-24T00:05:00Z');
+  await h.engine.tick();
+  assert.deepEqual(h.calls.start.slice(1).map((c) => c.body.source.number), [2, 3]);
+});
+
+test('engine: Start now skips the line and the limits; Remove takes an item out; a full queue skips', async () => {
+  const h = harness();
+  const r = rule({ limits: normalizeLimits({ dailyRuns: 1, maxConcurrent: 1 }) });
+  await h.engine.handleEvent(issueEvent(REPO, issue(1)));
+  await h.engine.handleEvent(issueEvent(REPO, issue(2)));
+  await h.engine.handleEvent(issueEvent(REPO, issue(3)));
+  const [two, three] = listEvents({ status: 'queued', oldestFirst: true });
+  h.gh.issues.set(3, issue(3));
+  const now = await h.engine.startNow(three.id, { by: 'carol' });
+  assert.equal(now.ok, true);
+  assert.equal(h.calls.start.at(-1).body.source.number, 3);
+  assert.equal(h.calls.start.at(-1).opts.startedBy, 'carol');
+  assert.equal((await h.engine.startNow(three.id)).code, 'NOT_QUEUED');
+  // Closed meanwhile: Start now drops it instead.
+  h.gh.issues.set(2, issue(2, { state: 'closed' }));
+  assert.equal((await h.engine.startNow(two.id)).code, 'CLOSED');
+  assert.equal(getEvent(two.id).reason, 'closed');
+  await h.engine.handleEvent(issueEvent(REPO, issue(4)));
+  const four = listEvents({ status: 'queued' })[0];
+  assert.equal(h.engine.removeQueued(four.id, { by: 'carol' }).ok, true);
+  assert.deepEqual([getEvent(four.id).status, getEvent(four.id).reason], ['skipped', 'removed']);
+  assert.equal(h.engine.removeQueued(four.id).code, 'NOT_QUEUED');
+  h.gh.issues.set(4, issue(4));
+  await h.engine.tick();
+  assert.equal(h.calls.start.filter((c) => c.body.source.number === 4).length, 0, 'a removed item never starts');
+  // A flood: past MAX_QUEUED_PER_RULE waiting, a new event is skipped as queue-full.
+  for (let n = 100; n < 100 + MAX_QUEUED_PER_RULE; n++) await h.engine.handleEvent(issueEvent(REPO, issue(n)));
+  await h.engine.handleEvent(issueEvent(REPO, issue(500)));
+  assert.equal(listEvents({ limit: 500 }).find((e) => e.number === 500).reason, 'queue-full');
   assert.ok(r);
 });
 
@@ -599,4 +657,13 @@ test('engine triage: unclear asks for details; no classifier answer keeps the ro
   await b.engine.handleEvent(issueEvent(REPO, issue(6)));
   assert.deepEqual(b.io.templates, ['propose:bug']);
   assert.deepEqual(b.io.labels, [], 'no AI answer: no label');
+});
+
+test('skipWords: plain sentences with no colon forms (design system status lines)', async () => {
+  const { skipWords } = await import('../src/core/automations.mjs');
+  for (const r of ['closed', 'own', 'before-rule', 'missed', 'filtered', 'draft', 'untrusted-author', 'daily-cap', 'concurrency',
+    'queue-full', 'removed', 'cost-cap', 'start-refused', 'superseded', 'question', 'needs-info']) {
+    assert.notEqual(skipWords(r), r, `${r} has words`);
+    assert.ok(!skipWords(r).includes(': '), r);
+  }
 });

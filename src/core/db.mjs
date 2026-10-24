@@ -63,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 72;
+export const SCHEMA_VERSION = 73;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -910,6 +910,10 @@ const INCREMENTAL_COLUMNS = {
                             resume_pipeline_id: 'TEXT',   // v44: a one-off "resume this paused run" ticket (NULL = starts a new run)
                             preset_id: 'TEXT' },   // v63: the run preset this run follows (read at fire time); NULL = none
   projects:               { vcs: 'TEXT' },   // v69: 'git' | 'none' (CONTRACT §1); NULL reads as 'git'
+  automation_rules:       { scope: "TEXT NOT NULL DEFAULT 'project'",   // v73: project | workspace (a v72 rule is a project's)
+                            workspace_id: 'TEXT' },                     // v73: the workspace a workspace rule watches; NULL = a project's
+  automation_events:      { prs: 'TEXT',         // v73: JSON [{name, repo, url, closes}] a workspace fix opened, one per changed member; NULL = one PR (pr_url)
+                            started_at: 'TEXT' },  // v73: when its run started (the daily cap counts by it); NULL = before v73 (created_at)
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of
@@ -1131,6 +1135,16 @@ CREATE TABLE IF NOT EXISTS automation_deliveries (
   received_at TEXT NOT NULL
 );
 `;
+
+/**
+ * v72 -> v73 (workspace Git event automations): automation_rules.scope / workspace_id and automation_events.prs /
+ * started_at.
+ * A CONDITIONAL repair like v13: the columns live in INCREMENTAL_COLUMNS, so existing rules stay and read as
+ * project rules (scope's default), and a DB the hoisted heal already patched is left alone.
+ */
+function applySchemaV73(db) {
+  repairSchemaGaps(db, schemaGaps(db));
+}
 
 // v68 (labels slice 1): run labels — free words that organise runs. Never read by stats, metrics or policy.
 // Written only by the label routes; survive archive/restore; removed by hand on a hard delete (pipeline-delete.mjs).
@@ -2459,6 +2473,7 @@ export function migrate(db) {
     // v70: ask_attachments.source_run_id / source_project_key / source_rel (Show in folder's fallback) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     if (current < 71) db.exec(UTILITY_COST_LEDGER_DDL);   // v71 utility spend (Smart run naming)
     if (current < 72) db.exec(AUTOMATIONS_DDL);           // v72 Git event automations (#711)
+    if (current < 73) applySchemaV73(db);                 // v73 workspace automations: rule scope, a fix's member PRs
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

@@ -1,13 +1,25 @@
 // ui/public/automations-view.mjs — Git event automations (docs/git-automations.md, flag gitAutomations).
-//   renderAutomations          a project page's Automations tab: the Auto-handle switches, the rules, what they did
+//   renderAutomations          a project's or a workspace's Automations tab: the Auto-handle switches, the rules, what
+//                              they did (a workspace's watches every member's repository)
 //   renderAutomationsOverview  Settings › Automations: which projects automate what, delivery, recent activity
 // app.js owns the fetches and the dialogs; this module only renders and calls back. Every string from GitHub or Azure
 // DevOps (titles, logins) goes through textContent.
 import { makeSwitch } from './switch.mjs';
+import { icon } from './icons.mjs';
+import { toggleMenu } from './workflows/menu.mjs';
 
 export const AUTOMATIONS_EMPTY_RULES = 'No rules of your own yet. The switches above need none; add a rule for anything else.';
 export const AUTOMATIONS_EMPTY_EVENTS = 'Nothing yet. New issues and pull requests show here with what Worca did.';
-export const AUTOMATIONS_EMPTY_PROJECTS = 'No project automates anything yet. Open a project and use its Automations tab.';
+export const AUTOMATIONS_EMPTY_QUEUE = 'Nothing waiting. Issues and pull requests that arrive over a limit wait here and start on their own.';
+export const AUTOMATIONS_EMPTY_PROJECTS = 'No project or workspace automates anything yet. Open one and use its Automations tab.';
+/** A workspace's switches start workspace runs: what changes from a project's, in the words under each switch. */
+const WORKSPACE_HELP = Object.freeze({
+  propose: 'Bug: finds the root cause across the workspace and posts a fix plan. Feature request: posts a plan. Nothing changes until someone '
+    + 'approves (here, or /worca approve). Questions and unclear issues get a comment, no run.',
+  fix: 'Fixes it across the workspace without asking, then opens one draft PR per changed repository, linked to each other. Only the issue\'s '
+    + 'own repository\'s PR closes it. Never merges.',
+});
+const EVENT_NOUNS = Object.freeze({ 'issue.opened': 'new issues', 'pr.opened': 'new pull requests' });
 
 const EVENT_WORDS = Object.freeze({ 'issue.opened': 'Issue opened', 'pr.opened': 'PR opened or ready' });
 const ACTION_WORDS = Object.freeze({ run: 'Run a workflow', propose: 'Triage and propose', fix: 'Full fix (draft PR)', review: 'Review the PR' });
@@ -18,9 +30,10 @@ const STATUS = Object.freeze({
 });
 const REASONS = Object.freeze({
   'untrusted-author': 'author is not a collaborator (add the trigger label to start it)', draft: 'a draft',
-  filtered: 'labels do not match', missed: 'opened while Worca was off', closed: 'closed', 'daily-cap': 'daily cap reached',
-  concurrency: 'waiting for a free slot', 'rule-off': 'rule turned off',
-  question: 'a question: commented, no run', 'needs-info': 'unclear: asked for details, no run',
+  filtered: 'labels do not match', missed: 'opened while Worca was off', closed: 'closed', 'daily-cap': 'daily limit reached · starts the next day',
+  concurrency: 'waiting for a free slot', 'rule-off': 'rule turned off', 'queue-full': 'too many waiting (100)', removed: 'removed from the queue',
+  superseded: 'a newer push replaced it',
+  question: 'a question · commented, no run', 'needs-info': 'unclear · asked for details, no run',
 });
 
 function h(doc, tag, cls, text) {
@@ -37,7 +50,7 @@ function btn(doc, label, cls, onClick) {
 }
 const isAzure = (repo) => /^dev\.azure\.com\//i.test(String(repo || ''));
 
-/** "Issue opened → Triage and propose" plus its filter and limits, one line each. */
+/** "Issue opened → Triage and propose", its filter in one line (`detail`) and its limits in another (`limits`). */
 export function ruleSummary(rule, workflowNames = {}) {
   const what = rule.action === 'run' ? `Run ${workflowNames[rule.workflowId] || rule.workflowId}` : ACTION_WORDS[rule.action] || rule.action;
   const f = rule.filter || {};
@@ -46,7 +59,15 @@ export function ruleSummary(rule, workflowNames = {}) {
   if (f.excludeLabels?.length) bits.push(`not ${f.excludeLabels.join(', ')}`);
   if (f.triggerLabel) bits.push(`trigger label “${f.triggerLabel}”`);
   if (f.allowLogins?.length) bits.push(`also @${f.allowLogins.join(', @')}`);
-  return { title: `${EVENT_WORDS[rule.event] || rule.event} → ${what}`, detail: [...bits, limitsLine(rule.limits)].filter(Boolean).join(' · ') };
+  return { title: `${EVENT_WORDS[rule.event] || rule.event} → ${what}`, detail: bits.join(' · '), limits: limitsLine(rule.limits) };
+}
+
+/** "Limits: Max 5 runs/day · $15 per run · 1 at a time" and, when the rule exists, its Edit limits button. */
+function limitsRow(doc, limits, onEdit) {
+  const row = h(doc, 'div', 'automations-limits');
+  row.append(h(doc, 'span', 'hint', `Limits: ${limitsLine(limits)}`));
+  if (onEdit) row.append(btn(doc, 'Edit limits', 'btn btn-sm btn-quiet', onEdit));
+  return row;
 }
 
 const AUTO_HANDLE_KEY = Object.freeze({ 'issue.opened:propose': 'propose', 'issue.opened:fix': 'fix', 'pr.opened:review': 'review' });
@@ -75,20 +96,80 @@ function eventRow(doc, e, cb, { projectName = null } = {}) {
   if (/^https:\/\/(github\.com|dev\.azure\.com)\//.test(String(e.url || ''))) { link.href = e.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; }
   top.append(link, ' ', h(doc, 'span', '', e.title || ''), h(doc, 'span', `badge ${st.family}`, st.word));
   row.append(top);
-  const triage = e.action === 'propose' && TRIAGE_WORDS[e.phase] ? `triaged: ${TRIAGE_WORDS[e.phase]}` : '';
+  const triage = e.action === 'propose' && TRIAGE_WORDS[e.phase] ? `triaged as ${TRIAGE_WORDS[e.phase]}` : '';
   const meta = [e.author ? `by @${e.author}` : '', ACTION_WORDS[e.phase === 'fix' ? 'fix' : e.action] || '', triage, st.reason,
     e.costUsd ? `$${Number(e.costUsd).toFixed(2)}` : '', e.via === 'webhook' ? 'webhook' : ''].filter(Boolean).join(' · ');
   row.append(h(doc, 'small', 'hint', meta));
   const acts = h(doc, 'div', 'pl-actions');
   if (e.status === 'awaiting-approval' && cb.onApprove) acts.append(btn(doc, 'Approve', 'btn btn-primary btn-sm', () => cb.onApprove(e)));
   if (e.pipelineId && cb.onOpenRun) acts.append(btn(doc, 'Open run', 'btn btn-sm', () => cb.onOpenRun(e)));
-  if (e.prUrl && /^https:\/\//.test(e.prUrl)) {
-    const pr = h(doc, 'a', 'btn btn-sm', 'Open PR');
-    pr.href = e.prUrl; pr.target = '_blank'; pr.rel = 'noopener noreferrer';
-    acts.append(pr);
-  }
+  const pr = prControl(doc, e);
+  if (pr) acts.append(pr);
   if (acts.childNodes.length) row.append(acts);
   return row;
+}
+
+/** View PR for one PR; for a workspace fix's several (one per changed repository) one View PRs ▾ that lists each by
+ *  its repository (design system, PR controls). null without an https PR. */
+export function prControl(doc, e) {
+  const all = Array.isArray(e.prs) && e.prs.some((p) => p && p.url) ? e.prs : (e.prUrl ? [{ url: e.prUrl }] : []);
+  const prs = all.filter((p) => p && /^https:\/\//.test(String(p.url || '')));
+  if (!prs.length) return null;
+  if (prs.length === 1) {
+    const a = h(doc, 'a', 'btn btn-sm');
+    a.href = prs[0].url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    a.append(icon(doc, 'pull-request', 14), 'View PR');
+    return a;
+  }
+  const b = h(doc, 'button', 'btn btn-sm automations-prs');
+  b.type = 'button';
+  b.setAttribute('aria-haspopup', 'menu');
+  b.append(icon(doc, 'pull-request', 14), 'View PRs', icon(doc, 'chevron-down', 14));
+  const win = doc.defaultView || globalThis;
+  b.addEventListener('click', () => toggleMenu({ doc, anchor: b, label: 'Pull requests', items: prs.map((p) => ({
+    label: `View PR · ${p.name || p.repo || 'repository'}`, icon: 'pull-request',
+    onSelect: () => win.open(p.url, '_blank', 'noopener,noreferrer'),
+  })) }));
+  return b;
+}
+
+/** What a waiting event waits for, as a status line: the daily limit until 00:00 UTC (in about N hours), the
+ *  concurrency limit until a run ends. `now` for tests. */
+export function waitLine(e, now = Date.now()) {
+  if (e.reason === 'daily-cap') {
+    const next = new Date(now); next.setUTCHours(24, 0, 0, 0);
+    const h = Math.max(1, Math.round((next.getTime() - now) / 3_600_000));
+    return `Waiting · daily limit · starts 00:00 UTC (in about ${h} hour${h === 1 ? '' : 's'})`;
+  }
+  return 'Waiting · starts when a run ends';
+}
+// The daily-limit line's caveat, in its tooltip: a day whose limit fills again keeps it waiting.
+const DAILY_WAIT_TIP = 'It starts if the next day\'s limit allows; otherwise it waits another day.';
+
+/** "Waiting": the queue, in the order it starts, with Start now (past the limits) and Remove. */
+function waitingSection(doc, queue = [], cb = {}, { names = null } = {}) {
+  const sec = h(doc, 'div', 'automations-queue drows');
+  sec.append(h(doc, 'h3', '', queue.length ? `Waiting (${queue.length})` : 'Waiting'));
+  if (!queue.length) { sec.append(h(doc, 'div', 'hist-empty', AUTOMATIONS_EMPTY_QUEUE)); return sec; }
+  queue.forEach((e, i) => {
+    const row = h(doc, 'div', 'drow drow-stack automations-waiting');
+    row.dataset.event = e.id;
+    const top = h(doc, 'div', 'pl-head');
+    top.append(h(doc, 'span', 'badge grey', `#${i + 1} in line`));
+    if (names) top.append(h(doc, 'span', 'badge', names.get(e.projectKey) || e.projectKey));
+    const link = h(doc, 'a', '', `${e.kind === 'pr' ? 'PR' : isAzure(e.repo) ? 'Work item' : 'Issue'} #${e.number}`);
+    if (/^https:\/\/(github\.com|dev\.azure\.com)\//.test(String(e.url || ''))) { link.href = e.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; }
+    top.append(link, ' ', h(doc, 'span', '', e.title || ''));
+    const line = h(doc, 'small', 'hint', [waitLine(e), ACTION_WORDS[e.phase === 'fix' ? 'fix' : e.action] || ''].filter(Boolean).join(' · '));
+    if (e.reason === 'daily-cap') line.title = DAILY_WAIT_TIP;
+    row.append(top, line);
+    const acts = h(doc, 'div', 'pl-actions');
+    if (cb.onStartNow) acts.append(btn(doc, 'Start now', 'btn btn-sm', () => cb.onStartNow(e)));
+    if (cb.onRemoveQueued) acts.append(btn(doc, 'Remove', 'btn btn-sm', () => cb.onRemoveQueued(e)));
+    if (acts.childNodes.length) row.append(acts);
+    sec.append(row);
+  });
+  return sec;
 }
 
 /** How events arrive, in one sentence. */
@@ -99,22 +180,43 @@ function deliveryLine(data, azure) {
   return `Worca checks ${azure ? 'Azure DevOps' : 'GitHub'} every minute.`;
 }
 
+/** "Workspace “Shop” handles new issues in this repository: …" — a project's rules a workspace takes over. */
+export function overrideLine(o) {
+  const events = (o.events || []).map((e) => EVENT_NOUNS[e] || e);
+  return `Workspace “${o.name}” handles ${events.join(' and ')} in this repository: its rules win, so this project's rules for `
+    + `${events.length === 1 ? 'that event' : 'those events'} do nothing while the workspace's are on.`;
+}
+
 /**
- * A project page's Automations tab.
- * data: GET /api/automations?projectDir= ({ rules, events, autoHandle, switches, repo, forge, defaultLimits, webhook, azureWebhook, polling })
- * cb: { onSwitch(key, on), onAddRule(), onToggleRule(rule, on), onDeleteRule(rule), onApprove(event), onOpenRun(event), onCheckNow() }
+ * A project's or a workspace's Automations tab.
+ * data: GET /api/automations?projectDir= ({ scope: 'project', rules, events, autoHandle, switches, repo, forge, overriddenBy,
+ *   defaultLimits, webhook, azureWebhook, polling }) or ?workspaceId= ({ scope: 'workspace', repos: [{ name, repo, forge }], … })
+ * cb: { onSwitch(key, on), onAddRule(), onToggleRule(rule, on), onDeleteRule(rule), onEditLimits(rule), onApprove(event),
+ *   onOpenRun(event), onCheckNow(), onStartNow(event), onRemoveQueued(event) }
  */
 export function renderAutomations(doc, data, { workflowNames = {}, ...cb } = {}) {
   const root = h(doc, 'div', 'automations');
-  if (!data.repo) {
-    root.append(h(doc, 'p', 'hint', 'This project has no GitHub or Azure DevOps remote. Automations watch a repository on one of them.'));
+  const ws = data.scope === 'workspace';
+  const watched = ws ? (data.repos || []).filter((r) => r.repo) : [];
+  if (ws ? !watched.length : !data.repo) {
+    root.append(h(doc, 'p', 'hint', ws
+      ? 'No project in this workspace has a GitHub or Azure DevOps remote. Automations watch repositories on them.'
+      : 'This project has no GitHub or Azure DevOps remote. Automations watch a repository on one of them.'));
     return root;
   }
-  const azure = data.forge === 'azure';
+  const azure = ws ? watched.some((r) => r.forge === 'azure') : data.forge === 'azure';
   const head = h(doc, 'p', 'hint automations-repo');
-  head.append(`Watching ${data.repo}. ${deliveryLine(data, azure)} `);
+  head.append(ws ? `Watching ${watched.length} repositor${watched.length === 1 ? 'y' : 'ies'}: ${watched.map((r) => r.repo).join(', ')}. ${deliveryLine(data, azure)} `
+    : `Watching ${data.repo}. ${deliveryLine(data, azure)} `);
   head.append(btn(doc, 'Check now', 'btn btn-sm btn-quiet', () => cb.onCheckNow?.()));
   root.append(head);
+  if (ws) {
+    const off = (data.repos || []).filter((r) => !r.repo).map((r) => r.name);
+    root.append(h(doc, 'p', 'hint automations-scope', 'A new issue in any of them starts a workspace run: the plan may leave repositories '
+      + 'untouched. A pull request is reviewed on its own. Where a member project has rules for the same event, this workspace\'s win.'
+      + (off.length ? ` Not watched (no GitHub or Azure DevOps remote): ${off.join(', ')}.` : '')));
+  }
+  for (const o of data.overriddenBy || []) root.append(h(doc, 'p', 'hint automations-override', overrideLine(o)));
 
   const ah = h(doc, 'div', 'automations-switches drows');
   ah.append(h(doc, 'h3', '', 'Auto-handle'));
@@ -122,10 +224,12 @@ export function renderAutomations(doc, data, { workflowNames = {}, ...cb } = {})
     const sw = makeSwitch(doc, { label: s.label, checked: !!data.autoHandle?.[s.key], rowClass: 'automations-switch', data: { switch: s.key } });
     sw.input.addEventListener('change', () => cb.onSwitch?.(s.key, sw.input.checked));
     ah.append(sw.row);
-    // What the switch does, and the limits its rule runs under (the stored rule's once it exists, else the defaults).
+    // What the switch does, and the limits its rule runs under: the stored rule's (editable) once the switch was
+    // turned on, else the defaults it will start with.
     const own = (data.rules || []).find((r) => r.origin === 'auto-handle' && autoHandleKey(r) === s.key);
-    const help = h(doc, 'p', 'hint automations-switch-help', s.help || '');
-    help.append(h(doc, 'span', 'automations-switch-limits', limitsLine(own?.limits || data.defaultLimits)));
+    const help = h(doc, 'div', 'automations-switch-help');
+    help.append(h(doc, 'p', 'hint', (ws && WORKSPACE_HELP[s.key]) || s.help || ''),
+      limitsRow(doc, own?.limits || data.defaultLimits, own && cb.onEditLimits ? () => cb.onEditLimits(own) : null));
     ah.append(help);
   }
   ah.append(h(doc, 'p', 'hint', azure
@@ -147,7 +251,9 @@ export function renderAutomations(doc, data, { workflowNames = {}, ...cb } = {})
     const top = h(doc, 'div', 'pl-head');
     top.append(h(doc, 'b', '', s.title));
     if (!r.enabled) top.append(h(doc, 'span', 'badge grey', 'Off'));
-    row.append(top, h(doc, 'small', 'hint', s.detail));
+    row.append(top);
+    if (s.detail) row.append(h(doc, 'small', 'hint', s.detail));
+    row.append(limitsRow(doc, r.limits, cb.onEditLimits ? () => cb.onEditLimits(r) : null));
     const acts = h(doc, 'div', 'pl-actions');
     acts.append(btn(doc, r.enabled ? 'Turn off' : 'Turn on', 'btn btn-sm', () => cb.onToggleRule?.(r, !r.enabled)));
     acts.append(btn(doc, 'Delete', 'btn btn-sm', () => cb.onDeleteRule?.(r)));
@@ -155,6 +261,8 @@ export function renderAutomations(doc, data, { workflowNames = {}, ...cb } = {})
     rules.append(row);
   }
   root.append(rules);
+
+  root.append(waitingSection(doc, data.queue || [], cb));
 
   const evs = h(doc, 'div', 'automations-events drows');
   evs.append(h(doc, 'h3', '', 'Recent'));
@@ -165,9 +273,10 @@ export function renderAutomations(doc, data, { workflowNames = {}, ...cb } = {})
 }
 
 /**
- * Settings › Automations: every project that automates something, how events arrive, and the latest activity.
+ * Settings › Automations: every project and workspace that automates something, how events arrive, and the latest activity.
  * data: GET /api/automations ({ rules, events, switches, webhook, azureWebhook, polling })
- * projects: [{ key, name }] (the registered projects). cb: { onOpenProject(key), onApprove(event), onOpenRun(event) }
+ * projects: [{ key, name }] (the registered projects; a workspace's key is `workspaces/<id>`, its rules' owner key).
+ * cb: { onOpenProject(key), onApprove(event), onOpenRun(event), onStartNow(event), onRemoveQueued(event) }
  */
 export function renderAutomationsOverview(doc, data, projects = [], cb = {}) {
   const root = h(doc, 'div', 'automations automations-overview');
@@ -178,7 +287,7 @@ export function renderAutomationsOverview(doc, data, projects = [], cb = {}) {
   root.append(delivery);
 
   const list = h(doc, 'div', 'automations-projects drows');
-  list.append(h(doc, 'h3', '', 'Projects'));
+  list.append(h(doc, 'h3', '', 'Projects and workspaces'));
   const byProject = new Map();
   for (const r of data.rules || []) {
     if (!byProject.has(r.projectKey)) byProject.set(r.projectKey, []);
@@ -191,7 +300,7 @@ export function renderAutomationsOverview(doc, data, projects = [], cb = {}) {
     const row = h(doc, 'div', 'drow drow-stack automations-project');
     row.dataset.project = key;
     const top = h(doc, 'div', 'pl-head');
-    top.append(h(doc, 'b', '', names.get(key) || key), h(doc, 'span', 'hint', rs[0].repo || ''));
+    top.append(h(doc, 'b', '', names.get(key) || key), h(doc, 'span', 'hint', rs[0].scope === 'workspace' ? 'Workspace: every member repository' : rs[0].repo || ''));
     row.append(top);
     const on = rs.filter((r) => r.enabled);
     const switches = on.filter((r) => r.origin === 'auto-handle').map((r) => labelOf.get(autoHandleKey(r))).filter(Boolean);
@@ -203,6 +312,8 @@ export function renderAutomationsOverview(doc, data, projects = [], cb = {}) {
     list.append(row);
   }
   root.append(list);
+
+  root.append(waitingSection(doc, data.queue || [], cb, { names }));
 
   const evs = h(doc, 'div', 'automations-events drows');
   evs.append(h(doc, 'h3', '', 'Recent'));

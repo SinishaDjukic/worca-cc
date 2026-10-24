@@ -1685,6 +1685,8 @@ function handleServerMessage(msg) {
     if (currentView() === 'settings' && currentSettingsTab === 'automations') void loadAutomationsView();
     const sec = projDetail && projDetail.screen.querySelector('.pd-sec-automations');
     if (sec && sec.isConnected) void buildPdAutomations(sec, projDetail.key);
+    const wsec = wsDetail && wsDetail.screen && wsDetail.screen.querySelector('.pd-sec-automations');
+    if (wsec && wsec.isConnected) void buildWdAutomations(wsec, wsDetail.id);
     return;
   }
 
@@ -9283,7 +9285,7 @@ if (el.wsList) {
 // editing — description, re-scan, delete, metrics home, policy home, routing, the map's overrides —
 // lives here.
 // ---------------------------------------------------------------------------
-const WS_TABS = ['overview', 'map', 'team', 'actions'];
+const WS_TABS = ['overview', 'map', 'team', 'actions', 'automations'];
 // workspaces-changed actions that can change the Map tab: an override (P5 routes) or a scan's save.
 const WD_MAP_ACTIONS = new Set(['map', 'scan-created', 'scan-updated', 'members']);   // members: a removal prunes the map
 function parseWsParam(param = '') {
@@ -9428,6 +9430,8 @@ const WD_TABS = [
   { key: 'map', label: 'Map', level: 'advanced', badge: () => null, visible: () => true, build: (sec, id) => buildWdMap(sec, id) },
   { key: 'team', label: 'Team', level: 'expert', badge: () => null, visible: () => true, build: (sec, id) => buildWdTeam(sec, id) },
   { key: 'actions', needsGit: true, label: 'Actions', level: 'advanced', badge: () => null, visible: () => true, build: (sec, id) => buildWdActions(sec, id) },
+  // Workspace Git event automations: every member's repository, shown while the gitAutomations flag is on.
+  { key: 'automations', needsGit: true, label: 'Automations', level: 'advanced', badge: () => null, visible: () => flagOn('gitAutomations'), build: (sec, id) => buildWdAutomations(sec, id) },
 ];
 function initWdTabs(screen, w) {
   initDetailTabs(screen, WD_TABS.map((t) => ({ ...t, icon: PD_TAB_ICONS[t.key] })), w, {
@@ -38407,6 +38411,15 @@ async function approveAutomation(ev) {
   if (!(await confirmModal({ title: 'Approve', message: `Start the fix for #${ev.number} with the proposed plan? Worca opens a draft pull request when it is done.`, confirmLabel: 'Start the fix' }))) return;
   automationsFail(await mcpApi('POST', `/api/automations/events/${encodeURIComponent(ev.id)}/approve`, {}), 'The fix did not start');
 }
+/** A waiting event: start it now past its limits, or take it out of the queue. */
+async function startAutomationNow(ev) {
+  if (!(await confirmModal({ title: 'Start now', message: `Start #${ev.number} now? It skips the line and its rule's limits; it still counts toward today's runs.`, confirmLabel: 'Start now' }))) return;
+  automationsFail(await mcpApi('POST', `/api/automations/events/${encodeURIComponent(ev.id)}/start`, {}), 'It did not start');
+}
+async function removeAutomationQueued(ev) {
+  if (!(await confirmModal({ title: 'Remove from the queue', message: `Remove #${ev.number} from the queue? It will not start; open a run by hand if it still needs one.`, confirmLabel: 'Remove', danger: true }))) return;
+  automationsFail(await mcpApi('POST', `/api/automations/events/${encodeURIComponent(ev.id)}/remove`, {}), 'Could not remove it');
+}
 function openAutomationRun(ev, projectKey) {
   if (ev.runId && runs.has(ev.runId)) { location.hash = `running/${ev.runId}`; return; }
   location.hash = `history/${histDetailParam({ id: ev.pipelineId, projectKey })}`;
@@ -38419,16 +38432,34 @@ async function buildPdAutomations(sec, key) {
   const proj = projectByKey(key);
   if (!proj || !flagOn('gitAutomations')) return;
   const seq = ++pdAutomationsSeq;
-  const [r, wf] = await Promise.all([mcpApi('GET', `/api/automations?projectDir=${encodeURIComponent(proj.path)}`), mcpApi('GET', '/api/workflows')]);
-  if (seq !== pdAutomationsSeq || !sec.isConnected) return;
+  await buildAutomationsTab(sec, { target: { projectDir: proj.path }, where: 'this project', stale: () => seq !== pdAutomationsSeq,
+    reload: () => buildPdAutomations(sec, key), openRun: (ev) => openAutomationRun(ev, key) });
+}
+// Workspace page › Automations: the same tab over every member's repository; an issue starts a workspace run.
+let wdAutomationsSeq = 0;
+async function buildWdAutomations(sec, id) {
+  sec.classList.add('pd-sec-automations');
+  if (!flagOn('gitAutomations')) return;
+  const seq = ++wdAutomationsSeq;
+  await buildAutomationsTab(sec, { target: { workspaceId: id }, where: 'this workspace', stale: () => seq !== wdAutomationsSeq,
+    reload: () => buildWdAutomations(sec, id),
+    // An issue's run is the workspace's; a PR's review ran in its member's project.
+    openRun: (ev, data) => openAutomationRun(ev, (ev.kind === 'pr' && (data.repos || []).find((m) => m.repo && m.repo.toLowerCase() === String(ev.repo || '').toLowerCase())?.projectKey)
+      || `workspaces/${id}`) });
+}
+/** One Automations tab: `target` is { projectDir } or { workspaceId }, the query and every write's body. */
+async function buildAutomationsTab(sec, { target, where, stale, reload, openRun }) {
+  const q = new URLSearchParams(target).toString();
+  const [r, wf] = await Promise.all([mcpApi('GET', `/api/automations?${q}`), mcpApi('GET', '/api/workflows')]);
+  if (stale() || !sec.isConnected) return;
   if (!r.ok) { sec.replaceChildren(automationsErr(r)); return; }
   const workflows = (wf.ok && Array.isArray(wf.data?.workflows) ? wf.data.workflows : []).map((w) => ({ id: w.id, name: w.name || w.id }));
   const workflowNames = Object.fromEntries([['wf_default', 'Default'], ...workflows.map((w) => [w.id, w.name])]);
   const fail = automationsFail;
-  const reload = () => buildPdAutomations(sec, key);
+  const lim = r.data.defaultLimits || {};
   sec.replaceChildren(renderAutomations(document, r.data, {
     workflowNames,
-    onSwitch: async (key, on) => { const res = await mcpApi('PUT', '/api/automations/auto-handle', { projectDir: proj.path, key, on }); fail(res, 'Could not change Auto-handle'); await reload(); },
+    onSwitch: async (key, on) => { const res = await mcpApi('PUT', '/api/automations/auto-handle', { ...target, key, on }); fail(res, 'Could not change Auto-handle'); await reload(); },
     onCheckNow: async () => { fail(await mcpApi('POST', '/api/automations/poll', {}), 'Could not check GitHub'); await reload(); },
     onToggleRule: async (rule, on) => { fail(await mcpApi('PATCH', `/api/automations/rules/${encodeURIComponent(rule.id)}`, { enabled: on }), 'Could not change the rule'); await reload(); },
     onDeleteRule: async (rule) => {
@@ -38436,8 +38467,21 @@ async function buildPdAutomations(sec, key) {
       fail(await mcpApi('DELETE', `/api/automations/rules/${encodeURIComponent(rule.id)}`), 'Could not delete the rule');
       await reload();
     },
+    onEditLimits: async (rule) => {
+      const l = rule.limits || lim;
+      const v = await promptModal({ title: 'Edit limits', confirmLabel: 'Save limits', fields: [
+        { id: 'dailyRuns', label: 'Runs per day', value: String(l.dailyRuns), hint: '1 to 200. Past it, new events wait in the queue and start the next day (the count resets at midnight UTC).' },
+        { id: 'maxCostUsd', label: 'Cost cap per run (USD)', value: String(l.maxCostUsd), hint: '0.1 to 1000. A run that passes it is stopped.' },
+        { id: 'maxConcurrent', label: `Runs at a time in ${where}`, value: String(l.maxConcurrent), hint: '1 to 10. Past it, new events wait and start when a run ends.' }] });
+      if (!v) return;
+      fail(await mcpApi('PATCH', `/api/automations/rules/${encodeURIComponent(rule.id)}`,
+        { limits: { dailyRuns: v.dailyRuns, maxCostUsd: v.maxCostUsd, maxConcurrent: v.maxConcurrent } }), 'Could not change the limits');
+      await reload();
+    },
     onApprove: async (ev) => { await approveAutomation(ev); await reload(); },
-    onOpenRun: (ev) => openAutomationRun(ev, key),
+    onStartNow: async (ev) => { await startAutomationNow(ev); await reload(); },
+    onRemoveQueued: async (ev) => { await removeAutomationQueued(ev); await reload(); },
+    onOpenRun: (ev) => openRun(ev, r.data),
     onAddRule: async () => {
       const v = await promptModal({ title: 'Add rule', confirmLabel: 'Add rule', fields: [
         { id: 'when', label: 'When', value: 'issue.opened:propose', options: [
@@ -38451,12 +38495,12 @@ async function buildPdAutomations(sec, key) {
         { id: 'labels', label: 'Only with these labels', placeholder: 'bug, regression', hint: 'Comma separated; empty: any.' },
         { id: 'triggerLabel', label: 'Trigger label', value: 'worca', hint: 'A maintainer adds it to let an outsider\'s issue start. Empty: outsiders never start one.' },
         { id: 'allowLogins', label: 'Also trust these logins', placeholder: 'octocat' },
-        { id: 'dailyRuns', label: 'Runs per day', value: '10' },
-        { id: 'maxCostUsd', label: 'Cost cap per run (USD)', value: '5' },
-        { id: 'maxConcurrent', label: 'Runs at a time in this project', value: '1' }] });
+        { id: 'dailyRuns', label: 'Runs per day', value: String(lim.dailyRuns ?? 10) },
+        { id: 'maxCostUsd', label: 'Cost cap per run (USD)', value: String(lim.maxCostUsd ?? 5) },
+        { id: 'maxConcurrent', label: `Runs at a time in ${where}`, value: String(lim.maxConcurrent ?? 1) }] });
       if (!v) return;
       const [event, action] = v.when.split(':');
-      const res = await mcpApi('POST', '/api/automations/rules', { projectDir: proj.path, event, action,
+      const res = await mcpApi('POST', '/api/automations/rules', { ...target, event, action,
         ...(action === 'run' ? { workflowId: v.workflowId } : {}),
         filter: { labels: v.labels, triggerLabel: v.triggerLabel, allowLogins: v.allowLogins },
         limits: { dailyRuns: v.dailyRuns, maxCostUsd: v.maxCostUsd, maxConcurrent: v.maxConcurrent } });
@@ -38476,9 +38520,18 @@ async function loadAutomationsView() {
   const r = await mcpApi('GET', '/api/automations');
   if (seq !== automationsOverviewSeq) return;
   if (!r.ok) { host.replaceChildren(automationsErr(r)); return; }
-  host.replaceChildren(renderAutomationsOverview(document, r.data, (state.projects || []).filter((p) => p && p.key), {
-    onOpenProject: (key) => { location.hash = `projects/${projParamFor(key, 'automations')}`; },
+  if (!(state.workspaces || []).length) { try { await loadWorkspaces(); } catch { /* names only */ } }
+  if (seq !== automationsOverviewSeq) return;
+  // A workspace's rules are keyed workspaces/<id>: its row opens the workspace's Automations tab.
+  const owners = [...(state.projects || []).filter((p) => p && p.key),
+    ...(state.workspaces || []).filter((w) => w && w.id).map((w) => ({ key: `workspaces/${w.id}`, name: w.name || w.id }))];
+  host.replaceChildren(renderAutomationsOverview(document, r.data, owners, {
+    onOpenProject: (key) => {
+      location.hash = key.startsWith('workspaces/') ? `workspaces/${wsParamFor(key.slice('workspaces/'.length), 'automations')}` : `projects/${projParamFor(key, 'automations')}`;
+    },
     onApprove: async (ev) => { await approveAutomation(ev); await loadAutomationsView(); },
+    onStartNow: async (ev) => { await startAutomationNow(ev); await loadAutomationsView(); },
+    onRemoveQueued: async (ev) => { await removeAutomationQueued(ev); await loadAutomationsView(); },
     onOpenRun: (ev) => openAutomationRun(ev, ev.projectKey),
   }));
 }
