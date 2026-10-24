@@ -199,3 +199,10 @@ test('planApprovedLine: the plan receipt names the roles reviewed and the open i
   assert.equal(planApprovedLine(clean), 'Plan approved · 5 roles reviewed');
   assert.equal(planApprovedLine(null), 'Plan approved');
 });
+
+test('projectLogRecord keeps a Bash description (desc) and leaves it absent otherwise', () => {
+  const rec = projectLogRecord({ source: 'implementer', level: 'debug', text: '→ Bash ls', ts: 't', desc: 'List files' });
+  assert.equal(rec.desc, 'List files');
+  assert.equal('desc' in projectLogRecord({ source: 's', level: 'info', text: 'x', ts: 't' }), false);
+  assert.equal('desc' in projectLogRecord({ source: 's', level: 'info', text: 'x', ts: 't', desc: '' }), false);
+});

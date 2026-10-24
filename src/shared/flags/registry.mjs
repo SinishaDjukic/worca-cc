@@ -84,7 +84,7 @@ export const FLAGS = Object.freeze([
   entry({
     key: 'commandSummaries',
     title: 'Command summaries',
-    description: 'Adds Settings › Chat › Summarise commands: commands in chat show as one line saying what they do, with the command and output one click away.',
+    description: 'Adds Settings › Chat › Summarise commands: commands in chat show as one line saying what they do, with the command and output one click away. Run logs show each Bash call\'s own description, with a Summaries / Raw switch.',
     stage: 'beta',
     default: true,
     owner: 'e-angelov',

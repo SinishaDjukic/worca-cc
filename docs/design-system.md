@@ -144,6 +144,12 @@ A disabled checked box fills `--seq`. A selected option row (`.opt-row`, `.chip-
 an ink border.
 ### Segmented control
 `.seg`: one `--field` container, 28px / 13px buttons, the selected one `--surface`. `.seg-sm` is the same size.
+The run log's Summaries / Raw switch (`.log-view-seg`, flag `commandSummaries`) is a `.seg-sm` in the Logs bar and the step
+log drawer head. A summarised line's `title` shows the command on hover; that is a mouse convenience, and Raw is the
+accessible path to the command. With the switch, Open in Logs and × in the drawer head never shrink; the title ellipsizes.
+At 480px and below, the drawer head puts the step title on its own row and keeps the switch, Open in Logs and × together
+on the row below, with 7px switch padding (a 311px History drawer leaves 283px). The Logs bar wraps while the switch
+shows, so its selects keep their content width and search shares the switch row with copy.
 ### Tabs
 `.tabs` / `.tab`: underline tabs, 32px, never boxed (checked).
 ### Filter chip
