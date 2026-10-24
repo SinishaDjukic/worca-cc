@@ -404,3 +404,7 @@ folder's settings `modelConfigs.customOverrides` on `chat-base-3` (`thinkingLeve
 - Cursor: still not installable here (cursor.com, downloads.cursor.com and api2.cursor.sh refused; the npm package
   `cursor-agent` is an unrelated third-party tool). Its to-verify list above is unchanged.
 - Registry copies with a remote (HTTP) server on Gemini/Qwen/OpenCode/Copilot: only stdio copies were run end to end.
+- Context files stay text in the prompt: a chat folder `context.fileName` (plus `discoveryMaxDirs: 0`) did not keep
+  `~/.gemini/GEMINI.md` out of a Gemini CLI request (checked with a marker), as the spike found for Qwen Code.
+- Full suite: `node tools/test.mjs` — 15 905 tests, the same 9 failures as the base branch (git/clone/export/HTTP-timeout
+  and `ui-history-shipit`), nothing else.

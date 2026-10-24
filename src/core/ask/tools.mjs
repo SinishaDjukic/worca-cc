@@ -1696,7 +1696,7 @@ export function createAskTools(deps) {
   };
   // A locked-down chat's image or PDF (read_attachment, read_file): metadata, plus the body as an MCP content block when
   // this chat's engine forwards that kind to its model (deps.chatImages / deps.chatPdfs, engine-switch.mjs `chat`).
-  const mediaResult = ({ name, kind, mime, bytes, uri, body }) => {
+  const mediaResult = ({ name, kind, mime, bytes, uri, body, tool = 'read_attachment' }) => {
     const pdf = mime === 'application/pdf';
     const meta = { name, kind, mime, totalBytes: bytes };
     if (!(pdf ? deps.chatPdfs : deps.chatImages)) {
@@ -1704,7 +1704,7 @@ export function createAskTools(deps) {
     }
     if (!(bytes <= MCP_MEDIA_MAX_BYTES)) return { ...meta, note: `too large to view in this chat (${Math.ceil(bytes / 1048576)} MB; the limit is ${MCP_MEDIA_MAX_BYTES / 1048576} MB)` };
     const buf = body();
-    if (!buf) throw new AskToolError('read_attachment: attachment not found');
+    if (!buf) throw new AskToolError(tool === 'read_file' ? `read_file: ${name} could not be read` : 'read_attachment: attachment not found');
     const where = deps.engine === 'codex'
       ? `it is content[1] of this result: in exec, pass that block to image() to look at it`
       : 'it is attached to this result: look at it there';
@@ -2274,7 +2274,7 @@ export function createAskTools(deps) {
         const mime = mediaMimeOf(input.path);
         if (mime && typeof deps.files?.readMedia === 'function') {
           const m = filesOf('read_file').readMedia({ path: str(input.path), maxBytes: MCP_MEDIA_MAX_BYTES });
-          return mediaResult({ name: m.path, kind: mime === 'application/pdf' ? 'binary' : 'image', mime, bytes: m.bytes, uri: `file://${m.path}`, body: () => m.read() });
+          return mediaResult({ name: m.path, kind: mime === 'application/pdf' ? 'binary' : 'image', mime, bytes: m.bytes, uri: `file://${m.path}`, body: () => m.read(), tool: 'read_file' });
         }
         return filesOf('read_file').readFile({ path: str(input.path), offset: input.offset, limit: input.limit });
       } catch (err) { throw fileError(err); }

@@ -776,7 +776,7 @@ feature below goes through worca (its MCP tools, its spawn options):
   The suggestion runs on the chat's own model; on Codex on GPT-5.6 Luna, on Copilot on GPT-5 Mini (an included model: no
   premium request on a paid plan).
 - **The Auto-workflow classifier** (`propose_workflow` with a task) runs on the chat's own engine, locked down the same
-  way, on the engine's classifier model (Settings › Models) or else the chat's own.
+  way, on the engine's classifier model (the Models page) or else the chat's own.
 - **Effort.** Gemini CLI takes it as the model's thinking (a thinking level on Gemini 3, a thinking budget on Gemini 2.5),
   Qwen Code as its `model.reasoningEffort` setting.
 
