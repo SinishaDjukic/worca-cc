@@ -81,6 +81,8 @@ ring for every button, link, summary, tab, switch and `[tabindex]` while `data-i
 back. Only a key that moves or acts on focus counts (Tab, the arrows, Enter, Space or Escape outside a field): typing,
 Enter in a field and a modifier alone keep the pointer mode (`ui/public/input-mode.mjs`). Fields keep their ink border
 on focus. Rings sit on `:focus-visible`, never on `:focus`.
+A divided list with list keys (`ui/public/list-keys.mjs`, the Runs list) is one Tab stop with a moving focus: rows and
+foldable section heads take ↑ ↓ / J K, their ⌄, ⋯ and checkbox are `tabindex="-1"`.
 
 ## Components
 ### Button (checked)
@@ -212,7 +214,7 @@ is appended inside it (a `.btn-split.mini`) and placed by its CSS; a `{ switch: 
 switch row (help line, `.switch`) whose toggle keeps the menu open. The run page's View PR ▾ is built with it. The sidebar flyouts (`.nav-fly`), the
 composer pickers (`.ask-pop`) and the split-button menus (`.btn-split-menu`) keep their
 own builders and positions and add `.menu` / `.menu-item`; they carry no box or row skin of their own. No hand-built
-dropdowns.
+dropdowns. An item that has a key shows it as its `hint` (the 11px `--ink-2` count slot): the Runs row ⋯ reads `S`, `E`, `⌫`.
 ### Row button
 `.row-btn`: a whole divided-list row that a person opens (a Library folder, a Memory row, a keyed project row): full
 width, `--hover` fill and `--r-sm` corner on hover, an inset ring on keyboard focus. Each list keeps its own grid and
@@ -256,6 +258,12 @@ body's padding, `--dlg-gap-head` / `--dlg-gap-foot` (default 18px / 14px): set t
 header with negative margins, and keep a nested scroller only for a bordered box (a list or a preview) that is bounded
 on purpose. Under 640px of height the head compacts (smaller hero, tighter gap) but stays. The Marketplace's
 `.mk-dialog` / `.mk-sheet` follow the same model with their own class names.
+
+Keyboard shortcuts sheet (`ui/public/keys-sheet.mjs`): the one sheet listing the list keys, opened by `?` on a list page
+or View › Keyboard shortcuts. A 760px `.card` dialog in the shared anatomy: two columns of divided rows (label left, key
+chips right, "or" between alternatives), stacked under 640px, and a foot with a 12px note and Close. Its `kbd.kbd`
+chips share the top search's `.tsearch-kbd` rule; there is no second key-chip style. Esc, Close or the backdrop close it
+and hand the focus back to the opener.
 
 ## Patterns
 - Status line: "State · detail", for example "Failed · Review · Review Implementation". No colon forms. In a card head

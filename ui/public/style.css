@@ -400,9 +400,22 @@ body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;pa
   font:400 var(--fs-body) var(--sans);-webkit-appearance:none;appearance:none;}
 .tsearch-input::placeholder{color:var(--ink-2);}
 .tsearch-input::-webkit-search-cancel-button,.tsearch-input::-webkit-search-decoration{-webkit-appearance:none;}
-.tsearch-kbd{display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:20px;height:20px;padding:0 5px;
+/* The top search chip is the one key chip (issue #948): the Keyboard shortcuts sheet's kbd shares it */
+.tsearch-kbd,.kbd{display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:20px;height:20px;padding:0 5px;
   border-radius:var(--r-sm);background:var(--panel);box-shadow:inset 0 0 0 1px var(--line-2);color:var(--ink-3);
   font:500 11px/1 var(--sans);white-space:nowrap;}
+/* The Keyboard shortcuts sheet (keys-sheet.mjs) */
+.keys-modal .card.keys-dlg{width:min(760px,100%);}   /* beats .viewer-modal .card's 860px (0,2,0) */
+.keys-title{margin:0;font:600 var(--fs-section)/1.25 var(--sans);}   /* the .card h2 size */
+.keys-cols{display:grid;grid-template-columns:1fr 1fr;gap:0 32px;}
+.keys-sec + .keys-sec{margin-top:16px;}
+.keys-h{margin:0 0 4px;font:600 var(--fs-meta)/1.5 var(--sans);color:var(--ink-2);}
+.keys-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:30px;border-top:1px solid var(--line);font-size:var(--fs-body);}
+.keys-combo{display:inline-flex;align-items:center;gap:4px;}
+.keys-or{margin:0 4px;color:var(--ink-3);font-size:var(--fs-meta);}
+.keys-note{margin:0 0 12px;color:var(--ink-2);font-size:var(--fs-meta);}
+.keys-foot{display:flex;justify-content:flex-end;}
+@media (max-width:640px){.keys-cols{grid-template-columns:1fr;}.keys-col + .keys-col{margin-top:16px;}}
 .tsearch-kbd:empty{display:none;}
 .tsearch-pop{position:absolute;z-index:30;top:calc(100% + 8px);left:50%;transform:translateX(-50%);width:100%;min-width:360px;
   max-height:min(480px,calc(100vh - 72px));overflow-y:auto;display:flex;flex-direction:column;padding:6px;
