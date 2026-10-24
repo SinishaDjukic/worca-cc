@@ -38,6 +38,7 @@ test('slice 3: the card head holds the head buttons with the one PR slot, then t
     assert.ok(head.nextElementSibling.matches('.rd-track'), `${id}: the tracker follows the head`);
     assert.equal(tpl.querySelectorAll('.rd-track').length, 1, `${id}: one tracker`);
     assert.equal(tpl.querySelector('.rd-pr-box'), null, `${id}: no PR bar`);
+    assert.ok(tpl.querySelector('.rd-sheet-head > .rd-now-top.run-status:first-child'), `${id}: the status block opens the head`);
   }
   const live = page.getElementById('run-detail-tpl').content.querySelector('.rd-sheet-head > .rd-head-acts');
   assert.ok(live.previousElementSibling.matches('.rd-live-row'), 'the head buttons come after the Live view row');
