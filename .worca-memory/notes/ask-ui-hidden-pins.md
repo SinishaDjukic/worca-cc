@@ -2,7 +2,7 @@
 name: ask-ui-hidden-pins
 description: Read before planning or reviewing a change to the Chat panel's DOM, the top bar, the page shell, openChat entry points or a new ask-api server test — the pins a
 paths: ui/public/ask-panel.mjs, ui/public/app.js, ui/public/index.html, ui/public/style.css, ui/public/topnav-search.mjs, test/ask-api-*.test.mjs, test/ui-chat-*.test.mjs, test/ask-panel*.test.mjs
-updated: 2026-10-24T22:35:13.864Z
+updated: 2026-10-24T23:42:17.504Z
 author: Denislav Prinov
 ---
 
@@ -29,10 +29,17 @@ Found replaying "Ask worca beside the page" (2026-10-24, 8 tasks). Each one turn
 - `showThread(null)` from `wantThread === undefined` (nothing ever shown) runs a full `newThread()` reset (scope, Sets, model). Tests booting `bootChat` on `#chat` start at `null` and never see it — boot on another page with the column open.
 - app.js hides the panel BEFORE moving its root, so `openPage`'s unconditional re-pin covers the move; a panel-level `setHost` while open needs its own `applyPin()`.
 - CSS: a `position:fixed;top:…;bottom:0` override under a base `height:100%` keeps the height (bottom ignored): add `height:auto` — the dock's phone tier hid the composer 48px below the screen; only a real browser shows it.
+- A path that USED to route to `#chat` got side effects from that hashchange for free; a no-route path (the side column) must do them itself: the artifact popup (`artifacts/viewer.mjs` `onHash`) closed — else the column opens under it (z 50) and its `focusin` pulls the focus back (fixed with the `closeOpenViewer` export).
+- `openPage` clears the unread dot on ANY show (`setUnread(false)`). A control that mirrors the Chat row's dot must also land where the Chat row does (`askPanel.unreadThreadId()`), or the news of a reply in another chat (a PR fix card) is lost.
+- Passive `newThread()` (a 404 on load, `ask-history-cleared`) calls `focusComposer()`: a no-op while the Chat section is hidden, a focus theft once the panel shows beside a page — pass `focus:false` there.
+- A page chip's id is the left-out key: an id that changes when data lands (a live run's `pipelineId` with the first frame) un-leaves it; an id without its run (`file:<path>`) leaves the same file out on the next run. Key a live run by `runId`, a file by `file:<run>:<path>`.
+- An overlay that stays open across routes (the column below 1081px) makes navigation started INSIDE it (run cards, `a[href^="#"]`) look dead: the page changes behind it.
 
 ## Test-harness traps
 - An ask-api test that posts a message and ends without `await idle()` (or settling the turn) lets the file's `after()` delete `WORCA_MOCK` before the turn's async title job spawns: the real CLI hits the no-real-claude guard, `npm test` exits 1 with 0 failures — only in the full suite, never alone. Compare `N test spawn(s) reached the real-claude guard` with a checkpoint run.
 - `bootChat` boots one app per jsdom window and rebinds the global `document`: an app.js observer/timer callback that reads the global `document` throws "after the test ended" once another test booted. Capture the node at creation and bail when `document.body !== body`.
 - The workspace page in `bootChat` needs `/api/team-metrics/scopes` and `/api/policy/scopes` arms (`paintWsMetricsRows` throws on the default body).
 - A test of a late repaint must make the late data actually late: hold the arm's promise (`new Promise((r) => held.push(…))`) and release it after `settle`, else the route's own repaint covers the hook and its revert stays green.
+- index.html ships static hidden `.viewer-modal` nodes (confirm, model editor, folder browser…): `querySelector('.viewer-modal')` is never null — the artifact popup is `.viewer-modal.apv`.
+- Panel-harness tests that only ever click the pill's `No project` item leave the project/workspace items' handlers unguarded; a host-move test that moves the root by hand never runs app.js's close → move → `setHost` → `open` glue — add a `bootChat` test that streams in the column and routes (Chat row, Open in Chat, Workflows and back).
 - `tools/test.mjs` runs a file named twice twice: a plan's "Step 2 command + `$(ls test/ask-panel*.test.mjs)`" line double-counts (v2 quoted 459 for 449 + 2×5). Name each file once.
