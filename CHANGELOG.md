@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Command summaries in chat (#911)
+
+- Chat: one-line command summaries, grouped cards, 760px column: Clean: the cycle-1 web UI major (the group head total froze while a grouped command ran) is fixed.
+- Command summaries helper job: fallback summaries for chat commands: The diff implements plan v3 file by file: a redacted-command-only summariser with an in-flight-deduped LRU cache, the commandSummaryModel setting copied from namingModel, the flipCard write-back with one ask-command-summary frame, and the flag-gated Helper jobs row.
+- Run logs: Bash descriptions with a Summaries / Raw switch: Cycle 3 fixes the three web UI cycle-2 findings with CSS only, gated on the flag and on containers that hold the switch: the drawer controls get flex:none, the switch padding is 7px at 480px and below, and the Logs bar wraps with content-width selects.
+
 ### Projects: New never overrides; Remove deletes worca's own folders
 
 - New by name names what blocks it: a registered project by its stored name, a folder by its path ("<path> is already registered as "<name>""), in the dialog, over the API and on Ask cards; a refusal from Create itself keeps Create off until the name changes.
