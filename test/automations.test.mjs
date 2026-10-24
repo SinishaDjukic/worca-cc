@@ -312,7 +312,7 @@ test('engine: the concurrency cap queues until a slot frees; the daily cap queue
   assert.equal(h.calls.start.length, 2);
   const waiting = listEvents({ status: 'queued' });
   assert.deepEqual(waiting.map((e) => [e.number, e.reason]), [[3, 'daily-cap']]);
-  assert.match(h.calls.notify.at(-1).message, /Queued issue #3: .*starts the next day/);
+  assert.match(h.calls.notify.at(-1).message, /^Queued issue #3 · the rule's daily run limit is reached\. It starts the next day \(UTC\)\.$/);
   h.gh.issues.set(3, issue(3));
   await h.engine.tick();
   assert.equal(h.calls.start.length, 2, 'still today');
@@ -657,4 +657,13 @@ test('engine triage: unclear asks for details; no classifier answer keeps the ro
   await b.engine.handleEvent(issueEvent(REPO, issue(6)));
   assert.deepEqual(b.io.templates, ['propose:bug']);
   assert.deepEqual(b.io.labels, [], 'no AI answer: no label');
+});
+
+test('skipWords: plain sentences with no colon forms (design system status lines)', async () => {
+  const { skipWords } = await import('../src/core/automations.mjs');
+  for (const r of ['closed', 'own', 'before-rule', 'missed', 'filtered', 'draft', 'untrusted-author', 'daily-cap', 'concurrency',
+    'queue-full', 'removed', 'cost-cap', 'start-refused', 'superseded', 'question', 'needs-info']) {
+    assert.notEqual(skipWords(r), r, `${r} has words`);
+    assert.ok(!skipWords(r).includes(': '), r);
+  }
 });

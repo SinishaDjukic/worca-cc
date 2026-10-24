@@ -551,13 +551,13 @@ export function limitDecision(rule, { startedToday = 0, liveInProject = 0 } = {}
 const SKIP_WORDS = Object.freeze({
   closed: 'it is closed', own: 'Worca opened it', 'before-rule': 'it was opened before the rule was turned on',
   missed: 'it was opened while Worca was not running (missed items are not replayed)', filtered: 'its labels do not match the rule',
-  draft: 'it is a draft', 'untrusted-author': 'its author is not a collaborator: a maintainer can add the trigger label to let it start',
-  'daily-cap': "the rule's daily run cap is reached: it starts the next day (UTC)", concurrency: 'as many event runs as allowed are running: it starts when one ends',
+  draft: 'it is a draft', 'untrusted-author': 'its author is not a collaborator. A maintainer can add the trigger label to let it start',
+  'daily-cap': "the rule's daily run limit is reached. It starts the next day (UTC)", concurrency: 'as many event runs as allowed are running. It starts when one ends',
   'queue-full': `the rule already has ${MAX_QUEUED_PER_RULE} events waiting`, removed: 'removed from the queue by hand',
   'cost-cap': "the run passed the rule's cost cap and was stopped", 'start-refused': 'the run could not start',
   superseded: 'a newer push replaced the head it was queued for',
-  question: 'triage read it as a question: Worca commented and started no run',
-  'needs-info': 'triage could not tell a bug from a feature: Worca asked for details and started no run',
+  question: 'triage read it as a question. Worca commented and started no run',
+  'needs-info': 'triage could not tell a bug from a feature. Worca asked for details and started no run',
 });
 export const skipWords = (reason) => SKIP_WORDS[reason] || reason || 'skipped';
 
@@ -853,14 +853,14 @@ export function createAutomationEngine(deps = {}) {
     }
     await labelAfterAi(rule, ev, triage);
     const next = upd(event.id, { status: 'skipped', reason, posted: true, phase: triage.kind });
-    notify('skipped', next, rule, `Triaged #${ev.number} as ${triage.kind === 'question' ? 'a question' : 'unclear'}${triage.reason ? ` (${triage.reason})` : ''}: no run.`);
+    notify('skipped', next, rule, `Triaged #${ev.number} as ${triage.kind === 'question' ? 'a question' : 'unclear'}${triage.reason ? ` (${triage.reason})` : ''} · no run.`);
     changed();
     return next;
   }
 
   function fail(event, rule, reason, detail = null) {
     const next = upd(event.id, { status: 'failed', reason: detail ? `${reason}: ${String(detail).slice(0, 300)}` : reason });
-    notify('failed', next, rule, `${skipWords(reason)}${detail ? `: ${detail}` : ''}.`);
+    notify('failed', next, rule, `Failed · ${skipWords(reason)}${detail ? ` · ${detail}` : ''}.`);
     changed();
     return next;
   }
@@ -900,19 +900,19 @@ export function createAutomationEngine(deps = {}) {
       // Worca's own items, closed ones and items from before the rule are not news: they are never logged.
       if (d.reason === 'own' || d.reason === 'before-rule' || d.reason === 'closed') return null;
       const c = claimEvent(rule, ev, { via, status: 'skipped', reason: d.reason, now: now() });
-      if (c && !c.same) { notify('skipped', c.event, rule, `Skipped ${ev.kind === 'pr' ? 'PR' : 'issue'} #${ev.number}: ${skipWords(d.reason)}.`); changed(); }
+      if (c && !c.same) { notify('skipped', c.event, rule, `Skipped ${ev.kind === 'pr' ? 'PR' : 'issue'} #${ev.number} · ${skipWords(d.reason)}.`); changed(); }
       return c?.event || null;
     }
     const cap = limitDecision(rule, { startedToday: runsStartedSince(rule.id, dayStart()), liveInProject: liveRunsInProject(rule.projectKey) });
     // A limit queues the event; only a full queue (a flood) skips it.
     if (cap && queuedForRule(rule.id) >= MAX_QUEUED_PER_RULE) {
       const c = claimEvent(rule, ev, { via, status: 'skipped', reason: 'queue-full', now: now() });
-      if (c && !c.same) { notify('skipped', c.event, rule, `Skipped ${ev.kind === 'pr' ? 'PR' : 'issue'} #${ev.number}: ${skipWords('queue-full')}.`); changed(); }
+      if (c && !c.same) { notify('skipped', c.event, rule, `Skipped ${ev.kind === 'pr' ? 'PR' : 'issue'} #${ev.number} · ${skipWords('queue-full')}.`); changed(); }
       return c?.event || null;
     }
     const c = claimEvent(rule, ev, { via, status: cap ? 'queued' : 'starting', reason: cap ? cap.reason : null, now: now() });
     if (!c) return null;                                   // already handled: never twice
-    if (cap) { notify('queued', c.event, rule, `Queued ${ev.kind === 'pr' ? 'PR' : 'issue'} #${ev.number}: ${skipWords(cap.reason)}.`); changed(); return c.event; }
+    if (cap) { notify('queued', c.event, rule, `Queued ${ev.kind === 'pr' ? 'PR' : 'issue'} #${ev.number} · ${skipWords(cap.reason)}.`); changed(); return c.event; }
     return start(rule, c.event, ev);
   }
 
@@ -1045,7 +1045,7 @@ export function createAutomationEngine(deps = {}) {
     }
     const next = upd(event.id, { status: 'done', posted: true });
     const urls = (event.prs || []).map((p) => p.url).filter(Boolean);
-    notify('done', next, rule, urls.length > 1 ? `Draft PRs opened for #${event.number}: ${urls.join(', ')}` : `Draft PR opened for #${event.number}: ${prUrl}`);
+    notify('done', next, rule, urls.length > 1 ? `Draft PRs opened for #${event.number} · ${urls.join(', ')}` : `Draft PR opened for #${event.number} · ${prUrl}`);
     changed();
     return next;
   }

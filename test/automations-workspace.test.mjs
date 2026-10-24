@@ -219,7 +219,7 @@ test('the fix ends with one draft PR per changed member, linked; the issue comme
   assert.deepEqual([posted.repo, posted.number], ['o/web', 4]);
   assert.match(posted.body, /2 draft pull requests, linked to each other/);
   assert.match(posted.body, /- api: https:\/\/github\.com\/o\/api\/pull\/11\n- web: https:\/\/github\.com\/o\/web\/pull\/12 \(closes this issue\)/);
-  assert.match(h.calls.notify.at(-1).message, /Draft PRs opened for #4: .*pull\/11, .*pull\/12/);
+  assert.match(h.calls.notify.at(-1).message, /^Draft PRs opened for #4 · .*pull\/11, .*pull\/12$/);
   // The comment names a member whose PR failed.
   assert.match(fixComment({ prs: [prs[1], { name: 'api', error: 'push refused' }] }), /- api: not opened \(push refused\)/);
 });
