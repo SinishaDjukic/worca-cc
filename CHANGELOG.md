@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Flag Runs That Finish Without Doing Work
+
+- Catch a run that finished without doing the work and flag it done-unsuccessful: Cycle 2: Slice 1 is implemented faithfully and conservatively against the approved v5 plan.
+- Show 'done, unsuccessful' with its reason everywhere a run result appears: Clean cycle-2 implementation of slice 2.
+- Route swallowed step failures through _recover instead of ending done: Faithful, minimal implementation of plan v5.
+
 ### Projects: New never overrides; Remove deletes worca's own folders
 
 - New by name names what blocks it: a registered project by its stored name, a folder by its path ("<path> is already registered as "<name>""), in the dialog, over the API and on Ask cards; a refusal from Create itself keeps Create off until the name changes.
