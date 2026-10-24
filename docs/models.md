@@ -291,11 +291,18 @@ failing the run. The Models page picks the model for each helper call — *Title
 time the dialog opens; Sonnet-class by default), *Agent generation*
 (Workflows › Agents › + › Generate; a model and an effort, the Claude tab only, since agent
 generation always runs on Claude; unset, or a model since removed from the catalog, uses
-the Claude CLI's default model) and *Run naming* (Smart run naming's title and branch
+the Claude CLI's default model), *Run naming* (Smart run naming's title and branch
 suggestion on the New run form, shown while the smartRunNaming flag is on; a model and an
 effort, the Claude tab only; unset, or a model since removed from the catalog, uses the
-cheapest ready Claude model at its lowest effort) — so pointing them at a steadier model leaves a flaky
-free model touching only the pipeline steps.
+cheapest ready Claude model at its lowest effort) and *Command summaries* (the one-line
+summary of a chat command the chat gave none, from the command alone with secrets redacted,
+never its output; shown while the commandSummaries flag is on; a model and an effort, the
+Claude tab only; unset, the cheapest ready Claude model at its lowest effort; none ready, the
+chat keeps the raw command) — so pointing them at a steadier model leaves a flaky
+free model touching only the pipeline steps. Command summaries' redaction is best-effort
+(token shapes and `Bearer` values, not a `--password foo` flag), and the Summarise commands
+switch in Settings › Chat turns the job off. A changed Command summaries model applies to new
+commands within a minute, while lines already written stay until a restart.
 
 **The daily allowance.** Separately, OpenRouter caps how many `:free` requests a key
 sends per day: **1000** on an account that has bought at least $10 of credit, **50**

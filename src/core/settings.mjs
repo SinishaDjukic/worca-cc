@@ -438,8 +438,8 @@ export function assertMemoryDefragModelInput(input, models = null) {
   return assertModelPairInput('memoryDefrag', input, models);
 }
 
-/** The `{ model, effort }` pair check shared by memoryDefrag, agentGenModel and namingModel; `key` names the setting in
- *  every message. */
+/** The `{ model, effort }` pair check shared by memoryDefrag, agentGenModel, namingModel and commandSummaryModel; `key`
+ *  names the setting in every message. */
 function assertModelPairInput(key, input, models) {
   if (input === '' || input === null || input === undefined) return null;
   if (typeof input !== 'object' || Array.isArray(input)) throw new Error(`${key} must be { model, effort } or null`);
@@ -1236,6 +1236,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'memoryDefrag',                            // Settings › Memory: the defragment model + effort
   'agentGenModel',                           // the agent wizard's Generate: model + effort (Claude, user-level)
   'namingModel',                             // Smart run naming's model + effort (Models › Helper jobs, Claude, user-level)
+  'commandSummaryModel',                     // Command summaries' model + effort (Models › Helper jobs, Claude, user-level)
   'workspaceScan',                           // Settings › Runs › Workspaces: the scan's models
   'schedule',                                // scheduled-run defaults { graceMin, ifMissed, maxFailures }
   'nightMode',                               // night mode user layer (night/config.mjs fields)
@@ -1659,6 +1660,46 @@ export async function setNamingModel(input, { models = null } = {}) {
   else settings.namingModel = pair.effort ? pair : { model: pair.model };
   await persistSettings(settings);
   return { namingModel: namingModel() };
+}
+
+// ── Command summaries model (Models › Engines › Claude › Helper jobs › Command summaries) ───
+// `commandSummaryModel`: the { model, effort } pair of the chat command summary call (ask/command-summary.mjs).
+// User-level and Claude-only like namingModel. Unset = the cheapest ready Claude model at its lowest effort
+// (naming.mjs#resolveNamingModel); none ready = no summary, the row keeps the raw command.
+const warnedCommandSummaryModel = new Set();
+
+/** The STORED pair: `{ model, effort }`, both null when unset. Sync and never throws (namingModel's rules). */
+export function commandSummaryModel() {
+  if (homeGuarded()) return { model: null, effort: null };
+  const v = readSettings().commandSummaryModel;
+  if (v === undefined || v === null) return { model: null, effort: null };
+  const warnOnce = (what, tail) => {
+    const id = JSON.stringify(what);
+    if (warnedCommandSummaryModel.has(id)) return;
+    warnedCommandSummaryModel.add(id);
+    console.warn(`[worca] invalid commandSummaryModel ${id} — ${tail}`);
+  };
+  const m = isObj(v) ? v.model : undefined;
+  if (typeof m !== 'string' || !m.trim() || m.length > DEFRAG_MODEL_MAX_LEN) {
+    warnOnce(v, 'command summaries use the cheapest ready Claude model');
+    return { model: null, effort: null };
+  }
+  const effort = typeof v.effort === 'string' && EFFORTS.includes(v.effort) ? v.effort : null;
+  if (v.effort !== undefined && v.effort !== null && effort === null) warnOnce(v, 'command summaries use the model\'s default effort');
+  return { model: m.trim(), effort };
+}
+
+export function assertCommandSummaryModelInput(input, models = null) {
+  return assertModelPairInput('commandSummaryModel', input, models);
+}
+
+export async function setCommandSummaryModel(input, { models = null } = {}) {
+  const pair = assertCommandSummaryModelInput(input, models);
+  const settings = readSettings();
+  if (pair === null) delete settings.commandSummaryModel;
+  else settings.commandSummaryModel = pair.effort ? pair : { model: pair.model };
+  await persistSettings(settings);
+  return { commandSummaryModel: commandSummaryModel() };
 }
 
 // ── Spawn-debug diagnostics toggle (the stored side of WORCA_DEBUG_SPAWN) ────
