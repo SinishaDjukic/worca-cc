@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Run card: "Where the work is" route + group page jump
+
+- Run page head: fixed 32px head row and full-width stage bar: The CSS-only s1 change matches plan v3 exactly: a 32px (40px touch) head row, the status block subgridded across the head so the stage bar is full width, no overhang, and a 16px gap.
+- 'Where the work is' route replaces the delivery tracker and Branch row: Both cycle-1 majors are fixed and tested.
+- Feature (group) page: no layout jump during live updates: The web UI review's major is fixed: keepUnchanged now refocuses the matching member link (same class, href and row data-key) after replacing a changed table.
+
 - Run page: a 'Where the work is' route replaces the tracker, the Branch row and the PR fact rows; a feature run no longer reads 'Merged into' the previous run's branch.
 
 ### Corporate proxy (experimental, flag `corporateProxy`)
