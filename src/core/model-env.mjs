@@ -60,8 +60,8 @@ export function aModelOf(engine) { return `${/^[aeiou]/i.test(String(engine)) ? 
 /** How an OWN_SIGNIN_ENGINES model connects, for the messages that refuse its env or upstream. */
 export function ownSignInNote(engine) { return OWN_SIGNIN_NOTE[engine] || ''; }
 /** A Goose or OpenCode model id is `provider/model`: goose's --provider and --model, split at the first `/`; OpenCode's as
- *  `opencode models` lists it (`-m` takes nothing else). */
-const PROVIDER_MODEL_ID_RE = /^[^/\s]+\/\S+$/;
+ *  `opencode models` lists it (`-m` takes nothing else). Neither half starts with `-` (it would read as a flag). */
+const PROVIDER_MODEL_ID_RE = /^(?!-)[^/\s]+\/(?!-)\S+$/;
 const MODEL_ID_HINT = Object.freeze({ goose: 'a goose model id is provider/model (for example google/gemini-2.5-flash)',
   opencode: 'an opencode model id is provider/model (as `opencode models` lists it)' });
 /** Why `id` cannot be a model of `engine`, or null. */

@@ -644,17 +644,14 @@ test('an opencode run refuses when a spawn names no model, and checks credential
   writeFileSync(bin, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 1.18.23; exit 0; fi\n' +
     'if [ -n "$ANTHROPIC_API_KEY" ]; then echo "0 credentials"; echo "1 environment variables"; else echo "0 credentials"; echo "0 environment variables"; fi\n');
   chmodSync(bin, 0o755);
-  const keep = { key: process.env.ANTHROPIC_API_KEY, optIn: process.env.WORCA_OPENCODE_ALLOW_DEFAULT_MODEL };
+  const keep = { key: process.env.ANTHROPIC_API_KEY };
   process.env.ANTHROPIC_API_KEY = 'worca-only';
-  delete process.env.WORCA_OPENCODE_ALLOW_DEFAULT_MODEL;
   try {
-    const r = await createOrchestrator({ projectDir: dir, guardrailsId: 'permissive', claude: { engine: 'opencode', bin } }).engineStartRefusal();
-    assert.equal(r.overridable, false);
-    assert.match(r.error, /^engine opencode: .*names no model: .*OpenCode Zen/);
-    // --allow-unguarded-engine: OpenCode cannot switch its sub-agent tool off yet (decision 11, engines/index.mjs subagentPolicy).
-    const named = createOrchestrator({ projectDir: dir, guardrailsId: 'permissive',
-      claude: { engine: 'opencode', bin, model: 'anthropic/claude-sonnet-4-5', allowUnguardedEngine: true } });
-    assert.equal(await named._opencodeOnDefaultModel(), false);
+    // The catalog's requiresExplicitModel: an agent node with no model is refused at the gate, and no opt-in lifts it.
+    const bare = withNodes(createOrchestrator({ projectDir: dir, guardrailsId: 'permissive', claude: { engine: 'opencode', bin, allowUnguardedEngine: true } }),
+      { a: { nodeId: 'a', kind: 'agent', model: null } });
+    assert.throws(() => bare._engineGate(), /OpenCode needs a model; pick one for this step\./);
+    const named = createOrchestrator({ projectDir: dir, guardrailsId: 'permissive', claude: { engine: 'opencode', bin, model: 'anthropic/claude-sonnet-4-5' } });
     assert.equal(await named.engineStartRefusal(), null);
     // The check runs under the agent's env (the catalog allowlist): a key worca has under a name OpenCode's catalog
     // entry does not list, and the set does not allowlist, is not the agent's.
@@ -671,7 +668,6 @@ test('an opencode run refuses when a spawn names no model, and checks credential
     assert.equal(logs.some((l) => /no provider credentials/.test(l.text)), false, JSON.stringify(logs));
   } finally {
     if (keep.key === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = keep.key;
-    if (keep.optIn !== undefined) process.env.WORCA_OPENCODE_ALLOW_DEFAULT_MODEL = keep.optIn;
     delete process.env.CONF_PROVIDER_KEY;
   }
 });
@@ -861,25 +857,25 @@ test('a result with no cost warns on a reporting engine, not on cursor; a per-Mt
 
 // ── OpenCode (engines/opencode.mjs) ──────────────────────────────────────────
 
-test('opencode: Permissive passes with --allow-unguarded-engine (its sub-agent tool cannot be switched off), one audit line per missing capability; cost is reported', () => {
-  assert.throws(() => withNodes(orch({ engine: 'opencode' }), {})._engineGate(), /sub-agents \(its task tool\) are not proven/);
-  const lines = withNodes(orch({ engine: 'opencode', allowUnguardedEngine: true }), {})._engineGate();
+test('opencode: Permissive passes (its task tool is denied by config, decision 11), one audit line per missing capability; cost is reported', () => {
+  const lines = withNodes(orch({ engine: 'opencode' }), {})._engineGate();
   const caps = lines.filter((l) => /^engine opencode: no \w+ — /.test(l));
   assert.deepEqual(caps.map((l) => l.split(':')[1].trim().split(' ')[1]).sort(), ['allowedTools', 'hookTelemetry']);
 });
 
-test('opencode: no rule kind is proven held yet — the Normal set needs --allow-unguarded-engine, then says so', async () => {
-  // Decision 9: a kind the catalog does not list (ENGINES.opencode.rules) counts as unenforced.
+test('opencode: no rule kind is proven held — the Normal set needs --allow-unguarded-engine, then says so', async () => {
+  // Decision 9: its command and path kinds are partial (ENGINES.opencode.rules), the rest unverified or unlisted.
   const rules = await NORMAL_RULES();
   const o = withNodes(orch({ engine: 'opencode' }), {});
   o.guardrailPermissionRules = rules;
   o.guardrailsId = 'normal';
-  assert.throws(() => o._engineGate(), (err) => /cannot enforce/.test(err.message));
+  assert.throws(() => o._engineGate(), (err) => /holds only in part|cannot enforce/.test(err.message));
   const allowed = withNodes(orch({ engine: 'opencode', allowUnguardedEngine: true }), {});
   allowed.guardrailPermissionRules = rules;
   allowed.guardrailsId = 'normal';
   const lines = allowed._engineGate();
-  assert.ok(lines.some((l) => /^engine opencode: guardrail set "normal": rules NOT enforced on opencode/.test(l)), lines.join('\n'));
+  assert.ok(lines.some((l) => /^engine opencode: deny rules held on opencode only in part, as permission rules — /.test(l)), lines.join('\n'));
+  assert.ok(lines.includes('engine opencode: its sub-agent tool (task) is off: its sub-agents are not proven to keep this run\'s rules'), lines.join('\n'));
 });
 
 test('engineStartRefusal: a missing opencode binary is not liftable', POSIX, async () => {

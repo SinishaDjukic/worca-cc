@@ -3611,14 +3611,6 @@ export class RunHarness extends EventEmitter {
    * Whether some spawn of this OpenCode run names no model (opencodePreflight `defaultModel`), so OpenCode would pick
    * its own default, possibly a free OpenCode Zen model. Never throws: anything unreadable counts as "some spawn does".
    */
-  async _opencodeOnDefaultModel() {
-    try {
-      return (await this._engineSpawnModels('opencode', null)).has(null);
-    } catch {
-      return true;
-    }
-  }
-
   /** The models this run's spawns on `engine` name, each in the engine's own id: the run's model, each step's and
    *  workflow node's (one not on the engine runs the run's), the helper jobs' when they run on this engine, and the
    *  Away-mode decider's. `fallback` stands for a spawn that names none. */
@@ -3683,8 +3675,6 @@ export class RunHarness extends EventEmitter {
    *  `_codexSignIn` for the sync remote preflight). */
   async _enginePreflightOptions() {
     const name = this.claude.engine || 'claude';
-    // OpenCode refuses a step that names no model unless the user opted in (opencodePreflight `defaultModel`).
-    if (name === 'opencode') return { defaultModel: await this._opencodeOnDefaultModel() };
     if (name !== 'codex') return {};
     this._codexSignIn = await this._codexNeedsSignIn();
     return { signIn: this._codexSignIn };

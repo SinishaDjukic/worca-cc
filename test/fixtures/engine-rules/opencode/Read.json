@@ -1,0 +1,22 @@
+{
+  "rules": {
+    "deny": [
+      "Read(./secret.txt)",
+      "Read(~/.ssh/**)"
+    ]
+  },
+  "expected": {
+    "permission": {
+      "read": {
+        "secret.txt": "deny",
+        "../../home/u/.ssh/**": "deny"
+      }
+    },
+    "enforced": [],
+    "partial": [
+      "Read(./secret.txt)",
+      "Read(~/.ssh/**)"
+    ],
+    "unenforced": []
+  }
+}

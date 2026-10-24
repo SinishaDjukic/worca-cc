@@ -254,7 +254,8 @@ conformanceRow('C-SUBAGENT', 'unproven sub-agents lose their tool in the spawn; 
   if (policy === 'deny') {
     const { rec, error } = await runFake(engine, { subagentsOff: true, allowedTools: ['Read', 'Bash', 'Agent'] });
     assert.equal(error, null, String(error?.message));
-    const argv = rec.argv.join(' ');
+    // Denied by a flag (argv) or by the config the spawn's env carries (OpenCode's OPENCODE_CONFIG_CONTENT).
+    const argv = [...rec.argv, ...Object.values(rec.env || {})].join(' ');
     assert.ok(argv.includes(s.tool) || (s.tool === 'Agent' && /--disallowedTools \S*Agent/.test(argv)), `${s.tool} denied in: ${argv}`);
   }
   if (policy === 'refuse') {
@@ -331,7 +332,7 @@ const canaryOf = (k) => (k === 'COPILOT_GITHUB_TOKEN' ? `github_pat_canary9f3a${
 const setCanaries = (names = CANARY_NAMES) => { for (const k of names) process.env[k] = canaryOf(k); };
 const clearCredentials = () => { for (const k of CANARY_NAMES) delete process.env[k]; };
 // A model the step names where the engine needs one behind a slot or the relay (Copilot), else its CLI's own default.
-const STEP_MODEL = { claude: undefined, codex: undefined, copilot: 'copilot/gpt-4.1', cursor: 'composer-1', gemini: undefined, qwen: undefined, goose: undefined };
+const STEP_MODEL = { claude: undefined, codex: undefined, copilot: 'copilot/gpt-4.1', cursor: 'composer-1', gemini: undefined, qwen: undefined, goose: undefined, opencode: 'anthropic/claude-sonnet-4-5' };
 /** The step model a sign-in mode is reached with: an engine whose model names its provider (signIn.byModel) reaches each
  *  provider's mode by a model on it; the others by the engine's step model. */
 const modeModel = (engine, mode) => (ENGINES[engine].signIn.byModel ? `${mode.id}/m-step` : STEP_MODEL[engine]);
@@ -420,7 +421,7 @@ conformanceRow('C-CANARY', 'the agent sees no credential worca holds, except the
   clearCredentials();
   setCanaries();
   const own = credentialNamesOf(engine);
-  const d = resolveModelRoute({ engine, serverEnv: process.env, broker: { on: false } });
+  const d = resolveModelRoute({ engine, serverEnv: process.env, broker: { on: false }, model: STEP_MODEL[engine] });
   const local = await runFake(engine, { env: { FAKE_FILES: '1', FAKE_GRANDCHILD: '0' }, model: STEP_MODEL[engine], argvInlineLimit: 1, mcpConfigPath: canaryMcpConfig(),
     allow: own, spawnEnv: Object.fromEntries(own.map((k) => [k, canaryOf(k)])) });
   assert.equal(local.error, null, String(local.error?.message));
@@ -507,7 +508,7 @@ conformanceRow('C-SIGNIN', 'each sign-in mode sees exactly its declared credenti
     clearCredentials();
     const cred = modeCredential(mode);
     const dirValue = tmp('worca-conf-signin-home-');
-    process.env[hostDir] = dirValue;
+    if (hostDir) process.env[hostDir] = dirValue;
     if (cred) {
       process.env[cred] = `v-${cred}`;
       for (const k of mode.env) if (k !== cred) process.env[k] = k.endsWith('_URL') ? 'https://gw.example' : 'x-org: o1';
@@ -521,7 +522,7 @@ conformanceRow('C-SIGNIN', 'each sign-in mode sees exactly its declared credenti
       spawnEnv: Object.fromEntries(decoys.map((k) => [k, `decoy-${k}`])) });
     assert.equal(error, null, `${mode.id}: ${error?.message}`);
     assert.deepEqual(credentialNamesOf(engine).filter((k) => k in rec.env), cred ? [cred] : [], `${engine}/${mode.id}`);
-    assert.equal(rec.env[hostDir], dirValue, `${mode.id}: the session dir stays (${hostDir})`);
+    if (hostDir) assert.equal(rec.env[hostDir], dirValue, `${mode.id}: the session dir stays (${hostDir})`);
     if (engine === 'claude' && mode.id === 'keychain') for (const k of ['HOME', 'USER', 'LOGNAME']) assert.ok(k in rec.env, `keychain: ${k}`);
     for (const k of [hostDir, ...(cred ? mode.env : []), ...(mode.requires || [])]) delete process.env[k];
   }
@@ -604,7 +605,7 @@ function assertOutcome(engine, x, { result, error, events, argv }) {
     assert.ok(events.some((e) => e.type === 'result' && e.subtype === 'error_max_turns'), at);
   } else if (x.outcome === 'turnCap') {
     assert.equal(error?.turnCap, true, `${at}: ${error?.message}`);
-    assert.match(error.message, /stopped after 1 tool calls \(the turn cap\)/, at);
+    assert.match(error.message, /stopped after 1 (tool calls|turns) \(the turn cap\)/, at);
   } else assert.equal(error?.name, 'AbortError', `${at}: ${error?.message}`);
 }
 
@@ -683,8 +684,13 @@ conformanceRow('C-LEDGER', 'spend is booked exactly once on every exit', async (
       gemini: {},
       qwen: {},
       goose: { usd: 0.0015561 },
+      // The captured stream is an OpenCode Zen model that says cost 0 for its tokens: no price, so cost unknown.
+      opencode: { usd: x.stream === 'stream.jsonl' ? null : 0.0123 },
     }[engine];
-    if (reportsCost) {
+    if (reportsCost && want.usd === null) {
+      assert.equal(h.booked(), 0, `${engine} ${x.name}: nothing priced to book`);
+      assert.equal(h.step.costKnown, false, `${engine} ${x.name}: cost unknown, never $0`);
+    } else if (reportsCost) {
       assert.equal(h.booked(), 1, `${engine} ${x.name}: booked once`);
       assert.ok(Math.abs(h.step.costUsd - want.usd) < 1e-4, `${engine} ${x.name}: ${h.step.costUsd}`);
       assert.notEqual(h.step.costKnown, false, `${engine} ${x.name}: the figure covers the step's turns`);
@@ -759,7 +765,8 @@ conformanceRow('C-MODEL', 'the step\'s model is checked and recorded', async (en
   const remote = createOrchestrator({ projectDir: '/tmp/conf-proj', guardrailsId: 'permissive', execEnv: 'e2b', claude: { mock: true, engine } });
   remote.resolved = { nodeCtx: { a: { nodeId: 'a', kind: 'agent', model: null } } };
   const refusal = remote._engineRefusal({ nodes: Object.values(remote.resolved.nodeCtx) });
-  if (entry.relay?.needsModel) assert.equal(refusal, `${entry.label} in a sandbox needs a model; pick one for this step.`);
+  if (entry.requiresExplicitModel && !entry.defaultModel) assert.equal(refusal, `${entry.label} needs a model; pick one for this step.`, 'local or not');
+  else if (entry.relay?.needsModel) assert.equal(refusal, `${entry.label} in a sandbox needs a model; pick one for this step.`);
   else assert.equal(refusal, null);
   setCatalogForTest({ ...ENGINES, [engine]: { ...ENGINES[engine], requiresExplicitModel: true } });
   try {

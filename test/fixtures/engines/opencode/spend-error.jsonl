@@ -1,0 +1,4 @@
+{"type":"step_start","sessionID":"ses_conf0000000000000000000001","part":{"id":"prt_s1","messageID":"msg_1","sessionID":"ses_conf0000000000000000000001","type":"step-start"}}
+{"type":"text","sessionID":"ses_conf0000000000000000000001","part":{"id":"prt_t1","messageID":"msg_1","sessionID":"ses_conf0000000000000000000001","type":"text","text":"half way"}}
+{"type":"step_finish","sessionID":"ses_conf0000000000000000000001","part":{"id":"prt_f1","reason":"stop","messageID":"msg_1","sessionID":"ses_conf0000000000000000000001","type":"step-finish","tokens":{"total":130,"input":100,"output":20,"reasoning":5,"cache":{"write":0,"read":5}},"cost":0.0123}}
+{"type":"error","timestamp":1791491276877,"sessionID":"ses_conf0000000000000000000001","error":{"name":"ProviderAuthError","data":{"providerID":"google","message":"Google Generative AI API key is missing. Pass it using the 'apiKey' parameter or the GOOGLE_GENERATIVE_AI_API_KEY environment variable."}}}

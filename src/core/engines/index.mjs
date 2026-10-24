@@ -106,9 +106,13 @@ const gooseAdapter = Object.freeze({ name: 'goose', capabilities: goose.gooseCap
   classifyError: goose.classifyGooseError, preflight: goose.goosePreflight, unattachableMcp: goose.gooseMcpProblems,
   removeSessions: goose.removeGooseSessions, chat: goose.gooseChat });
 // OpenCode (engines/opencode.mjs) emits the normalized vocabulary itself; its rules ride OPENCODE_CONFIG_CONTENT.
+// Its rule plan is the permission config it is told (the cwd and home fixed, so a fixture's paths read the same
+// everywhere); its `task` tool is denied by config when the run's sub-agents are off.
 const opencodeAdapter = Object.freeze({ name: 'opencode', capabilities: opencode.opencodeCapabilities, run: opencode.runOpencodeProcess,
   classifyError: opencode.classifyOpencodeError, preflight: opencode.opencodePreflight, unenforcedRules: opencode.unenforcedRules,
-  partialRules: opencode.partialRules, ruleReach: opencode.OPENCODE_RULE_TERMS.reach, ruleKind: opencode.OPENCODE_RULE_TERMS.kind, chat: opencode.opencodeChat });
+  partialRules: opencode.partialRules, ruleReach: opencode.OPENCODE_RULE_TERMS.reach, ruleKind: opencode.OPENCODE_RULE_TERMS.kind,
+  rulePlan: (rules) => opencode.opencodeRulePlan(rules, { cwd: '/w/run', home: '/home/u' }), denials: () => [], denySubagentTool: subagentsOff,
+  chat: opencode.opencodeChat });
 // Qwen Code (engines/qwen.mjs): its sub-agent tools are excluded by flag (--exclude-tools).
 const qwenAdapter = Object.freeze({ name: 'qwen', capabilities: qwen.qwenCapabilities, run: qwen.runQwenProcess,
   classifyError: qwen.classifyQwenError, preflight: qwen.qwenPreflight, unenforcedRules: qwen.unenforcedRules,

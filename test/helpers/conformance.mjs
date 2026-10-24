@@ -4,11 +4,6 @@
 import { test } from 'node:test';
 import { ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 
-// The rows an engine merged before the core layer does not pass yet: the commit that moves its family onto the catalog
-// (Gemini CLI and Qwen Code, Goose, OpenCode) closes them and takes its entries out. They show as skipped, with the
-// reason; the map only shrinks.
-const MOVED_LATER = ['C-CANARY', 'C-SIGNIN', 'C-LEDGER', 'C-MODEL'];
-export const PENDING = Object.freeze({ opencode: MOVED_LATER });
 
 /**
  * Register row `name` (C-ENV-EXACT, C-GROUPKILL, …) for every catalog entry.
@@ -18,10 +13,7 @@ export const PENDING = Object.freeze({ opencode: MOVED_LATER });
  * @param {{skip?: string|false}} [opts]
  */
 export function conformanceRow(name, title, fn, opts = {}) {
-  for (const engine of ENGINE_NAMES) {
-    const pending = PENDING[engine]?.includes(name) ? { skip: `pending: ${engine} moves onto the catalog in its own commit` } : {};
-    test(`${engine}: ${name} — ${title}`, { ...opts, ...pending }, (t) => fn(engine, t));
-  }
+  for (const engine of ENGINE_NAMES) test(`${engine}: ${name} — ${title}`, opts, (t) => fn(engine, t));
 }
 
 /** The priced test model per engine (null: the engine's own default, priced for codex): what a ledger harness's step runs. */

@@ -321,18 +321,25 @@ export const ENGINES = deepFreeze({
     env: { names: ['OPENCODE_DISABLE_LSP_DOWNLOAD', 'OPENCODE_DISABLE_MODELS_FETCH'], hostOnly: [],
       relayOwned: ['OPENCODE_API_KEY', 'OPENCODE_AUTH_CONTENT', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY',
         'GOOGLE_GENERATIVE_AI_API_KEY', 'OPENROUTER_API_KEY'], home: null },
-    signIn: { modes: [
+    // The step's provider/model id picks the provider, and so its one key (byModel; `opencode/…` is OpenCode Zen). A
+    // provider no mode lists signs in from OpenCode's own auth.json.
+    signIn: { byModel: true, modes: [
       { id: 'anthropic', kind: 'key', env: ['ANTHROPIC_API_KEY'] },
       { id: 'openai', kind: 'key', env: ['OPENAI_API_KEY'] },
       { id: 'google', kind: 'key', env: ['GOOGLE_GENERATIVE_AI_API_KEY'] },
       { id: 'openrouter', kind: 'key', env: ['OPENROUTER_API_KEY'] },
-      { id: 'zen', kind: 'key', env: ['OPENCODE_API_KEY'] },
+      { id: 'opencode', kind: 'key', env: ['OPENCODE_API_KEY'] },
       // `opencode auth login` (auth.json), or the same content in OPENCODE_AUTH_CONTENT.
       { id: 'auth-file', kind: 'own', env: ['OPENCODE_AUTH_CONTENT'], files: ['auth.json'] },
     ] },
     relay: null,
     shell: true,
-    rules: {},
+    // Its command rules match each command it reads out of a shell line (not one inside a substitution or `bash -c`) and
+    // its path rules bind its own tools: partial (test/fixtures/engine-rules/opencode/). A bare Bash, WebSearch or MCP
+    // rule takes the tool out of the session, so no refusal can be recorded: unverified.
+    rules: { Bash: 'partial', Read: 'partial', Edit: 'partial', Write: 'partial',
+      WebFetch: 'unverified', WebSearch: 'unverified', mcp: 'unverified' },
+    // Its `task` tool is denied by config when the run's sub-agents are off (decision 11).
     subagents: { tool: 'task', inheritsRules: 'unverified', proof: null },
     // Its own default can be a free OpenCode Zen model that sends the code to opencode.ai (engines/opencode.mjs).
     requiresExplicitModel: true, sessions: 'none', defaultModel: null, loadsClaudeMcp: false,

@@ -9,8 +9,10 @@ import { join } from 'node:path';
 import {
   buildOpencodeArgs, createOpencodeNormalizer, classifyOpencodeError, opencodeSessionOf, OPENCODE_SESSION_PREFIX,
   opencodeRulePlan, opencodeCapabilities, opencodePreflight, runOpencodeProcess, OPENCODE_ASK_LOCKDOWN, opencodeMcpServers,
-  parseOpencodeProviders, readSubsession, OPENCODE_EFFORTS, OPENCODE_RESUME_NOT_FOUND_RE,
+  parseOpencodeProviders, readSubsession, OPENCODE_EFFORTS, OPENCODE_RESUME_NOT_FOUND_RE, OPENCODE_SIGNED_OUT_HINT,
 } from '../src/core/engines/opencode.mjs';
+import { ENGINES } from '../src/shared/engine-switch.mjs';
+import { credentialNamesOf } from '../src/core/exec-env/credentials.mjs';
 import { EVENT_TYPES, isNormalized } from '../src/core/engines/events.mjs';
 import { CAPABILITY_KEYS } from '../src/core/engines/capabilities.mjs';
 import { fakeOpencode, opencodeReplyLines } from './helpers/fake-opencode.mjs';
@@ -40,7 +42,7 @@ test('session ids are engine-qualified; another engine\'s id is not an OpenCode 
   assert.equal(opencodeSessionOf('8f1c0000-0000-4000-8000-000000000000'), null);
 });
 
-test('normalizer (captured): session, Bash and Write rows, text, per-step usage, a result with cost and tokens', () => {
+test('normalizer (captured): session, Bash and Write rows, text, per-step usage, a result with tokens and its cost unknown', () => {
   const { events, final } = replay('shell-and-write.jsonl', { model: 'opencode/big-pickle' });
   for (const e of events) assert.ok(EVENT_TYPES.has(e.type) && isNormalized(e), JSON.stringify(e));
   assert.deepEqual(events[0], { type: 'session', sessionId: 'opencode:ses_ee2d0a8afffeylFcD9eRqk9ykh', model: 'opencode/big-pickle', init: true });
@@ -58,7 +60,8 @@ test('normalizer (captured): session, Bash and Write rows, text, per-step usage,
   assert.equal(events.filter((e) => e.type === 'text').map((e) => e.text).join(''), 'DONE');
   assert.equal(final.error, null);
   assert.equal(final.sessionId, 'ses_ee2d0a8afffeylFcD9eRqk9ykh');
-  assert.equal(final.costUsd, 0);
+  // A free OpenCode Zen model (big-pickle) says cost 0 for its tokens: OpenCode has no price, so neither does worca.
+  assert.equal(final.costUsd, null);
   assert.deepEqual(final.usage, { input_tokens: 8005, output_tokens: 147, cache_read_input_tokens: 7872, cache_creation_input_tokens: 0 });
   assert.equal(final.text, 'DONE');
 });
@@ -106,6 +109,7 @@ test('normalizer (captured): an error event fails the run, with its class', () =
 test('sub-session: the export\'s assistant messages summed; its tool calls as events under the task call', () => {
   const sub = readSubsession(text('export-subsession.json'), { parentId: 'call_task' });
   assert.equal(sub.costUsd, 0);
+  assert.equal(sub.unpriced, true, 'its messages used tokens and say cost 0: no price, not free');
   assert.deepEqual(sub.usage, { input_tokens: 5351, output_tokens: 267, cache_read_input_tokens: 5522, cache_creation_input_tokens: 0 });
   assert.deepEqual(sub.events.map((e) => [e.type, e.parentId]), [['tool', 'call_task'], ['toolResult', 'call_task']]);
   assert.equal(sub.events[0].calls[0].toolUseId, 'c0ab08be-bf93-469b-b8dc-0c2991ac3ac1');
@@ -181,30 +185,14 @@ async function withEnv(vars, fn) {
   for (const [k, v] of Object.entries(vars)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   try { return await fn(); } finally { for (const [k, v] of Object.entries(keep)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
 }
-const OPT_IN = 'WORCA_OPENCODE_ALLOW_DEFAULT_MODEL';
 const NO_CREDENTIALS = '└  0 credentials\n└  0 environment variables';
 
-test('preflight: missing binary refuses; no credentials refuses unless every spawn names a model or the user opted in; credentials pass', POSIX, async () => {
-  await withEnv({ [OPT_IN]: undefined }, async () => {
-    assert.match((await opencodePreflight({ bin: join(tmp(), 'nope') })).refusal, /WORCA_OPENCODE_BIN/);
-    const none = fakeOpencode(tmp(), 'x', { providersText: NO_CREDENTIALS }).bin;
-    assert.match((await opencodePreflight({ bin: none })).refusal, /no provider credentials.*OpenCode Zen.*WORCA_OPENCODE_ALLOW_DEFAULT_MODEL=1/);
-    assert.match((await opencodePreflight({ bin: none, defaultModel: false })).warning, /no provider credentials/, 'a model chosen for every spawn');
-    assert.deepEqual(await opencodePreflight({ bin: fakeOpencode(tmp(), 'x').bin }), {});
-    assert.match((await opencodePreflight({ bin: fakeOpencode(tmp(), 'x', { providersText: '???' }).bin })).warning, /could not tell/);
-  });
-  await withEnv({ [OPT_IN]: '1' }, async () => {
-    assert.match((await opencodePreflight({ bin: fakeOpencode(tmp(), 'x', { providersText: NO_CREDENTIALS }).bin })).warning, /no provider credentials/);
-  });
-});
-
-test('preflight: a spawn without a model refuses (OpenCode would pick its own default, possibly OpenCode Zen) unless opted in', POSIX, async () => {
-  const bin = fakeOpencode(tmp(), 'x').bin;
-  await withEnv({ [OPT_IN]: undefined }, async () => {
-    assert.match((await opencodePreflight({ bin, defaultModel: true })).refusal, /names no model: .*OpenCode Zen.*opencode\.ai/);
-    assert.deepEqual(await opencodePreflight({ bin, defaultModel: false }), {});
-  });
-  await withEnv({ [OPT_IN]: '1' }, async () => assert.deepEqual(await opencodePreflight({ bin, defaultModel: true }), {}));
+test('preflight: missing binary refuses; no credentials warns (every step names its model, ENGINES.opencode requiresExplicitModel); credentials pass', POSIX, async () => {
+  assert.match((await opencodePreflight({ bin: join(tmp(), 'nope') })).refusal, /WORCA_OPENCODE_BIN/);
+  const none = fakeOpencode(tmp(), 'x', { providersText: NO_CREDENTIALS }).bin;
+  assert.deepEqual(await opencodePreflight({ bin: none }), { warning: `no provider credentials in the agent's environment — only OpenCode Zen's free models (opencode.ai) will run; ${OPENCODE_SIGNED_OUT_HINT}` });
+  assert.deepEqual(await opencodePreflight({ bin: fakeOpencode(tmp(), 'x').bin }), {});
+  assert.match((await opencodePreflight({ bin: fakeOpencode(tmp(), 'x', { providersText: '???' }).bin })).warning, /could not tell/);
 });
 
 test('preflight: the credential check sees the env the agent gets — a key the allowlist withholds does not count', POSIX, async () => {
@@ -215,23 +203,18 @@ test('preflight: the credential check sees the env the agent gets — a key the 
   writeFileSync(bin, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 1.18.23; exit 0; fi\n' +
     'if [ -n "$DEEPSEEK_API_KEY$ANTHROPIC_API_KEY" ]; then echo "0 credentials"; echo "1 environment variables"; else echo "0 credentials"; echo "0 environment variables"; fi\n');
   chmodSync(bin, 0o755);
-  await withEnv({ [OPT_IN]: undefined, DEEPSEEK_API_KEY: 'worca-only', ANTHROPIC_API_KEY: undefined }, async () => {
-    assert.match((await opencodePreflight({ bin })).refusal, /no provider credentials in the agent's environment/);
+  await withEnv({ DEEPSEEK_API_KEY: 'worca-only', ANTHROPIC_API_KEY: undefined }, async () => {
+    assert.match((await opencodePreflight({ bin })).warning, /no provider credentials in the agent's environment/);
     assert.deepEqual(await opencodePreflight({ bin, envAllowlist: ['DEEPSEEK_API_KEY'] }), {});
   });
-  await withEnv({ [OPT_IN]: undefined, DEEPSEEK_API_KEY: undefined, ANTHROPIC_API_KEY: 'worca-key' }, async () => {
+  await withEnv({ DEEPSEEK_API_KEY: undefined, ANTHROPIC_API_KEY: 'worca-key' }, async () => {
     assert.deepEqual(await opencodePreflight({ bin }), {}, 'a catalog sign-in name: the agent gets it too');
   });
 });
 
-test('spawn: no model refuses before anything starts, unless the user opted in', POSIX, async () => {
-  const fake = fakeOpencode(tmp(), 'done');
-  await withEnv({ [OPT_IN]: undefined }, async () => {
-    await assert.rejects(runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'x' }), /refusing to start OpenCode without a model: .*OpenCode Zen/);
-    await assert.rejects(runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'x', model: '  ' }), /without a model/);
-    assert.equal(fake.record(), null, 'never spawned');
-  });
-  await withEnv({ [OPT_IN]: '1' }, async () => assert.equal((await runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'x' })).text, 'done'));
+test('the explicit-model rule is the catalog\'s: no opt-in is read any more', () => {
+  assert.equal(ENGINES.opencode.requiresExplicitModel, true);
+  assert.doesNotMatch(readFileSync(new URL('../src/core/engines/opencode.mjs', import.meta.url), 'utf8'), /WORCA_OPENCODE_ALLOW_DEFAULT_MODEL/);
 });
 
 test('preflight: OpenCode 2 refuses (its run attaches to a shared service and its flags, events and permissions changed); 1.x passes', POSIX, async () => {
@@ -374,4 +357,105 @@ test('a reply with a cost and no usage still books the cost', () => {
   const n = createOpencodeNormalizer();
   for (const l of opencodeReplyLines('hi', 'ses_x', { cost: 0.5, tokens: {} })) n.push(l);
   assert.equal(n.finish().costUsd, 0.5);
+});
+
+test('a step that used tokens and says cost 0 has no price: the run\'s cost is unknown, never $0', POSIX, async () => {
+  const n = createOpencodeNormalizer();
+  for (const l of opencodeReplyLines('hi', 'ses_x', { cost: 0 })) n.push(l);
+  assert.equal(n.finish().costUsd, null);
+  const empty = createOpencodeNormalizer();
+  for (const l of opencodeReplyLines('hi', 'ses_x', { cost: 0, tokens: {} })) empty.push(l);
+  assert.equal(empty.finish().costUsd, 0, 'no tokens, no spend: $0 is right');
+  const mixed = createOpencodeNormalizer();
+  for (const l of [...opencodeReplyLines('a', 'ses_x', { cost: 0.5 }), ...opencodeReplyLines('b', 'ses_x', { cost: 0 })]) mixed.push(l);
+  assert.equal(mixed.finish().costUsd, null, 'one unpriced step leaves the whole cost unknown');
+  const events = [];
+  await runOpencodeProcess({ cwd: tmp(), bin: fakeOpencode(tmp(), null, { lines: opencodeReplyLines('ok', 'ses_x', { cost: 0 }) }).bin, prompt: 'x', model: 'anthropic/x', onEvent: (e) => events.push(e) });
+  const result = events.find((e) => e.type === 'result');
+  assert.equal('costUsd' in result, false, 'the ledger books it cost unknown');
+  assert.equal(result.usage.input_tokens, 100);
+});
+
+test('spend: a step that ends without its result books what OpenCode priced (error, turn cap, stop), its sub-agents included', POSIX, async () => {
+  const spends = (events) => events.filter((e) => e.type === 'spend');
+  const usage = { input_tokens: 100, output_tokens: 25, cache_read_input_tokens: 5, cache_creation_input_tokens: 0 };
+  // An error after a priced step.
+  const errLines = [...opencodeReplyLines('half', 'ses_x'), ...frames('error-auth.jsonl').filter((l) => l.type === 'error')];
+  let events = [];
+  await assert.rejects(runOpencodeProcess({ cwd: tmp(), bin: fakeOpencode(tmp(), null, { lines: errLines, exit: 1 }).bin, prompt: 'x', model: 'anthropic/x', onEvent: (e) => events.push(e) }), /API key is missing/);
+  assert.deepEqual(spends(events), [{ type: 'spend', source: 'engine', costUsd: 0.0123, usage }]);
+  assert.equal(events.some((e) => e.type === 'result'), false);
+  // The turn cap.
+  events = [];
+  await assert.rejects(runOpencodeProcess({ cwd: tmp(), bin: fakeOpencode(tmp(), null, { lines: frames('shell-and-write.jsonl') }).bin, prompt: 'x', model: 'anthropic/x', maxTurns: 1, onEvent: (e) => events.push(e) }),
+    (err) => err.turnCap === true);
+  assert.equal(spends(events).length, 1, JSON.stringify(spends(events)));
+  // A stop, after a task call: the sub-agent's export is read, its tool calls reach the run log and its tokens the spend
+  // (its messages say cost 0 with tokens: the spend's cost is unknown).
+  const fake = fakeOpencode(tmp(), null, { lines: [...opencodeReplyLines('a', 'ses_x'), ...frames('task-subagent.jsonl').filter((l) => l.type === 'tool_use')], hold: true,
+    exportDoc: JSON.parse(text('export-subsession.json')) });
+  events = [];
+  const ac = new AbortController();
+  const run = runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'x', model: 'anthropic/x', allowedTools: ['Agent'], signal: ac.signal, onEvent: (e) => events.push(e) });
+  while (!events.some((e) => e.type === 'subagent')) await new Promise((r) => setTimeout(r, 20));
+  ac.abort();
+  await assert.rejects(run, (err) => err.name === 'AbortError');
+  assert.deepEqual(fake.exported(), ['ses_ee2c6ffe4ffe2lbboOzQjzEkHc']);
+  assert.ok(events.some((e) => e.type === 'tool' && e.parentId === 'call_5cc0884d58254297af7ea85e'), 'the sub-agent\'s tool call is in the run log');
+  assert.deepEqual(spends(events), [{ type: 'spend', source: 'engine',
+    usage: { input_tokens: 100 + 5351, output_tokens: 25 + 267, cache_read_input_tokens: 5 + 5522, cache_creation_input_tokens: 0 } }]);
+  // A success books once, from its result.
+  events = [];
+  await runOpencodeProcess({ cwd: tmp(), bin: fakeOpencode(tmp(), 'ok').bin, prompt: 'x', model: 'anthropic/x', onEvent: (e) => events.push(e) });
+  assert.deepEqual(spends(events), []);
+});
+
+test('result: a sub-agent session with no price, or one that cannot be read, leaves the cost unknown', POSIX, async () => {
+  const lines = [...opencodeReplyLines('a', 'ses_x'), ...frames('task-subagent.jsonl').filter((l) => l.type === 'tool_use')];
+  for (const [exportDoc, why] of [[JSON.parse(text('export-subsession.json')), 'its messages say cost 0 for their tokens'], [null, 'its export could not be read']]) {
+    const events = [];
+    await runOpencodeProcess({ cwd: tmp(), bin: fakeOpencode(tmp(), null, { lines, exportDoc }).bin, prompt: 'x', model: 'anthropic/x', allowedTools: ['Agent'], onEvent: (e) => events.push(e) });
+    assert.equal('costUsd' in events.find((e) => e.type === 'result'), false, why);
+  }
+});
+
+test('the turn cap: OpenCode\'s own step limit (exit 0) books what was priced', POSIX, async () => {
+  const sessionID = 'ses_fake0000000000000000000001';
+  const step = (i, text) => [
+    { type: 'step_start', sessionID, part: { id: `prt_s${i}`, messageID: `msg_${i}`, sessionID, type: 'step-start' } },
+    ...(text ? [{ type: 'text', sessionID, part: { id: `prt_t${i}`, messageID: `msg_${i}`, sessionID, type: 'text', text } }] : []),
+    { type: 'step_finish', sessionID, part: { id: `prt_f${i}`, reason: 'stop', messageID: `msg_${i}`, sessionID, type: 'step-finish', tokens: { input: 10, output: 1 }, cost: 0.01 } },
+  ];
+  const events = [];
+  await assert.rejects(runOpencodeProcess({ cwd: tmp(), bin: fakeOpencode(tmp(), null, { lines: [...step(1), ...step(2), ...step(3, 'so far')] }).bin, prompt: 'x', model: 'anthropic/x', maxTurns: 2,
+    onEvent: (e) => events.push(e) }), (err) => err.turnCap === true);
+  assert.deepEqual(events.filter((e) => e.type === 'spend').map((e) => [Math.round(e.costUsd * 100) / 100, e.usage.input_tokens]), [[0.03, 30]]);
+});
+
+test('sub-agents: with the run\'s sub-agents off (decision 11), the node gets no task tool even on a fan-out node', POSIX, async () => {
+  const fake = fakeOpencode(tmp(), 'done');
+  await runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'x', model: 'anthropic/x', allowedTools: ['Read', 'Agent'], subagentsOff: true });
+  const cfg = fake.config();
+  assert.deepEqual(cfg.agent['worca-node'].permission, { task: 'deny' });
+  assert.equal(cfg.agent['worca-investigator'], undefined);
+});
+
+test('sign-in: the step model\'s provider names the one key OpenCode gets', POSIX, async () => {
+  const held = (env) => credentialNamesOf('opencode').filter((k) => k in env);
+  await withEnv({ ANTHROPIC_API_KEY: 'k-an', OPENAI_API_KEY: 'k-oa', OPENCODE_API_KEY: 'k-zen' }, async () => {
+    const fake = fakeOpencode(tmp(), 'done');
+    await runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'x', model: 'openai/gpt-5' });
+    assert.deepEqual(held(fake.env()), ['OPENAI_API_KEY']);
+    await runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'x', model: 'opencode/grok-code' });
+    assert.deepEqual(held(fake.env()), ['OPENCODE_API_KEY'], 'OpenCode Zen');
+    await runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'x', model: 'deepseek/deepseek-chat' });
+    assert.deepEqual(held(fake.env()), [], 'a provider worca holds no key for: OpenCode\'s own sign-in');
+  });
+});
+
+test('the git ceiling: a run without a project stops the agent\'s git above its work root', POSIX, async () => {
+  const fake = fakeOpencode(tmp(), 'done');
+  const root = join(tmp(), 'work');
+  await runOpencodeProcess({ cwd: tmp(), bin: fake.bin, prompt: 'x', model: 'anthropic/x', workRoot: root });
+  assert.equal(fake.env().GIT_CEILING_DIRECTORIES.split(':')[0], join(root, '..'));
 });
