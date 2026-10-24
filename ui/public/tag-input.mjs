@@ -27,18 +27,6 @@ export function missingSlot(doc, key) {
   return s;
 }
 
-/** The amber flash on chips a fill placed (s2); CSS turns it off under reduced motion. */
-export function flashFilled(root, tags) {
-  const want = new Set(tags);
-  for (const c of root.querySelectorAll('.tag-chip')) {
-    if (!want.has(c.firstChild?.textContent)) continue;
-    c.classList.add('is-filled');
-    const done = () => c.classList.remove('is-filled');
-    c.addEventListener('animationend', done, { once: true });
-    setTimeout(done, 2000);
-  }
-}
-
 /** Suggestions for the typed text: `cli` → ['client:'], `client:a` → ['client:acme']; policy dimensions first (s2). */
 export function suggestionsFor(text, vocab, limit = 8, dims = []) {
   const t = String(text || '').normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trimStart();
@@ -313,7 +301,7 @@ export function createTagRulesLine(doc, tagInput) {
   const update = (info) => {
     const kept = tagInput.get().filter((t) => !added.includes(t));
     const own = new Set(kept.map(keyOf));
-    // s2: the person's last run in this project (else the project's defaults), then the dimension slots; the card's own keys win.
+    // s2 + #923: the project's defaults, then the dimension slots (never the last run's other tags); the card's own keys win.
     const fill = info?.autofill?.from ? info.autofill.tags : (info?.prefill || []);   // from null → prefill keeps dimension Defaults
     project = !!info?.autofill;   // D8: the server sends autofill only for a project target
     added = fill.filter((t) => !own.has(keyOf(t)));

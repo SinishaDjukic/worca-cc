@@ -176,3 +176,11 @@ test('Cursor: step slots only, and no helper slot borrowed from Claude', () => {
   assert.deepEqual(utilityModelFor('cursor', 'title'), { model: null, effort: null, source: 'default' });
   writeUser({});
 });
+
+test('Gemini CLI and Qwen Code: step slots only, like Cursor', () => {
+  const ids = settingIds({ roles: ['plan'] });
+  for (const e of ['gemini', 'qwen']) {
+    assert.deepEqual(ids.filter((id) => id.startsWith(`models.${e}.`)), [`models.${e}.steps.plan`]);
+    assert.deepEqual(utilityModelFor(e, 'title'), { model: null, effort: null, source: 'default' });
+  }
+});

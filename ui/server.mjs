@@ -256,7 +256,7 @@ import {
   readProjectActions, writeProjectActions, readActionsMeta, writeActionsMeta, writeTeamRepo,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
-import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, COPILOT_EFFORTS, OPENCODE_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, COPILOT_EFFORTS, GOOSE_EFFORTS, OPENCODE_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
 import { engineLabel, ENGINE_NAMES, engineRefusalFor } from '../src/shared/engine-switch.mjs';
 import { engineReadiness, engineLocks } from '../src/core/engines/readiness.mjs';
 import { providerReadiness } from '../src/core/bridge/registry.mjs';
@@ -7012,7 +7012,8 @@ app.get('/api/tag-dimensions', async (req, res) => {
       const src = prefillSources({ projectDir, person: startedByOf(req) });
       const prefill = prefillTags(info.dims, [], src);
       // s2 (D7, D8): the New run / Ask card fill, sent ONLY for a project target (a workspace has no single project).
-      const autofill = projectDir ? autoFillTags({ dims: info.dims, lastRun: src.lastUsed, projectDefaults: src.projectDefaults }) : undefined;
+      // #923: the project's defaults plus the slots; the last run's tags only fill mandatory dimensions.
+      const autofill = projectDir ? autoFillTags({ dims: info.dims, lastUsed: src.lastUsed, projectDefaults: src.projectDefaults }) : undefined;
       return res.json({ ...info, enforce: flagEnabled('runTags') && info.enforce === true, prefill, ...(autofill ? { autofill } : {}) });
     }
     res.json({ ...(await allTagDimensions()), team: await teamTagPolicy() });
@@ -12212,8 +12213,8 @@ app.get('/api/models', (req, res) => {
   res.json({
     models: maskedGlobalModels(), plugin: pluginModelsPayload(), predefined: PREDEFINED_MODELS, efforts: EFFORTS,
     codex: CODEX_BUILTIN_MODELS, codexEfforts: CODEX_EFFORTS,   // §3.1a: the Codex built-ins group + the editor's Codex efforts
-    cursorEfforts: CURSOR_EFFORTS,                               // none: Cursor has no effort flag (no Cursor built-ins)
     copilot: COPILOT_BUILTIN_MODELS, copilotEfforts: COPILOT_EFFORTS,   // the Copilot built-ins group + the editor's Copilot efforts
+    gooseEfforts: GOOSE_EFFORTS,                                 // GOOSE_THINKING_EFFORT values (no Goose built-ins)
     opencodeEfforts: OPENCODE_EFFORTS,                           // OpenCode's --variant values (no OpenCode built-ins)
     hideBuiltinModels: hideBuiltinModels(),   // the Models-view checkbox (#422)
     // Team policy catalog entries (team-policy design §8): read-only, env masked like a global's.

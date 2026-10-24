@@ -178,7 +178,7 @@ import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SY
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS } from '../../src/shared/connections.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
@@ -280,9 +280,9 @@ import { runPresetScopeOptions, runPresetRequest, runPresetErrorText, RUN_PRESET
 import { renderPresetsList } from './run-presets-view.mjs';
 import { presetSetupSummary, presetSavedNote, workflowNamesFrom } from './run-presets-names.mjs';
 import { setupFromBody } from '../../src/shared/run-presets.mjs';
-import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor, flashFilled, missingSlot } from './tag-input.mjs';
+import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor, missingSlot } from './tag-input.mjs';
 import { normaliseTags, formatTag, parseTag } from '../../src/shared/run-tags.mjs';
-import { splitByDimensions, tagGroupOptions, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
+import { prefillTags, splitByDimensions, tagGroupOptions, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
 import { createFlagsView, bindFlagSwitch } from './flags-view.mjs';
 import { createSmartNaming } from './smart-naming.mjs';
 import { renderPattern, patternProblem, PRESET_TYPES, TYPE_RE } from '../../src/shared/naming/pattern.mjs';
@@ -4599,7 +4599,7 @@ function renderAgentRows(rows) {
     keepVisible(tagLevel(fanWrap, 'expert'), !!row.fanOut !== !!rowDef.fanOut);
     keepVisible(tagLevel(sWrap, 'expert'), (row.subagentModel || '') !== (rowDef.subagentModel || ''));
     // Only a Claude run has a sub-agent model to pick: Codex has its own spawn_agent, Copilot's sub-agents run on the
-    // node's own model, OpenCode's investigator runs on the node's model, and Cursor has none.
+    // node's own model, OpenCode's investigator runs on the node's model, and Cursor, Gemini CLI, Goose and Qwen Code have none.
     if (state.engine !== 'claude') sWrap.hidden = true;
     if (row.askQuestions !== null && row.askQuestions !== undefined) {
       const lockWhy = row.questionsLocked ? (row.askQuestions ? 'Always on for this agent' : 'Always off for this agent') : null;
@@ -4821,8 +4821,8 @@ function paintEngineHints() {
       ? `GitHub Copilot CLI runs this pipeline, including titles and summaries (on its default model). Step models: ${project ? 'project Settings' : 'Models › Copilot'}. Sign in once with copilot login.`
       : state.engine === 'cursor'
       ? `Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Cursor'}.`
-      : state.engine === 'opencode'
-      ? `OpenCode runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › OpenCode'}.`
+      : SIGN_IN_ENGINE_NAMES.includes(state.engine)
+      ? `${engineLabel(state.engine)} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : `Models › ${engineLabel(state.engine)}`}.`
       : `Codex runs this pipeline, including titles and summaries. Its models: ${project ? 'project Settings' : 'Models › Codex'}`;
   }
   if (el.engineDefaultHint) {
@@ -4894,16 +4894,12 @@ async function refreshRunTagDims() {
   if (q) { try { const r = await fetch(`/api/tag-dimensions${q}`); info = r.ok ? await safeJson(r) : null; } catch {} }
   if (gen !== runTagDimsGen) return;
   runTagInput.resetSuggestions();
-  // s2: the person's last tagged run in this project fills the field (D6, D9); else the project's defaults, as before.
-  const fill = info?.autofill?.from === 'last-run' ? info.autofill.tags : (state.runTagDefaults || []);
-  const { slots, rest } = splitByDimensions(fill, info?.dims || []);
-  const filled = !runTagInput.dirty() && info?.autofill?.from === 'last-run';
+  // #923: the project's defaults fill the field; the last run's tags are never copied.
+  const { slots, rest } = splitByDimensions(state.runTagDefaults || [], info?.dims || []);
   if (!runTagInput.dirty()) runTagInput.set(rest);
-  // D4: the server's pre-fill (project default → Default → last used) when it sent one; the last run's slots win.
-  const slotTags = filled ? Object.entries(slots).map(([key, value]) => formatTag({ key, value }))
-    : Array.isArray(info?.prefill) ? info.prefill : Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
+  // D4: the server's pre-fill (project default → Default → last used, mandatory only) when it sent one.
+  const slotTags = Array.isArray(info?.prefill) ? info.prefill : Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
   paintRunTagDims(info, slotTags);
-  if (filled) flashFilled(runTagInput.el, rest);
 }
 document.getElementById('runTagsSaveDefault')?.addEventListener('click', async (e) => {
   const btn = e.currentTarget;
@@ -5176,7 +5172,7 @@ function goAddModel(restore) {
   mvState.editing = null;
   mvState.openCreate = true;
   mvState.openShare = false;
-  // "+ Add model…" on a Codex or Cursor run starts a model of that engine (D10); the editor applies `engine`.
+  // "+ Add model…" on a non-Claude run starts a model of that engine (D10); the editor applies `engine`.
   mvState.prefill = state.engine !== 'claude' ? { id: '', engine: state.engine } : null;
   mvState.openEditorOnLoad = true;         // survives the view switch: loadModelsView opens it
   showView('models');
@@ -7335,14 +7331,14 @@ function clearTask(submitted) {
   if (!sameTask(snapshotTask(), submitted)) return;
   lastTask = submitted;
   setTask({ title: '', prompt: '', markdown: '', mdFileName: '', extras: [] });
-  { // #718 + s2: the next run starts from the last run's cost tags (D6), else the project's defaults, the dimension keys in their slots
+  { // #718 + #923: the next run starts from the project's defaults, the dimension keys in their slots; never this run's tags
     const sent = normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags;
-    if (state.tagDims?.autofill && sent.length) state.tagDims.autofill = { tags: sent, from: 'last-run' };   // project target only (D8)
-    const lastRun = state.tagDims?.autofill?.from === 'last-run';
-    const { slots, rest } = splitByDimensions(lastRun ? state.tagDims.autofill.tags : (state.runTagDefaults || []), state.tagDims.dims);
+    const { slots, rest } = splitByDimensions(state.runTagDefaults || [], state.tagDims.dims);
     const slotTags = Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
+    // The run just started is now the person's last used: a mandatory slot takes its value (project target only, D8).
+    if (state.tagDims?.autofill && sent.length) state.tagDims.prefill = prefillTags(state.tagDims.dims, [], { projectDefaults: state.runTagDefaults || [], lastUsed: sent });
     runTagInput.set(rest, { clearText: true });
-    runTagDims.set(lastRun ? slotTags : Array.isArray(state.tagDims.prefill) ? state.tagDims.prefill : slotTags);
+    runTagDims.set(Array.isArray(state.tagDims.prefill) ? state.tagDims.prefill : slotTags);
     paintRunTagDimsWarn();
   }
   el.reuseTask.hidden = false;
@@ -18409,9 +18405,9 @@ function renderModelsViewBody() {
     predefined: d.predefined || [],
     codex: d.codex || [],
     codexEfforts: d.codexEfforts || [],
-    cursorEfforts: d.cursorEfforts || [],
     copilot: d.copilot || [],
     copilotEfforts: d.copilotEfforts || [],
+    gooseEfforts: d.gooseEfforts || [],
     opencodeEfforts: d.opencodeEfforts || [],
     efforts: d.efforts || [],
     hideBuiltin: !!d.hideBuiltinModels,
@@ -18450,7 +18446,7 @@ function modelEditorEl() {
 function openModelEditorDialog() {
   if (!el.modelEditorModal || !el.modelEditorHost) return;
   const d = mvState.data || { efforts: [] };
-  const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels, ...(d.codexEfforts ? { codexEfforts: d.codexEfforts } : {}), cursorEfforts: d.cursorEfforts || [], copilotEfforts: d.copilotEfforts || [], opencodeEfforts: d.opencodeEfforts || [] });
+  const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels, ...(d.codexEfforts ? { codexEfforts: d.codexEfforts } : {}), cursorEfforts: d.cursorEfforts || [], copilotEfforts: d.copilotEfforts || [], gooseEfforts: d.gooseEfforts || [], opencodeEfforts: d.opencodeEfforts || [] });
   if (!mvState.editing && mvState.prefill) prefillModelEditor(editor, mvState.prefill);
   const title = editor.querySelector('.mv-editor-title');
   if (title) title.id = 'mv-editor-heading';
@@ -18663,7 +18659,7 @@ async function paintEngineSettings(data) {
   renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
     noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
     defaultLabels: { claude: 'the default model' },
-    jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], opencode: [] } });
+    jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] } });
   // Each non-Claude card's readiness line (GET /api/engines). Only on the Models page, where the cards live: a
   // settings-changed broadcast repaints this from any view, and that must not spawn a preflight.
   if (currentView() === 'models') void paintEngineCardStatus(root);

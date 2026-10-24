@@ -30,9 +30,9 @@ test('readiness: with the broker on, every engine but Claude is not ready (broke
   process.env.WORCA_BROKER_URL = BROKER.WORCA_BROKER_URL;
   resetEngineReadiness();
   const boom = async () => { throw new Error('spawned'); };
-  const list = await engineReadiness({ preflights: { claude: async () => ({}), codex: boom, copilot: boom, cursor: boom, opencode: boom }, mock: true, force: true });
+  const list = await engineReadiness({ preflights: { claude: async () => ({}), codex: boom, copilot: boom, cursor: boom, gemini: boom, goose: boom, opencode: boom, qwen: boom }, mock: true, force: true });
   assert.deepEqual(list.find((e) => e.name === 'claude'), { name: 'claude', label: 'Claude', ready: true, reason: null });
-  for (const name of ['codex', 'copilot', 'cursor', 'opencode']) {
+  for (const name of ['codex', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen']) {
     const e = list.find((x) => x.name === name);
     assert.equal(e.ready, false, name);
     assert.equal(e.broker, true, name);
@@ -44,7 +44,7 @@ test('readiness: with the broker on, every engine but Claude is not ready (broke
 test('engineLocks (GET /api/engine-locks): empty without the broker; every engine but Claude with it, no preflight', () => {
   assert.deepEqual(engineLocks({}), []);
   const locks = engineLocks(BROKER);
-  assert.deepEqual(locks.map((e) => e.name), ['codex', 'copilot', 'cursor', 'opencode']);
+  assert.deepEqual(locks.map((e) => e.name), ['codex', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen']);
   assert.ok(locks.every((e) => e.broker === true && /credential broker is on/.test(e.reason)));
 });
 
