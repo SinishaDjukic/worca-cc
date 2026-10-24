@@ -34,12 +34,12 @@ async function stubUpstream(t, handler = (req, res) => { res.writeHead(200, { 'c
   return { seen, url: `http://127.0.0.1:${srv.address().port}` };
 }
 
-async function startRelay(t, opts = {}) {
+async function startRelay(t, opts = {}, { network } = {}) {
   const sdk = createFakeE2b({ root: tmp('worca-relay-root-') });
   const real = e2bClient(sdk, { opts: {} }, { mock: true });
   const runs = [];   // every client.run call's options (a spy over the real client)
   const client = { ...real, run: (b, cmd, o) => { runs.push(o); return real.run(b, cmd, o); } };
-  const box = await client.create({ environment: 'worca-agent', tags: {}, timeoutMs: 60_000 });
+  const box = await client.create({ environment: 'worca-agent', tags: {}, timeoutMs: 60_000, ...(network ? { network } : {}) });
   const scriptPath = join(box.pathPrefix, 'worca-relay.mjs');
   copyFileSync(SCRIPT, scriptPath);
   const logs = [];
@@ -47,7 +47,7 @@ async function startRelay(t, opts = {}) {
   const start = (o = {}) => relay.start({ client, box: box.box, scriptPath, ...o });
   await start();
   t.after(async () => { await relay.stop(); await sdk.Sandbox.kill(box.id); });
-  return { relay, logs, runs, start };
+  return { relay, logs, runs, start, sdk };
 }
 
 const route = (upstream, extra = {}) => ({
@@ -90,6 +90,18 @@ test('forwards a message call with the route credential and without the sandbox 
   const r2 = await post(`http://127.0.0.1:${port}/v1/messages/count_tokens`, { headers: { authorization: `Bearer ${id}`, 'content-type': 'application/json' } });
   assert.equal(r2.status, 200);
   assert.equal(up.seen[1].url, '/v1/messages/count_tokens');
+});
+
+// Egress closed (plan Task 13): the relay rides the command's stdio and the sandbox's loopback, which E2B keeps open
+// under deny-all (plans/2026-10-22-e2b-kill-egress-checks.md §2), so a model call still answers.
+test('a model call through the relay answers with the sandbox egress closed (allowOut empty)', POSIX, async (t) => {
+  const up = await stubUpstream(t);
+  const { relay, sdk } = await startRelay(t, {}, { network: { denyOut: ['0.0.0.0/0'] } });
+  assert.deepEqual(sdk.events.find((e) => e.type === 'create').network, { denyOut: ['0.0.0.0/0'] });
+  const { id, baseUrl } = relay.addRoute(route(up.url));
+  const r = await post(`${baseUrl}/v1/messages`, { headers: { authorization: `Bearer ${id}`, 'content-type': 'application/json', 'anthropic-version': '2023-06-01' } });
+  assert.equal(r.status, 200);
+  assert.equal(up.seen.length, 1);
 });
 
 test('joins an upstream base path without a double slash; auth wins over custom headers', POSIX, async (t) => {

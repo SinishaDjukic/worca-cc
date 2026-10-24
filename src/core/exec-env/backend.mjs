@@ -16,7 +16,11 @@
  * @property {{pause: boolean, buildEnvironment: boolean, defaultMaxConcurrent: number, defaultMaxWaitMin: number}} capabilities
  * @property {{maxConcurrent?: string, maxWaitMin?: string}} [limitSettings]  user setting keys (settings.mjs execEnvLimitSetting)
  * @property {RegExp} secretEnv         env keys that are this backend's secrets: stripped from every host child
- * @property {Array<{key: string, label: string, hint: string, validate: (value: string) => boolean}>} [projectFields]
+ * @property {Array<{key: string, label: string, hint: string, help?: string, placeholder?: string,
+ *   options?: Array<{value: string, label: string}>, validate: (value: string) => boolean}>} [projectFields]
+ *   `help` shows under the field, `placeholder` is the value an unset field means, `options` makes it a choice
+ * @property {(o: {config: object, env: object}) => ({allowOut?: string[], denyOut: string[], unheldDeny?: string[]} | null)} [network]
+ *   the sandbox's outbound network for a project's config (null: open); `unheldDeny` is for the run log only
  * @property {(ctx: {engine: string, isWorkspace: boolean, mock: boolean, brokerOn: boolean, runRootMode: string, needsSignIn?: boolean}) => {errors: string[], warnings: string[]}} preflight
  *   sync (the server's 409 path). Only the backend's OWN checks (keys, SDK, endpoint): the harness adds
  *   policy.mjs remotePreflight (workspace, engine, run-root mode, platform) for every backend. `needsSignIn` false: the
@@ -49,7 +53,8 @@
  * @typedef {{ name: string, id: string|null, buildId: string|null, specHash: string, baseVersion: string }} BuildResult
  *
  * @typedef {object} BackendClient   one connection; holds the server's keys, never handed to an agent
- * @property {(o: {environment: string, tags: Record<string,string>, timeoutMs: number}) => Promise<Box>} create
+ * @property {(o: {environment: string, tags: Record<string,string>, timeoutMs: number, network?: {allowOut?: string[], denyOut: string[]}}) => Promise<Box>} create
+ *   `network` only when the project limits egress; a 400 for it rejects with errorClass 'config'
  * @property {(id: string) => Promise<Box>} connect
  * @property {(id: string) => Promise<unknown>} info   resolves while the sandbox exists (the control-plane check)
  * @property {(tags: Record<string,string>) => Promise<Array<{id: string, tags: Record<string,string>}>>} list

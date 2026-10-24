@@ -41,6 +41,27 @@ test('shows the template in use, the read-only spec and Build; Save PATCHes only
   assert.deepEqual(calls.at(-1), { url: '/api/projects/proj-1/exec-env/config', method: 'PATCH', body: { backend: 'e2b', values: { template: 'mine' } } });
 });
 
+test('a field with options is a select: Sandbox network shows Open/Allow, its help below, and Save sends the choice', async () => {
+  const help = 'Stops casual network access from the sandbox, not a determined agent.';
+  const view = VIEW();
+  view.backends[0].fields.push({ key: 'egress', label: 'Sandbox network', hint: 'open or allow', help, placeholder: 'open',
+    options: [{ value: 'open', label: 'Open' }, { value: 'allow', label: 'Allow listed hosts only' }], value: null });
+  const { host, calls } = harness(view);
+  for (let i = 0; i < 3; i++) await tick();
+  const sel = host.querySelector('[data-backend="e2b"] select.exec-env-field[data-field="egress"]');
+  assert.ok(sel, 'a select, not a text input');
+  assert.deepEqual([...sel.options].map((o) => [o.value, o.textContent]), [['open', 'Open'], ['allow', 'Allow listed hosts only']]);
+  assert.equal(sel.value, 'open', 'unset shows the default');
+  const helps = [...host.querySelectorAll('.exec-env-field-help')];
+  assert.deepEqual(helps.map((p) => p.textContent), [help], 'only the field with help text gets a line');
+  assert.equal(helps[0].previousElementSibling, sel.closest('.exec-env-field-row'), 'the help sits right under its field');
+  assert.equal(host.querySelector('input.exec-env-field[data-field="template"]').placeholder, 'worca-agent (the default)', 'the template input keeps its placeholder');
+  sel.value = 'allow';
+  host.querySelector('.exec-env-save').click();
+  for (let i = 0; i < 3; i++) await tick();
+  assert.deepEqual(calls.at(-1).body, { backend: 'e2b', values: { template: null, egress: 'allow' } });
+});
+
 test('a stale build says why and offers Rebuild; a running job disables the button and polls', async () => {
   const build = { name: 'worca-agent-proj-1', builtAt: '2026-10-18T10:00:00.000Z', buildId: 'b1' };
   let h = harness(VIEW({ build, stale: { stale: true, reasons: ['the environment spec changed since the build'] } }));

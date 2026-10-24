@@ -109,7 +109,7 @@ test('preset table snapshot — changing a preset is a deliberate, release-noted
     envScrub: false,
     envAllowlist: [],
     protectedPaths: [
-      '.env*', '*.pem', '*.key', 'id_rsa', 'id_ed25519', '*.p12', '*.pfx', '//run/secrets/**',
+      '.env*', '*.pem', '*.key', '.npmrc', '.netrc', 'id_*', '*.p12', '*.pfx', '//run/secrets/**',
       '//**/worca-cc.db*', '//**/worca.db*', '//**/.worca-cc/plugins/*/data/secrets.json',
       '//**/.worca-cc/settings.json', '//**/.worca-cc/mcp/**',
     ],
@@ -128,10 +128,10 @@ test('preset table snapshot — changing a preset is a deliberate, release-noted
     envScrub: true,
     envAllowlist: [],
     protectedPaths: [
-      '.env*', '*.pem', '*.key', 'id_rsa', 'id_ed25519', '*.p12', '*.pfx', '//run/secrets/**',
+      '.env*', '*.pem', '*.key', '.npmrc', '.netrc', 'id_*', '*.p12', '*.pfx', '//run/secrets/**',
       '//**/worca-cc.db*', '//**/worca.db*', '//**/.worca-cc/plugins/*/data/secrets.json',
       '//**/.worca-cc/settings.json', '//**/.worca-cc/mcp/**',
-      '.npmrc', '.netrc', '*.tfstate*', '*.keystore', '*.jks',
+      '*.tfstate*', '*.keystore', '*.jks',
       '**/secrets/**', '**/.git/config', '~/.git-credentials',
       '~/.ssh/**', '~/.aws/**', '~/.config/gcloud/**', '~/.kube/**', '~/.config/gh/**',
       '~/.npmrc', '~/.netrc', '~/.docker/config.json',

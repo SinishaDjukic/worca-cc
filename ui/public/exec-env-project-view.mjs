@@ -1,7 +1,7 @@
 // ui/public/exec-env-project-view.mjs — the project page's sandbox environments, under "Execution environment"
-// (docs/e2b.md "Per-project templates"): per backend, its project fields (e2b: template) with the one in use, the
-// read-only environment spec, the last build (stale, or made on another server), and Build / Rebuild (the server
-// builds; a failed build keeps the previous template). Polls while a build runs.
+// (docs/e2b.md "Per-project templates"): per backend, its project fields (e2b: template, sandbox network) with the one
+// in use, the read-only environment spec, the last build (stale, or made on another server), and Build / Rebuild (the
+// server builds; a failed build keeps the previous template). Polls while a build runs.
 import { notify, cardAlert } from './feedback.mjs';
 
 const el = (doc, tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
@@ -23,9 +23,19 @@ export function mountExecEnvPanel(host, { projectKey, fetchFn = (u, o) => fetch(
       box.append(el(doc, 'h4', null, b.label));
       for (const f of b.fields) {
         const row = el(doc, 'label', 'field exec-env-field-row'); row.append(el(doc, 'span', null, f.label));
-        const input = el(doc, 'input', 'input exec-env-field'); input.dataset.field = f.key; input.value = f.value ?? '';
-        input.placeholder = b.effective && b.effective.source !== 'project' ? `${b.effective.name} (${b.effective.from})` : '';
+        let input;
+        if (Array.isArray(f.options)) {
+          // A choice (e2b: Sandbox network): an unset field shows the value it means (`placeholder`).
+          input = el(doc, 'select', 'select exec-env-field');
+          for (const o of f.options) { const opt = el(doc, 'option', null, o.label); opt.value = o.value; input.append(opt); }
+          input.value = f.value ?? f.placeholder ?? f.options[0]?.value ?? '';
+        } else {
+          input = el(doc, 'input', 'input exec-env-field'); input.value = f.value ?? '';
+          input.placeholder = b.effective && b.effective.source !== 'project' ? `${b.effective.name} (${b.effective.from})` : '';
+        }
+        input.dataset.field = f.key;
         row.append(input); box.append(row);
+        if (f.help) box.append(el(doc, 'p', 'hint exec-env-field-help', f.help));
       }
       if (b.fields.length) {
         const save = el(doc, 'button', 'btn btn-sm exec-env-save', 'Save'); save.type = 'button';

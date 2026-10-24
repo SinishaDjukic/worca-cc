@@ -6,7 +6,9 @@
 // `deps` (tool-deps.mjs builds the real bundle). Handler failures are
 // AskToolError → the MCP child returns them as isError:true text so the model
 // can self-correct; they are never JSON-RPC errors. No imports at all: diff paths
-// are repo-relative POSIX, so path handling here is plain string work.
+// are repo-relative POSIX, so path handling here is plain string work, and the
+// guardrail match is the secret-path owner's (secret-paths.mjs isSecretPath), injected
+// as deps.isSecretPath next to deps.protectedPaths (tool-deps.mjs).
 
 export class AskToolError extends Error {
   constructor(message) { super(message); this.name = 'AskToolError'; }
@@ -262,27 +264,9 @@ export function splitUnifiedDiff(text) {
   return sections;
 }
 
-const RE_SPECIAL = new Set(['.', '+', '?', '^', '$', '{', '}', '(', ')', '|', '[', ']', '\\']);
-const globCache = new Map();
-/** A guardrails.mjs pattern → anchored regex: a leading double-star + slash = any dirs, double-star = anything, one star = within one segment. */
-function globRe(pattern) {
-  let re = globCache.get(pattern);
-  if (re) return re;
-  let body = '';
-  for (let i = 0; i < pattern.length; i++) {
-    const c = pattern[i];
-    if (c !== '*') { body += RE_SPECIAL.has(c) ? `\\${c}` : c; continue; }
-    if (pattern[i + 1] !== '*') { body += '[^/]*'; continue; }
-    if (pattern[i + 2] === '/') { body += '(?:.*/)?'; i += 2; } else { body += '.*'; i += 1; }
-  }
-  re = new RegExp(`^${body}$`);
-  globCache.set(pattern, re);
-  return re;
-}
-
 /** Extensions whose bytes must never be UTF-8 decoded. The shared table in
  *  src/shared/artifact-kinds.mjs is the authority for the raw route and the
- *  viewer; this module stays import-free by contract (two source scans assert
+ *  viewer; this module imports only the secret-path owner (source scans assert
  *  it), so the byte extensions are restated here and
  *  test/ask-tools.test.mjs cross-checks the two sets against viewerKindFor. */
 const BYTE_EXTENSIONS = new Set([
@@ -298,23 +282,6 @@ export function isByteArtifact(relPath) {
   const base = String(relPath || '').split('/').pop() || '';
   const dot = base.lastIndexOf('.');
   return dot > 0 && BYTE_EXTENSIONS.has(base.slice(dot + 1).toLowerCase());
-}
-
-/**
- * Guardrail match for a diff section path (repo-relative, POSIX). Mirrors the CLI
- * semantics guardrails.mjs:16-18 documents: slash-LESS patterns (`*x*`, `*x`, `x*`,
- * `x`) match the basename at any depth; slash-containing ones match the whole path.
- * `~/…` and `//…` are absolute and can never name a file inside a run diff, so they
- * are skipped rather than silently mis-matched.
- */
-export function isProtectedBasename(path, patterns = []) {
-  const full = String(path ?? '').replace(/^\.\//, '');
-  const base = full.slice(full.lastIndexOf('/') + 1);
-  for (const p of patterns) {
-    if (typeof p !== 'string' || !p || p.startsWith('~/') || p.startsWith('//')) continue;
-    if (globRe(p).test(p.includes('/') ? full : base)) return true;
-  }
-  return false;
 }
 
 /** Byte-offset paging: cut at the last newline inside the window; never inside a UTF-8 sequence, never zero progress. */
@@ -421,6 +388,10 @@ const START_DESIGN_KINDS = Object.freeze(['web', 'presentation', 'pitch', 'video
 
 export function createAskTools(deps) {
   const L = deps.limits;
+  // The guardrail match for a path (secret-paths.mjs isSecretPath, injected): with patterns but no matcher, every
+  // path counts as protected, so a bundle that forgot the matcher hides too much, never a secret.
+  const isProtectedBasename = (p, patterns) => (typeof deps.isSecretPath === 'function'
+    ? deps.isSecretPath(p, patterns) : Array.isArray(patterns) && patterns.length > 0);
   // git missing on this machine (P0): an absent dep means git is on, so every existing caller is unchanged.
   const gitOff = () => typeof deps.gitAvailable === 'function' && deps.gitAvailable() === false;
 

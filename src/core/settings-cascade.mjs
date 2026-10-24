@@ -20,6 +20,7 @@ import { CHAT_SOURCE_BRANCH_ID, CHAT_SOURCE_BRANCH_MODES, DEFAULT_CHAT_SOURCE_BR
 import { EXEC_ENVS, selectExecEnv } from './exec-env/index.mjs';
 import { getExecBackend } from './exec-env/registry.mjs';
 import { remoteRefusesDefault } from './exec-env/policy.mjs';
+import { isSecretPathList } from './secret-paths.mjs';
 
 export const LAYERS = Object.freeze(['project', 'user', 'team']);
 const isObj = (value) => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -68,6 +69,8 @@ const SCALARS = [
   // may start a fix run, in addition to collaborators and the PR author. Project-only, like watchNewPrs.
   scalar({ id: 'watch.trustedReviewers', path: ['watch', 'trustedReviewers'], check: SETTING_CHECKS.stringArray, def: [], hint: 'must be an array of reviewer login strings', readUser: () => undefined }),
   scalar({ id: 'runUserClaudeSettings', check: (value) => typeof value === 'boolean', def: false, hint: 'must be true or false' }),
+  // Files the project adds to the secret-path list (secret-paths.mjs DEFAULT_SECRET_PATHS): kept out of a sandbox upload.
+  scalar({ id: 'secretPaths', check: isSecretPathList, def: Object.freeze([]), hint: 'must be a list of project-relative file patterns, one line each (dir/** for a folder; no ~/, / or ./ start)' }),
   scalar({ id: 'memory.softBytesPerFile', path: ['memory', 'softBytesPerFile'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_SOFT_BYTES_PER_FILE }),
   scalar({ id: 'memory.maxBytesPerFile', path: ['memory', 'maxBytesPerFile'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_HARD_BYTES_PER_FILE }),
   // Team memory (phase 1a): project-only opt-in — no user layer (readUser off), no team key.
