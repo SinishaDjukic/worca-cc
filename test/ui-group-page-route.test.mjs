@@ -230,3 +230,21 @@ test('Decisions: one section per member with a decision or a receipt; a live mem
   assert.equal(secs.length, 2);
   assert.ok([...secs[1].querySelectorAll('li.gpage-receipt')].some((li) => li.textContent === 'Plan accepted'));
 });
+
+test('slice 3: a failed /api/run-groups reload keeps the page (same .gpage node, no error, no rebuild)', async () => {
+  for (const fail of [() => json({ error: 'busy' }, 500), () => Promise.reject(new TypeError('Failed to fetch'))]) {
+    let down = false;
+    const ctx = await boot((url) => (down && url.startsWith('/api/run-groups') ? fail() : handler(url)));
+    ctx.go('feature/feat_1');
+    await ctx.settle(6);
+    const gp = pageOf(ctx).querySelector('.gpage');
+    assert.ok(gp, 'the page rendered');
+    const before = ctx.calls.filter((c) => c.url.startsWith('/api/run-groups')).length;
+    down = true;
+    ctx.dispatch({ type: 'run-groups-changed' });
+    await ctx.settle(6);
+    assert.ok(ctx.calls.filter((c) => c.url.startsWith('/api/run-groups')).length > before, 'the failed reload was really requested');
+    assert.equal(pageOf(ctx).querySelector('.gpage'), gp, 'the same page node');
+    assert.equal(pageOf(ctx).querySelector('.feature-page-error'), null, 'no "could not load" swap');
+  }
+});
