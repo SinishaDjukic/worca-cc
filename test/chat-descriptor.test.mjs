@@ -58,7 +58,7 @@ test('Codex and Copilot keep their words', () => {
   assert.equal(copilot.notReady.flag, 'copilotSetup');
   assert.equal(copilot.noLockdownMessage, 'Chat on Copilot is unavailable: this copilot cannot be locked down for a chat. Use a Claude chat.');
   assert.equal(copilot.shellTrippedMessage, 'Copilot tried to run a shell command although it was given none — worca stopped the turn.');
-  assert.equal(copilot.suggestionModel, null);
+  assert.equal(copilot.suggestionModel, 'gpt-5-mini');
   assert.equal(chatCostCapRefusal(copilot, 'copilot/gpt-5.4'), 'A per-turn cost cap is set, and Copilot reports no cost, so worca cannot keep this turn under it. Turn the cap off (Settings › Chat), or use a Claude or Codex chat.');
   assert.equal(chatCostCapRefusal(codex, 'nope', () => false), 'A per-turn cost cap is set, and nope has no known price on Codex, so worca cannot keep this turn under it. Pick a priced Codex model, or turn the cap off (Settings › Chat).');
   assert.equal(chatCostCapRefusal(codex, 'gpt-5.5', () => true), null);

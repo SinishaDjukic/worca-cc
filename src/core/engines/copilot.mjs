@@ -742,6 +742,9 @@ export const copilotChat = makeChatDescriptor({
   docsAnchor: 'github-copilot-cli',
   shellTrippedMessage: 'Copilot tried to run a shell command although it was given none — worca stopped the turn.',
   titles: true,
+  // GPT-5 Mini is one of Copilot's included models (0× premium requests on a paid plan): a suggestion after every reply
+  // costs no premium request there (one on the free plan).
+  suggestionModel: 'gpt-5-mini',
   prompt: {
     cli: "the GitHub Copilot CLI with Copilot's own sign-in",
     webOff: "Copilot's own web tools stay off.",

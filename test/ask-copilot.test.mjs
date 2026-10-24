@@ -107,8 +107,8 @@ test('the prompt: worca\'s file tools, no sub-agents, no images, the Copilot CLI
   assert.match(buildComposerSystemPrompt([], { engine: 'copilot' }), /plus the worca file tools read_file, grep and glob.*A Copilot chat cannot view images or PDFs/s);
 });
 
-test('no next-prompt suggestion on Copilot', () => {
-  assert.equal(suggestionModel('copilot', { inCatalog: () => true, ready: () => true }), null);
+test("Copilot's next-prompt suggestion runs on an included model (no premium request on a paid plan)", () => {
+  assert.equal(suggestionModel('copilot', { chatModel: 'copilot/claude-sonnet-5.5' }), 'gpt-5-mini');
 });
 
 test('the panel: Copilot\'s own section, its lock, and what it refuses before upload', () => {

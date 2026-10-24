@@ -1565,17 +1565,19 @@ class AskTurn extends EventEmitter {
     // Stored for test determinism, never awaited by run() (orchestrator.mjs:3821).
     // NO signal: a user stop aborts this.abort mid-turn and would kill the call
     // before it spawns. permissionMode 'dontAsk' is the B-1 fix.
+    const aux = this._auxCwd();
     this.titlePromise = Promise.resolve()
       .then(() => (this._titleOffline ? '' : d.generateTitle(this.firstText, {
-        cwd: this.scratchDir || join(d.worcaHome(), 'tmp', 'ask'),
+        cwd: aux.cwd,
         tools: [], strictMcpConfig: true, settingSources: ['project'],
         disableSlashCommands: true, envScrub: true, envAllowlist: [],
         permissionMode: 'dontAsk',
         // The chat's own model is the title default (#422) — a chat on a
         // custom endpoint titles itself there, not on a first-party Haiku.
         runModel: this.model,
-        // §4.6: a Codex chat titles itself on Codex, read-only (D11), with the Ask slot's model or the chat's own.
-        ...(this.lockedDown ? { engine: this.engine, model: d.askSlot(this.engine)?.model || this.model } : {}),
+        // §4.6: a locked-down chat titles itself on its own engine, locked down as the chat is but with no MCP server
+        // (title.mjs auxTextCall askLockdown), with the Ask slot's model or the chat's own.
+        ...(this.lockedDown ? { engine: this.engine, askLockdown: true, model: d.askSlot(this.engine)?.model || this.model } : {}),
         onError: ({ model, error }) => console.warn(
           `[worca-ask] thread ${this.threadId}: title generation failed (${model ? `model ${model}` : 'the CLI default model'}): ${error?.message || error} — keeping the fallback title`),
       })))
@@ -1596,7 +1598,20 @@ class AskTurn extends EventEmitter {
           try { d.onOutOfTurn({ type: 'ask-title', title }); } catch { /* sink */ }
         }
       })
-      .catch(() => { /* generateTitle already swallows; final backstop */ });
+      .catch(() => { /* generateTitle already swallows; final backstop */ })
+      .finally(aux.done);
+  }
+
+  /** Where a helper call of this chat (its title, its suggestion) runs: the scratch dir, or — on an engine that keeps its
+   *  settings and sessions per folder (chat descriptor `ownFolder`: Gemini CLI writes the lockdown's settings file into
+   *  the cwd) — a fresh folder of its own, removed when the call is over, so it never shares one with the chat or with
+   *  another helper call. */
+  _auxCwd() {
+    const d = this.deps;
+    const base = this.scratchDir || join(d.worcaHome(), 'tmp', 'ask');
+    if (!this.chat || !this.chat.ownFolder) return { cwd: base, done: () => {} };
+    const cwd = join(base, this.engine, `aux-${this.threadId}-${Math.random().toString(36).slice(2, 10)}`);
+    return { cwd, done: () => rm(cwd, { recursive: true, force: true }).catch(() => {}) };
   }
 
   /** The next-prompt suggestion (ask-suggestion): one cheap, tool-less, out-of-turn call after a turn that finished
@@ -1609,16 +1624,17 @@ class AskTurn extends EventEmitter {
     let model = null;
     try {
       if (!d.suggestionsEnabled() || d.budgetStatus().blocked) return;
-      model = d.suggestionModel(this.engine);
+      model = d.suggestionModel(this.engine, { chatModel: this.model });
     } catch { return; }
     if (!model) return;
     const ctl = d.claimSuggestion(this.threadId);
     const signal = AbortSignal.any([ctl.signal, AbortSignal.timeout(SUGGESTION_TIMEOUT_MS)]);
+    const aux = this._auxCwd();
     this.suggestionPromise = Promise.resolve()
       .then(() => d.generateSuggestion({ userText: this.firstText, replyText: this._replyText }, {
-        cwd: this.scratchDir || join(d.worcaHome(), 'tmp', 'ask'),
+        cwd: aux.cwd,
         model,
-        ...(this.lockedDown ? { engine: this.engine } : {}),
+        ...(this.lockedDown ? { engine: this.engine, askLockdown: true } : {}),
         tools: [], strictMcpConfig: true, settingSources: ['project'],
         disableSlashCommands: true, envScrub: true, envAllowlist: [],
         permissionMode: 'dontAsk',
@@ -1640,6 +1656,6 @@ class AskTurn extends EventEmitter {
         try { d.onOutOfTurn({ type: 'ask-suggestion', messageId: this.assistantMessageId, text }); } catch { /* sink */ }
       })
       .catch(() => { /* generateSuggestion never throws; final backstop */ })
-      .finally(() => { try { d.releaseSuggestion(this.threadId, ctl); } catch { /* best effort */ } });
+      .finally(() => { try { d.releaseSuggestion(this.threadId, ctl); } catch { /* best effort */ } aux.done(); });
   }
 }

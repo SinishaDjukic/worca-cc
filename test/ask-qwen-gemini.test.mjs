@@ -123,7 +123,8 @@ test('the prompt: worca\'s file tools, no sub-agents, images (and PDFs) as block
     assert.ok(buildSystemPrompt([], { engine: E.engine }).startsWith(rules));
     assert.ok(buildSystemPrompt([], { engine: E.engine, web: { enabled: true, allowedDomains: ['a.com'] } }).includes(`${E.label}'s own web tools stay off.`));
     assert.ok(buildComposerSystemPrompt([], { engine: E.engine }).includes(E.engine === 'goose' ? 'a Goose chat cannot view a PDF' : 'For an image or PDF, read_attachment returns the image or PDF itself'));
-    assert.equal(suggestionModel(E.engine, { inCatalog: () => true, ready: () => true }), null, 'no next-prompt suggestion');
+    assert.equal(suggestionModel(E.engine, { inCatalog: () => true, ready: () => true }), null, 'no chat model: no suggestion');
+    assert.equal(suggestionModel(E.engine, { chatModel: E.model }), E.model, "the suggestion runs on the chat's own model");
   }
 });
 
@@ -267,13 +268,44 @@ for (const E of ENGINES_UNDER_TEST) {
     assert.ok(getMessage(s.asst.id).blocks.some((b) => b.kind === 'notice' && b.text === 'Context restored from history'));
   });
 
-  test(`a ${E.label} chat's title is the prompt's own words: no title call outside the lockdown`, async () => {
+  test(`a ${E.label} chat titles itself on its own engine, locked down with no MCP server, after the gate`, async () => {
     const s = seed();
-    const { turn, titles } = makeTurn(E, s, { firstTurn: true, deterministicTitle: 'hello there' }, { runClaudeImpl: async (o) => reply(E, o) });
+    const { turn, titles } = makeTurn(E, s, { firstTurn: true, deterministicTitle: 'hello there' }, { runClaudeImpl: async (o) => reply(E, o),
+      generateTitle: async (...a) => { titles.push(a); return 'A Real Title'; }, askSlot: () => undefined });
+    await turn.run();
+    await turn.titlePromise;
+    assert.equal(titles.length, 1);
+    const o = titles[0][1];
+    assert.equal(o.engine, E.engine);
+    assert.equal(o.askLockdown, true);
+    assert.equal(o.model, E.model);
+    assert.equal(o.mcpConfigPath, undefined);
+    assert.equal(getThread(s.thread.id).title, 'A Real Title');
+  });
+
+  test(`a refused ${E.label} turn makes no title call: the title is the prompt's own words`, async () => {
+    const s = seed();
+    const { turn, titles } = makeTurn(E, s, { firstTurn: true, deterministicTitle: 'hello there' }, {
+      [`${E.engine}SelfTest`]: async () => ({ refusal: 'no' }), runClaudeImpl: async (o) => reply(E, o) });
     await turn.run();
     await turn.titlePromise;
     assert.equal(titles.length, 0);
     assert.equal(getThread(s.thread.id).title, 'hello there');
+  });
+
+  test(`a ${E.label} chat's next-prompt suggestion runs on the chat's own model, locked down`, async () => {
+    const s = seed();
+    const got = [];
+    const { turn, frames } = makeTurn(E, s, { suggest: true }, { runClaudeImpl: async (o) => reply(E, o),
+      suggestionsEnabled: () => true, budgetStatus: () => ({ blocked: false }),
+      generateSuggestion: async (io, o) => { got.push(o); return 'Show the diff'; }, onOutOfTurn: (f) => frames.push(f) });
+    await turn.run();
+    await turn.suggestionPromise;
+    assert.equal(got.length, 1);
+    assert.equal(got[0].model, E.model);
+    assert.equal(got[0].engine, E.engine);
+    assert.equal(got[0].askLockdown, true);
+    assert.equal(frames.find((f) => f.type === 'ask-suggestion').text, 'Show the diff');
   });
 }
 

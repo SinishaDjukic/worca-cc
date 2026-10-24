@@ -6,6 +6,8 @@
 import { ENGINES, engineLabel, chatEnginesTaking } from '../../shared/engine-switch.mjs';
 
 const DOCS = 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md';
+/** A descriptor's `suggestionModel` that means "the chat's own model". */
+export const CHAT_MODEL = 'chat';
 const never = () => false;
 const ready = async () => ({});
 
@@ -27,8 +29,9 @@ const ready = async () => ({});
  *   images, pdfs        what a chat takes (engine-switch.mjs `chat`): read_attachment and read_file send an image / a PDF
  *                       as an MCP content block of their result, which this engine forwards to its model
  *   turnImages          the user's images also ride the turn that carried them (Codex: `exec -i`)
- *   titles              the chat's title is a call on this engine (else it is the prompt's own words)
- *   suggestionModel     the model of the next-prompt suggestion, or null (none)
+ *   titles              the chat's title is a call on this engine (else it is the prompt's own words); like the
+ *                       suggestion, it runs locked down with no MCP server (title.mjs auxTextCall askLockdown)
+ *   suggestionModel     the model of the next-prompt suggestion: a model id, CHAT_MODEL (the chat's own), or null (none)
  *   prompt              the system prompt's words for this engine: {cli, attachments, composerBinary, webOff}
  *   metaTools           the engine's own tools a chat keeps (named and justified in plans/), as the stream names them:
  *                       the watchdog and the self-test allow them beside worca's (Goose: load_skill)
@@ -38,7 +41,7 @@ const ready = async () => ({});
  */
 export function makeChatDescriptor({
   engine, lockdown, askSupport = ready, selfTest = null, preflight = ready, modelPriced = null, resumeNotFound = never,
-  docsAnchor, setupLabel, noLockdownMessage, shellTrippedMessage, titles = false, suggestionModel = null, prompt = {},
+  docsAnchor, setupLabel, noLockdownMessage, shellTrippedMessage, titles = true, suggestionModel = CHAT_MODEL, prompt = {},
   notReadyFlag, metaTools = [], modelProblem = null, ownFolder = false, turnImages = false,
 }) {
   const label = engineLabel(engine);

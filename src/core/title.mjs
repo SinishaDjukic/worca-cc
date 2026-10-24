@@ -195,7 +195,9 @@ export async function auxTextCall({ systemPrompt, prompt, model, engine = null }
       // env (design §4.8) — a global entry matching this id carries its routing
       // env everywhere the id is used.
       modelEnv: engine ? undefined : resolveModelEnv(model, { tag: opts.bridgeTag || undefined }),   // tag: read a bridged model's upstream cost back
-      ...(engine ? { engine, sandbox: 'read-only' } : {}),
+      // A chat's helper call (its title, its next-prompt suggestion) runs locked down exactly as the chat does, with no MCP
+      // server at all (askLockdown, no --mcp-config): the engine's own tools are off, so it needs no read-only mode.
+      ...(engine ? { engine, sandbox: 'read-only', ...(opts.askLockdown ? { askLockdown: true, envScrub: true } : {}) } : {}),
       effort: opts.effortOverride || (engine && typeof opts.effort === 'string' && opts.effort) || AUX_EFFORT,
       permissionMode: opts.permissionMode || 'acceptEdits',
       allowedTools: [],            // empty → no --allowedTools flag → claude defaults; pure text gen
