@@ -53,10 +53,16 @@ export function showsFixConflicts(m, w) {
   return !!m && !watchStopped(m) && !!(m.pr && m.pr.id === 'conflicts') && canResolvePr(w);
 }
 
-/** GitHub's verdict (GET /api/pr/checks `status.label`) as the In review detail: "Review required" reads as a wait. */
+// GitHub's verdicts that are not the checks line (git-info.mjs prMergeStatus): with one of them as the label, the checks
+// line is the `detail`; otherwise the label IS the checks line.
+const VERDICTS = new Set(['Draft', 'Merge conflicts', 'Changes requested', 'Review required', 'Out of date with the base branch',
+  'Blocked by branch rules', 'Ready to merge']);
+
+/** GitHub's verdict (GET /api/pr/checks `status.label`) as the In review detail: "Review required" reads as a wait. A
+ *  label that is the checks line ("Checks running · 7 of 12 done") is the Checks row's, never the head's: ''. */
 export function verdictWords(status) {
   const label = status && typeof status.label === 'string' ? status.label : '';
-  if (!label) return '';
+  if (!VERDICTS.has(label)) return '';
   return label === 'Review required' ? 'waiting for a review' : label[0].toLowerCase() + label.slice(1);
 }
 /** "Build · failed · Implementation" (the model) → "Failed · Build · Implementation" (the request's page line). */
@@ -99,14 +105,15 @@ export function headModel(f) {
   const tryIt = f.canTry ? [btn('try', 'Try it', { title: 'Check out the branch on this machine' })] : [];
   const pr = f.pr && f.pr.url ? f.pr : null;
   const s = upper(pr);
-  if (s === 'MERGED') return { ...NONE, key: 'merged', status: { line: `Merged · your changes are in ${base}` }, cta: { state: 'merged', href: pr.url, menu: true } };
+  // The base branch is the facts list's Merged row: the head says only the state.
+  if (s === 'MERGED') return { ...NONE, key: 'merged', status: { line: 'Merged' }, cta: { state: 'merged', href: pr.url, menu: true } };
   if (s === 'OPEN') {
     const cta = { state: 'view', href: pr.url, menu: true };
     const w = f.prStatus && f.prStatus.watch;
     if (watchStopped(m)) {
-      // The model's own line (`Needs you · Watch stopped · 3 fix runs, …`), the Runs list's words: status null keeps it.
-      // The disabled button's reason is also visible text in the facts list's Watch row (factsModel), not only its title.
-      return { ...NONE, key: 'watch-stopped', status: null, cta,
+      // "Watch stopped" is the facts list's Watch row (with the disabled button's reason, visible text, not only its
+      // title): the head says only Needs you. The Runs list and the chat card keep the model's full line.
+      return { ...NONE, key: 'watch-stopped', status: { line: 'Needs you' }, cta,
         after: [btn('ask-changes', 'Ask for changes', { primary: true, disabled: true, title: ASK_IN_CHAT })] };
     }
     if (m.pr && m.pr.id === 'conflicts') {
@@ -120,7 +127,8 @@ export function headModel(f) {
     return { ...NONE, key: 'not-merged-back', status: { ...AMBER, line: `Needs you · not merged back into ${f.source}` },
       before: [btn('how-to-merge', 'How to merge')], cta: f.canCreatePr ? { state: 'create' } : null };
   }
-  if (f.push) return { ...NONE, key: 'push', status: { line: `Ready to ship · in ${f.source} here, not on the remote` }, before: tryIt, cta: { state: 'push', label: pushLabel(f.pushState), title: pushTip(f.source, f.pushState),
+  // The tracker's Push labels ("In {source} here", "On the remote") say where the work is.
+  if (f.push) return { ...NONE, key: 'push', status: { line: 'Ready to ship' }, before: tryIt, cta: { state: 'push', label: pushLabel(f.pushState), title: pushTip(f.source, f.pushState),
     disabled: f.pushState?.state === 'pushed' || f.pushState?.state === 'diverged' } };
   if (m.state !== 'ready') return { ...NONE, key: m.state };             // merged into its base without a PR (inBase)
   const cta = f.prInput === 'PENDING' ? { state: 'pending' } : f.canCreatePr ? { state: 'create' } : null;
@@ -213,10 +221,6 @@ export function trackerModel(f) {
   return { rows: [{ steps: f.push || f.notMergedBack ? pushPath(f) : prPath(f) }] };
 }
 
-// GitHub's verdicts that are not the checks line (git-info.mjs prMergeStatus): with one of them as the label, the checks
-// line is the `detail`; otherwise the label IS the checks line.
-const VERDICTS = new Set(['Draft', 'Merge conflicts', 'Changes requested', 'Review required', 'Out of date with the base branch',
-  'Blocked by branch rules', 'Ready to merge']);
 const CHECKS_TONE = Object.freeze({ failing: 'bad', pending: 'run', passing: 'ok' });
 /** The PR chip's model (run-model.mjs prState) with the status read's verdict folded in, so it says what the row says. */
 function chipOf(pr, s) {

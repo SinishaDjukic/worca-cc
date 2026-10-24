@@ -49,6 +49,8 @@ test('the run tile well is 176px and dotted (dots only behind graphs); the title
   assert.match(b, /\.chat-run-tile \.run-flow-wrap\.chat-run-tile-well\{height:176px;margin:0;overflow:hidden;/);
   assert.match(b, /\.chat-home-wf-tb\{[^}]*background-image:radial-gradient\(circle,var\(--line-2\) 1\.1px,transparent 1\.1px\);background-size:22px 22px;/);
   assert.match(b, /\.chat-run-tile-open::after\{content:"";position:absolute;inset:0;/);
+  // The title style and the ellipsis sit on the inner span: a .btn is inline-flex (no ellipsis) and keeps weight 500.
+  assert.match(b, /\.chat-run-tile-name\{min-width:0;font-weight:600;color:var\(--ink\);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;\}/);
   assert.match(b, /\.chat-run-tile-answer\{position:relative;z-index:2;/);
 });
 

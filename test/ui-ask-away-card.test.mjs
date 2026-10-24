@@ -1,5 +1,5 @@
 // test/ui-ask-away-card.test.mjs
-// The Away mode card in the Ask panel (wording §3.7): "Change Away mode? (user settings)", the Now / After
+// The Away mode card in the Ask panel (wording §3.7): "Change Away mode?" with the scope as its target line, the Now / After
 // summary lines with the changed words marked, one Changed line per field, Keep as is / Apply; the
 // applied state reads "Saved. <the new status line>".
 import { test } from 'node:test';
@@ -64,7 +64,8 @@ test('Away card: proposed renders Now/After/Changed and Apply posts applied; a p
       const ctx = await openWith(proposed(AWAY_CARD), rec);
       const el = ctx.doc.querySelector('.ask-card.ask-awcard');
       assert.ok(el, 'the Away mode card renders as its own card');
-      assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Change Away mode? (user settings)');
+      assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Change Away mode?');
+      assert.equal(el.querySelector('.ask-mcard-target').textContent, 'user settings', 'the scope is the target line');
       assert.match(el.querySelector('.ask-awcard-now').textContent, /^Now:.*runs you marked/);
       assert.match(el.querySelector('.ask-awcard-after').textContent, /^After:.*on all runs/);
       assert.deepEqual([...el.querySelectorAll('.ask-awcard-after mark')].map((m) => m.textContent), ['all', 'runs.']);
@@ -80,7 +81,8 @@ test('Away card: proposed renders Now/After/Changed and Apply posts applied; a p
       const rec = {};
       const ctx = await openWith(proposed({ ...AWAY_CARD, level: 'project', projectKey: 'shop-1', projectName: 'Shop' }), rec);
       const el = ctx.doc.querySelector('.ask-card.ask-awcard');
-      assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Change Away mode? (project Shop)');
+      assert.equal(el.querySelector('.ask-mcard-title').textContent, 'Change Away mode?');
+      assert.equal(el.querySelector('.ask-mcard-target').textContent, 'project Shop');
       el.querySelector('[data-ask-ac-decline]').click();
       await ctx.tick(); await ctx.tick();
       assert.deepEqual(rec.cardBodies, [{ state: 'declined' }]);

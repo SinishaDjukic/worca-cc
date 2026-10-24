@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { createCommandCard } from '../ui/public/ask-command-card.mjs';
+import { createCommandCard, longCommand } from '../ui/public/ask-command-card.mjs';
 
 const dom = () => new JSDOM('<!doctype html><html><body></body></html>').window.document;
 const CARD = { type: 'command', blockId: 't-0000000001:1', sessionId: 't-0000000001', seq: 1, command: 'npm test', folder: 'demo · main', warning: null };
@@ -13,6 +13,7 @@ test('a running command: the command, a live tail, a Stop button', () => {
   doc.body.appendChild(c.el);
   c.update({ status: 'running', tail: 'PASS a\nPASS b\n', exitCode: null });
   assert.equal(c.el.querySelector('.ask-cmd-line').textContent, '$ npm test');
+  assert.equal(c.el.querySelector('.ask-cmd-more').hidden, true, 'a short command needs no Show all');
   assert.match(c.el.querySelector('.ask-cmd-out').textContent, /PASS b/);
   assert.equal(c.el.querySelector('.ask-cmd-out').hidden, true, 'the output is folded by default');
   const stop = c.el.querySelector('.ask-cmd-stop');
@@ -39,12 +40,24 @@ test('the live-run warning shows when the card carries one', () => {
   assert.equal(c.el.querySelector('.ask-cmd-warning').hidden, false);
 });
 
-test('the output: folded behind a chevron toggle with its line count; no output, no toggle; a long command is never clamped', () => {
+test('the output: folded behind a chevron toggle with its line count; no output, no toggle; a long command is clamped with Show all', () => {
   const doc = dom(); const toggles = [];
   const long = `npm test -- ${'--grep very-long-pattern '.repeat(12)}`.trim();
   const c = createCommandCard({ doc, card: { ...CARD, command: long }, onStop: () => {}, onToggle: (open) => toggles.push(open) });
   doc.body.appendChild(c.el);
   assert.equal(c.el.querySelector('.ask-cmd-line').textContent, `$ ${long}`, 'the whole command line');
+  const more = c.el.querySelector('button.ask-cmd-more');
+  assert.equal(more.hidden, false, 'a long command offers Show all');
+  more.click();
+  assert.ok(c.el.querySelector('.ask-cmd-line').classList.contains('is-open'));
+  assert.equal(more.getAttribute('aria-expanded'), 'true');
+  assert.equal(more.textContent, 'Show less');
+  more.click();
+  assert.equal(c.el.querySelector('.ask-cmd-line').classList.contains('is-open'), false);
+  assert.equal(more.textContent, 'Show all');
+  assert.equal(longCommand('a\nb\nc'), false);
+  assert.equal(longCommand('a\nb\nc\nd'), true, 'more than 3 lines');
+  assert.equal(longCommand('x'.repeat(181)), true);
   const toggle = c.el.querySelector('button.ask-cmd-toggle');
   const out = c.el.querySelector('.ask-cmd-out');
   c.update({ status: 'running', tail: '', exitCode: null });

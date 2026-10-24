@@ -1,0 +1,2 @@
+{"type":"message","message":{"id":"msg_fixture","role":"assistant","created":1792490000,"content":[{"type":"error","kind":"other","message":"Ran into this error: Request failed: Bad request (400): API key not valid. Please pass a valid API key..\n\nPlease retry if you think this is a transient or recoverable error."}],"metadata":{"userVisible":true,"agentVisible":false}}}
+{"type":"error","error":"Ran into this error: Request failed: Bad request (400): API key not valid. Please pass a valid API key..\n\nPlease retry if you think this is a transient or recoverable error."}

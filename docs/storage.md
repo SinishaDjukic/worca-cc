@@ -91,6 +91,21 @@ project's working tree, so nothing is ever committed to your repo.
   policy/
     repos/<owner~repo>/                  git worktree of the project repo, detached at origin/worca-policy
     locks/<owner~repo>.lock              cross-process lock for enable / follow / publish
+  team-memory/                          team memory (phases 1a and 1b; projects/ only for projects with memory.team on)
+    projects/<projectKey>/
+      team.json                         last fetched snapshot of origin/worca-memory (what runs and chats load)
+      sync.json  outbox/  inflight/     fetch/push record; queued intents (never note text); intents being pushed
+      status/<name>.json                per-note verdict: pending | deleting | blocked (rule + line, never the value) | shared | kept | held
+      seed.json                         the last seeding (phase 1b): decided notes and their texts before it, for Undo
+      worktree/                         git worktree of the project repo, detached at origin/worca-memory
+    locks/<projectKey>.lock             cross-process lock for flush / refresh / switch-off
+    offers/<projectKey>.json            the one-time "share existing notes" offer: done | dismissed (kept by a switch-off)
+    available/<projectKey>.json         whether origin had worca-memory when the project was added, and the Overview
+                                        line's answer: pending | dismissed | accepted (kept by a switch-off and an unregister)
+  memory-usage/                         memory note usage counts (collect-only; local, never shared): hit / read / edit per
+    projects/<projectKey>.json          note and day (90 days), last 5 repo-relative trigger paths; global.json for global
+    global.json                         notes. Written once per sync-back; a run's hook files sit in
+                                        <pipeline>/memory-loads/<execution>.jsonl until then
   mcp/                                  the MCP registry: servers for worca only, never written to
                                         ~/.claude.json or .mcp.json; every file mode 0600, written
                                         atomically under mcp/.lock; a file with schema > 1 stops the

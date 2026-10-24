@@ -124,6 +124,8 @@ import { workflowPickerLabel, memoryChangesRows } from './results-view.mjs';
 import {
   memoryRoute, renderHealthCard, renderFileList, renderEditor, collectEditor,
   renderMemoryHistory, MEMORY_NAME_HELP, formatWhen, parseSnapshotId, patchRunRefs,
+  MEMORY_TEAM_SUB, renderMemoryViews, renderTeamCard, renderTeamNotes, renderSeedReview, renderClashCompare, teamLoadOf, teamLoadValue,
+  collectSeedDecisions, seedSummary, seedableCount, renderTeamAvailableLine,
 } from './memory-view.mjs';
 import { createScriptsController, nextCopyKey } from './scripts-view.mjs';
 import { renderRunPill, renderOverviewStrip, renderShipItStrip, shipItTryState, renderRunningActionRows, historyActionBadges, createActionsController, releaseCheckout } from './actions-view.mjs';
@@ -178,7 +180,7 @@ import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SY
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS } from '../../src/shared/connections.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
@@ -280,9 +282,9 @@ import { runPresetScopeOptions, runPresetRequest, runPresetErrorText, RUN_PRESET
 import { renderPresetsList } from './run-presets-view.mjs';
 import { presetSetupSummary, presetSavedNote, workflowNamesFrom } from './run-presets-names.mjs';
 import { setupFromBody } from '../../src/shared/run-presets.mjs';
-import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor, flashFilled, missingSlot } from './tag-input.mjs';
+import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor, missingSlot } from './tag-input.mjs';
 import { normaliseTags, formatTag, parseTag } from '../../src/shared/run-tags.mjs';
-import { splitByDimensions, tagGroupOptions, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
+import { prefillTags, splitByDimensions, tagGroupOptions, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
 import { createFlagsView, bindFlagSwitch } from './flags-view.mjs';
 import { createSmartNaming } from './smart-naming.mjs';
 import { renderPattern, patternProblem, PRESET_TYPES, TYPE_RE } from '../../src/shared/naming/pattern.mjs';
@@ -1804,7 +1806,8 @@ function handleServerMessage(msg) {
     scheduleOnboardingRefresh();
     refreshAllCounts();
     tmCache.at = 0;
-    if (currentView() === 'projects') void refreshProjectsPage(); else void loadProjects(selectedProjectRow()?.name || '', { quiet: true });
+    if (currentView() === 'projects') void refreshProjectsPage();
+    else void loadProjects(selectedProjectRow()?.name || '', { quiet: true }).then(() => { if (state.wizard && state.wizard.imports.length) renderWizardImports(); });
     return;
   }
   if (msg.type === 'workspaces-changed') {
@@ -1898,7 +1901,15 @@ function handleServerMessage(msg) {
   if (msg.type === 'memory-changed') {
     const scope = String(msg.scope || '');
     if (scope === 'global' && currentView() === 'settings' && currentSettingsTab === 'memory' && memoryTabCtl) pokeGlobalMemory();
-    else if (scope && currentView() === 'projects' && projDetail && projDetail.memCtl && projDetail.memCtl.scopeKey === scope) pokeProjectMemory();
+    else if (scope && currentView() === 'projects' && projDetail && projDetail.memCtl && projDetail.memCtl.scopeKey === scope) {
+      pokeProjectMemory();
+      if (projDetail.memView === 'team') pokeProjectTeam();   // a write changes the notes' team states too
+    }
+    return;
+  }
+  // Team memory (1b): a push, a block, a follow, a seeding or an Undo — refetch the open project's Team view.
+  if (msg.type === 'memory-team-changed') {
+    if (currentView() === 'projects' && projDetail && projDetail.teamCtl && projDetail.memView === 'team' && projDetail.key === msg.projectKey) pokeProjectTeam();
     return;
   }
 
@@ -3356,7 +3367,7 @@ function wfvShellActions() {
     importFile: async (f) => {
       let obj;
       try { obj = JSON.parse(await f.text()); }
-      catch (e) { notify({ tone: 'err', title: `${f.name} is not valid JSON: ${e.message}` }); return; }
+      catch (e) { notify({ tone: 'err', title: 'Not a valid workflow file', detail: `${f.name} is not valid JSON: ${e.message}` }); return; }
       await gvImportWorkflowObject(obj);
     },
     // Export reads the SAVED row by id, so an unsaved canvas (new, or edited since its save) is saved
@@ -3493,13 +3504,13 @@ async function routeWorkflows(param = '') {
   // and normalise the hash, or say why not — never nothing.
   try { window.history.replaceState(null, '', '#workflows'); } catch { /* sandboxed */ }
   if (!WF_ID_RE.test(head)) {
-    notify({ tone: 'err', title: `Could not open "${head}"`, detail: 'It is not a workflow id or a Workflows address.' });
+    notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${head}" is not a workflow id or a Workflows address.` });
     return;
   }
   let full = null;
   try { full = await gvApi.readWorkflow(head); } catch { full = null; }   // a refused fetch: say so below
   if (!full) {
-    notify({ tone: 'err', title: `Could not open workflow "${head}"`, detail: 'It was deleted or renamed, or Worca did not answer.' });
+    notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${head}" was deleted or renamed, or Worca did not answer.` });
     return;
   }
   if (await gvComposer.openTemplate(full)) gvComposer.fit();
@@ -4606,7 +4617,7 @@ function renderAgentRows(rows) {
     keepVisible(tagLevel(fanWrap, 'expert'), !!row.fanOut !== !!rowDef.fanOut);
     keepVisible(tagLevel(sWrap, 'expert'), (row.subagentModel || '') !== (rowDef.subagentModel || ''));
     // Only a Claude run has a sub-agent model to pick: Codex has its own spawn_agent, Copilot's sub-agents run on the
-    // node's own model, OpenCode's investigator runs on the node's model, and Cursor has none.
+    // node's own model, OpenCode's investigator runs on the node's model, and Cursor, Gemini CLI, Goose and Qwen Code have none.
     if (state.engine !== 'claude') sWrap.hidden = true;
     if (row.askQuestions !== null && row.askQuestions !== undefined) {
       const lockWhy = row.questionsLocked ? (row.askQuestions ? 'Always on for this agent' : 'Always off for this agent') : null;
@@ -4828,8 +4839,8 @@ function paintEngineHints() {
       ? `GitHub Copilot CLI runs this pipeline, including titles and summaries (on its default model). Step models: ${project ? 'project Settings' : 'Models › Copilot'}. Sign in once with copilot login.`
       : state.engine === 'cursor'
       ? `Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Cursor'}.`
-      : state.engine === 'opencode'
-      ? `OpenCode runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › OpenCode'}.`
+      : SIGN_IN_ENGINE_NAMES.includes(state.engine)
+      ? `${engineLabel(state.engine)} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : `Models › ${engineLabel(state.engine)}`}.`
       : `Codex runs this pipeline, including titles and summaries. Its models: ${project ? 'project Settings' : 'Models › Codex'}`;
   }
   if (el.engineDefaultHint) {
@@ -4901,16 +4912,12 @@ async function refreshRunTagDims() {
   if (q) { try { const r = await fetch(`/api/tag-dimensions${q}`); info = r.ok ? await safeJson(r) : null; } catch {} }
   if (gen !== runTagDimsGen) return;
   runTagInput.resetSuggestions();
-  // s2: the person's last tagged run in this project fills the field (D6, D9); else the project's defaults, as before.
-  const fill = info?.autofill?.from === 'last-run' ? info.autofill.tags : (state.runTagDefaults || []);
-  const { slots, rest } = splitByDimensions(fill, info?.dims || []);
-  const filled = !runTagInput.dirty() && info?.autofill?.from === 'last-run';
+  // #923: the project's defaults fill the field; the last run's tags are never copied.
+  const { slots, rest } = splitByDimensions(state.runTagDefaults || [], info?.dims || []);
   if (!runTagInput.dirty()) runTagInput.set(rest);
-  // D4: the server's pre-fill (project default → Default → last used) when it sent one; the last run's slots win.
-  const slotTags = filled ? Object.entries(slots).map(([key, value]) => formatTag({ key, value }))
-    : Array.isArray(info?.prefill) ? info.prefill : Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
+  // D4: the server's pre-fill (project default → Default → last used, mandatory only) when it sent one.
+  const slotTags = Array.isArray(info?.prefill) ? info.prefill : Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
   paintRunTagDims(info, slotTags);
-  if (filled) flashFilled(runTagInput.el, rest);
 }
 document.getElementById('runTagsSaveDefault')?.addEventListener('click', async (e) => {
   const btn = e.currentTarget;
@@ -5183,7 +5190,7 @@ function goAddModel(restore) {
   mvState.editing = null;
   mvState.openCreate = true;
   mvState.openShare = false;
-  // "+ Add model…" on a Codex or Cursor run starts a model of that engine (D10); the editor applies `engine`.
+  // "+ Add model…" on a non-Claude run starts a model of that engine (D10); the editor applies `engine`.
   mvState.prefill = state.engine !== 'claude' ? { id: '', engine: state.engine } : null;
   mvState.openEditorOnLoad = true;         // survives the view switch: loadModelsView opens it
   showView('models');
@@ -7342,14 +7349,14 @@ function clearTask(submitted) {
   if (!sameTask(snapshotTask(), submitted)) return;
   lastTask = submitted;
   setTask({ title: '', prompt: '', markdown: '', mdFileName: '', extras: [] });
-  { // #718 + s2: the next run starts from the last run's cost tags (D6), else the project's defaults, the dimension keys in their slots
+  { // #718 + #923: the next run starts from the project's defaults, the dimension keys in their slots; never this run's tags
     const sent = normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags;
-    if (state.tagDims?.autofill && sent.length) state.tagDims.autofill = { tags: sent, from: 'last-run' };   // project target only (D8)
-    const lastRun = state.tagDims?.autofill?.from === 'last-run';
-    const { slots, rest } = splitByDimensions(lastRun ? state.tagDims.autofill.tags : (state.runTagDefaults || []), state.tagDims.dims);
+    const { slots, rest } = splitByDimensions(state.runTagDefaults || [], state.tagDims.dims);
     const slotTags = Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
+    // The run just started is now the person's last used: a mandatory slot takes its value (project target only, D8).
+    if (state.tagDims?.autofill && sent.length) state.tagDims.prefill = prefillTags(state.tagDims.dims, [], { projectDefaults: state.runTagDefaults || [], lastUsed: sent });
     runTagInput.set(rest, { clearText: true });
-    runTagDims.set(lastRun ? slotTags : Array.isArray(state.tagDims.prefill) ? state.tagDims.prefill : slotTags);
+    runTagDims.set(Array.isArray(state.tagDims.prefill) ? state.tagDims.prefill : slotTags);
     paintRunTagDimsWarn();
   }
   el.reuseTask.hidden = false;
@@ -10655,6 +10662,8 @@ function renderWizardImports() {
     badge.className = `badge ${tone}`;
     badge.textContent = label;
     row.append(cb, name, sub, badge);
+    // Team memory E10: the repository's origin has a worca-memory branch (checked in the background after the add).
+    if (r.status === 'registered' && state.projects.some((p) => p && p.path === r.path && p.teamMemoryOffer)) row.appendChild(teamMemoryMark());
     const why = r.status === 'problem' ? r.problem
       : r.liftedFrom.length ? `Repository top folder of ${r.liftedFrom.join(', ')}` : '';
     if (why) {
@@ -12300,6 +12309,13 @@ function nestedRepoBadge(p) {
   return b;
 }
 
+/** Team memory E10: the "team memory available" chip of a project row whose origin has worca-memory while it is off
+ *  (the Projects list after Add / Add projects, the workspace wizard's import list). The offer itself is on its Overview. */
+function teamMemoryMark() {
+  return Object.assign(document.createElement('span'), { className: 'badge blue team-mem-mark', textContent: 'team memory available',
+    title: 'Your team shares memory for this repository. Turn it on from the project\'s Overview.' });
+}
+
 function buildProjectRow(p) {
   const item = document.createElement('div');
   item.className = 'pl-item';
@@ -12325,6 +12341,7 @@ function buildProjectRow(p) {
   }
   const nestedBadge = nestedRepoBadge(p);
   if (nestedBadge) name.append(' ', nestedBadge);
+  if (p.teamMemoryOffer) name.append(' ', tagLevel(teamMemoryMark(), 'advanced'));
   const path = document.createElement('div');
   path.className = 'proj-path';
   appendBreakable(path, p.displayPath || p.path);   // a narrow column breaks it after a /, not mid-name
@@ -12993,7 +13010,7 @@ function projParamFor(key, tab = 'overview', sub = '') {
 const projectByKey = (key) => state.projects.find((x) => x && x.key === key) || null;
 const projectHistoryRows = (key) => (state.historyAll || []).filter((r) => r && r.projectKey === key);
 
-let projDetail = null;      // { key, name, screen, memCtl } while a page is open
+let projDetail = null;      // { key, name, screen, memCtl, teamCtl, memView } while a page is open
 let projReturnFocus = '';   // the key of the row that opened the page; closeProjDetail hands focus back
 
 function routeProjectDetail(param, { instant = false } = {}) {
@@ -13021,7 +13038,7 @@ function openProjDetail(p, parsed, { instant = false } = {}) {
   host.scrollTop = 0;                       // a prior visit's scroll must not carry over
   const screen = $('#proj-detail-tpl').content.firstElementChild.cloneNode(true);
   host.appendChild(screen);
-  projDetail = { key: p.key, name: p.name, screen, memCtl: null };
+  projDetail = { key: p.key, name: p.name, screen, memCtl: null, teamCtl: null, memView: 'notes' };
 
   // Handlers close over the KEY and re-resolve the row at click time: a projects-changed
   // rebuild replaces the object in state.projects.
@@ -13114,6 +13131,7 @@ function syncProjHistoryButton(screen, key) {
 
 function teardownProjDetail() {
   if (projDetail && projDetail.memCtl) projDetail.memCtl.destroy();
+  if (projDetail && projDetail.teamCtl) projDetail.teamCtl.destroy();
   projDetail = null;
 }
 
@@ -13148,6 +13166,7 @@ function closeProjDetail({ instant = false } = {}) {
   // content, not a blank body (closeHistDetail keeps its graph mounts the same way). `clear`
   // below destroys it; the state is dropped NOW so a frame poke paints nothing meanwhile.
   const ctl = projDetail && projDetail.memCtl;
+  const teamCtl = projDetail && projDetail.teamCtl;
   projDetail = null;
   host.setAttribute('aria-hidden', 'true');
   // Un-inert the list FIRST — focus() is a no-op inside an inert subtree.
@@ -13167,6 +13186,7 @@ function closeProjDetail({ instant = false } = {}) {
     shell.classList.add('no-anim');
     shell.classList.remove('detail-open');
     if (ctl) ctl.destroy();
+    if (teamCtl) teamCtl.destroy();
     host.innerHTML = '';
     rafSafe(() => shell.classList.remove('no-anim'));
     return;
@@ -13175,7 +13195,7 @@ function closeProjDetail({ instant = false } = {}) {
   // Empty the screen after the slide (or via the timeout under reduced motion / jsdom). The
   // closed page's controller is destroyed either way; the host is emptied only if no NEW page
   // was mounted meanwhile (a page->page hop replaces the screen itself).
-  const clear = () => { if (ctl) ctl.destroy(); if (!projDetail) host.innerHTML = ''; };
+  const clear = () => { if (ctl) ctl.destroy(); if (teamCtl) teamCtl.destroy(); if (!projDetail) host.innerHTML = ''; };
   const onEnd = (e) => {
     if (e.target !== host || e.propertyName !== 'transform') return;
     host.removeEventListener('transitionend', onEnd);
@@ -13252,7 +13272,7 @@ function initPdTabs(screen, p) {
   screen.querySelector('.pd-tabs').addEventListener('click', (e) => {
     const btn = e.target.closest && e.target.closest('button[data-sec]');
     if (!btn || !projDetail) return;
-    const sub = btn.dataset.sec === 'memory' && projDetail.memCtl ? projDetail.memCtl.selectedName() : '';
+    const sub = btn.dataset.sec === 'memory' && projDetail.memCtl ? (projDetail.memView === 'team' ? MEMORY_TEAM_SUB : projDetail.memCtl.selectedName()) : '';
     const target = `projects/${projParamFor(projDetail.key, btn.dataset.sec, sub)}`;
     if (location.hash.slice(1) !== target) location.hash = target;
   });
@@ -13268,8 +13288,10 @@ function activateProjTab(tab, sub = '') {
   if (!tabs) return;
   tabs.activate(tabs.cells.has(tab) && (gitOn() || !tabs.cells.get(tab).tab.needsGit) ? tab : 'overview');
   if (tab !== 'memory' || !projDetail.memCtl) return;
-  const ctl = projDetail.memCtl;
   const name = sub ? safeDecode(sub) : '';
+  if (name === MEMORY_TEAM_SUB) { showProjMemoryView('team'); if (projDetail.teamCtl) void projDetail.teamCtl.load(); return; }
+  showProjMemoryView('notes');
+  const ctl = projDetail.memCtl;
   void ctl.load(name, { keepDraft: ctl.loaded() && name === ctl.selectedName() });
 }
 
@@ -13291,6 +13313,8 @@ function buildPdOverview(sec, key) {
   sec.classList.add('pd-sec-overview');
   const p = projectByKey(key);
   if (!p) return;
+  // Team memory E10: origin already has the team branch and this project is off — one line, advanced like the switch.
+  if (p.teamMemoryOffer) sec.appendChild(tagLevel(pdTeamAvailableLine(key), 'advanced'));
   const grid = document.createElement('div');
   grid.className = 'pd-ov-grid';
 
@@ -13346,6 +13370,29 @@ function buildPdOverview(sec, key) {
   void paintProjectPolicyCells();
   paintPdBranchCards();
   void refreshSyncChips();
+}
+
+// "Your team shares memory for this repository" (team memory E10). Turn on is the normal switch (PATCH memory.team:
+// its git and origin checks, then a fetch at once); Not now closes the offer for good on this machine. Either answer
+// repaints the list and the Overview without it, as the projects-changed frame the server sends does in other tabs.
+function pdTeamAvailableLine(key) {
+  const line = renderTeamAvailableLine();
+  const fail = (r) => (r.data && r.data.error) || `HTTP ${r.status}`;
+  const busy = (on) => { for (const b of line.querySelectorAll('button')) b.disabled = on; };
+  line.addEventListener('click', async (e) => {
+    const on = e.target.closest && e.target.closest('.mem-team-turn-on');
+    const later = e.target.closest && e.target.closest('.mem-team-not-now');
+    if (!on && !later) return;
+    busy(true);
+    const r = on
+      ? await memoryApi('PATCH', `/api/projects/${encodeURIComponent(key)}/settings`, { 'memory.team': true })
+      : await memoryApi('POST', `/api/memory/team/${encodeURIComponent(key)}/available/dismiss`);
+    if (!r.ok) { busy(false); notify({ tone: 'err', title: on ? 'Team memory is still off' : 'Not dismissed', detail: fail(r) }); return; }
+    if (on) notify({ tone: 'ok', title: 'Team memory is on', detail: 'Teammates\' notes load into runs and chats. Memory › Team shows them.' });
+    line.remove();
+    void refreshProjectsPage();   // the list's mark goes too (the server's projects-changed frame says the same)
+  });
+  return line;
 }
 
 // ---- Branch card (project page) / Branches card (workspace page) ----
@@ -13543,22 +13590,45 @@ function refreshProjOverview() {
 }
 
 // ---- Memory tab ----
-// The same grid Settings → Memory paints, for scope 'projects/<key>', hash-first (navigate: true):
-// memoryRoute() yields 'projects/<key>/memory[/<name>]', so the controller's routes are this page's
-// own routes. No load here — activateProjTab loads what the hash names.
+// Two views, hash-first like the pills (team memory 1b): Notes is `projects/<key>/memory[/<name>]` (the grid Settings →
+// Memory paints, for scope 'projects/<key>': memoryRoute() yields those routes, so the controller's routes are this
+// page's own), Team is `projects/<key>/memory/~team`. No load here — activateProjTab loads what the hash names.
 function buildPdMemory(sec, key) {
   sec.innerHTML = '';
   sec.classList.add('pd-sec-memory');
   const msg = document.createElement('p');
   msg.className = 'form-msg';
   msg.setAttribute('aria-live', 'polite');
+  const views = renderMemoryViews('notes');
   const host = document.createElement('div');
   host.className = 'mem-host';
-  sec.append(msg, host);
+  const teamHost = document.createElement('div');
+  teamHost.className = 'mem-team-host';
+  teamHost.hidden = true;
+  sec.append(msg, views, host, teamHost);
   if (!projDetail) return;
   if (projDetail.memCtl) projDetail.memCtl.destroy();
   ensureHistoryLoaded();   // the file meta and History name runs from these rows (D4)
+  if (projDetail.teamCtl) projDetail.teamCtl.destroy();
   projDetail.memCtl = createMemoryController({ host, msgEl: msg, scopeKey: `projects/${key}`, navigate: true });
+  projDetail.teamCtl = createTeamMemoryController({ host: teamHost, msgEl: msg, projectKey: key, current: () => projDetail && projDetail.teamCtl });
+  projDetail.memView = 'notes';
+  views.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('.mem-view');
+    if (!b || !projDetail || !projDetail.memCtl) return;
+    const sub = b.dataset.view === 'team' ? MEMORY_TEAM_SUB : projDetail.memCtl.selectedName();
+    const target = `projects/${projParamFor(projDetail.key, 'memory', sub)}`;
+    if (location.hash.slice(1) !== target) location.hash = target;
+  });
+}
+/** Show the Memory tab's Notes or Team view: the other stays mounted (a Notes draft survives a look at Team). */
+function showProjMemoryView(view) {
+  const sec = projDetail && projDetail.screen && projDetail.screen.querySelector('.pd-sec[data-sec="memory"]');
+  if (!sec || !sec.querySelector('.mem-team-host')) return;
+  projDetail.memView = view;
+  sec.querySelector('.mem-host').hidden = view === 'team';
+  sec.querySelector('.mem-team-host').hidden = view !== 'team';
+  for (const b of sec.querySelectorAll('.mem-view')) { const on = b.dataset.view === view; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); }
 }
 
 // ---- Reusable confirm / prompt modal ---------------------------------------
@@ -16903,6 +16973,7 @@ function pluginModal(title, bodyEl, actions = [], guard = {}) {
   pluginModalAfterClose = null;
   el.pluginModalTitle.textContent = title;
   el.pluginModalBody.replaceChildren(bodyEl);
+  cardAlert(el.pluginModalActions.parentElement, null);   // a refusal an earlier dialog put in the pinned foot goes with it
   el.pluginModalActions.replaceChildren(...actions.map(([label, cls, fn]) => {
     const b = document.createElement('button');
     // Dialog actions are 32px (docs/design-system.md › Sizes): the shell drops the callers' btn-sm.
@@ -17682,6 +17753,229 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
   };
 }
 
+// ── The project page's Memory › Team view (team memory 1b) ──
+// memory-view.mjs paints it; this owns /api/memory/team/:key[/…], the switch (the project setting memory.team) and the
+// seeding / Compare dialog in #plugin-modal — which the project page's Escape arm already stands down for.
+// `current`: the page's team controller now — a closed page drops it at once, and destroys it only after its slide-out.
+function createTeamMemoryController({ host, msgEl, projectKey, current = null }) {
+  const base = `/api/memory/team/${encodeURIComponent(projectKey)}`;
+  const st = { status: null, busy: false };
+  let seq = 0;
+  let dialogSeq = 0;
+  let self = null;
+  let dead = false;
+  let dialogBody = null;   // the body of the seeding / Compare dialog this controller opened last
+  const say = (text, kind) => reportStatus(msgEl, 'form-msg', text, kind);
+  const fail = (r) => (r.data && r.data.error) || `HTTP ${r.status}`;
+  const firstLine = (s) => String(s || '').trim().split('\n').find(Boolean) || '';
+  // Destroyed, or no longer its page's (the page closed or another one opened): it opens no dialog and acts on no click.
+  const gone = () => dead || (!!current && current() !== self);
+  // #plugin-modal shows THIS dialog — not just any: once ours is closed, another feature may hold the modal.
+  const holds = (body) => !!body && !el.pluginModal.classList.contains('hidden') && el.pluginModalBody.contains(body);
+  const ours = (body) => !gone() && holds(body);
+  // A dialog's refusal sits in its pinned foot, above the actions: `.dlg-body` is the only scroller, and an alert under
+  // a long review would be out of sight (docs/design-system.md › Modals). null clears it.
+  const footAlert = (opts) => { const box = cardAlert(el.pluginModalActions.parentElement, opts); if (box) el.pluginModalActions.before(box); };
+  function paint() {
+    host.replaceChildren();
+    if (!st.status) return;
+    host.appendChild(renderTeamCard(st.status, { busy: st.busy }));
+    if (st.status.enabled) host.appendChild(renderTeamNotes(st.status, { busy: st.busy }));
+  }
+  const setStatus = (status) => { if (status && typeof status.enabled === 'boolean') { st.status = status; paint(); } };
+  async function load() {
+    const my = ++seq;
+    const r = await memoryApi('GET', base);
+    if (my !== seq) return;
+    // A 200 without the status shape (an older server) is an error, never "off". A failed REFETCH keeps the last status
+    // on screen: only a first load has nothing to show.
+    if (!r.ok || !r.data || typeof r.data.enabled !== 'boolean') { paint(); say(fail(r), 'err-inline'); return; }
+    setStatus(r.data);
+  }
+  /** Local · Team · Both (team-memory-load-choice.md): Local is the switch-off (its confirm), Team or Both from Local
+   *  the switch-on (its seeding offer), Team ↔ Both changes only what loads. */
+  async function setLoad(next) {
+    const was = teamLoadOf(st.status);
+    if (!st.status || next === was) return;
+    const on = next !== 'local';
+    if (!on) {
+      const ok = await confirmModal({
+        title: 'Turn team memory off',
+        message: 'Stop sharing this project\'s notes? Nothing is fetched, loaded or pushed any more, and changes waiting to be pushed from this machine are dropped. Your notes stay here.',
+        confirmLabel: 'Turn off', danger: true,
+      });
+      if (!ok) { paint(); return; }
+    }
+    st.busy = true; paint();
+    const r = await memoryApi('PATCH', `/api/projects/${encodeURIComponent(projectKey)}/settings`, { 'memory.team': teamLoadValue(next) });
+    st.busy = false;
+    if (!r.ok) notify({ tone: 'err', title: was === 'local' ? 'Team memory is still off' : on ? 'What loads did not change' : 'Team memory is still on', detail: fail(r) });
+    await load();
+    // The first switch-on raises the offer (Q&A seed-offer); the Team view keeps it until finished or dismissed. Never
+    // over another page: this one may have closed while the switch was saved.
+    if (r.ok && on && was === 'local' && !gone() && st.status && st.status.enabled && st.status.seed && st.status.seed.offer === 'pending' && seedableCount(st.status) > 0) await openSeeding();
+  }
+  /** Every request of this view and its dialog, one at a time: while it runs, every control waits for it (a second Undo
+   *  would answer "Not undone" right after the first one's success; Compare's other side would race it). */
+  async function request(method, path, body) {
+    st.busy = true; paint();
+    ++seq;   // a load() under way is older than this answer: it never repaints over it
+    const r = await memoryApi(method, `${base}${path}`, body);
+    st.busy = false;
+    if (r.ok) setStatus(r.data.status); else paint();
+    return r;
+  }
+  const post = (path, body) => request('POST', path, body);
+  async function sync() {
+    const r = await post('/sync');
+    if (!r.ok) { notify({ tone: 'err', title: 'Sync failed', detail: fail(r) }); return; }
+    const f = r.data.flush;
+    if (f && f.ok === false) notify({ tone: 'warn', title: 'The push failed', detail: `${firstLine(f.stderr) || f.code}${f.hint ? ` — to fix: ${f.hint}` : ''}` });
+    else say('Synced with the team.', 'ok');
+  }
+  async function dismiss() { const r = await post('/seed/dismiss'); if (!r.ok) say(fail(r), 'err'); }
+  async function undo() {
+    const ok = await confirmModal({
+      title: 'Undo last seeding',
+      message: 'Put back the notes the last seeding changed on this machine and release the notes it held? Nothing is pushed: what it shared stays on the team. The notes as they are now stay in History.',
+      confirmLabel: 'Undo',
+    });
+    if (!ok) return;
+    const r = await post('/seed/undo');
+    if (!r.ok) { notify({ tone: 'err', title: 'Not undone', detail: fail(r) }); return; }
+    const d = r.data;
+    const parts = [d.restored.length ? `${d.restored.length} put back` : '', d.released.length ? `${d.released.length} released` : '', d.cancelled.length ? `${d.cancelled.length} not pushed after all` : ''].filter(Boolean);
+    notify({ tone: d.failed.length ? 'warn' : 'ok', title: parts.length ? `Seeding undone: ${parts.join(' · ')}` : 'Seeding undone — nothing needed putting back',
+      detail: d.failed.map((x) => `${x.name}.md: ${x.error}`).join('; ') });
+  }
+  async function removeFromTeam(name) {
+    const local = !!(st.status && (st.status.notes || []).some((n) => n.name === name && n.local));   // a team-only note has no copy here
+    const ok = await confirmModal({
+      title: 'Remove from the team',
+      message: `Remove “${name}.md” from the team branch? ${local ? 'A copy on this machine stays as a plain local note; the' : 'The'} branch's git history keeps the team's version.`,
+      confirmLabel: 'Remove', danger: true,
+    });
+    if (!ok) return;
+    const r = await request('DELETE', `/notes/${encodeURIComponent(name)}`);
+    if (!r.ok) { notify({ tone: 'err', title: 'Not removed', detail: fail(r) }); return; }
+    say(`${name}.md is being removed from the team.`, 'ok');
+  }
+  /** The seeding dialog — or, with `name`, Compare on one clash. Fetches a fresh preview each time it opens. */
+  async function openSeeding({ name = '' } = {}) {
+    const my = ++dialogSeq;
+    const body = document.createElement('div');
+    body.className = 'mem-seed-host';
+    body.appendChild(Object.assign(document.createElement('p'), { className: 'hint', textContent: 'Fetching the team\'s notes…' }));
+    const title = name ? `Compare ${name}.md with the team` : 'Share existing notes with the team';
+    const cancel = ['Cancel', 'btn btn-sm btn-quiet', () => closePluginModal()];
+    dialogBody = body;
+    pluginModal(title, body, [cancel]);
+    const r = await memoryApi('GET', `${base}/seed${name ? `?name=${encodeURIComponent(name)}` : ''}`);
+    if (my !== dialogSeq || !ours(body)) return;   // closed or opened again meanwhile, its page gone, or another dialog holds the modal
+    if (!r.ok) { body.replaceChildren(); cardAlert(body, { title: 'Could not read the notes', detail: fail(r) }); return; }
+    if (name) { paintCompare(body, r.data, name, title, cancel); return; }
+    body.replaceChildren(renderSeedReview(r.data));
+    pluginModal(title, body, [cancel, ['Share', 'btn btn-primary btn-sm mem-seed-submit', () => void commit(body)]]);
+    const label = () => {
+      const btn = el.pluginModalActions.querySelector('.mem-seed-submit');
+      if (!btn || btn.dataset.fbState) return;   // withButton owns the label while busy / done
+      const d = collectSeedDecisions(body);
+      const shares = d.filter((x) => x.action === 'share').length;
+      btn.disabled = !d.length;
+      btn.textContent = shares ? `Share ${shares} note${shares === 1 ? '' : 's'}` : 'Apply';
+    };
+    body.addEventListener('change', label);
+    label();
+  }
+  /** A dialog's POST, through `post` (one request at a time): only from this page's own dialog. null: nothing was sent. */
+  async function dialogRequest(body, btn, path, payload, busy) {
+    if (st.busy || !ours(body)) return null;
+    const r = await withButton(btn, async () => {
+      const res = await post(path, payload);
+      return res.ok ? res : { ...res, ok: false };
+    }, { busy, done: 'Done' });
+    return r.skipped ? null : r;
+  }
+  /** After a dialog's POST: true when it was applied. A dialog still this page's shows a refusal in place (STALE opens
+   *  the review again) and closes on success; one closed meanwhile (Cancel, its page left) leaves #plugin-modal alone —
+   *  another dialog may hold it by now — and a refusal, a STALE too, is a toast. */
+  async function settleDialog(body, r, { refused, reopen }) {
+    const open = ours(body);
+    if (!r.ok && open && r.status === 409 && r.data && r.data.code === 'STALE') { await reopen(); return false; }
+    if (!r.ok) { if (open) footAlert({ title: refused, detail: fail(r) }); else notify({ tone: 'err', title: refused, detail: fail(r) }); return false; }
+    if (open) closePluginModal();
+    return true;
+  }
+  async function commit(body) {
+    footAlert(null);
+    const r = await dialogRequest(body, el.pluginModalActions.querySelector('.mem-seed-submit'), '/seed', { decisions: collectSeedDecisions(body) }, 'Sharing…');
+    // A refused commit writes nothing (E3).
+    if (!r || !(await settleDialog(body, r, { refused: 'Nothing was applied',
+      reopen: async () => { say('Some notes changed since you opened this — review them again.', 'warn'); await openSeeding(); } }))) return;
+    const f = r.data.flush;
+    // A share the remote refused is blocked, never pending (seedSummary's rule): only one still waiting stays pending.
+    const rows = new Map(((r.data.status && r.data.status.notes) || []).map((n) => [n.name, n.state]));
+    const pending = (r.data.shared || []).some((n) => rows.get(n) !== 'shared' && rows.get(n) !== 'blocked');
+    notify({ tone: f && f.ok === false ? 'warn' : 'ok', title: seedSummary(r.data),
+      detail: f && f.ok === false ? `The push failed (${f.code})${pending ? ' — the notes stay pending' : ''}; the Team view says why.` : '' });
+  }
+  function paintCompare(body, preview, name, title, cancel) {
+    const note = (preview.notes || []).find((n) => n.name === name);
+    if (!note || !note.team || note.team.same) {
+      body.replaceChildren(Object.assign(document.createElement('p'), { className: 'hint', textContent: `${name}.md no longer differs from a team version.` }));
+      return;
+    }
+    body.replaceChildren(renderClashCompare(note));
+    if (note.blocked) body.appendChild(Object.assign(document.createElement('p'), { className: 'hint', textContent: `Your version is blocked by the secret check: ${note.blocked.reason}` }));
+    const actions = [cancel];
+    // A note recorded BLOCKED (its edit was blocked, the host refused it) stays here until an edit passes the check:
+    // no side can be picked for it — the commit refuses one.
+    if (note.state !== 'blocked') {
+      if (!note.team.tooBig) actions.push(['Take team', 'btn btn-sm btn-quiet mem-cmp-take', () => void resolve(body, note, 'take-team')]);
+      if (!note.blocked) actions.push(['Keep mine', 'btn btn-primary btn-sm mem-cmp-keep', () => void resolve(body, note, 'share')]);
+    }
+    pluginModal(title, body, actions);
+  }
+  async function resolve(body, note, action) {
+    const btn = el.pluginModalActions.querySelector(action === 'share' ? '.mem-cmp-keep' : '.mem-cmp-take');
+    const other = el.pluginModalActions.querySelector(action === 'share' ? '.mem-cmp-take' : '.mem-cmp-keep');
+    if (other) other.disabled = true;   // one side at a time
+    const r = await dialogRequest(body, btn, '/resolve', { name: note.name, action, hash: note.hash, teamHash: note.team.hash }, 'Saving…');
+    if (other) other.disabled = false;
+    if (!r || !(await settleDialog(body, r, { refused: 'Not changed', reopen: () => openSeeding({ name: note.name }) }))) return;
+    // Mine is shared once the returned status shows it on the team, blocked when the remote refused it (seedSummary's
+    // rule): else it waits to be pushed.
+    const mine = action === 'share' ? ((r.data.status?.notes || []).find((n) => n.name === note.name) || {}).state : null;
+    const onTeam = action !== 'share' || mine === 'shared';
+    notify({ tone: onTeam ? 'ok' : 'warn', title: action !== 'share' ? `${note.name}.md: the team's version is here now`
+      : onTeam ? `${note.name}.md: your version is shared`
+        : `${note.name}.md: your version ${mine === 'blocked' ? 'is blocked' : 'waits to be pushed'} — the Team view says why` });
+  }
+  const onClick = (e) => {
+    if (st.busy || gone()) return;   // one request at a time (its controls are disabled meanwhile); never a page that left
+    const hit = (cls) => (e.target.closest ? e.target.closest(`.${cls}`) : null);
+    if (hit('mem-team-load')) { void setLoad(hit('mem-team-load').dataset.load); return; }
+    if (hit('mem-team-sync')) { void sync(); return; }
+    if (hit('mem-team-seed')) { void openSeeding(); return; }
+    if (hit('mem-team-dismiss')) { void dismiss(); return; }
+    if (hit('mem-team-undo')) { void undo(); return; }
+    if (hit('mem-team-compare')) { void openSeeding({ name: hit('mem-team-compare').dataset.name }); return; }
+    if (hit('mem-team-remove')) void removeFromTeam(hit('mem-team-remove').dataset.name);
+  };
+  host.addEventListener('click', onClick);
+  self = {
+    projectKey,
+    load,
+    destroy() {
+      const owned = holds(dialogBody);
+      dead = true;
+      host.removeEventListener('click', onClick); host.replaceChildren();
+      if (owned) closePluginModal();   // the dialog this page opened goes with it — never another feature's
+    },
+  };
+  return self;
+}
+
 /** The project that hosts a GLOBAL defragment run (B32): the one picked on New pipeline, else the
  *  first registered project that exists. Disabled only when NO project is registered (spec §7.3). */
 function globalDefragHost() {
@@ -18421,9 +18715,9 @@ function renderModelsViewBody() {
     predefined: d.predefined || [],
     codex: d.codex || [],
     codexEfforts: d.codexEfforts || [],
-    cursorEfforts: d.cursorEfforts || [],
     copilot: d.copilot || [],
     copilotEfforts: d.copilotEfforts || [],
+    gooseEfforts: d.gooseEfforts || [],
     opencodeEfforts: d.opencodeEfforts || [],
     efforts: d.efforts || [],
     hideBuiltin: !!d.hideBuiltinModels,
@@ -18462,7 +18756,7 @@ function modelEditorEl() {
 function openModelEditorDialog() {
   if (!el.modelEditorModal || !el.modelEditorHost) return;
   const d = mvState.data || { efforts: [] };
-  const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels, ...(d.codexEfforts ? { codexEfforts: d.codexEfforts } : {}), cursorEfforts: d.cursorEfforts || [], copilotEfforts: d.copilotEfforts || [], opencodeEfforts: d.opencodeEfforts || [] });
+  const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels, ...(d.codexEfforts ? { codexEfforts: d.codexEfforts } : {}), cursorEfforts: d.cursorEfforts || [], copilotEfforts: d.copilotEfforts || [], gooseEfforts: d.gooseEfforts || [], opencodeEfforts: d.opencodeEfforts || [] });
   if (!mvState.editing && mvState.prefill) prefillModelEditor(editor, mvState.prefill);
   const title = editor.querySelector('.mv-editor-title');
   if (title) title.id = 'mv-editor-heading';
@@ -18675,7 +18969,7 @@ async function paintEngineSettings(data) {
   renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
     noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
     defaultLabels: { claude: 'the default model' },
-    jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], opencode: [] } });
+    jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] } });
   // Each non-Claude card's readiness line (GET /api/engines). Only on the Models page, where the cards live: a
   // settings-changed broadcast repaints this from any view, and that must not spawn a preflight.
   if (currentView() === 'models') void paintEngineCardStatus(root);
@@ -22626,6 +22920,10 @@ const pokeGlobalMemory = coalesce(() => {
 const pokeProjectMemory = coalesce(() => {
   const ctl = projDetail && projDetail.memCtl;
   if (ctl) void ctl.load(ctl.selectedName(), { fromFrame: true });
+}, COMMENT_POKE_MS);
+const pokeProjectTeam = coalesce(() => {
+  const ctl = projDetail && projDetail.teamCtl;
+  if (ctl && projDetail.memView === 'team') void ctl.load();
 }, COMMENT_POKE_MS);
 
 // Resolve the saved-pipeline detail URL ({state, auditMarkdown}) for a history

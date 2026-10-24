@@ -669,11 +669,23 @@ test('a successful remember/forget calls onMemoryMutation with the scope key fro
   h.push(atool('msg_c1', 'toolu_c1', 'mcp__worca__forget', { scope: 'project', name: 'conv' }, 'toolu_agent'));
   h.push(uresult('toolu_c1', JSON.stringify({ scope: 'project', projectKey: 'demo-00000001', scopeKey: 'projects/demo-00000001', name: 'conv', removed: true }), { ptu: 'toolu_agent' }));
   h.push(uresult('toolu_agent', [{ type: 'text', text: 'removed' }], { tur: AGENT_TUR }));
-  assert.deepEqual(seen, [{ scope: 'global', tool: 'remember' }, { scope: 'projects/demo-00000001', tool: 'forget' }]);
+  assert.deepEqual(seen, [{ scope: 'global', tool: 'remember', name: 'style' }, { scope: 'projects/demo-00000001', tool: 'forget', name: 'conv' }]);
   const boom = harness({ onMemoryMutation: () => { throw new Error('sink'); } });
   boom.push(atool('msg_1', 'toolu_1', 'mcp__worca__remember', { scope: 'global', name: 'a', body: 'x' }));
   assert.doesNotThrow(() => boom.push(uresult('toolu_1', JSON.stringify({ scopeKey: 'global' }))));
   assert.equal(boom.frames.filter((f) => f.type === 'ask-block').at(-1).block.status, 'done', 'the block still completed');
+});
+
+test('a successful read_memory calls onMemoryRead with the note address only; errors and other tools do not', () => {
+  const seen = [];
+  const h = harness({ onMemoryRead: (e) => seen.push(e) });
+  h.push(atool('msg_1', 'toolu_1', 'mcp__worca__read_memory', { scope: 'project', name: 'n' }));
+  h.push(uresult('toolu_1', JSON.stringify({ scope: 'project', projectKey: 'demo-00000001', name: 'n', layer: 'team', description: 'd', body: 'secret body' })));
+  h.push(atool('msg_1', 'toolu_2', 'mcp__worca__read_memory', { scope: 'global', name: 'gone' }));
+  h.push(uresult('toolu_2', JSON.stringify({ scope: 'global', name: 'gone' }), { isError: true }));
+  h.push(atool('msg_1', 'toolu_3', 'mcp__worca__list_memory', {}));
+  h.push(uresult('toolu_3', JSON.stringify({ scope: 'global', name: 'x' })));
+  assert.deepEqual(seen, [{ scope: 'project', projectKey: 'demo-00000001', name: 'n', layer: 'team' }]);
 });
 
 test('propose_workflow: label, START hook with the full input, RESULT hook with the raw text + isError; sub-agent calls never fire the hooks', () => {
@@ -724,9 +736,11 @@ const RESULT_HOOKS = [
   ['propose_project_change: labelled, and its RESULT reaches onProjectProposal with the full input; a sub-agent call never does', 'propose_project_change', 'onProjectProposal', { kind: 'create', name: 'landing-page' }],
   ['show_files: labelled, and its RESULT reaches onShowFiles with the full input; a sub-agent call never does',
     'show_files', 'onShowFiles', { files: [{ path: '$WORCA_ASK_OUT/a.png' }] }],
+  ['onProxyProposal fires on the propose_network_proxy_change result', 'propose_network_proxy_change', 'onProxyProposal', { upstream: 'proxy2.acme.test:3128' }],
+  ['onProxyFlagProposal fires on the propose_corporate_proxy_on result', 'propose_corporate_proxy_on', 'onProxyFlagProposal', { note: 'office' }],
 ];
 
-test('RESULT hooks: each hooked tool (metrics, track_run, policy, clone, web, away switch, away proposal, workspace, scope switch, project, show_files) reaches its hook on the main stream with {toolUseId,input,text,isError}; never for a sub-agent; a throwing hook is contained', async () => {
+test('RESULT hooks: each hooked tool (metrics, track_run, policy, clone, web, away switch, away proposal, workspace, scope switch, project, show_files, proxy change, proxy flag) reaches its hook on the main stream with {toolUseId,input,text,isError}; never for a sub-agent; a throwing hook is contained', async () => {
   await checkRows(RESULT_HOOKS.map(([name, tool, hook, input]) => ({ name, run: () => {
     const mcpName = `mcp__worca__${tool}`;
     const calls = [];

@@ -827,7 +827,7 @@ test('charts: the guide sets their heights and text steps; off-scale SVG text si
 
 // F-8: a typed uppercase kicker is a string literal of capitals set as visible text.
 const STATE_CODES = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPEN', 'MERGED', 'CLOSED', 'UNKNOWN', 'UNAVAILABLE', 'FAILED', 'DRAFT',
-  'BUTTON', 'SELECT', 'SPAN', 'MERGEABLE', 'CONFLICTING', 'PENDING', 'NONE'];
+  'BUTTON', 'SELECT', 'SPAN', 'MERGEABLE', 'CONFLICTING', 'PENDING', 'NONE', 'STALE'];
 const KICKER = new RegExp(`(['"\`])(?!(?:${STATE_CODES.join('|')})\\1)[A-Z][A-Z0-9 ·&/-]{2,}[A-Z0-9]\\1`);
 const KICKER_FILES = ['ui/public/app.js', 'ui/public/team-metrics-view.mjs'].map((f) => join(ROOT, f));
 test('no typed uppercase kicker in app.js or team-metrics-view.mjs (F-8, spec §1.3)', () => {
@@ -886,4 +886,20 @@ test('slice 3 (D18): the run page tiles read in the stat face, 22px sans with ta
   assert.match(body, /tabular-nums/);
   const tile = ALL.filter((x) => splitTop(x.sel).map((t) => t.trim()).includes('.rd-stats > div')).map((x) => x.body).join(';');
   assert.match(tile, /padding:var\(--pad-tile\) 8px/);
+});
+
+test('card head: the state word is a 15px/600 headline that never truncates; the detail is 12px --ink-2, 2 lines', () => {
+  const body = (sel) => ALL.filter((r) => splitTop(r.sel).map((t) => t.trim()).includes(sel)).map((r) => r.body).join(';');
+  const word = body('.run-status-word');
+  assert.match(word, /font-size:var\(--fs-section\)/);
+  assert.match(word, /font-weight:600/);
+  assert.doesNotMatch(word, /text-overflow|white-space:nowrap/, 'the headline is never cut');
+  const detail = body('.run-status-detail');
+  assert.match(detail, /font-size:var\(--fs-meta\)/);
+  assert.match(detail, /color:var\(--ink-2\)/);
+  assert.match(detail, /-webkit-line-clamp:2/);
+  // The old 13px one-line status head must not come back under any name.
+  assert.ok(!ALL.some((r) => /\.run-status-(?:head|word|text)\b/.test(r.sel) && /white-space:nowrap/.test(r.body) && /text-overflow:ellipsis/.test(r.body)),
+    'no status head is a nowrap ellipsis line');
+  assert.match(body('.chat-rc-status .run-status-word'), /font-size:var\(--fs-body\)/, 'beside a card title the state is 13px');
 });

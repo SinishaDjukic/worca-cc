@@ -1214,8 +1214,8 @@ test('ask-panel-card: the Engine field — Default sends none, a proposed engine
       const sel = ctx.doc.querySelector('.ask-card-engine');
       assert.equal(sel.value, '');
       assert.equal(sel.options[0].textContent, 'Codex (default)');
-      assert.deepEqual([...sel.options].slice(1).map((o) => o.textContent), ['Claude', 'Codex (Beta)', 'Copilot (Beta)', 'Cursor (Beta)', 'OpenCode (Beta)']);
-      assert.deepEqual([...sel.options].filter((o) => !o.hidden).map((o) => o.value), ['', 'claude', 'copilot', 'cursor', 'opencode'], 'Codex is listed once, as the default');
+      assert.deepEqual([...sel.options].slice(1).map((o) => o.textContent), ['Claude', 'Codex (Beta)', 'Copilot (Beta)', 'Cursor (Beta)', 'Gemini CLI (Beta)', 'Goose (Beta)', 'OpenCode (Beta)', 'Qwen Code (Beta)']);
+      assert.deepEqual([...sel.options].filter((o) => !o.hidden).map((o) => o.value), ['', 'claude', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen'], 'Codex is listed once, as the default');
       ctx.doc.querySelector('[data-ask-card-start]').click();
       for (let i = 0; i < 6; i++) await ctx.tick();
       assert.equal(rec.runBodies.length, 1);
@@ -2471,9 +2471,9 @@ test('ask-panel-card: a Folder member is listed but gets no per-member source in
   ]);
 });
 
-test('s2: a proposal for project acme lists the person\'s last-run cost tags plus required keys', async () => {
+test('s2: a proposal for project acme lists the project\'s default cost tags plus required keys', async () => {
   const rec = { tagRules: { dims: [{ key: 'client', label: 'Client', values: [], required: true }], enforce: false, prefill: [],
-    autofill: { tags: ['team:web'], from: 'last-run' } } };
+    autofill: { tags: ['team:web'], from: 'defaults' } } };
   const { ctx, card } = await openFlagged({ ...PROJECT_CARD, projectName: 'acme', tags: ['spike'] }, rec);
   await ctx.tick();
   assert.deepEqual(rec.tagRuleQueries, ['projectDir=%2Frepos%2Fproj']);

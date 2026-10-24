@@ -76,6 +76,12 @@ function copyButton(doc, text) {
   return btn;
 }
 
+/** A command long enough that the 3-line clamp may cut it (jsdom cannot measure, so this is a length test). */
+export function longCommand(cmd) {
+  const s = String(cmd || '');
+  return s.split('\n').length > 3 || s.length > 180;
+}
+
 /** `expanded` / `onToggle`: the output's fold, held by the panel per blockId so it outlives a rebuild of the card.
  *  `keepInPlace(control, change)`: a click folds or unfolds inside it, so the host can keep the toggle where it was
  *  on screen (a transcript pinned to its end would otherwise follow the opened output).
@@ -100,6 +106,16 @@ export function createCommandCard({ doc, card, onStop, onShow = () => {}, expand
   folder.addEventListener('click', () => onShow(card.sessionId));
   head.append(h(doc, 'span', 'ask-cmd-kicker', 'Command'), pill, folder, h(doc, 'span', 'ask-rc-spacer'), stop);
   const line = h(doc, 'div', 'ask-cmd-line', `$ ${card.command}`);
+  // A long command is clamped to 3 lines (style.css); Show all opens it in place.
+  const more = h(doc, 'button', 'btn btn-sm btn-quiet ask-cmd-more', 'Show all');
+  more.type = 'button';
+  more.hidden = !longCommand(card.command);
+  more.setAttribute('aria-expanded', 'false');
+  more.addEventListener('click', () => keepInPlace(more, () => {
+    const opened = line.classList.toggle('is-open');
+    more.textContent = opened ? 'Show less' : 'Show all';
+    more.setAttribute('aria-expanded', String(opened));
+  }));
   const warning = h(doc, 'div', 'ask-cmd-warning', card.warning || '');
   warning.hidden = !card.warning;
   // The tail is folded behind this toggle (the head and the command line are the card); no output, no toggle.
@@ -112,7 +128,7 @@ export function createCommandCard({ doc, card, onStop, onShow = () => {}, expand
   toggle.append(chev, toggleLabel);
   const out = h(doc, 'pre', 'ask-cmd-out');
   out.hidden = true;
-  el.append(head, line, warning, toggle, out);
+  el.append(head, line, more, warning, toggle, out);
   let view = null;
   let open = !!expanded;
   function paintOutput() {

@@ -549,7 +549,7 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
         errors.push(`${at} ("${id}"): a codex model takes no env — codex ignores routing env`);
         return;
       }
-      // A Cursor or OpenCode model runs through the engine's own sign-in: no routing env, no upstream.
+      // A model of an own-sign-in engine (Cursor, Gemini CLI, Goose, OpenCode, Qwen Code) runs through the engine's own sign-in: no routing env, no upstream.
       if (OWN_SIGNIN_ENGINES.includes(engine) && Object.keys(env).length) {
         errors.push(`${at} ("${id}"): ${aModelOf(engine)} takes no env — ${ownSignInNote(engine)}`);
         return;

@@ -436,18 +436,26 @@ test('suggestionsFor: required policy key first, then policy keys, then project 
   assert.deepEqual(suggestionsFor('cc:44', vocab, 8, dims), ['cc:4410', 'cc:4420']);
 });
 
-test('New run: the last run\'s cost tags fill an untouched field, flash, ride the body, and come back after a start', async () => {
-  const ctx = await bootForm({ dims: () => ({ dims: [], enforce: false, prefill: [], autofill: { tags: ['client:acme', 'team:web'], from: 'last-run' } }) });
+test('New run (#923): the field starts from the project\'s defaults, and a start does not carry its own tags into the next run', async () => {
+  const dims = { dims: [{ key: 'client', label: 'Client', values: [], required: true }, { key: 'cc', label: 'Cost centre', values: [], required: false }],
+    enforce: false, prefill: ['client:acme'], autofill: { tags: ['client:acme', 'team:ops'], from: 'defaults' } };
+  const ctx = await bootForm({ tagsFor: () => ['team:ops'], dims: () => dims });
   flagsOn(ctx.window);
-  assert.deepEqual(formChips(ctx.doc), ['client:acme', 'team:web']);
-  const chips = [...ctx.doc.querySelectorAll('#runTagsField .tag-chip')];
-  assert.ok(chips.length === 2 && chips.every((c) => c.classList.contains('is-filled')));
-  assert.deepEqual((await submit(ctx)).tags, ['client:acme', 'team:web']);
-  assert.deepEqual(formChips(ctx.doc), ['client:acme', 'team:web'], 'the next run starts from the run just started');
+  const slot = (key) => ctx.doc.querySelector(`#runTagDimsField .tag-dim-slot[data-key="${key}"] .tag-dim-input`);
+  assert.deepEqual(formChips(ctx.doc), ['team:ops']);
+  assert.equal(slot('client').value, 'acme');
+  const input = ctx.doc.querySelector('#runTagsField .tag-input-text');
+  input.value = 'project:redesign';
+  input.dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Enter', cancelable: true }));
+  for (const [key, v] of [['client', 'initech'], ['cc', '4410']]) { slot(key).value = v; slot(key).dispatchEvent(new ctx.window.Event('input')); }
+  assert.deepEqual((await submit(ctx)).tags, ['cc:4410', 'client:initech', 'project:redesign', 'team:ops']);
+  assert.deepEqual(formChips(ctx.doc), ['team:ops'], 'the run just started is not copied: the defaults come back');
+  assert.equal(slot('client').value, 'initech', 'a mandatory slot keeps the value just used');
+  assert.equal(slot('cc').value, '', 'an optional slot is not copied');
 });
 test('New run: a value typed into a slot survives switching the project away and back (no auto-fill overwrites it)', async () => {
-  const ctx = await bootForm({ dims: (q) => ({ dims: [{ key: 'client', label: 'Client', values: [], required: true }], enforce: false, prefill: [],
-    autofill: q.get('projectDir') === '/a/web' ? { tags: ['client:acme'], from: 'last-run' } : { tags: ['client:globex'], from: 'last-run' } }) });
+  const ctx = await bootForm({ dims: (q) => ({ dims: [{ key: 'client', label: 'Client', values: [], required: true }], enforce: false,
+    prefill: q.get('projectDir') === '/a/web' ? ['client:acme'] : ['client:globex'], autofill: { tags: [], from: null } }) });
   flagsOn(ctx.window);
   const slot = () => ctx.doc.querySelector('#runTagDimsField .tag-dim-input');
   assert.equal(slot().value, 'acme');
@@ -463,10 +471,9 @@ test('New run: a value typed into a slot survives switching the project away and
   await pick(web);
   assert.equal(slot().value, 'initech', 'the typed value is kept after the round trip');
 });
-test('New run: a cleared slot stays empty after a round trip, and an untouched auto-filled slot does not cross projects', async () => {
+test('New run: a cleared slot stays empty after a round trip, and an untouched pre-filled slot does not cross projects', async () => {
   const ctx = await bootForm({ dims: (q) => ({ dims: [{ key: 'client', label: 'Client', values: [], required: true }, { key: 'cc', label: 'Cost centre', values: [], required: false }],
-    enforce: false, prefill: [],
-    autofill: q.get('projectDir') === '/a/web' ? { tags: ['client:acme', 'cc:4410'], from: 'last-run' } : { tags: ['client:globex'], from: 'last-run' } }) });
+    enforce: false, prefill: q.get('projectDir') === '/a/web' ? ['cc:4410', 'client:acme'] : ['client:globex'], autofill: { tags: [], from: null } }) });
   flagsOn(ctx.window);
   const slot = (key) => ctx.doc.querySelector(`#runTagDimsField .tag-dim-slot[data-key="${key}"] .tag-dim-input`);
   const pick = async (i) => {
@@ -481,18 +488,10 @@ test('New run: a cleared slot stays empty after a round trip, and an untouched a
   slot('client').value = ''; slot('client').dispatchEvent(new ctx.window.Event('input'));
   await pick(api);
   assert.equal(slot('client').value, '', 'the cleared slot is not refilled by the next project');
-  assert.equal(slot('cc').value, '', 'the untouched auto-filled cc does not cross into a project whose last run has none');
+  assert.equal(slot('cc').value, '', 'the untouched pre-filled cc does not cross into a project that has none');
   await pick(web);
   assert.equal(slot('client').value, '', 'the cleared slot is still empty after the round trip');
   assert.equal(slot('cc').value, '4410', 'the untouched slot takes this project\'s fill again');
-});
-test('New run: autofill from "defaults" keeps today\'s project-default fill and does not flash', async () => {
-  const { doc } = await bootForm({ tagsFor: () => ['team:ops'], dims: () => ({ dims: [], enforce: false, prefill: [], autofill: { tags: ['team:ops'], from: 'defaults' } }) });
-  assert.equal(doc.querySelectorAll('#runTagsField .tag-chip.is-filled').length, 0);
-});
-test('style.css: the fill flash is off under prefers-reduced-motion', () => {
-  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
-  assert.match(css, /@media \(prefers-reduced-motion: ?reduce\)\{[^@]*\.tag-chip\.is-filled\{animation:none;\}/);
 });
 test('style.css: the Cost tags row wraps; the old in-tile rules are gone', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');

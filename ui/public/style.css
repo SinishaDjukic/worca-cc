@@ -4423,6 +4423,38 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .mem-snap-count{color:var(--ink-3);flex:1;}
 .mem-host .mono{font-family:var(--mono);}
 @media (max-width:900px){.mem-host{grid-template-columns:1fr;}}
+/* Memory › Team view (team memory 1b). Text on a tinted box uses the *-ink-strong tokens: 12–14px *-ink is under 4.5:1 there. */
+.pd-sec-memory .mem-views{margin:0 0 10px;}
+.mem-team-host{display:grid;gap:12px;}
+.mem-team-host .mono,.mem-seed .mono{font-family:var(--mono);}
+.mem-team-card{display:grid;gap:8px;}
+.mem-team-head{display:flex;align-items:center;gap:12px;}
+.mem-team-head .mem-team-loads{margin-left:auto;}
+.mem-team-sync-row,.mem-team-offer,.mem-team-seeding{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.mem-team-sync-text,.mem-team-counts,.mem-team-detail,.mem-team-findings,.mem-seed-desc,.mem-cmp-title{color:var(--ink-2);font-size:12px;}
+.mem-team-error{padding:8px 10px;border-radius:var(--r-ctrl);background:var(--red-bg);color:var(--red-ink-strong);}
+.mem-team-warn{padding:6px 10px;border-radius:var(--r-ctrl);background:var(--amber-bg);color:var(--amber-ink-strong);}
+.mem-team-hint{margin-top:4px;}
+.mem-team-offer{padding:8px 10px;border-radius:var(--r-ctrl);background:var(--blue-bg);color:var(--blue-ink-strong);}
+/* Team memory E10: the project Overview's offer line sits over the stat grid. */
+.mem-team-available{margin-bottom:18px;}
+.mem-team-list{padding:10px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.mem-team-row{display:flex;gap:12px;align-items:flex-start;padding:8px 4px;border-top:1px solid var(--line-2);}
+.mem-team-main{flex:1;min-width:0;}
+.mem-team-title{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.mem-team-detail{margin-top:2px;}
+.mem-team-findings{margin:4px 0 0 18px;}
+.mem-team-actions{display:flex;gap:6px;flex-shrink:0;}
+.mem-seed{display:grid;gap:12px;}
+.mem-seed-sec{display:grid;gap:6px;}
+.mem-seed-pick,.mem-seed-head{display:flex;gap:8px;align-items:baseline;min-width:0;}
+.mem-seed-desc{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mem-seed-clash{display:grid;gap:6px;padding:8px;border:1px solid var(--line);border-radius:var(--r-ctrl);}
+.mem-seed-choices{display:flex;flex-wrap:wrap;gap:12px;align-items:center;}
+.mem-cmp{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.mem-cmp-text{margin:0;padding:6px 8px;max-height:240px;overflow:auto;white-space:pre-wrap;font-size:12px;background:var(--field);border:1px solid var(--line-2);border-radius:var(--r-ctrl);}
+.mem-cmp-diff{background:var(--amber-bg);color:var(--amber-ink-strong);}
+@media (max-width:720px){.mem-cmp{grid-template-columns:1fr;}}
 
 /* ---------- History detail: Agents tab ---------- */
 .hd-ag-group{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);
@@ -5009,12 +5041,20 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
    top right, level with the state word; after it the head buttons (.rd-head-acts: run-head.mjs, with the pull request
    control .rd-pr-slot among them). The live row shows only while the run has not ended and the buttons only once it
    has, so the two never meet; if they did, the buttons take their own column after the row. */
-.rd-sheet-head{container:rd-head / inline-size;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:start;min-width:0;}
-.rd-sheet-head > .rd-now-top{grid-area:1 / 1;}
-.rd-sheet-head > .rd-live-row{grid-area:1 / 2;height:23px;margin-left:16px;}   /* the state word's line box (18px × 1.3) */
-/* Slice 3: centred on the status line: the 32px buttons overhang it each way, so the head is the status line's height
-   with or without them, and the PR control's fade-out moves nothing. A narrow card wraps them under the status. */
-.rd-sheet-head > .rd-head-acts{grid-area:1 / 3;display:flex;align-items:center;gap:8px;margin:-7px 0 -7px 16px;}
+.rd-sheet-head{container:rd-head / inline-size;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:start;min-width:0;
+  --rd-word-line:calc(var(--fs-section) * var(--lh-title));}
+/* The status block spans every head column so its bar (and the group bar, role rows) take the card's width; a subgrid
+   keeps the state word and its detail in column 1, so they stop where the switch or the buttons begin. Run page only: the
+   chat card and the group page lay the shared block out themselves. */
+.rd-sheet-head > .rd-now-top{grid-area:1 / 1 / 2 / -1;grid-template-columns:subgrid;column-gap:0;}
+.rd-sheet-head > .rd-now-top > *{grid-column:1 / -1;}
+.rd-sheet-head > .rd-now-top > .run-status-head{grid-column:1;}
+.rd-sheet-head > .rd-live-row{grid-area:1 / 2;height:var(--rd-word-line);margin-left:16px;}   /* the state word's line box */
+/* Slice 3: centred on the state word's line (the detail may add lines under it): the 32px buttons overhang that line
+   each way, so the head is the status block's height with or without them, and the PR control's fade-out moves
+   nothing. A narrow card wraps them under the status. */
+.rd-sheet-head > .rd-head-acts{grid-area:1 / 3;display:flex;align-items:center;gap:8px;
+  margin:calc((var(--rd-word-line) - 32px) / 2) 0 calc((var(--rd-word-line) - 32px) / 2) 16px;}
 .rd-sheet-head > .rd-head-acts[hidden]{display:none;}
 /* The PR slot may shrink in the row (its own max-width caps the label; style below), never past the card. */
 .rd-head-acts > .rd-pr-slot{min-width:0;}
@@ -5029,14 +5069,17 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-pr-menu.btn-split-menu .sw-item{align-items:flex-start;}
 .rd-pr-menu .wfv-menu-l{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;}
 .rd-pr-menu .sw-item[title] small{color:var(--amber-ink);}
-/* Slice 3: the read-only tracker under the head: three steps on one 3-column grid (two for a Folder run), a row per
-   workspace member with its name in a 44px column. Nodes reuse the status-dot colours. */
+/* Slice 3: the read-only tracker under the head: three steps on one grid (two for a Folder run), a row per
+   workspace member with its name in a 44px column. Nodes reuse the status-dot colours. Only steps before the last
+   draw a line, so the last column is the last step's own width and the lines grow to fill the rest: the first step
+   starts at the left edge, the last ends at the right. */
 .rd-track{display:flex;flex-direction:column;gap:8px;padding-top:12px;border-top:1px solid var(--line);}
 .rd-track[hidden]{display:none;}
 .rd-track-row{display:grid;grid-template-columns:minmax(0,1fr);}
 .rd-track-row.has-name{grid-template-columns:44px minmax(0,1fr);column-gap:8px;}
 .rd-track-name{font-size:var(--fs-meta);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:16px;}
-.rd-track-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0;padding:0;list-style:none;}
+.rd-track-steps{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;margin:0;padding:0;list-style:none;}
+.rd-track-steps:not(:has(> :nth-child(3))){grid-template-columns:minmax(0,1fr) auto;}
 /* Top-aligned: a label that wraps keeps its dot and line on its first line (the 18px label line centres both). */
 .rd-track-head{display:flex;align-items:flex-start;gap:8px;min-width:0;}
 .rd-track-head > .rd-track-dot{margin-top:1px;}
@@ -6020,7 +6063,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-card.ask-wfcard{gap:0;padding:16px 18px;border-width:1px;animation:wr-rise .2s cubic-bezier(.2,.7,.3,1) both;}
 .ask-wfcard>*{min-width:0;}
 .ask-wfcard-head{display:flex;align-items:center;gap:8px;height:24px;}
-.ask-wfcard-title{font-weight:600;font-size:15px;line-height:1.35;color:var(--ink);white-space:nowrap;}
+.ask-wfcard-state{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font-size:var(--fs-meta);font-weight:600;white-space:nowrap;}
 .ask-wfcard-round{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font-family:var(--mono);font-size:11px;white-space:nowrap;}
 .ask-wfcard-spacer,.ask-wfcard-actions .ask-card-actions-spacer{flex:1 1 auto;}
 .ask-wfcard-tag{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:var(--r-xs);font-family:var(--mono);font-size:11px;background:var(--slate-bg);color:var(--slate-ink);white-space:nowrap;}
@@ -6030,7 +6073,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-wfcard-saved svg{flex:0 0 auto;stroke:var(--green);}
 .ask-wfcard-saved span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ask-wfcard-savedline{margin-top:4px;font-size:13px;line-height:1.55;color:var(--ink-2);}
-.ask-wfcard-savedline+.ask-wfcard-graph{margin-top:16px;}
+.ask-wfcard-savedline+.ask-wfcard-graph,.ask-wfcard-saved+.ask-wfcard-graph{margin-top:16px;}
 .ask-wfcard .ask-card-err{margin-top:8px;}
 .ask-wfcard-actions{display:flex;align-items:center;gap:8px;margin-top:20px;}
 /* .ask-pop-chip itself lives with the other popover panels (below .ask-pop): both
@@ -6474,7 +6517,12 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd-folder:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .ask-cmd-stop{white-space:nowrap;}
 .ask-cmd-stop[hidden]{display:none;}
-.ask-cmd-line{font-family:var(--mono);font-size:12px;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;}
+/* A long command is clamped to 3 lines; .ask-cmd-more opens it. */
+.ask-cmd-line{font-family:var(--mono);font-size:12px;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;
+  display:-webkit-box;-webkit-line-clamp:3;line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+.ask-cmd-line.is-open{display:block;-webkit-line-clamp:unset;line-clamp:none;overflow:visible;}
+.ask-cmd-more{align-self:flex-start;}
+.ask-cmd-more[hidden]{display:none;}
 .ask-cmd-warning{padding:7px 10px;border:1px solid var(--amber-line);border-radius:var(--r-sm);background:var(--field);color:var(--ink);font-size:12px;}
 .ask-cmd-warning[hidden]{display:none;}
 /* The output is folded behind this toggle (no output, no toggle); the chevron turns down when it is open. */
@@ -8083,11 +8131,8 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .hd-tags-editor{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;}
 .hd-tags .tag-input{flex:1 1 280px;}
 .rd-page-meta > .tag-chip{margin-left:6px;}
-/* Cost tags (s2): the auto-fill flash on the New run form, the missing required-key slot, the run page's facts tile. */
-.tag-chip.is-filled{animation:tagFilled 1.6s ease-out;}
-@keyframes tagFilled{0%,30%{background:var(--amber-bg);}100%{background:var(--field);}}
+/* Cost tags (s2): the missing required-key slot, the run page's facts tile. */
 .tag-chip.tag-missing{background:transparent;border:1px dashed var(--amber);color:var(--amber-ink);}
-@media (prefers-reduced-motion: reduce){.tag-chip.is-filled{animation:none;}}
 /* Cost tags under the facts tiles (D15): one wrapping row — the label, the chips and missing-key slots, the control last. */
 .rd-cost-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;}
 /* Run labels (slice 1): the outlined chip; colour only on the dot (labelHue → .hue-*). */
@@ -8821,8 +8866,8 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 /* ===== Chat P2: Action cards ===== */
 /* Receipts (act, then undo), the stop warning and the pull-request offer (ui/public/chat/action-cards.mjs), on the Ask
    card chrome. Emphasis is a background wash, never an edge line. Text colours keep 4.5:1 in both themes. */
-.ask-rcard .ask-mcard-title,.ask-prcard .ask-mcard-title,.ask-shipcard .ask-mcard-title,.ask-changescard .ask-mcard-title,.ask-routecard .ask-mcard-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
-.ask-rcard :is(.ask-mcard-before,.ask-mcard-target){color:var(--ink-2);}
+.ask-rcard .ask-mcard-title,.ask-prcard .ask-mcard-title,.ask-shipcard .ask-mcard-title,.ask-changescard .ask-mcard-title,.ask-routecard .ask-mcard-title,.ask-awcard .ask-mcard-title{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.ask-rcard :is(.ask-mcard-before,.ask-mcard-target),.ask-awcard .ask-mcard-target{color:var(--ink-2);}
 .ask-rcard-change{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;font-family:var(--mono);font-size:12px;min-width:0;}
 .ask-rcard-change .ask-mcard-before{overflow-wrap:anywhere;}
 .ask-rcard-change .ask-mcard-after{color:var(--ink);overflow-wrap:anywhere;}
@@ -9549,7 +9594,8 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 /* The pill wraps under a long title rather than cutting either ("Waiting for your answer" is the status itself). */
 .chat-run-tile-head{display:flex;flex-wrap:wrap;align-items:flex-start;gap:6px 10px;min-width:0;}
 .chat-run-tile-tt{display:flex;flex:1 1 180px;flex-direction:column;gap:2px;min-width:0;}
-.chat-run-tile-open{max-width:100%;justify-content:flex-start;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chat-run-tile-open{max-width:100%;min-width:0;justify-content:flex-start;text-align:left;}
+.chat-run-tile-name{min-width:0;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .chat-run-tile-open::after{content:"";position:absolute;inset:0;z-index:1;border-radius:inherit;}
 .chat-run-tile-open:focus-visible{outline:none;}
 .chat-run-tile:has(.chat-run-tile-open:focus-visible){outline:2px solid var(--ink);outline-offset:2px;}
@@ -9885,8 +9931,15 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .rd-title-row a.kind-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* the shared status block */
 .run-status{display:grid;gap:8px;min-width:0;}
-.run-status-head{display:flex;align-items:center;gap:8px;min-width:0;}
-.run-status-text{font-size:13px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* The status block's head (design system, Card head): the state word is the card's headline (15px/600, never
+   truncated, the dot centred on it); the detail under it says only what no row below says, 12px --ink-2, at most 2
+   lines (its title holds the whole text). */
+.run-status-head{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:8px;align-items:center;min-width:0;}
+.run-status-head > .status-dot{grid-area:1 / 1;}
+.run-status-word{grid-area:1 / 2;min-width:0;font-size:var(--fs-section);font-weight:600;line-height:var(--lh-title);color:var(--ink);overflow-wrap:anywhere;}
+.run-status-detail{grid-area:2 / 2;min-width:0;margin-top:2px;font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);
+  overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.run-status-detail[hidden]{display:none;}   /* display:-webkit-box beats the UA [hidden] rule */
 /* A12: live role-review rows under the status line, divider rows, no box. */
 .run-status-roles{display:flex;flex-direction:column;}
 .run-role-row{display:flex;align-items:center;gap:8px;min-height:24px;font-size:12px;color:var(--ink-2);}
@@ -9897,6 +9950,8 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .run-role-refine{min-height:24px;display:flex;align-items:center;font-size:12px;color:var(--ink-2);}
 @media (prefers-reduced-motion: reduce){.run-role-dot.is-live{animation:none;}}
 .chat-rc-status .run-status-head > .status-dot{display:none;}   /* the card's dot is the head's (D10) */
+.chat-rc-status .run-status-head{column-gap:0;}   /* the dot column is empty here: no gap before the word */
+.chat-rc-status .run-status-word{font-size:var(--fs-body);line-height:var(--lh-body);}
 .chat-rc-actions{display:flex;flex-wrap:wrap;gap:8px;}   /* the card's footer buttons (D4): its own and the made ones */
 .rd-actions{display:contents;}   /* the model's made buttons (D4) are bar items, with the bar's own gap */
 /* member rows: dividers, never boxes (§1.4); the page table is one grid, rows are subgrids so columns line up (§3.3a) */

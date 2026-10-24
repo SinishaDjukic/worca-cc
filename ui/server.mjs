@@ -98,7 +98,7 @@ import {
   actionsSettings, setActionsSettings, assertActionsInput,
   syncDefaults, setSyncDefaults, assertSyncSettingsInput, DEFAULT_SYNC_SETTINGS,
   networkWaitSettings, assertNetworkWaitInput, setNetworkWait, effectiveNetworkWait,
-  networkProxySettings, setNetworkProxy,
+  networkProxySettings,
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
   stepModelsSetting, assertStepModelsInput, setStepModels,
   utilityModelsSetting, assertUtilityModelsInput, setUtilityModels,
@@ -256,7 +256,7 @@ import {
   readProjectActions, writeProjectActions, readActionsMeta, writeActionsMeta, writeTeamRepo,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
-import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, COPILOT_EFFORTS, OPENCODE_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, COPILOT_EFFORTS, GOOSE_EFFORTS, OPENCODE_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
 import { engineLabel, ENGINE_NAMES, engineRefusalFor } from '../src/shared/engine-switch.mjs';
 import { engineReadiness, engineLocks } from '../src/core/engines/readiness.mjs';
 import { providerReadiness } from '../src/core/bridge/registry.mjs';
@@ -397,8 +397,14 @@ import { ensureHouseBrief, writeHouseBriefPins } from '../src/core/house-brief.m
 import { validateMemoryScope, withStoreLock } from '../src/core/memory-sync.mjs';
 import {
   memoryRoot, GLOBAL_SCOPE, projectScope, scopeKey, isValidMemoryName, MEMORY_NAME_HELP, memoryScopeReport,
-  readMemory, writeMemory, removeMemory, listSnapshots, restoreSnapshot,
+  readMemory, writeMemory, removeMemory, listSnapshots, restoreSnapshot, listMemory,
 } from '../src/core/memory-store.mjs';
+import {
+  queueTeamChanges, changedNoteNames, teamMemoryStatus, flushTeamMemory, refreshTeamLayer, deleteTeamNote, isTeamMemoryOn,
+  switchTeamMemoryOn, teamMemorySettingChanged, startTeamMemoryBackground, teamMemoryEvents, teamClientText,
+  previewTeamSeed, seedTeamMemory, resolveTeamClash, undoTeamSeed, dismissSeedOffer,
+  detectTeamMemory, teamMemoryAvailability, dismissTeamMemoryOffer,
+} from '../src/core/memory-team.mjs';
 import { memoryCaps } from '../src/core/settings.mjs';
 import { onboardingPrefs, setOnboardingPrefs } from '../src/core/settings.mjs';
 import { settingsErrorReply, asSettingsField } from '../src/core/settings-errors.mjs';
@@ -497,9 +503,11 @@ import * as skClone from '../src/core/clone-project.mjs';
 import { HLJS_GRAMMAR_IDS } from './public/hljs-loader.mjs';
 import { useEnvProxy, proxyNotice } from '../src/core/env-proxy.mjs';
 import { startEgressPolicy, egressNotice, egressSummary } from '../src/core/egress-policy.mjs';
-import { proxyState, readProxyLogin, saveProxyLogin, clearProxyLogin, markLoginRejected, parseAccount, upstreamEnv,
-  ProxyLoginError } from '../src/core/proxy-credentials.mjs';
-import { checkUpstream, resolveUpstream, upstreamLabel, fixedPortOf, localProxyUrl, PASSWORD_MODES } from '../src/core/upstream-proxy.mjs';
+import { saveProxyLogin, clearProxyLogin, parseAccount, ProxyLoginError } from '../src/core/proxy-credentials.mjs';
+import { PASSWORD_MODES } from '../src/core/upstream-proxy.mjs';
+import { createProxyHost, PROXY_AGENT_TEXT } from '../src/core/proxy-host.mjs';
+import { applyProxyChange, validateProxyChange, validateProxyFlagOn } from '../src/core/ask/proxy-deps.mjs';
+import { proxyEventPrompt, proxyNoticeText } from '../src/core/ask/proxy-proposal.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -7012,7 +7020,8 @@ app.get('/api/tag-dimensions', async (req, res) => {
       const src = prefillSources({ projectDir, person: startedByOf(req) });
       const prefill = prefillTags(info.dims, [], src);
       // s2 (D7, D8): the New run / Ask card fill, sent ONLY for a project target (a workspace has no single project).
-      const autofill = projectDir ? autoFillTags({ dims: info.dims, lastRun: src.lastUsed, projectDefaults: src.projectDefaults }) : undefined;
+      // #923: the project's defaults plus the slots; the last run's tags only fill mandatory dimensions.
+      const autofill = projectDir ? autoFillTags({ dims: info.dims, lastUsed: src.lastUsed, projectDefaults: src.projectDefaults }) : undefined;
       return res.json({ ...info, enforce: flagEnabled('runTags') && info.enforce === true, prefill, ...(autofill ? { autofill } : {}) });
     }
     res.json({ ...(await allTagDimensions()), team: await teamTagPolicy() });
@@ -7039,7 +7048,8 @@ app.get('/api/projects/:key/settings', async (req, res) => {
 });
 app.patch('/api/projects/:key/settings', async (req, res) => {
   const project = await tmProject(req, res); if (!project) return;
-  try { res.json(await applyProjectSettingsPatch(project, req.body)); } catch (error) { badRequest(res, error?.message || String(error)); }
+  // A refused team-memory switch keeps its code (NO_GIT, FOLDER_PROJECT, NO_ORIGIN) so the client can say why.
+  try { res.json(await applyProjectSettingsPatch(project, req.body)); } catch (error) { res.status(400).json({ error: error?.message || String(error), ...(error?.status === 400 && typeof error.code === 'string' ? { code: error.code } : {}) }); }
 });
 
 /** PATCH /api/projects/:key/settings' body for one registered project ({key, path}): validate, write in one
@@ -7049,7 +7059,15 @@ async function applyProjectSettingsPatch(project, patch) {
   const roles = agentSteps().map(({ key }) => key);
   const items = assertProjectSettingsPatch(patch, { roles });
   await assertSlotModels(items.filter(({ entry, value }) => entry.family && value).map(({ entry, value }) => ({ id: entry.id, engine: entry.engine, value })), { projectDir: project.path });
-  writeProjectSettings({ projectDir: project.path }, patch, { roles });
+  const teamSwitch = items.find(({ entry }) => entry.id === 'memory.team');
+  const write = () => writeProjectSettings({ projectDir: project.path }, patch, { roles });
+  // `true` (load local and team notes) or "only" (team notes only) — team-memory-load-choice.md. Only a switch from
+  // off is a switch-on; Team ↔ Both changes what loads, nothing else.
+  const wasOn = teamSwitch ? isTeamMemoryOn(project.key) : false;
+  const turnsOn = teamSwitch && !wasOn && (teamSwitch.value === true || teamSwitch.value === 'only');
+  if (turnsOn) await switchTeamMemoryOn(project.key, project.path, write);   // 400 NO_GIT / FOLDER_PROJECT / NO_ORIGIN first; baseline + switch under the team lock (D1)
+  else write();
+  if (teamSwitch && isTeamMemoryOn(project.key) !== wasOn) void teamMemorySettingChanged(project.key, project.path).catch(teamWarn);   // on: fetch now · off: drop the queue
   emitChanged('settings-changed');
   return projectSettingsState(project.path);
 }
@@ -9892,7 +9910,9 @@ async function projectsForApi(list) {
   return list.map((p) => {
     const made = p.exists ? worcaNestedRepoOf(p.path) : null;
     return { ...p, workMode: effectiveWorkMode(p.vcs, available), displayPath: displayPath(p.path), ownedFolder: ownsProjectFolder(p),
-      ...(made ? { nestedRepo: { repoRoot: made.repoRoot, hint: worcaNestedRepoHint(p.path, made) } } : {}) };
+      ...(made ? { nestedRepo: { repoRoot: made.repoRoot, hint: worcaNestedRepoHint(p.path, made) } } : {}),
+      // E10: origin has a worca-memory branch and the project is off — the Overview's line, the import list's mark.
+      ...(teamMemoryAvailability(p.key).offer ? { teamMemoryOffer: true } : {}) };
   });
 }
 
@@ -9927,6 +9947,7 @@ app.post('/api/projects', async (req, res) => {
     // Its team policy at once too (MCP registry spec §11.2): removing a project drops its policy cache, so a re-added or
     // re-cloned project's home must not read "no project here follows" (a greyed Team set) until the background discovery.
     discoverPolicy(normalizeProjectPath(body.path), { force: true }).catch(() => { /* offline: the background discovery retries */ });
+    detectTeamMemorySoon(normalizeProjectPath(body.path));
     res.json({ projects: await projectsForApi(projects) });
   } catch (err) {
     if (err?.code === 'NESTED_IN_REPO') return res.status(400).json({ error: err.message, code: err.code, partOf: err.partOf, repoRoot: err.repoRoot });
@@ -9963,6 +9984,8 @@ app.post('/api/projects/bulk', async (req, res) => {
           await discoverPolicy(p, { force: true }).catch(() => { /* offline: the background discovery retries */ });
         }
       })();
+      // Team memory's check (E10) on its own queue, one remote at a time too: a slow origin never holds the discovery.
+      void (async () => { for (const p of addedPaths) await detectTeamMemory(p); })();
     }
     res.json({ projects: await projectsForApi(projects), results });
   } catch (err) {
@@ -9985,7 +10008,11 @@ function afterProjectRegistered(project, action = 'created') {
     .then(() => emitChanged('team-metrics-changed', 'discovered'))
     .catch(() => { /* offline or no origin: discovery retries hourly */ });
   discoverPolicy(project.path, { force: true }).catch(() => { /* offline: the background discovery retries */ });
+  detectTeamMemorySoon(project.path);
 }
+/** E10: whether origin already has a worca-memory branch, in the background (it never throws, never blocks the add,
+ *  and is skipped without git, for a Folder project or without origin). Its answer reaches the page as projects-changed. */
+function detectTeamMemorySoon(dir) { void detectTeamMemory(dir); }
 
 // POST /api/projects/create — New: a project by name under the projects root (U6). No requireFsAllowed: the only
 // path is <projects root>/<one checked folder name>.
@@ -10049,6 +10076,7 @@ async function startCloneJob(req) {
         .then(() => emitChanged('team-metrics-changed', 'discovered'))
         .catch(() => { /* offline or not a git repo: discovery retries hourly */ });
       discoverPolicy(project.path, { force: true }).catch(() => { /* offline: the background discovery retries */ });
+      detectTeamMemorySoon(project.path);
     } catch (err) {
       Object.assign(job, { state: 'error', code: err instanceof CloneError ? err.code : 'failed', error: err && err.message ? err.message : String(err) });
     }
@@ -10209,6 +10237,19 @@ function memoryError(res, err) {
   return res.status(status).json({ error: status === 500 ? 'memory store error' : message });
 }
 
+const teamWarn = (err) => console.warn(`[worca-ui] team memory: ${err && err.message ? err.message : err}`);
+
+/** Ask's remember/forget (MCP child or relay) is the same scope change a REST write makes: broadcast it, and — team
+ *  memory 1a — queue it for an opted-in project. The scope key and name come from worca's OWN tool result; both are
+ *  shape-checked here (and queueTeamChanges re-validates the name). Exported through _testing. */
+function askMemoryMutation({ scope, name = null, threadId = null } = {}) {
+  const projectKeyOf = typeof scope === 'string' && scope.startsWith('projects/') && PROJECT_KEY_RE.test(scope.slice('projects/'.length)) ? scope.slice('projects/'.length) : null;
+  if (scope === 'global' || projectKeyOf) emitMemoryChanged(scope);
+  if (projectKeyOf && typeof name === 'string' && name) {
+    queueTeamChanges(projectKeyOf, [name], { source: `ask:${threadId || 'unknown'}` }).catch(teamWarn);
+  }
+}
+
 /** Thread-less, seq-less frame (B5): an Ask tool, a REST write or a run that mounted memory
  *  changed a scope; open Memory views refetch. Best effort. Exported through _testing. */
 function emitMemoryChanged(scopeKeyStr) {
@@ -10303,25 +10344,47 @@ function registerMemoryRoutes(prefix, { family }) {
     const text = req.body && typeof req.body.text === 'string' ? req.body.text : null;
     if (text === null) return badRequest(res, 'text (string) is required');
     if (defragLocked(res, key)) return;
-    const r = await withStoreLock(memoryRoot(), () => writeMemory(memoryRoot(), scope, name, text, { source: 'user', caps: memoryCaps(project ? { projectDir: project.path } : null) }));
+    // Team memory: the tracked-copy marker (`team:`) is this machine's state, never the editor's (teamClientText). The
+    // page reloads a note right after its Save, before the push marks it, and a follow in another process sends it no
+    // frame: a Save without an edit must never read as a change pushed over a teammate's version (D13), and an old
+    // `team:` line saved after a team delete must never re-mark the copy for the next refresh to delete (D12).
+    const r = await withStoreLock(memoryRoot(), async () => writeMemory(memoryRoot(), scope, name, await teamClientText(scope, name, text),
+      { source: 'user', caps: memoryCaps(project ? { projectDir: project.path } : null) }));
     emitMemoryChanged(key);
+    if (project) await queueTeamChanges(project.key, [name], { source: 'user' }).catch(teamWarn);
     res.json({ ok: true, name, created: r.created, bytes: r.bytes });
   }));
-  app.delete(`${prefix}/files/:name`, scoped(async (req, res, { scope, key }) => {
+  app.delete(`${prefix}/files/:name`, scoped(async (req, res, { scope, key, project }) => {
     const name = named(req, res); if (name === null) return;
     if (defragLocked(res, key)) return;
     const removed = await withStoreLock(memoryRoot(), () => removeMemory(memoryRoot(), scope, name, { source: 'user' }));
     if (!removed) return res.status(404).json({ error: 'memory file not found' });
     emitMemoryChanged(key);
+    if (project) await queueTeamChanges(project.key, [name], { source: 'user' }).catch(teamWarn);
     res.json({ ok: true });
   }));
   app.get(`${prefix}/history`, scoped(async (_req, res, { scope }) => {
     const snapshots = (await listSnapshots(memoryRoot(), scope)).map((s) => ({ id: s.id, files: s.files }));
     res.json({ snapshots });
   }));
-  app.post(`${prefix}/history/:id/restore`, scoped(async (req, res, { scope, key }) => {
+  app.post(`${prefix}/history/:id/restore`, scoped(async (req, res, { scope, key, project }) => {
+    // Opted in, a restore pushes to the team (D13): the same caller check as every team route (E8).
+    if (project && isTeamMemoryOn(project.key) && !teamOriginOk(req, res)) return;
     if (defragLocked(res, key)) return;
-    await withStoreLock(memoryRoot(), () => restoreSnapshot(memoryRoot(), scope, String(req.params.id || ''), { source: 'user' }));   // ENAME -> 400, ENOSCOPE -> 404
+    // ONE store lock for the restore, its diff and its team queue: a concurrent write is never mistaken for the
+    // restore's, and a team follow (it takes this lock) can never slip in between the restore and its queue and undo it.
+    await withStoreLock(memoryRoot(), async () => {
+      const team = project && isTeamMemoryOn(project.key);   // off: exactly the restore of before (D1)
+      const before = team ? await listMemory(memoryRoot(), scope) : [];
+      await restoreSnapshot(memoryRoot(), scope, String(req.params.id || ''), { source: 'user' });   // ENAME -> 400, ENOSCOPE -> 404
+      if (!team) return;
+      const changed = changedNoteNames(before, await listMemory(memoryRoot(), scope));
+      // A restore is whole-scope (decisions D12, D13): on the team it undoes only this machine's own shared writes — a
+      // teammate's version followed here since the snapshot is never reverted or removed — and a note it only took back
+      // to its baseline (an edit that never reached the team, undone) stays local (D1).
+      // queueTeamChanges takes no store lock (no nesting); its flush runs later, outside this one.
+      if (changed.length) await queueTeamChanges(project.key, changed, { restore: true, source: 'user' }).catch(teamWarn);
+    });
     emitMemoryChanged(key);
     res.json({ ok: true });
   }));
@@ -10351,6 +10414,137 @@ app.get('/api/memory/health', async (_req, res) => {
 });
 registerMemoryRoutes('/api/memory/global', { family: 'global' });
 registerMemoryRoutes('/api/memory/projects/:key', { family: 'projects' });
+
+// /api/memory/team/:key — the team layer of one registered project (team memory 1a; phase 1b's Team tab reads it).
+// The switch itself is the project setting `memory.team` (PATCH /api/projects/:key/settings).
+async function teamProject(req, res) {
+  const key = String(req.params.key || '');
+  const p = PROJECT_KEY_RE.test(key) ? (await listProjects()).find((x) => x.key === key) : null;
+  if (!p) res.status(404).json({ error: 'project not found' });
+  return p || null;
+}
+const teamOff = (res) => res.status(409).json({ error: 'team memory is off for this project', code: 'DISABLED' });
+app.get('/api/memory/team/:key', async (req, res) => {
+  try { const p = await teamProject(req, res); if (!p) return; res.json(await teamMemoryStatus(p.key)); }
+  catch (err) { return memoryError(res, err); }
+});
+app.post('/api/memory/team/:key/sync', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    if (!isTeamMemoryOn(p.key)) return teamOff(res);
+    const flush = await flushTeamMemory(p.key, { projectDir: p.path });
+    const refresh = await refreshTeamLayer(p.key, { projectDir: p.path, maxAgeMs: 0 });
+    if (refresh?.followed?.length || refresh?.removed?.length) emitMemoryChanged(`projects/${p.key}`);
+    res.json({ flush, status: await teamMemoryStatus(p.key) });
+  } catch (err) { return memoryError(res, err); }
+});
+app.delete('/api/memory/team/:key/notes/:name', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    const name = String(req.params.name || '');
+    if (!isValidMemoryName(name)) return badRequest(res, `invalid memory name — ${MEMORY_NAME_HELP}`);
+    if (!isTeamMemoryOn(p.key)) return teamOff(res);
+    // B23, like every memory write: a live defragment run's final sync wins over a store write to a note it changed.
+    const live = liveDefragRun(`projects/${p.key}`);
+    if (live) return res.status(409).json({ error: 'a defragment run is live on this memory scope — wait for it to finish', runId: live.id });
+    await deleteTeamNote(p.key, name);
+    res.json({ ok: true, status: await teamMemoryStatus(p.key) });
+  } catch (err) { return err?.code === 'DISABLED' ? teamOff(res) : memoryError(res, err); }   // switched off meanwhile
+});
+// Team memory 1b: share existing notes (seeding), Compare on one clash, Undo of the last seeding, the one-time offer.
+function teamRouteError(res, err) {
+  const code = err && err.code;
+  if (code === 'DISABLED') return teamOff(res);
+  if (code === 'EBADREQ') return badRequest(res, err.message);
+  if (code === 'STALE') return res.status(409).json({ error: err.message, code, names: Array.isArray(err.names) ? err.names : [] });
+  if (code === 'ENOSEED') return res.status(404).json({ error: err.message, code });
+  if (code === 'FETCH_FAILED') return res.status(502).json({ error: err.message, code });   // a share needs the branch as it is now (502, as team metrics and policy)
+  return memoryError(res, err);   // MemoryError codes (ETOOBIG → 413, …), else 500
+}
+/** These routes push notes off the machine or rewrite them: a browser page must be served by THIS Worca —
+ *  isLocalRequest checks the hostname, never the port, and a body-less POST needs no CORS preflight (decision E8).
+ *  A possible agent is refused too, as on the Update routes: seeding is the person's consent (E3). */
+function teamOriginOk(req, res) {
+  // An <img> or a link from another page sends no Origin, but a browser marks it with Sec-Fetch-Site (another localhost
+  // port is `same-site`): the seed preview GET fetches and follows, so it must not be triggered that way either.
+  const site = req.headers['sec-fetch-site'];
+  if (!terminalSameOrigin(req) || (site && site !== 'same-origin' && site !== 'none')) {
+    res.status(403).json({ error: 'Team memory only answers pages served by this Worca.', code: 'CROSS_ORIGIN' });
+    return false;
+  }
+  if (!agentMayBeCaller(req)) return true;
+  res.status(403).json({ error: 'Team memory cannot be changed from inside the container while agent isolation is on. Open Worca through its published address.', code: 'TEAM_AGENT_BLOCKED' });
+  return false;
+}
+/** B23, like every memory write: a live defragment run's final sync wins over a store write to a note it changed. */
+function teamDefragLocked(res, key) {
+  const live = liveDefragRun(`projects/${key}`);
+  if (!live) return false;
+  res.status(409).json({ error: 'a defragment run is live on this memory scope — wait for it to finish', runId: live.id });
+  return true;
+}
+app.get('/api/memory/team/:key/seed', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;   // it fetches and follows (previewTeamSeed), and its hashes feed a share
+    const p = await teamProject(req, res); if (!p) return;
+    const name = typeof req.query.name === 'string' && req.query.name !== '' ? req.query.name : null;
+    if (name !== null && !isValidMemoryName(name)) return badRequest(res, `invalid memory name — ${MEMORY_NAME_HELP}`);
+    res.json(await previewTeamSeed(p.key, { projectDir: p.path, name }));
+  } catch (err) { return teamRouteError(res, err); }
+});
+app.post('/api/memory/team/:key/seed', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    if (!isTeamMemoryOn(p.key)) return teamOff(res);
+    if (teamDefragLocked(res, p.key)) return;
+    const r = await seedTeamMemory(p.key, req.body?.decisions, { projectDir: p.path });
+    if (r.tookTeam.length) emitMemoryChanged(`projects/${p.key}`);
+    res.json({ ok: true, ...r, status: await teamMemoryStatus(p.key) });
+  } catch (err) { return teamRouteError(res, err); }
+});
+app.post('/api/memory/team/:key/resolve', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    if (!isTeamMemoryOn(p.key)) return teamOff(res);
+    if (teamDefragLocked(res, p.key)) return;
+    const r = await resolveTeamClash(p.key, req.body || {}, { projectDir: p.path });
+    if (r.tookTeam.length) emitMemoryChanged(`projects/${p.key}`);
+    res.json({ ok: true, ...r, status: await teamMemoryStatus(p.key) });
+  } catch (err) { return teamRouteError(res, err); }
+});
+app.post('/api/memory/team/:key/seed/undo', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    if (!isTeamMemoryOn(p.key)) return teamOff(res);
+    if (teamDefragLocked(res, p.key)) return;
+    const r = await undoTeamSeed(p.key);
+    if (r.restored.length) emitMemoryChanged(`projects/${p.key}`);
+    res.json({ ok: true, ...r, status: await teamMemoryStatus(p.key) });
+  } catch (err) { return teamRouteError(res, err); }
+});
+app.post('/api/memory/team/:key/seed/dismiss', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    await dismissSeedOffer(p.key);
+    res.json({ ok: true, status: await teamMemoryStatus(p.key) });
+  } catch (err) { return teamRouteError(res, err); }
+});
+// E10: Not now on "Your team shares memory for this repository" — for good on this machine. Turn on is the switch itself
+// (PATCH /api/projects/:key/settings {"memory.team": true}).
+app.post('/api/memory/team/:key/available/dismiss', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    const available = dismissTeamMemoryOffer(p.key);
+    res.json({ ok: true, available });
+  } catch (err) { return teamRouteError(res, err); }
+});
 
 // ---------------------------------------------------------------------------
 // Filesystem browsing for the add-project folder selector. Hybrid picker:
@@ -11417,6 +11611,8 @@ function askAgentRelay({ threadId, reader, web = null, engine = 'claude', skillR
       },
       // Shaper (D7): here the tools see the live runs, so an open step's refusal reaches the model as the tool result.
       ...defaultShapeToolDeps({ threadId, live: (id) => liveSliceOf(id) }),
+      // Corporate proxy: read in-process; Test is refused under agent isolation (relayProxyDeps).
+      proxy: relayProxyDeps(),
     },
   });
   askRelays.set(token, entry);
@@ -12212,8 +12408,8 @@ app.get('/api/models', (req, res) => {
   res.json({
     models: maskedGlobalModels(), plugin: pluginModelsPayload(), predefined: PREDEFINED_MODELS, efforts: EFFORTS,
     codex: CODEX_BUILTIN_MODELS, codexEfforts: CODEX_EFFORTS,   // §3.1a: the Codex built-ins group + the editor's Codex efforts
-    cursorEfforts: CURSOR_EFFORTS,                               // none: Cursor has no effort flag (no Cursor built-ins)
     copilot: COPILOT_BUILTIN_MODELS, copilotEfforts: COPILOT_EFFORTS,   // the Copilot built-ins group + the editor's Copilot efforts
+    gooseEfforts: GOOSE_EFFORTS,                                 // GOOSE_THINKING_EFFORT values (no Goose built-ins)
     opencodeEfforts: OPENCODE_EFFORTS,                           // OpenCode's --variant values (no OpenCode built-ins)
     hideBuiltinModels: hideBuiltinModels(),   // the Models-view checkbox (#422)
     // Team policy catalog entries (team-policy design §8): read-only, env masked like a global's.
@@ -13053,28 +13249,56 @@ app.put('/api/chat-home/pins', async (req, res) => {
 // No worcaHome() call here: the login file path resolves per call (project rule server-import-time-worcahome).
 /** startEgressPolicy()'s result once the boot block ran (null in tests that import the app). */
 let EGRESS = null;
-let proxyTestRunning = false;
-/** D14: true once PUT /api/proxy/settings changed the upstream in this process (a restart clears it). */
-let proxyUpstreamChangedSinceBoot = false;
+/** The proxy's shared logic (src/core/proxy-host.mjs): the routes, the chat bridge and the proxy card all use it. */
+const proxyHost = createProxyHost({ egress: () => EGRESS });
+const proxyStatusPayload = () => proxyHost.status();
 
-/** D13: the proxy variables as they were before the local proxy took HTTP(S)_PROXY, never the local URL. */
-const proxySourceEnv = () => upstreamEnv(EGRESS && EGRESS.sourceEnv ? EGRESS.sourceEnv : process.env);
 /** D9: login, logout, test and settings act as the user; an agent under isolation must not. */
 function refuseProxyAgent(req, res) {
   if (!agentMayBeCaller(req)) return false;
-  res.status(403).json({ error: 'The corporate proxy login cannot be changed or tested from inside the container while agent isolation is on. Open Worca through its published address.', code: 'PROXY_AGENT_BLOCKED' });
+  res.status(403).json({ error: PROXY_AGENT_TEXT, code: 'PROXY_AGENT_BLOCKED' });
   return true;
 }
 
-function proxyStatusPayload() {
-  const live = EGRESS && EGRESS.connector ? EGRESS.connector.status() : null;
-  const fixed = fixedPortOf(networkProxySettings());
-  // A running proxy states its real URL; a proxy that failed to listen states no URL, only the error (D13).
-  const localUrl = EGRESS ? (EGRESS.status === 'on' ? EGRESS.url : null) : (fixed ? localProxyUrl(fixed) : null);
-  const localError = EGRESS && EGRESS.status === 'off' && EGRESS.upstreamError ? EGRESS.upstreamError : null;
-  return { ...proxyState({ env: proxySourceEnv(), networkProxy: networkProxySettings(), login: readProxyLogin(), live, expectRunning: true, localUrl }),
-    localError, settings: networkProxySettings() };
+// The chat's proxy bridge (src/core/ask/proxy-deps.mjs): classic mode only — relay mode is agent isolation, which
+// passes in-process deps (askAgentRelay) and refuses Test. One token per turn, dropped when the turn ends.
+const askProxyBridges = new Map();   // token -> threadId
+function askProxyBridge({ threadId }) {
+  if (agentIdentity() || !flagEnabled('corporateProxy')) return null;
+  const token = randomBytes(24).toString('base64url');
+  askProxyBridges.set(token, threadId);
+  const port = server.address()?.port || PORT;
+  return { url: `http://127.0.0.1:${port}/api/ask/proxy`, token, dispose: () => askProxyBridges.delete(token) };
 }
+app.post('/api/ask/proxy', async (req, res) => {
+  if (!isInContainer(req)) return res.status(403).json({ error: 'proxy: loopback callers only' });
+  if (!askProxyBridges.has(String(req.headers['x-worca-ask-proxy'] || ''))) return res.status(403).json({ error: 'proxy: unknown or finished turn' });
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: PROXY_AGENT_TEXT, code: 'PROXY_AGENT_BLOCKED' });
+  if (!flagEnabled('corporateProxy')) return res.json({ result: { flag: false } });
+  const op = req.body && req.body.op;
+  if (op === 'status') return res.json({ result: proxyHost.chatStatus() });
+  if (op === 'test') {
+    // proxyHost.test() releases its lock in `finally`; a throw from checkUpstream still needs a JSON reply here
+    // (the MCP child reads j.error).
+    try {
+      const r = await proxyHost.test();
+      return res.json({ result: r.status === 200 ? r.body : { ok: false, ...r.body } });
+    } catch (err) {
+      return res.status(500).json({ error: `the proxy test failed: ${err && err.message ? err.message : String(err)}` });
+    }
+  }
+  return badRequest(res, 'proxy: unknown op');
+});
+
+/** Relay mode (agent isolation): the proxy tools run here; reading is allowed (GET /api/proxy/status is not agent-refused), Test is not. */
+const relayProxyDeps = () => ({
+  flagOn: () => flagEnabled('corporateProxy'),
+  status: async () => proxyHost.chatStatus(),
+  test: null,
+  testOff: PROXY_AGENT_TEXT,
+  validateChange: validateProxyChange,
+  validateFlagOn: validateProxyFlagOn,
+});
 
 // Settings › Network proxy (docs/network-proxy.md). A disabled flag looks absent (404) and no
 // handler below runs, so the login file is never read with the flag off.
@@ -13114,39 +13338,14 @@ app.post('/api/proxy/logout', (req, res) => {
 
 app.post('/api/proxy/test', async (req, res) => {
   if (refuseProxyAgent(req, res)) return;
-  if (proxyTestRunning) return res.status(409).json({ error: 'a proxy test is already running', code: 'TEST_RUNNING' });
-  const login = readProxyLogin();
-  const up = resolveUpstream({ env: proxySourceEnv(), settings: networkProxySettings(), login: login && !login.error ? login : null });
-  if (!up) return res.status(409).json({ error: 'no corporate proxy is set up: enter its host and port and Save', code: 'NOT_CONFIGURED' });
-  if (up.error) return res.status(409).json({ error: up.error, code: 'UPSTREAM_INVALID' });
-  // D14: never send the saved hash to a host the running proxy does not use yet (a settings change waits for a restart).
-  const running = EGRESS && EGRESS.connector ? EGRESS.connector.status().upstream : null;
-  // With no proxy running (flag turned on after boot), a host saved through the card since boot is
-  // just as unproven: it could have been typed by mistake, so it gets no hash before a restart either.
-  const unproven = running ? running !== upstreamLabel(up.host, up.port) : proxyUpstreamChangedSinceBoot;
-  if (unproven) {
-    return res.status(409).json({ error: `the saved proxy ${upstreamLabel(up.host, up.port)} is not in use yet: restart Worca, then Test`, code: 'RESTART_NEEDED' });
-  }
-  proxyTestRunning = true;
-  try {
-    const r = await checkUpstream(up, {
-      startTripped: !!(up.login && up.login.rejected),
-      onTrip: ({ upstream, loginId }) => { if (loginId) markLoginRejected(loginId, { upstream }); },
-    });
-    EGRESS?.reloadLogin?.();   // a trip here marked the file: the running connector stops at once
-    res.json({ ok: r.ok, upstream: r.upstream.upstream, results: r.results });
-  } finally {
-    proxyTestRunning = false;
-  }
+  const r = await proxyHost.test();
+  res.status(r.status).json(r.body);
 });
 
 app.put('/api/proxy/settings', async (req, res) => {
   if (refuseProxyAgent(req, res)) return;
   try {
-    const before = networkProxySettings().upstream || '';
-    const networkProxy = await setNetworkProxy((req.body || {}).networkProxy ?? null);
-    if ((networkProxy.upstream || '') !== before) proxyUpstreamChangedSinceBoot = true;
-    res.json({ networkProxy, restartNeeded: true });
+    res.json(await proxyHost.saveSettings((req.body || {}).networkProxy ?? null));
   } catch (err) {
     res.status(400).json({ error: err && err.message ? err.message : String(err), field: 'networkProxy' });
   }
@@ -14238,7 +14437,7 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
         // Workflows chat (D13): a composer card names its type, state and name — never the run-card shape.
         const cc = composerHeaderCard(b);
         if (cc) { cards.push(cc); continue; }
-        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away' || b.card.type === 'scope-switch' || b.card.type === 'project')) {
+        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away' || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'proxy')) {
           cards.push({ id: b.id, type: b.card.type, state: b.state, summary: b.card.summary || '' });
           continue;
         }
@@ -14495,6 +14694,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         // user and its worca tools run here, through the relay. null = the classic MCP child.
         agentRelay: agentIdentity() ? (o) => askAgentRelay({ ...o, engine }) : null,
         commandBridge: askCommandBridge,                     // #574: null unless agent mode can work here
+        proxyBridge: askProxyBridge,                         // the corporate proxy bridge: null unless the flag is on
         onFrame: stampAskFrames(id, job),
         onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
         onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
@@ -14505,9 +14705,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         // A remember/forget in the MCP child is the same scope change a REST write makes (B29).
         // The key is parsed out of worca's OWN tool result, never written by the model; shape-check
         // it anyway before it rides a broadcast (I2-#22).
-        onMemoryMutation: ({ scope }) => {
-          if (scope === 'global' || (typeof scope === 'string' && scope.startsWith('projects/') && PROJECT_KEY_RE.test(scope.slice('projects/'.length)))) emitMemoryChanged(scope);
-        },
+        onMemoryMutation: (e) => askMemoryMutation({ ...e, threadId: id }),
         // A save_script in the MCP child is the same change a REST write makes (spec §3.3):
         // the open Scripts tabs drop their list and the composer marks its script list dirty.
         onScriptMutation: () => { emitChanged('scripts-changed', 'updated'); },
@@ -15136,8 +15334,8 @@ async function saveWorkflowCard(threadId, block, body = {}) {
       for (const [nid, sel] of Object.entries(ans.nodes)) nodes[nid] = { ...(nodes[nid] || {}), ...sel };
     }
   }
-  // `adopted` tells the saved card which line to show ("Uses your saved workflow"
-  // vs "Saved as a new workflow, tagged Auto") — card.match is set on BOTH paths.
+  // `adopted` tells the saved card whether to add "Uses a workflow you already had" (a new workflow has no line:
+  // its chip says Saved, its tag Auto) — card.match is set on BOTH paths.
   const flipped = flipCard(threadId, block.id, {
     state: 'saved', workflowId, card: { name, nodes, match: { id: workflowId, name }, adopted: matched },
   });
@@ -15257,9 +15455,9 @@ async function startMetricsEventTurn(threadId, block) {
   const state = block.state === 'declined' ? 'declined' : block.state === 'failed' ? 'failed' : 'applied';
   const result = card.result || null;
   // One event turn for every non-workflow card; the type picks the wording. Metrics is the fallback.
-  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' ? card.type : 'metrics';
-  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, web: webEventPrompt, workspace: workspaceEventPrompt, actions: actionsEventPrompt, away: awayEventPrompt, project: projectEventPrompt, metrics: metricsEventPrompt }[kind];
-  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, web: webNoticeText, workspace: workspaceNoticeText, actions: actionsNoticeText, away: awayNoticeText, project: projectNoticeText, metrics: metricsNoticeText }[kind];
+  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' ? card.type : 'metrics';
+  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, web: webEventPrompt, workspace: workspaceEventPrompt, actions: actionsEventPrompt, away: awayEventPrompt, project: projectEventPrompt, proxy: proxyEventPrompt, metrics: metricsEventPrompt }[kind];
+  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, web: webNoticeText, workspace: workspaceNoticeText, actions: actionsNoticeText, away: awayNoticeText, project: projectNoticeText, proxy: proxyNoticeText, metrics: metricsNoticeText }[kind];
   const text = eventPrompt({ cardId: block.id, state, card, result });
   const notice = noticeText({ state, card, result });
   const mv = await askEventPick(threadId, thread);
@@ -15663,6 +15861,36 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
         block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
       } finally { askCardBusy.delete(cardId); }
       if (!block) return res.status(409).json({ error: 'card vanished' });
+      const turn = await startMetricsEventTurn(id, block);
+      return res.json({ block, turn });
+    }
+    if (found.block.card && found.block.card.type === 'proxy') {
+      // Corporate proxy card (docs/network-proxy.md "From Chat"): proposed → applied | failed | declined. A settings
+      // card saves through proxyHost.saveSettings (the PUT /api/proxy/settings path, so D14's marker is set too); the
+      // flag card turns corporateProxy on through setFlags (the PATCH /api/flags call). Both re-validate first.
+      if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      // D9: the proxy is changed as the user — an agent under isolation must not (refuseProxyAgent's rule).
+      if (body.state === 'applied' && agentMayBeCaller(req)) return res.status(403).json({ error: PROXY_AGENT_TEXT, code: 'PROXY_AGENT_BLOCKED' });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        const turn = await startMetricsEventTurn(id, block);
+        return res.json({ block, turn });
+      }
+      askCardBusy.add(cardId);
+      let block;
+      try {
+        let result;
+        try { result = await applyProxyChange(found.block.card, { saveSettings: (p) => proxyHost.saveSettings(p) }); }
+        catch (err) { result = { ok: false, error: err && err.message ? err.message : String(err), code: (err && err.code) || 'ERROR' }; }
+        block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
+      } finally { askCardBusy.delete(cardId); }
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      // A settings card: an open Settings › Runs tab repaints. The flag card needs nothing: setFlags fires
+      // flagEvents 'changed', which broadcasts {type:'flags'} to every tab.
+      if (block.state === 'applied' && found.block.card.kind === 'settings') emitChanged('settings-changed');
       const turn = await startMetricsEventTurn(id, block);
       return res.json({ block, turn });
     }
@@ -18277,6 +18505,17 @@ if (isMain) {
     }
     try { startTeamMetricsBackground({ log: (m) => console.warn(m) }); }
     catch (err) { console.warn(`[worca-ui] team metrics background: ${err?.message || err}`); }
+    try {
+      startTeamMemoryBackground({ log: (m) => console.warn(m) });
+      teamMemoryEvents.on('changed', ({ projectKey: key, action }) => {
+        try {
+          broadcast({ type: 'memory-team-changed', projectKey: key, action });
+          // E10: the project list carries the offer (teamMemoryOffer), so its pages repaint.
+          if (action === 'available' || action === 'available-dismissed') emitChanged('projects-changed', 'updated');
+          if (action === 'followed' && PROJECT_KEY_RE.test(key)) emitMemoryChanged(`projects/${key}`);
+        } catch { /* best effort */ }
+      });
+    } catch (err) { console.warn(`[worca-ui] team memory background: ${err?.message || err}`); }
     try { startProjectSyncBackground({ log: (m) => console.warn(m) }); }
     catch (err) { console.warn(`[worca-ui] project sync background: ${err?.message || err}`); }
     // Watch PR (#619): its stop is awaited by shutdown's settleShutdownSteps.
@@ -18325,7 +18564,8 @@ export const _testing = {
   updateChecker,
   // The startEgressPolicy() result the /api/proxy routes read. Also clears the since-boot marker,
   // standing in for a restart.
-  setEgress: (e) => { EGRESS = e; proxyUpstreamChangedSinceBoot = false; },
+  setEgress: (e) => { EGRESS = e; proxyHost.restarted(); },
+  proxyHost,
   setUpdateFetcher: (fn) => { updateFetcherOverride = typeof fn === 'function' ? fn : null; updateChecker.clear(); },
   setSourceBuild: (v) => { sourceBuildOverride = typeof v === 'boolean' ? v : null; updateChecker.clear(); },
   setVersionsFetcher: (fn) => { versionsFetcherOverride = typeof fn === 'function' ? fn : null; versionLister.clear(); },
@@ -18339,12 +18579,12 @@ export const _testing = {
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
   startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES, MARKET_JOBS, pruneMarketJobs, marketJobFailure,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
-  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
+  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,
   uiControl, bearerMatches,
   broadcast, sockets, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
-  askCommandBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
+  askCommandBridge, askProxyBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   prWatcherDeps, askPrFixRun, askLinkIsPrFix, prFixRoundOf,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps, askShapeAction,
   openMemberPr, stackedBaseFor, chainRootFor, shipChainNow, afterRunSettled, offerShipCard, syncShipCard, draftReleasesOnMerge,

@@ -93,12 +93,12 @@ test('one ship flow: PR controls sit on the status line, never in the bar; Creat
   const two = paint(mk('chain', { members: [{ ...done, pr: gh(1) }, { ...done, pr: gh(2) }] }));
   assert.deepEqual(two.bar, []);
   assert.deepEqual(two.head.cta, { state: 'view', label: 'View PRs', menu: true, ws: true });
-  assert.ok(two.root.querySelector('.gpage-card .run-status').textContent.includes('In review · 2 PRs'));
+  assert.ok(two.root.querySelector('.gpage-card .run-status').dataset.text.includes('In review · 2 PRs'));
   assert.equal(two.root.querySelector('.gpage-ship').textContent, 'Merge in order 1 → 2');
   assert.equal(two.root.querySelectorAll('.gpage-runs .run-member-pr .runs-pr').length, 2);
   const one = paint(mk('chain', { members: [{ ...done, pr: gh(3) }, { ...done, pr: gh(3) }] }));
   assert.deepEqual(one.head.cta, { state: 'view', href: gh(3).url, menu: true });
-  assert.ok(one.root.querySelector('.gpage-card .run-status').textContent.includes('In review · 1 PR'));
+  assert.ok(one.root.querySelector('.gpage-card .run-status').dataset.text.includes('In review · 1 PR'));
   const feature = paint(mk('feature', { members: [done, done], pr: gh(4) }));
   assert.deepEqual(feature.bar, [], 'a feature shipped as one PR: no Open PR in the bar either');
 });
@@ -120,6 +120,17 @@ test('groupPrList: a chain\'s One PR shared by its 2 runs is listed once, owned 
   assert.deepEqual([list[0].pipelineId, list[0].key, list[0].name, list[0].position, list[0].conflicts], ['p2', 'p2', 'Run 2', 2, true]);
 });
 
+test('said once: an ended group has no group bar, so the Runs fact keeps "{done} done"', () => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  const model = groupModel({ kind: 'feature', title: 'Run tags', planning: done, members: [done, done, done] }, { now: NOW });
+  const ended = { ...row(), model, members: model.members.map((m, i) => ({ position: i + 1, title: `Slice ${i + 1}`, href: `#running/r${i + 1}`, runId: `r${i + 1}`, model: m, cost: 1 })) };
+  paintGroupPage(root, { row: ended, project: 'acme-app', tab: 'runs', overview: false }, NOOP);
+  assert.ok(['ready', 'in-review', 'merged'].includes(model.state), model.state);
+  assert.equal(root.querySelector('.run-status-group').hidden, true, 'no group bar once the group has ended');
+  assert.equal(root.querySelector('.rd-kv [data-fact="runs"] .rd-kv-v').textContent, '3 runs · 3 done');
+});
+
 test('run 3: the group page shares the run page head — kind word, crumbs, facts in the card, Stop and ⋯', () => {
   const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
   const root = buildGroupPage(doc);
@@ -134,7 +145,8 @@ test('run 3: the group page shares the run page head — kind word, crumbs, fact
   assert.ok(kv.previousElementSibling.matches('.rd-sheet-head') && kv.previousElementSibling.querySelector(':scope > .run-status'),
     'facts right under the status head (the one ship flow\'s status line + PR slot)');
   const shown = [...kv.querySelectorAll('.rd-kv-row:not([hidden])')].map((r) => [r.dataset.fact, r.querySelector('.rd-kv-v').textContent]);
-  assert.deepEqual(shown, [['project', 'acme-app'], ['runs', '3 runs · 1 done'], ['cost', '$4.20']]);
+  assert.deepEqual(shown, [['project', 'acme-app'], ['runs', '3 runs'], ['cost', '$4.20']]);
+  assert.equal(root.querySelector('.run-status-group .run-chain-label').textContent, '1 done', 'said once: on the group bar');
   const moreBtn = root.querySelector('.gpage-bar .gpage-more[aria-haspopup="menu"]');
   assert.ok(moreBtn);
   moreBtn.click();
@@ -204,12 +216,12 @@ test('slice 3: a user group\'s PR controls sit on the status line; separate read
   const sep = paint(mk([1, 2, 3].map((k) => ({ ...done, pr: gh(k) }))));
   assert.deepEqual(sep.bar, [], 'no Open PR in the bar (D10)');
   assert.deepEqual(sep.head.cta, { state: 'view', label: 'View PRs', menu: true, ws: true });
-  assert.ok(sep.root.querySelector('.gpage-card .run-status').textContent.includes('In review · 3 PRs'));
+  assert.ok(sep.root.querySelector('.gpage-card .run-status').dataset.text.includes('In review · 3 PRs'));
   assert.equal(sep.root.querySelector('.gpage-ship').textContent, 'Any order');
   assert.equal(sep.root.querySelectorAll('.gpage-runs .run-member-pr .runs-pr').length, 3);
   const one = paint(mk([1, 2, 3].map(() => ({ ...done, pr: gh(9) }))));
   assert.deepEqual(one.bar, [], 'QA 7\'s Open PR moved to the head');
   assert.deepEqual(one.head.cta, { state: 'view', href: gh(9).url, menu: true });
-  assert.ok(one.root.querySelector('.gpage-card .run-status').textContent.includes('In review · 1 PR'));
+  assert.ok(one.root.querySelector('.gpage-card .run-status').dataset.text.includes('In review · 1 PR'));
   assert.equal(one.root.querySelector('.gpage-ship').hidden, true, 'no ship line after One');
 });
