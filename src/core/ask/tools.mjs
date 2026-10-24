@@ -944,7 +944,8 @@ export function createAskTools(deps) {
       { name: 'run_command',
         description: "Run ONE shell command line in a Worca terminal and return at once with its blockId. Runs in the run's folder (runId, plus member on a workspace run) or the folder of this chat's project (projectKey: the chat's project or a member of its workspace; omit it for the chat's project) — never another project's. The terminal is shared with the user: a cd, export or venv (theirs or yours) carries over while the shell stays inside that folder, and the result's cwd says where it ran; a shell that left the folder is replaced by a fresh one in it. The command shows live to the user in the chat, and its tab is in the terminal pane when the user opens it. Then use wait_for (exit or an output match) or end your reply: a '[worca event] terminal block <id> exited <code>' message wakes you when it ends. One line only; at most 3 at once per chat; stopped after 30 minutes. Protected paths, worca's own API and hard-to-undo commands are refused.",
         inputSchema: SCHEMA.obj({ command: SCHEMA.s('one command line, e.g. "npm test"'), runId: SCHEMA.s('run id (optional)'),
-          member: SCHEMA.s('project key of a workspace run member (optional)'), projectKey: SCHEMA.s('project key (optional)') }, ['command']) },
+          member: SCHEMA.s('project key of a workspace run member (optional)'), projectKey: SCHEMA.s('project key (optional)'),
+          summary: SCHEMA.s('what the command does, in plain words, e.g. "Running the naming tests" (optional, one line)') }, ['command']) },
       { name: 'read_output',
         description: 'Read one terminal block\'s output (ANSI stripped), paged by characters: any block — yours or the user\'s (see list_blocks). A running block shows its output so far.',
         inputSchema: SCHEMA.obj({ blockId: SCHEMA.s('block id, e.g. t-0123456789:4'), offset: SCHEMA.i('character offset', 0, 1_000_000),
@@ -2900,7 +2901,8 @@ export function createAskTools(deps) {
       if (/[\r\n]/.test(command)) throw new AskToolError('run_command: send one line per command — join steps with && or ;');
       if (command.length > L.commandMaxChars) throw new AskToolError(`run_command: the command is longer than ${L.commandMaxChars} characters`);
       try {
-        return await c.run({ command, runId: str(input.runId) || null, member: str(input.member) || null, projectKey: str(input.projectKey) || null });
+        return await c.run({ command, runId: str(input.runId) || null, member: str(input.member) || null,
+          projectKey: str(input.projectKey) || null, summary: str(input.summary) || null });
       } catch (err) { throw new AskToolError(`run_command: ${err && err.message ? err.message : err}`); }
     },
     async read_output(input) {

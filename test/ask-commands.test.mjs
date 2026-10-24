@@ -362,3 +362,13 @@ test('a session shell gets $WORCA_ASK_OUT (this chat\'s out folder); credentials
   assert.equal(terminals.opened[0].baseEnv.WORCA_ASK_OUT, join(tmp, 'ask_0000aaaa', 'out'));
   assert.equal('GH_TOKEN' in terminals.opened[0].baseEnv, false);
 });
+
+test('run() echoes a cleaned summary: trimmed, one line, at most 120 characters (#911)', async () => {
+  // One fresh fixture per run, so no per-thread or busy-session limit can refuse a later call.
+  const r1 = await make().svc.run('ask_0000aaaa', { command: 'npm test', summary: '  Running\nthe tests  ' });
+  assert.equal(r1.summary, 'Running the tests');
+  const r2 = await make().svc.run('ask_0000aaaa', { command: 'npm test', summary: 'x'.repeat(300) });
+  assert.equal(r2.summary.length, 120);
+  const r3 = await make().svc.run('ask_0000aaaa', { command: 'npm test' });
+  assert.equal(r3.summary, null);
+});

@@ -1071,8 +1071,9 @@ const CHAT_NOTIFY_EVENTS = ['done', 'error', 'question', 'paused', 'away', 'prWa
  * {enabled:false} is the opt-out record); `scriptTools` (scripts-workbench W20) is the
  * chat's "Create and run scripts" switch and defaults ON, so only a stored false ever
  * takes save_script / test_script away. `suggestions` is Ask Worca's next-prompt ghost text after
- * each reply (one cheap model call per reply), default ON as well.
- * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean, suggestions: boolean}}
+ * each reply (one cheap model call per reply), default ON as well. `summariseCommands` (#911, flag
+ * commandSummaries) shows chat commands as one-line rows, default ON too.
+ * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean, suggestions: boolean, summariseCommands: boolean}}
  */
 export function chatPrefs() {
   const raw = readSettings().chat;
@@ -1084,13 +1085,16 @@ export function chatPrefs() {
     channels[key] = { enabled: v?.enabled !== false };
   }
   // `suggestions`: Ask Worca's next-prompt ghost text after each reply — default ON, only a stored false stops it.
-  return { notify, channels, scriptTools: chat.scriptTools !== false, suggestions: chat.suggestions !== false };
+  // `summariseCommands` (#911, flag commandSummaries): chat commands as one-line rows — default ON.
+  return { notify, channels, scriptTools: chat.scriptTools !== false, suggestions: chat.suggestions !== false,
+    summariseCommands: chat.summariseCommands !== false };
 }
 
 /**
  * Merge-patch the chat prefs: {notify?: {done?, error?, question?, paused?, away?},
- * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean, suggestions?: boolean}.
- * Unknown notify keys and a non-boolean scriptTools / suggestions are rejected (400 at the API layer);
+ * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean, suggestions?: boolean,
+ * summariseCommands?: boolean}.
+ * Unknown notify keys and a non-boolean scriptTools / suggestions / summariseCommands are rejected (400 at the API layer);
  * channels merge per key.
  */
 export async function setChatPrefs(patch = {}) {
@@ -1102,6 +1106,8 @@ export async function setChatPrefs(patch = {}) {
   if (hasScriptTools && typeof patch.scriptTools !== 'boolean') throw new Error('chat scriptTools must be true or false');
   const hasSuggestions = Object.prototype.hasOwnProperty.call(patch, 'suggestions');
   if (hasSuggestions && typeof patch.suggestions !== 'boolean') throw new Error('chat suggestions must be true or false');
+  const hasSummaries = Object.prototype.hasOwnProperty.call(patch, 'summariseCommands');
+  if (hasSummaries && typeof patch.summariseCommands !== 'boolean') throw new Error('chat summariseCommands must be true or false');
   const settings = readSettings();
   const cur = settings.chat && typeof settings.chat === 'object' ? settings.chat : {};
   settings.chat = {
@@ -1115,6 +1121,7 @@ export async function setChatPrefs(patch = {}) {
     } : {}),
     ...(hasScriptTools ? { scriptTools: patch.scriptTools } : {}),
     ...(hasSuggestions ? { suggestions: patch.suggestions } : {}),
+    ...(hasSummaries ? { summariseCommands: patch.summariseCommands } : {}),
   };
   await persistSettings(settings);
   return chatPrefs();

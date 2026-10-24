@@ -6,6 +6,7 @@
 // dirty flag with input/change listeners on their detached wrapper — no I/O.)
 
 import { makeSwitch } from './switch.mjs';
+import { chip } from './flags.mjs';
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -150,6 +151,28 @@ export function renderSuggestionsToggle({ prefs } = {}, { doc = globalThis.docum
 export function collectSuggestionsToggle(root) {
   const cb = root && typeof root.querySelector === 'function' ? root.querySelector('input.ask-suggestions') : null;
   return { suggestions: cb ? cb.checked : true };
+}
+
+/** Settings › Chat "Summarise commands" (#911, flag commandSummaries): chat commands as one-line rows.
+ *  Default ON; saved with the Ask Worca card. The host carries data-flag, so the row hides with the flag. */
+export function renderSummariesToggle({ prefs } = {}, { doc = globalThis.document } = {}) {
+  const wrap = doc.createElement('div');
+  const { row, input } = makeSwitch(doc, { label: 'Summarise commands', checked: prefs?.summariseCommands !== false, inputClass: 'ask-summaries' });
+  input.id = 'askSummaries';
+  const label = row.querySelector('.switch-label');
+  label.dataset.flagChip = 'commandSummaries';
+  chip(label, doc);
+  const hint = doc.createElement('small');
+  hint.className = 'hint drow-help';
+  hint.textContent = 'Each command shows as one line saying what it does; click it for the command and its output. Off: full command cards.';
+  wrap.append(row, hint);
+  return wrap;
+}
+
+/** collectSummariesToggle(root) -> the {chat} patch part for the switch. */
+export function collectSummariesToggle(root) {
+  const cb = root && typeof root.querySelector === 'function' ? root.querySelector('input.ask-summaries') : null;
+  return { summariseCommands: cb ? cb.checked : true };
 }
 
 /** Ask Worca → Web access (docs/guardrails.md "Web access"): off by default; the allowlist is enforced by worca's server. */
