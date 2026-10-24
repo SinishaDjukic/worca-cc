@@ -67,9 +67,13 @@ test('Codex and Copilot keep their words', () => {
 test('what a chat takes, by engine', () => {
   assert.equal(chatAttachRefusal({ engine: 'claude', kind: 'binary', pdf: true }), null);
   assert.equal(chatAttachRefusal({ engine: 'codex', kind: 'image' }), null);
-  assert.equal(chatAttachRefusal({ engine: 'codex', kind: 'binary', pdf: true }), 'PDFs need a Claude chat');
-  for (const engine of ['copilot', 'gemini', 'qwen']) {
-    assert.equal(chatAttachRefusal({ engine, kind: 'image' }), 'images and PDFs need a Claude chat', engine);
-    assert.equal(chatAttachRefusal({ engine, kind: 'text' }), null, engine);
+  assert.equal(chatAttachRefusal({ engine: 'codex', kind: 'binary', pdf: true }), 'a Codex chat cannot view PDFs (Claude, Gemini CLI, OpenCode or Qwen Code chats can)');
+  assert.equal(chatAttachRefusal({ engine: 'goose', kind: 'image' }), null);
+  assert.equal(chatAttachRefusal({ engine: 'goose', kind: 'binary', pdf: true }), 'a Goose chat cannot view PDFs (Claude, Gemini CLI, OpenCode or Qwen Code chats can)');
+  assert.equal(chatAttachRefusal({ engine: 'copilot', kind: 'image' }), 'a Copilot chat cannot view images or PDFs (Claude, Gemini CLI, OpenCode or Qwen Code chats view both)');
+  for (const engine of ['gemini', 'opencode', 'qwen']) {
+    assert.equal(chatAttachRefusal({ engine, kind: 'image' }), null, engine);
+    assert.equal(chatAttachRefusal({ engine, kind: 'binary', pdf: true }), null, engine);
   }
+  for (const engine of ['copilot', 'gemini', 'qwen']) assert.equal(chatAttachRefusal({ engine, kind: 'text' }), null, engine);
 });

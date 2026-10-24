@@ -8,7 +8,8 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createAskFileReader, askFileRoots, defaultFileDeps, AskFileError, ASK_FILE_LIMITS } from '../src/core/ask/file-deps.mjs';
-import { createAskTools, AskToolError } from '../src/core/ask/tools.mjs';
+import { createAskTools, AskToolError, MCP_CONTENT, MCP_MEDIA_MAX_BYTES } from '../src/core/ask/tools.mjs';
+import { createRpcServer } from '../src/core/ask/rpc-server.mjs';
 import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
 
 const POSIX = process.platform === 'win32' ? { skip: 'symlinks need privileges on Windows' } : {};
@@ -180,10 +181,52 @@ test('createAskTools: the file tools exist only with deps.files; reader errors r
   await assert.rejects(() => tools.call('grep', { pattern: '(' }), (e) => e instanceof AskToolError && /invalid regular expression/.test(e.message), 'the worker\'s rejection is mapped too');
 });
 
-test('read_attachment in a Codex chat: an image says it rides its turn and gives no path to read', async () => {
-  const tools = createAskTools({ limits: ASK_LIMITS, redact: (s) => s, engine: 'codex', files: reader,
-    readAttachment: () => ({ name: 'shot.png', kind: 'image', mime: 'image/png', bytes: 3, path: '/x/att.png' }) });
-  const r = await tools.call('read_attachment', { id: 'att_00000002' });
+const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+const mediaTools = (over = {}) => createAskTools({ limits: ASK_LIMITS, redact: (s) => s, engine: 'gemini', chatImages: true, chatPdfs: true, files: reader,
+  mediaElsewhere: (w) => `${w}: X chats can`,
+  readAttachment: (id) => (id === 'att_00000003'
+    ? { name: 'doc.pdf', kind: 'binary', mime: 'application/pdf', bytes: 5, path: '/x/att.pdf' }
+    : { name: 'shot.png', kind: 'image', mime: 'image/png', bytes: PNG.length, path: '/x/att.png' }),
+  readAttachmentBody: (id) => (id === 'att_00000003' ? Buffer.from('%PDF-') : PNG), ...over });
+
+test('read_attachment in a locked-down chat: an image comes back as an MCP image block of the result, never a path', async () => {
+  const r = await mediaTools().call('read_attachment', { id: 'att_00000002' });
   assert.equal(r.path, undefined);
-  assert.match(r.note, /attached to this turn/);
+  assert.deepEqual(r[MCP_CONTENT], [{ type: 'image', data: PNG.toString('base64'), mimeType: 'image/png' }]);
+  assert.match(r.note, /attached to this result/);
+  const codex = await mediaTools({ engine: 'codex', chatPdfs: false }).call('read_attachment', { id: 'att_00000002' });
+  assert.match(codex.note, /content\[1\].*image\(\)/, 'a Codex chat is told to forward the block with image() in exec');
+});
+
+test('read_attachment in a locked-down chat: a PDF rides as an embedded resource; an engine that cannot view it gets a note', async () => {
+  const r = await mediaTools().call('read_attachment', { id: 'att_00000003' });
+  assert.deepEqual(r[MCP_CONTENT], [{ type: 'resource', resource: { uri: 'worca://attachment/att_00000003', mimeType: 'application/pdf', blob: Buffer.from('%PDF-').toString('base64') } }]);
+  const goose = await mediaTools({ engine: 'goose', chatPdfs: false }).call('read_attachment', { id: 'att_00000003' });
+  assert.equal(goose[MCP_CONTENT], undefined);
+  assert.match(goose.note, /cannot view PDFs — pdfs: X chats can/);
+  const copilot = await mediaTools({ engine: 'copilot', chatImages: false, chatPdfs: false }).call('read_attachment', { id: 'att_00000002' });
+  assert.equal(copilot[MCP_CONTENT], undefined);
+  assert.match(copilot.note, /cannot view images/);
+});
+
+test('read_attachment: an image past the inline cap is described, not sent', async () => {
+  const tools = mediaTools({ readAttachment: () => ({ name: 'big.png', kind: 'image', mime: 'image/png', bytes: MCP_MEDIA_MAX_BYTES + 1, path: '/x' }),
+    readAttachmentBody: () => { throw new Error('never read'); } });
+  const r = await tools.call('read_attachment', { id: 'att_00000002' });
+  assert.equal(r[MCP_CONTENT], undefined);
+  assert.match(r.note, /too large/);
+});
+
+test('read_file: an image or PDF inside the roots comes back as media; outside the roots it is refused as before', async () => {
+  put(join(wt, 'docs', 'shot.png'), PNG);
+  const r = await mediaTools().call('read_file', { path: join(wt, 'docs', 'shot.png') });
+  assert.deepEqual(r[MCP_CONTENT], [{ type: 'image', data: PNG.toString('base64'), mimeType: 'image/png' }]);
+  await assert.rejects(mediaTools().call('read_file', { path: join(root, 'outside.png') }), AskToolError);
+});
+
+test('the MCP server sends a media result\'s block after its JSON text, and drops the key from the JSON', async () => {
+  const lines = [];
+  const srv = createRpcServer({ tools: { list: () => [{ name: 'm' }], call: async () => ({ name: 'a.png', [MCP_CONTENT]: [{ type: 'image', data: 'QQ==', mimeType: 'image/png' }] }) }, write: (l) => lines.push(JSON.parse(l)) });
+  await srv.feed(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'm', arguments: {} } }));
+  assert.deepEqual(lines[0].result.content, [{ type: 'text', text: '{"name":"a.png"}' }, { type: 'image', data: 'QQ==', mimeType: 'image/png' }]);
 });

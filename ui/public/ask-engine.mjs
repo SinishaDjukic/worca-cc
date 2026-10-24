@@ -25,8 +25,8 @@ export function pickerGroups(models, { lock = null } = {}) {
   return out;
 }
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
-/** D16: what a chat's engine cannot take, said before upload (engine-switch.mjs chatAttachRefusal: a Codex chat no PDF;
- *  Copilot, Gemini CLI and Qwen Code no image or PDF either). */
+/** D16: what a chat's engine cannot take, said before upload (engine-switch.mjs chatAttachRefusal: Codex and Goose chats
+ *  no PDF, a Copilot chat no image or PDF). */
 export function attachRefusal({ ext, engine }) {
   const pdf = ext === '.pdf';
   if (!pdf && !IMAGE_EXT.has(ext)) return null;

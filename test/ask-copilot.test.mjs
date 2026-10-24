@@ -116,8 +116,8 @@ test('the panel: Copilot\'s own section, its lock, and what it refuses before up
   assert.deepEqual(groups.map((g) => g.engine), ['claude', 'codex', 'copilot']);
   assert.deepEqual(pickerGroups(ROWS, { lock: 'copilot' }).map((g) => g.models.map((m) => m.id)), [['copilot/gpt-5.4', 'copilot/claude-sonnet-5.5']]);
   assert.equal(chatEngineOf([{ role: 'assistant' }], 'gone', { models: [] }, 'copilot'), 'copilot');
-  assert.equal(attachRefusal({ ext: '.png', engine: 'copilot' }), 'images and PDFs need a Claude chat');
-  assert.equal(attachRefusal({ ext: '.pdf', engine: 'copilot' }), 'images and PDFs need a Claude chat');
+  assert.equal(attachRefusal({ ext: '.png', engine: 'copilot' }), 'a Copilot chat cannot view images or PDFs (Claude, Gemini CLI, OpenCode or Qwen Code chats view both)');
+  assert.equal(attachRefusal({ ext: '.pdf', engine: 'copilot' }), 'a Copilot chat cannot view images or PDFs (Claude, Gemini CLI, OpenCode or Qwen Code chats view both)');
   assert.equal(attachRefusal({ ext: '.md', engine: 'copilot' }), null);
   assert.equal(attachRefusal({ ext: '.png', engine: 'codex' }), null);
 });

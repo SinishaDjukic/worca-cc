@@ -75,7 +75,9 @@ for (const E of ENGINES_UNDER_TEST) {
     assert.equal(doc.mcpServers.worca.env.WORCA_ASK_SKILL_ROOT, '/h/.worca-cc/ask/ask_00000001/skills/askm_1');
     const d = defaultFileDeps({ threadId: 'ask_00000001', env: { WORCA_ASK_ENGINE: E.engine } });
     assert.equal(d.engine, E.engine);
-    assert.equal(d.chatImages, false);
+    assert.equal(d.chatImages, true, 'every engine here forwards an image block');
+    assert.equal(d.chatPdfs, E.engine !== 'goose', 'Goose turns a PDF block into text: no PDFs');
+    assert.equal(typeof d.files.readMedia, 'function');
     assert.equal(typeof d.files.readFile, 'function');
   });
 }
@@ -110,16 +112,17 @@ test('a Qwen chat takes only Qwen models', async () => {
   assert.equal(chatEngine({ model: 'x', engine: 'gemini' }), 'gemini');
 });
 
-test('the prompt: worca\'s file tools, no sub-agents, no images, the engine named', () => {
+test('the prompt: worca\'s file tools, no sub-agents, images (and PDFs) as blocks of read_attachment, the engine named', () => {
   for (const E of ENGINES_UNDER_TEST) {
     const rules = engineSystemRules(E.engine);
     assert.match(rules, /the worca file tools read_file, grep and glob/);
-    assert.ok(rules.includes(`a ${E.label} chat cannot view them`));
+    assert.ok(rules.includes('read_attachment returns the image'), 'images come back as a block of the result');
+    assert.equal(rules.includes(`A ${E.label} chat cannot view a PDF`), E.engine === 'goose');
     assert.ok(rules.includes(`this chat runs on ${E.cli}`));
     assert.doesNotMatch(rules, /Codex CLI|sub-agent/);
     assert.ok(buildSystemPrompt([], { engine: E.engine }).startsWith(rules));
     assert.ok(buildSystemPrompt([], { engine: E.engine, web: { enabled: true, allowedDomains: ['a.com'] } }).includes(`${E.label}'s own web tools stay off.`));
-    assert.ok(buildComposerSystemPrompt([], { engine: E.engine }).includes(`A ${E.label} chat cannot view images or PDFs`));
+    assert.ok(buildComposerSystemPrompt([], { engine: E.engine }).includes(E.engine === 'goose' ? 'a Goose chat cannot view a PDF' : 'For an image or PDF, read_attachment returns the image or PDF itself'));
     assert.equal(suggestionModel(E.engine, { inCatalog: () => true, ready: () => true }), null, 'no next-prompt suggestion');
   }
 });
@@ -127,8 +130,8 @@ test('the prompt: worca\'s file tools, no sub-agents, no images, the engine name
 test('the panel: each engine\'s section and what it refuses before upload', () => {
   assert.deepEqual(pickerGroups(ROWS).map((g) => g.engine), ['claude', 'gemini', 'qwen']);
   for (const engine of ['qwen', 'gemini', 'goose', 'opencode']) {
-    assert.equal(attachRefusal({ ext: '.png', engine }), 'images and PDFs need a Claude chat');
-    assert.equal(attachRefusal({ ext: '.pdf', engine }), 'images and PDFs need a Claude chat');
+    assert.equal(attachRefusal({ ext: '.png', engine }), null);
+    assert.equal(attachRefusal({ ext: '.pdf', engine }), engine === 'goose' ? 'a Goose chat cannot view PDFs (Claude, Gemini CLI, OpenCode or Qwen Code chats can)' : null);
     assert.equal(attachRefusal({ ext: '.md', engine }), null);
   }
   assert.equal(isEngineSetupNotice({ kind: 'notice', qwenSetup: true }), true);

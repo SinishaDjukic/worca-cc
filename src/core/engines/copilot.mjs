@@ -744,8 +744,6 @@ export const copilotChat = makeChatDescriptor({
   titles: true,
   prompt: {
     cli: "the GitHub Copilot CLI with Copilot's own sign-in",
-    attachments: 'Image and PDF attachments are different: a Copilot chat cannot view them, and read_attachment returns only their kind and size. Tell the user they need a Claude chat (a Codex chat sees images).',
-    composerBinary: 'A Copilot chat cannot view images or PDFs: read_attachment returns only their kind and size, and they need a Claude chat.',
     webOff: "Copilot's own web tools stay off.",
   },
 });

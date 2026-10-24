@@ -563,7 +563,7 @@ export async function runOpencodeProcess({
   const instructions = ask ? [] : instructionFiles(realCwd);
   // The chat self-test's model endpoint, as an OpenAI-compatible provider of its own (engines/chat-selftest.mjs).
   const provider = probe && probe.url ? { [model.split('/')[0]]: { npm: '@ai-sdk/openai-compatible', name: 'worca self-test',
-    options: { baseURL: `${probe.url}/v1`, apiKey: 'worca-self-test' }, models: { [model.split('/').slice(1).join('/')]: { name: 'worca self-test', tool_call: true } } } } : null;
+    options: { baseURL: `${probe.url}/v1`, apiKey: 'worca-self-test' }, models: { [model.split('/').slice(1).join('/')]: { name: 'worca self-test', tool_call: true, attachment: true, modalities: { input: ['text', 'image', 'pdf'], output: ['text'] } } } } } : null;
   const config = { agent, ...(Object.keys(rules.permission).length ? { permission: rules.permission } : {}), ...(mcp ? { mcp } : {}),
     ...(instructions.length ? { instructions } : {}), ...(provider ? { provider } : {}) };
 

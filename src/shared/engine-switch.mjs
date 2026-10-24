@@ -26,10 +26,10 @@ export const ENGINES = Object.freeze({
   codex: Object.freeze({ label: 'Codex', models: true, cost: true, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: false }) }),
   copilot: Object.freeze({ label: 'Copilot', models: true, cost: false, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: false, pdfs: false }) }),
   cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: false, pdfs: false, verified: false }) }),
-  gemini: Object.freeze({ label: 'Gemini CLI', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: false, pdfs: false }) }),
-  goose: Object.freeze({ label: 'Goose', models: true, cost: true, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: false, pdfs: false }) }),
-  opencode: Object.freeze({ label: 'OpenCode', models: true, cost: true, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: false, pdfs: false }) }),
-  qwen: Object.freeze({ label: 'Qwen Code', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: false, pdfs: false }) }),
+  gemini: Object.freeze({ label: 'Gemini CLI', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }) }),
+  goose: Object.freeze({ label: 'Goose', models: true, cost: true, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: false }) }),
+  opencode: Object.freeze({ label: 'OpenCode', models: true, cost: true, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }) }),
+  qwen: Object.freeze({ label: 'Qwen Code', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: true, pdfs: true }) }),
 });
 
 /** The run engines. */
@@ -52,10 +52,17 @@ export const CHAT_ENGINE_NAMES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINE
 export function chatAttachRefusal({ engine, kind, pdf = false }) {
   const c = Object.hasOwn(ENGINES, engine || 'claude') ? ENGINES[engine || 'claude'].chat : null;
   if (!c || c.verified === false || kind === 'text') return null;
-  if (!c.images && !c.pdfs) return 'images and PDFs need a Claude chat';
-  if (pdf && !c.pdfs) return 'PDFs need a Claude chat';
-  if (!pdf && kind === 'image' && !c.images) return 'images need a Claude chat';
+  const label = engineLabel(engine);
+  if (!c.images && !c.pdfs) return `a ${label} chat cannot view images or PDFs (${chatEnginesTaking('images', 'pdfs')} chats view both)`;
+  if (pdf && !c.pdfs) return `a ${label} chat cannot view PDFs (${chatEnginesTaking('pdfs')} chats can)`;
+  if (!pdf && kind === 'image' && !c.images) return `a ${label} chat cannot view images (${chatEnginesTaking('images')} chats can)`;
   return null;
+}
+
+/** The chat engines that take every `what` ('images', 'pdfs'), as words: 'Claude, Gemini CLI, OpenCode or Qwen Code'. */
+export function chatEnginesTaking(...what) {
+  const names = CHAT_ENGINE_NAMES.filter((e) => what.every((w) => ENGINES[e].chat[w] === true)).map((e) => ENGINES[e].label);
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}` : names.join('');
 }
 
 /** The engines still in beta: every engine picker marks them. */

@@ -1409,7 +1409,7 @@ test('Ask\'s early checks and messages in the dock: type, 100 MB text, 8 files; 
   croot.querySelector('#wfc-input').dispatchEvent(new c.win.Event('focus'));
   pickFiles(c, [mkFile(c, 'spec.pdf', '%PDF-1.7', 'application/pdf'), pngFile(c)]);
   await settle();
-  assert.equal(croot.querySelector('.wfc-note').textContent, 'PDFs need a Claude chat: spec.pdf');
+  assert.equal(croot.querySelector('.wfc-note').textContent, 'a Codex chat cannot view PDFs (Claude, Gemini CLI, OpenCode or Qwen Code chats can): spec.pdf');
   assert.deepEqual(chipNames(croot), ['flow.png'], 'an image still attaches on Codex');
 });
 

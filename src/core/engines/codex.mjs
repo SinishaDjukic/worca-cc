@@ -31,6 +31,7 @@ import { ARGV_INLINE_LIMIT } from './claude.mjs';
 import { CODEX_PRICES, codexCachedRate } from '../list-prices.mjs';
 import { codexEndpointSpawn, findCodexEndpointEntry, hasCodexEndpoint } from './codex-endpoint.mjs';
 import { makeChatDescriptor } from './chat-descriptor.mjs';
+import { chatEnginesTaking } from '../../shared/engine-switch.mjs';
 import { scopeLauncherEnv } from '../mcp/launch.mjs';
 
 export const CODEX_DEFAULT_BIN = process.env.WORCA_CODEX_BIN || 'codex';
@@ -947,10 +948,11 @@ export const codexChat = makeChatDescriptor({
   shellTrippedMessage: 'Codex tried to run a shell command although its shell was switched off — worca stopped the turn.',
   titles: true,
   suggestionModel: 'gpt-5.6-luna',
+  turnImages: true,
   prompt: {
     cli: "the Codex CLI with Codex's own sign-in",
-    attachments: 'Image attachments are different: you see an image with the message it came with, and read_attachment returns only its kind and size. PDF attachments need a Claude chat.',
-    composerBinary: 'An image arrives with the message that carried it — you see it there, and read_attachment returns only its kind and size; a PDF needs a Claude chat.',
+    attachments: `Image attachments are different: you see an image with the message it came with; read_attachment returns any image attachment itself as content[1] of its result — in exec, pass that block to image() to look at it again. A Codex chat cannot view a PDF: read_attachment returns only its kind and size, and ${chatEnginesTaking('pdfs')} chats can.`,
+    composerBinary: 'An image arrives with the message that carried it — you see it there; read_attachment returns it again as content[1] of its result (in exec, pass that block to image()). A Codex chat cannot view a PDF.',
     webOff: "Codex's own web search stays off.",
   },
 });

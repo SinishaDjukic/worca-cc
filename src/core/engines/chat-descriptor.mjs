@@ -3,7 +3,7 @@
 // lock down for a chat exports one, built here so every field has a value; src/core/engines/chat.mjs collects them, and
 // turn.mjs, ask/models.mjs, ask/spawn.mjs and ask/prompt.mjs read them instead of naming engines. Import-light on
 // purpose: the adapters import it.
-import { ENGINES, engineLabel } from '../../shared/engine-switch.mjs';
+import { ENGINES, engineLabel, chatEnginesTaking } from '../../shared/engine-switch.mjs';
 
 const DOCS = 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md';
 const never = () => false;
@@ -24,7 +24,9 @@ const ready = async () => ({});
  *   notReady            {code, docsUrl, setupLabel, flag}: the not-ready notice and its error code; `flag` is the notice's
  *                       marker the panel opens the setup docs from
  *   shellTrippedMessage the error when the watchdog saw a shell call
- *   images, pdfs        what a chat takes (engine-switch.mjs `chat`)
+ *   images, pdfs        what a chat takes (engine-switch.mjs `chat`): read_attachment and read_file send an image / a PDF
+ *                       as an MCP content block of their result, which this engine forwards to its model
+ *   turnImages          the user's images also ride the turn that carried them (Codex: `exec -i`)
  *   titles              the chat's title is a call on this engine (else it is the prompt's own words)
  *   suggestionModel     the model of the next-prompt suggestion, or null (none)
  *   prompt              the system prompt's words for this engine: {cli, attachments, composerBinary, webOff}
@@ -37,7 +39,7 @@ const ready = async () => ({});
 export function makeChatDescriptor({
   engine, lockdown, askSupport = ready, selfTest = null, preflight = ready, modelPriced = null, resumeNotFound = never,
   docsAnchor, setupLabel, noLockdownMessage, shellTrippedMessage, titles = false, suggestionModel = null, prompt = {},
-  notReadyFlag, metaTools = [], modelProblem = null, ownFolder = false,
+  notReadyFlag, metaTools = [], modelProblem = null, ownFolder = false, turnImages = false,
 }) {
   const label = engineLabel(engine);
   const chat = ENGINES[engine]?.chat || { images: false, pdfs: false };
@@ -52,7 +54,7 @@ export function makeChatDescriptor({
     resumeNotFound,
     notReady: Object.freeze({ code: `${engine}-not-ready`, docsUrl: `${DOCS}#${docsAnchor || engine}`, prefix: `${short} isn't ready`, setupLabel: `${short} setup`, flag: notReadyFlag || `${engine}Setup` }),
     shellTrippedMessage: shellTrippedMessage || `${label} tried to run a shell command although it was given none — worca stopped the turn.`,
-    images: chat.images === true, pdfs: chat.pdfs === true,
+    images: chat.images === true, pdfs: chat.pdfs === true, turnImages: turnImages === true,
     titles: titles === true,
     metaTools: Object.freeze([...metaTools]),
     modelProblem: typeof modelProblem === 'function' ? modelProblem : () => null,
@@ -60,11 +62,26 @@ export function makeChatDescriptor({
     suggestionModel: typeof suggestionModel === 'string' && suggestionModel ? suggestionModel : null,
     prompt: Object.freeze({
       cli: prompt.cli || `${label} with its own sign-in`,
-      attachments: prompt.attachments || `Image and PDF attachments are different: a ${label} chat cannot view them, and read_attachment returns only their kind and size. Tell the user they need a Claude chat (a Codex chat sees images).`,
-      composerBinary: prompt.composerBinary || `A ${label} chat cannot view images or PDFs: read_attachment returns only their kind and size, and they need a Claude chat.`,
+      attachments: prompt.attachments || attachmentWords(label, chat),
+      composerBinary: prompt.composerBinary || composerBinaryWords(label, chat),
       webOff: prompt.webOff || `${label}'s own web tools stay off.`,
     }),
   });
+}
+
+/** Rule 6's attachment sentence for a chat on `label` that takes `chat.images` / `chat.pdfs` (read_attachment sends them
+ *  as blocks of its result). */
+export function attachmentWords(label, { images = false, pdfs = false } = {}) {
+  const view = 'whether your model can view it is up to the model: when the result says it could not, tell the user';
+  if (images && pdfs) return `Image and PDF attachments are different: read_attachment returns the image or PDF itself, as a block of its result beside its kind and size — read one to look at it (${view}).`;
+  if (images) return `Image attachments are different: read_attachment returns the image itself, as a block of its result beside its kind and size — read one to look at it (${view}). A ${label} chat cannot view a PDF: read_attachment returns only its kind and size, and ${chatEnginesTaking('pdfs')} chats can.`;
+  return `Image and PDF attachments are different: a ${label} chat cannot view them, and read_attachment returns only their kind and size. Tell the user ${chatEnginesTaking('images')} chats can view images${chatEnginesTaking('pdfs') !== chatEnginesTaking('images') ? ` (PDFs: ${chatEnginesTaking('pdfs')})` : ' and PDFs'}.`;
+}
+/** The composer's line for the same. */
+export function composerBinaryWords(label, { images = false, pdfs = false } = {}) {
+  if (images && pdfs) return 'For an image or PDF, read_attachment returns the image or PDF itself as a block of its result: read it to look at it.';
+  if (images) return `For an image, read_attachment returns the image itself as a block of its result: read it to look at it; a ${label} chat cannot view a PDF (read_attachment returns only its kind and size).`;
+  return `A ${label} chat cannot view images or PDFs: read_attachment returns only their kind and size.`;
 }
 
 /** The error a per-turn cost cap gives a chat on `d` for `model`, or null when worca can keep the turn under it. */

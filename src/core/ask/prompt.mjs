@@ -78,7 +78,7 @@ export const ASK_CODEX_REWRITES = Object.freeze([
   ['your Read, Grep and Glob tools inside a worktree (Read also views an image/PDF attachment at the path read_attachment returns, rule 6), and the catalog below.',
     'the worca file tools read_file, grep and glob inside a worktree, and the catalog below.'],
   ['Image and PDF attachments are different: read_attachment returns their kind, size and a file path instead of text — pass that path to your Read tool to actually view the image or PDF. That attachment path is the one place outside a worktree your Read tool may go (rule 7).',
-    'Image attachments are different: you see an image with the message it came with, and read_attachment returns only its kind and size. PDF attachments need a Claude chat.'],
+    chatDescriptor('codex').prompt.attachments],
   ['Read files with Read and search with Grep/Glob — always under that path, never elsewhere on disk (the sole exception: an attachment file path returned by read_attachment, rule 6), and never edit anything.',
     'Read files with read_file and search with grep and glob — always under that path (they refuse anything else on disk), and never edit anything.'],
   ['checkout/switch always re-detach and move what Read sees;', 'checkout/switch always re-detach and move what read_file sees;'],
@@ -95,7 +95,7 @@ export const ASK_CODEX_REWRITES = Object.freeze([
 
 /** Another locked-down engine's variant: the Codex rewrites (worca's file tools, no sub-agents, memory read by hand),
  *  with that engine's attachment and CLI words (its chat descriptor's `prompt`). */
-const CODEX_IMAGE_TEXT = 'Image attachments are different: you see an image with the message it came with, and read_attachment returns only its kind and size. PDF attachments need a Claude chat.';
+const CODEX_IMAGE_TEXT = chatDescriptor('codex').prompt.attachments;
 const CODEX_CLI_TEXT = "this chat runs on the Codex CLI with Codex's own sign-in; worca's pipelines and Claude chats call catalog models through the claude CLI, and a catalog model connects one of three ways";
 const cliText = (cli) => `this chat runs on ${cli}; worca's pipelines and Claude chats call catalog models through the claude CLI, and a catalog model connects one of three ways`;
 /** The rule rewrites of a locked-down chat on `engine`. */

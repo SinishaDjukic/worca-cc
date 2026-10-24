@@ -8,7 +8,7 @@ import { join, isAbsolute, resolve, dirname, basename } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { createAskFileReader } from './file-reader.mjs';
 import { lockedChatEngine } from '../model-env.mjs';
-import { ENGINES } from '../../shared/engine-switch.mjs';
+import { ENGINES, chatEnginesTaking } from '../../shared/engine-switch.mjs';
 
 export { AskFileError, ASK_FILE_LIMITS, createAskFileReader } from './file-reader.mjs';
 
@@ -30,6 +30,10 @@ export function askFileRoots({ home = worcaHome(), threadId, skillRoot = null } 
  *  WORCA_ASK_ENGINE in the child's env). */
 export function defaultFileDeps({ threadId = null, env = process.env, signal = null } = {}) {
   if (!env || !lockedChatEngine(env.WORCA_ASK_ENGINE)) return {};
-  // chatImages: whether this chat sees images (read_attachment's note for one that does not: Copilot, Gemini CLI, Qwen Code).
-  return { engine: env.WORCA_ASK_ENGINE, chatImages: ENGINES[env.WORCA_ASK_ENGINE].chat.images === true, files: createAskFileReader({ roots: askFileRoots({ threadId, skillRoot: env.WORCA_ASK_SKILL_ROOT || null }), signal }) };
+  // chatImages / chatPdfs: whether this chat's engine forwards an image / a PDF block of a tool result to its model
+  // (read_attachment and read_file send them); mediaElsewhere names the chats that do, for the note when it does not.
+  const chat = ENGINES[env.WORCA_ASK_ENGINE].chat;
+  return { engine: env.WORCA_ASK_ENGINE, chatImages: chat.images === true, chatPdfs: chat.pdfs === true,
+    mediaElsewhere: (what) => `${chatEnginesTaking(what)} chats can`,
+    files: createAskFileReader({ roots: askFileRoots({ threadId, skillRoot: env.WORCA_ASK_SKILL_ROOT || null }), signal }) };
 }

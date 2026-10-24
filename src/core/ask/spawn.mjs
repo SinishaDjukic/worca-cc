@@ -254,7 +254,7 @@ function buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, 
     // env_vars, copilot's MCP children inherit its env, Gemini CLI and Qwen Code by ${VAR} reference).
     envAllowlist: ['SSH_AUTH_SOCK', ...(keyVar ? [keyVar] : [])],
     ...(thread.sessionId ? { resumeSessionId: thread.sessionId } : {}),
-    ...(chat.images && Array.isArray(turn.images) && turn.images.length ? { images: [...turn.images] } : {}),
+    ...(chat.turnImages && Array.isArray(turn.images) && turn.images.length ? { images: [...turn.images] } : {}),
     // Agent mode (#574): the command bridge token, as a Claude chat gets it — never on disk; the adapter hands an Ask
     // chat's spawn env to its MCP servers.
     ...(commands?.token || proxy?.token ? { spawnEnv: bridgeTokens({ commands, proxy }) } : {}),
