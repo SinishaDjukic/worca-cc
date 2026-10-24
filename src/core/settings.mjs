@@ -60,7 +60,7 @@ import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import {
-  EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
+  EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, OWN_SIGNIN_ENGINES, aModelOf, ownSignInNote, modelIdProblem, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
   assertModelUpstream, upstreamEnvConflict, modelEnvRef, codexUpstreamProblem,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
   COPILOT_TERMS_VERSION, isUpstreamBaseUrl,
@@ -1845,9 +1845,9 @@ function sanitizeGlobalModel(raw) {
     const why = codexUpstreamProblem(upstream);
     if (why) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — ${why}`); upstream = undefined; }
   }
-  if (engine === 'cursor') {
-    for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — a cursor model takes no routing env`); delete env[k]; }
-    if (upstream) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — a cursor model runs through cursor-agent's own sign-in`); upstream = undefined; }
+  if (OWN_SIGNIN_ENGINES.includes(engine)) {
+    for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — ${aModelOf(engine)} takes no routing env`); delete env[k]; }
+    if (upstream) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — ${ownSignInNote(engine)}`); upstream = undefined; }
   }
   if (engine === 'copilot') {
     for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — a copilot model takes no routing env`); delete env[k]; }
@@ -1960,11 +1960,11 @@ function assertModelEngine(input) {
   if (MODEL_ENGINES.includes(input)) return input;
   throw new Error(`engine must be one of ${MODEL_ENGINES.join(' | ')}`);
 }
-/** A Cursor model takes no routing env and no upstream: cursor-agent connects with its own sign-in. */
-function assertCursorFields(engine, env, upstream) {
-  if (engine !== 'cursor') return;
-  if (Object.keys(env || {}).length) throw new Error('a cursor model takes no env');
-  if (upstream) throw new Error('a cursor model takes no upstream — cursor-agent connects with its own sign-in');
+/** A Cursor or OpenCode model takes no routing env and no upstream: the engine connects with its own sign-in. */
+function assertOwnSignInFields(engine, env, upstream) {
+  if (!OWN_SIGNIN_ENGINES.includes(engine)) return;
+  if (Object.keys(env || {}).length) throw new Error(`${aModelOf(engine)} takes no env`);
+  if (upstream) throw new Error(`${aModelOf(engine)} takes no upstream — ${ownSignInNote(engine)}`);
 }
 /** A Copilot model takes no routing env and no upstream: the Copilot CLI connects with its own sign-in. */
 function assertCopilotFields(engine, env, upstream) {
@@ -1996,6 +1996,8 @@ function assertIdForEngine(id, engine, conn = {}) {
   if ((engine === 'cursor' || engine === 'copilot') && (CODEX_PRICES[id.toLowerCase()] || listPriceFor(id))) throw new Error(`"${id}" is a built-in model id${engine === 'copilot' ? ` — Copilot's own models are copilot/<id>, such as "copilot/${id}"` : ''}`);
   // copilot/<id> names a Copilot built-in (model-env.mjs COPILOT_MODEL_PREFIX): only a Copilot row may take one.
   if (engine !== 'copilot' && id.toLowerCase().startsWith('copilot/')) throw new Error(`"${id}" names a Copilot model — a copilot/ id is for the Copilot engine`);
+  const why = modelIdProblem(engine, id);   // an OpenCode id is provider/model, so it never collides with a built-in
+  if (why) throw new Error(why);
 }
 
 /** @throws {Error} on a reserved key or a non-string value. `allowNull` admits
@@ -2075,7 +2077,7 @@ export async function addGlobalModel({ id, label, efforts, env, cost, upstream, 
   const vcost = assertModelCost(cost);
   const vupstream = assertModelUpstream(upstream);
   assertCodexFields(vengine, venv, vupstream);
-  assertCursorFields(vengine, venv, vupstream);
+  assertOwnSignInFields(vengine, venv, vupstream);
   assertCopilotFields(vengine, venv, vupstream);
   assertUpstreamEnvCompatible(venv, vupstream);
   const settings = readSettings();
@@ -2138,7 +2140,7 @@ export async function updateGlobalModel(id, { label, efforts, env, cost, upstrea
   if (upstream !== undefined) nextUpstream = isClearInput(upstream) ? undefined : assertModelUpstream(upstream);
   assertUpstreamEnvCompatible(nextEnv, nextUpstream);
   assertCodexFields(curEngine, nextEnv, nextUpstream);
-  assertCursorFields(curEngine, nextEnv, nextUpstream);
+  assertOwnSignInFields(curEngine, nextEnv, nextUpstream);
   assertCopilotFields(curEngine, nextEnv, nextUpstream);
 
   if (dryRun) return sanitizeGlobalModel(storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost, nextUpstream, curEngine));
@@ -2755,4 +2757,70 @@ export function effectiveNetworkWait(env = process.env) {
   const n = Number(raw);
   const maxWaitMs = raw != null && raw !== '' && Number.isFinite(n) && n >= 0 ? n : s.maxWaitMin * 60_000;
   return { enabled, maxWaitMs };
+}
+
+// Settings › Network proxy (corporateProxy flag; read at boot by egress-policy.mjs).
+// The same list as upstream-proxy.mjs AUTH_MODES: this module imports nothing from the core graph (test pins it).
+export const NETWORK_PROXY_AUTH = Object.freeze(['auto', 'none', 'basic', 'ntlm', 'digest']);
+const NETWORK_PROXY_TIMEOUTS = ['connectMs', 'authMs', 'idleMs'];
+const isProxyMs = (v) => Number.isInteger(v) && v >= 500 && v <= 3_600_000;
+// The same range as upstream-proxy.mjs fixedPortOf (D17; a test feeds both the same values).
+const isFixedPort = (v) => Number.isInteger(v) && v >= 1024 && v <= 65535;
+
+export function networkProxySettings() {
+  const v = readSettings().networkProxy;
+  return v && typeof v === 'object' && !Array.isArray(v) ? { ...v } : {};
+}
+
+/** "host:port" or "http://host:port" -> "http://host:port"; throws on userinfo or another scheme. */
+function normalizeProxyUpstream(raw) {
+  const s = String(raw).trim();
+  let u;
+  try { u = new URL(s.includes('://') ? s : `http://${s}`); } catch { throw new Error('networkProxy.upstream is not a valid host:port'); }
+  if (u.protocol !== 'http:') throw new Error('networkProxy.upstream must be an http:// proxy');
+  if (u.username || u.password) throw new Error('networkProxy.upstream must not carry a user name or password (a password never goes into settings.json; use Log in)');
+  if (!u.hostname) throw new Error('networkProxy.upstream has no host');
+  return `http://${u.host}`;
+}
+
+export function assertNetworkProxyInput(patch) {
+  if (patch === null || patch === '') return;
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('networkProxy must be an object');
+  for (const k of Object.keys(patch)) if (!['upstream', 'auth', 'noProxy', 'timeouts', 'fixedPort'].includes(k)) throw new Error(`unknown networkProxy setting: ${k}`);
+  if (patch.upstream != null && patch.upstream !== '') normalizeProxyUpstream(patch.upstream);
+  if (patch.auth != null && !NETWORK_PROXY_AUTH.includes(patch.auth)) throw new Error(`networkProxy.auth must be one of ${NETWORK_PROXY_AUTH.join(', ')}`);
+  if (patch.fixedPort != null && !isFixedPort(patch.fixedPort)) throw new Error('networkProxy.fixedPort must be a port from 1024 to 65535');
+  if (patch.noProxy != null) {
+    const ok = typeof patch.noProxy === 'string' ? patch.noProxy.length <= 4096
+      : Array.isArray(patch.noProxy) && patch.noProxy.length <= 200 && patch.noProxy.every((e) => typeof e === 'string' && e.length <= 253);
+    if (!ok) throw new Error('networkProxy.noProxy must be a comma-separated list of hosts');
+  }
+  if (patch.timeouts != null) {
+    if (typeof patch.timeouts !== 'object' || Array.isArray(patch.timeouts)) throw new Error('networkProxy.timeouts must be an object');
+    for (const [k, v] of Object.entries(patch.timeouts)) {
+      if (!NETWORK_PROXY_TIMEOUTS.includes(k)) throw new Error(`unknown networkProxy timeout: ${k}`);
+      if (v !== null && !isProxyMs(v)) throw new Error(`networkProxy.timeouts.${k} must be 500 to 3600000 ms`);
+    }
+  }
+}
+
+export async function setNetworkProxy(patch) {
+  assertNetworkProxyInput(patch);
+  const settings = readSettings();
+  if (patch === null || patch === '') delete settings.networkProxy;
+  else {
+    const next = { ...networkProxySettings() };
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null || v === '') delete next[k];
+      else if (k === 'upstream') next.upstream = normalizeProxyUpstream(v);
+      else if (k === 'timeouts') {
+        const t = { ...(next.timeouts || {}) };
+        for (const [tk, tv] of Object.entries(v)) { if (tv === null) delete t[tk]; else t[tk] = tv; }
+        if (Object.keys(t).length) next.timeouts = t; else delete next.timeouts;
+      } else next[k] = v;
+    }
+    if (Object.keys(next).length) settings.networkProxy = next; else delete settings.networkProxy;
+  }
+  await persistSettings(settings);
+  return networkProxySettings();
 }

@@ -466,7 +466,7 @@ test('list: a Codex built-in shadowed by a same-id model of any engine says over
 
 test('editor: Cursor takes no env, no endpoint, no effort and no pricing; the fields come back off Cursor', () => {
   const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS, cursorEfforts: [] });
-  assert.deepEqual([...el.querySelectorAll('.mv-engine option')].map((o) => o.value), ['claude', 'codex', 'copilot', 'cursor']);
+  assert.deepEqual([...el.querySelectorAll('.mv-engine option')].map((o) => o.value), ['claude', 'codex', 'copilot', 'cursor', 'opencode']);
   setModelEngine(el, 'cursor');
   assert.equal(el.querySelector('.mv-engine').value, 'cursor');
   assert.equal(el.querySelectorAll('.mv-effort-cb').length, 0, 'no effort chips');
@@ -490,6 +490,33 @@ test('editor: Cursor takes no env, no endpoint, no effort and no pricing; the fi
   assert.equal(el.querySelector('.mv-cost-edit').closest('.mv-field').hidden, false, 'Pricing is back');
   assert.equal(el.querySelector('.mv-efforts').closest('.mv-field').hidden, false, 'efforts are back');
   assert.deepEqual([...el.querySelectorAll('.mv-effort-cb')].map((c) => c.value), CODEX_EFFORTS);
+});
+
+test('editor: OpenCode takes no env and no endpoint; its efforts are the variants and Pricing stays', () => {
+  const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS, cursorEfforts: [], opencodeEfforts: ['minimal', 'low', 'medium', 'high', 'max'] });
+  setModelEngine(el, 'opencode');
+  assert.deepEqual([...el.querySelectorAll('.mv-effort-cb')].map((c) => c.value), ['minimal', 'low', 'medium', 'high', 'max']);
+  assert.equal(el.querySelector('.mv-env').closest('.mv-field').hidden, true);
+  assert.equal(el.querySelector('.mv-cost-edit').closest('.mv-field').hidden, false, 'OpenCode prices its own runs; an override still applies');
+  const conn = el.querySelector('.mv-conn');
+  const shown = [...conn.querySelectorAll('.mv-conn-mode')].filter((l) => !l.hidden);
+  // A new entry still offers every connection; on OpenCode's providers it runs on OpenCode alone.
+  assert.equal(shown.length, 3);
+  assert.equal(conn.querySelector('.mv-conn-mode-rb:checked').value, 'direct');
+  assert.match(conn.querySelector('.mv-conn-runs').textContent, /^Runs on OpenCode only/);
+  assert.equal(conn.querySelector('.mv-conn-body').hidden, true);
+  el.querySelector('.mv-id').value = 'anthropic/claude-sonnet-4-5';
+  const { body } = collectModelEditor(el);
+  assert.equal(body.engine, 'opencode');
+  assert.deepEqual(body.env, {});
+  assert.equal('upstream' in body, false);
+});
+
+test('editor: editing an OpenCode model offers only its own providers', () => {
+  const el = renderModelEditor({ id: 'anthropic/claude-sonnet-4-5', label: 'Sonnet', engine: 'opencode', efforts: ['high'] }, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS, opencodeEfforts: ['minimal', 'low', 'medium', 'high', 'max'] });
+  const shown = [...el.querySelectorAll('.mv-conn .mv-conn-mode')].filter((l) => !l.hidden);
+  assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-title').textContent), ['OpenCode providers']);
+  assert.equal(el.querySelector('.mv-conn-body').hidden, true);
 });
 
 test('list: a Cursor custom model carries a Cursor badge, and there is no Cursor filter chip', () => {

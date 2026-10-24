@@ -98,6 +98,7 @@ import {
   actionsSettings, setActionsSettings, assertActionsInput,
   syncDefaults, setSyncDefaults, assertSyncSettingsInput, DEFAULT_SYNC_SETTINGS,
   networkWaitSettings, assertNetworkWaitInput, setNetworkWait, effectiveNetworkWait,
+  networkProxySettings, setNetworkProxy,
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
   stepModelsSetting, assertStepModelsInput, setStepModels,
   utilityModelsSetting, assertUtilityModelsInput, setUtilityModels,
@@ -255,7 +256,7 @@ import {
   readProjectActions, writeProjectActions, readActionsMeta, writeActionsMeta, writeTeamRepo,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
-import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, COPILOT_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, COPILOT_EFFORTS, OPENCODE_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
 import { engineLabel, ENGINE_NAMES, engineRefusalFor } from '../src/shared/engine-switch.mjs';
 import { engineReadiness, engineLocks } from '../src/core/engines/readiness.mjs';
 import { providerReadiness } from '../src/core/bridge/registry.mjs';
@@ -496,6 +497,9 @@ import * as skClone from '../src/core/clone-project.mjs';
 import { HLJS_GRAMMAR_IDS } from './public/hljs-loader.mjs';
 import { useEnvProxy, proxyNotice } from '../src/core/env-proxy.mjs';
 import { startEgressPolicy, egressNotice, egressSummary } from '../src/core/egress-policy.mjs';
+import { proxyState, readProxyLogin, saveProxyLogin, clearProxyLogin, markLoginRejected, parseAccount, upstreamEnv,
+  ProxyLoginError } from '../src/core/proxy-credentials.mjs';
+import { checkUpstream, resolveUpstream, upstreamLabel, fixedPortOf, localProxyUrl, PASSWORD_MODES } from '../src/core/upstream-proxy.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -12210,6 +12214,7 @@ app.get('/api/models', (req, res) => {
     codex: CODEX_BUILTIN_MODELS, codexEfforts: CODEX_EFFORTS,   // §3.1a: the Codex built-ins group + the editor's Codex efforts
     cursorEfforts: CURSOR_EFFORTS,                               // none: Cursor has no effort flag (no Cursor built-ins)
     copilot: COPILOT_BUILTIN_MODELS, copilotEfforts: COPILOT_EFFORTS,   // the Copilot built-ins group + the editor's Copilot efforts
+    opencodeEfforts: OPENCODE_EFFORTS,                           // OpenCode's --variant values (no OpenCode built-ins)
     hideBuiltinModels: hideBuiltinModels(),   // the Models-view checkbox (#422)
     // Team policy catalog entries (team-policy design §8): read-only, env masked like a global's.
     policy: policyCatalogModels().map((m) => maskedGlobalModel(m, readiness)),
@@ -13042,6 +13047,108 @@ app.put('/api/chat-home/pins', async (req, res) => {
   } catch (err) {
     if (err && err.code === 'BAD_HOME_PINS') return badRequest(res, err.message);
     res.status(500).json({ error: String((err && err.message) || err) });
+  }
+});
+
+// No worcaHome() call here: the login file path resolves per call (project rule server-import-time-worcahome).
+/** startEgressPolicy()'s result once the boot block ran (null in tests that import the app). */
+let EGRESS = null;
+let proxyTestRunning = false;
+/** D14: true once PUT /api/proxy/settings changed the upstream in this process (a restart clears it). */
+let proxyUpstreamChangedSinceBoot = false;
+
+/** D13: the proxy variables as they were before the local proxy took HTTP(S)_PROXY, never the local URL. */
+const proxySourceEnv = () => upstreamEnv(EGRESS && EGRESS.sourceEnv ? EGRESS.sourceEnv : process.env);
+/** D9: login, logout, test and settings act as the user; an agent under isolation must not. */
+function refuseProxyAgent(req, res) {
+  if (!agentMayBeCaller(req)) return false;
+  res.status(403).json({ error: 'The corporate proxy login cannot be changed or tested from inside the container while agent isolation is on. Open Worca through its published address.', code: 'PROXY_AGENT_BLOCKED' });
+  return true;
+}
+
+function proxyStatusPayload() {
+  const live = EGRESS && EGRESS.connector ? EGRESS.connector.status() : null;
+  const fixed = fixedPortOf(networkProxySettings());
+  // A running proxy states its real URL; a proxy that failed to listen states no URL, only the error (D13).
+  const localUrl = EGRESS ? (EGRESS.status === 'on' ? EGRESS.url : null) : (fixed ? localProxyUrl(fixed) : null);
+  const localError = EGRESS && EGRESS.status === 'off' && EGRESS.upstreamError ? EGRESS.upstreamError : null;
+  return { ...proxyState({ env: proxySourceEnv(), networkProxy: networkProxySettings(), login: readProxyLogin(), live, expectRunning: true, localUrl }),
+    localError, settings: networkProxySettings() };
+}
+
+// Settings › Network proxy (docs/network-proxy.md). A disabled flag looks absent (404) and no
+// handler below runs, so the login file is never read with the flag off.
+app.use('/api/proxy', requireFlag('corporateProxy'));
+
+app.get('/api/proxy/status', (req, res) => {
+  res.set('Cache-Control', 'no-store').json(proxyStatusPayload());
+});
+
+app.post('/api/proxy/login', (req, res) => {
+  if (refuseProxyAgent(req, res)) return;
+  const body = req.body || {};
+  const { auth } = networkProxySettings();
+  if (PASSWORD_MODES.includes(auth)) {
+    // The code keeps its slice-2 name on purpose: it now covers Digest too (tests and the card pin it).
+    return res.status(409).json({ error: `networkProxy.auth is ${auth}, and a saved login keeps only the NT hash, which ${auth === 'digest' ? 'Digest' : 'Basic'} cannot use. Choose NTLMv2 and Save first.`, field: 'auth', code: 'BASIC_NO_SAVED_LOGIN' });
+  }
+  const account = body.domain ? { domain: body.domain, user: body.user } : parseAccount(body.user);
+  const password = typeof body.password === 'string' ? body.password : '';
+  body.password = undefined;
+  try {
+    saveProxyLogin({ ...account, password });
+  } catch (err) {
+    if (err instanceof ProxyLoginError) return res.status(400).json({ error: err.message, field: err.field });
+    return res.status(500).json({ error: `the login could not be saved (${err && err.code ? err.code : 'error'})` });
+  }
+  EGRESS?.reloadLogin?.();
+  res.json(proxyStatusPayload());
+});
+
+app.post('/api/proxy/logout', (req, res) => {
+  if (refuseProxyAgent(req, res)) return;
+  clearProxyLogin();
+  EGRESS?.reloadLogin?.();
+  res.json(proxyStatusPayload());
+});
+
+app.post('/api/proxy/test', async (req, res) => {
+  if (refuseProxyAgent(req, res)) return;
+  if (proxyTestRunning) return res.status(409).json({ error: 'a proxy test is already running', code: 'TEST_RUNNING' });
+  const login = readProxyLogin();
+  const up = resolveUpstream({ env: proxySourceEnv(), settings: networkProxySettings(), login: login && !login.error ? login : null });
+  if (!up) return res.status(409).json({ error: 'no corporate proxy is set up: enter its host and port and Save', code: 'NOT_CONFIGURED' });
+  if (up.error) return res.status(409).json({ error: up.error, code: 'UPSTREAM_INVALID' });
+  // D14: never send the saved hash to a host the running proxy does not use yet (a settings change waits for a restart).
+  const running = EGRESS && EGRESS.connector ? EGRESS.connector.status().upstream : null;
+  // With no proxy running (flag turned on after boot), a host saved through the card since boot is
+  // just as unproven: it could have been typed by mistake, so it gets no hash before a restart either.
+  const unproven = running ? running !== upstreamLabel(up.host, up.port) : proxyUpstreamChangedSinceBoot;
+  if (unproven) {
+    return res.status(409).json({ error: `the saved proxy ${upstreamLabel(up.host, up.port)} is not in use yet: restart Worca, then Test`, code: 'RESTART_NEEDED' });
+  }
+  proxyTestRunning = true;
+  try {
+    const r = await checkUpstream(up, {
+      startTripped: !!(up.login && up.login.rejected),
+      onTrip: ({ upstream, loginId }) => { if (loginId) markLoginRejected(loginId, { upstream }); },
+    });
+    EGRESS?.reloadLogin?.();   // a trip here marked the file: the running connector stops at once
+    res.json({ ok: r.ok, upstream: r.upstream.upstream, results: r.results });
+  } finally {
+    proxyTestRunning = false;
+  }
+});
+
+app.put('/api/proxy/settings', async (req, res) => {
+  if (refuseProxyAgent(req, res)) return;
+  try {
+    const before = networkProxySettings().upstream || '';
+    const networkProxy = await setNetworkProxy((req.body || {}).networkProxy ?? null);
+    if ((networkProxy.upstream || '') !== before) proxyUpstreamChangedSinceBoot = true;
+    res.json({ networkProxy, restartNeeded: true });
+  } catch (err) {
+    res.status(400).json({ error: err && err.message ? err.message : String(err), field: 'networkProxy' });
   }
 });
 
@@ -18028,8 +18135,8 @@ if (isMain) {
   // else runs, so every child and worca's own fetch() (useEnvProxy, next) go through it. It fails
   // closed: without the proxy, agents would have no restriction at all.
   try {
-    const egress = await startEgressPolicy({ log: (l) => console.log(`[worca-ui] egress: ${l}`) });
-    const egressLine = egressNotice(egress);
+    EGRESS = await startEgressPolicy({ log: (l) => console.log(`[worca-ui] egress: ${l}`) });
+    const egressLine = egressNotice(EGRESS);
     if (egressLine) console[egressLine.level === 'warn' ? 'warn' : 'log'](`[worca-ui] ${egressLine.text}`);
   } catch (err) {
     console.error(`[worca-ui] outbound network policy: the policy proxy could not start (${err && err.message ? err.message : err}). Not starting.`);
@@ -18216,6 +18323,9 @@ if (isMain) {
 export { app, server, runs };
 export const _testing = {
   updateChecker,
+  // The startEgressPolicy() result the /api/proxy routes read. Also clears the since-boot marker,
+  // standing in for a restart.
+  setEgress: (e) => { EGRESS = e; proxyUpstreamChangedSinceBoot = false; },
   setUpdateFetcher: (fn) => { updateFetcherOverride = typeof fn === 'function' ? fn : null; updateChecker.clear(); },
   setSourceBuild: (v) => { sourceBuildOverride = typeof v === 'boolean' ? v : null; updateChecker.clear(); },
   setVersionsFetcher: (fn) => { versionsFetcherOverride = typeof fn === 'function' ? fn : null; versionLister.clear(); },

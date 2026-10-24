@@ -52,6 +52,7 @@ import { cmdControl } from './control.mjs';
 import { cmdModels } from './models.mjs';
 import { cmdContainer } from './container.mjs';
 import { cmdExtension } from './extension.mjs';
+import { cmdProxy } from './proxy.mjs';
 import { cmdRun } from './run-preset.mjs';
 import {
   DEFAULT_UI_HOST, DEFAULT_UI_PORT, probeUi, stopUi, readUiInstance, uiUrl, waitForUiState,
@@ -340,6 +341,8 @@ Subcommands:
   extension [--browser <b>] [--open]
                               The browser extension packaged with this Worca: folder, version, install steps.
                               See: worca extension help (docs/browser-extension.md)
+  proxy <cmd> [...]           Corporate proxy login: status|login|logout|test.
+                              See: worca proxy help (docs/network-proxy.md)
   broker [serve|secrets|revoke --person <email>]
                               The credential broker: holds model keys outside worca's container
                               (docs/credential-broker.md)
@@ -355,7 +358,7 @@ Options:
   --extras <paths>         Extra files copied into the pipeline's extras/ folder
                            (comma-separated; repeatable)
   --model <m>              Claude model id
-  --engine <name>          Agent harness for the pipeline's agent nodes: claude (default) | codex (beta) | copilot (beta) | cursor (beta)
+  --engine <name>          Agent harness for the pipeline's agent nodes: claude (default) | codex (beta) | copilot (beta) | cursor (beta) | opencode (beta)
   --allow-unguarded-engine Run on an engine that cannot fully enforce the guardrail set's permission rules
   --permission-mode <m>    Claude permission mode: default | acceptEdits | plan |
                            bypassPermissions (default acceptEdits)
@@ -3314,7 +3317,7 @@ async function drainMetricsFlushes() {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'proxy']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3360,11 +3363,13 @@ async function main() {
   // A hosting platform's outbound network policy (src/core/egress-policy.mjs). `worca ui` leaves
   // it to the server it starts; any other command (a pipeline started by hand in the container)
   // runs its own policy proxy, or reuses the one a parent worca put in the environment.
-  if (process.argv[2] !== 'ui') {
+  // `worca proxy` skips it too, so `proxy test` talks to the corporate proxy itself (D15).
+  if (process.argv[2] !== 'ui' && process.argv[2] !== 'proxy') {
     try {
       const egress = await startEgressPolicy({ unref: true, log: (l) => process.stderr.write(`worca: egress: ${l}\n`) });
       const egressLine = egressNotice(egress);
-      if (egressLine?.level === 'warn') process.stderr.write(`worca: ${egressLine.text}\n`);
+      // Printed once per process, and only by commands that start the proxy (not `ui`, not `proxy`).
+      if (egressLine && (egressLine.level === 'warn' || egressLine.text.startsWith('Corporate proxy:'))) process.stderr.write(`worca: ${egressLine.text}\n`);
     } catch (err) {
       process.stderr.write(`worca: outbound network policy: the policy proxy could not start (${err && err.message ? err.message : err})\n`);
       return 78;
@@ -3404,6 +3409,7 @@ async function main() {
     if (sub === 'models') return cmdModels(rest, { out, c, fail });
     if (sub === 'container') return cmdContainer(rest, { out, c, fail });
     if (sub === 'extension') return cmdExtension(rest, { out, c, fail });
+    if (sub === 'proxy') return cmdProxy(rest, { out, c, fail });
     if (sub === 'broker') {
       // Loaded lazily: the broker is its own process and needs none of the core graph.
       const { runBrokerCli } = await import('../broker/main.mjs');

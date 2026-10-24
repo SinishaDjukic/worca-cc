@@ -5037,7 +5037,10 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-track-row.has-name{grid-template-columns:44px minmax(0,1fr);column-gap:8px;}
 .rd-track-name{font-size:var(--fs-meta);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:16px;}
 .rd-track-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0;padding:0;list-style:none;}
-.rd-track-head{display:flex;align-items:center;gap:8px;min-width:0;}
+/* Top-aligned: a label that wraps keeps its dot and line on its first line (the 18px label line centres both). */
+.rd-track-head{display:flex;align-items:flex-start;gap:8px;min-width:0;}
+.rd-track-head > .rd-track-dot{margin-top:1px;}
+.rd-track-head > .rd-track-line{margin-top:9px;}
 .rd-track-dot{flex:0 0 16px;width:16px;height:16px;box-sizing:border-box;border-radius:50%;display:grid;place-items:center;color:var(--panel);}
 .rd-track-dot.is-done{background:var(--green);}
 .rd-track-dot.is-current{border:2px solid currentColor;background:none;}
@@ -5051,19 +5054,31 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-track-dot.is-closed{border:1.5px solid var(--ink-3);color:var(--ink-3);}
 .rd-track-dot.is-future{border:1.5px solid var(--line-2);}
 .rd-track-dot.is-pulse{animation:wr-pulse 1.6s ease-in-out infinite;}
-.rd-track-label{font-size:var(--fs-meta);color:var(--ink);min-width:0;overflow-wrap:anywhere;}
+.rd-track-label{font-size:var(--fs-meta);line-height:18px;color:var(--ink);min-width:0;overflow-wrap:anywhere;}
 .rd-track-step.is-current .rd-track-label{font-weight:600;}
 .rd-track-step.is-future .rd-track-label{color:var(--ink-2);}   /* --ink-3 is 2.8:1 on the panel in light */
 .rd-track-step.is-closed .rd-track-label{text-decoration:line-through;color:var(--ink-2);}
 .rd-track-line{flex:1;min-width:12px;height:1px;margin-right:8px;background:var(--line-2);}
 .rd-track-line.is-done{background:var(--green);}
-.rd-track-sub{display:flex;flex-wrap:wrap;gap:4px 8px;margin:4px 0 0 24px;font-size:var(--fs-meta);color:var(--ink-2);}
-.rd-track-pr,.rd-track-link{color:var(--blue-ink-strong);font-weight:600;text-decoration:none;}
-.rd-track-act{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-radius:var(--r-xs);}
-.rd-track-act:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.rd-track-watch:not(.is-bad):not(.is-run){text-decoration:underline dotted;text-underline-offset:3px;}
-:is(.rd-track-tx,.rd-track-act).is-run{color:var(--blue-ink);}
-:is(.rd-track-tx,.rd-track-act).is-bad{color:var(--amber-ink);}
+/* The facts list's PR rows (run-head.mjs renderFacts): the PR chip, links, Watch / Commit it yourself, plain words.
+   A workspace row lists one member per line, the names in one column. */
+.rd-fact{display:flex;flex-wrap:wrap;align-items:center;gap:2px 12px;min-width:0;}
+.rd-fact > .is-line{flex-basis:100%;font-size:var(--fs-meta);color:var(--ink-2);}
+.rd-fact-members{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 10px;align-items:center;min-width:0;}
+.rd-fact-member{font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
+.rd-fact-pr{font-size:var(--fs-body);text-decoration:none;}
+.rd-fact-pr .runs-pr-num{font-weight:600;}
+.rd-fact-pr:hover .runs-pr-num{text-decoration:underline;}
+.rd-fact-pr:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+.rd-fact-link{color:var(--blue-ink-strong);font-weight:500;text-decoration:none;}
+.rd-fact-link:hover{text-decoration:underline;}
+.rd-fact-act{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-radius:var(--r-xs);}
+.rd-fact-act:not(.rd-fact-watch){color:var(--blue-ink-strong);font-weight:500;}
+.rd-fact-act:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.rd-fact-watch:not(.is-bad):not(.is-run){text-decoration:underline dotted;text-underline-offset:3px;}
+:is(.rd-fact-tx,.rd-fact-act).is-run{color:var(--blue-ink);}
+:is(.rd-fact-tx,.rd-fact-act).is-bad{color:var(--amber-ink);}
+:is(.rd-fact-tx,.rd-fact-act).is-ok{color:var(--green-ink);}
 @media (prefers-reduced-motion: reduce){.rd-track-dot.is-pulse{animation:none;}.rd-track-dot.is-current::after{transition:none;}}
 @media (max-width:480px){
   .rd-track-line{min-width:8px;margin-right:4px;}
@@ -9733,7 +9748,7 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 /* Divided rows: a line above every shown row but the first shown one (a hidden first row takes no line with it). */
 .rd-kv-row:not([hidden]) ~ .rd-kv-row{border-top:1px solid var(--line);}
 .rd-kv-row[hidden]{display:none;}
-.rd-kv-k{font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);}
+.rd-kv-k{font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);white-space:nowrap;}   /* one line, always */
 .rd-kv-v{margin:0;min-width:0;font-size:var(--fs-body);line-height:var(--lh-body);color:var(--ink);display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;overflow-wrap:anywhere;}
 /* A quiet button that leads a value (Add to group…, the branch chip) pulls back by its padding and border, so its text
    sits on the value column like Project's; its hover fill still shows. Trailing Add/Edit buttons keep their place. */
@@ -10385,6 +10400,11 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 .sn-types{display:flex;flex-wrap:wrap;gap:6px}
 @media (max-width:480px){.sn-branch-row{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){.sn-adorn.sn-loading .input{animation:none}}
+
+/* Settings › Network proxy (corporateProxy flag): a new surface, so placeholders use --ink-2. */
+#network-proxy-settings-card .input::placeholder{color:var(--ink-2);}
+#network-proxy-settings-card .np-results{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:var(--fs-meta);}
+#network-proxy-settings-card .np-results li[data-ok="false"]{color:var(--red-ink);}
 
 
 /* One border level per card (review B2): inside a chat card the nested boxes drop their border and take a tint. It stays LAST in the file: at (0,2,0) it only beats earlier rules of the same weight, and a

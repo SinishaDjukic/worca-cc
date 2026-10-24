@@ -571,6 +571,33 @@ worca can run pipelines on Cursor's headless CLI agent. Chat does not run on Cur
 
 **Chat on Cursor is not available.** A chat needs every shell and disk tool switched off, and no Cursor switch for that is known. Cursor models are not offered in Chat.
 
+## OpenCode
+
+worca can run pipelines on [OpenCode](https://opencode.ai) (`opencode run`). OpenCode is in beta in worca. Chat does not run on OpenCode. Checked against opencode 1.18.23.
+
+1. Install OpenCode and make sure worca finds it: on `PATH`, or `WORCA_OPENCODE_BIN=/path/to/opencode` in worca's environment. worca runs OpenCode 1.x (npm `opencode-ai`). OpenCode 2 (npm `@opencode/cli`, and Homebrew's `opencode` formula) changed how `opencode run` works, so worca refuses it until it is supported.
+2. Connect a provider once in a terminal: `opencode auth login`, or set the provider's key (for example `ANTHROPIC_API_KEY`) in worca's own environment. `opencode providers list` shows what OpenCode sees. Without either, only OpenCode Zen's free models run, and they send the code to opencode.ai, so the engine card shows OpenCode as not ready and a run is refused, unless every step names its model or you opt in (below). worca checks the credentials in the environment the agent gets: under a set that scrubs the environment, a key only worca has does not count. For Google models, set `GOOGLE_GENERATIVE_AI_API_KEY`: OpenCode 1.18 lists a `GEMINI_API_KEY` under `providers list` but does not use it, so a run stops with "Google Generative AI API key is missing".
+3. Pick OpenCode per run on New pipeline, or as a default on the Models page (Engines).
+
+**Models.** worca ships no OpenCode models. With no model set, OpenCode runs its own default (your `opencode.json` `model`, else its first provider's), which can be a free OpenCode Zen model that sends the code to opencode.ai. So worca refuses a run in which any step names no model, and never starts OpenCode without one. To run on OpenCode's own default anyway, set `WORCA_OPENCODE_ALLOW_DEFAULT_MODEL=1` in worca's environment. To pick one, add a model on the Models page with Engine **OpenCode** and the id `opencode models` lists, `provider/model` (for example `anthropic/claude-sonnet-4-5`). An OpenCode model takes no env and no endpoint: OpenCode's own providers connect it. Its efforts are OpenCode's `--variant` values (`minimal`, `low`, `medium`, `high`, `max`); a variant the model does not have is ignored by OpenCode without a word.
+
+**Cost.** OpenCode prices every step from its own price table, and worca books that cost, sub-agents included (worca reads each sub-agent session's cost with `opencode export`). A provider OpenCode has no prices for (a custom one in your `opencode.json`) reports $0: add a price to the model on the Models page, and worca uses it.
+
+**Helper jobs run on Claude.** On an OpenCode run, titles, the run overview, the PR description, the Auto workflow classifier and Away mode's night decider run on Claude, as on a Claude run: they read text worca did not write, and no read-only mode of OpenCode has been verified. The memory defrag and a workspace scan run on OpenCode itself.
+
+**What OpenCode holds, and what it does not.**
+
+- No per-role tool restriction or hook telemetry. The run log lists each one at start. A node's turn cap becomes the agent's `steps` limit: after that many tool steps OpenCode asks for a text reply, and worca fails the step as capped. Research fan-out runs through OpenCode's `task` tool as worca's investigator agent, which has no edit, write or shell tool and no sub-agents of its own, and the node's turn cap as its `steps` limit. worca removes OpenCode's built-in `general` and `explore` sub-agents, and a node without fan-out has no `task` tool. The investigator's tool calls reach the run log and the audit, read back with `opencode export` after the step. Skills are mounted at `.agents/skills`, which OpenCode lists for the agent. The system prompt reaches OpenCode as an agent's prompt.
+- Guardrails go into OpenCode's permission config. A bare `Bash` removes the shell, and `WebSearch` and MCP tool rules (`mcp__server__tool`) remove those tools: held in full. `WebFetch` is held only when the same set denies the shell and web search too. Command rules (`Bash(git push:*)`) match each command OpenCode reads out of a shell line, but not one inside `$(…)`, a variable or `bash -c "…"`. `Read(…)` and `Edit(…)`/`Write(…)` path rules hold for OpenCode's file tools, and the shell can still reach those paths. So those count as held only in part: any set other than Permissive needs **Allow unguarded** (`--allow-unguarded-engine`).
+- The Normal and Secure sets' rules for worca's own state in `~/.worca-cc` are read and edit rules held only in part, as on Cursor. OpenCode has no sandbox, so a run with **Allow unguarded** can read and change those files through its shell. Container mode is the containment.
+- A set that denies the whole shell (a bare `Bash` rule) cannot run OpenCode Zen's free models: they refuse a request without the shell tool. The run stops and says so.
+- worca writes nothing into the run checkout: the agent, the rules and the MCP servers ride the `OPENCODE_CONFIG_CONTENT` variable, with MCP secrets as `{env:NAME}` references whose values reach OpenCode through its environment. worca turns off the checkout's own `opencode.json` (`OPENCODE_DISABLE_PROJECT_CONFIG`) and names the checkout's `AGENTS.md` and `CLAUDE.md` to OpenCode itself. That also turns off the checkout's `.opencode/` folder, so its plugin scripts do not load. worca runs OpenCode with `--pure`, so the plugins in your own `~/.config/opencode` and npm plugins named in your config do not load either. OpenCode's built-in sign-in plugins stay on.
+- Your own OpenCode settings still apply: providers, agents and MCP servers in `~/.config/opencode/opencode.json`. worca's rules are merged over them.
+- Under the Secure set (environment scrubbed), provider keys in worca's environment do not reach OpenCode: use `opencode auth login`, or add the key's name to the set's environment allowlist.
+- The host guard's kill-check hook does not run on OpenCode; its instructions to the agent still apply.
+
+**Chat on OpenCode is not available.** A chat needs every shell and disk tool switched off, and no OpenCode lockdown has been verified. OpenCode models are not offered in Chat.
+
 ## Chat
 
 Chat can read the catalog and the providers, explain why a model is not
@@ -727,6 +754,10 @@ talks to answers at all.
 - **401 / "not signed in"** — sign in again on the Providers card; Copilot
   tokens can be revoked on GitHub's side.
 - **`engine cursor: cannot run cursor-agent (ENOENT)`** — install the Cursor CLI or set `WORCA_CURSOR_BIN`.
+- **`engine opencode: cannot run opencode (ENOENT)`** — install OpenCode or set `WORCA_OPENCODE_BIN`.
+- **`engine opencode: a step of this run names no model`** or **`refusing to start OpenCode without a model`** — set a model for the run (or each step), or set `WORCA_OPENCODE_ALLOW_DEFAULT_MODEL=1` to let OpenCode pick its own default.
+- **`engine opencode: no provider credentials in the agent's environment`** — run `opencode auth login`, or set the provider's key in worca's environment (and in the set's environment allowlist when it scrubs the environment).
+- **`OpenCode's free tier can only be used from within OpenCode`** — the run's guardrail set denies the whole shell; pick a model of another provider, or a set without a bare `Bash` rule.
 - **OpenRouter 429 on a `:free` model** — OpenRouter's shared free pool is busy,
   not your concurrency cap; see [OpenRouter](#openrouter).
 - **"OpenRouter's free-model requests for today are used up"** — the key's daily

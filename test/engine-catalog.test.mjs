@@ -95,7 +95,7 @@ test('a Codex custom model takes Codex efforts and refuses env, a non-Responses 
   await assert.rejects(() => addGlobalModel({ id: 'cx-4', engine: 'codex', upstream: { provider: 'openai', api: 'openai-responses', model: 'x', openrouter: { models: ['a/b'] } } }), /openrouter is not available on a codex model/);
   await assert.rejects(() => addGlobalModel({ id: 'claude-opus-5-5', engine: 'codex' }), /is a Claude model id/);
   await assert.rejects(() => addGlobalModel({ id: 'gpt-5.5', label: 'Claude-side' }), /"gpt-5.5" is the id of Codex's built-in gpt-5.5 \(ChatGPT sign-in\) — give this entry its own id, such as "my-gpt-5.5"/);
-  await assert.rejects(() => addGlobalModel({ id: 'cx-5', engine: 'gemini' }), /engine must be one of claude \| codex \| copilot \| cursor/);
+  await assert.rejects(() => addGlobalModel({ id: 'cx-5', engine: 'gemini' }), /engine must be one of claude \| codex \| copilot \| cursor \| opencode/);
   await assert.rejects(() => updateGlobalModel('cx-tune', { engine: 'claude' }), /engine cannot change/);
   await assert.rejects(() => updateGlobalModel('cx-tune', { env: { X: '1' } }), /a codex model takes no env/);
   assert.deepEqual((await updateGlobalModel('cx-tune', { efforts: ['minimal'] })).efforts, ['minimal']);
@@ -152,4 +152,18 @@ test('a custom Cursor model: no efforts, no env, no upstream, never a built-in i
   }
   await assert.rejects(() => updateGlobalModel('sonnet-4.5', { env: { X: '1' } }), /a cursor model takes no env/);
   assert.equal((await listModels('')).some((r) => r.engine === 'cursor' && r.builtin), false, 'no Cursor built-ins');
+});
+
+test('a custom OpenCode model: provider/model id, OpenCode\'s variants as efforts, no env, no upstream', async () => {
+  const m = await addGlobalModel({ id: 'anthropic/claude-sonnet-4-5', engine: 'opencode' });
+  assert.deepEqual(m, { id: 'anthropic/claude-sonnet-4-5', label: 'anthropic/claude-sonnet-4-5', efforts: ['minimal', 'low', 'medium', 'high', 'max'], engine: 'opencode' });
+  assert.equal(engineOfModel('anthropic/claude-sonnet-4-5'), 'opencode');
+  const some = await addGlobalModel({ id: 'openai/gpt-5', engine: 'opencode', efforts: ['high', 'low'] });
+  assert.deepEqual(some.efforts, ['low', 'high']);
+  await assert.rejects(() => addGlobalModel({ id: 'oc-1', engine: 'opencode' }), /an opencode model id is provider\/model/);
+  await assert.rejects(() => addGlobalModel({ id: 'x/oc-2', engine: 'opencode', env: { X: '1' } }), /an opencode model takes no env/);
+  await assert.rejects(() => addGlobalModel({ id: 'x/oc-3', engine: 'opencode', upstream: { provider: 'openai', api: 'openai-responses', model: 'm' } }), /no upstream/);
+  await assert.rejects(() => addGlobalModel({ id: 'x/oc-4', engine: 'opencode', efforts: ['xhigh'] }), /unknown effort "xhigh"/);
+  await assert.rejects(() => updateGlobalModel('openai/gpt-5', { env: { X: '1' } }), /an opencode model takes no env/);
+  assert.equal((await listModels('')).some((r) => r.engine === 'opencode' && r.builtin), false, 'no OpenCode built-ins');
 });
