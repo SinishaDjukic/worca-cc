@@ -82,6 +82,18 @@ export const FLAGS = Object.freeze([
     docs: 'docs/run-presets.md',
   }),
   entry({
+    key: 'commandSummaries',
+    title: 'Command summaries',
+    description: 'Adds Settings › Chat › Summarise commands: commands in chat show as one line saying what they do, with the command and output one click away.',
+    stage: 'beta',
+    default: true,
+    owner: 'e-angelov',
+    since: '1.13.1',
+    added: '2026-10-24',
+    reviewBy: '2027-01-20',
+    docs: 'docs/feature-flags.md',
+  }),
+  entry({
     key: 'runLabels',
     title: 'Run labels',
     description: 'Free-word labels on runs (hotfix, needs demo): chips on the Runs list, run pages and chat run cards, a Label filter and a Label action for selected runs. Labels never affect cost, policy or reports.',

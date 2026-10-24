@@ -16,14 +16,14 @@ test('renderIndexHtml with flags', async () => {
       assert.ok(shell.indexOf(FLAG_GATES_ANCHOR) > shell.indexOf('href="/style.css"'));
     } },
     { name: 'on: data-flags lists it, no gate rule for it', run: () => {
-      const out = renderIndexHtml(mini, 'dark', 'simple', { flagsDemo: true, keepAwake: true, shapeFirst: true, runTags: true, runPresets: true, runLabels: true, smartRunNaming: true });
-      assert.match(out, /<html lang="en" data-theme="dark" data-level="simple" data-flags="flagsDemo keepAwake shapeFirst runTags runPresets runLabels smartRunNaming">/);
+      const out = renderIndexHtml(mini, 'dark', 'simple', { flagsDemo: true, keepAwake: true, shapeFirst: true, runTags: true, runPresets: true, commandSummaries: true, runLabels: true, smartRunNaming: true });
+      assert.match(out, /<html lang="en" data-theme="dark" data-level="simple" data-flags="flagsDemo keepAwake shapeFirst runTags runPresets commandSummaries runLabels smartRunNaming">/);
       assert.match(out, /<style id="flag-gates"><\/style>/);
     } },
     { name: 'off: empty data-flags and one rule per off flag', run: () => {
-      const out = renderIndexHtml(mini, 'light', undefined, { flagsDemo: false, keepAwake: false, shapeFirst: false, runTags: false, runPresets: false, runLabels: false, smartRunNaming: false });
+      const out = renderIndexHtml(mini, 'light', undefined, { flagsDemo: false, keepAwake: false, shapeFirst: false, runTags: false, runPresets: false, commandSummaries: false, runLabels: false, smartRunNaming: false });
       assert.match(out, /<html lang="en" data-theme="light" data-flags="">/);
-      assert.match(out, /<style id="flag-gates">\[data-flag~="flagsDemo"\]\{display:none!important\}\n\[data-flag~="keepAwake"\]\{display:none!important\}\n\[data-flag~="shapeFirst"\]\{display:none!important\}\n\[data-flag~="runTags"\]\{display:none!important\}\n\[data-flag~="runPresets"\]\{display:none!important\}\n\[data-flag~="runLabels"\]\{display:none!important\}\n\[data-flag~="smartRunNaming"\]\{display:none!important\}<\/style>/);
+      assert.match(out, /<style id="flag-gates">\[data-flag~="flagsDemo"\]\{display:none!important\}\n\[data-flag~="keepAwake"\]\{display:none!important\}\n\[data-flag~="shapeFirst"\]\{display:none!important\}\n\[data-flag~="runTags"\]\{display:none!important\}\n\[data-flag~="runPresets"\]\{display:none!important\}\n\[data-flag~="commandSummaries"\]\{display:none!important\}\n\[data-flag~="runLabels"\]\{display:none!important\}\n\[data-flag~="smartRunNaming"\]\{display:none!important\}<\/style>/);
     } },
     { name: 'flags omitted ⇒ byte-for-byte what it rendered before', run: () => {
       assert.equal(renderIndexHtml(mini, 'system'), mini);

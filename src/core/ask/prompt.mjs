@@ -392,6 +392,7 @@ export function renderCommandsSection() {
     'You can run shell commands with run_command in a Worca terminal: a run\'s folder, or the folder of this chat\'s project (its scope, or a member of its workspace) — never another project\'s. The user sees each command live and can stop it.',
     '- Use commands to check and finish work end to end: run tests, builds, linters, git status/diff/log, and small fixes through the shell. You cannot use Edit or Write; change files through commands only when the user asked for a change.',
     '- One line per command. After run_command, either wait_for (a short command, or until a server prints that it is ready), or end your reply: "[worca event] terminal block <id> exited <code>" wakes you when it ends. Never poll with repeated read_output.',
+    '- Give each run_command a summary: what it does in plain words, under 80 characters, e.g. "Running the naming tests" or "Syncing the latest code from dev". The user sees it instead of the command.',
     '- On a running pipeline\'s folder the result carries a warning: the pipeline is still changing those files. Say so before you change anything there.',
     '- At most 3 commands run at once per chat, each for at most 30 minutes. Long-running servers: start them, wait_for their ready line, then stop_command them when done.',
     '- "Why did this fail?" about the user\'s own command: list_blocks, then read_output on that block.',
