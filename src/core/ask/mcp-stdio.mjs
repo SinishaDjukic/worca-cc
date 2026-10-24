@@ -39,6 +39,7 @@ import { defaultCloneDeps } from './clone-deps.mjs';
 import { defaultProjectDeps } from './project-deps.mjs';
 import { defaultWorkspaceDeps } from './workspace-deps.mjs';
 import { defaultActionsDeps } from './actions-deps.mjs';
+import { defaultProxyDeps } from './proxy-deps.mjs';
 import { defaultWebDeps } from './web-deps.mjs';
 import { defaultFileDeps } from './file-deps.mjs';
 import { defaultCommandDeps } from './command-deps.mjs';
@@ -94,6 +95,8 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       ...defaultWorkspaceDeps(),
       // Actions (docs/actions.md "Chat"): read the config, checkouts and running services; propose config.
       ...defaultActionsDeps(),
+      // Corporate proxy (docs/network-proxy.md "From Chat"): read + test over the per-turn bridge; two cards.
+      ...defaultProxyDeps({ env }),
       // Branch reads + fetch-only (#527): list_branches, list_projects.sync, get_run.baseMoved.
       ...defaultBranchDeps(),
       // Web access: present only when this turn's env carries WORCA_ASK_WEB (web-deps.mjs) — the

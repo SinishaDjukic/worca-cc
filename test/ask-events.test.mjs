@@ -724,9 +724,11 @@ const RESULT_HOOKS = [
   ['propose_project_change: labelled, and its RESULT reaches onProjectProposal with the full input; a sub-agent call never does', 'propose_project_change', 'onProjectProposal', { kind: 'create', name: 'landing-page' }],
   ['show_files: labelled, and its RESULT reaches onShowFiles with the full input; a sub-agent call never does',
     'show_files', 'onShowFiles', { files: [{ path: '$WORCA_ASK_OUT/a.png' }] }],
+  ['onProxyProposal fires on the propose_network_proxy_change result', 'propose_network_proxy_change', 'onProxyProposal', { upstream: 'proxy2.acme.test:3128' }],
+  ['onProxyFlagProposal fires on the propose_corporate_proxy_on result', 'propose_corporate_proxy_on', 'onProxyFlagProposal', { note: 'office' }],
 ];
 
-test('RESULT hooks: each hooked tool (metrics, track_run, policy, clone, web, away switch, away proposal, workspace, scope switch, project, show_files) reaches its hook on the main stream with {toolUseId,input,text,isError}; never for a sub-agent; a throwing hook is contained', async () => {
+test('RESULT hooks: each hooked tool (metrics, track_run, policy, clone, web, away switch, away proposal, workspace, scope switch, project, show_files, proxy change, proxy flag) reaches its hook on the main stream with {toolUseId,input,text,isError}; never for a sub-agent; a throwing hook is contained', async () => {
   await checkRows(RESULT_HOOKS.map(([name, tool, hook, input]) => ({ name, run: () => {
     const mcpName = `mcp__worca__${tool}`;
     const calls = [];

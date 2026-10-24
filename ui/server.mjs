@@ -98,7 +98,7 @@ import {
   actionsSettings, setActionsSettings, assertActionsInput,
   syncDefaults, setSyncDefaults, assertSyncSettingsInput, DEFAULT_SYNC_SETTINGS,
   networkWaitSettings, assertNetworkWaitInput, setNetworkWait, effectiveNetworkWait,
-  networkProxySettings, setNetworkProxy,
+  networkProxySettings,
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
   stepModelsSetting, assertStepModelsInput, setStepModels,
   utilityModelsSetting, assertUtilityModelsInput, setUtilityModels,
@@ -497,9 +497,11 @@ import * as skClone from '../src/core/clone-project.mjs';
 import { HLJS_GRAMMAR_IDS } from './public/hljs-loader.mjs';
 import { useEnvProxy, proxyNotice } from '../src/core/env-proxy.mjs';
 import { startEgressPolicy, egressNotice, egressSummary } from '../src/core/egress-policy.mjs';
-import { proxyState, readProxyLogin, saveProxyLogin, clearProxyLogin, markLoginRejected, parseAccount, upstreamEnv,
-  ProxyLoginError } from '../src/core/proxy-credentials.mjs';
-import { checkUpstream, resolveUpstream, upstreamLabel, fixedPortOf, localProxyUrl, PASSWORD_MODES } from '../src/core/upstream-proxy.mjs';
+import { saveProxyLogin, clearProxyLogin, parseAccount, ProxyLoginError } from '../src/core/proxy-credentials.mjs';
+import { PASSWORD_MODES } from '../src/core/upstream-proxy.mjs';
+import { createProxyHost, PROXY_AGENT_TEXT } from '../src/core/proxy-host.mjs';
+import { applyProxyChange, validateProxyChange, validateProxyFlagOn } from '../src/core/ask/proxy-deps.mjs';
+import { proxyEventPrompt, proxyNoticeText } from '../src/core/ask/proxy-proposal.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -11418,6 +11420,8 @@ function askAgentRelay({ threadId, reader, web = null, engine = 'claude', skillR
       },
       // Shaper (D7): here the tools see the live runs, so an open step's refusal reaches the model as the tool result.
       ...defaultShapeToolDeps({ threadId, live: (id) => liveSliceOf(id) }),
+      // Corporate proxy: read in-process; Test is refused under agent isolation (relayProxyDeps).
+      proxy: relayProxyDeps(),
     },
   });
   askRelays.set(token, entry);
@@ -13054,28 +13058,56 @@ app.put('/api/chat-home/pins', async (req, res) => {
 // No worcaHome() call here: the login file path resolves per call (project rule server-import-time-worcahome).
 /** startEgressPolicy()'s result once the boot block ran (null in tests that import the app). */
 let EGRESS = null;
-let proxyTestRunning = false;
-/** D14: true once PUT /api/proxy/settings changed the upstream in this process (a restart clears it). */
-let proxyUpstreamChangedSinceBoot = false;
+/** The proxy's shared logic (src/core/proxy-host.mjs): the routes, the chat bridge and the proxy card all use it. */
+const proxyHost = createProxyHost({ egress: () => EGRESS });
+const proxyStatusPayload = () => proxyHost.status();
 
-/** D13: the proxy variables as they were before the local proxy took HTTP(S)_PROXY, never the local URL. */
-const proxySourceEnv = () => upstreamEnv(EGRESS && EGRESS.sourceEnv ? EGRESS.sourceEnv : process.env);
 /** D9: login, logout, test and settings act as the user; an agent under isolation must not. */
 function refuseProxyAgent(req, res) {
   if (!agentMayBeCaller(req)) return false;
-  res.status(403).json({ error: 'The corporate proxy login cannot be changed or tested from inside the container while agent isolation is on. Open Worca through its published address.', code: 'PROXY_AGENT_BLOCKED' });
+  res.status(403).json({ error: PROXY_AGENT_TEXT, code: 'PROXY_AGENT_BLOCKED' });
   return true;
 }
 
-function proxyStatusPayload() {
-  const live = EGRESS && EGRESS.connector ? EGRESS.connector.status() : null;
-  const fixed = fixedPortOf(networkProxySettings());
-  // A running proxy states its real URL; a proxy that failed to listen states no URL, only the error (D13).
-  const localUrl = EGRESS ? (EGRESS.status === 'on' ? EGRESS.url : null) : (fixed ? localProxyUrl(fixed) : null);
-  const localError = EGRESS && EGRESS.status === 'off' && EGRESS.upstreamError ? EGRESS.upstreamError : null;
-  return { ...proxyState({ env: proxySourceEnv(), networkProxy: networkProxySettings(), login: readProxyLogin(), live, expectRunning: true, localUrl }),
-    localError, settings: networkProxySettings() };
+// The chat's proxy bridge (src/core/ask/proxy-deps.mjs): classic mode only — relay mode is agent isolation, which
+// passes in-process deps (askAgentRelay) and refuses Test. One token per turn, dropped when the turn ends.
+const askProxyBridges = new Map();   // token -> threadId
+function askProxyBridge({ threadId }) {
+  if (agentIdentity() || !flagEnabled('corporateProxy')) return null;
+  const token = randomBytes(24).toString('base64url');
+  askProxyBridges.set(token, threadId);
+  const port = server.address()?.port || PORT;
+  return { url: `http://127.0.0.1:${port}/api/ask/proxy`, token, dispose: () => askProxyBridges.delete(token) };
 }
+app.post('/api/ask/proxy', async (req, res) => {
+  if (!isInContainer(req)) return res.status(403).json({ error: 'proxy: loopback callers only' });
+  if (!askProxyBridges.has(String(req.headers['x-worca-ask-proxy'] || ''))) return res.status(403).json({ error: 'proxy: unknown or finished turn' });
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: PROXY_AGENT_TEXT, code: 'PROXY_AGENT_BLOCKED' });
+  if (!flagEnabled('corporateProxy')) return res.json({ result: { flag: false } });
+  const op = req.body && req.body.op;
+  if (op === 'status') return res.json({ result: proxyHost.chatStatus() });
+  if (op === 'test') {
+    // proxyHost.test() releases its lock in `finally`; a throw from checkUpstream still needs a JSON reply here
+    // (the MCP child reads j.error).
+    try {
+      const r = await proxyHost.test();
+      return res.json({ result: r.status === 200 ? r.body : { ok: false, ...r.body } });
+    } catch (err) {
+      return res.status(500).json({ error: `the proxy test failed: ${err && err.message ? err.message : String(err)}` });
+    }
+  }
+  return badRequest(res, 'proxy: unknown op');
+});
+
+/** Relay mode (agent isolation): the proxy tools run here; reading is allowed (GET /api/proxy/status is not agent-refused), Test is not. */
+const relayProxyDeps = () => ({
+  flagOn: () => flagEnabled('corporateProxy'),
+  status: async () => proxyHost.chatStatus(),
+  test: null,
+  testOff: PROXY_AGENT_TEXT,
+  validateChange: validateProxyChange,
+  validateFlagOn: validateProxyFlagOn,
+});
 
 // Settings › Network proxy (docs/network-proxy.md). A disabled flag looks absent (404) and no
 // handler below runs, so the login file is never read with the flag off.
@@ -13115,39 +13147,14 @@ app.post('/api/proxy/logout', (req, res) => {
 
 app.post('/api/proxy/test', async (req, res) => {
   if (refuseProxyAgent(req, res)) return;
-  if (proxyTestRunning) return res.status(409).json({ error: 'a proxy test is already running', code: 'TEST_RUNNING' });
-  const login = readProxyLogin();
-  const up = resolveUpstream({ env: proxySourceEnv(), settings: networkProxySettings(), login: login && !login.error ? login : null });
-  if (!up) return res.status(409).json({ error: 'no corporate proxy is set up: enter its host and port and Save', code: 'NOT_CONFIGURED' });
-  if (up.error) return res.status(409).json({ error: up.error, code: 'UPSTREAM_INVALID' });
-  // D14: never send the saved hash to a host the running proxy does not use yet (a settings change waits for a restart).
-  const running = EGRESS && EGRESS.connector ? EGRESS.connector.status().upstream : null;
-  // With no proxy running (flag turned on after boot), a host saved through the card since boot is
-  // just as unproven: it could have been typed by mistake, so it gets no hash before a restart either.
-  const unproven = running ? running !== upstreamLabel(up.host, up.port) : proxyUpstreamChangedSinceBoot;
-  if (unproven) {
-    return res.status(409).json({ error: `the saved proxy ${upstreamLabel(up.host, up.port)} is not in use yet: restart Worca, then Test`, code: 'RESTART_NEEDED' });
-  }
-  proxyTestRunning = true;
-  try {
-    const r = await checkUpstream(up, {
-      startTripped: !!(up.login && up.login.rejected),
-      onTrip: ({ upstream, loginId }) => { if (loginId) markLoginRejected(loginId, { upstream }); },
-    });
-    EGRESS?.reloadLogin?.();   // a trip here marked the file: the running connector stops at once
-    res.json({ ok: r.ok, upstream: r.upstream.upstream, results: r.results });
-  } finally {
-    proxyTestRunning = false;
-  }
+  const r = await proxyHost.test();
+  res.status(r.status).json(r.body);
 });
 
 app.put('/api/proxy/settings', async (req, res) => {
   if (refuseProxyAgent(req, res)) return;
   try {
-    const before = networkProxySettings().upstream || '';
-    const networkProxy = await setNetworkProxy((req.body || {}).networkProxy ?? null);
-    if ((networkProxy.upstream || '') !== before) proxyUpstreamChangedSinceBoot = true;
-    res.json({ networkProxy, restartNeeded: true });
+    res.json(await proxyHost.saveSettings((req.body || {}).networkProxy ?? null));
   } catch (err) {
     res.status(400).json({ error: err && err.message ? err.message : String(err), field: 'networkProxy' });
   }
@@ -14239,7 +14246,7 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
         // Workflows chat (D13): a composer card names its type, state and name — never the run-card shape.
         const cc = composerHeaderCard(b);
         if (cc) { cards.push(cc); continue; }
-        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away' || b.card.type === 'scope-switch' || b.card.type === 'project')) {
+        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away' || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'proxy')) {
           cards.push({ id: b.id, type: b.card.type, state: b.state, summary: b.card.summary || '' });
           continue;
         }
@@ -14496,6 +14503,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         // user and its worca tools run here, through the relay. null = the classic MCP child.
         agentRelay: agentIdentity() ? (o) => askAgentRelay({ ...o, engine }) : null,
         commandBridge: askCommandBridge,                     // #574: null unless agent mode can work here
+        proxyBridge: askProxyBridge,                         // the corporate proxy bridge: null unless the flag is on
         onFrame: stampAskFrames(id, job),
         onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
         onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
@@ -15258,9 +15266,9 @@ async function startMetricsEventTurn(threadId, block) {
   const state = block.state === 'declined' ? 'declined' : block.state === 'failed' ? 'failed' : 'applied';
   const result = card.result || null;
   // One event turn for every non-workflow card; the type picks the wording. Metrics is the fallback.
-  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' ? card.type : 'metrics';
-  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, web: webEventPrompt, workspace: workspaceEventPrompt, actions: actionsEventPrompt, away: awayEventPrompt, project: projectEventPrompt, metrics: metricsEventPrompt }[kind];
-  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, web: webNoticeText, workspace: workspaceNoticeText, actions: actionsNoticeText, away: awayNoticeText, project: projectNoticeText, metrics: metricsNoticeText }[kind];
+  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' ? card.type : 'metrics';
+  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, web: webEventPrompt, workspace: workspaceEventPrompt, actions: actionsEventPrompt, away: awayEventPrompt, project: projectEventPrompt, proxy: proxyEventPrompt, metrics: metricsEventPrompt }[kind];
+  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, web: webNoticeText, workspace: workspaceNoticeText, actions: actionsNoticeText, away: awayNoticeText, project: projectNoticeText, proxy: proxyNoticeText, metrics: metricsNoticeText }[kind];
   const text = eventPrompt({ cardId: block.id, state, card, result });
   const notice = noticeText({ state, card, result });
   const mv = await askEventPick(threadId, thread);
@@ -15664,6 +15672,36 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
         block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
       } finally { askCardBusy.delete(cardId); }
       if (!block) return res.status(409).json({ error: 'card vanished' });
+      const turn = await startMetricsEventTurn(id, block);
+      return res.json({ block, turn });
+    }
+    if (found.block.card && found.block.card.type === 'proxy') {
+      // Corporate proxy card (docs/network-proxy.md "From Chat"): proposed → applied | failed | declined. A settings
+      // card saves through proxyHost.saveSettings (the PUT /api/proxy/settings path, so D14's marker is set too); the
+      // flag card turns corporateProxy on through setFlags (the PATCH /api/flags call). Both re-validate first.
+      if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      // D9: the proxy is changed as the user — an agent under isolation must not (refuseProxyAgent's rule).
+      if (body.state === 'applied' && agentMayBeCaller(req)) return res.status(403).json({ error: PROXY_AGENT_TEXT, code: 'PROXY_AGENT_BLOCKED' });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        const turn = await startMetricsEventTurn(id, block);
+        return res.json({ block, turn });
+      }
+      askCardBusy.add(cardId);
+      let block;
+      try {
+        let result;
+        try { result = await applyProxyChange(found.block.card, { saveSettings: (p) => proxyHost.saveSettings(p) }); }
+        catch (err) { result = { ok: false, error: err && err.message ? err.message : String(err), code: (err && err.code) || 'ERROR' }; }
+        block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
+      } finally { askCardBusy.delete(cardId); }
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      // A settings card: an open Settings › Runs tab repaints. The flag card needs nothing: setFlags fires
+      // flagEvents 'changed', which broadcasts {type:'flags'} to every tab.
+      if (block.state === 'applied' && found.block.card.kind === 'settings') emitChanged('settings-changed');
       const turn = await startMetricsEventTurn(id, block);
       return res.json({ block, turn });
     }
@@ -18326,7 +18364,8 @@ export const _testing = {
   updateChecker,
   // The startEgressPolicy() result the /api/proxy routes read. Also clears the since-boot marker,
   // standing in for a restart.
-  setEgress: (e) => { EGRESS = e; proxyUpstreamChangedSinceBoot = false; },
+  setEgress: (e) => { EGRESS = e; proxyHost.restarted(); },
+  proxyHost,
   setUpdateFetcher: (fn) => { updateFetcherOverride = typeof fn === 'function' ? fn : null; updateChecker.clear(); },
   setSourceBuild: (v) => { sourceBuildOverride = typeof v === 'boolean' ? v : null; updateChecker.clear(); },
   setVersionsFetcher: (fn) => { versionsFetcherOverride = typeof fn === 'function' ? fn : null; versionLister.clear(); },
@@ -18345,7 +18384,7 @@ export const _testing = {
   broadcast, sockets, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
-  askCommandBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
+  askCommandBridge, askProxyBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   prWatcherDeps, askPrFixRun, askLinkIsPrFix, prFixRoundOf,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps, askShapeAction,
   openMemberPr, stackedBaseFor, chainRootFor, shipChainNow, afterRunSettled, offerShipCard, syncShipCard, draftReleasesOnMerge,

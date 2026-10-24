@@ -154,7 +154,8 @@ test('real child: handshake, seeded rows readable, thread-scoped attachment, pro
     'list_task_sources', 'find_tasks', 'get_task', 'list_presets',
     'list_scripts', 'get_script', 'save_script', 'test_script',
     'build_workflow', 'draft_agent', 'draft_script', 'get_agent', 'get_workflow',
-    'list_models', 'get_providers', 'test_provider', 'list_copilot_models', 'list_endpoint_models', 'propose_model_change', 'propose_clone_project', 'propose_project_change',
+    'list_models', 'get_providers', 'test_provider', 'list_copilot_models', 'list_endpoint_models', 'propose_model_change',
+    'get_network_proxy', 'test_network_proxy', 'propose_network_proxy_change', 'propose_corporate_proxy_on', 'propose_clone_project', 'propose_project_change',
     'propose_workspace_change',
     'get_project_actions', 'get_workspace_stacks', 'get_run_checkout', 'list_running_actions', 'propose_actions_change',
     'show_files', 'list_settings', 'change_setting', 'pause_run', 'resume_run', 'propose_stop_run', 'send_direction', 'propose_pull_request']);

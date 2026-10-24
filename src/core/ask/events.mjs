@@ -209,6 +209,10 @@ export function labelForTool(name, input = {}, attachmentNames = {}) {
     case 'get_run_checkout': return input?.id ? `Checking the checkout of ${String(input.id).slice(0, 40)}` : 'Checking a run checkout';
     case 'list_running_actions': return 'Looking at running actions';
     case 'propose_actions_change': return 'Proposing an actions change';
+    case 'get_network_proxy': return 'Reading the corporate proxy';
+    case 'test_network_proxy': return 'Testing the corporate proxy';
+    case 'propose_network_proxy_change': return 'Proposing a proxy change';
+    case 'propose_corporate_proxy_on': return 'Proposing to turn the corporate proxy on';
     case 'list_settings': return 'Reading settings';
     case 'change_setting': return input?.id ? `Changing ${String(input.id).slice(0, 40)}` : 'Changing a setting';
     case 'pause_run': return 'Pausing a run';
@@ -307,6 +311,8 @@ export function createTurnReducer({
   onAwaySwitch = null,           // set_away_now / set_run_away_mode RESULT (the parent applies the switch)
   onChatAction = null,           // worca Chat P2: a CHAT_ACTION_TOOLS RESULT (the parent applies it and posts its card)
   onAwayProposal = null,         // propose_away_mode_change RESULT (Away mode card; the parent re-validates the input)
+  onProxyProposal = null,        // propose_network_proxy_change RESULT (proxy card; the parent re-validates the input)
+  onProxyFlagProposal = null,    // propose_corporate_proxy_on RESULT (proxy flag card; same split)
   onCommentMutation = null,
   onWorktreeMutation = null,
   onMemoryMutation = null,
@@ -773,6 +779,19 @@ export function createTurnReducer({
         // Same split as the workspace card: the parent re-validates the INPUT against the stored config (actions-proposal.mjs).
         try {
           const ret = onActionsProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__propose_network_proxy_change' && typeof onProxyProposal === 'function') {
+        // The parent re-validates the INPUT against the flag and the stored settings (proxy-proposal.mjs).
+        try {
+          const ret = onProxyProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
+          if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
+        } catch { reducerErrors += 1; }
+      }
+      if (b.name === 'mcp__worca__propose_corporate_proxy_on' && typeof onProxyFlagProposal === 'function') {
+        try {
+          const ret = onProxyFlagProposal({ toolUseId: b.id, input: fullInputs.get(b.id) ?? {}, text, isError: !!c.is_error });
           if (ret && typeof ret.then === 'function') pendingHooks.push(ret.then(() => {}, () => { reducerErrors += 1; }));
         } catch { reducerErrors += 1; }
       }
