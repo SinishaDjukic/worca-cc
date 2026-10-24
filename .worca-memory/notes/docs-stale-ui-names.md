@@ -1,0 +1,40 @@
+---
+name: docs-stale-ui-names
+description: Read before writing README/docs on the UI, Ask, the broker or CLI flags, probing `worca <x> help`, editing src/cli imports, or re-shooting docs/screenshots
+paths: README.md, docs/*.md, src/cli/*.mjs, tools/readme-screenshots.mjs, docs/screenshots/**, docs/screenshots.md
+updated: 2026-10-24T15:55:36.602Z
+author: Denislav Prinov
+---
+
+Take labels from `ui/public/index.html`/app.js and behaviour from `src/`, never from older docs, info tips or plan research. Live sidebar labels: `sed -n 48,133p ui/public/index.html | grep -o '<span>[^<]*</span>'`.
+
+## Stale names in docs
+- **Running and History are ONE sidebar entry, Runs** (`data-nav="runs"`); `#running/<id>` and `#history/<key>/<id>` survive only as hash routes. Still wrong in `docs/ui-levels.md`, `docs/getting-started.md`, `docs/scheduled-runs.md`, Ask's follow notice "resume it from Running" (`src/core/ask/follow.mjs`) and the run card's `#running/…` link. The density toggle is gone; live cost/elapsed sit on the run page's glance tiles. The stats page is **Statistics**.
+- **PR buttons:** **Create pull request** on the run glance (then **View pull request**) and **Create PR** in the Advanced details header (`.hd-pr`, then **View PR**/**Merged**); both open *Ship it?* (confirm **Open pull request**) → `gh pr create`.
+- Tooltips are not button names ("Schedule a run after this" is the aria-label of **Run after**). `--wait` is refused with `--every`/`--cron`/`--after` (only `--at`; `src/cli/schedule.mjs`).
+- **Settings tabs:** General, Runs, Ask Worca, Guardrails, Memory, Plugins, MCP servers (**Sets** once skills-registry P7 lands; key stays `mcp`), Models, Providers — no Cost tab: the developer rate is **Settings › Runs › Budget & cost limits › Developer rate (USD/h)** (`budgetHumanRate`). "Up to 5 attempts" is a per-flush cap on non-fast-forward retries (`MAX_PUSH_ATTEMPTS`); a record is never dropped.
+- **A tab rename reaches beyond docs/:** `plugins/*/README.md`, `THIRD_PARTY_NOTICES.md`, chat replies (`src/core/chat/command-router.mjs`), the model-plugin README `ui/server.mjs` writes and the export Done step. A `Settings › <Tab>` sweep misses paths STARTING at the tab (`worca → Plugins → <x>`), `<Tab>-view` compounds and a bare "in Settings": grep `\b<Tab>\s*[›>→▸]` and "in Settings" over the whole tree minus `docs/changelog/`.
+- **Away mode** (code `night`; no doc of its own) is **Settings › Runs › Away mode** (Advanced). Only kinds ticked under *Always wait for me on…* wait; a free-text question gets a blank answer and a flag (`decideQuestion`).
+- **`docs/storage.md`:** no "All projects" view (the Runs list groups by project or date); `settingsFile()` is always `~/.worca-cc/settings.json` whatever `WORCA_HOME` says; `projects.json`/`workspaces.json` are vestigial (DB tables).
+- **`docs/getting-started.md`** invents a "compact top-nav twin below 1080px" (≤ 760 px is a drawer behind `#mbar-menu`), wizard hops for a Models column and 10/20-project notes; the pill is the label plus a separate `3/9` chip; the checklist is its own `#getting-started` view. Logs is Advanced on the run page (`RD_TABS`), Expert in History (`HD_TABS`).
+
+## UI copy that overclaims
+- **Title generation tip** ("written by the model the run or chat uses") holds for chats; a UI pipeline run passes `runModel: this.claude.model` (set only by `--model`, a ticket model or a defragment pair), so its title falls back to built-in Haiku.
+- **Share-as-plugin *Require at install*:** `modelSecrets` are only listed on the consent card; teammates fill them later in the plugin's *Model secrets* form, `required: false`.
+- **Presentation workflow:** `scripts/deck{Pdf,Audio,Bundle}.meta.json` say the cards read "the Clarify answers"; the code reads `deck-outputs.json`. No doc covers `wf_presentation`; Simple's Workflow picker lists only Auto and Default — reach it at Advanced, an Ask card or `--workflow wf_presentation`. Its header's "V31" is stale (`applySchemaV41` seeds it).
+- **Ask Worca** has no doc of its own (`## Ask Worca` sections plus `docs/speech.md`). "Every change is a card" is false: cards cover run, workflow, schedule move/edit/cancel/delete, model/provider, workspace, Actions config, metrics, policy, Away settings, clone, web host; NO card for `remember`/`forget`, `pause_schedule`/`resume_schedule`/`skip_next_run`, `set_away_now`/`set_run_away_mode`, diff comments, `save_script`/`test_script`. `ui/public/ask-model.mjs` is message/frame state, not the model picker (`ask-panel.mjs`, Advanced). "Talk, read the replies" never speaks; only Hands-free does TTS.
+- **Policy trust switch** ("Install and update required plugins … automatically"): browser-only (`localStorage worca.policy.trust.<home>`); `paintPluginsPolicy` silently installs only `state === 'missing'` plugins when the Plugins page paints; a below-floor plugin still opens its update preview. Skills U3's wording ("updates to required skills apply without another review when you trust this home") is a settled user decision — keep it, never write "installs and updates" as mechanism.
+- **Team set greys** (Forget) when no followed project names the home OR its policy requires no MCP server AND no skill.
+- **`docs/credential-broker.md`:** the broker does NOT deliver MCP registry secrets (worca puts `MCPSECRET_*` into the spawn env); "spend capped per spawn" is unused (no caller sets a token `budgetUsd`; only per-person daily/monthly budgets).
+
+## worca CLI
+- **Probing help can start a real run.** Only `SUBCOMMANDS` (`src/cli/worca-cc.mjs`) plus `help`/`version` are subcommands; `worca render help` is two tokens, skips the single-token typo guard and runs as prompt "render help" on the cwd project (with a TTY or `--yes` it spends tokens). Check `SUBCOMMANDS` first; probe with `</dev/null` and a mktemp HOME/USERPROFILE/WORCA_HOME.
+- `worca --install <dir> --force` dies `Unknown flag: --force`, exit 2 (only `tools/install.mjs` accepts it). A relative `--file` resolves against the PROJECT dir; `--extras` against the cwd. Exit `3` = ANY pause under `--yes` (manual Ctrl+C included); interactive: `0` for manual/limit/cap/recoverable pauses, `1` only for `REASON.ERROR`. `--workflow auto --yes` skips the proposal. `worca resume <id>` takes the FULL id and has no `--model`; `runs`/`logs`/`schedule` take a unique prefix.
+- `src/cli/worca-cc.mjs` keeps a SECOND `import { … } from './render.mjs';` for form helpers (the asker is `src/cli/forms.mjs`): before editing imports, `grep -rn "imports nothing\|import-free" test/` plus any `render.mjs` import regex, and read each hit.
+- The README browser floor (Chrome/Edge 123, Firefox 120, Safari 17.5) comes from `light-dark()` + `::backdrop`; nothing checks it.
+
+## Screenshots (`node tools/readme-screenshots.mjs [--only a,b] [--out DIR] [--keep] [--port N]`, ~30 s)
+Needs the `node_modules` link; 4399 is held by a foreign Worca — pass `--port 4411`. Read EVERY PNG (the leak guard reads text only). Offline UI states: [[promo-scene-build-traps]].
+- Clarify text: edit `runs.get(id).pendingQuestion.questions[i]` IN PLACE. Live tiles read the last `state` frame: set `orch.state.steps[*].activeMs/costUsd` + `totalCostUsd`, `orch._emit('state', orch.getState())`. Live title: await `orch._titlePromise`, set `orch.state.title` + `entry.title`, `updatePipelineTitle`, `orch.emit('title', …)`.
+- Finished runs: restage after `entry.settled`, then `runs.delete(runId)`. The Diff tab serves the frozen `diff-patch.patch` + `results.json` — rebuild with `diffNameStatus/diffNumstat/diffPatch` + `assembleResults/persistResults/persistDiffPatch`. Statistics' Ask cost needs `ask_cost_ledger` rows; never invent PR URLs.
+- Runs reopens the last run shown — name a run in the hash. Ask sheet: set `localStorage` `worca-cc.ask.size`/`worca-cc.ask.thread` before opening it (there is no `.ask-pill` since 1.11). Team metrics never records mock runs: `buildRunRecord` → `writeOutbox` → `flushSlug` after enabling. `Error: Request aborted` = a reload, benign.

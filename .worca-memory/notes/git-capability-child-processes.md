@@ -1,0 +1,34 @@
+---
+name: git-capability-child-processes
+description: Read before adding or reviewing a gitAvailable() gate, merging dev into a Projects-any-way branch, or proving no git ran — unprobed processes, census, spies
+paths: src/core/git-available.mjs, src/core/nogit-stub.mjs, src/core/git-info.mjs, src/core/metrics/sync.mjs, ui/server.mjs, src/core/graph/script-runner.mjs, src/core/workspace-map/*.mjs, src/core/workspace-map/detectors/*.mjs, scripts/workspace-map-*.mjs, src/core/ask/mcp-stdio.mjs, tools/verify-*-cdp.mjs, tools/smoke-*.mjs
+updated: 2026-10-24T15:55:36.602Z
+author: Denislav Prinov
+---
+
+Test-row traps for gates: [[git-gate-test-traps]].
+
+## `gitAvailable()` is FALSE in every process that never probed, even with git installed
+It reads `WORCA_GIT`, else the stored state, which is `not-probed` → `false` until `gitState()` resolves in THAT process: wrappers short-circuit, `listMemberFiles` walks (gitignored files leak), runs pause, on darwin `withNoGitPath` would hand claude the exit-127 stub (guarded: stub only when `reason !== 'not-probed'`). The suite cannot see it: `tools/test.mjs` exports `WORCA_GIT=1` to every test and child — a killer row deletes `process.env.WORCA_GIT`, `_testing.set({available:true})` and asserts the child env/result.
+- Who resolves git: `ui/server.mjs` at IMPORT (`await gitState();` after `preflightDeps();` — CDP verifiers and `readme-screenshots` import the server and listen themselves); CLI `main()` before dispatch (skips `ui`/`help`/`--ui`); script children via `envForShell` setting `env.WORCA_GIT = gitAvailable() ? '1' : '0'` (never in `scriptBaseEnv`, which scrubs WORCA_*); the Ask MCP child via forwarded `WORCA_GIT` (`buildMcpConfig({git})`) or `resolveChildGit`; `tools/smoke-workspace.mjs`/`smoke-plugin.mjs` after their imports (else smoke:workspace pauses `sourceBranch is not a valid ref: "main"`). An isMain-only server probe gave importers `reason:'not-probed'`, `data-git="off"` and a 409 on `POST /api/run`. `workspace-map-eval.mjs`/`ask-capture-fixtures.mjs` reach no git work. Clean (no gated module reached): plugin-shim-child, chat channel-worker-child, ask/grep-worker (a Worker is its own unprobed instance), check-cli, mcp/launch, host-guard, egress-proxy, codex-files-mcp, src/broker — re-walk imports after a new one.
+- The macOS stub follows children: `<worcaHome>/nogit-bin` leads PATH in terminals, agents' Bash and script nodes while git is missing; `git-available.mjs` drops `nogit-bin` dirs from `process.env.PATH` at load. Claude Code's Bash keeps a spawn-env PATH prefix first (2.1.302; probe: `PATH="<marker>:$PATH" claude -p '<echo $PATH via Bash>' --model claude-haiku-5-5 --allowedTools 'Bash(echo:*)' < /dev/null` — prompt right after `-p`, `--allowedTools` is variadic). Re-run on a CLI major bump.
+- `gh` runs `git remote -v` unless given `--repo`/`-R` or a PR URL, and `gh pr create` always runs git: gated in `git-info.mjs` (`ghRunsGit`; reached from History `findPrForBranch`, run archive, the merge pill). A logged-out `gh` exits before git: test with `GH_TOKEN=dummy` + a logging fake `git` first on PATH. A `NODE_OPTIONS=--import` hook patching `child_process` (+ `syncBuiltinESMExports()`) traces every spawn with its stack. `/usr/bin/python3` is a CLT shim too (`graph/python-probe.mjs`, `GET /api/scripts`).
+
+## Merging dev into a Projects-any-way branch: new git spawns arrive UNGATED
+New modules merge without conflict (`workspace-import.mjs`, `marketplace-publish.mjs` ran raw `execFile('git')`; suite green). Census every dev merge: `git diff <merge-base> MERGE_HEAD -- src ui | grep -n "execFile('git'\|spawn('git'\|'gh'"`, then for each check `GIT_ONLY_ROUTES` (`ui/server.mjs`), `data-needs-git` on its UI control and a `ui-git-hide-set` row.
+- A route that also serves git-free variants never goes in the table (it would 409 them): gate inline in the git branch (`POST /api/workflows/:id/export` marketplace arm) and make its list route answer skipped entries `needs git`; pin the 409 AND a git-free variant.
+- Calls through `git-info.mjs` `_run` and `git-sync.mjs` `_run` answer `gitMissingResult()` without spawning; only RAW spawns or other wrappers (`plugin-repo.mjs` `gitDir`) need the gate.
+- Prove a gate by mutating each gate line and `data-needs-git` singly, then `tools/test.mjs` `git-missing-routes` + `ui-git-hide-set`, judged by exit status.
+
+## Probe recipes (seconds, no suite)
+- Leak: `env -u WORCA_GIT node --input-type=module -e "…(await m.listMemberFiles('<repo>')).via"` on `workspace-map/files.mjs`: `walk` = leak, `git` = ok.
+- Server importer: a script in the tree importing `./ui/server.mjs`, listening on 0, printing `gitAvailable()` + `data-git`, run with `env -u WORCA_GIT` and sandbox homes.
+- Script child: delete `WORCA_GIT`, await `gitState()`, `envForShell(envelope, scriptBaseEnv({}, process.platform))`, spawn `script-child.mjs` with the envelope on stdin; `.via` must be `git`.
+
+## Proving "no git ran in folder X"
+- Harness seams (`orch._git`, git-info `_testing.setRunner`) miss routes and `metrics/sync.mjs` (`_testing.setGit`). For routes: a spy module as the test file's FIRST static import, every `src/` module and `../ui/server.mjs` loaded by `await import()` in `before()`; wrap `spawn, spawnSync, execFile, execFileSync, exec, execSync` on `createRequire(import.meta.url)('node:child_process')` + `syncBuiltinESMExports()`. Copy `[util.promisify.custom]` from `execFile`/`exec` (else `promisify(execFile)` resolves the bare stdout and every git answer reads as failed). Record `/(^|[\\/])git$/` with `opts.cwd || process.cwd()`; F is touched when that cwd or the arg after `-C` is under F or `realpathSync(F)`. Check the spy catches a known git route first; filter `projectKey()`/`canonicalProjectRoot` `rev-parse`.
+- A git-info runner spy in a folder-run test is never `[]` with git ON: `_resolvePolicy` → `discoverPolicy` → `listRemotes` runs `git remote -v` in the real folder every run and resume (non-repo: nothing cached); `discover: false` makes 0 calls. Same shape: metrics `resolveProjectSink` (non-mock) and `checkTeamTotalGate`. A git dir with no remote caches after one call, hiding it. Attribute calls by wrapping `orch._git` + both runners and printing `new Error().stack` frames.
+- A resume built without `auto: true` that restarts from the top blocks forever on the mock clarify question; a mid-graph pause resumes to done.
+
+## Git-run byte identity is NOT pinned by the parity suites
+Mutants leaking a non-git field into EVERY git run survived 22 suites (seed-traces, graph-prompt-parity, run-root-*, orchestrator-*, api-run-*): `state.workMode`/`state.projectKey` written unconditionally, `reason:"commit_failed"` on git `retain.members`, a stored `projectKey` for a registered Git project. Pin ABSENCE in a git-run row (`!("workMode" in orch.getState())`, `Object.keys(retain.members[0]).sort()` deep-equal today's list); P3/P5 edit these lines.
