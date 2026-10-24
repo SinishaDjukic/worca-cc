@@ -13,6 +13,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { applyFlags } from '../ui/public/flags.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -335,4 +336,38 @@ test('History graph: a v2 card (.node[data-node-id]) is a labelled link whose cl
   assert.equal(sec.querySelector('.log-f-step').value, 'n_a');
   assert.equal(lines(sec).length, 2);
   assert.equal(sec.__pendingLogFilter, null);
+});
+
+test('History drawer (#911 slice 3): the head holds Summaries / Raw before Open in Logs, and it swaps a saved Bash line', async () => {
+  const DESC_NDJSON = [
+    ...LINES,
+    { source: 'planner', level: 'debug', text: '→ Bash npm test', desc: 'Run the tests', ts: 5, nodeId: 'n_a', executionId: 'x:n_a:2', cycle: 2 },
+  ].map((l) => JSON.stringify({ ...l, ts: '2026-08-18T10:00:00Z' })).join('\n');
+  const arms = historyArms();
+  const { window } = await boot({ fetchHandler: (u, o) => (u.endsWith('/log') ? okText(DESC_NDJSON) : arms(u, o)) });
+  applyFlags({ commandSummaries: true }, window.document);
+  go(window, `history/${KEY}/${ID}`);
+  await settle(6);
+  const graph = $(window, '#hist-detail .hd-graph');
+  const card = window.document.createElement('div');
+  card.className = 'node node-agent run-node';
+  card.dataset.nodeId = 'n_a';
+  card.dataset.id = 'n_a';
+  card.innerHTML = '<div class="nlabel"><span class="tt">Planner</span></div>';
+  graph.appendChild(card);
+  const level = window.document.documentElement.dataset.level;
+  window.document.documentElement.dataset.level = 'expert';
+  click(window, card);
+  await settle(4);
+  const drawer = $(window, '#hist-detail .hd-sec[data-sec="workflow"] .wf-log-drawer');
+  assert.ok(drawer && !drawer.hidden, 'the drawer opens');
+  const seg = drawer.querySelector('.wf-log-head .log-view-seg');
+  assert.ok(seg, 'the drawer head holds the switch');
+  assert.equal(seg.nextElementSibling, drawer.querySelector('.wf-log-full'));
+  const bashMsg = () => [...drawer.querySelectorAll('.log .log-line .log-msg')].at(-1).textContent;
+  assert.equal(bashMsg(), '→ Run the tests', 'the saved desc survives projectLogRecord');
+  click(window, seg.querySelector('[data-log-view="raw"]'));
+  assert.equal(bashMsg(), '→ Bash npm test');
+  if (level === undefined) delete window.document.documentElement.dataset.level;
+  else window.document.documentElement.dataset.level = level;
 });

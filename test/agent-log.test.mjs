@@ -456,3 +456,48 @@ test('result event never logs a [done]/turns line', () => {
   assert.ok(!logs.some((l) => /turns|\[done\]/.test(l.text)), 'no [done]/turns line');
   assert.ok(!logs.some((l) => /^[←→]|\[init\]/.test(l.text)), 'no arrow/init line either');
 });
+
+test('Bash description (#911 slice 3): carried as desc, text keeps the raw command; Codex has none', async () => {
+  await checkRows([
+    { name: 'Claude Bash with a description logs both', run: () => {
+      const logs = capture('implementer', {
+        type: 'assistant',
+        raw: { type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1', name: 'Bash',
+          input: { command: 'node --test test/naming.test.mjs', description: 'Run the naming tests' } }] } },
+      });
+      assert.equal(logs.length, 1);
+      assert.equal(logs[0].text, '→ Bash node --test test/naming.test.mjs');
+      assert.equal(logs[0].desc, 'Run the naming tests');
+    } },
+    { name: 'no description: no desc key', run: () => {
+      const logs = capture('implementer', {
+        type: 'assistant',
+        raw: { type: 'assistant', message: { content: [{ type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'npm test' } }] } },
+      });
+      assert.equal(logs[0].text, '→ Bash npm test');
+      assert.equal('desc' in logs[0], false);
+    } },
+    { name: 'a Codex command (normalized, no description) stays raw', run: () => {
+      const logs = capture('implementer', { type: 'tool', parentId: null,
+        calls: [{ name: 'Bash', input: { command: "/bin/zsh -lc 'cat a.txt'" }, toolUseId: 'c1' }] });
+      assert.equal(logs[0].text, "→ Bash /bin/zsh -lc 'cat a.txt'");
+      assert.equal('desc' in logs[0], false);
+    } },
+    { name: 'a long description is clipped to 120; a non-string one is ignored', run: () => {
+      const long = 'x'.repeat(200);
+      const a = capture('implementer', { type: 'tool', parentId: null,
+        calls: [{ name: 'Bash', input: { command: 'ls', description: long }, toolUseId: 'c2' }] });
+      assert.equal(a[0].desc.length, 120);
+      assert.ok(a[0].desc.endsWith('…'));
+      const b = capture('implementer', { type: 'tool', parentId: null,
+        calls: [{ name: 'Bash', input: { command: 'ls', description: { x: 1 } }, toolUseId: 'c3' }] });
+      assert.equal('desc' in b[0], false);
+    } },
+    { name: 'a non-Bash tool with a description gets no desc, and its text is unchanged', run: () => {
+      const logs = capture('planner', { type: 'tool', parentId: null,
+        calls: [{ name: 'Read', input: { file_path: '/tmp/proj/a.js', description: 'nope' }, toolUseId: 'c4' }] });
+      assert.equal(posix(logs[0].text), '→ Read a.js');   // the file's own posix() helper, as its Read rows use
+      assert.equal('desc' in logs[0], false);
+    } },
+  ]);
+});

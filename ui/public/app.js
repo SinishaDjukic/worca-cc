@@ -83,6 +83,7 @@ const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', 
 
 import { icon } from './icons.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
+import { readLogView, writeLogView, paintLogMsg, applyLogView, syncLogViewSeg } from './log-view.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
 import { alreadyApplied, noteBoot } from './ws-seq.mjs';
 import { createAlerts, mountAlertsCard } from './alerts.mjs';
@@ -5335,9 +5336,24 @@ function effectiveDefaultsOf(row) {
 // ---------------------------------------------------------------------------
 const MAX_LOG_LINES = testHookInt('maxLogLines', 4000);
 
+// Run logs: Summaries / Raw (#911 slice 3). The stored choice applies only while commandSummaries is on;
+// off, every line reads raw (as before the flag). Read once; the guarded module-level `localStorage` never throws.
+let logViewPref = readLogView(localStorage);
+const logView = () => (flagOn('commandSummaries') ? logViewPref : 'raw');
+function setLogView(view) {
+  logViewPref = view === 'raw' ? 'raw' : 'summary';
+  writeLogView(localStorage, logViewPref);
+  applyLogView(document, logView());
+}
+const cloneLogViewSeg = () => {
+  const seg = document.getElementById('log-bar-tpl').content.querySelector('.log-view-seg').cloneNode(true);
+  syncLogViewSeg(seg, logView());
+  return seg;
+};
+
 // Build one .log-line node from a normalized log record. (Same DOM shape the
 // old global appendLog produced: ts/src/msg spans + lvl class.)
-function buildLogLine({ source, level, text, ts, sub, path, kind }) {
+function buildLogLine({ source, level, text, ts, sub, path, kind, desc }) {
   const line = document.createElement('div');
   line.className = logLineClass(level, sub);
 
@@ -5358,11 +5374,12 @@ function buildLogLine({ source, level, text, ts, sub, path, kind }) {
     m.href = '#';
     m.dataset.path = String(path);
     if (kind) m.dataset.kind = String(kind);
+    m.textContent = String(text);
   } else {
     m = document.createElement('span');
     m.className = 'log-msg';
+    paintLogMsg(m, { text, desc }, logView());   // a Bash description reads in place of the command (Summaries)
   }
-  m.textContent = String(text);
 
   line.append(t, s, m);
   return line;
@@ -5585,6 +5602,7 @@ function onLog(r, msg) {
     ...(msg.stream ? { stream: msg.stream } : {}),
     ...(msg.path != null ? { path: msg.path } : {}),
     ...(msg.kind != null ? { kind: msg.kind } : {}),
+    ...(typeof msg.desc === 'string' && msg.desc ? { desc: msg.desc } : {}),
   };
   r.logLines.push(rec);
   if (r.logLines.length > MAX_LOG_LINES) r.logLines.shift();
@@ -20258,7 +20276,10 @@ function openStopModal(target) {
 // The ONE source of the filter bar's markup is #log-bar-tpl; the run page's Logs tab and History
 // clone it so the two bars can never drift (control order, classes, a11y).
 function buildLogFilterBar() {
-  return document.getElementById('log-bar-tpl').content.querySelector('.log-filters').cloneNode(true);
+  const bar = document.getElementById('log-bar-tpl').content.querySelector('.log-filters').cloneNode(true);
+  const seg = bar.querySelector('.log-view-seg');
+  if (seg) syncLogViewSeg(seg, logView());   // every cloned bar shows the current choice
+  return bar;
 }
 
 // The ONE filter reader for both bars. The search box is read by PRESENCE, not
@@ -31582,7 +31603,7 @@ function revealLogDrawer(sec) {
   sec.scrollIntoView({ block: 'end', behavior: still ? 'auto' : 'smooth' });
 }
 function newLogDrawer(sec, { onClose, onOpenInLogs }) {
-  const d = createLogDrawer({ doc: document, win: window, storage: LOG_DRAWER_STORAGE, onClose, onOpenInLogs });
+  const d = createLogDrawer({ doc: document, win: window, storage: LOG_DRAWER_STORAGE, onClose, onOpenInLogs, tools: cloneLogViewSeg() });
   // Follow the tail only while the reader is at the bottom (one geometry read per scroll, not per line).
   d.body.addEventListener('scroll', () => {
     d.body.__pinned = d.body.scrollTop + d.body.clientHeight >= d.body.scrollHeight - 24;
@@ -39667,6 +39688,13 @@ askPanel = createAskPanel({
 // Command summaries (#911): read the person's switch once, and follow the flag.
 Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).then((d) => setChatSummariesPref(d && d.chat)).catch(() => { /* keep: on */ });
 onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); void paintHelperModelCards(); });
+// One delegated handler for every Summaries / Raw switch (Logs tab, History Logs, both drawers, Chat's run
+// panel): they are cloned on every build, so per-node listeners would be lost on each rebuild.
+document.addEventListener('click', (e) => {
+  const b = e.target.closest && e.target.closest('.log-view-seg button[data-log-view]');
+  if (b) setLogView(b.dataset.logView);
+});
+onFlagChange('commandSummaries', () => applyLogView(document, logView()));
 // Pinpoint (#669) on the chat's answers: Disagree, Use this and Go deeper send at once with the quote.
 pinpoint.addSurface(askPanel.root, {
   kind: 'chat',

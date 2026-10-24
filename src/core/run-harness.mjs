@@ -404,11 +404,18 @@ function subAgentCostModel(inputModel, parentModel) {
   return parentModel ?? null;
 }
 
-/** One `→ Tool target` line per call of a normalized `tool` event. */
+// Max chars for a Bash call's own `description` (#911 slice 3, flag commandSummaries): the run log's
+// Summaries mode shows it in place of the command. One line in the Logs pane; the command keeps its 80.
+const BASH_DESC_MAX = 120;
+
+/** One `→ Tool target` line per call of a normalized `tool` event, plus the Bash call's own
+ *  description as `desc` when the agent gave one (Claude Code does; Codex and Cursor never do). */
 function describeToolUses(calls, projectDir) {
   return calls.filter((c) => typeof c.name === 'string').map((c) => {
     const target = toolTarget(c.name, c.input, projectDir);
-    return target ? `${c.name} ${target}` : c.name;
+    const text = target ? `${c.name} ${target}` : c.name;
+    const d = c.name === 'Bash' && typeof c.input?.description === 'string' ? clip(c.input.description, BASH_DESC_MAX) : '';
+    return d ? { text, desc: d } : { text };
   });
 }
 
@@ -7184,6 +7191,8 @@ export class RunHarness extends EventEmitter {
       // stderr (agent CLI, git, graphify). Provenance, not severity — the level
       // says how bad it is, this says where it came from.
       if (attr.stream) evt.stream = attr.stream;
+      // A Bash call's own description (#911 slice 3): the web log's Summaries mode shows it; `text` keeps the command.
+      if (typeof attr.desc === 'string' && attr.desc) evt.desc = attr.desc;
     }
     this._emit('log', evt);
     this.logWriter.push(evt); // persist the full stream (buffered; flushed on a timer)
@@ -7506,8 +7515,8 @@ export class RunHarness extends EventEmitter {
     this._recordSkills(e.calls, e.parentId, attr);
     this._recordGraphify(e.calls, e.parentId, attr);
     const { source, logAttr } = this._sourceFor(role, e.parentId, attr);
-    for (const call of describeToolUses(e.calls, this.projectDir)) {
-      this._log(source, 'debug', `→ ${call}`, logAttr);
+    for (const { text, desc } of describeToolUses(e.calls, this.projectDir)) {
+      this._log(source, 'debug', `→ ${text}`, desc ? { ...(logAttr || {}), desc } : logAttr);
     }
   }
 
