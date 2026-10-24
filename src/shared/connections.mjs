@@ -1,12 +1,12 @@
 // src/shared/connections.mjs
 // Harness ⟂ provider ⟂ model. A catalog model reaches its endpoint over a CONNECTION, and the harnesses that can
 // run it follow from that connection — they are derived here, never declared:
-//   signin    the harness's own sign-in (Claude Code login, ChatGPT for Codex, Cursor, Goose's and OpenCode's providers). A subscription belongs to
+//   signin    the harness's own sign-in (Claude Code login, ChatGPT for Codex, Cursor, Gemini CLI, Qwen Code, Goose's and OpenCode's providers). A subscription belongs to
 //             its harness, so the model runs there and nowhere else. The entry's `engine` names that harness.
 //   env       routing env for Claude Code (ANTHROPIC_BASE_URL …): an Anthropic-format endpoint. Claude Code only.
 //   provider  a provider worca knows (`upstream`: copilot / openai / anthropic over a wire protocol). Claude Code
 //             reaches every one through worca's bridge; Codex reaches an OpenAI-compatible Responses endpoint
-//             itself (engines/codex-endpoint.mjs). Copilot, Cursor and OpenCode take no endpoint.
+//             itself (engines/codex-endpoint.mjs). Copilot and the sign-in engines (Cursor, Gemini CLI, Goose, OpenCode, Qwen Code) take no endpoint.
 // The `copilot` PROVIDER (GitHub Copilot's API, reached through the bridge) is not the Copilot harness: a Copilot
 // sign-in row (`engine:'copilot'`) runs on the Copilot CLI only.
 // ONE source for the server and the browser (served as-is under /src/shared). Import-free but for engine-switch.
@@ -14,7 +14,7 @@ import { ENGINES, MODEL_ENGINE_NAMES, engineLabel } from './engine-switch.mjs';
 
 export const PROVIDER_LABELS = Object.freeze({ copilot: 'GitHub Copilot', openai: 'OpenAI-compatible', anthropic: 'Anthropic-compatible' });
 /** The name of each harness's own sign-in, as a provider. */
-export const SIGNIN_LABELS = Object.freeze({ claude: 'Claude sign-in', codex: 'ChatGPT sign-in', cursor: 'Cursor sign-in', goose: 'Goose providers', opencode: 'OpenCode providers', copilot: 'Copilot sign-in' });
+export const SIGNIN_LABELS = Object.freeze({ claude: 'Claude sign-in', codex: 'ChatGPT sign-in', cursor: 'Cursor sign-in', gemini: 'Gemini CLI sign-in', goose: 'Goose providers', opencode: 'OpenCode providers', qwen: 'Qwen Code sign-in', copilot: 'Copilot sign-in' });
 
 const signinEngine = (m) => (m && MODEL_ENGINE_NAMES.includes(m.engine) ? m.engine : 'claude');
 
@@ -82,8 +82,10 @@ export const HARNESS_EFFORTS = Object.freeze({
   codex: Object.freeze(['minimal', 'low', 'medium', 'high']),
   cursor: Object.freeze([]),
   copilot: Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']),
+  gemini: Object.freeze([]),
   goose: Object.freeze(['low', 'medium', 'high', 'max']),
   opencode: Object.freeze(['minimal', 'low', 'medium', 'high', 'max']),
+  qwen: Object.freeze([]),
 });
 
 /** An effort picked in one harness's vocabulary, as the closest one `engine` takes, or null when it takes none.
@@ -108,7 +110,7 @@ export function effortsOn(m, engine) {
 }
 
 /** The harnesses by their product names, where a sentence names the CLI (the engine labels stay short: Claude). */
-export const HARNESS_NAMES = Object.freeze({ claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor', goose: 'Goose', opencode: 'OpenCode', copilot: 'Copilot' });
+export const HARNESS_NAMES = Object.freeze({ claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor', gemini: 'Gemini CLI', goose: 'Goose', opencode: 'OpenCode', qwen: 'Qwen Code', copilot: 'Copilot' });
 
 /** A free catalog id for a model `upstreamId` reached through `provider` ('openai', 'copilot', 'anthropic', or 'gw' for a
  *  routing-env endpoint): the id is worca's handle, the upstream id is what the endpoint is sent. */

@@ -395,7 +395,7 @@ function normalizeModels(raw, warnings) {
     const efforts = Array.isArray(m.efforts) ? m.efforts.filter((e) => allowed.includes(e)) : [];
     entry.efforts = efforts.length ? efforts : (engine === 'claude' ? ['medium', 'high'] : [...allowed]);
     if (OWN_SIGNIN_ENGINES.includes(engine)) {
-      // A Cursor, Goose or OpenCode model runs through the engine's own sign-in: no routing env, no upstream.
+      // A model of an own-sign-in engine (Cursor, Gemini CLI, Goose, OpenCode, Qwen Code) runs through the engine's own sign-in: no routing env, no upstream.
       if (m.env != null) { warnings.push(`catalogs.models: ${m.id}: ${aModelOf(engine)} takes no env — entry dropped`); continue; }
       if (m.upstream != null) { warnings.push(`catalogs.models: ${m.id}: ${aModelOf(engine)} takes no upstream — entry dropped`); continue; }
       const idWhy = modelIdProblem(engine, m.id);

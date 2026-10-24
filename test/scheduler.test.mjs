@@ -1127,7 +1127,7 @@ test('a paused usage limit an engine hit says it can continue now on the other e
   recordOutcome(await fire('20'), { status: 'paused', reason: 'usage_limit', detail: 'free requests used up' });
   const msgs = listNotifications().filter((n) => n.kind === 'run_paused' && n.scheduleId === schedule.id).map((n) => n.message).reverse();
   assert.deepEqual(msgs, [
-    "paused (usage limit): You've hit your usage limit — resume on Claude, Copilot, Cursor, Goose or OpenCode to continue now.",
+    "paused (usage limit): You've hit your usage limit — resume on Claude, Copilot, Cursor, Gemini CLI, Goose, OpenCode or Qwen Code to continue now.",
     'paused (usage limit): free requests used up',
   ]);
 });

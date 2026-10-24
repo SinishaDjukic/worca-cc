@@ -466,7 +466,7 @@ test('list: a Codex built-in shadowed by a same-id model of any engine says over
 
 test('editor: Cursor takes no env, no endpoint, no effort and no pricing; the fields come back off Cursor', () => {
   const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS, cursorEfforts: [] });
-  assert.deepEqual([...el.querySelectorAll('.mv-engine option')].map((o) => o.value), ['claude', 'codex', 'copilot', 'cursor', 'goose', 'opencode']);
+  assert.deepEqual([...el.querySelectorAll('.mv-engine option')].map((o) => o.value), ['claude', 'codex', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen']);
   setModelEngine(el, 'cursor');
   assert.equal(el.querySelector('.mv-engine').value, 'cursor');
   assert.equal(el.querySelectorAll('.mv-effort-cb').length, 0, 'no effort chips');
@@ -541,6 +541,38 @@ test('editor: editing an OpenCode model offers only its own providers', () => {
   assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-title').textContent), ['OpenCode providers']);
   assert.equal(el.querySelector('.mv-conn-body').hidden, true);
 });
+
+for (const [engine, label] of [['gemini', 'Gemini CLI'], ['qwen', 'Qwen Code']]) {
+  test(`editor: ${label} is Cursor's shape — its own sign-in only, no env, no effort, no pricing`, () => {
+    const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
+    setModelEngine(el, engine);
+    assert.equal(el.querySelectorAll('.mv-effort-cb').length, 0, 'no effort chips');
+    assert.equal(el.querySelector('.mv-env').closest('.mv-field').hidden, true);
+    assert.equal(el.querySelector('.mv-cost-edit').closest('.mv-field').hidden, true);
+    const conn = el.querySelector('.mv-conn');
+    // A new entry still offers every connection; on its CLI's sign-in it runs on that CLI alone.
+    assert.equal(conn.querySelector('.mv-conn-mode-rb:checked').value, 'direct');
+    assert.match(conn.querySelector('.mv-conn-runs').textContent, new RegExp(`^Runs on ${label} only`));
+    assert.equal(conn.querySelector('.mv-conn-body').hidden, true);
+    el.querySelector('.mv-id').value = 'm-1';
+    const { body } = collectModelEditor(el);
+    assert.equal(body.engine, engine);
+    assert.deepEqual(body.efforts, []);
+  });
+
+  test(`editor: editing a ${label} model shows no efforts and only its own sign-in`, () => {
+    const el = renderModelEditor({ id: 'm-1', label: 'm-1', engine, efforts: [] }, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
+    assert.equal(el.querySelectorAll('.mv-effort-cb').length, 0);
+    assert.equal(el.querySelector('.mv-efforts').closest('.mv-field').hidden, true);
+    const shown = [...el.querySelectorAll('.mv-conn .mv-conn-mode')].filter((l) => !l.hidden);
+    assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-title').textContent), [`${label} default`]);
+  });
+
+  test(`list: a ${label} model carries its badge and no effort summary of Claude's`, () => {
+    const el = renderModelsList({ globals: [{ id: 'm-1', label: 'm-1', efforts: [], engine }], predefined: PREDEFINED, efforts: EFFORTS, codexEfforts: CODEX_EFFORTS }, { doc });
+    assert.equal(el.querySelector('.mv-card[data-id="m-1"] .mv-engine').textContent, label);
+  });
+}
 
 test('list: a Cursor custom model carries a Cursor badge, and there is no Cursor filter chip', () => {
   const el = renderModelsList({

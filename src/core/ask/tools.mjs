@@ -521,7 +521,7 @@ export function createAskTools(deps) {
         tags: { type: 'array', items: { type: 'string' },
           description: 'run tags for cost allocation, always "key:value" (client:acme, team:web). Only when the user names them.' },
         memoryScope: SCHEMA.s('Memory defragment workflow only: "global" | "project"'),
-        engine: SCHEMA.s('claude | codex | copilot | cursor | goose | opencode — only when the user asked for that engine; omit for the default. Every engine but claude is beta: never pick one on your own'),
+        engine: SCHEMA.s('claude | codex | copilot | cursor | gemini | goose | opencode | qwen — only when the user asked for that engine; omit for the default. Every engine but claude is beta: never pick one on your own'),
         sourceBranch: SCHEMA.s('branch to start from (default: current)'), featureBranch: SCHEMA.s('feature branch name'),
         sameAsSource: SCHEMA.b('commit straight onto the source branch instead of a separate feature branch: the run fast-forwards the source to its work when it finishes. Only when the user asks for it.'),
         note: SCHEMA.s('one line shown on the card: why this workflow fits the work (≤ 200 chars)'),

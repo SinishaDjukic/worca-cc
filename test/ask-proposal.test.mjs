@@ -264,8 +264,8 @@ test('engine: omitted keeps the card shape, a known engine rides the card, an un
   assert.equal('engine' in ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x' })), false);
   assert.equal(ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', engine: 'Codex ' })).engine, 'codex');
   assert.equal(ok(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', engine: 'claude' })).engine, 'claude');
-  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', engine: 'gemini' })), [PROPOSAL_ERRORS.unknownEngine('gemini')]);
-  assert.match(PROPOSAL_ERRORS.unknownEngine('gemini'), /one of claude, codex, copilot, cursor/);
+  assert.deepEqual(errs(await validateProposal({ projectKey: 'demo-00000001', brief: 'x', engine: 'gpt' })), [PROPOSAL_ERRORS.unknownEngine('gpt')]);
+  assert.match(PROPOSAL_ERRORS.unknownEngine('gpt'), /one of claude, codex, copilot, cursor, gemini, goose, opencode, qwen/);
 });
 
 test('the same featureBranch and sourceBranch without sameAsSource is an error that names the flag', async () => {

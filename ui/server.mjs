@@ -12213,7 +12213,6 @@ app.get('/api/models', (req, res) => {
   res.json({
     models: maskedGlobalModels(), plugin: pluginModelsPayload(), predefined: PREDEFINED_MODELS, efforts: EFFORTS,
     codex: CODEX_BUILTIN_MODELS, codexEfforts: CODEX_EFFORTS,   // §3.1a: the Codex built-ins group + the editor's Codex efforts
-    cursorEfforts: CURSOR_EFFORTS,                               // none: Cursor has no effort flag (no Cursor built-ins)
     copilot: COPILOT_BUILTIN_MODELS, copilotEfforts: COPILOT_EFFORTS,   // the Copilot built-ins group + the editor's Copilot efforts
     gooseEfforts: GOOSE_EFFORTS,                                 // GOOSE_THINKING_EFFORT values (no Goose built-ins)
     opencodeEfforts: OPENCODE_EFFORTS,                           // OpenCode's --variant values (no OpenCode built-ins)

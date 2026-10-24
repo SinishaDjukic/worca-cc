@@ -17,7 +17,7 @@ export const PROJECT_CARDS = Object.freeze([
     hint: 'Create PR opens with Watch PR on for this project. A workspace run needs it on in every repository.' }] },
 ]);
 const JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag'];
-// src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): Cursor's, Goose's and OpenCode's helper jobs run on Claude.
+// src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the sign-in engines' helper jobs run on Claude.
 const HELPER_ENGINES = ['claude', 'codex'];
 function makeCard(doc, key, title) { const card = doc.createElement('section'); card.className = 'card pd-settings-card'; card.dataset.card = key; const heading = doc.createElement('h3'); heading.textContent = title; const body = doc.createElement('div'); body.className = 'pd-settings-body drows'; const save = doc.createElement('button'); save.type = 'button'; save.className = 'btn btn-primary btn-sm pd-settings-save'; save.textContent = 'Save'; const msg = doc.createElement('small'); msg.className = 'hint pd-settings-msg'; const actions = doc.createElement('div'); actions.className = 'add-project-actions engine-save-row'; actions.append(msg, save); card.append(heading, body, actions); return { card, body, save, msg }; }
 export function mountProjectSettings(host, { projectKey, projectDir, fetchFn = (url, options) => fetch(url, options), onTest = null }) {
