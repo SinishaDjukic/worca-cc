@@ -68,6 +68,15 @@ test('Cursor: step models without effort; no helper slots', async () => {
   assert.throws(() => assertStepModelsInput({ cursor: { plan: { model: 'x', effort: 'high' } } }), /^Error: stepModels\.cursor\.plan: Cursor takes no effort$/);
 });
 
+test('Goose: step models with its efforts; no helper slots; no Ask', async () => {
+  const { assertUtilityModelsInput, assertStepModelsInput, assertAskEngineInput, assertRunEngineInput } = await import('../src/core/settings.mjs');
+  assert.equal(assertRunEngineInput('goose'), 'goose');
+  assert.throws(() => assertAskEngineInput('goose'), /askEngine must be one of claude \| codex/);
+  assert.throws(() => assertUtilityModelsInput({ goose: { title: { model: 'x/y' } } }), /Goose runs no helper jobs/);
+  assert.deepEqual(assertStepModelsInput({ goose: { plan: { model: 'x/y', effort: 'max' } } }), { goose: { plan: { model: 'x/y', effort: 'max' } } });
+  assert.throws(() => assertStepModelsInput({ goose: { plan: { model: 'x/y', effort: 'xhigh' } } }), /effort must be one of low \| medium \| high \| max/);
+});
+
 test('OpenCode: step models with its variants; no helper slots; no Ask', async () => {
   const { assertUtilityModelsInput, assertStepModelsInput, assertAskEngineInput, assertRunEngineInput } = await import('../src/core/settings.mjs');
   assert.equal(assertRunEngineInput('opencode'), 'opencode');

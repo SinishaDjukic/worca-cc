@@ -27,19 +27,19 @@ before it closes on unsaved changes.
 
 ### Harnesses, providers and models
 
-A **harness** runs the agents: Claude Code, Codex, Copilot or Cursor, picked per
+A **harness** runs the agents: Claude Code, Codex, Copilot, Cursor or Goose, picked per
 run. A **provider** is where a model's tokens are billed: a harness's own
 sign-in, or an endpoint. A **model** sits on one provider. Which harnesses can
 run a model follows from its connection, never from a setting:
 
 | Connection | Runs on |
 |---|---|
-| A harness's own sign-in (Claude Code's login, Codex's ChatGPT sign-in, Cursor's, the Copilot CLI's) | that harness only — a subscription works only in its own CLI |
+| A harness's own sign-in (Claude Code's login, Codex's ChatGPT sign-in, Cursor's, the Copilot CLI's, Goose's providers) | that harness only — a subscription works only in its own CLI |
 | Custom endpoint via env (`ANTHROPIC_BASE_URL` …) | Claude Code |
 | Through a provider: an OpenAI-compatible endpoint on the Responses API | Claude Code (through the bridge) **and** Codex (directly) |
 | Through a provider: chat completions, OpenRouter routing, GitHub Copilot, Anthropic-compatible | Claude Code (through the bridge) |
 
-Copilot and Cursor take no endpoint: they run their own sign-in's models.
+Copilot, Cursor and Goose take no endpoint: they run their own sign-in's models.
 
 - A model that runs on two harnesses is added once. Its card names both
   (*Claude · Codex*), every picker on a run of either harness offers it, and a
@@ -571,6 +571,33 @@ worca can run pipelines on Cursor's headless CLI agent. Chat does not run on Cur
 
 **Chat on Cursor is not available.** A chat needs every shell and disk tool switched off, and no Cursor switch for that is known. Cursor models are not offered in Chat.
 
+## Goose
+
+worca can run pipelines on [Goose](https://github.com/aaif-goose/goose)'s headless CLI (`goose run`), checked against goose 1.54.0. Chat does not run on Goose.
+
+1. Install the Goose CLI (`brew install block-goose-cli`) and make sure worca finds it: on `PATH`, or `WORCA_GOOSE_BIN=/path/to/goose` in worca's environment.
+2. Set up a provider once: `goose configure`, or put the provider's key (for example `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) in worca's own environment. worca stores no Goose key. With guardrails that scrub the environment, add the key's name to the project's allowlist; `GOOSE_` variables always pass.
+3. Pick Goose per run on New pipeline, or as a default on the Models page (Engines). The engine card only checks that `goose --version` runs: a missing provider key shows up when the first step fails.
+
+**Models.** worca ships no Goose models. With no model set, Goose runs the provider and model of its own config. To pick one, add a model on the Models page with Engine **Goose** and the id `provider/model` (for example `google/gemini-2.5-flash`, `openai/gpt-4o`, `ollama/qwen2.5-coder`, `openrouter/anthropic/claude-sonnet-4`). worca splits it at the first `/` into goose's `--provider` and `--model`. Goose models take no env and no endpoint. Their efforts (low, medium, high, max) set `GOOSE_THINKING_EFFORT`; what each one does is up to the provider, and some ignore it.
+
+**Cost.** Goose prices a run itself when it knows the model (`cost_usd`), and worca shows that. A model Goose cannot price (a local Ollama model, a subscription) reports no cost: its steps show $0.00 and the run log warns on each one that no cost was reported, as a Codex model on an unpriced endpoint does.
+
+**A Claude subscription through Goose.** Goose's `claude-acp` provider runs Claude Code under your Claude login through the ACP adapter: install it (`npm install -g @agentclientprotocol/claude-agent-acp`), make sure `claude` is signed in, and use the model id `claude-acp/sonnet` (or `claude-acp/opus`). Claude Code then runs its own tools: they show in the run as Bash, Read, Edit and so on, without their arguments, and your own Claude Code settings, hooks and MCP servers apply to them. worca's MCP servers reach it too. Goose's older `claude-code` provider is deprecated (Goose's own words) and shows no tool calls at all. Running Claude through Goose is mainly a way to test the Goose engine: a Claude run on the Claude engine holds worca's guardrails, Goose's does not.
+
+**Helper jobs run on Claude**, as on Cursor: titles, the run overview, the PR description, the Auto workflow classifier and Away mode's night decider. Goose has no verified read-only mode for text worca did not write.
+
+**What Goose holds, and what it does not.**
+
+- Guardrails: none. Goose has no per-run permission rules worca can set, so any set other than Permissive needs **Allow unguarded** (`--allow-unguarded-engine`), and so do the project's own `.claude/settings.json` deny rules. Goose has no sandbox: an unguarded Goose run can read and change worca's own state in `~/.worca-cc` through its shell. Container mode is the containment.
+- Every tool call runs without asking (`GOOSE_MODE=auto`): Goose's approve modes wait for a terminal.
+- Your Goose extensions do not load (`--no-profile`): a run gets Goose's developer tools (shell, write, edit, tree, read_image) and the run's MCP servers only. Your provider settings in `~/.config/goose` still apply.
+- MCP servers: stdio servers only. worca starts each through a small wrapper script named after the server (in a temporary folder under `~/.worca-cc/tmp/goose`, removed after the step), so its tools keep their names; secret values reach the server through Goose's environment, never a file or the command line. A remote (http) server is not attached. On Windows there is no wrapper: each server's command goes to Goose as it is, with its env values in Goose's environment under their own names (two servers that set one name to different values stop the step), and its tools keep the names Goose derives from the command's path. MCP on Goose under Windows has not been tested.
+- No sub-agents (research fan-out runs serially), no skills folder, no hook telemetry. The host guard's kill-check hook does not run on Goose; its instructions to the agent still apply.
+- Goose keeps each step's session in its own database (`~/.local/share/goose/sessions`), named `worca-…`; a paused step resumes it.
+
+**Chat on Goose is not available.** Goose's chat mode skips every tool call, worca's own included, so it cannot lock a chat down the way Ask needs. Goose models are not offered in Chat.
+
 ## OpenCode
 
 worca can run pipelines on [OpenCode](https://opencode.ai) (`opencode run`). OpenCode is in beta in worca. Chat does not run on OpenCode. Checked against opencode 1.18.23.
@@ -754,6 +781,8 @@ talks to answers at all.
 - **401 / "not signed in"** — sign in again on the Providers card; Copilot
   tokens can be revoked on GitHub's side.
 - **`engine cursor: cannot run cursor-agent (ENOENT)`** — install the Cursor CLI or set `WORCA_CURSOR_BIN`.
+- **`engine goose: cannot run goose (ENOENT)`** — install the Goose CLI or set `WORCA_GOOSE_BIN`.
+- **A Goose step fails with "Ran into this error: … API key not valid"** — Goose reached the provider without a working key: run `goose configure`, or set the provider's key in worca's environment (and allowlist it under a scrubbing guardrail set).
 - **`engine opencode: cannot run opencode (ENOENT)`** — install OpenCode or set `WORCA_OPENCODE_BIN`.
 - **`engine opencode: a step of this run names no model`** or **`refusing to start OpenCode without a model`** — set a model for the run (or each step), or set `WORCA_OPENCODE_ALLOW_DEFAULT_MODEL=1` to let OpenCode pick its own default.
 - **`engine opencode: no provider credentials in the agent's environment`** — run `opencode auth login`, or set the provider's key in worca's environment (and in the set's environment allowlist when it scrubs the environment).

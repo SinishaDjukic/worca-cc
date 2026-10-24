@@ -1953,7 +1953,7 @@ function assertModelEngine(input) {
   if (MODEL_ENGINES.includes(input)) return input;
   throw new Error(`engine must be one of ${MODEL_ENGINES.join(' | ')}`);
 }
-/** A Cursor or OpenCode model takes no routing env and no upstream: the engine connects with its own sign-in. */
+/** A Cursor, Goose or OpenCode model takes no routing env and no upstream: the engine connects with its own sign-in. */
 function assertOwnSignInFields(engine, env, upstream) {
   if (!OWN_SIGNIN_ENGINES.includes(engine)) return;
   if (Object.keys(env || {}).length) throw new Error(`${aModelOf(engine)} takes no env`);
@@ -1989,7 +1989,7 @@ function assertIdForEngine(id, engine, conn = {}) {
   if ((engine === 'cursor' || engine === 'copilot') && (CODEX_PRICES[id.toLowerCase()] || listPriceFor(id))) throw new Error(`"${id}" is a built-in model id${engine === 'copilot' ? ` — Copilot's own models are copilot/<id>, such as "copilot/${id}"` : ''}`);
   // copilot/<id> names a Copilot built-in (model-env.mjs COPILOT_MODEL_PREFIX): only a Copilot row may take one.
   if (engine !== 'copilot' && id.toLowerCase().startsWith('copilot/')) throw new Error(`"${id}" names a Copilot model — a copilot/ id is for the Copilot engine`);
-  const why = modelIdProblem(engine, id);   // an OpenCode id is provider/model, so it never collides with a built-in
+  const why = modelIdProblem(engine, id);   // a Goose or OpenCode id is provider/model, so it never collides with a built-in
   if (why) throw new Error(why);
 }
 

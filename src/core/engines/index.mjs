@@ -3,7 +3,7 @@
 // error at run start, never a silent fallback; mock mode (WORCA_MOCK or
 // opts.mock) resolves every known engine to the offline mock. An adapter is
 // {name, capabilities, run, classifyError[, preflight, unenforcedRules, partialRules,
-// ruleReach, ruleKind, unattachableMcp]}: see the codex, copilot, cursor and opencode entries below.
+// ruleReach, ruleKind, unattachableMcp]}: see the codex, copilot, cursor, goose and opencode entries below.
 import { runClaudeAdapter, claudeCapabilities } from './claude.mjs';
 import { runMock } from './mock.mjs';
 import { normalizingOnEvent } from './claude-events.mjs';
@@ -12,6 +12,7 @@ import { runCodexProcess, codexCapabilities, classifyCodexError, codexPreflight,
 import * as copilot from './copilot.mjs';
 import { runCursorProcess, cursorCapabilities, classifyCursorError, cursorPreflight,
   unenforcedRules as cursorUnenforced, partialRules as cursorPartial, CURSOR_RULE_TERMS } from './cursor.mjs';
+import * as goose from './goose.mjs';
 import * as opencode from './opencode.mjs';
 
 export { CAPABILITY_KEYS, CAPABILITY_FALLBACKS, describeUnattachableMcp } from './capabilities.mjs';
@@ -59,6 +60,9 @@ const copilotAdapter = Object.freeze({ name: 'copilot', capabilities: copilot.co
 const cursorAdapter = Object.freeze({ name: 'cursor', capabilities: cursorCapabilities, run: runCursorProcess, classifyError: classifyCursorError,
   preflight: cursorPreflight, unenforcedRules: cursorUnenforced, partialRules: cursorPartial,
   ruleReach: CURSOR_RULE_TERMS.reach, ruleKind: CURSOR_RULE_TERMS.kind });
+// Goose (engines/goose.mjs) emits the normalized vocabulary itself. It holds no permission rule (capability false).
+const gooseAdapter = Object.freeze({ name: 'goose', capabilities: goose.gooseCapabilities, run: goose.runGooseProcess,
+  classifyError: goose.classifyGooseError, preflight: goose.goosePreflight, unattachableMcp: goose.gooseMcpProblems });
 // OpenCode (engines/opencode.mjs) emits the normalized vocabulary itself; its rules ride OPENCODE_CONFIG_CONTENT.
 const opencodeAdapter = Object.freeze({ name: 'opencode', capabilities: opencode.opencodeCapabilities, run: opencode.runOpencodeProcess,
   classifyError: opencode.classifyOpencodeError, preflight: opencode.opencodePreflight, unenforcedRules: opencode.unenforcedRules,
@@ -71,6 +75,7 @@ const ENGINES = new Map([
   ['codex', codexAdapter],
   ['copilot', copilotAdapter],
   ['cursor', cursorAdapter],
+  ['goose', gooseAdapter],
   ['opencode', opencodeAdapter],
   ['mock', mockAdapter],
 ]);

@@ -805,11 +805,11 @@ function collectOpenRouter(conn) {
 }
 
 /** Each connection mode's title and hint. A new entry offers all three (the sign-in picks its harness below); an entry
- *  being edited keeps its engine, so a Codex one has no env mode (codex ignores routing env) and a Cursor or OpenCode one only its
+ *  being edited keeps its engine, so a Codex one has no env mode (codex ignores routing env) and a Cursor, Goose or OpenCode one only its
  *  own sign-in (no env, no endpoint). A mode with no text is hidden. */
 const MODE_TEXT = {
   claude: {
-    direct: ["A harness's own sign-in", "The subscription you are signed in with: Claude Code's login, Codex's ChatGPT sign-in, Cursor's, the Copilot CLI's or OpenCode's providers. It runs only in that harness."],
+    direct: ["A harness's own sign-in", "The subscription you are signed in with: Claude Code's login, Codex's ChatGPT sign-in, Cursor's, the Copilot CLI's, Goose's or OpenCode's providers. It runs only in that harness."],
     env: ['Custom endpoint via env (Claude Code)', 'For endpoints that already speak the Anthropic API (LiteLLM, Bedrock, Vertex, a gateway). Set the routing env below.'],
     provider: ['Through a provider', "GitHub Copilot, an OpenAI-compatible or an Anthropic-compatible endpoint. Claude Code reaches each through worca's bridge; Codex reaches an OpenAI Responses endpoint itself."],
   },
@@ -823,12 +823,15 @@ const MODE_TEXT = {
   copilot: {
     direct: ['Copilot default', "the Copilot CLI's own sign-in (`copilot login`, or COPILOT_GITHUB_TOKEN) reaches GitHub Copilot."],
   },
+  goose: {
+    direct: ['Goose providers', "Goose's own providers (`goose configure`, or a provider key in worca's environment) reach the model the id names."],
+  },
   opencode: {
     direct: ['OpenCode providers', "OpenCode's own providers (`opencode auth login`, or a provider key in worca's environment) reach the model the id names."],
   },
 };
 /** Engines whose models connect only through the engine's own sign-in (src/core/model-env.mjs OWN_SIGNIN_ENGINES). */
-const OWN_SIGNIN = Object.freeze(['cursor', 'opencode']);
+const OWN_SIGNIN = Object.freeze(['cursor', 'goose', 'opencode']);
 
 /**
  * The Connection block for the model editor. `model` is the MASKED entry or
@@ -1005,7 +1008,7 @@ export function applyConnectionMode(connEl) {
   if (!conn) return;
   // A Codex model (conn.dataset.engine, set by models-view setModelEngine): no env mode, the OpenAI-compatible
   // provider only, the Responses API only, and none of the bridge's capability pins.
-  // A Cursor or OpenCode model: its own sign-in only (MODE_TEXT), so the provider body never shows.
+  // A Cursor, Goose or OpenCode model: its own sign-in only (MODE_TEXT), so the provider body never shows.
   // A new entry is on no engine until its connection says so (src/shared/connections.mjs): the sign-in mode asks which
   // harness, env and provider make it Claude Code's. Only an entry being edited is held to the engine it was added under.
   const eng = conn.dataset.engine || 'claude';

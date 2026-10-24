@@ -40,17 +40,17 @@ test('one engine table: the lists, model-env and the adapter registry derive fro
 });
 
 test('every other engine, in order, filtered by readiness', () => {
-  assert.deepEqual(otherEngines('claude'), ['codex', 'copilot', 'cursor', 'opencode']);
-  assert.deepEqual(otherEngines('cursor'), ['claude', 'codex', 'copilot', 'opencode']);
-  assert.deepEqual(otherEngines('opencode'), ['claude', 'codex', 'copilot', 'cursor']);
-  assert.deepEqual(otherEngines(null), ['codex', 'copilot', 'cursor', 'opencode'], 'a missing engine is Claude');
+  assert.deepEqual(otherEngines('claude'), ['codex', 'copilot', 'cursor', 'goose', 'opencode']);
+  assert.deepEqual(otherEngines('cursor'), ['claude', 'codex', 'copilot', 'goose', 'opencode']);
+  assert.deepEqual(otherEngines('opencode'), ['claude', 'codex', 'copilot', 'cursor', 'goose']);
+  assert.deepEqual(otherEngines(null), ['codex', 'copilot', 'cursor', 'goose', 'opencode'], 'a missing engine is Claude');
   assert.deepEqual(otherEngines('codex', ['claude']), ['claude']);
   assert.deepEqual(otherEngines('gemini'), []);
 });
 
 test('a usage limit offers the ready others; any other pause offers none', () => {
   assert.deepEqual(usageLimitSwitches({ reason: 'usage_limit', limitEngine: 'claude' }, ['claude', 'cursor']), ['cursor']);
-  assert.deepEqual(usageLimitSwitches({ reason: 'usage_limit', limitEngine: 'codex' }), ['claude', 'copilot', 'cursor', 'opencode'], 'nothing known: every other engine');
+  assert.deepEqual(usageLimitSwitches({ reason: 'usage_limit', limitEngine: 'codex' }), ['claude', 'copilot', 'cursor', 'goose', 'opencode'], 'nothing known: every other engine');
   assert.deepEqual(usageLimitSwitches({ reason: 'usage_limit', limitEngine: null }), []);
   assert.deepEqual(usageLimitSwitches({ reason: 'error', limitEngine: 'claude' }), []);
   assert.deepEqual(usageLimitSwitches({}), []);
@@ -114,7 +114,7 @@ test('a usage limit an agent hit records its engine on every copy of the pause',
   assert.equal(row.limitEngine, 'claude', 'the history list row too');
   assert.equal(row.limitResetAt, res.limitResetAt, 'the history list row carries the reset time');
   const audit = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(orch.state.id).map((e) => e.text).join('\n');
-  assert.match(audit, /Resume after the reset, or continue now on Codex, Copilot, Cursor or OpenCode, or resume with another model\./);
+  assert.match(audit, /Resume after the reset, or continue now on Codex, Copilot, Cursor, Goose or OpenCode, or resume with another model\./);
 
   // A resume clears it, like the reason.
   const orch2 = createOrchestrator({ projectDir: dir, auto: true, claude: { mock: true }, runners: { producer: async () => ({ status: 'ok', summary: 'done' }), verifier: okVerifier }, resume: saved });
