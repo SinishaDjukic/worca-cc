@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { shq } from './shell.mjs';
 import { guardedGitEnv } from '../git-guard.mjs';
+import { DEFAULT_SECRET_PATHS, isSecretPath } from '../secret-paths.mjs';
 
 const execFileP = promisify(execFile);
 const MAX_BUFFER = 256 * 1024 * 1024;
@@ -47,24 +48,50 @@ export async function walkFiles(p, { onSkip = () => {} } = {}) {
 /** What a fresh clone of the branch lacks: dirty + untracked (non-ignored) files (`files`,
  *  sent as they are: a symlink travels as a symlink, never as what it points at), the
  *  injected/extra paths (`mounts`, relative to the worktree, e.g. the memory mount, skills,
- *  graphify-out/ which ignores itself; sent dereferenced), and the deletions to replay. */
-export async function overlayFiles({ worktreeDir, injected = [], onSkip }) {
+ *  graphify-out/ which ignores itself; sent dereferenced), and the deletions to replay.
+ *  A file or mount path matching `secretPaths` (secret-paths.mjs) stays on this machine and is listed in `masked`.
+ *  A committed one (in HEAD, so in the git bundle already) is listed in `trackedSecrets` to warn about, never masked,
+ *  so the sandbox clone still equals git. */
+export async function overlayFiles({ worktreeDir, injected = [], onSkip, secretPaths = DEFAULT_SECRET_PATHS }) {
   const z = (s) => s.split('\0').filter(Boolean);
   const deleted = z(await git(['ls-files', '-z', '--deleted'], worktreeDir));
   const gone = new Set(deleted);
   const roots = injected.map((rel) => relative(worktreeDir, resolve(worktreeDir, rel)).split(sep).join('/')).filter((r) => r && !r.startsWith('..'));
   const underMount = (f) => roots.some((r) => f === r || f.startsWith(`${r}/`));
-  // A mount (a symlinked skill dir) goes in whole below; its own path must not also arrive as a symlink.
-  const files = z(await git(['ls-files', '-z', '--modified', '--others', '--exclude-standard'], worktreeDir))
-    .filter((f) => !gone.has(f) && !underMount(f));
+  const secret = (f) => isSecretPath(f, secretPaths);
+  const masked = new Set();
+  const keep = (f) => { if (!secret(f)) return true; masked.add(f); return false; };
+  // A mount (a symlinked skill dir) goes in whole below; its own path must not also arrive as a symlink. A file staged
+  // as new is neither in the bundle (HEAD) nor modified against the index: it goes too.
+  const head = async (args) => { try { return z(await git(args, worktreeDir)); } catch { return []; } };   // no commit yet
+  const stagedNew = await head(['diff', '--cached', '--name-only', '-z', '--diff-filter=A', 'HEAD']);
+  const files = [...z(await git(['ls-files', '-z', '--modified', '--others', '--exclude-standard'], worktreeDir)), ...stagedNew]
+    .filter((f) => !gone.has(f) && !underMount(f) && keep(f));
   const mounts = new Set();
   for (const rel of injected) {
     for (const abs of await walkFiles(resolve(worktreeDir, rel), { onSkip })) {
       const r = relative(worktreeDir, abs);
-      if (r && !r.startsWith('..')) mounts.add(r.split(sep).join('/'));
+      if (r && !r.startsWith('..')) { const p = r.split(sep).join('/'); if (keep(p)) mounts.add(p); }
     }
   }
-  return { files: [...new Set(files)].sort(), mounts: [...mounts].sort(), deleted: deleted.sort() };
+  // What the bundle carries is HEAD: a secret only staged is not in it (it is masked above), only a committed one.
+  const trackedSecrets = (await head(['ls-tree', '-r', '-z', '--name-only', 'HEAD'])).filter(secret);
+  return { files: [...new Set(files)].sort(), mounts: [...mounts].sort(), deleted: deleted.sort(),
+    masked: [...masked].sort(), trackedSecrets: [...new Set(trackedSecrets)].sort() };
+}
+
+/** The run-log lines for overlayFiles' `masked` and `trackedSecrets`: each list named once, paths only. */
+export function overlaySecretLines({ masked = [], trackedSecrets = [] }) {
+  const lines = [];
+  if (masked.length) {
+    lines.push({ level: 'warn', text: `sandbox upload: ${masked.length} secret file${masked.length === 1 ? '' : 's'} kept on this machine: ${masked.join(', ')}` });
+  }
+  if (trackedSecrets.length) {
+    const one = trackedSecrets.length === 1;
+    lines.push({ level: 'warn', text: `sandbox upload: ${trackedSecrets.length} committed file${one ? ' looks' : 's look'} like ${one ? 'a secret' : 'secrets'} and `
+      + `reach${one ? 'es' : ''} the sandbox with the git history: ${trackedSecrets.join(', ')}. Remove ${one ? 'it' : 'them'} from the repository to keep ${one ? 'it' : 'them'} out.` });
+  }
+  return lines;
 }
 
 /** tar.gz of `files` (relative to `cwd`). `dereference` (-h) copies a symlinked skill's content;

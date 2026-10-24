@@ -524,7 +524,7 @@ test('a resumed run gets a fresh relay: the old one is killed, a route on the ne
 
 // A remote spawn's model calls go through the relay (plans/model-relay-design.md §4): an E2B env on the
 // loopback fake whose `claude` calls the model the way the CLI does, with whatever the sandbox env holds.
-async function relayedClaudeEnv(t) {
+async function relayedClaudeEnv(t, extra = {}) {
   const seen = [];
   const init = JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' });
   const sdk = createFakeE2b({ root: tmp('worca-e2b-relayed-root-'), onCommand: async (cmd, o) => {
@@ -535,7 +535,7 @@ async function relayedClaudeEnv(t) {
     return { lines: [init, JSON.stringify({ type: 'result', result: `status ${r.status}`, total_cost_usd: 0 })], exitCode: 0 };
   } });
   const f = fixture(tmp);
-  const env = new E2bExecEnv(makeEnvOpts(tmp, sdk, f, { env: {} }));
+  const env = new E2bExecEnv(makeEnvOpts(tmp, sdk, f, { env: {}, ...extra }));
   await env.start();
   t.after(() => env.close('test'));
   return { env, f, sdk, seen };
@@ -566,6 +566,25 @@ test('a remote run on a bridged model is no longer refused', POSIX, (t) => withR
   assert.doesNotMatch(JSON.stringify(spawns[0].envs), new RegExp(secret), 'the bridge secret never enters the sandbox');
   assert.match(spawns[0].envs.ANTHROPIC_BASE_URL, /^http:\/\/127\.0\.0\.1:\d+\/r\//);
   assert.equal(env.relay.routes.size, 0, 'the route closed with the spawn');
+}));
+
+// Plan Task 13: deny-all egress (allowOut empty). The relay rides the command's stdio and the sandbox's loopback, which
+// E2B keeps open under deny-all (plans/2026-10-22-e2b-kill-egress-checks.md §2), so a Claude step still reaches its model.
+test('a Claude step reaches its model through the relay with the sandbox egress closed (allowOut empty)', POSIX, (t) => withRealClaude(async () => {
+  const seen = [];
+  const bridge = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => { seen.push({ url: req.url }); res.writeHead(200, { 'content-type': 'application/json' }); res.end('{}'); });
+  });
+  await new Promise((r) => bridge.listen(0, '127.0.0.1', r));
+  t.after(() => { bridge.closeAllConnections(); bridge.close(); });
+  const network = { denyOut: ['0.0.0.0/0'] };
+  const { env, f, sdk } = await relayedClaudeEnv(t, { network });
+  assert.deepEqual(sdk.events.find((e) => e.type === 'create').network, network, 'the sandbox was created with deny-all');
+  const r = await runClaude({ cwd: f.repo, prompt: 'hi', model: 'local-qwen', execEnv: env,
+    modelEnv: { ANTHROPIC_BASE_URL: `http://127.0.0.1:${bridge.address().port}/m/local-qwen`, ANTHROPIC_AUTH_TOKEN: 'bridge-secret-0123456789' } });
+  assert.equal(r.text, 'status 200');
+  assert.equal(seen.length, 1, 'the model call went through the relay to worca');
 }));
 
 test('a Bedrock model is refused for a remote run', POSIX, (t) => withRealClaude(async () => {

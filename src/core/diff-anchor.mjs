@@ -12,11 +12,12 @@
 // express.static serves, so relocating it under src/ would need a new static route
 // plus edits to app.js, index.html and two test files, for nothing.
 //
-// isProtectedBasename comes from ask/tools.mjs, where it is defined and exported.
-// That direction is safe: tools.mjs has ZERO imports, so this can never close a
-// cycle.
+// isProtectedBasename is the secret-path owner's matcher (secret-paths.mjs isSecretPath),
+// and the floor below is the secure guardrail preset, which builds on its
+// DEFAULT_SECRET_PATHS. secret-paths.mjs imports nothing of worca's, so this can
+// never close a cycle.
 import { splitPatchSections, patchIndex, sectionKey, parseFileSection, MAX_FILE_SECTION_CODE_UNITS } from '../../ui/public/diff-view.mjs';
-import { isProtectedBasename } from './ask/tools.mjs';
+import { isSecretPath as isProtectedBasename } from './secret-paths.mjs';
 import { GUARDRAIL_PRESETS } from './guardrails.mjs';
 
 /** The floor, exactly as tool-deps.mjs chooses it: never the run's own set. */

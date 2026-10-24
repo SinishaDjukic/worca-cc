@@ -24,10 +24,10 @@ const msg = (err) => redactSecrets(String((err && err.message) || err || 'unknow
 const SOURCE_ORDER = Object.freeze(['static', 'survey', 'usage', 'candidate']);
 const SKIP_SCAN_RE = /(^|\/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|go\.sum|poetry\.lock|Pipfile\.lock|composer\.lock|Gemfile\.lock|packages\.lock\.json|gradle\.lockfile)$|\.(min\.[a-z]+|map|svg|lock)$/i;
 /** Files the `normal` guardrail preset protects (basename, any depth: `.env*`, `*.pem`, `*.key`,
- *  `id_rsa`, `id_ed25519`, `*.p12`, `*.pfx`): an agent under it cannot Read them, so a candidate
+ *  `.npmrc`, `.netrc`, `id_*`, `*.p12`, `*.pfx`): an agent under it cannot Read them, so a candidate
  *  there could never be confirmed. (P3's config-env still reads `.env*` statically.) Kept equal to
  *  src/core/guardrails.mjs by a parity test; this module never imports it (C14). */
-const PROTECTED_RE = /(^|\/)(\.env[^/]*|[^/]*\.(pem|key|p12|pfx)|id_rsa|id_ed25519)$/i;
+const PROTECTED_RE = /(^|\/)(\.env[^/]*|[^/]*\.(pem|key|p12|pfx)|\.npmrc|\.netrc|id_[^/]*)$/i;
 /** X6: a host names a member through its first DNS label only when it is internal-shaped — one
  *  label (`billing`), or a name under an internal suffix (`billing.internal`,
  *  `billing.default.svc.cluster.local`). A public dotted host (`api.stripe.com`) names a member

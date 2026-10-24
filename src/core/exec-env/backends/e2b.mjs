@@ -6,6 +6,8 @@ import { createHash } from 'node:crypto';
 import { E2B_DEFAULT_TEMPLATE, CONTROL_REQUEST_TIMEOUT_MS, FILE_REQUEST_TIMEOUT_MS, STATUS_REQUEST_TIMEOUT_MS, DEFAULT_E2B_MAX_SANDBOXES,
   DEFAULT_E2B_MAX_WAIT_MIN, e2bConnection, e2bPreflight, redactKey } from '../e2b-config.mjs';
 import { renderProjectDockerfile, e2bBaseVersion, pinnedClaudeCodeVersion } from './e2b-template.mjs';
+// Light: sandbox-egress.mjs imports only egress-proxy.mjs, which imports only node built-ins.
+import { sandboxEgress, SANDBOX_EGRESS_HELP } from '../../sandbox-egress.mjs';
 
 const named = (err, sdk, name) => (typeof sdk?.[name] === 'function' && err instanceof sdk[name])
   || err.name === name || err.constructor?.name === name;
@@ -65,7 +67,19 @@ export function e2bClient(sdk, conn, { mock = false } = {}) {
   const handle = (sb) => ({ id: sb.sandboxId, pathPrefix: sb.pathPrefix || '', box: sb });
   const all = async (pager) => { const out = []; while (pager.hasNext) out.push(...await pager.nextItems()); return out; };
   return {
-    create: async ({ environment, tags, timeoutMs }) => handle(await sdk.Sandbox.create(environment, { ...ctl(), metadata: tags, timeoutMs })),
+    create: async ({ environment, tags, timeoutMs, network = null }) => {
+      try {
+        return handle(await sdk.Sandbox.create(environment, { ...ctl(), metadata: tags, timeoutMs, ...(network ? { network } : {}) }));
+      } catch (err) {
+        // E2B checks `network` at create and answers 400 for a shape it refuses (plans/2026-10-22-e2b-kill-egress-checks.md
+        // §2): a setting to fix, never a lost sandbox. Any other 400 is not about the network and stays the SDK's.
+        if (network && err?.statusCode === 400) {
+          throw Object.assign(new Error(`E2B refused the sandbox's network settings (${err.message}). Check WORCA_EGRESS_ALLOW `
+            + 'and WORCA_EGRESS_DENY, or set the project\'s sandbox network back to open.', { cause: err }), { errorClass: 'config' });
+        }
+        throw err;
+      }
+    },
     connect: async (id) => handle(await sdk.Sandbox.connect(id, ctl())),
     info: (id) => sdk.Sandbox.getInfo(id, ctl()),
     list: async (tags) => (await all(sdk.Sandbox.list({ ...conn.opts, query: { metadata: tags } })))
@@ -146,8 +160,16 @@ export const e2bBackend = Object.freeze({
     defaultMaxConcurrent: DEFAULT_E2B_MAX_SANDBOXES, defaultMaxWaitMin: DEFAULT_E2B_MAX_WAIT_MIN }),
   limitSettings: Object.freeze({ maxConcurrent: 'e2bMaxSandboxes', maxWaitMin: 'e2bMaxWaitMin' }),
   secretEnv: /^(E2B_|WORCA_E2B_)/,
-  projectFields: Object.freeze([Object.freeze({ key: 'template', label: 'E2B template',
-    hint: 'an E2B template name (lowercase letters, digits, - and _, optional :tag)', validate: (v) => TEMPLATE_RE.test(v) })]),
+  projectFields: Object.freeze([
+    Object.freeze({ key: 'template', label: 'E2B template',
+      hint: 'an E2B template name (lowercase letters, digits, - and _, optional :tag)', validate: (v) => TEMPLATE_RE.test(v) }),
+    // Decision 7: open unless the project opts in. `allow` = the WORCA_EGRESS_ALLOW list (sandbox-egress.mjs sandboxEgress).
+    Object.freeze({ key: 'egress', label: 'Sandbox network', hint: 'open or allow', help: SANDBOX_EGRESS_HELP, placeholder: 'open',
+      options: Object.freeze([Object.freeze({ value: 'open', label: 'Open' }), Object.freeze({ value: 'allow', label: 'Allow listed hosts only' })]),
+      validate: (v) => v === 'open' || v === 'allow' }),
+  ]),
+  /** Sandbox.create's `network` for the project's config, or null while its egress is open (design §4.6). */
+  network: ({ config = {}, env = process.env } = {}) => sandboxEgress(config, env),
   // e2bPreflight also runs the generic remotePreflight; the harness de-duplicates (A9), so the 409 text is today's.
   preflight: (ctx) => e2bPreflight({ ...ctx, sdkInstalled: e2bInstalled }),
   configured: (env = process.env) => !!env.E2B_API_KEY && e2bInstalled(),
