@@ -13,6 +13,23 @@ export const SandboxNotFoundError = named('SandboxNotFoundError');
 export const SandboxNotRunningError = named('SandboxNotRunningError');
 export const SandboxUnreachableError = named('SandboxUnreachableError');
 export const CommandExitError = named('CommandExitError');
+/** E2B 2.56.0's control-plane error: a 400 at create is a SandboxError with `statusCode` and a "400: <reason>" message. */
+export const SandboxError = named('SandboxError');
+
+const ALL_TRAFFIC = '0.0.0.0/0';
+const isAddress = (entry) => /^[0-9.]+(?:\/\d{1,2})?$/.test(entry) || entry.includes(':');
+/** What the self-hosted E2B 2.56.0 refuses in `network` at create (plans/2026-10-22-e2b-kill-egress-checks.md §2):
+ *  a host name in denyOut, and a host name in allowOut without ALL_TRAFFIC in denyOut. null = accepted. */
+function networkRefusal(network) {
+  if (!network) return null;
+  const allow = network.allowOut || []; const deny = network.denyOut || [];
+  const name = deny.find((d) => !isAddress(d));
+  if (name) return `invalid denied CIDR ${name}`;
+  if (allow.some((a) => !isAddress(a)) && !deny.includes(ALL_TRAFFIC)) {
+    return "When specifying allowed domains in allow out, you must include 'ALL_TRAFFIC' in deny out to block all other traffic.";
+  }
+  return null;
+}
 
 export function createFakeE2b({ root, onCommand = null, logFile = null } = {}) {
   const live = new Map();   // sandboxId -> FakeSandbox
@@ -76,8 +93,11 @@ export function createFakeE2b({ root, onCommand = null, logFile = null } = {}) {
   const info = (sb) => ({ sandboxId: sb.sandboxId, templateId: sb.templateId, metadata: { ...sb.metadata }, startedAt: sb.startedAt, state: 'running' });
   class Sandbox {
     static async create(template, opts = {}) {
+      const refused = networkRefusal(opts.network);
+      if (refused) throw new SandboxError(`400: ${refused}`, { statusCode: 400 });
       const sb = new FakeSandbox(`fake${++seq}${Date.now().toString(36)}`, template, opts);
-      live.set(sb.sandboxId, sb); log({ type: 'create', sandboxId: sb.sandboxId, template, metadata: opts.metadata || {} });
+      live.set(sb.sandboxId, sb);
+      log({ type: 'create', sandboxId: sb.sandboxId, template, metadata: opts.metadata || {}, ...(Object.hasOwn(opts, 'network') ? { network: opts.network } : {}) });
       return sb;
     }
     static async connect(id) { const sb = control(id); log({ type: 'connect', sandboxId: id }); return sb; }
@@ -94,5 +114,5 @@ export function createFakeE2b({ root, onCommand = null, logFile = null } = {}) {
       return { get hasNext() { return !done; }, async nextItems() { done = true; return items; } };
     }
   }
-  return { Sandbox, CommandExitError, SandboxNotFoundError, SandboxNotRunningError, SandboxUnreachableError, events, live };
+  return { Sandbox, CommandExitError, SandboxError, SandboxNotFoundError, SandboxNotRunningError, SandboxUnreachableError, events, live };
 }

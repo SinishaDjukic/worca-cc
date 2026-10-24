@@ -359,3 +359,58 @@ test('propose_run\'s execEnv and the chat rules name the engines a sandbox runs 
   const words = `${remote.slice(0, -1).map(engineLabel).join(', ')} or ${engineLabel(remote.at(-1))}`;
   assert.ok(String(ASK_SYSTEM_RULES).includes(`E2B takes runs of one git project only, on ${words}: no workspace`));
 });
+
+// ── sandbox egress (plan Task 13): Sandbox.create gets `network` only for an `allow` project ──
+test('e2b create: no network option unless one is given; a given one reaches Sandbox.create as it is', async () => {
+  const { createFakeE2b } = await import('../src/core/exec-env/e2b-fake.mjs');
+  const { e2bClient } = await import('../src/core/exec-env/backends/e2b.mjs');
+  const root = mkdtempSync(join(tmpdir(), 'worca-egress-root-')); scratch.push(root);
+  const sdk = createFakeE2b({ root });
+  const client = e2bClient(sdk, { opts: {} }, { mock: true });
+  const open = await client.create({ environment: 'worca-agent', tags: {}, timeoutMs: 60_000 });
+  const network = { allowOut: ['github.com', '*.github.com'], denyOut: ['0.0.0.0/0'] };
+  const closed = await client.create({ environment: 'worca-agent', tags: {}, timeoutMs: 60_000, network });
+  const creates = sdk.events.filter((e) => e.type === 'create');
+  assert.equal(Object.hasOwn(creates[0], 'network'), false, 'open by default: no network key at all');
+  assert.deepEqual(creates[1].network, network);
+  await sdk.Sandbox.kill(open.id); await sdk.Sandbox.kill(closed.id);
+});
+
+test('e2b create: a 400 for the network shape is a config error, not a lost sandbox', async () => {
+  const { createFakeE2b } = await import('../src/core/exec-env/e2b-fake.mjs');
+  const { E2bExecEnv } = await import('../src/core/exec-env/e2b-env.mjs');
+  const root = mkdtempSync(join(tmpdir(), 'worca-egress-root-')); scratch.push(root);
+  const sdk = createFakeE2b({ root });
+  const env = new E2bExecEnv({ sdk, conn: { opts: {}, template: 'worca-agent' }, worktreeDir: root, pipelineDir: root, metadata: {},
+    scratchDir: mkdtempSync(join(tmpdir(), 'worca-egress-scratch-')), network: { allowOut: ['github.com'] } });
+  await assert.rejects(env.start(), (err) => {
+    assert.equal(err.errorClass, 'config');
+    assert.match(err.message, /^E2B refused the sandbox's network settings \(400: .*ALL_TRAFFIC.*\)\. Check WORCA_EGRESS_ALLOW and WORCA_EGRESS_DENY, or set the project's sandbox network back to open\.$/);
+    return true;
+  });
+  assert.equal(env.lost, null);
+  assert.equal(sdk.live.size, 0);
+});
+
+test('the e2b fake answers like E2B 2.56.0 for each network shape', async () => {
+  const { createFakeE2b } = await import('../src/core/exec-env/e2b-fake.mjs');
+  const root = mkdtempSync(join(tmpdir(), 'worca-egress-root-')); scratch.push(root);
+  const sdk = createFakeE2b({ root });
+  const ok = async (network) => { const sb = await sdk.Sandbox.create('t', { network }); await sdk.Sandbox.kill(sb.sandboxId); };
+  await ok({ allowOut: ['github.com'], denyOut: ['0.0.0.0/0'] });
+  await ok({ allowOut: ['1.1.1.0/24', 'registry.npmjs.org'], denyOut: ['0.0.0.0/0'] });
+  await ok({ denyOut: ['0.0.0.0/0'] });
+  await ok({ allowOut: ['1.1.1.1'] });
+  await assert.rejects(sdk.Sandbox.create('t', { network: { allowOut: ['github.com'] } }), (e) => e.statusCode === 400 && /ALL_TRAFFIC/.test(e.message));
+  await assert.rejects(sdk.Sandbox.create('t', { network: { denyOut: ['github.com'] } }), (e) => e.statusCode === 400 && /invalid denied CIDR github\.com/.test(e.message));
+});
+
+test('e2b create: a 400 without a network option keeps the SDK error (it is not about the network)', async () => {
+  const { e2bClient } = await import('../src/core/exec-env/backends/e2b.mjs');
+  const sdkErr = Object.assign(new Error('400: template not usable'), { name: 'SandboxError', statusCode: 400 });
+  const sdk = { Sandbox: { create: async () => { throw sdkErr; } } };
+  const client = e2bClient(sdk, { opts: {} }, { mock: true });
+  await assert.rejects(client.create({ environment: 'worca-agent', tags: {}, timeoutMs: 60_000 }), (err) => err === sdkErr);
+  await assert.rejects(client.create({ environment: 'worca-agent', tags: {}, timeoutMs: 60_000, network: { denyOut: ['0.0.0.0/0'] } }),
+    (err) => err.errorClass === 'config' && err.cause === sdkErr);
+});

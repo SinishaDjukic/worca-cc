@@ -53,8 +53,9 @@ import {
   pipelineCostLimitUsd, totalCostLimitUsd, costLimitResetPeriod,
   memoryCaps,
 } from './settings.mjs';
-import { hasProjectSetting, utilityModelFor } from './settings-cascade.mjs';
+import { hasProjectSetting, utilityModelFor, resolveSetting } from './settings-cascade.mjs';
 import { withRole, roleModelFor, jobSlot } from './model-roles.mjs';
+import { secretPathsFor } from './secret-paths.mjs';
 import { mountDirs, mountMemory, refreshMount, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY } from './memory-sync.mjs';
 import { createUsageTally, drainMemoryLoads, memoryLoadLogPath, noteOfMemoryRel, recordMemoryUsage, rulesHaveScopedNote } from './memory-usage.mjs';
 import { memoryRoot, listMemory, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief, SANDBOX_SOURCE_PREFIX, isHeldSource } from './memory-store.mjs';
@@ -8659,6 +8660,10 @@ export class RunHarness extends EventEmitter {
       // The run-root CLAUDE.md sits above the worktree; Claude Code loads it from a parent dir.
       supportFiles: [...SCRIPT_SUPPORT_FILES, ...(this.runRoot ? [join(this.runRoot, 'CLAUDE.md')] : [])],
       metadata: { worca: '1', worcaInstance: instanceTag(worcaHome()), worcaRunId: this.pipeline.id, worcaProject: m.projectKey },
+      // Untracked and changed files matching these stay on this machine (secret-paths.mjs); the project adds its own.
+      secretPaths: secretPathsFor({ secretPaths: resolveSetting('secretPaths', { projectDir: this.projectDir, projectKey: m.projectKey }).value }),
+      // The sandbox's outbound network: null (open) unless the project's E2B egress setting is `allow`.
+      network: target?.network ?? null,
       scratchDir: this._execEnvScratchDir(),
       // The `.mcp.json` approvals a Claude spawn applies (orchestrator mcpjsonProjectDir); a workspace uses the worktree.
       mcpjsonProjectDir: this.isWorkspace ? null : this.projectDir,

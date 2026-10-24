@@ -192,6 +192,7 @@ Folder projects and runs without a project run locally, and the run log says why
 | Sandboxes at once (`e2bMaxSandboxes`) | Settings → Runs | 4 | More e2b runs wait, shown as "waiting for an E2B slot" on the run page. |
 | Max wait for an answer (`e2bMaxWaitMin`) | Settings → Runs | 240 min | How long a waiting or paused run keeps its sandbox. Past it, the sandbox is released and the run pauses; Resume continues in a fresh sandbox. |
 | E2B template (per project) | the project page → Execution environment | — | Overrides every other template for this project. |
+| Sandbox network (per project) | the project page → Execution environment | Open | Open, or **Allow listed hosts only**: the sandbox reaches only `WORCA_EGRESS_ALLOW` (see [Outbound network](#outbound-network-egress)). |
 
 ## Per-project templates
 
@@ -255,13 +256,58 @@ The template pins Claude Code (`docker/CLAUDE_CODE_VERSION`) and the codex, copi
 ## What leaves this machine
 
 A run in a sandbox sends to the E2B server: the run's branch with its whole git history, your uncommitted and
-untracked (not ignored) files, Worca's injected files (skills, memory rules), the run's pipeline folder and plans,
-and the model calls the agent CLI makes, which pass through the relay described below. The model credential
-(`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, or the Codex, Copilot or Cursor key) does not go: it stays on the
-Worca server. The sandbox runs as
-a user with passwordless sudo and has open network access, so code in it can still send what it can see (your
-repository, the run's files) to any address on the internet. E2B Cloud is never a silent default: with `E2B_API_URL` unset a run is
-refused, unless `WORCA_E2B_CLOUD=1` says the code may go to E2B Cloud.
+untracked (not ignored) files, except secret files (see [Secret files](#secret-files)), Worca's injected files
+(skills, memory rules), the run's pipeline folder and plans, and the model calls the agent CLI makes, which pass
+through the relay described below. The model credential (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, or the Codex,
+Copilot or Cursor key) does not go: it stays on the Worca server. The sandbox runs as a user with passwordless sudo
+and has open network access unless the project limits it (see [Outbound network](#outbound-network-egress)), so code
+in it can still send what it can see (your repository, the run's files) to any address on the internet. E2B Cloud is
+never a silent default: with `E2B_API_URL` unset a run is refused, unless `WORCA_E2B_CLOUD=1` says the code may go to
+E2B Cloud.
+
+## Secret files
+
+Files that look like secrets stay on this machine. The list is `.env*`, `*.pem`, `*.key`, `.npmrc`, `.netrc` and
+`id_*` (a name without a slash matches the file name at any depth; one with a slash matches the whole path), plus the
+project's own `secretPaths`. The same list is the floor of the Normal guardrails, chat's Show files and the diff view.
+
+- An untracked or changed file that matches is not uploaded. The run log names each one once:
+  `sandbox upload: 1 secret file kept on this machine: .env`.
+- A committed file that matches is already in the git history the sandbox gets, so it cannot be held back. The run
+  log warns about it and names it; remove it from the repository to keep it out.
+
+To add patterns for a project, set `secretPaths` in its project settings. There is no field on the project page yet;
+use the API, for example:
+
+    curl -X PATCH http://localhost:4317/api/projects/<key>/settings \
+      -H 'Content-Type: application/json' -d '{"secretPaths": ["*.tfvars", "config/credentials/**"]}'
+
+A pattern is one line, at most 256 characters, and a project can list up to 200. `null` clears them.
+
+## Outbound network (egress)
+
+A sandbox has open network access by default. The project page's **Sandbox network** (Execution environment) can
+limit it to **Allow listed hosts only**. The list is the one `docker/compose.egress.yml` uses: `WORCA_EGRESS_ALLOW` on
+the Worca server (empty means the default: `api.anthropic.com`, `.github.com`, `.githubusercontent.com`,
+`registry.npmjs.org`), minus `WORCA_EGRESS_DENY` (see [remote access](remote-access.md)). A leading dot means the host
+and its subdomains. IP addresses and CIDR ranges work too. An empty list blocks every outbound connection. The setting
+applies when a sandbox is created; a resumed run that reconnects keeps the sandbox it had.
+
+The model relay still works with everything blocked: the agent's model calls go to the sandbox's own loopback and come
+back to Worca over the command channel, never over the sandbox's network.
+
+Stops casual network access from the sandbox, not a determined agent: an allowed host name can be spoofed to reach any
+address, any host name opens DNS, and ssh git remotes fail (use HTTPS). In detail:
+
+- E2B matches host names on the TLS SNI or the HTTP `Host` header, not on the address, so a client that names an
+  allowed host can reach any IP. `compose.egress.yml`'s forward proxy holds better here; the two are not equivalent.
+- Any host name in the list opens DNS to the sandbox's resolver for every name, which leaves a DNS tunnel. A list of
+  IP addresses only does not.
+- ssh (port 22) never passes, so `git@` remotes fail. HTTPS remotes work.
+- A `WORCA_EGRESS_DENY` name under an allowed wildcard (`gist.github.com` under `.github.com`) cannot be carved out;
+  the run log says so. Raw sockets, ICMP and IPv6 do not get out.
+- If E2B refuses the settings, the run stops at start with "E2B refused the sandbox's network settings (400: …)".
+  Check `WORCA_EGRESS_ALLOW` and `WORCA_EGRESS_DENY`, or set the sandbox network back to Open.
 
 ## Keys and child processes
 
@@ -432,6 +478,7 @@ Each refusal names its cause before the run starts:
 | CURSOR_API_KEY is not set | Set it in the server's environment. |
 | The e2b SDK needs Node 22.19 or newer | Upgrade Node. |
 | The optional "e2b" package is not installed | `npm install e2b@2.56.0` in the Worca install directory. |
+| E2B refused the sandbox's network settings (400: …) | The allow list holds a value E2B does not take. Fix WORCA_EGRESS_ALLOW / WORCA_EGRESS_DENY, or set the project's Sandbox network to Open. |
 | the E2B template has no codex (or copilot, cursor-agent): rebuild it | The template was built before that engine joined it; the step fails at its first spawn. Rebuild `worca-agent` (`npm run e2b:build`), then rebuild the project's template on the project page. |
 | The sandbox's changes did not apply to the local worktree | Do not edit the run's worktree mid-run; the patch is in the pipeline folder. |
 | The agent committed a merge in the E2B sandbox | Run the task with the Local execution environment. |

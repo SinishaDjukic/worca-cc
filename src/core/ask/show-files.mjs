@@ -10,7 +10,7 @@
 import { realpath, stat, readFile } from 'node:fs/promises';
 import { basename, join, relative, sep } from 'node:path';
 import { refusePathShape, isInside, sniffMime, decodePlainText } from '../ask-files.mjs';
-import { isProtectedBasename } from './tools.mjs';
+import { isSecretPath } from '../secret-paths.mjs';
 import { GUARDRAIL_PRESETS } from '../guardrails.mjs';
 
 const MiB = 1024 * 1024;
@@ -70,11 +70,13 @@ export function kindOf(buf, name, limits) {
 }
 
 // ── credentials ───────────────────────────────────────────────────────────────
-/** Basename / path patterns (isProtectedBasename semantics: slash-less = basename at any depth). The secure guardrail
- *  preset is the floor (its `~/` and `//` entries are skipped by the matcher; CREDENTIAL_DIRS covers those homes). */
+/** Basename / path patterns (isSecretPath semantics: slash-less = basename at any depth). The secure guardrail
+ *  preset is the floor: it holds the one secret-path list (secret-paths.mjs DEFAULT_SECRET_PATHS, `id_*` among them)
+ *  plus guardrails' own entries; its `~/` and `//` entries are skipped by the matcher, and CREDENTIAL_DIRS covers those
+ *  homes. The rest are this module's own additions. */
 const CREDENTIAL_NAMES = Object.freeze([
   ...GUARDRAIL_PRESETS.secure.protectedPaths,
-  'id_rsa*', 'id_ed25519*', 'id_ecdsa*', 'id_dsa*', '.git-credentials', '.pgpass', '.pypirc',
+  '.git-credentials', '.pgpass', '.pypirc',
   'secrets.json', 'credentials', 'credentials.json', '*.kdbx', 'worca-cc.db*', 'worca.db*',
 ]);
 /** A folder that holds credentials (or worca's own state) anywhere BELOW the root the file was found in. */
@@ -84,7 +86,7 @@ const CREDENTIAL_DIR_PAIRS = Object.freeze([['.config', 'gh'], ['.config', 'gclo
 /** Why this root-relative POSIX path looks like a credential, or null. Case-insensitive (darwin and win32 fold). */
 export function credentialReason(relPosix) {
   const rel = String(relPosix || '').toLowerCase();
-  if (isProtectedBasename(rel, CREDENTIAL_NAMES)) return 'looks like a credential file';
+  if (isSecretPath(rel, CREDENTIAL_NAMES)) return 'looks like a credential file';
   const segs = rel.split('/').filter(Boolean);
   for (let i = 0; i < segs.length - 1; i++) {
     if (CREDENTIAL_DIRS.has(segs[i])) return `is inside ${segs[i]}/`;

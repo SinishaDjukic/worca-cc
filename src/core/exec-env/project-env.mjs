@@ -4,6 +4,7 @@
 import { readProjectExecEnv, updateProjectExecEnv } from '../config.mjs';
 import { getExecBackend, listExecBackends } from './registry.mjs';
 import { normalizeEnvSpec } from './env-spec.mjs';
+import { SANDBOX_EGRESS_HELP } from '../sandbox-egress.mjs';
 
 export class ExecEnvConfigError extends Error {
   constructor(message) { super(message); this.name = 'ExecEnvConfigError'; this.code = 'EXEC_ENV_CONFIG_INVALID'; }
@@ -73,7 +74,8 @@ export function resolveRunEnvironment(backend, projectKey, { env = process.env }
   let rec; try { rec = readProjectExecEnv(projectKey); } catch { rec = { config: {}, spec: null, builds: {} }; }
   const recorded = rec.builds[backend.name] || null;
   const { build, elsewhere } = usableBuild(backend, recorded, env);
-  const target = backend.resolveEnvironment({ config: rec.config[backend.name] || {}, build, env });
+  const config = rec.config[backend.name] || {};
+  const target = backend.resolveEnvironment({ config, build, env });
   const notes = [];
   const how = `Rebuild it on the project page, or run: worca exec-env build --project ${projectKey}`;
   if (elsewhere && target.source !== 'project') {
@@ -84,10 +86,27 @@ export function resolveRunEnvironment(backend, projectKey, { env = process.env }
   } else if (rec.spec && backend.capabilities.buildEnvironment && !recorded) {
     notes.push({ level: 'info', text: `the project has an environment spec but no built ${backend.environmentNoun} yet; this run uses ${target.name}. Build it on the project page, or run: worca exec-env build --project ${projectKey}` });
   }
+  const network = sandboxNetwork(backend, config, env, notes);
   const rebuild = target.source === 'build' ? `Rebuild environment on the project page, or run: worca exec-env build --project ${projectKey}`
     : backend.rebuildHint ?? null;
   // The build the sandbox starts from: a rebuild keeps the name, so a resume compares this too.
-  return { ...target, buildId: target.source === 'build' ? build.buildId ?? null : null, notes, rebuild };
+  return { ...target, buildId: target.source === 'build' ? build.buildId ?? null : null, notes, rebuild, network };
+}
+
+/** The backend's `network` for the project (null: open), with its run-log notes: what the sandbox reaches plus the
+ *  limits, and a deny the backend cannot hold. `unheldDeny` never leaves here: the create call gets allowOut/denyOut. */
+function sandboxNetwork(backend, config, env, notes) {
+  const egress = backend.network?.({ config, env }) ?? null;
+  if (!egress) return null;
+  const { unheldDeny = [], ...network } = egress;
+  const reach = network.allowOut?.length ? `only ${network.allowOut.join(', ')}` : 'nothing (every outbound connection is blocked)';
+  notes.push({ level: 'info', text: `sandbox network: allow, so the sandbox reaches ${reach}; the model relay still works. ${SANDBOX_EGRESS_HELP}` });
+  if (unheldDeny.length) {
+    const one = unheldDeny.length === 1;
+    notes.push({ level: 'warn', text: `sandbox network: WORCA_EGRESS_DENY names ${unheldDeny.join(', ')}, which an allowed wildcard covers; `
+      + `${backend.title} cannot carve ${one ? 'it' : 'them'} out, so ${one ? 'it stays' : 'they stay'} reachable.` });
+  }
+  return network;
 }
 
 /** GET /api/projects/:key/exec-env. `jobFor(backendName)` is the server's latest build job (build.mjs). */
@@ -100,7 +119,8 @@ export function projectExecEnvView(projectKey, { jobFor = () => null, env = proc
       const usable = usableBuild(b, build, env);
       return { name: b.name, label: b.label, title: b.title, environmentNoun: b.environmentNoun, canBuild: b.capabilities.buildEnvironment,
         buildName: b.capabilities.buildEnvironment ? b.environmentName(projectKey) : null,
-        fields: (b.projectFields || []).map(({ key, label, hint }) => ({ key, label, hint, value: config[key] ?? null })),
+        fields: (b.projectFields || []).map(({ key, label, hint, help, placeholder, options }) => ({ key, label, hint,
+          ...(help ? { help } : {}), ...(placeholder ? { placeholder } : {}), ...(options ? { options } : {}), value: config[key] ?? null })),
         effective: b.resolveEnvironment({ config, build: usable.build, env }),
         build, elsewhere: usable.elsewhere, stale: build ? buildStaleness({ spec: rec.spec, build, baseVersion: safeBaseVersion(b) }) : null,
         job: jobFor(b.name) };

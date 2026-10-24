@@ -547,7 +547,7 @@ test('engineStartRefusal answers before a run exists, and says when the consent 
 
   const strict = make({ engine: 'codex' }, { guardrailsId: 'normal' });
   assert.deepEqual(await strict.engineStartRefusal(), {
-    error: 'engine codex: guardrail set "normal" has permission rules this engine cannot enforce (Read(.env*), Edit(.env*), Read(*.pem) (+28 more)) — run it with --guardrails permissive, or pass --allow-unguarded-engine to run it without them',
+    error: 'engine codex: guardrail set "normal" has permission rules this engine cannot enforce (Read(.env*), Edit(.env*), Read(*.pem) (+30 more)) — run it with --guardrails permissive, or pass --allow-unguarded-engine to run it without them',
     overridable: true,
   });
   assert.equal(await make({ engine: 'codex', allowUnguardedEngine: true }, { guardrailsId: 'normal' }).engineStartRefusal(), null);

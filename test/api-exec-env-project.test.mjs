@@ -106,6 +106,18 @@ test('the e2b template field: PATCH saves it, the view says it is the effective 
   assert.equal((await patch(`/api/projects/${key}/exec-env/config`, { backend: 'e2b', values: { template: 'NO NO' } })).status, 400);
   assert.equal((await patch(`/api/projects/${key}/exec-env/config`, {})).status, 400, 'a body without backend never reaches the DB');
 });
+
+test('the e2b sandbox network field: PATCH takes open or allow and shows the choice; anything else is a 400', async () => {
+  const r = await patch(`/api/projects/${key}/exec-env/config`, { backend: 'e2b', values: { egress: 'allow' } });
+  assert.equal(r.status, 200);
+  const f = r.body.backends.find((b) => b.name === 'e2b').fields.find((x) => x.key === 'egress');
+  assert.equal(f.value, 'allow');
+  assert.deepEqual(f.options.map((o) => o.value), ['open', 'allow']);
+  assert.match(f.help, /^Stops casual network access from the sandbox/);
+  const bad = await patch(`/api/projects/${key}/exec-env/config`, { backend: 'e2b', values: { egress: 'closed' } });
+  assert.equal(bad.status, 400); assert.equal(bad.body.code, 'EXEC_ENV_CONFIG_INVALID');
+  assert.equal((await patch(`/api/projects/${key}/exec-env/config`, { backend: 'e2b', values: { egress: null } })).status, 200);
+});
 // (The "already running" 409 is pinned deterministically in exec-env-project-env; over HTTP it would depend on timing.)
 test('POST build answers 202 and the job ends done; the log is pollable', async () => {
   const unregister = _registerExecBackendForTests(lb.backend);

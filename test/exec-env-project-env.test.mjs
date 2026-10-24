@@ -199,3 +199,33 @@ test('a build records the server from the env it was built with; another server 
     assert.equal(spec.hash, readProjectExecEnv(k).builds.loopback.specHash);
   } finally { markServerProcess(false); }
 });
+
+test('e2b egress: a project field, open unless set to allow; allow hands the run its sandbox network', () => {
+  const k = key();
+  const field = e2b.projectFields.find((f) => f.key === 'egress');
+  assert.ok(field, 'the e2b backend has an egress project field');
+  assert.ok(field.validate('open') && field.validate('allow') && !field.validate('closed'));
+  assert.equal(field.help, 'Stops casual network access from the sandbox, not a determined agent: an allowed host name can be spoofed to reach any address, any host name opens DNS, and ssh git remotes fail (use HTTPS).');
+  assert.deepEqual(field.options.map((o) => o.value), ['open', 'allow']);
+  const open = resolveRunEnvironment(e2b, k, { env: {} });
+  assert.equal(open.network, null, 'open by default');
+  assert.equal(open.notes.some((n) => /sandbox network/.test(n.text)), false, 'an open sandbox adds no note');
+  assert.deepEqual(setProjectBackendConfig(k, 'e2b', { egress: 'allow' }), { egress: 'allow' });
+  assert.throws(() => setProjectBackendConfig(k, 'e2b', { egress: 'closed' }), /Sandbox network: must be open or allow/);
+  const t = resolveRunEnvironment(e2b, k, { env: { WORCA_EGRESS_ALLOW: 'registry.npmjs.org' } });
+  assert.deepEqual(t.network, { allowOut: ['registry.npmjs.org'], denyOut: ['0.0.0.0/0'] });
+  assert.equal(t.name, 'worca-agent', 'the egress field never names a template');
+  assert.deepEqual(t.notes.filter((n) => /^sandbox network/.test(n.text)), [{ level: 'info',
+    text: `sandbox network: allow, so the sandbox reaches only registry.npmjs.org; the model relay still works. ${field.help}` }]);
+  // A denied name under an allowed wildcard cannot be carved out in E2B: the run log says so, Sandbox.create never sees the key.
+  const w = resolveRunEnvironment(e2b, k, { env: { WORCA_EGRESS_ALLOW: '.github.com', WORCA_EGRESS_DENY: 'gist.github.com' } });
+  assert.deepEqual(w.network, { allowOut: ['github.com', '*.github.com'], denyOut: ['0.0.0.0/0'] });
+  assert.ok(w.notes.some((n) => n.level === 'warn' && n.text === 'sandbox network: WORCA_EGRESS_DENY names gist.github.com, which an allowed wildcard covers; E2B cannot carve it out, so it stays reachable.'));
+  const none = resolveRunEnvironment(e2b, k, { env: { WORCA_EGRESS_ALLOW: 'x.com', WORCA_EGRESS_DENY: 'x.com' } });
+  assert.deepEqual(none.network, { denyOut: ['0.0.0.0/0'] });
+  assert.match(none.notes.find((n) => /^sandbox network/.test(n.text)).text, /reaches nothing \(every outbound connection is blocked\)/);
+  const view = projectExecEnvView(k, { env: {} }).backends.find((b) => b.name === 'e2b');
+  assert.deepEqual(view.fields.find((f) => f.key === 'egress'),
+    { key: 'egress', label: field.label, hint: field.hint, help: field.help, placeholder: 'open', options: field.options, value: 'allow' });
+  assert.deepEqual(Object.keys(view.fields.find((f) => f.key === 'template')).sort(), ['hint', 'key', 'label', 'value'], 'the template field is unchanged');
+});

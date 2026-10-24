@@ -20,7 +20,8 @@ import { withStreamTimeouts } from '../model-env.mjs';
 import { MODEL_CREDENTIAL_ENV_KEYS } from '../broker-guard.mjs';
 import { remoteModelRoute, engineModelRoute } from './relay-route.mjs';
 import { createRouteMeter, relayUsageTotal } from './relay-usage.mjs';
-import { createSourceBundle, overlayFiles, makeTarGz, walkFiles, applyPatch, patchAlreadyApplied, patchPaths, hostRunChanges, injectedPaths, cloneScript, treeScript,
+import { DEFAULT_SECRET_PATHS, isSecretPath } from '../secret-paths.mjs';
+import { createSourceBundle, overlayFiles, overlaySecretLines, makeTarGz, walkFiles, applyPatch, patchAlreadyApplied, patchPaths, hostRunChanges, injectedPaths, cloneScript, treeScript,
   mergesScript, diffScript, SNAPSHOT_JS } from './git-transfer.mjs';
 
 export const SCRIPT_SUPPORT_FILES = Object.freeze([
@@ -61,10 +62,11 @@ export class RemoteExecEnv {
   constructor({ backend, client, environment = null, environmentBuild = null, worktreeDir, pipelineDir, storeRoots = [], mcpConfigPath = null,
     injected = [], refreshPaths = [], syncExcludes = [], supportFiles = SCRIPT_SUPPORT_FILES, metadata, scratchDir,
     log = () => {}, env = process.env, startedAt = Date.now(), onMaxWait = null, onPark = null, onReview = null, syncBudget = null,
-    mcpjsonProjectDir = null, homeDir = homedir(), rebuildHint = backend.rebuildHint ?? null, relayUpstreams = null }) {
+    mcpjsonProjectDir = null, homeDir = homedir(), rebuildHint = backend.rebuildHint ?? null, relayUpstreams = null,
+    secretPaths = DEFAULT_SECRET_PATHS, network = null }) {
     Object.assign(this, { backend, client, environment, environmentBuild, worktreeDir, pipelineDir, storeRoots, mcpConfigPath, injected,
       refreshPaths, syncExcludes, supportFiles, metadata, scratchDir, log, env, startedAt, onMaxWait, onPark, onReview,
-      mcpjsonProjectDir, homeDir, rebuildHint });
+      mcpjsonProjectDir, homeDir, rebuildHint, secretPaths, network });
     // Where the engine routes' calls go when not the vendor's own API (relay-route.mjs ENGINE_UPSTREAMS): tests only.
     this.relayUpstreams = relayUpstreams;
     this.parkedUntil = null;     // epoch ms the parked sandbox is released at, while an ask waits (onPark tells the host)
@@ -209,7 +211,9 @@ export class RemoteExecEnv {
   _adopt(h) { this.sandbox = h.box; this.sandboxId = h.id; this.prefix = h.pathPrefix || ''; }
   async start() {
     if (!this.environment) throw new Error(`no ${this.backend.environmentNoun} to start the ${this.label} from`);
-    this._adopt(await this._call(() => this.client.create({ environment: this.environment, tags: this.metadata, timeoutMs: SANDBOX_TIMEOUT_MS })));
+    // `network` (null: open) is fixed at create; a reconnect keeps the policy the sandbox was made with.
+    this._adopt(await this._call(() => this.client.create({ environment: this.environment, tags: this.metadata, timeoutMs: SANDBOX_TIMEOUT_MS,
+      ...(this.network ? { network: this.network } : {}) })));
     this.log('info', `sandbox ${this.sandboxId} created from ${this.backend.environmentNoun} ${this.environment}`);
     await this._ensureDirs([this.work, dirname(this.worktreeDir), ...this.roots]);
     await this._cloneIn();
@@ -377,7 +381,10 @@ export class RemoteExecEnv {
     const refresh = new Set(this.refreshPaths.map((rel) => resolve(this.worktreeDir, rel)));
     const real = new Set(await this._refreshRoots());
     const injected = this.injected.filter((rel) => { const abs = resolve(this.worktreeDir, rel); return !refresh.has(abs) || real.has(abs); });
-    const { files, mounts, deleted } = await overlayFiles({ worktreeDir: this.worktreeDir, injected, onSkip: (p) => this._refuseLink(p) });
+    const overlay = await overlayFiles({ worktreeDir: this.worktreeDir, injected, onSkip: (p) => this._refuseLink(p), secretPaths: this.secretPaths });
+    const { files, mounts, deleted } = overlay;
+    // Named once per sandbox: a reconnect clones again but the lists are the same.
+    if (!this._secretsLogged) { this._secretsLogged = true; for (const l of overlaySecretLines(overlay)) this.log(l.level, l.text); }
     // The worktree's own paths keep their symlinks (a link out of the worktree must not upload its
     // target); only the injected mounts are dereferenced (a symlinked skill's content, never a link out of it).
     if (files.length) await this._putTree(this.worktreeDir, files, 'overlay', { dereference: false });
@@ -543,11 +550,13 @@ export class RemoteExecEnv {
   async _uploadDelta() {
     const changed = new Map();   // host path -> sig
     // lstat, never stat: a link (one a patch or a step could have left) is not followed to its target.
-    const consider = async (abs, { onlyNew = false } = {}) => {
+    const consider = async (abs, { onlyNew = false, root = dirname(abs) } = {}) => {
       let st; try { st = await lstat(abs); } catch { return; }
       if (st.isSymbolicLink()) { this._refuseLink(abs); return; }
       const base = abs.split(sep).pop();
       if (!st.isFile() || SKIP_NAMES.has(base) || base.startsWith(SKIP_PREFIX) || base.includes(TEMP_MARK)) return;
+      // A secret file (secret-paths.mjs) stays on this machine, as in the first upload (overlayFiles).
+      if (this._secretKept(abs, root)) return;
       if (st.size > MAX_FILE_BYTES) { this.log('warn', `not uploading ${abs}: larger than ${MAX_LABEL}; the sandbox cannot read it`); return; }
       if (onlyNew && st.mtimeMs < this.startedAt && !this._inputs.has(abs)) return;
       const sig = sigOf(st);
@@ -555,11 +564,11 @@ export class RemoteExecEnv {
     };
     const walk = async (dir, o) => {
       let es; try { es = await readdir(dir, { withFileTypes: true }); } catch { return; }
-      for (const e of es) { const p = join(dir, e.name); if (e.isDirectory()) await walk(p, o); else await consider(p, o); }
+      for (const e of es) { const p = join(dir, e.name); if (e.isDirectory()) await walk(p, o); else await consider(p, { root: dir, ...o }); }
     };
-    await walk(this.pipelineDir, {});
-    for (const r of this.storeRoots) await walk(r, { onlyNew: true });
-    for (const root of await this._refreshRoots()) await walk(root, {});
+    await walk(this.pipelineDir, { root: this.pipelineDir });
+    for (const r of this.storeRoots) await walk(r, { onlyNew: true, root: r });
+    for (const root of await this._refreshRoots()) await walk(root, { root });
     for (const p of this._inputs) if (!changed.has(p)) await consider(p, {});
 
     const removed = [...this._uploaded.keys()].filter((h) => this._underRoots(h) && !existsSync(h));
@@ -686,11 +695,21 @@ export class RemoteExecEnv {
     await this._ensureDirs([p, ...new Set(files.map((f) => dirname(join(p, f))))]);
     await this._putTree(p, files, `path-${++this._seq}`);
   }
-  /** Script program roots (Step 6): uploaded whole, once per sandbox. */
+  /** Is `abs` a secret file (its path under `root`, the walked root, matches secretPaths)? Kept on this machine and
+   *  named once in the run log. */
+  _secretKept(abs, root) {
+    const rel = relative(root, abs).split(sep).join('/');
+    if (!isSecretPath(rel, this.secretPaths)) return false;
+    this._maskedLater ??= new Set();
+    if (!this._maskedLater.has(abs)) { this._maskedLater.add(abs); this.log('warn', `sandbox upload: secret file kept on this machine: ${abs}`); }
+    return true;
+  }
+  /** Script program roots (Step 6): uploaded whole, once per sandbox, but for their secret files (secret-paths.mjs). */
   async uploadTrees(dirs) {
     for (const d of dirs) {
       if (this._trees.has(d)) continue;
-      const files = (await walkFiles(d, { onSkip: (q) => this._refuseLink(q) })).map((f) => relative(d, f)).filter((f) => !f.split(sep).includes('node_modules'));
+      const files = (await walkFiles(d, { onSkip: (q) => this._refuseLink(q) })).map((f) => relative(d, f))
+        .filter((f) => !f.split(sep).includes('node_modules') && !this._secretKept(join(d, f), d));
       if (files.length) {
         await this._ensureDirs([d, ...new Set(files.map((f) => dirname(join(d, f))))]);
         await this._putTree(d, files, `tree-${++this._seq}`);

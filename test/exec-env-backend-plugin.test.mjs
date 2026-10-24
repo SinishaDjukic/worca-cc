@@ -19,6 +19,8 @@ import { updateProjectExecEnv } from '../src/core/config.mjs';
 import { setProjectEnvSpec, recordProjectBuild } from '../src/core/exec-env/project-env.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { createLoopbackBackend } from './helpers/loopback-backend.mjs';
+import { writeProjectSettings } from '../src/core/settings-cascade.mjs';
+import { DEFAULT_SECRET_PATHS } from '../src/core/secret-paths.mjs';
 
 const POSIX = { skip: process.platform === 'win32' ? 'remote execution is POSIX-only' : false, timeout: 180_000 };
 useTempHome(after, 'worca-loopback-plugin-home-');
@@ -176,4 +178,17 @@ test('Cursor`s engine files are not overlaid at sandbox start, and stay out of s
   // Not overlaid at start: syncEngineFiles is the only thing that puts (and removes) them in the sandbox, so an
   // upload at start never bypasses its record and its exclude lines.
   assert.deepEqual(opts.injected, ['CLAUDE.md', '.claude/rules/worca']);
+});
+
+test('the sandbox gets the project`s secretPaths on top of the defaults, and the network its environment resolved', () => {
+  const orch = createOrchestrator({ projectDir: freshRepo(), prompt: 'x', claude: { mock: true }, execEnv: 'loopback' });
+  const key = orch.members[0].projectKey;
+  orch.pipeline = { id: 'abcd1235', dir: tmp('worca-pipe-') };
+  assert.deepEqual(orch._execEnvOpts({}, { name: 'tpl', rebuild: null }).secretPaths, [...DEFAULT_SECRET_PATHS]);
+  writeProjectSettings({ projectKey: key }, { secretPaths: ['*.tfvars'] });
+  const network = { denyOut: ['0.0.0.0/0'] };
+  const opts = orch._execEnvOpts({}, { name: 'tpl', rebuild: null, network });
+  assert.deepEqual(opts.secretPaths, [...DEFAULT_SECRET_PATHS, '*.tfvars']);
+  assert.deepEqual(opts.network, network);
+  assert.equal(orch._execEnvOpts({}, { name: null, rebuild: null }).network, null, 'a reconnect target has no network');
 });
