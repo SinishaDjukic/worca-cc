@@ -32,6 +32,7 @@ remote flags.
 | `runPresets` | beta, default on | [Run presets](run-presets.md): the Preset ▾ button on the New run form, the Settings › Presets tab, schedules that follow a preset, `worca run --preset` and Chat's `list_presets` / `propose_run` `presetId`. Off, every `/api/presets` route answers 404 and `POST /api/run` refuses a `presetId` with 400. |
 | `commandSummaries` | beta, default on | Command summaries: Settings › Chat › Summarise commands (on by default) turns each chat command into one line saying what it does (the summary the chat gives `run_command`, else the command), with the runs status dot; a click opens the exact command, the folder and the output. Consecutive commands share one card. Off (the flag or the switch), chat shows full command cards. Command cards take the 760px text column either way. When the chat gives no summary, the Command summaries helper job (Models › Helper jobs) writes one from the command alone, secrets redacted and never its output, and caches repeats; with no ready Claude model the row keeps the command. Turning Summarise commands off also stops the job. Run page › Logs and the step log drawer show a Claude Code Bash call's own description, with a Summaries / Raw switch (remembered per browser). Codex lines stay raw, and the search matches the command and the description. Copy and the CLI always use the commands. Off, the switch is hidden and lines read as before. |
 | `corporateProxy` | experimental, default off | Corporate proxy: Worca's local proxy on 127.0.0.1 logs in to one upstream proxy (NTLMv2, also inside Negotiate, Digest or Basic) and every child process and Worca's own fetch go through it, with a credential-free `HTTP(S)_PROXY`. Off, nothing changes: no local proxy starts unless `WORCA_EGRESS_MODE` is set, and `HTTP(S)_PROXY` is left as it was. Read at startup, so restart Worca after changing it. See [Corporate proxy](#corporate-proxy). See [Network proxy](network-proxy.md). |
+| `requirements` | experimental, default off | The Requirements page (feature specs through a short interview, Ready and Start in Worca, product briefs), the Requirements interview row on Models › Engines › Claude › Helper jobs, the Requirements tile on Statistics. Off, money already spent on the page stays in Spent and keeps its Requirements row in Group by and the Cost report; every `/api/requirements` route answers 404 and no `requirements-changed` frame is sent ([docs](requirements.md)). |
 
 ## Smart run naming
 
@@ -98,8 +99,8 @@ off, and shown or hidden live when the flag changes:
 ```
 
 `data-flag-chip` adds the **Labs** / **Beta** chip, which links to the flag's row in
-Settings › Labs. A tab (`[role="tab"]`, `.tab`, or a button in `.tabs` / `.seg`) gets the chip
-inside its label instead, as plain text, never a link. `data-flag-chip="KEY"` names the flag without
+Settings › Labs. A tab (`[role="tab"]`, `.tab`, or a button in `.tabs` / `.seg`) and a sidebar row (a
+button in `.nav`) get the chip inside, after the label, as plain text, never a link. `data-flag-chip="KEY"` names the flag without
 gating the host, so its host shows the chip while the flag is off.
 
 In JS (`ui/public/flags.mjs`):

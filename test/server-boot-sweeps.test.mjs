@@ -200,6 +200,25 @@ test('boot: repo-look sweep removes a stale auto-look-* dir under tmp/ask and re
     'its registration was removed from the source repo');
 });
 
+// Requirements code looks (plans/requirements-design.md D7) live under <worcaHome>/tmp/requirements: a
+// crash mid-orientation leaves the checkout there, so boot sweeps that base too.
+test('boot: repo-look sweep also removes a stale look under tmp/requirements', async () => {
+  const repo = await freshRepo('worca-cc-boot-reqlook-');
+  const { openRepoLook } = await import('../src/core/auto/repo-look.mjs');
+  const base = join(worcaHome(), 'tmp', 'requirements');
+  await mkdir(base, { recursive: true });
+  const look = await openRepoLook(repo, base);
+  assert.ok(look && existsSync(look.cwd), 'fixture: a single-project look checked out');
+  const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  utimesSync(look.cwd, old, old);
+
+  const res = await bootMaintenance({ log: () => {} });
+
+  assert.deepEqual(res.requirementsRepoLooks.removed, [look.cwd]);
+  assert.deepEqual(res.requirementsRepoLooks.failed, []);
+  assert.ok(!existsSync(look.cwd), 'the stale requirements look is gone');
+});
+
 // P8a: a DB stamped past 24 by a divergent ladder can still hold v1 resume
 // points, so boot sweeps them once, idempotently.
 test('bootMaintenance retires runs left paused on the v1 engine', async () => {
@@ -211,4 +230,22 @@ test('bootMaintenance retires runs left paused on the v1 engine', async () => {
   const row = getDb().prepare('SELECT status, resume_point FROM pipelines WHERE id = ?').get('v1sweep1');
   assert.equal(row.status, 'interrupted');
   assert.equal(row.resume_point, null);
+});
+
+// Requirements A7 (D15): a product brief left `making` by a restart, whose job is not running, gets INTERRUPTED
+// through the boot path (next to the interview's own sweep). The helper is unit-tested in
+// requirements-brief-job.test.mjs; this pins the WIRING.
+test('boot: a product brief left making by a restart becomes INTERRUPTED', async () => {
+  const { beginBrief, getBrief } = await import('../src/core/requirements/store.mjs');
+  beginBrief('project', 'boot-brief-1');
+  assert.equal(getBrief('project', 'boot-brief-1').status, 'making');
+
+  const res = await bootMaintenance({ log: () => {} });
+
+  assert.equal(res.recoveredBriefs, 1);
+  const b = getBrief('project', 'boot-brief-1');
+  assert.equal(b.status, 'empty', 'never made: back to empty');
+  assert.equal(b.error.code, 'INTERRUPTED');
+  assert.equal(b.error.message, 'The look at the code did not finish because Worca restarted. Try again.');
+  assert.equal((await bootMaintenance({ log: () => {} })).recoveredBriefs, 0, 'idempotent');
 });

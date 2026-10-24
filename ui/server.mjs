@@ -103,6 +103,7 @@ import {
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
   stepModelsSetting, assertStepModelsInput, setStepModels,
   utilityModelsSetting, assertUtilityModelsInput, setUtilityModels,
+  requirementsInterviewSetting, assertRequirementsInterviewInput, setRequirementsInterview,
   askEngineSetting, assertAskEngineInput, setAskEngineSetting, askModelsSetting, assertAskModelsInput, setAskModels,
   chatHomePinsFor, setChatHomePinsFor,
 } from '../src/core/settings.mjs';
@@ -314,6 +315,10 @@ import { chatScopeOf, withChatScope, sameScope, scopeBody, targetInScope, scopeR
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
+import { registerRequirementsRoutes, requirementsChangeNotifier } from '../src/core/requirements/routes.mjs';
+import { createRunEventHook } from '../src/core/requirements/start.mjs';
+import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
+import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
 import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import { exportWorkflowToMarketplace, listPublishTargets } from '../src/core/marketplace-publish.mjs';
@@ -1097,6 +1102,10 @@ function broadcast(obj) {
 // CONTRACT §0: a git flip (installed / removed) reaches every open tab as one `git` frame.
 onGitChange((s) => broadcast({ type: 'git', git: { available: s.available, version: s.version } }));
 
+/** Requirements (A2 D9): the one run-event hook wireRun calls for every run; it notifies through the same
+ *  `requirements-changed` notifier the routes use (silent while the flag is off). */
+const requirementsRunEvent = createRunEventHook({ notify: requirementsChangeNotifier(broadcast) });
+
 // Per-person delivery of Ask frames (step 3): on a shared sign-in an ask-* frame that names a
 // thread goes only to sockets of that thread's owner (and to non-shared sockets, e.g. an
 // in-container tool), like the HTTP guard on /api/ask/threads/:id. Owners never change, so
@@ -1440,6 +1449,9 @@ function wireRun(entry) {
           }
         }
       }
+      // Requirements (A2 D9): a run a feature started learns its pipeline id; the feature hears status changes.
+      // The entry's pipeline id finds the start of a resumed run (a new UUID, the same pipeline).
+      requirementsRunEvent(id, name, payload, entry.pipelineId || null);   // never throws
       if (entry.ticketId && (name === 'done' || name === 'error') && !entry._outcomeRecorded) {
         // Scheduled runs: report how the fired run ended (feed item, failure streak).
         // 'error' is the launch-error channel — a failure before the pipeline row exists.
@@ -3644,6 +3656,28 @@ function releaseAskCard(item) {
       flipCard(item.askThreadId, item.askCardId, { state: 'proposed', runId: null, scheduledFor: null, scheduleId: null, sentence: null });
     }
   } catch (err) { console.error(`[worca-ui] ask card release failed: ${err && err.message ? err.message : err}`); }
+}
+
+/** A requirements start's run as the feature shows it (A2 D10): the live entry while the server has it,
+ *  else the pipeline row on disk (after a restart). null when neither knows the run. A resume gives the run
+ *  a new UUID, so the pipeline id finds the live entry first. `href`: the live run's page while the server
+ *  has it, else the saved run's History page (#history/<projectKey | workspaces/<key>>/<pipelineId>). */
+function requirementsRunSummary({ runId, pipelineId }) {
+  const live = (pipelineId && liveRunEntry(pipelineId)) || liveRunEntry(runId);
+  const id = pipelineId || (live && live.pipelineId) || null;
+  let state = null;
+  if (id) { try { state = readPipelineStateById(id); } catch { state = null; } }
+  if (!live && !state) return null;
+  const key = state && (state.target === 'workspace' && state.workspaceKey ? `workspaces/${state.workspaceKey}` : state.projectKey);
+  return {
+    status: (live && live.status) || (state && state.status) || null,
+    phase: (state && state.phase) || null,
+    costUsd: state?.totalCostUsd ?? null,
+    pipelineId: id,
+    href: live ? `#running/${live.id}` : key && id ? `#history/${key}/${id}` : null,
+    // waits on a question, a gate or the Auto confirmation: entry.pendingQuestion, as the Running page reads it
+    waiting: !!(live && live.pendingQuestion && !SETTLED_RUN.has(String(live.status || ''))),
+  };
 }
 
 /** Call startRunHandler without HTTP. Resolves { status, body }. */
@@ -10417,6 +10451,11 @@ app.get('/api/memory/health', async (_req, res) => {
 registerMemoryRoutes('/api/memory/global', { family: 'global' });
 registerMemoryRoutes('/api/memory/projects/:key', { family: 'projects' });
 
+// Requirements (plans/requirements-design.md): product-owner feature specs, behind the `requirements` flag.
+registerRequirementsRoutes(app, { broadcast, deps: {
+  startRun: (body, opts) => invokeStartRun(body, null, opts),   // D6: through the run handler, as PR watch does
+  runSummary: requirementsRunSummary,
+} });
 // /api/memory/team/:key — the team layer of one registered project (team memory 1a; phase 1b's Team tab reads it).
 // The switch itself is the project setting `memory.team` (PATCH /api/projects/:key/settings).
 async function teamProject(req, res) {
@@ -11354,6 +11393,8 @@ const settingsState = () => ({
   stepModels: stepModelsSetting(),
   utilityModels: utilityModelsSetting(),
   askEngine: askEngineSetting() ?? null,                  // Chat: the engine new chats start on (D17)
+  // Models › Engines › Claude: the STORED { model?, effort? } (null = the default); only while the requirements flag is on
+  ...(flagEnabled('requirements') ? { requirementsInterview: requirementsInterviewSetting() ?? null } : {}),
   askModels: askModelsSetting(),                          // Chat: the model per engine (D17)
   nightMode: nightModeSettings(),                         // night mode: the user layer (only the fields set)
   nightModeEffective: resolveNightConfig({ user: nightModeSettings() }).config,   // no project: the global view
@@ -11375,6 +11416,12 @@ async function autoModelState() {
   return { autoWorkflowModel: stored, autoWorkflowModelEffective: { model, source } };
 }
 
+/** What "(default)" means for the Requirements interview row: the newest plain Opus at medium effort (A1-D8).
+ *  Nothing while the requirements flag is off. */
+async function requirementsInterviewState() {
+  if (!flagEnabled('requirements')) return {};
+  return { requirementsInterviewDefault: { model: (await requirementsModel(() => listModels(''))) ?? null, effort: DEFAULT_INTERVIEW_EFFORT } };
+}
 /** Settings ▸ PR description model: the stored id + what Generate with AI will actually
  *  use (stored catalog id > the Sonnet-class default). Async because the catalog is. */
 async function prDescriptionModelState() {
@@ -11812,7 +11859,7 @@ app.post('/api/shutdown', (req, res) => {
 
 app.get('/api/settings', async (req, res) => {
   const person = awayPersonOf(req);   // B4: a signed-in person sees their own Away switch
-  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await commandSummaryModelState()), chat: chatPrefs(), app: APP_INFO });
+  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await commandSummaryModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(), app: APP_INFO });
 });
 
 // GET  /api/app/version       → { current, latest, status, checkedAt, enabled, links } (issue #841);
@@ -11915,7 +11962,7 @@ app.post('/api/settings', async (req, res) => {
     has('projectsRoot') ? normalizeProjectPath(body.projectsRoot) : null]))) return;
   try {
     const { actionsWarnings } = await applySettingsPatch(body, { person: awayPersonOf(req) });
-    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await commandSummaryModelState()), chat: chatPrefs(),
+    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await commandSummaryModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(),
       ...(actionsWarnings ? { actionsWarnings } : {}) });
   } catch (err) {
     // 400 with the user's words and, when known, the body path of the bad field (#555).
@@ -11971,6 +12018,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasUtilityModelsKey = has('utilityModels');
   const hasAskEngineKey = has('askEngine');
   const hasAskModelsKey = has('askModels');
+  const hasRequirementsInterviewKey = has('requirementsInterview') && flagEnabled('requirements');   // ignored while the flag is off
   const hasActionsKey = has('actions');
   const hasNetworkWaitKey = has('networkWait');
   const wsScanModels = hasWorkspaceScanKey ? (autoModels || defragModels || await listModels('')) : null;
@@ -11996,7 +12044,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   if (has('askMaxTurns')) ask.askMaxTurns = body.askMaxTurns ?? '';
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   {   // was the route's try: a refusal now reaches the caller (the route maps it to 400, the chat to a notice)
-    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'namingModel', 'commandSummaryModel', 'workspaceScan']) {
+    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'namingModel', 'commandSummaryModel', 'workspaceScan', ...(hasRequirementsInterviewKey ? ['requirementsInterview'] : [])]) {
       if (has(key)) asSettingsField(key, () => refuseNonClaudeUtilityModel(key, body[key]));
     }
     // Each validator / setter that can refuse a value runs tagged with the body key it checks,
@@ -12040,6 +12088,10 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasWorkspaceScanKey) asSettingsField('workspaceScan', () => assertWorkspaceScanInput(body.workspaceScan, wsScanModels));
     if (hasRunEngineKey) asSettingsField('runEngine', () => assertRunEngineInput(body.runEngine));
     if (hasAskEngineKey) asSettingsField('askEngine', () => assertAskEngineInput(body.askEngine));
+    if (hasRequirementsInterviewKey) await asSettingsField('requirementsInterview', async () => {
+      const v = assertRequirementsInterviewInput(body.requirementsInterview);
+      if (v?.model) await assertSlotModels([{ id: 'requirementsInterview', engine: 'claude', value: v }]);
+    });
     if (hasAskModelsKey) await asSettingsField('askModels', async () => {
       const patch = assertAskModelsInput(body.askModels);
       await assertSlotModels(Object.entries(patch).filter(([, value]) => value).map(([engine, value]) => ({ id: `askModels.${engine}`, engine, value })));
@@ -12117,6 +12169,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasUtilityModelsKey) await asSettingsField('utilityModels', () => setUtilityModels(body.utilityModels));
     if (hasAskEngineKey) await asSettingsField('askEngine', () => setAskEngineSetting(body.askEngine));
     if (hasAskModelsKey) await asSettingsField('askModels', () => setAskModels(body.askModels));
+    if (hasRequirementsInterviewKey) await asSettingsField('requirementsInterview', () => setRequirementsInterview(body.requirementsInterview));
     if (has('schedule')) await asSettingsField('schedule', () => setScheduleDefaults(body.schedule && typeof body.schedule === 'object' ? body.schedule : {}));
     if (has('nightMode')) await setNightMode(body.nightMode);
     if (has('nightModeToggle') && !(await setPersonNightModeToggle(person, body.nightModeToggle))) await setNightModeToggle(body.nightModeToggle);
@@ -12131,7 +12184,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey || hasUpdateCheckKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey || hasUpdateCheckKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -18157,7 +18210,7 @@ app.use((err, _req, res, next) => {
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, sweptV1: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, bench: null };
+  const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
   // Runs left 'running' by a previous process that died before writing a terminal
@@ -18179,6 +18232,22 @@ export async function bootMaintenance({ log } = {}) {
     if (swept.length) console.log(`[worca-ui] retired ${swept.length} run(s) paused on the v1 engine`);
   } catch (err) {
     console.error(`[worca-ui] v1-run sweep failed: ${err && err.message ? err.message : err}`);
+  }
+
+  // Requirements: a round cut short by this restart goes back to the product owner (design §4).
+  try {
+    const n = recoverRequirements();
+    if (n) console.log(`[worca-ui] requirements: ${n} interrupted round(s) handed back`);
+  } catch (err) {
+    console.error(`[worca-ui] requirements sweep failed: ${err && err.message ? err.message : err}`);
+  }
+  // Requirements A7 (D15): a product brief left `making` by this restart gets INTERRUPTED. This runs before the
+  // first await, but boot maintenance is not awaited before listen, so recoverBriefs skips a brief whose job runs.
+  try {
+    summary.recoveredBriefs = recoverBriefs();
+    if (summary.recoveredBriefs) console.log(`[worca-ui] requirements: ${summary.recoveredBriefs} interrupted product brief(s) marked`);
+  } catch (err) {
+    console.error(`[worca-ui] product brief sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   try {
@@ -18299,6 +18368,16 @@ export async function bootMaintenance({ log } = {}) {
     if (r.failed.length) console.error(`[worca-ui] repo-look sweep: ${r.failed.length} dir(s) could not be removed`);
   } catch (err) {
     console.error(`[worca-ui] repo-look sweep failed: ${err && err.message ? err.message : err}`);
+  }
+
+  // Requirements code looks (plans/requirements-design.md D7) a restart cut short, under <worcaHome>/tmp/requirements.
+  try {
+    const r = await sweepRepoLooks(path.join(worcaHome(), 'tmp', 'requirements'), { log: sink('repo-look') });
+    summary.requirementsRepoLooks = r;
+    if (r.removed.length) console.log(`[worca-ui] requirements repo-look sweep: removed ${r.removed.length} stale look dir(s)`);
+    if (r.failed.length) console.error(`[worca-ui] requirements repo-look sweep: ${r.failed.length} dir(s) could not be removed`);
+  } catch (err) {
+    console.error(`[worca-ui] requirements repo-look sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   // Script bench folders (workbench W11): the newest folder per script key
@@ -18606,7 +18685,7 @@ export const _testing = {
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
   startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES, MARKET_JOBS, pruneMarketJobs, marketJobFailure,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
-  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,
+  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,
   uiControl, bearerMatches,
   broadcast, sockets, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,

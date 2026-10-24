@@ -304,6 +304,11 @@ free model touching only the pipeline steps. Command summaries' redaction is bes
 switch in Settings › Chat turns the job off. A changed Command summaries model applies to new
 commands within a minute, while lines already written stay until a restart.
 
+The *Requirements interview* helper (the Requirements page's product briefs, code looks and interview
+rounds) runs on Claude only and is set per user. Unlike Memory defragment, it takes an effort without a
+model: the default model then runs at that effort. A model picked with no effort runs at that model's own default effort. A model removed from the
+catalog falls back to the default model but keeps a stored effort.
+
 **The daily allowance.** Separately, OpenRouter caps how many `:free` requests a key
 sends per day: **1000** on an account that has bought at least $10 of credit, **50**
 below, reset at 00:00 UTC. Every model call is one request — each agent turn, each

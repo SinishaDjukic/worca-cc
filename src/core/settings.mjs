@@ -1260,6 +1260,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'networkWait',                             // Settings › Runs › Wait for the network {enabled, maxWaitMin}
   'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
   'runEngine', 'stepModels', 'utilityModels',
+  'requirementsInterview',                   // Models › Engines › Claude: the requirements interview { model, effort }
   'askEngine', 'askModels',                  // Chat's engine for new chats and its model per engine (user-only, D17)
   'tagDimensions',                           // Settings › Tags › Tag dimensions [{ key, label, values, required, default? }]
   'enforceTags',                             // Settings › Tags › Require mandatory tags to start a run
@@ -1301,6 +1302,23 @@ export function askModelsSetting() {
   if (homeGuarded()) return {};
   const value = readSettings().askModels;
   return isObj(value) ? value : {};
+}
+/** The Requirements interview's STORED { model?, effort? } (A1.1 D1), or undefined: user-only, Claude-only, not a UTILITY_JOBS entry. */
+export function requirementsInterviewSetting() {
+  if (homeGuarded()) return undefined;
+  const value = readSettings().requirementsInterview;
+  return isObj(value) ? value : undefined;
+}
+/** Validate a POST value: { model?, effort? } (an effort alone is allowed), null / '' to clear. */
+export function assertRequirementsInterviewInput(input) {
+  return normalizeModelPair('claude', input, 'requirementsInterview');
+}
+export async function setRequirementsInterview(input) {
+  const value = assertRequirementsInterviewInput(input);
+  const settings = readSettings();
+  if (value === null) delete settings.requirementsInterview; else settings.requirementsInterview = value;
+  await persistSettings(settings);
+  return { requirementsInterview: requirementsInterviewSetting() ?? null };
 }
 export function assertAskEngineInput(input) {
   if (input === null || input === undefined || input === '') return null;

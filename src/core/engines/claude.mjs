@@ -325,18 +325,23 @@ export function buildClaudeArgs({
   tools: builtinTools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
   maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard, addDirs, disallowedTools, agents,
   pluginDirs, extraSettings, memoryLoadLog,
+  // Requirements A1.1: 'replace' swaps Claude Code's own system prompt for ours
+  // (--system-prompt / --system-prompt-file). Anything else, absent included, is
+  // today's --append-system-prompt(-file), so every other argv stays byte-identical.
+  systemPromptMode,
 }, delivery = {}) {
   // delivery (GH #380, set only by planClaudeInvocation's staged branch):
   //   promptViaStdin   -> bare `-p`; the prompt is written to the child's stdin
-  //   systemPromptFile -> `--append-system-prompt-file <path>` instead of the text
+  //   systemPromptFile -> `--append-system-prompt-file <path>` (or `--system-prompt-file`) instead of the text
   //   settingsFile     -> `--settings <path>` instead of the inline JSON
   const { promptViaStdin = false, systemPromptFile = null, settingsFile = null } = delivery;
   const args = promptViaStdin ? ['-p'] : ['-p', prompt];
   args.push('--output-format', 'stream-json', '--verbose', '--permission-mode', permissionMode);
   if (resumeSessionId) args.push('--resume', resumeSessionId);
   if (systemPrompt) {
-    if (systemPromptFile) args.push('--append-system-prompt-file', systemPromptFile);
-    else args.push('--append-system-prompt', systemPrompt);
+    const replace = systemPromptMode === 'replace';
+    if (systemPromptFile) args.push(replace ? '--system-prompt-file' : '--append-system-prompt-file', systemPromptFile);
+    else args.push(replace ? '--system-prompt' : '--append-system-prompt', systemPrompt);
   }
   if (model) {
     args.push('--model', model);
@@ -456,7 +461,7 @@ export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_IN
   return { ...plan, dir };
 }
 
-export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
+export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
   // MCP registry §5.5.3: with registry secrets in this spawn's env, every emit, the result text and the error
   // message leave redacted — wrapped once here, so the broker path (which calls runClaudeProcess) is covered too.
   const redactor = Array.isArray(redactValues) && redactValues.length ? createRedactor(redactValues) : null;
@@ -533,7 +538,9 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     // role, custom agent, plugin agent, ask chat — carries the protection
     // preamble, the PreToolUse hook (hostGuard -> the --settings payload), and
     // WORCA_HOST_PID (below). One kill-switch: WORCA_HOST_GUARD=0. Mock spawns
-    // nothing, so runMock stays untouched.
+    // nothing, so runMock stays untouched. The preamble heads the system prompt
+    // whether it is appended or (systemPromptMode replace, Requirements A1.1) replaces
+    // Claude Code's own.
     const guardOn = hostGuardEnabled();
     const guardedSystemPrompt = guardOn
       ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n')
@@ -546,7 +553,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
         mcpConfigPath, mcpServerGrants, permissionRules,
         tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
         maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, disallowedTools, agents,
-        pluginDirs, extraSettings, memoryLoadLog,
+        pluginDirs, extraSettings, memoryLoadLog, systemPromptMode,
       }, { bin: resolved.bin, limit });
     } catch (err) {
       rejectP(new Error(`Failed to stage the claude prompt files: ${err.message}`));

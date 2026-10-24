@@ -3,6 +3,20 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Requirements (experimental)
+
+**Define a feature with Worca before anything is built.**
+
+A product owner describes a feature in a few sentences and Worca interviews them, a few questions at a time, into a testable spec: goal, actors, flow, edge cases, rules, acceptance criteria and assumptions. Six checks say when it is Ready, and **Start in Worca** starts a normal run with the spec as its task. A product brief, made once per project or workspace from its default branch, lets every interview there start from what the product already does; edits to the spec or the brief are kept.
+
+Chips: Requirements · interview · Ready · Start in Worca · product brief · Requirements interview model · experimental: turn it on in Settings › Labs
+
+Read it: [Requirements](../requirements.md)
+
+Pull requests (add each number when it opens):
+
+- Requirements (#882)
+
 ## See when a newer Worca is out
 
 **Settings › About says whether you run the latest stable Worca.**

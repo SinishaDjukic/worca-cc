@@ -69,6 +69,10 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h2.5M11.5 12V6.8H15M11.5 12v5.3H15"></path></svg>
               <span>Workflows</span>
             </button>
+            <button type="button" data-nav="requirements" data-min-level="simple" data-flag="requirements" data-flag-chip>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4h8l3 3v13H5V4h3"></path><path d="M9 11h6M9 15h4"></path><path d="M9 4v2h6V4"></path></svg>
+              <span>Requirements</span>
+            </button>
 
             <!-- Add-ons: four Settings tabs that became pages of their own (Plugins → Marketplace,
                  Sets → Connectors, Models, Providers). Old #settings/<tab> addresses land here
@@ -1121,6 +1125,16 @@
         </section>
         <!-- /view runs -->
 
+        <!-- ===== VIEW: REQUIREMENTS (behind the requirements flag; requirements-view.mjs paints #requirements-host) ===== -->
+        <section class="view hidden" data-view="requirements">
+          <div class="topbar">
+            <div>
+              <div class="sub" id="requirements-sub">Define a feature with Worca before anything is built. Nothing runs until you start it.</div>
+            </div>
+          </div>
+          <p id="requirements-msg" class="form-msg" aria-live="polite"></p>
+          <div id="requirements-host"></div>
+        </section>
         <!-- ===== VIEW: FEATURE (Shaper, D16) ===== -->
 
         <!-- ===== VIEW: STATISTICS ===== -->
