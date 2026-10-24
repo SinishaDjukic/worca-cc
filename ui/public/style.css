@@ -5010,7 +5010,12 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
    control .rd-pr-slot among them). The live row shows only while the run has not ended and the buttons only once it
    has, so the two never meet; if they did, the buttons take their own column after the row. */
 .rd-sheet-head{container:rd-head / inline-size;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:start;min-width:0;}
-.rd-sheet-head > .rd-now-top{grid-area:1 / 1;}
+/* The status block spans every head column so its bar (and the group bar, role rows) take the card's width; a subgrid
+   keeps the status line in column 1, so its ellipsis stops where the switch or the buttons begin. Run page only: the
+   chat card and the group page lay the shared block out themselves. */
+.rd-sheet-head > .rd-now-top{grid-area:1 / 1 / 2 / -1;grid-template-columns:subgrid;column-gap:0;}
+.rd-sheet-head > .rd-now-top > *{grid-column:1 / -1;}
+.rd-sheet-head > .rd-now-top > .run-status-head{grid-column:1;}
 .rd-sheet-head > .rd-live-row{grid-area:1 / 2;height:23px;margin-left:16px;}   /* the state word's line box (18px × 1.3) */
 /* Slice 3: centred on the status line: the 32px buttons overhang it each way, so the head is the status line's height
    with or without them, and the PR control's fade-out moves nothing. A narrow card wraps them under the status. */
@@ -5029,14 +5034,17 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-pr-menu.btn-split-menu .sw-item{align-items:flex-start;}
 .rd-pr-menu .wfv-menu-l{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;}
 .rd-pr-menu .sw-item[title] small{color:var(--amber-ink);}
-/* Slice 3: the read-only tracker under the head: three steps on one 3-column grid (two for a Folder run), a row per
-   workspace member with its name in a 44px column. Nodes reuse the status-dot colours. */
+/* Slice 3: the read-only tracker under the head: three steps on one grid (two for a Folder run), a row per
+   workspace member with its name in a 44px column. Nodes reuse the status-dot colours. Only steps before the last
+   draw a line, so the last column is the last step's own width and the lines grow to fill the rest: the first step
+   starts at the left edge, the last ends at the right. */
 .rd-track{display:flex;flex-direction:column;gap:8px;padding-top:12px;border-top:1px solid var(--line);}
 .rd-track[hidden]{display:none;}
 .rd-track-row{display:grid;grid-template-columns:minmax(0,1fr);}
 .rd-track-row.has-name{grid-template-columns:44px minmax(0,1fr);column-gap:8px;}
 .rd-track-name{font-size:var(--fs-meta);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:16px;}
-.rd-track-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0;padding:0;list-style:none;}
+.rd-track-steps{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;margin:0;padding:0;list-style:none;}
+.rd-track-steps:not(:has(> :nth-child(3))){grid-template-columns:minmax(0,1fr) auto;}
 /* Top-aligned: a label that wraps keeps its dot and line on its first line (the 18px label line centres both). */
 .rd-track-head{display:flex;align-items:flex-start;gap:8px;min-width:0;}
 .rd-track-head > .rd-track-dot{margin-top:1px;}
