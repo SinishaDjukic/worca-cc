@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync, readdirSync, statSync, chmodSync, symlinkSync, mkdirSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { pbkdf2 } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { writeJsonAtomic } from '../src/core/json-atomic.mjs';
@@ -227,6 +228,20 @@ test('watchProxyLogin fires on a new save and on a marker for the same id', asyn
   markLoginRejected(v.id, { home });
   await until(() => calls > before);
   assert.equal(typeof watchProxyLogin(() => {}, { home: null }), 'function');
+});
+
+test('watchProxyLogin sees a save made right after it starts, even with the thread pool busy', async (t) => {
+  // fs.watchFile took its baseline from a first stat queued on the pool, so a save made before
+  // that stat ran became the baseline and was never reported (the Linux CI failure).
+  const home = tempHome(t);
+  const jobs = Array.from({ length: Number(process.env.UV_THREADPOOL_SIZE) || 4 },
+    () => new Promise((r) => pbkdf2('x', 'y', 200000, 32, 'sha512', r)));
+  let calls = 0;
+  const stop = watchProxyLogin(() => { calls += 1; }, { home, intervalMs: 20 });
+  t.after(stop);
+  saveProxyLogin({ user: 'jdoe', password: 'x' }, { home });
+  await Promise.all(jobs);
+  await until(() => calls >= 1);
 });
 
 // ── redaction / status / env ──
