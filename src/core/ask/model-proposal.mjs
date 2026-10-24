@@ -147,7 +147,7 @@ function entryRows(m) {
     if (m.upstream.capabilities) rows.push({ field: 'Limits', value: fmtCaps(m.upstream.capabilities) });
   }
   for (const [k, v] of Object.entries(m.env || {})) rows.push({ field: k, value: typeof v === 'string' ? maskEnvValue(k, v) : String(v) });
-  rows.push({ field: 'Efforts', value: effortsForEngine(m.engine).length ? fmtEfforts(m.efforts) : 'none' });   // Cursor, Gemini CLI, Qwen Code: no effort
+  rows.push({ field: 'Efforts', value: effortsForEngine(m.engine).length ? fmtEfforts(m.efforts) : 'none' });   // Cursor: no effort
   const c = fmtCost(m.cost);
   if (c) rows.push({ field: 'Pricing', value: c });
   return rows;

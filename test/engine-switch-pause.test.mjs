@@ -96,8 +96,8 @@ test('helper jobs run on the run engine when it runs them, else on Claude', () =
   assert.deepEqual(effortsForEngine('copilot'), ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
   assert.deepEqual(CURSOR_EFFORTS, []);
   assert.equal(effortsForEngine('cursor'), CURSOR_EFFORTS);
-  assert.deepEqual(effortsForEngine('gemini'), []);
-  assert.deepEqual(effortsForEngine('qwen'), []);
+  assert.deepEqual(effortsForEngine('gemini'), ['low', 'medium', 'high'], "Gemini CLI's thinking");
+  assert.deepEqual(effortsForEngine('qwen'), ['low', 'medium', 'high', 'xhigh', 'max'], "Qwen Code's reasoning-effort tiers");
   assert.deepEqual(effortsForEngine('opencode'), ['minimal', 'low', 'medium', 'high', 'max']);
 });
 

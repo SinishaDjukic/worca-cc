@@ -292,7 +292,7 @@ export const foldSystemPrompt = (sys, prompt) => (sys ? `=== SYSTEM ===\n${sys}\
  *   prepare's result may carry cleanup(), run when the spawn is over
  */
 export async function runFamilyProcess(spec, {
-  cwd = process.cwd(), systemPrompt = '', prompt = '', model, onEvent = () => {}, signal, bin, resumeSessionId,
+  cwd = process.cwd(), systemPrompt = '', prompt = '', model, effort, onEvent = () => {}, signal, bin, resumeSessionId,
   addDirs, writableDirs, sandbox, askLockdown, envScrub, envAllowlist, asAgent, mcpConfigPath, spawnEnv: runSpawnEnv,
   redactValues, maxTurns, permissionRules, noGit = false, probe = null,
 } = {}) {
@@ -341,7 +341,7 @@ export async function runFamilyProcess(spec, {
 
   let prepared = null;
   try {
-    prepared = spec.prepare({ cwd, bin, sys, prompt: String(prompt ?? ''), model, servers, permissionRules, includeDirs, scratchDir, noGit, ask, probe });
+    prepared = spec.prepare({ cwd, bin, sys, prompt: String(prompt ?? ''), model, effort, servers, permissionRules, includeDirs, scratchDir, noGit, ask, probe });
     // The engine's own env names survive scrub; the run env carries the MCP servers' ${VAR} values.
     const prefixes = typeof spec.envPrefixes === 'function' ? spec.envPrefixes(process.env) : spec.envPrefixes;
     const { env } = composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv,

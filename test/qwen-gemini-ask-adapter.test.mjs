@@ -137,3 +137,29 @@ test('the family helpers: version order, settings merged deeply with null kept, 
   assert.deepEqual(withEnvRefs({ s: { command: 'n', env: { K: 'own' } }, r: { url: 'https://x' } }, ['K', 'T']),
     { s: { command: 'n', env: { K: 'own', T: '${T}' } }, r: { url: 'https://x' } }, 'a server\'s own value wins; a remote server is untouched');
 });
+
+test('effort: Qwen Code takes it as its system settings\' model.reasoningEffort; an unknown tier writes none', POSIX, async () => {
+  const dir = tmp();
+  const fake = fakeQwen(dir, 'hi');
+  await runQwenProcess({ cwd: dir, bin: fake.bin, prompt: 'p', model: 'qwen3-coder', effort: 'xhigh', askLockdown: true, sandbox: 'read-only', mcpConfigPath: mcpFile(dir), envScrub: true });
+  assert.equal(JSON.parse(fake.record().system).model.reasoningEffort, 'xhigh');
+  const dir2 = tmp();
+  const fake2 = fakeQwen(dir2, 'hi');
+  await runQwenProcess({ cwd: dir2, bin: fake2.bin, prompt: 'p', model: 'qwen3-coder', effort: 'minimal', askLockdown: true, sandbox: 'read-only', mcpConfigPath: mcpFile(dir2), envScrub: true });
+  assert.equal(JSON.parse(fake2.record().system).model, undefined);
+});
+
+test('effort: Gemini CLI takes it as thinking — a level on Gemini 3, a budget on Gemini 2.5 — in the chat folder\'s settings', POSIX, async () => {
+  const { geminiEffortSettings } = await import('../src/core/engines/gemini.mjs');
+  assert.deepEqual(geminiEffortSettings('low').modelConfigs.customOverrides, [
+    { match: { model: 'chat-base-3' }, modelConfig: { generateContentConfig: { thinkingConfig: { thinkingLevel: 'LOW' } } } },
+    { match: { model: 'chat-base-2.5' }, modelConfig: { generateContentConfig: { thinkingConfig: { thinkingBudget: 1024 } } } },
+  ]);
+  assert.deepEqual(geminiEffortSettings('max'), {}, 'an effort Gemini CLI does not take writes nothing');
+  const dir = tmp();
+  const fake = fakeGemini(dir, 'hi');
+  await runGeminiProcess({ cwd: dir, bin: fake.bin, prompt: 'p', model: 'gemini-3-pro', effort: 'high', askLockdown: true, sandbox: 'read-only', mcpConfigPath: mcpFile(dir), envScrub: true });
+  const s = JSON.parse(fake.record().gemini);
+  assert.equal(s.modelConfigs.customOverrides[0].modelConfig.generateContentConfig.thinkingConfig.thinkingLevel, 'HIGH');
+  assert.deepEqual(s.tools.core, [GEMINI_NO_CORE_TOOL], 'the lockdown settings stay');
+});

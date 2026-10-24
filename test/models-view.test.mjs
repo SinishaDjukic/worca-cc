@@ -542,13 +542,13 @@ test('editor: editing an OpenCode model offers only its own providers', () => {
   assert.equal(el.querySelector('.mv-conn-body').hidden, true);
 });
 
-for (const [engine, label] of [['gemini', 'Gemini CLI'], ['qwen', 'Qwen Code']]) {
-  test(`editor: ${label} is Cursor's shape — its own sign-in only, no env, no effort, no pricing`, () => {
+for (const [engine, label, efforts] of [['gemini', 'Gemini CLI', ['low', 'medium', 'high']], ['qwen', 'Qwen Code', ['low', 'medium', 'high', 'xhigh', 'max']]]) {
+  test(`editor: ${label} — its own sign-in only, no env, its own efforts, a price for its chats`, () => {
     const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
     setModelEngine(el, engine);
-    assert.equal(el.querySelectorAll('.mv-effort-cb').length, 0, 'no effort chips');
+    assert.deepEqual([...el.querySelectorAll('.mv-effort-cb')].map((c) => c.value), efforts, "the engine's own efforts");
     assert.equal(el.querySelector('.mv-env').closest('.mv-field').hidden, true);
-    assert.equal(el.querySelector('.mv-cost-edit').closest('.mv-field').hidden, true);
+    assert.equal(el.querySelector('.mv-cost-edit').closest('.mv-field').hidden, false, "a chat's cost cap and spend use the price");
     const conn = el.querySelector('.mv-conn');
     // A new entry still offers every connection; on its CLI's sign-in it runs on that CLI alone.
     assert.equal(conn.querySelector('.mv-conn-mode-rb:checked').value, 'direct');
@@ -557,13 +557,12 @@ for (const [engine, label] of [['gemini', 'Gemini CLI'], ['qwen', 'Qwen Code']])
     el.querySelector('.mv-id').value = 'm-1';
     const { body } = collectModelEditor(el);
     assert.equal(body.engine, engine);
-    assert.deepEqual(body.efforts, []);
   });
 
-  test(`editor: editing a ${label} model shows no efforts and only its own sign-in`, () => {
-    const el = renderModelEditor({ id: 'm-1', label: 'm-1', engine, efforts: [] }, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
-    assert.equal(el.querySelectorAll('.mv-effort-cb').length, 0);
-    assert.equal(el.querySelector('.mv-efforts').closest('.mv-field').hidden, true);
+  test(`editor: editing a ${label} model shows its efforts and only its own sign-in`, () => {
+    const el = renderModelEditor({ id: 'm-1', label: 'm-1', engine, efforts }, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
+    assert.equal(el.querySelectorAll('.mv-effort-cb').length, efforts.length);
+    assert.equal(el.querySelector('.mv-efforts').closest('.mv-field').hidden, false);
     const shown = [...el.querySelectorAll('.mv-conn .mv-conn-mode')].filter((l) => !l.hidden);
     assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-title').textContent), [`${label} default`]);
   });

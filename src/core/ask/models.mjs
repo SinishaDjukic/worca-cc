@@ -15,8 +15,8 @@ import { harnessesOf, runsOn, effortsOn } from '../../shared/connections.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
 
 export const ENGINE_LABEL = Object.freeze(Object.fromEntries(ASK_ENGINES.map((e) => [e, engineLabel(e)])));
-/** The effort a chat on an engine with no effort vocabulary (Gemini CLI, Qwen Code) carries: it validates, the picker
- *  hides it (`noEffort`), and the adapter ignores it (capability `effort` false). */
+/** The effort a chat on an engine with no effort vocabulary carries (none today: Gemini CLI and Qwen Code took one with
+ *  their thinking settings): it validates, the picker hides it (`noEffort`), and the adapter ignores it. */
 const NO_EFFORT_PLACEHOLDER = 'medium';
 /** A chat's engine (cascading-settings-design.md D12): the engine stored on the thread (v53), so a model that left the
  *  catalog never moves the chat to another engine; a chat from before v53 reads its model's engine (unknown is Claude). */
@@ -130,7 +130,8 @@ export function createAskModels({
       const entry = {
         id: m.id,
         label: typeof m.label === 'string' && m.label ? m.label : m.id,
-        efforts: Array.isArray(m.efforts) ? [...m.efforts] : [...effortsForEngine(engine)],
+        // A sign-in engine's row with no efforts of its own takes the engine's whole vocabulary (Gemini CLI, Qwen Code).
+        efforts: Array.isArray(m.efforts) && (m.efforts.length || engine === 'claude') ? [...m.efforts] : [...effortsForEngine(engine)],
         custom,
         hasEnv: m.hasEnv === true,
       };

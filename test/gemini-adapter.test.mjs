@@ -114,7 +114,7 @@ test('unknown resume and a broken policy file are recognized from their captured
 test('capabilities: declared from the spike, cost is false', () => {
   assert.deepEqual(Object.keys(geminiCapabilities).sort(), [...CAPABILITY_KEYS].sort());
   assert.deepEqual(CAPABILITY_KEYS.filter((k) => geminiCapabilities[k] === false),
-    ['systemPromptFlag', 'allowedTools', 'effort', 'cost', 'subagents', 'hookTelemetry', 'skills', 'subagentSystemPrompt', 'turnBudget']);
+    ['systemPromptFlag', 'allowedTools', 'cost', 'subagents', 'hookTelemetry', 'skills', 'subagentSystemPrompt', 'turnBudget']);
   assert.ok(GEMINI_ASK_LOCKDOWN, 'Chat runs on Gemini CLI, locked down (plans/ask-on-qwen-gemini-spike.md)');
 });
 

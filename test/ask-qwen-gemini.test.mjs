@@ -89,12 +89,13 @@ const ROWS = [
 const mk = (prefs = { engine: 'claude', slots: {} }, avail = {}) => createAskModels({ listModels: async () => ROWS, pluginModels: () => [],
   secretStatus: () => [], effortless: () => new Set(), askPrefs: () => prefs, ...avail });
 
-test('askCatalog: Qwen and Gemini rows with one hidden effort, their defaults, askEngine qwen', async () => {
+test('askCatalog: Qwen and Gemini rows with their engine\'s efforts, their defaults, askEngine qwen', async () => {
   const cat = await mk({ engine: 'qwen', slots: { qwen: { model: 'qwen3-coder-plus' } } }).askCatalog();
   const q = cat.models.find((m) => m.id === 'qwen3-coder-plus');
   assert.equal(q.engine, 'qwen');
-  assert.deepEqual(q.efforts, ['medium'], 'an engine with no effort carries one placeholder…');
-  assert.equal(q.noEffort, true, '…that the picker hides');
+  assert.deepEqual(q.efforts, ['low', 'medium', 'high', 'xhigh', 'max'], "Qwen Code's reasoning-effort tiers");
+  assert.equal(q.noEffort, undefined, 'the picker shows them');
+  assert.deepEqual(cat.models.find((m) => m.id === 'gemini-3-pro').efforts, ['low', 'medium', 'high'], "Gemini CLI's thinking");
   assert.deepEqual(cat.defaults.qwen, { model: 'qwen3-coder-plus', effort: 'medium' });
   assert.deepEqual(cat.defaults.gemini, { model: 'gemini-3-pro', effort: 'medium' });
   assert.equal(cat.askEngine, 'qwen');

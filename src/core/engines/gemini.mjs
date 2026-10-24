@@ -28,7 +28,8 @@
 // - Sign-in: GEMINI_API_KEY (also from ~/.gemini/.env or ~/.env), Vertex env, or a sign-in chosen in
 //   ~/.gemini/settings.json (`security.auth.selectedType`). No status command exists.
 // - Not used (capability false): GEMINI_SYSTEM_MD replaces the whole built-in system prompt, so worca folds its system
-//   prompt into the prompt; sub-agents, hooks, skills, effort, a per-spawn tool list and a turn cap are not wired.
+//   prompt into the prompt; sub-agents, hooks, skills, a per-spawn tool list and a turn cap are not wired. Effort is
+//   the model's thinking, set in the settings file (geminiEffortSettings).
 //
 // Chat (Ask Worca) on Gemini CLI, verified on 0.65.0 against a local model endpoint (plans/ask-on-qwen-gemini-spike.md):
 // - An admin-tier rule (`--admin-policy`) that denies `toolName = "*"` takes every tool out of the offered list, the
@@ -58,7 +59,21 @@ import { chatSelfTest, SELF_TEST_MODEL } from './chat-selftest.mjs';
 export const geminiDefaultBin = () => process.env.WORCA_GEMINI_BIN || 'gemini';
 export const GEMINI_SESSION_PREFIX = 'gemini:';
 
-const GEMINI_FALSE = new Set(['systemPromptFlag', 'allowedTools', 'effort', 'cost', 'subagents', 'hookTelemetry', 'skills', 'subagentSystemPrompt', 'turnBudget']);
+const GEMINI_FALSE = new Set(['systemPromptFlag', 'allowedTools', 'cost', 'subagents', 'hookTelemetry', 'skills', 'subagentSystemPrompt', 'turnBudget']);
+
+/** An effort as Gemini CLI's thinking (GEMINI_EFFORTS): a thinking level for the Gemini 3 family, a thinking budget for
+ *  Gemini 2.5, set through its settings' model config overrides on the base aliases every chat model extends (the
+ *  overrides apply over an alias's own thinking). A model outside those families keeps its own. */
+export const GEMINI_THINKING = Object.freeze({
+  low: Object.freeze({ level: 'LOW', budget: 1024 }), medium: Object.freeze({ level: 'MEDIUM', budget: 8192 }), high: Object.freeze({ level: 'HIGH', budget: 24576 }),
+});
+/** The settings that carry `effort`, or {} (none, or one Gemini CLI does not take). */
+export function geminiEffortSettings(effort) {
+  const t = Object.hasOwn(GEMINI_THINKING, effort) ? GEMINI_THINKING[effort] : null;
+  if (!t) return {};
+  const over = (alias, thinkingConfig) => ({ match: { model: alias }, modelConfig: { generateContentConfig: { thinkingConfig } } });
+  return { modelConfigs: { customOverrides: [over('chat-base-3', { thinkingLevel: t.level }), over('chat-base-2.5', { thinkingBudget: t.budget })] } };
+}
 export const geminiCapabilities = Object.freeze(Object.fromEntries(CAPABILITY_KEYS.map((k) => [k, !GEMINI_FALSE.has(k)])));
 
 /** The `tools.core` value that names no built-in: none is registered (see the chat notes above). */
@@ -292,7 +307,7 @@ function systemPolicyPresent() {
 const systemPolicyDir = () => GEMINI_SYSTEM_POLICY_DIRS[process.platform] || GEMINI_SYSTEM_POLICY_DIRS.linux;
 
 /** A chat's spawn: the admin policy and the chat folder's settings (removed when the spawn is over). */
-function prepareAsk({ cwd, bin, sys, prompt, model, servers, scratchDir, probe }) {
+function prepareAsk({ cwd, bin, sys, prompt, model, effort, servers, scratchDir, probe }) {
   if (systemPolicyPresent()) throw new Error(`${bin}: the system policy folder (${systemPolicyDir()}) holds policy files, so Gemini CLI would skip worca's chat lockdown`);
   const mcpServers = servers ? familyMcpServers(servers) : {};
   const mcpNames = Object.keys(mcpServers);
@@ -300,7 +315,7 @@ function prepareAsk({ cwd, bin, sys, prompt, model, servers, scratchDir, probe }
   writeFileSync(policyFile, geminiAskPolicyToml(mcpNames), { mode: 0o644 });
   mkdirSync(join(cwd, '.gemini'), { recursive: true, mode: 0o700 });
   const settingsFile = join(cwd, '.gemini', 'settings.json');
-  const doc = mergeSettings({ mcpServers }, GEMINI_ASK_SETTINGS, probe ? { security: { auth: { selectedType: 'gemini-api-key' } } } : {});
+  const doc = mergeSettings({ mcpServers }, GEMINI_ASK_SETTINGS, geminiEffortSettings(effort), probe ? { security: { auth: { selectedType: 'gemini-api-key' } } } : {});
   writeFileSync(settingsFile, `${JSON.stringify(doc, null, 2)}\n`, { mode: 0o600 });
   return {
     stdin: foldSystemPrompt(sys, prompt),
@@ -316,8 +331,8 @@ const GEMINI_SPEC = Object.freeze({
   fatalStderrRe: GEMINI_POLICY_ERROR_RE, fatalMessage: 'Gemini CLI could not load worca\'s policy file, so the guardrail rules would not hold — stopped',
   createNormalizer: createGeminiNormalizer,
   askLockdown: GEMINI_ASK_LOCKDOWN,
-  prepare({ cwd, bin, sys, prompt, model, servers, permissionRules, includeDirs, scratchDir, noGit, ask, probe }) {
-    if (ask) return prepareAsk({ cwd, bin, sys, prompt, model, servers, scratchDir, probe });
+  prepare({ cwd, bin, sys, prompt, model, effort, servers, permissionRules, includeDirs, scratchDir, noGit, ask, probe }) {
+    if (ask) return prepareAsk({ cwd, bin, sys, prompt, model, effort, servers, scratchDir, probe });
     const plan = geminiRulePlan(permissionRules);
     let policyFile = null;
     if (plan.rules.length) {
@@ -325,9 +340,12 @@ const GEMINI_SPEC = Object.freeze({
       policyFile = join(scratchDir(), 'worca-policy.toml');
       writeFileSync(policyFile, geminiPolicyToml(plan.rules), { mode: 0o644 });
     }
-    // The checkout's .gemini/settings.json: worca's MCP servers, or (none) worca's earlier file removed.
+    // The checkout's .gemini/settings.json: worca's MCP servers and the spawn's thinking, or (neither) worca's earlier
+    // file removed.
     const mcpServers = servers ? familyMcpServers(servers) : {};
-    writeProjectFiles('gemini', cwd, Object.keys(mcpServers).length ? { '.gemini/settings.json': `${JSON.stringify({ mcpServers }, null, 2)}\n` } : {}, { git: !noGit });
+    const thinking = geminiEffortSettings(effort);
+    const project = { ...(Object.keys(mcpServers).length ? { mcpServers } : {}), ...thinking };
+    writeProjectFiles('gemini', cwd, Object.keys(project).length ? { '.gemini/settings.json': `${JSON.stringify(project, null, 2)}\n` } : {}, { git: !noGit });
     const mcpNames = Object.keys(mcpServers);
     return {
       stdin: foldSystemPrompt(sys, prompt),

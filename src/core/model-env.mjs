@@ -25,6 +25,11 @@ export const CURSOR_EFFORTS = [];
 export const GOOSE_EFFORTS = ['low', 'medium', 'high', 'max'];
 /** OpenCode's `--variant` values (engines/opencode.mjs): the union of its providers' reasoning variants. */
 export const OPENCODE_EFFORTS = ['minimal', 'low', 'medium', 'high', 'max'];
+/** Qwen Code's `model.reasoningEffort` tiers (engines/qwen.mjs), set in worca's system settings per spawn. */
+export const QWEN_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+/** Gemini CLI's thinking, set per spawn in its settings' model config overrides (engines/gemini.mjs GEMINI_THINKING): a
+ *  thinking level on Gemini 3, a thinking budget on Gemini 2.5. */
+export const GEMINI_EFFORTS = ['low', 'medium', 'high'];
 /** Copilot's `--reasoning-effort` values (engines/copilot.mjs COPILOT_EFFORTS; kept equal by a test). */
 export const COPILOT_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
 /** A Copilot built-in's catalog id is `copilot/<the id copilot --model takes>`: the bare ids clash with Codex's built-ins
@@ -77,7 +82,8 @@ export const ASK_ENGINES = [...CHAT_ENGINE_NAMES];
  *  glob and starts no registry MCP server. */
 export const lockedChatEngine = (engine) => engine !== 'claude' && ASK_ENGINES.includes(engine);
 export function effortsForEngine(engine) {
-  return engine === 'codex' ? CODEX_EFFORTS : engine === 'copilot' ? COPILOT_EFFORTS : engine === 'goose' ? GOOSE_EFFORTS : engine === 'opencode' ? OPENCODE_EFFORTS : OWN_SIGNIN_ENGINES.includes(engine) ? CURSOR_EFFORTS : EFFORTS;
+  return engine === 'codex' ? CODEX_EFFORTS : engine === 'copilot' ? COPILOT_EFFORTS : engine === 'goose' ? GOOSE_EFFORTS : engine === 'opencode' ? OPENCODE_EFFORTS
+    : engine === 'qwen' ? QWEN_EFFORTS : engine === 'gemini' ? GEMINI_EFFORTS : OWN_SIGNIN_ENGINES.includes(engine) ? CURSOR_EFFORTS : EFFORTS;
 }
 export const ALL_EFFORTS = [...new Set([...EFFORTS, ...CODEX_EFFORTS, ...COPILOT_EFFORTS])];
 

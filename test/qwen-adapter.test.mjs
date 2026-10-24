@@ -82,7 +82,7 @@ test('unknown resume is recognized from its captured stderr', () => {
 test('capabilities: the system prompt flag is the one Gemini lacks; cost is false', () => {
   assert.deepEqual(Object.keys(qwenCapabilities).sort(), [...CAPABILITY_KEYS].sort());
   assert.deepEqual(CAPABILITY_KEYS.filter((k) => qwenCapabilities[k] === false),
-    ['allowedTools', 'effort', 'cost', 'subagents', 'hookTelemetry', 'skills', 'subagentSystemPrompt', 'turnBudget']);
+    ['allowedTools', 'cost', 'subagents', 'hookTelemetry', 'skills', 'subagentSystemPrompt', 'turnBudget']);
   assert.ok(QWEN_ASK_LOCKDOWN, 'Chat runs on Qwen Code, locked down (plans/ask-on-qwen-gemini-spike.md)');
 });
 

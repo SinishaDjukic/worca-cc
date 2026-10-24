@@ -76,16 +76,16 @@ export function harnessesLabel(m) {
   return l.length < 2 ? (l[0] || '') : `${l.slice(0, -1).join(', ')} and ${l.at(-1)}`;
 }
 
-// Effort vocabularies per harness (model-env.mjs EFFORTS / CODEX_EFFORTS / CURSOR_EFFORTS / COPILOT_EFFORTS / GOOSE_EFFORTS / OPENCODE_EFFORTS; kept equal by a test).
+// Effort vocabularies per harness (model-env.mjs EFFORTS / CODEX_EFFORTS / CURSOR_EFFORTS / COPILOT_EFFORTS / GOOSE_EFFORTS / OPENCODE_EFFORTS / GEMINI_EFFORTS / QWEN_EFFORTS; kept equal by a test).
 export const HARNESS_EFFORTS = Object.freeze({
   claude: Object.freeze(['medium', 'high', 'xhigh', 'max']),
   codex: Object.freeze(['minimal', 'low', 'medium', 'high']),
   cursor: Object.freeze([]),
   copilot: Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']),
-  gemini: Object.freeze([]),
+  gemini: Object.freeze(['low', 'medium', 'high']),
   goose: Object.freeze(['low', 'medium', 'high', 'max']),
   opencode: Object.freeze(['minimal', 'low', 'medium', 'high', 'max']),
-  qwen: Object.freeze([]),
+  qwen: Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']),
 });
 
 /** An effort picked in one harness's vocabulary, as the closest one `engine` takes, or null when it takes none.

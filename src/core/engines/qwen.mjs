@@ -24,7 +24,8 @@
 // - `--append-system-prompt` reaches the model. `--max-session-turns` does not cap tool calls (worca counts them).
 // - Sign-in: `security.auth.selectedType` in the user settings (~/.qwen, or QWEN_HOME), or env naming a whole provider
 //   (getAuthTypeFromEnv below), also from ~/.qwen/.env. A key alone is "No auth type is selected".
-// - Not used (capability false): sub-agents, hooks, skills, effort, a per-spawn tool list, a turn cap.
+// - Not used (capability false): sub-agents, hooks, skills, a per-spawn tool list, a turn cap. Effort is the system
+//   settings' `model.reasoningEffort`.
 //
 // Chat (Ask Worca) on Qwen Code, verified on 0.26.1 against a local model endpoint (plans/ask-on-qwen-gemini-spike.md):
 // - `--core-tools` is an allowlist of the CORE built-ins only (read_file, write_file, edit, run_shell_command, web_fetch,
@@ -51,13 +52,18 @@ import {
   familyAskSupport, mergeSettings,
 } from './gemini-family.mjs';
 import { makeChatDescriptor } from './chat-descriptor.mjs';
+import { QWEN_EFFORTS } from '../model-env.mjs';
 import { chatSelfTest, SELF_TEST_MODEL } from './chat-selftest.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const qwenDefaultBin = () => process.env.WORCA_QWEN_BIN || 'qwen';
 export const QWEN_SESSION_PREFIX = 'qwen:';
 
-const QWEN_FALSE = new Set(['allowedTools', 'effort', 'cost', 'subagents', 'hookTelemetry', 'skills', 'subagentSystemPrompt', 'turnBudget']);
+const QWEN_FALSE = new Set(['allowedTools', 'cost', 'subagents', 'hookTelemetry', 'skills', 'subagentSystemPrompt', 'turnBudget']);
+/** Qwen Code's reasoning-effort tiers (its settings' `model.reasoningEffort`, written into worca's system settings). A
+ *  model without reasoning ignores it; Qwen clamps a tier its model lacks. */
+export { QWEN_EFFORTS };
+const QWEN_EFFORT_SET = new Set(QWEN_EFFORTS);
 export const qwenCapabilities = Object.freeze(Object.fromEntries(CAPABILITY_KEYS.map((k) => [k, !QWEN_FALSE.has(k)])));
 
 /** Every built-in tool name of Qwen Code 0.26.1 (its ToolNames). A chat excludes them all (`--exclude-tools`); a tool a
@@ -284,13 +290,16 @@ const QWEN_SPEC = Object.freeze({
   classify: classifyQwenError, resumeNotFoundRe: QWEN_RESUME_NOT_FOUND_RE,
   createNormalizer: createQwenNormalizer,
   askLockdown: QWEN_ASK_LOCKDOWN,
-  prepare({ bin, sys, prompt, model, servers, permissionRules, includeDirs, scratchDir, ask, probe }) {
+  prepare({ bin, sys, prompt, model, effort, servers, permissionRules, includeDirs, scratchDir, ask, probe }) {
     const plan = qwenRulePlan(permissionRules);
     const mcpServers = servers ? familyMcpServers(servers) : {};
     const env = { QWEN_CODE_SUPPRESS_YOLO_WARNING: '1', ...(ask ? QWEN_ASK_ENV : {}) };
-    if (plan.deny.length || Object.keys(mcpServers).length || ask) {
+    const tier = QWEN_EFFORT_SET.has(effort) ? effort : null;
+    if (plan.deny.length || Object.keys(mcpServers).length || ask || tier) {
       const file = join(scratchDir(), 'system-settings.json');
       let doc = qwenSystemSettings({ base: machineSystemSettings(bin), mcpServers, deny: plan.deny });
+      // The spawn's effort: the system settings win over the user's own model.reasoningEffort.
+      if (tier) doc = mergeSettings(doc, { model: { reasoningEffort: tier } });
       // A chat: worca's lockdown settings win over the machine's; the self-test signs in to its own endpoint.
       if (ask) doc = mergeSettings(doc, QWEN_ASK_SETTINGS, probe ? { security: { auth: { selectedType: 'openai' } } } : {});
       writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`, { mode: 0o644 });

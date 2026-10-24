@@ -6,7 +6,8 @@ import { applyEngineLocks, engineLock } from './engine-locks.mjs';
 export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', 'high', 'xhigh', 'max']), codex: Object.freeze(['minimal', 'low', 'medium', 'high']),
   copilot: Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']),
   ...Object.fromEntries(SIGN_IN_ENGINE_NAMES.map((e) => [e, Object.freeze([])])),
-  goose: Object.freeze(['low', 'medium', 'high', 'max']), opencode: Object.freeze(['minimal', 'low', 'medium', 'high', 'max']) });
+  goose: Object.freeze(['low', 'medium', 'high', 'max']), opencode: Object.freeze(['minimal', 'low', 'medium', 'high', 'max']),
+  gemini: Object.freeze(['low', 'medium', 'high']), qwen: Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']) });
 // An inherited value's label; an unset one stays null, so the field shows its bare heading.
 const engineName = (v) => (v == null ? null : engineLabel(v));
 const helpersNote = (engine) => (engine === 'copilot' ? "Copilot runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on its own default model."
