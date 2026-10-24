@@ -107,7 +107,7 @@ import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './grou
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
 import { setShipDialogOpener, shipReason } from './shape/ship-card.mjs';
 import { runPositionLabel, groupKindWord, pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
-import { headModel, trackerModel, renderHeadButtons, renderTracker, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
+import { headModel, trackerModel, factsModel, renderHeadButtons, renderTracker, renderFacts, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
   hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip } from './run-head.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
 import { loadRunsView, saveRunsView, viewChip, viewMenuItems } from './runs-view-menu.mjs';
@@ -35297,9 +35297,9 @@ function paintPageHead(glance, title, meta) {
 // place (paintPageHead owns the line's first text node, the Running page appends a person
 // chip after it), hidden when there is none. Copies like the Details header's button. Bound
 // once; the click reads the PAINTED name, never the one this paint saw (the stale-capture
-// note in paintHdHeaderMeta).
-function paintPageBranch(glance, name) {
-  const btn = glance && glance.querySelector('.rd-page-branch');
+// note in paintHdHeaderMeta). `fact`: the facts row it sits in, Branch or Merged (the base branch the work is in).
+function paintPageBranch(glance, name, fact = 'branch') {
+  const btn = glance && glance.querySelector(`.rd-kv-row[data-fact="${fact}"] .rd-page-branch`);
   if (!btn) return;
   btn.hidden = !name;
   const row = btn.closest('.rd-kv-row');            // run 3 (D8): the facts block's Branch row
@@ -35308,7 +35308,7 @@ function paintPageBranch(glance, name) {
   if (name && label.textContent !== name) {
     label.textContent = name;
     btn.title = name;
-    btn.setAttribute('aria-label', `Copy branch name ${name}`);
+    btn.setAttribute('aria-label', `Copy ${fact === 'merged' ? 'the branch it was merged into' : 'branch name'} ${name}`);
   }
   if (btn.dataset.bound === '1') return;
   btn.dataset.bound = '1';
@@ -35648,7 +35648,8 @@ function paintRunHead(screen, f, h) {
   if (slot) slot._prMenu = (anchor) => h.onMenu(anchor, f);
   renderHeadButtons(screen.querySelector('.rd-head-acts'), head, slot, h);
   if (slot && slot._prMenuOpen) slot._prMenuOpen(f);
-  renderTracker(screen.querySelector('.rd-track'), trackerModel(f), h);
+  renderTracker(screen.querySelector('.rd-track'), trackerModel(f));
+  renderFacts(screen.querySelector('.rd-kv'), factsModel(f), { ...h, onMerged: (name) => paintPageBranch(screen, name, 'merged') });
   return head;
 }
 

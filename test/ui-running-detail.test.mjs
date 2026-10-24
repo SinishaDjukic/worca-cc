@@ -385,8 +385,8 @@ test('a recovery-patch artifact adds the alternate-recovery link once', async ()
   });
   await settle(window);
 
-  // Slice 3: the tracker's Changes step carries the recovery patch.
-  const patchLinks = () => [...window.document.querySelectorAll('#run-detail .rd-track a.rd-track-link')].filter((a) => a.textContent === 'Download patch');
+  // The facts list's Kept work row carries the recovery patch.
+  const patchLinks = () => [...window.document.querySelectorAll('#run-detail .rd-kv [data-fact="kept"] a.rd-fact-link')].filter((a) => a.textContent === 'Download patch');
   let links = patchLinks();
   assert.equal(links.length, 1, 'the link renders off the recorded artifact');
   assert.match(links[0].getAttribute('href'), /\/api\/runs\/p1\/recovery-patch/);
@@ -1199,8 +1199,9 @@ test('a finished run whose branch has only a closed pull request: Create pull re
 const PR_URL = 'https://github.com/o/r/pull/781';
 const prRow = (state, extra = {}) => ({ ...HISTORY_ROW, id: 'p1', live: true, survived: true, branch: 'worca-cc/dark-p1', sourceBranch: 'main',
   pr: { state, url: PR_URL, number: 781, ...extra } });
-const CHECKS = { checks: { state: 'failure', failed: 1, total: 15 }, mergeable: 'MERGEABLE',
-  status: { tone: 'bad', label: 'Checks failing', detail: '1 of 15 checks failed' }, watch: { watching: false, status: 'idle' } };
+// The server's own shape (git-info.mjs rollupChecks / prMergeStatus): failing checks ARE the verdict, so no detail.
+const CHECKS = { checks: { state: 'failing', failed: 1, pending: 0, total: 15 }, mergeable: 'MERGEABLE',
+  status: { tone: 'bad', label: '1 of 15 checks failed', detail: '' }, watch: { watching: false, status: 'idle' } };
 async function prGlance({ row = prRow('OPEN'), level = 'advanced', checks = () => ok(CHECKS), watch = () => ok({ watching: true, status: 'idle' }),
   more = () => null } = {}) {
   const calls = { checks: [], watch: [] };
@@ -1231,7 +1232,7 @@ const fail500 = () => Promise.resolve({ ok: false, status: 500, json: async () =
 const itemsOf = (menu) => [...menu.querySelectorAll('[role^="menuitem"]')];
 const labelOf = (b) => (b.querySelector('b') || b.querySelector('.wfv-menu-l') || b).textContent;
 
-test('slice 3: an open PR is View PR │ ▾ in the card head and the tracker\'s PR step; no PR bar, no View PR in the bar', async () => {
+test('slice 3: an open PR is View PR │ ▾ in the card head and the Pull request fact; no PR bar, no View PR in the bar', async () => {
   const { scr, calls } = await prGlance();
   assert.equal(scr.querySelector('.rd-pr-box'), null, 'no PR bar');
   const main = scr.querySelector('.rd-head-acts .rd-pr-slot .btn-split.mini.rd-pr-split > a[data-rd-cta]');
@@ -1248,22 +1249,21 @@ test('slice 3: an open PR is View PR │ ▾ in the card head and the tracker\'s
   assert.equal(scr.querySelector('.rd-bar-end .rd-actions [data-model-action="open-pr"]'), null, 'the bar has no View PR');
   const steps = [...scr.querySelectorAll('.rd-track .rd-track-step')];
   assert.deepEqual(steps.map((x) => x.className.replace('rd-track-step ', '')), ['is-done', 'is-current is-ready', 'is-future']);
-  assert.equal(steps[1].querySelector('a.rd-track-pr').textContent, '#781');
-  assert.match(steps[1].textContent, /Checks failing/);
-  assert.match(steps[1].textContent, /1 of 15 checks failed/);
+  assert.equal(steps[1].textContent, 'Pull request', 'the step carries its label only');
+  const chip = scr.querySelector('.rd-kv [data-fact="pr"] a.runs-pr');
+  assert.equal(chip.querySelector('.runs-pr-num').textContent, 'PR #781');
+  assert.equal(chip.querySelector('.runs-pr-word').textContent, 'Checks failing');
+  assert.equal(scr.querySelector('.rd-kv [data-fact="checks"] .rd-kv-v').textContent, '1 of 15 checks failed');
   assert.ok(calls.checks.length >= 1, 'the feed read the PR status');
   assert.equal(scr.querySelector('.rd-result [data-rd-cta]'), null, 'nothing PR-shaped under Results');
 });
 
-test('a live run\'s tracker names its source branch as the base; without one it reads "Merged into base"', async () => {
+test('a live run\'s tracker reads Merged last, and shows no Merged fact until the work is in its base', async () => {
   const ctx = await bootRunning();
   const rd = await openGlance(ctx, 'running/r1', { branch: { source: 'main', feature: 'worca-cc/rate-p1', worktreeDir: '/tmp/wt' } });
   assert.equal(rd.querySelectorAll('.rd-track .rd-track-step').length, 3, 'a live git run paints the tracker');
-  const lastLabel = () => [...rd.querySelectorAll('.rd-track .rd-track-step')].at(-1).querySelector('.rd-track-label').textContent;
-  assert.equal(lastLabel(), 'Merged into main');
-  const ctx2 = await bootRunning();
-  const rd2 = await openGlance(ctx2);
-  assert.equal([...rd2.querySelectorAll('.rd-track .rd-track-step')].at(-1).querySelector('.rd-track-label').textContent, 'Merged into base');
+  assert.equal([...rd.querySelectorAll('.rd-track .rd-track-step')].at(-1).querySelector('.rd-track-label').textContent, 'Merged');
+  assert.equal(rd.querySelector('.rd-kv [data-fact="merged"]').hidden, true);
 });
 
 test('needle (c): at Advanced and Expert the ▾ lists one Watch switch, whose click POSTs /api/pr/watch', async () => {
@@ -1389,7 +1389,7 @@ test('slice 3: conflicts offer Fix conflicts in the head and the ▾; Watch stop
       assert.ok(ask && ask.disabled);
       assert.equal(ask.title, "Ask for changes from the run's chat");
       assert.equal(scr.querySelector('.rd-head-acts [data-head="fix-conflicts"]'), null);
-      assert.match(scr.querySelectorAll('.rd-track .rd-track-step')[1].textContent, /Ask for changes from the run's chat/);
+      assert.match(scr.querySelector('.rd-kv [data-fact="watch"] .rd-kv-v').textContent, /Ask for changes from the run's chat/);
       const m = await openMenu();
       assert.equal(itemsOf(m).some((b) => labelOf(b) === 'Fix conflicts'), false);
     } },
@@ -1437,9 +1437,9 @@ test('slice 3: a PR that merges while its page is open never gets its checks wor
   const rd = await openGlance(ctx);
   frame(ctx, { type: 'done', runId: 'r1', status: 'done' });
   await settle(ctx.window, 10);
-  const prStep = () => rd.querySelectorAll('.rd-track .rd-track-step')[1];
-  assert.ok(prStep().querySelector('.rd-track-watch'), 'the open PR reads Watching');
-  assert.match(prStep().textContent, /3 of 15 checks running/);
+  const row$ = (key) => rd.querySelector(`.rd-kv [data-fact="${key}"]`);
+  assert.ok(row$('watch').querySelector('.rd-fact-watch'), 'the open PR reads Watching');
+  assert.match(row$('checks').textContent, /3 of 15 checks running/);
   hold = true;
   frame(ctx, { type: 'pr-watch-changed', projectKey: row.projectKey, pipelineId: 'p1' });
   await settle(ctx.window, 4);
@@ -1448,11 +1448,14 @@ test('slice 3: a PR that merges while its page is open never gets its checks wor
   frame(ctx, { type: 'pipelines-changed' });
   await settle(ctx.window, 10);
   assert.ok(rd.querySelectorAll('.rd-track .rd-track-step')[2].classList.contains('is-merged'));
-  assert.equal(rd.querySelector('.rd-track .rd-track-watch'), null, 'merged: no Watch');
+  assert.equal(row$('watch').hidden, true, 'merged: no Watch');
+  assert.equal(row$('checks').hidden, true, 'merged: no Checks');
+  assert.equal(row$('merged').hidden, false, 'merged: the Merged fact names the base');
+  assert.equal(row$('merged').querySelector('.rd-page-branch-name').textContent, 'main');
   held.shift()();
   await settle(ctx.window, 10);
-  assert.equal(rd.querySelector('.rd-track .rd-track-watch'), null, 'the late answer paints no Watch');
-  assert.doesNotMatch(rd.querySelector('.rd-track').textContent, /checks running/, 'the late answer paints no checks words');
+  assert.equal(row$('watch').hidden, true, 'the late answer paints no Watch');
+  assert.equal(row$('checks').hidden, true, 'the late answer paints no checks words');
   hold = false;
   const before = reads;
   frame(ctx, { type: 'pr-watch-changed', projectKey: row.projectKey, pipelineId: 'p1' });
@@ -1460,16 +1463,16 @@ test('slice 3: a PR that merges while its page is open never gets its checks wor
   assert.equal(reads, before, 'a refresh reads no checks for a merged PR');
 });
 
-test('slice 3: a pr-watch-changed frame re-reads the PR and the tracker shows the watch fixing', async () => {
+test('slice 3: a pr-watch-changed frame re-reads the PR and the Watch fact shows it fixing', async () => {
   let answer = { ...CHECKS, watch: { watching: true, status: 'idle' } };
   const { ctx, scr } = await prGlance({ checks: () => ok(answer) });
-  const prStep = () => scr.querySelectorAll('.rd-track .rd-track-step')[1];
-  assert.equal(prStep().querySelector('button.rd-track-watch').textContent, 'Watching');
+  const watch = () => scr.querySelector('.rd-kv [data-fact="watch"] .rd-kv-v');
+  assert.equal(watch().querySelector('button.rd-fact-watch').textContent, 'Watching');
   answer = { ...CHECKS, watch: { watching: true, status: 'fixing', activePipelineId: 'fx1' } };
   frame(ctx, { type: 'pr-watch-changed', projectKey: KEY, pipelineId: 'p1' });
   await settle(ctx.window, 10);
-  assert.equal(prStep().querySelector('.rd-track-watch.is-run').textContent, 'Fixing');
-  const fix = [...prStep().querySelectorAll('a.rd-track-link')].find((a) => a.textContent === 'View fix run');
+  assert.equal(watch().querySelector('.rd-fact-watch.is-run').textContent, 'Fixing');
+  const fix = [...watch().querySelectorAll('a.rd-fact-link')].find((a) => a.textContent === 'View fix run');
   assert.equal(fix.getAttribute('href'), `#history/${KEY}/fx1`);
 });
 

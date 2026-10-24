@@ -227,10 +227,10 @@ test('the Update review card\'s commits row is a disclosure control, not a §1.2
   assert.deepEqual([...doc.querySelectorAll('button')].filter((b) => !b.classList.contains('btn') && !b.closest(controls)).map((b) => b.className), []);
 });
 
-test('slice 3: the tracker\'s Watching and Commit it yourself are controls; a plain button in the card is still a stray', () => {
-  assert.ok(BUTTON_SPEC.controls.includes('button.rd-track-act') && STRAY_SPEC.allow.includes('button.rd-track-act'));
-  const doc = new JSDOM(`<div id="v" class="rd-sheet"><div class="rd-track"><button type="button" class="rd-track-act rd-track-watch">Watching</button>
-    <button type="button" class="rd-track-act">Commit it yourself</button></div><button type="button" class="odd">x</button></div>`).window.document;
+test('slice 3: the facts list\'s Watching and Commit it yourself are controls; a plain button in the card is still a stray', () => {
+  assert.ok(BUTTON_SPEC.controls.includes('button.rd-fact-act') && STRAY_SPEC.allow.includes('button.rd-fact-act'));
+  const doc = new JSDOM(`<div id="v" class="rd-sheet"><div class="rd-kv"><button type="button" class="rd-fact-act rd-fact-watch">Watching</button>
+    <button type="button" class="rd-fact-act">Commit it yourself</button></div><button type="button" class="odd">x</button></div>`).window.document;
   const got = auditStray(doc.getElementById('v'), STRAY_SPEC, { rect: () => ({ width: 10, height: 10 }) }).map((f) => f.sig);
   assert.deepEqual(got, ['button.odd']);
 });

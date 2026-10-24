@@ -120,7 +120,7 @@ test('slice 3: the run page bar skips the head actions, so it makes no Create PR
 });
 
 test('PR text links are --blue-ink-strong at weight 600', () => {
-  for (const sel of ['.rd-prs-link', '.rd-track-pr', '.chat-rc-watch-pr', '.ask-prcard-link', '.ask-shipcard-pr', '.hd-pr-repo-link']) {
+  for (const sel of ['.rd-prs-link', '.chat-rc-watch-pr', '.ask-prcard-link', '.ask-shipcard-pr', '.hd-pr-repo-link']) {
     const d = decls(sel);
     assert.match(d, /color:var\(--blue-ink-strong\)/, sel);
     assert.match(d, /font-weight:600/, sel);
