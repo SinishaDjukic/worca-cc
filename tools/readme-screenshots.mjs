@@ -8,6 +8,8 @@
 //   … --out DIR              write the PNGs to DIR instead
 //   … --port N               the sandbox server's port (default 4399; must be free)
 //   … --keep                 keep the sandbox home and print its path (debugging)
+//   … --record FILE          shoot nothing: crawl every view and save the session for the mock
+//                            artifact (tools/mock-artifact.mjs, docs/screenshots.md#mock-artifact)
 //
 // Viewport: a 16-inch MacBook Pro at its default "looks like" resolution, 1728×1117 CSS px at
 // device scale 2, so every PNG is 3456×2234. Light theme, the whole viewport, sidebar included.
@@ -30,7 +32,7 @@
 // the mkdtemp dirs it created, on success, failure and SIGINT/SIGTERM alike.
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -42,6 +44,7 @@ const REPO = fileURLToPath(new URL('..', import.meta.url));
 const OUT = path.resolve(flag('--out') || path.join(REPO, 'docs', 'screenshots'));
 const ONLY = (flag('--only') || '').split(',').map((s) => s.trim().replace(/\.png$/, '')).filter(Boolean);
 const KEEP = args.includes('--keep');
+const RECORD = flag('--record') ? path.resolve(flag('--record')) : null;
 const SERVER_PORT = Number(flag('--port') || 4399);
 const CDP_PORT = Number(process.env.CDP_PORT || 9350);
 const VIEWPORT = { width: 1728, height: 1117, deviceScaleFactor: 2, mobile: false };
@@ -106,7 +109,24 @@ if (!(await portFree(CDP_PORT))) { console.error(`CDP port ${CDP_PORT} is in use
 const REAL_ENV = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
 // /tmp on macOS and Linux: run checkouts show their folder, and /tmp/… reads cleaner than /var/folders/….
 const SANDBOX_PARENT = process.platform !== 'win32' && existsSync('/tmp') ? '/tmp' : os.tmpdir();
-sandbox = await mkdtemp(path.join(SANDBOX_PARENT, 'worca-shots-'));
+// --record uses one fixed folder: project keys hash the project path, so a re-record keeps them.
+const MOCK_SANDBOX = path.join(SANDBOX_PARENT, 'worca-mock-sandbox');
+const MOCK_MARKER = '.worca-mock-sandbox';
+if (RECORD) {
+  if (existsSync(MOCK_SANDBOX)) {
+    // A folder with no files at all is a leftover too: a late child process can re-create empty caches after cleanup.
+    const holdsFiles = (d) => readdirSync(d, { withFileTypes: true }).some((e) => !e.isDirectory() || holdsFiles(path.join(d, e.name)));
+    if (!existsSync(path.join(MOCK_SANDBOX, MOCK_MARKER)) && holdsFiles(MOCK_SANDBOX)) {
+      console.error(`${MOCK_SANDBOX} exists and is not a mock sandbox - remove it first`); process.exit(1);
+    }
+    await rm(MOCK_SANDBOX, { recursive: true, force: true, maxRetries: 10 });
+  }
+  await mkdir(MOCK_SANDBOX, { recursive: true });
+  await writeFile(path.join(MOCK_SANDBOX, MOCK_MARKER), '');
+  // One time zone for every recording: schedules store it, and the Schedules page prints it.
+  process.env.TZ = 'Europe/Berlin';
+}
+sandbox = RECORD ? MOCK_SANDBOX : await mkdtemp(path.join(SANDBOX_PARENT, 'worca-shots-'));
 const CODE = path.join(sandbox, 'code');
 await mkdir(CODE, { recursive: true });
 process.env.HOME = sandbox;
@@ -924,6 +944,17 @@ async function capture(name) {
   await writeFile(file, Buffer.from(data, 'base64'));
   const b = Buffer.from(data, 'base64');
   log(`${name}.png ${b.readUInt32BE(16)}x${b.readUInt32BE(20)}`);
+}
+
+// ---- --record: crawl the views for the mock artifact instead of shooting them ---------------
+if (RECORD) {
+  const { recordMockSession } = await import(new URL('./mock-artifact/record.mjs', import.meta.url).href);
+  await cdp('Emulation.setTimezoneOverride', { timezoneId: process.env.TZ });
+  await recordMockSession({
+    out: RECORD, repo: REPO, sandbox, deny: DENY, base, api, cdp, ev, until2, kick, waitEvent, sleep, log, pageErrors,
+    startLiveRuns, seed: { askThread, termThread, csvRun, done: DONE, projects: PROJECTS, workspace: ws },
+  });
+  await shutdown(0);
 }
 
 // ---- the shot list (the lowest interface mode that shows each view; docs/ui-levels.md) -------

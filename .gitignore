@@ -31,6 +31,8 @@ test/live/out/
 extension/dist/
 e2e/extension/test-results/
 e2e/extension/playwright-report/
+# mock artifact output (tools/mock-artifact.mjs)
+.mock-artifact/
 # demo video output (tools/demo/extension-video)
 tools/demo/extension-video/out/
 .gstack/

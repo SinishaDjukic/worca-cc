@@ -18,6 +18,7 @@ node tools/readme-screenshots.mjs --only running,clarify    # just these
 | `--out DIR` | Write the PNGs to `DIR` instead of `docs/screenshots/`. |
 | `--port N` | The sandbox server's port (default 4399). The script stops when the port is taken; pick another. |
 | `--keep` | Keep the sandbox home and print its path, for debugging. |
+| `--record FILE` | Shoot nothing: record the session for the [mock artifact](#mock-artifact) instead. |
 | `CDP_PORT` | Chrome's debugging port (default 9350). |
 | `CHROME_BIN` | The Chrome binary, when it is not in a standard macOS or Linux location. |
 
@@ -123,3 +124,54 @@ Statistics uses "This week" from Wednesday on, "This month" early in a week from
 
 `architecture.png` is a diagram, not a UI shot, and the script does not produce it; see
 [ARCHITECTURE.md](ARCHITECTURE.md) for how to regenerate it.
+
+## Mock artifact
+
+`npm run mock:artifact` turns the same sandbox into one self-contained HTML page: the real web UI of the checked-out
+commit, running offline on the demo data. Every page opens and every tab works. Chat sends get a streamed, canned
+reply, and Run and Test on a run's Actions tab replay their recorded output. Nothing is saved: a change returns OK
+and is gone on reload. Use it to share a UI change or an experiment with people who do not run Worca, as a file or
+published as a Claude artifact.
+
+```bash
+npm run mock:artifact                    # record (~10 min), build, check -> .mock-artifact/worca-mock.html
+npm run mock:artifact -- --reuse         # visual-only change: build from the shared recording (~1 min)
+npm run mock:artifact -- --reuse --serve # ...and open it in the browser
+```
+
+| Flag | What it does |
+| --- | --- |
+| `--reuse` | Skip the recording: fetch `rec.json` from `origin/pr-assets/mock-artifact`. Enough when only `ui/public` changed. |
+| `--serve` | After the build, serve the page on `127.0.0.1` and open it. The file also opens straight from disk. |
+| `--no-check` | Build only. |
+| `--max-diff N` | The check's limit, in percent of differing pixels per view (default 2; each 64 px band of rows may sit up to 4 px higher or lower). |
+| `--save-recording` | After a passing check of a fresh recording, commit `rec.json` to `pr-assets/mock-artifact` on the remote and push it. Needs push access. |
+| `--out DIR`, `--remote NAME`, `--port N` | Output folder (default `.mock-artifact/`), the remote for `--reuse` and `--save-recording`, the sandbox server's port. |
+
+**How it works.**
+- **Record** (`tools/readme-screenshots.mjs --record`, `tools/mock-artifact/record.mjs`). It seeds the sandbox
+  above in one fixed folder, `/tmp/worca-mock-sandbox`, so project keys stay the same between recordings. It then
+  wraps `fetch` and the WebSocket in the page and walks the views:
+  - the seeded records' pages first;
+  - then every route a visited page links to (sidebar entries, menu items, `href="#…"` links), at most two pages
+    of each kind and 120 in all, so a new page is found through its sidebar entry;
+  - on each view it opens every tab once and saves a screenshot of the real app for the check.
+  It ends with one chat turn on the mock engine. The session is saved as `rec.json`, with the checkout and sandbox
+  paths replaced by `/Users/maya/…`, and the run fails on any leak-guard hit.
+- **Build** (`tools/mock-artifact/build.mjs`). esbuild bundles `ui/public/app.js`, `style.css`, the fonts, images and
+  vendor modules into the page, next to the recording and a fake backend (`tools/mock-artifact/shim.js`):
+  - `fetch` answers `/api/*` from the recording;
+  - the WebSocket replays the hello and each run's frames;
+  - the clock is pinned to the recording, so "2h ago" reads as it did;
+  - a small chat engine streams replies.
+  The same recording and the same `ui/public` give the same page, byte for byte.
+- **Check** (`tools/mock-artifact/check.mjs`). It walks the page in headless Chrome like the recorder did, and fails
+  on any request the mock could not answer, on page errors, and on any view more than `--max-diff` away from the real
+  app's screenshot. Each view over the limit is shot again on its own first. With `--reuse` there are no fresh real
+  shots, so only unanswered requests and errors are checked.
+
+**When to re-record.** When a change needs data or an endpoint the recording does not have, `--reuse` reports it as
+an unanswered request: run without `--reuse`. A new page is found through its links. Some features need an edit:
+- a view reached only through a menu or a modal needs a scripted step in `record.mjs`;
+- new kinds of demo records go in the seed above;
+- new chat frames or cards go in `shim.js`.
