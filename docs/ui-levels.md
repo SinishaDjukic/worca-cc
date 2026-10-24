@@ -205,7 +205,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Step log drawer under the Workflow graph (a card or execution-row click; Open in Logs, resize, close) | A — follows the Logs tab |
 | Branch chip, progress n/m · step on the card, model · effort pill, graph zoom cluster | A |
 | Auto proposal Revise; Artifacts tab | A |
-| Actions tab, Overview actions strip, Ship It 'Try it first' strip | A |
+| Actions tab, Overview actions strip, Create PR 'Try it first' button and strip | A |
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
 | Log filters (source, level, node, cycle) | E |
 | Graph node totals, fan and execution strips, Away mode chips and bands, loop badges | E |
@@ -226,16 +226,16 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Run without a project: the Artifacts tab, opened first; the No project group and its chip in the Runs list | S |
 | Overview: Perspective checklists, as on the run page (shaped runs) | S |
 | Diff tab, diff pill, inline comments; Create PR / View PR; "Push <source>" (a run on its source branch, instead of a PR); branch line; Artifacts tab | A |
-| Actions tab, Overview actions strip, Ship It 'Try it first' strip | A |
-| Ship It modal: Open as draft checkbox, "Will close owner/repo#N" line | A — ungated inside the modal (no `data-min-level`), so they show wherever the modal opens |
+| Actions tab, Overview actions strip, Create PR 'Try it first' button and strip | A |
+| Create PR dialog: Draft switch, "Will close owner/repo#N" line | A — ungated inside the modal (no `data-min-level`), so they show wherever the modal opens |
 | Running-action pill in the header, sidebar Running actions rows (one tile on the rail) | all — shown only while a service runs |
 | Mergeability pill; Logs tab; Agents tab; team-metrics status; MEMORY CHANGES; worktree row | E |
 | Step log drawer under the Workflow graph, as on the run page | E — follows the Logs tab |
 
 An open github.com or Azure DevOps pull request shows its state as GitHub's merge box would
 (Draft, Merge conflicts, Changes requested, checks failed or running, Review
-required, Out of date, Blocked, Ready to merge) in two places: the run page tracker's
-PR step, and a "Pull request" row under the review verdict
+required, Out of date, Blocked, Ready to merge) in two places: the run page card's
+status line (its checks line in the facts list's Checks row), and a "Pull request" row under the review verdict
 on the Overview tab (one row per repository for a workspace run). Both show at
 every level. Watch is changed from the View PR ▾ menu (Advanced) and from the
 Overview row's switch (Advanced).

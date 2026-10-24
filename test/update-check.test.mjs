@@ -12,6 +12,8 @@ import {
   parseVersion, formatVersion, compareVersions, versionStatus, releaseLinks, fetchNpmLatest,
   createUpdateChecker, isSourceBuild, CHANGELOG_URL, NPM_DIST_TAGS_URL,
   CHECK_INTERVAL_MS, FAILED_RETRY_MS, MIN_RECHECK_MS,
+  parseVersionList, fetchNpmVersions, NPM_PACKUMENT_URL, canAutoRestart, annotateVersions,
+  createVersionLister, findListedVersion, canonicalVersion, versionChannel,
 } from '../src/core/update-check.mjs';
 
 test('parseVersion accepts SemVer 2.0 (optional v, prerelease, build) and refuses garbage', () => {
@@ -241,4 +243,79 @@ test('checker: a garbage registry answer is unknown, and a failure after a succe
   clock.t += CHECK_INTERVAL_MS;
   st.answer = new Error('timeout');
   assert.equal((await checker.status()).status, 'unknown', 'the spec: an error leaves the state unknown');
+});
+
+const DOC = {
+  'dist-tags': { latest: '1.14.0', rc: '1.15.0-rc.2' },
+  versions: { '1.12.4': {}, '1.13.0': {}, '1.13.1': {}, '1.14.0-rc.3': {}, '1.14.0': {}, '1.15.0-rc.1': {},
+    '1.15.0-rc.2': {}, '1.15.0-beta.1': {}, '1.11.0': { deprecated: 'broken' }, 'garbage': {} },
+  time: { '1.14.0': '2026-10-21T10:00:00.000Z', '1.15.0-rc.2': '2026-10-22T10:00:00.000Z', created: 'x' },
+};
+
+test('parseVersionList: stable + rc channels, newest first, drops other prereleases, deprecated and junk', () => {
+  const l = parseVersionList(DOC);
+  assert.deepEqual(l.distTags, { latest: '1.14.0', rc: '1.15.0-rc.2' });
+  assert.deepEqual(l.versions.map((v) => v.version),
+    ['1.15.0-rc.2', '1.15.0-rc.1', '1.14.0', '1.14.0-rc.3', '1.13.1', '1.13.0', '1.12.4']);
+  assert.equal(l.versions.find((v) => v.version === '1.14.0').publishedAt, '2026-10-21T10:00:00.000Z');
+  assert.equal(l.versions.find((v) => v.version === '1.13.0').publishedAt, null);
+  assert.equal(l.versions.find((v) => v.version === '1.14.0-rc.3').channel, 'rc');
+  assert.throws(() => parseVersionList(null), /package document/);
+});
+
+test('versionChannel: only -rc.N counts as rc', () => {
+  assert.equal(versionChannel(parseVersion('1.2.3')), 'stable');
+  assert.equal(versionChannel(parseVersion('1.2.3-rc.4')), 'rc');
+  assert.equal(versionChannel(parseVersion('1.2.3-rc')), null);
+  assert.equal(versionChannel(parseVersion('1.2.3-beta.1')), null);
+});
+
+test('canAutoRestart: 1.14.0 and its RCs and later restart; older does not', () => {
+  assert.equal(canAutoRestart('1.14.0'), true);
+  assert.equal(canAutoRestart('1.14.0-rc.1'), true);
+  assert.equal(canAutoRestart('2.0.0'), true);
+  assert.equal(canAutoRestart('1.13.9'), false);
+  assert.equal(canAutoRestart('nope'), false);
+});
+
+test('annotateVersions: relation to current, belowLatest, autoRestart', () => {
+  const a = annotateVersions(parseVersionList(DOC), '1.13.1');
+  const by = Object.fromEntries(a.map((v) => [v.version, v]));
+  assert.equal(by['1.13.1'].relation, 'current');
+  assert.equal(by['1.14.0'].relation, 'newer');
+  assert.equal(by['1.13.0'].relation, 'older');
+  assert.equal(by['1.14.0-rc.3'].belowLatest, true);
+  assert.equal(by['1.15.0-rc.1'].belowLatest, false);
+  assert.equal(by['1.13.0'].autoRestart, false);
+});
+
+test('findListedVersion / canonicalVersion never let a raw string through', () => {
+  const l = parseVersionList(DOC);
+  assert.equal(findListedVersion(l, 'v1.14.0')?.version, '1.14.0');
+  assert.equal(findListedVersion(l, '1.14.0; rm -rf /'), null);
+  assert.equal(findListedVersion(l, '9.9.9'), null);
+  assert.equal(canonicalVersion('1.14.0+build.7'), '1.14.0');
+  assert.equal(canonicalVersion('latest'), null);
+});
+
+test('fetchNpmVersions reads the full packument with a timeout and throws on bad answers', async () => {
+  const f = okFetch(DOC);
+  const l = await fetchNpmVersions({ fetchImpl: f });
+  assert.equal(f.calls[0].url, NPM_PACKUMENT_URL);
+  assert.ok(f.calls[0].init.signal);
+  assert.equal(l.distTags.latest, '1.14.0');
+  await assert.rejects(fetchNpmVersions({ fetchImpl: okFetch({}, { status: 503 }) }), /503/);
+});
+
+test('createVersionLister: caches 12 h, shares one request, keeps the last list on failure, peek never fetches', async () => {
+  let t = 0; let n = 0; let fail = false;
+  const lister = createVersionLister({ now: () => t, fetchList: async () => { n += 1; if (fail) throw new Error('x'); return parseVersionList(DOC); } });
+  assert.equal(lister.peek(), null);
+  const [a, b] = await Promise.all([lister.get(), lister.get()]);
+  assert.equal(n, 1); assert.equal(a, b);
+  t += 60_000; await lister.get(); assert.equal(n, 1);
+  fail = true; t += 13 * 3600_000;
+  assert.equal((await lister.get()).distTags.latest, '1.14.0', 'stale list kept on failure');
+  assert.equal(n, 2);
+  await lister.get({ force: true }); assert.equal(n, 3);
 });

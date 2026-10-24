@@ -95,15 +95,21 @@ primary.
 Every pull request button and link looks the same everywhere (`test/ui-pr-controls.test.mjs`).
 1. Variant. Create PR and Push are the ship actions: `.btn.btn-primary`. View PR is navigation: a plain secondary
    `.btn`, for an open PR and a merged one alike. Nothing is a custom pill.
-2. Size by context. On a page (the run page's card head, the History Details header, the Ship it dialog) `.btn`, 32px.
+2. Size by context. On a page (the run page's card head, the History Details header, the Create PR dialog) `.btn`, 32px.
    Inside a card or bar (the Chat run card, the Chat pull request card, the run and group page bar buttons that
    `syncActions` makes) `.btn.btn-sm`, 28px. Never full width (`.btn-block`).
 3. Icon. Every PR button leads with one glyph from `icon(doc, name, size)` (`ui/public/icons.mjs`): 16px on `.btn`,
    14px on `.btn-sm`. Create PR `pr-create`; View PR `pull-request` while the PR is open, `merge` once merged; Push
    `arrow-up`.
-4. Labels. "Create PR" (`CREATE_PR_LABEL`, `ui/public/ship-words.mjs`); "View PR" for an open and a merged PR; Push says
-   the header's `Push main` (the source branch). The Ship it dialog keeps its title "Create pull request", and its "Try
-   it first" Check out is a secondary `.btn-sm`, so the dialog has one primary.
+4. Labels. The words come from `ui/public/ship-words.mjs`. "Create PR" makes PRs everywhere; "View PR" goes to one PR
+   (a menu item names it: "View PR #812"); "View PRs ▾" lists several; "Ship" is a status word ("Ready to ship"), never
+   a button. Push says the header's `Push main` (the source branch). Buttons, menu items, aria-labels and dialog titles
+   say "PR"; "pull request" only in headings and sentences; "open" is not a PR verb. The Create PR dialog's title equals
+   its confirm ("Create PR", "Create 2 PRs"). Its zones, in order: Into (remote and branch on one row, the branch alone
+   with one remote), Pull requests (a feature, a chain or a user group only: One / N stacked, or N separate for a user group, the suggestion under them),
+   Title and description (with Draft), After it opens (Watch PR, Release). Its footer: a divider,
+   then Cancel and the primary on the right; "Try it first" is a secondary `.btn` on the left; one primary. Field
+   labels in it are nouns ("Into", "Push remote", "Draft").
 5. Links. A PR text link (`.rd-prs-link`, `.rd-track-pr`, `.chat-rc-watch-pr`, `.ask-prcard-link`, `.ask-shipcard-pr`,
    `.hd-pr-repo-link`) is `--blue-ink-strong`, weight 600.
 Placement: on the run page the PR control sits in the card's head at every level (`.rd-sheet-head > .rd-head-acts`, the
@@ -112,6 +118,10 @@ merge, Report), centred on the status line, with at most one primary; under 420p
 their own row below the status, on the left edge. View PR is a split button `View PR │ ▾`
 (`.btn-split.mini.rd-pr-split`): the main half opens the PR, the ▾ (PR scope) holds Watch (Advanced and above), Copy PR
 link and Fix conflicts (while the PR conflicts). A workspace run has one `View PRs ▾` button that lists each member's PR.
+The group page has the same head: Create PR, View PR ▾ or View PRs ▾ on the status line; View PRs ▾ holds each PR, then
+Watch PRs and Copy PR links.
+A user group's dialog offers One / N separate; One waits on the combine check (`The 3 runs combine without conflicts`,
+or why it is off) and ships from a new branch named after the group. Its ship line reads `Any order`.
 Nothing PR-related sits in the bar or in a PR bar; the PR's checks and Watch words are the tracker's PR step. Runs list PR
 chips (`.runs-pr`) are chips, not PR controls.
 ### Field
@@ -153,16 +163,22 @@ A dot is the state: peach working (pulses), grey paused or waiting, green ready,
 ### Tracker
 The run page card's read-only "where is the work" line (`.rd-track`, `ui/public/run-head.mjs` `renderTracker`), under
 the status line after a `--line` divider, at every level. Three steps on one 3-column grid: the PR path (Changes ·
-Pull request · Merged into main: the real base, also while the run is live, or `Merged into base` when none is known),
+Pull request · Merged; the base branch is the facts list's Merged row),
 the Push path (Changes · In the source here · On the remote), a Folder run's two
 steps (Changes · Applied to your folder), and one row per workspace member with its name in a 44px column. Each step is
 a 16px node, a 12px label (600 when current, `--ink-3` when future) and a 1px connector, `--green` after a done node and
 `--line-2` otherwise. Nodes reuse the status-dot colours: done is a green fill with ✓, current is a ring with a dot
 (peach pulsing while working, green when ready, violet filled with ✓ once merged), a problem is an amber `!`, failed a
 red `!`, closed an `--ink-3` × with a struck label, future a hollow `--line-2` ring. Glyphs come from `icons.mjs`
-(`check`, `alert`, `x`). An optional 12px `--ink-2` second line holds the PR link (`#866`), GitHub's verdict, blue
-(`--blue-ink`) in-progress words and amber (`--amber-ink`) problems. Its links and its two quiet buttons (`Watching`,
-which opens the ▾ menu at Advanced, and kept work's `Commit it yourself`, `button.rd-track-act`) are its only controls.
+(`check`, `alert`, `x`). The labels are static and nothing sits under a step; a wrapping label (a long source branch
+on the Push path) keeps its node and connector on its first line (`align-items:flex-start`). The changing words live in
+the facts list (`.rd-kv`, `run-head.mjs` `factsModel` / `renderFacts`) as rows under Branch: **Merged** (the base
+branch, the Branch row's copy chip, Advanced and up), **Kept work** (Download patch, `Commit it yourself`), **Pull
+request** (the shared PR chip, `runs-list.mjs` `prChip`; a workspace's **Pull requests** lists one member per line, the
+names in one column), **Checks** (the checks line: `--green-ink` passed, `--blue-ink` running, `--amber-ink` failed)
+and **Watch** (its words, View fix run, and the Watch-stopped hint on its own line). GitHub's verdict is the status
+line's only. The quiet buttons `Watching` (opens the ▾ menu at Advanced) and `Commit it yourself` are
+`button.rd-fact-act`. Fact labels never wrap.
 Labels wrap inside their column at every width and never run past the card; under 480px the connectors shrink to 8px.
 ### Menu (checked)
 One menu skin. The box is `.menu`: 4px padding, `--panel`, 1px `--line`, `--r-md` (8px), `--shadow-menu`, 13px. A row is
@@ -206,6 +222,16 @@ stay, never move focus.
 `confirmModal({ title, message, confirmLabel, danger })` (`ui/public/app.js`): a destructive confirm names what goes;
 only inside a confirm is `.btn-danger` solid red. Footer actions and the head Close are 32px `.btn`; inline field
 buttons stay 28px; the card keeps the shared 24px padding (checked by the theme proof's `dialog-sizes`).
+
+Dialog anatomy (`ui/public/dialog-layout.mjs`): a `.viewer-modal` card that can outgrow the window carries `.dlg` and
+three direct children. `.dlg-head` holds the hero, title and subtitle (and head actions such as Close); `.dlg-body` is
+the only scroller; `.dlg-foot` holds the status line and the action row. Head and foot never scroll away, and a 1px
+divider appears only while content sits under them. Static dialogs write the wrappers in `index.html`; a JS builder
+calls `layoutDialog(card, { head, foot })`. Keep the card's 24px padding (the regions bleed over it). Seams are the
+body's padding, `--dlg-gap-head` / `--dlg-gap-foot` (default 18px / 14px): set those, never a margin. Never add a sticky
+header with negative margins, and keep a nested scroller only for a bordered box (a list or a preview) that is bounded
+on purpose. Under 640px of height the head compacts (smaller hero, tighter gap) but stays. The Marketplace's
+`.mk-dialog` / `.mk-sheet` follow the same model with their own class names.
 
 ## Patterns
 - Status line: "State · detail", for example "Failed · Review · Review Implementation". No colon forms.

@@ -4,8 +4,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
-import { headModel, trackerModel, renderTracker, renderHeadButtons, prMenuItems, trackerWatchWords, canResolvePr,
-  showsFixConflicts, hdPrWatchLabel } from '../ui/public/run-head.mjs';
+import { headModel, groupHead, trackerModel, factsModel, renderTracker, renderFacts, renderHeadButtons, prMenuItems, trackerWatchWords,
+  canResolvePr, showsFixConflicts, hdPrWatchLabel } from '../ui/public/run-head.mjs';
 
 const M = (state, extra = {}) => ({ state, word: state, dot: 'green', line: '', actions: [], pr: null, prNeeds: false, ...extra });
 const F = (extra = {}) => ({ m: M('ready'), mode: 'git', gitChrome: true, level: 'expert', workspace: null, base: 'dev', source: 'main',
@@ -17,12 +17,22 @@ const STOPPED_WATCH = M('needs-you', { prNeeds: true, actions: ['open-pr', 'ask-
   line: 'Needs you · Watch stopped · 3 fix runs, needs a person' });
 const FAILED = M('failed', { dot: 'red', line: 'Build · failed · Implementation' });
 const ids = (h) => [...h.before, ...h.after].map((b) => b.id);
-const doc = () => new JSDOM('<!doctype html><body><div class="rd-track"></div><div class="acts"></div></body>').window.document;
+const KV = ['kept', 'pr', 'checks', 'watch'].map((k) => `<div class="rd-kv-row" data-fact="${k}" hidden><dt class="rd-kv-k"></dt><dd class="rd-kv-v"></dd></div>`).join('');
+const doc = () => new JSDOM(`<!doctype html><body><div class="rd-track"></div><dl class="rd-kv">${KV}</dl><div class="acts"></div></body>`).window.document;
 const steps = (f) => {
   const d = doc();
   const host = d.querySelector('.rd-track');
-  renderTracker(host, trackerModel(f), {});
+  renderTracker(host, trackerModel(f));
   return [...host.querySelectorAll('.rd-track-step')];
+};
+/** The facts list after renderFacts: `row(key)` is the shown row's value (null when hidden), `merged` what onMerged got. */
+const facts = (f, h = {}) => {
+  const d = doc();
+  const kv = d.querySelector('.rd-kv');
+  let merged = null;
+  renderFacts(kv, factsModel(f), { ...h, onMerged: (name) => { merged = name; } });
+  const row = (key) => { const r = kv.querySelector(`[data-fact="${key}"]`); return r.hidden ? null : r.querySelector('.rd-kv-v'); };
+  return { kv, row, merged, label: (key) => kv.querySelector(`[data-fact="${key}"] .rd-kv-k`).textContent };
 };
 const cls = (s) => s.className.replace('rd-track-step ', '');
 
@@ -127,28 +137,103 @@ test('needle (b): three steps with the node classes for ready, in review, confli
   }
 });
 
-test('tracker: kept work on a stopped or failed run keeps its Download patch and Commit it yourself; stopped alone hides', () => {
+test('tracker: kept work on a stopped or failed run is a Kept work fact (Download patch, Commit it yourself); stopped alone hides', () => {
   const kept = { provisional: false, recovery: { href: '/api/x/recovery-patch', download: 'p.patch' } };
   const stopped = steps(F({ m: M('stopped'), kept }));
   assert.equal(stopped.length, 3);
   assert.equal(cls(stopped[0]), 'is-problem');
-  assert.equal(stopped[0].querySelector('a.rd-track-link').textContent, 'Download patch');
-  assert.equal(stopped[0].querySelector('a.rd-track-link').getAttribute('download'), 'p.patch');
-  assert.equal(stopped[0].querySelector('button.rd-track-act').textContent, 'Commit it yourself');
+  assert.equal(stopped[0].querySelector('a, button'), null, 'the step carries its label only');
+  let commits = 0;
+  const v = facts(F({ m: M('stopped'), kept }), { onCommit: () => { commits += 1; } }).row('kept');
+  assert.equal(v.querySelector('a.rd-fact-link').textContent, 'Download patch');
+  assert.equal(v.querySelector('a.rd-fact-link').getAttribute('download'), 'p.patch');
+  const commit = v.querySelector('button.rd-fact-act');
+  assert.equal(commit.textContent, 'Commit it yourself');
+  commit.click();
+  assert.equal(commits, 1);
   const failed = steps(F({ m: FAILED, kept }));
   assert.equal(cls(failed[0]), 'is-failed');
-  assert.ok(failed[0].querySelector('a.rd-track-link'));
-  assert.ok(failed[0].querySelector('button.rd-track-act'));
+  assert.ok(facts(F({ m: FAILED, kept })).row('kept').querySelector('a.rd-fact-link'));
+  assert.equal(facts(F({ m: M('working'), kept })).row('kept'), null, 'a live run offers no kept links');
+  assert.equal(facts(F()).row('kept'), null);
   assert.equal(trackerModel(F({ m: M('stopped') })), null);
   assert.equal(trackerModel(F({ m: M('waiting') })), null);
   assert.equal(trackerModel(F({ mode: 'none', gitChrome: false })), null);
 });
 
-test('tracker: Watch stopped explains the disabled Ask for changes in visible text on the PR step', () => {
-  const s = steps(TABLE['watch stopped'][0]);
+test('tracker: Watch stopped explains the disabled Ask for changes in visible text on the Watch fact', () => {
+  const f = TABLE['watch stopped'][0];
+  const s = steps(f);
   assert.equal(cls(s[1]), 'is-problem');
-  assert.match(s[1].textContent, /Ask for changes from the run's chat/);
-  assert.match(s[1].textContent, /Watch stopped/);
+  assert.equal(s[1].textContent, 'Pull request');
+  const w = facts(f).row('watch');
+  assert.match(w.textContent, /Watch stopped/);
+  const hint = w.querySelector('.is-line');
+  assert.equal(hint.textContent, "Ask for changes from the run's chat");
+});
+
+test('tracker: the labels are static (Changes done · Pull request · Merged) in every PR state', () => {
+  for (const f of [F(), F({ m: M('in-review'), pr: OPEN, base: 'release/2026.11-payments' }), TABLE.merged[0], F({ pr: { ...OPEN, state: 'CLOSED' } })]) {
+    assert.deepEqual(steps(f).map((s) => s.querySelector('.rd-track-label').textContent), ['Changes done', 'Pull request', 'Merged']);
+    assert.equal(steps(f).some((s) => s.children.length > 1), false, 'nothing under a step');
+  }
+});
+
+test('facts: Merged names the base once the PR is merged (or the run is in its base); never for an open PR', () => {
+  assert.equal(facts(TABLE.merged[0]).merged, 'dev');
+  assert.equal(facts(F({ m: M('merged') })).merged, 'dev', 'in its base without a PR of its own');
+  assert.equal(facts(F({ m: M('in-review'), pr: OPEN })).merged, '');
+  assert.equal(facts(F()).merged, '');
+  assert.equal(facts(F({ m: M('merged'), push: true })).merged, '', 'the push path has no Merged fact');
+});
+
+test('facts: the Pull request row is the shared PR chip (icon, PR #866, state word) linking to GitHub in a new tab', () => {
+  const v = facts(F({ m: M('in-review'), pr: OPEN, prStatus: { checks: { state: 'passing', total: 14, failed: 0, pending: 0 }, status: { label: 'Ready to merge', detail: 'All 14 checks passed', tone: 'ok' } } })).row('pr');
+  const a = v.querySelector('a.runs-pr.rd-fact-pr');
+  assert.equal(a.getAttribute('href'), OPEN.url);
+  assert.equal(a.target, '_blank');
+  assert.equal(a.querySelector('.runs-pr-num').textContent, 'PR #866');
+  assert.equal(a.querySelector('.runs-pr-word').textContent, 'Ready');
+  assert.ok(a.classList.contains('is-ready'));
+  const failing = facts(F({ m: M('in-review'), pr: OPEN, prStatus: { checks: { state: 'failing', total: 14, failed: 3, pending: 0 } } })).row('pr');
+  assert.equal(failing.querySelector('.runs-pr-word').textContent, 'Checks failing');
+  const merged = facts(TABLE.merged[0]).row('pr');
+  assert.ok(merged.querySelector('a.runs-pr.is-merged'));
+  const err = facts(F({ m: M('in-review'), pr: OPEN, prStatus: { resolveError: 'Could not resolve' } })).row('pr');
+  assert.equal(err.querySelector('.rd-fact-tx.is-bad.is-line').textContent, 'Could not resolve');
+});
+
+test('facts: Checks is the checks line in its colour; the verdict stays in the status line; no Checks or Watch after merge', () => {
+  const checks = (status, rollup) => facts(F({ m: M('in-review'), pr: OPEN, prStatus: { status, checks: rollup } })).row('checks');
+  const passed = checks({ label: 'Review required', detail: 'All 14 checks passed', tone: 'wait' }, { state: 'passing' });
+  assert.equal(passed.textContent, 'All 14 checks passed');
+  assert.ok(passed.querySelector('.is-ok'));
+  const failed = checks({ label: '3 of 14 checks failed', detail: '', tone: 'bad' }, { state: 'failing' });
+  assert.equal(failed.textContent, '3 of 14 checks failed');
+  assert.ok(failed.querySelector('.is-bad'));
+  assert.ok(checks({ label: 'Checks running · 9 of 14 done', detail: '', tone: 'run' }, { state: 'pending' }).querySelector('.is-run'));
+  assert.equal(checks({ label: 'Ready to merge', detail: '', tone: 'ok' }, null), null, 'no checks: no row, and never the verdict');
+  const merged = facts({ ...TABLE.merged[0], prStatus: { status: { label: 'Ready to merge', detail: 'All 14 checks passed' }, checks: { state: 'passing' }, watch: { watching: true, status: 'idle' } } });
+  assert.equal(merged.row('checks'), null);
+  assert.equal(merged.row('watch'), null);
+});
+
+test('facts: a workspace lists one PR per line (name, chip) and Watch only for members whose watch acts', () => {
+  const f = F({ m: M('in-review'), canCreatePr: false, workspace: { members: [
+    { key: 'a', name: 'api', pr: OPEN, prStatus: { checks: { state: 'passing' }, watch: { watching: true, status: 'idle' } } },
+    { key: 'b', name: 'web', pr: { ...OPEN, number: 87 }, prStatus: { checks: { state: 'failing' }, watch: { watching: true, status: 'fixing', activePipelineId: 'p9' } } },
+    { key: 'c', name: 'docs', pr: null, prStatus: null }] } });
+  const r = facts({ ...f, level: 'simple' }, { fixRunHref: (pid) => `#history/k/${pid}` });
+  assert.equal(r.label('pr'), 'Pull requests');
+  const list = r.row('pr').querySelector('.rd-fact-members');
+  assert.deepEqual([...list.querySelectorAll('.rd-fact-member')].map((n) => n.textContent), ['api', 'web']);
+  assert.deepEqual([...list.querySelectorAll('.runs-pr-num')].map((n) => n.textContent), ['PR #866', 'PR #87']);
+  assert.equal(list.children.length, 4, 'name, value, name, value: one member per line');
+  assert.equal(r.row('checks'), null, 'each chip carries its own state');
+  const w = r.row('watch');
+  assert.deepEqual([...w.querySelectorAll('.rd-fact-member')].map((n) => n.textContent), ['web'], 'idle Watching is Advanced+');
+  assert.equal(w.querySelector('a.rd-fact-link').getAttribute('href'), '#history/k/p9');
+  assert.equal(facts(F()).label('pr'), 'Pull request');
 });
 
 test('tracker: the folder path has 2 steps; a workspace draws one named row per member', () => {
@@ -195,13 +280,18 @@ test('tracker and head: hostile PR labels, member names and branch names render 
   const evil = '<img src=x onerror="globalThis.__pwned=1">';
   const d = doc();
   const host = d.querySelector('.rd-track');
-  renderTracker(host, trackerModel(F({ m: M('in-review'), base: evil, pr: OPEN, prStatus: { status: { label: evil, detail: evil }, watch: null },
-  })), {});
+  const hostile = F({ m: M('in-review'), base: evil, pr: OPEN, prStatus: { status: { label: evil, detail: evil }, resolveError: evil, watch: null } });
+  renderTracker(host, trackerModel(hostile));
   assert.equal(host.querySelector('img'), null);
-  assert.match(host.textContent, /<img src=x/);
-  renderTracker(host, trackerModel(F({ m: M('in-review'), workspace: { members: [{ key: 'a', name: evil, pr: OPEN, prStatus: null }] } })), {});
+  const kv = facts(hostile);
+  assert.equal(kv.kv.querySelector('img'), null);
+  assert.match(kv.row('checks').textContent, /<img src=x/);
+  assert.match(kv.row('pr').textContent, /<img src=x/);
+  const ws = F({ m: M('in-review'), workspace: { members: [{ key: 'a', name: evil, pr: OPEN, prStatus: null }] } });
+  renderTracker(host, trackerModel(ws));
   assert.equal(host.querySelector('img'), null);
   assert.equal(host.querySelector('.rd-track-name').textContent, evil);
+  assert.equal(facts(ws).row('pr').querySelector('.rd-fact-member').textContent, evil);
   const acts = d.querySelector('.acts');
   renderHeadButtons(acts, headModel(F({ notMergedBack: true, source: evil })), null, {});
   assert.equal(acts.querySelector('img'), null);
@@ -238,27 +328,23 @@ test('trackerWatchWords: Watching, Fixing, Resolving conflicts and Watch stopped
   assert.equal(hdPrWatchLabel({ watching: true, status: 'idle' }), '');
 });
 
-test('tracker: below Advanced the Watch words are plain text; at Advanced idle Watching opens the ▾ menu', () => {
-  const watching = (level, status) => steps(F({ level, m: M('in-review'), pr: OPEN, prStatus: { watch: { watching: true, status } } }))[1];
-  assert.equal(watching('simple', 'idle').querySelector('.rd-track-watch'), null);
-  assert.doesNotMatch(watching('simple', 'idle').textContent, /Watching/);
+test('facts: below Advanced the Watch words are plain text; at Advanced idle Watching opens the ▾ menu', () => {
+  const watching = (level, status, h) => facts(F({ level, m: M('in-review'), pr: OPEN, prStatus: { watch: { watching: true, status } } }), h).row('watch');
+  assert.equal(watching('simple', 'idle'), null, 'idle Watching hides below Advanced');
   const fixing = watching('simple', 'fixing');
-  assert.equal(fixing.querySelector('.rd-track-watch'), null);
-  assert.equal(fixing.querySelector('span.rd-track-tx.is-run').textContent, 'Fixing');
-  const adv = watching('advanced', 'idle').querySelector('button.rd-track-watch');
-  assert.ok(adv);
+  assert.equal(fixing.querySelector('.rd-fact-watch'), null);
+  assert.equal(fixing.querySelector('span.rd-fact-tx.is-run').textContent, 'Fixing');
+  let opened = null;
+  const adv = watching('advanced', 'idle', { onWatch: (el) => { opened = el; } }).querySelector('button.rd-fact-watch');
   assert.equal(adv.textContent, 'Watching');
+  adv.click();
+  assert.equal(opened, adv);
 });
 
-test('tracker: the PR step links #866 in a new tab, and a fixing watch links its fix run', () => {
-  const d = doc();
-  const host = d.querySelector('.rd-track');
+test('facts: a fixing watch links its fix run', () => {
   const f = F({ m: M('in-review'), pr: OPEN, prStatus: { watch: { watching: true, status: 'fixing', activePipelineId: 'p9' } } });
-  renderTracker(host, trackerModel(f), { fixRunHref: (pid) => `#history/k/${pid}` });
-  const pr = host.querySelector('a.rd-track-pr');
-  assert.equal(pr.textContent, '#866');
-  assert.equal(pr.target, '_blank');
-  const fix = [...host.querySelectorAll('a.rd-track-link')].find((a) => a.textContent === 'View fix run');
+  const w = facts(f, { fixRunHref: (pid) => `#history/k/${pid}` }).row('watch');
+  const fix = [...w.querySelectorAll('a.rd-fact-link')].find((a) => a.textContent === 'View fix run');
   assert.equal(fix.getAttribute('href'), '#history/k/p9');
 });
 
@@ -299,7 +385,8 @@ test('prMenuItems: Watch switch at Advanced and Expert only, Fix conflicts when 
     { key: 'a', name: 'app', number: 866, url: OPEN.url, open: true, watch: null },
     { key: 'b', name: 'api', number: 867, url: OPEN.url, open: true, watch: null }], { level: 'expert', ...h });
   assert.deepEqual(two.filter((i) => i.header).map((i) => i.header), ['app · Pull request #866', 'api · Pull request #867']);
-  assert.deepEqual(two.filter((i) => /^Open PR/.test(i.label || '')).map((i) => i.label), ['Open PR #866', 'Open PR #867']);
+  assert.deepEqual(two.filter((i) => /^View PR #/.test(i.label || '')).map((i) => i.label), ['View PR #866', 'View PR #867']);
+  assert.equal(two.some((i) => /^Open PR/.test(i.label || '')), false);
   const failed = one({ watch: null, watchFailed: true }, 'advanced').find((i) => i.label === 'Watch unavailable');
   assert.ok(failed && failed.disabled);
   assert.equal(failed.title, "Could not read this pull request's status");
@@ -329,12 +416,42 @@ test('renderHeadButtons: before, the slot, after; rebuilt only on change, and a 
   assert.equal(host.hidden, true);
 });
 
-test('tracker: the last PR step names the base; "Merged into base" when none is known', () => {
+test('groupHead (one ship flow): Create PR, View PR ▾, View PRs ▾; a partly shipped group keeps Create PR as a head button', () => {
+  const pr = (n, o = {}) => ({ key: `p${n}`, name: `Run ${n}`, number: n, url: `u${n}`, open: true, merged: false, ...o });
+  assert.deepEqual(groupHead({ state: 'ready', prs: [] }).cta, { state: 'create' });
+  assert.deepEqual(groupHead({ state: 'ready', prs: [] }).after, []);
+  const partly = groupHead({ state: 'ready', prs: [pr(1)] });
+  assert.deepEqual(partly.cta, { state: 'view', href: 'u1', menu: true });
+  assert.deepEqual(partly.after.map((b) => [b.id, b.label, !!b.primary]), [['ship', 'Create PR', true]]);
+  assert.deepEqual(groupHead({ state: 'in-review', prs: [pr(1), pr(2)] }).cta, { state: 'view', label: 'View PRs', menu: true, ws: true });
+  assert.deepEqual(groupHead({ state: 'in-review', prs: [pr(1), pr(2)] }).after, []);
+  assert.deepEqual(groupHead({ state: 'merged', prs: [pr(1, { open: false, merged: true })] }).cta, { state: 'merged', href: 'u1', menu: true });
+  assert.equal(groupHead({ state: 'working', prs: [] }).cta, null);
+});
+
+test('prMenuItems with onWatchAll / onCopyAll: each PR as today, then Watch PRs (Advanced) and Copy PR links', () => {
+  const prs = [{ key: 'a', name: 'Run 1', number: 12, url: 'u1', open: true, watch: null },
+    { key: 'b', name: 'Run 2', number: 13, url: 'u2', open: true, watch: null, conflicts: true }];
+  const noop = () => {};
+  const labels = (level, extra = { onWatchAll: noop, onCopyAll: noop }) => prMenuItems(prs, { level, onWatch: noop, onCopy: noop, onOpen: noop, onResolve: noop, ...extra })
+    .map((i) => (i.sep ? '—' : i.header || i.label));
+  assert.deepEqual(labels('advanced'), ['Run 1 · Pull request #12', 'View PR #12', 'Copy PR link', '—',
+    'Run 2 · Pull request #13', 'View PR #13', 'Copy PR link', 'Fix conflicts', '—', 'Watch PRs', 'Copy PR links']);
+  assert.deepEqual(labels('basic').slice(-2), ['—', 'Copy PR links']);
+  assert.equal(labels('advanced', {}).includes('Copy PR links'), false, 'the workspace menu is unchanged');
+});
+
+test('tracker: the last PR step reads Merged whatever the base (the base is the facts list\'s Merged row)', () => {
   const last = (f) => steps(f).at(-1).querySelector('.rd-track-label').textContent;
-  assert.equal(last(F({ m: M('working', { pulse: true }), base: 'main' })), 'Merged into main');
-  assert.equal(last(F({ m: M('working', { pulse: true }), base: '' })), 'Merged into base');
-  const long = 'feature/very-long-integration-branch-name-for-the-billing-team';
-  assert.equal(last(F({ base: long })), `Merged into ${long}`, 'the whole name, wrapped by CSS, never cut');
+  assert.equal(last(F({ m: M('working', { pulse: true }), base: 'main' })), 'Merged');
+  assert.equal(last(F({ m: M('working', { pulse: true }), base: '' })), 'Merged');
+  assert.equal(last(F({ base: 'feature/very-long-integration-branch-name-for-the-billing-team' })), 'Merged');
+});
+
+test('CSS: a wrapping tracker label keeps its dot and line on the first line; fact labels never wrap', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /^\.rd-track-head\{[^}]*align-items:flex-start;/m, 'top-aligned, not centred on a wrapped label');
+  assert.match(css, /^\.rd-kv-k\{[^}]*white-space:nowrap;/m);
 });
 
 test('tracker CSS: labels wrap inside their column at every width', () => {

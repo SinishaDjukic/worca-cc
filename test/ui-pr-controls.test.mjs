@@ -7,8 +7,8 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { ICONS } from '../ui/public/icons.mjs';
 import { syncActions } from '../ui/public/run-status-card.mjs';
+import { buildGroupPage } from '../ui/public/group-page.mjs';
 import { HEAD_ACTIONS, MENU_ACTIONS } from '../src/shared/run-model.mjs';
-import { renderShipItStrip } from '../ui/public/actions-view.mjs';
 
 const read = (p) => readFileSync(new URL(`../ui/public/${p}`, import.meta.url), 'utf8');
 const html = read('index.html');
@@ -41,6 +41,14 @@ test('slice 3: the card head holds the head buttons with the one PR slot, then t
   }
   const live = page.getElementById('run-detail-tpl').content.querySelector('.rd-sheet-head > .rd-head-acts');
   assert.ok(live.previousElementSibling.matches('.rd-live-row'), 'the head buttons come after the Live view row');
+});
+
+test('one ship flow: the group page card has the run page head with exactly one PR slot', () => {
+  const root = buildGroupPage(doc());
+  assert.equal(root.querySelectorAll('.rd-pr-slot').length, 1);
+  const slot = root.querySelector('.gpage-card > .rd-sheet-head > .rd-head-acts > .rd-pr-slot');
+  assert.ok(slot, 'the slot is in the card head');
+  assert.ok(slot.hasAttribute('data-needs-git'), 'the slot hides with git off');
 });
 
 test('the head lays the buttons out after the live row, and under the status in a narrow card', () => {
@@ -112,7 +120,7 @@ test('slice 3: the run page bar skips the head actions, so it makes no Create PR
 });
 
 test('PR text links are --blue-ink-strong at weight 600', () => {
-  for (const sel of ['.rd-prs-link', '.rd-track-pr', '.chat-rc-watch-pr', '.ask-prcard-link', '.ask-shipcard-pr', '.hd-pr-repo-link']) {
+  for (const sel of ['.rd-prs-link', '.chat-rc-watch-pr', '.ask-prcard-link', '.ask-shipcard-pr', '.hd-pr-repo-link']) {
     const d = decls(sel);
     assert.match(d, /color:var\(--blue-ink-strong\)/, sel);
     assert.match(d, /font-weight:600/, sel);
@@ -121,8 +129,15 @@ test('PR text links are --blue-ink-strong at weight 600', () => {
   assert.equal(decls('.hd-pr-repo-link.merged'), '', 'a merged repo link is not greyed');
 });
 
-test('Ship it dialog, Try it first: Check out is a secondary small button', () => {
-  const row = renderShipItStrip({ finished: true, members: [{ projectKey: 'p', branch: 'b' }] }, { doc: doc() });
-  const b = [...row.querySelectorAll('button')].find((x) => x.textContent === 'Check out');
-  assert.equal(b.className, 'btn btn-sm');
+test('Create PR dialog, Try it first: a secondary 32px .btn on the footer left', () => {
+  const page = new JSDOM(html).window.document;
+  const b = page.querySelector('#shipit-modal .shipit-actions > .shipit-try-btn');
+  assert.equal(b.className, 'btn shipit-try-btn');
+  assert.equal(b.textContent, 'Try it first');
+  assert.equal(b.getAttribute('data-min-level'), 'advanced');
+  assert.equal(b.parentElement.firstElementChild, b, 'it leads the footer');
+  assert.match(decls('.shipit-try-btn'), /margin-right:auto/);
+  assert.match(decls('.shipit-actions'), /justify-content:flex-end/);
+  assert.match(decls('.shipit-actions'), /border-top:1px solid var\(--line\)/);
+  assert.match(decls('.shipit-ok'), /flex:none/);
 });

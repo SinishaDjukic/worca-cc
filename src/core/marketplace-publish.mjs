@@ -20,7 +20,7 @@ import { readWorkflow } from './workflows.mjs';
 import { PLUGIN_NAME_RE } from './plugin-manifest.mjs';
 import { runPluginScriptCases } from './plugin-script-cases.mjs';
 import { parseRemoteUrl, forgeOf, remoteRepoSlug, FORGE_LABEL } from './forge.mjs';
-import { gitEnvFor, stripHostCredentials } from './host-credentials.mjs';
+import { gitEnvFor, stripHostCredentials, isTrackerTokenKey } from './host-credentials.mjs';
 import { readAzureCredentials, AZURE_DEVOPS_CREDENTIAL_KEYS } from './azure-credentials.mjs';
 import { GITHUB_CREDENTIAL_KEYS } from './github-credentials.mjs';
 import { parseCloneAllow, cloneAllowed } from './clone-project.mjs';
@@ -332,7 +332,8 @@ const TOKEN_ENV_KEYS = [...GITHUB_CREDENTIAL_KEYS, ...AZURE_DEVOPS_CREDENTIAL_KE
 /** D15: the credential VALUES this Worca holds (never logged; only compared). */
 function liveCredentialValues(...envs) {
   const az = readAzureCredentials();
-  return [...[process.env, ...envs].flatMap((e) => TOKEN_ENV_KEYS.map((k) => e && e[k])), az.read, az.write]
+  const trackers = (e) => Object.keys(e || {}).filter(isTrackerTokenKey).map((k) => e[k]);   // WORCA_JIRA_TOKEN(_*)
+  return [...[process.env, ...envs].flatMap((e) => [...TOKEN_ENV_KEYS.map((k) => e && e[k]), ...trackers(e)]), az.read, az.write]
     .filter((v) => typeof v === 'string' && v);
 }
 
@@ -446,7 +447,7 @@ export async function exportWorkflowToMarketplace({ workflowId, marketplaceId, p
   if (target.ref && !isSafeBranchName(target.ref)) throw err(`the marketplace tracks an unusable branch name "${target.ref}"`, 'BAD_REQUEST');
   if (!dryRun) {
     const avail = await d.providerAvailable(target);
-    if (!avail.ok) throw err(`cannot open a ${target.label} pull request here: ${avail.reason}`, 'UNSUPPORTED');
+    if (!avail.ok) throw err(`cannot create a ${target.label} PR here: ${avail.reason}`, 'UNSUPPORTED');
   }
 
   const work = await mkdtemp(join(tmpdir(), 'worca-mkt-publish-'));

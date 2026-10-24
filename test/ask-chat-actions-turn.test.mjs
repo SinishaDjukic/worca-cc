@@ -204,7 +204,7 @@ test('_onChatAction persists the card at once: a reload mid-turn, or a turn that
 });
 
 test('a sub-agent\'s call of each chat action is named in its "Not applied" notice (refine cycle 2 mutation killer)', async () => {
-  const WORDS = { change_setting: 'change a setting', pause_run: 'pause a run', resume_run: 'resume a run', propose_stop_run: 'stop a run', send_direction: 'send a direction to a run', propose_pull_request: 'open a pull request' };
+  const WORDS = { change_setting: 'change a setting', pause_run: 'pause a run', resume_run: 'resume a run', propose_stop_run: 'stop a run', send_direction: 'send a direction to a run', propose_pull_request: 'create a PR' };
   const blocks = await runWith({ chatAction: async () => ({ ok: true, block: { state: 'applied', card: RECEIPT } }) }, (onEvent) => {
     push(onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'tool_use', id: 'toolu_task', name: 'Agent', input: { description: 'helper', subagent_type: 'general-purpose', prompt: 'x' } }] } });
     Object.keys(WORDS).forEach((n, i) => {

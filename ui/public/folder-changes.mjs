@@ -4,6 +4,7 @@
 // the server's (`/`-separated in changes.json and apply-plan on every OS); every path goes in through textContent.
 
 import { kindChip } from './run-kind.mjs';
+import { layoutDialog } from './dialog-layout.mjs';
 
 export const CHANGE_SIGN = Object.freeze({ added: '+', modified: '~', deleted: '−' });
 export const CHANGE_WORD = Object.freeze({ added: 'Added', modified: 'Updated', deleted: 'Deleted' });
@@ -150,6 +151,7 @@ export function openApplyDialog({ doc, fetch, pipelineId, memberKey = '', member
   const member = memberName ? el(doc, 'div', 'fc-member-line') : null;
   if (member) member.append(el(doc, 'span', 'fc-member-name', String(memberName)), kindChip(doc, 'folder'));
   dlg.append(...[title, member, target, loading, plan, skipped, err, foot].filter(Boolean));
+  layoutDialog(dlg, { head: [title, member, target], foot: [err, foot] });
   modal.append(dlg);
   doc.body.append(modal);
 

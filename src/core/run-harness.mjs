@@ -36,7 +36,7 @@ import {
   assembleResults, persistResults, persistDiffPatch, buildPerProject, rollupSummary,
   retainedWorkPatchName, sizeOfChange,
 } from './results.mjs';
-import { resolveTaskInput, retryWriteback } from './sources.mjs';
+import { resolveTaskInput, retryWriteback, sourcePlaceholderTitle, ticketRunTitle } from './sources.mjs';
 import { projectKey, projectStorePath, workspaceStorePath, noProjectWorkDir, isNoProjectWorkDir } from './store.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME, NO_PROJECT_ERRORS, WORK_DIR_NAME, isNoProjectKey } from '../shared/no-project.mjs';
 import { harvestWork, ownWorkDir, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
@@ -1508,6 +1508,16 @@ export class RunHarness extends EventEmitter {
             ? { type: 'markdown', promptFile: this.opts.promptFile }
             : { type: 'prompt', prompt: '' });
       const input = await resolveTaskInput(source, { projectDir: this.projectDir });
+      // A tracker task titles its run "[TECH-104] <task title>": known now, it needs no AI title call (which a usage
+      // limit would fail, leaving the "<plugin>: <id>" placeholder). A title someone gave the run is kept.
+      const ticketTitle = source.type === 'plugin' && !this.opts.titleLocked
+        && (!this.opts.title || this.opts.title === sourcePlaceholderTitle(source))
+        ? ticketRunTitle(input.sourceMeta) : null;
+      if (ticketTitle) {
+        this.opts.title = ticketTitle;
+        this.opts.titleLocked = true;
+        this.state.title = ticketTitle;
+      }
       this.pipeline = await createPipeline(this.projectDir, {
         promptText: input.promptText,
         // ?? keeps the legacy both-set corner byte-identical: inline prompt wins the
@@ -1539,6 +1549,8 @@ export class RunHarness extends EventEmitter {
       });
       this.state.id = this.pipeline.id;
       this.state.pipelineDir = this.pipeline.dir;
+      // Replace the placeholder the client was shown at start with the task's title.
+      if (ticketTitle) this._emit('title', { title: ticketTitle, provisional: false, pipelineId: this.pipeline.id });
       this.logWriter.bind(this.pipeline.dir);                  // start persisting (flushes buffered preflight lines)
       recordArtifact(this.pipeline.id, RUN_LOG_KIND, RUN_LOG_FILE); // index like prompt.md (sync; INSERT OR IGNORE)
       // A11(b): carry the resolved prompt on the in-memory state too (createPipeline

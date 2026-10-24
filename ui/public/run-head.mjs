@@ -1,8 +1,11 @@
 // ui/public/run-head.mjs — slice 3: the run page card's status head (the page's status words, the head buttons, the
-// View PR ▾ items) and its read-only three-step tracker, for both run pages. Pure: headModel / trackerModel read the
-// facts app.js builds (headFactsOf); renderHeadButtons / renderTracker draw over the host's ownerDocument, never fetch.
+// View PR ▾ items), its read-only three-step tracker and the facts list's PR rows, for both run pages. Pure: headModel /
+// trackerModel / factsModel read the facts app.js builds (headFactsOf); renderHeadButtons / renderTracker / renderFacts
+// draw over the host's ownerDocument, never fetch.
 import { icon } from './icons.mjs';
-import { CREATE_PR_LABEL } from './ship-words.mjs';
+import { CREATE_PR_LABEL, VIEW_PRS_LABEL, viewPrLabel } from './ship-words.mjs';
+import { prChip } from './runs-list.mjs';
+import { prState } from '../../src/shared/run-model.mjs';
 
 // Watch PR (#619), moved from app.js: the tracker and the Overview's PR rows read one wording.
 export const HD_PR_WATCH_ACTIVE = new Set(['starting', 'fixing', 'publishing']);
@@ -102,7 +105,7 @@ export function headModel(f) {
     const w = f.prStatus && f.prStatus.watch;
     if (watchStopped(m)) {
       // The model's own line (`Needs you · Watch stopped · 3 fix runs, …`), the Runs list's words: status null keeps it.
-      // The disabled button's reason is also visible text on the tracker's PR step (prSecond), not only its title.
+      // The disabled button's reason is also visible text in the facts list's Watch row (factsModel), not only its title.
       return { ...NONE, key: 'watch-stopped', status: null, cta,
         after: [btn('ask-changes', 'Ask for changes', { primary: true, disabled: true, title: ASK_IN_CHAT })] };
     }
@@ -132,11 +135,23 @@ function workspaceHead(f) {
   const merged = prs.filter((x) => upper(x.pr) === 'MERGED').length;
   const open = prs.some((x) => upper(x.pr) === 'OPEN');
   return { ...NONE, key: 'workspace', status: open && f.m.state === 'in-review' ? { line: `In review · ${merged} of ${prs.length} merged` } : null,
-    cta: { state: 'view', label: 'View PRs', menu: true, ws: true },
+    cta: { state: 'view', label: VIEW_PRS_LABEL, menu: true, ws: true },
     after: f.canCreatePr ? [btn('ship', CREATE_PR_LABEL, { primary: true, icon: 'pr-create' })] : [] };
 }
 
-const N = (node, label, second) => ({ node, label, ...(second && second.length ? { second } : {}) });
+/** One ship flow (slice 2): a feature's or a chain's head, in workspaceHead's shape. `state`: groupModel's; `prs`:
+ *  groupPrList(row). Create PR while no run has a PR; View PR ▾ for one PR, View PRs ▾ for several; while the group
+ *  is still ready (a partly shipped chain) Create PR stays as a head button beside them. */
+export function groupHead({ state, prs }) {
+  const ready = state === 'ready';
+  if (!prs.length) return { ...NONE, key: 'group', cta: ready ? { state: 'create' } : null };
+  const cta = prs.length === 1
+    ? { state: prs[0].merged ? 'merged' : 'view', href: prs[0].url, menu: true }
+    : { state: 'view', label: VIEW_PRS_LABEL, menu: true, ws: true };
+  return { ...NONE, key: 'group', cta, after: ready ? [btn('ship', CREATE_PR_LABEL, { primary: true, icon: 'pr-create' })] : [] };
+}
+
+const N = (node, label) => ({ node, label });
 /** The tracker's Watch words (D16): status only; the ▾ menu edits Watch. */
 export function trackerWatchWords(w, { idle = true } = {}) {
   if (!w) return null;
@@ -147,40 +162,22 @@ export function trackerWatchWords(w, { idle = true } = {}) {
 }
 function changesStep(f) {
   const m = f.m;
-  // Same order as headModel: live first, then kept work (its links are the only Download patch / Commit it yourself),
-  // then failed. A failed run with kept work keeps its red failed node and still carries the kept links.
+  // Same order as headModel: live first, then kept work (its links are the facts list's Kept work row), then failed.
+  // A failed run with kept work keeps its red failed node.
   // A workspace member row passes `live` read once from the run-level model (its own prNeeds is only its PR step's).
   if (f.live !== undefined ? f.live : isLive(m)) return { ...N('working', 'Changes'), pulse: !!m.pulse };
-  if (f.kept) return N(m.state === 'failed' ? 'failed' : 'problem', 'Changes', [
-    ...(f.kept.recovery && f.kept.recovery.href ? [{ kind: 'patch', text: 'Download patch', href: f.kept.recovery.href, download: f.kept.recovery.download || '' }] : []),
-    { kind: 'commit', text: 'Commit it yourself' }]);
+  if (f.kept) return N(m.state === 'failed' ? 'failed' : 'problem', 'Changes');
   if (m.state === 'failed') return N('failed', 'Changes');
   return null;
 }
-function prSecond(f, pr) {
-  const out = [{ kind: 'pr', text: `#${pr.number}`, href: pr.url }];
-  const s = f.prStatus || {};
-  const v = s.status;
-  if (v && v.label) out.push({ kind: 'text', text: v.label, tone: v.tone === 'bad' ? 'bad' : v.tone === 'run' ? 'run' : '' });
-  if (v && v.label && v.detail) out.push({ kind: 'text', text: v.detail, tone: '' });
-  const adv = ADV.has(f.level);
-  const ww = trackerWatchWords(s.watch, { idle: adv });
-  // At Advanced the words open the ▾ menu (its Watch switch); below it they are plain text (no Watch item there).
-  if (ww) out.push(adv ? { kind: 'watch', ...ww } : { kind: 'text', text: ww.text, tone: ww.tone });
-  // Watch stopped: the head's disabled Ask for changes explains itself here in visible text (touch and keyboard too).
-  if (!f.workspace && f.m && watchStopped(f.m)) out.push({ kind: 'text', text: ASK_IN_CHAT, tone: '' });
-  if (s.watch && HD_PR_WATCH_ACTIVE.has(s.watch.status) && s.watch.activePipelineId) out.push({ kind: 'fix-run', text: 'View fix run', pid: s.watch.activePipelineId });
-  if (s.resolveError) out.push({ kind: 'text', text: s.resolveError, tone: 'bad' });
-  return out;
-}
 function prPath(f, pr = f.pr && f.pr.url ? f.pr : null) {
-  const merged = `Merged into ${f.base || 'base'}`;
+  const merged = 'Merged';   // static: the base branch is the facts list's Merged row
   const first = changesStep(f);
   if (first) return [first, N('future', 'Pull request'), N('future', merged)];
   const s = upper(pr);
-  if (s === 'MERGED') return [N('done', 'Changes done'), N('done', 'Pull request', prSecond(f, pr)), N('merged', merged)];
-  if (s === 'CLOSED') return [N('done', 'Changes done'), N('closed', 'Pull request', prSecond(f, pr)), N('future', merged)];
-  if (s === 'OPEN') return [N('done', 'Changes done'), N(f.m.prNeeds ? 'problem' : 'ready', 'Pull request', prSecond(f, pr)), N('future', merged)];
+  if (s === 'MERGED') return [N('done', 'Changes done'), N('done', 'Pull request'), N('merged', merged)];
+  if (s === 'CLOSED') return [N('done', 'Changes done'), N('closed', 'Pull request'), N('future', merged)];
+  if (s === 'OPEN') return [N('done', 'Changes done'), N(f.m.prNeeds ? 'problem' : 'ready', 'Pull request'), N('future', merged)];
   if (f.m.state === 'merged') return [N('done', 'Changes done'), N('future', 'Pull request'), N('merged', merged)];   // in its base, no PR of its own
   return [N('ready', 'Changes done'), N('future', 'Pull request'), N('future', merged)];
 }
@@ -216,26 +213,128 @@ export function trackerModel(f) {
   return { rows: [{ steps: f.push || f.notMergedBack ? pushPath(f) : prPath(f) }] };
 }
 
+// GitHub's verdicts that are not the checks line (git-info.mjs prMergeStatus): with one of them as the label, the checks
+// line is the `detail`; otherwise the label IS the checks line.
+const VERDICTS = new Set(['Draft', 'Merge conflicts', 'Changes requested', 'Review required', 'Out of date with the base branch',
+  'Blocked by branch rules', 'Ready to merge']);
+const CHECKS_TONE = Object.freeze({ failing: 'bad', pending: 'run', passing: 'ok' });
+/** The PR chip's model (run-model.mjs prState) with the status read's verdict folded in, so it says what the row says. */
+function chipOf(pr, s) {
+  const w = s && s.watch;
+  return prState({ ...pr, checks: (s && s.checks) || pr.checks || null, mergeable: (s && s.mergeable) || pr.mergeable,
+    fixing: !!(w && HD_PR_WATCH_ACTIVE.has(w.status)) });
+}
+/** The Watch row's parts for one PR status: its words (a ▾ opener at Advanced and up), the fix run's link. */
+function watchParts(s, adv) {
+  if (!s) return [];
+  const out = [];
+  const ww = trackerWatchWords(s.watch, { idle: adv });
+  if (ww) out.push(adv ? { kind: 'watch', ...ww } : { kind: 'text', text: ww.text, tone: ww.tone });
+  if (s.watch && HD_PR_WATCH_ACTIVE.has(s.watch.status) && s.watch.activePipelineId) out.push({ kind: 'fix-run', text: 'View fix run', pid: s.watch.activePipelineId });
+  return out;
+}
+/**
+ * The run facts list's PR rows (the tracker's steps carry labels only): { merged, kept, pr, prs, checks, watch }, each
+ * null when its row hides. `merged`: the base branch the work is in. `pr` / `kept` / `checks` / `watch`: parts; `prs`
+ * and a workspace's `watch`: [{ name, parts }], one line per member. GitHub's verdict is the status line's, not a row.
+ */
+export function factsModel(f) {
+  const out = { merged: null, kept: null, pr: null, prs: null, checks: null, watch: null };
+  if (!f || !f.m) return out;
+  const adv = ADV.has(f.level);
+  if (f.kept && !isLive(f.m)) {
+    out.kept = [
+      ...(f.kept.recovery && f.kept.recovery.href ? [{ kind: 'patch', text: 'Download patch', href: f.kept.recovery.href, download: f.kept.recovery.download || '' }] : []),
+      { kind: 'commit', text: 'Commit it yourself' }];
+  }
+  if (f.mode === 'folder' || f.mode === 'none' || !f.gitChrome) return out;
+  if (f.workspace) {
+    const members = f.workspace.members.filter((x) => x.pr && x.pr.url);
+    const prs = members.map((x) => ({ name: x.name, chip: chipOf(x.pr, x.prStatus) })).filter((x) => x.chip)
+      .map((x) => ({ name: x.name, parts: [{ kind: 'chip', pr: x.chip }] }));
+    if (prs.length) out.prs = prs;
+    const watch = members.filter((x) => upper(x.pr) === 'OPEN').map((x) => ({ name: x.name, parts: watchParts(x.prStatus, adv) }))
+      .filter((x) => x.parts.length);
+    if (watch.length) out.watch = watch;
+    return out;
+  }
+  const pr = f.pr && f.pr.url ? f.pr : null;
+  const s = upper(pr);
+  if (s === 'MERGED' || (!pr && f.m.state === 'merged' && !f.push && !f.notMergedBack)) out.merged = f.base || null;
+  if (!pr) return out;
+  const st = f.prStatus || {};
+  const chip = chipOf(pr, st);
+  if (chip) out.pr = [{ kind: 'chip', pr: chip }, ...(st.resolveError ? [{ kind: 'text', text: st.resolveError, tone: 'bad', line: true }] : [])];
+  if (s !== 'OPEN') return out;                          // merged or closed: no checks, no Watch
+  const v = st.status;
+  const text = v && v.label ? (v.detail || (VERDICTS.has(v.label) ? '' : v.label)) : '';
+  if (text) {
+    const tone = CHECKS_TONE[st.checks && st.checks.state] || (v.tone === 'bad' ? 'bad' : v.tone === 'run' ? 'run' : v.tone === 'ok' ? 'ok' : '');
+    out.checks = [{ kind: 'text', text, tone }];
+  }
+  const watch = watchParts(st, adv);
+  // Watch stopped: the head's disabled Ask for changes explains itself here in visible text (touch and keyboard too).
+  if (watchStopped(f.m)) watch.push({ kind: 'text', text: ASK_IN_CHAT, tone: '', line: true });
+  if (watch.length) out.watch = watch;
+  return out;
+}
+
 const NODE_CLASS = Object.freeze({ done: 'is-done', working: 'is-current is-working', ready: 'is-current is-ready',
   merged: 'is-current is-merged', problem: 'is-problem', failed: 'is-failed', closed: 'is-closed', future: 'is-future' });
 const NODE_GLYPH = Object.freeze({ done: 'check', merged: 'check', problem: 'alert', failed: 'alert', closed: 'x' });
 const NODE_WORD = Object.freeze({ done: 'Done', working: 'In progress', ready: 'Current', merged: 'Merged', problem: 'Needs you',
   failed: 'Failed', closed: 'Closed', future: 'Not yet' });
 
-/**
- * Paint the tracker into `host` (idempotent through a signature). Read-only: the only controls are its links and the
- * Watching / Commit it yourself buttons, whose calls come from `h` ({ onWatch(anchor), onFixRun(event, pid), onCommit() }).
- */
-export function renderTracker(host, model, h = {}) {
+/** Paint the tracker into `host` (idempotent through a signature). Labels only: the changing PR words are the facts
+ *  list's rows (renderFacts). */
+export function renderTracker(host, model) {
   if (!host) return;
   host.hidden = !model;
   const sig = model ? JSON.stringify(model) : '';
   if (host.dataset.sig === sig) return;
   host.dataset.sig = sig;
   const doc = host.ownerDocument;
-  host.replaceChildren(...(model ? model.rows.map((row) => trackerRow(doc, row, h)) : []));
+  host.replaceChildren(...(model ? model.rows.map((row) => trackerRow(doc, row)) : []));
 }
-function trackerRow(doc, row, h) {
+
+/**
+ * Paint factsModel's rows into the facts list `kv` (.rd-kv): each `[data-fact]` row's value, hidden when null. The
+ * Merged row's copy chip is the page's (app.js paintPageBranch), so `merged` only shows or hides it through `h.onMerged`.
+ * Idempotent per row through a signature. The controls' calls come from `h` ({ onWatch(anchor), onFixRun(event, pid),
+ * onCommit(), fixRunHref(pid), onMerged(name) }).
+ */
+export function renderFacts(kv, model, h = {}) {
+  if (!kv) return;
+  const doc = kv.ownerDocument;
+  if (h.onMerged) h.onMerged(model.merged || '');
+  const prKey = model.prs ? 'prs' : 'pr';
+  for (const key of ['kept', 'pr', 'checks', 'watch']) {
+    const row = kv.querySelector(`.rd-kv-row[data-fact="${key}"]`);
+    if (!row) continue;
+    const val = key === 'pr' ? model[prKey] : model[key];
+    row.hidden = !val;
+    const dd = row.querySelector('.rd-kv-v');
+    const sig = val ? JSON.stringify(val) : '';
+    if (dd.dataset.sig === sig) continue;
+    dd.dataset.sig = sig;
+    if (key === 'pr') row.querySelector('.rd-kv-k').textContent = model.prs ? 'Pull requests' : 'Pull request';
+    if (!val) { dd.replaceChildren(); continue; }
+    // A workspace's rows list one member per line, the names in one column (the tracker's own row shape).
+    if (val.length && val[0].name !== undefined) {
+      const list = doc.createElement('span');
+      list.className = 'rd-fact-members';
+      for (const x of val) {
+        const n = doc.createElement('span');
+        n.className = 'rd-fact-member';
+        n.textContent = x.name;
+        n.title = x.name;
+        list.append(n, factParts(doc, x.parts, h));
+      }
+      dd.replaceChildren(list);
+    } else dd.replaceChildren(factParts(doc, val, h));
+  }
+}
+function trackerRow(doc, row) {
   const wrap = doc.createElement('div');
   wrap.className = row.name ? 'rd-track-row has-name' : 'rd-track-row';
   if (row.name) { const n = doc.createElement('span'); n.className = 'rd-track-name'; n.textContent = row.name; n.title = row.name; wrap.append(n); }
@@ -263,38 +362,45 @@ function trackerRow(doc, row, h) {
       head.append(line);
     }
     li.append(head);
-    if (s.second) li.append(trackerSecond(doc, s.second, h));
     ol.append(li);
   });
   wrap.append(ol);
   return wrap;
 }
-function trackerSecond(doc, parts, h) {
-  const sub = doc.createElement('span');
-  sub.className = 'rd-track-sub';
+/** One facts value: the PR chip (runs-list.mjs prChip, a link in a new tab), links, the Watch / Commit it yourself
+ *  buttons and plain words. A `line` part starts its own line. */
+function factParts(doc, parts, h) {
+  const out = doc.createElement('span');
+  out.className = 'rd-fact';
   for (const p of parts) {
     let el;
-    if (p.kind === 'pr' || p.kind === 'patch' || p.kind === 'fix-run') {
+    if (p.kind === 'chip') {
+      el = prChip(doc, p.pr, { link: true, number: true });
+      el.classList.add('rd-fact-pr');
+      out.append(el);
+      continue;
+    }
+    if (p.kind === 'patch' || p.kind === 'fix-run') {
       el = doc.createElement('a');
-      el.className = p.kind === 'pr' ? 'rd-track-pr' : 'rd-track-link';
+      el.className = 'rd-fact-link';
       el.href = p.kind === 'fix-run' ? (h.fixRunHref ? h.fixRunHref(p.pid) : '#') : p.href;
-      if (p.kind === 'pr') { el.target = '_blank'; el.rel = 'noopener'; }
       if (p.kind === 'patch' && p.download) el.setAttribute('download', p.download);
       if (p.kind === 'fix-run') el.addEventListener('click', (e) => h.onFixRun && h.onFixRun(e, p.pid));
     } else if (p.kind === 'watch' || p.kind === 'commit') {
       el = doc.createElement('button');
       el.type = 'button';
-      el.className = `rd-track-act${p.kind === 'watch' ? ' rd-track-watch' : ''}${p.tone ? ` is-${p.tone}` : ''}`;
+      el.className = `rd-fact-act${p.kind === 'watch' ? ' rd-fact-watch' : ''}${p.tone ? ` is-${p.tone}` : ''}`;
       if (p.kind === 'watch' && !p.tone) el.prepend(icon(doc, 'eye', 12, 'ic'));
       el.addEventListener('click', () => (p.kind === 'watch' ? h.onWatch && h.onWatch(el) : h.onCommit && h.onCommit()));
     } else {
       el = doc.createElement('span');
-      el.className = p.tone ? `rd-track-tx is-${p.tone}` : 'rd-track-tx';
+      el.className = p.tone ? `rd-fact-tx is-${p.tone}` : 'rd-fact-tx';
     }
+    if (p.line) el.classList.add('is-line');
     el.append(p.text);
-    sub.append(el);
+    out.append(el);
   }
-  return sub;
+  return out;
 }
 
 /** Paint head.before, the PR slot (kept: paintPrCta owns it) and head.after into `host` (.rd-head-acts). `h.onHead(id, button)`
@@ -334,22 +440,31 @@ export function renderHeadButtons(host, head, slot, h = {}) {
 /**
  * The View PR ▾ items (openMenu's shape). `prs`: [{ key, name, number, url, open, conflicts, watch, watchFailed }]
  * (watch: the PR's /api/pr/checks `watch`, or null; watchFailed: the read gave no answer at all); one PR has no name
- * and no Open item (the split's main half opens it).
+ * and no Open item (the split's main half opens it). `onWatchAll(openPrs)` / `onCopyAll(prs)`: a group's Watch PRs and
+ * Copy PR links after several PRs.
  */
-export function prMenuItems(prs, { level, onWatch, onCopy, onOpen, onResolve }) {
+export function prMenuItems(prs, { level, onWatch, onCopy, onOpen, onResolve, onWatchAll = null, onCopyAll = null }) {
   const adv = level === 'advanced' || level === 'expert';
   const many = prs.length > 1;
   const items = [];
   for (const p of prs) {
     if (items.length) items.push({ sep: true });
     items.push({ header: many ? `${p.name} · Pull request #${p.number}` : `Pull request #${p.number}` });
-    if (many) items.push({ label: `Open PR #${p.number}`, icon: 'external', onSelect: () => onOpen(p) });
+    if (many) items.push({ label: viewPrLabel(p.number), icon: 'external', onSelect: () => onOpen(p) });
     if (adv && p.open && p.watch) items.push({ switch: true, label: 'Watch', icon: 'eye', help: WATCH_HELP, checked: !!p.watch.watching, key: p.key, onToggle: (b) => onWatch(p, b) });
     // A read that failed outright (D9): say so instead of leaving Watch silently absent. Disabled items are skipped by
     // openMenu's arrow keys (its `enabled()` filter).
     else if (adv && p.open && p.watchFailed) items.push({ label: 'Watch unavailable', icon: 'eye', disabled: true, title: "Could not read this pull request's status" });
     items.push({ label: 'Copy PR link', icon: 'link', onSelect: () => onCopy(p) });
     if (p.conflicts) items.push({ label: 'Fix conflicts', icon: 'git', onSelect: () => onResolve(p) });
+  }
+  // A group's several PRs (D12): Watch every open one (Advanced and up) and copy every link. The workspace menu passes
+  // neither, so it is unchanged.
+  if (many && (onWatchAll || onCopyAll)) {
+    items.push({ sep: true });
+    const open = prs.filter((p) => p.open);
+    if (adv && onWatchAll && open.length) items.push({ label: 'Watch PRs', icon: 'eye', onSelect: () => onWatchAll(open) });
+    if (onCopyAll) items.push({ label: 'Copy PR links', icon: 'link', onSelect: () => onCopyAll(prs) });
   }
   return items;
 }

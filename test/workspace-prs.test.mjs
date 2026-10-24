@@ -71,6 +71,6 @@ test('workspaceMembers carries workMode; memberPrTarget refuses a Folder member'
   assert.deepEqual(workspaceMembers(state).map((m) => [m.memberKey, m.workMode, m.feature]),
     [['api-00000001', 'git', 'worca-cc/x-api'], ['notes-00000004', 'folder', null]]);
   assert.deepEqual(memberPrTarget(state, 'notes-00000004'),
-    { ok: false, error: 'a Folder member has no branch to open a pull request from: notes-00000004' });
+    { ok: false, error: 'a Folder member has no branch to create a PR from: notes-00000004' });
   assert.equal(memberPrTarget(state, 'api-00000001').ok, true);
 });

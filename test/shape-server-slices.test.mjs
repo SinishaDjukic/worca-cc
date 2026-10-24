@@ -417,7 +417,7 @@ test('errors never escape: with shape_feature_slices gone resume answers 500, th
   }
 }));
 
-// ── D24: a finished slice opens a draft PR (openSliceDraft, from afterRunSettled) ──────────────────────────────
+// ── One ship flow: a member's own PR (openMemberPr); a settled slice opens none (afterRunSettled) ───────────────
 /** gh present, one origin; every argv lands in `seen`. `create(args)` answers gh pr create (a URL, or a failure). */
 function stubGh(seen, { create = () => okRun('https://github.com/me/repo/pull/7\n') } = {}) {
   gitInfo.setRunner((cmd, args) => {
@@ -446,44 +446,37 @@ function stackedFeature() {
 }
 const draftOf = (fid, idx) => getDb().prepare('SELECT draft_pr_url FROM shape_feature_slices WHERE feature_id = ? AND idx = ?').get(fid, idx).draft_pr_url;
 
-test('openSliceDraft: a draft PR on the chain root for slice 1, stacked on slice 1\'s branch for slice 2; once only', () => withGate(true, () => withEnvVars(NO_ADO, async () => {
+test('openMemberPr: a ready PR on the chain root for slice 1, stacked on slice 1\'s branch for slice 2; no draft', () => withGate(true, () => withEnvVars(NO_ADO, async () => {
   ({ _testing: gitInfo } = await import('../src/core/git-info.mjs'));
-  const { readPrState } = await import('../src/core/artifacts.mjs');
   try {
     const { f, p1, p2 } = stackedFeature();
     const seen = [];
     stubGh(seen);
-    await testing.openSliceDraft(p1);
-    const c1 = creates(seen)[0];
-    assert.ok(c1.includes('--draft'));
-    assert.equal(argOf(c1, '--base'), 'main');
-    assert.deepEqual(readPrState(p1), { url: 'https://github.com/me/repo/pull/7', number: 7, state: 'OPEN' }, 'a draft is OPEN (P18)');
-    assert.equal(draftOf(f.id, 1), 'https://github.com/me/repo/pull/7');
+    assert.equal((await testing.openMemberPr(p1)).ok, true);
     stubGh(seen, { create: () => okRun('https://github.com/me/repo/pull/8\n') });
-    await testing.openSliceDraft(p2);
-    const c2 = creates(seen)[1];
+    assert.equal((await testing.openMemberPr(p2)).ok, true);
+    const [c1, c2] = creates(seen);
+    assert.equal(argOf(c1, '--base'), 'main');
     assert.equal(argOf(c2, '--base'), `feat/${p1}`);
-    assert.equal(draftOf(f.id, 2), 'https://github.com/me/repo/pull/8');
-    await testing.openSliceDraft(p2);
-    assert.equal(creates(seen).length, 2, 'a PR is recorded: nothing more');
+    assert.ok(!c1.includes('--draft') && !c2.includes('--draft'));
+    assert.equal(draftOf(f.id, 1), null, 'no draft_pr_url is written');
   } finally { gitInfo.reset(); }
 })));
 
-test('openSliceDraft: a forge that refuses drafts gets the PR opened ready; no draft label', () => withGate(true, () => withEnvVars(NO_ADO, async () => {
+test('openMemberPr: a run that already has a live PR opens no second one', () => withGate(true, () => withEnvVars(NO_ADO, async () => {
   ({ _testing: gitInfo } = await import('../src/core/git-info.mjs'));
   try {
-    const { f, p1 } = stackedFeature();
+    const { p1 } = stackedFeature();
     const seen = [];
-    stubGh(seen, { create: (args) => (args.includes('--draft') ? failRun('Draft pull requests are not supported in this repository') : okRun('https://github.com/me/repo/pull/9\n')) });
-    const out = await testing.openSliceDraft(p1);
-    assert.equal(out.ok, true);
-    assert.equal(creates(seen).length, 2);
-    assert.ok(!creates(seen)[1].includes('--draft'));
-    assert.equal(draftOf(f.id, 1), null);
+    stubGh(seen);
+    assert.equal((await testing.openMemberPr(p1)).ok, true);
+    const again = await testing.openMemberPr(p1);
+    assert.deepEqual([again.ok, again.existed], [true, true]);
+    assert.equal(creates(seen).length, 1, 'once only');
   } finally { gitInfo.reset(); }
 })));
 
-test('afterRunSettled: a done slice opens its draft (no merge back needed); stopped, unsliced or gate off do not', () => withEnvVars(NO_ADO, async () => {
+test('afterRunSettled: a done slice opens no PR (one ship flow); it still offers the Ship card', () => withEnvVars(NO_ADO, async () => {
   ({ _testing: gitInfo } = await import('../src/core/git-info.mjs'));
   try {
     const seen = [];
@@ -491,16 +484,10 @@ test('afterRunSettled: a done slice opens its draft (no merge back needed); stop
     const orch = (pid, status, slice = { feature: 'f', index: 1 }) => ({ runShape: slice ? { slice } : null, getState: () => ({ status, id: pid }) });
     await withGate(true, async () => {
       const a = stackedFeature();
-      await testing.afterRunSettled(orch(a.p1, 'stopped'));
-      await testing.afterRunSettled(orch(a.p1, 'done', null));
-      assert.equal(creates(seen).length, 0);
       await testing.afterRunSettled(orch(a.p1, 'done'));
-      assert.equal(creates(seen).length, 1);
-    });
-    await withGate(false, async () => {
-      const b = stackedFeature();
-      await testing.afterRunSettled(orch(b.p1, 'done'));
-      assert.equal(creates(seen).length, 1, 'gate off: nothing runs');
+      await testing.afterRunSettled(orch(a.p2, 'done'));
+      assert.equal(creates(seen).length, 0, 'no draft PR per slice');
+      assert.equal(draftOf(a.f.id, 1), null);
     });
   } finally { gitInfo.reset(); }
 }));
@@ -561,9 +548,8 @@ shipT('one PR: gh pr create on the chain root (no draft, no "Part of"), then the
   assert.equal(closes.length, 3);
   for (const x of closes) assert.equal(argOf(x, '--comment'), 'Shipped as one pull request: https://github.com/me/repo/pull/9');
   const { readPrState } = await import('../src/core/artifacts.mjs');
-  assert.equal(readPrState(w.pids[0]).state, 'CLOSED');
-  assert.equal(readPrState(w.pids[2]).url, 'https://github.com/me/repo/pull/9', 'the last row holds the one PR');
-  assert.equal(readPrState(w.pids[2]).state, 'OPEN');
+  // The one PR is every slice's PR (as a chain shipped as One): the group reads In review · 1 PR, not Ready to ship.
+  for (const pid of w.pids) assert.deepEqual([readPrState(pid).url, readPrState(pid).state], ['https://github.com/me/repo/pull/9', 'OPEN'], pid);
   const v = await view(w.f.id);
   assert.deepEqual([v.ship.mode, v.ship.prUrl], ['one', 'https://github.com/me/repo/pull/9']);
   assert.equal(v.ship.result.closed, 3, 'slice 3\'s draft counts though its row now holds the one PR');
@@ -580,19 +566,105 @@ shipT('one PR when gh reports the last slice\'s draft already exists: it is made
   assert.equal((await view(w.f.id)).ship.result.closed, 2);
 });
 
-shipT('a done slice with no PR gets one first; when that fails the answer is 409 and nothing else ran', async () => {
-  const seen = []; stubShip(seen, { create: () => failRun('boom') });
-  const w = shipWorld();
-  getDb().prepare('UPDATE pipelines SET pr_url = NULL, pr_state = NULL WHERE id = ?').run(w.pids[1]);
+shipT('stacked with no slice PRs: each slice gets a ready PR on its stacked base in merge order, then 3 gh pr ready', async () => {
+  let n = 0;
+  const seen = []; stubShip(seen, { create: () => okRun(`https://github.com/me/repo/pull/${++n}\n`) });
+  const w = shipWorld({ prs: false });
   const r = await ship(w.f.id, 'stacked');
+  assert.equal(r.status, 200, await r.clone().text());
+  const c = ghCalls(seen, 'create');
+  assert.deepEqual(c.map((a) => argOf(a, '--base')), ['main', `feat/${w.pids[0]}`, `feat/${w.pids[1]}`]);
+  assert.ok(c.every((a) => !a.includes('--draft')));
+  assert.deepEqual(ghCalls(seen, 'ready').map((a) => a[3]), [1, 2, 3].map((k) => `https://github.com/me/repo/pull/${k}`));
+});
+
+shipT('One with no slice PRs: 1 PR into the chain root, nothing closed', async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld({ prs: false });
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 200, await r.clone().text());
+  const c = ghCalls(seen, 'create');
+  assert.equal(c.length, 1);
+  assert.equal(argOf(c[0], '--base'), 'main');
+  assert.equal(ghCalls(seen, 'close').length, 0);
+});
+
+shipT('in-flight drafts still ship stacked: 0 creates, 3 gh pr ready in slice order', async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld();                                   // each slice's PR recorded as its draft (recordSliceDraft)
+  assert.ok((await view(w.f.id)).slices.every((s) => s.pr && s.pr.draft === true), 'every slice reads as a draft');
+  const r = await ship(w.f.id, 'stacked');
+  assert.equal(r.status, 200, await r.clone().text());
+  assert.equal(ghCalls(seen, 'create').length, 0);
+  assert.deepEqual(ghCalls(seen, 'ready').map((a) => a[3]), [1, 2, 3].map((k) => `https://github.com/me/repo/pull/${k}`));
+});
+
+shipT('after a ship the slices\' stored PRs read ready, not draft, and pipelines-changed reloads the pages (one ship flow)', async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld();
+  for (const pid of w.pids) getDb().prepare('UPDATE pipelines SET pr_verdict = ? WHERE id = ?').run(JSON.stringify({ draft: true, mergeable: 'MERGEABLE' }), pid);
+  const ws = await collector();
+  try {
+    const r = await ship(w.f.id, 'stacked');
+    assert.equal(r.status, 200, await r.clone().text());
+    const { readPrState } = await import('../src/core/artifacts.mjs');
+    for (const pid of w.pids) assert.deepEqual([readPrState(pid).draft, readPrState(pid).mergeable], [false, 'MERGEABLE'], pid);
+    const t0 = Date.now();
+    while (!ws.frames('pipelines-changed').length && Date.now() - t0 < 3000) await sleep(10);
+    assert.ok(ws.frames('pipelines-changed').length, 'the Runs list and the group page reload History and run groups');
+  } finally { ws.close(); }
+});
+
+shipT('One over legacy drafts: the group of the feature reads In review · 1 PR, not Ready to ship', async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld();
+  for (const pid of w.pids) getDb().prepare('UPDATE pipelines SET pr_verdict = ? WHERE id = ?').run(JSON.stringify({ draft: true }), pid);
+  const r = await ship(w.f.id, 'one');
+  assert.equal(r.status, 200, await r.clone().text());
+  const { listRunGroups } = await import('../src/core/run-groups.mjs');
+  const { groupModel } = await import('../src/shared/run-model.mjs');
+  const g = listRunGroups().find((x) => x.id === w.f.id);
+  const m = groupModel({ kind: 'feature', title: g.title, members: g.members.map((x) => ({ status: x.status, pr: x.pr })) });
+  assert.deepEqual([m.state, m.line, m.prCount], ['in-review', 'In review · 1 PR', 1]);
+});
+
+shipT('One refuses a ready slice PR (409), closing and creating nothing', async () => {
+  const seen = []; stubShip(seen);
+  const w = shipWorld({ drafts: false });                  // ready slice PRs, as openMemberPr leaves them
+  const r = await ship(w.f.id, 'one');
   assert.equal(r.status, 409);
-  assert.equal((await r.json()).error, 'slice 2 has no pull request yet');
-  assert.equal(ghCalls(seen, 'ready').length, 0);
-  assert.equal(spawnSync('git', ['show', `${w.last}:CHANGELOG.md`], { cwd: w.dir }).status === 0, false, 'no changelog');
-  stubShip(seen);
+  assert.match((await r.json()).error, /already has a PR/);
+  assert.equal(ghCalls(seen, 'close').length, 0);
+  assert.equal(ghCalls(seen, 'create').length, 0);
+});
+
+shipT('a stacked failure mid-loop says how to continue; run 1\'s PR stays and a retry makes the other 2', async () => {
+  let n = 0;
+  const seen = []; stubShip(seen, { create: () => (++n === 2 ? failRun('boom') : okRun(`https://github.com/me/repo/pull/${n}\n`)) });
+  const w = shipWorld({ prs: false });
+  const r = await ship(w.f.id, 'stacked');
+  assert.ok(r.status >= 409, String(r.status));
+  const j = await r.json();
+  assert.match(j.error, /run 2's PR.*Create PR again to continue/);
+  assert.deepEqual(j.prs, ['https://github.com/me/repo/pull/1']);
+  const { readPrState } = await import('../src/core/artifacts.mjs');
+  assert.equal(readPrState(w.pids[0]).url, 'https://github.com/me/repo/pull/1');
+  const before = ghCalls(seen, 'create').length;
   const ok = await ship(w.f.id, 'stacked');
   assert.equal(ok.status, 200, await ok.clone().text());
-  assert.ok(ghCalls(seen, 'create').some((a) => argOf(a, '--head') === `feat/${w.pids[1]}`), 'slice 2\'s PR opened first');
+  assert.equal(ghCalls(seen, 'create').length - before, 2);
+});
+
+shipT('watch: true turns Watch on for each slice PR', async () => {
+  let n = 0;
+  const seen = []; stubShip(seen, { create: () => okRun(`https://github.com/me/repo/pull/${++n}\n`) });
+  const w = shipWorld({ prs: false });
+  const r = await post(`/api/shape/features/${w.f.id}/ship`, { mode: 'stacked', watch: true });
+  assert.equal(r.status, 200, await r.clone().text());
+  const { getWatch } = await import('../src/core/pr-watch.mjs');
+  const rows = [1, 2, 3].map((k) => getWatch(`https://github.com/me/repo/pull/${k}`));
+  assert.deepEqual(rows.map((x) => [x && x.enabled, x && x.pipelineId]), w.pids.map((pid) => [true, pid]));
+  assert.equal((await post(`/api/shape/features/${w.f.id}/ship`, { mode: 'stacked', watch: 'yes' })).status, 400);
 });
 
 shipT('a failed ready then a retry: CHANGELOG.md keeps one ### Charts entry; two concurrent ships: one wins', async () => {
@@ -611,6 +683,7 @@ shipT('a failed ready then a retry: CHANGELOG.md keeps one ### Charts entry; two
 
 test('Ship as with the gate off answers the gate\'s refusal', () => withGate(false, async () => {
   assert.equal((await post('/api/shape/features/feat_x/ship', { mode: 'one' })).status, 404);
+  assert.equal((await post('/api/shape/features/feat_x/ship', { mode: 'stacked', watch: true })).status, 404, 'with watch too');
 }));
 
 // ── Shaper s2: the Chat feature card route, the slice route's thread ─────────────

@@ -227,9 +227,9 @@ export function glanceCopy(run, { pill = null, checks = null, lastLine = '', pr 
       if (files === 0) return fin('finished', 'Finished', 'No files changed');
       if (p === 'PENDING') return fin('finished', 'Finished', 'Checking for a pull request…');
       if (p === 'UNAVAILABLE') return fin('finished', 'Finished', files ? nFiles(files) : 'Review the changes in Diff');
-      if (checks == null) return fin('finished', 'Finished', 'Review the changes before you open a pull request');
+      if (checks == null) return fin('finished', 'Finished', 'Review the changes before you create a PR');
       if (checks === 0) return fin('ship', 'Ready to ship', 'The review flagged nothing');
-      return fin('review', 'Ready to review', `${checks} thing${checks === 1 ? '' : 's'} to check before you open a pull request`);
+      return fin('review', 'Ready to review', `${checks} thing${checks === 1 ? '' : 's'} to check before you create a PR`);
     }
     case 'fail': {
       const failed = ledgerRows(run || {}).filter((r) => r.status === 'error').pop();

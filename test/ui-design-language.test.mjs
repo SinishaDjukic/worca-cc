@@ -8,27 +8,12 @@ import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
+import { cssRules as rules } from './helpers/css-rules.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 // Comments blanked but newlines kept, so a rule's line number is its real line.
 const css = readFileSync(join(ROOT, 'ui/public/style.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
 
-/** Every style rule as { sel, body, line }; @media/@container wrappers are walked through, @keyframes skipped. */
-function rules(text) {
-  const out = []; const stack = []; let start = 0; let line = 1;
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    if (ch === '\n') line += 1;
-    else if (ch === '{') { stack.push({ head: text.slice(start, i).trim(), at: i + 1, line }); start = i + 1; }
-    else if (ch === '}') {
-      const open = stack.pop();
-      const inKeyframes = stack.some((s) => /^@(-webkit-)?keyframes/.test(s.head));
-      if (open && !open.head.startsWith('@') && !inKeyframes) out.push({ sel: open.head.replace(/\s+/g, ' '), body: text.slice(open.at, i), line: open.line });
-      start = i + 1;
-    } else if (ch === ';' && (!stack.length || stack.at(-1).head.startsWith('@'))) start = i + 1;
-  }
-  return out;
-}
 /** Split on top-level commas only: commas inside color-mix(…), var(…) or :is(…) stay. */
 function splitTop(v) {
   const out = []; let depth = 0; let cur = '';

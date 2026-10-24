@@ -8,6 +8,7 @@ import { prChip } from './runs-list.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
 import { ACTION_LABEL } from '../../src/shared/run-model.mjs';
 import { icon } from './icons.mjs';
+import { CREATE_PR_LABEL } from './ship-words.mjs';
 
 const BAR_STATES = new Set(['starting', 'working', 'needs-you', 'paused']);       // D20: the states the list draws a bar for
 const GROUP_ENDED = new Set(['ready', 'in-review', 'merged']);
@@ -211,15 +212,29 @@ export function renderMemberRows(doc, row) {
   return ol;
 }
 
-/** D17: the group page's one ship line (feature groups only; the Ship card is the Shaper feature's). */
+/** D17: the group page's one ship line (a feature, or a chain in the one ship flow). */
 export function groupShipLine(row) {
-  if (!row || row.groupKind !== 'feature' || !row.model) return '';
+  if (!row || !['feature', 'chain', 'user'].includes(row.groupKind) || !row.model) return '';
   const { done, total } = row.model.count;
   const native = (row.members || []).filter((mb) => !mb.adhoc);
   const order = native.map((mb) => mb.position).join(' → ');
   const indep = (row.members || []).filter((mb) => mb.adhoc).map((mb) => mb.position);
-  if (done < total) return `Ship card comes when all ${total} runs are done, here and in the chat.`;
-  if (row.model.state === 'ready' && native.length >= 2) return `Merge in order ${order}, or ship as one PR${indep.length ? ` · ${indep.join(', ')} independent` : ''}`;
-  if (row.model.state === 'in-review' && !row.model.pr && native.length >= 2) return `Merge in order ${order}`;
+  if (done < total) {
+    return row.groupKind === 'feature' ? `Ship card comes when all ${total} runs are done, here and in the chat.`
+      : `${CREATE_PR_LABEL} comes when all ${total} runs are done.`;
+  }
+  // A run that already has its own PR disables One in the dialog (groupShipChoice), so the line stops offering it.
+  // A feature's legacy slice draft is not such a PR.
+  const owned = (row.members || []).some((mb) => { const pr = mb.model && mb.model.pr;
+    return !!(pr && pr.url && pr.id !== 'closed' && !(row.groupKind === 'feature' && pr.id === 'draft')); });
+  // Slice 3: a user group's runs are independent (every member is ad hoc): any merge order; One only when they combine.
+  if (row.groupKind === 'user') {
+    if (row.model.state === 'ready' && total >= 2) return owned ? 'Any order' : 'Any order, or as one PR when the runs combine';
+    return row.model.state === 'in-review' && row.model.prCount >= 2 ? 'Any order' : '';
+  }
+  const tail = `${owned ? '' : ', or ship as one PR'}${indep.length ? ` · ${indep.join(', ')} independent` : ''}`;
+  if (row.model.state === 'ready' && native.length >= 2) return `Merge in order ${order}${tail}`;
+  // Stacked PRs (2 or more) merge in order; one PR (a feature's, or a chain's recorded on every run) has no order.
+  if (row.model.state === 'in-review' && row.model.prCount >= 2 && native.length >= 2) return `Merge in order ${order}`;
   return '';
 }

@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { featureHeadline, renderFeature } from '../ui/public/shape/feature-view.mjs';
+import { setShipDialogOpener } from '../ui/public/shape/ship-card.mjs';
 import { closeMenus } from '../ui/public/workflows/menu.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -125,21 +126,27 @@ test('scan: one renderer, no summary/full/page mode branch in feature-view.mjs o
   assert.doesNotMatch(app, /__shapeMode|renderFeatureSummary|featureWhere|mode: '(summary|full|page)'/);
 });
 
-test('the Ship card: the waiting line until every run is done, no buttons; the ready card without Not now ships in one click', async () => {
+test('the Ship card: the waiting line until every run is done, no buttons; the ready card without Not now opens the Create PR dialog', async () => {
   const wait = mount(PAGE(), PLANS()).el;
   assert.equal(wait.querySelector('[data-ship-card="waiting"]').textContent, 'Ship card comes when all 3 runs are done, here and in the chat.');
   assert.equal(wait.querySelectorAll('button[data-act^="ship-"]').length, 0);
   assert.equal(mount({ ...PAGE(), status: 'canceled' }, PLANS()).el.querySelector('[data-ship-card]'), null, 'canceled: nothing');
   const done = { ...PAGE(), status: 'done', done: 3, slices: PAGE().slices.map((s) => ({ ...s, state: 'done' })),
     ship: { ready: true, mode: null, suggested: 'one', linesAdded: 840, linesRemoved: 120, files: 12, prUrl: null, hint: null, result: null } };
+  const opened = [];
+  setShipDialogOpener((id) => { opened.push(id); });
   const { el, d } = mount(done, PLANS());
   const btns = [...el.querySelectorAll('[data-ship-card="ready"] button[data-act^="ship-"]')];
-  assert.deepEqual(btns.map((b) => b.textContent), ['Stacked PRs', 'One PR'], 'no Not now on the group page');
-  assert.ok(el.querySelector('[data-act="ship-one"]').classList.contains('btn-primary'));
-  assert.equal(el.querySelector('.ask-shipcard-stats').textContent, '3 runs · 12 files · +840 \u2212120');
+  assert.deepEqual(btns.map((b) => b.textContent), ['Create PR'], 'no Not now on the group page');
+  assert.ok(el.querySelector('[data-act="ship-create"]').classList.contains('btn-primary'));
+  assert.equal([...el.querySelectorAll('button')].filter((b) => /Stacked PRs|One PR/.test(b.textContent)).length, 0);
+  assert.equal(el.querySelector('.ask-shipcard-stats').textContent, 'Ready to ship · 3 runs · 12 files · +840 \u2212120');
   assert.match(el.querySelector('.ask-shipcard-why').textContent, /840 lines: one PR is easier to review/);
-  el.querySelector('[data-act="ship-one"]').click(); await flush();
-  assert.deepEqual(d.acts.at(-1), { action: 'ship', body: { mode: 'one' }, opts: { focus: 'ship-one' } });
+  const acts = d.acts.length;
+  el.querySelector('[data-act="ship-create"]').click(); await flush();
+  assert.deepEqual(opened, [done.id]);
+  assert.equal(d.acts.length, acts, 'the card posts nothing: the dialog does');
+  setShipDialogOpener(null);
 });
 
 test('the Ship card once shipped: Shipped as stacked PRs with View PR on the last run\'s PR', () => {
