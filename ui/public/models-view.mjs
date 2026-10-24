@@ -16,7 +16,9 @@ import { harnessesOf, runsOn, suggestModelHandle } from '../../src/shared/connec
 
 /** The sign-in choices of the model editor: which subscription, in the harness that holds it. */
 const SIGNIN_CHOICES = { claude: 'Claude Code: your Claude login', codex: 'Codex: your ChatGPT sign-in', cursor: 'Cursor: your Cursor sign-in',
-  copilot: 'Copilot: your GitHub Copilot sign-in' };
+  copilot: 'Copilot: your GitHub Copilot sign-in',
+  opencode: 'OpenCode: your OpenCode providers' };
+
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -103,7 +105,7 @@ export function suggestDuplicateId(id, takenIds = []) {
  * entry you came for was never the one on top.
  * @param {{query?:string, filter?:string, collapsed?:object, highlight?:string[]}} [o]
  */
-export function renderModelsList({ globals = [], legacy = [], plugins = [], policy = [], predefined = [], codex = [], codexEfforts = [], cursorEfforts = [], copilot = [], copilotEfforts = [], efforts = [], hideBuiltin = false, projectName = '', query = '', filter = 'all', collapsed = {}, highlight = [] } = {}, { doc = globalThis.document } = {}) {
+export function renderModelsList({ globals = [], legacy = [], plugins = [], policy = [], predefined = [], codex = [], codexEfforts = [], cursorEfforts = [], copilot = [], copilotEfforts = [], opencodeEfforts = [], efforts = [], hideBuiltin = false, projectName = '', query = '', filter = 'all', collapsed = {}, highlight = [] } = {}, { doc = globalThis.document } = {}) {
   const root = h(doc, 'div', 'mv-list');
   const predefLc = new Set(predefined.map((m) => m.id.toLowerCase()));
   const pluginLc = new Set(plugins.map((m) => m.id.toLowerCase()));
@@ -117,7 +119,7 @@ export function renderModelsList({ globals = [], legacy = [], plugins = [], poli
     b.title = `Runs on ${hs.map(engineLabel).join(' and ')}`;
     return b;
   };
-  const effortsOf = (m) => effortsSummary(m.efforts, ({ claude: efforts, codex: codexEfforts, cursor: cursorEfforts, copilot: copilotEfforts })[m.engine || 'claude'] || efforts);
+  const effortsOf = (m) => effortsSummary(m.efforts, ({ claude: efforts, codex: codexEfforts, cursor: cursorEfforts, copilot: copilotEfforts, opencode: opencodeEfforts })[m.engine || 'claude'] || efforts);
   const q = String(query || '').trim().toLowerCase();
   const hi = new Set((highlight || []).map((x) => String(x).toLowerCase()));
   const searching = !!q || filter !== 'all';
@@ -457,11 +459,11 @@ function envRow(doc, key = '', value = '') {
  * Returns detached DOM; app.js wires mv-save / mv-cancel / mv-env-add /
  * mv-env-rm and calls collectModelEditor on save.
  */
-export function renderModelEditor(model, efforts, { doc = globalThis.document, providers = null, copilotModels = [], codexEfforts = ['minimal', 'low', 'medium', 'high'], cursorEfforts = [], copilotEfforts = [] } = {}) {
+export function renderModelEditor(model, efforts, { doc = globalThis.document, providers = null, copilotModels = [], codexEfforts = ['minimal', 'low', 'medium', 'high'], cursorEfforts = [], copilotEfforts = [], opencodeEfforts = ['minimal', 'low', 'medium', 'high', 'max'] } = {}) {
   const editing = !!model;
   const root = h(doc, 'section', 'card mv-editor');
   // Both engines' effort lists ride the root so setModelEngine can swap them (§3.1a).
-  root.dataset.effortLists = JSON.stringify({ claude: efforts, codex: codexEfforts, cursor: cursorEfforts, copilot: copilotEfforts });
+  root.dataset.effortLists = JSON.stringify({ claude: efforts, codex: codexEfforts, cursor: cursorEfforts, copilot: copilotEfforts, opencode: opencodeEfforts });
   const engineNow = editing && MODEL_ENGINE_NAMES.includes(model.engine) ? model.engine : 'claude';
   root.dataset.mode = editing ? 'edit' : 'create';
   if (editing) {
@@ -514,12 +516,13 @@ export function renderModelEditor(model, efforts, { doc = globalThis.document, p
   engineSel.disabled = editing;
   const signinField = field('Sign-in', engineSel, editing
     ? 'Fixed once created. Delete the model and add it again to change it.'
-    : 'The harness whose sign-in runs this model. A Cursor model takes no effort, and Worca cannot price it.');
+    : 'The harness whose sign-in runs this model. A Cursor model takes no effort, and Worca cannot price it. '
+      + "An OpenCode model's id is provider/model (as `opencode models` lists it); OpenCode's own providers connect it, and its effort is OpenCode's --variant.");
   signinField.classList.add('mv-signin-field');
   grid.appendChild(signinField);
 
   const effWrap = h(doc, 'div', 'mv-efforts');
-  const effortList = ({ claude: efforts, codex: codexEfforts, cursor: cursorEfforts, copilot: copilotEfforts })[engineNow] || efforts;
+  const effortList = ({ claude: efforts, codex: codexEfforts, cursor: cursorEfforts, copilot: copilotEfforts, opencode: opencodeEfforts })[engineNow] || efforts;
   const selected = new Set(editing && Array.isArray(model.efforts) ? model.efforts : effortList);
   for (const lab of effortBoxes(doc, effortList, selected)) effWrap.appendChild(lab);
   const effField = field('Supported efforts', effWrap, 'All checked = every effort (the default).');
@@ -624,7 +627,7 @@ function effortBoxes(doc, list, selected) {
  * The ONE place that knows the rule — the initial render, the select's change handler (app.js)
  * and "+ Add model…" from a Codex New pipeline all go through it. Safe on any editor.
  * @param {Element} rootEl the .mv-editor root
- * @param {'claude'|'codex'|'cursor'|'copilot'} engine
+ * @param {'claude'|'codex'|'cursor'|'copilot'|'opencode'} engine
  */
 export function setModelEngine(rootEl, engine) {
   const sel = rootEl && rootEl.querySelector('.mv-engine');

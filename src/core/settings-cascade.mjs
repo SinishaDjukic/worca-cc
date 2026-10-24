@@ -92,7 +92,7 @@ const CLAUDE_USER = {
   memoryDefrag: () => { const pair = memoryDefragModel(); return pair.model ? { model: pair.model, ...(pair.effort ? { effort: pair.effort } : {}) } : undefined; },
 };
 function utilEntry(engine, job) {
-  if (!HELPER_ENGINES.includes(engine)) return null;          // Cursor: no utility ids (helper jobs run on Claude)
+  if (!HELPER_ENGINES.includes(engine)) return null;          // Cursor, OpenCode: no utility ids (helper jobs run on Claude)
   if (engine === 'claude' && job === 'workspaceScan') return null;
   return { id: utilityId(engine, job), family: 'utility', engine, job, path: ['utilityModels', engine, job], store: 'settings',
     default: undefined, userOnly: job === 'workspaceScan', validate: pairCheck(engine),

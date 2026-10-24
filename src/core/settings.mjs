@@ -60,7 +60,7 @@ import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import {
-  EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
+  EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, OWN_SIGNIN_ENGINES, aModelOf, ownSignInNote, modelIdProblem, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
   assertModelUpstream, upstreamEnvConflict, modelEnvRef, codexUpstreamProblem,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
   COPILOT_TERMS_VERSION, isUpstreamBaseUrl,
@@ -1838,9 +1838,9 @@ function sanitizeGlobalModel(raw) {
     const why = codexUpstreamProblem(upstream);
     if (why) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — ${why}`); upstream = undefined; }
   }
-  if (engine === 'cursor') {
-    for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — a cursor model takes no routing env`); delete env[k]; }
-    if (upstream) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — a cursor model runs through cursor-agent's own sign-in`); upstream = undefined; }
+  if (OWN_SIGNIN_ENGINES.includes(engine)) {
+    for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — ${aModelOf(engine)} takes no routing env`); delete env[k]; }
+    if (upstream) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping upstream — ${ownSignInNote(engine)}`); upstream = undefined; }
   }
   if (engine === 'copilot') {
     for (const k of Object.keys(env)) { console.warn(`[worca] models entry ${JSON.stringify(id)}: dropping env key ${JSON.stringify(k)} — a copilot model takes no routing env`); delete env[k]; }
@@ -1953,11 +1953,11 @@ function assertModelEngine(input) {
   if (MODEL_ENGINES.includes(input)) return input;
   throw new Error(`engine must be one of ${MODEL_ENGINES.join(' | ')}`);
 }
-/** A Cursor model takes no routing env and no upstream: cursor-agent connects with its own sign-in. */
-function assertCursorFields(engine, env, upstream) {
-  if (engine !== 'cursor') return;
-  if (Object.keys(env || {}).length) throw new Error('a cursor model takes no env');
-  if (upstream) throw new Error('a cursor model takes no upstream — cursor-agent connects with its own sign-in');
+/** A Cursor or OpenCode model takes no routing env and no upstream: the engine connects with its own sign-in. */
+function assertOwnSignInFields(engine, env, upstream) {
+  if (!OWN_SIGNIN_ENGINES.includes(engine)) return;
+  if (Object.keys(env || {}).length) throw new Error(`${aModelOf(engine)} takes no env`);
+  if (upstream) throw new Error(`${aModelOf(engine)} takes no upstream — ${ownSignInNote(engine)}`);
 }
 /** A Copilot model takes no routing env and no upstream: the Copilot CLI connects with its own sign-in. */
 function assertCopilotFields(engine, env, upstream) {
@@ -1989,6 +1989,8 @@ function assertIdForEngine(id, engine, conn = {}) {
   if ((engine === 'cursor' || engine === 'copilot') && (CODEX_PRICES[id.toLowerCase()] || listPriceFor(id))) throw new Error(`"${id}" is a built-in model id${engine === 'copilot' ? ` — Copilot's own models are copilot/<id>, such as "copilot/${id}"` : ''}`);
   // copilot/<id> names a Copilot built-in (model-env.mjs COPILOT_MODEL_PREFIX): only a Copilot row may take one.
   if (engine !== 'copilot' && id.toLowerCase().startsWith('copilot/')) throw new Error(`"${id}" names a Copilot model — a copilot/ id is for the Copilot engine`);
+  const why = modelIdProblem(engine, id);   // an OpenCode id is provider/model, so it never collides with a built-in
+  if (why) throw new Error(why);
 }
 
 /** @throws {Error} on a reserved key or a non-string value. `allowNull` admits
@@ -2068,7 +2070,7 @@ export async function addGlobalModel({ id, label, efforts, env, cost, upstream, 
   const vcost = assertModelCost(cost);
   const vupstream = assertModelUpstream(upstream);
   assertCodexFields(vengine, venv, vupstream);
-  assertCursorFields(vengine, venv, vupstream);
+  assertOwnSignInFields(vengine, venv, vupstream);
   assertCopilotFields(vengine, venv, vupstream);
   assertUpstreamEnvCompatible(venv, vupstream);
   const settings = readSettings();
@@ -2131,7 +2133,7 @@ export async function updateGlobalModel(id, { label, efforts, env, cost, upstrea
   if (upstream !== undefined) nextUpstream = isClearInput(upstream) ? undefined : assertModelUpstream(upstream);
   assertUpstreamEnvCompatible(nextEnv, nextUpstream);
   assertCodexFields(curEngine, nextEnv, nextUpstream);
-  assertCursorFields(curEngine, nextEnv, nextUpstream);
+  assertOwnSignInFields(curEngine, nextEnv, nextUpstream);
   assertCopilotFields(curEngine, nextEnv, nextUpstream);
 
   if (dryRun) return sanitizeGlobalModel(storedModelShape(current.id, nextLabel, nextEfforts, nextEnv, nextCost, nextUpstream, curEngine));
