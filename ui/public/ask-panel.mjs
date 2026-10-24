@@ -3893,7 +3893,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const rootEl = make('div', `ask-card ask-wfcard is-${block.state}`);
     rootEl.setAttribute('data-ask-wfcard', block.state);
     const head = make('div', 'ask-wfcard-head');
-    head.appendChild(make('span', 'ask-wfcard-title', block.state === 'saved' ? 'Saved workflow' : 'Proposed workflow'));
+    // The name (body) is the card's one headline; the head says the state as a chip, with the round and, once saved, Auto.
+    head.appendChild(make('span', 'ask-wfcard-state', block.state === 'saved' ? 'Saved' : 'Proposed workflow'));
     head.appendChild(make('span', 'ask-wfcard-round', `round ${card.round || 1}`));
     if (block.state === 'saved') { head.appendChild(make('span', 'ask-wfcard-spacer')); head.appendChild(make('span', 'ask-wfcard-tag', 'Auto')); }
     rootEl.appendChild(head);
@@ -3919,9 +3920,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const saved = make('div', 'ask-wfcard-saved');
       saved.appendChild(svgIcon(WF_ICO.check, 15, 2.4));
       saved.appendChild(make('span', null, name));
-      const line = make('div', 'ask-wfcard-savedline', card.adopted ? 'Uses your saved workflow' : 'Saved as a new workflow, tagged Auto');
       handle.parts.name.replaceWith(saved);
-      saved.after(line);
+      // The chip says Saved and the tag says Auto: the line stays only when it says something new.
+      if (card.adopted) saved.after(make('div', 'ask-wfcard-savedline', 'Uses a workflow you already had'));
     } else if (matched) {
       const hint = make('div', 'ask-wfcard-hint', 'Model and effort come from that saved workflow. Edit them in the Workflows view.');
       handle.parts.match.after(hint);
@@ -4114,10 +4115,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const rootEl = make('div', `ask-card ask-mcard ask-awcard is-${block.state}`);
     rootEl.setAttribute('data-ask-awcard', block.state);
     const head = make('div', 'ask-mcard-head');
-    const where = card.level === 'project' ? `(project ${card.projectName || card.projectKey || ''})` : '(user settings)';
-    head.appendChild(make('span', 'ask-mcard-title', `Change Away mode? ${where}`));
+    head.appendChild(make('span', 'ask-mcard-title', 'Change Away mode?'));
     rootEl.appendChild(head);
     const body = make('div', 'ask-mcard-body');
+    // The scope is the target line, as on the other receipt cards: a long project name never widens the title.
+    body.appendChild(make('div', 'ask-mcard-target', card.level === 'project' ? `project ${card.projectName || card.projectKey || ''}` : 'user settings'));
     if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
     const before = Array.isArray(card.before) ? card.before : [];
     const after = Array.isArray(card.after) ? card.after : [];

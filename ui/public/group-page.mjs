@@ -3,7 +3,7 @@
 // primary action, Stop, ⋯) · title + kind · the card (status block, facts block, inline question) · tabs Runs ·
 // Overview · Decisions · Logs. Pure DOM; app.js owns the data (runs-list.mjs groupRow) and binds every dep. Classes
 // use `gpage-`: group-picker.mjs owns `gp-`.
-import { paintRunStatus, syncActions, renderMemberRows, groupShipLine } from './run-status-card.mjs';
+import { paintRunStatus, syncActions, renderMemberRows, groupShipLine, groupBarShows } from './run-status-card.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
 import { groupKindWord, pageModel, paintCrumbs, buildFacts, setFactText, factRow, syncFacts, GROUP_FACTS } from './run-page-head.mjs';
 import { icon } from './icons.mjs';
@@ -123,12 +123,15 @@ export function paintGroupPage(root, view, deps) {
   title.title = row.title;   // D13: the heading clamps at 2 lines
   root.querySelector('.gpage-head .kind-chip').textContent = groupKindWord(row);   // run 3 (D7): the group's kind
   paintCrumbs(root.querySelector('.gpage-bar .rd-crumbs'), [{ label: 'Runs', href: '#runs' }, { label: row.title }]);
-  paintRunStatus(root.querySelector('.gpage-card .run-status'), pageModel(m));   // run 3 (D10)
+  const pm = pageModel(m);
+  paintRunStatus(root.querySelector('.gpage-card .run-status'), pm);   // run 3 (D10)
   // Run 3 (D15): the facts block — Project, Runs, Total cost, Labels (the read-only union of the members' labels).
   const kv = root.querySelector('.gpage-card > .rd-kv');
   const { done, total } = m.count;
   setFactText(kv, 'project', view.project || '');
-  setFactText(kv, 'runs', `${total} run${total === 1 ? '' : 's'} · ${done} done`);
+  // Said once: while the group bar shows, its label carries "{done} done"; the Runs fact then gives the total alone.
+  const runs = `${total} run${total === 1 ? '' : 's'}`;
+  setFactText(kv, 'runs', groupBarShows(pm) ? runs : `${runs} · ${done} done`);
   // groupRow's costUsd is always a number: a group with no cost yet says nothing, never "$0.00".
   setFactText(kv, 'cost', row.costUsd > 0 ? fmtUsd(row.costUsd) : '');
   const labelsHost = factRow(kv, 'labels').querySelector('.rd-kv-v');

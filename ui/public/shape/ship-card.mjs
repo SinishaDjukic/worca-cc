@@ -56,7 +56,8 @@ export function renderShipCard(doc, m, handlers = {}) {
   root.append(head, body);
   if (m.phase === 'applied') {
     const r = m.result || {};
-    const done = h('div', 'ask-shipcard-done', r.mode === 'one' ? 'Shipped as one PR' : 'Shipped as stacked PRs');
+    // The kind chip says Shipped: the line says how.
+    const done = h('div', 'ask-shipcard-done', r.mode === 'one' ? 'As one PR' : 'As stacked PRs');
     if (r.prUrl) {
       const a = h('a', 'ask-shipcard-pr', VIEW_PR_LABEL);
       a.href = r.prUrl; a.target = '_blank'; a.rel = 'noopener';
@@ -68,8 +69,8 @@ export function renderShipCard(doc, m, handlers = {}) {
     if (handlers.onAskChanges) body.appendChild(renderAskChanges(doc, { onSend: handlers.onAskChanges }).el);   // Shaper s5
     return root;
   }
-  // ready
-  body.appendChild(h('div', 'ask-shipcard-stats', `Ready to ship · ${shipSummaryLine(m)}`));
+  // ready: the kind chip says Ship; the line is the facts.
+  body.appendChild(h('div', 'ask-shipcard-stats', shipSummaryLine(m)));
   const why = shipReason(m.suggested, m.added);
   if (why) body.appendChild(h('div', 'ask-shipcard-why', why));
   if (handlers.onAskChanges) body.appendChild(renderAskChanges(doc, { onSend: handlers.onAskChanges }).el);     // Shaper s5

@@ -3349,7 +3349,7 @@ function wfvShellActions() {
     importFile: async (f) => {
       let obj;
       try { obj = JSON.parse(await f.text()); }
-      catch (e) { notify({ tone: 'err', title: `${f.name} is not valid JSON: ${e.message}` }); return; }
+      catch (e) { notify({ tone: 'err', title: 'Not a valid workflow file', detail: `${f.name} is not valid JSON: ${e.message}` }); return; }
       await gvImportWorkflowObject(obj);
     },
     // Export reads the SAVED row by id, so an unsaved canvas (new, or edited since its save) is saved
@@ -3486,13 +3486,13 @@ async function routeWorkflows(param = '') {
   // and normalise the hash, or say why not — never nothing.
   try { window.history.replaceState(null, '', '#workflows'); } catch { /* sandboxed */ }
   if (!WF_ID_RE.test(head)) {
-    notify({ tone: 'err', title: `Could not open "${head}"`, detail: 'It is not a workflow id or a Workflows address.' });
+    notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${head}" is not a workflow id or a Workflows address.` });
     return;
   }
   let full = null;
   try { full = await gvApi.readWorkflow(head); } catch { full = null; }   // a refused fetch: say so below
   if (!full) {
-    notify({ tone: 'err', title: `Could not open workflow "${head}"`, detail: 'It was deleted or renamed, or Worca did not answer.' });
+    notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${head}" was deleted or renamed, or Worca did not answer.` });
     return;
   }
   if (await gvComposer.openTemplate(full)) gvComposer.fit();

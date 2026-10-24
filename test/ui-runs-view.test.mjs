@@ -1174,7 +1174,7 @@ test('D1/D2: a finished member still live, with no History PR yet, shows its gro
   assert.equal(mm.querySelector('.runs-pr-word').textContent, 'Checks failing');
   go(window, `history/${KEY}/p-roll1`); await settle(window, 8);
   // Run 3 (D10): the run page's PR bar carries "PR #821", so its status line drops the second mention.
-  assert.equal(doc.querySelector('#hist-detail .hd-glance .run-status-text').textContent, 'Needs you · Checks failing',
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .run-status').dataset.text, 'Needs you · Checks failing',
     'the run page reads what the list reads, without a second PR mention');
 });
 

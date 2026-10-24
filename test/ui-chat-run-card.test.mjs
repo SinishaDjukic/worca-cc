@@ -8,7 +8,7 @@ import { JSDOM } from 'jsdom';
 import { checkRows } from './helpers/rows.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { snapshotFromState, PROGRESS_CARD_TYPE } from '../ui/public/ask-run-card.mjs';
-import { createChatRunCard, createRunCardController, resultWord, answerReceipt, autoChip, midTrunc, progressIdent, runRefOf } from '../ui/public/chat/run-card.mjs';
+import { createChatRunCard, createRunCardController, resultWord, resultLines, answerReceipt, autoChip, midTrunc, progressIdent, runRefOf } from '../ui/public/chat/run-card.mjs';
 import { registerAskRenderer, askRendererFor, askKindOf } from '../ui/public/ask/registry.mjs';
 import { setShapeFirst } from './helpers/shape-gate.mjs';
 import { RUN_STATE_ROWS, NOW } from './helpers/run-states.mjs';
@@ -19,6 +19,7 @@ import { renderOutlineBody } from '../ui/public/shape/outline-body.mjs';
 import { noteAnswer, namedAnswer, forgetAnswer } from '../ui/public/shape/step-receipt.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
+import { statusText } from '../ui/public/run-status-card.mjs';
 /** The icons.mjs glyph a control leads with (its first child, an .ic span); '' when none. */
 const glyphOf = (el) => { const svg = el && el.firstElementChild && el.firstElementChild.matches('.ic') ? el.firstElementChild.querySelector('svg') : null; return svg ? Object.keys(ICONS).find((k) => ICONS[k] === svg.innerHTML) || '' : ''; };
 
@@ -98,6 +99,16 @@ function stepStub(pq, render, extra = {}) {
 }
 const outlineSlice = (id) => ({ id, title: `Run ${id}`, goal: `Goal ${id}`, inScope: [], outOfScope: [], acceptance: ['works'], dependsOn: [], estimate: 'medium' });
 
+test('resultLines: the result block says only what the status line does not', () => {
+  const st = (m) => statusText(m);
+  assert.deepEqual(resultLines({ title: 'In review', sub: '' }, st({ word: 'In review', line: 'In review' })), { title: '', sub: '' });
+  assert.deepEqual(resultLines({ title: 'Failed', sub: 'Step: Build · see Logs for the error' }, st({ word: 'Failed', line: 'Build · failed · Implementation' })),
+    { title: '', sub: 'Step: Build · see Logs for the error' });
+  assert.deepEqual(resultLines({ title: 'Applied', sub: '3 files changed' }, st({ word: 'Applied', line: 'Applied · 3 files changed' })), { title: '', sub: '' });
+  assert.deepEqual(resultLines({ title: 'PR closed', sub: 'Closed without merging' }, st({ word: 'Ready', line: 'Ready' })),
+    { title: 'PR closed', sub: 'Closed without merging' });
+});
+
 test('chat run card: head, sub-line, stats, agent chips with model + cycle, Auto, the Workflows well, Open run and Expand', async () => {
   await checkRows([
     { name: 'a live snapshot paints the head, stats and chips; the graph is the run-hosts card well', run: async () => {
@@ -142,7 +153,7 @@ test('chat run card: head, sub-line, stats, agent chips with model + cycle, Auto
       assert.ok(chip.classList.contains('is-waiting'));
       assert.equal(chip.style.getPropertyValue('--c'), 'var(--amber)');
       assert.equal($('.chat-rc-status').dataset.state, 'needs-you');
-      assert.match($('.chat-rc-status .run-status-text').textContent, /needs you · 1 question$/i);
+      assert.match($('.chat-rc-status').dataset.text, /needs you · 1 question$/i);
     } },
     { name: 'Auto: the sub-line chip names the adopted workflow; while deciding the well says so and draws no graph — and, like the run page, says when the run waits, is parked or never decided', run: async () => {
       const { card, $ } = mk();
@@ -382,8 +393,9 @@ test('chat run card result region: words, churn, top files → Diff, artifact ch
       const { card, $, calls, refreshed } = mk({ controls: { prHost: () => true, openShipIt: (...a) => { shipped.push(a); return Promise.resolve(null); } } });
       card.update(done(EXTRAS));
       assert.equal($('.chat-rc-result').hidden, false);
-      assert.equal($('.chat-rc-res-title').textContent, 'Ready to ship');
-      assert.equal($('.chat-rc-res-sub').textContent, 'Clean: no blocking issues flagged');
+      // Said once: the status line leads with "Ready to ship", so the verdict stands alone as the block's headline.
+      assert.equal($('.chat-rc-res-title').textContent, 'Clean: no blocking issues flagged');
+      assert.equal($('.chat-rc-res-sub'), null);
       assert.equal($('.chat-rc-res-churn').textContent, '+12 −3 · 2 files changed');
       const files = [...card.el.querySelectorAll('.chat-rc-file')];
       assert.deepEqual(files.map((f) => f.textContent), ['src/a.mjs+10−2', 'img/x.png']);
@@ -428,7 +440,8 @@ test('chat run card result region: words, churn, top files → Diff, artifact ch
     { name: 'an open PR is In review with a View link; merged reads Merged; a non-http URL is never linked', run: async () => {
       const { card, $ } = mk({ controls: { prHost: () => true } });
       card.update(done({ ...EXTRAS, pr: { url: 'https://github.com/o/r/pull/7', number: 7, state: 'OPEN' } }));
-      assert.equal($('.chat-rc-res-title').textContent, 'In review');
+      assert.equal($('.chat-rc-res-text'), null, 'the status line says In review: the block repeats nothing');
+      assert.ok($('.chat-rc-res-churn'), 'the churn still has its row');
       const a = $('a.chat-rc-view-pr');
       assert.equal(a.getAttribute('href'), 'https://github.com/o/r/pull/7');
       assert.equal(a.target, '_blank');
@@ -441,7 +454,7 @@ test('chat run card result region: words, churn, top files → Diff, artifact ch
       assert.deepEqual([...card.el.querySelectorAll('a, button')].filter((b) => !b.hidden && b.textContent === 'View PR'), [a]);
       assert.equal(a.dataset.modelAction, 'open-pr', 'the result\'s link is the model\'s open-pr');
       card.update(done({ ...EXTRAS, pr: { url: 'https://github.com/o/r/pull/7', number: 7, state: 'MERGED' } }));
-      assert.equal($('.chat-rc-res-title').textContent, 'Merged');
+      assert.equal($('.chat-rc-res-text'), null, 'the status line says Merged');
       assert.equal($('a.chat-rc-view-pr').textContent, 'View PR');
       assert.equal(glyphOf($('a.chat-rc-view-pr')), 'merge');
       assert.equal($('a.chat-rc-view-pr').hidden, false);
@@ -451,12 +464,12 @@ test('chat run card result region: words, churn, top files → Diff, artifact ch
     { name: 'Stopped and Failed (naming the failed step)', run: async () => {
       const { card, $ } = mk();
       card.update(live({ status: 'stopped', terminal: true, active: [] }));
-      assert.equal($('.chat-rc-res-title').textContent, 'Stopped');
-      assert.equal($('.chat-rc-res-sub').textContent, 'Stopped before it finished');
+      assert.equal($('.chat-rc-res-head'), null, 'the status line says Stopped: no head row at all');
+      assert.equal($('.chat-rc-result').hidden, false);
       const failed = snapshotFromState(STATE({ status: 'error', active: [], steps: [step({ executionId: 'x:n_plan:1', nodeId: 'n_plan', ordinal: 1 }), step({ executionId: 'x:n_impl:1', nodeId: 'n_impl', ordinal: 1, status: 'error' })] }), { now: 0 });
       card.update(failed);
-      assert.equal($('.chat-rc-res-title').textContent, 'Failed');
-      assert.equal($('.chat-rc-res-sub').textContent, 'Step: Implementer · see Logs for the error');
+      assert.equal($('.chat-rc-res-title').textContent, 'Step: Implementer · see Logs for the error', 'the step stands alone as the headline');
+      assert.equal($('.chat-rc-res-sub'), null);
     } },
   ]);
 });
@@ -485,6 +498,7 @@ test('chat run card helpers: progressIdent, runRefOf, autoChip, resultWord, answ
       assert.equal(resultWord(null), null);
       assert.equal(resultWord({ status: 'running' }), null);
       assert.equal(resultWord({ status: 'interrupted' }), null, 'resumable: no result region');
+      assert.equal(resultWord({ status: 'stopped' }).sub, '', 'Stopped adds nothing to the status line');
       noteAnswer('run-a', { id: 'rc-named-1', kind: 'gate', issues: [] }, { decision: 'continue' });
       assert.equal(answerReceipt(null, { id: 'rc-named-1', runId: 'run-a', step: 'Review' }), 'Accepted as is', 'the named note wins');
       assert.equal(answerReceipt({ kind: 'gate', payload: { decision: 'continue' } }, { id: 'rc-named-1', runId: 'run-a', step: 'Review' }), 'Accepted as is');
@@ -559,10 +573,10 @@ test('chat run card: what the card sent and its error survive same-question fram
       assert.equal($('.chat-rc-res-title').textContent, 'Done');
       assert.equal($('.chat-rc-create-pr'), null);
       card.update(live({ status: 'stopped', terminal: true, active: [] }));
-      assert.equal($('.chat-rc-res-title').textContent, 'Stopped');
+      assert.equal($('.chat-rc-res-head'), null);
       assert.equal($('.chat-rc-create-pr'), null);
       card.update(snapshotFromState(STATE({ status: 'error', active: [] }), { now: 0 }));
-      assert.equal($('.chat-rc-res-title').textContent, 'Failed');
+      assert.equal($('.chat-rc-res-title').textContent, 'See Logs for the error');
       assert.equal($('.chat-rc-create-pr'), null);
     } },
     { name: 'the gate pip moves focus to the card\'s own question', run: async () => {
@@ -596,7 +610,7 @@ test('chat run card result words follow the run page: Ready to review when the r
   assert.equal($('.chat-rc-res-sub'), null, 'no facts, no sub-line');
   assert.ok($('.chat-rc-create-pr'));
   card.update(done(facts(), { archived: true }));
-  assert.equal($('.chat-rc-res-title').textContent, 'Ready to ship');
+  assert.equal($('.chat-rc-res-title').textContent, 'Clean: no blocking issues flagged');
   assert.equal($('.chat-rc-create-pr'), null, 'an archived run has no branch to ship');
 });
 
@@ -1189,7 +1203,7 @@ test('feature card: Shaping, then the group row\'s chip, one status line and its
     card.update(shaped({ pipelineId: 'abcd1234', feature: null, log: [] }));
     assert.equal($('.kind-chip').textContent, 'Shaping');
     assert.ok($('.ask-rc-head > .status-dot'), 'the head dot is the model\'s status dot');
-    assert.equal($$('.run-status-text').length, 1);
+    assert.equal($$('.run-status-word').length, 1);
     assert.equal($('.chat-rc-members').hidden, true);
     const asking = RUN_STATE_ROWS.find((r) => r.state === 'needs-you').run;
     row = featureRow([asking, WAITING, WAITING]);
@@ -1197,7 +1211,7 @@ test('feature card: Shaping, then the group row\'s chip, one status line and its
       {}, { pendingQuestion: PQ_PLAN }));
     assert.equal($('.kind-chip').textContent, 'Feature · 3 runs');
     assert.deepEqual($$('.run-member-title').map((n) => n.textContent), ['Planning', 'Part 1', 'Part 2', 'Part 3']);
-    assert.equal($$('.run-status-text').length, 1, 'one status line');
+    assert.equal($$('.run-status-word').length, 1, 'one status line');
     assert.equal($$('ol.run-members').length, 1, 'one member list');
     // Fix 1: the chat card's member list is the group page's table — ink title over the status line, PR, cost, quiet ›.
     const ol = $('.chat-rc-members > ol.run-members');
@@ -1249,7 +1263,7 @@ test('feature card: run 2\'s plan ask is the open step, painted and answered wit
     const v = VIEW3([SL(1, 'done', { pipelineId: 'abcd1234' }), SL(2, 'approval', { pipelineId: 'beef0002', runId: 'run-2' }), SL(3, 'planned')],
       { ask: { index: 2, runId: 'run-2', pipelineId: 'beef0002', id: PQ_PLAN.id, kind: 'plan' } });
     card.update(shaped({ pipelineId: 'abcd1234', feature: v, log: [] }, { beef0002: two }, { status: 'done', terminal: true }, { status: 'done', active: [] }));
-    assert.equal($('.run-status-text').textContent, 'Run 2 of 3 · needs you');
+    assert.equal($('.run-status').dataset.text, 'Run 2 of 3 · needs you');
     assert.equal($('.ask-rc-head > .status-dot').getAttribute('aria-label'), row.model.word, 'the group\'s word, not the planning run\'s Done');
     assert.equal($('.chat-rc-q').hidden, false, 'D11: the Shaper open step wins over ownIsCurrent()');
     assert.equal(painted.at(-1).pipelineId, 'beef0002');
@@ -1462,8 +1476,8 @@ test('chat run card, a folder run: Finished · N files changed and Apply to fold
   const applied = []; const openers = [];
   const { card, $, refreshed } = mk({ controls: { prHost: () => true, openApply: (ref, opener) => { applied.push(ref.pipelineId); openers.push(opener); return Promise.resolve({ applied: 13, skipped: [] }); } } });
   card.update(done({ ...EX, changes: CH }, { workMode: 'folder', changes: CH }));
-  assert.equal($('.chat-rc-res-title').textContent, 'Finished');
-  assert.equal($('.chat-rc-res-sub').textContent, '14 files changed');
+  // Said once: the status line reads "Finished · 14 files changed", so the block keeps only its churn and actions.
+  assert.equal($('.chat-rc-res-text'), null);
   assert.equal($('.chat-rc-create-pr'), null);
   const b = $('.chat-rc-apply');
   assert.equal(b.textContent, 'Apply to folder');
@@ -1475,7 +1489,8 @@ test('chat run card, a folder run: Finished · N files changed and Apply to fold
   assert.equal(openers[0], b, 'the dialog returns focus to the card\'s button');
   assert.equal(refreshed.length, 1, 'the card re-reads the run once the dialog settles');
   card.update(done(EX, { workMode: 'folder', changes: { ...CH, state: 'applied' } }));
-  assert.equal($('.chat-rc-res-title').textContent, 'Applied');
+  assert.equal($('.chat-rc-status').dataset.text.startsWith('Applied'), true, 'the status line says Applied');
+  assert.equal($('.chat-rc-res-text'), null);
   assert.equal($('.chat-rc-apply'), null);
   assert.deepEqual(resultWord(done(null, { workMode: 'folder', changes: { ...CH, state: 'discarded' } })),
     { key: 'folder', tone: 'green', glyph: 'check', title: 'Discarded', sub: '14 files changed' });
@@ -1502,7 +1517,7 @@ test('chat run card: Create pull request asks isGitRun (CONTRACT §2) — a run 
 
 test('chat run card: a Folder run, a run without a project and a git run while git is missing read Finished words and offer no Ship it', async () => {
   const EX = { results: null, artifacts: [], moreArtifacts: false, pr: null };
-  const status = ($) => $('.chat-rc-status .run-status-text').textContent;
+  const status = ($) => $('.chat-rc-status').dataset.text;
   const ships = ($$) => $$('[data-model-action="ship"]').filter((b) => !b.hidden).length;
   await checkRows([
     { name: 'a git run with git: Ready to ship and Ship it (the control row)', run: () => {
@@ -1610,7 +1625,7 @@ test('chat run card, a workspace run with Folder members: no Apply to folder (ea
   card.update(done(EX, { workMode: 'folder', changes: CH }));
   assert.ok($('.chat-rc-apply'));
   card.update({ ...rest, terminal: true });
-  assert.equal($('.chat-rc-res-title').textContent, 'Finished');
+  assert.equal($('.chat-rc-res-text'), null, 'the status line says Finished');
   assert.equal($('.chat-rc-apply'), null, 'a REST workspace snapshot');
 });
 
@@ -1626,8 +1641,8 @@ test('halted feature: one status line (the group\'s), Shaper\'s Resume · Re-pla
       { id: 'feat_1', halted: { index: 2, state: 'error', waiting: [3] }, open: true, originPipelineId: 'abcd1234' });
     card.update(shaped({ pipelineId: 'abcd1234', feature: view, log: [] },
       { p2: { source: 'rest', terminal: true, status: 'failed', pipelineId: 'p2', stageProgress: { label: 'Review', text: 'Review' } } }));
-    assert.equal($('.run-status-text').textContent, 'Run 2 of 3 · failed');
-    assert.equal($$('.run-status-text').length, 1);
+    assert.equal($('.run-status').dataset.text, 'Run 2 of 3 · failed');
+    assert.equal($$('.run-status-word').length, 1);
     assert.deepEqual([...el.querySelectorAll('.chat-rc-factions > button')].map((b) => b.textContent || b.getAttribute('aria-label')), ['Resume', 'Re-plan the rest', 'More actions']);
     assert.equal($$('.chat-rc-foot button').filter((b) => !b.hidden && /^Resume$/.test(b.textContent)).length, 1, 'no second Resume');
     $('[data-act="feature-resume"]').click();
@@ -1838,7 +1853,7 @@ test('s5: a round 2 of the last run adds no member row and keeps "Round 1 · …
     const v = VIEW3([SL(1, 'done', { pipelineId: 'abcd1234' }), SL(2, 'done', { pipelineId: 'beef0002' }), last],
       { log: [{ key: 'round-3-1', run: 3, text: 'Round 1 · Part 3', detail: [] }, { key: 'round-3-2', run: 3, text: 'Round 2 · make it blue', detail: [] }] });
     card.update(shaped({ pipelineId: 'abcd1234', feature: v, log: [] }, { beef00r2: ROUND2() }, { status: 'done', terminal: true }, { status: 'done', active: [] }));
-    assert.equal($$('.run-status-text').length, 1);
+    assert.equal($$('.run-status-word').length, 1);
     assert.equal($$('.run-member').length, 4, 'Planning + 3 runs, no row for the round');
     assert.deepEqual($$('.chat-rc-log-text').map((e) => e.textContent), ['Round 1 · Part 3', 'Round 2 · make it blue']);
   } finally { setShapeFirst(false); }
@@ -1851,7 +1866,7 @@ test('s5: a plain run with a live round 2 says so in its status line and log', (
     const $$ = (q) => [...card.el.querySelectorAll(q)];               // the card never reads a run store: the controller fills roundSnaps
     card.update(done(null, { title: 'Add a chart', rounds: [{ round: 2, pipelineId: 'beef00r2', status: 'running', request: 'make it blue' }],
       roundSnaps: { beef00r2: ROUND2() } }));
-    assert.equal($('.run-status-text').textContent, 'Running · Round 2 · working');   // runModel's roundLine: the fixture's run has no staged progress
+    assert.equal($('.run-status').dataset.text, 'Running · Round 2 · working');   // runModel's roundLine: the fixture's run has no staged progress
     assert.deepEqual($$('.chat-rc-log-text').map((e) => e.textContent), ['Round 1 · Add a chart', 'Round 2 · make it blue']);
     assert.equal($$('.run-member').length, 0);
   } finally { setShapeFirst(false); }
@@ -1864,10 +1879,10 @@ test('s5: a plain run\'s round that needs you: the model words the round and its
     const rounds = [{ round: 2, pipelineId: 'beef00r2', status: 'running', request: 'make it blue' }];
     const asking = ROUND2({ pendingQuestion: { id: 'plan-1', kind: 'plan' }, stageProgress: SP('Plan', { text: 'Plan · 1/3' }) });
     card.update(done(null, { title: 'Add a chart', rounds, roundSnaps: { beef00r2: asking } }));
-    assert.match($('.run-status-text').textContent, /^Round 2 · Needs you/);
+    assert.match($('.run-status').dataset.text, /^Round 2 · Needs you/);
     assert.equal($('.chat-rc .run-status').dataset.state, 'needs-you');
     card.update(done(null, { title: 'Add a chart', rounds: [{ ...rounds[0], status: 'done' }], roundSnaps: {} }));
-    assert.doesNotMatch($('.run-status-text').textContent, /Round 2/);
+    assert.doesNotMatch($('.run-status').dataset.text, /Round 2/);
     assert.notEqual($('.chat-rc .run-status').dataset.state, 'needs-you');
   } finally { setShapeFirst(false); }
 });
@@ -1950,7 +1965,7 @@ test('s5 controller: a round\'s live snapshot reaches the card as roundSnaps; re
       { doc: dom.window.document, win: dom.window, fetch });
     dom.window.document.body.appendChild(built.el);
     await settle(); await settle();
-    assert.equal(built.el.querySelector('.run-status-text').textContent, 'Running · Round 2 · working');
+    assert.equal(built.el.querySelector('.run-status').dataset.text, 'Running · Round 2 · working');
     const n = calls.length;
     ctl.refreshPipeline('abcd1234');
     await settle(); await settle();
@@ -1975,7 +1990,7 @@ test('s5 controller: a feature round\'s live snapshot reaches the feature card; 
       { doc: dom.window.document, win: dom.window, shaperCard: () => cardJson });
     dom.window.document.body.appendChild(built.el);
     assert.equal(built.el.querySelector('.chat-rc-log-text').textContent, 'Round 2 · make it blue');
-    assert.equal(built.el.querySelectorAll('.run-status-text').length, 1);
+    assert.equal(built.el.querySelectorAll('.run-status-word').length, 1);
     assert.equal(built.el.querySelectorAll('.chat-rc-fstatus').length, 0);
     built.dispose(); ctl.destroy();
   } finally { setShapeFirst(false); }
@@ -1988,7 +2003,7 @@ test('s5: a plain run\'s live round hides the Ask for changes field; it comes ba
     const shownField = () => { const slot = $('.chat-rc-changes'); return !!(slot && !slot.hidden && slot.querySelector('.ask-changes')); };
     card.update(done(null, { title: 'Add a chart', rounds: [{ round: 2, pipelineId: 'beef00r2', status: 'running', request: 'make it blue' }],
       roundSnaps: { beef00r2: ROUND2() } }));
-    assert.equal($('.run-status-text').textContent, 'Running · Round 2 · working');   // runModel's roundLine: the fixture's run has no staged progress
+    assert.equal($('.run-status').dataset.text, 'Running · Round 2 · working');   // runModel's roundLine: the fixture's run has no staged progress
     assert.equal(shownField(), false, 'no field while round 2 runs');
     card.update(done(null, { title: 'Add a chart', rounds: [{ round: 2, pipelineId: 'beef00r2', status: 'done', request: 'make it blue' }] }));
     assert.equal(shownField(), true, 'the field is back once the round is done');
@@ -2003,7 +2018,7 @@ test('s5: a Watch PR fix round reports into the run card: status words, outcome 
     const $$ = (q) => [...card.el.querySelectorAll(q)];
     card.update(done(null, { title: 'Add a chart', roundSnaps: { beef00f2: fix },
       rounds: [{ round: 2, pipelineId: 'beef00f2', status: 'running', request: 'fix failing checks', by: 'watch', kinds: ['checks'] }] }));
-    assert.equal($('.run-status-text').textContent, 'Running · Round 2 · fix failing checks');
+    assert.equal($('.run-status').dataset.text, 'Running · Round 2 · fix failing checks');
     assert.equal($$('.run-member').length, 0);
     card.update(done(null, { title: 'Add a chart',
       rounds: [{ round: 2, pipelineId: 'beef00f2', status: 'done', request: 'fix failing checks', by: 'watch', kinds: ['checks'], outcome: { kind: 'pushed', sha: 'a1b2c3d' } }] }));
@@ -2018,7 +2033,7 @@ test('s5: a watch that gave up is said once, by the model\'s status line; its As
     card.update(done(null, { title: 'Add a chart', pipelineId: 'abcd1234',
       watch: { prUrl: 'https://github.com/o/r/pull/781', status: 'needs-person', reason: 'cap', fixRuns: 3 },
       rounds: [{ round: 4, pipelineId: 'beef00f4', status: 'done', request: 'fix failing checks', by: 'watch', kinds: ['checks'], outcome: { kind: 'failed', reason: 'fix-failed' } }] }));
-    assert.equal($('.run-status-text').textContent, 'Needs you · Watch stopped · 3 fix runs, checks still failing');
+    assert.equal($('.run-status').dataset.text, 'Needs you · Watch stopped · 3 fix runs, checks still failing');
     assert.equal($$('.chat-rc-watch-text').length, 0, 'D9: no second Watch-stopped line');
     const ask = $('[data-model-action="ask-changes"]');
     assert.equal(ask.disabled, false);
@@ -2041,7 +2056,7 @@ test('merge: a feature card after the split shows one status line, one member li
     const log = [{ key: 'p-0', run: null, text: 'Split into 3 runs', detail: [] }];
     card.update(shaped({ pipelineId: 'abcd1234', feature: VIEW3([SL(1, 'done', { pipelineId: 'abcd1234' }), SL(2, 'approval'), SL(3, 'planned')], { log }), log },
       {}, { status: 'running', run: asking, shaping: { feature: { id: 'feat_1' } } }));
-    assert.equal($$('.chat-rc .run-status-text').length, 1);
+    assert.equal($$('.chat-rc .run-status-word').length, 1);
     assert.equal($$('.chat-rc ol.run-members').length, 1);
     assert.equal($$('.chat-rc .chat-rc-fstatus, .chat-rc .chat-rc-chain, .chat-rc ol.chat-rc-members, .chat-rc .ask-rc-pill').length, 0);
     assert.equal($('.chat-rc .kind-chip').textContent, 'Feature · 3 runs');
@@ -2055,7 +2070,7 @@ test('merge: a stopped watch is said once by the model, and its Ask for changes 
     const { card, $, $$, doc } = mk({ ctx: { postChanges: async () => {} } });
     card.update(done({ pr: { url: 'https://github.com/o/r/pull/781', state: 'OPEN' } }, { title: 'Add a chart', pipelineId: 'abcd1234',
       watch: { prUrl: 'https://github.com/o/r/pull/781', status: 'needs-person', reason: 'cap', fixRuns: 3 } }));
-    assert.equal($('.run-status-text').textContent, 'Needs you · Watch stopped · 3 fix runs, checks still failing');
+    assert.equal($('.run-status').dataset.text, 'Needs you · Watch stopped · 3 fix runs, checks still failing');
     assert.equal($$('.chat-rc-watch-text').length, 0, 'D9: no second Watch-stopped line');
     const ask = $('[data-model-action="ask-changes"]');
     assert.equal(ask.disabled, false);
@@ -2089,8 +2104,8 @@ test('merge: a live Watch PR round feeds runModel, so the one status line names 
     const { card, $, $$ } = mk({ controls: { act: (t, aid) => { acts.push([t && t.pipelineId, aid]); return Promise.resolve(true); } } });
     card.update(done(null, { title: 'Add a chart', roundSnaps: { beef00f2: fix },
       rounds: [{ round: 2, pipelineId: 'beef00f2', status: 'running', request: 'fix failing checks', by: 'watch', kinds: ['checks'] }] }));
-    assert.equal($('.run-status-text').textContent, 'Running · Round 2 · fix failing checks');
-    assert.equal($$('.run-status-text').length, 1);
+    assert.equal($('.run-status').dataset.text, 'Running · Round 2 · fix failing checks');
+    assert.equal($$('.run-status-word').length, 1);
     assert.equal($$('.chat-rc-fstatus').length, 0);
     $('[data-model-action="stop"]').click();                  // D25: the round's run, not the finished round 1
     assert.deepEqual(acts, [['beef00f2', 'stop']]);
