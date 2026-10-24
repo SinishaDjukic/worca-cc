@@ -42,6 +42,7 @@ import { validateProjectProposal } from './project-deps.mjs';
 import { validateWorkspaceChange } from './workspace-deps.mjs';
 import { validateActionsChange } from './actions-deps.mjs';
 import { actionsProposalInput } from './actions-proposal.mjs';
+import { validateProxyChange, validateProxyFlagOn } from './proxy-deps.mjs';
 import { createWebValidator } from './web-proposal.mjs';
 import { validateScheduleChange } from './schedule-deps.mjs';
 import { lookupTask } from './source-deps.mjs';
@@ -188,6 +189,7 @@ class AskTurn extends EventEmitter {
     this.suggestionPromise = Promise.resolve();   // stored for test determinism, never awaited by run()
     this._replyText = '';                         // the finished reply's text (set in _complete), the suggestion's input
     this.commands = null;
+    this.proxyBridge = null;
     this.assistantMessageId = assistantMessageId;
     this.userMessageId = userMessageId;
     this.prompt = prompt;
@@ -241,6 +243,8 @@ class AskTurn extends EventEmitter {
       revalidateWorkflow: deps.revalidateWorkflow ?? revalidateWorkflowProposal,
       validateMetricsChange: deps.validateMetricsChange ?? validateMetricsChange,
       validateAwayChange: deps.validateAwayChange ?? validateAwayChange,
+      validateProxyChange: deps.validateProxyChange ?? validateProxyChange,
+      validateProxyFlagOn: deps.validateProxyFlagOn ?? validateProxyFlagOn,
       validatePolicyChange: deps.validatePolicyChange ?? validatePolicyChange,
       validateScheduleChange: deps.validateScheduleChange ?? validateScheduleChange,
       validateModelChange: deps.validateModelChange ?? validateModelChange,
@@ -286,6 +290,7 @@ class AskTurn extends EventEmitter {
       // Agent mode (#574): ({threadId}) => {url, token, dispose()} | null. Set by the server only where the
       // terminal is enabled (terminalEnabledHere). null = no command tools.
       commandBridge: deps.commandBridge ?? null,
+      proxyBridge: deps.proxyBridge ?? null,
       serverPath: deps.serverPath ?? ASK_MCP_SERVER_PATH,
       newAskId: deps.newAskId ?? newAskId,
       setPendingCardComments: deps.setPendingCardComments ?? setPendingCardComments,
@@ -800,6 +805,30 @@ class AskTurn extends EventEmitter {
     this._persistBlocks();
   }
 
+  /**
+   * propose_network_proxy_change / propose_corporate_proxy_on RESULT: the child's {ok:true} is only a hint — the parent
+   * re-validates the same INPUT against the flag and the stored settings now, and mints the card. A child {ok:false}
+   * already reached the model as text: no card, no notice.
+   */
+  async _onProxyProposal(name, input, text, isError) {
+    if (isError) return;
+    let out = null;
+    try { out = JSON.parse(text); } catch { out = null; }
+    if (!out || out.ok !== true) return;
+    const d = this.deps;
+    try {
+      const r = name === 'propose_corporate_proxy_on' ? await d.validateProxyFlagOn(input) : await d.validateProxyChange(input);
+      if (r && r.ok) this.reducer.addBlock({ kind: 'card', id: d.newAskId('card'), state: 'proposed', card: r.card });
+      else {
+        const errors = (r && Array.isArray(r.errors) && r.errors.length) ? r.errors : ['invalid proposal'];
+        this.reducer.addBlock({ kind: 'notice', text: `Proxy change rejected: ${errors.join('; ')}` });
+      }
+    } catch (err) {
+      this.reducer.addBlock({ kind: 'notice', text: `Proxy change rejected: ${err?.message || err}` });
+    }
+    this._persistBlocks();
+  }
+
   /** The card exists from the tool_use on (spec §8.2, PD7): a building block with the four-step trace, persisted. */
   _onWorkflowStart(toolUseId, input) {
     const d = this.deps;
@@ -924,6 +953,8 @@ class AskTurn extends EventEmitter {
       onProjectProposal: ({ input, text, isError }) => this._onProjectProposal(input, text, isError),
       onWorkspaceProposal: ({ input, text, isError }) => this._onWorkspaceProposal(input, text, isError),
       onActionsProposal: ({ input, text, isError }) => this._onActionsProposal(input, text, isError),
+      onProxyProposal: ({ input, text, isError }) => this._onProxyProposal('propose_network_proxy_change', input, text, isError),
+      onProxyFlagProposal: ({ input, text, isError }) => this._onProxyProposal('propose_corporate_proxy_on', input, text, isError),
       onWebProposal: ({ input, text, isError }) => this._onWebProposal(input, text, isError),
       onScopeSwitch: this.composer ? null : ({ input, text, isError }) => this._onScopeSwitch(input, text, isError),
       // pause / resume / skip / mark-read in the child → the server's schedules-changed frames.
@@ -1342,6 +1373,7 @@ class AskTurn extends EventEmitter {
       this.relay = d.agentRelay ? d.agentRelay({ threadId: this.threadId, reader: this.reader || null, web: this.web, ...(skillRoot ? { skillRoot } : {}) }) : null;
       // Agent mode never rides the relay: relay mode is agent isolation, where the terminal refuses agent callers.
       this.commands = !this.relay && this.agentMode && d.commandBridge ? d.commandBridge({ threadId: this.threadId }) : null;
+      this.proxyBridge = !this.relay && d.proxyBridge ? d.proxyBridge({ threadId: this.threadId }) : null;
       // One sign-in answer per turn: handed to the MCP child (spawn.mjs WORCA_ASK_CLAUDE_AUTH) and used by _onProposal,
       // so the model and the card get one verdict however long the turn runs. A relayed chat runs its tools here, in
       // this process (preflight's cache), so its child gets nothing.
@@ -1350,7 +1382,7 @@ class AskTurn extends EventEmitter {
       await d.fs.writeFile(
         mcpConfigPath,
         // MCP registry §9.2: the copies ride after `worca` — refs only (`${MCPSECRET_…}`); the values go in spawnEnv.
-        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, git: d.gitAvailable(), ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.lockedDown ? { engine: this.engine } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
+        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, git: d.gitAvailable(), ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.proxyBridge ? { proxy: this.proxyBridge } : {}), ...(this.lockedDown ? { engine: this.engine } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
         // Never a key value (webKeyVar: the key rides the process env). A relayed turn runs as
         // the person's agent user (agent-pool.mjs), which reads this file through its group: the
         // scratch dir is setgid worca-share (2770), so 0640 reaches the agent users and nobody
@@ -1380,6 +1412,7 @@ class AskTurn extends EventEmitter {
       if (this._skillBase) { try { await d.removeSkillMount(this._skillBase); } catch { /* best effort: the thread's folder goes with the thread */ } }
       if (this.relay) { try { this.relay.dispose(); } catch { /* already gone */ } this.relay = null; }
       if (this.commands) { try { this.commands.dispose(); } catch { /* already gone */ } this.commands = null; }
+      if (this.proxyBridge) { try { this.proxyBridge.dispose(); } catch { /* already gone */ } this.proxyBridge = null; }
     }
     this._kickoffTitle();
     this._kickoffSuggestion();
@@ -1447,6 +1480,7 @@ class AskTurn extends EventEmitter {
         registry: this.mcp,   // MCP registry §9.2: EVERY attempt, the resume-fallback retry included
         ...(this.lockedDown ? { engine: this.engine } : {}),
         commands: this.commands,
+        proxy: this.proxyBridge,
         git: d.gitAvailable(),
         ...(this.composer ? { composer: true } : {}),   // the Workflows chat: no Task built-in (spawn.mjs)
         // Skills registry §4.4: every attempt too, until the sideload safety net drops the layer.

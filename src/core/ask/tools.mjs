@@ -837,6 +837,28 @@ export function createAskTools(deps) {
           baseUrl: SCHEMA.s('import_endpoint: the endpoint listed, when it is not the provider\'s own'),
           note: SCHEMA.s('one line shown on the card: why this change (≤ 200 chars)') }, ['kind']) },
     ] : []),
+    // Corporate proxy (docs/network-proxy.md "From Chat"): read, test, and two cards. Listed with the bundle (proxy-deps.mjs).
+    ...(deps.proxy ? [
+      { name: 'get_network_proxy',
+        description: 'Read the corporate proxy (Labs flag corporateProxy). With the flag off: {flag:false, text, howToTurnOn}. With it on: state and line (the sentence Settings shows), upstream {hostPort, source "settings" | "env" (HTTP(S)_PROXY at start), auth, authLabel}, the stored settings (upstream, auth, noProxy, timeouts, fixedPort), local {url, running, error}, login {present, account DOMAIN\\user, savedAt, rejected, tripped, error} — never a password or hash —, restart {needed, reasons}, connector (the running proxy\'s upstream, auth, state none | unverified | verified | tripped) and warnings. Read-only.',
+        inputSchema: SCHEMA.obj({}) },
+      { name: 'test_network_proxy',
+        description: 'Test the corporate proxy now, as the Test button does: connects through it to github.com and api.anthropic.com. Returns {ok, upstream, results:[{host, ok, via "upstream" | "direct", ms, status?, needsLogin?, error?}]} or {ok:false, code, error} with code FLAG_OFF, NOT_CONFIGURED, UPSTREAM_INVALID, RESTART_NEEDED (the saved proxy is not the running one: the user restarts Worca, then tests), TEST_RUNNING or PROXY_AGENT_BLOCKED. A rejected login (407 after the login) is marked "needs login" — the user logs in again themselves. The proxy is contacted.',
+        inputSchema: SCHEMA.obj({}) },
+      { name: 'propose_network_proxy_change',
+        description: 'Propose a change to the stored corporate proxy settings (Settings › Runs › Network proxy). Fields, each optional, null unsets: upstream ("host:port", http only, never a user name or password), auth (auto | ntlm — NTLMv2, also inside Negotiate — | digest | basic | none), noProxy (comma-separated hosts that go direct), timeouts {connectMs, authMs, idleMs} (500 to 3600000, null for the default), fixedPort (1024 to 65535; pins the local proxy port). Validated exactly as Settings saves it. It never changes anything itself: the user sees a card with each value before → after and "Restart Worca to apply", and applies or declines it. Returns {ok:true, card} or {ok:false, errors} to fix and retry. Refused while the flag is off. Never claim it was applied — the card says so. There is no login field: never ask for a password.',
+        inputSchema: SCHEMA.obj({
+          upstream: { type: ['string', 'null'], description: 'proxy host:port (null: none)' },
+          auth: { type: ['string', 'null'], description: 'auto | ntlm | digest | basic | none (null: default)' },
+          noProxy: { type: ['string', 'null'], description: 'comma-separated hosts that go direct (null: default)' },
+          timeouts: { type: ['object', 'null'], description: '{connectMs?, authMs?, idleMs?} in ms; a null value returns one to its default', additionalProperties: false,
+            properties: { connectMs: { type: ['integer', 'null'] }, authMs: { type: ['integer', 'null'] }, idleMs: { type: ['integer', 'null'] } } },
+          fixedPort: { type: ['integer', 'null'], description: 'local proxy port 1024-65535 (null: any free port)' },
+          note: SCHEMA.s('one line shown on the card: why (≤ 200 chars)') }) },
+      { name: 'propose_corporate_proxy_on',
+        description: 'When get_network_proxy says the flag is off: propose turning the Labs flag "Corporate proxy" (corporateProxy) on. A card the user applies; Worca must then be restarted. Returns {ok:true, card} or {ok:false, errors} (already on, or locked by WORCA_FLAGS — then point to that).',
+        inputSchema: SCHEMA.obj({ note: SCHEMA.s('one line shown on the card: why (≤ 200 chars)') }) },
+    ] : []),
     ...(deps.clones ? [
       { name: 'propose_clone_project',
         description: 'Propose adding a project by cloning a repository into worca\'s projects folder, for the user to confirm — it never clones anything itself; the user sees a card with the URL, branch, target folder and how the code host is reached, and applies or declines it. url: an https:// repository URL (https://github.com/owner/repo or https://dev.azure.com/org/project/_git/repo), no credentials in it. branch: optional (default: the repository\'s default branch). name: optional folder and project name (default: the repository name). Returns {ok:true, card} or {ok:false, errors} — fix the input and call again.',
@@ -1525,6 +1547,14 @@ export function createAskTools(deps) {
     if (!deps.models) throw new AskToolError(`${tool}: models are unavailable`);
     return deps.models;
   };
+  const proxyOf = (tool) => {
+    if (!deps.proxy) throw new AskToolError(`${tool}: the corporate proxy tools are unavailable`);
+    return deps.proxy;
+  };
+  const proxyFlagOff = () => ({ flag: false,
+    text: 'The corporate proxy is off: it is the Labs flag "Corporate proxy" (corporateProxy), off by default.',
+    howToTurnOn: 'Offer propose_corporate_proxy_on (a card the user applies), or point to Settings › Labs › Corporate proxy. Either way Worca must be restarted after it is turned on.',
+    docs: 'docs/network-proxy.md' });
   const schedulesOf = (tool) => {
     if (!deps.schedules) throw new AskToolError(`${tool}: scheduled runs are unavailable`);
     return deps.schedules;
@@ -2636,6 +2666,27 @@ export function createAskTools(deps) {
       catch (err) { throw new AskToolError(`list_copilot_models: ${err && err.message ? err.message : err}`); }
     },
     async propose_model_change(input) { return modelsOf('propose_model_change').validateChange(input); },
+    async get_network_proxy() {
+      const p = proxyOf('get_network_proxy');
+      if (!p.flagOn()) return proxyFlagOff();
+      if (typeof p.status !== 'function') {
+        return { flag: true, available: false, text: 'The proxy status cannot be read from this chat turn (the flag was turned on during it). Ask again in a new message, or open Settings › Runs › Network proxy.' };
+      }
+      const s = await p.status();
+      return s && s.flag === false ? proxyFlagOff() : s;
+    },
+    async test_network_proxy() {
+      const p = proxyOf('test_network_proxy');
+      if (!p.flagOn()) return { ok: false, code: 'FLAG_OFF', error: proxyFlagOff().text };
+      if (typeof p.test !== 'function') {
+        return { ok: false, code: p.testOff ? 'PROXY_AGENT_BLOCKED' : 'UNAVAILABLE',
+          error: p.testOff || 'The proxy cannot be tested from this chat turn. Ask again in a new message, or use Test on Settings › Runs › Network proxy.' };
+      }
+      const r = await p.test();
+      return r && r.flag === false ? { ok: false, code: 'FLAG_OFF', error: proxyFlagOff().text } : r;
+    },
+    async propose_network_proxy_change(input) { return proxyOf('propose_network_proxy_change').validateChange(input); },
+    async propose_corporate_proxy_on(input) { return proxyOf('propose_corporate_proxy_on').validateFlagOn(input); },
     async propose_workspace_change(input) {
       if (!deps.workspaceChanges) throw new AskToolError('propose_workspace_change: workspace changes are unavailable');
       if (str(input.kind) !== 'create' && str(input.workspaceId)) {

@@ -2797,23 +2797,33 @@ export function assertNetworkProxyInput(patch) {
   }
 }
 
+/** The merge PUT /api/proxy/settings applies (null/'' drops a key; the whole patch null/'' drops it all). Pure. */
+export function mergeNetworkProxy(current, patch) {
+  if (patch === null || patch === '') return {};
+  const next = { ...(current || {}) };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null || v === '') delete next[k];
+    else if (k === 'upstream') next.upstream = normalizeProxyUpstream(v);
+    else if (k === 'timeouts') {
+      const t = { ...(next.timeouts || {}) };
+      for (const [tk, tv] of Object.entries(v)) { if (tv === null) delete t[tk]; else t[tk] = tv; }
+      if (Object.keys(t).length) next.timeouts = t; else delete next.timeouts;
+    } else next[k] = v;
+  }
+  return next;
+}
+
+/** What setNetworkProxy(patch) would store, without writing (the chat card's validator). Throws like it. */
+export function previewNetworkProxy(patch) {
+  assertNetworkProxyInput(patch);
+  return mergeNetworkProxy(networkProxySettings(), patch);
+}
+
 export async function setNetworkProxy(patch) {
   assertNetworkProxyInput(patch);
   const settings = readSettings();
-  if (patch === null || patch === '') delete settings.networkProxy;
-  else {
-    const next = { ...networkProxySettings() };
-    for (const [k, v] of Object.entries(patch)) {
-      if (v === null || v === '') delete next[k];
-      else if (k === 'upstream') next.upstream = normalizeProxyUpstream(v);
-      else if (k === 'timeouts') {
-        const t = { ...(next.timeouts || {}) };
-        for (const [tk, tv] of Object.entries(v)) { if (tv === null) delete t[tk]; else t[tk] = tv; }
-        if (Object.keys(t).length) next.timeouts = t; else delete next.timeouts;
-      } else next[k] = v;
-    }
-    if (Object.keys(next).length) settings.networkProxy = next; else delete settings.networkProxy;
-  }
+  const next = mergeNetworkProxy(networkProxySettings(), patch);
+  if (Object.keys(next).length) settings.networkProxy = next; else delete settings.networkProxy;
   await persistSettings(settings);
   return networkProxySettings();
 }

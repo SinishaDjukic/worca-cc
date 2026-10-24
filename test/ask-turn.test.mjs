@@ -439,6 +439,29 @@ test('card proposals (metrics, workspace, away, web): the parent re-validates th
       assert.deepEqual(mid.filter((b) => b.kind === 'card').map((b) => [b.state, b.card.type]), [['proposed', 'away']]);
       assert.ok(mid.some((b) => b.kind === 'notice' && b.text === 'Away mode change rejected: nothing to change'));
     } },
+    { name: 'proxy cards: the parent re-validates the input and mints the card; a refusal is a notice; the flag card has its own validator', run: async () => {
+      const s = seed();
+      const seen = { change: [], flag: [] };
+      let mid = null;
+      const { turn } = makeTurn(s, {}, {
+        validateProxyChange: async (inp) => { seen.change.push(inp); return inp.upstream ? { ok: true, card: { type: 'proxy', kind: 'settings', summary: 'Proxy: p.acme.test:3128' } } : { ok: false, errors: ['nothing to change'] }; },
+        validateProxyFlagOn: async (inp) => { seen.flag.push(inp); return { ok: true, card: { type: 'proxy', kind: 'flag', summary: 'Corporate proxy (Labs): On' } }; },
+        runClaudeImpl: async (opts) => {
+          awayCall(opts.onEvent, 1, 'mcp__worca__propose_network_proxy_change', { upstream: 'p.acme.test:3128' }, '{"ok":true}');
+          awayCall(opts.onEvent, 2, 'mcp__worca__propose_network_proxy_change', { auth: null }, '{"ok":true}');
+          awayCall(opts.onEvent, 3, 'mcp__worca__propose_corporate_proxy_on', { note: 'office' }, '{"ok":true}');
+          for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
+          mid = getMessage(s.asst.id).blocks;
+          push(opts.onEvent, RESULT());
+          return { text: '', exitCode: 0 };
+        },
+      });
+      await turn.run();
+      assert.deepEqual(seen.flag, [{ note: 'office' }]);
+      assert.equal(seen.change.length, 2);
+      assert.deepEqual(mid.filter((b) => b.kind === 'card').map((b) => [b.state, b.card.type, b.card.kind]), [['proposed', 'proxy', 'settings'], ['proposed', 'proxy', 'flag']]);
+      assert.ok(mid.some((b) => b.kind === 'notice' && b.text === 'Proxy change rejected: nothing to change'));
+    } },
   ]);
 });
 
