@@ -2,7 +2,7 @@
 name: ask-ui-hidden-pins
 description: Read before planning or reviewing a change to the Chat panel's DOM, the top bar, the page shell, openChat entry points or a new ask-api server test — the pins a
 paths: ui/public/ask-panel.mjs, ui/public/app.js, ui/public/index.html, ui/public/style.css, ui/public/topnav-search.mjs, test/ask-api-*.test.mjs, test/ui-chat-*.test.mjs, test/ask-panel*.test.mjs
-updated: 2026-10-24T20:27:39.788Z
+updated: 2026-10-24T22:35:13.864Z
 author: Denislav Prinov
 ---
 
@@ -24,8 +24,15 @@ Found replaying "Ask worca beside the page" (2026-10-24, 8 tasks). Each one turn
 - The Chat home's `.chat-page[data-view="home"] .ask-composer > .ask-pop` opens composer menus DOWNWARD; a composer docked at the bottom on home needs an upward override.
 - `openPage()` always focused the composer; `enterChatView` on a bare `#chat` opens the UNREAD chat — use `chat/new` to keep a new chat.
 - app.js page-level Escape arms (History/Running detail, project page, workspace-create) are document CAPTURE listeners: they run before element handlers, so they need an exemption for any new surface holding a text field.
+- Page changes with NO click and NO hashchange: the History Diff opens its first file itself (`renderFileTree` `initialKey`), the live Diff's first `pick()` is a direct call, a reload on a live run gets the run from the `hello` frame after the first paint. Hook `paintFileList`, that `pick`, and `askRunStore.subscribe` (`pokeAskRuns` fires on every frame and also after the projects load — it masks a `loadProjects` hook's guard in tests).
+- A queue item (`enqueueDraft`) must snapshot anything page-derived it sends: it drains after the person may have navigated.
+- `showThread(null)` from `wantThread === undefined` (nothing ever shown) runs a full `newThread()` reset (scope, Sets, model). Tests booting `bootChat` on `#chat` start at `null` and never see it — boot on another page with the column open.
+- app.js hides the panel BEFORE moving its root, so `openPage`'s unconditional re-pin covers the move; a panel-level `setHost` while open needs its own `applyPin()`.
+- CSS: a `position:fixed;top:…;bottom:0` override under a base `height:100%` keeps the height (bottom ignored): add `height:auto` — the dock's phone tier hid the composer 48px below the screen; only a real browser shows it.
 
 ## Test-harness traps
 - An ask-api test that posts a message and ends without `await idle()` (or settling the turn) lets the file's `after()` delete `WORCA_MOCK` before the turn's async title job spawns: the real CLI hits the no-real-claude guard, `npm test` exits 1 with 0 failures — only in the full suite, never alone. Compare `N test spawn(s) reached the real-claude guard` with a checkpoint run.
 - `bootChat` boots one app per jsdom window and rebinds the global `document`: an app.js observer/timer callback that reads the global `document` throws "after the test ended" once another test booted. Capture the node at creation and bail when `document.body !== body`.
 - The workspace page in `bootChat` needs `/api/team-metrics/scopes` and `/api/policy/scopes` arms (`paintWsMetricsRows` throws on the default body).
+- A test of a late repaint must make the late data actually late: hold the arm's promise (`new Promise((r) => held.push(…))`) and release it after `settle`, else the route's own repaint covers the hook and its revert stays green.
+- `tools/test.mjs` runs a file named twice twice: a plan's "Step 2 command + `$(ls test/ask-panel*.test.mjs)`" line double-counts (v2 quoted 459 for 449 + 2×5). Name each file once.
