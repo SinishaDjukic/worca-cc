@@ -1,23 +1,40 @@
 // test/cli-container.test.mjs
 // `worca container` (src/cli/container.mjs): the wrapper around `docker compose`.
 // Every runtime call goes through an injected exec, so nothing here needs Docker.
+// The project-scoped box (src/cli/container-mounts.mjs) is planned against real temp repos; only the
+// `docker compose config` test needs Docker, and it is skipped without it.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { withNoGit } from './helpers/git-off.mjs';
 import {
   cmdContainer, detectRuntime, commonParent, seedEnv, composeFileArgs, initDir, OVERLAYS, COMPOSE_SRC_DIR,
 } from '../src/cli/container.mjs';
+import {
+  resolveProjectDir, planProjectMasks, renderMaskOverlay, maskSettingsFor, boxName, MOUNT_FILE, EMPTY_FILE, MAX_MASKS,
+} from '../src/cli/container-mounts.mjs';
+import { secretPathsFor } from '../src/core/secret-paths.mjs';
+import { settingEntry, writeProjectSettings } from '../src/core/settings-cascade.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(__dirname, '..', 'src', 'cli', 'worca-cc.mjs');
 useTempHome(after);
+// maskSettingsFor reads the user layer from $HOME/.worca-cc/settings.json: keep the developer's own settings out.
+const savedHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+const scratchHome = mkdtempSync(join(tmpdir(), 'worca-container-home-'));
+process.env.HOME = scratchHome;
+process.env.USERPROFILE = scratchHome;
+after(() => {
+  for (const [k, v] of Object.entries(savedHome)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  rmSync(scratchHome, { recursive: true, force: true });
+});
 
 /** A fake runtime: records every call; `compose version` succeeds for `available` binaries. */
 function fakeExec(available = ['docker']) {
@@ -58,6 +75,8 @@ test('container helpers: detectRuntime, commonParent and composeFileArgs', async
       assert.deepEqual(composeFileArgs([]), ['-f', 'compose.yml']);
       assert.deepEqual(composeFileArgs(['egress', 'ssh']), ['-f', 'compose.yml', '-f', 'compose.egress.yml', '-f', 'compose.ssh.yml']);
       assert.deepEqual(OVERLAYS, ['egress', 'ssh', 'teams', 'clonein']);
+      assert.deepEqual(composeFileArgs(['ssh'], { project: true }), ['-f', 'compose.yml', '-f', 'compose.ssh.yml', '-f', 'project-mount.yml'],
+        'the generated project mount goes last, so its masks sit on top of every bind');
     } },
   ]);
 });
@@ -158,4 +177,334 @@ test('the real CLI routes `worca container help` and lists the subcommand in --h
   assert.match(h.stdout, /worca container — run Worca in a container/);
   const top = await run(['--help']);
   assert.match(top.stdout, /container <cmd> \[\.\.\.\]/);
+});
+
+const POSIX_ONLY = process.platform === 'win32' && 'POSIX paths and symlinks';
+
+/** A real repo, by its real path (macOS /var → /private/var): an untracked .env, an ignored .env.local, a committed
+ *  config/.env, a .env.example, a .tfvars, a link to a file inside, a link out of the project, and a legacy worca
+ *  checkout holding a .env. */
+function secretProject() {
+  const repo = realpathSync.native(tmp());
+  const git = (...args) => { const r = spawnSync('git', args, { cwd: repo, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
+  git('init', '-q', '-b', 'main'); git('config', 'user.email', 't@t'); git('config', 'user.name', 't');
+  mkdirSync(join(repo, 'config'));
+  writeFileSync(join(repo, 'config', '.env'), 'COMMITTED=1\n');
+  writeFileSync(join(repo, '.gitignore'), '.env.local\n.worca-cc/\n');
+  writeFileSync(join(repo, 'README.md'), 'x\n');
+  git('add', '-A'); git('commit', '-qm', 'base');
+  writeFileSync(join(repo, '.env'), 'TOKEN=host-only\n');
+  writeFileSync(join(repo, '.env.local'), 'TOKEN=local\n');
+  writeFileSync(join(repo, '.env.example'), 'TOKEN=\n');
+  writeFileSync(join(repo, 'prod.tfvars'), 'k = "v"\n');
+  writeFileSync(join(repo, 'notes.txt'), 'plain\n');
+  symlinkSync('notes.txt', join(repo, '.env.linked'));
+  symlinkSync('/etc/hosts', join(repo, '.env.outside'));
+  mkdirSync(join(repo, '.worca-cc', 'worktrees', 'r1'), { recursive: true });
+  writeFileSync(join(repo, '.worca-cc', 'worktrees', 'r1', '.env'), 'RUN=own\n');
+  return repo;
+}
+/** The mask targets an overlay binds, in file order (each volume line is a JSON flow map with `$` doubled). */
+const maskTargets = (yml) => yml.split('\n').filter((l) => l.startsWith('      - ')).map((l) => JSON.parse(l.slice(8).replaceAll('$$', '$')));
+
+test('secretPathsUnmask is a project setting validated like secretPaths', () => {
+  const entry = settingEntry('secretPathsUnmask');
+  assert.ok(entry, 'the cascade knows secretPathsUnmask');
+  assert.ok(entry.validate([]));
+  assert.ok(entry.validate(['.env.example']));
+  for (const bad of ['.env.example', [''], ['  '], ['a\nb'], [1], Array(201).fill('x')]) assert.ok(!entry.validate(bad), JSON.stringify(bad).slice(0, 40));
+  const repo = realpathSync.native(tmp());
+  try {
+    assert.throws(() => writeProjectSettings({ projectDir: repo }, { secretPathsUnmask: [''] }), /secretPathsUnmask must be a list of project-relative file patterns/);
+    writeProjectSettings({ projectDir: repo }, { secretPaths: ['*.tfvars'], secretPathsUnmask: [' .env.example '] });
+    const s = maskSettingsFor(repo);
+    assert.ok(s.patterns.includes('*.tfvars') && s.patterns.includes('.env*'), 'the defaults plus the project addition');
+    assert.deepEqual(s.unmask, ['.env.example']);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('resolveProjectDir: one real project folder, never a root, the home or the Worca home', () => {
+  const home = realpathSync.native(tmp());
+  try {
+    const proj = join(home, 'dev', 'api');
+    mkdirSync(proj, { recursive: true });
+    writeFileSync(join(home, 'f'), '');
+    assert.deepEqual(resolveProjectDir(proj, { home }), { dir: proj });
+    assert.deepEqual(resolveProjectDir(`${proj}/`, { home }), { dir: proj });
+    assert.match(resolveProjectDir('', { home }).error, /needs a folder/);
+    assert.match(resolveProjectDir(join(home, 'nope'), { home }).error, /does not exist/);
+    assert.match(resolveProjectDir(join(home, 'f'), { home }).error, /is not a folder/);
+    assert.match(resolveProjectDir('/', { home }).error, /too wide/);
+    assert.match(resolveProjectDir(home, { home }).error, /too wide/);
+    assert.match(resolveProjectDir(join(home, 'dev'), { home, worcaHomeDir: join(home, 'dev', '.worca') }).error, /holds the Worca home/);
+    assert.deepEqual(resolveProjectDir(proj, { home, worcaHomeDir: join(home, 'dev', '.worca') }), { dir: proj }, 'a sibling of the Worca home is fine');
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('planProjectMasks: untracked and ignored secrets, project additions and in-project link targets; committed ones are only named', { skip: POSIX_ONLY }, async () => {
+  const repo = secretProject();
+  try {
+    const plan = await planProjectMasks(repo, { patterns: secretPathsFor({ secretPaths: ['*.tfvars'] }), unmask: ['.env.example'] });
+    assert.deepEqual(plan.masks, ['.env', '.env.local', 'notes.txt', 'prod.tfvars'],
+      'never .env.example (unmasked), config/.env (committed), .env.outside (leads out) or .worca-cc/** (worca\'s checkouts)');
+    assert.deepEqual(plan.committed, ['config/.env']);
+    assert.deepEqual(plan.skippedLinks, ['.env.outside']);
+    assert.equal(plan.trackedUnknown, null);
+    const plain = await planProjectMasks(repo, { patterns: secretPathsFor({}) });
+    assert.ok(plain.masks.includes('.env.example') && !plain.masks.includes('prod.tfvars'), 'the defaults alone');
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('planProjectMasks without git: every match is masked, and the reason is given', { skip: POSIX_ONLY }, async (t) => {
+  const repo = secretProject();
+  try {
+    withNoGit(t);
+    const plan = await planProjectMasks(repo, { patterns: secretPathsFor({}) });
+    assert.ok(plan.masks.includes('config/.env'), 'a committed file cannot be told apart');
+    assert.match(plan.trackedUnknown, /git is not installed/);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('renderMaskOverlay: the parent as projects root, one read-only bind of the empty file per mask, `$` doubled', () => {
+  const yml = renderMaskOverlay({ projectDir: '/Users/me/dev/api', masks: ['.env', 'a/$x.pem'], emptyFile: '/w/container/mask-empty' });
+  assert.match(yml, /^services:\n {2}worca:\n {4}environment:\n {6}WORCA_PROJECTS_ROOT: "\/Users\/me\/dev"\n {4}volumes:\n/m,
+    'New and Clone in the box land in the unwritable parent, never inside the project');
+  assert.ok(yml.includes('a/$$x.pem'), 'a literal $ is escaped');
+  assert.deepEqual(maskTargets(yml), [
+    { type: 'bind', source: '/w/container/mask-empty', target: '/Users/me/dev/api/.env', read_only: true },
+    { type: 'bind', source: '/w/container/mask-empty', target: '/Users/me/dev/api/a/$x.pem', read_only: true },
+  ]);
+  const none = renderMaskOverlay({ projectDir: '/srv/p$1', masks: [], emptyFile: '/e' });
+  assert.ok(none.includes('WORCA_PROJECTS_ROOT: "/srv"') && !none.includes('volumes:'), 'no masks: the projects root only');
+});
+
+test('boxName: one valid compose project per real path', () => {
+  assert.match(boxName('/Users/me/dev/My API!'), /^worca-my-api-[0-9a-f]{8}$/);
+  assert.equal(boxName('/a/api'), boxName('/a/api'));
+  assert.notEqual(boxName('/a/api'), boxName('/b/api'), 'same folder name, another project: another box');
+  assert.match(boxName('/x/---'), /^worca-project-[0-9a-f]{8}$/);
+  assert.match(boxName(`/x/${'a'.repeat(29)}-b`), /^worca-a{29}-[0-9a-f]{8}$/, 'cut to 30 characters, no dash left at the end');
+});
+
+test('up --project: only that folder is bound, its untracked secrets are masked, and every later verb keeps it', { skip: POSIX_ONLY }, async () => {
+  const dir = tmp();
+  const repo = secretProject();
+  try {
+    writeProjectSettings({ projectDir: repo }, { secretPaths: ['*.tfvars'], secretPathsUnmask: ['.env.example'] });
+    const { exec, calls } = fakeExec();
+    const o = io();
+    assert.equal(await cmdContainer(['up', '--project', repo, '--projects', '/Users/me/dev'], { ...o, exec, dir }), 0);
+    const box = boxName(repo);
+    const first = calls.filter((k) => k.cmd === 'docker' && k.args[1] !== 'version');
+    assert.deepEqual(first.map((k) => k.args), [['compose', '-f', 'compose.yml', 'down'], ['compose', '-p', box, '-f', 'compose.yml', '-f', MOUNT_FILE, 'up', '-d']],
+      'the whole-folder box is stopped first, then the project starts in a box (and volumes) of its own');
+    const up = first[1];
+    assert.equal(up.env.WORCA_PROJECTS, repo, 'the bind is this project, not the tree in .env');
+    assert.equal(up.env.WORCA_PROJECTS_MOUNT, repo, 'at the same path');
+    const empty = join(dir, EMPTY_FILE);
+    assert.equal(statSync(empty).size, 0);
+    assert.equal(statSync(empty).mode & 0o777, 0o444);
+    const vols = maskTargets(readFileSync(join(dir, MOUNT_FILE), 'utf8'));
+    assert.deepEqual(vols.map((v) => v.target), ['.env', '.env.local', 'notes.txt', 'prod.tfvars'].map((r) => `${repo}/${r}`),
+      'a masked .env reads empty; the project\'s own *.tfvars addition is masked; .env.example is left unmasked');
+    assert.ok(vols.every((v) => v.source === empty && v.read_only === true));
+    assert.ok(o.lines.some((l) => l.includes(`project  ${repo}   only this folder is mounted; 4 secret files masked`)));
+    assert.ok(o.lines.some((l) => /1 committed file looks like a secret and is readable in the box with the git history: config\/\.env\./.test(l)));
+    assert.ok(o.lines.some((l) => /1 link named like a secret leads out of the project or nowhere, so it is not masked: \.env\.outside/.test(l)));
+    assert.equal(JSON.parse(readFileSync(join(dir, '.worca-container.json'), 'utf8')).project, repo);
+    assert.ok(o.lines.some((l) => l.includes(`box: ${box}`)));
+
+    calls.length = 0;
+    assert.equal(await cmdContainer(['up'], { ...o, exec, dir }), 0, 'up again, the project remembered');
+    assert.ok(!calls.some((k) => k.args.includes('down')), 'the same box: nothing to stop');
+    assert.deepEqual(calls.at(-1).args, ['compose', '-p', box, '-f', 'compose.yml', '-f', MOUNT_FILE, 'up', '-d']);
+
+    for (const verb of [['status'], ['run', '--', 'list'], ['shell'], ['run', '--project', repo, 'list']]) {
+      calls.length = 0;
+      assert.equal(await cmdContainer(verb, { ...o, exec, dir }), 0, verb.join(' '));
+      const call = calls.at(-1);
+      assert.deepEqual(call.args.slice(0, 7), ['compose', '-p', box, '-f', 'compose.yml', '-f', MOUNT_FILE], `${verb[0]} keeps the box and its masks`);
+      assert.equal(call.env.WORCA_PROJECTS, repo, `${verb[0]} keeps the narrow bind`);
+    }
+    assert.deepEqual(calls.at(-1).args.slice(-4), ['worca', '--project', repo, 'list'], 'run without `--` passes the worca CLI\'s own --project through');
+
+    calls.length = 0;
+    o.lines.length = 0;
+    assert.equal(await cmdContainer(['up', '--no-project'], { ...o, exec, dir }), 0);
+    assert.deepEqual(calls.find((k) => k.args.includes('down')).args, ['compose', '-p', box, '-f', 'compose.yml', 'down'], 'the project box is stopped first');
+    const back = calls.find((k) => k.args.includes('up'));
+    assert.deepEqual(back.args, ['compose', '-f', 'compose.yml', 'up', '-d']);
+    assert.equal(back.env?.WORCA_PROJECTS, undefined, 'the .env tree again');
+    assert.equal(back.env?.WORCA_PROJECTS_MOUNT, undefined);
+    assert.ok(!existsSync(join(dir, MOUNT_FILE)) && !existsSync(empty));
+    assert.equal(JSON.parse(readFileSync(join(dir, '.worca-container.json'), 'utf8')).project, null);
+    assert.ok(o.lines.some((l) => /projects {2}\/Users\/me\/dev {3}the whole folder is mounted, unmasked/.test(l)));
+  } finally { rmSync(dir, { recursive: true, force: true }); rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('up --project refusals: with clone-in, with --no-project, a missing folder, and a lost mount file', { skip: POSIX_ONLY }, async () => {
+  const dir = tmp();
+  const repo = secretProject();
+  try {
+    const { exec, calls } = fakeExec();
+    const o = io();
+    assert.equal(await cmdContainer(['up', '--project', repo, '--with', 'clonein', '--projects', '/Users/me/dev'], { ...o, exec, dir }), 1);
+    assert.match(o.fails.at(-1), /clone-in mounts none/);
+    assert.equal(await cmdContainer(['up', '--project', repo, '--no-project'], { ...o, exec, dir }), 1);
+    assert.match(o.fails.at(-1), /cannot go together/);
+    assert.equal(await cmdContainer(['up', '--project', join(repo, 'nope')], { ...o, exec, dir }), 1);
+    assert.match(o.fails.at(-1), /does not exist/);
+    assert.ok(!calls.some((k) => k.args.includes('up')), 'nothing started');
+
+    assert.equal(await cmdContainer(['up', '--project', repo], { ...o, exec, dir }), 0);
+    rmSync(join(dir, MOUNT_FILE));
+    calls.length = 0;
+    assert.equal(await cmdContainer(['shell'], { ...o, exec, dir }), 1);
+    assert.match(o.fails.at(-1), /project mount for .* is missing; run: worca container up/);
+    assert.equal(calls.filter((k) => k.args.includes('run')).length, 0, 'no one-off container without its masks');
+    assert.equal(await cmdContainer(['down'], { ...o, exec, dir }), 0, 'down still works');
+
+    calls.length = 0;
+    const downFails = (cmd, args, opts) => (args.includes('down') ? { status: 3, stdout: '', stderr: '' } : exec(cmd, args, opts));
+    assert.equal(await cmdContainer(['up', '--no-project'], { ...o, exec: downFails, dir }), 3);
+    assert.match(o.fails.at(-1), /could not stop the box for .*; nothing was started/);
+    assert.ok(!calls.some((k) => k.args.includes('up')), 'the old box still runs: no second one on its port');
+    assert.equal(JSON.parse(readFileSync(join(dir, '.worca-container.json'), 'utf8')).project, repo, 'still the project box');
+
+    const other = secretProject();
+    try {
+      calls.length = 0;
+      assert.equal(await cmdContainer(['up', '--project', other], { ...o, exec, dir }), 0, 'another project');
+      assert.deepEqual(calls.filter((k) => k.args.includes('down') || k.args.includes('up')).map((k) => k.args.slice(0, 3).concat(k.args.at(-1))),
+        [['compose', '-p', boxName(repo), 'down'], ['compose', '-p', boxName(other), '-d']], 'the first project\'s box stops before the next one starts');
+      rmSync(other, { recursive: true, force: true });
+      calls.length = 0;
+      assert.equal(await cmdContainer(['up'], { ...o, exec, dir }), 1, 'the remembered project is gone');
+      assert.match(o.fails.at(-1), /does not exist \(remembered from an earlier up: pass --project <dir> or --no-project\)/);
+      assert.ok(!calls.some((k) => k.args.includes('up')), 'compose would create the missing folder: nothing started');
+    } finally { rmSync(other, { recursive: true, force: true }); }
+  } finally { rmSync(dir, { recursive: true, force: true }); rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('up --project refuses a folder that holds the Worca home, before it stops or starts anything', { skip: POSIX_ONLY }, async () => {
+  const dir = tmp();
+  const holder = realpathSync.native(tmp());
+  const savedWorcaHome = process.env.WORCA_HOME;
+  process.env.WORCA_HOME = holder;   // worcaHome() is <holder>/.worca-cc: its database and settings sit inside
+  try {
+    const { exec, calls } = fakeExec();
+    const o = io();
+    assert.equal(await cmdContainer(['up', '--project', holder, '--projects', '/Users/me/dev'], { ...o, exec, dir }), 1);
+    assert.match(o.fails.at(-1), /holds the Worca home .*\.worca-cc; name one project folder/);
+    assert.ok(!calls.some((k) => k.args.includes('up') || k.args.includes('down')), 'nothing stopped or started');
+    assert.ok(!existsSync(join(dir, MOUNT_FILE)), 'no project mount written');
+  } finally {
+    process.env.WORCA_HOME = savedWorcaHome;
+    rmSync(dir, { recursive: true, force: true }); rmSync(holder, { recursive: true, force: true });
+  }
+});
+
+test('planProjectMasks in a folder that is not a repository: nothing is committed, every match is masked', { skip: POSIX_ONLY }, async () => {
+  const folder = realpathSync.native(tmp());
+  try {
+    writeFileSync(join(folder, '.env'), 'X=1\n');
+    writeFileSync(join(folder, 'id_rsa'), 'k\n');
+    writeFileSync(join(folder, 'notes.txt'), 'plain\n');
+    const plan = await planProjectMasks(folder, { patterns: secretPathsFor({}) });
+    assert.deepEqual(plan.masks, ['.env', 'id_rsa']);
+    assert.deepEqual(plan.committed, []);
+    assert.equal(plan.trackedUnknown, null, 'no repository is not "git could not tell"');
+  } finally { rmSync(folder, { recursive: true, force: true }); }
+});
+
+test('up --project refuses more than MAX_MASKS masks before it stops or starts anything', { skip: POSIX_ONLY }, async () => {
+  const dir = tmp();
+  const folder = realpathSync.native(tmp());
+  try {
+    for (let i = 0; i <= MAX_MASKS; i++) writeFileSync(join(folder, `.env.${i}`), '');
+    const { exec, calls } = fakeExec();
+    const o = io();
+    assert.equal(await cmdContainer(['up', '--project', folder, '--projects', '/Users/me/dev'], { ...o, exec, dir }), 1);
+    assert.match(o.fails.at(-1), new RegExp(`${MAX_MASKS + 1} secret files to mask \\(the limit is ${MAX_MASKS}\\)`));
+    assert.ok(!calls.some((k) => k.args.includes('down') || k.args.includes('up')), 'a running box is left alone');
+    assert.ok(!existsSync(join(dir, MOUNT_FILE)), 'no overlay written');
+  } finally { rmSync(dir, { recursive: true, force: true }); rmSync(folder, { recursive: true, force: true }); }
+});
+
+const COMPOSE = spawnSync('docker', ['compose', 'version'], { stdio: 'ignore' }).status === 0;
+test('docker compose config: a project-scoped box binds the project and the masks only', { skip: POSIX_ONLY || (!COMPOSE && 'docker compose is not installed') }, async () => {
+  const dir = tmp();
+  const repo = secretProject();
+  try {
+    const { exec } = fakeExec();
+    assert.equal(await cmdContainer(['up', '--project', repo, '--projects', '/Users/me/dev'], { ...io(), exec, dir }), 0);
+    const r = spawnSync('docker', ['compose', '-p', boxName(repo), '-f', 'compose.yml', '-f', MOUNT_FILE, 'config', '--format', 'json'],
+      { cwd: dir, encoding: 'utf8', env: { ...process.env, WORCA_PROJECTS: repo, WORCA_PROJECTS_MOUNT: repo } });
+    assert.equal(r.status, 0, r.stderr);
+    const cfg = JSON.parse(r.stdout);
+    assert.equal(cfg.name, boxName(repo), 'its own compose project, so its own volumes');
+    assert.equal(cfg.services.worca.environment.WORCA_PROJECTS_ROOT, dirname(repo));
+    const binds = cfg.services.worca.volumes.filter((v) => v.type === 'bind');
+    const empty = join(dir, EMPTY_FILE);
+    assert.deepEqual(binds.filter((v) => v.source !== empty).map((v) => [v.source, v.target]), [[repo, repo]], 'no sibling project is bound');
+    const masks = binds.filter((v) => v.source === empty);
+    assert.equal(masks.length, 4, '.env, .env.example, .env.local and notes.txt (no project settings for this fresh path)');
+    assert.ok(masks.every((v) => v.read_only === true));
+  } finally { rmSync(dir, { recursive: true, force: true }); rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('planProjectMasks: a refused git config masks every match; a dangling link is named; a link into worca\'s checkouts masks nothing', { skip: POSIX_ONLY }, async () => {
+  const repo = secretProject();
+  try {
+    assert.equal(spawnSync('git', ['config', 'core.gitProxy', 'not-run'], { cwd: repo }).status, 0);
+    symlinkSync('missing', join(repo, '.env.dangling'));
+    symlinkSync('.worca-cc/worktrees/r1/.env', join(repo, '.env.run'));
+    const plan = await planProjectMasks(repo, { patterns: secretPathsFor({}) });
+    assert.match(plan.trackedUnknown, /its git config was refused/);
+    assert.ok(plan.masks.includes('config/.env'), 'committed files cannot be told apart, so they are masked too');
+    assert.ok(!plan.masks.some((m) => m.startsWith('.worca-cc/')), 'a link into worca\'s own checkouts masks nothing there');
+    assert.deepEqual(plan.skippedLinks, ['.env.dangling', '.env.outside']);
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('planProjectMasks: installed packages are never masked (a virtualenv\'s CA bundle, vendored gems, Composer, pixi)', { skip: POSIX_ONLY }, async () => {
+  const folder = realpathSync.native(tmp());
+  try {
+    const put = (rel) => { mkdirSync(dirname(join(folder, rel)), { recursive: true }); writeFileSync(join(folder, rel), 'x\n'); };
+    put('.venv/lib/python3.12/site-packages/certifi/cacert.pem');
+    put('venv/lib/python3/dist-packages/pip/_vendor/certifi/cacert.pem');
+    put('vendor/bundle/ruby/3.3.0/gems/httpclient-2.8.3/lib/httpclient/cacert.pem');
+    put('vendor/composer/ca-bundle/res/cacert.pem');
+    put('.pixi/envs/default/ssl/cacert.pem');
+    put('certs/server.pem');
+    symlinkSync('.venv/lib/python3.12/site-packages/certifi/cacert.pem', join(folder, 'ca.pem'));
+    const plan = await planProjectMasks(folder, { patterns: secretPathsFor({}) });
+    assert.deepEqual(plan.masks, ['certs/server.pem'], 'the project\'s own key file only: an empty CA bundle would break TLS in the box');
+    assert.deepEqual(plan.skippedLinks, []);
+  } finally { rmSync(folder, { recursive: true, force: true }); }
+});
+
+test('docs: the project-scoped box is one box per project, not a mount per run (the owner\'s choice, said where it is used)', () => {
+  const doc = readFileSync(join(__dirname, '..', 'docs', 'docker.md'), 'utf8');
+  assert.match(doc, /one box per project, shared by\s+every run of that project, not a separate mount per run/);
+  assert.match(doc, /One box per project, not per run: every run of the project shares this box/);
+});
+
+test('up: a remembered project that now resolves to another real path is remembered by that path', { skip: POSIX_ONLY }, async () => {
+  const dir = tmp();
+  const repo = secretProject();
+  const parent = realpathSync.native(tmp());
+  try {
+    const link = join(parent, 'api');
+    symlinkSync(repo, link);
+    writeFileSync(join(dir, '.worca-container.json'), JSON.stringify({ with: [], project: link }));
+    const { exec, calls } = fakeExec();
+    const o = io();
+    assert.equal(await cmdContainer(['up'], { ...o, exec, dir }), 0);
+    assert.equal(JSON.parse(readFileSync(join(dir, '.worca-container.json'), 'utf8')).project, repo, 'the real path the box binds');
+    assert.deepEqual(calls.at(-1).args.slice(0, 3), ['compose', '-p', boxName(repo)]);
+    calls.length = 0;
+    assert.equal(await cmdContainer(['up'], { ...o, exec, dir }), 0);
+    assert.ok(!calls.some((k) => k.args.includes('down')), 'the same box again: nothing to stop');
+  } finally { for (const p of [dir, repo, parent]) rmSync(p, { recursive: true, force: true }); }
 });
