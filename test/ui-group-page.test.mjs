@@ -254,7 +254,7 @@ test('slice 3: a live hand-off keeps the last stage bar — never hidden, same n
   const marks = bar.querySelector('.run-prog-marks');
   assert.equal(bar.hidden, false);
   assert.equal(bar.dataset.mode, 'stages');
-  const text = () => root.querySelector('.gpage-card .run-status-text').textContent;
+  const text = () => root.querySelector('.gpage-card .run-status').dataset.text;
   for (const [label, raws, line] of [
     ['run 1 done, run 2 waiting', [F.at(-1), WAIT2], 'Run 2 of 2 · waiting for run 1'],
     ['run 2 ticket fired', [F.at(-1), { ticket: { status: 'fired' } }], 'Run 2 of 2 · starting'],
