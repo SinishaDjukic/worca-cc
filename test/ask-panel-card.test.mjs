@@ -2471,9 +2471,9 @@ test('ask-panel-card: a Folder member is listed but gets no per-member source in
   ]);
 });
 
-test('s2: a proposal for project acme lists the person\'s last-run cost tags plus required keys', async () => {
+test('s2: a proposal for project acme lists the project\'s default cost tags plus required keys', async () => {
   const rec = { tagRules: { dims: [{ key: 'client', label: 'Client', values: [], required: true }], enforce: false, prefill: [],
-    autofill: { tags: ['team:web'], from: 'last-run' } } };
+    autofill: { tags: ['team:web'], from: 'defaults' } } };
   const { ctx, card } = await openFlagged({ ...PROJECT_CARD, projectName: 'acme', tags: ['spike'] }, rec);
   await ctx.tick();
   assert.deepEqual(rec.tagRuleQueries, ['projectDir=%2Frepos%2Fproj']);

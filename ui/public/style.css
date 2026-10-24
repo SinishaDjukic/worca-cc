@@ -8057,11 +8057,8 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .hd-tags-editor{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;}
 .hd-tags .tag-input{flex:1 1 280px;}
 .rd-page-meta > .tag-chip{margin-left:6px;}
-/* Cost tags (s2): the auto-fill flash on the New run form, the missing required-key slot, the run page's facts tile. */
-.tag-chip.is-filled{animation:tagFilled 1.6s ease-out;}
-@keyframes tagFilled{0%,30%{background:var(--amber-bg);}100%{background:var(--field);}}
+/* Cost tags (s2): the missing required-key slot, the run page's facts tile. */
 .tag-chip.tag-missing{background:transparent;border:1px dashed var(--amber);color:var(--amber-ink);}
-@media (prefers-reduced-motion: reduce){.tag-chip.is-filled{animation:none;}}
 /* Cost tags under the facts tiles (D15): one wrapping row — the label, the chips and missing-key slots, the control last. */
 .rd-cost-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;}
 /* Run labels (slice 1): the outlined chip; colour only on the dot (labelHue → .hue-*). */

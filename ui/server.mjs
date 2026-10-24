@@ -7012,7 +7012,8 @@ app.get('/api/tag-dimensions', async (req, res) => {
       const src = prefillSources({ projectDir, person: startedByOf(req) });
       const prefill = prefillTags(info.dims, [], src);
       // s2 (D7, D8): the New run / Ask card fill, sent ONLY for a project target (a workspace has no single project).
-      const autofill = projectDir ? autoFillTags({ dims: info.dims, lastRun: src.lastUsed, projectDefaults: src.projectDefaults }) : undefined;
+      // #923: the project's defaults plus the slots; the last run's tags only fill mandatory dimensions.
+      const autofill = projectDir ? autoFillTags({ dims: info.dims, lastUsed: src.lastUsed, projectDefaults: src.projectDefaults }) : undefined;
       return res.json({ ...info, enforce: flagEnabled('runTags') && info.enforce === true, prefill, ...(autofill ? { autofill } : {}) });
     }
     res.json({ ...(await allTagDimensions()), team: await teamTagPolicy() });

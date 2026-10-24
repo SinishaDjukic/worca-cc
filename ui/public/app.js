@@ -280,9 +280,9 @@ import { runPresetScopeOptions, runPresetRequest, runPresetErrorText, RUN_PRESET
 import { renderPresetsList } from './run-presets-view.mjs';
 import { presetSetupSummary, presetSavedNote, workflowNamesFrom } from './run-presets-names.mjs';
 import { setupFromBody } from '../../src/shared/run-presets.mjs';
-import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor, flashFilled, missingSlot } from './tag-input.mjs';
+import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor, missingSlot } from './tag-input.mjs';
 import { normaliseTags, formatTag, parseTag } from '../../src/shared/run-tags.mjs';
-import { splitByDimensions, tagGroupOptions, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
+import { prefillTags, splitByDimensions, tagGroupOptions, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
 import { createFlagsView, bindFlagSwitch } from './flags-view.mjs';
 import { createSmartNaming } from './smart-naming.mjs';
 import { renderPattern, patternProblem, PRESET_TYPES, TYPE_RE } from '../../src/shared/naming/pattern.mjs';
@@ -4894,16 +4894,12 @@ async function refreshRunTagDims() {
   if (q) { try { const r = await fetch(`/api/tag-dimensions${q}`); info = r.ok ? await safeJson(r) : null; } catch {} }
   if (gen !== runTagDimsGen) return;
   runTagInput.resetSuggestions();
-  // s2: the person's last tagged run in this project fills the field (D6, D9); else the project's defaults, as before.
-  const fill = info?.autofill?.from === 'last-run' ? info.autofill.tags : (state.runTagDefaults || []);
-  const { slots, rest } = splitByDimensions(fill, info?.dims || []);
-  const filled = !runTagInput.dirty() && info?.autofill?.from === 'last-run';
+  // #923: the project's defaults fill the field; the last run's tags are never copied.
+  const { slots, rest } = splitByDimensions(state.runTagDefaults || [], info?.dims || []);
   if (!runTagInput.dirty()) runTagInput.set(rest);
-  // D4: the server's pre-fill (project default → Default → last used) when it sent one; the last run's slots win.
-  const slotTags = filled ? Object.entries(slots).map(([key, value]) => formatTag({ key, value }))
-    : Array.isArray(info?.prefill) ? info.prefill : Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
+  // D4: the server's pre-fill (project default → Default → last used, mandatory only) when it sent one.
+  const slotTags = Array.isArray(info?.prefill) ? info.prefill : Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
   paintRunTagDims(info, slotTags);
-  if (filled) flashFilled(runTagInput.el, rest);
 }
 document.getElementById('runTagsSaveDefault')?.addEventListener('click', async (e) => {
   const btn = e.currentTarget;
@@ -7335,14 +7331,14 @@ function clearTask(submitted) {
   if (!sameTask(snapshotTask(), submitted)) return;
   lastTask = submitted;
   setTask({ title: '', prompt: '', markdown: '', mdFileName: '', extras: [] });
-  { // #718 + s2: the next run starts from the last run's cost tags (D6), else the project's defaults, the dimension keys in their slots
+  { // #718 + #923: the next run starts from the project's defaults, the dimension keys in their slots; never this run's tags
     const sent = normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags;
-    if (state.tagDims?.autofill && sent.length) state.tagDims.autofill = { tags: sent, from: 'last-run' };   // project target only (D8)
-    const lastRun = state.tagDims?.autofill?.from === 'last-run';
-    const { slots, rest } = splitByDimensions(lastRun ? state.tagDims.autofill.tags : (state.runTagDefaults || []), state.tagDims.dims);
+    const { slots, rest } = splitByDimensions(state.runTagDefaults || [], state.tagDims.dims);
     const slotTags = Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
+    // The run just started is now the person's last used: a mandatory slot takes its value (project target only, D8).
+    if (state.tagDims?.autofill && sent.length) state.tagDims.prefill = prefillTags(state.tagDims.dims, [], { projectDefaults: state.runTagDefaults || [], lastUsed: sent });
     runTagInput.set(rest, { clearText: true });
-    runTagDims.set(lastRun ? slotTags : Array.isArray(state.tagDims.prefill) ? state.tagDims.prefill : slotTags);
+    runTagDims.set(Array.isArray(state.tagDims.prefill) ? state.tagDims.prefill : slotTags);
     paintRunTagDimsWarn();
   }
   el.reuseTask.hidden = false;
