@@ -108,7 +108,7 @@ import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './grou
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
 import { setShipDialogOpener, shipReason } from './shape/ship-card.mjs';
 import { runPositionLabel, groupKindWord, pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
-import { headModel, trackerModel, renderHeadButtons, renderTracker, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
+import { headModel, trackerModel, factsModel, renderHeadButtons, renderTracker, renderFacts, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
   hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip } from './run-head.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
 import { loadRunsView, saveRunsView, viewChip, viewMenuItems } from './runs-view-menu.mjs';
@@ -172,6 +172,7 @@ import { mountMarketplace, tabFromParam } from './marketplace/index.mjs';
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
+import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
 import { loadCredentials, credentialSuffix } from './credential-badges.mjs';
 import { freeRequestsSuffix, typicalFreeRun, newRunFreeWarning, providerFreeLine } from './openrouter-free-view.mjs';
 import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SYNC_EXECUTION_ID } from '../../src/shared/graph/constants.mjs';
@@ -4606,7 +4607,7 @@ function renderAgentRows(rows) {
     keepVisible(tagLevel(fanWrap, 'expert'), !!row.fanOut !== !!rowDef.fanOut);
     keepVisible(tagLevel(sWrap, 'expert'), (row.subagentModel || '') !== (rowDef.subagentModel || ''));
     // Only a Claude run has a sub-agent model to pick: Codex has its own spawn_agent, Copilot's sub-agents run on the
-    // node's own model, and Cursor has none.
+    // node's own model, OpenCode's investigator runs on the node's model, and Cursor has none.
     if (state.engine !== 'claude') sWrap.hidden = true;
     if (row.askQuestions !== null && row.askQuestions !== undefined) {
       const lockWhy = row.questionsLocked ? (row.askQuestions ? 'Always on for this agent' : 'Always off for this agent') : null;
@@ -4828,6 +4829,8 @@ function paintEngineHints() {
       ? `GitHub Copilot CLI runs this pipeline, including titles and summaries (on its default model). Step models: ${project ? 'project Settings' : 'Models › Copilot'}. Sign in once with copilot login.`
       : state.engine === 'cursor'
       ? `Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Cursor'}.`
+      : state.engine === 'opencode'
+      ? `OpenCode runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › OpenCode'}.`
       : `Codex runs this pipeline, including titles and summaries. Its models: ${project ? 'project Settings' : 'Models › Codex'}`;
   }
   if (el.engineDefaultHint) {
@@ -16566,6 +16569,8 @@ document.getElementById('smartNamingReset')?.addEventListener('click', (e) => po
   { smartNaming: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('smartNamingSave');
 onFlagChange('smartRunNaming', () => { snPaintMuted(); void snPaintCost(null); void paintHelperModelCards(); });
+// Settings › Network proxy: builds its body only while the corporateProxy flag is on.
+mountNetworkProxyCard();
 
 function paintAskSettings(data) {
   const turns = document.getElementById('askMaxTurns');
@@ -18437,6 +18442,7 @@ function renderModelsViewBody() {
     cursorEfforts: d.cursorEfforts || [],
     copilot: d.copilot || [],
     copilotEfforts: d.copilotEfforts || [],
+    opencodeEfforts: d.opencodeEfforts || [],
     efforts: d.efforts || [],
     hideBuiltin: !!d.hideBuiltinModels,
     projectName: pp ? pp.split('/').pop() : '',
@@ -18474,7 +18480,7 @@ function modelEditorEl() {
 function openModelEditorDialog() {
   if (!el.modelEditorModal || !el.modelEditorHost) return;
   const d = mvState.data || { efforts: [] };
-  const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels, ...(d.codexEfforts ? { codexEfforts: d.codexEfforts } : {}), cursorEfforts: d.cursorEfforts || [], copilotEfforts: d.copilotEfforts || [] });
+  const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels, ...(d.codexEfforts ? { codexEfforts: d.codexEfforts } : {}), cursorEfforts: d.cursorEfforts || [], copilotEfforts: d.copilotEfforts || [], opencodeEfforts: d.opencodeEfforts || [] });
   if (!mvState.editing && mvState.prefill) prefillModelEditor(editor, mvState.prefill);
   const title = editor.querySelector('.mv-editor-title');
   if (title) title.id = 'mv-editor-heading';
@@ -18695,7 +18701,7 @@ async function paintEngineSettings(data) {
   renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
     noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
     defaultLabels: { claude: 'the default model' },
-    jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [] } });
+    jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], opencode: [] } });
   // Each non-Claude card's readiness line (GET /api/engines). Only on the Models page, where the cards live: a
   // settings-changed broadcast repaints this from any view, and that must not spawn a preflight.
   if (currentView() === 'models') void paintEngineCardStatus(root);
@@ -35338,9 +35344,9 @@ function paintPageHead(glance, title, meta) {
 // place (paintPageHead owns the line's first text node, the Running page appends a person
 // chip after it), hidden when there is none. Copies like the Details header's button. Bound
 // once; the click reads the PAINTED name, never the one this paint saw (the stale-capture
-// note in paintHdHeaderMeta).
-function paintPageBranch(glance, name) {
-  const btn = glance && glance.querySelector('.rd-page-branch');
+// note in paintHdHeaderMeta). `fact`: the facts row it sits in, Branch or Merged (the base branch the work is in).
+function paintPageBranch(glance, name, fact = 'branch') {
+  const btn = glance && glance.querySelector(`.rd-kv-row[data-fact="${fact}"] .rd-page-branch`);
   if (!btn) return;
   btn.hidden = !name;
   const row = btn.closest('.rd-kv-row');            // run 3 (D8): the facts block's Branch row
@@ -35349,7 +35355,7 @@ function paintPageBranch(glance, name) {
   if (name && label.textContent !== name) {
     label.textContent = name;
     btn.title = name;
-    btn.setAttribute('aria-label', `Copy branch name ${name}`);
+    btn.setAttribute('aria-label', `Copy ${fact === 'merged' ? 'the branch it was merged into' : 'branch name'} ${name}`);
   }
   if (btn.dataset.bound === '1') return;
   btn.dataset.bound = '1';
@@ -35689,7 +35695,8 @@ function paintRunHead(screen, f, h) {
   if (slot) slot._prMenu = (anchor) => h.onMenu(anchor, f);
   renderHeadButtons(screen.querySelector('.rd-head-acts'), head, slot, h);
   if (slot && slot._prMenuOpen) slot._prMenuOpen(f);
-  renderTracker(screen.querySelector('.rd-track'), trackerModel(f), h);
+  renderTracker(screen.querySelector('.rd-track'), trackerModel(f));
+  renderFacts(screen.querySelector('.rd-kv'), factsModel(f), { ...h, onMerged: (name) => paintPageBranch(screen, name, 'merged') });
   return head;
 }
 

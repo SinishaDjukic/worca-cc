@@ -169,16 +169,22 @@ A dot is the state: peach working (pulses), grey paused or waiting, green ready,
 ### Tracker
 The run page card's read-only "where is the work" line (`.rd-track`, `ui/public/run-head.mjs` `renderTracker`), under
 the status line after a `--line` divider, at every level. Three steps on one 3-column grid: the PR path (Changes ·
-Pull request · Merged into main: the real base, also while the run is live, or `Merged into base` when none is known),
+Pull request · Merged; the base branch is the facts list's Merged row),
 the Push path (Changes · In the source here · On the remote), a Folder run's two
 steps (Changes · Applied to your folder), and one row per workspace member with its name in a 44px column. Each step is
 a 16px node, a 12px label (600 when current, `--ink-3` when future) and a 1px connector, `--green` after a done node and
 `--line-2` otherwise. Nodes reuse the status-dot colours: done is a green fill with ✓, current is a ring with a dot
 (peach pulsing while working, green when ready, violet filled with ✓ once merged), a problem is an amber `!`, failed a
 red `!`, closed an `--ink-3` × with a struck label, future a hollow `--line-2` ring. Glyphs come from `icons.mjs`
-(`check`, `alert`, `x`). An optional 12px `--ink-2` second line holds the PR link (`#866`), GitHub's verdict, blue
-(`--blue-ink`) in-progress words and amber (`--amber-ink`) problems. Its links and its two quiet buttons (`Watching`,
-which opens the ▾ menu at Advanced, and kept work's `Commit it yourself`, `button.rd-track-act`) are its only controls.
+(`check`, `alert`, `x`). The labels are static and nothing sits under a step; a wrapping label (a long source branch
+on the Push path) keeps its node and connector on its first line (`align-items:flex-start`). The changing words live in
+the facts list (`.rd-kv`, `run-head.mjs` `factsModel` / `renderFacts`) as rows under Branch: **Merged** (the base
+branch, the Branch row's copy chip, Advanced and up), **Kept work** (Download patch, `Commit it yourself`), **Pull
+request** (the shared PR chip, `runs-list.mjs` `prChip`; a workspace's **Pull requests** lists one member per line, the
+names in one column), **Checks** (the checks line: `--green-ink` passed, `--blue-ink` running, `--amber-ink` failed)
+and **Watch** (its words, View fix run, and the Watch-stopped hint on its own line). GitHub's verdict is the status
+line's only. The quiet buttons `Watching` (opens the ▾ menu at Advanced) and `Commit it yourself` are
+`button.rd-fact-act`. Fact labels never wrap.
 Labels wrap inside their column at every width and never run past the card; under 480px the connectors shrink to 8px.
 ### Menu (checked)
 One menu skin. The box is `.menu`: 4px padding, `--panel`, 1px `--line`, `--r-md` (8px), `--shadow-menu`, 13px. A row is

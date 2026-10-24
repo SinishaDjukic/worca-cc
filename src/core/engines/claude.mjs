@@ -675,6 +675,20 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
           text: text || undefined,
           ...(cost != null ? { costUsd: cost } : {}),
         });
+        // Claude Code can announce a spent subscription allowance as a
+        // synthetic assistant frame while an async Bash/tool process keeps the
+        // CLI alive indefinitely. Waiting for process exit in that case leaves
+        // the WORCA run stuck in "running". Treat only the CLI's own synthetic
+        // usage-limit message as terminal; ordinary model text that happens to
+        // discuss a limit must remain normal output. superviseSpawn terminates
+        // the CLI (and its tool tree) before rejecting, after which the existing
+        // recovery policy turns this structured class into a graceful pause.
+        if (evt?.type === 'assistant' && evt?.message?.model === '<synthetic>' && text
+            && classifyError(text) === 'usage_limit') {
+          const err = new Error(`${bin} reported: ${text.trim()}`);
+          err.errorClass = 'usage_limit';
+          return err;
+        }
       },
     }).then(resolveP, rejectP);
   });

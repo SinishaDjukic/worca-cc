@@ -68,6 +68,15 @@ test('Cursor: step models without effort; no helper slots', async () => {
   assert.throws(() => assertStepModelsInput({ cursor: { plan: { model: 'x', effort: 'high' } } }), /^Error: stepModels\.cursor\.plan: Cursor takes no effort$/);
 });
 
+test('OpenCode: step models with its variants; no helper slots; no Ask', async () => {
+  const { assertUtilityModelsInput, assertStepModelsInput, assertAskEngineInput, assertRunEngineInput } = await import('../src/core/settings.mjs');
+  assert.equal(assertRunEngineInput('opencode'), 'opencode');
+  assert.throws(() => assertAskEngineInput('opencode'), /askEngine must be one of claude \| codex/);
+  assert.throws(() => assertUtilityModelsInput({ opencode: { title: { model: 'x/y' } } }), /OpenCode runs no helper jobs/);
+  assert.deepEqual(assertStepModelsInput({ opencode: { plan: { model: 'x/y', effort: 'max' } } }), { opencode: { plan: { model: 'x/y', effort: 'max' } } });
+  assert.throws(() => assertStepModelsInput({ opencode: { plan: { model: 'x/y', effort: 'xhigh' } } }), /effort must be one of minimal \| low \| medium \| high \| max/);
+});
+
 test('a Cursor id in a Claude utility setting is a 400 naming it', async () => {
   const { addGlobalModel } = await import('../src/core/settings.mjs');
   await addGlobalModel({ id: 'cursor-m', engine: 'cursor' });

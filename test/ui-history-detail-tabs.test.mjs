@@ -597,13 +597,13 @@ test('discard confirms honestly, POSTs the keyed route and shows/links the saved
       assert.match(doc.querySelector('#viewer').textContent, /retained-work\.patch/,
         'the saved patch path is surfaced, not swallowed');
     } },
-    { name: 'the tracker links the recovery patch honestly (retained-work name)', run: async () => {
+    { name: 'the Kept work row links the recovery patch honestly (retained-work name)', run: async () => {
       const ctx = await bootDetail({
         rows: [retainedRow()],
         detail: { ...DETAIL, artifacts: [{ kind: 'retained-work-patch', relPath: 'retained-work.patch' }] },
       });
       await openDetail(ctx);
-      const link = [...ctx.window.document.querySelectorAll('#hist-detail .hd-glance .rd-track a.rd-track-link')]
+      const link = [...ctx.window.document.querySelectorAll('#hist-detail .hd-glance .rd-kv [data-fact="kept"] a.rd-fact-link')]
         .find((a) => a.textContent === 'Download patch');
       assert.ok(link, 'the alternate-recovery link renders for a retained-work-patch artifact');
       assert.equal(link.download, `retained-work-${ROW.id}.patch`, 'download name matches what the route prefers');
@@ -1663,7 +1663,8 @@ test('History glance: the card head\'s Create PR (every level), View PR │ ▾,
         if (pr) {
           assert.equal(glance.querySelector('.run-status').dataset.line, 'Ready to ship · the PR was closed');
           assert.ok(steps[1].classList.contains('is-closed'));
-          assert.equal(glance.querySelector('.runs-pr'), null, 'a closed PR is no chip');
+          const chip = glance.querySelector('.rd-kv [data-fact="pr"] a.runs-pr.is-closed');
+          assert.equal(chip.querySelector('.runs-pr-word').textContent, 'Closed', 'the Pull request fact says it was closed');
         }
         return;
       }
@@ -1674,7 +1675,10 @@ test('History glance: the card head\'s Create PR (every level), View PR │ ▾,
       assert.equal(main.classList.contains('btn-primary'), false);
       assert.equal(main.querySelector(':scope > .ic svg').innerHTML, ICONS[pr.state === 'MERGED' ? 'merge' : 'pull-request']);
       assert.ok(slot.querySelector('.rd-pr-split > button.rd-pr-more[aria-haspopup="menu"]'));
-      assert.equal(steps[1].querySelector('a.rd-track-pr').textContent, '#7');
+      assert.equal(steps[1].textContent, 'Pull request', 'the step carries its label only');
+      const chip = glance.querySelector('.rd-kv [data-fact="pr"] a.runs-pr');
+      assert.equal(chip.querySelector('.runs-pr-num').textContent, 'PR #7');
+      assert.equal(chip.getAttribute('href'), url);
       assert.ok(steps[pr.state === 'MERGED' ? 2 : 1].classList.contains(pr.state === 'MERGED' ? 'is-merged' : 'is-ready'));
     } });
   }

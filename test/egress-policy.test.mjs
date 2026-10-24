@@ -238,13 +238,13 @@ test('child env: proxy variables only while enforcing; loopback is the only bypa
   }
 });
 
-test('child env: a scrubbed agent spawn keeps the proxy variables', () => {
-  const vars = egressChildEnv('http://127.0.0.1:41234');
+test('child env: a scrubbed agent spawn keeps the proxy variables and the corporate-proxy marker', () => {
+  const vars = egressChildEnv('http://127.0.0.1:41234', [], { corporate: true });
   const saved = {};
   for (const k of Object.keys(vars)) { saved[k] = process.env[k]; process.env[k] = vars[k]; }
   try {
     const env = buildSpawnEnv(true, []);
-    for (const k of ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy', 'NO_PROXY', 'no_proxy']) assert.equal(env[k], vars[k], k);
+    for (const k of ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy', 'NO_PROXY', 'no_proxy', 'WORCA_CORPORATE_PROXY_URL']) assert.equal(env[k], vars[k], k);
   } finally {
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
@@ -450,4 +450,390 @@ test('supervisor: a proxy that stops listening comes back on the same port; stop
     assert.equal(proxy.listening, false, 'not restarted after stop()');
     o.server.close();
   }
+});
+
+// --- the corporate proxy (flag corporateProxy) -------------------------------------------------
+
+import { execFile } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+import { startFakeUpstream } from './helpers/fake-upstream-proxy.mjs';
+
+const FLAG_OFF = () => false;
+const FLAG_ON = () => true;
+const CORP_SECRETS = ['Password', 'a4f49c406510bdcab6824ee7c30fd852', Buffer.from('Domain\\User:Password').toString('base64')];
+const assertNoCorpSecrets = (text) => { for (const s of CORP_SECRETS) assert.ok(!String(text).includes(s), `secret in: ${text}`); };
+
+/** Run `fn` with WORCA_FLAGS set to `value`, restored afterwards (the real flagEnabled reads it per call). */
+async function withFlagsEnv(value, fn) {
+  const had = Object.prototype.hasOwnProperty.call(process.env, 'WORCA_FLAGS');
+  const before = process.env.WORCA_FLAGS;
+  process.env.WORCA_FLAGS = value;
+  try { return await fn(); } finally { if (had) process.env.WORCA_FLAGS = before; else delete process.env.WORCA_FLAGS; }
+}
+
+test('corporate proxy: the default gate is the real corporateProxy flag (no injection)', async () => {
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'none', originPort: o.port });
+  try {
+    // '-corporateProxy' locks it off even if the developer's own settings.json turned it on.
+    const offEnv = { HTTPS_PROXY: fake.url() };
+    let settingsRead = 0;
+    const counting = () => { settingsRead += 1; return {}; };
+    const off = await withFlagsEnv('-corporateProxy', () => startEgressPolicy({ env: offEnv, settings: counting }));
+    assert.equal(off.status, 'off');
+    assert.deepEqual(offEnv, { HTTPS_PROXY: fake.url() });
+    assert.equal(settingsRead, 0, 'the real flag off: settings are not read');
+    const onEnv = { HTTPS_PROXY: fake.url() };
+    const on = await withFlagsEnv('corporateProxy', () => startEgressPolicy({ env: onEnv, settings: () => ({}) }));
+    try {
+      assert.equal(on.status, 'on');
+      assert.equal(onEnv.HTTPS_PROXY, on.url);
+    } finally { await on.close(); }
+  } finally { await fake.close(); o.server.close(); }
+});
+
+test('corporate proxy, flag off: env untouched whatever HTTP(S)_PROXY or settings say', async () => {
+  const env = { HTTPS_PROXY: 'http://ACME%5Cjdoe:pw@corp.example:8080', NO_PROXY: 'intranet.example', PATH: '/bin' };
+  const before = { ...env };
+  let settingsRead = 0;
+  const r = await startEgressPolicy({ env, corporateProxy: FLAG_OFF, settings: () => { settingsRead += 1; return { networkProxy: { upstream: 'http://x:1' } }; } });
+  assert.equal(r.status, 'off');
+  assert.deepEqual(env, before);
+  assert.equal(settingsRead, 0, 'flag off: settings are not even read');
+  assert.equal(egressNotice(r), null);
+});
+
+test('corporate proxy, flag on: HTTP(S)_PROXY becomes the upstream and children get a credential-free loopback URL', async () => {
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'ntlm', originPort: o.port });
+  const corpUrl = fake.url('Domain%5CUser:Password@');
+  const env = { HTTPS_PROXY: corpUrl, NO_PROXY: 'intranet.example', ALL_PROXY: corpUrl, npm_config_https_proxy: corpUrl,
+    npm_config_proxy: corpUrl.replace('%5C', '%5c'), PATH: '/bin' };   // a differently encoded copy is caught too
+  const r = await startEgressPolicy({ env, corporateProxy: FLAG_ON, settings: () => ({}) });
+  try {
+    assert.equal(r.status, 'on');
+    assert.equal(r.boundAddress, '127.0.0.1', 'loopback only, never 0.0.0.0');
+    for (const k of ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy', 'ALL_PROXY', 'npm_config_https_proxy', 'npm_config_proxy']) {
+      assert.equal(env[k], r.url, k);
+      assert.ok(!env[k].includes('@'), `${k} carries no credentials`);
+    }
+    assert.deepEqual([...r.scrubbedKeys].sort(), ['ALL_PROXY', 'npm_config_https_proxy', 'npm_config_proxy']);
+    assert.equal(egressChildEnv(r.url, ['*']).NO_PROXY, '*', 'noProxy "*" is written alone');
+    assert.equal(env.PATH, '/bin');
+    assert.equal(env.NO_PROXY, '127.0.0.1,localhost,::1,intranet.example');
+    assert.equal(env.WORCA_CORPORATE_PROXY_URL, r.url, 'flag on with a connector: the browser-launch marker (D14)');
+    assert.equal(r.replacedProxy, false);
+    assert.match(egressNotice(r).text, /^Corporate proxy: via 127\.0\.0\.1:\d+ \(NTLMv2\), logged in as Domain\\User, local proxy http:\/\/127\.0\.0\.1:\d+/);
+    assertNoCorpSecrets(egressNotice(r).text);
+    assertNoCorpSecrets(JSON.stringify(r.upstream));
+    const tunnel = await rawRequest(Number(new URL(r.url).port), 'CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\nGET /t HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+    assert.match(tunnel, /^HTTP\/1\.1 200 Connection Established/);
+    assert.match(tunnel, /origin saw \/t/);
+    assert.equal(fake.stats.type3, 1);
+
+    const child = { ...env };
+    const again = await startEgressPolicy({ env: child, corporateProxy: FLAG_ON, settings: () => ({}) });
+    assert.equal(again.status, 'inherited', 'a worca under this one reuses the proxy, never chains to it');
+  } finally { await r.close(); await fake.close(); o.server.close(); }
+});
+
+test('corporate proxy + allow mode: allowed hosts are forwarded to the upstream, denied hosts never reach it', async () => {
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'none', originPort: o.port });
+  const env = { WORCA_EGRESS_MODE: 'allow', WORCA_EGRESS_ALLOW: PLATFORM_ALLOW, WORCA_EGRESS_DENY: '.invalid', HTTPS_PROXY: fake.url() };
+  const r = await startEgressPolicy({ env, corporateProxy: FLAG_ON, settings: () => ({}) });
+  try {
+    const port = Number(new URL(r.url).port);
+    const ok = await rawRequest(port, 'CONNECT app.worca.dev:443 HTTP/1.1\r\nHost: app.worca.dev:443\r\n\r\nGET /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+    assert.match(ok, /origin saw \/a/);
+    const denied = await rawRequest(port, 'CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n');
+    assert.match(denied, /^HTTP\/1\.1 403/);
+    assert.deepEqual(fake.stats.heads.map((h) => h.line), ['CONNECT app.worca.dev:443 HTTP/1.1']);
+    assert.equal(env.NO_PROXY, '127.0.0.1,localhost,::1', 'the policy keeps loopback as the only bypass');
+    assert.equal(env.WORCA_CORPORATE_PROXY_URL, r.url);
+    const n = egressNotice(r);
+    assert.doesNotMatch(n.text, /replaced/);
+    assert.match(n.text, /then forwarded to the corporate proxy 127\.0\.0\.1:\d+ \(no login\)/);
+  } finally { await r.close(); await fake.close(); o.server.close(); }
+});
+
+test('corporate proxy end to end: a child process fetch with the child env reaches the NTLM upstream', async () => {
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'ntlm', originPort: o.port });
+  const env = { HTTPS_PROXY: fake.url('Domain%5CUser:Password@') };
+  const r = await startEgressPolicy({ env, corporateProxy: FLAG_ON, settings: () => ({}) });
+  try {
+    const envProxy = pathToFileURL(fileURLToPath(new URL('../src/core/env-proxy.mjs', import.meta.url))).href;
+    const script = `import { useEnvProxy } from ${JSON.stringify(envProxy)}; useEnvProxy();
+      const res = await fetch('http://example.test/x'); console.log(res.status, await res.text());`;
+    // async execFile, never spawnSync: the local proxy runs on THIS process's event loop.
+    const out = await new Promise((resolve, reject) => {
+      execFile(process.execPath, ['--input-type=module', '-e', script],
+        { env: { ...process.env, ...env, WORCA_HOST_PID: '' }, timeout: 20_000 },
+        (err, stdout, stderr) => (err ? reject(new Error(`${err.message}\n${stderr}`)) : resolve(stdout.trim())));
+    });
+    // undici's EnvHttpProxyAgent tunnels http:// targets with CONNECT too, so the fake relays the
+    // GET to the origin instead of answering it itself.
+    assert.equal(out, '200 origin saw /x');
+    assert.ok(fake.stats.heads.some((h) => h.line === 'CONNECT example.test:80 HTTP/1.1'), JSON.stringify(fake.stats.heads));
+    assert.equal(fake.stats.type3, 1);
+    assert.ok(!JSON.stringify(env).includes('@'), 'the child env carries no credentials');
+  } finally { await r.close(); await fake.close(); o.server.close(); }
+});
+
+test('corporate proxy, flag on: no upstream anywhere is off; a bad one is a warning without the URL', async () => {
+  const env = { PATH: '/bin' };
+  const r = await startEgressPolicy({ env, corporateProxy: FLAG_ON, settings: () => ({}) });
+  assert.equal(r.status, 'off');
+  assert.deepEqual(env, { PATH: '/bin' });
+  const bad = await startEgressPolicy({ env: { HTTPS_PROXY: 'http://u:s3cret@corp.example:1' }, corporateProxy: FLAG_ON,
+    settings: () => ({ networkProxy: { upstream: 'https://corp.example:8443' } }) });
+  assert.equal(bad.status, 'off');
+  const n = egressNotice(bad);
+  assert.equal(n.level, 'warn');
+  assert.match(n.text, /^Corporate proxy: the upstream proxy must be an http:\/\/ URL/);
+  assert.doesNotMatch(n.text, /s3cret|corp\.example:8443/);
+});
+
+// --- the saved login (worca proxy login, src/core/proxy-credentials.mjs) ------------------------
+
+import { mkdtempSync, rmSync, chmodSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { saveProxyLogin, readProxyLogin, markLoginRejected, PROXY_LOGIN_FILE } from '../src/core/proxy-credentials.mjs';
+import { ntHash } from '../src/core/ntlm.mjs';
+
+const ACME = { domain: 'ACME', user: 'jdoe', password: 'S3cret!' };
+const CONNECT_GH = 'CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\nGET /t HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n';
+
+async function untilTrue(cond, ms = 3000, step = 10) {
+  const t0 = Date.now();
+  while (!cond()) {
+    if (Date.now() - t0 > ms) throw new Error('timed out');
+    await new Promise((r) => setTimeout(r, step));
+  }
+}
+
+/** A fake NTLM upstream for ACME\jdoe / S3cret!, a temp home, and a policy started on it. */
+async function savedLoginRig(t, { fakeOpts = {}, networkProxy = {}, password = 'S3cret!', marked = false, policyOpts = {} } = {}) {
+  const home = mkdtempSync(join(tmpdir(), 'worca-egress-login-'));
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'ntlm', domain: 'ACME', user: 'jdoe', password: 'S3cret!', originPort: o.port, ...fakeOpts });
+  const saved = password ? saveProxyLogin({ ...ACME, password }, { home }) : null;
+  if (saved && marked) markLoginRejected(saved.id, { home, upstream: `127.0.0.1:${fake.port}` });
+  const logs = [];
+  const env = {};
+  const r = await startEgressPolicy({
+    env, corporateProxy: FLAG_ON, log: (l) => logs.push(l),
+    settings: () => ({ networkProxy: { upstream: fake.url(), ...networkProxy } }),
+    login: () => readProxyLogin({ home }),
+    watchLogin: () => () => {},
+    markRejected: (id, opts) => markLoginRejected(id, { ...opts, home }),
+    ...policyOpts,
+  });
+  t.after(async () => { await r.close(); await fake.close(); o.server.close(); rmSync(home, { recursive: true, force: true }); });
+  return { home, fake, r, logs, env, saved, port: r.url ? Number(new URL(r.url).port) : 0 };
+}
+
+test('saved login: one marked rejected boots tripped and the upstream sees no credentials', async (t) => {
+  const { r, fake, port } = await savedLoginRig(t, { marked: true });
+  assert.equal(r.connector.status().state, 'tripped');
+  const n = egressNotice(r);
+  assert.equal(n.level, 'warn');
+  assert.match(n.text, /^Corporate proxy: via 127\.0\.0\.1:\d+ \(NTLMv2\): proxy needs login/);
+  const out = await rawRequest(port, CONNECT_GH);
+  assert.match(out, /^HTTP\/1\.1 407/);
+  assert.equal(fake.stats.authHeaders.length, 0);
+});
+
+test('saved login: the boot line names it, and reloadLogin picks up a new save', async (t) => {
+  const { r, home, port } = await savedLoginRig(t, { marked: true });
+  const fresh = await savedLoginRig(t);
+  const n = egressNotice(fresh.r);
+  assert.equal(n.level, 'info');
+  assert.match(n.text, /^Corporate proxy: via 127\.0\.0\.1:\d+ \(NTLMv2\), logged in as ACME\\jdoe, local proxy/);
+  saveProxyLogin(ACME, { home });
+  assert.equal(r.reloadLogin(), true);
+  assert.equal(r.connector.status().state, 'unverified');
+  assert.equal(r.reloadLogin(), false, 'nothing changed since');
+  assert.match(await rawRequest(port, CONNECT_GH), /origin saw \/t/);
+});
+
+test('saved login: a marker written by a second process trips the running connector', async (t) => {
+  const { r, home, fake, port, saved } = await savedLoginRig(t);
+  assert.equal(markLoginRejected(saved.id, { home, upstream: 'x' }), true);   // e.g. worca proxy test
+  assert.equal(r.reloadLogin(), true);
+  assert.equal(r.connector.status().state, 'tripped');
+  const before = fake.stats.authHeaders.length;
+  assert.match(await rawRequest(port, CONNECT_GH), /^HTTP\/1\.1 407/);
+  assert.equal(fake.stats.authHeaders.length, before);
+});
+
+test('saved login: a 407 to a handshake begun before a new login leaves the new login unmarked', async (t) => {
+  const { r, home, fake, port } = await savedLoginRig(t, { password: 'wrong', fakeOpts: { holdType3: true } });
+  const pending = rawRequest(port, CONNECT_GH);
+  await untilTrue(() => fake.stats.type3 === 1);
+  saveProxyLogin(ACME, { home });
+  assert.equal(r.reloadLogin(), true);
+  fake.release();
+  assert.match(await pending, /^HTTP\/1\.1 407/);
+  assert.equal(readProxyLogin({ home }).rejected, null);
+  assert.equal(r.connector.status().state, 'unverified');
+});
+
+test('saved login: the default watcher swaps a new login in without a restart', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'worca-egress-watch-'));
+  const prev = process.env.WORCA_HOME;
+  process.env.WORCA_HOME = home;
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'ntlm', domain: 'ACME', user: 'jdoe', password: 'S3cret!', originPort: o.port });
+  const r = await startEgressPolicy({ env: {}, corporateProxy: FLAG_ON, loginPollMs: 50, settings: () => ({ networkProxy: { upstream: fake.url() } }) });
+  t.after(async () => {
+    await r.close(); await fake.close(); o.server.close();
+    if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
+    rmSync(home, { recursive: true, force: true });
+  });
+  assert.equal(r.connector.status().state, 'none', 'no login at boot');
+  saveProxyLogin(ACME);   // the default home: WORCA_HOME/.worca-cc
+  await untilTrue(() => r.connector.status().state === 'unverified', 3000, 25);
+  assert.equal(r.connector.status().auth, 'auto');
+});
+
+test('saved login: a file that turns unreadable keeps a tripped connector tripped, logged once', { skip: process.platform === 'win32' }, async (t) => {
+  const { r, home, logs, saved } = await savedLoginRig(t, { marked: true });
+  chmodSync(join(home, PROXY_LOGIN_FILE), 0o644);
+  assert.equal(r.reloadLogin(), false);
+  assert.equal(r.connector.status().state, 'tripped');
+  assert.equal(r.connector.status().loginId, saved.id);
+  assert.equal(logs.filter((l) => /cannot be used/.test(l)).length, 1);
+  assert.match(logs.find((l) => /cannot be used/.test(l)), /^Corporate proxy:/);
+  const n = logs.length;
+  assert.equal(r.reloadLogin(), false);
+  assert.equal(logs.length, n, 'the same error is not logged again');
+});
+
+test('saved login: an explicit auth none never sends it, and no watcher starts', async (t) => {
+  let watched = 0;
+  const { r, home, fake, port } = await savedLoginRig(t, { networkProxy: { auth: 'none' }, policyOpts: { watchLogin: () => { watched += 1; return () => {}; } } });
+  assert.equal(r.connector.status().auth, 'none');
+  assert.equal(watched, 0);
+  await rawRequest(port, CONNECT_GH);
+  saveProxyLogin(ACME, { home });
+  r.reloadLogin();
+  assert.equal(r.connector.status().auth, 'none');
+  await rawRequest(port, CONNECT_GH);
+  assert.equal(fake.stats.authHeaders.length, 0);
+});
+
+test('saved login: a tripped handshake logs neither the password nor the hash', async (t) => {
+  const { logs, port, r } = await savedLoginRig(t, { password: 'wrong' });
+  assert.match(await rawRequest(port, CONNECT_GH), /^HTTP\/1\.1 407/);
+  assert.equal(r.connector.status().state, 'tripped');
+  assert.ok(logs.some((l) => /^Corporate proxy: .*did not accept/.test(l)), logs.join('\n'));
+  const joined = logs.join('\n');
+  for (const s of ['wrong', 'S3cret!', ntHash('wrong').toString('hex')]) assert.ok(!joined.includes(s), joined);
+});
+
+test('sourceEnv: the proxy variables before the swap, and never a parent\'s local proxy', async (t) => {
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'none', originPort: o.port });
+  const env = { HTTPS_PROXY: fake.url(), PATH: '/bin' };
+  const r = await startEgressPolicy({ env, corporateProxy: FLAG_ON, settings: () => ({}), login: () => null });
+  t.after(async () => { await r.close(); await fake.close(); o.server.close(); });
+  assert.equal(r.sourceEnv.HTTPS_PROXY, fake.url());
+  assert.equal(env.HTTPS_PROXY, r.url);
+  const local = 'http://127.0.0.1:9';
+  const child = { [EGRESS_PROXY_VAR]: local, HTTPS_PROXY: local, HTTP_PROXY: local, https_proxy: local, http_proxy: local, PATH: '/bin' };
+  const inh = await startEgressPolicy({ env: child, corporateProxy: FLAG_ON, settings: () => ({}) });
+  assert.equal(inh.status, 'inherited');
+  for (const k of [EGRESS_PROXY_VAR, 'HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy']) assert.equal(k in inh.sourceEnv, false, k);
+  const off = await startEgressPolicy({ env: { PATH: '/bin' }, corporateProxy: FLAG_OFF });
+  assert.deepEqual(off.sourceEnv, { PATH: '/bin' });
+});
+
+// ── Fixed local port (slice 3, D11-D14) ──
+// `closedPort()` gives a port nothing listens on. A parallel process can take that port between
+// closedPort() and the listen (an accepted, rare race: the test then fails with the EADDRINUSE
+// message itself, and a re-run passes).
+import { cmdProxy } from '../src/cli/proxy.mjs';
+import { CORPORATE_PROXY_VAR } from '../src/core/proxy-credentials.mjs';
+
+function tempHome(t) {
+  const home = mkdtempSync(join(tmpdir(), 'worca-egress-fixedport-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  return home;
+}
+
+test('fixedPort: the local proxy listens on 127.0.0.1:fixedPort and `worca proxy status` prints that URL', async (t) => {
+  const fake = await startFakeUpstream({ scheme: 'none', originPort: 9 });
+  t.after(() => fake.close());
+  const port = await closedPort();
+  const settings = () => ({ networkProxy: { upstream: fake.url(), fixedPort: port } });
+  const env = {};
+  const r = await startEgressPolicy({ env, corporateProxy: FLAG_ON, settings, login: () => null });
+  t.after(() => r.close());
+  assert.equal(r.status, 'on');
+  assert.equal(r.url, `http://127.0.0.1:${port}`);
+  assert.equal(env.HTTPS_PROXY, `http://127.0.0.1:${port}`);
+  assert.equal(env.WORCA_CORPORATE_PROXY_URL, `http://127.0.0.1:${port}`);
+  const lines = [];
+  const code = await cmdProxy(['status'], { out: (l) => lines.push(l), fail: () => {}, err: () => {}, env: {},
+    corporateProxy: FLAG_ON, settings, home: tempHome(t) });
+  assert.notEqual(code, 3, 'not needs-login');
+  assert.ok(lines.includes(`Local proxy: http://127.0.0.1:${port}`), lines.join('\n'));
+});
+
+test('WORCA_CORPORATE_PROXY_URL: one value in proxy-credentials, spawn.mjs and the promo-kit cdp helper', async () => {
+  const { SPAWN_ENV_BASE } = await import('../src/core/engines/spawn.mjs');
+  assert.equal(CORPORATE_PROXY_VAR, 'WORCA_CORPORATE_PROXY_URL');
+  assert.ok(SPAWN_ENV_BASE.includes(CORPORATE_PROXY_VAR), 'a scrubbed agent spawn keeps the marker');
+  const cdp = readFileSync(fileURLToPath(new URL('../assets/promo-kit/tools/cdp.mjs', import.meta.url)), 'utf8');
+  assert.ok(cdp.includes(`env.${CORPORATE_PROXY_VAR}`), 'cdp.mjs (a standalone asset) reads the same name');
+});
+
+test('fixedPort busy (another program): a clear EADDRINUSE error naming the port and the setting', async (t) => {
+  const squatter = net.createServer((c) => c.destroy());
+  await new Promise((r) => squatter.listen(0, '127.0.0.1', r));
+  t.after(() => squatter.close());
+  const port = squatter.address().port;
+  const settings = () => ({ networkProxy: { upstream: 'http://127.0.0.1:9', fixedPort: port } });
+  const r = await startEgressPolicy({ env: {}, corporateProxy: FLAG_ON, settings, login: () => null });
+  assert.equal(r.status, 'off');
+  assert.equal(r.upstreamError, `the local proxy cannot listen on 127.0.0.1:${port}: another program already uses that port (EADDRINUSE). Free the port or change networkProxy.fixedPort`);
+  assert.match(egressNotice(r).text, /^Corporate proxy: the local proxy cannot listen on 127\.0\.0\.1:\d+/);
+  assert.equal(egressNotice(r).level, 'warn');
+  await assert.rejects(startEgressPolicy({ env: { WORCA_EGRESS_MODE: 'block' }, corporateProxy: FLAG_ON, settings, login: () => null }),
+    /cannot listen on 127\.0\.0\.1:\d+: another program already uses that port \(EADDRINUSE\)/);
+});
+
+test('fixedPort held by another Worca: this one falls back to a free port and says so', async (t) => {
+  const port = await closedPort();
+  const settings = () => ({ networkProxy: { upstream: 'http://127.0.0.1:9', fixedPort: port } });
+  const first = await startEgressPolicy({ env: {}, corporateProxy: FLAG_ON, settings, login: () => null });
+  t.after(() => first.close());
+  const second = await startEgressPolicy({ env: {}, corporateProxy: FLAG_ON, settings, login: () => null });
+  t.after(() => second.close());
+  assert.equal(second.status, 'on');
+  assert.notEqual(second.url, `http://127.0.0.1:${port}`);
+  assert.equal(second.fixedPortShared, true);
+  assert.match(egressNotice(second).text, new RegExp(`127\\.0\\.0\\.1:${port} is served by another Worca`));
+});
+
+test('fixedPort, flag off with an enforced policy: the policy proxy starts on another port and settings are not read', async (t) => {
+  const port = await closedPort();
+  let reads = 0;
+  // An enforced policy starts a local proxy even with the flag off: the case where fixedPort could leak in.
+  const r = await startEgressPolicy({ env: { WORCA_EGRESS_MODE: 'block', HTTPS_PROXY: 'http://corp.example:8080' }, corporateProxy: FLAG_OFF,
+    settings: () => { reads += 1; return { networkProxy: { fixedPort: port } }; } });
+  t.after(() => r.close());
+  assert.equal(r.status, 'on');
+  assert.notEqual(r.url, `http://127.0.0.1:${port}`);
+  assert.equal(reads, 0);
+  assert.equal(r.fixedPort, undefined);
+  const refused = await new Promise((resolve) => {
+    const s = net.connect(port, '127.0.0.1');
+    s.on('connect', () => { s.destroy(); resolve(false); });
+    s.on('error', () => resolve(true));
+  });
+  assert.equal(refused, true);
 });
