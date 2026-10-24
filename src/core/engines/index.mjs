@@ -11,7 +11,7 @@ import { classifyError } from '../recoverable-error.mjs';
 import { runCodexProcess, codexCapabilities, classifyCodexError, codexPreflight, unenforcedRules, partialRules, codexMcpProblems, CODEX_COMMAND_RULE_REACH, codexChat } from './codex.mjs';
 import * as copilot from './copilot.mjs';
 import { runCursorProcess, cursorCapabilities, classifyCursorError, cursorPreflight,
-  unenforcedRules as cursorUnenforced, partialRules as cursorPartial, CURSOR_RULE_TERMS } from './cursor.mjs';
+  unenforcedRules as cursorUnenforced, partialRules as cursorPartial, CURSOR_RULE_TERMS, cursorChat } from './cursor.mjs';
 import * as gemini from './gemini.mjs';
 import * as goose from './goose.mjs';
 import * as opencode from './opencode.mjs';
@@ -62,7 +62,7 @@ const copilotAdapter = Object.freeze({ name: 'copilot', capabilities: copilot.co
 // cursor emits the normalized vocabulary itself (engines/cursor.mjs). Every rule it is given is partial (cursorRulePlan).
 const cursorAdapter = Object.freeze({ name: 'cursor', capabilities: cursorCapabilities, run: runCursorProcess, classifyError: classifyCursorError,
   preflight: cursorPreflight, unenforcedRules: cursorUnenforced, partialRules: cursorPartial,
-  ruleReach: CURSOR_RULE_TERMS.reach, ruleKind: CURSOR_RULE_TERMS.kind });
+  ruleReach: CURSOR_RULE_TERMS.reach, ruleKind: CURSOR_RULE_TERMS.kind, chat: cursorChat });
 // Gemini CLI and Qwen Code (engines/gemini.mjs, engines/qwen.mjs on the shared engines/gemini-family.mjs runner):
 // emit the normalized vocabulary themselves; command rules (and Gemini's path rules) are partial.
 const geminiAdapter = Object.freeze({ name: 'gemini', capabilities: gemini.geminiCapabilities, run: gemini.runGeminiProcess,
@@ -70,11 +70,11 @@ const geminiAdapter = Object.freeze({ name: 'gemini', capabilities: gemini.gemin
   partialRules: gemini.partialRules, ruleReach: gemini.GEMINI_RULE_TERMS.reach, ruleKind: gemini.GEMINI_RULE_TERMS.kind, chat: gemini.geminiChat });
 // Goose (engines/goose.mjs) emits the normalized vocabulary itself. It holds no permission rule (capability false).
 const gooseAdapter = Object.freeze({ name: 'goose', capabilities: goose.gooseCapabilities, run: goose.runGooseProcess,
-  classifyError: goose.classifyGooseError, preflight: goose.goosePreflight, unattachableMcp: goose.gooseMcpProblems });
+  classifyError: goose.classifyGooseError, preflight: goose.goosePreflight, unattachableMcp: goose.gooseMcpProblems, chat: goose.gooseChat });
 // OpenCode (engines/opencode.mjs) emits the normalized vocabulary itself; its rules ride OPENCODE_CONFIG_CONTENT.
 const opencodeAdapter = Object.freeze({ name: 'opencode', capabilities: opencode.opencodeCapabilities, run: opencode.runOpencodeProcess,
   classifyError: opencode.classifyOpencodeError, preflight: opencode.opencodePreflight, unenforcedRules: opencode.unenforcedRules,
-  partialRules: opencode.partialRules, ruleReach: opencode.OPENCODE_RULE_TERMS.reach, ruleKind: opencode.OPENCODE_RULE_TERMS.kind });
+  partialRules: opencode.partialRules, ruleReach: opencode.OPENCODE_RULE_TERMS.reach, ruleKind: opencode.OPENCODE_RULE_TERMS.kind, chat: opencode.opencodeChat });
 const qwenAdapter = Object.freeze({ name: 'qwen', capabilities: qwen.qwenCapabilities, run: qwen.runQwenProcess,
   classifyError: qwen.classifyQwenError, preflight: qwen.qwenPreflight, unenforcedRules: qwen.unenforcedRules,
   partialRules: qwen.partialRules, ruleReach: qwen.QWEN_RULE_TERMS.reach, ruleKind: qwen.QWEN_RULE_TERMS.kind, chat: qwen.qwenChat });

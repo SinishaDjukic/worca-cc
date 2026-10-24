@@ -120,7 +120,9 @@ export function createAskModels({
       // hand-made pick of one is an unknown model.
       // A row runs on every harness its connection reaches (src/shared/connections.mjs); a chat takes the ones Ask
       // runs on. An endpoint model Codex reaches too is offered in both groups.
-      const offered = (e) => e === 'claude' || available(e) && !brokerEngineRefusal(e);
+      // A model its engine's chat descriptor rules out (a provider that is itself an agent CLI, OpenCode Zen's free
+      // models) is not offered on that engine.
+      const offered = (e) => e === 'claude' || available(e) && !brokerEngineRefusal(e) && !chatDescriptor(e).modelProblem(m.id);
       const harnesses = harnessesOf(m).filter((e) => ASK_ENGINES.includes(e) && offered(e));
       if (!harnesses.length) continue;
       const engine = harnesses.includes(m.engine || 'claude') ? (m.engine || 'claude') : harnesses[0];

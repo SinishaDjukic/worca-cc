@@ -1,4 +1,4 @@
-// test/ask-qwen-gemini.test.mjs — an Ask Worca chat on Qwen Code and on Gemini CLI: the spawn's lockdown options, the
+// test/ask-qwen-gemini.test.mjs — an Ask Worca chat on Qwen Code, Gemini CLI, Goose and OpenCode: the spawn's lockdown options, the
 // MCP child's file tools, the catalog (no effort vocabulary), the prompt, the turn's readiness gate (support check,
 // self-test, preflight), the watchdog, the resume fallback, the title, and the panel's engine rules.
 import { test, after } from 'node:test';
@@ -29,9 +29,13 @@ after(() => {
   rmSync(scratchHome, { recursive: true, force: true });
 });
 
+const FAMILY = { anchor: 'gemini-cli-and-qwen-code', cap: (E) => `A per-turn cost cap is set, and ${E.label} reports no cost` };
 const ENGINES_UNDER_TEST = [
-  { engine: 'qwen', label: 'Qwen Code', model: 'qwen3-coder-plus', session: 'qwen:0b5e8c1a-0000-4000-8000-0000000000a1', cwd: '/h/.worca-cc/tmp/ask', resumeGone: 'qwen: No saved session found with ID x' },
-  { engine: 'gemini', label: 'Gemini CLI', model: 'gemini-3-pro', session: 'gemini:0b5e8c1a-0000-4000-8000-0000000000e1', cwd: '/h/.worca-cc/tmp/ask/gemini/ask_00000001', resumeGone: 'gemini exited with code 42: Invalid session identifier' },
+  { ...FAMILY, engine: 'qwen', label: 'Qwen Code', cli: "Qwen Code with Qwen Code's own sign-in", model: 'qwen3-coder-plus', session: 'qwen:0b5e8c1a-0000-4000-8000-0000000000a1', cwd: '/h/.worca-cc/tmp/ask', resumeGone: 'qwen: No saved session found with ID x' },
+  { ...FAMILY, engine: 'gemini', label: 'Gemini CLI', cli: "Gemini CLI with Gemini CLI's own sign-in", model: 'gemini-3-pro', session: 'gemini:0b5e8c1a-0000-4000-8000-0000000000e1', cwd: '/h/.worca-cc/tmp/ask/gemini/ask_00000001', resumeGone: 'gemini exited with code 42: Invalid session identifier' },
+  // Goose and OpenCode report a cost, but worca knows no price of their models: a cost cap refuses the turn too.
+  { engine: 'goose', label: 'Goose', cli: "Goose with Goose's own providers", anchor: 'goose', cap: (E) => `A per-turn cost cap is set, and ${E.model} has no known price on Goose`, model: 'google/gemini-3-flash', session: 'goose:worca-1-abc', cwd: '/h/.worca-cc/tmp/ask', resumeGone: "goose exited with code 1: No session found with name 'worca-1-abc'" },
+  { engine: 'opencode', label: 'OpenCode', cli: "OpenCode with OpenCode's own providers", anchor: 'opencode', cap: (E) => `A per-turn cost cap is set, and ${E.model} has no known price on OpenCode`, model: 'anthropic/claude-sonnet-5-5', session: 'opencode:ses_abc123', cwd: '/h/.worca-cc/tmp/ask', resumeGone: 'opencode exited with code 1: Error: Session not found' },
 ];
 
 const spawnBase = (over = {}) => ({
@@ -45,9 +49,10 @@ const spawnBase = (over = {}) => ({
   ...over,
 });
 
-test('the engine lists agree, and Chat runs on Qwen Code and Gemini CLI', () => {
+test('the engine lists agree, and Chat runs on Qwen Code, Gemini CLI, Goose and OpenCode (not Cursor)', () => {
   assert.deepEqual([...ASK_CHAT_ENGINES], ASK_ENGINES);
-  assert.ok(ASK_ENGINES.includes('qwen') && ASK_ENGINES.includes('gemini'));
+  for (const e of ['qwen', 'gemini', 'goose', 'opencode']) assert.ok(ASK_ENGINES.includes(e), e);
+  assert.equal(ASK_ENGINES.includes('cursor'), false);
   assert.equal(ENGINE_LABEL.qwen, 'Qwen Code');
   assert.equal(ENGINE_LABEL.gemini, 'Gemini CLI');
 });
@@ -110,7 +115,7 @@ test('the prompt: worca\'s file tools, no sub-agents, no images, the engine name
     const rules = engineSystemRules(E.engine);
     assert.match(rules, /the worca file tools read_file, grep and glob/);
     assert.ok(rules.includes(`a ${E.label} chat cannot view them`));
-    assert.ok(rules.includes(`this chat runs on ${E.label} with ${E.label}'s own sign-in`));
+    assert.ok(rules.includes(`this chat runs on ${E.cli}`));
     assert.doesNotMatch(rules, /Codex CLI|sub-agent/);
     assert.ok(buildSystemPrompt([], { engine: E.engine }).startsWith(rules));
     assert.ok(buildSystemPrompt([], { engine: E.engine, web: { enabled: true, allowedDomains: ['a.com'] } }).includes(`${E.label}'s own web tools stay off.`));
@@ -121,7 +126,7 @@ test('the prompt: worca\'s file tools, no sub-agents, no images, the engine name
 
 test('the panel: each engine\'s section and what it refuses before upload', () => {
   assert.deepEqual(pickerGroups(ROWS).map((g) => g.engine), ['claude', 'gemini', 'qwen']);
-  for (const engine of ['qwen', 'gemini']) {
+  for (const engine of ['qwen', 'gemini', 'goose', 'opencode']) {
     assert.equal(attachRefusal({ ext: '.png', engine }), 'images and PDFs need a Claude chat');
     assert.equal(attachRefusal({ ext: '.pdf', engine }), 'images and PDFs need a Claude chat');
     assert.equal(attachRefusal({ ext: '.md', engine }), null);
@@ -198,7 +203,7 @@ for (const E of ENGINES_UNDER_TEST) {
     assert.equal(err.code, `${E.engine}-not-ready`);
     const notice = getMessage(s.asst.id).blocks.find((b) => b.kind === 'notice' && b[`${E.engine}Setup`]);
     assert.equal(notice.href, chatDescriptor(E.engine).notReady.docsUrl);
-    assert.match(notice.href, /docs\/models\.md#gemini-cli-and-qwen-code$/);
+    assert.ok(notice.href.endsWith(`docs/models.md#${E.anchor}`));
     assert.ok(notice.text.startsWith(`${E.label} isn't ready: ${E.label} offered tools a chat must not have`));
   });
 
@@ -219,7 +224,7 @@ for (const E of ENGINES_UNDER_TEST) {
     await turn.run();
     assert.equal(calls.length, 0);
     assert.deepEqual(order, []);
-    assert.ok(frames.find((f) => f.type === 'ask-error').message.startsWith(`A per-turn cost cap is set, and ${E.label} reports no cost`));
+    assert.ok(frames.find((f) => f.type === 'ask-error').message.startsWith(E.cap(E)));
   });
 
   test(`the mock: no ${E.label} binary is asked`, async () => {
@@ -268,3 +273,37 @@ for (const E of ENGINES_UNDER_TEST) {
     assert.equal(getThread(s.thread.id).title, 'hello there');
   });
 }
+
+test('a model its engine rules out never starts a chat (OpenCode Zen, a Goose agent-CLI provider); the picker leaves it out', async () => {
+  for (const [engine, model, re] of [['opencode', 'opencode/big-pickle', /OpenCode Zen's free models/], ['goose', 'claude-acp/default', /claude-acp is an agent CLI/]]) {
+    const E = ENGINES_UNDER_TEST.find((x) => x.engine === engine);
+    const s = seed();
+    const { turn, frames, calls, order } = makeTurn({ ...E, model }, s, {}, { runClaudeImpl: async (o) => reply(E, o) });
+    await turn.run();
+    assert.equal(calls.length, 0);
+    assert.deepEqual(order, []);
+    assert.match(frames.find((f) => f.type === 'ask-error').message, re);
+  }
+  const cat = await createAskModels({ listModels: async () => [
+    { id: 'opencode/big-pickle', efforts: [], custom: 'global', engine: 'opencode' }, { id: 'anthropic/claude-sonnet-5-5', efforts: [], custom: 'global', engine: 'opencode' },
+    { id: 'claude-acp/default', efforts: [], custom: 'global', engine: 'goose' }, { id: 'google/gemini-3-flash', efforts: [], custom: 'global', engine: 'goose' },
+  ], pluginModels: () => [], secretStatus: () => [], effortless: () => new Set(), askPrefs: () => ({ engine: 'claude', slots: {} }) }).askCatalog();
+  assert.deepEqual(cat.models.map((m) => m.id), ['anthropic/claude-sonnet-5-5', 'google/gemini-3-flash']);
+});
+
+test('the watchdog keeps Goose\'s one named meta tool (load_skill); any other foreign tool still stops the turn', async () => {
+  const E = ENGINES_UNDER_TEST.find((x) => x.engine === 'goose');
+  const s = seed();
+  const { turn, frames } = makeTurn(E, s, {}, { runClaudeImpl: async (o) => reply(E, o, { calls: [{ id: 't1', name: 'load_skill', input: { name: 'web-search' } }] }) });
+  await turn.run();
+  assert.equal(frames.at(-1).type, 'ask-done');
+  const q = ENGINES_UNDER_TEST.find((x) => x.engine === 'qwen');
+  const s2 = seed();
+  const { turn: t2, frames: f2 } = makeTurn(q, s2, {}, { runClaudeImpl: async (o) => {
+    reply(q, o, { calls: [{ id: 't1', name: 'load_skill', input: {} }] });
+    if (o.signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
+    return { text: '', exitCode: 0 };
+  } });
+  await t2.run();
+  assert.match(f2.find((f) => f.type === 'ask-error').message, /^Qwen Code used load_skill/, 'only the engine that names it keeps it');
+});

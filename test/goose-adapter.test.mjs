@@ -138,7 +138,7 @@ test('capabilities: declared honestly; no Ask lockdown', () => {
   assert.deepEqual(Object.keys(gooseCapabilities).sort(), [...CAPABILITY_KEYS].sort());
   assert.deepEqual(CAPABILITY_KEYS.filter((k) => gooseCapabilities[k] === false),
     ['allowedTools', 'subagents', 'hookTelemetry', 'skills', 'permissionRules', 'subagentSystemPrompt', 'turnBudget']);
-  assert.equal(GOOSE_ASK_LOCKDOWN, null);
+  assert.ok(GOOSE_ASK_LOCKDOWN, 'Chat runs on Goose, locked down (plans/ask-on-qwen-gemini-spike.md)');
 });
 
 test('MCP: stdio servers only, names the wrapper file can carry', () => {
@@ -250,8 +250,8 @@ test('spawn: the turn cap stops the run past maxTurns tool calls', POSIX, async 
   await assert.rejects(runGooseProcess({ cwd: tmp(), bin: fake.bin, prompt: 'p', maxTurns: 1, scratchBase: tmp() }), (err) => err.turnCap === true);
 });
 
-test('spawn: Ask and read-only spawns refuse before any process', async () => {
-  await assert.rejects(runGooseProcess({ askLockdown: true, bin: '/nonexistent' }), /Chat on Goose is unavailable/);
+test('spawn: a read-only spawn, and a chat on an agent-CLI provider, refuse before any process', async () => {
+  await assert.rejects(runGooseProcess({ askLockdown: true, bin: '/nonexistent', model: 'claude-acp/default' }), /claude-acp is an agent CLI/);
   await assert.rejects(runGooseProcess({ sandbox: 'read-only', bin: '/nonexistent' }), /runs on Claude instead/);
 });
 

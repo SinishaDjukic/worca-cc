@@ -15,19 +15,20 @@
  *   beta      still in beta: every engine picker marks it (taking it out of beta is this one flag)
  *   signin    its models connect through its own sign-in (its CLI's login or its own providers): a model takes no env
  *             and no endpoint, and worca ships none of its models (efforts: src/core/model-env.mjs effortsForEngine)
- *   chat      a Chat (Ask) runs on it, and what an attachment it takes: {images, pdfs}; false = no Chat. Every engine but
- *             Claude runs a chat locked down, and its adapter exports the chat descriptor that does it (src/core/engines/
- *             chat.mjs refuses to load when the two disagree). Kept here, not in the adapters, because the browser and
- *             src/core/model-env.mjs read it and neither may import an adapter.
+ *   chat      Chat (Ask) on it: {images, pdfs, verified}; false = the adapter has no chat descriptor. Every engine but
+ *             Claude runs a chat locked down, and its adapter exports the chat descriptor that does it. `verified: false`
+ *             = the descriptor is wired but worca has no verified lockdown yet (its lockdown is null), so Chat stays off
+ *             there. src/core/engines/chat.mjs refuses to load when this and the descriptors disagree. Kept here, not in
+ *             the adapters, because the browser and src/core/model-env.mjs read it and neither may import an adapter.
  */
 export const ENGINES = Object.freeze({
   claude: Object.freeze({ label: 'Claude', models: true, cost: true, helpers: true, beta: false, signin: false, chat: Object.freeze({ images: true, pdfs: true }) }),
   codex: Object.freeze({ label: 'Codex', models: true, cost: true, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: true, pdfs: false }) }),
   copilot: Object.freeze({ label: 'Copilot', models: true, cost: false, helpers: true, beta: true, signin: false, chat: Object.freeze({ images: false, pdfs: false }) }),
-  cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, helpers: false, beta: true, signin: true, chat: false }),
+  cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: false, pdfs: false, verified: false }) }),
   gemini: Object.freeze({ label: 'Gemini CLI', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: false, pdfs: false }) }),
-  goose: Object.freeze({ label: 'Goose', models: true, cost: true, helpers: false, beta: true, signin: true, chat: false }),
-  opencode: Object.freeze({ label: 'OpenCode', models: true, cost: true, helpers: false, beta: true, signin: true, chat: false }),
+  goose: Object.freeze({ label: 'Goose', models: true, cost: true, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: false, pdfs: false }) }),
+  opencode: Object.freeze({ label: 'OpenCode', models: true, cost: true, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: false, pdfs: false }) }),
   qwen: Object.freeze({ label: 'Qwen Code', models: true, cost: false, helpers: false, beta: true, signin: true, chat: Object.freeze({ images: false, pdfs: false }) }),
 });
 
@@ -41,8 +42,8 @@ export const SWITCH_ENGINES = MODEL_ENGINE_NAMES;
 /** The engines whose models connect through their own sign-in (Cursor, Gemini CLI, Goose, OpenCode, Qwen Code). */
 export const SIGN_IN_ENGINE_NAMES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].signin));
 
-/** The engines a Chat runs on, Claude first (the `chat` flag above). */
-export const CHAT_ENGINE_NAMES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].chat));
+/** The engines a Chat runs on, Claude first (the `chat` flag above, without the unverified ones). */
+export const CHAT_ENGINE_NAMES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].chat && ENGINES[e].chat.verified !== false));
 
 /**
  * Why a chat on `engine` cannot take an attachment of this kind (`kind` text|image|binary, a PDF is `pdf: true`), said
@@ -50,7 +51,7 @@ export const CHAT_ENGINE_NAMES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINE
  */
 export function chatAttachRefusal({ engine, kind, pdf = false }) {
   const c = Object.hasOwn(ENGINES, engine || 'claude') ? ENGINES[engine || 'claude'].chat : null;
-  if (!c || kind === 'text') return null;
+  if (!c || c.verified === false || kind === 'text') return null;
   if (!c.images && !c.pdfs) return 'images and PDFs need a Claude chat';
   if (pdf && !c.pdfs) return 'PDFs need a Claude chat';
   if (!pdf && kind === 'image' && !c.images) return 'images need a Claude chat';

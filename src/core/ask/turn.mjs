@@ -1233,8 +1233,10 @@ class AskTurn extends EventEmitter {
     if (e.type === 'subagent' && e.event === 'spawn') { this._trip('tool', 'a sub-agent'); return; }
     if (e.type === 'tool' && Array.isArray(e.calls)) {
       if (e.calls.some((c) => c && c.name === 'Bash')) { this._trip('shell'); return; }
-      // Any other tool that is not worca's (a native web search, a file edit, …) means the lockdown did not hold either.
-      const foreign = e.calls.find((c) => c && !String(c.name || '').startsWith('mcp__'));
+      // Any other tool that is not worca's (a native web search, a file edit, …) means the lockdown did not hold either;
+      // only the engine's own meta tools its chat descriptor names (plans/: Goose's load_skill) are kept.
+      const meta = this.chat ? this.chat.metaTools : [];
+      const foreign = e.calls.find((c) => c && !String(c.name || '').startsWith('mcp__') && !meta.includes(String(c.name || '')));
       if (foreign) { this._trip('tool', String(foreign.name || 'an unknown tool')); return; }
       if ((e.parentId ?? null) !== null) return;
       this._toolCalls += e.calls.length;
@@ -1279,6 +1281,8 @@ class AskTurn extends EventEmitter {
     const own = (k) => d[`${this.engine}${k}`];
     const lockdown = own('Lockdown') ?? c.lockdown;
     if (!lockdown()) return this._complete({ kind: 'error', message: c.noLockdownMessage });
+    const modelProblem = c.modelProblem(this.model);
+    if (modelProblem) return this._complete({ kind: 'error', message: `${this.model} cannot run a chat on ${c.label}: ${modelProblem}. Pick another model for this chat.` });
     if (limitsNow.maxBudgetUsd != null) {
       const capped = chatCostCapRefusal(c, this.model, own('ModelPriced') ?? c.modelPriced);
       if (capped) return this._complete({ kind: 'error', message: capped });

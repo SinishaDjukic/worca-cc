@@ -1,7 +1,16 @@
-# Chat on Qwen Code and Gemini CLI — lockdown spike, chat descriptors, self-test
+# Chat on every harness — lockdown spikes (Qwen Code, Gemini CLI, OpenCode, Goose, Cursor), chat descriptors, self-test
 
 Status: implemented, 2026-10-24. Branch `claude/chat-descriptor-qwen-gemini` (on `claude/cursor-harness-worca-chat-8u9tgr`).
-Both engines passed the spike; Chat runs on both (`ASK_ENGINES = claude, codex, copilot, gemini, qwen`).
+
+| Engine | Result | Version checked |
+|---|---|---|
+| Qwen Code | **passed** — Chat on | 0.26.1 (npm) |
+| Gemini CLI | **passed** — Chat on | 0.65.0 (npm) |
+| OpenCode | **passed** — Chat on | 1.19.4 (npm `opencode-ai`) |
+| Goose | **passed** — Chat on | 1.56.0 (conda-forge `goose-cli`; GitHub release downloads were refused, 403) |
+| Cursor | **unverified** — descriptor wired, lockdown `null`, Chat off | not installable here (cursor.com, downloads.cursor.com refused; no npm, PyPI or conda-forge package) |
+
+`ASK_ENGINES = claude, codex, copilot, gemini, goose, opencode, qwen`.
 
 ## Goal
 
@@ -138,6 +147,93 @@ No real model and no real sign-in: each CLI was pointed at a local stub endpoint
   offered, all worca's; `list_projects` done; `read_file /etc/passwd` refused by worca; the turn finished `done`; a
   second turn resumed the stored `gemini:<uuid>` session in the same chat folder.
 
+## OpenCode 1.19.4 — PASS
+
+Stub: an OpenAI-compatible provider in `OPENCODE_CONFIG_CONTENT` (`@ai-sdk/openai-compatible`, `baseURL` the stub; OpenCode
+fetched the package from npm on first use). Hostile `~/.config/opencode/opencode.json`: an `evil` MCP server and a second
+`worca` one, `permission: {"*": "allow", "bash": "allow", …}`, `tools: {bash: true, evil_tool: true}`, `instructions`, an
+agent `worca-chat` with `permission: {bash: "allow"}`, an `evil` sub-agent; `tool/evil_tool.ts` (a custom tool writing a
+file), `plugin/evil.js` (a plugin writing a file), `agent/evil2.md`, `AGENTS.md`. Hostile workspace: `opencode.json` with
+`"*": "allow"` and an MCP server, `AGENTS.md`.
+
+- Baseline: `bash, edit, glob, grep, read, skill, task, todowrite, webfetch, write` + worca's tools.
+- Global `permission` deny-all and per-tool denies both work on a clean home, but OpenCode resolves permissions "last
+  match wins" over the merged user and inline config (key order), so a user's `"bash": "allow"` placed after `"*"`
+  could win. An **agent's** permission is evaluated after the global one.
+- **The lockdown** (engines/opencode.mjs `OPENCODE_ASK_LOCKDOWN`): a chat agent named `worca-chat-<random>` per spawn
+  (no user config can name it) with `permission: {"*": "deny", "<server>_*": "allow"}`; worca's server attached under
+  `worca<random>` per spawn (so a user server named `worca_x` cannot match the allow pattern; the stream's names are
+  mapped back to `mcp__worca__…`); `agent.general` / `agent.explore` `disable: true`; `--pure`;
+  `OPENCODE_DISABLE_PROJECT_CONFIG=1`; no `instructions`; a model is required and `opencode/…` (Zen) is refused.
+- **(i)** offered: worca's tools only, every request, clean and hostile home + hostile workspace. **(ii)** `bash`, `read`,
+  `write`, `webfetch`, `task`, `evil_list_projects`, `evil_tool` → "Model tried to call unavailable tool 'invalid'.
+  Available tools: worca_…". No canary, the custom tool and the plugin did not run. **(iii)** as (i)/(ii) with the hostile
+  config; the user's `worca` server lost to the inline one. The user's MCP servers still **start** (their tools are not
+  offered); `AGENTS.md` / `instructions` text reaches the prompt. **(iv)** end to end through `createAskTurn` and worca's
+  real MCP child: 82 tools, all worca's; `list_projects` done; worca's `read_file` refused `/etc/passwd`; done; a second
+  turn resumed the stored `opencode:ses_…`. A scripted `bash` call: refused by OpenCode, then the watchdog stopped the turn.
+- Self-test: passes on the real binary (~5 s), refuses the pipeline spawn path ("offered tools a chat must not have
+  (bash, edit, glob, …)").
+
+## Goose 1.56.0 — PASS
+
+Installed from conda-forge (`goose-cli-1.56.0-h19ae16a_0.conda`, unpacked with python `zstandard`); GitHub release
+downloads, crates.io and the Homebrew API were refused here. Stub: goose's `openai` provider (`OPENAI_HOST`,
+`OPENAI_BASE_PATH`, `OPENAI_API_KEY`). Found on the way: the probe MCP server answered unknown methods with an empty
+result, and goose opens with `server/discover` and falls back to `initialize` only on "method not found" — fixed in
+engines/chat-probe-mcp.mjs (a self-test that sees no worca tool fails closed anyway).
+
+Hostile home: `~/.config/goose/config.yaml` enabling `developer`, `extensionmanager`, `todo`, `chatrecall`, `summon`,
+`skills` and an `evil` stdio extension; `.goosehints`; skills in `~/.config/goose/skills`, `~/.claude/skills`,
+`~/.agents/skills`; a plugin in `~/.agents/plugins/evilplug` with `.mcp.json`, `hooks/hooks.json` (SessionStart,
+PreToolUse, UserPromptSubmit commands writing a file) and a skill.
+
+- `--no-profile` + `--with-builtin developer` (the pipeline argv): `edit, read_image, shell, tree, write, load_skill`.
+- `--no-profile`, no builtin: worca's tools + `load_skill`. The config's extensions (developer, extension manager, todo,
+  evil…) are not loaded: "Tool '…' is not available". Without `--no-profile`, goose adds `delegate`, `apps__*`,
+  `extensionmanager__*`, `analyze`, `load`: fail.
+- **But the user's home is still read**: the plugin's **hook ran** (file written) under `--no-profile`, and `load_skill`
+  served the user's skills and their supporting files (a `../` path was refused: "not found. Available: …").
+- **The lockdown** (engines/goose.mjs `GOOSE_ASK_LOCKDOWN`): `--no-profile`, no `--with-builtin`, worca's server as the
+  only `--with-extension`, and `HOME` + `XDG_CONFIG_HOME` / `XDG_DATA_HOME` / `XDG_STATE_HOME` / `XDG_CACHE_HOME` in
+  `<worca home>/engines/goose/chat-home` (stable, so sessions resume). worca's MCP child gets the real `HOME` back (git,
+  ssh). Env scrub keeps `GOOSE_*` and the chat model's provider's own names only. A provider that is an agent CLI
+  (`*-acp`, `claude-code`, `codex`, `cursor-agent`, `gemini-cli`, …) is refused: its tools are that CLI's.
+- **Meta tool kept: `load_skill`.** In the chat's home it knows only goose's built-in skills (`goose-doc-guide`,
+  `web-search`: instruction text); it refuses a path outside a skill's folder. It reads and writes nothing else and runs
+  nothing. The watchdog and the self-test allow it (chat descriptor `metaTools`) and nothing else.
+- **(i)** offered: worca's tools + `load_skill`, every request. **(ii)** `developer__shell`, `shell`,
+  `extensionmanager__manage_extensions`, `evil__list_projects`, `todo__todo_write` → "Tool '…' is not available";
+  `load_skill` of the user's skill → "Skill 'evil' not found"; traversal from a built-in skill → "has no supporting
+  files". No canary, no hook. **(iii)** the hostile home is not read at all. **(iv)** end to end through `createAskTurn`:
+  83 tools (82 worca + `load_skill`); `list_projects` done; worca's `read_file` refused `/etc/passwd`; done; resume kept
+  the `goose:worca-…` session. A scripted shell call: "not available", then the watchdog stopped the turn.
+- Self-test: passes on the real binary (<1 s), refuses the pipeline spawn path ("offered tools a chat must not have
+  (edit, read_image, shell, tree, write)").
+
+## Cursor — UNVERIFIED (Chat stays off)
+
+`cursor-agent` could not be installed: cursor.com and downloads.cursor.com are refused by this environment's proxy, and
+there is no npm, PyPI or conda-forge package of it. Wired: `cursorChat` (engines/cursor.mjs) with
+`CURSOR_ASK_LOCKDOWN = null`, its self-test returning a refusal (`CURSOR_NO_SELF_TEST`), and engine-switch.mjs
+`cursor.chat.verified: false`, so it is no Ask engine and its models are not offered. To turn it on, every item below
+must hold on the real binary, then set the lockdown, the self-test and `verified`:
+
+1. A way to point cursor-agent at a local model endpoint (a base-URL setting or env). Without one the self-test cannot
+   run, and Chat stays off however the lockdown looks. (Cursor's models are served by Cursor; none is known.)
+2. The candidate lockdown: `--mode ask` (read-only mode: does it remove the shell and file-write tools from the
+   offered list, or only refuse them?) plus `<cwd>/.cursor/cli.json` `permissions.deny: ["Shell(*)", "Read(**)",
+   "Write(**)", …]` for every tool kind its list shows (web fetch, search, MCP of other servers), and `allow` only for
+   worca's server's tools.
+3. That `~/.cursor/cli-config.json` (its permissions merge in, "deny winning" per the adapter notes) and
+   `~/.cursor/mcp.json` (user MCP servers) cannot widen it: a hostile user `allow: ["Shell(*)"]`, a user MCP server, a
+   name clash with `worca`.
+4. Cursor's rules (`.cursor/rules`, `~/.cursor` user rules, `AGENTS.md`) and any sub-agent / background-agent feature:
+   whether they add a tool.
+5. That denied tools are absent from the request's tool list (criterion (i)), not just refused when called.
+6. Resume (`--resume <chat id>`) and the not-found message (`CURSOR_RESUME_NOT_FOUND_RE`) on the chat path.
+Hosts that would need allowing for the spike: cursor.com, downloads.cursor.com (install), api2.cursor.sh (its model API).
+
 ## Chat descriptors (the refactor)
 
 Each adapter that supports Chat exports one descriptor (`engines/chat-descriptor.mjs` `makeChatDescriptor`):
@@ -194,7 +290,11 @@ the runtime backstop.
   adds a tool is caught by the self-test (the user's real `.env` is read); one that adds a background agent may not be.
 - **Relay mode** (agents under their own users) was not exercised: the self-test runs as the server user, and a
   Gemini chat folder written by the server must be readable by the agent user.
-- **Windows and macOS**: Linux only.
+- **Windows and macOS**: Linux only. A Goose chat refuses on Windows (its MCP wrappers are POSIX scripts there).
+- **Goose's keyring** with the moved home: provider keys from worca's environment were used; the keyring path (and a
+  provider configured only in `~/.config/goose`, which a chat no longer reads) was not checked.
+- **OpenCode's user MCP servers still start** as processes (their tools are not offered). OpenCode fetches the
+  self-test's provider package from npm on first use: offline, the self-test (and the chat) refuse.
 - **Telemetry.** Both CLIs phone home on their own (Qwen: an aliyuncs RUM host and models.dev, refused by this
   sandbox's proxy). Not changed here.
 - **Context files** (`GEMINI.md`, `QWEN.md`, skill descriptions) reach the model as text. Copilot's
@@ -204,8 +304,11 @@ the runtime backstop.
 ## Tests
 
 `test/qwen-gemini-ask-adapter.test.mjs` (argv, settings and policy files, pinned env, MCP env references, support
-check, resume left to the turn), `test/ask-qwen-gemini.test.mjs` (spawn options, MCP child, catalog, prompt, panel,
-turn gate order, self-test refusal, cost cap, mock, watchdog, resume fallback, title), `test/chat-selftest.test.mjs`
+check, resume left to the turn), `test/opencode-goose-ask-adapter.test.mjs` (OpenCode's per-spawn agent and server
+names, permission, names mapped back, Zen refused; Goose's argv, its own home, the real HOME and spawn env for worca's
+child, the provider env, agent-CLI providers), `test/ask-qwen-gemini.test.mjs` (all four engines: spawn options, MCP
+child, catalog, prompt, panel, turn gate order, self-test refusal, cost cap, mock, watchdog, resume fallback, title;
+models an engine rules out; Goose's meta tool), `test/chat-selftest.test.mjs`
 (verdict, both stub protocols, the probe server over stdio, cache and its keys), `test/chat-descriptor.test.mjs`
 (registry invariants, Codex and Copilot words unchanged). Pinned lists updated in `engine-switch-pause`,
 `ask-chat-engine`, `gemini-adapter`, `qwen-adapter`.

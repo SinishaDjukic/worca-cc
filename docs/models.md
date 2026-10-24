@@ -584,7 +584,7 @@ What a chat on Copilot can do, and what it cannot do:
 
 ## Cursor
 
-worca can run pipelines on Cursor's headless CLI agent. Chat does not run on Cursor.
+worca can run pipelines on Cursor's headless CLI agent. Chat does not run on Cursor (see the end of this section).
 
 > **Unverified.** This engine was built without a Cursor CLI to test against. Each fact it relies on (binary name,
 > flags, the stream format, the permission and MCP files) is listed as unverified at the top of
@@ -617,7 +617,7 @@ worca can run pipelines on Cursor's headless CLI agent. Chat does not run on Cur
 - **A provider or a custom endpoint** (a gateway's quota, an API key's limit): the pause names the provider (*OpenAI-compatible limit — …*). No other harness is offered: it would reach the same provider.
 - **Either way**, *Switch model…* (the run page's banner and the Resume menu) picks a model on another connection, and every remaining step of the run runs on it. From the command line: `worca resume <id> --model <model id>`. It must be a catalog model the run's harness can run.
 
-**Chat on Cursor is not available.** A chat needs every shell and disk tool switched off, and no Cursor switch for that is known. Cursor models are not offered in Chat.
+**Chat on Cursor is not available.** A chat needs every shell and disk tool switched off, and no Cursor switch for that has been verified: `cursor-agent` could not be installed where worca's lockdowns were checked, and it has no setting worca knows that points it at a test model endpoint, which the [self-test](#gemini-cli-and-qwen-code) every locked-down chat engine passes needs. Cursor models are not offered in Chat. What is left to verify is in `plans/ask-on-qwen-gemini-spike.md` (Cursor).
 
 ## Gemini CLI and Qwen Code
 
@@ -675,7 +675,7 @@ What a chat on Gemini CLI or Qwen Code can do, and what it cannot do:
 
 ## Goose
 
-worca can run pipelines on [Goose](https://github.com/aaif-goose/goose)'s headless CLI (`goose run`), checked against goose 1.54.0. Chat does not run on Goose.
+worca can run pipelines on [Goose](https://github.com/aaif-goose/goose)'s headless CLI (`goose run`), checked against goose 1.54.0. Chat runs on Goose 1.56.0 or newer, locked down to worca's own tools (see the end of this section).
 
 1. Install the Goose CLI (`brew install block-goose-cli`) and make sure worca finds it: on `PATH`, or `WORCA_GOOSE_BIN=/path/to/goose` in worca's environment.
 2. Set up a provider once: `goose configure`, or put the provider's key (for example `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) in worca's own environment. worca stores no Goose key. With guardrails that scrub the environment, add the key's name to the project's allowlist; `GOOSE_` variables always pass.
@@ -698,11 +698,15 @@ worca can run pipelines on [Goose](https://github.com/aaif-goose/goose)'s headle
 - No sub-agents (research fan-out runs serially), no skills folder, no hook telemetry. The host guard's kill-check hook does not run on Goose; its instructions to the agent still apply.
 - Goose keeps each step's session in its own database (`~/.local/share/goose/sessions`), named `worca-…`; a paused step resumes it.
 
-**Chat on Goose is not available.** Goose's chat mode skips every tool call, worca's own included, so it cannot lock a chat down the way Ask needs. Goose models are not offered in Chat.
+**Chat on Goose** needs goose 1.56.0 or newer (conda-forge's `goose-cli` works too). A chat runs `goose run --no-profile` with no built-in extension (no developer tools), worca's MCP server as its only extension, and in a home of its own under worca's home: your `~/.config/goose` config, extensions, hints, skills and `~/.agents` plugins (and their hooks) are not read. So goose sees no provider key in its own config: keep the model's key in worca's environment under that provider's own names (the system keyring may work too, but worca has not checked it with goose's home moved) (for a `google/…` model `GOOGLE_API_KEY`; a chat keeps only its model's provider's variables; a key only in `~/.config/goose` is not seen). The model is offered worca's tools and goose's `load_skill`, which then knows only goose's two built-in skills (text). Before the first chat on a goose binary, worca runs the same [self-test](#gemini-cli-and-qwen-code) as on Gemini CLI and Qwen Code.
+
+- A model whose provider is itself an agent CLI (`claude-acp`, `codex-acp`, `cursor-agent`, `gemini-cli`, …) runs that CLI's own tools, which worca cannot switch off: such models are not offered in Chat.
+- Goose prices some models, but worca cannot tell which, so a Goose chat runs only while the per-turn cost cap is off.
+- Everything else is as on Gemini CLI and Qwen Code: worca's file tools only, a chat that calls a shell or another tool stops with an error, no images or PDFs, the title from the first message, no suggestions, "Goose isn't ready" with the reason.
 
 ## OpenCode
 
-worca can run pipelines on [OpenCode](https://opencode.ai) (`opencode run`). OpenCode is in beta in worca. Chat does not run on OpenCode. Checked against opencode 1.18.23.
+worca can run pipelines on [OpenCode](https://opencode.ai) (`opencode run`). OpenCode is in beta in worca. Chat runs on OpenCode 1.19.4 or newer (1.x), locked down to worca's own tools (see the end of this section). Checked against opencode 1.18.23.
 
 1. Install OpenCode and make sure worca finds it: on `PATH`, or `WORCA_OPENCODE_BIN=/path/to/opencode` in worca's environment. worca runs OpenCode 1.x (npm `opencode-ai`). OpenCode 2 (npm `@opencode/cli`, and Homebrew's `opencode` formula) changed how `opencode run` works, so worca refuses it until it is supported.
 2. Connect a provider once in a terminal: `opencode auth login`, or set the provider's key (for example `ANTHROPIC_API_KEY`) in worca's own environment. `opencode providers list` shows what OpenCode sees. Without either, only OpenCode Zen's free models run, and they send the code to opencode.ai, so the engine card shows OpenCode as not ready and a run is refused, unless every step names its model or you opt in (below). worca checks the credentials in the environment the agent gets: under a set that scrubs the environment, a key only worca has does not count. For Google models, set `GOOGLE_GENERATIVE_AI_API_KEY`: OpenCode 1.18 lists a `GEMINI_API_KEY` under `providers list` but does not use it, so a run stops with "Google Generative AI API key is missing".
@@ -725,14 +729,19 @@ worca can run pipelines on [OpenCode](https://opencode.ai) (`opencode run`). Ope
 - Under the Secure set (environment scrubbed), provider keys in worca's environment do not reach OpenCode: use `opencode auth login`, or add the key's name to the set's environment allowlist.
 - The host guard's kill-check hook does not run on OpenCode; its instructions to the agent still apply.
 
-**Chat on OpenCode is not available.** A chat needs every shell and disk tool switched off, and no OpenCode lockdown has been verified. OpenCode models are not offered in Chat.
+**Chat on OpenCode** needs OpenCode 1.19.4 or newer (1.x). A chat runs as an agent of its own, named anew for every spawn, whose permission denies every tool and allows worca's MCP server (attached under a name new per spawn too), with OpenCode's `general` and `explore` sub-agents off, `--pure` (no plugins of yours) and no project config. A tool denied that way is not offered to the model at all, and your own `~/.config/opencode` permissions, custom tools, agents and MCP servers cannot widen it (your MCP servers still start; their tools are not offered). Before the first chat on an opencode binary, worca runs the same [self-test](#gemini-cli-and-qwen-code) as on Gemini CLI and Qwen Code, with a test provider in the inline config; OpenCode fetches that provider's package (`@ai-sdk/openai-compatible`) from npm the first time.
+
+- OpenCode Zen's free models (`opencode/…`) refuse a request without the shell, so they are not offered in Chat: pick a model of another provider. A chat uses the providers you signed in to with `opencode auth login`, or a key in worca's environment under that provider's own names (a chat keeps only its model's provider's variables).
+- worca knows no price of OpenCode's models, so an OpenCode chat runs only while the per-turn cost cap is off.
+- Your instructions files (`~/.config/opencode/AGENTS.md`, `instructions`) still reach the model as text.
+- Everything else is as on Gemini CLI and Qwen Code: worca's file tools only, a chat that calls a shell or another tool stops with an error, no images or PDFs, the title from the first message, no suggestions, "OpenCode isn't ready" with the reason.
 
 ## Chat
 
 **Which engine a chat runs on.** Chat runs on Claude Code, and on the engines worca can lock down to its own tools:
-[Codex](#codex), [GitHub Copilot CLI](#github-copilot-cli) and [Gemini CLI and Qwen Code](#gemini-cli-and-qwen-code). Pick one in
-Settings › Chat › Engine & models, or by picking one of its models for a new chat. Cursor, Goose and OpenCode models
-are not offered in Chat: worca has no verified lockdown for them. On every engine but Claude, a chat has no shell and no
+[Codex](#codex), [GitHub Copilot CLI](#github-copilot-cli), [Gemini CLI and Qwen Code](#gemini-cli-and-qwen-code), [Goose](#goose) and
+[OpenCode](#opencode). Pick one in Settings › Chat › Engine & models, or by picking one of its models for a new chat.
+Cursor models are not offered in Chat: worca has no verified lockdown for Cursor. On every engine but Claude, a chat has no shell and no
 file tools of its own, reads through worca's `read_file`, `grep` and `glob`, gets none of your MCP servers, and stops with
 an error the moment the engine calls a tool that is not worca's.
 

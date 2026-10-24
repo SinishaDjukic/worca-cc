@@ -3,8 +3,9 @@
 // Code): before the first chat turn on a binary, run it once, locked down exactly as a chat runs it, against a model
 // endpoint served here (127.0.0.1) and a stand-in for worca's MCP server (engines/chat-probe-mcp.mjs). The scripted model
 // asks for a shell command, then for worca's probe tool, then answers. It passes only when
-//   - every model request offered worca's MCP tools and nothing else (the user's own settings, servers, extensions and
-//     env files are read as in a real chat, so a setting that adds a tool fails it),
+//   - every model request offered worca's MCP tools and nothing else but the engine's named meta tools (its chat
+//     descriptor's metaTools; the user's own settings, servers, extensions and env files are read as in a real chat, so
+//     a setting that adds a tool fails it),
 //   - worca's tools whose names clash with the CLI's built-ins (read_file, glob, …) are still offered,
 //   - the shell call did not run (its canary file does not exist), and
 //   - worca's probe tool answered (the round trip a chat needs).
@@ -137,11 +138,14 @@ export function judgeSelfTest({ requests, allowed, expected, canaryRan, probeCal
  *   engine, label, bin, run (the adapter's run, called with askLockdown and `probe: {env}`),
  *   protocol ('openai'|'gemini'), probeEnv(baseUrl) (the env that points the CLI at the endpoint),
  *   wireName(server, tool) (the MCP tool's name on the wire), shellTool (the CLI's shell tool),
- *   configFiles (the files whose change re-runs the test), timeoutMs
+ *   configFiles (the files whose change re-runs the test), metaTools (the engine's own tools a chat keeps, as the
+ *   endpoint sees them), model (the model id the run is given), timeoutMs.
+ *   The run gets `probe: {env, url}`: the env that points the CLI at the endpoint, and the endpoint's base URL (for a
+ *   CLI that takes its provider from config, not env).
  */
 export async function chatSelfTest({
-  engine, label, bin, run, protocol, probeEnv, wireName, shellTool = 'run_shell_command', configFiles = [],
-  timeoutMs = 120_000, cacheFile = defaultCacheFile(), version = binaryVersion, home = worcaHome(),
+  engine, label, bin, run, protocol, probeEnv, wireName, shellTool = 'run_shell_command', configFiles = [], metaTools = [],
+  model = SELF_TEST_MODEL, timeoutMs = 120_000, cacheFile = defaultCacheFile(), version = binaryVersion, home = worcaHome(),
 }) {
   let ver;
   try { ver = await version(bin); } catch (err) { return { refusal: /ENOENT|EACCES/.test(String(err?.code || err?.message)) ? `cannot run ${bin} (${err.code || err.message})` : `could not ask ${bin} its version (${err?.message || err})` }; }
@@ -150,7 +154,7 @@ export async function chatSelfTest({
   const key = `${engine}|${real}|${ver}|${configFingerprint(configFiles)}`;
   if (passed.has(key) || readCache(cacheFile)[key]?.ok === true) { passed.set(key, true); return {}; }
   if (inflight.has(key)) return inflight.get(key);
-  const p = runOnce({ label, bin, run, protocol, probeEnv, wireName, shellTool, timeoutMs, home, engine })
+  const p = runOnce({ label, bin, run, protocol, probeEnv, wireName, shellTool, timeoutMs, home, engine, metaTools, model })
     .then((r) => { if (!r.refusal) { passed.set(key, true); writeCache(cacheFile, key, new Date().toISOString()); } return r; })
     .catch((err) => ({ refusal: `worca could not run its chat self-test on ${label} (${err?.message || err})` }))
     .finally(() => inflight.delete(key));
@@ -158,7 +162,7 @@ export async function chatSelfTest({
   return p;
 }
 
-async function runOnce({ label, bin, run, protocol, probeEnv, wireName, shellTool, timeoutMs, home, engine }) {
+async function runOnce({ label, bin, run, protocol, probeEnv, wireName, shellTool, timeoutMs, home, engine, metaTools = [], model = SELF_TEST_MODEL }) {
   const dir = join(home, 'tmp', 'chat-selftest', `${engine}-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
   mkdirSync(join(dir, 'cwd'), { recursive: true, mode: 0o700 });
   const canary = join(dir, 'canary');
@@ -175,8 +179,8 @@ async function runOnce({ label, bin, run, protocol, probeEnv, wireName, shellToo
   try {
     await run({
       cwd: join(dir, 'cwd'), bin, prompt: "worca's chat self-test: follow the calls you are given, then answer done.", systemPrompt: '',
-      model: SELF_TEST_MODEL, askLockdown: true, mcpConfigPath, envScrub: true, envAllowlist: [],
-      probe: { env: probeEnv(stub.url) }, signal: AbortSignal.timeout(timeoutMs), onEvent: () => {},
+      model, askLockdown: true, mcpConfigPath, envScrub: true, envAllowlist: [],
+      probe: { env: probeEnv(stub.url), url: stub.url }, signal: AbortSignal.timeout(timeoutMs), onEvent: () => {},
     });
   } catch (err) {
     error = String(err?.message || err).split('\n')[0].slice(0, 300);
@@ -187,7 +191,7 @@ async function runOnce({ label, bin, run, protocol, probeEnv, wireName, shellToo
   try { probeCalled = readFileSync(probeLog, 'utf8').includes('"worca_probe"'); } catch { /* never called */ }
   const verdict = judgeSelfTest({
     requests: stub.requests,
-    allowed: PROBE_TOOLS.map((t) => wireName(PROBE_SERVER, t)),
+    allowed: [...PROBE_TOOLS.map((t) => wireName(PROBE_SERVER, t)), ...metaTools],
     expected: PROBE_TOOLS.map((t) => wireName(PROBE_SERVER, t)),
     canaryRan: existsSync(canary), probeCalled, error, label,
   });

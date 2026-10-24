@@ -25,8 +25,11 @@ function serve() {
       const name = String(m.params?.name || '');
       if (process.env.WORCA_PROBE_LOG) { try { appendFileSync(process.env.WORCA_PROBE_LOG, `${JSON.stringify({ name })}\n`); } catch { /* the self-test reads a missing call as a failure */ } }
       send({ jsonrpc: '2.0', id: m.id, result: { content: [{ type: 'text', text: `${PROBE_ANSWER} ${name}` }] } });
-    } else if (m.id !== undefined) {
+    } else if (m.method === 'ping') {
       send({ jsonrpc: '2.0', id: m.id, result: {} });
+    } else if (m.id !== undefined && typeof m.method === 'string') {
+      // Anything else is unknown (a client that opens with `server/discover`, as goose does, falls back to initialize).
+      send({ jsonrpc: '2.0', id: m.id, error: { code: -32601, message: `method not found: ${m.method}` } });
     }
   });
 }
