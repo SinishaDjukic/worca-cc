@@ -730,7 +730,8 @@ export async function runCopilotProcess({
 
 /** Copilot's chat descriptor (engines/chat-descriptor.mjs; plans/ask-on-copilot-design.md Part 2): the read-only spawn
  *  above with COPILOT_ASK_FLAGS. Copilot has no sign-in status command: a signed-out CLI fails the turn itself (auth
- *  class), so the preflight only runs the binary. It reports no cost, so a per-turn cost cap refuses the turn. Each
+ *  class), so the preflight only runs the binary. It reports no cost: worca prices its tokens (a Models page price) for
+ *  the per-turn cost cap, and refuses the turn under a cap only for a model with no price. Each
  *  `impl` is the function a test hands the turn in its place. */
 export const copilotChat = makeChatDescriptor({
   engine: 'copilot',

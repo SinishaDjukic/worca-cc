@@ -4,6 +4,7 @@
 // turn.mjs, ask/models.mjs, ask/spawn.mjs and ask/prompt.mjs read them instead of naming engines. Import-light on
 // purpose: the adapters import it.
 import { ENGINES, engineLabel, chatEnginesTaking } from '../../shared/engine-switch.mjs';
+import { CODEX_PRICES, codexCachedRate, listPriceFor } from '../list-prices.mjs';
 
 const DOCS = 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md';
 /** A descriptor's `suggestionModel` that means "the chat's own model". */
@@ -21,7 +22,8 @@ const ready = async () => ({});
  *   selfTest(o)         null, or the runtime proof that the lockdown holds on this binary and this user's config
  *                       (engines/chat-selftest.mjs): resolves {refusal} or {}
  *   preflight({model})  the binary runs and is signed in: resolves {refusal} | {warning} | {}
- *   modelPriced(model)  for an engine that reports a cost: worca knows this model's price (a per-turn cost cap needs one)
+ *   listRates(model)    the list price (per-million-token rates) the engine's provider bills `model` at, or null; the
+ *                       Models page price wins over it (ask/chat-price.mjs chatModelRates)
  *   resumeNotFound(err) the turn's error says the stored session is gone (the turn retries once from history)
  *   notReady            {code, docsUrl, setupLabel, flag}: the not-ready notice and its error code; `flag` is the notice's
  *                       marker the panel opens the setup docs from
@@ -42,7 +44,7 @@ const ready = async () => ({});
  *                       worca's own MCP child too (chatSignInEnv), whose Auto classifier runs on the chat's engine
  */
 export function makeChatDescriptor({
-  engine, lockdown, askSupport = ready, selfTest = null, preflight = ready, modelPriced = null, resumeNotFound = never,
+  engine, lockdown, askSupport = ready, selfTest = null, preflight = ready, listRates = null, resumeNotFound = never,
   docsAnchor, setupLabel, noLockdownMessage, shellTrippedMessage, titles = true, suggestionModel = CHAT_MODEL, prompt = {},
   notReadyFlag, metaTools = [], modelProblem = null, ownFolder = false, turnImages = false, signIn = () => [],
 }) {
@@ -55,7 +57,7 @@ export function makeChatDescriptor({
     noLockdownMessage: noLockdownMessage || `Chat on ${label} is unavailable: worca cannot lock this ${label} down for a chat. Use a Claude chat.`,
     askSupport, selfTest, preflight,
     reportsCost: ENGINES[engine]?.cost === true,
-    modelPriced: typeof modelPriced === 'function' ? modelPriced : () => false,
+    listRates: typeof listRates === 'function' ? listRates : () => null,
     resumeNotFound,
     notReady: Object.freeze({ code: `${engine}-not-ready`, docsUrl: `${DOCS}#${docsAnchor || engine}`, prefix: `${short} isn't ready`, setupLabel: `${short} setup`, flag: notReadyFlag || `${engine}Setup` }),
     shellTrippedMessage: shellTrippedMessage || `${label} tried to run a shell command although it was given none — worca stopped the turn.`,
@@ -97,10 +99,26 @@ export function chatSignInEnv(d, model, env = process.env) {
     && want.some((w) => (w.endsWith('_') ? k.startsWith(w) : k === w))).sort();
 }
 
-/** The error a per-turn cost cap gives a chat on `d` for `model`, or null when worca can keep the turn under it. */
-export function chatCostCapRefusal(d, model, modelPriced = d.modelPriced) {
-  if (!d.reportsCost) return `A per-turn cost cap is set, and ${d.label} reports no cost, so worca cannot keep this turn under it. Turn the cap off (Settings › Chat), or use a Claude or Codex chat.`;
-  if (!modelPriced(model)) return `A per-turn cost cap is set, and ${model} has no known price on ${d.label}, so worca cannot keep this turn under it. Pick a priced ${d.label} model, or turn the cap off (Settings › Chat).`;
+/** The error a per-turn cost cap gives a chat on `d` for `model`, or null when worca can keep the turn under it:
+ *  `modelPriced(model)` says worca has a price for it (ask/chat-price.mjs chatModelRates), the same rule on every engine. */
+export function chatCostCapRefusal(d, model, modelPriced) {
+  if (!modelPriced(model)) return `A per-turn cost cap is set, and worca has no price for ${model || `${d.label}'s default model`}, so it cannot keep this turn under it. Set the model's price on the Models page, pick a priced model, or turn the cap off (Settings › Chat).`;
+  return null;
+}
+
+/** OpenAI's list price of a model id as per-million-token rates (list-prices.mjs CODEX_PRICES), or null. */
+export function openaiListRates(id) {
+  const row = typeof id === 'string' && Object.hasOwn(CODEX_PRICES, id) ? CODEX_PRICES[id] : null;
+  return row ? { input: row[0], output: row[1], cacheRead: codexCachedRate(row) } : null;
+}
+/** The list price of a `provider/model` id that worca knows its provider's prices for: `anthropic/<Claude id>`
+ *  (Anthropic's list price) and `openai/<id>` (OpenAI's); else null. Goose and OpenCode call those providers directly. */
+export function providerListRates(id) {
+  const m = /^([a-z0-9_.-]+)\/(.+)$/i.exec(String(id || '').trim());
+  if (!m) return null;
+  const p = m[1].toLowerCase();
+  if (p === 'anthropic') return listPriceFor(m[2]);
+  if (p === 'openai') return openaiListRates(m[2]);
   return null;
 }
 

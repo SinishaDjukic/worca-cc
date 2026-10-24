@@ -29,13 +29,12 @@ after(() => {
   rmSync(scratchHome, { recursive: true, force: true });
 });
 
-const FAMILY = { anchor: 'gemini-cli-and-qwen-code', cap: (E) => `A per-turn cost cap is set, and ${E.label} reports no cost` };
+const FAMILY = { anchor: 'gemini-cli-and-qwen-code' };
 const ENGINES_UNDER_TEST = [
   { ...FAMILY, engine: 'qwen', label: 'Qwen Code', cli: "Qwen Code with Qwen Code's own sign-in", model: 'qwen3-coder-plus', session: 'qwen:0b5e8c1a-0000-4000-8000-0000000000a1', cwd: '/h/.worca-cc/tmp/ask', resumeGone: 'qwen: No saved session found with ID x' },
   { ...FAMILY, engine: 'gemini', label: 'Gemini CLI', cli: "Gemini CLI with Gemini CLI's own sign-in", model: 'gemini-3-pro', session: 'gemini:0b5e8c1a-0000-4000-8000-0000000000e1', cwd: '/h/.worca-cc/tmp/ask/gemini/ask_00000001', resumeGone: 'gemini exited with code 42: Invalid session identifier' },
-  // Goose and OpenCode report a cost, but worca knows no price of their models: a cost cap refuses the turn too.
-  { engine: 'goose', label: 'Goose', cli: "Goose with Goose's own providers", anchor: 'goose', cap: (E) => `A per-turn cost cap is set, and ${E.model} has no known price on Goose`, model: 'google/gemini-3-flash', session: 'goose:worca-1-abc', cwd: '/h/.worca-cc/tmp/ask', resumeGone: "goose exited with code 1: No session found with name 'worca-1-abc'" },
-  { engine: 'opencode', label: 'OpenCode', cli: "OpenCode with OpenCode's own providers", anchor: 'opencode', cap: (E) => `A per-turn cost cap is set, and ${E.model} has no known price on OpenCode`, model: 'anthropic/claude-sonnet-5-5', session: 'opencode:ses_abc123', cwd: '/h/.worca-cc/tmp/ask', resumeGone: 'opencode exited with code 1: Error: Session not found' },
+  { engine: 'goose', label: 'Goose', cli: "Goose with Goose's own providers", anchor: 'goose', model: 'google/gemini-3-flash', session: 'goose:worca-1-abc', cwd: '/h/.worca-cc/tmp/ask', resumeGone: "goose exited with code 1: No session found with name 'worca-1-abc'" },
+  { engine: 'opencode', label: 'OpenCode', cli: "OpenCode with OpenCode's own providers", anchor: 'opencode', model: 'anthropic/claude-sonnet-5-5', session: 'opencode:ses_abc123', cwd: '/h/.worca-cc/tmp/ask', resumeGone: 'opencode exited with code 1: Error: Session not found' },
 ];
 
 const spawnBase = (over = {}) => ({
@@ -222,13 +221,25 @@ for (const E of ENGINES_UNDER_TEST) {
     assert.deepEqual(order, ['support']);
   });
 
-  test(`a per-turn cost cap refuses a ${E.label} turn (it reports no cost); nothing spawns`, async () => {
+  test(`a per-turn cost cap refuses a ${E.label} model worca has no price for; nothing spawns`, async () => {
     const s = seed();
-    const { turn, frames, calls, order } = makeTurn(E, s, {}, { askLimits: () => ({ maxTurns: 40, maxBudgetUsd: 1 }), runClaudeImpl: async (o) => reply(E, o) });
+    const { turn, frames, calls, order } = makeTurn(E, s, {}, { askLimits: () => ({ maxTurns: 40, maxBudgetUsd: 1 }), chatModelRates: () => null, runClaudeImpl: async (o) => reply(E, o) });
     await turn.run();
     assert.equal(calls.length, 0);
     assert.deepEqual(order, []);
-    assert.ok(frames.find((f) => f.type === 'ask-error').message.startsWith(E.cap(E)));
+    assert.ok(frames.find((f) => f.type === 'ask-error').message.startsWith(`A per-turn cost cap is set, and worca has no price for ${E.model}, so it cannot keep this turn under it. Set the model's price on the Models page`));
+  });
+
+  test(`a priced ${E.label} model runs under the cap: its spend is priced from its tokens with worca's rates, and the cap holds`, async () => {
+    const s = seed();
+    const rates = [];
+    const { turn, frames } = makeTurn(E, s, {}, { askLimits: () => ({ maxTurns: 40, maxBudgetUsd: 0.01 }),
+      chatModelRates: (d, m) => { rates.push([d.engine, m]); return { input: 1000, output: 1000 }; }, runClaudeImpl: async (o) => reply(E, o) });
+    await turn.run();
+    assert.deepEqual(rates[0], [E.engine, E.model]);
+    const done = frames.find((f) => f.type === 'ask-done');
+    assert.equal(done.costUsd, 0.015, '10 input + 5 output tokens at $1000 per million each');
+    assert.equal(done.reason, 'max_budget');
   });
 
   test(`the mock: no ${E.label} binary is asked`, async () => {

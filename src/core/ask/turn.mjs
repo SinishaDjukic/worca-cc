@@ -18,7 +18,7 @@ import { mkdir, writeFile, unlink, rm, readdir, lstat } from 'node:fs/promises';
 import { runClaude } from '../claude-runner.mjs';
 import { CLAUDE_SIGNED_OUT_CODE } from '../preflight.mjs';
 import { failedBecauseSignedOut } from '../claude-auth.mjs';
-import { resolveModelEnv, resolveModelCost, estimateCost, liveCostRates as defaultLiveCostRates } from '../config.mjs';
+import { resolveModelEnv, resolveModelCost, estimateCost, isPriceableUsage, liveCostRates as defaultLiveCostRates } from '../config.mjs';
 import { worcaHome, listProjects, displayPath } from '../projects.mjs';
 import { gitAvailable } from '../git-available.mjs';
 import { generateTitle } from '../title.mjs';
@@ -57,6 +57,7 @@ import { revalidateWorkflowProposal } from './workflow-deps.mjs';
 import { composerCardFrom } from './composer-payload.mjs';
 import { askLimits, ASK_LIMITS } from './limits.mjs';
 import { chatDescriptor, chatCostCapRefusal } from '../engines/chat.mjs';
+import { chatModelRates } from './chat-price.mjs';
 import { codexMemoryLine } from './prompt.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
 import { mentionedRefs } from './contexts.mjs';
@@ -278,6 +279,7 @@ class AskTurn extends EventEmitter {
       limits: deps.limits ?? ASK_LIMITS,
       resolveModelEnv: deps.resolveModelEnv ?? resolveModelEnv,
       resolveModelCost: deps.resolveModelCost ?? resolveModelCost,
+      chatModelRates: deps.chatModelRates ?? chatModelRates,
       worcaHome: deps.worcaHome ?? worcaHome,
       buildMcpConfig: deps.buildMcpConfig ?? buildMcpConfig,
       // git on this machine (P0): handed to the classic MCP child (WORCA_GIT) and to the sub-agent note.
@@ -913,7 +915,7 @@ class AskTurn extends EventEmitter {
     // One settings read per attempt, never per frame. null → the frames carry
     // estimatedCostUsd:null and the footer keeps today's behaviour.
     let liveRates = null;
-    try { liveRates = d.liveCostRates(this.model) ?? null; } catch { liveRates = null; }
+    try { liveRates = (this.lockedDown ? this._ratesFor() : d.liveCostRates(this.model)) ?? null; } catch { liveRates = null; }
     this.reducer = createTurnReducer({
       onFrame: (f) => this._frame(f),
       now: d.now,
@@ -1252,6 +1254,24 @@ class AskTurn extends EventEmitter {
     }
   }
 
+  /** worca's rates for `model` on this chat's engine (ask/chat-price.mjs), or null; read once per turn. */
+  _ratesFor(model = this.model) {
+    if (model !== this.model) return this.deps.chatModelRates(this.chat, model);
+    if (this._rates === undefined) this._rates = this.deps.chatModelRates(this.chat, this.model);
+    return this._rates;
+  }
+
+  /** A locked-down turn's `result` that carries no cost, priced with worca's rates from its token usage when worca has a
+   *  price: an engine that reports no cost (Copilot, Gemini CLI, Qwen Code) is booked and capped like one that does. A
+   *  reported cost passes through (the reducer re-prices it with a Models page price, resolveModelCost). */
+  _priced(e) {
+    if (!e || e.type !== 'result' || Number.isFinite(e.costUsd) || !isPriceableUsage(e.usage)) return e;
+    const rates = this._ratesFor();
+    if (!rates) return e;
+    const costUsd = Math.round(estimateCost(e.usage, rates) * 1e6) / 1e6;
+    return Number.isFinite(costUsd) ? { ...e, costUsd } : e;
+  }
+
   _trip(kind, what = null) {
     this._cap = kind;
     this._capWhat = what;
@@ -1284,7 +1304,7 @@ class AskTurn extends EventEmitter {
     const modelProblem = c.modelProblem(this.model);
     if (modelProblem) return this._complete({ kind: 'error', message: `${this.model} cannot run a chat on ${c.label}: ${modelProblem}. Pick another model for this chat.` });
     if (limitsNow.maxBudgetUsd != null) {
-      const capped = chatCostCapRefusal(c, this.model, own('ModelPriced') ?? c.modelPriced);
+      const capped = chatCostCapRefusal(c, this.model, own('ModelPriced') ?? ((m) => !!this._ratesFor(m)));
       if (capped) return this._complete({ kind: 'error', message: capped });
     }
     if (this.mock) return null;
@@ -1459,6 +1479,7 @@ class AskTurn extends EventEmitter {
               this.sessionId = e.sessionId;
               try { d.store.updateThread(this.threadId, { sessionId: e.sessionId }); } catch { /* deleted thread */ }
             }
+            if (this.lockedDown) e = this._priced(e);          // worca's prices, the same on every engine (chat-price.mjs)
             this.reducer.push(e);
             if (this.lockedDown) this._watch(e, limitsNow);   // D13/D14: Claude's caps are the CLI's own
             // §10: the turn's own init only (the normalizer sets mcpServers on a main-stream init only), and only with

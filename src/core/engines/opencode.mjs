@@ -69,7 +69,7 @@ import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { envFlag } from '../model-env.mjs';
-import { makeChatDescriptor, providerEnvPrefixes } from './chat-descriptor.mjs';
+import { makeChatDescriptor, providerEnvPrefixes, providerListRates } from './chat-descriptor.mjs';
 import { chatSelfTest } from './chat-selftest.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
@@ -717,5 +717,6 @@ export const opencodeChat = makeChatDescriptor({
   resumeNotFound: (err) => OPENCODE_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
   modelProblem: (id) => (ZEN_PROVIDER_RE.test(String(id || '')) ? "OpenCode Zen's free models refuse a request without the shell, and a chat has none" : null),
   signIn: (model) => ['OPENCODE_', ...providerEnvPrefixes(model)],
+  listRates: providerListRates,
   prompt: { cli: "OpenCode with OpenCode's own providers" },
 });

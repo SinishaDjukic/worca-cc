@@ -174,12 +174,12 @@ test('a Copilot turn spawns copilot locked down with the worca MCP server; the r
   assert.equal(frames.at(-1).type, 'ask-done');
 });
 
-test('a per-turn cost cap refuses a Copilot turn (it reports no cost); nothing spawns', async () => {
+test('a per-turn cost cap refuses a Copilot model worca has no price for (set one on the Models page); nothing spawns', async () => {
   const s = seed();
   const { turn, frames, calls } = makeTurn(s, {}, { askLimits: () => ({ maxTurns: 40, maxBudgetUsd: 1 }), runClaudeImpl: async (o) => reply(o) });
   await turn.run();
   assert.equal(calls.length, 0);
-  assert.match(frames.find((f) => f.type === 'ask-error').message, /A per-turn cost cap is set, and Copilot reports no cost/);
+  assert.match(frames.find((f) => f.type === 'ask-error').message, /worca has no price for copilot\/gpt-5\.4, so it cannot keep this turn under it\. Set the model's price on the Models page/);
 });
 
 test('a copilot without the lockdown flags: copilot-not-ready, a notice with the setup link, no spawn', async () => {

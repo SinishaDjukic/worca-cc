@@ -60,7 +60,7 @@ import { scopeLauncherEnv } from '../mcp/launch.mjs';
 import { expandMcpRefs } from './codex.mjs';
 import { ARGV_INLINE_LIMIT } from './claude.mjs';
 import { homedir } from 'node:os';
-import { makeChatDescriptor, providerEnvPrefixes } from './chat-descriptor.mjs';
+import { makeChatDescriptor, providerEnvPrefixes, providerListRates } from './chat-descriptor.mjs';
 import { chatSelfTest } from './chat-selftest.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
@@ -559,8 +559,9 @@ export function gooseChatSelfTest({ bin = gooseDefaultBin(), ...o } = {}) {
   });
 }
 
-/** Goose's chat descriptor (engines/chat-descriptor.mjs). Goose prices some models, but worca cannot know which, so a
- *  per-turn cost cap refuses the turn. Each `impl` is the function a test hands the turn. */
+/** Goose's chat descriptor (engines/chat-descriptor.mjs). A chat's spend is priced with worca's prices (the Models page,
+ *  else the list price of an anthropic/… or openai/… model), as on every engine. Each `impl` is the function a test hands
+ *  the turn. */
 export const gooseChat = makeChatDescriptor({
   engine: 'goose',
   lockdown: () => GOOSE_ASK_LOCKDOWN,
@@ -571,5 +572,6 @@ export const gooseChat = makeChatDescriptor({
   metaTools: GOOSE_ASK_LOCKDOWN.metaTools,
   modelProblem: gooseChatModelProblem,
   signIn: (model) => ['GOOSE_', ...providerEnvPrefixes(model)],
+  listRates: providerListRates,
   prompt: { cli: "Goose with Goose's own providers" },
 });

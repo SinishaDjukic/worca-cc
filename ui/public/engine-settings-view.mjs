@@ -195,8 +195,7 @@ export function renderAskEngineSection(host, { catalog = [], askEngine, askModel
     const id = `models.${engine}.ask`; const label = engineChoiceLabel(engine);
     rows.push({ id, label, set: askModels[engine] != null,
       hint: engine === 'claude' ? null
-        : ENGINES[engine].cost ? `On ${engineLabel(engine)} the per-turn cost cap is checked when a reply ends, and needs a model worca can price.`
-          : `${engineLabel(engine)} reports no cost: its chats run only while the per-turn cost cap is off.`,
+        : `On ${engineLabel(engine)} the per-turn cost cap is checked when a reply ends, and needs a model worca can price (its Models page price, or a list price worca knows).`,
       el: renderInheritField(doc, { id, label, kind: 'model', level: 'user', engine, catalog, efforts: ENGINE_EFFORTS[engine], own: askModels[engine], inherited: { value: defaults[engine] || undefined, source: 'default' } }) });
   }
   host.append(slotTable(doc, 'ask-chat-models', 'Chat models', rows, { what: 'engine', from: "Worca's defaults", onTest, always: true }));

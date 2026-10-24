@@ -30,7 +30,7 @@ import { strongestClass } from '../recoverable-error.mjs';
 import { ARGV_INLINE_LIMIT } from './claude.mjs';
 import { CODEX_PRICES, codexCachedRate } from '../list-prices.mjs';
 import { codexEndpointSpawn, findCodexEndpointEntry, hasCodexEndpoint } from './codex-endpoint.mjs';
-import { makeChatDescriptor } from './chat-descriptor.mjs';
+import { makeChatDescriptor, openaiListRates } from './chat-descriptor.mjs';
 import { chatEnginesTaking } from '../../shared/engine-switch.mjs';
 import { scopeLauncherEnv } from '../mcp/launch.mjs';
 
@@ -943,7 +943,8 @@ export const codexChat = makeChatDescriptor({
   noLockdownMessage: "Chat on Codex is unavailable: this codex version cannot switch off its image viewer (which reads any image on disk) or its sub-agents, and a chat must stay inside its own files. Use a Claude chat.",
   askSupport: (o, impl = codexAskSupport) => impl(o),
   preflight: ({ model } = {}, impl = codexPreflight) => impl({ signIn: !hasCodexEndpoint(model) }),
-  modelPriced: (model) => codexModelPriced(model),
+  // OpenAI's list price, unless the model runs on an endpoint of its own (its Models page price then, or none).
+  listRates: (model) => { const m = model || CODEX_DEFAULT_MODEL; return findCodexEndpointEntry(m) ? null : openaiListRates(m); },
   resumeNotFound: codexResumeNotFound,
   shellTrippedMessage: 'Codex tried to run a shell command although its shell was switched off — worca stopped the turn.',
   titles: true,
