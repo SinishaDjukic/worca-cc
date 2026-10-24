@@ -68,8 +68,10 @@ export function validateRunSource(raw, { target, listTaskSources, resolveProfile
     const v = Object.prototype.hasOwnProperty.call(given, i.key) ? given[i.key] : i.default;
     if (v === undefined || v === null) continue;
     if (typeof v !== 'string' && typeof v !== 'boolean' && typeof v !== 'number') { errors.push(`source.inputs.${i.key} must be a string`); continue; }
-    if (Array.isArray(i.options) && i.options.length && !i.options.map(String).includes(String(v))) {
-      errors.push(`source.inputs.${i.key} must be one of ${i.options.join(' | ')}`);
+    // Normalized options are {value, label}; the value is what a run stores.
+    const values = Array.isArray(i.options) ? i.options.map((o) => String(o && typeof o === 'object' ? o.value : o)) : [];
+    if (values.length && !values.includes(String(v))) {
+      errors.push(`source.inputs.${i.key} must be one of ${values.join(' | ')}`);
       continue;
     }
     inputs[i.key] = typeof v === 'string' ? clip(v, 500) : v;
