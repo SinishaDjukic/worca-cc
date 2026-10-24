@@ -9,6 +9,7 @@
 import { icon } from './icons.mjs';
 import { makeSwitch } from './switch.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
+import { HARNESS_EFFORTS } from '../../src/shared/connections.mjs';
 import { normaliseDimension } from '../../src/shared/tag-dimensions.mjs';
 import { MODEL_ROLES, ROLE_HARNESSES, ROLE_LABELS } from '../../src/shared/model-roles.mjs';
 const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -570,9 +571,10 @@ export function renderPolicyEmptyState({ doc = globalThis.document } = {}) {
 
 // ---- Team policy page: edit mode (board 5) --------------------------------------------------
 const KIND_LABEL = { default: 'Default', soft: 'Soft', hard: 'Hard' };
+// The policy's effort vocabulary (src/core/policy/registry.mjs EFFORTS): a step's effort, and a Claude model's efforts.
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
-const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
-const EFFORTS_BY_ENGINE = { claude: EFFORTS, codex: CODEX_EFFORTS, cursor: [], copilot: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'], goose: ['low', 'medium', 'high', 'max'], opencode: ['minimal', 'low', 'medium', 'high', 'max'] };
+// Another engine's model takes that engine's efforts, from the catalog.
+const effortsOf = (engine) => (engine && engine !== 'claude' && HARNESS_EFFORTS[engine]) || EFFORTS;
 
 function listChips(doc, row, items, labelOf) {
   const list = row.querySelector('.tp-list');
@@ -644,7 +646,7 @@ function catalogItem(doc, cat, item) {
     );
     const eff = h(doc, 'div', 'tp-cat-field tp-cat-efforts'); eff.append(h(doc, 'label', null, 'Efforts'));
     const row = h(doc, 'div', 'tp-cat-effort-row');
-    for (const e of (EFFORTS_BY_ENGINE[item?.engine || 'claude'] || EFFORTS)) { const lab = h(doc, 'label', 'check-row'); const cb = h(doc, 'input', 'tp-cat-effort'); cb.type = 'checkbox'; cb.value = e; cb.checked = Array.isArray(item?.efforts) && item.efforts.includes(e); lab.append(cb, ` ${e}`); row.append(lab); }
+    for (const e of effortsOf(item?.engine)) { const lab = h(doc, 'label', 'check-row'); const cb = h(doc, 'input', 'tp-cat-effort'); cb.type = 'checkbox'; cb.value = e; cb.checked = Array.isArray(item?.efforts) && item.efforts.includes(e); lab.append(cb, ` ${e}`); row.append(lab); }
     eff.append(row);
     const env = h(doc, 'div', 'tp-cat-field tp-cat-env'); env.append(h(doc, 'label', null, 'Env'));
     const rows = h(doc, 'div', 'tp-env-rows');
@@ -780,7 +782,7 @@ function valueControl(doc, meta, entry, row) {
         model.value = v?.[hn]?.[r]?.model || ''; model.setAttribute('aria-label', `${name} model`);
         const sw = h(doc, 'div', 'select-wrap'); const effort = h(doc, 'select', 'select tp-role-effort'); effort.setAttribute('aria-label', `${name} effort`);
         const none = h(doc, 'option', null, 'effort'); none.value = ''; effort.append(none);
-        for (const e of (hn === 'codex' ? CODEX_EFFORTS : EFFORTS)) { const o = h(doc, 'option', null, e); o.value = e; if (v?.[hn]?.[r]?.effort === e) o.selected = true; effort.append(o); }
+        for (const e of effortsOf(hn)) { const o = h(doc, 'option', null, e); o.value = e; if (v?.[hn]?.[r]?.effort === e) o.selected = true; effort.append(o); }
         sw.append(effort); line.append(h(doc, 'span', 'tp-role-label', name), model, sw); wrap.append(line);
       }
       break;

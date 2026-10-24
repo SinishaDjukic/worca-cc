@@ -196,7 +196,7 @@ import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SY
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES, costKnownOf } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, engineOptions, engineEntry, ENGINE_NAMES, HELPER_ENGINE_NAMES, isBetaEngine, costKnownOf } from '../../src/shared/engine-switch.mjs';
 import { remoteRefusesDefault } from '../../src/shared/exec-env.mjs';
 import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS } from '../../src/shared/connections.mjs';
 import {
@@ -4966,13 +4966,15 @@ function paintEngineHints() {
   if (el.engineHint) {
     el.engineHint.hidden = state.engine === 'claude';
     const project = Object.values(state.runDefaults?.steps?.[state.engine] || {}).some((s) => s?.source === 'project');
-    el.engineHint.textContent = state.engine === 'copilot'
-      ? `GitHub Copilot CLI runs this pipeline, including titles and summaries (on its default model). Step models: ${project ? 'project Settings' : 'Models › Copilot'}. Sign in once with copilot login.`
-      : state.engine === 'cursor'
-      ? `Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Cursor'}.`
-      : SIGN_IN_ENGINE_NAMES.includes(state.engine)
-      ? `${engineLabel(state.engine)} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : `Models › ${engineLabel(state.engine)}`}.`
-      : `Codex runs this pipeline, including titles and summaries. Its models: ${project ? 'project Settings' : 'Models › Codex'}`;
+    // From the catalog: an engine runs its helper jobs itself, with slots of their own (helperSlots) or on its
+    // default model, or hands them to Claude (helpers false).
+    const entry = engineEntry(state.engine); const name = engineLabel(state.engine);
+    const where = project ? 'project Settings' : `Models › ${name}`;
+    el.engineHint.textContent = !entry?.helpers
+      ? `${name} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${where}.`
+      : !entry.helperSlots
+      ? `${name} runs this pipeline, including titles and summaries (on its default model). Step models: ${where}.`
+      : `${name} runs this pipeline, including titles and summaries. Its models: ${where}`;
   }
   if (el.engineDefaultHint) {
     const source = state.runDefaults?.engine?.value === state.engine ? state.runDefaults.engine.source : null;
@@ -5105,8 +5107,9 @@ function showEngineRefusal(data) {
 }
 
 if (el.engineSelect) {
-  // An <option> holds text only: a beta engine says so in its label.
-  for (const o of el.engineSelect.options) if (isBetaEngine(o.value)) o.textContent += ' (Beta)';
+  // The engines from the catalog, the default first; an <option> holds text only, so a beta engine says so in its label.
+  el.engineSelect.replaceChildren(...engineOptions({ surface: 'run' }).map(({ value, label, beta }) => Object.assign(document.createElement('option'), { value, textContent: beta ? `${label} (Beta)` : label })));
+  el.engineSelect.value = state.engine;
   el.engineSelect.addEventListener('change', () => {
     state.engineTouched = true;
     setRunEngine(el.engineSelect.value);
@@ -10572,7 +10575,7 @@ if (el.wsCreateBtn) el.wsCreateBtn.addEventListener('click', () => { location.ha
 // ---- Workspace scan models (D15–D18): the scan agent (a catalog model + effort) and its project
 // agents (a sub-agent alias + effort). One painter for Create workspace and Settings › General.
 const SCAN_AGENT_ALIASES = [['sonnet', 'Sonnet'], ['opus', 'Opus'], ['fable', 'Fable']];
-const SCAN_EFFORTS = ['medium', 'high', 'xhigh', 'max'];
+const SCAN_EFFORTS = engineEntry('claude').efforts;   // the scan's agents are Claude sub-agents (SCAN_AGENT_ALIASES)
 const SCAN_MODELS_FALLBACK = { scanModel: 'claude-sonnet-5', scanEffort: 'medium', agentModel: 'sonnet', agentEffort: 'medium' };
 const WIZ_MODEL_IDS = { scanModel: 'wiz-scan-model', scanEffort: 'wiz-scan-effort', agentModel: 'wiz-agent-model', agentEffort: 'wiz-agent-effort' };
 const WS_SCAN_SETTINGS_IDS = { scanModel: 'wsScanModel', scanEffort: 'wsScanEffort', agentModel: 'wsAgentModel', agentEffort: 'wsAgentEffort' };
@@ -18978,11 +18981,7 @@ function renderModelsViewBody() {
     policy: d.policy || [],
     predefined: d.predefined || [],
     codex: d.codex || [],
-    codexEfforts: d.codexEfforts || [],
     copilot: d.copilot || [],
-    copilotEfforts: d.copilotEfforts || [],
-    gooseEfforts: d.gooseEfforts || [],
-    opencodeEfforts: d.opencodeEfforts || [],
     efforts: d.efforts || [],
     hideBuiltin: !!d.hideBuiltinModels,
     projectName: pp ? pp.split('/').pop() : '',
@@ -19020,7 +19019,7 @@ function modelEditorEl() {
 function openModelEditorDialog() {
   if (!el.modelEditorModal || !el.modelEditorHost) return;
   const d = mvState.data || { efforts: [] };
-  const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels, ...(d.codexEfforts ? { codexEfforts: d.codexEfforts } : {}), cursorEfforts: d.cursorEfforts || [], copilotEfforts: d.copilotEfforts || [], gooseEfforts: d.gooseEfforts || [], opencodeEfforts: d.opencodeEfforts || [] });
+  const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels });
   if (!mvState.editing && mvState.prefill) prefillModelEditor(editor, mvState.prefill);
   const title = editor.querySelector('.mv-editor-title');
   if (title) title.id = 'mv-editor-heading';
@@ -19197,9 +19196,8 @@ async function exportPluginFlow() {
   }
 }
 
-const CODEX_HELPER_JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan'];
-// src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the engines with helper slots of their own.
-const HELPER_ENGINES = ['claude', 'codex'];
+// The helper slots of an engine with slots of its own (the catalog's HELPER_ENGINE_NAMES), apart from Claude's (below).
+const ENGINE_HELPER_JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan'];
 // Claude's helper slots at user level are their own settings keys (settings-cascade.mjs CLAUDE_USER): a model id for
 // titles, Auto and PR descriptions (no effort), and the Memory defragment, Agent generation, Run naming and Command
 // summaries pairs. No user-level overview slot. Agent generation, Run naming and Command summaries are Claude's alone
@@ -19238,8 +19236,8 @@ async function paintEngineSettings(data, { force = false } = {}) {
   const catalog = Array.isArray(cfg?.models) ? cfg.models : [];
   const fields = { 'run.engine': { own: data.runEngine, inherited: { value: 'claude', source: 'default' } } };
   for (const engine of ENGINE_NAMES) for (const role of roles) fields[`models.${engine}.steps.${role.key}`] = { own: data.stepModels?.[engine]?.[role.key], inherited: { value: undefined, source: 'default' } };
-  for (const engine of HELPER_ENGINES.filter((e) => e !== 'claude')) {
-    for (const job of CODEX_HELPER_JOBS) fields[utilityId(engine, job)] = { own: data.utilityModels?.[engine]?.[job], inherited: { value: undefined, source: 'default' } };
+  for (const engine of HELPER_ENGINE_NAMES.filter((e) => e !== 'claude')) {
+    for (const job of ENGINE_HELPER_JOBS) fields[utilityId(engine, job)] = { own: data.utilityModels?.[engine]?.[job], inherited: { value: undefined, source: 'default' } };
   }
   const claudeOwn = CLAUDE_USER_HELPER_OWN(data || {});
   const claudeJobs = claudeUserHelperJobs();
@@ -19258,7 +19256,7 @@ async function paintEngineSettings(data, { force = false } = {}) {
     renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
       noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
       defaultLabels: { claude: 'the default model' },
-      jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] }, modelRoles: data.modelRoles || {} });
+      jobs: Object.fromEntries(HELPER_ENGINE_NAMES.map((e) => [e, e === 'claude' ? claudeJobs : ENGINE_HELPER_JOBS])), modelRoles: data.modelRoles || {} });
   }
   lastEngineSettingsData = data;
   paintModelRoles(data);

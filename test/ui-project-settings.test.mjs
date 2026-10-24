@@ -59,6 +59,11 @@ test('every field says what it inherits and from where; an override shows Projec
   assert.equal(field(host, 'models.codex.steps.planner').querySelector('.inherit-effort').options[0].textContent, 'low (your setting)');
   assert.deepEqual([...plan.options].map((o) => o.value), ['', 'gpt-5.5'], 'the Codex card offers Codex models only');
   assert.equal(field(host, 'models.codex.workspaceScan'), null, 'workspace scans are set per user');
+  // Helper rows on every engine with helper slots of its own (the catalog's); Copilot and Cursor have none.
+  for (const e of ['claude', 'codex']) {
+    for (const job of ['utility.title', 'utility.classifier', 'utility.overview', 'utility.prDescription', 'memoryDefrag']) assert.ok(field(host, `models.${e}.${job}`), `${e} ${job}`);
+  }
+  for (const e of ['copilot', 'cursor']) assert.equal(host.querySelector(`.engine-card[data-engine="${e}"] .engine-helpers .engine-slot`), null, `${e}: no helper rows`);
 });
 
 test('Save sends only what changed; a cleared field is null; a 400 shows on its card', async () => {

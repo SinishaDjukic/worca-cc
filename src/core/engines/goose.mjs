@@ -54,7 +54,8 @@ import { agentIdentityFor } from '../agent-pool.mjs';
 import { currentOwner } from '../billing.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
-import { superviseSpawn, childEnv, execCheck, argValue, cleanRunEnv, safeEmit } from '../spawn.mjs';
+import { superviseSpawn, childEnv, execCheck, runCapture, argValue, cleanRunEnv, safeEmit } from '../spawn.mjs';
+import { ENGINES } from '../../shared/engine-switch.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { scopeLauncherEnv } from '../mcp/launch.mjs';
@@ -86,7 +87,7 @@ export { GOOSE_EFFORTS } from '../model-env.mjs';
 
 /** Chat on Goose (see the chat notes above): `--no-profile`, no built-in extension, a home of its own, worca's extension
  *  only; `load_skill` is its one meta tool. Proven per binary by the chat self-test. */
-export const GOOSE_ASK_LOCKDOWN = Object.freeze({ builtins: Object.freeze([]), metaTools: Object.freeze(['load_skill']) });
+export const GOOSE_ASK_LOCKDOWN = Object.freeze({ builtins: Object.freeze([]), metaTools: ENGINES.goose.chat.metaTools });
 /** The chat's own home (HOME and the XDG folders) under worca's home. */
 export const gooseChatHome = () => join(worcaHome(), 'engines', 'goose', 'chat-home');
 /** A relayed chat's home (the chat runs as the person's agent user): a worca folder in that user's own home. */
@@ -554,11 +555,15 @@ export async function runGooseProcess({
 // ── chat ─────────────────────────────────────────────────────────────────────
 
 /** The oldest goose the chat lockdown was verified on. */
-export const GOOSE_ASK_MIN_VERSION = '1.56.0';
+export const GOOSE_ASK_MIN_VERSION = ENGINES.goose.chat.minVersion;
 
 /** Can this goose be locked down for a chat? At least GOOSE_ASK_MIN_VERSION, with `--no-profile`. Never rejects. */
 export function gooseAskSupport({ bin = gooseDefaultBin(), timeoutMs = 15000 } = {}) {
-  const run = (args) => new Promise((resolve) => { execFile(bin, args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => resolve({ err, out: String(stdout || '') })); });
+  // The owner's runner with the base env only (no engine names, no credential): --version and --help need none.
+  const run = async (args) => {
+    const r = await runCapture(bin, args, { spec: {}, timeoutMs, maxBuffer: 4 * 1024 * 1024 });
+    return { err: r.error || (r.code !== 0 ? Object.assign(new Error(`${bin} ${args.join(' ')} exited ${r.code}`), { code: r.code }) : null), out: r.stdout };
+  };
   return (async () => {
     const v = await run(['--version']);
     if (v.err) return { refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(v.err.code)) ? `cannot run ${bin} (${v.err.code}) — install the Goose CLI, or point WORCA_GOOSE_BIN at it` : `could not ask ${bin} its version (${v.err.message})` };
@@ -567,7 +572,8 @@ export function gooseAskSupport({ bin = gooseDefaultBin(), timeoutMs = 15000 } =
     const older = n.length !== 3 || n[0] < min[0] || (n[0] === min[0] && (n[1] < min[1] || (n[1] === min[1] && n[2] < min[2])));
     if (older) return { refusal: `this ${bin} is ${v.out.trim() || 'of an unknown version'}; a chat needs goose ${GOOSE_ASK_MIN_VERSION} or newer — update it` };
     const h = await run(['run', '--help']);
-    return /--no-profile/.test(h.out) ? {} : { refusal: `this ${bin} has no --no-profile to lock a chat down — update goose to ${GOOSE_ASK_MIN_VERSION} or newer` };
+    const missing = ENGINES.goose.chat.flags.filter((f) => !h.out.includes(f));
+    return !missing.length ? {} : { refusal: `this ${bin} has no ${missing.join(', ')} to lock a chat down — update goose to ${GOOSE_ASK_MIN_VERSION} or newer` };
   })();
 }
 
@@ -591,9 +597,7 @@ export const gooseChat = makeChatDescriptor({
   selfTest: (o, impl = gooseChatSelfTest) => impl(o),
   preflight: (_ctx, impl = goosePreflight) => impl(),
   resumeNotFound: (err) => GOOSE_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
-  metaTools: GOOSE_ASK_LOCKDOWN.metaTools,
   modelProblem: gooseChatModelProblem,
   signInMode: (model) => gooseProviderOf(model),
   listRates: providerListRates,
-  prompt: { cli: "Goose with Goose's own providers" },
 });

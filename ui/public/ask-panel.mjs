@@ -19,12 +19,11 @@ import { createCommandCard, createCommandGroup, COMMAND_CARD_TYPE } from './ask-
 import { commandRuns } from './ask-command-group.mjs';
 import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
 import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
-import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
-import { ENGINE_NAMES, engineLabel, isBetaEngine } from '../../src/shared/engine-switch.mjs';
+import { ENGINE_NAMES, engineLabel, engineOptions } from '../../src/shared/engine-switch.mjs';
 import { lockEngineOptions } from './engine-locks.mjs';
 import { execEnvList, execEnvLabel, execEnvKnown } from './exec-envs.mjs';
 import { remoteRefusesDefault } from '../../src/shared/exec-env.mjs';
-import { runsOn, modelGroups } from '../../src/shared/connections.mjs';
+import { runsOn, modelGroups, HARNESS_EFFORTS } from '../../src/shared/connections.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
 import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
@@ -2547,7 +2546,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         panel.appendChild(back);
         panel.appendChild(make('div', 'ask-pop-divider'));
         const entry = catalogEntry(st.picker.model);
-        for (const eff of entry && Array.isArray(entry.efforts) ? entry.efforts : ['medium', 'high', 'xhigh', 'max']) {
+        for (const eff of entry && Array.isArray(entry.efforts) ? entry.efforts : HARNESS_EFFORTS.claude) {
           const item = menuItem('ask-effort-item', () => setPickerEffort(eff));
           item.appendChild(make('span', 'ask-model-name', eff));
           if (eff === st.picker.effort) item.appendChild(checkMark());
@@ -3597,7 +3596,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // The saved run.execEnv default, raw: the card names what it gives THIS run (cardExecEnvDefault).
     const savedExecEnv = defaults && defaults.execEnv && typeof defaults.execEnv.value === 'string' ? defaults.execEnv.value : 'local';
     return { wf, registry, runConfig, rows, edits: {}, editable: true, explicit: !projectDir, engine, defaultEngine, savedExecEnv, allModels, proposal: {}, proposed: {}, warnings: [],
-      models, efforts: engine === 'claude' ? (Array.isArray(cfg.efforts) ? cfg.efforts : []) : [...(ENGINE_EFFORTS[engine] || [])],
+      models, efforts: engine === 'claude' ? (Array.isArray(cfg.efforts) ? cfg.efforts : []) : [...(HARNESS_EFFORTS[engine] || [])],
       subagentModels: Array.isArray(cfg.subagentModels) ? cfg.subagentModels : [] };
   }
   const laneEffective = (lane, row) => ({ ...row, ...(lane.edits[row.nodeId] || {}) });
@@ -5049,7 +5048,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Engine: "Default" sends none, so /api/run resolves the user's / project's engine (the label names it once the
     // lane has read it); a proposal that names an engine preselects it. Beta engines say so.
     const engineSel = rpSelect('ask-card-engine', 'Engine');
-    fillSelect(engineSel, [{ value: '', label: 'Default' }, ...ENGINE_NAMES.map((e) => ({ value: e, label: `${engineLabel(e)}${isBetaEngine(e) ? ' (Beta)' : ''}` }))], card.engine || '');
+    fillSelect(engineSel, [{ value: '', label: 'Default' }, ...engineOptions({ surface: 'run' }).map(({ value, label, beta }) => ({ value, label: beta ? `${label} (Beta)` : label }))], card.engine || '');
     // An engine this instance never starts (the credential broker is on) is greyed out; a proposal naming one falls back to Default.
     if (lockEngineOptions(engineSel)) engineSel.value = '';
     const engineField = rpField('Engine', engineSel);

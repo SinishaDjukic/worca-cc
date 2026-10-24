@@ -117,6 +117,36 @@ test('read-only sources and unknown ids are refused with a way forward', async (
   assert.match((await validate({ kind: 'edit_model' })).errors[0], /needs an id/);
 });
 
+test('the card names a model\'s connection and efforts from its engine\'s catalog entry', async () => {
+  const { ENGINES, setCatalogForTest } = await import('../src/shared/engine-switch.mjs');
+  const rowsOf = async (model) => Object.fromEntries((await fixture().validate({ kind: 'add_model', model })).card.rows.map((x) => [x.field, x.after]));
+  await checkRows([
+    { name: 'an engine whose models connect one fixed way (cursor, copilot): its modelConnection; no efforts reads "none"', run: async () => {
+      for (const engine of Object.keys(ENGINES).filter((e) => ENGINES[e].modelConnection)) {
+        const rows = await rowsOf({ id: `my-${engine}`, engine });
+        assert.equal(rows.Connection, ENGINES[engine].modelConnection, engine);
+        assert.equal(rows.Efforts, ENGINES[engine].efforts.length ? 'low, medium, high' : 'none', engine);
+      }
+    } },
+    { name: 'an engine with no fixed connection: the entry decides', run: async () => {
+      assert.equal((await rowsOf({ id: 'gw', env: { ANTHROPIC_BASE_URL: 'https://gw.example.com' } })).Connection, 'custom endpoint via env');
+      assert.equal((await rowsOf({ id: 'local-qwen', upstream: LLAMA })).Connection, 'through provider openai');
+    } },
+    { name: 'a catalog change is the only edit: the card follows it', run: async () => {
+      setCatalogForTest({ ...ENGINES, cursor: { ...ENGINES.cursor, modelConnection: 'its own sign-in, newly worded', efforts: ['low'] },
+        claude: { ...ENGINES.claude, modelConnection: 'claude, one way', efforts: [] } });
+      try {
+        const cursor = await rowsOf({ id: 'my-cursor', engine: 'cursor' });
+        assert.equal(cursor.Connection, 'its own sign-in, newly worded');
+        assert.equal(cursor.Efforts, 'low, medium, high');
+        const claude = await rowsOf({ id: 'gw2', env: { ANTHROPIC_BASE_URL: 'https://gw.example.com' } });
+        assert.equal(claude.Connection, 'claude, one way');
+        assert.equal(claude.Efforts, 'none');
+      } finally { setCatalogForTest(null); }
+    } },
+  ]);
+});
+
 test('edit_model: upstream merges into the stored block, the stored key is kept and never shown', async () => {
   const cur = { id: 'oa', label: 'OA', efforts: ['medium'], upstream: { provider: 'openai', api: 'openai-chat', model: 'gpt-5', apiKey: 'sk-secret-literal-1234', capabilities: { maxPromptTokens: 100000 } } };
   const { validate, calls } = fixture({ globals: [cur] });

@@ -572,9 +572,7 @@ export const CURSOR_NO_SELF_TEST = 'cursor-agent has no setting worca knows that
 export const cursorChat = makeChatDescriptor({
   engine: 'cursor',
   lockdown: () => CURSOR_ASK_LOCKDOWN,
-  noLockdownMessage: 'Chat on Cursor is unavailable: no switch that turns off its shell and file tools has been verified, and a chat must stay inside its own files. Use a Claude chat.',
   selfTest: async () => ({ refusal: CURSOR_NO_SELF_TEST }),
   preflight: (_ctx, impl = cursorPreflight) => impl(),
   resumeNotFound: (err) => CURSOR_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
-  prompt: { cli: "Cursor's CLI agent with Cursor's own sign-in" },
 });

@@ -46,6 +46,7 @@ import { join } from 'node:path';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { createClaudeNormalizer } from './claude-events.mjs';
 import { argValue } from '../spawn.mjs';
+import { ENGINES } from '../../shared/engine-switch.mjs';
 import {
   claudeToolName, commandRuleBody, familyMcpServers, classifyFamilyError, familyPreflight, runFamilyProcess,
   homeOf, readDotenv, settingsAuthType, foldSystemPrompt, NO_MCP_SERVER, FAMILY_ARGV_LIMIT, absolutePaths,
@@ -102,8 +103,8 @@ export const QWEN_ASK_ENV = Object.freeze({
  *  MCP server, the settings and env above. Proven per binary and user config by the chat self-test. */
 export const QWEN_ASK_LOCKDOWN = Object.freeze({ coreTools: [QWEN_NO_CORE_TOOL], excludeTools: QWEN_BUILTIN_TOOLS, settings: QWEN_ASK_SETTINGS, env: QWEN_ASK_ENV });
 /** The flags the lockdown needs, and the oldest Qwen Code it was verified on. */
-export const QWEN_ASK_FLAGS = Object.freeze(['--core-tools', '--exclude-tools', '--allowed-mcp-server-names']);
-export const QWEN_ASK_MIN_VERSION = '0.26.1';
+export const QWEN_ASK_FLAGS = ENGINES.qwen.chat.flags;
+export const QWEN_ASK_MIN_VERSION = ENGINES.qwen.chat.minVersion;
 
 /** What the gate and the run log say about the rules Qwen Code holds only in part. */
 export const QWEN_RULE_TERMS = Object.freeze({
@@ -348,7 +349,5 @@ export const qwenChat = makeChatDescriptor({
   selfTest: (o, impl = qwenChatSelfTest) => impl(o),
   preflight: (_ctx, impl = qwenPreflight) => impl(),
   resumeNotFound: (err) => QWEN_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
-  docsAnchor: 'gemini-cli-and-qwen-code',
   signInMode: (_model, env) => qwenSignInMode(env),
-  prompt: { cli: "Qwen Code with Qwen Code's own sign-in" },
 });

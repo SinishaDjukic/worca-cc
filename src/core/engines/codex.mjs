@@ -32,7 +32,6 @@ import { ARGV_INLINE_LIMIT } from './claude.mjs';
 import { CODEX_PRICES, codexCachedRate } from '../list-prices.mjs';
 import { codexEndpointSpawn, findCodexEndpointEntry, hasCodexEndpoint } from './codex-endpoint.mjs';
 import { makeChatDescriptor, openaiListRates } from './chat-descriptor.mjs';
-import { chatEnginesTaking } from '../../shared/engine-switch.mjs';
 import { brokerEnabled } from '../broker-client.mjs';
 import { brokerLease } from '../broker-lease.mjs';
 import { resolveModelRoute, localServerEnv } from '../exec-env/credentials.mjs';
@@ -89,7 +88,7 @@ export const CODEX_SUBAGENTS_OFF = Object.freeze(['--disable', 'multi_agent', '-
 /** The codex features CODEX_ASK_LOCKDOWN switches off: every one must exist in the installed codex. */
 export const CODEX_ASK_FEATURES = Object.freeze(CODEX_ASK_LOCKDOWN.filter((a, i, all) => all[i - 1] === '--disable'));
 /** The oldest codex the Ask lockdown was verified on. */
-export const CODEX_ASK_MIN_VERSION = '0.162';
+export const CODEX_ASK_MIN_VERSION = ENGINES.codex.chat.minVersion;
 
 /** Every read-only spawn — a utility job over untrusted input (a diff, a task text — D11) — runs with codex's shell off.
  *  The read-only sandbox still lets the shell read the whole disk, so a prompt-injected task could otherwise read a key
@@ -1047,22 +1046,9 @@ export async function runCodexProcess({
 export const codexChat = makeChatDescriptor({
   engine: 'codex',
   lockdown: () => CODEX_ASK_LOCKDOWN,
-  noLockdownMessage: "Chat on Codex is unavailable: this codex version cannot switch off its image viewer (which reads any image on disk) or its sub-agents, and a chat must stay inside its own files. Use a Claude chat.",
   askSupport: (o, impl = codexAskSupport) => impl(o),
   preflight: ({ model } = {}, impl = codexPreflight) => impl({ signIn: !hasCodexEndpoint(model) }),
   // OpenAI's list price, unless the model runs on an endpoint of its own (its Models page price then, or none).
   listRates: (model) => { const m = model || CODEX_DEFAULT_MODEL; return findCodexEndpointEntry(m) ? null : openaiListRates(m); },
   resumeNotFound: codexResumeNotFound,
-  shellTrippedMessage: 'Codex tried to run a shell command although its shell was switched off — worca stopped the turn.',
-  titles: true,
-  suggestionModel: 'gpt-5.6-luna',
-  turnImages: true,
-  // codex's MCP resource tools (plans/ask-on-codex-spike.md (h)): they read what the chat's own MCP servers publish.
-  metaTools: ['mcp__codex__list_mcp_resources', 'mcp__codex__list_mcp_resource_templates', 'mcp__codex__read_mcp_resource'],
-  prompt: {
-    cli: "the Codex CLI with Codex's own sign-in",
-    attachments: `Image attachments are different: you see an image with the message it came with; read_attachment returns any image attachment itself as content[1] of its result — called directly, the image is attached to the result; called from exec, pass that block to image() to look at it again. A Codex chat cannot view a PDF: read_attachment returns only its kind and size, and ${chatEnginesTaking('pdfs')} chats can.`,
-    composerBinary: 'An image arrives with the message that carried it — you see it there; read_attachment returns it again as content[1] of its result (called from exec, pass that block to image()). A Codex chat cannot view a PDF.',
-    webOff: "Codex's own web search stays off.",
-  },
 });

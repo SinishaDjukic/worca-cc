@@ -25,13 +25,27 @@
  *             the adapters, because the browser and src/core/model-env.mjs read it and neither may import an adapter.
  *   remote    a remote sandbox (E2B) runs it; where not, it runs locally only for now and a remote run on it is refused
  *             at run start (src/shared/exec-env.mjs REMOTE_ENGINES)
+ * What the UI shows for it (the engine pickers, effort lists, sign-in text and helper notes read these, never a copy;
+ * so do the CLI's --engine help and the chat's tools and rules):
+ *   harness   its CLI's name where a sentence names the harness ('Claude Code'; the label stays short: 'Claude')
+ *   efforts   the effort levels it takes, in its order ([]: it has no effort flag)
+ *   signInLabel  its own sign-in, as a model picker's connection group names it ('ChatGPT sign-in')
+ *   signInHint   how its own sign-in is set up, as the model editor says it (null: the editor names every harness)
+ *   helpersNote  what the Engines tab says in place of helper-job rows, or null
+ *   helperSlots  its helper jobs have model slots of their own (models.<engine>.utility.*); never read from the note
+ *   modelConnection  how its catalog models connect when that is fixed, as the chat's model card says it
+ *             ("cursor-agent's own sign-in"), or null: each entry's env or upstream decides
+ *   modelRule  how the chat's add_model writes one of its catalog models when they connect one fixed way ("a cursor
+ *             model takes no env, no upstream and no efforts (cursor-agent's own sign-in)"), or null
+ *   modelIdHint  how the model editor says one of its model ids is written, when it has a shape of its own, or null
+ *   signInTitle  the model editor's title for its own sign-in, or null ('<label> default')
  *   env       the exact variable names its child gets (never a prefix family): `names` its own non-secret config,
  *             `relayOwned` the ones that say where its model calls go and how they are signed (the model relay owns
  *             them in a sandbox), `hostOnly` the ones naming a path on this machine (a sandbox sets its own), `home` its
  *             dir in a sandbox HOME ({env, dir}) or null
  *   signIn    its sign-in modes: `id`, `kind` ('own' its own login, 'key' an API key or token, 'oauth' a subscription
  *             token), the exact `env` names the mode needs, the sign-in `files` it keeps, the broker slot that can
- *             hold its credential, and `requires`: config names that must be set too for the mode to apply. Modes are
+ *             hold its credential (`slotLabel`: how the Statistics view names a slot that is this engine's own), and `requires`: config names that must be set too for the mode to apply. Modes are
  *             listed in the order its CLI prefers them (the route resolver picks the first one whose credential is set
  *             and whose `requires` names are set too), its own login last. A mode's credential is its one secret-named
  *             name (`*_TOKEN`, `*_KEY`, `*_SECRET`); its other names are config.
@@ -72,7 +86,10 @@ const CLAUDE_NAMES = [
 ];
 export const ENGINES = deepFreeze({
   claude: {
-    label: 'Claude', models: true, cost: true, helpers: true, beta: false, signin: false, remote: true, chat: { images: true, pdfs: true },
+    label: 'Claude', models: true, cost: true, helpers: true, beta: false, signin: false, remote: true,
+    harness: 'Claude Code', efforts: ['medium', 'high', 'xhigh', 'max'], chat: { images: true, pdfs: true },
+    signInLabel: 'Claude sign-in', signInHint: null, helpersNote: null, helperSlots: true, modelConnection: null,
+    modelRule: null, modelIdHint: null, signInTitle: null,
     env: { names: CLAUDE_NAMES, hostOnly: ['CLAUDE_CONFIG_DIR'],
       relayOwned: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS'],
       home: null },
@@ -98,7 +115,25 @@ export const ENGINES = deepFreeze({
     requiresExplicitModel: false, sessions: 'user-store', defaultModel: null, loadsClaudeMcp: true,
   },
   codex: {
-    label: 'Codex', models: true, cost: true, helpers: true, beta: true, signin: false, remote: true, chat: { images: true, pdfs: false },
+    label: 'Codex', models: true, cost: true, helpers: true, beta: true, signin: false, remote: true,
+    harness: 'Codex', efforts: ['minimal', 'low', 'medium', 'high'],
+    chat: { images: true, pdfs: false, minVersion: '0.162', flags: [],
+      noLockdownMessage: "Chat on Codex is unavailable: this codex version cannot switch off its image viewer (which reads any image on disk) or its sub-agents, and a chat must stay inside its own files. Use a Claude chat.",
+      shellTrippedMessage: 'Codex tried to run a shell command although its shell was switched off — worca stopped the turn.',
+      titles: true,
+      suggestionModel: 'gpt-5.6-luna',
+      turnImages: true,
+      // codex's MCP resource tools (plans/ask-on-codex-spike.md (h)): they read what the chat's own MCP servers publish.
+      metaTools: ['mcp__codex__list_mcp_resources', 'mcp__codex__list_mcp_resource_templates', 'mcp__codex__read_mcp_resource'],
+      prompt: {
+        cli: "the Codex CLI with Codex's own sign-in",
+        attachments: 'Image attachments are different: you see an image with the message it came with; read_attachment returns any image attachment itself as content[1] of its result — called directly, the image is attached to the result; called from exec, pass that block to image() to look at it again. A Codex chat cannot view a PDF: read_attachment returns only its kind and size, and {pdfs} chats can.',
+        composerBinary: 'An image arrives with the message that carried it — you see it there; read_attachment returns it again as content[1] of its result (called from exec, pass that block to image()). A Codex chat cannot view a PDF.',
+        webOff: "Codex's own web search stays off.",
+      },
+      media: 'it is content[1] of this result: called directly, it is attached to the result — look at it there; called from exec, pass that block to image() to look at it' },
+    signInLabel: 'ChatGPT sign-in', signInHint: "codex's own sign-in (`codex login`) reaches OpenAI.", helpersNote: null,
+    helperSlots: true, modelConnection: null, modelRule: null, modelIdHint: null, signInTitle: null,
     env: { names: ['OPENAI_ORG_ID', 'OPENAI_PROJECT_ID'], hostOnly: ['CODEX_HOME'],
       relayOwned: ['CODEX_API_KEY', 'OPENAI_API_KEY', 'OPENAI_BASE_URL'], home: { env: 'CODEX_HOME', dir: '.codex' } },
     signIn: { modes: [
@@ -115,7 +150,28 @@ export const ENGINES = deepFreeze({
     requiresExplicitModel: false, sessions: 'managed-home', defaultModel: 'gpt-6.1-sol', loadsClaudeMcp: false,
   },
   copilot: {
-    label: 'Copilot', models: true, cost: false, helpers: true, beta: true, signin: false, remote: true, chat: { images: true, pdfs: true },
+    label: 'Copilot', models: true, cost: false, helpers: true, beta: true, signin: false, remote: true,
+    harness: 'Copilot', efforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+    chat: { images: true, pdfs: true, minVersion: '1.0.100', flags: ['--available-tools', '--disable-builtin-mcps', '--disallow-temp-dir', '--no-custom-instructions', '--additional-mcp-config'],
+      noLockdownMessage: 'Chat on Copilot is unavailable: this copilot cannot be locked down for a chat. Use a Claude chat.',
+      docsAnchor: 'github-copilot-cli',
+      shellTrippedMessage: 'Copilot tried to run a shell command although it was given none — worca stopped the turn.',
+      titles: true,
+      // GPT-5 Mini is one of Copilot's included models (0× premium requests on a paid plan): a suggestion after every reply
+      // costs no premium request there (one on the free plan).
+      suggestionModel: 'gpt-5-mini',
+      prompt: {
+        cli: "the GitHub Copilot CLI with Copilot's own sign-in",
+        webOff: "Copilot's own web tools stay off.",
+        // Copilot hands an MCP image on only to a model that declares vision, and a PDF only on the Responses and Anthropic
+        // APIs; otherwise it drops the block without a word (plans/ask-on-qwen-gemini-spike.md, "Open topics").
+        attachments: 'Image and PDF attachments are different: read_attachment returns the image or PDF itself, as a block of its result beside its kind and size, and Copilot hands it to your model right after the result only when the model can view that kind — read one to look at it; when it does not reach you, tell the user this Copilot model cannot view it.',
+        composerBinary: 'For an image or PDF, read_attachment returns the image or PDF itself as a block of its result, which Copilot hands on only to a model that can view that kind: read it to look at it; when it does not reach you, say this Copilot model cannot view it.',
+      },
+      media: 'Copilot attaches it right after this result when your model can view {kind}: look at it there; if it did not reach you, tell the user this model cannot view it' },
+    signInLabel: 'Copilot sign-in', signInHint: "the Copilot CLI's own sign-in (`copilot login`, or COPILOT_GITHUB_TOKEN) reaches GitHub Copilot.",
+    helpersNote: "Copilot runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on its own default model.",
+    helperSlots: false, modelConnection: "the Copilot CLI's own sign-in", modelRule: null, modelIdHint: null, signInTitle: null,
     // COPILOT_ALLOW_ALL and COPILOT_ASSISTED_APPROVAL are never listed: either widens copilot's tool allow list.
     env: { names: ['COPILOT_AUTO_UPDATE'], hostOnly: ['COPILOT_HOME'],
       relayOwned: ['COPILOT_GITHUB_TOKEN', 'COPILOT_PROVIDER_BASE_URL', 'COPILOT_PROVIDER_API_KEY', 'COPILOT_PROVIDER_TYPE',
@@ -127,7 +183,7 @@ export const ENGINES = deepFreeze({
       { id: 'provider-key', kind: 'key', env: ['COPILOT_PROVIDER_API_KEY'], requires: ['COPILOT_PROVIDER_BASE_URL'] },
       // A fine-grained PAT (github_pat_…, Copilot Requests only) is what the broker's copilot-pat slot and the relay
       // take; locally copilot accepts any token it accepts today.
-      { id: 'token', kind: 'key', env: ['COPILOT_GITHUB_TOKEN'], brokerSlot: 'copilot-pat' },
+      { id: 'token', kind: 'key', env: ['COPILOT_GITHUB_TOKEN'], brokerSlot: 'copilot-pat', slotLabel: 'Copilot (token)' },
       { id: 'keychain', kind: 'own', env: ['COPILOT_HOME'] },
     ] },
     relay: { protocol: 'openai', upstream: 'copilot', modelCheck: 'body', auxModels: [], needsModel: true },
@@ -138,12 +194,20 @@ export const ENGINES = deepFreeze({
     requiresExplicitModel: false, sessions: 'user-store', defaultModel: null, loadsClaudeMcp: false,
   },
   cursor: {
-    label: 'Cursor', models: true, cost: false, helpers: false, beta: true, signin: true, remote: true, chat: { images: false, pdfs: false, verified: false },
+    label: 'Cursor', models: true, cost: false, helpers: false, beta: true, signin: true, remote: true,
+    harness: 'Cursor', efforts: [],
+    chat: { images: false, pdfs: false, verified: false, minVersion: null, flags: [],
+      noLockdownMessage: 'Chat on Cursor is unavailable: no switch that turns off its shell and file tools has been verified, and a chat must stay inside its own files. Use a Claude chat.',
+      prompt: { cli: "Cursor's CLI agent with Cursor's own sign-in" } },
+    signInLabel: 'Cursor sign-in', signInHint: "cursor-agent's own sign-in (`cursor-agent login`, or CURSOR_API_KEY) reaches Cursor.",
+    helpersNote: "Cursor runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. See the Claude tab.",
+    helperSlots: false, modelConnection: "cursor-agent's own sign-in",
+    modelRule: "a cursor model takes no env, no upstream and no efforts (cursor-agent's own sign-in)", modelIdHint: null, signInTitle: null,
     env: { names: ['CURSOR_MODEL'], hostOnly: ['CURSOR_CONFIG_DIR'],
       relayOwned: ['CURSOR_API_KEY', 'CURSOR_AUTH_TOKEN', 'CURSOR_API_ENDPOINT', 'CURSOR_AGENT_CLI_AUTHLESS_MODE'],
       home: { env: 'CURSOR_CONFIG_DIR', dir: '.cursor' } },
     signIn: { modes: [
-      { id: 'api-key', kind: 'key', env: ['CURSOR_API_KEY'], brokerSlot: 'cursor' },
+      { id: 'api-key', kind: 'key', env: ['CURSOR_API_KEY'], brokerSlot: 'cursor', slotLabel: 'Cursor' },
       { id: 'keychain', kind: 'own', env: ['CURSOR_CONFIG_DIR'] },
     ] },
     relay: { protocol: 'connect', upstream: 'cursor', modelCheck: 'partial', auxModels: [] },
@@ -155,7 +219,16 @@ export const ENGINES = deepFreeze({
     requiresExplicitModel: false, sessions: 'user-store', defaultModel: null, loadsClaudeMcp: false,
   },
   gemini: {
-    label: 'Gemini CLI', models: true, cost: false, helpers: false, beta: true, signin: true, remote: false, chat: { images: true, pdfs: true },
+    label: 'Gemini CLI', models: true, cost: false, helpers: false, beta: true, signin: true, remote: false,
+    harness: 'Gemini CLI', efforts: ['low', 'medium', 'high'],
+    chat: { images: true, pdfs: true, minVersion: '0.65.0', flags: ['--admin-policy', '--allowed-mcp-server-names', '--extensions'],
+      docsAnchor: 'gemini-cli-and-qwen-code',
+      prompt: { cli: "Gemini CLI with Gemini CLI's own sign-in" },
+      ownFolder: true },
+    signInLabel: 'Gemini CLI sign-in', signInHint: "gemini's own sign-in (GEMINI_API_KEY, Vertex AI, or the sign-in you chose in `gemini`) reaches Google.",
+    helpersNote: "Gemini CLI runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. See the Claude tab.",
+    helperSlots: false, modelConnection: "gemini's own sign-in",
+    modelRule: "a gemini model takes no env, no upstream and no efforts (gemini's own sign-in)", modelIdHint: null, signInTitle: null,
     // GEMINI_CLI_TRUST_WORKSPACE is set per spawn; GEMINI_SYSTEM_MD and GEMINI_CLI_SYSTEM_SETTINGS_PATH are never listed
     // (either replaces what worca hands it).
     env: { names: ['GEMINI_CLI_TRUST_WORKSPACE'], hostOnly: ['GEMINI_CLI_HOME'],
@@ -177,7 +250,18 @@ export const ENGINES = deepFreeze({
     requiresExplicitModel: false, sessions: 'none', defaultModel: null, loadsClaudeMcp: false,
   },
   goose: {
-    label: 'Goose', models: true, cost: true, helpers: false, beta: true, signin: true, remote: false, chat: { images: true, pdfs: false },
+    label: 'Goose', models: true, cost: true, helpers: false, beta: true, signin: true, remote: false,
+    harness: 'Goose', efforts: ['low', 'medium', 'high', 'max'],
+    chat: { images: true, pdfs: false, minVersion: '1.56.0', flags: ['--no-profile'],
+      // load_skill reads the chat's own skills (plans/ask-on-qwen-gemini-spike.md): the one Goose tool a chat keeps.
+      metaTools: ['load_skill'],
+      prompt: { cli: "Goose with Goose's own providers" } },
+    signInLabel: 'Goose providers', signInHint: "Goose's own providers (`goose configure`, or a provider key in worca's environment) reach the model the id names.",
+    helpersNote: "Goose runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. See the Claude tab.",
+    helperSlots: false, modelConnection: "Goose's own providers",
+    modelRule: "a goose model's id is provider/model, it takes no env and no upstream (Goose's own providers), and its efforts are GOOSE_THINKING_EFFORT values",
+    modelIdHint: "A Goose model's id is provider/model (for example google/gemini-2.5-flash); Goose's own providers connect it.",
+    signInTitle: 'Goose providers',
     // goose's own knobs (GOOSE_MODE and GOOSE_THINKING_EFFORT are set per spawn); the provider and model come from the
     // step's model id (--provider, --model), its credentials from goose's config and keyring or the provider's key.
     env: { names: ['GOOSE_MODE', 'GOOSE_THINKING_EFFORT', 'GOOSE_MAX_TURNS', 'GOOSE_TEMPERATURE', 'GOOSE_CONTEXT_LIMIT',
@@ -204,7 +288,16 @@ export const ENGINES = deepFreeze({
     requiresExplicitModel: false, sessions: 'none', defaultModel: null, loadsClaudeMcp: false,
   },
   opencode: {
-    label: 'OpenCode', models: true, cost: true, helpers: false, beta: true, signin: true, remote: false, chat: { images: true, pdfs: true },
+    label: 'OpenCode', models: true, cost: true, helpers: false, beta: true, signin: true, remote: false,
+    harness: 'OpenCode', efforts: ['minimal', 'low', 'medium', 'high', 'max'],
+    chat: { images: true, pdfs: true, minVersion: '1.19.4', flags: [],
+      prompt: { cli: "OpenCode with OpenCode's own providers" } },
+    signInLabel: 'OpenCode providers', signInHint: "OpenCode's own providers (`opencode auth login`, or a provider key in worca's environment) reach the model the id names.",
+    helpersNote: "OpenCode runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. See the Claude tab.",
+    helperSlots: false, modelConnection: "OpenCode's own providers",
+    modelRule: "an opencode model's id is provider/model, it takes no env and no upstream (OpenCode's own providers), and its efforts are OpenCode variants",
+    modelIdHint: "An OpenCode model's id is provider/model (as `opencode models` lists it); OpenCode's own providers connect it, and its effort is OpenCode's --variant.",
+    signInTitle: 'OpenCode providers',
     // worca's config rides OPENCODE_CONFIG_CONTENT with the project config off (set per spawn); OPENCODE_CONFIG,
     // OPENCODE_CONFIG_DIR and OPENCODE_PERMISSION are never listed: each would bring config or rules worca did not write.
     env: { names: ['OPENCODE_DISABLE_LSP_DOWNLOAD', 'OPENCODE_DISABLE_MODELS_FETCH'], hostOnly: [],
@@ -227,7 +320,15 @@ export const ENGINES = deepFreeze({
     requiresExplicitModel: true, sessions: 'none', defaultModel: null, loadsClaudeMcp: false,
   },
   qwen: {
-    label: 'Qwen Code', models: true, cost: false, helpers: false, beta: true, signin: true, remote: false, chat: { images: true, pdfs: true },
+    label: 'Qwen Code', models: true, cost: false, helpers: false, beta: true, signin: true, remote: false,
+    harness: 'Qwen Code', efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+    chat: { images: true, pdfs: true, minVersion: '0.26.1', flags: ['--core-tools', '--exclude-tools', '--allowed-mcp-server-names'],
+      docsAnchor: 'gemini-cli-and-qwen-code',
+      prompt: { cli: "Qwen Code with Qwen Code's own sign-in" } },
+    signInLabel: 'Qwen Code sign-in', signInHint: "qwen's own sign-in (the auth type you chose in `qwen`, or a provider's env such as OPENAI_API_KEY, OPENAI_BASE_URL and OPENAI_MODEL).",
+    helpersNote: "Qwen Code runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. See the Claude tab.",
+    helperSlots: false, modelConnection: "qwen's own sign-in",
+    modelRule: "a qwen model takes no env, no upstream and no efforts (qwen's own sign-in)", modelIdHint: null, signInTitle: null,
     // QWEN_CODE_SUPPRESS_YOLO_WARNING and QWEN_CODE_SYSTEM_SETTINGS_PATH are set per spawn (the latter to worca's own
     // settings file, built over this machine's).
     // The model names say which model an env-only sign-in uses (Qwen's getAuthTypeFromEnv needs one).
@@ -288,6 +389,8 @@ export const ENGINE_NAMES = Object.freeze(Object.keys(ENGINES));
 export const MODEL_ENGINE_NAMES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].models));
 /** The engines a run can switch between: the model engines (a switch falls back to the target's catalog default). */
 export const SWITCH_ENGINES = MODEL_ENGINE_NAMES;
+/** The engines whose helper jobs have model slots of their own (title, overview, PR description, …). */
+export const HELPER_ENGINE_NAMES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].helperSlots));
 
 /** The engines whose models connect through their own sign-in (Cursor, Gemini CLI, Goose, OpenCode, Qwen Code). */
 export const SIGN_IN_ENGINE_NAMES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].signin));
@@ -321,6 +424,27 @@ export const BETA_ENGINES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].
 /** Is `engine` in beta? A missing engine is Claude. */
 export function isBetaEngine(engine) {
   return BETA_ENGINES.includes(engine || 'claude');
+}
+
+/** The one list every engine picker renders, in catalog order: `surface` 'run' (every engine), 'models' (the engines
+ *  that own catalog models) or 'ask' (the engines Ask Worca chats run on). A picker shows `label` and marks `beta`
+ *  its own way (a Beta badge, or ' (beta)' where only text fits). */
+export function engineOptions({ surface = 'run' } = {}) {
+  const surfaces = { run: ENGINE_NAMES, models: MODEL_ENGINE_NAMES, ask: CHAT_ENGINE_NAMES };
+  if (!Object.hasOwn(surfaces, surface)) throw new Error(`engineOptions: unknown surface "${surface}"`);
+  const names = surfaces[surface];
+  return names.map((value) => ({ value, label: engineLabel(value), beta: isBetaEngine(value) }));
+}
+
+/** The run engines as the CLI's --engine help lists them: 'claude (default) | codex (beta) | …'. */
+export function engineHelpList() {
+  return ENGINE_NAMES.map((e) => (e === DEFAULT_ENGINE ? `${e} (default)` : isBetaEngine(e) ? `${e} (beta)` : e)).join(' | ');
+}
+
+/** How the Statistics view names a broker slot that is one engine's own ('Copilot (token)'), or null. */
+export function brokerSlotLabel(slot) {
+  for (const e of ENGINE_NAMES) for (const m of ENGINES[e].signIn.modes) if (m.brokerSlot === slot && m.slotLabel) return m.slotLabel;
+  return null;
 }
 
 /** An engine's name where only text fits (a select option, an optgroup): 'Codex (beta)'. */

@@ -33,6 +33,7 @@ import {
 } from '../core/projects.mjs';
 import { projectKey, isNoProjectKey, noProjectWorkDir, isNoProjectWorkDir } from '../core/store.mjs';
 import { NO_PROJECT_ERRORS } from '../shared/no-project.mjs';
+import { engineHelpList } from '../shared/engine-switch.mjs';
 import { normaliseTags } from '../shared/run-tags.mjs';
 import { formatExecLine, formatGateHeader, formatRunSummary, formatWorkflowProposal, formatResumeHints } from './render.mjs';
 // Ask forms (spec §8): the prompt FORMATTING lives in render.mjs too (a second import
@@ -375,7 +376,7 @@ Options:
   --extras <paths>         Extra files copied into the pipeline's extras/ folder
                            (comma-separated; repeatable)
   --model <m>              Claude model id
-  --engine <name>          Agent harness for the pipeline's agent nodes: claude (default) | codex (beta) | copilot (beta) | cursor (beta) | gemini (beta) | goose (beta) | opencode (beta) | qwen (beta)
+  --engine <name>          Agent harness for the pipeline's agent nodes: ${engineHelpList()}
   --exec-env <name>        Where agent and script steps execute: local (default) or a registered backend —
                            e2b (one E2B sandbox per run; docs/e2b.md). List them: worca exec-env list
   --allow-unguarded-engine Run on an engine that cannot fully enforce the guardrail set's permission rules

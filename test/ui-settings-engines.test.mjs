@@ -7,7 +7,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { renderEngineSection, renderAskEngineSection, enginePatchToSettingsBody, ENGINE_EFFORTS, utilityId, renderRolesSection } from '../ui/public/engine-settings-view.mjs';
+import { renderEngineSection, renderAskEngineSection, enginePatchToSettingsBody, utilityId, renderRolesSection } from '../ui/public/engine-settings-view.mjs';
+import { HARNESS_EFFORTS } from '../src/shared/connections.mjs';
+import { ENGINES } from '../src/shared/engine-switch.mjs';
 import { EFFORTS, CODEX_EFFORTS } from '../src/core/model-env.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
 
@@ -21,8 +23,8 @@ const CATALOG = [
 const STEPS = [{ key: 'planner', label: 'Plan' }, { key: 'reviewer', label: 'Review' }];
 
 test('the efforts the UI offers are the engines\' own', () => {
-  assert.deepEqual(ENGINE_EFFORTS.claude, EFFORTS);
-  assert.deepEqual(ENGINE_EFFORTS.codex, CODEX_EFFORTS);
+  assert.deepEqual(HARNESS_EFFORTS.claude, EFFORTS);
+  assert.deepEqual(HARNESS_EFFORTS.codex, CODEX_EFFORTS);
   assert.equal(utilityId('codex', 'title'), 'models.codex.utility.title');
   assert.equal(utilityId('codex', 'workspaceScan'), 'models.codex.workspaceScan');
 });
@@ -30,10 +32,12 @@ test('the efforts the UI offers are the engines\' own', () => {
 test('enginePatchToSettingsBody maps setting ids onto the settings keys', () => {
   assert.deepEqual(enginePatchToSettingsBody({
     'run.engine': 'codex', 'models.codex.steps.planner': { model: 'gpt-5.5' }, 'models.claude.steps.reviewer': null,
+    'models.copilot.steps.planner': { model: 'copilot/gpt-5' },
     'models.codex.utility.title': { model: 'gpt-5.5', effort: 'low' }, 'models.codex.memoryDefrag': null,
   }), {
     runEngine: 'codex',
-    stepModels: { codex: { planner: { model: 'gpt-5.5' } }, claude: { reviewer: null } },
+    // Every model engine's step slots save, Copilot's too (the catalog's model engines, not a list of three).
+    stepModels: { codex: { planner: { model: 'gpt-5.5' } }, claude: { reviewer: null }, copilot: { planner: { model: 'copilot/gpt-5' } } },
     utilityModels: { codex: { title: { model: 'gpt-5.5', effort: 'low' }, memoryDefrag: null } },
   });
   // Agent generation is Claude's alone, a pair on its own settings key.
@@ -60,6 +64,13 @@ test('renderEngineSection: a row per role and job, each engine\'s models only', 
   assert.ok(host.querySelector('[data-setting="models.codex.workspaceScan"]'));
   assert.equal(host.querySelector('[data-setting="models.claude.utility.title"]'), null, 'no Claude jobs asked for, none rendered');
   assert.deepEqual(extra, {});
+  // An unset helper row runs the engine's catalog default; it is named by its catalog label when the catalog lists it.
+  const unset = (h) => h.querySelector('[data-setting="models.codex.utility.title"] .inherit-model').options[0].textContent;
+  assert.match(unset(host), new RegExp(`^Codex's default model \\(${ENGINES.codex.defaultModel.replace(/\./g, '\\.')}\\)`));
+  const labelled = doc.createElement('div');
+  renderEngineSection(labelled, { level: 'user', roles: STEPS, catalog: [...CATALOG, { id: ENGINES.codex.defaultModel, label: 'Sol', engine: 'codex', efforts: [], custom: false }],
+    fields: {}, jobs: { codex: ['title'] } });
+  assert.match(unset(labelled), /^Codex's default model \(Sol\)/);
 });
 
 test('renderEngineSection: the Cursor card has step rows, no helper rows, its own default label and the Claude-helpers note', () => {
@@ -160,6 +171,12 @@ test('the Models page: stored picks paint, Claude\'s helper jobs are rows of its
   }
   assert.match(claude.querySelector('[data-setting="models.claude.utility.agentGen"]').textContent, /Agent generation/);
   assert.equal(root.querySelector('[data-setting*=".agentGen"]:not([data-setting="models.claude.utility.agentGen"])'), null, 'agent generation runs on Claude only: no other engine has the row');
+  // Every other engine with helper slots of its own (the catalog's) gets a row per job; the others get none.
+  const codex = doc.querySelector('.engine-card[data-engine="codex"]');
+  for (const job of ['utility.title', 'utility.classifier', 'utility.overview', 'utility.prDescription', 'memoryDefrag', 'workspaceScan']) {
+    assert.ok(codex.querySelector(`.engine-helpers [data-setting="models.codex.${job}"]`), `codex ${job} is a Helper jobs row`);
+  }
+  for (const e of ['copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen']) assert.equal(doc.querySelector(`.engine-card[data-engine="${e}"] .engine-helpers .engine-slot`), null, `${e}: no helper rows`);
   const eng = root.querySelector('[data-setting="run.engine"] .inherit-input');
   eng.value = '';
   eng.dispatchEvent(new window.Event('change', { bubbles: true }));

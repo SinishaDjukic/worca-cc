@@ -10,7 +10,8 @@
 // and a wrong base URL or key breaks every pipeline that names the model. Credentials never
 // pass through here: a key is a ${VAR} reference or nothing, and the Copilot sign-in and its
 // notice stay on the Providers card.
-import { modelEnvRef, maskModelEnvValue, isLocalBaseUrl, isTranslatedApi, UPSTREAM_PROVIDERS, effortsForEngine } from '../model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, isLocalBaseUrl, isTranslatedApi, UPSTREAM_PROVIDERS } from '../model-env.mjs';
+import { engineEntry } from '../../shared/engine-switch.mjs';
 
 export const MODEL_CHANGE_KINDS = Object.freeze(['add_model', 'edit_model', 'remove_model', 'provider', 'import_copilot', 'import_endpoint']);
 const MAX_IMPORT = 40;
@@ -128,7 +129,8 @@ export function mergeEditPatch(current, patch) {
   return out;
 }
 
-const connectionOf = (m) => (m.engine === 'cursor' ? "cursor-agent's own sign-in" : m.engine === 'gemini' || m.engine === 'qwen' ? `${m.engine}'s own sign-in` : m.engine === 'copilot' ? "the Copilot CLI's own sign-in" : m.engine === 'goose' ? "Goose's own providers" : m.engine === 'opencode' ? "OpenCode's own providers" : m.upstream && m.engine === 'codex' ? 'codex, direct to an OpenAI-compatible endpoint' : m.upstream ? `through provider ${m.upstream.provider}` : m.env && m.env.ANTHROPIC_BASE_URL ? 'custom endpoint via env' : 'Anthropic API / CLI default');
+// An engine whose models connect one fixed way says how in its catalog entry (modelConnection); else the entry decides.
+const connectionOf = (m) => (engineEntry(m.engine)?.modelConnection || (m.upstream && m.engine === 'codex' ? 'codex, direct to an OpenAI-compatible endpoint' : m.upstream ? `through provider ${m.upstream.provider}` : m.env && m.env.ANTHROPIC_BASE_URL ? 'custom endpoint via env' : 'Anthropic API / CLI default'));
 const fmtEfforts = (e) => (Array.isArray(e) && e.length ? e.join(', ') : 'all');
 const fmtCost = (c) => (!c ? null : c.free ? 'free' : c.perMtok ? Object.entries(c.perMtok).map(([k, v]) => `${k} $${v}`).join(' · ') : JSON.stringify(c));
 const fmtCaps = (c) => (!c ? null : Object.entries(c).map(([k, v]) => `${k} ${v}`).join(' · '));
@@ -147,7 +149,7 @@ function entryRows(m) {
     if (m.upstream.capabilities) rows.push({ field: 'Limits', value: fmtCaps(m.upstream.capabilities) });
   }
   for (const [k, v] of Object.entries(m.env || {})) rows.push({ field: k, value: typeof v === 'string' ? maskEnvValue(k, v) : String(v) });
-  rows.push({ field: 'Efforts', value: effortsForEngine(m.engine).length ? fmtEfforts(m.efforts) : 'none' });   // Cursor: no effort
+  rows.push({ field: 'Efforts', value: engineEntry(m.engine)?.efforts.length === 0 ? 'none' : fmtEfforts(m.efforts) });   // an engine with no effort flag
   const c = fmtCost(m.cost);
   if (c) rows.push({ field: 'Pricing', value: c });
   return rows;

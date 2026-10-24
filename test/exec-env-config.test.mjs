@@ -353,8 +353,9 @@ test('propose_run\'s execEnv and the chat rules name the engines a sandbox runs 
   const { REMOTE_ENGINES: remote } = await import('../src/shared/exec-env.mjs');
   const { engineLabel } = await import('../src/shared/engine-switch.mjs');
   const desc = (deps) => createAskTools({ limits: ASK_LIMITS, ...deps }).list().find((d) => d.name === 'propose_run').inputSchema.properties.execEnv.description;
-  assert.match(desc({ remoteEngines: ['claude', 'zeta'] }), /one git project\) on the claude or zeta engine\. Only/);
-  assert.match(desc({}), /one git project\)\. Only/, 'no list given: no engine named');
+  const engines = { claude: { harness: 'Claude Code', remote: true }, zeta: { harness: 'Zeta', remote: true }, eta: { harness: 'Eta' } };
+  assert.match(desc({ engineCatalog: { engines, defaultEngine: 'claude' } }), /one git project\) on the claude or zeta engine\. Only/);
+  assert.match(desc({}), /one git project\)\. Only/, 'no catalog given: no engine named');
   const words = `${remote.slice(0, -1).map(engineLabel).join(', ')} or ${engineLabel(remote.at(-1))}`;
   assert.ok(String(ASK_SYSTEM_RULES).includes(`E2B takes runs of one git project only, on ${words}: no workspace`));
 });

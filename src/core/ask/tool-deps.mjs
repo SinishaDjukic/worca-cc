@@ -17,6 +17,7 @@ import { readAttachmentText, readAttachmentRaw, getAttachment, attachmentPath, g
 import { redactAskText } from './redact.mjs';
 import { htmlToText } from './html-text.mjs';
 import { ASK_LIMITS } from './limits.mjs';
+import { ENGINES, DEFAULT_ENGINE } from '../../shared/engine-switch.mjs';
 import { askProgress } from '../ask-projection.mjs';
 import { getDb } from '../db.mjs';
 import { listProjects, displayPath } from '../projects.mjs';
@@ -25,7 +26,6 @@ import { readNightDecisions } from '../night/store.mjs';
 import { PERSPECTIVE_KEYS } from '../../shared/shape/perspectives.mjs';
 import { listPresets } from '../run-presets-store.mjs';
 import { defaultGuardrailSetId } from '../guardrail-store.mjs';
-import { REMOTE_ENGINES } from '../../shared/exec-env.mjs';
 
 /** Who started runs (pipelines.started_by), one row per person, most active first. Scope: a
  *  projectKey or a workspaceKey, else everything. Archived and pre-attribution (NULL) runs are
@@ -182,7 +182,8 @@ export function defaultToolDeps({ threadId, viewer = null }) {
     protectedPaths: [...GUARDRAIL_PRESETS.secure.protectedPaths],
     redact: redactAskText,
     limits: ASK_LIMITS,
-    // The engines a sandbox runs (src/shared/exec-env.mjs, from the catalog): propose_run's execEnv names them.
-    remoteEngines: REMOTE_ENGINES,
+    // The engine catalog the tool descriptions name (propose_run's engine, list_models, add_model). Injected: tools.mjs
+    // stays import-free.
+    engineCatalog: { engines: ENGINES, defaultEngine: DEFAULT_ENGINE },
   };
 }

@@ -65,6 +65,7 @@ import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { superviseSpawn, childEnv, execCheck, runCapture, argValue, cleanRunEnv, safeEmit } from '../spawn.mjs';
+import { ENGINES } from '../../shared/engine-switch.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { envFlag } from '../model-env.mjs';
@@ -683,7 +684,7 @@ export async function runOpencodeProcess({
 // ── chat ─────────────────────────────────────────────────────────────────────
 
 /** The oldest OpenCode the chat lockdown was verified on; OpenCode 2 is refused by the preflight. */
-export const OPENCODE_ASK_MIN_VERSION = '1.19.4';
+export const OPENCODE_ASK_MIN_VERSION = ENGINES.opencode.chat.minVersion;
 
 /** Can this opencode be locked down for a chat? OpenCode 1.x at least OPENCODE_ASK_MIN_VERSION. Never rejects. */
 export function opencodeAskSupport({ bin = opencodeDefaultBin(), timeoutMs = 15000 } = {}) {
@@ -731,5 +732,4 @@ export const opencodeChat = makeChatDescriptor({
   modelProblem: (id) => (ZEN_PROVIDER_RE.test(String(id || '')) ? "OpenCode Zen's free models refuse a request without the shell, and a chat has none" : null),
   signInMode: (model) => opencodeProviderOf(model),
   listRates: providerListRates,
-  prompt: { cli: "OpenCode with OpenCode's own providers" },
 });

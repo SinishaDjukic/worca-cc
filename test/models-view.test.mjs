@@ -11,6 +11,7 @@ import {
   renderExportWizard, collectExportWizard, applyConnectionModeIn,
 } from '../ui/public/models-view.mjs';
 import { bridgedBadge, degradationLine } from '../ui/public/bridge-view.mjs';
+import { ENGINES } from '../src/shared/engine-switch.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 
@@ -341,7 +342,7 @@ test('list: Codex built-ins have their own group; a Codex custom model carries a
   const el = renderModelsList({
     globals: [{ id: 'gpt-5.5-tuned', label: 'Tuned', efforts: ['low', 'high'], engine: 'codex' }],
     predefined: PREDEFINED, efforts: EFFORTS,
-    codex: [{ id: 'gpt-5.5', label: 'GPT-5.5', efforts: CODEX_EFFORTS }], codexEfforts: CODEX_EFFORTS,
+    codex: [{ id: 'gpt-5.5', label: 'GPT-5.5', efforts: CODEX_EFFORTS }],
   }, { doc });
   const sec = el.querySelector('.mv-section[data-section="codex"]');
   assert.ok(sec);
@@ -355,7 +356,7 @@ test('list: Codex built-ins have their own group; a Codex custom model carries a
 });
 
 test('editor: the engine swaps the efforts and hides env for Codex; collect sends it', () => {
-  const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
+  const el = renderModelEditor(null, EFFORTS, { doc });
   const engine = el.querySelector('.mv-engine');
   assert.equal(engine.value, 'claude');
   assert.equal(engine.disabled, false);
@@ -375,7 +376,7 @@ test('editor: the engine swaps the efforts and hides env for Codex; collect send
   setModelEngine(el, 'claude');
   assert.deepEqual([...el.querySelectorAll('.mv-effort-cb')].map((c) => c.value), EFFORTS);
   assert.equal(collectModelEditor(el).body.engine, undefined, 'a Claude create body is unchanged');
-  const edit = renderModelEditor({ id: 'gpt-5.5-tuned', label: 'Tuned', efforts: ['low'], engine: 'codex' }, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
+  const edit = renderModelEditor({ id: 'gpt-5.5-tuned', label: 'Tuned', efforts: ['low'], engine: 'codex' }, EFFORTS, { doc });
   assert.equal(edit.querySelector('.mv-engine').disabled, true, 'the engine is fixed once created');
   assert.deepEqual([...edit.querySelectorAll('.mv-effort-cb')].filter((c) => c.checked).map((c) => c.value), ['low']);
   assert.equal(edit.querySelector('.mv-env').closest('.mv-field').hidden, true);
@@ -383,7 +384,7 @@ test('editor: the engine swaps the efforts and hides env for Codex; collect send
 
 test('editor: a new model picks its connection first; through a provider it is Claude Code\'s, and an OpenAI Responses endpoint runs on Codex too', () => {
   const providers = { openai: { configured: false, keySet: false, keyOptional: false } };
-  const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS, providers });
+  const el = renderModelEditor(null, EFFORTS, { doc, providers });
   const conn = el.querySelector('.mv-conn');
   const signin = el.querySelector('.mv-signin-field');
   // A new entry is on no engine until its connection says so: every mode, whatever the sign-in.
@@ -424,7 +425,7 @@ test('editor: a new model picks its connection first; through a provider it is C
 
 test('editor (edit): a stored Codex endpoint model keeps codex\'s rules — its own sign-in or an OpenAI-compatible Responses endpoint', () => {
   const upstream = { provider: 'openai', api: 'openai-responses', model: 'qwen3-coder', baseUrl: 'http://127.0.0.1:8000/v1', apiKey: '${CX_KEY}', headers: { 'X-Team': 'blue' } };
-  const edit = renderModelEditor({ id: 'cx-local', engine: 'codex', efforts: CODEX_EFFORTS, upstream }, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
+  const edit = renderModelEditor({ id: 'cx-local', engine: 'codex', efforts: CODEX_EFFORTS, upstream }, EFFORTS, { doc });
   const conn = edit.querySelector('.mv-conn');
   const shown = [...conn.querySelectorAll('.mv-conn-mode')].filter((l) => !l.hidden);
   assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-rb').value), ['direct', 'provider'], 'no env mode on Codex');
@@ -456,7 +457,7 @@ test('list: a Codex built-in shadowed by a same-id model of any engine says over
   const el = renderModelsList({
     globals: [{ id: 'gpt-5.5', label: 'GPT via proxy', efforts: ['medium'] }],
     predefined: PREDEFINED, efforts: EFFORTS,
-    codex: [{ id: 'gpt-5.5', label: 'GPT-5.5', efforts: CODEX_EFFORTS }, { id: 'gpt-5.6-sol', label: 'Sol', efforts: CODEX_EFFORTS }], codexEfforts: CODEX_EFFORTS,
+    codex: [{ id: 'gpt-5.5', label: 'GPT-5.5', efforts: CODEX_EFFORTS }, { id: 'gpt-5.6-sol', label: 'Sol', efforts: CODEX_EFFORTS }],
     policy: [{ id: 'gpt-5.6-sol', label: 'Sol via Acme', efforts: ['medium'], home: 'acme/gateway' }],
   }, { doc });
   const badge = (id) => !!el.querySelector(`.mv-builtin.mv-codex[data-id="${id}"] .mv-shadowed`);
@@ -465,7 +466,7 @@ test('list: a Codex built-in shadowed by a same-id model of any engine says over
 });
 
 test('editor: Cursor takes no env, no endpoint, no effort and no pricing; the fields come back off Cursor', () => {
-  const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS, cursorEfforts: [] });
+  const el = renderModelEditor(null, EFFORTS, { doc });
   assert.deepEqual([...el.querySelectorAll('.mv-engine option')].map((o) => o.value), ['claude', 'codex', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen']);
   setModelEngine(el, 'cursor');
   assert.equal(el.querySelector('.mv-engine').value, 'cursor');
@@ -573,10 +574,28 @@ for (const [engine, label, efforts] of [['gemini', 'Gemini CLI', ['low', 'medium
   });
 }
 
+test('editor: the sign-in choices, the no-effort note and an own-sign-in model\'s Connection come from the catalog', () => {
+  const el = renderModelEditor(null, EFFORTS, { doc });
+  assert.deepEqual([...el.querySelectorAll('.mv-engine option')].map((o) => o.textContent),
+    ['Claude Code: your Claude sign-in', 'Codex: your ChatGPT sign-in (beta)', 'Copilot: your Copilot sign-in (beta)', 'Cursor: your Cursor sign-in (beta)',
+      'Gemini CLI: your Gemini CLI sign-in (beta)', 'Goose: your Goose providers (beta)', 'OpenCode: your OpenCode providers (beta)', 'Qwen Code: your Qwen Code sign-in (beta)']);
+  assert.match(el.querySelector('.mv-signin-field').textContent, /The harness whose sign-in runs this model\. A Cursor model takes no effort, and Worca cannot price it\. A Goose model's id is provider\/model .* An OpenCode model's id is provider\/model /);
+  const direct = el.querySelector('.mv-conn-mode-rb[value="direct"]').closest('.mv-conn-mode');
+  assert.equal(direct.querySelector('.mv-conn-mode-hint').textContent, 'The subscription a harness is signed in with (Claude Code, Codex, Copilot, Cursor, Gemini CLI, Goose, OpenCode or Qwen Code). It runs only in that harness.');
+  // An edited Copilot or Cursor model keeps its own sign-in alone, worded by its catalog entry.
+  for (const engine of ['copilot', 'cursor']) {
+    const conn = renderModelEditor({ id: `my-${engine}`, label: 'Mine', efforts: [], engine }, EFFORTS, { doc }).querySelector('.mv-conn');
+    const shown = [...conn.querySelectorAll('.mv-conn-mode')].filter((l) => !l.hidden);
+    assert.equal(shown.length, 1, `${engine}: its own sign-in only`);
+    assert.equal(shown[0].querySelector('.mv-conn-mode-title').textContent, `${ENGINES[engine].label} default`);
+    assert.equal(shown[0].querySelector('.mv-conn-mode-hint').textContent, ENGINES[engine].signInHint);
+    assert.equal(conn.querySelector('.mv-conn-body').hidden, true, `${engine}: no endpoint fields`);
+  }
+});
 test('list: a Cursor custom model carries a Cursor badge, and there is no Cursor filter chip', () => {
   const el = renderModelsList({
     globals: [{ id: 'sonnet-4.5', label: 'Sonnet via Cursor', efforts: [], engine: 'cursor' }],
-    predefined: PREDEFINED, efforts: EFFORTS, codexEfforts: CODEX_EFFORTS, cursorEfforts: [],
+    predefined: PREDEFINED, efforts: EFFORTS,
   }, { doc });
   assert.equal(el.querySelector('.mv-card[data-id="sonnet-4.5"] .mv-engine').textContent, 'Cursor');
   assert.equal([...el.querySelectorAll('[data-filter]')].some((c) => c.dataset.filter === 'cursor'), false);

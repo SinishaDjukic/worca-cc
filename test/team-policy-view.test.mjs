@@ -10,6 +10,7 @@ import {
 } from '../ui/public/team-policy-view.mjs';
 import { renderCostPauseBanner } from '../ui/public/stats-view.mjs';
 import { FIELDS } from '../src/core/policy/registry.mjs';
+import { HARNESS_EFFORTS } from '../src/shared/connections.mjs';
 
 const dom = new JSDOM('<!doctype html><body></body>');
 const doc = dom.window.document;
@@ -332,6 +333,12 @@ test('Catalog tab and editor show a Codex model\'s engine', () => {
   assert.equal(root.querySelector('.tp-catalog-models .tp-engine').textContent, 'Codex');
   const plain = renderPolicyCatalogPanel(PAYLOAD, { doc });
   assert.equal(plain.querySelector('.tp-catalog-models .tp-engine'), null);
+  // The editor offers each engine's own efforts (the catalog's); a Claude model the policy's own list.
+  const models = [{ id: 'acme-opus', label: 'Opus', efforts: ['high'] }, ...payload.policy.doc.catalogs.models, { id: 'acme-copilot', label: 'Acme Copilot', efforts: [], engine: 'copilot' }];
+  const editor = renderPolicyEditor({ ...SAMPLE_DOC, catalogs: { ...SAMPLE_DOC.catalogs, models } }, { registry: REGISTRY, doc });
+  const efforts = Object.fromEntries([...editor.querySelectorAll('.tp-cat-item[data-cat="models"]')]
+    .map((el) => [el.querySelector('.tp-cat-id').value, [...el.querySelectorAll('.tp-cat-effort')].map((cb) => cb.value)]));
+  assert.deepEqual(efforts, { 'acme-opus': ['low', 'medium', 'high', 'xhigh', 'max'], 'acme-codex': [...HARNESS_EFFORTS.codex], 'acme-copilot': [...HARNESS_EFFORTS.copilot] });
 });
 
 test('editor: runs.tagDimensions chips, add row adds a dimension, docFromEditor reads them back', () => {

@@ -4,7 +4,9 @@
 // starting again resends with allowUnguardedEngine: true. Boot copied from test/ui-sync-row.test.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
@@ -39,7 +41,7 @@ const freshBody = (dir, over = {}) => {
 };
 const ok = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
 
-async function boot({ fresh = null, syncGet = null, syncPost = null, run = null, workspaces = [], runDefaults = null, execEnvs = null } = {}) {
+async function boot({ fresh = null, syncGet = null, syncPost = null, run = null, workspaces = [], runDefaults = null, execEnvs = null, appUrl = null } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -94,7 +96,7 @@ async function boot({ fresh = null, syncGet = null, syncPost = null, run = null,
   window.localStorage.clear();
   window.localStorage.setItem('worca-cc.runTarget', 'project');
   window.localStorage.setItem('worca-cc.lastProject', 'web');
-  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
+  await import((appUrl || pathToFileURL(appPath).href) + `?b=${Date.now()}_${Math.random()}`);
   await tick();
   lastWs._l.open?.forEach((fn) => fn());
   const recv = (obj) => lastWs._l.message.forEach((fn) => fn({ data: JSON.stringify(obj) }));
@@ -134,6 +136,39 @@ test('engine: Claude is the default and sends nothing', async () => {
   assert.equal('allowUnguardedEngine' in first, false);
 });
 
+/** A copy of app.js whose engine-switch import is a shim: its engineOptions labels codex `label`, everything else is
+ *  the real module. Every other relative import is made absolute, so the copy runs from a temp folder on the real
+ *  modules. (The catalog is frozen and engineLabel reads it directly, so a label with markup needs this seam.) */
+function appWithEngineLabel(label) {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-engine-label-'));
+  const real = new URL('../src/shared/engine-switch.mjs', import.meta.url).href;
+  const shim = join(dir, 'engine-switch-shim.mjs');
+  writeFileSync(shim, `export * from ${JSON.stringify(real)};\nimport { engineOptions as realOptions } from ${JSON.stringify(real)};\n`
+    + `export function engineOptions(o) { return realOptions(o).map((x) => (x.value === 'codex' ? { ...x, label: ${JSON.stringify(label)} } : x)); }\n`);
+  const appUrl = pathToFileURL(appPath).href;
+  let swapped = 0;
+  const src = readFileSync(appPath, 'utf8').replace(/(\bfrom\s*|\bimport\s+)(['"])(\.{1,2}\/[^'"]+)\2/g, (_m, kw, q, spec) => {
+    const abs = new URL(spec, appUrl).href;
+    if (abs === real) { swapped += 1; return `${kw}${q}${pathToFileURL(shim).href}${q}`; }
+    return `${kw}${q}${abs}${q}`;
+  });
+  assert.equal(swapped, 1, 'app.js imports engine-switch once');
+  writeFileSync(join(dir, 'app.mjs'), src);
+  return { url: pathToFileURL(join(dir, 'app.mjs')).href, dir };
+}
+
+test('engine: an engine\'s label is text in its <option>, never parsed as markup', async () => {
+  const label = '<img src="x" onerror="window.__labelRan = 1">Codex';
+  const app = appWithEngineLabel(label);
+  try {
+    const ctx = await boot({ appUrl: app.url });
+    const opt = [...ctx.doc.getElementById('engineSelect').options].find((o) => o.value === 'codex');
+    assert.ok(opt.textContent.startsWith(label), opt.textContent);
+    assert.equal(opt.children.length, 0, 'no element was parsed out of the label');
+    assert.equal(ctx.doc.querySelector('#engineSelect img'), null);
+  } finally { rmSync(app.dir, { recursive: true, force: true }); }
+});
+
 test('engine: Codex sends engine only, and shows the hint', async () => {
   // Its own boot: a second start after a successful one would depend on what beginRun
   // leaves behind, which is not what this test is about.
@@ -156,7 +191,8 @@ test('engine: Copilot sends engine copilot, says it runs on its default model, a
   pick(ctx, 'copilot');
   assert.equal(doc.getElementById('engineSelect').value, 'copilot');
   assert.equal(doc.getElementById('engine-hint').hidden, false);
-  assert.match(doc.getElementById('engine-hint').textContent, /^GitHub Copilot CLI runs this pipeline, including titles and summaries \(on its default model\)\. Step models: Models › Copilot\./);
+  // The hint is built from the catalog: an engine with helpers of its own but no helper slots runs them on its default model.
+  assert.equal(doc.getElementById('engine-hint').textContent, 'Copilot runs this pipeline, including titles and summaries (on its default model). Step models: Models › Copilot.');
   await submit(ctx);
   assert.equal(ctx.posted.at(-1).engine, 'copilot');
   await waitFor(() => !doc.getElementById('engineRefusal').hidden);
@@ -247,7 +283,10 @@ test('engine: the Codex hint says the whole pipeline runs on Codex and where its
 test('engine: Cursor is the third choice; it sends engine cursor and says helper jobs run on Claude', async () => {
   const ctx = await boot({ run: (_body, n) => ok({ runId: `r${n}` }) });
   const doc = ctx.doc;
+  // The page holds no engine <option>: app.js builds them from the catalog (engineOptions), a beta one saying so.
   assert.deepEqual([...doc.querySelectorAll('#engineSelect option')].map((o) => o.value), ['claude', 'codex', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen']);
+  assert.deepEqual([...doc.querySelectorAll('#engineSelect option')].map((o) => o.textContent), ['Claude', 'Codex (Beta)', 'Copilot (Beta)', 'Cursor (Beta)', 'Gemini CLI (Beta)', 'Goose (Beta)', 'OpenCode (Beta)', 'Qwen Code (Beta)']);
+  assert.doesNotMatch(readFileSync(htmlPath, 'utf8'), /<option value="(claude|codex|copilot|cursor|gemini|goose|opencode|qwen)"/);
   pick(ctx, 'cursor');
   assert.equal(doc.getElementById('engineSelect').value, 'cursor');
   const hint = doc.getElementById('engine-hint');

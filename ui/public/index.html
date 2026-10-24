@@ -437,16 +437,8 @@
                   <div class="field field-compact" id="engine-row" data-min-level="advanced">
                     <label for="engineSelect">Engine</label>
                     <div class="select-wrap">
-                      <select id="engineSelect" class="select" aria-label="Engine">
-                        <option value="claude" selected>Claude</option>
-                        <option value="codex">Codex</option>
-                        <option value="copilot">Copilot</option>
-                        <option value="cursor">Cursor</option>
-                        <option value="gemini">Gemini CLI</option>
-                        <option value="goose">Goose</option>
-                        <option value="opencode">OpenCode</option>
-                        <option value="qwen">Qwen Code</option>
-                      </select>
+                      <!-- The engines come from the catalog (src/shared/engine-switch.mjs engineOptions): app.js fills them. -->
+                      <select id="engineSelect" class="select" aria-label="Engine"></select>
                     </div>
                   </div>
 
@@ -469,7 +461,7 @@
 
                   <!-- The engine's hints span the row: a 40% cell would wrap them into a tall column. -->
                   <div class="wf-engine-hints">
-                    <small class="hint" id="engine-hint" hidden>Codex runs this pipeline, including titles and summaries. Its models: Models › Codex</small>
+                    <small class="hint" id="engine-hint" hidden></small>
                     <small class="hint" id="engine-default-hint" hidden></small>
                     <small class="hint warn" id="engine-mcpjson-hint" hidden></small>
                     <small class="hint" id="exec-env-hint" hidden>Runs locally: the saved E2B default does not apply to this run.</small>

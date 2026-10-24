@@ -57,7 +57,7 @@ import { brokerEnabled } from '../broker-client.mjs';
 import { brokerLease } from '../broker-lease.mjs';
 import { resolveModelRoute, localServerEnv } from '../exec-env/credentials.mjs';
 import { CLI_POINTING, POINTING_NAMES } from '../exec-env/relay-route.mjs';
-import { engineEntry } from '../../shared/engine-switch.mjs';
+import { ENGINES, engineEntry } from '../../shared/engine-switch.mjs';
 
 export const COPILOT_DEFAULT_BIN = process.env.WORCA_COPILOT_BIN || 'copilot';
 
@@ -572,9 +572,9 @@ function storeUsage(dir, session, usage) {
 }
 
 /** The flags an Ask chat's lockdown needs (COPILOT_ASK_LOCKDOWN): every one must be in the installed copilot's --help. */
-export const COPILOT_ASK_FLAGS = Object.freeze(['--available-tools', '--disable-builtin-mcps', '--disallow-temp-dir', '--no-custom-instructions', '--additional-mcp-config']);
+export const COPILOT_ASK_FLAGS = ENGINES.copilot.chat.flags;
 /** The oldest copilot the Ask lockdown was verified on. */
-export const COPILOT_ASK_MIN_VERSION = '1.0.100';
+export const COPILOT_ASK_MIN_VERSION = ENGINES.copilot.chat.minVersion;
 /** Ask Worca on Copilot: the lockdown is the read-only spawn (only the MCP servers it is handed — worca's own — and a
  *  scrubbed env) plus no custom instructions. A flag, not a list: the adapter builds it (runCopilotProcess askLockdown). */
 export const COPILOT_ASK_LOCKDOWN = true;
@@ -847,22 +847,7 @@ export async function runCopilotProcess({
 export const copilotChat = makeChatDescriptor({
   engine: 'copilot',
   lockdown: () => COPILOT_ASK_LOCKDOWN,
-  noLockdownMessage: 'Chat on Copilot is unavailable: this copilot cannot be locked down for a chat. Use a Claude chat.',
   askSupport: (o, impl = copilotAskSupport) => impl(o),
   preflight: (_ctx, impl = copilotPreflight) => impl(),
   resumeNotFound: copilotResumeNotFound,
-  docsAnchor: 'github-copilot-cli',
-  shellTrippedMessage: 'Copilot tried to run a shell command although it was given none — worca stopped the turn.',
-  titles: true,
-  // GPT-5 Mini is one of Copilot's included models (0× premium requests on a paid plan): a suggestion after every reply
-  // costs no premium request there (one on the free plan).
-  suggestionModel: 'gpt-5-mini',
-  prompt: {
-    cli: "the GitHub Copilot CLI with Copilot's own sign-in",
-    webOff: "Copilot's own web tools stay off.",
-    // Copilot hands an MCP image on only to a model that declares vision, and a PDF only on the Responses and Anthropic
-    // APIs; otherwise it drops the block without a word (plans/ask-on-qwen-gemini-spike.md, "Open topics").
-    attachments: 'Image and PDF attachments are different: read_attachment returns the image or PDF itself, as a block of its result beside its kind and size, and Copilot hands it to your model right after the result only when the model can view that kind — read one to look at it; when it does not reach you, tell the user this Copilot model cannot view it.',
-    composerBinary: 'For an image or PDF, read_attachment returns the image or PDF itself as a block of its result, which Copilot hands on only to a model that can view that kind: read it to look at it; when it does not reach you, say this Copilot model cannot view it.',
-  },
 });

@@ -51,6 +51,7 @@ import { homedir } from 'node:os';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { writeProjectFiles } from './project-files.mjs';
 import { argValue } from '../spawn.mjs';
+import { ENGINES } from '../../shared/engine-switch.mjs';
 import {
   claudeToolName, commandRuleBody, mcpRuleParts, familyMcpServers, classifyFamilyError, familyPreflight, runFamilyProcess,
   homeOf, readDotenv, settingsAuthType, foldSystemPrompt, NO_MCP_SERVER, absolutePaths, familyAskSupport, mergeSettings,
@@ -91,8 +92,8 @@ export const GEMINI_ASK_SETTINGS = Object.freeze({
  *  no extension, only worca's MCP server. Proven per binary and user config by the chat self-test. */
 export const GEMINI_ASK_LOCKDOWN = Object.freeze({ settings: GEMINI_ASK_SETTINGS, extensions: 'none' });
 /** The flags the lockdown needs, and the oldest Gemini CLI it was verified on. */
-export const GEMINI_ASK_FLAGS = Object.freeze(['--admin-policy', '--allowed-mcp-server-names', '--extensions']);
-export const GEMINI_ASK_MIN_VERSION = '0.65.0';
+export const GEMINI_ASK_FLAGS = ENGINES.gemini.chat.flags;
+export const GEMINI_ASK_MIN_VERSION = ENGINES.gemini.chat.minVersion;
 
 /** A chat's admin policy: every tool denied, worca's MCP servers' tools allowed above it. */
 export function geminiAskPolicyToml(mcpNames) {
@@ -404,14 +405,12 @@ export function geminiChatSelfTest({ bin = geminiDefaultBin(), ...o } = {}) {
 
 /** Gemini CLI's chat descriptor (engines/chat-descriptor.mjs). A chat runs in a folder of its own (`ownFolder`): Gemini
  *  keeps sessions per folder and reads the chat's settings from it. Each `impl` is the function a test hands the turn. */
-export const geminiChat = Object.freeze({ ...makeChatDescriptor({
+export const geminiChat = makeChatDescriptor({
   engine: 'gemini',
   lockdown: () => GEMINI_ASK_LOCKDOWN,
   askSupport: (o, impl = geminiAskSupport) => impl(o),
   selfTest: (o, impl = geminiChatSelfTest) => impl(o),
   preflight: (_ctx, impl = geminiPreflight) => impl(),
   resumeNotFound: (err) => GEMINI_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
-  docsAnchor: 'gemini-cli-and-qwen-code',
   signInMode: () => null,
-  prompt: { cli: "Gemini CLI with Gemini CLI's own sign-in" },
-}), ownFolder: true });
+});

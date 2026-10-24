@@ -576,6 +576,13 @@ test('get_run_diff: the protected floor is the secure preset, not normal', async
   assert.ok(!d.text.includes('TOP_SECRET_VALUE'));
 });
 
+test('the real bundle passes the engine catalog the tool descriptions name (tools.mjs imports nothing)', async () => {
+  const { ENGINES, DEFAULT_ENGINE } = await import('../src/shared/engine-switch.mjs');
+  const deps = defaultToolDeps({ threadId: 'ask_00000001' });
+  assert.equal(deps.engineCatalog.engines, ENGINES);
+  assert.equal(deps.engineCatalog.defaultEngine, DEFAULT_ENGINE);
+});
+
 test('get_run_diff: a prefix-less patch is filtered per file, not swallowed whole', async () => {
   const secure = { ...fake, protectedPaths: defaultToolDeps({ threadId: 'ask_00000001' }).protectedPaths };
   const t = createAskTools({ ...secure, readDiffPatch: async () => NOPREFIX_DIFF });

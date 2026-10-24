@@ -2,7 +2,7 @@ import { renderInheritField, readDirtyFields, inheritedOf } from './inherit-fiel
 import { renderEngineSection, utilityId } from './engine-settings-view.mjs';
 import { notify, cardAlert } from './feedback.mjs';
 import { mountExecEnvPanel } from './exec-env-project-view.mjs';
-import { ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { ENGINE_NAMES, HELPER_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 
 // A USD field's inherited value as the placeholder shows it: "$5.00", or "no cap" when unset.
 const usd = (value) => (value == null ? 'no cap' : `$${Number(value).toFixed(2)}`);
@@ -23,9 +23,9 @@ export const PROJECT_CARDS = Object.freeze([
     toValue: (value) => value === 'on', fromValue: (value) => (value ? 'on' : 'off'), format: (value) => (value ? 'On' : 'Off'),
     hint: 'Create PR opens with Watch PR on for this project. A workspace run needs it on in every repository.' }] },
 ]);
+// A project's helper slots, on every engine with helper slots of its own (the catalog's HELPER_ENGINE_NAMES); the
+// other engines' helper jobs run on their default model or on Claude, as their tab says.
 const JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag'];
-// src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the sign-in engines' helper jobs run on Claude.
-const HELPER_ENGINES = ['claude', 'codex'];
 function makeCard(doc, key, title) { const card = doc.createElement('section'); card.className = 'card pd-settings-card'; card.dataset.card = key; const heading = doc.createElement('h3'); heading.textContent = title; const body = doc.createElement('div'); body.className = 'pd-settings-body drows'; const save = doc.createElement('button'); save.type = 'button'; save.className = 'btn btn-primary btn-sm pd-settings-save'; save.textContent = 'Save'; const msg = doc.createElement('small'); msg.className = 'hint pd-settings-msg'; const actions = doc.createElement('div'); actions.className = 'add-project-actions engine-save-row'; actions.append(msg, save); card.append(heading, body, actions); return { card, body, save, msg }; }
 export function mountProjectSettings(host, { projectKey, projectDir, fetchFn = (url, options) => fetch(url, options), onTest = null }) {
   const doc = host.ownerDocument; const url = `/api/projects/${encodeURIComponent(projectKey)}/settings`; let catalog = []; let current = { own: {} };
@@ -35,8 +35,8 @@ export function mountProjectSettings(host, { projectKey, projectDir, fetchFn = (
   const render = (data) => {
     execEnvPanel?.stop(); execEnvPanel = null;
     current = data; host.replaceChildren(); const field = (id) => ({ own: data.own[id], inherited: inheritedOf(data.layers[id]) }); const roles = data.roles || [];
-    const models = makeCard(doc, 'models', 'Engine and models'); const ids = ['run.engine']; for (const engine of ENGINE_NAMES) { for (const role of roles) ids.push(`models.${engine}.steps.${role.key}`); if (HELPER_ENGINES.includes(engine)) for (const job of JOBS) ids.push(utilityId(engine, job)); }
-    renderEngineSection(models.body, { level: 'project', roles, catalog, fields: Object.fromEntries(ids.map((id) => [id, field(id)])), jobs: { claude: JOBS, codex: JOBS, cursor: [], goose: [], opencode: [] }, status: models.msg, onTest, notes: { claude: 'Claude step models set here apply to the Default workflow; other workflows keep their own node picks.' } }); host.append(models.card);
+    const models = makeCard(doc, 'models', 'Engine and models'); const ids = ['run.engine']; for (const engine of ENGINE_NAMES) { for (const role of roles) ids.push(`models.${engine}.steps.${role.key}`); if (HELPER_ENGINE_NAMES.includes(engine)) for (const job of JOBS) ids.push(utilityId(engine, job)); }
+    renderEngineSection(models.body, { level: 'project', roles, catalog, fields: Object.fromEntries(ids.map((id) => [id, field(id)])), jobs: Object.fromEntries(HELPER_ENGINE_NAMES.map((e) => [e, JOBS])), status: models.msg, onTest, notes: { claude: 'Claude step models set here apply to the Default workflow; other workflows keep their own node picks.' } }); host.append(models.card);
     for (const spec of PROJECT_CARDS) {
       const item = makeCard(doc, spec.key, spec.title);
       for (const row of spec.fields) item.body.append(renderInheritField(doc, { ...row, ...(row.id === 'run.execEnv' && execEnvOptions ? { options: execEnvOptions } : {}), level: 'project', ...field(row.id) }));

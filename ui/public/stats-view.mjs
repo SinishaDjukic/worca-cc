@@ -12,6 +12,7 @@
 import { flagOn } from './flags.mjs';
 import { renderTeamCapPauseBanner, POLICY_PAUSE_REASONS } from './team-policy-view.mjs';
 import { rowsToCsv } from '../../src/shared/csv.mjs';
+import { brokerSlotLabel } from '../../src/shared/engine-switch.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -593,7 +594,7 @@ export function renderRunsChart(spec, { doc = globalThis.document, fmt = DEFAULT
 }
 
 /** Full Statistics body: KPI row + the two chart cards (or empty notes). */
-const SLOT_NAMES = { anthropic: 'Anthropic', openai: 'OpenAI', openrouter: 'OpenRouter', copilot: 'Copilot', 'copilot-pat': 'Copilot (token)', cursor: 'Cursor', local: 'Local' };
+const SLOT_NAMES = { anthropic: 'Anthropic', openai: 'OpenAI', openrouter: 'OpenRouter', copilot: 'Copilot', local: 'Local' };
 /** Stacked on phones the thead is clipped: the first cell leads the row, every other cell names its column. */
 const labelCells = (tr, heads) => { tr.cells[0].classList.add('table-main'); for (let i = 1; i < tr.cells.length; i++) tr.cells[i].dataset.label = heads[i]; };
 
@@ -637,7 +638,7 @@ export function renderPeopleCard(byPerson, rangeLabel, { doc = globalThis.docume
     tr.appendChild(spend);
     tr.appendChild(h(doc, 'td', 'num', compactCount(p.requests)));
     tr.appendChild(h(doc, 'td', 'num', `${compactCount(p.inputTokens + (p.cacheReadTokens || 0))} / ${compactCount(p.outputTokens)}`));
-    tr.appendChild(h(doc, 'td', 'people-slots', [...new Set(p.slots.map((s) => `${SLOT_NAMES[s.slot] || s.slot}${s.plan === 'subscription' ? ' (subscription)' : ''}`))].join(', ')));
+    tr.appendChild(h(doc, 'td', 'people-slots', [...new Set(p.slots.map((s) => `${SLOT_NAMES[s.slot] || brokerSlotLabel(s.slot) || s.slot}${s.plan === 'subscription' ? ' (subscription)' : ''}`))].join(', ')));
     labelCells(tr, heads);
     tbody.appendChild(tr);
   }

@@ -201,7 +201,7 @@ export function createAskModels({
     if (!entry.efforts.includes(e) && !(engine && effortsOn(entry, engine).includes(e))) return { ok: false, error: `effort "${e}" is not available for model "${entry.id}"` };
     // D12: inside a chat (engine given) only a model the chat's engine runs; switching engine means a new chat.
     const own = entry.engine || 'claude';
-    if (engine && !runsOn(entry, engine)) return { ok: false, error: `this chat runs on ${ENGINE_LABEL[engine]}; start a new chat to use ${ENGINE_LABEL[own]}` };
+    if (engine && !runsOn(entry, engine)) return { ok: false, error: `this chat runs on ${engineLabel(engine)}; start a new chat to use ${engineLabel(own)}` };
     return { ok: true, model: entry.id, effort: e };
   }
 
@@ -227,7 +227,7 @@ export function createAskModels({
 /** The chat notice for an eventPick fallback: which model was unavailable and what the reply runs on instead. */
 export function eventFallbackNotice({ fallback, model, effort }) {
   if (!fallback) return null;
-  const on = fallback.engine ? `${ENGINE_LABEL[fallback.engine]}'s default, ${model} (${effort})` : `${model} (${effort})`;
+  const on = fallback.engine ? `${engineLabel(fallback.engine)}'s default, ${model} (${effort})` : `${model} (${effort})`;
   return fallback.from.toLowerCase() === String(model).toLowerCase()
     ? `This chat's effort is not available for ${fallback.from} any more, so this reply uses ${on}.`
     : `This chat's model ${fallback.from} is not available any more, so this reply uses ${on}.`;

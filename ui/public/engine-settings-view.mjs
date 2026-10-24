@@ -1,19 +1,19 @@
 import { icon } from './icons.mjs';
 import { renderInheritField, readDirtyFields, readInheritField, inheritText, formatPair } from './inherit-field.mjs';
-import { engineLabel, engineChoiceLabel, isBetaEngine, ENGINE_NAMES, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES, CHAT_ENGINE_NAMES, ENGINES } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, engineChoiceLabel, engineOptions, engineEntry, MODEL_ENGINE_NAMES, HELPER_ENGINE_NAMES, CHAT_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { HARNESS_EFFORTS } from '../../src/shared/connections.mjs';
 import { applyEngineLocks, engineLock } from './engine-locks.mjs';
 import { MODEL_ROLES, ROLE_LABELS, ROLE_HINTS, ROLE_HARNESSES, roleOfSettingId } from '../../src/shared/model-roles.mjs';
 const roleLabelText = (role) => `From ${ROLE_LABELS[role]}`;
-// The own-sign-in engines have no effort flag, except Goose and OpenCode.
-export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', 'high', 'xhigh', 'max']), codex: Object.freeze(['minimal', 'low', 'medium', 'high']),
-  copilot: Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']),
-  ...Object.fromEntries(SIGN_IN_ENGINE_NAMES.map((e) => [e, Object.freeze([])])),
-  goose: Object.freeze(['low', 'medium', 'high', 'max']), opencode: Object.freeze(['minimal', 'low', 'medium', 'high', 'max']),
-  gemini: Object.freeze(['low', 'medium', 'high']), qwen: Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']) });
 // An inherited value's label; an unset one stays null, so the field shows its bare heading.
 const engineName = (v) => (v == null ? null : engineLabel(v));
-const helpersNote = (engine) => (engine === 'copilot' ? "Copilot runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on its own default model."
-  : `${engineLabel(engine)} runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. See the Claude tab.`);
+// What an unset row runs, by the catalog: an engine whose helper jobs run on Claude runs its own default model on a
+// step; a helper job runs the engine's catalog default (`defaultModel`, by its catalog label), else the CLI's own.
+const stepDefaultLabel = (engine) => (engineEntry(engine)?.helpers ? "the workflow's model" : `${engineLabel(engine)}'s default model`);
+const helperDefaultLabel = (engine, catalog) => {
+  const model = engineEntry(engine)?.defaultModel;
+  return model ? `${engineLabel(engine)}'s default model (${catalog.find((m) => m?.id === model)?.label || model})` : 'the default model';
+};
 export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', agentGen: 'Agent generation', naming: 'Run naming', commandSummary: 'Command summaries', workspaceScan: 'Workspace scan', requirementsInterview: 'Requirements interview' });
 // The setting id of an engine's helper slot, as settings-cascade.mjs names it: memory defragment
 // and workspace scan are runs of their own (spec §3.1 "own-run models"), the rest are utility jobs.
@@ -121,7 +121,7 @@ function slotTable(doc, cls, title, rows, { what, from, onTest = null, always = 
  *  slot stores a model only. Returns {} (kept for callers that read engine extras). */
 export function renderEngineSection(host, options) {
   const doc = host.ownerDocument; host.replaceChildren(); const field = (id) => options.fields?.[id] || EMPTY;
-  const run = field('run.engine'); host.append(renderInheritField(doc, { id: 'run.engine', label: 'Default engine', kind: 'select', level: options.level, hint: 'New run starts on this engine. You can still switch per run.', options: ENGINE_NAMES.map((e) => ({ value: e, label: engineChoiceLabel(e) })), own: run.own, inherited: run.inherited, format: engineName }));
+  const run = field('run.engine'); host.append(renderInheritField(doc, { id: 'run.engine', label: 'Default engine', kind: 'select', level: options.level, hint: 'New run starts on this engine. You can still switch per run.', options: engineOptions({ surface: 'run' }).map(({ value }) => ({ value, label: engineChoiceLabel(value) })), own: run.own, inherited: run.inherited, format: engineName }));
   applyEngineLocks(host);
   const from = options.level === 'project' ? 'your settings' : "Worca's defaults";
   const noEffort = new Set(options.noEffort || []);
@@ -129,7 +129,7 @@ export function renderEngineSection(host, options) {
   const runEngine = run.own ?? run.inherited?.value;
   const first = MODEL_ENGINE_NAMES.includes(runEngine) ? runEngine : 'claude';
   const cards = {};
-  const sw = engineSwitch(doc, MODEL_ENGINE_NAMES, (engine) => pick(engine));
+  const sw = engineSwitch(doc, engineOptions({ surface: 'models' }), (engine) => pick(engine));
   // A titled block under a rule: the switch picks which engine's models show; it is not part of Default engine.
   const head = doc.createElement('div'); head.className = 'field engine-models-head'; head.dataset.minLevel = 'advanced';
   head.append(Object.assign(doc.createElement('span'), { className: 'label', textContent: 'Models per engine' }), Object.assign(doc.createElement('small'), { className: 'hint', textContent: 'Each engine keeps its own step and helper models. They apply whenever a run uses that engine.' }), sw.el);
@@ -138,10 +138,10 @@ export function renderEngineSection(host, options) {
     for (const [e, c] of Object.entries(cards)) c.hidden = e !== engine;
     sw.pick(engine);
   };
-  for (const engine of MODEL_ENGINE_NAMES) {
+  for (const { value: engine, label, beta: isBeta } of engineOptions({ surface: 'models' })) {
     const card = doc.createElement('section'); card.className = 'engine-card'; card.dataset.engine = engine; card.dataset.minLevel = 'advanced';
     // Advanced has no switch: the tab names its engine. Expert's switch already does (style.css hides this there).
-    const heading = doc.createElement('h3'); heading.className = 'engine-card-name'; heading.textContent = engineLabel(engine); if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'flag-chip flag-chip-beta beta-badge'; beta.textContent = 'Beta'; heading.append(beta); } card.append(heading);
+    const heading = doc.createElement('h3'); heading.className = 'engine-card-name'; heading.textContent = label; if (isBeta) { const beta = doc.createElement('span'); beta.className = 'flag-chip flag-chip-beta beta-badge'; beta.textContent = 'Beta'; heading.append(beta); } card.append(heading);
     // A non-Claude tab's readiness line (GET /api/engines), filled by app.js on the Models page.
     if (engine !== 'claude') { const status = doc.createElement('small'); status.className = 'engine-card-status'; card.append(status); }
     if (options.notes?.[engine]) { const note = doc.createElement('small'); note.className = 'hint engine-card-note'; note.textContent = options.notes[engine]; card.append(note); }
@@ -152,21 +152,21 @@ export function renderEngineSection(host, options) {
       const rolePick = role && options.modelRoles?.[engine]?.[role];
       const ownInherited = value.inherited?.value !== undefined;
       const inherited = rolePick && rolePick.model && !ownInherited ? { value: rolePick, source: 'role', label: roleLabelText(role) } : value.inherited;
-      const el = renderInheritField(doc, { id, label, kind: 'model', level: options.level, engine, catalog: options.catalog || [], efforts: ENGINE_EFFORTS[engine], own: value.own, inherited, defaultLabel, noEffort: noEffort.has(id) });
+      const el = renderInheritField(doc, { id, label, kind: 'model', level: options.level, engine, catalog: options.catalog || [], efforts: HARNESS_EFFORTS[engine], own: value.own, inherited, defaultLabel, noEffort: noEffort.has(id) });
       // Only rows whose fallback is the role's to paint: a team or project layer keeps its own text.
       if (role && !ownInherited) { el.dataset.role = role; el.dataset.defaultLabel = defaultLabel; el.dataset.roleSet = rolePick && rolePick.model ? '1' : ''; }
       return { id, label, hint, set: value.own !== undefined && value.own !== null, el };
     };
-    const steps = (options.roles || []).map((role) => row(`models.${engine}.steps.${role.key}`, role.label || role.key, options.defaultLabels?.steps || (SIGN_IN_ENGINE_NAMES.includes(engine) ? `${engineLabel(engine)}'s default model` : "the workflow's model")));
+    const steps = (options.roles || []).map((role) => row(`models.${engine}.steps.${role.key}`, role.label || role.key, options.defaultLabels?.steps || stepDefaultLabel(engine)));
     card.append(slotTable(doc, 'engine-steps', 'Step models', steps, { what: 'step', from, onTest: options.onTest }));
     const jobs = options.jobs?.[engine] || [];
     if (jobs.length) {
-      const helpers = jobs.map((job) => row(utilityId(engine, job), JOB_LABELS[job] || job, options.defaultLabels?.[engine] || (engine === 'codex' ? "Codex's default model (GPT-5.6 Sol)" : 'the default model'), JOB_HINTS[job]));
+      const helpers = jobs.map((job) => row(utilityId(engine, job), JOB_LABELS[job] || job, options.defaultLabels?.[engine] || helperDefaultLabel(engine, options.catalog || []), JOB_HINTS[job]));
       card.append(slotTable(doc, 'engine-helpers', 'Helper jobs', helpers, { what: 'helper job', from, onTest: options.onTest }));
-    } else if (SIGN_IN_ENGINE_NAMES.includes(engine) || engine === 'copilot') {
+    } else if (engineEntry(engine)?.helpersNote) {
       const sec = doc.createElement('section'); sec.className = 'engine-slots engine-helpers';
       const bar = doc.createElement('div'); bar.className = 'engine-slot-bar'; bar.append(Object.assign(doc.createElement('h4'), { textContent: 'Helper jobs' }));
-      sec.append(bar, Object.assign(doc.createElement('small'), { className: 'hint engine-slot-rest', textContent: helpersNote(engine) }));
+      sec.append(bar, Object.assign(doc.createElement('small'), { className: 'hint engine-slot-rest', textContent: engineEntry(engine).helpersNote }));
       card.append(sec);
     }
     host.append(card); cards[engine] = card;
@@ -182,13 +182,14 @@ export function renderEngineSection(host, options) {
 }
 export const readEngineSection = (host) => readDirtyFields(host);
 
-/** The Claude / Codex / … engine switch (Expert). Used by the Engines card and the Roles card. `onPick(engine)`
- *  is called on a click; returns { el, pick } where pick(engine) sets the pressed button. */
+/** The engine switch (Expert). Used by the Engines card and the Roles card. `engines` are engineOptions() entries
+ *  ({ value, label, beta }); `onPick(engine)` is called on a click; returns { el, pick } where pick(engine) sets the
+ *  pressed button. */
 export function engineSwitch(doc, engines, onPick) {
   const sw = doc.createElement('div'); sw.className = 'seg engine-switch'; sw.setAttribute('role', 'group'); sw.setAttribute('aria-label', 'Engine'); sw.dataset.minLevel = 'expert';
-  for (const engine of engines) {
-    const btn = doc.createElement('button'); btn.type = 'button'; btn.dataset.engine = engine; btn.textContent = engineLabel(engine);
-    if (isBetaEngine(engine)) { const beta = doc.createElement('span'); beta.className = 'flag-chip flag-chip-beta beta-badge'; beta.textContent = 'Beta'; btn.append(beta); }
+  for (const { value: engine, label, beta: isBeta } of engines) {
+    const btn = doc.createElement('button'); btn.type = 'button'; btn.dataset.engine = engine; btn.textContent = label;
+    if (isBeta) { const beta = doc.createElement('span'); beta.className = 'flag-chip flag-chip-beta beta-badge'; beta.textContent = 'Beta'; btn.append(beta); }
     btn.addEventListener('click', () => onPick(engine)); sw.append(btn);
   }
   const pick = (engine) => { for (const b of sw.querySelectorAll('button')) { const on = b.dataset.engine === engine; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); } };
@@ -202,7 +203,7 @@ export function renderRolesSection(host, { roles = {}, catalog = [], engine = 'c
   const first = ROLE_HARNESSES.includes(engine) ? engine : 'claude';
   const panels = {};
   const show = (h) => { for (const [e, p] of Object.entries(panels)) p.hidden = e !== h; sw.pick(h); };
-  const sw = engineSwitch(doc, ROLE_HARNESSES, show);
+  const sw = engineSwitch(doc, engineOptions({ surface: 'models' }).filter((o) => ROLE_HARNESSES.includes(o.value)), show);
   host.append(sw.el);
   for (const h of ROLE_HARNESSES) {
     const panel = doc.createElement('section'); // Not .engine-card: that class names the Engines card's own panels.
@@ -210,7 +211,7 @@ export function renderRolesSection(host, { roles = {}, catalog = [], engine = 'c
     panel.append(Object.assign(doc.createElement('h3'), { className: 'engine-card-name', textContent: engineLabel(h) }));
     for (const r of MODEL_ROLES) {
       const el = renderInheritField(doc, { id: `models.${h}.roles.${r}`, label: ROLE_LABELS[r], hint: ROLE_HINTS[r], kind: 'model', level: 'user', engine: h,
-        catalog, efforts: ENGINE_EFFORTS[h], own: roles?.[h]?.[r], inherited: { value: undefined, source: 'default' }, defaultLabel: "each job's own default" });
+        catalog, efforts: HARNESS_EFFORTS[h], own: roles?.[h]?.[r], inherited: { value: undefined, source: 'default' }, defaultLabel: "each job's own default" });
       const clear = el.querySelector('.inherit-clear');
       if (clear) { clear.replaceChildren(icon(doc, 'x', 14)); clear.setAttribute('aria-label', `Clear ${ROLE_LABELS[r]}`); clear.title = 'Clear: each job uses its own default'; }
       panel.append(el);
@@ -264,14 +265,17 @@ export function paintRoleFallbacks(engineHost, roles, catalog = []) {
   }
   for (const box of engineHost.querySelectorAll('.engine-slots')) box.dispatchEvent(new (engineHost.ownerDocument.defaultView.Event)('roles-changed'));
 }
+// A step slot on any model engine; a helper slot on an engine with helper slots of its own, apart from Claude's (below).
+const STEP_ID = new RegExp(`^models\\.(${MODEL_ENGINE_NAMES.join('|')})\\.steps\\.(.+)$`);
+const UTILITY_ID = new RegExp(`^models\\.(${HELPER_ENGINE_NAMES.filter((e) => e !== 'claude').join('|')})\\.(?:utility\\.)?(title|classifier|overview|prDescription|memoryDefrag|workspaceScan)$`);
 const CLAUDE_HELPER_KEYS = Object.freeze({ title: 'titleModel', classifier: 'autoWorkflowModel', prDescription: 'prDescriptionModel', memoryDefrag: 'memoryDefrag', agentGen: 'agentGenModel', naming: 'namingModel', commandSummary: 'commandSummaryModel' });
 const CLAUDE_PAIR_KEYS = new Set(['memoryDefrag', 'agentGenModel', 'namingModel', 'commandSummaryModel']);
 export function enginePatchToSettingsBody(patch) {
   const body = {};
   for (const [id, value] of Object.entries(patch || {})) {
     if (id === 'run.engine') { body.runEngine = value; continue; }
-    let match = new RegExp(`^models\\.(${MODEL_ENGINE_NAMES.join('|')})\\.steps\\.(.+)$`).exec(id); if (match) { ((body.stepModels ||= {})[match[1]] ||= {})[match[2]] = value; continue; }
-    match = /^models\.(codex)\.(?:utility\.)?(title|classifier|overview|prDescription|memoryDefrag|workspaceScan)$/.exec(id); if (match) ((body.utilityModels ||= {})[match[1]] ||= {})[match[2]] = value;
+    let match = STEP_ID.exec(id); if (match) { ((body.stepModels ||= {})[match[1]] ||= {})[match[2]] = value; continue; }
+    match = UTILITY_ID.exec(id); if (match) ((body.utilityModels ||= {})[match[1]] ||= {})[match[2]] = value;
     // Claude's helper slots live in their own settings keys: a model id (title, Auto, PR description), and the
     // Memory defragment, Agent generation and Run naming pairs; the Requirements interview pair is its own key.
     if (id === 'models.claude.requirementsInterview') {
@@ -296,23 +300,23 @@ export function renderAskEngineSection(host, { catalog = [], askEngine, askModel
   const others = CHAT_ENGINE_NAMES.filter((e) => e !== 'claude');
   const offered = Object.fromEntries(others.map((e) => [e, catalog.some((m) => m && m.engine === e)]));
   const unavailable = (e) => (engineLock(e) !== null ? `Chat on ${engineLabel(e)} is off while the credential broker is on, so new chats start on Claude.`
-    : ENGINES[e].signin ? `Chat on ${engineLabel(e)} needs a ${engineLabel(e)} model: add one on the Models page.`
+    : engineEntry(e)?.signin ? `Chat on ${engineLabel(e)} needs a ${engineLabel(e)} model: add one on the Models page.`
       : `Chat on ${engineLabel(e)} is unavailable on this ${e} version, so new chats start on Claude.`);
   const notes = others.filter((e) => !offered[e]).map(unavailable).join(' ');
   host.append(renderInheritField(doc, { id: 'askEngine', label: 'Engine for new chats', kind: 'select', level: 'user',
     hint: `A chat keeps the engine it started on; to switch, start a new chat.${notes ? ` ${notes}` : ''}`,
-    options: [{ value: 'claude', label: 'Claude' }, ...others.map((e) => ({ value: e, label: offered[e] ? engineChoiceLabel(e) : `${engineLabel(e)} (unavailable)` }))],
+    options: engineOptions({ surface: 'ask' }).map(({ value, label }) => ({ value, label: value === 'claude' || offered[value] ? engineChoiceLabel(value) : `${label} (unavailable)` })),
     own: askEngine ?? undefined, inherited: { value: 'claude', source: 'default' }, format: engineName }));
   applyEngineLocks(host);
   // The chat models: the Engines card's table, one row per engine and always listed (no switch, nothing folded).
   const rows = [];
-  for (const engine of ['claude', ...others]) {
+  for (const engine of CHAT_ENGINE_NAMES) {
     if (engine !== 'claude' && !offered[engine]) continue;
     const id = `models.${engine}.ask`; const label = engineChoiceLabel(engine);
     rows.push({ id, label, set: askModels[engine] != null,
       hint: engine === 'claude' ? null
         : `On ${engineLabel(engine)} the per-turn cost cap is checked when a reply ends, and needs a model worca can price (its Models page price, or a list price worca knows).`,
-      el: renderInheritField(doc, { id, label, kind: 'model', level: 'user', engine, catalog, efforts: ENGINE_EFFORTS[engine], own: askModels[engine], inherited: { value: defaults[engine] || undefined, source: 'default' } }) });
+      el: renderInheritField(doc, { id, label, kind: 'model', level: 'user', engine, catalog, efforts: HARNESS_EFFORTS[engine], own: askModels[engine], inherited: { value: defaults[engine] || undefined, source: 'default' } }) });
   }
   host.append(slotTable(doc, 'ask-chat-models', 'Chat models', rows, { what: 'engine', from: "Worca's defaults", onTest, always: true }));
   if (status) {

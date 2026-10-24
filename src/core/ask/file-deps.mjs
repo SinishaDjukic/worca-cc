@@ -35,5 +35,7 @@ export function defaultFileDeps({ threadId = null, env = process.env, signal = n
   const chat = ENGINES[env.WORCA_ASK_ENGINE].chat;
   return { engine: env.WORCA_ASK_ENGINE, chatImages: chat.images === true, chatPdfs: chat.pdfs === true,
     mediaElsewhere: (what) => `${chatEnginesTaking(what)} chats can`,
+    // Where a media block reaches this engine's model, in its own words (engine-switch.mjs `chat.media`).
+    mediaNote: typeof chat.media === 'string' ? (kind) => chat.media.replace('{kind}', kind) : null,
     files: createAskFileReader({ roots: askFileRoots({ threadId, skillRoot: env.WORCA_ASK_SKILL_ROOT || null }), signal }) };
 }
