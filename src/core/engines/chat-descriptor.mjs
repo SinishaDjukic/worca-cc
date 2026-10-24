@@ -38,11 +38,13 @@ const ready = async () => ({});
  *   modelProblem(id)    why a model of this engine cannot run a chat (a provider that is itself an agent CLI, one that
  *                       refuses a request without the shell), or null; the picker leaves such a model out
  *   ownFolder           a chat runs in a folder of its own under the scratch dir (the engine keeps sessions per folder)
+ *   signIn(model, env)  the env names (a trailing `_` = a prefix) the engine signs in with for `model`: handed on to
+ *                       worca's own MCP child too (chatSignInEnv), whose Auto classifier runs on the chat's engine
  */
 export function makeChatDescriptor({
   engine, lockdown, askSupport = ready, selfTest = null, preflight = ready, modelPriced = null, resumeNotFound = never,
   docsAnchor, setupLabel, noLockdownMessage, shellTrippedMessage, titles = true, suggestionModel = CHAT_MODEL, prompt = {},
-  notReadyFlag, metaTools = [], modelProblem = null, ownFolder = false, turnImages = false,
+  notReadyFlag, metaTools = [], modelProblem = null, ownFolder = false, turnImages = false, signIn = () => [],
 }) {
   const label = engineLabel(engine);
   const chat = ENGINES[engine]?.chat || { images: false, pdfs: false };
@@ -62,6 +64,7 @@ export function makeChatDescriptor({
     metaTools: Object.freeze([...metaTools]),
     modelProblem: typeof modelProblem === 'function' ? modelProblem : () => null,
     ownFolder: ownFolder === true,
+    signIn: typeof signIn === 'function' ? signIn : () => [],
     suggestionModel: typeof suggestionModel === 'string' && suggestionModel ? suggestionModel : null,
     prompt: Object.freeze({
       cli: prompt.cli || `${label} with its own sign-in`,
@@ -85,6 +88,13 @@ export function composerBinaryWords(label, { images = false, pdfs = false } = {}
   if (images && pdfs) return 'For an image or PDF, read_attachment returns the image or PDF itself as a block of its result: read it to look at it.';
   if (images) return `For an image, read_attachment returns the image itself as a block of its result: read it to look at it; a ${label} chat cannot view a PDF (read_attachment returns only its kind and size).`;
   return `A ${label} chat cannot view images or PDFs: read_attachment returns only their kind and size.`;
+}
+
+/** The names in `env` that a chat on `d` signs in with for `model` (its descriptor's `signIn`; never a WORCA_ name). */
+export function chatSignInEnv(d, model, env = process.env) {
+  const want = d ? d.signIn(model, env) : [];
+  return Object.keys(env).filter((k) => !/^WORCA_/.test(k) && typeof env[k] === 'string' && env[k] !== ''
+    && want.some((w) => (w.endsWith('_') ? k.startsWith(w) : k === w))).sort();
 }
 
 /** The error a per-turn cost cap gives a chat on `d` for `model`, or null when worca can keep the turn under it. */

@@ -28,6 +28,7 @@ import { RESERVED_KEY_VAR } from '../web-allowlist.mjs';
 import { keepListNames } from '../mcp/keep-list.mjs';
 import { ASK_DENY_RULES } from './deny-rules.mjs';
 import { chatDescriptor } from '../engines/chat.mjs';
+import { chatSignInEnv } from '../engines/chat-descriptor.mjs';
 
 /** Absolute path of the worca MCP server script — the `serverPath` of buildMcpConfig (P2 never guesses it). */
 export const ASK_MCP_SERVER_PATH = fileURLToPath(new URL('./mcp-stdio.mjs', import.meta.url));
@@ -157,12 +158,12 @@ function bridgeTokens({ commands = null, proxy = null } = {}) {
  * @param {boolean} [o.git]  false = this machine has no git: the sub-agent note promises no worktree
  * @returns {object} runClaude options
  */
-export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpConfigPath, scratchDir, memoryDir = null, web = null, relayed = false, registry = null, commands = null, proxy = null, skills = null, engine = 'claude', composer = false, git = true } = {}) {
+export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpConfigPath, scratchDir, memoryDir = null, web = null, relayed = false, registry = null, commands = null, proxy = null, skills = null, engine = 'claude', composer = false, git = true, env = process.env } = {}) {
   if (!scratchDir) throw new Error('buildAskSpawnOptions: scratchDir is required');
   if (!mcpConfigPath) throw new Error('buildAskSpawnOptions: mcpConfigPath is required');
   const chat = engine !== 'claude' ? chatDescriptor(engine) : null;
   if (engine !== 'claude' && !chat) throw new Error(`buildAskSpawnOptions: Chat does not run on ${engine}`);
-  if (chat) return buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, web, relayed, commands, proxy });
+  if (chat) return buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, web, relayed, commands, proxy, env });
   const systemPrompt = String(turn.systemPrompt ?? '') + (turn.mock ? buildMockMarkers(turn.mock.card) : '');
   const reg = registry && Array.isArray(registry.copies) && registry.copies.length ? registry : null;
   // Skills registry §4.4 (P3 probe 6): --disable-slash-commands hides the Skill tool AND every plugin skill, so a turn
@@ -237,7 +238,7 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
  * routing env) do not exist there; the caps are turn.mjs's watchdog (D14). The host-guard preamble is prepended by the
  * adapter.
  */
-function buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, web, relayed, commands = null, proxy = null }) {
+function buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, web, relayed, commands = null, proxy = null, env = process.env }) {
   const keyVar = !relayed ? webKeyVar(web) : null;
   return {
     engine: chat.engine,
@@ -250,9 +251,10 @@ function buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, 
     askLockdown: true,
     mcpConfigPath,
     envScrub: true,
-    // The MCP child needs them (ssh-remote git fetch; the web search key): the adapter hands them on (codex through
-    // env_vars, copilot's MCP children inherit its env, Gemini CLI and Qwen Code by ${VAR} reference).
-    envAllowlist: ['SSH_AUTH_SOCK', ...(keyVar ? [keyVar] : [])],
+    // The MCP child needs them (ssh-remote git fetch; the web search key; the engine's own sign-in, for the Auto
+    // classifier it runs on this engine): the adapter hands them on (codex through env_vars, copilot's MCP children inherit its env —
+    // all but its BYOK COPILOT_PROVIDER_* names —, Gemini CLI, Qwen Code, Goose and OpenCode by ${VAR} reference).
+    envAllowlist: ['SSH_AUTH_SOCK', ...(keyVar ? [keyVar] : []), ...(relayed ? [] : chatSignInEnv(chat, turn.model, env))],
     ...(thread.sessionId ? { resumeSessionId: thread.sessionId } : {}),
     ...(chat.turnImages && Array.isArray(turn.images) && turn.images.length ? { images: [...turn.images] } : {}),
     // Agent mode (#574): the command bridge token, as a Claude chat gets it — never on disk; the adapter hands an Ask
@@ -267,8 +269,10 @@ function buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, 
  *  spawned env-scrubbed, so nothing WORCA_* reaches the child unless it rides mcpServers.env. Forwarded only when set. */
 // WORCA_PROJECTS_ROOT / WORCA_CLONE_ALLOW: propose_clone_project validates against the same projects
 // folder and allowlist the server clones with (neither is a secret; no credential is ever forwarded).
+// The engines' binary overrides: a locked-down chat's classifier runs its own engine from the child (workflow-deps.mjs).
 export const MCP_FORWARD_ENV = Object.freeze(['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT', 'WORCA_CLONE_ALLOW',
-  'WORCA_FLAGS']);   // a WORCA_FLAGS lock (the shapeFirst gate's propose_run check) reaches the child too
+  'WORCA_FLAGS',   // a WORCA_FLAGS lock (the shapeFirst gate's propose_run check) reaches the child too
+  'WORCA_CODEX_BIN', 'WORCA_COPILOT_BIN', 'WORCA_GEMINI_BIN', 'WORCA_GOOSE_BIN', 'WORCA_OPENCODE_BIN', 'WORCA_QWEN_BIN']);
 /** The parent turn's Claude Code sign-in for the child's propose_run check (proposal.mjs claudeAuth): the child runs
  *  inside the chat's env, where the chat model's routing (ANTHROPIC_BASE_URL …) reads as a sign-in. Only the probe's
  *  three answers ride. */
@@ -297,7 +301,7 @@ export function webMcpEnv(web) {
  * (path.resolve(process.env.WORCA_HOME) or dirname(worcaHome())) — never
  * worcaHome() itself. The argv twins make the child independent of env forwarding.
  */
-export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath, serverPath, env = process.env, reader = null, relay = null, web = null, extraServers = null, commands = null, proxy = null, engine = 'claude', skillRoot = null, claudeAuth = null, git = undefined }) {
+export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath, serverPath, env = process.env, reader = null, relay = null, web = null, extraServers = null, commands = null, proxy = null, engine = 'claude', model = null, skillRoot = null, claudeAuth = null, git = undefined }) {
   if (!serverPath) throw new Error('buildMcpConfig: serverPath is required');
   if (typeof homeBase !== 'string' || !homeBase.trim()) throw new Error('buildMcpConfig: homeBase is required');
   const base = resolvePath(homeBase);
@@ -330,7 +334,7 @@ export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath
       // The parent's git answer (P0): the child's gitAvailable() reads it, so git-only tools follow this machine.
       ...(typeof git === 'boolean' ? { WORCA_GIT: git ? '1' : '0' } : {}),
       // A locked-down chat's child adds read_file / grep / glob (file-deps.mjs) and classifies on its engine (D13, D8).
-      ...(chatDescriptor(engine) ? { WORCA_ASK_ENGINE: engine } : {}),
+      ...(chatDescriptor(engine) ? { WORCA_ASK_ENGINE: engine, ...(typeof model === 'string' && model ? { WORCA_ASK_MODEL: model } : {}) } : {}),
       // Such a turn's set skills (#635): this message's mount, one more read-only root of read_file / grep / glob. The
       // file is per message, so the root lives as long as the turn; the child checks it names exactly such a folder.
       ...(chatDescriptor(engine) && typeof skillRoot === 'string' && skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}),

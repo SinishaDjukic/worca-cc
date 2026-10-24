@@ -31,7 +31,7 @@ after(() => {
 const spawnBase = (over = {}) => ({
   thread: { id: 'ask_00000001', sessionId: null },
   turn: { prompt: 'hello', systemPrompt: 'SYS', model: 'copilot/gpt-5.4', effort: 'medium', modelEnv: { X: '1' }, images: ['/att/a.png'] },
-  limits: { maxTurns: 40, maxBudgetUsd: null },
+  limits: { maxTurns: 40, maxBudgetUsd: null }, env: {},
   mcpConfigPath: '/h/.worca-cc/tmp/ask/mcp-askm_00000001.json',
   scratchDir: '/h/.worca-cc/tmp/ask',
   memoryDir: '/h/.worca-cc/ask/memory/global',

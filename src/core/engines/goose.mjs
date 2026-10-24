@@ -570,5 +570,6 @@ export const gooseChat = makeChatDescriptor({
   resumeNotFound: (err) => GOOSE_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
   metaTools: GOOSE_ASK_LOCKDOWN.metaTools,
   modelProblem: gooseChatModelProblem,
+  signIn: (model) => ['GOOSE_', ...providerEnvPrefixes(model)],
   prompt: { cli: "Goose with Goose's own providers" },
 });

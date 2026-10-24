@@ -63,3 +63,26 @@ test('propose_workflow task mode: a Codex chat classifies on Codex with Codex mo
   await claudeDeps.workflow.propose({ mode: 'task', task: 'Fix a typo', projectKey: p.key }).catch(() => {});
   assert.equal('engine' in claudeSeen[0], false, 'a Claude chat\'s classifier input is unchanged');
 });
+
+test('propose_workflow task mode: every locked-down chat classifies on its own engine, locked down, on the chat\'s model', async (t) => {
+  const prevMock = process.env.WORCA_MOCK; process.env.WORCA_MOCK = '1';
+  t.after(() => { if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock; });
+  const dir = gitDir('askwf2');
+  const p = (await addProject({ name: 'askwf2', path: dir })).find((x) => x.name === 'askwf2');
+  for (const engine of ['codex', 'copilot', 'gemini', 'goose', 'opencode', 'qwen']) {
+    const seen = [];
+    const classify = async (input) => { seen.push(input); throw Object.assign(new Error('stop'), { name: 'ClassifierError' }); };
+    const deps = defaultWorkflowDeps({ threadId: 'ask_00000001', classify, env: { WORCA_ASK_ENGINE: engine, WORCA_ASK_MODEL: `${engine}-chat-model` } });
+    await deps.workflow.propose({ mode: 'task', task: 'Fix a typo', projectKey: p.key }).catch(() => {});
+    assert.equal(seen[0].engine, engine, engine);
+    assert.equal(seen[0].askLockdown, true, engine);
+    assert.equal(seen[0].model, `${engine}-chat-model`, `${engine}: no classifier slot, so the chat's own model`);
+    assert.equal(seen[0].repoLook, false, `${engine}: text only, no checkout`);
+  }
+});
+
+test('buildMcpConfig: a locked-down chat\'s child learns the chat\'s model (its classifier runs on it)', () => {
+  const doc = buildMcpConfig({ homeBase: '/h', threadId: 'ask_00000001', serverPath: '/s.mjs', env: {}, engine: 'gemini', model: 'gemini-3-pro' });
+  assert.equal(doc.mcpServers.worca.env.WORCA_ASK_MODEL, 'gemini-3-pro');
+  assert.equal('WORCA_ASK_MODEL' in buildMcpConfig({ homeBase: '/h', threadId: 'ask_00000001', serverPath: '/s.mjs', env: {}, model: 'claude-opus-5-5' }).mcpServers.worca.env, false);
+});

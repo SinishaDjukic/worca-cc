@@ -1362,7 +1362,7 @@ class AskTurn extends EventEmitter {
       mcpConfigPath = join(scratchDir, `mcp-${this.assistantMessageId}.json`);
       // A Codex turn's set skills (#635): this message's mount folder only, read through read_file for this turn only.
       const skillRoot = this.lockedDown && this.skills && this.skillMount ? this._skillBase : null;
-      this.relay = d.agentRelay ? d.agentRelay({ threadId: this.threadId, reader: this.reader || null, web: this.web, ...(skillRoot ? { skillRoot } : {}) }) : null;
+      this.relay = d.agentRelay ? d.agentRelay({ threadId: this.threadId, reader: this.reader || null, web: this.web, ...(this.lockedDown ? { model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}) }) : null;
       // Agent mode never rides the relay: relay mode is agent isolation, where the terminal refuses agent callers.
       this.commands = !this.relay && this.agentMode && d.commandBridge ? d.commandBridge({ threadId: this.threadId }) : null;
       this.proxyBridge = !this.relay && d.proxyBridge ? d.proxyBridge({ threadId: this.threadId }) : null;
@@ -1374,7 +1374,7 @@ class AskTurn extends EventEmitter {
       await d.fs.writeFile(
         mcpConfigPath,
         // MCP registry §9.2: the copies ride after `worca` — refs only (`${MCPSECRET_…}`); the values go in spawnEnv.
-        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, git: d.gitAvailable(), ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.proxyBridge ? { proxy: this.proxyBridge } : {}), ...(this.lockedDown ? { engine: this.engine } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
+        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, git: d.gitAvailable(), ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.proxyBridge ? { proxy: this.proxyBridge } : {}), ...(this.lockedDown ? { engine: this.engine, model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
         // Never a key value (webKeyVar: the key rides the process env). A relayed turn runs as
         // the person's agent user (agent-pool.mjs), which reads this file through its group: the
         // scratch dir is setgid worca-share (2770), so 0640 reaches the agent users and nobody

@@ -745,6 +745,7 @@ export const copilotChat = makeChatDescriptor({
   // GPT-5 Mini is one of Copilot's included models (0× premium requests on a paid plan): a suggestion after every reply
   // costs no premium request there (one on the free plan).
   suggestionModel: 'gpt-5-mini',
+  signIn: () => ['COPILOT_', 'GH_TOKEN', 'GITHUB_TOKEN', 'GH_HOST'],
   prompt: {
     cli: "the GitHub Copilot CLI with Copilot's own sign-in",
     webOff: "Copilot's own web tools stay off.",

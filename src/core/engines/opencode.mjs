@@ -716,5 +716,6 @@ export const opencodeChat = makeChatDescriptor({
   preflight: (_ctx, impl = opencodePreflight) => impl({ defaultModel: false, envScrub: true, envAllowlist: [] }),
   resumeNotFound: (err) => OPENCODE_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
   modelProblem: (id) => (ZEN_PROVIDER_RE.test(String(id || '')) ? "OpenCode Zen's free models refuse a request without the shell, and a chat has none" : null),
+  signIn: (model) => ['OPENCODE_', ...providerEnvPrefixes(model)],
   prompt: { cli: "OpenCode with OpenCode's own providers" },
 });

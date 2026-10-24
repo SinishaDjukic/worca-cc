@@ -346,5 +346,6 @@ export const qwenChat = makeChatDescriptor({
   preflight: (_ctx, impl = qwenPreflight) => impl(),
   resumeNotFound: (err) => QWEN_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
   docsAnchor: 'gemini-cli-and-qwen-code',
+  signIn: (_model, env) => qwenEnvPrefixes(env),
   prompt: { cli: "Qwen Code with Qwen Code's own sign-in" },
 });

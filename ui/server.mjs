@@ -11582,14 +11582,14 @@ async function askPrCardFacts(row) {
 
 const askRelays = new Map();   // token -> { rpc, out, billTo, owner }
 
-function askAgentRelay({ threadId, reader, web = null, engine = 'claude', skillRoot = null }) {
+function askAgentRelay({ threadId, reader, web = null, engine = 'claude', model = null, skillRoot = null }) {
   const token = randomBytes(24).toString('base64url');
   const life = new AbortController();
   const entry = { out: [], billTo: currentBillTo(), owner: currentOwner() };
   // The tools run here, so this turn's web access rides a private env copy (never process.env itself);
   // the search key is read from worca's own environment, where it was set.
   // A locked-down turn's set skills (#635): this message's mount, one more read root for this relay (this turn) only.
-  const env = { ...process.env, ...askWebMcpEnv(web), ...(lockedChatEngine(engine) ? { WORCA_ASK_ENGINE: engine, ...(skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}) } : {}) };
+  const env = { ...process.env, ...askWebMcpEnv(web), ...(lockedChatEngine(engine) ? { WORCA_ASK_ENGINE: engine, ...(typeof model === 'string' && model ? { WORCA_ASK_MODEL: model } : {}), ...(skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}) } : {}) };
   entry.rpc = createAskToolServer({
     threadId, reader, signal: life.signal, env, write: (s) => { entry.out.push(s); },
     // The tools run in THIS process, which holds the live runs: get_run_diff can read a run
