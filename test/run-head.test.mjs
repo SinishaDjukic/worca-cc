@@ -461,5 +461,16 @@ test('tracker CSS: labels wrap inside their column at every width', () => {
   assert.doesNotMatch(rule[1], /white-space:nowrap/, 'a nowrap label spills past the card');
   assert.match(rule[1], /min-width:0;/);
   assert.match(rule[1], /overflow-wrap:anywhere;/);
-  assert.match(css, /^\.rd-track-steps\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\);/m, 'columns may shrink');
+  assert.match(css, /^\.rd-track-steps\{display:grid;grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\) auto;/m, 'columns may shrink');
+});
+
+test('tracker CSS: the last step ends at the card\'s right edge, for 3 steps and the 2-step Folder row', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  // Only steps before the last draw a line, so the last column is its own width and the lines take the rest.
+  assert.doesNotMatch(css, /\.rd-track-steps\{[^}]*repeat\(3,/, 'an equal third leaves the last column half empty');
+  assert.match(css, /^\.rd-track-steps:not\(:has\(> :nth-child\(3\)\)\)\{grid-template-columns:minmax\(0,1fr\) auto;\}/m,
+    'a 2-step row gets 2 columns, not 2 of 3');
+  const folder = steps(TABLE.folder[0]);
+  assert.equal(folder.length, 2);
+  assert.equal(folder[1].querySelector('.rd-track-line'), null, 'the last step has no line');
 });
