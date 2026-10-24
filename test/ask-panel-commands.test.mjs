@@ -375,3 +375,52 @@ test('a failed row that opened itself does not reopen its folded output after a 
   assert.equal(row().querySelector('.ask-cmd-out').hidden, true, 'the folded output stays folded');
   ctx.panel.destroy();
 });
+
+test('an ask-command-summary frame rewrites the open row in place; another thread\'s frame is ignored (#911 slice 2)', async () => {
+  const { ctx } = setup({ blocks: [cmdBlock(1, 0, null)] });
+  applyFlags({ commandSummaries: true }, ctx.doc);
+  ctx.panel.open();
+  await settle(ctx);
+  const el = ctx.doc.querySelector('.ask-card.ask-cmd');
+  const sum = el.querySelector('.ask-cmd-sum');
+  assert.ok(sum.classList.contains('is-raw'));
+  ctx.panel.pushServerFrame({ type: 'ask-command-summary', threadId: 'ask_other', blockId: BID, summary: 'Nope' });
+  ctx.flush();
+  assert.equal(sum.textContent, 'cmd 1', 'another thread\'s frame changes nothing');
+  ctx.panel.pushServerFrame({ type: 'ask-command-summary', threadId: TID, blockId: BID, summary: 'Running the tests' });
+  ctx.flush();
+  assert.equal(ctx.doc.querySelector('.ask-card.ask-cmd'), el, 'same element');
+  assert.equal(sum.textContent, 'Running the tests');
+  assert.ok(!sum.classList.contains('is-raw'));
+  ctx.panel.destroy();
+});
+
+test('the stored block carries the generated summary: a rebuild (mode off, then on) still shows it (#911 slice 2)', async () => {
+  const { ctx } = setup({ blocks: [cmdBlock(1, 0, null)] });
+  applyFlags({ commandSummaries: true }, ctx.doc);
+  ctx.panel.open();
+  await settle(ctx);
+  // flipCard's own frame (ask-message after the turn) upserts the merged block, then the repaint frame follows.
+  const patched = cmdBlock(1, 0, 'Running the tests');
+  ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID, message: { id: MID, threadId: TID, seq: 2, role: 'assistant', text: 'ok', status: 'done', createdAt: 't', blocks: [patched] } });
+  ctx.panel.pushServerFrame({ type: 'ask-command-summary', threadId: TID, blockId: BID, summary: 'Running the tests' });
+  ctx.flush();
+  applyFlags({ commandSummaries: false }, ctx.doc); ctx.panel.refreshCommandCards(); ctx.flush();
+  applyFlags({ commandSummaries: true }, ctx.doc); ctx.panel.refreshCommandCards(); ctx.flush();
+  const sum = ctx.doc.querySelector('.ask-cmd-sum');
+  assert.equal(sum.textContent, 'Running the tests');
+  assert.ok(!sum.classList.contains('is-raw'));
+  ctx.panel.destroy();
+});
+
+// The no-model proof (0 calls, 0 writes, 0 frames) is in test/ask-command-summary.test.mjs; this pins the panel side.
+test('with no ask-command-summary frame (what no ready model sends), the row keeps the raw command (#911 slice 2)', async () => {
+  const { ctx } = setup({ blocks: [cmdBlock(1, 0, null)] });
+  applyFlags({ commandSummaries: true }, ctx.doc);
+  ctx.panel.open();
+  await settle(ctx);
+  const s = ctx.doc.querySelector('.ask-cmd-sum');
+  assert.ok(s.classList.contains('is-raw'));
+  assert.equal(s.textContent, 'cmd 1');
+  ctx.panel.destroy();
+});

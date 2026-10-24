@@ -1884,6 +1884,28 @@ test('run_command result: the card keeps the summary, clipped; a non-string summ
   assert.equal(cards[0].card.summary, 'Running the tests');
 });
 
+test('run_command with no summary asks the helper job once per card; a chat-given summary never does (#911 slice 2)', async () => {
+  const s = seed();
+  const asked = [];
+  const res = (seq, summary) => JSON.stringify({ ok: true, blockId: `t-0000000001:${seq}`, sessionId: 't-0000000001', seq,
+    command: `npm test ${seq}`, cwd: '/w/p', folder: 'p · main', warning: null, summary });
+  const runner = async (opts) => {
+    for (const [id, text] of [['toolu_1', res(1, null)], ['toolu_2', res(2, 'Running the tests')]]) {
+      push(opts.onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'tool_use', id, name: 'mcp__worca__run_command', input: { command: 'npm test' } }] } });
+      push(opts.onEvent, { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: id, content: text }] } });
+    }
+    await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r));
+    push(opts.onEvent, RESULT());
+    return { text: '', exitCode: 0 };
+  };
+  const { turn } = makeTurn(s, {}, { runClaudeImpl: runner, summariseCommand: (c) => { asked.push(c); throw new Error('ignored'); } });
+  await turn.run();
+  const cards = getMessage(s.asst.id).blocks.filter((b) => b.kind === 'card');
+  assert.equal(asked.length, 1, 'only the card without a summary');
+  assert.deepEqual(asked[0], { cardId: cards[0].id, blockId: 't-0000000001:1', command: 'npm test 1' });
+  assert.equal(cards.length, 2, 'a throwing job never breaks the turn');
+});
+
 test('a command card records where in the answer it ran (textAt), so the chat shows it between the text around it', async () => {
   const s = seed();
   const ok = JSON.stringify({ ok: true, blockId: 't-0000000001:1', sessionId: 't-0000000001', seq: 1, command: 'npm test', cwd: '/w/p', folder: 'p · main', warning: null });

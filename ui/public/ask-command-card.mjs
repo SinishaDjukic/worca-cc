@@ -197,7 +197,8 @@ function createCommandRow({ doc, card, onStop, onShow, expanded, onToggle, keepI
   let chosen = rowOpen === true || rowOpen === false;
   const win = doc.defaultView;
   let ticker = null;              // one 1 s interval while the command runs (D17)
-  const text = card.summary || card.command;
+  const given = !!card.summary;                    // #911 slice 2: a chat-given summary is never replaced
+  let text = card.summary || card.command;
   function paintDot(v) {
     const m = dotOf(v);
     paintStatusDot(dot, m);
@@ -256,6 +257,15 @@ function createCommandRow({ doc, card, onStop, onShow, expanded, onToggle, keepI
       }
       el.classList.toggle('is-live', live);
       paint();
+    },
+    /** #911 slice 2: the Command summaries helper job's line, for a row the chat gave no summary. In place. */
+    setSummary(s) {
+      const line = typeof s === 'string' ? s.trim() : '';
+      if (!line || given) return;
+      text = line;
+      sum.textContent = line;
+      sum.classList.remove('is-raw');
+      paintMeta();
     },
     /** `{ role: 'first'|'mid'|'last', head? }` or null: this row's place in a group of consecutive commands. */
     setGroup(g) {
