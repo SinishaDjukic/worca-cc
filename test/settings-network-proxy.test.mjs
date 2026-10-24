@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { NETWORK_PROXY_AUTH, networkProxySettings, setNetworkProxy, assertNetworkProxyInput, readSettings } from '../src/core/settings.mjs';
+import { NETWORK_PROXY_AUTH, networkProxySettings, setNetworkProxy, assertNetworkProxyInput, readSettings, previewNetworkProxy, mergeNetworkProxy } from '../src/core/settings.mjs';
 import { AUTH_MODES, fixedPortOf } from '../src/core/upstream-proxy.mjs';
 
 let home; const prev = {};
@@ -59,4 +59,18 @@ test('fixedPort: settings validation and upstream-proxy fixedPortOf agree on eve
     try { assertNetworkProxyInput({ fixedPort: v }); } catch { accepted = false; }
     assert.equal(fixedPortOf({ fixedPort: v }) !== 0, accepted, String(v));
   }
+});
+
+test('previewNetworkProxy: same validation and merge as setNetworkProxy, never writes', async () => {
+  await setNetworkProxy(null);   // earlier tests in this file leave noProxy / fixedPort behind
+  await setNetworkProxy({ upstream: 'proxy.acme.test:8080', auth: 'ntlm', timeouts: { connectMs: 5000 } });
+  const before = networkProxySettings();
+  const after = previewNetworkProxy({ upstream: 'proxy2.acme.test:3128', timeouts: { connectMs: null, idleMs: 60000 }, auth: null });
+  assert.deepEqual(after, { upstream: 'http://proxy2.acme.test:3128', timeouts: { idleMs: 60000 } });
+  assert.deepEqual(networkProxySettings(), before, 'nothing written');
+  assert.throws(() => previewNetworkProxy({ upstream: 'http://u:secret@p.acme.test:1' }), /must not carry a user name or password/);
+  assert.throws(() => previewNetworkProxy({ auth: 'negotiate' }), /networkProxy.auth must be one of auto, none, basic, ntlm, digest/);
+  assert.throws(() => previewNetworkProxy({ fixedPort: 80 }), /fixedPort must be a port from 1024 to 65535/);
+  assert.deepEqual(previewNetworkProxy(null), {});
+  assert.deepEqual(mergeNetworkProxy({ auth: 'ntlm' }, { auth: '' }), {});
 });

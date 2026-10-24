@@ -201,3 +201,9 @@ test('JS builders route through the shared helper', () => {
   assert.equal((read('ui/public/branch-sync.mjs').match(/layoutDialog\(/g) || []).length, 2, 'sync dialog + sync refusal');
   assert.match(read('ui/public/app.js'), /watchDialogEdges\(document\)/);
 });
+
+test('the team memory seeding review is no second scroller inside #plugin-modal\'s body (only its bounded preview boxes are)', () => {
+  const seed = ALL.filter((r) => r.sel === '.mem-seed');
+  assert.equal(seed.length, 1);
+  assert.doesNotMatch(seed[0].body, /overflow|max-height/);
+});

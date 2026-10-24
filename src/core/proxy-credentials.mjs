@@ -6,7 +6,7 @@
 // guarded like an ssh key: 0600 on POSIX (refused when group/other can read it) and an
 // owner-only ACL through icacls on Windows, set on the tmp file before the rename.
 // `rejected` is the lockout breaker's memory across processes and restarts.
-import { readFileSync, lstatSync, openSync, fstatSync, closeSync, rmSync, watchFile, unwatchFile, constants as fsc } from 'node:fs';
+import { readFileSync, lstatSync, openSync, fstatSync, closeSync, rmSync, statSync, constants as fsc } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { userInfo } from 'node:os';
@@ -183,9 +183,20 @@ export function loginView(r) {
 export function watchProxyLogin(onChange, { home = defaultHome(), intervalMs = 1000 } = {}) {
   const file = proxyLoginFile(home);
   if (!file) return () => {};
-  const listener = (cur, prev) => { if (cur.mtimeMs !== prev.mtimeMs || cur.ino !== prev.ino) { try { onChange(); } catch { /* ignore */ } } };
-  watchFile(file, { interval: intervalMs, persistent: false }, listener);
-  return () => unwatchFile(file, listener);
+  // Our own poll with the baseline taken here, not fs.watchFile: its baseline is its first stat,
+  // done later on the thread pool, so a save landing before that stat ran was never reported.
+  const sig = () => {
+    try { const st = statSync(file); return `${st.ino}|${st.mtimeMs}|${st.ctimeMs}|${st.size}`; } catch (err) { return err && err.code ? err.code : 'error'; }
+  };
+  let last = sig();
+  const timer = setInterval(() => {
+    const cur = sig();
+    if (cur === last) return;
+    last = cur;
+    try { onChange(); } catch { /* ignore */ }
+  }, intervalMs);
+  timer.unref();
+  return () => clearInterval(timer);
 }
 
 /** Mask anything credential-shaped in a proxy log line. */

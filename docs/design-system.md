@@ -114,9 +114,8 @@ Every pull request button and link looks the same everywhere (`test/ui-pr-contro
    `.hd-pr-repo-link`) is `--blue-ink-strong`, weight 600.
 Placement: on the run page the PR control sits in the card's head at every level (`.rd-sheet-head > .rd-head-acts`, the
 `.rd-pr-slot` among the head buttons: Try it, Create PR, Push, Fix conflicts, Ask for changes, Discard / Apply, How to
-merge, Report), centred in the card head's row, which is the buttons' height (32px, 40px on touch screens) whichever
-control it holds, with at most one primary; under 420px of head width the buttons wrap onto their own row below the
-status block, on the left edge. View PR is a split button `View PR │ ▾`
+merge, Report), centred on the status line, with at most one primary; under 420px of head width the buttons wrap onto
+their own row below the status, on the left edge. View PR is a split button `View PR │ ▾`
 (`.btn-split.mini.rd-pr-split`): the main half opens the PR, the ▾ (PR scope) holds Watch (Advanced and above), Copy PR
 link and Fix conflicts (while the PR conflicts). A workspace run has one `View PRs ▾` button that lists each member's PR.
 The group page has the same head: Create PR, View PR ▾ or View PRs ▾ on the status line; View PRs ▾ holds each PR, then
@@ -145,6 +144,12 @@ A disabled checked box fills `--seq`. A selected option row (`.opt-row`, `.chip-
 an ink border.
 ### Segmented control
 `.seg`: one `--field` container, 28px / 13px buttons, the selected one `--surface`. `.seg-sm` is the same size.
+The run log's Summaries / Raw switch (`.log-view-seg`, flag `commandSummaries`) is a `.seg-sm` in the Logs bar and the step
+log drawer head. A summarised line's `title` shows the command on hover; that is a mouse convenience, and Raw is the
+accessible path to the command. With the switch, Open in Logs and × in the drawer head never shrink; the title ellipsizes.
+At 480px and below, the drawer head puts the step title on its own row and keeps the switch, Open in Logs and × together
+on the row below, with 7px switch padding (a 311px History drawer leaves 283px). The Logs bar wraps while the switch
+shows, so its selects keep their content width and search shares the switch row with copy.
 ### Tabs
 `.tabs` / `.tab`: underline tabs, 32px, never boxed (checked).
 ### Filter chip
@@ -155,12 +160,22 @@ border, ink text. Never a solid ink fill. A count sits in `.n`. It is the only f
 One chip: 18px, 11px / 500 sans, 4px corner, filled, no border (checked). The Labs (violet) and Beta (blue) flag chips are
 the reference size. Colour carries meaning only. The "Suggested" chip on the New run form's title and branch (`.sn-chip`, Smart run naming) is a permitted Labs-violet use: the whole feature is a Labs feature. Cost-tag chips (`.tag-chip`), the Projects sync pill (`.ps-pill`), the
 Chat command card's state (`.ask-cmd-pill`) and the Team policy tab count (`.tp-tab-badge`) are the same chip; on the
-active tab the count turns neutral (`--line-2` fill, ink text). The missing-key slot is the one outlined chip: a 1px dashed
+active tab the count turns neutral (`--line-2` fill, ink text). A chat command in summary mode (flag `commandSummaries`) shows the runs status dot and no state chip; the full card keeps `.ask-cmd-pill`. The missing-key slot is the one outlined chip: a 1px dashed
 `--amber` outline on a transparent fill. A removable chip's × is a 14px quiet button inside the chip. A source, "Official"
 or a policy origin is `.badge.slate`; "not installed" and "built-in" are grey.
 ### Status dot and symbols
 A dot is the state: peach working (pulses), grey paused or waiting, green ready, violet merged. Needs you is an amber
 "?" only when Worca asks; a PR problem is a plain amber dot with the reason in the PR chip; failed is a red "!".
+### Card head
+The first line of a card is its headline. When the page title sits above the card (the run page, the group page),
+the state is the headline: `.run-status-word`, 1–3 words at `--fs-section` / 600 / `--lh-title`, never truncated, the
+status dot centred on it and the head buttons and the Live switch centred on its line (`.rd-sheet-head`,
+`--rd-word-line`). Under it, `.run-status-detail`: 12px `--ink-2`, at most 2 lines (the whole text as its tooltip),
+and only what no row below says ("not in dev yet", "Failed · Build · Implementation" → "Build · Implementation",
+"14 files changed in a copy", "conflicts with dev", GitHub's verdict); absent otherwise. A card with its own title
+(the chat run card) keeps the state at 13px / 600 under it. Titles are static or short ("Change Away mode?"); dynamic
+names go in the target or meta line (`.ask-mcard-target`); a title that can still grow (a run or feature name) gets
+an ellipsis and its text as a tooltip. Chips say the kind or state once; the line after a chip never repeats its word.
 ### Tracker
 The run page card's read-only "where is the work" line (`.rd-track`, `ui/public/run-head.mjs` `renderTracker`), under
 the status line after a `--line` divider, at every level. Three steps on one 3-column grid: the PR path (Changes ·
@@ -177,8 +192,9 @@ the facts list (`.rd-kv`, `run-head.mjs` `factsModel` / `renderFacts`) as rows u
 branch, the Branch row's copy chip, Advanced and up), **Kept work** (Download patch, `Commit it yourself`), **Pull
 request** (the shared PR chip, `runs-list.mjs` `prChip`; a workspace's **Pull requests** lists one member per line, the
 names in one column), **Checks** (the checks line: `--green-ink` passed, `--blue-ink` running, `--amber-ink` failed)
-and **Watch** (its words, View fix run, and the Watch-stopped hint on its own line). GitHub's verdict is the status
-line's only. The quiet buttons `Watching` (opens the ▾ menu at Advanced) and `Commit it yourself` are
+and **Watch** (its words, View fix run, and the Watch-stopped hint on its own line). GitHub's verdict is the card
+head's detail only ("In review" / "waiting for a review"); the checks line is the Checks row's alone, never the head's.
+The quiet buttons `Watching` (opens the ▾ menu at Advanced) and `Commit it yourself` are
 `button.rd-fact-act`. Fact labels never wrap.
 Labels wrap inside their column at every width and never run past the card; under 480px the connectors shrink to 8px.
 ### Menu (checked)
@@ -219,6 +235,8 @@ under 300ms. Error: a plain sentence plus a "Details" quiet button, never the ra
 ### Toasts
 `notify({ tone, title, detail, action, key })` (`ui/public/feedback.mjs`): ok and info close after 5s, warn and err
 stay, never move focus.
+The title is at most 6 static words ("Could not open the workflow"). Names, ids and paths go in `detail`; a raw error
+goes in `detail` too, never in the title, and behind a Details action when it is long.
 ### Modals
 `confirmModal({ title, message, confirmLabel, danger })` (`ui/public/app.js`): a destructive confirm names what goes;
 only inside a confirm is `.btn-danger` solid red. Footer actions and the head Close are 32px `.btn`; inline field
@@ -235,7 +253,11 @@ on purpose. Under 640px of height the head compacts (smaller hero, tighter gap) 
 `.mk-dialog` / `.mk-sheet` follow the same model with their own class names.
 
 ## Patterns
-- Status line: "State · detail", for example "Failed · Review · Review Implementation". No colon forms.
+- Status line: "State · detail", for example "Failed · Review · Review Implementation". No colon forms. In a card head
+  the two parts split: the state is the headline and the detail is the line under it (Card head).
+- Say each thing once. When a row, chip or tracker step in the card says a fact, the head does not: the row wins over
+  the head. The checks line is the Checks row's, the base branch the Merged row's, Watch stopped the Watch row's, where
+  the work is the tracker's; a result block never repeats the status line's state word.
 - "?" only means Worca is asking. An amber dot without "?" is a PR problem. "!" means failed.
 - Labels are 1–3 words. Plain words: never ids (`run:cc3b6fce`), raw timestamps or raw errors in visible text; ids
   belong in a tooltip.
@@ -248,10 +270,9 @@ on purpose. Under 640px of height the head compacts (smaller hero, tighter gap) 
   `Runs › Run tags › Run 2` beside it when the list stands beside the page; Run after; on the right the one primary
   action, Stop, ⋯), the title with its kind chip (`Run 2 of 3`, `Run`, or
   `Feature` / `Chain` / `Group`; a run in a group's chip links its group page and ends in a CSS `›` (`Run 2 of 3 ›`), so
-  its facts block has no group row), then the card: the status block (the status line, the head buttons at its right,
-  with the PR control among them; see PR controls. Beside the stage bar the status line names only the step
-  (`Working · Refine Plan`); the stage is on the bar; the stage bar, the group's "N done" bar and the role rows run the
-  card's full width 16px under the head row, never only the space left of the buttons), the tracker under a `--line` divider, the facts block (`.rd-kv`: 12px
+  its facts block has no group row), then the card: the status block (the state word as the card's headline with its detail under it, the head buttons at its right,
+  centred on the word's line, with the PR control among them; see Card head and PR controls. Beside the stage bar the
+  detail names only the step (`Working` / `Refine Plan`); the stage is on the bar), the tracker under a `--line` divider, the facts block (`.rd-kv`: 12px
   `--ink-2` labels, 13px values, one row per fact and one place to edit it; a quiet button that leads a value pulls back
   by its padding so its text sits on the value column), then the tiles (`--fs-stat` sans values with tabular figures,
   `--pad-tile` padding). No PR bar, no kept-work, merge-back or Apply box: their actions are head buttons.

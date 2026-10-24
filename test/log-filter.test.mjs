@@ -126,3 +126,11 @@ test('compileLogFilter matches logLineVisible on every axis', () => {
     for (const rec of recs) assert.equal(pred(rec), logLineVisible(rec, f), JSON.stringify({ f, rec }));
   }
 });
+
+test('search matches the raw command and the Bash description', () => {
+  const rec = { level: 'debug', text: '→ Bash node --test test/naming.test.mjs', desc: 'Run the naming tests' };
+  assert.equal(compileLogFilter({ search: 'naming.test' })(rec), true);
+  assert.equal(compileLogFilter({ search: 'RUN THE' })(rec), true);
+  assert.equal(compileLogFilter({ search: 'cargo' })(rec), false);
+  assert.equal(compileLogFilter({ search: 'naming' })({ level: 'info', text: 'other' }), false);
+});

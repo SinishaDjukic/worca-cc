@@ -336,7 +336,7 @@ test('run page: a paused Codex run lists every other engine; the third clone res
   page.querySelector('.rd-resume-more').click();
   await ctx.settle();
   const items = [...page.querySelectorAll('.rd-resume-menu .resume-on-other')].filter((i) => !i.hidden);
-  assert.deepEqual(items.map((i) => [i.dataset.engine, i.querySelector('b').textContent]), [['claude', 'Resume on Claude'], ['copilot', 'Resume on Copilot'], ['cursor', 'Resume on Cursor'], ['opencode', 'Resume on OpenCode']]);
+  assert.deepEqual(items.map((i) => [i.dataset.engine, i.querySelector('b').textContent]), [['claude', 'Resume on Claude'], ['copilot', 'Resume on Copilot'], ['cursor', 'Resume on Cursor'], ['gemini', 'Resume on Gemini CLI'], ['goose', 'Resume on Goose'], ['opencode', 'Resume on OpenCode'], ['qwen', 'Resume on Qwen Code']]);
   items[2].querySelector('b').click();
   await ctx.settle();
   assert.equal(modal(ctx.doc).title, 'Resume on Cursor?');
@@ -388,7 +388,10 @@ test('History detail menu: one item per other engine, ready or not; the third on
   assert.deepEqual(items.map((i) => [i.dataset.engine, i.querySelector('b').textContent, i.querySelector('small').textContent]),
     [['claude', 'Resume on Claude', NOTE], ['copilot', 'Resume on Copilot', "Starts the paused step fresh; a model Copilot cannot run falls back to its default."],
       ['cursor', 'Resume on Cursor', "Starts the paused step fresh; a model Cursor cannot run falls back to its default."],
-      ['opencode', 'Resume on OpenCode', 'Starts the paused step fresh; a model OpenCode cannot run falls back to its default.']]);
+      ['gemini', 'Resume on Gemini CLI', 'Starts the paused step fresh; a model Gemini CLI cannot run falls back to its default.'],
+      ['goose', 'Resume on Goose', "Starts the paused step fresh; a model Goose cannot run falls back to its default."],
+      ['opencode', 'Resume on OpenCode', 'Starts the paused step fresh; a model OpenCode cannot run falls back to its default.'],
+      ['qwen', 'Resume on Qwen Code', 'Starts the paused step fresh; a model Qwen Code cannot run falls back to its default.']]);
   ctx.doc.querySelector('.hd-resume-more').click();
   await ctx.settle();
   items[2].click();

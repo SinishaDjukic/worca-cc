@@ -8,7 +8,7 @@ import {
   DEFAULT_CONTEXT_MAX_BYTES_PER_FILE, DEFAULT_CONTEXT_MAX_BYTES_TOTAL, DEFAULT_SKILL_MOUNT,
   DEFAULT_MEMORY_SOFT_BYTES_PER_FILE, DEFAULT_MEMORY_HARD_BYTES_PER_FILE, DEFAULT_MEMORY_MAX_FILES_PER_SCOPE,
   DEFAULT_MEMORY_HOOK_MAX_CHARS, DEFAULT_MEMORY_DEFRAG_WRITES, DEFAULT_MEMORY_DEFRAG_FILES,
-  DEFAULT_MEMORY_DEFRAG_BYTES_PCT, DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES,
+  DEFAULT_MEMORY_DEFRAG_BYTES_PCT, DEFAULT_MEMORY_DEFRAG_ALWAYS_ON_BYTES, DEFAULT_MEMORY_TEAM_MAX_FILES,
   DEFAULT_ASK_MAX_TURNS, DEFAULT_ASK_MAX_BUDGET_USD, DEFAULT_HUMAN_RATE_USD,
 } from './settings.mjs';
 import { cachedPolicyForKey } from './policy/cache.mjs';
@@ -59,6 +59,9 @@ const SCALARS = [
   scalar({ id: 'watchNewPrs', check: (value) => typeof value === 'boolean', def: false, hint: 'must be true or false' }),
   scalar({ id: 'memory.softBytesPerFile', path: ['memory', 'softBytesPerFile'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_SOFT_BYTES_PER_FILE }),
   scalar({ id: 'memory.maxBytesPerFile', path: ['memory', 'maxBytesPerFile'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_HARD_BYTES_PER_FILE }),
+  // Team memory (phase 1a): project-only opt-in — no user layer (readUser off), no team key.
+  scalar({ id: 'memory.team', path: ['memory', 'team'], check: SETTING_CHECKS.teamMemory, def: false, hint: 'must be true, false or "only"', readUser: () => undefined }),
+  scalar({ id: 'memory.teamMaxFiles', path: ['memory', 'teamMaxFiles'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_TEAM_MAX_FILES, hint: 'must be a positive whole number' }),
   scalar({ id: 'memory.maxFilesPerScope', path: ['memory', 'maxFilesPerScope'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_MAX_FILES_PER_SCOPE }),
   scalar({ id: 'memory.hookMaxChars', path: ['memory', 'hookMaxChars'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_HOOK_MAX_CHARS }),
   scalar({ id: 'memory.defrag.writes', path: ['memory', 'defrag', 'writes'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_DEFRAG_WRITES }),
@@ -92,7 +95,7 @@ const CLAUDE_USER = {
   memoryDefrag: () => { const pair = memoryDefragModel(); return pair.model ? { model: pair.model, ...(pair.effort ? { effort: pair.effort } : {}) } : undefined; },
 };
 function utilEntry(engine, job) {
-  if (!HELPER_ENGINES.includes(engine)) return null;          // Cursor, OpenCode: no utility ids (helper jobs run on Claude)
+  if (!HELPER_ENGINES.includes(engine)) return null;          // the own-sign-in engines: no utility ids (helper jobs run on Claude)
   if (engine === 'claude' && job === 'workspaceScan') return null;
   return { id: utilityId(engine, job), family: 'utility', engine, job, path: ['utilityModels', engine, job], store: 'settings',
     default: undefined, userOnly: job === 'workspaceScan', validate: pairCheck(engine),

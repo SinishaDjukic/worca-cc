@@ -923,3 +923,26 @@ test("Escape closes Worca's folder browser but leaves the wizard and its import 
   assert.ok(viewShown(doc, 'workspace-create'), 'the wizard stayed');
   assert.equal(doc.querySelector('#wiz-name').value, 'Keep me');
 });
+
+test('E10: a registered import row whose project has team memory available carries the mark; a projects-changed frame adds it once the check answers', async () => {
+  let offer = false;
+  const rest = importRoutes();
+  const { window } = await boot({ fetchHandler: (u, opts) => {
+    if (u.endsWith('/api/projects') && (!opts || !opts.method || opts.method === 'GET')) {
+      return json({ projects: [...PROJECTS, { name: 'svc-iam', path: '/a/svc-iam', exists: true, key: 'svc-iam-0000aaaa', ...(offer ? { teamMemoryOffer: true } : {}) }] });
+    }
+    return rest(u, opts);
+  } });
+  goCreate(window);
+  await tick();
+  const doc = window.document;
+  click(window, doc.querySelector('#wiz-import-add'));
+  await settle();
+  const mark = (path) => importBox(doc, path).closest('.wiz-import-row').querySelector('.team-mem-mark');
+  assert.equal(mark('/a/svc-iam'), null, 'not checked yet');
+  offer = true;
+  WSStub.last._listeners.message.forEach((fn) => fn({ data: JSON.stringify({ type: 'projects-changed', action: 'updated' }) }));
+  await settle();
+  assert.equal(mark('/a/svc-iam').textContent, 'team memory available');
+  assert.equal(mark('/x/api'), null, 'a new row is not a project yet');
+});

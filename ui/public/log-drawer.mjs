@@ -23,9 +23,10 @@ export function clampHeight(h, viewport) {
 
 /**
  * @param {{doc: Document, win?: {innerHeight?: number}, storage?: object,
- *   onClose?: () => void, onOpenInLogs?: () => void}} o
+ *   onClose?: () => void, onOpenInLogs?: () => void, tools?: Element|null}} o
+ *   `tools`: an optional head control (the run log's Summaries / Raw switch), placed before "Open in Logs".
  */
-export function createLogDrawer({ doc, win = {}, storage = null, onClose = null, onOpenInLogs = null }) {
+export function createLogDrawer({ doc, win = {}, storage = null, onClose = null, onOpenInLogs = null, tools = null }) {
   const el = doc.createElement('section');
   el.className = 'wf-log-drawer';
   el.hidden = true;
@@ -39,6 +40,7 @@ export function createLogDrawer({ doc, win = {}, storage = null, onClose = null,
       `<button type="button" class="btn btn-sm btn-quiet btn-icon wf-log-close" aria-label="Close the step log" title="Close (Esc)">${iconSvg('x', 14)}</button>` +
     '</header>' +
     '<div class="log wf-log-body" tabindex="0"></div>';
+  if (tools) el.querySelector('.wf-log-head').insertBefore(tools, el.querySelector('.wf-log-full'));
   const title = el.querySelector('.wf-log-title');
   const live = el.querySelector('.wf-log-live');
   const body = el.querySelector('.wf-log-body');

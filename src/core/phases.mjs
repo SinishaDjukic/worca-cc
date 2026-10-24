@@ -897,6 +897,9 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // plugins under <pipeline.dir>/skills; Agent-tool children see them too). undefined without set
     // skills or with a blocked layer ⇒ nothing emitted ⇒ argv byte-identical.
     pluginDirs: ctx.skillPluginDirs?.length ? ctx.skillPluginDirs : undefined,
+    // Memory usage (memory-usage.mjs, U3): the execution's InstructionsLoaded hook file — null unless the run's rules
+    // copy holds a note with `paths:` ⇒ nothing in --settings and the argv stays byte-identical.
+    memoryLoadLog: typeof ctx.memoryLoadLog === 'string' && ctx.memoryLoadLog ? ctx.memoryLoadLog : undefined,
     // Guardrails: worca policy + lifted repo deny rules as {deny,...} rules ->
     // ONE --settings payload; envScrub/envAllowlist -> spawn env. All undefined
     // when the project has no guardrails, so the argv and env stay byte-identical

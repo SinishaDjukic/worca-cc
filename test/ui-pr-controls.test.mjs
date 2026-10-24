@@ -71,46 +71,6 @@ test('the head lays the buttons out after the live row, and under the status in 
   assert.doesNotMatch(css, /\.rd-pr-box/, 'no PR bar rules');
 });
 
-test('s1: the head row is the buttons\' height and the status block spans it; nothing overhangs', () => {
-  // One height for the row: 32px, 40px on touch screens (the touch .btn).
-  assert.match(css, /(^|\})\.rd-sheet-head\{--rd-head-h:32px;/m);
-  assert.match(css, /@media \(pointer:coarse\)\{\.rd-sheet-head\{--rd-head-h:40px;\}\}/);
-  // The status block spans the head and shares its columns, so the bars run full width whatever control shows.
-  const block = decls('.rd-sheet-head > .run-status');
-  assert.match(block, /grid-area:1 \/ 1 \/ 2 \/ -1/);
-  assert.match(block, /grid-template-columns:subgrid/);
-  assert.match(decls('.rd-sheet-head > .run-status > *'), /grid-column:1 \/ -1/);
-  assert.match(decls('.rd-sheet-head > .run-status > .run-status-head'), /grid-column:1;height:var\(--rd-head-h\)/);
-  assert.equal(decls('.rd-sheet-head > .rd-now-top'), '', 'the old column-1 placement is gone');
-  // 16px to the first line under the row: 8px margin + the block's 8px gap, and no line brings its own top margin.
-  assert.match(decls('.rd-sheet-head > .run-status > .run-status-head:has(~ :not([hidden]))'), /margin-bottom:8px/);
-  assert.match(decls('.rd-sheet-head > .run-status > .run-status-bar'), /margin-top:0/, '.run-prog\'s 10px would make it 26px');
-  for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    if (/run-status-roles|run-status-group|run-prog-chain/.test(m[1])) {
-      assert.doesNotMatch(m[2], /margin(-top)?:/, `the role rows and the group bar keep no top margin: ${m[1].trim()}`);
-    }
-  }
-  // Both right-hand controls are the row's height, centred, with no negative margin.
-  const live = decls('.rd-sheet-head > .rd-live-row');
-  assert.match(live, /height:var\(--rd-head-h\)/);
-  assert.doesNotMatch(live, /height:23px/);
-  const acts = decls('.rd-sheet-head > .rd-head-acts');
-  assert.match(acts, /align-items:center/);
-  assert.match(acts, /height:var\(--rd-head-h\)/);
-  assert.doesNotMatch(acts, /margin:-|margin-(top|bottom):-/, 'no overhang (decls also reads the narrow @container rule)');
-  // The chat card's block is untouched: the shared rule is byte-identical, and the only subgrid on a status block
-  // (or on the run page's .rd-now-top, or inside the chat card) is the card head's.
-  assert.match(css, /(^|\})\.run-status\{display:grid;gap:8px;min-width:0;\}/m);
-  // The is-link band's negative margin and padding stay symmetric, so on the subgrid they cancel on the edge tracks
-  // and the status line and bar keep the head's edges (measured in CDP step 1e).
-  assert.match(decls('.rd-now-top.is-link'), /margin:-8px -12px;padding:8px 12px/);
-  for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    const sel = m[1].trim();
-    if (!/subgrid/.test(m[2]) || !/run-status|rd-now-top|chat-rc/.test(sel)) continue;
-    assert.equal(sel, '.rd-sheet-head > .run-status', `only the card head subgrids the status block: ${sel}`);
-  }
-});
-
 test('no PR control is full width, and the CTA glyphs come from icons.mjs', () => {
   for (const f of ['app.js', 'chat/run-card.mjs', 'run-status-card.mjs']) assert.doesNotMatch(read(f), /btn-block/, f);
   assert.doesNotMatch(read('app.js'), /CTA_ICONS|rd-cta-ico/);

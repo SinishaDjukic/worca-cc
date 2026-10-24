@@ -13,13 +13,18 @@
  *   helpers   it runs a run's helper jobs itself (title, overview, PR description, Auto classifier, night decider);
  *             else they run on Claude
  *   beta      still in beta: every engine picker marks it (taking it out of beta is this one flag)
+ *   signin    its models connect through its own sign-in (its CLI's login or its own providers): a model takes no env
+ *             and no endpoint, and worca ships none of its models (efforts: src/core/model-env.mjs effortsForEngine)
  */
 export const ENGINES = Object.freeze({
-  claude: Object.freeze({ label: 'Claude', models: true, cost: true, helpers: true, beta: false }),
-  codex: Object.freeze({ label: 'Codex', models: true, cost: true, helpers: true, beta: true }),
-  copilot: Object.freeze({ label: 'Copilot', models: true, cost: false, helpers: true, beta: true }),
-  cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, helpers: false, beta: true }),
-  opencode: Object.freeze({ label: 'OpenCode', models: true, cost: true, helpers: false, beta: true }),
+  claude: Object.freeze({ label: 'Claude', models: true, cost: true, helpers: true, beta: false, signin: false }),
+  codex: Object.freeze({ label: 'Codex', models: true, cost: true, helpers: true, beta: true, signin: false }),
+  copilot: Object.freeze({ label: 'Copilot', models: true, cost: false, helpers: true, beta: true, signin: false }),
+  cursor: Object.freeze({ label: 'Cursor', models: true, cost: false, helpers: false, beta: true, signin: true }),
+  gemini: Object.freeze({ label: 'Gemini CLI', models: true, cost: false, helpers: false, beta: true, signin: true }),
+  goose: Object.freeze({ label: 'Goose', models: true, cost: true, helpers: false, beta: true, signin: true }),
+  opencode: Object.freeze({ label: 'OpenCode', models: true, cost: true, helpers: false, beta: true, signin: true }),
+  qwen: Object.freeze({ label: 'Qwen Code', models: true, cost: false, helpers: false, beta: true, signin: true }),
 });
 
 /** The run engines. */
@@ -28,6 +33,9 @@ export const ENGINE_NAMES = Object.freeze(Object.keys(ENGINES));
 export const MODEL_ENGINE_NAMES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].models));
 /** The engines a run can switch between: the model engines (a switch falls back to the target's catalog default). */
 export const SWITCH_ENGINES = MODEL_ENGINE_NAMES;
+
+/** The engines whose models connect through their own sign-in (Cursor, Gemini CLI, Goose, OpenCode, Qwen Code). */
+export const SIGN_IN_ENGINE_NAMES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].signin));
 
 /** The engines still in beta: every engine picker marks them. */
 export const BETA_ENGINES = Object.freeze(ENGINE_NAMES.filter((e) => ENGINES[e].beta));

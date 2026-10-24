@@ -12,9 +12,9 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { readPipelineForResume, readPipelineStateById, listPipelines } from '../src/core/artifacts.mjs';
 import { getDb } from '../src/core/db.mjs';
-import { SWITCH_ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES, otherEngines, usageLimitSwitches, engineLabel, engineList, engineReportsCost, engineSwitchNote, runCostLabel } from '../src/shared/engine-switch.mjs';
+import { SWITCH_ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES, otherEngines, usageLimitSwitches, engineLabel, engineList, engineReportsCost, engineSwitchNote, runCostLabel, SIGN_IN_ENGINE_NAMES } from '../src/shared/engine-switch.mjs';
 import { ENGINES } from '../src/shared/engine-switch.mjs';
-import { MODEL_ENGINES, RUN_ENGINES, HELPER_ENGINES, ASK_ENGINES, helperEngineFor, CURSOR_EFFORTS, effortsForEngine } from '../src/core/model-env.mjs';
+import { MODEL_ENGINES, RUN_ENGINES, HELPER_ENGINES, ASK_ENGINES, helperEngineFor, CURSOR_EFFORTS, effortsForEngine, OWN_SIGNIN_ENGINES } from '../src/core/model-env.mjs';
 import { listEngines } from '../src/core/engines/index.mjs';
 
 useTempHome(after);
@@ -37,20 +37,22 @@ test('one engine table: the lists, model-env and the adapter registry derive fro
   assert.deepEqual([...MODEL_ENGINE_NAMES], MODEL_ENGINES);
   assert.deepEqual([...ENGINE_NAMES], listEngines().map((e) => e.name).filter((n) => n !== 'mock'));
   assert.deepEqual([...ENGINE_NAMES], RUN_ENGINES);
+  assert.deepEqual([...SIGN_IN_ENGINE_NAMES], OWN_SIGNIN_ENGINES);
+  assert.deepEqual(OWN_SIGNIN_ENGINES, ['cursor', 'gemini', 'goose', 'opencode', 'qwen']);
 });
 
 test('every other engine, in order, filtered by readiness', () => {
-  assert.deepEqual(otherEngines('claude'), ['codex', 'copilot', 'cursor', 'opencode']);
-  assert.deepEqual(otherEngines('cursor'), ['claude', 'codex', 'copilot', 'opencode']);
-  assert.deepEqual(otherEngines('opencode'), ['claude', 'codex', 'copilot', 'cursor']);
-  assert.deepEqual(otherEngines(null), ['codex', 'copilot', 'cursor', 'opencode'], 'a missing engine is Claude');
+  assert.deepEqual(otherEngines('claude'), ['codex', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen']);
+  assert.deepEqual(otherEngines('cursor'), ['claude', 'codex', 'copilot', 'gemini', 'goose', 'opencode', 'qwen']);
+  assert.deepEqual(otherEngines('opencode'), ['claude', 'codex', 'copilot', 'cursor', 'gemini', 'goose', 'qwen']);
+  assert.deepEqual(otherEngines(null), ['codex', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen'], 'a missing engine is Claude');
   assert.deepEqual(otherEngines('codex', ['claude']), ['claude']);
-  assert.deepEqual(otherEngines('gemini'), []);
+  assert.deepEqual(otherEngines('gpt'), []);
 });
 
 test('a usage limit offers the ready others; any other pause offers none', () => {
   assert.deepEqual(usageLimitSwitches({ reason: 'usage_limit', limitEngine: 'claude' }, ['claude', 'cursor']), ['cursor']);
-  assert.deepEqual(usageLimitSwitches({ reason: 'usage_limit', limitEngine: 'codex' }), ['claude', 'copilot', 'cursor', 'opencode'], 'nothing known: every other engine');
+  assert.deepEqual(usageLimitSwitches({ reason: 'usage_limit', limitEngine: 'codex' }), ['claude', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen'], 'nothing known: every other engine');
   assert.deepEqual(usageLimitSwitches({ reason: 'usage_limit', limitEngine: null }), []);
   assert.deepEqual(usageLimitSwitches({ reason: 'error', limitEngine: 'claude' }), []);
   assert.deepEqual(usageLimitSwitches({}), []);
@@ -60,6 +62,8 @@ test('labels, lists and cost reporting follow the registry', () => {
   assert.equal(engineLabel('codex'), 'Codex');
   assert.equal(engineLabel(undefined), 'Claude');
   assert.equal(engineLabel('cursor'), 'Cursor');
+  assert.equal(engineLabel('gemini'), 'Gemini CLI');
+  assert.equal(engineLabel('qwen'), 'Qwen Code');
   assert.equal(engineLabel('opencode'), 'OpenCode');
   assert.equal(engineList(['codex', 'cursor']), 'Codex or Cursor');
   assert.equal(engineList(['claude', 'codex', 'cursor'], (e) => e), 'claude, codex or cursor');
@@ -82,6 +86,8 @@ test('helper jobs run on the run engine when it runs them, else on Claude', () =
   assert.equal(helperEngineFor('claude'), 'claude');
   assert.equal(helperEngineFor('codex'), 'codex');
   assert.equal(helperEngineFor('cursor'), 'claude');
+  assert.equal(helperEngineFor('gemini'), 'claude', 'worca does not lock Gemini CLI down: helper jobs read untrusted text');
+  assert.equal(helperEngineFor('qwen'), 'claude');
   assert.equal(helperEngineFor('opencode'), 'claude', 'OpenCode has no verified read-only mode either');
   assert.equal(helperEngineFor('copilot'), 'copilot', 'Copilot runs its own helper jobs on its default model');
   assert.equal(helperEngineFor(undefined), 'claude');
@@ -90,6 +96,8 @@ test('helper jobs run on the run engine when it runs them, else on Claude', () =
   assert.deepEqual(effortsForEngine('copilot'), ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
   assert.deepEqual(CURSOR_EFFORTS, []);
   assert.equal(effortsForEngine('cursor'), CURSOR_EFFORTS);
+  assert.deepEqual(effortsForEngine('gemini'), []);
+  assert.deepEqual(effortsForEngine('qwen'), []);
   assert.deepEqual(effortsForEngine('opencode'), ['minimal', 'low', 'medium', 'high', 'max']);
 });
 
@@ -114,7 +122,7 @@ test('a usage limit an agent hit records its engine on every copy of the pause',
   assert.equal(row.limitEngine, 'claude', 'the history list row too');
   assert.equal(row.limitResetAt, res.limitResetAt, 'the history list row carries the reset time');
   const audit = getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(orch.state.id).map((e) => e.text).join('\n');
-  assert.match(audit, /Resume after the reset, or continue now on Codex, Copilot, Cursor or OpenCode, or resume with another model\./);
+  assert.match(audit, /Resume after the reset, or continue now on Codex, Copilot, Cursor, Gemini CLI, Goose, OpenCode or Qwen Code, or resume with another model\./);
 
   // A resume clears it, like the reason.
   const orch2 = createOrchestrator({ projectDir: dir, auto: true, claude: { mock: true }, runners: { producer: async () => ({ status: 'ok', summary: 'done' }), verifier: okVerifier }, resume: saved });

@@ -16,6 +16,7 @@ import { workflowPickerLabel } from './results-view.mjs';
 import { renderAutoProposal, AUTO_PROPOSAL_ORDER_CARD } from './auto-proposal.mjs';
 import { createRunProgressCard, snapshotFromState, PROGRESS_CARD_TYPE } from './ask-run-card.mjs';
 import { createCommandCard, COMMAND_CARD_TYPE } from './ask-command-card.mjs';
+import { commandRuns, groupHead } from './ask-command-group.mjs';
 import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
 import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
@@ -194,7 +195,7 @@ const HISTORY_GROUPS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['earlie
 /** The column's search waits this long after the last keystroke before it asks the server. */
 const HISTORY_SEARCH_MS = 200;
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null }) {
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true }) {
   const homePick = browserPick();         // hoisted declaration (defined below)
   const st = {
     open: false,
@@ -231,6 +232,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     commands: new Map(),      // blockId → command card handle (ask-command-card.mjs)
     commandFrames: new Map(), // blockId → the last ask-command view that arrived before its card was built
     commandsOpen: new Set(),  // blockIds whose output the user unfolded (the card's toggle; outlives a rebuild of the card)
+    commandsRowOpen: new Map(),  // blockId → the person's open choice on a summary row (#911); absent = none
+    commandGroupOf: new Map(),   // blockId → the blockIds of its group (#911), for the head's live total
     pinned: true,
     wantThread: undefined,    // the chat the page shows or is loading: an id, null = home (a new chat), undefined = none yet
     unread: false,            // what onUnread was last told (the Chat row's dot)
@@ -3893,7 +3896,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const rootEl = make('div', `ask-card ask-wfcard is-${block.state}`);
     rootEl.setAttribute('data-ask-wfcard', block.state);
     const head = make('div', 'ask-wfcard-head');
-    head.appendChild(make('span', 'ask-wfcard-title', block.state === 'saved' ? 'Saved workflow' : 'Proposed workflow'));
+    // The name (body) is the card's one headline; the head says the state as a chip, with the round and, once saved, Auto.
+    head.appendChild(make('span', 'ask-wfcard-state', block.state === 'saved' ? 'Saved' : 'Proposed workflow'));
     head.appendChild(make('span', 'ask-wfcard-round', `round ${card.round || 1}`));
     if (block.state === 'saved') { head.appendChild(make('span', 'ask-wfcard-spacer')); head.appendChild(make('span', 'ask-wfcard-tag', 'Auto')); }
     rootEl.appendChild(head);
@@ -3919,9 +3923,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const saved = make('div', 'ask-wfcard-saved');
       saved.appendChild(svgIcon(WF_ICO.check, 15, 2.4));
       saved.appendChild(make('span', null, name));
-      const line = make('div', 'ask-wfcard-savedline', card.adopted ? 'Uses your saved workflow' : 'Saved as a new workflow, tagged Auto');
       handle.parts.name.replaceWith(saved);
-      saved.after(line);
+      // The chip says Saved and the tag says Auto: the line stays only when it says something new.
+      if (card.adopted) saved.after(make('div', 'ask-wfcard-savedline', 'Uses a workflow you already had'));
     } else if (matched) {
       const hint = make('div', 'ask-wfcard-hint', 'Model and effort come from that saved workflow. Edit them in the Workflows view.');
       handle.parts.match.after(hint);
@@ -4065,6 +4069,48 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     return line;
   }
+  /** The corporate proxy card (propose_network_proxy_change / propose_corporate_proxy_on): before → after, the restart note. */
+  function buildProxyCard(block) {
+    const card = block.card || {};
+    const summary = card.summary || '';
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
+    const rootEl = make('div', `ask-card ask-mcard ask-pxcard is-${block.state}`);
+    rootEl.setAttribute('data-ask-pxcard', block.state);
+    const head = make('div', 'ask-mcard-head');
+    head.appendChild(make('span', 'ask-mcard-title', card.kind === 'flag' ? 'Turn on the corporate proxy?' : 'Change the network proxy?'));
+    rootEl.appendChild(head);
+    const body = make('div', 'ask-mcard-body');
+    if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
+    const list = make('ul', 'ask-mcard-changes');
+    for (const c of Array.isArray(card.changes) ? card.changes : []) list.appendChild(make('li', '', `${c.label}: ${c.before} → ${c.after}`));
+    body.appendChild(list);
+    const result = card.result || null;
+    if (block.state === 'failed') body.appendChild(make('div', 'ask-mcard-failed', `Could not apply: ${block.error || (result && result.error) || 'unknown error'}`));
+    else if (block.state === 'applied') {
+      body.appendChild(make('div', 'ask-awcard-saved', result && result.detail ? result.detail : `Saved. ${card.restartNote || 'Restart Worca to apply.'}`));
+      const open = make('a', 'ask-card-sched-link', card.kind === 'flag' ? 'Open Settings › Labs' : 'Open Settings › Runs › Network proxy');
+      open.href = card.kind === 'flag' ? '#settings/experimental/corporateProxy' : '#settings/runs/network-proxy';
+      body.appendChild(open);
+    } else body.appendChild(make('div', 'ask-pxcard-restart', card.restartNote || 'Restart Worca to apply.'));
+    rootEl.appendChild(body);
+    rootEl.appendChild(make('div', 'ask-card-err'));   // postCard writes a failed POST here (every card has one)
+    if (block.state === 'proposed') {
+      const actions = make('div', 'ask-mcard-actions');
+      const btn = (cls, text, attr, icon) => {
+        const b = make('button', cls, text); b.type = 'button'; b.setAttribute(attr, '');
+        if (icon) b.prepend(svgIcon(icon, 12, 2.2));
+        return b;
+      };
+      const keep = btn('btn btn-sm btn-quiet ask-card-not-now', 'Keep as is', 'data-ask-px-decline');
+      keep.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, keep));
+      const apply = btn('btn btn-sm btn-primary', 'Apply', 'data-ask-px-apply', WF_ICO.save);
+      apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
+      actions.append(make('span', 'ask-card-actions-spacer'), keep, apply);
+      rootEl.appendChild(actions);
+    }
+    return { el: rootEl };
+  }
+
   function buildAwayCard(block) {
     const card = block.card || {};
     const summary = card.summary || 'Away mode change';
@@ -4072,10 +4118,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const rootEl = make('div', `ask-card ask-mcard ask-awcard is-${block.state}`);
     rootEl.setAttribute('data-ask-awcard', block.state);
     const head = make('div', 'ask-mcard-head');
-    const where = card.level === 'project' ? `(project ${card.projectName || card.projectKey || ''})` : '(user settings)';
-    head.appendChild(make('span', 'ask-mcard-title', `Change Away mode? ${where}`));
+    head.appendChild(make('span', 'ask-mcard-title', 'Change Away mode?'));
     rootEl.appendChild(head);
     const body = make('div', 'ask-mcard-body');
+    // The scope is the target line, as on the other receipt cards: a long project name never widens the title.
+    body.appendChild(make('div', 'ask-mcard-target', card.level === 'project' ? `project ${card.projectName || card.projectKey || ''}` : 'user settings'));
     if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
     const before = Array.isArray(card.before) ? card.before : [];
     const after = Array.isArray(card.after) ? card.after : [];
@@ -5663,7 +5710,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (card.type === PROGRESS_CARD_TYPE) return true;
     if (card.type && chatCardBuilder(card.type)) return false;      // an extension type is never a run card, whatever its state
     if (ASK_COMPOSER_CARD_TYPES.includes(card.type)) return false;   // Ask's draft / graph cards are never run cards
-    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project') return false;
+    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy') return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
   function buildCard(block) {
@@ -5704,16 +5751,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isWeb = !!(block.card && block.card.type === 'web');
     const isActions = !!(block.card && block.card.type === 'actions');
     const isAway = !!(block.card && block.card.type === 'away');
+    const isProxy = !!(block.card && block.card.type === 'proxy');
     const isCommand = !!(block.card && block.card.type === COMMAND_CARD_TYPE);
     const isComposer = !!(block.card && ASK_COMPOSER_CARD_TYPES.includes(block.card.type));
     const isProgress = isProgressBlock(block);
     // Proposed cards only: `card.nudge` stays on the block after it flips to 'started', and a live run card must never
     // be disposed and remounted because the gate changed.
     const nudgeStale = block.state === 'proposed' && !!(block.card && block.card.nudge) && cached && cached.shapeOn !== shapeFirstOn();
+    // #911: a command card is built in the mode the gate gives; a changed mode rebuilds it (the dispose below clears its ticker).
+    const sumStale = isCommand && cached && cached.sum !== summariesOn();
     // Ask's draft cards also change with the cards AROUND them (a newer draft of the key replaces one): rebuilt when
     // what they show changes, not only their state.
     const view = isComposer ? composerCards().view(block) : '';
-    if (cached && !nudgeStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isAway || isCommand || isComposer || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached && !nudgeStale && !sumStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isAway || isProxy || isCommand || isComposer || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
@@ -5725,12 +5775,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isWorkspace ? buildWorkspaceCard(block)
       : isActions ? buildActionsCard(block)
       : isAway ? buildAwayCard(block)
+      : isProxy ? buildProxyCard(block)
       : isCommand ? buildCommandCard(block)
       : isComposer ? composerCards().render(block)
       : isProgress ? buildProgressCard(block)
         : custom ? { el: make('div', 'ask-card-stub', (block.card && (block.card.summary || block.card.title)) || 'Card unavailable') }
         : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
-    st.cardEls.set(block.id, { el: built.el, state: block.state, view, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1, shapeOn: shapeFirstOn() });
+    st.cardEls.set(block.id, { el: built.el, state: block.state, view, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1, shapeOn: shapeFirstOn(), sum: summariesOn() });
     return built.el;
   }
   function disposeCardEntry(c) {
@@ -5779,15 +5830,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   // ---- command cards (ui/public/ask-command-card.mjs; Ask agent mode, #574) ------------------------------------------
+  /** The gate (#911): the Labs flag and the person's Settings › Chat switch. */
+  function summariesOn() { return flagOn('commandSummaries', doc) && summariseCommands() !== false; }
   /** One command Ask ran: hydrated once over REST (a reload, a finished block), then live from ask-command frames. */
   function buildCommandCard(block) {
     const card = block.card || {};
     const blockId = String(card.blockId || '');
-    const handle = createCommandCard({ doc, card, onStop: (sid) => {
+    const sum = summariesOn();
+    const handle = createCommandCard({ doc, card, summarise: sum, onStop: (sid) => {
       fetch(`/api/terminal/sessions/${encodeURIComponent(sid)}/stop`, { method: 'POST' }).catch(() => { /* the next frame says what happened */ });
     }, onShow: (sid) => showTerminal(sid), expanded: st.commandsOpen.has(blockId), keepInPlace, onToggle: (open) => {
       if (open) st.commandsOpen.add(blockId); else st.commandsOpen.delete(blockId);
-    } });
+    },
+    rowOpen: st.commandsRowOpen.has(blockId) ? st.commandsRowOpen.get(blockId) : undefined,
+    onRowToggle: (open) => { st.commandsRowOpen.set(blockId, open); },
+    onTick: () => { const ids = st.commandGroupOf.get(blockId); if (ids) paintGroupHead(ids); } });
     st.commands.set(blockId, handle);
     const early = st.commandFrames.get(blockId);
     if (early) { st.commandFrames.delete(blockId); handle.update(early); }
@@ -5810,10 +5867,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function applyCommandFrame(view) {
     if (!view || typeof view.blockId !== 'string') return;
     const handle = st.commands.get(view.blockId);
-    if (handle) { handle.update(view); return; }
+    if (handle) {
+      handle.update(view);
+      const ids = st.commandGroupOf.get(view.blockId);
+      if (ids) paintGroupHead(ids);
+      return;
+    }
     st.commandFrames.set(view.blockId, view);                  // the turn's card block and the first frames race
     if (st.commandFrames.size > 50) st.commandFrames.delete(st.commandFrames.keys().next().value);
   }
+
+  /** #911: the group head's live total, on the group's first row. */
+  function paintGroupHead(ids) {
+    const first = st.commands.get(ids[0]);
+    if (!first || !first.setGroup) return;
+    first.setGroup({ role: 'first', head: groupHead(ids.map((id) => (st.commands.get(id) || {}).view || null)) });
+  }
+  /** #911: the flag or the person's switch changed: rebuild the command cards in the other mode. */
+  function refreshCommandCards() { if (st.model) { renderTranscript(); scheduleFlush(); } }
 
   // ---- run progress cards (ui/public/ask-run-card.mjs; D1 runStore seam, D9 REST hydration, D11 cadence) ------------
   const PROGRESS_TICK_MS = 1000, PROGRESS_REHYDRATE_MS = 30_000;
@@ -6243,6 +6314,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       else if (b.kind === 'card') parts.push(`c:${b.id}:${b.state || ''}:${(b.card && b.card.type) || ''}:${b.runId || ''}:${b.error || ''}:${registeredCardBuilder(b) ? cardRev(b) : ''}`);
     }
     parts.push(`r:${row.status || ''}:${row.errorMessage || ''}:${row.errorCode || ''}:${isLiveRow(row) ? 1 : 0}`);
+    parts.push(`s:${summariesOn() ? 1 : 0}`);   // #911: a mode change rebuilds the command cards
     return parts.join('|');
   }
 
@@ -6298,7 +6370,27 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // Inline cards (a command card) sit between answer pieces, in the order they happened: [card, piece] per card.
       let inline = [];
       const answerDivs = () => [answer, ...inline.map((x) => x.piece)];
-      renderAnswer = () => renderAnswerInto(answerDivs(), cur);
+      /** #911: consecutive command cards with only blank text between them share one card (summary mode only). */
+      const paintGroups = () => {
+        const cards = inlineCards(cur);
+        // Most streamed tokens land in a message with no command card: stop before any work (renderAnswer runs per token).
+        if (!cards.some((b) => b.card && b.card.type === COMMAND_CARD_TYPE)) return;
+        const handles = cards.map((b) => (b.card && b.card.type === COMMAND_CARD_TYPE ? st.commands.get(String(b.card.blockId || '')) : null));
+        for (const handle of handles) if (handle && handle.setGroup) handle.setGroup(null);
+        for (const b of cards) if (b.card && b.card.blockId) st.commandGroupOf.delete(String(b.card.blockId));
+        if (!summariesOn()) return;
+        const isLive = !!(st.model && st.model.live() && st.model.live().messageId === cur.id);
+        const pieces = answerPieces(isLive ? st.model.live().text : cur.text || '', cards);
+        for (const [a, z] of commandRuns(handles.map(Boolean), pieces)) {
+          const ids = cards.slice(a, z + 1).map((b) => String(b.card.blockId));
+          for (let i = a; i <= z; i += 1) {
+            st.commandGroupOf.set(ids[i - a], ids);
+            handles[i].setGroup({ role: i === a ? 'first' : i === z ? 'last' : 'mid' });
+          }
+          paintGroupHead(ids);
+        }
+      };
+      renderAnswer = () => { renderAnswerInto(answerDivs(), cur); paintGroups(); };
       renderAnswer();
       let tailSig = null;
       const renderTail = () => {
@@ -6326,6 +6418,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           });
           renderAnswer();
         }
+        paintGroups();
         for (const b of cur.blocks || []) {
           if (!b) continue;
           if (b.kind === 'notice') wrap.appendChild(buildNotice(b));
@@ -6619,6 +6712,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (frame.threadId !== st.threadId) return;
       // Only the card: the terminal pane is never opened or switched for Ask's command (its tab waits there).
       applyCommandFrame(frame.command);
+      return;
+    }
+    if (frame.type === 'ask-command-summary') {                 // #911 slice 2: the helper job's line for one row, in place
+      if (frame.threadId !== st.threadId) return;
+      // flipCard's ask-card / ask-message frame already put it on st.model's block, so a later build paints it too;
+      // this frame repaints the row that is mounted now (buildCard keeps a cached row while mode and state hold).
+      st.commands.get(String(frame.blockId || ''))?.setSummary?.(frame.summary);
       return;
     }
     if (frame.type === 'ask-scope') {                           // Projects, any way P4 (CONTRACT §4): a server-side switch
@@ -6958,6 +7058,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     setQuote,
     sendQuoted,
     pushServerFrame,
+    refreshCommandCards,
     onHello,
     ownsKey,
     setScope: (scope) => setScopeFromApi(scope),

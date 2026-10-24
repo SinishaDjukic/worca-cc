@@ -201,8 +201,8 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Diff tab (live worktree while running, the final patch after) | A |
 | Folder run (a Folder project): Changes tab, the Folder chip, the "<n> files · on a copy" bar with Discard and Apply to folder, the Apply to folder dialog | S |
 | Run without a project (No project): the Artifacts tab, opened first; the No project chip | S |
-| Live log pane (run page › Logs), log search / copy / auto-scroll | A |
-| Step log drawer under the Workflow graph (a card or execution-row click; Open in Logs, resize, close) | A — follows the Logs tab |
+| Live log pane (run page › Logs), log search / copy / auto-scroll, Summaries / Raw switch (flag `commandSummaries`) | A |
+| Step log drawer under the Workflow graph (a card or execution-row click; Open in Logs, resize, close), Summaries / Raw switch (flag `commandSummaries`) | A — follows the Logs tab |
 | Branch chip, progress n/m · step on the card, model · effort pill, graph zoom cluster | A |
 | Auto proposal Revise; Artifacts tab | A |
 | Actions tab, Overview actions strip, Create PR 'Try it first' button and strip | A |
@@ -301,6 +301,8 @@ inside the view.
 |---|---|
 | Projects list, add, project page Overview, remove, Use git (Folder projects) and Link remote (Git projects without origin) | S |
 | Project Memory tab (view and edit files) | A |
+| Project Memory tab › Team view (Local · Team · Both choice, note states, share existing notes, Compare, Undo seeding); project Settings › Team memory | A |
+| Project page Overview › "Your team shares memory for this repository" (Turn on, Not now); the "team memory available" mark in the Projects list and the workspace wizard's import list | A |
 | Project page Actions tab | A |
 | Workspaces list, create wizard (with its Add… / paste-box import), workspace page Overview (projects, description, re-scan, delete) | A |
 | Workspace header "Scan model" control (view / change / clear the saved re-scan model); the choose-a-model window a re-scan opens when the workspace has no usable pick — it unblocks the re-scan, so it shows at any level | A |

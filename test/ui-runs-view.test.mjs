@@ -1174,7 +1174,7 @@ test('D1/D2: a finished member still live, with no History PR yet, shows its gro
   assert.equal(mm.querySelector('.runs-pr-word').textContent, 'Checks failing');
   go(window, `history/${KEY}/p-roll1`); await settle(window, 8);
   // Run 3 (D10): the run page's PR bar carries "PR #821", so its status line drops the second mention.
-  assert.equal(doc.querySelector('#hist-detail .hd-glance .run-status-text').textContent, 'Needs you · Checks failing',
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .run-status').dataset.text, 'Needs you · Checks failing',
     'the run page reads what the list reads, without a second PR mention');
 });
 
@@ -1342,5 +1342,84 @@ test('slice 2: side by side (split) the group Back shows the list, with the grou
   assert.equal(shell.classList.contains('detail-open'), false, 'the group page closed');
   window.dispatchEvent(new window.Event('hashchange')); await settle(window, 6);
   assert.equal(shell.classList.contains('detail-open'), false, 'and is not reopened by the D6 restore');
+  window.close();
+});
+
+// Dividers (running rows lost their line?): jsdom drops `border-bottom:1px solid var(--line)` from getComputedStyle,
+// so the cascade's inputs are checked instead. Every style.css rule that declares a border (top-level or inside any
+// @media, so the 375px rules count too) is matched against the rendered row with el.matches().
+const STYLE_CSS = readFileSync(join(__dir, '..', 'ui', 'public', 'style.css'), 'utf8');
+const BORDER_DECL = /(^|[;{\s])border(-bottom|-top)?(-(color|width|style))?\s*:/;
+function borderRules(doc) {
+  const st = doc.createElement('style');
+  st.textContent = STYLE_CSS;
+  doc.head.append(st);
+  const out = [];
+  const walk = (list) => {
+    for (const r of list) {
+      if (r.selectorText) { if (BORDER_DECL.test(r.style.cssText)) out.push(r); }
+      else if (r.cssRules) walk(r.cssRules);   // @media / @supports bodies; @keyframes children have no selectorText
+    }
+  };
+  walk(st.sheet.cssRules);
+  return out;
+}
+const borderHits = (rules, el) => rules.filter((r) => { try { return el.matches(r.selectorText); } catch { return false; } })
+  .map((r) => r.selectorText);
+const DIVIDER = '.runs-item';   // style.css: .runs-item{…border-bottom:1px solid var(--line);}
+const CHAINS_2 = () => ['pchain01', 'pchain02'].map((pid, i) => ({ id: `p:${pid}`, title: `Chain ${i + 1}`, members: [
+  { pipelineId: pid, ticketId: null, state: 'current', title: `Chain ${i + 1} root`, projectDir: PROJECT, after: null },
+  { pipelineId: null, ticketId: `tick${i}`, state: 'waiting', title: `Chain ${i + 1} next`, projectDir: PROJECT, after: 1 }] }));
+
+test('dividers: two running runs and two running groups each keep one --line divider, in both views', async () => {
+  for (const groupBy of ['none', 'project']) {
+    const { window, doc, recv } = await boot({ chains: CHAINS_2(), storage: VIEW({ groupBy }) });
+    recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pchain01' }), live('r2', { pipelineId: 'pchain02' }), live('r3'), live('r4')] });
+    go(window, 'runs'); await settle(window);
+    const rules = borderRules(doc);
+    const base = rules.find((r) => r.selectorText === DIVIDER);
+    assert.ok(base && /border-bottom:\s*1px solid var\(--line\)/.test(base.style.cssText), 'the one divider rule is intact');
+    const groups = ['chain:p:pchain01', 'chain:p:pchain02'].map((k) => groupItem(doc, k));
+    const runsTop = ['r3', 'r4'].map((id) => itemOf(doc, `[data-run-id="${id}"]`));
+    for (const [what, items] of [['running group', groups], ['running run', runsTop]]) {
+      for (const it of items) {
+        assert.ok(it, `${what} is drawn (${groupBy})`);
+        assert.equal(it.dataset.level, 'top');
+        // A plain row: not Needs you, not selected, not a group whose run is open (the three designed exceptions).
+        assert.ok(!it.classList.contains('is-needs'), `${what} is not a Needs-you row`);
+        assert.equal(it.querySelector(':scope > a.runs-row.selected, :scope > a.runs-row.member-open'), null, `${what} is not highlighted`);
+        // Only the divider rule: nothing hides it (transparent / 0), recolours it, or adds a second (top) border.
+        assert.deepEqual(borderHits(rules, it), [DIVIDER], `${what} ${it.dataset.rowKey} keeps exactly one divider (${groupBy})`);
+      }
+    }
+    // Running groups open by default; their members still draw none (the members rule is untouched).
+    for (const g of groups) {
+      assert.equal(g.querySelector(':scope > .runs-row-tail .runs-expand').getAttribute('aria-expanded'), 'true');
+      for (const m of g.querySelectorAll(':scope > .runs-members > .runs-item')) {
+        assert.ok(borderHits(rules, m).includes('.runs-members > .runs-item'), 'a member row draws no divider');
+      }
+      assert.deepEqual(borderHits(rules, g.querySelector(':scope > .runs-members')), [], 'the members list adds no line');
+    }
+    window.close();
+  }
+});
+
+test('dividers: a highlighted row (selected, Needs you, collapsed group with its run open) still drops its own', async () => {
+  const { window, doc, recv } = await boot({ chains: CHAINS_2(), history: [] });
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pchain01' }), live('r3')] });
+  go(window, 'runs'); await settle(window);
+  const rules = borderRules(doc);
+  // Probes carry the real classes, appended and removed in one go (as tools/verify-runs-list-cdp.mjs does).
+  const row = itemOf(doc, '[data-run-id="r3"]');
+  const probe = (cls, inner) => { const p = row.cloneNode(false); if (cls) p.classList.add(cls); p.innerHTML = inner; row.after(p); return p; };
+  const sel = probe('', '<a class="runs-row selected"></a>');
+  const needs = probe('is-needs', '<a class="runs-row"></a>');
+  const openShut = probe('', '<a class="runs-row member-open"></a>');
+  const openExpanded = probe('', '<a class="runs-row member-open"></a><div class="runs-members"></div>');
+  assert.ok(borderHits(rules, sel).includes('.runs-item:has(> a.runs-row.selected)'));
+  assert.ok(borderHits(rules, needs).includes('.runs-item.is-needs'));
+  assert.ok(borderHits(rules, openShut).includes('.runs-item:has(> a.runs-row.member-open):not(:has(> .runs-members))'));
+  assert.deepEqual(borderHits(rules, openExpanded), [DIVIDER], 'an expanded group whose run is open keeps its divider');
+  for (const p of [sel, needs, openShut, openExpanded]) p.remove();
   window.close();
 });

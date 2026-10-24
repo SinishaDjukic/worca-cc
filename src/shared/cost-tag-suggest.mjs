@@ -32,15 +32,15 @@ export function suggestValues({ key, dims = [], vocab = null } = {}) {
 }
 
 /**
- * The New run / Ask card fill: the person's last tagged run in the project, else the project's defaults; values outside a
- * dimension's list are dropped, then the dimension slots are completed (project default → Default → last used).
- * @returns {{ tags: string[], from: 'last-run'|'defaults'|null }}
+ * The New run / Ask card fill (#923): the project's defaults, values outside a dimension's list dropped, then the dimension
+ * slots completed (project default → Default → the person's last value, mandatory dimensions only). The last run's other
+ * tags are never copied.
+ * @returns {{ tags: string[], from: 'defaults'|null }}
  */
-export function autoFillTags({ dims = [], lastRun = [], projectDefaults = [] } = {}) {
-  const from = lastRun.length ? 'last-run' : projectDefaults.length ? 'defaults' : null;
-  const base = (lastRun.length ? lastRun : projectDefaults).filter((t) => {
+export function autoFillTags({ dims = [], lastUsed = [], projectDefaults = [] } = {}) {
+  const base = projectDefaults.filter((t) => {
     const d = dims.find((x) => x.key === keyOf(t));
     return !d || !d.values?.length || d.values.includes(valueOf(t));
   });
-  return { tags: prefillTags(dims, base, { projectDefaults, lastUsed: lastRun }), from };
+  return { tags: prefillTags(dims, base, { projectDefaults, lastUsed }), from: projectDefaults.length ? 'defaults' : null };
 }

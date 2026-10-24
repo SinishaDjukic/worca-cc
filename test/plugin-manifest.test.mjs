@@ -824,8 +824,21 @@ test('models: a Codex model names its engine, takes Codex efforts and refuses ro
   assert.equal(up.manifest.models[0].upstream.model, 'qwen', 'a Codex model may ship an OpenAI-compatible Responses endpoint');
   const chat = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'codex', upstream: { provider: 'openai', api: 'openai-chat', model: 'qwen' } }] });
   assert.ok(chat.errors.some((e) => /"cx".*Responses API only/.test(e)), JSON.stringify(chat.errors));
-  const bad = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'gemini' }] });
-  assert.ok(bad.errors.some((e) => /"engine" must be "claude", "codex", "copilot", "cursor" or "opencode"/.test(e)), JSON.stringify(bad.errors));
+  const bad = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'gpt' }] });
+  assert.ok(bad.errors.some((e) => /"engine" must be "claude", "codex", "copilot", "cursor", "gemini", "goose", "opencode" or "qwen"/.test(e)), JSON.stringify(bad.errors));
+  const gs = normalizeManifest({ name: 'p', models: [{ id: 'google/x', engine: 'goose' }] });
+  assert.equal(gs.ok, true, JSON.stringify(gs.errors));
+  assert.deepEqual(gs.manifest.models[0], { id: 'google/x', label: 'google/x', engine: 'goose', efforts: ['low', 'medium', 'high', 'max'] });
+  const gsEnv = normalizeManifest({ name: 'p', models: [{ id: 'google/x', engine: 'goose', env: { X: '1' } }] });
+  assert.ok(gsEnv.errors.some((e) => /a goose model takes no env/.test(e)), JSON.stringify(gsEnv.errors));
+  const gsId = normalizeManifest({ name: 'p', models: [{ id: 'bare', engine: 'goose' }] });
+  assert.ok(gsId.errors.some((e) => /a goose model id is provider\/model/.test(e)), JSON.stringify(gsId.errors));
+  for (const engine of ['gemini', 'qwen']) {
+    const ok = normalizeManifest({ name: 'p', models: [{ id: 'g', engine }] });
+    assert.deepEqual(ok.manifest.models[0], { id: 'g', label: 'g', engine, efforts: [] });
+    const withEnv = normalizeManifest({ name: 'p', models: [{ id: 'g', engine, env: { X: '1' } }] });
+    assert.ok(withEnv.errors.some((e) => new RegExp(`"g".*a ${engine} model takes no env`).test(e)), JSON.stringify(withEnv.errors));
+  }
   const cursor = normalizeManifest({ name: 'p', models: [{ id: 'cu', engine: 'cursor' }] });
   assert.equal(cursor.ok, true, JSON.stringify(cursor.errors));
   assert.deepEqual(cursor.manifest.models[0], { id: 'cu', label: 'cu', engine: 'cursor', efforts: [] });

@@ -149,7 +149,7 @@ test('the folder run glance (board 10): Ready · 14 files changed in a copy, tim
   // Runs redesign: the one status block (run-model.mjs) words the run.
   // Slice 3: the card head words a pending copy, and the tracker has the folder path's 2 steps.
   assert.equal(g.querySelector('.rd-now-top').dataset.word, 'Ready');
-  assert.equal(g.querySelector('.rd-now-top .run-status-text').textContent, 'Ready · 14 files changed in a copy');
+  assert.equal(g.querySelector('.rd-now-top').dataset.text, 'Ready · 14 files changed in a copy');
   assert.equal(g.querySelectorAll('.rd-track .rd-track-step').length, 2);
   const tile = [...doc.querySelectorAll('#hist-detail .rd-facts .rd-stats > div')].at(-1);
   assert.equal(tile.lastElementChild.textContent, 'files changed');
@@ -210,7 +210,7 @@ test('a folder run shows no git chrome and asks git or a forge nothing', async (
       assert.equal(g.querySelector('.rd-page-branch').hidden, true);
       assert.equal(g.querySelector('.rd-pr-slot').hidden, true);
       for (const sel of ['.hd-base', '.hd-branch-copy', '.hd-pr', '.hd-publish', '.hd-push']) assert.equal(doc.querySelector(`#hist-detail ${sel}`).hidden, true, sel);
-      assert.equal(g.querySelector('.rd-now-top .run-status-text').textContent, 'Finished', 'not "Ready to ship": Ship it is hidden');
+      assert.equal(g.querySelector('.rd-now-top').dataset.text, 'Finished', 'not "Ready to ship": Ship it is hidden');
       assert.equal(g.querySelector('.rd-page-meta .kind-chip'), null, 'still a git run: no Folder chip');
       assert.ok(!ctx.calls.some((c) => /\/publish|\/base-check/.test(c.url)));
     } },
@@ -225,7 +225,7 @@ test('a folder run shows no git chrome and asks git or a forge nothing', async (
       const g = doc.querySelector('#hist-detail .hd-glance');
       assert.equal(doc.querySelector('#hist-detail .hd-base').hidden, false);
       assert.equal(g.querySelector('.rd-page-branch').hidden, false);
-      assert.equal(g.querySelector('.rd-now-top .run-status-text').textContent, 'Ready to ship · not in feat/log-ux yet');
+      assert.equal(g.querySelector('.rd-now-top').dataset.text, 'Ready to ship · not in feat/log-ux yet');
     } },
     { name: 'git missing hides a git run\'s pull request link and slot (paintHdPr / the !gitChrome return)', run: async () => {
       const ctx = await bootDetail({ rows: [{ ...ROW, pr: { state: 'OPEN', url: 'https://github.com/a/b/pull/1' } }] });
@@ -279,7 +279,7 @@ test('a folder row that carries git-looking fields still shows no branch row and
 const headOf = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-head-acts');
 const headBtn = (doc, id) => headOf(doc).querySelector(`[data-head="${id}"]`);
 const headLabels = (doc) => [...headOf(doc).querySelectorAll('[data-head]')].map((b) => b.textContent);
-const lineOf = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-now-top .run-status-text').textContent;
+const lineOf = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-now-top').dataset.text;
 
 test('the head\'s Apply on the glance and the bar on Changes; Apply to folder applies 13 files, toasts, and settles to Applied', async () => {
   const ctx = await boot();
