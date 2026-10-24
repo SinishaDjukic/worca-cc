@@ -342,7 +342,7 @@ const GEMINI_SPEC = Object.freeze({
   fatalStderrRe: GEMINI_POLICY_ERROR_RE, fatalMessage: 'Gemini CLI could not load worca\'s policy file, so the guardrail rules would not hold — stopped',
   createNormalizer: createGeminiNormalizer,
   askLockdown: GEMINI_ASK_LOCKDOWN,
-  prepare({ cwd, bin, sys, prompt, model, effort, servers, permissionRules, includeDirs, scratchDir, noGit, ask, probe }) {
+  prepare({ cwd, bin, sys, prompt, model, effort, servers, permissionRules, includeDirs, scratchDir, noGit, ask, probe, workRoot }) {
     if (ask) return prepareAsk({ cwd, bin, sys, prompt, model, effort, servers, scratchDir, probe });
     const plan = geminiRulePlan(permissionRules);
     let policyFile = null;
@@ -356,7 +356,7 @@ const GEMINI_SPEC = Object.freeze({
     const mcpServers = servers ? familyMcpServers(servers) : {};
     const thinking = geminiEffortSettings(effort);
     const project = { ...(Object.keys(mcpServers).length ? { mcpServers } : {}), ...thinking };
-    writeProjectFiles('gemini', cwd, Object.keys(project).length ? { '.gemini/settings.json': `${JSON.stringify(project, null, 2)}\n` } : {}, { git: !noGit });
+    writeProjectFiles('gemini', cwd, Object.keys(project).length ? { '.gemini/settings.json': `${JSON.stringify(project, null, 2)}\n` } : {}, { git: !noGit, root: workRoot });
     const mcpNames = Object.keys(mcpServers);
     return {
       stdin: foldSystemPrompt(sys, prompt),

@@ -93,6 +93,19 @@ test('no raw env in engines', () => {
   assert.deepEqual(bad, []);
 });
 
+test('scripts, the terminal, actions, plugin children and worca\'s own git build their env and signal groups through the owner', () => {
+  const files = ['src/core/graph/script-runner.mjs', 'src/core/terminal/context.mjs', 'src/core/terminal/pty.mjs', 'src/core/actions/spawn.mjs',
+    'src/core/plugin-shim.mjs', 'src/core/workspace-map/files.mjs', 'src/core/workspace-map/detectors/git-submodules.mjs',
+    'src/core/engines/cursor.mjs'];
+  const bans = [/\.\.\.process\.env\b/, /stripHostCredentials\(/, /GIT_CEILING_DIRECTORIES:\s*dirname/, /process\.kill\(-/];
+  const bad = [];
+  for (const f of files) {
+    const src = readFileSync(join(ROOT, f), 'utf8');
+    for (const re of bans) if (re.test(src)) bad.push(`${f}: ${re.source}`);
+  }
+  assert.deepEqual(bad, [], 'childEnv({ kind }) builds the env; signalProcessGroup signals the group (src/core/spawn.mjs)');
+});
+
 test('workspace-map git has a ceiling', { skip: process.platform === 'win32' }, async () => {
   const repo = mkdtempSync(join(tmpdir(), 'worca-ceil-'));
   try {

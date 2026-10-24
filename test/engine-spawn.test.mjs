@@ -21,7 +21,7 @@ function script(body) {
 }
 
 const base = (over = {}) => ({
-  displayBin: 'fake', cwd: tmpdir(), env: undefined, stdin: null, signal: undefined, asAgent: false,
+  displayBin: 'fake', cwd: tmpdir(), env: process.env, stdin: null, signal: undefined, asAgent: false,
   stagedDir: null, cleanup: () => {}, onEvent: () => {}, onStdoutLine: () => {},
   stdoutErrorDetail: () => '', classify: () => null,
   spawnError: (err, prefix) => new Error(`${prefix}: ${err.message}`),

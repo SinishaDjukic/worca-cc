@@ -416,7 +416,7 @@ export async function runCursorProcess({
     servers = doc && typeof doc.mcpServers === 'object' && doc.mcpServers && Object.keys(doc.mcpServers).length ? doc.mcpServers : null;
     if (servers) files['.cursor/mcp.json'] = `${JSON.stringify(cursorMcpDocument(servers), null, 2)}\n`;
   }
-  writeCursorProjectFiles(cwd, files, { git: !noGit });
+  writeCursorProjectFiles(cwd, files, { git: !noGit, root: workRoot });
 
   if (remote && bin !== 'cursor-agent') safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] cursor: ${bin} (this machine's binary) is ignored; the ${remote.label} runs its own pinned cursor-agent` });
   const exe = remote ? 'cursor-agent' : bin;
@@ -475,7 +475,7 @@ export async function runCursorProcess({
   // A remote spawn changed the sandbox's mirror, not this checkout: worca's copy is mirrored there again.
   const restore = async () => {
     let changed;
-    try { changed = restoreCursorProjectFiles(cwd, files, { git: !noGit }); } catch (err) {
+    try { changed = restoreCursorProjectFiles(cwd, files, { git: !noGit, root: workRoot }); } catch (err) {
       safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] cursor: could not restore worca's .cursor files: ${err.message}` });
       return;
     }

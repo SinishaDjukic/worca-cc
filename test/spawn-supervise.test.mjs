@@ -115,6 +115,53 @@ test('a child that ignores SIGTERM is killed, group and all, after the grace', P
   await waitFor(() => !alive(gp), sigkillGraceMs() + 1000);
 });
 
+test('superviseSpawn refuses a spawn with no env: a child never inherits worca\'s env by default', async () => {
+  for (const env of [undefined, null]) {
+    assert.throws(() => supervise({ file: process.execPath, args: ['-e', ''], env, cwd: tmp('worca-sup-') }),
+      { message: 'superviseSpawn fake: env is required (build it with childEnv)' });
+  }
+});
+
+/**
+ * A reused process group, simulated: process.kill answers for the stopped child's pid X as the host would once X went
+ * to a foreign process. The first probe of group X (when the leader exits) finds members when `atExit`; later probes
+ * find group X when `groupLater`; pid X is held by some process when `held`. Every signal to -X after the SIGTERM is
+ * recorded, never sent. Resolves to those signals.
+ */
+async function stopWithReusedGroup({ atExit, held, groupLater }) {
+  const real = process.kill;
+  const sent = [];
+  let pid = null; let groupProbes = 0;
+  const noSuch = () => { throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' }); };
+  process.kill = function stub(target, signal) {
+    if (pid === null && target < 0 && signal === 'SIGTERM') pid = -target;
+    else if (pid !== null && target === -pid && signal === 0) { groupProbes += 1; if (groupProbes === 1 ? !atExit : !groupLater) noSuch(); return true; }
+    else if (pid !== null && target === -pid) { sent.push(signal); return true; }
+    else if (pid !== null && target === pid && signal === 0) { if (!held) noSuch(); return true; }
+    return real.call(process, target, signal);
+  };
+  try {
+    const dir = tmp('worca-sup-');
+    const ac = new AbortController();
+    const p = supervise({ file: process.execPath, args: ['-e', "setInterval(() => {}, 1000)"], env: process.env, signal: ac.signal, cwd: dir });
+    await new Promise((r) => setTimeout(r, 300));
+    ac.abort();
+    await assert.rejects(p, (e) => e.name === 'AbortError');
+    await new Promise((r) => setTimeout(r, sigkillGraceMs() + 300));
+  } finally { process.kill = real; }
+  return sent;
+}
+
+test('the SIGKILL escalation spares a group whose id was reused after the run\'s group died', POSIX, async () => {
+  // The leader exited with no member left; X was then reused by a process that formed group X and left (X is free).
+  assert.deepEqual(await stopWithReusedGroup({ atExit: false, held: false, groupLater: true }), []);
+});
+
+test('the SIGKILL escalation spares a group whose leader pid now belongs to another process', POSIX, async () => {
+  // Members were left when the leader exited; they died, and X went to a new leader of a group X.
+  assert.deepEqual(await stopWithReusedGroup({ atExit: true, held: true, groupLater: true }), []);
+});
+
 test('remote line runs under setsid; the stop commands signal its group', () => {
   assert.equal(groupLine("'claude' '-p'"), "exec setsid -w 'claude' '-p'");
   assert.equal(groupKillLine('TERM', 4242), 'kill -TERM -- -4242 2>/dev/null || kill -TERM 4242 2>/dev/null || true');

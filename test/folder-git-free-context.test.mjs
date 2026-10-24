@@ -10,8 +10,10 @@ import { runOpts } from '../src/core/phases.mjs';
 import { mcpjsonApproval, shippedSkillNames, mergeMcpConfigs, assembleRunContext } from '../src/core/run-context.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { withNoGit } from './helpers/git-off.mjs';
-import { writeCursorProjectFiles } from '../src/core/engines/cursor.mjs';
+import { writeCursorProjectFiles, runCursorProcess } from '../src/core/engines/cursor.mjs';
 import { fakeCursor } from './helpers/fake-cursor.mjs';
+import { runGeminiProcess } from '../src/core/engines/gemini.mjs';
+import { fakeGemini } from './helpers/fake-gemini-family.mjs';
 
 const dirs = [];
 after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -66,6 +68,44 @@ test('writeCursorProjectFiles { git: false } inside an enclosing repo writes the
   const before = existsSync(exclude) ? readFileSync(exclude, 'utf8') : '';
   writeCursorProjectFiles(copy, { '.cursor/cli.json': '{}\n' }, { git: false });
   assert.equal(readFileSync(join(copy, '.cursor', 'cli.json'), 'utf8'), '{}\n');
+  assert.equal(existsSync(exclude) ? readFileSync(exclude, 'utf8') : '', before);
+});
+
+test('writeCursorProjectFiles { root }: a work root inside an enclosing repo gets no line in that repo\'s info/exclude (the git ceiling)', () => {
+  const repo = repoOf('ctxng-cursor-root');
+  const work = join(repo, 'runs', 'abcd1234', 'work'); mkdirSync(work, { recursive: true });
+  const exclude = join(repo, '.git', 'info', 'exclude');
+  const before = existsSync(exclude) ? readFileSync(exclude, 'utf8') : '';
+  writeCursorProjectFiles(work, { '.cursor/cli.json': '{}\n' }, { root: work });
+  assert.equal(readFileSync(join(work, '.cursor', 'cli.json'), 'utf8'), '{}\n');
+  assert.equal(existsSync(exclude) ? readFileSync(exclude, 'utf8') : '', before);
+});
+
+test('runCursorProcess { workRoot }: the run path passes the ceiling to the write and to the restore (enclosing repo\'s info/exclude untouched)', POSIX, async () => {
+  const repo = repoOf('ctxng-cursor-wiring');
+  const work = join(repo, 'runs', 'abcd1234', 'work'); mkdirSync(work, { recursive: true });
+  const exclude = join(repo, '.git', 'info', 'exclude');
+  const before = existsSync(exclude) ? readFileSync(exclude, 'utf8') : '';
+  // The agent loosens the deny file, so the restore rewrites it: both writes must stop at the work root.
+  const fake = fakeCursor(tmp('cursor-wiring-bin'), 'ok', { sh: `printf '{"permissions":{"deny":[]}}' > .cursor/cli.json` });
+  const events = [];
+  await realSpawn(() => runCursorProcess({ cwd: work, workRoot: work, bin: fake.bin, prompt: 'go', permissionRules: { deny: ['Bash'] }, onEvent: (e) => events.push(e) }));
+  assert.match(fake.record()?.cli || '', /"deny"/, 'the deny rules reached the spawn');
+  assert.ok(events.some((e) => e.type === 'stderr' && /changed \.cursor\/cli\.json/.test(e.text)), 'the restore ran');
+  assert.deepEqual(JSON.parse(readFileSync(join(work, '.cursor', 'cli.json'), 'utf8')), { permissions: { deny: ['Shell(*)'] } });
+  assert.equal(existsSync(exclude) ? readFileSync(exclude, 'utf8') : '', before);
+});
+
+test('runGeminiProcess { workRoot }: the run path passes the ceiling to its .gemini/settings.json write (enclosing repo\'s info/exclude untouched)', POSIX, async () => {
+  const repo = repoOf('ctxng-gemini-wiring');
+  const work = join(repo, 'runs', 'abcd1234', 'work'); mkdirSync(work, { recursive: true });
+  const exclude = join(repo, '.git', 'info', 'exclude');
+  const before = existsSync(exclude) ? readFileSync(exclude, 'utf8') : '';
+  const mcp = join(tmp('gemini-wiring-mcp'), 'mcp.json');
+  writeFileSync(mcp, JSON.stringify({ mcpServers: { gh: { command: 'gh-mcp' } } }));
+  const fake = fakeGemini(tmp('gemini-wiring-bin'), 'ok');
+  await realSpawn(() => runGeminiProcess({ cwd: work, workRoot: work, bin: fake.bin, prompt: 'go', mcpConfigPath: mcp }));
+  assert.deepEqual(JSON.parse(fake.record()?.gemini || '{}').mcpServers?.gh?.command, 'gh-mcp', 'the servers reached the spawn');
   assert.equal(existsSync(exclude) ? readFileSync(exclude, 'utf8') : '', before);
 });
 

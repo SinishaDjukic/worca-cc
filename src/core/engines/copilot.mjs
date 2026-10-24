@@ -536,10 +536,21 @@ export function classifyCopilotError(err) {
 export const COPILOT_RESUME_NOT_FOUND_RE = /no session, task, or name matched/i;
 export function copilotResumeNotFound(err) { return COPILOT_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')); }
 
+/** The oldest copilot a run accepts: older CLIs may still need `--allow-all-tools` in -p mode, which worca no longer
+ *  passes (G14, checked on 1.0.100). */
+export const COPILOT_MIN_VERSION = '1.0.100';
+/** `a` compared with `b`, both `x.y.z`: negative when `a` is older. */
+const compareVersions = (a, b) => {
+  const pa = a.split('.').map(Number); const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i += 1) if (pa[i] !== pb[i]) return pa[i] - pb[i];
+  return 0;
+};
+
 /**
- * The engine's run-start check (engines/index.mjs `preflight`): the binary runs. Copilot has no
- * sign-in status command, so a signed-out CLI shows on the first spawn (an auth-class failure).
- * Never rejects: `{refusal}` when the binary cannot run, `{warning}` when the check itself failed, `{}` otherwise.
+ * The engine's run-start check (engines/index.mjs `preflight`): the binary runs, and is COPILOT_MIN_VERSION or newer.
+ * Copilot has no sign-in status command, so a signed-out CLI shows on the first spawn (an auth-class failure).
+ * Never rejects: `{refusal}` when the binary cannot run or is too old, `{warning}` when the check itself failed, `{}`
+ * otherwise.
  */
 export async function copilotPreflight({ bin = COPILOT_DEFAULT_BIN, timeoutMs = 15000, envAllowlist = [], spec = null } = {}) {
   spec ??= copilotSpawnSpec({ envAllowlist, signInMode: resolveModelRoute({ engine: 'copilot', broker: { on: brokerEnabled() }, checkModel: false }).signInMode });
@@ -550,7 +561,11 @@ export async function copilotPreflight({ bin = COPILOT_DEFAULT_BIN, timeoutMs = 
       : { warning: `could not check ${bin} (${error.message})` };
   }
   if (code) return { warning: `${bin} --version exited with code ${code}` };
-  return /copilot/i.test(String(stdout)) ? {} : { warning: `${bin} --version did not name GitHub Copilot CLI` };
+  if (!/copilot/i.test(String(stdout))) return { warning: `${bin} --version did not name GitHub Copilot CLI` };
+  const version = /\b(\d+\.\d+\.\d+)\b/.exec(String(stdout))?.[1];
+  return version && compareVersions(version, COPILOT_MIN_VERSION) < 0
+    ? { refusal: `${bin} is GitHub Copilot CLI ${version}; worca needs ${COPILOT_MIN_VERSION} or newer — update it (npm i -g @github/copilot)` }
+    : {};
 }
 
 /** The childEnv spec a copilot run spawns with (engine, the route resolver's sign-in mode, the run's allowlist, cwd and

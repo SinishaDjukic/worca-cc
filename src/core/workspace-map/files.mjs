@@ -5,12 +5,12 @@
 // without a shell and without the caller's GIT_DIR.
 
 import { lstat, readdir, readFile, realpath } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve, sep, dirname } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { LIMITS } from '../../shared/workspace-map/limits.mjs';
 import { gitAvailable } from '../git-available.mjs';
 import { guardedGitEnv } from '../git-guard.mjs';
-import { runCapture } from '../spawn.mjs';
+import { runCapture, childEnv } from '../spawn.mjs';
 
 export const SKIP_DIRS = Object.freeze(['.git', 'node_modules', 'vendor', 'dist', 'build', 'target', 'out',
   '.next', '.nuxt', 'coverage', 'graphify-out', '.venv', 'venv', '__pycache__', '.gradle', '.idea', '.vscode',
@@ -28,9 +28,6 @@ const TEST_FILE_RE = /(\.test\.[^/]+$)|(_test\.go$)|(Tests?\.(java|kt)$)|(Tests\
 const SPEC_TEST_RE = /(^|\/)specs?\/|\.spec\.[^/]+$/i;
 const CONTRACT_RE = /\.(ya?ml|json|graphqls?|gql|proto)$/i;
 const SNIFF_BYTES = 8192;
-/** git's location variables beat its cwd: a worca started from a git hook (GIT_DIR set) would
- *  otherwise list — and read the HEAD and the remote of — the hook's repository. */
-const GIT_ENV_DROP = Object.freeze(['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY', 'GIT_COMMON_DIR', 'GIT_PREFIX']);
 
 /** posix rel → true for test code (never creates an edge; counted). Test directory names match in
  *  any case (`Tests/`, `Spec/`), .NET test projects (`Billing.Tests/`) and Django's `tests.py` too.
@@ -66,14 +63,14 @@ const inside = (root, abs) => {
   return !!back && back !== '..' && !back.startsWith(`..${sep}`) && !isAbsolute(back);
 };
 
-/** Runs git (no shell; GIT_DIR & co. dropped from its env; it never walks above `dir`: GIT_CEILING_DIRECTORIES, so a
- *  member that is no repository never borrows the repository around it) in `dir` → git's stdout as printed
+/** Runs git (no shell; the child-process owner's git env: GIT_DIR & co. dropped, so a worca started from a git hook never
+ *  reads the hook's repository; it never walks above `dir`: GIT_CEILING_DIRECTORIES, so a member that is no repository
+ *  never borrows the repository around it) in `dir` → git's stdout as printed
  *  (untrimmed: callers trim), or null on any failure — and for a missing / non-string `dir`
  *  (never the process cwd). */
 export function gitOutput(dir, args, { timeoutMs = 30000, maxBuffer = 256 * 1024 * 1024 } = {}) {
   if (typeof dir !== 'string' || !dir || !Array.isArray(args) || !gitAvailable()) return Promise.resolve(null);
-  const base = { ...process.env, GIT_CEILING_DIRECTORIES: dirname(resolve(dir)) };
-  for (const k of GIT_ENV_DROP) delete base[k];
+  const base = childEnv({ kind: 'git', root: dir }).env;
   // No planted hook or config command runs (git-guard.mjs, G2): `ls-files` alone starts core.fsmonitor.
   return guardedGitEnv(dir, { env: base }).then((env) => runCapture('git', args, { cwd: dir, env, timeoutMs, maxBuffer })
     .then((r) => (r.code === 0 ? r.stdout : null)), () => null);

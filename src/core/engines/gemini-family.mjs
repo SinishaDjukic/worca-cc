@@ -341,7 +341,7 @@ export async function runFamilyProcess(spec, {
 
   let prepared = null;
   try {
-    prepared = spec.prepare({ cwd, bin, sys, prompt: String(prompt ?? ''), model, effort, servers, permissionRules, includeDirs, scratchDir, noGit, ask, probe });
+    prepared = spec.prepare({ cwd, bin, sys, prompt: String(prompt ?? ''), model, effort, servers, permissionRules, includeDirs, scratchDir, noGit, ask, probe, workRoot });
     // The catalog allowlist (src/core/spawn.mjs childEnv: the engine's exact names and sign-in names); the run env
     // carries the MCP servers' ${VAR} values.
     const signInMode = spec.signInMode ? spec.signInMode(process.env) : null;

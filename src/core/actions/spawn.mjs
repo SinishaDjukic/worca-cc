@@ -2,16 +2,15 @@
 // its whole process tree. Mirrors graph/script-runner.mjs (#runtime shell form + killTree).
 import { spawn } from 'node:child_process';
 import { killTree } from '../graph/script-runner.mjs';
-import { stripHostCredentials } from '../host-credentials.mjs';
-import { withNoGitPath } from '../nogit-stub.mjs';
+import { childEnv, signalProcessGroup } from '../spawn.mjs';
 
 const STRIPPED = ['WORCA_HOME', 'WORCA_RUN_ROOT', 'WORCA_HOST_PID'];
 const MAX_LINE = 8000;
 
+/** The env an action starts from: the server's env (an action is the person's command, like their terminal) through
+ *  the child-process owner (childEnv kind 'terminal'): no host credential, no broker secret, no STRIPPED name. */
 export function actionBaseEnv(base = process.env) {
-  const env = stripHostCredentials({ ...base });
-  for (const k of STRIPPED) delete env[k];
-  return withNoGitPath(env);
+  return childEnv({ kind: 'terminal', base, strip: STRIPPED }).env;
 }
 
 export function shellArgv(command, platform = process.platform, env = process.env) {
@@ -55,7 +54,7 @@ export async function stopProcess(child, { graceMs = 3000, platform = process.pl
   if (!child?.pid) return;                                               // never spawned
   if (child.exitCode !== null || child.signalCode !== null) { killTree(child, platform); return; }   // leader gone: reap the group
   const closed = new Promise((r) => child.once('close', r));
-  if (platform !== 'win32') { try { process.kill(-child.pid, 'SIGTERM'); } catch { try { child.kill('SIGTERM'); } catch { /* gone */ } } }
+  if (platform !== 'win32') signalProcessGroup(child.pid, 'SIGTERM', (sig) => child.kill(sig));
   const timer = new Promise((r) => setTimeout(r, platform === 'win32' ? 0 : graceMs).unref());
   await Promise.race([closed, timer]);
   killTree(child, platform);               // always: reaches a grandchild that outlived its parent

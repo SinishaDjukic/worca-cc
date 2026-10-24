@@ -17,12 +17,12 @@
 // per-op responses so smoke/tests run offline with zero plugins installed.
 
 import { createHash } from 'node:crypto';
-import { spawnChild } from './spawn.mjs';
+import { spawnChild, childEnv, WIN32_ENV_BASELINE } from './spawn.mjs';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { envFlag } from './model-env.mjs';
-import { PROXY_URL_NAMES, proxyUrlHasLogin } from './env-proxy.mjs';
+import { proxyUrlHasLogin } from './env-proxy.mjs';
 import { WORCA_PLUGIN_API } from './plugin-api.mjs';
 import { normalizeManifest, negotiatedApi } from './plugin-manifest.mjs';
 import { readPluginsLock, pluginCurrentDir } from './plugins-lock.mjs';
@@ -153,36 +153,13 @@ function loadSource(plugin, sourceId) {
 }
 
 /** Child env: PATH + HOME (spec §7.2), the proxy variables and the CA bundle
- *  paths. Notably NOT WORCA_*, tokens, npm_*. Exported for the channel-worker
- *  supervisor (chat/channel-host.mjs), which spawns persistent children under the
- *  same rule. `env` is the host env to read (tests pass a plain object: a Windows
- *  process.env answers every casing of a name). */
+ *  paths. Notably NOT WORCA_*, tokens, npm_*. The child-process owner builds it (spawn.mjs childEnv kind 'plugin':
+ *  a proxy URL with credentials withholds every proxy URL, worca says why: withheldProxyNotice). Exported for the
+ *  channel-worker supervisor (chat/channel-host.mjs), which spawns persistent children under the same rule. `env` is
+ *  the host env to read (tests pass a plain object: a Windows process.env answers every casing of a name). */
 export function scrubbedEnv(platform = process.platform, env = process.env) {
-  const child = {};
-  if (env.PATH) child.PATH = env.PATH;
-  if (env.HOME) child.HOME = env.HOME;
-  // The proxy and CA variables are connectivity config: the child routes its
-  // fetch() through them (env-proxy.mjs), or it fails on a proxy-only network,
-  // and a proxy that re-signs TLS needs its CA. A proxy URL with credentials is a
-  // secret, though, so then NO proxy URL passes (one alone would half-route the
-  // child): it goes direct, and worca says why (withheldProxyNotice). NO_PROXY
-  // and the CA paths never carry one.
-  const names = proxyUrlHasLogin(env) ? NO_PROXY_NAMES : [...PROXY_URL_NAMES, ...NO_PROXY_NAMES];
-  for (const k of [...names, ...CA_NAMES]) if (env[k]) child[k] = env[k];
-  // Windows has no HOME and a child cannot even start without SYSTEMROOT (Node
-  // docs); the rest are the non-secret system vars node/npm need to resolve
-  // temp dirs, the shell, and the .cmd/.exe lookup. Still no WORCA_*, tokens
-  // or npm_* — the §7.2 rule is unchanged, only the platform baseline differs.
-  if (platform === 'win32') {
-    for (const k of WIN32_ENV_BASELINE) if (env[k]) child[k] = env[k];
-  }
-  return child;
+  return childEnv({ kind: 'plugin', platform, base: env }).env;
 }
-
-const NO_PROXY_NAMES = ['NO_PROXY', 'no_proxy'];
-/** The CA names spawn.mjs SPAWN_ENV_BASE passes too: node reads the first,
- *  the tools a connector may run (gh, curl, git, Python) the rest. */
-const CA_NAMES = ['NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'GIT_SSL_CAINFO', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE'];
 
 let withheldProxyNoticed = false;
 
@@ -209,10 +186,8 @@ export function _resetWithheldProxyNotice() {
   withheldProxyNoticed = false;
 }
 
-/** Non-secret Windows system vars a child needs to run at all (spec §7.2 note). */
-export const WIN32_ENV_BASELINE = Object.freeze([
-  'USERPROFILE', 'SYSTEMROOT', 'SYSTEMDRIVE', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP', 'APPDATA', 'LOCALAPPDATA',
-]);
+/** Non-secret Windows system vars a child needs to run at all (spec §7.2 note): the owner's list. */
+export { WIN32_ENV_BASELINE };
 
 /** The spawn for one plugin child (connector op, chat worker, channel check): node with
  *  `nodeArgs` under the scrubbed env. On a container with a plugin user (agent-user.mjs

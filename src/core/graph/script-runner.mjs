@@ -12,20 +12,16 @@ import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { delimiter, dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mockEnabled } from '../claude-runner.mjs';
-import { childEnv, spawnChild, spawnChildSync } from '../spawn.mjs';
-import { scrubbedEnv } from '../plugin-shim.mjs';            // PATH/HOME, the proxy and CA variables + the Windows start-up baseline (P11); no cycle: plugin-shim imports no graph module
+import { childEnv, spawnChild, spawnChildSync, signalProcessGroup } from '../spawn.mjs';
 import { normalizeReview } from '../protocol.mjs';
 import { readVerdict, missingVerdictWarning } from './exec-io.mjs';
 import { AWAIT_PORT, PARAMS_PORT } from '../../shared/graph/constants.mjs';
 import { DEFAULT_EXIT_CODES, DEFAULT_TIMEOUT_MS, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, SCRIPT_RUNTIMES, pythonMissingSentence, overlayWiredParams } from '../../shared/graph/script-meta.mjs';
 import { probePython } from './python-probe.mjs';
-import { stripHostCredentials } from '../host-credentials.mjs';
-import { withoutProxyLogin } from '../env-proxy.mjs';
 import { agentIdentity, agentSpawn, killAgentGroupSync } from '../agent-user.mjs';
 import { agentIdentityFor } from '../agent-pool.mjs';
 import { currentOwner } from '../billing.mjs';
 import { gitAvailable } from '../git-available.mjs';
-import { withNoGitPath } from '../nogit-stub.mjs';
 
 const CHILD_PATH = fileURLToPath(new URL('./script-child.mjs', import.meta.url));
 /** The `python` harness (workbench spec §7), spawned as `<python> -u worca_script.py <program.py>`. */
@@ -215,16 +211,13 @@ export function envForShell(envelope, baseEnv = process.env) {
   return env;
 }
 
-/** The env a script child STARTS from (P11). With the run's env-scrub guardrail on it is
- *  the allowlist child env (childEnv kind 'script': base names + the per-project allowlist) over
- *  scrubbedEnv (PATH/HOME, the proxy and CA variables, and the baseline a Windows child needs
- *  to start at all: SYSTEMROOT/COMSPEC/PATHEXT/TEMP…) — a script never sees MORE of the host
- *  environment than the agents beside it. Scrub off: the server's env (D11). */
+/** The env a script child STARTS from (P11), built by the child-process owner (childEnv kind 'script'). With the run's
+ *  env-scrub guardrail on it is the allowlist (base names, PATH/HOME, the proxy and CA variables, the baseline a Windows
+ *  child needs to start at all, and the per-project allowlist): a script never sees MORE of the host environment than
+ *  the agents beside it. Scrub off: the server's env (D11). Either way never a GitHub, Azure DevOps or backend
+ *  credential, nor the broker's secret, like the agents. */
 export function scriptBaseEnv(claudeOpts, platform = process.platform) {
-  const scrubbed = claudeOpts?.envScrub ? childEnv({ kind: 'script', allowlist: claudeOpts?.envAllowlist }).env : null;
-  // Never a GitHub or Azure DevOps credential, nor a proxy URL with a login, like the agents
-  // (src/core/host-credentials.mjs, env-proxy.mjs withoutProxyLogin).
-  return withNoGitPath(withoutProxyLogin(stripHostCredentials(scrubbed ? { ...scrubbedEnv(platform), ...scrubbed } : process.env)), { platform });
+  return childEnv({ kind: 'script', inherit: !claudeOpts?.envScrub, allowlist: claudeOpts?.envAllowlist, platform }).env;
 }
 
 export function parseFrame(text) {
@@ -323,7 +316,7 @@ export function killTree(child, platform = process.platform) {
   // group goes down through sudo too. Only while sudo still runs: after it exits the pid may be reused.
   const agent = agentOf.get(child);
   const alive = child.exitCode === null && child.signalCode === null;
-  try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch { /* gone */ } }
+  signalProcessGroup(child.pid, 'SIGKILL', (s) => child.kill(s));
   if (agent && alive) killAgentGroupSync(child.pid, agent);
 }
 

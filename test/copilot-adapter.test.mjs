@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import {
   buildCopilotArgs, copilotRulePlan, copilotToolPlan, copilotMcpServers, copilotUnattachableMcp, mcpEnvRefNames,
   createCopilotNormalizer, classifyCopilotError, copilotSessionOf, COPILOT_SESSION_PREFIX, copilotCapabilities,
-  readCopilotUsage, runCopilotProcess, copilotPreflight, copilotAskSupport, COPILOT_ASK_FLAGS, copilotAgentFile, copilotInvestigatorAgent, copilotResumeNotFound,
+  readCopilotUsage, runCopilotProcess, copilotPreflight, copilotAskSupport, COPILOT_ASK_FLAGS, COPILOT_MIN_VERSION, copilotAgentFile, copilotInvestigatorAgent, copilotResumeNotFound,
   COPILOT_NO_TOOLS, COPILOT_NODE_AGENT, projectCopilotMcpNames,
 } from '../src/core/engines/copilot.mjs';
 import { getEngine, selectRunEngine } from '../src/core/engines/index.mjs';
@@ -483,9 +483,17 @@ test('preflight: a missing binary refuses the run; a working one passes', POSIX,
   assert.match((await copilotPreflight({ bin: '/nonexistent/copilot' })).refusal, /cannot run \/nonexistent\/copilot \(ENOENT\)/);
   const dir = tmp();
   const bin = join(dir, 'copilot');
-  writeFileSync(bin, '#!/bin/sh\necho "GitHub Copilot CLI 1.0.92."\n');
+  writeFileSync(bin, '#!/bin/sh\necho "GitHub Copilot CLI 1.0.100."\n');
   chmodSync(bin, 0o755);
   assert.deepEqual(await copilotPreflight({ bin }), {});
+  writeFileSync(bin, '#!/bin/sh\necho "GitHub Copilot CLI 1.2.3"\n');
+  assert.deepEqual(await copilotPreflight({ bin }), {}, 'a newer minor and patch pass');
+  // Older CLIs may still need --allow-all-tools, which worca no longer passes (G14): refused at run start.
+  writeFileSync(bin, '#!/bin/sh\necho "GitHub Copilot CLI 1.0.92."\n');
+  assert.equal((await copilotPreflight({ bin })).refusal,
+    `${bin} is GitHub Copilot CLI 1.0.92; worca needs ${COPILOT_MIN_VERSION} or newer — update it (npm i -g @github/copilot)`);
+  writeFileSync(bin, '#!/bin/sh\necho "GitHub Copilot CLI 0.0.354"\n');
+  assert.match((await copilotPreflight({ bin })).refusal, /is GitHub Copilot CLI 0\.0\.354; worca needs 1\.0\.100 or newer/);
   writeFileSync(bin, '#!/bin/sh\nexit 2\n');
   assert.match((await copilotPreflight({ bin })).warning, /exited with code 2/);
 });

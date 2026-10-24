@@ -8,6 +8,10 @@ import { delimiter } from 'node:path';
 import { childEnv, formatDropped } from '../src/core/spawn.mjs';
 import { ENGINES } from '../src/shared/engine-switch.mjs';
 import { resolveModelRoute } from '../src/core/exec-env/credentials.mjs';
+import { scriptBaseEnv } from '../src/core/graph/script-runner.mjs';
+import { terminalEnv } from '../src/core/terminal/context.mjs';
+import { actionBaseEnv } from '../src/core/actions/spawn.mjs';
+import { scrubbedEnv } from '../src/core/plugin-shim.mjs';
 
 const BASE = { PATH: 'p', HOME: 'h', COPILOT_ALLOW_ALL: '1', COPILOT_HOME: '/c', OPENAI_API_KEY: 'k' };
 
@@ -177,4 +181,85 @@ test('never a host credential or broker secret', () => {
   const base = { PATH: 'p', GH_TOKEN: 'ghp_x', WORCA_BROKER_SECRET: 'b', WORCA_BROKER_SECRET_FILE: '/s', E2B_API_KEY: 'e2b_k' };
   const { env } = childEnv({ engine: 'claude', allowlist: Object.keys(base), base, overlay: { GH_TOKEN: 'from-model' } });
   for (const k of ['GH_TOKEN', 'WORCA_BROKER_SECRET', 'WORCA_BROKER_SECRET_FILE', 'E2B_API_KEY']) assert.equal(env[k], undefined, k);
+});
+
+// ── the other child kinds (design §4.1: script, terminal, plugin, git) ──────────────────────────────────────────────
+
+const HOSTY = { PATH: '/bin', HOME: '/h', GOPATH: '/go', GH_TOKEN: 'ghp_x', E2B_API_KEY: 'e2b_x', WORCA_BROKER_SECRET: 'b',
+  WORCA_BROKER_SECRET_FILE: '/s', WORCA_HOME: '/wh', PORT: '4317' };
+
+test('terminal: the whole env minus credentials, the broker secret and the names it strips; kept names come back', () => {
+  const { env } = childEnv({ kind: 'terminal', base: HOSTY, strip: ['WORCA_HOME', 'PORT'], keep: ['E2B_API_KEY'],
+    overlay: { TERM: 'dumb', PORT: '1' }, cwd: '/w', root: '/runs/r1/work' });
+  assert.equal(env.GOPATH, '/go', 'a user var passes: the terminal is the person\'s shell');
+  assert.equal(env.GH_TOKEN, undefined);
+  assert.equal(env.WORCA_BROKER_SECRET, undefined);
+  assert.equal(env.WORCA_BROKER_SECRET_FILE, undefined);
+  assert.equal(env.WORCA_HOME, undefined);
+  assert.equal(env.PORT, undefined, 'a stripped name stays out, even when the overlay sets it');
+  assert.equal(env.E2B_API_KEY, 'e2b_x', 'a kept name survives the credential strip');
+  assert.equal(env.TERM, 'dumb');
+  assert.equal(env.PWD, '/w');
+  assert.equal(env.GIT_CEILING_DIRECTORIES, '/runs/r1');
+});
+
+test('script: an allowlist with envScrub, the whole env (minus credentials) without', () => {
+  assert.equal(childEnv({ kind: 'script', base: HOSTY }).env.GOPATH, undefined);
+  const open = childEnv({ kind: 'script', inherit: true, base: HOSTY }).env;
+  assert.equal(open.GOPATH, '/go');
+  assert.equal(open.GH_TOKEN, undefined);
+  assert.equal(open.WORCA_BROKER_SECRET, undefined);
+  assert.throws(() => childEnv({ kind: 'engine', engine: 'claude', inherit: true, base: HOSTY }), /cannot inherit/);
+  assert.throws(() => childEnv({ kind: 'plugin', inherit: true, base: HOSTY }), /cannot inherit/);
+});
+
+test('git: the whole env minus credentials and git\'s location variables, never above dirname(root)', () => {
+  const { env } = childEnv({ kind: 'git', root: '/runs/r1/work', base: { ...HOSTY, GIT_DIR: '/x/.git', GIT_WORK_TREE: '/x', GIT_INDEX_FILE: '/i' } });
+  assert.equal(env.GIT_DIR, undefined);
+  assert.equal(env.GIT_WORK_TREE, undefined);
+  assert.equal(env.GIT_INDEX_FILE, undefined);
+  assert.equal(env.GH_TOKEN, undefined);
+  assert.equal(env.WORCA_BROKER_SECRET, undefined);
+  assert.equal(env.GOPATH, '/go');
+  assert.equal(env.GIT_CEILING_DIRECTORIES, '/runs/r1');
+  assert.throws(() => childEnv({ kind: 'git', remote: true, base: HOSTY }), /no sandbox env/, 'only an allowlist kind runs in a sandbox');
+});
+
+test('plugin: PATH, HOME, the proxy and CA names (no proxy URL that carries credentials), the Windows baseline', () => {
+  assert.deepEqual(childEnv({ kind: 'plugin', base: { ...HOSTY, HTTPS_PROXY: 'http://p:3128', NO_PROXY: 'l' } }).env,
+    { PATH: '/bin', HOME: '/h', HTTPS_PROXY: 'http://p:3128', NO_PROXY: 'l' });
+  assert.deepEqual(childEnv({ kind: 'plugin', base: { PATH: '/bin', HTTPS_PROXY: 'http://u:pw@p:3128', NO_PROXY: 'l' } }).env,
+    { PATH: '/bin', NO_PROXY: 'l' });
+  assert.equal(childEnv({ kind: 'plugin', platform: 'win32', base: { PATH: '/bin', SYSTEMROOT: 'C:\\W' } }).env.SYSTEMROOT, 'C:\\W');
+  assert.equal(childEnv({ kind: 'plugin', platform: 'linux', base: { PATH: '/bin', SYSTEMROOT: 'C:\\W' } }).env.SYSTEMROOT, undefined);
+});
+
+test('scripts, the terminal, actions and plugin children build their env through the owner', () => {
+  const saved = { ...process.env };
+  Object.assign(process.env, { WORCA_BROKER_SECRET: 'b', WORCA_BROKER_SECRET_FILE: '/s' });
+  try {
+    for (const [name, env] of [
+      ['script (envScrub off)', scriptBaseEnv({})],
+      ['script (envScrub on)', scriptBaseEnv({ envScrub: true })],
+      ['terminal', terminalEnv({ base: process.env, sessionId: 's', mode: 'pty', cwd: '/w' })],
+      ['action', actionBaseEnv(process.env)],
+      ['plugin', scrubbedEnv(process.platform, process.env)],
+    ]) {
+      assert.equal(env.WORCA_BROKER_SECRET, undefined, `${name}: the broker's secret`);
+      assert.equal(env.WORCA_BROKER_SECRET_FILE, undefined, `${name}: the broker's secret file`);
+    }
+  } finally {
+    for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+    Object.assign(process.env, saved);
+  }
+  assert.deepEqual(scrubbedEnv('linux', { PATH: '/bin', HOME: '/h', GOPATH: '/go' }),
+    childEnv({ kind: 'plugin', platform: 'linux', base: { PATH: '/bin', HOME: '/h', GOPATH: '/go' } }).env);
+});
+
+
+test('remote: a kept name never brings a backend key back into a sandbox, even declared', () => {
+  const { env } = childEnv({ engine: 'claude', remote: true, keep: ['E2B_API_KEY', 'E2B_API_URL'], declared: ['E2B_API_KEY', 'E2B_API_URL'],
+    base: { E2B_API_KEY: 'e2b_k', E2B_API_URL: 'https://e2b.example' } });
+  assert.equal(env.E2B_API_KEY, undefined);
+  assert.equal(env.E2B_API_URL, undefined);
 });

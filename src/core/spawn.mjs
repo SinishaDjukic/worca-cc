@@ -19,17 +19,21 @@ import { isWithin } from './fs-scope.mjs';
 import { withNoGitPath } from './nogit-stub.mjs';
 import { composeChildEnv } from './child-env.mjs';
 
-export { formatDropped, SPAWN_ENV_BASE, DEFAULT_SIGKILL_GRACE_MS, sigkillGraceMs } from './child-env.mjs';
+export { formatDropped, SPAWN_ENV_BASE, DEFAULT_SIGKILL_GRACE_MS, sigkillGraceMs, WIN32_ENV_BASELINE, proxyHasCredentials } from './child-env.mjs';
 import { sigkillGraceMs } from './child-env.mjs';
 
+// The kinds that get no no-git PATH stub: git itself (worca runs it only where git is installed), and plugin children
+// (spec §7.2: exactly their names).
+const NO_STUB = new Set(['git', 'plugin']);
 /**
- * The one env builder for a child (child-env.mjs composeChildEnv: the catalog allowlist of exact names, local or
- * remote), with the no-git PATH stub on a local child.
+ * The one env builder for a child (child-env.mjs composeChildEnv: an allowlist of exact names, worca's env for the
+ * kinds that inherit it, local or remote), with the no-git PATH stub on a local child.
  * @returns {{env: Record<string,string>, dropped: string[]}}
  */
 export function childEnv(spec = {}) {
   const r = composeChildEnv(spec);
-  return spec.remote ? r : { env: withNoGitPath(r.env), dropped: r.dropped };
+  if (spec.remote || NO_STUB.has(spec.kind)) return r;
+  return { env: withNoGitPath(r.env, spec.platform ? { platform: spec.platform } : {}), dropped: r.dropped };
 }
 
 
@@ -49,8 +53,8 @@ export function cleanRunEnv(env) {
 
 // ── process primitives for children with their own lifecycle ───────────────
 // The script runner, the terminal, plugin shims and channel workers supervise their own children (a capped capture, a
-// pty, a JSON-RPC pipe): they start them here, never from node:child_process themselves, and always say which env the
-// child gets (childEnv, or a builder of their own such as plugin-shim.mjs scrubbedEnv).
+// pty, a JSON-RPC pipe): they start them here, never from node:child_process themselves, build the child's env with
+// childEnv({ kind }) and signal its group with signalProcessGroup.
 
 /** node's spawn for a long-lived child. `options.env` is required: a child never inherits worca's env by default. */
 export function spawnChild(file, args, options) {
@@ -131,10 +135,38 @@ export function safeEmit(onEvent, e) {
 // Group kill (plans/core-protection-layer-design.md §4.1 item 2): on POSIX every local child leads its own process
 // group. Windows has no process groups (child.kill only).
 const GROUP_KILL = process.platform !== 'win32';
-/** `signal` to the child's process group (`group`), else to the child; never throws (a gone group answers ESRCH). */
+/**
+ * `signal` to the process group `pid` leads, else `fallback(signal)` (the child alone: Windows, a pid that leads no
+ * group, a group already gone). The one group signal of every supervisor (superviseSpawn, the script runner's tree
+ * kill, the terminal); never throws. True when the group took it.
+ */
+export function signalProcessGroup(pid, signal, fallback = () => {}) {
+  if (GROUP_KILL && typeof pid === 'number' && pid > 0) {
+    try { process.kill(-pid, signal); return true; } catch { /* gone, or never a leader: the child alone */ }
+  }
+  try { fallback(signal); } catch { /* gone */ }
+  return false;
+}
+/** `signal` to the child's process group (`group`), else to the child. */
 function signalGroup(child, signal, group) {
-  if (group) { try { process.kill(-child.pid, signal); return; } catch { /* gone, or never a leader: the child alone */ } }
-  try { child.kill(signal); } catch { /* ignore */ }
+  if (group) signalProcessGroup(child.pid, signal, (s) => child.kill(s));
+  else { try { child.kill(signal); } catch { /* ignore */ } }
+}
+/** Whether a process group `pid` exists: a member answers signal 0 (EPERM: one of another user's, an agent user's). */
+function groupExists(pid) {
+  try { process.kill(-pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+/**
+ * Whether `child`'s process group may still be signalled as the run's, at the SIGKILL escalation. Yes while the leader
+ * is unreaped (no exit code yet: its pid, and so the group id, cannot be anyone else's). Once it is reaped, only when
+ * the group still had members at that moment (`orphaned`, seen on 'exit') and no process holds the leader's pid now:
+ * POSIX never hands out a pid while a group of that id exists, so a leader-less group that never emptied is still the
+ * run's, while a group that emptied, or a pid held again, means the id may belong to someone else.
+ */
+function groupStillOwned(child, orphaned) {
+  if (child.exitCode === null && child.signalCode === null) return true;
+  if (!orphaned) return false;
+  try { process.kill(child.pid, 0); return false; } catch (e) { return e.code === 'ESRCH'; }
 }
 /** The process groups of the local children still supervised: a POSIX child leads its own group, so a terminal's
  *  Ctrl+C no longer reaches it, and a worca that exits first (the CLI's hard exit, a crash) must take them along.
@@ -170,7 +202,7 @@ export async function abandonRoute(execEnv, route, onEvent) {
  * @param {string[]} o.args
  * @param {string} o.displayBin                    the name used in error messages (the caller's `bin`)
  * @param {string} o.cwd
- * @param {Record<string,string>|undefined} o.env  undefined => inherit process.env
+ * @param {Record<string,string>} o.env           required (childEnv): a child never inherits worca's env by default
  * @param {string|null} o.stdin                    written then closed when non-null
  * @param {AbortSignal} [o.signal]
  * @param {boolean} [o.asAgent]                    run as WORCA_AGENT_USER when configured
@@ -201,6 +233,7 @@ export function superviseSpawn(o) {
   const { file, args, displayBin, cwd, env, stdin, signal, asAgent, stagedDir, agentHome = null, cleanup, onEvent,
     onStdoutLine, onStderrLine = null, stdoutErrorDetail, classify, isBenignStderr = () => false, redactText = null, spawnError, onDone, execEnv = null,
     route = null } = o;
+  if (!env || typeof env !== 'object') throw new Error(`superviseSpawn ${displayBin}: env is required (build it with childEnv)`);
   const remote = execEnv?.remote ? execEnv : null;
   return new Promise((resolveP, rejectP) => {
     let childEnv = env;
@@ -223,7 +256,7 @@ export function superviseSpawn(o) {
       child = remote
         ? remote.spawn(exe, argv, { cwd, env: childEnv, stdin, uploads: [stagedDir].flat().filter(Boolean).map((d) => (typeof d === 'string' ? d : d.dir)) })
         : spawn(exe, argv, {
-          cwd, stdio: [stdin != null ? 'pipe' : 'ignore', 'pipe', 'pipe'], ...(childEnv ? { env: childEnv } : {}),
+          cwd, stdio: [stdin != null ? 'pipe' : 'ignore', 'pipe', 'pipe'], env: childEnv,
           ...(agentId || GROUP_KILL ? { detached: true } : {}),
         });
     } catch (err) {
@@ -248,6 +281,9 @@ export function superviseSpawn(o) {
 
     const group = !remote && GROUP_KILL && typeof child.pid === 'number';
     if (group) liveGroups.add(child.pid);
+    // Whether the group outlived its leader (members left when it exited): the escalation's ownership check.
+    let orphaned = false;
+    if (group) child.once('exit', () => { orphaned = groupExists(child.pid); });
     const terminateChild = () => {
       if (terminationStarted) return;
       terminationStarted = true;
@@ -258,8 +294,10 @@ export function superviseSpawn(o) {
       killTimer = setTimeout(() => {
         // Only a sudo still running holds the group: after it exits the pid may be reused.
         const stuck = child.exitCode === null && child.signalCode === null;
-        // The group may outlive its leader (a backgrounded grandchild); the leader alone only while it still runs.
-        if (group && liveGroups.has(child.pid)) signalGroup(child, 'SIGKILL', true);
+        // The group may outlive its leader (a backgrounded grandchild), but never a reused group: it must still be this
+        // child's (groupStillOwned). The leader alone only while it still runs.
+        const owned = group && liveGroups.has(child.pid) && groupStillOwned(child, orphaned);
+        if (owned) signalGroup(child, 'SIGKILL', true);
         else if (stuck) signalGroup(child, 'SIGKILL', false);
         if (agentId && stuck) killAgentGroup(child.pid, agentId);
       }, sigkillGraceMs()).unref?.();

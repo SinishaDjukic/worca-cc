@@ -180,7 +180,7 @@ import { readyEnginesCached } from './engines/ready-cache.mjs';
 import { shapeRecordFrom, buildShapeStats } from './shape/stats.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
 import { guardedGitEnv } from './git-guard.mjs';
-import { stripHostCredentials } from './host-credentials.mjs';
+import { isWithin } from './fs-scope.mjs';
 
 // worca-cc repo root; holds skills/. fileURLToPath, never URL.pathname: the
 // latter is `/C:/…` on Windows and %-encoded everywhere (see DEFAULT_AGENTS_DIR
@@ -7370,13 +7370,25 @@ export class RunHarness extends EventEmitter {
    * the whole process, and under `npm test` the runner, until the CI job's
    * 30-minute limit killed it.
    * Repository-local hooks and config commands never run (git-guard.mjs, security G2), except the
-   * project's hooks for `hooks: true` (the end-of-run commit), with every host credential stripped.
+   * project's hooks for `hooks: true` (the end-of-run commit). The env is the child-process owner's git env (childEnv
+   * kind 'git': every host credential stripped), and git never walks above the run's work root holding `cwd` (_gitRoot).
    */
+  /** The run's work root holding `dir` when that root is no git checkout of its own (work/ of a run without a project, a
+   *  Folder copy; the deepest one), else null: the root of the git ceiling of a git worca runs there. A git member's root
+   *  is a checkout, which may sit below its repository's top (a project in a subfolder): its git must walk up. */
+  _gitRoot(dir) {
+    const d = resolve(dir);
+    const roots = [...(this.workDirs instanceof Map ? this.workDirs.entries() : [])]
+      .filter(([key, r]) => typeof r === 'string' && r && this._memberWorkMode(key) !== 'git').map(([, r]) => resolve(r));
+    return roots.filter((r) => isWithin(d, r)).sort((a, b) => b.length - a.length)[0] ?? null;
+  }
+
   async _git(args, { cwd, ignoreAbort = false, timeoutMs = HARNESS_GIT_TIMEOUT_MS, hooks = false } = {}) {
     if (!gitAvailable()) return gitMissingResult();
     let env;
     try {
-      env = await guardedGitEnv(cwd || this.projectDir, hooks ? { hooks, env: stripHostCredentials(process.env) } : {});
+      const dir = cwd || this.projectDir;
+      env = await guardedGitEnv(dir, { hooks, env: childEnv({ kind: 'git', root: this._gitRoot(dir) }).env });
     } catch (err) { return { ok: false, code: -1, stdout: '', stderr: err.message }; }
     return new Promise((resolveP) => {
       let child;

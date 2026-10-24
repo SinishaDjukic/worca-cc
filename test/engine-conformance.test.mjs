@@ -187,25 +187,30 @@ conformanceRow('C-GROUPKILL', 'a stop kills the engine and its backgrounded gran
   await waitFor(() => !alive(gp), sigkillGraceMs() + 1000);
 }, POSIX);
 
-test('C-GROUPKILL (sandbox): a stopped step\'s grandchild dies; the sandbox and its relay live on', POSIX, async () => {
-  const f = fixture(tmp);
-  const sdk = createFakeE2b({ root: tmp('worca-conf-e2b-'), onCommand: (cmd) => (/^command -v /.test(cmd) ? { lines: ['/usr/local/bin/x'] } : null) });
-  const env = new E2bExecEnv(makeEnvOpts(tmp, sdk, f));
-  await env.start();
-  try {
-    const out = env.sb(join(f.repo, 'rec.json'));
-    const ac = new AbortController();
-    const p = superviseSpawn({ file: process.execPath, args: [FAKE], displayBin: 'fake', cwd: f.repo, env: { FAKE_OUT: out, FAKE_HOLD: '1' }, stdin: null,
-      signal: ac.signal, asAgent: false, stagedDir: null, cleanup: () => {}, onEvent: () => {}, onStdoutLine: () => {}, stdoutErrorDetail: () => '',
-      classify: () => null, spawnError: (e) => e, onDone: (code) => ({ exitCode: code }), execEnv: env });
-    const gp = await waitFor(() => { try { return Number(readFileSync(`${out}.grand`, 'utf8').trim()) || null; } catch { return null; } });
-    ac.abort();
-    await assert.rejects(p, (e) => e.name === 'AbortError');
-    await waitFor(() => !alive(gp), sigkillGraceMs() + 1000);
-    assert.equal(env.lost, null);
-    assert.equal(env.relay.alive, true);
-  } finally { await env.close('test'); }
-});
+// Per engine, the real adapter in a sandbox (the fake E2B runs real bash): a stopped step's grandchild dies through the
+// adapter's own spawn path (remote-child.mjs: `exec setsid -w`, then a group kill), while the sandbox and its relay live on.
+conformanceRow('C-GROUPKILL', "(sandbox) a stopped step's grandchild dies; the sandbox and its relay live on", async (engine, t) => {
+  // An engine no sandbox runs yet (catalog `remote: false`) is refused at run start instead (exec-env-config.test.mjs).
+  if (!ENGINES[engine].remote) { t.skip('no sandbox runs this engine yet (catalog remote: false)'); return; }
+  const upstream = await startEngineUpstream();
+  t.after(() => upstream.close());
+  const out = join(tmp('worca-conf-gk-'), 'rec.json');
+  const box = await relaySandbox(t, { engine, tmp, upstream, serverEnv: upstream.serverEnv,
+    fake: { FAKE_OUT: out, FAKE_HOLD: '1', FAKE_STREAM: join(HERE, 'fixtures', 'engines', engine, 'stream.jsonl') } });
+  const ac = new AbortController();
+  const run = runClaude({ engine, cwd: box.f.repo, prompt: 'P', execEnv: box.env, model: STEP_MODEL[engine], signal: ac.signal,
+    bin: `/nonexistent/worca-test/${engine}`,
+    ...(engine === 'claude' ? { modelEnv: { ANTHROPIC_BASE_URL: upstream.url, ANTHROPIC_API_KEY: ANTHROPIC_KEY } } : {}) }).then(() => null, (e) => e);
+  const gp = await waitFor(() => { try { return Number(readFileSync(`${out}.grand`, 'utf8').trim()) || null; } catch { return null; } }, 30000);
+  const rec = JSON.parse(readFileSync(out, 'utf8'));
+  assert.equal(rec.pgid, rec.pid, 'the step leads its own process group in the sandbox');
+  ac.abort();
+  const error = await run;
+  assert.equal(error?.name, 'AbortError', String(error?.message));
+  await waitFor(() => !alive(gp), sigkillGraceMs() + 1000);
+  assert.equal(box.env.lost, null, 'the sandbox lives on');
+  assert.equal(box.env.relay.alive, true, 'the model relay lives on');
+}, POSIX);
 
 // ── C-PREFLIGHT-ENV ──────────────────────────────────────────────────────────
 
