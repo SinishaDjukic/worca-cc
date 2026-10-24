@@ -224,7 +224,7 @@ test('same-branch, merged back: Push replaces Create PR and posts /api/push; the
   assert.equal(doc.querySelector('#hist-detail .hd-base').textContent, 'Merged into main');
   assert.equal(doc.querySelector('#hist-detail .hd-branch-copy').hidden, true);
   assert.equal(doc.querySelector('#hist-detail .hd-publish').hidden, true);
-  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-branch-name').textContent, 'main');
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-route .rd-route-name').textContent, 'main', 'the route\'s source row');
   const cta = doc.querySelector('#hist-detail .hd-glance .rd-head-acts .rd-pr-slot [data-rd-cta]');
   assert.ok(cta, 'the card head offers Push');
   // PR controls (design system): Push is a primary .btn led by arrow-up, and the head says the header's words.

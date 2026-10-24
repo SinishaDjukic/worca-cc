@@ -31,8 +31,7 @@ test('a saved run without a project opens Details on Artifacts, at Simple level,
   assert.equal(doc.querySelector('#hist-detail .hd-tab.active').dataset.sec, 'artifacts');
   assert.equal(doc.querySelector('#hist-detail .rd-page-meta .kind-chip.kind-none').textContent, 'No project');
   assert.doesNotMatch(doc.querySelector('#hist-detail .rd-page-meta').firstChild.data, /work/);
-  const branch = doc.querySelector('#hist-detail .rd-page-branch');
-  assert.ok(!branch || branch.hidden);
+  assert.equal(doc.querySelector('#hist-detail .rd-route .rd-route-copy'), null, 'no project, no git chrome: no branch to copy');
   const after = doc.querySelector('#hist-detail .hd-after');
   assert.equal(after.hidden, true, 'no Run after: a run without a project cannot be chained');
   assert.equal(after.onclick, null);

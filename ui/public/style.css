@@ -4996,15 +4996,6 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
    for the rest of the line wraps under the text and truncates there. */
 .rd-page-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;color:var(--ink-2);}
 .rd-page-meta:empty{display:none;}
-/* The run's feature branch (app.js paintPageBranch): a compact mono chip that copies it, with the
-   Details header's copied tick (.rd-branch-copy). The full name is its tooltip. */
-.rd-page-branch{min-width:0;max-width:100%;font-family:var(--mono);}
-.rd-page-branch[hidden]{display:none;}
-.rd-page-branch-name{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.rd-page-branch svg{flex:none;}
-.rd-page-branch .ico-check{display:none;}
-.rd-page-branch.copied .ico-copy{display:none;}
-.rd-page-branch.copied .ico-check{display:inline;color:var(--green-ink);}
 /* The card's head: one row the buttons' height (--rd-head-h: 32px, 40px on touch screens like .btn) with the status
    line on the left and, on the right, the Live view switch (app.js paintRdLive) while the run is live or the head
    buttons (.rd-head-acts: run-head.mjs, with the pull request control .rd-pr-slot among them) once it has ended; the
@@ -5039,47 +5030,44 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-pr-menu.btn-split-menu .sw-item{align-items:flex-start;}
 .rd-pr-menu .wfv-menu-l{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;}
 .rd-pr-menu .sw-item[title] small{color:var(--amber-ink);}
-/* Slice 3: the read-only tracker under the head: three steps on one 3-column grid (two for a Folder run), a row per
-   workspace member with its name in a 44px column. Nodes reuse the status-dot colours. */
-.rd-track{display:flex;flex-direction:column;gap:8px;padding-top:12px;border-top:1px solid var(--line);}
-.rd-track[hidden]{display:none;}
-.rd-track-row{display:grid;grid-template-columns:minmax(0,1fr);}
-.rd-track-row.has-name{grid-template-columns:44px minmax(0,1fr);column-gap:8px;}
-.rd-track-name{font-size:var(--fs-meta);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:16px;}
-.rd-track-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0;padding:0;list-style:none;}
-/* Top-aligned: a label that wraps keeps its dot and line on its first line (the 18px label line centres both). */
-.rd-track-head{display:flex;align-items:flex-start;gap:8px;min-width:0;}
-.rd-track-head > .rd-track-dot{margin-top:1px;}
-.rd-track-head > .rd-track-line{margin-top:9px;}
-.rd-track-dot{flex:0 0 16px;width:16px;height:16px;box-sizing:border-box;border-radius:50%;display:grid;place-items:center;color:var(--panel);}
-.rd-track-dot.is-done{background:var(--green);}
-.rd-track-dot.is-current{border:2px solid currentColor;background:none;}
-.rd-track-dot.is-current::after{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;}
-.rd-track-dot.is-working{color:var(--peach);}
-.rd-track-dot.is-ready{color:var(--green);}
-.rd-track-dot.is-merged{background:var(--violet);border:0;color:var(--panel);}
-.rd-track-dot.is-merged::after{content:none;}
-.rd-track-dot.is-problem{background:var(--amber);}
-.rd-track-dot.is-failed{background:var(--red);}
-.rd-track-dot.is-closed{border:1.5px solid var(--ink-3);color:var(--ink-3);}
-.rd-track-dot.is-future{border:1.5px solid var(--line-2);}
-.rd-track-dot.is-pulse{animation:wr-pulse 1.6s ease-in-out infinite;}
-.rd-track-label{font-size:var(--fs-meta);line-height:18px;color:var(--ink);min-width:0;overflow-wrap:anywhere;}
-.rd-track-step.is-current .rd-track-label{font-weight:600;}
-.rd-track-step.is-future .rd-track-label{color:var(--ink-2);}   /* --ink-3 is 2.8:1 on the panel in light */
-.rd-track-step.is-closed .rd-track-label{text-decoration:line-through;color:var(--ink-2);}
-.rd-track-line{flex:1;min-width:12px;height:1px;margin-right:8px;background:var(--line-2);}
-.rd-track-line.is-done{background:var(--green);}
-/* The facts list's PR rows (run-head.mjs renderFacts): the PR chip, links, Watch / Commit it yourself, plain words.
-   A workspace row lists one member per line, the names in one column. */
-.rd-fact{display:flex;flex-wrap:wrap;align-items:center;gap:2px 12px;min-width:0;}
-.rd-fact > .is-line{flex-basis:100%;font-size:var(--fs-meta);color:var(--ink-2);}
-.rd-fact-members{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 10px;align-items:center;min-width:0;}
-.rd-fact-member{font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
-.rd-fact-pr{font-size:var(--fs-body);text-decoration:none;}
-.rd-fact-pr .runs-pr-num{font-weight:600;}
-.rd-fact-pr:hover .runs-pr-num{text-decoration:underline;}
-.rd-fact-pr:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+/* s2: "Where the work is" (run-head.mjs renderRoute) under the card head: the run's places in order. A 20px circle
+   (11px icon: the kind of place; colour: the state), the place (mono names truncate, full name in the title) and one
+   quiet status line. A 1px connector joins the circles, green between two done rows. */
+.rd-route{display:flex;flex-direction:column;gap:8px;padding-top:12px;border-top:1px solid var(--line);min-width:0;}
+.rd-route[hidden]{display:none;}
+.rd-route-head{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:24px;}
+.rd-route-label{font-size:var(--fs-meta);color:var(--ink-2);}
+.rd-route-list{display:flex;flex-direction:column;margin:0;padding:0;list-style:none;}
+.rd-route-row{position:relative;display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:12px;padding-bottom:12px;}
+.rd-route-row:last-child{padding-bottom:0;}
+.rd-route-row:not(:last-child)::before{content:"";position:absolute;left:10px;top:24px;bottom:4px;width:1px;background:var(--line-2);}
+.rd-route-row.is-linked::before{background:var(--green);}
+.rd-route-dot{flex:0 0 20px;width:20px;height:20px;box-sizing:border-box;border-radius:50%;display:grid;place-items:center;
+  border:1.5px solid currentColor;color:var(--ink-3);}
+.rd-route-dot.is-working{color:var(--peach);}
+.rd-route-dot.is-done{color:var(--green);}
+.rd-route-dot.is-problem{color:var(--amber);}
+.rd-route-dot.is-review{color:var(--blue);}
+.rd-route-dot.is-failed{color:var(--red);}
+.rd-route-dot.is-merged{color:var(--violet);}
+.rd-route-dot.is-closed{color:var(--slate);}
+.rd-route-dot.is-future{border-color:var(--line-2);color:var(--ink-3);}
+.rd-route-dot.is-pulse{animation:wr-pulse 1.6s ease-in-out infinite;}
+.rd-route-main{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.rd-route-place{display:flex;align-items:center;gap:6px;min-width:0;min-height:20px;font-size:var(--fs-body);color:var(--ink);}
+.rd-route-name{min-width:0;font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.rd-route-place .rd-fact-tx.is-strong{font-weight:600;}
+.rd-route-copy{flex:none;margin-block:-4px;}   /* the 28px button keeps the 20px line, so the name centres on its circle */
+/* The copied tick, as .hd-branch-copy / .rd-branch-copy do it (copyBranchToClipboard toggles .copied). */
+.rd-route-copy .ico-check{display:none;}
+.rd-route-copy.copied .ico-copy{display:none;}
+.rd-route-copy.copied .ico-check{display:inline;color:var(--green-ink);}
+.rd-route-second{font-size:var(--fs-meta);color:var(--ink-2);min-width:0;overflow-wrap:anywhere;}   /* --ink-3 is 2.8:1 in light */
+.rd-route-second > .is-line{display:block;}
+.rd-route-fold{display:flex;align-items:center;gap:12px;margin:0;min-width:0;font-size:var(--fs-body);color:var(--ink);}
+.rd-route-fold-tx{min-width:0;overflow-wrap:anywhere;}
+.rd-fact-tx.is-merged{color:var(--violet-ink);}
+/* The route's second-line parts (run-head.mjs renderRoute): links, Watch / Commit it yourself, plain words. */
 .rd-fact-link{color:var(--blue-ink-strong);font-weight:500;text-decoration:none;}
 .rd-fact-link:hover{text-decoration:underline;}
 .rd-fact-act{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-radius:var(--r-xs);}
@@ -5089,11 +5077,7 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 :is(.rd-fact-tx,.rd-fact-act).is-run{color:var(--blue-ink);}
 :is(.rd-fact-tx,.rd-fact-act).is-bad{color:var(--amber-ink);}
 :is(.rd-fact-tx,.rd-fact-act).is-ok{color:var(--green-ink);}
-@media (prefers-reduced-motion: reduce){.rd-track-dot.is-pulse{animation:none;}.rd-track-dot.is-current::after{transition:none;}}
-@media (max-width:480px){
-  .rd-track-line{min-width:8px;margin-right:4px;}
-  .rd-track-row.has-name{grid-template-columns:minmax(0,1fr);row-gap:4px;}
-}
+@media (prefers-reduced-motion: reduce){.rd-route-dot.is-pulse{animation:none;}}
 /* The status line (.rd-now-top) is the shared status block (run-status-card.mjs, .run-status below). */
 
 /* The status glyph (run-glance.mjs renderOrb): colour is the state. */
