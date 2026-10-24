@@ -2249,8 +2249,9 @@ export function createAskTools(deps) {
         return { name: a.name, kind: a.kind, mime: a.mime, totalBytes: a.bytes,
           note: a.kind === 'image' ? 'image attachment: attached to this turn — you saw it with the message it came with' : 'PDFs need a Claude chat' };
       }
-      if (a.kind && a.kind !== 'text' && deps.engine === 'copilot') {
-        // A Copilot chat takes no image or PDF at all (the composer refuses them): only text attachments read.
+      if (a.kind && a.kind !== 'text' && deps.engine && deps.chatImages === false) {
+        // A chat that takes no image or PDF at all (Copilot, Gemini CLI, Qwen Code: the composer refuses them): only text
+        // attachments read.
         return { name: a.name, kind: a.kind, mime: a.mime, totalBytes: a.bytes, note: 'images and PDFs need a Claude chat (a Codex chat sees images)' };
       }
       if (a.kind && a.kind !== 'text') {

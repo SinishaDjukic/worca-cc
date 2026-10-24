@@ -29,7 +29,8 @@ import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { ARGV_INLINE_LIMIT } from './claude.mjs';
 import { CODEX_PRICES, codexCachedRate } from '../list-prices.mjs';
-import { codexEndpointSpawn, findCodexEndpointEntry } from './codex-endpoint.mjs';
+import { codexEndpointSpawn, findCodexEndpointEntry, hasCodexEndpoint } from './codex-endpoint.mjs';
+import { makeChatDescriptor } from './chat-descriptor.mjs';
 import { scopeLauncherEnv } from '../mcp/launch.mjs';
 
 export const CODEX_DEFAULT_BIN = process.env.WORCA_CODEX_BIN || 'codex';
@@ -931,3 +932,25 @@ export async function runCodexProcess({
   }
   return { text: redactor ? redactor.text(final.text) : final.text, exitCode: res.code };
 }
+
+/** Codex's chat descriptor (engines/chat-descriptor.mjs; cascading-settings-design.md §4.6, D13, D14). The lockdown is
+ *  CODEX_ASK_LOCKDOWN; a chat model on its own endpoint needs no codex sign-in, only the binary (codex-endpoint.mjs).
+ *  Each `impl` is the function a test hands the turn in its place. */
+export const codexChat = makeChatDescriptor({
+  engine: 'codex',
+  lockdown: () => CODEX_ASK_LOCKDOWN,
+  noLockdownMessage: "Chat on Codex is unavailable: this codex version cannot switch off its image viewer (which reads any image on disk) or its sub-agents, and a chat must stay inside its own files. Use a Claude chat.",
+  askSupport: (o, impl = codexAskSupport) => impl(o),
+  preflight: ({ model } = {}, impl = codexPreflight) => impl({ signIn: !hasCodexEndpoint(model) }),
+  modelPriced: (model) => codexModelPriced(model),
+  resumeNotFound: codexResumeNotFound,
+  shellTrippedMessage: 'Codex tried to run a shell command although its shell was switched off — worca stopped the turn.',
+  titles: true,
+  suggestionModel: 'gpt-5.6-luna',
+  prompt: {
+    cli: "the Codex CLI with Codex's own sign-in",
+    attachments: 'Image attachments are different: you see an image with the message it came with, and read_attachment returns only its kind and size. PDF attachments need a Claude chat.',
+    composerBinary: 'An image arrives with the message that carried it — you see it there, and read_attachment returns only its kind and size; a PDF needs a Claude chat.',
+    webOff: "Codex's own web search stays off.",
+  },
+});

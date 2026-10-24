@@ -102,7 +102,7 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       // Web access: present only when this turn's env carries WORCA_ASK_WEB (web-deps.mjs) — the
       // child's env (classic), or the relay's own copy built from the turn's web access (ui/server.mjs).
       ...defaultWebDeps({ threadId, signal, env }),
-      // Codex and Copilot chats only (WORCA_ASK_ENGINE=codex|copilot): read_file / grep / glob under the shared deny rules (D13).
+      // Locked-down chats only (WORCA_ASK_ENGINE names the engine): read_file / grep / glob under the shared deny rules (D13).
       ...defaultFileDeps({ threadId, env, signal }),
       // Agent mode (#574): present only when this turn's env names the command bridge (command-deps.mjs).
       ...defaultCommandDeps({ env }),

@@ -191,6 +191,64 @@ export function familyPreflight({ bin, env = process.env, timeoutMs = 10000, lab
   });
 }
 
+// ── chat ─────────────────────────────────────────────────────────────────────
+
+/** `a` is at least `b` (dotted numbers; a pre-release tag ignored). */
+export function versionAtLeast(a, b) {
+  const n = (v) => String(v).replace(/^[^0-9]*/, '').split(/[.-]/).slice(0, 3).map((x) => Number.parseInt(x, 10) || 0);
+  const [x, y] = [n(a), n(b)];
+  for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  return true;
+}
+
+/**
+ * Can this CLI be locked down for a chat? Its `--help` names every flag the lockdown needs and its `--version` is at
+ * least the one the lockdown was verified on. Never rejects: {refusal} or {}.
+ */
+export function familyAskSupport({ bin, timeoutMs = 15000, flags, minVersion, label, install, binEnv, extra = null }) {
+  const run = (args) => new Promise((resolve) => {
+    execFile(bin, args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => resolve({ err, out: String(stdout || '') }));
+  });
+  return (async () => {
+    const v = await run(['--version']);
+    if (v.err && typeof v.err.code !== 'number') {
+      return { refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(v.err.code)) ? `cannot run ${bin} (${v.err.code}) — install ${label} (${install}), or point ${binEnv} at it` : `could not ask ${bin} its version (${v.err.message})` };
+    }
+    const version = v.out.trim().split('\n')[0];
+    if (!versionAtLeast(version, minVersion)) return { refusal: `this ${bin} is ${version || 'of an unknown version'}; a chat needs ${label} ${minVersion} or newer — update it (${install})` };
+    const h = await run(['--help']);
+    const missing = flags.filter((f) => !new RegExp(`(^|\\s)${f.replace(/-/g, '\\-')}(\\s|=|$)`, 'm').test(h.out));
+    if (missing.length) return { refusal: `this ${bin} has no ${missing.join(', ')} to lock a chat down — update ${label} to ${minVersion} or newer` };
+    const more = extra ? extra() : null;
+    return more ? { refusal: more } : {};
+  })();
+}
+
+const isPlain = (v) => v && typeof v === 'object' && !Array.isArray(v);
+/** Settings objects merged left to right: objects deeply, anything else (arrays, null, scalars) replaced. */
+export function mergeSettings(...docs) {
+  const out = {};
+  for (const d of docs) {
+    if (!isPlain(d)) continue;
+    for (const [k, v] of Object.entries(d)) out[k] = isPlain(v) && isPlain(out[k]) ? mergeSettings(out[k], v) : isPlain(v) ? mergeSettings(v) : v;
+  }
+  return out;
+}
+
+/** A chat's MCP servers with `${NAME}` references to the env names their child must get from the CLI's env (the
+ *  command bridge token, SSH_AUTH_SOCK, the web search key): either CLI may hand its MCP children a filtered env, but
+ *  both fill a reference from their own. */
+export function withEnvRefs(servers, names) {
+  if (!servers || !names.length) return servers;
+  const out = {};
+  for (const [n, srv] of Object.entries(servers)) {
+    out[n] = srv && typeof srv === 'object' && typeof srv.command === 'string'
+      ? { ...srv, env: { ...Object.fromEntries(names.map((k) => [k, `\${${k}}`])), ...(isPlain(srv.env) ? srv.env : {}) } }
+      : srv;
+  }
+  return out;
+}
+
 // ── spawn ────────────────────────────────────────────────────────────────────
 
 /** The store project folders (`<worca home>/store/<project>`) that hold any of `dirs`. */
@@ -220,23 +278,29 @@ export const foldSystemPrompt = (sys, prompt) => (sys ? `=== SYSTEM ===\n${sys}\
  *   output) gets one fresh attempt, said out loud.
  * - The folders worca hands the agent (addDirs, writableDirs) become workspace folders; none may sit in Worca's own
  *   home outside the run store (writableRootsInWorcaHome), whose path rules these CLIs hold only in part.
- * - A read-only spawn and an Ask chat refuse: worca does not lock these CLIs down (their helper jobs run on Claude).
+ * - A read-only spawn refuses: these CLIs have no read-only mode (their helper jobs run on Claude). An Ask chat
+ *   (askLockdown) runs only with the engine's spec.askLockdown: spec.prepare gets `ask: true` and builds the lockdown
+ *   (engines/qwen.mjs, engines/gemini.mjs); such a spawn has no file tool of its own, so its cwd may sit in Worca's
+ *   home, and a session the CLI no longer knows is the turn's to handle (ask/turn.mjs resumeNotFound), not retried here.
+ *   `probe` ({env}): the chat self-test's endpoint (engines/chat-selftest.mjs).
  * - `maxTurns` caps the main agent's tool calls, counted as codex counts them.
  * - spec.prepare writes the engine's config (a scratch folder under Worca's home, or the checkout) and returns
  *   {argsFor(session, resume), stdin, env}; spec.fatalStderrRe stops the child on a stderr line that means its rules
  *   did not load.
  * @param {object} spec {name, label, prefix, envPrefixes (a list, or a function of worca's env), classify,
- *   resumeNotFoundRe, fatalStderrRe?, fatalMessage?, createNormalizer({model, mcpNames}), prepare(ctx)}
+ *   resumeNotFoundRe, fatalStderrRe?, fatalMessage?, askLockdown?, createNormalizer({model, mcpNames}), prepare(ctx)};
+ *   prepare's result may carry cleanup(), run when the spawn is over
  */
 export async function runFamilyProcess(spec, {
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, onEvent = () => {}, signal, bin, resumeSessionId,
   addDirs, writableDirs, sandbox, askLockdown, envScrub, envAllowlist, asAgent, mcpConfigPath, spawnEnv: runSpawnEnv,
-  redactValues, maxTurns, permissionRules, noGit = false,
+  redactValues, maxTurns, permissionRules, noGit = false, probe = null,
 } = {}) {
   const { name, label, prefix } = spec;
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
-  if (askLockdown) throw new Error(`${bin}: worca does not lock ${label} down for a chat — Chat on ${label} is unavailable`);
-  if (sandbox === 'read-only') throw new Error(`${bin}: worca has no read-only mode for ${label} — a read-only job runs on Claude instead`);
+  const ask = !!askLockdown;
+  if (ask && !spec.askLockdown) throw new Error(`${bin}: worca does not lock ${label} down for a chat — Chat on ${label} is unavailable`);
+  if (sandbox === 'read-only' && !ask) throw new Error(`${bin}: worca has no read-only mode for ${label} — a read-only job runs on Claude instead`);
   const secrets = Array.isArray(redactValues) ? redactValues : [];
   const redactor = secrets.length ? createRedactor(secrets) : null;
   if (redactor) { const emit = onEvent; onEvent = (e) => emit(redactor.deep(e)); }
@@ -249,15 +313,19 @@ export async function runFamilyProcess(spec, {
   let session = familySessionOf(prefix, resumeSessionId);
   if (resumeSessionId && !session) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] ${name}: stored session ${JSON.stringify(String(resumeSessionId).slice(0, 12))}… is not a ${label} session — starting a fresh one` });
 
-  const includeDirs = [...new Set([...(addDirs || []), ...(writableDirs || [])].filter((d) => typeof d === 'string' && d))];
-  const inHome = writableRootsInWorcaHome({ cwd, roots: includeDirs });
+  // A chat adds no folder: it reads only through worca's MCP tools.
+  const includeDirs = ask ? [] : [...new Set([...(addDirs || []), ...(writableDirs || [])].filter((d) => typeof d === 'string' && d))];
+  const inHome = ask ? [] : writableRootsInWorcaHome({ cwd, roots: includeDirs });
   if (inHome.length) throw new Error(`${bin}: refusing to start ${label} — it would be able to write ${inHome.join(', ')}, inside Worca's home (${worcaHome()}), where Worca keeps its database, settings and plugins; ${label} cannot hold the rules that protect them`);
 
   // The agent's prompt names files in its project's store folder (plans, earlier steps' outputs) that Claude reads
   // wherever they are; these CLIs' file tools read only the workspace, so a folder in the store brings its project's.
   for (const p of storeProjectDirs(includeDirs)) if (!includeDirs.includes(p)) includeDirs.push(p);
 
-  const servers = readMcpServers(mcpConfigPath, bin);
+  const runEnv = cleanRunEnv(runSpawnEnv) ?? undefined;
+  // A chat's MCP child gets what it needs from the CLI's env by reference (withEnvRefs).
+  const refNames = ask ? [...new Set([...Object.keys(runEnv || {}), ...(envAllowlist || []).filter((k) => typeof process.env[k] === 'string' && process.env[k] !== '')])] : [];
+  const servers = ask ? withEnvRefs(readMcpServers(mcpConfigPath, bin), refNames) : readMcpServers(mcpConfigPath, bin);
   const guardOn = hostGuardEnabled();
   const sys = guardOn ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n') : String(systemPrompt || '');
 
@@ -271,11 +339,12 @@ export async function runFamilyProcess(spec, {
   };
   const removeScratch = () => { if (scratch) rmSync(scratch, { recursive: true, force: true }); };
 
+  let prepared = null;
   try {
-    const prepared = spec.prepare({ cwd, bin, sys, prompt: String(prompt ?? ''), model, servers, permissionRules, includeDirs, scratchDir, noGit });
+    prepared = spec.prepare({ cwd, bin, sys, prompt: String(prompt ?? ''), model, servers, permissionRules, includeDirs, scratchDir, noGit, ask, probe });
     // The engine's own env names survive scrub; the run env carries the MCP servers' ${VAR} values.
     const prefixes = typeof spec.envPrefixes === 'function' ? spec.envPrefixes(process.env) : spec.envPrefixes;
-    const { env } = composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv: cleanRunEnv(runSpawnEnv) ?? undefined,
+    const { env } = composeSpawnEnv({ envScrub, envAllowlist, prefixes, runEnv,
       overlay: prepared.env, hostPid: guardOn ? process.pid : null });
     const mcpNames = Object.keys(servers || {});
     const cap = Number.isInteger(maxTurns) && maxTurns > 0 ? maxTurns : null;
@@ -325,7 +394,7 @@ export async function runFamilyProcess(spec, {
       out = await attempt(session || randomUUID(), !!session);
     } catch (err) {
       // A resumed session the CLI no longer knows (it answered before any stream line): one fresh attempt, said out loud.
-      if (!session || err?.sawOutput || err?.name === 'AbortError' || !spec.resumeNotFoundRe.test(String(err?.message || ''))) throw err;
+      if (ask || !session || err?.sawOutput || err?.name === 'AbortError' || !spec.resumeNotFoundRe.test(String(err?.message || ''))) throw err;
       safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] ${name}: session ${session.slice(0, 12)}… is gone — starting a fresh one` });
       session = null;
       out = await attempt(randomUUID(), false);
@@ -334,6 +403,7 @@ export async function runFamilyProcess(spec, {
   } catch (err) {
     throw redacted(err);
   } finally {
+    try { prepared?.cleanup?.(); } catch { /* best effort */ }
     removeScratch();
   }
 }

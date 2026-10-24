@@ -25,14 +25,33 @@
 // - Sign-in: `security.auth.selectedType` in the user settings (~/.qwen, or QWEN_HOME), or env naming a whole provider
 //   (getAuthTypeFromEnv below), also from ~/.qwen/.env. A key alone is "No auth type is selected".
 // - Not used (capability false): sub-agents, hooks, skills, effort, a per-spawn tool list, a turn cap.
+//
+// Chat (Ask Worca) on Qwen Code, verified on 0.26.1 against a local model endpoint (plans/ask-on-qwen-gemini-spike.md):
+// - `--core-tools` is an allowlist of the CORE built-ins only (read_file, write_file, edit, run_shell_command, web_fetch,
+//   …): a name that is none of them leaves none. The other built-ins (agent, skill, send_message, the worktree, goal,
+//   cron, team and workflow tools, tool_search / tool_call) ignore it, and `--exclude-tools` removes them: the call is
+//   refused ("Matching deny rule") and the tool is not offered. MCP tools are offered as `mcp__<server>__<tool>`.
+// - With `tools.toolSearch.enabled` on (the default) MCP and other tools are deferred behind tool_search / tool_call and
+//   NOT in the offered list; off, every registered tool is offered, so the list the model sees is the whole set.
+// - System settings (QWEN_CODE_SYSTEM_SETTINGS_PATH) are merged last and win over the user's and the workspace's.
+// - `--bare` ignores `--core-tools` (its own small set includes the shell) and `--safe-mode` ignores it too, so neither
+//   is used. Hooks, the tool discovery / call commands, the MCP server command and the background memory agents (which
+//   keep read_file / write_file / edit of their own whatever the flags say) are switched off in worca's system settings.
+// - ~/.qwen/.env (and ~/.env) set any env name that is unset or empty, overriding settings: QWEN_CODE_MEMORY_TEAM=1
+//   there starts a memory agent with file tools, QWEN_CODE_SAFE_MODE=1 drops the core allowlist. The chat's env sets
+//   every such switch (QWEN_ASK_ENV) to a non-empty value, and the self-test runs with the user's real files.
 import { readFileSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { createClaudeNormalizer } from './claude-events.mjs';
 import {
   claudeToolName, commandRuleBody, familyMcpServers, classifyFamilyError, familyPreflight, runFamilyProcess,
   homeOf, readDotenv, settingsAuthType, foldSystemPrompt, NO_MCP_SERVER, FAMILY_ARGV_LIMIT, absolutePaths,
+  familyAskSupport, mergeSettings,
 } from './gemini-family.mjs';
+import { makeChatDescriptor } from './chat-descriptor.mjs';
+import { chatSelfTest, SELF_TEST_MODEL } from './chat-selftest.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const qwenDefaultBin = () => process.env.WORCA_QWEN_BIN || 'qwen';
@@ -41,8 +60,44 @@ export const QWEN_SESSION_PREFIX = 'qwen:';
 const QWEN_FALSE = new Set(['allowedTools', 'effort', 'cost', 'subagents', 'hookTelemetry', 'skills', 'subagentSystemPrompt', 'turnBudget']);
 export const qwenCapabilities = Object.freeze(Object.fromEntries(CAPABILITY_KEYS.map((k) => [k, !QWEN_FALSE.has(k)])));
 
-/** Ask Worca on Qwen Code: null = worca does not lock it down for a chat (model-env.mjs ASK_ENGINES). */
-export const QWEN_ASK_LOCKDOWN = null;
+/** Every built-in tool name of Qwen Code 0.26.1 (its ToolNames). A chat excludes them all (`--exclude-tools`); a tool a
+ *  newer Qwen Code adds is caught by the chat self-test (engines/chat-selftest.mjs), which refuses the chat. */
+export const QWEN_BUILTIN_TOOLS = Object.freeze([
+  'exec', 'edit', 'write_file', 'read_file', 'zoom_image', 'grep_search', 'glob', 'run_shell_command', 'todo_write',
+  'save_memory', 'manage_memory', 'search_memory', 'agent', 'skill', 'exit_plan_mode', 'enter_plan_mode', 'web_fetch',
+  'web_search', 'image_gen', 'list_directory', 'lsp', 'ask_user_question', 'cron_create', 'cron_list', 'cron_delete',
+  'loop_wakeup', 'create_sub_session', 'list_agents', 'task_stop', 'task_create', 'task_update', 'task_list',
+  'team_create', 'team_delete', 'team_plan_approval', 'request_shutdown', 'send_message', 'structured_output', 'monitor',
+  'notebook_edit', 'tool_call', 'tool_search', 'read_mcp_resource', 'advisor', 'enter_worktree', 'exit_worktree',
+  'workflow', 'artifact', 'record_artifact', 'record_source', 'report_findings', 'get_goal', 'update_goal',
+  'omni_downsample_image', 'omni_downscale_video', 'omni_downsample_audio', 'omni_extract_keyframes', 'omni_extract_audio',
+  'omni_clip_video', 'omni_convert_image', 'omni_transcribe_audio', 'omni_clip_image', 'omni_clip_audio',
+  'omni_caption_image', 'omni_caption_audio', 'omni_ocr_image', 'omni_understand_video_segments',
+  'omni_recall_media_memory', 'propose_goal', 'display_image',
+]);
+/** The `--core-tools` value that names no core built-in: the allowlist is on and holds none of them. */
+export const QWEN_NO_CORE_TOOL = '__worca_no_core_tool__';
+/** worca's system settings for a chat, over the machine's own (qwenSystemSettings): every tool offered, none deferred;
+ *  no hook, no tool discovery or call command, no MCP server command, no background memory or skill agent. */
+export const QWEN_ASK_SETTINGS = Object.freeze({
+  tools: { toolSearch: { enabled: false }, discoveryCommand: '', callCommand: '' },
+  mcp: { serverCommand: '' },
+  memory: { enableManagedAutoMemory: false, enableManagedAutoDream: false, enableAutoSkill: false, enableTeamMemory: false, enableTeamMemorySync: false, enableStructuredRecall: false, mem0: null },
+  disableAllHooks: true,
+});
+/** A chat's env: the switches an env file could otherwise turn on, each set (an env file only fills unset names). */
+export const QWEN_ASK_ENV = Object.freeze({
+  QWEN_CODE_SAFE_MODE: '0', QWEN_CODE_MEMORY_TEAM: '0', QWEN_CODE_MEMORY_TEAM_SYNC: '0', QWEN_CODE_MEMORY_STRUCTURED_RECALL: '0',
+  QWEN_CODE_ENABLE_AGENT_TEAM: '0', QWEN_CODE_ENABLE_AGENT_COLLABORATION: '0', QWEN_CODE_ENABLE_WORKFLOWS: '0',
+  QWEN_CODE_DISABLE_WORKFLOWS: '1', QWEN_CODE_ENABLE_ARTIFACT: '0', QWEN_CODE_DISABLE_ARTIFACT: '1', QWEN_CODE_ENABLE_OMNI: '0',
+  QWEN_CODE_DISABLE_CRON: '1',
+});
+/** Chat on Qwen Code (plans/ask-on-qwen-gemini-spike.md): no core built-in, every other built-in excluded, only worca's
+ *  MCP server, the settings and env above. Proven per binary and user config by the chat self-test. */
+export const QWEN_ASK_LOCKDOWN = Object.freeze({ coreTools: [QWEN_NO_CORE_TOOL], excludeTools: QWEN_BUILTIN_TOOLS, settings: QWEN_ASK_SETTINGS, env: QWEN_ASK_ENV });
+/** The flags the lockdown needs, and the oldest Qwen Code it was verified on. */
+export const QWEN_ASK_FLAGS = Object.freeze(['--core-tools', '--exclude-tools', '--allowed-mcp-server-names']);
+export const QWEN_ASK_MIN_VERSION = '0.26.1';
 
 /** What the gate and the run log say about the rules Qwen Code holds only in part. */
 export const QWEN_RULE_TERMS = Object.freeze({
@@ -118,12 +173,14 @@ function machineSystemSettings(bin) {
 
 /** `qwen --output-format stream-json --approval-mode yolo (--session-id S | --resume S) [--model M]
  *  [--append-system-prompt P] [--include-directories D]… --allowed-mcp-server-names N…`. The prompt travels on stdin. */
-export function buildQwenArgs({ sessionId, resume = false, model, systemPrompt, includeDirs = [], mcpNames = [] } = {}) {
+export function buildQwenArgs({ sessionId, resume = false, model, systemPrompt, includeDirs = [], mcpNames = [], ask = false } = {}) {
   const args = ['--output-format', 'stream-json', '--approval-mode', 'yolo', resume ? '--resume' : '--session-id', String(sessionId)];
   if (model) args.push('--model', String(model));
   if (systemPrompt) args.push('--append-system-prompt', systemPrompt);
   for (const d of includeDirs) args.push('--include-directories', d);
   for (const n of mcpNames.length ? mcpNames : [NO_MCP_SERVER]) args.push('--allowed-mcp-server-names', n);
+  // A chat (QWEN_ASK_LOCKDOWN): no core built-in, every other one excluded (one comma-separated value).
+  if (ask) args.push('--core-tools', QWEN_ASK_LOCKDOWN.coreTools.join(','), '--exclude-tools', QWEN_ASK_LOCKDOWN.excludeTools.join(','));
   return args;
 }
 
@@ -226,22 +283,27 @@ const QWEN_SPEC = Object.freeze({
   envPrefixes: qwenEnvPrefixes,
   classify: classifyQwenError, resumeNotFoundRe: QWEN_RESUME_NOT_FOUND_RE,
   createNormalizer: createQwenNormalizer,
-  prepare({ bin, sys, prompt, model, servers, permissionRules, includeDirs, scratchDir }) {
+  askLockdown: QWEN_ASK_LOCKDOWN,
+  prepare({ bin, sys, prompt, model, servers, permissionRules, includeDirs, scratchDir, ask, probe }) {
     const plan = qwenRulePlan(permissionRules);
     const mcpServers = servers ? familyMcpServers(servers) : {};
-    const env = { QWEN_CODE_SUPPRESS_YOLO_WARNING: '1' };
-    if (plan.deny.length || Object.keys(mcpServers).length) {
+    const env = { QWEN_CODE_SUPPRESS_YOLO_WARNING: '1', ...(ask ? QWEN_ASK_ENV : {}) };
+    if (plan.deny.length || Object.keys(mcpServers).length || ask) {
       const file = join(scratchDir(), 'system-settings.json');
-      writeFileSync(file, `${JSON.stringify(qwenSystemSettings({ base: machineSystemSettings(bin), mcpServers, deny: plan.deny }), null, 2)}\n`, { mode: 0o644 });
+      let doc = qwenSystemSettings({ base: machineSystemSettings(bin), mcpServers, deny: plan.deny });
+      // A chat: worca's lockdown settings win over the machine's; the self-test signs in to its own endpoint.
+      if (ask) doc = mergeSettings(doc, QWEN_ASK_SETTINGS, probe ? { security: { auth: { selectedType: 'openai' } } } : {});
+      writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`, { mode: 0o644 });
       env.QWEN_CODE_SYSTEM_SETTINGS_PATH = file;
     }
+    if (probe) Object.assign(env, probe.env);
     // The system prompt rides --append-system-prompt; one too long for a command line is folded into stdin instead.
     const byFlag = !!sys && Buffer.byteLength(sys, 'utf8') <= FAMILY_ARGV_LIMIT;
     const mcpNames = Object.keys(mcpServers);
     return {
       stdin: byFlag ? prompt : foldSystemPrompt(sys, prompt),
       env,
-      argsFor: (sessionId, resume) => buildQwenArgs({ sessionId, resume, model, systemPrompt: byFlag ? sys : '', includeDirs, mcpNames }),
+      argsFor: (sessionId, resume) => buildQwenArgs({ sessionId, resume, model, systemPrompt: byFlag ? sys : '', includeDirs, mcpNames, ask }),
     };
   },
 });
@@ -250,3 +312,39 @@ const QWEN_SPEC = Object.freeze({
 export function runQwenProcess(opts = {}) {
   return runFamilyProcess(QWEN_SPEC, { ...opts, bin: opts.bin || qwenDefaultBin() });
 }
+
+// ── chat ─────────────────────────────────────────────────────────────────────
+
+/** Can this qwen be locked down for a chat? Every flag in QWEN_ASK_FLAGS, and the version the lockdown was verified on.
+ *  Never rejects: {refusal} or {}. */
+export function qwenAskSupport({ bin = qwenDefaultBin(), timeoutMs = 15000 } = {}) {
+  return familyAskSupport({ bin, timeoutMs, flags: QWEN_ASK_FLAGS, minVersion: QWEN_ASK_MIN_VERSION, label: 'Qwen Code', install: 'npm i -g @qwen-code/qwen-code', binEnv: 'WORCA_QWEN_BIN' });
+}
+
+/** The user config files a Qwen Code chat reads (a change re-runs the self-test). */
+export function qwenConfigFiles(env = process.env) {
+  const dir = (typeof env.QWEN_HOME === 'string' && env.QWEN_HOME.trim()) || join(homeOf(env), '.qwen');
+  return [join(dir, 'settings.json'), join(dir, '.env'), join(homeOf(env), '.qwen', '.env'), join(homeOf(env), '.env'),
+    QWEN_SYSTEM_SETTINGS_PATHS[process.platform] || QWEN_SYSTEM_SETTINGS_PATHS.linux];
+}
+
+/** The chat self-test on this qwen (engines/chat-selftest.mjs): OpenAI chat completions from a local endpoint. */
+export function qwenChatSelfTest({ bin = qwenDefaultBin(), ...o } = {}) {
+  return chatSelfTest({
+    engine: 'qwen', label: 'Qwen Code', bin, run: runQwenProcess, protocol: 'openai',
+    probeEnv: (url) => ({ OPENAI_API_KEY: 'worca-self-test', OPENAI_BASE_URL: `${url}/v1`, OPENAI_MODEL: SELF_TEST_MODEL }),
+    wireName: (server, tool) => `mcp__${server}__${tool}`, configFiles: qwenConfigFiles(), ...o,
+  });
+}
+
+/** Qwen Code's chat descriptor (engines/chat-descriptor.mjs). Each `impl` is the function a test hands the turn. */
+export const qwenChat = makeChatDescriptor({
+  engine: 'qwen',
+  lockdown: () => QWEN_ASK_LOCKDOWN,
+  askSupport: (o, impl = qwenAskSupport) => impl(o),
+  selfTest: (o, impl = qwenChatSelfTest) => impl(o),
+  preflight: (_ctx, impl = qwenPreflight) => impl(),
+  resumeNotFound: (err) => QWEN_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
+  docsAnchor: 'gemini-cli-and-qwen-code',
+  prompt: { cli: "Qwen Code with Qwen Code's own sign-in" },
+});

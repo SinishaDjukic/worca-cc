@@ -1,12 +1,14 @@
 // src/core/ask/file-deps.mjs
 // Worca's read-only file tools for Codex chats (cascading-settings-design.md D13, §4.6): read_file, grep, glob.
-// Codex has no permission engine, so these are a Codex chat's ONLY view of the disk. The reader itself is
+// A locked-down chat (every engine but Claude: Codex, Copilot, Gemini CLI, Qwen Code) has no file tool of its own, so these are its ONLY view of the disk. The reader itself is
 // file-reader.mjs; this module adds the chat's roots under the Worca home (plus, for a turn with set skills, that
 // message's skill mount). Present in the MCP child only for a
-// Codex or Copilot chat (WORCA_ASK_ENGINE=codex|copilot); a Claude chat keeps its native Read/Grep/Glob.
+// locked-down chat (WORCA_ASK_ENGINE names its engine); a Claude chat keeps its native Read/Grep/Glob.
 import { join, isAbsolute, resolve, dirname, basename } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { createAskFileReader } from './file-reader.mjs';
+import { lockedChatEngine } from '../model-env.mjs';
+import { ENGINES } from '../../shared/engine-switch.mjs';
 
 export { AskFileError, ASK_FILE_LIMITS, createAskFileReader } from './file-reader.mjs';
 
@@ -24,10 +26,10 @@ export function askFileRoots({ home = worcaHome(), threadId, skillRoot = null } 
   return roots;
 }
 
-/** The engines whose chats read through worca's file tools: their own file tools are off (the lockdown). */
-const FILE_TOOL_ENGINES = ['codex', 'copilot'];
-/** The MCP child's file bundle: present only for a Codex or Copilot chat (the parent sets WORCA_ASK_ENGINE in the child's env). */
+/** The MCP child's file bundle: present only for a locked-down chat, whose own file tools are off (the parent sets
+ *  WORCA_ASK_ENGINE in the child's env). */
 export function defaultFileDeps({ threadId = null, env = process.env, signal = null } = {}) {
-  if (!env || !FILE_TOOL_ENGINES.includes(env.WORCA_ASK_ENGINE)) return {};
-  return { engine: env.WORCA_ASK_ENGINE, files: createAskFileReader({ roots: askFileRoots({ threadId, skillRoot: env.WORCA_ASK_SKILL_ROOT || null }), signal }) };
+  if (!env || !lockedChatEngine(env.WORCA_ASK_ENGINE)) return {};
+  // chatImages: whether this chat sees images (read_attachment's note for one that does not: Copilot, Gemini CLI, Qwen Code).
+  return { engine: env.WORCA_ASK_ENGINE, chatImages: ENGINES[env.WORCA_ASK_ENGINE].chat.images === true, files: createAskFileReader({ roots: askFileRoots({ threadId, skillRoot: env.WORCA_ASK_SKILL_ROOT || null }), signal }) };
 }

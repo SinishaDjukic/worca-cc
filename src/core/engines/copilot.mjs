@@ -44,6 +44,7 @@ import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit, writableRootsIn
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { mcpResultText } from './codex.mjs';
+import { makeChatDescriptor } from './chat-descriptor.mjs';
 import { copilotWireModel, COPILOT_EFFORTS as MODEL_ENV_COPILOT_EFFORTS } from '../model-env.mjs';
 
 export const COPILOT_DEFAULT_BIN = process.env.WORCA_COPILOT_BIN || 'copilot';
@@ -726,3 +727,25 @@ export async function runCopilotProcess({
   safeEmit(onEvent, { type: 'result', text: out, isError: false, sessionId, ...(delta ? { usage: claudeStyleUsage(delta) } : {}) });
   return { text: out, exitCode: res.code };
 }
+
+/** Copilot's chat descriptor (engines/chat-descriptor.mjs; plans/ask-on-copilot-design.md Part 2): the read-only spawn
+ *  above with COPILOT_ASK_FLAGS. Copilot has no sign-in status command: a signed-out CLI fails the turn itself (auth
+ *  class), so the preflight only runs the binary. It reports no cost, so a per-turn cost cap refuses the turn. Each
+ *  `impl` is the function a test hands the turn in its place. */
+export const copilotChat = makeChatDescriptor({
+  engine: 'copilot',
+  lockdown: () => COPILOT_ASK_LOCKDOWN,
+  noLockdownMessage: 'Chat on Copilot is unavailable: this copilot cannot be locked down for a chat. Use a Claude chat.',
+  askSupport: (o, impl = copilotAskSupport) => impl(o),
+  preflight: (_ctx, impl = copilotPreflight) => impl(),
+  resumeNotFound: copilotResumeNotFound,
+  docsAnchor: 'github-copilot-cli',
+  shellTrippedMessage: 'Copilot tried to run a shell command although it was given none — worca stopped the turn.',
+  titles: true,
+  prompt: {
+    cli: "the GitHub Copilot CLI with Copilot's own sign-in",
+    attachments: 'Image and PDF attachments are different: a Copilot chat cannot view them, and read_attachment returns only their kind and size. Tell the user they need a Claude chat (a Codex chat sees images).',
+    composerBinary: 'A Copilot chat cannot view images or PDFs: read_attachment returns only their kind and size, and they need a Claude chat.',
+    webOff: "Copilot's own web tools stay off.",
+  },
+});

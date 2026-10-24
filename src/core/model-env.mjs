@@ -12,7 +12,7 @@
 // import contract; that is why the constant does NOT live next to
 // SPAWN_ENV_BASE in claude-runner.mjs.
 
-import { ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES } from '../shared/engine-switch.mjs';
+import { ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES, CHAT_ENGINE_NAMES } from '../shared/engine-switch.mjs';
 
 /** Reasoning-effort vocabulary. Canonical home is HERE (not config.mjs, which
  *  re-exports it) so settings.mjs can validate a catalog entry's `efforts`
@@ -65,11 +65,16 @@ const MODEL_ID_HINT = Object.freeze({ goose: 'a goose model id is provider/model
 export function modelIdProblem(engine, id) {
   return MODEL_ID_HINT[engine] && !PROVIDER_MODEL_ID_RE.test(String(id ?? '')) ? MODEL_ID_HINT[engine] : null;
 }
-/** Engines an Ask Worca chat may run on: those whose shell and disk tools can be switched off (Codex: CODEX_ASK_LOCKDOWN,
- *  and a codex that has every flag in it, ask/turn.mjs; Copilot: only worca's MCP server through --available-tools,
- *  COPILOT_ASK_FLAGS). The own-sign-in engines: none is known (CURSOR_ASK_LOCKDOWN, GOOSE_ASK_LOCKDOWN, OPENCODE_ASK_LOCKDOWN = null;
- *  worca does not lock Gemini CLI or Qwen Code down). */
-export const ASK_ENGINES = ['claude', 'codex', 'copilot'];
+/** Engines an Ask Worca chat may run on (engine-switch.mjs `chat`): Claude, and those whose adapter exports a chat
+ *  descriptor that locks the engine down to worca's own MCP server (src/core/engines/chat.mjs, which refuses to load when
+ *  an adapter and this list disagree): Codex (CODEX_ASK_LOCKDOWN), Copilot (--available-tools), Gemini CLI (an
+ *  admin-tier deny-all policy) and Qwen Code (no core tool, every other built-in excluded) — plans/ask-on-qwen-gemini-spike.md.
+ *  Cursor, Goose and OpenCode have none (CURSOR_ASK_LOCKDOWN, GOOSE_ASK_LOCKDOWN, OPENCODE_ASK_LOCKDOWN = null). This
+ *  module may not import an adapter (settings.mjs imports it), hence the flag. */
+export const ASK_ENGINES = [...CHAT_ENGINE_NAMES];
+/** A chat engine that runs locked down: every Ask engine but Claude. Its chat reads through worca's read_file / grep /
+ *  glob and starts no registry MCP server. */
+export const lockedChatEngine = (engine) => engine !== 'claude' && ASK_ENGINES.includes(engine);
 export function effortsForEngine(engine) {
   return engine === 'codex' ? CODEX_EFFORTS : engine === 'copilot' ? COPILOT_EFFORTS : engine === 'goose' ? GOOSE_EFFORTS : engine === 'opencode' ? OPENCODE_EFFORTS : OWN_SIGNIN_ENGINES.includes(engine) ? CURSOR_EFFORTS : EFFORTS;
 }

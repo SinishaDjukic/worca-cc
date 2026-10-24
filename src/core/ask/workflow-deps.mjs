@@ -24,6 +24,7 @@ import { resolveAutoModel } from '../auto/model.mjs';
 import { ASK_LIMITS } from './limits.mjs';
 import { utilityModelFor } from '../settings-cascade.mjs';
 import { runsOn } from '../../shared/connections.mjs';
+import { lockedChatEngine, helperEngineFor } from '../model-env.mjs';
 
 const TUNABLE_KEYS = ['model', 'effort', 'fanOut', 'askQuestions'];
 const flat = (v, max) => cleanText(v, max);
@@ -175,8 +176,10 @@ export function workflowNoticeText({ state, name = '', matched = false, thenRun 
  */
 export function defaultWorkflowDeps({ threadId = null, signal = null, classify = classifyTask, env = process.env } = {}) {   // eslint-disable-line no-unused-vars
   const bundleSignal = signal;
-  // A Codex or Copilot chat's classifier runs on its own engine too: such a chat makes no Claude call (D8).
-  const chatEngine = env && ['codex', 'copilot'].includes(env.WORCA_ASK_ENGINE) ? env.WORCA_ASK_ENGINE : null;
+  // A locked-down chat's classifier runs on its own engine when that engine runs helper jobs (Codex, Copilot): such a
+  // chat makes no Claude call (D8). Gemini CLI and Qwen Code have no read-only mode, so theirs runs on Claude, as a
+  // run's helper jobs do (model-env.mjs helperEngineFor).
+  const chatEngine = env && lockedChatEngine(env.WORCA_ASK_ENGINE) && helperEngineFor(env.WORCA_ASK_ENGINE) === env.WORCA_ASK_ENGINE ? env.WORCA_ASK_ENGINE : null;
   return {
     workflow: {
       /**

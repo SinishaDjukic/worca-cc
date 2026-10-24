@@ -14,6 +14,7 @@ import { loadCatalog } from '../mcp/catalog.mjs';
 import { MCP_STARTUP_MS } from '../mcp/timeouts.mjs';
 import { resolveSkillRegistry, cachedSkillTeamFor, SKILL_CAP } from '../skills-registry/resolve.mjs';
 import { skillSkipReasonText, skillSkipMessage, skillLayerText, SKILL_PROBLEM_REASONS } from '../skills-registry/texts.mjs';
+import { lockedChatEngine } from '../model-env.mjs';
 
 export const ASK_MCP_COPY_CAP = 12;
 // Skills registry §4.4: Ask mounts at most 12 set skills per turn (SKILL_CAP.ask).
@@ -174,7 +175,7 @@ function pickerSets(mcpSets, skillSets, blocked) {
 function skillsPreview(r, engine = 'claude') {
   // A Codex chat (#635): the names it loads them by (codexSkillNames) replace `<plugin>:<skill>`, and Claude Code's
   // --plugin-dir block does not apply — codex reads the skills through read_file.
-  const codex = engine === 'codex' || engine === 'copilot';   // a Copilot chat too: it reads its skills through read_file
+  const codex = lockedChatEngine(engine);   // every locked-down chat: it reads its skills through read_file
   const names = codex ? codexSkillNames(r.mounted) : null;
   const blocked = codex ? null : r.blocked ?? null;
   return {
@@ -198,8 +199,8 @@ export async function askMcpPreview({ ctx, threadId = null, off = null, model = 
   const { result: sk } = await resolveAskSkills({ ctx, threadId, off }, d);
   // §4.6: a Codex chat starts no registry copy, only the set skills (#635). Its set rows count skills only, and
   // `codexServers` says how many servers wait for a Claude chat, so the picker can say so.
-  // A Copilot chat is the same (its lockdown attaches worca's own server only); `codexServers` keeps its name.
-  if (engine === 'codex' || engine === 'copilot') {
+  // Every locked-down chat is the same (its lockdown attaches worca's own server only); `codexServers` keeps its name.
+  if (lockedChatEngine(engine)) {
     const sets = pickerSets(result.sets, sk.sets, false).map((x) => ({ ...x, members: 0, started: 0 }));
     return { sets, copies: [], started: 0, skipped: [], skippedTools: [], newer: result.newer === true,
       codexServers: result.copies.length + result.skipped.length, skills: skillsPreview(sk, engine) };
@@ -218,7 +219,7 @@ export async function askMcpPreview({ ctx, threadId = null, off = null, model = 
  *  that join from the next message. null when no worktree target joined or it brings no copy. Skills registry §4.4:
  *  with `before.skills` (the turn's skills result) the skills that join are named too. */
 export async function askMcpJoinNotice({ before, ctx, threadId, off = null, model = null, engine = 'claude' }, deps = {}) {
-  const codex = engine === 'codex' || engine === 'copilot';   // #635: a Codex (or Copilot) chat gains skills only, named as it loads them (codexSkillNames)
+  const codex = lockedChatEngine(engine);   // #635: a locked-down chat gains skills only, named as it loads them (codexSkillNames)
   const next = await resolveAskMcp({ ctx, threadId, off, model }, deps);
   const nextSkills = before.skills ? (await resolveAskSkills({ ctx, threadId, off }, deps)).result : null;
   const had = new Set(before.targets.filter((t) => t.kind === 'project').map((t) => t.key));

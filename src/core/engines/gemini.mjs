@@ -29,15 +29,30 @@
 //   ~/.gemini/settings.json (`security.auth.selectedType`). No status command exists.
 // - Not used (capability false): GEMINI_SYSTEM_MD replaces the whole built-in system prompt, so worca folds its system
 //   prompt into the prompt; sub-agents, hooks, skills, effort, a per-spawn tool list and a turn cap are not wired.
-import { readdirSync, writeFileSync } from 'node:fs';
+//
+// Chat (Ask Worca) on Gemini CLI, verified on 0.65.0 against a local model endpoint (plans/ask-on-qwen-gemini-spike.md):
+// - An admin-tier rule (`--admin-policy`) that denies `toolName = "*"` takes every tool out of the offered list, the
+//   user's own policies (user tier, even an allow-all) and yolo included; a higher-priority allow for worca's MCP server
+//   keeps its tools. A denied or unknown call is answered "Tool … not found".
+// - But a statically denied built-in also hides an MCP tool of the same bare name (worca's read_file, glob, web_fetch):
+//   Gemini matches excluded names against an MCP tool's unprefixed name too. `tools.core` (an allowlist of the built-ins
+//   to REGISTER) naming none of them registers none, so nothing of that name is excluded and worca's tools stay offered.
+// - The checkout's (here: the chat folder's) `.gemini/settings.json` wins over ~/.gemini/settings.json: it switches the
+//   user's hooks, tool discovery and call commands off. `--extensions none` loads no extension (their MCP servers and
+//   context files). `--allowed-mcp-server-names` keeps every other MCP server off.
+// - Context files (~/.gemini/GEMINI.md, skill descriptions) still reach the prompt as text; they add no tool.
+// - Sessions live per folder (~/.gemini/tmp/<hash of the cwd>), so a chat runs in a folder of its own, the same every turn.
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { writeProjectFiles } from './project-files.mjs';
 import {
   claudeToolName, commandRuleBody, mcpRuleParts, familyMcpServers, classifyFamilyError, familyPreflight, runFamilyProcess,
-  homeOf, readDotenv, settingsAuthType, foldSystemPrompt, NO_MCP_SERVER, absolutePaths,
+  homeOf, readDotenv, settingsAuthType, foldSystemPrompt, NO_MCP_SERVER, absolutePaths, familyAskSupport, mergeSettings,
 } from './gemini-family.mjs';
+import { makeChatDescriptor } from './chat-descriptor.mjs';
+import { chatSelfTest, SELF_TEST_MODEL } from './chat-selftest.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const geminiDefaultBin = () => process.env.WORCA_GEMINI_BIN || 'gemini';
@@ -46,8 +61,29 @@ export const GEMINI_SESSION_PREFIX = 'gemini:';
 const GEMINI_FALSE = new Set(['systemPromptFlag', 'allowedTools', 'effort', 'cost', 'subagents', 'hookTelemetry', 'skills', 'subagentSystemPrompt', 'turnBudget']);
 export const geminiCapabilities = Object.freeze(Object.fromEntries(CAPABILITY_KEYS.map((k) => [k, !GEMINI_FALSE.has(k)])));
 
-/** Ask Worca on Gemini CLI: null = worca does not lock it down for a chat (model-env.mjs ASK_ENGINES). */
-export const GEMINI_ASK_LOCKDOWN = null;
+/** The `tools.core` value that names no built-in: none is registered (see the chat notes above). */
+export const GEMINI_NO_CORE_TOOL = '__worca_no_core_tool__';
+/** A chat folder's `.gemini/settings.json` beside worca's MCP servers: no built-in registered, no hook, no tool discovery
+ *  or call command. */
+export const GEMINI_ASK_SETTINGS = Object.freeze({
+  tools: { core: [GEMINI_NO_CORE_TOOL], discoveryCommand: '', callCommand: '' },
+  hooksConfig: { enabled: false },
+});
+/** Chat on Gemini CLI (plans/ask-on-qwen-gemini-spike.md): the admin policy (geminiAskPolicyToml), the settings above,
+ *  no extension, only worca's MCP server. Proven per binary and user config by the chat self-test. */
+export const GEMINI_ASK_LOCKDOWN = Object.freeze({ settings: GEMINI_ASK_SETTINGS, extensions: 'none' });
+/** The flags the lockdown needs, and the oldest Gemini CLI it was verified on. */
+export const GEMINI_ASK_FLAGS = Object.freeze(['--admin-policy', '--allowed-mcp-server-names', '--extensions']);
+export const GEMINI_ASK_MIN_VERSION = '0.65.0';
+
+/** A chat's admin policy: every tool denied, worca's MCP servers' tools allowed above it. */
+export function geminiAskPolicyToml(mcpNames) {
+  const q = (v) => JSON.stringify(v);
+  return [
+    '[[rule]]', 'toolName = "*"', 'decision = "deny"', 'priority = 900', `denyMessage = ${q('worca chat lockdown: only worca\'s own tools')}`, '',
+    ...mcpNames.flatMap((n) => ['[[rule]]', `mcpName = ${q(n)}`, 'toolName = "*"', 'decision = "allow"', 'priority = 999', '']),
+  ].join('\n');
+}
 
 /** What the gate and the run log say about the rules Gemini CLI holds only in part. */
 export const GEMINI_RULE_TERMS = Object.freeze({
@@ -138,12 +174,13 @@ export function geminiPolicyToml(rules) {
 
 /** `gemini --output-format stream-json --approval-mode yolo (--session-id S | --resume S) [--model M] [--admin-policy F]
  *  [--include-directories D]… --allowed-mcp-server-names N…`. The prompt travels on stdin. */
-export function buildGeminiArgs({ sessionId, resume = false, model, policyFile, includeDirs = [], mcpNames = [] } = {}) {
+export function buildGeminiArgs({ sessionId, resume = false, model, policyFile, includeDirs = [], mcpNames = [], ask = false } = {}) {
   const args = ['--output-format', 'stream-json', '--approval-mode', 'yolo', resume ? '--resume' : '--session-id', String(sessionId)];
   if (model) args.push('--model', String(model));
   if (policyFile) args.push('--admin-policy', policyFile);
   for (const d of includeDirs) args.push('--include-directories', d);
   for (const n of mcpNames.length ? mcpNames : [NO_MCP_SERVER]) args.push('--allowed-mcp-server-names', n);
+  if (ask) args.push('--extensions', GEMINI_ASK_LOCKDOWN.extensions);
   return args;
 }
 
@@ -252,12 +289,35 @@ function systemPolicyPresent() {
   try { return readdirSync(dir).some((f) => f.endsWith('.toml')); } catch { return false; }
 }
 
+const systemPolicyDir = () => GEMINI_SYSTEM_POLICY_DIRS[process.platform] || GEMINI_SYSTEM_POLICY_DIRS.linux;
+
+/** A chat's spawn: the admin policy and the chat folder's settings (removed when the spawn is over). */
+function prepareAsk({ cwd, bin, sys, prompt, model, servers, scratchDir, probe }) {
+  if (systemPolicyPresent()) throw new Error(`${bin}: the system policy folder (${systemPolicyDir()}) holds policy files, so Gemini CLI would skip worca's chat lockdown`);
+  const mcpServers = servers ? familyMcpServers(servers) : {};
+  const mcpNames = Object.keys(mcpServers);
+  const policyFile = join(scratchDir(), 'worca-chat-policy.toml');
+  writeFileSync(policyFile, geminiAskPolicyToml(mcpNames), { mode: 0o644 });
+  mkdirSync(join(cwd, '.gemini'), { recursive: true, mode: 0o700 });
+  const settingsFile = join(cwd, '.gemini', 'settings.json');
+  const doc = mergeSettings({ mcpServers }, GEMINI_ASK_SETTINGS, probe ? { security: { auth: { selectedType: 'gemini-api-key' } } } : {});
+  writeFileSync(settingsFile, `${JSON.stringify(doc, null, 2)}\n`, { mode: 0o600 });
+  return {
+    stdin: foldSystemPrompt(sys, prompt),
+    env: { GEMINI_CLI_TRUST_WORKSPACE: 'true', ...(probe ? probe.env : {}) },
+    argsFor: (sessionId, resume) => buildGeminiArgs({ sessionId, resume, model, policyFile, mcpNames, ask: true }),
+    cleanup: () => rmSync(settingsFile, { force: true }),
+  };
+}
+
 const GEMINI_SPEC = Object.freeze({
   name: 'gemini', label: 'Gemini CLI', prefix: GEMINI_SESSION_PREFIX, envPrefixes: ['GEMINI_', 'GOOGLE_'],
   classify: classifyGeminiError, resumeNotFoundRe: GEMINI_RESUME_NOT_FOUND_RE,
   fatalStderrRe: GEMINI_POLICY_ERROR_RE, fatalMessage: 'Gemini CLI could not load worca\'s policy file, so the guardrail rules would not hold — stopped',
   createNormalizer: createGeminiNormalizer,
-  prepare({ cwd, bin, sys, prompt, model, servers, permissionRules, includeDirs, scratchDir, noGit }) {
+  askLockdown: GEMINI_ASK_LOCKDOWN,
+  prepare({ cwd, bin, sys, prompt, model, servers, permissionRules, includeDirs, scratchDir, noGit, ask, probe }) {
+    if (ask) return prepareAsk({ cwd, bin, sys, prompt, model, servers, scratchDir, probe });
     const plan = geminiRulePlan(permissionRules);
     let policyFile = null;
     if (plan.rules.length) {
@@ -281,3 +341,48 @@ const GEMINI_SPEC = Object.freeze({
 export function runGeminiProcess(opts = {}) {
   return runFamilyProcess(GEMINI_SPEC, { ...opts, bin: opts.bin || geminiDefaultBin() });
 }
+
+// ── chat ─────────────────────────────────────────────────────────────────────
+
+/** Can this gemini be locked down for a chat? Every flag in GEMINI_ASK_FLAGS, the version the lockdown was verified on,
+ *  and no system policy file (which would make Gemini skip worca's admin policy). Never rejects: {refusal} or {}. */
+export function geminiAskSupport({ bin = geminiDefaultBin(), timeoutMs = 15000 } = {}) {
+  return familyAskSupport({ bin, timeoutMs, flags: GEMINI_ASK_FLAGS, minVersion: GEMINI_ASK_MIN_VERSION, label: 'Gemini CLI', install: 'npm i -g @google/gemini-cli', binEnv: 'WORCA_GEMINI_BIN',
+    extra: () => (systemPolicyPresent() ? `the system policy folder (${systemPolicyDir()}) holds policy files, so Gemini CLI would skip worca's chat lockdown` : null) });
+}
+
+/** The machine's own system settings file, which outranks the chat folder's settings. */
+export const GEMINI_SYSTEM_SETTINGS_PATHS = Object.freeze({
+  darwin: '/Library/Application Support/GeminiCli/settings.json', win32: 'C:\\ProgramData\\gemini-cli\\settings.json', linux: '/etc/gemini-cli/settings.json',
+});
+
+/** The config a Gemini CLI chat reads (a change re-runs the self-test): the user's and the machine's. */
+export function geminiConfigFiles(env = process.env) {
+  const base = (typeof env.GEMINI_CLI_HOME === 'string' && env.GEMINI_CLI_HOME.trim()) || homeOf(env);
+  const g = join(base, '.gemini');
+  return [join(g, 'settings.json'), join(g, '.env'), join(homeOf(env), '.env'), join(g, 'policies'), join(g, 'extensions'),
+    join(g, 'GEMINI.md'), systemPolicyDir(),
+    (typeof env.GEMINI_CLI_SYSTEM_SETTINGS_PATH === 'string' && env.GEMINI_CLI_SYSTEM_SETTINGS_PATH.trim()) || GEMINI_SYSTEM_SETTINGS_PATHS[process.platform] || GEMINI_SYSTEM_SETTINGS_PATHS.linux];
+}
+
+/** The chat self-test on this gemini (engines/chat-selftest.mjs): the Gemini API from a local endpoint. */
+export function geminiChatSelfTest({ bin = geminiDefaultBin(), ...o } = {}) {
+  return chatSelfTest({
+    engine: 'gemini', label: 'Gemini CLI', bin, run: runGeminiProcess, protocol: 'gemini',
+    probeEnv: (url) => ({ GEMINI_API_KEY: 'worca-self-test', GOOGLE_GEMINI_BASE_URL: url, GOOGLE_GENAI_USE_VERTEXAI: 'false', GOOGLE_GENAI_USE_GCA: 'false', GEMINI_MODEL: SELF_TEST_MODEL }),
+    wireName: (server, tool) => `mcp_${server}_${tool}`, configFiles: geminiConfigFiles(), ...o,
+  });
+}
+
+/** Gemini CLI's chat descriptor (engines/chat-descriptor.mjs). A chat runs in a folder of its own (`ownFolder`): Gemini
+ *  keeps sessions per folder and reads the chat's settings from it. Each `impl` is the function a test hands the turn. */
+export const geminiChat = Object.freeze({ ...makeChatDescriptor({
+  engine: 'gemini',
+  lockdown: () => GEMINI_ASK_LOCKDOWN,
+  askSupport: (o, impl = geminiAskSupport) => impl(o),
+  selfTest: (o, impl = geminiChatSelfTest) => impl(o),
+  preflight: (_ctx, impl = geminiPreflight) => impl(),
+  resumeNotFound: (err) => GEMINI_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
+  docsAnchor: 'gemini-cli-and-qwen-code',
+  prompt: { cli: "Gemini CLI with Gemini CLI's own sign-in" },
+}), ownFolder: true });

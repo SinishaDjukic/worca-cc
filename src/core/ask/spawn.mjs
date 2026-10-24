@@ -22,11 +22,12 @@
 // instruction can at most make worca GET an allowlisted https URL. Native WebFetch/WebSearch stay
 // denied, and the mcp__worca grant already covers the web tools, so the tool list never changes.
 // The search key's VALUE never touches disk (webKeyVar): only its var name joins envAllowlist.
-import { resolve as resolvePath } from 'node:path';
+import { resolve as resolvePath, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RESERVED_KEY_VAR } from '../web-allowlist.mjs';
 import { keepListNames } from '../mcp/keep-list.mjs';
 import { ASK_DENY_RULES } from './deny-rules.mjs';
+import { chatDescriptor } from '../engines/chat.mjs';
 
 /** Absolute path of the worca MCP server script — the `serverPath` of buildMcpConfig (P2 never guesses it). */
 export const ASK_MCP_SERVER_PATH = fileURLToPath(new URL('./mcp-stdio.mjs', import.meta.url));
@@ -159,8 +160,9 @@ function bridgeTokens({ commands = null, proxy = null } = {}) {
 export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpConfigPath, scratchDir, memoryDir = null, web = null, relayed = false, registry = null, commands = null, proxy = null, skills = null, engine = 'claude', composer = false, git = true } = {}) {
   if (!scratchDir) throw new Error('buildAskSpawnOptions: scratchDir is required');
   if (!mcpConfigPath) throw new Error('buildAskSpawnOptions: mcpConfigPath is required');
-  if (engine === 'codex') return buildCodexAskOptions({ thread, turn, mcpConfigPath, scratchDir, web, relayed, commands, proxy });
-  if (engine === 'copilot') return buildCopilotAskOptions({ thread, turn, mcpConfigPath, scratchDir, web, relayed, commands, proxy });
+  const chat = engine !== 'claude' ? chatDescriptor(engine) : null;
+  if (engine !== 'claude' && !chat) throw new Error(`buildAskSpawnOptions: Chat does not run on ${engine}`);
+  if (chat) return buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, web, relayed, commands, proxy });
   const systemPrompt = String(turn.systemPrompt ?? '') + (turn.mock ? buildMockMarkers(turn.mock.card) : '');
   const reg = registry && Array.isArray(registry.copies) && registry.copies.length ? registry : null;
   // Skills registry §4.4 (P3 probe 6): --disable-slash-commands hides the Skill tool AND every plugin skill, so a turn
@@ -225,18 +227,21 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
 }
 
 /**
- * A Codex chat's spawn (cascading-settings-design.md D13, §4.6): read-only sandbox, the lockdown (no shell, no image
- * viewer, no native web search, no browser/apps — codex.mjs CODEX_ASK_LOCKDOWN; codex keeps its sub-agent tools, which the
- * watchdog stops the turn on), the worca MCP server from the same per-turn
- * config file, approval `never` (exec has no other mode), and NO writable dir: memory is read through read_file, never
- * an --add-dir root. Claude's levers (tool lists, permission rules, --max-turns/--max-budget-usd, routing env) do not
- * exist on codex; the caps are turn.mjs's watchdog (D14). The host-guard preamble is prepended by the adapter.
+ * A locked-down chat's spawn (cascading-settings-design.md D13, §4.6) on the engine of `chat` (its chat descriptor,
+ * engines/chat.mjs): the adapter's Ask lockdown (askLockdown — Codex: CODEX_ASK_LOCKDOWN; Copilot: no built-in tool,
+ * only the worca MCP server, no custom instructions; Gemini CLI and Qwen Code: plans/ask-on-qwen-gemini-spike.md), the
+ * worca MCP server from the same per-turn config file, a scrubbed env, and NO writable dir: memory is read through
+ * read_file, never an --add-dir root. This turn's images ride along only on an engine that takes them (Codex, `-i`).
+ * An engine that keeps its sessions and settings per folder (`ownFolder`: Gemini CLI) runs in the chat's own folder under
+ * the scratch dir, the same every turn. Claude's levers (tool lists, permission rules, --max-turns/--max-budget-usd,
+ * routing env) do not exist there; the caps are turn.mjs's watchdog (D14). The host-guard preamble is prepended by the
+ * adapter.
  */
-function buildCodexAskOptions({ thread, turn, mcpConfigPath, scratchDir, web, relayed, commands = null, proxy = null }) {
+function buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, web, relayed, commands = null, proxy = null }) {
   const keyVar = !relayed ? webKeyVar(web) : null;
   return {
-    engine: 'codex',
-    cwd: scratchDir,
+    engine: chat.engine,
+    cwd: chat.ownFolder && thread.id ? join(scratchDir, chat.engine, String(thread.id)) : scratchDir,
     prompt: String(turn.prompt ?? ''),
     systemPrompt: String(turn.systemPrompt ?? '') + (turn.mock ? buildMockMarkers(turn.mock.card) : ''),
     model: turn.model,
@@ -245,42 +250,13 @@ function buildCodexAskOptions({ thread, turn, mcpConfigPath, scratchDir, web, re
     askLockdown: true,
     mcpConfigPath,
     envScrub: true,
-    // The MCP child needs them (ssh-remote git fetch; the web search key): codex hands them on through env_vars.
+    // The MCP child needs them (ssh-remote git fetch; the web search key): the adapter hands them on (codex through
+    // env_vars, copilot's MCP children inherit its env, Gemini CLI and Qwen Code by ${VAR} reference).
     envAllowlist: ['SSH_AUTH_SOCK', ...(keyVar ? [keyVar] : [])],
     ...(thread.sessionId ? { resumeSessionId: thread.sessionId } : {}),
-    ...(Array.isArray(turn.images) && turn.images.length ? { images: [...turn.images] } : {}),
+    ...(chat.images && Array.isArray(turn.images) && turn.images.length ? { images: [...turn.images] } : {}),
     // Agent mode (#574): the command bridge token, as a Claude chat gets it — never on disk; the adapter hands an Ask
-    // chat's spawn env to its MCP servers (codex.mjs askLockdown).
-    ...(commands?.token || proxy?.token ? { spawnEnv: bridgeTokens({ commands, proxy }) } : {}),
-    signal: turn.signal,
-    onEvent: turn.onEvent,
-  };
-}
-
-/**
- * A Copilot chat's spawn: the adapter's Ask lockdown (engines/copilot.mjs askLockdown — no built-in tool at all, only the
- * worca MCP server from the per-turn config, no custom instructions, a scrubbed env), no writable dir and no added
- * folder: memory is read through read_file. No images (copilot takes none; the composer refuses them). Claude's levers
- * do not exist on copilot; the caps are turn.mjs's watchdog. The host-guard preamble is prepended by the adapter.
- */
-function buildCopilotAskOptions({ thread, turn, mcpConfigPath, scratchDir, web, relayed, commands = null, proxy = null }) {
-  const keyVar = !relayed ? webKeyVar(web) : null;
-  return {
-    engine: 'copilot',
-    cwd: scratchDir,
-    prompt: String(turn.prompt ?? ''),
-    systemPrompt: String(turn.systemPrompt ?? '') + (turn.mock ? buildMockMarkers(turn.mock.card) : ''),
-    model: turn.model,
-    effort: turn.effort,
-    sandbox: 'read-only',
-    askLockdown: true,
-    mcpConfigPath,
-    envScrub: true,
-    // The MCP child inherits copilot's env (verified on 1.0.100): ssh-remote git fetch, the web search key.
-    envAllowlist: ['SSH_AUTH_SOCK', ...(keyVar ? [keyVar] : [])],
-    ...(thread.sessionId ? { resumeSessionId: thread.sessionId } : {}),
-    // Agent mode (#574): the command bridge token, never on disk; the adapter hands an Ask chat's spawn env to copilot,
-    // whose MCP children inherit it.
+    // chat's spawn env to its MCP servers.
     ...(commands?.token || proxy?.token ? { spawnEnv: bridgeTokens({ commands, proxy }) } : {}),
     signal: turn.signal,
     onEvent: turn.onEvent,
@@ -353,11 +329,11 @@ export function buildMcpConfig({ homeBase, threadId, execPath = process.execPath
     env: { WORCA_HOME: base, WORCA_ASK_THREAD_ID: thread, ...forwarded, ...authEnv(claudeAuth), ...(typeof reader === 'string' && reader ? { WORCA_ASK_READER: reader } : {}), ...webMcpEnv(web),
       // The parent's git answer (P0): the child's gitAvailable() reads it, so git-only tools follow this machine.
       ...(typeof git === 'boolean' ? { WORCA_GIT: git ? '1' : '0' } : {}),
-      // A Codex or Copilot chat's child adds read_file / grep / glob (file-deps.mjs) and classifies on its engine (D13, D8).
-      ...(engine === 'codex' || engine === 'copilot' ? { WORCA_ASK_ENGINE: engine } : {}),
+      // A locked-down chat's child adds read_file / grep / glob (file-deps.mjs) and classifies on its engine (D13, D8).
+      ...(chatDescriptor(engine) ? { WORCA_ASK_ENGINE: engine } : {}),
       // Such a turn's set skills (#635): this message's mount, one more read-only root of read_file / grep / glob. The
       // file is per message, so the root lives as long as the turn; the child checks it names exactly such a folder.
-      ...((engine === 'codex' || engine === 'copilot') && typeof skillRoot === 'string' && skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}),
+      ...(chatDescriptor(engine) && typeof skillRoot === 'string' && skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}),
       // Agent mode (#574): the bridge URL only; its token rides spawnEnv (buildAskSpawnOptions), never this file.
       ...(commands && commands.url ? { WORCA_ASK_COMMANDS: JSON.stringify({ url: commands.url }) } : {}),
       ...(proxy && proxy.url ? { WORCA_ASK_PROXY: JSON.stringify({ url: proxy.url }) } : {}) },

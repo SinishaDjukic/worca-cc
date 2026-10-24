@@ -4,10 +4,11 @@
 // One call per thread at a time — a newer one, or a new turn on the thread, aborts the older one.
 import { auxTextCall, DEFAULT_TITLE_MODEL, modelReady } from '../title.mjs';
 import { catalogHasModel } from '../config.mjs';
+import { chatDescriptor } from '../engines/chat.mjs';
 
 export const SUGGESTION_TIMEOUT_MS = 30_000;
-/** Codex's suggestion model: the cheapest priced gpt-5.6 model (list-prices.mjs). */
-export const CODEX_SUGGESTION_MODEL = 'gpt-5.6-luna';
+/** Codex's suggestion model: the cheapest priced gpt-5.6 model (list-prices.mjs; its chat descriptor's). */
+export const CODEX_SUGGESTION_MODEL = chatDescriptor('codex').suggestionModel;
 const MAX_LEN = 80;
 const MAX_WORDS = 12;
 
@@ -20,11 +21,11 @@ const SYSTEM = [
 ].join(' ');
 
 /** The fixed cheap model per engine: Haiku on Claude while it is in the catalog and ready (else null: no
- *  suggestion — never the chat's own, possibly expensive, model), the small model on Codex. Copilot: none — every
- *  copilot call spends a premium request, and a Copilot chat makes no Claude call. */
+ *  suggestion — never the chat's own, possibly expensive, model); on another engine its chat descriptor's (Codex: its
+ *  small model; Copilot: none — every copilot call spends a premium request; Gemini CLI, Qwen Code: none — a chat makes
+ *  no call outside its lockdown, and they have no read-only mode). */
 export function suggestionModel(engine, { inCatalog = (id) => catalogHasModel(id, { engine: 'claude' }), ready = modelReady } = {}) {
-  if (engine === 'codex') return CODEX_SUGGESTION_MODEL;
-  if (engine === 'copilot') return null;
+  if (engine && engine !== 'claude') return chatDescriptor(engine)?.suggestionModel ?? null;
   try { return inCatalog(DEFAULT_TITLE_MODEL) && ready(DEFAULT_TITLE_MODEL) ? DEFAULT_TITLE_MODEL : null; } catch { return null; }
 }
 

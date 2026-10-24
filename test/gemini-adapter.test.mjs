@@ -115,7 +115,7 @@ test('capabilities: declared from the spike, cost is false', () => {
   assert.deepEqual(Object.keys(geminiCapabilities).sort(), [...CAPABILITY_KEYS].sort());
   assert.deepEqual(CAPABILITY_KEYS.filter((k) => geminiCapabilities[k] === false),
     ['systemPromptFlag', 'allowedTools', 'effort', 'cost', 'subagents', 'hookTelemetry', 'skills', 'subagentSystemPrompt', 'turnBudget']);
-  assert.equal(GEMINI_ASK_LOCKDOWN, null);
+  assert.ok(GEMINI_ASK_LOCKDOWN, 'Chat runs on Gemini CLI, locked down (plans/ask-on-qwen-gemini-spike.md)');
 });
 
 test('rule plan: shell, web and MCP tool rules held; command and path rules partial; the rest unenforced', () => {
@@ -257,9 +257,8 @@ test('spawn: a folder in the run store brings its project\'s store folder, so pl
   assert.deepEqual(a.filter((x, i) => a[i - 1] === '--include-directories'), [memory, project]);
 });
 
-test('read-only and Ask spawns refuse', async () => {
+test('a read-only spawn refuses (an Ask spawn is test/gemini-ask-adapter.test.mjs)', async () => {
   await assert.rejects(runGeminiProcess({ cwd: tmp(), bin: '/nonexistent', prompt: 'x', sandbox: 'read-only' }), /read-only/);
-  await assert.rejects(runGeminiProcess({ cwd: tmp(), bin: '/nonexistent', prompt: 'x', askLockdown: true }), /Chat on Gemini CLI is unavailable/);
 });
 
 test('resume: a gemini: session resumes it; a foreign one starts fresh and says so', POSIX, async () => {

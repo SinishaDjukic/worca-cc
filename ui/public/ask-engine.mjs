@@ -1,7 +1,7 @@
 // ui/public/ask-engine.mjs — Ask Worca's engine rules for the panel (cascading-settings-design.md D12, D16, §6). Pure.
-/** The engines an Ask chat runs on, in picker order (src/core/model-env.mjs ASK_ENGINES; kept equal by a test). */
-export const ASK_CHAT_ENGINES = Object.freeze(['claude', 'codex', 'copilot']);
-import { engineChoiceLabel } from '../../src/shared/engine-switch.mjs';
+import { engineChoiceLabel, CHAT_ENGINE_NAMES, chatAttachRefusal } from '../../src/shared/engine-switch.mjs';
+/** The engines an Ask chat runs on, in picker order (engine-switch.mjs `chat`, as src/core/model-env.mjs ASK_ENGINES). */
+export const ASK_CHAT_ENGINES = CHAT_ENGINE_NAMES;
 import { runsOn } from '../../src/shared/connections.mjs';
 /** A catalog row's engine: the server tags every non-Claude row; an untagged row is Claude. */
 export const engineOfEntry = (m) => (m && m.engine) || 'claude';
@@ -24,10 +24,16 @@ export function pickerGroups(models, { lock = null } = {}) {
   }
   return out;
 }
-const COPILOT_REFUSED_EXT = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp']);
-/** D16: what a Codex or Copilot chat cannot take, said before upload (Copilot takes no image either). */
+const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+/** D16: what a chat's engine cannot take, said before upload (engine-switch.mjs chatAttachRefusal: a Codex chat no PDF;
+ *  Copilot, Gemini CLI and Qwen Code no image or PDF either). */
 export function attachRefusal({ ext, engine }) {
-  if (engine === 'codex' && ext === '.pdf') return 'PDFs need a Claude chat';
-  if (engine === 'copilot' && COPILOT_REFUSED_EXT.has(ext)) return 'images and PDFs need a Claude chat';
-  return null;
+  const pdf = ext === '.pdf';
+  if (!pdf && !IMAGE_EXT.has(ext)) return null;
+  return chatAttachRefusal({ engine, kind: pdf ? 'binary' : 'image', pdf });
+}
+/** A notice that an engine is not ready for a chat: the turn flags it `<engine>Setup` (its chat descriptor's
+ *  notReady.flag, src/core/engines/chat-descriptor.mjs), and the panel opens its setup docs in a new tab. */
+export function isEngineSetupNotice(b) {
+  return !!b && ASK_CHAT_ENGINES.some((e) => e !== 'claude' && b[`${e}Setup`] === true);
 }

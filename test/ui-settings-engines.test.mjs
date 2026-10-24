@@ -108,7 +108,8 @@ test('renderAskEngineSection offers no Cursor engine', () => {
   const doc = new JSDOM('<!doctype html><div id="h"></div>').window.document;
   const host = doc.getElementById('h');
   renderAskEngineSection(host, { catalog: CATALOG });
-  assert.deepEqual([...host.querySelectorAll('[data-setting="askEngine"] option')].map((o) => o.value).filter(Boolean), ['codex', 'copilot'], 'Claude is the default option, listed once');
+  assert.deepEqual([...host.querySelectorAll('[data-setting="askEngine"] option')].map((o) => o.value).filter(Boolean), ['codex', 'copilot', 'gemini', 'qwen'], 'Claude is the default option, listed once');
+  assert.match(host.textContent, /Chat on Qwen Code needs a Qwen Code model: add one on the Models page\./, 'an engine that ships no model says how to get one');
 });
 
 async function boot(settings = {}, { hash = 'settings', engines = null } = {}) {

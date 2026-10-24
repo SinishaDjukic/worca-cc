@@ -83,7 +83,7 @@ test('capabilities: the system prompt flag is the one Gemini lacks; cost is fals
   assert.deepEqual(Object.keys(qwenCapabilities).sort(), [...CAPABILITY_KEYS].sort());
   assert.deepEqual(CAPABILITY_KEYS.filter((k) => qwenCapabilities[k] === false),
     ['allowedTools', 'effort', 'cost', 'subagents', 'hookTelemetry', 'skills', 'subagentSystemPrompt', 'turnBudget']);
-  assert.equal(QWEN_ASK_LOCKDOWN, null);
+  assert.ok(QWEN_ASK_LOCKDOWN, 'Chat runs on Qwen Code, locked down (plans/ask-on-qwen-gemini-spike.md)');
 });
 
 test('rule plan: Qwen reads Claude\'s rule syntax; command rules and file-write path rules are partial; unknown tools unenforced', () => {
@@ -195,9 +195,8 @@ test('spawn: a system prompt too long for argv is folded into stdin', POSIX, asy
   assert.match(rec.stdin, /^=== SYSTEM ===\n/);
 });
 
-test('read-only and Ask spawns refuse', async () => {
+test('a read-only spawn refuses (an Ask spawn is test/qwen-ask-adapter.test.mjs)', async () => {
   await assert.rejects(runQwenProcess({ cwd: tmp(), bin: '/nonexistent', prompt: 'x', sandbox: 'read-only' }), /read-only/);
-  await assert.rejects(runQwenProcess({ cwd: tmp(), bin: '/nonexistent', prompt: 'x', askLockdown: true }), /Chat on Qwen Code is unavailable/);
 });
 
 test('resume: a qwen: session resumes it; one Qwen no longer knows starts fresh and says so', POSIX, async () => {
