@@ -79,6 +79,7 @@
     "verify:flags": "node --disable-warning=ExperimentalWarning tools/verify-flags-cdp.mjs",
     "verify:feature-page": "node --disable-warning=ExperimentalWarning tools/verify-feature-page-cdp.mjs",
     "verify:runs-list": "node --disable-warning=ExperimentalWarning tools/verify-runs-list-cdp.mjs",
+    "mock:artifact": "node --disable-warning=ExperimentalWarning tools/mock-artifact.mjs",
     "test": "node tools/test.mjs",
     "test:fast": "node tools/test.mjs --tier fast",
     "test:slow": "node tools/test.mjs --tier slow",
