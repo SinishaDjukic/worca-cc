@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Run page: the PR details move from the tracker to the facts list
+
+- The three-step tracker carries fixed labels only: Changes done · Pull request · Merged. The last step no longer names the base branch, so a long branch name can no longer push its circle out of line; a label that wraps keeps its circle and connector on its first line.
+- The facts list (Group, Project, Branch) gains the rows the steps used to carry: **Merged** (the base branch the work is in, copyable like Branch, Advanced and up), **Kept work** (Download patch, Commit it yourself), **Pull request** (the shared PR chip: git-state icon, "PR #412", state word, opening GitHub in a new tab), **Checks** (the checks line in its colour) and **Watch** (its words, View fix run, and the Watch-stopped hint). GitHub's verdict stays in the status line only; Checks and Watch hide once the PR is merged.
+- A workspace run lists its PRs one per line under **Pull requests**, the member names in one column, and Watch only for members whose watch is doing something.
+- Fact labels never wrap.
+
 ### Projects: New never overrides; Remove deletes worca's own folders
 
 - New by name names what blocks it: a registered project by its stored name, a folder by its path ("<path> is already registered as "<name>""), in the dialog, over the API and on Ask cards; a refusal from Create itself keeps Create off until the name changes.

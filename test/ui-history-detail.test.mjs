@@ -351,12 +351,14 @@ test('Archive is disabled with a tooltip when the list row reports retained work
   // An AUTHORITATIVE retention offers the actions in the head, Apply as the one primary.
   assert.ok(keptBtn(doc, 'discard-kept'));
   assert.ok(keptBtn(doc, 'apply-kept').classList.contains('btn-primary'));
-  // The tracker's Changes step is the only recovery instruction: the patch and the copy-paste commands.
+  // The facts list's Kept work row is the only recovery instruction: the patch and the copy-paste commands.
   const step = doc.querySelector('#hist-detail .hd-glance .rd-track .rd-track-step');
   assert.ok(step.classList.contains('is-problem'));
-  const patch = [...step.querySelectorAll('a.rd-track-link')].find((a) => a.textContent === 'Download patch');
+  const kept = doc.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="kept"]');
+  assert.equal(kept.hidden, false);
+  const patch = [...kept.querySelectorAll('a.rd-fact-link')].find((a) => a.textContent === 'Download patch');
   assert.match(patch.getAttribute('href'), /\/recovery-patch\?/);
-  click(ctx.window, [...step.querySelectorAll('button.rd-track-act')].find((b) => b.textContent === 'Commit it yourself'));
+  click(ctx.window, [...kept.querySelectorAll('button.rd-fact-act')].find((b) => b.textContent === 'Commit it yourself'));
   assert.equal(doc.getElementById('viewer-title').textContent, 'Commit it yourself');
   const text = doc.getElementById('viewer').textContent;
   assert.match(text, /pre-commit hook failed/, "git's own stderr, verbatim");
@@ -364,15 +366,15 @@ test('Archive is disabled with a tooltip when the list row reports retained work
   assert.doesNotMatch(doc.querySelector('#hist-detail .hd-glance .rd-sheet').textContent, /worktree/i);
 });
 
-test('kept work on a stopped or a failed saved run: the head offers Discard and Apply to branch, the tracker its patch', async () => {
+test('kept work on a stopped or a failed saved run: the head offers Discard and Apply to branch, the facts list its patch', async () => {
   await checkRows(['stopped', 'error'].map((status) => ({ name: status, run: async () => {
     const ctx = await bootDetail({ rows: [retainedRow({ status })], detail: { ...PATCH_DETAIL, state: { ...DETAIL.state, status } } });
     await openDetail(ctx);
     const doc = ctx.window.document;
     assert.ok(keptBtn(doc, 'apply-kept'), `${status}: Apply to branch`);
     assert.ok(keptBtn(doc, 'discard-kept'), `${status}: Discard`);
-    const patch = [...doc.querySelectorAll('#hist-detail .hd-glance .rd-track a.rd-track-link')].find((a) => a.textContent === 'Download patch');
-    assert.ok(patch, `${status}: the tracker's Download patch`);
+    const patch = [...doc.querySelectorAll('#hist-detail .hd-glance .rd-kv [data-fact="kept"] a.rd-fact-link')].find((a) => a.textContent === 'Download patch');
+    assert.ok(patch, `${status}: the Kept work row's Download patch`);
   } })));
 });
 
