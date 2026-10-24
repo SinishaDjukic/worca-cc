@@ -1,7 +1,7 @@
 // src/core/title.mjs
 import { runClaude } from './claude-runner.mjs';
 import { normalizingOnEvent } from './engines/claude-events.mjs';
-import { resolveModelEnv, resolveModelCost, catalogHasModel } from './config.mjs';
+import { resolveModelEnv, resolveModelCost, catalogHasModel, estimateCost, isPriceableUsage } from './config.mjs';
 import { titleModel as storedTitleModel } from './settings.mjs';
 import { AUX_EFFORT } from './model-env.mjs';
 import { withRecoveryRetry } from './recovery-backoff.mjs';
@@ -227,6 +227,9 @@ export async function auxTextCall({ systemPrompt, prompt, model, engine = null }
       mcpConfigPath: opts.mcpConfigPath,
       // Every priced result is real spend (a 429 retry spawns again): hand it to the caller to book.
       onEvent: normalizingOnEvent((e) => {
+        // A locked-down chat's helper call on an engine that reports no cost: priced from its tokens with the chat's
+        // rates (opts.rates, ask/chat-price.mjs), as the chat's own turns are.
+        if (e?.type === 'result' && e.costUsd == null && engine && opts.rates && isPriceableUsage(e.usage)) e = { ...e, costUsd: estimateCost(e.usage, opts.rates) };
         if (e?.type !== 'result' || e.costUsd == null || typeof opts.onCost !== 'function') return;
         const usage = e.usage ?? null;
         const up = opts.bridgeTag ? bridgeCostFor(opts.bridgeTag) : null;   // a bridged model: the upstream's own figure wins

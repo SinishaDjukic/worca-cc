@@ -7,7 +7,7 @@
 // mode answers from recipes.mjs without spawning.
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
 import { normalizingOnEvent } from '../engines/claude-events.mjs';
-import { resolveModelEnv, resolveModelCost, modelCostConfig } from '../config.mjs';
+import { resolveModelEnv, resolveModelCost, modelCostConfig, estimateCost } from '../config.mjs';
 import { modelFacts, factsBrief, contextText, MODEL_PICK_POLICY } from '../model-tiers.mjs';
 import { bridgeCostFor, forgetBridgeTag } from '../bridge/telemetry.mjs';
 import { safeParseJson } from '../protocol.mjs';
@@ -297,7 +297,7 @@ export async function classifyTask(input, deps = {}) {
   const {
     taskText = '', extras = [], fingerprint = '', models = [], humanInLoop = true, feedback = [], priorShape = null, registry = {}, domain = null, requireModel = false,
     model, modelEnv, engine, cwd = process.cwd(), bin, mock = false, signal, envScrub, envAllowlist, maxAttempts = 2, repoLook: lookAsked = false, timeoutMs, bridgeTag = null,
-    workspace = null, addDirs = [], askLockdown = false,
+    workspace = null, addDirs = [], askLockdown = false, rates = null,
   } = input || {};
   // The repo look is Claude's Read/Grep/Glob. On codex the classifier is a read-only spawn with its shell off
   // (codex.mjs CODEX_SHELL_OFF): it looks through worca's own read_file/grep/glob over the checkout instead
@@ -364,6 +364,8 @@ export async function classifyTask(input, deps = {}) {
             usage.input_tokens += Number(u.input_tokens) || 0;
             usage.output_tokens += Number(u.output_tokens) || 0;
           }
+          // A locked-down chat's engine that reports no cost: priced from its tokens with the chat's rates (chat-price.mjs).
+          if (e.costUsd == null && rates && u) { const c = estimateCost(u, rates); if (Number.isFinite(c)) costUsd += c; return; }
           if (e.costUsd == null) return;
           const up = bridgeTag ? bridgeCostFor(bridgeTag) : null;   // a bridged model: the upstream's own figure wins
           if (up) forgetBridgeTag(bridgeTag);

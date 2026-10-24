@@ -1655,7 +1655,7 @@ class AskTurn extends EventEmitter {
       .then(() => d.generateSuggestion({ userText: this.firstText, replyText: this._replyText }, {
         cwd: aux.cwd,
         model,
-        ...(this.lockedDown ? { engine: this.engine, askLockdown: true } : {}),
+        ...(this.lockedDown ? { engine: this.engine, askLockdown: true, rates: this._ratesFor(model) } : {}),
         tools: [], strictMcpConfig: true, settingSources: ['project'],
         disableSlashCommands: true, envScrub: true, envAllowlist: [],
         permissionMode: 'dontAsk',

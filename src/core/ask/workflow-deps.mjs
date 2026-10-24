@@ -25,6 +25,8 @@ import { ASK_LIMITS } from './limits.mjs';
 import { utilityModelFor } from '../settings-cascade.mjs';
 import { runsOn } from '../../shared/connections.mjs';
 import { lockedChatEngine } from '../model-env.mjs';
+import { chatDescriptor } from '../engines/chat.mjs';
+import { chatModelRates } from './chat-price.mjs';
 
 const TUNABLE_KEYS = ['model', 'effort', 'fanOut', 'askQuestions'];
 const flat = (v, max) => cleanText(v, max);
@@ -226,7 +228,7 @@ export function defaultWorkflowDeps({ threadId = null, signal = null, classify =
           const input = {
             taskText: String(task).slice(0, ASK_LIMITS.workflowTaskMaxChars), extras: [], fingerprint, models, registry, domain: 'coding',
             humanInLoop: true, feedback: [], priorShape: null, model: chatEngine ? (utilityModelFor(chatEngine, 'classifier').model || chatModel) : resolveAutoModel(models),
-            ...(chatEngine ? { engine: chatEngine, askLockdown: true } : {}),
+            ...(chatEngine ? { engine: chatEngine, askLockdown: true, rates: chatModelRates(chatDescriptor(chatEngine), utilityModelFor(chatEngine, 'classifier').model || chatModel) } : {}),
             cwd: look ? look.cwd : cwd, repoLook: !!look,
             mock: mockEnabled({}), signal: signal || bundleSignal,
             ...(ws ? { workspace: {
