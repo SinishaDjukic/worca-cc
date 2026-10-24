@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { gitEnvFor, stripHostCredentials, hostLookupNeeded, githubOnlyEnv } from '../src/core/host-credentials.mjs';
+import { gitEnvFor, stripHostCredentials, hostLookupNeeded, githubOnlyEnv, TRACKER_STRIP_ONLY_KEYS, isTrackerTokenKey } from '../src/core/host-credentials.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 
@@ -37,6 +37,20 @@ test('gitEnvFor passes base to the GitHub env only when the caller gave one (run
 
 test('stripHostCredentials removes GitHub and Azure keys, including the strip-only Boards token (M1)', () => {
   assert.deepEqual(stripHostCredentials({ ...base, WORCA_ADO_GIT_TOKEN: 'x', WORCA_GIT_TOKEN: 'y', WORCA_ADO_BOARDS_TOKEN: 'b' }), { PATH: '/bin' });
+});
+
+test('stripHostCredentials and every git env drop the strip-only tracker tokens (jira-source)', async () => {
+  assert.ok(TRACKER_STRIP_ONLY_KEYS.includes('WORCA_JIRA_TOKEN'));
+  // One variable per Jira profile: WORCA_JIRA_TOKEN and WORCA_JIRA_TOKEN_<NAME>, any case (Windows).
+  const jira = { WORCA_JIRA_TOKEN: 'j', WORCA_JIRA_TOKEN_DC: 'd', worca_jira_token_cloud: 'c' };
+  assert.deepEqual(stripHostCredentials({ ...base, ...jira, WORCA_JIRA_TOKENX: 'kept', WORCA_JIRA_TOKEN_: 'kept too' }),
+    { PATH: '/bin', WORCA_JIRA_TOKENX: 'kept', WORCA_JIRA_TOKEN_: 'kept too' });
+  assert.deepEqual(['WORCA_JIRA_TOKEN', 'WORCA_JIRA_TOKEN_DC', 'worca_jira_token_cloud', 'WORCA_JIRA_TOKENX', 'WORCA_JIRA_TOKEN_', 'JIRA_TOKEN'].map(isTrackerTokenKey),
+    [true, true, true, false, false, false]);
+  const gh = await gitEnvFor('read', 'https://github.com/acme/ok1.git', { githubEnvImpl: async () => ({ env: { ...jira }, error: null }) });
+  const az = await gitEnvFor('read', 'https://dev.azure.com/acme/Shop/_git/api', { base: { ...base, ...jira } });
+  const other = await gitEnvFor('read', 'https://example.com/x.git', { base: { ...base, ...jira } });
+  for (const r of [gh, az, other]) assert.deepEqual(Object.keys(r.env).filter(isTrackerTokenKey), []);
 });
 
 test('hostLookupNeeded: only App mode, an Azure credential, or (for pushes) push-as-person', async () => {

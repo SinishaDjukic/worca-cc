@@ -476,8 +476,8 @@ level and has no **Diff**, **Changes** or **Actions**.
   GitHub issue URL or `owner/repo#123`, and the ticket becomes the run's task.
   Each source can close its issue or work item when the run succeeds; Ask
   Worca can find a ticket and propose a run for it. See
-  [GitHub Issues](plugins/github-source/README.md) and
-  [Azure Boards](docs/azure-devops.md).
+  [GitHub Issues](plugins/github-source/README.md),
+  [Azure Boards](docs/azure-devops.md) and [Jira](plugins/jira-source/README.md).
 - **Drive runs from chat** — two-way **Telegram**, **Slack**, **Discord** and
   **Microsoft Teams** channels (Teams needs a public HTTPS endpoint through a
   tunnel; the others dial out). Pick the events that notify — questions and

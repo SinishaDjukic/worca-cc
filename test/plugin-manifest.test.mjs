@@ -842,11 +842,11 @@ test('configSchema `advanced` folds an optional field: a boolean, no warning; th
   assert.deepEqual(r.manifest.chatChannels[0].configSchema.map((f) => [f.key, f.advanced]), [['a', true], ['b', false], ['c', false]]);
   const root = fileURLToPath(new URL('../plugins/', import.meta.url));
   const advanced = {};
-  for (const p of ['slack-chat', 'discord-chat', 'teams-chat', 'telegram-chat', 'github-source', 'azure-boards-source']) {
+  for (const p of ['slack-chat', 'discord-chat', 'teams-chat', 'telegram-chat', 'github-source', 'azure-boards-source', 'jira-source']) {
     const b = normalizeManifest(JSON.parse(readFileSync(join(root, p, 'worca-cc-plugin.json'), 'utf8')));
     assert.deepEqual([b.ok, b.warnings], [true, []], p);
     advanced[p] = [...b.manifest.taskSources, ...b.manifest.chatChannels].flatMap((s) => s.configSchema.filter((f) => f.advanced).map((f) => f.key));
   }
   assert.deepEqual(advanced, { 'slack-chat': ['channelAllowlist'], 'discord-chat': ['channelAllowlist'], 'teams-chat': ['tenantType', 'tenantId'],
-    'telegram-chat': [], 'github-source': [], 'azure-boards-source': [] });
+    'telegram-chat': [], 'github-source': [], 'azure-boards-source': [], 'jira-source': [] });
 });
