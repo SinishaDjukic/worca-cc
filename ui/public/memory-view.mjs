@@ -4,12 +4,11 @@
 // fetch, no listeners outside the returned tree (guardrails-view.mjs posture). app.js owns the
 // endpoint calls and the mounting; node:test drives these via jsdom. Interactive elements carry a
 // routing class (mem-new, mem-save, mem-cancel, mem-delete, mem-restore, mem-defrag; the Team view:
-// mem-view, mem-team-switch, mem-team-sync, mem-team-seed, mem-team-dismiss, mem-team-undo,
+// mem-view, mem-team-load, mem-team-sync, mem-team-seed, mem-team-dismiss, mem-team-undo,
 // mem-team-compare, mem-team-remove; the project Overview's offer: mem-team-turn-on, mem-team-not-now; the seeding dialog: mem-seed-check, mem-seed-all, mem-seed-clash)
 // plus data-name / data-id, so the controller wires ONE delegated listener per host. The namespace is
 // `mem-*`: `mv-*` belongs to the Models page (models-view.mjs). Every string that came from disk
 // (names, hooks, bodies, reasons) is a textContent / value — never innerHTML.
-import { makeSwitch } from './switch.mjs';
 
 function h(doc, tag, cls, text) {
   const n = doc.createElement(tag);
@@ -310,28 +309,44 @@ export function renderMemoryViews(view, { doc = globalThis.document } = {}) {
   return seg;
 }
 
+/** Local · Team · Both — which memory runs and chats load (team-memory-load-choice.md). Local is team memory off; Team
+ *  and Both share this project's notes and load the team's — Team nothing else, Both this machine's notes too. */
+export const TEAM_LOADS = Object.freeze([['local', 'Local'], ['team', 'Team'], ['both', 'Both']]);
+/** The status's load: 'local' while off; an older server's on (no `load`) is Both. */
+export const teamLoadOf = (status) => (!status?.enabled ? 'local' : status.load === 'team' ? 'team' : 'both');
+/** The PATCH value of `memory.team` for a load: null (off), "only" or true. */
+export const teamLoadValue = (load) => (load === 'team' ? 'only' : load === 'both' ? true : null);
+function teamLoadHint(load, status) {
+  if (load === 'team') return `Runs and chats load the team's notes only — your shared notes and teammates', newest ${status?.caps?.teamMaxFiles ?? 50} — not the notes that stay on this machine. Notes written or changed here are shared on the ${status.branch} branch after a secret check.`;
+  if (load === 'both') return `Runs and chats load your notes and teammates'. Notes written or changed here are shared on the ${status.branch} branch of this repository after a secret check. Your note wins over the team's of the same name, and changing it replaces the team's version.`;
+  return `${status?.available?.branchOnOrigin === true ? `${TEAM_AVAILABLE_TEXT}: its worca-memory branch is on origin. ` : ''}Runs and chats load this machine's notes only. Team or Both shares this project's notes with teammates on a worca-memory branch of its repository, after a secret check; the notes that exist now stay on this machine until you pick which to share.`;
+}
 /**
- * The Team view's head: the opt-in switch (`mem-team-switch`) and what it does; on, the branch, the last fetch and
- * push, every sync error with 1a's hint, the counts, and the seeding controls — the one-time offer (`mem-team-seed` /
- * `mem-team-dismiss`) until finished or dismissed, then a plain "Share existing notes…", and Undo of the last seeding
- * (`mem-team-undo`). `busy`: a request of the view is on its way — every control waits for it.
+ * The Team view's head: which memory loads (`mem-team-load` buttons, Local · Team · Both) and what that does; on, the
+ * branch, the last fetch and push, every sync error with 1a's hint, the counts, and the seeding controls — the one-time
+ * offer (`mem-team-seed` / `mem-team-dismiss`) until finished or dismissed, then a plain "Share existing notes…", and
+ * Undo of the last seeding (`mem-team-undo`). `busy`: a request of the view is on its way — every control waits for it.
  */
 export function renderTeamCard(status, { doc = globalThis.document, busy = false } = {}) {
   const on = !!status?.enabled;
+  const load = teamLoadOf(status);
   const card = h(doc, 'section', 'card mem-team-card');
   const head = h(doc, 'div', 'mem-team-head');
   head.appendChild(h(doc, 'b', '', 'Team memory'));
-  const { row: toggle, input: cb } = makeSwitch(doc, { label: on ? 'On' : 'Off', ariaLabel: 'Share this project\'s notes with the team',
-    checked: on, inputClass: 'mem-team-switch', rowClass: 'mem-team-toggle' });
-  // Off and refused by the server's own check (D8: no git, a Folder project, no origin): the switch could never turn on.
+  const seg = h(doc, 'div', 'seg seg-sm mem-team-loads');
+  seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', 'Which memory runs and chats load');
+  // Off and refused by the server's own check (D8: no git, a Folder project, no origin): Team and Both could never turn on.
   const blocked = !on && status?.canStart === false;
-  cb.disabled = !!busy || blocked;
-  head.appendChild(toggle);
+  for (const [key, label] of TEAM_LOADS) {
+    const b = h(doc, 'button', `mem-team-load${load === key ? ' on' : ''}`, label);
+    b.type = 'button'; b.dataset.load = key;
+    b.setAttribute('aria-pressed', String(load === key));
+    b.disabled = !!busy || (blocked && key !== 'local');
+    seg.appendChild(b);
+  }
+  head.appendChild(seg);
   card.appendChild(head);
-  card.appendChild(h(doc, 'small', blocked ? 'hint mem-team-cannot' : 'hint', on
-    ? `Notes written or changed here are shared on the ${status.branch} branch of this repository after a secret check, and teammates' notes load into runs and chats. Your note wins over the team's of the same name, and changing it replaces the team's version.`
-    : blocked ? teamStartRefusal(status.startError)
-      : `${status?.available?.branchOnOrigin === true ? `${TEAM_AVAILABLE_TEXT}: its worca-memory branch is on origin. ` : ''}Share this project's notes with teammates on a worca-memory branch of its repository, after a secret check. The notes that exist now stay on this machine until you pick which to share.`));
+  card.appendChild(h(doc, 'small', blocked ? 'hint mem-team-cannot' : 'hint', blocked ? teamStartRefusal(status.startError) : teamLoadHint(load, status)));
   if (!on) return card;
   const r = status.remote || {};
   const where = r.exists === false ? 'not on origin yet — the first note shared starts it' : r.headSha ? `at ${String(r.headSha).slice(0, 7)}` : 'not fetched yet';
@@ -406,10 +421,19 @@ function teamButton(doc, cls, label, name, busy) {
   b.type = 'button'; b.dataset.name = name; b.disabled = !!busy;
   return b;
 }
-function teamRowDetail(n) {
+function teamRowDetail(n, load) {
+  const text = teamStateDetail(n, load);
+  // Team notes only (load 'team'): a local copy that does not load says so — a plain local, held or blocked note always,
+  // a shared or pending one when over the cap.
+  if (load !== 'team' || !n.local || n.mounted !== false || (n.state === 'local' && n.shadows)) return text;
+  return `${text} Not loaded into runs: ${n.state === 'shared' || n.state === 'pending' ? 'over the team note cap' : 'Team loads team notes only'}.`;
+}
+function teamStateDetail(n, load) {
   const by = [n.author ? `by ${n.author}` : '', n.updated ? formatWhen(n.updated) : ''].filter(Boolean).join(', ');
   switch (n.state) {
-    case 'local': return n.shadows ? 'The team has a different note of this name — yours is the one loaded here until you compare them.' : 'On this machine only.';
+    case 'local':
+      if (n.shadows && load === 'team') return 'The team has a different note of this name — the team\'s is the one loaded here (Team loads team notes only) until you compare them.';
+      return n.shadows ? 'The team has a different note of this name — yours is the one loaded here until you compare them.' : 'On this machine only.';
     case 'held': return 'Differs from the team\'s version and held: none of its changes are shared until you keep yours or take the team\'s.';
     case 'blocked': return `Not shared: ${n.reason || 'the secret check flagged it'}. Edit the note so the check passes; it is shared then.`;
     case 'pending': return n.error ? `Waiting to be pushed — the last push failed (${firstLine(n.error)}).` : 'Waiting to be pushed.';
@@ -437,7 +461,7 @@ export function renderTeamNotes(status, { doc = globalThis.document, busy = fals
     const { text, cls } = teamStateBadge(n.state);
     title.append(h(doc, 'span', 'mono', `${n.name}.md`), h(doc, 'span', `badge ${cls}`, text));
     main.appendChild(title);
-    const detail = teamRowDetail(n);
+    const detail = teamRowDetail(n, teamLoadOf(status));
     if (detail) main.appendChild(h(doc, 'div', 'mem-team-detail', detail));
     if (n.state === 'blocked' && Array.isArray(n.findings) && n.findings.length) {
       const ul = h(doc, 'ul', 'mem-team-findings');

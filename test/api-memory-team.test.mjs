@@ -65,6 +65,16 @@ test('the switch: memory.team is refused 400 without origin; with origin it turn
   assert.equal((await call('PUT', `/api/memory/projects/${shop.key}/files/legacy`, { text: legacy })).status, 200);
   await drainTeamMemoryFlushes();
   assert.equal((await call('GET', `/api/memory/team/${shop.key}`)).json.notes.find((n) => n.name === 'legacy').state, 'local');
+  // Both → Team ("only"): what loads changes, nothing else — the note keeps its opt-in baseline, nothing is re-recorded.
+  const only = await call('PATCH', `/api/projects/${shop.key}/settings`, { 'memory.team': 'only' });
+  assert.equal(only.status, 200);
+  const st = (await call('GET', `/api/memory/team/${shop.key}`)).json;
+  assert.deepEqual([st.enabled, st.load], [true, 'team']);
+  const legacyRow = st.notes.find((n) => n.name === 'legacy');
+  assert.deepEqual([legacyRow.state, legacyRow.mounted], ['local', false], 'not loaded: Team loads team notes only');
+  assert.equal((await call('PATCH', `/api/projects/${plain.key}/settings`, { 'memory.team': 'only' })).json.code, 'NO_ORIGIN', 'Team from off is a switch-on: the same refusal');
+  assert.equal((await call('PATCH', `/api/projects/${shop.key}/settings`, { 'memory.team': 'all' })).status, 400);
+  assert.equal((await call('PATCH', `/api/projects/${shop.key}/settings`, { 'memory.team': true })).status, 200, 'back to Both for the next test');
 });
 
 test('a Memory-page save is queued, gated and pushed; a team delete removes it from the branch', { skip }, async () => {

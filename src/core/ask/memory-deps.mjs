@@ -12,7 +12,7 @@ import { mountDirs, withStoreLock, refreshMount } from '../memory-sync.mjs';
 import { memoryCaps } from '../settings.mjs';
 import { listProjects, worcaHome } from '../projects.mjs';
 import { PROJECT_KEY_RE } from '../store.mjs';
-import { mountTeamLayer, refreshTeamLayerSoon, teamListing, readTeamNote } from '../memory-team.mjs';
+import { mountTeamLayer, refreshTeamLayerSoon, teamListing, readTeamNote, teamMemoryLoadOf, memoryLoadPlan, memoryLoadPlans, loadFilteredDirs } from '../memory-team.mjs';
 
 /** {key, name, path} for a registered project key, or null. */
 async function projectByKey(key) {
@@ -21,13 +21,27 @@ async function projectByKey(key) {
   return p ? { key: p.key, name: p.name || '', path: p.path } : null;
 }
 
+/** The local notes a project scope loads, or null when every one does (memoryLoadPlan). */
+async function loadedLocalNames(scope) {
+  if (scope?.kind !== 'project' || teamMemoryLoadOf(scope.projectKey) !== 'team') return null;
+  return (await memoryLoadPlan(scope.projectKey)).localNames;
+}
+
 export function defaultMemoryDeps({ threadId }) {
   const source = `ask:${threadId || 'unknown'}`;
   return {
     memory: {
       projectByKey,
-      list: (scope) => listMemory(memoryRoot(), scope),
-      read: (scope, name) => readMemory(memoryRoot(), scope, name),
+      // A project whose team memory loads team notes only: its other local notes are not this chat's memory — never
+      // listed, and read_memory of one reads the team's note of that name (memoryLoadPlan). Writes still reach them.
+      list: async (scope) => {
+        const only = await loadedLocalNames(scope);
+        return (await listMemory(memoryRoot(), scope)).filter((e) => !only || only.has(e.name));
+      },
+      read: async (scope, name) => {
+        const only = await loadedLocalNames(scope);
+        return only && !only.has(name) ? null : readMemory(memoryRoot(), scope, name);
+      },
       /** Compose + write one file. Omitted description/paths keep the existing file's values (an
        *  omission never erases); `append` joins the bodies with one blank line (replace on a new
        *  file). Read-compose-write under the store lock (I2-#13) so two turns of THIS process
@@ -101,13 +115,16 @@ export async function refreshAskMemoryMount({ projectKey = null, projectName = n
       ? `[worca-ask] memory: ignoring ${JSON.stringify(p)} — ${MEMORY_NAME_HELP}`
       : `[worca-ask] memory mount: ${p} could not be refreshed (${err?.message || err}); the previous copy (if any) is served this turn`);
     const rules = join(base, '.claude', 'rules', 'worca');
-    const { files } = await refreshMount({ root: memoryRoot(), mount: rules, dirs, onError });
+    // What the project loads (team-memory-load-choice.md): every local note, or — team notes only — the ones that are
+    // team notes. One plan for both halves of the mount.
+    const plans = await memoryLoadPlans(dirs);
+    const { files } = await refreshMount({ root: memoryRoot(), mount: rules, dirs: loadFilteredDirs(dirs, plans), onError });
     // Team memory (phase 1a): the project's team folder (rules/team/), shadowed by same-named local notes; an opted-out
     // project's folder is emptied. The fetch runs in the background — a turn never waits on the network. A team-layer
     // failure never costs the turn its local memory: thrown from here, the turn's catch would drop the whole mount.
     if (projectKey) refreshTeamLayerSoon(projectKey);
     let team = 0;
-    try { team = (await mountTeamLayer({ rules, dirs })).reduce((n, t) => n + t.count, 0); }
+    try { team = (await mountTeamLayer({ rules, dirs, plans })).reduce((n, t) => n + t.count, 0); }
     catch (err) { console.warn(`[worca-ask] team memory: team notes not mounted (${err?.message || err}); local memory is served this turn`); }
     return files + team ? base : null;
   });

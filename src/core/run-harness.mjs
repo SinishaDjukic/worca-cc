@@ -56,8 +56,8 @@ import {
 import { hasProjectSetting, utilityModelFor } from './settings-cascade.mjs';
 import { mountDirs, mountMemory, refreshMount, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY } from './memory-sync.mjs';
 import { createUsageTally, drainMemoryLoads, memoryLoadLogPath, noteOfMemoryRel, recordMemoryUsage, rulesHaveScopedNote } from './memory-usage.mjs';
-import { memoryRoot, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief } from './memory-store.mjs';
-import { isTeamMemoryOn, refreshTeamLayerWithin, mountTeamLayer, queueTeamChanges, teamChangesFromSync, teamClientText } from './memory-team.mjs';
+import { memoryRoot, listMemory, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief } from './memory-store.mjs';
+import { isTeamMemoryOn, refreshTeamLayerWithin, mountTeamLayer, queueTeamChanges, teamChangesFromSync, teamClientText, memoryLoadPlans, loadFilteredDirs } from './memory-team.mjs';
 import { readCostCapOverride, totalWindowSpendUsd, costWindowStart, recordCostDelta } from './cost-budget.mjs';
 import {
   writeRunManifest, readRunManifest, updateRunManifest, rmGuarded, rescueModifiedMounts,
@@ -4200,18 +4200,27 @@ export class RunHarness extends EventEmitter {
     // Team memory (phase 1a): bring each opted-in project's team layer up to date FIRST — following the team rewrites
     // this machine's unedited tracked copies, and the two copies below must already carry that. Bounded; never throws.
     await this._refreshTeamMemory(dirs);
-    // The WRITABLE copy: a full copy of the mounted scopes (agents edit existing files in place;
+    // What each project loads (team-memory-load-choice.md): a project whose team memory loads team notes only mounts
+    // just its local notes that are team notes, in BOTH copies (an engine without rules, and an Explore or Plan
+    // sub-agent, read the writable copy). A defragment run works on every local note.
+    const plans = this.memoryScope ? new Map() : await memoryLoadPlans(dirs);
+    const loadDirs = loadFilteredDirs(dirs, plans);
+    // The WRITABLE copy: a copy of the mounted scopes (agents edit existing files in place;
     // syncBack diffs it against this baseline). Outside git — no sentinel.
-    const m = await mountMemory({ root, mount, dirs, onError });
+    const m = await mountMemory({ root, mount, dirs: loadDirs, onError });
     // The READ-ONLY rules copy: the same files where the CLI discovers them. Its baseline is
     // irrelevant (nothing syncs back from it). `<rules>/.gitignore` = `*` keeps it out of an agent's
     // own `git add -A`, a staging pre-commit hook, snapshotWorktreePatch's bare `git add -A` and the
     // reviewer's `git status`; the §8.8 `:(exclude)` pathspec stays as defence in depth.
-    await mountMemory({ root, mount: rules, dirs, onError, gitIgnore: true });
+    await mountMemory({ root, mount: rules, dirs: loadDirs, onError, gitIgnore: true });
     // …then the team folder(s) of the READ-ONLY copy only (decision D2): an agent changes a team note by writing a
     // same-named local note, which shadows it here and is shared on sync. A defragment run works on local notes only.
-    const team = this.memoryScope ? [] : (await this._mountTeamDirs(rules, dirs)) ?? [];
+    const team = this.memoryScope ? [] : (await this._mountTeamDirs(rules, dirs, plans)) ?? [];
     this.memory = { root, mount, rules, dirs, baseline: m.baseline, team, scoped: await this._memoryScoped(rules) };
+    for (const d of loadDirs) if (d.only) {
+      const hidden = (await listMemory(root, d.scope).catch(() => [])).length - d.only.size;
+      if (hidden > 0) this._log('memory', 'info', `team memory: ${d.label} loads team notes only — ${hidden} local note(s) not loaded`);
+    }
     this.state.memoryMount = mount;
     this.state.memoryRules = rules;
     this._refreshMemoryBlock();
@@ -4386,8 +4395,8 @@ export class RunHarness extends EventEmitter {
 
   /** The rules copy's team folder(s) — [] when nothing is opted in; null when the write failed (warned, never thrown):
    *  the caller keeps what it had, so one failed re-mount does not stop every later one. */
-  async _mountTeamDirs(rules, dirs) {
-    try { return await mountTeamLayer({ rules, dirs }); }
+  async _mountTeamDirs(rules, dirs, plans) {
+    try { return await mountTeamLayer({ rules, dirs, plans }); }
     catch (err) { this._log('memory', 'warn', `team memory: team notes not mounted: ${err?.message || err}`); return null; }
   }
 
@@ -4445,24 +4454,27 @@ export class RunHarness extends EventEmitter {
       await appendAudit(this.pipeline.dir, `${head}: ${details.join('; ')}`).catch(() => {});
       await this._recordFailedWrites(failed, now);
     }
+    // Never a defragment run's result (D15). Queued FIRST: a note on its way to the team loads in a project whose team
+    // memory loads team notes only (memoryLoadPlan), so the refresh below must see its intent.
+    if (res.total && !this.memoryScope) await this._queueTeamMemory(res, dirs);
     // The rules copy the NEXT execution loads must carry what this sync stored (the store is the
     // authority: it also holds Ask/UI writes made mid-run). Non-destructive and per-file atomic, so
     // a Task sub-agent spawning right now never reads a torn file; never touches the sentinel.
+    // What each project loads is read again (a note now pending starts loading, a blocked one stops); the writable copy
+    // keeps what it was mounted with — its baseline must stay valid.
     if (res.total && this.memory && this.memory.mount === mount && this.memory.rules) {
+      const plans = this.memoryScope ? new Map() : await memoryLoadPlans(dirs);
       try {
         // the rules copy lives in the cwd: a Folder copy swapped for a link is never written through
         if (this.workMode === 'folder' && !(await this._folderCopyIntact())) throw new Error(`the run's copy is not the run's own folder: ${this.runCwd}`);
-        const { failed: stale } = await withStoreLock(memoryRoot(), () => refreshMount({ root: memoryRoot(), mount: this.memory.rules, dirs, onError: (p, err) => this._memoryReadWarn(p, err) }));
+        const { failed: stale } = await withStoreLock(memoryRoot(), () => refreshMount({ root: memoryRoot(), mount: this.memory.rules, dirs: loadFilteredDirs(dirs, plans), onError: (p, err) => this._memoryReadWarn(p, err) }));
         if (stale.length) this._log('memory', 'warn', `memory: the rules copy could not be refreshed for ${stale.join(', ')} — the next agent loads the previous text`);
       } catch (err) {
         this._log('memory', 'warn', `memory: the rules copy could not be refreshed: ${err?.message || err}`);
       }
-    }
-    // Never a defragment run's result (D15). A note stored now may shadow a team note (or a deletion un-shadow one).
-    if (res.total && !this.memoryScope) {
-      await this._queueTeamMemory(res, dirs);
-      if (this.memory && this.memory.mount === mount && this.memory.rules && this.memory.team?.length) {
-        const team = await this._mountTeamDirs(this.memory.rules, dirs);
+      // A note stored now may shadow a team note (or a deletion un-shadow one).
+      if (!this.memoryScope && this.memory.team?.length) {
+        const team = await this._mountTeamDirs(this.memory.rules, dirs, plans);
         if (team) { this.memory.team = team; this._refreshMemoryBlock(); }   // the team sentence follows the new counts
       }
     }

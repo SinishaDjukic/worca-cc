@@ -149,13 +149,13 @@ test('s4: Pull requests › Watch new pull requests reads Off (default) and save
   assert.deepEqual(calls.filter((c) => c.method === 'PATCH').at(-1).body, { watchNewPrs: null });
 });
 
-test('Team memory (memory.team): Off by default; On saves true; a refusal without origin shows on the card', async () => {
+test('Team memory (memory.team): Local by default; Both saves true, Team "only"; a refusal without origin shows on the card', async () => {
   let reply = { status: 400, body: { error: 'team memory needs an `origin` remote: the team layer lives on its worca-memory branch' } };
   const { window, host, calls } = harness({ patch: () => reply });
   for (let i = 0; i < 4; i++) await tick();
   const select = field(host, 'memory.team').querySelector('.inherit-input');
-  assert.deepEqual([select.value, select.options[0].textContent, select.options[1].textContent], ['', 'Off (default)', 'On']);
-  select.value = 'on';
+  assert.deepEqual([select.value, ...[...select.options].map((o) => o.textContent)], ['', 'Local (default)', 'Team: team notes only', 'Both: my notes and the team\'s']);
+  select.value = 'both';
   select.dispatchEvent(new window.Event('change', { bubbles: true }));
   const save = () => host.querySelector('.pd-settings-card[data-card="context"] .pd-settings-save').click();
   save();
@@ -165,6 +165,14 @@ test('Team memory (memory.team): Off by default; On saves true; a refusal withou
   reply = { status: 200, body: { ...VIEW, own: { ...VIEW.own, 'memory.team': true } } };
   save();
   for (let i = 0; i < 4; i++) await tick();
-  assert.equal(field(host, 'memory.team').querySelector('.inherit-input').value, 'on', 'repainted from the answer');
-  assert.match(field(host, 'memory.team').textContent, /Switching it off drops changes still waiting to be pushed/, 'the Team view\'s switch-off warning, here too (m13)');
+  assert.equal(field(host, 'memory.team').querySelector('.inherit-input').value, 'both', 'repainted from the answer');
+  assert.match(field(host, 'memory.team').textContent, /Switching back to Local drops changes still waiting to be pushed/, 'the Team view\'s switch-off warning, here too (m13)');
+  const again = field(host, 'memory.team').querySelector('.inherit-input');
+  again.value = 'team';
+  again.dispatchEvent(new window.Event('change', { bubbles: true }));
+  reply = { status: 200, body: { ...VIEW, own: { ...VIEW.own, 'memory.team': 'only' } } };
+  save();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.deepEqual(calls.filter((c) => c.method === 'PATCH').at(-1).body, { 'memory.team': 'only' });
+  assert.equal(field(host, 'memory.team').querySelector('.inherit-input').value, 'team');
 });

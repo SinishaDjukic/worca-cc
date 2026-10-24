@@ -41,6 +41,8 @@ defragmenting the team layer.
   until one upsert is refused on its own while the rest landed; a refusal of every push (branch protection) pins none.
 - **D6 The switch is the settings cascade's project layer only:** `memory.team` (boolean, default `false`, no user layer,
   no team-policy key) in `project_config.extra.settings`. `removeProject` clears it, so a re-added project starts off.
+  Amended by team-memory-load-choice.md: `memory.team` also takes `"only"` — on, and runs and chats load team notes
+  only; the Team view's switch is one Local · Team · Both choice (Local = off).
 - **D7 Separate caps.** The local store keeps `memory.maxFilesPerScope`; `memory.teamMaxFiles` (default 50) caps how many
   team notes a run or chat loads per project, newest `updated` first. Team-only notes never count against the local cap.
 - **D8 The branch is created lazily** by the first share (an orphan: `README.md` + `.worca-memory/config.json`
@@ -223,7 +225,8 @@ Plan sub-agent, which loads no rules, reads them there). Dir lines unchanged ⇒
 change/forget); the Codex rewrite keys on rule 13's FIRST sentence only, which is unchanged.
 
 ### 2.9 API / CLI (what 1b consumes)
-- `PATCH /api/projects/:key/settings {"memory.team": true|null}` — switch (true is refused 400 without origin).
+- `PATCH /api/projects/:key/settings {"memory.team": true|"only"|null}` — switch (on from off is refused 400 without
+  origin); `teamMemoryStatus` gains `load: 'local'|'both'|'team'` (team-memory-load-choice.md).
 - `GET /api/memory/team/:key` — `teamMemoryStatus`: `{projectKey, enabled, branch, caps:{localMaxFiles,teamMaxFiles},
   canStart?, startError?:{code, message}` (off only: whether the switch would turn on — null when no checkout is known —
   and why not: `NO_GIT`, `FOLDER_PROJECT`, `NO_ORIGIN`; the Team view disables the switch and says why in one line),

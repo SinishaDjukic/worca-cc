@@ -111,6 +111,8 @@ export function validateMemoryScope({ workflowId, memoryScope, isWorkspace = fal
  * `git status` all skip it. Not a memory file: `listMemoryDir` lists `*.md` only, so sync-back
  * neither syncs it nor reads it as a deletion. The §8.8 `:(exclude)` pathspec stays as defence
  * in depth (a hand-deleted sentinel, an older git).
+ * A dir with `only` (a Set of note names) copies just those notes: a project whose team memory loads team notes only
+ * (memory-team.mjs memoryLoadPlan). The baseline then holds only them, so sync-back never reads a note left out as deleted.
  */
 export async function mountMemory({ root, mount, dirs, onError, gitIgnore = false }) {
   // (Windows: an indexer/AV may hold a handle for a moment.)
@@ -123,6 +125,7 @@ export async function mountMemory({ root, mount, dirs, onError, gitIgnore = fals
     const dest = join(mount, d.rel);
     await mkdir(dest, { recursive: true });
     for (const e of await listMemory(root, d.scope, { onError, hashOf: syncHash })) {
+      if (d.only && !d.only.has(e.name)) continue;
       await cp(join(scopeDir(root, d.scope), `${e.name}.md`), join(dest, `${e.name}.md`));
       baseline[baselineKey(d.rel, e.name)] = e.hash;
       files++;
@@ -141,6 +144,7 @@ export async function mountMemory({ root, mount, dirs, onError, gitIgnore = fals
  * loads; a file that never landed is simply absent this turn), its temp is unlinked and its name is
  * reported. Returns `{ files, failed }` where `files` is what the mount SHOULD hold (the store
  * entries of the scope set) and `failed` the names that could not be refreshed this call.
+ * `only` on a dir: as in mountMemory — the other notes are not written, and a copy of one already there is unlinked.
  */
 export async function refreshMount({ root, mount, dirs, onError }) {
   let files = 0;
@@ -148,7 +152,7 @@ export async function refreshMount({ root, mount, dirs, onError }) {
   for (const d of dirs) {
     const dest = join(mount, d.rel);
     await mkdir(dest, { recursive: true });
-    const entries = await listMemory(root, d.scope, { onError });
+    const entries = (await listMemory(root, d.scope, { onError })).filter((e) => !d.only || d.only.has(e.name));
     // `keep` is built from what we actually WROTE or deliberately kept — an entry that vanished
     // between the listing and the read is not in it, so its stale mount copy is swept THIS call.
     const keep = new Set();
