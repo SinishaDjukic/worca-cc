@@ -919,10 +919,8 @@ test('Memory › Team: the deep link opens the Team view; switching on PATCHes m
   const sec = doc.querySelector('.pd-sec[data-sec="memory"]');
   assert.deepEqual([sec.querySelector('.mem-host').hidden, sec.querySelector('.mem-team-host').hidden], [true, false]);
   assert.equal(sec.querySelector('.mem-view.on').dataset.view, 'team');
-  const sw = sec.querySelector('.mem-team-switch');
-  assert.equal(sw.checked, false);
-  sw.checked = true;
-  sw.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.equal(sec.querySelector('.mem-team-load.on').dataset.load, 'local');
+  click(window, sec.querySelector('.mem-team-load[data-load="both"]'));
   for (let i = 0; i < 10; i++) await tick();
   assert.deepEqual(calls.find((c) => c.method === 'PATCH').body, { 'memory.team': true });
   const modal = doc.getElementById('plugin-modal');
@@ -941,6 +939,40 @@ test('Memory › Team: the deep link opens the Team view; switching on PATCHes m
   click(window, sec.querySelector('.mem-view[data-view="notes"]'));
   await tick(); await tick();
   assert.equal(window.location.hash, '#projects/alpha-00000001/memory');
+});
+
+test('Memory › Team: Both → Team PATCHes "only" with no dialog and no offer; Team → Local asks first and PATCHes null', async () => {
+  const calls = [];
+  let status = TEAM_ST();   // on (Both), the offer pending with a note to share: only a switch from Local raises it
+  const { window } = await boot({ fetchHandler: (u, o = {}) => {
+    const method = (o.method || 'GET').toUpperCase();
+    if (u.endsWith('/api/projects/alpha-00000001/settings') && method === 'PATCH') {
+      const value = JSON.parse(o.body)['memory.team'];
+      calls.push(value);
+      status = value === null ? TEAM_ST({ enabled: false, counts: {}, notes: [], remote: null }) : TEAM_ST({ load: value === 'only' ? 'team' : 'both' });
+      return memJson({ own: { 'memory.team': value }, effective: {}, layers: {}, roles: [] });
+    }
+    if (u.endsWith('/api/memory/team/alpha-00000001')) return memJson(status);
+    return memFetch(u, o);
+  } });
+  await goHash(window, 'projects/alpha-00000001/memory/~team');
+  const doc = window.document;
+  const sec = doc.querySelector('.pd-sec[data-sec="memory"]');
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(sec.querySelector('.mem-team-load.on').dataset.load, 'both');
+  click(window, sec.querySelector('.mem-team-load[data-load="team"]'));
+  for (let i = 0; i < 10; i++) await tick();
+  assert.deepEqual(calls, ['only']);
+  assert.equal(doc.getElementById('confirm-modal').classList.contains('hidden'), true, 'no confirm');
+  assert.equal(doc.getElementById('plugin-modal').classList.contains('hidden'), true, 'no seeding offer');
+  assert.equal(sec.querySelector('.mem-team-load.on').dataset.load, 'team');
+  click(window, sec.querySelector('.mem-team-load[data-load="local"]'));
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(doc.getElementById('confirm-modal').classList.contains('hidden'), false, 'Local is the switch-off: it asks');
+  click(window, doc.getElementById('confirm-ok'));
+  for (let i = 0; i < 10; i++) await tick();
+  assert.deepEqual(calls, ['only', null]);
+  assert.equal(sec.querySelector('.mem-team-load.on').dataset.load, 'local');
 });
 
 test('Memory › Team: a memory-team-changed frame for the open project refetches the status; another project\'s does not', async () => {
@@ -1209,9 +1241,7 @@ test('Memory › Team: the dialog belongs to its page — leaving closes the one
   status = TEAM_ST({ enabled: false, counts: {}, notes: [], remote: null });
   await goHash(window, 'projects/alpha-00000001/memory/~team');
   await settle();
-  const sw = sec().querySelector('.mem-team-switch');
-  sw.checked = true;
-  sw.dispatchEvent(new window.Event('change', { bubbles: true }));
+  click(window, sec().querySelector('.mem-team-load[data-load="team"]'));
   await settle();
   assert.deepEqual(writes(), ['PATCH settings']);
   await goHash(window, 'projects');
@@ -1372,12 +1402,13 @@ test('Memory › Team: a refetch older than a Remove from team never repaints ov
   click(window, sec.querySelector('.mem-team-remove[data-name="ana"]'));
   click(window, doc.getElementById('confirm-ok'));
   for (let i = 0; i < 5; i++) await tick();
-  const sw = sec.querySelector('.mem-team-switch');   // disabled while the DELETE runs; a change that slips through waits too
-  sw.checked = false;
-  sw.dispatchEvent(new window.Event('change', { bubbles: true }));
+  const local = sec.querySelector('.mem-team-load[data-load="local"]');   // disabled while the DELETE runs; a click that slips through waits too
+  assert.equal(local.disabled, true);
+  local.disabled = false;
+  click(window, local);
   for (let i = 0; i < 5; i++) await tick();
   assert.equal(doc.getElementById('confirm-modal').classList.contains('hidden'), true, 'no switch-off while a request runs');
-  assert.equal(sec.querySelector('.mem-team-switch').checked, true, 'the switch is painted back');
+  assert.equal(sec.querySelector('.mem-team-load.on').dataset.load, 'both', 'still Both');
   releaseDelete();
   for (let i = 0; i < 10; i++) await tick();
   const after = badge();
@@ -1389,7 +1420,7 @@ test('Memory › Team: a refetch older than a Remove from team never repaints ov
   WSStub.last._listeners.message.forEach((fn) => fn({ data: JSON.stringify({ type: 'memory-team-changed', projectKey: 'alpha-00000001', action: 'flushed' }) }));
   await new Promise((r) => setTimeout(r, 400));
   assert.equal(badge(), after, 'a failed refetch keeps the last status on screen');
-  assert.ok(sec.querySelector('.mem-team-switch'), 'and the switch');
+  assert.ok(sec.querySelector('.mem-team-load'), 'and the choice');
 });
 
 test('E10: the Overview line "Your team shares memory for this repository" — advanced, no dialog; Turn on is the normal switch, Not now its own POST, and the line goes', async () => {

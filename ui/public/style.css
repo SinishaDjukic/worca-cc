@@ -4429,7 +4429,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 .mem-team-host .mono,.mem-seed .mono{font-family:var(--mono);}
 .mem-team-card{display:grid;gap:8px;}
 .mem-team-head{display:flex;align-items:center;gap:12px;}
-.mem-team-head .mem-team-toggle{margin-left:auto;}
+.mem-team-head .mem-team-loads{margin-left:auto;}
 .mem-team-sync-row,.mem-team-offer,.mem-team-seeding{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
 .mem-team-sync-text,.mem-team-counts,.mem-team-detail,.mem-team-findings,.mem-seed-desc,.mem-cmp-title{color:var(--ink-2);font-size:12px;}
 .mem-team-error{padding:8px 10px;border-radius:var(--r-ctrl);background:var(--red-bg);color:var(--red-ink-strong);}

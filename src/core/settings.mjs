@@ -389,8 +389,17 @@ export function memoryCaps(scope) {
 }
 
 /** Team memory (phase 1a) is on for this project. The PROJECT layer only — no settings.json default, no team-policy
- *  field: sharing is opted into one project at a time. No scope (a global note, a workspace run) is always off. */
-export function teamMemoryEnabled(scope) { return projectOverride('memory.team', scope) === true; }
+ *  field: sharing is opted into one project at a time. No scope (a global note, a workspace run) is always off.
+ *  `memory.team` is `true` (on, runs and chats load local and team notes) or `"only"` (on, they load team notes only:
+ *  team-memory-load-choice.md); anything else is off. */
+export function teamMemoryEnabled(scope) { return teamMemoryLoad(scope) !== 'local'; }
+/** Which notes of this project a run or chat loads: 'local' (team memory off), 'both' (`memory.team: true`) or 'team'
+ *  (`memory.team: "only"`). */
+export function teamMemoryLoad(scope) {
+  const v = projectOverride('memory.team', scope);
+  return v === true ? 'both' : v === TEAM_MEMORY_ONLY ? 'team' : 'local';
+}
+export const TEAM_MEMORY_ONLY = 'only';
 
 // ── Memory defragment model (Settings › Memory) ─────────────────────────────
 // `memory.defrag.model` / `memory.defrag.effort`: the pair EVERY Memory defragment run uses
@@ -1397,6 +1406,7 @@ export function normalizeModelPair(engine, input, label = 'model') {
 export const SETTING_CHECKS = Object.freeze({
   usdCap: (value) => isUsdCap(value), byteCap: (value) => isByteCap(value),
   bool: (value) => typeof value === 'boolean',
+  teamMemory: (value) => typeof value === 'boolean' || value === TEAM_MEMORY_ONLY,
   pct: (value) => isByteCap(value) && value <= 100,
   askMaxTurns: (value) => isAskMaxTurns(value), askMaxBudgetUsd: (value) => value === null || isAskMaxBudget(value),
   skillMount: (value) => SKILL_MOUNTS.includes(value), engine: (value) => MODEL_ENGINES.includes(value), runEngine: (value) => RUN_ENGINES.includes(value),

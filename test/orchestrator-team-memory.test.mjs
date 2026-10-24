@@ -89,6 +89,38 @@ test('opted in: team notes load read-only, local shadows team by name, the block
   assert.match((await readMemory(memoryRoot(), projectScope(key), 'ci-trap')).meta.extra[TEAM_MARKER_KEY], /^[0-9a-f]{40}$/);
 });
 
+test('team notes only ("only"): the plain local notes stay out of both copies, the team\'s version of a clash loads, a note the run writes loads for the next agent', { skip, timeout: 120000 }, async () => {
+  const { bare, dir, key } = await project('teamonly');
+  writeProjectSettings({ projectDir: dir }, { 'memory.team': 'only' });
+  pushTeamNotes(bare, { 'deploy-trap': note('Read before deploying', 'Migrate first.'), conventions: note('House style', 'Team version.') });
+  await writeMemory(memoryRoot(), projectScope(key), 'conventions', note('House style', 'My version.'), { source: 'user', now: NOW });
+  await writeMemory(memoryRoot(), projectScope(key), 'private', note('Mine only', 'Never shared.'), { source: 'user', now: NOW });
+  const seen = [];
+  let wrote = false;
+  let mount = null;
+  const orch = createOrchestrator({ projectDir: dir, workflowId: 'wf_quick-fix', prompt: 'demo', claude: { mock: true }, auto: true, runners: { producer: async (ctx) => {
+    mount ??= (await readdir(join(ctx.memoryMount, 'project'))).sort();
+    seen.push({ key: ctx.node.key, project: (await readdir(join(ctx.memoryRules, 'project'))).sort(), team: (await readdir(join(ctx.memoryRules, 'team'))).sort(),
+      conventions: existsSync(join(ctx.memoryRules, 'team', 'conventions.md')) ? readFileSync(join(ctx.memoryRules, 'team', 'conventions.md'), 'utf8') : null });
+    if (ctx.node.key === 'implementer' && !wrote) {
+      wrote = true;
+      await writeFile(join(ctx.memoryMount, 'project', 'ci-trap.md'), note('Read when CI is red', 'Pin TZ=UTC.'));
+    }
+    return runAgentExecution(ctx);
+  } } });
+  assert.equal((await orch.run()).status, 'done');
+  assert.deepEqual([seen[0].project, seen[0].team], [[], ['conventions.md', 'deploy-trap.md']], 'no plain local note; the team\'s notes, unshadowed');
+  assert.match(seen[0].conventions, /Team version\./);
+  assert.deepEqual(mount, [], 'the writable copy leaves them out too');
+  const after = seen.slice(seen.findIndex((x) => x.key === 'implementer') + 1);
+  assert.ok(after.length && after.every((x) => x.project.includes('ci-trap.md') && !x.project.includes('private.md')), JSON.stringify(seen));
+  const log = await readFile(join(orch.getState().pipelineDir, RUN_LOG_FILE), 'utf8');
+  assert.match(log, /team memory: Project teamonly loads team notes only — 2 local note\(s\) not loaded/);
+  await drainTeamMemoryFlushes();
+  assert.ok(branchFiles(bare, TEAM_MEMORY_BRANCH).includes(`${TEAM_NOTES_REL}/ci-trap.md`), 'the write path is unchanged: shared');
+  assert.ok(await readMemory(memoryRoot(), projectScope(key), 'private'), 'the notes that do not load stay in the store');
+});
+
 test('a defragment run mounts no team folder; an opted-out project fetches and mounts nothing', { skip, timeout: 120000 }, async () => {
   const { bare, dir, key } = await project('billing');
   pushTeamNotes(bare, { 'billing-trap': note('Read before invoicing', 'Round half-even.') });

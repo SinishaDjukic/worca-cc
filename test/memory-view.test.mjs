@@ -204,10 +204,15 @@ test('Team view basics: the hash segment is never a note name; the badge table; 
 
 test('renderTeamCard: the switch, the branch line, a push error with 1a\'s hint, the counts, the one-time offer — then the plain button and Undo', () => {
   const off = renderTeamCard({ enabled: false, branch: 'worca-memory', seed: { offer: 'pending', last: null } }, { doc });
-  assert.equal(off.querySelector('.mem-team-switch').checked, false);
+  const pressed = (card) => [...card.querySelectorAll('.mem-team-load')].map((b) => [b.dataset.load, b.getAttribute('aria-pressed')]);
+  assert.deepEqual(pressed(off), [['local', 'true'], ['team', 'false'], ['both', 'false']], 'off is Local');
+  assert.match(off.querySelector('.hint').textContent, /^Runs and chats load this machine's notes only/);
   assert.equal(off.querySelector('.mem-team-sync'), null, 'off: nothing else');
   const on = renderTeamCard(TEAM, { doc });
-  assert.equal(on.querySelector('.mem-team-switch').checked, true);
+  assert.deepEqual(pressed(on), [['local', 'false'], ['team', 'false'], ['both', 'true']], 'on without a load (an older server) is Both');
+  const only = renderTeamCard({ ...TEAM, load: 'team', caps: { teamMaxFiles: 30 } }, { doc });
+  assert.deepEqual(pressed(only), [['local', 'false'], ['team', 'true'], ['both', 'false']]);
+  assert.match(only.querySelector('.hint').textContent, /^Runs and chats load the team's notes only — your shared notes and teammates', newest 30/);
   assert.match(on.querySelector('.mem-team-sync-text').textContent, /^Branch worca-memory at abcdef1 · fetched \d{4}-\d\d-\d\d \d\d:\d\d$/);
   assert.match(on.querySelector('.mem-team-error').textContent, /Last push failed \(.+\): remote: error: GH006/);
   assert.match(on.querySelector('.mem-team-hint').textContent, /^To fix: exempt `worca-memory` from branch protection/);
@@ -220,9 +225,10 @@ test('renderTeamCard: the switch, the branch line, a push error with 1a\'s hint,
   assert.ok(done.querySelector('.mem-team-undo'));
   // busy: a request of the view is on its way — every control waits for it (a second Undo would answer "Not undone").
   const controls = (card) => [...card.querySelectorAll('button, input')].map((c) => [[...c.classList].find((k) => k.startsWith('mem-team-')), c.disabled]);
-  assert.deepEqual(controls(renderTeamCard(TEAM, { doc, busy: true })), [['mem-team-switch', true], ['mem-team-sync', true], ['mem-team-seed', true], ['mem-team-dismiss', true]]);
+  const loads = [['mem-team-load', true], ['mem-team-load', true], ['mem-team-load', true]];
+  assert.deepEqual(controls(renderTeamCard(TEAM, { doc, busy: true })), [...loads, ['mem-team-sync', true], ['mem-team-seed', true], ['mem-team-dismiss', true]]);
   assert.deepEqual(controls(renderTeamCard({ ...TEAM, seed: { offer: 'done', last: { at: '2026-10-17T10:01:00.000Z', snapshotId: 'x', shared: 2, tookTeam: 1, held: 1 } } }, { doc, busy: true })),
-    [['mem-team-switch', true], ['mem-team-sync', true], ['mem-team-seed', true], ['mem-team-undo', true]]);
+    [...loads, ['mem-team-sync', true], ['mem-team-seed', true], ['mem-team-undo', true]]);
 });
 
 test('renderTeamNotes: one label per state (a tracked copy reads Shared), why a note is blocked, a push error, Compare and Remove from team where they apply', () => {
@@ -263,18 +269,37 @@ test('renderTeamNotes copy: a team-only delete promises no local copy; a copy th
   assert.equal(detail('wait'), 'Waiting to be pushed — the last push failed (fatal: first).');
 });
 
+test('renderTeamNotes in Team mode: a local copy that does not load says so — the team\'s version of a clash is the one loaded', () => {
+  const list = renderTeamNotes({ enabled: true, load: 'team', notes: [
+    { name: 'mine', state: 'local', local: true, team: false, mounted: false },
+    { name: 'clash', state: 'local', local: true, team: false, shadows: true, mounted: false },
+    { name: 'held', state: 'held', local: true, team: true, mounted: false },
+    { name: 'old', state: 'shared', local: true, team: true, mounted: false },
+    { name: 'kept', state: 'shared', local: true, team: true, mounted: true },
+  ] }, { doc });
+  const detail = (n) => list.querySelector(`.mem-team-row[data-name="${n}"] .mem-team-detail`).textContent;
+  assert.equal(detail('mine'), 'On this machine only. Not loaded into runs: Team loads team notes only.');
+  assert.match(detail('clash'), /the team's is the one loaded here \(Team loads team notes only\)/);
+  assert.match(detail('held'), /Not loaded into runs: Team loads team notes only\.$/);
+  assert.match(detail('old'), /Not loaded into runs: over the team note cap\.$/);
+  assert.doesNotMatch(detail('kept'), /Not loaded/);
+  const both = renderTeamNotes({ enabled: true, load: 'both', notes: [{ name: 'mine', state: 'local', local: true, team: false, mounted: false }] }, { doc });
+  assert.equal(both.querySelector('.mem-team-detail').textContent, 'On this machine only.', 'Both: every local note loads');
+});
+
 test('renderTeamCard off: a switch that cannot turn on is disabled with one line saying why — no repository copy for a Folder project (m11)', () => {
   const card = (startError) => renderTeamCard({ enabled: false, branch: 'worca-memory', seed: { offer: 'pending', last: null }, canStart: !startError, startError }, { doc });
   const ok = card(null);
-  assert.equal(ok.querySelector('.mem-team-switch').disabled, false);
+  const disabled = (card) => [...card.querySelectorAll('.mem-team-load')].map((b) => b.disabled);
+  assert.deepEqual(disabled(ok), [false, false, false]);
   assert.match(ok.querySelector('.hint').textContent, /worca-memory branch of its repository/);
   const folder = card({ code: 'FOLDER_PROJECT', message: 'team memory needs a git project: …' });
-  assert.equal(folder.querySelector('.mem-team-switch').disabled, true);
+  assert.deepEqual(disabled(folder), [false, true, true], 'Team and Both could never turn on; Local stays picked');
   assert.equal(folder.querySelector('.mem-team-cannot').textContent, 'Team memory needs a git project: this is a Folder project.');
   assert.doesNotMatch(folder.textContent, /repository/);
   assert.match(card({ code: 'NO_ORIGIN', message: 'x' }).querySelector('.mem-team-cannot').textContent, /needs an origin remote/);
-  assert.equal(renderTeamCard({ enabled: false, branch: 'worca-memory', seed: {}, canStart: null, startError: null }, { doc }).querySelector('.mem-team-switch').disabled, false,
-    'no checkout known here (canStart null): the switch says why when it is tried');
+  assert.deepEqual(disabled(renderTeamCard({ enabled: false, branch: 'worca-memory', seed: {}, canStart: null, startError: null }, { doc })), [false, false, false],
+    'no checkout known here (canStart null): the choice says why when it is tried');
 });
 
 test('renderSeedReview + collectSeedDecisions: nothing ticked; clashes default to Skip; Keep mine off for a blocked version, Take team off when too big; blocked notes listed', () => {

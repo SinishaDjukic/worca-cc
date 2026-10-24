@@ -16,11 +16,12 @@ import { gitDir } from './helpers/git-dir.mjs';
 import { addProject, removeProject } from '../src/core/projects.mjs';
 import { writeProjectSettings } from '../src/core/settings-cascade.mjs';
 import { memoryRoot, projectScope, writeMemory, readMemory, removeMemory, setMemoryExtra, listSnapshots, listMemory, restoreSnapshot, snapshotScope } from '../src/core/memory-store.mjs';
-import { mountDirs } from '../src/core/memory-sync.mjs';
+import { mountDirs, mountMemory, refreshMount } from '../src/core/memory-sync.mjs';
+import { defaultMemoryDeps, refreshAskMemoryMount } from '../src/core/ask/memory-deps.mjs';
 import {
   contentHash, teamNoteText, noteFindings, queueTeamChanges, flushTeamMemory, teamMemoryStatus, mountTeamLayer, teamMountNames, teamMountNotes, teamMountRel, teamChangesFromSync,
   changedNoteNames, isTeamMemoryOn, deleteTeamNote, teamMemorySettingChanged, teamListing, readTeamNote, recordExistingNotes, switchTeamMemoryOn,
-  teamNoteStates, holdApplies, previewTeamSeed, seedTeamMemory, undoTeamSeed, readSeedOffer, dismissSeedOffer, resolveTeamClash,
+  teamNoteStates, teamOnlyLoad, memoryLoadPlan, memoryLoadPlans, loadFilteredDirs, holdApplies, previewTeamSeed, seedTeamMemory, undoTeamSeed, readSeedOffer, dismissSeedOffer, resolveTeamClash,
   TEAM_MARKER_KEY, _testing,
 } from '../src/core/memory-team.mjs';
 import { createWorkspace } from '../src/core/workspaces.mjs';
@@ -134,7 +135,7 @@ test('mount: unshadowed team notes (case-insensitive), newest teamMaxFiles first
   const single = join(tmp, 'single');
   mkdirSync(join(single, 'team', 'keep-me'), { recursive: true });
   writeFileSync(join(single, 'team', 'stale.md'), 'x');
-  assert.deepEqual(await mountTeamLayer({ rules: single, dirs: mountDirs({ members: [{ projectKey: KEY, projectName: 'Shop' }] }) }), [{ key: KEY, rel: 'team', count: 2 }]);
+  assert.deepEqual(await mountTeamLayer({ rules: single, dirs: mountDirs({ members: [{ projectKey: KEY, projectName: 'Shop' }] }) }), [{ key: KEY, rel: 'team', count: 2, load: 'both' }]);
   assert.deepEqual(readdirSync(join(single, 'team')).sort(), ['a.md', 'b.md', 'keep-me'], 'shadowed, past the cap and stale files gone; sub-dirs kept');
   assert.match(readFileSync(join(single, 'team', 'b.md'), 'utf8'), /^author: mate$/m);
   const rows = Object.fromEntries((await teamMemoryStatus(KEY)).notes.map((n) => [n.name, n]));
@@ -167,6 +168,84 @@ test('a team.json that is valid JSON but holds a broken entry serves its other n
   try { mounted = await mountTeamLayer({ rules, dirs }); } finally { console.warn = orig; }
   assert.deepEqual(mounted.map((m) => [m.key, m.count]), [[dirs[1].scope.projectKey, 1]]);
   assert.equal(warnings.length, 1, warnings.join('\n'));
+});
+
+test('team notes only ("only"): shared and pending local notes load, plain / held / blocked ones do not and shadow nothing; one cap over both; global notes and the store untouched', async () => {
+  const K = 'teamonly-0000003a';
+  writeProjectSettings({ projectKey: K }, { 'memory.team': 'only', 'memory.teamMaxFiles': 4 });
+  const scope = projectScope(K);
+  await put(K, 'shared', note('s', 'Tracked.'));
+  const f = await readMemory(memoryRoot(), scope, 'shared');
+  const h = contentHash({ ...f.meta, name: 'shared' }, f.body);
+  await setMemoryExtra(memoryRoot(), scope, 'shared', TEAM_MARKER_KEY, h);
+  _testing.markShared(K, 'shared', h);
+  await put(K, 'fresh', note('f', 'New, on its way.'));
+  await put(K, 'plain', note('p', 'Mine only.'));
+  await put(K, 'Clash', note('c', 'My clash.'));
+  await put(K, 'secret', note('x', 'Mail ops-lead@acme.io.'));
+  await queueTeamChanges(K, ['fresh', 'secret'], { flush: false });
+  await writeMemory(memoryRoot(), { kind: 'global' }, 'style', note('g', 'Global.'), { source: 'user', now: NOW });
+  _testing.writeSnapshot(K, snapshotOf({ shared: { body: 'Tracked.' }, clash: { updated: '2026-10-16T09:00:00.000Z' }, mate: { updated: '2026-10-16T08:00:00.000Z' },
+    old: { updated: '2020-01-01T00:00:00.000Z' } }));
+  const plan = await memoryLoadPlan(K);
+  assert.deepEqual([plan.load, [...plan.localNames].sort(), plan.team.map((n) => n.name).sort()], ['team', ['fresh', 'shared'], ['clash', 'mate']],
+    'blocked / plain / held stay out; the team\'s clash loads; four in all, the oldest team note past the cap');
+  const rows = Object.fromEntries((await teamMemoryStatus(K)).notes.map((n) => [n.name, n.mounted]));
+  assert.deepEqual(rows, { Clash: false, clash: true, fresh: true, mate: true, old: false, plain: false, secret: false, shared: true });
+  assert.equal((await teamMemoryStatus(K)).load, 'team');
+  assert.equal((await teamListing(K)).find((n) => n.name === 'clash').shadowed, false, 'a local note that does not load shadows nothing');
+  // The mount: the filter in both copies, the global dir as it is.
+  const dirs = mountDirs({ members: [{ projectKey: K, projectName: 'Only' }] });
+  const plans = await memoryLoadPlans(dirs);
+  const m = await mountMemory({ root: memoryRoot(), mount: join(tmp, 'only-w'), dirs: loadFilteredDirs(dirs, plans) });
+  assert.deepEqual(readdirSync(join(tmp, 'only-w', 'project')).sort(), ['fresh.md', 'shared.md']);
+  assert.deepEqual(Object.keys(m.baseline).sort(), ['global/style.md', 'project/fresh.md', 'project/shared.md'], 'a note left out is never in the baseline');
+  const rules = join(tmp, 'only-r');
+  mkdirSync(join(rules, 'project'), { recursive: true });
+  writeFileSync(join(rules, 'project', 'plain.md'), 'stale');
+  await refreshMount({ root: memoryRoot(), mount: rules, dirs: loadFilteredDirs(dirs, plans) });
+  assert.deepEqual(readdirSync(join(rules, 'project')).sort(), ['fresh.md', 'shared.md'], 'a copy of a note that no longer loads is unlinked');
+  assert.deepEqual(await mountTeamLayer({ rules, dirs, plans }), [{ key: K, rel: 'team', count: 2, load: 'team' }]);
+  // Ask: the mount, list_memory and read_memory follow the same plan.
+  const base = await refreshAskMemoryMount({ projectKey: K, projectName: 'Only' });
+  assert.deepEqual([readdirSync(join(base, '.claude', 'rules', 'worca', 'project')).sort(), readdirSync(join(base, '.claude', 'rules', 'worca', 'team')).sort()],
+    [['fresh.md', 'shared.md'], ['clash.md', 'mate.md']]);
+  const mem = defaultMemoryDeps({ threadId: 't' }).memory;
+  assert.deepEqual((await mem.list(scope)).map((e) => e.name).sort(), ['fresh', 'shared']);
+  assert.equal(await mem.read(scope, 'plain'), null, 'not this chat\'s memory: read_memory falls back to the team');
+  assert.ok(await mem.read(scope, 'shared'));
+  assert.ok(await readMemory(memoryRoot(), scope, 'plain'), 'the store keeps every note');
+  // Both again: every local note loads, the team rule of before.
+  writeProjectSettings({ projectKey: K }, { 'memory.team': true });
+  const both = await memoryLoadPlan(K);
+  assert.deepEqual([both.load, both.localNames, both.team.map((n) => n.name).sort()], ['both', null, ['mate', 'old']]);
+  writeProjectSettings({ projectKey: K }, { 'memory.team': null });
+  assert.deepEqual(await memoryLoadPlan(K), { load: 'local', localNames: null, team: [] });
+});
+
+test('a workspace mixes modes per member: a Team member is filtered, a Both member and the global dir are not', async () => {
+  const A = 'wsteam-0000003b', B = 'wsboth-0000003c';
+  writeProjectSettings({ projectKey: A }, { 'memory.team': 'only' });
+  on(B);
+  await put(A, 'a-local', note('a', 'A only.'));
+  await put(B, 'b-local', note('b', 'B only.'));
+  _testing.writeSnapshot(A, snapshotOf({ 'a-team': {} }));
+  _testing.writeSnapshot(B, snapshotOf({ 'b-team': {} }));
+  const dirs = mountDirs({ members: [{ projectKey: A, projectName: 'A' }, { projectKey: B, projectName: 'B' }], isWorkspace: true });
+  const plans = await memoryLoadPlans(dirs);
+  const filtered = loadFilteredDirs(dirs, plans);
+  assert.deepEqual(filtered.map((d) => [d.rel, d.only ? [...d.only] : null]), [['global', null], [`projects/${B}`, null], [`projects/${A}`, []]], 'members sorted by key');
+  const rules = join(tmp, 'ws-mixed');
+  assert.deepEqual((await mountTeamLayer({ rules, dirs, plans })).map((t) => [t.rel, t.count, t.load]), [[`team/${B}`, 1, 'both'], [`team/${A}`, 1, 'team']]);
+});
+
+test('teamOnlyLoad: pending loads before its push, a queued removal still hides the team copy, case-insensitive shadowing, no caps given loads all', () => {
+  const snapshot = { notes: { Deploy: { updated: '2026-10-15T00:00:00.000Z', bytes: 10 }, gone: { updated: '2026-10-15T00:00:00.000Z', bytes: 10 },
+    big: { updated: '2026-10-17T00:00:00.000Z', bytes: 40_000 } } };
+  const rows = [{ name: 'deploy', local: true, state: 'pending', updated: '2026-10-16T00:00:00.000Z' }, { name: 'mine', local: true, state: 'local', updated: '2026-10-16T00:00:00.000Z' }];
+  const r = teamOnlyLoad({ rows, snapshot, queued: ['deploy', 'gone'], maxBytes: 32768 });
+  assert.deepEqual([[...r.local], [...r.team]], [['deploy'], []]);
+  assert.deepEqual([...teamOnlyLoad({ rows: [], snapshot }).team].sort(), ['Deploy', 'big', 'gone']);
 });
 
 test('teamMountNames: shadowing is case-insensitive, a note over the local per-file cap never loads, newest first, capped', () => {

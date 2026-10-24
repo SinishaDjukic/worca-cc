@@ -46,7 +46,13 @@ test('on refuses a project without origin; on / status / sync / rm / off round-t
   assert.equal(no.code, 1);
   assert.match(no.err, /origin.*\(NO_ORIGIN\)/);
   assert.equal((await runCli(['memory', 'team', 'on', '--project', dir])).code, 0);
-  assert.equal(JSON.parse((await runCli(['memory', 'team', 'status', '--project', dir, '--json'])).out).enabled, true);
+  assert.equal(JSON.parse((await runCli(['memory', 'team', 'status', '--project', dir, '--json'])).out).load, 'both');
+  const only = await runCli(['memory', 'team', 'on', '--team-only', '--project', dir]);
+  assert.match(only.out, /runs and chats load team notes only/);
+  assert.equal(JSON.parse((await runCli(['memory', 'team', 'status', '--project', dir, '--json'])).out).load, 'team');
+  assert.match((await runCli(['memory', 'team', 'status', '--project', dir])).out, /on — runs and chats load team notes only/);
+  assert.equal((await runCli(['memory', 'team', 'on', '--project', dir])).code, 0, 'on again: back to local and team notes');
+  assert.equal(JSON.parse((await runCli(['memory', 'team', 'status', '--project', dir, '--json'])).out).load, 'both');
   await writeMemory(memoryRoot(), projectScope(key), 'cli-note', '---\nname: cli-note\ndescription: From the CLI test\n---\nBody.\n', { source: 'user' });
   await queueTeamChanges(key, ['cli-note'], { flush: false });
   const s = await runCli(['memory', 'team', 'sync', '--project', dir, '--json']);

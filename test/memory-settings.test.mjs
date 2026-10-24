@@ -153,7 +153,7 @@ test('assertMemoryDefragModelInput: the pair rule, the catalog casing, and the m
 });
 
 import { writeProjectSettings, assertProjectSettingsPatch } from '../src/core/settings-cascade.mjs';
-import { teamMemoryEnabled } from '../src/core/settings.mjs';
+import { teamMemoryEnabled, teamMemoryLoad } from '../src/core/settings.mjs';
 
 test('team memory: off by default, per project only; memory.teamMaxFiles is a cap of its own', () => {
   const projectKey = 'teamdemo-0000000a';
@@ -164,9 +164,12 @@ test('team memory: off by default, per project only; memory.teamMaxFiles is a ca
   assert.equal(memoryCaps({ projectKey }).teamMaxFiles, 7);
   assert.equal(memoryCaps({ projectKey }).maxFilesPerScope, 50, 'the local cap is separate');
   assert.equal(memoryCaps(null).teamMaxFiles, 50, 'default');
-  assert.throws(() => assertProjectSettingsPatch({ 'memory.team': 'yes' }), /memory\.team must be true or false/);
+  assert.equal(teamMemoryLoad({ projectKey }), 'both', 'true loads local and team notes');
+  writeProjectSettings({ projectKey }, { 'memory.team': 'only' });
+  assert.deepEqual([teamMemoryEnabled({ projectKey }), teamMemoryLoad({ projectKey })], [true, 'team'], '"only": on, team notes only');
+  assert.throws(() => assertProjectSettingsPatch({ 'memory.team': 'yes' }), /memory\.team must be true, false or "only"/);
   writeProjectSettings({ projectKey }, { 'memory.team': null });
-  assert.equal(teamMemoryEnabled({ projectKey }), false);
+  assert.deepEqual([teamMemoryEnabled({ projectKey }), teamMemoryLoad({ projectKey })], [false, 'local']);
 });
 
 test('team memory: settings.json cannot switch it on — the user layer is not read', async () => {

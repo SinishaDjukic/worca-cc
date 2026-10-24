@@ -124,7 +124,7 @@ import { workflowPickerLabel, memoryChangesRows } from './results-view.mjs';
 import {
   memoryRoute, renderHealthCard, renderFileList, renderEditor, collectEditor,
   renderMemoryHistory, MEMORY_NAME_HELP, formatWhen, parseSnapshotId, patchRunRefs,
-  MEMORY_TEAM_SUB, renderMemoryViews, renderTeamCard, renderTeamNotes, renderSeedReview, renderClashCompare,
+  MEMORY_TEAM_SUB, renderMemoryViews, renderTeamCard, renderTeamNotes, renderSeedReview, renderClashCompare, teamLoadOf, teamLoadValue,
   collectSeedDecisions, seedSummary, seedableCount, renderTeamAvailableLine,
 } from './memory-view.mjs';
 import { createScriptsController, nextCopyKey } from './scripts-view.mjs';
@@ -17780,7 +17780,12 @@ function createTeamMemoryController({ host, msgEl, projectKey, current = null })
     if (!r.ok || !r.data || typeof r.data.enabled !== 'boolean') { paint(); say(fail(r), 'err-inline'); return; }
     setStatus(r.data);
   }
-  async function toggle(on) {
+  /** Local · Team · Both (team-memory-load-choice.md): Local is the switch-off (its confirm), Team or Both from Local
+   *  the switch-on (its seeding offer), Team ↔ Both changes only what loads. */
+  async function setLoad(next) {
+    const was = teamLoadOf(st.status);
+    if (!st.status || next === was) return;
+    const on = next !== 'local';
     if (!on) {
       const ok = await confirmModal({
         title: 'Turn team memory off',
@@ -17790,13 +17795,13 @@ function createTeamMemoryController({ host, msgEl, projectKey, current = null })
       if (!ok) { paint(); return; }
     }
     st.busy = true; paint();
-    const r = await memoryApi('PATCH', `/api/projects/${encodeURIComponent(projectKey)}/settings`, { 'memory.team': on ? true : null });
+    const r = await memoryApi('PATCH', `/api/projects/${encodeURIComponent(projectKey)}/settings`, { 'memory.team': teamLoadValue(next) });
     st.busy = false;
-    if (!r.ok) notify({ tone: 'err', title: on ? 'Team memory is still off' : 'Team memory is still on', detail: fail(r) });
+    if (!r.ok) notify({ tone: 'err', title: was === 'local' ? 'Team memory is still off' : on ? 'What loads did not change' : 'Team memory is still on', detail: fail(r) });
     await load();
     // The first switch-on raises the offer (Q&A seed-offer); the Team view keeps it until finished or dismissed. Never
     // over another page: this one may have closed while the switch was saved.
-    if (r.ok && on && !gone() && st.status && st.status.enabled && st.status.seed && st.status.seed.offer === 'pending' && seedableCount(st.status) > 0) await openSeeding();
+    if (r.ok && on && was === 'local' && !gone() && st.status && st.status.enabled && st.status.seed && st.status.seed.offer === 'pending' && seedableCount(st.status) > 0) await openSeeding();
   }
   /** Every request of this view and its dialog, one at a time: while it runs, every control waits for it (a second Undo
    *  would answer "Not undone" right after the first one's success; Compare's other side would race it). */
@@ -17937,6 +17942,7 @@ function createTeamMemoryController({ host, msgEl, projectKey, current = null })
   const onClick = (e) => {
     if (st.busy || gone()) return;   // one request at a time (its controls are disabled meanwhile); never a page that left
     const hit = (cls) => (e.target.closest ? e.target.closest(`.${cls}`) : null);
+    if (hit('mem-team-load')) { void setLoad(hit('mem-team-load').dataset.load); return; }
     if (hit('mem-team-sync')) { void sync(); return; }
     if (hit('mem-team-seed')) { void openSeeding(); return; }
     if (hit('mem-team-dismiss')) { void dismiss(); return; }
@@ -17944,20 +17950,14 @@ function createTeamMemoryController({ host, msgEl, projectKey, current = null })
     if (hit('mem-team-compare')) { void openSeeding({ name: hit('mem-team-compare').dataset.name }); return; }
     if (hit('mem-team-remove')) void removeFromTeam(hit('mem-team-remove').dataset.name);
   };
-  const onChange = (e) => {
-    if (!(e.target && e.target.classList && e.target.classList.contains('mem-team-switch'))) return;
-    if (st.busy || gone()) { paint(); return; }   // as onClick: one request at a time, never a page that left
-    void toggle(e.target.checked);
-  };
   host.addEventListener('click', onClick);
-  host.addEventListener('change', onChange);
   self = {
     projectKey,
     load,
     destroy() {
       const owned = holds(dialogBody);
       dead = true;
-      host.removeEventListener('click', onClick); host.removeEventListener('change', onChange); host.replaceChildren();
+      host.removeEventListener('click', onClick); host.replaceChildren();
       if (owned) closePluginModal();   // the dialog this page opened goes with it — never another feature's
     },
   };

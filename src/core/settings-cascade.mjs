@@ -60,7 +60,7 @@ const SCALARS = [
   scalar({ id: 'memory.softBytesPerFile', path: ['memory', 'softBytesPerFile'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_SOFT_BYTES_PER_FILE }),
   scalar({ id: 'memory.maxBytesPerFile', path: ['memory', 'maxBytesPerFile'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_HARD_BYTES_PER_FILE }),
   // Team memory (phase 1a): project-only opt-in — no user layer (readUser off), no team key.
-  scalar({ id: 'memory.team', path: ['memory', 'team'], check: SETTING_CHECKS.bool, def: false, hint: 'must be true or false', readUser: () => undefined }),
+  scalar({ id: 'memory.team', path: ['memory', 'team'], check: SETTING_CHECKS.teamMemory, def: false, hint: 'must be true, false or "only"', readUser: () => undefined }),
   scalar({ id: 'memory.teamMaxFiles', path: ['memory', 'teamMaxFiles'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_TEAM_MAX_FILES, hint: 'must be a positive whole number' }),
   scalar({ id: 'memory.maxFilesPerScope', path: ['memory', 'maxFilesPerScope'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_MAX_FILES_PER_SCOPE }),
   scalar({ id: 'memory.hookMaxChars', path: ['memory', 'hookMaxChars'], check: SETTING_CHECKS.byteCap, def: DEFAULT_MEMORY_HOOK_MAX_CHARS }),

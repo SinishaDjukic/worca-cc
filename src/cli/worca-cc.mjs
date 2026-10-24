@@ -3333,7 +3333,11 @@ async function drainTeamPushes() {
 const MEMORY_HELP = `worca memory — agent memory
 
   worca memory team status [--project <path>] [--json]  The team layer: on/off, the branch, every note's state
-  worca memory team on [--project <path>]               Share this project's NEW and CHANGED notes on its worca-memory branch
+  worca memory team on [--team-only] [--project <path>]
+                                                        Share this project's NEW and CHANGED notes on its worca-memory branch;
+                                                        runs and chats load local and team notes, or with --team-only only
+                                                        the team's (your notes that are not shared stay here, unloaded).
+                                                        Run again with or without --team-only to change what loads
   worca memory team off [--project <path>]              Stop: nothing is fetched, loaded or pushed; this machine's queue is dropped
   worca memory team sync [--project <path>] [--json]    Push the queue now and fetch the team's notes
   worca memory team rm <name> [--project <path>]        Remove a note from the team (git history keeps it)
@@ -3355,7 +3359,7 @@ async function cmdMemory(argv) {
   if (group !== 'team' || !['status', 'on', 'off', 'sync', 'rm', 'resolve'].includes(verb)) { process.stderr.write(MEMORY_HELP); return 2; }
   const team = await import('../core/memory-team.mjs');
   const { writeProjectSettings } = await import('../core/settings-cascade.mjs');
-  const a = pluginArgs(rest, ['--project'], ['--json', '--keep-mine', '--take-team']);
+  const a = pluginArgs(rest, ['--project'], ['--json', '--keep-mine', '--take-team', '--team-only']);
   const projectDir = resolve(a.project || process.cwd());
   const key = projectKey(projectDir);
   const project = (await listProjects()).find((p) => p.key === key);
@@ -3364,7 +3368,7 @@ async function cmdMemory(argv) {
     if (verb === 'status') {
       const st = await team.teamMemoryStatus(key);
       if (a.json) { out(JSON.stringify(st, null, 2)); return 0; }
-      out(c('bold', `team memory for ${project.name}: ${st.enabled ? 'on' : 'off'}`));
+      out(c('bold', `team memory for ${project.name}: ${st.enabled ? `on — runs and chats load ${st.load === 'team' ? 'team notes only' : 'local and team notes'}` : 'off'}`));
       if (!st.enabled) return 0;
       out(`  branch ${st.branch}: ${st.remote.exists === false ? 'not on origin yet' : (st.remote.headSha || '').slice(0, 7) || 'not fetched yet'}${st.remote.lastError ? c('yellow', ` · last push failed: ${st.remote.lastError.split('\n')[0]}`) : ''}`);
       out(`  ${Object.entries(st.counts).map(([k, n]) => `${n} ${k}`).join(' · ') || 'no notes'}`);
@@ -3373,7 +3377,15 @@ async function cmdMemory(argv) {
       return 0;
     }
     if (verb === 'on') {
-      await team.switchTeamMemoryOn(key, project.path, () => writeProjectSettings({ projectDir: project.path }, { 'memory.team': true }));
+      const value = a['team-only'] ? 'only' : true;
+      const loads = a['team-only'] ? 'team notes only' : 'local and team notes';
+      // Already on: only what loads changes (team-memory-load-choice.md) — no switch-on, no fetch.
+      if (team.isTeamMemoryOn(key)) {
+        writeProjectSettings({ projectDir: project.path }, { 'memory.team': value });
+        out(`team memory is on for ${project.name} — runs and chats load ${loads}`);
+        return 0;
+      }
+      await team.switchTeamMemoryOn(key, project.path, () => writeProjectSettings({ projectDir: project.path }, { 'memory.team': value }));
       // On from here: a first fetch that fails is retried by every run start, chat turn and the server's tick.
       const r = await team.teamMemorySettingChanged(key, project.path).catch((err) => ({ error: err }));
       if (r?.error) out(c('yellow', `team memory is on for ${project.name} — the first fetch failed (${r.error.message || r.error}); it is retried on the next run`));

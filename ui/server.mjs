@@ -7061,9 +7061,13 @@ async function applyProjectSettingsPatch(project, patch) {
   await assertSlotModels(items.filter(({ entry, value }) => entry.family && value).map(({ entry, value }) => ({ id: entry.id, engine: entry.engine, value })), { projectDir: project.path });
   const teamSwitch = items.find(({ entry }) => entry.id === 'memory.team');
   const write = () => writeProjectSettings({ projectDir: project.path }, patch, { roles });
-  if (teamSwitch?.value === true) await switchTeamMemoryOn(project.key, project.path, write);   // 400 NO_GIT / FOLDER_PROJECT / NO_ORIGIN first; baseline + switch under the team lock (D1)
+  // `true` (load local and team notes) or "only" (team notes only) — team-memory-load-choice.md. Only a switch from
+  // off is a switch-on; Team ↔ Both changes what loads, nothing else.
+  const wasOn = teamSwitch ? isTeamMemoryOn(project.key) : false;
+  const turnsOn = teamSwitch && !wasOn && (teamSwitch.value === true || teamSwitch.value === 'only');
+  if (turnsOn) await switchTeamMemoryOn(project.key, project.path, write);   // 400 NO_GIT / FOLDER_PROJECT / NO_ORIGIN first; baseline + switch under the team lock (D1)
   else write();
-  if (teamSwitch) void teamMemorySettingChanged(project.key, project.path).catch(teamWarn);   // on: fetch now · off: drop the queue
+  if (teamSwitch && isTeamMemoryOn(project.key) !== wasOn) void teamMemorySettingChanged(project.key, project.path).catch(teamWarn);   // on: fetch now · off: drop the queue
   emitChanged('settings-changed');
   return projectSettingsState(project.path);
 }

@@ -15,7 +15,7 @@ import { worcaHome, listProjects, getProjectByPath } from './projects.mjs';
 import { gitState } from './git-available.mjs';
 import { listRemotes } from './git-info.mjs';
 import { PROJECT_KEY_RE } from './store.mjs';
-import { memoryCaps, teamMemoryEnabled } from './settings.mjs';
+import { memoryCaps, teamMemoryEnabled, teamMemoryLoad } from './settings.mjs';
 import './settings-cascade.mjs';   // side effect: installs the project-layer reader teamMemoryEnabled and memoryCaps consult
 import {
   memoryRoot, projectScope, scopeDir, listMemory, readMemory, writeMemory, removeMemory, setMemoryExtra, snapshotScope,
@@ -68,6 +68,8 @@ const seedFile = (key) => join(keyDir(key), 'seed.json');
 const isKey = (key) => typeof key === 'string' && PROJECT_KEY_RE.test(key);
 /** On for this project key — the settings cascade's project layer, `memory.team`. */
 export function isTeamMemoryOn(projectKey) { return isKey(projectKey) && teamMemoryEnabled({ projectKey }); }
+/** What a run or chat loads of this project: 'local' (off), 'both' or 'team' (team-memory-load-choice.md). */
+export function teamMemoryLoadOf(projectKey) { return isKey(projectKey) ? teamMemoryLoad({ projectKey }) : 'local'; }
 
 function teamError(code, message, extra = {}) { return Object.assign(new Error(message), { code, ...extra }); }
 /** A note name indexes an OWN key or nothing: `constructor`, `toString` and `__proto__` are valid note names, never a
@@ -1059,6 +1061,23 @@ export function teamMountNames(notes, localNames, { maxFiles = 0, maxBytes = 0 }
     .filter((n) => !shadowed.has(n.toLowerCase()) && !(maxBytes > 0 && notes[n].bytes > maxBytes))
     .slice(0, maxFiles > 0 ? maxFiles : undefined);
 }
+/** Pure: what a project whose team memory loads team notes only (`memory.team: "only"`) loads, over teamNoteStates
+ *  rows. Its local notes that ARE team notes — `shared` (a tracked copy) and `pending` (on its way to the team: loads
+ *  before its push lands) — and the team's other notes: never shadowed by a local note that does not load, still by a
+ *  queued intent (a removal on its way), none over the local per-file cap. Newest `maxFiles` of them IN ALL.
+ *  @returns {{local:Set<string>, team:Set<string>}} the local notes (into project/) and the team's (into team/) */
+export function teamOnlyLoad({ rows = [], snapshot = null, queued = [], maxFiles = 0, maxBytes = 0 }) {
+  const team = snapshot && !snapshot.missing ? snapshot.notes || {} : {};
+  const local = rows.filter((r) => r.local && (r.state === 'shared' || r.state === 'pending'));
+  const shadowed = new Set([...local.map((r) => r.name), ...queued].map((n) => String(n).toLowerCase()));
+  const picks = [
+    ...local.map((r) => ({ name: r.name, updated: r.updated, local: true })),
+    ...Object.keys(team).filter((n) => !shadowed.has(n.toLowerCase()) && !(maxBytes > 0 && team[n].bytes > maxBytes))
+      .map((n) => ({ name: n, updated: team[n].updated, local: false })),
+  ].sort((a, b) => String(b.updated || '').localeCompare(String(a.updated || '')) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .slice(0, maxFiles > 0 ? maxFiles : undefined);
+  return { local: new Set(picks.filter((p) => p.local).map((p) => p.name)), team: new Set(picks.filter((p) => !p.local).map((p) => p.name)) };
+}
 /** A hold (1b: a same-name clash the user skipped while seeding) lasts while the team holds a note of that name,
  *  case-insensitively — and while this machine cannot tell (no snapshot yet: the next fetch decides). The team's note
  *  gone (a teammate deleted it, the branch is gone): a plain local note again. Pure. */
@@ -1103,11 +1122,47 @@ export async function writeTeamDir(dir, notes) {
   }
 }
 /**
- * Write the team folder(s) of a READ-ONLY rules copy (decision D2) for every opted-in project dir in `dirs`; a project
- * that is off gets its folder emptied if one exists. Called after refreshTeamLayer; never fetches.
- * @returns {Promise<Array<{key:string, rel:string, count:number}>>} one entry per opted-in project
+ * What one project LOADS (team-memory-load-choice.md): `local` (off: its local notes) · `both` (its local notes, and the
+ * team notes teamMountNames picks) · `team` (teamOnlyLoad: `localNames` limits its local notes). No fetch here.
+ * @returns {Promise<{load:'local'|'both'|'team', localNames:Set<string>|null, team:Array<{name:string,text:string}>}>}
+ *   `localNames` null = every local note
  */
-export async function mountTeamLayer({ rules, dirs }) {
+export async function memoryLoadPlan(projectKey) {
+  const load = teamMemoryLoadOf(projectKey);
+  if (load === 'local') return { load, localNames: null, team: [] };
+  if (load === 'both') return { load, localNames: null, team: await teamMountNotes(projectKey) };
+  const caps = memoryCaps({ projectKey });
+  const { snapshot, rows, queued } = await noteRows(projectKey, caps);
+  const sets = teamOnlyLoad({ rows, snapshot, queued: [...queued.keys()], maxFiles: caps.teamMaxFiles, maxBytes: caps.hardBytesPerFile });
+  return { load, localNames: sets.local, team: [...sets.team].map((name) => ({ name, text: snapshot.notes[name].text })) };
+}
+/** The project dirs of `dirs` that load only some of their local notes, given `only` (mountMemory's filter); the other
+ *  dirs as they are. `plans`: Map(projectKey → memoryLoadPlan). */
+export function loadFilteredDirs(dirs, plans) {
+  return (dirs || []).map((d) => {
+    const names = d.scope?.kind === 'project' ? plans?.get(d.scope.projectKey)?.localNames : null;
+    return names ? { ...d, only: names } : d;
+  });
+}
+/** memoryLoadPlan for every project dir of `dirs`: Map(projectKey → plan). A project whose plan fails loads as `both`
+ *  would without a team folder — its local notes — and the failure is warned. */
+export async function memoryLoadPlans(dirs) {
+  const plans = new Map();
+  for (const d of dirs || []) {
+    if (d.scope?.kind !== 'project' || plans.has(d.scope.projectKey)) continue;
+    const key = d.scope.projectKey;
+    try { plans.set(key, await memoryLoadPlan(key)); }
+    catch (err) { console.warn(`[worca] team memory: ${key}: what to load could not be read (${err?.code || err?.message || err}) — its local notes load`); }
+  }
+  return plans;
+}
+/**
+ * Write the team folder(s) of a READ-ONLY rules copy (decision D2) for every opted-in project dir in `dirs`; a project
+ * that is off gets its folder emptied if one exists. Called after refreshTeamLayer; never fetches. `plans`
+ * (memoryLoadPlans, the ones the local copies were mounted with) — read here when not given.
+ * @returns {Promise<Array<{key:string, rel:string, count:number, load:string}>>} one entry per opted-in project
+ */
+export async function mountTeamLayer({ rules, dirs, plans = null }) {
   const out = [];
   for (const d of dirs || []) {
     if (d.scope?.kind !== 'project') continue;
@@ -1116,10 +1171,11 @@ export async function mountTeamLayer({ rules, dirs }) {
     const target = join(rules, ...rel.split('/'));
     // One workspace member that cannot be mounted (a disk error) never costs the next one its team notes.
     try {
-      if (!isTeamMemoryOn(key)) { if (existsSync(target)) await writeTeamDir(target, []); continue; }
-      const notes = await teamMountNotes(key);
+      const plan = plans?.get(key) ?? (plans ? null : await memoryLoadPlan(key));
+      if (!plan || plan.load === 'local') { if (existsSync(target)) await writeTeamDir(target, []); continue; }
+      const notes = plan.team;
       await writeTeamDir(target, notes);
-      out.push({ key, rel, count: notes.length });
+      out.push({ key, rel, count: notes.length, load: plan.load });
     } catch (err) {
       console.warn(`[worca] team memory: ${key}: team notes not mounted (${err?.code || err?.message || err})`);
     }
@@ -1152,7 +1208,9 @@ export async function teamListing(projectKey) {
   if (!isTeamMemoryOn(projectKey)) return null;
   const snap = await readTeamSnapshot(projectKey);
   if (!snap || snap.missing) return [];
-  const local = new Set((await listMemory(memoryRoot(), projectScope(projectKey))).map((e) => e.name.toLowerCase()));
+  // Team notes only: a local note that does not load shadows nothing (memoryLoadPlan).
+  const loaded = teamMemoryLoadOf(projectKey) === 'team' ? (await memoryLoadPlan(projectKey)).localNames : null;
+  const local = new Set((loaded ? [...loaded] : (await listMemory(memoryRoot(), projectScope(projectKey))).map((e) => e.name)).map((n) => n.toLowerCase()));
   const queued = new Set([...(await queuedNames(projectKey))].map((n) => n.toLowerCase()));
   // A note this machine is removing from the team (queued, no local copy; any case — a push removes every case variant,
   // D9) is no team note any more: the same rule as the mount.
@@ -1173,7 +1231,7 @@ export async function readTeamNote(projectKey, name) {
 
 // ── status for the API / CLI / phase 1b ────────────────────────────────────────────────────────
 /** Pure: one row per name across the local store, the records, the queue and the snapshot (§2.6). */
-export function teamNoteStates({ local = [], statuses = {}, queued = new Set(), snapshot = null, maxFiles = 0, maxBytes = 0 }) {
+export function teamNoteStates({ local = [], statuses = {}, queued = new Set(), snapshot = null, maxFiles = 0, maxBytes = 0, load = 'both' }) {
   const team = snapshot && !snapshot.missing ? snapshot.notes || {} : {};
   const localBy = new Map(local.map((l) => [l.name, l]));
   // `queued`: the queued names, or a Map name → the intent's op (a team delete stays `deleting` under a blocked edit).
@@ -1194,6 +1252,12 @@ export function teamNoteStates({ local = [], statuses = {}, queued = new Set(), 
     else if (l && l.marker && l.marker === l.hash) rows.push({ ...row, state: 'shared', behind: t ? t.hash !== l.hash : !!snapshot && !snapshot.missing });
     else if (l) rows.push({ ...row, state: 'local', shadows: teamLower.has(name.toLowerCase()) });
     else if (t) rows.push({ ...row, state: 'team' });
+  }
+  // Team notes only: `mounted` says whether THIS row's copy loads — a local row's local copy (a held or plain local note
+  // does not, the team's version of its name may), a teammate's row the team's.
+  if (load === 'team') {
+    const sets = teamOnlyLoad({ rows, snapshot, queued: queuedNames, maxFiles, maxBytes });
+    for (const r of rows) r.mounted = r.local ? sets.local.has(r.name) : sets.team.has(r.name);
   }
   return rows;
 }
@@ -1217,12 +1281,13 @@ async function readQueuedOps(projectKey) {
 async function noteRows(projectKey, caps) {
   const local = await readLocalNotes(projectKey);
   const snapshot = await readTeamSnapshot(projectKey);
+  const queued = await readQueuedOps(projectKey);
   const rows = teamNoteStates({
     local: [...local].map(([name, f]) => ({ name, hash: f.hash, marker: f.marker, updated: f.updated })),
-    statuses: await readStatuses(projectKey), queued: await readQueuedOps(projectKey), snapshot,
-    maxFiles: caps.teamMaxFiles, maxBytes: caps.hardBytesPerFile,
+    statuses: await readStatuses(projectKey), queued, snapshot,
+    maxFiles: caps.teamMaxFiles, maxBytes: caps.hardBytesPerFile, load: teamMemoryLoadOf(projectKey),
   });
-  return { local, snapshot, rows };
+  return { local, snapshot, rows, queued };
 }
 /** 'pending' until a seeding is finished ('done') or the offer dismissed ('dismissed'). */
 export async function readSeedOffer(projectKey) {
@@ -1244,7 +1309,7 @@ async function lastSeed(projectKey) {
 export async function teamMemoryStatus(projectKey) {
   const caps = memoryCaps(isKey(projectKey) ? { projectKey } : null);
   const enabled = isTeamMemoryOn(projectKey);
-  const base = { projectKey, enabled, branch: TEAM_MEMORY_BRANCH, caps: { localMaxFiles: caps.maxFilesPerScope, teamMaxFiles: caps.teamMaxFiles }, available: teamMemoryAvailability(projectKey) };
+  const base = { projectKey, enabled, load: teamMemoryLoadOf(projectKey), branch: TEAM_MEMORY_BRANCH, caps: { localMaxFiles: caps.maxFilesPerScope, teamMaxFiles: caps.teamMaxFiles }, available: teamMemoryAvailability(projectKey) };
   const seed = { offer: await readSeedOffer(projectKey), last: enabled ? await lastSeed(projectKey) : null };
   if (!enabled) {
     // Whether the switch would turn on, and why not (D8) — null when no checkout of the project is known here.
