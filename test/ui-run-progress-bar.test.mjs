@@ -212,6 +212,8 @@ test('run progress layout CSS', async () => {
       assert.match(rule('.run-status'), /display:\s*grid/);
       assert.match(rule('.rd-sheet-head'), /grid-template-columns:\s*minmax\(0,\s*1fr\)/);
       assert.doesNotMatch(css, /(^|\})\.rd-now-top\{display:flex/m, 'the old orb row no longer lays the block out');
+      // s1: in the card head the block spans every column, so the bar is the head's width, not column 1's.
+      assert.match(rule('.rd-sheet-head > .run-status'), /grid-area:\s*1 \/ 1 \/ 2 \/ -1/);
     } },
     { name: 'the hover detail opens above the bar', run() {
       const r = rule('.run-prog-detail');

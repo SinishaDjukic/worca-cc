@@ -114,8 +114,9 @@ Every pull request button and link looks the same everywhere (`test/ui-pr-contro
    `.hd-pr-repo-link`) is `--blue-ink-strong`, weight 600.
 Placement: on the run page the PR control sits in the card's head at every level (`.rd-sheet-head > .rd-head-acts`, the
 `.rd-pr-slot` among the head buttons: Try it, Create PR, Push, Fix conflicts, Ask for changes, Discard / Apply, How to
-merge, Report), centred on the status line, with at most one primary; under 420px of head width the buttons wrap onto
-their own row below the status, on the left edge. View PR is a split button `View PR │ ▾`
+merge, Report), centred in the card head's row, which is the buttons' height (32px, 40px on touch screens) whichever
+control it holds, with at most one primary; under 420px of head width the buttons wrap onto their own row below the
+status block, on the left edge. View PR is a split button `View PR │ ▾`
 (`.btn-split.mini.rd-pr-split`): the main half opens the PR, the ▾ (PR scope) holds Watch (Advanced and above), Copy PR
 link and Fix conflicts (while the PR conflicts). A workspace run has one `View PRs ▾` button that lists each member's PR.
 The group page has the same head: Create PR, View PR ▾ or View PRs ▾ on the status line; View PRs ▾ holds each PR, then
@@ -249,7 +250,8 @@ on purpose. Under 640px of height the head compacts (smaller hero, tighter gap) 
   `Feature` / `Chain` / `Group`; a run in a group's chip links its group page and ends in a CSS `›` (`Run 2 of 3 ›`), so
   its facts block has no group row), then the card: the status block (the status line, the head buttons at its right,
   with the PR control among them; see PR controls. Beside the stage bar the status line names only the step
-  (`Working · Refine Plan`); the stage is on the bar), the tracker under a `--line` divider, the facts block (`.rd-kv`: 12px
+  (`Working · Refine Plan`); the stage is on the bar; the stage bar, the group's "N done" bar and the role rows run the
+  card's full width 16px under the head row, never only the space left of the buttons), the tracker under a `--line` divider, the facts block (`.rd-kv`: 12px
   `--ink-2` labels, 13px values, one row per fact and one place to edit it; a quiet button that leads a value pulls back
   by its padding so its text sits on the value column), then the tiles (`--fs-stat` sans values with tabular figures,
   `--pad-tile` padding). No PR bar, no kept-work, merge-back or Apply box: their actions are head buttons.

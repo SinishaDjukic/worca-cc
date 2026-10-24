@@ -5005,20 +5005,30 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-page-branch .ico-check{display:none;}
 .rd-page-branch.copied .ico-copy{display:none;}
 .rd-page-branch.copied .ico-check{display:inline;color:var(--green-ink);}
-/* The card's head: the status line top left, the Live view switch (app.js paintRdLive)
-   top right, level with the state word; after it the head buttons (.rd-head-acts: run-head.mjs, with the pull request
-   control .rd-pr-slot among them). The live row shows only while the run has not ended and the buttons only once it
-   has, so the two never meet; if they did, the buttons take their own column after the row. */
-.rd-sheet-head{container:rd-head / inline-size;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:start;min-width:0;}
-.rd-sheet-head > .rd-now-top{grid-area:1 / 1;}
-.rd-sheet-head > .rd-live-row{grid-area:1 / 2;height:23px;margin-left:16px;}   /* the state word's line box (18px × 1.3) */
-/* Slice 3: centred on the status line: the 32px buttons overhang it each way, so the head is the status line's height
-   with or without them, and the PR control's fade-out moves nothing. A narrow card wraps them under the status. */
-.rd-sheet-head > .rd-head-acts{grid-area:1 / 3;display:flex;align-items:center;gap:8px;margin:-7px 0 -7px 16px;}
+/* The card's head: one row the buttons' height (--rd-head-h: 32px, 40px on touch screens like .btn) with the status
+   line on the left and, on the right, the Live view switch (app.js paintRdLive) while the run is live or the head
+   buttons (.rd-head-acts: run-head.mjs, with the pull request control .rd-pr-slot among them) once it has ended; the
+   two never meet, and if they did the buttons take their own column after the row. The status block spans the head
+   and shares its columns (subgrid): its status line stays in the first column, and its role rows, "N done" bar and
+   stage bar run the full head width 16px under the row, so neither their width nor the card's height depends on
+   which control shows. The group page card (group-page.mjs) has the same head with a bare .run-status. */
+.rd-sheet-head{--rd-head-h:32px;container:rd-head / inline-size;display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:start;min-width:0;}
+@media (pointer:coarse){.rd-sheet-head{--rd-head-h:40px;}}
+.rd-sheet-head > .run-status{grid-area:1 / 1 / 2 / -1;grid-template-columns:subgrid;column-gap:0;}
+.rd-sheet-head > .run-status > *{grid-column:1 / -1;}
+.rd-sheet-head > .run-status > .run-status-head{grid-column:1;height:var(--rd-head-h);}
+/* 8px here + the block's 8px row gap = 16px to the first shown line under the head row; nothing under it, no margin. */
+.rd-sheet-head > .run-status > .run-status-head:has(~ :not([hidden])){margin-bottom:8px;}
+/* The block's gap spaces the bar here, not .run-prog's own 10px top margin. */
+.rd-sheet-head > .run-status > .run-status-bar{margin-top:0;}
+/* Above the status block's is-link hover band, which spans the head. */
+.rd-sheet-head > .rd-live-row{grid-area:1 / 2;height:var(--rd-head-h);margin-left:16px;position:relative;}
+.rd-sheet-head > .rd-head-acts{grid-area:1 / 3;display:flex;align-items:center;gap:8px;height:var(--rd-head-h);margin-left:16px;position:relative;}
 .rd-sheet-head > .rd-head-acts[hidden]{display:none;}
 /* The PR slot may shrink in the row (its own max-width caps the label; style below), never past the card. */
 .rd-head-acts > .rd-pr-slot{min-width:0;}
-@container rd-head (max-width:420px){.rd-sheet-head > .rd-head-acts{grid-area:2 / 1 / 3 / -1;justify-self:start;flex-wrap:wrap;margin:12px 0 0;max-width:100%;}
+/* A narrow card wraps the buttons onto their own row under the status block, on the left edge. */
+@container rd-head (max-width:420px){.rd-sheet-head > .rd-head-acts{grid-area:2 / 1 / 3 / -1;justify-self:start;flex-wrap:wrap;height:auto;min-height:var(--rd-head-h);margin:16px 0 0;max-width:100%;}
   .rd-head-acts > .rd-pr-slot{max-width:100%;}
   .rd-head-acts .btn-split-menu{right:auto;left:0;}}
 .rd-sheet-head:has(.btn-split-menu){position:relative;z-index:7;}

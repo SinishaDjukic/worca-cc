@@ -15,6 +15,7 @@
 //   STILL CDP-ONLY
 //     (1b)(1c) .gv-stage === the .run-flow-wrap padding box on the Running detail and the History detail
 //     (1a)     the Runs list row carries no graph, log or inline panel; a waiting run sits in Needs you
+//     (1e)(1f) the card head row height, the right control's centring and the stage bar's full width (s1)
 //     (3)       the 26/22px footer bands and offsetHeight === nodeSize()
 //     (4a)(4b)  computed animationName on a live wire, live and under .settled
 //     (5)       the RENDERED <=N pill (a visible .wmax) beside the Nx count
@@ -266,6 +267,36 @@ const HOSTGEO = (wrapSel) => `(()=>{${R_FN}
     hostInlineWidth:host.style.width||'',z:+m.a.toFixed(6),
     hostPos:getComputedStyle(host).position,hostPad:getComputedStyle(host).padding,
     hostDisplay:getComputedStyle(host).display};})()`;
+/** s1: the card head's geometry. The head row is --rd-head-h tall, the right-hand control is centred on the status line
+ *  (or, in a narrow head, wrapped under the block), and the first line under the row starts 16px down; a shown stage
+ *  bar is the head's full width. */
+const HEADGEO = (root) => `(()=>{${R_FN}
+  const head=document.querySelector(${JSON.stringify(`${root} .rd-sheet-head`)});
+  if(!head)return {missing:true};
+  const vis=(e)=>!!e&&!e.hidden&&e.getClientRects().length>0;
+  const q=(s)=>head.querySelector(':scope > '+s);
+  const block=q('.run-status'), st=q('.run-status > .run-status-head'), bar=q('.run-status > .run-status-bar');
+  const first=[...block.children].slice(1).find(vis)||null;
+  const live=q('.rd-live-row'), acts=q('.rd-head-acts');
+  const right=vis(live)?live:vis(acts)?acts:null;
+  return {head:R(head),status:R(st),bar:vis(bar)?R(bar):null,first:first?R(first):null,right:right?R(right):null,
+    rightIs:!right?'none':right===live?'live':'acts',isLink:block.classList.contains('is-link'),
+    hh:parseFloat(getComputedStyle(head).getPropertyValue('--rd-head-h'))};})()`;
+/** `narrow`: the width's expected mode (true at 375px, false at 1280px), so a pane that comes out narrow at 1280px
+ *  fails instead of quietly taking the narrow branch. */
+function headOk(g, narrow) {
+  if (g.missing || !g.status) return false;
+  if ((g.head.w <= 420) !== narrow) return false;                                        // the expected layout mode
+  if (g.hh !== 32 || Math.abs(g.status.h - 32) > 0.5) return false;                      // the row is 32px (no touch emulation)
+  if (Math.abs(g.status.l - g.head.l) > 1) return false;                                 // is-link's margin/padding cancel
+  if (g.first && Math.abs(g.first.t - g.status.b - 16) > 1) return false;                // 16px to the first line under it
+  if (g.bar && (Math.abs(g.bar.w - g.head.w) > 1 || Math.abs(g.bar.l - g.head.l) > 1)) return false;  // full width
+  if (!g.right) return true;
+  // Wrapped under the block: 16px margin, less 1px of rounding.
+  if (g.rightIs === 'acts' && narrow) return g.right.t >= (g.first ? g.first.b : g.status.b) + 15;
+  const mid = (r) => r.t + r.h / 2;
+  return Math.abs(mid(g.right) - mid(g.status)) <= 1 && g.right.h <= g.hh + 0.5;        // centred, no overhang
+}
 /** Every node card's box, in STAGE-local coordinates, plus the stage box. */
 const NODEBOXES = (wrapSel) => `(()=>{
   const stage=document.querySelector(${JSON.stringify(wrapSel)}+' .gv-stage');
@@ -403,6 +434,20 @@ try {
   check('1d', '1d the matrix saw the graph both beside the card and under it', liveLayouts.size === 2, [...liveLayouts]);
   // Back to the width and window the run started with: the checks below were measured there.
   await ev(`localStorage.setItem(${JSON.stringify(LIST_W_KEY)},'280');0`);
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+
+  // (1e) s1: the live head: 32px row, Live view centred on the status line, the stage bar the head's full width,
+  // measured in the is-link (Needs you) state so the subgrid's edge-track margins are proved, not assumed.
+  // The (1d) matrix left the Runs list at up to 640px; pin its 280px floor again so the 1280px head is wide.
+  await ev(`localStorage.setItem(${JSON.stringify(LIST_W_KEY)},'280');0`);
+  for (const [w, narrow] of [[1280, false], [375, true]]) {
+    await cdp('Emulation.setDeviceMetricsOverride', { width: w, height: 900, deviceScaleFactor: 1, mobile: false });
+    await go(`running/${runId}`);
+    await until(`document.querySelector('#run-detail .rd-sheet-head .run-status-head')`, `the live head at ${w}px`);
+    const g = await ev(HEADGEO('#run-detail'));
+    check('1e', `live head at ${w}px: ${g.rightIs} centred in a ${g.hh}px row, bar ${g.bar ? 'full width' : 'hidden'}`,
+      headOk(g, narrow) && g.rightIs === 'live' && !!g.bar && g.isLink, g);
+  }
   await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
 
   // (9a) the node axis is live on the Logs tab bar, with MANIFEST labels
@@ -648,6 +693,23 @@ try {
     !g3.missing && Math.abs(g3.stage.t - g3.pad.t) < 0.6 && Math.abs(g3.stage.h - g3.pad.h) < 0.6
     && Math.abs(g3.stage.l - g3.pad.l) < 0.6 && Math.abs(g3.stage.w - g3.pad.w) < 0.6
     && g3.hostPos === 'absolute' && g3.hostPad === '0px' && g3.hostDisplay === 'block', g3);
+
+  // (1f) s1: the saved head: the same 32px row with the head buttons (or nothing), centred, no overhang. The card head
+  // shows on the saved run page itself, not under Details.
+  const histHash = await ev('location.hash.slice(1)');
+  for (const [w, narrow] of [[1280, false], [375, true]]) {
+    await cdp('Emulation.setDeviceMetricsOverride', { width: w, height: 900, deviceScaleFactor: 1, mobile: false });
+    await go(`history/${rec.projectKey}/${rec.id}`);
+    await until(`document.querySelector('#hist-detail .rd-sheet-head .run-status-head')`, `the saved head at ${w}px`);
+    const g = await ev(HEADGEO('#hist-detail'));
+    check('1f', `saved head at ${w}px: ${g.rightIs} in a ${g.hh}px row`, headOk(g, narrow) && g.rightIs !== 'live', g);
+  }
+  await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+  await go(histHash);
+  await until(`document.querySelector('${HD} .gv-stage .gv-world .node')`, 'the History graph again');
+  await ev('window.scrollTo(0,0);0'); await settle('history again');
+  await ev(`(async()=>{const r=await fetch('/api/history/${rec.projectKey}/${rec.id}');
+    window.__histState=(await r.json()).state;return 1;})()`);   // the reloads above dropped it
 
   // (3) footer bands + the SHARED nodeSize, before and after expanding a strip.
   // The expected height is recomputed IN THE PAGE from the served

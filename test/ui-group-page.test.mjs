@@ -133,6 +133,9 @@ test('run 3: the group page shares the run page head — kind word, crumbs, fact
   const kv = root.querySelector('.gpage-card.rd-sheet > .rd-kv');
   assert.ok(kv.previousElementSibling.matches('.rd-sheet-head') && kv.previousElementSibling.querySelector(':scope > .run-status'),
     'facts right under the status head (the one ship flow\'s status line + PR slot)');
+  const gHead = root.querySelector('.gpage-card.rd-sheet > .rd-sheet-head');
+  assert.ok(gHead.querySelector(':scope > .run-status:first-child'), 's1: a bare .run-status opens the head, so the card-head CSS reaches it');
+  assert.ok(gHead.querySelector(':scope > .rd-head-acts'), 's1: the buttons sit beside it in the same head');
   const shown = [...kv.querySelectorAll('.rd-kv-row:not([hidden])')].map((r) => [r.dataset.fact, r.querySelector('.rd-kv-v').textContent]);
   assert.deepEqual(shown, [['project', 'acme-app'], ['runs', '3 runs · 1 done'], ['cost', '$4.20']]);
   const moreBtn = root.querySelector('.gpage-bar .gpage-more[aria-haspopup="menu"]');
