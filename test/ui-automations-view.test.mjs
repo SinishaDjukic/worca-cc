@@ -4,7 +4,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { prControl, waitLine, renderAutomations } from '../ui/public/automations-view.mjs';
+import { prControl, waitLine, renderAutomations, eventStatus } from '../ui/public/automations-view.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const domOf = () => trackDom(new JSDOM('<!doctype html><body></body>'));
@@ -60,4 +60,13 @@ test('Waiting row: the status line leads, the caveat sits in the tooltip', () =>
   assert.match(line.textContent, /^Waiting · daily limit · starts 00:00 UTC .* · Triage and propose$/);
   assert.ok(!line.textContent.includes(': '), 'no colon form');
   assert.match(line.title, /next day's limit/);
+});
+
+test('eventStatus and the Recent meta line: reasons and triage carry no colon forms', () => {
+  for (const reason of ['daily-cap', 'question', 'needs-info', 'concurrency', 'queue-full', 'untrusted-author'])
+    assert.ok(!eventStatus({ status: 'skipped', reason }).reason.includes(': '), reason);
+  const doc = domOf().window.document;
+  const root = renderAutomations(doc, { scope: 'project', repo: 'o/r', forge: 'github', rules: [], switches: [], queue: [],
+    events: [{ id: 'e1', number: 4, title: 'How do I export?', kind: 'issue', action: 'propose', phase: 'question', status: 'skipped', reason: 'question' }] });
+  assert.equal(root.querySelector('.automations-event .hint').textContent, 'Triage and propose · triaged as question · a question · commented, no run');
 });

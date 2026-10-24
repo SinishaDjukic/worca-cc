@@ -33,7 +33,7 @@ const REASONS = Object.freeze({
   filtered: 'labels do not match', missed: 'opened while Worca was off', closed: 'closed', 'daily-cap': 'daily limit reached · starts the next day',
   concurrency: 'waiting for a free slot', 'rule-off': 'rule turned off', 'queue-full': 'too many waiting (100)', removed: 'removed from the queue',
   superseded: 'a newer push replaced it',
-  question: 'a question: commented, no run', 'needs-info': 'unclear: asked for details, no run',
+  question: 'a question · commented, no run', 'needs-info': 'unclear · asked for details, no run',
 });
 
 function h(doc, tag, cls, text) {
@@ -96,7 +96,7 @@ function eventRow(doc, e, cb, { projectName = null } = {}) {
   if (/^https:\/\/(github\.com|dev\.azure\.com)\//.test(String(e.url || ''))) { link.href = e.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; }
   top.append(link, ' ', h(doc, 'span', '', e.title || ''), h(doc, 'span', `badge ${st.family}`, st.word));
   row.append(top);
-  const triage = e.action === 'propose' && TRIAGE_WORDS[e.phase] ? `triaged: ${TRIAGE_WORDS[e.phase]}` : '';
+  const triage = e.action === 'propose' && TRIAGE_WORDS[e.phase] ? `triaged as ${TRIAGE_WORDS[e.phase]}` : '';
   const meta = [e.author ? `by @${e.author}` : '', ACTION_WORDS[e.phase === 'fix' ? 'fix' : e.action] || '', triage, st.reason,
     e.costUsd ? `$${Number(e.costUsd).toFixed(2)}` : '', e.via === 'webhook' ? 'webhook' : ''].filter(Boolean).join(' · ');
   row.append(h(doc, 'small', 'hint', meta));
