@@ -1,0 +1,82 @@
+{
+  "metaVersion": 2,
+  "key": "toolchainResolver",
+  "displayName": "Toolchain: resolve",
+  "description": "Merges Detect's facts with the agent's proposals into one plan: concrete mise versions, size, disk budget, status per row, and a diff against the saved toolchain lock. Checks the toolchain root is writable first. Blocks (routes to Approve) only when something needs installing.",
+  "color": "blue",
+  "icon": "",
+  "domain": "toolchains",
+  "order": 99,
+  "runtime": "node",
+  "file": "toolchainResolver.mjs",
+  "command": null,
+  "timeoutMs": 900000,
+  "params": [
+    {
+      "id": "toolchainRoot",
+      "type": "string",
+      "required": false,
+      "label": "Toolchain root",
+      "description": "Shared mise data dir; every tool@version lives here once, for all projects. Empty = /data/toolchains when /data exists (Railway volume), else ~/.worca-cc/toolchains. Must be writable.",
+      "default": ""
+    },
+    {
+      "id": "reserveMb",
+      "type": "number",
+      "required": false,
+      "label": "Keep free (MB)",
+      "description": "Disk left untouched after the install.",
+      "default": 2048
+    }
+  ],
+  "portSummary": "Reads facts, proposals; produces plan, summary, changes, unchanged.",
+  "inputs": [
+    {
+      "id": "facts",
+      "type": "json",
+      "required": true
+    },
+    {
+      "id": "proposals",
+      "type": "json",
+      "required": true
+    }
+  ],
+  "outputs": [
+    {
+      "id": "plan",
+      "type": "json",
+      "when": "always",
+      "filename": "toolchain-plan.json",
+      "store": "run",
+      "artifactKind": "plan"
+    },
+    {
+      "id": "summary",
+      "type": "md",
+      "when": "always",
+      "filename": "toolchain-plan.md",
+      "store": "run",
+      "artifactKind": "summary"
+    },
+    {
+      "id": "changes",
+      "type": "json",
+      "when": "blocking",
+      "filename": "toolchain-plan.json",
+      "store": "run",
+      "artifactKind": "changes"
+    },
+    {
+      "id": "unchanged",
+      "type": "json",
+      "when": "clean",
+      "filename": "toolchain-plan.json",
+      "store": "run",
+      "artifactKind": "unchanged"
+    }
+  ],
+  "verdict": {
+    "filename": "toolchain-resolve-verdict.json"
+  }
+}

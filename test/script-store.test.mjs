@@ -227,6 +227,30 @@ test('cases: written to the user layer; for a built-in key they are an OVERLAY w
   await fails(() => writeCases('shell', 'x'), 'BAD_REQUEST', /cases must be an array/);
 });
 
+test('readScript names every case the cases file drops, and an unreadable file; a missing file is no problem', async () => {
+  await createScript({ meta: NODE_META, source: SRC });
+  const file = join(userScriptsDir(), 'lint.tests.json');
+  assert.deepEqual((await readScript('lint')).caseProblems, [], 'no cases file: nothing to report');
+  writeFileSync(file, JSON.stringify({ version: 1, cases: [
+    { id: 'good', name: 'fine' },
+    { id: 'long', name: 'x'.repeat(81) },
+    { id: '9bad' },
+  ] }));
+  const read = await readScript('lint');
+  assert.deepEqual(read.cases.map((c) => c.id), ['good'], 'only the valid case loads');
+  assert.deepEqual(read.caseProblems, [
+    'lint.tests.json: case "long": name must be 80 characters or fewer',
+    'lint.tests.json: cases[2]: bad case id "9bad"',
+  ]);
+  writeFileSync(file, '{ not json');
+  const broken = await readScript('lint');
+  assert.deepEqual(broken.cases, []);
+  assert.equal(broken.caseProblems.length, 1);
+  assert.match(broken.caseProblems[0], /^lint\.tests\.json: invalid JSON \(/);
+  rmSync(file);
+  await deleteScript('lint');
+});
+
 test('listScripts is the registry order with caseCount; a half-written pair loads nothing', async () => {
   await createScript({ meta: NODE_META, source: SRC, by: 'ui' });
   await writeCases('lint', [{ id: 'c1' }]);

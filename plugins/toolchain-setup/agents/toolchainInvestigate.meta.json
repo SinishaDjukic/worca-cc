@@ -1,0 +1,45 @@
+{
+  "key": "toolchainInvestigate",
+  "displayName": "Toolchain: investigate",
+  "description": "Reads CI configs, Dockerfiles, Makefiles, scripts and docs to find the toolchains Detect missed; read-only, outputs proposals.json only.",
+  "color": "violet",
+  "icon": "",
+  "agentFile": "toolchainInvestigate.md",
+  "runnerType": "producer",
+  "scope": "project",
+  "domain": "toolchains",
+  "fanOut": false,
+  "asksQuestions": false,
+  "questionsLocked": false,
+  "questionsDefault": false,
+  "order": 99,
+  "promptHints": "",
+  "requiresSkills": [],
+  "requiresAssets": [],
+  "metaVersion": 2,
+  "inputs": [
+    {
+      "id": "facts",
+      "type": "json",
+      "required": true,
+      "as": "file"
+    },
+    {
+      "id": "task",
+      "type": "md",
+      "required": false,
+      "as": "file"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "proposals",
+      "type": "json",
+      "when": "always",
+      "filename": "toolchain-proposals.json",
+      "store": "run",
+      "artifactKind": "proposals"
+    }
+  ],
+  "portSummary": "Reads facts, task; produces proposals."
+}
