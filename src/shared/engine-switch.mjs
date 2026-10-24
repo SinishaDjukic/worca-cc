@@ -48,7 +48,8 @@
  *             hold its credential (`slotLabel`: how the Statistics view names a slot that is this engine's own), and `requires`: config names that must be set too for the mode to apply. Modes are
  *             listed in the order its CLI prefers them (the route resolver picks the first one whose credential is set
  *             and whose `requires` names are set too), its own login last. A mode's credential is its one secret-named
- *             name (`*_TOKEN`, `*_KEY`, `*_SECRET`); its other names are config.
+ *             name (`*_TOKEN`, `*_KEY`, `*_SECRET`); its other names are config. `byModel`: a model id names its
+ *             provider (`provider/model`), and that provider's mode (its id) signs the step in
  *   relay     how the model relay carries its calls ({protocol, upstream, modelCheck, auxModels, needsModel}), or null.
  *             `needsModel`: its CLI has no model of its own once pointed at a relay or broker slot (a step with none is
  *             refused)
@@ -275,28 +276,34 @@ export const ENGINES = deepFreeze({
     signInTitle: 'Goose providers',
     // goose's own knobs (GOOSE_MODE and GOOSE_THINKING_EFFORT are set per spawn); the provider and model come from the
     // step's model id (--provider, --model), its credentials from goose's config and keyring or the provider's key.
+    // GOOSE_PATH_ROOT moves goose's config, data (its session database) and state dirs.
     env: { names: ['GOOSE_MODE', 'GOOSE_THINKING_EFFORT', 'GOOSE_MAX_TURNS', 'GOOSE_TEMPERATURE', 'GOOSE_CONTEXT_LIMIT',
-      'GOOSE_DISABLE_KEYRING', 'GOOSE_CLI_MIN_PRIORITY'], hostOnly: [],
+      'GOOSE_DISABLE_KEYRING', 'GOOSE_CLI_MIN_PRIORITY', 'GOOSE_PATH_ROOT'], hostOnly: ['GOOSE_PATH_ROOT'],
       relayOwned: ['GOOSE_PROVIDER', 'GOOSE_MODEL', 'GOOSE_LEAD_PROVIDER', 'GOOSE_LEAD_MODEL', 'OPENAI_API_KEY', 'OPENAI_HOST',
         'OPENAI_BASE_PATH', 'ANTHROPIC_API_KEY', 'ANTHROPIC_HOST', 'GOOGLE_API_KEY', 'GOOGLE_HOST', 'OPENROUTER_API_KEY',
         'OPENROUTER_HOST', 'AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_DEPLOYMENT_NAME',
         'AZURE_OPENAI_API_VERSION', 'DATABRICKS_TOKEN', 'DATABRICKS_HOST', 'OLLAMA_HOST'], home: null },
-    signIn: { modes: [
+    // The step's provider/model id picks the provider, and so its one key (byModel); with no model, the provider goose
+    // is configured with (GOOSE_PROVIDER, engines/goose.mjs gooseConfiguredMode). A provider listed here by no mode
+    // (ollama, aws_bedrock, gcp_vertex_ai, …) signs in from goose's own config and keyring.
+    signIn: { byModel: true, modes: [
       { id: 'openai', kind: 'key', env: ['OPENAI_API_KEY'] },
       { id: 'anthropic', kind: 'key', env: ['ANTHROPIC_API_KEY'] },
       { id: 'google', kind: 'key', env: ['GOOGLE_API_KEY'] },
       { id: 'openrouter', kind: 'key', env: ['OPENROUTER_API_KEY'] },
       { id: 'azure_openai', kind: 'key', env: ['AZURE_OPENAI_API_KEY'] },
       { id: 'databricks', kind: 'key', env: ['DATABRICKS_TOKEN'] },
-      { id: 'config', kind: 'own', env: [], files: ['config.yaml'] },
+      { id: 'config', kind: 'own', env: [], files: ['config.yaml', 'secrets.yaml'] },
     ] },
     relay: null,
     shell: true,
-    // goose holds no permission rule per spawn (its permission.yaml is per tool name and user-wide).
+    // goose holds no permission rule per spawn (its permission.yaml is per tool name and user-wide): every kind is
+    // unenforced, so a guardrail set with deny rules needs --allow-unguarded-engine.
     rules: {},
     // The summon extension (its sub-agents) is never loaded: --no-profile --with-builtin developer.
     subagents: { tool: null, inheritsRules: 'unverified', proof: null },
-    requiresExplicitModel: false, sessions: 'none', defaultModel: null, loadsClaudeMcp: false,
+    // Its sessions live in its own database (~/.local/share/goose/sessions/sessions.db, engines/goose.mjs).
+    requiresExplicitModel: false, sessions: 'user-store', defaultModel: null, loadsClaudeMcp: false,
   },
   opencode: {
     label: 'OpenCode', models: true, cost: true, helpers: false, beta: true, signin: true, remote: false,

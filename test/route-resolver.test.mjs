@@ -170,3 +170,20 @@ test('who serves the calls of an engine without a relay: its mode\'s provider, e
   assert.equal(resolveModelRoute({ engine: 'qwen', serverEnv: {}, broker: OFF, configured: 'qwen-oauth' }).provider, 'qwen');
   assert.equal(resolveModelRoute({ engine: 'codex', serverEnv: { OPENAI_API_KEY: 'k' }, broker: OFF }).provider, 'openai', 'a relay engine: its upstream');
 });
+
+test('an engine whose model id names its provider (Goose): that provider\'s one key, set or not; another provider keeps none', () => {
+  const serverEnv = { PATH: 'p', OPENAI_API_KEY: 'o', GOOGLE_API_KEY: 'g', ANTHROPIC_API_KEY: 'a' };
+  const google = resolveModelRoute({ engine: 'goose', serverEnv, broker: OFF, model: 'google/gemini-2.5-flash' });
+  assert.deepEqual([google.kind, google.signInMode, google.credential, google.provider], ['direct', 'google', 'GOOGLE_API_KEY', 'google']);
+  const { env } = childEnv({ engine: 'goose', signInMode: google.signInMode, base: serverEnv });
+  assert.deepEqual(credentialNamesOf('goose').filter((k) => k in env), ['GOOGLE_API_KEY']);
+  // A provider worca holds no key for (goose's own config signs it in): no key of worca's, the provider still named.
+  const ollama = resolveModelRoute({ engine: 'goose', serverEnv, broker: OFF, model: 'ollama/llama3' });
+  assert.deepEqual([ollama.kind, ollama.signInMode, ollama.credential, ollama.provider], ['own', 'ollama', null, 'ollama']);
+  assert.deepEqual(credentialNamesOf('goose').filter((k) => k in childEnv({ engine: 'goose', signInMode: ollama.signInMode, base: serverEnv }).env), []);
+  // No model: the CLI's own provider setting (the adapter passes it as `configured`), else the catalog order.
+  assert.equal(resolveModelRoute({ engine: 'goose', serverEnv, broker: OFF, configured: 'anthropic' }).credential, 'ANTHROPIC_API_KEY');
+  assert.equal(resolveModelRoute({ engine: 'goose', serverEnv, broker: OFF }).credential, 'OPENAI_API_KEY');
+  // The step's model wins over the CLI's setting (goose runs --provider).
+  assert.equal(resolveModelRoute({ engine: 'goose', serverEnv, broker: OFF, model: 'google/x', configured: 'anthropic' }).credential, 'GOOGLE_API_KEY');
+});

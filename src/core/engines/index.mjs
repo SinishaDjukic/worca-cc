@@ -100,9 +100,11 @@ const geminiAdapter = Object.freeze({ name: 'gemini', capabilities: gemini.gemin
   partialRules: gemini.partialRules, ruleReach: gemini.GEMINI_RULE_TERMS.reach, ruleKind: gemini.GEMINI_RULE_TERMS.kind,
   rulePlan: (rules) => gemini.geminiRulePlan(rules, { home: '/home/u' }), denials: gemini.geminiDenials, denySubagentTool: () => null,
   removeSessions: gemini.removeGeminiSessions, chat: gemini.geminiChat });
-// Goose (engines/goose.mjs) emits the normalized vocabulary itself. It holds no permission rule (capability false).
+// Goose (engines/goose.mjs) emits the normalized vocabulary itself. It holds no permission rule (capability false); its
+// sessions are rows of its own database.
 const gooseAdapter = Object.freeze({ name: 'goose', capabilities: goose.gooseCapabilities, run: goose.runGooseProcess,
-  classifyError: goose.classifyGooseError, preflight: goose.goosePreflight, unattachableMcp: goose.gooseMcpProblems, chat: goose.gooseChat });
+  classifyError: goose.classifyGooseError, preflight: goose.goosePreflight, unattachableMcp: goose.gooseMcpProblems,
+  removeSessions: goose.removeGooseSessions, chat: goose.gooseChat });
 // OpenCode (engines/opencode.mjs) emits the normalized vocabulary itself; its rules ride OPENCODE_CONFIG_CONTENT.
 const opencodeAdapter = Object.freeze({ name: 'opencode', capabilities: opencode.opencodeCapabilities, run: opencode.runOpencodeProcess,
   classifyError: opencode.classifyOpencodeError, preflight: opencode.opencodePreflight, unenforcedRules: opencode.unenforcedRules,

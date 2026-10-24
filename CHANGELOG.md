@@ -9,9 +9,11 @@
 ### Security: the merged engines move onto the engine catalog (core protection layer)
 
 - Gemini CLI and Qwen Code: each gets one sign-in's names and never worca's other keys: the sign-in its own settings choose, else the first one worca's environment names. Of the run's environment, only the values its MCP servers reference reach it. Qwen Code's sub-agent tools (`agent`, `send_message`, `cron_create`) are switched off. Archiving a run removes their sessions (`~/.gemini/tmp`, `~/.qwen`), never a sign-in file. When Gemini CLI refuses a tool call on its own (with no terminal it refuses a shell command that reuses a flag or path from earlier tool output, and edits to build files such as `package.json`), the run log says it was not a worca rule.
+- Goose: the step's `provider/model` id names the provider, and Goose gets that provider's key only (no model: the provider Goose is configured with). Its MCP servers' env values no longer ride Goose's own environment, where every tool call saw them: each sits in a file beside the server's wrapper. A step that ends early (an error, the turn cap, a stop) books what Goose recorded, and a reply Goose could not price is cost unknown, never $0. Archiving a run removes its Goose sessions from Goose's database.
 - **Upgrade notes.**
   - Gemini CLI and Qwen Code do not run in an E2B sandbox yet: such a run is refused at start.
   - Gemini CLI holds `Edit`, `Bash`, `Grep` and `Glob` rules only in part (no edit refusal was captured), and `WebFetch`, `WebSearch` and MCP rules are unverified; Qwen Code holds `Bash` only in part, and `Write`, `Grep`, `Glob`, `WebFetch` and `WebSearch` are unverified. Each of those needs `--allow-unguarded-engine`.
+  - Goose does not run in an E2B sandbox yet. Every rule kind needs `--allow-unguarded-engine` on Goose: it holds no rule per spawn. Amazon Bedrock with a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK` handed to Goose) is refused, also for a step with no model while `GOOSE_PROVIDER` is `aws_bedrock`: sign Goose in with an AWS profile. On Windows, a Goose MCP server that declares env values is not attached. Under a cost cap, a Goose step starts only on a model worca can price itself (a Models page price, or an `anthropic/…` or `openai/…` list price).
 
 ### Security: one owner per engine boundary (core protection layer, part 1)
 

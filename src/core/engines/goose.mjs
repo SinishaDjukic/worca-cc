@@ -29,6 +29,11 @@
 //   after the command's path (a bare path: its basename, `.` -> `_`), and its tools `<extension>__<tool>`; worca runs
 //   each server through a wrapper script named after the server, so the names are the server's own. goose 1.54
 //   opens with `server/discover` (MCP 2026-07-28) and falls back to `initialize` on "method not found".
+// - goose keeps its sessions in one SQLite database (Paths::data_dir()/sessions/sessions.db: GOOSE_PATH_ROOT/data, else
+//   the XDG data dir, ~/.local/share/goose on macOS too). `sessions.name` is the `--name` worca gives; each model reply
+//   adds a `usage_ledger` row (its tokens, and `cost` when goose can price it, else NULL) before the stream shows it,
+//   and goose's own `delete_session` removes the session's `messages`, `usage_ledger` and `sessions` rows (read in the
+//   goose 1.54.0 source, crates/goose/src/session/session_manager.rs; `goose session remove` asks on a terminal).
 // - Assumed absent (capability false): a per-spawn tool allowlist, permission rules worca can set per spawn (goose's
 //   permission.yaml is per tool name and user-wide), sub-agents (the summon extension is not loaded), skills, hooks,
 //   a turn or spend cap worca can count on. A read-only spawn refuses (no verified read-only mode).
@@ -47,8 +52,9 @@
 //   worca's MCP child gets the real HOME back. Provider keys then come from the env or the keyring, not ~/.config/goose.
 // - A provider that is itself an agent CLI (claude-acp, codex-acp, cursor-agent, gemini-cli, …) runs that CLI's own
 //   tools, out of goose's reach: a chat never runs on one.
-import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { isAbsolute, join } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { agentIdentityFor } from '../agent-pool.mjs';
 import { currentOwner } from '../billing.mjs';
@@ -56,6 +62,8 @@ import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { superviseSpawn, childEnv, execCheck, runCapture, argValue, cleanRunEnv, safeEmit } from '../spawn.mjs';
 import { ENGINES } from '../../shared/engine-switch.mjs';
+import { resolveModelRoute } from '../exec-env/relay-route.mjs';
+import { brokerEnabled } from '../broker-client.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { scopeLauncherEnv } from '../mcp/launch.mjs';
@@ -113,14 +121,20 @@ export function splitGooseModel(id) {
 const MCP_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+/** Whether a server declares env values (a wrapper hands them to it; on Windows nothing could, but goose's own env). */
+const declaresEnv = (srv) => !!srv?.env && typeof srv.env === 'object' && Object.keys(srv.env).length > 0;
+
 /** The servers of an --mcp-config document that goose cannot attach, each with its reason (capabilities.mjs
  *  describeUnattachableMcp): `remote` (worca attaches stdio servers only: goose's streamable-http flag takes no
- *  headers), `name` (outside MCP_NAME_RE: the wrapper's file name is the server's name) or `incomplete`. */
-export function gooseMcpProblems(servers) {
+ *  headers), `name` (outside MCP_NAME_RE: the wrapper's file name is the server's name), `env` (on Windows, which has no
+ *  wrapper script: its values could reach it only through goose's own env, which every tool call of the agent sees)
+ *  or `incomplete`. */
+export function gooseMcpProblems(servers, { platform = process.platform } = {}) {
   const out = [];
   for (const [name, srv] of Object.entries(servers && typeof servers === 'object' ? servers : {})) {
     const stdio = !!srv && typeof srv.command === 'string';
-    const reason = stdio ? (MCP_NAME_RE.test(name) ? null : 'name') : srv && typeof srv.url === 'string' ? 'remote' : 'incomplete';
+    const reason = !stdio ? (srv && typeof srv.url === 'string' ? 'remote' : 'incomplete')
+      : !MCP_NAME_RE.test(name) ? 'name' : platform === 'win32' && declaresEnv(srv) ? 'env' : null;
     if (reason) out.push({ name, reason });
   }
   return out;
@@ -130,58 +144,47 @@ export function gooseMcpProblems(servers) {
 export const shWord = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
 
 /**
- * Each stdio server as a wrapper script goose launches by path (so goose names the extension after the server) and
- * the env the goose process carries for them. A server's env values never reach a file or argv: each rides goose's env
- * under a per-server name (`WORCAMCP<i>_<KEY>`), and the wrapper exports it under the server's own name.
+ * Each stdio server as a wrapper script goose launches by path (so goose names the extension after the server), and
+ * the env file beside it holding the server's env values. Those values never ride goose's own env (where the agent's
+ * every tool call would see them), the wrapper text or argv: the wrapper sources `<name>.env` from its own folder (a
+ * server name holds no `.`, so no wrapper is named so), which only worca and goose's MCP launch read.
  * @param {Record<string, {command:string, args?:string[], env?:object}>} servers  already expanded (expandMcpRefs)
- * @returns {{scripts: Record<string,string>, env: Record<string,string>}} scripts: server name -> wrapper text
+ * @returns {{scripts: Record<string,string>, envFiles: Record<string,string>}} server name -> wrapper text, and -> its
+ *   env file's text (only for a server that declares env)
  */
 export function gooseMcpWrappers(servers) {
   const scripts = {};
-  const env = {};
-  let i = 0;
+  const envFiles = {};
   for (const [name, srv] of Object.entries(servers && typeof servers === 'object' ? servers : {})) {
     if (!MCP_NAME_RE.test(name) || !srv || typeof srv.command !== 'string') continue;
-    i += 1;
     const lines = ['#!/bin/sh', `# worca: MCP server ${name} for goose (engines/goose.mjs)`];
-    for (const [k, v] of Object.entries(srv.env && typeof srv.env === 'object' ? srv.env : {})) {
-      if (!ENV_NAME_RE.test(k) || typeof v !== 'string') continue;
-      const carrier = `WORCAMCP${i}_${k}`;
-      env[carrier] = v;
-      lines.push(`${k}="$${carrier}"; export ${k}; unset ${carrier}`);
+    const vars = Object.entries(srv.env && typeof srv.env === 'object' ? srv.env : {}).filter(([k, v]) => ENV_NAME_RE.test(k) && typeof v === 'string');
+    if (vars.length) {
+      envFiles[name] = vars.map(([k, v]) => `${k}=${shWord(v)}; export ${k}\n`).join('');
+      lines.push(`. "\${0%/*}/${name}.env"`);
     }
     lines.push(`exec ${[srv.command, ...(Array.isArray(srv.args) ? srv.args : [])].map(shWord).join(' ')}`);
     scripts[name] = `${lines.join('\n')}\n`;
   }
-  return { scripts, env };
+  return { scripts, envFiles };
 }
 
 /**
- * Windows has no `sh` for gooseMcpWrappers: each stdio server's command line goes to `--with-extension` as it is, and
- * its env values ride the goose process env under the server's own names (goose's servers inherit that env). Every
- * server shares that one env, so two declaring one name (any casing: Windows env names are case-insensitive) with
- * different values throw, as on codex. goose names such an extension after the command's path, not the server: its
- * tools keep goose's names. UNVERIFIED on Windows (no capture): the command line is POSIX-quoted (shWord), which
- * keeps a backslash path literal if goose splits it as on macOS.
+ * Windows has no `sh` for gooseMcpWrappers: each stdio server's command line goes to `--with-extension` as it is. A
+ * server that declares env is not attached (gooseMcpProblems `env`): its values could reach it only through goose's own
+ * env. goose names such an extension after the command's path, not the server: its tools keep goose's names.
+ * UNVERIFIED on Windows (no capture): the command line is POSIX-quoted (shWord), which keeps a backslash path literal
+ * if goose splits it as on macOS.
  * @param {Record<string, {command:string, args?:string[], env?:object}>} servers  already expanded (expandMcpRefs)
- * @returns {{extensions: string[], env: Record<string,string>}}
+ * @returns {{extensions: string[]}}
  */
 export function gooseMcpDirect(servers) {
   const extensions = [];
-  const env = {};
-  const seen = new Map();   // upper-cased name -> [name, value]
   for (const [name, srv] of Object.entries(servers && typeof servers === 'object' ? servers : {})) {
-    if (!MCP_NAME_RE.test(name) || !srv || typeof srv.command !== 'string') continue;
-    for (const [k, v] of Object.entries(srv.env && typeof srv.env === 'object' ? srv.env : {})) {
-      if (!ENV_NAME_RE.test(k) || typeof v !== 'string') continue;
-      const had = seen.get(k.toUpperCase());
-      if (had && had[1] !== v) throw new Error(`MCP servers declare ${had[0]} with different values — on Windows goose hands its servers one shared environment`);
-      seen.set(k.toUpperCase(), [k, v]);
-      env[k] = v;
-    }
+    if (!MCP_NAME_RE.test(name) || !srv || typeof srv.command !== 'string' || declaresEnv(srv)) continue;
     extensions.push([srv.command, ...(Array.isArray(srv.args) ? srv.args : [])].map(shWord).join(' '));
   }
-  return { extensions, env };
+  return { extensions };
 }
 
 // ── argv ─────────────────────────────────────────────────────────────────────
@@ -352,27 +355,128 @@ export function classifyGooseError(err) {
 
 export const GOOSE_SIGNED_OUT_HINT = 'run `goose configure`, or set the provider\'s key (for example GOOGLE_API_KEY or OPENAI_API_KEY) in worca\'s environment';
 
+const homeOf = (env) => (typeof env?.HOME === 'string' && env.HOME.trim()) || homedir();
+const absEnv = (env, k) => (typeof env?.[k] === 'string' && isAbsolute(env[k]) ? env[k] : null);
+/** goose's config dir (goose Paths::config_dir: GOOSE_PATH_ROOT/config, else the XDG config dir; Windows %APPDATA%). */
+const gooseConfigDir = (env, platform) => (absEnv(env, 'GOOSE_PATH_ROOT') ? join(env.GOOSE_PATH_ROOT, 'config')
+  : platform === 'win32' ? join(absEnv(env, 'APPDATA') || join(homeOf(env), 'AppData', 'Roaming'), 'Block', 'goose', 'config')
+    : join(absEnv(env, 'XDG_CONFIG_HOME') || join(homeOf(env), '.config'), 'goose'));
+
+/** The provider goose is configured with (GOOSE_PROVIDER in the env, else in its config.yaml): with no model on the
+ *  step, the catalog sign-in mode it signs in with (credentials.mjs resolveModelRoute `configured`), or null. */
+export function gooseConfiguredMode(env = process.env, platform = process.platform) {
+  const given = typeof env.GOOSE_PROVIDER === 'string' ? env.GOOSE_PROVIDER.trim() : '';
+  if (given) return given;
+  let text = '';
+  try { text = readFileSync(join(gooseConfigDir(env, platform), 'config.yaml'), 'utf8'); } catch { return null; }
+  const m = /^GOOSE_PROVIDER:[ \t]*["']?([A-Za-z0-9_.-]+)["']?[ \t]*$/m.exec(text);
+  return m ? m[1] : null;
+}
+
+/**
+ * The one sign-in mode a goose spawn keeps (credentials.mjs resolveModelRoute): the step model's provider (catalog
+ * signIn.byModel), else the provider goose is configured with, else the catalog order. Throws (errorClass 'config')
+ * on a refusal: the credential broker holds no Goose key.
+ */
+export function gooseSignInMode(model = null, env = process.env) {
+  const d = resolveModelRoute({ engine: 'goose', serverEnv: env, model: model || null, broker: { on: brokerEnabled() }, checkModel: false,
+    configured: model ? null : gooseConfiguredMode(env) });
+  if (d.refusal) throw Object.assign(new Error(`Goose: ${d.refusal}`), { errorClass: 'config' });
+  return d.signInMode;
+}
+
 /** The run-start check (engines/index.mjs `preflight`). Never rejects: {refusal} | {warning} | {}. Only the binary is
- *  checked, under the run's env (src/core/spawn.mjs execCheck): goose keeps provider keys in its config, its keyring or
- *  the env, and none of them is readable cheaply. */
-export async function goosePreflight({ bin = gooseDefaultBin(), timeoutMs = 10000, envAllowlist = [], spec = gooseSpawnSpec({ envAllowlist }) } = {}) {
-  const { code, error } = await execCheck(bin, ['--version'], { spec, timeoutMs });
+ *  checked, under the env a model-less step spawns with (src/core/spawn.mjs execCheck): goose keeps provider keys in its
+ *  config, its keyring or the env, and none of them is readable cheaply. */
+export async function goosePreflight({ bin = gooseDefaultBin(), timeoutMs = 10000, envAllowlist = [], spec = null } = {}) {
+  let given = spec;
+  if (!given) {
+    try { given = gooseSpawnSpec({ envAllowlist, signInMode: gooseSignInMode(null) }); } catch (err) { return { refusal: err.message }; }
+  }
+  const { code, error } = await execCheck(bin, ['--version'], { spec: given, timeoutMs });
   if (!error && code === 0) return {};
   return error && !/^(ENOENT|EACCES|EINVAL)$/.test(String(error.code))
     ? { warning: `could not check ${bin} (${error.message})` }
     : { refusal: `cannot run ${bin} (${error ? error.code : code}) — install the Goose CLI (brew install block-goose-cli), or point WORCA_GOOSE_BIN at it` };
 }
 
-/** The childEnv spec a goose run spawns with (engine, the run's allowlist, cwd and work root, the host pid): run and
- *  preflight build their env from it, so the check sees the run's env. */
-export function gooseSpawnSpec({ envAllowlist = [], cwd = null, workRoot = null, hostPid = null, signInMode = null } = {}) {
+/** The childEnv spec a goose run spawns with (engine, its one sign-in mode, the run's allowlist, cwd and work root, the
+ *  host pid): run and preflight build their env from it, so the check sees the run's env. */
+export function gooseSpawnSpec({ envAllowlist = [], signInMode = null, cwd = null, workRoot = null, hostPid = null } = {}) {
   return { engine: 'goose', signInMode, allowlist: envAllowlist, cwd, root: workRoot, hostPid };
 }
 
-/** The catalog sign-in mode a model id signs in with: its provider (`anthropic/…` -> 'anthropic'); '' for an id with no
- *  provider, which keeps no provider key. */
-export function gooseProviderOf(model) {
-  return splitGooseModel(model)?.provider.toLowerCase() ?? '';
+// ── sessions ─────────────────────────────────────────────────────────────────
+
+let DatabaseSync = null;
+/** node:sqlite, loaded on first use (as db.mjs does). */
+const sqlite = () => (DatabaseSync ??= createRequire(import.meta.url)('node:sqlite').DatabaseSync);
+
+/** goose's session database (goose Paths::data_dir()/sessions/sessions.db: GOOSE_PATH_ROOT/data, else the XDG data
+ *  dir, ~/.local/share/goose on macOS too; Windows %APPDATA%\Block\goose\data, unverified). */
+export function gooseSessionsDb(env = process.env, platform = process.platform) {
+  const data = absEnv(env, 'GOOSE_PATH_ROOT') ? join(env.GOOSE_PATH_ROOT, 'data')
+    : platform === 'win32' ? join(absEnv(env, 'APPDATA') || join(homeOf(env), 'AppData', 'Roaming'), 'Block', 'goose', 'data')
+      : join(absEnv(env, 'XDG_DATA_HOME') || join(homeOf(env), '.local', 'share'), 'goose');
+  return join(data, 'sessions', 'sessions.db');
+}
+
+/** `fn(db)` over goose's database, or null when it is absent or unreadable (another goose version's schema included). */
+function withGooseDb(env, fn, { readOnly = true } = {}) {
+  const file = gooseSessionsDb(env);
+  if (!existsSync(file)) return null;
+  let db = null;
+  try {
+    db = new (sqlite())(file, { readOnly });
+    db.exec('PRAGMA busy_timeout = 2000');
+    return fn(db, file);
+  } catch { return null; } finally { try { db?.close(); } catch { /* closed */ } }
+}
+
+/**
+ * What goose recorded for session `name` past its usage-ledger row `after` (one row per model reply): {last, usage,
+ * costUsd} — `costUsd` null when a reply had no price — or null (no database, no such session).
+ */
+export function gooseSessionSpend(name, env = process.env, after = 0) {
+  return withGooseDb(env, (db) => {
+    const s = db.prepare('SELECT id FROM sessions WHERE name = ?').get(String(name));
+    if (!s) return null;
+    const r = db.prepare(`SELECT MAX(id) AS last, COUNT(*) AS n, COUNT(cost) AS priced, SUM(input_tokens) AS i, SUM(output_tokens) AS o,
+      SUM(cache_read_tokens) AS cr, SUM(cache_write_tokens) AS cw, SUM(cost) AS c FROM usage_ledger WHERE session_id = ? AND id > ?`).get(s.id, after);
+    const n = Number(r?.n) || 0;
+    return { last: n ? Number(r.last) : after, usage: { input_tokens: Number(r?.i) || 0, output_tokens: Number(r?.o) || 0,
+      cache_read_input_tokens: Number(r?.cr) || 0, cache_creation_input_tokens: Number(r?.cw) || 0 },
+    costUsd: n && Number(r.priced) === n ? Number(r.c) : null, replies: n };
+  });
+}
+
+/**
+ * Archive (catalog `sessions: 'user-store'`): remove the goose sessions named by `sessionIds` (`goose:worca-…`) from
+ * goose's database, as goose's own delete_session does (their messages, usage-ledger rows and session rows), never its
+ * config or keyring. A busy or unreadable database is a failure, not a throw.
+ * @returns {Promise<{removed: string[], failed: {path: string, error: string}[]}>} removed: `<db>#<session id>`
+ */
+export async function removeGooseSessions({ sessionIds = [], env = process.env } = {}) {
+  const names = [...new Set(sessionIds.map(gooseSessionOf).filter(Boolean))];
+  const out = { removed: [], failed: [] };
+  if (!names.length || !existsSync(gooseSessionsDb(env))) return out;
+  const file = gooseSessionsDb(env);
+  let db = null;
+  try {
+    db = new (sqlite())(file);
+    db.exec('PRAGMA busy_timeout = 2000');
+    for (const name of names) {
+      for (const { id } of db.prepare('SELECT id FROM sessions WHERE name = ?').all(name)) {
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          for (const sql of ['DELETE FROM messages WHERE session_id = ?', 'DELETE FROM usage_ledger WHERE session_id = ?', 'DELETE FROM sessions WHERE id = ?']) db.prepare(sql).run(id);
+          db.exec('COMMIT');
+          out.removed.push(`${file}#${id}`);
+        } catch (err) { db.exec('ROLLBACK'); throw err; }
+      }
+    }
+  } catch (err) { out.failed.push({ path: file, error: err?.code || err?.message || String(err) }); } finally { try { db?.close(); } catch { /* closed */ } }
+  return out;
 }
 
 // ── spawn ────────────────────────────────────────────────────────────────────
@@ -417,8 +521,9 @@ export async function runGooseProcess({
   const realHome = agentId ? agentId.home : (process.env.HOME || homedir());
 
   const guardOn = hostGuardEnabled();
-  // A chat keeps only its model's provider key (the catalog sign-in mode of that provider): it has no shell to read it.
-  const spec = gooseSpawnSpec({ envAllowlist, cwd, workRoot, hostPid: guardOn ? process.pid : null, signInMode: ask ? gooseProviderOf(model) : null });
+  // The one provider key the step's model (else goose's configured provider) signs in with: never worca's others. A chat
+  // keeps the same one: it has no shell to read it.
+  const spec = gooseSpawnSpec({ envAllowlist, signInMode: gooseSignInMode(model), cwd, workRoot, hostPid: guardOn ? process.pid : null });
 
   // MCP: each stdio server becomes a wrapper script (on Windows: its command line as it is, gooseMcpDirect). goose stores
   // a session's extensions and starts them again on resume, so the wrappers live in a folder named after the session
@@ -428,13 +533,13 @@ export async function runGooseProcess({
   const made = [];
   const cleanup = () => { for (const d of made) { try { rmSync(d, { recursive: true, force: true }); } catch { /* best effort */ } } };
   let scripts = {};
+  let envFiles = {};
   let direct = [];
-  let mcpEnv = {};
   if (mcpConfigPath) {
     let doc;
     try { doc = JSON.parse(readFileSync(mcpConfigPath, 'utf8')); } catch (err) { throw new Error(`${bin}: cannot read the MCP config ${mcpConfigPath}: ${err.message}`); }
     const all = doc && typeof doc.mcpServers === 'object' && doc.mcpServers ? doc.mcpServers : {};
-    const problems = gooseMcpProblems(all);
+    const problems = gooseMcpProblems(all, { platform });
     const skip = new Set(problems.map((p) => p.name));
     if (skip.size) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] MCP servers not attached on goose — ${problems.map((p) => `${p.name} (${p.reason})`).join(', ')}` });
     // A chat: the child of each server gets the real HOME back (the chat runs goose in a home of its own) and the spawn
@@ -447,8 +552,8 @@ export async function runGooseProcess({
       // `${VAR}` references expand from this spawn's env plus the run's spawn env, as Claude Code would expand them.
       const from = childEnv({ ...spec, runEnv: cleanRunEnv(runSpawnEnv) }).env;
       const expanded = expandMcpRefs(kept, from);
-      if (platform === 'win32') ({ extensions: direct, env: mcpEnv } = gooseMcpDirect(expanded));
-      else ({ scripts, env: mcpEnv } = gooseMcpWrappers(expanded));
+      if (platform === 'win32') ({ extensions: direct } = gooseMcpDirect(expanded));
+      else ({ scripts, envFiles } = gooseMcpWrappers(expanded));
     }
   }
   const mcpNames = Object.keys(scripts);
@@ -459,6 +564,7 @@ export async function runGooseProcess({
     try {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
       made.push(dir);
+      for (const [name, text] of Object.entries(envFiles)) writeFileSync(join(dir, `${name}.env`), text, { mode: 0o600 });
       return { dir, extensions: mcpNames.map((name) => { const file = join(dir, name); writeFileSync(file, scripts[name], { mode: 0o700 }); return shWord(file); }) };
     } catch (err) {
       throw new Error(`${bin}: cannot prepare the MCP wrappers: ${err.message}`);
@@ -470,22 +576,38 @@ export async function runGooseProcess({
   // A system prompt too large for one argv value is folded into stdin behind a delimiter.
   if (sys && Buffer.byteLength(sys, 'utf8') > GOOSE_ARGV_LIMIT) { stdin = `=== SYSTEM ===\n${sys}\n=== END SYSTEM ===\n\n${stdin}`; sys = ''; }
 
-  // The catalog allowlist (src/core/spawn.mjs childEnv: goose's own names, the provider keys it signs in with). The MCP
-  // servers' env values ride the run env. P3-D20: the run env itself stays out of this child's env, but the git ceiling
-  // of a run without a project is no secret and must reach its git (childEnv merges its own `root` over it).
+  // The catalog allowlist (src/core/spawn.mjs childEnv: goose's own names, the one provider key it signs in with). The MCP
+  // servers' env values reach them through their wrappers' env files, never this env. P3-D20: the run env itself stays
+  // out of this child's env, but the git ceiling of a run without a project is no secret and must reach its git
+  // (childEnv merges its own `root` over it).
   const ceiling = typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string' ? { GIT_CEILING_DIRECTORIES: runSpawnEnv.GIT_CEILING_DIRECTORIES } : {};
   // The chat's own home: none of the user's plugins, hooks, skills or hints (see the chat notes above).
   if (ask && !agentId) for (const d of ['.config', '.local/share', '.local/state', '.cache']) mkdirSync(join(home, d), { recursive: true, mode: 0o700 });
   const chatHomeEnv = ask ? { HOME: home, XDG_CONFIG_HOME: join(home, '.config'), XDG_DATA_HOME: join(home, '.local', 'share'),
     XDG_STATE_HOME: join(home, '.local', 'state'), XDG_CACHE_HOME: join(home, '.cache') } : {};
   // Headless: approve / smart_approve would wait for a TTY.
-  const { env } = childEnv({ ...spec, runEnv: { ...mcpEnv, ...ceiling },
+  const { env } = childEnv({ ...spec, runEnv: ceiling,
     overlay: { GOOSE_MODE: 'auto', ...(effort ? { GOOSE_THINKING_EFFORT: String(effort) } : {}), ...chatHomeEnv, ...(probe ? probe.env : {}) } });
+  // Amazon Bedrock with a Bedrock API key: no goose turn on it has been seen, and no usage meter of worca's reads it. A
+  // step with no provider in its model runs goose's GOOSE_PROVIDER, so that one counts too.
+  if ((splitGooseModel(model)?.provider ?? env.GOOSE_PROVIDER) === 'aws_bedrock' && typeof env.AWS_BEARER_TOKEN_BEDROCK === 'string' && env.AWS_BEARER_TOKEN_BEDROCK) {
+    throw Object.assign(new Error(`${bin}: Goose on Amazon Bedrock with a Bedrock API key (AWS_BEARER_TOKEN_BEDROCK) is not supported yet — sign goose in to Bedrock with an AWS profile (goose configure), or pick another provider`), { errorClass: 'config' });
+  }
 
   const cap = Number.isInteger(maxTurns) && maxTurns > 0 ? maxTurns : null;
   const turnCap = () => Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true });
+  // A spawn that ends without its result (an error, the turn cap, goose's own turn limit, a stop) still spent what goose
+  // recorded: its `complete`'s figure, else the session's usage-ledger rows since `before`. Booked as the engine's own
+  // figure; no cost figure (an unpriced model) leaves the step's cost unknown, never $0.
+  const spendOnExit = (final, sessionName, before) => {
+    const from = final.completed ? { usage: final.usage, costUsd: final.costUsd } : gooseSessionSpend(sessionName, env, before);
+    if (!from?.usage || !Object.values(from.usage).some((n) => n > 0)) return;
+    safeEmit(onEvent, { type: 'spend', source: 'engine', ...(from.costUsd != null ? { costUsd: from.costUsd } : {}), usage: from.usage });
+  };
   const attempt = async (resumeName) => {
     const sessionName = resumeName || newSessionName();
+    // goose's usage ledger before this spawn: a resumed session's earlier replies were booked by their own spawns.
+    const before = resumeName ? gooseSessionSpend(sessionName, env)?.last ?? 0 : 0;
     const { dir, extensions } = writeWrappers(sessionName);
     const normalizer = createGooseNormalizer({ model: model || null, sessionName, mcpServers: mcpNames });
     const capCtrl = new AbortController();
@@ -509,6 +631,7 @@ export async function runGooseProcess({
       onDone: (code) => ({ code }),
       onStdoutLine: (line) => { for (const e of normalizer.push(line)) emit(e); },
     }).catch((err) => {
+      spendOnExit(normalizer.finish(), sessionName, before);
       if (capped && !signal?.aborted) throw turnCap();
       const f = normalizer.finish();
       if (f.error && f.error !== NO_COMPLETE && err?.name !== 'AbortError') {
@@ -520,6 +643,7 @@ export async function runGooseProcess({
     });
     for (const e of normalizer.end()) emit(e);
     const final = normalizer.finish();
+    if ((capped && !signal?.aborted) || final.error || final.turnLimit) spendOnExit(final, sessionName, before);
     if (capped && !signal?.aborted) throw turnCap();
     if (final.error) throw Object.assign(new Error(`${bin}: ${final.error}`), { errorClass: classifyGooseError(final.error), sawSession });
     if (final.turnLimit) throw Object.assign(new Error(`${bin}: goose stopped at its own turn limit before finishing (GOOSE_MAX_TURNS) — raise it, or split the task`), { sawSession });
@@ -598,6 +722,7 @@ export const gooseChat = makeChatDescriptor({
   preflight: (_ctx, impl = goosePreflight) => impl(),
   resumeNotFound: (err) => GOOSE_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
   modelProblem: gooseChatModelProblem,
-  signInMode: (model) => gooseProviderOf(model),
+  // The one its spawn keeps (gooseSignInMode); none when the route is refused, as the spawn itself is.
+  signInMode: (model) => { try { return gooseSignInMode(model); } catch { return ''; } },
   listRates: providerListRates,
 });

@@ -7,6 +7,7 @@
 import { after, beforeEach, afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, lstatSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +35,7 @@ import { relaySandbox } from './helpers/relay-sandbox.mjs';
 import { CATALOG_CREDENTIAL_NAMES } from './helpers/credential-env.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { CURSOR_ARGV_LIMIT } from '../src/core/engines/cursor.mjs';
+import { gooseSessionsDb } from '../src/core/engines/goose.mjs';
 import { CURSOR_CLI_CONFIG } from '../src/core/exec-env/relay-route.mjs';
 import { chatDescriptor } from '../src/core/engines/chat.mjs';
 import { modelPricedOn } from '../src/core/pricing.mjs';
@@ -100,9 +102,6 @@ conformanceRow('C-ENV-EXACT', 'the child gets base, catalog, sign-in and declare
 // A chat's model where the engine's chat needs one that names its provider; else the CLI's own default.
 const CHAT_MODEL = { goose: 'anthropic/claude-sonnet-5', opencode: 'anthropic/claude-sonnet-5' };
 const chatOn = (engine) => !!ENGINES[engine].chat && ENGINES[engine].chat.verified !== false;
-// Chat engines whose chat spawn moves onto the catalog in that engine's own commit (Goose: its MCP servers' env
-// moves to a file beside the wrapper): the chat rows wait for it.
-const CHAT_PENDING = new Set(['goose']);
 /** A chat turn's MCP config: worca's own server, its token and a set's secret by reference (ask/spawn.mjs buildMcpConfig). */
 function chatMcpConfig() {
   const file = join(tmp('worca-conf-chat-mcp-'), 'mcp.json');
@@ -119,7 +118,6 @@ function runChatFake(engine, { env = {}, spawnEnv = {}, allow = [] } = {}) {
 
 conformanceRow('C-ENV-EXACT (chat)', "a chat turn's spawn gets exact names only: no unlisted name, no host credential", async (engine, t) => {
   if (!chatOn(engine)) { t.skip('Chat is off on this engine (catalog chat.verified false)'); return; }
-  if (CHAT_PENDING.has(engine)) { t.skip('pending: this engine\'s chat moves onto the catalog in its own commit'); return; }
   const { rec, error } = await runChatFake(engine, { env: { COPILOT_ALLOW_ALL: 'true', CONF_UNLISTED_SECRET: 's3', GH_TOKEN: 'ghp_x' },
     spawnEnv: { ASK_COMMAND_TOKEN: 'tok-9', MCPSECRET_CONF: 'm9f3a' } });
   assert.equal(error, null, String(error?.message));
@@ -279,7 +277,20 @@ const STORES = {
   // Gemini names a chat by the id's first 8 characters; the file holds the whole id.
   gemini: { at: (h, id) => join(h, '.gemini', 'tmp', 'proj', 'chats', `session-2026-10-22T10-00-${id.slice(0, 8)}.json`), data: (id) => JSON.stringify({ sessionId: id }), id: (x) => `gemini:${x}`, signIn: (h) => join(h, '.gemini', 'oauth_creds.json') },
   qwen: { at: (h, id) => join(h, '.qwen', 'projects', 'proj', 'chats', `${id}.jsonl`), id: (x) => `qwen:${x}`, signIn: (h) => join(h, '.qwen', 'oauth_creds.json') },
+  // Goose keeps a session as rows of its own database (engines/goose.mjs gooseSessionsDb), named by worca.
+  goose: { db: true, id: (x) => `goose:worca-${x}`, signIn: (h) => join(h, '.config', 'goose', 'config.yaml') },
 };
+/** Goose's session rows (`sessions` and a `messages` row each) for `ids`, in a database at `file`; `has(id)` reads one back. */
+function gooseSessionRows(file, ids) {
+  mkdirSync(dirname(file), { recursive: true });
+  const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite');
+  const db = new DatabaseSync(file);
+  db.exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, name TEXT NOT NULL); CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL);
+    CREATE TABLE usage_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL)`);
+  for (const id of ids) { db.prepare('INSERT INTO sessions VALUES (?, ?)').run(`s-${id}`, `worca-${id}`); db.prepare('INSERT INTO messages (session_id) VALUES (?)').run(`s-${id}`); }
+  db.close();
+  return (id) => { const d = new DatabaseSync(file); try { return !!d.prepare('SELECT 1 FROM sessions WHERE name = ?').get(`worca-${id}`); } finally { d.close(); } };
+}
 
 conformanceRow('C-SESSIONS', "archiving removes the run's sessions and never the sign-in", async (engine) => {
   if (ENGINES[engine].sessions === 'none') return;
@@ -288,8 +299,17 @@ conformanceRow('C-SESSIONS', "archiving removes the run's sessions and never the
   const home = mkdtempSync(join(tmpdir(), 'worca-conf-home-'));
   try {
     process.env.HOME = home;
-    for (const k of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'COPILOT_HOME', 'CURSOR_CONFIG_DIR', 'GEMINI_CLI_HOME', 'QWEN_HOME']) delete process.env[k];
+    for (const k of ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'COPILOT_HOME', 'CURSOR_CONFIG_DIR', 'GEMINI_CLI_HOME', 'QWEN_HOME', 'GOOSE_PATH_ROOT', 'XDG_DATA_HOME']) delete process.env[k];
     const put = (p, d) => { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, d); return p; };
+    if (store.db) {
+      const has = gooseSessionRows(gooseSessionsDb(process.env), [SID, OTHER]);
+      const signIn = put(store.signIn(home), 'secret');
+      await removeRunSessions({ sessionIds: [store.id(SID)] });
+      assert.equal(has(SID), false);
+      assert.equal(has(OTHER), true);
+      assert.equal(readFileSync(signIn, 'utf8'), 'secret');
+      return;
+    }
     const other = store.data ? store.data(OTHER) : 'b';
     const mine = put(store.at(home, SID), store.data ? store.data(SID) : 'a'); const theirs = put(store.at(home, OTHER), other); const signIn = put(store.signIn(home), 'secret');
     await removeRunSessions({ sessionIds: [store.id(SID)] });
@@ -311,7 +331,10 @@ const canaryOf = (k) => (k === 'COPILOT_GITHUB_TOKEN' ? `github_pat_canary9f3a${
 const setCanaries = (names = CANARY_NAMES) => { for (const k of names) process.env[k] = canaryOf(k); };
 const clearCredentials = () => { for (const k of CANARY_NAMES) delete process.env[k]; };
 // A model the step names where the engine needs one behind a slot or the relay (Copilot), else its CLI's own default.
-const STEP_MODEL = { claude: undefined, codex: undefined, copilot: 'copilot/gpt-4.1', cursor: 'composer-1', gemini: undefined, qwen: undefined };
+const STEP_MODEL = { claude: undefined, codex: undefined, copilot: 'copilot/gpt-4.1', cursor: 'composer-1', gemini: undefined, qwen: undefined, goose: undefined };
+/** The step model a sign-in mode is reached with: an engine whose model names its provider (signIn.byModel) reaches each
+ *  provider's mode by a model on it; the others by the engine's step model. */
+const modeModel = (engine, mode) => (ENGINES[engine].signIn.byModel ? `${mode.id}/m-step` : STEP_MODEL[engine]);
 /** The legs a row runs, by what the catalog says the engine has: a broker slot for one of its keys, a sandbox. An engine
  *  without them is refused there instead, and the row checks that. */
 const brokerable = (engine) => ENGINES[engine].signIn.modes.some((m) => m.kind !== 'own' && m.brokerSlot);
@@ -446,7 +469,6 @@ conformanceRow('C-CANARY', 'the agent sees no credential worca holds, except the
 
 conformanceRow('C-CANARY (chat)', 'a chat turn sees no credential worca holds, except the one its model signs in with', async (engine, t) => {
   if (!chatOn(engine)) { t.skip('Chat is off on this engine (catalog chat.verified false)'); return; }
-  if (CHAT_PENDING.has(engine)) { t.skip('pending: this engine\'s chat moves onto the catalog in its own commit'); return; }
   // Every canary in worca's env, and the turn's envAllowlist as ask/spawn.mjs builds it (chatSignInEnv): the child holds
   // the one credential the route resolver picks for the chat's model, nowhere else (argv, staged files).
   clearCredentials();
@@ -491,11 +513,11 @@ conformanceRow('C-SIGNIN', 'each sign-in mode sees exactly its declared credenti
       for (const k of mode.env) if (k !== cred) process.env[k] = k.endsWith('_URL') ? 'https://gw.example' : 'x-org: o1';
       for (const k of mode.requires || []) process.env[k] = 'http://127.0.0.1:1';
     } else Object.assign(process.env, { HOME: process.env.HOME || '/tmp', USER: process.env.USER || 'u', LOGNAME: process.env.LOGNAME || 'u' });
-    const picks = (extra) => resolveModelRoute({ engine, serverEnv: { ...process.env, ...extra }, broker: { on: false }, model: STEP_MODEL[engine] }).signInMode;
+    const picks = (extra) => resolveModelRoute({ engine, serverEnv: { ...process.env, ...extra }, broker: { on: false }, model: modeModel(engine, mode) }).signInMode;
     const decoys = credentialNamesOf(engine).filter((k) => k !== cred && picks({ [k]: 'd' }) === mode.id);
     for (const k of decoys) process.env[k] = `decoy-${k}`;
     seeded += decoys.length;
-    const { rec, error } = await runFake(engine, { env: { FAKE_GRANDCHILD: '0' }, model: STEP_MODEL[engine], allow: decoys,
+    const { rec, error } = await runFake(engine, { env: { FAKE_GRANDCHILD: '0' }, model: modeModel(engine, mode), allow: decoys,
       spawnEnv: Object.fromEntries(decoys.map((k) => [k, `decoy-${k}`])) });
     assert.equal(error, null, `${mode.id}: ${error?.message}`);
     assert.deepEqual(credentialNamesOf(engine).filter((k) => k in rec.env), cred ? [cred] : [], `${engine}/${mode.id}`);
@@ -647,8 +669,9 @@ conformanceRow('C-LEDGER', 'spend is booked exactly once on every exit', async (
     for (const k of ['FAKE_EXIT', 'FAKE_HOLD_AFTER']) delete process.env[k];   // runFake leaves a case's knobs in the env
     const events = []; const ac = new AbortController();
     const p = runFake(engine, { stream: x.stream, env: { FAKE_GRANDCHILD: '0', ...(x.env || {}) }, model: STEP_MODEL[engine], signal: ac.signal, onEvent: (e) => events.push(e), ...(x.opts || {}) });
-    // Aborted once the spend-bearing line is out (copilot prints none: its tokens come from its session files).
-    if (x.abort) { await waitFor(() => events.some((e) => e.type === 'result' || e.type === 'tool'), 30000); ac.abort(); }
+    // Aborted once the spend-bearing line is out (copilot prints none: its tokens come from its session files; goose's
+    // complete is a usage event, its result comes after the spawn).
+    if (x.abort) { await waitFor(() => events.some((e) => e.type === 'result' || e.type === 'tool' || e.type === 'usage'), 30000); ac.abort(); }
     const { result, error, rec } = await p;
     assertOutcome(engine, x, { result, error, events, argv: rec?.argv || [] });
     const h = await replay(engine, events);
@@ -659,10 +682,12 @@ conformanceRow('C-LEDGER', 'spend is booked exactly once on every exit', async (
       copilot: {},
       gemini: {},
       qwen: {},
+      goose: { usd: 0.0015561 },
     }[engine];
     if (reportsCost) {
       assert.equal(h.booked(), 1, `${engine} ${x.name}: booked once`);
       assert.ok(Math.abs(h.step.costUsd - want.usd) < 1e-4, `${engine} ${x.name}: ${h.step.costUsd}`);
+      assert.notEqual(h.step.costKnown, false, `${engine} ${x.name}: the figure covers the step's turns`);
     } else {
       assert.equal(h.booked(), 0, `${engine} ${x.name}`);
       assert.equal(h.step.costKnown, false, `${engine} ${x.name}: cost unknown, never $0`);
@@ -670,6 +695,13 @@ conformanceRow('C-LEDGER', 'spend is booked exactly once on every exit', async (
     }
   }
 
+  // An engine's figure with tokens and no price (Goose on a model it cannot price) is cost unknown, never $0.
+  if (reportsCost) {
+    const h = await ledgerHarness(engine, null);
+    h.orch._onAgentEvent('implementer', { type: 'spend', source: 'engine', usage: { input_tokens: 5, output_tokens: 1 } }, h.attr);
+    assert.equal(h.booked(), 0, `${engine}: nothing to book`);
+    assert.equal(h.step.costKnown, false, `${engine}: an unpriced spend`);
+  }
   // An unpriced reply is cost unknown, never $0.
   if (engine === 'claude') {
     const h = await ledgerHarness('claude', null);
@@ -742,9 +774,11 @@ conformanceRow('C-MODEL', 'the step\'s model is checked and recorded', async (en
   const o = createOrchestrator({ projectDir: '/tmp/conf-proj', guardrailsId: 'permissive', claude: { mock: true, engine } });
   const id = `c${engine.slice(0, 3)}0001`.padEnd(8, '0');
   o.state.id = id;
-  o._execStep({ executionId: 'x:a:1', nodeId: 'a', ordinal: 1, uiPhase: 'implement', node: { kind: 'agent', key: 'implementer' }, claudeOpts: { model: null } }, 'start');
+  // An engine whose model names its provider records the step model's (no model: goose's own config decides).
+  const model = entry.signIn.byModel ? 'openai/m-step' : null;
+  o._execStep({ executionId: 'x:a:1', nodeId: 'a', ordinal: 1, uiPhase: 'implement', node: { kind: 'agent', key: 'implementer' }, claudeOpts: { model } }, 'start');
   // The relay's upstream, else whom the resolver's sign-in names (credentials.mjs: a mode's provider, the entry's).
-  const provider = entry.relay?.upstream ?? resolveModelRoute({ engine, serverEnv: process.env, broker: { on: false }, checkModel: false }).provider;
+  const provider = entry.relay?.upstream ?? resolveModelRoute({ engine, serverEnv: process.env, broker: { on: false }, checkModel: false, model }).provider;
   assert.ok(provider, `${engine}: a provider is known`);
   assert.equal(o.state.steps[0].provider, provider);
   await writeState(`/d-${id}`, { ...o.getState(), id, projectKey: 'proj-conf' });

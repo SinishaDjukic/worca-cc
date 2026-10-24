@@ -8,7 +8,7 @@ import { ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 // (Gemini CLI and Qwen Code, Goose, OpenCode) closes them and takes its entries out. They show as skipped, with the
 // reason; the map only shrinks.
 const MOVED_LATER = ['C-CANARY', 'C-SIGNIN', 'C-LEDGER', 'C-MODEL'];
-export const PENDING = Object.freeze({ goose: MOVED_LATER, opencode: MOVED_LATER });
+export const PENDING = Object.freeze({ opencode: MOVED_LATER });
 
 /**
  * Register row `name` (C-ENV-EXACT, C-GROUPKILL, …) for every catalog entry.

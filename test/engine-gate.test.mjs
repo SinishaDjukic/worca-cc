@@ -810,11 +810,19 @@ test('engineStartRefusal: a signed-out cursor-agent is not liftable', POSIX, asy
 
 // ── Goose (engines/goose.mjs) ────────────────────────────────────────────────
 
-test('goose: Permissive passes, one audit line per missing capability; cost is reported', () => {
-  const lines = withNodes(orch({ engine: 'goose' }), {})._engineGate();
+test('goose: Permissive passes, one audit line per missing capability and the host-guard line; cost is reported', () => {
+  const prev = process.env.WORCA_HOST_GUARD; delete process.env.WORCA_HOST_GUARD;
+  let lines;
+  try { lines = withNodes(orch({ engine: 'goose' }), {})._engineGate(); } finally { if (prev !== undefined) process.env.WORCA_HOST_GUARD = prev; }
   const caps = lines.filter((l) => /^engine goose: no \w+ — /.test(l));
   assert.deepEqual(caps.map((l) => l.split(':')[1].trim().split(' ')[1]).sort(),
     ['allowedTools', 'hookTelemetry', 'permissionRules', 'skills', 'subagentSystemPrompt', 'subagents', 'turnBudget']);
+  assert.ok(lines.includes('engine goose: the host-guard hook does not run on goose (its preamble still does)'), lines.join('\n'));
+  // goose reports what it priced, but worca names a node model it cannot price itself (R4: a cap would refuse it).
+  const unpriced = withNodes(orch({ engine: 'goose' }), { a: { nodeId: 'a', kind: 'agent', model: 'google/gemini-2.5-flash' } })._engineGate();
+  assert.ok(unpriced.includes('engine goose: model "google/gemini-2.5-flash" has no price — its spend is booked as cost unknown'), unpriced.join('\n'));
+  const priced = withNodes(orch({ engine: 'goose' }), { a: { nodeId: 'a', kind: 'agent', model: 'anthropic/claude-sonnet-5-5' } })._engineGate();
+  assert.equal(priced.some((l) => /has no price/.test(l)), false, priced.join('\n'));
 });
 
 test('goose holds no rule: the Normal set needs --allow-unguarded-engine, then says none is enforced', async () => {

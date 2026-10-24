@@ -41,6 +41,8 @@ READMEs), the first line of each capture kept for its session.
   shows the same refusal for a settings rule). Bash is `partial` (`env git log` runs); Write, Grep, Glob, WebFetch and
   WebSearch were never refused in a capture: `unverified`.
 
+Goose holds no rule per spawn (`goose/README.md`): every kind is `unenforced`.
+
 Codex, Copilot and Cursor have no `held` kind: their tool-removing rules (a bare `Bash`, an MCP rule) leave no denial
 event to capture, their command and path rules are `partial`, Copilot's account here has no CLI access and
 `cursor-agent` is not signed in. `test/fixtures/copilot/denied.jsonl` is a real Copilot 1.0.100 capture of a

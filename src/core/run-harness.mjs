@@ -8363,8 +8363,14 @@ export class RunHarness extends EventEmitter {
       }
     } else {
       cost = Number.isFinite(e.costUsd) ? e.costUsd : NaN;
+      // An engine's own figure for a way out (a `spend`, not its result): it covers the step's turns so far.
+      if (key && !e.result && !e.aux) this._openTurns?.delete(key);
       if (!billable) { known = false; quiet = true; why = `${entry?.label ?? engine} reports no cost`; }
-      else if (!Number.isFinite(cost) && e.result && !this.claude.mock) {
+      else if (!Number.isFinite(cost) && !e.result && !e.aux && usage) {
+        // Tokens with no price (Goose on a model it cannot price): cost unknown, never $0.
+        known = false;
+        why = `${entry?.label ?? engine} reported this step's tokens but no cost`;
+      } else if (!Number.isFinite(cost) && e.result && !this.claude.mock) {
         // The texts the old _onResultEvent logged (test/engine-gate.test.mjs:760-776, model-cost-override-surfaces:117).
         known = false;
         why = costCfg?.perMtok

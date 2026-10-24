@@ -71,7 +71,8 @@ export function engineCredential(engine, env = process.env) {
  *   its own endpoint (codex-endpoint.mjs hasCodexEndpoint); broker: whether the broker is on (default: worca's own
  *   process env — the broker is a property of the server, never of a sandbox env) and its slot ids;
  *   checkModel: false skips the needsModel refusals (the caller does not know the step's model); configured: the sign-in
- *   mode id the CLI's own settings choose (a local spawn of Gemini CLI or Qwen Code), which wins over the catalog order.
+ *   mode id the CLI's own settings choose (a local spawn of Gemini CLI, Qwen Code or Goose), which wins over the catalog
+ *   order; on an engine whose model id names its provider (signIn.byModel), the step's model wins over both.
  * @returns {{kind:'relayed'|'brokered'|'own'|'direct', engine:string, signInMode:string|null, credential:string|null,
  *   source:'server'|'model'|'endpoint'|'broker'|'login'|null, slot:string|null, provider:string|null,
  *   models:string[], warning:string|null, refusal:string|null}}
@@ -140,16 +141,23 @@ export function resolveModelRoute({ engine, remote = false, serverEnv = process.
   if (modelBase && hostOf(modelBase) !== hostOf(ANTHROPIC) && modelBase !== str(serverEnv.ANTHROPIC_BASE_URL)) {
     return done({ kind: 'direct', signInMode: 'model', source: 'model', provider: hostOf(modelBase) });
   }
-  const direct = (mode, key) => done({ kind: 'direct', signInMode: mode.id, credential: key, source: 'server', provider: providerOf(mode),
+  const direct = (mode, key) => done({ kind: 'direct', signInMode: mode.id, credential: key, source: 'server',
+    provider: providerOf(mode) ?? (entry.signIn.byModel ? mode.id : null),
     warning: `${name} signs in with ${key} from worca's environment; the agent can read it. Use a sandbox or the credential broker to keep it out.` });
-  // The mode the CLI's own settings choose (Gemini CLI's and Qwen Code's security.auth.selectedType) is the one it signs
-  // in with, whatever else is set: only its credential is kept, and when worca's env does not hold it (the CLI's own
-  // files do), none is. A setting the catalog does not name keeps none either.
-  if (configured != null) {
-    const mode = entry.signIn.modes.find((m) => m.id === configured) ?? null;
+  // An engine whose model id names its provider (`provider/model`, catalog signIn.byModel: Goose) signs in to that
+  // provider: its mode, as if the CLI's own settings chose it.
+  const slash = entry.signIn.byModel && model ? String(model).indexOf('/') : -1;
+  const named = slash > 0 ? String(model).slice(0, slash) : null;
+  // The mode the CLI's own settings choose (Gemini CLI's and Qwen Code's security.auth.selectedType, the provider Goose
+  // is configured with) is the one it signs in with, whatever else is set: only its credential is kept, and when worca's
+  // env does not hold it (the CLI's own files do), none is. A setting the catalog does not name keeps none either.
+  const chosen = named ?? configured;
+  if (chosen != null) {
+    const mode = entry.signIn.modes.find((m) => m.id === chosen) ?? null;
     const key = modeCredential(mode);
     if (key && filled(serverEnv[key])) return direct(mode, key);
-    return done({ kind: 'own', signInMode: mode ? mode.id : String(configured), source: 'login', provider: providerOf(mode) });
+    return done({ kind: 'own', signInMode: mode ? mode.id : String(chosen), source: 'login',
+      provider: providerOf(mode) ?? (entry.signIn.byModel ? String(chosen) : null) });
   }
   for (const mode of entry.signIn.modes) {
     const key = modeCredential(mode);

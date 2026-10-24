@@ -6,6 +6,7 @@
 import { test, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, renameSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
@@ -14,12 +15,15 @@ import { archivePipeline } from '../src/core/pipeline-delete.mjs';
 import { removeRunSessions } from '../src/core/engines/index.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { ENGINE_NAMES, ENGINES } from '../src/shared/engine-switch.mjs';
+import { gooseSessionsDb } from '../src/core/engines/goose.mjs';
 import { removeSessionEntries } from '../src/core/engines/sessions.mjs';
+
+const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite');
 
 useTempHome(after);
 const POSIX = process.platform === 'win32' ? { skip: 'POSIX file modes' } : {};
 const UA = '11111111-1111-4111-8111-111111111111'; const UB = '22222222-2222-4222-8222-222222222222';
-const VARS = ['HOME', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'COPILOT_HOME', 'CURSOR_CONFIG_DIR', 'GEMINI_CLI_HOME', 'QWEN_HOME'];
+const VARS = ['HOME', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'COPILOT_HOME', 'CURSOR_CONFIG_DIR', 'GEMINI_CLI_HOME', 'QWEN_HOME', 'GOOSE_PATH_ROOT', 'XDG_DATA_HOME'];
 let saved; let home;
 beforeEach(() => {
   saved = Object.fromEntries(VARS.map((k) => [k, process.env[k]]));
@@ -55,10 +59,18 @@ function seedStores() {
       signIn: [put(join(home, '.gemini', 'oauth_creds.json'), 'secret-gemini'), put(join(home, '.gemini', 'google_accounts.json'), 'secret-gemini-accounts')] },
     qwen: { a: [put(join(home, '.qwen', 'projects', 'proj', 'chats', `${UA}.jsonl`)), put(join(home, '.qwen', 'tmp', 'proj', UA, 'checkpoint.json'))],
       b: [put(join(home, '.qwen', 'projects', 'proj', 'chats', `${UB}.jsonl`))], signIn: [put(join(home, '.qwen', 'oauth_creds.json'), 'secret-qwen')] },
+    // Goose: rows of its own database (named by worca), checked by gooseHas.
+    goose: { a: [], b: [], signIn: [put(join(home, '.config', 'goose', 'config.yaml'), 'GOOSE_PROVIDER: google\n')] },
   };
+  const db = new DatabaseSync(put(gooseSessionsDb(process.env), ''));
+  db.exec('CREATE TABLE sessions (id TEXT PRIMARY KEY, name TEXT NOT NULL); CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL); CREATE TABLE usage_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL)');
+  for (const n of ['worca-run-a', 'worca-run-b']) db.prepare('INSERT INTO sessions VALUES (?, ?)').run(`id-${n}`, n);
+  db.close();
   return f;
 }
-const RUN_A = [UA, `codex:${UA}`, `copilot:${UA}`, 'cursor:chat-a', `gemini:${UA}`, `qwen:${UA}`];
+/** Whether goose's database still holds the session named `name`. */
+const gooseHas = (name) => { const db = new DatabaseSync(gooseSessionsDb(process.env)); try { return !!db.prepare('SELECT 1 FROM sessions WHERE name = ?').get(name); } finally { db.close(); } };
+const RUN_A = [UA, `codex:${UA}`, `copilot:${UA}`, 'cursor:chat-a', `gemini:${UA}`, `qwen:${UA}`, 'goose:worca-run-a'];
 
 test('every engine that keeps sessions can remove them', () => {
   for (const e of ENGINE_NAMES) if (ENGINES[e].sessions !== 'none') assert.ok(ENGINES[e].sessions, e);
@@ -103,6 +115,8 @@ test('archive removes this run\'s sessions only, and the sign-in files survive',
     assert.deepEqual(f[e].signIn.map((p) => readFileSync(p, 'utf8')), before[e], `${e}: sign-in byte-identical`);
     assert.deepEqual(res.find((r) => r.engine === e).warnings, [], e);
   }
+  assert.equal(gooseHas('worca-run-a'), false, 'goose: run A\'s session row');
+  assert.equal(gooseHas('worca-run-b'), true, 'goose: run B\'s session row');
 });
 
 test('a link in a session store is removed as a link, never followed out of the store', POSIX, async () => {

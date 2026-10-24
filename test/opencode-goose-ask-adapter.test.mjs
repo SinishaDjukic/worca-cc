@@ -94,11 +94,13 @@ test('Goose chat spawn: a home of its own, the real HOME and the spawn env for w
   assert.equal(rec.env.XDG_CONFIG_HOME, join(chatHome, '.config'));
   assert.equal(rec.env.GOOGLE_API_KEY, 'g-key', 'its provider\'s key');
   assert.equal(rec.env.OPENAI_API_KEY, undefined, 'never another provider\'s');
-  const wrapper = Object.values(rec.wrappers)[0];
-  assert.match(wrapper, /HOME="\$WORCAMCP1_HOME"; export HOME/);
-  assert.match(wrapper, /ASK_COMMAND_TOKEN="\$WORCAMCP1_ASK_COMMAND_TOKEN"/);
-  assert.equal(rec.env.WORCAMCP1_HOME, realHome);
-  assert.equal(rec.env.WORCAMCP1_ASK_COMMAND_TOKEN, 'tok-1');
+  // worca's child gets the real HOME and the spawn env from the file beside its wrapper (0600), never goose's own env.
+  const [file] = Object.keys(rec.wrappers);
+  assert.match(rec.wrappers[file], /^\. "\$\{0%\/\*\}\/[^"]+\.env"$/m);
+  assert.match(rec.envFiles[file].text, new RegExp(`^HOME='${realHome}'; export HOME$`, 'm'));
+  assert.match(rec.envFiles[file].text, /^ASK_COMMAND_TOKEN='tok-1'; export ASK_COMMAND_TOKEN$/m);
+  assert.equal(rec.envFiles[file].mode, 0o600);
+  assert.equal(rec.env.ASK_COMMAND_TOKEN, undefined, 'the token is not in goose\'s env');
 });
 
 test('a relayed Goose chat (the agent user): its home is a worca folder in the agent\'s own home, made by goose; its MCP children get the agent\'s HOME', POSIX, async () => {
@@ -119,7 +121,8 @@ test('a relayed Goose chat (the agent user): its home is a worca folder in the a
   const home = join(agentHome, '.worca', 'goose-chat-home');
   assert.equal(rec.env.HOME, home, 'not the agent\'s own HOME: none of its goose config, skills or hints');
   assert.equal(rec.env.XDG_DATA_HOME, join(home, '.local', 'share'));
-  assert.equal(rec.env.WORCAMCP1_HOME, agentHome, 'an allowlisted HOME reference never brings the server\'s back');
+  const [file] = Object.keys(rec.wrappers);
+  assert.match(rec.envFiles[file].text, new RegExp(`^HOME='${agentHome}'; export HOME$`, 'm'), 'an allowlisted HOME reference never brings the server\'s back');
 });
 
 test('Goose chat: an agent-CLI provider is refused; a model provider is not', () => {
