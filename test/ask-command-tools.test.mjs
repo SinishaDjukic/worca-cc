@@ -50,7 +50,13 @@ test('run_command validates before calling the bridge', async () => {
   await assert.rejects(t.call('run_command', { command: 'a\nb' }), /one line/);
   const r = await t.call('run_command', { command: 'npm test', projectKey: 'p' });
   assert.equal(r.blockId, 't-0000000001:1');
-  assert.deepEqual(calls.at(-1), ['run', { command: 'npm test', runId: null, member: null, projectKey: 'p' }]);
+  assert.deepEqual(calls.at(-1), ['run', { command: 'npm test', runId: null, member: null, projectKey: 'p', summary: null }]);
+});
+
+test('run_command passes an optional summary through (#911)', async () => {
+  const t = createAskTools({ ...fake, ...base, commands });
+  await t.call('run_command', { command: 'npm test', projectKey: 'p', summary: 'Running the tests' });
+  assert.equal(calls.at(-1)[1].summary, 'Running the tests');
 });
 
 test('read_output redacts; wait_for clamps its timeout', async () => {

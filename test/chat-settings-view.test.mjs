@@ -3,7 +3,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderAskWebFields } from '../ui/public/chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields } from '../ui/public/chat-settings-view.mjs';
+import { applyFlags } from '../ui/public/flags.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
@@ -167,4 +168,19 @@ test('#555 chat Test: busy → Delivered on the button; a delivery failure is a 
   assert.equal(t.textContent, 'Test', 'a failure skips "Delivered"');
   assert.equal(t.disabled, false);
   bad.close();
+});
+
+test('Summarise commands: on by default, a Beta chip, collects its value (#911)', () => {
+  const doc = new JSDOM('<!doctype html><html><body></body></html>').window.document;
+  applyFlags({ commandSummaries: true }, doc);
+  const host = doc.createElement('div');
+  host.append(renderSummariesToggle({ prefs: {} }, { doc }));
+  const cb = host.querySelector('input.ask-summaries');
+  assert.equal(cb.checked, true);
+  assert.equal(host.querySelector('.switch-label').textContent.startsWith('Summarise commands'), true);
+  assert.equal(host.querySelector('.flag-chip.flag-chip-beta').textContent, 'Beta');
+  cb.checked = false;
+  assert.deepEqual(collectSummariesToggle(host), { summariseCommands: false });
+  host.replaceChildren(renderSummariesToggle({ prefs: { summariseCommands: false } }, { doc }));
+  assert.equal(host.querySelector('input.ask-summaries').checked, false);
 });

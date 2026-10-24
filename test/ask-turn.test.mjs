@@ -1859,8 +1859,29 @@ test('run_command result mints one command card; an error result mints nothing',
   const cards = getMessage(s.asst.id).blocks.filter((b) => b.kind === 'card');
   assert.equal(cards.length, 1);
   assert.equal(cards[0].state, 'command');
-  assert.deepEqual(cards[0].card, { type: 'command', blockId: 't-0000000001:1', sessionId: 't-0000000001', seq: 1, command: 'npm test', folder: 'p · main', cwd: '/w/p', warning: null });
+  assert.deepEqual(cards[0].card, { type: 'command', blockId: 't-0000000001:1', sessionId: 't-0000000001', seq: 1, command: 'npm test', folder: 'p · main', cwd: '/w/p', warning: null, summary: null });
   assert.ok(frames.some((f) => f.type === 'ask-card' && f.block.card.type === 'command'));
+});
+
+test('run_command result: the card keeps the summary, clipped; a non-string summary is dropped (#911)', async () => {
+  const s = seed();
+  const res = (seq, summary) => JSON.stringify({ ok: true, blockId: `t-0000000001:${seq}`, sessionId: 't-0000000001', seq,
+    command: 'npm test', cwd: '/w/p', folder: 'p · main', warning: null, summary });
+  const runner = async (opts) => {
+    const frames = [['toolu_1', res(1, 'Running the tests')], ['toolu_2', res(2, 'y'.repeat(300))], ['toolu_3', res(3, 42)]];
+    for (const [id, text] of frames) {
+      push(opts.onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'tool_use', id, name: 'mcp__worca__run_command', input: { command: 'npm test' } }] } });
+      push(opts.onEvent, { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: id, content: text }] } });
+    }
+    await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r));
+    push(opts.onEvent, RESULT());
+    return { text: '', exitCode: 0 };
+  };
+  const { turn } = makeTurn(s, {}, { runClaudeImpl: runner });
+  await turn.run();
+  const cards = getMessage(s.asst.id).blocks.filter((b) => b.kind === 'card');
+  assert.deepEqual(cards.map((b) => b.card.summary && b.card.summary.length), [17, 120, null]);
+  assert.equal(cards[0].card.summary, 'Running the tests');
 });
 
 test('a command card records where in the answer it ran (textAt), so the chat shows it between the text around it', async () => {
