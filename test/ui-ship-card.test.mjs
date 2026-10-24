@@ -30,7 +30,7 @@ test('ready (one ship flow): Ready to ship + Create PR opens the shared dialog; 
   assert.deepEqual(buttons(el).map((b) => b.textContent), ['Not now', 'Create PR']);
   assert.ok(el.querySelector('[data-act="ship-create"]').classList.contains('btn-primary'));
   assert.ok(el.querySelector('[data-act="ship-not-now"]').classList.contains('ask-card-not-now'));
-  assert.equal(el.querySelector('.ask-shipcard-stats').textContent, 'Ready to ship · 3 runs · 12 files · +840 −120');
+  assert.equal(el.querySelector('.ask-shipcard-stats').textContent, '3 runs · 12 files · +840 −120', 'the kind chip says Ship: the line is the facts');
   assert.equal(el.querySelector('.ask-shipcard-why').textContent, 'This feature adds 840 lines: one PR is easier to review.');
   assert.equal(el.querySelectorAll('.release-row').length, 0, 'the release row lives in the dialog');
   assert.equal(buttons(el).filter((b) => /Stacked PRs|One PR/.test(b.textContent)).length, 0);
@@ -65,18 +65,18 @@ test('Not now posts not-now', async () => {
   assert.deepEqual(posts, [{ verb: 'not-now' }]);
 });
 
-test('applied: Shipped as one PR, View PR, the closed drafts and the release line', () => {
+test('applied: the Shipped chip, As one PR, View PR, the closed drafts and the release line', () => {
   const { el } = chat({ id: 'card_00000001', state: 'applied',
     card: { ...READY, result: { mode: 'one', prUrl: 'https://github.com/o/r/pull/9', closed: 3, release: { version: 'v1.12.0', url: null, error: null } } } });
   assert.equal(el.querySelector('.ask-mcard-kind').textContent, 'Shipped');
-  assert.match(el.querySelector('.ask-shipcard-done').textContent, /^Shipped as one PR · View PR$/);
+  assert.match(el.querySelector('.ask-shipcard-done').textContent, /^As one PR · View PR$/);
   assert.equal(el.querySelector('.ask-shipcard-pr').href, 'https://github.com/o/r/pull/9');
   assert.equal(el.querySelector('.ask-shipcard-closed').textContent, 'Closed 3 drafts');
   assert.equal(el.querySelector('.ask-shipcard-rel').textContent, 'Release v1.12.0 · draft after merge');
   assert.equal(el.querySelectorAll('button').length, 0);
   const made = chat({ id: 'c', state: 'applied', card: { ...READY, result: { mode: 'stacked', prUrl: null, closed: 0,
     release: { version: 'v1.12.0', url: 'https://github.com/o/r/releases/tag/v1.12.0', error: null } } } }).el;
-  assert.equal(made.querySelector('.ask-shipcard-done').textContent, 'Shipped as stacked PRs');
+  assert.equal(made.querySelector('.ask-shipcard-done').textContent, 'As stacked PRs', 'the kind chip says Shipped: the line says how');
   assert.equal(made.querySelector('.ask-shipcard-closed'), null);
   assert.equal(made.querySelector('.ask-shipcard-rel').textContent, 'Draft release v1.12.0 · open it');
   const failed = chat({ id: 'c', state: 'applied', card: { ...READY, result: { mode: 'one', prUrl: null, closed: 0,

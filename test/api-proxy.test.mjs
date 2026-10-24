@@ -267,3 +267,23 @@ test('auth digest: Log in is refused with 409 like Basic', async () => {
     assert.equal(existsSync(loginFile()), false);
   } finally { await call('PUT', '/api/proxy/settings', { networkProxy: { auth: null } }); }
 });
+
+test('POST /api/ask/proxy: per-turn token, loopback, flag, agent refusal; status and test share the routes\' guards', async () => {
+  const bad = await fetch(`${base}/api/ask/proxy`, { method: 'POST', headers: { ...JSONH, 'x-worca-ask-proxy': 'nope' }, body: '{"op":"status"}' });
+  assert.equal(bad.status, 403);
+  const b = testing.askProxyBridge({ threadId: 'ask_00000001' });
+  const op = (o, h = {}) => fetch(`${base}/api/ask/proxy`, { method: 'POST', headers: { ...JSONH, 'x-worca-ask-proxy': b.token, ...h }, body: JSON.stringify({ op: o }) }).then(async (r) => ({ status: r.status, body: await r.json() }));
+  const s = await op('status');
+  assert.equal(s.body.result.flag, true);
+  assert.ok(!JSON.stringify(s.body).includes('ntHash'));
+  testing.setEgress(null);   // no running proxy, marker cleared (stands in for a restart)
+  await call('PUT', '/api/proxy/settings', { networkProxy: { upstream: '127.0.0.1:19', auth: null } });   // a host no earlier test saved: changed since boot
+  assert.equal(testing.proxyHost.changedSinceBoot(), true);
+  assert.equal((await op('test')).body.result.code, 'RESTART_NEEDED', 'D14 through the chat, the same marker as the route');
+  process.env.WORCA_FLAGS = '-corporateProxy';
+  try { assert.deepEqual((await op('status')).body.result, { flag: false }); } finally { process.env.WORCA_FLAGS = 'corporateProxy'; }
+  await withAgent(async () => assert.equal((await op('status')).status, 403));
+  b.dispose();
+  assert.equal((await op('status')).status, 403, 'a finished turn\'s token is dead');
+  testing.setEgress(null);
+});

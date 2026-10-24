@@ -212,8 +212,16 @@ test('run progress layout CSS', async () => {
       assert.match(rule('.run-status'), /display:\s*grid/);
       assert.match(rule('.rd-sheet-head'), /grid-template-columns:\s*minmax\(0,\s*1fr\)/);
       assert.doesNotMatch(css, /(^|\})\.rd-now-top\{display:flex/m, 'the old orb row no longer lays the block out');
-      // s1: in the card head the block spans every column, so the bar is the head's width, not column 1's.
-      assert.match(rule('.rd-sheet-head > .run-status'), /grid-area:\s*1 \/ 1 \/ 2 \/ -1/);
+    } },
+    { name: 'run page: the bar spans the whole head, the status line keeps column 1 beside the switch and buttons', run() {
+      const top = rule('.rd-sheet-head > .rd-now-top');
+      assert.match(top, /grid-area:1 \/ 1 \/ 2 \/ -1/, 'the block spans every head column');
+      assert.match(top, /grid-template-columns:subgrid/, 'its rows line up with the head\'s columns');
+      assert.match(top, /column-gap:0/);
+      assert.match(css, /^\.rd-sheet-head > \.rd-now-top > \*\{grid-column:1 \/ -1;\}/m, 'the bar and the other rows span the card');
+      assert.match(rule('.rd-sheet-head > .rd-now-top > .run-status-head'), /grid-column:1;/, 'the status text ends where the switch begins');
+      // Scoped to the run page: the shared block's own rule lays out no subgrid for the chat card or the group page.
+      assert.doesNotMatch(rule('.run-status'), /subgrid/);
     } },
     { name: 'the hover detail opens above the bar', run() {
       const r = rule('.run-prog-detail');

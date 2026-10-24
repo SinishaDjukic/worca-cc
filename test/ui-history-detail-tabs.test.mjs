@@ -1022,7 +1022,7 @@ test('History opens on the glance: page title, status line, facts, the tab rows;
   // Runs redesign slice 4: the one status block names the state, and its line says the state word once.
   const st = hd.querySelector('.hd-glance .rd-sheet .run-status');
   assert.ok(st.dataset.state, 'the status block names the state');
-  assert.ok(st.querySelector('.run-status-text').textContent.toLowerCase().includes(st.dataset.word.toLowerCase()), 'the state word is in the status line');
+  assert.ok(st.dataset.text.toLowerCase().includes(st.dataset.word.toLowerCase()), 'the state word is in the status line');
   assert.equal(hd.querySelector('.rd-trail-btn'), null, 'no trail of dots');
   assert.equal(hd.querySelectorAll('.rd-facts .rd-stats > div').length, 3, 'time · cost · changes');
   assert.deepEqual([...hd.querySelectorAll('.rd-facts .rd-stats > div > span')].map((s) => s.textContent).slice(0, 2), ['time', 'cost']);

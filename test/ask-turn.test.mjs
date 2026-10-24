@@ -439,6 +439,29 @@ test('card proposals (metrics, workspace, away, web): the parent re-validates th
       assert.deepEqual(mid.filter((b) => b.kind === 'card').map((b) => [b.state, b.card.type]), [['proposed', 'away']]);
       assert.ok(mid.some((b) => b.kind === 'notice' && b.text === 'Away mode change rejected: nothing to change'));
     } },
+    { name: 'proxy cards: the parent re-validates the input and mints the card; a refusal is a notice; the flag card has its own validator', run: async () => {
+      const s = seed();
+      const seen = { change: [], flag: [] };
+      let mid = null;
+      const { turn } = makeTurn(s, {}, {
+        validateProxyChange: async (inp) => { seen.change.push(inp); return inp.upstream ? { ok: true, card: { type: 'proxy', kind: 'settings', summary: 'Proxy: p.acme.test:3128' } } : { ok: false, errors: ['nothing to change'] }; },
+        validateProxyFlagOn: async (inp) => { seen.flag.push(inp); return { ok: true, card: { type: 'proxy', kind: 'flag', summary: 'Corporate proxy (Labs): On' } }; },
+        runClaudeImpl: async (opts) => {
+          awayCall(opts.onEvent, 1, 'mcp__worca__propose_network_proxy_change', { upstream: 'p.acme.test:3128' }, '{"ok":true}');
+          awayCall(opts.onEvent, 2, 'mcp__worca__propose_network_proxy_change', { auth: null }, '{"ok":true}');
+          awayCall(opts.onEvent, 3, 'mcp__worca__propose_corporate_proxy_on', { note: 'office' }, '{"ok":true}');
+          for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
+          mid = getMessage(s.asst.id).blocks;
+          push(opts.onEvent, RESULT());
+          return { text: '', exitCode: 0 };
+        },
+      });
+      await turn.run();
+      assert.deepEqual(seen.flag, [{ note: 'office' }]);
+      assert.equal(seen.change.length, 2);
+      assert.deepEqual(mid.filter((b) => b.kind === 'card').map((b) => [b.state, b.card.type, b.card.kind]), [['proposed', 'proxy', 'settings'], ['proposed', 'proxy', 'flag']]);
+      assert.ok(mid.some((b) => b.kind === 'notice' && b.text === 'Proxy change rejected: nothing to change'));
+    } },
   ]);
 });
 
@@ -1137,7 +1160,33 @@ test('mutation sinks: worktree and memory writes in the stream reach their injec
         },
       });
       await turn.run();
-      assert.deepEqual(pokes, [{ scope: 'global', tool: 'remember' }]);
+      assert.deepEqual(pokes, [{ scope: 'global', tool: 'remember', name: 'style' }]);
+    } },
+    { name: 'recordMemoryUsage dep: read_memory calls are merged ONCE at turn end, one read per note; a failing sink never breaks the turn', run: async () => {
+      const s = seed(); const calls = [];
+      const { turn, frames } = makeTurn(s, {}, {
+        recordMemoryUsage: async (events) => { calls.push(events); throw new Error('disk full'); },
+        runClaudeImpl: async ({ onEvent }) => {
+          const body = (o) => JSON.stringify({ description: 'SECRET', body: 'SECRET BODY', ...o });
+          toolUse(onEvent, 'm1', 'toolu_1', 'mcp__worca__read_memory', { scope: 'global', name: 'style' });
+          toolResult(onEvent, 'toolu_1', body({ scope: 'global', projectKey: null, name: 'style' }));
+          toolUse(onEvent, 'm2', 'toolu_2', 'mcp__worca__read_memory', { scope: 'global', name: 'style' });
+          toolResult(onEvent, 'toolu_2', body({ scope: 'global', projectKey: null, name: 'style' }));
+          toolUse(onEvent, 'm3', 'toolu_3', 'mcp__worca__read_memory', { scope: 'project', name: 'shared' });
+          toolResult(onEvent, 'toolu_3', body({ scope: 'project', projectKey: 'demo-00000001', name: 'shared', layer: 'team' }));
+          say(onEvent, 'm4', 'read');
+          push(onEvent, RESULT());
+          return { text: '', exitCode: 0 };
+        },
+      });
+      await turn.run();
+      assert.equal(calls.length, 1, 'one merge per turn');
+      assert.deepEqual(calls[0], [
+        { file: 'global', note: 'global:style', signal: 'read' },
+        { file: 'demo-00000001', note: 'team:shared', signal: 'read' },
+      ]);
+      assert.ok(!JSON.stringify(calls).includes('SECRET'), 'never the description or body');
+      assert.equal(frames.at(-1).status, 'done');
     } },
   ]);
 });
@@ -1859,8 +1908,51 @@ test('run_command result mints one command card; an error result mints nothing',
   const cards = getMessage(s.asst.id).blocks.filter((b) => b.kind === 'card');
   assert.equal(cards.length, 1);
   assert.equal(cards[0].state, 'command');
-  assert.deepEqual(cards[0].card, { type: 'command', blockId: 't-0000000001:1', sessionId: 't-0000000001', seq: 1, command: 'npm test', folder: 'p · main', cwd: '/w/p', warning: null });
+  assert.deepEqual(cards[0].card, { type: 'command', blockId: 't-0000000001:1', sessionId: 't-0000000001', seq: 1, command: 'npm test', folder: 'p · main', cwd: '/w/p', warning: null, summary: null });
   assert.ok(frames.some((f) => f.type === 'ask-card' && f.block.card.type === 'command'));
+});
+
+test('run_command result: the card keeps the summary, clipped; a non-string summary is dropped (#911)', async () => {
+  const s = seed();
+  const res = (seq, summary) => JSON.stringify({ ok: true, blockId: `t-0000000001:${seq}`, sessionId: 't-0000000001', seq,
+    command: 'npm test', cwd: '/w/p', folder: 'p · main', warning: null, summary });
+  const runner = async (opts) => {
+    const frames = [['toolu_1', res(1, 'Running the tests')], ['toolu_2', res(2, 'y'.repeat(300))], ['toolu_3', res(3, 42)]];
+    for (const [id, text] of frames) {
+      push(opts.onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'tool_use', id, name: 'mcp__worca__run_command', input: { command: 'npm test' } }] } });
+      push(opts.onEvent, { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: id, content: text }] } });
+    }
+    await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r));
+    push(opts.onEvent, RESULT());
+    return { text: '', exitCode: 0 };
+  };
+  const { turn } = makeTurn(s, {}, { runClaudeImpl: runner });
+  await turn.run();
+  const cards = getMessage(s.asst.id).blocks.filter((b) => b.kind === 'card');
+  assert.deepEqual(cards.map((b) => b.card.summary && b.card.summary.length), [17, 120, null]);
+  assert.equal(cards[0].card.summary, 'Running the tests');
+});
+
+test('run_command with no summary asks the helper job once per card; a chat-given summary never does (#911 slice 2)', async () => {
+  const s = seed();
+  const asked = [];
+  const res = (seq, summary) => JSON.stringify({ ok: true, blockId: `t-0000000001:${seq}`, sessionId: 't-0000000001', seq,
+    command: `npm test ${seq}`, cwd: '/w/p', folder: 'p · main', warning: null, summary });
+  const runner = async (opts) => {
+    for (const [id, text] of [['toolu_1', res(1, null)], ['toolu_2', res(2, 'Running the tests')]]) {
+      push(opts.onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: 'msg_1', content: [{ type: 'tool_use', id, name: 'mcp__worca__run_command', input: { command: 'npm test' } }] } });
+      push(opts.onEvent, { type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: id, content: text }] } });
+    }
+    await new Promise((r) => setImmediate(r)); await new Promise((r) => setImmediate(r));
+    push(opts.onEvent, RESULT());
+    return { text: '', exitCode: 0 };
+  };
+  const { turn } = makeTurn(s, {}, { runClaudeImpl: runner, summariseCommand: (c) => { asked.push(c); throw new Error('ignored'); } });
+  await turn.run();
+  const cards = getMessage(s.asst.id).blocks.filter((b) => b.kind === 'card');
+  assert.equal(asked.length, 1, 'only the card without a summary');
+  assert.deepEqual(asked[0], { cardId: cards[0].id, blockId: 't-0000000001:1', command: 'npm test 1' });
+  assert.equal(cards.length, 2, 'a throwing job never breaks the turn');
 });
 
 test('a command card records where in the answer it ran (textAt), so the chat shows it between the text around it', async () => {

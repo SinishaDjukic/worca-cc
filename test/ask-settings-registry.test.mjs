@@ -468,3 +468,30 @@ test('models.claude.utility.naming: a user-scope Claude pair on namingModel, nev
   assert.equal(p.ok, false);
   assert.match(p.error, /^unknown setting "models\.claude\.utility\.naming"/, 'user-only: unknown per project, not "keys and tokens"');
 });
+
+test('team memory (1a): the project defs leave out the memory.team opt-in and label memory.teamMaxFiles; a chat change of memory.team is refused', async () => {
+  const { settingIds, assertProjectSettingsPatch } = await import('../src/core/settings-cascade.mjs');
+  const ids = settingIds({ roles: [] });
+  assert.ok(ids.includes('memory.team') && ids.includes('memory.teamMaxFiles'), 'the cascade offers both: only the registry hides the opt-in');
+  const reg = createSettingsRegistry({
+    projectSettingIds: () => ids,
+    resolveSetting: () => ({ value: 50, source: 'default', layers: { project: undefined, user: undefined, team: undefined, default: 50 } }),
+    assertProjectSettingsPatch,
+    projects: async () => [PROJECT],
+  });
+  const defs = reg.defsFor('project');
+  assert.ok(!defs.some((d) => d.id === 'memory.team'), 'the opt-in is not a project def the chat can write');
+  assert.equal(defs.find((d) => d.id === 'memory.teamMaxFiles')?.label, 'Memory: most team notes loaded');
+  const rows = (await reg.list({ scope: 'project', projectKey: PROJECT.key, query: 'memory.team' })).settings;
+  assert.deepEqual(rows.map((x) => [x.id, x.label, x.value]), [['memory.teamMaxFiles', 'Memory: most team notes loaded', '50 (inherited)']]);
+  assert.ok((await reg.list({ scope: 'user' })).excluded.includes('Team memory sharing'), 'the exclusion is told to the model');
+  for (const scope of [{ scope: 'project', projectKey: PROJECT.key }, { scope: 'user' }]) {
+    const refused = await reg.check({ id: 'memory.team', ...scope, value: true });
+    assert.equal(refused.ok, false, scope.scope);
+    assert.match(refused.error, /^memory\.team is not changed from the chat: it publishes to the team/);
+  }
+  const cap = await reg.check({ id: 'memory.teamMaxFiles', scope: 'project', projectKey: PROJECT.key, value: 7 });
+  assert.equal(cap.ok, true, cap.error);
+  // The exclusion matches memory.team and memory.team.* only: the cap beside it is a per-project setting, not "published".
+  assert.match((await reg.check({ id: 'memory.teamMaxFiles', scope: 'user', value: 7 })).error, /^unknown setting "memory\.teamMaxFiles".*\(it is set per project: scope "project"\)$/);
+});

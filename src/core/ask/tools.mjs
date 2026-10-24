@@ -677,10 +677,10 @@ export function createAskTools(deps) {
       description: 'Propose a change to the stored Away mode settings — away hours, time zone, which runs, marked-runs-by-day minutes, method, the model and effort that weigh the options, thresholds, limits, always-wait kinds — at user level or for one project (level "project" + projectKey, or the pinned project; the spend cap is user-only). set: {field: value} with the stored field names (enabled, window "HH:MM-HH:MM" or null, timeZone, graceMinutes or null, strategy, minConfidence, minMargin, criteria, neverDecide, spendCapUsd, maxDecisions, maxExtraCycles, allowCostCapOverride, deciderModel (a model id from the catalog), deciderEffort (medium | high | xhigh | max)); unset: [field] returns a field to inherited. It never changes anything itself: the user sees a card with the effect before and after and applies or declines it. Returns {ok:true, card} or {ok:false, errors} to fix and retry. Never claim a change was applied — the card says so when it happens. For the two live switches use set_away_now / set_run_away_mode instead.',
       inputSchema: SCHEMA.obj({ level: SCHEMA.s('user | project'), projectKey: SCHEMA.s('project key (level project; defaults to the pinned project)'), set: { type: 'object' }, unset: { type: 'array', items: { type: 'string' } }, note: SCHEMA.s('one-line reason shown on the card') }, ['level']) },
     { name: 'list_memory',
-      description: 'List worca\'s memory files — the durable rules and preferences agents and this chat keep — for scope "global" and/or the resolved project: name, hook (description), paths, source, updated, bytes. Omit scope for both.',
+      description: 'List worca\'s memory files — the durable rules and preferences agents and this chat keep — for scope "global" and/or the resolved project: name, hook (description), paths, source, updated, bytes. Omit scope for both. On a project whose team memory is on, `team` lists the notes teammates share (read-only).',
       inputSchema: SCHEMA.obj({ scope: SCHEMA.s('"global" | "project" (default: both)'), projectKey: SCHEMA.s('the project for scope "project" (default: the chat\'s project)') }) },
     { name: 'read_memory',
-      description: 'Read one memory file: its hook, paths, provenance and markdown body. scope is "global" or "project".',
+      description: 'Read one memory file: its hook, paths, provenance and markdown body. scope is "global" or "project". A project name with no local file reads the teammates\' shared note of that name.',
       inputSchema: SCHEMA.obj({ scope: SCHEMA.s('"global" | "project"'), name: SCHEMA.s('file name without .md'), projectKey: SCHEMA.s('the project for scope "project"') }, ['scope', 'name']) },
     { name: 'remember',
       description: 'Save a durable rule or preference into worca\'s memory — one topic per file; global for how the user works, project for facts about one repository. mode "replace" (default) writes the body, "append" adds it under the existing body. description is the one-line hook shown in every index and paths a comma-separated glob list; both keep their current values when omitted. Never store secrets, credentials or run-specific progress.',
@@ -837,6 +837,28 @@ export function createAskTools(deps) {
           baseUrl: SCHEMA.s('import_endpoint: the endpoint listed, when it is not the provider\'s own'),
           note: SCHEMA.s('one line shown on the card: why this change (≤ 200 chars)') }, ['kind']) },
     ] : []),
+    // Corporate proxy (docs/network-proxy.md "From Chat"): read, test, and two cards. Listed with the bundle (proxy-deps.mjs).
+    ...(deps.proxy ? [
+      { name: 'get_network_proxy',
+        description: 'Read the corporate proxy (Labs flag corporateProxy). With the flag off: {flag:false, text, howToTurnOn}. With it on: state and line (the sentence Settings shows), upstream {hostPort, source "settings" | "env" (HTTP(S)_PROXY at start), auth, authLabel}, the stored settings (upstream, auth, noProxy, timeouts, fixedPort), local {url, running, error}, login {present, account DOMAIN\\user, savedAt, rejected, tripped, error} — never a password or hash —, restart {needed, reasons}, connector (the running proxy\'s upstream, auth, state none | unverified | verified | tripped) and warnings. Read-only.',
+        inputSchema: SCHEMA.obj({}) },
+      { name: 'test_network_proxy',
+        description: 'Test the corporate proxy now, as the Test button does: connects through it to github.com and api.anthropic.com. Returns {ok, upstream, results:[{host, ok, via "upstream" | "direct", ms, status?, needsLogin?, error?}]} or {ok:false, code, error} with code FLAG_OFF, NOT_CONFIGURED, UPSTREAM_INVALID, RESTART_NEEDED (the saved proxy is not the running one: the user restarts Worca, then tests), TEST_RUNNING or PROXY_AGENT_BLOCKED. A rejected login (407 after the login) is marked "needs login" — the user logs in again themselves. The proxy is contacted.',
+        inputSchema: SCHEMA.obj({}) },
+      { name: 'propose_network_proxy_change',
+        description: 'Propose a change to the stored corporate proxy settings (Settings › Runs › Network proxy). Fields, each optional, null unsets: upstream ("host:port", http only, never a user name or password), auth (auto | ntlm — NTLMv2, also inside Negotiate — | digest | basic | none), noProxy (comma-separated hosts that go direct), timeouts {connectMs, authMs, idleMs} (500 to 3600000, null for the default), fixedPort (1024 to 65535; pins the local proxy port). Validated exactly as Settings saves it. It never changes anything itself: the user sees a card with each value before → after and "Restart Worca to apply", and applies or declines it. Returns {ok:true, card} or {ok:false, errors} to fix and retry. Refused while the flag is off. Never claim it was applied — the card says so. There is no login field: never ask for a password.',
+        inputSchema: SCHEMA.obj({
+          upstream: { type: ['string', 'null'], description: 'proxy host:port (null: none)' },
+          auth: { type: ['string', 'null'], description: 'auto | ntlm | digest | basic | none (null: default)' },
+          noProxy: { type: ['string', 'null'], description: 'comma-separated hosts that go direct (null: default)' },
+          timeouts: { type: ['object', 'null'], description: '{connectMs?, authMs?, idleMs?} in ms; a null value returns one to its default', additionalProperties: false,
+            properties: { connectMs: { type: ['integer', 'null'] }, authMs: { type: ['integer', 'null'] }, idleMs: { type: ['integer', 'null'] } } },
+          fixedPort: { type: ['integer', 'null'], description: 'local proxy port 1024-65535 (null: any free port)' },
+          note: SCHEMA.s('one line shown on the card: why (≤ 200 chars)') }) },
+      { name: 'propose_corporate_proxy_on',
+        description: 'When get_network_proxy says the flag is off: propose turning the Labs flag "Corporate proxy" (corporateProxy) on. A card the user applies; Worca must then be restarted. Returns {ok:true, card} or {ok:false, errors} (already on, or locked by WORCA_FLAGS — then point to that).',
+        inputSchema: SCHEMA.obj({ note: SCHEMA.s('one line shown on the card: why (≤ 200 chars)') }) },
+    ] : []),
     ...(deps.clones ? [
       { name: 'propose_clone_project',
         description: 'Propose adding a project by cloning a repository into worca\'s projects folder, for the user to confirm — it never clones anything itself; the user sees a card with the URL, branch, target folder and how the code host is reached, and applies or declines it. url: an https:// repository URL (https://github.com/owner/repo or https://dev.azure.com/org/project/_git/repo), no credentials in it. branch: optional (default: the repository\'s default branch). name: optional folder and project name (default: the repository name). Returns {ok:true, card} or {ok:false, errors} — fix the input and call again.',
@@ -922,7 +944,8 @@ export function createAskTools(deps) {
       { name: 'run_command',
         description: "Run ONE shell command line in a Worca terminal and return at once with its blockId. Runs in the run's folder (runId, plus member on a workspace run) or the folder of this chat's project (projectKey: the chat's project or a member of its workspace; omit it for the chat's project) — never another project's. The terminal is shared with the user: a cd, export or venv (theirs or yours) carries over while the shell stays inside that folder, and the result's cwd says where it ran; a shell that left the folder is replaced by a fresh one in it. The command shows live to the user in the chat, and its tab is in the terminal pane when the user opens it. Then use wait_for (exit or an output match) or end your reply: a '[worca event] terminal block <id> exited <code>' message wakes you when it ends. One line only; at most 3 at once per chat; stopped after 30 minutes. Protected paths, worca's own API and hard-to-undo commands are refused.",
         inputSchema: SCHEMA.obj({ command: SCHEMA.s('one command line, e.g. "npm test"'), runId: SCHEMA.s('run id (optional)'),
-          member: SCHEMA.s('project key of a workspace run member (optional)'), projectKey: SCHEMA.s('project key (optional)') }, ['command']) },
+          member: SCHEMA.s('project key of a workspace run member (optional)'), projectKey: SCHEMA.s('project key (optional)'),
+          summary: SCHEMA.s('what the command does, in plain words, e.g. "Running the naming tests" (optional, one line)') }, ['command']) },
       { name: 'read_output',
         description: 'Read one terminal block\'s output (ANSI stripped), paged by characters: any block — yours or the user\'s (see list_blocks). A running block shows its output so far.',
         inputSchema: SCHEMA.obj({ blockId: SCHEMA.s('block id, e.g. t-0123456789:4'), offset: SCHEMA.i('character offset', 0, 1_000_000),
@@ -1248,6 +1271,15 @@ export function createAskTools(deps) {
   }
   // B24: every string the model sees is redacted, here as everywhere else in this module.
   const shapeMemoryFile = (e) => ({ name: e.name, description: deps.redact(e.description), paths: e.paths, source: e.source, updated: e.updated, bytes: e.bytes });
+  // Team memory (phase 1a): an opted-in project's teammates' notes, read-only here. deps.memory.listTeam / readTeam are
+  // optional; absent — or null, the project is off — the results keep exactly their earlier shape.
+  const teamRowsOf = async (projectKey) => {
+    // A broken team snapshot never costs list_memory its local half: no team rows, as when the project is off.
+    let rows = null;
+    try { rows = typeof memoryOf().listTeam === 'function' ? await memoryOf().listTeam(projectKey) : null; } catch { rows = null; }
+    return Array.isArray(rows) ? { team: rows.map((e) => ({ name: e.name, description: deps.redact(e.description), paths: e.paths, updated: e.updated, author: e.author, shadowed: e.shadowed })) } : {};
+  };
+  const teamNoteOf = async (r, name) => (r.scope === 'project' && typeof memoryOf().readTeam === 'function' ? memoryOf().readTeam(r.projectKey, name) : null);
   const normalizePaths = (v) => (Array.isArray(v) ? v.map((x) => String(x ?? '')) : String(v ?? '').split(',')).map((s2) => s2.trim()).filter(Boolean);
   // ---- team metrics (docs/team-metrics.md "Chat") ------------------------------------------
   // Domain-level by design: the model sees scopes, ranges, homes and routing, never slug
@@ -1525,6 +1557,14 @@ export function createAskTools(deps) {
     if (!deps.models) throw new AskToolError(`${tool}: models are unavailable`);
     return deps.models;
   };
+  const proxyOf = (tool) => {
+    if (!deps.proxy) throw new AskToolError(`${tool}: the corporate proxy tools are unavailable`);
+    return deps.proxy;
+  };
+  const proxyFlagOff = () => ({ flag: false,
+    text: 'The corporate proxy is off: it is the Labs flag "Corporate proxy" (corporateProxy), off by default.',
+    howToTurnOn: 'Offer propose_corporate_proxy_on (a card the user applies), or point to Settings › Labs › Corporate proxy. Either way Worca must be restarted after it is turned on.',
+    docs: 'docs/network-proxy.md' });
   const schedulesOf = (tool) => {
     if (!deps.schedules) throw new AskToolError(`${tool}: scheduled runs are unavailable`);
     return deps.schedules;
@@ -2446,7 +2486,7 @@ export function createAskTools(deps) {
         let r = null;
         try { r = await memoryScopeOf('list_memory', { ...input, scope: 'project' }); }
         catch (err) { if (which === 'project') throw err; }                 // "both" with no project: project is null, never an error
-        out.project = r ? { projectKey: r.projectKey, files: (await memoryOf().list(r.scopeObj)).map(shapeMemoryFile) } : null;
+        out.project = r ? { projectKey: r.projectKey, files: (await memoryOf().list(r.scopeObj)).map(shapeMemoryFile), ...(await teamRowsOf(r.projectKey)) } : null;
       }
       return out;
     },
@@ -2456,7 +2496,11 @@ export function createAskTools(deps) {
       if (!name) throw new AskToolError('read_memory: name is required');
       let f;
       try { f = await memoryOf().read(r.scopeObj, name); } catch (err) { throw memoryError('read_memory', err); }
-      if (!f) throw new AskToolError(`read_memory: no memory file "${name}" in ${r.scope}`);
+      if (!f) {
+        const t = await teamNoteOf(r, name);
+        if (t) return { scope: r.scope, projectKey: r.projectKey, name: t.name || name, layer: 'team', readOnly: true, description: deps.redact(t.meta.description), paths: t.meta.paths, author: t.author ?? null, updated: t.meta.updated, body: deps.redact(t.body) };
+        throw new AskToolError(`read_memory: no memory file "${name}" in ${r.scope}`);
+      }
       // B24: the parsed meta + the body, redacted — no `text`: the fence would be a second copy
       // of what the meta already spells out (the REST route keeps it for the editor).
       return { scope: r.scope, projectKey: r.projectKey, name, description: deps.redact(f.meta.description), paths: f.meta.paths, source: f.meta.source, updated: f.meta.updated, body: deps.redact(f.body) };
@@ -2477,7 +2521,8 @@ export function createAskTools(deps) {
       };
       let w;
       try { w = await memoryOf().remember(r.scopeObj, fields); } catch (err) { throw memoryError('remember', err); }
-      return { scope: r.scope, projectKey: r.projectKey, scopeKey: r.key, name, bytes: w.bytes, created: w.created, mode };
+      // w.name: the team's spelling when this changed a teammate's note under a case variant of its name.
+      return { scope: r.scope, projectKey: r.projectKey, scopeKey: r.key, name: w.name || name, bytes: w.bytes, created: w.created, mode };
     },
     async forget(input) {
       const r = await memoryScopeOf('forget', input);
@@ -2485,7 +2530,10 @@ export function createAskTools(deps) {
       if (!name) throw new AskToolError('forget: name is required');
       let removed;
       try { removed = await memoryOf().forget(r.scopeObj, name); } catch (err) { throw memoryError('forget', err); }
-      if (!removed) throw new AskToolError(`forget: no memory file "${name}" in ${r.scope}`);
+      if (!removed) {
+        const t = await teamNoteOf(r, name).catch(() => null);
+        throw new AskToolError(t ? `forget: "${t.name || name}" is a teammate's shared note with no copy on this machine — it is read-only here` : `forget: no memory file "${name}" in ${r.scope}`);
+      }
       return { scope: r.scope, projectKey: r.projectKey, scopeKey: r.key, name, removed: true };
     },
     // ---- scheduled runs
@@ -2636,6 +2684,27 @@ export function createAskTools(deps) {
       catch (err) { throw new AskToolError(`list_copilot_models: ${err && err.message ? err.message : err}`); }
     },
     async propose_model_change(input) { return modelsOf('propose_model_change').validateChange(input); },
+    async get_network_proxy() {
+      const p = proxyOf('get_network_proxy');
+      if (!p.flagOn()) return proxyFlagOff();
+      if (typeof p.status !== 'function') {
+        return { flag: true, available: false, text: 'The proxy status cannot be read from this chat turn (the flag was turned on during it). Ask again in a new message, or open Settings › Runs › Network proxy.' };
+      }
+      const s = await p.status();
+      return s && s.flag === false ? proxyFlagOff() : s;
+    },
+    async test_network_proxy() {
+      const p = proxyOf('test_network_proxy');
+      if (!p.flagOn()) return { ok: false, code: 'FLAG_OFF', error: proxyFlagOff().text };
+      if (typeof p.test !== 'function') {
+        return { ok: false, code: p.testOff ? 'PROXY_AGENT_BLOCKED' : 'UNAVAILABLE',
+          error: p.testOff || 'The proxy cannot be tested from this chat turn. Ask again in a new message, or use Test on Settings › Runs › Network proxy.' };
+      }
+      const r = await p.test();
+      return r && r.flag === false ? { ok: false, code: 'FLAG_OFF', error: proxyFlagOff().text } : r;
+    },
+    async propose_network_proxy_change(input) { return proxyOf('propose_network_proxy_change').validateChange(input); },
+    async propose_corporate_proxy_on(input) { return proxyOf('propose_corporate_proxy_on').validateFlagOn(input); },
     async propose_workspace_change(input) {
       if (!deps.workspaceChanges) throw new AskToolError('propose_workspace_change: workspace changes are unavailable');
       if (str(input.kind) !== 'create' && str(input.workspaceId)) {
@@ -2832,7 +2901,8 @@ export function createAskTools(deps) {
       if (/[\r\n]/.test(command)) throw new AskToolError('run_command: send one line per command — join steps with && or ;');
       if (command.length > L.commandMaxChars) throw new AskToolError(`run_command: the command is longer than ${L.commandMaxChars} characters`);
       try {
-        return await c.run({ command, runId: str(input.runId) || null, member: str(input.member) || null, projectKey: str(input.projectKey) || null });
+        return await c.run({ command, runId: str(input.runId) || null, member: str(input.member) || null,
+          projectKey: str(input.projectKey) || null, summary: str(input.summary) || null });
       } catch (err) { throw new AskToolError(`run_command: ${err && err.message ? err.message : err}`); }
     },
     async read_output(input) {

@@ -330,6 +330,7 @@ export const DEFAULT_MEMORY_SOFT_BYTES_PER_FILE = 8192;    // flagged in health 
 export const DEFAULT_MEMORY_HARD_BYTES_PER_FILE = 32768;   // rejected at sync-back / write above this
 export const DEFAULT_MEMORY_MAX_FILES_PER_SCOPE = 50;
 export const DEFAULT_MEMORY_HOOK_MAX_CHARS = 160;
+export const DEFAULT_MEMORY_TEAM_MAX_FILES = 50;   // team notes a run or chat LOADS per project, newest first (team memory 1a)
 
 export const DEFAULT_MEMORY_DEFRAG_WRITES = 10;     // writesSinceDefrag at which a scope is "due"
 export const DEFAULT_MEMORY_DEFRAG_FILES = 30;      // file count at which a scope is "due"
@@ -377,6 +378,7 @@ export function memoryCaps(scope) {
     hardBytesPerFile: projectOverride('memory.maxBytesPerFile', scope) ?? readMemoryCap('maxBytesPerFile', DEFAULT_MEMORY_HARD_BYTES_PER_FILE),
     maxFilesPerScope: projectOverride('memory.maxFilesPerScope', scope) ?? readMemoryCap('maxFilesPerScope', DEFAULT_MEMORY_MAX_FILES_PER_SCOPE),
     hookMaxChars: projectOverride('memory.hookMaxChars', scope) ?? readMemoryCap('hookMaxChars', DEFAULT_MEMORY_HOOK_MAX_CHARS),
+    teamMaxFiles: projectOverride('memory.teamMaxFiles', scope) ?? readMemoryCap('teamMaxFiles', DEFAULT_MEMORY_TEAM_MAX_FILES),
     defrag: {
       writes: projectOverride('memory.defrag.writes', scope) ?? readDefragThreshold('writes', DEFAULT_MEMORY_DEFRAG_WRITES),
       files: projectOverride('memory.defrag.files', scope) ?? readDefragThreshold('files', DEFAULT_MEMORY_DEFRAG_FILES),
@@ -385,6 +387,19 @@ export function memoryCaps(scope) {
     },
   };
 }
+
+/** Team memory (phase 1a) is on for this project. The PROJECT layer only — no settings.json default, no team-policy
+ *  field: sharing is opted into one project at a time. No scope (a global note, a workspace run) is always off.
+ *  `memory.team` is `true` (on, runs and chats load local and team notes) or `"only"` (on, they load team notes only:
+ *  team-memory-load-choice.md); anything else is off. */
+export function teamMemoryEnabled(scope) { return teamMemoryLoad(scope) !== 'local'; }
+/** Which notes of this project a run or chat loads: 'local' (team memory off), 'both' (`memory.team: true`) or 'team'
+ *  (`memory.team: "only"`). */
+export function teamMemoryLoad(scope) {
+  const v = projectOverride('memory.team', scope);
+  return v === true ? 'both' : v === TEAM_MEMORY_ONLY ? 'team' : 'local';
+}
+export const TEAM_MEMORY_ONLY = 'only';
 
 // ── Memory defragment model (Settings › Memory) ─────────────────────────────
 // `memory.defrag.model` / `memory.defrag.effort`: the pair EVERY Memory defragment run uses
@@ -438,8 +453,8 @@ export function assertMemoryDefragModelInput(input, models = null) {
   return assertModelPairInput('memoryDefrag', input, models);
 }
 
-/** The `{ model, effort }` pair check shared by memoryDefrag, agentGenModel and namingModel; `key` names the setting in
- *  every message. */
+/** The `{ model, effort }` pair check shared by memoryDefrag, agentGenModel, namingModel and commandSummaryModel; `key`
+ *  names the setting in every message. */
 function assertModelPairInput(key, input, models) {
   if (input === '' || input === null || input === undefined) return null;
   if (typeof input !== 'object' || Array.isArray(input)) throw new Error(`${key} must be { model, effort } or null`);
@@ -1056,8 +1071,9 @@ const CHAT_NOTIFY_EVENTS = ['done', 'error', 'question', 'paused', 'away', 'prWa
  * {enabled:false} is the opt-out record); `scriptTools` (scripts-workbench W20) is the
  * chat's "Create and run scripts" switch and defaults ON, so only a stored false ever
  * takes save_script / test_script away. `suggestions` is Ask Worca's next-prompt ghost text after
- * each reply (one cheap model call per reply), default ON as well.
- * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean, suggestions: boolean}}
+ * each reply (one cheap model call per reply), default ON as well. `summariseCommands` (#911, flag
+ * commandSummaries) shows chat commands as one-line rows, default ON too.
+ * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean, suggestions: boolean, summariseCommands: boolean}}
  */
 export function chatPrefs() {
   const raw = readSettings().chat;
@@ -1069,13 +1085,16 @@ export function chatPrefs() {
     channels[key] = { enabled: v?.enabled !== false };
   }
   // `suggestions`: Ask Worca's next-prompt ghost text after each reply — default ON, only a stored false stops it.
-  return { notify, channels, scriptTools: chat.scriptTools !== false, suggestions: chat.suggestions !== false };
+  // `summariseCommands` (#911, flag commandSummaries): chat commands as one-line rows — default ON.
+  return { notify, channels, scriptTools: chat.scriptTools !== false, suggestions: chat.suggestions !== false,
+    summariseCommands: chat.summariseCommands !== false };
 }
 
 /**
  * Merge-patch the chat prefs: {notify?: {done?, error?, question?, paused?, away?},
- * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean, suggestions?: boolean}.
- * Unknown notify keys and a non-boolean scriptTools / suggestions are rejected (400 at the API layer);
+ * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean, suggestions?: boolean,
+ * summariseCommands?: boolean}.
+ * Unknown notify keys and a non-boolean scriptTools / suggestions / summariseCommands are rejected (400 at the API layer);
  * channels merge per key.
  */
 export async function setChatPrefs(patch = {}) {
@@ -1087,6 +1106,8 @@ export async function setChatPrefs(patch = {}) {
   if (hasScriptTools && typeof patch.scriptTools !== 'boolean') throw new Error('chat scriptTools must be true or false');
   const hasSuggestions = Object.prototype.hasOwnProperty.call(patch, 'suggestions');
   if (hasSuggestions && typeof patch.suggestions !== 'boolean') throw new Error('chat suggestions must be true or false');
+  const hasSummaries = Object.prototype.hasOwnProperty.call(patch, 'summariseCommands');
+  if (hasSummaries && typeof patch.summariseCommands !== 'boolean') throw new Error('chat summariseCommands must be true or false');
   const settings = readSettings();
   const cur = settings.chat && typeof settings.chat === 'object' ? settings.chat : {};
   settings.chat = {
@@ -1100,6 +1121,7 @@ export async function setChatPrefs(patch = {}) {
     } : {}),
     ...(hasScriptTools ? { scriptTools: patch.scriptTools } : {}),
     ...(hasSuggestions ? { suggestions: patch.suggestions } : {}),
+    ...(hasSummaries ? { summariseCommands: patch.summariseCommands } : {}),
   };
   await persistSettings(settings);
   return chatPrefs();
@@ -1229,6 +1251,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'memoryDefrag',                            // Settings › Memory: the defragment model + effort
   'agentGenModel',                           // the agent wizard's Generate: model + effort (Claude, user-level)
   'namingModel',                             // Smart run naming's model + effort (Models › Helper jobs, Claude, user-level)
+  'commandSummaryModel',                     // Command summaries' model + effort (Models › Helper jobs, Claude, user-level)
   'workspaceScan',                           // Settings › Runs › Workspaces: the scan's models
   'schedule',                                // scheduled-run defaults { graceMin, ifMissed, maxFailures }
   'nightMode',                               // night mode user layer (night/config.mjs fields)
@@ -1390,6 +1413,8 @@ export function normalizeModelPair(engine, input, label = 'model') {
 }
 export const SETTING_CHECKS = Object.freeze({
   usdCap: (value) => isUsdCap(value), byteCap: (value) => isByteCap(value),
+  bool: (value) => typeof value === 'boolean',
+  teamMemory: (value) => typeof value === 'boolean' || value === TEAM_MEMORY_ONLY,
   pct: (value) => isByteCap(value) && value <= 100,
   askMaxTurns: (value) => isAskMaxTurns(value), askMaxBudgetUsd: (value) => value === null || isAskMaxBudget(value),
   skillMount: (value) => SKILL_MOUNTS.includes(value), engine: (value) => MODEL_ENGINES.includes(value), runEngine: (value) => RUN_ENGINES.includes(value),
@@ -1652,6 +1677,46 @@ export async function setNamingModel(input, { models = null } = {}) {
   else settings.namingModel = pair.effort ? pair : { model: pair.model };
   await persistSettings(settings);
   return { namingModel: namingModel() };
+}
+
+// ── Command summaries model (Models › Engines › Claude › Helper jobs › Command summaries) ───
+// `commandSummaryModel`: the { model, effort } pair of the chat command summary call (ask/command-summary.mjs).
+// User-level and Claude-only like namingModel. Unset = the cheapest ready Claude model at its lowest effort
+// (naming.mjs#resolveNamingModel); none ready = no summary, the row keeps the raw command.
+const warnedCommandSummaryModel = new Set();
+
+/** The STORED pair: `{ model, effort }`, both null when unset. Sync and never throws (namingModel's rules). */
+export function commandSummaryModel() {
+  if (homeGuarded()) return { model: null, effort: null };
+  const v = readSettings().commandSummaryModel;
+  if (v === undefined || v === null) return { model: null, effort: null };
+  const warnOnce = (what, tail) => {
+    const id = JSON.stringify(what);
+    if (warnedCommandSummaryModel.has(id)) return;
+    warnedCommandSummaryModel.add(id);
+    console.warn(`[worca] invalid commandSummaryModel ${id} — ${tail}`);
+  };
+  const m = isObj(v) ? v.model : undefined;
+  if (typeof m !== 'string' || !m.trim() || m.length > DEFRAG_MODEL_MAX_LEN) {
+    warnOnce(v, 'command summaries use the cheapest ready Claude model');
+    return { model: null, effort: null };
+  }
+  const effort = typeof v.effort === 'string' && EFFORTS.includes(v.effort) ? v.effort : null;
+  if (v.effort !== undefined && v.effort !== null && effort === null) warnOnce(v, 'command summaries use the model\'s default effort');
+  return { model: m.trim(), effort };
+}
+
+export function assertCommandSummaryModelInput(input, models = null) {
+  return assertModelPairInput('commandSummaryModel', input, models);
+}
+
+export async function setCommandSummaryModel(input, { models = null } = {}) {
+  const pair = assertCommandSummaryModelInput(input, models);
+  const settings = readSettings();
+  if (pair === null) delete settings.commandSummaryModel;
+  else settings.commandSummaryModel = pair.effort ? pair : { model: pair.model };
+  await persistSettings(settings);
+  return { commandSummaryModel: commandSummaryModel() };
 }
 
 // ── Spawn-debug diagnostics toggle (the stored side of WORCA_DEBUG_SPAWN) ────
@@ -2797,23 +2862,33 @@ export function assertNetworkProxyInput(patch) {
   }
 }
 
+/** The merge PUT /api/proxy/settings applies (null/'' drops a key; the whole patch null/'' drops it all). Pure. */
+export function mergeNetworkProxy(current, patch) {
+  if (patch === null || patch === '') return {};
+  const next = { ...(current || {}) };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null || v === '') delete next[k];
+    else if (k === 'upstream') next.upstream = normalizeProxyUpstream(v);
+    else if (k === 'timeouts') {
+      const t = { ...(next.timeouts || {}) };
+      for (const [tk, tv] of Object.entries(v)) { if (tv === null) delete t[tk]; else t[tk] = tv; }
+      if (Object.keys(t).length) next.timeouts = t; else delete next.timeouts;
+    } else next[k] = v;
+  }
+  return next;
+}
+
+/** What setNetworkProxy(patch) would store, without writing (the chat card's validator). Throws like it. */
+export function previewNetworkProxy(patch) {
+  assertNetworkProxyInput(patch);
+  return mergeNetworkProxy(networkProxySettings(), patch);
+}
+
 export async function setNetworkProxy(patch) {
   assertNetworkProxyInput(patch);
   const settings = readSettings();
-  if (patch === null || patch === '') delete settings.networkProxy;
-  else {
-    const next = { ...networkProxySettings() };
-    for (const [k, v] of Object.entries(patch)) {
-      if (v === null || v === '') delete next[k];
-      else if (k === 'upstream') next.upstream = normalizeProxyUpstream(v);
-      else if (k === 'timeouts') {
-        const t = { ...(next.timeouts || {}) };
-        for (const [tk, tv] of Object.entries(v)) { if (tv === null) delete t[tk]; else t[tk] = tv; }
-        if (Object.keys(t).length) next.timeouts = t; else delete next.timeouts;
-      } else next[k] = v;
-    }
-    if (Object.keys(next).length) settings.networkProxy = next; else delete settings.networkProxy;
-  }
+  const next = mergeNetworkProxy(networkProxySettings(), patch);
+  if (Object.keys(next).length) settings.networkProxy = next; else delete settings.networkProxy;
   await persistSettings(settings);
   return networkProxySettings();
 }

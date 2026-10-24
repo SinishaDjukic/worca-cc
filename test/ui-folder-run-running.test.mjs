@@ -76,7 +76,7 @@ test('a finished folder run before its saved row lands: Ready · 14 files change
   // Runs redesign: the one status block (run-model.mjs) words the run.
   // Slice 3 (D14): the card head words the pending copy and carries its actions; the route has 2 rows (s2).
   assert.equal($(ctx, '.rd-now-top').dataset.word, 'Ready');
-  assert.equal($(ctx, '.rd-now-top .run-status-text').textContent, 'Ready · 14 files changed in a copy');
+  assert.equal($(ctx, '.rd-now-top').dataset.text, 'Ready · 14 files changed in a copy');
   assert.equal($(ctx, '.rd-apply-slot'), null);
   assert.deepEqual([...ctx.window.document.querySelectorAll('#run-detail .rd-head-acts [data-head]')].map((b) => b.textContent), ['Discard', 'Apply to folder']);
   assert.equal(ctx.window.document.querySelectorAll('#run-detail .rd-route .rd-route-row').length, 2);
@@ -182,7 +182,7 @@ test('a finished git run while git is missing: no pull-request placeholder, a li
   await ctx.settle(8);
   assert.equal($(ctx, '.rd-pr-slot').hidden, true);
   assert.equal($(ctx, '.rd-pr-slot .rd-pr-spin'), null);
-  assert.equal($(ctx, '.rd-now-top .run-status-text').textContent, 'Finished', 'not "Ready to ship": Ship it is hidden');
+  assert.equal($(ctx, '.rd-now-top').dataset.text, 'Finished', 'not "Ready to ship": Ship it is hidden');
 });
 
 test('a finished folder run: changes that land after the detail payload fill the Changes row', async () => {

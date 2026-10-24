@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import { headModel, groupHead, routeModel, routeGroupOf, landingOf, prRef, renderRoute, routeOpenWanted, setRouteOpen, ROUTE_OPEN_KEY,
-  renderHeadButtons, prMenuItems, trackerWatchWords, canResolvePr, showsFixConflicts, hdPrWatchLabel, ASK_IN_CHAT } from '../ui/public/run-head.mjs';
+  renderHeadButtons, prMenuItems, trackerWatchWords, canResolvePr, showsFixConflicts, hdPrWatchLabel, ASK_IN_CHAT, verdictWords } from '../ui/public/run-head.mjs';
 import { icon } from '../ui/public/icons.mjs';   // the remote icon check
 
 const M = (state, extra = {}) => ({ state, word: state, dot: 'green', line: '', actions: [], pr: null, prNeeds: false, ...extra });
@@ -24,12 +24,12 @@ const TABLE = {
   working: [F({ m: M('working', { pulse: true }) }), 'live', null, []],
   ready: [F(), 'ready', 'Ready to ship · not in dev yet', ['try']],
   pending: [F({ prInput: 'PENDING' }), 'ready', 'Ready to ship · not in dev yet', ['try']],
-  push: [F({ push: true }), 'push', 'Ready to ship · in main here, not on the remote', ['try']],
+  push: [F({ push: true }), 'push', 'Ready to ship', ['try']],
   'pr closed': [F({ pr: { ...OPEN, state: 'CLOSED' } }), 'pr-closed', 'Ready to ship · the PR was closed', ['try']],
   'in review': [F({ m: M('in-review'), pr: OPEN, prStatus: { status: { label: 'Review required' }, watch: null } }), 'in-review', 'In review · waiting for a review', []],
   conflicts: [F({ m: CONFLICTS, pr: OPEN, prStatus: { watch: { watching: false, status: 'idle' } } }), 'conflicts', 'Needs you · conflicts with dev', ['fix-conflicts']],
-  'watch stopped': [F({ m: STOPPED_WATCH, pr: OPEN, prStatus: { watch: { watching: true, status: 'needs-person' } } }), 'watch-stopped', null, ['ask-changes']],
-  merged: [F({ m: M('merged', { dot: 'violet' }), pr: { ...OPEN, state: 'MERGED' } }), 'merged', 'Merged · your changes are in dev', []],
+  'watch stopped': [F({ m: STOPPED_WATCH, pr: OPEN, prStatus: { watch: { watching: true, status: 'needs-person' } } }), 'watch-stopped', 'Needs you', ['ask-changes']],
+  merged: [F({ m: M('merged', { dot: 'violet' }), pr: { ...OPEN, state: 'MERGED' } }), 'merged', 'Merged', []],
   kept: [F({ kept: { provisional: false } }), 'kept', 'Needs you · the changes could not be committed', ['discard-kept', 'apply-kept']],
   'kept provisional': [F({ kept: { provisional: true } }), 'kept', 'Needs you · the changes could not be committed', []],
   'not merged back': [F({ notMergedBack: true }), 'not-merged-back', 'Needs you · not merged back into main', ['how-to-merge']],
@@ -78,10 +78,29 @@ test('head: the PR control per state (pending, push, view ▾, merged ▾, creat
   assert.equal(headModel(F({ canTry: false })).before.length, 0);
 });
 
-test('head: Watch stopped keeps the model line and draws Ask for changes disabled, titled for the chat', () => {
+test('Watch stopped: the head says Needs you (the route says why) and draws Ask for changes disabled', () => {
   const h = headModel(TABLE['watch stopped'][0]);
-  assert.equal(h.status, null);
+  assert.equal(h.status.line, 'Needs you');
   assert.deepEqual(h.after.map((b) => [b.id, !!b.primary, !!b.disabled, b.title]), [['ask-changes', true, true, "Ask for changes from the run's chat"]]);
+});
+
+test('head: the In review detail is GitHub verdict only; the checks line stays in the route', () => {
+  const at = (status) => headModel(F({ m: M('in-review'), pr: OPEN, prStatus: { status, watch: null } })).status.line;
+  assert.equal(at({ label: 'Checks running · 7 of 12 done, 1 skipped' }), 'In review');
+  assert.equal(at({ label: 'Checks failing · 2 of 12 failed' }), 'In review');
+  assert.equal(at({ label: 'Review required' }), 'In review · waiting for a review');
+  assert.equal(at({ label: 'Changes requested' }), 'In review · changes requested');
+  assert.equal(at({ label: 'Ready to merge', detail: 'All 14 checks passed' }), 'In review · ready to merge');
+  const pr = routeModel(F({ m: M('in-review'), pr: OPEN, prStatus: { checks: { state: 'pending' }, status: { label: 'Checks running · 7 of 12 done' } } }))
+    .rows.find((r) => r.kind === 'pr');
+  assert.equal(say(pr.second), 'Checks running · 7 of 12 done', "said once: in the route's pull request row");
+});
+
+test('head: Merged, Watch stopped and Push leave their detail to the route', () => {
+  assert.equal(TABLE.merged[2], 'Merged');
+  assert.match(say(routeModel(TABLE.merged[0]).fold.parts), /^Merged into dev/, 'the base is in the route');
+  assert.ok(routeModel(F({ push: true })).rows.some((r) => r.kind === 'remote'), 'the Push path says where');
+  assert.deepEqual(verdictWords({ label: 'Checks running · 1 of 2 done' }), '');
 });
 
 test('head: kept work wins over the run end state (done, stopped, failed); a live run still comes first', () => {
@@ -373,7 +392,7 @@ test('route: a feature run built on Run 1\'s branch never reads "Merged into" th
   assert.equal(say(routeModel(F({ m: M('ready'), ...RUN2, group: FEATURE() })).rows[2].second), 'Lands here when the feature ships');
   const shipped = routeModel(F({ m: M('merged'), ...RUN2, pr: PR(915, 'MERGED'), group: FEATURE({ shipMode: 'one' }) }));
   assert.equal(say(shipped.fold.parts), 'Merged into dev · worca/worka-cc#915');
-  assert.equal(headModel(F({ m: M('merged'), ...RUN2, pr: PR(915, 'MERGED'), group: FEATURE() })).status.line, 'Merged · your changes are in dev');
+  assert.equal(headModel(F({ m: M('merged'), ...RUN2, pr: PR(915, 'MERGED'), group: FEATURE() })).status.line, 'Merged', 'the route says where');
   // Root unknown (History not loaded): a place word, never the previous run's branch.
   const unknown = routeModel(F({ m: M('ready'), ...RUN2, group: FEATURE({ root: '' }) }));
   assert.equal(placeOf(unknown.rows[2].place), "The feature's base branch");
