@@ -144,6 +144,12 @@ A disabled checked box fills `--seq`. A selected option row (`.opt-row`, `.chip-
 an ink border.
 ### Segmented control
 `.seg`: one `--field` container, 28px / 13px buttons, the selected one `--surface`. `.seg-sm` is the same size.
+The run log's Summaries / Raw switch (`.log-view-seg`, flag `commandSummaries`) is a `.seg-sm` in the Logs bar and the step
+log drawer head. A summarised line's `title` shows the command on hover; that is a mouse convenience, and Raw is the
+accessible path to the command. With the switch, Open in Logs and × in the drawer head never shrink; the title ellipsizes.
+At 480px and below, the drawer head puts the step title on its own row and keeps the switch, Open in Logs and × together
+on the row below, with 7px switch padding (a 311px History drawer leaves 283px). The Logs bar wraps while the switch
+shows, so its selects keep their content width and search shares the switch row with copy.
 ### Tabs
 `.tabs` / `.tab`: underline tabs, 32px, never boxed (checked).
 ### Filter chip
@@ -154,7 +160,7 @@ border, ink text. Never a solid ink fill. A count sits in `.n`. It is the only f
 One chip: 18px, 11px / 500 sans, 4px corner, filled, no border (checked). The Labs (violet) and Beta (blue) flag chips are
 the reference size. Colour carries meaning only. The "Suggested" chip on the New run form's title and branch (`.sn-chip`, Smart run naming) is a permitted Labs-violet use: the whole feature is a Labs feature. Cost-tag chips (`.tag-chip`), the Projects sync pill (`.ps-pill`), the
 Chat command card's state (`.ask-cmd-pill`) and the Team policy tab count (`.tp-tab-badge`) are the same chip; on the
-active tab the count turns neutral (`--line-2` fill, ink text). The missing-key slot is the one outlined chip: a 1px dashed
+active tab the count turns neutral (`--line-2` fill, ink text). A chat command in summary mode (flag `commandSummaries`) shows the runs status dot and no state chip; the full card keeps `.ask-cmd-pill`. The missing-key slot is the one outlined chip: a 1px dashed
 `--amber` outline on a transparent fill. A removable chip's × is a 14px quiet button inside the chip. A source, "Official"
 or a policy origin is `.badge.slate`; "not installed" and "built-in" are grey.
 ### Status dot and symbols

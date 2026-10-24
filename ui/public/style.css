@@ -1132,6 +1132,11 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 /* run card: pills drop to a full-width second row under "Live log" (order puts
    the bar after the autoscroll switch so row 1 stays label ⟷ switch) */
 .run-log-head .log-filters{order:1;flex-basis:100%;}
+/* With the Summaries / Raw switch the one-row bar cut the selects and search to 14px on a phone, so it wraps
+   (only when it overflows) and search shares the switch row with copy. */
+:root[data-flags~="commandSummaries"] .log-filters:has(> .log-view-seg){flex-wrap:wrap;row-gap:6px;}
+:root[data-flags~="commandSummaries"] .log-filters:has(> .log-view-seg) select.log-f{flex:0 0 auto;}
+:root[data-flags~="commandSummaries"] .log-filters:has(> .log-view-seg) .log-search{flex-basis:80px;}
 
 /* needs-attention flag */
 .attn-flag{display:inline-flex;align-items:center;gap:5px;margin-left:10px;background:var(--amber-bg);
@@ -6541,6 +6546,32 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd-toggle[aria-expanded="true"] .ask-cmd-chev{transform:rotate(90deg);}
 .ask-cmd-out{margin:0;max-height:16em;overflow:auto;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--field);color:var(--ink);font-family:var(--mono);font-size:11px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;}
 .ask-cmd-out[hidden]{display:none;}
+/* Command summaries (#911): one row per command with the runs status dot; a group joins rows into one card. */
+.ask-card.ask-cmd.is-sum{gap:0;padding:0;}
+.ask-cmd-ghead{padding:8px 14px 0;color:var(--ink-2);font-size:12px;}
+.ask-cmd-ghead[hidden]{display:none;}
+.ask-cmd-row{display:flex;align-items:center;gap:8px;min-height:38px;padding:0 14px;cursor:pointer;}
+.ask-cmd-row:hover{background:var(--hover);}
+.ask-cmd-row-btn{display:flex;align-items:center;gap:10px;flex:1 1 auto;min-width:0;padding:0;border:0;background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.ask-cmd-row-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-cmd-sum{flex:1 1 auto;min-width:0;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ask-cmd-sum.is-raw{font-family:var(--mono);font-size:12px;font-weight:400;color:var(--ink-2);}
+.ask-cmd-meta{flex:none;color:var(--ink-2);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;}
+.ask-cmd.is-sum .ask-cmd-chev{flex:none;color:var(--ink-2);transition:transform .15s;}
+.ask-cmd.is-sum.is-open > .ask-cmd-row .ask-cmd-chev{transform:rotate(90deg);}
+.ask-cmd-detail{display:flex;flex-direction:column;gap:8px;padding:10px 14px 12px;border-top:1px solid var(--line);}
+.ask-cmd-detail[hidden]{display:none;}
+.ask-cmd.is-sum .ask-cmd-line{display:flex;align-items:center;gap:2px;}
+.ask-cmd-copy{display:inline-flex;min-width:0;max-width:100%;font-family:var(--mono);}
+.ask-cmd-copy-text{min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;text-align:left;}
+.ask-cmd-copy .ico-check{display:none;}
+.ask-cmd-copy.copied .ico-copy{display:none;}
+.ask-cmd-copy.copied .ico-check{display:inline;color:var(--green-ink);}
+.ask-cmd.is-sum .ask-cmd-folder{align-self:flex-start;}
+.ask-cmd.is-sum > .ask-cmd-warning{margin:0 14px 12px;}
+/* A group: rows share one border with dividers (the message's 6px gap and the card's 2px top margin cancelled). */
+.ask-cmd.in-group:not(.is-g-last){border-bottom-left-radius:0;border-bottom-right-radius:0;}
+.ask-cmd.in-group:not(.is-g-first){margin-top:-7px;border-top-left-radius:0;border-top-right-radius:0;}
 .ask-rc-graph{position:relative;margin-top:14px;min-height:120px;overflow:hidden;border:1px solid var(--line);border-radius:var(--r-sm);cursor:pointer;
   background:var(--canvas-2) radial-gradient(circle,var(--line-2) 1.1px,transparent 1.1px);background-size:22px 22px;transition:height .24s cubic-bezier(.2,.7,.3,1);}
 .ask-rc-graph[hidden]{display:none;}
@@ -8433,6 +8464,16 @@ button.act-srow-name{cursor:pointer}
 @media (max-width:760px){
   .wf-log-drawer{height:var(--wf-log-h,50vh);}
 }
+/* With the Summaries / Raw switch the controls keep their size and the title ellipsizes (× had shrunk to 16px). */
+:root[data-flags~="commandSummaries"] .wf-log-head:has(> .log-view-seg) :is(.wf-log-full,.wf-log-close){flex:none;}
+/* A phone: the Summaries / Raw switch, Open in Logs and × fill the head, so the title takes its own row. */
+@media (max-width:480px){
+  :root[data-flags~="commandSummaries"] .wf-log-head:has(> .log-view-seg){flex-wrap:wrap;gap:3px 6px;}
+  :root[data-flags~="commandSummaries"] .wf-log-head:has(> .log-view-seg) .wf-log-title{max-width:calc(100% - 40px);}
+  :root[data-flags~="commandSummaries"] .wf-log-head:has(> .log-view-seg) .wf-log-spacer{flex-basis:100%;}
+  :root[data-flags~="commandSummaries"] .wf-log-head:has(> .log-view-seg) .log-view-seg{margin-left:auto;}
+  :root[data-flags~="commandSummaries"] .wf-log-head:has(> .log-view-seg) .log-view-seg button{padding:0 7px;}
+}
 
 /* ========================================================================== */
 /* Workflows view (full screen): the canvas card and the Library card side by  */
@@ -8770,6 +8811,8 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-convo .ask-msg > :is(.ask-card,.ask-card-stub){width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}
 /* The run proposal is a form: it keeps the 760px text column, not the wide card column. */
 .chat-convo .ask-msg > .ask-card.ask-rp{width:min(var(--chat-text-max),100cqi);margin-left:calc((100% - min(var(--chat-text-max),100cqi)) / 2);}
+/* Command cards (#911): the 760px text column too, summary rows and full cards alike. */
+.chat-convo .ask-msg > .ask-card.ask-cmd{width:min(var(--chat-text-max),100cqi);margin-left:calc((100% - min(var(--chat-text-max),100cqi)) / 2);}
 /* The composer's popovers ride the composer (ask-panel.mjs openPopover): above the box in the dock, under it on
    home, and never sized against the composer's own height. On home the cap is 100vh less .chat-home's 10vh top padding. */
 .chat-page .ask-composer{--ask-box-top:calc(100% - 10px);}

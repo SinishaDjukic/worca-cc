@@ -83,6 +83,7 @@ const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', 
 
 import { icon } from './icons.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
+import { readLogView, writeLogView, paintLogMsg, applyLogView, syncLogViewSeg } from './log-view.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
 import { alreadyApplied, noteBoot } from './ws-seq.mjs';
 import { createAlerts, mountAlertsCard } from './alerts.mjs';
@@ -170,7 +171,7 @@ import {
   channelBadge, renderNeedsGit,
 } from './plugins-view.mjs';
 import { mountMarketplace, tabFromParam } from './marketplace/index.mjs';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
@@ -393,6 +394,13 @@ function bindMarkdownReady() {
 const pageMarkdown = (text) => (hdMarkdown.isReady() ? hdMarkdown.render(text) : { kind: 'plain' });
 
 let askPanel = null;           // Chat panel — assigned by the boot mount; every seam uses askPanel?.
+let chatSummariesPref = true;    // Settings › Chat › Summarise commands (#911): GET /api/settings chat.summariseCommands
+function setChatSummariesPref(chat) {
+  const on = !(chat && chat.summariseCommands === false);
+  if (on === chatSummariesPref) return;
+  chatSummariesPref = on;
+  askPanel?.refreshCommandCards();
+}
 // Pinpoint (#669): one selection controller for the page. Created at load, so its window key handler runs ahead of
 // the artifact viewer's (added when a popup opens).
 const pinpoint = createPinpoint({ doc: document, win: window, fetch: (u, o) => fetch(u, o) });
@@ -5345,9 +5353,24 @@ function effectiveDefaultsOf(row) {
 // ---------------------------------------------------------------------------
 const MAX_LOG_LINES = testHookInt('maxLogLines', 4000);
 
+// Run logs: Summaries / Raw (#911 slice 3). The stored choice applies only while commandSummaries is on;
+// off, every line reads raw (as before the flag). Read once; the guarded module-level `localStorage` never throws.
+let logViewPref = readLogView(localStorage);
+const logView = () => (flagOn('commandSummaries') ? logViewPref : 'raw');
+function setLogView(view) {
+  logViewPref = view === 'raw' ? 'raw' : 'summary';
+  writeLogView(localStorage, logViewPref);
+  applyLogView(document, logView());
+}
+const cloneLogViewSeg = () => {
+  const seg = document.getElementById('log-bar-tpl').content.querySelector('.log-view-seg').cloneNode(true);
+  syncLogViewSeg(seg, logView());
+  return seg;
+};
+
 // Build one .log-line node from a normalized log record. (Same DOM shape the
 // old global appendLog produced: ts/src/msg spans + lvl class.)
-function buildLogLine({ source, level, text, ts, sub, path, kind }) {
+function buildLogLine({ source, level, text, ts, sub, path, kind, desc }) {
   const line = document.createElement('div');
   line.className = logLineClass(level, sub);
 
@@ -5368,11 +5391,12 @@ function buildLogLine({ source, level, text, ts, sub, path, kind }) {
     m.href = '#';
     m.dataset.path = String(path);
     if (kind) m.dataset.kind = String(kind);
+    m.textContent = String(text);
   } else {
     m = document.createElement('span');
     m.className = 'log-msg';
+    paintLogMsg(m, { text, desc }, logView());   // a Bash description reads in place of the command (Summaries)
   }
-  m.textContent = String(text);
 
   line.append(t, s, m);
   return line;
@@ -5595,6 +5619,7 @@ function onLog(r, msg) {
     ...(msg.stream ? { stream: msg.stream } : {}),
     ...(msg.path != null ? { path: msg.path } : {}),
     ...(msg.kind != null ? { kind: msg.kind } : {}),
+    ...(typeof msg.desc === 'string' && msg.desc ? { desc: msg.desc } : {}),
   };
   r.logLines.push(rec);
   if (r.logLines.length > MAX_LOG_LINES) r.logLines.shift();
@@ -16639,6 +16664,9 @@ function paintAskSettings(data) {
   if (scriptHost) scriptHost.replaceChildren(renderScriptToolsToggle({ prefs: data.chat || {} }, { doc: document }));
   const suggestHost = document.getElementById('ask-suggestions-host');
   if (suggestHost) suggestHost.replaceChildren(renderSuggestionsToggle({ prefs: data.chat || {} }, { doc: document }));
+  const summariesHost = document.getElementById('ask-summaries-host');
+  if (summariesHost) summariesHost.replaceChildren(renderSummariesToggle({ prefs: data.chat || {} }, { doc: document }));
+  setChatSummariesPref(data.chat);
   // Web access: repainted from every GET and save response, which also resets its dirty flag.
   const webHost = document.getElementById('ask-web-host');
   if (webHost) webHost.replaceChildren(renderAskWebFields({ askWeb: data.askWeb }, { doc: document }));
@@ -16689,9 +16717,11 @@ function saveAskLimits(e) {
   const webHost = document.getElementById('ask-web-host');
   const askWebBody = webHost ? collectAskWebFields(webHost) : null;   // null = the web fields were not touched
   const suggestHost = document.getElementById('ask-suggestions-host');
+  const summariesHost = document.getElementById('ask-summaries-host');
   const chat = {
     ...(scriptHost ? collectScriptToolsToggle(scriptHost) : {}),
     ...(suggestHost ? collectSuggestionsToggle(suggestHost) : {}),
+    ...(summariesHost ? collectSummariesToggle(summariesHost) : {}),
   };
   postAskLimits({ askMaxTurns, askMaxBudgetUsd,
     ...(Object.keys(chat).length ? { chat } : {}),
@@ -18932,14 +18962,17 @@ const CODEX_HELPER_JOBS = ['title', 'classifier', 'overview', 'prDescription', '
 // src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the engines with helper slots of their own.
 const HELPER_ENGINES = ['claude', 'codex'];
 // Claude's helper slots at user level are their own settings keys (settings-cascade.mjs CLAUDE_USER): a model id for
-// titles, Auto and PR descriptions (no effort), and the Memory defragment, Agent generation and Run naming pairs. No
-// user-level overview slot. Agent generation and Run naming are Claude's alone (they always run on Claude), so no other
-// tab has their rows; Run naming shows only while smartRunNaming is on.
-const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen', 'naming'];
+// titles, Auto and PR descriptions (no effort), and the Memory defragment, Agent generation, Run naming and Command
+// summaries pairs. No user-level overview slot. Agent generation, Run naming and Command summaries are Claude's alone
+// (they always run on Claude), so no other tab has their rows; Run naming shows only while smartRunNaming is on, Command
+// summaries only while commandSummaries is on.
+const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen', 'naming', 'commandSummary'];
 const helperPair = (p) => (p && p.model ? { model: p.model, ...(p.effort ? { effort: p.effort } : {}) } : undefined);
-// Run naming shows only while smartRunNaming is on; the Requirements interview is a user-only slot (settings key
-// requirementsInterview), listed only while its flag is on. Both asked at paint time, never a module constant.
-const claudeUserHelperJobs = () => [...CLAUDE_USER_HELPER_JOBS.filter((job) => job !== 'naming' || flagOn('smartRunNaming')),
+// Run naming shows only while smartRunNaming is on, Command summaries only while commandSummaries is on; the
+// Requirements interview is a user-only slot (settings key requirementsInterview), listed only while its flag is on.
+// All asked at paint time, never a module constant.
+const claudeUserHelperJobs = () => [...CLAUDE_USER_HELPER_JOBS.filter((job) => (job !== 'naming' || flagOn('smartRunNaming'))
+  && (job !== 'commandSummary' || flagOn('commandSummaries'))),
   ...(flagOn('requirements') ? ['requirementsInterview'] : [])];
 const CLAUDE_USER_HELPER_OWN = (data) => ({
   title: data.titleModel ? { model: data.titleModel } : undefined,
@@ -18950,6 +18983,7 @@ const CLAUDE_USER_HELPER_OWN = (data) => ({
   requirementsInterview: data.requirementsInterview && (data.requirementsInterview.model || data.requirementsInterview.effort)
     ? { ...(data.requirementsInterview.model ? { model: data.requirementsInterview.model } : {}), ...(data.requirementsInterview.effort ? { effort: data.requirementsInterview.effort } : {}) } : undefined,
   naming: helperPair(data.namingModel),
+  commandSummary: helperPair(data.commandSummaryModel),
 });
 let lastEngineSettingsData = null;
 async function paintEngineSettings(data) {
@@ -18970,6 +19004,11 @@ async function paintEngineSettings(data) {
   // The interview's empty choices read "Opus 5.5 (default)" and "medium (default)" (the answer's requirementsInterviewDefault).
   const interviewDefault = data?.requirementsInterviewDefault;
   if (interviewDefault?.model && claudeJobs.includes('requirementsInterview')) fields[utilityId('claude', 'requirementsInterview')].inherited = { value: { model: interviewDefault.model, ...(interviewDefault.effort ? { effort: interviewDefault.effort } : {}) }, source: 'default' };
+  // Command summaries: unset runs on the cheapest ready Claude model, so the empty option names it ("Haiku 5.5 (default)").
+  const csAuto = data?.commandSummaryModelEffective;
+  if (fields[utilityId('claude', 'commandSummary')] && csAuto && csAuto.source === 'auto' && csAuto.model) {
+    fields[utilityId('claude', 'commandSummary')].inherited = { value: { model: csAuto.model }, source: 'default' };
+  }
   renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
     noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
     defaultLabels: { claude: 'the default model' },
@@ -20558,7 +20597,10 @@ function openStopModal(target) {
 // The ONE source of the filter bar's markup is #log-bar-tpl; the run page's Logs tab and History
 // clone it so the two bars can never drift (control order, classes, a11y).
 function buildLogFilterBar() {
-  return document.getElementById('log-bar-tpl').content.querySelector('.log-filters').cloneNode(true);
+  const bar = document.getElementById('log-bar-tpl').content.querySelector('.log-filters').cloneNode(true);
+  const seg = bar.querySelector('.log-view-seg');
+  if (seg) syncLogViewSeg(seg, logView());   // every cloned bar shows the current choice
+  return bar;
 }
 
 // The ONE filter reader for both bars. The search box is read by PRESENCE, not
@@ -31886,7 +31928,7 @@ function revealLogDrawer(sec) {
   sec.scrollIntoView({ block: 'end', behavior: still ? 'auto' : 'smooth' });
 }
 function newLogDrawer(sec, { onClose, onOpenInLogs }) {
-  const d = createLogDrawer({ doc: document, win: window, storage: LOG_DRAWER_STORAGE, onClose, onOpenInLogs });
+  const d = createLogDrawer({ doc: document, win: window, storage: LOG_DRAWER_STORAGE, onClose, onOpenInLogs, tools: cloneLogViewSeg() });
   // Follow the tail only while the reader is at the bottom (one geometry read per scroll, not per line).
   d.body.addEventListener('scroll', () => {
     d.body.__pinned = d.body.scrollTop + d.body.clientHeight >= d.body.scrollHeight - 24;
@@ -39919,7 +39961,10 @@ async function chatHomeFlags() {
   try {
     const res = await fetch('/api/settings');
     const data = await safeJson(res);
-    if (res.ok && data && data.chat && typeof data.chat === 'object') out.scripts = data.chat.scriptTools !== false;
+    if (res.ok && data && data.chat && typeof data.chat === 'object') {
+      out.scripts = data.chat.scriptTools !== false;
+      setChatSummariesPref(data.chat);
+    }
   } catch { /* keep the default: on */ }
   try {
     const res = await fetch('/api/sources');
@@ -39978,8 +40023,19 @@ askPanel = createAskPanel({
   chatDeps,
   onRoute: chatRoute,
   onUnread: paintChatUnread,
+  summariseCommands: () => chatSummariesPref,
 });
 ($('section.view[data-view="chat"]') || document.body).appendChild(askPanel.root);
+// Command summaries (#911): read the person's switch once, and follow the flag.
+Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).then((d) => setChatSummariesPref(d && d.chat)).catch(() => { /* keep: on */ });
+onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); void paintHelperModelCards(); });
+// One delegated handler for every Summaries / Raw switch (Logs tab, History Logs, both drawers, Chat's run
+// panel): they are cloned on every build, so per-node listeners would be lost on each rebuild.
+document.addEventListener('click', (e) => {
+  const b = e.target.closest && e.target.closest('.log-view-seg button[data-log-view]');
+  if (b) setLogView(b.dataset.logView);
+});
+onFlagChange('commandSummaries', () => applyLogView(document, logView()));
 // Pinpoint (#669) on the chat's answers: Disagree, Use this and Go deeper send at once with the quote.
 pinpoint.addSurface(askPanel.root, {
   kind: 'chat',

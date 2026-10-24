@@ -453,8 +453,8 @@ export function assertMemoryDefragModelInput(input, models = null) {
   return assertModelPairInput('memoryDefrag', input, models);
 }
 
-/** The `{ model, effort }` pair check shared by memoryDefrag, agentGenModel and namingModel; `key` names the setting in
- *  every message. */
+/** The `{ model, effort }` pair check shared by memoryDefrag, agentGenModel, namingModel and commandSummaryModel; `key`
+ *  names the setting in every message. */
 function assertModelPairInput(key, input, models) {
   if (input === '' || input === null || input === undefined) return null;
   if (typeof input !== 'object' || Array.isArray(input)) throw new Error(`${key} must be { model, effort } or null`);
@@ -1071,8 +1071,9 @@ const CHAT_NOTIFY_EVENTS = ['done', 'error', 'question', 'paused', 'away', 'prWa
  * {enabled:false} is the opt-out record); `scriptTools` (scripts-workbench W20) is the
  * chat's "Create and run scripts" switch and defaults ON, so only a stored false ever
  * takes save_script / test_script away. `suggestions` is Ask Worca's next-prompt ghost text after
- * each reply (one cheap model call per reply), default ON as well.
- * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean, suggestions: boolean}}
+ * each reply (one cheap model call per reply), default ON as well. `summariseCommands` (#911, flag
+ * commandSummaries) shows chat commands as one-line rows, default ON too.
+ * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean, suggestions: boolean, summariseCommands: boolean}}
  */
 export function chatPrefs() {
   const raw = readSettings().chat;
@@ -1084,13 +1085,16 @@ export function chatPrefs() {
     channels[key] = { enabled: v?.enabled !== false };
   }
   // `suggestions`: Ask Worca's next-prompt ghost text after each reply — default ON, only a stored false stops it.
-  return { notify, channels, scriptTools: chat.scriptTools !== false, suggestions: chat.suggestions !== false };
+  // `summariseCommands` (#911, flag commandSummaries): chat commands as one-line rows — default ON.
+  return { notify, channels, scriptTools: chat.scriptTools !== false, suggestions: chat.suggestions !== false,
+    summariseCommands: chat.summariseCommands !== false };
 }
 
 /**
  * Merge-patch the chat prefs: {notify?: {done?, error?, question?, paused?, away?},
- * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean, suggestions?: boolean}.
- * Unknown notify keys and a non-boolean scriptTools / suggestions are rejected (400 at the API layer);
+ * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean, suggestions?: boolean,
+ * summariseCommands?: boolean}.
+ * Unknown notify keys and a non-boolean scriptTools / suggestions / summariseCommands are rejected (400 at the API layer);
  * channels merge per key.
  */
 export async function setChatPrefs(patch = {}) {
@@ -1102,6 +1106,8 @@ export async function setChatPrefs(patch = {}) {
   if (hasScriptTools && typeof patch.scriptTools !== 'boolean') throw new Error('chat scriptTools must be true or false');
   const hasSuggestions = Object.prototype.hasOwnProperty.call(patch, 'suggestions');
   if (hasSuggestions && typeof patch.suggestions !== 'boolean') throw new Error('chat suggestions must be true or false');
+  const hasSummaries = Object.prototype.hasOwnProperty.call(patch, 'summariseCommands');
+  if (hasSummaries && typeof patch.summariseCommands !== 'boolean') throw new Error('chat summariseCommands must be true or false');
   const settings = readSettings();
   const cur = settings.chat && typeof settings.chat === 'object' ? settings.chat : {};
   settings.chat = {
@@ -1115,6 +1121,7 @@ export async function setChatPrefs(patch = {}) {
     } : {}),
     ...(hasScriptTools ? { scriptTools: patch.scriptTools } : {}),
     ...(hasSuggestions ? { suggestions: patch.suggestions } : {}),
+    ...(hasSummaries ? { summariseCommands: patch.summariseCommands } : {}),
   };
   await persistSettings(settings);
   return chatPrefs();
@@ -1244,6 +1251,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'memoryDefrag',                            // Settings › Memory: the defragment model + effort
   'agentGenModel',                           // the agent wizard's Generate: model + effort (Claude, user-level)
   'namingModel',                             // Smart run naming's model + effort (Models › Helper jobs, Claude, user-level)
+  'commandSummaryModel',                     // Command summaries' model + effort (Models › Helper jobs, Claude, user-level)
   'workspaceScan',                           // Settings › Runs › Workspaces: the scan's models
   'schedule',                                // scheduled-run defaults { graceMin, ifMissed, maxFailures }
   'nightMode',                               // night mode user layer (night/config.mjs fields)
@@ -1687,6 +1695,46 @@ export async function setNamingModel(input, { models = null } = {}) {
   else settings.namingModel = pair.effort ? pair : { model: pair.model };
   await persistSettings(settings);
   return { namingModel: namingModel() };
+}
+
+// ── Command summaries model (Models › Engines › Claude › Helper jobs › Command summaries) ───
+// `commandSummaryModel`: the { model, effort } pair of the chat command summary call (ask/command-summary.mjs).
+// User-level and Claude-only like namingModel. Unset = the cheapest ready Claude model at its lowest effort
+// (naming.mjs#resolveNamingModel); none ready = no summary, the row keeps the raw command.
+const warnedCommandSummaryModel = new Set();
+
+/** The STORED pair: `{ model, effort }`, both null when unset. Sync and never throws (namingModel's rules). */
+export function commandSummaryModel() {
+  if (homeGuarded()) return { model: null, effort: null };
+  const v = readSettings().commandSummaryModel;
+  if (v === undefined || v === null) return { model: null, effort: null };
+  const warnOnce = (what, tail) => {
+    const id = JSON.stringify(what);
+    if (warnedCommandSummaryModel.has(id)) return;
+    warnedCommandSummaryModel.add(id);
+    console.warn(`[worca] invalid commandSummaryModel ${id} — ${tail}`);
+  };
+  const m = isObj(v) ? v.model : undefined;
+  if (typeof m !== 'string' || !m.trim() || m.length > DEFRAG_MODEL_MAX_LEN) {
+    warnOnce(v, 'command summaries use the cheapest ready Claude model');
+    return { model: null, effort: null };
+  }
+  const effort = typeof v.effort === 'string' && EFFORTS.includes(v.effort) ? v.effort : null;
+  if (v.effort !== undefined && v.effort !== null && effort === null) warnOnce(v, 'command summaries use the model\'s default effort');
+  return { model: m.trim(), effort };
+}
+
+export function assertCommandSummaryModelInput(input, models = null) {
+  return assertModelPairInput('commandSummaryModel', input, models);
+}
+
+export async function setCommandSummaryModel(input, { models = null } = {}) {
+  const pair = assertCommandSummaryModelInput(input, models);
+  const settings = readSettings();
+  if (pair === null) delete settings.commandSummaryModel;
+  else settings.commandSummaryModel = pair.effort ? pair : { model: pair.model };
+  await persistSettings(settings);
+  return { commandSummaryModel: commandSummaryModel() };
 }
 
 // ── Spawn-debug diagnostics toggle (the stored side of WORCA_DEBUG_SPAWN) ────

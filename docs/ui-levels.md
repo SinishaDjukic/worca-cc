@@ -202,8 +202,8 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Diff tab (live worktree while running, the final patch after) | A |
 | Folder run (a Folder project): Changes tab, the Folder chip, the "<n> files · on a copy" bar with Discard and Apply to folder, the Apply to folder dialog | S |
 | Run without a project (No project): the Artifacts tab, opened first; the No project chip | S |
-| Live log pane (run page › Logs), log search / copy / auto-scroll | A |
-| Step log drawer under the Workflow graph (a card or execution-row click; Open in Logs, resize, close) | A — follows the Logs tab |
+| Live log pane (run page › Logs), log search / copy / auto-scroll, Summaries / Raw switch (flag `commandSummaries`) | A |
+| Step log drawer under the Workflow graph (a card or execution-row click; Open in Logs, resize, close), Summaries / Raw switch (flag `commandSummaries`) | A — follows the Logs tab |
 | Branch chip, progress n/m · step on the card, model · effort pill, graph zoom cluster | A |
 | Auto proposal Revise; Artifacts tab | A |
 | Actions tab, Overview actions strip, Create PR 'Try it first' button and strip | A |

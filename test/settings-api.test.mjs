@@ -280,6 +280,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       requirementsInterview: null,
       agentGenModel: null,
       namingModel: null,
+      commandSummaryModel: null,
       workspaceScan: null,
       schedule: {},
       nightMode: {}, nightModeToggle: 'auto',
@@ -451,4 +452,19 @@ test('POST enforceTags: a non-boolean is 400 with field enforceTags; true round-
   assert.equal((await (await fetch(`${base}/api/settings`)).json()).enforceTags, true);
   await postJson({ enforceTags: false });
   assert.equal((await (await fetch(`${base}/api/settings`)).json()).enforceTags, false);
+});
+
+test('chat.summariseCommands defaults on, saves false, rejects a non-boolean (#911)', async () => {
+  let s = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(s.chat.summariseCommands, true);
+  let r = await fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat: { summariseCommands: false } }) });
+  assert.equal(r.status, 200);
+  s = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(s.chat.summariseCommands, false);
+  r = await fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat: { summariseCommands: 'no' } }) });
+  assert.equal(r.status, 400);
+  // settingsErrorReply (src/core/settings-errors.mjs) answers { error, field }: the field is the body key validated.
+  const body = await r.json();
+  assert.equal(body.field, 'chat');
+  assert.equal(typeof body.error, 'string');
 });

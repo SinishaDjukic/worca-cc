@@ -90,6 +90,7 @@ import {
   memoryDefragModel, setMemoryDefragModel, assertMemoryDefragModelInput,
   agentGenModel as storedAgentGenModel, setAgentGenModel, assertAgentGenModelInput,
   namingModel as storedNamingModel, setNamingModel, assertNamingModelInput,
+  commandSummaryModel as storedCommandSummaryModel, setCommandSummaryModel, assertCommandSummaryModelInput,
   workspaceScanModels, setWorkspaceScanModels, assertWorkspaceScanInput,
   scheduleDefaults, setScheduleDefaults,
   userTagDimensions, setUserTagDimensions, userEnforceTags, setUserEnforceTags,
@@ -168,6 +169,7 @@ import { attachRunFollower } from '../src/core/ask/follow.mjs';
 import { mockEnabled, MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride, recordUtilityCost } from '../src/core/cost-budget.mjs';
 import { resolveNamingModel, suggestNames, mockSuggestion, estimateNamingUsd, legacyBranchHint } from '../src/core/naming.mjs';
+import { createCommandSummariser, summariseCommandCard, commandSummariesWanted } from '../src/core/ask/command-summary.mjs';
 import { getStats, budgetWindowSavings, shapingGroups } from '../src/core/stats.mjs';
 import {
   enableTeamMetrics, setRecordMyRuns, flushSlug, flushAll, flushProject, scheduleFlush, discoverProject,
@@ -11441,6 +11443,12 @@ async function namingModelState() {
   return { namingModel: stored, namingModelEffective: resolveNamingModel(stored, await listModels(''), modelCostConfig) };
 }
 
+/** Models › Helper jobs › Command summaries: the stored pair + what a summary will actually run on. */
+async function commandSummaryModelState() {
+  const stored = storedCommandSummaryModel();
+  return { commandSummaryModel: stored, commandSummaryModelEffective: resolveNamingModel(stored, await listModels(''), modelCostConfig) };
+}
+
 // ---------------------------------------------------------------------------
 // Instance lifecycle (`worca ui status|stop|restart`, src/core/ui-instance.mjs)
 // ---------------------------------------------------------------------------
@@ -11851,7 +11859,7 @@ app.post('/api/shutdown', (req, res) => {
 
 app.get('/api/settings', async (req, res) => {
   const person = awayPersonOf(req);   // B4: a signed-in person sees their own Away switch
-  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(), app: APP_INFO });
+  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await commandSummaryModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(), app: APP_INFO });
 });
 
 // GET  /api/app/version       → { current, latest, status, checkedAt, enabled, links } (issue #841);
@@ -11954,7 +11962,7 @@ app.post('/api/settings', async (req, res) => {
     has('projectsRoot') ? normalizeProjectPath(body.projectsRoot) : null]))) return;
   try {
     const { actionsWarnings } = await applySettingsPatch(body, { person: awayPersonOf(req) });
-    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(),
+    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await commandSummaryModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(),
       ...(actionsWarnings ? { actionsWarnings } : {}) });
   } catch (err) {
     // 400 with the user's words and, when known, the body path of the bad field (#555).
@@ -12002,6 +12010,8 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const agentGenModels = hasAgentGenKey ? (autoModels || defragModels || await listModels('')) : null;
   const hasNamingModelKey = has('namingModel');
   const namingModels = hasNamingModelKey ? (autoModels || defragModels || agentGenModels || await listModels('')) : null;
+  const hasCommandSummaryModelKey = has('commandSummaryModel');
+  const csModels = hasCommandSummaryModelKey ? (autoModels || defragModels || agentGenModels || namingModels || await listModels('')) : null;
   const hasWorkspaceScanKey = has('workspaceScan');
   const hasRunEngineKey = has('runEngine');
   const hasStepModelsKey = has('stepModels');
@@ -12034,7 +12044,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   if (has('askMaxTurns')) ask.askMaxTurns = body.askMaxTurns ?? '';
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   {   // was the route's try: a refusal now reaches the caller (the route maps it to 400, the chat to a notice)
-    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'namingModel', 'workspaceScan', ...(hasRequirementsInterviewKey ? ['requirementsInterview'] : [])]) {
+    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'namingModel', 'commandSummaryModel', 'workspaceScan', ...(hasRequirementsInterviewKey ? ['requirementsInterview'] : [])]) {
       if (has(key)) asSettingsField(key, () => refuseNonClaudeUtilityModel(key, body[key]));
     }
     // Each validator / setter that can refuse a value runs tagged with the body key it checks,
@@ -12074,6 +12084,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasMemoryDefragKey) asSettingsField('memoryDefrag', () => assertMemoryDefragModelInput(body.memoryDefrag, defragModels));
     if (hasAgentGenKey) asSettingsField('agentGenModel', () => assertAgentGenModelInput(body.agentGenModel, agentGenModels));
     if (hasNamingModelKey) asSettingsField('namingModel', () => assertNamingModelInput(body.namingModel, namingModels));
+    if (hasCommandSummaryModelKey) asSettingsField('commandSummaryModel', () => assertCommandSummaryModelInput(body.commandSummaryModel, csModels));
     if (hasWorkspaceScanKey) asSettingsField('workspaceScan', () => assertWorkspaceScanInput(body.workspaceScan, wsScanModels));
     if (hasRunEngineKey) asSettingsField('runEngine', () => assertRunEngineInput(body.runEngine));
     if (hasAskEngineKey) asSettingsField('askEngine', () => assertAskEngineInput(body.askEngine));
@@ -12151,6 +12162,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasMemoryDefragKey) await setMemoryDefragModel(body.memoryDefrag, { models: defragModels });
     if (hasAgentGenKey) await setAgentGenModel(body.agentGenModel, { models: agentGenModels });
     if (hasNamingModelKey) await setNamingModel(body.namingModel, { models: namingModels });
+    if (hasCommandSummaryModelKey) await setCommandSummaryModel(body.commandSummaryModel, { models: csModels });
     if (hasWorkspaceScanKey) await setWorkspaceScanModels(body.workspaceScan, { models: wsScanModels });
     if (hasRunEngineKey) await asSettingsField('runEngine', () => setRunEngineSetting(body.runEngine));
     if (hasStepModelsKey) await asSettingsField('stepModels', () => setStepModels(body.stepModels));
@@ -12172,7 +12184,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey || hasUpdateCheckKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey || hasUpdateCheckKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -14763,6 +14775,9 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         // the open Scripts tabs drop their list and the composer marks its script list dirty.
         onScriptMutation: () => { emitChanged('scripts-changed', 'updated'); },
         trackRun: (input, { pin } = {}) => askTrackRun(id, input, pin ?? null),
+        // #911 slice 2: the Command summaries helper job for a command card the chat left without a summary.
+        summariseCommand: (c) => { void summariseCommandCard({ threadId: id, ...c },
+          { enabled: commandSummariesOpen, summariser: commandSummariser, flipCard, broadcast }); },
         // set_away_now / set_run_away_mode and (worca Chat P2) the chat's act-then-undo tools: askChatTurnDeps.
         ...askChatTurnDeps(turnReader),
         resolveMentions: resolveAskMentions,
@@ -15065,6 +15080,18 @@ app.get('/api/extension/status', (req, res) => {
   if (!req.worcaExtension) return res.status(403).json({ error: 'extension token required', code: 'extension-route' });
   res.json({ paired: true, id: req.worcaExtension.id, name: req.worcaExtension.name, serverMock: serverMockMode(), version: PKG_VERSION });
 });
+
+// ---------------------------------------------------------------------------
+// Command summaries (#911 slice 2, flag commandSummaries): a chat command the chat gave no summary gets one from
+// the Models page's Command summaries helper job — the redacted command alone, cached per process.
+// ---------------------------------------------------------------------------
+const commandSummariser = createCommandSummariser({
+  pickModel: async () => resolveNamingModel(storedCommandSummaryModel(), await listModels(''), modelCostConfig),
+  onCost: (c) => { try { recordUtilityCost('commandSummary', c); } catch { /* a ledger write never fails a summary */ } },
+});
+/** Read before the call and after the answer: the Labs flag, the person's Settings › Chat switch, no mock, the cost limit not reached. */
+const commandSummariesOpen = () => commandSummariesWanted({ flag: flagEnabled('commandSummaries'),
+  summariseCommands: chatPrefs().summariseCommands, mock: mockEnabled({}), blocked: budgetStatus().blocked });
 
 // ---------------------------------------------------------------------------
 // Smart run naming (flag smartRunNaming, docs/feature-flags.md): the New run form asks for a title, a branch type and

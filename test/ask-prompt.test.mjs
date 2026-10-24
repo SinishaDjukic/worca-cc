@@ -933,3 +933,8 @@ test('Ask proposes graphs and drafts like the composer: rule 11 teaches build_wo
   assert.equal(renderScriptsSection({ runtimes: ['node', 'shell'], composer: true, edits: true }).includes('save_script'), false, 'the Workflows chat never saves');
   assert.ok(SANDBOX_NOTE.includes('Never call build_workflow, draft_agent or draft_script yourself'));
 });
+
+test('the commands section asks for a short summary on run_command (#911)', () => {
+  assert.match(renderCommandsSection(), /summary/);
+  assert.match(renderCommandsSection(), /under 80 characters/);
+});
