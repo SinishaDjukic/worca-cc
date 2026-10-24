@@ -445,7 +445,7 @@ import { TokenBucket } from '../src/core/chat/rate-limiter.mjs';
 import { renderTest } from '../src/core/chat/renderers.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { normalizeManifest, validatePluginDir, PLUGIN_NAME_RE as MANIFEST_PLUGIN_NAME_RE } from '../src/core/plugin-manifest.mjs';
-import { listTaskSources, retryWriteback, resolveTaskInput } from '../src/core/sources.mjs';
+import { listTaskSources, retryWriteback, resolveTaskInput, sourcePlaceholderTitle } from '../src/core/sources.mjs';
 import {
   createTicket, getTicket, listTickets, updateTicket, cancelTicket, requestRunNow, setTicketPipeline,
   createSchedule, getSchedule, listSchedules, updateSchedule, pauseSchedule, resumeSchedule, skipNext,
@@ -2200,7 +2200,7 @@ async function promptFileProblem(source, projectDir) {
 // the task and settles the real title via the title event.
 function fallbackRunTitle(effectivePrompt, source) {
   if (effectivePrompt) return effectivePrompt.slice(0, 80);
-  if (source && source.type === 'plugin') return `${source.plugin}: ${source.taskId}`;
+  if (source && source.type === 'plugin') return sourcePlaceholderTitle(source);
   const text = (source && (source.prompt || source.promptText || source.promptFile)) || 'task';
   return String(text).slice(0, 80);
 }
