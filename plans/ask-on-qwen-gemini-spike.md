@@ -299,7 +299,8 @@ the runtime backstop.
   sandbox's proxy). Not changed here.
 - **Context files** (`GEMINI.md`, `QWEN.md`, skill descriptions) reach the model as text. Copilot's
   `--no-custom-instructions` has no equivalent that worked.
-- An Auto-workflow proposal from a Qwen or Gemini chat classifies on Claude (these CLIs have no read-only helper mode).
+- ~~An Auto-workflow proposal from a Qwen or Gemini chat classifies on Claude.~~ It classifies on the chat's engine now
+  (see "Every feature on every engine" below).
 
 ## Tests
 
@@ -312,3 +313,94 @@ models an engine rules out; Goose's meta tool), `test/chat-selftest.test.mjs`
 (verdict, both stub protocols, the probe server over stdio, cache and its keys), `test/chat-descriptor.test.mjs`
 (registry invariants, Codex and Copilot words unchanged). Pinned lists updated in `engine-switch-pause`,
 `ask-chat-engine`, `gemini-adapter`, `qwen-adapter`.
+
+## Every feature on every engine (2026-10-24, branch `claude/chat-uniform-engines`)
+
+Goal: a chat behaves the same whatever harness runs it. Every feature is delivered through worca (its MCP tools, its
+spawn options), never by turning a CLI tool back on; the lockdowns, the self-test and the watchdog are unchanged except
+where noted.
+
+### Method
+
+Real binaries, worca's in-process stub endpoint, scratch `WORCA_HOME`/`HOME`, end to end through `createAskTurn` with the
+real adapter and worca's real MCP child (`mcp-stdio.mjs`). Versions: Qwen Code 0.26.1, Gemini CLI 0.65.0, OpenCode 1.19.4
+(npm), Goose 1.56.0 (conda-forge), **Codex 0.164.0 and GitHub Copilot CLI 1.0.103 (npm `@openai/codex`, `@github/copilot`;
+new this round)**. The stub gained a Responses protocol (Codex), and two ways in for engines that have no API-key login:
+
+- **Copilot**: its BYOK env — `COPILOT_PROVIDER_BASE_URL`, `COPILOT_PROVIDER_API_KEY`, `COPILOT_MODEL`, `COPILOT_OFFLINE=true`
+  (OpenAI chat completions). No GitHub sign-in needed.
+- **Codex**: a global model entry with an OpenAI Responses `upstream` pointing at the stub (worca's own custom-endpoint
+  path, codex-endpoint.mjs): codex ignores `OPENAI_BASE_URL`. MCP tools are reached through code mode (`exec` with
+  `tools.mcp__<server>__<tool>(…)`), so the stub scripts a `custom_tool_call`.
+
+Each check reads the request bodies the stub received (the base64 of a marker PNG/PDF, the offered tool list,
+`reasoning_effort` / `thinkingConfig`, the copy's secret in a tool result).
+
+### Results
+
+| Feature | Claude | Codex | Copilot | Gemini CLI | Qwen Code | Goose | OpenCode |
+|---|---|---|---|---|---|---|---|
+| Image via `read_attachment` / `read_file` | (native) | **works** (code mode `image()`) | **not shipped** (a) | **works** | **works** (b) | **works** | **works** (b) |
+| PDF via `read_attachment` / `read_file` | (native) | **not possible** (c) | **not shipped** (a) | **works** | **works** (b) | **not possible** (d) | **works** (b) |
+| Registry MCP copies (launcher + secret) | yes | **works** (stdio only) | **works** | **works** | **works** | **works** (stdio only) | **works** |
+| Cost cap / spend priced by worca | yes | **works** | **works** (e) | **works** | **works** | **works** (e) | **works** (e) |
+| Title on the chat's engine, no tools | yes | **works** (f) | **works** | **works** | **works** | **works** (g) | **works** |
+| Suggestion on the chat's engine, no tools | yes | **works** (f, h) | **works** | **works** | **works** | **works** (g) | **works** |
+| Auto classifier on the chat's engine | Claude | **works** (f) | **unverified** (i) | **works** | **works** | **works** (g) | **works** |
+| Effort | yes | yes | yes | **works** (j) | **works** (j) | yes | yes |
+
+(a) Copilot converts an MCP image into its `binaryResultsForLlm` (seen in its session events) but sent no image to the
+BYOK model under any model id tried (gpt-4o, gpt-5, claude-sonnet-4.5, claude-sonnet-5.5, gpt-6.1-sol, gemini-3.8-flash),
+with or without the lockdown: under BYOK its models declare no vision. A signed-in Copilot's catalog does declare vision,
+but no sign-in was available here, so `chat.images/pdfs` stay false for Copilot ("verify against the real binary").
+(b) Model-gated by the CLI itself: Qwen Code forwards an image to a model its modality table marks as image-capable
+(`gpt-*`, `gemini-*`, `claude-*`, `qwen*-vl`, …) and a PDF to `gemini-*`/`claude-*`; otherwise it sends the model
+"[image: image/png]". OpenCode forwards per the model's models.dev capabilities and otherwise tells the model "this model
+does not support image input. Inform the user." (c) Codex's code mode forwards an image block (`image()`) but has no
+helper for a document; the PDF reaches the model only as JSON text of the block. (d) Goose decodes an embedded PDF
+resource into text (the raw PDF bytes): unusable. (e) Engines that report no cost (Copilot, Gemini CLI, Qwen Code) are
+priced from their token usage with worca's rates; Goose and OpenCode keep their own figure, re-priced by a Models page
+price. A Gemini CLI and a Qwen Code chat tripped `max_budget` on a priced model in the end-to-end run. (f) Codex offers its
+locked-down set (`exec` without MCP tools, `wait`, `request_user_input`, `clock`, `collaboration`) — the same set as a
+chat; its sub-agents inherit the lockdown. (g) Goose offers `load_skill`, its one justified meta tool. (h) The suggestion
+model `gpt-5.6-luna` is not the stub's, so only the title was seen end to end on Codex; the suggestion path is the same
+call. (i) Copilot strips its BYOK `COPILOT_PROVIDER_*` env from MCP children (checked with an env-dumping server: every
+other allowlisted name and `HOME`, `PATH` reach it), so the nested classifier inside worca's MCP child cannot reach the
+stub. A signed-in Copilot reads its credentials from `HOME`, which the child has; not verified. (j) Gemini CLI: the chat
+folder's settings `modelConfigs.customOverrides` on `chat-base-3` (`thinkingLevel` LOW/MEDIUM/HIGH) and `chat-base-2.5`
+(`thinkingBudget` 1024/8192/24576); the requests showed the level on gemini-3.x and the budget on gemini-2.5. Qwen Code:
+`model.reasoningEffort` in worca's system settings; the request carried `reasoning_effort`.
+
+### What changed (code)
+
+- **Media** (`tools.mjs` `MCP_CONTENT`, `mediaResult`; `rpc-server.mjs`): `read_attachment` and `read_file` return an MCP
+  `image` block, or an embedded `resource` with `application/pdf`, after the JSON text, on an engine whose `chat` flag
+  takes that kind (`engine-switch.mjs`: Codex/Goose images; Gemini/Qwen/OpenCode both; Copilot neither); 20 MB cap. The
+  attachment refusal names the chats that do view the kind. Codex keeps `-i` for the message's own images
+  (`turnImages`). The relay mode passes the extra blocks unchanged (the server runs the same RPC server).
+- **Titles, suggestions, classifier** (`title.mjs` `auxTextCall`, `classify.mjs`, `workflow-deps.mjs`): `askLockdown: true`
+  and no `--mcp-config` — the chat's own lockdown with no MCP server — instead of a read-only helper mode. Gemini CLI's
+  helper calls run in a folder of their own (it writes the lockdown's settings into the cwd). worca's MCP child learns the
+  chat's model (`WORCA_ASK_MODEL`), the engines' binary overrides, and the engine's sign-in env names (descriptor
+  `signIn`), so the nested classifier signs in as the chat does.
+- **Cost** (`ask/chat-price.mjs`, `turn.mjs` `_priced`, descriptor `listRates`): one rule on every engine.
+- **Registry copies** (`ask/mcp.mjs` `mcpForEngine`, `spawn.mjs`, `ui/server.mjs`): the copies the engine can attach
+  (its adapter's `unattachableMcp`) ride the per-turn config beside `worca`; secrets in `spawnEnv`, redacted; keep-list
+  names in the env allowlist for the launcher. The watchdog now allows `mcp__worca__*` and this turn's copies only (plus
+  Codex's own `mcp__codex__*_mcp_resource*` tools, as `metaTools`) — before, any `mcp__*` passed.
+- **Self-test**: a second probe server (`mcpcopy`) beside `worca`; it must be offered and answer (a lockdown that allowed
+  only `worca` would hide a chat's copies). OpenCode's per-spawn alias is per server in the self-test. Cache key bumped
+  (`r2`), so earlier passes run again once. Verified on the four binaries (2.2 s, 4.8 s, 0.5 s, 5.1 s); the Qwen run
+  without the lockdown is still refused.
+- **Effort**: `GEMINI_EFFORTS = low, medium, high`, `QWEN_EFFORTS = low … max`; capability `effort` true on both
+  (pipelines included).
+
+### Still not verified / not possible
+
+- Copilot images and PDFs, and the Copilot classifier, with a real sign-in (see (a), (i)).
+- Codex and Goose PDFs: not possible with these CLIs' MCP handling ((c), (d)); worca has no PDF renderer to send pages
+  as images.
+- Real models: every run used the stub. A real model's reply to an image was not seen; the request carried it.
+- Cursor: still not installable here (cursor.com, downloads.cursor.com and api2.cursor.sh refused; the npm package
+  `cursor-agent` is an unrelated third-party tool). Its to-verify list above is unchanged.
+- Registry copies with a remote (HTTP) server on Gemini/Qwen/OpenCode/Copilot: only stdio copies were run end to end.
