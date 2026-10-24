@@ -19,6 +19,9 @@ import { resolveUpstream, upstreamLabel, AUTH_LABELS } from './upstream-proxy.mj
 export const PROXY_LOGIN_FILE = 'proxy-login.json';
 /** Same value as egress-policy.mjs EGRESS_PROXY_VAR (that module imports this one; a test pins it). */
 const LOCAL_PROXY_VAR = 'WORCA_EGRESS_PROXY_URL';
+/** Set with the flag on, next to the proxy variables: the marker browser launches read (D14). The one
+ *  declaration: egress-policy.mjs imports it; spawn.mjs and promo-kit cdp.mjs repeat the literal (pinned). */
+export const CORPORATE_PROXY_VAR = 'WORCA_CORPORATE_PROXY_URL';
 const PROXY_VARS = ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy', 'NO_PROXY', 'no_proxy'];
 const MAX_NAME = 256;
 const MAX_PASSWORD = 256;
@@ -198,7 +201,7 @@ export function redactProxyLine(text) {
 export function upstreamEnv(env = process.env) {
   if (!env[LOCAL_PROXY_VAR]) return env;
   const out = { ...env };
-  for (const k of [...PROXY_VARS, LOCAL_PROXY_VAR]) delete out[k];
+  for (const k of [...PROXY_VARS, LOCAL_PROXY_VAR, CORPORATE_PROXY_VAR]) delete out[k];
   return out;
 }
 
@@ -233,10 +236,11 @@ export function stateLine(st) {
  *   authLabel?: string, login: object|null, loginError: string|null, running: boolean, restartNeeded: boolean,
  *   warnings: string[], error?: string}}
  */
-export function proxyState({ env = process.env, networkProxy, login = readProxyLogin(), live = null, expectRunning = false } = {}) {
+export function proxyState({ env = process.env, networkProxy, login = readProxyLogin(), live = null, expectRunning = false,
+  localUrl = null } = {}) {
   const saved = login && !login.error ? login : null;
   const base = { login: saved ? loginView(saved) : null, loginError: login && login.error ? login.error : null,
-    running: !!live, restartNeeded: false, warnings: [] };
+    running: !!live, restartNeeded: false, warnings: [], localUrl };
   const done = (st) => ({ ...st, line: stateLine(st) });
   const up = resolveUpstream({ env, settings: networkProxy, login: saved });
   if (!up) return done({ ...base, state: 'not-configured', text: STATE_TEXT['not-configured'] });

@@ -21,9 +21,10 @@
 // The login saved by `worca proxy login` (src/core/proxy-credentials.mjs) is read at boot and
 // watched, so a new login (or a rejection another process recorded) applies without a restart.
 
+import http from 'node:http';
 import { createProxy, readEgressPolicy, normalizeHost } from './egress-proxy.mjs';
-import { createUpstreamConnector, resolveUpstream, ProxyCredentials, AUTH_LABELS } from './upstream-proxy.mjs';
-import { readProxyLogin, watchProxyLogin, markLoginRejected, redactProxyLine, upstreamEnv } from './proxy-credentials.mjs';
+import { createUpstreamConnector, resolveUpstream, ProxyCredentials, AUTH_LABELS, PASSWORD_MODES, fixedPortOf, localProxyUrl } from './upstream-proxy.mjs';
+import { readProxyLogin, watchProxyLogin, markLoginRejected, redactProxyLine, upstreamEnv, CORPORATE_PROXY_VAR } from './proxy-credentials.mjs';
 import { flagEnabled } from './flags.mjs';
 import { readSettings } from './settings.mjs';
 
@@ -44,12 +45,41 @@ function loginFor(value, upstream) {
 }
 
 /** The variables a child needs to go through the proxy at `url`; loopback and `direct` go direct
- *  (`direct` = ['*'] means everything does, written as NO_PROXY='*' alone). */
-export function egressChildEnv(url, direct = []) {
+ *  (`direct` = ['*'] means everything does, written as NO_PROXY='*' alone). `corporate`: a corporate
+ *  proxy connector runs (flag on), so the browser-launch marker is set too (D14). */
+export function egressChildEnv(url, direct = [], { corporate = false } = {}) {
   const noProxy = direct.includes('*') ? '*' : [LOOPBACK, ...direct].join(',');
-  const env = { [EGRESS_PROXY_VAR]: url, NO_PROXY: noProxy, no_proxy: noProxy };
+  const env = { [EGRESS_PROXY_VAR]: url, NO_PROXY: noProxy, no_proxy: noProxy, ...(corporate ? { [CORPORATE_PROXY_VAR]: url } : {}) };
   for (const k of PROXY_NAMES) env[k] = url;
   return env;
+}
+
+/** The clear message for a fixed port that cannot be bound (D12). */
+export function fixedPortError(port, err) {
+  const code = err && err.code ? err.code : 'error';
+  const why = code === 'EADDRINUSE' ? 'another program already uses that port'
+    : code === 'EACCES' ? 'the system does not let Worca use that port (on Windows, check `netsh interface ipv4 show excludedportrange protocol=tcp`)'
+      : 'the port cannot be used';
+  return Object.assign(new Error(`the local proxy cannot listen on 127.0.0.1:${port}: ${why} (${code}). Free the port or change networkProxy.fixedPort`),
+    { code, fixedPort: port });
+}
+
+/** True when 127.0.0.1:port is a Worca local proxy (its self-request answer carries x-worca-proxy: local). */
+export function isWorcaProxy(port, { timeoutMs = 1000 } = {}) {
+  return new Promise((resolve) => {
+    const req = http.request({ host: '127.0.0.1', port, method: 'GET', path: localProxyUrl(port) + '/', agent: false, timeout: timeoutMs },
+      (res) => { res.resume(); resolve(res.headers['x-worca-proxy'] === 'local'); });
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => resolve(false));
+    req.end();
+  });
+}
+
+function listenOn(server, port) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, '127.0.0.1', () => { server.off('error', reject); resolve(); });
+  });
 }
 
 /** True when `env` already points at a policy proxy an ancestor worca started. */
@@ -117,15 +147,24 @@ export async function startEgressPolicy({ env = process.env, log = () => {}, unr
     // Only refusals are logged: an agent's every package download would otherwise be a line.
     log: (line) => { if (/ DENY /.test(line)) log(line); },
   });
+  // D11: read only with the flag on (s is null otherwise), so a flag-off Worca never binds it.
+  const fixedPort = corp ? fixedPortOf(s && typeof s === 'object' ? s.networkProxy : undefined) : 0;
+  let fixedPortShared = false;
   try {
-    await new Promise((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(0, '127.0.0.1', () => { server.off('error', reject); resolve(); });
-    });
+    try {
+      await listenOn(server, fixedPort);
+    } catch (err) {
+      if (!fixedPort) throw err;
+      if (err && err.code === 'EADDRINUSE' && await isWorcaProxy(fixedPort)) {
+        fixedPortShared = true;   // D12: another Worca serves the fixed port; this one keeps its children on its own
+        await listenOn(server, 0);
+      } else throw fixedPortError(fixedPort, err);
+    }
   } catch (err) {
     connector?.close();
     if (policy.enforced) throw err;
-    return { status: 'off', policy, upstreamError: `the local proxy could not start (${err && err.code ? err.code : 'error'})`, sourceEnv: upstreamEnv(env), close: none };
+    return { status: 'off', policy, upstreamError: err && err.fixedPort ? err.message : `the local proxy could not start (${err && err.code ? err.code : 'error'})`,
+      sourceEnv: upstreamEnv(env), close: none };
   }
   if (unref) server.unref();
   const port = server.address().port;
@@ -138,7 +177,7 @@ export async function startEgressPolicy({ env = process.env, log = () => {}, unr
   const credentialed = connector ? Object.keys(env).filter((k) => !PROXY_NAMES.includes(k) && loginFor(env[k], usable)) : [];
   const sourceEnv = upstreamEnv(Object.fromEntries([...PROXY_NAMES, 'NO_PROXY', 'no_proxy', EGRESS_PROXY_VAR]
     .filter((k) => env[k] !== undefined).map((k) => [k, env[k]])));   // before the swap below
-  Object.assign(env, egressChildEnv(url, direct));
+  Object.assign(env, egressChildEnv(url, direct, { corporate: !!connector }));
   const scrubbedKeys = [];
   for (const k of credentialed) { env[k] = url; scrubbedKeys.push(k); }
   /** What the connector holds: login id + marker time, so a marker on the same id counts (D8). */
@@ -166,12 +205,13 @@ export async function startEgressPolicy({ env = process.env, log = () => {}, unr
     const creds = ok ? new ProxyCredentials({ domain: ok.domain, user: ok.user, ntHash: ok.ntHash }, 'auto') : null;
     return connector.useLogin(creds, { id: ok ? ok.id : null, rejected: !!(ok && ok.rejected) });
   };
-  // No watcher where a login can never be swapped in (Basic, or an explicit auth none: D23).
-  const swappable = usable && usable.auth !== 'basic' && !['basic', 'none'].includes(usable.requestedAuth);
+  // No watcher where a login can never be swapped in (Basic, Digest, or an explicit auth none: D23).
+  const swappable = usable && !PASSWORD_MODES.includes(usable.auth) && !['none', ...PASSWORD_MODES].includes(usable.requestedAuth);
   const stopWatch = connector && swappable ? watchLogin(reloadLogin) : () => {};
   const sup = superviseProxy(server, port, { log });
   return {
     status: 'on', policy, url, replacedProxy, sourceEnv, ...extra,
+    ...(fixedPort ? { fixedPort, fixedPortShared } : {}),
     ...(connector ? { connector, reloadLogin, boundAddress: server.address().address, scrubbedKeys,
       upstream: { ...connector.status(), warnings: usable.warnings } } : {}),
     close: async () => { stopWatch(); await sup.stop(); connector?.close(); },
@@ -218,12 +258,13 @@ export function superviseProxy(server, port, { log = () => {}, host = '127.0.0.1
 }
 
 /** The corporate half of the boot line (D18): "Corporate proxy: via host:port (auth)…". */
-function corporateLine(up, url) {
+function corporateLine(up, url, result = {}) {
   const via = `Corporate proxy: via ${up.upstream} (${AUTH_LABELS[up.auth]})`;
   if (up.state === 'tripped') {
     return `${via}: proxy needs login. The corporate proxy rejected the saved login${up.login ? ` for ${up.login}` : ''}, so Worca sends no credentials; run \`worca proxy login\` or use Settings › Network proxy`;
   }
-  return `${via}${up.login ? `, logged in as ${up.login}` : ''}, local proxy ${url}; NO_PROXY hosts and loopback go direct`;
+  const shared = result.fixedPortShared ? `; 127.0.0.1:${result.fixedPort} is served by another Worca, so this one uses ${url}` : '';
+  return `${via}${up.login ? `, logged in as ${up.login}` : ''}, local proxy ${url}; NO_PROXY hosts and loopback go direct${shared}`;
 }
 
 /** The boot line for startEgressPolicy()'s result, or null when there is nothing to say. */
@@ -238,8 +279,8 @@ export function egressNotice(result) {
   if (!p.enforced) {
     const text = result.status === 'inherited'
       ? `Corporate proxy: outbound connections go through the parent Worca's proxy at ${result.url}`
-      : [corporateLine(up, result.url), ...warnings].join('; ');
-    return { level: warnings.length || up?.state === 'tripped' ? 'warn' : 'info', text };
+      : [corporateLine(up, result.url, result), ...warnings].join('; ');
+    return { level: warnings.length || up?.state === 'tripped' || result.fixedPortShared ? 'warn' : 'info', text };
   }
   const n = (k, list) => `${k} ${list.length} host${list.length === 1 ? '' : 's'}`;
   const deny = p.deny.filter((h) => h !== '.invalid');

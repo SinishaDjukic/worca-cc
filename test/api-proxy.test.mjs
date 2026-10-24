@@ -238,3 +238,32 @@ test('flag on with no proxy started at boot: running false, restartNeeded true',
   assert.match(st.body.line, /Restart Worca/);
   assert.equal(st.body.settings.upstream, `http://127.0.0.1:${fake.port}`);
 });
+
+test('status: localUrl from a fixed port, or null with the listen error (D13)', async () => {
+  assert.equal((await call('PUT', '/api/proxy/settings', { networkProxy: { fixedPort: 3128 } })).status, 200);
+  const busy = 'the local proxy cannot listen on 127.0.0.1:3128: another program already uses that port (EADDRINUSE). Free the port or change networkProxy.fixedPort';
+  try {
+    testing.setEgress(null);
+    const st = await call('GET', '/api/proxy/status');
+    assert.equal(st.body.localUrl, 'http://127.0.0.1:3128');
+    assert.equal(st.body.localError, null);
+    testing.setEgress({ status: 'off', upstreamError: busy });
+    const off = await call('GET', '/api/proxy/status');
+    assert.equal(off.body.localUrl, null);
+    assert.equal(off.body.localError, busy);
+  } finally {
+    testing.setEgress(null);
+    await call('PUT', '/api/proxy/settings', { networkProxy: { fixedPort: null } });
+  }
+});
+
+test('auth digest: Log in is refused with 409 like Basic', async () => {
+  assert.equal((await call('PUT', '/api/proxy/settings', { networkProxy: { auth: 'digest' } })).status, 200);
+  try {
+    const r = await call('POST', '/api/proxy/login', { domain: 'ACME', user: 'jdoe', password: 'S3cret!' });
+    assert.equal(r.status, 409);
+    assert.equal(r.body.field, 'auth');
+    assert.match(r.body.error, /networkProxy\.auth is digest/);
+    assert.equal(existsSync(loginFile()), false);
+  } finally { await call('PUT', '/api/proxy/settings', { networkProxy: { auth: null } }); }
+});

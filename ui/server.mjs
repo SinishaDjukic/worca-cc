@@ -499,7 +499,7 @@ import { useEnvProxy, proxyNotice } from '../src/core/env-proxy.mjs';
 import { startEgressPolicy, egressNotice, egressSummary } from '../src/core/egress-policy.mjs';
 import { proxyState, readProxyLogin, saveProxyLogin, clearProxyLogin, markLoginRejected, parseAccount, upstreamEnv,
   ProxyLoginError } from '../src/core/proxy-credentials.mjs';
-import { checkUpstream, resolveUpstream, upstreamLabel } from '../src/core/upstream-proxy.mjs';
+import { checkUpstream, resolveUpstream, upstreamLabel, fixedPortOf, localProxyUrl, PASSWORD_MODES } from '../src/core/upstream-proxy.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -13067,8 +13067,12 @@ function refuseProxyAgent(req, res) {
 
 function proxyStatusPayload() {
   const live = EGRESS && EGRESS.connector ? EGRESS.connector.status() : null;
-  return { ...proxyState({ env: proxySourceEnv(), networkProxy: networkProxySettings(), login: readProxyLogin(), live, expectRunning: true }),
-    settings: networkProxySettings() };
+  const fixed = fixedPortOf(networkProxySettings());
+  // A running proxy states its real URL; a proxy that failed to listen states no URL, only the error (D13).
+  const localUrl = EGRESS ? (EGRESS.status === 'on' ? EGRESS.url : null) : (fixed ? localProxyUrl(fixed) : null);
+  const localError = EGRESS && EGRESS.status === 'off' && EGRESS.upstreamError ? EGRESS.upstreamError : null;
+  return { ...proxyState({ env: proxySourceEnv(), networkProxy: networkProxySettings(), login: readProxyLogin(), live, expectRunning: true, localUrl }),
+    localError, settings: networkProxySettings() };
 }
 
 // Settings › Network proxy (docs/network-proxy.md). A disabled flag looks absent (404) and no
@@ -13082,8 +13086,10 @@ app.get('/api/proxy/status', (req, res) => {
 app.post('/api/proxy/login', (req, res) => {
   if (refuseProxyAgent(req, res)) return;
   const body = req.body || {};
-  if (networkProxySettings().auth === 'basic') {
-    return res.status(409).json({ error: 'networkProxy.auth is basic, and a saved login keeps only the NT hash, which Basic cannot use. Choose NTLMv2 and Save first.', field: 'auth', code: 'BASIC_NO_SAVED_LOGIN' });
+  const { auth } = networkProxySettings();
+  if (PASSWORD_MODES.includes(auth)) {
+    // The code keeps its slice-2 name on purpose: it now covers Digest too (tests and the card pin it).
+    return res.status(409).json({ error: `networkProxy.auth is ${auth}, and a saved login keeps only the NT hash, which ${auth === 'digest' ? 'Digest' : 'Basic'} cannot use. Choose NTLMv2 and Save first.`, field: 'auth', code: 'BASIC_NO_SAVED_LOGIN' });
   }
   const account = body.domain ? { domain: body.domain, user: body.user } : parseAccount(body.user);
   const password = typeof body.password === 'string' ? body.password : '';

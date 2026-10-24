@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NETWORK_PROXY_AUTH, networkProxySettings, setNetworkProxy, assertNetworkProxyInput, readSettings } from '../src/core/settings.mjs';
-import { AUTH_MODES } from '../src/core/upstream-proxy.mjs';
+import { AUTH_MODES, fixedPortOf } from '../src/core/upstream-proxy.mjs';
 
 let home; const prev = {};
 before(async () => {
@@ -42,4 +42,21 @@ test('networkProxy: bad input is refused, a password never goes into settings', 
 
 test('NETWORK_PROXY_AUTH is the same list as upstream-proxy.mjs AUTH_MODES (settings.mjs stays a leaf)', () => {
   assert.deepEqual([...NETWORK_PROXY_AUTH], [...AUTH_MODES]);
+});
+
+test('networkProxy.fixedPort: 1024-65535 integers only; null removes it', async () => {
+  assert.doesNotThrow(() => assertNetworkProxyInput({ fixedPort: 3128 }));
+  for (const bad of [80, 1023, 65536, 3128.5, '3128', -1]) {
+    assert.throws(() => assertNetworkProxyInput({ fixedPort: bad }), /networkProxy\.fixedPort must be a port from 1024 to 65535/);
+  }
+  assert.equal((await setNetworkProxy({ fixedPort: 3128 })).fixedPort, 3128);
+  assert.equal('fixedPort' in await setNetworkProxy({ fixedPort: null }), false);
+});
+
+test('fixedPort: settings validation and upstream-proxy fixedPortOf agree on every value (D17)', () => {
+  for (const v of [1023, 1024, 3128, 65535, 65536, 80, 3128.5, '3128', -1, 0]) {
+    let accepted = true;
+    try { assertNetworkProxyInput({ fixedPort: v }); } catch { accepted = false; }
+    assert.equal(fixedPortOf({ fixedPort: v }) !== 0, accepted, String(v));
+  }
 });

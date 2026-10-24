@@ -15,7 +15,7 @@
 // Every state of a plate shares ONE clip (fixed at begin), so crossfades line up. Only the target's subtree is
 // painted (everything else visibility:hidden, page backgrounds transparent), so the PNG has alpha and no app chrome.
 import { spawn, spawnSync } from 'node:child_process';
-import { chromeEnv, CHROME_SAFE_ARGS } from '../tools/cdp.mjs';
+import { chromeEnv, chromeProxy, CHROME_SAFE_ARGS } from '../tools/cdp.mjs';
 import { mkdirSync, writeFileSync, readFileSync, existsSync, mkdtempSync, rmSync, renameSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir, userInfo, homedir } from 'node:os';
@@ -60,6 +60,14 @@ export function leakGuard(text, deny = defaultDeny()) {
 
 /* ---------------- browser ---------------- */
 
+/** Playwright launch options for the system Chrome: keychain-safe flags, the real HOME, and (corporateProxy
+ *  flag) Worca's local proxy as proxy.server. */
+export function launchOptions(exe, env = process.env) {
+  const proxy = chromeProxy(env);
+  return { executablePath: exe, headless: true, env: chromeEnv(env),
+    args: ['--force-color-profile=srgb', '--hide-scrollbars', ...CHROME_SAFE_ARGS], ...(proxy ? { proxy } : {}) };
+}
+
 /**
  * Launch headless Chrome (playwright-core, system browser) and load `url`. Returns { browser, ctx, page, go, close, url }.
  * `promoDir` is remembered for Plate.begin(page, …) so plates land in <promoDir>/plates/.
@@ -68,8 +76,7 @@ export async function open({ url, dsf = 3, width = 1600, height = 1000, chrome, 
   const exe = chrome || findChrome();
   if (!exe) throw new Error('no Chrome-family browser found: ' + toolHints().chrome);
   const { chromium } = loadDep('playwright-core');
-  const browser = await chromium.launch({ executablePath: exe, headless: true, env: chromeEnv(),
-    args: ['--force-color-profile=srgb', '--hide-scrollbars', ...CHROME_SAFE_ARGS] });
+  const browser = await chromium.launch(launchOptions(exe));
   const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: dsf, colorScheme, reducedMotion: 'no-preference' });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.warn('[page error]', e.message));

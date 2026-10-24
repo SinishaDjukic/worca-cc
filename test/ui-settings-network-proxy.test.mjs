@@ -147,3 +147,32 @@ test('app.js mounts the card', () => {
   const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
   assert.ok(app.includes('mountNetworkProxyCard('));
 });
+
+test('Local proxy port: filled from settings, Save sends fixedPort, an empty field sends null', async (t) => {
+  const p = mount({ 'GET /api/proxy/status': { ok: true, status: 200, data: { ...STATUS, settings: { ...STATUS.settings, fixedPort: 3128 } } } }, { flag: true });
+  t.after(p.close);
+  await tick();
+  assert.ok(p.$('npFixedPort'));
+  assert.equal(p.$('npFixedPort').value, '3128');
+  p.$('npSave').click();
+  await tick(); await tick();
+  assert.equal(p.calls.find((c) => c.method === 'PUT').body.networkProxy.fixedPort, 3128);
+  p.calls.length = 0;
+  await new Promise((r) => setTimeout(r, BUTTON_DONE_MS + 20));
+  p.$('npFixedPort').value = '';
+  p.$('npSave').click();
+  await tick(); await tick();
+  assert.equal(p.calls.find((c) => c.method === 'PUT').body.networkProxy.fixedPort, null);
+});
+
+test('Digest disables Log in with its own hint', async (t) => {
+  const p = mount({}, { flag: true });
+  t.after(p.close);
+  await tick();
+  p.$('npAuth').value = 'digest';
+  p.$('npAuth').dispatchEvent(new p.dom.window.Event('change'));
+  assert.equal(p.$('npAuth').value, 'digest', 'Digest is an option');
+  assert.equal(p.$('npLogin').disabled, true);
+  assert.equal(p.$('npBasicNote').hidden, false);
+  assert.match(p.$('npBasicNote').textContent, /Digest cannot use a saved login/);
+});

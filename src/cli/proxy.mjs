@@ -4,7 +4,7 @@
 import { createInterface } from 'node:readline';
 import { flagEnabled } from '../core/flags.mjs';
 import { readSettings } from '../core/settings.mjs';
-import { checkUpstream, resolveUpstream } from '../core/upstream-proxy.mjs';
+import { checkUpstream, resolveUpstream, fixedPortOf, localProxyUrl, PASSWORD_MODES } from '../core/upstream-proxy.mjs';
 import { parseAccount, saveProxyLogin, readProxyLogin, clearProxyLogin, markLoginRejected, proxyState,
   upstreamEnv, ProxyLoginError } from '../core/proxy-credentials.mjs';
 
@@ -68,6 +68,7 @@ function printStatus(st, out) {
   else out(`Corporate proxy: ${st.upstream} (${st.authLabel}, from ${st.source === 'settings' ? 'settings' : 'HTTPS_PROXY'})`);
   out(st.login ? `Login: ${st.login.label}, saved ${st.login.savedAt ? `${st.login.savedAt.slice(0, 16).replace('T', ' ')} UTC` : 'at an unknown time'}`
     : `Login: none saved${st.loginError ? ` (${st.loginError})` : ''}`);
+  out(`Local proxy: ${st.localUrl || 'a free port picked when Worca starts (set networkProxy.fixedPort to pin one)'}`);
   out(`State: ${st.line}`);
   for (const w of st.warnings) out(`Warning: ${w}`);
 }
@@ -93,7 +94,9 @@ export async function cmdProxy(argv, {
   const upEnv = upstreamEnv(env);
 
   if (verb === 'status') {
-    const st = proxyState({ env: upEnv, networkProxy: networkProxy(), login: readProxyLogin(at) });
+    const np = networkProxy();
+    // D13: a CLI process cannot see the running server's free port; a fixed port is the only URL it can state.
+    const st = proxyState({ env: upEnv, networkProxy: np, login: readProxyLogin(at), localUrl: fixedPortOf(np) ? localProxyUrl(fixedPortOf(np)) : null });
     if (json) out(JSON.stringify(st)); else printStatus(st, out);
     return st.state === 'needs-login' ? 3 : (st.state === 'not-configured' || st.state === 'error') ? 1 : 0;
   }
@@ -104,8 +107,9 @@ export async function cmdProxy(argv, {
   }
 
   if (verb === 'login') {
-    if ((networkProxy() || {}).auth === 'basic') {
-      err('worca: networkProxy.auth is basic, and a saved login keeps only the NT hash, which Basic cannot use. Set auth to auto, or keep the login in HTTPS_PROXY.');
+    const { auth } = networkProxy() || {};
+    if (PASSWORD_MODES.includes(auth)) {
+      err(`worca: networkProxy.auth is ${auth}, and a saved login keeps only the NT hash, which ${auth === 'digest' ? 'Digest' : 'Basic'} cannot use. Set auth to auto, or keep the login in HTTPS_PROXY.`);
       return 1;
     }
     const i = rest.indexOf('--user');

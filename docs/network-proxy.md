@@ -1,6 +1,7 @@
 # Network proxy
 
-Use Worca behind a corporate proxy that asks for an NTLMv2 login. This is an experimental
+Use Worca behind a corporate proxy that asks for an NTLMv2 login (also inside Negotiate), or a Digest
+or Basic login. This is an experimental
 feature behind the `corporateProxy` flag. For the flag itself, see
 [Feature flags › Corporate proxy](feature-flags.md#corporate-proxy).
 
@@ -24,7 +25,7 @@ every local user can do that too.
 3. Restart Worca. The proxy host, port, login mode, direct hosts and timeouts are read at startup.
 
 You can also set the same values by hand in `settings.json` under `networkProxy` (`upstream`,
-`auth`, `noProxy`, `timeouts`). When no upstream is set there, Worca uses the `HTTPS_PROXY` /
+`auth`, `noProxy`, `timeouts`, `fixedPort`). When no upstream is set there, Worca uses the `HTTPS_PROXY` /
 `HTTP_PROXY` that was set when it started.
 
 ## Log in once
@@ -66,6 +67,60 @@ URL's login, if there is one.
 With `networkProxy.auth` set to `none`, the saved login is never sent. With `auth` set to `basic`,
 it cannot be used: Basic needs the password, and the file holds only the hash. Keep a Basic login
 in `HTTPS_PROXY` (`http://ACME%5Cjdoe:password@proxy.acme.example:8080`), or switch to NTLMv2.
+
+## Kept-alive connections
+
+NTLM and Negotiate log in a connection, not a request. For plain `http://` requests (`apt`, `pip`,
+`npm` metadata) Worca logs a connection in once, with a `HEAD` probe to the first URL, and later
+requests reuse it without sending credentials again. A connection that stays idle for longer than
+`networkProxy.timeouts.idleMs` (default 10 minutes) is closed, and the next request logs in again.
+
+- When the proxy forgets a connection's login and asks again, that is not a rejected password. A
+  request without a body is sent once more on a fresh login; a request with a body gets a `502`
+  ("asked for a login again on a kept-alive connection; send the request again").
+- When the proxy forgets the login again right after that fresh login, or closes the connection
+  after every login, Worca logs in per request from then on (one line in the log), and that one
+  request gets a `502`.
+- A new login, a logout or a "proxy needs login" stop closes every connection of the old login.
+
+## Negotiate and Digest
+
+- **Negotiate.** A proxy that offers only `Negotiate` (IIS, ISA/Forefront, some Squid builds) gets
+  the same NTLMv2 login wrapped in `Negotiate`, as Px and CNTLM send it. Worca remembers which
+  wrapper worked. Kerberos is not supported: a proxy that accepts only Kerberos tickets rejects the
+  NTLM login once, and Worca stops with "proxy needs login".
+- **Digest.** Set `networkProxy.auth` to `digest` (or choose **Login: Digest** on the card) and keep
+  the login in `HTTPS_PROXY` (`http://ACME%5Cjdoe:password@proxy.acme.example:8080`). Worca keeps
+  that password in memory to answer each challenge (SHA-256 preferred, then MD5, `qop=auth`). A saved
+  login cannot be used, because it holds only the NT hash. `auto` never answers a Digest-only proxy.
+  A challenge that says the nonce went stale gets a `502` ("send the request again") and never
+  counts as a rejected password.
+
+## A fixed local port
+
+By default the local proxy listens on a free port picked at startup. To use it from an IDE or a shell
+outside Worca, pin it: set `networkProxy.fixedPort` (1024–65535) in `settings.json`, or fill in
+**Local proxy port** on the card, then restart Worca. `worca proxy status` then prints
+`Local proxy: http://127.0.0.1:<port>`. Without a fixed port it says a free port is picked at
+startup.
+
+- If another program already uses the port, Worca says so at startup ("the local proxy cannot listen
+  on 127.0.0.1:3128: another program already uses that port (EADDRINUSE). Free the port or change
+  networkProxy.fixedPort"), shows it on the card, and runs without the corporate proxy. Under a
+  hosting platform's network policy, startup stops with that message.
+- If the port is held by another Worca (the UI, while you start `worca run` from a shell), this one
+  uses a free port of its own and the boot line says "served by another Worca".
+- A fixed port is predictable: any local process can use it, and while Worca restarts its proxy
+  another process could take the port first and receive the plain-HTTP traffic of tools pointed at
+  it. It never receives your credentials.
+
+## Browsers in runs
+
+Chrome takes its proxy from the OS settings or its own flags and does not reliably honour
+`HTTPS_PROXY`. With the flag on, Worca also sets `WORCA_CORPORATE_PROXY_URL` for its children, and
+the run assets that start a browser pass it on: Playwright launches get `proxy.server`, raw Chrome
+launches `--proxy-server`, with your `NO_PROXY` hosts as the bypass list. With the flag off, browser
+launches are unchanged.
 
 ## Check it
 
@@ -110,7 +165,7 @@ A login kept in `HTTPS_PROXY` has no saved stop. Correct the URL, then restart W
 
 ## Kerberos or single sign-on
 
-Not supported. Run [Px](https://github.com/genotrance/px) with your Windows session, point
+Not supported (Negotiate works only with the NTLM login inside it). Run [Px](https://github.com/genotrance/px) with your Windows session, point
 `HTTPS_PROXY` at it, and leave the `corporateProxy` flag off.
 
 ## Troubleshooting
@@ -118,6 +173,10 @@ Not supported. Run [Px](https://github.com/genotrance/px) with your Windows sess
 - **The proxy offers only Basic.** NTLMv2 (`auto`) never falls back to Basic. Set
   `networkProxy.auth` to `basic` and keep the login in `HTTPS_PROXY`. Basic sends the password in
   cleartext on every connection.
+- **The proxy offers only Digest.** Set `networkProxy.auth` to `digest` and keep the login in
+  `HTTPS_PROXY`.
+- **The fixed port cannot be used on Windows (EACCES).** Hyper-V and WSL reserve port ranges. List
+  them with `netsh interface ipv4 show excludedportrange protocol=tcp` and pick a port outside them.
 - **PAC or WPAD.** Not supported. Ask your IT team for the proxy host and port, and enter them in
   Settings › Network proxy.
 - **"proxy-login.json can be read by other users".** The file's mode changed (a backup restore, a

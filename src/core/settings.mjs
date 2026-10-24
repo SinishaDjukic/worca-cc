@@ -2752,9 +2752,11 @@ export function effectiveNetworkWait(env = process.env) {
 
 // Settings › Network proxy (corporateProxy flag; read at boot by egress-policy.mjs).
 // The same list as upstream-proxy.mjs AUTH_MODES: this module imports nothing from the core graph (test pins it).
-export const NETWORK_PROXY_AUTH = Object.freeze(['auto', 'none', 'basic', 'ntlm']);
+export const NETWORK_PROXY_AUTH = Object.freeze(['auto', 'none', 'basic', 'ntlm', 'digest']);
 const NETWORK_PROXY_TIMEOUTS = ['connectMs', 'authMs', 'idleMs'];
 const isProxyMs = (v) => Number.isInteger(v) && v >= 500 && v <= 3_600_000;
+// The same range as upstream-proxy.mjs fixedPortOf (D17; a test feeds both the same values).
+const isFixedPort = (v) => Number.isInteger(v) && v >= 1024 && v <= 65535;
 
 export function networkProxySettings() {
   const v = readSettings().networkProxy;
@@ -2775,9 +2777,10 @@ function normalizeProxyUpstream(raw) {
 export function assertNetworkProxyInput(patch) {
   if (patch === null || patch === '') return;
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('networkProxy must be an object');
-  for (const k of Object.keys(patch)) if (!['upstream', 'auth', 'noProxy', 'timeouts'].includes(k)) throw new Error(`unknown networkProxy setting: ${k}`);
+  for (const k of Object.keys(patch)) if (!['upstream', 'auth', 'noProxy', 'timeouts', 'fixedPort'].includes(k)) throw new Error(`unknown networkProxy setting: ${k}`);
   if (patch.upstream != null && patch.upstream !== '') normalizeProxyUpstream(patch.upstream);
   if (patch.auth != null && !NETWORK_PROXY_AUTH.includes(patch.auth)) throw new Error(`networkProxy.auth must be one of ${NETWORK_PROXY_AUTH.join(', ')}`);
+  if (patch.fixedPort != null && !isFixedPort(patch.fixedPort)) throw new Error('networkProxy.fixedPort must be a port from 1024 to 65535');
   if (patch.noProxy != null) {
     const ok = typeof patch.noProxy === 'string' ? patch.noProxy.length <= 4096
       : Array.isArray(patch.noProxy) && patch.noProxy.length <= 200 && patch.noProxy.every((e) => typeof e === 'string' && e.length <= 253);

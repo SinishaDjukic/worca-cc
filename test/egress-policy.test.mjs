@@ -238,13 +238,13 @@ test('child env: proxy variables only while enforcing; loopback is the only bypa
   }
 });
 
-test('child env: a scrubbed agent spawn keeps the proxy variables', () => {
-  const vars = egressChildEnv('http://127.0.0.1:41234');
+test('child env: a scrubbed agent spawn keeps the proxy variables and the corporate-proxy marker', () => {
+  const vars = egressChildEnv('http://127.0.0.1:41234', [], { corporate: true });
   const saved = {};
   for (const k of Object.keys(vars)) { saved[k] = process.env[k]; process.env[k] = vars[k]; }
   try {
     const env = buildSpawnEnv(true, []);
-    for (const k of ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy', 'NO_PROXY', 'no_proxy']) assert.equal(env[k], vars[k], k);
+    for (const k of ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy', 'NO_PROXY', 'no_proxy', 'WORCA_CORPORATE_PROXY_URL']) assert.equal(env[k], vars[k], k);
   } finally {
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
@@ -521,6 +521,7 @@ test('corporate proxy, flag on: HTTP(S)_PROXY becomes the upstream and children 
     assert.equal(egressChildEnv(r.url, ['*']).NO_PROXY, '*', 'noProxy "*" is written alone');
     assert.equal(env.PATH, '/bin');
     assert.equal(env.NO_PROXY, '127.0.0.1,localhost,::1,intranet.example');
+    assert.equal(env.WORCA_CORPORATE_PROXY_URL, r.url, 'flag on with a connector: the browser-launch marker (D14)');
     assert.equal(r.replacedProxy, false);
     assert.match(egressNotice(r).text, /^Corporate proxy: via 127\.0\.0\.1:\d+ \(NTLMv2\), logged in as Domain\\User, local proxy http:\/\/127\.0\.0\.1:\d+/);
     assertNoCorpSecrets(egressNotice(r).text);
@@ -549,6 +550,7 @@ test('corporate proxy + allow mode: allowed hosts are forwarded to the upstream,
     assert.match(denied, /^HTTP\/1\.1 403/);
     assert.deepEqual(fake.stats.heads.map((h) => h.line), ['CONNECT app.worca.dev:443 HTTP/1.1']);
     assert.equal(env.NO_PROXY, '127.0.0.1,localhost,::1', 'the policy keeps loopback as the only bypass');
+    assert.equal(env.WORCA_CORPORATE_PROXY_URL, r.url);
     const n = egressNotice(r);
     assert.doesNotMatch(n.text, /replaced/);
     assert.match(n.text, /then forwarded to the corporate proxy 127\.0\.0\.1:\d+ \(no login\)/);
@@ -747,4 +749,91 @@ test('sourceEnv: the proxy variables before the swap, and never a parent\'s loca
   for (const k of [EGRESS_PROXY_VAR, 'HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy']) assert.equal(k in inh.sourceEnv, false, k);
   const off = await startEgressPolicy({ env: { PATH: '/bin' }, corporateProxy: FLAG_OFF });
   assert.deepEqual(off.sourceEnv, { PATH: '/bin' });
+});
+
+// ── Fixed local port (slice 3, D11-D14) ──
+// `closedPort()` gives a port nothing listens on. A parallel process can take that port between
+// closedPort() and the listen (an accepted, rare race: the test then fails with the EADDRINUSE
+// message itself, and a re-run passes).
+import { cmdProxy } from '../src/cli/proxy.mjs';
+import { CORPORATE_PROXY_VAR } from '../src/core/proxy-credentials.mjs';
+
+function tempHome(t) {
+  const home = mkdtempSync(join(tmpdir(), 'worca-egress-fixedport-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  return home;
+}
+
+test('fixedPort: the local proxy listens on 127.0.0.1:fixedPort and `worca proxy status` prints that URL', async (t) => {
+  const fake = await startFakeUpstream({ scheme: 'none', originPort: 9 });
+  t.after(() => fake.close());
+  const port = await closedPort();
+  const settings = () => ({ networkProxy: { upstream: fake.url(), fixedPort: port } });
+  const env = {};
+  const r = await startEgressPolicy({ env, corporateProxy: FLAG_ON, settings, login: () => null });
+  t.after(() => r.close());
+  assert.equal(r.status, 'on');
+  assert.equal(r.url, `http://127.0.0.1:${port}`);
+  assert.equal(env.HTTPS_PROXY, `http://127.0.0.1:${port}`);
+  assert.equal(env.WORCA_CORPORATE_PROXY_URL, `http://127.0.0.1:${port}`);
+  const lines = [];
+  const code = await cmdProxy(['status'], { out: (l) => lines.push(l), fail: () => {}, err: () => {}, env: {},
+    corporateProxy: FLAG_ON, settings, home: tempHome(t) });
+  assert.notEqual(code, 3, 'not needs-login');
+  assert.ok(lines.includes(`Local proxy: http://127.0.0.1:${port}`), lines.join('\n'));
+});
+
+test('WORCA_CORPORATE_PROXY_URL: one value in proxy-credentials, spawn.mjs and the promo-kit cdp helper', async () => {
+  const { SPAWN_ENV_BASE } = await import('../src/core/engines/spawn.mjs');
+  assert.equal(CORPORATE_PROXY_VAR, 'WORCA_CORPORATE_PROXY_URL');
+  assert.ok(SPAWN_ENV_BASE.includes(CORPORATE_PROXY_VAR), 'a scrubbed agent spawn keeps the marker');
+  const cdp = readFileSync(fileURLToPath(new URL('../assets/promo-kit/tools/cdp.mjs', import.meta.url)), 'utf8');
+  assert.ok(cdp.includes(`env.${CORPORATE_PROXY_VAR}`), 'cdp.mjs (a standalone asset) reads the same name');
+});
+
+test('fixedPort busy (another program): a clear EADDRINUSE error naming the port and the setting', async (t) => {
+  const squatter = net.createServer((c) => c.destroy());
+  await new Promise((r) => squatter.listen(0, '127.0.0.1', r));
+  t.after(() => squatter.close());
+  const port = squatter.address().port;
+  const settings = () => ({ networkProxy: { upstream: 'http://127.0.0.1:9', fixedPort: port } });
+  const r = await startEgressPolicy({ env: {}, corporateProxy: FLAG_ON, settings, login: () => null });
+  assert.equal(r.status, 'off');
+  assert.equal(r.upstreamError, `the local proxy cannot listen on 127.0.0.1:${port}: another program already uses that port (EADDRINUSE). Free the port or change networkProxy.fixedPort`);
+  assert.match(egressNotice(r).text, /^Corporate proxy: the local proxy cannot listen on 127\.0\.0\.1:\d+/);
+  assert.equal(egressNotice(r).level, 'warn');
+  await assert.rejects(startEgressPolicy({ env: { WORCA_EGRESS_MODE: 'block' }, corporateProxy: FLAG_ON, settings, login: () => null }),
+    /cannot listen on 127\.0\.0\.1:\d+: another program already uses that port \(EADDRINUSE\)/);
+});
+
+test('fixedPort held by another Worca: this one falls back to a free port and says so', async (t) => {
+  const port = await closedPort();
+  const settings = () => ({ networkProxy: { upstream: 'http://127.0.0.1:9', fixedPort: port } });
+  const first = await startEgressPolicy({ env: {}, corporateProxy: FLAG_ON, settings, login: () => null });
+  t.after(() => first.close());
+  const second = await startEgressPolicy({ env: {}, corporateProxy: FLAG_ON, settings, login: () => null });
+  t.after(() => second.close());
+  assert.equal(second.status, 'on');
+  assert.notEqual(second.url, `http://127.0.0.1:${port}`);
+  assert.equal(second.fixedPortShared, true);
+  assert.match(egressNotice(second).text, new RegExp(`127\\.0\\.0\\.1:${port} is served by another Worca`));
+});
+
+test('fixedPort, flag off with an enforced policy: the policy proxy starts on another port and settings are not read', async (t) => {
+  const port = await closedPort();
+  let reads = 0;
+  // An enforced policy starts a local proxy even with the flag off: the case where fixedPort could leak in.
+  const r = await startEgressPolicy({ env: { WORCA_EGRESS_MODE: 'block', HTTPS_PROXY: 'http://corp.example:8080' }, corporateProxy: FLAG_OFF,
+    settings: () => { reads += 1; return { networkProxy: { fixedPort: port } }; } });
+  t.after(() => r.close());
+  assert.equal(r.status, 'on');
+  assert.notEqual(r.url, `http://127.0.0.1:${port}`);
+  assert.equal(reads, 0);
+  assert.equal(r.fixedPort, undefined);
+  const refused = await new Promise((resolve) => {
+    const s = net.connect(port, '127.0.0.1');
+    s.on('connect', () => { s.destroy(); resolve(false); });
+    s.on('error', () => resolve(true));
+  });
+  assert.equal(refused, true);
 });

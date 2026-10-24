@@ -239,7 +239,8 @@ export function createProxy({ allow, policy = null, log = () => {}, limits = {},
     }
     const host = normalizeHost(url.hostname);
     const port = url.port ? Number(url.port) : 80;
-    if (isSelf(host, port)) { res.writeHead(400).end(); return; }
+    // The header tells another Worca that this port is a Worca local proxy (fixed port, D12).
+    if (isSelf(host, port)) { res.writeHead(400, { 'x-worca-proxy': 'local' }).end(); return; }
     if (!permits(host)) {
       verdict(false, req.method, url.host);
       const r = refusal(host);
