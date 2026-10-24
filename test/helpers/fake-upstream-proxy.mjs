@@ -17,12 +17,15 @@ import { ntHash, ntowfv2, parseType3 } from '../../src/core/ntlm.mjs';
  *   real Switching Protocols (with Upgrade), whatever the request asked.
  *   statusChallenge: that non-200 answer also carries `Proxy-Authenticate: NTLM` (the ambiguous case).
  *   rejectDelayMs: delay before the 407 that refuses wrong credentials (a slow proxy, for the client-abort tests).
+ *   holdType3: count each Type 3 in stats.type3 on arrival, then park its answer until release()
+ *   (the stale-handshake and single-flight tests); release() sends what would have been sent.
  */
 export async function startFakeUpstream({ scheme = 'ntlm', offer = null, user = 'User', domain = 'Domain',
   password = 'Password', originPort, closeOn407 = false, silent = false, headNoBody407 = true,
-  afterType3 = null, status = 200, statusChallenge = false, rejectDelayMs = 0 } = {}) {
+  afterType3 = null, status = 200, statusChallenge = false, rejectDelayMs = 0, holdType3 = false } = {}) {
   const stats = { sockets: 0, type1: 0, type3: 0, basic: 0, heads: [], authHeaders: [] };
   const sockets = new Set();
+  const held = [];
   const want = Buffer.from(`${domain}\\${user}:${password}`).toString('base64');
   const server = net.createServer((sock) => {
     const id = ++stats.sockets;
@@ -73,37 +76,54 @@ export async function startFakeUpstream({ scheme = 'ntlm', offer = null, user = 
           const ntowf = ntowfv2(ntHash(password), t3.user, t3.domain);
           const proof = createHmac('md5', ntowf).update(Buffer.concat([challenge, t3.ntChallengeResponse.subarray(16)])).digest();
           ok = !!challenge && proof.equals(t3.ntChallengeResponse.subarray(0, 16)) && t3.user === user;
+          if (holdType3) {
+            sock.off('data', onData);
+            const verdict = ok;
+            held.push(() => {
+              if (!verdict) { refuse('Proxy-Authenticate: NTLM\r\n'); return; }
+              if (answer(method, target) === 'continue') { sock.on('data', onData); onData(Buffer.alloc(0)); }
+            });
+            return;
+          }
           if (!ok) { refuse('Proxy-Authenticate: NTLM\r\n'); return; }
         }
         if (!ok) { reply407(offers.map((o) => `Proxy-Authenticate: ${o}\r\n`).join('')); continue; }
-        if (status !== 200) {
-          const body = `upstream says ${status}`;
-          if (status === 101) { sock.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n'); continue; }
-          sock.write(`HTTP/1.1 ${status} Upstream Error\r\n${statusChallenge ? 'Proxy-Authenticate: NTLM\r\n' : ''}Content-Length: ${body.length}\r\n\r\n${body}`);
-          continue;
-        }
-        if (method === 'CONNECT') {
-          sock.off('data', onData);
-          const o = net.connect(originPort, '127.0.0.1', () => {
-            sock.write('HTTP/1.1 200 Connection established\r\n\r\n');
-            if (buf.length) o.write(buf);
-            sock.pipe(o); o.pipe(sock);
-          });
-          sockets.add(o);   // close() must drop the origin leg too, or it keeps the test process alive
-          o.on('close', () => sockets.delete(o));
-          o.on('error', () => sock.destroy());
-          return;
-        }
-        const body = `upstream relayed ${method} ${target}`;
-        sock.write(`HTTP/1.1 200 OK\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${method === 'HEAD' ? '' : body}`);
+        if (answer(method, target) === 'continue') continue;
+        return;
       }
     };
+    /** The answer to an accepted request: 'continue' reads the next head, 'return' hands the socket over. */
+    function answer(method, target) {
+      if (status !== 200) {
+        const body = `upstream says ${status}`;
+        if (status === 101) { sock.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n'); return 'continue'; }
+        sock.write(`HTTP/1.1 ${status} Upstream Error\r\n${statusChallenge ? 'Proxy-Authenticate: NTLM\r\n' : ''}Content-Length: ${body.length}\r\n\r\n${body}`);
+        return 'continue';
+      }
+      if (method === 'CONNECT') {
+        sock.off('data', onData);
+        const o = net.connect(originPort, '127.0.0.1', () => {
+          sock.write('HTTP/1.1 200 Connection established\r\n\r\n');
+          if (buf.length) o.write(buf);
+          sock.pipe(o); o.pipe(sock);
+        });
+        sockets.add(o);   // close() must drop the origin leg too, or it keeps the test process alive
+        o.on('close', () => sockets.delete(o));
+        o.on('error', () => sock.destroy());
+        return 'return';
+      }
+      const body = `upstream relayed ${method} ${target}`;
+      sock.write(`HTTP/1.1 200 OK\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${method === 'HEAD' ? '' : body}`);
+      return 'continue';
+    }
     sock.on('data', onData);
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   return {
     stats,
     port: server.address().port,
+    /** Send every parked Type 3 answer (holdType3). */
+    release: () => { for (const go of held.splice(0)) go(); },
     url: (auth = '') => `http://${auth}127.0.0.1:${server.address().port}`,
     close: () => new Promise((r) => { for (const s of sockets) s.destroy(); server.close(() => r()); }),
   };

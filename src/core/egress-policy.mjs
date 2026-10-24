@@ -18,9 +18,12 @@
 // (src/core/upstream-proxy.mjs): from settings.json networkProxy, else the HTTP(S)_PROXY that was
 // set. Children then get a credential-free http://127.0.0.1:<port>. Under a policy, the policy
 // decides first and allowed hosts are forwarded to the upstream instead of replacing it.
+// The login saved by `worca proxy login` (src/core/proxy-credentials.mjs) is read at boot and
+// watched, so a new login (or a rejection another process recorded) applies without a restart.
 
 import { createProxy, readEgressPolicy, normalizeHost } from './egress-proxy.mjs';
-import { createUpstreamConnector, resolveUpstream, AUTH_LABELS } from './upstream-proxy.mjs';
+import { createUpstreamConnector, resolveUpstream, ProxyCredentials, AUTH_LABELS } from './upstream-proxy.mjs';
+import { readProxyLogin, watchProxyLogin, markLoginRejected, redactProxyLine, upstreamEnv } from './proxy-credentials.mjs';
 import { flagEnabled } from './flags.mjs';
 import { readSettings } from './settings.mjs';
 
@@ -75,26 +78,38 @@ export function egressSummary(env = process.env) {
  *   inherited  a parent worca's proxy is already in env: reused, nothing started.
  *   on         proxy listening on 127.0.0.1:<port>; the proxy variables are now in env.
  * A policy proxy that cannot start rejects; a corporate-proxy-only one returns off + upstreamError.
+ * Every return carries `sourceEnv`: the proxy variables as they were before the swap (through
+ * upstreamEnv(), so never a parent's local proxy), for proxyState()/checkUpstream (D13).
  * @param {{env?: Record<string, string|undefined>, log?: (line: string) => void, unref?: boolean,
- *   corporateProxy?: () => boolean, settings?: () => object}} [opts]
+ *   corporateProxy?: () => boolean, settings?: () => object, login?: () => object|null, loginPollMs?: number,
+ *   watchLogin?: (fn: () => void) => () => void, markRejected?: (id: string, o: object) => boolean}} [opts]
  * @returns {Promise<{status: 'off'|'inherited'|'on', policy: object, url?: string, replacedProxy?: boolean,
- *   upstreamError?: string, connector?: object, boundAddress?: string, scrubbedKeys?: string[], upstream?: object,
- *   close: () => Promise<void>}>}
+ *   upstreamError?: string, connector?: object, reloadLogin?: () => boolean, boundAddress?: string,
+ *   scrubbedKeys?: string[], upstream?: object, sourceEnv: object, close: () => Promise<void>}>}
  */
 export async function startEgressPolicy({ env = process.env, log = () => {}, unref = false,
-  corporateProxy = () => flagEnabled('corporateProxy'), settings = readSettings } = {}) {
+  corporateProxy = () => flagEnabled('corporateProxy'), settings = readSettings,
+  login = () => readProxyLogin(), loginPollMs = 1000, watchLogin = (fn) => watchProxyLogin(fn, { intervalMs: loginPollMs }),
+  markRejected = (id, o) => markLoginRejected(id, o) } = {}) {
   const policy = readEgressPolicy(env);
   const none = async () => {};
   const corp = !!corporateProxy();
-  if (!policy.enforced && !corp) return { status: 'off', policy, close: none };
-  if (inheritsEgressProxy(env)) return { status: 'inherited', policy, url: env[EGRESS_PROXY_VAR], close: none };
+  // D13: for 'inherited', env.HTTPS_PROXY is already the parent's local proxy, and upstreamEnv drops it.
+  if (!policy.enforced && !corp) return { status: 'off', policy, sourceEnv: upstreamEnv(env), close: none };
+  if (inheritsEgressProxy(env)) return { status: 'inherited', policy, url: env[EGRESS_PROXY_VAR], sourceEnv: upstreamEnv(env), close: none };
   const s = corp ? settings() : null;
-  const upstream = corp ? resolveUpstream({ env, settings: s && typeof s === 'object' ? s.networkProxy : undefined }) : null;
+  const saved = corp ? login() : null;                  // never read with the flag off
+  const upstream = corp ? resolveUpstream({ env, settings: s && typeof s === 'object' ? s.networkProxy : undefined, login: saved }) : null;
   const upstreamError = upstream && upstream.error ? upstream.error : undefined;
   const usable = upstream && !upstream.error ? upstream : null;
   const extra = upstreamError ? { upstreamError } : {};
-  if (!policy.enforced && !usable) return { status: 'off', policy, ...extra, close: none };
-  const connector = usable ? createUpstreamConnector(usable, { log: (l) => log(`corporate proxy: ${l}`) }) : null;
+  if (!policy.enforced && !usable) return { status: 'off', policy, ...extra, sourceEnv: upstreamEnv(env), close: none };
+  const connector = usable ? createUpstreamConnector(usable, {
+    log: (l) => log(`Corporate proxy: ${redactProxyLine(l)}`),
+    startTripped: !!(usable.login && usable.login.rejected),
+    // D7: the id of the login that was refused, captured by the handshake; never the current one.
+    onTrip: ({ upstream: label, loginId }) => { if (loginId) markRejected(loginId, { upstream: label }); },
+  }) : null;
   const server = createProxy({
     policy: policy.enforced ? policy : OPEN_POLICY,
     connector,
@@ -110,7 +125,7 @@ export async function startEgressPolicy({ env = process.env, log = () => {}, unr
   } catch (err) {
     connector?.close();
     if (policy.enforced) throw err;
-    return { status: 'off', policy, upstreamError: `the local proxy could not start (${err && err.code ? err.code : 'error'})`, close: none };
+    return { status: 'off', policy, upstreamError: `the local proxy could not start (${err && err.code ? err.code : 'error'})`, sourceEnv: upstreamEnv(env), close: none };
   }
   if (unref) server.unref();
   const port = server.address().port;
@@ -121,15 +136,45 @@ export async function startEgressPolicy({ env = process.env, log = () => {}, unr
   // the upstream host:port (ALL_PROXY, npm_config_https_proxy, a differently encoded copy, ...)
   // would let a child bypass the local proxy with the password.
   const credentialed = connector ? Object.keys(env).filter((k) => !PROXY_NAMES.includes(k) && loginFor(env[k], usable)) : [];
+  const sourceEnv = upstreamEnv(Object.fromEntries([...PROXY_NAMES, 'NO_PROXY', 'no_proxy', EGRESS_PROXY_VAR]
+    .filter((k) => env[k] !== undefined).map((k) => [k, env[k]])));   // before the swap below
   Object.assign(env, egressChildEnv(url, direct));
   const scrubbedKeys = [];
   for (const k of credentialed) { env[k] = url; scrubbedKeys.push(k); }
+  /** What the connector holds: login id + marker time, so a marker on the same id counts (D8). */
+  const keyOf = (r) => (r ? `${r.id}|${r.rejected ? r.rejected.at : ''}` : '');
+  let currentKey = keyOf(usable && usable.login ? { id: usable.login.id, rejected: usable.login.rejected } : null);
+  let lastLoginError = '';
+  /** Re-read the saved login; swap it into the connector when it changed. @returns {boolean} changed */
+  const reloadLogin = () => {
+    if (!connector) return false;
+    const next = login();
+    // D8: a file that cannot be used now (bad mode, bad JSON, EACCES) changes nothing. Treating it
+    // as "logged out" would reset the gate and reopen a tripped breaker. Logged once per message.
+    if (next && next.error) {
+      if (next.error !== lastLoginError) log(`Corporate proxy: the saved login cannot be used (${next.error}); keeping the current login`);
+      lastLoginError = next.error;
+      return false;
+    }
+    lastLoginError = '';
+    const ok = next || null;
+    const key = keyOf(ok);
+    if (key === currentKey) return false;
+    currentKey = key;
+    // Same login, newly marked, and this connector already tripped (it wrote the marker): nothing to do.
+    if (ok && ok.rejected && connector.status().loginId === ok.id && connector.status().state === 'tripped') return false;
+    const creds = ok ? new ProxyCredentials({ domain: ok.domain, user: ok.user, ntHash: ok.ntHash }, 'auto') : null;
+    return connector.useLogin(creds, { id: ok ? ok.id : null, rejected: !!(ok && ok.rejected) });
+  };
+  // No watcher where a login can never be swapped in (Basic, or an explicit auth none: D23).
+  const swappable = usable && usable.auth !== 'basic' && !['basic', 'none'].includes(usable.requestedAuth);
+  const stopWatch = connector && swappable ? watchLogin(reloadLogin) : () => {};
   const sup = superviseProxy(server, port, { log });
   return {
-    status: 'on', policy, url, replacedProxy, ...extra,
-    ...(connector ? { connector, boundAddress: server.address().address, scrubbedKeys,
+    status: 'on', policy, url, replacedProxy, sourceEnv, ...extra,
+    ...(connector ? { connector, reloadLogin, boundAddress: server.address().address, scrubbedKeys,
       upstream: { ...connector.status(), warnings: usable.warnings } } : {}),
-    close: async () => { await sup.stop(); connector?.close(); },
+    close: async () => { stopWatch(); await sup.stop(); connector?.close(); },
   };
 }
 
@@ -172,20 +217,29 @@ export function superviseProxy(server, port, { log = () => {}, host = '127.0.0.1
   };
 }
 
+/** The corporate half of the boot line (D18): "Corporate proxy: via host:port (auth)…". */
+function corporateLine(up, url) {
+  const via = `Corporate proxy: via ${up.upstream} (${AUTH_LABELS[up.auth]})`;
+  if (up.state === 'tripped') {
+    return `${via}: proxy needs login. The corporate proxy rejected the saved login${up.login ? ` for ${up.login}` : ''}, so Worca sends no credentials; run \`worca proxy login\` or use Settings › Network proxy`;
+  }
+  return `${via}${up.login ? `, logged in as ${up.login}` : ''}, local proxy ${url}; NO_PROXY hosts and loopback go direct`;
+}
+
 /** The boot line for startEgressPolicy()'s result, or null when there is nothing to say. */
 export function egressNotice(result) {
   if (!result) return null;
   if (result.status === 'off') {
-    return result.upstreamError ? { level: 'warn', text: `corporate proxy: ${result.upstreamError}; it is not used` } : null;
+    return result.upstreamError ? { level: 'warn', text: `Corporate proxy: ${result.upstreamError}; it is not used` } : null;
   }
   const p = result.policy;
   const up = result.upstream;
   const warnings = up ? up.warnings : [];
   if (!p.enforced) {
     const text = result.status === 'inherited'
-      ? `corporate proxy: outbound connections go through the parent Worca's proxy at ${result.url}`
-      : [`corporate proxy: outbound connections go through ${up.upstream} (${AUTH_LABELS[up.auth]}) via ${result.url}; NO_PROXY hosts and loopback go direct`, ...warnings].join('; ');
-    return { level: warnings.length ? 'warn' : 'info', text };
+      ? `Corporate proxy: outbound connections go through the parent Worca's proxy at ${result.url}`
+      : [corporateLine(up, result.url), ...warnings].join('; ');
+    return { level: warnings.length || up?.state === 'tripped' ? 'warn' : 'info', text };
   }
   const n = (k, list) => `${k} ${list.length} host${list.length === 1 ? '' : 's'}`;
   const deny = p.deny.filter((h) => h !== '.invalid');
@@ -194,9 +248,9 @@ export function egressNotice(result) {
   if (p.invalidMode) parts.push(`WORCA_EGRESS_MODE=${JSON.stringify(p.invalidMode)} is not open, block or allow, so allow applies`);
   if (result.status === 'inherited') parts.push('enforced by the parent worca\'s proxy');
   else parts.push(`enforced through the proxy at ${result.url} for every child process`);
-  if (up) parts.push(`then forwarded to the corporate proxy ${up.upstream} (${AUTH_LABELS[up.auth]})`, ...warnings);
-  if (result.upstreamError) parts.push(`corporate proxy: ${result.upstreamError}; it is not used`);
+  if (up) parts.push(`then forwarded to the corporate proxy ${up.upstream} (${AUTH_LABELS[up.auth]})`, ...(up.state === 'tripped' ? ['proxy needs login: run `worca proxy login`'] : []), ...warnings);
+  if (result.upstreamError) parts.push(`Corporate proxy: ${result.upstreamError}; it is not used`);
   if (result.replacedProxy) parts.push('the HTTP(S)_PROXY that was set is replaced');
-  const warn = p.invalidMode || result.replacedProxy || warnings.length || result.upstreamError;
+  const warn = p.invalidMode || result.replacedProxy || warnings.length || result.upstreamError || up?.state === 'tripped';
   return { level: warn ? 'warn' : 'info', text: parts.join('; ') };
 }

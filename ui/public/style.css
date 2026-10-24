@@ -10373,6 +10373,11 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 @media (max-width:480px){.sn-branch-row{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){.sn-adorn.sn-loading .input{animation:none}}
 
+/* Settings › Network proxy (corporateProxy flag): a new surface, so placeholders use --ink-2. */
+#network-proxy-settings-card .input::placeholder{color:var(--ink-2);}
+#network-proxy-settings-card .np-results{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:var(--fs-meta);}
+#network-proxy-settings-card .np-results li[data-ok="false"]{color:var(--red-ink);}
+
 
 /* One border level per card (review B2): inside a chat card the nested boxes drop their border and take a tint. It stays LAST in the file: at (0,2,0) it only beats earlier rules of the same weight, and a
    later state rule resetting the border shorthand would draw the box again. Outside cards the base rules keep theirs. */

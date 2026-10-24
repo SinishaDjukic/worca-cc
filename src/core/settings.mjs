@@ -2749,3 +2749,66 @@ export function effectiveNetworkWait(env = process.env) {
   const maxWaitMs = raw != null && raw !== '' && Number.isFinite(n) && n >= 0 ? n : s.maxWaitMin * 60_000;
   return { enabled, maxWaitMs };
 }
+
+// Settings › Network proxy (corporateProxy flag; read at boot by egress-policy.mjs).
+// The same list as upstream-proxy.mjs AUTH_MODES: this module imports nothing from the core graph (test pins it).
+export const NETWORK_PROXY_AUTH = Object.freeze(['auto', 'none', 'basic', 'ntlm']);
+const NETWORK_PROXY_TIMEOUTS = ['connectMs', 'authMs', 'idleMs'];
+const isProxyMs = (v) => Number.isInteger(v) && v >= 500 && v <= 3_600_000;
+
+export function networkProxySettings() {
+  const v = readSettings().networkProxy;
+  return v && typeof v === 'object' && !Array.isArray(v) ? { ...v } : {};
+}
+
+/** "host:port" or "http://host:port" -> "http://host:port"; throws on userinfo or another scheme. */
+function normalizeProxyUpstream(raw) {
+  const s = String(raw).trim();
+  let u;
+  try { u = new URL(s.includes('://') ? s : `http://${s}`); } catch { throw new Error('networkProxy.upstream is not a valid host:port'); }
+  if (u.protocol !== 'http:') throw new Error('networkProxy.upstream must be an http:// proxy');
+  if (u.username || u.password) throw new Error('networkProxy.upstream must not carry a user name or password (a password never goes into settings.json; use Log in)');
+  if (!u.hostname) throw new Error('networkProxy.upstream has no host');
+  return `http://${u.host}`;
+}
+
+export function assertNetworkProxyInput(patch) {
+  if (patch === null || patch === '') return;
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('networkProxy must be an object');
+  for (const k of Object.keys(patch)) if (!['upstream', 'auth', 'noProxy', 'timeouts'].includes(k)) throw new Error(`unknown networkProxy setting: ${k}`);
+  if (patch.upstream != null && patch.upstream !== '') normalizeProxyUpstream(patch.upstream);
+  if (patch.auth != null && !NETWORK_PROXY_AUTH.includes(patch.auth)) throw new Error(`networkProxy.auth must be one of ${NETWORK_PROXY_AUTH.join(', ')}`);
+  if (patch.noProxy != null) {
+    const ok = typeof patch.noProxy === 'string' ? patch.noProxy.length <= 4096
+      : Array.isArray(patch.noProxy) && patch.noProxy.length <= 200 && patch.noProxy.every((e) => typeof e === 'string' && e.length <= 253);
+    if (!ok) throw new Error('networkProxy.noProxy must be a comma-separated list of hosts');
+  }
+  if (patch.timeouts != null) {
+    if (typeof patch.timeouts !== 'object' || Array.isArray(patch.timeouts)) throw new Error('networkProxy.timeouts must be an object');
+    for (const [k, v] of Object.entries(patch.timeouts)) {
+      if (!NETWORK_PROXY_TIMEOUTS.includes(k)) throw new Error(`unknown networkProxy timeout: ${k}`);
+      if (v !== null && !isProxyMs(v)) throw new Error(`networkProxy.timeouts.${k} must be 500 to 3600000 ms`);
+    }
+  }
+}
+
+export async function setNetworkProxy(patch) {
+  assertNetworkProxyInput(patch);
+  const settings = readSettings();
+  if (patch === null || patch === '') delete settings.networkProxy;
+  else {
+    const next = { ...networkProxySettings() };
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === null || v === '') delete next[k];
+      else if (k === 'upstream') next.upstream = normalizeProxyUpstream(v);
+      else if (k === 'timeouts') {
+        const t = { ...(next.timeouts || {}) };
+        for (const [tk, tv] of Object.entries(v)) { if (tv === null) delete t[tk]; else t[tk] = tv; }
+        if (Object.keys(t).length) next.timeouts = t; else delete next.timeouts;
+      } else next[k] = v;
+    }
+    if (Object.keys(next).length) settings.networkProxy = next; else delete settings.networkProxy;
+  }
+  await persistSettings(settings);
+  return networkProxySettings();
+}
