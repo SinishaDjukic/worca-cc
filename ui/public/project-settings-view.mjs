@@ -10,7 +10,11 @@ const typesOf = (text) => String(text).toLowerCase().split(/[\s,]+/).filter(Bool
 export const PROJECT_CARDS = Object.freeze([
   { key: 'cost', title: 'Cost', fields: [{ id: 'pipelineCostLimitUsd', label: 'Per-pipeline cap (USD)', kind: 'number', min: .01, step: .01, format: usd }, { id: 'humanRateUsdPerHour', label: 'Developer rate (USD/h)', kind: 'number', min: .01, step: .01, format: usd }] },
   { key: 'ask', title: 'Chat', fields: [{ id: 'askMaxTurns', label: 'Turn limit', kind: 'number', min: 1, step: 1 }, { id: 'askMaxBudgetUsd', label: 'Per-turn cost cap (USD)', kind: 'number', min: .1, step: .1, format: usd }] },
-  { key: 'context', title: 'Context and memory', fields: [{ id: 'contextMaxBytesPerFile', label: 'Run context: bytes per file', kind: 'number', min: 1 }, { id: 'contextMaxBytesTotal', label: 'Run context: bytes in total', kind: 'number', min: 1 }, { id: 'skillMount', label: 'Skill delivery', kind: 'select', options: [{ value: 'copy', label: 'Copy' }, { value: 'symlink', label: 'Symlink' }] }] },
+  { key: 'context', title: 'Context and memory', fields: [{ id: 'contextMaxBytesPerFile', label: 'Run context: bytes per file', kind: 'number', min: 1 }, { id: 'contextMaxBytesTotal', label: 'Run context: bytes in total', kind: 'number', min: 1 }, { id: 'skillMount', label: 'Skill delivery', kind: 'select', options: [{ value: 'copy', label: 'Copy' }, { value: 'symlink', label: 'Symlink' }] },
+    { id: 'memory.team', label: 'Team memory', kind: 'select', options: [{ value: 'on', label: 'On' }],
+      // Project layer only (no user layer): inherit = off. Off is stored as null, like the CLI and the Team view do.
+      fromValue: (v) => (v === true ? 'on' : ''), toValue: (v) => (v === 'on' ? true : null), format: (v) => (v === true ? 'On' : 'Off'),
+      hint: 'Shares this project\'s notes with the team on its worca-memory branch, after a secret check (needs an origin remote). Notes that exist stay on this machine until you share them from the Memory tab\'s Team view. Switching it off drops changes still waiting to be pushed from this machine.' }] },
   { key: 'pr', title: 'Pull requests', fields: [{ id: 'watchNewPrs', label: 'Watch new pull requests', kind: 'select',
     options: [{ value: 'on', label: 'On' }, { value: 'off', label: 'Off' }],
     toValue: (value) => value === 'on', fromValue: (value) => (value ? 'on' : 'off'), format: (value) => (value ? 'On' : 'Off'),

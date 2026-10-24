@@ -8,17 +8,22 @@ import { readFile, writeFile, readdir, mkdir, rm, rename, cp, realpath } from 'n
 import { join, resolve, relative, isAbsolute, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { worcaHome } from './projects.mjs';
+import { teamMemoryEnabled } from './settings.mjs';
 import { isValidSkillName } from './skills.mjs';
 import { parseFrontmatter, stripFrontmatter } from './frontmatter.mjs';
 
 export const MEMORY_DIR = 'memory';
 export const HOOK_MAX_CHARS = 160;
 export const SNAPSHOT_KEEP = 20;
+/** Team memory's tracked-copy marker, a frontmatter extra `team: <contentHash>` (memory-team.mjs). Defined here so the
+ *  run sync (memory-sync.mjs) can leave it out of what it compares without importing the team layer (a cycle). */
+export const TEAM_MARKER_KEY = 'team';
 export const GLOBAL_SCOPE = Object.freeze({ kind: 'global' });
 
 /** Every refusal this module raises: ENAME (unusable name), ECASE (case twin), ETOOBIG (over
  *  the hard cap), EFULL (the scope holds caps.maxFilesPerScope files and this is a new one),
- *  ENOSCOPE (no such snapshot), EESCAPE (the scope dir resolves outside the store root).
+ *  ENOSCOPE (no such snapshot), EESCAPE (the scope dir resolves outside the store root), ESTALE (an `expectHash`
+ *  write or removal found the file changed since the caller read it).
  *  Callers branch on `code`; syncBack turns them into per-file rejections instead of aborting. */
 export class MemoryError extends Error {
   constructor(code, message) { super(message); this.name = 'MemoryError'; this.code = code; }
@@ -179,8 +184,10 @@ function assertName(name) {
 }
 
 // ── listing / reading ────────────────────────────────────────────────────────
-/** @param {string} dir any directory holding <name>.md files (a store scope dir OR a run-mount dir) */
-export async function listMemoryDir(dir, { onError } = {}) {
+/** @param {string} dir any directory holding <name>.md files (a store scope dir OR a run-mount dir)
+ *  @param {{onError?: Function, hashOf?: (text: string) => string}} [o] `hashOf`: the `hash` each entry carries (hashText
+ *  by default; a run's sync passes memory-sync.mjs syncHash) */
+export async function listMemoryDir(dir, { onError, hashOf = hashText } = {}) {
   const out = [];
   for (const e of await readdirMaybe(dir, onError)) {
     if (!e.isFile() || !e.name.endsWith('.md')) continue;
@@ -193,7 +200,7 @@ export async function listMemoryDir(dir, { onError } = {}) {
     out.push({
       // §2: a broken/missing fence is still SERVED — the hook falls back to the first non-empty body line.
       name, description: meta.description || deriveHook(body), paths: meta.paths, source: meta.source, updated: meta.updated,
-      bytes: bytesOf(text), hasFrontmatter, hash: hashText(text),
+      bytes: bytesOf(text), hasFrontmatter, hash: hashOf(text),
     });
   }
   return out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -297,18 +304,27 @@ async function assertNoCaseTwin(dir, name) {
  * `snapshot`: `true` (snapshot this scope now), `false` (the caller took one) or an async
  * function called at the snapshot point — syncBack passes a once-per-scope closure so a
  * sync of N files takes ONE snapshot of the pre-sync scope, not N.
+ * `expectHash` (hashText of the file as the caller read it) makes it a compare-and-swap, checked after the snapshot,
+ * right before the write: a file changed since (another process's edit) is left alone — ESTALE.
  */
-export async function writeMemory(root, scope, name, text, { source, now, caps, onError, snapshot = true } = {}) {
+export async function writeMemory(root, scope, name, text, { source, now, caps, onError, snapshot = true, expectHash = null } = {}) {
   assertName(name);
   const dir = await writableScopeDir(root, scope);
   const existing = await assertNoCaseTwin(dir, name);
   const when = now || new Date().toISOString();
-  const repaired = repairMemoryFile(String(text ?? ''), { name, source: source || 'user', now: when, hookMaxChars: caps?.hookMaxChars });
+  const target = join(dir, `${name}.md`);
+  const before = await readTextMaybe(target, onError);
+  // A hook already longer than the cap (a teammate's, kept by a team-memory follow) is never clipped by a write that
+  // leaves it as it is: a Save without an edit stays no change, and never truncates that hook for the whole team. Only on
+  // an opted-in project (D1): everywhere else every write clips, as before team memory.
+  const keepAllowed = scope?.kind === 'project' && teamMemoryEnabled({ projectKey: scope.projectKey });
+  const keptHook = before === null || !keepAllowed ? '' : flattenLine(parseMemoryFile(before).meta.description).trim();
+  const hookMaxChars = keptHook && flattenLine(parseMemoryFile(String(text ?? '')).meta.description).trim() === keptHook
+    ? Math.max(caps?.hookMaxChars ?? HOOK_MAX_CHARS, keptHook.length) : caps?.hookMaxChars;
+  const repaired = repairMemoryFile(String(text ?? ''), { name, source: source || 'user', now: when, hookMaxChars });
   const bytes = bytesOf(repaired.text);
   const hard = caps?.hardBytesPerFile;
   if (hard && bytes > hard) throw new MemoryError('ETOOBIG', `memory: "${name}" is ${bytes} bytes, over the ${hard}-byte cap`);
-  const target = join(dir, `${name}.md`);
-  const before = await readTextMaybe(target, onError);
   // A NEW file past the per-scope cap is refused before the snapshot (spec §2 caps; P2 amendment
   // B12). syncBack pre-checks the same count and its reason text is identical minus the prefix.
   if (before === null && caps?.maxFilesPerScope && existing >= caps.maxFilesPerScope) {
@@ -316,12 +332,20 @@ export async function writeMemory(root, scope, name, text, { source, now, caps, 
   }
   if (typeof snapshot === 'function') await snapshot();
   else if (snapshot !== false) await snapshotScope(root, scope, { source, now: when });
+  await assertUnchanged(target, name, expectHash);
   await writeAtomic(target, repaired.text);
   const st = await readScopeState(root, scope);
   await bumpScopeState(root, scope, { writesSinceDefrag: st.writesSinceDefrag + 1, lastWriteAt: when });
-  return { created: before === null, bytes, meta: repaired.meta, changed: before !== repaired.text };
+  return { created: before === null, bytes, meta: repaired.meta, changed: before !== repaired.text, text: repaired.text };
 }
-export async function removeMemory(root, scope, name, { source, now, snapshot = true } = {}) {
+/** `expectHash` (writeMemory, removeMemory): the file must still be what the caller read — else ESTALE. */
+async function assertUnchanged(target, name, expectHash) {
+  if (expectHash == null) return;
+  const cur = await readTextMaybe(target);
+  if (cur === null || hashText(cur) !== expectHash) throw new MemoryError('ESTALE', `memory: "${name}" changed since it was read`);
+}
+/** Remove one memory file (snapshot first). `expectHash`: a compare-and-swap, as writeMemory's. */
+export async function removeMemory(root, scope, name, { source, now, snapshot = true, expectHash = null } = {}) {
   assertName(name);
   // Exact-cased existence: on macOS/Windows `readTextMaybe` would happily open testing.md through
   // "Testing" and the rm below would delete a file the caller never named. readdir is the truth.
@@ -332,6 +356,7 @@ export async function removeMemory(root, scope, name, { source, now, snapshot = 
   const when = now || new Date().toISOString();
   if (typeof snapshot === 'function') await snapshot();
   else if (snapshot !== false) await snapshotScope(root, scope, { source, now: when });
+  await assertUnchanged(target, name, expectHash);
   await rm(target, { force: true });
   const st = await readScopeState(root, scope);
   await bumpScopeState(root, scope, { writesSinceDefrag: st.writesSinceDefrag + 1, lastWriteAt: when });
@@ -380,8 +405,47 @@ export const MEMORY_BLOCK_INTRO_READ = MEMORY_BLOCK_INTRO.replace(
   'matching file). ',
 ).replace('is Claude Code\'s own and a write there is refused as a sensitive path, so never write there', 'is a read-only copy, so never write there');
 
-export function renderMemoryBlock(sections, { engine = 'claude' } = {}) {
-  const lines = [MEMORY_BLOCK_HEADING, engine && engine !== 'claude' ? MEMORY_BLOCK_INTRO_READ : MEMORY_BLOCK_INTRO];
+/**
+ * Set (or, value null, drop) ONE extra frontmatter key of an existing note — team memory's tracked-copy marker. Not a
+ * WRITE in this store's sense: no repair (source/updated keep their values), no snapshot, no counter bump.
+ * `expectHash` (hashText of the file as the caller read it) makes it a compare-and-swap: a file changed since is
+ * left alone. A fence-less file is repaired by its next real write, never here.
+ * @returns {Promise<boolean>} whether the file was rewritten
+ */
+export async function setMemoryExtra(root, scope, name, key, value, { expectHash = null } = {}) {
+  assertName(name);
+  if (!EXTRA_KEY_RE.test(key) || KNOWN_KEYS.includes(key)) throw new MemoryError('ENAME', `memory: invalid extra key ${JSON.stringify(key)}`);
+  const dir = await writableScopeDir(root, scope);
+  const target = join(dir, `${name}.md`);
+  const text = await readTextMaybe(target);
+  if (text === null || (expectHash && hashText(text) !== expectHash)) return false;
+  const { meta, body, hasFrontmatter } = parseMemoryFile(text);
+  if (!hasFrontmatter) return false;
+  const extra = { ...meta.extra };
+  if (value === null || value === undefined) {
+    if (!Object.hasOwn(extra, key)) return false;
+    delete extra[key];
+  } else {
+    if (extra[key] === String(value)) return false;
+    extra[key] = String(value);
+  }
+  await writeAtomic(target, renderMemoryFile({ ...meta, name, extra }, body));
+  return true;
+}
+
+/** The sentence the ONE intro line gains when a run mounts teammates' notes (team memory, phase 1a). */
+export function memoryBlockTeamSentence(teamDir, { engine = 'claude' } = {}) {
+  const where = engine && engine !== 'claude'
+    ? `are under ${teamDir} — read the ones whose \`description\` fits your task too`
+    // The intro's own exception: the built-in Explore and Plan sub-agents load no rules and read only the dirs below.
+    : `also load as rules, from ${teamDir} (an Explore or Plan sub-agent reads them there)`;
+  return ` Teammates' shared notes (team memory) ${where}; they have no writable copy: to change one, write a file with ` +
+    'the same name into the matching Project directory below — it then replaces the team version for everyone.';
+}
+
+export function renderMemoryBlock(sections, { engine = 'claude', teamDir = null } = {}) {
+  const intro = engine && engine !== 'claude' ? MEMORY_BLOCK_INTRO_READ : MEMORY_BLOCK_INTRO;
+  const lines = [MEMORY_BLOCK_HEADING, teamDir ? `${intro}${memoryBlockTeamSentence(flattenLine(teamDir), { engine })}` : intro];
   for (const s of sections || []) lines.push(`${flattenLine(s.label)} — ${s.dir}:`);
   return `${lines.join('\n')}\n`;
 }

@@ -316,6 +316,7 @@ export function createTurnReducer({
   onCommentMutation = null,
   onWorktreeMutation = null,
   onMemoryMutation = null,
+  onMemoryRead = null,           // read_memory RESULT → { scope, projectKey, name, layer } (memory usage counts; never the body)
   onScriptMutation = null,        // save_script RESULT { ok: true, key, created } → { key, action }
   onComposerResult = null,     // Workflows chat: edit_canvas / build_workflow / draft_* RESULT → a composer card (turn.mjs)
   estimateLiveCost = null,
@@ -624,8 +625,20 @@ export function createTurnReducer({
     try {
       const parsed = JSON.parse(text);
       const scope = typeof parsed?.scopeKey === 'string' ? parsed.scopeKey : null;
-      if (scope) onMemoryMutation({ scope, tool: short(name) });
+      // The note's name rides the same result (team memory 1a queues it); the server sink re-validates both.
+      const note = typeof parsed?.name === 'string' ? parsed.name : null;
+      if (scope) onMemoryMutation({ scope, tool: short(name), ...(note ? { name: note } : {}) });
     } catch { /* unparseable result — no poke; the next open refetches anyway */ }
+  }
+
+  // And for memory usage (memory-usage.mjs): a successful read_memory is a `read` of that note. Only the note's address
+  // leaves the result — never its description or body.
+  function pokeMemoryRead(name, text, isError) {
+    if (isError || name !== 'mcp__worca__read_memory' || typeof onMemoryRead !== 'function') return;
+    try {
+      const p = JSON.parse(text);
+      if (p && typeof p.name === 'string') onMemoryRead({ scope: p.scope, projectKey: p.projectKey ?? null, name: p.name, layer: p.layer ?? null });
+    } catch { /* unparseable result — nothing counted */ }
   }
 
   // And for scripts: save_script REFUSES by returning { ok: false, errors } with no is_error
@@ -661,6 +674,7 @@ export function createTurnReducer({
         pokeCommentWrite(ct.name, text, c.is_error);
         pokeWorktreeMutation(ct.name, ct.input, c.is_error);
         pokeMemoryWrite(ct.name, text, c.is_error);
+        pokeMemoryRead(ct.name, text, c.is_error);
         pokeScriptWrite(ct.name, text, c.is_error);
         pokeScheduleWrite(ct.name, c.is_error);
         if (CHAT_ACTION_TOOLS.has(ct.name) && !c.is_error && typeof onChatAction === 'function') {
@@ -832,6 +846,7 @@ export function createTurnReducer({
       pokeCommentWrite(b.name, text, c.is_error);
       pokeWorktreeMutation(b.name, fullInputs.get(b.id), c.is_error);
       pokeMemoryWrite(b.name, text, c.is_error);
+      pokeMemoryRead(b.name, text, c.is_error);
       pokeScriptWrite(b.name, text, c.is_error);
       pokeScheduleWrite(b.name, c.is_error);
     }

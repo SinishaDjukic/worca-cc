@@ -320,18 +320,51 @@ test('corrupted worktree is removed and recreated on flush', { skip }, async () 
   assert.equal(res.ok, true, JSON.stringify(res));
 });
 
+// Characterization (team memory 1a, Step 2a): the flush-loop paths the commitToTeamBranch extraction moves and no
+// other test reaches — the clean-tree verify, a failing reset, and the in-loop branch-missing refresh (below).
+test('a record already on the branch (an earlier push whose outbox cleanup failed) is verified and cleared: pushed 0, no commit', { skip }, async () => {
+  await writeOutbox('billing-api', rec('runV0001', '2026-11-03T10:00:00Z'));
+  assert.equal((await flushSlug('billing-api', { sleep: async () => {} })).pushed, 1);
+  const tip = git(billingBare, 'rev-parse', 'worca-metrics');
+  await writeOutbox('billing-api', rec('runV0001', '2026-11-03T10:00:00Z'));   // the same record file again
+  const res = await flushSlug('billing-api', { sleep: async () => {} });
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.equal(res.pushed, 0);
+  assert.equal(git(billingBare, 'rev-parse', 'worca-metrics'), tip, 'nothing committed');
+  assert.deepEqual(await listOutbox('billing-api'), []);
+});
+
+test('a failing reset removes the worktree and reports WORKTREE_FAILED; the next flush recreates it and lands the record', { skip }, async () => {
+  await writeOutbox('billing-api', rec('runX0001', '2026-11-04T10:00:00Z'));
+  let failed = 0;
+  _testing.setGit(async (cwd, args, opts) => (args[0] === 'reset' && !failed++
+    ? { ok: false, code: 128, stdout: '', stderr: 'fatal: simulated reset failure' } : _testing.defaultGit(cwd, args, opts)));
+  const res = await flushSlug('billing-api', { sleep: async () => {} });
+  assert.equal(res.code, 'WORKTREE_FAILED');
+  assert.match(res.stderr, /simulated reset failure/);
+  assert.equal(existsSync(worktreePath('billing-api')), false, 'removed: recreated on the next trigger');
+  assert.deepEqual(await listOutbox('billing-api'), ['20261104T100000Z-runX0001.jsonl']);
+  _testing.reset();
+  const again = await flushSlug('billing-api', { sleep: async () => {} });
+  assert.equal(again.ok, true, JSON.stringify(again));
+  assert.equal(again.pushed, 1);
+});
+
 test('remote branch deleted → enabled=false; outbox kept for 30 days from the deletion, then dropped', { skip }, async () => {
   await writeOutbox('billing-api', rec('runOld001', '2026-07-01T10:00:00Z'));
   const old = join(outboxDir('billing-api'), '20260701T100000Z-runOld001.jsonl');
   const past = (Date.now() - 40 * 86_400_000) / 1000;
   utimesSync(old, past, past);                                  // written 40 days ago, before the deletion
   git(billingA, 'push', '-q', 'origin', '--delete', 'worca-metrics');
-  const prefs = await discoverProject(billingA, { force: true });
-  assert.equal(prefs.enabled, false); assert.ok(prefs.disabledAt);
-
+  // The cached verdict still says enabled: the flush's own fetch finds the branch gone and refreshes it (the in-loop path).
   let res = await flushSlug('billing-api');
   assert.equal(res.code, 'BRANCH_MISSING');
+  const prefs = readTeamMetricsPrefs(projectKey(billingA));
+  assert.equal(prefs.enabled, false); assert.ok(prefs.disabledAt);
   assert.deepEqual(await listOutbox('billing-api'), ['20260701T100000Z-runOld001.jsonl'], 'deleted just now: retained, however old the file');
+
+  res = await flushSlug('billing-api');
+  assert.equal(res.code, 'BRANCH_MISSING');
 
   writeTeamMetricsPrefs(projectKey(billingA), { disabledAt: new Date(Date.now() - 31 * 86_400_000).toISOString() });
   await writeOutbox('billing-api', rec('runNew001', '2026-09-20T10:00:00Z'));   // written after the deletion: own 30 days

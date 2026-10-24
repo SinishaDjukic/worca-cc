@@ -464,3 +464,71 @@ test('mountMemory writes the .gitignore sentinel FIRST: a mount that dies half w
   assert.equal(existsSync(join(mount, 'global', 'testing.md')), true, 'files landed before the failure');
   assert.equal(await readFile(join(mount, '.gitignore'), 'utf8'), '*\n', 'the sentinel is already there: git never sees a half mount');
 });
+
+test('a hook already longer than the cap (a teammate\'s, kept by a team follow) is never clipped by a write that leaves it as it is; syncBack\'s baseline is the store\'s bytes', async (t) => {
+  const root = await tmp('worca-mem-root-');
+  const mount = join(await tmp(), 'memory');
+  const scope = projectScope('beta-2222bbbb');
+  // The kept-hook rule is an opted-in project's only (D1: off is the behaviour before team memory — the next test).
+  const { writeProjectSettings } = await import('../src/core/settings-cascade.mjs');
+  writeProjectSettings({ projectKey: 'beta-2222bbbb' }, { 'memory.team': true });
+  t.after(() => writeProjectSettings({ projectKey: 'beta-2222bbbb' }, { 'memory.team': null }));
+  const hook = `Read first: ${'a long teammate hook, '.repeat(10)}end.`;
+  assert.ok(hook.length > CAPS.hookMaxChars);
+  await writeMemory(root, scope, 'conv', `---\nname: conv\ndescription: ${hook}\n---\nBody.\n`, { source: 'team', now: NOW, caps: { ...CAPS, hookMaxChars: 300 } });
+  await writeMemory(root, scope, 'conv', (await readMemory(root, scope, 'conv')).text, { source: 'user', now: NOW, caps: CAPS });   // a Save without an edit
+  assert.equal((await readMemory(root, scope, 'conv')).meta.description, hook, 'kept whole');
+  const d = mountDirs({ members: [MEMBERS[0]], isWorkspace: false });
+  const m = await mountMemory({ root, mount, dirs: d });
+  const p = join(mount, 'project', 'conv.md');
+  await writeFile(p, (await readFile(p, 'utf8')).replace('Body.', 'Body, edited by the run.'));   // the agent keeps the hook
+  const warns = [];
+  const sync = (baseline) => syncBack({ root, mount, dirs: d, baseline, source: 'run:p1', now: '2026-09-09T11:00:00.000Z', caps: CAPS, onWarn: (w) => warns.push(w) });
+  const r1 = await sync(m.baseline);
+  assert.deepEqual(refs(r1.modified), ['project/conv']);
+  assert.equal((await readMemory(root, scope, 'conv')).meta.description, hook);
+  assert.equal(r1.baseline[baselineKey('project', 'conv')], hashText((await readMemory(root, scope, 'conv')).text), 'the baseline is what the store holds');
+  await rm(p);                                                                     // the run then deletes it
+  assert.deepEqual(refs((await sync(r1.baseline)).deleted), ['project/conv'], 'the store copy is the one it synced: the deletion goes through');
+  assert.deepEqual(warns, []);
+});
+
+test('off (D1): a write that leaves an over-cap hook as it is still clips it, as before team memory — the store and a sync-back alike', async () => {
+  const root = await tmp('worca-mem-root-');
+  const mount = join(await tmp(), 'memory');
+  const scope = projectScope('beta-2222bbbb');                       // never opted in
+  const hook = `Read first: ${'a long hand-edited hook, '.repeat(10)}end.`;
+  await writeMemory(root, scope, 'conv', `---\nname: conv\ndescription: ${hook}\n---\nBody.\n`, { source: 'user', now: NOW, caps: { ...CAPS, hookMaxChars: 300 } });
+  const d = mountDirs({ members: [MEMBERS[0]], isWorkspace: false });
+  const m = await mountMemory({ root, mount, dirs: d });
+  const p = join(mount, 'project', 'conv.md');
+  await writeFile(p, (await readFile(p, 'utf8')).replace('Body.', 'Body, edited by the run.'));
+  await syncBack({ root, mount, dirs: d, baseline: m.baseline, source: 'run:p1', now: '2026-09-09T11:00:00.000Z', caps: CAPS });
+  assert.equal((await readMemory(root, scope, 'conv')).meta.description.length, CAPS.hookMaxChars, 'clipped, as at HEAD');
+  await writeMemory(root, scope, 'conv', (await readMemory(root, scope, 'conv')).text, { source: 'user', now: NOW, caps: { ...CAPS, hookMaxChars: 100 } });
+  assert.equal((await readMemory(root, scope, 'conv')).meta.description.length, 100, 'a lowered cap applies on the next write');
+});
+
+import { syncHash } from '../src/core/memory-sync.mjs';
+import { setMemoryExtra } from '../src/core/memory-store.mjs';
+
+test('team memory\'s `team:` line is no change to a run\'s sync (worca writes it after a push): the run\'s later deletion of the note mirrors, its later edit lands without a warning; a note without the line hashes as its bytes', async () => {
+  const root = await tmp('worca-mem-root-');
+  const mount = join(await tmp(), 'memory');
+  const scope = projectScope('beta-2222bbbb');
+  for (const name of ['shared', 'edited']) await writeMemory(root, scope, name, `---\nname: ${name}\ndescription: About ${name}\n---\nBody.\n`, { source: 'user', now: NOW, caps: CAPS });
+  const d = mountDirs({ members: [MEMBERS[0]], isWorkspace: false });
+  const m = await mountMemory({ root, mount, dirs: d });
+  for (const name of ['shared', 'edited']) assert.equal(await setMemoryExtra(root, scope, name, 'team', 'a'.repeat(40)), true);   // a push lands under the run
+  await writeFile(join(mount, 'project', 'shared.md'), '');                                                    // the run deletes one (B19)…
+  const p = join(mount, 'project', 'edited.md');
+  await writeFile(p, (await readFile(p, 'utf8')).replace('Body.', 'Body, edited by the run.'));                // …and edits the other
+  const warns = [];
+  const r = await syncBack({ root, mount, dirs: d, baseline: m.baseline, source: 'run:p1', now: '2026-09-09T11:00:00.000Z', caps: CAPS, onWarn: (w) => warns.push(w) });
+  assert.deepEqual([refs(r.deleted), refs(r.modified)], [['project/shared'], ['project/edited']], 'the deletion mirrors: the store copy is the one the run synced');
+  assert.deepEqual(warns, [], 'no "changed in the store since this run mounted it"');
+  const plain = '---\nname: a\ndescription: d\n---\nB.\n';
+  assert.equal(syncHash(plain), hashText(plain), 'without the line: the bytes, exactly as before team memory');
+  assert.equal(syncHash(plain.replace('description: d\n', `description: d\nteam: ${'b'.repeat(40)}\n`)), hashText(plain));
+  assert.notEqual(syncHash(plain.replace('description: d\n', 'description: d\nteam: payments\n')), hashText(plain), 'a user\'s own `team:` key is content');
+});
