@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { judgeSelfTest, startStubEndpoint, chatSelfTest, resetChatSelfTests, configFingerprint, SELF_TEST_MODEL } from '../src/core/engines/chat-selftest.mjs';
+import { judgeSelfTest, startStubEndpoint, chatSelfTest, resetChatSelfTests, configFingerprint, SELF_TEST_MODEL, PROBE_COPY } from '../src/core/engines/chat-selftest.mjs';
 import { PROBE_TOOLS, PROBE_ANSWER } from '../src/core/engines/chat-probe-mcp.mjs';
 
 useTempHome(after);
@@ -17,6 +17,8 @@ after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true });
 
 const wire = (s, t) => `mcp__${s}__${t}`;
 const ALL = PROBE_TOOLS.map((t) => wire('worca', t));
+// What a chat's lockdown offers in the self-test: worca's stand-in and the registry copy's, both allowed by name.
+const BOTH = [...ALL, ...PROBE_TOOLS.map((t) => wire(PROBE_COPY, t))];
 
 test('the verdict: only worca\'s tools, its clashing names kept, no shell, the probe answered', () => {
   const base = { allowed: ALL, expected: ALL, canaryRan: false, probeCalled: true, label: 'Qwen Code' };
@@ -61,9 +63,9 @@ test('the endpoint (Gemini): function declarations and built-in tools recorded; 
 });
 
 /** The probe MCP server's answer to one call, through its stdio. */
-function callProbe(cfg, name) {
+function callProbe(cfg, name, server = 'worca') {
   return new Promise((resolve, reject) => {
-    const srv = cfg.mcpServers.worca;
+    const srv = cfg.mcpServers[server];
     const child = spawn(srv.command, srv.args, { env: { ...process.env, ...srv.env }, stdio: ['pipe', 'pipe', 'inherit'] });
     let buf = '';
     const out = [];
@@ -83,7 +85,7 @@ function callProbe(cfg, name) {
  * A stand-in for an engine run: asks the endpoint (as the CLI would, with the probe env), offers `offer` tools, and
  * carries out what the scripted model asks — a shell command when `obeys` names it, worca's probe through its MCP server.
  */
-const fakeEngine = ({ offer = ALL, obeys = [] } = {}) => {
+const fakeEngine = ({ offer = BOTH, obeys = [] } = {}) => {
   const runs = [];
   const run = async (o) => {
     runs.push(o);
@@ -95,8 +97,9 @@ const fakeEngine = ({ offer = ALL, obeys = [] } = {}) => {
       const r = JSON.parse(await post(base, { messages: [], tools: offer.map((name) => ({ type: 'function', function: { name } })) }, '/chat/completions'));
       const call = r.choices[0].message.tool_calls?.[0]?.function;
       if (!call) return { text: 'done', exitCode: 0 };
-      if (call.name === 'mcp__worca__worca_probe') {
-        const answers = await callProbe(cfg, 'worca_probe');
+      const probed = [['worca', 'mcp__worca__worca_probe'], [PROBE_COPY, wire(PROBE_COPY, 'worca_probe')]].find(([, n]) => n === call.name);
+      if (probed) {
+        const answers = await callProbe(cfg, 'worca_probe', probed[0]);
         assert.deepEqual(answers[1].result.tools.map((t) => t.name), [...PROBE_TOOLS]);
         assert.ok(answers[2].result.content[0].text.startsWith(PROBE_ANSWER));
       } else if (obeys.includes(call.name)) {
@@ -128,6 +131,12 @@ test('a locked-down engine passes, and the pass is kept per binary, version and 
   assert.deepEqual(await chatSelfTest(opts({ run: e.run, cacheFile, configFiles: [cfg], version: async () => '0.27.0' })), {});
   assert.equal(e.runs.length, 3, 'a changed user config runs it again');
   assert.notEqual(configFingerprint([cfg]), configFingerprint([join(tmp(), 'none')]));
+});
+
+test('an engine that leaves the registry copy out (a lockdown that allows worca\'s server only) is refused', async () => {
+  resetChatSelfTests();
+  const r = await chatSelfTest(opts({ run: fakeEngine({ offer: ALL }).run, cacheFile: join(tmp(), 'cache.json') }));
+  assert.match(r.refusal, /hid worca's own tools \(mcp__mcpcopy__worca_probe\)/);
 });
 
 test('an engine that offers a built-in or runs the shell is refused, and the failure is not kept', async () => {

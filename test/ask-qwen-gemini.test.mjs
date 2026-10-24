@@ -263,6 +263,29 @@ for (const E of ENGINES_UNDER_TEST) {
     }
   });
 
+  test(`a ${E.label} chat gets this turn's registry copies: in its MCP config, their secrets in the spawn env, its watchdog allows them and nothing else`, async () => {
+    const REG = { servers: { gh_work: { type: 'stdio', command: 'node', args: ['x.mjs'], env: { MCPCHILD_TOKEN: '${MCPSECRET_GH}' } } }, env: { MCPSECRET_GH: 'tok-123', MCP_TIMEOUT: '20000' },
+      secretValues: ['tok-123'], grants: ['mcp__gh_work'], disallowedTools: [], skipped: [], skippedTools: [], sets: [],
+      copies: [{ name: 'gh_work', copy: 'gh_work', setId: 'general', setName: 'General', serverId: 's', projects: [], description: 'gh' }] };
+    const o = buildAskSpawnOptions({ ...spawnBase(), engine: E.engine, registry: REG });
+    assert.deepEqual(o.spawnEnv, { MCPSECRET_GH: 'tok-123', MCP_TIMEOUT: '20000' });
+    assert.deepEqual(o.redactValues, ['tok-123']);
+    assert.ok(o.envAllowlist.includes('PATH'), "a stdio copy's launcher reads the keep-list from the engine's env");
+    const doc = buildMcpConfig({ homeBase: '/h', threadId: 'ask_00000001', serverPath: '/s.mjs', env: {}, engine: E.engine, extraServers: REG.servers });
+    assert.deepEqual(Object.keys(doc.mcpServers), ['worca', 'gh_work']);
+    for (const [name, ok] of [['mcp__gh_work__search', true], ['mcp__evil__list_projects', false]]) {
+      const s = seed();
+      const { turn, frames } = makeTurn(E, s, { mcp: REG }, { runClaudeImpl: async (oo) => {
+        reply(E, oo, { calls: [{ id: 't1', name, input: {} }] });
+        if (oo.signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
+        return { text: 'Answer', exitCode: 0 };
+      } });
+      await turn.run();
+      if (ok) assert.equal(frames.at(-1).type, 'ask-done', name);
+      else assert.match(frames.find((f) => f.type === 'ask-error').message, new RegExp(`${E.label} used mcp__evil__list_projects`));
+    }
+  });
+
   test(`a stored ${E.label} session the CLI no longer knows: one retry from history, no resume`, async () => {
     const s = seed();
     let n = 0;

@@ -2501,8 +2501,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.mcp.preview = st.mcp.failed ? null : data;
     const p = st.mcp.preview;
     // A failed preview leaves the chip as it was (the open picker says so): the user can reopen it to retry.
-    // §4.6: registry MCP servers are offered in Claude chats only; a Codex chat's preview carries its set skills alone
-    // (#635), so the picker shows there when a set has skills.
+    // Every chat starts the sets' MCP servers its engine can attach, and their skills.
     if (p) el.mcpBtn.hidden = !p.sets.some((x) => x.members > 0 || (x.skills || 0) > 0);
     el.mcpBtnLabel.textContent = p ? `Sets · ${p.started + ((p.skills && p.skills.started) || 0)}` : 'Sets · ?';
     if (st.mcp.render) st.mcp.render();
@@ -2650,8 +2649,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (!p.sets.length) panel.appendChild(make('div', 'ask-pop-empty', st.mcp.failed ? 'Could not load the sets. Reopen to retry.' : !st.mcp.preview ? 'Loading…' : 'No sets in play.'));
         // Skills registry §4.1: a host whose Claude Code refuses --plugin-dir mounts no skill — one muted line.
         if (sk.layer && sk.layer.blocked) panel.appendChild(make('div', 'ask-pop-empty', layerLine(sk)));
-        // §4.6 (#635): a Codex chat starts the sets' skills but none of their MCP servers — said, never just left out.
-        if (p.codexServers > 0) panel.appendChild(make('div', 'ask-pop-empty', 'MCP servers from sets are available in Claude chats'));
         panel.appendChild(make('div', 'ask-pop-divider'));
         panel.appendChild(mcpManageItem('Manage on the Connectors page', '#connectors'));
       }

@@ -130,3 +130,24 @@ test('askMcpJoinNotice (D17): names the copies a new worktree brings, per projec
   assert.equal(await askMcpJoinNotice({ ...args, before: wsBefore, ctx: { pinned: true, workspaceId: WS.id } }, deps([wt('shop-00000002')])), null,
     'a worktree on a member of the workspace in play joins nothing');
 });
+
+test('mcpForEngine: a locked-down chat keeps the copies its engine attaches; the rest are skipped with the reason', async () => {
+  const { mcpForEngine } = await import('../src/core/ask/mcp.mjs');
+  const { skipReasonText } = await import('../src/core/mcp/registry.mjs');
+  const r = {
+    servers: { local: { type: 'stdio', command: 'node', args: [] }, web: { type: 'http', url: 'https://x.example/mcp' } },
+    env: {}, secretValues: [], grants: ['mcp__local', 'mcp__web'], disallowedTools: ['mcp__web__a_very_long_tool'],
+    copies: [{ name: 'local', copy: 'local', setId: 'general', setName: 'General', serverId: 's1' }, { name: 'web', copy: 'web', setId: 'general', setName: 'General', serverId: 's2' }],
+    skipped: [], skippedTools: [{ name: 'web', tool: 'a_very_long_tool', reason: 'tool-name-too-long:a_very_long_tool' }], sets: [],
+  };
+  assert.equal(mcpForEngine(r, 'claude'), r, 'Claude attaches every copy');
+  assert.equal(mcpForEngine(r, 'gemini'), r, 'Gemini CLI attaches stdio and http servers');
+  const codex = mcpForEngine(r, 'codex');
+  assert.deepEqual(Object.keys(codex.servers), ['local']);
+  assert.deepEqual(codex.copies.map((c) => c.name), ['local']);
+  assert.deepEqual(codex.grants, ['mcp__local']);
+  assert.deepEqual(codex.disallowedTools, []);
+  assert.deepEqual(codex.skippedTools, []);
+  assert.deepEqual(codex.skipped, [{ setId: 'general', setName: 'General', serverId: 's2', copy: 'web', reason: 'engine-remote' }]);
+  assert.match(skipReasonText(codex.skipped[0], []), /attaches local \(stdio\) servers only/);
+});

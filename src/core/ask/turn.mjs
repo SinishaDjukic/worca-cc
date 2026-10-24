@@ -1235,10 +1235,12 @@ class AskTurn extends EventEmitter {
     if (e.type === 'subagent' && e.event === 'spawn') { this._trip('tool', 'a sub-agent'); return; }
     if (e.type === 'tool' && Array.isArray(e.calls)) {
       if (e.calls.some((c) => c && c.name === 'Bash')) { this._trip('shell'); return; }
-      // Any other tool that is not worca's (a native web search, a file edit, …) means the lockdown did not hold either;
-      // only the engine's own meta tools its chat descriptor names (plans/: Goose's load_skill) are kept.
+      // Any other tool that is not worca's or one of this turn's registry copies' (a native web search, a file edit, a
+      // server of the user's own, …) means the lockdown did not hold either; only the engine's own meta tools its chat
+      // descriptor names (plans/: Goose's load_skill) are kept.
       const meta = this.chat ? this.chat.metaTools : [];
-      const foreign = e.calls.find((c) => c && !String(c.name || '').startsWith('mcp__') && !meta.includes(String(c.name || '')));
+      const servers = ['worca', ...(this.mcp ? this.mcp.copies.map((c) => c.name) : [])];
+      const foreign = e.calls.find((c) => c && !servers.some((s) => String(c.name || '').startsWith(`mcp__${s}__`)) && !meta.includes(String(c.name || '')));
       if (foreign) { this._trip('tool', String(foreign.name || 'an unknown tool')); return; }
       if ((e.parentId ?? null) !== null) return;
       this._toolCalls += e.calls.length;

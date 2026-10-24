@@ -14633,13 +14633,11 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const web = askWebAccessFor(id, ctx);
     // MCP registry §9.1–9.3: General + the targets in play (the tagged dropdown fallback excluded), minus the chat's
     // picker choices — resolved ONCE per turn, so the per-turn file, the spawn and the prompt section agree.
-    const mcp = composerMode ? { result: null } : await resolveAskMcp({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff, model });
-    // D12: the chat's engine is its (validated, engine-locked) model's. A locked-down chat (every engine but Claude) gets
-    // no registry copies (§4.6, §10) and is told so once per chat.
+    // D12: the chat's engine is its (validated, engine-locked) model's. Every chat gets the registry copies its engine
+    // can attach (ask/mcp.mjs mcpForEngine): a locked-down chat's lockdown allows them by name beside worca's own server.
     const engine = ASK_ENGINES.includes(modelEngine) ? modelEngine : 'claude';
     const lockedDown = engine !== 'claude';
-    const mcpCodexNote = !composerMode && lockedDown && mcp.result.copies.length > 0
-      && !askListMessages(id).some((m) => Array.isArray(m.blocks) && m.blocks.some((b) => b && b.mcpCodex));
+    const mcp = composerMode ? { result: null } : await resolveAskMcp({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff, model, engine });
     // Skills registry §4.4: the same targets and choices for the skills from sets — resolved ONCE per turn; the turn
     // mounts them and appends the prompt section naming exactly what it wrote (a Codex chat reads them through read_file).
     const skills = composerMode ? { result: null } : await resolveAskSkills({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff });
@@ -14648,7 +14646,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const agentOn = !composerMode && askCommandsEnabled();
     const systemPrompt = composerMode
       ? await askComposerSystemPromptFor(catalog, { web, engine })
-      : await askSystemPromptFor(catalog, { web, mcp: lockedDown ? null : await askMcpPromptInput(mcp), commands: agentOn, engine });
+      : await askSystemPromptFor(catalog, { web, mcp: await askMcpPromptInput(mcp), commands: agentOn, engine });
     // Shared terminal: what the user ran in this chat's Ask tabs since its last user turn (their commands never wake
     // the chat; an event turn leaves them for the next user turn).
     if (!synthetic && askCommandsEnabled()) headerCtx.personCommands = askCommands.takePersonCommands(id);
@@ -14675,14 +14673,13 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       deterministicTitle,
       pinnedScope: pinned,                          // #397: proposal defaulting + mismatch flag
       web,
-      mcp: lockedDown ? null : mcp.result,
+      mcp: mcp.result,
       skills: skills.result,
       agentMode: agentOn,
       composer: composerMode ? ((askGetThread(id) || {}).composer || null) : null,
       suggest: !synthetic,                          // ask-suggestion: a user's message only — an event turn suggests nothing
       ...(lockedDown ? {
         engine,
-        mcpCodexNote,
         // D16: this message's images ride the turn on an engine that takes them (`codex exec -i`); the route refused
         // what the engine cannot take (engine-switch.mjs chatAttachRefusal).
         ...(ENGINES[engine].chat.images ? { images: attRows.filter((a) => a.kind === 'image').map((a) => askAttachmentPath(id, a.id)).filter(Boolean) } : {}),

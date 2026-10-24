@@ -517,7 +517,7 @@ export async function runOpencodeProcess({
       // reference; the names no user server can take: a fresh one per spawn (the self-test's is fixed).
       const refNames = [...new Set([...Object.keys(cleanRunEnv(runSpawnEnv) || {}), ...(envAllowlist || []).filter((k) => typeof process.env[k] === 'string' && process.env[k] !== '')])];
       servers = Object.fromEntries(Object.entries(servers).map(([n, srv]) => {
-        const alias = (probe && probe.serverAlias) || `${n.replace(/[^A-Za-z0-9]/g, '') || 'mcp'}${rand()}`;
+        const alias = (probe && probe.serverAlias && probe.serverAlias(n)) || `${n.replace(/[^A-Za-z0-9]/g, '') || 'mcp'}${rand()}`;
         serverNames[alias] = n;
         const withRefs = srv && typeof srv.command === 'string' && refNames.length
           ? { ...srv, env: { ...Object.fromEntries(refNames.map((k) => [k, `\${${k}}`])), ...(srv.env && typeof srv.env === 'object' ? srv.env : {}) } } : srv;
@@ -701,8 +701,8 @@ export function opencodeConfigFiles(env = process.env) {
 export function opencodeChatSelfTest({ bin = opencodeDefaultBin(), ...o } = {}) {
   return chatSelfTest({
     engine: 'opencode', label: 'OpenCode', bin, protocol: 'openai', model: 'worcaselftest/worca-self-test',
-    run: (opts) => runOpencodeProcess({ ...opts, probe: { ...opts.probe, serverAlias: 'worcaselftest' } }),
-    probeEnv: () => ({}), wireName: (_server, tool) => `worcaselftest_${tool}`, shellTool: 'bash', configFiles: opencodeConfigFiles(), ...o,
+    run: (opts) => runOpencodeProcess({ ...opts, probe: { ...opts.probe, serverAlias: (n) => `${n}selftest` } }),
+    probeEnv: () => ({}), wireName: (server, tool) => `${server}selftest_${tool}`, shellTool: 'bash', configFiles: opencodeConfigFiles(), ...o,
   });
 }
 

@@ -951,6 +951,8 @@ export const codexChat = makeChatDescriptor({
   suggestionModel: 'gpt-5.6-luna',
   turnImages: true,
   signIn: () => ['CODEX_', 'OPENAI_'],
+  // codex's MCP resource tools (plans/ask-on-codex-spike.md (h)): they read what the chat's own MCP servers publish.
+  metaTools: ['mcp__codex__list_mcp_resources', 'mcp__codex__list_mcp_resource_templates', 'mcp__codex__read_mcp_resource'],
   prompt: {
     cli: "the Codex CLI with Codex's own sign-in",
     attachments: `Image attachments are different: you see an image with the message it came with; read_attachment returns any image attachment itself as content[1] of its result — in exec, pass that block to image() to look at it again. A Codex chat cannot view a PDF: read_attachment returns only its kind and size, and ${chatEnginesTaking('pdfs')} chats can.`,

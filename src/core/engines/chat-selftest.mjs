@@ -1,14 +1,15 @@
 // src/core/engines/chat-selftest.mjs
 // The runtime proof behind Chat on an engine whose lockdown worca builds from its CLI's own switches (Gemini CLI, Qwen
 // Code): before the first chat turn on a binary, run it once, locked down exactly as a chat runs it, against a model
-// endpoint served here (127.0.0.1) and a stand-in for worca's MCP server (engines/chat-probe-mcp.mjs). The scripted model
-// asks for a shell command, then for worca's probe tool, then answers. It passes only when
-//   - every model request offered worca's MCP tools and nothing else but the engine's named meta tools (its chat
+// endpoint served here (127.0.0.1) and a stand-in for worca's MCP server (engines/chat-probe-mcp.mjs) beside a second one
+// standing in for a registry copy (a chat attaches the user's sets' servers next to worca's). The scripted model asks for
+// a shell command, then for worca's probe tool, then for the copy's, then answers. It passes only when
+//   - every model request offered the two servers' tools and nothing else but the engine's named meta tools (its chat
 //     descriptor's metaTools; the user's own settings, servers, extensions and env files are read as in a real chat, so
 //     a setting that adds a tool fails it),
 //   - worca's tools whose names clash with the CLI's built-ins (read_file, glob, …) are still offered,
 //   - the shell call did not run (its canary file does not exist), and
-//   - worca's probe tool answered (the round trip a chat needs).
+//   - worca's probe tool and the copy's answered (the round trips a chat needs).
 // A pass is kept per binary, version and user config fingerprint (in memory and in <worca home>/engines/
 // chat-selftest.json); a failure is never kept, so the next turn runs the test again. The turn's watchdog (turn.mjs
 // _watch) stays the backstop for what a test run cannot show.
@@ -23,6 +24,10 @@ import { PROBE_TOOLS } from './chat-probe-mcp.mjs';
 export const PROBE_MCP_PATH = fileURLToPath(new URL('./chat-probe-mcp.mjs', import.meta.url));
 export const SELF_TEST_MODEL = 'worca-self-test';
 const PROBE_SERVER = 'worca';
+/** The stand-in registry copy: a second probe server under another name, allowed by name like a set's server. */
+export const PROBE_COPY = 'mcpcopy';
+/** Bumped when the test itself changes, so a pass kept by an older test runs again. */
+const SELF_TEST_REV = 2;
 
 const passed = new Map();     // cache key -> true
 const inflight = new Map();   // cache key -> Promise
@@ -151,7 +156,7 @@ export async function chatSelfTest({
   try { ver = await version(bin); } catch (err) { return { refusal: /ENOENT|EACCES/.test(String(err?.code || err?.message)) ? `cannot run ${bin} (${err.code || err.message})` : `could not ask ${bin} its version (${err?.message || err})` }; }
   let real = bin;
   try { real = realpathSync(bin); } catch { /* a bare name on PATH: the version tells binaries apart */ }
-  const key = `${engine}|${real}|${ver}|${configFingerprint(configFiles)}`;
+  const key = `${engine}|${real}|${ver}|${configFingerprint(configFiles)}|r${SELF_TEST_REV}`;
   if (passed.has(key) || readCache(cacheFile)[key]?.ok === true) { passed.set(key, true); return {}; }
   if (inflight.has(key)) return inflight.get(key);
   const p = runOnce({ label, bin, run, protocol, probeEnv, wireName, shellTool, timeoutMs, home, engine, metaTools, model })
@@ -167,11 +172,14 @@ async function runOnce({ label, bin, run, protocol, probeEnv, wireName, shellToo
   mkdirSync(join(dir, 'cwd'), { recursive: true, mode: 0o700 });
   const canary = join(dir, 'canary');
   const probeLog = join(dir, 'probe.log');
+  const copyLog = join(dir, 'copy.log');
   const mcpConfigPath = join(dir, 'mcp.json');
-  writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers: { [PROBE_SERVER]: { type: 'stdio', command: process.execPath, args: [PROBE_MCP_PATH], env: { WORCA_PROBE_LOG: probeLog } } } }), { mode: 0o600 });
+  const probe = (log) => ({ type: 'stdio', command: process.execPath, args: [PROBE_MCP_PATH], env: { WORCA_PROBE_LOG: log } });
+  writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers: { [PROBE_SERVER]: probe(probeLog), [PROBE_COPY]: probe(copyLog) } }), { mode: 0o600 });
   const script = [
     { tool: shellTool, args: { command: `touch ${canary}` } },
     { tool: wireName(PROBE_SERVER, 'worca_probe'), args: {} },
+    { tool: wireName(PROBE_COPY, 'worca_probe'), args: {} },
     { text: 'done' },
   ];
   const stub = await startStubEndpoint({ protocol, script });
@@ -187,12 +195,12 @@ async function runOnce({ label, bin, run, protocol, probeEnv, wireName, shellToo
   } finally {
     await stub.close();
   }
-  let probeCalled = false;
-  try { probeCalled = readFileSync(probeLog, 'utf8').includes('"worca_probe"'); } catch { /* never called */ }
+  const called = (log) => { try { return readFileSync(log, 'utf8').includes('"worca_probe"'); } catch { return false; } };
+  const probeCalled = called(probeLog) && called(copyLog);
   const verdict = judgeSelfTest({
     requests: stub.requests,
-    allowed: [...PROBE_TOOLS.map((t) => wireName(PROBE_SERVER, t)), ...metaTools],
-    expected: PROBE_TOOLS.map((t) => wireName(PROBE_SERVER, t)),
+    allowed: [...PROBE_TOOLS.map((t) => wireName(PROBE_SERVER, t)), ...PROBE_TOOLS.map((t) => wireName(PROBE_COPY, t)), ...metaTools],
+    expected: [...PROBE_TOOLS.map((t) => wireName(PROBE_SERVER, t)), wireName(PROBE_COPY, 'worca_probe')],
     canaryRan: existsSync(canary), probeCalled, error, label,
   });
   rmSync(dir, { recursive: true, force: true });

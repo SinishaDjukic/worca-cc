@@ -163,7 +163,7 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
   if (!mcpConfigPath) throw new Error('buildAskSpawnOptions: mcpConfigPath is required');
   const chat = engine !== 'claude' ? chatDescriptor(engine) : null;
   if (engine !== 'claude' && !chat) throw new Error(`buildAskSpawnOptions: Chat does not run on ${engine}`);
-  if (chat) return buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, web, relayed, commands, proxy, env });
+  if (chat) return buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, web, relayed, commands, proxy, env, registry });
   const systemPrompt = String(turn.systemPrompt ?? '') + (turn.mock ? buildMockMarkers(turn.mock.card) : '');
   const reg = registry && Array.isArray(registry.copies) && registry.copies.length ? registry : null;
   // Skills registry §4.4 (P3 probe 6): --disable-slash-commands hides the Skill tool AND every plugin skill, so a turn
@@ -238,8 +238,13 @@ export function buildAskSpawnOptions({ thread = {}, turn = {}, limits = {}, mcpC
  * routing env) do not exist there; the caps are turn.mjs's watchdog (D14). The host-guard preamble is prepended by the
  * adapter.
  */
-function buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, web, relayed, commands = null, proxy = null, env = process.env }) {
+function buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, web, relayed, commands = null, proxy = null, env = process.env, registry = null }) {
   const keyVar = !relayed ? webKeyVar(web) : null;
+  // MCP registry §9.2 on a locked-down chat: the copies ride the per-turn config beside `worca` (the adapter's lockdown
+  // allows each by name), their secrets in spawnEnv (never on disk), their values redacted; a stdio copy's launcher
+  // reads the keep-list from the engine's scrubbed env, as on Claude.
+  const reg = registry && Array.isArray(registry.copies) && registry.copies.length ? registry : null;
+  const stdio = !!reg && Object.values(reg.servers).some((srv) => srv && typeof srv.command === 'string');
   return {
     engine: chat.engine,
     cwd: chat.ownFolder && thread.id ? join(scratchDir, chat.engine, String(thread.id)) : scratchDir,
@@ -254,12 +259,13 @@ function buildLockedAskOptions({ chat, thread, turn, mcpConfigPath, scratchDir, 
     // The MCP child needs them (ssh-remote git fetch; the web search key; the engine's own sign-in, for the Auto
     // classifier it runs on this engine): the adapter hands them on (codex through env_vars, copilot's MCP children inherit its env —
     // all but its BYOK COPILOT_PROVIDER_* names —, Gemini CLI, Qwen Code, Goose and OpenCode by ${VAR} reference).
-    envAllowlist: ['SSH_AUTH_SOCK', ...(keyVar ? [keyVar] : []), ...(relayed ? [] : chatSignInEnv(chat, turn.model, env))],
+    envAllowlist: ['SSH_AUTH_SOCK', ...(keyVar ? [keyVar] : []), ...(relayed ? [] : chatSignInEnv(chat, turn.model, env)), ...(stdio ? keepListNames() : [])],
     ...(thread.sessionId ? { resumeSessionId: thread.sessionId } : {}),
     ...(chat.turnImages && Array.isArray(turn.images) && turn.images.length ? { images: [...turn.images] } : {}),
     // Agent mode (#574): the command bridge token, as a Claude chat gets it — never on disk; the adapter hands an Ask
-    // chat's spawn env to its MCP servers.
-    ...(commands?.token || proxy?.token ? { spawnEnv: bridgeTokens({ commands, proxy }) } : {}),
+    // chat's spawn env to its MCP servers. The registry copies' secrets and MCP_TIMEOUT ride the same way.
+    ...(reg || commands?.token || proxy?.token ? { spawnEnv: { ...(reg ? reg.env : {}), ...bridgeTokens({ commands, proxy }) } } : {}),
+    ...(reg && reg.secretValues.length ? { redactValues: [...reg.secretValues] } : {}),
     signal: turn.signal,
     onEvent: turn.onEvent,
   };
