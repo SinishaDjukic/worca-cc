@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { applyFlags } from '../ui/public/flags.mjs';
 import { renderIndexHtml } from '../src/core/index-html.mjs';
+import { createSuggestedName } from '../ui/public/smart-naming.mjs';
 
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
@@ -214,4 +215,31 @@ test('browser timers: Start clears the task and reports no error, flag off and o
     assert.equal($(ctx, 'prompt').value, '', `flag ${on ? 'on' : 'off'}: the started task is cleared`);
     assert.doesNotMatch(ctx.doc.body.textContent, /Run not started|Illegal invocation/);
   }
+});
+
+test('createSuggestedName: loading → suggested; typing wins; a failure leaves the field empty', async () => {
+  const { window } = new JSDOM('<!doctype html><body><span id="c"></span><div class="sn-adorn"><input id="n" class="input"></div><p id="h"></p><button id="r"></button><button id="x"></button></body>');
+  const doc = window.document;
+  const $ = (id) => doc.getElementById(id);
+  let release;
+  const f = createSuggestedName({ doc, input: $('n'), chipSlot: $('c'), hint: $('h'), retry: $('r'), clear: $('x'),
+    icon: (d) => d.createElement('i'), suggest: () => new Promise((r) => { release = r; }) });
+  void f.run();
+  assert.equal(f.state(), 'loading');
+  assert.ok(doc.querySelector('.sn-adorn.sn-loading'));
+  assert.equal($('n').getAttribute('aria-busy'), 'true');
+  release({ source: 'model', name: 'Release prep' });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal($('n').value, 'Release prep');
+  assert.equal($('c').textContent, 'Suggested');
+  $('n').value = 'Mine';
+  $('n').dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(f.state(), 'edited');
+  assert.equal($('c').textContent, '');
+  const g = createSuggestedName({ doc, input: $('n'), chipSlot: $('c'), retry: null, clear: null, icon: () => null,
+    suggest: async () => ({ source: 'fallback', error: 'x' }) });
+  await g.run();
+  assert.equal($('n').value, '');
+  assert.equal(g.state(), 'idle');
+  assert.equal(doc.querySelector('.sn-adorn.sn-loading'), null);
 });

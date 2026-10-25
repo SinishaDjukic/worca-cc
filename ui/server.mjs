@@ -137,8 +137,12 @@ import {
   finishMessage as askFinishMessage, newAskId,
   newAskId as askNewId, findPullRequestCards as askFindPullRequestCards, findFixRunCards as askFindFixRunCards,
   setArchived as askSetArchived, setPinned as askSetPinned, listThreadsPage as askListThreadsPage, THREAD_SORTS,
+  createChatGroup as askCreateChatGroup, getChatGroup as askGetChatGroup, listChatGroups as askListChatGroups,
+  renameChatGroup as askRenameChatGroup, addToChatGroup as askAddToChatGroup, removeFromChatGroup as askRemoveFromChatGroup,
+  deleteChatGroup as askDeleteChatGroup, chatGroupThreadIds as askChatGroupThreadIds, firstUserText as askFirstUserText,
+  ChatGroupError,
 } from '../src/core/ask/store.mjs';
-import { CHAT_BUSY, chatBusyReason } from '../src/shared/chat-busy.mjs';
+import { CHAT_BUSY, chatBusyReason, chatGroupBusyText } from '../src/shared/chat-busy.mjs';
 import { revealTargetFor as askRevealTargetFor } from '../src/core/ask/show-files-deps.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { stripIntentLead } from '../src/shared/intent-leads.mjs';
@@ -170,7 +174,7 @@ import { validateMcpOff, resolveAskMcp, askMcpPromptInput, askMcpPreview, askMcp
 import { attachRunFollower } from '../src/core/ask/follow.mjs';
 import { mockEnabled, MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride, recordUtilityCost } from '../src/core/cost-budget.mjs';
-import { resolveNamingModel, suggestNames, mockSuggestion, estimateNamingUsd, legacyBranchHint } from '../src/core/naming.mjs';
+import { resolveNamingModel, suggestNames, mockSuggestion, estimateNamingUsd, legacyBranchHint, suggestGroupName } from '../src/core/naming.mjs';
 import { createCommandSummariser, summariseCommandCard, commandSummariesWanted } from '../src/core/ask/command-summary.mjs';
 import { getStats, budgetWindowSavings, shapingGroups } from '../src/core/stats.mjs';
 import {
@@ -14184,8 +14188,10 @@ app.delete('/api/ask/threads/:id', async (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
   try {
-    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    const t = askGetThread(id);
+    if (!t) return res.status(404).json({ error: 'thread not found' });
     await deleteAskThreadFully(id);
+    if (t.groupId) emitChanged('ask-groups-changed', 'removed');   // #948 s3: its delete may have dropped the group
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -15191,6 +15197,146 @@ app.post('/api/naming/suggest', namingOn, async (req, res) => {
     if (r.source !== 'model') return fallback(r.error);
     res.json({ ...r, title: cfg.suggestTitle ? r.title : undefined, branch: cfg.suggestBranch ? r.branch : undefined });
   } catch (err) { if (!res.headersSent) res.status(500).json({ error: 'suggestion failed' }); }   // Express 4 swallows async throws
+});
+
+// ---------------------------------------------------------------------------
+// #948 s3 (flag chatsColumn): the Chats column's topic groups. Every route answers 404 while chatsColumn is off;
+// suggest-name also while smartRunNaming is off (namingOn, the /api/naming/* gate above). Every write broadcasts
+// ask-groups-changed, so other tabs re-read their column.
+// ---------------------------------------------------------------------------
+const chatGroupsOn = requireFlag('chatsColumn');
+function chatGroupError(res, err) {
+  if (err instanceof ChatGroupError) return res.status(err.status).json({ error: err.message, code: err.code });
+  return res.status(500).json({ error: err && err.message ? err.message : String(err) });
+}
+/** `raw` as chat ids this person sees: 400 for a bad list, 404 for a missing or hidden chat; null after answering. */
+function askGroupThreads(req, res, raw) {
+  if (!Array.isArray(raw) || !raw.length || raw.length > 200 || raw.some((x) => typeof x !== 'string' || !ASK_ID_RE.test(x))) {
+    badRequest(res, 'threadIds must list 1 to 200 chat ids');
+    return null;
+  }
+  const ids = [...new Set(raw)];
+  for (const id of ids) {
+    const t = askGetThread(id);
+    if (!t || !askThreadVisible(t, req)) { res.status(404).json({ error: 'thread not found' }); return null; }
+  }
+  return ids;
+}
+/** The group named by :id that this person sees, or null after answering 400 / 404. */
+function askGroupFor(req, res) {
+  const id = askIdParam(res, req.params.id, 'group');
+  if (!id) return null;
+  const g = askGetChatGroup(id);
+  const viewer = askViewer(req);
+  if (!g || (viewer && g.createdBy && g.createdBy !== viewer)) { res.status(404).json({ error: 'group not found' }); return null; }
+  return g;
+}
+
+app.get('/api/ask/groups', chatGroupsOn, (req, res) => {
+  try { res.json({ groups: askListChatGroups({ visibleTo: askViewer(req) }) }); } catch (err) { chatGroupError(res, err); }
+});
+
+app.post('/api/ask/groups', chatGroupsOn, (req, res) => {
+  try {
+    const b = req.body || {};
+    const ids = askGroupThreads(req, res, b.threadIds);
+    if (!ids) return;
+    const group = askCreateChatGroup({ name: b.name, nameSource: b.nameSource, threadIds: ids, createdBy: actorOf(req) });
+    emitChanged('ask-groups-changed', 'created');
+    res.status(201).json({ group });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.patch('/api/ask/groups/:id', chatGroupsOn, (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const group = askRenameChatGroup(g.id, { name: req.body?.name, nameSource: req.body?.nameSource });
+    emitChanged('ask-groups-changed', 'renamed');
+    res.json({ group });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.post('/api/ask/groups/:id/threads', chatGroupsOn, (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const ids = askGroupThreads(req, res, req.body?.threadIds);
+    if (!ids) return;
+    const group = askAddToChatGroup(g.id, ids);
+    emitChanged('ask-groups-changed', 'moved');
+    res.json({ group });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.delete('/api/ask/groups/:id/threads/:threadId', chatGroupsOn, (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const tid = askIdParam(res, req.params.threadId, 'thread');
+    if (!tid) return;
+    const t = askGetThread(tid);
+    if (!t || t.groupId !== g.id || !askThreadVisible(t, req)) return res.status(404).json({ error: 'thread not found' });
+    const r = askRemoveFromChatGroup(tid);
+    emitChanged('ask-groups-changed', 'removed');
+    res.json({ ok: true, ...r });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.post('/api/ask/groups/:id/archive', chatGroupsOn, (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const archived = req.body?.archived;
+    if (typeof archived !== 'boolean') return badRequest(res, 'archived must be true or false');
+    // Only the members whose state changes: Undo restores exactly these, and a chat archived before stays archived.
+    const ids = askChatGroupThreadIds(g.id).filter((id) => !!askGetThread(id)?.archivedAt !== archived);
+    // Synchronous from here to the writes: no `await` between the busy check and setArchived, or a turn could start
+    // in between and a busy chat would be archived.
+    if (archived) {
+      for (const id of ids) {
+        const reason = askBusyReason(id);
+        if (reason) return res.status(409).json({ error: chatGroupBusyText(askGetThread(id)?.title), code: 'CHAT_BUSY', reason, threadId: id });
+      }
+    }
+    for (const id of ids) askSetArchived(id, archived);
+    emitChanged('ask-groups-changed', archived ? 'archived' : 'restored');
+    res.json({ ok: true, threadIds: ids });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.delete('/api/ask/groups/:id', chatGroupsOn, async (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const deleteChats = req.query.deleteChats === 'true';
+    const ids = askChatGroupThreadIds(g.id);
+    let deleted = 0;
+    // One at a time, as the bulk thread DELETE: each worktree removal spawns git.
+    if (deleteChats) for (const id of ids) { const r = await deleteAskThreadFully(id); if (r.deleted) deleted += 1; }
+    askDeleteChatGroup(g.id);                 // a no-op once the last chat's delete dropped the group
+    emitChanged('ask-groups-changed', deleteChats ? 'deleted' : 'ungrouped');
+    res.json({ ok: true, threadIds: ids, deleted });
+  } catch (err) { if (!res.headersSent) chatGroupError(res, err); }
+});
+
+// POST /api/ask/groups/suggest-name {threadIds} -> { source: 'model', name } | { source: 'fallback', error }.
+// The Run naming helper model (namingPick); the prompt carries each chat's title and first message only.
+app.post('/api/ask/groups/suggest-name', chatGroupsOn, namingOn, async (req, res) => {
+  try {
+    const ids = askGroupThreads(req, res, req.body?.threadIds);
+    if (!ids) return;
+    if (!namingBucket.tryConsume()) return res.status(429).json({ error: 'too many suggestions, try again in a moment' });
+    if (budgetStatus().blocked) return res.json({ source: 'fallback', error: 'total cost limit reached' });
+    if (mockEnabled({})) return res.json({ source: 'model', name: 'Mock group' });   // deterministic, spawns nothing
+    const chats = ids.map((id) => ({ title: askGetThread(id)?.title || '', firstMessage: askFirstUserText(id) }));
+    const ac = new AbortController();
+    res.on('close', () => { if (!res.writableEnded) ac.abort(); });
+    const pick = await namingPick();
+    const r = await suggestGroupName({ chats, signal: ac.signal },
+      { pickModel: () => pick, onCost: (c) => { try { recordUtilityCost('naming', c); } catch { /* a ledger write never fails a suggestion */ } } });
+    res.json(r.source === 'model' ? { source: 'model', name: r.name } : { source: 'fallback', error: r.error });
+  } catch (err) { if (!res.headersSent) res.status(500).json({ error: 'suggestion failed' }); }
 });
 
 // ---------------------------------------------------------------------------

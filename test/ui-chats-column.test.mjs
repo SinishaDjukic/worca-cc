@@ -26,6 +26,13 @@ function api(rec, { list = LIST, failList = false, cursor = null, totals = null 
       const busy = /ask_00000001/.test(url) && JSON.parse(opts.body).archived === true;
       return { ok: !busy, status: busy ? 409 : 200, json: async () => (busy ? { error: 'busy', code: 'CHAT_BUSY' } : { thread: {} }) };
     }
+    // #948 s3: the topic groups. GET lists rec.groups; every other group call is recorded and answers a group.
+    if (url === '/api/ask/groups' && m === 'GET') return { ok: true, status: 200, json: async () => ({ groups: rec.groups || [] }) };
+    if (url.startsWith('/api/ask/groups')) {
+      const b = opts.body ? JSON.parse(opts.body) : undefined;
+      rec.groupCalls.push(b === undefined ? [m, url] : [m, url, b]);
+      return { ok: true, status: 200, json: async () => ({ group: { id: 'askg_00000009', name: b && b.name } }) };
+    }
     if (url.startsWith('/api/ask/threads?')) {
       if (failList || rec.failList) return { ok: false, status: 503, json: async () => ({}) };
       const paged = url.includes('cursor=');
@@ -43,9 +50,10 @@ function api(rec, { list = LIST, failList = false, cursor = null, totals = null 
   };
 }
 async function bootOn(opts = {}) {
-  const rec = { calls: [], patches: [] };
-  const ctx = makePanel({ innerWidth: 1600, now: () => NOW, platform: 'MacIntel', fetchHandler: api(rec, opts), deps: opts.deps });
-  applyFlags({ chatsColumn: true }, ctx.doc);
+  const rec = { calls: [], patches: [], groupCalls: [], groups: opts.groups || [] };
+  const ctx = makePanel({ innerWidth: 1600, now: () => NOW, platform: 'MacIntel', fetchHandler: api(rec, opts), deps: opts.deps,
+    ...(opts.confirm ? { confirm: opts.confirm } : {}) });
+  applyFlags({ chatsColumn: true, ...(opts.flags || {}) }, ctx.doc);
   ctx.panel.chatsColumnChanged();
   ctx.panel.open({ threadId: null });
   await ticks(ctx);
@@ -230,7 +238,7 @@ test('R renames through chatDeps.prompt, P pins, . opens the row menu with its k
   third.focus();
   key(doc, third, { key: '.' });
   assert.equal(doc.querySelectorAll('.wfv-menu').length, 1);
-  assert.deepEqual([...doc.querySelectorAll('.wfv-menu .wfv-menu-hint')].map((n) => n.textContent), ['Space', 'R', 'P', 'E', '⌫']);
+  assert.deepEqual([...doc.querySelectorAll('.wfv-menu .wfv-menu-hint')].map((n) => n.textContent), ['Space', 'R', 'P', 'G', 'E', '⌫']);
 });
 
 test('View › Archived re-fetches with show=archived, loads, then shows the chip; × resets; the view is kept per browser', async () => {
@@ -337,4 +345,92 @@ test('the resize handle sits in the column and ArrowRight keeps the width under 
   assert.equal(handle.getAttribute('aria-label'), 'Resize the chats list');
   key(doc, handle, { key: 'ArrowRight' });
   assert.ok(ctx.storage.getItem('worca-cc.chats.listWidth'));
+});
+
+// ── #948 s3: topic groups ──
+const GID = 'askg_00000001';
+// T defaults scope: null, and a chat with no project adds no project to the group line, so both members name one.
+const GROUPED = [T('ask_00000003', { groupId: GID, title: 'Fix the login', scope: { projectKey: 'worka-1' } }),
+  T('ask_00000004', { groupId: GID, title: 'SSO', scope: { projectKey: 'other' } }), ...LIST];
+
+test('a group row: count, ⌄ expands to indented members, "2 projects"; ↵ folds it again', async () => {
+  const { col, doc } = await bootOn({ list: GROUPED, groups: [{ id: GID, name: 'Release prep', nameSource: 'user', createdAt: iso(5 * DAY), count: 2 }] });
+  const g = col.querySelector(`.runs-item[data-row-key="cgroup:${GID}"]`);
+  assert.equal(g.querySelector('.runs-count').textContent, '2');
+  assert.match(g.querySelector('.runs-row-sub').textContent, /^2 projects · /);
+  const exp = g.querySelector('.runs-expand');
+  assert.equal(exp.getAttribute('aria-label'), 'Show the 2 chats in Release prep');
+  exp.click();
+  const open = col.querySelector(`.runs-item[data-row-key="cgroup:${GID}"]`);
+  assert.equal(open.querySelectorAll('.runs-members > .runs-item').length, 2);
+  const row = open.querySelector('a.runs-row');
+  row.focus();
+  key(doc, row, { key: 'Enter' });
+  assert.equal(col.querySelector(`.runs-item[data-row-key="cgroup:${GID}"] .runs-members`), null);
+});
+
+test('⋯ › Add to group… lists the groups in the picker; a pick moves the chat', async () => {
+  const { col, doc, rec, ctx } = await bootOn({ list: GROUPED, groups: [{ id: GID, name: 'Release prep', count: 2 }] });
+  col.querySelector('.runs-item[data-row-key="chat:ask_00000002"] .runs-more').click();
+  [...doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Add to group…').click();
+  const pick = doc.querySelector(`.group-picker .gp-row[data-group-id="${GID}"]`);
+  assert.equal(pick.querySelector('.gp-title').textContent, 'Release prep');
+  pick.click();
+  await ticks(ctx);
+  assert.deepEqual(rec.groupCalls[0], ['POST', `/api/ask/groups/${GID}/threads`, { threadIds: ['ask_00000002'] }]);
+});
+
+test('Select 2 › Group 2 › New group opens the dialog; smartRunNaming off: plain field, ⌘↵ creates', async () => {
+  const { col, doc, rec, ctx } = await bootOn({ flags: { smartRunNaming: false } });
+  for (const id of ['ask_00000002', 'ask_10000000']) col.querySelector(`.runs-item[data-row-key="chat:${id}"] .runs-check`).click();
+  const groupBtn = col.querySelector('#chats-bulk [data-bulk="group"]');
+  assert.equal(groupBtn.querySelector('.runs-bulk-c').textContent, '2');
+  groupBtn.click();
+  doc.querySelector('.group-picker .gp-new').click();
+  const input = doc.getElementById('chat-group-name');
+  assert.equal(doc.querySelector('.chat-group-modal .sn-chip, .chat-group-modal .sn-actions'), null);
+  assert.ok(!rec.groupCalls.some((c) => c[1].endsWith('suggest-name')));
+  input.value = 'Login work';
+  input.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true }));
+  key(doc, input, { key: 'Enter', metaKey: true });
+  await ticks(ctx);
+  assert.deepEqual(rec.groupCalls.at(-1), ['POST', '/api/ask/groups', { name: 'Login work', nameSource: 'user', threadIds: ['ask_00000002', 'ask_10000000'] }]);
+});
+
+test('View › Group by › Topic: one section per group, then Ungrouped', async () => {
+  const { col, doc, ctx } = await bootOn({ list: GROUPED, groups: [{ id: GID, name: 'Release prep', count: 2 }] });
+  col.querySelector('#chats-view-btn').click();
+  [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((b) => b.textContent.includes('Topic')).click();
+  await ticks(ctx);
+  assert.deepEqual([...col.querySelectorAll('.runs-sec-head .runs-sec-title')].map((n) => n.textContent), ['Release prep', 'Ungrouped']);
+});
+
+test('a group with a busy chat: ⋯ › Archive group is disabled with the reason', async () => {
+  const list = [T('ask_00000003', { groupId: GID, title: 'Ship notes', inFlight: true }), T('ask_00000004', { groupId: GID }), ...LIST];
+  const { col, doc } = await bootOn({ list, groups: [{ id: GID, name: 'Release prep', count: 2 }] });
+  col.querySelector(`.runs-item[data-row-key="cgroup:${GID}"] .runs-more`).click();
+  const arch = [...doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Archive group');
+  assert.equal(arch.disabled, true);
+  assert.equal(arch.title, "Can't archive while “Ship notes” is busy. Wait for it to finish or stop it.");
+});
+
+test('Delete group… confirms the server total (archived included), not the loaded members', async () => {
+  let asked = null;
+  const { col, doc } = await bootOn({ list: GROUPED, groups: [{ id: GID, name: 'Release prep', count: 2, total: 3 }],
+    confirm: async (o) => { asked = o; return false; } });
+  col.querySelector(`.runs-item[data-row-key="cgroup:${GID}"] .runs-more`).click();
+  [...doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Delete group…').click();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(asked.message, '“Release prep” and its 3 chats (1 archived) are removed. This cannot be undone.');
+});
+
+test('a group opened because a chat needed you stays open after the chat stops needing you', async () => {
+  const list = [T('ask_00000003', { groupId: GID, waiting: true }), T('ask_00000004', { groupId: GID }), ...LIST];
+  const { col, ctx } = await bootOn({ list, groups: [{ id: GID, name: 'Release prep', count: 2 }] });
+  assert.ok(col.querySelector(`.runs-item[data-row-key="cgroup:${GID}"] .runs-members`));
+  list[0] = T('ask_00000003', { groupId: GID });          // the caller's array: the next list answer reads it
+  ctx.panel.pushServerFrame({ type: 'ask-groups-changed', action: 'moved' });
+  await new Promise((r) => setTimeout(r, 300));
+  await ticks(ctx);
+  assert.ok(col.querySelector(`.runs-item[data-row-key="cgroup:${GID}"] .runs-members`));
 });

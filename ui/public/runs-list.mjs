@@ -353,7 +353,7 @@ function needsWhy(row) {
 /** §3.1 "say each thing once": the row's one status line. `section`: 'needs' | 'running' | '' (mixed). */
 export function listLine(row, { section = '', time = '' } = {}) {
   const m = row.model;
-  if (row.kind === 'chat') return m.line;   // #948 s2: a Chats column row brings its whole sub line (chats-list.mjs)
+  if (row.kind === 'chat' || row.kind === 'chat-group') return m.line;   // #948: Chats column rows bring their whole sub line (chats-list.mjs)
   if (row.archived) return and('Archived', time);
   if (row.kind === 'chain') {
     const p = posOf(m);
@@ -412,7 +412,7 @@ export function memberCostUsd(...xs) {
 
 /** The row's hover text (spec §2.4). `cost` null: the engine reports none (engineReportsCost). */
 export function costTitle(r) {
-  if (r.kind === 'chain') return `Group total ${fmtUsd(r.costUsd || 0)}`;
+  if (r.kind === 'chain' || r.kind === 'chat-group') return `Group total ${fmtUsd(r.costUsd || 0)}`;
   return r.cost == null ? 'Cost unknown' : `Cost ${fmtUsd(r.cost)}`;
 }
 
@@ -625,9 +625,11 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   if (r.runId) a.dataset.runId = r.runId;   // this exact line: test/ui-guide-hops.test.mjs reads it as the guide hop's painter
   a.dataset.line = r.model.line;      // slice 4 (D3): the canonical status line, compared across list, card and page
   if (r.memberKeys) a.dataset.memberKeys = [...r.memberKeys].join(' ');   // paintRunsSelection rebuilds the set from it
+  // #948 s3: a Chats column topic group draws as a Runs group row (count, ⌄, indented members), with no stage line.
+  const grouped = r.kind === 'chain' || r.kind === 'chat-group';
   const right = doc.createElement('span');
   right.className = 'runs-row-right';
-  if (r.kind === 'chain') right.append(textEl(doc, 'span', 'runs-count', r.count));
+  if (grouped) right.append(textEl(doc, 'span', 'runs-count', r.count));
   if (r.adhoc) right.append(textEl(doc, 'span', 'runs-indep', 'Independent'));
   if (r.model.pr && !r.model.pr.pending) right.append(prChip(doc, r.model.pr));
   // Rows carry no clock: the model's `now` keeps it deterministic. Group rows ('chain') carry their latest member's
@@ -650,8 +652,10 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   }
   const tail = doc.createElement('span');
   tail.className = 'runs-row-tail';
-  if (r.kind === 'chain') {
-    const t = iconButton(doc, 'runs-expand', 'chevron-down', `${r.open ? 'Hide' : 'Show'} the ${r.members.length} runs in ${r.title}`);
+  if (grouped) {
+    // A chat group names the server's count (its chats not all paged in yet); a chain row carries no memberCount.
+    const n = r.memberCount ?? r.members.length;
+    const t = iconButton(doc, 'runs-expand', 'chevron-down', `${r.open ? 'Hide' : 'Show'} the ${n} ${r.memberNoun || 'runs'} in ${r.title}`);
     t.dataset.chainKey = r.key;
     t.setAttribute('aria-expanded', r.open ? 'true' : 'false');
     tail.append(t);
@@ -661,13 +665,13 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   more.setAttribute('aria-haspopup', 'menu');
   tail.append(more);
   item.append(pick, a, tail);
-  if (r.kind === 'chain' && r.open) {
+  if (grouped && r.open) {
     const list = doc.createElement('div');   // member rows are div.runs-item, so a list of them is a div with role=list
     list.className = 'runs-members';
     list.setAttribute('role', 'list');
     for (const mb of r.members) {
       list.append(renderItem(doc, { ...mb, href: mb.href || '#runs', title: mb.title || '(untitled)' },
-        { level: 'member', checked, selecting, lineFrom, now, position: r.groupKind === 'user' || mb.adhoc ? '' : String(mb.position) }));
+        { level: 'member', checked, selecting, lineFrom, now, position: r.kind !== 'chain' || r.groupKind === 'user' || mb.adhoc ? '' : String(mb.position) }));
     }
     item.append(list);
   }

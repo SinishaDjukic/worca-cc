@@ -15,3 +15,8 @@ export function chatBusyReason({ inFlight = false, commands = 0, tracking = 0 } 
   if (Number(tracking) > 0) return 'following';
   return null;
 }
+
+/** #948 s3: Archive group's tooltip and its 409, naming the first busy chat of the group. */
+export function chatGroupBusyText(title) {
+  return `Can't archive while “${title || 'New chat'}” is busy. Wait for it to finish or stop it.`;
+}

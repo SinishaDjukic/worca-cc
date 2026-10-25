@@ -1951,7 +1951,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         scopeName: (sc) => chatDep('scopeName', sc) || '', currentId: () => (typeof st.wantThread === 'string' ? st.wantThread : st.threadId),
         onOpen: (id) => { if (historyOverlayOpen()) setHistoryOpen(false, { persist: false }); showThread(id); route(id); },
         onRename: (r) => { void renameThread(r); }, onDelete: (r) => { void deleteThread({ id: r.id, title: r.title }); },
-        onHelp: (opener) => openChatKeys(opener) });
+        onHelp: (opener) => openChatKeys(opener),
+        flagOn: (k) => flagOn(k, doc), confirm: (o) => confirm(o),
+        // #948 s3: Delete group removed these chats; the open one goes home, as a deleted chat does (deleteThread).
+        onChatsGone: (ids) => {
+          for (const id of ids) { if (readStoredThread() === id) storeThread(null); st.askedIn.delete(id); st.queues.delete(id); }
+          if (ids.includes(st.threadId) || ids.includes(st.wantThread)) {
+            if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
+            newThread();
+            route(null, { replace: true });
+          }
+        } });
       el.headNew.remove();
       el.historyBtn.after(el.headPlus = newChatPlus());
       // D28: the open chat's figures, once, as the context popover's button (the composer's .ask-meter hides by CSS).

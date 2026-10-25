@@ -29,7 +29,9 @@ export function chatRows(threads = [], { now = Date.now() } = {}) {
   return threads.slice(0, CHAT_LIMIT).map((t) => {
     const at = Date.parse(t.updatedAt);
     const time = Number.isFinite(at) ? rowTime(at, now) : '';
-    return { kind: 'chat', id: t.id, title: t.title || 'New chat', sub: (t.match && t.match.snippet) || '',
+    // #948 s3: a hit on the chat's topic group name says which group (store.mjs toListRow match.group).
+    const sub = t.match && t.match.group ? `Group · ${t.match.group}` : (t.match && t.match.snippet) || '';
+    return { kind: 'chat', id: t.id, title: t.title || 'New chat', sub,
       meta: t.archived || t.archivedAt ? ['Archived', time].filter(Boolean).join(' · ') : time, href: `#chat/${t.id}` };
   });
 }

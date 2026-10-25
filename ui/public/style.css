@@ -406,6 +406,12 @@ body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;pa
   font:500 11px/1 var(--sans);white-space:nowrap;}
 /* The Keyboard shortcuts sheet (keys-sheet.mjs) */
 .keys-modal .card.keys-dlg{width:min(760px,100%);}   /* beats .viewer-modal .card's 860px (0,2,0) */
+.chat-group-modal .card.chat-group-dlg{width:min(440px,100%);}   /* beats .viewer-modal .card's 860px, as .keys-dlg */
+.chat-group-sub{margin:4px 0 12px;color:var(--ink-2);font-size:13px;}
+.chat-group-label{display:flex;align-items:center;margin-bottom:6px;font-size:12px;font-weight:600;color:var(--ink-2);}
+.chat-group-hint{margin:6px 0 0;min-height:16px;font-size:12px;color:var(--ink-2);}
+.chat-group-err{margin:0 0 8px;font-size:12px;color:var(--red-ink);}
+.chat-group-foot{display:flex;justify-content:flex-end;gap:8px;}
 .keys-title{margin:0;font:600 var(--fs-section)/1.25 var(--sans);}   /* the .card h2 size */
 .keys-cols{display:grid;grid-template-columns:1fr 1fr;gap:0 32px;}
 .keys-sec + .keys-sec{margin-top:16px;}
