@@ -4,8 +4,9 @@ import { withButton, fieldError, clearFieldErrors } from './feedback.mjs';
 import { makeSwitch } from './switch.mjs';
 
 // The status sentences live in src/shared so setup apply's proxy-swap row says the same thing.
-export { FIXED_PORT_NOTE, SAVED_TEXT, PORT_PENDING_TEXT, NOT_SAVED_TEXT, SAVED_OFF_TEXT } from '../../src/shared/network-proxy-text.mjs';
-import { FIXED_PORT_NOTE, SAVED_TEXT, PORT_PENDING_TEXT, NOT_SAVED_TEXT, SAVED_OFF_TEXT } from '../../src/shared/network-proxy-text.mjs';
+export { PORT_SWITCH_NOTE, FIXED_PORT_NOTE, SAVED_TEXT, PORT_PENDING_TEXT, NOT_SAVED_TEXT, SAVED_OFF_TEXT } from '../../src/shared/network-proxy-text.mjs';
+import { PORT_SWITCH_NOTE, FIXED_PORT_NOTE, SAVED_TEXT, PORT_PENDING_TEXT, NOT_SAVED_TEXT, SAVED_OFF_TEXT } from '../../src/shared/network-proxy-text.mjs';
+import { UPSTREAM_TIMEOUTS } from '../../src/shared/proxy-timeouts.mjs';
 export const TESTING_TEXT = 'Testing…';
 /** The login choices; exported for the setup assistant's Login select (fit-1-2). */
 export const AUTH_OPTIONS = [['auto', 'NTLMv2 (recommended)'], ['basic', 'Basic (password in cleartext)'], ['digest', 'Digest (password from HTTPS_PROXY)'], ['none', 'No login']];
@@ -81,9 +82,11 @@ function build(doc, body) {
   const { wrap: authWrap, sel: auth } = select(doc, AUTH_OPTIONS);
   const noProxy = input(doc, 'text', { placeholder: 'intranet.acme.example, .corp.acme.example', spellcheck: 'false' });
   const fixedPort = input(doc, 'number', { min: '1024', max: '65535', placeholder: 'any free port' });
-  const connectS = input(doc, 'number', { min: '1', max: '3600', placeholder: '30' });
-  const authS = input(doc, 'number', { min: '1', max: '3600', placeholder: '15' });
-  const idleS = input(doc, 'number', { min: '1', max: '3600', placeholder: '600' });
+  // Empty means the default, shown as the placeholder (the same numbers the server uses).
+  const secs = (k) => String(UPSTREAM_TIMEOUTS[k] / 1000);
+  const connectS = input(doc, 'number', { min: '1', max: '3600', placeholder: secs('connectMs') });
+  const authS = input(doc, 'number', { min: '1', max: '3600', placeholder: secs('authMs') });
+  const idleS = input(doc, 'number', { min: '1', max: '3600', placeholder: secs('idleMs') });
   const domain = input(doc, 'text', { placeholder: 'ACME', autocomplete: 'off', spellcheck: 'false' });
   const user = input(doc, 'text', { placeholder: 'jdoe', autocomplete: 'username', spellcheck: 'false' });
   const password = input(doc, 'password', { autocomplete: 'new-password' });
@@ -105,7 +108,8 @@ function build(doc, body) {
   const actions = make(doc, 'div', 'add-project-actions');
   const btn = (id, text, primary = false) => { const b = make(doc, 'button', primary ? 'btn btn-primary btn-sm' : 'btn btn-sm', text); b.type = 'button'; b.id = id; return b; };
   const save = btn('npSave', 'Save'); const login = btn('npLogin', 'Log in', true); const logout = btn('npLogout', 'Log out'); const test = btn('npTest', 'Test');
-  actions.append(save, logout, test, login);
+  const detect = btn('npDetect', 'Auto-detect');   // GET /api/proxy/detect: fills host and port from this machine's settings
+  actions.append(save, logout, detect, test, login);
   // Empty small.hint lines filled by JS: the Settings tooltip contract allows no static .hint text.
   // #npBasicNote keeps its slice-2 name on purpose: it now carries the Digest note too (tests pin the id).
   const basicNote = make(doc, 'small', 'hint', '');
@@ -122,8 +126,8 @@ function build(doc, body) {
   setup.id = 'npSetup';
   setup.hidden = true;
   body.append(drows, actions, basicNote, status, setup, results);
-  portNote.textContent = FIXED_PORT_NOTE;
-  return { enabled, host, port, auth, noProxy, fixedPort, connectS, authS, idleS, domain, user, password, save, login, logout, test, basicNote, status, setup, results };
+  portNote.textContent = PORT_SWITCH_NOTE;
+  return { enabled, host, port, auth, noProxy, fixedPort, connectS, authS, idleS, domain, user, password, save, login, logout, test, detect, basicNote, status, setup, results };
 }
 
 function fill(f, st) {
@@ -202,6 +206,17 @@ export function mountNetworkProxyCard({ doc = globalThis.document, fetchJson: fj
       renderResults(c.results, r.data.results);
       return !!r.data.ok;
     };
+    // Auto-detect fills the form only; Save still tests it first (UNTESTED), as for typed values.
+    cur.detect.addEventListener('click', () => withButton(cur.detect, async () => {
+      const r = await fj('/api/proxy/detect');
+      const d = r.ok ? r.data : null;
+      if (d?.found) {
+        cur.host.value = d.host; cur.port.value = String(d.port);
+        if (Array.isArray(d.noProxy) && d.noProxy.length) cur.noProxy.value = d.noProxy.join(', ');
+      }
+      cur.status.textContent = d?.line || "Couldn't read this machine's proxy settings.";
+      return { ok: !!d?.found };
+    }, { busy: 'Detecting…', done: 'Filled in' }));
     cur.save.addEventListener('click', () => withButton(cur.save, async () => {
       clearFieldErrors(body);
       const patch = patchOf(cur);

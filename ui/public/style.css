@@ -8356,6 +8356,9 @@ button.act-srow-name{cursor:pointer}
 .inherit-sub{display:flex;flex-direction:column;gap:4px;min-width:0;}
 .inherit-sub-cap{font-size:11px;font-weight:600;color:var(--ink-2);}
 .inherit-sub .select{width:100%;min-width:0;}
+/* inherit-field.mjs wraps each select in .select-wrap (the chevron): the wrap takes the space the bare select had. */
+.inherit-row > .select-wrap{flex:1 1 auto;min-width:0;}
+.inherit-row > .select-wrap > .select{width:100%;}
 @media (max-width:560px){ .inherit-row.inherit-pair{grid-template-columns:1fr;} }
 /* Engine & models (engine-settings-view.mjs): the card (level 1) → the engine switch (2) → sections divided by a
    rule, each a heading with its controls on the right (3) → one Model / Effort table (4) → grey notes (5). No card
@@ -10721,8 +10724,24 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 .setup-modal .card.setup-card{width:min(640px,100%);}
 .setup-card .card-head{flex-direction:column;align-items:flex-start;gap:4px;}
 .setup-card .sa-step-of{font-size:var(--fs-meta);color:var(--ink-2);}
+/* Step titles read as the dialog's heading: one size up from a card section title. */
+.setup-card .card-head h2{font-size:var(--fs-subpage);margin:0;}   /* .card h2's 18px bottom margin would split title from subtitle */
+/* The segmented progress bar above "Step N of 7": done and current filled, the rest the quiet line colour. */
+.setup-card .sa-progress{display:flex;gap:4px;width:100%;margin-bottom:8px;}
+.setup-card .sa-progress-seg{flex:1 1 0;height:4px;border-radius:var(--r-xs);background:var(--line-2);}
+.setup-card .sa-progress-seg[data-state="done"],.setup-card .sa-progress-seg[data-state="current"]{background:var(--ink);}
+@media (forced-colors:active){.setup-card .sa-progress-seg{background:Canvas;border:1px solid CanvasText;}
+  .setup-card .sa-progress-seg[data-state="done"],.setup-card .sa-progress-seg[data-state="current"]{background:CanvasText;}}
 .setup-card .sa-sub{margin:0;color:var(--ink-2);}
 .setup-card .sa-step{display:flex;flex-direction:column;gap:16px;min-width:0;}
+/* The step's 16px gap spaces its children; .field's own 18px bottom margin on top of it doubled the space between fields. */
+.setup-card .sa-step > .field{margin-bottom:0;}
+/* Buttons in the step column keep their own width instead of stretching across it. */
+.setup-card .sa-step > .btn,.setup-card .sa-step > .link-btn{align-self:flex-start;}
+.setup-card .sa-proxy-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}   /* Test, then Reset to defaults */
+/* Auto-detect under the proxy address, its result line beside it (wrapping below on a narrow card). */
+.setup-card .sa-detect-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;min-width:0;}
+.setup-card .sa-detect-line{min-width:0;flex:1 1 200px;overflow-wrap:anywhere;}
 .setup-card .sa-rows{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;}
 .setup-card .sa-row{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px;min-width:0;}
 /* Team setup (slice 5): the Team line above a step the team filled, and the chip on a row. */
@@ -10731,10 +10750,49 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 .setup-card .sa-row-main{flex:1 1 120px;min-width:0;overflow-wrap:anywhere;}
 .setup-card .sa-row-line{font-size:var(--fs-meta);color:var(--ink-2);}
 .setup-card .sa-row .badge{flex:none;white-space:nowrap;}
+/* The Check step's table: badge and name columns size to their content, the details column takes the rest
+   and wraps; engine sub-rows indent under Engines. Under 560px the details drop below the name. */
+.setup-card .sa-check{width:100%;border-collapse:collapse;table-layout:auto;}
+.setup-card .sa-check td{padding:6px 12px 6px 0;vertical-align:top;}
+.setup-card .sa-check td:last-child{padding-right:0;}
+.setup-card .sa-check-mark{width:1%;white-space:nowrap;}
+/* Keep .badge's inline-flex (it centres the text in its 18px); top-aligned, 1px down, it centres on the 19.5px first line. */
+.setup-card .sa-check-mark .badge{justify-content:center;min-width:44px;vertical-align:top;margin-top:1px;}
+.setup-card .sa-check-name{width:1%;white-space:nowrap;}
+.setup-card .sa-check-name .badge.team{margin-left:6px;}
+.setup-card .sa-check-line{min-width:0;color:var(--ink-2);overflow-wrap:anywhere;}
+.setup-card .sa-check tbody tr + tr:not(.sa-check-sub) td{border-top:1px solid var(--line);}
+.setup-card .sa-check-sub td{padding-top:2px;padding-bottom:2px;font-size:var(--fs-meta);}
+.setup-card .sa-check-sub .sa-check-mark .badge{margin-top:0;}   /* the smaller sub-row line is the badge's own 18px */
+.setup-card .sa-check-sub .sa-check-name{padding-left:4px;}
+/* The ↳ marks an engine as part of Engines; decorative, so the alt text after the slash is empty. */
+.setup-card .sa-check-sub .sa-check-name::before{content:"\21B3" / "";display:inline-block;width:16px;color:var(--ink-2);}
+@media (max-width:560px){
+  /* Each row is its own grid, so the badge column is a fixed width (the widest badge, Check) to keep names aligned;
+     the row border moves from the cells to the row, or it would split a name from its details. */
+  .setup-card .sa-check tr{display:grid;grid-template-columns:56px 1fr;column-gap:8px;}
+  .setup-card .sa-check td{padding-right:0;}
+  .setup-card .sa-check tbody tr + tr:not(.sa-check-sub) td{border-top:0;}
+  .setup-card .sa-check tbody tr + tr:not(.sa-check-sub){border-top:1px solid var(--line);}
+  .setup-card .sa-check-mark{grid-row:span 2;}
+  .setup-card .sa-check-mark,.setup-card .sa-check-name{width:auto;white-space:normal;padding-bottom:2px;}
+  .setup-card .sa-check-line{grid-column:2;padding-top:0;}
+  .setup-card .sa-check-sub .sa-check-line{padding-left:16px;}
+}
 .setup-card .sa-pair{display:flex;flex-wrap:wrap;gap:8px;}
 .setup-card .sa-pair > *{flex:1 1 100px;min-width:0;}
 .setup-card .sa-broker{margin:0;color:var(--ink-2);}
+/* The wizard always shows the head and foot rules (other dialogs show them only while content is under them). */
+.setup-card.dlg > .dlg-head::after,.setup-card.dlg > .dlg-foot::before{opacity:1;}
+/* With the rules always on, each needs its own 16px on both sides: the head and foot pad toward them, the body
+   pads away from them (its --dlg-gap-*), so the subtitle and the buttons never touch a rule. */
+.setup-card.dlg{--dlg-gap-head:16px;--dlg-gap-foot:16px;}
+.setup-card.dlg > .dlg-head{padding-bottom:16px;}
+.setup-card.dlg > .dlg-foot{padding-top:16px;}
 .setup-card .dlg-foot .confirm-actions{flex-wrap:wrap;}
+/* Wizard foot: the way back or out (Back, Cancel / Set up later, Close, Share) sits on the left; Skip and the
+   primary action stay on the right, the primary last. paintFoot always appends the left one first. */
+.setup-card .dlg-foot .confirm-actions > :first-child:not(:last-child){margin-right:auto;}
 .setup-card .sa-status{min-width:0;overflow-wrap:anywhere;}
 .setup-card .hint{color:var(--ink-2);}
 .setup-card .hint.err{color:var(--red-ink);}

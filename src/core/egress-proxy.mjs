@@ -246,10 +246,12 @@ export function createProxy({ allow, policy = null, log = () => {}, limits = {},
       }, body);
     });
   }
-  // The proxy relaying to itself would loop; nothing legitimate asks for that.
+  // The proxy relaying to itself would loop; nothing legitimate asks for that. Its own ports: the one it listens on,
+  // plus any a later listener hands sockets from (egress-policy.mjs listenAlso, via server.addSelfPort).
+  const selfPorts = new Set();
   const isSelf = (host, port) => {
     const a = server.address();
-    return !!a && port === a.port && LOOPBACK_NAMES.has(host);
+    return LOOPBACK_NAMES.has(host) && ((!!a && port === a.port) || selfPorts.has(port));
   };
 
   function onRequest(req, res) {
@@ -347,6 +349,7 @@ export function createProxy({ allow, policy = null, log = () => {}, limits = {},
     try { onRequest(req, res); } catch { try { res.destroy(); } catch { /* gone */ } }
   });
   server.maxConnections = L.maxConnections;
+  server.addSelfPort = (p) => { selfPorts.add(p); };
   server.setTimeout(L.idleTimeoutMs);   // no 'timeout' listener: an idle socket is destroyed
   // A new connection gets headersTimeout to send its first head (slow loris), enforced on the socket
   // itself: Node's own headersTimeout check did not drop a half-sent first head. onRequest and

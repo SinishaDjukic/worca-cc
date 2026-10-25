@@ -54,7 +54,10 @@ test('AC-3.1: every check, a state and a line, under 3 s', async () => {
   assert.equal(env.state, 'ok');
   assert.equal(env.line, 'Your environment sends traffic through proxy.acme.example:8080.');
   assert.doesNotMatch(JSON.stringify(env), /secret|jdoe/);           // never echo proxy credentials
-  assert.equal(checks.find((c) => c.id === 'harnesses').line, 'Ready: Claude Code. Not ready: Codex (Not signed in).');
+  const h = checks.find((c) => c.id === 'harnesses');
+  assert.equal(h.label, 'Engines');
+  assert.equal(h.line, '1 of 2 engines are ready.');
+  assert.deepEqual(h.facts.engines.map((e) => e.line), ['Ready.', 'Not signed in.']);
 });
 
 test('a hung probe becomes warn and never holds the answer', async () => {
@@ -69,18 +72,26 @@ test('the default budget keeps a hung probe under 3 s', async () => {
   assert.equal(checks.find((c) => c.id === 'direct').state, 'warn');
 });
 
+test('the engines check gets 4× the budget: a slow first run (every CLI started) still answers', async () => {
+  const slow = (ms, v) => () => new Promise((r) => setTimeout(() => r(v), ms));
+  const engines = [{ name: 'claude', label: 'Claude Code', ready: true, reason: null }];
+  const { checks } = await detectSetup({ probes: { ...mockProbes, engines: slow(250, engines), git: slow(250, { available: true }) }, budgetMs: 100 });
+  assert.equal(checks.find((c) => c.id === 'harnesses').state, 'ok', '250 ms is inside the engines check\'s 400');
+  assert.equal(checks.find((c) => c.id === 'git').line, "Couldn't check this in time.", 'every other check keeps the plain budget');
+});
+
 test('a throwing probe is warn with a fixed line that echoes nothing', async () => {
   const { checks } = await detectSetup({ probes: { ...mockProbes, git: async () => { throw new Error('spawn failed http://jdoe:secret@proxy.acme.example'); } } });
   assert.deepEqual(checks.find((c) => c.id === 'git'), { id: 'git', label: 'Git', state: 'warn', line: "Couldn't check this." });
   assert.doesNotMatch(JSON.stringify(checks), /spawn failed/);
 });
 
-test('a long harness reason is cut to 80 characters in the line; facts keep it whole', async () => {
-  const reason = 'x'.repeat(200);
+test('a long engine reason is cut to 160 characters in its line; facts keep it whole', async () => {
+  const reason = 'x'.repeat(300);
   const { checks } = await detectSetup({ probes: { ...mockProbes, engines: fast([{ name: 'claude', label: 'Claude Code', ready: true, reason: null }, { name: 'codex', label: 'Codex', ready: false, reason }]) } });
   const h = checks.find((c) => c.id === 'harnesses');
-  const shown = /\(([^)]*)\)/.exec(h.line)[1];
-  assert.ok(shown.length <= 80, shown.length);
+  const shown = h.facts.engines[1].line;
+  assert.ok(shown.length <= 160 && shown.endsWith('…'), shown.length);
   assert.equal(h.facts.engines[1].reason, reason);
 });
 
@@ -96,7 +107,7 @@ for (const [name, over, id, state, line] of [
   ['no proxy env', { sourceEnv: () => ({}) }, 'proxyEnv', 'no', 'No proxy is set in your environment.'],
   ['scheme-less proxy env', { sourceEnv: () => ({ HTTPS_PROXY: 'jdoe:secret@proxy.acme.example:8080' }) }, 'proxyEnv', 'ok', 'Your environment sends traffic through proxy.acme.example:8080.'],
   ['direct ok', { direct: fast(true) }, 'direct', 'ok', 'api.anthropic.com answers directly.'],
-  ['no engine ready', { engines: fast([{ name: 'claude', label: 'Claude Code', ready: false, reason: null }]) }, 'harnesses', 'no', 'No coding agent is ready on this machine.'],
+  ['no engine ready', { engines: fast([{ name: 'claude', label: 'Claude Code', ready: false, reason: null }]) }, 'harnesses', 'no', 'No engine is ready on this machine.'],
   ['no ollama', { ollama: fast(null) }, 'ollama', 'no', 'No Ollama is running on port 11434.'],
   // With the corporate proxy on, sourceEnv holds only the proxy variables; the key is read from the full env.
   ['api key set, proxy on', { processEnv: () => ({ ANTHROPIC_API_KEY: 'sk-ant-zzz' }) }, 'apiKey', 'ok', 'ANTHROPIC_API_KEY is set in your environment.'],

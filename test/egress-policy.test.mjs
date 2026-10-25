@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
+import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -967,17 +968,42 @@ test('AC-2.6: a second process watching settings.json swaps within 5 s', async (
   } finally { await live.close(); await a.close(); await b.close(); o.server.close(); }
 });
 
-test('AC-2.7 (core): a fixedPort change is pending and the old port keeps listening', async () => {
+test('AC-2.7 (core): a fixedPort change switches at once; the old port keeps answering for the children holding it', async () => {
   const fake = await startFakeUpstream({ scheme: 'none', originPort: 1 });
   const p1 = await freePort(); const p2 = await freePort();
-  const live = await startLiveEgress({ env: {}, settings: () => ({ networkProxy: { enabled: true, upstream: fake.url(), fixedPort: p1 } }), login: () => null, watch: () => () => {} });
+  const env = {}; let envChanges = 0;
+  const live = await startLiveEgress({ env, settings: () => ({ networkProxy: { enabled: true, upstream: fake.url(), fixedPort: p1 } }), login: () => null, watch: () => () => {}, onEnvChange: () => { envChanges += 1; } });
   try {
+    assert.equal(env.HTTPS_PROXY, `http://127.0.0.1:${p1}`);
     const out = await live.apply({ enabled: true, upstream: fake.url(), fixedPort: p2 });
-    assert.deepEqual(out.pending, ['fixedPort']);
-    assert.equal(out.changed, false);
-    assert.equal(await isWorcaProxy(p1), true);
-    assert.equal(await isWorcaProxy(p2), false);
+    assert.deepEqual(out.pending, []);
+    assert.equal(out.changed, true);
+    assert.equal(out.portSwitched, p2);
+    assert.equal(await isWorcaProxy(p1), true, 'the old port still answers');
+    assert.equal(await isWorcaProxy(p2), true, 'the new port answers now');
+    assert.equal(env.HTTPS_PROXY, `http://127.0.0.1:${p2}`, 'new children get the new port');
+    assert.equal(live.current().url, `http://127.0.0.1:${p2}`);
+    assert.equal(live.current().fixedPort, p2);
+    assert.equal(envChanges, 1);
+    assert.deepEqual((await live.apply({ enabled: true, upstream: fake.url(), fixedPort: p2 })).pending, [], 'applying it again changes nothing');
   } finally { await live.close(); await fake.close(); }
+  assert.equal(await isWorcaProxy(p2), false, 'close() stops the extra listener too');
+});
+
+test('AC-2.7 (core): a new fixedPort that another program holds is said at once; the proxy stays where it was', async () => {
+  const fake = await startFakeUpstream({ scheme: 'none', originPort: 1 });
+  const p1 = await freePort();
+  const holder = net.createServer().listen(0, '127.0.0.1'); await once(holder, 'listening');
+  const taken = holder.address().port;
+  const env = {};
+  const live = await startLiveEgress({ env, settings: () => ({ networkProxy: { enabled: true, upstream: fake.url(), fixedPort: p1 } }), login: () => null, watch: () => () => {} });
+  try {
+    const out = await live.apply({ enabled: true, upstream: fake.url(), fixedPort: taken });
+    assert.match(out.upstreamError, /^saved, but the local proxy cannot listen on 127\.0\.0\.1:\d+: another program already uses that port/);
+    assert.equal(out.changed, false);
+    assert.equal(env.HTTPS_PROXY, `http://127.0.0.1:${p1}`);
+    assert.equal(await isWorcaProxy(p1), true);
+  } finally { await live.close(); await fake.close(); holder.close(); }
 });
 
 test('liveKeyOf: key order and fixedPort do not change the key', () => {

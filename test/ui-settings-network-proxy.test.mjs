@@ -178,7 +178,7 @@ test('AC-2.8: the card is Simple level, has no flag gate, and folds timeouts and
   assert.equal(more.querySelector('summary').textContent.trim(), 'More');
   for (const id of ['npFixedPort', 'npConnectS', 'npAuthS', 'npIdleS']) assert.ok(more.contains(m.$(id)), `${id} is under More`);
   for (const id of ['npHost', 'npPort', 'npAuth', 'npNoProxy']) assert.equal(more.contains(m.$(id)), false, `${id} stays visible`);
-  assert.equal(m.$('npFixedPortNote').textContent, 'Applies at the next start');
+  assert.equal(m.$('npFixedPortNote').textContent, 'Takes effect at once. Programs already using the old port keep it until Worca restarts.');
   m.close();
 });
 
@@ -315,4 +315,20 @@ test('needs-login shows Fix in setup assistant, which opens the assistant on Net
   await tick();
   assert.equal(bare.$('npSetup').hidden, true, 'no onOpenSetup');
   assert.equal(AUTH_OPTIONS.length, 4);
+});
+
+test('Auto-detect fills host, port and a manual bypass list, and shows where they came from; nothing is saved', async (t) => {
+  const found = { found: true, source: 'pac', host: 'proxy.example.com', port: 3128, noProxy: [], also: [], line: "From your system's PAC file (wpad.example.com)." };
+  const p = mount({ 'GET /api/proxy/detect': { ok: true, status: 200, data: found } });
+  t.after(p.close);
+  await tick();
+  const noProxyBefore = p.$('npNoProxy').value;
+  p.$('npDetect').click();
+  await tick(); await tick();
+  assert.deepEqual([p.$('npHost').value, p.$('npPort').value], ['proxy.example.com', '3128']);
+  assert.equal(p.$('npNoProxy').value, noProxyBefore, 'a PAC answer has no bypass list: the field stays');
+  assert.equal(p.$('npStatus').textContent, "From your system's PAC file (wpad.example.com).");
+  assert.equal(p.calls.some((c) => c.method === 'PUT'), false, 'detect only fills the form');
+  assert.equal(p.$('npConnectS').placeholder, '60');
+  assert.equal(p.$('npIdleS').placeholder, '300');
 });

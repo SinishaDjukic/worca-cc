@@ -34,6 +34,8 @@ function efforts(doc, select, spec, modelId, keep) {
   if (spec.noEffort) { select.replaceChildren(option(doc, '', 'Default')); select.disabled = true; select.title = 'This setting keeps a model only: it runs at the model\'s default effort.'; return; }
   for (const effort of list) select.append(option(doc, effort, effort)); select.value = keep && list.includes(keep) ? keep : '';
 }
+// Every select sits in the shared .select-wrap, whose ::after draws the chevron (`appearance:none` drops the native one).
+const skinned = (doc, control) => { if (control.tagName !== 'SELECT') return control; const box = node(doc, 'div', 'select-wrap'); box.append(control); return box; };
 export function renderInheritField(doc, spec) {
   const wrap = node(doc, 'div', 'field drow inherit-field'); wrap.dataset.setting = spec.id; wrap.dataset.kind = spec.kind;
   const row = node(doc, 'div', 'label-row drow-label'); const label = node(doc, 'label', null, spec.label); const badge = node(doc, 'span', 'inherit-badge', 'Project');
@@ -52,9 +54,9 @@ export function renderInheritField(doc, spec) {
   const line = node(doc, 'div', 'drow-control away-input-row inherit-row');
   if (spec.kind === 'model') {   // one row, Model wider than Effort, each named by a caption (the Ask run card's pattern)
     line.classList.add('inherit-pair'); wrap.classList.add('drow-wide');
-    const cap = (text, control) => { const box = node(doc, 'label', 'inherit-sub'); box.append(node(doc, 'span', 'inherit-sub-cap', text), control); return box; };
+    const cap = (text, control) => { const box = node(doc, 'label', 'inherit-sub'); box.append(node(doc, 'span', 'inherit-sub-cap', text), skinned(doc, control)); return box; };
     line.append(cap('Model', controls[0]), cap('Effort', controls[1]));
-  } else line.append(...controls);
+  } else line.append(...controls.map((control) => skinned(doc, control)));
   wrap.append(line); STATE.set(wrap, { spec });
   const paint = () => { const set = readInheritField(wrap) !== null; badge.hidden = !(set && spec.level === 'project'); clear.hidden = !set; };
   const touched = () => { wrap.dataset.dirty = '1'; paint(); }; for (const control of controls) { control.addEventListener('input', touched); control.addEventListener('change', touched); }

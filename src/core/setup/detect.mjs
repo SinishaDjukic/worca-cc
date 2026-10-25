@@ -14,6 +14,9 @@ import { readTeamSetupFile } from './team-file.mjs';
 import { homedir } from 'node:os';
 
 export const DETECT_BUDGET_MS = 2500;
+// The engines check starts every engine's CLI on its first, uncached run (engines/ready-cache.mjs), which can take
+// several seconds; it gets 4× the budget (10 s) so that first run is not "Couldn't check this in time".
+export const ENGINES_BUDGET_FACTOR = 4;
 export const OLLAMA_URL = 'http://127.0.0.1:11434';
 const TIMEOUT = Symbol('timeout');
 
@@ -83,15 +86,15 @@ export const DETECT_CHECKS = Object.freeze([
   { id: 'direct', label: 'Direct connection', run: (p) => p.direct(), read: (up) =>
     up ? ['ok', 'api.anthropic.com answers directly.']
       : ['no', "api.anthropic.com can't be reached directly. On a company network this usually means a proxy is needed."] },
-  { id: 'harnesses', label: 'Coding agents', run: (p) => p.engines(), read: (list) => {
+  { id: 'harnesses', label: 'Engines', budgetFactor: ENGINES_BUDGET_FACTOR, run: (p) => p.engines(), read: (list) => {
     const ready = list.filter((e) => e.ready);
-    const not = list.filter((e) => !e.ready);
-    const facts = { engines: list.map(({ name, label, ready: r, reason }) => ({ name, label, ready: r, reason })) };
-    if (!ready.length) return ['no', 'No coding agent is ready on this machine.', facts];
-    const head = `Ready: ${ready.map((e) => e.label).join(', ')}.`;
-    // The row shows a short, guarded reason; the full one stays in facts.engines[].reason (ux-2-1).
-    const why = (r) => { const t = userLine(r, 'Coding agents').replace(/\.$/, ''); return t.length > 80 ? `${t.slice(0, 79).trimEnd()}…` : t; };
-    return not.length ? ['warn', `${head} Not ready: ${not.map((e) => `${e.label}${e.reason ? ` (${why(e.reason)})` : ''}`).join(', ')}.`, facts] : ['ok', head, facts];
+    // Each engine is its own sub-row in the dialog: `line` is a short, guarded reason; the full one stays in `reason` (ux-2-1).
+    const why = (r) => { const t = userLine(r, 'Engines'); return t.length > 160 ? `${t.slice(0, 159).trimEnd()}…` : t; };
+    const facts = { engines: list.map(({ name, label, ready: r, reason }) =>
+      ({ name, label, ready: r, reason, line: reason ? why(reason) : r ? 'Ready.' : 'Not ready.' })) };
+    if (!ready.length) return ['no', 'No engine is ready on this machine.', facts];
+    if (ready.length === list.length) return ['ok', `All ${list.length} engines are ready.`, facts];
+    return ['warn', `${ready.length} of ${list.length} engines are ready.`, facts];
   } },
   { id: 'ollama', label: 'Local Ollama', run: (p) => p.ollama(), read: (o) =>
     o ? ['ok', `Ollama is running here with ${o.models} model${o.models === 1 ? '' : 's'}.`, { models: o.models }]
@@ -106,16 +109,16 @@ export const DETECT_CHECKS = Object.freeze([
 ]);
 
 /**
- * Run every check in parallel, each under `budgetMs`. Never throws.
+ * Run every check in parallel, each under `budgetMs` (times its budgetFactor, the engines check). Never throws.
  * @returns {Promise<{checks: Array<{id,label,state:'ok'|'warn'|'no',line,facts?}>, ms:number}>}
  */
 export async function detectSetup({ probes = defaultProbes(), budgetMs = DETECT_BUDGET_MS, now = Date.now } = {}) {
   const t0 = now();
-  const checks = await Promise.all(DETECT_CHECKS.map(async ({ id, label, run, read }) => {
+  const checks = await Promise.all(DETECT_CHECKS.map(async ({ id, label, run, read, budgetFactor = 1 }) => {
     let timer;
     try {
       const raw = await Promise.race([Promise.resolve().then(() => run(probes)),
-        new Promise((r) => { timer = setTimeout(() => r(TIMEOUT), budgetMs); timer.unref?.(); })]);
+        new Promise((r) => { timer = setTimeout(() => r(TIMEOUT), budgetMs * budgetFactor); timer.unref?.(); })]);
       if (raw === TIMEOUT) return row(id, label, 'warn', "Couldn't check this in time.");
       const [state, line, facts] = read(raw ?? null);
       return row(id, label, state, line, facts);

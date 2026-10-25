@@ -19,10 +19,36 @@ every local user can do that too.
 ## Set it up
 
 1. Open Settings › Runs › Network proxy and turn on **Use a corporate proxy**.
-2. Enter the proxy host and port, choose **Login: NTLMv2** and list the hosts that go direct. The
+2. Enter the proxy host and port, or press **Auto-detect** to fill them in from this machine's own proxy
+   settings (see [Auto-detect](#auto-detect)). Choose **Login: NTLMv2** and list the hosts that go direct. The
    timeouts and the local proxy port are under **More**.
 3. Press **Test**, then **Save**. Save tests a new proxy itself when you have not: Worca switches to
    a new proxy only after it passed a test. New connections use it at once.
+
+### Auto-detect
+
+**Auto-detect** (the card, and the setup assistant's Network step) asks this machine which proxy it uses for
+`api.anthropic.com` and fills in the host and port. It only fills the form: **Test** and **Save** work as for typed
+values, and Worca still chains to that one fixed proxy.
+
+| OS | Where it looks | What it can fill |
+|---|---|---|
+| macOS | `scutil --proxy`: a PAC URL, then auto-discovery (`http://wpad/wpad.dat`), then a manual HTTPS (or HTTP) proxy | host and port; with a manual proxy also the bypass list |
+| Windows | Windows PowerShell's `GetSystemWebProxy` (the system's own PAC, WPAD and manual resolver); the registry says which it was | host and port; with a manual proxy also `ProxyOverride` |
+| Linux | GNOME `gsettings org.gnome.system.proxy`: mode `auto` (its PAC URL, or WPAD) or `manual` | host and port; with a manual proxy also `ignore-hosts` |
+
+- With several proxies in the answer, the first fills in and the line names the others. A PAC answer that goes
+  `DIRECT` says no proxy is needed. SOCKS entries are skipped: Worca chains to an HTTP proxy only.
+- The bypass list comes only from a manual setting: a PAC file's direct rules are code, not a list. IP ranges
+  (`169.254/16`) and Windows' `<local>` are left out, since Worca's no-proxy hosts never match them.
+- Login mode, account and timeouts are never detected.
+- **A PAC file never runs inside Worca.** Worca fetches it (http, https or file; at most 1 MB, 4 s, without the
+  proxy) and evaluates it in a separate `node --permission` process that can read no file but its own script and
+  start no process, with a 64 MB heap and a 4-second limit. That process asks Worca for each DNS lookup the script
+  makes. Date and time rules (`dateRange`, `timeRange`) count as always in range.
+- `GET /api/proxy/detect` answers `{ found, source: pac | wpad | manual | none | error, host?, port?, noProxy?,
+  also?, pacUrl?, direct?, line }`. It never answers an error status: a setting it cannot read is `found: false`
+  with a line.
 
 You can also set the same values by hand in `settings.json` under `networkProxy` (`enabled`,
 `upstream`, `auth`, `noProxy`, `timeouts`, `fixedPort`). When no upstream is set there, Worca uses the `HTTPS_PROXY` /
@@ -35,8 +61,11 @@ You can also set the same values by hand in `settings.json` under `networkProxy`
 - Turning the proxy on starts the local proxy now. Agents already running keep a direct route until
   their next step. Turning it off sends new connections direct through the same local address.
 - Other Worca processes (a `worca run` started from a shell) pick up a change within about 1 s.
-- `fixedPort` applies at the next start: the save answers "Applies at the next start", and the old
-  port keeps answering until then.
+- A new `fixedPort` takes effect at once. A running local proxy starts listening on the new port too, and new
+  agents and terminals get it; programs that already hold the old port keep using it until Worca restarts, when
+  only the new port is opened. A local proxy that this save starts (the proxy was off, as on a first setup) opens
+  only the new port. A port another program already uses is refused at once ("saved, but the local proxy cannot
+  listen on …"), and the proxy stays on the port it had.
 - A save from Worca (the card, the chat card) needs a passing test of exactly those values (host,
   port and login mode) within 10 minutes, or it is refused with `UNTESTED` and nothing is written.
   Turning the proxy off, and changing only the direct hosts, timeouts or the local port, need no test.
@@ -59,8 +88,8 @@ You can also set the same values by hand in `settings.json` under `networkProxy`
 
 ## Settings reference
 
-- **Who it is for:** a network with one fixed corporate proxy (host and port known) that asks for an NTLMv2 (also inside Negotiate), Digest or Basic login. Networks that only publish a PAC/WPAD script are not supported.
-- **`networkProxy` in `settings.json`:** `upstream` (an `http://host:port` URL; default: the `HTTPS_PROXY`/`HTTP_PROXY` that was set), `auth` (default `auto` when the URL carries a login, else `none`), `noProxy` (a comma-separated string or a list; default: the `NO_PROXY` that was set; `*.x` means `.x`, `*` sends everything direct, CIDR entries never match; loopback always goes direct) `timeouts` `{ connectMs, authMs, idleMs }` (defaults 30000, 15000 and 600000, each clamped to 500–3600000) and `fixedPort` (1024–65535: the local proxy listens on `127.0.0.1:<fixedPort>` instead of a free port, so an IDE or shell outside Worca can use it; read only with the proxy on), and `enabled` (`true` turns the proxy on). Edit them in Settings › Network proxy or by hand; a change applies to new connections at once, except `fixedPort` (next start).
+- **Who it is for:** a network with one fixed corporate proxy (host and port known) that asks for an NTLMv2 (also inside Negotiate), Digest or Basic login. A network that publishes a PAC or WPAD script works when that script picks one fixed HTTP proxy: **Auto-detect** reads it and fills in the host and port.
+- **`networkProxy` in `settings.json`:** `upstream` (an `http://host:port` URL; default: the `HTTPS_PROXY`/`HTTP_PROXY` that was set), `auth` (default `auto` when the URL carries a login, else `none`), `noProxy` (a comma-separated string or a list; default: the `NO_PROXY` that was set; `*.x` means `.x`, `*` sends everything direct, CIDR entries never match; loopback always goes direct) `timeouts` `{ connectMs, authMs, idleMs }` (defaults 60000, 60000 and 300000, each clamped to 500–3600000) and `fixedPort` (1024–65535: the local proxy listens on `127.0.0.1:<fixedPort>` instead of a free port, so an IDE or shell outside Worca can use it; read only with the proxy on), and `enabled` (`true` turns the proxy on). Edit them in Settings › Network proxy or by hand; a change applies to new connections at once; a new `fixedPort` is listened on at once too, and the old port keeps answering until the next start.
 - **Where the login comes from:** from `worca proxy login` / Settings › Network proxy (saved NT hash), else `DOMAIN%5Cuser:password@` in `HTTP(S)_PROXY` (`http://ACME%5Cjdoe:password@proxy.acme.example:8080`). A saved login wins over the URL's, with a warning. A user name or password in `settings.json` is ignored with a warning, because a password never goes into `settings.json`. See [Network proxy](network-proxy.md).
 - **`auth` values:** `auto` (the default, NTLMv2 only, sent inside `Negotiate` when the proxy offers only that), `ntlm` (the same), `digest`, `basic` and `none`. `basic` sends the password base64-encoded, in cleartext, to the proxy on every connection; use it only when the proxy offers nothing else. `digest` (RFC 7616: SHA-256 or MD5, `qop=auth`) needs the password from the `HTTPS_PROXY` URL, which Worca then keeps in memory; a saved login cannot be used. `auto` never falls back to Basic or Digest: a proxy that offers only one of them gets a 502 that says to set `networkProxy.auth`.
 - **The "proxy needs login" stop:** after one rejected login (or a connection dropped or left unanswered right after one) Worca stops sending credentials, and clients get a 407 with `x-worca-proxy: needs-login`. Log in again (`worca proxy login` or Settings › Network proxy). For a saved login, the rejection is saved with the login, so a restart does not try the same password again; a new login clears it, in every running Worca within a few seconds. A login in `HTTPS_PROXY` keeps no such memory: correct the URL, then restart Worca, because each restart with the old password spends one attempt against the account lockout limit.
@@ -114,7 +143,7 @@ in `HTTPS_PROXY` (`http://ACME%5Cjdoe:password@proxy.acme.example:8080`), or swi
 NTLM and Negotiate log in a connection, not a request. For plain `http://` requests (`apt`, `pip`,
 `npm` metadata) Worca logs a connection in once, with a `HEAD` probe to the first URL, and later
 requests reuse it without sending credentials again. A connection that stays idle for longer than
-`networkProxy.timeouts.idleMs` (default 10 minutes) is closed, and the next request logs in again.
+`networkProxy.timeouts.idleMs` (default 5 minutes) is closed, and the next request logs in again.
 
 - When the proxy forgets a connection's login and asks again, that is not a rejected password. A
   request without a body is sent once more on a fresh login; a request with a body gets a `502`
@@ -141,7 +170,7 @@ requests reuse it without sending credentials again. A connection that stays idl
 
 By default the local proxy listens on a free port picked at startup. To use it from an IDE or a shell
 outside Worca, pin it: set `networkProxy.fixedPort` (1024–65535) in `settings.json`, or fill in
-**Local proxy port** under **More** on the card; it applies at the next start. `worca proxy status` then prints
+**Local proxy port** under **More** on the card; it takes effect at once. `worca proxy status` then prints
 `Local proxy: http://127.0.0.1:<port>`. Without a fixed port it says a free port is picked at
 startup.
 
@@ -239,7 +268,8 @@ Not supported (Negotiate works only with the NTLM login inside it). Run [Px](htt
   `HTTPS_PROXY`.
 - **The fixed port cannot be used on Windows (EACCES).** Hyper-V and WSL reserve port ranges. List
   them with `netsh interface ipv4 show excludedportrange protocol=tcp` and pick a port outside them.
-- **PAC or WPAD.** Not supported. Ask your IT team for the proxy host and port, and enter them in
-  Settings › Runs › Network proxy.
+- **PAC or WPAD.** Press **Auto-detect**: it reads the script and fills in the proxy it picks for
+  `api.anthropic.com`. If it says it couldn't read the PAC file, or the script picks only SOCKS, ask your IT team
+  for the proxy host and port and enter them by hand.
 - **"proxy-login.json can be read by other users".** The file's mode changed (a backup restore, a
   copy). Run `worca proxy login` again.

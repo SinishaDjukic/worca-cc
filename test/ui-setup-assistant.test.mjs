@@ -265,7 +265,9 @@ test('corporate Copilot path: proxy test → Next applies the network → notice
     await h.type('network.login.domain', 'ACME');
     await h.type('network.login.user', 'jdoe');
     await h.type('network.login.password', 'S3cret!');
+    h.$('.sa-test').focus();
     await h.click('.sa-test');
+    assert.equal(h.doc.activeElement, h.$('.sa-test'), 'the repaint keeps focus on Test, not the first control at the top');
     const testBody = h.log.filter((r) => r.url === '/api/proxy/test').at(-1).body;
     assert.deepEqual(testBody.login, { domain: 'ACME', user: 'jdoe', password: 'S3cret!' }, 'the Test carries the typed login');
     await h.click('.sa-next');                               // Next on Network: a network-only apply
@@ -305,7 +307,7 @@ test('corporate Copilot path: proxy test → Next applies the network → notice
     assert.equal(h.title(), 'Setting up Worca…');
   } finally { h.close(); }
 });
-test('Network gate: each of host, port, Login and Go direct to re-locks Next after a pass; the pass expires on screen (qa-1-1, ux-2-4)', async () => {
+test('Network gate: each of host, port, Login and No proxy hosts re-locks Next after a pass; the pass expires on screen (qa-1-1, ux-2-4)', async () => {
   const h = await open({ entry: 'fix', step: 'network', proxy: PROXY_ON });
   try {
     assert.equal(h.title(), 'How does this machine reach the internet?');
@@ -371,12 +373,88 @@ test('keyboard: a step change moves focus into the dialog, and Tab / Shift+Tab w
   } finally { h.close(); }
 });
 
+test('the second button: none when the step is as saved, Discard changes once it differs, which puts it back', async () => {
+  const h = await open({ entry: 'rerun' });
+  try {
+    await h.goTo('work');
+    assert.equal(h.$('.sa-skip'), null, 'nothing to discard and Next is open: Back and Next only');
+    await h.type('work.pipelineCostLimitUsd', '9');
+    assert.equal(h.$('.sa-skip').textContent, 'Discard changes');
+    await h.click('.sa-skip');
+    assert.equal(h.title(), 'Check and apply');
+    await h.goTo('work');
+    assert.equal(h.$('[data-sa-field="work.pipelineCostLimitUsd"]').value, '5', 'the saved limit is back');
+    assert.equal(h.$('.sa-skip'), null);
+  } finally { h.close(); }
+});
+
+test('Network › More: timeouts show their defaults and only a changed one is sent; the port note only with a running proxy', async () => {
+  const value = (h, k) => h.$(`[data-sa-field="network.networkProxy.timeouts.${k}"]`).value;
+  let h = await open({ entry: 'rerun', proxy: { ...PROXY_ON, running: false } });
+  try {
+    await h.goTo('network');
+    await h.click('.sa-more');
+    assert.deepEqual(['connectMs', 'authMs', 'idleMs'].map((k) => value(h, k)), ['60', '60', '300']);
+    assert.equal(h.$('.sa-step').textContent.includes('Programs already using the old port'), false, 'nothing running: no note');
+    await h.type('network.networkProxy.timeouts.idleMs', '300');                 // the default again: not sent
+    await h.type('network.networkProxy.timeouts.connectMs', '90');
+    await h.click('.sa-test');
+    const sent = h.log.filter((r) => r.url === '/api/proxy/test').at(-1).body.networkProxy;
+    assert.deepEqual(sent.timeouts, { connectMs: 90000 });
+  } finally { h.close(); }
+  h = await open({ entry: 'rerun', proxy: { ...PROXY_ON, running: true } });
+  try {
+    await h.goTo('network');
+    await h.click('.sa-more');
+    assert.equal(h.$('.sa-step').textContent.includes('Takes effect at once. Programs already using the old port keep it until Worca restarts.'), true, 'a running proxy: the switch note');
+  } finally { h.close(); }
+});
+
+test('Network: Reset to defaults puts login mode, no proxy hosts, local port and timeouts back; host and account stay', async () => {
+  const saved = { ...PROXY_ON, settings: { ...PROXY_ON.settings, auth: 'basic', noProxy: ['intranet.example.com'], fixedPort: 18080, timeouts: { connectMs: 90000 } } };
+  const h = await open({ entry: 'rerun', proxy: saved });
+  try {
+    await h.goTo('network');
+    await h.click('.sa-more');
+    await h.click('.sa-reset');
+    const v = (f) => h.$(`[data-sa-field="${f}"]`).value;
+    assert.equal(v('network.networkProxy.auth'), 'auto');
+    assert.equal(v('network.networkProxy.noProxy'), '');
+    assert.equal(v('network.networkProxy.fixedPort'), '');
+    assert.equal(v('network.networkProxy.timeouts.connectMs'), '60');
+    assert.equal(v('network.networkProxy'), 'proxy.acme.example', 'the proxy address has no default');
+    assert.equal(v('network.login.user'), 'jdoe', 'nor does the account');
+    assert.equal(h.next().disabled, true, 'like any edit, the reset needs a new Test');
+  } finally { h.close(); }
+});
+
+test('Network: Auto-detect fills host, port and a manual bypass list, says where they came from, and needs a new Test', async () => {
+  const found = { found: true, source: 'manual', host: 'proxy.example.com', port: 3128, noProxy: ['*.corp.example.com'], also: [], line: 'From your macOS proxy settings.' };
+  const h = await open({ entry: 'rerun', proxy: PROXY_ON, routes: { '/api/proxy/detect': reply(found) } });
+  try {
+    await h.goTo('network');
+    await h.click('.sa-detect');
+    const v = (f) => h.$(`[data-sa-field="${f}"]`).value;
+    assert.deepEqual([v('network.networkProxy'), v('network.networkProxy.port'), v('network.networkProxy.noProxy')], ['proxy.example.com', '3128', '*.corp.example.com']);
+    assert.equal(h.$('.sa-detect-line').textContent, 'From your macOS proxy settings.');
+    assert.equal(h.next().disabled, true, 'detected values still need a Test');
+  } finally { h.close(); }
+  const none = await open({ entry: 'rerun', proxy: PROXY_ON, routes: { '/api/proxy/detect': reply({ found: false, source: 'none', line: 'No proxy is set in your macOS settings.' }) } });
+  try {
+    await none.goTo('network');
+    await none.click('.sa-detect');
+    assert.equal(none.$('[data-sa-field="network.networkProxy"]').value, 'proxy.acme.example', 'nothing found: the address stays');
+    assert.equal(none.$('.sa-detect-line').textContent, 'No proxy is set in your macOS settings.');
+  } finally { none.close(); }
+});
+
 test('re-run gate: the saved proxy still needs a Test; Skip keeps it and the body has no network (product-1-1)', async () => {
   const h = await open({ entry: 'rerun', proxy: PROXY_ON, routes: { '/api/setup/apply': reply({ id: 'stp_1', steps: STEPS3 }, 202) } });
   try {
     await h.click('.sa-next');
     assert.equal(h.next().disabled, true);
     assert.equal(h.status().textContent, 'Test the connection to continue');
+    assert.equal(h.$('.sa-skip').textContent, 'Skip for now', 'Next is blocked: the way past keeps the saved proxy');
     await h.click('.sa-skip');
     assert.equal(h.title(), 'Where should Worca get its models?');
     await applyLimit(h);
@@ -766,7 +844,7 @@ test('the head: Step N of 7, the title and the subtitle on every step (ux-1-3)',
   const subs = { first: ['Worca checks this machine, then asks only what it could not find.', 'Worca’s agents use this route for every model call.',
     'Turn on every source you can use. You need at least one.', 'Each role sets the model for every job that has none of its own.', 'You can change all of these later in Settings.',
     'Worca will save these settings, sign in, import the models and test each one.'] };
-  subs.rerun = [...subs.first]; subs.rerun[0] = 'Your current setup is loaded. Change what you need; the rest stays as it is.'; subs.rerun[5] = 'Only the rows marked Changed will be written.';
+  subs.rerun = [...subs.first]; subs.rerun[0] = 'Status of your local setup.'; subs.rerun[5] = 'Only the rows marked Changed will be written.';
   for (const entry of ['first', 'rerun']) {
     const h = await open({ entry, routes: { '/api/setup/apply': reply({ id: 'stp_1', steps: STEPS3 }, 202) } });
     try {
@@ -888,6 +966,10 @@ test('CSS: 290px layout, --ink-2 scoping and no ink-3 under .setup- (AC-4.7, fit
   assert.ok(css.includes('.setup-card .sa-pair{display:flex;flex-wrap:wrap;gap:8px;}'));
   assert.ok(css.includes('.setup-card .sa-pair > *{flex:1 1 100px;min-width:0;}'));
   assert.ok(css.includes('.setup-card .dlg-foot .confirm-actions{flex-wrap:wrap;}'));   // Share and Continue stack at 290px
+  // The head and foot rules always show in the wizard, not only while content scrolls under them.
+  assert.ok(css.includes('.setup-card.dlg > .dlg-head::after,.setup-card.dlg > .dlg-foot::before{opacity:1;}'));
+  // Wizard foot: the first button (Back / Cancel / Close / Share) on the left, Skip and the primary on the right.
+  assert.ok(css.includes('.setup-card .dlg-foot .confirm-actions > :first-child:not(:last-child){margin-right:auto;}'));
   assert.ok(css.includes('.badge.team{background:var(--blue-bg);color:var(--blue-ink-strong);}'));
   assert.ok(css.includes('.setup-card .sa-team-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--ink-2);}'));
   assert.ok(css.includes('.setup-modal .card.setup-card{width:min(640px,100%);}'));
@@ -913,7 +995,7 @@ test('module source: no HTML sinks, no CSS.escape; built on layoutDialog and gua
   assert.ok(src.includes("kind: 'form'"));
   assert.ok(read('docs/setup-assistant.md').includes('## The dialog'));
   const gs = read('docs/getting-started.md');
-  assert.ok(gs.includes('Set up later')); assert.ok(gs.includes('Run setup again'));
+  assert.ok(gs.includes('Set up later')); assert.ok(gs.includes('Setup assistant › **Run setup**'));
 });
 
 const bodyOf = (w) => (typeof w.body === 'string' ? JSON.parse(w.body) : w.body);
@@ -927,8 +1009,8 @@ test('AC-5.4: a first start pre-fills blanks from the team file and marks the ro
   const h = await open({ entry: 'first', team: TEAM_FILE, settings: { ...SETTINGS, uiLevel: null, pipelineCostLimitUsd: null },
     detect: { ...DETECT, checks: [...DETECT.checks, TEAM_CHECK] } });
   try {
-    assert.equal(h.$('.sa-check li[data-check="teamSetup"] .badge.team').textContent, 'Team');
-    assert.equal(h.$('.sa-check li[data-check="claude"] .badge.team'), null);          // only the teamSetup ok row
+    assert.equal(h.$('.sa-check tr[data-check="teamSetup"] .badge.team').textContent, 'Team');
+    assert.equal(h.$('.sa-check tr[data-check="claude"] .badge.team'), null);          // only the teamSetup ok row
     await h.goTo('review');
     const work = h.$('.sa-review li[data-group="work"]');
     assert.equal(work.querySelector('.badge.team').textContent, 'Team');
@@ -970,11 +1052,43 @@ test('AC-5.7: a partial team record merges over the saved one, so a matching rec
   assert.deepEqual(buildApplyBody(s, diff).work, { sync: { beforeRun: true, remote: 'origin', refreshMinutes: 10, onDiverged: 'rebase' } });
 });
 
+test('the Check step: one table row per check, then one sub-row per engine under Engines', async () => {
+  const engines = check('harnesses', 'warn', { label: 'Engines', line: '1 of 2 engines are ready.', facts: { engines: [
+    { name: 'claude', label: 'Claude', ready: true, line: 'Ready.' },
+    { name: 'goose', label: 'Goose', ready: false, line: 'Install the Goose CLI.' }] } });
+  const h = await open({ entry: 'first', detect: { checks: [check('claude', 'ok'), engines, check('git', 'ok')] } });
+  try {
+    const rows = h.$$('.sa-check tbody tr');
+    assert.deepEqual(rows.map((r) => r.dataset.check || `engine:${r.dataset.engine}`), ['claude', 'harnesses', 'engine:claude', 'engine:goose', 'git']);
+    const goose = h.$('.sa-check tr.sa-check-sub[data-engine="goose"]');
+    assert.equal(goose.querySelector('.sa-check-mark .badge.grey').textContent, 'No');
+    assert.equal(goose.querySelector('.sa-check-name').textContent, 'Goose');
+    assert.equal(goose.querySelector('.sa-check-line').textContent, 'Install the Goose CLI.');
+    assert.equal(h.$('.sa-check tr[data-check="harnesses"] .sa-check-line').textContent, '1 of 2 engines are ready.');
+  } finally { h.close(); }
+});
+
+test('the Check step: the Team setup row shows only with something to report', async () => {
+  const none = { id: 'teamSetup', label: 'Team setup', state: 'no', line: 'No team setup file was found.' };
+  let h = await open({ entry: 'rerun', detect: { checks: [...DETECT.checks, none] } });
+  try { assert.equal(h.$('.sa-check tr[data-check="teamSetup"]'), null, 'no file and no policy home: no row'); } finally { h.close(); }
+  const homes = [{ home: 'acme/gateway', hash: 'bbbb', unmapped: [], values: { work: { totalCostLimitUsd: 40 } }, keys: ['work.totalCostLimitUsd'] }];
+  h = await open({ entry: 'rerun', team: { file: { found: false }, homes }, detect: { checks: [...DETECT.checks, none] } });
+  try {
+    const tr = h.$('.sa-check tr[data-check="teamSetup"]');
+    assert.equal(tr.querySelector('.sa-check-mark .badge.green').textContent, 'OK');
+    assert.equal(tr.querySelector('.sa-check-line').textContent, 'Your team policy recommends a setup (acme/gateway).');
+    assert.equal(tr.querySelector('.badge.team').textContent, 'Team');
+  } finally { h.close(); }
+  h = await open({ entry: 'rerun', detect: { checks: [...DETECT.checks, TEAM_CHECK] } });
+  try { assert.match(h.$('.sa-check tr[data-check="teamSetup"]').textContent, /Found a team setup/); } finally { h.close(); }
+});
+
 test('the Check step: a refused team file gets the amber Check badge and no Team chip', async () => {
   const warn = { ...TEAM_CHECK, state: 'warn', line: 'The team setup in ~/.worca-cc/team-setup.json was not used: A team setup never carries network settings: “networkProxy”. Remove it and try again.' };
   const h = await open({ entry: 'first', detect: { ...DETECT, checks: [...DETECT.checks, warn] } });
   try {
-    const li = h.$('.sa-check li[data-check="teamSetup"]');
+    const li = h.$('.sa-check tr[data-check="teamSetup"]');
     assert.equal(li.querySelector('.badge.amber').textContent, 'Check');
     assert.equal(li.querySelector('.badge.team'), null);
     assert.match(li.textContent, /“networkProxy”/);

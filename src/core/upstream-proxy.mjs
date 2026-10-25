@@ -16,7 +16,9 @@ import { parseHostList, hostMatches, normalizeHost } from './egress-proxy.mjs';
 import { ntHash, type1Message, parseType2, type3Message, NtlmError } from './ntlm.mjs';
 import { parseChallenges, pickDigest, digestHa1, digestAuthorization, isStaleDigest, DigestError } from './http-digest.mjs';
 
-export const UPSTREAM_TIMEOUTS = Object.freeze({ connectMs: 30_000, authMs: 15_000, idleMs: 10 * 60_000 });
+// The defaults live in src/shared so the setup assistant shows the same numbers.
+import { UPSTREAM_TIMEOUTS } from '../shared/proxy-timeouts.mjs';
+export { UPSTREAM_TIMEOUTS };
 export const AUTH_MODES = Object.freeze(['auto', 'none', 'basic', 'ntlm', 'digest']);
 export const AUTH_LABELS = Object.freeze({ auto: 'NTLMv2', none: 'no login', basic: 'Basic, cleartext', ntlm: 'NTLMv2', digest: 'Digest' });
 /** Modes that need the password itself; a saved login keeps only the NT hash, so they never use one (D8). */

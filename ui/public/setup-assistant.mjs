@@ -8,9 +8,10 @@ import { guardModal } from './modal-guard.mjs';
 import { makeSwitch } from './switch.mjs';
 import { COPILOT_TERMS, renderCopilotSignIn } from './bridge-view.mjs';
 import { renderRolesSection, readRolesValues } from './engine-settings-view.mjs';
-import { fetchJson as defaultFetchJson, renderResults, FIXED_PORT_NOTE, AUTH_OPTIONS } from './settings-network-proxy.mjs';
+import { fetchJson as defaultFetchJson, renderResults, PORT_SWITCH_NOTE, AUTH_OPTIONS } from './settings-network-proxy.mjs';
 import { LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { ROLE_LABELS, MODEL_ROLES } from '../../src/shared/model-roles.mjs';
+import { UPSTREAM_TIMEOUTS } from '../../src/shared/proxy-timeouts.mjs';
 
 export const SETUP_STEPS = Object.freeze([
   { id: 'check', label: 'Check this machine' },
@@ -251,7 +252,7 @@ export function stepOfField(field) { return GROUP_STEP[String(field || '').split
 export function setupStepForSignIn(btn) { return btn?.dataset?.provider === 'copilot' ? 'access' : null; }
 
 const SUBTITLES = Object.freeze({
-  check: { first: 'Worca checks this machine, then asks only what it could not find.', other: 'Your current setup is loaded. Change what you need; the rest stays as it is.' },
+  check: { first: 'Worca checks this machine, then asks only what it could not find.', other: 'Status of your local setup.' },
   network: 'Worca’s agents use this route for every model call.',
   access: 'Turn on every source you can use. You need at least one.',
   models: 'Each role sets the model for every job that has none of its own.',
@@ -305,7 +306,10 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     netJob: false, netRetry: null, netPending: null, netSaved: '' };
 
   const stepOf = el('span', 'sa-step-of'); const title = el('h2', null); title.id = 'setup-title'; const sub = el('p', 'sa-sub');
-  const head = el('div', 'card-head'); head.append(stepOf, title, sub);
+  // One segment per step, above "Step N of 7". Decorative: the step line says the same to a screen reader.
+  const progress = el('div', 'sa-progress'); progress.setAttribute('aria-hidden', 'true');
+  for (const s of SETUP_STEPS) { const seg = el('span', 'sa-progress-seg'); seg.dataset.step = s.id; seg.title = s.label; progress.append(seg); }
+  const head = el('div', 'card-head'); head.append(progress, stepOf, title, sub);
   const body = el('div', 'sa-step'); const status = el('small', 'hint sa-status'); status.setAttribute('role', 'status');
   const actions = el('div', 'confirm-actions');
   const card = el('div', 'card setup-card'); card.append(head, body, status, actions);
@@ -338,7 +342,8 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     const active = doc.activeElement;
     if (active && active !== doc.body && active.isConnected) return;
     const next = actions.querySelector('.sa-next:not([disabled])');
-    (focusables().find((n) => body.contains(n)) || next || focusables()[0] || card).focus();
+    // preventScroll: paintBody owns the body's scroll position (kept on a repaint, the top on a new step).
+    (focusables().find((n) => body.contains(n)) || next || focusables()[0] || card).focus({ preventScroll: true });
   }
 
   const opener = doc.activeElement; let closed = false;
@@ -364,6 +369,9 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   function paint() { paintHead(); paintBody(); paintFoot(); keepFocus(); }
   function paintHead() {
     stepOf.textContent = `Step ${idx() + 1} of ${SETUP_STEPS.length}`;
+    // A finished Apply fills the last segment too: nothing is left to do.
+    const at = idx(); const finished = S.step === 'apply' && !!S.done?.ok;
+    [...progress.children].forEach((seg, i) => { seg.dataset.state = i < at || finished ? 'done' : i === at ? 'current' : 'todo'; });
     const pick = (v) => (typeof v === 'string' ? v : v[entry === 'first' ? 'first' : 'other']);
     title.textContent = S.step === 'apply' ? (S.done ? (S.done.ok ? 'Worca is ready' : 'Setup stopped') : 'Setting up Worca…') : TITLES[S.step];
     sub.textContent = pick(SUBTITLES[S.step]);
@@ -417,7 +425,28 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   }
 
   // ── step painters ──
+  // A repaint within the same step (Test, a seg pick, More) keeps the scroll position and the focused control: it
+  // rebuilds every node, which otherwise snaps the body to the top and lets keepFocus jump to the first control.
+  // The control is found again by focusKey; one that comes back disabled (Test while it runs) is retried next paint.
+  const focusKey = (n) => n?.dataset?.saField ? `field:${n.dataset.saField}`
+    : n?.classList ? `${n.tagName}:${[...n.classList].filter((c) => c.startsWith('sa-')).join('.')}:${n.dataset.value || ''}` : null;
   function paintBody() {
+    const scroller = body.parentElement; const same = S.paintedStep === S.step; S.paintedStep = S.step;
+    const top = same && scroller ? scroller.scrollTop : 0;
+    const active = doc.activeElement;
+    // Focus keepFocus parked while the control was disabled is not a new choice: the pending refocus stays.
+    if (!same) S.refocus = null; else if (active && body.contains(active) && active !== S.parked) S.refocus = focusKey(active);
+    S.parked = null;
+    paintStep();
+    if (S.refocus) {
+      const again = [...body.querySelectorAll('button, input, select, textarea, a[href]')].find((n) => focusKey(n) === S.refocus);
+      if (again && !again.disabled) { again.focus({ preventScroll: true }); S.refocus = null; }
+    }
+    const before = doc.activeElement; keepFocus();
+    if (S.refocus && doc.activeElement !== before) S.parked = doc.activeElement;
+    if (scroller) scroller.scrollTop = top;
+  }
+  function paintStep() {
     body.replaceChildren();
     if (S.loadError) {
       const list = rows('sa-load');
@@ -430,7 +459,6 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     if (S.netSaved && S.step !== 'check' && S.step !== 'apply') body.append(el('p', 'hint sa-net-saved', S.netSaved));
     ({ check: paintCheck, network: paintNetwork, access: paintAccess, models: paintModels, work: paintWork, review: paintReview, apply: paintApply })[S.step]();
     markField(S.errField);
-    keepFocus();
   }
   function markField(field) {
     if (!field) return;
@@ -439,23 +467,51 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     if (input) { input.setAttribute('aria-invalid', 'true'); input.focus?.(); }
   }
 
+  // A team setup is optional, so its row shows only when there is one to report: the file (found, or refused with
+  // the reason), else a team policy home that recommends one. Neither: no row, not a grey "No".
+  function teamRow(c) {
+    if (c.state !== 'no') return c;
+    const homes = S.teamHomes || [];
+    if (!homes.length) return null;
+    return { ...c, state: 'ok', line: `Your team policy recommends a setup (${homes.map((x) => x.home).join(', ')}).` };
+  }
+  // One table, so badges, names and details line up; the engines check adds one sub-row per engine.
   function paintCheck() {
-    const list = rows('sa-check');
-    if (!S.detect) list.append(row(badge('amber', 'Couldn\'t check this machine.'), 'Worca continues without it.'));
-    else for (const c of S.detect.checks || []) {
+    if (!S.detect) { const list = rows('sa-check'); list.append(row(badge('amber', 'Couldn\'t check this machine.'), 'Worca continues without it.')); body.append(list); return; }
+    const table = el('table', 'sa-check');
+    const head = el('tr');
+    for (const t of ['Status', 'Check', 'Details']) head.append(el('th', null, t));
+    const thead = el('thead', 'sr-only'); thead.append(head);
+    const tbody = el('tbody');
+    const tr = (cls, mark, name, line) => {
+      const r = el('tr', cls); const n = el('td', 'sa-check-name'); n.append(name);
+      const m = el('td', 'sa-check-mark'); m.append(mark);
+      r.append(m, n, el('td', 'sa-check-line', line || ''));
+      return r;
+    };
+    for (const detected of S.detect.checks || []) {
+      const c = detected.id === 'teamSetup' ? teamRow(detected) : detected;
+      if (!c) continue;
       const [tone, text] = CHECK_BADGE[c.state] || CHECK_BADGE.no;
-      const li = row(badge(tone, text), c.label, c.line); li.dataset.check = c.id;
-      if (c.id === 'teamSetup' && c.state === 'ok') li.append(badge('team', 'Team'));
-      list.append(li);
+      const r = tr(null, badge(tone, text), c.label, c.line); r.dataset.check = c.id;
+      if (c.id === 'teamSetup' && c.state === 'ok') r.querySelector('.sa-check-name').append(badge('team', 'Team'));
+      tbody.append(r);
+      if (c.id !== 'harnesses') continue;
+      for (const e of c.facts?.engines || []) {
+        const [t, x] = CHECK_BADGE[e.ready ? 'ok' : 'no'];
+        const s = tr('sa-check-sub', badge(t, x), e.label, e.line); s.dataset.engine = e.name;
+        tbody.append(s);
+      }
     }
-    body.append(list);
+    table.append(thead, tbody);
+    body.append(table);
   }
 
   function paintNetwork() {
     const n = S.answers.network; const locked = !!S.retryLogin || !!S.netRetry || S.netJob;
     // Any edit to a value the test sent drops the pass, so changing it back still needs a new test.
     const untest = (set) => (v) => { S.tested = null; timers.clearTimeout(S.passT); set(v); };
-    body.append(seg([['direct', 'Direct'], ['proxy', 'Through a corporate proxy']], n.mode, untest((v) => { n.mode = v; paint(); }), { label: 'Connection', disabled: locked }));
+    body.append(seg([['direct', 'Direct'], ['proxy', 'Proxy']], n.mode, untest((v) => { n.mode = v; paint(); }), { label: 'Connection', disabled: locked }));
     if (n.mode !== 'proxy') return;
     const test = btn('Test', 'btn btn-sm sa-test', () => { void testProxy(); });
     test.disabled = S.testing;
@@ -465,7 +521,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       li.append(btn('Change', 'btn btn-sm btn-quiet sa-change', () => { S.expanded = true; paintBody(); }));
       list.append(li); body.append(list, test);
     } else {
-      const host = textInput('text', n.host, untest((v) => { n.host = v; }), { placeholder: 'proxy.acme.example', autocomplete: 'off', spellcheck: 'false' });
+      const host = textInput('text', n.host, untest((v) => { n.host = v; }), { placeholder: 'proxy.example.com', autocomplete: 'off', spellcheck: 'false' });
       const port = textInput('number', n.port, untest((v) => { n.port = v; }), { placeholder: '8080', min: '1', max: '65535', 'aria-label': 'Port' });
       host.dataset.saField = 'network.networkProxy'; port.dataset.saField = 'network.networkProxy.port';
       const pair = el('div', 'sa-pair'); pair.append(host, port);
@@ -473,36 +529,51 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       for (const [v, t] of AUTH_OPTIONS) { const o = el('option', null, t); o.value = v; auth.append(o); }
       auth.value = n.auth; authWrap.append(auth);
       auth.addEventListener('change', () => untest((v) => { n.auth = v; paint(); })(auth.value));
-      const noProxy = textInput('text', n.noProxy, untest((v) => { n.noProxy = v; }), { placeholder: 'intranet.acme.example, .corp.acme.example', spellcheck: 'false' });
+      const noProxy = textInput('text', n.noProxy, untest((v) => { n.noProxy = v; }), { placeholder: 'intranet.example.com, .corp.example.com', spellcheck: 'false' });
       for (const i of [host, port, auth, noProxy]) i.disabled = locked;
-      body.append(field('Proxy', pair, null), field('Login', authWrap, null));
+      // Auto-detect: the proxy this machine's own settings pick (PAC, auto-discovery or manual, GET /api/proxy/detect).
+      const detect = btn('Auto-detect', 'btn btn-sm sa-detect', () => { void autoDetect(); }); detect.disabled = locked || S.detecting;
+      const detectRow = el('div', 'sa-detect-row'); detectRow.append(detect);
+      if (S.detectLine) detectRow.append(el('small', 'hint sa-detect-line', S.detectLine));
+      const proxyField = field('Proxy', pair, null); proxyField.append(detectRow);
+      body.append(proxyField, field('Login', authWrap, null));
       if (n.auth === 'auto') {
         // The account rides the Test, so editing it (the password too) needs a new one.
-        const domain = textInput('text', n.domain, untest((v) => { n.domain = v; }), { placeholder: 'ACME', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Domain' });
-        const user = textInput('text', n.user, untest((v) => { n.user = v; }), { placeholder: 'jdoe', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'User name' });
+        const domain = textInput('text', n.domain, untest((v) => { n.domain = v; }), { placeholder: 'domain', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Domain' });
+        const user = textInput('text', n.user, untest((v) => { n.user = v; }), { placeholder: 'username', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'User name' });
         domain.dataset.saField = 'network.login.domain'; user.dataset.saField = 'network.login.user';
         const account = el('div', 'sa-pair'); account.append(domain, user);
         const pw = textInput('password', n.password, untest((v) => { n.password = v; }), { autocomplete: 'off',
           ...(S.saved.proxy?.login && !locked ? { placeholder: 'Saved login in use · type to replace' } : {}) });
         body.append(field('Account', account, null), field('Password', pw, 'network.login.password'));
       }
-      body.append(field('Go direct to', noProxy, 'network.networkProxy.noProxy'));
+      body.append(field('No proxy hosts', noProxy, 'network.networkProxy.noProxy'));
       if (!locked) {
-        body.append(btn('More: timeouts and local proxy port', 'link sa-more', () => { S.more = !S.more; paintBody(); }));
+        body.append(btn('More: timeouts and local proxy port', 'link-btn sa-more', () => { S.more = !S.more; paintBody(); }));
         if (S.more) {
           const fixed = textInput('number', n.fixedPort, untest((v) => { n.fixedPort = v.trim(); }), { min: '1024', max: '65535', placeholder: 'any free port' });
-          const f = field('Local proxy port', fixed, 'network.networkProxy.fixedPort'); f.append(el('small', 'hint', FIXED_PORT_NOTE));
+          const f = field('Local proxy port', fixed, 'network.networkProxy.fixedPort');
+          // A new port is listened on at once; with a proxy already running, the old port also keeps answering for
+          // the programs holding it until the next start (egress-policy.mjs listenAlso). Nothing running: no note.
+          if (S.saved.proxy?.running) f.append(el('small', 'hint', PORT_SWITCH_NOTE));
           body.append(f);
+          // Shown filled in with the default; saved only when it differs, so an untouched field never reads as a change.
           for (const [k, label] of TIMEOUTS) {
-            const v = n.timeouts?.[k];
-            body.append(field(label, textInput('number', v ? String(v / 1000) : '', untest((s) => {
-              const t = { ...(n.timeouts || {}) };
-              if (s.trim()) t[k] = Math.round(Number(s) * 1000); else delete t[k];
+            const v = n.timeouts?.[k] || UPSTREAM_TIMEOUTS[k];
+            body.append(field(label, textInput('number', String(v / 1000), untest((s) => {
+              const t = { ...(n.timeouts || {}) }; const ms = Math.round(Number(s) * 1000);
+              if (s.trim() && ms !== UPSTREAM_TIMEOUTS[k]) t[k] = ms; else delete t[k];
               n.timeouts = t;
             }), { min: '1', max: '3600' }), `network.networkProxy.timeouts.${k}`));
           }
         }
-        body.append(test);
+        // Reset to defaults: every value here that has a default (login mode, no proxy hosts, local port, timeouts).
+        // The proxy address and the account have none, so they stay. Like any edit, it drops a passing test.
+        const reset = btn('Reset to defaults', 'btn btn-sm btn-quiet sa-reset', untest(() => {
+          Object.assign(n, { auth: 'auto', noProxy: '', fixedPort: '', timeouts: {} }); paintBody();
+        }));
+        const bar = el('div', 'sa-proxy-actions'); bar.append(test, reset);
+        body.append(bar);
       }
     }
     if (S.testing) { const list = rows('sa-testing'); list.append(row(el('span', 'mk-phase-spin'), 'Testing…')); body.append(list); }
@@ -659,7 +730,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     if (S.netRetry && S.step === 'network') {             // a failed network apply: Retry from its step
       const needPw = S.netRetry.login && !String(S.answers.network.password || '').trim();
       actions.append(btn('Back', 'btn sa-back', () => goTo(SETUP_STEPS[idx() - 1].id)));
-      actions.append(btn('Skip', 'btn btn-quiet sa-skip', () => { void skip(); }));
+      actions.append(btn('Skip for now', 'btn btn-quiet sa-skip', () => { void skip(); }));
       const again = btn('Retry', 'btn btn-primary sa-next', () => applyNetwork(S.netRetry.body, S.netRetry));
       again.disabled = needPw; actions.append(again);
       status.className = `hint sa-status${S.error ? ' err' : ''}`; status.textContent = S.error || (needPw ? 'Type the proxy password again to retry' : '');
@@ -675,8 +746,9 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     }
     actions.append(first ? btn(entry === 'first' ? 'Set up later' : 'Cancel', 'btn btn-quiet sa-later', () => guard.cancel())
       : btn('Back', 'btn sa-back', () => goTo(SETUP_STEPS[idx() - 1].id)));
-    if (S.answers && idx() >= 1 && idx() <= 4) actions.append(btn('Skip', 'btn btn-quiet sa-skip', () => { void skip(); }));
     const gate = S.answers ? nextGate(S.step, S.answers, { saved: S.saved, tested: S.tested, now: now(), detect: S.detect, entry, netSaved: S.netSaved }) : { ok: false, reason: '' };
+    const skipLabel = S.answers && idx() >= 1 && idx() <= 4 ? skipLabelFor(gate) : null;
+    if (skipLabel) actions.append(btn(skipLabel, 'btn btn-quiet sa-skip', () => { void skip(); }));
     const label = S.step === 'check' ? 'Start' : S.step === 'review' ? (gate.finish ? 'Finish' : entry === 'first' ? 'Apply setup' : 'Apply changes') : 'Next';
     const onNext = () => (S.step === 'network' ? nextFromNetwork() : S.step !== 'review' ? goTo(SETUP_STEPS[idx() + 1].id) : gate.finish ? teardown('done') : startApply(null));
     const next = btn(label, 'btn btn-primary sa-next', onNext);
@@ -709,6 +781,13 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
 
   // Skip keeps the saved values for that step (mockup: "Skipping a step keeps its saved values"). After a failed
   // network apply those are re-read first: its earlier steps may have saved some of them.
+  // The second button on steps 2–5 shows only when it does something Next does not. Both labels run skip(), which
+  // puts the step back to its saved values and moves on. Next blocked (an untested proxy, a missing sign-in):
+  // "Skip for now". The step differs from what is saved (the Review step's Changed): "Discard changes". Else none.
+  function skipLabelFor(gate) {
+    if (!gate.ok) return 'Skip for now';
+    return diffRows(S.saved, S.answers).some((r) => r.step === S.step && r.changed) ? 'Discard changes' : null;
+  }
   async function skip() {
     if (S.netRetry && S.step === 'network') {
       S.netRetry = null; S.results = new Map(); S.answers.network.password = '';
@@ -735,6 +814,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     // 'team': the home the notice named (null when it is gone); any other entry: a valid team setup file.
     const t = teamRes.ok ? teamRes.data : null;
     S.team = entry === 'team' ? (t?.homes || []).find((x) => x.home === teamHome) || null : (t?.file?.ok ? t.file : null);
+    S.teamHomes = (t?.homes || []).filter((x) => x?.home && Array.isArray(x.keys) && x.keys.length);   // the Check step's Team setup row
     if (!keepAnswers || !S.answers) {
       S.answers = initialAnswers({ saved: S.saved, detect: S.detect, entry, step, team: S.team, savedKeys: Array.isArray(t?.savedKeys) ? t.savedKeys : null });
       S.opened = JSON.stringify(S.answers);
@@ -752,6 +832,23 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   }
 
   // Network › Test: POST /api/proxy/test with the values on screen; a pass records { key, at } (A11).
+  // Fills host and port (and, from a manual system setting, its usable bypass list); like any edit it needs a new Test.
+  async function autoDetect() {
+    const n = S.answers.network;
+    S.detecting = true; S.detectLine = 'Looking at this machine\'s proxy settings…'; paint();
+    const r = await call('/api/proxy/detect');
+    if (closed) return;
+    S.detecting = false;
+    const d = r.ok ? r.data : null;
+    if (d?.found) {
+      S.tested = null; timers.clearTimeout(S.passT);
+      n.host = d.host; n.port = String(d.port);
+      if (Array.isArray(d.noProxy) && d.noProxy.length) n.noProxy = d.noProxy.join(', ');
+    }
+    S.detectLine = d?.line || "Couldn't read this machine's proxy settings.";
+    paint();
+  }
+
   async function testProxy() {
     const n = S.answers.network; const key = proxyKey(n);
     S.testing = true; S.tested = null; S.error = ''; paint();

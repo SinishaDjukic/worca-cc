@@ -523,6 +523,7 @@ import * as skClone from '../src/core/clone-project.mjs';
 import { HLJS_GRAMMAR_IDS } from './public/hljs-loader.mjs';
 import { useEnvProxy, reinstallEnvProxy, proxyNotice } from '../src/core/env-proxy.mjs';
 import { startLiveEgress, egressNotice, egressSummary } from '../src/core/egress-policy.mjs';
+import { detectSystemProxy } from '../src/core/system-proxy.mjs';
 import { saveProxyLogin, clearProxyLogin, parseAccount, ProxyLoginError, upstreamEnv, savedLoginRefusal } from '../src/core/proxy-credentials.mjs';
 import { createProxyHost, PROXY_AGENT_TEXT } from '../src/core/proxy-host.mjs';
 import { applyProxyChange, validateProxyChange, validateProxyFlagOn } from '../src/core/ask/proxy-deps.mjs';
@@ -13528,6 +13529,14 @@ app.get('/api/proxy/status', (req, res) => {
   res.set('Cache-Control', 'no-store').json(proxyStatusPayload());
 });
 
+// Auto-detect (setup assistant › Network, the Network proxy card): the proxy this machine's own settings pick for
+// api.anthropic.com — a PAC file, auto-discovery or a manual proxy (src/core/system-proxy.mjs). Read-only: the
+// caller fills its fields and still Tests before saving. Never a 500: an unreadable setting is a found:false line.
+let detectSystemProxyImpl = detectSystemProxy;
+app.get('/api/proxy/detect', async (req, res) => {
+  res.set('Cache-Control', 'no-store').json(await detectSystemProxyImpl());
+});
+
 app.post('/api/proxy/login', (req, res) => {
   if (refuseProxyAgent(req, res)) return;
   const body = req.body || {};
@@ -19021,6 +19030,7 @@ export const _testing = {
   // The startEgressPolicy() result the /api/proxy routes read, or a startLiveEgress() that also applies saves.
   setEgress: (e) => { EGRESS = e; },
   setLiveEgress: (l) => { EGRESS_LIVE = l; },
+  setSystemProxyDetect: (fn) => { detectSystemProxyImpl = fn || detectSystemProxy; },
   proxyHost,
   // Setup assistant: swap the apply side effects / detect probes; resetSetup drops overrides, the lock and the jobs.
   setSetupDeps: (o) => { setupDepsOverride = o || {}; },

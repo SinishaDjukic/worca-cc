@@ -18,8 +18,11 @@ Checks the machine and answers within about 3 seconds:
 There is one row per check, always in this order: `claude`, `git`, `proxyEnv`, `direct`, `harnesses`,
 `ollama`, `apiKey`. `state` is `ok`, `warn` or `no`, and `line` is one plain-words sentence. Some rows also
 carry `facts`: the proxy host for `proxyEnv`, the engines for `harnesses`, the model count for `ollama`.
+The `harnesses` row (shown as Engines) counts the ready engines in its `line`; each `facts.engines[]` entry
+carries its own short `line` (at most 160 characters; the full `reason` is kept), and the dialog shows one
+sub-row per engine under it.
 
-- Each check has 2.5 seconds. A check that takes longer is `warn` with "Couldn't check this in time.", and a
+- Each check has 2.5 seconds; the engines check has 10, since its first run starts every engine's CLI. A check that takes longer is `warn` with "Couldn't check this in time.", and a
   check that fails is `warn` with "Couldn't check this."
 - `proxyEnv` shows `host:port` only, never a proxy login. `apiKey` says whether `ANTHROPIC_API_KEY` is set,
   never its value.
@@ -134,13 +137,21 @@ this machine knows is left out with a warning, such as
 `ui/public/setup-assistant.mjs` builds the dialog. Every open loads the saved values first
 (`/api/settings`, `/api/proxy/status`, `/api/providers`, `/api/config`) plus `GET /api/setup/detect`.
 Detection fills a field only when the saved value is empty, and only on a first start. The head shows
-"Step N of 7", the step's title and a subtitle. The foot holds the status line and the buttons. On steps 2–5,
-**Skip** keeps that step's saved values.
+a segmented progress bar (one segment per step), "Step N of 7", the step's title and a subtitle. The foot holds
+the status line and the buttons: the way back or out (Back, Cancel / Set up later, Close) on the left, the primary
+action on the right.
+
+On steps 2–5 a second button appears next to the primary one only when it does something **Next** does not. Both
+labels put the step back to its saved values and move on:
+
+- **Skip for now** while **Next** is blocked (an untested proxy, a missing sign-in, no source picked).
+- **Discard changes** when the step differs from what is saved (the rows Review marks **Changed**).
+- No second button when the step is as saved and **Next** is open.
 
 | Step | What it asks |
 |---|---|
 | 1 Check this machine | Nothing. One row per detect check, with OK, Check or No. |
-| 2 Network | Direct, or through a corporate proxy: host and port, login mode, account and password (NTLMv2 only), the hosts that go direct, and under **More** the timeouts and the local proxy port. A proxy found in `HTTPS_PROXY` on a first start shows as one "Found in your environment" line with **Change**. **Next** saves and applies these values at once (only when they changed), with its progress inline. |
+| 2 Network | Direct, or through a corporate proxy: host and port (**Auto-detect** fills them in from the system settings, see [Auto-detect](network-proxy.md#auto-detect)), login mode, account and password (NTLMv2 only), the hosts that go direct, and under **More** the timeouts (filled in with their defaults) and the local proxy port. **Reset to defaults** puts the login mode, the no-proxy hosts, the local port and the timeouts back. A proxy found in `HTTPS_PROXY` on a first start shows as one "Found in your environment" line with **Change**. **Next** saves and applies these values at once (only when they changed), with its progress inline. |
 | 3 Model access | Which sources to use: Claude Code sign-in, GitHub Copilot, OpenAI-compatible, Anthropic-compatible. Copilot shows its notice, the "I understand" switch, the plan, and the device sign-in inside the dialog. With the credential broker on, keys and the Copilot sign-in stay on the broker's key page. |
 | 4 Models | The Models page's Roles: Deep thinking, Everyday coding and Quick jobs per harness, plus "Test each model after Apply". Copilot models picked here are imported by Apply. |
 | 5 How you work | Interface mode, the per-run and total limits, the reset period, AI-written PR descriptions and smart run names. |
@@ -151,18 +162,18 @@ Detection fills a field only when the saved value is empty, and only on a first 
 the host, port, login mode, direct hosts and account on screen. **Test** sends the typed domain, user and
 password with it, so a fresh install behind an NTLM proxy passes before anything is saved; editing any of them
 needs a new test. A pass counts for 9 minutes, under the server's 10-minute window. This holds for the saved
-proxy on a re-run too: **Skip** is the way past Network without a test, and it keeps the saved values.
+proxy on a re-run too: **Skip for now** is the way past Network without a test, and it keeps the saved values.
 
 **Next on Network.** After a passing test (or with Direct), **Next** posts the network group alone and shows its
 rows inline on Network. Model access opens only when it succeeded; the password is dropped right after the 202.
 A failure stays on Network with the failed step's line and offers **Retry** from that step (asking for the
-password again when the login step still has to run) or **Skip**. An apply refused with `UNTESTED` stays on
+password again when the login step still has to run) or **Skip for now**. An apply refused with `UNTESTED` stays on
 Network too. Values that match the saved ones post nothing, so on a re-run **Next** just moves on. Once saved,
 the dialog says so in one line ("The corporate proxy is saved and on."), Review lists Network as **Saved**
 rather than **Changed**, and closing the dialog with **Set up later** keeps it. When nothing else changed,
 Review offers **Finish**.
 
-**Re-run.** Settings › General › Setup assistant › **Run setup again** opens the dialog with the saved values
+**Re-run.** Settings › General › Setup assistant › **Run setup** opens the dialog with the saved values
 in every field. Only the changed groups and fields are sent, and a cleared role is sent as `null`. With nothing
 changed, **Apply changes** is disabled ("Nothing changed."). A first start with nothing to change shows
 **Finish** instead and posts nothing.
@@ -195,6 +206,11 @@ dropped with a warning. Tags are dropped too: they come from the project's team 
 file that carries one, by key name or by a value that looks like a key, is refused whole, with the field named:
 "A team setup never carries network settings: “networkProxy”. Remove it and try again." The Check step shows
 the refusal on its **Team setup** row.
+
+**The Check step's Team setup row** shows only when there is a team setup to report: the file (found, or refused
+with the reason), or else a team policy home that recommends one ("Your team policy recommends a setup (…)", with
+the Team chip). With neither, the row is left out: a team setup is optional, so its absence is not a finding. The
+detect answer still carries the `teamSetup` row either way.
 
 **In the dialog.** On a first start, the file's values fill only the answers that are blank, and each Review
 row they filled carries a **Team** chip. A team role that no source on this machine offers shows "None of your

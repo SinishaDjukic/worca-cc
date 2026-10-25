@@ -344,7 +344,7 @@ test('AC-2.5: an untested upstream change is refused with UNTESTED and writes no
   } finally { testing.setLiveEgress(null); await live.close(); await other.close(); await useUpstream(fake.port); }
 });
 
-test('AC-2.7: changing fixedPort answers "Applies at the next start" and the old port keeps listening', async () => {
+test('AC-2.7: changing fixedPort switches at once (no restart) and the old port keeps listening', async () => {
   const p1 = await freePort(); const p2 = await freePort();
   await useUpstream(fake.port);
   await setNetworkProxy({ fixedPort: p1 });
@@ -353,11 +353,11 @@ test('AC-2.7: changing fixedPort answers "Applies at the next start" and the old
   try {
     const r = await call('PUT', '/api/proxy/settings', { networkProxy: { fixedPort: p2 } });
     assert.equal(r.status, 200, r.text);
-    assert.equal(r.body.restartNeeded, true);
-    assert.deepEqual(r.body.pending, ['fixedPort']);
-    assert.equal(r.body.notes.fixedPort, 'Applies at the next start');
+    assert.equal(r.body.restartNeeded, false);
+    assert.deepEqual(r.body.pending, []);
+    assert.equal(r.body.notes.fixedPort, undefined);
     assert.equal(await isWorcaProxy(p1), true);
-    assert.equal(await isWorcaProxy(p2), false);
+    assert.equal(await isWorcaProxy(p2), true);
   } finally { testing.setLiveEgress(null); await live.close(); await setNetworkProxy({ fixedPort: null }); }
 });
 
@@ -424,4 +424,14 @@ test('a typed login is checked like apply checks it: a bad field is 400, Basic a
     assert.equal(r.body.error, savedLoginRefusal(auth));
   }
   assert.equal(existsSync(loginFile()), false);
+});
+
+test('GET /api/proxy/detect answers what the system detection found, uncached', async () => {
+  const found = { found: true, source: 'manual', host: 'proxy.example.com', port: 8080, noProxy: ['*.corp.example.com'], also: [], line: 'From your macOS proxy settings.' };
+  testing.setSystemProxyDetect(async () => found);
+  try {
+    const r = await call('GET', '/api/proxy/detect');
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual(r.body, found);
+  } finally { testing.setSystemProxyDetect(null); }
 });

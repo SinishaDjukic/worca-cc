@@ -37647,7 +37647,7 @@ function paintGsSettings() {
     ? `Hidden from the sidebar · ${done} of ${total} done`
     : `In the sidebar · ${done} of ${total} done`);
 }
-// Settings › General › Setup assistant: Run setup again (AC-4.4).
+// Settings › General › Setup assistant: Run setup (AC-4.4).
 document.getElementById('setupRunAgain')?.addEventListener('click', () => openSetup({ entry: 'rerun' }));
 document.getElementById('gsShowAgain')?.addEventListener('click', async () => {
   if (gs.status && gs.status.hidden) {

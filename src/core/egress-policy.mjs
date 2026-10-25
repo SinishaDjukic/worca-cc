@@ -23,6 +23,7 @@
 // startLiveEgress() wraps it: a saved change of networkProxy swaps the upstream in place (D7-D10).
 
 import http from 'node:http';
+import net from 'node:net';
 import { createProxy, readEgressPolicy, normalizeHost } from './egress-proxy.mjs';
 import { createUpstreamConnector, resolveUpstream, ProxyCredentials, AUTH_LABELS, PASSWORD_MODES, fixedPortOf, localProxyUrl } from './upstream-proxy.mjs';
 import { readProxyLogin, watchProxyLogin, markLoginRejected, redactProxyLine, upstreamEnv, CORPORATE_PROXY_VAR } from './proxy-credentials.mjs';
@@ -174,7 +175,7 @@ export async function startEgressPolicy({ env = process.env, log = () => {}, unr
   }
   if (unref) server.unref();
   const port = server.address().port;
-  const url = `http://127.0.0.1:${port}`;
+  let url = `http://127.0.0.1:${port}`;   // listenAlso() moves it to a new fixed port
   const replacedProxy = !connector && PROXY_NAMES.some((k) => env[k] && env[k] !== url);
   const direct = directOf(usable);
   // D21: read before the swap. Any variable whose value is an http URL with userinfo pointing at
@@ -214,6 +215,25 @@ export async function startEgressPolicy({ env = process.env, log = () => {}, unr
   // The watcher runs whenever the proxy is on: a swap can bring in an upstream that takes a login.
   const stopWatch = watchLogin(() => { if (isSwappable(usable)) reloadLogin(); });
   const sup = superviseProxy(server, port, { log });
+  // listenAlso(): extra listeners on later fixed ports. Each hands its sockets to the same proxy server, so every port
+  // shares the connector, the login and the policy. The old port keeps answering for the children already holding it.
+  const extras = [];
+  let boundFixed = fixedPort;
+  /** Listen on `nextPort` too and hand it to new children (D10 live): the env's proxy URL moves there. Rejects
+   *  with fixedPortError when the port cannot be bound; nothing changes then. */
+  async function listenAlso(nextPort) {
+    const side = net.createServer((socket) => server.emit('connection', socket));
+    side.maxConnections = server.maxConnections;
+    try { await listenOn(side, nextPort); } catch (err) { throw fixedPortError(nextPort, err); }
+    if (unref) side.unref();
+    server.addSelfPort(nextPort);
+    extras.push({ side, sup: superviseProxy(side, nextPort, { log }) });
+    url = `http://127.0.0.1:${nextPort}`;
+    boundFixed = nextPort; fixedPortShared = false;
+    Object.assign(env, egressChildEnv(url, directOf(usable), { corporate: !!connector }));
+    for (const k of scrubbedKeys) env[k] = url;
+    return url;
+  }
 
   /** D7/D13: re-resolve the upstream from the pre-swap env and swap it into the running server. */
   function swapUpstream(np) {
@@ -238,14 +258,21 @@ export async function startEgressPolicy({ env = process.env, log = () => {}, unr
   }
 
   return {
-    status: 'on', policy, url, replacedProxy, sourceEnv, scrubbedKeys, boundAddress: server.address().address,
-    ...(fixedPort ? { fixedPort, fixedPortShared } : {}),
+    status: 'on', policy, replacedProxy, sourceEnv, scrubbedKeys, boundAddress: server.address().address,
+    get url() { return url; },
+    get fixedPort() { return boundFixed || undefined; },
+    get fixedPortShared() { return boundFixed ? fixedPortShared : undefined; },
+    listenAlso,
     get upstreamError() { return upstreamError; },
     get connector() { return connector; },
     get reloadLogin() { return connector ? reloadLogin : undefined; },
     get upstream() { return connector ? { ...connector.status(), warnings: usable.warnings } : undefined; },
     swapUpstream,
-    close: async () => { stopWatch(); await sup.stop(); connector?.close(); },
+    close: async () => {
+      stopWatch(); await sup.stop();
+      for (const x of extras) { await x.sup.stop(); x.side.close(); }
+      connector?.close();
+    },
   };
 }
 
@@ -274,16 +301,28 @@ export async function startLiveEgress({ settings = readSettings, readStrict = re
 
   async function applyNow(np) {
     const fixed = fixedPortOf(np);
-    const pending = boundFixed !== null && fixed !== boundFixed ? ['fixedPort'] : [];
+    // A new fixed port switches at once: the running proxy listens there too and new children get it, while the old
+    // port keeps answering for the ones holding it until the next start. A port that cannot be bound is said now
+    // (it would fail the next start too). No fixed port any more: the current one simply stays until the next start.
+    const pending = []; let portError; let switched = false;
+    if (boundFixed !== null && fixed !== boundFixed && result.status === 'on') {
+      if (!fixed) boundFixed = 0;
+      else {
+        try { await result.listenAlso(fixed); boundFixed = fixed; switched = true; }
+        catch (err) { portError = `saved, but ${err && err.message ? err.message : err}`; }
+      }
+    }
+    if (switched) { try { onEnvChange(); } catch { /* the new port runs */ } }
+    const extra = { ...(portError ? { upstreamError: portError } : {}), ...(switched ? { portSwitched: fixed } : {}) };
     const key = liveKeyOf(np);
-    if (key === appliedKey) return { changed: false, pending };
+    if (key === appliedKey) return { changed: switched, pending, ...extra };
     if (result.status === 'inherited') { appliedKey = key; return { changed: false, pending }; }
     if (result.status === 'on') {
       const r = result.swapUpstream(np);
-      if (!r.changed) return { ...r, pending };          // Decision 6a: the running connector stays
+      if (!r.changed) return { ...r, pending, ...extra };   // Decision 6a: the running connector stays
       appliedKey = key;
       try { onEnvChange(); } catch { /* the swap stands */ }
-      return { ...r, pending };
+      return { ...r, pending, ...extra };
     }
     if (!(np && np.enabled === true)) { appliedKey = key; return { changed: false, pending: [] }; }
     const next = await startEgressPolicy({ ...startOpts, settings: () => ({ networkProxy: np }), proxyOn: () => true });
