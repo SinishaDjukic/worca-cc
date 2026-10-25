@@ -77,6 +77,21 @@ function checkAccount({ domain = '', user }) {
   return { domain: d, user: u };
 }
 
+/** saveProxyLogin's field checks without writing (setup apply validates before its one write). @throws {ProxyLoginError} */
+export function assertProxyLoginInput({ domain = '', user, password }) {
+  const account = checkAccount({ domain, user });
+  if (typeof password !== 'string' || !password) throw new ProxyLoginError('password', 'enter the password');
+  if (password.length > MAX_PASSWORD) throw new ProxyLoginError('password', `the password is longer than ${MAX_PASSWORD} characters`);
+  return account;
+}
+
+/** Basic and Digest send the password itself, and a saved login keeps only the NT hash. Null = a login can be saved. */
+export function savedLoginRefusal(auth) {
+  if (auth !== 'basic' && auth !== 'digest') return null;
+  const mode = auth === 'digest' ? 'Digest' : 'Basic';
+  return `“Login” is ${mode}, and a saved login keeps only the NT hash, which ${mode} cannot use. Choose NTLMv2 and Save first.`;
+}
+
 /**
  * Hash `password` and save the login. Returns the public view (never the hash).
  * @throws {ProxyLoginError} on a bad field; any fs/icacls error as is (no file left behind)
@@ -84,9 +99,7 @@ function checkAccount({ domain = '', user }) {
 export function saveProxyLogin({ domain = '', user, password }, {
   home = defaultHome(), platform = process.platform, exec = execFileSync, env = process.env, now = Date.now,
 } = {}) {
-  const account = checkAccount({ domain, user });
-  if (typeof password !== 'string' || !password) throw new ProxyLoginError('password', 'enter the password');
-  if (password.length > MAX_PASSWORD) throw new ProxyLoginError('password', `the password is longer than ${MAX_PASSWORD} characters`);
+  const account = assertProxyLoginInput({ domain, user, password });
   const file = proxyLoginFile(home);
   if (!file) throw new ProxyLoginError('home', 'Worca has no home folder to save the login in');
   const record = { v: 1, id: randomBytes(8).toString('hex'), ...account,

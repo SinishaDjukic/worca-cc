@@ -9,7 +9,8 @@ import { checkUpstream, resolveUpstream, upstreamKey, upstreamLabel, fixedPortOf
 export const PROXY_AGENT_TEXT = 'The corporate proxy login cannot be changed or tested from inside the container while agent isolation is on. Open Worca through its published address.';
 /** How long a passing test lets a save swap to those values (D9). */
 export const TESTED_TTL_MS = 10 * 60_000;
-export const FIXED_PORT_NOTE = 'Applies at the next start';
+export { FIXED_PORT_NOTE } from '../shared/network-proxy-text.mjs';
+import { FIXED_PORT_NOTE } from '../shared/network-proxy-text.mjs';
 export const UNTESTED_TEXT = 'Test these proxy settings first: Worca switches to a new proxy only after it passed a test';
 
 /**
@@ -122,13 +123,14 @@ export function createProxyHost({ egress, apply = () => null, io = {} } = {}) {
     }
   }
 
-  /** PUT /api/proxy/settings, the chat card's Apply and setup apply. Throws the settings.mjs validation
-   *  error; refuses an untested upstream (409 UNTESTED) before writing anything. */
-  async function saveSettings(patch) {
+  /** The UNTESTED gate alone, so setup apply can refuse before its one write (D9, D20). Throws the validation error. */
+  function checkSave(patch) {
     const next = preview(patch ?? null);
-    if (untested(next)) return { refused: refuse('UNTESTED', UNTESTED_TEXT) };
-    const beforeFixed = fixedPortOf(settings());
-    const networkProxy = await saveNetworkProxy(patch ?? null);
+    return { next, refused: untested(next) ? refuse('UNTESTED', UNTESTED_TEXT) : null };
+  }
+
+  /** Swap in values that are already written: PUT /api/proxy/settings' tail, and setup apply's proxy-swap step. */
+  async function applyWritten(networkProxy, beforeFixed) {
     const fallback = { changed: false, pending: fixedPortOf(networkProxy) !== beforeFixed ? ['fixedPort'] : [] };
     // The write already happened: a failed live apply is reported with the saved result, never turned into a 400.
     let out;
@@ -140,5 +142,14 @@ export function createProxyHost({ egress, apply = () => null, io = {} } = {}) {
       ...(out.upstreamError ? { upstreamError: out.upstreamError } : {}) };
   }
 
-  return { status, chatStatus, test, saveSettings };
+  /** PUT /api/proxy/settings and the chat card's Apply. Throws the settings.mjs validation
+   *  error; refuses an untested upstream (409 UNTESTED) before writing anything. */
+  async function saveSettings(patch) {
+    const { refused } = checkSave(patch);
+    if (refused) return { refused };
+    const beforeFixed = fixedPortOf(settings());
+    return applyWritten(await saveNetworkProxy(patch ?? null), beforeFixed);
+  }
+
+  return { status, chatStatus, test, saveSettings, checkSave, applyWritten, fixedPortNow: () => fixedPortOf(settings()) };
 }

@@ -27,12 +27,13 @@ import { resolveBillTo } from '../billing.mjs';
 
 // ── credential broker (docs/credential-broker.md) ────────────────────────────
 
-/** With the broker on, provider keys and sign-ins live on its key page, never in worca. */
-function refuseWithBroker(what) {
-  if (!brokerEnabled()) return;
+/** With the broker on, provider keys and sign-ins live on its key page, never in worca. The Error, or null when the broker is off. */
+export function brokerRefusal(what) {
+  if (!brokerEnabled()) return null;
   const keyPage = cachedBrokerInfo()?.publicUrl;
-  throw Object.assign(new Error(`worca can't ${what}: with the credential broker, each person does that on the key page${keyPage ? ` (${keyPage})` : ''}`), { code: 'BROKER' });
+  return Object.assign(new Error(`worca can't ${what}: with the credential broker, each person does that on the key page${keyPage ? ` (${keyPage})` : ''}`), { code: 'BROKER' });
 }
+function refuseWithBroker(what) { const err = brokerRefusal(what); if (err) throw err; }
 
 /**
  * Run `fn(token)` with a short-lived broker token for `slot`, billed to the person behind

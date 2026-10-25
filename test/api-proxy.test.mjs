@@ -11,7 +11,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { startFakeUpstream } from './helpers/fake-upstream-proxy.mjs';
-import { saveProxyLogin, readProxyLogin, proxyLoginReads, proxyLoginFile } from '../src/core/proxy-credentials.mjs';
+import { saveProxyLogin, readProxyLogin, proxyLoginReads, proxyLoginFile, savedLoginRefusal } from '../src/core/proxy-credentials.mjs';
+import { INTERNAL_KEY } from '../src/core/settings-errors.mjs';
 import { ntHash } from '../src/core/ntlm.mjs';
 import { startLiveEgress, isWorcaProxy } from '../src/core/egress-policy.mjs';
 import { readSettings, setNetworkProxy } from '../src/core/settings.mjs';
@@ -170,6 +171,9 @@ test('auth basic: Log in is refused with 409 field auth', async () => {
     const r = await call('POST', '/api/proxy/login', { domain: 'ACME', user: 'jdoe', password: 'S3cret!' });
     assert.equal(r.status, 409);
     assert.equal(r.body.field, 'auth');
+    assert.equal(r.body.code, 'BASIC_NO_SAVED_LOGIN');
+    assert.equal(r.body.error, savedLoginRefusal('basic'), 'the same text setup apply returns');
+    assert.doesNotMatch(r.body.error, INTERNAL_KEY);
     assert.equal(existsSync(loginFile()), false);
   } finally { await setNetworkProxy({ auth: null }); }
 });
@@ -266,7 +270,9 @@ test('auth digest: Log in is refused with 409 like Basic', async () => {
     const r = await call('POST', '/api/proxy/login', { domain: 'ACME', user: 'jdoe', password: 'S3cret!' });
     assert.equal(r.status, 409);
     assert.equal(r.body.field, 'auth');
-    assert.match(r.body.error, /networkProxy\.auth is digest/);
+    assert.equal(r.body.code, 'BASIC_NO_SAVED_LOGIN');
+    assert.equal(r.body.error, savedLoginRefusal('digest'));
+    assert.doesNotMatch(r.body.error, INTERNAL_KEY);
     assert.equal(existsSync(loginFile()), false);
   } finally { await setNetworkProxy({ auth: null }); }
 });

@@ -281,6 +281,8 @@ import { speechState, transcribe, synthesize, testSpeech } from '../src/core/spe
 import { speechAssetStore } from '../src/core/speech-assets.mjs';
 import { listPluginModels, modelSecretsSchema, pluginModelSecretStatus } from '../src/core/plugin-models.mjs';
 import { testModel } from '../src/core/model-test.mjs';
+import { detectSetup, defaultProbes } from '../src/core/setup/detect.mjs';
+import { planSetupApply, commitSetupPlan, runSetupSteps, SetupFieldError, SetupConflictError } from '../src/core/setup/apply.mjs';
 import {
   DEFAULT_UI_PORT, UI_HEALTH_NAME, newUiToken, writeUiInstance, removeUiInstance, uiUrl,
 } from '../src/core/ui-instance.mjs';
@@ -518,8 +520,7 @@ import * as skClone from '../src/core/clone-project.mjs';
 import { HLJS_GRAMMAR_IDS } from './public/hljs-loader.mjs';
 import { useEnvProxy, reinstallEnvProxy, proxyNotice } from '../src/core/env-proxy.mjs';
 import { startLiveEgress, egressNotice, egressSummary } from '../src/core/egress-policy.mjs';
-import { saveProxyLogin, clearProxyLogin, parseAccount, ProxyLoginError } from '../src/core/proxy-credentials.mjs';
-import { PASSWORD_MODES } from '../src/core/upstream-proxy.mjs';
+import { saveProxyLogin, clearProxyLogin, parseAccount, ProxyLoginError, upstreamEnv, savedLoginRefusal } from '../src/core/proxy-credentials.mjs';
 import { createProxyHost, PROXY_AGENT_TEXT } from '../src/core/proxy-host.mjs';
 import { applyProxyChange, validateProxyChange, validateProxyFlagOn } from '../src/core/ask/proxy-deps.mjs';
 import { proxyEventPrompt, proxyNoticeText } from '../src/core/ask/proxy-proposal.mjs';
@@ -11981,6 +11982,25 @@ app.post('/api/settings', async (req, res) => {
   }
 });
 
+/** The catalog checks on an asserted modelRoles patch, shared by POST /api/settings and setup apply (A18).
+ *  Returns the patch with each model rewritten to the catalog's canonical id. */
+async function checkModelRolesPatch(patch) {
+  const items = [];
+  // Model and harness only: the role effort is mapped when used (effortOn), never refused here (A7).
+  for (const [engine, roles] of Object.entries(patch)) for (const [role, value] of Object.entries(roles)) if (value) items.push({ id: `modelRoles.${engine}.${role}`, engine, value: { model: value.model } });
+  await assertSlotModels(items);
+  // Store the catalog's canonical id (A8), so every consumer matches the same spelling.
+  if (items.length) {
+    const models = await listModels('');
+    for (const roles of Object.values(patch)) for (const value of Object.values(roles)) {
+      if (!value) continue;
+      const hit = models.find((m) => m?.id?.toLowerCase() === value.model.toLowerCase());
+      if (hit) value.model = hit.id;
+    }
+  }
+  return patch;
+}
+
 /**
  * POST /api/settings' body without the request: validate every present key before any write, write them (root
  * first), then the broadcasts. Shared with Ask's change_setting and its Revert (worca Chat P2), which send ONE known
@@ -12115,20 +12135,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     });
     let modelRolesPatch = null;
     if (hasModelRolesKey) await asSettingsField('modelRoles', async () => {
-      modelRolesPatch = assertModelRolesInput(body.modelRoles);
-      const items = [];
-      // Model and harness only: the role effort is mapped when used (effortOn), never refused here (A7).
-      for (const [engine, roles] of Object.entries(modelRolesPatch)) for (const [role, value] of Object.entries(roles)) if (value) items.push({ id: `modelRoles.${engine}.${role}`, engine, value: { model: value.model } });
-      await assertSlotModels(items);
-      // Store the catalog's canonical id (A8), so every consumer matches the same spelling.
-      if (items.length) {
-        const models = await listModels('');
-        for (const roles of Object.values(modelRolesPatch)) for (const value of Object.values(roles)) {
-          if (!value) continue;
-          const hit = models.find((m) => m?.id?.toLowerCase() === value.model.toLowerCase());
-          if (hit) value.model = hit.id;
-        }
-      }
+      modelRolesPatch = await checkModelRolesPatch(assertModelRolesInput(body.modelRoles));
     });
     if (hasUtilityModelsKey) await asSettingsField('utilityModels', async () => {
       const patch = assertUtilityModelsInput(body.utilityModels); const items = [];
@@ -13405,6 +13412,85 @@ function refuseNonJson(req, res) {
 }
 const owns = (o, k) => !!o && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k);
 
+// Setup assistant (docs/setup-assistant.md): the machine check and the one-shot apply. The progress follows
+// the clone-job pattern: 202, one 'setup-apply' frame per step, a terminal frame, and a poll route.
+const SETUP_JOBS = new Map();            // id -> { id, state, results, ok, retry, startedAt, endedAt }
+const SETUP_JOB_TTL_MS = 60 * 60_000;
+let setupRunning = null;
+let setupDepsOverride = {};
+let setupProbesOverride = null;
+const SETUP_AGENT_TEXT = 'Setup cannot run from inside the container while agent isolation is on. Open Worca through its published address.';
+const publicSetupJob = (j) => ({ id: j.id, done: j.state !== 'running', ok: j.ok, retry: j.retry, results: j.results, startedAt: j.startedAt, endedAt: j.endedAt });
+
+function setupDeps() {
+  return {
+    checkProxy: (patch) => proxyHost.checkSave(patch),
+    fixedPortNow: () => proxyHost.fixedPortNow(),
+    applyProxy: (np, beforeFixed) => proxyHost.applyWritten(np, beforeFixed),
+    reloadLogin: () => egressNow()?.reloadLogin?.(),
+    checkModelRoles: (patch) => checkModelRolesPatch(patch),
+    testModel: async (id) => {
+      const key = String(id).toLowerCase();
+      if (modelTestsInFlight.has(key)) return { ok: false, message: 'test already running for this model' };
+      modelTestsInFlight.add(key);
+      try { return await testModel(id); } finally { modelTestsInFlight.delete(key); }
+    },
+    ...setupDepsOverride,
+  };
+}
+
+app.get('/api/setup/detect', async (req, res) => {
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: SETUP_AGENT_TEXT, code: 'SETUP_AGENT_BLOCKED' });
+  try {
+    const probes = setupProbesOverride || defaultProbes({ recheck: isTruthy(req.query.recheck),
+      sourceEnv: () => upstreamEnv(egressNow()?.sourceEnv ?? process.env) });
+    res.json(await detectSetup({ probes }));
+  } catch (err) { console.error('[setup] detect failed:', err); res.status(500).json({ error: 'Worca could not check this machine. Try again.' }); }
+});
+
+app.post('/api/setup/apply', async (req, res) => {
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: SETUP_AGENT_TEXT, code: 'SETUP_AGENT_BLOCKED' });
+  if (!req.is('application/json')) return res.status(415).json({ error: 'Setup needs its answers sent as JSON.', code: 'JSON_REQUIRED' });
+  if (setupRunning) return res.status(409).json({ error: 'Setup is already applying. Wait for it to finish, then try again.', code: 'SETUP_RUNNING', id: setupRunning });
+  // Claim the lock synchronously, before the first await, so two POSTs can never both plan (security-1-1).
+  const id = `stp_${randomBytes(6).toString('hex')}`;
+  setupRunning = id;
+  const deps = setupDeps();
+  let plan;
+  try {
+    plan = await planSetupApply(req.body, deps);
+    await commitSetupPlan(plan, deps);
+  } catch (err) {
+    setupRunning = null;                                        // every early return releases the lock
+    if (err instanceof SetupFieldError) return res.status(400).json({ error: err.message, field: err.field, ...(err.code ? { code: err.code } : {}) });
+    if (err instanceof SetupConflictError) return res.status(409).json({ error: err.message, code: err.code });
+    console.error('[setup] apply failed before its steps:', err);
+    return res.status(500).json({ error: plan ? 'Settings were not saved. Try Apply again.' : 'Worca could not check this setup. Try Apply again.' });
+  }
+  if (plan.written.some((k) => ['pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod'].includes(k))) emitChanged('budget-changed');
+  if (plan.written.length) emitChanged('settings-changed');
+  const job = { id, state: 'running', results: [], ok: null, retry: null, startedAt: Date.now(), endedAt: null };
+  SETUP_JOBS.set(job.id, job);
+  res.status(202).json({ id: job.id, written: plan.written, steps: [...plan.refused, ...plan.steps].map((s) => ({ id: s.id, label: s.label })) });
+  runSetupSteps(plan, { deps, onResult: (r) => { job.results.push(r); broadcast({ type: 'setup-apply', id: job.id, result: r }); } })
+    .then((out) => Object.assign(job, { ok: out.ok, retry: out.retry }))
+    .catch((err) => Object.assign(job, { ok: false, retry: null, error: err && err.message ? err.message : String(err) }))
+    .finally(() => {
+      Object.assign(job, { state: 'done', endedAt: Date.now() });
+      setupRunning = null;
+      broadcast({ type: 'setup-apply', id: job.id, done: true, ok: job.ok, retry: job.retry });
+      if (job.results.some((r) => r.state === 'ok' && /-import$|^copilot-signin$/.test(r.id))) emitChanged('settings-changed');
+      setTimeout(() => SETUP_JOBS.delete(job.id), SETUP_JOB_TTL_MS).unref?.();
+    });
+});
+
+app.get('/api/setup/apply/:id', (req, res) => {
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: SETUP_AGENT_TEXT, code: 'SETUP_AGENT_BLOCKED' });
+  const job = SETUP_JOBS.get(req.params.id);
+  if (!job) return res.status(404).json({ error: 'No such setup apply. It may have finished more than an hour ago.' });
+  res.json(publicSetupJob(job));
+});
+
 app.get('/api/proxy/status', (req, res) => {
   res.set('Cache-Control', 'no-store').json(proxyStatusPayload());
 });
@@ -13413,10 +13499,9 @@ app.post('/api/proxy/login', (req, res) => {
   if (refuseProxyAgent(req, res)) return;
   const body = req.body || {};
   const { auth } = networkProxySettings();
-  if (PASSWORD_MODES.includes(auth)) {
-    // The code keeps its slice-2 name on purpose: it now covers Digest too (tests and the card pin it).
-    return res.status(409).json({ error: `networkProxy.auth is ${auth}, and a saved login keeps only the NT hash, which ${auth === 'digest' ? 'Digest' : 'Basic'} cannot use. Choose NTLMv2 and Save first.`, field: 'auth', code: 'BASIC_NO_SAVED_LOGIN' });
-  }
+  const refusal = savedLoginRefusal(auth);
+  // The code keeps its slice-2 name on purpose: it now covers Digest too (tests and the card pin it).
+  if (refusal) return res.status(409).json({ error: refusal, field: 'auth', code: 'BASIC_NO_SAVED_LOGIN' });
   const account = body.domain ? { domain: body.domain, user: body.user } : parseAccount(body.user);
   const password = typeof body.password === 'string' ? body.password : '';
   body.password = undefined;
@@ -18902,6 +18987,10 @@ export const _testing = {
   setEgress: (e) => { EGRESS = e; },
   setLiveEgress: (l) => { EGRESS_LIVE = l; },
   proxyHost,
+  // Setup assistant: swap the apply side effects / detect probes; resetSetup drops overrides, the lock and the jobs.
+  setSetupDeps: (o) => { setupDepsOverride = o || {}; },
+  setSetupProbes: (p) => { setupProbesOverride = p || null; },
+  resetSetup: () => { setupDepsOverride = {}; setupProbesOverride = null; setupRunning = null; SETUP_JOBS.clear(); },
   setUpdateFetcher: (fn) => { updateFetcherOverride = typeof fn === 'function' ? fn : null; updateChecker.clear(); },
   setSourceBuild: (v) => { sourceBuildOverride = typeof v === 'boolean' ? v : null; updateChecker.clear(); },
   setVersionsFetcher: (fn) => { versionsFetcherOverride = typeof fn === 'function' ? fn : null; versionLister.clear(); },

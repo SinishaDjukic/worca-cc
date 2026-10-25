@@ -3,11 +3,9 @@
 import { withButton, fieldError, clearFieldErrors } from './feedback.mjs';
 import { makeSwitch } from './switch.mjs';
 
-export const FIXED_PORT_NOTE = 'Applies at the next start';
-export const SAVED_TEXT = 'Saved. New connections use it now.';
-export const PORT_PENDING_TEXT = ' The local proxy port applies at the next start.';
-export const NOT_SAVED_TEXT = 'Not saved: the test did not pass. Fix the values and Save again.';
-export const SAVED_OFF_TEXT = 'Saved. New connections go direct now.';
+// The status sentences live in src/shared so setup apply's proxy-swap row says the same thing.
+export { FIXED_PORT_NOTE, SAVED_TEXT, PORT_PENDING_TEXT, NOT_SAVED_TEXT, SAVED_OFF_TEXT } from '../../src/shared/network-proxy-text.mjs';
+import { FIXED_PORT_NOTE, SAVED_TEXT, PORT_PENDING_TEXT, NOT_SAVED_TEXT, SAVED_OFF_TEXT } from '../../src/shared/network-proxy-text.mjs';
 export const TESTING_TEXT = 'Testing…';
 const AUTH_OPTIONS = [['auto', 'NTLMv2 (recommended)'], ['basic', 'Basic (password in cleartext)'], ['digest', 'Digest (password from HTTPS_PROXY)'], ['none', 'No login']];
 /** Login modes that need the password itself, so Log in (a saved NT hash) is off, with this hint (D16). */

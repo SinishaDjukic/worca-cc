@@ -26,7 +26,7 @@ const require = createRequire(import.meta.url);
 const LOOPBACK = ['localhost', '127.0.0.1', '::1', '[::1]'];
 
 /** undici is CommonJS, so it loads synchronously; null when it can't be loaded. */
-function loadUndici() {
+export function loadUndici() {
   try { return require('undici'); } catch { return null; }
 }
 
