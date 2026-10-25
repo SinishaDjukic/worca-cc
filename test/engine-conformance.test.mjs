@@ -29,7 +29,7 @@ import { resetBrokerClient } from '../src/core/broker-client.mjs';
 import { writeState } from '../src/core/artifacts.mjs';
 import { prepare } from '../src/core/db.mjs';
 import { ledgerHarness } from './helpers/conformance.mjs';
-import { startEngineUpstream, ANTHROPIC_KEY, CODEX_KEY, PAT, CURSOR_KEY, ACCESS } from './helpers/engine-upstream.mjs';
+import { startEngineUpstream, ANTHROPIC_KEY, CODEX_KEY, PAT, CURSOR_KEY, ACCESS, GEMINI_KEY, OPENROUTER_KEY } from './helpers/engine-upstream.mjs';
 import { startTestBroker } from './helpers/test-broker.mjs';
 import { relaySandbox } from './helpers/relay-sandbox.mjs';
 import { CATALOG_CREDENTIAL_NAMES } from './helpers/credential-env.mjs';
@@ -192,7 +192,7 @@ conformanceRow('C-GROUPKILL', "(sandbox) a stopped step's grandchild dies; the s
   const upstream = await startEngineUpstream();
   t.after(() => upstream.close());
   const out = join(tmp('worca-conf-gk-'), 'rec.json');
-  const box = await relaySandbox(t, { engine, tmp, upstream, serverEnv: upstream.serverEnv,
+  const box = await relaySandbox(t, { engine, tmp, upstream, serverEnv: serverEnvFor(engine, upstream),
     fake: { FAKE_OUT: out, FAKE_HOLD: '1', FAKE_STREAM: join(HERE, 'fixtures', 'engines', engine, 'stream.jsonl') } });
   const ac = new AbortController();
   const run = runClaude({ engine, cwd: box.f.repo, prompt: 'P', execEnv: box.env, model: STEP_MODEL[engine], signal: ac.signal,
@@ -332,7 +332,24 @@ const canaryOf = (k) => (k === 'COPILOT_GITHUB_TOKEN' ? `github_pat_canary9f3a${
 const setCanaries = (names = CANARY_NAMES) => { for (const k of names) process.env[k] = canaryOf(k); };
 const clearCredentials = () => { for (const k of CANARY_NAMES) delete process.env[k]; };
 // A model the step names where the engine needs one behind a slot or the relay (Copilot), else its CLI's own default.
-const STEP_MODEL = { claude: undefined, codex: undefined, copilot: 'copilot/gpt-4.1', cursor: 'composer-1', gemini: undefined, qwen: undefined, goose: undefined, opencode: 'anthropic/claude-sonnet-4-5' };
+const STEP_MODEL = { claude: undefined, codex: undefined, copilot: 'copilot/gpt-4.1', cursor: 'composer-1', gemini: undefined, qwen: 'qwen3-coder-plus',
+  goose: 'openai/gpt-5.5', opencode: 'anthropic/claude-sonnet-4-5' };
+/** The key the loopback vendor takes for each per-mode engine's step model (STEP_MODEL): the one its sandbox mode signs
+ *  with, added to the vendor's own server env (Qwen Code's step model reaches its gemini mode). Goose's and OpenCode's
+ *  step models are on their first catalog provider, the one their model-less run-start check signs in with too. */
+const SANDBOX_KEYS = { gemini: { GEMINI_API_KEY: GEMINI_KEY }, qwen: { GEMINI_API_KEY: GEMINI_KEY }, goose: { OPENAI_API_KEY: CODEX_KEY },
+  opencode: { ANTHROPIC_API_KEY: ANTHROPIC_KEY } };
+const serverEnvFor = (engine, upstream) => ({ ...upstream.serverEnv, ...(SANDBOX_KEYS[engine] || {}) });
+/** Per mode route the loopback vendor answers (MODE_ROUTES): the key it takes, the config the mode requires, and the
+ *  path of one generate call for model `m` (in the body, or in the path for Gemini). */
+const MODE_CALLS = {
+  openai: { key: CODEX_KEY, path: () => '/v1/chat/completions' },
+  anthropic: { key: ANTHROPIC_KEY, path: () => '/v1/messages' },
+  openrouter: { key: OPENROUTER_KEY, path: () => '/api/v1/chat/completions' },
+  'gemini-api': { key: GEMINI_KEY, path: (m) => `/v1beta/models/${m}:streamGenerateContent?alt=sse` },
+  'openai-compatible': { key: CODEX_KEY, env: (u) => ({ OPENAI_BASE_URL: `${u}/v1` }), path: () => '/chat/completions' },
+  'anthropic-compatible': { key: ANTHROPIC_KEY, env: (u) => ({ ANTHROPIC_BASE_URL: u }), path: () => '/v1/messages' },
+};
 /** The step model a sign-in mode is reached with: an engine whose model names its provider (signIn.byModel) reaches each
  *  provider's mode by a model on it; the others by the engine's step model. */
 const modeModel = (engine, mode) => (ENGINES[engine].signIn.byModel ? `${mode.id}/m-step` : STEP_MODEL[engine]);
@@ -341,11 +358,19 @@ const modeModel = (engine, mode) => (ENGINES[engine].signIn.byModel ? `${mode.id
 const brokerable = (engine) => ENGINES[engine].signIn.modes.some((m) => m.kind !== 'own' && m.brokerSlot);
 const sandboxed = (engine) => ENGINES[engine].remote && !!ENGINES[engine].relay;
 /** The env var a brokered spawn's token sits in, and how its base names the slot. */
+const opencodeProvider = (r) => { const p = JSON.parse(r.env.OPENCODE_CONFIG_CONTENT).provider; return Object.values(p)[0]?.options || {}; };
 const BROKERED = {
   claude: { name: 'ANTHROPIC_AUTH_TOKEN', base: (r) => r.env.ANTHROPIC_BASE_URL, slot: '/p/anthropic' },
   codex: { name: 'WORCA_RELAY_KEY', base: (r) => r.argv.map((a) => /^model_providers\.worca_relay\.base_url="(.*)"$/.exec(a)?.[1]).find(Boolean), slot: '/p/openai/v1' },
   copilot: { name: 'COPILOT_PROVIDER_API_KEY', base: (r) => r.env.COPILOT_PROVIDER_BASE_URL, slot: '/p/copilot-pat' },
   cursor: { name: 'CURSOR_AUTH_TOKEN', base: (r) => r.env.CURSOR_API_ENDPOINT, slot: '/p/cursor' },
+  gemini: { name: 'GEMINI_API_KEY', base: (r) => r.env.GOOGLE_GEMINI_BASE_URL, slot: '/p/google' },
+  // Qwen Code with no sign-in of its own chosen: the first mode with a slot, its OpenAI-compatible one on OpenAI's API.
+  qwen: { name: 'OPENAI_API_KEY', base: (r) => r.env.OPENAI_BASE_URL, slot: '/p/openai/v1' },
+  // goose's openai: an origin plus OPENAI_BASE_PATH (…/v1/chat/completions).
+  goose: { name: 'OPENAI_API_KEY', base: (r) => `${r.env.OPENAI_HOST}/${String(r.env.OPENAI_BASE_PATH).replace(/\/?v1\/chat\/completions$/, '')}`, slot: '/p/openai' },
+  // OpenCode takes its provider's endpoint and key in its inline config, never its env.
+  opencode: { name: 'OPENCODE_CONFIG_CONTENT', token: (r) => opencodeProvider(r).apiKey, base: (r) => opencodeProvider(r).baseURL, slot: '/p/anthropic/v1' },
 };
 
 /** An MCP config with one stdio server whose env references every canary name as REF_<i> (never the names themselves:
@@ -384,7 +409,7 @@ async function sharedBroker() {
   if (shared) return shared;
   const upstream = await startEngineUpstream();
   const broker = await startTestBroker({ upstream, keys: { WORCA_BROKER_KEY_ANTHROPIC: ANTHROPIC_KEY, WORCA_BROKER_KEY_OPENAI: CODEX_KEY,
-    WORCA_BROKER_KEY_COPILOT_PAT: PAT, WORCA_BROKER_KEY_CURSOR: CURSOR_KEY } });
+    WORCA_BROKER_KEY_COPILOT_PAT: PAT, WORCA_BROKER_KEY_CURSOR: CURSOR_KEY, WORCA_BROKER_KEY_GOOGLE: GEMINI_KEY, WORCA_BROKER_KEY_OPENROUTER: OPENROUTER_KEY } });
   shared = { upstream, broker };
   return shared;
 }
@@ -409,7 +434,7 @@ async function assertBrokered(engine, { rec, error, minted }) {
   assert.equal(error, null, String(error?.message));
   assert.ok(rec, 'the CLI ran');
   const b = BROKERED[engine];
-  assert.match(String(rec.env[b.name]), /^wbt_/, 'the spawn holds its broker token');
+  assert.match(String(b.token ? b.token(rec) : rec.env[b.name]), /^wbt_/, 'the spawn holds its broker token');
   assert.ok(String(b.base(rec)).endsWith(b.slot), `${b.base(rec)} names ${b.slot}`);
   await waitFor(() => minted().length && minted().every((r) => r.revoked_at), 10000);
 }
@@ -562,7 +587,7 @@ conformanceRow('C-SIGNIN', 'each sign-in mode sees exactly its declared credenti
   if (!sandboxed(engine)) return;
   clearCredentials();
   const real = { claude: { CLAUDE_CODE_OAUTH_TOKEN: 'sk-ant-oat01-signin-0123456789abcdef' }, codex: { CODEX_API_KEY: CODEX_KEY },
-    copilot: { COPILOT_GITHUB_TOKEN: PAT }, cursor: { CURSOR_API_KEY: CURSOR_KEY } }[engine];
+    copilot: { COPILOT_GITHUB_TOKEN: PAT }, cursor: { CURSOR_API_KEY: CURSOR_KEY }, ...SANDBOX_KEYS }[engine];
   const box = await relaySandbox(t, { engine, tmp, serverEnv: real });
   await runClaude({ engine, cwd: box.f.repo, prompt: 'P', execEnv: box.env, model: STEP_MODEL[engine], bin: `/nonexistent/worca-test/${engine}` });
   const envs = box.seen[0]?.envs;
@@ -572,7 +597,9 @@ conformanceRow('C-SIGNIN', 'each sign-in mode sees exactly its declared credenti
     assert.match(envs.ANTHROPIC_BASE_URL, /^http:\/\/127\.0\.0\.1:\d+\/r\//);
     assert.equal(envs.CLAUDE_CODE_OAUTH_TOKEN, undefined);
   } else {
-    assert.equal({ codex: envs.WORCA_RELAY_KEY, copilot: envs.COPILOT_PROVIDER_API_KEY, cursor: envs.CURSOR_AUTH_TOKEN }[engine], RELAY_DUMMY);
+    const dummy = { codex: envs.WORCA_RELAY_KEY, copilot: envs.COPILOT_PROVIDER_API_KEY, cursor: envs.CURSOR_AUTH_TOKEN, gemini: envs.GEMINI_API_KEY,
+      qwen: envs.GEMINI_API_KEY, goose: envs.OPENAI_API_KEY, opencode: envs.OPENCODE_CONFIG_CONTENT && opencodeProvider({ env: envs }).apiKey }[engine];
+    assert.equal(dummy, RELAY_DUMMY);
   }
   for (const v of Object.values(real)) assert.equal(JSON.stringify({ envs, cmd: box.seen[0].cmd }).includes(v), false, 'the server credential stays in worca');
   await box.close();
@@ -589,9 +616,13 @@ async function replay(engine, events, model = undefined) {
 /** The events that carried tokens worca books: a result's non-empty relay take, a spend with messages or usage. */
 const carriers = (events) => events.filter((e) => (e.type === 'result' && e.relay?.messages) || (e.type === 'spend' && (e.messages || e.usage)));
 /** The line of each fixture stream that carries a result (codex: its turn.completed). */
-const RESULT_LINE = { claude: /"type":"result"/, codex: /"type":"turn\.completed"/, copilot: /"type":"result"/, cursor: /"type":"result"/, gemini: /"type":"result"/, qwen: /"type":"result"/ };
+const RESULT_LINE = { claude: /"type":"result"/, codex: /"type":"turn\.completed"/, copilot: /"type":"result"/, cursor: /"type":"result"/, gemini: /"type":"result"/, qwen: /"type":"result"/,
+  goose: /"type":"complete"/, opencode: /"type":"step_finish"/ };
+/** The engines whose result comes after the spawn settled (built from what they recorded): the route's close carries the
+ *  relay's take, always. */
+const RESULT_AFTER_SPAWN = new Set(['copilot', 'goose', 'opencode']);
 /** The relay's price of one 100-in/20-out reply (list-prices.mjs, per Mtok): Sonnet 5 $2/$10, GPT-5.5 $5/$30. */
-const RELAY_PRICE = { claude: 0.0004, codex: 0.0011 };
+const RELAY_PRICE = { claude: 0.0004, codex: 0.0011, goose: 0.0011, opencode: 0.0004 };
 /** The way a spawn ended is the one the case set up: exit 0, exit code 1, the turn cap, a stop. */
 function assertOutcome(engine, x, { result, error, events, argv }) {
   const at = `${engine} ${x.name}`;
@@ -617,9 +648,11 @@ conformanceRow('C-LEDGER', 'spend is booked exactly once on every exit', async (
   if (sandboxed(engine)) {
     const upstream = await startEngineUpstream({ usage: { input_tokens: 100, output_tokens: 20 } });
     t.after(() => upstream.close());
-    const stepModel = { claude: 'claude-sonnet-5', codex: 'gpt-5.5', copilot: 'copilot/gpt-4.1', cursor: 'composer-1' }[engine];
-    const wire = { claude: 'claude-sonnet-5', codex: 'gpt-5.5', copilot: 'gpt-4.1', cursor: undefined }[engine];
-    const box = await relaySandbox(t, { engine, tmp, upstream, serverEnv: upstream.serverEnv, fake: {} });
+    const stepModel = { claude: 'claude-sonnet-5', codex: 'gpt-5.5', copilot: 'copilot/gpt-4.1', cursor: 'composer-1', gemini: 'gemini-2.5-flash',
+      qwen: 'qwen3-coder-plus', goose: 'openai/gpt-5.5', opencode: 'anthropic/claude-sonnet-5' }[engine];
+    const wire = { claude: 'claude-sonnet-5', codex: 'gpt-5.5', copilot: 'gpt-4.1', cursor: undefined, gemini: 'gemini-2.5-flash', qwen: 'qwen3-coder-plus',
+      goose: 'gpt-5.5', opencode: 'anthropic/claude-sonnet-5' }[engine];
+    const box = await relaySandbox(t, { engine, tmp, upstream, serverEnv: serverEnvFor(engine, upstream), fake: {} });
     // The stream without its result line: a spawn that ends before any result leaves its take to the route's close.
     const noResult = join(tmp('worca-conf-noresult-'), 'stream.jsonl');
     writeFileSync(noResult, `${readFileSync(fixture('stream.jsonl'), 'utf8').split('\n').filter((l) => l && !RESULT_LINE[engine].test(l)).join('\n')}\n`);
@@ -647,7 +680,7 @@ conformanceRow('C-LEDGER', 'spend is booked exactly once on every exit', async (
       const carried = carriers(events);
       assert.equal(carried.length, 1, `${x.name}: exactly one event carried the tokens (${events.map((e) => e.type).join(',')})`);
       // No result line (or Copilot, whose result comes after the spawn settled): the route's close carried the take.
-      if (x.spend || engine === 'copilot') assert.equal(carried[0].type, 'spend', `${x.name}: the route's close carried it`);
+      if (x.spend || RESULT_AFTER_SPAWN.has(engine)) assert.equal(carried[0].type, 'spend', `${x.name}: the route's close carried it`);
       const h = await replay(engine, events, stepModel);
       assert.deepEqual(h.step.usage, { input: 100, output: 20, cacheRead: 0, cacheWrite: 0 }, x.name);
       if (reportsCost) {
@@ -759,6 +792,34 @@ conformanceRow('C-MODEL', 'the step\'s model is checked and recorded', async (en
     assert.equal(ok.status, 200);
     await ok.text();
     await box.close();
+  } else if (entry.relay.modelCheck === 'mode') {
+    // R11: each relayable sign-in mode's route holds the call to the step's model where its protocol names it: the
+    // body's model (as the CLI sends it, without the provider the id names), or the model in a Gemini call's path.
+    const upstream = await startEngineUpstream();
+    t.after(() => upstream.close());
+    const box = await relaySandbox(t, { engine, tmp, upstream, serverEnv: upstream.serverEnv });
+    const u = upstream.url;
+    const checked = [];
+    for (const mode of entry.signIn.modes.filter((m) => MODE_CALLS[m.relay])) {
+      const c = MODE_CALLS[mode.relay];
+      const serverEnv = { [mode.env[0]]: c.key, ...(c.env ? c.env(u) : {}) };
+      const model = modeModel(engine, mode);
+      const d = resolveModelRoute({ engine, remote: true, serverEnv, model, broker: { on: false }, configured: entry.signIn.byModel ? null : mode.id });
+      assert.equal(d.relayMode, mode.id, `${engine}: ${mode.id} resolves`);
+      const route = buildRelayRoute(d, { serverEnv, label: box.env.label, upstreams: upstream.relayUpstreams });
+      const { baseUrl } = box.env.relay.addRoute(route);
+      const wire = entry.signIn.byModel ? 'm-step' : model;
+      const call = (m) => fetch(`${baseUrl}${c.path(m)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: m, stream: true }) });
+      const other = await call('m-other');
+      assert.equal(other.status, 403, `${engine} ${mode.id}: another model`);
+      assert.match(await other.text(), /worca-relay: model \\?"m-other\\?" is not this step's model/);
+      const ok = await call(wire);
+      assert.equal(ok.status, 200, `${engine} ${mode.id}: the step's model`);
+      await ok.text();
+      checked.push(mode.id);
+    }
+    assert.ok(checked.length, `${engine}: a mode route was checked`);
+    await box.close();
   } else assert.equal(entry.relay.modelCheck, 'partial', `${engine}: an unchecked relay is named partial`);
 
   // At start: a model-less step on an engine that needs one.
@@ -839,6 +900,23 @@ test('brokered local Copilot and Cursor: a spawn whose staging fails revokes its
   assert.equal(run.error?.errorClass, 'config');
   assert.match(String(run.error?.message), /cannot run as an agent user yet .* run Cursor in a sandbox/);
   assert.equal(broker.tokens().length, before, 'refused before the lease');
+});
+
+// A per-mode engine under the broker (R11): its CLI reads endpoints and sign-in selectors besides keys (Gemini CLI's
+// GOOGLE_GENAI_USE_VERTEXAI would move it to Vertex with this machine's ADC, goose's OPENAI_HOST elsewhere). None of its
+// catalog relayOwned names keeps an ambient value: only what the pointing sets reaches the CLI.
+test('brokered per-mode engines: no endpoint, key or sign-in selector of their own survives from worca\'s env, the allowlist or the run env', POSIX, async () => {
+  for (const engine of ENGINE_NAMES.filter((e) => ENGINES[e].relay?.perMode)) {
+    const names = ENGINES[engine].env.relayOwned;
+    const ambient = Object.fromEntries(names.map((k) => [k, 'ambient-7c1e']));
+    Object.assign(process.env, ambient);
+    let run;
+    try { run = await brokeredRun(engine, { allow: names, spawnEnv: ambient }); } finally { for (const k of names) delete process.env[k]; }
+    assert.equal(run.error, null, `${engine}: ${run.error?.message}`);
+    const kept = names.filter((k) => run.rec.env[k] === 'ambient-7c1e');
+    assert.deepEqual(kept, [], `${engine}: ambient ${kept.join(', ')}`);
+    await assertBrokered(engine, run);
+  }
 });
 
 test('a sandbox run under the broker (D8): the relay\'s upstream is the broker slot, signed with the spawn token; the sandbox holds a dummy', { ...POSIX, timeout: 180_000 }, async (t) => {

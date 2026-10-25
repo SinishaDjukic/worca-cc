@@ -1,8 +1,9 @@
 // test/exec-env-remote-child.test.mjs
 // The agent spawn seam in e2b mode: superviseSpawn driving a RemoteChild (src/core/exec-env/remote-child.mjs)
 // on the loopback fake, and runClaude end to end with a canned claude stream inside the "sandbox".
-import { test, after } from 'node:test';
+import { test, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { ENGINES, ENGINE_NAMES, setCatalogForTest } from '../src/shared/engine-switch.mjs';
 import { once } from 'node:events';
 import { writeFileSync, readFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,6 +28,11 @@ const until = (cond, p) => {
     .finally(() => clearInterval(iv));
 };
 
+// Every env a test started is closed after it, also when an assertion failed first: a fake sandbox's model relay child
+// left running keeps the whole file from exiting. close() is idempotent, so a test's own close stays as it is.
+const opened = new Set();
+afterEach(async () => { for (const env of opened) await env.close('test').catch(() => {}); opened.clear(); });
+
 /** An env on a fresh fake sandbox. The template's engine CLIs (RemoteExecEnv.ensureCli probes them) are all there unless
  *  `missing` names one: every probe is answered here, never by the fake's real bash, whose PATH is this machine's (it may
  *  hold a real codex). `probes` lists the CLIs probed, in order. */
@@ -39,6 +45,7 @@ async function started(extra = {}, { missing = [], onCommand = null, ...sdkOpts 
     return onCommand ? onCommand(cmd, o) : null;
   } });
   const env = new E2bExecEnv(makeEnvOpts(tmp, sdk, f, extra));
+  opened.add(env);
   await env.start();
   return { f, sdk, env, probes };
 }
@@ -255,10 +262,13 @@ test('a long prompt is staged: the system prompt file exists at its mirrored pat
     await env.close('test');
   }));
 
-test('a remote runClaude on an engine the sandbox does not run is refused, with and without mock', async () => {
+test('a remote runClaude on an engine the sandbox does not run is refused, with and without mock', async (t) => {
+  // Every catalog engine runs in a sandbox today: one the catalog marks local (an engine added later) is refused.
+  setCatalogForTest({ ...ENGINES, gemini: { ...ENGINES.gemini, remote: false } });
+  t.after(() => setCatalogForTest(null));
   const execEnv = { remote: true, sandboxId: 'x', title: 'E2B' };
   // An object, not a bare RegExp: assert.rejects tests a RegExp against String(err) ("Error: …"), where ^ never matches.
-  const gate = { message: /^E2B execution runs the claude, codex, copilot and cursor engines only \(this run uses gemini\): Gemini CLI runs locally only for now\. Pick Local, or switch the engine\.$/ };
+  const gate = { message: /^E2B execution runs the claude, codex, copilot, cursor, goose, opencode and qwen engines only \(this run uses gemini\): Gemini CLI runs locally only for now\. Pick Local, or switch the engine\.$/ };
   await assert.rejects(runClaude({ engine: 'gemini', execEnv }), gate);
   await assert.rejects(runClaude({ engine: 'gemini', execEnv, mock: true }), gate);
 });

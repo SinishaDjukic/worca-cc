@@ -11,7 +11,7 @@ import { e2bPreflight, modelCredential, sandboxEnv, sandboxMcpConfig, redactKey,
 import { RemoteExecEnv } from '../src/core/exec-env/remote-env.mjs';
 import { remotePreflight, remoteRefusesDefault, instanceTag, INSTANCE_ID_FILE } from '../src/core/exec-env/policy.mjs';
 import { REMOTE_ENGINES } from '../src/shared/exec-env.mjs';
-import { ENGINES, ENGINE_NAMES } from '../src/shared/engine-switch.mjs';
+import { ENGINES, ENGINE_NAMES, setCatalogForTest } from '../src/shared/engine-switch.mjs';
 import { engineCredential, sandboxEnv as sbxEnv } from '../src/core/exec-env/policy.mjs';
 
 const scratch = []; after(() => scratch.forEach((d) => rmSync(d, { recursive: true, force: true })));
@@ -29,21 +29,29 @@ test('preflight: a clean e2b claude single-project run passes', () => {
   assert.deepEqual(pre().errors, []);
 });
 
-test('an engine without sandbox support in the catalog (gemini, qwen, goose, opencode) is refused at run start: it runs locally only for now', () => {
-  // The catalog flag decides, never a name list: REMOTE_ENGINES is exactly the catalog's remote engines.
+/** The catalog with `engine` marked local-only (no sandbox runs it): what an engine added later starts as. */
+const localOnly = (engine) => setCatalogForTest({ ...ENGINES, [engine]: { ...ENGINES[engine], remote: false } });
+
+test('an engine without sandbox support in the catalog is refused at run start: it runs locally only for now', (t) => {
+  // The catalog flag decides, never a name list: REMOTE_ENGINES is exactly the catalog's remote engines, every one today.
   assert.deepEqual(REMOTE_ENGINES, ENGINE_NAMES.filter((e) => ENGINES[e].remote));
+  assert.deepEqual([...REMOTE_ENGINES], [...ENGINE_NAMES]);
+  t.after(() => setCatalogForTest(null));
   for (const engine of ['gemini', 'qwen', 'goose', 'opencode']) {
-    assert.equal(ENGINES[engine].remote, false, engine);
+    localOnly(engine);
     const errs = pre({ engine }).errors;
     assert.equal(errs.length, 1, engine);
-    assert.match(errs[0], new RegExp(`^E2B execution runs the claude, codex, copilot and cursor engines only \\(this run uses ${engine}\\): ${ENGINES[engine].label} runs locally only for now\\. Pick Local, or switch the engine\\.$`));
+    const others = ENGINE_NAMES.filter((e) => e !== engine);
+    assert.equal(errs[0], `E2B execution runs the ${others.slice(0, -1).join(', ')} and ${others.at(-1)} engines only (this run uses ${engine}): ${ENGINES[engine].label} runs locally only for now. Pick Local, or switch the engine.`);
     assert.equal(remoteRefusesDefault({ engine }), `the ${engine} engine`);
   }
+  setCatalogForTest(null);
   assert.deepEqual(pre({ engine: 'claude' }).errors, []);
 });
 
 test('preflight refuses other engines, workspace runs, win32, missing key/credential/sdk/old node, E2B_DEBUG', () => {
-  assert.match(pre({ engine: 'gemini' }).errors.join(), /claude, codex, copilot and cursor engines only/);
+  localOnly('gemini');
+  try { assert.match(pre({ engine: 'gemini' }).errors.join(), /claude, codex, copilot, cursor, goose, opencode and qwen engines only/); } finally { setCatalogForTest(null); }
   assert.match(pre({ isWorkspace: true }).errors.join(), /single-project runs only/);
   assert.match(pre({ platform: 'win32' }).errors.join(), /macOS or Linux/);
   assert.match(pre({ env: { ...OK_ENV, E2B_API_KEY: '' } }).errors.join(), /E2B_API_KEY is not set/);
@@ -55,20 +63,24 @@ test('preflight refuses other engines, workspace runs, win32, missing key/creden
   assert.match(pre({ mock: true, runRootMode: 'legacy' }).errors.join(), /detached run-root mode/);
 });
 
-test('the remote engines: claude, codex, copilot and cursor pass; any other engine is refused at start and skips a saved default', () => {
-  assert.deepEqual([...REMOTE_ENGINES], ['claude', 'codex', 'copilot', 'cursor']);
+test('the remote engines (every catalog engine) pass; one the catalog marks local is refused at start and skips a saved default', (t) => {
   for (const engine of REMOTE_ENGINES) {
     assert.deepEqual(remotePreflight({ title: 'E2B', engine }), [], engine);
     assert.equal(remoteRefusesDefault({ engine }), null, engine);
   }
+  t.after(() => setCatalogForTest(null));
+  localOnly('gemini');
   assert.match(remotePreflight({ title: 'Loopback', engine: 'gemini' }).join(),
-    /^Loopback execution runs the claude, codex, copilot and cursor engines only \(this run uses gemini\): Gemini CLI runs locally only for now\. Pick Local, or switch the engine\.$/);
+    /^Loopback execution runs the claude, codex, copilot, cursor, goose, opencode and qwen engines only \(this run uses gemini\): Gemini CLI runs locally only for now\. Pick Local, or switch the engine\.$/);
   assert.equal(remoteRefusesDefault({ engine: 'gemini' }), 'the gemini engine');
 });
 
-test('the generic remote guards are worded with the backend title; a codex project run is not refused', () => {
+test('the generic remote guards are worded with the backend title; a codex project run is not refused', (t) => {
+  t.after(() => setCatalogForTest(null));
+  localOnly('gemini');
   const errs = remotePreflight({ title: 'Loopback', isWorkspace: true, engine: 'gemini' });
   assert.equal(errs.filter((e) => e.startsWith('Loopback execution')).length, 2);
+  setCatalogForTest(null);
   assert.deepEqual(remotePreflight({ title: 'Loopback', engine: 'codex' }), []);
 });
 
@@ -298,7 +310,16 @@ test('sandboxEnv per engine: its own config keys only, never a credential or end
   }
   assert.equal('CODEX_HOME' in sbxEnv(host, { engine: 'codex', keep: ['CODEX_HOME'] }), false, 'a host path never passes, even kept');
   assert.equal('CURSOR_CONFIG_DIR' in sbxEnv(host, { engine: 'cursor', keep: ['CURSOR_CONFIG_DIR'] }), false);
-  assert.throws(() => sbxEnv(host, { engine: 'gemini' }), /cannot run in a remote sandbox/);
+  assert.throws(() => sbxEnv(host, { engine: 'mock' }), /cannot run in a remote sandbox/);
+  // The four per-mode engines: their own config names only; every provider key, endpoint and sign-in selector stays.
+  const fam = { ...host, GEMINI_API_KEY: 'g', GOOGLE_API_KEY: 'ga', GOOGLE_GEMINI_BASE_URL: 'https://gw', GOOGLE_GENAI_USE_GCA: 'true', GEMINI_CLI_HOME: '/Users/x',
+    GEMINI_CLI_TRUST_WORKSPACE: 'true', QWEN_HOME: '/Users/x/.qwen', QWEN_MODEL: 'q', QWEN_OAUTH: 'tok', GOOSE_MODE: 'auto', GOOSE_PROVIDER: 'openai',
+    OPENAI_HOST: 'https://elsewhere', OPENROUTER_API_KEY: 'or', DATABRICKS_TOKEN: 'db', OPENCODE_API_KEY: 'oc', OPENCODE_AUTH_CONTENT: '{}',
+    GOOGLE_GENERATIVE_AI_API_KEY: 'gg', OPENCODE_DISABLE_LSP_DOWNLOAD: '1' };
+  assert.deepEqual(Object.keys(sbxEnv(fam, { engine: 'gemini' })).sort(), ['GEMINI_CLI_TRUST_WORKSPACE', 'LANG']);
+  assert.deepEqual(Object.keys(sbxEnv(fam, { engine: 'qwen' })).sort(), ['LANG', 'QWEN_MODEL']);
+  assert.deepEqual(Object.keys(sbxEnv(fam, { engine: 'goose' })).sort(), ['GOOSE_MODE', 'LANG']);
+  assert.deepEqual(Object.keys(sbxEnv(fam, { engine: 'opencode' })).sort(), ['LANG', 'OPENCODE_DISABLE_LSP_DOWNLOAD']);
 });
 
 test('engineCredential: the credential worca signs each engine`s calls with, from the server env only; never a file', () => {
@@ -320,8 +341,17 @@ test('engineCredential: the credential worca signs each engine`s calls with, fro
   assert.match(engineCredential('cursor', {}).problem, /CURSOR_API_KEY is not set/);
   // Read from each engine's relay row, never an engine-name branch: an engine with no row has no credential, and every
   // engine a sandbox runs has one.
-  assert.match(engineCredential('gemini', { GEMINI_API_KEY: 'g' }).problem, /the gemini engine cannot run in a remote sandbox/);
+  assert.match(engineCredential('mock', {}).problem, /the mock engine cannot run in a remote sandbox/);
   for (const e of REMOTE_ENGINES) assert.doesNotMatch(engineCredential(e, {}).problem, /cannot run in a remote sandbox/, e);
+  // A per-mode engine: the key of the mode the resolver picks (the first one set, with no step model), and a sign-in that
+  // needs a token minted or refreshed on this machine is no key worca signs with.
+  assert.deepEqual(engineCredential('gemini', { GEMINI_API_KEY: ' g\n' }), { value: 'g', source: 'GEMINI_API_KEY' });
+  assert.deepEqual(engineCredential('gemini', { GOOGLE_API_KEY: 'v', GOOGLE_GENAI_USE_VERTEXAI: 'true' }), { value: 'v', source: 'GOOGLE_API_KEY' });
+  assert.match(engineCredential('gemini', { GOOGLE_CLOUD_ACCESS_TOKEN: 't' }).problem, /Gemini CLI in a sandbox needs the key of one of its sign-ins \(GEMINI_API_KEY, GOOGLE_API_KEY\)/);
+  assert.deepEqual(engineCredential('qwen', { OPENAI_API_KEY: 'o', OPENAI_BASE_URL: 'https://dashscope.example/v1' }), { value: 'o', source: 'OPENAI_API_KEY' });
+  assert.match(engineCredential('qwen', { OPENAI_API_KEY: 'o' }).problem, /needs the key of one of its sign-ins/, 'an OpenAI-compatible key names its base URL');
+  assert.deepEqual(engineCredential('goose', { OPENROUTER_API_KEY: 'r' }), { value: 'r', source: 'OPENROUTER_API_KEY' });
+  assert.deepEqual(engineCredential('opencode', { OPENCODE_API_KEY: 'z' }), { value: 'z', source: 'OPENCODE_API_KEY' });
 });
 
 test('preflight checks the credential the relay signs the run engine`s calls with: a codex API key, a fine-grained Copilot token, the Cursor key', () => {

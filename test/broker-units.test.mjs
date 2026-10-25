@@ -78,7 +78,7 @@ test('config: durations and vault keys', () => {
 
 test('slots: built-ins pin their upstreams; local exists only when named', () => {
   const ids = builtinSlots().map((s) => s.id);
-  assert.deepEqual(ids, ['anthropic', 'openai', 'openrouter', 'copilot', 'copilot-pat', 'cursor']);
+  assert.deepEqual(ids, ['anthropic', 'openai', 'openrouter', 'google', 'copilot', 'copilot-pat', 'cursor']);
   const cp = builtinSlots().find((s) => s.id === 'copilot');
   assert.equal(cp.auth, 'copilot');
   assert.ok(cp.headers.includes('copilot-integration-id'));

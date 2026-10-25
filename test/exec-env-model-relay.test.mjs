@@ -955,6 +955,52 @@ test('relay checks only body routes', POSIX, async (t) => {
   assert.equal(g.status, 200, 'GET /models has no body to check');
 });
 
+// R11: a per-mode route's path pin (Gemini's /models/{m}:, Azure's deployment, Databricks' endpoint), the broker's
+// path rule, and a body the relay can meter.
+test('a path-checked route admits the step model\'s path only, on every method; another model never reaches the upstream', POSIX, async (t) => {
+  const up = await stubUpstream(t);
+  const { relay } = await startRelay(t);
+  const gem = relay.addRoute(route(up.url, { protocol: 'gemini', allow: [['POST', /^\/v1beta\/models\/[A-Za-z0-9._-]+:(streamGenerateContent|generateContent|countTokens)$/]],
+    modelCheck: 'path', pathModel: /\/models\/([^/:]+):/, models: ['gemini-2.5-flash'], stepModel: 'gemini-2.5-flash' }));
+  const other = await post(`${gem.baseUrl}/v1beta/models/gemini-3-pro:streamGenerateContent?alt=sse`, { body: '{}' });
+  assert.equal(other.status, 403);
+  assert.match((await other.json()).error.message, /^worca-relay: model "gemini-3-pro" is not this step's model/);
+  assert.equal((await post(`${gem.baseUrl}/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse`, { body: '{}' })).status, 200);
+  const db = relay.addRoute(route(up.url, { protocol: 'openai', allow: [['GET', /^\/api\/2\.0\/serving-endpoints\/[A-Za-z0-9._-]+$/], ['POST', /^\/serving-endpoints\/[A-Za-z0-9._-]+\/invocations$/]],
+    modelCheck: 'path', pathModel: /^\/(?:api\/2\.0\/)?serving-endpoints\/([^/]+)/, models: ['my-llm'], stepModel: 'my-llm' }));
+  assert.equal((await fetch(`${db.baseUrl}/api/2.0/serving-endpoints/other-rag`)).status, 403, 'another endpoint`s config');
+  assert.equal((await post(`${db.baseUrl}/serving-endpoints/other-rag/invocations`)).status, 403, 'another endpoint');
+  assert.equal((await fetch(`${db.baseUrl}/api/2.0/serving-endpoints/my-llm`)).status, 200);
+  assert.deepEqual(up.seen.map((x) => x.url), ['/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse', '/api/2.0/serving-endpoints/my-llm']);
+});
+
+test('a dot, empty or encoded path segment is refused before the route reads the path (R11-5)', POSIX, async (t) => {
+  const up = await stubUpstream(t);
+  const { relay } = await startRelay(t);
+  const r = relay.addRoute(route(up.url, { protocol: 'openai', allow: [['POST', /^\/openai\/deployments\/[^/]+\/chat\/completions$/], ['POST', /^\/serving-endpoints\/[^/]+\/invocations$/]] }));
+  const port = new URL(r.baseUrl).port;
+  const at = new URL(r.baseUrl).pathname;
+  for (const p of ['/openai/deployments/../chat/completions', '/serving-endpoints/%2E%2E/invocations', '/serving-endpoints/%2e./invocations',
+    '/openai/deployments/x%2Fy/chat/completions']) {
+    const res = await rawRequest(port, `${at}${p}`);
+    assert.equal(res.status, 403, p);
+  }
+  assert.equal(up.seen.length, 0, 'nothing reached the upstream');
+});
+
+test('a streamed Chat Completions call asks for its usage, and a background Responses call is refused (R11-2)', POSIX, async (t) => {
+  const up = await stubUpstream(t);
+  const { relay } = await startRelay(t);
+  const r = relay.addRoute(route(up.url, { protocol: 'openai', origin: 'https://api.openai.com', allow: [['POST', '/v1/chat/completions'], ['POST', '/v1/responses'],
+    ['POST', /^\/serving-endpoints\/[A-Za-z0-9._-]+\/invocations$/]], modelCheck: 'body', models: ['gpt-x'], stepModel: 'gpt-x' }));
+  assert.equal((await post(`${r.baseUrl}/v1/chat/completions`, { body: '{"model":"gpt-x","stream":true}' })).status, 200);
+  assert.deepEqual(JSON.parse(up.seen[0].body), { model: 'gpt-x', stream: true, stream_options: { include_usage: true } });
+  assert.equal((await post(`${r.baseUrl}/serving-endpoints/e/invocations`, { body: '{"model":"gpt-x","stream":true,"stream_options":{"include_usage":false}}' })).status, 200);
+  assert.deepEqual(JSON.parse(up.seen[1].body).stream_options, { include_usage: true }, 'a Databricks invocation too, whatever the sandbox sent');
+  await openaiRefusal(await post(`${r.baseUrl}/v1/responses`, { body: '{"model":"gpt-x","background":true}' }), 400, /^worca-relay: a background response is not supported/);
+  assert.equal(up.seen.length, 2, 'the background call never reached the upstream');
+});
+
 // ── closing a route (core protection layer, Task 10: the usage ledger) ──
 test('drainRoute waits for the route\'s in-flight reply and refuses new calls meanwhile', POSIX, async (t) => {
   let release;

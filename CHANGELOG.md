@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Gemini CLI, Qwen Code, Goose and OpenCode in E2B sandboxes and under the credential broker
+
+- Every engine now runs in an E2B sandbox. Gemini CLI, Qwen Code, Goose and OpenCode go through worca's model relay per sign-in: the one the step resolves to (as a local run picks it) names the vendor API and the key in the worca server's environment that signs each call on the server. Each CLI gets the relay URL and a placeholder key, and its telemetry, model catalog fetches and updates are off. No model key enters a sandbox.
+- Under the credential broker they take the slot of that sign-in: a new `google` slot holds a Gemini API key (`x-goog-api-key`), and Qwen Code, Goose and OpenCode also use the `openai`, `anthropic` and `openrouter` slots. No endpoint, key or sign-in setting of theirs reaches the CLI from worca's environment, the allowlist or the run env.
+- The relay and the broker meter the Gemini API's usage. Worca books the relay's count in a sandbox: tokens for Gemini CLI and Qwen Code, the relay's price for Goose and OpenCode, never the CLI's own figures there.
+- **Upgrade notes.**
+  - Refused in a sandbox: Gemini CLI's Google login, Vertex AI with Google's Application Default Credentials or an access token, Qwen OAuth, a key a CLI keeps in its own config, Goose on Bedrock, Vertex AI or GitHub Copilot, and OpenCode's GitHub Copilot sign-in. Under the broker, Gemini CLI's Google login stays refused, and so does a provider with no slot (Azure OpenAI, Databricks, OpenCode Zen).
+  - A Goose, OpenCode or Qwen Code step in a sandbox or under the broker needs a model.
+  - The E2B template pins gemini 0.63.0, qwen 0.25.0, goose 1.55.0 (checked against its release SHA-256) and opencode 1.18.23. Rebuild your template (`npm run e2b:build`) before a run on one of them.
+
 ### Engine gate refusals name the options that exist
 
 - `worca --guardrails <id>` picks a run's guardrail set. A run the engine gate refuses for its set's rules names that flag (`--guardrails permissive`) and `--allow-unguarded-engine` on the CLI, and the Permissive set and Allow unguarded in the UI. A resume keeps the set its run pinned, so its refusal points at a new run on the Permissive set instead.
@@ -12,10 +22,9 @@
 - Goose: the step's `provider/model` id names the provider, and Goose gets that provider's key only (no model: the provider Goose is configured with). Its MCP servers' env values no longer ride Goose's own environment, where every tool call saw them: each sits in a file beside the server's wrapper. A step that ends early (an error, the turn cap, a stop) books what Goose recorded, and a reply Goose could not price is cost unknown, never $0. Archiving a run removes its Goose sessions from Goose's database.
 - OpenCode: every step must name a model (the catalog's rule; nothing lifts it), and the step's provider gives OpenCode its one key. Its `task` tool is switched off. A step that ends early books what OpenCode priced, its sub-agents included, and their tool calls reach the run log; a step that says cost 0 for its tokens (OpenCode Zen's free models, a custom provider) is cost unknown, never $0. A Goose or OpenCode model id whose provider or model half starts with `-` is refused.
 - **Upgrade notes.**
-  - Gemini CLI and Qwen Code do not run in an E2B sandbox yet: such a run is refused at start.
   - Gemini CLI holds `Edit`, `Bash`, `Grep` and `Glob` rules only in part (no edit refusal was captured), and `WebFetch`, `WebSearch` and MCP rules are unverified; Qwen Code holds `Bash` only in part, and `Write`, `Grep`, `Glob`, `WebFetch` and `WebSearch` are unverified. Each of those needs `--allow-unguarded-engine`.
-  - Goose does not run in an E2B sandbox yet. Every rule kind needs `--allow-unguarded-engine` on Goose: it holds no rule per spawn. Amazon Bedrock with a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK` handed to Goose) is refused, also for a step with no model while `GOOSE_PROVIDER` is `aws_bedrock`: sign Goose in with an AWS profile. On Windows, a Goose MCP server that declares env values is not attached. Under a cost cap, a Goose step starts only on a model worca can price itself (a Models page price, or an `anthropic/…` or `openai/…` list price).
-  - OpenCode does not run in an E2B sandbox yet. `WORCA_OPENCODE_ALLOW_DEFAULT_MODEL` is no longer read, and the sign-in mode `zen` is now `opencode`. OpenCode holds `Bash`, `Read`, `Edit` and `Write` rules only in part, and `WebFetch`, `WebSearch` and MCP rules are unverified: each needs `--allow-unguarded-engine`. Under a cost cap, an OpenCode step starts only on a model worca can price itself, as on Goose.
+  - Every rule kind needs `--allow-unguarded-engine` on Goose: it holds no rule per spawn. Amazon Bedrock with a Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK` handed to Goose) is refused, also for a step with no model while `GOOSE_PROVIDER` is `aws_bedrock`: sign Goose in with an AWS profile. On Windows, a Goose MCP server that declares env values is not attached. Under a cost cap, a Goose step starts only on a model worca can price itself (a Models page price, or an `anthropic/…` or `openai/…` list price).
+  - `WORCA_OPENCODE_ALLOW_DEFAULT_MODEL` is no longer read, and the sign-in mode `zen` is now `opencode`. OpenCode holds `Bash`, `Read`, `Edit` and `Write` rules only in part, and `WebFetch`, `WebSearch` and MCP rules are unverified: each needs `--allow-unguarded-engine`. Under a cost cap, an OpenCode step starts only on a model worca can price itself, as on Goose.
 
 ### Security: one owner per engine boundary (core protection layer, part 1)
 

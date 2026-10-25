@@ -3315,9 +3315,10 @@ export class RunHarness extends EventEmitter {
           ? `engine ${name}: ${what} — the nodes that name it run on ${name}'s default model, so their cost stays unknown`
           : `engine ${name}: ${what} — the nodes that name it run on ${name}'s default model`);
     }
-    // A remote run's model relay checks each call's model only where the catalog says it can (relay.modelCheck 'body').
+    // A remote run's model relay checks each call's model only where the catalog says it can (relay.modelCheck 'body',
+    // or 'mode': as the sign-in mode's route pins it).
     const relay = engineEntry(name)?.relay;
-    if (this._execBackend && relay && relay.modelCheck !== 'body') {
+    if (this._execBackend && relay && relay.modelCheck === 'partial') {
       lines.push(`engine ${name}: the model relay does not check which model each call names (${relay.protocol === 'connect' ? 'the model is inside protobuf' : 'its side calls are not pinned yet'})`);
     }
     for (const l of lines) this._log('orchestrator', 'warn', l);

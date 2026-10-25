@@ -168,7 +168,10 @@ export function modelSlot(modelId) {
   let owner = null;
   try { owner = engineEntry(engineOfModel(id)); } catch { owner = null; }
   if (owner && owner.relay?.upstream !== 'anthropic') {
-    const slot = owner.signIn.modes.find((m) => m.kind !== 'own' && m.brokerSlot)?.brokerSlot;
+    // An engine whose model id names its provider (Goose, OpenCode: `provider/model`): that provider's slot.
+    const slash = owner.signIn.byModel ? id.indexOf('/') : -1;
+    const modes = slash > 0 ? owner.signIn.modes.filter((m) => m.id === id.slice(0, slash)) : owner.signIn.modes;
+    const slot = modes.find((m) => m.kind !== 'own' && m.brokerSlot)?.brokerSlot;
     if (slot) return { slot };
   }
   const lc = id.toLowerCase();

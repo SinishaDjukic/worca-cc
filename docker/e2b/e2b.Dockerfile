@@ -1,8 +1,8 @@
 # docker/e2b/e2b.Dockerfile — the E2B sandbox template for worca's e2b execution
 # environment (plans/e2b-execution-design.md §13). The agent's half of docker/Dockerfile:
-# the same pinned Claude Code (docker/CLAUDE_CODE_VERSION) and the codex, copilot and cursor-agent
-# CLIs (docker/e2b/engine-clis.json), plus git, node, python and common build toolchains — no worca
-# server (that stays on the PC).
+# the same pinned Claude Code (docker/CLAUDE_CODE_VERSION) and the codex, copilot, cursor-agent, gemini,
+# qwen, goose and opencode CLIs (docker/e2b/engine-clis.json), plus git, node, python and common build
+# toolchains — no worca server (that stays on the PC).
 #
 #   E2B_API_KEY=… E2B_API_URL=http://localhost:3000 npm run e2b:build
 #
@@ -27,9 +27,21 @@ RUN npm install -g "@anthropic-ai/claude-code@__CLAUDE_CODE_VERSION__" \
 # The other engines' CLIs, pinned (docker/e2b/engine-clis.json; build.mjs fills the placeholders): a newer CLI is a
 # new template build. No updater runs (worca passes --no-auto-update / COPILOT_AUTO_UPDATE=false to copilot).
 RUN npm install -g "@openai/codex@__CODEX_VERSION__" "@github/copilot@__COPILOT_VERSION__" \
+      "@google/gemini-cli@__GEMINI_VERSION__" "@qwen-code/qwen-code@__QWEN_VERSION__" "opencode-ai@__OPENCODE_VERSION__" \
  && npm cache clean --force \
  && codex --version \
- && copilot --version --no-auto-update
+ && copilot --version --no-auto-update \
+ && gemini --version \
+ && qwen --version \
+ && opencode --version
+
+# goose from its GitHub release at the pinned version, checked against the pinned SHA-256 of the VM's arch.
+RUN arch="$(uname -m)"; case "$arch" in x86_64|amd64) arch=x86_64; sum=__GOOSE_SHA256_X64__;; aarch64|arm64) arch=aarch64; sum=__GOOSE_SHA256_ARM64__;; *) echo "unsupported arch $arch" >&2; exit 1;; esac \
+ && curl -fsSL -o /tmp/goose.tar.gz "https://github.com/aaif-goose/goose/releases/download/v__GOOSE_VERSION__/goose-${arch}-unknown-linux-gnu.tar.gz" \
+ && echo "${sum}  /tmp/goose.tar.gz" | sha256sum -c - \
+ && tar -xzf /tmp/goose.tar.gz -C /usr/local/bin ./goose \
+ && rm /tmp/goose.tar.gz \
+ && goose --version
 
 # cursor-agent from Cursor's own download (the URL its install script uses), at the pinned build, for the VM's arch.
 RUN arch="$(uname -m)"; case "$arch" in x86_64|amd64) arch=x64;; aarch64|arm64) arch=arm64;; *) echo "unsupported arch $arch" >&2; exit 1;; esac \

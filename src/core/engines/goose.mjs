@@ -60,10 +60,12 @@ import { agentIdentityFor } from '../agent-pool.mjs';
 import { currentOwner } from '../billing.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
-import { superviseSpawn, childEnv, execCheck, runCapture, argValue, cleanRunEnv, safeEmit } from '../spawn.mjs';
+import { superviseSpawn, childEnv, execCheck, runCapture, argValue, cleanRunEnv, safeEmit, abandonRoute } from '../spawn.mjs';
 import { ENGINES } from '../../shared/engine-switch.mjs';
-import { resolveModelRoute } from '../exec-env/relay-route.mjs';
+import { resolveModelRoute, pointAtSlot } from '../exec-env/relay-route.mjs';
+import { sandboxMcpConfig } from '../exec-env/policy.mjs';
 import { brokerEnabled } from '../broker-client.mjs';
+import { brokerLease } from '../broker-lease.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { scopeLauncherEnv } from '../mcp/launch.mjs';
@@ -379,10 +381,17 @@ export function gooseConfiguredMode(env = process.env, platform = process.platfo
  * on a refusal: the credential broker holds no Goose key.
  */
 export function gooseSignInMode(model = null, env = process.env) {
-  const d = resolveModelRoute({ engine: 'goose', serverEnv: env, model: model || null, broker: { on: brokerEnabled() }, checkModel: false,
-    configured: model ? null : gooseConfiguredMode(env) });
+  return gooseRoute(model, { env, checkModel: false }).signInMode;
+}
+
+/** How a goose spawn signs its model calls (credentials.mjs resolveModelRoute): locally as gooseSignInMode says; under
+ *  the broker the slot of the model's provider; in a sandbox (`remote`) the relay's route for it. Throws the refusal. */
+function gooseRoute(model, { env = process.env, remote = null, checkModel = true } = {}) {
+  const serverEnv = remote ? remote.env : env;
+  const d = resolveModelRoute({ engine: 'goose', remote: !!remote, serverEnv, model: model || null, broker: { on: brokerEnabled() }, checkModel,
+    configured: model ? null : gooseConfiguredMode(serverEnv) });
   if (d.refusal) throw Object.assign(new Error(`Goose: ${d.refusal}`), { errorClass: 'config' });
-  return d.signInMode;
+  return d;
 }
 
 /** The run-start check (engines/index.mjs `preflight`). Never rejects: {refusal} | {warning} | {}. Only the binary is
@@ -489,12 +498,17 @@ export const GOOSE_RESUME_NOT_FOUND_RE = /No session found with name/i;
  * with `errorClass` on failure. Options goose has no lever for (allowedTools, agents, maxBudgetUsd, writableDirs,
  * addDirs — goose has no sandbox) are ignored; the run start logs each as a degradation. `maxTurns` caps the main
  * agent's tool calls, counted as codex counts them.
+ * Under the credential broker goose is pointed at the slot of the provider its model names (relay-route.mjs
+ * pointAtSlot). A remote run (exec-env, e2b): the template's pinned goose, its calls through worca's model relay, which
+ * signs them with the server's key for that provider (relay-route.mjs MODE_ROUTES: the relay URL in the provider's host
+ * variable, a dummy key, no keyring, no telemetry); no host guard. Goose attaches stdio MCP servers only and a sandbox
+ * has url ones only, so none attaches there. What the relay measured is booked, never goose's own figures there.
  */
 export async function runGooseProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, effort, onEvent = () => {}, signal,
   bin = gooseDefaultBin(), resumeSessionId, sandbox, askLockdown, envAllowlist, asAgent,
   mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, scratchBase = null, platform = process.platform, probe = null,
-  chatHome = null, workRoot = null,
+  chatHome = null, workRoot = null, execEnv = null, billTo, spawnKind, permissionMode, runId, threadId, maxBudgetUsd,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
   const ask = !!askLockdown;
@@ -502,8 +516,8 @@ export async function runGooseProcess({
   if (ask && platform === 'win32') throw new Error(`${bin}: a chat on Goose is not verified on Windows`);
   if (ask && gooseChatModelProblem(model)) throw new Error(`${bin}: ${model} cannot run a chat on Goose: ${gooseChatModelProblem(model)}`);
   const secrets = Array.isArray(redactValues) ? redactValues : [];
-  const redactor = secrets.length ? createRedactor(secrets) : null;
-  if (redactor) { const emit = onEvent; onEvent = (e) => emit(redactor.deep(e)); }
+  let redactor = secrets.length ? createRedactor(secrets) : null;
+  { const emit = onEvent; onEvent = (e) => emit(redactor ? redactor.deep(e) : e); }
   const redacted = (err) => {
     if (redactor && err && typeof err.message === 'string') err.message = redactor.text(err.message);
     if (redactor && err && typeof err.stack === 'string') err.stack = redactor.text(err.stack);
@@ -520,10 +534,15 @@ export async function runGooseProcess({
   const home = chatHome || (agentId ? gooseAgentChatHome(agentId.home) : gooseChatHome());
   const realHome = agentId ? agentId.home : (process.env.HOME || homedir());
 
-  const guardOn = hostGuardEnabled();
+  const remote = execEnv?.remote && !ask ? execEnv : null;
+  // How this spawn signs its model calls, before anything is written or staged.
+  const decision = gooseRoute(model, { remote });
+  if (remote && bin !== 'goose') safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] goose: ${bin} (this machine's binary) is ignored; the ${remote.label} runs its own pinned goose` });
+  const exe = remote ? 'goose' : bin;
+  const guardOn = hostGuardEnabled() && !remote;
   // The one provider key the step's model (else goose's configured provider) signs in with: never worca's others. A chat
   // keeps the same one: it has no shell to read it.
-  const spec = gooseSpawnSpec({ envAllowlist, signInMode: gooseSignInMode(model), cwd, workRoot, hostPid: guardOn ? process.pid : null });
+  const spec = gooseSpawnSpec({ envAllowlist, signInMode: decision.signInMode, cwd, workRoot, hostPid: guardOn ? process.pid : null });
 
   // MCP: each stdio server becomes a wrapper script (on Windows: its command line as it is, gooseMcpDirect). goose stores
   // a session's extensions and starts them again on resume, so the wrappers live in a folder named after the session
@@ -538,6 +557,8 @@ export async function runGooseProcess({
   if (mcpConfigPath) {
     let doc;
     try { doc = JSON.parse(readFileSync(mcpConfigPath, 'utf8')); } catch (err) { throw new Error(`${bin}: cannot read the MCP config ${mcpConfigPath}: ${err.message}`); }
+    // In a sandbox only the run's url servers exist, which goose cannot attach: each is named below.
+    if (remote) doc = sandboxMcpConfig(doc).config;
     const all = doc && typeof doc.mcpServers === 'object' && doc.mcpServers ? doc.mcpServers : {};
     const problems = gooseMcpProblems(all, { platform });
     const skip = new Set(problems.map((p) => p.name));
@@ -593,6 +614,28 @@ export async function runGooseProcess({
   if ((splitGooseModel(model)?.provider ?? env.GOOSE_PROVIDER) === 'aws_bedrock' && typeof env.AWS_BEARER_TOKEN_BEDROCK === 'string' && env.AWS_BEARER_TOKEN_BEDROCK) {
     throw Object.assign(new Error(`${bin}: Goose on Amazon Bedrock with a Bedrock API key (AWS_BEARER_TOKEN_BEDROCK) is not supported yet — sign goose in to Bedrock with an AWS profile (goose configure), or pick another provider`), { errorClass: 'config' });
   }
+  // The broker token, taken late (a refusal above leaves none behind) and released in the finally. Local brokered: goose
+  // calls the slot of its model's provider with it; no ambient provider host or key survives.
+  let lease = null;
+  try {
+    if (decision.slot) {
+      lease = await brokerLease({ billTo, spawnKind, permissionMode, askLockdown, runId, threadId, maxBudgetUsd, asAgent, execEnv }, decision.slot);
+      redactor = createRedactor([...secrets, ...lease.secrets]);
+    }
+    if (decision.kind === 'brokered' && !remote) {
+      for (const k of ENGINES.goose.env.relayOwned) delete env[k];
+      Object.assign(env, pointAtSlot(decision, lease, model).env);
+    }
+  } catch (err) { lease?.release(); cleanup(); throw redacted(err); }
+  /** One attempt's env and route: in a sandbox its own relay route (each spawn's end closes its route). */
+  const attemptEnv = async () => {
+    if (!remote) return { env, route: null };
+    const route = remote.openRoute(decision, { spawnEnv: env, lease });
+    try {
+      await remote.ensureCli(exe);
+      return { env: remote.envFor(env, { engine: 'goose', keep: remote.mcpEnvRefs, route }), route };
+    } catch (err) { await abandonRoute(remote, route, onEvent); throw err; }
+  };
 
   const cap = Number.isInteger(maxTurns) && maxTurns > 0 ? maxTurns : null;
   const turnCap = () => Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true });
@@ -600,6 +643,8 @@ export async function runGooseProcess({
   // recorded: its `complete`'s figure, else the session's usage-ledger rows since `before`. Booked as the engine's own
   // figure; no cost figure (an unpriced model) leaves the step's cost unknown, never $0.
   const spendOnExit = (final, sessionName, before) => {
+    // A sandbox's figures are the sandbox's word: the route's close booked what the relay measured.
+    if (remote) return;
     const from = final.completed ? { usage: final.usage, costUsd: final.costUsd } : gooseSessionSpend(sessionName, env, before);
     if (!from?.usage || !Object.values(from.usage).some((n) => n > 0)) return;
     safeEmit(onEvent, { type: 'spend', source: 'engine', ...(from.costUsd != null ? { costUsd: from.costUsd } : {}), usage: from.usage });
@@ -607,8 +652,9 @@ export async function runGooseProcess({
   const attempt = async (resumeName) => {
     const sessionName = resumeName || newSessionName();
     // goose's usage ledger before this spawn: a resumed session's earlier replies were booked by their own spawns.
-    const before = resumeName ? gooseSessionSpend(sessionName, env)?.last ?? 0 : 0;
+    const before = resumeName && !remote ? gooseSessionSpend(sessionName, env)?.last ?? 0 : 0;
     const { dir, extensions } = writeWrappers(sessionName);
+    const { env: spawnEnv, route } = await attemptEnv();
     const normalizer = createGooseNormalizer({ model: model || null, sessionName, mcpServers: mcpNames });
     const capCtrl = new AbortController();
     let toolCalls = 0; let capped = false; let sawSession = false;
@@ -621,7 +667,8 @@ export async function runGooseProcess({
     };
     const args = buildGooseArgs({ model, systemPrompt: sys, sessionName, resume: !!resumeName, extensions, ask });
     const res = await superviseSpawn({
-      file: bin, args, displayBin: bin, cwd, env, stdin, signal: spawnSignal, asAgent, stagedDir: asAgent ? dir : null, onEvent,
+      file: exe, args, displayBin: bin, cwd, env: spawnEnv, stdin, signal: spawnSignal, asAgent: remote ? false : asAgent,
+      stagedDir: asAgent && !remote ? dir : null, onEvent, execEnv: remote, route,
       ...(ask && agentId ? { agentHome: () => home } : {}),
       cleanup: () => {},
       stdoutErrorDetail: () => { const e = normalizer.finish().error; return e && e !== NO_COMPLETE ? e : ''; },
@@ -664,15 +711,17 @@ export async function runGooseProcess({
     }
     const { final } = out;
     const text = redactor ? redactor.text(final.text) : final.text;
+    // In a sandbox the result carries no figure of goose's: the route's close already booked the relay's measure.
     // `inputIncludesCache`: goose's input_tokens already holds the cache read and write (checked on Gemini and on
     // claude-code, goose 1.55), so input + cache would count it twice. Run telemetry reads it; nothing else does.
     safeEmit(onEvent, { type: 'result', text, isError: false, sessionId: GOOSE_SESSION_PREFIX + out.sessionName,
-      ...(final.usage ? { usage: final.usage, inputIncludesCache: true } : {}), ...(final.costUsd != null ? { costUsd: final.costUsd } : {}) });
+      ...(remote ? { relay: { messages: 0, byModel: {} } } : { ...(final.usage ? { usage: final.usage, inputIncludesCache: true } : {}), ...(final.costUsd != null ? { costUsd: final.costUsd } : {}) }) });
     return { text, exitCode: out.exitCode };
   } catch (err) {
     throw redacted(err);
   } finally {
     cleanup();
+    lease?.release();
   }
 }
 

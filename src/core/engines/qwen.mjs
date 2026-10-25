@@ -326,14 +326,15 @@ const QWEN_SPEC = Object.freeze({
   classify: classifyQwenError, resumeNotFoundRe: QWEN_RESUME_NOT_FOUND_RE,
   createNormalizer: createQwenNormalizer,
   askLockdown: QWEN_ASK_LOCKDOWN,
-  prepare({ bin, sys, prompt, model, effort, servers, permissionRules, includeDirs, scratchDir, ask, probe, subagentsOff }) {
+  prepare({ bin, sys, prompt, model, effort, servers, permissionRules, includeDirs, scratchDir, ask, probe, subagentsOff, remote = false }) {
     const plan = qwenRulePlan(permissionRules);
     const mcpServers = servers ? familyMcpServers(servers) : {};
     const env = { QWEN_CODE_SUPPRESS_YOLO_WARNING: '1', ...(ask ? QWEN_ASK_ENV : {}) };
     const tier = QWEN_EFFORT_SET.has(effort) ? effort : null;
     if (plan.deny.length || Object.keys(mcpServers).length || ask || tier) {
       const file = join(scratchDir(), 'system-settings.json');
-      let doc = qwenSystemSettings({ base: machineSystemSettings(bin), mcpServers, deny: plan.deny });
+      // In a sandbox this machine's system settings mean nothing (and may name its sign-in): worca's own alone.
+      let doc = qwenSystemSettings({ base: remote ? {} : machineSystemSettings(bin), mcpServers, deny: plan.deny });
       // The spawn's effort: the system settings win over the user's own model.reasoningEffort.
       if (tier) doc = mergeSettings(doc, { model: { reasoningEffort: tier } });
       // A chat: worca's lockdown settings win over the machine's; the self-test signs in to its own endpoint.

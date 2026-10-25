@@ -403,3 +403,45 @@ test('slots file: a Connect slot is built-in only; response headers and the look
   assert.throws(() => mergeSlots(base, [{ id: 'copilot-pat', lookupUrl: 'http://example.com' }]), /lookupUrl: upstream must be https/);
   assert.equal(mergeSlots(base, [{ id: 'copilot-pat', lookupUrl: 'https://ghe.example/api/v3/' }]).find((s) => s.id === 'copilot-pat').lookupUrl, 'https://ghe.example/api/v3');
 });
+
+// ── the google slot: Gemini CLI's API key, and the google provider of Qwen Code, Goose and OpenCode (R11) ──
+const GEMINI_KEY = 'AIza-person-key-0123456789abcdef';
+
+test('google slot: a Gemini call names its model in the path; the spawn token rides x-goog-api-key, the person\'s key goes out there too, and the usage is booked', async () => {
+  const path = '/v1beta/models/gemini-2.5-flash:streamGenerateContent';
+  const up = await fakeVendor({
+    '/v1beta/models': (req, res) => { res.writeHead(req.headers['x-goog-api-key'] === GEMINI_KEY ? 200 : 403, { 'content-type': 'application/json' }); res.end('{"models":[]}'); },
+    [`${path}?alt=sse`]: (req, res) => {
+      if (req.headers['x-goog-api-key'] !== GEMINI_KEY || req.headers.authorization) { res.writeHead(403); res.end(); return; }
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end([{ candidates: [{ content: { parts: [{ text: 'h' }] } }], usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 1 }, modelVersion: 'gemini-2.5-flash' },
+        { candidates: [{ content: { parts: [{ text: 'i' }] } }], usageMetadata: { promptTokenCount: 500, cachedContentTokenCount: 200, candidatesTokenCount: 40, thoughtsTokenCount: 10 }, modelVersion: 'gemini-2.5-flash' }]
+        .map((e) => `data: ${JSON.stringify(e)}\n\n`).join(''));
+    },
+  });
+  const { mint, port, service, store } = await broker(up, { mode: 'multi', slotsExtra: [{ id: 'google', upstream: up.url }] });
+  assert.equal((await service.saveCredential('ada@acme.dev', 'google', GEMINI_KEY)).ok, true, 'the key verifies against GET /v1beta/models');
+  const token = await mint('google', 'ada@acme.dev');
+  const r = await fetch(`http://127.0.0.1:${port}/p/google${path}?alt=sse`, { method: 'POST', headers: { 'x-goog-api-key': token, 'content-type': 'application/json' },
+    body: JSON.stringify({ contents: [] }) });
+  assert.equal(r.status, 200);
+  await r.text();
+  const [row] = store.queryUsage({ billTo: 'ada@acme.dev' });
+  assert.equal(row.model, 'gemini-2.5-flash');
+  assert.deepEqual([row.inputTokens ?? row.input_tokens, row.cacheReadTokens ?? row.cache_read_tokens, row.outputTokens ?? row.output_tokens], [300, 200, 50], 'the last running total; thinking is output');
+  assert.ok(row.usd > 0, 'an unlisted model is priced at the fallback rate, never $0');
+  // Another Gemini API call is not the slot's: refused in Google's error shape, before any key leaves.
+  const files = await fetch(`http://127.0.0.1:${port}/p/google/v1beta/files`, { method: 'POST', headers: { 'x-goog-api-key': token } });
+  assert.equal(files.status, 403);
+  const body = await files.json();
+  assert.equal(body.error.status, 'PERMISSION_DENIED');
+  assert.match(body.error.message, /^worca-broker: POST \/v1beta\/files is not allowed for slot google/);
+  assert.equal(up.calls.filter((c) => c.url.startsWith('/v1beta/files')).length, 0);
+});
+
+test('slots file: a Gemini slot is built-in only', () => {
+  const base = builtinSlots();
+  assert.ok(mergeSlots(base, [{ id: 'google', upstream: 'http://127.0.0.1:5' }]).find((s) => s.id === 'google').pathPattern instanceof RegExp, 'an override keeps the pattern');
+  assert.throws(() => mergeSlots(base, [{ id: 'my-gemini', protocol: 'gemini', auth: 'x-goog-api-key', credential: 'per-person', upstream: 'https://g.example', paths: [['POST', '/x']] }]),
+    /protocol gemini is built-in only/);
+});

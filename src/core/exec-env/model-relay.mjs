@@ -9,6 +9,8 @@ import { shq } from './shell.mjs';
 import { upstreamRequestHeaders, agentResponseHeaders, MAX_REQUEST_BYTES, UPSTREAM_IDLE_MS, CLIENT_DRAIN_MS } from '../../broker/service.mjs';
 import { scrubText, createByteScrubber, createConnectScrubber, connectReplyProblem, isConnectStream, CONNECT_IDENTITY } from '../../broker/scrub.mjs';
 import { CONNECT_CODES } from '../../broker/cursor.mjs';
+import { pathIssue } from '../../broker/slots.mjs';
+import { requestWithUsage } from '../../broker/usage.mjs';
 /** The byte-stream scrubber lives in src/broker/scrub.mjs (the broker scrubs Cursor replies the same way). */
 export { createByteScrubber } from '../../broker/scrub.mjs';
 
@@ -52,14 +54,18 @@ const mib = (n) => Math.round(n / (1 << 20));
 const b64Bytes = (s) => Math.max(0, Math.floor(s.length * 3 / 4) - (s.endsWith('==') ? 2 : s.endsWith('=') ? 1 : 0));
 
 const relayError = (status, type, message) => ({ status, type, message });
+/** google.rpc status names for the HTTP statuses the relay refuses with. */
+const GOOGLE_STATUS = Object.freeze({ 400: 'INVALID_ARGUMENT', 403: 'PERMISSION_DENIED', 413: 'INVALID_ARGUMENT', 429: 'RESOURCE_EXHAUSTED',
+  502: 'UNAVAILABLE', 504: 'DEADLINE_EXCEEDED', 529: 'UNAVAILABLE' });
 const lowerKeys = (o) => Object.fromEntries(Object.entries(o || {}).map(([k, v]) => [k.toLowerCase(), v]));
 /** Whether `route` takes `method pathname`: its `allow` list of [method, exact path | RegExp] (CLAUDE_ALLOW without one). */
 const allows = (route, method, pathname) => (route.allow || CLAUDE_ALLOW)
   .some(([m, p]) => m === method && (p instanceof RegExp ? p.test(pathname) : p === pathname));
-/** A refusal body in the shape the route's client reads: Anthropic's (the default), OpenAI's or Connect's. */
+/** A refusal body in the shape the route's client reads: Anthropic's (the default), OpenAI's, Google's or Connect's. */
 function refusalBody(protocol, { status, type, message }) {
   const msg = `worca-relay: ${message}`;
   if (protocol === 'openai') return { error: { message: msg, type, code: null } };
+  if (protocol === 'gemini') return { error: { code: status, message: msg, status: GOOGLE_STATUS[status] || 'UNKNOWN' } };
   if (protocol === 'connect') return { code: CONNECT_CODES[status] || 'unknown', message: msg };
   return { type: 'error', error: { type, message: msg } };
 }
@@ -275,7 +281,9 @@ export class ModelRelay {
     const entry = this.routes.get(id);
     if (!id || !entry || entry.closed) return this._refuse(f, where, relayError(403, 'permission_error', 'unknown or ended route'));
     const proto = entry.route.protocol;
-    if (!allows(entry.route, f.method, pathname) || !SAFE_QUERY.test(query) || query.includes('..')) {
+    // As the broker does (slots.mjs pathIssue): a dot, empty or encoded segment is refused before any allow pattern
+    // reads the path, since the fetch below would normalise it to a path the route never admitted.
+    if (pathIssue(pathname) || !allows(entry.route, f.method, pathname) || !SAFE_QUERY.test(query) || query.includes('..')) {
       return this._refuse(f, where, relayError(403, 'permission_error', `${String(f.method).slice(0, 10)} ${pathname.slice(0, 100)} is not ${entry.route.call || 'a Messages API call'}`), proto);
     }
     // Every limit is checked on the size the base64 announces, before decoding it.
@@ -285,12 +293,26 @@ export class ModelRelay {
     if (this._bytes + size > this.maxBytes) return this._refuse(f, where, relayError(429, 'rate_limit_error', `more than ${mib(this.maxBytes)} MiB of request bodies in flight from this sandbox`), proto);
     if (this.budget.used + size > this.budget.limit) return this._refuse(f, where, relayError(529, 'overloaded_error', `worca is relaying more than ${mib(this.budget.limit)} MiB of request bodies at once`), proto);
     let body = Buffer.from(b64, 'base64');
+    // The model this call was held to (null: the route checks none), which its usage is booked under ('' for the step's
+    // own model, relay-usage.mjs createRouteMeter).
+    let checked = null;
+    const pinned = Array.isArray(entry.route.models) && entry.route.models.length ? entry.route.models : null;
+    // A path-checked route (a per-mode route's pin, relay-route.mjs modePin): the model, deployment or endpoint the path
+    // names must be the step's, on every call (also a GET of the endpoint's own config).
+    if (entry.route.modelCheck === 'path' && pinned) {
+      const m = entry.route.pathModel?.exec(pathname)?.[1];
+      if (typeof m !== 'string' || !pinned.includes(m)) {
+        return this._refuse(f, where, relayError(403, 'permission_error', `model ${JSON.stringify(String(m ?? '').slice(0, 100))} is not this step's model`), proto);
+      }
+      checked = m;
+    }
     // The step's model (plans/core-protection-layer-design.md §4.2): a body-checked route (catalog relay.modelCheck
-    // 'body') carries `models`; a call naming any other model is refused. The body is forwarded re-serialised, so the
-    // upstream reads the same `model` worca checked (JSON.parse keeps the last of duplicate keys; an upstream may keep
-    // the first). A second, differently cased model key is refused: a Go upstream (encoding/json) matches field names
-    // case-insensitively. Routes without `models` (partial checks: Claude, Cursor) pass untouched.
-    if (entry.route.modelCheck === 'body' && Array.isArray(entry.route.models) && entry.route.models.length && !NO_BODY.has(f.method)) {
+    // 'body', or a per-mode route's body pin) carries `models`; a call naming any other model is refused. The body is
+    // forwarded re-serialised, so the upstream reads the same `model` worca checked (JSON.parse keeps the last of
+    // duplicate keys; an upstream may keep the first). A second, differently cased model key is refused: a Go upstream
+    // (encoding/json) matches field names case-insensitively. Routes without `models` (partial checks: Claude, Cursor,
+    // Gemini CLI) pass untouched.
+    if (entry.route.modelCheck === 'body' && pinned && !NO_BODY.has(f.method)) {
       let parsed;
       try { parsed = JSON.parse(body.toString('utf8')); } catch { parsed = undefined; }
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -300,17 +322,29 @@ export class ModelRelay {
         return this._refuse(f, where, relayError(400, 'invalid_request_error', 'the request body names its model more than once'), proto);
       }
       const m = parsed.model;
-      if (typeof m !== 'string' || !entry.route.models.includes(m)) {
+      if (typeof m !== 'string' || !pinned.includes(m)) {
         return this._refuse(f, where, relayError(403, 'permission_error', `model ${JSON.stringify(String(m ?? '').slice(0, 100))} is not this step's model`), proto);
       }
       body = Buffer.from(JSON.stringify(parsed));
+      checked = m;
+    }
+    // A reply worca can meter (as the broker asks for it, src/broker/usage.mjs): a streamed Chat Completions call asks
+    // for its usage whatever the sandbox sent, and a background Responses call (answered to a poll the relay never sees)
+    // is refused.
+    if (proto === 'openai' && !NO_BODY.has(f.method)) {
+      try { body = requestWithUsage({ id: '', protocol: proto, upstream: entry.route.origin || 'http://relay.invalid' }, pathname, body); }
+      catch (err) {
+        if (err?.code !== 'E_BACKGROUND') throw err;
+        return this._refuse(f, where, relayError(400, 'invalid_request_error', 'a background response is not supported: worca could not meter it'), proto);
+      }
     }
     // Only upstream silence ends a call early. A client that goes (a 'close' frame, a relay exit or stop(), a sandbox
     // that stops taking frames) detaches it: nothing more is forwarded, and the upstream is read to its end, so the
     // meter books what the provider bills. Its usage comes last in a stream (Anthropic's message_delta), so an
     // aborted reply would book next to nothing (as the broker does, V7). A detached call keeps its slot until then.
     const ac = new AbortController();
-    const call = { why: null, gone: false, abort: (why) => { if (!call.why) call.why = why; ac.abort(); }, detach: () => { call.gone = true; } };
+    const call = { why: null, gone: false, model: checked != null && checked === entry.route.stepModel ? '' : checked,
+      abort: (why) => { if (!call.why) call.why = why; ac.abort(); }, detach: () => { call.gone = true; } };
     const idle = setTimeout(() => call.abort('idle'), this.idleMs); idle.unref?.();
     call.touch = () => idle.refresh();
     entry.active++; this.inflight.set(f.id, call); this._bytes += size; this.budget.used += size;
@@ -349,7 +383,7 @@ export class ModelRelay {
       url = String(base).replace(/\/+$/, '') + rest;
       const auth = lowerKeys(await route.authHeaders(headers));
       // Whatever worca signs with is scrubbed from every reply, also a token the route derived just now.
-      for (const k of ['authorization', 'x-api-key']) {
+      for (const k of ['authorization', 'x-api-key', 'x-goog-api-key', 'api-key']) {
         if (auth[k] !== undefined) { const s = String(auth[k]); this.secrets.add(s); this.secrets.add(s.replace(/^(Bearer|token)\s+/i, '')); }
       }
       for (const s of route.secrets || []) this.secrets.add(s);
@@ -396,7 +430,7 @@ export class ModelRelay {
       ? createConnectScrubber(secrets, { maxMessage: MAX_REQUEST_BYTES }) : createByteScrubber(secrets);
     // The route's meter (relay-usage.mjs): worca's own count of what the reply used, never the sandbox's. It is fed
     // every upstream byte, also after the client is gone.
-    const meter = route.meter?.(pathname) || null;
+    const meter = route.meter?.(pathname, call.model) || null;
     try {
       await this._pass(f, call, { t: 'head', id: f.id, status: r.status, headers: rh });
       try {

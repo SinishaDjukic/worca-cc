@@ -1,10 +1,11 @@
 // src/core/exec-env/relay-route.mjs
 // Where one remote spawn's model calls go and which auth headers worca adds on its own side
-// (plans/model-relay-design.md §4): Claude's (remoteModelRoute) and Codex's, Copilot's and Cursor's
-// (engineModelRoute). The relay (model-relay.mjs) applies the result; the sandbox never holds the credential.
+// (plans/model-relay-design.md §4): Claude's (remoteModelRoute), Codex's, Copilot's and Cursor's (engineModelRoute),
+// and, per sign-in mode, Gemini CLI's, Qwen Code's, Goose's and OpenCode's (MODE_ROUTES). The relay (model-relay.mjs)
+// applies the result; the sandbox never holds the credential.
 // Refuses (errorClass 'config') what a relay cannot carry.
 import { createHash } from 'node:crypto';
-import { isResolved, engineCredential, modelCredential } from './credentials.mjs';
+import { isResolved, engineCredential, modelCredential, modeCredential } from './credentials.mjs';
 import { engineEntry } from '../../shared/engine-switch.mjs';
 import { OAUTH_BETA, mergeBetas } from '../../broker/service.mjs';
 import { isCopilotHost } from '../../broker/copilot.mjs';
@@ -291,9 +292,189 @@ export function buildRelayRoute(decision, { spawnEnv = {}, modelEnv = null, serv
   const models = [...new Set([...(endpoint?.model ? [endpoint.model] : decision.models), ...(entry.relay.auxModels || [])])];
   let route;
   if (entry.relay.upstream === 'anthropic') route = remoteModelRoute({ spawnEnv, modelEnv, serverEnv, label });
+  else if (entry.relay.perMode) route = modeRoute(decision, { serverEnv, lease, upstreams, label });
   else if (lease) route = slotRoute(entry, decision, { lease, label });
   else route = engineModelRoute({ engine: decision.engine, serverEnv, spawnEnv, model: decision.models[0] ?? null, endpoint, label, upstreams, fetchImpl, now, cache });
-  return { ...route, models, modelCheck: entry.relay.modelCheck };
+  // A per-mode route names what its sign-in mode pins (modeRoute); every other route takes the catalog's check.
+  // `stepModel`: the name a call on the step's own model gives (its usage is booked as the step's model).
+  return { ...route, models: route.models ?? models, modelCheck: route.modelCheck ?? entry.relay.modelCheck,
+    stepModel: route.stepModel ?? (endpoint?.model || decision.models[0] || null) };
+}
+
+// ── Gemini CLI, Qwen Code, Goose and OpenCode: one route per sign-in mode (relay spike 2026-10-22) ──
+// Each CLI sends plain HTTP/1.1 with SSE replies and its key in one header, so a mode whose credential is a plain key
+// relays as it is: the CLI gets the relay's URL (or a broker slot's) where it takes its endpoint, a dummy key, and the
+// switches that turn its side traffic off. A mode that needs a token minted or refreshed on this machine (Google's
+// login, Vertex with ADC, Qwen OAuth), each request signed (Bedrock SigV4) or a host the CLI does not let worca move has
+// no route (catalog: no `relay` on the mode) and is refused there.
+
+/** One path segment a route admits where the path names a model, a deployment or an endpoint: never an empty, dot or
+ *  encoded one (the relay also refuses those first, as the broker does: slots.mjs pathIssue). */
+const SEG = '(?!\\.{1,2}(?:[/:]|$))[A-Za-z0-9._-]+';
+/** The Gemini API's generate calls under `prefix` (the model is in the path: /models/{m}:method). */
+const geminiCalls = (prefix) => new RegExp(`^${prefix.replace(/[/.]/g, '\\$&')}/models/${SEG}:(streamGenerateContent|generateContent|countTokens)$`);
+/** Where a Gemini call names its model: /models/{m}:method. */
+const GEMINI_MODEL_AT = /\/models\/([^/:]+):/;
+/** The vendors' APIs these routes reach, as origins (a route's `allow` holds the full path, as the broker's slots do).
+ *  RemoteExecEnv's `relayUpstreams.modes` replaces one by its route id in tests only. */
+const VENDOR = Object.freeze({ 'gemini-api': 'https://generativelanguage.googleapis.com', 'vertex-express': 'https://aiplatform.googleapis.com',
+  openai: 'https://api.openai.com', anthropic: 'https://api.anthropic.com', openrouter: 'https://openrouter.ai', 'opencode-zen': 'https://opencode.ai' });
+const bearer = (key) => () => ({ authorization: `Bearer ${key}` });
+const header = (name, key) => () => ({ [name]: key });
+const serverBase = (serverEnv, name) => {
+  if (!str(serverEnv?.[name])) throw refuse(`The worca server's ${name} is not set; the relay sends this sign-in's calls there.`);
+  return checkBase(serverEnv[name], `The worca server's ${name}`);
+};
+
+/**
+ * Per catalog `relay` on a sign-in mode: where its calls go (`upstream(serverEnv)`), the protocol of its replies (the
+ * meter and the refusal shape), the calls it takes, how worca signs them (`sign(key)` → the auth headers), the request
+ * headers it forwards, and `slotSuffix`, what the CLI's base needs after a broker slot's URL (a slot's paths start at the
+ * vendor's root) where the relay's upstream already holds it.
+ * `pin`: where a call names its model, which the relay holds to the step's (an engine whose catalog relay.modelCheck is
+ * 'mode'): `{ body: true }` the request body's `model`; `{ path }` the first group of `path` in the call's path (Gemini's
+ * /models/{m}:, Azure's deployment, Databricks' serving endpoint), with `name(serverEnv)` when the server's env names it
+ * rather than the step's model (Azure's deployment; `missing`: the refusal when it does not).
+ */
+export const MODE_ROUTES = Object.freeze({
+  'gemini-api': { upstream: () => VENDOR['gemini-api'], protocol: 'gemini', call: 'a Gemini API call',
+    allow: [['POST', geminiCalls('/v1beta')]], sign: (k) => header('x-goog-api-key', k), forward: ['x-goog-api-client'], slotSuffix: '',
+    pin: { path: GEMINI_MODEL_AT } },
+  'vertex-express': { upstream: () => VENDOR['vertex-express'], protocol: 'gemini', call: 'a Vertex AI express call',
+    allow: [['POST', geminiCalls('/v1beta1/publishers/google')]], sign: (k) => header('x-goog-api-key', k), forward: ['x-goog-api-client'], slotSuffix: '',
+    pin: { path: GEMINI_MODEL_AT } },
+  openai: { upstream: () => VENDOR.openai, protocol: 'openai', call: 'an OpenAI API call',
+    allow: [['POST', '/v1/chat/completions'], ['POST', '/v1/responses'], ['GET', '/v1/models']], sign: bearer, slotSuffix: '', pin: { body: true } },
+  anthropic: { upstream: () => VENDOR.anthropic, protocol: 'anthropic', call: 'a Messages API call',
+    allow: [['POST', '/v1/messages'], ['POST', '/v1/messages/count_tokens']], sign: (k) => header('x-api-key', k), slotSuffix: '', pin: { body: true } },
+  openrouter: { upstream: () => VENDOR.openrouter, protocol: 'openai', call: 'an OpenRouter call',
+    allow: [['POST', '/api/v1/chat/completions'], ['GET', '/api/v1/models']], sign: bearer, forward: ['http-referer', 'x-title'], slotSuffix: '', pin: { body: true } },
+  // OpenCode Zen answers Responses (GPT models), Messages (Claude) or Chat Completions per model, each SDK with its own
+  // header: worca signs in the header the CLI used.
+  'opencode-zen': { upstream: () => VENDOR['opencode-zen'], protocol: 'openai', call: 'an OpenCode Zen call',
+    allow: [['POST', '/zen/v1/responses'], ['POST', '/zen/v1/messages'], ['POST', '/zen/v1/chat/completions']],
+    sign: (k) => (incoming = {}) => (incoming['x-api-key'] !== undefined ? { 'x-api-key': k } : { authorization: `Bearer ${k}` }),
+    forward: ['x-opencode-client', 'x-opencode-project', 'x-opencode-request', 'x-opencode-session'], slotSuffix: '', pin: { body: true } },
+  // The deployment is the model on Azure, and goose takes it from AZURE_OPENAI_DEPLOYMENT_NAME: the one the route admits.
+  'azure-openai': { upstream: (env) => new URL(serverBase(env, 'AZURE_OPENAI_ENDPOINT')).origin, protocol: 'openai', call: 'an Azure OpenAI call',
+    allow: [['POST', new RegExp(`^/openai/deployments/${SEG}/chat/completions$`)]], sign: (k) => header('api-key', k), slotSuffix: '',
+    pin: { path: /^\/openai\/deployments\/([^/]+)\//, name: (env) => str(env?.AZURE_OPENAI_DEPLOYMENT_NAME),
+      missing: "The worca server's AZURE_OPENAI_DEPLOYMENT_NAME is not set; the relay admits calls to that one deployment only." } },
+  // The serving endpoint is the model (goose names it as the step's model): its own config and its invocations only.
+  databricks: { upstream: (env) => new URL(serverBase(env, 'DATABRICKS_HOST')).origin, protocol: 'openai', call: 'a Databricks serving call',
+    allow: [['GET', new RegExp(`^/api/2\\.0/serving-endpoints/${SEG}$`)], ['POST', new RegExp(`^/serving-endpoints/${SEG}/invocations$`)]], sign: bearer, slotSuffix: '',
+    pin: { path: /^\/(?:api\/2\.0\/)?serving-endpoints\/([^/]+)/ } },
+  // Qwen Code's OpenAI- and Anthropic-compatible modes: the base worca's env names (DashScope, a gateway, the vendor).
+  // Under the broker they reach the openai or anthropic slot, whose paths start at /v1.
+  'openai-compatible': { upstream: (env) => serverBase(env, 'OPENAI_BASE_URL'), protocol: 'openai', call: 'an OpenAI-compatible call',
+    allow: [['POST', '/chat/completions']], sign: bearer, slotSuffix: '/v1', pin: { body: true } },
+  'anthropic-compatible': { upstream: (env) => serverBase(env, 'ANTHROPIC_BASE_URL'), protocol: 'anthropic', call: 'a Messages API call',
+    allow: [['POST', '/v1/messages']], sign: (k) => header('x-api-key', k), slotSuffix: '', pin: { body: true } },
+});
+
+/** Qwen Code's side traffic off in every mode: the models.dev catalog and its usage telemetry. */
+const QWEN_QUIET = Object.freeze({ QWEN_CODE_MODELS_DEV: 'off', QWEN_USAGE_STATISTICS_ENABLED: 'false' });
+/** Gemini CLI's user settings worca writes where it points the CLI (its home in a sandbox): usage statistics off, which
+ *  stops the Clearcut telemetry (sent straight to play.googleapis.com, past any relay) and the install id on model
+ *  calls. No env switch exists. */
+export const GEMINI_RELAY_SETTINGS = `${JSON.stringify({ privacy: { usageStatisticsEnabled: false } }, null, 2)}\n`;
+const join2 = (base, suffix) => `${String(base).replace(/\/+$/, '')}${suffix}`;
+
+/**
+ * How each per-mode CLI is pointed at `base` (the relay route's URL, or a broker slot's URL plus the route's
+ * slotSuffix) for the mode's route `relay`, with `credential` (RELAY_DUMMY, or the spawn's broker token) where its key
+ * goes: `{ env, config? }`. OpenCode reads no base URL from its env for these providers: its provider block rides its
+ * inline config (`config`, merged into OPENCODE_CONFIG_CONTENT by the adapter). `model`: the step's model id as the
+ * engine names it (Goose and OpenCode: provider/model). An adapter deletes the engine's catalog relayOwned names
+ * before it applies the env, so no ambient endpoint or key survives.
+ */
+export const MODE_POINTING = Object.freeze({
+  gemini: (relay, base, credential) => ({ env: relay === 'vertex-express'
+    ? { GOOGLE_API_KEY: credential, GOOGLE_GENAI_USE_VERTEXAI: 'true', GOOGLE_VERTEX_BASE_URL: base }
+    // Without the auth override a base URL alone makes 0.63 pick its "gateway" sign-in, which it then refuses.
+    : { GEMINI_API_KEY: credential, GEMINI_CLI_AUTH_OVERRIDE: 'gemini-api-key', GOOGLE_GEMINI_BASE_URL: base } }),
+  // Qwen Code signs in only with the model named for its provider (a key alone is "No auth type is selected").
+  qwen: (relay, base, credential, model) => ({ env: {
+    ...(relay === 'openai-compatible' ? { OPENAI_API_KEY: credential, OPENAI_BASE_URL: base, OPENAI_MODEL: String(model || '') }
+      : relay === 'anthropic-compatible' ? { ANTHROPIC_API_KEY: credential, ANTHROPIC_BASE_URL: base, ANTHROPIC_MODEL: String(model || '') }
+        : { GEMINI_API_KEY: credential, GEMINI_MODEL: String(model || ''), GOOGLE_GEMINI_BASE_URL: base }),
+    ...QWEN_QUIET } }),
+  // Each goose provider takes its host in its own variable; OpenAI's is an origin plus OPENAI_BASE_PATH. No keyring.
+  goose: (relay, base, credential, model, serverEnv = {}) => {
+    const u = new URL(base);
+    const per = {
+      openai: { OPENAI_HOST: u.origin, OPENAI_BASE_PATH: `${u.pathname.replace(/^\/+|\/+$/g, '')}${u.pathname.length > 1 ? '/' : ''}v1/chat/completions`, OPENAI_API_KEY: credential },
+      anthropic: { ANTHROPIC_HOST: base, ANTHROPIC_API_KEY: credential },
+      'gemini-api': { GOOGLE_HOST: base, GOOGLE_API_KEY: credential },
+      openrouter: { OPENROUTER_HOST: base, OPENROUTER_API_KEY: credential },
+      // The deployment and API version are settings, not secrets: they ride along when worca's env names them.
+      'azure-openai': { AZURE_OPENAI_ENDPOINT: base, AZURE_OPENAI_API_KEY: credential,
+        ...Object.fromEntries(['AZURE_OPENAI_DEPLOYMENT_NAME', 'AZURE_OPENAI_API_VERSION'].filter((k) => str(serverEnv[k])).map((k) => [k, str(serverEnv[k])])) },
+      databricks: { DATABRICKS_HOST: base, DATABRICKS_TOKEN: credential },
+    }[relay];
+    return { env: { ...per, GOOSE_DISABLE_KEYRING: '1', GOOSE_TELEMETRY_OFF: '1' } };
+  },
+  // The provider block points its SDK at the relay; small_model pins the session-title call to the step's model; the
+  // catalog fetch, updates, sharing, default plugins and LSP downloads stay off.
+  opencode: (relay, base, credential, model) => {
+    const provider = String(model || '').split('/')[0];
+    const suffix = { openai: '/v1', anthropic: '/v1', 'gemini-api': '/v1beta', openrouter: '/api/v1', 'opencode-zen': '/zen/v1' }[relay] ?? '';
+    return {
+      env: { OPENCODE_DISABLE_MODELS_FETCH: '1', OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_SHARE: '1', OPENCODE_DISABLE_DEFAULT_PLUGINS: '1',
+        OPENCODE_DISABLE_LSP_DOWNLOAD: '1' },
+      config: { provider: { [provider]: { options: { baseURL: join2(base, suffix), apiKey: credential } } }, ...(model ? { small_model: String(model) } : {}),
+        autoupdate: false, share: 'disabled' },
+    };
+  },
+});
+
+/** Where a per-mode engine's CLI is pointed and with what: its decision's mode (resolveModelRoute relayMode) and route. */
+export function modeRelayOf(decision) {
+  const entry = engineEntry(decision?.engine);
+  const mode = entry?.relay?.perMode ? entry.signIn.modes.find((m) => m.id === decision.relayMode) ?? null : null;
+  if (!mode || !mode.relay || !MODE_ROUTES[mode.relay] || !MODE_POINTING[decision.engine]) throw refuse(`the ${decision?.engine} engine has no relay route for this sign-in`);
+  return { mode, route: MODE_ROUTES[mode.relay] };
+}
+
+/** A per-mode CLI pointed at broker slot `lease` (a local brokered spawn): `{ env, config? }` with the spawn token. */
+export function pointAtSlot(decision, lease, model = decision.models[0] ?? null) {
+  const { mode, route } = modeRelayOf(decision);
+  return MODE_POINTING[decision.engine](mode.relay, join2(lease.baseUrl, route.slotSuffix), lease.token, model);
+}
+
+function modeRoute(decision, { serverEnv, lease, upstreams, label }) {
+  const { mode, route: r } = modeRelayOf(decision);
+  const model = decision.models[0] ?? null;
+  const cred = lease ? null : modeCredential(mode);
+  const key = lease ? lease.token : str(serverEnv?.[cred]);
+  if (!key) throw refuse(`${cred} is not set in the worca server's environment; worca signs this sign-in's calls with it.`);
+  // Under the broker the relay forwards to the slot (which adds the person's key); else to the vendor, signed here.
+  const upstream = lease ? join2(lease.baseUrl, r.slotSuffix) : String(upstreams?.modes?.[mode.relay] || r.upstream(serverEnv)).replace(/\/+$/, '');
+  return {
+    engine: decision.engine, upstream, origin: new URL(upstream).origin, protocol: r.protocol,
+    call: `${r.call} from ${decision.engine} in an ${label}${lease ? ' through the credential broker' : ''}`,
+    allow: r.allow, authHeaders: lease ? bearer(key) : r.sign(key), extraHeaders: {}, forwardHeaders: r.forward || [], secrets: [key],
+    ...modePin(decision, r, model, serverEnv),
+    spawn: (baseUrl) => MODE_POINTING[decision.engine](mode.relay, baseUrl, RELAY_DUMMY, model, serverEnv),
+  };
+}
+
+/** What a per-mode route holds each call's model to (MODE_ROUTES `pin`), as model-relay.mjs checks it: `modelCheck`
+ *  'body' or 'path', `models` the one name a call may give (the step's model as the CLI sends it: without the provider
+ *  its id names, on an engine whose ids do; or the server's Azure deployment), `pathModel` where a path names it. An
+ *  engine whose catalog check is not 'mode' (Gemini CLI: its own side calls use other models) is checked as the
+ *  catalog says. `stepModel`: that name, which the meter books as the step's model. */
+function modePin(decision, r, model, serverEnv) {
+  const entry = engineEntry(decision.engine);
+  if (entry.relay.modelCheck !== 'mode' || !r.pin) return {};
+  const slash = entry.signIn.byModel && model ? String(model).indexOf('/') : -1;
+  const wire = model ? (slash > 0 ? String(model).slice(slash + 1) : String(model)) : '';
+  const name = r.pin.name ? r.pin.name(serverEnv) : wire;
+  if (!name) {
+    throw refuse(r.pin.missing || `${entry.label} in a sandbox needs a model; pick one for this step.`);
+  }
+  const models = [...new Set([name, ...(entry.relay.auxModels || [])])];
+  return r.pin.body ? { modelCheck: 'body', models, stepModel: name } : { modelCheck: 'path', pathModel: r.pin.path, models, stepModel: name };
 }
 
 /** An engine route whose upstream is a broker slot (`lease`): the spawn token signs, nothing else is added. */

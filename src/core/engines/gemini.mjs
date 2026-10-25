@@ -51,6 +51,7 @@ import { worcaHome } from '../projects.mjs';
 import { homedir } from 'node:os';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { writeProjectFiles } from './project-files.mjs';
+import { GEMINI_RELAY_SETTINGS } from '../exec-env/relay-route.mjs';
 import { argValue } from '../spawn.mjs';
 import { ENGINES, ruleKind } from '../../shared/engine-switch.mjs';
 import {
@@ -405,12 +406,13 @@ const GEMINI_SPEC = Object.freeze({
   fatalStderrRe: GEMINI_POLICY_ERROR_RE, fatalMessage: 'Gemini CLI could not load worca\'s policy file, so the guardrail rules would not hold — stopped',
   createNormalizer: createGeminiNormalizer,
   askLockdown: GEMINI_ASK_LOCKDOWN,
-  prepare({ cwd, bin, sys, prompt, model, effort, servers, permissionRules, includeDirs, scratchDir, noGit, ask, probe, workRoot }) {
+  prepare({ cwd, bin, sys, prompt, model, effort, servers, permissionRules, includeDirs, scratchDir, noGit, ask, probe, workRoot, remote = false }) {
     if (ask) return prepareAsk({ cwd, bin, sys, prompt, model, effort, servers, scratchDir, probe });
     const plan = geminiRulePlan(permissionRules);
     let policyFile = null;
     if (plan.rules.length) {
-      if (systemPolicyPresent()) throw new Error(`${bin}: the system policy folder (${GEMINI_SYSTEM_POLICY_DIRS[process.platform] || GEMINI_SYSTEM_POLICY_DIRS.linux}) holds policy files, so Gemini CLI would skip worca's guardrail rules`);
+      // This machine's system policy folder says nothing about a sandbox's (the template has none).
+      if (!remote && systemPolicyPresent()) throw new Error(`${bin}: the system policy folder (${GEMINI_SYSTEM_POLICY_DIRS[process.platform] || GEMINI_SYSTEM_POLICY_DIRS.linux}) holds policy files, so Gemini CLI would skip worca's guardrail rules`);
       policyFile = join(scratchDir(), 'worca-policy.toml');
       writeFileSync(policyFile, geminiPolicyToml(plan.rules), { mode: 0o644 });
     }
@@ -419,11 +421,14 @@ const GEMINI_SPEC = Object.freeze({
     const mcpServers = servers ? familyMcpServers(servers) : {};
     const thinking = geminiEffortSettings(effort);
     const project = { ...(Object.keys(mcpServers).length ? { mcpServers } : {}), ...thinking };
-    writeProjectFiles('gemini', cwd, Object.keys(project).length ? { '.gemini/settings.json': `${JSON.stringify(project, null, 2)}\n` } : {}, { git: !noGit, root: workRoot });
+    const files = Object.keys(project).length ? { '.gemini/settings.json': `${JSON.stringify(project, null, 2)}\n` } : {};
+    writeProjectFiles('gemini', cwd, files, { git: !noGit, root: workRoot });
     const mcpNames = Object.keys(mcpServers);
     return {
       stdin: foldSystemPrompt(sys, prompt),
       env: { GEMINI_CLI_TRUST_WORKSPACE: 'true' },
+      // A sandbox: the checkout file mirrored there, and its own user settings (usage statistics off).
+      projectFiles: Object.keys(files), homeFiles: remote ? [{ rel: '.gemini/settings.json', data: GEMINI_RELAY_SETTINGS }] : [],
       argsFor: (sessionId, resume) => buildGeminiArgs({ sessionId, resume, model, policyFile, includeDirs, mcpNames }),
     };
   },

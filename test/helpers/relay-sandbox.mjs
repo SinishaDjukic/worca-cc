@@ -15,7 +15,8 @@ import { fixture, makeEnvOpts } from './e2b-fixture.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const FAKE_ENGINE = join(HERE, '..', 'fixtures', 'fake-engine.mjs');
 /** The CLI each engine's adapter runs in a sandbox. */
-export const ENGINE_CLI = Object.freeze({ claude: 'claude', codex: 'codex', copilot: 'copilot', cursor: 'cursor-agent' });
+export const ENGINE_CLI = Object.freeze({ claude: 'claude', codex: 'codex', copilot: 'copilot', cursor: 'cursor-agent', gemini: 'gemini', qwen: 'qwen',
+  goose: 'goose', opencode: 'opencode' });
 const shq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
 /**

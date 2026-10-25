@@ -1,5 +1,11 @@
 {
   "codex": "0.163.0",
   "copilot": "1.0.100",
-  "cursor": "2026.10.19-6bbf2c4"
+  "cursor": "2026.10.19-6bbf2c4",
+  "gemini": "0.63.0",
+  "qwen": "0.25.0",
+  "goose": "1.55.0",
+  "gooseSha256X64": "fd3932908328fac850ca7ad2a8289c744e0c2ddaf4c5a2338709fb17a00b3a4c",
+  "gooseSha256Arm64": "ea83f59bb165a3d999dd00edf69a58028747f31e404b96f0153452c6b1651188",
+  "opencode": "1.18.23"
 }

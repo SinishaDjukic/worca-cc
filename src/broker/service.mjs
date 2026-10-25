@@ -60,12 +60,17 @@ export function agentResponseHeaders(incoming) {
   return out;
 }
 
+/** google.rpc status names for the HTTP statuses the broker refuses with (a Gemini client reads `status`). */
+const GOOGLE_STATUS = Object.freeze({ 400: 'INVALID_ARGUMENT', 403: 'PERMISSION_DENIED', 404: 'NOT_FOUND', 408: 'DEADLINE_EXCEEDED',
+  413: 'INVALID_ARGUMENT', 429: 'RESOURCE_EXHAUSTED', 502: 'UNAVAILABLE', 503: 'UNAVAILABLE' });
 /** The error body a client of `protocol` understands, with a `worca-broker:` message. */
 export function brokerError(protocol, status, type, message) {
   const msg = `worca-broker: ${message}`;
   const body = protocol === 'openai'
     ? { error: { message: msg, type, code: type } }
-    : protocol === 'connect'
+    : protocol === 'gemini'
+      ? { error: { code: status, message: msg, status: GOOGLE_STATUS[status] || 'UNKNOWN' } }
+      : protocol === 'connect'
       ? { code: CONNECT_CODES[status] || 'unknown', message: msg }
       : { type: 'error', error: { type, message: msg } };
   return { status, body };
@@ -317,6 +322,7 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
       return { authorization: `Bearer ${secret}`, 'anthropic-beta': mergeBetas(incoming['anthropic-beta'], OAUTH_BETA) };
     }
     if (slot.auth === 'x-api-key') return { 'x-api-key': secret };
+    if (slot.auth === 'x-goog-api-key') return { 'x-goog-api-key': secret };
     if (slot.auth === 'github-user') return { authorization: `token ${parseGithubSecret(secret).token}` };
     return { authorization: `Bearer ${secret}` };
   }

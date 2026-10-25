@@ -5,8 +5,8 @@
 // key anywhere else (guarantee K2). Pure.
 import { CURSOR_PATHS, CURSOR_FORWARD } from './cursor.mjs';
 
-export const PROTOCOLS = Object.freeze(['anthropic', 'openai', 'github', 'connect']);
-export const AUTH_STYLES = Object.freeze(['x-api-key', 'bearer', 'copilot', 'github-user', 'none', 'copilot-pat', 'cursor-exchange']);
+export const PROTOCOLS = Object.freeze(['anthropic', 'openai', 'github', 'connect', 'gemini']);
+export const AUTH_STYLES = Object.freeze(['x-api-key', 'bearer', 'copilot', 'github-user', 'none', 'copilot-pat', 'cursor-exchange', 'x-goog-api-key']);
 /** A slot that carries an engine's own sign-in (never a catalog model's base URL): routing, the boot guard and plugin
  *  slot origins skip it. One copy for broker-routing.mjs, broker-boot.mjs and plugin-broker-slots.mjs. */
 export const engineOnlyAuth = (slot) => ['copilot', 'github-user', 'copilot-pat', 'cursor-exchange'].includes(slot?.auth);
@@ -26,6 +26,8 @@ const ANTHROPIC_PATHS = Object.freeze([
   ['POST', '/v1/messages/count_tokens'],
   ['GET', '/v1/models'],
 ]);
+/** The Gemini API's generate calls (the model is in the path: /v1beta/models/{model}:method). */
+export const GEMINI_CALLS = /^\/v1beta\/models\/[^/:]+:(streamGenerateContent|generateContent|countTokens)$/;
 const OPENAI_PATHS = Object.freeze([
   ['POST', '/v1/chat/completions'],
   ['POST', '/v1/responses'],
@@ -58,6 +60,14 @@ export function builtinSlots({ localUrl = null, github = null } = {}) {
       paths: Object.freeze([['POST', '/api/v1/chat/completions'], ['GET', '/api/v1/models'], ['GET', '/api/v1/key']]),
       verify: { method: 'GET', path: '/api/v1/key' },
       keyHint: 'sk-or-…',
+    },
+    {
+      // A Gemini API key (AIza…): Gemini CLI's key mode and the google provider of Qwen Code, Goose and OpenCode. Its
+      // calls name the model in the path, so they are admitted by the built-in pattern.
+      id: 'google', label: 'Google Gemini API key', protocol: 'gemini',
+      upstream: 'https://generativelanguage.googleapis.com', auth: 'x-goog-api-key', credential: 'per-person',
+      paths: Object.freeze([['GET', '/v1beta/models']]), pathPattern: GEMINI_CALLS, headers: Object.freeze(['x-goog-api-client']),
+      verify: { method: 'GET', path: '/v1beta/models' }, keyHint: 'AIza…',
     },
     {
       // The upstream is where the token exchange says Copilot's API lives (always a
@@ -153,12 +163,12 @@ export function mergeSlots(builtins, extra) {
       if (!SLOT_ID_RE.test(String(e.id || ''))) throw new Error(`${where}: id must match ${SLOT_ID_RE}`);
       if (e.id.startsWith(PLUGIN_SLOT_PREFIX)) throw new Error(`${where}: ids starting with "${PLUGIN_SLOT_PREFIX}" belong to plugin slots`);
       const base = byId.get(e.id) || {};
-      // A path pattern is a built-in slot's own: an operator lists exact paths.
+      // A path pattern (Gemini's model calls) is the built-in slot's own: an operator lists exact paths.
       if (e.pathPattern !== undefined) throw new Error(`${where}: pathPattern is built-in only`);
       const s = { ...base, ...e };
       if (!PROTOCOLS.includes(s.protocol)) throw new Error(`${where}: protocol must be one of ${PROTOCOLS.join(', ')}`);
-      // A Connect slot needs its built-in slot's own exchange, scrubbing and paths: an operator-defined one could never.
-      if (s.protocol === 'connect' && base.protocol !== s.protocol) throw new Error(`${where}: protocol connect is built-in only`);
+      // A Connect or Gemini slot needs its built-in slot's own exchange, scrubbing and paths: an operator-defined one could never.
+      if ((s.protocol === 'connect' || s.protocol === 'gemini') && base.protocol !== s.protocol) throw new Error(`${where}: protocol ${s.protocol} is built-in only`);
       if (!AUTH_STYLES.includes(s.auth)) throw new Error(`${where}: auth must be one of ${AUTH_STYLES.join(', ')}`);
       if (!CREDENTIAL_KINDS.includes(s.credential)) throw new Error(`${where}: credential must be one of ${CREDENTIAL_KINDS.join(', ')}`);
       const issue = upstreamIssue(s.upstream);

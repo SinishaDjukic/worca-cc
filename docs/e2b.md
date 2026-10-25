@@ -235,8 +235,9 @@ worca exec-env build --project <key|dir>                  # build or rebuild wor
 
 The project page shows the spec read-only, the template in use, the last build, and a **Build environment** /
 **Rebuild environment** button. A build is `worca-agent` plus the spec's packages and tools, as one template.
-The template pins Claude Code (`docker/CLAUDE_CODE_VERSION`) and the codex, copilot and cursor-agent CLIs
-(`docker/e2b/engine-clis.json`); `npm run e2b:build` prints every pinned version.
+The template pins Claude Code (`docker/CLAUDE_CODE_VERSION`) and the codex, copilot, cursor-agent, gemini, qwen, goose
+and opencode CLIs (`docker/e2b/engine-clis.json`; goose from its GitHub release, checked against its SHA-256);
+`npm run e2b:build` prints every pinned version.
 
 - Builds run only in the Worca server, which holds the E2B keys. `worca exec-env build` asks the running server
   (start it with `worca ui`). Under remote access the CLI's call needs a sign-in, so build from the project page
@@ -351,6 +352,22 @@ refused, and every reply is scrubbed of the keys and tokens Worca signs with.
   (`COPILOT_PROVIDER_*`, set by Worca). Worca looks up your account's Copilot API host once with the token and
   signs each call with it, adding the Copilot CLI's integration headers. Claude models use the Messages API,
   GPT-5 and o-series models the Responses API, other models Chat Completions. Only that one API passes.
+- **Gemini CLI, Qwen Code, Goose and OpenCode** go through it per sign-in: the one their step resolves to (as a local
+  run picks it) names where the calls go and which key from the worca server's environment signs them. Each CLI gets
+  the relay where it takes its endpoint and a placeholder where it takes its key.
+  - Gemini CLI: `GEMINI_API_KEY` for the Gemini API, or a Vertex express key (`GOOGLE_API_KEY` with
+    `GOOGLE_GENAI_USE_VERTEXAI=true`), signed as `x-goog-api-key`. Usage statistics are off in its sandbox settings,
+    which stops the telemetry it would send past the relay.
+  - Qwen Code: its OpenAI-compatible sign-in to the server's `OPENAI_BASE_URL`, its Anthropic-compatible one to
+    `ANTHROPIC_BASE_URL`, or Gemini with `GEMINI_API_KEY`, with the step's model. Its model catalog fetch and usage
+    telemetry are off.
+  - Goose: the provider the step's `provider/model` id names (openai, anthropic, google, openrouter, azure_openai,
+    databricks), through that provider's host variable, with no keyring and no telemetry.
+  - OpenCode: the provider the step's model names (anthropic, openai, google, openrouter, or OpenCode Zen), as a
+    provider block in its inline config. Its model catalog fetch, updates, sharing, default plugins and LSP downloads
+    are off.
+  - Only the generate calls of the mode's API pass. Worca books the relay's count: tokens for Gemini CLI and Qwen
+    Code, which report no cost, and the relay's price for Goose and OpenCode, never the CLI's own figures there.
 - **Cursor** gets the relay as its API endpoint and a placeholder token. Worca exchanges `CURSOR_API_KEY` for an
   access token on the server, keeps it until shortly before it expires, and signs each call with it. The access
   and refresh tokens never reach the sandbox. `cursor-agent` runs its agent stream over HTTP/1.1
@@ -367,9 +384,12 @@ so `worca run --exec-env e2b`, `worca e2b sweep` and `npm run e2b:build` work th
 
 ## Limitations
 
-- The claude, codex, copilot and cursor engines only: Gemini CLI, Goose, OpenCode and Qwen Code run locally only for
-  now (the engine catalog's `sandbox` flag, `src/shared/engine-switch.mjs`, says which engines a sandbox runs).
-  Single-project runs of a git project only (not a Folder project, not a run without a project: the code goes in
+- Every engine runs in a sandbox (the engine catalog's `remote` flag, `src/shared/engine-switch.mjs`, says which).
+  A sign-in that needs a token made or refreshed on this machine is refused there: Gemini CLI's Google login, Vertex
+  AI with Google's Application Default Credentials or an access token, Qwen OAuth, and a key a CLI stores in its own
+  config. So are Goose on Bedrock (it signs each call), Vertex AI or GitHub Copilot (hosts Goose does not let worca
+  move), OpenCode's GitHub Copilot sign-in, and a Goose, OpenCode or Qwen Code step with no model. The refusal names
+  the sign-ins and providers worca relays. Single-project runs of a git project only (not a Folder project, not a run without a project: the code goes in
   as a git bundle); macOS or Linux hosts only; the detached run-root mode only (`WORCA_RUN_ROOT=legacy` is
   refused). A saved E2B default skips workspace runs and runs on another engine: they run locally, the New run
   dialog shows Local for them, and the run log says why. Only an explicit per-run E2B pick is refused for them.
@@ -384,11 +404,25 @@ so `worca run --exec-env e2b`, `worca e2b sweep` and `npm run e2b:build` work th
   sandbox needs a model. A run with a model-less Copilot step is refused at start, and a Copilot helper job (title,
   overview, PR description) fails there for the same reason.
 - The relay checks each Codex and Copilot call against the step's model and refuses another one
-  (`403 worca-relay: model …`). Claude's and Cursor's calls are not checked (the run log says so once).
+  (`403 worca-relay: model …`). Qwen Code, Goose and OpenCode calls are checked the same way where their API names
+  the model: in the request body, in a Gemini call's path, in the Azure OpenAI deployment (the server's
+  `AZURE_OPENAI_DEPLOYMENT_NAME`, which Goose on Azure then needs) or in the Databricks serving endpoint. Claude's,
+  Cursor's and Gemini CLI's calls are not checked (the run log says so once): Gemini CLI makes its own side calls on
+  other Gemini models.
+- The relay books each reply at its own model's price. A price set on the step's model (free, or per million tokens)
+  prices that model's replies only; a reply on a model worca has no price for leaves the step's cost unknown, which a
+  cost limit stops at. The relay asks every streamed Chat Completions call for its usage, refuses a background
+  Responses call, and reads the usage of a reply too large to parse whole from its end.
 - If Cursor's servers ever force its agent stream onto HTTP/2, Cursor steps in a sandbox fail; the relay cannot
   carry that stream.
 - An agent's own `.cursor/cli.json` or `.cursor/mcp.json` written in a sandbox does not come back to the run branch.
-- The `WORCA_CODEX_BIN`, `WORCA_COPILOT_BIN` and `WORCA_CURSOR_BIN` overrides (paths on your machine) do not apply
+- Gemini CLI, Qwen Code, Goose and OpenCode in a sandbox are tested against stand-ins only (Goose 1.55 and OpenCode
+  1.18.23 were checked to send each call to the path the relay takes). Until one real turn per engine passes on a real
+  E2B server, treat them as unverified there. Goose attaches no MCP server in a sandbox (it attaches command servers
+  only); OpenCode's sub-agent sessions stay in the sandbox, so their tool calls are not in the run log (their model
+  calls are in the relay's count).
+- The `WORCA_CODEX_BIN`, `WORCA_COPILOT_BIN`, `WORCA_CURSOR_BIN`, `WORCA_GEMINI_BIN`, `WORCA_QWEN_BIN`, `WORCA_GOOSE_BIN`
+  and `WORCA_OPENCODE_BIN` overrides (paths on your machine) do not apply
   in a sandbox; the run log says so.
 - Three checks against real accounts are still open: a Copilot turn signed with a fine-grained personal access
   token, Cursor's HTTP/2 policy (whether its servers keep accepting the HTTP/1.1 agent stream the relay carries),
@@ -465,7 +499,9 @@ Each refusal names its cause before the run starts:
 
 | Message | Fix |
 |---|---|
-| E2B execution runs the claude, codex, copilot and cursor engines only (this run uses gemini): Gemini CLI runs locally only for now | The engine has no sandbox support yet. Pick Local, or switch the engine. |
+| E2B execution runs the … engines only (this run uses …): … runs locally only for now | The engine has no sandbox support yet. Pick Local, or switch the engine. |
+| Gemini CLI's google-login sign-in cannot run in a sandbox | Set `GEMINI_API_KEY` in the worca server's environment and choose the API key in Gemini CLI's settings, or pick Local. |
+| Goose's … provider in a sandbox needs … in the worca server's environment | Set that provider's key on the worca server (a key `goose configure` or `opencode auth login` stored stays on this machine), or pick Local. |
 | E2B execution runs single-project runs only | Pick Local for workspace runs. |
 | E2B execution needs a git project; this is a Folder project | Pick Local, or use a git project. |
 | E2B execution needs a project; this run has none | Pick Local, or pick a git project. |

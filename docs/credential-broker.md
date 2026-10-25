@@ -148,6 +148,7 @@ A slot is one kind of credential with one fixed destination.
 | `anthropic` | `https://api.anthropic.com` | An API key as `x-api-key`, or a Claude subscription token as a Bearer ([below](#claude-subscriptions)) |
 | `openai` | `https://api.openai.com` | `Authorization: Bearer` |
 | `openrouter` | `https://openrouter.ai` | `Authorization: Bearer` |
+| `google` | `https://generativelanguage.googleapis.com` | A Gemini API key (`AIza…`) as `x-goog-api-key`. Only the generate and token-count calls of `/v1beta/models/{model}:…` pass. Gemini CLI signs in here, and so does the google provider of Qwen Code, Goose and OpenCode |
 | `copilot` | `*.githubcopilot.com` | Copilot's short-lived token, exchanged from the person's GitHub sign-in |
 | `copilot-pat` | `*.githubcopilot.com` (the host GitHub names for the token) | A fine-grained personal access token (`github_pat_…`; give it only the Copilot Requests permission) as a Bearer, with the Copilot CLI's headers. The broker checks the token's shape, not its permissions: a classic or OAuth token is refused. The Copilot engine signs in here |
 | `cursor` | `https://api2.cursor.sh` | An access token the broker exchanges for the person's Cursor API key (and exchanges again on a 401). Replies are scrubbed of both, message by message: the broker asks for uncompressed replies, reads a gzip message before it scrubs it, and refuses a reply it cannot read (502, or a cut stream). The Cursor engine signs in here |
@@ -426,6 +427,20 @@ sign-in, Copilot's or Cursor's keychain sign-in) never goes through the broker. 
 only such a login is refused before a run starts, Chat offers no chats on it, and every engine
 picker shows it greyed out. Copilot and Cursor are billed per seat: their usage rows record tokens
 and book $0, so a person's dollar budget does not cover them.
+
+Gemini CLI, Qwen Code, Goose and OpenCode take the slot of the sign-in their step resolves to:
+
+- **Gemini CLI**: a Gemini API key, in `google`. Its Google login, Vertex AI and an access token stay refused.
+- **Qwen Code**: the sign-in its own settings choose, else the first one with a slot: OpenAI (`openai`, OpenAI's own
+  API), Gemini (`google`) or Anthropic (`anthropic`). Under the broker a step names its model. Qwen OAuth and Vertex AI
+  stay refused.
+- **Goose** and **OpenCode**: the provider the step's `provider/model` id names, in `openai`, `anthropic`, `google` or
+  `openrouter`. A provider with no slot (Azure OpenAI, Databricks, OpenCode Zen, and every provider that signs in from
+  the CLI's own config) is refused with the providers that have one.
+
+Each CLI is pointed at the slot where it takes its endpoint, with the spawn's token where it takes its key; no other
+endpoint, key or sign-in setting of that engine reaches it from worca's environment, the guardrail set's allowlist or
+the run's environment.
 
 ### People
 

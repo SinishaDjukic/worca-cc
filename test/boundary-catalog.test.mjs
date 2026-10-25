@@ -19,7 +19,7 @@ const RULES_DIR = join(ROOT, 'test', 'fixtures', 'engine-rules');
 const NAME = /^[A-Z][A-Za-z0-9_]*$/;
 const SECRET = /_(TOKEN|SECRET|KEY)$/;
 // The broker slots the catalog's key modes sit in (src/broker/slots.mjs builtinSlots).
-const BROKER_SLOTS = ['anthropic', 'openai', 'copilot-pat', 'cursor'];
+const BROKER_SLOTS = ['anthropic', 'openai', 'openrouter', 'google', 'copilot-pat', 'cursor'];
 
 test('catalog keys equal the adapter registry minus mock', () => {
   assert.deepEqual([...ENGINE_NAMES], listEngines().map((e) => e.name).filter((n) => n !== 'mock'));

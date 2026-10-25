@@ -14,8 +14,9 @@ const MAX_LINE = 1 << 20;   // an SSE line longer than this is skipped, never bu
 const MAX_JSON = 4 << 20;   // a non-streamed JSON body larger than this is not parsed whole for usage
 const EDGE = 64 << 10;      // ...but its head (the model) and tail (the usage) are kept, and read on their own (V8)
 
-/** The JSON object after the last `"<key>":` in `text`, or null. Strings are skipped, so braces in them don't count. */
-function lastObjectAt(text, key) {
+/** The JSON object after the last `"<key>":` in `text`, or null. Strings are skipped, so braces in them don't count.
+ *  worca's model relay reads an over-cap reply's tail the same way (core/exec-env/relay-usage.mjs). */
+export function lastObjectAt(text, key) {
   const at = text.lastIndexOf(`"${key}"`);
   if (at < 0) return null;
   const open = text.indexOf('{', at);
@@ -77,10 +78,26 @@ function applyOpenAI(u, obj) {
   if (Number.isFinite(us.cost)) u.reportedUsd = us.cost;
 }
 
+/** A Gemini API chunk (or one JSON reply, or the array a stream without ?alt=sse is): its usageMetadata is the running
+ *  total, so the last one wins; the prompt count includes its cached part, thinking is billed as output. */
+function applyGemini(u, obj) {
+  for (const o of Array.isArray(obj) ? obj : [obj]) {
+    if (!o || typeof o !== 'object') continue;
+    if (o.modelVersion) u.model = o.modelVersion;
+    const us = o.usageMetadata;
+    if (!us || typeof us !== 'object') continue;
+    const prompt = Number.isFinite(us.promptTokenCount) ? us.promptTokenCount : 0;
+    const cached = Number.isFinite(us.cachedContentTokenCount) ? Math.min(prompt, us.cachedContentTokenCount) : 0;
+    u.inputTokens = prompt - cached;
+    u.cacheReadTokens = cached;
+    u.outputTokens = (Number.isFinite(us.candidatesTokenCount) ? us.candidatesTokenCount : 0) + (Number.isFinite(us.thoughtsTokenCount) ? us.thoughtsTokenCount : 0);
+  }
+}
+
 /**
  * A usage tap for one response.
- * @param {'anthropic'|'openai'|'connect'|'none'} protocol  'connect': Cursor's RunSSE envelopes (every turn's usage
- *   summed, no model named); 'none': a reply that reports no usage (Cursor's unary calls)
+ * @param {'anthropic'|'openai'|'gemini'|'connect'|'none'} protocol  'connect': Cursor's RunSSE envelopes (every turn's
+ *   usage summed, no model named); 'none': a reply that reports no usage (Cursor's unary calls)
  * @param {string|null} contentType  the response's content-type
  * @returns {{write:(chunk:Buffer|string)=>void, end:()=>ReturnType<typeof emptyUsage>}}
  */
@@ -94,7 +111,7 @@ export function createUsageTap(protocol, contentType) {
     }, { maxMessage: MAX_JSON });
     return { write: (chunk) => reader.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk), end: () => { reader.end(); return u; } };
   }
-  const apply = protocol === 'openai' ? applyOpenAI : applyAnthropic;
+  const apply = protocol === 'openai' ? applyOpenAI : protocol === 'gemini' ? applyGemini : applyAnthropic;
   const sse = /text\/event-stream/i.test(String(contentType || ''));
   let buf = '';
   let jsonParts = [];
@@ -135,8 +152,11 @@ export function createUsageTap(protocol, contentType) {
       else if (jsonLen && jsonLen <= MAX_JSON) {
         try { apply(u, JSON.parse(jsonParts.join(''))); } catch { /* not JSON */ }
       } else if (jsonLen) {
-        const { model, usage } = bigJsonSummary(head, tail);
-        if (usage) apply(u, protocol === 'openai' ? { model, usage } : { type: 'message', model, usage });
+        if (protocol === 'gemini') applyGemini(u, { usageMetadata: lastObjectAt(tail, 'usageMetadata') });
+        else {
+          const { model, usage } = bigJsonSummary(head, tail);
+          if (usage) apply(u, protocol === 'openai' ? { model, usage } : { type: 'message', model, usage });
+        }
       }
       jsonParts = [];
       return u;
@@ -187,10 +207,11 @@ export function priceUsage(u, unpriced = UNPRICED_RATES) {
 
 /**
  * The request body to send upstream, changed so the response reports what it cost: a streamed
- * OpenAI chat completion carries usage only with `stream_options.include_usage`, and OpenRouter
- * returns its own cost only with `usage.include`. The agent writes the body, so the broker sets
- * both rather than trust it to. A Responses call with `background` is refused (E_BACKGROUND). Anything else, or a
- * body that is not a JSON object, passes as is.
+ * OpenAI chat completion (also a Databricks serving endpoint's invocations, the same API) carries usage only with
+ * `stream_options.include_usage`, and OpenRouter returns its own cost only with `usage.include`. The agent writes the
+ * body, so the broker (and worca's model relay, core/exec-env/model-relay.mjs) sets both rather than trust it to. A
+ * Responses call with `background` is refused (E_BACKGROUND). Anything else, or a body that is not a JSON object,
+ * passes as is.
  * @param {{id:string, protocol:string, upstream:string}} slot
  * @param {string} path  the upstream path
  * @param {Buffer} body
@@ -199,7 +220,7 @@ export function priceUsage(u, unpriced = UNPRICED_RATES) {
 export function requestWithUsage(slot, path, body) {
   if (slot.protocol !== 'openai' || !body.length) return body;
   const responses = /\/responses$/.test(path);
-  if (!responses && !/\/chat\/completions$/.test(path)) return body;
+  if (!responses && !/\/chat\/completions$/.test(path) && !/^\/serving-endpoints\/[^/]+\/invocations$/.test(path)) return body;
   let req;
   try { req = JSON.parse(body.toString('utf8')); } catch { return body; }
   if (!req || typeof req !== 'object' || Array.isArray(req)) return body;

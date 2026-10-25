@@ -338,7 +338,8 @@ export class RemoteExecEnv {
   }
   /** A route for one spawn's model calls, from the route resolver's decision (credentials.mjs resolveModelRoute; an
    *  untagged object is refused). The sandbox gets only the relay URL and a dummy credential (or the route id, for
-   *  Claude). `lease`: the spawn's broker token when the broker is on. Throws the route's refusals (errorClass 'config'). */
+   *  Claude): `env`, codex's `-c` overrides in `args`, OpenCode's provider block for its inline config in `config`.
+   *  `lease`: the spawn's broker token when the broker is on. Throws the route's refusals (errorClass 'config'). */
   openRoute(decision, { spawnEnv = {}, modelEnv = null, endpoint = null, lease = null } = {}) {
     const route = buildRelayRoute(decision, { spawnEnv, modelEnv, serverEnv: this.env, endpoint, lease, label: this.label,
       upstreams: this.relayUpstreams, cache: this._authCache });
@@ -352,7 +353,7 @@ export class RemoteExecEnv {
       this.log('info', `model relay: calls to ${route.origin} get no credential from worca (this model sets no key for it); a 401 comes from that endpoint`);
     }
     const pointed = route.spawn ? route.spawn(baseUrl) : { env: { ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_AUTH_TOKEN: id }, args: [] };
-    return { id, env: pointed.env, args: pointed.args || [], secrets: route.secrets, firstParty: route.firstParty };
+    return { id, env: pointed.env, args: pointed.args || [], config: pointed.config || null, secrets: route.secrets, firstParty: route.firstParty };
   }
   /** Back-compat for callers outside the adapters (exec-env-sync, exec-env-pipeline, exec-env-remote-child tests):
    *  resolve Claude's route, then open it. Each caller has a server OAuth token or a model-env key, so it never refuses. */

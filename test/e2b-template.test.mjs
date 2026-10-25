@@ -119,16 +119,23 @@ test('a project template name is worca-agent-<key>, cut to 63 chars keeping the 
   assert.equal(name.length, 63); assert.ok(name.endsWith('-1234abcd')); assert.match(name, TEMPLATE_RE);
 });
 
-test('the template pins codex, copilot and cursor-agent from docker/e2b/engine-clis.json', () => {
+test('the template pins every engine CLI (and goose\'s checksums) from docker/e2b/engine-clis.json', () => {
   const clis = pinnedEngineClis();
-  assert.deepEqual(Object.keys(clis), ['codex', 'copilot', 'cursor']);
+  assert.deepEqual(Object.keys(clis), ['codex', 'copilot', 'cursor', 'gemini', 'qwen', 'goose', 'gooseSha256X64', 'gooseSha256Arm64', 'opencode']);
   const df = renderTemplateDockerfile(pinnedClaudeCodeVersion());
   assert.match(df, new RegExp(`@openai/codex@${clis.codex.replaceAll('.', '\\.')}`));
   assert.match(df, new RegExp(`@github/copilot@${clis.copilot.replaceAll('.', '\\.')}`));
   assert.match(df, new RegExp(`downloads\\.cursor\\.com/lab/${clis.cursor.replaceAll('.', '\\.')}/linux/`));
-  assert.doesNotMatch(df, /__[A-Z_]+_VERSION__/);
+  assert.match(df, new RegExp(`@google/gemini-cli@${clis.gemini.replaceAll('.', '\\.')}`));
+  assert.match(df, new RegExp(`@qwen-code/qwen-code@${clis.qwen.replaceAll('.', '\\.')}`));
+  assert.match(df, new RegExp(`opencode-ai@${clis.opencode.replaceAll('.', '\\.')}`));
+  assert.match(df, new RegExp(`goose/releases/download/v${clis.goose.replaceAll('.', '\\.')}/`));
+  // goose is checked against the pinned SHA-256 of the arch it downloads.
+  assert.ok(df.includes(`sum=${clis.gooseSha256X64}`) && df.includes(`sum=${clis.gooseSha256Arm64}`) && df.includes('sha256sum -c -'));
+  assert.doesNotMatch(df, /__[A-Z0-9_]+__/);
   assert.equal(df.match(/^FROM /gm).length, 1);
-  assert.throws(() => pinnedEngineClis('{"codex":"latest","copilot":"1.0.100","cursor":"2026.10.19-6bbf2c4"}'), /codex: "latest" is not a pinned version/);
+  assert.throws(() => pinnedEngineClis(JSON.stringify({ ...clis, codex: 'latest' })), /codex: "latest" is not a pinned version/);
+  assert.throws(() => pinnedEngineClis(JSON.stringify({ ...clis, gooseSha256X64: 'abc' })), /gooseSha256X64/);
   assert.throws(() => pinnedEngineClis('{"codex":"0.163.0","copilot":"1.0.100"}'), /cursor/);
   assert.throws(() => renderTemplateDockerfile(pinnedClaudeCodeVersion(), undefined, { ...clis, cursor: '$(id)' }), /cursor/);
   assert.ok(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).files.includes('docker/e2b/engine-clis.json'));
@@ -137,7 +144,7 @@ test('the template pins codex, copilot and cursor-agent from docker/e2b/engine-c
 test('the base version names every pinned CLI, so a new pin makes every project build stale', () => {
   const v = pinnedClaudeCodeVersion(); const c = pinnedEngineClis();
   assert.equal(e2bBaseVersion().replace(/worca-agent@[0-9a-f]{12}/, 'worca-agent@H'),
-    `claude-code@${v}+codex@${c.codex}+copilot@${c.copilot}+cursor-agent@${c.cursor}+worca-agent@H+mise@${MISE_VERSION}`);
+    `claude-code@${v}+codex@${c.codex}+copilot@${c.copilot}+cursor-agent@${c.cursor}+gemini@${c.gemini}+qwen@${c.qwen}+goose@${c.goose}+opencode@${c.opencode}+worca-agent@H+mise@${MISE_VERSION}`);
   assert.notEqual(e2bBaseVersion({ clis: { ...c, codex: '0.164.0' } }), e2bBaseVersion());
-  assert.equal(cliVersionsLine(), `claude-code ${v}, codex ${c.codex}, copilot ${c.copilot}, cursor-agent ${c.cursor}`);
+  assert.equal(cliVersionsLine(), `claude-code ${v}, codex ${c.codex}, copilot ${c.copilot}, cursor-agent ${c.cursor}, gemini ${c.gemini}, qwen ${c.qwen}, goose ${c.goose}, opencode ${c.opencode}`);
 });

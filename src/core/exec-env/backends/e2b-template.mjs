@@ -25,12 +25,21 @@ const SYSTEM_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bi
 export function pinnedClaudeCodeVersion() { return readFileSync(CLAUDE_CODE_VERSION_FILE, 'utf8').trim(); }
 
 const SEMVER = /^\d+\.\d+\.\d+$/;
-// key -> [Dockerfile placeholder, accepted version shape, the CLI's name in logs and the base version]
+const SHA256 = /^[0-9a-f]{64}$/;
+// key -> [Dockerfile placeholder, accepted shape, the CLI's name in logs and the base version (null: a checksum, which
+// moves with its version)]
 const ENGINE_CLI_PINS = Object.freeze({
   codex: ['__CODEX_VERSION__', SEMVER, 'codex'],
   copilot: ['__COPILOT_VERSION__', SEMVER, 'copilot'],
   cursor: ['__CURSOR_AGENT_VERSION__', /^\d{4}\.\d{1,2}\.\d{1,2}-[0-9a-f]{7,40}$/, 'cursor-agent'],
+  gemini: ['__GEMINI_VERSION__', SEMVER, 'gemini'],
+  qwen: ['__QWEN_VERSION__', SEMVER, 'qwen'],
+  goose: ['__GOOSE_VERSION__', SEMVER, 'goose'],
+  gooseSha256X64: ['__GOOSE_SHA256_X64__', SHA256, null],
+  gooseSha256Arm64: ['__GOOSE_SHA256_ARM64__', SHA256, null],
+  opencode: ['__OPENCODE_VERSION__', SEMVER, 'opencode'],
 });
+const NAMED_PINS = Object.entries(ENGINE_CLI_PINS).filter(([, [, , name]]) => name);
 
 function checkEngineClis(clis) {
   for (const [key, [, re]] of Object.entries(ENGINE_CLI_PINS)) {
@@ -38,7 +47,8 @@ function checkEngineClis(clis) {
   }
   return Object.freeze(Object.fromEntries(Object.keys(ENGINE_CLI_PINS).map((k) => [k, String(clis[k])])));
 }
-/** The pinned engine CLI versions: { codex, copilot, cursor }, each checked (a pin is interpolated into a RUN line). */
+/** The pinned engine CLI versions (and goose's checksums): { codex, copilot, cursor, gemini, qwen, goose, opencode, … },
+ *  each checked (a pin is interpolated into a RUN line). */
 export function pinnedEngineClis(text = readFileSync(ENGINE_CLIS_FILE, 'utf8')) { return checkEngineClis(JSON.parse(text)); }
 
 export function renderTemplateDockerfile(version, text = readFileSync(E2B_DOCKERFILE, 'utf8'), clis = pinnedEngineClis()) {
@@ -56,14 +66,14 @@ export function e2bBaseVersion({ version = pinnedClaudeCodeVersion(), text = rea
   const instructions = text.split('\n').map((l) => l.trimEnd()).filter((l) => l.trim() && !/^\s*#/.test(l)).join('\n');
   const base = createHash('sha256').update(instructions).digest('hex').slice(0, 12);
   const pins = checkEngineClis(clis);
-  const engines = Object.entries(ENGINE_CLI_PINS).map(([key, [, , name]]) => `+${name}@${pins[key]}`).join('');
+  const engines = NAMED_PINS.map(([key, [, , name]]) => `+${name}@${pins[key]}`).join('');
   return `claude-code@${version}${engines}+worca-agent@${base}+mise@${MISE_VERSION}`;
 }
 
-/** "claude-code V, codex V, copilot V, cursor-agent V": the e2b:build log line. */
+/** "claude-code V, codex V, copilot V, cursor-agent V, gemini V, …": the e2b:build log line. */
 export function cliVersionsLine({ version = pinnedClaudeCodeVersion(), clis = pinnedEngineClis() } = {}) {
   const pins = checkEngineClis(clis);
-  return [`claude-code ${version}`, ...Object.entries(ENGINE_CLI_PINS).map(([key, [, , name]]) => `${name} ${pins[key]}`)].join(', ');
+  return [`claude-code ${version}`, ...NAMED_PINS.map(([key, [, , name]]) => `${name} ${pins[key]}`)].join(', ');
 }
 
 /** worca-agent plus the spec (env-spec.mjs normalizeEnvSpec output): apt packages, then mise tools under

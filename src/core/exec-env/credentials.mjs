@@ -53,6 +53,15 @@ const SANDBOX_PICK = Object.freeze({
  *  `{problem}` (never a value in it). Same contract and texts as before (policy.mjs re-exports it). */
 export function engineCredential(engine, env = process.env) {
   const e = engineEntry(engine || 'claude');
+  // An engine whose relay is per mode: the key of the mode the route resolver picks (with no step model, the first mode
+  // whose key is set), from the same server env.
+  if (e?.remote && e.relay?.perMode) {
+    const d = resolveModelRoute({ engine, remote: true, serverEnv: env, broker: { on: false }, checkModel: false });
+    if (d.refusal) return { problem: d.refusal };
+    const mode = e.signIn.modes.find((m) => m.id === d.relayMode) ?? e.signIn.modes.find((m) => m.relay && filled(env[modeCredential(m)]));
+    const source = modeCredential(mode);
+    return { value: env[source].trim(), source };
+  }
   const pick = e?.remote && e.relay ? SANDBOX_PICK[e.relay.upstream] : null;
   if (!pick) return { problem: `the ${engine} engine cannot run in a remote sandbox` };
   const source = pick.order.find((k) => filled(env[k]));
@@ -61,6 +70,33 @@ export function engineCredential(engine, env = process.env) {
   const problem = pick.check?.(value);
   return problem ? { problem } : { value, source };
 }
+
+/** The mode an engine with a per-mode relay (catalog relay.perMode: Gemini CLI, Qwen Code, Goose, OpenCode) signs in
+ *  with behind the relay or a broker slot, as the local spawn would pick it: the provider the step's model names
+ *  (signIn.byModel), else the mode the CLI's own settings choose (`configured`), else the catalog order. `ok(mode)` says
+ *  whether a mode can be used here (its credential is in the server env, or its broker slot exists). Returns
+ *  `{mode}`, `{mode: null}` (no model to name a provider yet, and some mode is usable: readiness), or `{refusal}`. */
+function perModeChoice(entry, { label, model, configured, ok, need, where }) {
+  const slash = entry.signIn.byModel && model ? String(model).indexOf('/') : -1;
+  const chosen = slash > 0 ? String(model).slice(0, slash) : configured;
+  const relayable = entry.signIn.modes.filter((m) => m.kind !== 'own' && m.relay);
+  const names = relayable.map((m) => m.id).join(', ');
+  if (chosen != null) {
+    const mode = entry.signIn.modes.find((m) => m.id === chosen) ?? null;
+    const what = entry.signIn.byModel ? `${label}'s ${chosen} provider` : `${label}'s ${chosen} sign-in`;
+    if (!mode || mode.kind === 'own' || !mode.relay) {
+      return { refusal: `${what} cannot run ${where}: it would need ${mode?.kind === 'own' ? 'a sign-in that stays on this machine' : 'a credential worca cannot sign with there'}. ${where === 'in a sandbox' ? 'In a sandbox' : 'Under the broker'} worca signs ${label}'s ${entry.signIn.byModel ? 'providers' : 'sign-ins'} ${names}. Pick one of them, or pick Local.` };
+    }
+    return ok(mode) ? { mode } : { refusal: need(mode, what) };
+  }
+  const mode = relayable.find(ok);
+  if (mode) return entry.signIn.byModel && !model ? { mode: null } : { mode };
+  return { refusal: need(null, label) };
+}
+
+/** A mode's `requires` names that the step's own model fills (OPENAI_MODEL, GEMINI_MODEL, …): behind the relay or a
+ *  broker slot the spawn names its model itself, so only the others must be in the server env. */
+const requiredConfig = (mode) => (mode.requires || []).filter((k) => !/_MODEL$/.test(k));
 
 /**
  * How one spawn of `engine` signs its model calls.
@@ -75,10 +111,11 @@ export function engineCredential(engine, env = process.env) {
  *   order; on an engine whose model id names its provider (signIn.byModel), the step's model wins over both.
  * @returns {{kind:'relayed'|'brokered'|'own'|'direct', engine:string, signInMode:string|null, credential:string|null,
  *   source:'server'|'model'|'endpoint'|'broker'|'login'|null, slot:string|null, provider:string|null,
- *   models:string[], warning:string|null, refusal:string|null}}
+ *   models:string[], warning:string|null, refusal:string|null, relayMode:string|null}}
  *   signInMode: the catalog mode id childEnv keeps, or an undeclared id (relayed, brokered, model, endpoint) that keeps
  *   no credential of the engine (brokered: no model credential at all, D10); credential: the one env name the child
- *   keeps (direct/own), else null.
+ *   keeps (direct/own), else null; relayMode: on an engine whose relay is per mode, the sign-in mode a relayed or
+ *   brokered spawn is pointed for (its route, catalog `relay` on the mode), else null.
  */
 export function resolveModelRoute({ engine, remote = false, serverEnv = process.env, modelEnv = null, model = null,
   endpoint = false, broker = null, checkModel = true, configured = null } = {}) {
@@ -88,7 +125,7 @@ export function resolveModelRoute({ engine, remote = false, serverEnv = process.
   const b = broker || { on: brokerEnabled() };
   const slots = b.slots || brokerSlotIds();
   const out = { kind: null, engine: name, signInMode: null, credential: null, source: null, slot: null, provider: null,
-    models: model ? [String(model)] : [], warning: null, refusal: null };
+    models: model ? [String(model)] : [], warning: null, refusal: null, relayMode: null };
   const done = (o) => Object.defineProperty({ ...out, ...o }, RESOLVED, { value: true });
   // An engine the catalog does not know (the mock adapter): nothing to decide; childEnv keeps its default (null mode).
   if (!entry) return done({ kind: 'own', signInMode: null });
@@ -108,9 +145,27 @@ export function resolveModelRoute({ engine, remote = false, serverEnv = process.
       warning: remote ? null : `${name} signs in with WORCA_CODEX_PROVIDER_KEY from this model's settings; the agent can read it. Use a sandbox or the credential broker to keep it out.` });
   }
 
+  // An engine whose relay is per mode: the mode its step resolves to names the route and the broker slot.
+  const perMode = (where, ok, need) => perModeChoice(entry, { label, model, configured, ok, need, where });
+  const modeProvider = (mode) => (mode ? mode.provider ?? entry.provider ?? (entry.signIn.byModel ? mode.id : null) : null);
+  const slotOk = (m) => !!m.brokerSlot && slots.includes(m.brokerSlot);
+  // No mode with a slot here at all: the broker's one refusal (brokerEngineRefusal says the same at run start).
+  const noSlot = (m, what) => (m && entry.signIn.modes.some(slotOk)
+    ? `the credential broker is on, and ${what} has no broker slot; pick a model or sign-in that has one (${entry.signIn.modes.filter(slotOk).map((x) => x.id).join(', ')}), or turn the broker off`
+    : brokerRefusalText(name));
+
   if (remote) {
     if (!entry.remote || !entry.relay) return done({ kind: 'relayed', signInMode: 'relayed', refusal: `the ${name} engine cannot run in a remote sandbox` });
     if (needsModel) return done({ kind: 'relayed', signInMode: 'relayed', refusal: `${label} in a sandbox needs a model; pick one for this step.` });
+    if (entry.relay.perMode) {
+      const c = b.on ? perMode('under the broker', slotOk, noSlot)
+        : perMode('in a sandbox', (m) => { const k = modeCredential(m); return !!k && filled(serverEnv[k]) && requiredConfig(m).every((r) => filled(serverEnv[r])); },
+          (m, what) => (m ? `${what} in a sandbox needs ${[modeCredential(m), ...requiredConfig(m)].filter((k) => !filled(serverEnv[k])).join(' and ')} in the worca server's environment: worca signs its calls there (a key the CLI stores itself stays on this machine). Set it, or pick Local.`
+            : `${label} in a sandbox needs the key of one of its ${entry.signIn.byModel ? 'providers' : 'sign-ins'} (${entry.signIn.modes.filter((x) => x.kind !== 'own' && x.relay).map((x) => modeCredential(x)).join(', ')}) in the worca server's environment: worca signs its calls there. None is set.`));
+      if (c.refusal) return done({ kind: 'relayed', signInMode: 'relayed', refusal: c.refusal });
+      return done({ kind: 'relayed', signInMode: 'relayed', source: b.on ? 'broker' : 'server', slot: b.on ? c.mode?.brokerSlot ?? null : null,
+        provider: modeProvider(c.mode), relayMode: c.mode?.id ?? null });
+    }
     if (b.on) {
       // Claude under the broker: runViaBroker already put the slot URL and the spawn token (or a keyless bridge URL) in
       // the model env, and the relay signs with it. Other engines: the adapter takes a lease for `slot` (broker-lease.mjs).
@@ -127,6 +182,12 @@ export function resolveModelRoute({ engine, remote = false, serverEnv = process.
   // Local.
   if (b.on) {
     if (needsModel) return done({ kind: 'brokered', signInMode: 'brokered', refusal: `${label} under the credential broker needs a model; pick one for this step.` });
+    if (entry.relay?.perMode) {
+      const c = perMode('under the broker', slotOk, noSlot);
+      if (c.refusal) return done({ kind: 'own', signInMode: 'brokered', refusal: c.refusal });
+      const mode = c.mode ?? entry.signIn.modes.find(slotOk);
+      return done({ kind: 'brokered', signInMode: 'brokered', source: 'broker', slot: mode.brokerSlot, provider: modeProvider(mode), relayMode: mode.id });
+    }
     // Claude: runViaBroker's model env (slot URL + spawn token, or a keyless loopback bridge) is the only credential;
     // signInMode 'brokered' makes childEnv drop every other model credential (as claude.mjs:579-582 did).
     if (modelKey || modelBase) return done({ kind: 'brokered', signInMode: 'brokered', source: 'broker', provider: hostOf(modelBase) || upstream });

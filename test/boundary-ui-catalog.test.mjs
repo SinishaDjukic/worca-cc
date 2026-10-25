@@ -302,7 +302,7 @@ test("the chat tools name the engines from the catalog the bundle passes, a new 
   assert.equal(d.engine, `${names.join(' | ')} — only when the user asked for that engine; omit for the default. ${list(names.filter((e) => engines[e].beta), 'and')} are beta: never pick one on your own`);
   assert.ok(d.engine.endsWith('qwen and zed are beta: never pick one on your own'), d.engine);
   assert.ok(d.run.includes(`engine: who runs the agents — claude (Claude Code), or ${list(others.map((e) => `${e} (beta)`), 'or')}; omit it`), d.run);
-  assert.ok(d.execEnv.includes('needs a project target (one git project) on the claude, codex, copilot or cursor engine.'), d.execEnv);
+  assert.ok(d.execEnv.includes('needs a project target (one git project) on the claude, codex, copilot, cursor, gemini, goose, opencode or qwen engine.'), d.execEnv);
   assert.ok(d.list.includes(`engine (${names.join(' | ')}: the engine it belongs to;`), d.list);
   assert.ok(d.change.includes(`engine?: ${names.join(' | ')} (fixed once added)`), d.change);
   // Each engine whose models connect one fixed way writes its own add_model rule (catalog modelRule): zed copies Cursor's.

@@ -12,7 +12,9 @@
 //   FAKE_CALL=1         makes ONE model call the way the engine's CLI would, from its own env and argv, and records
 //                       `rec.call` ({url, status, body}): Claude Code's Messages call (ANTHROPIC_BASE_URL), codex's
 //                       Responses call (its `model_providers.worca_relay.base_url` override), copilot's offline provider
-//                       call (COPILOT_PROVIDER_*), cursor-agent's RunSSE (CURSOR_API_ENDPOINT). The body names
+//                       call (COPILOT_PROVIDER_*), cursor-agent's RunSSE (CURSOR_API_ENDPOINT), OpenCode's provider block
+//                       (OPENCODE_CONFIG_CONTENT), Gemini's (GOOGLE_GEMINI_BASE_URL, goose's GOOGLE_HOST) and goose's
+//                       and Qwen Code's other provider hosts. The body names
 //                       FAKE_CALL_MODEL, else the argv's model flag (-m for codex, --model for the others). The reply is
 //                       read to its end before the stream lines.
 //   FAKE_HOLD_AFTER=N   prints N stream lines, then waits to be stopped.
@@ -49,6 +51,21 @@ function stagedFiles() {
 
 const flag = (name) => { const i = argv.indexOf(name); return i === -1 ? null : argv[i + 1] ?? null; };
 
+/** One call to `provider`'s API under `base` (its API root: …/v1 for anthropic and openai, …/v1beta for google), signed
+ *  with `key` in the header that provider's SDK uses. */
+function providerCall(provider, base, key, model, headers) {
+  if (provider === 'google') {
+    return { url: `${base}/models/${model}:streamGenerateContent?alt=sse`, headers: { ...headers, 'x-goog-api-key': key },
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'hi' }] }] }) };
+  }
+  if (provider === 'anthropic') {
+    return { url: `${base}/messages`, headers: { ...headers, 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model, stream: true, max_tokens: 5, messages: [{ role: 'user', content: 'hi' }] }) };
+  }
+  return { url: `${base}/${provider === 'openai' ? 'responses' : 'chat/completions'}`, headers: { ...headers, authorization: `Bearer ${key}` },
+    body: JSON.stringify({ model, stream: true, ...(provider === 'openai' ? { input: 'hi' } : { messages: [{ role: 'user', content: 'hi' }] }) }) };
+}
+
 /** The engine's one model call, the way its CLI makes it (FAKE_CALL). */
 async function modelCall() {
   const env = process.env;
@@ -65,6 +82,28 @@ async function modelCall() {
     url = `${env.COPILOT_PROVIDER_BASE_URL}${path}`;
     if (anthropic) headers['x-api-key'] = env.COPILOT_PROVIDER_API_KEY; else headers.authorization = `Bearer ${env.COPILOT_PROVIDER_API_KEY}`;
     body = JSON.stringify({ model, stream: true, ...(anthropic ? { max_tokens: 5, messages: [{ role: 'user', content: 'hi' }] } : path === '/responses' ? { input: 'hi' } : { messages: [{ role: 'user', content: 'hi' }] }) });
+  } else if (env.OPENCODE_CONFIG_CONTENT && JSON.parse(env.OPENCODE_CONFIG_CONTENT).provider) {
+    // OpenCode: its provider block (baseURL, apiKey) in its inline config; the model is provider/model.
+    const [provider, ...rest] = String(env.FAKE_CALL_MODEL || flag('-m') || flag('--model') || '').split('/');
+    model = rest.join('/') || provider;
+    const { baseURL, apiKey } = JSON.parse(env.OPENCODE_CONFIG_CONTENT).provider[provider]?.options || {};
+    ({ url, headers, body } = providerCall(provider, baseURL, apiKey, model, headers));
+  } else if (env.GOOGLE_GEMINI_BASE_URL || env.GOOGLE_HOST) {
+    // Gemini CLI and Qwen Code's gemini mode (GOOGLE_GEMINI_BASE_URL), goose's google (GOOGLE_HOST).
+    model = env.FAKE_CALL_MODEL || flag('--model') || 'gemini-2.5-pro';
+    ({ url, headers, body } = providerCall('google', `${env.GOOGLE_GEMINI_BASE_URL || env.GOOGLE_HOST}/v1beta`, env.GEMINI_API_KEY || env.GOOGLE_API_KEY, model, headers));
+  } else if (env.OPENAI_HOST || env.OPENAI_BASE_URL) {
+    // goose's openai (an origin plus OPENAI_BASE_PATH) and Qwen Code's OpenAI-compatible mode (a base URL).
+    model = env.FAKE_CALL_MODEL || flag('--model');
+    url = env.OPENAI_HOST ? `${env.OPENAI_HOST}/${env.OPENAI_BASE_PATH}` : `${env.OPENAI_BASE_URL}/chat/completions`;
+    headers.authorization = `Bearer ${env.OPENAI_API_KEY}`;
+    body = JSON.stringify({ model, stream: true, messages: [{ role: 'user', content: 'hi' }] });
+  } else if (env.OPENROUTER_HOST) {
+    model = env.FAKE_CALL_MODEL || flag('--model');
+    ({ url, headers, body } = providerCall('openrouter', `${env.OPENROUTER_HOST}/api/v1`, env.OPENROUTER_API_KEY, model, headers));
+  } else if (env.ANTHROPIC_HOST) {
+    model = env.FAKE_CALL_MODEL || flag('--model');
+    ({ url, headers, body } = providerCall('anthropic', `${env.ANTHROPIC_HOST}/v1`, env.ANTHROPIC_API_KEY, model, headers));
   } else if (env.CURSOR_API_ENDPOINT) {
     url = `${env.CURSOR_API_ENDPOINT}/agent.v1.AgentService/RunSSE`;
     headers = { 'content-type': 'application/connect+proto', authorization: `Bearer ${env.CURSOR_AUTH_TOKEN}` };

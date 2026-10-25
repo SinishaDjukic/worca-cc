@@ -1,7 +1,8 @@
 // test/helpers/engine-upstream.mjs
 // A loopback stand-in for every vendor API an engine's model calls reach (moved from test/exec-env-engine-relay.test.mjs
 // startUpstream): Anthropic Messages (Claude Code), OpenAI Responses (codex), the Copilot API's three wires (copilot,
-// with its account lookup) and api2.cursor.sh (the key exchange and RunSSE). Each answers its streaming shape with
+// with its account lookup), api2.cursor.sh (the key exchange and RunSSE), the Gemini API, OpenAI Chat Completions and
+// OpenRouter (the per-mode engines: Gemini CLI, Qwen Code, Goose, OpenCode). Each answers its streaming shape with
 // usage, checks the credential worca (or the broker) must have added, records every call in `calls`, and echoes a
 // secret inside its reply so a test can prove the scrub. The relay's routes reach it under /v1, /copilot and /cursor
 // (`relayUpstreams`); a broker slot's upstream is cut to the origin, so the un-prefixed paths answer too.
@@ -12,9 +13,11 @@ export const CODEX_KEY = 'sk-codex-server-0123456789abcdef';
 export const PAT = `github_pat_${'R2d2'.repeat(10)}`;
 export const CURSOR_KEY = 'crsr-server-key-0123456789abcdef';
 export const ANTHROPIC_KEY = 'sk-ant-api03-upstream-0123456789abcdef';
+export const GEMINI_KEY = 'AIza-upstream-gemini-0123456789abcdef';
+export const OPENROUTER_KEY = 'sk-or-upstream-0123456789abcdef';
 export const ACCESS = `${b64({ alg: 'HS256' })}.${b64({ sub: 'user', exp: Math.floor(Date.now() / 1000) + 3600 })}.c2ln`;
 export const REFRESH = `${b64({ alg: 'HS256' })}.${b64({ sub: 'user', typ: 'refresh' })}.cmVm`;
-export const ALL_SECRETS = Object.freeze([CODEX_KEY, PAT, CURSOR_KEY, ACCESS, REFRESH, ANTHROPIC_KEY]);
+export const ALL_SECRETS = Object.freeze([CODEX_KEY, PAT, CURSOR_KEY, ACCESS, REFRESH, ANTHROPIC_KEY, GEMINI_KEY, OPENROUTER_KEY]);
 
 const sse = (events) => events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('');
 export const envelope = (flag, b) => { const h = Buffer.alloc(5); h[0] = flag; h.writeUInt32BE(b.length, 1); return Buffer.concat([h, b]); };
@@ -38,7 +41,7 @@ export async function startEngineUpstream({ usage = null, cut = false } = {}) {
       calls.push({ method: req.method, url: req.url, headers: req.headers, body });
       const auth = req.headers.authorization || '';
       const deny = (...want) => {
-        if (want.some((w) => auth === `Bearer ${w}` || req.headers['x-api-key'] === w)) return false;
+        if (want.some((w) => auth === `Bearer ${w}` || req.headers['x-api-key'] === w || req.headers['x-goog-api-key'] === w)) return false;
         res.writeHead(401, { 'content-type': 'application/json' }); res.end('{"error":"bad key"}'); return true;
       };
       /** Write `chunks` (the first carries the usage), or cut the socket after the first. */
@@ -75,6 +78,21 @@ export async function startEngineUpstream({ usage = null, cut = false } = {}) {
         return stream('text/event-stream', [sse([{ type: 'message_start', message: { id: 'm1', type: 'message', model: 'claude-sonnet-5', usage: { input_tokens: n.input, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }]),
           sse([{ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: n.output } }, { type: 'message_stop' }])]);
       }
+      // The Gemini API (Gemini CLI, and the google provider of the others): the model is in the path, the key in a header.
+      const gem = /^\/v1beta\/models\/([^/:?]+):(streamGenerateContent|generateContent)(\?.*)?$/.exec(path);
+      if (gem) {
+        if (deny(GEMINI_KEY)) return;
+        const n = u(80, 9);
+        return stream('text/event-stream', [sse([{ modelVersion: gem[1], candidates: [{ content: { parts: [{ text: `echo ${GEMINI_KEY}` }] } }],
+          usageMetadata: { promptTokenCount: n.input, candidatesTokenCount: n.output } }])]);
+      }
+      // OpenAI Chat Completions (goose's openai, Qwen Code's OpenAI-compatible) and OpenRouter's.
+      if (path === '/v1/chat/completions' || path === '/api/v1/chat/completions') {
+        if (deny(path === '/v1/chat/completions' ? CODEX_KEY : OPENROUTER_KEY)) return;
+        const n = u(70, 8);
+        return stream('text/event-stream', [sse([{ model: 'gpt-5.5', choices: [{ delta: { content: `echo ${CODEX_KEY}` } }] }]),
+          `${sse([{ model: 'gpt-5.5', choices: [], usage: { prompt_tokens: n.input, completion_tokens: n.output } }])}data: [DONE]\n\n`]);
+      }
       if (path === '/chat/completions') {
         if (deny(PAT)) return;
         const n = u(50, 6);
@@ -104,9 +122,11 @@ export async function startEngineUpstream({ usage = null, cut = false } = {}) {
   const url = `http://127.0.0.1:${srv.address().port}`;
   return {
     url, calls,
-    keys: { CODEX_KEY, PAT, CURSOR_KEY, ACCESS, REFRESH, ANTHROPIC_KEY },
+    keys: { CODEX_KEY, PAT, CURSOR_KEY, ACCESS, REFRESH, ANTHROPIC_KEY, GEMINI_KEY, OPENROUTER_KEY },
     serverEnv: { CODEX_API_KEY: CODEX_KEY, COPILOT_GITHUB_TOKEN: PAT, CURSOR_API_KEY: CURSOR_KEY },
-    relayUpstreams: { openai: `${url}/v1`, copilotApi: `${url}/copilot`, cursor: `${url}/cursor` },
+    // The per-mode routes (relay-route.mjs MODE_ROUTES) reach their vendor's origin; each path names its API.
+    relayUpstreams: { openai: `${url}/v1`, copilotApi: `${url}/copilot`, cursor: `${url}/cursor`,
+      modes: { 'gemini-api': url, openai: url, anthropic: url, openrouter: url } },
     close: () => new Promise((r) => { srv.closeAllConnections(); srv.close(() => r()); }),
   };
 }

@@ -4,7 +4,7 @@
 // its names are re-exported here so existing imports keep working.
 import { redactKey, remotePreflight } from './policy.mjs';
 import { resolveModelRoute } from './credentials.mjs';
-import { REMOTE_ENGINES } from '../../shared/exec-env.mjs';
+import { engineEntry } from '../../shared/engine-switch.mjs';
 import { goesDirect, parseNoProxy } from '../upstream-proxy.mjs';
 export { SANDBOX_TIMEOUT_MS, HEARTBEAT_MS, AGENT_COMMAND_TIMEOUT_MS, SHELL_COMMAND_TIMEOUT_MS, redactKey,
   modelCredential, MODEL_CREDENTIAL_KEYS, sandboxEnv, isLoopbackHost, sandboxMcpConfig, instanceTag,
@@ -68,7 +68,7 @@ export function e2bPreflight({ engine, isWorkspace, workMode = 'git', mock = fal
     // the spawn's broker token (the broker holds the person's key). The route resolver's remote refusal says which
     // (credentials.mjs resolveModelRoute; the step's model is not known here: the harness gate checks it).
     // An engine no sandbox runs is refused once, above (remotePreflight), with no credential noise.
-    if (needsSignIn && REMOTE_ENGINES.includes(name)) {
+    if (needsSignIn && engineEntry(name)?.remote) {
       const d = resolveModelRoute({ engine: name, remote: true, serverEnv: env, broker: { on: brokerOn }, checkModel: false });
       if (d.refusal) errors.push(d.refusal);
     }

@@ -112,7 +112,8 @@ test('codex: a custom provider at the relay with a dummy key; worca signs with t
       assert.deepEqual(mine.map((c) => c.url), ['/v1/responses'], 'refused calls never reach the upstream');
       assert.equal(mine[0].headers.authorization, `Bearer ${CODEX_KEY}`, 'worca signed it');
       const result = events.find((e) => e.type === 'result');
-      assert.deepEqual(result.relay.byModel['gpt-5.5'], { input_tokens: 100, output_tokens: 7, cache_read_input_tokens: 20, cache_creation_input_tokens: 0,
+      // Booked under '' (the step's own model, which the relay held the call to): priceRelayUsage prices it as gpt-5.5.
+      assert.deepEqual(result.relay.byModel[''], { input_tokens: 100, output_tokens: 7, cache_read_input_tokens: 20, cache_creation_input_tokens: 0,
         cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 } }, 'the relay measured the reply, not the sandbox`s 999999');
       assert.equal(env.relay.routes.size, 0, 'the route closed with the spawn');
     } finally { await env.close('test'); }

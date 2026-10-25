@@ -3,6 +3,7 @@
 // In-process mock runs on test/helpers/loopback-backend.mjs (no e2b fake): the setup mirrors test/exec-env-pipeline.test.mjs.
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
+import { ENGINES, ENGINE_NAMES, setCatalogForTest } from '../src/shared/engine-switch.mjs';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -134,10 +135,14 @@ test('a lost box fails the run cleanly through the generic classifyError', POSIX
   assert.match(r.error, /Loopback box lb\d+ is gone/);
 });
 
-test('the generic guards apply to a second backend: workspace runs are refused at start; every remote engine passes', () => {
+test('the generic guards apply to a second backend: workspace runs are refused at start; every remote engine passes', (t) => {
   const mk = (o) => createOrchestrator({ projectDir: freshRepo(), prompt: 'x', claude: { mock: true, ...(o.claude || {}) }, execEnv: 'loopback', ...o });
-  for (const engine of ['codex', 'copilot', 'cursor']) assert.equal(mk({ claude: { engine } }).execEnvStartRefusal(), null, engine);
-  assert.match(mk({ claude: { engine: 'gemini' } }).execEnvStartRefusal(), /^Loopback execution cannot start: Loopback execution runs the claude, codex, copilot and cursor engines only \(this run uses gemini\): Gemini CLI runs locally only for now/);
+  for (const engine of ENGINE_NAMES.filter((e) => e !== 'claude')) assert.equal(mk({ claude: { engine } }).execEnvStartRefusal(), null, engine);
+  // An engine the catalog marks local (one added later) is refused at start.
+  setCatalogForTest({ ...ENGINES, gemini: { ...ENGINES.gemini, remote: false } });
+  t.after(() => setCatalogForTest(null));
+  assert.match(mk({ claude: { engine: 'gemini' } }).execEnvStartRefusal(), /^Loopback execution cannot start: Loopback execution runs the claude, codex, copilot, cursor, goose, opencode and qwen engines only \(this run uses gemini\): Gemini CLI runs locally only for now/);
+  setCatalogForTest(null);
   assert.match(wsOrch('loopback').execEnvStartRefusal(), /Loopback execution runs single-project runs only/);
   assert.equal(mk({}).execEnvStartRefusal(), null);
 });

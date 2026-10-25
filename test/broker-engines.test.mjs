@@ -43,15 +43,9 @@ test('readiness: with the broker on, every engine with a slot is ready (mock: no
   const boom = async () => { throw new Error('spawned'); };
   const list = await engineReadiness({ preflights: { claude: async () => ({}), codex: boom, copilot: boom, cursor: boom, gemini: boom, goose: boom, opencode: boom, qwen: boom }, mock: true, force: true });
   assert.deepEqual(list.find((e) => e.name === 'claude'), { name: 'claude', label: 'Claude', ready: true, reason: null });
-  for (const name of ['codex', 'copilot', 'cursor']) {
+  // Every engine has a key mode in a slot (Gemini CLI, Qwen Code, Goose and OpenCode: google, openai, anthropic, openrouter).
+  for (const name of ['codex', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen']) {
     assert.deepEqual(list.find((e) => e.name === name), { name, label: ENGINES[name].label, ready: true, reason: null }, name);
-  }
-  // No broker slot holds their keys yet: under the broker only their own sign-ins are left, which it refuses.
-  for (const name of ['gemini', 'goose', 'opencode', 'qwen']) {
-    const e = list.find((x) => x.name === name);
-    assert.equal(e.ready, false, name);
-    assert.equal(e.broker, true, name);
-    assert.match(e.reason, /credential broker is on/);
   }
   setCatalogForTest(ownOnly('cursor'));
   resetEngineReadiness();
@@ -64,11 +58,11 @@ test('readiness: with the broker on, every engine with a slot is ready (mock: no
 
 test('engineLocks (GET /api/engine-locks): empty without the broker; with it, only the engines without a slot', () => {
   assert.deepEqual(engineLocks({}), []);
-  // Gemini CLI, Goose, OpenCode and Qwen Code have no broker slot yet (a later follow-up).
-  assert.deepEqual(engineLocks(BROKER).map((e) => e.name), ['gemini', 'goose', 'opencode', 'qwen']);
+  // Every engine has a key mode in a slot.
+  assert.deepEqual(engineLocks(BROKER).map((e) => e.name), []);
   setCatalogForTest(ownOnly('copilot'));
   const locks = engineLocks(BROKER);
-  assert.deepEqual(locks.map((e) => e.name), ['copilot', 'gemini', 'goose', 'opencode', 'qwen']);
+  assert.deepEqual(locks.map((e) => e.name), ['copilot']);
   assert.ok(locks.every((e) => e.broker === true && /credential broker is on/.test(e.reason)));
 });
 
@@ -133,4 +127,20 @@ test('the broker preflight maps a codex model to the openai slot, never the anth
   process.env.WORCA_BROKER_URL = BROKER.WORCA_BROKER_URL;
   assert.deepEqual(modelSlot('gpt-6.1-sol'), { slot: 'openai' }, "a codex catalog model: Codex's key mode slot");
   assert.deepEqual(modelSlot('claude-sonnet-5'), { slot: 'anthropic' });
+});
+
+test('the broker preflight maps a Goose or OpenCode model to the slot of the provider its id names', async () => {
+  const { modelSlot, setModelEngineReader } = await import('../src/core/broker-routing.mjs');
+  await import('../src/core/config.mjs');
+  process.env.WORCA_BROKER_URL = BROKER.WORCA_BROKER_URL;
+  const owners = { 'google/gemini-2.5-flash': 'goose', 'openrouter/qwen3': 'opencode', 'anthropic/claude-sonnet-5': 'opencode' };
+  setModelEngineReader((id) => owners[id] ?? null);
+  try {
+    assert.deepEqual(modelSlot('google/gemini-2.5-flash'), { slot: 'google' });
+    assert.deepEqual(modelSlot('openrouter/qwen3'), { slot: 'openrouter' });
+    assert.deepEqual(modelSlot('anthropic/claude-sonnet-5'), { slot: 'anthropic' });
+  } finally {
+    const { engineOfModel } = await import('../src/core/config.mjs');
+    setModelEngineReader((id) => engineOfModel(id));
+  }
 });

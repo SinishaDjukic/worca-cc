@@ -13,11 +13,13 @@ import { homedir } from 'node:os';
 import { join, relative, resolve, sep, isAbsolute } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
-import { superviseSpawn, childEnv, execCheck, runCapture, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from '../spawn.mjs';
-import { resolveModelRoute, localServerEnv } from '../exec-env/relay-route.mjs';
+import { superviseSpawn, childEnv, execCheck, runCapture, cleanRunEnv, safeEmit, writableRootsInWorcaHome, abandonRoute } from '../spawn.mjs';
+import { resolveModelRoute, localServerEnv, pointAtSlot } from '../exec-env/relay-route.mjs';
+import { sandboxMcpConfig } from '../exec-env/policy.mjs';
 import { brokerEnabled } from '../broker-client.mjs';
+import { brokerLease } from '../broker-lease.mjs';
 import { removeSessionEntries } from './sessions.mjs';
-import { ruleKind } from '../../shared/engine-switch.mjs';
+import { ruleKind, engineEntry } from '../../shared/engine-switch.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 
@@ -295,15 +297,17 @@ export function envRefNames(servers) {
 }
 const pickEnv = (env, names) => Object.fromEntries(names.filter((k) => typeof env[k] === 'string').map((k) => [k, env[k]]));
 
-/** The sign-in mode a spawn of `spec`'s engine keeps (credentials.mjs resolveModelRoute over worca's env and the run's):
- *  the one the CLI's own settings choose (spec.configuredMode), else the catalog order. */
-function familySignInMode(spec, runEnv, model) {
-  const serverEnv = localServerEnv(runEnv);
-  const d = resolveModelRoute({ engine: spec.name, serverEnv, model: model || null, broker: { on: brokerEnabled() }, checkModel: false,
+/** How a spawn of `spec`'s engine signs its model calls (credentials.mjs resolveModelRoute over worca's env and the
+ *  run's, or a sandbox's server env): the mode the CLI's own settings choose (spec.configuredMode), else the catalog
+ *  order; under the broker or in a sandbox, a mode with a broker slot or a relay route. Throws the refusal. */
+function familyRoute(spec, { runEnv = {}, model = null, remote = null, checkModel = true } = {}) {
+  const serverEnv = remote ? remote.env : localServerEnv(runEnv);
+  const d = resolveModelRoute({ engine: spec.name, remote: !!remote, serverEnv, model: model || null, broker: { on: brokerEnabled() }, checkModel,
     configured: spec.configuredMode ? spec.configuredMode(serverEnv) : null });
   if (d.refusal) throw Object.assign(new Error(`${spec.label}: ${d.refusal}`), { errorClass: 'config' });
-  return d.signInMode;
+  return d;
 }
+const familySignInMode = (spec, runEnv, model) => familyRoute(spec, { runEnv, model, checkModel: false }).signInMode;
 
 /** The sign-in mode a chat on `spec`'s engine signs in with for `model` (chat descriptor `signInMode`): the one its spawn
  *  keeps (familySignInMode over worca's env); '' (no names) when the route is refused, as the spawn itself is. */
@@ -350,6 +354,13 @@ export const foldSystemPrompt = (sys, prompt) => (sys ? `=== SYSTEM ===\n${sys}\
  * - The child's env is the catalog allowlist (src/core/spawn.mjs childEnv) with the one sign-in the route resolver picks
  *   (credentials.mjs resolveModelRoute; the one the CLI's own settings choose wins, spec.configuredMode), and of the run
  *   env only what its MCP servers reference and the git ceiling: never the run's other registry secrets.
+ * - Under the credential broker the CLI is pointed at the broker slot of that mode (relay-route.mjs pointAtSlot) with
+ *   the spawn's token; a mode with no slot (Google's login) is refused.
+ * - A remote run (exec-env, e2b): the template's pinned CLI, its model calls through worca's model relay, which signs
+ *   them with the server's key for the mode (relay-route.mjs MODE_ROUTES: a dummy key and the relay URL in the sandbox);
+ *   no host guard; the run's url MCP servers only; the scratch folder uploaded, the checkout files the engine wrote
+ *   mirrored (prepare's `projectFiles`) and its sandbox home written (`homeFiles`). The route opens before anything
+ *   reaches the sandbox, so a refused mode leaves nothing there.
  * @param {object} spec {name, label, prefix, configuredMode? (a function of worca's env: the catalog sign-in mode id the
  *   CLI's own settings choose, or null), classify,
  *   resumeNotFoundRe, fatalStderrRe?, fatalMessage?, askLockdown?, createNormalizer({model, mcpNames, cwd, ruleKinds}), prepare(ctx)};
@@ -358,7 +369,8 @@ export const foldSystemPrompt = (sys, prompt) => (sys ? `=== SYSTEM ===\n${sys}\
 export async function runFamilyProcess(spec, {
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, effort, onEvent = () => {}, signal, bin, resumeSessionId,
   addDirs, writableDirs, sandbox, askLockdown, envAllowlist, asAgent, mcpConfigPath, spawnEnv: runSpawnEnv,
-  redactValues, maxTurns, permissionRules, noGit = false, probe = null, workRoot = null, subagentsOff = false,
+  redactValues, maxTurns, permissionRules, noGit = false, probe = null, workRoot = null, subagentsOff = false, execEnv = null,
+  billTo, spawnKind, permissionMode, runId, threadId, maxBudgetUsd,
 } = {}) {
   const { name, label, prefix } = spec;
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
@@ -366,8 +378,8 @@ export async function runFamilyProcess(spec, {
   if (ask && !spec.askLockdown) throw new Error(`${bin}: worca does not lock ${label} down for a chat — Chat on ${label} is unavailable`);
   if (sandbox === 'read-only' && !ask) throw new Error(`${bin}: worca has no read-only mode for ${label} — a read-only job runs on Claude instead`);
   const secrets = Array.isArray(redactValues) ? redactValues : [];
-  const redactor = secrets.length ? createRedactor(secrets) : null;
-  if (redactor) { const emit = onEvent; onEvent = (e) => emit(redactor.deep(e)); }
+  let redactor = secrets.length ? createRedactor(secrets) : null;
+  { const emit = onEvent; onEvent = (e) => emit(redactor ? redactor.deep(e) : e); }
   const redacted = (err) => {
     if (redactor && err && typeof err.message === 'string') err.message = redactor.text(err.message);
     if (redactor && err && typeof err.stack === 'string') err.stack = redactor.text(err.stack);
@@ -387,10 +399,17 @@ export async function runFamilyProcess(spec, {
   for (const p of storeProjectDirs(includeDirs)) if (!includeDirs.includes(p)) includeDirs.push(p);
 
   const runEnv = cleanRunEnv(runSpawnEnv) ?? undefined;
+  const remote = execEnv?.remote && !ask ? execEnv : null;
+  // How this spawn signs its model calls, before anything is written or staged: a refusal leaves nothing behind.
+  const decision = ask ? null : familyRoute(spec, { runEnv: runEnv || {}, model, remote });
   // A chat's MCP child gets what it needs from the CLI's env by reference (withEnvRefs).
   const refNames = ask ? [...new Set([...Object.keys(runEnv || {}), ...(envAllowlist || []).filter((k) => typeof process.env[k] === 'string' && process.env[k] !== '')])] : [];
-  const servers = ask ? withEnvRefs(readMcpServers(mcpConfigPath, bin), refNames) : readMcpServers(mcpConfigPath, bin);
-  const guardOn = hostGuardEnabled();
+  let servers = ask ? withEnvRefs(readMcpServers(mcpConfigPath, bin), refNames) : readMcpServers(mcpConfigPath, bin);
+  // In a sandbox only the run's url servers exist (the env logged each dropped one at sandbox start).
+  if (remote && servers) { servers = sandboxMcpConfig({ mcpServers: servers }).config.mcpServers; if (!Object.keys(servers).length) servers = null; }
+  if (remote && bin !== name) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] ${name}: ${bin} (this machine's binary) is ignored; the ${remote.label} runs its own pinned ${name}` });
+  const exe = remote ? name : bin;
+  const guardOn = hostGuardEnabled() && !remote;
   const sys = guardOn ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n') : String(systemPrompt || '');
 
   let scratch = null;
@@ -404,13 +423,38 @@ export async function runFamilyProcess(spec, {
   const removeScratch = () => { if (scratch) rmSync(scratch, { recursive: true, force: true }); };
 
   let prepared = null;
+  let lease = null;
   try {
-    prepared = spec.prepare({ cwd, bin, sys, prompt: String(prompt ?? ''), model, effort, servers, permissionRules, includeDirs, scratchDir, noGit, ask, probe, workRoot, subagentsOff });
+    prepared = spec.prepare({ cwd, bin, sys, prompt: String(prompt ?? ''), model, effort, servers, permissionRules, includeDirs, scratchDir, noGit, ask, probe, workRoot, subagentsOff, remote: !!remote });
     // The catalog allowlist with the one sign-in the resolver picks; of the run env, the values the attached servers
     // reference (both CLIs fill `$VAR` / `${VAR}` from their own env) and the git ceiling of a run without a project.
     const runEnv = cleanRunEnv(runSpawnEnv) || {};
-    const { env } = childEnv({ engine: name, signInMode: familySignInMode(spec, runEnv, model), allowlist: envAllowlist, cwd, root: workRoot,
+    let { env } = childEnv({ engine: name, signInMode: decision ? decision.signInMode : familySignInMode(spec, runEnv, model), allowlist: envAllowlist, cwd, root: workRoot,
       runEnv: pickEnv(runEnv, [...envRefNames(servers), 'GIT_CEILING_DIRECTORIES']), overlay: prepared.env, hostPid: guardOn ? process.pid : null });
+    // The broker token, taken late (a refusal above leaves none behind) and released in the finally: a resumed session
+    // the CLI no longer knows is retried under the same one.
+    if (decision?.slot) {
+      lease = await brokerLease({ billTo, spawnKind, permissionMode, askLockdown, runId, threadId, maxBudgetUsd, asAgent, execEnv }, decision.slot);
+      redactor = createRedactor([...secrets, ...lease.secrets]);
+    }
+    if (decision?.kind === 'brokered' && !remote) {
+      // No ambient endpoint or key of this engine survives: the CLI calls the slot with the spawn token only.
+      for (const k of engineEntry(name).env.relayOwned) delete env[k];
+      Object.assign(env, pointAtSlot(decision, lease, model).env);
+    }
+    /** The env of one attempt: in a sandbox its own relay route (each spawn's end closes its route), the adapter's own
+     *  config names kept, and the engine's sandbox home. */
+    let homeEnv = null;
+    const attemptEnv = async () => {
+      if (!remote) return { env, route: null };
+      const route = remote.openRoute(decision, { spawnEnv: env, lease });
+      try {
+        await remote.ensureCli(exe);
+        homeEnv ??= await remote.engineHome(name, { files: prepared.homeFiles || [] });
+        await remote.syncEngineFiles((prepared.projectFiles || []).map((rel) => join(cwd, rel)));
+        return { env: { ...remote.envFor(env, { engine: name, keep: [...remote.mcpEnvRefs, ...Object.keys(prepared.env || {})], route }), ...homeEnv }, route };
+      } catch (err) { await abandonRoute(remote, route, onEvent); throw err; }
+    };
     const mcpNames = Object.keys(servers || {});
     const cap = Number.isInteger(maxTurns) && maxTurns > 0 ? maxTurns : null;
     const turnCap = () => Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true });
@@ -420,10 +464,14 @@ export async function runFamilyProcess(spec, {
       const ctrl = new AbortController();
       let toolCalls = 0; let capped = false; let fatal = null; let sawOutput = false;
       const spawnSignal = signal ? AbortSignal.any([signal, ctrl.signal]) : ctrl.signal;
-      safeEmit(onEvent, { type: 'session', sessionId: prefix + id });
+      const { env: spawnEnv, route } = await attemptEnv();
+      // A sandbox's stream is the sandbox's word: each result carries what the relay measured instead (remote-env.mjs).
+      const ev = route ? remote.meteredEvents(route.id, onEvent) : onEvent;
+      safeEmit(ev, { type: 'session', sessionId: prefix + id });
       const res = await superviseSpawn({
-        file: bin, args: prepared.argsFor(id, resume), displayBin: bin, cwd, env, stdin: prepared.stdin, signal: spawnSignal, asAgent,
-        stagedDir: asAgent ? [scratch, ...(prepared.agentDirs || [])] : null, onEvent, cleanup: () => {},
+        file: exe, args: prepared.argsFor(id, resume), displayBin: bin, cwd, env: spawnEnv, stdin: prepared.stdin, signal: spawnSignal,
+        asAgent: remote ? false : asAgent, stagedDir: remote || asAgent ? [scratch, ...(prepared.agentDirs || [])].filter(Boolean) : null,
+        onEvent: ev, execEnv: remote, route, cleanup: () => {},
         stdoutErrorDetail: () => normalizer.finish().error || '',
         classify: (m) => spec.classify(m),
         redactText: redactor ? (t) => redactor.text(t) : null,
@@ -433,7 +481,7 @@ export async function runFamilyProcess(spec, {
         onStdoutLine: (line) => {
           sawOutput = true;
           for (const e of normalizer.push(line)) {
-            safeEmit(onEvent, e);
+            safeEmit(ev, e);
             if (cap && !capped && e.type === 'tool' && (e.parentId ?? null) === null && (toolCalls += e.calls.length) > cap) { capped = true; ctrl.abort(); }
           }
         },
@@ -470,5 +518,6 @@ export async function runFamilyProcess(spec, {
   } finally {
     try { prepared?.cleanup?.(); } catch { /* best effort */ }
     removeScratch();
+    lease?.release();
   }
 }

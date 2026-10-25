@@ -3,6 +3,7 @@
 // warning, and no project (or a workspace run) skipping the project layer.
 import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { ENGINES, setCatalogForTest } from '../src/shared/engine-switch.mjs';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -200,8 +201,13 @@ test('run.execEnv: user default, project override, the run wins, an invalid stor
   assert.deepEqual(resolveRunExecEnv({ workspace: true }),
     { execEnv: 'local', source: 'user', fallback: 'the saved E2B default does not apply to a workspace run; it runs locally' });
   assert.deepEqual(resolveRunExecEnv({ projectDir: dir, engine: 'codex' }), { execEnv: 'e2b', source: 'user' });
-  assert.deepEqual(resolveRunExecEnv({ projectDir: dir, engine: 'gemini' }),
-    { execEnv: 'local', source: 'user', fallback: 'the saved E2B default does not apply to the gemini engine; it runs locally' });
+  assert.deepEqual(resolveRunExecEnv({ projectDir: dir, engine: 'gemini' }), { execEnv: 'e2b', source: 'user' }, 'every catalog engine runs in a sandbox');
+  // An engine the catalog marks local (one added later) keeps a saved default off it.
+  setCatalogForTest({ ...ENGINES, gemini: { ...ENGINES.gemini, remote: false } });
+  try {
+    assert.deepEqual(resolveRunExecEnv({ projectDir: dir, engine: 'gemini' }),
+      { execEnv: 'local', source: 'user', fallback: 'the saved E2B default does not apply to the gemini engine; it runs locally' });
+  } finally { setCatalogForTest(null); }
   assert.deepEqual(resolveRunExecEnv({ projectDir: dir, engine: 'claude' }), { execEnv: 'e2b', source: 'user' });
   assert.deepEqual(resolveRunExecEnv({ projectDir: dir, workMode: 'folder' }),
     { execEnv: 'local', source: 'user', fallback: 'the saved E2B default does not apply to a Folder project; it runs locally' });

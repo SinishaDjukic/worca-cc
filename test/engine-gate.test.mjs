@@ -1336,6 +1336,13 @@ test('the gate names a partial relay check on a remote run', () => {
   assert.ok(cursor.includes('engine cursor: the model relay does not check which model each call names (the model is inside protobuf)'), cursor.join('\n'));
   const codex = withNodes(remoteOrch({ engine: 'codex' }), {})._engineGate();
   assert.ok(!codex.some((l) => /does not check which model/.test(l)), 'codex is checked');
+  // R11: a per-mode engine whose routes pin the model (catalog 'mode') is checked; Gemini CLI is not.
+  for (const engine of ['goose', 'opencode', 'qwen']) {
+    const lines = withNodes(remoteOrch({ engine }), {})._engineGate();
+    assert.ok(!lines.some((l) => /does not check which model/.test(l)), `${engine} is checked`);
+  }
+  const gemini = withNodes(remoteOrch({ engine: 'gemini' }), {})._engineGate();
+  assert.ok(gemini.includes('engine gemini: the model relay does not check which model each call names (its side calls are not pinned yet)'), gemini.join('\n'));
   const local = withNodes(orch(), {})._engineGate();
   assert.ok(!local.some((l) => /does not check which model/.test(l)), 'a local run has no relay');
 });

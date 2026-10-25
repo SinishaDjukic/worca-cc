@@ -49,10 +49,16 @@
  *             listed in the order its CLI prefers them (the route resolver picks the first one whose credential is set
  *             and whose `requires` names are set too), its own login last. A mode's credential is its one secret-named
  *             name (`*_TOKEN`, `*_KEY`, `*_SECRET`); its other names are config. `byModel`: a model id names its
- *             provider (`provider/model`), and that provider's mode (its id) signs the step in
+ *             provider (`provider/model`), and that provider's mode (its id) signs the step in. `relay` (on an engine
+ *             whose relay is `perMode`): the model relay's route for this mode (exec-env/relay-route.mjs MODE_ROUTES); a
+ *             mode without one is refused in a sandbox
  *   relay     how the model relay carries its calls ({protocol, upstream, modelCheck, auxModels, needsModel}), or null.
+ *             `modelCheck`: how the relay holds each call to the step's model (plus `auxModels`): 'body' the request
+ *             body's model, 'mode' as the step's sign-in mode's route says (relay-route.mjs MODE_ROUTES `pin`: the body,
+ *             or the model, deployment or endpoint its path names), 'partial' not at all (the reason sits by the entry).
  *             `needsModel`: its CLI has no model of its own once pointed at a relay or broker slot (a step with none is
- *             refused)
+ *             refused). `perMode`: no one upstream; the sign-in mode the step resolves to names its route (`relay` on
+ *             the mode) and its broker slot
  *   provider  who serves its model calls when no relay says so ('google'), or null; a sign-in mode's own `provider`
  *             wins (the run's and each step's `provider` column)
  *   shell     it runs an unrestricted shell, so its path rules bind its own tools only (decision 10)
@@ -223,7 +229,7 @@ export const ENGINES = deepFreeze({
     requiresExplicitModel: false, sessions: 'user-store', defaultModel: null, loadsClaudeMcp: false,
   },
   gemini: {
-    label: 'Gemini CLI', models: true, cost: false, helpers: false, beta: true, signin: true, remote: false,
+    label: 'Gemini CLI', models: true, cost: false, helpers: false, beta: true, signin: true, remote: true,
     harness: 'Gemini CLI', efforts: ['low', 'medium', 'high'],
     chat: { images: true, pdfs: true, minVersion: '0.65.0', flags: ['--admin-policy', '--allowed-mcp-server-names', '--extensions'],
       docsAnchor: 'gemini-cli-and-qwen-code',
@@ -237,18 +243,26 @@ export const ENGINES = deepFreeze({
     // its own config. GEMINI_SYSTEM_MD and GEMINI_CLI_SYSTEM_SETTINGS_PATH are never listed (either replaces what worca
     // hands it). GOOGLE_APPLICATION_CREDENTIALS (Vertex AI through ADC) names a file, not a key: it passes like the
     // other endpoint names.
+    // In a sandbox its home (the one holding .gemini, GEMINI_CLI_HOME) is worca's: its settings switch usage statistics off.
     env: { names: ['GEMINI_CLI_TRUST_WORKSPACE', 'GEMINI_CLI_HOME', 'GEMINI_MODEL'], hostOnly: ['GEMINI_CLI_HOME'],
       relayOwned: ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_GEMINI_BASE_URL', 'GOOGLE_VERTEX_BASE_URL', 'GOOGLE_GENAI_USE_VERTEXAI',
         'GOOGLE_GENAI_USE_GCA', 'GOOGLE_CLOUD_ACCESS_TOKEN', 'CODE_ASSIST_ENDPOINT', 'GEMINI_CLI_AUTH_OVERRIDE',
-        'GOOGLE_APPLICATION_CREDENTIALS', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION', 'GCE_METADATA_HOST'], home: null },
-    // The sign-in its settings choose (security.auth.selectedType) wins (engines/gemini.mjs geminiConfiguredMode).
+        'GOOGLE_APPLICATION_CREDENTIALS', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION', 'GCE_METADATA_HOST'],
+      home: { env: 'GEMINI_CLI_HOME', dir: 'gemini-home' } },
+    // The sign-in its settings choose (security.auth.selectedType) wins (engines/gemini.mjs geminiConfiguredMode). A Gemini
+    // API key and a Vertex express key relay as they are (one header); an access token and the Google login would need a
+    // token worca mints or refreshes on this machine, so they stay local (decision 5: the login is refused under the broker).
     signIn: { modes: [
-      { id: 'api-key', kind: 'key', env: ['GEMINI_API_KEY'] },
-      { id: 'vertex-key', kind: 'key', env: ['GOOGLE_API_KEY'], requires: ['GOOGLE_GENAI_USE_VERTEXAI'], provider: 'vertex' },
+      { id: 'api-key', kind: 'key', env: ['GEMINI_API_KEY'], relay: 'gemini-api', brokerSlot: 'google' },
+      { id: 'vertex-key', kind: 'key', env: ['GOOGLE_API_KEY'], requires: ['GOOGLE_GENAI_USE_VERTEXAI'], provider: 'vertex', relay: 'vertex-express' },
       { id: 'access-token', kind: 'key', env: ['GOOGLE_CLOUD_ACCESS_TOKEN'], provider: 'vertex' },
       { id: 'google-login', kind: 'own', env: [], files: ['oauth_creds.json', 'google_accounts.json'] },
     ] },
-    relay: null, provider: 'google',
+    // Gemini CLI's own side calls use other Gemini models than the step's: the auto router's classifier (a flash-lite
+    // model in the 0.63 captures, test/fixtures/gemini/), its loop and next-speaker checks and its web search tool, and
+    // which ones moves with each CLI version. No capture with an explicit model shows them, so no auxModels list can be
+    // trusted and the model is not checked. The relay still prices each reply by its own model (relay-usage.mjs).
+    relay: { perMode: true, protocol: null, modelCheck: 'partial', auxModels: [] }, provider: 'google',
     shell: true,
     // Captured on 0.63 (test/fixtures/engine-rules/gemini/, from test/fixtures/gemini/policy-denied.jsonl): read_file and
     // write_file refused by path rules. No `replace` refusal was captured, so Edit is partial until one is. A command rule
@@ -262,7 +276,7 @@ export const ENGINES = deepFreeze({
     requiresExplicitModel: false, sessions: 'user-store', defaultModel: null, loadsClaudeMcp: false,
   },
   goose: {
-    label: 'Goose', models: true, cost: true, helpers: false, beta: true, signin: true, remote: false,
+    label: 'Goose', models: true, cost: true, helpers: false, beta: true, signin: true, remote: true,
     harness: 'Goose', efforts: ['low', 'medium', 'high', 'max'],
     chat: { images: true, pdfs: false, minVersion: '1.56.0', flags: ['--no-profile'],
       // load_skill reads the chat's own skills (plans/ask-on-qwen-gemini-spike.md): the one Goose tool a chat keeps.
@@ -285,17 +299,20 @@ export const ENGINES = deepFreeze({
         'AZURE_OPENAI_API_VERSION', 'DATABRICKS_TOKEN', 'DATABRICKS_HOST', 'OLLAMA_HOST'], home: null },
     // The step's provider/model id picks the provider, and so its one key (byModel); with no model, the provider goose
     // is configured with (GOOSE_PROVIDER, engines/goose.mjs gooseConfiguredMode). A provider listed here by no mode
-    // (ollama, aws_bedrock, gcp_vertex_ai, …) signs in from goose's own config and keyring.
+    // (ollama, aws_bedrock, gcp_vertex_ai, …) signs in from goose's own config and keyring, and stays local: Bedrock signs
+    // each call (SigV4), Vertex and GitHub Copilot call hosts goose does not let worca move.
     signIn: { byModel: true, modes: [
-      { id: 'openai', kind: 'key', env: ['OPENAI_API_KEY'] },
-      { id: 'anthropic', kind: 'key', env: ['ANTHROPIC_API_KEY'] },
-      { id: 'google', kind: 'key', env: ['GOOGLE_API_KEY'] },
-      { id: 'openrouter', kind: 'key', env: ['OPENROUTER_API_KEY'] },
-      { id: 'azure_openai', kind: 'key', env: ['AZURE_OPENAI_API_KEY'] },
-      { id: 'databricks', kind: 'key', env: ['DATABRICKS_TOKEN'] },
+      { id: 'openai', kind: 'key', env: ['OPENAI_API_KEY'], relay: 'openai', brokerSlot: 'openai' },
+      { id: 'anthropic', kind: 'key', env: ['ANTHROPIC_API_KEY'], relay: 'anthropic', brokerSlot: 'anthropic' },
+      { id: 'google', kind: 'key', env: ['GOOGLE_API_KEY'], relay: 'gemini-api', brokerSlot: 'google' },
+      { id: 'openrouter', kind: 'key', env: ['OPENROUTER_API_KEY'], relay: 'openrouter', brokerSlot: 'openrouter' },
+      { id: 'azure_openai', kind: 'key', env: ['AZURE_OPENAI_API_KEY'], relay: 'azure-openai' },
+      { id: 'databricks', kind: 'key', env: ['DATABRICKS_TOKEN'], relay: 'databricks' },
       { id: 'config', kind: 'own', env: [], files: ['config.yaml', 'secrets.yaml'] },
     ] },
-    relay: null,
+    // Its model id names the provider, so a sandbox or a broker slot needs one. Its calls name only the step's model
+    // (goose 1.55 against a capture server, 2026-10-26: openai, anthropic, google and openrouter, with --name).
+    relay: { perMode: true, protocol: null, modelCheck: 'mode', auxModels: [], needsModel: true },
     shell: true,
     // goose holds no permission rule per spawn (its permission.yaml is per tool name and user-wide): every kind is
     // unenforced, so a guardrail set with deny rules needs --allow-unguarded-engine.
@@ -306,7 +323,7 @@ export const ENGINES = deepFreeze({
     requiresExplicitModel: false, sessions: 'user-store', defaultModel: null, loadsClaudeMcp: false,
   },
   opencode: {
-    label: 'OpenCode', models: true, cost: true, helpers: false, beta: true, signin: true, remote: false,
+    label: 'OpenCode', models: true, cost: true, helpers: false, beta: true, signin: true, remote: true,
     harness: 'OpenCode', efforts: ['minimal', 'low', 'medium', 'high', 'max'],
     chat: { images: true, pdfs: true, minVersion: '1.19.4', flags: [],
       prompt: { cli: "OpenCode with OpenCode's own providers" } },
@@ -324,15 +341,17 @@ export const ENGINES = deepFreeze({
     // The step's provider/model id picks the provider, and so its one key (byModel; `opencode/…` is OpenCode Zen). A
     // provider no mode lists signs in from OpenCode's own auth.json.
     signIn: { byModel: true, modes: [
-      { id: 'anthropic', kind: 'key', env: ['ANTHROPIC_API_KEY'] },
-      { id: 'openai', kind: 'key', env: ['OPENAI_API_KEY'] },
-      { id: 'google', kind: 'key', env: ['GOOGLE_GENERATIVE_AI_API_KEY'] },
-      { id: 'openrouter', kind: 'key', env: ['OPENROUTER_API_KEY'] },
-      { id: 'opencode', kind: 'key', env: ['OPENCODE_API_KEY'] },
-      // `opencode auth login` (auth.json), or the same content in OPENCODE_AUTH_CONTENT.
+      { id: 'anthropic', kind: 'key', env: ['ANTHROPIC_API_KEY'], relay: 'anthropic', brokerSlot: 'anthropic' },
+      { id: 'openai', kind: 'key', env: ['OPENAI_API_KEY'], relay: 'openai', brokerSlot: 'openai' },
+      { id: 'google', kind: 'key', env: ['GOOGLE_GENERATIVE_AI_API_KEY'], relay: 'gemini-api', brokerSlot: 'google' },
+      { id: 'openrouter', kind: 'key', env: ['OPENROUTER_API_KEY'], relay: 'openrouter', brokerSlot: 'openrouter' },
+      { id: 'opencode', kind: 'key', env: ['OPENCODE_API_KEY'], relay: 'opencode-zen' },
+      // `opencode auth login` (auth.json), or the same content in OPENCODE_AUTH_CONTENT: its own sign-in, local only.
       { id: 'auth-file', kind: 'own', env: ['OPENCODE_AUTH_CONTENT'], files: ['auth.json'] },
     ] },
-    relay: null,
+    // Its calls name only the step's model: small_model pins its title call to it (opencode 1.18.23 against a capture
+    // server, 2026-10-26: anthropic, openai and google).
+    relay: { perMode: true, protocol: null, modelCheck: 'mode', auxModels: [], needsModel: true },
     shell: true,
     // Its command rules match each command it reads out of a shell line (not one inside a substitution or `bash -c`) and
     // its path rules bind its own tools: partial (test/fixtures/engine-rules/opencode/). A bare Bash, WebSearch or MCP
@@ -345,7 +364,7 @@ export const ENGINES = deepFreeze({
     requiresExplicitModel: true, sessions: 'none', defaultModel: null, loadsClaudeMcp: false,
   },
   qwen: {
-    label: 'Qwen Code', models: true, cost: false, helpers: false, beta: true, signin: true, remote: false,
+    label: 'Qwen Code', models: true, cost: false, helpers: false, beta: true, signin: true, remote: true,
     harness: 'Qwen Code', efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
     chat: { images: true, pdfs: true, minVersion: '0.26.1', flags: ['--core-tools', '--exclude-tools', '--allowed-mcp-server-names'],
       docsAnchor: 'gemini-cli-and-qwen-code',
@@ -362,14 +381,22 @@ export const ENGINES = deepFreeze({
         'QWEN_OAUTH'], home: null },
     // The mode ids are Qwen's auth types. The one its settings choose wins (engines/qwen.mjs qwenConfiguredMode); else,
     // as Qwen's getAuthTypeFromEnv, the env signs in only when it names a whole provider (`requires`).
+    // In a sandbox, an OpenAI-compatible or Anthropic-compatible mode goes to the base URL worca's env names for it, signed
+    // there; under the broker, to the openai or anthropic slot (that vendor's own API). Vertex AI needs Google's ADC and
+    // Qwen OAuth a token on this machine: both stay local.
     signIn: { modes: [
-      { id: 'openai', kind: 'key', env: ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_MODEL'], requires: ['OPENAI_BASE_URL', 'OPENAI_MODEL'], provider: 'openai' },
-      { id: 'gemini', kind: 'key', env: ['GEMINI_API_KEY', 'GEMINI_MODEL'], requires: ['GEMINI_MODEL'], provider: 'google' },
+      { id: 'openai', kind: 'key', env: ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_MODEL'], requires: ['OPENAI_BASE_URL', 'OPENAI_MODEL'], provider: 'openai',
+        relay: 'openai-compatible', brokerSlot: 'openai' },
+      { id: 'gemini', kind: 'key', env: ['GEMINI_API_KEY', 'GEMINI_MODEL'], requires: ['GEMINI_MODEL'], provider: 'google', relay: 'gemini-api', brokerSlot: 'google' },
       { id: 'vertex-ai', kind: 'key', env: ['GOOGLE_API_KEY', 'GOOGLE_MODEL'], requires: ['GOOGLE_MODEL'], provider: 'vertex' },
-      { id: 'anthropic', kind: 'key', env: ['ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL', 'ANTHROPIC_BASE_URL'], requires: ['ANTHROPIC_MODEL', 'ANTHROPIC_BASE_URL'], provider: 'anthropic' },
+      { id: 'anthropic', kind: 'key', env: ['ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL', 'ANTHROPIC_BASE_URL'], requires: ['ANTHROPIC_MODEL', 'ANTHROPIC_BASE_URL'], provider: 'anthropic',
+        relay: 'anthropic-compatible', brokerSlot: 'anthropic' },
       { id: 'qwen-oauth', kind: 'own', env: [], files: ['oauth_creds.json'], provider: 'qwen' },
     ] },
-    relay: null, provider: null,
+    // Qwen Code signs in only with a model named for its provider: behind a relay or a slot the step names it
+    // (OPENAI_MODEL, ANTHROPIC_MODEL or GEMINI_MODEL), and its side calls (next speaker, loop checks) use that model
+    // too. Not yet captured against a relay: a side call on another model would be refused there (403).
+    relay: { perMode: true, protocol: null, modelCheck: 'mode', auxModels: [], needsModel: true }, provider: null,
     shell: true,
     // Captured on 0.25 (test/fixtures/engine-rules/qwen/, from test/fixtures/qwen/denied.jsonl and mcp-denied.jsonl):
     // read_file and write_file refused by Read and Edit rules, an MCP tool by its rule. A command rule matches the start of

@@ -67,14 +67,16 @@ import { join, relative } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
-import { superviseSpawn, childEnv, execCheck, runCapture, argValue, cleanRunEnv, safeEmit } from '../spawn.mjs';
+import { superviseSpawn, childEnv, execCheck, runCapture, argValue, cleanRunEnv, safeEmit, abandonRoute } from '../spawn.mjs';
 import { ENGINES } from '../../shared/engine-switch.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { makeChatDescriptor, providerListRates } from './chat-descriptor.mjs';
 import { chatSelfTest } from './chat-selftest.mjs';
-import { resolveModelRoute } from '../exec-env/relay-route.mjs';
+import { resolveModelRoute, pointAtSlot } from '../exec-env/relay-route.mjs';
+import { sandboxMcpConfig } from '../exec-env/policy.mjs';
 import { brokerEnabled } from '../broker-client.mjs';
+import { brokerLease } from '../broker-lease.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const opencodeDefaultBin = () => process.env.WORCA_OPENCODE_BIN || 'opencode';
@@ -463,9 +465,15 @@ export function opencodeSpawnSpec({ envAllowlist = [], signInMode = null, cwd = 
 /** The one sign-in mode an OpenCode spawn keeps (credentials.mjs resolveModelRoute): the step model's provider (catalog
  *  signIn.byModel), else the catalog order. Throws (errorClass 'config') on a refusal: the broker holds no OpenCode key. */
 export function opencodeSignInMode(model = null, env = process.env) {
-  const d = resolveModelRoute({ engine: 'opencode', serverEnv: env, model: model || null, broker: { on: brokerEnabled() }, checkModel: false });
+  return opencodeRoute(model, { env, checkModel: false }).signInMode;
+}
+
+/** How an OpenCode spawn signs its model calls (credentials.mjs resolveModelRoute): locally as opencodeSignInMode says;
+ *  under the broker the slot of the model's provider; in a sandbox (`remote`) the relay's route for it. Throws the refusal. */
+function opencodeRoute(model, { env = process.env, remote = null, checkModel = true } = {}) {
+  const d = resolveModelRoute({ engine: 'opencode', remote: !!remote, serverEnv: remote ? remote.env : env, model: model || null, broker: { on: brokerEnabled() }, checkModel });
   if (d.refusal) throw Object.assign(new Error(`OpenCode: ${d.refusal}`), { errorClass: 'config' });
-  return d.signInMode;
+  return d;
 }
 
 // ── spawn ────────────────────────────────────────────────────────────────────
@@ -486,12 +494,18 @@ const instructionFiles = (cwd) => ['AGENTS.md', 'CLAUDE.md'].map((f) => join(cwd
  * Error with `errorClass` on failure. Options OpenCode has no lever for (allowedTools, maxBudgetUsd, writableDirs,
  * addDirs — OpenCode has no sandbox) are ignored; the run start logs each as a degradation. `maxTurns` caps the main
  * agent's tool steps with the agent's `steps` (OpenCode's own cap), and its tool calls, counted as codex counts them.
+ * Under the credential broker its provider block points at the slot of the provider its model names (relay-route.mjs
+ * pointAtSlot). A remote run (exec-env, e2b): the template's pinned opencode, its calls through worca's model relay,
+ * which signs them with the server's key for that provider (relay-route.mjs MODE_ROUTES: the relay URL and a dummy key
+ * in its inline config); no host guard; the run's url MCP servers only; the prompt files uploaded. What the relay
+ * measured is booked, never OpenCode's own figures there; its sub-agents' sessions stay in the sandbox.
  */
 export async function runOpencodeProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, effort, onEvent = () => {}, signal,
   bin = opencodeDefaultBin(), resumeSessionId, sandbox, askLockdown, envAllowlist, asAgent,
   mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, permissionRules, allowedTools, appendSubagentSystemPrompt,
-  scratchBase = null, probe = null, workRoot = null, subagentsOff = false,
+  scratchBase = null, probe = null, workRoot = null, subagentsOff = false, execEnv = null,
+  billTo, spawnKind, permissionMode, runId, threadId, maxBudgetUsd,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
   // A chat (askLockdown): OPENCODE_ASK_LOCKDOWN, on a model it names (never OpenCode's default, never OpenCode Zen).
@@ -500,7 +514,7 @@ export async function runOpencodeProcess({
   if (ask && !(typeof model === 'string' && model.trim())) throw new Error(`${bin}: a chat on OpenCode needs a model`);
   if (ask && ZEN_PROVIDER_RE.test(model)) throw new Error(`${bin}: OpenCode Zen's free models refuse a chat (it has no shell) — pick a model of another provider`);
   const secrets = Array.isArray(redactValues) ? redactValues : [];
-  const redactor = secrets.length ? createRedactor(secrets) : null;
+  let redactor = secrets.length ? createRedactor(secrets) : null;
   const sniffed = { cause: null };
   { const emit = onEvent; onEvent = (e) => {
     if (e?.type === 'stderr' && typeof e.text === 'string') { const m = LOG_CAUSE_RE.exec(e.text); if (m) sniffed.cause = m[1]; }
@@ -514,6 +528,9 @@ export async function runOpencodeProcess({
 
   let session = opencodeSessionOf(resumeSessionId);
   if (resumeSessionId && !session) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] opencode: stored session ${JSON.stringify(String(resumeSessionId).slice(0, 12))}… is not an OpenCode session — starting a fresh one` });
+  const remote = execEnv?.remote && !ask ? execEnv : null;
+  // How this spawn signs its model calls, before anything is written or staged.
+  const decision = opencodeRoute(model, { remote });
 
   let realCwd = cwd;
   try { realCwd = realpathSync(cwd); } catch { /* not there: the spawn says so */ }
@@ -524,6 +541,8 @@ export async function runOpencodeProcess({
   if (mcpConfigPath) {
     let doc;
     try { doc = JSON.parse(readFileSync(mcpConfigPath, 'utf8')); } catch (err) { throw new Error(`${bin}: cannot read the MCP config ${mcpConfigPath}: ${err.message}`); }
+    // In a sandbox only the run's url servers exist (the env logged each dropped one at sandbox start).
+    if (remote) doc = sandboxMcpConfig(doc).config;
     let servers = doc && typeof doc.mcpServers === 'object' && doc.mcpServers ? doc.mcpServers : {};
     if (ask) {
       // The chat's MCP child gets the spawn env (the command bridge token, SSH_AUTH_SOCK, the web search key) by
@@ -541,7 +560,9 @@ export async function runOpencodeProcess({
     if (!Object.keys(mcp).length) mcp = null;
   }
 
-  const guardOn = hostGuardEnabled();
+  if (remote && bin !== 'opencode') safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] opencode: ${bin} (this machine's binary) is ignored; the ${remote.label} runs its own pinned opencode` });
+  const exe = remote ? 'opencode' : bin;
+  const guardOn = hostGuardEnabled() && !remote;
   const sys = guardOn ? [hostGuardSystemPrompt(process.pid), systemPrompt].filter(Boolean).join('\n\n') : String(systemPrompt || '');
   // Decision 11: with the run's sub-agents off (their keeping the rules is unproven), no node reaches a sub-agent; a chat
   // has none either.
@@ -587,15 +608,43 @@ export async function runOpencodeProcess({
   // ceiling of a run without a project is no secret and must reach the agent's git (childEnv merges its own `root` over
   // it). OpenCode takes its project folder from PWD, not from its process cwd: childEnv sets it to the cwd. A chat keeps
   // the same one key: it has no shell to read it.
-  const spec = opencodeSpawnSpec({ envAllowlist, signInMode: opencodeSignInMode(model), cwd, workRoot, hostPid: guardOn ? process.pid : null });
+  const spec = opencodeSpawnSpec({ envAllowlist, signInMode: decision.signInMode, cwd, workRoot, hostPid: guardOn ? process.pid : null });
   const refEnv = {};
   if (mcp) {
     const from = childEnv({ ...spec, runEnv: cleanRunEnv(runSpawnEnv) }).env;
     for (const n of envRefNames(mcp)) if (typeof from[n] === 'string') refEnv[n] = from[n];
   }
   const ceiling = typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string' ? { GIT_CEILING_DIRECTORIES: runSpawnEnv.GIT_CEILING_DIRECTORIES } : {};
-  const { env } = childEnv({ ...spec, runEnv: { ...refEnv, ...ceiling }, overlay: { OPENCODE_CONFIG_CONTENT: JSON.stringify(config),
-    OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_DISABLE_AUTOUPDATE: '1', OPENCODE_DISABLE_SHARE: '1', ...(probe ? probe.env : {}) } });
+  const overlay = { OPENCODE_CONFIG_CONTENT: JSON.stringify(config), OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_DISABLE_AUTOUPDATE: '1',
+    OPENCODE_DISABLE_SHARE: '1', ...(probe ? probe.env : {}) };
+  const { env } = childEnv({ ...spec, runEnv: { ...refEnv, ...ceiling }, overlay });
+  /** worca's config with a pointing's provider block (the relay's, or a broker slot's) merged in. */
+  const pointedConfig = (pointed) => JSON.stringify({ ...config, ...(pointed.config || {}), provider: { ...(config.provider || {}), ...(pointed.config?.provider || {}) } });
+  // The broker token, taken late (a refusal above leaves none behind) and released in the finally. Local brokered: the
+  // provider block calls the slot of its model's provider with it; no ambient provider key survives.
+  let lease = null;
+  try {
+    if (decision.slot) {
+      lease = await brokerLease({ billTo, spawnKind, permissionMode, askLockdown, runId, threadId, maxBudgetUsd, asAgent, execEnv }, decision.slot);
+      redactor = createRedactor([...secrets, ...lease.secrets]);
+    }
+    if (decision.kind === 'brokered' && !remote) {
+      const pointed = pointAtSlot(decision, lease, model);
+      for (const k of ENGINES.opencode.env.relayOwned) delete env[k];
+      Object.assign(env, pointed.env, { OPENCODE_CONFIG_CONTENT: pointedConfig(pointed) });
+    }
+  } catch (err) { lease?.release(); cleanup(); throw redacted(err); }
+  /** One attempt's env and route: in a sandbox its own relay route (each spawn's end closes its route), its provider
+   *  block in the config, and the config names worca sets kept. */
+  const attemptEnv = async () => {
+    if (!remote) return { env, route: null };
+    const route = remote.openRoute(decision, { spawnEnv: env, lease });
+    try {
+      await remote.ensureCli(exe);
+      return { env: { ...remote.envFor(env, { engine: 'opencode', keep: [...remote.mcpEnvRefs, ...Object.keys(overlay)], route }),
+        OPENCODE_CONFIG_CONTENT: pointedConfig(route) }, route };
+    } catch (err) { await abandonRoute(remote, route, onEvent); throw err; }
+  };
 
   const turnCap = () => Object.assign(new Error(`${bin}: stopped after ${cap} turns (the turn cap)`), { turnCap: true });
   const attempt = async (sessionId) => {
@@ -604,8 +653,10 @@ export async function runOpencodeProcess({
     let toolCalls = 0; let capped = false; let sawSession = false;
     const spawnSignal = cap ? (signal ? AbortSignal.any([signal, capCtrl.signal]) : capCtrl.signal) : signal;
     const args = buildOpencodeArgs({ agent: nodeAgent, model, effort, sessionId });
+    const { env: spawnEnv, route } = await attemptEnv();
     const res = await superviseSpawn({
-      file: bin, args, displayBin: bin, cwd, env, stdin: String(prompt ?? ''), signal: spawnSignal, asAgent, stagedDir: asAgent ? scratch : null, onEvent,
+      file: exe, args, displayBin: bin, cwd, env: spawnEnv, stdin: String(prompt ?? ''), signal: spawnSignal, asAgent: remote ? false : asAgent,
+      stagedDir: remote || asAgent ? scratch : null, onEvent, execEnv: remote, route,
       cleanup: () => {},
       isBenignStderr,
       stdoutErrorDetail: () => normalizer.finish().error || '',
@@ -661,6 +712,8 @@ export async function runOpencodeProcess({
   /** The spend of a spawn that ends without its result (an error, the turn cap, a stop): what OpenCode priced so far and
    *  its sub-agents' sessions, booked as the engine's own figure (no figure: cost unknown, never $0). */
   const spendOnExit = async (final) => {
+    // A sandbox's figures are the sandbox's word: the route's close booked what the relay measured.
+    if (remote) return;
     const sub = final.subSessions.length ? await subSpend(final.subSessions) : null;
     const usage = sub ? addUsage(final.usage, sub.usage) : final.usage;
     const costUsd = final.costUsd == null || sub?.unpriced ? null : final.costUsd + (sub ? sub.costUsd : 0);
@@ -681,18 +734,26 @@ export async function runOpencodeProcess({
       out = await attempt(null);
     }
     const { final } = out;
+    const text = redactor ? redactor.text(final.text) : final.text;
+    const sessionId = final.sessionId ? { sessionId: OPENCODE_SESSION_PREFIX + final.sessionId } : {};
+    if (remote) {
+      // The sandbox's sub-agent sessions stay there: their model calls are in the relay's count, their tool calls are not
+      // in the run log. The result carries no figure of OpenCode's: the route's close already booked the relay's measure.
+      if (final.subSessions.length) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] opencode: the sub-agent session(s) ${final.subSessions.map((x) => x.sessionId).join(', ')} ran in the ${remote.label}; their tool calls are not in the run log (their model calls are in the relay's count)` });
+      safeEmit(onEvent, { type: 'result', text, isError: false, ...sessionId, relay: { messages: 0, byModel: {} } });
+      return { text, exitCode: out.exitCode };
+    }
     const sub = final.subSessions.length ? await subSpend(final.subSessions) : null;
     // No price for a step or a sub-agent's message: the result carries no cost (the ledger books it unknown).
     const costUsd = final.costUsd == null || sub?.unpriced ? undefined : final.costUsd + (sub ? sub.costUsd : 0);
     const usage = sub ? addUsage(final.usage, sub.usage) : final.usage;
-    const text = redactor ? redactor.text(final.text) : final.text;
-    safeEmit(onEvent, { type: 'result', text, isError: false, ...(final.sessionId ? { sessionId: OPENCODE_SESSION_PREFIX + final.sessionId } : {}),
-      usage, ...(costUsd !== undefined ? { costUsd } : {}) });
+    safeEmit(onEvent, { type: 'result', text, isError: false, ...sessionId, usage, ...(costUsd !== undefined ? { costUsd } : {}) });
     return { text, exitCode: out.exitCode };
   } catch (err) {
     throw redacted(err);
   } finally {
     cleanup();
+    lease?.release();
   }
 }
 

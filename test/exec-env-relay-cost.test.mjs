@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { createFakeE2b } from '../src/core/exec-env/e2b-fake.mjs';
 import { E2bExecEnv } from '../src/core/exec-env/e2b-env.mjs';
-import { createRouteMeter, priceRelayUsage } from '../src/core/exec-env/relay-usage.mjs';
+import { createRouteMeter, priceRelayUsage, isDispatchedModel } from '../src/core/exec-env/relay-usage.mjs';
 import { UNPRICED_RATES } from '../src/broker/usage.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { createClaudeNormalizer } from '../src/core/engines/claude-events.mjs';
@@ -74,16 +74,45 @@ test('a reply cut off after message_start still counts what the upstream reporte
   assert.equal(meter.take().byModel['claude-sonnet-5'].input_tokens, 1000);
 });
 
-test('pricing: list price per reply model; the dispatched model\'s own override wins; an unknown model is named', async () => {
-  const relay = { messages: 1, byModel: { 'claude-sonnet-5': { input_tokens: 2000, output_tokens: 1000, cache_read_input_tokens: 400, cache_creation_input_tokens: 0 } } };
+test('pricing: list price per reply model; the dispatched model\'s own override prices its own replies only; an unknown model is named', async () => {
+  const usage = { input_tokens: 2000, output_tokens: 1000, cache_read_input_tokens: 400, cache_creation_input_tokens: 0 };
+  const relay = { messages: 1, byModel: { 'claude-sonnet-5': usage } };
   const listed = priceRelayUsage(relay, 'sonnet');
   assert.ok(Math.abs(listed.costUsd - 0.01408) < 1e-9, String(listed.costUsd));   // 2000×2 + 1000×10 + 400×0.2 per Mtok
   assert.deepEqual(listed.unpriced, []);
   await addGlobalModel({ id: 'free-gw', label: 'Free gateway', cost: { free: true } });
-  assert.deepEqual(priceRelayUsage(relay, 'free-gw'), { costUsd: 0, unpriced: [] });
+  // The step's own replies (its id, booked under '' by the relay, or a dated alias of it) take its override.
+  for (const own of ['free-gw', '', 'free-gw-20260101']) assert.deepEqual(priceRelayUsage({ messages: 1, byModel: { [own]: usage } }, 'free-gw'), { costUsd: 0, unpriced: [] }, own);
+  // R11-1: a free step model never prices a call made on another model: that one is priced by its own list price.
+  const other = priceRelayUsage(relay, 'free-gw');
+  assert.ok(Math.abs(other.costUsd - 0.01408) < 1e-9, String(other.costUsd));
   const odd = priceRelayUsage({ messages: 1, byModel: { 'gw-odd': { input_tokens: 1e6, output_tokens: 1e6 } } }, null);
   assert.deepEqual(odd.unpriced, ['gw-odd']);
   assert.equal(odd.costUsd, UNPRICED_RATES.input + UNPRICED_RATES.output, 'an unpriced model books at the fallback rate, never $0 (audit 2.8)');
+});
+
+test('pricing: a reply on a model worca cannot price is unpriced, never the step model\'s rates (R11-1)', async () => {
+  await addGlobalModel({ id: 'openrouter/meta-llama/llama-3.3-70b-instruct:free', label: 'Llama free', cost: { free: true } });
+  await addGlobalModel({ id: 'google/gemini-2.5-flash-lite', label: 'Flash lite', cost: { perMtok: { input: 0.1, output: 0.4 } } });
+  const big = { input_tokens: 900_000, output_tokens: 100_000 };
+  // The audit's two cases: Opus named on a free OpenRouter step, gemini-3-pro on a cheap flash-lite step.
+  // Unpriced, and booked at the fallback rate (the highest list rate, audit 2.8), never the step model's.
+  const fallback = 0.9 * UNPRICED_RATES.input + 0.1 * UNPRICED_RATES.output;
+  for (const [model, step] of [['anthropic/claude-opus-4.1', 'openrouter/meta-llama/llama-3.3-70b-instruct:free'], ['gemini-3-pro', 'google/gemini-2.5-flash-lite']]) {
+    const r = priceRelayUsage({ messages: 1, byModel: { [model]: big } }, step);
+    assert.deepEqual(r.unpriced, [model]);
+    assert.ok(Math.abs(r.costUsd - fallback) < 1e-9, `${model}: ${r.costUsd}`);
+  }
+  // The step's own model, as the CLI sends it (no provider prefix), keeps the step's price.
+  const own = priceRelayUsage({ messages: 1, byModel: { 'gemini-2.5-flash-lite': big } }, 'google/gemini-2.5-flash-lite');
+  assert.ok(Math.abs(own.costUsd - 0.13) < 1e-9, String(own.costUsd));
+  // A step on a provider/model id booked under '' (the relay held the call to it) keeps the list price of its model.
+  const listed = priceRelayUsage({ messages: 1, byModel: { '': { input_tokens: 2000, output_tokens: 1000, cache_read_input_tokens: 400 } } }, 'anthropic/claude-sonnet-5');
+  assert.ok(Math.abs(listed.costUsd - 0.01408) < 1e-9, String(listed.costUsd));
+  assert.equal(isDispatchedModel('meta-llama/llama-3.3-70b-instruct:free', 'openrouter/meta-llama/llama-3.3-70b-instruct:free'), true);
+  assert.equal(isDispatchedModel('claude-sonnet-5-2', 'claude-sonnet-5'), false, 'a different model sharing a prefix');
+  assert.equal(isDispatchedModel('gemini-2.5-flash-001', 'gemini-2.5-flash'), true, 'a version suffix');
+  assert.equal(isDispatchedModel('claude-sonnet-5-20260101', 'claude-sonnet-5[1m]'), true, 'Claude`s 1M-context suffix');
 });
 
 /** An E2B env on the loopback fake whose `claude` makes `calls` streamed model calls through the relay, then prints
