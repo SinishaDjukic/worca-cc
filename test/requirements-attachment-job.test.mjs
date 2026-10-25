@@ -736,3 +736,52 @@ test('D14: runFiles lists the switched-on feature files, then the switched-on do
   rmSync(job.attachmentFile(g));
   assert.equal(job.unsendableRunFile(job.runFiles(f)).name, 'g.md');
 });
+
+test('D14: a staged copy that fails while its row stands as the start chose it says the stored file cannot be opened; a row changed or removed meanwhile says it changed', async (t) => {
+  const log = t.mock.method(console, 'error', () => {});
+  process.env.WORCA_MOCK = '1';
+  const base = join(worcaHome(), 'tmp', 'stage-test-rows');
+  mkdirSync(base, { recursive: true });
+  const f = createFeature({ scopeType: 'project', scopeKey: 'shop-rows', title: 'Rows', description: 'd' });
+  const fo = { type: 'feature', id: f.seq };
+  const [a, b, c, e] = job.addAttachments(fo, [textFile('a.md', 'aaaa'), textFile('b.md', 'bbbb'), textFile('c.md', 'cccc'), textFile('e.md', 'eeee')]);
+  await job.readsSettled(fo);
+  const entry = (r) => ({ id: r.id, name: r.name, path: job.attachmentFile(r), sha256: r.sha256 });
+  const cannot = (name) => `${name} cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.`;
+  const changed = (name) => `${name} could not be sent with the run: it changed while the run started. Try again.`;
+  const stage = async (id, r) => { let ran = false; const out = await job.withStagedRunFiles(id, [entry(r)], async () => { ran = true; return { status: 201 }; }, { base }); return [out.status, out.body.error, ran, existsSync(join(base, `orchestrator-extras-${id}`))]; };
+  // corrupted at rest: the same size, other bytes; the row is as the start chose it
+  writeFileSync(job.attachmentFile(a), 'AAAA');
+  assert.deepEqual(await stage('r-rot', a), [409, cannot('a.md'), false, false]);
+  // the body is gone, the row stands: the stored file, not a change
+  rmSync(job.attachmentFile(b));
+  assert.deepEqual(await stage('r-nobody', b), [409, cannot('b.md'), false, false]);
+  // the row was replaced meanwhile (another sha256): a change during the start
+  const was = entry(c);
+  updateAttachment(c.id, { sha256: sha(Buffer.from('cccc v2')) });
+  writeFileSync(job.attachmentFile(c), 'cccc v2');
+  let out = await job.withStagedRunFiles('r-replaced', [was], async () => ({ status: 201 }), { base });
+  assert.deepEqual([out.status, out.body.error], [409, changed('c.md')]);
+  // the row was removed meanwhile
+  const gone = entry(e);
+  job.removeAttachment(fo, e.id);
+  out = await job.withStagedRunFiles('r-removed', [gone], async () => ({ status: 201 }), { base });
+  assert.deepEqual([out.status, out.body.error], [409, changed('e.md')]);
+  assert.equal(log.mock.calls.length, 4, 'each raw error goes to the log');
+});
+
+test('D14: staged names are Windows-safe and unique after the mapping; a successful start gets a drop for the folder', async () => {
+  assert.deepEqual(['a:b?.md', 'notes.md.', 'x "y" <z>|.txt  ', 'CON.md', 'nul', 'Spec v2.pdf', '...'].map(job.stagedName),
+    ['a_b_.md', 'notes.md', 'x _y_ _z__.txt', '_CON.md', '_nul', 'Spec v2.pdf', 'file']);
+  const base = join(worcaHome(), 'tmp', 'stage-test-names');
+  mkdirSync(base, { recursive: true });
+  const src = join(base, 's.bin');
+  writeFileSync(src, 's');
+  let drop = null;
+  const ok = await job.withStagedRunFiles('r-names', [{ name: 'notes.md', path: src }, { name: 'notes.md.', path: src }, { name: 'q: why?.md', path: src }],
+    async (paths, staged) => { drop = staged.drop; return { status: 201, body: { paths } }; }, { base });
+  assert.deepEqual(ok.body.paths.map((p) => p.split(/[\\/]/).pop()), ['notes.md', 'notes (2).md', 'q_ why_.md']);
+  assert.deepEqual(readdirSync(join(base, 'orchestrator-extras-r-names')).sort(), ['notes (2).md', 'notes.md', 'q_ why_.md']);
+  await drop();
+  assert.equal(existsSync(join(base, 'orchestrator-extras-r-names')), false, 'the caller removes the folder once the run has its own copy');
+});

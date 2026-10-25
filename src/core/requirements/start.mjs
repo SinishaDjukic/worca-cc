@@ -10,7 +10,7 @@ import {
   requireFeature, listTurns, latestStart, createStart, appendTurn, linkPipeline, startByRunId, startByPipelineId, listAttachments,
 } from './store.mjs';
 import { isBusy } from './interview.mjs';
-import { runFiles, unsendableRunFile } from './attachment-job.mjs';
+import { runFiles, unsendableRunFile, cannotGoWithRun } from './attachment-job.mjs';
 import { markStarting, unmarkStarting, isStarting } from './starting.mjs';
 import { readiness } from './ready.mjs';
 import { renderTaskMarkdown } from './markdown.mjs';
@@ -45,7 +45,7 @@ function refusal(res) {
  * @param {{ reason?:string, workflowId?:string, sourceBranch?:string }} input
  * @param {{ by?:string|null }} who
  * @param {{ startRun:(body:object, opts:{runId:string, startedBy:string|null,
- *     extrasFiles?:Array<{name:string, path:string, sha256:string}>})=>Promise<{status:number, body:any}>,
+ *     extrasFiles?:Array<{id:string, name:string, path:string, sha256:string}>})=>Promise<{status:number, body:any}>,
  *   target:{ ok:boolean, label?:string, hint?:string, name?:string, path?:string }, newRunId?:()=>string }} deps
  * @returns {Promise<{ runId:string, version:number }>}
  */
@@ -86,10 +86,10 @@ export async function startFeature(seq, { reason, workflowId, sourceBranch } = {
     };
     const sent = runFiles(f);   // A8 D14
     const bad = unsendableRunFile(sent);
-    if (bad) throw new RequirementsError('CONFLICT', `${bad.name} cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.`);
+    if (bad) throw new RequirementsError('CONFLICT', cannotGoWithRun(bad.name));
     const runId = newRunId();
     const res = await startRun(body, { runId, startedBy: by,
-      ...(sent.length ? { extrasFiles: sent.map(({ name, path, sha256 }) => ({ name, path, sha256 })) } : {}) });
+      ...(sent.length ? { extrasFiles: sent.map(({ id, name, path, sha256 }) => ({ id, name, path, sha256 })) } : {}) });
     const status = Number(res && res.status);
     if (!(status >= 200 && status <= 299)) throw refusal(res);
     const stored = (res.body && typeof res.body.runId === 'string' && res.body.runId) || runId;

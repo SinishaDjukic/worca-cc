@@ -8,6 +8,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { WebSocket } from 'ws';
 
 let home; let srv; let base; let prev; let projKey; let projDir; let mod;
@@ -289,12 +290,12 @@ async function stopRun(runId) {
   const done = new Set(['done', 'stopped', 'error', 'paused', 'interrupted']);
   await waitFor(() => !mod.runs.get(runId) || done.has(String(mod.runs.get(runId).status || '')), 30000, 'the run to settle');
 }
-const stagedDirs = () => readdirSync(tmpdir()).filter((n) => n.startsWith('orchestrator-extras-')).sort();
+const PIPE = ['mock.md', 'notes (2).md', 'notes.md', 'spec_ v2_.md'];
 
-test('server: a start copies the switched-on files under their display names into the run\'s extras folder, and the run gets them', async () => {
+test('server: a start copies the switched-on files into the run\'s pipeline under Windows-safe, unique names, and leaves no staged copy', async () => {
   const up = (name, text) => ({ name, dataBase64: Buffer.from(text).toString('base64') });
   const c = await call('POST', '/api/requirements', { scopeType: 'project', scopeKey: projKey, title: 'With files', description: 'Before it ships',
-    attachments: [up('notes.md', 'notes'), up('mock.md', 'mock')] });
+    attachments: [up('notes.md', 'notes'), up('mock.md', 'mock'), up('spec: v2?.md', 'spec')] });
   assert.equal(c.status, 201, JSON.stringify(c.json));
   const seq = c.json.feature.seq;
   await waitFor(async () => (await call('GET', `/api/requirements/${seq}`)).json.feature.status === 'your_turn', 8000, 'your_turn');
@@ -315,26 +316,27 @@ test('server: a start copies the switched-on files under their display names int
     for (const a of v.feature.attachments) assert.equal((await call('PATCH', a.href, { sendWithRun: true })).status, 200);
     for (const a of v.feature.briefDocuments) assert.equal((await call('PATCH', a.href, { sendWithEveryRun: true })).status, 200);
 
-    // A start the run handler refuses (an unknown workflow) leaves no staged copies behind
-    const was = stagedDirs();
+    // A start the run handler refuses (an unknown workflow) answers without a path and stores nothing
     const no = await call('POST', `/api/requirements/${seq}/start`, { workflowId: 'wf_no_such_workflow' });
     assert.ok(no.status >= 400 && no.status < 500, JSON.stringify(no.json));
     assert.doesNotMatch(JSON.stringify(no.json), /orchestrator-extras/);
-    assert.deepEqual(stagedDirs(), was, 'the refused start removed its copies');
     assert.equal(store.latestStart(seq), null);
 
     const s = await call('POST', `/api/requirements/${seq}/start`, {});
     assert.equal(s.status, 201, JSON.stringify(s.json));
     runId = s.json.runId;
-    const dir = join(tmpdir(), `orchestrator-extras-${runId}`);
-    assert.deepEqual(readdirSync(dir).sort(), ['mock.md', 'notes (2).md', 'notes.md']);
-    assert.equal(readFileSync(join(dir, 'notes (2).md'), 'utf8'), 'the brief\'s notes', 'same-named files never overwrite each other');
-    assert.deepEqual(s.json.feature.starts[0].files.map((x) => [x.name, x.from]), [['notes.md', 'feature'], ['mock.md', 'feature'], ['notes.md', 'brief']]);
-    // createPipeline copies them into <pipeline>/extras, where the run's agents find them
+    assert.deepEqual(s.json.feature.starts[0].files.map((x) => [x.name, x.from]),
+      [['notes.md', 'feature'], ['mock.md', 'feature'], ['spec: v2?.md', 'feature'], ['notes.md', 'brief']], 'the start row keeps the display names');
+    // createPipeline copies them into <pipeline>/extras, the copy the run's agents read
     const pdir = await waitFor(() => mod.runs.get(runId)?.orch?.pipeline?.dir, 10000, 'the pipeline dir');
-    await waitFor(() => { try { return readdirSync(join(pdir, 'extras')).length === 3; } catch { return false; } }, 10000, 'the pipeline extras');
-    assert.deepEqual(readdirSync(join(pdir, 'extras')).sort(), ['mock.md', 'notes (2).md', 'notes.md']);
+    await waitFor(() => { try { return readdirSync(join(pdir, 'extras')).length === PIPE.length; } catch { return false; } }, 10000, 'the pipeline extras');
+    assert.deepEqual(readdirSync(join(pdir, 'extras')).sort(), PIPE);
     assert.equal(readFileSync(join(pdir, 'extras', 'notes.md'), 'utf8'), 'notes');
+    assert.equal(readFileSync(join(pdir, 'extras', 'notes (2).md'), 'utf8'), 'the brief\'s notes', 'same-named files never overwrite each other');
+    // then the staged folder goes: no orchestrator-extras-<runId> is left behind
+    const staged = join(tmpdir(), `orchestrator-extras-${runId}`);
+    await waitFor(() => !existsSync(staged), 10000, 'the staged folder to go');
+    assert.deepEqual(readdirSync(join(pdir, 'extras')).sort(), PIPE, 'the pipeline keeps its own copy');
   } finally {
     if (runId) {
       await stopRun(runId);
@@ -342,6 +344,18 @@ test('server: a start copies the switched-on files under their display names int
     }
     await call('DELETE', `/api/requirements/brief/project/${projKey}`);
   }
+});
+
+test('server: invokeStartRun removes the staged copies of a start the run handler refuses (that run id\'s folder)', async () => {
+  const src = join(home, 'staged-src.md');
+  writeFileSync(src, 'x');
+  const runId = randomUUID();
+  const staged = join(tmpdir(), `orchestrator-extras-${runId}`);
+  const out = await mod._testing.invokeStartRun({ projectDir: projDir, promptMarkdown: '# x', title: 'x', workflowId: 'wf_no_such_workflow' }, null,
+    { runId, extrasFiles: [{ name: 'a.md', path: src }] });
+  assert.ok(out.status >= 400 && out.status < 500, JSON.stringify(out.body));
+  assert.equal(existsSync(staged), false);
+  assert.equal(mod.runs.has(runId), false);
 });
 
 test('server: POST /api/run never takes _extrasPaths from its body', async () => {

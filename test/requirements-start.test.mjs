@@ -486,6 +486,7 @@ test('Start sends the switched-on files and documents as extrasFiles and records
     assert.deepEqual(opts.extrasFiles.map((x) => x.name), ['notes.md', 'glossary.md']);
     assert.ok(opts.extrasFiles.every((x) => typeof x.path === 'string' && x.path.endsWith('.txt')));
     assert.deepEqual(opts.extrasFiles.map((x) => x.sha256), [a.sha256, g.sha256], 'the staging checks each copy against its hash');
+    assert.deepEqual(opts.extrasFiles.map((x) => x.id), [a.id, g.id], 'and asks its row whether a failed copy is a change or a damaged body');
     assert.deepEqual(latestStart(f.seq).files, [{ id: a.id, name: 'notes.md', sha256: a.sha256, from: 'feature' }, { id: g.id, name: 'glossary.md', sha256: g.sha256, from: 'brief' }]);
     assert.deepEqual(r.json.feature.starts[0].files.map((x) => x.name), ['notes.md', 'glossary.md']);
     assert.equal(b.sendWithRun, false);

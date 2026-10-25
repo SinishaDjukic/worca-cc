@@ -2830,6 +2830,7 @@ const startRunHandler = async (req, res) => {
     // does not survive a reboot); a schedule stages them below, once it is validated.
     // A8 D14: a requirements start hands its files' staged copies in-process (req._extrasPaths, set by invokeStartRun
     // only, never from HTTP, like _roundOf); they replace body.extras.
+    // `sched` would drop them, but never meets them: a requirements start's body carries no schedule fields.
     const handed = Array.isArray(req._extrasPaths) ? req._extrasPaths.filter((x) => typeof x === 'string' && fs.existsSync(x)) : null;
     const extras = internal
       ? (Array.isArray(stored.extrasPaths) ? stored.extrasPaths.filter((x) => typeof x === 'string' && fs.existsSync(x)) : [])
@@ -3692,13 +3693,34 @@ function requirementsRunSummary({ runId, pipelineId }) {
   };
 }
 
-/** Call startRunHandler without HTTP. Resolves { status, body }. A8 D14: `extrasFiles` ([{ name, path, sha256? }], a
- *  requirements start) are staged into the run's extras folder first and handed over as req._extrasPaths; a refused
- *  start removes them again (withStagedRunFiles). */
+/** A8 D14: a requirements start's staged copies go once createPipeline has copied them into <pipeline>/extras: the run
+ *  and its agents read only that copy (run-harness _collectExtras; createPipeline is the one reader of opts.extras, and
+ *  `orch.pipeline` is set only when it returned), or when the run ends before it got that far. Best effort: `drop`
+ *  logs a failure. */
+function dropStagedOnceCopied(runId, drop) {
+  const entry = runs.get(runId);
+  const orch = entry && entry.orch;
+  if (!orch) { void drop(); return; }
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    if (typeof orch.off === 'function') orch.off('state', check); else if (typeof orch.removeListener === 'function') orch.removeListener('state', check);
+    void drop();
+  };
+  const check = () => { if (orch.pipeline && orch.pipeline.dir) finish(); };
+  subscribe(orch, 'state', check);
+  if (entry.launch && typeof entry.launch.finally === 'function') entry.launch.finally(finish);
+  check();
+}
+
+/** Call startRunHandler without HTTP. Resolves { status, body }. A8 D14: `extrasFiles` ([{ id?, name, path, sha256? }],
+ *  a requirements start) are staged into the run's extras folder first and handed over as req._extrasPaths; a refused
+ *  start removes them again (withStagedRunFiles), a started one once its pipeline has its own copy. */
 async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null } = {}) {
   const files = Array.isArray(extrasFiles) && extrasFiles.length ? extrasFiles : null;
   const id = files ? (runId || randomUUID()) : runId;   // the extras folder is named by the run id
-  const run = async (extrasPaths) => {
+  const run = async (extrasPaths, staged = null) => {
     let out = { status: 200, body: null };
     const res = {
       statusCode: 200,
@@ -3707,6 +3729,7 @@ async function invokeStartRun(body, internal, { startedBy = null, runId = null, 
     };
     await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: id,
       _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}), ...(extrasPaths ? { _extrasPaths: extrasPaths } : {}) }, res);
+    if (staged && out.status >= 200 && out.status <= 299) dropStagedOnceCopied(id, staged.drop);
     return out;
   };
   return files ? withStagedRunFiles(id, files, run) : run(null);
@@ -18705,7 +18728,7 @@ export const _testing = {
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
   startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES, MARKET_JOBS, pruneMarketJobs, marketJobFailure,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
-  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,
+  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, invokeStartRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,
   uiControl, bearerMatches,
   broadcast, sockets, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,

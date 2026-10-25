@@ -3830,7 +3830,7 @@ export function runFiles(f) {
 
   `start.mjs`: import `listAttachments` from the store and `runFiles` from `./attachment-job.mjs`; `const r = readiness(f, { turns: listTurns(f.seq), target, files: listAttachments('feature', f.seq) });`; before `const runId = newRunId();`: `const sent = runFiles(f);   // D14`; the call `await startRun(body, { runId, startedBy: by, ...(sent.length ? { extrasFiles: sent.map(({ name, path }) => ({ name, path })) } : {}) })`; `createStart({ …, files: sent.map(({ id, name, sha256, from }) => ({ id, name, sha256, from })) }, { by })`; `startView` returns `files: start.files || []` after `sourceBranch`.
 
-  `routes.mjs` `featureView`: `changedSinceStart: rows.length ? changedSince(rows[0].spec, f.spec, { filesBefore: rows[0].files || [], filesNow: runFiles(f) }) : []` (import `runFiles`).
+  `routes.mjs` `featureView`: `changedSinceStart: rows.length ? changedSince(rows[0].spec, f.spec, sentFiles(rows[0], f)) : []` (import `runFiles`), with `const sentFiles = (start, f) => { const own = (list) => list.filter((x) => x.from === 'feature'); return { filesBefore: own(start.files || []), filesNow: own(runFiles(f)) }; };`: only the feature files are compared; a document's switch is a setting of the whole scope that Undo leaves alone, so documents never count as a change since the start.
 
   `edits.mjs` `revertToStart` (import `listAttachments, updateAttachment` from the store):
 

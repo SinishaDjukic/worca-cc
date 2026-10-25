@@ -574,12 +574,34 @@ const sha256OfFile = (path) => new Promise((resolve, reject) => {
   createReadStream(path).on('error', reject).on('data', (c) => h.update(c)).on('end', () => resolve(h.digest('hex')));
 });
 
-/** D14: a start's files copied under their display names into the run's extras folder (writeExtras'
- *  orchestrator-extras-<runId>, which createPipeline copies into <pipeline>/extras by base name); a name already used in
- *  that run gets " (2)", so no file overwrites another. An entry's `sha256`, when given, is checked against its copy, so
- *  the run gets exactly the version the start chose. `start(paths)` runs the start; a refused start (not 2xx) or a throw
- *  removes the folder again, so nothing is left in the temp dir. A body removed or replaced meanwhile (a brief
- *  document's routes do not wait for a start) answers 409 naming the file, never its path, and the start never runs. */
+/** D14: what a start answers for a switched-on file whose stored body Worca cannot open (or that is not its version). */
+export const cannotGoWithRun = (name) => `${name} cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.`;
+
+/** D14: a staged copy's file name, from the display name: safe on Windows (`: * ? " < > |` become `_`, trailing dots
+ *  and spaces go, a device name such as CON gets a leading `_`). Only the copy is named so; the start row keeps the
+ *  display name. */
+export function stagedName(name) {
+  let s = displayName(name).replace(/[:*?"<>|]/g, '_').replace(/[. ]+$/, '');
+  if (!s) s = 'file';
+  if (/^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i.test(s)) s = `_${s}`;
+  return s;
+}
+
+/** Whether the row a staged copy came from still stands as the start chose it (same id, same sha256): then a copy that
+ *  failed or does not match is the stored body's fault, not a change made during the start. */
+function rowAsChosen(f) {
+  if (!f.id || !f.sha256) return false;
+  try { const row = getAttachment(f.id); return !!row && row.sha256 === f.sha256; } catch { return false; }
+}
+
+/** D14: a start's files copied into the run's extras folder (writeExtras' orchestrator-extras-<runId>, which
+ *  createPipeline copies into <pipeline>/extras by base name), each under its stagedName; a name already used in that
+ *  run gets " (2)", so no file overwrites another. An entry's `sha256`, when given, is checked against its copy, so the
+ *  run gets exactly the version the start chose. `start(paths, { drop })` runs the start (`drop` removes the folder, for
+ *  the caller to call once the run has its own copy); a refused start (not 2xx) or a throw removes the folder again, so
+ *  nothing is left in the temp dir. A copy that fails or does not match answers 409 naming the file, never its path, and
+ *  the start never runs: "changed while the run started" when its row was removed or replaced meanwhile (a brief
+ *  document's routes do not wait for a start), else cannotGoWithRun (the stored body itself is damaged). */
 export async function withStagedRunFiles(runId, list, start, { base = tmpdir() } = {}) {
   const dir = join(base, `orchestrator-extras-${runId}`);
   const drop = () => rm(dir, { recursive: true, force: true }).catch((e) => console.error(`requirements: could not remove the staged files of run ${runId}:`, message(e)));
@@ -591,7 +613,7 @@ export async function withStagedRunFiles(runId, list, start, { base = tmpdir() }
   const taken = [];
   const paths = [];
   for (const f of list) {
-    const name = uniqueName(displayName(f.name), taken);
+    const name = uniqueName(stagedName(f.name), taken);   // unique after the mapping: "notes.md." and "notes.md" differ
     taken.push(name);
     const dest = join(dir, name);
     try {
@@ -600,12 +622,14 @@ export async function withStagedRunFiles(runId, list, start, { base = tmpdir() }
     } catch (err) {
       console.error(`requirements: a file of run ${runId} could not be staged:`, message(err));
       await drop();
-      return { status: 409, body: { error: `${displayName(f.name)} could not be sent with the run: it changed while the run started. Try again.` } };
+      const shown = displayName(f.name);
+      return { status: 409, body: { error: rowAsChosen(f) ? cannotGoWithRun(shown)
+        : `${shown} could not be sent with the run: it changed while the run started. Try again.` } };
     }
     paths.push(dest);
   }
   let out;
-  try { out = await start(paths); } catch (err) { await drop(); throw err; }
+  try { out = await start(paths, { drop }); } catch (err) { await drop(); throw err; }
   const status = Number(out && out.status);
   if (!(status >= 200 && status <= 299)) await drop();
   return out;
