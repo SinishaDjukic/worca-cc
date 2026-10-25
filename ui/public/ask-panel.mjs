@@ -1952,7 +1952,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         onOpen: (id) => { if (historyOverlayOpen()) setHistoryOpen(false, { persist: false }); showThread(id); route(id); },
         onRename: (r) => { void renameThread(r); }, onDelete: (r) => { void deleteThread({ id: r.id, title: r.title }); },
         onHelp: (opener) => openChatKeys(opener),
-        flagOn: (k) => flagOn(k, doc), confirm: (o) => confirm(o),
+        flagOn: (k) => flagOn(k, doc), confirm: (o) => confirm(o), requestRefresh: () => scheduleThreadsRefresh(),
         // #948 s3: Delete group removed these chats; the open one goes home, as a deleted chat does (deleteThread).
         onChatsGone: (ids) => {
           for (const id of ids) { if (readStoredThread() === id) storeThread(null); st.askedIn.delete(id); st.queues.delete(id); }
@@ -1972,7 +1972,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       el.headMeter.addEventListener('click', () => openCtxPopover(el.headMeter));
       el.head.appendChild(el.headMeter);
       updateMeters();
-      void chatsCol.refresh();
+      loadHistory();                              // hidden (a boot on another page): stale until Chat shows
     } else {
       chatsCol.destroy();
       chatsCol = null;
@@ -2126,7 +2126,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    *  show tries again (a boot whose endpoints failed does not keep "No saved chats." for good). While the column's
    *  search holds text, every fetch (a show, a refresh frame, a delete) asks for its matches. */
   function loadHistory() {
-    if (chatsCol) { void chatsCol.refresh(); return; }   // #948 s2: the Chats column takes every refresh path
+    if (chatsCol) {                                    // #948 s2: the Chats column takes every refresh path
+      if (!st.open) { st.historyStale = true; return; }
+      st.historyStale = false;
+      void chatsCol.refresh();
+      return;
+    }
     st.historyStale = false;
     const gen = ++st.historyGen;
     const query = st.historyQuery.trim();

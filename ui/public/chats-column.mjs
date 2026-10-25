@@ -24,7 +24,7 @@ const MAX_PAGE = 200;
 
 export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = () => Date.now(), level = () => 'simple',
   scopeName = () => '', currentId = () => null, onOpen, onRename, onDelete, onHelp = () => {},
-  flagOn = () => false, confirm = async () => false, onChatsGone = () => {} }) {
+  flagOn = () => false, confirm = async () => false, onChatsGone = () => {}, requestRefresh = null }) {
   const doc = host.ownerDocument;
   const el = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   // focusKey uses list-dom.mjs's navKey form (`row:chat:ID`, `sec:older`), as runsUi does.
@@ -117,7 +117,9 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     paint();
   }
   const refresh = () => load();
+  // `requestRefresh` (ask-panel.mjs): the panel's debounced refresh, which only marks the list stale while Chat is hidden.
   function scheduleRefresh() {
+    if (requestRefresh) { requestRefresh(); return; }
     if (st.timer) return;
     st.timer = win.setTimeout(() => { st.timer = null; void refresh(); }, 250);
   }

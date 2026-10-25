@@ -93,6 +93,26 @@ test('loading, then offline with Try again; Try again re-fetches and paints the 
   assert.equal(col.querySelector('.runs-offline'), null);
 });
 
+test('hidden, the column fetches nothing: the first show loads it once; a frame while hidden waits for the next show', async () => {
+  const rec = { calls: [], patches: [] };
+  const ctx = makePanel({ innerWidth: 1600, now: () => NOW, fetchHandler: api(rec) });
+  applyFlags({ chatsColumn: true }, ctx.doc);
+  ctx.panel.chatsColumnChanged();
+  await ticks(ctx);
+  assert.equal(listGets(rec).length, 0, 'a boot on another page asks for no chats');
+  ctx.panel.open({ threadId: null });
+  await ticks(ctx);
+  assert.equal(listGets(rec).length, 1, 'the first show loads the list');
+  ctx.panel.close();
+  ctx.panel.pushServerFrame({ type: 'ask-command', threadId: 'ask_00000002', command: { blockId: 'sess:1', status: 'running' } });
+  await new Promise((r) => setTimeout(r, 300));
+  await ticks(ctx);
+  assert.equal(listGets(rec).length, 1, 'hidden: the frame only marks the list stale');
+  ctx.panel.open({ threadId: null });
+  await ticks(ctx);
+  assert.equal(listGets(rec).length, 2, 'the next show fetches it once');
+});
+
 test('a failed Show older keeps the rows and shows one err toast', async () => {
   const { ctx, rec, doc, col } = await bootOn({ cursor: 'c1' });
   col.querySelector('[data-section="older"] .runs-sec-head').click();
