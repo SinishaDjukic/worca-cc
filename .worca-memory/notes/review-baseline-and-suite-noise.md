@@ -1,7 +1,7 @@
 ---
 name: review-baseline-and-suite-noise
 description: Read before reviewing a worca run's diff or judging a red full suite — the prompt's checkpoint may not be the branch base, and several suite failures are enviro
-updated: 2026-10-24T18:03:24.605Z
+updated: 2026-10-25T00:28:29.075Z
 author: Bulibas
 ---
 
@@ -90,6 +90,10 @@ cycle-1 tree. Do two things:
 - `test/api-platform-heartbeat.test.mjs` "an idle server: ok …" gets `health: 'degraded'` when the disk holding the
   temp home is nearly full (`diskNearlyFull` → the `diskFull` signal; seen 2026-10-22 at 96% used, on a `git archive`
   base copy too). Check `df -h` before blaming the diff.
+- `test/ask-api-action-cards.test.mjs` :206 (Away "I'm back" counts only inside away hours) and :271 (per-person Away B4)
+  fail in about 30 ms, alone too, with "inside away hours, … changed the status" (seen 2026-10-25 at 03:24 local, on a
+  `git archive` checkpoint copy as well). They build the away window from the clock, so they are time-of-day noise, not
+  load: rerun them on a base copy at the same time before blaming the diff.
 - A NEW test that forces an interleaving (fs-gate, a held lock, a poll loop) can pass alone and in its scoped run, yet
   fail in the full suite. Before handing one off, run 8–10 copies of its file at once:
   `for i in $(seq 8); do (npm test -- test/x.test.mjs > /tmp/x-$i.log 2>&1 &); done` — each copy gets its own temp
