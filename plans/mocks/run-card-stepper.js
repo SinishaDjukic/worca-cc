@@ -59,17 +59,19 @@ function pickerHtml(kind) {
 let pendingFocus = '';
 let lastOpen = '';
 
-function rowHtml(r, extra) {
-  const more = (extra || []).filter(Boolean);
-  const bits = [r.loops ? `<span class="sc-loop" title="Ran ${r.loops} times">${svg('refresh', 11)}${r.loops}</span>` : '', r.time ? `<span>${esc(r.time)}</span>` : ''].concat(more.filter((x) => !x.startsWith('<button'))).filter(Boolean);
-  const meta = bits.join('<span class="rc-sep">·</span>') + more.filter((x) => x.startsWith('<button')).join('');   // controls follow without a dot
-  const name = r.ref ? `<button type="button" class="sc-step rd-route-name" data-ref="${esc(r.ref)}" data-key="ref:${esc(r.ref)}" title="Open ${esc(r.name)} in Activity">${esc(r.name)}</button>`
-    : `<span class="rd-route-name" title="${esc(r.name)}"${r.akey ? ` tabindex="-1" data-key="act:${esc(r.akey)}"` : ''}>${esc(r.name)}</span>`;
+function rowHtml(r, full) {
+  // A step row is cells of its list's grid: circle · name · time · loops, and in Activity also model · cost · Log.
+  // Rows are subgrids, so every column lines up down the list; on narrow cards the details drop under the name.
+  const name = r.ref ? `<button type="button" class="sc-step rd-route-name sc-name" data-ref="${esc(r.ref)}" data-key="ref:${esc(r.ref)}" title="Open ${esc(r.name)} in Activity">${esc(r.name)}</button>`
+    : `<span class="rd-route-name sc-name" title="${esc(r.name)}"${r.akey ? ` tabindex="-1" data-key="act:${esc(r.akey)}"` : ''}>${esc(r.name)}</span>`;
+  const loops = r.loops ? `<span class="sc-loop" title="Ran ${r.loops} times">${svg('refresh', 11)}${r.loops}</span>` : '';
+  const log = full && !/is-next/.test(r.rowCls) && !r.evidence ? `<button type="button" class="btn btn-sm btn-quiet rtab-log" data-key="log:${esc(r.akey)}">Log</button>` : '';
+  const rest = `<span class="sc-rest"><span class="sc-loops">${loops}</span>${full ? `<span class="sc-model">${esc(r.model || '')}</span><span class="sc-cost">${esc(r.cost || '')}</span><span class="sc-act">${log}</span>` : ''}</span>`;
   // A failed or blocked step shows what broke, its last lines and a way into the log, in Activity only.
   const ev = r.evidence ? `<div class="rtab-ev"><p class="rtab-ev-t">${esc(r.evidence.title)}</p><pre class="rtab-ev-l">${r.evidence.lines.map(esc).join('\n')}</pre><button type="button" class="btn btn-sm rtab-ev-btn" data-key="log:${esc(r.akey)}">${esc(r.evidence.log)}</button></div>` : '';
-  return `<li class="rd-route-row ${r.rowCls}${r.focus ? ' is-focus' : ''}"><span class="rd-route-dot ${r.dotCls}" role="img" aria-label="${esc(r.word)}">${svg(r.icon, 10)}</span>
-    <div class="rd-route-main"><div class="rd-route-place">${name}${meta ? `<span class="sc-meta">${meta}</span>` : ''}</div>
-    ${r.live ? `<div class="rd-route-second" title="${esc(r.live)}">${esc(r.live)}${r.when ? `<span class="rc-when"> · ${esc(r.when)}</span>` : ''}</div>` : ''}${ev}</div></li>`;
+  return `<li class="rd-route-row sc-row ${r.rowCls}${r.focus ? ' is-focus' : ''}"><span class="rd-route-dot ${r.dotCls}" role="img" aria-label="${esc(r.word)}">${svg(r.icon, 10)}</span>
+    ${name}<span class="sc-time">${esc(r.time || '')}</span>${rest}
+    ${r.live ? `<div class="rd-route-second sc-line" title="${esc(r.live)}">${esc(r.live)}${r.when ? `<span class="rc-when"> · ${esc(r.when)}</span>` : ''}</div>` : ''}${ev}</li>`;
 }
 // The ship choice: one pick, so a radio group (arrow keys move and pick); Recommended is the neutral chip, then why.
 function choiceHtml(ch) {
@@ -104,9 +106,10 @@ function activityPanel(v) {
   const view = ui.view || 'steps';
   const seg = `<div class="seg" role="group" aria-label="Show"><button type="button" data-view="steps" data-key="view:steps" aria-pressed="${view === 'steps'}">Steps</button><button type="button" data-view="graph" data-key="view:graph" aria-pressed="${view === 'graph'}">Graph</button></div>`;
   if (view === 'graph') return `<div class="rtab-bar">${seg}</div><p class="rtab-dim rtab-p">The run graph, as today, centred on the live step; a step opens the same log drawer.</p>`;
-  const stages = v.activity.map((st) => `<section class="rtab rtab-stage"><h2 class="rtab-h">${esc(st.label)}${st.title ? ' · ' + esc(st.title) : ''}${st.meta ? ` <span class="rtab-dim">${esc(st.meta)}</span>` : ''}</h2>
-    <ol class="rd-route-list sc-subs">${st.rows.map((r) => rowHtml(Object.assign({}, r, { ref: '', akey: r.ref }), [r.model ? `<span>${esc(r.model)}</span>` : '', r.cost ? `<span>${esc(r.cost)}</span>` : '',
-      /is-next/.test(r.rowCls) || r.evidence ? '' : `<button type="button" class="btn btn-sm btn-quiet rtab-log" data-key="log:${esc(r.ref)}">Log</button>`])).join('')}</ol></section>`).join('');
+  // One list for the whole tab, stage headings as full-width rows, so every step on the tab shares the same columns.
+  const rows = v.activity.map((st) => `<li class="sc-stage-row"><h2 class="rtab-h">${esc(st.label)}${st.title ? ' · ' + esc(st.title) : ''}${st.meta ? ` <span class="rtab-dim">${esc(st.meta)}</span>` : ''}</h2></li>`
+    + st.rows.map((r) => rowHtml(Object.assign({}, r, { ref: '', akey: r.ref }), true)).join('')).join('');
+  const stages = `<section class="rtab rtab-stage"><ol class="rd-route-list sc-subs is-full" aria-label="Steps">${rows}</ol></section>`;
   return `<div class="rtab-bar">${seg}</div>${stages}`;
 }
 function decisionsPanel(v) {
