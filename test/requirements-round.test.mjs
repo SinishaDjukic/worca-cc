@@ -335,6 +335,7 @@ const A2_ROUND_SYSTEM_LINES = [
   `- Ask at most ${MAX_QUESTIONS} questions, only the ones whose answers change what gets built. Each question has 2 to 4 short options, your recommended option (copied exactly from the options) and one short line on why you ask it.`,
   '- If an answer contradicts an earlier answer or the spec, ask about the contradiction instead of choosing a side.',
   '- Do not ask what the project context, the product brief, the attached files or the code summary already answers.',
+  '- When a criterion, an assumption or a question comes from a file in <attachments> or a document in <product_brief>, set its "source" to that file\'s name exactly as written there; otherwise null.',
   '- Turn every gap you cannot close into an assumption the product owner can confirm or reject.',
   '- Acceptance criteria are observable, testable statements of behaviour. Keep the ids of existing criteria and assumptions; give new ones the id null.',
   '- Never remove a criterion or an assumption, and never change a section listed in <edited_by_product_owner>.',
@@ -343,9 +344,9 @@ const A2_ROUND_SYSTEM_LINES = [
   '',
   'Reply with ONLY this JSON object: no prose, no code fence.',
   '{ "spec": { "goal": { "text": "", "measure": "" }, "actors": [], "flow": [], "edgeCases": [], "rules": [], "outOfScope": [], "openQuestions": [] },',
-  '  "criteria": [{ "id": "R-po-1", "text": "" }],',
-  '  "assumptions": [{ "id": null, "text": "" }],',
-  '  "questions": [{ "id": "short-kebab-id", "question": "", "options": ["", ""], "recommended": "", "why": "" }],',
+  '  "criteria": [{ "id": "R-po-1", "text": "", "source": null }],',
+  '  "assumptions": [{ "id": null, "text": "", "source": null }],',
+  '  "questions": [{ "id": "short-kebab-id", "question": "", "options": ["", ""], "recommended": "", "why": "", "source": null }],',
   '  "done": false,',
   '  "note": "one short line for the product owner" }',
 ];
@@ -498,4 +499,36 @@ test('A8: without files the round prompt is A7\'s text; two rounds with the same
   const one = roundPromptParts({ feature: A2_FEATURE(), turns: A2_TURNS.slice(0, 1), round: 2, attachments: ATT });
   const two = roundPromptParts({ feature: A2_FEATURE(), turns: A2_TURNS, round: 3, attachments: ATT });
   assert.equal(one.stable, two.stable);
+});
+
+// ── A8 D13: sources ─────────────────
+const SRC = ['support-tickets.pdf', 'Glossary.pdf'];
+
+test('A8 D13: a listed name is kept with the listed spelling; anything else is dropped', () => {
+  const r = applyRound(emptySpec(), {
+    spec: {},
+    criteria: [{ id: null, text: 'Cancel until the label is printed', source: 'SUPPORT-TICKETS.PDF' }, { id: null, text: 'B', source: '../etc/passwd' }],
+    assumptions: [{ id: null, text: 'Refunds go to the card', source: 'glossary.pdf' }, { id: null, text: 'C', source: 7 }],
+    questions: [{ id: 'when', question: 'Until when?', options: ['Label', 'Pick-up'], recommended: 'Label', why: '38 tickets', source: 'support-tickets.pdf' }],
+  }, { sources: SRC });
+  assert.deepEqual(r.spec.criteria.map((c) => c.source), ['support-tickets.pdf', undefined]);
+  assert.deepEqual(r.spec.assumptions.map((a) => a.source), ['Glossary.pdf', undefined]);
+  assert.equal(r.questions[0].source, 'support-tickets.pdf');
+  const none = applyRound(emptySpec(), { spec: {}, criteria: [{ id: null, text: 'X', source: 'support-tickets.pdf' }] });
+  assert.equal('source' in none.spec.criteria[0], false, 'no files listed: no source');
+});
+
+test('A8 D13: an unedited criterion and an open assumption take the reply\'s source with its text; an edited one keeps its own', () => {
+  const prev = { ...emptySpec(), criteria: [{ id: 'R-po-1', text: 'Old', source: 'Glossary.pdf' }, { id: 'R-po-2', text: 'Mine', edited: true, source: 'Glossary.pdf' }],
+    assumptions: [{ id: 'A-1', text: 'a', status: 'open' }, { id: 'A-2', text: 'b', status: 'confirmed', source: 'Glossary.pdf' }] };
+  const r = applyRound(prev, { spec: {}, criteria: [{ id: 'R-po-1', text: 'New', source: null }, { id: 'R-po-2', text: 'Theirs', source: 'support-tickets.pdf' }],
+    assumptions: [{ id: 'A-1', text: 'a2', source: 'support-tickets.pdf' }, { id: 'A-2', text: 'b2', source: null }] }, { sources: SRC });
+  assert.deepEqual(r.spec.criteria.map((c) => [c.text, c.source]), [['New', undefined], ['Mine', 'Glossary.pdf']]);
+  assert.deepEqual(r.spec.assumptions.map((a) => [a.text, a.source]), [['a2', 'support-tickets.pdf'], ['b', 'Glossary.pdf']]);
+});
+
+test('A8 D17: the mock round\'s first criterion carries the first file\'s name', () => {
+  const m = mockRoundReply({ title: 'T', description: 'D', rounds: 0 }, false, { sources: ['notes.md'] });
+  assert.equal(m.criteria[0].source, 'notes.md');
+  assert.equal(mockRoundReply({ title: 'T', description: 'D', rounds: 0 }, false).criteria[0].source, null);
 });

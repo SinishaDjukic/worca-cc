@@ -239,7 +239,7 @@ function runJob(row, target, scopeType, scopeKey, by, d) {
         try { reply = await briefCall(d, { cwd: look.cwd, prompt, model: model || undefined, effort, timeoutMs }); }
         catch (err) { cost = Number(err?.costUsd) || 0; throw err; }
         cost = Number(reply.costUsd) || 0;
-        fresh = normalizeBrief(reply.text, { cwds: cwdsOf(look.cwd), members });   // while the checkout is still there
+        fresh = normalizeBrief(reply.text, { cwds: cwdsOf(look.cwd), members, sources: docs.map((x) => x.name) });   // while the checkout is still there
         sources = scopeType === 'project'
           ? [{ project: target.dirs[0].project, branch: target.dirs[0].base.branch, ref: target.dirs[0].base.ref, sha: look.commit || null }]
           : target.dirs.filter((x) => (members || []).includes(x.project))

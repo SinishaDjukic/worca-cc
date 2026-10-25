@@ -98,7 +98,7 @@ export function editCriterion(seq, id, text, { by = null } = {}) {
   if (!f.spec.criteria.some((c) => c.id === id)) throw new RequirementsError('NOT_FOUND', `no criterion ${String(id).slice(0, 20)}`);
   return tx(() => {
     appendTurn(seq, { kind: 'edit', payload: { criterion: id, action: 'edited' } }, { by });
-    return updateFeature(seq, { spec: { ...f.spec, criteria: f.spec.criteria.map((c) => (c.id === id ? { id, text: t, edited: true } : c)) } }, { by });
+    return updateFeature(seq, { spec: { ...f.spec, criteria: f.spec.criteria.map((c) => (c.id === id ? { id, text: t, edited: true, ...(c.source ? { source: c.source } : {}) } : c)) } }, { by });
   });
 }
 

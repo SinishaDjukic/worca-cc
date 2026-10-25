@@ -512,3 +512,16 @@ test('A8: documents go after the four sections, outside their cap, and into <bri
     + 'The working directory, /w/auto-look-0a1b2c3d, is a checkout of the project.'), p);
   assert.ok(BRIEF_SYSTEM_PROMPT.includes('<brief_documents>'));
 });
+
+test('A8 D13: brief users, terms and areas keep a source among the documents; edits keep it; the Markdown says "(from <name>)"', () => {
+  const reply = JSON.stringify({ product: 'P', users: [{ name: 'Buyer', can: 'buys', source: 'GLOSSARY.pdf' }],
+    terms: [{ term: 'Order', meaning: 'a purchase', source: 'nope.pdf' }], areas: [{ name: 'Orders', text: 't', status: 'exists', source: 'glossary.pdf' }] });
+  const { sections } = normalizeBrief(reply, { sources: ['glossary.pdf'] });
+  assert.deepEqual([sections.users[0].source, sections.terms[0].source, sections.areas[0].source], ['glossary.pdf', undefined, 'glossary.pdf']);
+  const users = parseSectionValue('users', 'Buyer: buys and returns', sections);
+  assert.equal(users[0].source, 'glossary.pdf');
+  const md = renderBriefMarkdown({ scopeType: 'project', sections, sources: [], files: [], madeAt: '2026-10-01T00:00:00Z' }, { scopeLabel: 'Shop' });
+  assert.ok(md.includes('- Buyer: buys (from glossary.pdf)'));
+  assert.ok(md.includes('- Orders (exists): t (from glossary.pdf)'));
+  assert.ok(!renderBriefForPrompt(sections).includes('(from'), 'the prompt text is unchanged');
+});

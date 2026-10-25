@@ -892,3 +892,17 @@ test('A8 D6: a refresh hands the brief\'s documents to the look as <brief_docume
   assert.equal(runner.calls[0].prompt.includes('<brief_documents>'), false);
   assert.match(runner.calls[1].prompt, /<brief_documents>\ntone\.md: Friendly and short\.\n<\/brief_documents>\n\nThese documents are the product owner's material/);
 });
+
+test('A8 D13: a brief item the reply gives a document as its source keeps it, with the listed spelling', async () => {
+  const r = repo();
+  const lk = looks();
+  const runner = fakeRunner([goodReply(lk.lookDir), goodReply(lk.lookDir, { users: [{ name: 'Shopper', can: 'orders.', source: 'TONE.md' }] })]);
+  const k = key();
+  const d = deps({ runner, lk, projects: [project(k, r.dir)] });
+  await (await makeBrief('project', k, {}, d)).job;
+  const doc = insertAttachment({ id: mintAttachmentId(), ownerType: 'brief', ownerId: getBrief('project', k).id, name: 'tone.md', kind: 'text',
+    mime: 'text/markdown', bytes: 3, sha256: 'tone2' });
+  updateAttachment(doc.id, { status: 'done', summary: 'Friendly.' });
+  await (await makeBrief('project', k, {}, d)).job;
+  assert.equal(getBrief('project', k).sections.users[0].source, 'tone.md');
+});

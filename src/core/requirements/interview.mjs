@@ -403,13 +403,13 @@ async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
   const turns = listTurns(seq);
   const files = promptFiles(f);   // A8 D6: the feature's files and the scope's documents, as the prompts carry them
   const brief = briefFor(f, files.documents);   // A7 D10: every round reads the scope's usable brief and records which one
-  const seqs = { criteriaSeq: f.criteriaSeq, assumptionSeq: f.assumptionSeq, final: isFinal, removedCriteria: removedCriteria(turns) };
+  const seqs = { criteriaSeq: f.criteriaSeq, assumptionSeq: f.assumptionSeq, final: isFinal, removedCriteria: removedCriteria(turns), sources: files.sources };
   let applied = null;
   let model = null;
   let cost = 0;
   let lastErr = null;
   if (mockEnabled({})) {
-    applied = applyRound(f.spec, mockRoundReply(f, isFinal, { followUp: followItems }), seqs);
+    applied = applyRound(f.spec, mockRoundReply(f, isFinal, { followUp: followItems, sources: files.sources }), seqs);
   } else {
     const ctx = getContext(f.scopeType, f.scopeKey);
     const prompt = buildRoundPrompt({ feature: f, context: ctx.body, turns, final: isFinal, round: f.rounds + 1, followUp: followItems, brief: brief?.text,

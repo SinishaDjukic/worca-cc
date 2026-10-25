@@ -29,6 +29,7 @@ export const ROUND_SYSTEM_PROMPT = [
   `- Ask at most ${MAX_QUESTIONS} questions, only the ones whose answers change what gets built. Each question has 2 to 4 short options, your recommended option (copied exactly from the options) and one short line on why you ask it.`,
   '- If an answer contradicts an earlier answer or the spec, ask about the contradiction instead of choosing a side.',
   '- Do not ask what the project context, the product brief, the attached files or the code summary already answers.',
+  '- When a criterion, an assumption or a question comes from a file in <attachments> or a document in <product_brief>, set its "source" to that file\'s name exactly as written there; otherwise null.',
   '- Turn every gap you cannot close into an assumption the product owner can confirm or reject.',
   '- Acceptance criteria are observable, testable statements of behaviour. Keep the ids of existing criteria and assumptions; give new ones the id null.',
   '- Never remove a criterion or an assumption, and never change a section listed in <edited_by_product_owner>.',
@@ -37,9 +38,9 @@ export const ROUND_SYSTEM_PROMPT = [
   '',
   'Reply with ONLY this JSON object: no prose, no code fence.',
   '{ "spec": { "goal": { "text": "", "measure": "" }, "actors": [], "flow": [], "edgeCases": [], "rules": [], "outOfScope": [], "openQuestions": [] },',
-  '  "criteria": [{ "id": "R-po-1", "text": "" }],',
-  '  "assumptions": [{ "id": null, "text": "" }],',
-  '  "questions": [{ "id": "short-kebab-id", "question": "", "options": ["", ""], "recommended": "", "why": "" }],',
+  '  "criteria": [{ "id": "R-po-1", "text": "", "source": null }],',
+  '  "assumptions": [{ "id": null, "text": "", "source": null }],',
+  '  "questions": [{ "id": "short-kebab-id", "question": "", "options": ["", ""], "recommended": "", "why": "", "source": null }],',
   '  "done": false,',
   '  "note": "one short line for the product owner" }',
 ].join('\n');
@@ -201,7 +202,15 @@ export function normalizeOrientation(raw) {
   return { summary: clip(raw?.summary, 2000), files, area: clip(raw?.area, 80) };
 }
 
-function normalizeQuestions(list) {
+/** A8 D13: the listed name a reply's "source" matches (ignoring case), with the listed spelling; else null. */
+function sourceOf(v, sources) {
+  if (typeof v !== 'string' || !v.trim() || !sources.length) return null;
+  const k = v.trim().toLowerCase();
+  return sources.find((s) => s.toLowerCase() === k) || null;
+}
+const setSource = (item, src) => { if (src) item.source = src; else delete item.source; };
+
+function normalizeQuestions(list, { sources = [] } = {}) {
   const out = [];
   const ids = new Set();
   for (const q of Array.isArray(list) ? list : []) {
@@ -213,7 +222,8 @@ function normalizeQuestions(list) {
     while (ids.has(id)) id = `${id}-${out.length + 1}`;
     ids.add(id);
     const rec = clip(q.recommended, 200);
-    out.push({ id, question, options, recommended: options.includes(rec) ? rec : null, why: clip(q.why) });
+    const source = sourceOf(q.source, sources);
+    out.push({ id, question, options, recommended: options.includes(rec) ? rec : null, why: clip(q.why), ...(source ? { source } : {}) });
   }
   return out;
 }
@@ -221,9 +231,10 @@ function normalizeQuestions(list) {
 /**
  * Apply one model reply to the spec. Never trusts the model with ids, deletions or the product owner's
  * edits (design D3, D6): a new criterion whose text matches one the product owner removed
- * (`removedCriteria`, case-insensitive) is dropped.
+ * (`removedCriteria`, case-insensitive) is dropped. A8 D13: an item's "source" is kept only when it names one of
+ * `sources` (the files and documents the prompt listed), with the listed spelling.
  */
-export function applyRound(prev, raw, { criteriaSeq = 0, assumptionSeq = 0, final = false, removedCriteria = [] } = {}) {
+export function applyRound(prev, raw, { criteriaSeq = 0, assumptionSeq = 0, final = false, removedCriteria = [], sources = [] } = {}) {
   if (!raw || typeof raw !== 'object' || !raw.spec || typeof raw.spec !== 'object' || Array.isArray(raw.spec)) {
     throw new RoundError('the reply has no "spec" object');
   }
@@ -244,20 +255,21 @@ export function applyRound(prev, raw, { criteriaSeq = 0, assumptionSeq = 0, fina
   for (const it of Array.isArray(raw.criteria) ? raw.criteria : []) {
     const text = clip(it && it.text);
     if (!text) continue;
+    const src = sourceOf(it.source, sources);
     const cur = it.id ? crit.get(it.id) : null;
-    if (cur) { if (!cur.edited) cur.text = text; continue; }
+    if (cur) { if (!cur.edited) { cur.text = text; setSource(cur, src); } continue; }
     if (critSeen.has(text.toLowerCase()) || added >= NEW_ITEMS_PER_ROUND) continue;
     critSeen.add(text.toLowerCase());
     added += 1;
     cSeq += 1;
-    spec.criteria.push({ id: `R-po-${cSeq}`, text });
+    spec.criteria.push({ id: `R-po-${cSeq}`, text, ...(src ? { source: src } : {}) });
   }
 
   let aSeq = nextIdNumber(assumptionSeq, spec.assumptions, 'A-') - 1;
-  const addAssumption = (text) => {
+  const addAssumption = (text, src = null) => {
     asmSeen.add(text.toLowerCase());
     aSeq += 1;
-    spec.assumptions.push({ id: `A-${aSeq}`, text, status: 'open' });
+    spec.assumptions.push({ id: `A-${aSeq}`, text, status: 'open', ...(src ? { source: src } : {}) });
   };
   const asm = new Map(spec.assumptions.map((a) => [a.id, a]));
   const asmSeen = new Set(spec.assumptions.map((a) => a.text.toLowerCase()));
@@ -265,15 +277,16 @@ export function applyRound(prev, raw, { criteriaSeq = 0, assumptionSeq = 0, fina
   for (const it of Array.isArray(raw.assumptions) ? raw.assumptions : []) {
     const text = clip(it && it.text);
     if (!text) continue;
+    const src = sourceOf(it.source, sources);
     const cur = it.id ? asm.get(it.id) : null;
-    if (cur) { if (cur.status === 'open' && !cur.edited) cur.text = text; continue; }
+    if (cur) { if (cur.status === 'open' && !cur.edited) { cur.text = text; setSource(cur, src); } continue; }
     if (asmSeen.has(text.toLowerCase()) || added >= NEW_ITEMS_PER_ROUND) continue;
     asmSeen.add(text.toLowerCase());
     added += 1;
-    addAssumption(text);
+    addAssumption(text, src);
   }
 
-  let questions = final ? [] : normalizeQuestions(raw.questions);
+  let questions = final ? [] : normalizeQuestions(raw.questions, { sources });
   // Questions were asked but none is usable: that is an unreadable reply, not the end of the interview
   // (unless the model also said it is done).
   if (!final && !questions.length && raw.done !== true && Array.isArray(raw.questions) && raw.questions.length) {
@@ -294,8 +307,8 @@ export function applyRound(prev, raw, { criteriaSeq = 0, assumptionSeq = 0, fina
   };
 }
 
-/** Mock mode (D13): a deterministic two-round interview, never a spawn. */
-export function mockRoundReply(feature, final, { followUp = null } = {}) {
+/** Mock mode (D13): a deterministic two-round interview, never a spawn. A8 D17: the first criterion names the first file. */
+export function mockRoundReply(feature, final, { followUp = null, sources = [] } = {}) {
   if (followUp && followUp.length && !final) {
     return {
       spec: {},
@@ -315,7 +328,7 @@ export function mockRoundReply(feature, final, { followUp = null } = {}) {
       actors: ['Customer'], flow: [feature.description],
       openQuestions: first ? ['Who pays the shipping back?'] : [],
     },
-    criteria: [{ id: null, text: `[mock] ${feature.title} works for a customer` }],
+    criteria: [{ id: null, text: `[mock] ${feature.title} works for a customer`, source: sources[0] || null }],
     assumptions: first ? [] : [{ id: null, text: '[mock] Refunds are full' }],
     questions: first ? [
       { id: 'who', question: 'Who may do this?', options: ['Customers', 'Support agents', 'Both'], recommended: 'Customers', why: 'It decides who sees the button.' },
