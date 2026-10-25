@@ -311,7 +311,11 @@ and hand the focus back to the opener.
   run's start, a waiting ticket's creation); a section with no rows is not drawn.
 - Chats list (flag `chatsColumn`): the Runs list anatomy in the Chat page's column; sections Pinned · Today · Recent
   (the 10 latest before today) · Older (folded); Archive is disabled while a chat replies, runs a command or follows a
-  live run; an archived chat reads Restore, as a run does; New chat is the one + after the list toggle.
+  live run; an archived chat reads Restore, as a run does; New chat is the one + after the list toggle; a topic group is
+  a Runs group row (count, ⌄, members indented 16px, no dividers) placed by its newest chat; its sub line names its
+  project or `N projects`; Group by Project files a group spanning projects under Several projects, never No project;
+  Group by Topic shows one section per group, then Ungrouped; the group dialog's name field
+  uses Smart run naming's Suggested chip only while that flag is on.
 - Waiting says what it waits for: `Waiting · starts after Complete Design Language Rollout · run 3`,
   `Waiting · starts 14:00`. A group in Needs you leads with the reason: `Run 1 needs you · Checks failing`.
 - Question options are divided rows: one --line between rows, no box per option; the picked row takes the --field fill

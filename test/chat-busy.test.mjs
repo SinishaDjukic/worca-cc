@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chatBusyReason, CHAT_BUSY } from '../src/shared/chat-busy.mjs';
+import { chatBusyReason, CHAT_BUSY, chatGroupBusyText } from '../src/shared/chat-busy.mjs';
 
 test('chatBusyReason: replying wins, then a command, then a followed live run; idle is null', () => {
   assert.equal(chatBusyReason({ inFlight: true, commands: 2, tracking: 1 }), 'replying');
@@ -12,4 +12,9 @@ test('chatBusyReason: replying wins, then a command, then a followed live run; i
 
 test('every reason has its tooltip text, and each says what to do', () => {
   for (const r of ['replying', 'command', 'following']) assert.match(CHAT_BUSY[r], /^Can't archive while this chat .+\. Wait .+\.$/);
+});
+
+test('chatGroupBusyText names the busy chat', () => {
+  assert.equal(chatGroupBusyText('Ship notes'), "Can't archive while “Ship notes” is busy. Wait for it to finish or stop it.");
+  assert.equal(chatGroupBusyText(''), "Can't archive while “New chat” is busy. Wait for it to finish or stop it.");
 });

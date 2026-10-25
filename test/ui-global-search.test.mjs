@@ -225,3 +225,8 @@ test('#948 s2 chatRows: at most 5 of 7; an archived chat reads "Archived · time
   assert.equal(rows[2].title, 'New chat');
   assert.deepEqual([rows[3].kind, rows[3].href, rows[3].sub], ['chat', '#chat/ask_00000003', '']);
 });
+
+test('chatRows: a chat found by its group name reads "Group · NAME"', () => {
+  const [r] = chatRows([{ id: 'ask_00000001', title: 'Fix the login', updatedAt: new Date().toISOString(), match: { group: 'Release prep' } }]);
+  assert.equal(r.sub, 'Group · Release prep');
+});

@@ -90,7 +90,8 @@ test('Chat page sheet: 4 sections in order, and every row is a key its own funct
   const secs = sheetSections({ page: 'chat' });
   assert.deepEqual(secs.map((s) => s.title), ['Anywhere', 'Chat page', 'Chats list', 'Selection']);
   // The same token map as the Runs walk above; a chord's non-modifier tokens are alternatives ("↑ ↓", "J K").
-  const tok = { ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown', Enter: 'Enter', Space: ' ', Backspace: 'Backspace', Escape: 'Escape', '.': '.', '\\': '\\' };
+  const tok = { ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown', ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight', Enter: 'Enter',
+    Space: ' ', Backspace: 'Backspace', Escape: 'Escape', '.': '.', '\\': '\\' };
   const code = (k) => (k === '\\' ? 'Backslash' : /^[A-Z]$/.test(k) ? `Key${k}` : k);
   for (const s of secs.filter((x) => x.list)) for (const r of s.rows) for (const chord of r.keys) {
     const mods = { shiftKey: chord.includes('shift'), metaKey: chord.includes('mod'), altKey: chord.includes('alt') };

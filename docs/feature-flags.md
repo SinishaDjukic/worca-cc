@@ -60,6 +60,12 @@ a command or follows a run that is still going (the server answers 409 `CHAT_BUS
 archived chat unarchives it. The column's search moves into the top-bar search as a Chats group, and New chat is one +
 right after the list toggle in the conversation head. Off, today's chat history column comes back unchanged.
 
+Topic groups: Select › Group N or a chat's ⋯ › Add to group… puts chats in a group (one group per chat; adding a
+grouped chat moves it). A group row shows its count and expands with ⌄; View › Group by › Topic lists one section per
+group, then Ungrouped. Archive group is blocked while a chat in it is busy. With Smart run naming on, the group dialog
+suggests a name from the chat titles and first messages on the Run naming model; off, it is a plain name field and
+`POST /api/ask/groups/suggest-name` answers 404. Every `/api/ask/groups` route answers 404 while `chatsColumn` is off.
+
 ## Corporate proxy
 
 Flag `corporateProxy`. Worca starts a local proxy on `127.0.0.1` that logs in to your corporate proxy, and hands every child process (agents, git, MCP servers, plugins, chat channels) and its own fetch `HTTPS_PROXY`/`HTTP_PROXY` = `http://127.0.0.1:<port>`, a URL without credentials. Any other variable that held the same credentialed proxy URL (`ALL_PROXY`, `npm_config_https_proxy`, …) is pointed at the local proxy too.
