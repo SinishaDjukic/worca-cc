@@ -985,3 +985,198 @@ test('Replace with a newer version… hands the focus to the ⋯ before the pick
   assert.equal(document.activeElement.getAttribute('data-ui'), 'file-more-ratt_00000000000a');
   assert.equal(document.querySelector('.req-dialog'), null, 'nothing picked: no dialog');
 });
+// ── board 18: Ready to build, Files for the run ─────────────────
+const DOC_HREF = '/api/requirements/brief/project/shop-1/documents/ratt_0000000000d1';
+const doc = (over = {}) => { const { sendWithRun, ...rest } = att(); return { ...rest, id: 'ratt_0000000000d1', name: 'glossary.pdf', sendWithEveryRun: true, href: DOC_HREF, ...over }; };
+const ready = (over = {}) => feature({ status: 'done', state: 'ready', readiness: readiness(true), ...over });
+
+test('board 18: the row (role=group): "n of m go with it", a chip per file then From the brief; the notes and the mentions', async () => {
+  const f = ready({ attachments: [att({ sendWithRun: true, mentions: ['R-po-3'] }), att({ id: 'ratt_00000000000b', name: 'refund-policy.md', sendWithRun: false,
+    href: '/api/requirements/4/attachments/ratt_00000000000b' })], briefDocuments: [doc()] });
+  const { host } = await openFeature(f);
+  const row = host.querySelector('.req-build .req-build-files');
+  assert.deepEqual([row.getAttribute('role'), row.querySelector('h4').textContent, row.querySelector('.req-build-files-head .hint').textContent],
+    ['group', 'Files for the run', '2 of 3 go with it · click a file to add or leave it out']);
+  assert.equal(document.getElementById(row.getAttribute('aria-labelledby')), row.querySelector('h4'));
+  const chips = [...row.querySelectorAll('.req-fpick')];
+  assert.deepEqual(chips.map((c) => [c.textContent, c.getAttribute('aria-pressed'), c.getAttribute('aria-label')]), [
+    ['support-tickets.pdf', 'true', 'Send support-tickets.pdf with the run'], ['refund-policy.md', 'false', 'Send refund-policy.md with the run'],
+    ['glossary.pdf', 'true', 'Send glossary.pdf with every run']]);
+  assert.equal(row.querySelector('.req-fpick-group').textContent, 'From the brief');
+  assert.equal(text(row.querySelector('.req-build-files-note')), 'Left out, a file still shaped the spec through what Worca took from it. The spec mentions support-tickets.pdf (R-po-3).');
+});
+
+test('board 18: a chip flips its switch: the file\'s Send with the run, a document\'s Send with every run', async () => {
+  const f = ready({ briefDocuments: [doc()] });
+  const { host, calls } = await openFeature(f, { [`PATCH ${HREF}`]: OK, [`PATCH ${DOC_HREF}`]: OK });
+  host.querySelector('[data-ui="fpick-ratt_00000000000a"]').click();
+  await settle();
+  host.querySelector('[data-ui="fpick-ratt_0000000000d1"]').click();
+  await settle();
+  assert.deepEqual(calls.filter((c) => c.method === 'PATCH').map((c) => [c.url, c.body]), [[HREF, { sendWithRun: true }], [DOC_HREF, { sendWithEveryRun: false }]]);
+});
+
+test('board 18: no files and no documents: no row', async () => {
+  const { host } = await openFeature(ready({ attachments: [] }));
+  assert.ok(host.querySelector('.req-build'));
+  assert.equal(host.querySelector('.req-build-files'), null);
+});
+
+test('board 18: the chip is the switch: the focus stays on it, it turns green with a check, and the Files card\'s switch shows it', async () => {
+  let f = ready();
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
+    [`PATCH ${HREF}`]: () => { f = ready({ attachments: [att({ sendWithRun: true })] }); return { feature: f, turns: [] }; } });
+  const { host, view } = make();
+  await view.show('feature/4');
+  const chip = host.querySelector('[data-ui="fpick-ratt_00000000000a"]');
+  assert.deepEqual([chip.tagName, chip.type, chip.classList.contains('on'), chip.querySelector('svg path').getAttribute('d')], ['BUTTON', 'button', false, 'M12 5v14M5 12h14']);
+  assert.equal(host.querySelector('[data-ui="file-send-ratt_00000000000a"]').checked, false);
+  chip.focus();
+  chip.click();
+  await settle();
+  const now = host.querySelector('[data-ui="fpick-ratt_00000000000a"]');
+  assert.equal(document.activeElement, now, 'the focus stays on the chip');
+  assert.deepEqual([now.getAttribute('aria-pressed'), now.classList.contains('on'), now.querySelector('svg path').getAttribute('d')], ['true', true, 'M5 12.5l4.5 4.5L19 7.5']);
+  assert.equal(host.querySelector('[data-ui="file-send-ratt_00000000000a"]').checked, true, 'the Files card\'s switch is the same setting');
+  assert.equal(host.querySelector('.req-build-files-head .hint').textContent, '1 of 1 go with it · click a file to add or leave it out');
+  assert.equal(calls.filter((c) => c.method === 'PATCH').length, 1);
+});
+
+test('board 18: a second press while the first is on its way sends nothing more', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: ready(), turns: [] }), [`PATCH ${HREF}`]: OK });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts = {}) => { if ((opts.method || 'GET') === 'PATCH') await gate; return realFetch(url, opts); };
+  const { host, view } = make();
+  await view.show('feature/4');
+  const chip = host.querySelector('[data-ui="fpick-ratt_00000000000a"]');
+  chip.click();
+  chip.click();
+  release();
+  await settle();
+  assert.equal(calls.filter((c) => c.method === 'PATCH').length, 1);
+});
+
+test('board 18: a file Worca cannot send cannot be switched on: the chip shows it and says why; switched on, it can be left out', async () => {
+  const stuck = att({ status: 'failed', summary: '', error: { code: 'STORE_FAILED', message: 'Worca could not store the new version. Replace it again.' } });
+  const gone = att({ id: 'ratt_00000000000b', name: 'notes.md', status: 'failed', summary: '', sendWithRun: true,
+    error: { code: 'FAILED', message: 'Worca could not open the stored file. Remove it and attach it again.' }, href: '/api/requirements/4/attachments/ratt_00000000000b' });
+  const slow = att({ id: 'ratt_00000000000c', name: 'slow.png', status: 'failed', summary: '', error: { code: 'TIMEOUT', message: 'x' },
+    href: '/api/requirements/4/attachments/ratt_00000000000c' });
+  const { host, calls } = await openFeature(ready({ attachments: [stuck, gone, slow] }), { 'PATCH /api/requirements/4/attachments/ratt_00000000000b': OK });
+  const [a, b, c] = [...host.querySelectorAll('.req-fpick')];
+  assert.deepEqual([a.disabled, a.getAttribute('aria-pressed'), a.classList.contains('bad')], [true, 'false', true], 'off and unusable: it cannot be switched on');
+  assert.deepEqual([b.disabled, b.getAttribute('aria-pressed'), b.classList.contains('bad')], [false, 'true', true], 'on and unusable: it can be left out');
+  assert.deepEqual([c.disabled, c.classList.contains('bad')], [false, false], 'a file Worca could not read may still go (D1)');
+  for (const x of [a, b]) assert.equal(x.querySelector('svg path').getAttribute('d'), 'M12 3l9.5 17h-19L12 3z');
+  const lines = [...host.querySelectorAll('.req-build-files-bad')];
+  assert.deepEqual(lines.map((l) => l.textContent), [
+    'support-tickets.pdf cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.',
+    'notes.md cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.']);
+  assert.equal(document.getElementById(a.getAttribute('aria-describedby')), lines[0]);
+  assert.equal(document.getElementById(b.getAttribute('aria-describedby')), lines[1]);
+  a.click();
+  b.click();
+  await settle();
+  assert.deepEqual(calls.filter((x) => x.method === 'PATCH').map((x) => [x.url, x.body]), [['/api/requirements/4/attachments/ratt_00000000000b', { sendWithRun: false }]]);
+});
+
+test('board 18: a file being read again has no switch (D1): its chip waits and says Reading…', async () => {
+  const { host } = await openFeature(ready({ attachments: [att({ status: 'reading', sendWithRun: true })] }));
+  const chip = host.querySelector('.req-fpick');
+  assert.deepEqual([chip.disabled, text(chip), chip.getAttribute('aria-label'), chip.getAttribute('aria-pressed')],
+    [true, 'support-tickets.pdf Reading…', 'Send support-tickets.pdf with the run', 'true']);
+});
+
+test('board 18: only the brief\'s documents: the row is From the brief alone; a view without files (before A8) has no row', async () => {
+  const docs = await openFeature(ready({ attachments: [], briefDocuments: [doc({ sendWithEveryRun: false })] }));
+  const row = docs.host.querySelector('.req-build-files');
+  assert.equal(row.querySelector('.req-build-files-head .hint').textContent, '0 of 1 go with it · click a file to add or leave it out');
+  assert.equal(row.querySelectorAll('.req-fpicks').length, 1);
+  assert.equal(text(row.querySelector('.req-build-files-note')), 'Left out, a file still shaped the spec through what Worca took from it.');
+  const old = feature({ status: 'done', state: 'ready', readiness: readiness(true) });
+  delete old.attachments;
+  delete old.briefDocuments;
+  const before = await openFeature(old);
+  assert.ok(before.host.querySelector('.req-build'));
+  assert.equal(before.host.querySelector('.req-build-files'), null);
+});
+
+test('board 18: names are text only', async () => {
+  const evil = '<img src=x onerror="window.__x=1">.md';
+  const { host } = await openFeature(ready({ attachments: [att({ name: evil, mentions: ['R-po-1'] })] }));
+  const row = host.querySelector('.req-build-files');
+  assert.equal(row.querySelector('img'), null);
+  assert.equal(row.querySelector('.req-fpick').textContent, evil);
+  assert.ok(row.querySelector('.req-build-files-note').textContent.endsWith(`The spec mentions ${evil} (R-po-1).`));
+});
+
+test('Changed since the run started: the three file lines and the undo note', async () => {
+  const start = { version: 1, runId: 'r1', run: { status: 'running', phase: 'plan', costUsd: 0.5, href: '#running/r1' }, failing: [], spec: feature().spec, files: [] };
+  const f = feature({ status: 'done', state: 'started', starts: [start], changedSinceStart: [{ kind: 'file', change: 'added', name: 'a.pdf' },
+    { kind: 'file', change: 'removed', name: 'b.md' }, { kind: 'file', change: 'replaced', name: 'c.png' }] });
+  const { host } = await openFeature(f);
+  const lines = [...host.querySelectorAll('.req-changed .req-change-line')];
+  assert.deepEqual(lines.map(text), ['File: a.pdf goes with the run now.', 'File: b.md no longer goes with the run.', 'File: c.png was replaced with a newer version.']);
+  assert.equal(lines[0].querySelector('b').textContent, 'a.pdf');
+  assert.equal(lines[1].querySelector('del').textContent, 'b.md');
+  assert.equal(text(host.querySelector('.req-changed-files')), "Undo puts the spec and the files' Send switches back. A removed or replaced file stays as it is now, and so do the documents' switches.");
+});
+
+test('Changed since the run started: without a file line, no undo note; a spec line keeps its form', async () => {
+  const start = { version: 1, runId: 'r1', run: { status: 'running', phase: 'plan', costUsd: 0.5, href: '#running/r1' }, failing: [], spec: feature().spec, files: [] };
+  const f = feature({ status: 'done', state: 'started', starts: [start], changedSinceStart: [{ kind: 'goal', field: 'text', before: 'Cancel', after: 'Cancel early' }] });
+  const { host } = await openFeature(f);
+  assert.deepEqual([...host.querySelectorAll('.req-changed .req-change-line')].map(text), ['Goal: Cancel Cancel early']);
+  assert.equal(host.querySelector('.req-changed-files'), null);
+});
+
+test('Decide: files to ask about give "Ask about <name>"; with a rejection waiting too, "Ask about A-4 and <name>"', async () => {
+  const late = att({ id: 'ratt_00000000000c', name: 'b.pdf', href: '/api/requirements/4/attachments/ratt_00000000000c' });
+  const only = await openFeature(feature({ status: 'done', state: 'decide', unaskedFiles: ['ratt_00000000000c'], attachments: [att(), late] }),
+    { 'POST /api/requirements/4/follow-up': OK });
+  const btn = only.host.querySelector('[data-ui="follow-up"]');
+  assert.equal(btn.textContent, 'Ask about b.pdf');
+  btn.click();
+  await settle();
+  assert.ok(only.calls.some((c) => c.method === 'POST' && c.url === '/api/requirements/4/follow-up'));
+  const spec = { ...feature().spec, assumptions: [{ id: 'A-4', text: 'Full refund', status: 'rejected' }] };
+  const both = await openFeature(feature({ status: 'done', state: 'decide', spec, unaskedRejections: ['A-4'], unaskedFiles: ['ratt_00000000000c'], attachments: [late] }));
+  assert.equal(both.host.querySelector('[data-ui="follow-up"]').textContent, 'Ask about A-4 and b.pdf');
+});
+
+test('Decide: three to ask about read "Ask about <first> and 2 more"; a file still being read is not offered; rejections alone keep "Done, ask about"', async () => {
+  const mk = (id, name, over = {}) => att({ id, name, href: `/api/requirements/4/attachments/${id}`, ...over });
+  const spec = { ...feature().spec, assumptions: [{ id: 'A-4', text: 'Full refund', status: 'rejected' }] };
+  const three = await openFeature(feature({ status: 'done', state: 'decide', spec, unaskedRejections: ['A-4'],
+    unaskedFiles: ['ratt_00000000000b', 'ratt_00000000000c'], attachments: [mk('ratt_00000000000b', 'a.pdf'), mk('ratt_00000000000c', 'b.pdf')] }));
+  assert.equal(three.host.querySelector('[data-ui="follow-up"]').textContent, 'Ask about A-4 and 2 more');
+  const reading = await openFeature(feature({ status: 'done', state: 'decide', unaskedFiles: ['ratt_00000000000c'],
+    attachments: [mk('ratt_00000000000c', 'b.pdf', { status: 'reading', summary: '' })] }));
+  assert.equal(reading.host.querySelector('[data-ui="follow-up"]'), null, 'the follow-up waits for the read (D8)');
+  const rej = await openFeature(feature({ status: 'done', state: 'decide', spec, unaskedRejections: ['A-4'] }));
+  assert.equal(rej.host.querySelector('[data-ui="follow-up"]').textContent, 'Done, ask about A-4');
+});
+
+test('style.css: board 18 rules inside the Requirements block, tokens only', () => {
+  assertInRequirementsBlock(['.req-build-files', '.req-fpick', '.req-fpick.on', '.req-changed-files']);
+});
+
+test('style.css: board 18 on the type scale and the 6px corner; AA inks; 44px hit areas at phone width', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
+  const block = css.slice(start, css.indexOf('/* ── marketplace P3 ── */'));
+  const rule = (sel) => { const at = block.indexOf(`\n${sel}{`); return at < 0 ? '' : block.slice(at + sel.length + 2, block.indexOf('}', at)); };
+  const chip = rule('.req-fpick');
+  assert.match(chip, /border:1px dashed /);
+  assert.match(chip, /border-radius:var\(--r-sm\)/);
+  assert.match(chip, /font-size:var\(--fs-meta\)/);
+  assert.match(chip, /color:var\(--ink-2\)/, 'the name and the + on --panel: 6.6:1');
+  assert.match(rule('.req-fpick[aria-pressed="true"]'), /background:var\(--green-bg\);color:var\(--green-ink-strong\)/, 'the check on --green-bg: 4.9:1');
+  assert.match(rule('.req-fpick.on .req-fpick-name'), /color:var\(--ink\)/);
+  assert.match(rule('.req-fpick-group'), /color:var\(--ink-2\)/);
+  const phone = block.slice(block.indexOf('/* Board 18 at phone width'));
+  assert.match(phone, /\.req-fpick::after\{content:"";position:absolute;inset:-8px 0\}/);
+  assert.match(phone, /\.req-fpicks\{row-gap:14px\}/);
+});

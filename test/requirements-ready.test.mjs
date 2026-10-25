@@ -213,3 +213,12 @@ test('changedSince: a file added to the send set, left out of it, or replaced is
   assert.deepEqual(changedSince({}, {}), [], 'no file lists: no file lines');
   assert.deepEqual(changedSince({}, {}, { filesBefore: was, filesNow: was }), [], 'the same files: no file lines');
 });
+test('readiness: while a file to ask about is still being read, the interview check says "Reading N files…" (A8 D2/D8)', () => {
+  const f = { spec: { goal: { text: 'g', measure: 'm' }, criteria: [{ id: 'R-po-1', text: 'c' }], assumptions: [], openQuestions: [] } };
+  const turns = [roundTurn(1), fileTurn(2, 'added', 'a'), fileTurn(3, 'added', 'b')];
+  const check = (files, extra = {}) => readiness({ ...f, ...extra }, { turns, files }).checks.find((c) => c.key === 'interview');
+  assert.deepEqual([check([file('a', 'reading')]).ok, check([file('a', 'reading')]).hint], [false, 'Reading 1 file…']);
+  assert.equal(check([file('a', 'reading'), file('b', 'reading')]).hint, 'Reading 2 files…');
+  assert.equal(check([file('a', 'reading'), file('b')]).hint, 'Reading 1 file…', 'the follow-up waits for the read');
+  assert.equal(check([file('a', 'reading')], { pending: { questions: [{}] } }).hint, '1 question waiting');
+});

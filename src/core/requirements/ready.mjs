@@ -65,6 +65,9 @@ export function readiness(feature, { turns = [], target = { ok: true }, files = 
   const unasked = unaskedRejections(spec, turns);
   const unaskedF = unaskedFiles(files, turns);   // A8 D8: a file added or replaced after the interview fails "Interview finished"
   const nameOf = (id) => ((files || []).find((x) => x && x.id === id) || {}).name || id;
+  // A file to ask about that is still being read: the follow-up waits for the read, and the check says so in the
+  // page's reading words (A8 D2), not "to ask about" yet.
+  const readingF = unaskedF.filter((id) => ((files || []).find((x) => x && x.id === id) || {}).status === 'reading');
 
   let assumptionHint = '';
   if (open) assumptionHint = `${open} to decide`;
@@ -78,8 +81,9 @@ export function readiness(feature, { turns = [], target = { ok: true }, files = 
       'add at least one'),
     mk('interview', !!(latest && latest.payload && latest.payload.done === true) && !unaskedF.length, 'Interview finished',
       waiting ? `${plural(waiting, 'question', 'questions')} waiting`
-        : unaskedF.length === 1 ? `${nameOf(unaskedF[0])} to ask about`
-          : unaskedF.length ? `${unaskedF.length} files to ask about` : 'not finished'),
+        : readingF.length ? `Reading ${plural(readingF.length, 'file', 'files')}…`
+          : unaskedF.length === 1 ? `${nameOf(unaskedF[0])} to ask about`
+            : unaskedF.length ? `${unaskedF.length} files to ask about` : 'not finished'),
     mk('openQuestions', openQ === 0, 'No open questions', `${openQ} open`),
     mk('assumptions', !open && !unasked.length, 'Every assumption decided', assumptionHint),
     mk('target', !!(target && target.ok), (target && target.label) || 'Project or workspace exists',

@@ -293,6 +293,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   let dialog = null;
   let workflowsFailed = false;     // GET /api/workflows failed: Auto only, and the card says so
   const assumePosting = new Set(); // assumption ids whose Confirm / Reject POST is in flight
+  const pickPosting = new Set();   // file ids whose Files for the run chip PATCH is in flight (board 18)
   // Unsaved input of the feature page, kept across repaints (read from the DOM before a rebuild, put back after).
   let ui = freshUi();
   function freshUi() {
@@ -1263,10 +1264,25 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       btn('Confirm', 'confirmed', 'req-yes req-confirm', 'confirm'), btn('Reject', 'rejected', 'req-no req-reject', 'reject'));
   }
 
+  // A8 D8: the files to ask about whose read is done, in upload order. One still being read waits: the follow-up takes
+  // it once the read is done (the server asks only about files whose text the prompt carries).
+  const askableFiles = (f) => (f.attachments || []).filter((a) => a && a.status === 'done' && (f.unaskedFiles || []).includes(a.id));
+
   function decideCard(f) {
     const all = (f.spec && f.spec.assumptions) || [];
-    if (!all.length) return h('p', { class: 'hint req-note', text: 'The interview is done. Edit the spec on the right; every change is kept.' });
     const waitingIds = f.unaskedRejections || [];
+    const fileNames = askableFiles(f).map((a) => a.name);
+    const post = (path, body) => act(async () => { await api('POST', `/api/requirements/${f.seq}/${path}`, body); await paint(); });
+    // One follow-up covers both (POST …/follow-up): "Ask about A-4 and b.pdf"; without files, A2's "Done, ask about A-4".
+    const askItems = [...waitingIds, ...fileNames];
+    const askLabel = fileNames.length
+      ? `Ask about ${askItems.length <= 2 ? joinAnd(askItems) : `${askItems[0]} and ${askItems.length - 1} more`}`
+      : `Done, ask about ${waitingIds[0]}${waitingIds.length > 1 ? ` and ${waitingIds.length - 1} more` : ''}`;
+    const askBtn = askItems.length ? h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'follow-up', onclick: () => post('follow-up', {}) }, askLabel) : null;
+    if (!all.length) {
+      const done = h('p', { class: 'hint req-note', text: 'The interview is done. Edit the spec on the right; every change is kept.' });
+      return askBtn ? h('section', { class: 'qpanel req-decide', 'aria-label': 'Ask about the new files' }, done, h('div', { class: 'qpanel-foot' }, askBtn)) : done;
+    }
     const open = all.filter((a) => a.status === 'open');
     const waiting = all.filter((a) => a.status === 'rejected' && waitingIds.includes(a.id));
     const rest = all.filter((a) => !open.includes(a) && !waiting.includes(a));
@@ -1275,7 +1291,6 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       h('code', { class: 'req-id', text: a.id }),
       h('span', { class: 'req-arow-text', text: a.text }),
       assumeToggle(f, a, { prefix: 'decide-' }));
-    const post = (path, body) => act(async () => { await api('POST', `/api/requirements/${f.seq}/${path}`, body); await paint(); });
     return h('section', { class: 'qpanel req-decide', 'aria-label': 'Decide the assumptions' },
       h('div', { class: 'qpanel-head' }, icon(ICONS.ask, { size: 17, width: 1.8 }), h('b', { text: 'Decide the assumptions' }),
         h('span', { class: 'qcount', text: `${open.length} of ${all.length} left` })),
@@ -1287,14 +1302,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('span', { class: 'qanswered', text: `${all.length - open.length} decided · ${rejected} rejected` }),
         open.length ? h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'confirm-all', onclick: () => post('assumptions', { confirmOpen: true }) },
           `Confirm the ${open.length} left`) : null,
-        waitingIds.length ? h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'follow-up', onclick: () => post('follow-up', {}) },
-          `Done, ask about ${waitingIds[0]}${waitingIds.length > 1 ? ` and ${waitingIds.length - 1} more` : ''}`) : null));
+        askBtn));
   }
 
   // Something to decide, from the data rather than the state (A2 D11): a started feature still decides its
   // assumptions and asks about the rejected ones (the state there is `started`, never `decide`).
   const decideNeeded = (f) => !f.pending && f.status === 'done'
-    && (((f.spec && f.spec.assumptions) || []).some((a) => a.status === 'open') || (f.unaskedRejections || []).length > 0);
+    && (((f.spec && f.spec.assumptions) || []).some((a) => a.status === 'open') || (f.unaskedRejections || []).length > 0
+      || askableFiles(f).length > 0);
 
   // The Ready to build card is the current card: Ready, nothing to answer or change, not locked.
   const buildCardShown = (f) => f.state === 'ready' && !isLocked(f) && !f.pending && revising == null;
@@ -1357,6 +1372,52 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       h('div', { class: 'req-build-field' }, h('label', { for: 'req-build-branch', text: 'Branch from' }),
         f.scopeType === 'workspace' ? branch : h('div', { class: 'select-wrap' }, branch)));
   }
+  // ---- Files for the run (board 18, D14): a chip per feature file, then the brief's documents. A chip is the same setting
+  // as the file's switch on the Files card (a document's: Send with every run); the row is hidden with no files and no
+  // documents. A file Start would refuse (a version Worca could not store, a stored file it cannot open) cannot be
+  // switched on and says why in Start's words; switched on, it can still be left out. A file being read has no switch
+  // (D1): its chip waits. Names are text only.
+  const STORED_GONE = 'Worca could not open the stored file. Remove it and attach it again.';   // attachment-job's read failure
+  const unsendable = (a) => storeFailedOf(a) || (a.status === 'failed' && !!a.error && a.error.message === STORED_GONE);
+  function filesForRun(f) {
+    const files = Array.isArray(f.attachments) ? f.attachments : [];
+    const docs = Array.isArray(f.briefDocuments) ? f.briefDocuments : [];
+    if (!files.length && !docs.length) return null;
+    const on = files.filter((a) => a.sendWithRun).length + docs.filter((a) => a.sendWithEveryRun).length;
+    const bad = [];
+    const chip = (a, doc) => {
+      const key = doc ? 'sendWithEveryRun' : 'sendWithRun';
+      const sel = !!a[key];
+      const reading = a.status === 'reading';
+      const stuck = !reading && unsendable(a);
+      const why = stuck || reading ? `req-fpick-why-${a.id}` : null;
+      if (stuck) bad.push(h('p', { class: 'hint req-build-files-bad', id: why,
+        text: `${a.name} cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.` }));
+      return h('button', { type: 'button', class: `req-fpick${sel ? ' on' : ''}${stuck ? ' bad' : ''}`, 'aria-pressed': sel ? 'true' : 'false',
+        'aria-label': doc ? `Send ${a.name} with every run` : `Send ${a.name} with the run`, 'aria-describedby': why, 'data-ui': `fpick-${a.id}`,
+        disabled: starting || reading || (stuck && !sel),
+        onclick: () => {
+          if (pickPosting.has(a.id)) return;   // the first press is on its way: a second would send the same value again
+          pickPosting.add(a.id);
+          void act(async () => {
+            try { await api('PATCH', a.href, { [key]: !sel }); } finally { pickPosting.delete(a.id); }
+            await paint();   // the chip keeps the focus (its data-ui), and the Files card's switch shows the change
+          });
+        } },
+      icon(stuck ? ICONS.warn : sel ? ICONS.check : ICONS.plus, { size: 13, width: sel && !stuck ? 2.6 : 2.2 }),
+      h('span', { class: 'req-fpick-name', text: a.name }),
+      reading ? [' ', h('span', { class: 'req-fpick-state', id: why, text: 'Reading…' })] : null);
+    };
+    const told = [...files, ...docs].filter((a) => (a.mentions || []).length);
+    return h('div', { class: 'req-build-files', role: 'group', 'aria-labelledby': 'req-build-files-h' },
+      h('div', { class: 'req-build-files-head' }, h('h4', { id: 'req-build-files-h', text: 'Files for the run' }),
+        h('span', { class: 'hint', text: `${on} of ${files.length + docs.length} go with it · click a file to add or leave it out` })),
+      files.length ? h('div', { class: 'req-fpicks' }, ...files.map((a) => chip(a, false))) : null,
+      docs.length ? h('div', { class: 'req-fpicks' }, h('span', { class: 'req-fpick-group', text: 'From the brief' }), ...docs.map((a) => chip(a, true))) : null,
+      ...bad,
+      h('p', { class: 'hint req-build-files-note' }, 'Left out, a file still shaped the spec through what Worca took from it.',
+        ...told.map((a) => ` The spec mentions ${a.name} (${a.mentions.join(', ')}).`)));
+  }
   function buildCard(f) {
     const c = choiceOf(f);
     if (c.open) loadBuildOptions(f);
@@ -1373,7 +1434,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           h('button', { type: 'button', class: 'hint req-link', 'data-ui': 'build-change', 'aria-expanded': c.open ? 'true' : 'false',
             'aria-label': 'Change the workflow and branch', 'data-min-level': 'advanced',   // docs/ui-levels.md: the chips show the values at every level
             onclick: () => { c.open = !c.open; focusNext = c.open ? 'build-workflow' : 'build-change'; redraw(); } }, 'Change')),
-        c.open ? buildChoices(f, c, chipBranch) : null),
+        c.open ? buildChoices(f, c, chipBranch) : null,
+        filesForRun(f)),
       h('button', { type: 'button', class: 'btn btn-primary req-build-go', 'data-ui': 'start-go', 'data-start': '', disabled: starting,
         onclick: (e) => startFlow(f, { trigger: e.currentTarget }) }, icon(ICONS.play, { size: 14, fill: 'currentColor', stroke: 'none' }), 'Start in Worca'));
   }
@@ -1414,7 +1476,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const ins = (t) => h('ins', { class: 'req-ins', text: t });
     const both = (a, b) => [a ? del(a) : null, a && b ? ' ' : null, b ? ins(b) : null];
     let kids;
-    if (c.kind === 'goal') kids = [`${c.field === 'measure' ? 'Success measure' : 'Goal'}: `, ...both(c.before, c.after)];
+    if (c.kind === 'file') {   // A8 D14: a feature file the run got, or would get now
+      kids = ['File: ', c.change === 'removed' ? del(c.name) : h('b', { text: c.name }),
+        c.change === 'added' ? ' goes with the run now.' : c.change === 'removed' ? ' no longer goes with the run.' : ' was replaced with a newer version.'];
+    } else if (c.kind === 'goal') kids = [`${c.field === 'measure' ? 'Success measure' : 'Goal'}: `, ...both(c.before, c.after)];
     else if (c.kind === 'section') {
       const items = [...(c.removed || []).map(del), ...(c.added || []).map(ins)];
       kids = [`${sectionTitle(c.section)}: `, ...items.flatMap((x, i) => (i ? [' ', x] : [x]))];
@@ -1439,6 +1504,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('b', { text: 'Changed since the run started' }),
         ...f.changedSinceStart.map(changeLine),
         h('p', { text: `The running build still works from v${v}; it does not see this change.` }),
+        // D14: Undo turns the feature files' switches back, never a removed or replaced body, never a document's switch
+        f.changedSinceStart.some((c) => c.kind === 'file') ? h('p', { class: 'req-changed-files',
+          text: "Undo puts the spec and the files' Send switches back. A removed or replaced file stays as it is now, and so do the documents' switches." }) : null,
         h('div', { class: 'req-actions' },
           h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'revert', disabled: isLocked(f), onclick: undo }, 'Undo my changes'))));
   }
