@@ -4,6 +4,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { buildChatQuestion, buildChatReceipt } from '../ui/public/chat/question.mjs';
+import { keepFocus } from '../ui/public/chat/keep-focus.mjs';
 
 const doms = [];
 afterEach(() => { for (const d of doms.splice(0)) d.window.close(); });
@@ -167,16 +168,26 @@ test('buildChatReceipt: a closed question is one plain line, never the question'
   assert.equal(el.querySelector('.qpanel'), null);
 });
 
-test('keepFocus: a card moved into a new row gets its focused control back when the focus fell to <body>', async () => {
+test('keepFocus (#958): a control moved inside the root gets the focus back when it fell to <body>; destroy() ends it', async () => {
   const { doc } = rig();
-  const { el, destroy } = buildChatQuestion(doc, spec(doc));
+  const root = doc.createElement('div');
   const a = doc.createElement('div'); const b = doc.createElement('div');
-  doc.body.append(a, b);
+  root.append(a, b); doc.body.appendChild(root);
+  const { el } = buildChatQuestion(doc, spec(doc));
   a.appendChild(el);
+  const keeper = keepFocus(root, doc);
   const opt = el.querySelectorAll('.qopt')[1];
   opt.focus();
-  b.appendChild(el);                                   // renderTranscript re-appends a cached card in its new row
+  b.appendChild(el);                                   // moved into another row
   await tick();
-  assert.equal(doc.activeElement, opt);
-  destroy();
+  assert.equal(doc.activeElement, opt, 'moved to another row: refocused');
+  a.appendChild(el); a.removeChild(el); a.appendChild(el);   // out and back into the same row
+  await tick();
+  assert.equal(doc.activeElement, opt, 'back in the same row: refocused');
+  keeper.destroy();
+  opt.focus();
+  b.appendChild(el);
+  await tick();
+  assert.notEqual(doc.activeElement, opt, 'destroyed: no watch');
+  root.remove();
 });

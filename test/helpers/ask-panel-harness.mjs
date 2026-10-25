@@ -149,3 +149,10 @@ export function pointer(window, type, init = {}) {
   const buttons = type === 'pointerup' || type === 'pointercancel' ? 0 : 1;
   return new window.PointerEvent(type, { pointerId: 1, button: 0, buttons, bubbles: true, cancelable: true, ...init });
 }
+
+/** #958: a scroll the READER makes (a wheel first, then the scroll): only that unpins the transcript. */
+export function userScroll(ctx, t, top) {
+  t.dispatchEvent(new ctx.window.Event('wheel', { bubbles: true }));
+  t.scrollTop = top;
+  t.dispatchEvent(new ctx.window.Event('scroll'));
+}
