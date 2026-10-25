@@ -41,7 +41,7 @@
 // - `opencode providers list` counts stored credentials and provider env vars. Zen's free models need neither.
 // - With no `-m`, OpenCode picks its own default model, which can be a free OpenCode Zen model: the checkout's code
 //   then goes to opencode.ai. Its catalog entry says requiresExplicitModel, so the run gate refuses a step with no
-//   model before anything spawns.
+//   model before anything spawns (again once an Auto run adopts its graph), and runOpencodeProcess refuses one too.
 // - `step_finish` says `cost: 0` for a model its table has no price for: a step that used tokens and costs 0 is
 //   unpriced (cost unknown), never free.
 // - OpenCode writes only its own folders (~/.local/share/opencode, ~/.config/opencode, ~/.cache/opencode): its
@@ -514,6 +514,9 @@ export async function runOpencodeProcess({
   const ask = !!askLockdown;
   if (sandbox === 'read-only' && !ask) throw new Error(`${bin}: OpenCode has no verified read-only mode — a read-only job runs on Claude instead`);
   if (ask && !(typeof model === 'string' && model.trim())) throw new Error(`${bin}: a chat on OpenCode needs a model`);
+  // A run step too (catalog requiresExplicitModel): the run gate refuses it at start, and this holds for any graph that
+  // gate did not see. With no `-m` OpenCode runs its own default, which can send the checkout to OpenCode Zen.
+  if (!(typeof model === 'string' && model.trim())) throw new Error(`${bin}: OpenCode needs a model; pick one for this step`);
   if (ask && ZEN_PROVIDER_RE.test(model)) throw new Error(`${bin}: OpenCode Zen's free models refuse a chat (it has no shell) — pick a model of another provider`);
   const secrets = Array.isArray(redactValues) ? redactValues : [];
   let redactor = secrets.length ? createRedactor(secrets) : null;

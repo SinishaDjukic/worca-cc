@@ -1703,7 +1703,7 @@ export class RunHarness extends EventEmitter {
       // `topology` is consumed AFTER this point (collectRequiredSkills, the workflow
       // audit line), so the adopted graph is what they see.
       const decided = await this._decideTopology();
-      if (decided) topology = decided;
+      if (decided) { topology = decided; this._engineAdoptedGate(); }
       this._checkAbort();
 
       // 3c) Build the knowledge graph INSIDE each worktree so agents can query it.
@@ -2074,7 +2074,7 @@ export class RunHarness extends EventEmitter {
         this.state.setupStage = 'Checking the setup';
         this._bookend('preflight', 'start');
       }
-      await this._decideTopology({ resume: rp });
+      if (await this._decideTopology({ resume: rp })) this._engineAdoptedGate();
       this._checkAbort();
 
       // ── setup replay (D7): a converted setup failure paused this run before its
@@ -3323,6 +3323,16 @@ export class RunHarness extends EventEmitter {
     }
     for (const l of lines) this._log('orchestrator', 'warn', l);
     return lines;
+  }
+
+  /** An Auto run's start gate read the empty bootstrap graph: once it adopts a graph, the gate's refusals run again over
+   *  the adopted nodes (a step with no model on an engine that needs one, a cost cap that cannot count a node's model).
+   *  A refusal ends the run, as at start. */
+  _engineAdoptedGate() {
+    const name = this.claude.engine || 'claude';
+    const why = this._engineRefusal({ rules: this.guardrailPermissionRules, guardrailsId: this.guardrailsId,
+      projectRules: this._engineProjectRules ?? null, nodes: Object.values(this.resolved?.nodeCtx || {}) });
+    if (why) throw markTerminal(engineRefusal(name, why));
   }
 
   /** With a pipeline or total cost cap set (local settings, or the team policy once resolved), refuse a run whose cost
