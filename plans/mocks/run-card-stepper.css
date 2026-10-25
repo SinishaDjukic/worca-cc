@@ -231,3 +231,11 @@ html,body{height:auto;overflow:visible;margin:0;}
   .rtab-dec:not(.is-runs) li > :first-child{grid-row:auto;}
   .rtab-dec:not(.is-runs) li > :not(:first-child){grid-column:1;}
 }
+
+/* Tabs sit on the card's grid: the tab row and panels start at the card's content edge, every section keeps the
+   20px rail + 12px gap, so a step in Activity lines up under the same step in the card, and headings and text share
+   the card's text edge. */
+.rtab-panel{margin-inline:calc(var(--pad-card) + 1px);}
+.rc-tabs{margin-left:calc(var(--pad-card) + 1px + var(--rail) + var(--gap));margin-right:calc(var(--pad-card) + 1px);}
+.rtab,.rtab-bar,.rtab-panel > .rtab-dec:not(.is-runs){padding-left:calc(var(--rail) + var(--gap));}
+.rtab-stage .sc-subs{margin-left:calc(-1 * (var(--rail) + var(--gap)));}   /* rows put their circle back on the rail */

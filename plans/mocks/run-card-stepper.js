@@ -72,14 +72,14 @@ function stackHtml(k) {
 function summaryPanel(v) {
   const d = v.tabData;
   const costs = v.activity.filter((st) => !/^run/.test(st.key)).flatMap((st) => st.rows.filter((r) => r.cost).map((r) => `<tr><td>${esc(r.name)}</td><td>${esc(r.model)}</td><td class="num">${esc(r.time)}</td><td class="num">${esc(r.cost)}</td></tr>`)).join('');
-  return `<section class="rt"><h2 class="rtab-h">What you asked</h2><p class="rtab-p">${esc(d.task)}</p></section>
-  <section class="rt"><h2 class="rtab-h">To check <span class="n">${d.check.length}</span></h2><ul class="rtab-list">${d.check.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></section>
-  ${costs ? `<section class="rt"><h2 class="rtab-h">Cost by step</h2><div class="table-wrap"><table class="table"><thead><tr><th>Step</th><th>Model</th><th class="num">Time</th><th class="num">Cost</th></tr></thead><tbody>${costs}</tbody></table></div></section>` : ''}
-  <section class="rt"><h2 class="rtab-h">Artifacts <span class="n">${d.artifacts.length}</span></h2><ul class="rtab-list is-plain">${d.artifacts.map(([f, step]) => `<li><code>${esc(f)}</code><span class="rtab-dim">from ${esc(step)}</span></li>`).join('')}</ul></section>`;
+  return `<section class="rtab"><h2 class="rtab-h">What you asked</h2><p class="rtab-p">${esc(d.task)}</p></section>
+  <section class="rtab"><h2 class="rtab-h">To check <span class="n">${d.check.length}</span></h2><ul class="rtab-list">${d.check.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></section>
+  ${costs ? `<section class="rtab"><h2 class="rtab-h">Cost by step</h2><div class="table-wrap"><table class="table"><thead><tr><th>Step</th><th>Model</th><th class="num">Time</th><th class="num">Cost</th></tr></thead><tbody>${costs}</tbody></table></div></section>` : ''}
+  <section class="rtab"><h2 class="rtab-h">Artifacts <span class="n">${d.artifacts.length}</span></h2><ul class="rtab-list is-plain">${d.artifacts.map(([f, step]) => `<li><code>${esc(f)}</code><span class="rtab-dim">from ${esc(step)}</span></li>`).join('')}</ul></section>`;
 }
 function changesPanel(v) {
   const f = v.tabData.files; const add = f.reduce((a, x) => a + x[1], 0); const del = f.reduce((a, x) => a + x[2], 0);
-  return `<section class="rt"><h2 class="rtab-h">${f.length} files <span class="rtab-dim"><span class="add">+${add}</span> <span class="del">−${del}</span></span></h2>
+  return `<section class="rtab"><h2 class="rtab-h">${f.length} files <span class="rtab-dim"><span class="add">+${add}</span> <span class="del">−${del}</span></span></h2>
   <ul class="rtab-files">${f.map(([p, a, d]) => `<li><button type="button" class="rtab-file"><code title="${esc(p)}">${esc(p)}</code><span class="ct"><span class="add">+${a}</span><span class="del">−${d}</span></span></button></li>`).join('')}</ul>
   <p class="rtab-dim rtab-p">A file opens its diff here; review comments sit on its lines.</p></section>`;
 }
@@ -87,7 +87,7 @@ function activityPanel(v) {
   const view = ui.view || 'steps';
   const seg = `<div class="seg" role="group" aria-label="Show"><button type="button" data-view="steps" aria-pressed="${view === 'steps'}">Steps</button><button type="button" data-view="graph" aria-pressed="${view === 'graph'}">Graph</button></div>`;
   if (view === 'graph') return `<div class="rtab-bar">${seg}</div><p class="rtab-dim rtab-p">The run graph, as today, centred on the live step; a step opens the same log drawer.</p>`;
-  const stages = v.activity.map((st) => `<section class="rt rt-stage"><h2 class="rtab-h">${esc(st.label)}${st.title ? ' · ' + esc(st.title) : ''}${st.meta ? ` <span class="rtab-dim">${esc(st.meta)}</span>` : ''}</h2>
+  const stages = v.activity.map((st) => `<section class="rtab rtab-stage"><h2 class="rtab-h">${esc(st.label)}${st.title ? ' · ' + esc(st.title) : ''}${st.meta ? ` <span class="rtab-dim">${esc(st.meta)}</span>` : ''}</h2>
     <ol class="rd-route-list sc-subs">${st.rows.map((r) => rowHtml(Object.assign({}, r, { ref: '' }), [r.model ? `<span>${esc(r.model)}</span>` : '', r.cost ? `<span>${esc(r.cost)}</span>` : '',
       /is-next/.test(r.rowCls) ? '' : '<button type="button" class="btn btn-sm btn-quiet rtab-log">Log</button>'])).join('')}</ol></section>`).join('');
   return `<div class="rtab-bar">${seg}</div>${stages}`;
