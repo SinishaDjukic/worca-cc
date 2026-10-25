@@ -258,7 +258,7 @@
       tabs: (c.tabs || RUN_TABS).map(([id, l, n], i, all) => ({ id, l, n: n || '', sel: id === (all.some((t) => t[0] === ui.tab) ? ui.tab : all[0][0]) })),
       activity: c.stages.map((x) => ({ key: x.key, label: x.label, meta: stageMeta(x), title: x.title || '',
         rows: x.subs.map((y, i) => Object.assign(rowOf(y, x.subs[i + 1]), { model: MODEL_OF[y.name] || '', cost: y.state === 'next' ? '' : COST_OF[y.name] || '', focus: ui.focus === x.key + '/' + y.name, ref: x.key + '/' + y.name })) })),
-      detail: DETAIL,
+      tabData: DETAIL,
     };
   }
 

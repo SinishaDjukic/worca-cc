@@ -70,7 +70,7 @@ function stackHtml(k) {
 
 // The tabs under the card: one question each.
 function summaryPanel(v) {
-  const d = v.detail;
+  const d = v.tabData;
   const costs = v.activity.filter((st) => !/^run/.test(st.key)).flatMap((st) => st.rows.filter((r) => r.cost).map((r) => `<tr><td>${esc(r.name)}</td><td>${esc(r.model)}</td><td class="num">${esc(r.time)}</td><td class="num">${esc(r.cost)}</td></tr>`)).join('');
   return `<section class="rt"><h2 class="rtab-h">What you asked</h2><p class="rtab-p">${esc(d.task)}</p></section>
   <section class="rt"><h2 class="rtab-h">To check <span class="n">${d.check.length}</span></h2><ul class="rtab-list">${d.check.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></section>
@@ -78,7 +78,7 @@ function summaryPanel(v) {
   <section class="rt"><h2 class="rtab-h">Artifacts <span class="n">${d.artifacts.length}</span></h2><ul class="rtab-list is-plain">${d.artifacts.map(([f, step]) => `<li><code>${esc(f)}</code><span class="rtab-dim">from ${esc(step)}</span></li>`).join('')}</ul></section>`;
 }
 function changesPanel(v) {
-  const f = v.detail.files; const add = f.reduce((a, x) => a + x[1], 0); const del = f.reduce((a, x) => a + x[2], 0);
+  const f = v.tabData.files; const add = f.reduce((a, x) => a + x[1], 0); const del = f.reduce((a, x) => a + x[2], 0);
   return `<section class="rt"><h2 class="rtab-h">${f.length} files <span class="rtab-dim"><span class="add">+${add}</span> <span class="del">−${del}</span></span></h2>
   <ul class="rtab-files">${f.map(([p, a, d]) => `<li><button type="button" class="rtab-file"><code title="${esc(p)}">${esc(p)}</code><span class="ct"><span class="add">+${a}</span><span class="del">−${d}</span></span></button></li>`).join('')}</ul>
   <p class="rtab-dim rtab-p">A file opens its diff here; review comments sit on its lines.</p></section>`;
@@ -93,7 +93,7 @@ function activityPanel(v) {
   return `<div class="rtab-bar">${seg}</div>${stages}`;
 }
 function decisionsPanel(v) {
-  return `<ul class="rtab-dec">${v.detail.decisions.map((x) => `<li><span class="rtab-dim">${esc(x.step)}</span><span class="rtab-q">${esc(x.q)}</span><span>${esc(x.a)}</span><span class="rtab-dim">${esc(x.by)}</span></li>`).join('')}</ul>`;
+  return `<ul class="rtab-dec">${v.tabData.decisions.map((x) => `<li><span class="rtab-dim">${esc(x.step)}</span><span class="rtab-q">${esc(x.q)}</span><span>${esc(x.a)}</span><span class="rtab-dim">${esc(x.by)}</span></li>`).join('')}</ul>`;
 }
 function runsPanel(v) {
   const runs = v.activity.filter((st) => /^run/.test(st.key));

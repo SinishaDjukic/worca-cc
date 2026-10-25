@@ -226,8 +226,8 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rtab-dec.is-runs li{grid-template-columns:20px minmax(0,1fr) auto;column-gap:12px;align-items:center;}
 .rtab-dec.is-runs li > .status-dot{justify-self:center;grid-row:1 / span 2;}
 .rtab-dec.is-runs li > .btn{grid-column:3;grid-row:1 / span 2;}
-@container (max-width: 480px){
-  .rtab-dec li{grid-template-columns:minmax(0,1fr);}
-  .rtab-dec li > :first-child{grid-row:auto;}
-  .rtab-dec li > :not(:first-child){grid-column:1;}
+@container (max-width: 480px){   /* decisions stack; the Runs list keeps its dot | title | Open columns */
+  .rtab-dec:not(.is-runs) li{grid-template-columns:minmax(0,1fr);}
+  .rtab-dec:not(.is-runs) li > :first-child{grid-row:auto;}
+  .rtab-dec:not(.is-runs) li > :not(:first-child){grid-column:1;}
 }
