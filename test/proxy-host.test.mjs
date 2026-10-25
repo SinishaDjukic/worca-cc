@@ -120,3 +120,22 @@ test('saveSettings: turning off and a fixedPort-only change need no test; the po
   assert.equal(off.refused, undefined, 'turning off needs no test');
   assert.equal(calls.saved.length, 2);
 });
+
+test('a typed login: only a recorded test takes it; it replaces the saved login for that test, and the pass is per account', async () => {
+  const seen = [];
+  const { h, calls } = host({ settings: { enabled: false, upstream: 'http://proxy.acme.test:8080' }, login: null,
+    check: async (up) => { seen.push(up); return { ok: true, upstream: { upstream: `${up.host}:${up.port}` }, results: [] }; } });
+  const patch = { enabled: true, upstream: 'http://proxy.acme.test:8080', auth: 'auto' };
+  const A = { domain: 'ACME', user: 'jdoe', password: 'S3cret!' };
+  const chat = await h.test(patch, { login: A });
+  assert.equal(chat.status, 400, 'the chat tool test (record false) never takes a login');
+  assert.equal(seen.length, 0);
+  assert.equal((await h.test(patch, { record: true, login: A })).body.ok, true);
+  assert.equal(seen[0].auth, 'auto');
+  assert.equal(seen[0].credentials.user, 'jdoe');
+  assert.equal(seen[0].login.label, 'ACME\\jdoe');
+  assert.equal(calls.rejected.length, 0);
+  assert.equal(h.checkSave(patch, { login: A }).refused, null, 'the gate passes for the tested account');
+  assert.equal(h.checkSave(patch, { login: { ...A, user: 'other' } }).refused.body.code, 'UNTESTED', 'another account needs its own test');
+  assert.equal(h.checkSave(patch).refused.body.code, 'UNTESTED', 'no login at all is another account too');
+});

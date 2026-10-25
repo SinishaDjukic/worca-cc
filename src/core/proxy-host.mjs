@@ -3,7 +3,8 @@
 // process state those must agree on: the one-test-at-a-time lock and the passed tests that let a
 // save swap the upstream (D9).
 import { networkProxySettings, setNetworkProxy, previewNetworkProxy, networkProxyEnabled, readSettings } from './settings.mjs';
-import { proxyState, readProxyLogin, markLoginRejected, upstreamEnv } from './proxy-credentials.mjs';
+import { proxyState, readProxyLogin, markLoginRejected, upstreamEnv, assertProxyLoginInput, savedLoginRefusal, ProxyLoginError } from './proxy-credentials.mjs';
+import { ntHash } from './ntlm.mjs';
 import { checkUpstream, resolveUpstream, upstreamKey, upstreamLabel, fixedPortOf, localProxyUrl } from './upstream-proxy.mjs';
 
 export const PROXY_AGENT_TEXT = 'The corporate proxy login cannot be changed or tested from inside the container while agent isolation is on. Open Worca through its published address.';
@@ -28,7 +29,7 @@ export function createProxyHost({ egress, apply = () => null, io = {} } = {}) {
   const check = io.checkUpstream ?? checkUpstream;
   const envOf = io.env ?? (() => process.env);
   let testRunning = false;
-  /** upstreamKey -> time of the passing test. */
+  /** passKey (upstream + account) -> time of the passing test. */
   const passed = new Map();
 
   const E = () => egress() || null;
@@ -36,11 +37,15 @@ export function createProxyHost({ egress, apply = () => null, io = {} } = {}) {
   const sourceEnv = () => upstreamEnv(E() && E().sourceEnv ? E().sourceEnv : envOf());
   const live = () => (E() && E().connector ? E().connector.status() : null);
 
-  /** The upstream `np` would use, resolved like the running proxy does (D13). */
-  const resolveFor = (np) => {
-    const login = readLogin();
+  /** The upstream `np` would use, resolved like the running proxy does (D13). `typed`: a login typed in the
+   *  setup dialog (typedRecord), used instead of the saved one; it lives only in this call's memory. */
+  const resolveFor = (np, typed = null) => {
+    const login = typed || readLogin();
     return resolveUpstream({ env: sourceEnv(), settings: np, login: login && !login.error ? login : null });
   };
+  /** A pass is keyed on the upstream AND the account it logged in as, so one account's pass never clears
+   *  the gate for another. */
+  const passKey = (up) => (up && !up.error ? `${upstreamKey(up)}|${up.login ? up.login.label : ''}` : '');
   /** The running upstream's key, resolved through the same resolveFor() as the candidate, so both sides
    *  share one format. The connector's status().auth can drift from the resolved auth after a login
    *  change (useLogin sets 'auto'/'none'), so it is never compared directly (architect-2-1). '' = nothing runs. */
@@ -48,14 +53,14 @@ export function createProxyHost({ egress, apply = () => null, io = {} } = {}) {
     const l = live();
     if (!l) return '';
     const up = resolveFor(settings());
-    return up && !up.error && upstreamLabel(up.host, up.port) === l.upstream ? upstreamKey(up) : '';
+    return up && !up.error && upstreamLabel(up.host, up.port) === l.upstream ? passKey(up) : '';
   };
   /** True when saving `np` would send traffic (and the login) to an upstream nobody tested (D9). */
-  function untested(np) {
+  function untested(np, typed = null) {
     if (!(np && np.enabled === true)) return false;
-    const up = resolveFor(np);
+    const up = resolveFor(np, typed);
     if (!up || up.error) return false;               // nothing to send to; the status line says why
-    const key = upstreamKey(up);
+    const key = passKey(up);
     if (key === runningKey()) return false;
     for (const [k, at] of passed) if (now() - at > TESTED_TTL_MS) passed.delete(k);   // prune expired passes
     return !passed.has(key);
@@ -95,17 +100,36 @@ export function createProxyHost({ egress, apply = () => null, io = {} } = {}) {
 
   const refuse = (code, error) => ({ status: 409, body: { error, code } });
 
+  /** A typed login as a readProxyLogin()-shaped record: the NT hash in memory, no id (a trip marks no file).
+   *  @throws {ProxyLoginError} like apply's check */
+  function typedRecord(login) {
+    const account = assertProxyLoginInput(login && typeof login === 'object' ? login : {});
+    return { id: '', ...account, ntHash: ntHash(login.password), savedAt: '', rejected: null };
+  }
+
   /**
    * POST /api/proxy/test and the chat card's Apply. `candidate`: a networkProxy patch merged over the saved
    * values; none = the saved values. `record`: only a person's click (the UI route, the card's Apply) may
    * record a pass that later satisfies the UNTESTED gate; the chat tool test never records (D9).
+   * `login`: the setup dialog's typed { domain, user, password }, used for this test only and never written
+   * or logged; its NT hash goes only to the candidate upstream. Only a recorded test may take one.
    * {status, body}; body {ok, upstream, results} on 200.
    */
-  async function test(candidate, { record = false } = {}) {
+  async function test(candidate, { record = false, login } = {}) {
     if (testRunning) return refuse('TEST_RUNNING', 'a proxy test is already running');
     let np;
     try { np = candidate === undefined ? settings() : preview(candidate); } catch (err) { return { status: 400, body: { error: err.message, field: 'networkProxy' } }; }
-    const up = resolveFor(np);
+    let typed = null;
+    if (login !== undefined) {
+      if (!record) return { status: 400, body: { error: 'this test uses the saved login only', field: 'login' } };
+      const refusal = savedLoginRefusal(np && np.auth);
+      if (refusal) return { status: 400, body: { error: refusal, field: 'login', code: 'BASIC_NO_SAVED_LOGIN' } };
+      try { typed = typedRecord(login); } catch (err) {
+        if (!(err instanceof ProxyLoginError)) throw err;
+        return { status: 400, body: { error: err.message, field: `login.${err.field}` } };
+      }
+    }
+    const up = resolveFor(np, typed);
     if (!up) return refuse('NOT_CONFIGURED', 'no corporate proxy is set up: enter its host and port, then Test');
     if (up.error) return refuse('UPSTREAM_INVALID', up.error);
     testRunning = true;
@@ -114,8 +138,8 @@ export function createProxyHost({ egress, apply = () => null, io = {} } = {}) {
         startTripped: !!(up.login && up.login.rejected),
         onTrip: ({ upstream, loginId }) => { if (loginId) markRejected(loginId, { upstream }); },
       });
-      if (!r.ok) passed.delete(upstreamKey(up));
-      else if (record) passed.set(upstreamKey(up), now());
+      if (!r.ok) passed.delete(passKey(up));
+      else if (record) passed.set(passKey(up), now());
       E()?.reloadLogin?.();   // a trip here marked the file: the running connector stops at once
       return { status: 200, body: { ok: r.ok, upstream: r.upstream.upstream, results: r.results } };
     } finally {
@@ -123,10 +147,14 @@ export function createProxyHost({ egress, apply = () => null, io = {} } = {}) {
     }
   }
 
-  /** The UNTESTED gate alone, so setup apply can refuse before its one write (D9, D20). Throws the validation error. */
-  function checkSave(patch) {
+  /** The UNTESTED gate alone, so setup apply can refuse before its one write (D9, D20). `login`: the login the
+   *  same apply saves, so the gate asks for a pass with THAT account; an invalid one falls back to the saved
+   *  login here (apply then names the bad field). Throws the networkProxy validation error. */
+  function checkSave(patch, { login } = {}) {
     const next = preview(patch ?? null);
-    return { next, refused: untested(next) ? refuse('UNTESTED', UNTESTED_TEXT) : null };
+    let typed = null;
+    if (login !== undefined) { try { typed = typedRecord(login); } catch (err) { if (!(err instanceof ProxyLoginError)) throw err; } }
+    return { next, refused: untested(next, typed) ? refuse('UNTESTED', UNTESTED_TEXT) : null };
   }
 
   /** Swap in values that are already written: PUT /api/proxy/settings' tail, and setup apply's proxy-swap step. */

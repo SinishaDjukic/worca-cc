@@ -48,7 +48,13 @@ You can also set the same values by hand in `settings.json` under `networkProxy`
 - "Saved. New connections use it now." covers new connections from Worca itself and new agent steps;
   an agent step that is already running keeps its route until it ends.
 - `POST /api/proxy/test` takes `{ networkProxy }`, the values to test merged over the saved ones;
-  without it, it tests the saved values. Both `/api/proxy/test` and `PUT /api/proxy/settings` take
+  without it, it tests the saved values. It also takes an optional `login: { domain, user, password }`, the
+  login typed in the setup assistant's Network step: the test uses it instead of the saved login, so a fresh
+  install behind an NTLM proxy can pass before any login is saved. That login is checked like a saved one (a
+  bad field is a 400 on `login.<field>`; with `auth` Basic or Digest it is refused, because a saved login
+  keeps only the NT hash), held in memory for that one test, and never written or logged; its NT hash goes only
+  to the proxy under test. Its pass counts only for that account: saving the same proxy with another login (or
+  with none, so the saved one) needs its own test. The chat's test never takes a login. Both `/api/proxy/test` and `PUT /api/proxy/settings` take
   `application/json` bodies only.
 
 ## Settings reference

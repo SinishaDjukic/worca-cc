@@ -140,8 +140,9 @@ export async function planSetupApply(body, deps = {}) {
     networkProxy = await check('network', 'networkProxy', () => nextNetworkProxy(network.networkProxy));
     // Nothing new would be sent when the planned value is already stored (a proxy-swap retry after the
     // 10-minute test pass expired): the gate guards a write, so it is skipped then (architect-2-2).
+    // The login this apply saves rides along: the pass must be for that account (D9).
     if (!sameValue(networkProxy, current.networkProxy)) {
-      const { refused: gate } = await check('network', 'networkProxy', () => d.checkProxy(network.networkProxy));
+      const { refused: gate } = await check('network', 'networkProxy', () => d.checkProxy(network.networkProxy, own(network, 'login') ? network.login : undefined));
       if (gate) throw new SetupFieldError('network.networkProxy', gate.body.error, gate.body.code);
     }
     next.networkProxy = networkProxy;

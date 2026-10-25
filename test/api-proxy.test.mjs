@@ -372,3 +372,56 @@ test('Decision 15a: a non-JSON body is refused with 415; a PUT without networkPr
   assert.equal(empty.status, 400);
   assert.equal(JSON.stringify(readSettings()), before, 'nothing was written');
 });
+
+test('a typed login: the test passes with NO saved login, writes nothing, and its pass clears the gate for that account only', async () => {
+  await useUpstream(fake.port);
+  await call('POST', '/api/proxy/logout', {});
+  const patch = { enabled: true, upstream: `127.0.0.1:${fake.port}`, auth: 'auto' };
+  const A = { domain: 'ACME', user: 'jdoe', password: 'S3cret!' };
+  const B = { domain: 'ACME', user: 'other', password: 'S3cret!' };
+  const before = JSON.stringify(readSettings());
+  try {
+    const bare = await call('POST', '/api/proxy/test', { networkProxy: patch });
+    assert.equal(bare.body.ok, false, 'the NTLM fake needs a login');
+    const logged = [];
+    const saved = { log: console.log, warn: console.warn, error: console.error };
+    for (const k of Object.keys(saved)) console[k] = (...a) => logged.push(a.join(' '));
+    let t;
+    try { t = await call('POST', '/api/proxy/test', { networkProxy: patch, login: A }); } finally { Object.assign(console, saved); }
+    assert.equal(t.status, 200, t.text);
+    assert.equal(t.body.ok, true, t.text);
+    assert.ok(t.body.results.every((r) => r.ok), t.text);
+    assert.ok(!logged.join('\n').includes('S3cret!'), 'the password is never logged');
+    assert.ok(!t.text.includes('S3cret!') && !t.text.includes(ntHash('S3cret!').toString('hex')));
+    assert.equal(existsSync(loginFile()), false, 'proxy-login.json is untouched');
+    assert.equal(JSON.stringify(readSettings()), before, 'settings.json is untouched');
+
+    // The pass for account A never clears the gate for account B (the apply writes nothing then).
+    await setNetworkProxy(null);
+    const refusedB = await call('POST', '/api/setup/apply', { network: { networkProxy: patch, login: B } });
+    assert.equal(refusedB.status, 400, refusedB.text);
+    assert.equal(refusedB.body.code, 'UNTESTED');
+    assert.equal(existsSync(loginFile()), false);
+    const okA = await call('POST', '/api/setup/apply', { network: { networkProxy: patch, login: A } });
+    assert.equal(okA.status, 202, okA.text);
+    let job;
+    const t0 = Date.now();
+    do { await new Promise((r) => setTimeout(r, 20)); job = (await call('GET', `/api/setup/apply/${okA.body.id}`)).body; } while (!job.done && Date.now() - t0 < 5000);
+    assert.equal(job.ok, true, JSON.stringify(job));
+    assert.equal(readProxyLogin().user, 'jdoe');
+  } finally { await call('POST', '/api/proxy/logout', {}); await useUpstream(fake.port); }
+});
+
+test('a typed login is checked like apply checks it: a bad field is 400, Basic and Digest are refused', async () => {
+  const patch = { enabled: true, upstream: `127.0.0.1:${fake.port}` };
+  const empty = await call('POST', '/api/proxy/test', { networkProxy: patch, login: { domain: 'ACME', user: 'jdoe', password: '' } });
+  assert.equal(empty.status, 400);
+  assert.equal(empty.body.field, 'login.password');
+  for (const auth of ['basic', 'digest']) {
+    const r = await call('POST', '/api/proxy/test', { networkProxy: { ...patch, auth }, login: { domain: 'ACME', user: 'jdoe', password: 'S3cret!' } });
+    assert.equal(r.status, 400, auth);
+    assert.equal(r.body.code, 'BASIC_NO_SAVED_LOGIN');
+    assert.equal(r.body.error, savedLoginRefusal(auth));
+  }
+  assert.equal(existsSync(loginFile()), false);
+});

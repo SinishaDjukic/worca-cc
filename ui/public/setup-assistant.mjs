@@ -50,11 +50,18 @@ export function safeHttpUrl(v) {
   catch { return null; }
 }
 
-/** The key a proxy test pass is recorded under: the values the test sent (A11). */
+/** The key a proxy test pass is recorded under: the values the test sent, the account included (A11). */
 export function proxyKey(n) {
-  const host = String(n.host || '').trim();
-  return JSON.stringify({ upstream: host ? `http://${host}:${String(n.port || '').trim() || '8080'}` : null, auth: n.auth || 'auto', noProxy: String(n.noProxy || '').trim() || null });
+  const host = String(n.host || '').trim(); const auth = n.auth || 'auto';
+  return JSON.stringify({ upstream: host ? `http://${host}:${String(n.port || '').trim() || '8080'}` : null, auth, noProxy: String(n.noProxy || '').trim() || null,
+    account: auth === 'auto' ? `${String(n.domain || '').trim()}\\${String(n.user || '').trim()}` : null });
 }
+/** The login typed on Network, or null: it rides the Test and the network apply, never anything else. */
+function typedLogin(n) {
+  return n.mode === 'proxy' && n.auth === 'auto' && n.password ? { domain: n.domain.trim(), user: n.user.trim(), password: n.password } : null;
+}
+/** The one line the dialog shows once Next on Network saved it (the network group applies on Next). */
+export function networkSavedLine(n) { return n.mode === 'proxy' ? 'The corporate proxy is saved and on.' : 'Direct connection saved.'; }
 
 /** Order-blind deep equality (the server's sameValue, src/core/setup/apply.mjs:61, for plain JSON); null == undefined. */
 function same(a, b) {
@@ -166,8 +173,8 @@ export function buildApplyBody(saved, answers) {
   const body = {};
   const net = networkPatch(answers.network);
   if (!same(net, savedNetworkPatch(saved))) (body.network ||= {}).networkProxy = net;
-  const n = answers.network;
-  if (n.mode === 'proxy' && n.auth === 'auto' && n.password) (body.network ||= {}).login = { domain: n.domain.trim(), user: n.user.trim(), password: n.password };
+  const login = typedLogin(answers.network);
+  if (login) (body.network ||= {}).login = login;
   const a = answers.access; const pv = saved.providers || {};
   const cpSaved = !!pv.copilot?.connected || pv.broker?.providers?.copilot?.state === 'set';
   if (a.copilot && ((a.copilotConnected && !cpSaved) || a.copilotAccount !== (pv.copilot?.accountType || 'individual') || a.importModels.length)) {
@@ -211,9 +218,9 @@ export function diffRows(saved, answers) {
 /**
  * Whether the primary button may run on `step`, and the status line when it may not (A11, R-ux-2).
  * `tested` = { key, at } of the last passing test, or null. A first start with nothing to apply returns
- * { ok: true, finish: true } on Review (A23).
+ * { ok: true, finish: true } on Review (A23); so does any entry once Next on Network saved it (`netSaved`).
  */
-export function nextGate(step, answers, { saved, tested = null, now = Date.now(), detect = null, entry = 'first' } = {}) {
+export function nextGate(step, answers, { saved, tested = null, now = Date.now(), detect = null, entry = 'first', netSaved = '' } = {}) {
   if (step === 'network' && answers.network.mode === 'proxy') {
     if (!tested || tested.key !== proxyKey(answers.network) || now - tested.at >= TEST_PASS_MS) return { ok: false, reason: 'Test the connection to continue' };
   }
@@ -228,6 +235,7 @@ export function nextGate(step, answers, { saved, tested = null, now = Date.now()
     if (a.claude && claude && claude.state !== 'ok') return { ok: false, reason: 'Run claude /login in a terminal first' };
   }
   if (step === 'review' && !diffRows(saved, answers).some((r) => r.changed)) {
+    if (netSaved) return { ok: true, finish: true, reason: `${netSaved} Nothing else to change.` };
     if (entry === 'first') return { ok: true, finish: true, reason: 'Nothing to change: your current setup already works.' };
     // 'team' finishes like 'first' (T17): Finish closes with done, which marks the notice seen.
     if (entry === 'team') return { ok: true, finish: true, reason: answers.found?.teamGone ? TEAM_GONE_LINE : TEAM_MATCHES_LINE };
@@ -291,7 +299,10 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   const call = async (url, opts) => { try { return await fetchJson(url, opts); } catch { return { ok: false, status: 0, data: { error: UNREACHABLE } }; } };
   const S = { step, saved: null, detect: null, answers: null, opened: null, loadError: '', tested: null, testing: false, testResults: [],
     applying: false, early: [], job: null, results: new Map(), body: null, done: null, error: '', errField: null, pollT: null, pollFails: 0, passT: null,
-    cpFlow: null, cpT: null, copilotModels: [], expanded: false, more: false, hadLogin: false, retryLogin: null, note: '', sharing: false, team: null };
+    cpFlow: null, cpT: null, copilotModels: [], expanded: false, more: false, hadLogin: false, retryLogin: null, note: '', sharing: false, team: null,
+    // Network applies on Next (a network-only apply): netJob while it runs; netRetry { fromStep, body, login } after
+    // a failed step; netPending what a Retry would resend; netSaved the line once it is saved.
+    netJob: false, netRetry: null, netPending: null, netSaved: '' };
 
   const stepOf = el('span', 'sa-step-of'); const title = el('h2', null); title.id = 'setup-title'; const sub = el('p', 'sa-sub');
   const head = el('div', 'card-head'); head.append(stepOf, title, sub);
@@ -338,7 +349,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     if (opener?.isConnected) opener.focus?.();
     onClose(how);
   }
-  const guard = guardModal(modal, { kind: 'form', close: () => teardown('later'),
+  const guard = guardModal(modal, { kind: 'form', close: () => teardown('later'), busy: () => S.netJob,
     // Apply (and a login Retry after it) is past the point of discarding: its writes are done (architect-1-2).
     isDirty: () => S.step !== 'apply' && !S.retryLogin && !!S.answers && !!S.opened && JSON.stringify(S.answers) !== S.opened });
 
@@ -416,6 +427,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       return;
     }
     if (!S.answers) { const list = rows('sa-load'); list.append(row(el('span', 'mk-phase-spin'), 'Loading your setup…')); body.append(list); return; }
+    if (S.netSaved && S.step !== 'check' && S.step !== 'apply') body.append(el('p', 'hint sa-net-saved', S.netSaved));
     ({ check: paintCheck, network: paintNetwork, access: paintAccess, models: paintModels, work: paintWork, review: paintReview, apply: paintApply })[S.step]();
     markField(S.errField);
     keepFocus();
@@ -440,7 +452,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   }
 
   function paintNetwork() {
-    const n = S.answers.network; const locked = !!S.retryLogin;
+    const n = S.answers.network; const locked = !!S.retryLogin || !!S.netRetry || S.netJob;
     // Any edit to a value the test sent drops the pass, so changing it back still needs a new test.
     const untest = (set) => (v) => { S.tested = null; timers.clearTimeout(S.passT); set(v); };
     body.append(seg([['direct', 'Direct'], ['proxy', 'Through a corporate proxy']], n.mode, untest((v) => { n.mode = v; paint(); }), { label: 'Connection', disabled: locked }));
@@ -465,11 +477,12 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       for (const i of [host, port, auth, noProxy]) i.disabled = locked;
       body.append(field('Proxy', pair, null), field('Login', authWrap, null));
       if (n.auth === 'auto') {
-        const domain = textInput('text', n.domain, (v) => { n.domain = v; }, { placeholder: 'ACME', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Domain' });
-        const user = textInput('text', n.user, (v) => { n.user = v; }, { placeholder: 'jdoe', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'User name' });
+        // The account rides the Test, so editing it (the password too) needs a new one.
+        const domain = textInput('text', n.domain, untest((v) => { n.domain = v; }), { placeholder: 'ACME', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Domain' });
+        const user = textInput('text', n.user, untest((v) => { n.user = v; }), { placeholder: 'jdoe', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'User name' });
         domain.dataset.saField = 'network.login.domain'; user.dataset.saField = 'network.login.user';
         const account = el('div', 'sa-pair'); account.append(domain, user);
-        const pw = textInput('password', n.password, (v) => { n.password = v; }, { autocomplete: 'off',
+        const pw = textInput('password', n.password, untest((v) => { n.password = v; }), { autocomplete: 'off',
           ...(S.saved.proxy?.login && !locked ? { placeholder: 'Saved login in use · type to replace' } : {}) });
         body.append(field('Account', account, null), field('Password', pw, 'network.login.password'));
       }
@@ -494,6 +507,14 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     }
     if (S.testing) { const list = rows('sa-testing'); list.append(row(el('span', 'mk-phase-spin'), 'Testing…')); body.append(list); }
     else if (S.testResults.length && !locked) { const list = el('ul', 'np-results sa-results'); renderResults(list, S.testResults); body.append(list); }
+    paintNetworkApply();
+  }
+  // The network-only apply's rows, inline on Network (Direct included): its progress, or the failed step's line.
+  function paintNetworkApply() {
+    if (!(S.netJob || S.netRetry) || !S.results.size) return;
+    const list = rows('sa-apply sa-net-apply');
+    paintApplyRows(doc, list, S.results, !S.netJob);
+    body.append(list);
   }
 
   function paintAccess() {
@@ -597,9 +618,11 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   function paintReview() {
     const list = rows('sa-review');
     for (const r of diffRows(S.saved, S.answers)) {
-      if (entry !== 'first' && !r.changed) continue;
+      const netSaved = r.group === 'network' && !!S.netSaved && !r.changed;
+      if (entry !== 'first' && !r.changed && !netSaved) continue;
       const li = row(null, r.label, r.value); li.dataset.group = r.group;
       if (r.changed) li.append(badge('amber', 'Changed'));
+      if (netSaved) li.append(badge('green', 'Saved'));
       if (r.team) li.append(badge('team', 'Team'));
       li.append(btn('Change', 'btn btn-sm btn-quiet sa-change', () => goTo(r.step)));
       list.append(li);
@@ -632,7 +655,16 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       status.className = `hint sa-status${S.error ? ' err' : ''}`; status.textContent = S.error || S.note || (S.done ? '' : 'Working…');
       return;
     }
-    if (S.applying) { status.className = 'hint sa-status'; status.textContent = 'Working…'; return; }
+    if (S.applying || S.netJob) { status.className = 'hint sa-status'; status.textContent = 'Working…'; return; }
+    if (S.netRetry && S.step === 'network') {             // a failed network apply: Retry from its step
+      const needPw = S.netRetry.login && !String(S.answers.network.password || '').trim();
+      actions.append(btn('Back', 'btn sa-back', () => goTo(SETUP_STEPS[idx() - 1].id)));
+      actions.append(btn('Skip', 'btn btn-quiet sa-skip', () => { void skip(); }));
+      const again = btn('Retry', 'btn btn-primary sa-next', () => applyNetwork(S.netRetry.body, S.netRetry));
+      again.disabled = needPw; actions.append(again);
+      status.className = `hint sa-status${S.error ? ' err' : ''}`; status.textContent = S.error || (needPw ? 'Type the proxy password again to retry' : '');
+      return;
+    }
     if (S.retryLogin && S.step === 'network') {           // A24: Network in re-type mode
       const pw = String(S.answers.network.password || '').trim();
       actions.append(btn('Back', 'btn sa-back', () => { S.retryLogin = null; S.answers.network.password = ''; goTo('apply'); }));
@@ -643,10 +675,10 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     }
     actions.append(first ? btn(entry === 'first' ? 'Set up later' : 'Cancel', 'btn btn-quiet sa-later', () => guard.cancel())
       : btn('Back', 'btn sa-back', () => goTo(SETUP_STEPS[idx() - 1].id)));
-    if (S.answers && idx() >= 1 && idx() <= 4) actions.append(btn('Skip', 'btn btn-quiet sa-skip', () => skip()));
-    const gate = S.answers ? nextGate(S.step, S.answers, { saved: S.saved, tested: S.tested, now: now(), detect: S.detect, entry }) : { ok: false, reason: '' };
+    if (S.answers && idx() >= 1 && idx() <= 4) actions.append(btn('Skip', 'btn btn-quiet sa-skip', () => { void skip(); }));
+    const gate = S.answers ? nextGate(S.step, S.answers, { saved: S.saved, tested: S.tested, now: now(), detect: S.detect, entry, netSaved: S.netSaved }) : { ok: false, reason: '' };
     const label = S.step === 'check' ? 'Start' : S.step === 'review' ? (gate.finish ? 'Finish' : entry === 'first' ? 'Apply setup' : 'Apply changes') : 'Next';
-    const onNext = () => (S.step !== 'review' ? goTo(SETUP_STEPS[idx() + 1].id) : gate.finish ? teardown('done') : startApply(null));
+    const onNext = () => (S.step === 'network' ? nextFromNetwork() : S.step !== 'review' ? goTo(SETUP_STEPS[idx() + 1].id) : gate.finish ? teardown('done') : startApply(null));
     const next = btn(label, 'btn btn-primary sa-next', onNext);
     next.disabled = !gate.ok || S.testing; actions.append(next);
     status.className = `hint sa-status${S.error ? ' err' : ''}`; status.textContent = S.error || gate.reason;
@@ -675,8 +707,14 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   // The status line is the dialog's small.hint.sa-status[role=status], so each note is announced.
   function refocusShare() { if (!closed) actions.querySelector('.sa-share')?.focus(); }
 
-  // Skip keeps the saved values for that step (mockup: "Skipping a step keeps its saved values").
-  function skip() {
+  // Skip keeps the saved values for that step (mockup: "Skipping a step keeps its saved values"). After a failed
+  // network apply those are re-read first: its earlier steps may have saved some of them.
+  async function skip() {
+    if (S.netRetry && S.step === 'network') {
+      S.netRetry = null; S.results = new Map(); S.answers.network.password = '';
+      await load({ keepAnswers: true });
+      if (closed) return;
+    }
     const saved = initialAnswers({ saved: S.saved, entry: 'rerun' });
     const group = GROUP_STEP[S.step];
     if (group) S.answers[group] = saved[group];
@@ -717,7 +755,8 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   async function testProxy() {
     const n = S.answers.network; const key = proxyKey(n);
     S.testing = true; S.tested = null; S.error = ''; paint();
-    const r = await call('/api/proxy/test', { method: 'POST', body: { networkProxy: networkPatch(n) } });
+    const login = typedLogin(n);
+    const r = await call('/api/proxy/test', { method: 'POST', body: { networkProxy: networkPatch(n), ...(login ? { login } : {}) } });
     if (closed) return;
     S.testing = false;
     S.testResults = r.ok ? (r.data.results || []) : [];
@@ -757,6 +796,63 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       S.cpT = timers.setTimeout(poll, Math.max(3, Number(r.data?.interval) || S.cpFlow.interval || 5) * 1000);
     };
     S.cpT = timers.setTimeout(poll, Math.max(3, Number(S.cpFlow.interval) || 5) * 1000);
+  }
+
+  /**
+   * Next on Network: the network group takes effect now, so steps 3 on (the Copilot sign-in) already go
+   * through the proxy. Values that match what is saved post nothing (D19); otherwise a network-only apply
+   * runs inline, and Model access opens only once it succeeded.
+   */
+  function nextFromNetwork() {
+    const net = buildApplyBody(S.saved, S.answers).network;
+    if (!net) { goTo(SETUP_STEPS[idx() + 1].id); return; }
+    void applyNetwork({ network: net });
+  }
+  /** POST the network-only body (`retry` = a failed run's { fromStep, login }: the password is typed again). */
+  async function applyNetwork(netBody, retry = null) {
+    let post = retry ? { ...netBody, fromStep: retry.fromStep } : netBody;
+    if (retry?.login) post = { ...post, network: { ...post.network, login: typedLogin(S.answers.network) } };
+    S.applying = true; S.netJob = true; S.job = null; S.done = null; S.early = []; S.error = ''; S.errField = null; S.pollFails = 0;
+    S.results = new Map(); card.dataset.fbState = 'busy'; paint();
+    const r = await call('/api/setup/apply', { method: 'POST', body: post });
+    const hadLogin = !!post.network?.login;
+    post = null;
+    if (closed) return;
+    S.applying = false;
+    if (r.status === 202) {
+      // Scrubbed as scrubSecrets() does: the password was saved by proxy-login, or is typed again on Retry.
+      S.answers.network.password = '';
+      const kept = { network: { ...netBody.network } }; delete kept.network.login;
+      S.netRetry = null; S.netPending = { body: kept, login: hadLogin };
+      return attach(r.data.id, r.data.steps || []);
+    }
+    S.netJob = false; delete card.dataset.fbState; S.early = [];
+    if (r.status === 400) {
+      if (r.data.code === 'UNTESTED') S.tested = null;
+      S.error = r.data.error || 'Check this value.'; S.errField = r.data.field || null;
+      paint(); return;
+    }
+    if (r.status === 409 && r.data.code === 'SETTINGS_CHANGED') { await load({ keepAnswers: true }); if (closed) return; }
+    S.error = r.data.error || `HTTP ${r.status}`; paint();
+  }
+  /** The network-only apply ended: reload what is saved, so the D19 diff (and the final Apply) has no network. */
+  async function finishNetwork(done) {
+    const failed = [...S.results.values()].find((x) => x.state === 'failed');
+    const pending = S.netPending; S.netPending = null; S.job = null; S.done = null;
+    if (done.ok) {
+      S.results = new Map();
+      await load({ keepAnswers: true });
+      if (closed) return;
+      S.netJob = false; S.netSaved = networkSavedLine(S.answers.network);
+      goTo(SETUP_STEPS[idx() + 1].id);
+      return;
+    }
+    // A failed step keeps its earlier writes (D20): Retry runs from it with the same body, as the final Apply's does.
+    S.netJob = false;
+    S.netRetry = done.retry ? { fromStep: done.retry, body: pending.body, login: pending.login && LOGIN_RETRY_STEPS.includes(done.retry) } : null;
+    if (!S.netRetry) { S.results = new Map(); await load({ keepAnswers: true }); if (closed) return; }
+    paint();
+    S.error = failed?.line || S.error || 'The network settings were not applied.'; paintFoot();
   }
 
   /**
@@ -812,7 +908,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   }
   function attach(id, steps, { pollNow = false } = {}) {
     S.job = id; S.done = null; S.results = new Map(steps.map((s) => [s.id, { ...s, state: 'pending' }]));
-    goTo('apply');
+    if (S.netJob) paint(); else goTo('apply');
     const early = S.early; S.early = [];
     for (const m of early) onFrame(m);                  // frames that beat the 202 (qa-1-2); other ids are dropped
     if (!S.done) schedulePoll(pollNow ? 0 : 2000);       // a 409 SETUP_RUNNING has no steps yet: poll at once (architect-2-3)
@@ -823,7 +919,9 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   }
   function finish(done) {
     S.done = { ok: done.ok === true, retry: done.retry || null }; delete card.dataset.fbState;
-    timers.clearTimeout(S.pollT); paint();
+    timers.clearTimeout(S.pollT);
+    if (S.netJob) { void finishNetwork(S.done); return; }
+    paint();
   }
   function schedulePoll(ms = 2000) {
     timers.clearTimeout(S.pollT);

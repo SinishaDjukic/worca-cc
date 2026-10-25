@@ -94,6 +94,7 @@ async function open({ entry = 'first', step = 'check', settings = SETTINGS, prox
       n.checked = !n.checked; n.dispatchEvent(new window.Event('change', { bubbles: true })); await settle();
     },
     async goTo(id) { handle.goTo(id); await settle(); },
+    settle,
     applies: () => log.filter((r) => r.url === '/api/setup/apply' && r.method === 'POST'),
     writes: () => log.filter((r) => r.method !== 'GET'),
     close() { handle.close(); window.close(); },
@@ -109,6 +110,39 @@ async function applyLimit(h, value = '7') {
   await h.click('.sa-next');
 }
 const STEPS3 = [{ id: 'proxy-swap', label: 'Proxy' }, { id: 'copilot-signin', label: 'Copilot' }, { id: 'role-test.deep', label: 'Deep thinking' }];
+const NET_STEPS = [{ id: 'proxy-swap', label: 'Network proxy' }, { id: 'proxy-login', label: 'Proxy login' }];
+
+/**
+ * The server side of "Network applies on Next": a network-only apply answers 202 'stp_net…' and, once its done
+ * frame arrived, GET /api/proxy/status returns the applied values. Any other apply answers 202 'stp_1'.
+ */
+function netServer({ proxy = PROXY_OFF } = {}) {
+  const st = { proxy, applied: [], ids: [] };
+  const routes = {
+    '/api/proxy/status': () => reply(st.proxy),
+    '/api/setup/apply': (o, n) => {
+      if (!o.body.network) return reply({ id: 'stp_1', steps: STEPS3 }, 202);
+      st.applied.push(o.body.network); st.ids.push(`stp_net${n}`);
+      return reply({ id: st.ids.at(-1), steps: NET_STEPS }, 202);
+    },
+  };
+  /** The done frame for apply `n` (1-based): ok, or failed at `failAt` with `line`. */
+  async function done(h, { n = st.applied.length, ok = true, failAt = null, line = 'It failed.' } = {}) {
+    const id = st.ids[n - 1];
+    if (ok) {
+      const np = st.applied[n - 1].networkProxy;
+      if (np) {
+        st.proxy = np.enabled ? { settings: { enabled: true, upstream: np.upstream, auth: np.auth, noProxy: np.noProxy ? [np.noProxy] : [] },
+          login: st.applied[n - 1].login ? { domain: st.applied[n - 1].login.domain, user: st.applied[n - 1].login.user } : st.proxy.login, state: 'ready' }
+          : { ...PROXY_OFF, login: st.proxy.login };
+      }
+      for (const r of NET_STEPS) h.handle.onFrame({ type: 'setup-apply', id, result: { ...r, state: 'ok', line: 'Saved.' } });
+    } else h.handle.onFrame({ type: 'setup-apply', id, result: { id: failAt, label: failAt, state: 'failed', line, retry: failAt } });
+    h.handle.onFrame({ type: 'setup-apply', id, done: true, ok, retry: ok ? null : failAt });
+    await h.settle();
+  }
+  return { st, routes, done };
+}
 
 /** Model access: Copilot on, notice accepted, device flow through to "connected". `pollAnswers`: one per poll. */
 async function signInCopilot(h, { pollAnswers = [reply({ ok: true, login: 'jdoe' })] } = {}) {
@@ -132,9 +166,9 @@ const COPILOT_ROUTES = (pollAnswers = [reply({ ok: true, login: 'jdoe' })]) => (
 test('pure helpers: proxyKey, initialAnswers, buildApplyBody, rolePatch, diffRows, nextGate, safeHttpUrl, small helpers', async () => {
   const n = { host: 'proxy.acme.example', port: '8080', auth: 'auto', noProxy: '' };
   await checkRows([
-    { name: 'proxyKey: same four values, same key; any one changed, another key', run: () => {
+    { name: 'proxyKey: same values, same key; any one changed (the account too), another key', run: () => {
       assert.equal(proxyKey(n), proxyKey({ ...n }));
-      for (const change of [{ host: 'p2.acme.example' }, { port: '8081' }, { auth: 'basic' }, { noProxy: '.corp' }]) assert.notEqual(proxyKey({ ...n, ...change }), proxyKey(n));
+      for (const change of [{ host: 'p2.acme.example' }, { port: '8081' }, { auth: 'basic' }, { noProxy: '.corp' }, { domain: 'ACME' }, { user: 'jdoe' }]) assert.notEqual(proxyKey({ ...n, ...change }), proxyKey(n));
     } },
     { name: 'initialAnswers: a re-run keeps the saved proxy over detection; a first start fills a blank from HTTPS_PROXY; fix › access turns Copilot on', run: () => {
       const rerun = initialAnswers({ saved: saved({ proxy: PROXY_ON }), detect: { checks: [check('proxyEnv', 'ok', { facts: { host: 'other.example:3128' } })] }, entry: 'rerun' });
@@ -211,8 +245,9 @@ test('pure helpers: proxyKey, initialAnswers, buildApplyBody, rolePatch, diffRow
 
 // ── 2. the dialog ──
 
-test('corporate Copilot path: proxy test → notice → device sign-in → roles → Apply, in one dialog (AC-4.2, AC-4.3)', async () => {
-  const h = await open({ detect: DETECT_PROXY, routes: { ...COPILOT_ROUTES(), '/api/setup/apply': reply({ id: 'stp_1', steps: STEPS3 }, 202) } });
+test('corporate Copilot path: proxy test → Next applies the network → notice → device sign-in → roles → Apply, in one dialog (AC-4.2, AC-4.3)', async () => {
+  const net = netServer();
+  const h = await open({ detect: DETECT_PROXY, routes: { ...COPILOT_ROUTES(), ...net.routes } });
   try {
     assert.ok(h.doc.querySelector('#setup-modal .card.setup-card.dlg'), 'the card is laid out by layoutDialog');
     assert.equal(h.$('.sa-step-of').textContent, 'Step 1 of 7');
@@ -227,30 +262,49 @@ test('corporate Copilot path: proxy test → notice → device sign-in → roles
     await h.type('network.networkProxy.port', '8081');
     assert.equal(h.next().disabled, true);
     assert.equal(h.status().textContent, 'Test the connection to continue');
+    await h.type('network.login.domain', 'ACME');
+    await h.type('network.login.user', 'jdoe');
+    await h.type('network.login.password', 'S3cret!');
     await h.click('.sa-test');
-    await h.click('.sa-next');                               // → Model access
+    const testBody = h.log.filter((r) => r.url === '/api/proxy/test').at(-1).body;
+    assert.deepEqual(testBody.login, { domain: 'ACME', user: 'jdoe', password: 'S3cret!' }, 'the Test carries the typed login');
+    await h.click('.sa-next');                               // Next on Network: a network-only apply
+    assert.equal(h.applies().length, 1);
+    assert.deepEqual(Object.keys(h.applies()[0].body), ['network'], 'only the network group');
+    assert.equal(h.applies()[0].body.network.networkProxy.upstream, 'http://proxy.acme.example:8081');
+    assert.equal(h.applies()[0].body.network.login.password, 'S3cret!');
+    assert.equal(h.title(), 'How does this machine reach the internet?', 'it waits on Network');
+    assert.equal(h.status().textContent, 'Working…');
+    assert.equal(h.$$('.sa-net-apply li.sa-row').length, 2, 'its progress shows inline');
+    assert.equal(h.field('network.login.password').value, '', 'the password is scrubbed after the 202');
+    await net.done(h);
     assert.equal(h.title(), 'Where should Worca get its models?');
+    assert.equal(h.$('.sa-net-saved').textContent, 'The corporate proxy is saved and on.');
+    assert.equal(h.log.filter((r) => r.url === '/api/proxy/status').length, 2, 'the saved values were reloaded');
     await signInCopilot(h);
     assert.match(h.$('.sa-copilot').textContent, /Connected as @jdoe/);
     await h.click('.sa-next');                               // → Models
     await h.pick(h.$('.inherit-field[data-setting="models.claude.roles.deep"] .inherit-model'), 'copilot-claude-opus-5-5');
     await h.click('.sa-next'); await h.click('.sa-next');    // → How you work → Review
+    const netRow = h.$('.sa-review li[data-group="network"]');
+    assert.match(netRow.textContent, /Saved/);
+    assert.doesNotMatch(netRow.textContent, /Changed/);
     assert.equal(h.next().textContent, 'Apply setup');
     await h.click('.sa-next');
     const urls = h.log.map((r) => r.url);
     assert.ok(urls.indexOf('/api/providers/copilot/acknowledge') < urls.indexOf('/api/providers/copilot/login'), 'acknowledge first');
+    assert.ok(h.log.indexOf(h.applies()[0]) < urls.indexOf('/api/providers/copilot/acknowledge'), 'the network applied before the Copilot calls');
     assert.equal(h.log.some((r) => r.url === '/api/settings' && r.method === 'POST'), false, 'no POST /api/settings');
     assert.equal(h.doc.documentElement.dataset.level, 'simple');
-    const body = h.applies()[0].body;
+    const body = h.applies()[1].body;
     assert.equal(body.access.copilot.signIn, true);
     assert.equal(body.access.copilot.acknowledgeTerms, true);
     assert.ok(body.access.copilot.importModels.includes('claude-opus-5-5'));
     assert.equal(body.work?.uiLevel, undefined);
-    assert.equal(body.network.networkProxy.upstream, 'http://proxy.acme.example:8081');
+    assert.equal(body.network, undefined, 'the final Apply sends no network group');
     assert.equal(h.title(), 'Setting up Worca…');
   } finally { h.close(); }
 });
-
 test('Network gate: each of host, port, Login and Go direct to re-locks Next after a pass; the pass expires on screen (qa-1-1, ux-2-4)', async () => {
   const h = await open({ entry: 'fix', step: 'network', proxy: PROXY_ON });
   try {
@@ -343,25 +397,92 @@ test('a failing Test on the collapsed "Found" row opens the fields', async () =>
   } finally { h.close(); }
 });
 
-test('UNTESTED: a 400 returns to Network with the error, and Next stays locked once an input clears it (qa-1-1)', async () => {
+test('UNTESTED: Next on Network stays on Network with the error, and Next stays locked once an input clears it (qa-1-1)', async () => {
   const err = { field: 'network.networkProxy', code: 'UNTESTED', error: 'Test these proxy settings first…' };
   const h = await open({ entry: 'fix', step: 'network', proxy: PROXY_ON, routes: { '/api/setup/apply': reply(err, 400) } });
   try {
     await h.type('network.networkProxy.port', '3128');
     await h.click('.sa-test');
-    for (let i = 0; i < 4; i++) await h.click('.sa-next');  // → access → models → work → review
-    assert.equal(h.title(), 'Check and apply');
     await h.click('.sa-next');
+    assert.equal(h.applies().length, 1);
     assert.equal(h.title(), 'How does this machine reach the internet?');
     assert.equal(h.status().textContent, err.error);
     assert.ok(h.status().classList.contains('err'));
     assert.equal(h.field('network.networkProxy').getAttribute('aria-invalid'), 'true');
+    assert.equal(h.$('.setup-card').dataset.fbState, undefined);
     await h.type('network.networkProxy.noProxy', '');
     assert.equal(h.next().disabled, true);
     assert.equal(h.status().textContent, 'Test the connection to continue');
   } finally { h.close(); }
 });
 
+test('Network applies on Next: unchanged values post nothing (D19); Direct after a saved proxy applies; a typed account needs its own Test', async () => {
+  await checkRows([
+    { name: 're-run, saved proxy unchanged: Test, Next moves on with no apply', run: async () => {
+      const h = await open({ entry: 'rerun', step: 'network', proxy: PROXY_ON });
+      try {
+        await h.click('.sa-test');
+        await h.click('.sa-next');
+        assert.equal(h.title(), 'Where should Worca get its models?');
+        assert.equal(h.applies().length, 0);
+        assert.equal(h.$('.sa-net-saved'), null, 'nothing new was saved');
+      } finally { h.close(); }
+    } },
+    { name: 're-run, Direct unchanged: Next moves on with no apply', run: async () => {
+      const h = await open({ entry: 'rerun', step: 'network' });
+      try {
+        await h.click('.sa-next');
+        assert.equal(h.title(), 'Where should Worca get its models?');
+        assert.equal(h.applies().length, 0);
+      } finally { h.close(); }
+    } },
+    { name: 'Direct after a saved proxy: Next posts { enabled: false }; Review finishes with the saved row', run: async () => {
+      const net = netServer({ proxy: PROXY_ON });
+      const h = await open({ entry: 'rerun', step: 'network', proxy: PROXY_ON, routes: net.routes });
+      try {
+        await h.click('.seg button[data-value="direct"]');
+        await h.click('.sa-next');
+        assert.deepEqual(h.applies()[0].body, { network: { networkProxy: { enabled: false } } });
+        await net.done(h);
+        assert.equal(h.title(), 'Where should Worca get its models?');
+        assert.equal(h.$('.sa-net-saved').textContent, 'Direct connection saved.');
+        await h.goTo('review');
+        const li = h.$('.sa-review li[data-group="network"]');
+        assert.ok(li, 'a re-run lists the saved network row');
+        assert.match(li.textContent, /Saved/);
+        assert.equal(h.next().textContent, 'Finish');
+        assert.equal(h.status().textContent, 'Direct connection saved. Nothing else to change.');
+      } finally { h.close(); }
+    } },
+    { name: 'editing the domain, user or password after a pass needs a new Test', run: async () => {
+      const h = await open({ entry: 'fix', step: 'network', proxy: PROXY_ON });
+      try {
+        for (const [f, v] of [['network.login.domain', 'OTHER'], ['network.login.user', 'jane'], ['network.login.password', 'x']]) {
+          await h.click('.sa-test');
+          assert.equal(h.next().disabled, false, f);
+          await h.type(f, v);
+          assert.equal(h.next().disabled, true, `${f}: re-locked`);
+        }
+      } finally { h.close(); }
+    } },
+    { name: 'Set up later after Network applied: the dialog says the proxy is saved and on', run: async () => {
+      const net = netServer();
+      const h = await open({ entry: 'first', step: 'network', routes: net.routes });
+      try {
+        await h.click('.seg button[data-value="proxy"]');
+        await h.type('network.networkProxy', 'proxy.acme.example');
+        await h.click('.sa-test');
+        await h.click('.sa-next');
+        await net.done(h);
+        await h.click('.sa-back');                            // back to Network: the line stays
+        assert.equal(h.$('.sa-net-saved').textContent, 'The corporate proxy is saved and on.');
+        await h.click('.sa-next');                            // unchanged now: no second apply
+        assert.equal(h.applies().length, 1);
+        assert.equal(h.$('.sa-net-saved').textContent, 'The corporate proxy is saved and on.');
+      } finally { h.close(); }
+    } },
+  ]);
+});
 test('Apply rows: one per step, a spinner on the first unfinished one, frames fill them, Continue / Retry / Back to review (AC-4.6)', async () => {
   await checkRows([
     { name: 'three steps, running then waiting; a frame marks Done and moves the spinner; done ok → Continue → onClose(done)', run: async () => {
@@ -480,54 +601,76 @@ test('Apply rows: one per step, a spinner on the first unfinished one, frames fi
   ]);
 });
 
-test('secrets: scrubbed after the 202; a login Retry asks for the password again and sends it once (security-1-1, security-2-1)', async () => {
+test('secrets: scrubbed after the 202; a failed network apply stays on Network and its Retry asks for the password again (security-1-1, security-2-1)', async () => {
   const run = async (retryAt) => {
-    const h = await open({ entry: 'fix', step: 'network', proxy: PROXY_ON, routes: { '/api/setup/apply': (_o, n) => reply({ id: `stp_${n}`, steps: STEPS3 }, 202) } });
+    const net = netServer({ proxy: PROXY_ON });
+    const h = await open({ entry: 'fix', step: 'network', proxy: PROXY_ON, routes: net.routes });
     try {
+      await h.type('network.networkProxy.port', '3128');
       await h.type('network.login.password', 'pw-1');
       await h.click('.sa-test');
-      await h.click('.sa-next');                             // → access
-      await h.toggle('.sa-src-openai');
-      await h.type('access.openai.baseUrl', 'https://llm.acme.example/v1');
-      await h.type('access.openai.apiKey', 'sk-secret');
-      await h.goTo('review');
       await h.click('.sa-next');
       const first = h.applies()[0].body;
       assert.equal(first.network.login.password, 'pw-1');
-      assert.equal(first.access.openai.apiKey, 'sk-secret');
-      h.handle.onFrame({ type: 'setup-apply', id: 'stp_1', done: true, ok: false, retry: retryAt });
-      await h.click('.sa-retry');
-      if (LOGIN_RETRY_STEPS.includes(retryAt)) {
-        assert.equal(h.applies().length, 1, 'Retry posts nothing yet');
-        assert.equal(h.title(), 'How does this machine reach the internet?');
-        assert.equal(h.field('network.login.password').value, '', 'the password was scrubbed');
-        assert.equal(h.field('network.networkProxy').disabled, true, 'the planned proxy values are read-only');
-        assert.equal(h.status().textContent, 'Type the proxy password again to retry');
-        assert.equal(h.next().textContent, 'Retry');
-        assert.equal(h.next().disabled, true);
-        await h.type('network.login.password', 'pw-2');
-        assert.equal(h.next().disabled, false);
-        await h.click('.sa-next');
-        const again = h.applies()[1].body;
-        assert.equal(again.fromStep, retryAt);
-        assert.equal(again.network.login.password, 'pw-2');
-        assert.equal(again.access?.openai?.apiKey, undefined);
-        const bodies = h.log.map((r) => JSON.stringify(r.body ?? null));
-        assert.deepEqual(bodies.map((b, i) => (b.includes('pw-1') ? i : -1)).filter((i) => i >= 0), [h.log.indexOf(h.applies()[0])]);
-        assert.deepEqual(bodies.map((b, i) => (b.includes('pw-2') ? i : -1)).filter((i) => i >= 0), [h.log.indexOf(h.applies()[1])]);
-        assert.equal(h.title(), 'Setting up Worca…');
-      } else {
-        const again = h.applies()[1].body;
-        assert.equal(again.fromStep, 'copilot-signin');
-        assert.equal(again.network?.login, undefined);
-        assert.equal(again.access?.openai?.apiKey, undefined);
-      }
+      assert.equal(h.field('network.login.password').value, '', 'the password was scrubbed');
+      await net.done(h, { ok: false, failAt: retryAt, line: 'The proxy refused it.' });
+      assert.equal(h.title(), 'How does this machine reach the internet?', 'a failure stays on Network');
+      assert.equal(h.status().textContent, 'The proxy refused it.');
+      assert.ok(h.status().classList.contains('err'));
+      assert.match(h.$('.sa-net-apply').textContent, /The proxy refused it\./);
+      assert.equal(h.field('network.networkProxy').disabled, true, 'the planned proxy values are read-only');
+      assert.equal(h.next().textContent, 'Retry');
+      assert.equal(h.next().disabled, true);
+      await h.type('network.login.password', 'pw-2');
+      assert.equal(h.next().disabled, false);
+      await h.click('.sa-next');
+      const again = h.applies()[1].body;
+      assert.equal(again.fromStep, retryAt);
+      assert.equal(again.network.login.password, 'pw-2');
+      assert.equal(again.network.networkProxy.upstream, 'http://proxy.acme.example:3128');
+      const bodies = h.log.map((r) => JSON.stringify(r.body ?? null));
+      const tests = h.log.filter((r) => r.url === '/api/proxy/test').map((r) => h.log.indexOf(r));
+      assert.deepEqual(bodies.map((b, i) => (b.includes('pw-1') ? i : -1)).filter((i) => i >= 0), [...tests, h.log.indexOf(h.applies()[0])].sort((a, b) => a - b));
+      assert.deepEqual(bodies.map((b, i) => (b.includes('pw-2') ? i : -1)).filter((i) => i >= 0), [h.log.indexOf(h.applies()[1])]);
+      await net.done(h, { n: 2 });
+      assert.equal(h.title(), 'Where should Worca get its models?');
     } finally { h.close(); }
   };
   await checkRows([
     { name: 'retry at proxy-swap', run: () => run('proxy-swap') },
     { name: 'retry at proxy-login', run: () => run('proxy-login') },
-    { name: 'retry at copilot-signin posts at once', run: () => run('copilot-signin') },
+    { name: 'the final Apply: keys scrubbed after the 202; Retry at copilot-signin posts at once without them', run: async () => {
+      const h = await open({ entry: 'rerun', step: 'access', routes: { '/api/setup/apply': (_o, n) => reply({ id: `stp_${n}`, steps: STEPS3 }, 202) } });
+      try {
+        await h.toggle('.sa-src-openai');
+        await h.type('access.openai.baseUrl', 'https://llm.acme.example/v1');
+        await h.type('access.openai.apiKey', 'sk-secret');
+        await h.goTo('review');
+        await h.click('.sa-next');
+        assert.equal(h.applies()[0].body.access.openai.apiKey, 'sk-secret');
+        h.handle.onFrame({ type: 'setup-apply', id: 'stp_1', done: true, ok: false, retry: 'copilot-signin' });
+        await h.click('.sa-retry');
+        const again = h.applies()[1].body;
+        assert.equal(again.fromStep, 'copilot-signin');
+        assert.equal(again.network, undefined);
+        assert.equal(again.access?.openai?.apiKey, undefined);
+      } finally { h.close(); }
+    } },
+    { name: 'Skip after a failed network apply re-reads what is saved and moves on', run: async () => {
+      const net = netServer({ proxy: PROXY_ON });
+      const h = await open({ entry: 'fix', step: 'network', proxy: PROXY_ON, routes: net.routes });
+      try {
+        await h.type('network.networkProxy.port', '3128');
+        await h.click('.sa-test');
+        await h.click('.sa-next');
+        await net.done(h, { ok: false, failAt: 'proxy-swap' });
+        const reads = h.log.filter((r) => r.url === '/api/proxy/status').length;
+        await h.click('.sa-skip');
+        assert.equal(h.log.filter((r) => r.url === '/api/proxy/status').length, reads + 1);
+        assert.equal(h.title(), 'Where should Worca get its models?');
+        assert.equal(h.applies().length, 1);
+      } finally { h.close(); }
+    } },
     { name: 'Back in login-retry mode returns to the failed Apply screen', run: async () => {
       const h = await open({ entry: 'fix', step: 'network', proxy: PROXY_ON, routes: { '/api/setup/apply': reply({ id: 'stp_1', steps: STEPS3 }, 202) } });
       try {
@@ -544,7 +687,6 @@ test('secrets: scrubbed after the 202; a login Retry asks for the password again
     } },
   ]);
 });
-
 test('a 400 field error returns to its step, marks the input and shows the server line', async () => {
   const h = await open({ entry: 'rerun', routes: { '/api/setup/apply': reply({ field: 'work.pipelineCostLimitUsd', error: 'x' }, 400) } });
   try {

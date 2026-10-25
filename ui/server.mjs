@@ -13430,7 +13430,7 @@ const publicSetupJob = (j) => ({ id: j.id, done: j.state !== 'running', ok: j.ok
 
 function setupDeps() {
   return {
-    checkProxy: (patch) => proxyHost.checkSave(patch),
+    checkProxy: (patch, login) => proxyHost.checkSave(patch, { login }),
     fixedPortNow: () => proxyHost.fixedPortNow(),
     applyProxy: (np, beforeFixed) => proxyHost.applyWritten(np, beforeFixed),
     reloadLogin: () => egressNow()?.reloadLogin?.(),
@@ -13553,10 +13553,12 @@ app.post('/api/proxy/logout', (req, res) => {
 });
 
 // D9: the body's networkProxy is a candidate merged over the saved values; a pass is recorded for the UNTESTED gate.
+// `login` ({ domain, user, password }): the setup dialog's typed login, used for this test only, never written or logged.
 app.post('/api/proxy/test', async (req, res) => {
   if (refuseProxyAgent(req, res) || refuseNonJson(req, res)) return;
   const body = req.body || {};
-  const r = await proxyHost.test(owns(body, 'networkProxy') ? body.networkProxy : undefined, { record: true });
+  const r = await proxyHost.test(owns(body, 'networkProxy') ? body.networkProxy : undefined,
+    { record: true, ...(owns(body, 'login') ? { login: body.login } : {}) });
   res.status(r.status).json(r.body);
 });
 

@@ -55,7 +55,9 @@ Every group and field is optional. The apply runs in three phases:
    The 202 answer lists them in `written`. When another tab changed one of those settings since the check,
    the answer is 409 `SETTINGS_CHANGED` and nothing is written.
 3. **Run.** The side effects run in this order: `proxy-swap`, `proxy-login`, `copilot-signin`,
-   `copilot-import`, `openai-import`, then one `role-test.<engine>.<role>` per role.
+   `copilot-import`, `openai-import`, then one `role-test.<engine>.<role>` per role. The dialog sends the
+   `network` group on its own, from **Next** on Network (see below), so `proxy-swap` and `proxy-login` run
+   then, and its final Apply starts at `copilot-signin`.
 
 The answer to a valid apply is 202 `{ id, written, steps: [{ id, label }] }`. Progress then arrives on the
 WebSocket, one frame per step:
@@ -110,9 +112,17 @@ this machine knows is left out with a warning, such as
 ### Contracts for the dialog
 
 - **A new proxy must pass a test first.** Run `POST /api/proxy/test` on the new proxy upstream; that test
-  records the pass. Otherwise Apply answers 400 `{ field: 'network.networkProxy', code: 'UNTESTED' }` and
+  records the pass. The test takes the login typed on Network as `login: { domain, user, password }`, and the
+  pass counts only for that account: an apply whose `network.login` names another account (or none, against a
+  saved one) is refused. Otherwise Apply answers 400 `{ field: 'network.networkProxy', code: 'UNTESTED' }` and
   saves nothing. When the proxy settings are already saved (a `proxy-swap` retry), the test is not needed
   again.
+- **Network applies on Next.** The dialog posts `{ network: { networkProxy, login } }` alone when **Next**
+  leaves Network with values that differ from the saved ones, and opens Model access only once that apply
+  succeeded. The proxy is then live before step 3, so the Copilot calls there (`/api/providers/copilot/…`) go
+  through it: a proxy turned on at runtime starts the local proxy and re-installs Worca's fetch dispatcher (D8).
+  This is the one exception to "nothing is saved before Apply"; every other group waits for Apply. The dialog
+  then reloads the saved values, so its final Apply carries no `network` group.
 - **Sign in to Copilot before Apply.** Apply never starts the Copilot device flow. The dialog runs it
   through `/api/providers/copilot/login` first, and Apply's `copilot-signin` step only checks the stored
   token.
@@ -130,17 +140,27 @@ Detection fills a field only when the saved value is empty, and only on a first 
 | Step | What it asks |
 |---|---|
 | 1 Check this machine | Nothing. One row per detect check, with OK, Check or No. |
-| 2 Network | Direct, or through a corporate proxy: host and port, login mode, account and password (NTLMv2 only), the hosts that go direct, and under **More** the timeouts and the local proxy port. A proxy found in `HTTPS_PROXY` on a first start shows as one "Found in your environment" line with **Change**. |
+| 2 Network | Direct, or through a corporate proxy: host and port, login mode, account and password (NTLMv2 only), the hosts that go direct, and under **More** the timeouts and the local proxy port. A proxy found in `HTTPS_PROXY` on a first start shows as one "Found in your environment" line with **Change**. **Next** saves and applies these values at once (only when they changed), with its progress inline. |
 | 3 Model access | Which sources to use: Claude Code sign-in, GitHub Copilot, OpenAI-compatible, Anthropic-compatible. Copilot shows its notice, the "I understand" switch, the plan, and the device sign-in inside the dialog. With the credential broker on, keys and the Copilot sign-in stay on the broker's key page. |
 | 4 Models | The Models page's Roles: Deep thinking, Everyday coding and Quick jobs per harness, plus "Test each model after Apply". Copilot models picked here are imported by Apply. |
 | 5 How you work | Interface mode, the per-run and total limits, the reset period, AI-written PR descriptions and smart run names. |
-| 6 Review | One row per group. A row that differs from the saved value carries **Changed**, and **Change** jumps back. A re-run lists only the changed rows. |
+| 6 Review | One row per group. A row that differs from the saved value carries **Changed**, and **Change** jumps back. A re-run lists only the changed rows, plus Network as **Saved** once Next applied it. |
 | 7 Apply | One row per apply step, filled from the `setup-apply` frames (or the poll). |
 
 **The Network gate.** With a corporate proxy picked, **Next** stays disabled until **Test** passes for exactly
-the host, port, login mode and direct hosts on screen. A pass counts for 9 minutes, under the server's
-10-minute window. This holds for the saved proxy on a re-run too: **Skip** is the way past Network without a
-test, and it keeps the saved values. An apply refused with `UNTESTED` returns to Network.
+the host, port, login mode, direct hosts and account on screen. **Test** sends the typed domain, user and
+password with it, so a fresh install behind an NTLM proxy passes before anything is saved; editing any of them
+needs a new test. A pass counts for 9 minutes, under the server's 10-minute window. This holds for the saved
+proxy on a re-run too: **Skip** is the way past Network without a test, and it keeps the saved values.
+
+**Next on Network.** After a passing test (or with Direct), **Next** posts the network group alone and shows its
+rows inline on Network. Model access opens only when it succeeded; the password is dropped right after the 202.
+A failure stays on Network with the failed step's line and offers **Retry** from that step (asking for the
+password again when the login step still has to run) or **Skip**. An apply refused with `UNTESTED` stays on
+Network too. Values that match the saved ones post nothing, so on a re-run **Next** just moves on. Once saved,
+the dialog says so in one line ("The corporate proxy is saved and on."), Review lists Network as **Saved**
+rather than **Changed**, and closing the dialog with **Set up later** keeps it. When nothing else changed,
+Review offers **Finish**.
 
 **Re-run.** Settings › General › Setup assistant › **Run setup again** opens the dialog with the saved values
 in every field. Only the changed groups and fields are sent, and a cleared role is sent as `null`. With nothing
@@ -154,8 +174,9 @@ switched on. A fix-it run closes back to the page it came from.
 **Apply and Retry.** The first unfinished row shows a spinner. Each finished row shows Done, Failed, Skipped or
 Refused and its line. **Continue** closes the dialog. On a first start or a re-run, the welcome's three doors
 come next. A failed step that names a retry shows **Retry**, which resends the same answers from that step. The
-dialog keeps no secret after the 202, so a retry at `proxy-swap` or `proxy-login` reopens Network and asks for the
-proxy password again. A failed job without a retry, or a job Worca lost track of, shows **Back to review**.
+dialog keeps no secret after the 202. The network group normally runs from Next on Network; when an Apply still
+carries it (a fix-it run that went straight to Review), a retry at `proxy-swap` or `proxy-login` reopens Network
+and asks for the proxy password again. A failed job without a retry, or a job Worca lost track of, shows **Back to review**.
 
 ## Team setup
 
