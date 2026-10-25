@@ -1,0 +1,13 @@
+---
+name: live-ui-walk-recipe
+description: Read before a plan's multi-step "live check on an isolated instance" (click-through at several widths, chat replies, focus) — seeded demo home, a Chrome that su
+updated: 2026-10-25T04:56:31.421Z
+author: Denislav Prinov
+---
+
+A plan's live walk spans dozens of steps; a one-shot CDP script per step loses the page. What worked (Ask side column, 2026-10-25, ~25 checks), beside [[real-browser-view-probe]]:
+
+- **Seed a believable home:** `node tools/readme-screenshots.mjs --only history,run-detail,ask-worca --keep --port 4411 --out <mkdtemp>/shots` (CDP_PORT=93xx). It exits 1 "timeout waiting for history rows" (a checkpoint copy too), but every seed is written first: 24 runs with Diffs and md artifacts, 4 repos, a workspace, chats with a started run card and a `#history/...` notice link. It prints `sandbox kept: /tmp/worca-shots-XXXX`; serve it with `HOME=USERPROFILE=WORCA_HOME=<sb> WORCA_PROJECTS_ROOT=<sb>/code PATH=<sb>/bin:$PATH GIT_CONFIG_NOSYSTEM=1 WORCA_MOCK=1 PORT=4329` and `echo $$ > pidfile; exec env … node ui/server.mjs` (run_in_background: the pid is the server's). `POST /api/settings {uiLevel:'advanced'}` for the Diff tab.
+- **One Chrome for the whole walk:** start it the same `exec` way with `--headless=new --remote-debugging-port=<p> --user-data-dir=<mkdtemp> --use-mock-keychain`; each step is a small module run by a driver that does `chromium.connectOverCDP` from `<worktree>/node_modules/playwright-core/index.mjs` (absolute path) and `process.exit()` (never `browser.close()`). Widths: CDP `Browser.setWindowBounds` persists across connections, but the headless window floors at 500px wide and ~87px of the height is chrome (900 → innerHeight 813); phones need `page.setViewportSize` inside the step.
+- **Mock chat replies land in the same millisecond as the send**, so "a reply arrives while you switch chat / hop pages" never happens; put `MOCK_SLOW` in the message (300 ms per frame, `WORCA_MOCK_SLOW_MS` 50-5000). "propose a run to …" yields a proposal card (`Open in New run`, `Start run`); "runs" alone does not match the run arm.
+- **Focus after a route is only provable live:** jsdom lays nothing out, so the Runs shell never enters its slide layout (< 880px, `RUNS_SPLIT_MIN`) whose detail open focuses `.hd-back`; the project page always focuses `.pd-back`. Any "the focus stays in X after a link opens a page" claim must be walked at a width where the page is narrow.
