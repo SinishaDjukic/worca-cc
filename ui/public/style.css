@@ -8514,6 +8514,15 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 /* Toolbar buttons are .btn (quiet, icon or text; Save is primary); open menus and the pressed library toggle keep a tint. */
 .wfv-bar .btn-quiet:is([aria-pressed="true"],[aria-expanded="true"]){background:var(--hover);color:var(--ink);}
 .wfv-bar .btn-icon svg{width:16px;height:16px;}
+/* Workflow versions (plans/workflow-tests-plan.md Part 1). The Canvas · Versions buttons keep the .seg 28px (A5). */
+.wfv-vstatus{margin:0 4px;white-space:nowrap;color:var(--ink-2);}
+.wfv-versions{position:absolute;inset:0;overflow:auto;background:var(--bg);padding:72px 32px 48px;}
+.wfv-changes{margin:4px 0 12px;padding-left:18px;}
+.wfv-changes li{margin:2px 0;}
+.wfv-check{display:flex;align-items:center;gap:8px;font-size:13px;}
+/* The page sits on the stage above the canvas overlay (10) and under the top bars (20); the canvas tools leave while it shows. */
+.wfv-versions{z-index:15;}
+.wfv-stage:has(> .wfv-versions:not([hidden])) > :is(.wfv-dock,.wfv-br){display:none;}
 .wfv-bar .btn:not(.btn-icon) svg{width:15px;height:15px;}
 .wfv-bar .wfv-chev{width:12px;height:12px;color:var(--ink-2);}
 .wfv-savewrap{display:inline-flex;margin-left:4px;}

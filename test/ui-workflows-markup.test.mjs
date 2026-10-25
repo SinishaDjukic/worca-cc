@@ -13,12 +13,12 @@ test('one workflows view; the composer, agents, scripts and agent-create views a
   for (const v of ['composer', 'agents', 'scripts', 'agent-create']) assert.equal(doc.querySelector(`[data-view="${v}"]`), null, v);
 });
 
-test('top bar: Back, Workflows ▾, name, chip | Library toggle, Save — and nothing else', () => {
+test('top bar: Back, Workflows ▾, name, Canvas · Versions, chip | Library toggle, Save version, Save — and nothing else', () => {
   const tl = doc.querySelector('.wfv-tl .wfv-bar');
-  assert.deepEqual([...tl.querySelectorAll('button, input')].map((e) => e.id), ['wfv-back', 'wfv-wf-menu', 'wfv-name', 'wfv-errors', 'wfv-import-file']);
+  assert.deepEqual([...tl.querySelectorAll('button, input')].map((e) => e.id || e.dataset.page), ['wfv-back', 'wfv-wf-menu', 'wfv-name', 'canvas', 'versions', 'wfv-errors', 'wfv-import-file']);
   assert.equal(doc.getElementById('wfv-name').placeholder, 'Untitled pipeline');
   const tr = doc.querySelector('.wfv-tr .wfv-bar');
-  assert.deepEqual([...tr.querySelectorAll('button')].map((e) => e.id), ['wfv-lib-toggle', 'wfv-save']);
+  assert.deepEqual([...tr.querySelectorAll('button')].map((e) => e.id), ['wfv-lib-toggle', 'wfv-saveversion', 'wfv-save']);
   assert.equal(doc.getElementById('wfv-save').textContent.trim(), 'Save');
 });
 
@@ -59,4 +59,29 @@ test('narrow screens: only Auto-layout goes icon-only (the zoom keeps its %), an
   assert.match(css, /@media \(max-width:760px\)\{\.wfv-tr\{top:58px;\}#wfv-autolayout span\{display:none;\}#wfv-autolayout\{width:30px;padding:0;justify-content:center;\}/);
   assert.doesNotMatch(css, /\.wfv-br \.wfv-btn span\{display:none;\}/, 'that rule also hid #wfv-zoom-label');
   assert.match(css, /\.wfv-tb\{[^}]*max-width:calc\(100% - 16px\);overflow-x:auto;/);
+});
+
+test('versions (flag workflowTests): Canvas / Versions switch, the status line, Save version and the hidden page', () => {
+  const pages = doc.getElementById('wfv-pages');
+  assert.ok(pages, '#wfv-pages');
+  assert.equal(pages.dataset.flag, 'workflowTests');
+  assert.ok(pages.classList.contains('seg'));
+  assert.deepEqual([...pages.querySelectorAll('button')].map((b) => b.textContent.trim()), ['Canvas', 'Versions']);
+  assert.deepEqual([...pages.querySelectorAll('button')].map((b) => b.dataset.page), ['canvas', 'versions']);
+  // The Labs chip sits inside the Versions tab label (A4), never as a link in the strip.
+  assert.equal(pages.querySelector('[data-page="versions"]').dataset.flagChip, 'workflowTests');
+  assert.equal(pages.hasAttribute('data-flag-chip'), false);
+  const status = doc.getElementById('wfv-vstatus');
+  assert.equal(status.dataset.flag, 'workflowTests');
+  assert.ok(status.hidden);
+  const save = doc.getElementById('wfv-saveversion');
+  assert.equal(save.textContent.trim(), 'Save version');
+  assert.equal(save.dataset.flag, 'workflowTests');
+  const page = doc.getElementById('wfv-versions');
+  assert.ok(page, '#wfv-versions');
+  assert.ok(page.hidden);
+  assert.equal(page.dataset.flag, 'workflowTests');
+  // Under the floating top bars (so Canvas stays reachable) and fenced from the canvas keys (Delete never edits the hidden graph).
+  assert.equal(page.parentElement.id, 'wfv-stage');
+  assert.equal(page.dataset.canvasKeys, 'off');
 });

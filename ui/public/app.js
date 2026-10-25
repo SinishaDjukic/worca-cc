@@ -211,6 +211,7 @@ import { createComposer, isReservedWorkflowId } from './graph/composer.mjs';
 import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
 import { createLibrary } from './workflows/library.mjs';
 import { createChatDock } from './workflows/chat-dock.mjs';
+import { openSaveVersionDialog, openUseVersionDialog, statusText } from './workflows/version-dialogs.mjs';
 import { mintId } from '../../src/shared/graph/template.mjs';
 // mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
 // bare <select> with no preview host on this branch (the v1 read-only mini-graph
@@ -3210,7 +3211,28 @@ const gvApi = {
     const d = await safeJson(res);
     // 422 = the shared validator's issues, rendered verbatim by the dialog.
     if (!res.ok) return { ok: false, status: res.status, issues: d && (d.issues || d.errors), error: d && d.error, id: d && d.id };
+    setTimeout(() => void wfvRefreshVersions(), 0);
     return { ok: true, workflow: (d && d.workflow) || d };
+  },
+  versions: async (id) => {
+    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/versions`);
+    if (!res.ok) return null;
+    return safeJson(res);
+  },
+  saveVersion: async (id, body) => {
+    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/versions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+    const d = await safeJson(res);
+    return res.ok ? { ok: true, overview: d } : { ok: false, error: d && d.error };
+  },
+  useVersion: async (id, no) => {
+    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/versions/${no}/use`, { method: 'POST' });
+    const d = await safeJson(res);
+    return res.ok ? { ok: true, overview: d } : { ok: false, error: d && d.error };
+  },
+  restoreRevision: async (id, rev) => {
+    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/history/${rev}/restore`, { method: 'POST' });
+    const d = await safeJson(res);
+    return res.ok ? { ok: true, ...d } : { ok: false, error: d && d.error, errors: d && d.errors };
   },
   // {ok, error} — the refusal string comes from the JSON body, because every
   // delete this API can refuse (the built-in, a 404, a 409) says WHY there and
@@ -3253,6 +3275,7 @@ function wfvEls() {
     autolayout: g('wfv-autolayout'), zoom: g('wfv-zoom'), zoomLabel: g('wfv-zoom-label'), overlay: g('wfv-overlay'),
     library: g('wfv-library'), sheet: g('wfv-sheet'), sheetTitle: g('wfv-sheet-title'), sheetClose: g('wfv-sheet-close'),
     dialogHost: g('wfv-dialog-host'), chat: g('wfc'),
+    pages: g('wfv-pages'), vstatus: g('wfv-vstatus'), saveVersion: g('wfv-saveversion'), versions: g('wfv-versions'),
   };
 }
 
@@ -3323,6 +3346,14 @@ async function initWorkflows() {
   });
   wfvLibrary = createLibrary({ doc: document, host: els.library, actions: wfvLibraryActions() });
   wfvShell = createWorkflowsShell({ doc: document, els: { ...els, inspector: insBody }, composer: gvComposer, actions: wfvShellActions() });
+  {
+    const e = wfvEls();
+    e.pages?.addEventListener('click', (ev) => { const b = ev.target.closest('button[data-page]'); if (b) wfvShowPage(b.dataset.page); });
+    e.saveVersion?.addEventListener('click', () => void wfvSaveVersion());
+  }
+  // Every new document on the canvas (a Library row's Open, an address, New canvas, a chat build) repaints the
+  // version line, so it never shows the previous workflow's version.
+  gvComposer.hooks.onDocChange = () => { void wfvRefreshVersions(); };
   wfvChat = createChatDock({
     doc: document, host: els.chat, composer: gvComposer, sessionId: WFV_SESSION,
     fetch: (...a) => fetch(...a),
@@ -3381,6 +3412,49 @@ function wfvSetLibraryOpen(open) {
   wfvLibrary?.setOpen(open);
   wfvShell?.paintLibToggle(open);
 }
+
+// Workflow versions (plans/workflow-tests-plan.md Part 1): the Canvas · Versions switch, the status line and Save version.
+let wfvVersionsOverview = null;
+async function wfvRefreshVersions() {
+  const els = wfvEls();
+  const t = gvComposer && gvComposer.template();
+  if (!flagOn('workflowTests') || !t || !t.id) { wfvVersionsOverview = null; if (els.vstatus) els.vstatus.hidden = true; return null; }
+  const overview = await gvApi.versions(t.id);
+  // Another workflow opened while this one was asked for: its own refresh paints the line, not this late answer.
+  const now = gvComposer.template();
+  if (!now || now.id !== t.id) return wfvVersionsOverview;
+  wfvVersionsOverview = overview;
+  const text = statusText(wfvVersionsOverview);
+  if (els.vstatus) { els.vstatus.textContent = text; els.vstatus.hidden = !text; }
+  if (els.versions && !els.versions.hidden) wfvRenderVersionsPage();
+  return wfvVersionsOverview;
+}
+function wfvShowPage(page) {
+  const els = wfvEls();
+  for (const b of els.pages ? els.pages.querySelectorAll('button[data-page]') : []) {
+    const on = b.dataset.page === page;
+    b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false');
+  }
+  if (els.versions) els.versions.hidden = page !== 'versions';
+  if (page === 'versions') void wfvRefreshVersions().then(() => wfvRenderVersionsPage());
+}
+async function wfvSaveVersion() {
+  // Save the draft first when the canvas has unsaved changes: the same path Export… takes (wfvShellActions
+  // exportCurrent → gvComposer.openSaveDialog({ then })), so an unsaved canvas is never versioned by surprise.
+  if (gvComposer.isDirty() || !gvComposer.template().id) { gvComposer.openSaveDialog({ then: () => void wfvSaveVersion() }); return; }
+  const t = gvComposer.template();
+  if (!t || !t.id) return;
+  const o = (await wfvRefreshVersions()) || { versions: [], draft: null };
+  const nextNo = (o.versions[0] ? o.versions[0].versionNo : 0) + 1;
+  openSaveVersionDialog({ doc: document, win: window, nextNo, changes: o.draft ? o.draft.changes : [],
+    onSubmit: async (body) => { const r = await gvApi.saveVersion(t.id, body); if (r.ok) await wfvRefreshVersions(); return r; } });
+}
+function wfvRenderVersionsPage() {             // Task 8 replaces this body with renderVersionsPage(…)
+  const els = wfvEls();
+  if (els.versions) els.versions.textContent = statusText(wfvVersionsOverview) || 'No versions yet.';
+}
+// The flag flips live: off leaves the Versions page (its markup hides, the canvas tools come back); on paints the line.
+onFlagChange('workflowTests', (on) => { if (!on) wfvShowPage('canvas'); void wfvRefreshVersions(); });
 
 function wfvShellActions() {
   return {

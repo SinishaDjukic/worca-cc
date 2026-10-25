@@ -1481,6 +1481,7 @@
               <div class="wfv-canvas gv-canvas" id="wfv-canvas">
                 <div class="gv-chip" id="wfv-chip" hidden></div>
               </div>
+              <section class="wfv-versions" id="wfv-versions" data-flag="workflowTests" data-canvas-keys="off" aria-label="Versions" hidden></section>
               <div class="wfv-float wfv-tl" data-canvas-keys="off">
                 <div class="wfv-bar">
                   <button type="button" class="btn btn-quiet btn-icon" id="wfv-back" aria-label="Back" title="Back">
@@ -1494,6 +1495,12 @@
                   </button>
                   <span class="wfv-sep" aria-hidden="true"></span>
                   <input type="text" class="wfv-name" id="wfv-name" placeholder="Untitled pipeline" aria-label="Pipeline name" spellcheck="false" autocomplete="off">
+                  <span class="wfv-vstatus hint" id="wfv-vstatus" data-flag="workflowTests" aria-live="polite" hidden></span>
+                  <span class="wfv-sep" aria-hidden="true" data-flag="workflowTests"></span>
+                  <div class="seg wfv-pages" id="wfv-pages" role="tablist" aria-label="Workflow views" data-flag="workflowTests">
+                    <button type="button" role="tab" aria-selected="true" class="on" data-page="canvas">Canvas</button>
+                    <button type="button" role="tab" aria-selected="false" data-page="versions" data-flag-chip="workflowTests">Versions</button>
+                  </div>
                   <button type="button" class="btn btn-sm btn-danger wfv-errchip" id="wfv-errors" hidden></button>
                   <input type="file" id="wfv-import-file" accept=".json,application/json" hidden>
                 </div>
@@ -1503,6 +1510,7 @@
                   <button type="button" class="btn btn-quiet btn-icon" id="wfv-lib-toggle" aria-label="Library" title="Library" aria-pressed="true" aria-controls="wfv-library">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z"></path></svg>
                   </button>
+                  <button type="button" class="btn btn-quiet" id="wfv-saveversion" data-flag="workflowTests">Save version</button>
                   <span class="wfv-savewrap" id="wfv-savewrap"><span class="wfv-save-reason hint" id="wfv-save-reason" hidden></span><button type="button" class="btn btn-primary" id="wfv-save" aria-describedby="wfv-save-reason">Save</button></span>
                 </div>
               </div>
