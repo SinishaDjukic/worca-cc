@@ -108,7 +108,9 @@ html,body{height:auto;overflow:visible;margin:0;}
 @media (prefers-reduced-motion: reduce){.sc-subs{animation:none;}}
 .sc-subs .rd-route-name{font-family:var(--sans);}
 .sc-subs .rd-route-row.is-next .rd-route-name{color:var(--ink-2);}
-.sc-subs .sc-meta{margin-left:auto;flex:none;display:inline-flex;align-items:center;gap:8px;font-size:var(--fs-meta);color:var(--ink-2);font-variant-numeric:tabular-nums;}
+/* A step's time and loops sit right after its name, so the row reads from one left edge. */
+.sc-subs .sc-meta{flex:none;display:inline-flex;align-items:center;gap:8px;font-size:var(--fs-meta);color:var(--ink-2);font-variant-numeric:tabular-nums;}
+.sc-subs .sc-meta::before{content:"·";color:var(--ink-3);}
 .sc-subs .sc-loop{display:inline-flex;align-items:center;gap:3px;}
 .sc-subs .rd-route-second{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;overflow-wrap:normal;}
 .sc-subs .rd-route-second .rc-when{color:var(--ink-3);}
@@ -160,13 +162,12 @@ html,body{height:auto;overflow:visible;margin:0;}
 .sk-list .rd-route-place{gap:8px;}
 .sk-num{flex:none;font-size:var(--fs-meta);font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;}
 .sk-list .rd-route-name{font-family:var(--sans);font-size:var(--fs-body);font-weight:400;}
-.sk-word{margin-left:auto;flex:none;font-size:var(--fs-meta);color:var(--ink-2);}
+.sk-word{color:var(--ink-2);}   /* leads the PR's second line */
 .sk-word.is-done{color:var(--green-ink);}
 .sk-word.is-problem{color:var(--amber-ink);}
 .sk-list .rd-route-second{font-size:var(--fs-meta);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;overflow-wrap:normal;}
 .sk-list .is-next-up{background:var(--row-selected);box-shadow:0 0 0 8px var(--row-selected);border-radius:2px;margin-bottom:12px;}
 .sk-list .is-next-up::before{display:none;}
-.sk-br{display:none;}
 .sk-note{padding-left:32px;font-size:var(--fs-meta);color:var(--ink-2);}
 .sc-cell.is-review{background:var(--blue);}
 .sk-word.is-review{color:var(--blue-ink);}
@@ -174,13 +175,59 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rc-card{container-type:inline-size;}
 @container (max-width: 420px){
   .rc-zone > .rc-side{grid-column:2 / 4;grid-row:auto;justify-self:start;margin-top:10px;}
-  .sk-list .rd-route-place{flex-wrap:wrap;row-gap:2px;}
-  .sk-list .rd-route-name{flex:1 1 0;}
-  .sk-br{display:block;flex-basis:100%;height:0;}
-  .sk-list .sk-word{margin-left:0;}
 }
 /* Explanations: each menu item carries one help line; the action's menu opens with what the main button does. */
 .rc-pop > .menu{min-width:260px;max-width:300px;}
 .menu-item.has-help{flex-direction:column;align-items:flex-start;gap:0;padding:6px 9px;text-align:left;}
 .menu-help{font-size:var(--fs-meta);color:var(--ink-2);line-height:var(--lh-body);white-space:normal;}
 .menu-lead{margin:0;padding:6px 9px 4px;font-size:var(--fs-meta);color:var(--ink-2);line-height:var(--lh-body);}
+/* Ship as: the question-option rows on the card's rail; the 16px mark centres on the 20px rail, text on the content edge. */
+.sk-choice{padding-left:0;margin:0;}
+.sk-choice .qopt{align-items:flex-start;gap:14px;padding:8px 12px 8px 2px;}
+.sk-choice .qopt::before{margin-top:2px;}
+.sk-choice .qopt:disabled{cursor:not-allowed;color:var(--ink-3);}
+.sk-choice .qopt:disabled:hover{background:none;}
+.sk-opt{display:flex;flex-direction:column;min-width:0;}
+.sk-opt-l{display:inline-flex;align-items:center;}
+.sk-opt-h{font-size:var(--fs-meta);font-weight:400;color:var(--ink-2);}
+
+/* ---- Tabs: Summary, Changes, Activity, Decisions (Runs on a group) ---- */
+.sc-step{padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;min-width:0;}
+.sc-step:hover{text-decoration:underline;text-underline-offset:3px;}
+.sc-step:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+.rtab-panel{container-type:inline-size;padding-top:20px;display:flex;flex-direction:column;gap:24px;}
+.rt{display:flex;flex-direction:column;gap:8px;min-width:0;}
+.rtab-h{margin:0;font:600 var(--fs-body)/var(--lh-title) var(--sans);color:var(--ink);display:flex;align-items:baseline;gap:8px;}
+.rtab-h .n{font-size:var(--fs-caption);font-weight:500;color:var(--ink-2);}
+.rtab-p{margin:0;font-size:var(--fs-body);color:var(--ink-2);}
+.rtab-dim{font-size:var(--fs-meta);font-weight:400;color:var(--ink-2);}
+.rtab-list{list-style:none;margin:0;padding:0;}
+.rtab-list li{padding:8px 0;border-top:1px solid var(--line);font-size:var(--fs-body);}
+.rtab-list li:first-child{border-top:0;}
+.rtab-list.is-plain li{display:flex;align-items:baseline;gap:12px;min-width:0;}
+.rtab-list code,.rtab-files code{font-family:var(--mono);font-size:var(--fs-meta);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+.table .num{text-align:right;font-variant-numeric:tabular-nums;}
+.rtab-files{list-style:none;margin:0;padding:0;}
+.rtab-files li{border-top:1px solid var(--line);}
+.rtab-files li:first-child{border-top:0;}
+.rtab-file{display:flex;align-items:center;gap:16px;width:100%;min-height:36px;padding:0 8px;margin:0 -8px;border:0;background:none;color:inherit;cursor:pointer;border-radius:var(--r-sm);text-align:left;box-sizing:content-box;}
+.rtab-file:hover{background:var(--hover);}
+.rtab-file .ct{flex:none;display:flex;gap:8px;font-family:var(--mono);font-size:var(--fs-meta);}
+.add{color:var(--hd-count-add);} .del{color:var(--hd-count-del);}
+.rtab-bar{display:flex;}
+.rtab-stage .sc-subs .rtab-log{margin-block:-6px;flex:none;}
+.sc-subs .is-focus{background:var(--row-selected);box-shadow:0 0 0 6px var(--row-selected);border-radius:2px;}
+.rtab-dec{list-style:none;margin:0;padding:0;}
+.rtab-dec li{display:grid;grid-template-columns:160px minmax(0,1fr);column-gap:16px;row-gap:2px;padding:10px 0;border-top:1px solid var(--line);font-size:var(--fs-body);}
+.rtab-dec li:first-child{border-top:0;}
+.rtab-dec li > :first-child{grid-row:1 / span 3;}
+.rtab-dec li > :not(:first-child){grid-column:2;}
+.rtab-q{font-weight:500;color:var(--ink);}
+.rtab-dec.is-runs li{grid-template-columns:20px minmax(0,1fr) auto;column-gap:12px;align-items:center;}
+.rtab-dec.is-runs li > .status-dot{justify-self:center;grid-row:1 / span 2;}
+.rtab-dec.is-runs li > .btn{grid-column:3;grid-row:1 / span 2;}
+@container (max-width: 480px){
+  .rtab-dec li{grid-template-columns:minmax(0,1fr);}
+  .rtab-dec li > :first-child{grid-row:auto;}
+  .rtab-dec li > :not(:first-child){grid-column:1;}
+}

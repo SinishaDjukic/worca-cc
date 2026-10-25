@@ -27,8 +27,11 @@
 
   const LIVE_FIGS = [['Time', '4h 38m'], ['Cost', '$84.10'], ['Rate', '$18.20/h']];
   const DONE_FIGS = [['Time', '4h 52m'], ['Cost', '$86.02']];
-  const RUN_TABS = [['Overview'], ['Diff', '14'], ['Workflow', '30'], ['Logs'], ['Q&A', '2']];
-  const GROUP_TABS = [['Runs', '3'], ['Overview'], ['Decisions', '4']];
+  // Four tabs, one question each: Summary (what you asked, what to check), Changes (what changed: the git diff or a
+  // Folder run's files), Activity (how it ran: every step with its log, model and cost; the graph is a view of it),
+  // Decisions (questions, answers and approvals). Artifacts sit in Summary; Try it and the patch are the action's ▾.
+  const RUN_TABS = [['summary', 'Summary'], ['changes', 'Changes', '14'], ['activity', 'Activity'], ['decisions', 'Decisions', '3']];
+  const GROUP_TABS = [['runs', 'Runs', '3'], ['summary', 'Summary'], ['activity', 'Activity'], ['decisions', 'Decisions', '4']];
   const A = (label, icon, primary, items) => ({ label, icon, primary: !!primary, items: items || [] });
 
   const CASES = [
@@ -62,7 +65,7 @@
       stages: run({ tail: [{ key: 'apply', label: 'Apply', subs: [next('Into ~/src/marketing-site', { live: '14 files changed in a copy' })] }] }) },
     { id: 'workspace', group: 'Kinds', label: 'Workspace', word: 'In review', dot: 'is-green', branch: 'feat/billing-export', project: 'billing workspace', action: A('View PRs', 'pr', false, ['worca-api #212', 'worca-web #88', 'worca-docs #31', 'Copy PR links']), figs: [['Time', '3h 05m'], ['Cost', '$52.70']],
       stages: run({ tail: [{ key: 'pr', label: 'PRs', subs: [s('worca-api #212', 'merged', '', { live: 'Merged into main' }), s('worca-web #88', 'now', '', { live: 'Checks running · 5 of 7' }), s('worca-docs #31', 'problem', '', { live: 'Conflicts with main' })] }, { key: 'merged', label: 'Merged', subs: [s('1 of 3 repositories', 'now', '', { live: 'worca-api is in main' })] }] }) },
-    { id: 'noproject', group: 'Kinds', label: 'No project', word: 'Finished', dot: 'is-green', project: 'No project', branch: '', figs: [['Time', '12m'], ['Cost', '$1.80']], tabs: [['Overview'], ['Artifacts', '3'], ['Workflow', '8'], ['Logs']],
+    { id: 'noproject', group: 'Kinds', label: 'No project', word: 'Finished', dot: 'is-green', project: 'No project', branch: '', figs: [['Time', '12m'], ['Cost', '$1.80']], tabs: [['summary', 'Summary'], ['activity', 'Activity'], ['decisions', 'Decisions']],
       stages: run({ tail: [{ key: 'done', label: 'Done', subs: [ok('3 artifacts', '', { live: 'In the Artifacts tab' })] }] }) },
 
     // Shaper
@@ -87,7 +90,18 @@
         member(3, RUNS[2], ['next', 'next', 'next', 'next']),
         { key: 'pr', label: 'PRs', subs: [next('#1'), next('#2'), next('#3')] }] },
     { id: 'featureready', group: 'Groups', label: 'Feature ready', kind: 'Feature', word: 'Ready', dot: 'is-green', branch: '', action: A('Create 3 PRs', 'prc', true, ['Try it', 'Discard']), figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS,
-      stack: { mode: 'create' },
+      stack: { mode: 'create', runs: RUNS, rec: 'stack', reason: '3 runs and about 1,200 changed lines: three small reviews go faster than one large one.' },
+      stages: [{ key: 'plan', label: 'Plan', subs: [ok('Clarify', '34s'), ok('Plan', '33m 57s'), ok('Cut into runs', '7m')] },
+        member(1, RUNS[0], ['done', 'done', 'done', 'done'], { times: ['22m', '58m', '31m'] }), member(2, RUNS[1], ['done', 'done', 'done', 'done'], { times: ['18m', '1h 2m', '27m'] }),
+        member(3, RUNS[2], ['done', 'done', 'done', 'done'], { times: ['12m', '44m', '19m'] }),
+        { key: 'pr', label: 'PRs', subs: [next('#1'), next('#2'), next('#3')] }] },
+    { id: 'featureone', group: 'Groups', label: 'Feature ready, small', kind: 'Feature', word: 'Ready', dot: 'is-green', branch: '', action: A('Create PR', 'prc', true, ['Try it', 'Discard']), figs: [['Time', '1h 40m'], ['Cost', '$21.70']], tabs: GROUP_TABS,
+      stack: { mode: 'create', runs: RUNS.slice(0, 2), rec: 'one', reason: '2 small runs, 180 changed lines, and they combine without conflicts: one review is enough.' },
+      stages: [{ key: 'plan', label: 'Plan', subs: [ok('Clarify', '34s'), ok('Plan', '12m'), ok('Cut into runs', '3m')] },
+        member(1, RUNS[0], ['done', 'done', 'done', 'done'], { times: ['8m', '31m', '12m'] }), member(2, RUNS[1], ['done', 'done', 'done', 'done'], { times: ['6m', '22m', '9m'] }),
+        { key: 'pr', label: 'PRs', subs: [next('#1'), next('#2')] }] },
+    { id: 'featureblocked', group: 'Groups', label: 'Feature ready, One PR off', kind: 'Feature', word: 'Ready', dot: 'is-green', branch: '', action: A('Create 3 PRs', 'prc', true, ['Try it', 'Discard']), figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS,
+      stack: { mode: 'create', runs: RUNS, rec: 'stack', oneBlocked: 'Not possible: run 3 changes the same lines as run 2. Ship them stacked, or fix the overlap first.', reason: 'Runs 2 and 3 overlap, so only the stacked way keeps each review clean.' },
       stages: [{ key: 'plan', label: 'Plan', subs: [ok('Clarify', '34s'), ok('Plan', '33m 57s'), ok('Cut into runs', '7m')] },
         member(1, RUNS[0], ['done', 'done', 'done', 'done'], { times: ['22m', '58m', '31m'] }), member(2, RUNS[1], ['done', 'done', 'done', 'done'], { times: ['18m', '1h 2m', '27m'] }),
         member(3, RUNS[2], ['done', 'done', 'done', 'done'], { times: ['12m', '44m', '19m'] }),
@@ -102,14 +116,29 @@
   // The stack: the PRs of a feature or chain, in merge order, each based on the one above it.
   const STACKS = {
     outline: { title: '3 runs, one PR each', note: 'Each run builds on the one before', rows: RUNS.map((t, i) => ({ num: String(i + 1), title: t, state: 'next', word: ['Small', 'Medium', 'Small'][i], sub: i ? 'Builds on run ' + i : 'Starts from dev' })) },
-    create: { title: 'Ship as', modes: true, rows: RUNS.map((t, i) => ({ num: 'PR ' + (i + 1), title: t, state: 'next', word: 'Not opened', sub: i ? 'Into PR ' + i + '’s branch' : 'Into dev' })),
-      one: [{ num: 'One PR', title: 'All 3 runs, one branch', state: 'next', word: 'Not opened', sub: 'Into dev · from feat/unified-navigation' }] },
+    create: { title: 'Ship as', choice: true },
     review: { title: 'Merge in order', rows: [
       { num: '#959', title: RUNS[0], state: 'done', word: 'Ready to merge', sub: 'Into dev · 7 of 7 checks · approved', isNext: true },
       { num: '#960', title: RUNS[1], state: 'review', word: 'In review', sub: 'Into #959 · 5 of 7 checks' },
       { num: '#961', title: RUNS[2], state: 'problem', word: 'Checks failing', sub: 'Into #960 · 2 failed' }] },
   };
 
+
+
+  // What the tabs hold, shared by every case (sample content; the step list comes from the case itself).
+  const MODEL_OF = { Clarify: 'Sonnet 5.5', Plan: 'Opus 5.5', 'Refine plan': 'Opus 5.5', 'Plan review': 'Sonnet 5.5', Implementation: 'Opus 5.5',
+    'Review implementation': 'Opus 5.5', 'Manual tests checklist': 'Haiku 5.5', 'Manual web UI testing': 'Sonnet 5.5' };
+  const COST_OF = { Clarify: '$0.76', Plan: '$14.65', 'Refine plan': '$18.29', 'Plan review': '$7.82', Implementation: '$31.18', 'Review implementation': '$9.95', 'Manual tests checklist': '$0.80', 'Manual web UI testing': '$0.00' };
+  const DETAIL = {
+    task: 'One head for the run and group pages: Back, the breadcrumb and the run’s actions in the top bar, and the page title once.',
+    check: ['The breadcrumb hides under 600px: try it on a phone', 'Back on a group page now goes to Runs, not the group list'],
+    artifacts: [['plan.md', 'Plan'], ['review-3.md', 'Review implementation'], ['checklist.md', 'Manual tests checklist']],
+    files: [['ui/public/run-head.mjs', 182, 64], ['ui/public/style.css', 41, 58], ['ui/public/app.js', 27, 19], ['ui/public/nav/routes.mjs', 12, 3], ['test/ui-run-head.test.mjs', 96, 0]],
+    decisions: [
+      { step: 'Clarify', q: 'Which pages get the breadcrumb?', a: 'Run and group pages', by: 'You' },
+      { step: 'Plan', q: 'Approve the plan', a: 'Approved · 6 steps, 2 open issues fixed', by: 'You' },
+      { step: 'Review implementation', q: 'Keep the breadcrumb on phones under 600px?', a: 'Show only Back there', by: 'Answered for you · Away mode' }],
+  };
 
   // One line on what each action does: the main button's tooltip and the head of its ▾ menu, and each menu item's help.
   const HELP = {
@@ -124,6 +153,7 @@
     'Start a new run': 'A fresh run with the same task',
     'Create PR': 'Opens a pull request from this run’s branch into dev',
     'Create 3 PRs': 'Opens one PR per run, each into the one before',
+    'Create 2 PRs': 'Opens one PR per run, the second into the first',
     'Try it': 'Checks the branch out locally so you can run it',
     'Push main': 'Pushes the commits straight to origin/main, no PR',
     'Discard': 'Throws the changes away; the run stays in history',
@@ -147,7 +177,6 @@
     'Don’t split': 'Builds it as one run and one PR',
     'worca-api #212': 'Merged into main', 'worca-web #88': 'Checks running', 'worca-docs #31': 'Conflicts with main',
   };
-  const SHIP_HELP = { stack: 'One PR per run, each into the one before: small reviews, merged in order', one: 'All runs on one branch, one PR into dev: one review, one merge' };
 
   const LIVE = { now: 1, ask: 1, problem: 1, failed: 1, paused: 1, review: 1 };
   const isDone = (x) => x.state === 'done' || x.state === 'merged';
@@ -192,13 +221,27 @@
     let stack = null;
     if (c.stack && (open === 'pr' || (c.stack.mode === 'outline' && open === 'plan'))) {
       const src = STACKS[c.stack.mode];
-      const one = src.modes && ui.ship === 'one';
-      const rows = (one ? src.one : src.rows).map((r) => Object.assign(rowOf({ state: r.state }), r, { rowCls: 'is-' + r.state + (r.isNext ? ' is-next-up' : '') }));
-      stack = { title: src.title, note: src.modes ? SHIP_HELP[one ? 'one' : 'stack'] : src.note || '', modes: !!src.modes, ship: one ? 'one' : 'stack', rows, count: (src.rows || []).length };
+      let rows = src.rows || [];
+      let choice = null;
+      if (src.choice) {
+        // One PR or stacked: Worca recommends one and says why; an option that cannot work is off, with its reason.
+        const sh = c.stack;
+        const n = sh.runs.length;
+        const pick = ui.ship && !(ui.ship === 'one' && sh.oneBlocked) ? ui.ship : sh.rec;
+        choice = { reason: sh.reason, options: [
+          { id: 'stack', label: 'Stacked · ' + n + ' PRs', help: 'One PR per run, each into the one before. Small reviews, merged in order.', rec: sh.rec === 'stack', disabled: '', selected: pick === 'stack' },
+          { id: 'one', label: 'One PR', help: sh.oneBlocked || 'All ' + n + ' runs on one branch. One review, one merge.', rec: sh.rec === 'one', disabled: sh.oneBlocked || '', selected: pick === 'one' }] };
+        rows = pick === 'one'
+          ? [{ num: 'One PR', title: 'All ' + n + ' runs, one branch', state: 'next', word: 'Not opened', sub: 'Into dev' }]
+          : sh.runs.map((t, i) => ({ num: 'PR ' + (i + 1), title: t, state: 'next', word: 'Not opened', sub: i ? 'Into PR ' + i + '\u2019s branch' : 'Into dev' }));
+        c.__pick = pick;
+      }
+      rows = rows.map((r) => Object.assign(rowOf({ state: r.state }), r, { rowCls: 'is-' + r.state + (r.isNext ? ' is-next-up' : '') }));
+      stack = { title: src.title, note: src.note || '', choice, rows };
     }
     let action = null;
     if (c.action) {
-      const label = c.stack && c.stack.mode === 'create' && ui.ship === 'one' ? 'Create PR' : c.action.label;
+      const label = c.stack && c.stack.mode === 'create' ? (c.__pick === 'one' ? 'Create PR' : 'Create ' + c.stack.runs.length + ' PRs') : c.action.label;
       action = Object.assign({}, c.action, { label, help: HELP[label] || '', items: c.action.items.map((t) => ({ text: t, help: HELP[t] || '' })) });
     }
     return {
@@ -210,8 +253,12 @@
         aria: [x.label, STAGE_WORD[stageState(x.subs)], stageMeta(x)].filter(Boolean).join(', '),
         cells: x.subs.map((y) => 'is-' + y.state) })),
       open: { key: open, label: st.label, title: st.title || '', isRun: !!st.run, browsing: open !== now,
-        rows: stack ? [] : st.subs.map((x, i) => rowOf(x, st.subs[i + 1])), stack },
-      figs: c.figs.map(([k, v]) => ({ k, v })), tabs: (c.tabs || RUN_TABS).map(([l, n], i) => ({ l, n: n || '', sel: i === 0 })),
+        rows: stack ? [] : st.subs.map((x, i) => Object.assign(rowOf(x, st.subs[i + 1]), { ref: st.run ? '' : st.key + '/' + x.name })), stack },
+      figs: c.figs.map(([k, v]) => ({ k, v })),
+      tabs: (c.tabs || RUN_TABS).map(([id, l, n], i, all) => ({ id, l, n: n || '', sel: id === (all.some((t) => t[0] === ui.tab) ? ui.tab : all[0][0]) })),
+      activity: c.stages.map((x) => ({ key: x.key, label: x.label, meta: stageMeta(x), title: x.title || '',
+        rows: x.subs.map((y, i) => Object.assign(rowOf(y, x.subs[i + 1]), { model: MODEL_OF[y.name] || '', cost: y.state === 'next' ? '' : COST_OF[y.name] || '', focus: ui.focus === x.key + '/' + y.name, ref: x.key + '/' + y.name })) })),
+      detail: DETAIL,
     };
   }
 
