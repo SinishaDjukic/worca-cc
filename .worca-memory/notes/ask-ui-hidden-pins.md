@@ -2,7 +2,7 @@
 name: ask-ui-hidden-pins
 description: Read before planning or reviewing a change to the Chat panel's DOM, the top bar, the page shell, openChat entry points or a new ask-api server test — the pins a
 paths: ui/public/ask-panel.mjs, ui/public/app.js, ui/public/index.html, ui/public/style.css, ui/public/topnav-search.mjs, test/ask-api-*.test.mjs, test/ui-chat-*.test.mjs, test/ask-panel*.test.mjs
-updated: 2026-10-25T00:43:39.650Z
+updated: 2026-10-25T03:58:17.196Z
 author: Denislav Prinov
 ---
 
@@ -33,6 +33,7 @@ Found replaying "Ask worca beside the page" (2026-10-24, 8 tasks). Each one turn
 - `openPage` clears the unread dot on ANY show (`setUnread(false)`). A control that mirrors the Chat row's dot must also land where the Chat row does (`askPanel.unreadThreadId()`), or the news of a reply in another chat (a PR fix card) is lost — and a host that re-shows by itself (the column after Chat/Workflows) must keep the dot while it shows another chat.
 - Passive `newThread()` (a 404 on load, `ask-history-cleared`) calls `focusComposer()`: a no-op while the Chat section is hidden, a focus theft once the panel shows beside a page — pass `focus:false` there.
 - A page chip's id is the left-out key: an id that changes when data lands (a live run's `pipelineId` with the first frame) un-leaves it; an id without its run (`file:<path>`) leaves the same file out on the next run. Key a live run by `runId`, a file by `file:<run>:<path>`.
+- A control its own action hides drops the focus to `<body>`: a Recent chats row (the empty state goes `display:none` as its chat shows), a menu row closed with `focusTrigger:false` while the column stays (> 1080px, `uncover()` is a no-op there). Four audit cycles missed both; keyboard random walks found them. End each such action with `focusComposer()`; a new focus fallback must refuse under a dialog too (`dialogUp()`).
 - An overlay that stays open across routes (the column below 1081px) makes navigation started INSIDE it look dead: the page changes behind it. A delegated `a[href^="#"]` listener misses most of it — the panel routes by hand in `topicRow`, `mcpManageItem`, the progress card's `onOpen` (a default-prevented link) and the `openNewPipeline` dep: grep `location.hash =` in ask-panel.mjs and route each through one helper.
 - `.topnav` sizes `.topnav-r` `minmax(max-content,1fr)`: a new labelled bar button takes its width from the PAGE TITLE, on every page (a 113px label left `Runs` an ellipsis at 1081–1110px). Measure the title in Chrome at 1081–1160 and 761–960px (rail) against a checkpoint clone.
 
@@ -40,7 +41,8 @@ Found replaying "Ask worca beside the page" (2026-10-24, 8 tasks). Each one turn
 - An ask-api test that posts a message and ends without `await idle()` (or settling the turn) lets the file's `after()` delete `WORCA_MOCK` before the turn's async title job spawns: the real CLI hits the no-real-claude guard, `npm test` exits 1 with 0 failures — only in the full suite, never alone. Compare `N test spawn(s) reached the real-claude guard` with a checkpoint run.
 - `bootChat` boots one app per jsdom window and rebinds the global `document`: an app.js observer/timer callback that reads the global `document` throws "after the test ended" once another test booted. Capture the node at creation and bail when `document.body !== body`.
 - The workspace page in `bootChat` needs `/api/team-metrics/scopes` and `/api/policy/scopes` arms (`paintWsMetricsRows` throws on the default body).
-- A test of a late repaint must make the late data actually late: hold the arm's promise (`new Promise((r) => held.push(…))`) and release it after `settle`, else the route's own repaint covers the hook and its revert stays green.
+- A late-repaint test must hold the arm's promise and release it after `settle`, else the route's own repaint covers the hook (its revert stays green).
 - index.html ships static hidden `.viewer-modal` nodes (confirm, model editor, folder browser…): `querySelector('.viewer-modal')` is never null — the artifact popup is `.viewer-modal.apv`.
-- Panel-harness tests that only ever click the pill's `No project` item leave the project/workspace items' handlers unguarded; a host-move test that moves the root by hand never runs app.js's close → move → `setHost` → `open` glue — add a `bootChat` test that streams in the column and routes (Chat row, Open in Chat, Workflows and back).
-- `tools/test.mjs` runs a file named twice twice: a plan's "Step 2 command + `$(ls test/ask-panel*.test.mjs)`" line double-counts (v2 quoted 459 for 449 + 2×5). Name each file once.
+- Clicking only the pill's `No project` leaves the project/workspace handlers unguarded; a host move done by hand skips app.js's close → move → `setHost` → `open` glue — stream in the column under `bootChat` and route (Chat row, Open in Chat, Workflows, back).
+- `tools/test.mjs` runs a file named twice twice (a `$(ls test/ask-panel*.test.mjs)` Run line double-counts): name each file once.
+- Parallel-copies flake checks: `test/ask-api-messages.test.mjs`'s three attachment tests (100 MB body) fail `ECONNRESET` at 8–12 copies on the checkpoint too — leave that file out.
