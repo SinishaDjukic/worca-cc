@@ -1,7 +1,7 @@
 ---
 name: refiner-scratch-tree-reuse
 description: Implementing a big prose-heavy plan: reuse the refiner's replayed scratch tree, but audit every prose bullet, because the tree lags the final plan version
-updated: 2026-10-25T15:48:07.946Z
+updated: 2026-10-25T19:40:56.752Z
 author: Bulibas
 ---
 
@@ -22,3 +22,11 @@ backticks. Its "outline only" doc was a 3-line stub. Diff the plan versions firs
 to list what the tree cannot have. Then run two read-only audit lanes (sonnet is enough), each holding half the tasks.
 They check every prose bullet against `git diff <checkpoint>` and skip the blocks already `cmp`'d. They also found a
 duplicated test card id and a missing doc string.
+
+The lag can reach back more than one version, even when the plan's Handoff calls the tree "the whole vN plan applied"
+(promo video, 2026-10-25: cycle 4's `w`). Its code blocks all matched, but prompt bullets from v5 were missing too
+(capture step 4's `storageState`, the review's brand-file order, a scenes write-scope tail), a hook-line paragraph
+was an older wording, and three T12 files (README, docs/models.md, the changelog) were never written at all. So the
+v(N-1)→vN diff is not the full list: check each quoted bullet against the files. A python helper that takes the span
+between the first and last backtick of a plan line and searches the whitespace-normalised file finds most misses in
+seconds. Also list `comm` of the tree's changed files against the plan's Files lists, since whole files can be absent.
