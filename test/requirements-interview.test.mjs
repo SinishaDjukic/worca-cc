@@ -8,17 +8,18 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import {
   createFeature, getFeature, listTurns, updateFeature, appendTurn, setContext, getBrief, beginBrief, saveBriefResult, deleteBrief,
-  insertAttachment, mintAttachmentId, updateAttachment, getAttachment, deleteAttachmentRow,
+  insertAttachment, mintAttachmentId, updateAttachment, getAttachment, deleteAttachmentRow, listAttachments,
 } from '../src/core/requirements/store.mjs';
 import { REPO_LOOK_TOOLS, REPO_LOOK_MAX_TURNS, REPO_LOOK_TIMEOUT_MS } from '../src/core/auto/classify.mjs';
 import {
-  startOrientation, submitAnswers, finishInterview, followUp, retry, settled, isBusy, recoverInterrupted, requirementsModel, MAX_JOBS, interviewCallOptions, callModel,
+  startOrientation, submitAnswers, finishInterview, followUp, maybeFollowUpFiles, retry, settled, isBusy, recoverInterrupted, requirementsModel, MAX_JOBS, interviewCallOptions, callModel,
   userClaudeSignIn, interviewModel, DEFAULT_INTERVIEW_EFFORT, assertCapacity,
 } from '../src/core/requirements/interview.mjs';
-import { addAttachments, readsSettled } from '../src/core/requirements/attachment-job.mjs';
+import { addAttachments, removeAttachment, readsSettled } from '../src/core/requirements/attachment-job.mjs';
 import { ATTACHMENT_SYSTEM_PROMPT } from '../src/core/requirements/attachments.mjs';
 import { requirementsWindowedSpendUsd } from '../src/core/cost-budget.mjs';
 import { ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT } from '../src/core/requirements/round.mjs';
+import { unaskedFiles, readiness } from '../src/core/requirements/ready.mjs';
 import { removeCriterion, setAssumption } from '../src/core/requirements/edits.mjs';
 
 useTempHome(after);
@@ -1260,14 +1261,15 @@ test('A8: readGuard, when given at all, is an absolute path: an empty or relativ
 
 // ── A8: files in the interview (plans/requirements-a8-design.md D2, D5, D6) ─────────────────
 const upload = (name, text) => { const data = Buffer.from(text); return { name, kind: 'text', mime: 'text/markdown', data, text, bytes: data.length, sha256: createHash('sha256').update(data).digest('hex') }; };
-/** Replies per call: a file read gets its summary, a round the round reply. */
+/** Replies per call: a file read gets its summary, a round the round reply. Like the real runner, a guarded call (a Read-form
+ *  read) returns the guard's decisions: none, since the fake stream shows no tool call. */
 function fileRunner({ summary = 'Refunds within 14 days.', round = ROUND1 } = {}) {
   const calls = [];
   const runClaudeImpl = async (opts) => {
     calls.push(opts);
     const text = JSON.stringify(opts.systemPrompt === ATTACHMENT_SYSTEM_PROMPT ? { summary } : round);
     opts.onEvent?.({ type: 'result', raw: { type: 'result', total_cost_usd: 0.1, result: text }, costUsd: 0.1 });
-    return { text };
+    return { text, ...(opts.readGuard ? { readGuardDecisions: [] } : {}) };
   };
   return { calls, runClaudeImpl };
 }
@@ -1392,4 +1394,170 @@ test('A8 D6: Look closer reads the brief\'s documents inside <product_brief>; wi
   assert.equal(r.calls.length, 2);
   assert.doesNotMatch(r.calls[0].prompt, /Documents:/);
   assert.equal(r.calls[1].prompt, r.calls[0].prompt.replace('\n</product_brief>', '\n\nDocuments:\nglossary.pdf: Terms.\n</product_brief>'));
+});
+
+/** A feature whose interview has finished (looked at, its last round done, status done). */
+function doneFeature() {
+  const f = newFeature();
+  appendTurn(f.seq, { kind: 'round', payload: { questions: [], done: true } });
+  return updateFeature(f.seq, { status: 'done', rounds: 2, orientation: { summary: '', files: [], skipped: 'off' } });
+}
+const FOLLOW = { spec: {}, questions: [{ id: 'f1', question: 'What in policy.md matters?', options: ['Rules', 'Examples'], recommended: 'Rules', why: 'w', source: 'policy.md' }], done: false, note: 'n' };
+
+test('A8 D8: a file added after the interview finished gets one follow-up round by itself, once its read has ended', async () => {
+  const r = fileRunner({ round: FOLLOW });
+  const f = doneFeature();
+  const [a] = addAttachments({ type: 'feature', id: f.seq }, [upload('policy.md', 'Refunds in 14 days.')], {}, deps(r));
+  await readsSettled({ type: 'feature', id: f.seq });
+  await settled(f.seq);
+  const turns = listTurns(f.seq);
+  assert.deepEqual(turns.find((t) => t.kind === 'followup').payload, { assumptions: [], files: [a.id] });
+  const round = turns.filter((t) => t.kind === 'round').at(-1);
+  assert.deepEqual([round.payload.followUp, round.payload.followUpFiles], [[], [a.id]]);
+  assert.match(r.calls.at(-1).prompt, /these files after the interview finished: “policy\.md”\./);
+  assert.deepEqual(round.payload.files, [a.id], 'the follow-up carried the file');
+  assert.equal(getFeature(f.seq).status, 'your_turn');
+  assert.equal(getFeature(f.seq).rounds, 3, 'outside the cap: it counts as a round, never as the final one');
+});
+
+test('A8 D8: when the follow-up cannot start, the file stays unasked, Ready fails, and POST follow-up asks about it', async () => {
+  const gate = (() => { let open; const p = new Promise((res) => { open = res; }); return { p, open }; })();
+  const r = fileRunner({ round: FOLLOW });
+  const looking = { ...r, runClaudeImpl: async (o) => { if (o.systemPrompt === ORIENTATION_SYSTEM_PROMPT) await gate.p; return r.runClaudeImpl(o); } };
+  const f = doneFeature();
+  startOrientation(f.seq, { thenRound: false }, deps(looking));      // busy: a look runs
+  addAttachments({ type: 'feature', id: f.seq }, [upload('late.md', 'late')], {}, deps(looking));
+  await readsSettled({ type: 'feature', id: f.seq });
+  gate.open();
+  await settled(f.seq);
+  assert.equal(listTurns(f.seq).some((t) => t.kind === 'followup'), false, 'busy when the read ended: not started');
+  const files = listAttachments('feature', f.seq);
+  assert.deepEqual(unaskedFiles(files, listTurns(f.seq)), [files[0].id]);
+  assert.equal(readiness(getFeature(f.seq), { turns: listTurns(f.seq), files }).checks.find((c) => c.key === 'interview').hint, 'late.md to ask about');
+  await followUp(f.seq, {}, deps(r));
+  assert.deepEqual(listTurns(f.seq).find((t) => t.kind === 'followup').payload.files, [files[0].id]);
+});
+
+test('A8 D8: during the interview, after a start, and for documents no follow-up starts', async () => {
+  const r = fileRunner({ round: FOLLOW });
+  const mid = newFeature();
+  appendTurn(mid.seq, { kind: 'round', payload: { questions: ROUND1.questions, done: false } });
+  updateFeature(mid.seq, { status: 'your_turn', rounds: 1 });
+  addAttachments({ type: 'feature', id: mid.seq }, [upload('mid.md', 'mid')], {}, deps(r));
+  await readsSettled({ type: 'feature', id: mid.seq });
+  assert.equal(listTurns(mid.seq).some((t) => t.kind === 'followup'), false);
+  const started = doneFeature();
+  appendTurn(started.seq, { kind: 'start', payload: { version: 1, runId: 'r-a8' } });
+  addAttachments({ type: 'feature', id: started.seq }, [upload('after.md', 'after')], {}, deps(r));
+  await readsSettled({ type: 'feature', id: started.seq });
+  assert.equal(maybeFollowUpFiles(started.seq, deps(r)), false);
+  assert.equal(listTurns(started.seq).some((t) => t.kind === 'followup'), false);
+  assert.throws(() => followUp(started.seq, {}, deps(r)), /nothing is waiting for a follow-up/);
+});
+
+test('A8 D8: a file still being read when a round runs is not asked by it; it gets its follow-up once its read ends', async () => {
+  let open;
+  const gate = new Promise((res) => { open = res; });
+  const r = fileRunner({ round: ROUND2 });
+  const held = { ...r, runClaudeImpl: async (o) => { if (o.systemPrompt === ATTACHMENT_SYSTEM_PROMPT) await gate; return r.runClaudeImpl(o); } };
+  const f = newFeature();
+  appendTurn(f.seq, { kind: 'round', payload: { questions: ROUND1.questions, done: false } });
+  updateFeature(f.seq, { status: 'your_turn', rounds: 1, orientation: { summary: '', files: [], skipped: 'off' } });
+  const data = Buffer.from('%PDF-1.7\nscan\n');
+  const [a] = addAttachments({ type: 'feature', id: f.seq },
+    [{ name: 'scan.pdf', kind: 'binary', mime: 'application/pdf', data, bytes: data.length, sha256: createHash('sha256').update(data).digest('hex') }], {}, deps(held));
+  await finishInterview(f.seq, {}, deps(held));   // the final round runs while scan.pdf is still being read
+  const last = listTurns(f.seq).filter((t) => t.kind === 'round').at(-1);
+  assert.equal((last.payload.files || []).includes(a.id), false);
+  assert.deepEqual(unaskedFiles(listAttachments('feature', f.seq), listTurns(f.seq)), [a.id]);
+  open();
+  await readsSettled({ type: 'feature', id: f.seq });
+  assert.equal(getAttachment(a.id).status, 'done');
+  await settled(f.seq);
+  assert.deepEqual(listTurns(f.seq).find((t) => t.kind === 'followup').payload.files, [a.id]);
+  assert.deepEqual(unaskedFiles(listAttachments('feature', f.seq), listTurns(f.seq)), []);
+});
+
+test('A8: a file turn after an error never hides it from Try again; a failed files follow-up retries with its files', async () => {
+  const f = doneFeature();
+  updateFeature(f.seq, { status: 'your_turn' });   // mid-interview while it is read: no automatic follow-up starts
+  const [a] = addAttachments({ type: 'feature', id: f.seq }, [upload('again.md', 'again')], {}, deps(fileRunner(), { mockEnabled: () => true }));
+  await readsSettled({ type: 'feature', id: f.seq });
+  assert.equal(listTurns(f.seq).some((t) => t.kind === 'followup'), false);
+  updateFeature(f.seq, { status: 'done' });
+  appendTurn(f.seq, { kind: 'followup', payload: { assumptions: [], files: [a.id] } });
+  appendTurn(f.seq, { kind: 'error', payload: { code: 'FAILED', message: 'x', job: 'round' } });
+  appendTurn(f.seq, { kind: 'file', payload: { action: 'edited', id: a.id, name: 'again.md' } });
+  const r = fileRunner({ round: FOLLOW });
+  await retry(f.seq, {}, deps(r));
+  assert.deepEqual(listTurns(f.seq).filter((t) => t.kind === 'round').at(-1).payload.followUpFiles, [a.id]);
+});
+
+const FOLLOW_DONE = { spec: {}, questions: [], done: true, note: 'Nothing more about the files.' };
+/** Resolves once `ok()` holds (checked every few milliseconds, at most 2 seconds). */
+async function until(ok) {
+  for (let i = 0; i < 400 && !ok(); i += 1) await new Promise((res) => setTimeout(res, 5));
+  assert.ok(ok(), 'the condition never held');
+}
+
+test('A8 D8: no follow-up while another file is still being read; then one for both, and it never starts another', async () => {
+  let open;
+  const gate = new Promise((res) => { open = res; });
+  const r = fileRunner({ round: FOLLOW_DONE });
+  const held = { ...r, runClaudeImpl: async (o) => { if (o.systemPrompt === ATTACHMENT_SYSTEM_PROMPT && o.prompt.includes('Name: slow.md')) await gate; return r.runClaudeImpl(o); } };
+  const f = doneFeature();
+  const [a, b] = addAttachments({ type: 'feature', id: f.seq }, [upload('quick.md', 'quick'), upload('slow.md', 'slow')], {}, deps(held));
+  await until(() => getAttachment(a.id).status === 'done');
+  await new Promise((res) => setTimeout(res, 20));
+  assert.equal(listTurns(f.seq).some((t) => t.kind === 'followup'), false, 'slow.md is still being read');
+  assert.equal(isBusy(f.seq), false);
+  open();
+  await readsSettled({ type: 'feature', id: f.seq });
+  await settled(f.seq);
+  assert.deepEqual(listTurns(f.seq).filter((t) => t.kind === 'followup').map((t) => t.payload.files), [[a.id, b.id]]);
+  const rounds = listTurns(f.seq).filter((t) => t.kind === 'round');
+  assert.deepEqual([rounds.length, rounds.at(-1).payload.final, rounds.at(-1).payload.files], [2, false, [a.id, b.id]]);
+  assert.deepEqual([getFeature(f.seq).status, getFeature(f.seq).rounds], ['done', 3]);
+  assert.deepEqual(unaskedFiles(listAttachments('feature', f.seq), listTurns(f.seq)), []);
+  assert.equal(maybeFollowUpFiles(f.seq, deps(r)), false, 'asked: nothing is left for another follow-up');
+  assert.equal(listTurns(f.seq).filter((t) => t.kind === 'followup').length, 1);
+});
+
+test('A8 D8: the budget and an archive keep Worca\'s follow-up from starting; a failed or unstored file never waits for one; a removal that leaves nothing to read starts it', async () => {
+  const r = fileRunner({ round: FOLLOW });
+  const f = doneFeature();
+  const kept = insertAttachment({ id: mintAttachmentId(), ownerType: 'feature', ownerId: f.seq, name: 'kept.md', kind: 'text', mime: 'text/markdown', bytes: 4, sha256: 'k1' });
+  updateAttachment(kept.id, { status: 'done', summary: 'Kept.' });
+  appendTurn(f.seq, { kind: 'file', payload: { action: 'added', id: kept.id, name: 'kept.md' } });
+  const lost = insertAttachment({ id: mintAttachmentId(), ownerType: 'feature', ownerId: f.seq, name: 'lost.md', kind: 'text', mime: 'text/markdown', bytes: 4, sha256: 'l1' });
+  updateAttachment(lost.id, { status: 'failed', error: { code: 'STORE_FAILED', message: 'x', at: 't' } });
+  appendTurn(f.seq, { kind: 'file', payload: { action: 'added', id: lost.id, name: 'lost.md' } });
+  assert.deepEqual(unaskedFiles(listAttachments('feature', f.seq), listTurns(f.seq)), [kept.id], 'a file that failed or was not stored is listed by name only');
+  assert.equal(maybeFollowUpFiles(f.seq, deps(r, { budget: () => ({ blocked: true }) })), false);
+  assert.equal(maybeFollowUpFiles(f.seq, deps(r, { budget: () => { throw new Error('no budget'); } })), false, 'never throws');
+  updateFeature(f.seq, { status: 'archived' });
+  assert.equal(maybeFollowUpFiles(f.seq, deps(r)), false);
+  updateFeature(f.seq, { status: 'done' });
+  assert.equal(listTurns(f.seq).some((t) => t.kind === 'followup'), false);
+  removeAttachment({ type: 'feature', id: f.seq }, lost.id, {}, deps(r));   // nothing is left to read: the follow-up starts
+  await settled(f.seq);
+  assert.deepEqual(listTurns(f.seq).find((t) => t.kind === 'followup').payload, { assumptions: [], files: [kept.id] });
+  assert.deepEqual(listTurns(f.seq).filter((t) => t.kind === 'round').at(-1).payload.files, [kept.id]);
+});
+
+test('A8 D8: a brief document starts no follow-up round for the scope\'s finished features', async () => {
+  const b = savedBrief();
+  const r = fileRunner({ round: FOLLOW });
+  const f = newBriefFeature();
+  appendTurn(f.seq, { kind: 'round', payload: { questions: [], done: true } });
+  updateFeature(f.seq, { status: 'done', rounds: 2, orientation: { summary: '', files: [], skipped: 'brief' } });
+  const owner = { type: 'brief', id: b.id, scopeType: 'project', scopeKey: BSCOPE };
+  const [doc] = addAttachments(owner, [upload('terms.md', 'Terms')], {}, deps(r));
+  try {
+    await readsSettled(owner);
+    assert.equal(getAttachment(doc.id).status, 'done');
+    assert.equal(listTurns(f.seq).some((t) => t.kind === 'followup' || t.kind === 'file'), false);
+    assert.equal(maybeFollowUpFiles(f.seq, deps(r)), false);
+    assert.equal(readiness(getFeature(f.seq), { turns: listTurns(f.seq), files: listAttachments('feature', f.seq) }).checks.find((c) => c.key === 'interview').ok, true);
+  } finally { deleteAttachmentRow(doc.id); }   // the later tests read this brief without documents
 });

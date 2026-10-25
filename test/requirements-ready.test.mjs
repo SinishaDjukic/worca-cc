@@ -1,7 +1,7 @@
 // test/requirements-ready.test.mjs — readiness, displayed state, changes since a start (A2 D1, D2, D4, D11).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readiness, unaskedRejections, displayState, changedSince, OVERRIDABLE } from '../src/core/requirements/ready.mjs';
+import { readiness, unaskedFiles, unaskedRejections, displayState, changedSince, OVERRIDABLE } from '../src/core/requirements/ready.mjs';
 import { emptySpec } from '../src/core/requirements/spec.mjs';
 
 const good = () => {
@@ -178,4 +178,29 @@ test('asked about: a follow-up round for its own ids (even with no questions); a
   // an ordinary round counts only when it asked something
   assert.deepEqual(unaskedRejections(s, [rej, { id: 8, kind: 'round', payload: { done: true, questions: [] } }]), ['A-4', 'A-5']);
   assert.deepEqual(unaskedRejections(s, [rej, { id: 8, kind: 'round', payload: { done: false, questions: Q1 } }]), []);
+});
+
+// ── A8 D8: files added or replaced after the interview ─────────────────
+const fileTurn = (id, action, fileId) => ({ id, kind: 'file', payload: { action, id: fileId, name: `${fileId}.pdf` } });
+/** A round; `files`: the files whose text its prompt carried (runRound records them). */
+const roundTurn = (id, done = true, files = []) => ({ id, kind: 'round', payload: { questions: [], done, ...(files.length ? { files } : {}) } });
+const file = (id, status = 'done') => ({ id, name: `${id}.pdf`, status });
+
+test('unaskedFiles: changed after the last round that carried it; reading counts, failed and unread-budget do not; a start ends it', () => {
+  const turns = [fileTurn(1, 'added', 'a'), roundTurn(2, true, ['a']), fileTurn(3, 'added', 'b'), fileTurn(4, 'read', 'a'), fileTurn(5, 'replaced', 'a'), fileTurn(6, 'added', 'c'), fileTurn(7, 'added', 'd')];
+  assert.deepEqual(unaskedFiles([file('a'), file('b', 'reading'), file('c', 'failed'), file('d', 'unread-budget')], turns), ['a', 'b']);
+  assert.deepEqual(unaskedFiles([file('a')], [...turns, roundTurn(8, true, ['a'])]), []);
+  assert.deepEqual(unaskedFiles([file('a')], [...turns, roundTurn(8)]), ['a'], 'a round that did not carry the file has not asked about it');
+  assert.deepEqual(unaskedFiles([file('a')], [...turns, { id: 9, kind: 'start', payload: { version: 1 } }]), []);
+  assert.deepEqual(unaskedFiles([file('x')], [roundTurn(1)]), [], 'no added turn: nothing to ask');
+});
+
+test('readiness: the interview check fails with "<name> to ask about" / "N files to ask about"; waiting questions come first', () => {
+  const f = { spec: { goal: { text: 'g', measure: 'm' }, criteria: [{ id: 'R-po-1', text: 'c' }], assumptions: [], openQuestions: [] } };
+  const turns = [roundTurn(1), fileTurn(2, 'added', 'a'), fileTurn(3, 'added', 'b')];
+  const check = (files, extra = {}) => readiness({ ...f, ...extra }, { turns, files }).checks.find((c) => c.key === 'interview');
+  assert.deepEqual([check([file('a')]).ok, check([file('a')]).hint], [false, 'a.pdf to ask about']);
+  assert.equal(check([file('a'), file('b')]).hint, '2 files to ask about');
+  assert.equal(check([]).ok, true);
+  assert.equal(check([file('a')], { pending: { questions: [{}] } }).hint, '1 question waiting');
 });

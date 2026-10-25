@@ -27,7 +27,7 @@ import {
   mintAttachmentId, insertAttachment, getAttachment, listAttachments, updateAttachment, addAttachmentCost, deleteAttachmentRow,
   listReadingAttachments, recentReadCosts, appendTurn, addFeatureCost, getFeature, usableBrief,
 } from './store.mjs';
-import { callModel, interviewModel } from './interview.mjs';
+import { callModel, interviewModel, maybeFollowUpFiles } from './interview.mjs';
 
 export const MAX_READ_JOBS = 2;
 export const READ_TIMEOUT_MS = 180_000;
@@ -120,7 +120,9 @@ function pump() {
 }
 function settle(e) {
   notifyOwner(e.owner, e.d);
-  release(ownerKey(e.owner));
+  // D8: the feature has nothing left to read or answer: files added after its interview finished may get their follow-up
+  // round (maybeFollowUpFiles is idempotent and never throws, so a read and an ask ending in either order both reach it)
+  if (release(ownerKey(e.owner)) && e.owner.type === 'feature') maybeFollowUpFiles(e.owner.id, e.d);
 }
 
 /** Drops the queued jobs of these files and stops their running ones (a removed file, a deleted brief, D10). */
@@ -370,7 +372,7 @@ export function removeAttachment(owner, id, { by = null } = {}, deps = {}) {
     if (owner.type === 'feature') appendTurn(owner.id, { kind: 'file', payload: { action: 'removed', id: row.id, name: row.name } }, { by });
   });
   removeBody(row);
-  release(ownerKey(owner));
+  if (release(ownerKey(owner)) && owner.type === 'feature') maybeFollowUpFiles(owner.id, d);   // D8, as settle
   notifyOwner(owner, d);
   return row;
 }
@@ -542,14 +544,16 @@ export function queueUnread(seq, deps = {}) {
 // ---------------------------------------------------------------- the prompts (D6)
 
 /** What a round's prompt carries of the files (D6): the feature's <attachments> text (null without files), the scope's
- *  documents for <product_brief> ('' without any), the names a reply may give as a source, and the rows. */
+ *  documents for <product_brief> ('' without any), the names a reply may give as a source, and the rows. `carried` (D8):
+ *  the ids of the files whose text the prompt carried (a summary it shows, or their full text). */
 export function promptFiles(f) {
   const rows = listAttachments('feature', f.seq);
   const brief = usableBrief(f.scopeType, f.scopeKey);
   const docs = brief ? listAttachments('brief', brief.id) : [];
   const texts = selectInlineAttachments(rows, (r) => { try { return redactAskText(readFileSync(attachmentFile(r), 'utf8')); } catch { return null; } });
   return { rows, docs, attachments: rows.length ? renderAttachmentsForPrompt(rows, { texts }) : null,
-    documents: docs.length ? renderDocumentsForPrompt(docs) : '', sources: sourceNames(rows, docs) };
+    documents: docs.length ? renderDocumentsForPrompt(docs) : '', sources: sourceNames(rows, docs),
+    carried: rows.filter((r) => (r.summary && (r.summaryEdited || r.status === 'done')) || texts.has(r.id)).map((r) => r.id) };
 }
 
 // ---------------------------------------------------------------- boot, estimates

@@ -19,7 +19,7 @@ import { worcaHome, listProjects } from '../projects.mjs';
 import { utilityModelFor } from '../settings-cascade.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, MAX_ROUNDS, LIMITS, clip } from './spec.mjs';
-import { unaskedRejections } from './ready.mjs';
+import { unaskedRejections, unaskedFiles } from './ready.mjs';
 import {
   requireFeature, getFeature, updateFeature, appendTurn, listTurns, getContext, addFeatureCost, listFeatures, usableBrief, listAttachments,
 } from './store.mjs';
@@ -391,7 +391,9 @@ async function runOrientation(seq, d, by, { useBrief = false } = {}) {
     at: new Date().toISOString() } }, { by });
 }
 
-async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
+/** `followUpFiles` (A8 D8): the ids of the files a follow-up asks about; one removed since is left out (none left: an
+ *  ordinary round). */
+async function runRound(seq, d, by, { final = false, followUp = null, followUpFiles = null } = {}) {
   if (isArchived(seq)) return;
   queueUnread(seq, d);   // A8 D5: files a spending limit stopped are read again once it allows
   setStatus(seq, 'thinking', by);
@@ -399,9 +401,11 @@ async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
   const f = requireFeature(seq);
   const found = followUp ? f.spec.assumptions.filter((a) => followUp.includes(a.id) && a.status === 'rejected').map((a) => ({ id: a.id, text: a.text })) : [];
   const followItems = found.length ? found : null;   // none left rejected: an ordinary round
-  const isFinal = final || (!followItems && f.rounds + 1 >= MAX_ROUNDS);
   const turns = listTurns(seq);
   const files = promptFiles(f);   // A8 D6: the feature's files and the scope's documents, as the prompts carry them
+  const askFiles = Array.isArray(followUpFiles) ? files.rows.filter((r) => followUpFiles.includes(r.id)) : [];
+  const fileNames = askFiles.length ? askFiles.map((r) => r.name) : null;   // removed since: an ordinary round
+  const isFinal = final || (!followItems && !fileNames && f.rounds + 1 >= MAX_ROUNDS);
   const brief = briefFor(f, files.documents);   // A7 D10: every round reads the scope's usable brief and records which one
   const seqs = { criteriaSeq: f.criteriaSeq, assumptionSeq: f.assumptionSeq, final: isFinal, removedCriteria: removedCriteria(turns), sources: files.sources };
   let applied = null;
@@ -409,11 +413,11 @@ async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
   let cost = 0;
   let lastErr = null;
   if (mockEnabled({})) {
-    applied = applyRound(f.spec, mockRoundReply(f, isFinal, { followUp: followItems, sources: files.sources }), seqs);
+    applied = applyRound(f.spec, mockRoundReply(f, isFinal, { followUp: followItems, followUpFiles: fileNames, sources: files.sources }), seqs);
   } else {
     const ctx = getContext(f.scopeType, f.scopeKey);
     const prompt = buildRoundPrompt({ feature: f, context: ctx.body, turns, final: isFinal, round: f.rounds + 1, followUp: followItems, brief: brief?.text,
-      attachments: files.attachments });
+      attachments: files.attachments, followUpFiles: fileNames });
     const im = await interviewModel(d);
     model = im.model || undefined;
     const effort = im.effort || undefined;
@@ -439,8 +443,10 @@ async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
     failTurn(seq, { code: 'BAD_REPLY', message: `Worca's reply could not be read (${lastErr.message}). Try again.`, job: 'round', costUsd: cost, model }, by, 'your_turn');
     return;
   }
-  const turnId = appendTurn(seq, { kind: 'round', payload: { questions: applied.questions, note: applied.note, done: applied.done, final: isFinal, ...(followItems ? { followUp: followItems.map((a) => a.id) } : {}),
-    ...(brief ? { brief: { id: brief.id, madeAt: brief.madeAt } } : {}) },
+  const turnId = appendTurn(seq, { kind: 'round', payload: { questions: applied.questions, note: applied.note, done: applied.done, final: isFinal,
+    ...(followItems || fileNames ? { followUp: (followItems || []).map((a) => a.id) } : {}), ...(fileNames ? { followUpFiles: askFiles.map((r) => r.id) } : {}),
+    ...(brief ? { brief: { id: brief.id, madeAt: brief.madeAt } } : {}),
+    ...(files.carried.length ? { files: files.carried } : {}) },   // A8 D8: the files this round asked about (absent without any)
     model: model || null, costUsd: cost || null }, { by });
   charge(seq, turnId, cost, model);
   setStatus(seq, applied.done ? 'done' : 'your_turn', by, {
@@ -488,17 +494,35 @@ export function startOrientation(seq, { by = null, thenRound = true } = {}, deps
   }, by, 'look', { waiting: waits });
 }
 
-/** Ask about the assumptions the product owner rejected since the last round: one extra round, past the round cap. */
-export function followUp(seq, { by = null } = {}, deps = {}) {
+/** Ask about the assumptions the product owner rejected and the files added or replaced since the interview finished
+ *  (A2-D4, A8 D8): one extra round, past the round cap. `filesOnly`: Worca's own follow-up after the reads (D8). */
+export function followUp(seq, { by = null, filesOnly = false } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   const f = guard(seq);
   const turns = listTurns(seq);
   // The round waiting for answers comes first: its answers start the next round, which sees the rejection.
   if (f.status === 'your_turn' && pendingRound(turns)) throw new RequirementsError('CONFLICT', 'answer the questions waiting first');
-  const ids = unaskedRejections(f.spec, turns);
-  if (!ids.length) throw new RequirementsError('CONFLICT', 'no rejected assumption is waiting for a follow-up');
-  appendTurn(seq, { kind: 'followup', payload: { assumptions: ids } }, { by });
-  return startJob(seq, d, () => runRound(seq, d, by, { followUp: ids }), by);
+  const ids = filesOnly ? [] : unaskedRejections(f.spec, turns);
+  const files = unaskedFiles(listAttachments('feature', f.seq), turns);
+  if (!ids.length && !files.length) throw new RequirementsError('CONFLICT', 'nothing is waiting for a follow-up');
+  appendTurn(seq, { kind: 'followup', payload: { assumptions: ids, ...(files.length ? { files } : {}) } }, { by });
+  return startJob(seq, d, () => runRound(seq, d, by, { followUp: ids, followUpFiles: files.length ? files : null }), by);
+}
+
+/** A8 D8: once a feature has nothing left to read or answer, files added or replaced after its interview finished get one
+ *  short follow-up round, started by Worca when it can start (not busy, not archived, under MAX_JOBS, within the budget);
+ *  otherwise the Decide panel offers it. Never throws. */
+export function maybeFollowUpFiles(seq, deps = {}) {
+  try {
+    const d = { ...DEFAULTS, ...deps };
+    const f = getFeature(seq);
+    if (!f || f.status !== 'done' || isBusy(seq) || activeJobs() >= MAX_JOBS) return false;
+    if (!unaskedFiles(listAttachments('feature', f.seq), listTurns(seq)).length) return false;
+    const b = d.budget();
+    if (b && b.blocked) return false;
+    followUp(seq, { by: null, filesOnly: true }, deps);
+    return true;
+  } catch { return false; }
 }
 
 /** Where a feature rests between jobs: done when its latest round said so, else the product owner's turn. */
@@ -543,11 +567,14 @@ export function finishInterview(seq, { by = null } = {}, deps = {}) {
 export function retry(seq, { by = null } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   const f = guard(seq);
-  if (listTurns(seq).at(-1)?.kind !== 'error') throw new RequirementsError('CONFLICT', 'nothing to retry');
-  const lastReal = listTurns(seq).filter((t) => t.kind !== 'error').at(-1);
+  const turns = listTurns(seq).filter((t) => t.kind !== 'file');   // A8: a file's turns never hide the error Try again answers
+  if (turns.at(-1)?.kind !== 'error') throw new RequirementsError('CONFLICT', 'nothing to retry');
+  const lastReal = turns.filter((t) => t.kind !== 'error').at(-1);
   if (!f.orientation) return startOrientation(seq, { by }, deps);
-  if (listTurns(seq).at(-1).payload.job === 'look') return startOrientation(seq, { by, thenRound: false }, deps);
-  if (lastReal?.kind === 'followup') return startJob(seq, d, () => runRound(seq, d, by, { followUp: lastReal.payload.assumptions }), by);
+  if (turns.at(-1).payload.job === 'look') return startOrientation(seq, { by, thenRound: false }, deps);
+  if (lastReal?.kind === 'followup') {
+    return startJob(seq, d, () => runRound(seq, d, by, { followUp: lastReal.payload.assumptions, followUpFiles: lastReal.payload.files || null }), by);
+  }
   return startJob(seq, d, () => runRound(seq, d, by, { final: lastReal?.kind === 'finish' }), by);
 }
 
