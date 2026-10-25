@@ -1756,12 +1756,12 @@ test('a done slice\'s History page: its chip "Run 1 of 3" links the feature page
   await settle(ctx.window, 4);
   const line = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="group"]');
   assert.equal(line.hidden, true, 'no Feature row: the chip links the group');
-  const chip = ctx.window.document.querySelector('#hist-detail .rd-title-row .kind-chip');   // in the page head
+  const chip = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-title-row .kind-chip');
   assert.equal(chip.textContent, 'Run 1 of 3');
   assert.equal(chip.getAttribute('href'), '#feature/feat_1');
   assert.equal(ctx.window.document.querySelector('#hist-detail .rd-slice-line'), null, 'the chip replaces the slice line');
   await openDetail(ctx);                                 // the same detail again: painted in place
-  assert.equal(ctx.window.document.querySelectorAll('#hist-detail .rd-title-row .kind-chip').length, 1);
+  assert.equal(ctx.window.document.querySelectorAll('#hist-detail .hd-glance .rd-title-row .kind-chip').length, 1);
 });
 
 test('a plain run (in no group) shows no group link; at Expert it offers "Add to group…"', async () => {
