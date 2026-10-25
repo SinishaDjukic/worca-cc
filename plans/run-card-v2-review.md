@@ -34,8 +34,11 @@ the phone Runs tab wrapped one word per line, and two highlights used a 2px radi
 1. **Failures and pauses that explain themselves.** "Tests failed 3 times" is not enough: show the failing test, the
    last 3–5 error lines, a jump to the failing log line, who or what paused it, and "Resume with a note to the agent".
    (Customer, Competition)
-2. **A two-way card.** Show a question's options in place, with Answer as the submit, and add "Tell Worca…" plus
-   Pause while it works. This is the main gap against Copilot, Jules and Devin. (Competition, Customer)
+2. **Answer the run's own questions in place.** Show a question's options on the card, with Answer as the submit,
+   instead of a click that opens them. The competition and customer reviews also asked for steering a run mid-way
+   ("Tell Worca…"), as Copilot, Jules and Devin do. **Not adopted:** a Worca run is dispatched with a fixed workflow
+   and runs to its end; talking to Worca is Chat's job, not the run page's. That is a deliberate difference from those
+   tools, not a gap. Pause and Stop already sit in the page bar.
 3. **Cost guardrails.** Show spend against a budget or a finish estimate ("$84 of $120") with a warning near the limit,
    and bring back the Away-mode share the old card had. Keep the rate as a secondary figure: it under-reports while the
    live step's cost is still arriving. (Customer, Competition)
