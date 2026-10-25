@@ -8,7 +8,7 @@ import { guardModal } from './modal-guard.mjs';
 import { makeSwitch } from './switch.mjs';
 import { COPILOT_TERMS, renderCopilotSignIn } from './bridge-view.mjs';
 import { renderRolesSection, readRolesValues } from './engine-settings-view.mjs';
-import { fetchJson as defaultFetchJson, renderResults, PORT_SWITCH_NOTE, AUTH_OPTIONS } from './settings-network-proxy.mjs';
+import { fetchJson as defaultFetchJson, renderResults, PORT_EMPTY_NOTE, PORT_SWITCH_NOTE, AUTH_OPTIONS } from './settings-network-proxy.mjs';
 import { LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { ROLE_LABELS, MODEL_ROLES } from '../../src/shared/model-roles.mjs';
 import { UPSTREAM_TIMEOUTS } from '../../src/shared/proxy-timeouts.mjs';
@@ -551,11 +551,11 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       if (!locked) {
         body.append(btn('More: timeouts and local proxy port', 'link-btn sa-more', () => { S.more = !S.more; paintBody(); }));
         if (S.more) {
-          const fixed = textInput('number', n.fixedPort, untest((v) => { n.fixedPort = v.trim(); }), { min: '1024', max: '65535', placeholder: 'any free port' });
+          const fixed = textInput('number', n.fixedPort, untest((v) => { n.fixedPort = v.trim(); }), { min: '1024', max: '65535', placeholder: 'Automatic' });
           const f = field('Local proxy port', fixed, 'network.networkProxy.fixedPort');
-          // A new port is listened on at once; with a proxy already running, the old port also keeps answering for
-          // the programs holding it until the next start (egress-policy.mjs listenAlso). Nothing running: no note.
-          if (S.saved.proxy?.running) f.append(el('small', 'hint', PORT_SWITCH_NOTE));
+          // What empty means, always; with a proxy already running, also that a new port applies at once while the old
+          // one keeps answering for the programs holding it until the next start (egress-policy.mjs listenAlso).
+          f.append(el('small', 'hint', S.saved.proxy?.running ? `${PORT_EMPTY_NOTE} ${PORT_SWITCH_NOTE}` : PORT_EMPTY_NOTE));
           body.append(f);
           // Shown filled in with the default; saved only when it differs, so an untouched field never reads as a change.
           for (const [k, label] of TIMEOUTS) {
@@ -591,15 +591,25 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   function paintAccess() {
     const a = S.answers.access; const broker = !!S.saved.providers?.broker?.enabled; const pv = S.saved.providers || {};
     const toggle = (name) => (on) => { a[name] = on; paint(); };
-    if (S.answers.found.claude) body.append(rows('sa-claude', row(badge('green', 'OK'), 'Claude Code is signed in')));
-    else {
-      body.append(sw('Claude Code sign-in', a.claude, toggle('claude'), 'sa-src-claude'));
-      const claude = (S.detect?.checks || []).find((c) => c.id === 'claude');
-      if (a.claude && claude && claude.state !== 'ok') {
-        const list = rows('sa-claude'); const li = row(badge('amber', 'Check'), 'Run claude, then /login, in a terminal');
-        li.append(btn('Check again', 'btn btn-sm sa-recheck', () => { void recheck(); }));
-        list.append(li); body.append(list);
+    const claude = (S.detect?.checks || []).find((c) => c.id === 'claude');
+    if (!S.answers.found.claude) body.append(sw('Claude Code sign-in', a.claude, toggle('claude'), 'sa-src-claude'));
+    if (S.answers.found.claude || (a.claude && claude?.state === 'ok')) {
+      // Signed in: Worca cannot run Claude's own login (interactive, tied to the home folder), so "Sign in again"
+      // opens the terminal steps and a Check again that reads the sign-in past its cache.
+      const li = row(badge('green', 'OK'), 'Claude Code is signed in', S.claudeChecked || '');
+      if (!S.claudeRelogin) li.append(btn('Sign in again', 'btn btn-sm btn-quiet sa-claude-relogin', () => { S.claudeRelogin = true; S.claudeChecked = ''; paint(); }));
+      const list = rows('sa-claude', li);
+      if (S.claudeRelogin) {
+        const steps = row(null, 'In a terminal, run claude, then /logout and /login. Then check again here.');
+        steps.append(btn('Check again', 'btn btn-sm sa-recheck', () => { void recheck({ relogin: true }); }),
+          btn('Cancel', 'btn btn-sm btn-quiet sa-claude-relogin-cancel', () => { S.claudeRelogin = false; paint(); }));
+        list.append(steps);
       }
+      body.append(list);
+    } else if (a.claude && claude && claude.state !== 'ok') {
+      const list = rows('sa-claude'); const li = row(badge('amber', 'Check'), 'Run claude, then /login, in a terminal');
+      li.append(btn('Check again', 'btn btn-sm sa-recheck', () => { void recheck(); }));
+      list.append(li); body.append(list);
     }
     body.append(sw('GitHub Copilot', a.copilot, toggle('copilot'), 'sa-src-copilot'));
     if (a.copilot) {
@@ -609,7 +619,19 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
         for (const para of COPILOT_TERMS.body.split('\n\n')) box.append(el('p', 'sa-sub', para));
         box.append(sw(COPILOT_TERMS.checkbox, a.copilotAck, (on) => { a.copilotAck = on; paint(); }, 'sa-cp-ack'));
         box.append(field('Plan', seg(COPILOT_PLANS, a.copilotAccount, (v) => { a.copilotAccount = v; paint(); }, { label: 'Plan' }), null));
-        if (a.copilotConnected) box.append(rows('sa-cp', row(badge('green', 'OK'), `Connected as @${a.copilotLogin || 'github'}`)));
+        if (a.copilotConnected) {
+          // Use another account: sign out (the Providers page's endpoint), then the device sign-in starts here.
+          const li = row(badge('green', 'OK'), `Connected as @${a.copilotLogin || 'github'}`);
+          if (!S.cpSwitch) li.append(btn('Use another account', 'btn btn-sm btn-quiet sa-cp-switch', () => { S.cpSwitch = true; paint(); }));
+          const list = rows('sa-cp', li);
+          if (S.cpSwitch) {
+            const ask = row(badge('amber', 'Check'), 'Sign out of GitHub Copilot?', 'Models bridged through Copilot stop working until you sign in again.');
+            const go = btn('Sign out and sign in again', 'btn btn-sm sa-cp-switch-go', () => { void copilotSwitch(); }); go.disabled = !a.copilotAck;
+            ask.append(go, btn('Cancel', 'btn btn-sm btn-quiet sa-cp-switch-cancel', () => { S.cpSwitch = false; paint(); }));
+            list.append(ask);
+          }
+          box.append(list);
+        }
         else {
           const go = btn('Sign in with GitHub', 'btn btn-sm sa-cp-signin', () => { void copilotSignIn(); });
           go.disabled = !a.copilotAck || !!S.cpFlow; box.append(go);
@@ -632,7 +654,9 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
         const key = textInput('password', a[`${name}Key`], (v) => { a[`${name}Key`] = v; },
           { autocomplete: 'off', placeholder: pv[name]?.keyMasked || 'API key, or ${VAR}' });
         key.classList.add('sa-key');
-        box.append(field('API key', key, `access.${name}.apiKey`));
+        const keyField = field('API key', key, `access.${name}.apiKey`);
+        if (pv[name]?.keyMasked) keyField.append(el('small', 'hint', 'A key is saved. Type a new one to replace it.'));
+        box.append(keyField);
       }
       body.append(box);
     }
@@ -823,12 +847,30 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     guard.markClean();
   }
 
-  // Model access › Claude › Check again: detect once more, past its cache.
-  async function recheck() {
+  // Model access › Claude › Check again: detect once more, past its cache. After "Sign in again", a signed-in answer
+  // closes the steps and says it was checked; any other answer shows the usual Check row.
+  async function recheck({ relogin = false } = {}) {
     const r = await call('/api/setup/detect?recheck=1');
     if (closed) return;
     if (r.ok) S.detect = r.data;
+    const ok = (S.detect?.checks || []).find((c) => c.id === 'claude')?.state === 'ok';
+    if (relogin) {
+      S.claudeRelogin = !ok; S.claudeChecked = ok ? 'Checked again just now.' : '';
+      if (!ok) { S.answers.found.claude = false; S.answers.access.claude = true; }   // shows the Check row with its steps
+    }
     paint();
+  }
+
+  // Model access › Copilot › Use another account: sign out, then the device sign-in, as on a first connection.
+  async function copilotSwitch() {
+    const a = S.answers.access;
+    const r = await call('/api/providers/copilot/logout', { method: 'POST', body: {} });
+    if (closed) return;
+    if (!r.ok) { S.error = r.data?.error || "Couldn't sign out of GitHub Copilot"; paint(); return; }
+    S.cpSwitch = false; a.copilotConnected = false; a.copilotLogin = '';
+    if (S.saved.providers?.copilot) S.saved.providers.copilot.connected = false;   // a Skip now keeps "signed out", the truth
+    paint();
+    await copilotSignIn();
   }
 
   // Network › Test: POST /api/proxy/test with the values on screen; a pass records { key, at } (A11).

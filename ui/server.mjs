@@ -13534,6 +13534,8 @@ app.get('/api/proxy/status', (req, res) => {
 // caller fills its fields and still Tests before saving. Never a 500: an unreadable setting is a found:false line.
 let detectSystemProxyImpl = detectSystemProxy;
 app.get('/api/proxy/detect', async (req, res) => {
+  // Like the proxy routes that act: it fetches a PAC file and starts processes, so an agent run is refused.
+  if (refuseProxyAgent(req, res)) return;
   res.set('Cache-Control', 'no-store').json(await detectSystemProxyImpl());
 });
 

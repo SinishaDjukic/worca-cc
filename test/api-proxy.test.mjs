@@ -435,3 +435,15 @@ test('GET /api/proxy/detect answers what the system detection found, uncached', 
     assert.deepEqual(r.body, found);
   } finally { testing.setSystemProxyDetect(null); }
 });
+
+test('an agent caller cannot run Auto-detect: it fetches a PAC file and starts processes', async () => {
+  let ran = false;
+  testing.setSystemProxyDetect(async () => { ran = true; return { found: false, source: 'none', line: 'x' }; });
+  try {
+    await withAgent(async () => {
+      const r = await call('GET', '/api/proxy/detect');
+      assert.deepEqual([r.status, r.body.code], [403, 'PROXY_AGENT_BLOCKED']);
+    });
+    assert.equal(ran, false);
+  } finally { testing.setSystemProxyDetect(null); }
+});

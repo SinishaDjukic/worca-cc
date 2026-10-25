@@ -395,7 +395,9 @@ test('Network › More: timeouts show their defaults and only a changed one is s
     await h.goTo('network');
     await h.click('.sa-more');
     assert.deepEqual(['connectMs', 'authMs', 'idleMs'].map((k) => value(h, k)), ['60', '60', '300']);
-    assert.equal(h.$('.sa-step').textContent.includes('Programs already using the old port'), false, 'nothing running: no note');
+    assert.equal(h.$('.sa-step').textContent.includes('Leave it empty and Worca picks a free port each time it starts.'), true, 'what empty means, always');
+    assert.equal(h.$('[data-sa-field="network.networkProxy.fixedPort"]').placeholder, 'Automatic');
+    assert.equal(h.$('.sa-step').textContent.includes('Programs already using the old port'), false, 'nothing running: no switch note');
     await h.type('network.networkProxy.timeouts.idleMs', '300');                 // the default again: not sent
     await h.type('network.networkProxy.timeouts.connectMs', '90');
     await h.click('.sa-test');
@@ -877,6 +879,54 @@ test('entry steps and the handle: fix › network, fix › access with Copilot o
     await applyLimit(h);
     await h.goTo('network');
     assert.equal(h.title(), 'Setting up Worca…', 'goTo is a no-op on Apply');
+  } finally { h.close(); }
+});
+
+test('Model access › Claude: Sign in again shows the terminal steps; Check again reads past the cache', async () => {
+  let signedIn = true;
+  const recheck = () => reply({ checks: [check('claude', signedIn ? 'ok' : 'no'), check('git', 'ok'), check('direct', 'ok')] });
+  const h = await open({ entry: 'rerun', routes: { '/api/setup/detect?recheck=1': () => recheck() } });
+  try {
+    await h.goTo('access');
+    assert.match(h.$('.sa-claude').textContent, /Claude Code is signed in/);
+    await h.click('.sa-claude-relogin');
+    assert.match(h.$('.sa-claude').textContent, /run claude, then \/logout and \/login/);
+    await h.click('.sa-recheck');
+    assert.ok(h.log.some((r) => r.url === '/api/setup/detect?recheck=1'));
+    assert.match(h.$('.sa-claude').textContent, /Checked again just now\./);
+    assert.equal(h.$('.sa-recheck'), null, 'the steps close once it is signed in');
+    signedIn = false;
+    await h.click('.sa-claude-relogin');
+    await h.click('.sa-recheck');
+    assert.match(h.$('.sa-claude').textContent, /Run claude, then \/login, in a terminal/, 'signed out now: the usual Check row');
+  } finally { h.close(); }
+});
+
+test('Model access › Copilot: Use another account asks first, signs out, then runs the device sign-in here', async () => {
+  const providers = { ...PROVIDERS, copilot: { connected: true, termsCurrent: true, accountType: 'individual', login: 'jdoe' } };
+  const h = await open({ entry: 'rerun', providers, routes: { ...COPILOT_ROUTES([reply({ ok: true, login: 'acme-dev' })]), '/api/providers/copilot/logout': reply({ ok: true }) } });
+  try {
+    await h.goTo('access');
+    assert.match(h.$('.sa-cp').textContent, /Connected as @jdoe/);
+    await h.click('.sa-cp-switch');
+    assert.match(h.$('.sa-cp').textContent, /Models bridged through Copilot stop working until you sign in again\./);
+    assert.equal(h.log.some((r) => r.url === '/api/providers/copilot/logout'), false, 'nothing happens before the confirm');
+    await h.click('.sa-cp-switch-go');
+    assert.ok(h.log.some((r) => r.url === '/api/providers/copilot/logout' && r.method === 'POST'));
+    assert.equal(h.$('.mv-cp-code').textContent, 'ABCD-1234', 'the device sign-in starts in the dialog');
+    await h.flush();
+    assert.match(h.$('.sa-cp').textContent, /Connected as @acme-dev/);
+  } finally { h.close(); }
+});
+
+test('Model access › a saved API key: the field says how to replace it', async () => {
+  const providers = { ...PROVIDERS, openai: { configured: true, baseUrl: 'https://llm.example.com/v1', keyMasked: 'sk-…1234' } };
+  const h = await open({ entry: 'rerun', providers });
+  try {
+    await h.goTo('access');
+    if (!h.$('.sa-src-openai').checked) await h.toggle('.sa-src-openai');
+    assert.match(h.$('.sa-key').closest('.field').textContent, /A key is saved\. Type a new one to replace it\./);
+    assert.equal(h.$('.sa-key').placeholder, 'sk-…1234');
   } finally { h.close(); }
 });
 

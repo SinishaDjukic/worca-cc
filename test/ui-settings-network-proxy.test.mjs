@@ -178,7 +178,7 @@ test('AC-2.8: the card is Simple level, has no flag gate, and folds timeouts and
   assert.equal(more.querySelector('summary').textContent.trim(), 'More');
   for (const id of ['npFixedPort', 'npConnectS', 'npAuthS', 'npIdleS']) assert.ok(more.contains(m.$(id)), `${id} is under More`);
   for (const id of ['npHost', 'npPort', 'npAuth', 'npNoProxy']) assert.equal(more.contains(m.$(id)), false, `${id} stays visible`);
-  assert.equal(m.$('npFixedPortNote').textContent, 'Takes effect at once. Programs already using the old port keep it until Worca restarts.');
+  assert.equal(m.$('npFixedPortNote').textContent, 'Leave it empty and Worca picks a free port each time it starts. Set one only for programs outside Worca (an IDE, a shell). Takes effect at once. Programs already using the old port keep it until Worca restarts.');
   m.close();
 });
 

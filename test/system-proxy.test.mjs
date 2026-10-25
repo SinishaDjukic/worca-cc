@@ -100,6 +100,17 @@ test('Linux (GNOME): manual with ignore-hosts; auto with a PAC URL; no gsettings
   assert.equal(missing.found, false);
 });
 
+test('a PAC address with a login is fetched with it and answered without it', async () => {
+  const withLogin = SCUTIL_PAC.replace('http://wpad.example.com/proxy.pac', 'http://jdoe:secret@wpad.example.com/proxy.pac');
+  const fetched = [];
+  const r = await detectSystemProxy({ platform: 'darwin', runImpl: async () => withLogin, fetchPacImpl: async (u) => { fetched.push(u); return PAC; }, evaluate });
+  assert.deepEqual(fetched, ['http://jdoe:secret@wpad.example.com/proxy.pac']);
+  assert.equal(r.pacUrl, 'http://wpad.example.com/proxy.pac');
+  assert.doesNotMatch(JSON.stringify(r), /secret|jdoe/);
+  const win = readWindowsAnswer(JSON.stringify({ enable: 0, pac: 'http://jdoe:secret@wpad.example.com/p.pac', resolved: 'http://proxy.example.com:8080/', bypassed: false }));
+  assert.doesNotMatch(JSON.stringify(win), /secret|jdoe/);
+});
+
 test('fetchPac: only http(s) and file addresses; a size cap', async () => {
   await assert.rejects(fetchPac('ftp://wpad.example.com/proxy.pac'), /a ftp: PAC address is not supported/);
   await assert.rejects(fetchPac('http://wpad.example.com/x', { fetchImpl: async () => ({ ok: false, status: 404 }) }), /answered 404/);

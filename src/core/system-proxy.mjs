@@ -48,6 +48,11 @@ export async function fetchPac(url, { fetchImpl = directFetch, readImpl = readFi
   return text;
 }
 
+/** A PAC address as it may be shown: any user:password@ dropped (an intranet PAC URL can carry a login). */
+export function safePacUrl(raw) {
+  try { const u = new URL(raw); u.username = ''; u.password = ''; return u.href; } catch { return String(raw || '').replace(/\/\/[^@/]*@/, '//'); }
+}
+
 /** No-proxy entries Worca can use: CIDR ranges never match in Worca and `<local>` has no equivalent, so they are dropped. */
 export function usableBypass(list) {
   return [...new Set((list || []).map((s) => String(s).trim()).filter((s) => s && !s.includes('/') && s !== '<local>' && !/^[\d.:]+$/.test(s)))];
@@ -86,9 +91,10 @@ const gstr = (s) => String(s || '').trim().replace(/^'(.*)'$/, '$1');
 const glist = (s) => [...String(s || '').matchAll(/'([^']*)'/g)].map((m) => m[1]);
 
 /** What a PAC script picks for the target, as a detect answer. */
-async function fromPac(pacUrl, source, { fetchPacImpl, evaluate, target }) {
+async function fromPac(fetchUrl, source, { fetchPacImpl, evaluate, target }) {
+  const pacUrl = safePacUrl(fetchUrl);   // fetched with its login, answered without it
   let script;
-  try { script = await fetchPacImpl(pacUrl); } catch (err) { return { found: false, source, pacUrl, line: `Couldn't read your system's PAC file: ${err.message}.` }; }
+  try { script = await fetchPacImpl(fetchUrl); } catch (err) { return { found: false, source, pacUrl, line: `Couldn't read your system's PAC file: ${err.message}.` }; }
   const r = await evaluate(script, target);
   if (r.error) return { found: false, source, pacUrl, line: `Couldn't use your system's PAC file: ${r.error}.` };
   const proxies = r.entries.filter((e) => e.type === 'proxy');
@@ -131,7 +137,7 @@ export function readWindowsAnswer(json, target = DETECT_TARGET) {
   let w; try { w = JSON.parse(json); } catch { return { found: false, source: 'error', line: "Couldn't read the Windows proxy settings." }; }
   const resolved = w.resolved && !w.bypassed && w.resolved !== target ? hostPort(w.resolved, 80) : null;
   if (!resolved) return w.pac || w.enable === 1 ? { found: false, source: w.pac ? 'pac' : 'manual', direct: true, line: 'Your Windows settings send api.anthropic.com direct: no proxy is needed.' } : NONE('Windows');
-  if (w.pac) return { found: true, source: 'pac', pacUrl: w.pac, ...resolved, noProxy: [], also: [], line: `From your system's PAC file (${(() => { try { return new URL(w.pac).host; } catch { return w.pac; } })()}).` };
+  if (w.pac) return { found: true, source: 'pac', pacUrl: safePacUrl(w.pac), ...resolved, noProxy: [], also: [], line: `From your system's PAC file (${(() => { try { return new URL(w.pac).host; } catch { return w.pac; } })()}).` };
   if (w.enable === 1 && w.server) return manual(resolved, String(w.override || '').split(';'), 'Windows');
   return { found: true, source: 'wpad', ...resolved, noProxy: [], also: [], line: 'From your system\'s auto-discovery (WPAD).' };
 }

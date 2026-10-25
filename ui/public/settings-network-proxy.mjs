@@ -4,8 +4,8 @@ import { withButton, fieldError, clearFieldErrors } from './feedback.mjs';
 import { makeSwitch } from './switch.mjs';
 
 // The status sentences live in src/shared so setup apply's proxy-swap row says the same thing.
-export { PORT_SWITCH_NOTE, FIXED_PORT_NOTE, SAVED_TEXT, PORT_PENDING_TEXT, NOT_SAVED_TEXT, SAVED_OFF_TEXT } from '../../src/shared/network-proxy-text.mjs';
-import { PORT_SWITCH_NOTE, FIXED_PORT_NOTE, SAVED_TEXT, PORT_PENDING_TEXT, NOT_SAVED_TEXT, SAVED_OFF_TEXT } from '../../src/shared/network-proxy-text.mjs';
+export { PORT_EMPTY_NOTE, PORT_SWITCH_NOTE, FIXED_PORT_NOTE, SAVED_TEXT, PORT_PENDING_TEXT, NOT_SAVED_TEXT, SAVED_OFF_TEXT } from '../../src/shared/network-proxy-text.mjs';
+import { PORT_EMPTY_NOTE, PORT_SWITCH_NOTE, FIXED_PORT_NOTE, SAVED_TEXT, PORT_PENDING_TEXT, NOT_SAVED_TEXT, SAVED_OFF_TEXT } from '../../src/shared/network-proxy-text.mjs';
 import { UPSTREAM_TIMEOUTS } from '../../src/shared/proxy-timeouts.mjs';
 export const TESTING_TEXT = 'Testing…';
 /** The login choices; exported for the setup assistant's Login select (fit-1-2). */
@@ -81,7 +81,7 @@ function build(doc, body) {
   const port = input(doc, 'number', { min: '1', max: '65535', placeholder: '8080' });
   const { wrap: authWrap, sel: auth } = select(doc, AUTH_OPTIONS);
   const noProxy = input(doc, 'text', { placeholder: 'intranet.acme.example, .corp.acme.example', spellcheck: 'false' });
-  const fixedPort = input(doc, 'number', { min: '1024', max: '65535', placeholder: 'any free port' });
+  const fixedPort = input(doc, 'number', { min: '1024', max: '65535', placeholder: 'Automatic' });
   // Empty means the default, shown as the placeholder (the same numbers the server uses).
   const secs = (k) => String(UPSTREAM_TIMEOUTS[k] / 1000);
   const connectS = input(doc, 'number', { min: '1', max: '3600', placeholder: secs('connectMs') });
@@ -126,7 +126,7 @@ function build(doc, body) {
   setup.id = 'npSetup';
   setup.hidden = true;
   body.append(drows, actions, basicNote, status, setup, results);
-  portNote.textContent = PORT_SWITCH_NOTE;
+  portNote.textContent = `${PORT_EMPTY_NOTE} ${PORT_SWITCH_NOTE}`;
   return { enabled, host, port, auth, noProxy, fixedPort, connectS, authS, idleS, domain, user, password, save, login, logout, test, detect, basicNote, status, setup, results };
 }
 
