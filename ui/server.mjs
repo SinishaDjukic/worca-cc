@@ -153,9 +153,7 @@ import {
 import { askScriptPromptInput, scriptToolsEnabled } from '../src/core/ask/script-deps.mjs';
 import { validateComposerPayload, isComposerCard, composerCardPatch, composerHeaderCard } from '../src/core/ask/composer-payload.mjs';
 import { composerPromptBlock } from '../src/core/ask/composer-deps.mjs';
-import {
-  classifyExtension as askClassifyExtension, sniffMime as askSniffMime,
-} from '../src/core/ask/attachment-kind.mjs';
+import { validateAttachmentUploads } from '../src/core/attachment-upload.mjs';
 import {
   listAskWorktrees as askListWorktrees,
   removeAskWorktree as askRemoveWorktree,
@@ -14877,52 +14875,27 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     const scope = cv.context.pinned === undefined ? (chatScopeOf(thread.context) || chatScopeOf(cv.context)) : chatScopeOf(cv.context);
     const ctx = withChatScope(cv.context, scope);
 
-    // §7.3 — validate EVERY attachment before ANY write (all-or-nothing).
+    // §7.3 — validate EVERY attachment before ANY write (all-or-nothing), through the validation the Requirements page
+    // shares (src/core/attachment-upload.mjs): Ask's caps, its engine refusals and its messages. The engine is read per
+    // file, as before; the objects handed on are Ask's own shapes (no sha256, no raw bytes for a text kind).
     const files = [];
     if (body.attachments !== undefined) {
-      if (!Array.isArray(body.attachments)) return badRequest(res, 'attachments must be an array');
-      if (body.attachments.length > ASK_LIMITS.attachment.maxFiles) {
-        return badRequest(res, `at most ${ASK_LIMITS.attachment.maxFiles} attachments per message`);
-      }
-      const dec = new TextDecoder('utf-8', { fatal: true });
-      for (const a of body.attachments) {
-        const name = a && typeof a.name === 'string' ? a.name : '';
-        const dot = name.lastIndexOf('.');
-        const ext = dot === -1 ? '' : name.slice(dot).toLowerCase();
-        // #398: the extension CLAIMS a type; text kinds are then proven by UTF-8
-        // decoding (as before), binary kinds by their magic number — a body that
-        // does not match its claim is refused here, before any write.
-        const cls = askClassifyExtension(ext);
-        if (!cls) return badRequest(res, `attachment type not allowed: ${name || '(unnamed)'}`);
-        // D16: a Codex chat has no PDF reader (out of scope, §10) — refused at attach time, before any write.
-        // (askClassifyExtension gives kind text|image|binary; a PDF is kind 'binary', mime 'application/pdf'.)
-        const attachEngine = askTurnEngine(id, thread, mv.model);
-        if (cls.mime === 'application/pdf' && attachEngine === 'codex') return badRequest(res, `PDFs need a Claude chat: ${name}`);
-        // A Copilot chat takes no image or PDF (the adapter has no image input).
-        if (cls.kind !== 'text' && attachEngine === 'copilot') return badRequest(res, `images and PDFs need a Claude chat: ${name}`);
-        const raw = typeof a.dataBase64 === 'string' ? a.dataBase64 : '';
-        const buf = raw ? Buffer.from(raw, 'base64') : Buffer.alloc(0);
-        if (!buf.length) return badRequest(res, `attachment is empty or not valid base64: ${name}`);
-        const cap = cls.kind === 'text' ? ASK_LIMITS.attachment.maxBytesPerFile : ASK_LIMITS.attachment.maxBytesPerBinaryFile;
-        if (buf.length > cap) {
-          return res.status(413).json({ error: `attachment over ${cap} bytes: ${name}` });
-        }
-        if (cls.kind !== 'text') {
-          const sniffed = askSniffMime(buf);
-          if (sniffed !== cls.mime) {
-            return badRequest(res, `attachment content does not match its extension: ${name}`);
-          }
-          files.push({ name, kind: cls.kind, mime: cls.mime, data: buf, bytes: buf.length });
-          continue;
-        }
-        let bodyText;
-        try { bodyText = dec.decode(buf); } catch { return badRequest(res, `attachment is not valid UTF-8: ${name}`); }
-        if (bodyText.includes('\u0000')) return badRequest(res, `attachment contains NUL bytes: ${name}`);
-        files.push({ name, kind: 'text', mime: cls.mime, text: bodyText, bytes: buf.length });
-      }
-      const cap = ASK_LIMITS.attachment.maxBytesPerMessage;
-      if (files.reduce((s, f) => s + f.bytes, 0) > cap) {
-        return res.status(413).json({ error: `attachments over ${cap} bytes per message` });
+      const v = validateAttachmentUploads(body.attachments, {
+        maxFiles: ASK_LIMITS.attachment.maxFiles, maxBytesPerFile: ASK_LIMITS.attachment.maxBytesPerFile,
+        maxBytesPerBinaryFile: ASK_LIMITS.attachment.maxBytesPerBinaryFile, maxBytesTotal: ASK_LIMITS.attachment.maxBytesPerMessage,
+        refuse: (cls, name) => {
+          const attachEngine = askTurnEngine(id, thread, mv.model);
+          // D16: a Codex chat has no PDF reader (out of scope, §10); a Copilot chat takes no image or PDF.
+          if (cls.mime === 'application/pdf' && attachEngine === 'codex') return `PDFs need a Claude chat: ${name}`;
+          if (cls.kind !== 'text' && attachEngine === 'copilot') return `images and PDFs need a Claude chat: ${name}`;
+          return null;
+        },
+      });
+      if (!v.ok) return res.status(v.status).json({ error: v.error });
+      for (const f of v.files) {
+        files.push(f.kind === 'text'
+          ? { name: f.name, kind: 'text', mime: f.mime, text: f.text, bytes: f.bytes }
+          : { name: f.name, kind: f.kind, mime: f.mime, data: f.data, bytes: f.bytes });
       }
     }
 

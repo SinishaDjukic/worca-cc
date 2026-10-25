@@ -47,3 +47,32 @@ export function sizeLabel(bytes) {
   if (v < 1024 * 1024) return `${Math.round(v / 1024)} KB`;
   return `${(v / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+// ---- uploads (D7) ----
+
+export const OFFICE_EXTENSIONS = Object.freeze(['.docx', '.xlsx', '.pptx']);
+const READS = 'Worca reads text, images and PDF.';
+
+/** A type Worca does not read: Office files get the PDF hint. */
+export function officeRefusal(name, ext) {
+  const n = displayName(name);
+  return OFFICE_EXTENSIONS.includes(String(ext || '').toLowerCase()) ? `${n} was not added: ${READS} Save it as PDF to attach it here.` : `${n} was not added: ${READS}`;
+}
+
+/** validateAttachmentUploads' options for a feature's files or a brief's documents; `create` is the New feature form. */
+export function reqUploadOptions({ owner = 'feature', create = false } = {}) {
+  const L = REQ_ATTACH_LIMITS;
+  const cap = owner === 'brief' ? `a brief takes up to ${L.files} documents.` : `a feature takes up to ${L.files} files.`;
+  return {
+    maxFiles: L.files, maxBytesPerFile: L.fileBytes, maxBytesPerBinaryFile: L.fileBytes, maxBytesTotal: L.requestBytes,
+    notAllowed: officeRefusal,
+    messages: {
+      notArray: () => 'attachments must be a list of files',
+      tooMany: (_max, name) => `${displayName(name)} was not added: ${cap}`,
+      tooBig: (name) => `${displayName(name)} was not added: it is over 25 MB.`,
+      totalTooBig: (_cap, name) => (create
+        ? `${displayName(name)} was not added: a new feature's files can be up to 100 MB in all; add more on the feature page.`
+        : `${displayName(name)} was not added: add up to 100 MB at a time.`),
+    },
+  };
+}
