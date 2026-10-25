@@ -424,7 +424,8 @@ await open(375, 'runs', `!!document.querySelector('#runs-list .runs-row[data-run
 // #runs-list is the scroller (overflow-y:auto); its padding makes it overflow so a 300px scroll can hold.
 await ev(`document.getElementById('runs-list').style.paddingBottom = '2000px'; document.getElementById('runs-list').scrollTop = 300; 0`);
 const top0 = await ev(`document.getElementById('runs-list').scrollTop`);
-check(top0 === 300, `the list scrolls before the run is opened (scrollTop ${top0})`);
+// The browser clamps 300 to what the list can scroll (CI's window holds less than a local one): any real scroll proves it.
+check(top0 > 100, `the list scrolls before the run is opened (scrollTop ${top0})`);
 await ev(`document.querySelector('#runs-list .runs-row[data-run-id=${JSON.stringify(liveId)}]').click();0`);
 await waitFor(LIVE_READY, 'the live run opened from its row');
 await sleep(600);
@@ -432,7 +433,7 @@ await ev(`document.querySelector('#topnav-crumbs .nav-up').click();0`);
 await waitFor("location.hash === '#runs'", 'back on the list');
 await sleep(800);
 const upKept = await ev(`(() => ({ top: document.getElementById('runs-list').scrollTop, row: (document.activeElement && document.activeElement.dataset.runId) || '' }))()`);
-check(upKept.top === 300 && upKept.row === liveId, `going up keeps the list's scroll (${top0} -> ${upKept.top}) and focus on the row it was opened from (${upKept.row})`);
+check(upKept.top === top0 && upKept.row === liveId, `going up keeps the list's scroll (${top0} -> ${upKept.top}) and focus on the row it was opened from (${upKept.row})`);
 for (const width of [290, 375, 1440]) {
   await open(width, `feature/${f.id}`, "!!document.querySelector('#runs-pane #group-detail .gpage .run-members.is-table')", `the group page head at ${width}`);
   const bad = await ev(LAYOUT_AUDIT);
