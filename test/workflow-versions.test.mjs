@@ -62,9 +62,29 @@ test('status: the draft differs from the version in use, in plain words, includi
   assert.deepEqual(s.draft.partsChanged, [{ kind: 'agent', key: 'planner' }]);
 });
 
-test('status without versions: draft is null', async () => {
+test('status without versions: draft is null, and so is sinceLatest (the next save is the first version)', async () => {
   await writeGraphWorkflow(tpl());
-  assert.deepEqual(await versionStatus('wf_v', { deps }), { liveVersionNo: null, latestVersionNo: null, draft: null });
+  assert.deepEqual(await versionStatus('wf_v', { deps }), { liveVersionNo: null, latestVersionNo: null, draft: null, sinceLatest: null });
+});
+
+test('status: sinceLatest compares the draft with the LATEST version (what Save version compares), not the one in use', async () => {
+  await writeGraphWorkflow(tpl());
+  await createVersion('wf_v', { deps });                       // v1, in use
+  const t = tpl(); t.nodes[1] = { ...t.nodes[1], config: { model: 'sonnet' } };
+  await writeGraphWorkflow(t);
+  await createVersion('wf_v', { deps });                       // v2, not in use
+  const s = await versionStatus('wf_v', { deps });
+  assert.equal(s.liveVersionNo, 1);
+  assert.deepEqual(s.draft.changes, ['Planner: AI model default → sonnet'], 'draft.changes still compares with the version in use');
+  assert.deepEqual(s.draft.sinceLatest, { versionNo: 2, changes: [] });
+  assert.deepEqual(s.sinceLatest, s.draft.sinceLatest);
+  // A Library edit after v2 shows since v2 too.
+  await writeFile(deps.mdPath, 'Plan it carefully.');
+  const s2 = await versionStatus('wf_v', { deps });
+  assert.deepEqual(s2.draft.sinceLatest, { versionNo: 2, changes: ['Planner: changed in the Library'] });
+  const o = await versionsOverview('wf_v', { deps });
+  assert.deepEqual(o.sinceLatest, { versionNo: 2, changes: ['Planner: changed in the Library'] });
+  assert.deepEqual(o.draft.sinceLatest, o.sinceLatest);
 });
 
 test('restore puts a saved state into the draft, keeps the version in use, and can itself be undone', async () => {

@@ -66,23 +66,35 @@ export function useVersion(workflowId, versionNo) {
   return { liveVersionNo: n };
 }
 
-/** The draft compared with the version in use (null when the workflow has no version in use). */
+/** What differs from saved version `ver` to the draft: the graph diff plus "<label>: changed in the Library" per part. */
+function changesSince(ver, row, graph, parts, labelOf) {
+  const changes = diffGraphs({ name: ver.name, ...ver.graph }, { name: row.name, ...graph }, { labelOf }).map((c) => c.text);
+  const before = new Map((ver.parts || []).map((p) => [`${p.kind}:${p.key}`, p.hash]));
+  const partsChanged = parts.filter((p) => before.has(`${p.kind}:${p.key}`) && before.get(`${p.kind}:${p.key}`) !== p.hash)
+    .map((p) => ({ kind: p.kind, key: p.key }));
+  for (const p of partsChanged) changes.push(`${labelOf(p)}: changed in the Library`);
+  return { changes, partsChanged };
+}
+
+/**
+ * The draft compared with the version in use (`draft`, null when the workflow has no version in use) and with the
+ * latest version (`sinceLatest`, what Save version compares against; null when the workflow has no version yet).
+ */
 export async function versionStatus(workflowId, { deps = {} } = {}) {
   const row = versionableRow(workflowId);
   const latest = latestVersion(workflowId);
   const live = row.live_version_no ? readVersion(workflowId, row.live_version_no) : null;
-  if (!live) return { liveVersionNo: null, latestVersionNo: latest ? latest.versionNo : null, draft: null };
+  const latestVersionNo = latest ? latest.versionNo : null;
+  if (!live && !latest) return { liveVersionNo: null, latestVersionNo, draft: null, sinceLatest: null };
   const regs = registries(deps);
   const labelOf = labeler(regs);
   const graph = parse(row.graph, {});
   const parts = await workflowParts(graph, { ...deps, ...regs });
-  const changes = diffGraphs({ name: live.name, ...live.graph }, { name: row.name, ...graph }, { labelOf }).map((c) => c.text);
-  const before = new Map((live.parts || []).map((p) => [`${p.kind}:${p.key}`, p.hash]));
-  const partsChanged = parts.filter((p) => before.has(`${p.kind}:${p.key}`) && before.get(`${p.kind}:${p.key}`) !== p.hash)
-    .map((p) => ({ kind: p.kind, key: p.key }));
-  for (const p of partsChanged) changes.push(`${labelOf(p)}: changed in the Library`);
+  const sinceLatest = latest ? { versionNo: latest.versionNo, changes: changesSince(latest, row, graph, parts, labelOf).changes } : null;
+  if (!live) return { liveVersionNo: null, latestVersionNo, draft: null, sinceLatest };
+  const { changes, partsChanged } = changesSince(live, row, graph, parts, labelOf);
   const changed = workflowFingerprint(graph, parts) !== live.fingerprint || row.name !== live.name;
-  return { liveVersionNo: live.versionNo, latestVersionNo: latest ? latest.versionNo : null, draft: { changed, changes, partsChanged } };
+  return { liveVersionNo: live.versionNo, latestVersionNo, draft: { changed, changes, partsChanged, sinceLatest }, sinceLatest };
 }
 
 /** Restore into draft (D4): through the validating save; a state that no longer fits is refused (INVALID_GRAPH). */
@@ -124,5 +136,5 @@ export async function versionsOverview(workflowId, { deps = {} } = {}) {
       inUse: v.versionNo === status.liveVersionNo, runs: counts.get(v.versionNo) || 0, changes };
   });
   const history = all.filter((r) => r.versionNo === null).map((r) => ({ id: r.id, source: r.source, by: r.by, createdAt: r.createdAt, name: r.name }));
-  return { workflowId, name: row.name, liveVersionNo: status.liveVersionNo, draft: status.draft, versions, history };
+  return { workflowId, name: row.name, liveVersionNo: status.liveVersionNo, draft: status.draft, sinceLatest: status.sinceLatest, versions, history };
 }
