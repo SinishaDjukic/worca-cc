@@ -941,6 +941,44 @@ test('interviewCallOptions: overrides replace the kind defaults', () => {
   assert.equal(r.effort, 'low');
 });
 
+test("A8 §9: allowedTools overrides the allow list only; its default is the call's tools, so every A1.1 and A7 call is unchanged", () => {
+  const read = interviewCallOptions('look', { cwd: '/c', prompt: 'P', model: 'm1', systemPrompt: 'F', tools: ['Read'], allowedTools: ['Read(//c/a.pdf)'], maxTurns: 5 });
+  assert.deepEqual([read.tools, read.allowedTools, read.maxTurns, read.systemPrompt, read.systemPromptMode], [['Read'], ['Read(//c/a.pdf)'], 5, 'F', 'replace']);
+  for (const kind of ['look', 'round']) {
+    const o = interviewCallOptions(kind, { cwd: '/c', prompt: 'P', model: 'm1' });
+    assert.deepEqual(o.allowedTools, o.tools, kind);
+  }
+  assert.throws(() => interviewCallOptions('round', { cwd: '/c', prompt: 'P', allowedTools: 'Read' }), TypeError);
+  assert.throws(() => interviewCallOptions('round', { cwd: '/c', prompt: 'P', disallowedTools: [] }), TypeError);
+});
+
+test("A8: callModel aborts its call when the caller's signal aborts", async () => {
+  const ctrl = new AbortController();
+  let seen = null;
+  const d = { runClaudeImpl: (o) => new Promise((_, rej) => { seen = o.signal; o.signal.addEventListener('abort', () => rej(new Error('stopped'))); }), userSignIn: () => false };
+  const p = callModel(d, { kind: 'round', cwd: '/c', prompt: 'P', model: 'm1', timeoutMs: 60_000, signal: ctrl.signal });
+  ctrl.abort();
+  await assert.rejects(p, /stopped/);
+  assert.equal(seen.aborted, true);
+});
+
+test('A8: callModel returns the normalized events it saw (one shape) and the guard decisions the runner returned', async () => {
+  const toolUse = { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'tu_1', name: 'Read', input: { file_path: '/c/a.pdf' } }] } };
+  const decisions = [{ tool: 'Read', path: '/c/a.pdf', decision: 'allow', id: 'tu_1' }];
+  const d = { userSignIn: () => false, runClaudeImpl: async (opts) => {
+    opts.onEvent({ type: 'assistant', raw: toolUse });
+    opts.onEvent({ type: 'result', raw: { type: 'result', total_cost_usd: 0.25, result: 'x', num_turns: 2 }, costUsd: 0.25 });
+    return { text: 'x', readGuardDecisions: decisions };
+  } };
+  const out = await callModel(d, { kind: 'look', cwd: '/c', prompt: 'P', model: 'm1', timeoutMs: 5000, tools: ['Read'], readGuard: '/c/a.pdf' });
+  assert.deepEqual(out.events.map((e) => e.type), ['tool', 'result'], 'normalized only: no raw envelope beside its normalized event');
+  assert.deepEqual(out.events[0].calls, [{ name: 'Read', input: { file_path: '/c/a.pdf' }, toolUseId: 'tu_1' }]);
+  assert.equal(out.events[1].numTurns, 2);
+  assert.deepEqual(out.readGuardDecisions, decisions);
+  const plain = await callModel({ userSignIn: () => false, runClaudeImpl: async () => ({ text: 'y' }) }, { kind: 'round', cwd: '/c', prompt: 'P', model: 'm1', timeoutMs: 5000 });
+  assert.deepEqual(plain, { text: 'y', costUsd: 0, events: [] }, 'no decisions key when the runner returned none');
+});
+
 test('callModel: sends the built options plus signal and onEvent, and books the cost', async () => {
   const seen = [];
   const d = { userSignIn: () => false, runClaudeImpl: async (opts) => {
@@ -949,7 +987,7 @@ test('callModel: sends the built options plus signal and onEvent, and books the 
     return { text: 'x' };
   } };
   const out = await callModel(d, { kind: 'round', cwd: '/c', prompt: 'P', model: 'm1', timeoutMs: 5000 });
-  assert.deepEqual(out, { text: 'x', costUsd: 0.25 });
+  assert.deepEqual([out.text, out.costUsd, out.events.map((e) => e.type), 'readGuardDecisions' in out], ['x', 0.25, ['result'], false]);
   const { signal, onEvent, ...rest } = seen[0];
   assert.ok(signal && typeof onEvent === 'function');
   assert.deepEqual(rest, interviewCallOptions('round', { cwd: '/c', prompt: 'P', model: 'm1' }));

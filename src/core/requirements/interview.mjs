@@ -195,11 +195,11 @@ const CALL_KINDS = Object.freeze({
   look: () => ({ systemPrompt: ORIENTATION_SYSTEM_PROMPT, tools: REPO_LOOK_TOOLS, maxTurns: REPO_LOOK_MAX_TURNS }),
   round: () => ({ systemPrompt: ROUND_SYSTEM_PROMPT, tools: [], maxTurns: null }),
 });
-const CALL_KEYS = new Set(['cwd', 'prompt', 'model', 'systemPrompt', 'tools', 'maxTurns', 'effort', 'permissionRules', 'readGuard']);
+const CALL_KEYS = new Set(['cwd', 'prompt', 'model', 'systemPrompt', 'tools', 'allowedTools', 'maxTurns', 'effort', 'permissionRules', 'readGuard']);
 
 /**
  * The runClaude options of one interview call, without `signal` / `onEvent` (design §9, the lane contract).
- * `kind` is 'look' or 'round'; systemPrompt, tools, maxTurns and effort override that kind's defaults.
+ * `kind` is 'look' or 'round'; systemPrompt, tools, allowedTools, maxTurns and effort override that kind's defaults.
  * Two overrides of their own, emitted only when given (A8, plans/requirements-a8-design.md D3): `permissionRules`
  * (a file read's and the brief look's deny rules) and `readGuard` (the one file a read may open, file-read-guard.mjs),
  * which when present at all must be an absolute path: an empty or relative value throws instead of meaning "no guard".
@@ -220,10 +220,13 @@ export function interviewCallOptions(kind, args = {}, { keepUserSettings = false
   const pick = (k) => (args[k] !== undefined ? args[k] : def[k]);
   const tools = pick('tools');
   if (!Array.isArray(tools)) throw new TypeError('interviewCallOptions: tools must be an array');
+  // A8 §9: a file read allows one Read rule naming its copy; without the override the allow list is the tools, as before.
+  const allowed = args.allowedTools !== undefined ? args.allowedTools : tools;
+  if (!Array.isArray(allowed)) throw new TypeError('interviewCallOptions: allowedTools must be an array');
   const maxTurns = pick('maxTurns');
   return {
     cwd, systemPrompt: pick('systemPrompt'), systemPromptMode: 'replace', prompt, model, modelEnv: resolveModelEnv(model),
-    allowedTools: [...tools], tools: [...tools], strictMcpConfig: true,
+    allowedTools: [...allowed], tools: [...tools], strictMcpConfig: true,
     ...(keepUserSettings ? {} : { settingSources: ['project'] }), disableSlashCommands: true,
     ...(maxTurns ? { maxTurns } : {}),
     ...(args.effort ? { effort: args.effort } : {}),
@@ -233,25 +236,37 @@ export function interviewCallOptions(kind, args = {}, { keepUserSettings = false
   };
 }
 
-export async function callModel(d, { kind, cwd, prompt, model, timeoutMs, ...overrides }) {
+/**
+ * One interview call (A1.1 §9): the built options plus a timeout, the caller's `signal` (A8: a removed file stops its
+ * read) and the cost of every `result`. Resolves to `{ text, costUsd, events }`, plus `readGuardDecisions` when the
+ * runner returned them (a guarded read, file-read-guard.mjs). `events` are the call's normalized events, one shape
+ * only (engines/claude-events.mjs), so a read can check that the guard decided every tool call the stream shows.
+ * A failed call throws with the money already spent on it as `costUsd`.
+ */
+export async function callModel(d, { kind, cwd, prompt, model, timeoutMs, signal = null, ...overrides }) {
   // Read per call, so a changed user settings file applies without a restart (D6).
   const keepUserSettings = !!(d.userSignIn || DEFAULTS.userSignIn)();
   const options = interviewCallOptions(kind, { cwd, prompt, model, ...overrides }, { keepUserSettings });
   const ctrl = new AbortController();
+  // A8: the read job stops a read whose file was removed; the caller's signal aborts this call's own controller.
+  const onAbort = () => ctrl.abort();
+  if (signal) { if (signal.aborted) ctrl.abort(); else signal.addEventListener('abort', onAbort, { once: true }); }
   let timedOut = false;
   const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, timeoutMs);
   let costUsd = 0;
+  const events = [];
   try {
     const res = await d.runClaudeImpl({
       ...options, signal: ctrl.signal,
       onEvent: normalizingOnEvent((e) => {
+        events.push(e);
         if (e.type !== 'result' || e.costUsd == null) return;
         const c = resolveModelCost(model, Number(e.costUsd), e.usage ?? null);
         if (Number.isFinite(c)) costUsd += c;
         else if (Number.isFinite(Number(e.costUsd))) costUsd += Number(e.costUsd);
       }),
     });
-    return { text: res?.text || '', costUsd };
+    return { text: res?.text || '', costUsd, events, ...(Array.isArray(res?.readGuardDecisions) ? { readGuardDecisions: res.readGuardDecisions } : {}) };
   } catch (err) {
     // Money may already be spent when a call fails: the error carries it so the caller books it.
     const out = timedOut
@@ -259,7 +274,10 @@ export async function callModel(d, { kind, cwd, prompt, model, timeoutMs, ...ove
       : (err instanceof Error ? err : new Error(String(err)));
     out.costUsd = costUsd;
     throw out;
-  } finally { clearTimeout(timer); }
+  } finally {
+    clearTimeout(timer);
+    if (signal) signal.removeEventListener('abort', onAbort);
+  }
 }
 
 async function openLookFor(f, d, signal) {

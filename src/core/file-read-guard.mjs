@@ -93,7 +93,7 @@ export function readGuardDecisions(file) {
 
 /** Every tool call of a stream: raw stream-json frames, the runner's `{ type, raw }` envelopes, or normalized `tool`
  *  events (engines/claude-events.mjs), as `{ name, input, id }`. */
-function toolCalls(events) {
+export function toolCalls(events) {
   const out = [];
   for (const e of Array.isArray(events) ? events : []) {
     if (!e || typeof e !== 'object') continue;

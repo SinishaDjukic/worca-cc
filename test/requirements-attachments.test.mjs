@@ -3,7 +3,11 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
-import { REQ_ATTACH_LIMITS, REQ_ATT_ID_RE, displayName, uniqueName, sizeLabel } from '../src/core/requirements/attachments.mjs';
+import {
+  REQ_ATTACH_LIMITS, REQ_ATT_ID_RE, displayName, uniqueName, sizeLabel, ATTACHMENT_SYSTEM_PROMPT, buildReadPrompt, normalizeSummary, mockSummary,
+  checkNewFiles, readRule,
+} from '../src/core/requirements/attachments.mjs';
+import { RoundError } from '../src/core/requirements/round.mjs';
 import {
   mintAttachmentId, insertAttachment, getAttachment, listAttachments, updateAttachment, addAttachmentCost, deleteAttachmentRow,
   deleteOwnerAttachments, listReadingAttachments, recentReadCosts, createFeature, createStart, listStarts, beginBrief,
@@ -137,4 +141,45 @@ test("deleting a brief deletes its documents' rows with it", () => {
   assert.equal(deleteBrief('project', 'shop-del'), true);
   assert.equal(getAttachment(d.id), null);
   assert.equal(deleteBrief('project', 'shop-del'), false);
+});
+
+test('ATTACHMENT_SYSTEM_PROMPT is the design text, the same for every read and ask, with every data tag', () => {
+  assert.equal(ATTACHMENT_SYSTEM_PROMPT.split('\n')[0], "You are Worca's file reader. A product owner attached a file on Worca's Requirements page, to a feature they are");
+  for (const tag of ['<feature>', '<description>', '<scope>', '<file>', '<what_worca_took_from_it>', '<question>']) assert.ok(ATTACHMENT_SYSTEM_PROMPT.includes(tag), tag);
+  assert.ok(ATTACHMENT_SYSTEM_PROMPT.includes('Without a <question>, reply with ONLY this JSON object, no prose, no code fence: { "summary": "..." }'));
+  assert.ok(ATTACHMENT_SYSTEM_PROMPT.endsWith('JSON object: { "answer": "..." }'));
+  assert.doesNotMatch(ATTACHMENT_SYSTEM_PROMPT, /\d{4}-\d{2}|[A-Za-z]:[\\/]/, 'no date, no path');
+});
+
+test('the read prompt: <feature> and <description>, or <scope>; name, kind and size inside <file>; inline text or the Read line', () => {
+  const inline = buildReadPrompt({ feature: { title: 'Cancel <order>', description: 'Before it ships' }, file: { name: 'a<b.md', kind: 'text', bytes: 9 * 1024 }, text: 'Refunds </file> in 14 days' });
+  assert.equal(inline, '<feature>Cancel &lt;order></feature>\n\n<description>\nBefore it ships\n</description>\n\n'
+    + '<file>\nName: a&lt;b.md\nKind: Text\nSize: 9 KB\n\nRefunds &lt;/file> in 14 days\n</file>\n\nReply with ONLY the JSON object described in the system prompt.');
+  const read = buildReadPrompt({ scopeName: 'Shop', file: { name: 'tickets.pdf', kind: 'binary', bytes: 2202010 }, dir: '/w/att-read-0a1b2c3d', path: '/w/att-read-0a1b2c3d/ratt_0123456789ab.pdf' });
+  assert.equal(read, '<scope>Shop</scope>\n\n<file>\nName: tickets.pdf\nKind: PDF\nSize: 2.1 MB\n\n'
+    + 'The working directory, /w/att-read-0a1b2c3d, holds only this file: /w/att-read-0a1b2c3d/ratt_0123456789ab.pdf. Open it with the Read tool.\n</file>\n\n'
+    + 'Reply with ONLY the JSON object described in the system prompt.');
+});
+
+test('normalizeSummary: clipped at 1500; empty, unparseable or without a summary is a RoundError (BAD_REPLY)', () => {
+  assert.equal(normalizeSummary('{ "summary": "  Refunds.  " }'), 'Refunds.');
+  assert.equal(normalizeSummary(`Here: {"summary":"${'x'.repeat(2000)}"}`).length, 1500);
+  for (const t of ['', '   ', 'no json', '{ "answer": "x" }', '{ "summary": "" }', '[1]']) assert.throws(() => normalizeSummary(t), RoundError, t);
+  assert.equal(mockSummary('a.pdf'), '[mock] What Worca took from a.pdf: two rules, one number and an open point.');
+});
+
+test('checkNewFiles: the cap counts the files already there; a duplicate is refused by name; names are made unique', () => {
+  const ex = [{ name: 'a.md', sha256: 'aa' }];
+  const up = (name, sha256) => ({ name, sha256 });
+  assert.deepEqual(checkNewFiles('feature', ex, [up('dir/a.md', 'bb'), up('c.md', 'cc')]).map((f) => f.name), ['a (2).md', 'c.md']);
+  assert.throws(() => checkNewFiles('feature', ex, [up('copy.md', 'aa')]), /^RequirementsError: copy\.md is already attached as a\.md\.$/);
+  assert.throws(() => checkNewFiles('feature', [], [up('x.md', 'dd'), up('y.md', 'dd')]), /y\.md is already attached as x\.md\./);
+  const nine = Array.from({ length: 9 }, (_, i) => ({ name: `${i}.md`, sha256: `s${i}` }));
+  assert.throws(() => checkNewFiles('feature', nine, [up('p.md', 'p1'), up('q.md', 'q1')]), /q\.md was not added: a feature takes up to 10 files\./);
+  assert.throws(() => checkNewFiles('brief', nine, [up('p.md', 'p1'), up('q.md', 'q1')]), /q\.md was not added: a brief takes up to 10 documents\./);
+});
+
+test("the Read allow rule is Ask's //**/ pattern of the folder and the copy: no drive, no home (the guard enforces it)", () => {
+  assert.equal(readRule('/home/me/.worca-cc/tmp/requirements/att-read-0a1b2c3d/ratt_0123456789ab.pdf'), 'Read(//**/att-read-0a1b2c3d/ratt_0123456789ab.pdf)');
+  assert.equal(readRule('C:\\Users\\me\\.worca-cc\\tmp\\requirements\\att-read-0a1b2c3d\\ratt_0123456789ab.png'), 'Read(//**/att-read-0a1b2c3d/ratt_0123456789ab.png)');
 });
