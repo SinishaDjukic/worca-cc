@@ -245,3 +245,11 @@ export function sourceNames(files = [], documents = []) {
   for (const r of [...files, ...documents]) if (r && r.name && !out.some((x) => x.toLowerCase() === r.name.toLowerCase())) out.push(r.name);
   return out;
 }
+
+/** D1: the ids of the criteria, then the assumptions, whose source is the file or whose text names it (ignoring case). */
+export function mentions(spec, name) {
+  const n = String(name || '').toLowerCase();
+  if (!n) return [];
+  const hit = (x) => (typeof x.source === 'string' && x.source.toLowerCase() === n) || String(x.text || '').toLowerCase().includes(n);
+  return [...((spec && spec.criteria) || []), ...((spec && spec.assumptions) || [])].filter((x) => x && hit(x)).map((x) => x.id);
+}

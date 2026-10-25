@@ -22,6 +22,7 @@ import { RoundError } from './round.mjs';
 import {
   REQ_ATT_ID_RE, REQ_ATTACH_LIMITS, ATTACHMENT_SYSTEM_PROMPT, buildReadPrompt, buildAskPrompt, normalizeSummary, mockSummary, checkNewFiles,
   readRule, normalizeAnswer, mockAnswer, pushHistory, selectInlineAttachments, renderAttachmentsForPrompt, renderDocumentsForPrompt, sourceNames, hasText,
+  mentions,
 } from './attachments.mjs';
 import {
   mintAttachmentId, insertAttachment, getAttachment, listAttachments, updateAttachment, addAttachmentCost, deleteAttachmentRow,
@@ -611,4 +612,18 @@ export function readEstimate(kind) {
   if (!c.length) return null;
   const m = c.length >> 1;
   return Math.round((c.length % 2 ? c[m] : (c[m - 1] + c[m]) / 2) * 100) / 100;
+}
+
+/** The three kinds' estimates, read once per view (§5 `estimateUsd`; the list's `readEstimates`). */
+export const readEstimates = () => ({ text: readEstimate('text'), image: readEstimate('image'), binary: readEstimate('binary') });
+
+/** A file as the page shows it (§5): a feature file carries `sendWithRun`, a document `sendWithEveryRun`. `estimates` is
+ *  readEstimates() read once by the caller (else each file reads its kind's). */
+export function fileView(row, { spec = null, href, doc = false, estimates = null } = {}) {
+  return {
+    id: row.id, name: row.name, kind: row.kind, mime: row.mime, bytes: row.bytes, status: row.status, error: row.error,
+    summary: row.summary, summaryEdited: row.summaryEdited, asks: row.asks, history: row.history,
+    [doc ? 'sendWithEveryRun' : 'sendWithRun']: row.sendWithRun, costUsd: row.costUsd, readAt: row.readAt, readModel: row.readModel,
+    estimateUsd: estimates ? (estimates[row.kind] ?? null) : readEstimate(row.kind), mentions: spec ? mentions(spec, row.name) : [], href,
+  };
 }

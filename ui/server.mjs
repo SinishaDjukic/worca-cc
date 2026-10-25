@@ -313,10 +313,13 @@ import { chatScopeOf, withChatScope, sameScope, scopeBody, targetInScope, scopeR
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
-import { registerRequirementsRoutes, requirementsChangeNotifier } from '../src/core/requirements/routes.mjs';
+import {
+  registerRequirementsRoutes, requirementsChangeNotifier, REQUIREMENTS_UPLOAD_ROUTES, REQUIREMENTS_UPLOAD_JSON_LIMIT,
+} from '../src/core/requirements/routes.mjs';
 import { createRunEventHook } from '../src/core/requirements/start.mjs';
 import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
 import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
+import { recoverAttachmentReads, sweepReadFolders, sweepTempBodies } from '../src/core/requirements/attachment-job.mjs';
 import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import { exportWorkflowToMarketplace, listPublishTargets } from '../src/core/marketplace-publish.mjs';
@@ -1780,6 +1783,10 @@ app.post('/api/run', express.json({ limit: ASK_UPLOAD_JSON_LIMIT }));
 // A script's saved cases are inline text: 32 cases x 256 KiB PER PORT is legal (workbench
 // spec §3.2) and does not fit the global 8 MB, so the one route that saves them all gets room.
 app.put('/api/scripts/:key/cases', express.json({ limit: '64mb' }));
+// Requirements files (plans/requirements-a8-design.md D10) ride base64 in these bodies, up to 100 MB per request: Ask's
+// window, registered BEFORE the global parser and BEHIND the flag's gate (with the flag off the gate answers 404 first,
+// so nothing is parsed).
+for (const p of REQUIREMENTS_UPLOAD_ROUTES) app.post(p, requireFlag('requirements'), express.json({ limit: REQUIREMENTS_UPLOAD_JSON_LIMIT }));
 app.use(express.json({ limit: '8mb' }));
 
 // Credential broker billing (src/core/billing.mjs): every claude spawn a request causes —
@@ -18184,7 +18191,7 @@ app.use((err, _req, res, next) => {
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null };
+  const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, recoveredAttachmentReads: 0, attachmentReadFolders: null, attachmentTempBodies: null, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
   // Runs left 'running' by a previous process that died before writing a terminal
@@ -18222,6 +18229,13 @@ export async function bootMaintenance({ log } = {}) {
     if (summary.recoveredBriefs) console.log(`[worca-ui] requirements: ${summary.recoveredBriefs} interrupted product brief(s) marked`);
   } catch (err) {
     console.error(`[worca-ui] product brief sweep failed: ${err && err.message ? err.message : err}`);
+  }
+  // Requirements A8 (D5): a file left `reading` by this restart fails with INTERRUPTED; Try again reads it again.
+  try {
+    summary.recoveredAttachmentReads = recoverAttachmentReads();
+    if (summary.recoveredAttachmentReads) console.log(`[worca-ui] requirements: ${summary.recoveredAttachmentReads} interrupted file read(s) marked`);
+  } catch (err) {
+    console.error(`[worca-ui] requirements file-read sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   try {
@@ -18352,6 +18366,24 @@ export async function bootMaintenance({ log } = {}) {
     if (r.failed.length) console.error(`[worca-ui] requirements repo-look sweep: ${r.failed.length} dir(s) could not be removed`);
   } catch (err) {
     console.error(`[worca-ui] requirements repo-look sweep failed: ${err && err.message ? err.message : err}`);
+  }
+  // Requirements A8 (D5, D9): read folders (att-read-*) a restart left under <worcaHome>/tmp/requirements, and temp bodies
+  // a crash left between a replace's write and its rename, each older than an hour.
+  try {
+    const r = sweepReadFolders(path.join(worcaHome(), 'tmp', 'requirements'));
+    summary.attachmentReadFolders = r;
+    if (r.removed.length) console.log(`[worca-ui] requirements read-folder sweep: removed ${r.removed.length} folder(s)`);
+    if (r.failed.length) console.error(`[worca-ui] requirements read-folder sweep: ${r.failed.length} folder(s) could not be removed`);
+  } catch (err) {
+    console.error(`[worca-ui] requirements read-folder sweep failed: ${err && err.message ? err.message : err}`);
+  }
+  try {
+    const r = sweepTempBodies();
+    summary.attachmentTempBodies = r;
+    if (r.removed.length) console.log(`[worca-ui] requirements temp-body sweep: removed ${r.removed.length} file(s)`);
+    if (r.failed.length) console.error(`[worca-ui] requirements temp-body sweep: ${r.failed.length} file(s) could not be removed`);
+  } catch (err) {
+    console.error(`[worca-ui] requirements temp-body sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   // Script bench folders (workbench W11): the newest folder per script key
