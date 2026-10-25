@@ -4,7 +4,7 @@
 // recovery after a restart, the boot sweep and the estimates. A read never throws out: a failure is the file's `failed`
 // status, and a read the spending limit stops leaves it `unread-budget`.
 // interview.mjs and this module import each other: neither uses the other's bindings at module top level.
-import { chmodSync, copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { tx } from '../db.mjs';
@@ -20,7 +20,8 @@ import { guardDecisionsCover, toolCalls } from '../file-read-guard.mjs';
 import { RequirementsError, clip } from './spec.mjs';
 import { RoundError } from './round.mjs';
 import {
-  REQ_ATT_ID_RE, REQ_ATTACH_LIMITS, ATTACHMENT_SYSTEM_PROMPT, buildReadPrompt, normalizeSummary, mockSummary, checkNewFiles, readRule,
+  REQ_ATT_ID_RE, REQ_ATTACH_LIMITS, ATTACHMENT_SYSTEM_PROMPT, buildReadPrompt, buildAskPrompt, normalizeSummary, mockSummary, checkNewFiles,
+  readRule, normalizeAnswer, mockAnswer, pushHistory,
 } from './attachments.mjs';
 import {
   mintAttachmentId, insertAttachment, getAttachment, listAttachments, updateAttachment, addAttachmentCost, deleteAttachmentRow,
@@ -111,7 +112,7 @@ function pump() {
     e.ctrl = new AbortController();
     running.set(e.id, e);
     void (async () => {
-      try { await runRead(e); } catch (err) { console.error('requirements: a file job failed:', message(err)); }
+      try { await (e.kind === 'ask' ? runAsk(e) : runRead(e)); } catch (err) { console.error('requirements: a file job failed:', message(err)); }
       finally { running.delete(e.id); settle(e); pump(); }
     })();
   }
@@ -182,9 +183,9 @@ const unchecked = (costUsd) => Object.assign(new Error(UNCHECKED), { code: 'UNCH
 /** One read-only call on the file: inline (a text of at most 24 KB, redacted, no tools at all) or opened with Read from a
  *  fresh private folder that holds only its copy (a text file's copy is its redacted text), removed when the call ends,
  *  whatever happens. A result that cannot be checked (a Read-form one the guard did not cover, an inline one with a tool
- *  call) is discarded as UNCHECKED, its cost still on it. `extra` reaches the prompt (Task 5's question) and cannot
- *  override the file's framing. Throws with `costUsd` (callModel's) and `model` on it. */
-async function readCall(e, row, extra = {}) {
+ *  call) is discarded as UNCHECKED, its cost still on it. With a `question` it is an ask (D12): the same call, its prompt
+ *  carrying the row's current summary and the question. Throws with `costUsd` (callModel's) and `model` on it. */
+async function readCall(e, row, { question = null } = {}) {
   const d = e.d;
   const im = await interviewModel(d);
   const model = im.model || null;
@@ -200,7 +201,8 @@ async function readCall(e, row, extra = {}) {
       if (text != null) writeFileSync(path, text, { encoding: 'utf8', mode: FILE_MODE });
       else { copyFileSync(attachmentFile(row), path); chmodSync(path, FILE_MODE); }
     }
-    const prompt = buildReadPrompt({ ...extra, ...(await promptContext(e.owner, d)), file: row, text: inline ? text : null, dir, path });
+    const framing = { ...(await promptContext(e.owner, d)), file: row, text: inline ? text : null, dir, path };
+    const prompt = question != null ? buildAskPrompt({ ...framing, summary: row.summary, question }) : buildReadPrompt(framing);
     // D3, D15: every read carries Ask's deny rules; a Read-form read also the file-read guard, which lets Read open the
     // copy and nothing else (the allow rule is intent: the engine reads unmatched paths).
     const deny = { deny: [...REQUIREMENTS_READ_DENY_RULES] };
@@ -269,12 +271,60 @@ function finishRead(e, { summary, costUsd, model }) {
   tx(() => {
     if (row) {
       const patch = { status: 'done', error: null, readCostUsd: costUsd > 0 ? costUsd : null, readModel: model, readAt: at };
-      if (row.summaryEdited) patch.history = [{ at, by: null, reason: 'read', name: row.name, sha256: row.sha256, summary, edited: false, asks: [] },
-        ...row.history].slice(0, REQ_ATTACH_LIMITS.history);
+      if (row.summaryEdited) patch.history = pushHistory(row.history, { at, by: null, reason: 'read', name: row.name, sha256: row.sha256, summary, edited: false, asks: [] });
       else patch.summary = summary;
       updateAttachment(row.id, patch);
     }
     bookWrites(e, costUsd, model, 'read', row);
+  });
+}
+
+// ---------------------------------------------------------------- the ask (D12)
+
+async function runAsk(e) {
+  await null;
+  const row = getAttachment(e.id);
+  if (!row) return;
+  const d = e.d;
+  let cost = 0;
+  let model = null;
+  try {
+    const b = d.budget();   // again before the call (D12): a limit reached since the press fails the ask, nothing spent
+    if (b && b.blocked) { failAsk(e, { code: 'BUDGET', message: budgetMessage(b) }, 0, null); return; }
+    if (d.mockEnabled()) { finishAsk(e, { answer: mockAnswer(e.question), costUsd: 0, model: null }); return; }
+    const r = await readCall(e, row, { question: e.question });
+    cost = r.costUsd;
+    model = r.model;
+    if (e.cancelled) { tx(() => bookWrites(e, cost, model, 'asked', null)); return; }
+    finishAsk(e, { answer: normalizeAnswer(r.text), costUsd: cost, model });
+  } catch (err) {
+    const failure = failureOf(err);
+    if (failure.code === 'FAILED') console.error(`requirements: asking about file ${e.id} failed:`, message(err));
+    failAsk(e, failure, cost || Number(err?.costUsd) || 0, model || err?.model || null);
+  }
+}
+
+// The row's `error` is a failed read's (no `job`) or the last failed ask's (`job: 'ask'`). An ask touches only its own:
+// a failed read's error stays until the file is read again.
+const askError = (row) => !row.error || row.error.job === 'ask';
+
+function failAsk(e, failure, costUsd, model) {
+  tx(() => {
+    const now = e.cancelled ? null : getAttachment(e.id);
+    if (now && askError(now)) updateAttachment(now.id, { error: { ...failure, at: iso(), job: 'ask', question: e.question } });
+    bookWrites(e, costUsd, model, 'asked', now);
+  });
+}
+
+/** The answer under the summary, labelled with its question, apart from the summary (`asks`), so a read never overwrites it. */
+function finishAsk(e, { answer, costUsd, model }) {
+  tx(() => {
+    const row = getAttachment(e.id);
+    if (row) {
+      updateAttachment(row.id, { ...(row.error && askError(row) ? { error: null } : {}),
+        asks: [...row.asks, { question: e.question, answer, by: e.by, at: iso(), costUsd }] });
+    }
+    bookWrites(e, costUsd, model, 'asked', row);
   });
 }
 
@@ -346,6 +396,104 @@ export function setSend(owner, id, on, { by = null } = {}, deps = {}) {
   const out = updateAttachment(row.id, { sendWithRun: !!on }, { by });
   notifyOwner(owner, d);
   return out;
+}
+
+const ASKING = 'Worca is already answering a question about this file.';
+const STORE_FAILED = 'Worca could not store the new version. Replace it again.';
+const budgetMessage = (b) => `The spending limit${b && b.totalLimitUsd != null ? ` of $${b.totalLimitUsd}` : ''} is reached for this period. Worca can read the file when the limit resets or is raised.`;
+/** One job per file: no replace, ask or read again while the file is read or a question about it is answered. */
+function notIdle(row) {
+  if (row.status === 'reading' || isReading(row.id)) throw new RequirementsError('CONFLICT', READING);
+  if (isAsking(row.id)) throw new RequirementsError('CONFLICT', ASKING);
+}
+
+/** Read again, and Try again (D11): the current text goes to the history first (D4) and an edited mark is cleared; the
+ *  answers stay. */
+export function readAgain(owner, id, { by = null } = {}, deps = {}) {
+  const d = { ...DEFAULTS, ...deps };
+  const row = ownAttachment(owner, id);
+  notIdle(row);
+  const patch = { status: 'reading', error: null };
+  if (row.summary) {
+    patch.history = pushHistory(row.history, { at: iso(), by, reason: 'read-again', name: row.name, sha256: row.sha256, summary: row.summary,
+      edited: row.summaryEdited, asks: [] });
+  }
+  if (row.summaryEdited) patch.summaryEdited = false;
+  const out = updateAttachment(row.id, patch, { by });
+  enqueue({ id: row.id, name: row.name, owner, kind: 'read', by, d });
+  notifyOwner(owner, d);
+  return out;
+}
+
+/** Ask about this file (D12): one question per file at a time, at most 20 answers, the budget checked at the press. */
+export function askAttachment(owner, id, question, { by = null } = {}, deps = {}) {
+  const d = { ...DEFAULTS, ...deps };
+  const row = ownAttachment(owner, id);
+  const q = typeof question === 'string' ? question.trim().replace(/\s+/g, ' ') : '';
+  if (!q || q.length > REQ_ATTACH_LIMITS.question) throw new RequirementsError('BAD_REQUEST', `the question must be 1 to ${REQ_ATTACH_LIMITS.question} characters`);
+  notIdle(row);
+  if (row.asks.length >= REQ_ATTACH_LIMITS.asks) throw new RequirementsError('CONFLICT', `This file has ${REQ_ATTACH_LIMITS.asks} answers already.`);
+  const b = d.budget();
+  if (b && b.blocked) throw new RequirementsError('BUDGET', budgetMessage(b));
+  enqueue({ id: row.id, name: row.name, owner, kind: 'ask', question: q, by, d });
+  notifyOwner(owner, d);
+  return row;
+}
+
+/** The new body into place after its row committed: a rename, else once more as a copy (Windows refuses a rename onto a
+ *  file another reader holds open for a moment); else the file is failed, so the page offers Replace again. The temp
+ *  file goes on every path. */
+function storeBody(temp, target, id) {
+  try { renameSync(temp, target); return true; } catch { /* once more as a copy */ }
+  try {
+    copyFileSync(temp, target);
+    return true;
+  } catch (err) {
+    console.error(`requirements: could not store the new version of file ${id}:`, message(err));
+  } finally {
+    try { rmSync(temp, { force: true }); } catch (x) { console.error('requirements: could not remove a temp body:', message(x)); }
+  }
+  try { updateAttachment(id, { status: 'failed', error: { code: 'FAILED', message: STORE_FAILED, at: iso() } }); } catch (x) {
+    console.error('requirements: could not mark a replaced file failed:', message(x));
+  }
+  return false;
+}
+
+/** Replace with a newer version (D11): a new body under the same id; the switch stays; the answers move to the old
+ *  version's history entry; the summary is written again unless `keepSummary` keeps the product owner's text (the new
+ *  read's then goes to the history, D4); the file is read again. */
+export function replaceAttachment(owner, id, upload, { keepSummary = false, by = null } = {}, deps = {}) {
+  const d = { ...DEFAULTS, ...deps };
+  const row = ownAttachment(owner, id);
+  notIdle(row);
+  const [next] = checkNewFiles(owner.type, listAttachments(owner.type, owner.id).filter((r) => r.id !== row.id), [upload]);
+  const keep = !!keepSummary && row.summaryEdited;
+  const history = pushHistory(row.history, { at: iso(), by, reason: 'replaced', name: row.name, sha256: row.sha256,
+    summary: row.summary, edited: row.summaryEdited, asks: row.asks });
+  const oldFile = attachmentFile(row);
+  const newFile = attachmentFile({ id: row.id, kind: next.kind, mime: next.mime });
+  // The new body goes to a temp file first and replaces the live one only after the row commits: a failed transaction
+  // leaves the old body and row as they were, and a download in flight never reads a half-written body (D9, D10).
+  mkdirSync(attachmentsDir(), { recursive: true, mode: DIR_MODE });
+  const temp = `${newFile}.tmp-${randomBytes(4).toString('hex')}`;
+  let out;
+  try {
+    writeFileSync(temp, next.data, { mode: FILE_MODE });
+    out = tx(() => {
+      if (owner.type === 'feature') appendTurn(owner.id, { kind: 'file', payload: { action: 'replaced', id: row.id, name: next.name, before: row.name } }, { by });
+      return updateAttachment(row.id, { name: next.name, kind: next.kind, mime: next.mime, bytes: next.bytes, sha256: next.sha256,
+        status: 'reading', error: null, summary: keep ? row.summary : '', summaryEdited: keep, asks: [], history,
+        readCostUsd: null, readModel: null, readAt: null }, { by });
+    });
+  } catch (err) {
+    try { rmSync(temp, { force: true }); } catch (x) { console.error('requirements: could not remove a temp body:', message(x)); }
+    throw err;
+  }
+  const stored = storeBody(temp, newFile, row.id);
+  if (newFile !== oldFile) { try { rmSync(oldFile, { force: true }); } catch (x) { console.error('requirements: could not remove an old body:', message(x)); } }
+  if (stored) enqueue({ id: row.id, name: next.name, owner, kind: 'read', by, d });
+  notifyOwner(owner, d);
+  return stored ? out : getAttachment(row.id);
 }
 
 /** D5: when the budget allows, the feature's files and its scope's documents a limit stopped are read again. The budget

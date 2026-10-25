@@ -100,16 +100,23 @@ export const ATTACHMENT_SYSTEM_PROMPT = [
 ].join('\n');
 
 /** The read's user prompt. Name and kind sit inside <file>, not in attributes: asData escapes only `<` (A7 §4).
- *  `text`: the redacted text of an inline file; otherwise `dir` and `path` name the read folder and its one copy. */
-export function buildReadPrompt({ feature = null, scopeName = null, file, text = null, dir = null, path = null }) {
+ *  `text`: the redacted text of an inline file; otherwise `dir` and `path` name the read folder and its one copy.
+ *  With a `question` (D12), the current summary and the question follow the file. */
+export function buildReadPrompt({ feature = null, scopeName = null, file, text = null, dir = null, path = null, summary = null, question = null }) {
   const head = feature
     ? [`<feature>${asData(feature.title)}</feature>`, `<description>\n${asData(feature.description)}\n</description>`]
     : [`<scope>${asData(scopeName)}</scope>`];
   const lines = `Name: ${file.name}\nKind: ${KIND_TITLES[file.kind] || 'Text'}\nSize: ${sizeLabel(file.bytes)}`;
   const body = text != null ? `${lines}\n\n${text}`
     : `${lines}\n\nThe working directory, ${dir}, holds only this file: ${path}. Open it with the Read tool.`;
-  return [...head, `<file>\n${asData(body)}\n</file>`, 'Reply with ONLY the JSON object described in the system prompt.'].join('\n\n');
+  const ask = question != null
+    ? [`<what_worca_took_from_it>\n${asData(summary) || '(nothing yet)'}\n</what_worca_took_from_it>`, `<question>${asData(question)}</question>`]
+    : [];
+  return [...head, `<file>\n${asData(body)}\n</file>`, ...ask, 'Reply with ONLY the JSON object described in the system prompt.'].join('\n\n');
 }
+
+/** D12: the read prompt with the current summary and the product owner's question. */
+export const buildAskPrompt = (args) => buildReadPrompt({ ...args, summary: args.summary ?? '', question: String(args.question ?? '') });
 
 /** The reply as an object: the whole text, else the part from the first `{` to the last `}`. */
 function replyObject(text) {
@@ -130,6 +137,18 @@ export function normalizeSummary(text) {
 }
 
 export const mockSummary = (name) => `[mock] What Worca took from ${name}: two rules, one number and an open point.`;
+
+/** D12: the answer, at most 600 characters. */
+export function normalizeAnswer(text) {
+  const s = clip(replyObject(text).answer, REQ_ATTACH_LIMITS.answer);
+  if (!s) throw new RoundError('the reply has no answer');
+  return s;
+}
+
+export const mockAnswer = (question) => `[mock] ${question}: the file does not say more.`;
+
+/** A history entry on top; at most REQ_ATTACH_LIMITS.history kept, newest first (D4, D11). */
+export const pushHistory = (history, entry) => [entry, ...(Array.isArray(history) ? history : [])].slice(0, REQ_ATTACH_LIMITS.history);
 
 /** The new files of an owner as they will be stored, or BAD_REQUEST: past the cap (counting the files already there),
  *  a content already attached (by sha256, also within the batch), names made unique within the owner (D7, D9). */

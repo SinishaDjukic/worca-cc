@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
 import {
   REQ_ATTACH_LIMITS, REQ_ATT_ID_RE, displayName, uniqueName, sizeLabel, ATTACHMENT_SYSTEM_PROMPT, buildReadPrompt, normalizeSummary, mockSummary,
-  checkNewFiles, readRule,
+  checkNewFiles, readRule, buildAskPrompt, normalizeAnswer, mockAnswer, pushHistory,
 } from '../src/core/requirements/attachments.mjs';
 import { RoundError } from '../src/core/requirements/round.mjs';
 import {
@@ -182,4 +182,21 @@ test('checkNewFiles: the cap counts the files already there; a duplicate is refu
 test("the Read allow rule is Ask's //**/ pattern of the folder and the copy: no drive, no home (the guard enforces it)", () => {
   assert.equal(readRule('/home/me/.worca-cc/tmp/requirements/att-read-0a1b2c3d/ratt_0123456789ab.pdf'), 'Read(//**/att-read-0a1b2c3d/ratt_0123456789ab.pdf)');
   assert.equal(readRule('C:\\Users\\me\\.worca-cc\\tmp\\requirements\\att-read-0a1b2c3d\\ratt_0123456789ab.png'), 'Read(//**/att-read-0a1b2c3d/ratt_0123456789ab.png)');
+});
+
+test('the ask prompt: the read prompt plus <what_worca_took_from_it> and <question>, before the reply line', () => {
+  const p = buildAskPrompt({ feature: { title: 'T', description: 'D' }, file: { name: 'a.md', kind: 'text', bytes: 10 }, text: 'body',
+    summary: 'Refunds <14 days>.', question: 'What about store credit?' });
+  assert.ok(p.endsWith('</file>\n\n<what_worca_took_from_it>\nRefunds &lt;14 days>.\n</what_worca_took_from_it>\n\n'
+    + '<question>What about store credit?</question>\n\nReply with ONLY the JSON object described in the system prompt.'), p);
+  assert.ok(buildAskPrompt({ scopeName: 'S', file: { name: 'a.md', kind: 'text', bytes: 1 }, text: 'x', summary: '', question: 'Q' })
+    .includes('<what_worca_took_from_it>\n(nothing yet)\n</what_worca_took_from_it>'));
+});
+
+test('normalizeAnswer clips at 600; no answer is a RoundError; the mock answer; the history keeps the newest 10', () => {
+  assert.equal(normalizeAnswer(`{"answer":"${'y'.repeat(700)}"}`).length, 600);
+  assert.throws(() => normalizeAnswer('{ "summary": "x" }'), RoundError);
+  assert.equal(mockAnswer('Refunds?'), '[mock] Refunds?: the file does not say more.');
+  const h = Array.from({ length: 10 }, (_, i) => ({ summary: `${i}` }));
+  assert.deepEqual(pushHistory(h, { summary: 'new' }).map((x) => x.summary), ['new', '0', '1', '2', '3', '4', '5', '6', '7', '8']);
 });
