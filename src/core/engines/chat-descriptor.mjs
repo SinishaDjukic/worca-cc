@@ -47,7 +47,8 @@ const ready = async () => ({});
  *   media               where a media block of a tool result reaches the model ({kind}: 'images' or 'PDFs'), or null
  *   metaTools           the engine's own tools a chat keeps (named and justified in plans/), as the stream names them:
  *                       the watchdog and the self-test allow them beside worca's (Goose: load_skill)
- *   ownFolder           a chat runs in a folder of its own under the scratch dir (the engine keeps sessions per folder)
+ *   ownFolder           a chat runs in a folder of its own under the scratch dir (ask/chat-folder.mjs): the engine
+ *                       keeps sessions per folder (Gemini CLI), or runs code it finds in its cwd (Goose, OpenCode)
  *   minVersion, flags   the oldest CLI the lockdown was verified on, and the --help flags it needs (askSupport)
  */
 export function makeChatDescriptor({

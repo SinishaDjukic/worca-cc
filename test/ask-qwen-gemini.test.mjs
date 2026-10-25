@@ -33,8 +33,8 @@ const FAMILY = { anchor: 'gemini-cli-and-qwen-code' };
 const ENGINES_UNDER_TEST = [
   { ...FAMILY, engine: 'qwen', label: 'Qwen Code', cli: "Qwen Code with Qwen Code's own sign-in", model: 'qwen3-coder-plus', session: 'qwen:0b5e8c1a-0000-4000-8000-0000000000a1', cwd: '/h/.worca-cc/tmp/ask', resumeGone: 'qwen: No saved session found with ID x' },
   { ...FAMILY, engine: 'gemini', label: 'Gemini CLI', cli: "Gemini CLI with Gemini CLI's own sign-in", model: 'gemini-3-pro', session: 'gemini:0b5e8c1a-0000-4000-8000-0000000000e1', cwd: '/h/.worca-cc/tmp/ask/gemini/ask_00000001', resumeGone: 'gemini exited with code 42: Invalid session identifier' },
-  { engine: 'goose', label: 'Goose', cli: "Goose with Goose's own providers", anchor: 'goose', model: 'google/gemini-3-flash', session: 'goose:worca-1-abc', cwd: '/h/.worca-cc/tmp/ask', resumeGone: "goose exited with code 1: No session found with name 'worca-1-abc'" },
-  { engine: 'opencode', label: 'OpenCode', cli: "OpenCode with OpenCode's own providers", anchor: 'opencode', model: 'anthropic/claude-sonnet-5-5', session: 'opencode:ses_abc123', cwd: '/h/.worca-cc/tmp/ask', resumeGone: 'opencode exited with code 1: Error: Session not found' },
+  { engine: 'goose', label: 'Goose', cli: "Goose with Goose's own providers", anchor: 'goose', model: 'google/gemini-3-flash', session: 'goose:worca-1-abc', cwd: '/h/.worca-cc/tmp/ask/goose/ask_00000001', resumeGone: "goose exited with code 1: No session found with name 'worca-1-abc'" },
+  { engine: 'opencode', label: 'OpenCode', cli: "OpenCode with OpenCode's own providers", anchor: 'opencode', model: 'anthropic/claude-sonnet-5-5', session: 'opencode:ses_abc123', cwd: '/h/.worca-cc/tmp/ask/opencode/ask_00000001', resumeGone: 'opencode exited with code 1: Error: Session not found' },
 ];
 
 const spawnBase = (over = {}) => ({

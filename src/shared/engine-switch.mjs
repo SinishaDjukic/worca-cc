@@ -23,6 +23,7 @@
  *             = the descriptor is wired but worca has no verified lockdown yet (its lockdown is null), so Chat stays off
  *             there. src/core/engines/chat.mjs refuses to load when this and the descriptors disagree. Kept here, not in
  *             the adapters, because the browser and src/core/model-env.mjs read it and neither may import an adapter.
+ *             `cwdCode`: what its CLI loads and runs from its cwd; a chat folder holding one is refused (ask/chat-folder.mjs).
  *   remote    a remote sandbox (E2B) runs it; where not, it runs locally only for now and a remote run on it is refused
  *             at run start (src/shared/exec-env.mjs REMOTE_ENGINES)
  * What the UI shows for it (the engine pickers, effort lists, sign-in text and helper notes read these, never a copy;
@@ -281,7 +282,9 @@ export const ENGINES = deepFreeze({
     chat: { images: true, pdfs: false, minVersion: '1.56.0', flags: ['--no-profile'],
       // load_skill reads the chat's own skills (plans/ask-on-qwen-gemini-spike.md): the one Goose tool a chat keeps.
       metaTools: ['load_skill'],
-      prompt: { cli: "Goose with Goose's own providers" } },
+      prompt: { cli: "Goose with Goose's own providers" },
+      // It runs `.agents/plugins/*/hooks` from its cwd (goose 1.55): a chat folder holding one is refused.
+      ownFolder: true, cwdCode: ['.agents'] },
     signInLabel: 'Goose providers', signInHint: "Goose's own providers (`goose configure`, or a provider key in worca's environment) reach the model the id names.",
     helpersNote: "Goose runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. See the Claude tab.",
     helperSlots: false, modelConnection: "Goose's own providers",
@@ -326,7 +329,9 @@ export const ENGINES = deepFreeze({
     label: 'OpenCode', models: true, cost: true, helpers: false, beta: true, signin: true, remote: true,
     harness: 'OpenCode', efforts: ['minimal', 'low', 'medium', 'high', 'max'],
     chat: { images: true, pdfs: true, minVersion: '1.19.4', flags: [],
-      prompt: { cli: "OpenCode with OpenCode's own providers" } },
+      prompt: { cli: "OpenCode with OpenCode's own providers" },
+      // It loads `.opencode/plugin(s)/*.js` from its cwd despite --pure: a chat folder holding one is refused.
+      ownFolder: true, cwdCode: ['.opencode'] },
     signInLabel: 'OpenCode providers', signInHint: "OpenCode's own providers (`opencode auth login`, or a provider key in worca's environment) reach the model the id names.",
     helpersNote: "OpenCode runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. See the Claude tab.",
     helperSlots: false, modelConnection: "OpenCode's own providers",

@@ -48,6 +48,7 @@ import { validateProxyChange, validateProxyFlagOn } from './proxy-deps.mjs';
 import { scriptApprovalCard } from './script-approval.mjs';
 import { defaultScriptDeps } from './script-deps.mjs';
 import { claimFileForAgent } from '../agent-user.mjs';
+import { chatFolder } from './chat-folder.mjs';
 import { agentIdentityFor } from '../agent-pool.mjs';
 import { currentOwner } from '../billing.mjs';
 import { createWebValidator } from './web-proposal.mjs';
@@ -265,6 +266,8 @@ class AskTurn extends EventEmitter {
       claimAgentFile: deps.claimAgentFile ?? ((file) => claimFileForAgent(file, agentIdentityFor(currentOwner()))),
       // 1.4: the thread's folder goes to this turn's agent user's own group (store.mjs); throws on a planted one.
       claimThreadDir: deps.claimThreadDir ?? ((threadId) => claimThreadDir(threadId)),
+      // A chat's own folder (chat descriptor `ownFolder`), checked to be worca's; a relayed chat's goes to its agent user.
+      chatFolder: deps.chatFolder ?? ((scratch, engine, name, { relayed = false } = {}) => chatFolder(scratch, engine, name, { agent: relayed ? agentIdentityFor(currentOwner()) : null })),
       readScript: deps.readScript ?? ((key) => defaultScriptDeps({ threadId: this.threadId }).scripts.read(key)),
       validateWebProposal: deps.validateWebProposal ?? ((input) => createWebValidator({
         allowed: () => (this.web ? this.web.allowedDomains : []), teamCap: () => (this.web ? this.web.teamCap ?? null : null) })(input)),
@@ -1452,6 +1455,9 @@ class AskTurn extends EventEmitter {
         { encoding: 'utf8', mode: this.relay ? 0o640 : 0o600, flag: fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW },
       );
       if (this.relay) d.claimAgentFile(mcpConfigPath);
+      // An engine that runs in a folder of its own (spawn.mjs buildLockedAskOptions: <scratch>/<engine>/<thread>): made and
+      // checked here, never one another agent user planted in the shared scratch dir (chat-folder.mjs).
+      if (this.chat?.ownFolder && this.threadId) await d.chatFolder(scratchDir, this.engine, String(this.threadId), { relayed: !!this.relay });
       // One 30-minute budget for the whole turn, retry included. The timedOut
       // flag and abort() run in ONE synchronous callback, so R-C always reads
       // the flag set (the awaiting continuation resumes a microtask later);
@@ -1638,8 +1644,8 @@ class AskTurn extends EventEmitter {
     // NO signal: a user stop aborts this.abort mid-turn and would kill the call
     // before it spawns. permissionMode 'dontAsk' is the B-1 fix.
     const aux = this._auxCwd();
-    this.titlePromise = Promise.resolve()
-      .then(() => (this._titleOffline ? '' : d.generateTitle(this.firstText, {
+    this.titlePromise = aux.ready
+      .then((ok) => (this._titleOffline || !ok ? '' : d.generateTitle(this.firstText, {
         cwd: aux.cwd,
         tools: [], strictMcpConfig: true, settingSources: ['project'],
         disableSlashCommands: true, envScrub: true, envAllowlist: [],
@@ -1677,13 +1683,19 @@ class AskTurn extends EventEmitter {
   /** Where a helper call of this chat (its title, its suggestion) runs: the scratch dir, or — on an engine that keeps its
    *  settings and sessions per folder (chat descriptor `ownFolder`: Gemini CLI writes the lockdown's settings file into
    *  the cwd) — a fresh folder of its own, removed when the call is over, so it never shares one with the chat or with
-   *  another helper call. */
+   *  another helper call. `ready` resolves true once the folder is made and checked (chat-folder.mjs), false when it
+   *  could not be: the call is then skipped. */
   _auxCwd() {
     const d = this.deps;
     const base = this.scratchDir || join(d.worcaHome(), 'tmp', 'ask');
-    if (!this.chat || !this.chat.ownFolder) return { cwd: base, done: () => {} };
-    const cwd = join(base, this.engine, `aux-${this.threadId}-${Math.random().toString(36).slice(2, 10)}`);
-    return { cwd, done: () => rm(cwd, { recursive: true, force: true }).catch(() => {}) };
+    if (!this.chat || !this.chat.ownFolder) return { cwd: base, ready: Promise.resolve(true), done: () => {} };
+    const name = `aux-${this.threadId}-${Math.random().toString(36).slice(2, 10)}`;
+    const cwd = join(base, this.engine, name);
+    const ready = Promise.resolve().then(() => d.chatFolder(base, this.engine, name)).then(() => true, (err) => {
+      console.warn(`[worca-ask] thread ${this.threadId}: no helper folder (${err?.message || err}) — the helper call is skipped`);
+      return false;
+    });
+    return { cwd, ready, done: () => rm(cwd, { recursive: true, force: true }).catch(() => {}) };
   }
 
   /** The next-prompt suggestion (ask-suggestion): one cheap, tool-less, out-of-turn call after a turn that finished
@@ -1702,8 +1714,8 @@ class AskTurn extends EventEmitter {
     const ctl = d.claimSuggestion(this.threadId);
     const signal = AbortSignal.any([ctl.signal, AbortSignal.timeout(SUGGESTION_TIMEOUT_MS)]);
     const aux = this._auxCwd();
-    this.suggestionPromise = Promise.resolve()
-      .then(() => d.generateSuggestion({ userText: this.firstText, replyText: this._replyText }, {
+    this.suggestionPromise = aux.ready
+      .then((ok) => !ok ? '' : d.generateSuggestion({ userText: this.firstText, replyText: this._replyText }, {
         cwd: aux.cwd,
         model,
         ...(this.lockedDown ? { engine: this.engine, askLockdown: true, rates: this._ratesFor(model) } : {}),
