@@ -1726,6 +1726,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function ownsKey(e) {
     if (e.key !== 'Escape' || e.defaultPrevented || st.destroyed || !st.open || modalUp() || el.page.closest('[inert]')) return false;
     if (e.target && typeof e.target.closest === 'function' && e.target.closest('.term-pane, [data-chat-panel]')) return false;
+    // A menu or group picker the Chats column opened closes itself first: one Escape closes one thing.
+    if (doc.querySelector('.wfv-menu, .group-picker')) return false;
     return !!st.popover || historyOverlayOpen();
   }
 

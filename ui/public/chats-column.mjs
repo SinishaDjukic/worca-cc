@@ -462,7 +462,8 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     focusList() { const n = rove.rove(); if (n) n.focus(); return !!n; },
     /** The chat before (-1) or after (+1) `id` in the list as shown, or null. */
     neighbour(id, dir) {
-      const keys = [...list.querySelectorAll('a.runs-row')].map((a) => a.dataset.rowKey);
+      // Chats only: a topic group row (cgroup:) sits between chats but is not one to open.
+      const keys = [...list.querySelectorAll('a.runs-row')].map((a) => a.dataset.rowKey).filter((k) => k && k.startsWith('chat:'));
       const i = keys.indexOf(`chat:${id}`);
       const k = i < 0 ? keys[dir > 0 ? 0 : keys.length - 1] : keys[i + dir];
       return k ? k.slice('chat:'.length) : null;

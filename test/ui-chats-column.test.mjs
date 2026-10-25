@@ -355,6 +355,24 @@ const GID = 'askg_00000001';
 const GROUPED = [T('ask_00000003', { groupId: GID, title: 'Fix the login', scope: { projectKey: 'worka-1' } }),
   T('ask_00000004', { groupId: GID, title: 'SSO', scope: { projectKey: 'other' } }), ...LIST];
 
+test('⌥↓ / ⌥↑ step over a topic group row to the next chat, never open the group as a chat', async () => {
+  const { ctx, doc, col, rec } = await bootOn({ list: GROUPED, groups: [{ id: GID, name: 'Release prep', nameSource: 'user', createdAt: iso(5 * DAY), count: 2 }] });
+  const keys = [...col.querySelectorAll('a.runs-row')].map((a) => a.dataset.rowKey);
+  const g = keys.findIndex((k, i) => k.startsWith('cgroup:') && i > 0 && keys[i - 1].startsWith('chat:'));
+  assert.ok(g > 0, 'precondition: a chat row right before a group row');
+  const before = keys[g - 1].slice('chat:'.length);
+  const after = keys.slice(g + 1).find((k) => k.startsWith('chat:')).slice('chat:'.length);
+  ctx.panel.open({ threadId: before });
+  await ticks(ctx);
+  key(doc, doc.body, { key: 'ArrowDown', code: 'ArrowDown', altKey: true });
+  await ticks(ctx);
+  assert.equal(ctx.panel.threadId(), after);
+  key(doc, doc.body, { key: 'ArrowUp', code: 'ArrowUp', altKey: true });
+  await ticks(ctx);
+  assert.equal(ctx.panel.threadId(), before);
+  assert.ok(!rec.calls.some((c) => /\/api\/ask\/threads\/[^/?]*askg_/.test(c)), 'a group id is never fetched as a chat');
+});
+
 test('a group row: count, ⌄ expands to indented members, "2 projects"; ↵ folds it again', async () => {
   const { col, doc } = await bootOn({ list: GROUPED, groups: [{ id: GID, name: 'Release prep', nameSource: 'user', createdAt: iso(5 * DAY), count: 2 }] });
   const g = col.querySelector(`.runs-item[data-row-key="cgroup:${GID}"]`);

@@ -100,6 +100,24 @@ test('below 1100px the column is an overlay: a scrim shows, a pick closes it (ne
   assert.equal(ctx.doc.activeElement, btn, 'focus back on the toggle, as with Escape');
 });
 
+test('below 1100px Escape over a row\'s ⋯ menu closes the menu only; the overlay stays', async () => {
+  const ctx = makePanel({ fetchHandler: api({}), innerWidth: 900 });
+  ctx.panel.open();
+  await ticks(ctx);
+  const page = ctx.panel.root;
+  ctx.doc.querySelector('[data-ask-threads-btn]').click();
+  const more = moreOf(ctx, 'ask_00000001');
+  more.focus();
+  more.click();
+  const item = ctx.doc.querySelector('.wfv-menu [role="menuitem"]');
+  item.focus();
+  key(ctx.window, item, 'Escape');
+  assert.equal(ctx.doc.querySelector('.wfv-menu'), null, 'the menu closed');
+  assert.equal(page.dataset.history, 'open', 'one Escape closes one thing');
+  key(ctx.window, ctx.doc.activeElement, 'Escape');
+  assert.equal(page.dataset.history, 'closed', 'the next Escape closes the overlay');
+});
+
 test('setHistoryOpen (P4) sets data-history at once; persist:false leaves the stored choice alone', async () => {
   const ctx = makePanel({ fetchHandler: api({}), innerWidth: 1700 });
   const page = ctx.panel.root;
