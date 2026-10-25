@@ -25147,8 +25147,9 @@ function paintHdGlance(screen, record, data) {
   // Time · Cost · Changes, then the Cost tags row, as on the Running page in every state.
   paintHdFacts(screen, record, data);
 
-  // The result: every tab, the actions. The things to check live in Overview only.
-  const host = glance.querySelector('.hd-result');
+  // The result: every tab, the actions. The things to check live in Overview only. The section by its full class: the
+  // header above it (now inside the glance) carries the End chip, a span.hd-result of its own.
+  const host = glance.querySelector('.rd-result.hd-result');
   const keptRow = host.querySelector('.rd-srow-checkout');
   const keptFocus = keptRow && keptRow.contains(document.activeElement) ? document.activeElement : null;
   host.replaceChildren();

@@ -1000,6 +1000,18 @@ const GLANCE_DETAIL = {
   results: { ...RESULTS, keyThingsToCheck: [{ id: 'c1', severity: 'major', title: 'Uploads fall back to IP' }] },
 };
 
+// #960: the page head moved the header (and its End chip, .hd-result) into the glance, above the Results section: a
+// run that reached End keeps its tab rows in the Results section, and the chip keeps its one word.
+test('a run that reached End: the End chip reads "completed" in the header meta; the tab rows stay in the Results section', async () => {
+  const ctx = await bootDetail({ detail: { ...GLANCE_DETAIL, state: { ...GLANCE_DETAIL.state, endReached: true, result: { type: 'void' } } } });
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  const hd = ctx.window.document.querySelector('#hist-detail .hd');
+  assert.equal(hd.querySelector('.hd-meta .hd-result').textContent, 'completed');
+  assert.deepEqual([...hd.querySelectorAll('.hd-glance .rd-result.hd-result .rd-sgroup .rd-slabel')].map((l) => l.textContent), ['Results', 'How it ran']);
+  assert.equal(hd.querySelector('.hd-meta .rd-sgroup'), null, 'no tab rows in the header meta');
+});
+
 test('History opens on Summary: the glance (page title, status line, facts, the tab rows); every tab is a route', async () => {
   const ctx = await bootDetail({ detail: GLANCE_DETAIL });
   await openDetail(ctx, '');
