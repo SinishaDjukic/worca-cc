@@ -50,7 +50,7 @@ export function viewChip(v, { shown, total, personName = '' }) {
   return parts.join(' · ');
 }
 
-/** Items for openMenu. `onPick(patch)` gets {show} | {groupBy} | {person} | {select: true}. */
+/** Items for openMenu. `onPick(patch)` gets {show} | {groupBy} | {person} | {select: true} | {shortcuts: true}. */
 export function viewMenuItems(v, counts, { people = [], onPick }) {
   const n = (x) => (x == null ? '' : String(x));
   const items = [{ header: 'Show' }];
@@ -61,6 +61,7 @@ export function viewMenuItems(v, counts, { people = [], onPick }) {
     items.push({ header: 'Started by' }, { label: 'Everyone', checked: !v.person, onSelect: () => onPick({ person: '' }) });
     for (const p of people) items.push({ label: p.name, checked: v.person === p.key, onSelect: () => onPick({ person: p.key }) });
   }
-  items.push({ sep: true }, { label: 'Select', onSelect: () => onPick({ select: true }) });
+  items.push({ sep: true }, { label: 'Select', onSelect: () => onPick({ select: true }) },
+    { label: 'Keyboard shortcuts', hint: '?', onSelect: () => onPick({ shortcuts: true }) });
   return items;
 }

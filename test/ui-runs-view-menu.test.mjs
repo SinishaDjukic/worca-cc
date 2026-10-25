@@ -42,3 +42,12 @@ test('menu items: Show with counts, Group by, Select; Started by only on shared 
   const shared = viewMenuItems(DEFAULT_VIEW, {}, { people: [{ key: 'ana', name: 'Ana' }], onPick: () => {} });
   assert.ok(shared.some((i) => i.header === 'Started by'));
 });
+
+test('menu items: Keyboard shortcuts is the last item, hint ?', () => {
+  let picked = null;
+  const items = viewMenuItems({ show: 'all', groupBy: 'none', person: '' }, {}, { onPick: (p) => { picked = p; } });
+  const last = items.at(-1);
+  assert.deepEqual([last.label, last.hint], ['Keyboard shortcuts', '?']);
+  last.onSelect();
+  assert.deepEqual(picked, { shortcuts: true });
+});

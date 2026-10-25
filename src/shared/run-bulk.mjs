@@ -68,12 +68,13 @@ export function skipText(plan) {
   return [...by].map(([reason, list]) => `Skipped ${list.length} ${reason}: ${names(list)}.`).join(' ');
 }
 
-/** The one confirm for Stop and Delete (§3.2, §5a.3). Archive has none (it shows Undo, null here) unless it takes an
+/** The one confirm for Stop and Delete (§3.2, §5a.3). Restore has none. Archive has none (it shows Undo, null here) unless it takes an
  *  interrupted run that could still resume: Undo brings back the record, never the resume point. */
 export function bulkConfirm(action, plan) {
   const skipped = skipText(plan);
   const parked = plan.apply.filter(resumableInterrupted);
   const lost = parked.length ? `${parked.length} interrupted run${parked.length === 1 ? '' : 's'} can't be resumed afterwards: ${names(parked)}.` : '';
+  if (action === 'restore') return null;   // Restore brings a record back: nothing to lose, nothing to ask
   if (action === 'archive') {
     return lost ? { title: `Archive ${runs(plan.apply.length)}?`, confirmLabel: 'Archive', danger: true, message: [lost, skipped].filter(Boolean).join(' ') } : null;
   }
@@ -83,7 +84,8 @@ export function bulkConfirm(action, plan) {
     return { title: `Stop ${runs(plan.apply.length + c)}?`, confirmLabel: 'Stop', danger: true,
       message: [c ? `${c} waiting run${c === 1 ? ' is' : 's are'} cancelled: ${names(plan.cancel)}.` : '', skipped, 'Stopping cannot be undone.'].filter(Boolean).join(' ') };
   }
-  return { title: `Delete ${runs(plan.apply.length + plan.cancel.length)} permanently?`, confirmLabel: 'Delete', danger: true,
+  // Issue #948: the Delete confirm opens on Cancel, so a stray Enter keeps the runs.
+  return { title: `Delete ${runs(plan.apply.length + plan.cancel.length)} permanently?`, confirmLabel: 'Delete', danger: true, focus: 'cancel',
     message: ['Deletes the run records, their files and local branches.',
       'Keeps remote branches, pull requests and their cost in Statistics (as "deleted run").', lost, skipped, 'There is no undo.'].filter(Boolean).join(' ') };
 }

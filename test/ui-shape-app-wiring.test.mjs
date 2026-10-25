@@ -451,6 +451,9 @@ test('group page: a ⋯ pick of Ask before each run posts approve-each {on:false
   assert.equal(page.querySelector('[data-act="feature-more"]'), null, 'run 4 D17: the Overview draws no ⋯ of its own');
   assert.equal(page.querySelector('.shape-feature-order'), null, 'run 4 D17: the merge order stays on the Runs tab');
   assert.equal(item().getAttribute('aria-checked'), 'true');
+  const labels = [...doc.querySelectorAll('.wfv-menu-item .wfv-menu-l')].map((l) => l.textContent);
+  assert.ok(labels.includes('Stop') && labels.includes('Archive'), labels.join(', '));
+  assert.equal(doc.querySelectorAll('.wfv-menu .wfv-menu-hint').length, 0, 'issue #948: the list keys do not act here, so no key hints');
   click(ctx, item());
   await ctx.settle(8);
   assert.deepEqual(server.posts, [{ id: 'feat_1', action: 'approve-each', body: { on: false } }]);

@@ -2,6 +2,7 @@
 // them, and the action bar's counts from the shared eligibility table (src/shared/run-bulk.mjs), so the bar counts
 // what the server will do.
 import { planBulk, skipText } from '../../src/shared/run-bulk.mjs';
+import { listKeyAction } from './list-keys.mjs';
 
 export function createRunsSelection() {
   const set = new Set();
@@ -26,13 +27,10 @@ export function rangeKeys(visible, anchor, key) {
   return visible.slice(Math.min(a, b), Math.max(a, b) + 1);
 }
 
-/** 'toggle' | 'all' | 'clear' | null for a keydown in the list pane. ⌘A on a Mac, Ctrl+A elsewhere (either is taken). */
+/** 'toggle' | 'all' | 'clear' | null — the selection keys only (list-keys.mjs has the whole table). */
 export function runsKeyAction(e, { size = 0 } = {}) {
-  if (e.key === 'Escape') return size > 0 ? 'clear' : null;
-  if (e.inField) return null;
-  if (e.key === ' ' && e.targetIsRow && !e.metaKey && !e.ctrlKey) return 'toggle';
-  if ((e.key === 'a' || e.key === 'A') && (e.metaKey || e.ctrlKey)) return 'all';
-  return null;
+  const a = listKeyAction(e, { size, list: 'runs' });
+  return a === 'toggle' || a === 'all' || a === 'clear' ? a : null;
 }
 
 /** A list row as a bulk target (members for a group row). */
