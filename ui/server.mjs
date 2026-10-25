@@ -66,6 +66,9 @@ import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/c
 import { gitState, gitAvailable, currentGitState, onGitChange, GIT_MISSING } from '../src/core/git-available.mjs';
 import { teamOverHttps, teamRepoState, setTypedTeamRepo } from '../src/core/git-free/team-repo.mjs';
 import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, FlagError, requireFlag } from '../src/core/flags.mjs';
+import { TELEMETRY_FILE } from '../src/core/telemetry/recorder.mjs';
+import { summarizeTelemetry } from '../src/core/telemetry/summary.mjs';
+import { modelFacts } from '../src/core/model-tiers.mjs';
 import { createKeepAwake, countWorking } from '../src/core/keep-awake.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
@@ -6032,6 +6035,28 @@ app.get('/api/runs/:id/artifact', async (req, res) => {
     const hit = await resolveIndexedArtifactForRow(row, req.query.rel);
     if (!hit) return res.status(404).json({ error: 'artifact not found' });
     res.json(hit);
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// GET /api/runs/:id/telemetry -> Run telemetry (Labs): telemetry.ndjson summarised per step
+// (src/core/telemetry/summary.mjs), by the pipeline id alone like /artifact above. 404 while the
+// flag is off, and when the run recorded none (it ran with the flag off).
+app.get('/api/runs/:id/telemetry', requireFlag('runTelemetry'), async (req, res) => {
+  try {
+    const row = findPipelineRowById(req.params.id);
+    if (!row) return res.status(404).json({ error: 'pipeline not found' });
+    let text;
+    try { text = await fsp.readFile(path.join(await runDirForRow(row), TELEMETRY_FILE), 'utf8'); } catch { return res.status(404).json({ error: 'no telemetry' }); }
+    let facts = [];
+    try { facts = modelFacts(await listModels(''), { costOf: modelCostConfig }); } catch { facts = []; }
+    const windowOf = (model) => {
+      if (!model) return null;
+      const f = facts.find((x) => x.id === model) || modelFacts([{ id: model }])[0];
+      return f ? { tokens: f.context, from: f.contextFrom } : null;
+    };
+    res.json(summarizeTelemetry(text, { windowOf }));
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }

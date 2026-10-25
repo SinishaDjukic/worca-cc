@@ -311,7 +311,8 @@ export function createGooseNormalizer({ model = null, sessionName, mcpServers = 
       completed = true;
       usage = claudeStyleUsage(evt);
       if (Number.isFinite(evt.cost_usd)) costUsd = evt.cost_usd;
-      out.push({ type: 'usage', messageId: null, parentId: null, phase: 'message', model: model || null, usage });
+      // `total`: the session's sum, not one model call (Run telemetry reads it; everyone else ignores it).
+      out.push({ type: 'usage', messageId: null, parentId: null, phase: 'message', model: model || null, usage, total: true });
       return out;
     }
     if (evt.type === 'error') {

@@ -2285,6 +2285,21 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 .run-flow .node.is-active .fan .fl{color:var(--blue-ink);}
 @keyframes sqPulse{0%,100%{opacity:1;}50%{opacity:.38;}}
 
+/* Run telemetry (Labs, docs/run-telemetry.md): one line of figures + a context chart per agent card. */
+.ag-tel{padding:6px 12px 8px;display:flex;flex-direction:column;gap:6px;}
+.ag-tel[hidden]{display:none;}
+.tel-figs{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:var(--fs-caption);color:var(--ink-2);}
+.tel-fig.is-warn{color:var(--amber-ink);}
+.tel-fig.is-high{color:var(--red-ink);}
+.tel-chart{display:block;width:100%;height:48px;}
+.tel-chart .tel-line{fill:none;stroke:var(--blue);stroke-width:1.5;vector-effect:non-scaling-stroke;}
+.tel-chart .tel-win{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:4 3;vector-effect:non-scaling-stroke;}
+.tel-chart .tel-trig{stroke:var(--amber);stroke-width:1;stroke-dasharray:1 3;vector-effect:non-scaling-stroke;}
+.tel-chart .tel-compact{stroke:var(--amber);stroke-width:1;vector-effect:non-scaling-stroke;}
+.tel-harness{display:flex;align-items:baseline;gap:8px;font-size:var(--fs-caption);margin:0 0 8px;}
+.tel-harness .flag-chip{flex:none;}
+.tel-harness-tx{flex:1 1 0;min-width:0;}
+
 /* Selector lists that used to pair the retired run-card tree with the History
    detail's Agents tab. `.subs-stat` is only ever styled here, so a bare appended
    `.subs-stat.stop{…}` would tie on specificity and still lose to this rule's
