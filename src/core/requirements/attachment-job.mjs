@@ -4,7 +4,7 @@
 // recovery after a restart, the boot sweep and the estimates. A read never throws out: a failure is the file's `failed`
 // status, and a read the spending limit stops leaves it `unread-budget`.
 // interview.mjs and this module import each other: neither uses the other's bindings at module top level.
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { tx } from '../db.mjs';
@@ -36,13 +36,21 @@ const DEFAULTS = Object.freeze({
   onChange: () => {}, onBriefChange: () => {}, mockEnabled: () => mockEnabled({}), readTimeoutMs: READ_TIMEOUT_MS,
 });
 const READING = 'Worca is reading this file.';
+// What a failed read stores (D5): product messages only; the raw error goes to the log, with the file's id.
+const UNCHECKED = 'Worca stopped this read: it could not confirm the read stayed inside this file. Try again.';
+const STORED_FILE = 'Worca could not open the stored file. Remove it and attach it again.';
+const TRY_AGAIN = 'Worca could not read it. Try again.';
+const FS_CODES = new Set(['ENOENT', 'EEXIST', 'EACCES', 'EBUSY', 'EPERM', 'EISDIR', 'ENOTDIR', 'EMFILE', 'ENFILE', 'ENOSPC', 'EROFS', 'ENAMETOOLONG']);
+// Bodies, read folders and copies are the user's alone (POSIX modes; no effect on Windows).
+const DIR_MODE = 0o700;
+const FILE_MODE = 0o600;
 const message = (err) => (err && err.message ? err.message : String(err));
 const iso = () => new Date().toISOString();
 
 // ---------------------------------------------------------------- bodies (D9)
 
 export const attachmentsDir = () => join(worcaHome(), 'requirements', 'att');
-const readBase = () => { const d = join(worcaHome(), 'tmp', 'requirements'); mkdirSync(d, { recursive: true }); return d; };
+const readBase = () => { const d = join(worcaHome(), 'tmp', 'requirements'); mkdirSync(d, { recursive: true, mode: DIR_MODE }); return d; };
 
 /** A body's path, from the store-minted id and the kind's extension only (never the file's name). */
 export function attachmentFile(row) {
@@ -161,15 +169,21 @@ async function promptContext(owner, d) {
 function guardCovered(r) {
   if (!Array.isArray(r.readGuardDecisions)) return false;
   const events = Array.isArray(r.events) ? r.events : [];
-  const turns = events.filter((x) => x && x.type === 'result' && Number.isFinite(x.numTurns)).map((x) => x.numTurns);
+  const results = events.filter((x) => x && x.type === 'result');
+  if (!results.length) return false;   // a stream without its result was not seen whole
+  const turns = results.filter((x) => Number.isFinite(x.numTurns)).map((x) => x.numTurns);
   if (Math.max(0, ...turns) > 1 && toolCalls(events).length === 0) return false;
   return guardDecisionsCover(events, r.readGuardDecisions);
 }
+/** An inline read has no tools: a tool call on its stream means the call did not run as Worca built it. */
+const inlineClean = (r) => toolCalls(Array.isArray(r.events) ? r.events : []).length === 0;
+const unchecked = (costUsd) => Object.assign(new Error(UNCHECKED), { code: 'UNCHECKED', costUsd });
 
 /** One read-only call on the file: inline (a text of at most 24 KB, redacted, no tools at all) or opened with Read from a
- *  fresh folder that holds only its copy (a text file's copy is its redacted text), removed when the call ends, whatever
- *  happens. A Read-form result the guard did not cover is discarded (a RoundError, its cost still on it). `extra` reaches
- *  the prompt (Task 5's question). Throws with `costUsd` (callModel's) and `model` on it. */
+ *  fresh private folder that holds only its copy (a text file's copy is its redacted text), removed when the call ends,
+ *  whatever happens. A result that cannot be checked (a Read-form one the guard did not cover, an inline one with a tool
+ *  call) is discarded as UNCHECKED, its cost still on it. `extra` reaches the prompt (Task 5's question) and cannot
+ *  override the file's framing. Throws with `costUsd` (callModel's) and `model` on it. */
 async function readCall(e, row, extra = {}) {
   const d = e.d;
   const im = await interviewModel(d);
@@ -181,11 +195,12 @@ async function readCall(e, row, extra = {}) {
     let path = null;
     if (!inline) {
       dir = join(readBase(), `att-read-${randomBytes(4).toString('hex')}`);
-      mkdirSync(dir);
+      mkdirSync(dir, { mode: DIR_MODE });
       path = join(dir, `${row.id}${extensionForAttachment(row.kind, row.mime)}`);
-      if (text != null) writeFileSync(path, text, 'utf8'); else copyFileSync(attachmentFile(row), path);
+      if (text != null) writeFileSync(path, text, { encoding: 'utf8', mode: FILE_MODE });
+      else { copyFileSync(attachmentFile(row), path); chmodSync(path, FILE_MODE); }
     }
-    const prompt = buildReadPrompt({ ...(await promptContext(e.owner, d)), file: row, text: inline ? text : null, dir, path, ...extra });
+    const prompt = buildReadPrompt({ ...extra, ...(await promptContext(e.owner, d)), file: row, text: inline ? text : null, dir, path });
     // D3, D15: every read carries Ask's deny rules; a Read-form read also the file-read guard, which lets Read open the
     // copy and nothing else (the allow rule is intent: the engine reads unmatched paths).
     const deny = { deny: [...REQUIREMENTS_READ_DENY_RULES] };
@@ -194,9 +209,7 @@ async function readCall(e, row, extra = {}) {
     const r = await callModel(d, { ...call, model: model || undefined, ...(im.effort ? { effort: im.effort } : {}),
       systemPrompt: ATTACHMENT_SYSTEM_PROMPT, timeoutMs: d.readTimeoutMs, signal: e.ctrl.signal });
     const costUsd = Number(r.costUsd) || 0;
-    if (!inline && !guardCovered(r)) {
-      throw Object.assign(new RoundError('Worca could not confirm that the read opened only this file'), { costUsd });
-    }
+    if (inline ? !inlineClean(r) : !guardCovered(r)) throw unchecked(costUsd);
     return { text: r.text, costUsd, model };
   } catch (err) {
     throw Object.assign(err instanceof Error ? err : new Error(String(err)), { model });
@@ -205,27 +218,32 @@ async function readCall(e, row, extra = {}) {
   }
 }
 
-const failureOf = (err) => ({
-  code: (err && typeof err.code === 'string' && err.code) || (err instanceof RoundError ? 'BAD_REPLY' : 'FAILED'),
-  message: err instanceof RoundError ? `Worca's reply could not be read (${message(err)}).` : message(err),
-});
+/** What a failed read stores: Worca's own codes and messages only (UNCHECKED, TIMEOUT, BAD_REPLY with the reply check's
+ *  reason); anything else is FAILED with a product message, an fs error naming the stored file. Never raw error text. */
+function failureOf(err) {
+  if (err instanceof RoundError) return { code: 'BAD_REPLY', message: `Worca's reply could not be read (${message(err)}).` };
+  if (err && err.code === 'UNCHECKED') return { code: 'UNCHECKED', message: UNCHECKED };
+  if (err && err.code === 'TIMEOUT') return { code: 'TIMEOUT', message: message(err) };   // callModel's own words
+  const fs = !!err && (typeof err.syscall === 'string' || FS_CODES.has(err.code));
+  return { code: 'FAILED', message: fs ? STORED_FILE : TRY_AGAIN };
+}
 
 async function runRead(e) {
   await null;
   const row = getAttachment(e.id);
   if (!row || row.status !== 'reading') return;
   const d = e.d;
-  const b = d.budget();
-  if (b && b.blocked) { updateAttachment(row.id, { status: 'unread-budget' }); return; }   // D5: not an error; nothing spent
-  if (d.mockEnabled()) {
-    const ms = Number(process.env.WORCA_MOCK_READ_MS) || 0;   // the browser proof sees "Reading N files…" (D17)
-    if (ms > 0) await new Promise((r) => setTimeout(r, ms));
-    finishRead(e, { summary: mockSummary(row.name), costUsd: 0, model: null });
-    return;
-  }
   let cost = 0;
   let model = null;
   try {
+    const b = d.budget();
+    if (b && b.blocked) { updateAttachment(row.id, { status: 'unread-budget' }); return; }   // D5: not an error; nothing spent
+    if (d.mockEnabled()) {
+      const ms = Number(process.env.WORCA_MOCK_READ_MS) || 0;   // the browser proof sees "Reading N files…" (D17)
+      if (ms > 0) await new Promise((r) => setTimeout(r, ms));
+      finishRead(e, { summary: mockSummary(row.name), costUsd: 0, model: null });
+      return;
+    }
     const r = await readCall(e, row);
     cost = r.costUsd;
     model = r.model;
@@ -235,8 +253,10 @@ async function runRead(e) {
     cost = cost || Number(err?.costUsd) || 0;
     model = model || err?.model || null;
     const now = getAttachment(e.id);
+    const failure = failureOf(err);
+    if (failure.code === 'FAILED') console.error(`requirements: reading file ${e.id} failed:`, message(err));
     tx(() => {
-      if (now && !e.cancelled) updateAttachment(now.id, { status: 'failed', error: { ...failureOf(err), at: iso() } });
+      if (now && !e.cancelled) updateAttachment(now.id, { status: 'failed', error: { ...failure, at: iso() } });
       bookWrites(e, cost, model, 'read', e.cancelled ? null : now);
     });
   }
@@ -265,20 +285,27 @@ function finishRead(e, { summary, costUsd, model }) {
 export function addAttachments(owner, files, { by = null } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   const planned = checkNewFiles(owner.type, listAttachments(owner.type, owner.id), files).map((f) => ({ ...f, id: mintAttachmentId() }));
-  mkdirSync(attachmentsDir(), { recursive: true });
+  mkdirSync(attachmentsDir(), { recursive: true, mode: DIR_MODE });
   const rows = [];
-  for (const p of planned) {
-    writeFileSync(attachmentFile(p), p.data);   // the uploaded bytes, as they came (D15)
-    try {
-      tx(() => {
-        rows.push(insertAttachment({ id: p.id, ownerType: owner.type, ownerId: owner.id, name: p.name, kind: p.kind, mime: p.mime,
-          bytes: p.bytes, sha256: p.sha256 }, { by }));
-        if (owner.type === 'feature') appendTurn(owner.id, { kind: 'file', payload: { action: 'added', id: p.id, name: p.name } }, { by });
-      });
-    } catch (err) { removeBody(p); throw err; }
+  try {
+    for (const p of planned) {
+      let row;
+      try {
+        writeFileSync(attachmentFile(p), p.data, { mode: FILE_MODE });   // the uploaded bytes, as they came (D15)
+        row = tx(() => {
+          const r = insertAttachment({ id: p.id, ownerType: owner.type, ownerId: owner.id, name: p.name, kind: p.kind, mime: p.mime,
+            bytes: p.bytes, sha256: p.sha256 }, { by });
+          if (owner.type === 'feature') appendTurn(owner.id, { kind: 'file', payload: { action: 'added', id: p.id, name: p.name } }, { by });
+          return r;
+        });
+      } catch (err) { removeBody(p); throw err; }
+      rows.push(row);
+      // Queued as soon as its row is stored, so a later file's failure leaves no row `reading` with no read behind it.
+      enqueue({ id: row.id, name: row.name, owner, kind: 'read', by, d });
+    }
+  } finally {
+    if (rows.length) notifyOwner(owner, d);
   }
-  for (const r of rows) enqueue({ id: r.id, name: r.name, owner, kind: 'read', by, d });
-  notifyOwner(owner, d);
   return rows;
 }
 

@@ -4,7 +4,7 @@
 import * as job from '../src/core/requirements/attachment-job.mjs';
 import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -96,7 +96,10 @@ test('an image, a PDF and a 30 KB text are opened with Read from a fresh folder 
   const f = feature();
   const seen = [];
   const r = fakeRunner([{ summary: 'An image.' }, { summary: 'A PDF.' }, { summary: 'Long notes.' }],
-    { onCall: (o) => { const names = readdirSync(o.cwd); seen.push({ names, copy: readFileSync(join(o.cwd, names[0]), 'utf8') }); } });
+    { onCall: (o) => {
+      const names = readdirSync(o.cwd);
+      seen.push({ names, copy: readFileSync(join(o.cwd, names[0]), 'utf8'), dirMode: statSync(o.cwd).mode & 0o777, copyMode: statSync(o.readGuard).mode & 0o777 });
+    } });
   const long = `${'x'.repeat(30 * 1024)} sk-ant-${'b'.repeat(40)}`;
   const rows = job.addAttachments(own(f), [binFile('mock.png', PNG, 'image', 'image/png'), pdfFile(), textFile('notes.md', long)], {}, deps(r));
   await job.readsSettled(own(f));
@@ -115,18 +118,67 @@ test('an image, a PDF and a 30 KB text are opened with Read from a fresh folder 
   assert.doesNotMatch(txt.copy, /sk-ant-b{40}/, "a text file's copy is its redacted text");
   assert.deepEqual(rows.map((x) => getAttachment(x.id).status), ['done', 'done', 'done'], 'no tool call on the stream: nothing left unchecked');
   assert.deepEqual(readDirs(), []);
+  if (process.platform !== 'win32') {
+    assert.ok(seen.every((s) => s.dirMode === 0o700 && s.copyMode === 0o600), 'the read folder and its copy are private');
+    assert.deepEqual(rows.map((x) => statSync(job.attachmentFile(getAttachment(x.id))).mode & 0o777), [0o600, 0o600, 0o600], 'bodies are private');
+    assert.equal(statSync(job.attachmentsDir()).mode & 0o777, 0o700);
+    assert.equal(statSync(join(worcaHome(), 'tmp', 'requirements')).mode & 0o777, 0o700);
+  }
 });
 
-test('a throwing call, an unreadable reply and an empty summary: failed with its code, the cost booked, no folder left', async () => {
+test('a throwing call, an unreadable reply and an empty summary: failed with its code, the cost booked, no folder left', async (t) => {
+  const log = t.mock.method(console, 'error', () => {});
   const f = feature();
-  const r = fakeRunner(byName({ 'a.pdf': new Error('boom'), 'b.md': 'not json', 'c.md': { summary: '' } }));
+  const r = fakeRunner(byName({ 'a.pdf': new Error('boom at /secret/path'), 'b.md': 'not json', 'c.md': { summary: '' } }));
   const rows = job.addAttachments(own(f), [pdfFile('a.pdf'), textFile('b.md', 'b'), textFile('c.md', 'c')], {}, deps(r));
   await job.readsSettled(own(f));
   const st = rows.map((x) => getAttachment(x.id));
   assert.deepEqual(st.map((x) => [x.status, x.error.code]), [['failed', 'FAILED'], ['failed', 'BAD_REPLY'], ['failed', 'BAD_REPLY']]);
+  assert.equal(st[0].error.message, 'Worca could not read it. Try again.', 'never the raw error text');
   assert.match(st[1].error.message, /^Worca's reply could not be read \(/);
   assert.equal(st[1].costUsd, 0.1);
+  assert.ok(log.mock.calls.some((c) => String(c.arguments[0]).includes(rows[0].id) && String(c.arguments[1]).includes('boom')), 'the raw error is logged with the id');
   assert.deepEqual(readDirs(), []);
+});
+
+test('a missing stored body: FAILED with a product message, no path and no fs code stored; nothing spent', async (t) => {
+  const log = t.mock.method(console, 'error', () => {});
+  const f = feature();
+  const r = fakeRunner([]);
+  const rows = job.addAttachments(own(f), [pdfFile('gone.pdf'), textFile('gone.md', `${'g'.repeat(30 * 1024)}`), textFile('small.md', 's')], {}, deps(r));
+  for (const x of rows) rmSync(job.attachmentFile(x));   // before the read starts (it waits a tick)
+  await job.readsSettled(own(f));
+  assert.equal(r.calls.length, 0);
+  for (const x of rows) {
+    const a = getAttachment(x.id);
+    assert.deepEqual([a.status, a.error.code, a.error.message, a.costUsd], ['failed', 'FAILED', 'Worca could not open the stored file. Remove it and attach it again.', 0], x.name);
+    assert.doesNotMatch(JSON.stringify(a.error), /ENOENT|ratt_|[\\/]/, 'no path, no fs code');
+  }
+  assert.equal(log.mock.calls.length, 3);
+  assert.deepEqual(readDirs(), []);
+});
+
+test('a throwing budget check fails the file instead of leaving it reading', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const f = feature();
+  const r = fakeRunner([{ summary: 'never' }]);
+  const [row] = job.addAttachments(own(f), [textFile('budget.md', 'b')], {}, deps(r, { budget: () => { throw new Error('db locked'); } }));
+  await job.readsSettled(own(f));
+  const a = getAttachment(row.id);
+  assert.deepEqual([a.status, a.error.code, a.error.message, r.calls.length], ['failed', 'FAILED', 'Worca could not read it. Try again.', 0]);
+});
+
+test('a partial add: the files stored before the failure are read, none is left reading; the failed one leaves no row or body', async () => {
+  const f = feature();
+  const r = fakeRunner([{ summary: 'First.' }]);
+  const bad = { ...textFile('bad.md', 'bad'), data: null };   // its body cannot be written
+  const bodies = () => readdirSync(job.attachmentsDir()).length;
+  const before = bodies();
+  assert.throws(() => job.addAttachments(own(f), [textFile('first.md', 'first'), bad], {}, deps(r)), TypeError);
+  await job.readsSettled(own(f));
+  const rows = listAttachments('feature', f.seq);
+  assert.deepEqual(rows.map((x) => [x.name, x.status, x.summary]), [['first.md', 'done', 'First.']]);
+  assert.equal(bodies(), before + 1, "only the stored file's body is on disk");
 });
 
 // ── D15: a Read-form read counts only when the guard decided every tool call its stream shows ──
@@ -137,8 +189,8 @@ test('a Read-form read whose stream shows a tool call the guard never decided is
   const [row] = job.addAttachments(own(f), [pdfFile('unchecked.pdf')], {}, deps(r));
   await job.readsSettled(own(f));
   const a = getAttachment(row.id);
-  assert.deepEqual([a.status, a.error.code, a.summary, a.readCostUsd, a.costUsd], ['failed', 'BAD_REPLY', '', null, 0.1]);
-  assert.match(a.error.message, /^Worca's reply could not be read \(/);
+  assert.deepEqual([a.status, a.error.code, a.summary, a.readCostUsd, a.costUsd], ['failed', 'UNCHECKED', '', null, 0.1]);
+  assert.equal(a.error.message, 'Worca stopped this read: it could not confirm the read stayed inside this file. Try again.');
   assert.equal(getFeature(f.seq).costUsd, 0.1);
   assert.equal(prepare('SELECT count(*) AS n FROM req_cost_ledger WHERE attachment_id = ?').get(row.id).n, 1);
   assert.deepEqual(readDirs(), []);
@@ -153,16 +205,31 @@ test('the same stream with the decision logged for its tool call is done', async
   assert.deepEqual([getAttachment(row.id).status, getAttachment(row.id).summary], ['done', 'Two tickets.']);
 });
 
-test('fail closed: more than one turn with no tool call on the stream, or no decision log at all, is a discarded read', async () => {
+test('fail closed: more than one turn with no tool call, no decision log, or no result on the stream is a discarded read', async () => {
   const f = feature();
+  const unchecked = (id) => [getAttachment(id).status, getAttachment(id).error.code, getAttachment(id).summary];
   const turns = fakeRunner([{ summary: 'Hidden steps.' }], { numTurns: 3 });
   const [a] = job.addAttachments(own(f), [pdfFile('turns.pdf')], {}, deps(turns));
   await job.readsSettled(own(f));
-  assert.deepEqual([getAttachment(a.id).status, getAttachment(a.id).summary], ['failed', '']);
+  assert.deepEqual(unchecked(a.id), ['failed', 'UNCHECKED', '']);
   const noLog = { runClaudeImpl: async (o) => { o.onEvent({ type: 'result', raw: { type: 'result', total_cost_usd: 0.1, result: '{"summary":"x"}' }, costUsd: 0.1 }); return { text: '{"summary":"x"}' }; } };
   const [b] = job.addAttachments(own(f), [pdfFile('nolog.pdf', Buffer.from('%PDF-1.7\nother\n'))], {}, deps(noLog));
   await job.readsSettled(own(f));
-  assert.deepEqual([getAttachment(b.id).status, getAttachment(b.id).error.code, getAttachment(b.id).summary], ['failed', 'BAD_REPLY', '']);
+  assert.deepEqual(unchecked(b.id), ['failed', 'UNCHECKED', '']);
+  const noResult = { runClaudeImpl: async () => ({ text: '{"summary":"x"}', readGuardDecisions: [] }) };
+  const [c] = job.addAttachments(own(f), [pdfFile('noresult.pdf', Buffer.from('%PDF-1.7\nthird\n'))], {}, deps(noResult));
+  await job.readsSettled(own(f));
+  assert.deepEqual(unchecked(c.id), ['failed', 'UNCHECKED', '']);
+});
+
+test('an inline read whose stream shows a tool call is discarded as UNCHECKED, the cost booked', async () => {
+  const f = feature();
+  const r = fakeRunner([{ summary: 'Should not be stored.' }], { stream: () => [readOfCopy({ readGuard: '/etc/passwd' })] });
+  const [row] = job.addAttachments(own(f), [textFile('inline.md', 'small')], {}, deps(r));
+  await job.readsSettled(own(f));
+  assert.equal('readGuard' in r.calls[0], false);
+  const a = getAttachment(row.id);
+  assert.deepEqual([a.status, a.error.code, a.summary, a.costUsd], ['failed', 'UNCHECKED', '', 0.1]);
 });
 
 /** A node fake claude for the real runner: reports a Read of the copy on the stream, running the '*' PreToolUse hook
@@ -194,13 +261,14 @@ test('the real runner: a stream with a tool call and an empty decision log ends 
     for (const [runHook, want] of [[false, ['failed', '']], [true, ['done', 'Read for real.']]]) {
       const f = feature();
       const { bin, dir } = fakeClaudeBin(runHook);
-      const real = { runClaudeImpl: (o) => runClaude({ ...o, bin }) };
-      const [row] = job.addAttachments(own(f), [pdfFile(`real-${runHook}.pdf`, Buffer.from(`%PDF-1.7\n${runHook}\n`))], {}, deps(real));
-      await job.readsSettled(own(f));
-      const a = getAttachment(row.id);
-      assert.deepEqual([a.status, a.summary], want, `runHook ${runHook}`);
-      assert.equal(a.costUsd, 0.1, 'the cost is booked either way');
-      rmSync(dir, { recursive: true, force: true });
+      try {
+        const real = { runClaudeImpl: (o) => runClaude({ ...o, bin }) };
+        const [row] = job.addAttachments(own(f), [pdfFile(`real-${runHook}.pdf`, Buffer.from(`%PDF-1.7\n${runHook}\n`))], {}, deps(real));
+        await job.readsSettled(own(f));
+        const a = getAttachment(row.id);
+        assert.deepEqual([a.status, a.summary], want, `runHook ${runHook}`);
+        assert.equal(a.costUsd, 0.1, 'the cost is booked either way');
+      } finally { rmSync(dir, { recursive: true, force: true }); }
     }
   } finally { if (prev === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = prev; }
   assert.deepEqual(readDirs(), []);
