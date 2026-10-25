@@ -34,6 +34,7 @@ import { ATTACH_ACCEPT, ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64,
 import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
+import { keepFocus } from './chat/keep-focus.mjs';
 import { flagOn } from './flags.mjs';
 import { mountChatsColumn } from './chats-column.mjs';
 import { chatPageKeyAction, keyHint, isMac, LIST_FIELD } from './list-keys.mjs';
@@ -235,6 +236,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     commandsRowOpen: new Map(),  // blockId → the person's open choice on a summary row (#911); absent = none
     commandGroupOf: new Map(),   // blockId → the blockIds of its group (#911), for the head's live total
     pinned: true,
+    leftAt: null,          // #958: { threadId, top, pinned } recorded when the page hides; read on the next show
+    restoreTop: null,      // #958: a scrollTop the next applyPin() writes back (a same-chat return, unpinned)
+    scrollIntentAt: null,  // #958: now() of the last wheel / touch / press / key on the transcript
+    scrollHeld: false,     // #958: a press on the transcript (its scrollbar) is held until pointerup
+    cardMemo: null,        // #958: card id → element built in the current renderTranscript pass (one build per card)
     wantThread: undefined,    // the chat the page shows or is loading: an id, null = home (a new chat), undefined = none yet
     unread: false,            // what onUnread was last told (the Chat row's dot)
     historyStale: true,       // the History rows need a fetch at the next show (a refresh frame landed while hidden)
@@ -461,6 +467,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.transcript = make('div', 'ask-transcript');
     el.transcript.setAttribute('data-ask-scroll', '');
     el.transcript.addEventListener('scroll', updatePinFromScroll);
+    el.transcript.addEventListener('wheel', noteScrollIntent, { passive: true });
+    el.transcript.addEventListener('touchmove', noteScrollIntent, { passive: true });
+    el.transcript.addEventListener('pointerdown', onScrollPress, true);   // capture: a card's stopPropagation cannot hide it
     // The transcript is only the scrollport; every row lands in this column, which style.css caps
     // (--ask-col-max) and centres. Scroll/pin logic keeps reading el.transcript.
     el.transcriptCol = make('div', 'ask-transcript-col');
@@ -1606,7 +1615,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   /**
    * The page became visible (app.js: the #chat route) — or, with `req`, is routed: `{ threadId: null }` = home
-   * (a new chat; the draft stays), `{ threadId }` = that chat. Every hidden → shown step re-pins the transcript,
+   * (a new chat; the draft stays), `{ threadId }` = that chat. Every hidden → shown step restores the same chat's place (or pins),
    * repaints the run cards and re-previews the Sets; the FIRST one also loads the model catalog and — only for a
    * bare open() with no route — the stored chat. (`req`, not `route`: route() is the address callback below.)
    */
@@ -1617,7 +1626,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (showing) {
       st.open = true;
       setUnread(false);
-      st.pinned = true;
+      // #958: back on the chat the page left: restore that place (the bottom when it was following). Another chat,
+      // or home, opens at the bottom.
+      const back = st.leftAt;
+      st.leftAt = null;
+      const target = routed ? (typeof req.threadId === 'string' && req.threadId ? req.threadId : null)
+        : (typeof st.wantThread === 'string' ? st.wantThread : st.threadId);
+      if (back && back.threadId === target && !back.pinned) { st.pinned = false; st.restoreTop = back.top; }
+      else { st.pinned = true; st.restoreTop = null; }
       ensureFirstOpen({ restore: !routed });
       composerCards().stale();   // the chat was hidden: a wizard may have saved a draft meanwhile
       scheduleFlush();
@@ -1668,6 +1684,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   /** The page was hidden (app.js: another route). Voice stops and popovers close; focus belongs to the next page. */
   function closePage() {
     if (!st.open) return;
+    // #958: display:none drops the scroller's offset: remember it (and the pin) for a return to this chat. A switch
+    // still loading has no place worth keeping.
+    const loading = typeof st.wantThread === 'string' && st.wantThread !== st.threadId;
+    st.leftAt = st.threadId && !loading ? { threadId: st.threadId, top: el.transcript.scrollTop, pinned: st.pinned } : null;
     stopVoice();
     closePopover({ focusTrigger: false });
     if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
@@ -5528,7 +5548,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy') return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
+  // #958: one build per card per reconcile. renderTranscript asks for a card twice (is it away? then the tail paint);
+  // a card the cache never keeps (a terminal proposal) or a stale one must not be built, and disposed, twice.
   function buildCard(block) {
+    if (!st.cardMemo) return buildCardNow(block);
+    if (!st.cardMemo.has(block.id)) st.cardMemo.set(block.id, buildCardNow(block));
+    return st.cardMemo.get(block.id);
+  }
+  function buildCardNow(block) {
     if (!st.cardEls) st.cardEls = new Map();
     const cached = st.cardEls.get(block.id);
     // CONTRACT §2: a registered builder wins. The built-ins' cache rule: reused while the state holds, rebuilt (the old
@@ -6086,7 +6113,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
   function renderAnswerPiece(div, text, isLive) {
     // Seed the >32 KB throttle clock here, not only in renderAnswerFor: a
-    // structural flush repaints answers through renderTranscript, which never
+    // structural flush repaints answers through renderTranscript (reconciled), which never
     // passes through renderAnswerFor — left at 0, the 250 ms window would be
     // permanently expired and the size ladder dead.
     st.lastAnswerRender = now();
@@ -6133,6 +6160,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     return parts.join('|');
   }
 
+  /** What an assistant row's answer shows: the live text while it streams, else its status and stored text. */
+  function answerKeyOf(r) {
+    const live = st.model && st.model.live();
+    return live && live.messageId === r.id ? `l:${live.text}` : `d:${r.status || ''}:${r.text || ''}`;
+  }
+  /** #958: a user/system row's content, to tell a resync's same row from a changed one (null: treat as changed). */
+  function shownKeyOf(r) { try { return JSON.stringify(r); } catch { return null; } }
+
   function buildMessage(row) {
     const wrap = make('div', `ask-msg ask-msg-${row.role}`);
     // The model REPLACES a row object on upsert (ask-model upsertRow), so every
@@ -6141,6 +6176,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     let patch = null;   // the in-place update for an assistant row; null ⇒ update() rebuilds
     let relevel = null; // re-decides the activity's toggle after a mode change (assistant rows only)
     let renderAnswer = null;
+    let retail = null;     // #958: forgets the tail signature, so the next patch re-renders the tail (assistant rows)
+    let answerKey = null;  // #958: answerKeyOf() of the answer on screen (assistant rows)
+    const shownKey = row.role === 'user' || row.role === 'system' ? shownKeyOf(row) : null;
     if (row.role === 'user') {
       // PD6: a synthetic row (a workflow-card event) is a notice, never a bubble — its text is the model-facing event line.
       const synthetic = (row.blocks || []).filter((b) => b && b.kind === 'notice' && b.synthetic);
@@ -6205,9 +6243,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           paintGroupHead(ids);
         }
       };
-      renderAnswer = () => { renderAnswerInto(answerDivs(), cur); paintGroups(); };
+      renderAnswer = () => { answerKey = answerKeyOf(cur); renderAnswerInto(answerDivs(), cur); paintGroups(); };
       renderAnswer();
       let tailSig = null;
+      retail = () => { tailSig = null; };
       const renderTail = () => {
         const sig = tailSignature(cur);
         if (sig === tailSig) return;
@@ -6215,10 +6254,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const cards = inlineCards(cur);
         const sameInline = cards.length === inline.length && cards.every((b, i) => b.id === inline[i].id);
         if (sameInline) {
-          // Kept in place: a card swaps its element only when buildCard hands back a new one.
+          // Kept in place: a card swaps its element only when buildCard hands back a new one. #958: the old element
+          // may already be detached (a command card's dispose removes it), and the same element may sit in a gone
+          // row: in both cases the card goes back before its answer piece.
           cards.forEach((b, i) => {
             const cardEl = buildCard(b, cur);
-            if (cardEl !== inline[i].card) { inline[i].card.replaceWith(cardEl); inline[i].card = cardEl; }
+            if (cardEl !== inline[i].card || !wrap.contains(cardEl)) {
+              if (cardEl !== inline[i].card) inline[i].card.remove();
+              inline[i].piece.before(cardEl);
+              inline[i].card = cardEl;
+            }
           });
         }
         const last = inline.length ? inline[inline.length - 1].piece : answer;
@@ -6277,6 +6322,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       patch = (row2) => { cur = row2; activity.update(row2); renderTail(); };
       relevel = () => activity.update(cur);
     }
+    // #958: a card the row should hold but no longer does. buildCard hands back the cached element (its cache rule
+    // still runs: a stale card is rebuilt, once per pass through st.cardMemo) or a fresh one; either one outside
+    // `wrap` means the row must be painted again. A user row renders no cards, so it never asks.
+    const cardsAway = (r) => r.role !== 'user' && (r.blocks || []).some((b) => {
+      if (!b || b.kind !== 'card' || b.id == null) return false;
+      const c = buildCard(b);
+      return !!c && !wrap.contains(c);
+    });
     const entry = {
       el: wrap,
       renderAnswer,
@@ -6286,11 +6339,26 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         // `.ask-msg` on every ask-label and every ask-block frame, so the whole
         // message — entry animation, answer subtree and cards — was re-created
         // under the text being read. A user/system row carries nothing live and
-        // changes only through a structural repaint, so it still rebuilds.
+        // changes only through a structural repaint (reconciled: refresh), so it still rebuilds.
         if (patch) { patch(row2); return; }
         const fresh = buildMessage(row2);
         wrap.replaceWith(fresh.el);
         st.rowEls.set(row2.id, fresh);
+      },
+      /**
+       * #958: a structural flush refreshes a row it keeps instead of building it again. The element stays in the
+       * column, so the scroll position has nothing to clamp against and a focused control inside stays put.
+       */
+      refresh(row2) {
+        if (patch) {
+          if (cardsAway(row2)) retail();
+          patch(row2);
+          if (answerKey !== answerKeyOf(row2)) renderAnswer();
+          return;
+        }
+        const k = shownKeyOf(row2);
+        if (k != null && k === shownKey && !cardsAway(row2)) return;
+        entry.update(row2);
       },
     };
     return entry;
@@ -6301,20 +6369,37 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const keep = new Set();
     if (st.model) for (const row of st.model.messages()) for (const b of row.blocks || []) if (b && b.kind === 'card' && b.id != null) keep.add(b.id);
     pruneCardEls(keep);
+    const prev = st.rowEls || new Map();
     st.rowEls = new Map();
-    el.transcriptCol.replaceChildren();
-    if (!st.model) { syncView(); return; }
-    for (const row of st.model.messages()) {
-      const entry = buildMessage(row);
-      // The entry animation belongs to a message this transcript has never shown.
-      // ask-start, ask-done and every ask-message rebuild the WHOLE column, so
-      // without the ledger the rows already on screen would rise and fade in
-      // again — including on a mid-turn resync, which repaints the same thread.
-      // The ledger is written at the END of a flush, not here: see flush().
-      if (!st.seenRows.has(row.id)) entry.el.setAttribute('data-ask-enter', '');
-      st.rowEls.set(row.id, entry);
-      el.transcriptCol.appendChild(entry.el);
+    const col = el.transcriptCol;
+    if (!st.model) { col.replaceChildren(); syncView(); return; }
+    // #958: reconcile by message id. ask-start, ask-done, every ask-message and a resync used to empty the column and
+    // build every row again: a focused control lost the focus, and a card laying out mid-rebuild clamped the scroll
+    // position to the partial column. A kept row stays connected and is refreshed in place; new rows are built, gone
+    // ones removed, and only a row out of order moves.
+    const rows = st.model.messages();
+    const ids = new Set(rows.map((r) => r.id));
+    st.cardMemo = new Map();
+    try {
+      for (const [id, entry] of prev) if (!ids.has(id)) entry.el.remove();
+      for (const row of rows) {
+        const kept = prev.get(row.id);
+        if (kept) {
+          kept.refresh(row);                         // a rebuilt user/system row (update) stores its fresh entry itself
+          if (!st.rowEls.has(row.id)) st.rowEls.set(row.id, kept);
+        } else st.rowEls.set(row.id, buildMessage(row));
+        // The entry animation belongs to a message this transcript has never shown (a row update() rebuilt too). The
+        // ledger is written at the END of a flush, not here: see flush().
+        if (!st.seenRows.has(row.id)) st.rowEls.get(row.id).el.setAttribute('data-ask-enter', '');
+      }
+    } finally { st.cardMemo = null; }
+    let at = col.firstChild;
+    for (const row of rows) {
+      const node = st.rowEls.get(row.id).el;
+      if (node === at) at = at.nextSibling;
+      else col.insertBefore(node, at);
     }
+    while (at) { const next = at.nextSibling; at.remove(); at = next; }   // only row elements live in the column
     syncView();                                      // home ↔ thread: the composer follows the first message
   }
 
@@ -6370,7 +6455,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // The model owns the list (load() seeded it). It belongs here, not in
     // switchThread: resync()/onHello() come through loadThread too.
     setWorktrees(st.model.worktrees());
-    st.pinned = true;
+    // #958: a SWITCH opens at the bottom; a resync or reconnect of the same chat keeps the reader where they are.
+    if (switched) { st.pinned = true; st.restoreTop = null; }
     scheduleFlush();
     stopElapsed();      // a mid-stream thread switch must not leave the old
     updateSendStop();   // turn's timer or stop button behind (V3/D2 reset)
@@ -6678,6 +6764,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.rowEls) for (const id of st.rowEls.keys()) st.seenRows.add(id);
   }
 
+  // #958: only the reader's own scroll (wheel, touch, a press on the transcript or its scrollbar, a key on the
+  // transcript) leaves the bottom. A scroll the browser makes after a layout change (a clamp while a card measures)
+  // is not theirs. Tab, and Enter/Space on a control, count: they can scroll a card control into view.
+  const USER_SCROLL_MS = 600;
+  const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+  function noteScrollIntent() { st.scrollIntentAt = now(); }
+  function onScrollPress() { st.scrollHeld = true; noteScrollIntent(); }
+  function onScrollRelease() { if (st.scrollHeld) { st.scrollHeld = false; noteScrollIntent(); } }
+  function onScrollKey(e) {
+    const tg = e.target;
+    if (tg !== doc.body && !(tg && el.transcript.contains(tg))) return;   // keys in the Chats list or a menu: not ours
+    const field = !!tg && (tg.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(tg.tagName || ''));
+    if (e.key === 'Tab' || (!field && (SCROLL_KEYS.has(e.key) || e.key === 'Enter'))) noteScrollIntent();
+  }
+  function userScrolling() {
+    return st.scrollHeld || (st.scrollIntentAt != null && now() - st.scrollIntentAt < USER_SCROLL_MS);
+  }
+
   function updatePinFromScroll() {
     const t = el.transcript;
     // The scroll event of our OWN pin write (applyPin, jumpToLatest) can arrive after the column grew again (a card's
@@ -6689,14 +6793,25 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       return;
     }
     st.pinWrite = null;
-    st.pinned = t.scrollHeight - t.scrollTop - t.clientHeight < 24;
+    const atBottom = t.scrollHeight - t.scrollTop - t.clientHeight < 24;
+    if (!userScrolling()) {                          // #958: not the reader: never unpins; reaching the bottom re-pins
+      if (st.pinned) applyPin();
+      else if (atBottom) { st.pinned = true; if (el.jump) el.jump.hidden = true; }
+      return;
+    }
+    st.pinned = atBottom;
     if (el.jump) el.jump.hidden = st.pinned;
   }
 
   function applyPin() {
     if (!st.open) return;
+    const t = el.transcript;
+    if (st.restoreTop != null && t.clientHeight > 0) {   // #958: a same-chat return, unpinned, once the page has a box
+      const top = st.restoreTop;
+      st.restoreTop = null;
+      if (!st.pinned) t.scrollTop = top;
+    }
     if (st.pinned) {
-      const t = el.transcript;
       // Only when the bottom has actually moved away. flush() runs this on EVERY
       // rAF of a stream, and an unconditional write re-snapped the scrollport on
       // each one — which is what turned a growing answer into a twitch.
@@ -6724,6 +6839,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function jumpToLatest() {
     st.pinned = true;
+    st.restoreTop = null;
     el.transcript.scrollTop = el.transcript.scrollHeight;
     st.pinWrite = el.transcript.scrollTop;
     if (el.jump) el.jump.hidden = true;
@@ -6801,6 +6917,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   // ---- mount ----------------------------------------------------------------
   const root = buildRoot();
+  const focusKeep = keepFocus(el.transcriptCol, doc);   // #958: every row and card keeps its focused control
+  doc.addEventListener('keydown', onScrollKey, true);
+  doc.addEventListener('pointerup', onScrollRelease, true);
+  doc.addEventListener('pointercancel', onScrollRelease, true);
+  win.addEventListener('blur', onScrollRelease);    // a release outside the window never reaches the document
   mountAddons();
   doc.addEventListener('keydown', onDocKeydown, true);
   doc.addEventListener('keydown', onChatKeys);       // #948 s2: the Chat page keys
@@ -6845,6 +6966,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (chatsCol) { chatsCol.destroy(); chatsCol = null; }
     doc.removeEventListener('pointerdown', onDocPointerdown, true);
     doc.removeEventListener('worca:level', onLevelChange);
+    focusKeep.destroy();
+    doc.removeEventListener('keydown', onScrollKey, true);
+    doc.removeEventListener('pointerup', onScrollRelease, true);
+    doc.removeEventListener('pointercancel', onScrollRelease, true);
+    win.removeEventListener('blur', onScrollRelease);
     win.removeEventListener('resize', onWinResize);
     win.removeEventListener('hashchange', onHashChange);
     if (dockRo) { dockRo.disconnect(); dockRo = null; }

@@ -463,7 +463,7 @@ test('controller: a `done` frame re-reads only the cards of THAT run; the late r
   }
 });
 
-test('S9: the control the user is in, inside the card, keeps the focus (and its value) when ask-panel rebuilds the transcript — Chrome restores the caret with the focus', async () => {
+test('S9: the control the user is in, inside the card, keeps the focus (and its value) when ask-panel repaints the card\'s row — Chrome restores the caret with the focus (#958: the panel\'s one column watcher)', async () => {
   _resetChatExtensions();
   const store = fakeStore();
   const ask = { id: 'q-1', kind: 'questions', nodeId: 'n_plan', questions: [{ id: 'q1', question: 'Which database?', options: [] }] };
@@ -488,11 +488,12 @@ test('S9: the control the user is in, inside the card, keeps the focus (and its 
   const field = card.querySelector('.chat-rc-q .qfree');
   assert.ok(field, 'the question field is in the card');
   let seq = 1;
-  // A new thread row (a follower notice, a direction row): renderTranscript re-appends the cached card in a new row.
+  // #958: a new thread row no longer moves the card (rows reconcile). The card's own message comes again with a fresh
+  // notice: its tail re-renders and re-appends the cached card inside its row, a real move.
   const newRow = async () => {
     seq += 1;
     ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID,
-      message: { id: `askm_0000001${seq}`, threadId: TID, seq, role: 'system', text: `note ${seq}`, blocks: [{ kind: 'notice', text: `note ${seq}` }], status: null, createdAt: 't' } });
+      message: { id: 'askm_00000001', threadId: TID, seq: 1, role: 'assistant', text: '', blocks: [BLOCK, { kind: 'notice', id: `n${seq}`, text: `note ${seq}` }], status: 'done', createdAt: 't' } });
     ctx.flush();
     await ctx.tick();
   };
@@ -502,8 +503,13 @@ test('S9: the control the user is in, inside the card, keeps the focus (and its 
       field.value = 'Postgres 16';
       field.setSelectionRange(3, 5);
       const row = card.parentNode;
+      const removed = [];
+      const mo = new ctx.window.MutationObserver((rs) => { for (const r of rs) removed.push(...r.removedNodes); });
+      mo.observe(row, { childList: true });
       await newRow();
-      assert.notEqual(card.parentNode, row, 'the card was re-appended into a new row');
+      mo.disconnect();
+      assert.ok(removed.includes(card), 'the card really moved: it was taken out of its row');
+      assert.equal(card.parentNode, row, 'and put back into the same row');
       assert.equal(ctx.doc.activeElement, field);
       assert.deepEqual([field.selectionStart, field.selectionEnd], [3, 5]);
       assert.equal(field.value, 'Postgres 16');
@@ -596,18 +602,21 @@ test('S9: the control the user is in, inside the card, keeps the focus (and its 
       assert.equal(ctx.doc.activeElement, field);
       assert.deepEqual(seen, [{ preventScroll: true }]);
     } },
-    { name: 'disposing the card ends the watch', run: async () => {
+    { name: 'destroying the panel ends the watch', run: async () => {
       field.focus();
-      let cut = 0;
-      const proto = ctx.window.MutationObserver.prototype;
-      const disconnect = proto.disconnect;
-      proto.disconnect = function counted() { cut += 1; return disconnect.call(this); };
-      ctl.destroy();
-      proto.disconnect = disconnect;
-      assert.equal(cut, 1);
+      ctx.panel.destroy();
+      ctx.doc.body.appendChild(ctx.panel.root);
+      const r = card.parentNode;
+      r.removeChild(card); r.appendChild(card); await ctx.tick();
+      assert.notEqual(ctx.doc.activeElement, field, 'the watch ended with the panel');
+      field.focus();
+      r.removeChild(card); r.appendChild(card); await ctx.tick();
+      assert.notEqual(ctx.doc.activeElement, field, 'no watcher re-armed');
+      ctx.panel.root.remove();
     } },
   ]);
   ctx.panel.destroy();
+  ctl.destroy();
   _resetChatExtensions();
 });
 
