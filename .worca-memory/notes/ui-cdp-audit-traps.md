@@ -2,7 +2,7 @@
 name: ui-cdp-audit-traps
 description: Read before adding a view, card, dialog, CSS class, colour or layout rule in ui/public, or auditing one in Chrome — cascade, layout, suite guards, theme
 paths: ui/public/style.css, ui/public/index.html, ui/public/app.js, ui/public/*-view.mjs, ui/public/topnav.mjs, ui/public/marketplace/*.mjs, ui/public/graph/inspector.mjs, tools/verify-*-cdp.mjs, test/ui-*.test.mjs, docs/ui-primitives/mockup.html
-updated: 2026-10-24T15:55:36.602Z
+updated: 2026-10-25T02:06:35.113Z
 author: Denislav Prinov
 ---
 
@@ -27,6 +27,7 @@ jsdom has no cascade or layout: these pass every jsdom test and the suite (a rul
 - Every `position:fixed` overlay with `top:0` paints over a new band (the header has no z-index on purpose): recompute each; stacked sticky bars hide `scrollIntoView` targets (`scroll-margin-top`).
 - Top bar grid (settled): `minmax(32px,1fr) minmax(240px,440px) minmax(max-content,1fr)` — never `min-content` left, a one-sided floor starves the other side; phones (≤ 760) `auto auto`. Floor ≈ 534 px: below it the right slot slides under `.term-pane` (z 39). Hit-test every control with 1 px `elementFromPoint` scans at 820, 1100, 1280/1440, terminal 460 and max width.
 - Run screens re-hosted narrower: `.rd-questions .gate-actions .btn{flex:0 0 auto}` overflows LEFT under ~350 px (restate `flex:0 1 auto; max-width:100%; white-space:normal`; one-column `.issue`, `align-self:start` on `.issue-sev`). `.rd-bar-end` needs ~670 px with the Away select (paused Resume 137 px > Pause 91 px; only the select may shrink): probe running AND paused, at 360 px too. Viewport media queries never fire for a squeezed column: container query (`inline-size` adds no layout containment). `animation … both` with a transform leaves a containing block: `backwards`.
+- A host that slides in from `width:0` (the Ask side column's `askSideIn`) measures everything at open squeezed: `fitInput()` left the empty composer at its 120 px cap on EVERY show for 4 refine cycles (one even recorded the 234 px strip as normal). Refit on a width change (the existing ResizeObserver, keyed on the field's width); in Chrome compare a motion open with a reduced-motion one.
 - Graph wells: `mountRunGraph` `'focus'` keeps cards as tab stops (give the host `inert`); an underline at `bottom:-1px` in `overflow-x:auto` clips (`bottom:0` + inset box-shadow). Copying the Library look: `.wfv :is(input,textarea)::placeholder` (0,1,2) beats a copied one outside `.wfv`; compare `getComputedStyle(el, '::placeholder')`.
 - `.seg button` keeps UA `line-height:normal` (38 px beside a 34 px `.page-btn`); `flex:1 1 280px` on a short `.sub` wraps actions early.
 
