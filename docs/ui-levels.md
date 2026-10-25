@@ -188,9 +188,9 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Run page Overview: Perspective checklists (Shaper, gated): the latest review cycle as one summary line, unmet items open with their evidence, met items behind "Show N met items", earlier cycles behind "Earlier cycles" | S |
 | Run page: usage-limit notice (reset time, Resume at HH:MM, Cancel) | S |
 | Runs list / glance: "resets HH:MM" / "resumes HH:MM" | S |
-| Runs list: the View menu (Show with counts, Group by, Started by on a shared deployment, Select) and its chip; the row and member checkboxes, Select all, Space / ⌘A / Esc; the action bar's Stop and Archive (Undo); the row ⋯ menu's Stop, Archive, View PR and Open feature | S |
+| Runs list: the View menu (Show with counts, Group by, Started by on a shared deployment, Select, Keyboard shortcuts) and its chip; the row and member checkboxes, Select all, Space / ⌘A / Esc; the list keys (↑ ↓ / J K, ↵, → ←, `.`, S, E, Space, ⇧↑ ⇧↓, ⌘A, Esc), `?` and the Keyboard shortcuts sheet; the action bar's Stop and Archive (Undo); the row ⋯ menu's Stop, Archive (Restore on an archived row), View PR and Open feature, each with its key as a hint | S |
 | Runs list: the label filter (chosen from the top search, "Runs labelled hotfix" or label:hotfix) and its chips with × under the header; the action bar's Label (with runLabels) | S |
-| Runs list: Delete (the action bar and the row ⋯ menu); Add to group… and Remove from group (the row ⋯ menu) | A |
+| Runs list: Delete (the action bar and the row ⋯ menu); Add to group… and Remove from group (the row ⋯ menu); their keys ⌫, G and ⇧G | A |
 | Run page: "Add to group…" on the Group row of a run in no group, the same as in the list's row menu | A |
 | Resume menu: Resume at HH:MM (when the limit resets) | A |
 | Run page glance: the run's name as the page title, the status line (state, then the step), time · cost (with its Away mode share) · changes; the Cost tags row under them (with `runTags`), the Live view switch and its fogged graph of the running step(s), parallel steps (Now), one row per tab, a waiting question below its own heading, the result actions | S |
@@ -320,6 +320,7 @@ inside the view.
 | General: Appearance, Alerts, Interface mode, Getting started, About | S |
 | Runs tab: Budget & cost limits (incl. Resume runs automatically when a usage limit resets) | S |
 | Runs tab: Pull requests (Draft the PR description with AI automatically) | S |
+| Runs tab: Network proxy | S — timeouts and the local port under More |
 | Labs tab (feature flags) | S — flags are independent of levels (docs/feature-flags.md) |
 | General: root folders; Runs tab: Scheduled runs defaults, Workspaces (scan models), chat notifications; Chat tab (limits, tools, web access, chat history) | A |
 | Runs tab: Actions (keep policy, port range, editor/terminal, cap) | A |
@@ -339,6 +340,7 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Marketplace page: the Browse, Installed and Marketplaces tabs, install, update, Add marketplace, Health (Check health), leftover data and Purge | A |
 | Connectors page: the Sets, Servers and Skills views | A |
 | Models page: the catalog, and the Engines card (Default engine, Models per engine: Step models and Helper jobs tables, including titles, Auto classifier, PR description, Memory defragment, Agent generation and, behind the `requirements` flag, Requirements interview) | E |
+| Models page: the Roles card (Deep thinking, Everyday coding, Quick jobs per harness; its Claude / Codex switch is E). The Models nav entry is E, so below Expert the card opens from the `#models` address until the setup assistant adds a Simple-level way in | S |
 | Models page: the catalog toolbar (search, filter chips, folding groups), the editor dialog's Connection section, the Import-models dialog (Copilot and OpenAI-compatible sources) | E |
 | Providers page: Providers card (Copilot sign-in, account type, concurrency cap, key rows) and its Import-models shortcuts | E |
 | The Copilot notice modal; a card's "needs sign-in" pill and button; the New pipeline caption's "needs sign-in" note | all (rule 1 — they block a run) |

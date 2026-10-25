@@ -51,6 +51,7 @@ import { renderPromptArtifact } from './phases.mjs';
 import { listModels, modelHasBaseUrlRouting, resolveRunConfig, stepSlotDefaults, slotSourceLines } from './config.mjs';
 import { defragSlotPair, utilityModelFor } from './settings-cascade.mjs';
 import { resolveDefragModel, agentPairText } from './memory-defrag-model.mjs';
+import { withRole } from './model-roles.mjs';
 import { describeScanModels } from './workspace-scan-run.mjs';
 import { assembleShape, normalizeShape, ShapeError } from '../shared/graph/assemble.mjs';
 import { blockingIssues } from '../shared/graph/verdict.mjs';
@@ -189,7 +190,7 @@ export class GraphOrchestrator extends RunHarness {
     const hasWires = Object.keys(overlayWires).length > 0;
     const overlay = hasNodes || hasWires ? { ...(hasNodes ? { nodes: overlayNodes } : {}), ...(hasWires ? { wires: overlayWires } : {}) } : null;
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
-      engine: this.claude.engine || 'claude', isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(overlay ? { overlay } : {}), ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
+      engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(overlay ? { overlay } : {}), ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
       ...(scan ? { agentPair: scan.agentPair, subagentPin: scan.subagentPin } : {}),
     });
     this._adoptResolvedGraph(resolved);
@@ -239,7 +240,8 @@ export class GraphOrchestrator extends RunHarness {
   async _defragAgentPair() {
     const engine = this.claude.engine || 'claude';
     const explicit = { model: this.claude.model, effort: this.claude.effort };
-    const stored = defragSlotPair(engine, this._settingsScope());
+    // Model roles (D3): an unset defragment slot takes the quick role.
+    const stored = withRole(defragSlotPair(engine, this._settingsScope()), engine, 'memoryDefrag');
     // The catalog read only when the setting is the one that decides.
     const models = !(typeof explicit.model === 'string' && explicit.model.trim()) && stored.model
       ? (await listModels(this.projectDir)).filter((m) => runsOn(m, engine)) : [];
@@ -605,7 +607,7 @@ export class GraphOrchestrator extends RunHarness {
     for (const [nodeId, sel] of Object.entries(tunables || {})) overlayNodes[nodeId] = { ...sel };
     for (const [nodeId, sel] of Object.entries(answer.nodes || {})) overlayNodes[nodeId] = { ...(overlayNodes[nodeId] || {}), ...sel };
     const resolved = await resolveGraph(this.projectDir, workflowId, registry, this.agentsDir, {
-      engine: this.claude.engine || 'claude', isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
+      engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
     });
     if (!this.humanInLoop) {
       // spec D3: no agent may stop the run to ask (generic — every agent node).
@@ -2068,6 +2070,7 @@ export class GraphOrchestrator extends RunHarness {
       if (status === 'start') step.endedAt = null;
     }
     if (terminal) step.endedAt = now;
+    if (this.telemetry) this.telemetry.stepStatus(key, ctx.nodeId, status);
     // Turns this execution's spawn never closed with a `result` (a pause, a stop, a crash, a retried
     // attempt): counted apart on the row (run-harness _closeOpenTurns). A result already cleared them.
     // At 'start' only on RE-entry (a retry, a resume): a fresh execution has nothing of its own to

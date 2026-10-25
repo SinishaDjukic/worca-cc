@@ -1,9 +1,10 @@
 // src/core/title.mjs
 import { runClaude } from './claude-runner.mjs';
 import { normalizingOnEvent } from './engines/claude-events.mjs';
-import { resolveModelEnv, resolveModelCost, catalogHasModel } from './config.mjs';
+import { resolveModelEnv, resolveModelCost, catalogHasModel, estimateCost, isPriceableUsage } from './config.mjs';
 import { titleModel as storedTitleModel } from './settings.mjs';
 import { AUX_EFFORT } from './model-env.mjs';
+import { roleModelFor } from './model-roles.mjs';
 import { withRecoveryRetry } from './recovery-backoff.mjs';
 import { bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
@@ -37,6 +38,8 @@ export function clipTitle(text, max) {
   return (sp >= Math.floor(max / 2) ? cut.slice(0, sp) : t.slice(0, max)).replace(/[\s,;:–—-]+$/, '').trim();
 }
 
+const roleTitleModel = () => roleModelFor('claude', 'titleModel')?.model || '';
+
 /**
  * Which model writes a title, decided PER CALL (#422) — nothing is captured at
  * import, so a Settings save or an env change reaches the very next title:
@@ -45,19 +48,20 @@ export function clipTitle(text, max) {
  *                                verbatim, no catalog check: an operator escape hatch
  *   3. the stored `titleModel` — only while it is still a catalog member; a stale
  *                                id (plugin removed, entry deleted) is reported and skipped
- *   4. `opts.runModel`         — the model of the run / chat that asked for the title,
+ *   4. the quick model role    — modelRoles.claude.quick (D3), only while it is a catalog member
+ *   5. `opts.runModel`         — the model of the run / chat that asked for the title,
  *                                which is what makes an install with NO first-party
  *                                model produce titles with zero configuration
- *   5. DEFAULT_TITLE_MODEL     — the built-in Haiku, only while it is a catalog member
+ *   6. DEFAULT_TITLE_MODEL     — the built-in Haiku, only while it is a catalog member
  *                                and ready; otherwise model null: NO --model flag, the
  *                                claude CLI's own default (a title never hinges on Haiku)
  * Pure apart from the injectable readers. Exported for tests and for the
  * settings API (describeTitleModel below).
  * @param {{model?:string, runModel?:string}} [opts]
- * @param {{env?:NodeJS.ProcessEnv, stored?:()=>string|null, inCatalog?:(id:string)=>boolean, ready?:(id:string)=>boolean}} [deps]
- * @returns {{model:string|null, source:'explicit'|'env'|'settings'|'run'|'builtin', stale:string|null}}
+ * @param {{env?:NodeJS.ProcessEnv, stored?:()=>string|null, role?:()=>string, inCatalog?:(id:string)=>boolean, ready?:(id:string)=>boolean}} [deps]
+ * @returns {{model:string|null, source:'explicit'|'env'|'settings'|'role'|'run'|'builtin', stale:string|null}}
  */
-export function resolveTitleModel(opts = {}, { env = process.env, stored = storedTitleModel, inCatalog = (id) => catalogHasModel(id, { engine: 'claude' }), ready = modelReady } = {}) {
+export function resolveTitleModel(opts = {}, { env = process.env, stored = storedTitleModel, role = roleTitleModel, inCatalog = (id) => catalogHasModel(id, { engine: 'claude' }), ready = modelReady } = {}) {
   const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : '');
   const explicit = str(opts.model);
   if (explicit) return { model: explicit, source: 'explicit', stale: null };
@@ -69,6 +73,8 @@ export function resolveTitleModel(opts = {}, { env = process.env, stored = store
     if (inCatalog(configured)) return { model: configured, source: 'settings', stale: null };
     stale = configured;
   }
+  const fromRole = str(role());
+  if (fromRole && inCatalog(fromRole)) return { model: fromRole, source: 'role', stale };
   const runModel = str(opts.runModel);
   if (runModel) return { model: runModel, source: 'run', stale };
   const builtin = inCatalog(DEFAULT_TITLE_MODEL) && ready(DEFAULT_TITLE_MODEL) ? DEFAULT_TITLE_MODEL : null;
@@ -195,7 +201,9 @@ export async function auxTextCall({ systemPrompt, prompt, model, engine = null }
       // env (design §4.8) — a global entry matching this id carries its routing
       // env everywhere the id is used.
       modelEnv: engine ? undefined : resolveModelEnv(model, { tag: opts.bridgeTag || undefined }),   // tag: read a bridged model's upstream cost back
-      ...(engine ? { engine, sandbox: 'read-only' } : {}),
+      // A chat's helper call (its title, its next-prompt suggestion) runs locked down exactly as the chat does, with no MCP
+      // server at all (askLockdown, no --mcp-config): the engine's own tools are off, so it needs no read-only mode.
+      ...(engine ? { engine, sandbox: 'read-only', ...(opts.askLockdown ? { askLockdown: true, envScrub: true } : {}) } : {}),
       effort: opts.effortOverride || (engine && typeof opts.effort === 'string' && opts.effort) || AUX_EFFORT,
       permissionMode: opts.permissionMode || 'acceptEdits',
       allowedTools: [],            // empty → no --allowedTools flag → claude defaults; pure text gen
@@ -225,6 +233,9 @@ export async function auxTextCall({ systemPrompt, prompt, model, engine = null }
       mcpConfigPath: opts.mcpConfigPath,
       // Every priced result is real spend (a 429 retry spawns again): hand it to the caller to book.
       onEvent: normalizingOnEvent((e) => {
+        // A locked-down chat's helper call on an engine that reports no cost: priced from its tokens with the chat's
+        // rates (opts.rates, ask/chat-price.mjs), as the chat's own turns are.
+        if (e?.type === 'result' && e.costUsd == null && engine && opts.rates && isPriceableUsage(e.usage)) e = { ...e, costUsd: estimateCost(e.usage, opts.rates) };
         if (e?.type !== 'result' || e.costUsd == null || typeof opts.onCost !== 'function') return;
         const usage = e.usage ?? null;
         const up = opts.bridgeTag ? bridgeCostFor(opts.bridgeTag) : null;   // a bridged model: the upstream's own figure wins

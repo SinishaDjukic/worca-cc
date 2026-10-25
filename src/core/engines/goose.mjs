@@ -31,12 +31,28 @@
 //   opens with `server/discover` (MCP 2026-07-28) and falls back to `initialize` on "method not found".
 // - Assumed absent (capability false): a per-spawn tool allowlist, permission rules worca can set per spawn (goose's
 //   permission.yaml is per tool name and user-wide), sub-agents (the summon extension is not loaded), skills, hooks,
-//   a turn or spend cap worca can count on. Ask and read-only spawns refuse: GOOSE_MODE=chat would also skip worca's
-//   own MCP tools, and a chat without the developer extension is not wired up yet.
+//   a turn or spend cap worca can count on. A read-only spawn refuses (no verified read-only mode).
+//
+// Chat (Ask Worca) on Goose, verified on goose 1.56.0 (conda-forge goose-cli) against a local model endpoint
+// (plans/ask-on-qwen-gemini-spike.md):
+// - `--no-profile` with no `--with-builtin` leaves the model worca's extension and goose's `load_skill` only: the
+//   developer tools, the extension manager (which could turn developer back on), todo, chat recall, summon / delegate
+//   and apps are not offered, and a call to one is "Tool '…' is not available". Without `--no-profile`, goose's default
+//   platform extensions (delegate, apps, extension manager, analyze, …) are added.
+// - But goose still reads the user's home under `--no-profile`: plugins in ~/.agents/plugins (a plugin's hooks.json
+//   command RAN on session start), and the skills `load_skill` serves (~/.config/goose/skills, ~/.claude/skills,
+//   ~/.agents/skills, plugin skills). So a chat runs goose with HOME and the XDG folders in a home of its own under
+//   worca's home (the same every turn, so its sessions resume); `load_skill` then knows only goose's built-in skills
+//   (goose-doc-guide, web-search: text), refuses a path outside a skill's folder, and is kept as a named meta tool.
+//   worca's MCP child gets the real HOME back. Provider keys then come from the env or the keyring, not ~/.config/goose.
+// - A provider that is itself an agent CLI (claude-acp, codex-acp, cursor-agent, gemini-cli, …) runs that CLI's own
+//   tools, out of goose's reach: a chat never runs on one.
 import { mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { worcaHome } from '../projects.mjs';
+import { agentIdentityFor } from '../agent-pool.mjs';
+import { currentOwner } from '../billing.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
@@ -45,6 +61,9 @@ import { strongestClass } from '../recoverable-error.mjs';
 import { scopeLauncherEnv } from '../mcp/launch.mjs';
 import { expandMcpRefs } from './codex.mjs';
 import { ARGV_INLINE_LIMIT } from './claude.mjs';
+import { homedir } from 'node:os';
+import { makeChatDescriptor, providerEnvPrefixes, providerListRates } from './chat-descriptor.mjs';
+import { chatSelfTest } from './chat-selftest.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const gooseDefaultBin = () => process.env.WORCA_GOOSE_BIN || 'goose';
@@ -66,8 +85,21 @@ export const gooseCapabilities = Object.freeze(Object.fromEntries(CAPABILITY_KEY
 /** GOOSE_THINKING_EFFORT values worca offers (model-env.mjs, the zero-import leaf settings validate against). */
 export { GOOSE_EFFORTS } from '../model-env.mjs';
 
-/** Ask Worca on Goose: a verified lockdown. null = none, so Ask stays off (model-env.mjs ASK_ENGINES). */
-export const GOOSE_ASK_LOCKDOWN = null;
+/** Chat on Goose (see the chat notes above): `--no-profile`, no built-in extension, a home of its own, worca's extension
+ *  only; `load_skill` is its one meta tool. Proven per binary by the chat self-test. */
+export const GOOSE_ASK_LOCKDOWN = Object.freeze({ builtins: Object.freeze([]), metaTools: Object.freeze(['load_skill']) });
+/** The chat's own home (HOME and the XDG folders) under worca's home. */
+export const gooseChatHome = () => join(worcaHome(), 'engines', 'goose', 'chat-home');
+/** A relayed chat's home (the chat runs as the person's agent user): a worca folder in that user's own home. */
+export const gooseAgentChatHome = (agentHome) => join(agentHome, '.worca', 'goose-chat-home');
+/** Goose providers that are agent CLIs of their own (ACP agents, CLI wrappers): their tools are out of goose's reach. */
+const AGENT_PROVIDER_RE = /(?:^|[-_])acp$|^(?:claude[-_]code|codex|cursor[-_]agent|gemini[-_]cli|copilot|amp|pi)(?:[-_]acp)?$/i;
+/** Why `id` cannot run a Goose chat (its provider is an agent CLI), or null. */
+export function gooseChatModelProblem(id) {
+  const m = splitGooseModel(id);
+  const provider = m ? m.provider : String(id || '').split('/')[0];
+  return provider && AGENT_PROVIDER_RE.test(provider) ? `its provider ${provider} is an agent CLI that runs its own tools, which a chat cannot switch off` : null;
+}
 
 /** A worca model id as goose's `--provider` and `--model`: split at the first `/` (an OpenRouter model keeps its own). */
 export function splitGooseModel(id) {
@@ -159,8 +191,9 @@ export const GOOSE_ARGV_LIMIT = process.platform === 'win32' ? ARGV_INLINE_LIMIT
 
 /** `goose run -q --output-format stream-json --no-profile --with-builtin developer [--provider P --model M]
  *  [--system S] [--with-extension W]… (--name N | --resume --name N) -i -`; the prompt goes on stdin. */
-export function buildGooseArgs({ model, systemPrompt, sessionName, resume = false, extensions = [] } = {}) {
-  const args = ['run', '-q', '--output-format', 'stream-json', '--no-profile', '--with-builtin', 'developer'];
+export function buildGooseArgs({ model, systemPrompt, sessionName, resume = false, extensions = [], ask = false } = {}) {
+  // A chat (GOOSE_ASK_LOCKDOWN) adds no built-in extension: no developer tools.
+  const args = ['run', '-q', '--output-format', 'stream-json', '--no-profile', ...(ask ? [] : ['--with-builtin', 'developer'])];
   const m = splitGooseModel(model);
   if (m) args.push('--provider', m.provider, '--model', m.model);
   if (systemPrompt) args.push('--system', String(systemPrompt));
@@ -278,7 +311,8 @@ export function createGooseNormalizer({ model = null, sessionName, mcpServers = 
       completed = true;
       usage = claudeStyleUsage(evt);
       if (Number.isFinite(evt.cost_usd)) costUsd = evt.cost_usd;
-      out.push({ type: 'usage', messageId: null, parentId: null, phase: 'message', model: model || null, usage });
+      // `total`: the session's sum, not one model call (Run telemetry reads it; everyone else ignores it).
+      out.push({ type: 'usage', messageId: null, parentId: null, phase: 'message', model: model || null, usage, total: true });
       return out;
     }
     if (evt.type === 'error') {
@@ -344,11 +378,14 @@ export const GOOSE_RESUME_NOT_FOUND_RE = /No session found with name/i;
 export async function runGooseProcess({
   cwd = process.cwd(), systemPrompt = '', prompt = '', model, effort, onEvent = () => {}, signal,
   bin = gooseDefaultBin(), resumeSessionId, sandbox, askLockdown, envScrub, envAllowlist, asAgent,
-  mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, scratchBase = null, platform = process.platform,
+  mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, scratchBase = null, platform = process.platform, probe = null,
+  chatHome = null,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
-  if (askLockdown) throw new Error(`${bin}: Goose has no verified lockdown for a chat — Chat on Goose is unavailable`);
-  if (sandbox === 'read-only') throw new Error(`${bin}: Goose has no verified read-only mode — a read-only job runs on Claude instead`);
+  const ask = !!askLockdown;
+  if (sandbox === 'read-only' && !ask) throw new Error(`${bin}: Goose has no verified read-only mode — a read-only job runs on Claude instead`);
+  if (ask && platform === 'win32') throw new Error(`${bin}: a chat on Goose is not verified on Windows`);
+  if (ask && gooseChatModelProblem(model)) throw new Error(`${bin}: ${model} cannot run a chat on Goose: ${gooseChatModelProblem(model)}`);
   const secrets = Array.isArray(redactValues) ? redactValues : [];
   const redactor = secrets.length ? createRedactor(secrets) : null;
   if (redactor) { const emit = onEvent; onEvent = (e) => emit(redactor.deep(e)); }
@@ -361,8 +398,16 @@ export async function runGooseProcess({
   let session = gooseSessionOf(resumeSessionId);
   if (resumeSessionId && !session) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] goose: stored session ${JSON.stringify(String(resumeSessionId).slice(0, 12))}… is not a Goose session — starting a fresh one` });
 
+  // A relayed chat runs goose as the person's agent user (agent-user.mjs), which cannot write worca's home: its chat home
+  // is a worca folder in that user's own home (as a relayed chat on another engine reads that user's own config), which
+  // goose creates itself. Otherwise it is worca's (gooseChatHome).
+  const agentId = ask && asAgent ? agentIdentityFor(currentOwner()) : null;
+  const home = chatHome || (agentId ? gooseAgentChatHome(agentId.home) : gooseChatHome());
+  const realHome = agentId ? agentId.home : (process.env.HOME || homedir());
+
   const guardOn = hostGuardEnabled();
-  const envOpts = { envScrub, envAllowlist, prefixes: ['GOOSE_'], hostPid: guardOn ? process.pid : null };
+  // A chat keeps its model's provider env too (its key in worca's environment): it has no shell to read it.
+  const envOpts = { envScrub, envAllowlist, prefixes: ['GOOSE_', ...(ask ? providerEnvPrefixes(model) : [])], hostPid: guardOn ? process.pid : null };
 
   // MCP: each stdio server becomes a wrapper script (on Windows: its command line as it is, gooseMcpDirect). goose stores
   // a session's extensions and starts them again on resume, so the wrappers live in a folder named after the session
@@ -381,10 +426,15 @@ export async function runGooseProcess({
     const problems = gooseMcpProblems(all);
     const skip = new Set(problems.map((p) => p.name));
     if (skip.size) safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] MCP servers not attached on goose — ${problems.map((p) => `${p.name} (${p.reason})`).join(', ')}` });
-    const kept = Object.fromEntries(Object.entries(all).filter(([n]) => !skip.has(n)).map(([n, srv]) => [n, scopeLauncherEnv(srv)]));
+    // A chat: the child of each server gets the real HOME back (the chat runs goose in a home of its own) and the spawn
+    // env (the command bridge token, SSH_AUTH_SOCK, the web search key) by reference.
+    const refNames = ask ? [...new Set([...Object.keys(cleanRunEnv(runSpawnEnv) || {}), ...(envAllowlist || []).filter((k) => typeof process.env[k] === 'string' && process.env[k] !== '')])] : [];
+    const forAsk = (srv) => (ask && srv && typeof srv.command === 'string'
+      ? { ...srv, env: { ...Object.fromEntries(refNames.map((k) => [k, `\${${k}}`])), HOME: realHome, ...(srv.env && typeof srv.env === 'object' ? srv.env : {}) } } : srv);
+    const kept = Object.fromEntries(Object.entries(all).filter(([n]) => !skip.has(n)).map(([n, srv]) => [n, scopeLauncherEnv(forAsk(srv))]));
     if (Object.keys(kept).length) {
       // `${VAR}` references expand from this spawn's env plus the run's spawn env, as Claude Code would expand them.
-      const from = composeSpawnEnv({ ...envOpts, runEnv: cleanRunEnv(runSpawnEnv) }).env;
+      const from = { ...composeSpawnEnv({ ...envOpts, runEnv: cleanRunEnv(runSpawnEnv) }).env, ...(ask ? Object.fromEntries((envAllowlist || []).filter((k) => typeof process.env[k] === 'string').map((k) => [k, process.env[k]])) : {}) };
       const expanded = expandMcpRefs(kept, from);
       if (platform === 'win32') ({ extensions: direct, env: mcpEnv } = gooseMcpDirect(expanded));
       else ({ scripts, env: mcpEnv } = gooseMcpWrappers(expanded));
@@ -413,6 +463,13 @@ export async function runGooseProcess({
   const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(mcpEnv).length ? { runEnv: mcpEnv } : {}) });
   // Headless: approve / smart_approve would wait for a TTY. PWD follows the cwd (an inherited one names worca's folder).
   Object.assign(env, { PWD: cwd, GOOSE_MODE: 'auto' });
+  if (ask) {
+    // The chat's own home: none of the user's plugins, hooks, skills or hints (see the chat notes above).
+    if (!agentId) for (const d of ['.config', '.local/share', '.local/state', '.cache']) mkdirSync(join(home, d), { recursive: true, mode: 0o700 });
+    Object.assign(env, { HOME: home, XDG_CONFIG_HOME: join(home, '.config'), XDG_DATA_HOME: join(home, '.local', 'share'),
+      XDG_STATE_HOME: join(home, '.local', 'state'), XDG_CACHE_HOME: join(home, '.cache') });
+  }
+  if (probe) Object.assign(env, probe.env);
   if (effort) env.GOOSE_THINKING_EFFORT = String(effort);
   // P3-D20: the run env stays out of this child's env, but the git ceiling of a run without a project must reach its git.
   if (typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string') env.GIT_CEILING_DIRECTORIES = runSpawnEnv.GIT_CEILING_DIRECTORIES;
@@ -432,9 +489,10 @@ export async function runGooseProcess({
       // Pause/Resume: the runner's own session event (no `init`) is the one the harness stamps on the step.
       if (e.type === 'session') { sawSession = true; safeEmit(onEvent, { type: 'session', sessionId: e.sessionId }); }
     };
-    const args = buildGooseArgs({ model, systemPrompt: sys, sessionName, resume: !!resumeName, extensions });
+    const args = buildGooseArgs({ model, systemPrompt: sys, sessionName, resume: !!resumeName, extensions, ask });
     const res = await superviseSpawn({
       file: bin, args, displayBin: bin, cwd, env, stdin, signal: spawnSignal, asAgent, stagedDir: asAgent ? dir : null, onEvent,
+      ...(ask && agentId ? { agentHome: () => home } : {}),
       cleanup: () => {},
       stdoutErrorDetail: () => { const e = normalizer.finish().error; return e && e !== NO_COMPLETE ? e : ''; },
       classify: (m) => classifyGooseError(m),
@@ -466,7 +524,8 @@ export async function runGooseProcess({
       out = await attempt(session);
     } catch (err) {
       // A resumed session goose no longer knows (before any event): one fresh attempt, said out loud.
-      if (!session || err?.sawSession || err?.name === 'AbortError' || !GOOSE_RESUME_NOT_FOUND_RE.test(String(err?.message || ''))) throw err;
+      // A chat's is the turn's to handle (ask/turn.mjs resumeNotFound: it retries from history).
+      if (ask || !session || err?.sawSession || err?.name === 'AbortError' || !GOOSE_RESUME_NOT_FOUND_RE.test(String(err?.message || ''))) throw err;
       safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] goose: session ${session.slice(0, 24)}… is gone — starting a fresh one` });
       session = null;
       out = await attempt(null);
@@ -482,3 +541,50 @@ export async function runGooseProcess({
     cleanup();
   }
 }
+
+// ── chat ─────────────────────────────────────────────────────────────────────
+
+/** The oldest goose the chat lockdown was verified on. */
+export const GOOSE_ASK_MIN_VERSION = '1.56.0';
+
+/** Can this goose be locked down for a chat? At least GOOSE_ASK_MIN_VERSION, with `--no-profile`. Never rejects. */
+export function gooseAskSupport({ bin = gooseDefaultBin(), timeoutMs = 15000 } = {}) {
+  const run = (args) => new Promise((resolve) => { execFile(bin, args, { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => resolve({ err, out: String(stdout || '') })); });
+  return (async () => {
+    const v = await run(['--version']);
+    if (v.err) return { refusal: /^(ENOENT|EACCES|EINVAL)$/.test(String(v.err.code)) ? `cannot run ${bin} (${v.err.code}) — install the Goose CLI, or point WORCA_GOOSE_BIN at it` : `could not ask ${bin} its version (${v.err.message})` };
+    const n = (/(\d+)\.(\d+)\.(\d+)/.exec(v.out) || []).slice(1).map(Number);
+    const min = GOOSE_ASK_MIN_VERSION.split('.').map(Number);
+    const older = n.length !== 3 || n[0] < min[0] || (n[0] === min[0] && (n[1] < min[1] || (n[1] === min[1] && n[2] < min[2])));
+    if (older) return { refusal: `this ${bin} is ${v.out.trim() || 'of an unknown version'}; a chat needs goose ${GOOSE_ASK_MIN_VERSION} or newer — update it` };
+    const h = await run(['run', '--help']);
+    return /--no-profile/.test(h.out) ? {} : { refusal: `this ${bin} has no --no-profile to lock a chat down — update goose to ${GOOSE_ASK_MIN_VERSION} or newer` };
+  })();
+}
+
+/** The chat self-test on this goose (engines/chat-selftest.mjs): its OpenAI provider at a local endpoint. The chat runs
+ *  in a home of its own, so no user config file is in its key. */
+export function gooseChatSelfTest({ bin = gooseDefaultBin(), ...o } = {}) {
+  return chatSelfTest({
+    engine: 'goose', label: 'Goose', bin, protocol: 'openai', model: 'openai/worca-self-test', run: runGooseProcess,
+    probeEnv: (url) => ({ OPENAI_HOST: url, OPENAI_BASE_PATH: 'v1/chat/completions', OPENAI_API_KEY: 'worca-self-test' }),
+    wireName: (server, tool) => `${server}__${tool}`, shellTool: 'shell', metaTools: GOOSE_ASK_LOCKDOWN.metaTools, ...o,
+  });
+}
+
+/** Goose's chat descriptor (engines/chat-descriptor.mjs). A chat's spend is priced with worca's prices (the Models page,
+ *  else the list price of an anthropic/… or openai/… model), as on every engine. Each `impl` is the function a test hands
+ *  the turn. */
+export const gooseChat = makeChatDescriptor({
+  engine: 'goose',
+  lockdown: () => GOOSE_ASK_LOCKDOWN,
+  askSupport: (o, impl = gooseAskSupport) => impl(o),
+  selfTest: (o, impl = gooseChatSelfTest) => impl(o),
+  preflight: (_ctx, impl = goosePreflight) => impl(),
+  resumeNotFound: (err) => GOOSE_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
+  metaTools: GOOSE_ASK_LOCKDOWN.metaTools,
+  modelProblem: gooseChatModelProblem,
+  signIn: (model) => ['GOOSE_', ...providerEnvPrefixes(model)],
+  listRates: providerListRates,
+  prompt: { cli: "Goose with Goose's own providers" },
+});

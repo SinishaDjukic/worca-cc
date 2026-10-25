@@ -50,17 +50,24 @@ export function viewChip(v, { shown, total, personName = '' }) {
   return parts.join(' · ');
 }
 
-/** Items for openMenu. `onPick(patch)` gets {show} | {groupBy} | {person} | {select: true}. */
-export function viewMenuItems(v, counts, { people = [], onPick }) {
+/** Items for openMenu. `onPick(patch)` gets {show} | {sort} | {groupBy} | {person} | {select: true} | {shortcuts: true}.
+ *  `showOpts` / `groupOpts` default to the Runs lists; `sortOpts` adds a Sort by block (the Chats column); a group option's
+ *  third entry is its hint. */
+export function viewMenuItems(v, counts, { people = [], onPick, showOpts = SHOW, sortOpts = null, groupOpts = GROUP }) {
   const n = (x) => (x == null ? '' : String(x));
   const items = [{ header: 'Show' }];
-  for (const [id, label] of SHOW) items.push({ label, hint: n(counts[id]), checked: v.show === id, onSelect: () => onPick({ show: id }) });
+  for (const [id, label] of showOpts) items.push({ label, hint: n(counts[id]), checked: v.show === id, onSelect: () => onPick({ show: id }) });
+  if (sortOpts) {
+    items.push({ header: 'Sort by' });
+    for (const [id, label] of sortOpts) items.push({ label, checked: v.sort === id, onSelect: () => onPick({ sort: id }) });
+  }
   items.push({ header: 'Group by' });
-  for (const [id, label] of GROUP) items.push({ label, checked: v.groupBy === id, onSelect: () => onPick({ groupBy: id }) });
+  for (const [id, label, hint] of groupOpts) items.push({ label, ...(hint ? { hint } : {}), checked: v.groupBy === id, onSelect: () => onPick({ groupBy: id }) });
   if (people.length) {
     items.push({ header: 'Started by' }, { label: 'Everyone', checked: !v.person, onSelect: () => onPick({ person: '' }) });
     for (const p of people) items.push({ label: p.name, checked: v.person === p.key, onSelect: () => onPick({ person: p.key }) });
   }
-  items.push({ sep: true }, { label: 'Select', onSelect: () => onPick({ select: true }) });
+  items.push({ sep: true }, { label: 'Select', onSelect: () => onPick({ select: true }) },
+    { label: 'Keyboard shortcuts', hint: '?', onSelect: () => onPick({ shortcuts: true }) });
   return items;
 }

@@ -141,7 +141,9 @@ const STDERR_DETAIL_MAX = 2000;
  * @param {string|null} o.stdin                    written then closed when non-null
  * @param {AbortSignal} [o.signal]
  * @param {boolean} [o.asAgent]                    run as WORCA_AGENT_USER when configured
- * @param {string|null} [o.stagedDir]              shared with the agent user before spawn
+ * @param {string|{dir:string, writable?:boolean}|Array|null} [o.stagedDir]  shared with the agent user before spawn
+ *                                                  (agent-user.mjs shareWithAgent)
+ * @param {((id:object) => string)|null} [o.agentHome] the HOME an agent spawn runs with instead of the agent's own
  * @param {() => void} o.cleanup                   called exactly once on every terminal path
  * @param {(e:object) => void} o.onEvent
  * @param {(line:string) => void|Error} o.onStdoutLine each non-empty trimmed stdout line; returning an Error
@@ -159,7 +161,7 @@ const STDERR_DETAIL_MAX = 2000;
  * @param {(code:number) => any} o.onDone
  */
 export function superviseSpawn(o) {
-  const { file, args, displayBin, cwd, env, stdin, signal, asAgent, stagedDir, cleanup, onEvent,
+  const { file, args, displayBin, cwd, env, stdin, signal, asAgent, stagedDir, agentHome = null, cleanup, onEvent,
     onStdoutLine, onStderrLine = null, stdoutErrorDetail, classify, isBenignStderr = () => false, redactText = null, spawnError, onDone } = o;
   return new Promise((resolveP, rejectP) => {
     let childEnv = env;
@@ -171,8 +173,10 @@ export function superviseSpawn(o) {
       let exe = file;
       let argv = args;
       if (agentId) {
-        if (stagedDir) shareWithAgent(stagedDir, agentId);
-        ({ file: exe, args: argv, env: childEnv } = agentSpawn(file, args, childEnv, agentId));
+        // Every folder the server staged for this spawn, opened to the agent's group up to worca's tmp.
+        // A `{dir, writable}` entry is one the agent also writes into (Copilot's usage file).
+        for (const d of [stagedDir].flat()) if (d) shareWithAgent(typeof d === 'string' ? d : d.dir, agentId, { stopAt: join(worcaHome(), 'tmp'), writable: typeof d === 'object' && d.writable === true });
+        ({ file: exe, args: argv, env: childEnv } = agentSpawn(file, args, childEnv, agentId, agentHome ? { home: agentHome(agentId) } : {}));
       }
       child = spawn(exe, argv, {
         cwd, stdio: [stdin != null ? 'pipe' : 'ignore', 'pipe', 'pipe'], ...(childEnv ? { env: childEnv } : {}),

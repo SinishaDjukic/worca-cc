@@ -83,6 +83,45 @@ box (id, label or upstream id) and filter chips — *All*, *Yours*, *Built-in*,
 *Plugin*, *Team*, *Needs setup*, plus *Just imported* right after an import.
 Each group folds, with the count in its header; built-in models start folded.
 
+## Model roles
+
+Every model slot that has no value of its own falls back to one of three
+roles. The Roles card on the Models page (above the Engines card) sets them:
+
+| Role | Setting key | What it covers |
+|---|---|---|
+| Deep thinking | `deep` | Plans and reviews: the Plan, Plan review, Refine plan, Review implementation, Deck review and Bug Root Cause steps, and Away mode's decider (`nightMode.deciderModel`) |
+| Everyday coding | `everyday` | Every other step, Chat (`askModels`), Agent generation (`agentGenModel`), the Requirements interview (`requirementsInterview`) and Claude's Auto classifier (`autoWorkflowModel`) |
+| Quick jobs | `quick` | Titles (`titleModel`), Run naming (`namingModel`), Command summaries (`commandSummaryModel`), PR description (`prDescriptionModel`), Memory defragment (`memoryDefrag`, including its step), Workspace scan (`workspaceScan`, the scan model only) and every `utilityModels.<engine>.*` job, Codex's Auto classifier included |
+
+Where a slot looks, in order:
+
+- **Steps:** the node's own pick, the project's step model, your or the team's
+  step model, the workflow template's own model, then the role. A run started
+  with its own model (`--model`) uses that model for every unset step instead
+  of the role, and an Auto run skips the role, as it skips your step models.
+- **Helper jobs:** the job's own setting, then the role, then today's
+  fallback (for titles: the run's model, then the built-in Haiku).
+
+Roles are kept per harness (`modelRoles.claude`, `modelRoles.codex`): a Claude
+run never reads the Codex roles, and a harness with no roles keeps today's
+fallbacks. With no `modelRoles` at all, every slot resolves exactly as it did
+before roles existed.
+
+A role names a catalog model that runs on its harness; the server refuses any
+other and stores the catalog's own spelling of the id (`Claude-Opus-5-5` is
+saved as `claude-opus-5-5`). The effort is any reasoning level; when a job
+uses the role, the effort is mapped to the nearest one the harness takes (on
+Claude, `low` runs as `medium`).
+
+```sh
+curl -X POST http://localhost:4317/api/settings -H 'Content-Type: application/json' \
+  -d '{ "modelRoles": { "claude": { "quick": { "model": "claude-haiku-5-5", "effort": "low" } } } }'
+```
+
+`null` clears a role (`{ "modelRoles": { "claude": { "quick": null } } }`).
+Chat's `change_setting` sets the same values as `models.<harness>.roles.<role>`.
+
 ## Providers
 
 The **Providers** card has a page of its own, **Providers** (Expert level). A
@@ -100,7 +139,8 @@ the API host when the sign-in does not name one.
 
 **OpenAI-compatible** and **Anthropic-compatible.** A base URL, an API key
 (stored masked, or `${VAR}`), and *Test connection*. A model can override
-either under its Connection's *Advanced* disclosure. An OpenAI-compatible base
+either under its Connection's *Advanced* disclosure; a model whose base URL is on
+another host never gets the provider's key ([Gemini and Qwen models](#gemini-and-qwen-models)). An OpenAI-compatible base
 URL on this machine or a private network (`localhost`, `127.x`, `10.x`,
 `192.168.x`, `172.16–31.x`, `*.local`) — llama.cpp's `llama-server`, Ollama,
 LM Studio, a LAN vLLM — needs no key: leave it empty and the bridge sends no
@@ -370,6 +410,53 @@ as ambiguous — is left out of that model's requests instead, also logged once;
 pipeline agent does not need it. This applies to any OpenAI-compatible endpoint,
 not only OpenRouter.
 
+### Gemini and Qwen models
+
+With an API key, Gemini and Qwen models run on Claude Code through the bridge, like
+any OpenAI-compatible model, so they work **in Chat** and in every pipeline step,
+with Claude Code's own tool lockdown and guardrails. Google and Alibaba each serve
+an OpenAI-compatible endpoint:
+
+| | Base URL | Key |
+|---|---|---|
+| **Gemini** (Google AI Studio) | `https://generativelanguage.googleapis.com/v1beta/openai` | an AI Studio key, as `${GEMINI_API_KEY}` |
+| **Qwen** (Alibaba Model Studio) | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` (mainland China: `https://dashscope.aliyuncs.com/compatible-mode/v1`) | a Model Studio key, as `${DASHSCOPE_API_KEY}` |
+
+On the Models page, *Import models…* → *OpenAI-compatible server* → **Gemini** or
+**Qwen** fills the base URL and the key's `${VAR}` and lists what the endpoint serves.
+The key is stored on each imported model (its Connection), not on the Providers
+card, so the OpenAI-compatible card can stay pointed at OpenRouter or anything else.
+Export the variable where Worca starts. From a terminal:
+
+```
+worca models import gemini [--api-key '${GEMINI_API_KEY}'] [--search flash] [--pick id,id | --all] [--yes]
+worca models import qwen   [--api-key '${DASHSCOPE_API_KEY}'] [--base-url https://dashscope.aliyuncs.com/compatible-mode/v1] …
+```
+
+- **Gemini**: Worca reads Google's own model list, so each entry gets the window
+  Google serves, its output cap and whether it thinks; embedding, image, video and
+  speech models are listed but cannot be ticked. Gemini 3 signs each tool call
+  (a *thought signature*) and refuses the next request without it. Claude Code has
+  nowhere to keep it, so the bridge keeps it per tool call and puts it back. A call
+  the bridge no longer has (Worca restarted mid-conversation) gets Google's
+  documented stand-in, which skips the check for that call instead of failing it.
+- **Qwen**: Model Studio's list carries ids only, so set each model's Prompt limit
+  by hand after importing.
+- Neither lists a price: imported entries show *cost not verified* until you set one.
+- The same models are on OpenRouter (`google/…`, `qwen/…`), with OpenRouter's price
+  and cost reporting, if you would rather keep one key.
+- This route needs an API key. To use a Google account or Qwen's own sign-in, run
+  Gemini CLI or Qwen Code as the engine instead ([Gemini CLI and Qwen Code](#gemini-cli-and-qwen-code)),
+  in pipelines and in Chat.
+
+**A provider's key only goes to the provider's own host.** A model whose base URL
+is on another host than the OpenAI-compatible (or Anthropic-compatible) provider's
+uses its own key or none; it never borrows the provider's. So an OpenRouter key on
+the Providers card is never sent to Google, Alibaba or a gateway a model points at.
+A model that relied on that before shows **needs sign-in** with the reason; give it
+its own key on its Connection (*Advanced*). The import dialog follows the same rule
+when it lists an endpoint.
+
 ### Import from Copilot
 
 Pick *GitHub Copilot* and the dialog shows Copilot's chat models with vendor,
@@ -477,8 +564,8 @@ What an Ask chat on Codex can do, and what it cannot do:
 - It reads files only through worca's `read_file`, `grep` and `glob`, inside the chat's worktrees, attachments and memory, under the same protected-file rules as a Claude chat. It has no shell, no image viewer and no Codex web search; web access goes through worca's web tools as in any chat.
 - Codex keeps its sub-agent tools; no Codex setting removes them. A sub-agent gets the same locked-down tools, and the chat stops with an error as soon as one starts.
 - A chat keeps the engine it started on. To switch, start a new chat.
-- Images are sent with the message that carries them. PDFs need a Claude chat. Your MCP servers are available in Claude chats.
-- Skills from your sets work as in a Claude chat, and the Sets picker lists them. Codex does not load them itself: each message copies them into the chat's folder, the chat is told each skill's name, description and `SKILL.md` path, and `read_file` can open that message's copy for that message only. A skill keeps its own name; when two sets have a skill of the same name, each is called `<set>-<name>`. The sets' MCP servers stay in Claude chats.
+- Images are sent with the message that carries them, and `read_attachment` returns any image attachment again (in Codex's `exec`, `image()` shows it). A Codex chat cannot view PDFs. Your sets' MCP servers start with the chat when they are local (stdio) servers (see [Chat](#chat)).
+- Skills from your sets work as in a Claude chat, and the Sets picker lists them. Codex does not load them itself: each message copies them into the chat's folder, the chat is told each skill's name, description and `SKILL.md` path, and `read_file` can open that message's copy for that message only. A skill keeps its own name; when two sets have a skill of the same name, each is called `<set>-<name>`.
 - The per-turn cost cap needs a model worca can price; on Codex the cap is checked when a reply ends.
 - If Codex is not installed or not signed in, the chat says "Codex isn't ready" with the reason. It never falls back to Claude.
 
@@ -542,13 +629,13 @@ What a chat on Copilot can do, and what it cannot do:
 - Copilot's built-in GitHub MCP server, your `~/.copilot` MCP servers and custom instructions (`AGENTS.md`, `~/.copilot` instructions) are off. Worca's environment is scrubbed; worca's MCP server inherits what is left.
 - If the chat calls a shell or any tool that is not worca's, worca stops the turn with an error.
 - A chat keeps the engine it started on. To switch, start a new chat.
-- Images and PDFs need a Claude chat (a Codex chat takes images). Your MCP servers are available in Claude chats. Skills from your sets work as on Codex.
-- Copilot reports no dollar cost, so a Copilot chat runs only while the per-turn cost cap is off. There are no next-prompt suggestions on Copilot: each call would spend a premium request.
+- A Copilot chat views an image when its model declares vision, and a PDF on a model Copilot calls through the Responses or Anthropic API (see [Chat](#chat)); for any other model Copilot drops it, and the chat says so. Your sets' MCP servers (local and remote) and skills work as in any chat.
+- Copilot reports no dollar cost: worca prices the chat's tokens with the model's price on the Models page, and a per-turn cost cap refuses a model with none. The next-prompt suggestion runs on GPT-5 Mini, an included model (no premium request on a paid plan; one on the free plan).
 - If Copilot is not installed, the chat says "Copilot isn't ready" with the reason. A signed-out Copilot fails the turn with an auth error. It never falls back to Claude.
 
 ## Cursor
 
-worca can run pipelines on Cursor's headless CLI agent. Chat does not run on Cursor.
+worca can run pipelines on Cursor's headless CLI agent. Chat does not run on Cursor (see the end of this section).
 
 > **Unverified.** This engine was built without a Cursor CLI to test against. Each fact it relies on (binary name,
 > flags, the stream format, the permission and MCP files) is listed as unverified at the top of
@@ -581,11 +668,11 @@ worca can run pipelines on Cursor's headless CLI agent. Chat does not run on Cur
 - **A provider or a custom endpoint** (a gateway's quota, an API key's limit): the pause names the provider (*OpenAI-compatible limit — …*). No other harness is offered: it would reach the same provider.
 - **Either way**, *Switch model…* (the run page's banner and the Resume menu) picks a model on another connection, and every remaining step of the run runs on it. From the command line: `worca resume <id> --model <model id>`. It must be a catalog model the run's harness can run.
 
-**Chat on Cursor is not available.** A chat needs every shell and disk tool switched off, and no Cursor switch for that is known. Cursor models are not offered in Chat.
+**Chat on Cursor is not available.** A chat needs every shell and disk tool switched off, and no Cursor switch for that has been verified: `cursor-agent` could not be installed where worca's lockdowns were checked, and it has no setting worca knows that points it at a test model endpoint, which the [self-test](#gemini-cli-and-qwen-code) every locked-down chat engine passes needs. Cursor models are not offered in Chat. What is left to verify is in `plans/ask-on-qwen-gemini-spike.md` (Cursor).
 
 ## Gemini CLI and Qwen Code
 
-worca can run pipelines on Google's Gemini CLI (`gemini`) and on Qwen Code (`qwen`). Qwen Code is a fork of Gemini CLI, and worca runs both the same way; where they differ, this section says so. Both are in **beta**. Chat does not run on either.
+worca can run pipelines on Google's Gemini CLI (`gemini`) and on Qwen Code (`qwen`). Qwen Code is a fork of Gemini CLI, and worca runs both the same way; where they differ, this section says so. Both are in **beta**. Chat runs on both, locked down to worca's own tools (see **Chat on Gemini CLI and Qwen Code** below); with an API key, Gemini and Qwen models also run in Chat on Claude Code ([Gemini and Qwen models](#gemini-and-qwen-models)).
 
 Verified on Gemini CLI 0.63.0 and Qwen Code 0.25.0. The captured streams and every fact the adapters rely on are in `test/fixtures/gemini/README.md` and `test/fixtures/qwen/README.md`.
 
@@ -595,13 +682,13 @@ Verified on Gemini CLI 0.63.0 and Qwen Code 0.25.0. The captured streams and eve
    - **Qwen Code:** run `qwen` once in a terminal and choose how it signs in, or set a whole provider in worca's environment or `~/.qwen/.env` (for example `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `OPENAI_MODEL`). A key alone is not enough: Qwen Code then stops with "No auth type is selected".
 
    Neither CLI has a status command, so the engine card's readiness line only checks that the binary runs and that a sign-in is configured. worca never reads the credentials.
-3. Pick the engine per run on New pipeline, or as a default on the Models page (Engines).
+3. Pick the engine per run on New pipeline, or as a default on the Models page (Engines). For Chat, Settings › Chat › Engine & models.
 
-**Models.** worca ships none. With no model set, the CLI runs its own default (Gemini CLI: `auto`). To pick one, add a model on the Models page with Engine **Gemini CLI** or **Qwen Code** and the id the CLI expects (for example `gemini-3.8-flash` or `qwen3-coder-plus`). These models take no env, no endpoint and no effort; which provider a Qwen Code model reaches is Qwen Code's own setting.
+**Models.** worca ships none. With no model set, the CLI runs its own default (Gemini CLI: `auto`). To pick one, add a model on the Models page with Engine **Gemini CLI** or **Qwen Code** and the id the CLI expects (for example `gemini-3.8-flash` or `qwen3-coder-plus`). These models take no env and no endpoint; which provider a Qwen Code model reaches is Qwen Code's own setting. Their effort is the model's thinking on Gemini CLI (low, medium, high: a thinking level on Gemini 3, a thinking budget of 1024, 8192 or 24576 tokens on Gemini 2.5), written into the settings file worca hands the CLI, and `model.reasoningEffort` on Qwen Code (low to max), written into worca's system settings; a model without reasoning ignores it.
 
 **Cost.** Neither CLI reports a cost, only tokens, so the run's cost shows as *cost unknown*, never $0.00. A pipeline cost limit cannot count their spend; the run log says so.
 
-**Helper jobs run on Claude**, as on Cursor: titles, the run overview, the PR description, the Auto workflow classifier and Away mode's night decider. They read text worca did not write, and worca does not lock these CLIs down. The memory defrag and a workspace scan run on the engine itself.
+**Helper jobs run on Claude**, as on Cursor: titles, the run overview, the PR description, the Auto workflow classifier and Away mode's night decider. They read text worca did not write, and these CLIs have no read-only mode for a helper job. The memory defrag and a workspace scan run on the engine itself.
 
 **What they hold, and what they do not.**
 
@@ -609,7 +696,7 @@ Verified on Gemini CLI 0.63.0 and Qwen Code 0.25.0. The captured streams and eve
   - **Gemini CLI**: an `--admin-policy` file in worca's own temp folder, at the admin tier, so it outranks your own policies. A bare `Bash`, `WebFetch`, `WebSearch`, a bare `Read`/`Edit`/`Write` and MCP server or tool rules are held. Command rules (`Bash(git push:*)`) are matched against the start of the command, so `env git push` gets past them, and path rules stop Gemini CLI's file tools, not its shell: both are held **only in part**, and need **Allow unguarded** (`--allow-unguarded-engine`). If Gemini CLI reports that it could not read the policy file, the run stops (Gemini would otherwise run with no rule). If your machine's system policy folder already holds policy files, Gemini CLI ignores worca's, so the run refuses.
   - **Qwen Code** reads Claude's rule syntax itself, so worca hands it the rules as written. Command rules are held only in part (the same `env` gap), and so are `Edit(…)`/`Write(…)` path rules: they stop Qwen Code's file tools, not its shell, which can still write that path. Both need **Allow unguarded** (`--allow-unguarded-engine`). A `Read` rule also stops the shell from reading that file. Rules on tools Qwen Code does not have are not held.
 - Under a set that scrubs the environment, Qwen Code gets the environment names of the provider it is set to (its chosen sign-in, else the provider its environment names) and no other's: worca's own keys for other providers stay out of its shell.
-- No per-role tool restriction, effort, sub-agents, hook telemetry, native skills or turn cap. The run log lists each one at start. Research fan-out runs serially. Gemini CLI has no flag to add to its system prompt, so worca's system prompt is folded into the prompt; Qwen Code takes it with `--append-system-prompt`.
+- No per-role tool restriction, sub-agents, hook telemetry, native skills or turn cap. The run log lists each one at start. Research fan-out runs serially. Gemini CLI has no flag to add to its system prompt, so worca's system prompt is folded into the prompt; Qwen Code takes it with `--append-system-prompt`.
 - The folders worca hands an agent (its outputs, the pipeline folder) are added as workspace folders, the only places their file tools reach outside the checkout. As with Copilot, a run refuses to start when one of them would sit inside worca's own home outside the run store. Their shell can still reach any file you can; container mode is the containment.
 - MCP servers: only the run's servers attach (`--allowed-mcp-server-names`); your own servers in `~/.gemini` or `~/.qwen`, and the checkout's, stay off. Secrets stay `${NAME}` references whose values reach the CLI through its environment, never a file.
   - **Gemini CLI** reads them from the checkout's `.gemini/settings.json`, which worca writes for the run (handled like Cursor's files: hidden by a line under `# worca: Gemini CLI engine config` in `.git/info/exclude`, removed when the run ends, never in the diff or commit). If the checkout tracks its own `.gemini/settings.json`, or holds one worca did not write, a run that attaches MCP servers stops instead of changing it.
@@ -619,9 +706,27 @@ Verified on Gemini CLI 0.63.0 and Qwen Code 0.25.0. The captured streams and eve
 
 **Resume.** worca names each session (`--session-id`) and resumes it after a pause. A session the CLI no longer knows starts fresh, and the run log says so.
 
+**Chat on Gemini CLI and Qwen Code** needs Gemini CLI 0.65.0 or Qwen Code 0.26.1 or newer, signed in the CLI's own way (step 2). A chat on either is offered worca's own MCP tools and nothing else: no shell, no file, web or memory tools of the CLI, no sub-agents, no skills, no extensions and none of your own MCP servers. How each is locked down, and how it was checked, is in `plans/ask-on-qwen-gemini-spike.md`:
+
+- **Gemini CLI**: an admin-tier policy that denies every tool and allows worca's MCP server above it (it outranks your own policies, an allow-all included), a settings file in the chat's own folder that registers no built-in tool and turns your hooks and tool discovery off, `--extensions none`, and `--allowed-mcp-server-names`. If your machine's system policy folder holds policy files, Gemini CLI would skip worca's, so the chat refuses.
+- **Qwen Code**: no core tool (`--core-tools`), every other built-in excluded (`--exclude-tools`), `--allowed-mcp-server-names`, and a system settings file in worca's temp folder that wins over yours: every tool offered directly (no tool search), no hooks, no tool discovery, no background memory or skill agents. The chat's environment also sets the switches an env file could turn on (`QWEN_CODE_MEMORY_TEAM`, `QWEN_CODE_SAFE_MODE`, …).
+
+Before the first chat on a binary, worca runs a **self-test**: it starts the CLI once, locked down exactly as a chat, against a model endpoint worca serves on 127.0.0.1 and a stand-in for its MCP server, with your own settings, extensions and env files as they are. The scripted model asks for a shell command and for worca's probe tool. The chat starts only when every request offered worca's tools and nothing else, worca's tools named like a built-in (`read_file`, `glob`, `web_fetch`) are still there, the shell command did not run, and the probe answered. A pass is kept per binary, version and config (`~/.gemini` or `~/.qwen` settings and env files, `~/.env`, Gemini's policies and extensions folders); change one, update the CLI, and the test runs again. A failure says what the CLI offered ("Qwen Code isn't ready: Qwen Code offered tools a chat must not have (…)") and is never kept. The test takes a few seconds and spends nothing.
+
+What a chat on Gemini CLI or Qwen Code can do, and what it cannot do:
+
+- It reads files only through worca's `read_file`, `grep` and `glob`, inside the chat's worktrees, attachments and memory, under the same protected-file rules as a Claude chat. Web access goes through worca's web tools as in any chat.
+- Your context files (`~/.gemini/GEMINI.md`, `~/.qwen/QWEN.md`) still reach the model as text, as do the descriptions of skills; they add no tool. Neither CLI has a setting that leaves them out: a different `context.fileName` only adds a name, and moving the CLI's home (`GEMINI_CLI_HOME`, `QWEN_HOME`) would move your sign-in and settings with it.
+- If the chat calls a shell or any tool that is not worca's, worca stops the turn with an error, as on Codex and Copilot.
+- A chat keeps the engine it started on. To switch, start a new chat.
+- Images and PDFs are sent through `read_attachment` (Qwen Code only to a model that takes them). Your sets' MCP servers and skills work as in any chat. Effort is the model's thinking (Gemini CLI) or `model.reasoningEffort` (Qwen Code).
+- Neither CLI reports a cost: worca prices the chat's tokens with the model's price on the Models page, and a per-turn cost cap refuses a model with none. The title, the next-prompt suggestion and the Auto-workflow classifier run on the chat's own engine, locked down like the chat.
+- A Gemini CLI chat runs in a folder of its own under worca's temp folder, the same every turn, because Gemini CLI keeps its sessions per folder.
+- If the CLI is not installed, too old, not signed in, or fails the self-test, the chat says "Gemini CLI isn't ready" or "Qwen Code isn't ready" with the reason and a link here. It never falls back to Claude.
+
 ## Goose
 
-worca can run pipelines on [Goose](https://github.com/aaif-goose/goose)'s headless CLI (`goose run`), checked against goose 1.54.0. Chat does not run on Goose.
+worca can run pipelines on [Goose](https://github.com/aaif-goose/goose)'s headless CLI (`goose run`), checked against goose 1.54.0. Chat runs on Goose 1.56.0 or newer, locked down to worca's own tools (see the end of this section).
 
 1. Install the Goose CLI (`brew install block-goose-cli`) and make sure worca finds it: on `PATH`, or `WORCA_GOOSE_BIN=/path/to/goose` in worca's environment.
 2. Set up a provider once: `goose configure`, or put the provider's key (for example `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) in worca's own environment. worca stores no Goose key. With guardrails that scrub the environment, add the key's name to the project's allowlist; `GOOSE_` variables always pass.
@@ -644,11 +749,15 @@ worca can run pipelines on [Goose](https://github.com/aaif-goose/goose)'s headle
 - No sub-agents (research fan-out runs serially), no skills folder, no hook telemetry. The host guard's kill-check hook does not run on Goose; its instructions to the agent still apply.
 - Goose keeps each step's session in its own database (`~/.local/share/goose/sessions`), named `worca-…`; a paused step resumes it.
 
-**Chat on Goose is not available.** Goose's chat mode skips every tool call, worca's own included, so it cannot lock a chat down the way Ask needs. Goose models are not offered in Chat.
+**Chat on Goose** needs goose 1.56.0 or newer (conda-forge's `goose-cli` works too). A chat runs `goose run --no-profile` with no built-in extension (no developer tools), worca's MCP server as its only extension, and in a home of its own under worca's home (on a hosted worca whose agents run under their own users, a worca folder in that user's home): your `~/.config/goose` config, extensions, hints, skills and `~/.agents` plugins (and their hooks) are not read. So goose sees no provider key in its own config: keep the model's key in worca's environment under that provider's own names (the system keyring may work too, but worca has not checked it with goose's home moved) (for a `google/…` model `GOOGLE_API_KEY`; a chat keeps only its model's provider's variables; a key only in `~/.config/goose` is not seen). The model is offered worca's tools and goose's `load_skill`, which then knows only goose's two built-in skills (text). Before the first chat on a goose binary, worca runs the same [self-test](#gemini-cli-and-qwen-code) as on Gemini CLI and Qwen Code.
+
+- A model whose provider is itself an agent CLI (`claude-acp`, `codex-acp`, `cursor-agent`, `gemini-cli`, …) runs that CLI's own tools, which worca cannot switch off: such models are not offered in Chat.
+- worca prices a Goose chat with the model's price on the Models page, or the list price of an `anthropic/…` or `openai/…` model; a per-turn cost cap refuses a model with neither.
+- Everything else is as on Gemini CLI and Qwen Code: worca's file tools only, a chat that calls a shell or another tool stops with an error, images (not PDFs: Goose turns them into text), your sets' local MCP servers, a generated title and suggestions, "Goose isn't ready" with the reason.
 
 ## OpenCode
 
-worca can run pipelines on [OpenCode](https://opencode.ai) (`opencode run`). OpenCode is in beta in worca. Chat does not run on OpenCode. Checked against opencode 1.18.23.
+worca can run pipelines on [OpenCode](https://opencode.ai) (`opencode run`). OpenCode is in beta in worca. Chat runs on OpenCode 1.19.4 or newer (1.x), locked down to worca's own tools (see the end of this section). Checked against opencode 1.18.23.
 
 1. Install OpenCode and make sure worca finds it: on `PATH`, or `WORCA_OPENCODE_BIN=/path/to/opencode` in worca's environment. worca runs OpenCode 1.x (npm `opencode-ai`). OpenCode 2 (npm `@opencode/cli`, and Homebrew's `opencode` formula) changed how `opencode run` works, so worca refuses it until it is supported.
 2. Connect a provider once in a terminal: `opencode auth login`, or set the provider's key (for example `ANTHROPIC_API_KEY`) in worca's own environment. `opencode providers list` shows what OpenCode sees. Without either, only OpenCode Zen's free models run, and they send the code to opencode.ai, so the engine card shows OpenCode as not ready and a run is refused, unless every step names its model or you opt in (below). worca checks the credentials in the environment the agent gets: under a set that scrubs the environment, a key only worca has does not count. For Google models, set `GOOGLE_GENERATIVE_AI_API_KEY`: OpenCode 1.18 lists a `GEMINI_API_KEY` under `providers list` but does not use it, so a run stops with "Google Generative AI API key is missing".
@@ -671,9 +780,69 @@ worca can run pipelines on [OpenCode](https://opencode.ai) (`opencode run`). Ope
 - Under the Secure set (environment scrubbed), provider keys in worca's environment do not reach OpenCode: use `opencode auth login`, or add the key's name to the set's environment allowlist.
 - The host guard's kill-check hook does not run on OpenCode; its instructions to the agent still apply.
 
-**Chat on OpenCode is not available.** A chat needs every shell and disk tool switched off, and no OpenCode lockdown has been verified. OpenCode models are not offered in Chat.
+**Chat on OpenCode** needs OpenCode 1.19.4 or newer (1.x). A chat runs as an agent of its own, named anew for every spawn, whose permission denies every tool and allows worca's MCP server (attached under a name new per spawn too), with OpenCode's `general` and `explore` sub-agents off, `--pure` (no plugins of yours) and no project config. A tool denied that way is not offered to the model at all, and your own `~/.config/opencode` permissions, custom tools, agents and MCP servers cannot widen it (your MCP servers still start; their tools are not offered). Before the first chat on an opencode binary, worca runs the same [self-test](#gemini-cli-and-qwen-code) as on Gemini CLI and Qwen Code, with a test provider in the inline config; OpenCode fetches that provider's package (`@ai-sdk/openai-compatible`) from npm the first time.
+
+- OpenCode Zen's free models (`opencode/…`) refuse a request without the shell, so they are not offered in Chat: pick a model of another provider. A chat uses the providers you signed in to with `opencode auth login`, or a key in worca's environment under that provider's own names (a chat keeps only its model's provider's variables).
+- worca prices an OpenCode chat with the model's price on the Models page, or the list price of an `anthropic/…` or `openai/…` model; a per-turn cost cap refuses a model with neither.
+- Your instructions files (`~/.config/opencode/AGENTS.md`, `instructions`) still reach the model as text.
+- Everything else is as on Gemini CLI and Qwen Code: worca's file tools only, a chat that calls a shell or another tool stops with an error, images and PDFs (to a model that takes them), your sets' MCP servers, a generated title and suggestions, "OpenCode isn't ready" with the reason.
 
 ## Chat
+
+**Which engine a chat runs on.** Chat runs on Claude Code, and on the engines worca can lock down to its own tools:
+[Codex](#codex), [GitHub Copilot CLI](#github-copilot-cli), [Gemini CLI and Qwen Code](#gemini-cli-and-qwen-code), [Goose](#goose) and
+[OpenCode](#opencode). Pick one in Settings › Chat › Engine & models, or by picking one of its models for a new chat.
+Cursor models are not offered in Chat: worca has no verified lockdown for Cursor. On every engine but Claude, a chat has no shell and no
+file tools of its own, reads through worca's `read_file`, `grep` and `glob`, and stops with an error the moment the engine
+calls a tool that is neither worca's nor one of your sets' MCP servers.
+
+**What a chat can do, by engine.** A chat behaves the same on every engine; the engine's own tools stay off, and every
+feature below goes through worca (its MCP tools, its spawn options):
+
+| | Claude | Codex | Copilot | Gemini CLI, Qwen Code | Goose | OpenCode |
+|---|---|---|---|---|---|---|
+| Images | yes | yes | yes (1) | yes | yes | yes |
+| PDFs | yes | — (2) | yes (1) | yes | — (3) | yes |
+| MCP servers from your sets | yes | stdio servers | yes | yes | stdio servers | yes |
+| Per-turn cost cap | yes | yes | yes | yes | yes | yes |
+| Generated title | yes | yes | yes | yes | yes | yes |
+| Next-prompt suggestion | yes | yes | yes | yes | yes | yes |
+| Effort picker | yes | yes | yes | yes | yes | yes |
+| Auto-workflow classifier | Claude | Codex | Copilot | its own engine | Goose | OpenCode |
+
+- **Images and PDFs.** `read_attachment` (and `read_file`, for an image or PDF in the chat's worktrees) sends the image
+  or PDF to the model as part of its result; the chat reads an attachment to look at it. Whether the model can view it is
+  the model's: Qwen Code and OpenCode forward an image or PDF only to a model that takes one (a model that does not is
+  told so, and says so). A Codex chat also gets the images of the message that carries them. (1) Copilot hands an image
+  on only to a model that declares vision, and a PDF only to a model it calls through the Responses or Anthropic API;
+  otherwise it drops it without a word, so the chat is told to say when nothing reached it. A custom provider set
+  through `COPILOT_PROVIDER_*` declares no vision: images do not reach it there. (2) Codex forwards an image of a tool
+  result, not a document. (3) Goose turns a PDF of a tool result into text. worca does not convert a PDF for Codex or
+  Goose: it has no PDF renderer, and text pulled out of a PDF without one is too often wrong to hand a model.
+- **Context files.** Gemini CLI reads `~/.gemini/GEMINI.md` and Qwen Code `~/.qwen/QWEN.md` into a chat's prompt as
+  text; they add no tool. Neither CLI has a setting that leaves them out (a different context file name only adds one).
+  Copilot's are off (`--no-custom-instructions`).
+- **MCP servers from your sets** start beside worca's own server, allowed by name by the engine's lockdown (the Sets
+  picker lists them), remote (HTTP or SSE) ones included, with their header secrets. Codex and Goose attach local
+  (stdio) servers only; a remote one is listed as not started.
+- **Per-turn cost cap.** worca prices a chat's tokens with its own prices on every engine: the model's price on the
+  Models page, else the list price its provider bills (OpenAI models on Codex; `anthropic/…` and `openai/…` models on
+  Goose and OpenCode). A chat whose model worca has no price for refuses to start while the cap is on, and says to set a
+  price on the Models page. The cap is checked when a reply ends.
+- **Title and suggestion** are calls on the chat's own engine, locked down like the chat and with no MCP server at all.
+  The suggestion runs on the chat's own model; on Codex on GPT-5.6 Luna, on Copilot on GPT-5 Mini (an included model: no
+  premium request on a paid plan).
+- **The Auto-workflow classifier** (`propose_workflow` with a task) runs on the chat's own engine, locked down the same
+  way, on the engine's classifier model (the Models page) or else the chat's own. It runs inside worca's own MCP
+  server, which gets the engine's sign-in env and your HOME: a Copilot signed in with `copilot login`, or with providers
+  in `~/.copilot/providers.json`, classifies there; one set up only through `COPILOT_PROVIDER_*` env does not (Copilot
+  keeps those names from its MCP servers), and `propose_workflow` then reports the classifier's failure.
+- **Agents under their own users** (a hosted worca, [Agent users per person](credential-broker.md#agent-users-per-person)):
+  a chat on any engine runs as the person's agent user, reads that user's own config for the engine, and its worca
+  tools run in the server. A Goose chat's home is then `~/.worca/goose-chat-home` in that user's home. Its title,
+  suggestion and classifier run as worca's own user, like a run's helper jobs.
+- **Effort.** Gemini CLI takes it as the model's thinking (a thinking level on Gemini 3, a thinking budget on Gemini 2.5),
+  Qwen Code as its `model.reasoningEffort` setting.
 
 Chat can read the catalog and the providers, explain why a model is not
 ready, and set models up for you. The rule: **every change is a card you
@@ -686,7 +855,7 @@ click Apply.
 | `get_providers` | The Providers card's state: Copilot sign-in and notice, each key-based provider's base URL, whether a key is set (and from where), whether it is optional | read |
 | `test_provider` | *Test connection* for one provider | read (contacts it) |
 | `list_copilot_models` | What *Import models…* would list | read (contacts GitHub) |
-| `list_endpoint_models` | What an OpenAI-compatible server of yours serves, with the window each model really gets | read (contacts it) |
+| `list_endpoint_models` | What an OpenAI-compatible server of yours, Gemini or Qwen serves, with the window each model really gets; a hosted API's key is passed as a `${VAR}` | read (contacts it) |
 | `propose_model_change` | `add_model`, `edit_model`, `remove_model` (user entries only), `provider` (base URL, key, concurrency, account type), `import_copilot`, `import_endpoint` | card |
 
 - The card shows the change as a before → after list, and the **warnings** that

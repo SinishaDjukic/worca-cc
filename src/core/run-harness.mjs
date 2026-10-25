@@ -54,6 +54,7 @@ import {
   memoryCaps,
 } from './settings.mjs';
 import { hasProjectSetting, utilityModelFor } from './settings-cascade.mjs';
+import { withRole, roleModelFor, jobSlot } from './model-roles.mjs';
 import { mountDirs, mountMemory, refreshMount, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY } from './memory-sync.mjs';
 import { createUsageTally, drainMemoryLoads, memoryLoadLogPath, noteOfMemoryRel, recordMemoryUsage, rulesHaveScopedNote } from './memory-usage.mjs';
 import { memoryRoot, listMemory, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief } from './memory-store.mjs';
@@ -66,6 +67,8 @@ import {
 } from './run-manifest.mjs';
 import { assembleRunContext, renderContextAudit, renderSkillAudit, MCP_GRANT_MODE, discoverProjectSettings, skillsRelFor, realDirsBelow } from './run-context.mjs';
 import { createRunLogWriter, RUN_LOG_FILE, RUN_LOG_KIND } from './run-log.mjs';
+import { createTelemetryRecorder, TELEMETRY_FILE } from './telemetry/recorder.mjs';
+import { dbPath } from './db.mjs';
 import {
   detectTools, detectToolsPerProject, runGraphifyUpdate, worktreeGraphInstruction,
   probeClaudeCapabilities, explainUnspawnableClaude,
@@ -1063,6 +1066,7 @@ export class RunHarness extends EventEmitter {
     this.extrasFiles = []; // attached files copied into <pipeline>/extras (set in _dispatch)
     this.pipeline = null; // { id, dir, promptText }
     this.logWriter = createRunLogWriter(); // buffered NDJSON persistence of the `log` stream
+    this.telemetry = null; // Run telemetry recorder (Labs), set by _bindTelemetry while the flag is on
     this.baseName = null;
     this.planDatePrefix = null; // DD-MM-YY captured once so -vN versions share it
 
@@ -1566,6 +1570,7 @@ export class RunHarness extends EventEmitter {
       // Replace the placeholder the client was shown at start with the task's title.
       if (ticketTitle) this._emit('title', { title: ticketTitle, provisional: false, pipelineId: this.pipeline.id });
       this.logWriter.bind(this.pipeline.dir);                  // start persisting (flushes buffered preflight lines)
+      this._bindTelemetry(this.pipeline.dir);
       recordArtifact(this.pipeline.id, RUN_LOG_KIND, RUN_LOG_FILE); // index like prompt.md (sync; INSERT OR IGNORE)
       // A11(b): carry the resolved prompt on the in-memory state too (createPipeline
       // already INSERTs prompt and the curated UPSERT excludes it, so persistence is
@@ -1842,6 +1847,7 @@ export class RunHarness extends EventEmitter {
         await this._keepCheckoutByPolicy().catch((e) => this._log('worktree', 'warn', `keep policy: ${e?.message || e}`));
         await this._checkBaseAfterRun().catch((e) => this._log('git', 'warn', `base check: ${e?.message || e}`));
       }
+      await this._closeTelemetry();
       await this.logWriter.close().catch(() => {}); // flush + stop timer (last, to capture teardown logs)
     }
   }
@@ -1939,6 +1945,7 @@ export class RunHarness extends EventEmitter {
       this._startHeartbeat();
       this._nightSyncCounts();              // night counters continue from the DB, not from 0
       this.logWriter.bind(rp.pipelineDir);
+      this._bindTelemetry(rp.pipelineDir);
       recordArtifact(row.id, RUN_LOG_KIND, RUN_LOG_FILE);
       if (this._staleResumeModel) {
         this._log('orchestrator', 'warn', this._staleResumeOwner
@@ -2148,6 +2155,7 @@ export class RunHarness extends EventEmitter {
         await this._keepCheckoutByPolicy().catch((e) => this._log('worktree', 'warn', `keep policy: ${e?.message || e}`));
         await this._checkBaseAfterRun().catch((e) => this._log('git', 'warn', `base check: ${e?.message || e}`));
       }
+      await this._closeTelemetry();
       await this.logWriter.close().catch(() => {}); // flush + stop timer (last, to capture teardown logs)
     }
   }
@@ -2430,6 +2438,7 @@ export class RunHarness extends EventEmitter {
         await this._teardownRunRoot().catch(() => {});
         await this._checkBaseAfterRun().catch((e) => this._log('git', 'warn', `base check: ${e?.message || e}`));   // #620
       }
+      await this._closeTelemetry();
       await this.logWriter.close().catch(() => {}); // last, to capture the teardown's log lines
     }
   }
@@ -2456,6 +2465,7 @@ export class RunHarness extends EventEmitter {
     this.state.pipelineDir = rp.pipelineDir;
     this._nightSyncCounts();                   // the Away mode counters the stopped frame reports
     this.logWriter.bind(rp.pipelineDir);
+    this._bindTelemetry(rp.pipelineDir);
     recordArtifact(row.id, RUN_LOG_KIND, RUN_LOG_FILE);
     const iv = rp.interventions && typeof rp.interventions === 'object' ? rp.interventions : {};
     const pausedAt = Date.parse(iv.pausedAt || row.updated_at);
@@ -3598,7 +3608,10 @@ export class RunHarness extends EventEmitter {
 
   _utilitySlot(job) {
     const scope = this._settingsScope();
-    return utilityModelFor(this._helperEngine(), job, scope ? { projectDir: scope } : { workspace: true });
+    const engine = this._helperEngine();
+    const slot = utilityModelFor(engine, job, scope ? { projectDir: scope } : { workspace: true });
+    // Model roles (D3): an unset helper slot takes its role (Claude's classifier → everyday, every other job → quick).
+    return withRole(slot, engine, jobSlot(engine, job));
   }
 
   /** The engine worca's helper jobs run on (model-env.mjs helperEngineFor): Claude on a Cursor run. */
@@ -6561,8 +6574,13 @@ export class RunHarness extends EventEmitter {
         : modelForEngine(this.claude.model || null, engine, { projectDir: this.projectDir })) || null;
     // Named before the effort is checked, so an effort codex's default model does not offer (max, xhigh) drops to medium.
     const fallback = !runModel && engine === 'codex' ? CODEX_DEFAULT_MODEL : null;
-    const pair = resolveDeciderPair({ deciderModel: config.deciderModel, deciderEffort: config.deciderEffort, runModel: runModel || fallback },
-      { models: models.filter((m) => m && runsOn(m, engine)) });
+    // Model roles (D3): an unset decider takes the deep role.
+    const role = config.deciderModel ? null : roleModelFor(engine, 'nightMode.deciderModel');
+    const pair = resolveDeciderPair({
+      deciderModel: config.deciderModel || role?.model,
+      deciderEffort: config.deciderModel ? config.deciderEffort : (role?.effort ?? config.deciderEffort),
+      runModel: runModel || fallback,
+    }, { models: models.filter((m) => m && runsOn(m, engine)) });
     if (fallback && pair.model === fallback && pair.source === 'run') pair.source = 'default';
     const warn = (text) => {
       if ((this._nightWarned ||= new Set()).has(text)) return;
@@ -7442,6 +7460,7 @@ export class RunHarness extends EventEmitter {
       for (const n of normalize(e)) this._onAgentEvent(role, n, attr);
       return;
     }
+    if (this.telemetry) this.telemetry.observe(e, attr);
     switch (e.type) {
       // Sub-agent telemetry (feature-detected, gated by WORCA_SUBAGENT_HOOKS). A
       // surfaced PostToolUse:Agent hook_response carries, as the hook's echoed stdout,
@@ -8123,6 +8142,7 @@ export class RunHarness extends EventEmitter {
   }
 
   _emit(event, payload) {
+    if (event === 'state' && this.telemetry) this.telemetry.stateEmitted(payload);
     try {
       this.emit(event, payload);
     } catch {
@@ -8218,6 +8238,28 @@ export class RunHarness extends EventEmitter {
       .catch(() => { /* generateTitle already swallows; this is a final backstop */ });
   }
 
+  /** Run telemetry (Labs): one recorder per harness, decided when the run dir is first bound. */
+  _bindTelemetry(dir) {
+    if (this.telemetry || !dir || !flagEnabled('runTelemetry')) return;
+    this.telemetry = createTelemetryRecorder();
+    this.telemetry.bind(dir);
+  }
+
+  async _closeTelemetry() {
+    const t = this.telemetry;
+    if (!t || t.isClosed()) return;
+    try {
+      const size = (p) => stat(p).then((x) => x.size, () => null);
+      const dir = this.pipeline?.dir || this.state.pipelineDir;
+      const [dbBytes, telemetryBytes, logBytes] = await Promise.all([
+        size(dbPath()), dir ? size(join(dir, TELEMETRY_FILE)) : null, dir ? size(join(dir, RUN_LOG_FILE)) : null,
+      ]);
+      await t.close({ dbBytes, telemetryBytes, logBytes });
+    } catch {
+      await t.close().catch(() => {});   /* telemetry never fails a run */
+    }
+  }
+
   /** @returns {Promise<boolean>} whether the state reached the row. */
   async _persist() {
     const rpNow = this.state.resumePoint;
@@ -8230,7 +8272,13 @@ export class RunHarness extends EventEmitter {
       // in state): _rowHandedOff reads it back. A resumed run's new harness never writes this token.
       const st = this._pauseToken && rpNow && typeof rpNow === 'object'
         ? { ...this.state, resumePoint: { ...rpNow, pausedBy: this._pauseToken } } : this.state;
-      await writeState(this.pipeline.dir, st);
+      if (this.telemetry) {
+        const t0 = performance.now();
+        await writeState(this.pipeline.dir, st);
+        this.telemetry.persisted(performance.now() - t0, st.steps?.length || 0);
+      } else {
+        await writeState(this.pipeline.dir, st);
+      }
       return true;
     } catch {
       /* persistence is best-effort */

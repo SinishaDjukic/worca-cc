@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Run telemetry (experimental, flag `runTelemetry`)
+
+- With the flag on, a run records every model call's context size, tokens, timing and tools, tool run times, retries, compactions and sub-agent calls, plus Worca's own state saves, live-update sizes and event loop delay, to `telemetry.ndjson` in the run folder. Recording only: runs behave the same, and with the flag off nothing is written.
+- The run page's Agents tab shows each agent's context peak against the model's window, calls, sessions, time split and a context-over-time chart, and a line of Worca's own figures. `GET /api/runs/:id/telemetry` answers the same as JSON. See [Run telemetry](docs/run-telemetry.md).
+
+### Chat sidebar aligned with Runs + shared list keyboard
+
+- Shared list keyboard: Runs aligned + Keyboard shortcuts sheet: Cycle 2 fixes the web UI review's one major issue.
+- Chats column with the Runs anatomy: sections, View menu, pin, archive (busy-blocked), search in the top bar, New chat +: Both webui cycle-1 majors are fixed: ask-history-cleared now empties (full) or prunes (scoped threadIds) the Chats column and refetches, and the head meter is a start-aligned block so its ellipsis applies.
+- Topic groups for chats: Add to group, group dialog with suggested names, Group by Topic: Cycle 2 fixes both web UI majors: the Date view's Older count now counts the chats behind each group row (no phantom Older), and multi-project groups get their own 'Several projects' section.
+
 ### Run card: "Where the work is" route + group page jump
 
 - Run page head: fixed 32px head row and full-width stage bar: The CSS-only s1 change matches plan v3 exactly: a 32px (40px touch) head row, the status block subgridded across the head so the stage bar is full width, no overhang, and a 16px gap.

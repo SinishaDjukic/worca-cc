@@ -1,6 +1,6 @@
 // src/core/upstream-proxy.mjs — the corporate (upstream) proxy the local proxy chains to.
 //
-// Behind the `corporateProxy` flag (checked in egress-policy.mjs). createProxy in egress-proxy.mjs
+// On while settings networkProxy.enabled is true (checked in egress-policy.mjs). createProxy in egress-proxy.mjs
 // receives the connector built here and calls route()/tunnel()/forward() for hosts that go to the
 // upstream; egress-proxy.mjs itself keeps importing node: modules only (the Docker sidecar runs
 // it as one file). NTLM authenticates a CONNECTION: Type 1 -> 407/Type 2 -> Type 3 run on one
@@ -16,7 +16,9 @@ import { parseHostList, hostMatches, normalizeHost } from './egress-proxy.mjs';
 import { ntHash, type1Message, parseType2, type3Message, NtlmError } from './ntlm.mjs';
 import { parseChallenges, pickDigest, digestHa1, digestAuthorization, isStaleDigest, DigestError } from './http-digest.mjs';
 
-export const UPSTREAM_TIMEOUTS = Object.freeze({ connectMs: 30_000, authMs: 15_000, idleMs: 10 * 60_000 });
+// The defaults live in src/shared so the setup assistant shows the same numbers.
+import { UPSTREAM_TIMEOUTS } from '../shared/proxy-timeouts.mjs';
+export { UPSTREAM_TIMEOUTS };
 export const AUTH_MODES = Object.freeze(['auto', 'none', 'basic', 'ntlm', 'digest']);
 export const AUTH_LABELS = Object.freeze({ auto: 'NTLMv2', none: 'no login', basic: 'Basic, cleartext', ntlm: 'NTLMv2', digest: 'Digest' });
 /** Modes that need the password itself; a saved login keeps only the NT hash, so they never use one (D8). */
@@ -74,6 +76,8 @@ export class ProxyCredentials {
 
 /** "host:port", bracketing an IPv6 host. */
 export const upstreamLabel = (h, p) => `${h.includes(':') ? `[${h}]` : h}:${p}`;
+/** What a test proves and a swap needs (D9): the host:port the login would go to, and how. */
+export const upstreamKey = (up) => (up && !up.error ? `${upstreamLabel(up.host, up.port)}|${up.auth}` : '');
 const hostPort = upstreamLabel;
 
 /** "http://DOMAIN%5Cuser:pass@host:port" -> { host, port, credentials } or { error } (never quoting the value). */

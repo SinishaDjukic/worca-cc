@@ -53,10 +53,10 @@ async function rig(t) {
   const lines = [];
   const errs = [];
   const fails = [];
-  const settings = () => ({ networkProxy: { upstream: fake.url() } });
+  const settings = () => ({ networkProxy: { enabled: true, upstream: fake.url() } });
   const run = (argv, extra = {}) => cmdProxy(argv, {
     out: (s) => lines.push(s), err: (s) => errs.push(s), fail: (s) => fails.push(s), env: {}, home,
-    corporateProxy: () => true, settings, ...extra,
+    settings, ...extra,
   });
   const seen = () => [...lines, ...errs, ...fails].join('\n');
   return { home, fake, lines, errs, fails, settings, run, seen };
@@ -69,7 +69,7 @@ test('status: needs login (exit 3) once the running breaker tripped; a stdin log
   assert.equal(await r.run(['login'], { input: stdin('ACME\\jdoe\nwrong\n') }), 0);
   assert.ok(r.lines.some((l) => l.includes('ACME\\jdoe')));
   const policy = await startEgressPolicy({
-    env: {}, corporateProxy: () => true, settings: r.settings, login: () => readProxyLogin({ home: r.home }),
+    env: {}, proxyOn: () => true, settings: r.settings, login: () => readProxyLogin({ home: r.home }),
     watchLogin: () => () => {}, markRejected: (id, o) => markLoginRejected(id, { ...o, home: r.home }),
   });
   t.after(() => policy.close());
@@ -122,12 +122,30 @@ test('login --password is a usage error and writes nothing', async (t) => {
   assert.equal(existsSync(join(r.home, PROXY_LOGIN_FILE)), false);
 });
 
-test('flag off: status exits 1 and the login file is not read', async (t) => {
+test('worca proxy status works with the proxy off and says so', async () => {
+  const lines = [];
+  const code = await cmdProxy(['status'], { out: (s) => lines.push(s), fail: () => {}, env: {}, settings: () => ({ networkProxy: { upstream: 'http://proxy.acme.example:8080' } }) });
+  assert.equal(code, 1);
+  assert.match(lines.join('\n'), /State: off: Worca connects directly/);
+  assert.equal(lines[0], 'Corporate proxy: proxy.acme.example:8080 (no login, from settings)');
+  assert.doesNotMatch(lines.join('\n'), /undefined/);
+});
+
+test('login and test work with the proxy off', async (t) => {
   const r = await rig(t);
-  const reads = proxyLoginReads();
-  assert.equal(await r.run(['status'], { corporateProxy: () => false }), 1);
-  assert.match(r.errs.join('\n'), /corporate proxy is off/);
-  assert.equal(proxyLoginReads(), reads);
+  const off = () => ({ networkProxy: { enabled: false, upstream: r.fake.url() } });
+  assert.equal(await r.run(['login'], { input: stdin('ACME\\jdoe\nS3cret!\n'), settings: off }), 0);
+  assert.equal(readProxyLogin({ home: r.home }).user, 'jdoe');
+  assert.equal(await r.run(['test'], { settings: off }), 0);
+});
+
+test('AC-2.6 wiring: worca main() migrates the flag and starts the live egress before any command', () => {
+  const src = readFileSync(new URL('../src/cli/worca-cc.mjs', import.meta.url), 'utf8');
+  const main = src.slice(src.indexOf('async function main('));
+  const mig = main.indexOf('migrateCorporateProxyFlag()');
+  const live = main.indexOf('startLiveEgress(');
+  assert.ok(mig > 0 && live > mig, 'migration first, then startLiveEgress');
+  assert.equal(/startEgressPolicy\(/.test(main), false, 'no static start left in main()');
 });
 
 test('login with auth basic exits 1; logout deletes the login', async (t) => {
@@ -168,7 +186,7 @@ test('a TTY login prompts for the user, then reads the password hidden', async (
 test('spawned: `worca proxy help` is wired, and `worca proxy status` starts no local proxy', async (t) => {
   const home = mkdtempSync(join(tmpdir(), 'worca-cli-proxy-spawn-'));
   t.after(() => rmSync(home, { recursive: true, force: true }));
-  const env = { ...process.env, WORCA_FLAGS: 'corporateProxy', WORCA_HOME: home, HOME: home, USERPROFILE: home };
+  const env = { ...process.env, WORCA_HOME: home, HOME: home, USERPROFILE: home };
   delete env.WORCA_HOST_PID;
   delete env.NODE_TEST_CONTEXT;
   const help = spawnSync(process.execPath, [CLI, 'proxy', 'help'], { env, encoding: 'utf8', timeout: 30_000 });

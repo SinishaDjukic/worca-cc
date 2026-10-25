@@ -63,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 75;
+export const SCHEMA_VERSION = 77;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -836,8 +836,8 @@ ${STEP_QUESTIONS_DDL}
  * against the live schema so the gap can be healed regardless of the stamp.
  */
 const INCREMENTAL_COLUMNS = {
-  req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT' },   // v74: a brief look's spend (feature_seq is 0 then); v75: a file's read or ask
-  req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v75: the files a start sent (A8 D14)
+  req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask
+  req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
@@ -883,7 +883,10 @@ const INCREMENTAL_COLUMNS = {
                             agent_mode: 'INTEGER',   // v51 (#574): the chat's Agent mode switch, 0/1; NULL = on
                             engine: 'TEXT',          // v53 (#635): the engine the chat is locked to; NULL = before v53 (read from its model)
                             mode: 'TEXT',            // v54 (Workflows view): 'composer' for the editor's chat; NULL = an Ask Worca chat
-                            composer: 'TEXT' },      // v54: JSON {sessionId, docToken, graph, selection, dirty, drafts} — the canvas the last message carried
+                            composer: 'TEXT',        // v54: JSON {sessionId, docToken, graph, selection, dirty, drafts} — the canvas the last message carried
+                            archived_at: 'TEXT',     // v75 (#948 s2): when the chat was archived; NULL = not archived
+                            pinned_at: 'TEXT',       // v75 (#948 s2): when the chat was pinned; NULL = not pinned
+                            group_id: 'TEXT' },      // v76 (#948 s3): the chat's topic group (ask_chat_groups.id); NULL = ungrouped
   shape_features:         { ship_mode: 'TEXT',        // v58 (D24): 'stacked' | 'one'; NULL = not shipped
                             ship_pr_url: 'TEXT',      // v58: the one PR (mode 'one'); NULL otherwise
                             shipped_at: 'TEXT',       // v58: when Ship as ran
@@ -1324,7 +1327,19 @@ CREATE TABLE IF NOT EXISTS req_briefs (
 );
 `;
 
-// v75 Requirements A8 (plans/requirements-a8-design.md §3): a feature's files and a made brief's documents. Bodies live
+// v76 (#948 s3): the Chats column's topic groups. A chat names its group in ask_threads.group_id (one at most); a
+// group is never empty (the store deletes it with its last chat). name_source: 'suggested' | 'user'.
+const ASK_CHAT_GROUPS_DDL = `
+CREATE TABLE IF NOT EXISTS ask_chat_groups (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  name_source TEXT NOT NULL DEFAULT 'user',
+  created_by  TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);`;
+
+// v77 Requirements A8 (plans/requirements-a8-design.md §3): a feature's files and a made brief's documents. Bodies live
 // on disk (<worcaHome>/requirements/att/<id><ext>); the row holds what Worca took from each. Reconcile-safe: IF NOT
 // EXISTS + INCREMENTAL_TABLES; req_cost_ledger.attachment_id and req_starts.files_json live in INCREMENTAL_COLUMNS.
 const REQUIREMENTS_ATTACHMENTS_DDL = `
@@ -1387,6 +1402,7 @@ const INCREMENTAL_TABLES = {
   run_presets:    RUN_PRESETS_DDL,
   run_groups:        RUN_GROUPS_DDL,
   run_group_members: RUN_GROUPS_DDL,
+  ask_chat_groups:   ASK_CHAT_GROUPS_DDL,      // v76 (#948 s3)
   night_decisions:   NIGHT_DECISIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
@@ -2536,9 +2552,11 @@ export function migrate(db) {
     // v74 requirements: the product brief + ledger.brief_id. The repair runs again here: req_cost_ledger is created at
     // v72, after the hoisted repair, so a DB coming from below 72 gets brief_id only from this call.
     if (current < 74) { db.exec(REQUIREMENTS_BRIEFS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
-    // v75 requirements A8: req_attachments + ledger.attachment_id + starts.files_json. The repair runs again here, as at
+    // v75 (#948 s2): ask_threads.archived_at / pinned_at — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    if (current < 76) db.exec(ASK_CHAT_GROUPS_DDL);   // v76 (#948 s3) topic groups; ask_threads.group_id comes from INCREMENTAL_COLUMNS
+    // v77 requirements A8: req_attachments + ledger.attachment_id + starts.files_json. The repair runs again here, as at
     // v74: a DB coming from below 72 / 73 creates the ledger and the starts table after the hoisted repair.
-    if (current < 75) { db.exec(REQUIREMENTS_ATTACHMENTS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
+    if (current < 77) { db.exec(REQUIREMENTS_ATTACHMENTS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

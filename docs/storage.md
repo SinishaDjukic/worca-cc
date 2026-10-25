@@ -70,7 +70,7 @@ project's working tree, so nothing is ever committed to your repo.
                                         written before the turn's spawn, removed when the turn ends
   requirements/att/<id>.<ext>           Requirements files and brief documents — .txt for text kinds, the real
                                         extension for images and PDF; the name is the store's id (ratt_<12 hex>),
-                                        never the file's. Rows: req_attachments (v75). Folder 0700, files 0600.
+                                        never the file's. Rows: req_attachments (v77). Folder 0700, files 0600.
                                         Removed with the file, or with the brief for its documents; an archived
                                         feature keeps its files. A replace writes <id>.<ext>.tmp-<8 hex> and renames
                                         it over the body; one a crash left, older than an hour, is swept at boot

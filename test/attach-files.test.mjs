@@ -30,7 +30,7 @@ test('checkAttachment: Ask\'s checks in Ask\'s order, with its messages; a same-
   assert.equal(checkAttachment({ name: 'spec.pdf', size: 10 }).mime, 'application/pdf');
   assert.equal(checkAttachment({ name: 'evil.exe', size: 1 }).error, 'attachment type not allowed: evil.exe');
   assert.equal(checkAttachment({ name: 'README', size: 1 }).error, 'attachment type not allowed: README');
-  assert.equal(checkAttachment({ name: 'spec.pdf', size: 1 }, { engine: 'codex' }).error, 'PDFs need a Claude chat: spec.pdf');
+  assert.equal(checkAttachment({ name: 'spec.pdf', size: 1 }, { engine: 'codex' }).error, 'a Codex chat cannot view PDFs (Claude, Copilot, Gemini CLI, OpenCode or Qwen Code chats can): spec.pdf');
   assert.equal(checkAttachment({ name: 'shot.png', size: 1 }, { engine: 'codex' }).ok, true);
   assert.equal(checkAttachment({ name: 'big.md', size: 100 * 1024 * 1024 + 1 }).error, 'attachment over 104857600 bytes: big.md');
   assert.equal(checkAttachment({ name: 'big.md', size: 100 * 1024 * 1024 }).ok, true);

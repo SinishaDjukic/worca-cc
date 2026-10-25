@@ -3,15 +3,15 @@
 // error at run start, never a silent fallback; mock mode (WORCA_MOCK or
 // opts.mock) resolves every known engine to the offline mock. An adapter is
 // {name, capabilities, run, classifyError[, preflight, unenforcedRules, partialRules,
-// ruleReach, ruleKind, unattachableMcp]}: see the codex, copilot, cursor, gemini, goose, opencode and qwen entries below.
+// ruleReach, ruleKind, unattachableMcp, chat]}: see the codex, copilot, cursor, gemini, goose, opencode and qwen entries below.
 import { runClaudeAdapter, claudeCapabilities } from './claude.mjs';
 import { runMock } from './mock.mjs';
 import { normalizingOnEvent } from './claude-events.mjs';
 import { classifyError } from '../recoverable-error.mjs';
-import { runCodexProcess, codexCapabilities, classifyCodexError, codexPreflight, unenforcedRules, partialRules, codexMcpProblems, CODEX_COMMAND_RULE_REACH } from './codex.mjs';
+import { runCodexProcess, codexCapabilities, classifyCodexError, codexPreflight, unenforcedRules, partialRules, codexMcpProblems, CODEX_COMMAND_RULE_REACH, codexChat } from './codex.mjs';
 import * as copilot from './copilot.mjs';
 import { runCursorProcess, cursorCapabilities, classifyCursorError, cursorPreflight,
-  unenforcedRules as cursorUnenforced, partialRules as cursorPartial, CURSOR_RULE_TERMS } from './cursor.mjs';
+  unenforcedRules as cursorUnenforced, partialRules as cursorPartial, CURSOR_RULE_TERMS, cursorChat } from './cursor.mjs';
 import * as gemini from './gemini.mjs';
 import * as goose from './goose.mjs';
 import * as opencode from './opencode.mjs';
@@ -51,32 +51,33 @@ const claudeAdapter = Object.freeze({ name: 'claude', capabilities: claudeCapabi
 // `unattachableMcp(servers)`: the --mcp-config servers this engine cannot attach, as `{name, reason}` (reasons:
 // capabilities.mjs describeUnattachableMcp); the run gate refuses a registry copy among them and warns about the rest.
 // An engine without it attaches what Claude Code does.
+// `chat`: the adapter's chat descriptor (engines/chat-descriptor.mjs) — Chat runs on it, locked down (engines/chat.mjs).
 const codexAdapter = Object.freeze({ name: 'codex', capabilities: codexCapabilities, run: runCodexProcess, classifyError: classifyCodexError, preflight: codexPreflight,
-  unenforcedRules, partialRules, ruleReach: CODEX_COMMAND_RULE_REACH, ruleKind: 'command rules', unattachableMcp: codexMcpProblems });
+  unenforcedRules, partialRules, ruleReach: CODEX_COMMAND_RULE_REACH, ruleKind: 'command rules', unattachableMcp: codexMcpProblems, chat: codexChat });
 // The GitHub Copilot CLI (engines/copilot.mjs): emits the normalized vocabulary itself, like codex.
 const copilotAdapter = Object.freeze({ name: 'copilot', capabilities: copilot.copilotCapabilities, run: copilot.runCopilotProcess,
   classifyError: copilot.classifyCopilotError, preflight: copilot.copilotPreflight, unenforcedRules: copilot.unenforcedRules,
   partialRules: copilot.partialRules, ruleReach: copilot.COPILOT_COMMAND_RULE_REACH, ruleKind: 'command and write rules',
-  unattachableMcp: copilot.copilotMcpProblems });
+  unattachableMcp: copilot.copilotMcpProblems, chat: copilot.copilotChat });
 // cursor emits the normalized vocabulary itself (engines/cursor.mjs). Every rule it is given is partial (cursorRulePlan).
 const cursorAdapter = Object.freeze({ name: 'cursor', capabilities: cursorCapabilities, run: runCursorProcess, classifyError: classifyCursorError,
   preflight: cursorPreflight, unenforcedRules: cursorUnenforced, partialRules: cursorPartial,
-  ruleReach: CURSOR_RULE_TERMS.reach, ruleKind: CURSOR_RULE_TERMS.kind });
+  ruleReach: CURSOR_RULE_TERMS.reach, ruleKind: CURSOR_RULE_TERMS.kind, chat: cursorChat });
 // Gemini CLI and Qwen Code (engines/gemini.mjs, engines/qwen.mjs on the shared engines/gemini-family.mjs runner):
 // emit the normalized vocabulary themselves; command rules (and Gemini's path rules) are partial.
 const geminiAdapter = Object.freeze({ name: 'gemini', capabilities: gemini.geminiCapabilities, run: gemini.runGeminiProcess,
   classifyError: gemini.classifyGeminiError, preflight: gemini.geminiPreflight, unenforcedRules: gemini.unenforcedRules,
-  partialRules: gemini.partialRules, ruleReach: gemini.GEMINI_RULE_TERMS.reach, ruleKind: gemini.GEMINI_RULE_TERMS.kind });
+  partialRules: gemini.partialRules, ruleReach: gemini.GEMINI_RULE_TERMS.reach, ruleKind: gemini.GEMINI_RULE_TERMS.kind, chat: gemini.geminiChat });
 // Goose (engines/goose.mjs) emits the normalized vocabulary itself. It holds no permission rule (capability false).
 const gooseAdapter = Object.freeze({ name: 'goose', capabilities: goose.gooseCapabilities, run: goose.runGooseProcess,
-  classifyError: goose.classifyGooseError, preflight: goose.goosePreflight, unattachableMcp: goose.gooseMcpProblems });
+  classifyError: goose.classifyGooseError, preflight: goose.goosePreflight, unattachableMcp: goose.gooseMcpProblems, chat: goose.gooseChat });
 // OpenCode (engines/opencode.mjs) emits the normalized vocabulary itself; its rules ride OPENCODE_CONFIG_CONTENT.
 const opencodeAdapter = Object.freeze({ name: 'opencode', capabilities: opencode.opencodeCapabilities, run: opencode.runOpencodeProcess,
   classifyError: opencode.classifyOpencodeError, preflight: opencode.opencodePreflight, unenforcedRules: opencode.unenforcedRules,
-  partialRules: opencode.partialRules, ruleReach: opencode.OPENCODE_RULE_TERMS.reach, ruleKind: opencode.OPENCODE_RULE_TERMS.kind });
+  partialRules: opencode.partialRules, ruleReach: opencode.OPENCODE_RULE_TERMS.reach, ruleKind: opencode.OPENCODE_RULE_TERMS.kind, chat: opencode.opencodeChat });
 const qwenAdapter = Object.freeze({ name: 'qwen', capabilities: qwen.qwenCapabilities, run: qwen.runQwenProcess,
   classifyError: qwen.classifyQwenError, preflight: qwen.qwenPreflight, unenforcedRules: qwen.unenforcedRules,
-  partialRules: qwen.partialRules, ruleReach: qwen.QWEN_RULE_TERMS.reach, ruleKind: qwen.QWEN_RULE_TERMS.kind });
+  partialRules: qwen.partialRules, ruleReach: qwen.QWEN_RULE_TERMS.reach, ruleKind: qwen.QWEN_RULE_TERMS.kind, chat: qwen.qwenChat });
 // The mock stands in for Claude in tests and smokes, so it declares Claude's map.
 const mockAdapter = Object.freeze({ name: 'mock', capabilities: claudeCapabilities, run: normalized(runMock), classifyError });
 

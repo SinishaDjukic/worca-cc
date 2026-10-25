@@ -4,7 +4,7 @@
 
 **Goal:** A product owner can give Worca the material a feature comes with (emails, support tickets, a spec, screenshots, a mockup). Worca reads each file once, when it is added, writes down "What Worca took from it" (which the product owner can edit; their text wins), and every interview round uses that. Files can be added, replaced, asked about, read again and removed under the same rules as the product owner's other edits; spec items that came from a file name it; on Start the files switched on go to the run as its attached files and the start records which ones. A made Product brief can keep documents every feature of its scope uses.
 
-**Architecture:** Pure attachment logic (limits, ids, display names, refusals, the reader's prompts and reply checks, the `<attachments>` and documents blocks, mentions) in a new `src/core/requirements/attachments.mjs`; the shared base64 upload validation, extracted from Ask's messages route with no Ask behaviour change, in a new `src/core/attachment-upload.mjs`; the job (bodies on disk, the read queue `MAX_READ_JOBS = 2`, the one read per file through A1.1's `callModel`, ask / replace / read again, spend, recovery, the boot sweep, the estimates, what rounds, views and starts read) in a new `src/core/requirements/attachment-job.mjs`; one new table `req_attachments` (v75) with `req_cost_ledger.attachment_id` and `req_starts.files_json`. The interview gains one prompt block, the follow-up for files and sources in small hunks of `round.mjs` / `interview.mjs` / `ready.mjs`; the brief gains documents in `brief.mjs` / `brief-job.mjs`; the run hand-off reuses the extras path of `ui/server.mjs`. The page module `ui/public/requirements-view.mjs` gains the Files field, the Files card, its menus and dialogs, the Ready row and the brief's Documents card.
+**Architecture:** Pure attachment logic (limits, ids, display names, refusals, the reader's prompts and reply checks, the `<attachments>` and documents blocks, mentions) in a new `src/core/requirements/attachments.mjs`; the shared base64 upload validation, extracted from Ask's messages route with no Ask behaviour change, in a new `src/core/attachment-upload.mjs`; the job (bodies on disk, the read queue `MAX_READ_JOBS = 2`, the one read per file through A1.1's `callModel`, ask / replace / read again, spend, recovery, the boot sweep, the estimates, what rounds, views and starts read) in a new `src/core/requirements/attachment-job.mjs`; one new table `req_attachments` (v77) with `req_cost_ledger.attachment_id` and `req_starts.files_json`. The interview gains one prompt block, the follow-up for files and sources in small hunks of `round.mjs` / `interview.mjs` / `ready.mjs`; the brief gains documents in `brief.mjs` / `brief-job.mjs`; the run hand-off reuses the extras path of `ui/server.mjs`. The page module `ui/public/requirements-view.mjs` gains the Files field, the Files card, its menus and dialogs, the Ready row and the brief's Documents card.
 
 **Tech Stack:** Node ESM, `node:sqlite`, `node:test`, jsdom, Express (`ui/server.mjs`), vanilla DOM (`ui/public/*.mjs`), Claude Code CLI through A1.1's `callModel` (replace mode, hermetic flags).
 
@@ -16,7 +16,7 @@
 
 - One commit per task; subjects start `Requirements:`; every message ends with the trailer `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Local only: never push, no rebase, no amend.
 - Everything is behind the `requirements` flag (D18): every new route is in `REQUIREMENTS_ROUTES` behind `requireFlag('requirements')`; the upload parsers sit behind the same gate, so an upload with the flag off is answered 404 `{ error: 'not found' }` without being parsed; file results reach the page only through `requirementsChangeNotifier` (a feature's `seq` frame) and `requirementsBriefNotifier` (a brief's `brief` frame).
-- Schema **v75** (`SCHEMA_VERSION` 74 → 75): `req_attachments` exactly as design §3, `IF NOT EXISTS`, in `INCREMENTAL_TABLES`; `req_cost_ledger.attachment_id TEXT` and `req_starts.files_json TEXT NOT NULL DEFAULT '[]'` in `INCREMENTAL_COLUMNS`; the rung is `if (current < 75) { db.exec(REQUIREMENTS_ATTACHMENTS_DDL); repairSchemaGaps(db, schemaGaps(db)); }`.
+- Schema **v77** (`SCHEMA_VERSION` 76 → 77; written as 74 → 75, renumbered after upstream took v75 and v76): `req_attachments` exactly as design §3, `IF NOT EXISTS`, in `INCREMENTAL_TABLES`; `req_cost_ledger.attachment_id TEXT` and `req_starts.files_json TEXT NOT NULL DEFAULT '[]'` in `INCREMENTAL_COLUMNS`; the rung is `if (current < 77) { db.exec(REQUIREMENTS_ATTACHMENTS_DDL); repairSchemaGaps(db, schemaGaps(db)); }`.
 - Limits (`REQ_ATTACH_LIMITS`): 10 files per feature, 10 documents per brief, 25 MB per file (every kind), 100 MB per upload request; the upload routes' JSON window is `Math.ceil(100 MB × 4 / 3) + 1 MiB` (Ask's formula).
 - Text caps: a summary ("What Worca took from it") at most 1,500 characters, the product owner's too; an answer at most 600; a question 1–200; at most 20 answers per file; a history of at most 10 entries, newest first; one file's summary and answers at most 3,000 characters in a prompt (newest answers first, older ones cut with "(… N earlier answers)").
 - The 24 KB budget (`ASK_LIMITS.inlineAttachmentsMaxBytes`, 24 × 1024 bytes): a text file of at most 24 KB is read inline; the `<attachments>` block carries the full redacted text of text files, in upload order, while they stay within 24 KB in all.
@@ -72,7 +72,7 @@
 | `src/core/attachment-upload.mjs` | Create (Task 2) | `validateAttachmentUploads(list, opts)`: the base64 JSON upload check Ask and Requirements share; Ask's messages as defaults |
 | `src/core/requirements/attachments.mjs` | Create (Task 1), grows in Tasks 2–8, 9 | Pure: `REQ_ATTACH_LIMITS`, `REQ_ATT_ID_RE`, `displayName`, `uniqueName`, `sizeLabel`, `KIND_TITLES`, `KIND_WORDS`, `officeRefusal`, `reqUploadOptions`, `checkNewFiles`, `readRule`, `ATTACHMENT_SYSTEM_PROMPT`, `buildReadPrompt`, `buildAskPrompt`, `normalizeSummary`, `normalizeAnswer`, `mockSummary`, `mockAnswer`, `pushHistory`, `selectInlineAttachments`, `renderAttachmentsForPrompt`, `renderDocumentsForPrompt`, `sourceNames`, `mentions` |
 | `src/core/requirements/attachment-job.mjs` | Create (Task 4), grows in Tasks 5, 6, 8, 9, 10 | The job: bodies, add / remove / edit / switch, the read queue, reads and asks, replace, read again, spend, `recoverAttachmentReads`, `sweepReadFolders`, `readEstimate`, `queueUnread`, `promptFiles`, `fileView`, `runFiles` |
-| `src/core/db.mjs` | Modify (Task 1) | v75: `req_attachments`, the two columns |
+| `src/core/db.mjs` | Modify (Task 1) | v77: `req_attachments`, the two columns |
 | `src/core/requirements/spec.mjs` | Modify (Task 1) | turn kind `file`; error code `TOO_LARGE` |
 | `src/core/requirements/store.mjs` | Modify (Task 1) | `req_attachments` rows; `createStart` takes `files`; `recentBriefCosts` leaves file rows out; `deleteBrief` deletes the brief's document rows; `getBriefById` |
 | `src/core/cost-budget.mjs` | Modify (Task 1) | `attachmentId` in `recordRequirementsCostDelta` |
@@ -89,20 +89,20 @@
 | `ui/public/style.css` | Modify (Tasks 11–15) | `req-new-files`, `req-files`, `req-file-*`, `req-src-tag`, `req-build-files`, `req-fpick`, `req-docs` rules inside the Requirements block |
 | `tools/verify-requirements-cdp.mjs` | Modify (Task 16) | the browser proof of files |
 | `docs/requirements.md`, `docs/storage.md`, `docs/ui-levels.md`, `docs/changelog/unreleased.md` | Modify (Task 16) | the Files section, storage, levels, the changelog entry |
-| Tests (Create) | | `test/file-read-guard.test.mjs`, `test/db-migrate-v75.test.mjs`, `test/requirements-attachments.test.mjs`, `test/attachment-upload.test.mjs`, `test/requirements-attachment-job.test.mjs`, `test/requirements-attachments-api.test.mjs`, `test/requirements-view-files.test.mjs` |
+| Tests (Create) | | `test/file-read-guard.test.mjs`, `test/db-migrate-v77.test.mjs`, `test/requirements-attachments.test.mjs`, `test/attachment-upload.test.mjs`, `test/requirements-attachment-job.test.mjs`, `test/requirements-attachments-api.test.mjs`, `test/requirements-view-files.test.mjs` |
 | Tests (Modify) | | `test/db-migrate-v72.test.mjs`, `test/db-migrate-v73.test.mjs`, `test/requirements-interview.test.mjs`, `test/requirements-round.test.mjs`, `test/requirements-brief.test.mjs`, `test/requirements-brief-job.test.mjs`, `test/requirements-ready.test.mjs`, `test/requirements-edits.test.mjs`, `test/requirements-markdown-save.test.mjs`, `test/requirements-start.test.mjs`, `test/requirements-run-link.test.mjs`, `test/requirements-api.test.mjs`, `test/attach-files.test.mjs` |
 
 ---
 
-### Task 1: Schema v75, the attachments store and file spend
+### Task 1: Schema v77, the attachments store and file spend
 
 **Files:**
-- Modify: `src/core/db.mjs` (`SCHEMA_VERSION` 74 → 75 at line ~66; `REQUIREMENTS_ATTACHMENTS_DDL` after `REQUIREMENTS_BRIEFS_DDL` ~line 1324; `INCREMENTAL_TABLES` entry `req_attachments`; `INCREMENTAL_COLUMNS` entries at line ~839; the rung after the v74 rung ~line 2507)
+- Modify: `src/core/db.mjs` (`SCHEMA_VERSION` 76 → 77 at line ~66; `REQUIREMENTS_ATTACHMENTS_DDL` after `REQUIREMENTS_BRIEFS_DDL` ~line 1324; `INCREMENTAL_TABLES` entry `req_attachments`; `INCREMENTAL_COLUMNS` entries at line ~839; the rung after the v74 rung ~line 2507)
 - Create: `src/core/requirements/attachments.mjs`
 - Modify: `src/core/requirements/spec.mjs` (`TURN_KINDS`, the `RequirementsError` code list)
 - Modify: `src/core/requirements/store.mjs`
 - Modify: `src/core/cost-budget.mjs` (`recordRequirementsCostDelta`, line ~97)
-- Create: `test/db-migrate-v75.test.mjs`, `test/requirements-attachments.test.mjs`
+- Create: `test/db-migrate-v77.test.mjs`, `test/requirements-attachments.test.mjs`
 - Modify: `test/db-migrate-v72.test.mjs` (line ~24, the ledger's pinned columns), `test/db-migrate-v73.test.mjs` (line ~8, `COLS`)
 
 **Interfaces:**
@@ -112,10 +112,10 @@
 - Produces (`cost-budget.mjs`): `recordRequirementsCostDelta({ featureSeq = 0, briefId = null, turnId = null, attachmentId = null, amountUsd, model = null, tsMs })`.
 - Produces (`spec.mjs`): `TURN_KINDS` gains `'file'`; `RequirementsError` code `'TOO_LARGE'` (413).
 
-- [ ] **Step 1: Write the failing migration test** `test/db-migrate-v75.test.mjs`:
+- [ ] **Step 1: Write the failing migration test** `test/db-migrate-v77.test.mjs`:
 
 ```js
-// test/db-migrate-v75.test.mjs — req_attachments, req_cost_ledger.attachment_id and req_starts.files_json
+// test/db-migrate-v77.test.mjs — req_attachments, req_cost_ledger.attachment_id and req_starts.files_json
 // (plans/requirements-a8-design.md §3).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -141,7 +141,7 @@ function assertComplete(db) {
 test('fresh DB has req_attachments and both columns', () => {
   const db = new DatabaseSync(':memory:');
   migrate(db);
-  assert.ok(SCHEMA_VERSION >= 75);
+  assert.ok(SCHEMA_VERSION >= 77);
   assertComplete(db);
 });
 
@@ -188,14 +188,14 @@ test('one content per owner; a start row without files has "[]"', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and see it fail.** `node tools/test.mjs test/db-migrate-v75.test.mjs` → FAIL: `SCHEMA_VERSION >= 75` is false (`74`) and `no such table: req_attachments`.
+- [ ] **Step 2: Run it and see it fail.** `node tools/test.mjs test/db-migrate-v77.test.mjs` → FAIL: `SCHEMA_VERSION >= 77` is false (`76`) and `no such table: req_attachments`.
 
 - [ ] **Step 3: Implement the migration** in `src/core/db.mjs`:
-  - `export const SCHEMA_VERSION = 75;`
+  - `export const SCHEMA_VERSION = 77;`
   - After `REQUIREMENTS_BRIEFS_DDL`:
 
 ```js
-// v75 Requirements A8 (plans/requirements-a8-design.md §3): a feature's files and a made brief's documents. Bodies live
+// v77 Requirements A8 (plans/requirements-a8-design.md §3): a feature's files and a made brief's documents. Bodies live
 // on disk (<worcaHome>/requirements/att/<id><ext>); the row holds what Worca took from each. Reconcile-safe: IF NOT
 // EXISTS + INCREMENTAL_TABLES; req_cost_ledger.attachment_id and req_starts.files_json live in INCREMENTAL_COLUMNS.
 const REQUIREMENTS_ATTACHMENTS_DDL = `
@@ -226,20 +226,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS req_attachments_sha ON req_attachments(owner_t
 ```
 
   - `INCREMENTAL_COLUMNS`: replace the `req_cost_ledger` line with
-    `req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT' },   // v74: a brief look's spend (feature_seq is 0 then); v75: a file's read or ask`
-    and add `req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v75: the files a start sent (A8 D14)`.
+    `req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask`
+    and add `req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)`.
   - `INCREMENTAL_TABLES`: `req_attachments: REQUIREMENTS_ATTACHMENTS_DDL,` after `req_briefs`.
   - After the v74 rung:
 
 ```js
-    // v75 requirements A8: req_attachments + ledger.attachment_id + starts.files_json. The repair runs again here, as at
+    // v77 requirements A8: req_attachments + ledger.attachment_id + starts.files_json. The repair runs again here, as at
     // v74: a DB coming from below 72 / 73 creates the ledger and the starts table after the hoisted repair.
-    if (current < 75) { db.exec(REQUIREMENTS_ATTACHMENTS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
+    if (current < 77) { db.exec(REQUIREMENTS_ATTACHMENTS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
 ```
 
-  - `test/db-migrate-v72.test.mjs`: the pinned ledger columns become `['id', 'feature_seq', 'turn_id', 'amount_usd', 'model', 'ts', 'brief_id', 'attachment_id']` (comment `// brief_id: v74, attachment_id: v75`). `test/db-migrate-v73.test.mjs`: `COLS` ends `…, 'started_by', 'started_at', 'files_json']`.
+  - `test/db-migrate-v72.test.mjs`: the pinned ledger columns become `['id', 'feature_seq', 'turn_id', 'amount_usd', 'model', 'ts', 'brief_id', 'attachment_id']` (comment `// brief_id: v74, attachment_id: v77`). `test/db-migrate-v73.test.mjs`: `COLS` ends `…, 'started_by', 'started_at', 'files_json']`.
 
-- [ ] **Step 4: Run and see it pass.** `node tools/test.mjs test/db-migrate-v75.test.mjs test/db-migrate-v74.test.mjs test/db-migrate-v73.test.mjs test/db-migrate-v72.test.mjs` → all pass.
+- [ ] **Step 4: Run and see it pass.** `node tools/test.mjs test/db-migrate-v77.test.mjs test/db-migrate-v74.test.mjs test/db-migrate-v73.test.mjs test/db-migrate-v72.test.mjs` → all pass.
 
 - [ ] **Step 5: Write the failing store and names test** `test/requirements-attachments.test.mjs`:
 
@@ -579,14 +579,14 @@ export function recordRequirementsCostDelta({ featureSeq = 0, briefId = null, tu
 }
 ```
 
-- [ ] **Step 8: Run and see it pass.** `node tools/test.mjs test/requirements-attachments.test.mjs test/db-migrate-v75.test.mjs test/db-migrate-v74.test.mjs test/db-migrate-v73.test.mjs test/db-migrate-v72.test.mjs test/requirements-store.test.mjs test/cost-budget-requirements.test.mjs test/stats-api.test.mjs test/requirements-brief-job.test.mjs` → all pass.
+- [ ] **Step 8: Run and see it pass.** `node tools/test.mjs test/requirements-attachments.test.mjs test/db-migrate-v77.test.mjs test/db-migrate-v74.test.mjs test/db-migrate-v73.test.mjs test/db-migrate-v72.test.mjs test/requirements-store.test.mjs test/cost-budget-requirements.test.mjs test/stats-api.test.mjs test/requirements-brief-job.test.mjs` → all pass.
 
 - [ ] **Step 9: Commit.**
 
 ```bash
 git add src/core/db.mjs src/core/requirements/attachments.mjs src/core/requirements/spec.mjs src/core/requirements/store.mjs \
-  src/core/cost-budget.mjs test/db-migrate-v75.test.mjs test/requirements-attachments.test.mjs test/db-migrate-v72.test.mjs test/db-migrate-v73.test.mjs
-git commit -m "Requirements: attachments table (v75), store and file spend" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+  src/core/cost-budget.mjs test/db-migrate-v77.test.mjs test/requirements-attachments.test.mjs test/db-migrate-v72.test.mjs test/db-migrate-v73.test.mjs
+git commit -m "Requirements: attachments table (v77), store and file spend" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -5879,7 +5879,7 @@ git archive --format=tar HEAD | wsl -e bash -lc 'd=$(mktemp -d /tmp/worca-a8-XXX
 | D6 prompts: `<attachments>` last in stable, documents in `<product_brief>` and `<brief_documents>`, data rules (quoted file names), byte-identity of the user prompts without files; the brief look's deny rules | 6, 8 (the follow-up line) |
 | D7 file types and limits, their refusals, the New feature total | 2, 4 (`checkNewFiles`), 11 (client checks), 12 (batches), 17 (the image size limit measured) |
 | D8 change rules: during, after the interview (unasked until a round carried the file, follow-up, Decide), after a start, documents | 8 (rules, follow-up), 9 (views), 14 (Decide) |
-| D9 storage: v75, paths from id and kind, body first (Replace through a temp file), duplicates, display names (well formed, no bidi) | 1, 4, 5 |
+| D9 storage: v77, paths from id and kind, body first (Replace through a temp file), duplicates, display names (well formed, no bidi) | 1, 4, 5 |
 | D10 API: shared validation, the JSON window behind the flag, download headers (`attachmentDisposition`), `editable` / `isStarting`, reading refusals | 2, 9, 5 (409s), 10 (the starting refusal) |
 | D11 Replace (keep or rewrite), Read again (confirm on edited) | 5, 13 |
 | D12 Ask about this file (1–200, 600, 20, budget, one at a time) | 5, 13 |

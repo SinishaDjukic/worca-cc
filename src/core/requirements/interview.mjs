@@ -17,6 +17,7 @@ import { tx } from '../db.mjs';
 import { REPO_LOOK_TOOLS, REPO_LOOK_MAX_TURNS, REPO_LOOK_TIMEOUT_MS } from '../auto/classify.mjs';
 import { worcaHome, listProjects } from '../projects.mjs';
 import { utilityModelFor } from '../settings-cascade.mjs';
+import { withRole } from '../model-roles.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, MAX_ROUNDS, LIMITS, clip } from './spec.mjs';
 import { unaskedRejections, unaskedFiles } from './ready.mjs';
@@ -36,7 +37,8 @@ const DEFAULTS = Object.freeze({
   runClaudeImpl: runClaude, listModels, listProjects, workspaceTarget,
   openLook: openRepoLook, openWorkspaceLook: openWorkspaceRepoLook, budget: () => budgetStatus(), onChange: () => {},
   userSignIn: () => userSignInLogged(),
-  interviewSlot: () => utilityModelFor('claude', 'requirementsInterview'),
+  // Model roles (D3): an unset interview slot takes the everyday role.
+  interviewSlot: () => withRole(utilityModelFor('claude', 'requirementsInterview'), 'claude', 'requirementsInterview'),
 });
 
 // Keys of the user settings' `env` block that sign Claude Code in or route its traffic (A1.1 D6).

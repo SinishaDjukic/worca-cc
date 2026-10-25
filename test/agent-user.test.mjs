@@ -4,11 +4,11 @@
 // changes when it is unset. A fake `sudo` on PATH records the argv and runs the command.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, chmod, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, chmod, readFile, mkdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, delimiter } from 'node:path';
 import {
-  agentIdentity, resolveOnPath, agentSpawn, killAgentGroup, killAgentGroupSync,
+  agentIdentity, resolveOnPath, agentSpawn, killAgentGroup, killAgentGroupSync, shareWithAgent,
 } from '../src/core/agent-user.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { runOpts } from '../src/core/phases.mjs';
@@ -42,6 +42,44 @@ test('agentSpawn: sudo -n -E -u <user> -- <abs bin>, the agent\'s HOME/USER/LOGN
     env: { PATH: '/usr/local/bin', ANTHROPIC_API_KEY: 'k', HOME: '/data/agent-home', USER: 'worca-agent', LOGNAME: 'worca-agent' },
   });
   assert.throws(() => agentSpawn('claude', [], { PATH: '/nope' }, ID, { isFile: () => false }), /not found on PATH/);
+});
+
+test('agentSpawn: a caller\'s own HOME for the agent (a Goose chat\'s home) replaces the agent\'s', () => {
+  const w = agentSpawn('/usr/bin/goose', [], { PATH: '/usr/bin', HOME: '/srv' }, ID, { isFile: () => true, home: '/data/agent-home/.worca/goose-chat-home' });
+  assert.equal(w.env.HOME, '/data/agent-home/.worca/goose-chat-home');
+  assert.equal(w.env.USER, 'worca-agent');
+});
+
+const mode = async (p) => (await stat(p)).mode & 0o7777;
+
+test('shareWithAgent: the whole staged folder for the group (sub-folders traversable, executables kept), traverse-only above it up to stopAt', POSIX, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'worca-share-'));
+  const tmpBase = join(root, 'tmp');
+  const staged = join(tmpBase, 'gemini', 'ask_1', '.gemini');
+  await mkdir(join(staged, 'agents'), { recursive: true, mode: 0o700 });
+  await chmod(join(tmpBase, 'gemini'), 0o700); await chmod(join(tmpBase, 'gemini', 'ask_1'), 0o700); await chmod(tmpBase, 0o700);
+  await writeFile(join(staged, 'settings.json'), '{}', { mode: 0o600 });
+  await writeFile(join(staged, 'agents', 'node.md'), 'x', { mode: 0o600 });
+  await writeFile(join(staged, 'wrapper'), '#!/bin/sh\n', { mode: 0o700 });
+  const id = { ...ID, gid: process.getgid() };
+  shareWithAgent(staged, id, { stopAt: tmpBase });
+  assert.equal(await mode(staged), 0o750);
+  assert.equal(await mode(join(staged, 'agents')), 0o750, 'a sub-folder stays traversable');
+  assert.equal(await mode(join(staged, 'agents', 'node.md')), 0o640);
+  assert.equal(await mode(join(staged, 'settings.json')), 0o640);
+  assert.equal(await mode(join(staged, 'wrapper')), 0o750, 'an executable stays executable');
+  assert.equal(await mode(join(tmpBase, 'gemini', 'ask_1')), 0o710, 'traverse, never list');
+  assert.equal(await mode(join(tmpBase, 'gemini')), 0o710);
+  assert.equal(await mode(tmpBase), 0o700, 'nothing at or above stopAt');
+  shareWithAgent(staged, id, { stopAt: tmpBase, writable: true });
+  assert.equal(await mode(staged), 0o770, 'writable: the agent writes into it (Copilot\'s usage file)');
+  const lone = join(root, 'other', 'spawn-1');
+  await mkdir(lone, { recursive: true, mode: 0o700 });
+  await chmod(join(root, 'other'), 0o700);
+  shareWithAgent(lone, id);
+  assert.equal(await mode(join(root, 'other')), 0o710, 'without stopAt: its direct parent only');
+  assert.equal(await mode(root), (await stat(root)).mode & 0o7777);
+  shareWithAgent(lone, { ...id, gid: null });   // no shared group: nothing to do, never a throw
 });
 
 test('killAgentGroup(Sync): kills the whole group as the agent, never pid 1 or a bad pid', () => {

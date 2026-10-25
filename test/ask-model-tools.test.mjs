@@ -380,3 +380,28 @@ test('apply path: applyModelChange replays through the setters; dryRun validates
     } },
   ]);
 });
+
+test('import_endpoint with the endpoint\'s own key (Gemini, Qwen): a ${VAR} rides the listing and the card; a literal key is refused', async () => {
+  const seen = [];
+  const endpoint = {
+    server: 'gemini', serverLabel: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', warnings: [],
+    models: [{ id: 'gemini-3-flash', name: 'Gemini 3 Flash', catalogId: 'google-gemini-3-flash', servedContext: 1048576, importable: true, inCatalog: false }],
+  };
+  const withEp = createModelChangeValidator({
+    listGlobalModels: () => [], listPluginModels: () => [], policyModels: () => [], predefined: [],
+    addModel: async (m) => m, updateModel: async () => ({}), updateProvider: async () => ({}),
+    providerConfig: () => ({ baseUrl: 'https://openrouter.ai/api/v1' }), providerReadiness: () => ({ ok: true }),
+    modelRefs: () => ({ steps: [], nodes: [] }), envHas: () => true,
+    endpointModels: async (baseUrl, apiKey) => { seen.push([baseUrl, apiKey]); return endpoint; },
+  });
+  const r = await withEp({ kind: 'import_endpoint', baseUrl: endpoint.baseUrl, apiKey: '${GEMINI_API_KEY}', ids: ['gemini-3-flash'] });
+  assert.equal(r.ok, true, JSON.stringify(r.errors));
+  assert.deepEqual(seen, [[endpoint.baseUrl, '${GEMINI_API_KEY}']]);
+  assert.deepEqual(r.card.change, { ids: ['gemini-3-flash'], baseUrl: endpoint.baseUrl, apiKey: '${GEMINI_API_KEY}' });
+  assert.deepEqual(r.card.rows.at(-1), { field: 'Key', before: null, after: '${GEMINI_API_KEY} on each entry' });
+
+  const bad = await withEp({ kind: 'import_endpoint', baseUrl: endpoint.baseUrl, apiKey: 'AIzaSyLiteralKey', ids: ['gemini-3-flash'] });
+  assert.equal(bad.ok, false);
+  assert.match(bad.errors[0], /apiKey must be a \$\{VAR\} reference/);
+  assert.equal(seen.length, 1, 'a literal key never reaches the endpoint');
+});
