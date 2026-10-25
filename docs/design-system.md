@@ -154,7 +154,8 @@ At 480px and below, the drawer head puts the step title on its own row and keeps
 on the row below, with 7px switch padding (a 311px History drawer leaves 283px). The Logs bar wraps while the switch
 shows, so its selects keep their content width and search shares the switch row with copy.
 ### Tabs
-`.tabs` / `.tab`: underline tabs, 32px, never boxed (checked).
+`.tabs` / `.tab`: underline tabs, 32px, never boxed (checked). One controller, `ui/public/nav/tabs.mjs`: role=tablist,
+roving tabindex, arrow keys, the tab in the address (see Navigation).
 ### Filter chip
 `.filter-chip` (`aria-pressed`): 28px, 12px / 500, 1px `--line-2` border, 6px corner. Selected: `--field` fill, ink
 border, ink text. Never a solid ink fill. A count sits in `.n`. It is the only filter chip: `mv-filter`, `wfl-chip`,
@@ -280,11 +281,10 @@ and hand the focus back to the opener.
   no page header; the Marketplace's tabs are its header (Marketplace exceptions).
 - Stat tiles hold numbers only (time, cost, files changed). A list of chips goes in its own labelled row, for example
   the Cost tags row in the run page's facts block, never stacked inside a tile. The value is sans with tabular figures.
-- Run and group pages share one head: the bar (Back, a 28px chevron `Back to Runs`, in every layout; the breadcrumb
-  `Runs › Run tags › Run 2` beside it when the list stands beside the page; Run after; on the right the one primary
-  action, Stop, ⋯), the title with its kind chip (`Run 2 of 3`, `Run`, or
-  `Feature` / `Chain` / `Group`; a run in a group's chip links its group page and ends in a CSS `›` (`Run 2 of 3 ›`), so
-  its facts block has no group row), then the card: the status block (the state word as the card's headline with its detail under it, the head buttons at its right,
+- Run and group pages share one head (Navigation): the breadcrumb in the top bar, then the title row (the title with
+  its kind chip, Run after, on the right the one primary action, Stop, ⋯), then the tabs, then the card. The kind chip
+  reads `Run 2 of 3`, `Run`, or `Feature` / `Chain` / `Group`; a run in a group's chip links its group page and ends in
+  a CSS `›` (`Run 2 of 3 ›`), so its facts block has no group row. The card: the status block (the state word as the card's headline with its detail under it, the head buttons at its right,
   centred on the word's line, with the PR control among them; see Card head and PR controls. Beside the stage bar the
   detail names only the step (`Working` / `Refine Plan`); the stage is on the bar), the route ("Where the work is") under a `--line` divider, the facts block (`.rd-kv`: Group, Project, Labels and Cost tags; 12px
   `--ink-2` labels, 13px values, one row per fact and one place to edit it; a quiet button that leads a value pulls back
@@ -303,6 +303,11 @@ and hand the focus back to the opener.
   page; the ⌄ only expands. One row is highlighted at a time, the one whose page is open: a collapsed group whose run
   is open shows the lighter `--row-open` fill over its whole row; expanded, only the open run's row is highlighted.
   Rows inside a group draw no dividers; the group keeps its own divider before the next row.
+- Two row levels in the Runs list and the Chats column. A top-level row (a single run, Needs you, a group row) has a
+  13px / 500 title over a 12px status line; a group row's title is 600. A row inside a group is one line, 26px (40px on
+  touch screens): a 12px / 400 title, then its status at the right (it drops the Working / Starting word its dot says
+  and ellipsises first), then its PR chip; no label chips and no Independent tag. A live member's 3px line sits under
+  its title. Its ⋯ stays 28px, centred.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
   not from a filter button in the list's header. The Marketplace's Browse search is the one exception
   (Marketplace exceptions).
@@ -339,6 +344,36 @@ catalogue structure that was approved, drawn with this system's tokens:
 - Kind colours (`.mk-t-*` on the hue families, glyphs on the `-ink-strong` shades) appear only in a plugin's monogram tile
   and as the rail's small kind dots. The update chip ("Update 0.3.0", "2 updates") is the page's blue status chip.
   Status chips there use `.badge.mk-chip-*` on the `-ink-strong` shades (4.5:1 or more); the global `.badge` tones do not change.
+
+## Navigation
+On the run, saved run and feature/group pages; the other pages move in later slices (each with one ROUTES row).
+- One page head (R1). The breadcrumb lives in the top bar, in the title's place, and starts at the section, so the
+  section name shows once (`Runs › Chat sidebar aligned with Runs`). Below it: the title row (the 22px h1, the kind chip,
+  an optional meta line, the page's actions on the right, secondary ones in ⋯), then the tabs. No separate head row.
+  The chip sits right after the title; the actions keep their width and the title wraps. At 640px and below the title
+  wraps in full, the chip goes under it, and Run after moves into ⋯.
+- Going up means going to the parent, named (R2). Wide: the breadcrumb is the only way up; no Back buttons. At 760px
+  and below the top bar shows one link, `‹ Parent name`. A parent whose name is not known yet is left out. Escape in the
+  slide layout follows the same link.
+- The breadcrumb ends at the parent; the current page is the title (R3). Say each fact once: a slice run's title drops
+  "Run N · " on screen, because the chip `Run 3 of 5 ›` says it and links the feature.
+- Overlays (the Chat run panel, wizards, editors over a page) have no breadcrumb; ✕ / Cancel / Escape return to where
+  they opened, and Open full page goes to the page on the same tab (R4; the overlays move onto the shared head in a
+  later slice, and until then the Chat run panel keeps its Details view).
+- One tab component (R5): `.tabs` / `.tab`, `role=tablist`, `aria-selected`, arrow keys, Home and End. Every tab is in
+  the address as `/tab`, the default tab is left out, and a change adds a history entry. Run pages: Summary (default) ·
+  Diff · Artifacts · Workflow · Logs · Agents · Q&A (Changes and Actions where they apply); Q&A is `qa` on both.
+  Old addresses (`…/details/tab`, `clarify`) still open the same tab. A run waiting for an answer marks Summary with `?`.
+  A link on the page to another of its tabs (Open the diff, Open in Logs, a graph footer row) pushes that tab's address.
+- Until the run panel moves onto the shared head, a run page shows the Details header's own rows in Summary, under the
+  facts row: "cost unknown", the branch and Sync, Publish / Push, the base check. The title, status and PR control it
+  repeats are not drawn there, and neither is its cost: the glance's cost tile is the breakdown trigger.
+- Going up to Runs keeps the list's scroll and selection. After a navigation, focus is on the h1. The breadcrumb is
+  `nav aria-label="Breadcrumb"`. Dark theme comes from the existing `light-dark()` tokens only.
+- How to add a page: one row in `ROUTES` (`ui/public/nav/routes.mjs`: params, tabs, old forms, parent), one row in
+  app.js `NAV_SCREENS` (its title row, bar and tablist), delete its old Back, and fixture rows in
+  `test/nav-routes.test.mjs`. Never parse a hash, paint a crumb or build a tab strip in the view itself;
+  `test/nav-drift.test.mjs` fails a view that does.
 
 ## Do and don't
 | Do | Don't | Why |

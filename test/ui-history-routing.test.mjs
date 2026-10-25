@@ -180,7 +180,7 @@ test('#history/<key>/<id> opens the detail screen and fetches the keyed detail U
   assert.equal(window.document.querySelector('#hist-detail .hd-title').textContent, ROW.title);
 });
 
-test('back/Back button/Escape: side by side keeps the saved run, the slide layout returns to the list', async () => {
+test('back/the Runs crumb/Escape: side by side keeps the saved run, the slide layout returns to the list', async () => {
   const ctx = await boot({ fetchHandler: handler });
   // Each row starts side by side on a freshly opened saved run. Reopening right after a
   // slide-out is safe: its 600ms fallback clears the screen only while no run is open.
@@ -205,13 +205,14 @@ test('back/Back button/Escape: side by side keeps the saved run, the slide layou
       // jsdom never fires `transitionend`, so the screen is emptied only by the 600ms
       // fallback timer.
     } },
-    { name: 'the Back button returns to the list in both layouts', run: async () => {
+    { name: 'the top bar\'s Runs crumb returns to the list in both layouts', run: async () => {
       split(ctx.window);
       let shell = await openDetail(ctx);
-      const back = ctx.window.document.querySelector('#hist-detail .hd-back');
-      assert.ok(back, 'the detail header carries a Back button');
+      assert.equal(ctx.window.document.querySelector('#hist-detail .hd-back'), null, 'no Back in the page');
+      const back = ctx.window.document.querySelector('#topnav-crumbs .nav-trail a[data-crumb="runs"]');
+      assert.ok(back, 'the top bar carries the Runs crumb');
 
-      // Slice 2: split shows Back too; it asks for the list itself (goRunsList), never the remembered run.
+      // It asks for the list itself (backToRunsList), never the remembered run.
       back.dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
       await settle(ctx.window);
       assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'runs');
@@ -219,7 +220,7 @@ test('back/Back button/Escape: side by side keeps the saved run, the slide layou
 
       slide(ctx.window);
       shell = await openDetail(ctx);
-      ctx.window.document.querySelector('#hist-detail .hd-back')
+      ctx.window.document.querySelector('#topnav-crumbs a.nav-up')
         .dispatchEvent(new ctx.window.Event('click', { bubbles: true }));
       await settle(ctx.window);
       assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'runs');
@@ -286,7 +287,7 @@ test('Escape is swallowed while ANY pop-up is up, not only the ones a list named
   ]);
 });
 
-test('unknown id renders the detail error state with a working Back', async () => {
+test('unknown id renders the detail error state under the trail Runs, with no tab strip and a working up link', async () => {
   const missing = (url) => {
     if (url.endsWith('/api/history/pr')) return ok({ ok: true });
     if (url.endsWith('/api/history')) return ok({ pipelines: [], ghAvailable: false });
@@ -304,9 +305,12 @@ test('unknown id renders the detail error state with a working Back', async () =
   assert.equal(err.hidden, false, 'the error slot is revealed');
   assert.match(err.textContent, /Could not load run/);
 
-  // Back is shown in the slide layout only (side by side the list is in view).
+  assert.equal(window.document.querySelector('#hist-detail .ph-tabs [role="tab"]'), null, 'no tabs are built');
+  assert.equal(window.document.querySelector('#hist-detail .hd-back'), null);
+  assert.deepEqual([...window.document.querySelectorAll('#topnav-crumbs .nav-trail a')].map((a) => a.textContent), ['Runs']);
+  assert.equal(window.location.hash, `#history/${KEY}/nope1234`, 'the address stays as typed');
   slide(window);
-  window.document.querySelector('#hist-detail .hd-back').dispatchEvent(new window.Event('click', { bubbles: true }));
+  window.document.querySelector('#topnav-crumbs a.nav-up').dispatchEvent(new window.Event('click', { bubbles: true }));
   await settle(window);
   assert.equal(window.location.hash.replace(/^#/, ''), 'runs');
   assert.equal(window.document.querySelector('#hist-shell').classList.contains('detail-open'), false);

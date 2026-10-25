@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { runPositionLabel, groupKindWord, pageModel, runCrumbs, paintCrumbs, buildFacts, syncFacts, setFactText, RUN_FACTS, GROUP_FACTS }
+import { runPositionLabel, groupKindWord, pageModel, runTitleText, buildFacts, syncFacts, setFactText, RUN_FACTS, GROUP_FACTS }
   from '../ui/public/run-page-head.mjs';
+import { sliceTitle } from '../src/core/shape/features.mjs';
 
 const doc = () => new JSDOM('<!doctype html><body></body>').window.document;
 const home = (over = {}) => ({ row: { groupKind: 'feature', groupId: 'feat_1', title: 'Run tags' }, planning: false, position: 2, total: 3, ...over });
@@ -28,21 +29,6 @@ test('pageModel strips the one PR reference from the line, and only that', () =>
   assert.equal(pageModel(plain), plain);                     // untouched object when there is nothing to strip
 });
 
-test('crumbs: Runs › group › Run 2 for a member, Runs › group for a group page, none alone', () => {
-  assert.deepEqual(runCrumbs(home()), [{ label: 'Runs', href: '#runs' }, { label: 'Run tags', href: '#feature/feat_1' }, { label: 'Run 2' }]);
-  assert.deepEqual(runCrumbs(home({ row: { groupKind: 'chain', groupId: 'p:p0', title: 'Docs chain' } })).at(1), { label: 'Docs chain', href: '#group/p%3Ap0' });
-  assert.deepEqual(runCrumbs(null), []);
-  const d = doc();
-  const nav = d.createElement('nav');
-  paintCrumbs(nav, runCrumbs(home()));
-  assert.equal(nav.hidden, false);
-  assert.deepEqual([...nav.querySelectorAll('.rd-crumb')].map((c) => [c.tagName, c.textContent]), [['A', 'Runs'], ['A', 'Run tags'], ['SPAN', 'Run 2']]);
-  assert.equal(nav.querySelector('.rd-crumb:last-child').getAttribute('aria-current'), 'page');
-  assert.equal(nav.querySelectorAll('.rd-crumb-sep svg').length, 2);   // the chevron icon, never a typed "›"
-  paintCrumbs(nav, []);
-  assert.equal(nav.hidden, true);
-});
-
 test('facts block: one row per fact, hidden while empty', () => {
   const d = doc();
   const kv = buildFacts(d, GROUP_FACTS);
@@ -62,4 +48,18 @@ test('facts block: one row per fact, hidden while empty', () => {
   syncFacts(rk);
   assert.equal(rk.querySelector('[data-fact="outcome"]').hidden, false);
   assert.equal(rk.querySelector('[data-fact="outcome"] .rd-kv-v').textContent, 'Unsuccessful');
+});
+
+test('runTitleText drops "Run N · " only when the chip says the same N', () => {
+  const h = { row: { title: 'Run tags' }, position: 2, planning: false };
+  assert.equal(runTitleText('Run 2 · Pin charts', h), 'Pin charts');
+  assert.equal(runTitleText('Run 3 · Pin charts', h), 'Run 3 · Pin charts');   // chip says 2: keep
+  assert.equal(runTitleText('Run 2 · Pin charts', null), 'Run 2 · Pin charts');
+  assert.equal(runTitleText('Run 2 · Pin charts', { ...h, planning: true, position: null }), 'Run 2 · Pin charts');
+  assert.equal(runTitleText('Fix the tooltip', h), 'Fix the tooltip');
+});
+
+test('runTitleText strips the prefix sliceTitle really writes (a reworded sliceTitle fails here)', () => {
+  const h = { row: { title: 'Run tags' }, position: 2, planning: false };
+  assert.equal(runTitleText(sliceTitle('Run tags', 2, 3, { title: 'Pin charts' }), h), 'Pin charts');
 });

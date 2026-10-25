@@ -436,38 +436,6 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     },
   });
 
-  // S9: ask-panel's renderTranscript (P1) re-appends this cached card after a replaceChildren() on every new row,
-  // ask-start/-done and resync; moving the card drops the focus of the control the user is in (a half-typed answer, a
-  // button they tabbed to) to <body>. Remember that control while it has the focus; once the card sits in its new row,
-  // focus it again (a text field keeps its caret) — only when the focus fell to nothing. A press or a Tab elsewhere
-  // ends the watch.
-  let kept = null;                                   // { node, host } while a control in this card has the focus
-  let keptMo = null;
-  function keptStop() {
-    kept = null;
-    if (keptMo) { keptMo.disconnect(); keptMo = null; }
-    doc.removeEventListener('pointerdown', keptPress, true);
-  }
-  function keptPress(e) { if (kept && !(e.target && kept.node.contains(e.target))) keptStop(); }
-  function keptRestore() {
-    const k = kept;
-    if (!k || doc.activeElement === k.node || el.parentNode === k.host) return;   // still in it, or the card did not move
-    const a = doc.activeElement;
-    if (!k.node.isConnected || (a && a !== doc.body)) { keptStop(); return; }   // gone, or the focus went somewhere
-    k.node.focus({ preventScroll: true });           // its focusin records the new row
-    if (doc.activeElement !== k.node) keptStop();    // it cannot take the focus now (disabled while an answer is in flight)
-  }
-  el.addEventListener('focusin', (e) => {
-    kept = { node: e.target, host: el.parentNode };
-    const MO = doc.defaultView && doc.defaultView.MutationObserver;
-    if (!keptMo && MO) {
-      keptMo = new MO(keptRestore);
-      keptMo.observe(doc, { childList: true, subtree: true });
-      doc.addEventListener('pointerdown', keptPress, true);
-    }
-  });
-  el.addEventListener('focusout', (e) => { if (e.relatedTarget && !el.contains(e.relatedTarget)) keptStop(); });
-
   function paintAgents(s) {
     const pq = s && s.pendingQuestion;
     const gate = s && s.decor && s.decor.gate ? s.decor.gate.nodeId : null;
@@ -967,7 +935,6 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
 
   function destroy() {
     dead = true;
-    keptStop();
     if (graph) { graph.destroy(); graph = null; }
     call(controls.releaseQuestion, qBody);
   }

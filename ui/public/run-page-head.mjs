@@ -1,7 +1,6 @@
 // ui/public/run-page-head.mjs — the aligned run and group page head (runs navigation, run 3): the kind chip's words,
-// the status model without a second PR mention, the breadcrumb and the facts block. Pure DOM over the host's
-// ownerDocument; app.js and group-page.mjs own the data.
-import { icon } from './icons.mjs';
+// the status model without a second PR mention, the h1 text and the facts block (the breadcrumb is nav/crumbs.mjs).
+// Pure DOM over the host's ownerDocument; app.js and group-page.mjs own the data.
 
 export const RUN_FACTS = Object.freeze([['group', 'Group'], ['project', 'Project'], ['branch', 'Branch'], ['outcome', 'Outcome'], ['labels', 'Labels'], ['tags', 'Cost tags']]);
 export const GROUP_FACTS = Object.freeze([['project', 'Project'], ['runs', 'Runs'], ['cost', 'Total cost'], ['labels', 'Labels']]);
@@ -28,40 +27,14 @@ export function pageModel(m) {
   return { ...m, line: m.line.split(` · PR #${n}`).join('') };
 }
 
-/** "Runs › Run tags › Run 2" for a grouped run; [] for a single run (the bar keeps no crumbs then). */
-export function runCrumbs(home) {
-  if (!home || !home.row) return [];
-  const last = home.planning ? 'Planning' : home.position != null ? `Run ${home.position}` : 'Run';
-  return [{ label: 'Runs', href: '#runs' }, { label: home.row.title, href: groupHrefOf(home.row) }, { label: last }];
-}
-
-/** Paint `crumbs` ([{ label, href? }]) into `nav` (idempotent through a signature). Under two crumbs it hides. */
-export function paintCrumbs(nav, crumbs) {
-  if (!nav) return;
-  const sig = JSON.stringify(crumbs);
-  nav.hidden = crumbs.length < 2;
-  if (nav.dataset.sig === sig) return;
-  nav.dataset.sig = sig;
-  const doc = nav.ownerDocument;
-  const kids = [];
-  crumbs.forEach((c, i) => {
-    if (i) {
-      const s = doc.createElement('span');
-      s.className = 'rd-crumb-sep';
-      s.setAttribute('aria-hidden', 'true');
-      s.append(icon(doc, 'chevron', 12));
-      kids.push(s);
-    }
-    const last = i === crumbs.length - 1;
-    const e = doc.createElement(!last && c.href ? 'a' : 'span');
-    e.className = 'rd-crumb';
-    e.textContent = c.label;
-    e.title = c.label;
-    if (last) e.setAttribute('aria-current', 'page'); else if (c.href) e.setAttribute('href', c.href);
-    if (c.href === '#runs') e.dataset.crumb = 'runs';      // app.js routes it through goRunsList (no split restore)
-    kids.push(e);
-  });
-  nav.replaceChildren(...kids);
+/** The run page's h1 text: a slice run's "Run 3 · " prefix goes when the chip already says "Run 3 of N" (say each
+ *  fact once). Display only: sliceTitle, branches and PR titles keep it. The prefix format is sliceTitle's
+ *  (src/core/shape/features.mjs); a test feeds its real output through here. */
+export function runTitleText(title, home) {
+  const t = String(title || '');
+  if (!home || home.planning || home.position == null) return t;
+  const m = /^Run (\d+) · (.+)$/.exec(t);
+  return m && Number(m[1]) === home.position ? m[2] : t;
 }
 
 /** The facts block for a page built in JS (the group page). The run templates carry the same markup statically. */

@@ -526,7 +526,7 @@ test('tabs render with badges; Details opens on Overview, and a tab route opens 
 
   assert.deepEqual(
     tabsOf(doc).map((b) => b.dataset.sec),
-    ['overview', 'diff', 'actions', 'workflow', 'clarify', 'logs', 'agents'],   // one order on both run pages: results, then how it ran
+    ['overview', 'diff', 'actions', 'workflow', 'logs', 'agents', 'clarify'],   // one order on both run pages: the route table's (Q&A last)
   );
   // filesNew(1) + filesChanged(13). NEVER + filesDeleted: results.mjs:32 buckets
   // 'D' rows into changedFiles (NEW_STATUS is {A,C}) while :29 ALSO counts them in
@@ -625,7 +625,8 @@ test('the History Artifacts tab opens a row in the popup, and Escape closes only
   await settle(ctx.window, 6);
   const doc = ctx.window.document;
   const hash = ctx.window.location.hash;
-  assert.match(hash, /\/details\/artifacts$/);
+  assert.match(hash, /\/artifacts$/);
+  assert.doesNotMatch(hash, /\/details\//, 'the old address was rewritten to the tab\'s');
   const main = [...doc.querySelectorAll('#hist-detail .hd-sec[data-sec="artifacts"] .afb-main')]
     .find((m) => m.querySelector('.afb-name').textContent === 'plan.md');
   click(ctx.window, main);

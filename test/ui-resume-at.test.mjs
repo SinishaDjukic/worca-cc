@@ -234,12 +234,12 @@ const histFetch = (pauseReason = null) => (url) => {
 };
 
 test('History detail: the bar carries the Resume split (no card Resume); "Resume at…" opens the sheet and posts the pipeline id', async () => {
-  // One boot at advanced level: the detail opens in glance mode with the split in its bar;
+  // One boot at advanced level: the detail opens as a page (Summary) with the split in its bar;
   // each step's state is recorded as it happens, and the rows read the records.
   const ctx = await boot({ level: 'advanced', fetchHandler: histFetch() });
   ctx.go(`history/${KEY}/fcec04e8`);
   await ctx.settle(8);
-  const mode = ctx.doc.querySelector('#hist-detail .hd').dataset.mode;
+  const presentation = ctx.doc.querySelector('#hist-detail .hd').dataset.presentation;
   const split = ctx.doc.querySelector('.hd-resume-split');
   const barSplit = ctx.doc.querySelector('#hist-detail .hd-bar .rd-bar-end .hd-resume-split');
   const shown = { splitHidden: split?.hidden, barSplitHidden: barSplit?.hidden,
@@ -266,7 +266,7 @@ test('History detail: the bar carries the Resume split (no card Resume); "Resume
       assert.equal(JSON.parse(posts[0].opts.body).pipelineId, 'fcec04e8');
     } },
     { name: 'History glance: the bar carries the Resume split, whose "Resume at…" posts', run: () => {
-      assert.equal(mode, 'glance');
+      assert.equal(presentation, 'page');
       assert.ok(barSplit, 'the Resume split sits in the bar, shared by both modes');
       assert.equal(shown.barSplitHidden, false);
       assert.equal(shown.resumeHidden, false, 'Resume is its left half');

@@ -7,7 +7,7 @@ import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 import {
   rowTime, whenLabel, liveRowState, histRowState, schedRowState, countNeedsYou, needsYouItems,
-  buildRunsModel, isRowSelected, isMemberOpen, renderRunsList, dateBucket, DATE_BUCKETS, listLine, groupRow, groupCostUsd, costTitle, memberCostUsd,
+  buildRunsModel, isRowSelected, isMemberOpen, renderRunsList, dateBucket, DATE_BUCKETS, listLine, groupRow, groupCostUsd, costTitle, memberCostUsd, memberLine,
 } from '../ui/public/runs-list.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -639,4 +639,57 @@ test('#948 s2 renderRunsList: a bare section has no head, emptyByShow / loadingT
   assert.equal(off[0].firstChild.textContent, 'The chats show here once Worca\'s server is reachable again.');
   const runsOff = renderRunsList(doc, empty('all'), { offline: true });
   assert.equal(runsOff[0].querySelectorAll('[data-runs-retry]').length, 0, 'Runs (retry only with a note) keeps its plain offline note');
+});
+
+test('#955 memberLine: a member drops only the Working / Starting word its dot says', () => {
+  assert.equal(memberLine({ state: 'working' }, 'Working'), '');
+  assert.equal(memberLine({ state: 'working' }, 'Running · Round 2 · Build'), 'Round 2 · Build');
+  assert.equal(memberLine({ state: 'working' }, 'Implementation · Write tests'), 'Implementation · Write tests');
+  assert.equal(memberLine({ state: 'starting' }, 'Starting'), '');
+  assert.equal(memberLine({ state: 'starting' }, 'Copying the folder'), 'Copying the folder');
+  assert.equal(memberLine({ state: 'starting' }, 'Round 2 · Starting'), 'Round 2 · Starting', 'only a leading word goes');
+  for (const [state, line] of [['failed', 'Failed at Build'], ['paused', 'Plan · paused'], ['stopped', 'Stopped at Plan'],
+    ['needs-you', 'Plan · needs you · answer 2 questions'], ['waiting', 'Waiting · starts after run 1']]) {
+    assert.equal(memberLine({ state }, line), line, `${state} keeps its word`);
+  }
+});
+
+test('#955 a one-line member: PR chip kept with no repeated word, no labels, no Independent, a 3px live line', () => {
+  const chain = { id: 'p:c955', groupKind: 'chain', title: 'Chain', members: [
+    { position: 1, pipelineId: 'm1', kind: 'hist', adhoc: true, labels: ['hotfix'], run: { status: 'done', pr: GH(7, { state: 'MERGED' }) } },
+    { position: 2, pipelineId: 'p2', runId: 'r2', kind: 'live', run: { status: 'running', steps: [{ nodeId: 'n' }], active: ['n'] } }] };
+  const m = buildRunsModel({ live: [liveIt('r2', { pipelineId: 'p2' })], history: [histIt('m1', { run: { status: 'done', pr: GH(7, { state: 'MERGED' }) } })],
+    groups: [chain], now: NOW });
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, m));
+  const members = [...host.querySelectorAll('.runs-item[data-row-key="chain:p:c955"] .runs-members > .runs-item[data-level="member"]')];
+  assert.equal(members.length, 2, 'an unfinished group is open (D29)');
+  const [done, live] = members;
+  assert.equal(done.querySelector('.runs-pr-word').textContent, 'Merged', 'the chip stays');
+  assert.doesNotMatch(done.querySelector('.runs-row-sub').textContent, /Merged/, 'the line never repeats the chip');
+  assert.equal(done.querySelector('.runs-row-labels'), null, 'no label chips on a member');
+  assert.equal(done.querySelector('.runs-indep'), null, 'no Independent on a member');
+  assert.ok(live.querySelector(':scope > a.runs-row > .runs-row-prog > i'), 'the live member draws the 3px line');
+  assert.equal(live.querySelector('.runs-stage'), null, 'not the four-section block');
+  assert.doesNotMatch(live.querySelector('.runs-row-sub').textContent, /^(Working|Running)\b/);
+  const liveModel = m.sections.flatMap((s) => s.rows).find((r) => r.key === 'chain:p:c955').members[1].model;
+  assert.equal(live.querySelector(':scope > a.runs-row').dataset.line, liveModel.line, 'data-line keeps the canonical line (D11)');
+});
+
+test('#955 a chat inside a one-project topic group does not repeat the project; a "2 projects" group keeps it', () => {
+  const chat = (id, line) => ({ key: `chat:${id}`, id, kind: 'chat', title: id, href: `#chat/${id}`, labels: [],
+    model: { state: 'idle', word: 'Idle', line, dot: 'grey', pulse: false, symbol: null, icon: 'chat' } });
+  const group = (where, members) => ({ key: `cgroup:${where}`, id: where, groupId: where, kind: 'chat-group', title: 'Topic', href: '#chat',
+    memberNoun: 'chats', members, count: String(members.length), memberCount: members.length, open: true, groupName: where, labels: [],
+    model: { state: 'idle', word: 'Idle', line: `${where} · 11:00`, dot: 'grey', pulse: false, symbol: null, icon: 'chat' } });
+  const flat = { sections: [{ id: 'all', title: 'Chats', rows: [
+    group('worka-cc', [chat('a', 'worka-cc · $0.40 · 11:00'), chat('b', 'worka-cc')]),
+    group('2 projects', [chat('c', 'worka-cc · 10:00')]),
+  ], count: 2, bare: true }], view: { show: 'all' }, now: NOW, total: 2, shown: 2, spansProjects: false };
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, flat));
+  const sub = (k) => host.querySelector(`.runs-item[data-row-key="chat:${k}"] .runs-row-sub`).textContent;
+  assert.equal(sub('a'), '$0.40 · 11:00');
+  assert.equal(sub('b'), '');
+  assert.equal(sub('c'), 'worka-cc · 10:00');
 });

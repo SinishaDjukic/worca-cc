@@ -230,6 +230,7 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4.5" width="19" height="15" rx="4.5"></rect><path class="side-toggle-line" d="M7.25 9v6"></path><rect class="side-toggle-fill" x="6" y="8.25" width="4" height="7.5" rx="1.5" fill="currentColor" stroke="none"></rect></svg>
             </button>
             <h1 class="topnav-title" id="topnav-title"></h1>
+            <nav class="topnav-crumbs" id="topnav-crumbs" aria-label="Breadcrumb" hidden></nav>
           </div>
           <div class="topnav-c">
             <!-- Search or ask (topnav-search.mjs over global-search.mjs): ⌘K / Ctrl K focuses the
@@ -777,22 +778,10 @@
 
           <!-- clone target for the live run in the pane (#running/<runId>) -->
           <template id="run-detail-tpl">
-            <!-- Two modes on one screen (docs: Run page glance). `data-mode="glance"` shows the
-                 status line, the trail and the sheet; `data-mode="details"` shows the tabs.
-                 The route picks the mode: #running/<id> vs #running/<id>/details[/<tab>]. -->
-            <div class="rd" data-mode="glance">
+            <!-- One page with tabs (docs/design-system.md Navigation). The Chat run panel presents the same
+                 screen in Details mode (slice 3 moves it). -->
+            <div class="rd">
               <div class="rd-bar">
-                <button type="button" class="rd-back btn btn-sm btn-quiet btn-icon" aria-label="Back to Runs" title="Back to Runs">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"></path></svg>
-                </button>
-                <button type="button" class="rd-to-run btn" hidden aria-label="Back to the run">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-                  <span class="rd-to-run-label">Run</span>
-                </button>
-                <!-- Run 3 (D6): Runs › the group › Run 2, beside the list only (the slide layout keeps Back). -->
-                <nav class="rd-crumbs" aria-label="Breadcrumb" hidden></nav>
-                <!-- The run's name: the glance's headline carries its state. -->
-                <span class="rd-bar-mid"><span class="rd-bar-title"></span></span>
                 <span class="rd-bar-end">
                   <!-- Away mode on this run (POST /api/run/night); hidden once the run is over. -->
                   <label class="rd-night-wrap" hidden><span class="txt">Away mode on this run</span>
@@ -855,7 +844,7 @@
 
               <section class="rd-glance" aria-label="Run status">
                 <div class="rd-now">
-                  <!-- The run's name is the page title; the bar shows it only once this scrolls away. Its kind
+                  <!-- The run's name is the page title (a page moves this row into its head, .ph). Its kind
                        chip says where the run sits ("Run 2 of 3", run 3 D7); every other fact is in the card. -->
                   <header class="rd-page-head">
                     <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1><span class="kind-chip">Run</span></div>
@@ -955,19 +944,10 @@
 
           <!-- clone target for a saved run in the pane (#history/<projectKey>/<id>) -->
           <template id="hist-detail-tpl">
-            <div class="hd" data-mode="glance">
-              <!-- Two modes on one screen, as on the Running page: the glance (#history/<key>/<id>)
-                   and Details (#history/<key>/<id>/details[/<tab>]). The bar is shared. -->
+            <div class="hd">
+              <!-- One page with tabs, as on the Running page (docs/design-system.md Navigation). The Chat run
+                   panel presents the same screen in Details mode (slice 3 moves it). The bar is shared. -->
               <div class="hd-bar">
-                <button type="button" class="hd-back btn btn-sm btn-quiet btn-icon" aria-label="Back to Runs" title="Back to Runs">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"></path></svg>
-                </button>
-                <button type="button" class="hd-to-run btn" hidden aria-label="Back to the run">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-                  Run
-                </button>
-                <nav class="rd-crumbs" aria-label="Breadcrumb" hidden></nav>
-                <span class="rd-bar-mid"><span class="rd-bar-title"></span></span>
                 <!-- The run page bar's controls, in its order and with its look (style.css shares their
                      rules): Run after, the Resume split, Pause, Stop. History's own class names, so
                      setupHdActions, paintHdAfter, paintHdLive and resumePipeline's busy label reach them. -->

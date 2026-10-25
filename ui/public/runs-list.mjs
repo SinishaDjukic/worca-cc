@@ -318,6 +318,15 @@ const RUNNING_STATES = new Set(['starting', 'working', 'paused', 'needs-you']);
 const LIVE_MEMBER = new Set(['starting', 'working', 'needs-you', 'paused', 'failed']);
 const STAGED = (m) => (m && m.progress && m.progress.mode === 'stages' ? m.progress.label : '');
 const and = (...p) => p.filter(Boolean).join(' · ');
+// #955: inside a group the dot already says Working / Starting, so a member's line drops that word ("Running" is a
+// round's Working word, run-model.mjs roundLine). Failed, Paused, Stopped, Needs you and Waiting keep theirs.
+const DOT_SAYS = new Set(['working', 'starting']);
+export function memberLine(m, line) {
+  const s = String(line || '');
+  return m && DOT_SAYS.has(m.state) ? s.replace(/^(?:Working|Starting|Running)(?: · |$)/, '') : s;
+}
+// #955 (D8): a chat inside a topic group that names its one project does not repeat it.
+const dropLead = (line, lead) => (!lead ? line : line === lead ? '' : line.startsWith(`${lead} · `) ? line.slice(lead.length + 3) : line);
 
 /** A row's place in a Show filter (D4). */
 export function rowShow(row, show) {
@@ -604,7 +613,7 @@ export function rowLabels(doc, labels) {
   return box;
 }
 
-function renderItem(doc, r, { section = '', level = 'top', checked, selecting, spansProjects = false, lineFrom = null, position = '', now = Date.now() } = {}) {
+function renderItem(doc, r, { section = '', level = 'top', checked, selecting, spansProjects = false, lineFrom = null, position = '', parentWhere = '', now = Date.now() } = {}) {
   const item = doc.createElement('div');
   item.className = `runs-item${checked.has(r.key) ? ' is-checked' : ''}${r.needs && level === 'top' ? ' is-needs' : ''}`;
   item.dataset.rowKey = r.key;
@@ -632,7 +641,6 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   const right = doc.createElement('span');
   right.className = 'runs-row-right';
   if (grouped) right.append(textEl(doc, 'span', 'runs-count', r.count));
-  if (r.adhoc) right.append(textEl(doc, 'span', 'runs-indep', 'Independent'));
   if (r.model.pr && !r.model.pr.pending) right.append(prChip(doc, r.model.pr));
   // Rows carry no clock: the model's `now` keeps it deterministic. Group rows ('chain') carry their latest member's
   // activityMs, so "Ready to ship · Fri" and a group-PR row's "Fri" get their time too.
@@ -640,17 +648,24 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   // QA 3: a PR-driven member keeps the list's own line, so the model's reason line never sits next to its own chip.
   let line = level === 'member' && LIVE_MEMBER.has(r.model.state) && !r.model.prNeeds ? r.model.line : listLine(r, { section, time });
   if (spansProjects && level === 'top' && r.groupName) line = and(line, r.groupName);
+  // #955: a member is one line: no state word its dot says, no project its group names, no label chips.
+  if (level === 'member') line = dropLead(memberLine(r.model, line), r.kind === 'chat' ? parentWhere : '');
   const title = textEl(doc, 'span', 'runs-row-title', position ? `${position} · ${r.title}` : r.title);
-  const lab = rowLabels(doc, r.labels);
+  const lab = level === 'top' ? rowLabels(doc, r.labels) : null;
   a.append(...[title, lab, right, textEl(doc, 'span', 'runs-row-sub', line)].filter(Boolean));
   if (r.kind === 'chain' && !ENDED_STATES.has(r.model.state) && r.model.progress) {
     a.append(renderRowLine(doc, { fraction: r.model.progress.fraction }, (lineFrom && lineFrom.get(r.key)) || ''));
   } else if (r.kind !== 'chain' && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed' && !r.model.prNeeds && r.model.progress) {
     // A run in Needs you only through its PR (conflicts, failing checks) has finished: no progress bar to draw.
-    const stage = doc.createElement('div');
-    stage.className = 'run-prog runs-stage';
-    paintProgressBar(stage, r.model.progress, { pulse: r.model.pulse });
-    a.append(stage);
+    if (level === 'member') {
+      // #955: a one-line member keeps the list's 3px line; paintRunsProgress (app.js) moves it in place.
+      a.append(renderRowLine(doc, { fraction: r.model.progress.fraction }, (lineFrom && lineFrom.get(r.key)) || ''));
+    } else {
+      const stage = doc.createElement('div');
+      stage.className = 'run-prog runs-stage';
+      paintProgressBar(stage, r.model.progress, { pulse: r.model.pulse });
+      a.append(stage);
+    }
   }
   const tail = doc.createElement('span');
   tail.className = 'runs-row-tail';
@@ -673,7 +688,8 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
     list.setAttribute('role', 'list');
     for (const mb of r.members) {
       list.append(renderItem(doc, { ...mb, href: mb.href || '#runs', title: mb.title || '(untitled)' },
-        { level: 'member', checked, selecting, lineFrom, now, position: r.kind !== 'chain' || r.groupKind === 'user' || mb.adhoc ? '' : String(mb.position) }));
+        { level: 'member', checked, selecting, lineFrom, now, parentWhere: r.kind === 'chat-group' ? r.groupName || '' : '',
+          position: r.kind !== 'chain' || r.groupKind === 'user' || mb.adhoc ? '' : String(mb.position) }));
     }
     item.append(list);
   }

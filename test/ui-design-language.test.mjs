@@ -697,6 +697,24 @@ test('Runs list: one highlight at a time — a group whose run is open is filled
   assert.match(ALL.find((r) => r.sel === '.runs-item').body, /border-bottom:1px solid var\(--line\)/);
 });
 
+test('#955 Runs list: rows inside a group are one 26px line (40px on touch); a group title is 600', () => {
+  const bodyOf = (sel) => ALL.filter((r) => splitTop(r.sel).includes(sel)).map((r) => r.body).join(';');
+  assert.match(bodyOf('.runs-members .runs-row'), /flex-wrap:nowrap/);
+  assert.match(bodyOf('.runs-members .runs-row'), /padding:4px 0/);
+  assert.match(bodyOf('.runs-members .runs-row-title'), /font-size:var\(--fs-meta\)/);
+  assert.match(bodyOf('.runs-members .runs-row-title'), /font-weight:400/);
+  assert.match(bodyOf('.runs-members .runs-row-sub'), /text-overflow:ellipsis/);
+  assert.match(bodyOf('.runs-members .runs-row-sub'), /flex:0 1000 auto/, 'the status gives way before the title');
+  assert.match(bodyOf('.runs-members .runs-pick'), /height:26px/);
+  assert.match(bodyOf('.runs-members .runs-row-tail'), /height:26px/);
+  assert.match(css, /@media \(pointer: coarse\)\{\.runs-members \.runs-pick,\.runs-members \.runs-row-tail\{height:40px;\}/);
+  assert.match(bodyOf('.runs-row-chain > .runs-row-title'), /font-weight:600/);
+  assert.match(bodyOf('.runs-row-chat-group > .runs-row-title'), /font-weight:600/);
+  // Top-level rows unchanged.
+  assert.match(bodyOf('.runs-row-title'), /font-weight:500/);
+  assert.match(bodyOf('.runs-pick'), /height:36px/);
+});
+
 test('a script-focused control shows no ring for a pointer user; fields keep their focus border', () => {
   const r = ALL.find((x) => x.sel.startsWith(':root[data-input="pointer"] :is(button,'));
   assert.ok(r, 'the pointer suppressor covers every button, link, summary, tab, switch and [tabindex]');
