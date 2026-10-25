@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { effortOn } from '../shared/connections.mjs';
 
 import { getDb, prepare, tx } from './db.mjs';
+import { snapshotRowTx } from './workflow-revisions.mjs';
 import { worcaHome } from './projects.mjs';
 import { resolveRunConfig, readConfig, EFFORTS, stepSlotDefaults, modelForEngine } from './config.mjs';
 import { isSubagentModelValue, SUBAGENT_MODELS, ALL_EFFORTS, effortsForEngine, MODEL_ENGINES } from './model-env.mjs';
@@ -236,6 +237,12 @@ function rowToTpl(r) {
 
 const ROW_COLS = 'id, name, version, domain, steps, feedbacks, graph, archived_at, created_at, updated_at, origin';
 
+/** D3: does this write change what the row holds? (name, domain, graph, or un-archiving it). */
+function rowChanges(prev, { name, domain, graph }) {
+  return prev.version !== 2 || prev.name !== name || (prev.domain || 'general') !== domain
+    || prev.graph !== JSON.stringify(graph) || !!prev.archived_at;
+}
+
 /** Read + shallow-validate one stored template row. Unsafe id / missing => null. */
 function readRaw(id, { includeArchived = false } = {}) {
   if (!isSafeWorkflowId(id)) return null; // SECURITY: reject path-traversal / unsafe ids
@@ -298,7 +305,7 @@ export async function writeWorkflow(tpl) {
  * upsert; the API's save path is the one caller that turns it on.
  *
  * @param {{id?:string, name:string, domain?:string, origin?:string, nodes:Array, wires:Array, canvas?:object}} tpl
- * @param {{rejectCollision?:boolean}} [opts]
+ * @param {{rejectCollision?:boolean, revisionSource?:string, by?:string|null}} [opts]
  * @throws {Error} code 'RESERVED_NAME' (the name slugs onto wf_default) or,
  *   with rejectCollision, code 'ID_TAKEN' + `.id` (the minted id is in use)
  */
@@ -345,6 +352,10 @@ export async function writeGraphWorkflow(tpl, opts = {}) {
   }
   const createdAt = (typeof tpl?.createdAt === 'string' && tpl.createdAt) || existing?.created_at || now;
   tx(() => {
+    const prev = prepare(`SELECT ${ROW_COLS} FROM workflows WHERE id = ?`).get(id);
+    if (prev && rowChanges(prev, { name, domain, graph })) {
+      snapshotRowTx(prev, { source: opts?.revisionSource || 'save', by: opts?.by ?? null, now });
+    }
     prepare(`
       INSERT INTO workflows (id, name, version, domain, steps, feedbacks, graph, archived_at, created_at, updated_at, origin)
       VALUES (?, ?, 2, ?, '[]', '[]', ?, NULL, ?, ?, ?)
@@ -513,9 +524,11 @@ export async function setWorkflowNodeDefaults(id, map) {
       return { ...node, config: { ...kept, ...clean } };
     });
     const now = new Date().toISOString();
+    const nextGraph = JSON.stringify({ nodes, wires: tpl.wires, ...(tpl.canvas ? { canvas: tpl.canvas } : {}) });
     tx(() => {
-      prepare('UPDATE workflows SET graph = ?, updated_at = ? WHERE id = ?')
-        .run(JSON.stringify({ nodes, wires: tpl.wires, ...(tpl.canvas ? { canvas: tpl.canvas } : {}) }), now, id);
+      const prev = prepare(`SELECT ${ROW_COLS} FROM workflows WHERE id = ?`).get(id);
+      if (prev && prev.graph !== nextGraph) snapshotRowTx(prev, { source: 'defaults', now });
+      prepare('UPDATE workflows SET graph = ?, updated_at = ? WHERE id = ?').run(nextGraph, now, id);
     });
     return { ...tpl, nodes, updatedAt: now };
   }
@@ -551,6 +564,8 @@ export async function deleteWorkflow(id) {
   getDb();
   let changed = 0;
   tx(() => {
+    const prev = prepare(`SELECT ${ROW_COLS} FROM workflows WHERE id = ?`).get(id);
+    if (prev) snapshotRowTx(prev, { source: 'delete' });
     changed = prepare('DELETE FROM workflows WHERE id = ?').run(id).changes;
   });
   return changed > 0;
