@@ -1423,7 +1423,7 @@ test('board 19: at 10 documents Add documents is disabled; a document Start coul
   const sw = host.querySelector('[data-ui="file-send-ratt_0000000000dd"]');
   assert.equal(sw.disabled, true);
   assert.equal(document.getElementById(sw.getAttribute('aria-describedby')).textContent,
-    'd0.md cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.');
+    'd0.md cannot go with runs: Worca could not open the stored file. Replace it, or leave it out.');
   assert.equal(host.querySelector('[data-ui="file-send-ratt_0000000001dd"]').disabled, false);
   const on = await openBriefPage(madeBrief({ documents: [doc({ sendable: false, sendWithEveryRun: true })] }));
   assert.equal(on.host.querySelector('[data-ui="file-send-ratt_0000000000d1"]').disabled, false, 'switching off still works');
@@ -1467,4 +1467,54 @@ test('style.css: board 19 at phone width: the Documents card shares the Files ca
   assert.match(rule('.req-docs .req-docs-foot'), /border-top:1px solid var\(--line\)/);
   assert.match(rule('.req-brief-src'), /font-size:var\(--fs-meta\)/);
   assert.match(block, /\.req-files \.switch-row::after\{content:"";position:absolute;inset:-8px 0\}/, 'the Documents card is a .req-files card');
+});
+
+// ── Task 15 review: documents speak for every run; a dialog closes with its brief ─────────────────
+
+test('board 19: a Replace dialog closes when the brief page is left (to the list, or to another brief); the page is not inert', async () => {
+  const OTHER = '/api/requirements/brief/project/cafe-1';
+  for (const to of ['', 'brief/project/cafe-1']) {
+    const { view, host } = await openBriefPage(madeBrief(), { 'GET /api/requirements': LIST, [`GET ${OTHER}`]: madeBrief({ documents: [] }) });
+    pick(host.querySelector('[data-menu="file-ratt_0000000000d1"] input[type="file"]'), [mkFile('glossary-v2.pdf', '%PDF-1.7 v2', 'application/pdf')]);
+    assert.ok(document.querySelector('.req-dialog'), 'the dialog is open');
+    assert.equal(host.inert, true);
+    await view.show(to);
+    assert.equal(document.querySelector('.req-dialog'), null, `closed on show('${to}')`);
+    assert.equal(host.inert, false);
+    assert.equal(host.hasAttribute('inert'), false);
+  }
+});
+
+test('board 19: a document Start could not send says it cannot go with runs', async () => {
+  const { host } = await openBriefPage(madeBrief({ documents: [doc({ sendable: false, sendWithEveryRun: false })] }));
+  assert.equal(host.querySelector('.req-docs .req-file-unsendable').textContent,
+    'glossary.pdf cannot go with runs: Worca could not open the stored file. Replace it, or leave it out.');
+});
+
+test('board 19: a document being read says interviews use it once it is read (with and without a cost)', async () => {
+  const { host } = await openBriefPage(madeBrief({ documents: [doc({ status: 'reading', summary: null, estimateUsd: 0.12 }),
+    doc({ id: 'ratt_0000000000d2', name: 'tone.md', status: 'reading', summary: null, estimateUsd: null, href: DOC2 })] }));
+  assert.deepEqual([...host.querySelectorAll('.req-docs .req-file-state')].map((p) => p.textContent),
+    ['Worca is reading it (about $0.12). Interviews use it once it is read.', 'Worca is reading it. Interviews use it once it is read.']);
+});
+
+test('board 19: a document Worca could not read says interviews list it by name only', async () => {
+  const { host } = await openBriefPage(madeBrief({ documents: [doc({ status: 'failed', summary: null, error: { code: 'TIMEOUT', message: 'timed out' } })] }));
+  assert.equal(host.querySelector('.req-docs .req-file-failed-text').textContent,
+    'Worca could not read this file: it ran out of time. Interviews list it by name only.');
+});
+
+test('board 19: a document the budget stopped says interviews list it by name only until the budget allows', async () => {
+  const { host } = await openBriefPage(madeBrief({ resetPeriod: 'weekly', documents: [doc({ status: 'unread-budget', summary: null })] }));
+  assert.equal(host.querySelector('.req-docs .req-file-state').textContent,
+    'The Requirements budget is used up for this week. Worca reads it when the budget allows; until then interviews list it by name only.');
+});
+
+test("board 16: a feature file keeps its own lines (the run, the next round, the interview)", async () => {
+  const { host } = await openFeature(feature({ attachments: [att({ status: 'reading', summary: null, estimateUsd: null }),
+    att({ id: 'ratt_00000000000b', name: 'b.pdf', status: 'failed', summary: null, error: { code: 'TIMEOUT' }, sendable: false, href: '/api/requirements/4/attachments/ratt_00000000000b' })] }));
+  assert.equal(host.querySelector('.req-files .req-file-state').textContent, 'Worca is reading it. The next round uses it.');
+  assert.equal(host.querySelector('.req-files .req-file-failed-text').textContent, 'Worca could not read this file: it ran out of time. The interview lists it by name only.');
+  assert.equal(host.querySelector('.req-files .req-file-unsendable').textContent,
+    'b.pdf cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.');
 });

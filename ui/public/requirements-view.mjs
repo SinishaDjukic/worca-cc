@@ -338,6 +338,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     seqShown = next;
     const b = /^brief\/(project|workspace)\/([^/]+)$/.exec(param);
     const nextBrief = b ? { scopeType: b[1], scopeKey: decodeKey(b[2]) } : null;
+    // leaving a shown brief (to the list, a feature, another brief): a dialog opened on it closes with it
+    if (briefShown && (!nextBrief || scopeId(nextBrief) !== scopeId(briefShown))) closeDialog(false);
     if (nextBrief && (!briefShown || scopeId(nextBrief) !== scopeId(briefShown))) {
       // another brief's Documents card (board 19): its files' ui state and live nodes start afresh, as a feature's do
       for (const map of [fileUi, fileMsgs, fileMsgList, fileNodes, refusalEls, fileWas, droppedKeys]) map.clear();
@@ -1401,6 +1403,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   // being read has no switch (D1): its chip waits. Names are text only.
   const unsendable = (a) => a.sendable === false;
   const cannotGo = (name) => `${name} cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.`;
+  // a brief document's switch is "Send with every run": it speaks of runs and of interviews (Task 15 review, user-approved)
+  const cannotGoDoc = (name) => `${name} cannot go with runs: Worca could not open the stored file. Replace it, or leave it out.`;
   function filesForRun(f) {
     const files = Array.isArray(f.attachments) ? f.attachments : [];
     const docs = Array.isArray(f.briefDocuments) ? f.briefDocuments : [];
@@ -2087,7 +2091,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     }
     // A version that could not be stored (D11): the server's words, and Replace, which mends it (Read again is refused).
     const stuck = storeFailedOf(a);
-    const said = stuck ? String(a.error.message || '') : `Worca could not read this file: ${reasonOf(a.error)}. The interview lists it by name only.`;
+    const said = stuck ? String(a.error.message || '')
+      : `Worca could not read this file: ${reasonOf(a.error)}. ${ctx.doc ? 'Interviews list' : 'The interview lists'} it by name only.`;
     if (n.failed.words.textContent !== said) n.failed.words.textContent = said;
     const label = stuck ? 'Replace with a newer version…' : 'Try again';
     if (n.failed.btn.textContent !== label) n.failed.btn.textContent = label;
@@ -2126,6 +2131,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     }
     const replace = filePicker((files) => openReplace(a, ctx, files[0]), { multiple: false });
     const sendKey = ctx.doc ? 'sendWithEveryRun' : 'sendWithRun';
+    const usesIt = ctx.doc ? 'Interviews use it once it is read.' : 'The next round uses it.';
     const meta = [`${KIND_TITLE[a.kind] || 'Text'} · ${sizeText(a.bytes)}`, a.costUsd > 0 ? `read for ${usd(a.costUsd)}` : null].filter(Boolean).join(' · ');
     const top = h('div', { class: 'req-file-top' },
       h('a', { class: 'req-file-name', href: a.href, target: '_blank', rel: 'noopener', 'data-ui': `file-name-${a.id}`, text: a.name }),
@@ -2139,10 +2145,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       fileMenu(a, ctx, replace));
     const state = reading
       ? h('p', { class: 'hint req-file-state', text: typeof a.estimateUsd === 'number'
-        ? `Worca is reading it (about ${usd(a.estimateUsd)}). The next round uses it.` : 'Worca is reading it. The next round uses it.' })
+        ? `Worca is reading it (about ${usd(a.estimateUsd)}). ${usesIt}` : `Worca is reading it. ${usesIt}` })
       : a.status === 'failed' ? failedLine(a, ctx, replace)
         : a.status === 'unread-budget'
-          ? h('p', { class: 'hint req-file-state', text: `The Requirements budget is used up for this ${ctx.period === 'weekly' ? 'week' : 'month'}. Worca reads it when the budget allows; until then the interview lists it by name only.` })
+          ? h('p', { class: 'hint req-file-state', text: `The Requirements budget is used up for this ${ctx.period === 'weekly' ? 'week' : 'month'}. Worca reads it when the budget allows; until then ${ctx.doc ? 'interviews list' : 'the interview lists'} it by name only.` })
           : asking ? h('p', { class: 'hint req-file-state req-file-asking', text: `Worca is looking for: “${a.asking}”…` }) : null;
     if (s.edit != null && (!hasText || reading)) {
       // The text went away under the open editor (read again, replaced): the draft cannot be saved, and the card says why.
@@ -2188,7 +2194,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       sw.input.addEventListener('change', () => act(async () => { await api('PATCH', a.href, { [sendKey]: sw.input.checked }); await paint(); }));
       send = h('div', { class: 'req-file-send' }, sw.row,
         ...((a.mentions || []).length ? [' ', h('span', { class: 'hint', text: `The spec mentions this file (${a.mentions.join(', ')}).` })] : []),
-        stuck ? h('p', { class: 'hint req-file-unsendable', id: `req-file-why-${a.id}`, text: cannotGo(a.name) }) : null);
+        stuck ? h('p', { class: 'hint req-file-unsendable', id: `req-file-why-${a.id}`, text: ctx.doc ? cannotGoDoc(a.name) : cannotGo(a.name) }) : null);
     }
     const ask = s.ask != null ? askPanel(a, ctx) : null;
     return h('div', { class: 'req-file', 'data-file': a.id }, top, state, took, ask, askFailedLine(a), asks, history, send);
@@ -2216,21 +2222,31 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     return filesLive;
   }
 
+  /** The setup the Files card and the Documents card share (boards 16, 19): the rows' context, the card's message line
+   *  (`dropped`, a draft the page had to drop while its file is read, said until no file is read any more; `refuse`, a
+   *  Replace pick the early checks refused, said now), the picker that uploads, and the rows. */
+  function fileCardCtx({ key, list, doc, locked, period, redraw: rerender, setFocus, url, owner, addUi, headUi }) {
+    const say1 = (text) => { fileMsgs.set(key, text); fileMsgList.set(key, text ? [text] : []); };
+    const ctx = { doc, locked, period, list, redraw: rerender, focus: setFocus, addUi, headUi,
+      dropped: () => { say1(DROPPED_DRAFT); droppedKeys.add(key); },
+      refuse: (text) => { droppedKeys.delete(key); say1(text); const el = refusalAlert(key); if (!el.isConnected) rerender(); } };
+    for (const id of fileNodes.keys()) if (!list.some((a) => a.id === id)) fileNodes.delete(id);
+    const input = filePicker((files) => {
+      droppedKeys.delete(key);
+      uploadFiles({ url, key, existing: list, owner, rerender, focusUi: addUi, fallbackUi: headUi, setFocus }, files);
+    });
+    const rows = list.map((a) => fileRow(a, ctx));   // before the message line: a row may put a line there
+    if (droppedKeys.has(key) && !list.some((a) => a.status === 'reading')) { droppedKeys.delete(key); say1(''); }
+    return { input, rows };
+  }
+
   function filesCard(f) {
     if (!Array.isArray(f.attachments)) return null;   // a feature view from before A8
     const list = f.attachments;
     const locked = isLocked(f) || starting;
     const key = `feature:${f.seq}`;
-    // A line in the card's own message area (the refusal line): `dropped`, a draft the page had to drop while its file is
-    // read (said until no file is read any more); `refuse`, a Replace pick the early checks refused (said now).
-    const say1 = (text) => { fileMsgs.set(key, text); fileMsgList.set(key, text ? [text] : []); };
-    const ctx = { doc: false, locked, period: f.resetPeriod, list, redraw, focus: (k) => { focusNext = k; },
-      dropped: () => { say1(DROPPED_DRAFT); droppedKeys.add(key); },
-      refuse: (text) => { droppedKeys.delete(key); say1(text); const el = refusalAlert(key); if (!el.isConnected) redraw(); } };
-    for (const id of fileNodes.keys()) if (!list.some((a) => a.id === id)) fileNodes.delete(id);
-    const input = filePicker((files) => { droppedKeys.delete(key); uploadFiles({ url: `/api/requirements/${f.seq}/attachments`, key, existing: list, owner: 'feature', rerender: redraw }, files); });
-    const rows = list.map((a) => fileRow(a, ctx));   // before the message line: a row may put a line there
-    if (droppedKeys.has(key) && !list.some((a) => a.status === 'reading')) { droppedKeys.delete(key); say1(''); }
+    const { input, rows } = fileCardCtx({ key, list, doc: false, locked, period: f.resetPeriod, redraw,
+      setFocus: (k) => { focusNext = k; }, url: `/api/requirements/${f.seq}/attachments`, owner: 'feature', addUi: 'files-add', headUi: 'files-head' });
     return h('section', { class: 'card req-files', 'aria-label': 'Files', 'data-ui': 'files-card' },
       h('div', { class: 'req-card-head req-files-head' },
         h('div', {}, h('h3', { text: `Files · ${list.length}`, tabindex: '-1', 'data-ui': 'files-head' }),
@@ -2253,18 +2269,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const s = briefShown;
     const list = data.documents;
     const key = `brief:${scopeId(s)}`;
-    const setFocus = (k) => { briefFocusNext = k; };
-    const say1 = (text) => { fileMsgs.set(key, text); fileMsgList.set(key, text ? [text] : []); };
-    const ctx = { doc: true, locked: false, period: data.resetPeriod, list, redraw: redrawBrief, focus: setFocus, addUi: 'docs-add', headUi: 'docs-head',
-      dropped: () => { say1(DROPPED_DRAFT); droppedKeys.add(key); },
-      refuse: (text) => { droppedKeys.delete(key); say1(text); const el = refusalAlert(key); if (!el.isConnected) redrawBrief(); } };
-    for (const id of fileNodes.keys()) if (!list.some((a) => a.id === id)) fileNodes.delete(id);
-    const input = filePicker((files) => {
-      droppedKeys.delete(key);
-      uploadFiles({ url: `${briefApi(s)}/documents`, key, existing: list, owner: 'brief', rerender: redrawBrief, focusUi: 'docs-add', fallbackUi: 'docs-head', setFocus }, files);
-    });
-    const rows = list.map((a) => fileRow(a, ctx));   // before the message line: a row may put a line there
-    if (droppedKeys.has(key) && !list.some((a) => a.status === 'reading')) { droppedKeys.delete(key); say1(''); }
+    const { input, rows } = fileCardCtx({ key, list, doc: true, locked: false, period: data.resetPeriod, redraw: redrawBrief,
+      setFocus: (k) => { briefFocusNext = k; }, url: `${briefApi(s)}/documents`, owner: 'brief', addUi: 'docs-add', headUi: 'docs-head' });
     return h('section', { class: 'card req-files req-docs', 'aria-label': 'Documents', 'data-ui': 'docs-card' },
       h('div', { class: 'req-card-head req-files-head' },
         h('div', {}, h('h3', { text: `Documents · ${list.length}`, tabindex: '-1', 'data-ui': 'docs-head' }),
