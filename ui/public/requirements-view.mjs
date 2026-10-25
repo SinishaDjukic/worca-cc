@@ -280,6 +280,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   const refusalEls = new Map();     // an owner key → its role=alert line
   const fileWas = new Map();        // a file id → its status at the last paint (what the status line says changed)
   let filesLive = null;             // the Files card's sr-only role=status line
+  let keptSel = null;               // the focused text field's selection, read by capture() before a feature repaint
   // Start in Worca: the workflow / branch choices per feature seq ({ workflowId, sourceBranch, open }),
   // the workflow list and each project's branches (loaded once, when Change opens), a start in flight,
   // and the start-before-Ready dialog ({ wrap, trigger, triggerUi }).
@@ -403,10 +404,15 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   // Read the unsaved input from the current feature page into `ui`, and which field has focus.
   function capture(f) {
+    keptSel = null;
     if (!host.querySelector(`[data-req-feature="${f.seq}"]`)) return null;
     const q = (k) => host.querySelector(`[data-ui="${k}"]`);
     const active = document.activeElement;
     const focus = active && host.contains(active) ? active.getAttribute('data-ui') : null;
+    // a typed field keeps its caret and selection across the rebuild (as the brief page's captureBrief)
+    if (focus && (active.tagName === 'TEXTAREA' || (active.tagName === 'INPUT' && active.type === 'text'))) {
+      keptSel = [active.selectionStart, active.selectionEnd, active.selectionDirection];
+    }
     const ea = q('edit-a');
     if (ea) {
       const eb = q('edit-b');
@@ -1734,8 +1740,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
 
   /** D7: the page's early checks, the accepted files in requests of at most 100 MB, the refusals in the card's alert line.
-   *  The focus goes back to Add files (`focusUi`) once the card is painted again. */
-  async function uploadFiles({ url, key, existing, owner, rerender, focusUi = 'files-add' }, files) {
+   *  The focus goes back to Add files (`focusUi`) once the card is painted again; when the upload filled the card and
+   *  Add files is disabled, to the card's heading (`fallbackUi`, tabindex=-1). */
+  async function uploadFiles({ url, key, existing, owner, rerender, focusUi = 'files-add', fallbackUi = 'files-head' }, files) {
     const errors = [];
     const ok = [];
     const pending = existing.map((x) => ({ name: x.name, bytes: x.bytes }));
@@ -1755,6 +1762,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       } finally {
         focusNext = focusUi;
         await paint();   // the batches already sent show, also when a later one is refused (the message comes after)
+        const add = host.querySelector(`[data-ui="${focusUi}"]`);
+        if (add && add.disabled) host.querySelector(`[data-ui="${fallbackUi}"]`)?.focus();
       }
     });
   }
@@ -1778,9 +1787,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const ta = h('textarea', { rows: '5', maxlength: '1500', 'aria-label': `What Worca took from ${a.name}`, 'data-ui': `file-edit-text-${a.id}` });
     ta.value = s.edit;
     ta.addEventListener('input', () => { s.edit = ta.value; });
+    const cancel = () => { s.edit = null; ctx.focus(editReturn(a)); ctx.redraw(); };
+    // Escape cancels, as Cancel does (the new-criterion field's grammar)
+    ta.addEventListener('keydown', (e) => { if (e.key !== 'Escape') return; e.preventDefault(); e.stopPropagation(); cancel(); });
     return h('div', { class: 'req-edit req-file-edit' }, ta,
       h('div', { class: 'req-actions' },
-        h('button', { type: 'button', class: 'btn btn-sm', onclick: () => { s.edit = null; ctx.focus(editReturn(a)); ctx.redraw(); } }, 'Cancel'),
+        h('button', { type: 'button', class: 'btn btn-sm', onclick: cancel }, 'Cancel'),
         h('button', { type: 'button', class: 'btn btn-sm btn-primary', 'data-ui': `file-save-${a.id}`, disabled: ctx.locked,
           onclick: () => act(async () => { await api('PATCH', a.href, { summary: ta.value }); s.edit = null; ctx.focus(editReturn(a)); await paint(); }) }, 'Save')));
   }
@@ -1847,7 +1859,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         : a.status === 'unread-budget'
           ? h('p', { class: 'hint req-file-state', text: `The Requirements budget is used up for this ${ctx.period === 'weekly' ? 'week' : 'month'}. Worca reads it when the budget allows; until then the interview lists it by name only.` })
           : null;
-    if (s.edit != null && (!hasText || reading)) s.edit = null;   // the text went away (read again, replaced) under the editor
+    if (s.edit != null && (!hasText || reading)) {
+      // The text went away under the open editor (read again, replaced): the draft cannot be saved, and the card says why.
+      // The editor had the focus: it goes to the file's ⋯, which every state has.
+      const typing = document.activeElement && document.activeElement.getAttribute('data-ui') === `file-edit-text-${a.id}`;
+      s.edit = null;
+      if (ctx.say) ctx.say('Worca is reading this file.');
+      if (typing) ctx.focus(`file-more-${a.id}`);
+    }
     const clamp = hasText && !s.all && isClamped(a.summary);
     const took = s.edit != null ? editBox(a, ctx) : hasText ? [
       h('p', { class: 'req-file-cap' }, 'What Worca took from it', a.summaryEdited ? h('span', { class: 'req-edited', text: ' · edited by you' }) : null),
@@ -1898,18 +1917,22 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const list = f.attachments;
     const locked = isLocked(f) || starting;
     const key = `feature:${f.seq}`;
-    const ctx = { doc: false, locked, period: f.resetPeriod, redraw, focus: (k) => { focusNext = k; } };
+    // `say`: a line in the card's own message area (the refusal line), e.g. a draft the page had to drop
+    const say1 = (text) => { fileMsgs.set(key, text); fileMsgList.set(key, [text]); };
+    const ctx = { doc: false, locked, period: f.resetPeriod, redraw, focus: (k) => { focusNext = k; }, say: say1 };
     for (const id of fileNodes.keys()) if (!list.some((a) => a.id === id)) fileNodes.delete(id);
     const input = filePicker((files) => uploadFiles({ url: `/api/requirements/${f.seq}/attachments`, key, existing: list, owner: 'feature', rerender: redraw }, files));
+    const rows = list.map((a) => fileRow(a, ctx));   // before the message line: a row may put a line there
     return h('section', { class: 'card req-files', 'aria-label': 'Files', 'data-ui': 'files-card' },
       h('div', { class: 'req-card-head req-files-head' },
-        h('div', {}, h('h3', { text: `Files · ${list.length}` }), h('p', { class: 'hint', text: 'Worca reads each one once and uses what it took from it in every round.' })),
+        h('div', {}, h('h3', { text: `Files · ${list.length}`, tabindex: '-1', 'data-ui': 'files-head' }),
+          h('p', { class: 'hint', text: 'Worca reads each one once and uses what it took from it in every round.' })),
         h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'files-add', disabled: locked || list.length >= REQ_ATTACH.maxFiles, onclick: () => input.click() }, 'Add files'),
         input),
       privacyNote(f.interview),
       refusalAlert(key),
       filesStatus(list),
-      list.length ? h('div', { class: 'req-files-list' }, ...list.map((a) => fileRow(a, ctx)))
+      list.length ? h('div', { class: 'req-files-list' }, ...rows)
         : h('p', { class: 'hint req-files-empty', text: 'No files yet. Add emails, a spec, screenshots or a mockup.' }));
   }
 
@@ -2097,10 +2120,15 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('div', { class: 'req-right' }, readyPanel(f), filesCard(f), specCard(f)))));
     if (ui.editVals && ui.editVals.key !== editing) ui.editVals = null;
     const want = focusNext || focus;
+    const sel = focusNext ? null : keptSel;   // a field just opened starts fresh; the focused one keeps its caret
     focusNext = null;
+    keptSel = null;
     if (want) {
       const el = host.querySelector(`[data-ui="${want}"]`);
-      if (el && !el.disabled) el.focus();
+      if (el && !el.disabled) {
+        el.focus();
+        if (sel && typeof el.setSelectionRange === 'function') { try { el.setSelectionRange(sel[0], sel[1], sel[2] || 'none'); } catch { /* not a text field */ } }
+      }
     }
     // A focus kept for later (a revision sent: that round's Change): taken once the control is back and the
     // focus is still nowhere; dropped as soon as the focus is somewhere else.

@@ -522,3 +522,77 @@ test('style.css: board 20 hides the pencil below 600 px (it is in the ⋯ menu);
   assert.match(rule('.req-file-cap'), /color:var\(--ink-2\)/);
   assert.match(rule('.req-menu .hd-menu'), /position:absolute/, 'a menu floats under its trigger');
 });
+
+// ── Task 12 follow-up (review): the reading line's AA ink, the editor's Escape and caret, a dropped draft, focus at 10 files ─────────
+
+test('style.css: the "Reading N files…" badge takes --blue-ink-strong on --blue-bg (AA), inside the Requirements block', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assertInRequirementsBlock(['.req-reading .badge.blue']);
+  const body = (css.match(/\.req-reading \.badge\.blue\{([^}]*)\}/) || [])[1] || '';
+  assert.match(body, /color:var\(--blue-ink-strong\)/);
+});
+
+test('the summary editor: Escape cancels and hands the focus back to the pencil; nothing is sent', async () => {
+  const { host, calls } = await openFeature(feature());
+  host.querySelector('.req-file-pencil').click();
+  const ta = host.querySelector('[data-ui="file-edit-text-ratt_00000000000a"]');
+  ta.value = 'Half typed';
+  ta.dispatchEvent(new window.Event('input'));
+  const ev = new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  ta.dispatchEvent(ev);
+  assert.equal(ev.defaultPrevented, true);
+  assert.equal(host.querySelector('[data-ui="file-edit-text-ratt_00000000000a"]'), null, 'the editor is closed');
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'file-edit-ratt_00000000000a');
+  host.querySelector('.req-file-pencil').click();
+  assert.equal(host.querySelector('[data-ui="file-edit-text-ratt_00000000000a"]').value, att().summary, 'a new edit starts from the text, not the cancelled draft');
+  assert.equal(calls.filter((c) => c.method !== 'GET').length, 0);
+});
+
+test('the summary editor keeps its text, focus and caret across a live repaint', async () => {
+  const { host, view } = await openFeature(feature());
+  host.querySelector('.req-file-pencil').click();
+  let ta = host.querySelector('[data-ui="file-edit-text-ratt_00000000000a"]');
+  ta.value = 'abcdefgh';
+  ta.dispatchEvent(new window.Event('input'));
+  ta.focus();
+  ta.setSelectionRange(2, 5);
+  await view.changed(4);
+  const now = host.querySelector('[data-ui="file-edit-text-ratt_00000000000a"]');
+  assert.notEqual(now, ta, 'repainted');
+  ta = now;
+  assert.deepEqual([ta.value, document.activeElement === ta, ta.selectionStart, ta.selectionEnd], ['abcdefgh', true, 2, 5]);
+});
+
+test('a draft whose file is read again (or loses its text) under the open editor is dropped, and the card says "Worca is reading this file."', async () => {
+  let f = feature();
+  const { host, view } = await openFeature(null, { 'GET /api/requirements/4': () => ({ feature: f, turns: [] }) });
+  host.querySelector('.req-file-pencil').click();
+  const ta = host.querySelector('[data-ui="file-edit-text-ratt_00000000000a"]');
+  ta.value = 'Mine';
+  ta.dispatchEvent(new window.Event('input'));
+  f = feature({ attachments: [att({ status: 'reading', summary: '' })] });
+  await view.changed(4);
+  assert.equal(host.querySelector('[data-ui="file-edit-text-ratt_00000000000a"]'), null);
+  const line = host.querySelector('.req-files .req-file-refused');
+  assert.deepEqual([line.getAttribute('role'), line.hidden, line.textContent], ['alert', false, 'Worca is reading this file.']);
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'file-more-ratt_00000000000a', "the focus goes to the file's ⋯");
+  f = feature();
+  await view.changed(4);
+  host.querySelector('.req-file-pencil').click();
+  f = feature({ attachments: [att({ status: 'failed', summary: '', error: { code: 'TIMEOUT', message: 'x' } })] });
+  await view.changed(4);
+  assert.equal(host.querySelector('[data-ui="file-edit-text-ratt_00000000000a"]'), null, 'lost its text: closed too');
+  assert.equal(host.querySelector('.req-files .req-file-refused').textContent, 'Worca is reading this file.');
+});
+
+test('an upload that fills the card (10 files) disables Add files; the focus goes to the Files heading', async () => {
+  const nine = Array.from({ length: 9 }, (_, i) => att({ id: `ratt_00000000001${i}`, name: `f${i}.md`, kind: 'text', bytes: 10 }));
+  let f = feature({ attachments: nine });
+  const { host } = await openFeature(null, { 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
+    'POST /api/requirements/4/attachments': () => { f = feature({ attachments: [...nine, att({ id: 'ratt_000000000020', name: 'last.md', kind: 'text', bytes: 3 })] }); return { feature: f, turns: [] }; } });
+  pick(host.querySelector('.req-files input[type="file"]'), [mkFile('last.md', '# n')]);
+  await settle();
+  assert.equal(host.querySelector('[data-ui="files-add"]').disabled, true);
+  const head = host.querySelector('.req-files h3');
+  assert.deepEqual([document.activeElement === head, head.getAttribute('tabindex'), head.textContent], [true, '-1', 'Files · 10']);
+});

@@ -10125,8 +10125,9 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .req-ico:hover:not(:disabled),.req-ico[aria-expanded="true"]{background:var(--hover);color:var(--ink)}
 .req-ico:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-ico:disabled{opacity:.45;cursor:not-allowed}
-/* The menus are upstream's one menu (.menu box, .menu-item rows) placed like the header ⋯ (.hd-more-wrap, .hd-menu). */
-/* the open list floats under its trigger, right-aligned (upstream dropped .hd-more-wrap / .hd-menu's own placement) */
+/* The menus are upstream's one menu (.menu box, .menu-item rows). The list keeps the .hd-more-wrap / .hd-menu class
+   names, but upstream f92a7148d removed those rules, so Requirements owns the placement here through .req-menu: the open
+   list floats under its trigger, right-aligned. */
 .req-menu{position:relative;display:inline-flex}
 .req-menu .hd-menu{position:absolute;top:calc(100% + 6px);right:0;z-index:5;min-width:200px}
 .req-menu-item{box-sizing:border-box;text-decoration:none}   /* Download .md is a link row */
@@ -10416,6 +10417,7 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-new-files-note[hidden]{display:none}
 .req-reading{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0;padding:12px 16px;border-radius:var(--r-md);background:var(--field);font-size:13px}
 .req-reading .hint{margin:0;color:var(--ink-2)}
+.req-reading .badge.blue{color:var(--blue-ink-strong)}   /* AA on --blue-bg: 5.0:1 (--blue-ink is 3.6:1); dark is the same shade */
 /* A create's "<name> was not added: Worca could not store it." on the feature page: the refusal box's AA pair, not the
    shared .form-msg.warn (amber ink on the page background is under 4.5:1). */
 .form-msg.req-msg-warn{padding:8px 10px;border-radius:var(--r-md);background:var(--amber-bg);color:var(--amber-ink-strong);overflow-wrap:anywhere}
