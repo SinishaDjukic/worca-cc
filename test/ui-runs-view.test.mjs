@@ -885,7 +885,8 @@ test('Add to group / Remove from group repaint the group with its new count and 
   const exp = groupRowEl().querySelector(':scope > .runs-row-tail .runs-expand');
   if (exp.getAttribute('aria-expanded') !== 'true') { click(window, exp); await settle(window); }
   const member = groupRowEl().querySelector('.runs-members .runs-row[data-pipeline-id="pw000002"]').closest('.runs-item');
-  assert.equal(member.querySelector('.runs-indep').textContent, 'Independent');
+  assert.equal(member.querySelector('.runs-indep'), null, '#955: a one-line member drops Independent');
+  assert.doesNotMatch(member.querySelector('.runs-row-title').textContent, /^\d+ · /, 'an ad hoc member has no position');
   click(window, member.querySelector(':scope > .runs-row-tail .runs-more'));
   click(window, [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.textContent.includes('Remove from group')));
   await settle(window, 8);

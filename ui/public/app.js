@@ -33504,10 +33504,13 @@ function paintRunsList() {
     if (g && typeof g.scrollIntoView === 'function') g.scrollIntoView({ block: 'start' });
   }
 }
-/** P2/P7: move every group line to its fraction IN PLACE — a rebuild would restart the glide. Group rows only: a
- *  single row's four-section stage block is painted whole by paintProgressBar in renderItem. */
+/** P2/P7: move every group line to its fraction IN PLACE — a rebuild would restart the glide. Group rows and their open members only: a
+ *  top-level single row's four-section stage block is painted whole by paintProgressBar in renderItem. */
 function paintRunsProgress(host, model) {
-  const rows = model.sections.flatMap((s) => (s.collapsed ? [] : s.rows)).filter((r) => r.kind === 'chain' && r.model.progress);
+  // #955: an open group's live members draw the same 3px line as their group row.
+  const rows = model.sections.flatMap((s) => (s.collapsed ? [] : s.rows))
+    .flatMap((r) => (r.kind === 'chain' ? [r, ...(r.open ? r.members || [] : [])] : []))
+    .filter((r) => r.model && r.model.progress);
   for (const r of rows) {
     for (const line of host.querySelectorAll(`.runs-item[data-row-key="${cssEscape(r.key)}"] > a.runs-row > .runs-row-prog`)) {
       line.firstElementChild.style.width = progressWidth(r.model.progress.fraction);
