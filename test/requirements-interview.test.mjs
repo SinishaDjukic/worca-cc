@@ -1372,3 +1372,24 @@ test('A8 D6: the scope\'s documents ride inside <product_brief>, after its secti
     assert.match(round.prompt, /- Orders \(partly\): checkout and history\.\n\nDocuments:\nglossary\.pdf: Terms\.\n<\/product_brief>/);
   } finally { deleteAttachmentRow(d0.id); }   // the later A7 tests read this brief without documents
 });
+
+test('A8 D6: Look closer reads the brief\'s documents inside <product_brief>; without documents its prompt is unchanged', async () => {
+  briefOn();
+  const b = savedBrief();
+  const f = newBriefFeature();
+  await startOrientation(f.seq, {}, briefDeps(fakeRunner([ROUND1])).d);
+  await settled(f.seq);
+  const look = { summary: 'Orders have no note yet.', files: [], area: 'Orders' };
+  const r = fakeRunner([look, look]);
+  await startOrientation(f.seq, { thenRound: false }, briefDeps(r).d);
+  await settled(f.seq);
+  const d0 = insertAttachment({ id: mintAttachmentId(), ownerType: 'brief', ownerId: b.id, name: 'glossary.pdf', kind: 'binary', mime: 'application/pdf', bytes: 10, sha256: 'g2' });
+  updateAttachment(d0.id, { status: 'done', summary: 'Terms.' });
+  try {
+    await startOrientation(f.seq, { thenRound: false }, briefDeps(r).d);
+    await settled(f.seq);
+  } finally { deleteAttachmentRow(d0.id); }
+  assert.equal(r.calls.length, 2);
+  assert.doesNotMatch(r.calls[0].prompt, /Documents:/);
+  assert.equal(r.calls[1].prompt, r.calls[0].prompt.replace('\n</product_brief>', '\n\nDocuments:\nglossary.pdf: Terms.\n</product_brief>'));
+});

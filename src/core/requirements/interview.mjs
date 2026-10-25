@@ -368,7 +368,7 @@ async function orient(f, d, brief = null) {
 
 async function runOrientation(seq, d, by, { useBrief = false } = {}) {
   const f0 = requireFeature(seq);
-  const brief = briefFor(f0);
+  const brief = briefFor(f0, promptFiles(f0).documents);   // A8 D6: the closer look reads the brief's documents too
   // A7 D11: every stored look names the scope it was made for and the brief it was made against (null: none yet).
   // The scope cannot change while the look runs (header edits wait for the job), so it is read here.
   const stamp = { scopeType: f0.scopeType, scopeKey: f0.scopeKey, briefId: brief ? brief.id : null };

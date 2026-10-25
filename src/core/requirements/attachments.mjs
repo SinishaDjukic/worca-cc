@@ -195,11 +195,11 @@ export function selectInlineAttachments(rows, readText, budget = REQ_ATTACH_LIMI
   return out;
 }
 
-const KNOWN_BY_NAME = Object.freeze({
-  reading: 'being read; known by name only.',
-  'unread-budget': 'not read yet; known by name only.',
-  failed: 'Worca could not read it; known by name only.',
+// A file's state when its read is not done; STORE_FAILED: a replace whose new body could not be stored (D11).
+const STATE_NOTES = Object.freeze({
+  reading: 'being read', 'unread-budget': 'not read yet', failed: 'Worca could not read it', stored: 'the file itself could not be stored',
 });
+const stateNote = (r) => (r.status === 'failed' && r.error?.code === 'STORE_FAILED' ? STATE_NOTES.stored : STATE_NOTES[r.status] || STATE_NOTES.reading);
 /** A file has text to show: its read is done, or the product owner wrote it. */
 const hasText = (r) => !!r.summary && (r.summaryEdited || r.status === 'done');
 
@@ -220,13 +220,15 @@ function entry(first, r) {
   return lines.join('\n');
 }
 
-/** The <attachments> block's text (the caller wraps it in asData), in upload order; `texts` from selectInlineAttachments. */
+/** The <attachments> block's text (the caller wraps it in asData), in upload order; `texts` from selectInlineAttachments.
+ *  A file whose read is not done says its state: with the product owner's text before it, else as "known by name only". */
 export function renderAttachmentsForPrompt(rows, { texts = new Map() } = {}) {
   return (rows || []).map((r) => {
     const head = `${r.name} (${KIND_WORDS[r.kind] || 'text'}, ${sizeLabel(r.bytes)})`;
+    const done = r.status === 'done';
     const parts = [hasText(r)
-      ? entry(`${head}\nWhat Worca took from it${r.summaryEdited ? " (the product owner's words)" : ''}:\n${r.summary}`, r)
-      : `${head}: ${KNOWN_BY_NAME[r.status] || KNOWN_BY_NAME.reading}`];
+      ? entry(`${done ? head : `${head}: ${stateNote(r)}.`}\nWhat Worca took from it${r.summaryEdited ? " (the product owner's words)" : ''}:\n${r.summary}`, r)
+      : `${head}: ${stateNote(r)}; known by name only.`];
     if (texts.has(r.id)) parts.push(`Full text:\n${texts.get(r.id)}`);
     return parts.join('\n');
   }).join('\n\n');

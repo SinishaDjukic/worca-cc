@@ -220,7 +220,6 @@ test('the other states, and the 3,000-character entry cap with the newest answer
   assert.match(renderAttachmentsForPrompt([r('failed')]), /: Worca could not read it; known by name only\.$/);
   for (const status of ['reading', 'failed', 'unread-budget']) {   // an earlier read's text is never shown as current
     assert.doesNotMatch(renderAttachmentsForPrompt([doneRow({ status })]), /52 support tickets/, status);
-    assert.match(renderAttachmentsForPrompt([doneRow({ status, summaryEdited: true })]), /\(the product owner's words\):\n52 support tickets/, status);
   }
   const asks = Array.from({ length: 12 }, (_, i) => ({ question: `Q${i}`, answer: 'a'.repeat(400) }));
   const out = renderAttachmentsForPrompt([doneRow({ asks })]);
@@ -243,4 +242,17 @@ test('documents for <product_brief> and <brief_documents>: "<name>: <summary>" a
   const docs = [doneRow({ name: 'glossary.pdf', summary: 'Terms.', asks: [{ question: 'Q?', answer: 'A.' }] }), doneRow({ name: 'tone.md', status: 'unread-budget', summary: '' })];
   assert.equal(renderDocumentsForPrompt(docs), 'glossary.pdf: Terms.\nQ: Q?\nA: A.\ntone.md');
   assert.deepEqual(sourceNames([{ name: 'a.pdf' }], [{ name: 'g.pdf' }, { name: 'A.PDF' }]), ['a.pdf', 'g.pdf']);
+});
+
+test('the product owner\'s text on a file whose read is not done comes with the file\'s state; a file not stored says so', () => {
+  const owner = (status, error = null) => doneRow({ status, error, summaryEdited: true, summary: 'Refunds in 14 days.' });
+  const words = "\nWhat Worca took from it (the product owner's words):\nRefunds in 14 days.";
+  assert.equal(renderAttachmentsForPrompt([owner('reading')]), `support-tickets.pdf (PDF, 2.1 MB): being read.${words}`);
+  assert.equal(renderAttachmentsForPrompt([owner('unread-budget')]), `support-tickets.pdf (PDF, 2.1 MB): not read yet.${words}`);
+  assert.equal(renderAttachmentsForPrompt([owner('failed', { code: 'TIMEOUT' })]), `support-tickets.pdf (PDF, 2.1 MB): Worca could not read it.${words}`);
+  assert.equal(renderAttachmentsForPrompt([owner('failed', { code: 'STORE_FAILED' })]), `support-tickets.pdf (PDF, 2.1 MB): the file itself could not be stored.${words}`);
+  assert.equal(renderAttachmentsForPrompt([owner('done')]), `support-tickets.pdf (PDF, 2.1 MB)${words}`);
+  assert.equal(renderAttachmentsForPrompt([owner('done', { code: 'FAILED', job: 'ask' })]), `support-tickets.pdf (PDF, 2.1 MB)${words}`, 'a failed ask is not the file\'s state');
+  assert.equal(renderAttachmentsForPrompt([doneRow({ status: 'failed', summary: '', error: { code: 'STORE_FAILED' } })]),
+    'support-tickets.pdf (PDF, 2.1 MB): the file itself could not be stored; known by name only.');
 });
