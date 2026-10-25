@@ -19,7 +19,7 @@ before(async () => {
   process.env.HOME = sandboxHome; process.env.USERPROFILE = sandboxHome;
   process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
   process.env.WORCA_MOCK = '1';
-  process.env.WORCA_FLAGS = 'chatsColumn,-smartRunNaming';
+  process.env.WORCA_FLAGS = '-smartRunNaming';
   mod = await import('../ui/server.mjs');
   srv = mod.server;
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
@@ -36,17 +36,11 @@ after(async () => {
 
 const chat = async (title) => (await (await call('POST', '/api/ask/threads', { title })).json()).thread;
 
-test('chatsColumn off: every group route answers 404', async () => {
-  process.env.WORCA_FLAGS = '-chatsColumn';
-  assert.equal((await call('GET', '/api/ask/groups')).status, 404);
-  assert.equal((await call('POST', '/api/ask/groups', { name: 'x', threadIds: [] })).status, 404);
-});
-
 test('smartRunNaming off: POST suggest-name answers 404; on (mock): the fixed name', async () => {
-  process.env.WORCA_FLAGS = 'chatsColumn,-smartRunNaming';
+  process.env.WORCA_FLAGS = '-smartRunNaming';
   const a = await chat('Fix the login');
   assert.equal((await call('POST', '/api/ask/groups/suggest-name', { threadIds: [a.id] })).status, 404);
-  process.env.WORCA_FLAGS = 'chatsColumn,smartRunNaming';
+  process.env.WORCA_FLAGS = 'smartRunNaming';
   const r = await call('POST', '/api/ask/groups/suggest-name', { threadIds: [a.id] });
   assert.equal(r.status, 200);
   assert.deepEqual(await r.json(), { source: 'model', name: 'Mock group' });
@@ -54,7 +48,7 @@ test('smartRunNaming off: POST suggest-name answers 404; on (mock): the fixed na
 });
 
 test('create, rename, move, remove; GET lists the group with its count; threads carry groupId', async () => {
-  process.env.WORCA_FLAGS = 'chatsColumn';
+  process.env.WORCA_FLAGS = '';
   const [a, b] = [await chat('a'), await chat('b')];
   const made = await call('POST', '/api/ask/groups', { name: 'Release prep', nameSource: 'suggested', threadIds: [a.id] });
   assert.equal(made.status, 201);
@@ -72,7 +66,7 @@ test('create, rename, move, remove; GET lists the group with its count; threads 
 });
 
 test('404 and 400 paths: a missing group, an unknown chat id, a bad id list', async () => {
-  process.env.WORCA_FLAGS = 'chatsColumn';
+  process.env.WORCA_FLAGS = '';
   assert.equal((await call('PATCH', '/api/ask/groups/askg_00000000', { name: 'x' })).status, 404);
   assert.equal((await call('POST', '/api/ask/groups', { name: 'x', threadIds: ['ask_00000000'] })).status, 404);
   assert.equal((await call('POST', '/api/ask/groups', { name: 'x', threadIds: [] })).status, 400);
@@ -80,7 +74,7 @@ test('404 and 400 paths: a missing group, an unknown chat id, a bad id list', as
 });
 
 test('deleting the last chat of a group through DELETE /api/ask/threads/:id drops the group', async () => {
-  process.env.WORCA_FLAGS = 'chatsColumn';
+  process.env.WORCA_FLAGS = '';
   const a = await chat('only');
   const { group } = await (await call('POST', '/api/ask/groups', { name: 'Solo', threadIds: [a.id] })).json();
   assert.equal((await call('DELETE', `/api/ask/threads/${a.id}`)).status, 200);
@@ -89,7 +83,7 @@ test('deleting the last chat of a group through DELETE /api/ask/threads/:id drop
 });
 
 test('Archive group: 409 CHAT_BUSY while a member replies (nothing archived); 200 once idle', async () => {
-  process.env.WORCA_FLAGS = 'chatsColumn';
+  process.env.WORCA_FLAGS = '';
   const [a, b] = [await chat('Ship notes'), await chat('b')];
   const { group } = await (await call('POST', '/api/ask/groups', { name: 'G', threadIds: [a.id, b.id] })).json();
   mod._testing.askJobs.set(a.id, { turn: { stop() {} }, status: 'running', graceTimer: null });
@@ -112,7 +106,7 @@ test('Archive group: 409 CHAT_BUSY while a member replies (nothing archived); 20
 });
 
 test('DELETE deleteChats=false ungroups (chats stay); deleteChats=true deletes the chats', async () => {
-  process.env.WORCA_FLAGS = 'chatsColumn';
+  process.env.WORCA_FLAGS = '';
   const a = await chat('a');
   let { group } = await (await call('POST', '/api/ask/groups', { name: 'G', threadIds: [a.id] })).json();
   assert.equal((await call('DELETE', `/api/ask/groups/${group.id}?deleteChats=false`)).status, 200);

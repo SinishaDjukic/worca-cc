@@ -15200,11 +15200,9 @@ app.post('/api/naming/suggest', namingOn, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// #948 s3 (flag chatsColumn): the Chats column's topic groups. Every route answers 404 while chatsColumn is off;
-// suggest-name also while smartRunNaming is off (namingOn, the /api/naming/* gate above). Every write broadcasts
+// #948 s3: the Chats column's topic groups. suggest-name answers 404 while smartRunNaming is off (namingOn, the /api/naming/* gate above). Every write broadcasts
 // ask-groups-changed, so other tabs re-read their column.
 // ---------------------------------------------------------------------------
-const chatGroupsOn = requireFlag('chatsColumn');
 function chatGroupError(res, err) {
   if (err instanceof ChatGroupError) return res.status(err.status).json({ error: err.message, code: err.code });
   return res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -15232,11 +15230,11 @@ function askGroupFor(req, res) {
   return g;
 }
 
-app.get('/api/ask/groups', chatGroupsOn, (req, res) => {
+app.get('/api/ask/groups', (req, res) => {
   try { res.json({ groups: askListChatGroups({ visibleTo: askViewer(req) }) }); } catch (err) { chatGroupError(res, err); }
 });
 
-app.post('/api/ask/groups', chatGroupsOn, (req, res) => {
+app.post('/api/ask/groups', (req, res) => {
   try {
     const b = req.body || {};
     const ids = askGroupThreads(req, res, b.threadIds);
@@ -15247,7 +15245,7 @@ app.post('/api/ask/groups', chatGroupsOn, (req, res) => {
   } catch (err) { chatGroupError(res, err); }
 });
 
-app.patch('/api/ask/groups/:id', chatGroupsOn, (req, res) => {
+app.patch('/api/ask/groups/:id', (req, res) => {
   try {
     const g = askGroupFor(req, res);
     if (!g) return;
@@ -15257,7 +15255,7 @@ app.patch('/api/ask/groups/:id', chatGroupsOn, (req, res) => {
   } catch (err) { chatGroupError(res, err); }
 });
 
-app.post('/api/ask/groups/:id/threads', chatGroupsOn, (req, res) => {
+app.post('/api/ask/groups/:id/threads', (req, res) => {
   try {
     const g = askGroupFor(req, res);
     if (!g) return;
@@ -15269,7 +15267,7 @@ app.post('/api/ask/groups/:id/threads', chatGroupsOn, (req, res) => {
   } catch (err) { chatGroupError(res, err); }
 });
 
-app.delete('/api/ask/groups/:id/threads/:threadId', chatGroupsOn, (req, res) => {
+app.delete('/api/ask/groups/:id/threads/:threadId', (req, res) => {
   try {
     const g = askGroupFor(req, res);
     if (!g) return;
@@ -15283,7 +15281,7 @@ app.delete('/api/ask/groups/:id/threads/:threadId', chatGroupsOn, (req, res) => 
   } catch (err) { chatGroupError(res, err); }
 });
 
-app.post('/api/ask/groups/:id/archive', chatGroupsOn, (req, res) => {
+app.post('/api/ask/groups/:id/archive', (req, res) => {
   try {
     const g = askGroupFor(req, res);
     if (!g) return;
@@ -15305,7 +15303,7 @@ app.post('/api/ask/groups/:id/archive', chatGroupsOn, (req, res) => {
   } catch (err) { chatGroupError(res, err); }
 });
 
-app.delete('/api/ask/groups/:id', chatGroupsOn, async (req, res) => {
+app.delete('/api/ask/groups/:id', async (req, res) => {
   try {
     const g = askGroupFor(req, res);
     if (!g) return;
@@ -15322,7 +15320,7 @@ app.delete('/api/ask/groups/:id', chatGroupsOn, async (req, res) => {
 
 // POST /api/ask/groups/suggest-name {threadIds} -> { source: 'model', name } | { source: 'fallback', error }.
 // The Run naming helper model (namingPick); the prompt carries each chat's title and first message only.
-app.post('/api/ask/groups/suggest-name', chatGroupsOn, namingOn, async (req, res) => {
+app.post('/api/ask/groups/suggest-name', namingOn, async (req, res) => {
   try {
     const ids = askGroupThreads(req, res, req.body?.threadIds);
     if (!ids) return;

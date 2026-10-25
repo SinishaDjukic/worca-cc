@@ -26,6 +26,16 @@ test('Group by Date: Pinned · Today · Recent · Older; Recent holds at most 10
   assert.equal(buildChatsModel({ threads, total: 20, more: true, olderOpen: true, now: NOW }).sections[3].more, true);
 });
 
+test('Today starts at local midnight: a chat at 00:00 today is Today, one a millisecond earlier is Recent', () => {
+  const midnight = new Date(NOW);
+  midnight.setHours(0, 0, 0, 0);
+  const m = buildChatsModel({ threads: [thread('at', { updatedAt: new Date(midnight.getTime()).toISOString() }),
+    thread('before', { updatedAt: new Date(midnight.getTime() - 1).toISOString() })], total: 2, now: NOW });
+  const ids = (sec) => m.sections.find((s) => s.id === sec).rows.map((r) => r.id);
+  assert.deepEqual(ids('today'), ['at']);
+  assert.deepEqual(ids('recent'), ['before']);
+});
+
 test('row: state column and sub line; busy rows carry their reason', () => {
   const idle = chatRow(thread('a'), { scopeName: () => 'worka-cc', now: NOW });
   assert.equal(idle.model.icon, 'chat');

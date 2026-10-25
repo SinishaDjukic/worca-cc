@@ -10,7 +10,7 @@
 //   navigate(href)    a row with a route ('#running/…', '#projects/…', …)
 //   openWorkflow(id)  a workflow row
 //   onLabel(label)    a "Runs labelled hotfix" row: apply the Runs list label filter
-//   searchChats(q)    #948 s2 (flag chatsColumn): the Chats group's rows (global-search.mjs chatRows), async; null = none
+//   searchChats(q)    #948 s2: the Chats group's rows (global-search.mjs chatRows), async; null = none
 //   chatsFirst()      the Chats group leads (the Chat page); else it follows Runs
 //
 // Focus stays in the input while the popover is open: the rows are options it points at with

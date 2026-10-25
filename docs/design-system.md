@@ -309,7 +309,9 @@ and hand the focus back to the opener.
 - Phones: one 16px gutter; nothing scrolls sideways at 290px.
 - Runs list order: Needs you (most urgent first), Running, Waiting, Recent. Each section is newest dispatch first (a
   run's start, a waiting ticket's creation); a section with no rows is not drawn.
-- Chats list (flag `chatsColumn`): the Runs list anatomy in the Chat page's column; sections Pinned · Today · Recent
+- Chats list: the Runs list anatomy in the Chat page's column; the open chat's figures sit once in the conversation
+  head as a readout control (`button.chat-head-meter`, 11px mono, like the cost breakdown's `.cost-bd-btn`), not a
+  §1.2 button; sections Pinned · Today · Recent
   (the 10 latest before today) · Older (folded); Archive is disabled while a chat replies, runs a command or follows a
   live run; an archived chat reads Restore, as a run does; New chat is the one + after the list toggle; a topic group is
   a Runs group row (count, ⌄, members indented 16px, no dividers) placed by its newest chat; its sub line names its
