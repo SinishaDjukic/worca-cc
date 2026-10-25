@@ -216,7 +216,7 @@ async function validateForSave(graph, { registry, scripts, agentsDir }) {
  * @returns {Promise<{workflow: object, warnings: Array}>}
  * @throws code 'SCRIPTS_UNCONFIRMED' (`.scriptNodes`) — nothing was written
  */
-export async function saveGraphWorkflow(body, { registry, agentsDir, origin = null, confirmScripts = false, acceptScripts = null } = {}) {
+export async function saveGraphWorkflow(body, { registry, agentsDir, origin = null, confirmScripts = false, acceptScripts = null, revision = null } = {}) {
   const graph = prepareGraph(body || {}, { keepId: true });
   const { warnings, scripts } = await validateForSave(graph, { registry, agentsDir });
   if (confirmScripts === true) {
@@ -226,7 +226,10 @@ export async function saveGraphWorkflow(body, { registry, agentsDir, origin = nu
         'SCRIPTS_UNCONFIRMED', { scriptNodes });
     }
   }
-  const workflow = await writeGraphWorkflow(typeof origin === 'string' && origin ? { ...graph, origin } : graph, { rejectCollision: true });
+  const workflow = await writeGraphWorkflow(typeof origin === 'string' && origin ? { ...graph, origin } : graph, {
+    rejectCollision: true,
+    ...(revision && typeof revision === 'object' ? { revisionSource: revision.source, by: revision.by ?? null } : {}),
+  });
   return { workflow, warnings };
 }
 
