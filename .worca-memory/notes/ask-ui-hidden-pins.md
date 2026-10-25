@@ -2,7 +2,7 @@
 name: ask-ui-hidden-pins
 description: Read before planning or reviewing a change to the Chat panel's DOM, the top bar, the page shell, openChat entry points or a new ask-api server test — the pins a
 paths: ui/public/ask-panel.mjs, ui/public/app.js, ui/public/index.html, ui/public/style.css, ui/public/topnav-search.mjs, test/ask-api-*.test.mjs, test/ui-chat-*.test.mjs, test/ask-panel*.test.mjs
-updated: 2026-10-24T23:42:17.504Z
+updated: 2026-10-25T00:43:39.650Z
 author: Denislav Prinov
 ---
 
@@ -30,10 +30,11 @@ Found replaying "Ask worca beside the page" (2026-10-24, 8 tasks). Each one turn
 - app.js hides the panel BEFORE moving its root, so `openPage`'s unconditional re-pin covers the move; a panel-level `setHost` while open needs its own `applyPin()`.
 - CSS: a `position:fixed;top:…;bottom:0` override under a base `height:100%` keeps the height (bottom ignored): add `height:auto` — the dock's phone tier hid the composer 48px below the screen; only a real browser shows it.
 - A path that USED to route to `#chat` got side effects from that hashchange for free; a no-route path (the side column) must do them itself: the artifact popup (`artifacts/viewer.mjs` `onHash`) closed — else the column opens under it (z 50) and its `focusin` pulls the focus back (fixed with the `closeOpenViewer` export).
-- `openPage` clears the unread dot on ANY show (`setUnread(false)`). A control that mirrors the Chat row's dot must also land where the Chat row does (`askPanel.unreadThreadId()`), or the news of a reply in another chat (a PR fix card) is lost.
+- `openPage` clears the unread dot on ANY show (`setUnread(false)`). A control that mirrors the Chat row's dot must also land where the Chat row does (`askPanel.unreadThreadId()`), or the news of a reply in another chat (a PR fix card) is lost — and a host that re-shows by itself (the column after Chat/Workflows) must keep the dot while it shows another chat.
 - Passive `newThread()` (a 404 on load, `ask-history-cleared`) calls `focusComposer()`: a no-op while the Chat section is hidden, a focus theft once the panel shows beside a page — pass `focus:false` there.
 - A page chip's id is the left-out key: an id that changes when data lands (a live run's `pipelineId` with the first frame) un-leaves it; an id without its run (`file:<path>`) leaves the same file out on the next run. Key a live run by `runId`, a file by `file:<run>:<path>`.
-- An overlay that stays open across routes (the column below 1081px) makes navigation started INSIDE it (run cards, `a[href^="#"]`) look dead: the page changes behind it.
+- An overlay that stays open across routes (the column below 1081px) makes navigation started INSIDE it look dead: the page changes behind it. A delegated `a[href^="#"]` listener misses most of it — the panel routes by hand in `topicRow`, `mcpManageItem`, the progress card's `onOpen` (a default-prevented link) and the `openNewPipeline` dep: grep `location.hash =` in ask-panel.mjs and route each through one helper.
+- `.topnav` sizes `.topnav-r` `minmax(max-content,1fr)`: a new labelled bar button takes its width from the PAGE TITLE, on every page (a 113px label left `Runs` an ellipsis at 1081–1110px). Measure the title in Chrome at 1081–1160 and 761–960px (rail) against a checkpoint clone.
 
 ## Test-harness traps
 - An ask-api test that posts a message and ends without `await idle()` (or settling the turn) lets the file's `after()` delete `WORCA_MOCK` before the turn's async title job spawns: the real CLI hits the no-real-claude guard, `npm test` exits 1 with 0 failures — only in the full suite, never alone. Compare `N test spawn(s) reached the real-claude guard` with a checkpoint run.
