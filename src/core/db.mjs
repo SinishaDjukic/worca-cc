@@ -63,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 76;
+export const SCHEMA_VERSION = 77;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -863,7 +863,8 @@ const INCREMENTAL_COLUMNS = {
                             human_hours: 'REAL', human_signals: 'TEXT' },   // v33: per-execution human-hours credit + its signals JSON
   sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER',
                             run_model: 'TEXT' },   // v25: the model the child actually ran on
-  workflows:              { domain: 'TEXT', origin: 'TEXT', graph: 'TEXT', archived_at: 'TEXT' },
+  workflows:              { domain: 'TEXT', origin: 'TEXT', graph: 'TEXT', archived_at: 'TEXT',
+                            live_version_no: 'INTEGER' },   // v77: the named version new runs use (NULL = the row itself)
   config_workflow_nodes:  { ask_questions: 'INTEGER', subagent_model: 'TEXT' },  // v25: sub-agent model policy
   ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
   artifacts:              { step_key: 'TEXT', node_id: 'TEXT', cycle: 'INTEGER', created_at: 'TEXT' }, // per-step attribution
@@ -1338,6 +1339,27 @@ CREATE TABLE IF NOT EXISTS ask_chat_groups (
   updated_at  TEXT NOT NULL
 );`;
 
+// v77 (plans/workflow-tests-plan.md, #721 workflow part): every save keeps the state it replaced (version_no NULL,
+// the last 50 per workflow) and Save version keeps a numbered state (never pruned). Append-only and FK-free like
+// ask_cost_ledger, so history outlives a deleted workflows row. `graph` = {nodes, wires, canvas?, codeGraph?}.
+const WORKFLOW_REVISIONS_DDL = `
+CREATE TABLE IF NOT EXISTS workflow_revisions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  workflow_id TEXT NOT NULL,
+  version_no  INTEGER,
+  note        TEXT,
+  name        TEXT NOT NULL,
+  domain      TEXT,
+  graph       TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  parts       TEXT NOT NULL DEFAULT '[]',
+  source      TEXT NOT NULL,
+  made_by     TEXT,
+  created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_revisions_wf ON workflow_revisions (workflow_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_revisions_version ON workflow_revisions (workflow_id, version_no) WHERE version_no IS NOT NULL;`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1373,6 +1395,7 @@ const INCREMENTAL_TABLES = {
   run_groups:        RUN_GROUPS_DDL,
   run_group_members: RUN_GROUPS_DDL,
   ask_chat_groups:   ASK_CHAT_GROUPS_DDL,      // v76 (#948 s3)
+  workflow_revisions: WORKFLOW_REVISIONS_DDL,  // v77 (workflow tests Part 1, #721)
   night_decisions:   NIGHT_DECISIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
@@ -2523,6 +2546,7 @@ export function migrate(db) {
     if (current < 74) { db.exec(REQUIREMENTS_BRIEFS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
     // v75 (#948 s2): ask_threads.archived_at / pinned_at — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     if (current < 76) db.exec(ASK_CHAT_GROUPS_DDL);   // v76 (#948 s3) topic groups; ask_threads.group_id comes from INCREMENTAL_COLUMNS
+    if (current < 77) db.exec(WORKFLOW_REVISIONS_DDL);   // v77 workflow history + versions; workflows.live_version_no comes from INCREMENTAL_COLUMNS
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
