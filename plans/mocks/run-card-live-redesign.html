@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run card mock</title>
+<!-- The real stylesheet: every colour, size and component here is Worca's own (docs/design-system.md). -->
+<link rel="stylesheet" href="../../ui/public/style.css">
+<style>
+  /* style.css loads fonts from /fonts (the server root); this file opens from disk. */
+  @font-face{font-family:'Poppins';font-weight:400;src:url('../../ui/public/fonts/poppins-latin-400-normal.woff2') format('woff2');}
+  @font-face{font-family:'Poppins';font-weight:500;src:url('../../ui/public/fonts/poppins-latin-500-normal.woff2') format('woff2');}
+  @font-face{font-family:'Poppins';font-weight:600;src:url('../../ui/public/fonts/poppins-latin-600-normal.woff2') format('woff2');}
+  @font-face{font-family:'Poppins';font-weight:700;src:url('../../ui/public/fonts/poppins-latin-700-normal.woff2') format('woff2');}
+  @font-face{font-family:'JetBrains Mono';font-weight:400;src:url('../../ui/public/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');}
+
+  html,body{height:auto;overflow:auto;}
+  body{background:var(--panel);}
+  .mk-page{max-width:1280px;margin:0 auto;padding:32px;}
+  .mk-page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:24px;}
+  .mk-page-head .page-intro{margin:4px 0 0;color:var(--ink-2);}
+  .mk-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:48px;align-items:start;}
+  .mk-col-label{font-size:var(--fs-meta);color:var(--ink-2);padding-bottom:8px;margin-bottom:24px;border-bottom:1px solid var(--line);}
+  .mk-col-label b{color:var(--ink);font-weight:600;}
+
+  /* The captured card keeps its own layout; only the page padding goes. */
+  .mk-now .rd-glance{padding:0;}
+  .mk-now .rd-glance > :not(.rd-live){max-width:none;}
+
+  /* ---------- Proposed ---------- */
+  .mk-new{display:flex;flex-direction:column;gap:12px;}
+  .mk-meta{display:flex;align-items:center;gap:8px;font-size:var(--fs-meta);color:var(--ink-2);min-width:0;white-space:nowrap;}
+  .mk-meta > *{flex:none;}
+  .mk-meta > .mk-branch{flex:0 1 auto;}
+  .mk-meta .sep{color:var(--ink-3);}
+  .mk-branch{display:inline-flex;align-items:center;gap:2px;min-width:0;max-width:100%;}
+  .mk-branch code{font-family:var(--mono);font-size:var(--fs-meta);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .mk-branch .btn{margin-block:-4px;flex:none;}
+  .mk-to{color:var(--ink-3);}
+  .mk-meta .btn-quiet{margin-block:-4px;}
+  .mk-new .rd-sheet{padding:var(--pad-card);display:flex;flex-direction:column;gap:16px;margin-top:8px;}
+
+  .mk-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;column-gap:10px;align-items:center;}
+  .mk-head .status-dot{grid-area:1 / 1;}
+  .mk-head .run-status-word{grid-area:1 / 2;font:600 var(--fs-section)/var(--lh-title) var(--sans);}
+  .mk-head .switch-row{grid-area:1 / 3;display:flex;align-items:center;gap:8px;font-size:var(--fs-body);color:var(--ink-2);}
+  .mk-head .mk-detail{grid-area:2 / 2 / 2 / 4;margin-top:2px;font-size:var(--fs-meta);color:var(--ink-2);}
+  .mk-head .mk-detail b{color:var(--ink);font-weight:500;}
+
+  .mk-figs{display:flex;flex-wrap:wrap;gap:12px 32px;}
+  .mk-fig b{display:block;white-space:nowrap;font:600 var(--fs-section)/var(--lh-title) var(--sans);font-variant-numeric:tabular-nums;}
+  .mk-fig span{font-size:var(--fs-meta);color:var(--ink-2);}
+
+  .mk-feed{display:grid;grid-template-columns:40px minmax(0,1fr);gap:6px 12px;padding-top:16px;border-top:1px solid var(--line);}
+  .mk-feed dt{font-size:var(--fs-meta);color:var(--ink-2);line-height:var(--lh-body);padding-top:1px;}
+  .mk-feed dd{margin:0;font-size:var(--fs-body);color:var(--ink);min-width:0;}
+  .mk-feed dd .when{font-size:var(--fs-meta);color:var(--ink-3);margin-left:6px;}
+  .mk-feed code{font-family:var(--mono);font-size:.92em;}
+
+  .mk-tabs{margin-top:12px;}
+  .mk-tabs .n{font-size:var(--fs-caption);color:var(--ink-3);font-variant-numeric:tabular-nums;}
+  .mk-panel{padding-top:16px;}
+  .mk-panel[hidden]{display:none;}
+  .mk-panel p{margin:0 0 12px;color:var(--ink-2);}
+  .mk-files{list-style:none;margin:0;padding:0;}
+  .mk-files li{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid var(--line);font-size:var(--fs-body);}
+  .mk-files li:first-child{border-top:0;}
+  .mk-files code{font-family:var(--mono);font-size:var(--fs-meta);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .mk-files .add{color:var(--hd-count-add);} .mk-files .del{color:var(--hd-count-del);}
+  .mk-files .ct{flex:none;font-family:var(--mono);font-size:var(--fs-meta);display:flex;gap:8px;}
+
+  .mk-notes{margin:40px 0 0;padding:16px 0 0;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);}
+  .mk-notes h2{font:600 var(--fs-body)/var(--lh-title) var(--sans);color:var(--ink);margin:0 0 8px;}
+  .mk-notes ol{margin:0 0 16px;padding-left:18px;display:flex;flex-direction:column;gap:6px;}
+  .mk-notes b{color:var(--ink);font-weight:500;}
+  .mk-sample{border-bottom:1px dashed var(--ink-3);}
+
+  @media (max-width:900px){
+    .mk-page{padding:16px;}
+    .mk-cols{grid-template-columns:minmax(0,1fr);gap:40px;}
+    .mk-page-head{flex-direction:column;}
+  }
+</style>
+</head>
+<body>
+<div class="mk-page">
+  <header class="mk-page-head">
+    <div>
+      <h1 class="page-title">Run card, live run</h1>
+      <p class="page-intro">The run page card today, beside the proposed one. Same run, same tokens and components from <code>ui/public/style.css</code>.</p>
+    </div>
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" data-theme-pick="light">Light</button>
+      <button type="button" data-theme-pick="dark" class="on" aria-pressed="true">Dark</button>
+    </div>
+  </header>
+
+  <div class="mk-cols">
+    <section class="mk-now" aria-label="Today">
+      <div class="mk-col-label"><b>Today</b> · markup captured from dev, 25 Oct, graph removed</div>
+      <div class="rd">
+<section class="rd-glance" aria-label="Run status" data-live="on">
+                <div class="rd-now">
+                  
+                  <header class="rd-page-head">
+                    <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1" title="Unified page navigation: one head, breadcrumb in the top">Unified page navigation: one head, breadcrumb in the top</h1><span class="kind-chip">Run</span></div>
+                  </header>
+                </div>
+                <div class="rd-sheet">
+                  
+                  <div class="rd-sheet-head">
+                    
+                    <div class="rd-now-top run-status" data-state="working" data-word="Working" data-line="Review · 3rd pass" data-text="Working · 3rd pass"><div class="run-status-head"><span class="status-dot is-peach is-pulse" data-state="working" aria-hidden="true"></span><span class="run-status-word">Working</span><span class="run-status-detail" title="3rd pass">3rd pass</span></div><div class="run-status-roles" hidden=""></div><div class="run-prog-chain run-status-group" hidden=""></div><div class="run-prog run-status-bar" data-mode="stages" data-tone="blue" data-pulse="on" tabindex="0" aria-label="Run progress"><div class="run-prog-track" aria-hidden="true"><div class="run-prog-sec" data-stage="plan"><div class="run-prog-fill" style="width: 100%;"></div></div><div class="run-prog-sec" data-stage="build"><div class="run-prog-fill" style="width: 100%;"></div></div><div class="run-prog-sec is-current" data-stage="review"><div class="run-prog-fill" style="width: 75%;"></div></div><div class="run-prog-sec" data-stage="ready"><div class="run-prog-fill" style="width: 0%;"></div></div></div><div class="run-prog-marks" aria-hidden="true"><span class="run-prog-mark" data-stage="plan" data-state="done">Plan</span><span class="run-prog-mark" data-stage="build" data-state="done">Build</span><span class="run-prog-mark" data-stage="review" data-state="current">Review</span><span class="run-prog-mark" data-stage="ready" data-state="waiting">Ready</span></div></div></div>
+                    
+                    <div class="switch-row rd-live-row">
+                      <span class="txt">Live view</span>
+                      <div class="switch rd-live-switch on" role="switch" tabindex="0" aria-checked="true" aria-label="Live view"></div>
+                    </div>
+                    
+                    <div class="rd-head-acts" hidden="" data-sig="[]"><div class="rd-pr-slot" data-needs-git="" hidden="" data-sig="none|||||false|false|false" data-state="none"></div></div>
+                    <span class="rd-pr-feed" hidden="" data-key=""></span>
+                  </div>
+                  
+                  <div class="rd-route" data-sig="[{&quot;rows&quot;:[{&quot;kind&quot;:&quot;branch&quot;,&quot;state&quot;:&quot;working&quot;,&quot;place&quot;:[{&quot;kind&quot;:&quot;mono&quot;,&quot;text&quot;:&quot;feat/unified-page-navigation-one-head-breadcrumb&quot;}],&quot;second&quot;:[{&quot;kind&quot;:&quot;text&quot;,&quot;text&quot;:&quot;This run's branch&quot;},{&quot;kind&quot;:&quot;sep&quot;,&quot;text&quot;:&quot; · &quot;},{&quot;kind&quot;:&quot;text&quot;,&quot;text&quot;:&quot;the agents are working here&quot;}],&quot;copy&quot;:&quot;feat/unified-page-navigation-one-head-breadcrumb&quot;,&quot;pulse&quot;:true},{&quot;kind&quot;:&quot;pr&quot;,&quot;state&quot;:&quot;future&quot;,&quot;place&quot;:[{&quot;kind&quot;:&quot;text&quot;,&quot;text&quot;:&quot;Pull request&quot;}],&quot;second&quot;:[{&quot;kind&quot;:&quot;text&quot;,&quot;text&quot;:&quot;Opens when the changes are done&quot;}]},{&quot;kind&quot;:&quot;target&quot;,&quot;state&quot;:&quot;future&quot;,&quot;place&quot;:[{&quot;kind&quot;:&quot;mono&quot;,&quot;text&quot;:&quot;dev&quot;}],&quot;second&quot;:[{&quot;kind&quot;:&quot;text&quot;,&quot;text&quot;:&quot;Lands here when the pull request is merged&quot;}]}],&quot;fold&quot;:null,&quot;current&quot;:0},false]" data-label-id="rd-route-label-1"><div class="rd-route-head"><span class="rd-route-label" id="rd-route-label-1">Where the work is</span></div><ol class="rd-route-list" aria-labelledby="rd-route-label-1"><li class="rd-route-row is-working" aria-current="step"><span class="rd-route-dot is-working is-pulse" role="img" aria-label="In progress"><span class="ic rd-route-ic" aria-hidden="true" style="width: 11px; height: 11px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="6" cy="6" r="2.2"></circle><circle cx="6" cy="18" r="2.2"></circle><circle cx="18" cy="8" r="2.2"></circle><path d="M6 8.2v7.6M18 10.2c0 4-6 3-10.5 6.3"></path></svg></span></span><div class="rd-route-main"><div class="rd-route-place"><span class="rd-route-name" title="feat/unified-page-navigation-one-head-breadcrumb">feat/unified-page-navigation-one-head-breadcrumb</span><button type="button" class="btn btn-sm btn-quiet rd-route-copy" data-route="copy" title="feat/unified-page-navigation-one-head-breadcrumb" aria-label="Copy branch name feat/unified-page-navigation-one-head-breadcrumb"><span class="ic ico-copy" aria-hidden="true" style="width: 12px; height: 12px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h8"></path></svg></span><span class="ic ico-check" aria-hidden="true" style="width: 12px; height: 12px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span></button></div><div class="rd-route-second"><span class="rd-fact-tx">This run's branch</span> · <span class="rd-fact-tx">the agents are working here</span></div></div></li><li class="rd-route-row is-future"><span class="rd-route-dot is-future" role="img" aria-label="Not yet"><span class="ic rd-route-ic" aria-hidden="true" style="width: 11px; height: 11px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="6" cy="6" r="2.2"></circle><circle cx="6" cy="18" r="2.2"></circle><circle cx="18" cy="18" r="2.2"></circle><path d="M6 8.2v7.6"></path><path d="M18 15.8V9a3 3 0 0 0-3-3h-4"></path><path d="M13 3.5 10.5 6 13 8.5"></path></svg></span></span><div class="rd-route-main"><div class="rd-route-place"><span class="rd-fact-tx">Pull request</span></div><div class="rd-route-second"><span class="rd-fact-tx">Opens when the changes are done</span></div></div></li><li class="rd-route-row is-future"><span class="rd-route-dot is-future" role="img" aria-label="Not yet"><span class="ic rd-route-ic" aria-hidden="true" style="width: 11px; height: 11px;"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="6" cy="5.5" r="2.2"></circle><circle cx="6" cy="18.5" r="2.2"></circle><circle cx="18" cy="12" r="2.2"></circle><path d="M6 7.7v8.6"></path><path d="M6 7.7c0 2.4 2.5 4.3 9.8 4.3"></path></svg></span></span><div class="rd-route-main"><div class="rd-route-place"><span class="rd-route-name" title="dev">dev</span></div><div class="rd-route-second"><span class="rd-fact-tx">Lands here when the pull request is merged</span></div></div></li></ol></div>
+                  
+                  <dl class="rd-kv" aria-label="Run facts">
+                    <div class="rd-kv-row" data-fact="group"><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line" data-sig="add"><button type="button" class="btn btn-sm btn-quiet rd-group-add"><span class="ic" aria-hidden="true" style="width: 12px; height: 12px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14"></path></svg></span>Add to group…</button></dd></div>
+                    <div class="rd-kv-row" data-fact="project"><dt class="rd-kv-k">Project</dt><dd class="rd-kv-v rd-page-meta">worka-cc · started 08:31</dd></div>
+                    <div class="rd-kv-row" data-fact="labels"><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"><div class="rd-labels" aria-label="Labels"><span class="rd-labels-none">None</span><button type="button" class="btn btn-sm btn-quiet rd-labels-edit" aria-label="Add a label" aria-haspopup="dialog"><span class="ic" aria-hidden="true" style="width: 12px; height: 12px;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14"></path></svg></span>Add</button></div></dd></div>
+                    <div class="rd-kv-row" data-fact="tags" hidden=""><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v" data-sig=""></dd></div>
+                  </dl>
+                  <div class="rd-banners"></div>
+                  
+                  <div class="rd-facts" data-sig="t|4h 31mtime$83.44incl. $0.32 Away mode|" data-rest="$83.44incl. $0.32 Away mode|"><div class="rd-stats" data-n="2"><div><b class="run-time">4h 31m</b><span>time</span></div><div><b>$83.44</b><span>incl. $0.32 Away mode</span></div></div></div>
+                  
+                  <div class="rd-away-note" hidden=""><span class="rd-away-note-text"></span><button type="button" class="btn btn-sm rd-away-jump">See the answers</button></div>
+                  <div class="rd-nowlist" data-sig="[]"></div>
+                  <div class="rd-result" data-key="live|expert|ResultsOverviewDiffArtifacts2Actions|How it ranWorkflow30 stepsQ&amp;ALogsAgents"><div class="rd-sgroup"><div class="rd-slabel">Results</div><div class="rd-slist"><button type="button" data-rd-tab="overview" class="rd-srow chv"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" class="rd-srow-ico" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><path d="M12 8h.01M11 12h1v4h1" stroke-linecap="round" stroke-linejoin="round"></path></svg><span class="rd-srow-tx">Overview</span></button><button type="button" data-rd-tab="diff" class="rd-srow chv" data-needs-git=""><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" class="rd-srow-ico" aria-hidden="true"><path d="M6 3h8l4 4v14H6z" stroke-linejoin="round"></path><path d="M14 3v4h4" stroke-linejoin="round"></path></svg><span class="rd-srow-tx">Diff</span></button><button type="button" data-rd-tab="artifacts" class="rd-srow chv"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" class="rd-srow-ico" aria-hidden="true"><path d="M3 8l9-4 9 4-9 4-9-4z" stroke-linejoin="round"></path><path d="M3 8v8l9 4 9-4V8" stroke-linejoin="round"></path><path d="M12 12v8" stroke-linecap="round"></path></svg><span class="rd-srow-tx">Artifacts</span><span class="rd-srow-v">2</span></button><button type="button" data-rd-tab="actions" class="rd-srow chv" data-needs-git=""><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" class="rd-srow-ico" aria-hidden="true"><path d="M7 5l11 7-11 7z"></path></svg><span class="rd-srow-tx">Actions</span></button></div></div><div class="rd-sgroup"><div class="rd-slabel">How it ran</div><div class="rd-slist"><button type="button" data-rd-tab="workflow" class="rd-srow chv"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" class="rd-srow-ico" aria-hidden="true"><rect x="3" y="9" width="6" height="6" rx="1.5"></rect><rect x="15" y="4" width="6" height="6" rx="1.5"></rect><rect x="15" y="14" width="6" height="6" rx="1.5"></rect><path d="M9 12h3m0 0V7h3m-3 5v5h3" stroke-linecap="round" stroke-linejoin="round"></path></svg><span class="rd-srow-tx">Workflow</span><span class="rd-srow-v">30 steps</span></button><button type="button" data-rd-tab="qa" class="rd-srow chv"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" class="rd-srow-ico" aria-hidden="true"><path d="M5 4.5h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-6.5L8 21v-3.5H5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2z" stroke-linejoin="round"></path><path d="M9.9 9.1a2.2 2.2 0 1 1 3.2 2c-.7.4-1.1.9-1.1 1.6M12 14.9h.01" stroke-linecap="round" stroke-linejoin="round"></path></svg><span class="rd-srow-tx">Q&amp;A</span></button><button type="button" data-rd-tab="logs" class="rd-srow chv"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" class="rd-srow-ico" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10" stroke-linecap="round"></path></svg><span class="rd-srow-tx">Logs</span></button><button type="button" data-rd-tab="agents" class="rd-srow chv"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" class="rd-srow-ico" aria-hidden="true"><circle cx="6" cy="6" r="2.4"></circle><circle cx="6" cy="18" r="2.4"></circle><circle cx="18" cy="12" r="2.4"></circle><path d="M8 6h5a3 3 0 0 1 3 3v0M8 18h5a3 3 0 0 0 3-3v0" stroke-linecap="round"></path></svg><span class="rd-srow-tx">Agents</span></button></div></div></div>
+                </div>
+                
+                
+                
+                
+                
+                <section class="rd-night-sec" hidden=""><h3 class="rd-night-h">Answered for you<span class="rd-night-count"> · $0.32</span></h3><div class="rd-night-asks"></div></section>
+              </section>
+      </div>
+    </section>
+
+    <section aria-label="Proposed">
+      <div class="mk-col-label"><b>Proposed</b> · <span class="mk-sample">dashed</span> values are samples, the rest is this run's data</div>
+
+      <div class="mk-new">
+        <h1 class="rd-page-title">Unified page navigation: one head, breadcrumb in the top</h1>
+
+        <!-- 1. The facts that never change sit under the title, on one line. The route folds into it while nothing has happened yet. -->
+        <div class="mk-meta">
+          <span>worka-cc</span><span class="sep">·</span>
+          <span>started 08:31</span><span class="sep">·</span>
+          <span class="mk-branch" title="feat/unified-page-navigation-one-head-breadcrumb">
+            <code>feat/unified-page-navigation-one-head-breadcrumb</code>
+            <button type="button" class="btn btn-sm btn-quiet btn-icon" aria-label="Copy branch name">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+          </span>
+          <span class="mk-to">→ PR → <code style="font-family:var(--mono)">dev</code></span>
+        </div>
+
+        <div class="rd-sheet">
+          <!-- 2. The headline stays the state word; the detail now names the step, the loop and the time in it. -->
+          <div class="mk-head">
+            <span class="status-dot is-peach is-pulse" aria-hidden="true"></span>
+            <span class="run-status-word">Working</span>
+            <div class="switch-row">
+              <span>Live view</span>
+              <div class="switch on" role="switch" tabindex="0" aria-checked="true" aria-label="Live view"></div>
+            </div>
+            <div class="mk-detail"><b>Manual web UI testing</b> · Review, pass 3 · 12m in this step</div>
+          </div>
+
+          <div class="run-prog run-status-bar" data-mode="stages" data-tone="blue" data-pulse="on" aria-label="Run progress">
+            <div class="run-prog-track" aria-hidden="true">
+              <div class="run-prog-sec" data-stage="plan"><div class="run-prog-fill" style="width:100%"></div></div>
+              <div class="run-prog-sec" data-stage="build"><div class="run-prog-fill" style="width:100%"></div></div>
+              <div class="run-prog-sec is-current" data-stage="review"><div class="run-prog-fill" style="width:75%"></div></div>
+              <div class="run-prog-sec" data-stage="ready"><div class="run-prog-fill" style="width:0%"></div></div>
+            </div>
+            <div class="run-prog-marks" aria-hidden="true">
+              <span class="run-prog-mark" data-state="done">Plan</span>
+              <span class="run-prog-mark" data-state="done">Build</span>
+              <span class="run-prog-mark" data-state="current">Review</span>
+              <span class="run-prog-mark" data-state="waiting">Ready</span>
+            </div>
+          </div>
+
+          <!-- 3. Three numbers, no boxes. The rate tells you whether to worry about the total. -->
+          <div class="mk-figs">
+            <div class="mk-fig"><b class="run-time">4h 31m</b><span>time</span></div>
+            <div class="mk-fig"><b>$83.44</b><span>cost, incl. $0.32 Away mode</span></div>
+            <div class="mk-fig"><b>$18.50</b><span>per hour</span></div>
+          </div>
+
+          <!-- 4. What it is doing and what comes next: the heart of a live card. -->
+          <dl class="mk-feed">
+            <dt>Now</dt>
+            <dd><span class="mk-sample">Opening the Runs page at 375px to check the breadcrumb</span><span class="when">8s ago</span></dd>
+            <dt>Next</dt>
+            <dd>Ready · create PR into <code>dev</code></dd>
+          </dl>
+        </div>
+
+        <!-- 5. Tabs replace the two boxed link lists; each says what is inside and opens here. -->
+        <div class="tabs mk-tabs" role="tablist" aria-label="Run detail">
+          <button type="button" class="tab" role="tab" aria-selected="true" data-tab="overview">Overview</button>
+          <button type="button" class="tab" role="tab" aria-selected="false" data-tab="diff">Diff <span class="n mk-sample">14</span></button>
+          <button type="button" class="tab" role="tab" aria-selected="false" data-tab="workflow">Workflow <span class="n">30</span></button>
+          <button type="button" class="tab" role="tab" aria-selected="false" data-tab="logs">Logs</button>
+          <button type="button" class="tab" role="tab" aria-selected="false" data-tab="qa">Q&amp;A</button>
+          <button type="button" class="tab" role="tab" aria-selected="false" data-tab="agents">Agents</button>
+          <button type="button" class="tab" role="tab" aria-selected="false" data-tab="artifacts">Artifacts <span class="n">2</span></button>
+        </div>
+
+        <div class="mk-panel" data-panel="overview" role="tabpanel">
+          <p class="mk-sample">One head for the run and group pages: Back, the breadcrumb and the run's actions in the top bar; the page title once.</p>
+          <!-- The facts block moves here; empty facts are a quiet add, not a row of "None". -->
+          <div class="rd-kv">
+            <div class="rd-kv-row"><span class="rd-kv-k">Project</span><p class="rd-kv-v">worka-cc</p></div>
+            <div class="rd-kv-row"><span class="rd-kv-k">Organise</span><p class="rd-kv-v">
+              <button type="button" class="btn btn-sm btn-quiet">Add to group</button>
+              <button type="button" class="btn btn-sm btn-quiet">Add label</button>
+            </p></div>
+          </div>
+        </div>
+        <div class="mk-panel" data-panel="diff" role="tabpanel" hidden>
+          <ul class="mk-files">
+            <li><code class="mk-sample">ui/public/run-head.mjs</code><span class="ct"><span class="add">+182</span><span class="del">−64</span></span></li>
+            <li><code class="mk-sample">ui/public/style.css</code><span class="ct"><span class="add">+41</span><span class="del">−58</span></span></li>
+            <li><code class="mk-sample">ui/public/app.js</code><span class="ct"><span class="add">+27</span><span class="del">−19</span></span></li>
+            <li><code class="mk-sample">test/ui-run-head.test.mjs</code><span class="ct"><span class="add">+96</span><span class="del">−0</span></span></li>
+          </ul>
+        </div>
+        <div class="mk-panel" data-panel="workflow" role="tabpanel" hidden><p>The live graph, full width here, centred on the running step. It no longer floats under the card.</p></div>
+        <div class="mk-panel" data-panel="logs" role="tabpanel" hidden><p>The Logs view as today, opened in place.</p></div>
+        <div class="mk-panel" data-panel="qa" role="tabpanel" hidden><p>The questions Worca asked and the answers, as today.</p></div>
+        <div class="mk-panel" data-panel="agents" role="tabpanel" hidden><p>The agents and their figures, as today.</p></div>
+        <div class="mk-panel" data-panel="artifacts" role="tabpanel" hidden><p>The 2 artifacts, as today.</p></div>
+      </div>
+    </section>
+  </div>
+
+  <section class="mk-notes">
+    <h2>What changed and why</h2>
+    <ol>
+      <li><b>Detail line names the step.</b> "3rd pass" becomes "Manual web UI testing · Review, pass 3 · 12m in this step". The headline stays the state word, as Card head asks.</li>
+      <li><b>Route folds into the meta line while it is all future.</b> Two of its three rows said what has not happened yet. The full route comes back once a row has news (a PR, checks, a conflict).</li>
+      <li><b>Three figures replace the two tiles.</b> Time, cost and cost per hour, unboxed. The rate is what tells you whether $83 is a problem.</li>
+      <li><b>Now and Next.</b> The agent's latest action and what happens after this step. Nothing on today's card says either.</li>
+      <li><b>Tabs replace Results and How it ran.</b> Today they are boxed lists inside the card; as tabs each shows a count and opens in place, and Workflow gives the live graph a home.</li>
+      <li><b>Facts move to Overview.</b> Group and Labels show as quiet adds, not rows that read "None".</li>
+    </ol>
+    <h2>Rules this would change in docs/design-system.md</h2>
+    <ol>
+      <li>Route: "at every level from the start of the run" becomes "once a row has a state other than future".</li>
+      <li>Patterns › run and group page head: the facts block and tiles leave the card; the Results and How it ran lists become tabs.</li>
+      <li>Patterns › stat tiles: the run page shows its figures as an unboxed row.</li>
+      <li>Card head: "beside the stage bar the detail names only the step" grows to step, pass and time in step.</li>
+    </ol>
+  </section>
+</div>
+
+<script>
+  document.querySelectorAll('[data-theme-pick]').forEach(b => b.addEventListener('click', () => {
+    document.documentElement.dataset.theme = b.dataset.themePick;
+    document.querySelectorAll('[data-theme-pick]').forEach(x => {
+      x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', String(x === b));
+    });
+  }));
+  document.querySelectorAll('.mk-tabs .tab').forEach(t => t.addEventListener('click', () => {
+    document.querySelectorAll('.mk-tabs .tab').forEach(x => x.setAttribute('aria-selected', String(x === t)));
+    document.querySelectorAll('.mk-panel').forEach(p => { p.hidden = p.dataset.panel !== t.dataset.tab; });
+  }));
+</script>
+</body>
+</html>

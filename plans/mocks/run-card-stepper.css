@@ -1,0 +1,185 @@
+/* Run card redesign: the layer on top of Worca's own style.css (tokens, .btn, .status-dot, .run-prog, .rd-route-*,
+   .tabs, .kind-chip). One alignment grid for every zone: a 20px rail (status dot, route circles, member dots),
+   a 12px gap, the content, then the action column. The 20px + 12px is the route's own grid (.rd-route-row). */
+
+
+html,body{height:auto;overflow:visible;margin:0;}
+
+/* The artboard: the run page's ground (--bg), the card on --panel, as in the app. */
+.rc-board{box-sizing:border-box;min-height:100%;padding:32px;background:var(--bg);color:var(--ink);
+  font:400 var(--fs-body)/var(--lh-body) var(--sans);-webkit-font-smoothing:antialiased;}
+.rc-board.is-light{color-scheme:light;}
+.rc-board.is-dark{color-scheme:dark;}
+.rc-board.is-phone{padding:16px;}
+
+.rc{--rail:20px;--gap:12px;display:flex;flex-direction:column;gap:16px;min-width:0;}
+
+/* Title block: title (two lines, then an ellipsis), one meta line that truncates its longest part. */
+.rc-head{display:flex;flex-direction:column;gap:6px;min-width:0;}
+.rc-heading{margin:0;font:700 var(--fs-page)/var(--lh-title) var(--sans);letter-spacing:-.02em;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.rc-facts{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
+.rc-facts > *{flex:none;}
+.rc-facts > .rc-trunc{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.rc-sep{color:var(--ink-3);}
+
+/* The card: zones on the shared grid, split by one --line. */
+.rc-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);padding:var(--pad-card);
+  display:flex;flex-direction:column;gap:16px;min-width:0;}
+.rc-zone{display:grid;grid-template-columns:var(--rail) minmax(0,1fr) auto;column-gap:var(--gap);row-gap:2px;align-items:center;min-width:0;}
+.rc-zone.is-ruled{padding-top:16px;border-top:1px solid var(--line);}
+.rc-rail{grid-column:1;display:flex;justify-content:center;align-items:center;}
+.rc-main{grid-column:2;min-width:0;}
+.rc-side{grid-column:3;grid-row:1 / span 2;justify-self:end;align-self:center;display:flex;gap:8px;}
+.rc-span{grid-column:2 / 4;min-width:0;}
+.rc-label{grid-column:2 / 4;font-size:var(--fs-meta);color:var(--ink-2);margin-bottom:6px;}
+
+/* Status zone: the state word, one detail line. */
+.rc-word{font:600 var(--fs-section)/var(--lh-title) var(--sans);white-space:nowrap;}
+.rc-detail{grid-column:2;font-size:var(--fs-meta);color:var(--ink-2);min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.rc-detail b{color:var(--ink);font-weight:500;}
+
+/* The one action: a split button, the main half names the next step, ▾ holds the rest. */
+.rc-action{display:inline-flex;}
+.rc-action .btn svg{flex:none;}
+
+/* Route: the real .rd-route-* rows; the current row's second line is what is happening there. */
+.rc-route{grid-column:1 / -1;}
+.rc-route .rd-route-second{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;overflow-wrap:normal;}
+.rc-route .rd-route-second .rc-when{color:var(--ink-3);}
+.rc-route .rd-route-name.is-sans{font-family:var(--sans);}
+.rc-route .rc-row-side{margin-left:auto;flex:none;font-size:var(--fs-meta);color:var(--ink-2);}
+
+/* Figures: label and value pairs on one line, tabular. */
+.rc-figs{grid-column:2 / 4;display:flex;flex-wrap:wrap;gap:4px 24px;font-size:var(--fs-meta);color:var(--ink-2);}
+.rc-figs b{color:var(--ink);font-weight:600;font-size:var(--fs-body);font-variant-numeric:tabular-nums;margin-left:6px;}
+
+/* A question or a plan waiting on you: text clamped to two lines, the answer is the action. */
+.rc-ask{grid-column:2 / 4;font-size:var(--fs-body);color:var(--ink);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+
+/* Members of a group: divided one-line rows on the same rail. */
+.rc-members{grid-column:1 / -1;list-style:none;margin:0;padding:0;}
+.rc-member{display:grid;grid-template-columns:var(--rail) minmax(0,1fr) auto auto;column-gap:var(--gap);align-items:center;
+  min-height:32px;border-top:1px solid var(--line);}
+.rc-member:first-child{border-top:0;}
+.rc-member .rc-m-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.rc-member .rc-m-state{font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
+.rc-member.is-open{background:var(--row-selected);border-radius:var(--r-sm);border-top-color:transparent;}
+.rc-member.is-open + .rc-member{border-top-color:transparent;}
+
+/* Tabs under the card: the real .tabs; a count is a caption, never a chip. */
+.rc-tabs .n{font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;}
+.rc-panel{font-size:var(--fs-body);color:var(--ink-2);}
+
+/* Canvas-only: the frame label above a board. */
+.rc-case{font-size:var(--fs-meta);color:var(--ink-2);margin:0 0 16px;}
+.rc-case b{color:var(--ink);font-weight:600;}
+
+/* Step card: one stepper for the whole journey (Plan · Build · Review · PR · Merged). Each stage is a segment
+   made of its sub-steps; the selected stage opens its sub-steps underneath on the route rail (.rd-route-*). */
+
+.sc-track{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;}
+.sc-seg{display:flex;gap:2px;height:6px;}
+.sc-cell{flex:1 1 0;min-width:0;border-radius:var(--r-xs);background:var(--line-2);transition:background-color .3s ease;}
+.sc-cell.is-done{background:var(--ink-2);}
+.sc-cell.is-now{background:var(--peach);animation:sc-breathe 1.6s ease-in-out infinite;}
+.sc-cell.is-ask,.sc-cell.is-problem{background:var(--amber);}
+.sc-cell.is-failed{background:var(--red);}
+.sc-cell.is-merged{background:var(--violet);}
+@keyframes sc-breathe{0%,100%{opacity:1}50%{opacity:.45}}
+@media (prefers-reduced-motion: reduce){.sc-cell.is-now{animation:none;}}
+
+/* Stage tabs under the track: same 5 columns, so each label sits under its segment. */
+.sc-stages{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;margin-top:6px;}
+.sc-stage{display:flex;flex-direction:column;align-items:flex-start;gap:0;min-width:0;padding:4px 0 0;border:0;background:none;
+  color:var(--ink-2);font:inherit;text-align:left;cursor:pointer;border-top:2px solid transparent;transition:color .15s ease,border-color .15s ease;}
+.sc-stage:hover{color:var(--ink);}
+.sc-stage:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+.sc-stage[aria-selected="true"]{color:var(--ink);border-top-color:var(--ink);}
+.sc-stage .l{font-size:var(--fs-meta);font-weight:500;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.sc-stage[aria-selected="true"] .l{font-weight:600;}
+.sc-stage .m{font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+/* The open stage's sub-steps: route rows, fading in when a stage opens. */
+.sc-subs{grid-column:1 / -1;animation:sc-in .18s ease-out;}
+@keyframes sc-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion: reduce){.sc-subs{animation:none;}}
+.sc-subs .rd-route-name{font-family:var(--sans);}
+.sc-subs .rd-route-row.is-next .rd-route-name{color:var(--ink-2);}
+.sc-subs .sc-meta{margin-left:auto;flex:none;display:inline-flex;align-items:center;gap:8px;font-size:var(--fs-meta);color:var(--ink-2);font-variant-numeric:tabular-nums;}
+.sc-subs .sc-loop{display:inline-flex;align-items:center;gap:3px;}
+.sc-subs .rd-route-second{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;overflow-wrap:normal;}
+.sc-subs .rd-route-second .rc-when{color:var(--ink-3);}
+.sc-head{grid-column:2 / 4;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;min-height:28px;}
+.sc-head .rc-label{margin:0;}
+
+/* The meta line's branch: mono, ellipsized, with its copy button. */
+.sc-branch{display:inline-flex;align-items:center;gap:2px;min-width:0;flex:0 1 auto;}
+.sc-branch code{font-family:var(--mono);font-size:var(--fs-meta);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+.sc-branch .btn{margin-block:-6px;flex:none;}
+
+/* The case switcher above an interactive card (canvas only). */
+.sc-cases{margin-bottom:16px;}
+
+/* ---- v2 polish ---- */
+/* Sub-steps are secondary to the stage: 12px names, 16px circles centred on the same 20px rail. */
+.sc-subs .rd-route-row{padding-bottom:10px;}
+.sc-subs .rd-route-row:last-child{padding-bottom:0;}
+.sc-subs .rd-route-dot{width:16px;height:16px;flex-basis:16px;margin:2px;}
+.sc-subs .rd-route-row:not(:last-child)::before{top:22px;}
+.sc-subs .rd-route-place{font-size:var(--fs-meta);min-height:20px;}
+.sc-subs .rd-route-name{font-weight:500;}
+.sc-subs .rd-route-second{font-size:var(--fs-meta);}
+.sc-cell.is-paused{background:var(--slate);}
+.sc-stage .m{font-size:var(--fs-caption);}
+
+/* The facts line: project · branch · start, then chips that exist, then + to add one. */
+.rc-facts .label-chip,.rc-facts .tag-chip,.rc-facts .kind-chip{flex:none;}
+.rc-facts .tag-chip{height:18px;font-size:var(--fs-caption);font-weight:500;border-radius:var(--r-xs);}
+.rc-facts .rc-add{margin-block:-6px;flex:none;}
+.rc-pop{position:relative;display:inline-flex;}
+.rc-pop > .menu{position:absolute;z-index:5;top:calc(100% + 6px);left:0;min-width:180px;}
+.rc-pop.is-right > .menu{left:auto;right:0;}
+.menu-h{padding:6px 9px 2px;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);}
+
+/* A run segment of a group opens as that run: its title and a way into it. */
+.sc-head .sc-run{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);color:var(--ink);font-weight:500;}
+
+/* The stack card: PRs in merge order on the rail, each into the one above it. */
+.sk{grid-column:1 / -1;display:flex;flex-direction:column;gap:10px;animation:sc-in .18s ease-out;}
+.sk-head{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:28px;padding-left:32px;}
+.sk-head .rc-label{margin:0;}
+.sk-head .seg button{font-size:var(--fs-meta);}
+.sk-list .rd-route-row{padding-bottom:12px;}
+.sk-list .rd-route-row:last-child{padding-bottom:0;}
+.sk-list .rd-route-row:not(:last-child)::before{background:var(--line-2);}
+.sk-list .rd-route-place{gap:8px;}
+.sk-num{flex:none;font-size:var(--fs-meta);font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;}
+.sk-list .rd-route-name{font-family:var(--sans);font-size:var(--fs-body);font-weight:400;}
+.sk-word{margin-left:auto;flex:none;font-size:var(--fs-meta);color:var(--ink-2);}
+.sk-word.is-done{color:var(--green-ink);}
+.sk-word.is-problem{color:var(--amber-ink);}
+.sk-list .rd-route-second{font-size:var(--fs-meta);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;overflow-wrap:normal;}
+.sk-list .is-next-up{background:var(--row-selected);box-shadow:0 0 0 8px var(--row-selected);border-radius:2px;margin-bottom:12px;}
+.sk-list .is-next-up::before{display:none;}
+.sk-up{flex:none;height:18px;padding:0 6px;display:inline-flex;align-items:center;border-radius:var(--r-xs);background:var(--green-bg);color:var(--green-ink);font-size:var(--fs-caption);font-weight:500;}
+.sk-br{display:none;}
+.sk-note{padding-left:32px;font-size:var(--fs-meta);color:var(--ink-2);}
+.sc-cell.is-review{background:var(--blue);}
+.sk-word.is-review{color:var(--blue-ink);}
+/* Under 420px of card the action leaves the state's line and sits under it, on the text edge (Card head rule). */
+.rc-card{container-type:inline-size;}
+@container (max-width: 420px){
+  .rc-zone > .rc-side{grid-column:2 / 4;grid-row:auto;justify-self:start;margin-top:10px;}
+  .sk-list .rd-route-place{flex-wrap:wrap;row-gap:2px;}
+  .sk-list .rd-route-name{flex:1 1 0;}
+  .sk-br{display:block;flex-basis:100%;height:0;}
+  .sk-list .sk-word{margin-left:0;}
+}
+/* Explanations: each menu item carries one help line; the action's menu opens with what the main button does. */
+.rc-pop > .menu{min-width:260px;max-width:300px;}
+.menu-item.has-help{flex-direction:column;align-items:flex-start;gap:0;padding:6px 9px;text-align:left;}
+.menu-help{font-size:var(--fs-meta);color:var(--ink-2);line-height:var(--lh-body);white-space:normal;}
+.menu-lead{margin:0;padding:6px 9px 4px;font-size:var(--fs-meta);color:var(--ink-2);line-height:var(--lh-body);}

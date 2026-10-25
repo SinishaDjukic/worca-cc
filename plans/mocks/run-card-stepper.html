@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run card stepper</title>
+<!-- Worca's own stylesheet; the two small layers below are the proposal (canvas: Run card redesign). -->
+<link rel="stylesheet" href="../../ui/public/style.css">
+<link rel="stylesheet" href="run-card-stepper.css">
+<style>
+  @font-face{font-family:'Poppins';font-weight:400;src:url('../../ui/public/fonts/poppins-latin-400-normal.woff2') format('woff2');}
+  @font-face{font-family:'Poppins';font-weight:500;src:url('../../ui/public/fonts/poppins-latin-500-normal.woff2') format('woff2');}
+  @font-face{font-family:'Poppins';font-weight:600;src:url('../../ui/public/fonts/poppins-latin-600-normal.woff2') format('woff2');}
+  @font-face{font-family:'Poppins';font-weight:700;src:url('../../ui/public/fonts/poppins-latin-700-normal.woff2') format('woff2');}
+  @font-face{font-family:'JetBrains Mono';font-weight:400;src:url('../../ui/public/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');}
+  .mk-wrap{max-width:672px;margin:0 auto;}
+  .mk-bar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;margin-bottom:24px;}
+  .mk-bar .seg{flex-wrap:wrap;max-width:100%;}
+  @media (max-width:600px){body.rc-board{padding:16px;}}
+</style>
+</head>
+<body class="rc-board">
+<div class="mk-wrap">
+  <div class="mk-bar">
+    <label style="display:flex;align-items:center;gap:8px;font-size:var(--fs-meta);color:var(--ink-2)">Case <select class="select" id="case" style="width:220px"></select></label>
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" data-theme-pick="light">Light</button>
+      <button type="button" data-theme-pick="dark" aria-pressed="true">Dark</button>
+    </div>
+  </div>
+  <div id="card"></div>
+</div>
+<script src="run-card-model.js"></script>
+<script src="run-card-stepper.js"></script>
+</body>
+</html>
