@@ -134,6 +134,8 @@ html,body{height:auto;overflow:visible;margin:0;}
 .sc-subs .rd-route-second{font-size:var(--fs-meta);}
 .sc-cell.is-paused{background:var(--slate);}
 .sc-stage .m{font-size:var(--fs-caption);}
+.sc-stage .m:empty::before{content:"\00a0";}   /* a stage still to come shows no time, and keeps its line */
+.sc-head.is-end{justify-content:flex-end;}
 
 /* The facts line: project · branch · start, then chips that exist, then + to add one. */
 .rc-facts .label-chip,.rc-facts .tag-chip,.rc-facts .kind-chip{flex:none;}
@@ -164,7 +166,6 @@ html,body{height:auto;overflow:visible;margin:0;}
 .sk-list .rd-route-second{font-size:var(--fs-meta);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;overflow-wrap:normal;}
 .sk-list .is-next-up{background:var(--row-selected);box-shadow:0 0 0 8px var(--row-selected);border-radius:2px;margin-bottom:12px;}
 .sk-list .is-next-up::before{display:none;}
-.sk-up{flex:none;height:18px;padding:0 6px;display:inline-flex;align-items:center;border-radius:var(--r-xs);background:var(--green-bg);color:var(--green-ink);font-size:var(--fs-caption);font-weight:500;}
 .sk-br{display:none;}
 .sk-note{padding-left:32px;font-size:var(--fs-meta);color:var(--ink-2);}
 .sc-cell.is-review{background:var(--blue);}

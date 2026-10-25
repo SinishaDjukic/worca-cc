@@ -40,7 +40,7 @@
     { id: 'question', group: 'Run', label: 'Needs you', word: 'Needs you', sym: 'q', action: A('Answer', '', true, ['Use the default answer']), figs: LIVE_FIGS,
       stages: run({ review: [s('Review implementation', 'ask', '12m', { live: 'Keep the breadcrumb on phones under 600px, or show only Back there?', when: '4m' }), next('Manual tests checklist'), next('Manual web UI testing')] }) },
     { id: 'paused', group: 'Run', label: 'Paused', word: 'Paused', dot: 'is-grey', detail: 'Usage limit · resumes at 14:00', action: A('Resume', 'play', false, ['Resume when the limit resets', 'Stop']), figs: [['Time', '2h 40m'], ['Cost', '$48.30']],
-      stages: run({ build: [s('Implementation', 'paused', '1h 2m', { live: 'Paused by the usage limit' })], review: allNext(REVIEW) }) },
+      stages: run({ build: [s('Implementation', 'paused', '1h 2m')], review: allNext(REVIEW) }) },
     { id: 'failed', group: 'Run', label: 'Failed', word: 'Failed', sym: 'x', action: A('Resume from Build', 'refresh', true, ['Report this run', 'Start a new run']), figs: [['Time', '2h 12m'], ['Cost', '$41.30']],
       stages: run({ build: [s('Implementation', 'failed', '1h 30m', { loops: 3, live: 'Tests failed 3 times in a row' })], review: allNext(REVIEW) }) },
     { id: 'ready', group: 'Run', label: 'Ready', word: 'Ready', dot: 'is-green', action: A('Create PR', 'prc', true, ['Try it', 'Push main', 'Discard']), figs: DONE_FIGS, stages: run({}) },
@@ -80,7 +80,7 @@
         tail: [{ key: 'ship', label: 'Ship', subs: [next('With the feature', { live: 'One stacked PR each, from the feature page' })] }] }) },
 
     // Groups
-    { id: 'feature', group: 'Groups', label: 'Feature, run 2', kind: 'Feature', word: 'Working', dot: 'is-peach is-pulse', branch: '', figs: [['Time', '3h 20m'], ['Cost', '$61.10'], ['Runs', '1 of 3 done']], tabs: GROUP_TABS,
+    { id: 'feature', group: 'Groups', label: 'Feature, run 2', kind: 'Feature', word: 'Working', dot: 'is-peach is-pulse', branch: '', figs: [['Time', '3h 20m'], ['Cost', '$61.10'], ['Rate', '$18.30/h']], tabs: GROUP_TABS,
       stages: [{ key: 'plan', label: 'Plan', subs: [ok('Clarify', '34s'), ok('Plan', '33m 57s'), ok('Cut into runs', '7m', { live: '3 runs, one PR each' })] },
         member(1, RUNS[0], ['done', 'done', 'done', 'done'], { times: ['22m', '58m', '31m', ''] }),
         member(2, RUNS[1], ['done', 'now', 'next', 'next'], { times: ['18m', '40m'], live: ['', 'Editing app.js'], when: ['', '3s ago'] }),
@@ -156,13 +156,19 @@
     problem: ['is-problem', 'alert', 'Needs attention'], failed: ['is-failed', 'alert', 'Failed'], paused: ['is-closed', 'pause', 'Paused'], review: ['is-review', 'pr', 'In review'], next: ['is-future', '', 'Not yet'], merged: ['is-merged', 'merge', 'Merged'] };
   const stageState = (subs) => (subs.some((x) => LIVE[x.state]) ? 'live' : subs.every(isDone) ? 'done' : 'next');
   const toMin = (t) => { let m = 0; t.replace(/(\d+)\s*([hms])/g, (_, n, u) => { m += u === 'h' ? +n * 60 : u === 'm' ? +n : +n / 60; return ''; }); return m; };
-  const fmtMin = (m) => (m >= 60 ? Math.floor(m / 60) + 'h ' + Math.round(m % 60) + 'm' : m >= 1 ? Math.round(m) + 'm' : Math.round(m * 60) + 's');
+  const fmtMin = (m) => {
+    if (m < 1) return Math.round(m * 60) + 's';
+    const r = Math.round(m);   // round first, so 59.8 minutes reads 1h, not 60m
+    return r >= 60 ? Math.floor(r / 60) + 'h' + (r % 60 ? ' ' + (r % 60) + 'm' : '') : r + 'm';
+  };
+  // The label under a segment says only what its cells cannot: how long. Total for a finished stage, so far for the
+  // live one, nothing for one still to come (the cells already show how many steps and how far along it is).
   function stageMeta(st) {
-    const subs = st.subs; const state = stageState(subs); const done = subs.filter(isDone).length;
-    if (state === 'live') return st.run ? subs.find((x) => LIVE[x.state]).name : (done + 1) + ' of ' + subs.length;
-    if (state === 'done') { const m = subs.reduce((a, x) => a + (x.time ? toMin(x.time) : 0), 0); return m ? fmtMin(m) : 'Done'; }
-    return st.run ? 'Waiting' : subs.length === 1 ? '1 step' : subs.length + ' steps';
+    if (stageState(st.subs) === 'next') return '';
+    const m = st.subs.reduce((a, x) => a + (x.time ? toMin(x.time) : 0), 0);
+    return m ? fmtMin(m) : '';
   }
+  const STAGE_WORD = { live: 'in progress', done: 'done', next: 'not started' };
   function defaultStage(c) {
     const live = c.stages.find((st) => stageState(st.subs) === 'live');
     if (live) return live.key;
@@ -201,6 +207,7 @@
       started: 'started 08:31', chips: ui.chips || [],
       word: c.word, dot: c.dot || '', sym: c.sym || '', detail: c.detail || '', action,
       stages: c.stages.map((x) => ({ key: x.key, label: x.label, meta: stageMeta(x), selected: x.key === open, live: stageState(x.subs) === 'live',
+        aria: [x.label, STAGE_WORD[stageState(x.subs)], stageMeta(x)].filter(Boolean).join(', '),
         cells: x.subs.map((y) => 'is-' + y.state) })),
       open: { key: open, label: st.label, title: st.title || '', isRun: !!st.run, browsing: open !== now,
         rows: stack ? [] : st.subs.map((x, i) => rowOf(x, st.subs[i + 1])), stack },

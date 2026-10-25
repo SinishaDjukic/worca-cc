@@ -53,7 +53,7 @@ function rowHtml(r) {
 function stackHtml(k) {
   const seg = k.modes ? `<div class="seg" role="group" aria-label="Ship as"><button type="button" data-ship="stack" aria-pressed="${k.ship === 'stack'}">Stacked · ${k.count} PRs</button><button type="button" data-ship="one" aria-pressed="${k.ship === 'one'}">One PR</button></div>` : '';
   const rows = k.rows.map((r) => `<li class="rd-route-row ${r.rowCls}"><span class="rd-route-dot ${r.dotCls}" role="img" aria-label="${r.word}">${svg(r.icon, 11)}</span>
-    <div class="rd-route-main"><div class="rd-route-place"><span class="sk-num">${esc(r.num)}</span><span class="rd-route-name" title="${esc(r.title)}">${esc(r.title)}</span><span class="sk-br"></span>${r.isNext ? '<span class="sk-up">Next</span>' : ''}<span class="sk-word is-${r.state}">${esc(r.word)}</span></div>
+    <div class="rd-route-main"><div class="rd-route-place"><span class="sk-num">${esc(r.num)}</span><span class="rd-route-name" title="${esc(r.title)}">${esc(r.title)}</span><span class="sk-br"></span><span class="sk-word is-${r.state}">${esc(r.word)}</span></div>
     <div class="rd-route-second" title="${esc(r.sub)}">${esc(r.sub)}</div></div></li>`).join('');
   return `<div class="sk"><div class="sk-head"><span class="rc-label">${esc(k.title)}</span>${seg}</div><ol class="rd-route-list sk-list" aria-label="${esc(k.title)}">${rows}</ol>${k.note ? `<p class="sk-note" style="margin:0">${esc(k.note)}</p>` : ''}</div>`;
 }
@@ -70,10 +70,10 @@ function render() {
     + (addable.length ? `<span class="rc-pop"><button type="button" class="btn btn-sm btn-quiet btn-icon rc-add" aria-label="Add a label, cost tag or group" aria-haspopup="menu" aria-expanded="${ui.menu === 'add'}" data-menu="add">${svg('plus', 14)}</button>${menu('add', addable.map((x) => ({ id: x.kind, text: x.menu, help: x.help })))}</span>` : '');
 
   const track = v.stages.map((st) => `<div class="sc-seg">${st.cells.map((c) => `<span class="sc-cell ${c}"></span>`).join('')}</div>`).join('');
-  const tabs = v.stages.map((st) => `<button type="button" class="sc-stage" role="tab" aria-selected="${st.selected}" data-stage="${st.key}" aria-label="${st.label}, ${esc(st.meta)}"><span class="l">${st.label}</span><span class="m">${esc(st.meta)}</span></button>`).join('');
+  const tabs = v.stages.map((st) => `<button type="button" class="sc-stage" role="tab" aria-selected="${st.selected}" data-stage="${st.key}" aria-label="${esc(st.aria)}"><span class="l">${st.label}</span><span class="m">${esc(st.meta)}</span></button>`).join('');
   const o = v.open;
   const head = o.isRun ? `<div class="sc-head"><span class="sc-run" title="${esc(o.title)}">${esc(o.label)} · ${esc(o.title)}</span><button type="button" class="btn btn-sm btn-quiet">Open run</button></div>`
-    : o.browsing ? `<div class="sc-head"><span class="rc-label">${o.label}, not the current stage</span><button type="button" class="btn btn-sm btn-quiet" data-back>Back to now</button></div>` : '';
+    : o.browsing ? '<div class="sc-head is-end"><button type="button" class="btn btn-sm btn-quiet" data-back>Back to now</button></div>' : '';
   const panel = o.stack ? stackHtml(o.stack) : `<ol class="rd-route-list sc-subs" aria-label="${o.label} steps" style="grid-column:1 / -1">${o.rows.map(rowHtml).join('')}</ol>`;
 
   document.getElementById('card').innerHTML = `
