@@ -133,6 +133,8 @@ import { renderRunPill, renderOverviewStrip, renderShipItStrip, shipItTryState, 
 import { editorFieldEl, renderProjectActionsEditor, renderStackEditor } from './actions-config-view.mjs';
 import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, setMcpStripRenderer } from './mcp-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
+import { pageChips, pageScopeOf } from './ask-page-chips.mjs';
+import { createAskSide, sideTier } from './ask-side.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES } from './attach-files.mjs';
 // worca Chat P2: the receipt, stop and pull-request cards (registered below, before the chat mounts).
 import { registerChatActionCards, refreshChatPrWatch } from './chat/action-cards.mjs';
@@ -227,7 +229,7 @@ import { isBrowsableKind } from '../../src/shared/artifact-kinds.mjs';
 import { artifactsByNodeCycle, groupArtifactsByKind, BULK_KIND_THRESHOLD, viewerKindFor, renderArtifact, rawArtifactUrl,
   renderMarkdown as renderArtifactMarkdown } from './artifact-view-c4.mjs';
 // The popup viewer every artifact opener uses (Chat P5).
-import { openArtifactViewer, downloadArtifact } from './artifacts/viewer.mjs';
+import { openArtifactViewer, downloadArtifact, closeOpenViewer } from './artifacts/viewer.mjs';
 // Pinpoint (#669): act on selected text in the chat, run artifacts and the Diff tab.
 import { createPinpoint } from './pinpoint.mjs';
 import { decorateArtifact, decorateDiff } from './pinpoint-surfaces.mjs';
@@ -393,6 +395,9 @@ function bindMarkdownReady() {
 const pageMarkdown = (text) => (hdMarkdown.isReady() ? hdMarkdown.render(text) : { kind: 'plain' });
 
 let askPanel = null;           // Chat panel — assigned by the boot mount; every seam uses askPanel?.
+let askSide = null;            // Ask worca beside the page: the side column's controller (ask-side.mjs), made after askPanel
+let askHistoryOnChat = false;  // the column's "Open History in Chat": the Chat page opens its History column once it hosts the chat
+let askEntryThread = null;     // openChat({ threadId }) on a hidden column: the chat it opens on (askSide onShow), never the stored one first
 let chatSummariesPref = true;    // Settings › Chat › Summarise commands (#911): GET /api/settings chat.summariseCommands
 function setChatSummariesPref(chat) {
   const on = !(chat && chat.summariseCommands === false);
@@ -1140,6 +1145,8 @@ const isPhoneNav = () => !!(phoneNavMq && phoneNavMq.matches);
 function railCollapsed() {
   if (isPhoneNav()) return false;
   if (railTierMq && railTierMq.matches) return true;
+  // Ask worca beside the page (L11): a pushing side column folds the menu while the page would be under 640px. Never stored.
+  if (askSide && askSide.forcesRail()) return true;
   return sidebarCollapsed;
 }
 
@@ -1173,6 +1180,8 @@ function applySidebarCollapsed() {
   const aside = $('.sidebar');
   if (aside) aside.classList.toggle('collapsed', collapsed);
   document.body.classList.toggle('rail-collapsed', collapsed);
+  // Ask worca beside the page: while the side column folds the menu, its toggle can neither unfold it nor store a choice.
+  document.body.classList.toggle('ask-side-rail', !isPhoneNav() && !(railTierMq && railTierMq.matches) && !!(askSide && askSide.forcesRail()));
   const btn = $('#side-toggle');
   if (btn) {
     btn.setAttribute('aria-expanded', String(!collapsed));
@@ -1223,7 +1232,7 @@ function setSidebarCollapsed(v) {
   repaintNavMode();
 }
 
-$('#side-toggle')?.addEventListener('click', () => setSidebarCollapsed(!sidebarCollapsed));
+$('#side-toggle')?.addEventListener('click', () => { if (!document.body.classList.contains('ask-side-rail')) setSidebarCollapsed(!sidebarCollapsed); });
 
 // The rail's Running actions: one tile (a green dot and the count) opening the same rows, Stop
 // included, in a side flyout — so a running service stays stoppable on the rail too.
@@ -1270,6 +1279,8 @@ if (topnavSearchRoot) createTopnavSearch({
   loadLazy: loadTopnavLazy,
   // The Ask Worca row: Chat opens with what was typed in the composer, unsent (worca Chat R3).
   onAsk: (query) => { openChat({ text: query }); },
+  // Ask worca beside the page (L7): on a page with the side column the row says where the text goes.
+  askRow: () => (askSide && askSide.available() ? { title: 'Ask worca', meta: 'with this page' } : { title: 'Ask in Chat', meta: 'opens a chat' }),
   navigate: (href) => { location.hash = href; },
   openWorkflow: (id) => { void openWorkflowFromAsk(id); },
   // D17: "Runs labelled hotfix" adds the word to the Runs list label filter and opens the Runs LIST: a bare #runs
@@ -1314,9 +1325,10 @@ function setMobileNavOpen(open) {
   document.body.classList.toggle('nav-open', next);
   mbarMenu?.setAttribute('aria-expanded', String(next));
   if (navScrim) navScrim.hidden = !next;
-  for (const n of [$('.main'), $('#topnav'), $('body > .term-pane')]) {
+  for (const n of [$('.main'), $('#topnav'), $('body > .term-pane'), $('#ask-side')]) {
     if (n) n.toggleAttribute('inert', next);
   }
+  paintAskSideCover();
   if (next) $('#side-close')?.focus();
   else if (hadFocus) mbarMenu?.focus();
 }
@@ -7906,6 +7918,7 @@ async function loadProjects(selectName, { quiet = false } = {}) {
   }
   paintNoProjectWorkDir();
   renderProjectOptions(selectName, { quiet });
+  askPanel?.pageChanged?.();   // Ask worca beside the page: a project page's chip and scope name the project now
   if (state.presets.length) paintPresetMenu();   // pinned presets' group labels name the projects
   // P3-D7: the automatic No project default (no stored choice, no project at boot) gives way to the first project.
   if (state.runTargetAuto && state.runTarget === 'none' && state.projects.length) setRunTarget('project', { persist: false });
@@ -9086,6 +9099,7 @@ async function loadWorkspaces() {
   } catch {
     state.workspaces = [];
   }
+  askPanel?.pageChanged?.();   // Ask worca beside the page: a workspace page's chip and scope name the workspace now
   // A re-scan still running (a reload, another tab's change): follow it on the page.
   for (const w of state.workspaces) if (w && w.rescan && w.rescan.runId) trackWsRescan(w.id, w.rescan);
   // Stale selection guard: a remembered workspace id not in the fetched list is
@@ -11039,6 +11053,7 @@ document.addEventListener('keydown', (e) => {
   if (currentView() !== 'workspace-create') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
+  if (e.target?.closest?.('#ask-side')) return;                      // Ask worca beside the page: an Escape typed in the side column is the chat's
   if (dialogOpen(document)) return;                                    // a pop-up owns Escape
   if (document.querySelector('.viewer-modal:not(.hidden), .guide-layer')) return; // a dialog or the guide owns Escape
   if (el.wizClose) el.wizClose.click();
@@ -23502,7 +23517,7 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
     // an archived row never appears in historyAll, so without this the stub —
     // no projectDir, no title — sticks and the glance head prints "(no project)".
     || (state.historyArchived || []).find(matchRow);
-  if (row) histDetailState.record = row;
+  if (row) { histDetailState.record = row; askPanel?.pageChanged?.(); }   // the side column's Run chip names the run
   // A deep-linked ARCHIVED run on a cold feed: the payload's stamp says the row
   // lives in the archived feed, so fetch that feed now (its lazy load runs
   // refreshHdFromRow at the end, which repairs the stub record and repaints).
@@ -24926,7 +24941,7 @@ function hdSyncPr(projectKey, id, row) {
   rdRepaintOpenGlance(id);
   if (!histDetailState || !histDetailState.screen || !histDetailState.data) return;
   if (histDetailState.id !== id || histDetailState.key !== projectKey) return;
-  if (row) histDetailState.record = row;   // a deep link's minimal record upgrades to the real row
+  if (row) { histDetailState.record = row; askPanel?.pageChanged?.(); }   // a deep link's minimal record upgrades to the real row
   paintHdPr(histDetailState.screen, histDetailState.record, histDetailState.data);
   paintHdHeaderMeta(histDetailState.screen, histDetailState.record, histDetailState.data);
   paintHdOvPrs(histDetailState.screen.querySelector('.hd-ov-prs'), histDetailState.record);
@@ -26813,6 +26828,7 @@ function refreshHdFromRow() {
     : rowNewer(row.baseCheck, st.branch?.baseCheck);
   if (baseChanged && reloadHistDetail()) return;
   histDetailState.record = row;
+  askPanel?.pageChanged?.();
   const { screen, data } = histDetailState;
   paintHdHeaderMeta(screen, row, data);
   const held = paintHdBanners(screen, row, data);       // corrects in BOTH directions
@@ -28141,6 +28157,7 @@ function buildHdDiff(sec, record, data) {
     rowsHost.replaceChildren(tree);
     rowsHost.scrollTop = scrolled;
     paintCommentBadges();
+    if (askSide?.shown()) askPanel?.pageChanged?.();   // Ask worca beside the page: the first file opens with no click
     return firstNode;
   }
 
@@ -29380,6 +29397,7 @@ function buildRdDiff(sec, ctx) {
       if (!first || key === picked) first = { entry, btn };
     }
     pick(first.entry, first.btn);
+    if (askSide?.shown()) askPanel?.pageChanged?.();   // Ask worca beside the page: the first file opens with no click
     rdPaintTabBadges(runDetailState.screen || sec, rdCtx(r));
   };
   refresh.addEventListener('click', () => { void load(); });
@@ -30526,6 +30544,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
+  if (e.target?.closest?.('#ask-side')) return;                      // Ask worca beside the page: an Escape typed in the side column is the chat's
   // Any pop-up on screen owns Escape — modal-guard.mjs hands it to the one on top — and the detail screen
   // stays. Capture phase, so this reads the state BEFORE the guard closes that pop-up.
   if (dialogOpen(document)) return;
@@ -30553,6 +30572,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
+  if (e.target?.closest?.('#ask-side')) return;                      // Ask worca beside the page: an Escape typed in the side column is the chat's
   if (dialogOpen(document)) return;                                    // a pop-up owns Escape (modal-guard.mjs)
   if (currentView() !== 'running') return;
   if (!el.runShell || !el.runShell.classList.contains('detail-open')) return;
@@ -30574,6 +30594,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
+  if (e.target?.closest?.('#ask-side')) return;                      // Ask worca beside the page: an Escape typed in the side column is the chat's
   if (dialogOpen(document)) return;                                    // a pop-up owns Escape (modal-guard.mjs)
   if (currentView() !== 'projects') return;
   if (!el.projShell || !el.projShell.classList.contains('detail-open')) return;
@@ -33644,6 +33665,7 @@ function overlayUp() {
 document.addEventListener('keydown', (e) => {
   // openMenu (workflows/menu.mjs) and the group picker stop their Escape at the menu, so it never gets here.
   if (e.key !== 'Escape' || e.defaultPrevented || overlayUp() || document.querySelector('.wfv-menu, .group-picker, .label-picker')) return;
+  if (e.target?.closest?.('#ask-side')) return;   // Ask worca beside the page: an Escape typed in the side column is the chat's
   if (!runsUi.sel.size && !runsUi.selecting) return;
   e.preventDefault();
   runsUi.sel.clear();
@@ -35214,7 +35236,13 @@ function crpSyncSheet() {
 function installChatRunPanel() {
   chatPanelRouter = routeChatRunPanel;
   chatPanelContext = chatRunPanelContext;
-  chatDeps.openRunPanel = openChatRunPanel;
+  // Ask worca beside the page (L9): a run card in the side column opens the run's own page (no run panel in 440px);
+  // where the column covers the page it steps aside so that page shows (uncover).
+  chatDeps.openRunPanel = (ref, opts) => {
+    if (askPanel?.host?.() !== 'dock') return openChatRunPanel(ref, opts);
+    askSide?.uncover();
+    return chatOpenRunPage(ref, opts);
+  };
   if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { routeChatRunPanel, closeChatRunPanel, chatRunPanelContext, openChatRunPanel });
   const [view, param] = parseHash();
   const segs = view === 'chat' && currentShownView === 'chat' ? runPanel.panelSegments(param) : [];
@@ -38459,6 +38487,7 @@ function showView(name, param = '') {
     if (prevView !== 'projects') void loadProjectsView();   // routes the LIVE hash after its fetch
     else routeProjectDetail(param);
   }
+  syncAskSide(name);
   if (name === 'chat') enterChatView(param, prevView);
   if (name === 'workflows') void enterWorkflowsView(param, prevView);
   if (name === 'settings') showSettingsTab(param);
@@ -38786,10 +38815,38 @@ function chatRoute(threadId, { replace = false } = {}) {
   }
   location.hash = target;
 }
+/** Ask worca beside the page: which host the ONE chat page has on this route (showView, after the leave-Chat block and
+ *  before enterChatView). Chat: the page — the column and its button hide, the person's choice kept. Workflows: no
+ *  column (no top bar). Every other page: the button, and the column when the person left it open. */
+function syncAskSide(name) {
+  if (!askSide || !askPanel) return;
+  const btn = $('#topnav-ask');
+  if (name === 'chat') {
+    askSide.setAvailable(false);
+    if (btn) btn.hidden = true;
+    const section = $('section.view[data-view="chat"]');
+    if (section && askPanel.root.parentNode !== section) section.appendChild(askPanel.root);
+    askPanel.setHost('page');
+    if (askHistoryOnChat) { askHistoryOnChat = false; askPanel.setHistoryOpen(true, { persist: false }); }
+    return;
+  }
+  askHistoryOnChat = false;
+  if (btn) btn.hidden = name === 'workflows';
+  askSide.setAvailable(name !== 'workflows');
+}
+/** Below 1081px the side column covers the main column: the page behind it is inert while it shows (with the phone drawer's). */
+function paintAskSideCover() {
+  const covers = !!(askSide && askSide.shown()) && sideTier(window.innerWidth || 0) !== 'push';
+  $('.main')?.toggleAttribute('inert', covers || mobileNavOpen);
+}
 /** The Chat row's dot (ask-panel onUnread): a reply in the chat the page shows finished while Chat was not on screen. */
 function paintChatUnread(on) {
   const dot = document.getElementById('nav-chat-unread');
   if (dot) dot.hidden = !on;
+  // Ask worca beside the page (L13): the header toggle mirrors the Chat row's dot.
+  const askDot = document.getElementById('topnav-ask-dot');
+  if (askDot) askDot.hidden = !on;
+  document.getElementById('topnav-ask')?.setAttribute('aria-label', on ? 'Ask worca, new reply' : 'Ask worca');
   const row = document.querySelector('.nav button[data-nav="chat"]');
   if (!row) return;
   if (on) row.setAttribute('aria-label', 'Chat, new reply');
@@ -38804,6 +38861,19 @@ for (const a of document.querySelectorAll('.brand a.logo, .brand a.logo-mark')) 
  *  WITHOUT sending, so several can stack and the user presses send once. */
 function openChat({ text = '', threadId = null, quote = null } = {}) {
   const id = typeof threadId === 'string' && CHAT_THREAD_RE.test(threadId) ? threadId : '';
+  // Ask worca beside the page (L7): a page with the side column opens the chat there — no navigation. Chat and
+  // Workflows have no column (available() is false), so they keep going to the Chat page below.
+  if (askSide && askSide.available()) {
+    closeOpenViewer(document, { restore: false });   // the route to Chat closed an artifact popup: never open the column under one
+    askEntryThread = id || null;
+    try { askSide.show({ focus: true }); } finally { askEntryThread = null; }
+    if (id) askPanel?.open({ threadId: id });
+    if (quote) askPanel?.setQuote(quote);
+    const text1 = String(text ?? '').trim();
+    if (text1) askPanel?.appendToComposer(text1);
+    else document.querySelector('#ask-side [data-chat-page] textarea.ask-input')?.focus();
+    return;
+  }
   // Already on Chat and no chat named: stay put, the address too — a run panel open over the chat must not close.
   if (!(currentShownView === 'chat' && !id)) {
     const target = id ? `chat/${id}` : 'chat';
@@ -38837,7 +38907,8 @@ function chatOpenRunPage(ref = {}, opts = {}) {
 if (typeof window !== 'undefined') {
   window.__np = Object.assign(window.__np || {}, {
     chat: {
-      deps: chatDeps, enterChatView, openChat, getPageContext,
+      deps: chatDeps, enterChatView, openChat, getPageContext, getPageChips, getPageScope, paintChatUnread,
+      get askSide() { return askSide; },
       setPanelRouter(fn) { chatPanelRouter = typeof fn === 'function' ? fn : null; },
       setPanelContext(fn) { chatPanelContext = typeof fn === 'function' ? fn : null; },
     },
@@ -38944,7 +39015,9 @@ function getPageContext() {
   // tools' page-following project resolves to it.
   if (ctx.view === 'projects' && param) {
     const parsed = parseProjParam(param);
-    if (parsed && projectByKey(parsed.key)) { ctx.view = 'project-detail'; ctx.projectKey = parsed.key; return ctx; }
+    // Ask worca beside the page: pageProjectKey names the page on screen even when the chat's scope is elsewhere
+    // (projectKey is a target key the panel replaces with the scope's).
+    if (parsed && projectByKey(parsed.key)) { ctx.view = 'project-detail'; ctx.projectKey = parsed.key; ctx.pageProjectKey = parsed.key; return ctx; }
   }
   if (ctx.view === 'new' && state.runTarget === 'workspace' && state.selectedWorkspaceId) {
     ctx.workspaceId = state.selectedWorkspaceId;
@@ -38959,7 +39032,7 @@ function getPageContext() {
   // A workspace page names its workspace (§9.1), like a project page names its project.
   if (ctx.view === 'workspaces' && param) {
     const ws = parseWsParam(param);
-    if (ws && workspaceById(ws.id)) { ctx.workspaceId = ws.id; return ctx; }
+    if (ws && workspaceById(ws.id)) { ctx.workspaceId = ws.id; ctx.pageWorkspaceId = ws.id; return ctx; }
   }
   // The Team metrics page's selection: scope id, range, group-by and the active filters, so
   // "why did spend jump?" refers to the chart on screen. Ids and enum slugs only — the server
@@ -38981,6 +39054,27 @@ function getPageContext() {
   const dir = selectedProjectPath();
   if (dir) { ctx.projectDir = dir; ctx.projectSource = 'fallback'; }
   return ctx;
+}
+/** Ask worca beside the page: the composer's chips for the page on screen (ask-page-chips.mjs), named with what this
+ *  tab knows — the live run's or the open saved run's title and status, the project's or the workspace's name. */
+function getPageChips() {
+  const ctx = getPageContext();
+  const names = {};
+  if (ctx.runId || ctx.pipelineId) {
+    const live = ctx.runId ? runs.get(ctx.runId) : null;
+    const saved = !live && histDetailState && histDetailState.id === ctx.pipelineId ? histDetailState.record : null;
+    const row = live || saved;
+    if (row && row.title) names.run = row.title;
+    if (row && row.status) names.runStatus = row.status;
+  }
+  if (ctx.pageProjectKey) names.project = projectByKey(ctx.pageProjectKey)?.name || '';
+  if (ctx.pageWorkspaceId) names.workspace = workspaceById(ctx.pageWorkspaceId)?.name || '';
+  return pageChips(ctx, names);
+}
+/** The project or workspace the page on screen is about: a new chat in the side column starts there (pageScopeOf).
+ *  The panel passes the page minus the chips the person left out; no argument = the whole page. */
+function getPageScope(ctx) {
+  return pageScopeOf(ctx && typeof ctx === 'object' ? ctx : getPageContext(), state.projects, state.workspaces);
 }
 
 function openNewPipeline(prefill) {
@@ -39971,7 +40065,8 @@ askPanel = createAskPanel({
   },
   confirm: confirmModal,
   getPageContext,
-  openNewPipeline,
+  // Ask worca beside the page (R11): Open in New run from the chat is a page it opens, so a covering column steps aside.
+  openNewPipeline: (prefill) => { askSide?.uncover(); openNewPipeline(prefill); },
   openComposer: (id) => { openWorkflowFromAsk(id); },
   composerActions: askComposerActions(),        // Ask's draft and graph cards: the Workflows chat's actions (ask-composer-cards.mjs)
   openClaudeSetup: () => { openClaudeSetup(); },
@@ -39988,8 +40083,70 @@ askPanel = createAskPanel({
   onRoute: chatRoute,
   onUnread: paintChatUnread,
   summariseCommands: () => chatSummariesPref,
+  // Ask worca beside the page: the page on screen as chips and as a new side chat's scope, and the column's head buttons.
+  getPageChips,
+  getPageScope,
+  sideActions: {
+    hide: () => askSide?.hide(),
+    // L8: the thread moves to the Chat page; the column stays wanted, so the next page shows it again.
+    // An empty chat goes as chat/new (home): a bare #chat would open another, unread chat instead (enterChatView).
+    openInChat: (id) => { location.hash = id ? `chat/${id}` : 'chat/new'; },
+    openHistoryInChat: () => { askHistoryOnChat = true; location.hash = askPanel.threadId() ? `chat/${askPanel.threadId()}` : 'chat/new'; },
+    // R11: a page the chat opens itself (a topic row, Manage in Connectors, a run card's Open run) shows where the
+    // column covers the page.
+    uncover: () => askSide?.uncover(),
+  },
 });
 ($('section.view[data-view="chat"]') || document.body).appendChild(askPanel.root);
+// Ask worca beside the page: the header toggle docks this same panel in aside#ask-side on every page but Chat and
+// Workflows (syncAskSide decides per route). Made here, after the panel and before the boot route below.
+if ($('#ask-side') && $('#topnav-ask')) {
+  askSide = createAskSide({
+    doc: document,
+    win: window,
+    storage: localStorage,
+    aside: $('#ask-side'),
+    button: $('#topnav-ask'),
+    getTermW: () => (terminalPane?.isOpen() ? (parseInt(document.body?.style.getPropertyValue('--term-w'), 10) || 460) : 0),
+    onShow: ({ focus, button }) => {
+      const host = $('#ask-side [data-ask-side-host]');
+      if (host && askPanel.root.parentNode !== host) host.appendChild(askPanel.root);
+      askPanel.setHost('dock');
+      // L13: the header button lands where the Chat row does, on the chat whose reply lit the dot; an entry point naming a
+      // chat (openChat({ threadId })) opens that one; a route or any other entry point keeps the chat the column showed.
+      const want = askEntryThread || (button ? askPanel.unreadThreadId() : null);
+      askPanel.open(want ? { threadId: want } : undefined, { focus });
+    },
+    onHide: () => askPanel?.close(),
+    onLayout: () => {
+      const was = document.body.classList.contains('rail-collapsed');
+      applySidebarCollapsed();
+      // A fold the column forces (or gives back) repaints the menu as the rail tier does: Runs' title, the run tiles, the bands.
+      if (document.body.classList.contains('rail-collapsed') !== was) repaintNavMode();
+      paintAskSideCover();
+    },
+  });
+  // L12: the terminal pane narrows the page too — its open, its close and a drag of its width (--term-w on the body)
+  // re-ask the rail question.
+  if (typeof window.MutationObserver === 'function') {
+    const body = document.body;
+    const termSig = () => `${body.classList.contains('term-open')}:${body.style.getPropertyValue('--term-w')}`;
+    let term = termSig();
+    new window.MutationObserver(() => {
+      if (document.body !== body) return;                    // a torn-down page (tests boot one app per window)
+      const now = termSig();
+      if (now !== term) { term = now; askSide.relayout(); }
+    }).observe(document.body, { attributes: true, attributeFilter: ['class', 'style'] });
+  }
+  // A Details tab or a Diff file changes the page context with no hashchange (replaceState, a class): the chips follow.
+  $('.main')?.addEventListener('click', () => { if (askSide.shown()) queueMicrotask(() => askPanel?.pageChanged?.()); });
+  // A page link in the chat (a run, a project it names) opens that page: where the column covers the page it steps
+  // aside so the page shows. A link the chat handles itself, or one opened in a new tab, leaves it be.
+  $('#ask-side').addEventListener('click', (e) => {
+    if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (e.target?.closest?.('a[href^="#"]')) askSide.uncover();
+  });
+}
 // Command summaries (#911): read the person's switch once, and follow the flag.
 Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).then((d) => setChatSummariesPref(d && d.chat)).catch(() => { /* keep: on */ });
 onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); void paintHelperModelCards(); });
@@ -40021,7 +40178,11 @@ pinpoint.addSurface(askPanel.root, {
 // The Chat home (worca Chat P6) inside the page's [data-chat-home], mounted before the boot route so the first Chat
 // render already has it (the section is still hidden here: the visit starts when the route shows it).
 mountChatHome();
-askRunStore.subscribe((runId, type) => { if (type !== 'log') chatHome?.update(); });   // a log line changes no tile
+askRunStore.subscribe((runId, type) => {
+  if (type === 'log') return;                                // a log line changes no tile
+  chatHome?.update();
+  if (askSide?.shown()) askPanel?.pageChanged?.();           // Ask worca beside the page: a live run's name and status reach its chip
+});
 
 
 // Boot: parse view + optional param so a reload on a deep link (#running/<id>)

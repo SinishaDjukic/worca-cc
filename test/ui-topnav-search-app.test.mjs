@@ -235,31 +235,32 @@ test('each row routes; the Ask in Chat row hands what was typed to the chat', as
       await settle(window);
       assert.equal(window.location.hash, '#schedules/repeating');
     } },
-    { name: 'Ask in Chat with text, from another page: Chat opens with it in the composer', run: async () => {
+    // Ask worca beside the page (L7): on another page the row is "Ask worca · with this page" and opens the side column.
+    { name: 'Ask worca with text, from another page: the side column opens with it in the composer, the page stays', run: async () => {
       const { window, doc, key, type, click } = await boot();
       window.location.hash = '#runs';
       await settle(window);
       assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), true, 'precondition: another page');
       key(doc.body, 'k', { metaKey: true });
       type('  why did the login run fail ');
-      click('Ask in Chat');
+      click('Ask worca');
       await settle(window);
-      assert.equal(window.location.hash, '#chat');
-      assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), false);
-      assert.equal(doc.querySelector('textarea.ask-input').value, 'why did the login run fail');
-      assert.equal(doc.activeElement, doc.querySelector('textarea.ask-input'));
+      assert.equal(window.location.hash, '#runs');
+      assert.equal(doc.getElementById('ask-side').hidden, false);
+      assert.equal(doc.querySelector('#ask-side textarea.ask-input').value, 'why did the login run fail');
+      assert.equal(doc.activeElement, doc.querySelector('#ask-side textarea.ask-input'));
     } },
-    { name: 'Ask in Chat with nothing typed, from another page: Chat just opens', run: async () => {
+    { name: 'Ask worca with nothing typed, from another page: the side column just opens', run: async () => {
       const { window, doc, key, click } = await boot();
       window.location.hash = '#runs';
       await settle(window);
-      assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), true, 'precondition: another page');
       key(doc.body, 'k', { metaKey: true });
-      click('Ask in Chat');
+      click('Ask worca');
       await settle(window);
-      assert.equal(window.location.hash, '#chat');
-      assert.equal(doc.querySelector('[data-view="chat"]').classList.contains('hidden'), false);
-      assert.equal(doc.querySelector('textarea.ask-input').value, '');
+      assert.equal(window.location.hash, '#runs');
+      assert.equal(doc.getElementById('ask-side').hidden, false);
+      assert.equal(doc.querySelector('#ask-side textarea.ask-input').value, '');
+      assert.equal(doc.activeElement, doc.querySelector('#ask-side textarea.ask-input'));
     } },
   ]);
 });

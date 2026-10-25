@@ -823,9 +823,10 @@ test('New chat leads the column: a labelled button between the head and the date
   assert.equal(nb.querySelector('svg').getAttribute('aria-hidden'), 'true', 'the plus glyph is decoration');
   assert.ok(nb.classList.contains('chat-new-btn'), 'the head button\'s look (style.css)');
   const where = (c) => (c.classList.contains('chat-history-head') ? 'head' : c === nb ? 'new' : c.classList.contains('chat-history-body') ? 'body' : c.className);
-  assert.deepEqual([...col.children].map(where), ['head', 'new', 'body'], 'outside the body the list repaints');
+  // Ask worca beside the page: the side column's footer (Open History in Chat) closes the column; style.css hides it here.
+  assert.deepEqual([...col.children].map(where), ['head', 'new', 'body', 'chat-history-foot'], 'outside the body the list repaints');
   assert.ok(nb.compareDocumentPosition(col.querySelector('.chat-history-group-label')) & ctx.window.Node.DOCUMENT_POSITION_FOLLOWING, 'above Today / Yesterday / Earlier');
-  assert.equal(ctx.doc.querySelectorAll('[data-ask-new-btn]').length, 2, 'the head\'s and the column\'s');
+  assert.equal(ctx.doc.querySelectorAll('[data-ask-new-btn]').length, 3, 'the head\'s, the column\'s and the side column head\'s (hidden on the Chat page)');
   assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Fix the login bug');
   nb.click();
   assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'New chat');
