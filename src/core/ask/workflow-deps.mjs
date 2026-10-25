@@ -24,6 +24,9 @@ import { resolveAutoModel } from '../auto/model.mjs';
 import { ASK_LIMITS } from './limits.mjs';
 import { utilityModelFor } from '../settings-cascade.mjs';
 import { runsOn } from '../../shared/connections.mjs';
+import { lockedChatEngine } from '../model-env.mjs';
+import { chatDescriptor } from '../engines/chat.mjs';
+import { chatModelRates } from './chat-price.mjs';
 
 const TUNABLE_KEYS = ['model', 'effort', 'fanOut', 'askQuestions'];
 const flat = (v, max) => cleanText(v, max);
@@ -175,8 +178,11 @@ export function workflowNoticeText({ state, name = '', matched = false, thenRun 
  */
 export function defaultWorkflowDeps({ threadId = null, signal = null, classify = classifyTask, env = process.env } = {}) {   // eslint-disable-line no-unused-vars
   const bundleSignal = signal;
-  // A Codex or Copilot chat's classifier runs on its own engine too: such a chat makes no Claude call (D8).
-  const chatEngine = env && ['codex', 'copilot'].includes(env.WORCA_ASK_ENGINE) ? env.WORCA_ASK_ENGINE : null;
+  // A locked-down chat's classifier runs on its own engine, through the chat's own lockdown with no MCP server
+  // (classify.mjs askLockdown): such a chat makes no Claude call (D8). Its model: the engine's classifier slot, else the
+  // chat's own (WORCA_ASK_MODEL, spawn.mjs buildMcpConfig).
+  const chatEngine = env && lockedChatEngine(env.WORCA_ASK_ENGINE) ? env.WORCA_ASK_ENGINE : null;
+  const chatModel = chatEngine && typeof env.WORCA_ASK_MODEL === 'string' ? env.WORCA_ASK_MODEL : '';
   return {
     workflow: {
       /**
@@ -221,8 +227,8 @@ export function defaultWorkflowDeps({ threadId = null, signal = null, classify =
             : await openRepoLook(project.path, cwd, { signal: signal || bundleSignal });
           const input = {
             taskText: String(task).slice(0, ASK_LIMITS.workflowTaskMaxChars), extras: [], fingerprint, models, registry, domain: 'coding',
-            humanInLoop: true, feedback: [], priorShape: null, model: chatEngine ? (utilityModelFor(chatEngine, 'classifier').model || '') : resolveAutoModel(models),
-            ...(chatEngine ? { engine: chatEngine } : {}),
+            humanInLoop: true, feedback: [], priorShape: null, model: chatEngine ? (utilityModelFor(chatEngine, 'classifier').model || chatModel) : resolveAutoModel(models),
+            ...(chatEngine ? { engine: chatEngine, askLockdown: true, rates: chatModelRates(chatDescriptor(chatEngine), utilityModelFor(chatEngine, 'classifier').model || chatModel) } : {}),
             cwd: look ? look.cwd : cwd, repoLook: !!look,
             mock: mockEnabled({}), signal: signal || bundleSignal,
             ...(ws ? { workspace: {

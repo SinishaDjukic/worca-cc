@@ -61,10 +61,11 @@ function compact(parts) {
 /**
  * Translate one Messages API request body.
  * @param {object} body  the Anthropic request as the CLI sent it
- * @param {{upstreamModel:string, capabilities?:{toolCalls?:boolean, vision?:boolean, reasoning?:boolean, maxOutputTokens?:number, reasoningEfforts?:string[]}}} opts
+ * @param {{upstreamModel:string, capabilities?:{toolCalls?:boolean, vision?:boolean, reasoning?:boolean, maxOutputTokens?:number, reasoningEfforts?:string[]}, extraContentFor?:(id:string)=>object|undefined}} opts
+ *   extraContentFor: the `extra_content` the upstream put on a tool call (a Gemini thought signature), handed back on it
  * @returns {{body?:object, warnings:string[], error?:{type:string,message:string}}}
  */
-export function toChatRequest(body, { upstreamModel, capabilities = {} } = {}) {
+export function toChatRequest(body, { upstreamModel, capabilities = {}, extraContentFor = null } = {}) {
   const caps = capabilities || {};
   const warnings = [];
   const seen = new Set();
@@ -94,10 +95,13 @@ export function toChatRequest(body, { upstreamModel, capabilities = {} } = {}) {
         if (!b || typeof b !== 'object') continue;
         if (b.type === 'text') { if (typeof b.text === 'string' && b.text) texts.push(b.text); }
         else if (b.type === 'tool_use') {
+          const id = String(b.id || '');
+          const extra = extraContentFor ? extraContentFor(id) : undefined;
           toolCalls.push({
-            id: String(b.id || ''),
+            id,
             type: 'function',
             function: { name: String(b.name || ''), arguments: JSON.stringify(b.input ?? {}) },
+            ...(extra ? { extra_content: extra } : {}),
           });
         } else if (b.type === 'thinking' && b.signature === CHAT_REASONING_SIGNATURE) {
           // Our own reasoning echoed back: chat completions takes no reasoning

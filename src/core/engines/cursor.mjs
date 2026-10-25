@@ -41,6 +41,7 @@ import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { ARGV_INLINE_LIMIT } from './claude.mjs';
 import { ENGINE_PROJECT_FILES, projectFileOwned, writeProjectFiles } from './project-files.mjs';
+import { makeChatDescriptor } from './chat-descriptor.mjs';
 export { excludeLine } from './project-files.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
@@ -57,7 +58,8 @@ const CURSOR_FALSE = new Set(['systemPromptFlag', 'allowedTools', 'effort', 'cos
 export const cursorCapabilities = Object.freeze(Object.fromEntries(CAPABILITY_KEYS.map((k) => [k, !CURSOR_FALSE.has(k)])));
 
 /** Ask Worca on Cursor: the flags that would leave Cursor no shell and no disk tools. null = no such flags are known,
- *  and Ask stays off Cursor (model-env.mjs ASK_ENGINES; ask/models.mjs, ask/turn.mjs). */
+ *  and Ask stays off Cursor (model-env.mjs ASK_ENGINES; ask/models.mjs, ask/turn.mjs). The chat descriptor below is
+ *  wired so that verifying one is the only step left (plans/ask-on-qwen-gemini-spike.md › Cursor). */
 export const CURSOR_ASK_LOCKDOWN = null;
 
 /** What the gate and the run log say about the rules Cursor holds (all of them only in part). */
@@ -416,3 +418,22 @@ export async function runCursorProcess({
     if (stagedDir) rmSync(stagedDir, { recursive: true, force: true });
   }
 }
+
+// ── chat ─────────────────────────────────────────────────────────────────────
+
+/** Why the chat self-test cannot run on cursor-agent: it has no option worca knows that points it at another model
+ *  endpoint, and its sign-in is Cursor's own. */
+export const CURSOR_NO_SELF_TEST = 'cursor-agent has no setting worca knows that points it at a local model endpoint, so worca cannot prove a lockdown on it';
+
+/** Cursor's chat descriptor (engines/chat-descriptor.mjs): wired, off. Chat on Cursor needs a lockdown verified on the
+ *  real binary (CURSOR_ASK_LOCKDOWN) and a self-test that can run; neither exists yet, so engine-switch.mjs marks its
+ *  chat `verified: false` and engines/chat.mjs leaves it out of the chat engines. */
+export const cursorChat = makeChatDescriptor({
+  engine: 'cursor',
+  lockdown: () => CURSOR_ASK_LOCKDOWN,
+  noLockdownMessage: 'Chat on Cursor is unavailable: no switch that turns off its shell and file tools has been verified, and a chat must stay inside its own files. Use a Claude chat.',
+  selfTest: async () => ({ refusal: CURSOR_NO_SELF_TEST }),
+  preflight: (_ctx, impl = cursorPreflight) => impl(),
+  resumeNotFound: (err) => CURSOR_RESUME_NOT_FOUND_RE.test(String((err && err.message) || err || '')),
+  prompt: { cli: "Cursor's CLI agent with Cursor's own sign-in" },
+});

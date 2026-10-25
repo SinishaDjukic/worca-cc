@@ -92,12 +92,12 @@ test('helper jobs run on the run engine when it runs them, else on Claude', () =
   assert.equal(helperEngineFor('copilot'), 'copilot', 'Copilot runs its own helper jobs on its default model');
   assert.equal(helperEngineFor(undefined), 'claude');
   for (const e of HELPER_ENGINES) assert.ok(MODEL_ENGINES.includes(e));
-  assert.deepEqual(ASK_ENGINES, ['claude', 'codex', 'copilot'], 'Ask never runs on Cursor (CURSOR_ASK_LOCKDOWN = null)');
+  assert.deepEqual(ASK_ENGINES, ['claude', 'codex', 'copilot', 'gemini', 'goose', 'opencode', 'qwen'], 'Ask never runs on Cursor (no verified lockdown)');
   assert.deepEqual(effortsForEngine('copilot'), ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
   assert.deepEqual(CURSOR_EFFORTS, []);
   assert.equal(effortsForEngine('cursor'), CURSOR_EFFORTS);
-  assert.deepEqual(effortsForEngine('gemini'), []);
-  assert.deepEqual(effortsForEngine('qwen'), []);
+  assert.deepEqual(effortsForEngine('gemini'), ['low', 'medium', 'high'], "Gemini CLI's thinking");
+  assert.deepEqual(effortsForEngine('qwen'), ['low', 'medium', 'high', 'xhigh', 'max'], "Qwen Code's reasoning-effort tiers");
   assert.deepEqual(effortsForEngine('opencode'), ['minimal', 'low', 'medium', 'high', 'max']);
 });
 

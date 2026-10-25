@@ -1,0 +1,906 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Reference mockup for plans/setup-assistant-design.md. A design reference, not code to copy:
+     build with ui/public/style.css tokens and docs/design-system.md components.
+     Live copy: https://claude.ai/artifact/5g2ZifcSHKvhLd4CbLp72h -->
+<title>Worca Setup Assistant</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+/* Layout: a concept document in Worca's own design language: page header, the live prototype as the centrepiece,
+   then divided-row tables that say what each answer writes. Tokens mirror ui/public/style.css. */
+:root{
+  --bg:#F1F1EF; --panel:#FFFFFF; --field:#F6F6F4; --surface:#FFFFFF;
+  --ink:#19191B; --ink-2:#5C5C63; --ink-3:#8A8A91; --on-ink:#FFFFFF;
+  --line:#ECECEA; --line-2:#E3E3E0; --hover:#EBEBE8;
+  --green:#5BAE5B; --green-bg:#E2F3DF; --green-ink:#2C7535;
+  --amber:#E6962A; --amber-bg:#FCE8C8; --amber-ink:#8E550B; --amber-wash:#FEF7EC; --amber-line:#F5D9A8;
+  --blue-bg:#DEEFF7; --blue-ink:#2B6A8C;
+  --violet:#8C7FD6; --violet-bg:#EAE6F8; --violet-ink:#5B4BB0;
+  --slate-bg:#E8ECF0; --slate-ink:#4A5661;
+  --red-bg:#FBE3E0; --red-ink:#B23F33;
+  --shadow-pop:0 12px 40px rgba(20,20,22,.10),0 2px 6px rgba(20,20,22,.05);
+  --sans:'Poppins',ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --fs-caption:11px; --fs-meta:12px; --fs-body:13px; --fs-section:15px; --fs-subpage:18px; --fs-page:22px; --fs-hero:32px;
+  --r-xs:4px; --r-sm:6px; --r-md:8px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#161614; --panel:#222220; --field:#2C2C29; --surface:#34342F;
+  --ink:#ECECE8; --ink-2:#B4B4AE; --ink-3:#9E9E98; --on-ink:#161614;
+  --line:#30302D; --line-2:#494944; --hover:#353531;
+  --green-bg:#1C2F1D; --green-ink:#8FD48F; --amber-bg:#332715; --amber-ink:#F0B45A; --amber-wash:#322816; --amber-line:#6A5228;
+  --blue-bg:#1A2A33; --blue-ink:#86C4E3; --violet-bg:#262336; --violet-ink:#B3A8EE;
+  --slate-bg:#262A2E; --slate-ink:#B3BEC8; --red-bg:#34201D; --red-ink:#F08C7E;
+  --shadow-pop:0 12px 40px rgba(0,0,0,.45),0 2px 6px rgba(0,0,0,.3); color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#161614; --panel:#222220; --field:#2C2C29; --surface:#34342F;
+  --ink:#ECECE8; --ink-2:#B4B4AE; --ink-3:#9E9E98; --on-ink:#161614;
+  --line:#30302D; --line-2:#494944; --hover:#353531;
+  --green-bg:#1C2F1D; --green-ink:#8FD48F; --amber-bg:#332715; --amber-ink:#F0B45A; --amber-wash:#322816; --amber-line:#6A5228;
+  --blue-bg:#1A2A33; --blue-ink:#86C4E3; --violet-bg:#262336; --violet-ink:#B3A8EE;
+  --slate-bg:#262A2E; --slate-ink:#B3BEC8; --red-bg:#34201D; --red-ink:#F08C7E;
+  --shadow-pop:0 12px 40px rgba(0,0,0,.45),0 2px 6px rgba(0,0,0,.3); color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:var(--fs-body);line-height:1.5;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:40px 80px}
+.wrap{max-width:1120px;margin:0 auto;display:flex;flex-direction:column;gap:48px}
+h1,h2,h3{text-wrap:balance;margin:0}
+h1{font-size:var(--fs-hero);font-weight:700;letter-spacing:-.02em;line-height:1.2}
+h2{font-size:var(--fs-subpage);font-weight:600;line-height:1.25}
+h3{font-size:var(--fs-section);font-weight:600;line-height:1.25}
+p{margin:0;max-width:68ch}
+code,.mono{font-family:var(--mono);font-size:.92em}
+.intro{color:var(--ink-2);font-size:var(--fs-section);max-width:62ch}
+.meta{color:var(--ink-2);font-size:var(--fs-meta)}
+.sec{display:flex;flex-direction:column;gap:16px}
+.sec-head{display:flex;flex-direction:column;gap:6px}
+.hdr{display:flex;flex-direction:column;gap:12px}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.badge{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;border-radius:var(--r-xs);font-size:var(--fs-caption);font-weight:500;background:var(--slate-bg);color:var(--slate-ink);white-space:nowrap}
+.badge.green{background:var(--green-bg);color:var(--green-ink)}
+.badge.amber{background:var(--amber-bg);color:var(--amber-ink)}
+.badge.blue{background:var(--blue-bg);color:var(--blue-ink)}
+.badge.violet{background:var(--violet-bg);color:var(--violet-ink)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);padding:24px}
+
+/* ---------- today vs. tomorrow ---------- */
+.compare{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:16px}
+.path{display:flex;flex-direction:column;gap:12px}
+.path ol{margin:0;padding:0;list-style:none;display:flex;flex-direction:column}
+.path li{display:grid;grid-template-columns:22px 1fr;gap:8px;padding:6px 0;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2)}
+.path li:first-child{border-top:0}
+.path li b{color:var(--ink);font-weight:500}
+.path .n{font-variant-numeric:tabular-nums;color:var(--ink-3)}
+.path .tally{display:flex;gap:16px;align-items:baseline;flex-wrap:wrap}
+.tally .big{font-size:var(--fs-page);font-weight:700;font-variant-numeric:tabular-nums}
+.path li.pain b{color:var(--amber-ink)}
+
+/* ---------- prototype frame ---------- */
+.stage{background:var(--field);border:1px solid var(--line);border-radius:var(--r-md);padding:24px;display:flex;flex-direction:column;gap:16px}
+.stage-bar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.seg{display:inline-flex;background:var(--panel);border:1px solid var(--line-2);border-radius:var(--r-sm);padding:2px;gap:2px;flex-wrap:wrap}
+.seg button{height:26px;border:0;background:transparent;border-radius:var(--r-xs);padding:0 10px;font:inherit;font-size:var(--fs-meta);color:var(--ink-2);cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--field);color:var(--ink);font-weight:500;box-shadow:inset 0 0 0 1px var(--line-2)}
+.proto{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start}
+@media (max-width:900px){.proto{grid-template-columns:minmax(0,1fr)}}
+
+.dlg{background:var(--panel);border-radius:var(--r-md);box-shadow:var(--shadow-pop);display:grid;grid-template-columns:200px minmax(0,1fr);min-height:600px;overflow:hidden}
+@media (max-width:680px){.dlg{grid-template-columns:minmax(0,1fr)}.rail{display:none!important}}
+.rail{background:var(--field);border-right:1px solid var(--line);padding:24px 12px;display:flex;flex-direction:column;gap:2px}
+.rail .brand{display:flex;align-items:center;gap:8px;padding:0 8px 18px;font-weight:600}
+.rail .brand svg{width:22px;height:22px}
+.rstep{display:grid;grid-template-columns:20px 1fr;gap:8px;align-items:center;padding:7px 8px;border-radius:var(--r-sm);color:var(--ink-3);font-size:var(--fs-meta);border:0;background:none;text-align:left;font-family:inherit;cursor:default}
+.rstep.done{color:var(--ink-2);cursor:pointer}
+.rstep.done:hover{background:var(--hover)}
+.rstep.cur{background:var(--panel);color:var(--ink);font-weight:500;box-shadow:inset 0 0 0 1px var(--line)}
+.rstep.skip{text-decoration:line-through;opacity:.6}
+.rdot{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--line-2);display:grid;place-items:center}
+.rstep.cur .rdot{border-color:var(--ink)}
+.rstep.done .rdot{background:var(--green);border-color:var(--green)}
+.rstep.done .rdot::after{content:"";width:6px;height:3px;border-left:1.5px solid #fff;border-bottom:1.5px solid #fff;transform:translateY(-1px) rotate(-45deg)}
+.rail .foot{margin-top:auto;padding:12px 8px 0;font-size:var(--fs-caption);color:var(--ink-3)}
+
+.pane{display:flex;flex-direction:column;min-width:0}
+.pane-head{padding:24px 28px 14px;display:flex;flex-direction:column;gap:4px}
+.pane-head .step-of{font-size:var(--fs-meta);color:var(--ink-3)}
+.pane-head h3{font-size:var(--fs-subpage)}
+.pane-head p{color:var(--ink-2)}
+.pane-body{padding:4px 28px 24px;flex:1;display:flex;flex-direction:column;gap:18px;min-width:0}
+.pane-foot{border-top:1px solid var(--line);padding:14px 28px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.pane-foot .sp{flex:1}
+.pane-foot .status{font-size:var(--fs-meta);color:var(--ink-3)}
+
+.btn{height:32px;padding:0 14px;border-radius:var(--r-sm);border:1px solid var(--line-2);background:var(--panel);color:var(--ink);font:inherit;font-weight:500;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.btn:hover{border-color:var(--ink-3)}
+.btn-primary{background:var(--ink);color:var(--on-ink);border-color:var(--ink)}
+.btn-primary:hover{opacity:.9}
+.btn-quiet{border-color:transparent;background:transparent;color:var(--ink-2)}
+.btn-quiet:hover{background:var(--hover);border-color:transparent}
+.btn-sm{height:28px;padding:0 10px;font-size:var(--fs-meta)}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.link{background:none;border:0;padding:0;font:inherit;color:var(--blue-ink);cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+
+.field{display:grid;grid-template-columns:150px minmax(0,1fr);gap:12px;align-items:center}
+@media (max-width:560px){.field{grid-template-columns:minmax(0,1fr);gap:4px}}
+.field label{font-weight:500}
+.field .hint{grid-column:2;font-size:var(--fs-meta);color:var(--ink-3);margin-top:-6px}
+@media (max-width:560px){.field .hint{grid-column:1}}
+.input,.select{height:32px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);color:var(--ink);font:inherit;padding:0 10px;width:100%;min-width:0}
+.input:focus,.select:focus{outline:none;border-color:var(--ink);background:var(--panel)}
+.row2{display:grid;grid-template-columns:minmax(0,1fr) 90px;gap:8px}
+.fields{display:flex;flex-direction:column;gap:12px}
+
+.choices{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.choice{display:grid;grid-template-columns:20px 34px minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 10px;border-bottom:1px solid var(--line);cursor:pointer;border-radius:0}
+.choice:hover{background:var(--hover)}
+.choice.on{background:var(--field);border-radius:var(--r-sm);border-bottom-color:transparent}
+.choice input{margin:0;accent-color:var(--ink);width:16px;height:16px}
+.choice .ic{width:34px;height:34px;border-radius:var(--r-sm);display:grid;place-items:center;background:var(--slate-bg);color:var(--slate-ink)}
+.choice .ic svg{width:18px;height:18px}
+.choice .t{font-weight:500}
+.choice .d{font-size:var(--fs-meta);color:var(--ink-2)}
+.nest{margin:0 0 4px 66px;padding:14px 0 6px;display:flex;flex-direction:column;gap:12px}
+@media (max-width:560px){.nest{margin-left:0}}
+
+.checks{display:flex;flex-direction:column}
+.check{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line)}
+.check:last-child{border-bottom:0}
+.check .what{font-weight:500}
+.check .det{font-size:var(--fs-meta);color:var(--ink-2)}
+.sym{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;font-size:10px;font-weight:700;color:#fff}
+.sym.ok{background:var(--green)}
+.sym.warn{background:var(--amber);color:#19191B}
+.sym.no{background:var(--line-2);color:var(--ink-2)}
+.sym.spin{border:2px solid var(--line-2);border-top-color:var(--ink);animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.sym.spin{animation:none}}
+
+.note{background:var(--amber-wash);border:1px solid var(--amber-line);border-radius:var(--r-sm);padding:12px 14px;font-size:var(--fs-meta);color:var(--ink-2);display:flex;flex-direction:column;gap:8px}
+.note b{color:var(--ink)}
+.info{background:var(--field);border-radius:var(--r-sm);padding:12px 14px;font-size:var(--fs-meta);color:var(--ink-2)}
+.devcode{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.devcode .code{font-family:var(--mono);font-size:var(--fs-subpage);letter-spacing:.12em;background:var(--field);border:1px dashed var(--line-2);border-radius:var(--r-sm);padding:4px 12px}
+
+.roles{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.role{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,220px) 96px;gap:12px;align-items:center;padding:14px 0;border-bottom:1px solid var(--line)}
+@media (max-width:620px){.role{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.role .rl{grid-column:1/-1}}
+.role .rl .t{font-weight:600}
+.role .rl .d{font-size:var(--fs-meta);color:var(--ink-2)}
+.role .rl .jobs{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}
+.levels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+@media (max-width:560px){.levels{grid-template-columns:minmax(0,1fr)}}
+.lv{border:1px solid var(--line-2);border-radius:var(--r-md);padding:12px;display:flex;flex-direction:column;gap:4px;cursor:pointer;background:var(--panel);text-align:left;font:inherit;color:inherit}
+.lv:hover{border-color:var(--ink-3)}
+.lv[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.lv .t{font-weight:600}
+.lv .d{font-size:var(--fs-meta);color:var(--ink-2)}
+.sw{position:relative;width:32px;height:18px;flex:none}
+.sw input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
+.sw span{position:absolute;inset:0;background:var(--line-2);border-radius:999px;transition:background .15s}
+.sw span::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;transition:transform .15s}
+.sw input:checked+span{background:var(--ink)}
+.sw input:checked+span::after{transform:translateX(14px)}
+.sw input:focus-visible+span{outline:2px solid var(--ink);outline-offset:2px}
+.toggle-row{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line)}
+.toggle-row:last-child{border-bottom:0}
+.toggle-row .d{font-size:var(--fs-meta);color:var(--ink-2)}
+
+.review{display:flex;flex-direction:column;border-top:1px solid var(--line)}
+.rv{display:grid;grid-template-columns:120px minmax(0,1fr) auto;gap:12px;padding:12px 0;border-bottom:1px solid var(--line);align-items:start}
+@media (max-width:560px){.rv{grid-template-columns:minmax(0,1fr) auto}.rv .k{grid-column:1/-1}}
+.rv .k{color:var(--ink-2);font-size:var(--fs-meta);padding-top:1px}
+.rv .v{display:flex;flex-direction:column;gap:2px}
+.rv .v .sub{font-size:var(--fs-meta);color:var(--ink-2)}
+
+.done-hero{display:flex;flex-direction:column;align-items:flex-start;gap:12px;padding:8px 0}
+.doors{display:flex;flex-direction:column;border-top:1px solid var(--line);width:100%}
+.door{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;padding:12px 4px;border-bottom:1px solid var(--line);background:none;border-left:0;border-right:0;border-top:0;text-align:left;font:inherit;color:inherit;cursor:pointer}
+.door:hover{background:var(--hover)}
+.door .d{font-size:var(--fs-meta);color:var(--ink-2)}
+
+/* side panel: what gets written */
+.side{display:flex;flex-direction:column;gap:12px;position:sticky;top:16px}
+.side .card{padding:18px}
+.side h3{font-size:var(--fs-body)}
+.saved{display:flex;align-items:baseline;gap:8px}
+.saved .big{font-size:var(--fs-page);font-weight:700;font-variant-numeric:tabular-nums}
+.writes{display:flex;flex-direction:column;max-height:380px;overflow:auto;margin-top:8px}
+.w{display:flex;flex-direction:column;padding:7px 0;border-bottom:1px solid var(--line);font-size:var(--fs-meta)}
+.w:last-child{border-bottom:0}
+.w .key{font-family:var(--mono);font-size:var(--fs-caption);color:var(--ink);word-break:break-all}
+.w .val{color:var(--ink-2);word-break:break-word}
+.w.new{animation:flash 1.2s ease-out}
+@keyframes flash{from{background:var(--green-bg)}to{background:transparent}}
+@media (prefers-reduced-motion:reduce){.w.new{animation:none}}
+.empty{color:var(--ink-3);font-size:var(--fs-meta);padding:8px 0}
+
+/* tables */
+.tbl-wrap{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md)}
+table{border-collapse:collapse;width:100%;min-width:720px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top;font-size:var(--fs-meta)}
+th{color:var(--ink-2);font-weight:500;background:var(--field)}
+tr:last-child td{border-bottom:0}
+td:first-child{font-weight:500;color:var(--ink);font-size:var(--fs-body)}
+td code{color:var(--ink)}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px}
+.list{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;color:var(--ink-2)}
+.list b{color:var(--ink);font-weight:500}
+.chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:var(--fs-meta)}
+.chain span.s{padding:4px 10px;border-radius:var(--r-sm);background:var(--field);border:1px solid var(--line-2)}
+.chain span.s.new{background:var(--violet-bg);border-color:transparent;color:var(--violet-ink);font-weight:500}
+.chain .arr{color:var(--ink-3)}
+.q{display:flex;flex-direction:column;gap:4px;padding:12px 0;border-bottom:1px solid var(--line)}
+.q:last-child{border-bottom:0}
+.q .t{font-weight:500}
+.q .d{font-size:var(--fs-meta);color:var(--ink-2)}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<header class="hdr">
+  <div class="chips"><span class="badge violet">Concept</span><span class="badge">Worca UI · first run</span><span class="badge">Restartable from Settings</span><span class="badge">Team setup</span><span class="badge green">No restart</span></div>
+  <h1>Set up Worca in five answers</h1>
+  <p class="intro">A setup assistant that runs on the first start and from Settings › General. It asks about the network, where models come from, which models to use, and how hands-on you want to be. Then it writes every setting, signs in, imports models and tests them for you. A team lead can publish shared defaults once (model roles, limits, conventions); each person still sets up their own network and model sources.</p>
+</header>
+
+<!-- ================= TODAY VS. WIZARD ================= -->
+<section class="sec">
+  <div class="sec-head">
+    <h2>What it replaces</h2>
+    <p class="meta">Traced through the current UI on <code>dev</code>. Steps marked amber are the ones people miss.</p>
+  </div>
+  <div class="compare">
+    <div class="card path">
+      <h3>Corporate proxy, today</h3>
+      <ol>
+        <li><span class="n">1</span><span>Settings › Labs › turn on <b>Corporate proxy</b> (or <code>worca flags on corporateProxy</code>)</span></li>
+        <li class="pain"><span class="n">2</span><span><b>Switch the interface to Advanced</b>, or the card stays hidden</span></li>
+        <li><span class="n">3</span><span>Settings › Runs › Network proxy: host, port, login mode, direct hosts, three timeouts, local port</span></li>
+        <li><span class="n">4</span><span>Save, then domain, user and password, then Log in</span></li>
+        <li class="pain"><span class="n">5</span><span><b>Restart Worca from the terminal</b>: host, port, mode and timeouts are read at startup</span></li>
+        <li><span class="n">6</span><span>Come back, press Test, hope the first login was right (each restart with a wrong password spends one lockout attempt)</span></li>
+      </ol>
+      <div class="tally"><span class="big">~15</span><span class="meta">clicks and fields · 2 pages · 1 restart</span></div>
+    </div>
+    <div class="card path">
+      <h3>GitHub Copilot models, today</h3>
+      <ol>
+        <li class="pain"><span class="n">1</span><span><b>Switch to Expert</b>: Providers and Models are Expert pages</span></li>
+        <li><span class="n">2</span><span>Providers › Copilot › Sign in › read the notice › device code at github.com › account type</span></li>
+        <li><span class="n">3</span><span>Import models… › pick the Copilot source › tick models › Import</span></li>
+        <li><span class="n">4</span><span>Models › Engines › Step models: Plan, Plan review, Refine, Implement, Review… one row each</span></li>
+        <li><span class="n">5</span><span>Helper jobs: titles, Auto classifier, PR description, memory defragment, agent generation, requirements interview</span></li>
+        <li class="pain"><span class="n">6</span><span><b>Then the slots that live elsewhere</b>: Chat's model, smart naming, command summaries, workspace scan models, the Away mode decider</span></li>
+        <li class="pain"><span class="n">7</span><span><b>No default model</b>: each empty slot falls back its own way (Chat to Opus 5.5, titles to Haiku 4.5, steps to the CLI default), and all of them fail without a Claude sign-in</span></li>
+      </ol>
+      <div class="tally"><span class="big">~45</span><span class="meta">clicks · 4 pages · ~17 model slots</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= PROTOTYPE ================= -->
+<section class="sec">
+  <div class="sec-head">
+    <h2>The assistant</h2>
+    <p class="meta">Clickable. Pick a starting machine to see how detection pre-fills the answers and which steps drop out. The panel on the right lists what Apply would write.</p>
+  </div>
+  <div class="stage">
+    <div class="stage-bar">
+      <div class="seg" role="group" aria-label="Example machine">
+        <button type="button" data-scn="corp" aria-pressed="true">Corporate laptop · Copilot</button>
+        <button type="button" data-scn="personal" aria-pressed="false">Personal · Claude sign-in</button>
+        <button type="button" data-scn="local" aria-pressed="false">Local models · Ollama</button>
+      </div>
+      <div class="seg" role="group" aria-label="Entry point">
+        <button type="button" data-entry="first" aria-pressed="true">First start</button>
+        <button type="button" data-entry="rerun" aria-pressed="false">Run again from Settings</button>
+      </div>
+    </div>
+    <div class="proto">
+      <div class="dlg" role="dialog" aria-label="Set up Worca">
+        <nav class="rail" id="rail"></nav>
+        <div class="pane">
+          <div class="pane-head" id="head"></div>
+          <div class="pane-body" id="body"></div>
+          <div class="pane-foot" id="foot"></div>
+        </div>
+      </div>
+      <aside class="side">
+        <div class="card">
+          <div class="saved"><span class="big" id="clicks">0</span><span class="meta">clicks saved so far</span></div>
+          <p class="meta" id="pagesline">Across the pages you would otherwise visit.</p>
+        </div>
+        <div class="card">
+          <h3>Apply will write</h3>
+          <div class="writes" id="writes"></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<!-- ================= STEP TABLE ================= -->
+<section class="sec">
+  <div class="sec-head">
+    <h2>The steps, and when each one shows</h2>
+    <p class="meta">Every step has a working default, so Skip is always safe. A step whose answer was detected collapses to a one-line confirmation.</p>
+  </div>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Step</th><th>Shown when</th><th>Asks</th><th>Writes / does</th></tr></thead>
+    <tbody>
+      <tr><td>1 · Check this machine</td><td>Always</td><td>Whether to start from a team setup, when one is found or linked.</td><td>Looks for a team setup (below). Reads <code>claude</code> on PATH and its sign-in (preflight <code>probeClaudeAuth</code>), git, <code>HTTPS_PROXY</code> / <code>NO_PROXY</code>, installed harness CLIs (Codex, Copilot CLI, Cursor, Goose), a local Ollama on :11434, an <code>ANTHROPIC_API_KEY</code></td></tr>
+      <tr><td>2 · Network</td><td>Always; pre-picked "corporate proxy" when <code>HTTPS_PROXY</code> is set or a direct probe to api.anthropic.com fails</td><td>Direct or proxy; host, port, login mode, domain\user, password, direct hosts. Timeouts and local port fold under "More".</td><td><code>networkProxy.{enabled,upstream,auth,noProxy,timeouts,fixedPort}</code> (the Labs flag is gone), <code>POST /api/proxy/login</code> (NT hash to <code>proxy-login.json</code>). Next waits for a test of the values on screen; Apply then switches the running proxy over.</td></tr>
+      <tr><td>3 · Model access</td><td>Always</td><td>Which sources to use (several allowed). Copilot: notice, account type, device sign-in. Key-based: URL and key with Test.</td><td><code>providers.copilot.{githubToken, accountType, acknowledgedTerms, termsVersion}</code>, <code>providers.openai.{baseUrl, apiKey}</code> (OpenRouter is its preset), <code>providers.anthropic.apiKey</code>; secrets may be <code>${VAR}</code>. Refused, with a pointer, when the credential broker holds the keys</td></tr>
+      <tr><td>4 · Models</td><td>Always; one row per role</td><td>A model and effort for three roles: Deep thinking, Everyday coding, Quick jobs. "Show every job" opens the full list for exceptions.</td><td>Imports the picked models; writes the new <code>modelRoles</code> (below); sets <code>runEngine</code> when the only usable harness is not Claude Code</td></tr>
+      <tr><td>5 · How you work</td><td>Always</td><td>Interface mode, spend limits, AI-written PR descriptions, smart run names</td><td><code>uiLevel</code>, <code>pipelineCostLimitUsd</code>, <code>totalCostLimitUsd</code>, <code>costLimitResetPeriod</code>, <code>autoGeneratePrDescription</code>, <code>smartNaming</code></td></tr>
+      <tr><td>6 · Review</td><td>Always</td><td>Nothing new. Each group has Change, which jumps back.</td><td>On a re-run, only changed rows are marked and only they are written</td></tr>
+      <tr><td>7 · Apply</td><td>Always</td><td>Nothing. Shows each action with its result.</td><td>One <code>POST /api/setup/apply</code>; restarts the local proxy in place; tests each role model with a one-line call; ends on the Getting started doors</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ================= MODEL ROLES ================= -->
+<section class="sec">
+  <div class="sec-head">
+    <h2>The missing piece: model roles</h2>
+    <p class="meta">Worca has no default model today. Each slot either names a model or falls back to a built-in Claude one. The assistant needs one place to write, so the concept adds three roles that every slot inherits from.</p>
+  </div>
+  <div class="grid2">
+    <div class="card" style="display:flex;flex-direction:column;gap:10px">
+      <h3>A role names the work, not the model</h3>
+      <p class="meta">The three roles line up roughly with Opus, Sonnet and Haiku, but they are named after the kind of work so they still make sense on Copilot, OpenAI or Ollama. Each role holds one model and one effort, which you pick. "Deep thinking = GPT-5.5 via Copilot" is valid, and so is "Quick jobs = Sonnet" if you care more about quality than cost.</p>
+    </div>
+    <div class="card" style="display:flex;flex-direction:column;gap:10px">
+      <h3>One set per harness</h3>
+      <p class="meta">Codex cannot run Claude models, so roles are keyed per harness like <code>stepModels</code>: <code>modelRoles.claude.deep</code>, <code>modelRoles.codex.deep</code>. The assistant fills the harness you use. A harness without roles keeps today's fallbacks.</p>
+    </div>
+  </div>
+  <div class="card" style="display:flex;flex-direction:column;gap:14px">
+    <div class="chain" aria-label="Resolution order">
+      <span class="s">Per-node or per-run pick</span><span class="arr">›</span>
+      <span class="s">Project or team policy</span><span class="arr">›</span>
+      <span class="s">The slot's own setting<br><span class="meta">stepModels, titleModel…</span></span><span class="arr">›</span>
+      <span class="s new">Its role in modelRoles</span><span class="arr">›</span>
+      <span class="s">Today's per-slot fallback</span>
+    </div>
+    <p class="meta">The assistant writes only <code>modelRoles</code> and clears nothing else. A slot someone set by hand keeps winning. Change the Everyday model once on the Models page and every job on that role follows.</p>
+  </div>
+  <div class="tbl-wrap"><table id="roletable">
+    <thead><tr><th>Role</th><th>Default pick (Claude / Copilot / Ollama)</th><th>Jobs that inherit it</th><th>Today's setting key</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+  <p class="meta">The role split follows <code>MODEL_PICK_POLICY</code> in <code>src/core/model-tiers.mjs</code>: judgement steps take the top tier, producers the strong tier, mechanical work the cheapest capable tier.</p>
+</section>
+
+<!-- ================= RE-RUN + BUILD NOTES ================= -->
+<section class="sec">
+  <div class="sec-head"><h2>Running it again, and how to build it</h2></div>
+  <div class="grid2">
+    <div class="card" style="display:flex;flex-direction:column;gap:12px">
+      <h3>Entry points</h3>
+      <ul class="list">
+        <li><b>First start.</b> A fresh install (the same test as <code>effectiveUiLevel</code>'s "fresh") opens the assistant before the welcome dialog. Its last screen is the welcome dialog's three doors, so onboarding continues where it does today.</li>
+        <li><b>Settings › General › Setup assistant.</b> A Simple-level row: "Network, models and limits in one pass" with <b>Run setup again</b>. Also in the account menu while a step is broken.</li>
+        <li><b>Fix-it links.</b> A "proxy needs login" stop, a Copilot "needs sign-in" pill or a model that fails its test opens the assistant on that one step.</li>
+        <li><b>CLI.</b> <code>worca setup</code> asks the same questions in the terminal for headless and Docker hosts; <code>worca setup --from acme-setup.json</code> applies a team setup and asks only for what it leaves out.</li>
+        <li><b>Team updates.</b> "Your team updated the recommended setup · Review" in the account menu opens it on Review.</li>
+      </ul>
+    </div>
+    <div class="card" style="display:flex;flex-direction:column;gap:12px">
+      <h3>On a re-run</h3>
+      <ul class="list">
+        <li>Opens pre-filled with the current values, never with detection results that would undo them.</li>
+        <li>Rows that differ from what is saved get a "Changed" chip; Review lists only those, and Apply writes only those.</li>
+        <li>A slot set by hand that disagrees with its new role shows once: "Implement uses gpt-5.5, set on the Models page. Keep it / Use Everyday coding".</li>
+        <li>Skipping a step keeps its saved values. Nothing is cleared unless the person turns it off.</li>
+      </ul>
+    </div>
+    <div class="card" style="display:flex;flex-direction:column;gap:12px">
+      <h3>Server work</h3>
+      <ul class="list">
+        <li><b>GET /api/setup/detect</b>: the machine checks in one call (preflight already has most of them).</li>
+        <li><b>POST /api/setup/apply</b>: validates every patch first, then writes in one <code>persistSettings</code>, then runs the side effects in order and streams each result over the WebSocket. A failed step leaves earlier writes in place and says which one to retry.</li>
+        <li><b>Proxy without a restart</b>: see the section below.</li>
+        <li><b>Team setup</b>: <code>setup.json</code> read from a link, a file, <code>~/.worca-cc/team-setup.json</code> or a policy home, plus an editor on the Team policy page.</li>
+        <li><b>modelRoles.&lt;engine&gt;.{deep, everyday, quick}</b>, keyed per engine like <code>stepModels</code>, in <code>SETTINGS_POST_KEYS</code>, one resolver used by step models, helper jobs, Chat and naming, and a Roles card at the top of the Models page.</li>
+      </ul>
+    </div>
+    <div class="card" style="display:flex;flex-direction:column;gap:12px">
+      <h3>UI rules it follows</h3>
+      <ul class="list">
+        <li>Uses the house dialog anatomy (<code>.dlg-head</code> / <code>.dlg-body</code> / <code>.dlg-foot</code>), 32px fields, divided rows, sentence case.</li>
+        <li>Works at every interface level: it writes Expert-only settings, but never asks the person to switch mode to answer.</li>
+        <li>Never stores a proxy password; the Copilot notice is shown in full and acknowledged, exactly as on the Providers page.</li>
+        <li>The Getting started tile "Connect Claude Code" ticks from the same detection, so the two never disagree.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ================= LIVE PROXY ================= -->
+<section class="sec">
+  <div class="sec-head">
+    <h2>Changing the proxy without a restart</h2>
+    <p class="meta">This is possible, and most of the work already exists. Agents, git, MCP servers and plugins never see the corporate proxy. They are handed <code>HTTPS_PROXY=http://127.0.0.1:&lt;port&gt;</code>, Worca's local proxy, and only that proxy talks to the corporate one. As long as the local address stays the same, everything behind it can change while children keep running.</p>
+  </div>
+  <div class="card" style="display:flex;flex-direction:column;gap:14px">
+    <div class="chain" aria-label="Where a request goes">
+      <span class="s">Agent, git, MCP server</span><span class="arr">›</span>
+      <span class="s">127.0.0.1:49731<br><span class="meta">stays the same</span></span><span class="arr">›</span>
+      <span class="s new">Connector<br><span class="meta">swapped in place</span></span><span class="arr">›</span>
+      <span class="s">proxy.acme.example:8080</span>
+    </div>
+    <p class="meta">The saved login already works this way: <code>reloadLogin()</code> in <code>src/core/egress-policy.mjs</code> watches <code>proxy-login.json</code> and calls <code>connector.useLogin()</code> without a restart. The rest of the settings can follow the same path.</p>
+  </div>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Change</th><th>How it applies live</th><th>Size</th></tr></thead>
+    <tbody>
+      <tr><td>Host, port, login mode</td><td><code>createProxy()</code> holds its connector as a constant. Make it replaceable (<code>server.useConnector(next)</code>): new connections use the new connector, and open tunnels finish on the old one, which closes once it is idle.</td><td>Small</td></tr>
+      <tr><td>Testing before switching</td><td><code>checkUpstream()</code> already builds a connector of its own for the values it is given. Test what is on screen, switch only after it passes. This replaces the current refusal "the saved proxy is not in use yet: restart Worca, then Test". The hash still goes only to a host the person typed and tested.</td><td>Small</td></tr>
+      <tr><td>Direct hosts, timeouts</td><td>The local proxy decides direct or upstream per request through <code>connector.route()</code>, so a new list applies at once, even for children started earlier. Timeouts move into the same swappable object.</td><td>Small</td></tr>
+      <tr><td>Turning the proxy on when it was off</td><td>Start the local proxy at runtime, write its address into <code>process.env</code> for every later spawn, and re-install Worca's own fetch dispatcher (<code>useEnvProxy()</code> already returns a <code>restore</code> for that). Agents that are already running keep their direct route until their next step.</td><td>Medium</td></tr>
+      <tr><td>Optional: keep the local proxy always on</td><td>Today the local proxy runs only with the proxy turned on (<code>startEgressPolicy</code> returns <code>off</code> otherwise, and children get the shell's own <code>HTTPS_PROXY</code> or none). Starting it on every boot with no connector (everything direct) would make "turning it on" a plain swap, even for agents already running. The cost: one loopback hop for all traffic, and a shell <code>HTTPS_PROXY</code> without a login would have to be chained through it.</td><td>Medium</td></tr>
+      <tr><td>Turning it off</td><td>Swap in no connector: the local proxy sends everything direct, and children keep working through the same address.</td><td>Small</td></tr>
+      <tr><td>Other Worca processes</td><td>A <code>worca run</code> started from a shell has its own local proxy. Watch <code>networkProxy</code> in <code>settings.json</code> the way the login file is watched today, and every running Worca switches within a few seconds.</td><td>Small</td></tr>
+      <tr><td>Fixed local port</td><td>The one change that cannot apply live, because children were handed the old port. Listen on the new port too and drop the old one at the next start. The assistant says "Applies at the next start" on that one field.</td><td>Small</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ================= TEAM SETUP ================= -->
+<section class="sec">
+  <div class="sec-head">
+    <h2>Team setup</h2>
+    <p class="meta">A lead publishes what should be the same for everyone: which models do which work, spend limits and conventions. Network and model access stay personal, because people on one team reach the internet and pay for models in different ways. Teammates see the team's values marked Team in the assistant.</p>
+  </div>
+  <div class="tbl-wrap"><table>
+    <thead><tr><th>Area</th><th>Recorded</th><th>Kind</th></tr></thead>
+    <tbody>
+      <tr><td>Model roles</td><td><code>modelRoles.&lt;harness&gt;.{deep, everyday, quick}</code> as an <b>upstream model</b> and effort (<code>claude-opus-5-5</code> · high), never a catalog entry. Each person's Worca maps it to whichever of their sources serves that model: the Claude sign-in, Copilot, an API key or OpenRouter. When none does, the assistant says so and keeps that person's own pick.</td><td>soft</td></tr>
+      <tr><td>Harness</td><td><code>runEngine</code>, <code>hideBuiltinModels</code></td><td>default</td></tr>
+      <tr><td>How you work</td><td><code>uiLevel</code>, <code>autoGeneratePrDescription</code>, <code>smartNaming</code> (title and branch suggestions, the branch <code>pattern</code> and <code>types</code>)</td><td>default</td></tr>
+      <tr><td>Spend limits</td><td><code>pipelineCostLimitUsd</code>, <code>totalCostLimitUsd</code>, <code>costLimitResetPeriod</code>. Read from <code>policy.json</code> when the setup sits in a policy home, so they are never stated twice.</td><td>soft</td></tr>
+      <tr><td>Team conventions (optional)</td><td><code>tagDimensions</code> and <code>enforceTags</code> (cost tags), <code>sync</code> (sync before run), <code>networkWait</code>, enabled feature <code>flags</code></td><td>default</td></tr>
+      <tr><td>About the file</td><td>Name, schema version, who published it and when</td><td>—</td></tr>
+      <tr><td>Never recorded</td><td>Network and proxy settings; model sources, provider addresses, plan types and keys; tokens and passwords; the Copilot notice acceptance; machine paths, editor and terminal commands, ports; theme, alerts, Getting started progress</td><td>—</td></tr>
+    </tbody>
+  </table></div>
+  <div class="grid2">
+    <div class="card" style="display:flex;flex-direction:column;gap:12px">
+      <h3>Where it comes from</h3>
+      <ul class="list">
+        <li><b>A link or a file</b> on the first screen: "Start from a team setup". Works before any project is added.</li>
+        <li><b>A file put there by IT</b>: <code>~/.worca-cc/team-setup.json</code>, or <code>WORCA_TEAM_SETUP</code> pointing at one. Found during the machine check.</li>
+        <li><b>A team policy home</b>: a new <b>Setup</b> field group in <code>policy.json</code> on the <code>worca-policy</code> branch, using the policy registry's existing kinds and validator. Roles there apply to runs on that repository directly. For the rest, adding the project offers "Your team has a recommended setup" and opens the assistant on the rows that differ.</li>
+        <li><b>CLI</b>: <code>worca setup --from &lt;url|file&gt;</code>, for Docker images and provisioning scripts.</li>
+      </ul>
+    </div>
+    <div class="card" style="display:flex;flex-direction:column;gap:12px">
+      <h3>Editing it</h3>
+      <ul class="list">
+        <li>The Team policy editor gains a <b>Setup</b> tab from its one-tab-per-group rule, with a kind per value. Publishing is the normal policy commit, so authority stays push permission on <code>worca-policy</code>. The standalone file is the same document limited to the Setup and cost fields.</li>
+        <li>At the end of the assistant, <b>Share as team setup</b> turns your answers into a draft: network and model sources left out, your role picks turned into upstream model names. Save it as a file, or open it in the policy editor.</li>
+        <li>Model roles also join the policy's model section, next to allowed models and step defaults, so a team can change Everyday coding for everyone in one edit.</li>
+      </ul>
+    </div>
+    <div class="card" style="display:flex;flex-direction:column;gap:12px">
+      <h3>When the team changes it</h3>
+      <ul class="list">
+        <li>Worca reads policy on start and every hour, as today. A changed setup shows one line in the account menu: "Your team updated the recommended setup · Review".</li>
+        <li>Review opens the assistant on Review, listing only the changed rows, each marked Team. Nothing is applied until you press Apply.</li>
+        <li>A value you changed yourself stays yours. A <code>soft</code> value you moved away from is listed as a deviation, as allowed models are today.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ================= DECISIONS ================= -->
+<section class="sec">
+  <div class="sec-head"><h2>Decided</h2></div>
+  <div class="card" style="padding-block:8px">
+    <div class="q"><div class="t">Model roles</div><div class="d"><code>modelRoles.&lt;harness&gt;.{deep, everyday, quick}</code> becomes the layer every model slot falls back to. The assistant writes only roles.</div></div>
+    <div class="q"><div class="t">The proxy changes without a restart</div><div class="d">A replaceable connector behind a fixed local address, tested before it is swapped in. Only a new fixed local port waits for the next start.</div></div>
+    <div class="q"><div class="t">Corporate proxy leaves Labs with this feature</div><div class="d">The <code>corporateProxy</code> flag becomes <code>networkProxy.enabled</code>. Existing installs with the flag on migrate to <code>enabled: true</code>. The Network proxy card moves to Simple level, with its timeouts and local port under "More".</div></div>
+    <div class="q"><div class="t">Team setup ships in the first version</div><div class="d">Read from a link, a file, an IT-placed file or a policy home. Edited on the Team policy page. Created from the assistant with Share as team setup.</div></div>
+  </div>
+</section>
+
+</div>
+
+<script>
+(function(){
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+const ICON = {
+  claude:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10l3 2-3 2M12 15h5"/></svg>',
+  copilot:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 0 0-2.8 17.5c.4.1.6-.2.6-.4v-1.6c-2.5.5-3-1.1-3-1.1-.4-1-1-1.3-1-1.3-.8-.6.1-.6.1-.6.9.1 1.4 1 1.4 1 .8 1.4 2.1 1 2.6.8.1-.6.3-1 .6-1.2-2-.2-4.1-1-4.1-4.5 0-1 .4-1.8 1-2.4-.1-.2-.4-1.2.1-2.4 0 0 .8-.3 2.5.9a8.6 8.6 0 0 1 4.6 0c1.7-1.2 2.5-.9 2.5-.9.5 1.2.2 2.2.1 2.4.6.6 1 1.4 1 2.4 0 3.5-2.1 4.3-4.1 4.5.3.3.6.8.6 1.6v2.4c0 .2.2.5.6.4A9 9 0 0 0 12 3z"/></svg>',
+  key:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M11 12l8-8M16 7l2 2M14 9l2 2"/></svg>',
+  server:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="7" rx="1.5"/><rect x="4" y="13" width="16" height="7" rx="1.5"/><path d="M8 7.5h.01M8 16.5h.01"/></svg>',
+  route:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="6" r="2.5"/><path d="M8.5 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.5"/></svg>',
+  globe:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg>',
+  shield:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.2-3 7.8-7 9-4-1.2-7-4.8-7-9V6z"/></svg>',
+};
+
+/* ---------- catalogue of models per source ---------- */
+const MODELS = {
+  claude:  [['claude-opus-5-5','Claude Opus 5.5','$25 / Mtok out'],['claude-sonnet-5-5','Claude Sonnet 5.5','$15 / Mtok out'],['claude-haiku-5-5','Claude Haiku 5.5','$5 / Mtok out']],
+  copilot: [['copilot-claude-opus-5-5','Claude Opus 5.5 · Copilot','Premium ×3'],['copilot-claude-sonnet-5-5','Claude Sonnet 5.5 · Copilot','Premium ×1'],['copilot-gpt-5.5','GPT-5.5 · Copilot','Premium ×1'],['copilot-gpt-5-mini','GPT-5 mini · Copilot','Included']],
+  apikey:  [['claude-opus-5-5','Claude Opus 5.5 · API key','$25 / Mtok out'],['claude-sonnet-5-5','Claude Sonnet 5.5 · API key','$15 / Mtok out'],['claude-haiku-5-5','Claude Haiku 5.5 · API key','$5 / Mtok out']],
+  openai:  [['ollama-qwen3-coder','qwen3-coder:30b · Ollama','Free · local'],['ollama-gpt-oss','gpt-oss:20b · Ollama','Free · local'],['ollama-llama3.2','llama3.2:3b · Ollama','Free · local']],
+  openrouter: [['openrouter-claude-sonnet-5-5','Claude Sonnet 5.5 · OpenRouter','$15 / Mtok out'],['openrouter-deepseek-v4','DeepSeek V4 · OpenRouter','$1.10 / Mtok out']],
+};
+const ROLES = [
+  { id:'deep', t:'Deep thinking', d:'Plans and reviews. Worth the strongest model.', jobs:['Plan','Plan review','Refine plan','Review','Bug root cause'], effort:'high',
+    pick:{ claude:'claude-opus-5-5', copilot:'copilot-claude-opus-5-5', apikey:'claude-opus-5-5', openai:'ollama-qwen3-coder', openrouter:'openrouter-claude-sonnet-5-5' } },
+  { id:'everyday', t:'Everyday coding', d:'Writes the code and answers in Chat.', jobs:['Implement','Bug fix','Chat','Agent generation','Requirements interview'], effort:'medium',
+    pick:{ claude:'claude-sonnet-5-5', copilot:'copilot-claude-sonnet-5-5', apikey:'claude-sonnet-5-5', openai:'ollama-qwen3-coder', openrouter:'openrouter-claude-sonnet-5-5' } },
+  { id:'quick', t:'Quick jobs', d:'Short, frequent helper calls. Cheap and fast.', jobs:['Run titles','Branch names','Auto classifier','Overview','PR description','Command summaries','Memory defragment','Workspace scan'], effort:'low',
+    pick:{ claude:'claude-haiku-5-5', copilot:'copilot-gpt-5-mini', apikey:'claude-haiku-5-5', openai:'ollama-llama3.2', openrouter:'openrouter-deepseek-v4' } },
+];
+const SOURCES = [
+  { id:'claude', t:'Claude Code sign-in', d:'Your Claude subscription, through the claude CLI.', ic:'claude' },
+  { id:'copilot', t:'GitHub Copilot', d:'Your Copilot plan. Billed in premium requests.', ic:'copilot' },
+  { id:'apikey', t:'Anthropic API key', d:'Pay per token on console.anthropic.com.', ic:'key' },
+  { id:'openai', t:'OpenAI-compatible server', d:'OpenAI, Azure, or a local Ollama, LM Studio or vLLM.', ic:'server' },
+  { id:'openrouter', t:'OpenRouter', d:'Many models behind one key.', ic:'route' },
+];
+
+/* ---------- scenarios: what detection finds ---------- */
+const SCN = {
+  corp: { detect:{ claude:['warn','Claude Code 2.1.310 installed','Not signed in. Copilot can stand in for it.'], git:['ok','git 2.47',''], proxy:['warn','Corporate proxy in HTTPS_PROXY','proxy.acme.example:8080 · login needed'], harness:['no','No other harness CLI','Codex, Copilot CLI, Cursor, Goose: not found'], ollama:['no','No local model server',''] },
+    net:'proxy', proxy:{host:'proxy.acme.example',port:'8080',auth:'auto',domain:'ACME',user:'jdoe',pw:'',noProxy:'localhost, .acme.internal, git.acme.internal'}, sources:['copilot'], level:'simple', run:'10', month:'300' },
+  personal: { detect:{ claude:['ok','Claude Code 2.1.310, signed in','Claude Max · you@example.com'], git:['ok','git 2.47',''], proxy:['ok','Direct internet','api.anthropic.com answered in 84 ms'], harness:['ok','Codex 0.98 installed','Signed in with ChatGPT'], ollama:['no','No local model server',''] },
+    net:'direct', proxy:{host:'',port:'',auth:'auto',domain:'',user:'',pw:'',noProxy:''}, sources:['claude'], level:'advanced', run:'5', month:'' },
+  local: { detect:{ claude:['warn','Claude Code 2.1.310 installed','Not signed in. Local models can stand in for it.'], git:['ok','git 2.47',''], proxy:['ok','Direct internet',''], harness:['no','No other harness CLI',''], ollama:['ok','Ollama on localhost:11434','3 models pulled'] },
+    net:'direct', proxy:{host:'',port:'',auth:'auto',domain:'',user:'',pw:'',noProxy:''}, sources:['openai'], level:'simple', run:'', month:'' },
+};
+
+let S;
+function reset(scn, entry){
+  const c = SCN[scn];
+  S = { scn, entry, step:0, visited:new Set([0]),
+    net:c.net, proxy:{...c.proxy}, proxyTested:false, proxyTesting:false, more:false,
+    sources:new Set(c.sources), cp:{ ack:entry==='rerun', account:'business', state: entry==='rerun' ? 'in' : 'out' },
+    apikey:'', oaiUrl: scn==='local' ? 'http://localhost:11434/v1' : '', oaiKey:'', orKey:'',
+    roles:{}, efforts:{}, showAll:false,
+    level:c.level, run:c.run, month:c.month, period:'monthly', prAI:true, naming:true,
+    applyIdx:-1, applied:false, team: scn==='corp' };
+  if (entry === 'rerun') S.proxyTested = c.net === 'proxy';
+  pickDefaults();
+}
+function primarySource(){ for (const id of ['copilot','claude','apikey','openrouter','openai']) if (S.sources.has(id)) return id; return 'claude'; }
+function availableModels(){ const out=[]; for (const s of SOURCES) if (S.sources.has(s.id)) for (const m of MODELS[s.id]) out.push({src:s.id,id:m[0],label:m[1],price:m[2]}); return out; }
+/* The team setup names upstream models; each person's sources decide which catalog entry serves them. */
+const TEAM_ROLES = { deep:'claude-opus-5-5', everyday:'claude-sonnet-5-5', quick:'claude-haiku-5-5' };
+const TEAM_LABEL = { deep:'Claude Opus 5.5', everyday:'Claude Sonnet 5.5', quick:'Claude Haiku 5.5' };
+function pickDefaults(){
+  const p = primarySource(); const avail = availableModels();
+  S.teamMiss = {};
+  for (const r of ROLES){
+    if (S.team){
+      const u = TEAM_ROLES[r.id];
+      const hit = avail.find(m => m.id === u || m.id.endsWith('-' + u));
+      if (hit){ S.roles[r.id] = hit.id; continue; }
+      S.teamMiss[r.id] = true;
+    }
+    if (!avail.some(m => m.id === S.roles[r.id])) S.roles[r.id] = avail.length ? (r.pick[p] || avail[0].id) : '';
+    if (!S.efforts[r.id]) S.efforts[r.id] = S.sources.has('openai') && S.sources.size===1 ? 'medium' : r.effort;
+  }
+}
+const labelOf = (id) => { for (const s in MODELS) for (const m of MODELS[s]) if (m[0]===id) return m[1]; return id || 'None'; };
+
+/* ---------- steps ---------- */
+const STEPS = [
+  { id:'check', name:'Check this machine' },
+  { id:'net', name:'Network' },
+  { id:'access', name:'Model access' },
+  { id:'models', name:'Models' },
+  { id:'style', name:'How you work' },
+  { id:'review', name:'Review' },
+  { id:'apply', name:'Apply' },
+];
+
+function canNext(){
+  const st = STEPS[S.step].id;
+  if (st==='net' && S.net==='proxy') return S.proxyTested;
+  if (st==='access'){
+    if (!S.sources.size) return false;
+    if (S.sources.has('copilot') && S.cp.state!=='in') return false;
+    if (S.sources.has('apikey') && !S.apikey) return false;
+    if (S.sources.has('openai') && !S.oaiUrl) return false;
+    if (S.sources.has('openrouter') && !S.orKey) return false;
+    if (S.sources.has('claude') && SCN[S.scn].detect.claude[0]!=='ok') return false;
+  }
+  return true;
+}
+function blockReason(){
+  const st = STEPS[S.step].id;
+  if (st==='net' && S.net==='proxy' && !S.proxyTested) return 'Test the connection to continue';
+  if (st==='access'){
+    if (!S.sources.size) return 'Pick at least one source';
+    if (S.sources.has('copilot') && S.cp.state!=='in') return 'Sign in to GitHub Copilot to continue';
+    if (S.sources.has('apikey') && !S.apikey) return 'Paste the API key to continue';
+    if (S.sources.has('openai') && !S.oaiUrl) return 'Enter the server address';
+    if (S.sources.has('openrouter') && !S.orKey) return 'Paste the OpenRouter key';
+    if (S.sources.has('claude') && SCN[S.scn].detect.claude[0]!=='ok') return 'Run claude /login in a terminal first';
+  }
+  return '';
+}
+
+/* ---------- writes (the side panel) ---------- */
+function writes(){
+  const w = [];
+  const add = (key, val, clicks) => w.push({key, val, clicks});
+  if (S.team) add('teamSetup', 'ACME Engineering · followed for updates', 0);
+  if (S.step >= 1 || S.visited.has(1)) {
+    if (S.net==='proxy'){
+      add('networkProxy.enabled','true (no Labs visit, no Advanced switch)',5);
+      add('networkProxy.upstream', `http://${S.proxy.host||'…'}:${S.proxy.port||'…'}`,2);
+      add('networkProxy.auth', S.proxy.auth,1);
+      if (S.proxy.noProxy) add('networkProxy.noProxy', S.proxy.noProxy,1);
+      if (S.proxy.user) add('proxy-login.json', `${S.proxy.domain}\\${S.proxy.user} · NT hash, no password`,3);
+      add('Restart', 'none: the local proxy restarts in place',3);
+    } else add('networkProxy','unchanged · direct',0);
+  }
+  if (S.visited.has(2)){
+    if (S.sources.has('copilot')){ add('providers.copilot.githubToken','gho_…•••• (device sign-in)',6); add('providers.copilot.accountType',S.cp.account,1); add('providers.copilot.acknowledgedTerms','2026-10-25',1); }
+    if (S.sources.has('apikey')) add('providers.anthropic.apiKey','sk-ant-…•••• (masked)',4);
+    if (S.sources.has('openai')) add('providers.openai.baseUrl', S.oaiUrl||'…',4);
+    if (S.sources.has('openrouter')) add('providers.openai.baseUrl','https://openrouter.ai/api/v1',2); add('providers.openai.apiKey','sk-or-…•••• (masked)',2);
+    if (S.sources.has('claude')) add('Claude Code sign-in','use the CLI login',0);
+  }
+  if (S.visited.has(3)){
+    const avail = availableModels().filter(m => m.src!=='claude');
+    const used = new Set(Object.values(S.roles));
+    const imp = avail.filter(m => used.has(m.id));
+    if (imp.length) add('models (import)', imp.map(m=>m.label).join(', '), 3+imp.length);
+    for (const r of ROLES) add(`modelRoles.claude.${r.id}`, `${labelOf(S.roles[r.id])} · ${S.efforts[r.id]}`, 2*r.jobs.length);
+    if (S.scn==='personal') add('runEngine','claude (Codex also offered per run)',1);
+  }
+  if (S.visited.has(4)){
+    add('uiLevel', S.level, 2);
+    if (S.run) add('pipelineCostLimitUsd', `$${S.run}`, 2);
+    if (S.month) add('totalCostLimitUsd', `$${S.month} · ${S.period}`, 3);
+    add('autoGeneratePrDescription', S.prAI ? 'on':'off', 2);
+    add('smartNaming.suggestTitle', S.naming ? 'on':'off', 3);
+  }
+  return w;
+}
+let lastKeys = new Set();
+function paintSide(){
+  const w = writes();
+  const clicks = w.reduce((a,x)=>a+x.clicks,0);
+  $('#clicks').textContent = clicks;
+  const box = $('#writes');
+  if (!w.length){ box.innerHTML = '<div class="empty">Nothing yet. Answers appear here as you go.</div>'; lastKeys = new Set(); return; }
+  box.innerHTML = w.map(x => `<div class="w${lastKeys.size && !lastKeys.has(x.key+x.val) ? ' new':''}"><span class="key">${esc(x.key)}</span><span class="val">${esc(x.val)}</span></div>`).join('');
+  lastKeys = new Set(w.map(x=>x.key+x.val));
+}
+
+/* ---------- rendering ---------- */
+function rail(){
+  const r = $('#rail');
+  r.innerHTML = `<div class="brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="5" cy="12" r="2.2"/><circle cx="12" cy="12" r="2.2"/><circle cx="19" cy="12" r="2.2"/><path d="M7.2 12h2.6M14.2 12h2.6"/></svg>Set up Worca</div>` +
+    STEPS.map((s,i) => {
+      const cls = i===S.step ? 'cur' : (S.visited.has(i) && i<S.step) || (S.applied && i<6) ? 'done' : '';
+      return `<button type="button" class="rstep ${cls}" data-go="${i}" ${cls==='done'&&!S.applied?'':'tabindex="-1"'}><span class="rdot"></span><span>${s.name}</span></button>`;
+    }).join('') + `<div class="foot">${S.entry==='rerun' ? 'Opened from Settings › General' : 'Every step can be skipped. Worca works with the defaults.'}</div>`;
+}
+function head(){
+  const st = STEPS[S.step];
+  const H = {
+    check:['Let’s set up Worca', S.entry==='rerun' ? 'Your current setup is loaded. Change what you need; the rest stays as it is.' : 'Worca checked this machine first, so most answers are already filled in.'],
+    net:['How does this machine reach the internet?','Agents, git and model calls all go through this.'],
+    access:['Where should Worca get its models?','Pick one or more. You can add others later on the Providers page.'],
+    models:['Which models should do the work?','Three choices cover every job. Each job can still be changed on its own later.'],
+    style:['How do you want to work?','You can change all of this later in Settings.'],
+    review:['Check and apply', S.entry==='rerun' ? 'Only the rows marked Changed will be written.' : 'Worca will save these settings, sign in, import the models and test each one.'],
+    apply:[S.applied ? 'Worca is ready' : 'Setting up Worca…', S.applied ? 'Everything below was set up and tested.' : 'This takes about 20 seconds.'],
+  }[st.id];
+  $('#head').innerHTML = `<span class="step-of">${S.step<6 ? `Step ${S.step+1} of 6` : ''}</span><h3>${H[0]}</h3><p>${H[1]}</p>`;
+}
+const TB = () => S.team ? ' <span class="badge" title="From the ACME Engineering team setup">Team</span>' : '';
+function chk(sym, what, det){ const g = {ok:'✓',warn:'?',no:'–',spin:''}[sym]; return `<div class="check"><span class="sym ${sym}">${g}</span><div><div class="what">${esc(what)}</div>${det?`<div class="det">${esc(det)}</div>`:''}</div><span></span></div>`; }
+
+function body(){
+  const st = STEPS[S.step].id; const b = $('#body'); const D = SCN[S.scn].detect;
+  if (st==='check'){
+    const teamRow = S.team
+      ? `<div class="check"><span class="sym ok">✓</span><div><div class="what">Team setup: ACME Engineering</div><div class="det">${S.scn==='corp' ? 'Found in ~/.worca-cc/team-setup.json, placed by IT' : 'From the link you pasted'} · model roles, limits and naming conventions</div></div><button type="button" class="btn btn-sm btn-quiet" id="teamOff">Don’t use</button></div>`
+      : `<div class="check"><span class="sym no">–</span><div><div class="what">No team setup</div><div class="det">Your team may have one. Paste its link or choose the file.</div></div><button type="button" class="btn btn-sm" id="teamOn">Use a team setup…</button></div>`;
+    b.innerHTML = `<div class="checks">${teamRow}${['claude','git','proxy','harness','ollama'].map(k=>chk(...D[k])).join('')}</div>
+      <div class="info">${S.team ? 'Your team’s model roles and limits are filled in and marked Team. Network and model sources are yours to set up in the next two steps.' : S.scn==='corp' ? 'A corporate proxy and no Claude sign-in were found. The next steps set up the proxy and offer GitHub Copilot as the model source.' : S.scn==='local' ? 'Ollama is running here. The model step will offer its models.' : 'Claude Code is signed in and the network is direct, so two steps will be one click each.'}</div>`;
+    $('#teamOff') && $('#teamOff').addEventListener('click', ()=>{ S.team=false; render(); });
+    $('#teamOn') && $('#teamOn').addEventListener('click', ()=>{ S.team=true; S.run=SCN.corp.run; S.month=SCN.corp.month; S.roles={}; pickDefaults(); render(); });
+  }
+  if (st==='net'){
+    const p = S.proxy;
+    b.innerHTML = `<div class="choices">
+      ${choice('net','direct', S.net==='direct', ICON.globe, 'Direct', 'No proxy, or one the operating system handles without a login.', 'radio')}
+      ${choice('net','proxy', S.net==='proxy', ICON.shield, 'Through a corporate proxy', D.proxy[0]==='warn' ? 'Found in HTTPS_PROXY: proxy.acme.example:8080' : 'A proxy with a fixed host and port that asks for a login.', 'radio', D.proxy[0]==='warn' ? '<span class="badge amber">Detected</span>':'')}
+    </div>
+    ${S.net==='proxy' ? `<div class="fields">
+      <div class="field"><label for="pHost">Proxy</label><div class="row2"><input class="input" id="pHost" value="${esc(p.host)}" placeholder="proxy.example.com"><input class="input" id="pPort" value="${esc(p.port)}" placeholder="8080" inputmode="numeric" aria-label="Port"></div></div>
+      <div class="field"><label for="pAuth">Login</label><select class="select" id="pAuth"><option value="auto"${p.auth==='auto'?' selected':''}>Windows login (NTLMv2), recommended</option><option value="basic"${p.auth==='basic'?' selected':''}>Basic</option><option value="digest"${p.auth==='digest'?' selected':''}>Digest</option><option value="none"${p.auth==='none'?' selected':''}>No login</option></select></div>
+      ${p.auth!=='none' ? `<div class="field"><label for="pUser">Account</label><div class="row2" style="grid-template-columns:90px minmax(0,1fr)"><input class="input" id="pDomain" value="${esc(p.domain)}" placeholder="DOMAIN" aria-label="Domain"><input class="input" id="pUser" value="${esc(p.user)}" placeholder="user name"></div></div>
+      <div class="field"><label for="pPw">Password</label><input class="input" id="pPw" type="password" value="${esc(p.pw)}" placeholder="${S.entry==='rerun' ? 'Saved login in use · type to replace' : 'Your Windows password'}" autocomplete="off"></div>
+      <div class="hint" style="margin:-4px 0 0 162px">Worca keeps only a hash of it in a file only you can read. It never goes into settings.json.</div>` : ''}
+      <div class="field"><label for="pNo">Go direct to</label><input class="input" id="pNo" value="${esc(p.noProxy)}" placeholder="localhost, .corp.internal"></div>
+      <div><button type="button" class="link" id="more">${S.more?'Hide':'More'}: timeouts and local proxy port</button></div>
+      ${S.more ? `<div class="field"><label for="pTo">Timeouts</label><input class="input" id="pTo" value="Connect 30 s · login 15 s · idle 10 min"></div><div class="field"><label for="pFix">Local proxy port</label><input class="input" id="pFix" placeholder="Pick a free port each start"></div>` : ''}
+      <div class="checks" style="border-top:1px solid var(--line);padding-top:4px">
+        ${S.proxyTesting ? chk('spin','Testing…','Logging in to the proxy and reaching the model and git hosts') :
+          S.proxyTested ? chk('ok','Proxy login accepted', `${p.domain}\\${p.user} · NTLMv2 inside Negotiate`)+chk('ok','api.githubcopilot.com reachable','212 ms')+chk('ok','github.com reachable','githubusercontent.com and api.github.com too')+chk('ok','Hosts in "go direct" bypass the proxy','git.acme.internal answered without it') :
+          `<div style="padding:10px 0;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><button type="button" class="btn" id="test">Test connection</button><span class="meta">Tries the login once, so a wrong password costs one attempt, not one per restart.</span></div>`}
+      </div>
+    </div>` : ''}`;
+    bindChoice('net', (v) => { S.net = v; });
+    const map = {pHost:'host',pPort:'port',pAuth:'auth',pDomain:'domain',pUser:'user',pPw:'pw',pNo:'noProxy'};
+    for (const id in map){ const el = $('#'+id); if (el) el.addEventListener(el.tagName==='SELECT'?'change':'input', () => { S.proxy[map[id]] = el.value; S.proxyTested=false; if (el.tagName==='SELECT') render(); else { paintSide(); foot(); } }); }
+    $('#more') && $('#more').addEventListener('click', () => { S.more=!S.more; render(); });
+    $('#test') && $('#test').addEventListener('click', () => { S.proxyTesting=true; render(); setTimeout(()=>{ S.proxyTesting=false; S.proxyTested=true; render(); }, 1300); });
+  }
+  if (st==='access'){
+    b.innerHTML = `<div class="choices">${SOURCES.map(s => {
+      const on = S.sources.has(s.id);
+      let tag = '';
+      if (s.id==='claude') tag = D.claude[0]==='ok' ? '<span class="badge green">Signed in</span>' : '<span class="badge">Not signed in</span>';
+      if (s.id==='openai' && D.ollama[0]==='ok') tag = '<span class="badge green">Ollama found</span>';
+      if (s.id==='copilot' && S.cp.state==='in') tag = '<span class="badge green">Connected</span>';      return choice('src', s.id, on, ICON[s.ic], s.t, s.d, 'checkbox', tag) + (on ? nest(s.id) : '');
+    }).join('')}</div>`;
+    bindChoice('src', (v, el) => { el.checked ? S.sources.add(v) : S.sources.delete(v); pickDefaults(); });
+    bindAccess();
+  }
+  if (st==='models'){
+    const avail = availableModels();
+    b.innerHTML = `<div class="roles">${ROLES.map(r => `<div class="role">
+      <div class="rl"><div class="t">${r.t}${TB()}</div><div class="d">${S.team ? (S.teamMiss[r.id] ? `Team picks ${TEAM_LABEL[r.id]}, which none of your sources offer. Using the closest one you have.` : `Team picks ${TEAM_LABEL[r.id]}, served here by your ${esc(SOURCES.find(s=>s.id===availableModels().find(m=>m.id===S.roles[r.id])?.src)?.t || 'source')}.`) : r.d}</div><div class="jobs">${(S.showAll ? r.jobs : r.jobs.slice(0,3)).map(j=>`<span class="badge">${j}</span>`).join('')}${!S.showAll && r.jobs.length>3 ? `<span class="badge">+${r.jobs.length-3} more</span>`:''}</div></div>
+      <div class="select-wrap"><select class="select" id="role-${r.id}" aria-label="${r.t} model">${avail.map(m=>`<option value="${m.id}"${S.roles[r.id]===m.id?' selected':''}>${esc(m.label)} · ${esc(m.price)}</option>`).join('')}</select></div>
+      <select class="select" id="eff-${r.id}" aria-label="${r.t} effort">${['low','medium','high','xhigh'].map(e=>`<option${S.efforts[r.id]===e?' selected':''}>${e}</option>`).join('')}</select>
+    </div>`).join('')}</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center"><button type="button" class="link" id="showall">${S.showAll ? 'Show fewer jobs' : 'Show every job these cover'}</button><span class="meta">Recommended picks follow Worca’s model policy: strongest for judgement, cheapest capable for helpers.</span></div>
+    ${S.sources.has('copilot') ? `<div class="info">Agents run in Claude Code; Worca’s built-in bridge carries the calls to Copilot. ${S.roles.deep==='copilot-claude-opus-5-5' ? 'Opus counts 3 premium requests per call; Sonnet or GPT-5.5 on Deep thinking stretches your quota further.' : ''}</div>` : ''}
+    ${S.scn==='personal' ? `<div class="info">Codex is installed too. Runs use Claude Code unless you pick Codex for a run on New pipeline.</div>` : ''}
+    ${S.sources.has('openai') && S.sources.size===1 ? `<div class="note"><b>Small local models struggle with planning.</b><span>Deep thinking works best on a strong model. You can add a cloud source later and change only this row.</span></div>` : ''}`;
+    for (const r of ROLES){ $('#role-'+r.id).addEventListener('change', (e)=>{ S.roles[r.id]=e.target.value; render(); }); $('#eff-'+r.id).addEventListener('change',(e)=>{ S.efforts[r.id]=e.target.value; paintSide(); }); }
+    $('#showall').addEventListener('click', ()=>{ S.showAll=!S.showAll; render(); });
+  }
+  if (st==='style'){
+    const L = [['simple','Simple','The core loop. Nothing here can break a run.'],['advanced','Advanced','Branches, guardrails, per-agent models, the live log.'],['expert','Expert','Everything: authoring, routing, team setup.']];
+    b.innerHTML = `<div class="fields"><div style="font-weight:500">Interface</div><div class="levels">${L.map(l=>`<button type="button" class="lv" data-lv="${l[0]}" aria-pressed="${S.level===l[0]}"><span class="t">${l[1]}</span><span class="d">${l[2]}</span></button>`).join('')}</div></div>
+      <div class="fields"><div style="font-weight:500">Spend limits${TB()}</div>${S.team ? '<div class="meta">Your team expects at most $10 per run. Going higher asks once and is recorded in team metrics.</div>' : ''}
+        <div class="field"><label for="bRun">Per run</label><input class="input" id="bRun" value="${esc(S.run)}" placeholder="No limit" inputmode="decimal"></div>
+        <div class="field"><label for="bMonth">In total</label><div class="row2" style="grid-template-columns:minmax(0,1fr) 120px"><input class="input" id="bMonth" value="${esc(S.month)}" placeholder="No limit" inputmode="decimal"><select class="select" id="bPer" aria-label="Reset period"><option value="monthly">per month</option><option value="weekly"${S.period==='weekly'?' selected':''}>per week</option></select></div></div>
+        ${S.sources.has('copilot') && S.sources.size===1 ? '<div class="hint" style="margin:-4px 0 0 162px">Copilot calls show as $0. These limits apply once you add a paid source.</div>' : ''}
+      </div>
+      <div><div class="toggle-row"><div><div style="font-weight:500">Draft pull request descriptions with AI</div><div class="d">Uses the Quick jobs model when the Ship it dialog opens.</div></div><label class="sw"><input type="checkbox" id="tPr"${S.prAI?' checked':''} aria-label="Draft pull request descriptions with AI"><span></span></label></div>
+      <div class="toggle-row"><div><div style="font-weight:500">Name runs and branches for me</div><div class="d">A short title and branch name from your prompt.</div></div><label class="sw"><input type="checkbox" id="tNm"${S.naming?' checked':''} aria-label="Name runs and branches for me"><span></span></label></div></div>`;
+    b.querySelectorAll('.lv').forEach(x => x.addEventListener('click', ()=>{ S.level=x.dataset.lv; render(); }));
+    $('#bRun').addEventListener('input', e=>{ S.run=e.target.value; paintSide(); });
+    $('#bMonth').addEventListener('input', e=>{ S.month=e.target.value; paintSide(); });
+    $('#bPer').addEventListener('change', e=>{ S.period=e.target.value; paintSide(); });
+    $('#tPr').addEventListener('change', e=>{ S.prAI=e.target.checked; paintSide(); });
+    $('#tNm').addEventListener('change', e=>{ S.naming=e.target.checked; paintSide(); });
+  }
+  if (st==='review'){
+    const ch = S.entry==='rerun';
+    const srcNames = SOURCES.filter(s=>S.sources.has(s.id)).map(s=>s.t).join(', ');
+    const rows = [
+      ['Network', S.net==='proxy' ? `Corporate proxy · ${S.proxy.host}:${S.proxy.port}` : 'Direct', S.net==='proxy' ? `${S.proxy.auth==='auto'?'NTLMv2':S.proxy.auth} as ${S.proxy.domain}\\${S.proxy.user} · direct: ${S.proxy.noProxy||'none'}` : '', 1, false],
+      ['Model access', srcNames, S.sources.has('copilot') ? `GitHub Copilot ${S.cp.account} · notice accepted` : '', 2, false],
+      ['Models', ROLES.map(r=>`${r.t}: ${labelOf(S.roles[r.id])}`).join('<br>'), `Covers ${ROLES.reduce((a,r)=>a+r.jobs.length,0)} jobs. Settings you set by hand keep winning.`, 3, ch],
+      ['How you work', `${S.level[0].toUpperCase()+S.level.slice(1)} interface`, `Limits: ${S.run?'$'+S.run+' per run':'none per run'}, ${S.month?'$'+S.month+' '+S.period.replace('ly',''):'no total'} · PR drafts ${S.prAI?'on':'off'} · run names ${S.naming?'on':'off'}`, 4, false],
+    ];
+    b.innerHTML = `${S.team ? '<div class="info">Started from the ACME Engineering team setup. When the team changes it, Worca asks before applying anything.</div>' : ''}<div class="review">${rows.map(r=>`<div class="rv"><span class="k">${r[0]}${r[4]?' <span class="badge blue">Changed</span>':''}${S.team && (r[0]==='Models' || r[0]==='How you work') ? ' <span class="badge">Team</span>' : ''}</span><div class="v"><span>${r[1]}</span>${r[2]?`<span class="sub">${esc(r[2])}</span>`:''}</div><button type="button" class="btn btn-sm btn-quiet" data-go="${r[3]}">Change</button></div>`).join('')}</div>
+      ${ch ? '<div class="note"><b>Implement uses GPT-5.5 · Copilot, set on the Models page.</b><span>It differs from Everyday coding. <button type="button" class="link">Keep it</button> · <button type="button" class="link">Use Everyday coding</button></span></div>' : ''}`;
+    b.querySelectorAll('[data-go]').forEach(x => x.addEventListener('click', ()=>go(+x.dataset.go)));
+  }
+  if (st==='apply'){
+    const acts = applyActions();
+    if (!S.applied){
+      b.innerHTML = `<div class="checks">${acts.map((a,i)=> i<S.applyIdx ? chk('ok',a[0],a[1]) : i===S.applyIdx ? chk('spin',a[0],'') : chk('no',a[0],'')).join('')}</div>`;
+    } else {
+      b.innerHTML = `<div class="checks">${acts.map(a=>chk('ok',a[0],a[1])).join('')}</div>
+        <div class="done-hero"><div style="font-weight:600">What next?</div><div class="doors">
+          <button type="button" class="door"><span><span>Watch a run end to end, offline</span><br><span class="d">A mock run on a sample project. Spends nothing.</span></span><span>›</span></button>
+          <button type="button" class="door"><span><span>Add your first project</span><br><span class="d">A new folder, one you have, or a clone.</span></span><span>›</span></button>
+          <button type="button" class="door"><span><span>Run a real pipeline</span><br><span class="d">Uses ${esc(labelOf(S.roles.deep))} to plan and ${esc(labelOf(S.roles.everyday))} to build.</span></span><span>›</span></button>
+          ${S.team ? '' : '<button type="button" class="door"><span><span>Share as team setup</span><br><span class="d">Your answers without accounts or secrets, as a file or a draft on the Team policy page.</span></span><span>›</span></button>'}
+        </div></div>`;
+    }
+  }
+}
+function choice(group, val, on, ic, t, d, type, tag=''){
+  return `<label class="choice${on?' on':''}"><input type="${type}" name="${group}" value="${val}"${on?' checked':''} data-g="${group}"><span class="ic">${ic}</span><span><span class="t">${t}</span><br><span class="d">${d}</span></span>${tag||'<span></span>'}</label>`;
+}
+function bindChoice(group, fn){ $('#body').querySelectorAll(`input[data-g="${group}"]`).forEach(el => el.addEventListener('change', ()=>{ fn(el.value, el); render(); })); }
+function nest(id){
+  const D = SCN[S.scn].detect;
+  if (id==='claude') return D.claude[0]==='ok' ? '' : `<div class="nest"><div class="note"><b>Claude Code is installed but not signed in.</b><span>Run <code>claude</code> in a terminal, type <code>/login</code>, then press Check again.</span><span><button type="button" class="btn btn-sm">Check again</button></span></div></div>`;
+  if (id==='copilot'){
+    if (S.cp.state==='in') return `<div class="nest"><div class="checks">${chk('ok','Connected as @jdoe','Copilot Business · 1,240 of 1,500 premium requests left this month')}</div></div>`;
+    return `<div class="nest">
+      <div class="note"><b>Before you sign in</b><span>Worca reaches Copilot through the same API GitHub’s editor extensions use. GitHub allows Copilot only in supported clients and has suspended accounts for automated use. Pipelines are automated, high-volume use, and your GitHub account carries this risk. Worca caps concurrent requests at 4 and never signs in without you.</span>
+        <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="cpAck"${S.cp.ack?' checked':''} style="accent-color:var(--ink)"> I understand</label></div>
+      <div class="field"><label for="cpAcct">Plan</label><div class="seg" role="group" aria-label="Copilot plan" id="cpAcct">${['individual','business','enterprise'].map(a=>`<button type="button" data-acct="${a}" aria-pressed="${S.cp.account===a}">${a[0].toUpperCase()+a.slice(1)}</button>`).join('')}</div></div>
+      ${S.cp.state==='code' ? `<div class="devcode"><span class="code">7F3K-Q9PX</span><button type="button" class="btn btn-sm" id="cpCopy">Copy and open github.com/login/device</button></div><div class="checks">${chk('spin','Waiting for GitHub…','Enter the code on GitHub. This page updates by itself.')}</div>` :
+        `<div><button type="button" class="btn" id="cpSign"${S.cp.ack?'':' disabled'}>Sign in with GitHub</button></div>`}
+    </div>`;
+  }
+  if (id==='apikey') return `<div class="nest"><div class="field"><label for="akKey">API key</label><input class="input" id="akKey" value="${esc(S.apikey)}" placeholder="sk-ant-… or \${ANTHROPIC_API_KEY}"></div></div>`;
+  if (id==='openai') return `<div class="nest"><div class="field"><label for="oaUrl">Address</label><input class="input" id="oaUrl" value="${esc(S.oaiUrl)}" placeholder="https://api.openai.com/v1"></div><div class="field"><label for="oaKey">API key</label><input class="input" id="oaKey" value="${esc(S.oaiKey)}" placeholder="Not needed for localhost"></div>${S.oaiUrl.includes('localhost') ? `<div class="checks">${chk('ok','Ollama answered','qwen3-coder:30b, gpt-oss:20b, llama3.2:3b')}</div>`:''}</div>`;
+  if (id==='openrouter') return `<div class="nest"><div class="field"><label for="orKey">API key</label><input class="input" id="orKey" value="${esc(S.orKey)}" placeholder="sk-or-…"></div></div>`;
+  return '';
+}
+function bindAccess(){
+  const ack = $('#cpAck'); ack && ack.addEventListener('change', ()=>{ S.cp.ack = ack.checked; render(); });
+  $('#body').querySelectorAll('[data-acct]').forEach(x=>x.addEventListener('click', ()=>{ S.cp.account=x.dataset.acct; render(); }));
+  const sign = $('#cpSign'); sign && sign.addEventListener('click', ()=>{ S.cp.state='code'; render(); setTimeout(()=>{ if (S.cp.state==='code'){ S.cp.state='in'; render(); } }, 2400); });
+  const cp = $('#cpCopy'); cp && cp.addEventListener('click', ()=>{ try { navigator.clipboard.writeText('7F3K-Q9PX').catch(()=>{}); } catch {} cp.textContent='Copied · finish on GitHub'; });
+  for (const [id,k] of [['akKey','apikey'],['oaUrl','oaiUrl'],['oaKey','oaiKey'],['orKey','orKey']]){ const el=$('#'+id); el && el.addEventListener('change', ()=>{ S[k]=el.value; render(); }); el && el.addEventListener('input', ()=>{ S[k]=el.value; foot(); }); }
+}
+function applyActions(){
+  const a = [];
+  if (S.net==='proxy'){ a.push(['Saved the proxy settings','networkProxy.enabled, upstream, auth, noProxy']); a.push(['Started the local proxy without a restart','127.0.0.1:49731 → proxy.acme.example:8080']); a.push(['Saved your proxy login','Hash only, in proxy-login.json']); }
+  if (S.sources.has('copilot')) a.push(['Saved the GitHub Copilot sign-in','@jdoe · Copilot Business · 4 requests at a time']);
+  if (S.sources.has('openai')) a.push(['Added the OpenAI-compatible provider', S.oaiUrl]);
+  if (S.sources.has('apikey')) a.push(['Added the Anthropic API key','Stored masked']);
+  if (S.sources.has('openrouter')) a.push(['Added the OpenRouter key','Stored masked']);
+  const imp = new Set(Object.values(S.roles).filter(id => !id.startsWith('claude-') || S.sources.has('apikey')));
+  if (imp.size) a.push([`Imported ${imp.size} model${imp.size>1?'s':''}`, [...imp].map(labelOf).join(', ')]);
+  a.push(['Set the three model roles', `${ROLES.reduce((n,r)=>n+r.jobs.length,0)} jobs follow them`]);
+  a.push(['Tested each model with a one-line call', ROLES.map(r=>`${r.t} ${['0.9','1.4','0.4'][ROLES.indexOf(r)]} s`).join(' · ')]);
+  a.push(['Saved interface and limits', `${S.level} · ${S.run?'$'+S.run+' per run':'no run limit'}`]);
+  return a;
+}
+function foot(){
+  const f = $('#foot'); const st = STEPS[S.step].id;
+  if (st==='apply'){
+    f.innerHTML = S.applied ? `<span class="status">Change any of this later: Settings › General › Setup assistant</span><span class="sp"></span><button type="button" class="btn btn-primary" id="restart">Start over</button>` : `<span class="status">Working…</span><span class="sp"></span>`;
+    $('#restart') && $('#restart').addEventListener('click', ()=>{ reset(S.scn, S.entry); render(); });
+    return;
+  }
+  const reason = canNext() ? '' : blockReason();
+  const next = st==='review' ? (S.entry==='rerun' ? 'Apply changes' : 'Apply setup') : st==='check' ? 'Start' : 'Next';
+  f.innerHTML = `${S.step>0 ? '<button type="button" class="btn" id="back">Back</button>' : `<button type="button" class="btn btn-quiet" id="later">${S.entry==='rerun'?'Cancel':'Set up later'}</button>`}
+    <span class="sp"></span><span class="status">${esc(reason)}</span>
+    ${S.step>0 && st!=='review' ? '<button type="button" class="btn btn-quiet" id="skip">Skip</button>' : ''}
+    <button type="button" class="btn btn-primary" id="next"${canNext()?'':' disabled'}>${next}</button>`;
+  $('#back') && $('#back').addEventListener('click', ()=>go(S.step-1));
+  $('#skip') && $('#skip').addEventListener('click', ()=>go(S.step+1, true));
+  $('#next').addEventListener('click', ()=>{ if (st==='review') startApply(); else go(S.step+1); });
+}
+function go(i){ S.step = Math.max(0, Math.min(6, i)); S.visited.add(S.step); render(); }
+function startApply(){
+  go(6); const n = applyActions().length; S.applyIdx = 0; render();
+  const tick = () => { S.applyIdx++; if (S.applyIdx >= n){ S.applied = true; } render(); if (!S.applied) setTimeout(tick, 650); };
+  setTimeout(tick, 650);
+}
+function render(){ rail(); head(); body(); foot(); paintSide();
+  $('#rail').querySelectorAll('.rstep.done').forEach(x=>x.addEventListener('click', ()=>{ if(!S.applied) go(+x.dataset.go); })); }
+
+/* role table */
+$('#roletable tbody').innerHTML = [
+  ['Deep thinking','Opus 5.5 · Claude Opus 5.5 via Copilot · qwen3-coder:30b','Plan, Plan review, Refine plan, Review implementation, Bug root cause, Deck review, the Away mode decider','<code>stepModels.claude.&lt;judgement steps&gt;</code>, <code>nightMode.deciderModel</code>'],
+  ['Everyday coding','Sonnet 5.5 · Claude Sonnet 5.5 via Copilot · qwen3-coder:30b','Implementation, Bug fix, Clarify and other steps, Chat, Agent generation, Requirements interview, Auto workflow','<code>stepModels.claude.&lt;producers&gt;</code>, <code>askModels.claude</code>, <code>agentGenModel</code>, <code>requirementsInterview</code>, <code>autoWorkflowModel</code>'],
+  ['Quick jobs','Haiku 5.5 · GPT-5 mini via Copilot · llama3.2:3b','Run titles, branch names, Auto classifier, overview, PR description, command summaries, memory defragment, workspace scan','<code>titleModel</code>, <code>namingModel</code>, <code>utilityModels.codex.*</code>, <code>prDescriptionModel</code>, <code>commandSummaryModel</code>, <code>memoryDefrag</code>, <code>workspaceScan</code>'],
+].map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td></tr>`).join('');
+
+document.querySelectorAll('[data-scn]').forEach(b=>b.addEventListener('click', ()=>{ document.querySelectorAll('[data-scn]').forEach(x=>x.setAttribute('aria-pressed', x===b)); lastKeys=new Set(); reset(b.dataset.scn, S.entry); render(); }));
+document.querySelectorAll('[data-entry]').forEach(b=>b.addEventListener('click', ()=>{ document.querySelectorAll('[data-entry]').forEach(x=>x.setAttribute('aria-pressed', x===b)); lastKeys=new Set(); reset(S.scn, b.dataset.entry); if (b.dataset.entry==='rerun'){ [1,2,3,4].forEach(i=>S.visited.add(i)); } render(); }));
+reset('corp','first'); render();
+})();
+</script>
+</body>
+</html>

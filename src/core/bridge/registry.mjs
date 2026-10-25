@@ -17,6 +17,21 @@ export function keyOptional(provider, baseUrl) {
   return provider === 'openai' && isLocalBaseUrl(baseUrl);
 }
 
+/** The scheme, host and port of a URL, lower-cased; '' for anything unparsable. */
+function originOf(u) {
+  try { return new URL(String(u || '').trim()).origin.toLowerCase(); } catch { return ''; }
+}
+
+/**
+ * The provider's own key, when it may go with this entry: the entry has no base URL of its own, or that base URL is
+ * on the provider's origin. A key set for one host (OpenRouter on the OpenAI-compatible card) is never sent to another
+ * (a Gemini or Qwen entry with its own base URL): that entry needs its own key.
+ */
+export function providerKeyFor(upstream, cfg) {
+  if (upstream && upstream.baseUrl && originOf(upstream.baseUrl) !== originOf(cfg && cfg.baseUrl)) return '';
+  return resolveProviderSecret(cfg && cfg.apiKey);
+}
+
 /** Every entry with an upstream is bridged when Claude Code runs it (src/shared/connections.mjs: Claude Code
  *  reaches every provider through the bridge). Codex connects to an OpenAI Responses endpoint itself
  *  (engines/codex-endpoint.mjs), so the same entry is bridged on a Claude run and direct on a Codex run. */
@@ -69,10 +84,11 @@ export function providerReadiness(upstream) {
     }
     return { ok: true };
   }
-  // openai / anthropic: a per-entry key wins, else the provider's key.
+  // openai / anthropic: a per-entry key wins, else the provider's key when it is meant for this host (providerKeyFor).
   const cfg = providerConfig(p);
-  const key = resolveProviderSecret(upstream.apiKey) || resolveProviderSecret(cfg.apiKey);
-  const has = providerSecretSet(p) || !!upstream.apiKey;
+  const key = resolveProviderSecret(upstream.apiKey) || providerKeyFor(upstream, cfg);
+  const providerKeyHere = !upstream.baseUrl || originOf(upstream.baseUrl) === originOf(cfg.baseUrl);
+  const has = (providerKeyHere && providerSecretSet(p)) || !!upstream.apiKey;
   // No key configured anywhere + a local endpoint = keyless. A configured key
   // whose ${VAR} is unset still blocks: the user meant to send one.
   if (!key && (has || !keyOptional(p, upstream.baseUrl || cfg.baseUrl))) {
@@ -80,7 +96,9 @@ export function providerReadiness(upstream) {
       ok: false, reason: 'no_key',
       message: has
         ? `provider ${p}: the API key's \${VAR} is not set in worca's environment`
-        : `provider ${p}: no API key — open the Providers page`,
+        : providerKeyHere
+          ? `provider ${p}: no API key — open the Providers page`
+          : `provider ${p}: no API key for ${originOf(upstream.baseUrl)} — the provider's key is for ${originOf(cfg.baseUrl)}, so give the model its own key (its Connection › Advanced)`,
     };
   }
   return { ok: true };
@@ -95,7 +113,7 @@ export function upstreamSettings(upstream) {
     api: upstream.api,
     model: upstream.model,
     baseUrl: upstream.baseUrl || cfg.baseUrl || null,
-    apiKey: p === 'copilot' ? null : (resolveProviderSecret(upstream.apiKey) || resolveProviderSecret(cfg.apiKey) || ''),
+    apiKey: p === 'copilot' ? null : (resolveProviderSecret(upstream.apiKey) || providerKeyFor(upstream, cfg) || ''),
     githubToken: p === 'copilot' ? resolveProviderSecret(cfg.githubToken) : null,
     accountType: p === 'copilot' ? cfg.accountType : null,
     headers: upstream.headers || {},

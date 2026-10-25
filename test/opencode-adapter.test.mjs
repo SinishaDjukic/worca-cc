@@ -129,7 +129,7 @@ test('error classes', () => {
 test('capabilities: declared honestly from the spike', () => {
   assert.deepEqual(Object.keys(opencodeCapabilities).sort(), [...CAPABILITY_KEYS].sort());
   assert.deepEqual(CAPABILITY_KEYS.filter((k) => opencodeCapabilities[k] === false), ['allowedTools', 'hookTelemetry']);
-  assert.equal(OPENCODE_ASK_LOCKDOWN, null);
+  assert.ok(OPENCODE_ASK_LOCKDOWN, 'Chat runs on OpenCode, locked down (plans/ask-on-qwen-gemini-spike.md)');
   assert.deepEqual(OPENCODE_EFFORTS, ['minimal', 'low', 'medium', 'high', 'max']);
 });
 
@@ -310,9 +310,10 @@ test('spawn: the free tier refusing a run without a shell says why', POSIX, asyn
     (err) => /free tier/.test(err.message) && /denies the whole shell/.test(err.message));
 });
 
-test('read-only and Ask spawns refuse', async () => {
+test('a read-only spawn refuses; a chat needs a model that is not OpenCode Zen (the chat path: test/opencode-goose-ask-adapter.test.mjs)', async () => {
   await assert.rejects(runOpencodeProcess({ cwd: tmp(), bin: '/nonexistent', prompt: 'x', sandbox: 'read-only' }), /read-only/);
-  await assert.rejects(runOpencodeProcess({ cwd: tmp(), bin: '/nonexistent', prompt: 'x', askLockdown: true }), /Chat on OpenCode is unavailable/);
+  await assert.rejects(runOpencodeProcess({ cwd: tmp(), bin: '/nonexistent', prompt: 'x', askLockdown: true }), /a chat on OpenCode needs a model/);
+  await assert.rejects(runOpencodeProcess({ cwd: tmp(), bin: '/nonexistent', prompt: 'x', askLockdown: true, model: 'opencode/big-pickle' }), /OpenCode Zen's free models refuse a chat/);
 });
 
 test('a foreign stored session starts fresh and says so; an opencode: session resumes', POSIX, async () => {

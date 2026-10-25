@@ -197,7 +197,7 @@ import {
 } from './models-view.mjs';
 import {
   renderProvidersCard, collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
-  applyProviderPreset, endpointRowMatches,
+  applyProviderPreset, endpointRowMatches, ENDPOINT_PRESETS,
   setModelUpstream, COPILOT_TERMS,
 } from './bridge-view.mjs';
 import {
@@ -978,6 +978,8 @@ const el = {
   mimpSource: $('#mimp-source'),
   mimpBase: $('#mimp-base'),
   mimpBaseField: null,          // set below: the label wrapping #mimp-base
+  mimpKey: $('#mimp-key'),
+  mimpKeyField: null,           // set below: the label wrapping #mimp-key
   mimpList: $('#mimp-list'),
   mimpMsg: $('#mimp-msg'),
   mimpFilter: $('#mimp-filter'),
@@ -19425,6 +19427,7 @@ function paintImportSource() {
   }));
   // Copilot has no base URL, and loads by itself; the whole field (with its button) goes away.
   if (el.mimpBaseField) el.mimpBaseField.classList.toggle('hidden', mimp.source !== 'openai');
+  if (el.mimpKeyField) el.mimpKeyField.classList.toggle('hidden', mimp.source !== 'openai');
 }
 
 /**
@@ -19439,6 +19442,7 @@ function openImportDialog({ source, baseUrl, goToModels } = {}) {
   mimp.baseUrl = baseUrl || (mvState.providers && mvState.providers.openai && mvState.providers.openai.baseUrl) || '';
   mimp.payload = null;
   if (el.mimpBase) el.mimpBase.value = mimp.baseUrl;
+  if (el.mimpKey) el.mimpKey.value = '';
   paintImportSource();
   if (el.mimpBody) el.mimpBody.replaceChildren();
   if (el.mimpGo) el.mimpGo.disabled = true;
@@ -19486,13 +19490,15 @@ function closeImportDialog() {
 async function listImportModels() {
   const endpoint = mimp.source === 'openai';
   mimp.baseUrl = el.mimpBase ? el.mimpBase.value.trim() : '';
+  mimp.apiKey = el.mimpKey ? el.mimpKey.value.trim() : '';
   if (endpoint && !mimp.baseUrl) { setImportMsg('Give the endpoint a base URL, e.g. http://127.0.0.1:11434/v1', 'err'); el.mimpBase?.focus(); return; }
   if (el.mimpList) el.mimpList.disabled = true;
   if (el.mimpGo) el.mimpGo.disabled = true;
   setImportMsg(endpoint ? 'Asking the endpoint what it serves…' : 'Loading Copilot models…');
   try {
     const url = endpoint ? `/api/providers/openai/models?baseUrl=${encodeURIComponent(mimp.baseUrl)}` : '/api/providers/copilot/models';
-    const res = await fetch(url);
+    // The endpoint's own key rides a header, never the URL (server logs, history).
+    const res = await fetch(url, endpoint && mimp.apiKey ? { headers: { 'X-Worca-Endpoint-Key': mimp.apiKey } } : {});
     const data = await safeJson(res);
     if (!res.ok) { setImportMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
     mimp.payload = data;
@@ -19532,7 +19538,7 @@ async function importModelsFlow() {
   setImportMsg('Importing…');
   try {
     const res = endpoint
-      ? await fetch('/api/providers/openai/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, baseUrl: sheet.dataset.baseurl || '' }) })
+      ? await fetch('/api/providers/openai/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, baseUrl: sheet.dataset.baseurl || '', ...(mimp.apiKey ? { apiKey: mimp.apiKey } : {}) }) })
       : await fetch('/api/providers/copilot/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
     const data = await safeJson(res);
     if (!res.ok) { setImportMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
@@ -19910,6 +19916,17 @@ for (const host of [el.modelsList, el.modelEditorModal]) {
 // ── Import dialog wiring ────────────────────────────────────────────────────
 if (el.modelImportModal) {
   el.mimpBaseField = el.mimpBase ? el.mimpBase.closest('.mimp-base-field') : null;
+  el.mimpKeyField = el.mimpKey ? el.mimpKey.closest('.mimp-key-field') : null;
+  // A hosted API's preset fills its base URL and the usual ${VAR} for its key (bridge-view.mjs ENDPOINT_PRESETS).
+  for (const b of el.modelImportModal.querySelectorAll('.mimp-preset')) {
+    b.addEventListener('click', () => {
+      const p = ENDPOINT_PRESETS[b.dataset.preset];
+      if (!p) return;
+      if (el.mimpBase) el.mimpBase.value = p.baseUrl;
+      if (el.mimpKey) el.mimpKey.value = p.keyRef;
+      listImportModels();
+    });
+  }
   el.modelImportBtn?.addEventListener('click', () => openImportDialog({}));
   el.mimpSource?.addEventListener('change', () => {
     mimp.source = el.mimpSource.value;
@@ -19922,6 +19939,7 @@ if (el.modelImportModal) {
   });
   el.mimpList?.addEventListener('click', () => listImportModels());
   el.mimpBase?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); listImportModels(); } });
+  el.mimpKey?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); listImportModels(); } });
   el.mimpFilter?.addEventListener('input', () => applyImportFilter());
   el.mimpGo?.addEventListener('click', () => importModelsFlow());
   el.mimpCancel?.addEventListener('click', () => importGuard?.cancel());

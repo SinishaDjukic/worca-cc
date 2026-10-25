@@ -265,8 +265,8 @@ import {
   readProjectActions, writeProjectActions, readActionsMeta, writeActionsMeta, writeTeamRepo,
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
-import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, COPILOT_EFFORTS, GOOSE_EFFORTS, OPENCODE_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
-import { engineLabel, ENGINE_NAMES, engineRefusalFor } from '../src/shared/engine-switch.mjs';
+import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, COPILOT_EFFORTS, GOOSE_EFFORTS, OPENCODE_EFFORTS, helperEngineFor, ASK_ENGINES, lockedChatEngine } from '../src/core/model-env.mjs';
+import { engineLabel, ENGINE_NAMES, engineRefusalFor, ENGINES, chatAttachRefusal } from '../src/shared/engine-switch.mjs';
 import { engineReadiness, engineLocks } from '../src/core/engines/readiness.mjs';
 import { providerReadiness } from '../src/core/bridge/registry.mjs';
 import { startBridge } from '../src/core/bridge/server.mjs';
@@ -11654,14 +11654,14 @@ async function askPrCardFacts(row) {
 
 const askRelays = new Map();   // token -> { rpc, out, billTo, owner }
 
-function askAgentRelay({ threadId, reader, web = null, engine = 'claude', skillRoot = null }) {
+function askAgentRelay({ threadId, reader, web = null, engine = 'claude', model = null, skillRoot = null }) {
   const token = randomBytes(24).toString('base64url');
   const life = new AbortController();
   const entry = { out: [], billTo: currentBillTo(), owner: currentOwner() };
   // The tools run here, so this turn's web access rides a private env copy (never process.env itself);
   // the search key is read from worca's own environment, where it was set.
-  // A Codex turn's set skills (#635): this message's mount, one more read root for this relay (this turn) only.
-  const env = { ...process.env, ...askWebMcpEnv(web), ...(engine === 'codex' || engine === 'copilot' ? { WORCA_ASK_ENGINE: engine, ...(skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}) } : {}) };
+  // A locked-down turn's set skills (#635): this message's mount, one more read root for this relay (this turn) only.
+  const env = { ...process.env, ...askWebMcpEnv(web), ...(lockedChatEngine(engine) ? { WORCA_ASK_ENGINE: engine, ...(typeof model === 'string' && model ? { WORCA_ASK_MODEL: model } : {}), ...(skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}) } : {}) };
   entry.rpc = createAskToolServer({
     threadId, reader, signal: life.signal, env, write: (s) => { entry.out.push(s); },
     // The tools run in THIS process, which holds the live runs: get_run_diff can read a run
@@ -12661,7 +12661,9 @@ app.get('/api/providers/copilot/models', async (req, res) => {
 // saving it first. Same reach as Test connection: the UI is loopback-only.
 app.get('/api/providers/openai/models', async (req, res) => {
   try {
-    res.json(await endpointModelsForImport({ baseUrl: typeof req.query.baseUrl === 'string' ? req.query.baseUrl : '' }));
+    // The endpoint's own key (Gemini, Qwen) arrives in a header, never the query string.
+    const apiKey = typeof req.get('x-worca-endpoint-key') === 'string' ? req.get('x-worca-endpoint-key') : '';
+    res.json(await endpointModelsForImport({ baseUrl: typeof req.query.baseUrl === 'string' ? req.query.baseUrl : '', apiKey }));
   } catch (err) {
     return providerError(res, err);
   }
@@ -12670,7 +12672,7 @@ app.get('/api/providers/openai/models', async (req, res) => {
 app.post('/api/providers/openai/import-models', async (req, res) => {
   const b = req.body || {};
   try {
-    const result = await importEndpointModels(b.ids, { baseUrl: typeof b.baseUrl === 'string' ? b.baseUrl : '' });
+    const result = await importEndpointModels(b.ids, { baseUrl: typeof b.baseUrl === 'string' ? b.baseUrl : '', apiKey: typeof b.apiKey === 'string' ? b.apiKey : '' });
     emitChanged('settings-changed');
     res.json({ ...result, models: maskedGlobalModels() });
   } catch (err) {
@@ -14755,13 +14757,11 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const web = askWebAccessFor(id, ctx);
     // MCP registry §9.1–9.3: General + the targets in play (the tagged dropdown fallback excluded), minus the chat's
     // picker choices — resolved ONCE per turn, so the per-turn file, the spawn and the prompt section agree.
-    const mcp = composerMode ? { result: null } : await resolveAskMcp({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff, model });
-    // D12: the chat's engine is its (validated, engine-locked) model's. A Codex or Copilot chat gets no registry copies
-    // (§4.6, §10) and is told so once per chat.
+    // D12: the chat's engine is its (validated, engine-locked) model's. Every chat gets the registry copies its engine
+    // can attach (ask/mcp.mjs mcpForEngine): a locked-down chat's lockdown allows them by name beside worca's own server.
     const engine = ASK_ENGINES.includes(modelEngine) ? modelEngine : 'claude';
     const lockedDown = engine !== 'claude';
-    const mcpCodexNote = !composerMode && lockedDown && mcp.result.copies.length > 0
-      && !askListMessages(id).some((m) => Array.isArray(m.blocks) && m.blocks.some((b) => b && b.mcpCodex));
+    const mcp = composerMode ? { result: null } : await resolveAskMcp({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff, model, engine });
     // Skills registry §4.4: the same targets and choices for the skills from sets — resolved ONCE per turn; the turn
     // mounts them and appends the prompt section naming exactly what it wrote (a Codex chat reads them through read_file).
     const skills = composerMode ? { result: null } : await resolveAskSkills({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff });
@@ -14770,7 +14770,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const agentOn = !composerMode && askCommandsEnabled();
     const systemPrompt = composerMode
       ? await askComposerSystemPromptFor(catalog, { web, engine })
-      : await askSystemPromptFor(catalog, { web, mcp: lockedDown ? null : await askMcpPromptInput(mcp), commands: agentOn, engine });
+      : await askSystemPromptFor(catalog, { web, mcp: await askMcpPromptInput(mcp), commands: agentOn, engine });
     // Shared terminal: what the user ran in this chat's Ask tabs since its last user turn (their commands never wake
     // the chat; an event turn leaves them for the next user turn).
     if (!synthetic && askCommandsEnabled()) headerCtx.personCommands = askCommands.takePersonCommands(id);
@@ -14797,17 +14797,16 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       deterministicTitle,
       pinnedScope: pinned,                          // #397: proposal defaulting + mismatch flag
       web,
-      mcp: lockedDown ? null : mcp.result,
+      mcp: mcp.result,
       skills: skills.result,
       agentMode: agentOn,
       composer: composerMode ? ((askGetThread(id) || {}).composer || null) : null,
       suggest: !synthetic,                          // ask-suggestion: a user's message only — an event turn suggests nothing
-      ...(engine === 'copilot' ? { engine, mcpCodexNote } : {}),   // no images: the route refused them
-      ...(engine === 'codex' ? {
+      ...(lockedDown ? {
         engine,
-        mcpCodexNote,
-        // D16: this message's images ride the turn as `codex exec -i` (PDFs never reach here: the route refused them).
-        images: attRows.filter((a) => a.kind === 'image').map((a) => askAttachmentPath(id, a.id)).filter(Boolean),
+        // D16: this message's images ride the turn on an engine that takes them (`codex exec -i`); the route refused
+        // what the engine cannot take (engine-switch.mjs chatAttachRefusal).
+        ...(ENGINES[engine].chat.images ? { images: attRows.filter((a) => a.kind === 'image').map((a) => askAttachmentPath(id, a.id)).filter(Boolean) } : {}),
       } : {}),
       timeZone: ctx.timeZone || (thread.context && thread.context.timeZone) || null,   // scheduled runs: the user's clock
       memoryProject: headerCtx.project ? { key: headerCtx.project.key, name: headerCtx.project.name || '' } : null,   // native-rules revision: the turn mounts global + this project through --add-dir
@@ -14953,12 +14952,11 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
         // does not match its claim is refused here, before any write.
         const cls = askClassifyExtension(ext);
         if (!cls) return badRequest(res, `attachment type not allowed: ${name || '(unnamed)'}`);
-        // D16: a Codex chat has no PDF reader (out of scope, §10) — refused at attach time, before any write.
-        // (askClassifyExtension gives kind text|image|binary; a PDF is kind 'binary', mime 'application/pdf'.)
-        const attachEngine = askTurnEngine(id, thread, mv.model);
-        if (cls.mime === 'application/pdf' && attachEngine === 'codex') return badRequest(res, `PDFs need a Claude chat: ${name}`);
-        // A Copilot chat takes no image or PDF (the adapter has no image input).
-        if (cls.kind !== 'text' && attachEngine === 'copilot') return badRequest(res, `images and PDFs need a Claude chat: ${name}`);
+        // D16: what the chat's engine cannot take (a Codex chat no PDF; Copilot, Gemini CLI and Qwen Code no image or
+        // PDF) is refused at attach time, before any write. (askClassifyExtension gives kind text|image|binary; a PDF is
+        // kind 'binary', mime 'application/pdf'.)
+        const attachRefused = chatAttachRefusal({ engine: askTurnEngine(id, thread, mv.model), kind: cls.kind, pdf: cls.mime === 'application/pdf' });
+        if (attachRefused) return badRequest(res, `${attachRefused}: ${name}`);
         const raw = typeof a.dataBase64 === 'string' ? a.dataBase64 : '';
         const buf = raw ? Buffer.from(raw, 'base64') : Buffer.alloc(0);
         if (!buf.length) return badRequest(res, `attachment is empty or not valid base64: ${name}`);
