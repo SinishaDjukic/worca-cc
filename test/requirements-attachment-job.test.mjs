@@ -785,3 +785,27 @@ test('D14: staged names are Windows-safe and unique after the mapping; a success
   await drop();
   assert.equal(existsSync(join(base, 'orchestrator-extras-r-names')), false, 'the caller removes the folder once the run has its own copy');
 });
+
+test('fileView: asking is the question of the running or queued ask, null otherwise; the answer frame has it cleared', async () => {
+  const f = feature();
+  const r = fakeRunner([{ summary: 'A.' }, { summary: 'B.' }, { summary: 'C.' }]);
+  const [a, b, c] = job.addAttachments(own(f), [textFile('a.md', 'a'), textFile('b.md', 'b'), textFile('c.md', 'c')], {}, deps(r));
+  await job.readsSettled(own(f));
+  const view = (id) => job.fileView(getAttachment(id), { href: 'x' });
+  assert.equal(view(a.id).asking, null);
+  const gate = deferred();
+  const seen = [];
+  const slow = fakeRunner(() => ({ answer: 'Yes.' }), { gate });
+  const d = deps(slow, { onChange: () => seen.push(view(c.id).asking) });
+  job.askAttachment(own(f), a.id, '  Refunds   to credit? ', {}, d);
+  job.askAttachment(own(f), b.id, 'Late?', {}, d);
+  job.askAttachment(own(f), c.id, 'Queued?', {}, d);
+  await new Promise((res) => setTimeout(res, 30));
+  assert.equal(slow.calls.length, 2, 'two run, the third waits');
+  assert.deepEqual([view(a.id).asking, view(b.id).asking, view(c.id).asking], ['Refunds to credit?', 'Late?', 'Queued?'], 'running, running, queued');
+  gate.resolve();
+  await job.readsSettled(own(f));
+  assert.deepEqual([view(a.id).asking, view(b.id).asking, view(c.id).asking], [null, null, null]);
+  assert.equal(seen.at(-1), null, 'the last frame (the answer) shows it cleared');
+  assert.equal(getAttachment(c.id).asks.at(-1).question, 'Queued?');
+});

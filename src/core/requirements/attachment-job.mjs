@@ -94,6 +94,13 @@ const waiters = new Map(); // owner key → readsSettled resolvers
 const pendingFor = (key) => queue.some((e) => ownerKey(e.owner) === key) || [...running.values()].some((e) => ownerKey(e.owner) === key);
 export const isReading = (id) => queue.some((e) => e.id === id && e.kind === 'read') || running.get(id)?.kind === 'read';
 export const isAsking = (id) => queue.some((e) => e.id === id && e.kind === 'ask') || running.get(id)?.kind === 'ask';
+/** The question of the file's ask in progress (running, else queued), or null: the page's Asking… line (board 21). */
+export function askingQuestion(id) {
+  const r = running.get(id);
+  if (r && r.kind === 'ask') return r.question;
+  const q = queue.find((e) => e.id === id && e.kind === 'ask');
+  return q ? q.question : null;
+}
 /** Whether the owner has a read or ask queued or running (readsSettled waits for none). */
 export const filesPending = (owner) => pendingFor(ownerKey(owner));
 
@@ -300,7 +307,13 @@ async function runAsk(e) {
   try {
     const b = d.budget();   // again before the call (D12): a limit reached since the press fails the ask, nothing spent
     if (b && b.blocked) { failAsk(e, { code: 'BUDGET', message: budgetMessage(b) }, 0, null, { book: false }); return; }   // like a read: no turn
-    if (d.mockEnabled()) { finishAsk(e, { answer: mockAnswer(e.question), costUsd: 0, model: null }); return; }
+    if (d.mockEnabled()) {
+      const ms = Number(process.env.WORCA_MOCK_READ_MS) || 0;   // the browser proof sees "Asking…" too (D17)
+      if (ms > 0) await new Promise((r) => setTimeout(r, ms));
+      if (e.cancelled) return;
+      finishAsk(e, { answer: mockAnswer(e.question), costUsd: 0, model: null });
+      return;
+    }
     const r = await readCall(e, row, { question: e.question });
     cost = r.costUsd;
     model = r.model;
@@ -716,5 +729,6 @@ export function fileView(row, { spec = null, href, doc = false, estimates = null
     summary: row.summary, summaryEdited: row.summaryEdited, asks: row.asks, history: row.history,
     [doc ? 'sendWithEveryRun' : 'sendWithRun']: row.sendWithRun, costUsd: row.costUsd, readAt: row.readAt, readModel: row.readModel,
     estimateUsd: estimates ? (estimates[row.kind] ?? null) : readEstimate(row.kind), mentions: spec ? mentions(spec, row.name) : [], href,
+    asking: askingQuestion(row.id),
   };
 }

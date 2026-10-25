@@ -301,9 +301,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   if (subEl) subEl.textContent = 'Define a feature with Worca before anything is built. Nothing runs until you start it.';
   const say = (text, kind = '') => { if (msgEl) { msgEl.textContent = text || ''; msgEl.className = `form-msg${kind ? ` ${kind}` : ''}`; } };
-  const fail = (err) => say(err && err.status === 404
-    ? 'Requirements are turned off, or this feature no longer exists.'
-    : (err && err.message) || String(err), 'err');
+  const GONE = 'Requirements are turned off, or this feature no longer exists.';
+  const fail = (err) => say(err && err.status === 404 ? GONE : (err && err.message) || String(err), 'err');
+  /** A refusal for a dialog's or a panel's own line: the server's words, the 404 as `fail` says it, and product copy for
+   *  anything else (an HTTP failure without a JSON error, a network failure): never a raw "HTTP 502". */
+  const errText = (err) => (err && err.status === 404 ? GONE
+    : err && err.data && typeof err.data.error === 'string' && err.data.error ? err.data.error : 'Worca could not finish that. Try again.');
   const act = async (fn) => { say(''); try { await fn(); } catch (err) { fail(err); } };
   // "Started build v<n>." with a link to the run (the page stays on the feature, D10).
   const sayStarted = (version, runId) => {
@@ -1644,7 +1647,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         started(f, data);
       } catch (err) {
         starting = false;
-        msg.textContent = (err && err.message) || String(err);
+        msg.textContent = errText(err);
       } finally { busy = false; sync(); }
     });
     const card = h('section', { class: 'card req-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'req-dlg-title' },
@@ -1817,7 +1820,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
    *  and Remove while the file is read; Ask once it is read; Read again not on a version that could not be stored. The
    *  A1 lock disables all but Open. `replace` is the row's file picker (also behind a stored-version failure's button). */
   function fileMenu(a, ctx, replace) {
-    const reading = a.status === 'reading';
+    const reading = a.status === 'reading' || !!a.asking;   // an ask in progress waits like a read (one job per file)
     const stuck = storeFailedOf(a);
     const off = ctx.locked;
     const remove = menuItem('Remove', () => removeFile(a, ctx), { disabled: off, ui: `fmi-remove-${a.id}` });
@@ -1825,8 +1828,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const items = [
       h('a', { role: 'menuitem', class: 'menu-item req-menu-item', 'data-ui': `fmi-open-${a.id}`, href: a.href, target: '_blank', rel: 'noopener' }, 'Open'),
       hasTextOf(a) && !reading ? menuItem('Edit what Worca took from it', () => openEdit(a, ctx), { disabled: off, ui: `fmi-edit-${a.id}` }) : null,
-      a.status === 'done' ? menuItem('Ask about this file…', () => openAsk(a, ctx), { disabled: off, ui: `fmi-ask-${a.id}` }) : null,
-      reading ? null : menuItem('Replace with a newer version…', () => replace.click(), { disabled: off, ui: `fmi-replace-${a.id}` }),
+      a.status === 'done' && !reading ? menuItem('Ask about this file…', () => openAsk(a, ctx), { disabled: off, ui: `fmi-ask-${a.id}` }) : null,
+      reading ? null : menuItem('Replace with a newer version…', () => { focusMore(a); replace.click(); }, { disabled: off, ui: `fmi-replace-${a.id}` }),
       reading || stuck ? null : menuItem('Read again', () => act(async () => {
         if (a.summaryEdited && !window.confirm("Read again? Your text goes to the file's history.")) { focusMore(a); return; }
         await api('POST', `${a.href}/read-again`, {});
@@ -1875,14 +1878,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const id = `req-ask-${a.id}`;
     const input = h('input', { type: 'text', id, maxlength: '200', autocomplete: 'off', 'data-ui': `file-ask-text-${a.id}` });
     input.value = s.ask || '';
-    let busy = false;
+    // in flight: on the file's ui state (not this paint's panel), so a live repaint mid-request does not re-enable Ask
     const go = h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-ui': `file-ask-go-${a.id}` }, 'Ask');
-    const sync = () => { go.disabled = ctx.locked || busy || !input.value.trim(); };
+    const sync = () => { go.disabled = ctx.locked || !!s.askBusy || !input.value.trim(); };
     const close = () => { s.ask = null; n.askMsg.textContent = ''; ctx.focus(moreUi(a)); ctx.redraw(); };
     const send = async () => {
       const q = input.value.trim();
-      if (busy || !q || ctx.locked) return;
-      busy = true; sync(); n.askMsg.textContent = '';
+      if (s.askBusy || !q || ctx.locked) return;
+      s.askBusy = true; sync(); n.askMsg.textContent = '';
       try {
         await api('POST', `${a.href}/ask`, { question: q });
         s.ask = null;
@@ -1890,8 +1893,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         ctx.focus(moreUi(a));
         await paint();
       } catch (err) {
-        n.askMsg.textContent = (err && err.message) || String(err);
-      } finally { busy = false; if (input.isConnected) sync(); }
+        n.askMsg.textContent = errText(err);
+      } finally {
+        s.askBusy = false;
+        // the panel on screen now (a repaint may have replaced this one)
+        const now = host.querySelector(`[data-ui="file-ask-go-${a.id}"]`);
+        const field = host.querySelector(`[data-ui="file-ask-text-${a.id}"]`);
+        if (now && field) now.disabled = ctx.locked || !field.value.trim();
+      }
     };
     input.addEventListener('input', () => { s.ask = input.value; sync(); });
     input.addEventListener('keydown', (e) => {
@@ -1935,7 +1944,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         closeDialog(true);
         await paint();
       } catch (err) {
-        msg.textContent = (err && err.message) || String(err);
+        msg.textContent = errText(err);
       } finally { busy = false; go.disabled = false; }
     });
     const card = h('section', { class: 'card req-dialog req-replace', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'req-dlg-title' },
@@ -1955,10 +1964,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function srcTag(f, source) {
     if (!source) return null;
     const k = String(source).toLowerCase();
-    const file = [...(f.attachments || []), ...(f.briefDocuments || [])].find((x) => x && String(x.name).toLowerCase() === k);
-    const clip = icon(ICONS.clip, { size: 11 });
-    return file && file.href ? h('a', { class: 'req-src-tag', href: file.href, target: '_blank', rel: 'noopener' }, clip, String(source))
-      : h('span', { class: 'req-src-tag' }, clip, String(source));
+    const all = [...(f.attachments || []), ...(f.briefDocuments || [])].filter(Boolean);
+    const same = (name) => String(name || '').toLowerCase() === k;
+    // a file replaced by a newer version under another name still counts: its history keeps the earlier name
+    const file = all.find((x) => same(x.name)) || all.find((x) => (x.history || []).some((e) => e && e.reason === 'replaced' && same(e.name)));
+    const kids = [icon(ICONS.clip, { size: 11 }), h('span', { class: 'sr-only', text: 'from ' }), String(source)];
+    return file && file.href ? h('a', { class: 'req-src-tag', href: file.href, target: '_blank', rel: 'noopener' }, ...kids)
+      : h('span', { class: 'req-src-tag' }, ...kids);
   }
 
   /** The Reading… badge (role=status), one node per file while it is read. */
@@ -1966,6 +1978,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const n = fileNode(a.id);
     if (!n.badge) n.badge = h('span', { class: 'badge blue', role: 'status', text: 'Reading…' });
     return n.badge;
+  }
+  /** The Asking… badge (role=status), the same pattern: one node per file while a question about it is answered. */
+  function askingBadge(a) {
+    const n = fileNode(a.id);
+    if (!n.asking) n.asking = h('span', { class: 'badge blue', role: 'status', text: 'Asking…' });
+    return n.asking;
   }
   /** The failed line (role=alert) with Try again, one node per failure: a repaint updates it in place and says nothing. */
   function failedLine(a, ctx, replace) {
@@ -2008,8 +2026,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const hasText = hasTextOf(a);
     const n = fileNode(a.id);
     if (!reading) n.badge = null;
+    const asking = !reading && !!a.asking;   // an ask in progress (D12): the answer's frame clears it
+    if (!asking) n.asking = null;
     if (a.status !== 'failed') n.failed = null;   // a later failure is a new alert
-    if (s.ask != null && a.status !== 'done') {   // Ask is for a read file (board 21); the lock only disables it
+    if (s.ask != null && (a.status !== 'done' || asking)) {   // Ask is for a read file (board 21); the lock only disables it
       if (document.activeElement && document.activeElement.getAttribute('data-ui') === `file-ask-text-${a.id}`) ctx.focus(moreUi(a));
       s.ask = null;
     }
@@ -2021,8 +2041,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       h('span', { class: 'hint req-file-meta', text: meta }),
       h('span', { class: 'req-file-gap' }),
       reading ? readingBadge(a) : null,
+      asking ? askingBadge(a) : null,
       a.status === 'unread-budget' ? h('span', { class: 'badge amber', text: 'Not read yet' }) : null,
-      hasText && !reading ? icoBtn('pencil', `Edit what Worca took from ${a.name}`, () => openEdit(a, ctx),
+      hasText && !reading && !asking ? icoBtn('pencil', `Edit what Worca took from ${a.name}`, () => openEdit(a, ctx),
         { cls: 'req-file-pencil', disabled: ctx.locked, 'data-ui': `file-edit-${a.id}` }) : null,
       fileMenu(a, ctx, replace));
     const state = reading
@@ -2031,7 +2052,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       : a.status === 'failed' ? failedLine(a, ctx, replace)
         : a.status === 'unread-budget'
           ? h('p', { class: 'hint req-file-state', text: `The Requirements budget is used up for this ${ctx.period === 'weekly' ? 'week' : 'month'}. Worca reads it when the budget allows; until then the interview lists it by name only.` })
-          : null;
+          : asking ? h('p', { class: 'hint req-file-state req-file-asking', text: `Worca is looking for: “${a.asking}”…` }) : null;
     if (s.edit != null && (!hasText || reading)) {
       // The text went away under the open editor (read again, replaced): the draft cannot be saved, and the card says why.
       // The editor had the focus: it goes to the file's ⋯, which every state has.

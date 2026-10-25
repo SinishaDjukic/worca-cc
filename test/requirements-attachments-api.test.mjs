@@ -60,7 +60,7 @@ test('create with two files: stored, read before round 1, round 1 names the firs
     ['notes.md', 'text', 'done', '[mock] What Worca took from notes.md: two rules, one number and an open point.'],
     ['tickets.pdf', 'binary', 'done', '[mock] What Worca took from tickets.pdf: two rules, one number and an open point.']]);
   const a = f.attachments[0];
-  assert.deepEqual(Object.keys(a).sort(), ['asks', 'bytes', 'costUsd', 'error', 'estimateUsd', 'history', 'href', 'id', 'kind', 'mentions', 'mime',
+  assert.deepEqual(Object.keys(a).sort(), ['asking', 'asks', 'bytes', 'costUsd', 'error', 'estimateUsd', 'history', 'href', 'id', 'kind', 'mentions', 'mime',
     'name', 'readAt', 'readModel', 'sendWithRun', 'status', 'summary', 'summaryEdited'].sort());
   assert.equal(a.href, `/api/requirements/${seq}/attachments/${a.id}`);
   assert.equal(f.spec.criteria[0].source, 'notes.md');
@@ -118,8 +118,13 @@ test('replace, ask and read again answer 202; a file being read refuses them wit
     assert.deepEqual([(await call('PATCH', a.href, { summary: 'x' })).status], [409]);
   } finally { delete process.env.WORCA_MOCK_READ_MS; }
   await waitFor(async () => (await view(seq)).attachments[0].status === 'done');
-  assert.equal((await call('POST', `${a.href}/ask`, { question: 'What about refunds?' })).status, 202);
+  process.env.WORCA_MOCK_READ_MS = '300';
+  let asked;
+  try { asked = await call('POST', `${a.href}/ask`, { question: 'What about refunds?' }); } finally { delete process.env.WORCA_MOCK_READ_MS; }
+  assert.equal(asked.status, 202);
+  assert.equal(asked.json.feature.attachments[0].asking, 'What about refunds?', 'the answer to the press shows the ask in progress');
   await waitFor(async () => (await view(seq)).attachments[0].asks.length === 1);
+  assert.equal((await view(seq)).attachments[0].asking, null, 'cleared once answered');
   assert.equal((await view(seq)).attachments[0].asks[0].answer, '[mock] What about refunds?: the file does not say more.');
   const rp = await call('POST', `${a.href}/replace`, { attachments: [up('b.md', 'beta')], keepSummary: false });
   assert.equal(rp.status, 202);

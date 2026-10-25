@@ -836,12 +836,12 @@ test('D13: the spec card shows a source as a tag after the text, a link while th
     assumptions: [{ id: 'A-1', text: 'Card refunds', status: 'open', source: 'gone.md' }, { id: 'A-2', text: 'From the brief', status: 'open', source: 'Policy.MD' }] };
   const { host } = await openFeature(feature({ spec, briefDocuments: [att({ id: 'ratt_00000000000f', name: 'policy.md', kind: 'text', href: '/api/requirements/brief/project/shop-1/documents/ratt_00000000000f' })] }));
   const tag = host.querySelector('[data-criterion="R-po-1"] .req-src-tag');
-  assert.deepEqual([tag.tagName, tag.textContent, tag.getAttribute('href'), tag.getAttribute('target')], ['A', 'support-tickets.pdf', HREF, '_blank']);
+  assert.deepEqual([tag.tagName, tag.textContent, tag.getAttribute('href'), tag.getAttribute('target')], ['A', 'from support-tickets.pdf', HREF, '_blank']);
   assert.deepEqual([tag.parentElement.className, tag.parentElement.firstChild.textContent], ['req-item-text', 'Cancel until printed'], 'after the text, in its line');
   assert.equal(tag.querySelector('svg').getAttribute('aria-hidden'), 'true');
   assert.equal(host.querySelector('[data-criterion="R-po-2"] .req-src-tag'), null);
   const gone = host.querySelector('[data-assumption="A-1"] .req-src-tag');
-  assert.deepEqual([gone.tagName, gone.textContent], ['SPAN', 'gone.md']);
+  assert.deepEqual([gone.tagName, gone.textContent], ['SPAN', 'from gone.md']);
   const doc = host.querySelector('[data-assumption="A-2"] .req-src-tag');
   assert.deepEqual([doc.tagName, doc.getAttribute('href')], ['A', '/api/requirements/brief/project/shop-1/documents/ratt_00000000000f'], 'a brief document, matched case-insensitively');
 });
@@ -854,7 +854,7 @@ test('D13: a removed file\'s tag loses its link on the next paint', async () => 
   assert.equal(host.querySelector('.req-src-tag').tagName, 'A');
   item(host, 'Remove').click();
   await settle();
-  assert.deepEqual([host.querySelector('.req-src-tag').tagName, host.querySelector('.req-src-tag').textContent], ['SPAN', 'support-tickets.pdf']);
+  assert.deepEqual([host.querySelector('.req-src-tag').tagName, host.querySelector('.req-src-tag').textContent], ['SPAN', 'from support-tickets.pdf']);
 });
 
 test('XSS: a question, an answer and a source are text, never markup', async () => {
@@ -877,4 +877,111 @@ test('style.css: board 20 puts the pencil in the menu below 600 px; board 21 rul
   assert.match(rule('.req-files .req-menu .menu-item'), /white-space:nowrap/, 'board 21: one line a menu row');
   assert.match(rule('.req-replace-opt .hint'), /display:inline/, "the history note follows the choice's words");
   assert.match(rule('.req-spec a.req-src-tag::after'), /inset:-13px -4px/, 'a source link has a 44 px target at phone width');
+});
+
+// ── Task 13 review: an ask in progress, a repaint mid-request, renamed sources, error copy, a cancelled picker ─────────
+
+test('an ask in progress: the blue Asking… badge (one role=status node) and "Worca is looking for: …"; the menu waits; cleared by the answer', async () => {
+  let f = feature({ attachments: [att({ asking: 'What about refunds?' })] });
+  const { host, view } = await openFeature(null, { 'GET /api/requirements/4': () => ({ feature: f, turns: [] }) });
+  const badge = host.querySelector('.req-file .badge.blue');
+  assert.deepEqual([badge.textContent, badge.getAttribute('role')], ['Asking…', 'status']);
+  assert.equal(host.querySelector('.req-file-asking').textContent, 'Worca is looking for: “What about refunds?”…');
+  assert.deepEqual(labels(openMenu(host)), ['Open', '—', 'Remove'], 'like reading: only Open and Remove');
+  assert.equal(host.querySelector('.req-file-pencil'), null, 'no pencil while it is asked');
+  await view.changed(4);
+  assert.equal(host.querySelector('.req-file .badge.blue'), badge, 'the same status node across a repaint');
+  f = feature({ attachments: [att({ asking: null, asks: [{ question: 'What about refunds?', answer: 'None.' }] })] });
+  await view.changed(4);
+  assert.equal(host.querySelector('.req-file .badge.blue'), null);
+  assert.equal(host.querySelector('.req-file-asking'), null);
+  assert.equal(labels(openMenu(host)).length, 7, 'the whole menu again');
+});
+
+test('Ask stays busy across a live repaint while its request is out; one POST', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const { host, view, calls } = await openFeature(feature(), { [`POST ${HREF}/ask`]: () => held });
+  item(host, 'Ask about this file…').click();
+  const input = host.querySelector('[data-ui="file-ask-text-ratt_00000000000a"]');
+  input.value = 'Refunds?';
+  input.dispatchEvent(new window.Event('input'));
+  host.querySelector('[data-ui="file-ask-go-ratt_00000000000a"]').click();
+  await settle();
+  await view.changed(4);
+  const go = host.querySelector('[data-ui="file-ask-go-ratt_00000000000a"]');
+  assert.equal(go.disabled, true, 'the repainted Ask is still busy');
+  go.click();
+  host.querySelector('[data-ui="file-ask-text-ratt_00000000000a"]').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await settle();
+  assert.equal(calls.filter((c) => c.url === `${HREF}/ask`).length, 1);
+  release(OK);
+  await settle();
+  assert.equal(host.querySelector('.req-file-askpanel'), null, 'closed once it went through');
+});
+
+test("a source naming a file's earlier version keeps its link to the file that replaced it", async () => {
+  const spec = { ...feature().spec, criteria: [{ id: 'R-po-1', text: 'x', source: 'Tickets-Sept.pdf' }, { id: 'R-po-2', text: 'y', source: 'notes.md' }] };
+  const { host } = await openFeature(feature({ spec, attachments: [att({ history: [
+    { at: '2026-10-19T08:00:00Z', name: 'tickets-sept.pdf', summary: 'old', reason: 'replaced' },
+    { at: '2026-10-18T08:00:00Z', name: 'notes.md', summary: 'old', reason: 'read-again' }] })] }));
+  const renamed = host.querySelector('[data-criterion="R-po-1"] .req-src-tag');
+  assert.deepEqual([renamed.tagName, renamed.getAttribute('href')], ['A', HREF]);
+  assert.equal(host.querySelector('[data-criterion="R-po-2"] .req-src-tag').tagName, 'SPAN', 'only a replaced version counts');
+});
+
+test('a source link is named "from <name>" for screen readers', async () => {
+  const spec = { ...feature().spec, criteria: [{ id: 'R-po-1', text: 'x', source: 'support-tickets.pdf' }] };
+  const { host } = await openFeature(feature({ spec }));
+  const tag = host.querySelector('.req-src-tag');
+  assert.deepEqual([tag.querySelector('.sr-only').textContent, tag.lastChild.textContent], ['from ', 'support-tickets.pdf']);
+});
+
+test('error copy: the Replace dialog, the ask panel and the start dialog never show a raw HTTP status', async () => {
+  const raw = (status) => { globalThis.fetch = async () => ({ ok: false, status, json: async () => { throw new SyntaxError('Unexpected token <'); } }); };
+  const { host } = await openFeature(feature({ readiness: { ...readiness(), overridable: true } }));
+  pick(host.querySelector('[data-menu="file-ratt_00000000000a"] input[type="file"]'), [mkFile('b.md', '# b')]);
+  const dlg = document.querySelector('.req-dialog');
+  raw(502);
+  dlg.querySelector('[data-ui="replace-go"]').click();
+  await settle();
+  assert.equal(dlg.querySelector('.req-dlg-msg').textContent, 'Worca could not finish that. Try again.');
+  globalThis.fetch = async () => ({ ok: false, status: 404, json: async () => ({ error: 'file not found' }) });
+  dlg.querySelector('[data-ui="replace-go"]').click();
+  await settle();
+  assert.equal(dlg.querySelector('.req-dlg-msg').textContent, 'Requirements are turned off, or this feature no longer exists.');
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  item(host, 'Ask about this file…').click();
+  const input = host.querySelector('[data-ui="file-ask-text-ratt_00000000000a"]');
+  input.value = 'Q?';
+  input.dispatchEvent(new window.Event('input'));
+  raw(500);
+  host.querySelector('[data-ui="file-ask-go-ratt_00000000000a"]').click();
+  await settle();
+  assert.equal(host.querySelector('.req-file-askmsg').textContent, 'Worca could not finish that. Try again.');
+  globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
+  host.querySelector('[data-ui="file-ask-go-ratt_00000000000a"]').click();
+  await settle();
+  assert.equal(host.querySelector('.req-file-askmsg').textContent, 'Worca could not finish that. Try again.', 'a network failure too');
+  host.querySelector('[data-ui="start-anyway"]').click();
+  const reason = document.getElementById('req-dlg-reason');
+  reason.value = 'Now.';
+  reason.dispatchEvent(new window.Event('input'));
+  raw(502);
+  [...document.querySelectorAll('.req-dialog button')].at(-1).click();
+  await settle();
+  assert.equal(document.querySelector('.req-dialog .req-dlg-msg').textContent, 'Worca could not finish that. Try again.');
+});
+
+test('Replace with a newer version… hands the focus to the ⋯ before the picker, so a cancelled picker leaves it there', async () => {
+  const { host } = await openFeature(feature());
+  let opened = 0;
+  host.querySelector('[data-menu="file-ratt_00000000000a"] input[type="file"]').addEventListener('click', () => {
+    opened += 1;
+    assert.equal(document.activeElement.getAttribute('data-ui'), 'file-more-ratt_00000000000a', 'focused before the picker opens');
+  });
+  item(host, 'Replace with a newer version…').click();
+  assert.equal(opened, 1);
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'file-more-ratt_00000000000a');
+  assert.equal(document.querySelector('.req-dialog'), null, 'nothing picked: no dialog');
 });
