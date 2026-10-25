@@ -203,9 +203,9 @@ It degrades rather than fails:
   period), lead time is hidden, and items read "Done".
 - **gh answers only partly** (rate limit, a repository the viewer cannot read): the note quotes
   GitHub's error; those runs stay unknown and are asked again later.
-- **Not GitHub** (GitLab, Bitbucket, Azure DevOps): merge tracking covers GitHub and Azure DevOps
-  repositories (Azure: set `WORCA_ADO_TOKEN`, see [Azure DevOps](azure-devops.md)); GitLab and
-  Bitbucket items show without merge data.
+- **Not GitHub** (GitLab, Bitbucket, Azure DevOps): merge tracking covers GitHub, Azure DevOps and Bitbucket Cloud
+  repositories (Azure: set `WORCA_ADO_TOKEN`, see [Azure DevOps](azure-devops.md); Bitbucket: set `WORCA_BB_TOKEN`,
+  see [Bitbucket](bitbucket.md)); GitLab and Bitbucket Data Center items show without merge data.
 
 ## Chat
 

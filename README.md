@@ -128,7 +128,8 @@ level and has no **Diff**, **Changes** or **Actions**.
   **Generate** it (Settings › Runs › **Pull requests** can draft it as soon as the
   dialog opens), open it as a draft and watch it, then pushes the branch
   and opens the PR with the GitHub CLI (`gh`), or on
-  [Azure DevOps](docs/azure-devops.md) with a personal access token. A run
+  [Azure DevOps](docs/azure-devops.md) with a personal access token, and
+  [Bitbucket Cloud](docs/bitbucket.md) with an access or API token. A run
   started from a GitHub issue closes it on merge, and a workspace run opens one
   linked PR per changed repo. The button then becomes **View PR**.
   **Publish branch** (Advanced) pushes the branch without a PR.
@@ -1047,6 +1048,7 @@ The skill starts the same deterministic orchestrator as the CLI;
 - [Voice mode](docs/speech.md) — hands-free Chat: Whisper and Kokoro in the browser, or your own speech servers
 - [Voice languages](docs/speech-languages.md) — which languages work today, and the plan for more
 - [Azure DevOps](docs/azure-devops.md) — Ship-it, clone, sync, merge tracking and the Boards source on `dev.azure.com`: the token, its scopes, and what does not work yet
+- [Bitbucket](docs/bitbucket.md) — Ship-it, clone, sync, Watch PR and merge tracking on bitbucket.org: the tokens, their scopes, and what does not work yet
 - [Statistics](docs/statistics.md) — spend and outcomes by range, person and tag, CSV export and the API
 - [Team metrics](docs/team-metrics.md) — git-backed, team-wide records of finished runs on a `worca-metrics` branch
 - [Team policy](docs/team-policy.md) — team-set cost caps, allowed models, required plugins, guardrail defaults and MCP servers from a `worca-policy` branch

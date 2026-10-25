@@ -20,6 +20,7 @@ import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { writeStoreMeta, persistPrState, readPrState, createPipeline, writeState, listAllPipelines } from '../src/core/artifacts.mjs';
 import { _testing as prDesc, PR_BODY_MAX } from '../src/core/pr-description.mjs';
 import * as azurePr from '../src/core/pr/azure.mjs';
+import * as bitbucketPr from '../src/core/pr/bitbucket.mjs';
 import { setPrRemotePrefs, readPrRemotePrefs } from '../src/core/config.mjs';
 import { createTicket, markTicketFired } from '../src/core/scheduler.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
@@ -31,6 +32,8 @@ import { withEnv } from './helpers/with-env.mjs';
 
 const NO_ADO = { WORCA_ADO_TOKEN: undefined, WORCA_ADO_READ_TOKEN: undefined, WORCA_ADO_WRITE_TOKEN: undefined, AZURE_DEVOPS_EXT_PAT: undefined };
 const WITH_ADO = { ...NO_ADO, WORCA_ADO_TOKEN: 'pat' };
+const NO_BB = { WORCA_BB_TOKEN: undefined, WORCA_BB_READ_TOKEN: undefined, WORCA_BB_WRITE_TOKEN: undefined, WORCA_BB_EMAIL: undefined };
+const WITH_BB = { ...NO_ADO, ...NO_BB, WORCA_BB_TOKEN: 'bbtok' };
 
 let srv, base, home, prevHome, betaKey, betaId, betaRepo;
 
@@ -56,12 +59,13 @@ after(async () => {
   gitInfo.reset();
   gitSync.reset();
   azurePr._testing.reset();
+  bitbucketPr._testing.reset();
   _resetForTests();
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
   await rm(home, { recursive: true, force: true });
 });
 
-beforeEach(() => { gitInfo.reset(); gitSync.reset(); prDesc.reset(); azurePr._testing.reset(); });
+beforeEach(() => { gitInfo.reset(); gitSync.reset(); prDesc.reset(); azurePr._testing.reset(); bitbucketPr._testing.reset(); });
 
 // git-sync's runner (the base-freshness fetch, #527): upstream is a github remote; every argv
 // lands in `seen`; `rev-list --count` answers `moved`.
@@ -137,6 +141,39 @@ function stubAdo(calls, { create = () => adoJson(201, { pullRequestId: 31 }),
     if (method === 'POST' && path.endsWith('/pullrequests')) return create();
     if (method === 'GET' && path.endsWith('/pullrequests/31')) return adoJson(200, view);
     return adoJson(404, { message: 'not stubbed' });
+  });
+}
+const BB = 'https://bitbucket.org/acme/api.git';
+const BB_REMOTES_V = `origin\t${BB} (fetch)\norigin\t${BB} (push)\n`;
+/** gh present; one Bitbucket origin; argv + env recorded. */
+function stubBitbucketRepo(seen, { remotesV = BB_REMOTES_V, getUrl = (name) => (name === 'fork' ? 'https://bitbucket.org/me/api.git' : BB) } = {}) {
+  gitInfo.setRunner((cmd, args, opts = {}) => {
+    seen.push({ argv: [cmd, ...args], env: opts.env });
+    const done = (stdout = '') => Promise.resolve({ ok: true, stdout, stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === '--version') return done('gh 2.x');
+    if (cmd === 'git' && args[0] === 'remote' && args[1] === 'get-url') return done(`${getUrl(args[args.length - 1])}\n`);
+    if (cmd === 'git' && args[0] === 'remote') return done(remotesV);
+    if (cmd === 'git' && args[0] === 'for-each-ref') return done(REFS);
+    if (cmd === 'gh') return Promise.resolve({ ok: false, stdout: '', stderr: 'gh must not run for Bitbucket', code: 1 });
+    return done();
+  });
+}
+const bbJson = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+/** Bitbucket REST fake: no open PR, POST …/pullrequests answers #31, the PR (with its abbreviated commits) and an empty
+ *  file-conflicts list; every call recorded. */
+function stubBb(calls) {
+  bitbucketPr._testing.setFetch(async (url, init = {}) => {
+    const method = init.method || 'GET';
+    calls.push({ url: String(url), method, body: init.body ? JSON.parse(init.body) : undefined, auth: init.headers?.authorization });
+    const path = new URL(url).pathname;
+    if (method === 'POST' && path.endsWith('/pullrequests')) return bbJson(201, { id: 31 });
+    if (path.endsWith('/conflicts')) return bbJson(200, { values: [] });
+    if (path.endsWith('/pullrequests')) return bbJson(200, { values: [] });
+    if (path.endsWith('/pullrequests/31')) {
+      return bbJson(200, { id: 31, state: 'OPEN', source: { branch: { name: FEATURE }, commit: { hash: 'a1b2c3d4e5f6' }, repository: { full_name: 'acme/api' } },
+        destination: { branch: { name: 'main' }, commit: { hash: '0f9e8d7c6b5a' } } });
+    }
+    return bbJson(404, { error: { message: 'not stubbed' } });
   });
 }
 const getRemotes =(q) => fetch(`${base}/api/pr/remotes?${new URLSearchParams(q)}`);
@@ -1054,10 +1091,10 @@ test('POST /api/pr/mergeable reads an Azure PR URL over REST', () => withEnv(WIT
 test('GET /api/history and /api/runs expose prHosts next to ghAvailable', () => withEnv(WITH_ADO, async () => {
   stubAzureRepo([]);
   const h = await (await fetch(`${base}/api/history`)).json();
-  assert.deepEqual(h.prHosts, { github: true, azure: true });
+  assert.deepEqual(h.prHosts, { github: true, azure: true, bitbucket: false });
   assert.equal(h.ghAvailable, true);
   const r = await (await fetch(`${base}/api/runs?projectDir=${encodeURIComponent(betaRepo)}`)).json();
-  assert.deepEqual(r.prHosts, { github: true, azure: true });
+  assert.deepEqual(r.prHosts, { github: true, azure: true, bitbucket: false });
 }));
 
 test('POST /api/pr links the Azure Boards work item a run came from', () => withEnv(WITH_ADO, async () => {
@@ -1082,8 +1119,66 @@ test('POST /api/pr/describe drafts for the PR host the modal names', async () =>
   assert.match(seen[0].systemPrompt, /Azure DevOps/);
   assert.doesNotMatch(seen[1].systemPrompt, /Azure DevOps/, 'anything else is GitHub');
   assert.doesNotMatch(seen[2].systemPrompt, /Azure DevOps/);
+  assert.equal((await postDescribe({ projectKey: betaKey, id: betaId, forge: 'bitbucket' })).status, 200);
+  assert.match(seen[3].systemPrompt, /a Bitbucket pull request/);
 });
 
+
+test('POST /api/pr on a Bitbucket origin: pushes with the Bitbucket token, creates over REST, persists #31, reads mergeability', () => withEnv(WITH_BB, async () => {
+  await setPrRemotePrefs(betaRepo, {});
+  const seen = []; const calls = [];
+  stubBitbucketRepo(seen);
+  stubBb(calls);
+  const r = await post({ projectKey: betaKey, id: betaId });
+  const j = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(j));
+  assert.equal(j.url, 'https://bitbucket.org/acme/api/pull-requests/31');
+  assert.equal(j.mergeable, 'MERGEABLE');
+  const push = seen.find((s) => s.argv[1] === 'push');
+  assert.ok(push, 'the branch was pushed');
+  assert.equal(push.env.WORCA_BB_GIT_TOKEN, 'bbtok');
+  assert.equal(push.env.WORCA_BB_GIT_USER, 'x-token-auth');
+  assert.equal(push.env.WORCA_BB_TOKEN, undefined);
+  assert.equal(push.env.GH_TOKEN, undefined);
+  assert.deepEqual(seen.filter((s) => s.argv[0] === 'gh').map((s) => s.argv), [['gh', '--version']], 'gh never ran beyond --version');
+  const create = calls.find((c) => c.method === 'POST');
+  assert.equal(new URL(create.url).pathname, '/2.0/repositories/acme/api/pullrequests');
+  assert.deepEqual([create.body.source.branch.name, create.body.destination.branch.name], [FEATURE, 'main']);
+  assert.equal(create.auth, 'Bearer bbtok');
+  for (const c of calls) assert.equal(new URL(c.url).origin, 'https://api.bitbucket.org');
+  const pr = readPrState(betaId);
+  assert.deepEqual({ number: pr.number, state: pr.state, url: pr.url }, { number: 31, state: 'OPEN', url: 'https://bitbucket.org/acme/api/pull-requests/31' });
+}));
+
+test('POST /api/pr on a Bitbucket origin without a token -> 409 naming WORCA_BB_TOKEN, nothing pushed', () => withEnv({ ...NO_ADO, ...NO_BB }, async () => {
+  const seen = [];
+  stubBitbucketRepo(seen);
+  const r = await post({ projectKey: betaKey, id: betaId });
+  assert.equal(r.status, 409);
+  const j = await r.json();
+  assert.match(j.error, /WORCA_BB_TOKEN/);
+  assert.equal(j.forge, 'bitbucket');
+  assert.ok(!seen.some((s) => s.argv[1] === 'push'), 'nothing was pushed');
+}));
+
+test('POST /api/pr Bitbucket fork (push to another repo) -> 422 unsupported before anything is pushed', () => withEnv(WITH_BB, async () => {
+  const seen = []; const calls = [];
+  stubBitbucketRepo(seen, { remotesV: `fork\thttps://bitbucket.org/me/api.git (fetch)\nfork\thttps://bitbucket.org/me/api.git (push)\n${BB_REMOTES_V}` });
+  stubBb(calls);
+  const r = await post({ projectKey: betaKey, id: betaId, pushRemote: 'fork', baseRemote: 'origin' });
+  assert.equal(r.status, 422);
+  assert.match((await r.json()).error, /Bitbucket pull requests between repositories \(forks\) are not supported yet — push to origin/);
+  assert.ok(!seen.some((s) => s.argv[1] === 'push'));
+  assert.equal(calls.length, 0);
+}));
+
+test('GET /api/pr/remotes labels a Bitbucket remote and names the missing token', () => withEnv({ ...NO_ADO, ...NO_BB }, async () => {
+  stubBitbucketRepo([]);
+  const j = await (await getRemotes({ projectKey: betaKey, id: betaId })).json();
+  const o = j.remotes.find((x) => x.name === 'origin');
+  assert.deepEqual([o.forge, o.prHost, o.prSupported], ['bitbucket', 'Bitbucket', false]);
+  assert.match(o.prReason, /WORCA_BB_TOKEN/);
+}));
 
 // ---------------------------------------------------------------------------
 // Draft PRs and the source issue's closing line.
@@ -1248,6 +1343,22 @@ test('POST /api/pr on an Azure origin: draft reaches the REST create as isDraft;
   assert.equal(create.body.isDraft, true);
   assert.doesNotMatch(create.body.description, /Closes/);
   assert.equal((await (await getRemotes({ projectKey: betaKey, id })).json()).issue, null, 'no "Will close" line for an Azure base');
+}));
+
+test('POST /api/pr on a Bitbucket origin: draft reaches the REST create; a GitHub issue source adds no Closes line', () => withEnv(WITH_BB, async () => {
+  await setPrRemotePrefs(betaRepo, {});
+  const id = await seedIssueRun({ feature: 'worca-cc/bb-draft-run' });
+  const calls = [];
+  stubBitbucketRepo([]);
+  stubBb(calls);
+  const r = await post({ projectKey: betaKey, id, draft: true, body: 'Did it.' });
+  const j = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(j));
+  assert.equal(j.draft, true);
+  const create = calls.find((c) => c.method === 'POST');
+  assert.equal(create.body.draft, true);
+  assert.doesNotMatch(create.body.description, /Closes/);
+  assert.equal((await (await getRemotes({ projectKey: betaKey, id })).json()).issue, null, 'no "Will close" line for a Bitbucket base');
 }));
 
 test('POST /api/pr on an Azure origin with watch:true watches the new Azure DevOps PR', () => withEnv(WITH_ADO, async () => {

@@ -56,7 +56,7 @@ const state = {
   runGroups: [],     // GET /api/run-groups: Shaper features and user groups for the Runs list (D10)
   runGroupsLoaded: false, // set by loadRunGroups on every outcome: runGroups starts as [], so it cannot say "loaded"
   ghAvailable: false,// gh CLI availability, from the last /api/history load
-  adoAvailable: false,// an Azure DevOps credential is configured (prHosts.azure), same source
+  adoAvailable: false,// a REST PR host has a credential: prHosts.azure or prHosts.bitbucket (D10), same source
 
   // --- Workspaces ---
   workspaces: [],            // GET /api/workspaces read-model
@@ -21955,6 +21955,8 @@ function mergePrStatus(a, b) {
     azure: b.azure && b.azure !== 'unused' ? b.azure : (a.azure ?? b.azure),
     azureError: b.azureError ?? a.azureError ?? null,
     azureTruncated: [...new Set([...(a.azureTruncated || []), ...(b.azureTruncated || [])])],
+    bitbucket: b.bitbucket && b.bitbucket !== 'unused' ? b.bitbucket : (a.bitbucket ?? b.bitbucket),
+    bitbucketError: b.bitbucketError ?? a.bitbucketError ?? null,
     actionRepos: [...new Set([...(a.actionRepos || []), ...(b.actionRepos || [])])],
     unsupportedRepos: [...new Set([...(a.unsupportedRepos || []), ...(b.unsupportedRepos || [])])],
   };
@@ -22375,7 +22377,7 @@ async function loadHistoryView({ force = false } = {}) {
   state.historyError = '';
   crp.historySeen = true;   // Chat P4: a run panel id still unknown after this is missing, not pending
   state.ghAvailable = !!data.ghAvailable;
-  state.adoAvailable = !!(data.prHosts && data.prHosts.azure);
+  state.adoAvailable = !!(data.prHosts && (data.prHosts.azure || data.prHosts.bitbucket));
   paintHistory();                                        // fresh skeleton repaint
   rdRepaintOpenGlance();                                 // an open finished run reads its PR from these rows
   pokeAskRuns(null, 'history');                          // Chat P3: a finished run card's Create pull request reads prHostAvailable()
@@ -23772,6 +23774,7 @@ function crossRepoHint(remotes, pushName, baseName, branch, baseBranch) {
   const cross = !!(push && base && push.slug && base.slug && push.slug.toLowerCase() !== base.slug.toLowerCase());
   if (base && base.prSupported === false) return base.prReason || `${base.prHost || 'This host'} pull requests are not available`;
   if (cross && base.forge === 'azure') return `Azure DevOps pull requests between repositories (forks) are not supported yet. Push to ${base.name}.`;
+  if (cross && base.forge === 'bitbucket') return `Bitbucket pull requests between repositories (forks) are not supported yet. Push to ${base.name}.`;
   return cross ? `Cross-repo: ${push.owner}:${branch || ''} → ${base.slug} ${baseBranch}` : '';
 }
 
@@ -24125,7 +24128,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
     if (!q('.shipit-base-wrap').hidden) payload.baseBranch = q('.shipit-base-branch').value;
     if (!q('.shipit-remotes').hidden) {
       const baseRemote = (modal._remotes || []).find((r) => r.name === q('.shipit-base-remote').value);
-      if (baseRemote && baseRemote.forge === 'azure') payload.forge = 'azure';
+      if (baseRemote && (baseRemote.forge === 'azure' || baseRemote.forge === 'bitbucket')) payload.forge = baseRemote.forge;
     }
     try {
       const res = await fetch('/api/pr/describe', {
@@ -24263,7 +24266,7 @@ function rdRepaintOpenGlance(pipelineId = null) {
   paintRdGlance(runDetailState.screen, r);
 }
 
-/** Some PR host is reachable (gh, or an Azure DevOps token); the Ship-it modal and the server name the
+/** Some PR host is reachable (gh, or an Azure DevOps or Bitbucket token); the Ship-it modal and the server name the
  *  missing one for the chosen remote (D8). */
 function prHostAvailable() { return gitOn() && !!(state.ghAvailable || state.adoAvailable); }
 
