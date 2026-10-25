@@ -217,7 +217,7 @@ export function upstreamEnv(env = process.env) {
 }
 
 export const STATE_TEXT = Object.freeze({
-  ready: 'ready', 'no-login': 'no login saved', 'needs-login': 'needs login', 'not-configured': 'not set up', error: 'cannot be used',
+  ready: 'ready', 'no-login': 'no login saved', 'needs-login': 'needs login', 'not-configured': 'not set up', error: 'cannot be used', off: 'off',
 });
 
 const when = (iso) => (iso ? `${iso.slice(0, 16).replace('T', ' ')} UTC` : 'at an unknown time');
@@ -229,31 +229,39 @@ const when = (iso) => (iso ? `${iso.slice(0, 16).replace('T', ' ')} UTC` : 'at a
 export function stateLine(st) {
   const who = st.login ? ` as ${st.login.label}` : '';
   const via = st.upstream ? ` via ${st.upstream} (${st.authLabel})` : '';
-  const restart = st.restartNeeded ? ' Restart Worca to start the proxy.' : '';
   switch (st.state) {
-    case 'ready': return `${STATE_TEXT.ready}:${via}${who}.${restart}`;
-    case 'no-login': return `${STATE_TEXT['no-login']}:${via}. Log in with your domain, user name and password.${restart}`;
+    case 'off': return st.upstream
+      ? `${STATE_TEXT.off}: Worca connects directly. Turn on Use a corporate proxy to use ${st.upstream}.`
+      : `${STATE_TEXT.off}: turn on Use a corporate proxy, enter its host and port, then Save.`;
+    case 'ready': return `${STATE_TEXT.ready}:${via}${who}.`;
+    case 'no-login': return `${STATE_TEXT['no-login']}:${via}. Log in with your domain, user name and password.`;
     case 'needs-login': return `${STATE_TEXT['needs-login']}: the corporate proxy rejected the saved login${st.login ? ` for ${st.login.label}` : ''} ${when(st.login && st.login.rejected && st.login.rejected.at)}, so Worca sends no credentials. Log in again (worca proxy login).`;
     case 'error': return `${STATE_TEXT.error}: ${st.error}`;
-    default: return `${STATE_TEXT['not-configured']}: enter the corporate proxy host and port and Save (or set HTTPS_PROXY), then restart Worca.`;
+    default: return `${STATE_TEXT['not-configured']}: enter the corporate proxy host and port, then Save (or set HTTPS_PROXY).`;
   }
 }
 
 /**
  * One status for the CLI, the route and the card. `live` = a running connector's status(), or
- * null. `running` false with the flag on means the proxy did not start at boot (the flag was turned
- * on later): `restartNeeded` is then true for a configured upstream.
+ * null. `enabled` false (networkProxy.enabled off) gives state `off`, with the login fields filled.
+ * `expectRunning` with no live connector sets `restartNeeded` (kept for callers that ask; the
+ * server applies changes live and passes false).
  * @returns {{state: keyof STATE_TEXT, text: string, line: string, upstream?: string, source?: string, auth?: string,
  *   authLabel?: string, login: object|null, loginError: string|null, running: boolean, restartNeeded: boolean,
  *   warnings: string[], error?: string}}
  */
 export function proxyState({ env = process.env, networkProxy, login = readProxyLogin(), live = null, expectRunning = false,
-  localUrl = null } = {}) {
+  localUrl = null, enabled = true } = {}) {
   const saved = login && !login.error ? login : null;
   const base = { login: saved ? loginView(saved) : null, loginError: login && login.error ? login.error : null,
     running: !!live, restartNeeded: false, warnings: [], localUrl };
   const done = (st) => ({ ...st, line: stateLine(st) });
   const up = resolveUpstream({ env, settings: networkProxy, login: saved });
+  if (!enabled) {
+    const where = up && !up.error
+      ? { upstream: upstreamLabel(up.host, up.port), source: up.source, auth: up.auth, authLabel: AUTH_LABELS[up.auth] } : {};
+    return done({ ...base, state: 'off', text: STATE_TEXT.off, ...where });
+  }
   if (!up) return done({ ...base, state: 'not-configured', text: STATE_TEXT['not-configured'] });
   if (up.error) return done({ ...base, state: 'error', text: STATE_TEXT.error, source: up.source, error: up.error });
   const tripped = live ? live.state === 'tripped' : !!(up.login && up.login.rejected);

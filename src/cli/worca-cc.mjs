@@ -42,7 +42,7 @@ import { createFormAsker } from './forms.mjs';
 import { kindLabel } from '../shared/away-mode/labels.mjs';
 import { pauseExitCode, describePauseReason, promptOptions, REASON } from '../core/failure-policy.mjs';
 import { sigtermGraceMs } from '../core/drain.mjs';
-import { effectiveDebugSpawn } from '../core/settings.mjs';
+import { effectiveDebugSpawn, migrateCorporateProxyFlag } from '../core/settings.mjs';
 import { SCHEDULE_VALUE_FLAGS, wantsSchedule, readScheduleFlags, createFromFlags, waitAndRun, cmdSchedule, resolveAfterId } from './schedule.mjs';
 import { applyTagRules } from '../core/tag-dimensions.mjs';
 import { inheritedTagsAtCreation } from '../core/scheduler.mjs';
@@ -57,8 +57,8 @@ import { cmdRun } from './run-preset.mjs';
 import {
   DEFAULT_UI_HOST, DEFAULT_UI_PORT, probeUi, stopUi, readUiInstance, uiUrl, waitForUiState,
 } from '../core/ui-instance.mjs';
-import { useEnvProxy, proxyNotice } from '../core/env-proxy.mjs';
-import { startEgressPolicy, egressNotice } from '../core/egress-policy.mjs';
+import { useEnvProxy, reinstallEnvProxy, proxyNotice } from '../core/env-proxy.mjs';
+import { startLiveEgress, egressNotice } from '../core/egress-policy.mjs';
 import { gitState, GIT_MISSING } from '../core/git-available.mjs';
 import { workModeOfRow, workModeForStart, effectiveWorkMode } from '../core/project-kind.mjs';
 // Static on purpose (issue #841): after `npm i -g` the files on disk are the new version's.
@@ -3503,14 +3503,20 @@ function nearestSubcommand(token) {
 }
 
 async function main() {
+  // D6: the old Labs flag becomes networkProxy.enabled, once, before the proxy reads it.
+  await migrateCorporateProxyFlag();
   // A hosting platform's outbound network policy (src/core/egress-policy.mjs). `worca ui` leaves
   // it to the server it starts; any other command (a pipeline started by hand in the container)
   // runs its own policy proxy, or reuses the one a parent worca put in the environment.
   // `worca proxy` skips it too, so `proxy test` talks to the corporate proxy itself (D15).
+  // The settings watcher keeps a long run live: a saved networkProxy change swaps its upstream (AC-2.6).
+  let fetchProxy = null;
   if (process.argv[2] !== 'ui' && process.argv[2] !== 'proxy') {
     try {
-      const egress = await startEgressPolicy({ unref: true, log: (l) => process.stderr.write(`worca: egress: ${l}\n`) });
-      const egressLine = egressNotice(egress);
+      const egress = await startLiveEgress({ unref: true, log: (l) => process.stderr.write(`worca: egress: ${l}\n`),
+        // D8: a proxy turned on at runtime: this process's own fetch follows the new HTTPS_PROXY.
+        onEnvChange: () => { fetchProxy = reinstallEnvProxy(fetchProxy); } });
+      const egressLine = egressNotice(egress.current());
       // Printed once per process, and only by commands that start the proxy (not `ui`, not `proxy`).
       if (egressLine && (egressLine.level === 'warn' || egressLine.text.startsWith('Corporate proxy:'))) process.stderr.write(`worca: ${egressLine.text}\n`);
     } catch (err) {
@@ -3520,7 +3526,8 @@ async function main() {
   }
   // Outbound calls (pipelines, `worca broker`) honor HTTP(S)_PROXY / NO_PROXY (src/core/env-proxy.mjs).
   // Only problems are printed: stdout belongs to the subcommand (some emit JSON).
-  const proxyLine = proxyNotice(useEnvProxy());
+  fetchProxy = useEnvProxy();
+  const proxyLine = proxyNotice(fetchProxy);
   if (proxyLine?.level === 'warn') process.stderr.write(`worca: ${proxyLine.text}\n`);
   const argv2 = process.argv.slice(2); if (argv2[0] !== 'ui' && argv2[0] !== 'help' && !argv2.includes('--ui')) await gitState();
   const sub = process.argv[2];

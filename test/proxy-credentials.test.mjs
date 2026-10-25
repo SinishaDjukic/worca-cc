@@ -282,7 +282,11 @@ test('proxyState and stateLine for every state', (t) => {
   }
   const restart = proxyState({ env: {}, networkProxy: up, login: null, expectRunning: true, live: null });
   assert.equal(restart.restartNeeded, true);
-  assert.match(restart.line, /Restart Worca/);
+  assert.doesNotMatch(restart.line, /Restart Worca/, 'changes apply live: the line never says to restart');
+  const off = proxyState({ env: {}, networkProxy: up, login: null, enabled: false });
+  assert.equal(off.state, 'off');
+  assert.match(off.line, /^off: Worca connects directly\. Turn on Use a corporate proxy to use \S+\.$/);
+  assert.equal(proxyState({ env: {}, networkProxy: {}, login: null, enabled: false }).line, 'off: turn on Use a corporate proxy, enter its host and port, then Save.');
   const bad = proxyState({ env: {}, networkProxy: up, login: { error: 'x is bad' } });
   assert.equal(bad.loginError, 'x is bad');
   assert.equal(bad.login, null);

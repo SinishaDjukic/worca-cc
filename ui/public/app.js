@@ -16661,7 +16661,7 @@ document.getElementById('smartNamingReset')?.addEventListener('click', (e) => po
   { smartNaming: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('smartNamingSave');
 onFlagChange('smartRunNaming', () => { snPaintMuted(); void snPaintCost(null); void paintHelperModelCards(); });
-// Settings › Network proxy: builds its body only while the corporateProxy flag is on.
+// Settings › Network proxy (networkProxy.enabled; Simple level, no flag).
 mountNetworkProxyCard();
 
 function paintAskSettings(data) {

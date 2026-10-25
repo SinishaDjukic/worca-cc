@@ -1,13 +1,13 @@
 # Network proxy
 
 Use Worca behind a corporate proxy that asks for an NTLMv2 login (also inside Negotiate), or a Digest
-or Basic login. This is an experimental
-feature behind the `corporateProxy` flag. For the flag itself, see
-[Feature flags › Corporate proxy](feature-flags.md#corporate-proxy).
+or Basic login. Turn it on with **Use a corporate proxy** in Settings › Runs › Network proxy
+(`networkProxy.enabled` in `settings.json`). It used to be the Labs flag `corporateProxy`: an install
+with that flag on gets `networkProxy.enabled: true` on first start.
 
 ## What it does
 
-With the flag on, Worca starts a local proxy on `127.0.0.1`. That proxy logs in to your corporate
+With the proxy on, Worca starts a local proxy on `127.0.0.1`. That proxy logs in to your corporate
 proxy. Every process Worca starts (agents, git, MCP servers, plugins, chat channels) and Worca's own
 outbound requests get `HTTPS_PROXY` / `HTTP_PROXY` = `http://127.0.0.1:<port>`, a URL with no
 credentials in it. Hosts in your `NO_PROXY` list and loopback go direct.
@@ -18,15 +18,50 @@ every local user can do that too.
 
 ## Set it up
 
-1. Turn the flag on: `worca flags on corporateProxy`.
-2. Open Settings › Runs › Network proxy (Advanced level). Enter the proxy host and port, choose
-   **Login: NTLMv2**, list the hosts that go direct, and change the timeouts if you need to.
-   Press **Save**.
-3. Restart Worca. The proxy host, port, login mode, direct hosts and timeouts are read at startup.
+1. Open Settings › Runs › Network proxy and turn on **Use a corporate proxy**.
+2. Enter the proxy host and port, choose **Login: NTLMv2** and list the hosts that go direct. The
+   timeouts and the local proxy port are under **More**.
+3. Press **Test**, then **Save**. Save tests a new proxy itself when you have not: Worca switches to
+   a new proxy only after it passed a test. New connections use it at once.
 
-You can also set the same values by hand in `settings.json` under `networkProxy` (`upstream`,
-`auth`, `noProxy`, `timeouts`, `fixedPort`). When no upstream is set there, Worca uses the `HTTPS_PROXY` /
+You can also set the same values by hand in `settings.json` under `networkProxy` (`enabled`,
+`upstream`, `auth`, `noProxy`, `timeouts`, `fixedPort`). When no upstream is set there, Worca uses the `HTTPS_PROXY` /
 `HTTP_PROXY` that was set when it started.
+
+## Changes apply live
+
+- New connections use the new proxy at once; a connection that is already open finishes on the old
+  one. Children keep the same `HTTPS_PROXY` (the local proxy), so nothing has to restart.
+- Turning the proxy on starts the local proxy now. Agents already running keep a direct route until
+  their next step. Turning it off sends new connections direct through the same local address.
+- Other Worca processes (a `worca run` started from a shell) pick up a change within about 1 s.
+- `fixedPort` applies at the next start: the save answers "Applies at the next start", and the old
+  port keeps answering until then.
+- A save from Worca (the card, the chat card) needs a passing test of exactly those values (host,
+  port and login mode) within 10 minutes, or it is refused with `UNTESTED` and nothing is written.
+  Turning the proxy off, and changing only the direct hosts, timeouts or the local port, need no test.
+  A hand edit of `settings.json` is applied without a test: the file is yours.
+- A host that does not resolve leaves the running proxy in place; the save says why.
+- A `settings.json` that is not valid JSON, or is deleted, is ignored by running processes until
+  the next start. A valid file without a `networkProxy` key reads as off, and every running process
+  goes direct.
+- "Saved. New connections use it now." covers new connections from Worca itself and new agent steps;
+  an agent step that is already running keeps its route until it ends.
+- `POST /api/proxy/test` takes `{ networkProxy }`, the values to test merged over the saved ones;
+  without it, it tests the saved values. Both `/api/proxy/test` and `PUT /api/proxy/settings` take
+  `application/json` bodies only.
+
+## Settings reference
+
+- **Who it is for:** a network with one fixed corporate proxy (host and port known) that asks for an NTLMv2 (also inside Negotiate), Digest or Basic login. Networks that only publish a PAC/WPAD script are not supported.
+- **`networkProxy` in `settings.json`:** `upstream` (an `http://host:port` URL; default: the `HTTPS_PROXY`/`HTTP_PROXY` that was set), `auth` (default `auto` when the URL carries a login, else `none`), `noProxy` (a comma-separated string or a list; default: the `NO_PROXY` that was set; `*.x` means `.x`, `*` sends everything direct, CIDR entries never match; loopback always goes direct) `timeouts` `{ connectMs, authMs, idleMs }` (defaults 30000, 15000 and 600000, each clamped to 500–3600000) and `fixedPort` (1024–65535: the local proxy listens on `127.0.0.1:<fixedPort>` instead of a free port, so an IDE or shell outside Worca can use it; read only with the proxy on), and `enabled` (`true` turns the proxy on). Edit them in Settings › Network proxy or by hand; a change applies to new connections at once, except `fixedPort` (next start).
+- **Where the login comes from:** from `worca proxy login` / Settings › Network proxy (saved NT hash), else `DOMAIN%5Cuser:password@` in `HTTP(S)_PROXY` (`http://ACME%5Cjdoe:password@proxy.acme.example:8080`). A saved login wins over the URL's, with a warning. A user name or password in `settings.json` is ignored with a warning, because a password never goes into `settings.json`. See [Network proxy](network-proxy.md).
+- **`auth` values:** `auto` (the default, NTLMv2 only, sent inside `Negotiate` when the proxy offers only that), `ntlm` (the same), `digest`, `basic` and `none`. `basic` sends the password base64-encoded, in cleartext, to the proxy on every connection; use it only when the proxy offers nothing else. `digest` (RFC 7616: SHA-256 or MD5, `qop=auth`) needs the password from the `HTTPS_PROXY` URL, which Worca then keeps in memory; a saved login cannot be used. `auto` never falls back to Basic or Digest: a proxy that offers only one of them gets a 502 that says to set `networkProxy.auth`.
+- **The "proxy needs login" stop:** after one rejected login (or a connection dropped or left unanswered right after one) Worca stops sending credentials, and clients get a 407 with `x-worca-proxy: needs-login`. Log in again (`worca proxy login` or Settings › Network proxy). For a saved login, the rejection is saved with the login, so a restart does not try the same password again; a new login clears it, in every running Worca within a few seconds. A login in `HTTPS_PROXY` keeps no such memory: correct the URL, then restart Worca, because each restart with the old password spends one attempt against the account lockout limit.
+- **Loopback-only access:** any local process can use the local proxy, the same as Px and CNTLM. On a shared multi-user host every local user and every agent child can use your corporate login through it; set `WORCA_EGRESS_MODE` to limit where untrusted children may connect. With `WORCA_EGRESS_MODE` set, the policy decides first and allowed hosts are forwarded to the corporate proxy.
+- **Plain HTTP:** NTLM logs in a connection once, with a `HEAD` probe, and later plain `http://` requests reuse it until it has been idle for `timeouts.idleMs`; when the proxy does not ask for a login, that `HEAD` reaches the site once. Basic and Digest send their header with each request.
+- **Browsers in runs:** the promo kit's Playwright and Chrome launches get the local proxy explicitly (`proxy.server`, `--proxy-server`), because Chrome does not reliably honour `HTTPS_PROXY`. They read `WORCA_CORPORATE_PROXY_URL`, which Worca sets for its children only while the proxy is on.
+- **Kerberos or single sign-on:** not supported. [Px](https://github.com/genotrance/px) logs in with your Windows session; point `HTTPS_PROXY` at Px instead and leave the corporate proxy off.
 
 ## Log in once
 
@@ -100,7 +135,7 @@ requests reuse it without sending credentials again. A connection that stays idl
 
 By default the local proxy listens on a free port picked at startup. To use it from an IDE or a shell
 outside Worca, pin it: set `networkProxy.fixedPort` (1024–65535) in `settings.json`, or fill in
-**Local proxy port** on the card, then restart Worca. `worca proxy status` then prints
+**Local proxy port** under **More** on the card; it applies at the next start. `worca proxy status` then prints
 `Local proxy: http://127.0.0.1:<port>`. Without a fixed port it says a free port is picked at
 startup.
 
@@ -117,9 +152,9 @@ startup.
 ## Browsers in runs
 
 Chrome takes its proxy from the OS settings or its own flags and does not reliably honour
-`HTTPS_PROXY`. With the flag on, Worca also sets `WORCA_CORPORATE_PROXY_URL` for its children, and
+`HTTPS_PROXY`. With the proxy on, Worca also sets `WORCA_CORPORATE_PROXY_URL` for its children, and
 the run assets that start a browser pass it on: Playwright launches get `proxy.server`, raw Chrome
-launches `--proxy-server`, with your `NO_PROXY` hosts as the bypass list. With the flag off, browser
+launches `--proxy-server`, with your `NO_PROXY` hosts as the bypass list. With the proxy off, browser
 launches are unchanged.
 
 ## Check it
@@ -128,6 +163,7 @@ launches are unchanged.
 
 | State | Meaning | Exit code |
 |---|---|---|
+| off | the proxy is off (`networkProxy.enabled`) | 1 |
 | ready | a login is saved and has not been rejected | 0 |
 | no login saved | the proxy is set up, but there is no login | 0 |
 | needs login | the corporate proxy rejected the saved login | 3 |
@@ -144,16 +180,16 @@ Both commands take `--json`.
 
 The Chat assistant can read, test and change the proxy settings for you, the way it handles Away mode and Actions:
 
-- **Read**: `get_network_proxy` reports whether the flag is on, the saved settings, the proxy in use and where it came
+- **Read**: `get_network_proxy` reports whether the proxy is on, the saved settings, the proxy in use and where it came
   from (settings, or `HTTPS_PROXY` / `HTTP_PROXY` at start), the local proxy URL and its status, who is logged in
-  (`DOMAIN\user`; whether the login was rejected), whether a restart is needed and why, and the live proxy's state.
+  (`DOMAIN\user`; whether the login was rejected), and the live proxy's state.
   It never sees the password or the saved hash.
-- **Test**: `test_network_proxy` runs the same check as the Test button, with the same rules: one test at a time,
-  and no test of a proxy saved since Worca started (restart first, so the saved login is never sent to a host the
-  running proxy does not use yet). A login the proxy rejects is marked "needs login".
-- **Change**: the assistant proposes a card with each setting before → after and "Restart Worca to apply". Nothing
-  changes until you press Apply; Apply saves exactly as the Save button does.
-- **Turn it on**: with the flag off, the assistant can offer a card that turns on Labs › Corporate proxy (then restart).
+- **Test**: `test_network_proxy` runs the same check as the Test button, on the saved values only (never values the
+  chat chose), one test at a time. Its pass never counts for the `UNTESTED` rule. A login the proxy rejects is marked
+  "needs login".
+- **Change**: the assistant proposes a card with each setting before → after and "New connections use it now." Nothing
+  changes until you press Apply; Apply tests a new proxy first, then saves exactly as the Save button does.
+- **Turn it on**: with the proxy off, the assistant can offer a card that sets `networkProxy.enabled: true`.
 - **Log in and out yourself**: the chat never asks for, takes or repeats your password. Use Log in / Log out on
   Settings › Runs › Network proxy, or `worca proxy login` / `worca proxy logout`.
 
@@ -186,7 +222,7 @@ A login kept in `HTTPS_PROXY` has no saved stop. Correct the URL, then restart W
 ## Kerberos or single sign-on
 
 Not supported (Negotiate works only with the NTLM login inside it). Run [Px](https://github.com/genotrance/px) with your Windows session, point
-`HTTPS_PROXY` at it, and leave the `corporateProxy` flag off.
+`HTTPS_PROXY` at it, and leave the corporate proxy off.
 
 ## Troubleshooting
 

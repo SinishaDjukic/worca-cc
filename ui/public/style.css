@@ -10756,8 +10756,11 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 @media (max-width:480px){.sn-branch-row{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){.sn-adorn.sn-loading .input{animation:none}}
 
-/* Settings › Network proxy (corporateProxy flag): a new surface, so placeholders use --ink-2. */
+/* Settings › Network proxy: a new surface (Simple level), so placeholders and hints use --ink-2. */
 #network-proxy-settings-card .input::placeholder{color:var(--ink-2);}
+#network-proxy-settings-card .hint{color:var(--ink-2);}
+/* The "More" fold reuses details.advanced; inside the card's rows it draws no extra rule (fit-2-1). */
+#network-proxy-settings-card .np-more{margin-top:0;border-top:0;padding-top:0;}
 #network-proxy-settings-card .np-results{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:var(--fs-meta);}
 #network-proxy-settings-card .np-results li[data-ok="false"]{color:var(--red-ink);}
 

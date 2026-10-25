@@ -1,30 +1,64 @@
 // The corporate proxy's server-side logic (docs/network-proxy.md), shared by the /api/proxy routes,
 // the chat's proxy bridge (POST /api/ask/proxy) and the proxy card's Apply. It owns the two pieces of
-// process state those must agree on: the one-test-at-a-time lock and D14's since-boot marker.
-import { networkProxySettings, setNetworkProxy } from './settings.mjs';
+// process state those must agree on: the one-test-at-a-time lock and the passed tests that let a
+// save swap the upstream (D9).
+import { networkProxySettings, setNetworkProxy, previewNetworkProxy, networkProxyEnabled, readSettings } from './settings.mjs';
 import { proxyState, readProxyLogin, markLoginRejected, upstreamEnv } from './proxy-credentials.mjs';
-import { checkUpstream, resolveUpstream, upstreamLabel, fixedPortOf, localProxyUrl } from './upstream-proxy.mjs';
+import { checkUpstream, resolveUpstream, upstreamKey, upstreamLabel, fixedPortOf, localProxyUrl } from './upstream-proxy.mjs';
 
 export const PROXY_AGENT_TEXT = 'The corporate proxy login cannot be changed or tested from inside the container while agent isolation is on. Open Worca through its published address.';
+/** How long a passing test lets a save swap to those values (D9). */
+export const TESTED_TTL_MS = 10 * 60_000;
+export const FIXED_PORT_NOTE = 'Applies at the next start';
+export const UNTESTED_TEXT = 'Test these proxy settings first: Worca switches to a new proxy only after it passed a test';
 
 /**
- * @param {{ egress: () => object|null, io?: object }} o  egress: startEgressPolicy()'s result (null before boot / in tests)
+ * @param {{ egress: () => object|null, apply?: (np: object) => Promise<object>|null, io?: object }} o
+ *   egress: the running startEgressPolicy() result (null before boot / in tests). apply: startLiveEgress().apply.
  */
-export function createProxyHost({ egress, io = {} } = {}) {
+export function createProxyHost({ egress, apply = () => null, io = {} } = {}) {
   const settings = io.settings ?? networkProxySettings;
+  const preview = io.preview ?? previewNetworkProxy;
+  const enabledNow = io.enabled ?? (() => networkProxyEnabled(readSettings()));
+  const now = io.now ?? Date.now;
   const saveNetworkProxy = io.saveNetworkProxy ?? setNetworkProxy;
   const readLogin = io.readLogin ?? readProxyLogin;
   const markRejected = io.markLoginRejected ?? markLoginRejected;
   const check = io.checkUpstream ?? checkUpstream;
   const envOf = io.env ?? (() => process.env);
   let testRunning = false;
-  /** D14: true once a settings save changed the upstream in this process (a restart clears it). */
-  let changedSinceBoot = false;
+  /** upstreamKey -> time of the passing test. */
+  const passed = new Map();
 
   const E = () => egress() || null;
   /** D13: the proxy variables as they were before the local proxy took HTTP(S)_PROXY, never the local URL. */
   const sourceEnv = () => upstreamEnv(E() && E().sourceEnv ? E().sourceEnv : envOf());
   const live = () => (E() && E().connector ? E().connector.status() : null);
+
+  /** The upstream `np` would use, resolved like the running proxy does (D13). */
+  const resolveFor = (np) => {
+    const login = readLogin();
+    return resolveUpstream({ env: sourceEnv(), settings: np, login: login && !login.error ? login : null });
+  };
+  /** The running upstream's key, resolved through the same resolveFor() as the candidate, so both sides
+   *  share one format. The connector's status().auth can drift from the resolved auth after a login
+   *  change (useLogin sets 'auto'/'none'), so it is never compared directly (architect-2-1). '' = nothing runs. */
+  const runningKey = () => {
+    const l = live();
+    if (!l) return '';
+    const up = resolveFor(settings());
+    return up && !up.error && upstreamLabel(up.host, up.port) === l.upstream ? upstreamKey(up) : '';
+  };
+  /** True when saving `np` would send traffic (and the login) to an upstream nobody tested (D9). */
+  function untested(np) {
+    if (!(np && np.enabled === true)) return false;
+    const up = resolveFor(np);
+    if (!up || up.error) return false;               // nothing to send to; the status line says why
+    const key = upstreamKey(up);
+    if (key === runningKey()) return false;
+    for (const [k, at] of passed) if (now() - at > TESTED_TTL_MS) passed.delete(k);   // prune expired passes
+    return !passed.has(key);
+  }
 
   /** GET /api/proxy/status. */
   function status() {
@@ -33,7 +67,7 @@ export function createProxyHost({ egress, io = {} } = {}) {
     // A running proxy states its real URL; a proxy that failed to listen states no URL, only the error (D13).
     const localUrl = eg ? (eg.status === 'on' ? eg.url : null) : (fixed ? localProxyUrl(fixed) : null);
     const localError = eg && eg.status === 'off' && eg.upstreamError ? eg.upstreamError : null;
-    return { ...proxyState({ env: sourceEnv(), networkProxy: settings(), login: readLogin(), live: live(), expectRunning: true, localUrl }),
+    return { ...proxyState({ env: sourceEnv(), networkProxy: settings(), login: readLogin(), live: live(), enabled: enabledNow(), expectRunning: false, localUrl }),
       localError, settings: settings() };
   }
 
@@ -41,12 +75,9 @@ export function createProxyHost({ egress, io = {} } = {}) {
   function chatStatus() {
     const p = status();
     const l = live();
-    const reasons = [];
-    if (!l) reasons.push('no local proxy is running in this Worca: the flag was turned on after Worca started, or the upstream could not be used at start');
-    if (changedSinceBoot) reasons.push('the upstream was changed since Worca started');
     const login = p.login;
     return {
-      flag: true,
+      enabled: enabledNow(),
       state: p.state, line: p.line, error: p.error || null,
       upstream: p.upstream ? { hostPort: p.upstream, source: p.source, auth: p.auth, authLabel: p.authLabel } : null,
       settings: p.settings,
@@ -56,7 +87,6 @@ export function createProxyHost({ egress, io = {} } = {}) {
         rejected: !!(login && login.rejected), tripped: l ? l.state === 'tripped' : !!(login && login.rejected),
         error: p.loginError || null,
       },
-      restart: { needed: reasons.length > 0, reasons },
       connector: l ? { upstream: l.upstream, auth: l.auth, source: l.source, account: l.login || null, state: l.state } : null,
       warnings: p.warnings || [],
     };
@@ -64,24 +94,27 @@ export function createProxyHost({ egress, io = {} } = {}) {
 
   const refuse = (code, error) => ({ status: 409, body: { error, code } });
 
-  /** POST /api/proxy/test. {status, body}; body {ok, upstream, results} on 200. */
-  async function test() {
+  /**
+   * POST /api/proxy/test and the chat card's Apply. `candidate`: a networkProxy patch merged over the saved
+   * values; none = the saved values. `record`: only a person's click (the UI route, the card's Apply) may
+   * record a pass that later satisfies the UNTESTED gate; the chat tool test never records (D9).
+   * {status, body}; body {ok, upstream, results} on 200.
+   */
+  async function test(candidate, { record = false } = {}) {
     if (testRunning) return refuse('TEST_RUNNING', 'a proxy test is already running');
-    const login = readLogin();
-    const up = resolveUpstream({ env: sourceEnv(), settings: settings(), login: login && !login.error ? login : null });
-    if (!up) return refuse('NOT_CONFIGURED', 'no corporate proxy is set up: enter its host and port and Save');
+    let np;
+    try { np = candidate === undefined ? settings() : preview(candidate); } catch (err) { return { status: 400, body: { error: err.message, field: 'networkProxy' } }; }
+    const up = resolveFor(np);
+    if (!up) return refuse('NOT_CONFIGURED', 'no corporate proxy is set up: enter its host and port, then Test');
     if (up.error) return refuse('UPSTREAM_INVALID', up.error);
-    // D14: never send the saved hash to a host the running proxy does not use yet (a settings change waits for a restart).
-    const l = live();
-    // With no proxy running (flag turned on after boot), a host saved since boot is just as unproven.
-    const unproven = l ? l.upstream !== upstreamLabel(up.host, up.port) : changedSinceBoot;
-    if (unproven) return refuse('RESTART_NEEDED', `the saved proxy ${upstreamLabel(up.host, up.port)} is not in use yet: restart Worca, then Test`);
     testRunning = true;
     try {
       const r = await check(up, {
         startTripped: !!(up.login && up.login.rejected),
         onTrip: ({ upstream, loginId }) => { if (loginId) markRejected(loginId, { upstream }); },
       });
+      if (!r.ok) passed.delete(upstreamKey(up));
+      else if (record) passed.set(upstreamKey(up), now());
       E()?.reloadLogin?.();   // a trip here marked the file: the running connector stops at once
       return { status: 200, body: { ok: r.ok, upstream: r.upstream.upstream, results: r.results } };
     } finally {
@@ -89,13 +122,23 @@ export function createProxyHost({ egress, io = {} } = {}) {
     }
   }
 
-  /** PUT /api/proxy/settings and the proxy card's Apply. Throws the settings.mjs validation error. */
+  /** PUT /api/proxy/settings, the chat card's Apply and setup apply. Throws the settings.mjs validation
+   *  error; refuses an untested upstream (409 UNTESTED) before writing anything. */
   async function saveSettings(patch) {
-    const before = settings().upstream || '';
+    const next = preview(patch ?? null);
+    if (untested(next)) return { refused: refuse('UNTESTED', UNTESTED_TEXT) };
+    const beforeFixed = fixedPortOf(settings());
     const networkProxy = await saveNetworkProxy(patch ?? null);
-    if ((networkProxy.upstream || '') !== before) changedSinceBoot = true;
-    return { networkProxy, restartNeeded: true };
+    const fallback = { changed: false, pending: fixedPortOf(networkProxy) !== beforeFixed ? ['fixedPort'] : [] };
+    // The write already happened: a failed live apply is reported with the saved result, never turned into a 400.
+    let out;
+    try { out = (await apply(networkProxy)) || fallback; }
+    catch (err) { out = { ...fallback, upstreamError: `saved, but not applied yet: ${err && err.message ? err.message : err}` }; }
+    const pending = out.pending || [];
+    return { networkProxy, applied: !!out.changed, restartNeeded: pending.length > 0, pending,
+      notes: pending.includes('fixedPort') ? { fixedPort: FIXED_PORT_NOTE } : {},
+      ...(out.upstreamError ? { upstreamError: out.upstreamError } : {}) };
   }
 
-  return { status, chatStatus, test, saveSettings, restarted: () => { changedSinceBoot = false; }, changedSinceBoot: () => changedSinceBoot };
+  return { status, chatStatus, test, saveSettings };
 }

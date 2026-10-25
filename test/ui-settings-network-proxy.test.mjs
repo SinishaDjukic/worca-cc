@@ -4,8 +4,7 @@ import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { applyFlags } from '../ui/public/flags.mjs';
-import { mountNetworkProxyCard } from '../ui/public/settings-network-proxy.mjs';
+import { mountNetworkProxyCard, SAVED_TEXT, NOT_SAVED_TEXT, TESTING_TEXT } from '../ui/public/settings-network-proxy.mjs';
 import { BUTTON_DONE_MS } from '../ui/public/feedback.mjs';
 
 const HTML = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
@@ -23,35 +22,25 @@ const TEST_OK = { ok: false, upstream: 'proxy.acme.example:8080', results: [
 const tick = () => new Promise((r) => setImmediate(r));
 
 /** A fresh page and card; `answers` maps "METHOD url" to { ok, status, data }. */
-function mount(answers = {}, { flag = false } = {}) {
+function mount(answers = {}) {
   const dom = new JSDOM(HTML);
   const doc = dom.window.document;
-  if (flag) applyFlags({ corporateProxy: true }, doc);
   const calls = [];
+  // An answer may be a function (called, and awaited, per request).
   const fetchJson = async (url, { method = 'GET', body } = {}) => {
     calls.push({ method, url, body });
-    return answers[`${method} ${url}`] || { ok: true, status: 200, data: STATUS };
+    const a = answers[`${method} ${url}`];
+    return (typeof a === 'function' ? await a() : a) || { ok: true, status: 200, data: STATUS };
   };
   const off = mountNetworkProxyCard({ doc, fetchJson });
   const $ = (id) => doc.getElementById(id);
-  const close = () => { off(); applyFlags({ corporateProxy: false }, doc); dom.window.close(); };
+  const close = () => { off(); dom.window.close(); };
   return { dom, doc, calls, $, close };
 }
 
-test('flag off: no body and no request; the section carries the flag and level gates', (t) => {
+test('the fields, a status fetch, and the status line is the payload line as is (no flag needed)', async (t) => {
   const p = mount();
   t.after(p.close);
-  const card = p.$('network-proxy-settings-card');
-  assert.equal(card.dataset.flag, 'corporateProxy');
-  assert.equal(card.dataset.minLevel, 'advanced');
-  assert.equal(p.$('networkProxyBody').children.length, 0);
-  assert.deepEqual(p.calls, []);
-});
-
-test('flag on: the fields, a status fetch, and the status line is the payload line as is', async (t) => {
-  const p = mount();
-  t.after(p.close);
-  applyFlags({ corporateProxy: true }, p.doc);
   await tick();
   assert.ok(p.$('npHost') && p.$('npTest'));
   assert.equal(p.$('npPassword').type, 'password');
@@ -62,12 +51,11 @@ test('flag on: the fields, a status fetch, and the status line is the payload li
   assert.equal(p.$('npPort').value, '8080');
   assert.equal(p.$('npConnectS').value, '30');
   assert.equal(p.$('npUser').value, 'jdoe');
-  applyFlags({ corporateProxy: false }, p.doc);
-  assert.equal(p.$('networkProxyBody').children.length, 0, 'off again: the body is emptied');
+  assert.equal(p.$('npEnabled').checked, false, 'settings without enabled: the switch is off');
 });
 
 test('Test posts once and lists one row per host', async (t) => {
-  const p = mount({ 'POST /api/proxy/test': { ok: true, status: 200, data: TEST_OK } }, { flag: true });
+  const p = mount({ 'POST /api/proxy/test': { ok: true, status: 200, data: TEST_OK } });
   t.after(p.close);
   await tick();
   p.$('npTest').click();
@@ -79,9 +67,9 @@ test('Test posts once and lists one row per host', async (t) => {
   assert.match(p.doc.querySelector('[data-host="api.anthropic.com"][data-ok="false"]').textContent, /FAIL/);
 });
 
-test('a 409 RESTART_NEEDED shows the server sentence and no rows', async (t) => {
-  const error = 'the saved proxy 127.0.0.1:9 is not in use yet: restart Worca, then Test';
-  const p = mount({ 'POST /api/proxy/test': { ok: false, status: 409, data: { code: 'RESTART_NEEDED', error } } }, { flag: true });
+test('a 409 refusal shows the server sentence and no rows', async (t) => {
+  const error = 'no corporate proxy is set up: enter its host and port, then Test';
+  const p = mount({ 'POST /api/proxy/test': { ok: false, status: 409, data: { code: 'NOT_CONFIGURED', error } } });
   t.after(p.close);
   await tick();
   p.$('npTest').click();
@@ -91,7 +79,7 @@ test('a 409 RESTART_NEEDED shows the server sentence and no rows', async (t) => 
 });
 
 test('Log in posts domain, user and password, then clears the password', async (t) => {
-  const p = mount({}, { flag: true });
+  const p = mount({});
   t.after(p.close);
   await tick();
   p.$('npDomain').value = 'ACME';
@@ -105,7 +93,7 @@ test('Log in posts domain, user and password, then clears the password', async (
 });
 
 test('Basic disables Log in with a hint; auto enables it again', async (t) => {
-  const p = mount({}, { flag: true });
+  const p = mount({});
   t.after(p.close);
   await tick();
   const pick = (v) => { p.$('npAuth').value = v; p.$('npAuth').dispatchEvent(new p.dom.window.Event('change')); };
@@ -121,7 +109,7 @@ test('Basic disables Log in with a hint; auto enables it again', async (t) => {
 test('Basic chosen while Log in shows "Logged in": it stays disabled once the button goes idle', async (t) => {
   mock.timers.enable({ apis: ['setTimeout'] });
   t.after(() => mock.timers.reset());
-  const p = mount({}, { flag: true });
+  const p = mount({});
   t.after(p.close);
   await tick();
   p.$('npUser').value = 'jdoe';
@@ -134,13 +122,14 @@ test('Basic chosen while Log in shows "Logged in": it stays disabled once the bu
   assert.equal(p.$('npLogin').disabled, true);
 });
 
-test('a payload with restartNeeded shows its line, which says to restart', async (t) => {
-  const line = 'no login saved: via p:8080 (no login). Log in with your domain, user name and password. Restart Worca to start the proxy.';
-  const p = mount({ 'GET /api/proxy/status': { ok: true, status: 200, data: { ...STATUS, state: 'no-login', login: null, restartNeeded: true, line } } }, { flag: true });
+test('the status line never says to restart, and an enabled setting turns the switch on', async (t) => {
+  const line = 'no login saved: via p:8080 (no login). Log in with your domain, user name and password.';
+  const p = mount({ 'GET /api/proxy/status': { ok: true, status: 200, data: { ...STATUS, state: 'no-login', login: null, line, settings: { ...STATUS.settings, enabled: true } } } });
   t.after(p.close);
   await tick();
-  assert.match(p.$('npStatus').textContent, /Restart Worca/);
+  assert.doesNotMatch(p.$('npStatus').textContent, /Restart Worca/);
   assert.equal(p.$('npStatus').dataset.state, 'no-login');
+  assert.equal(p.$('npEnabled').checked, true);
 });
 
 test('app.js mounts the card', () => {
@@ -149,7 +138,7 @@ test('app.js mounts the card', () => {
 });
 
 test('Local proxy port: filled from settings, Save sends fixedPort, an empty field sends null', async (t) => {
-  const p = mount({ 'GET /api/proxy/status': { ok: true, status: 200, data: { ...STATUS, settings: { ...STATUS.settings, fixedPort: 3128 } } } }, { flag: true });
+  const p = mount({ 'GET /api/proxy/status': { ok: true, status: 200, data: { ...STATUS, settings: { ...STATUS.settings, fixedPort: 3128 } } } });
   t.after(p.close);
   await tick();
   assert.ok(p.$('npFixedPort'));
@@ -166,7 +155,7 @@ test('Local proxy port: filled from settings, Save sends fixedPort, an empty fie
 });
 
 test('Digest disables Log in with its own hint', async (t) => {
-  const p = mount({}, { flag: true });
+  const p = mount({});
   t.after(p.close);
   await tick();
   p.$('npAuth').value = 'digest';
@@ -175,4 +164,132 @@ test('Digest disables Log in with its own hint', async (t) => {
   assert.equal(p.$('npLogin').disabled, true);
   assert.equal(p.$('npBasicNote').hidden, false);
   assert.match(p.$('npBasicNote').textContent, /Digest cannot use a saved login/);
+});
+
+test('AC-2.8: the card is Simple level, has no flag gate, and folds timeouts and the local port under More', async () => {
+  const m = mount();
+  await tick();
+  const card = m.$('network-proxy-settings-card');
+  assert.equal(card.dataset.minLevel, 'simple');
+  assert.equal(card.hasAttribute('data-flag'), false);
+  assert.ok(m.$('npEnabled'), 'the switch renders without any flag');
+  const more = card.querySelector('details.np-more');
+  assert.equal(more.open, false);
+  assert.equal(more.querySelector('summary').textContent.trim(), 'More');
+  for (const id of ['npFixedPort', 'npConnectS', 'npAuthS', 'npIdleS']) assert.ok(more.contains(m.$(id)), `${id} is under More`);
+  for (const id of ['npHost', 'npPort', 'npAuth', 'npNoProxy']) assert.equal(more.contains(m.$(id)), false, `${id} stays visible`);
+  assert.equal(m.$('npFixedPortNote').textContent, 'Applies at the next start');
+  m.close();
+});
+
+test('Save: an UNTESTED refusal runs Test with the form values, then saves; a failed test saves nothing', async () => {
+  let puts = 0;
+  const m = mount({
+    'PUT /api/proxy/settings': () => (++puts === 1 ? { ok: false, status: 409, data: { code: 'UNTESTED', error: 'Test these proxy settings first…' } }
+      : { ok: true, status: 200, data: { networkProxy: {}, restartNeeded: false, pending: [], notes: {} } }),
+    'POST /api/proxy/test': { ok: true, status: 200, data: { ok: true, upstream: 'proxy.acme.example:8080', results: [{ host: 'github.com', ok: true, via: 'upstream', ms: 12 }] } },
+  });
+  await tick();
+  m.$('npEnabled').checked = true;
+  m.$('npHost').value = 'proxy.acme.example'; m.$('npPort').value = '8080';
+  m.$('npSave').click();
+  for (let i = 0; i < 10; i++) await tick();
+  const test = m.calls.find((c) => c.url === '/api/proxy/test');
+  assert.deepEqual(test.body.networkProxy.upstream, 'http://proxy.acme.example:8080');
+  assert.equal(test.body.networkProxy.enabled, true);
+  assert.equal(m.calls.filter((c) => c.url === '/api/proxy/settings').length, 2);
+  assert.equal(m.$('npStatus').textContent, 'Saved. New connections use it now.');
+  assert.equal(m.$('npTestResults').children.length, 1);
+  m.close();
+});
+
+test('Save: a failed test after UNTESTED saves nothing and says so', async () => {
+  const m = mount({
+    'PUT /api/proxy/settings': { ok: false, status: 409, data: { code: 'UNTESTED', error: 'Test these proxy settings first…' } },
+    'POST /api/proxy/test': { ok: true, status: 200, data: { ok: false, upstream: 'proxy.acme.example:8080', results: [{ host: 'github.com', ok: false, error: 'connect ECONNREFUSED' }] } },
+  });
+  await tick();
+  m.$('npEnabled').checked = true;
+  m.$('npHost').value = 'proxy.acme.example'; m.$('npPort').value = '8080';
+  m.$('npSave').click();
+  for (let i = 0; i < 10; i++) await tick();
+  assert.equal(m.calls.filter((c) => c.url === '/api/proxy/settings').length, 1, 'one PUT only');
+  assert.equal(m.$('npStatus').textContent, NOT_SAVED_TEXT);
+  assert.equal(m.$('npTestResults').children[0].dataset.ok, 'false');
+  m.close();
+});
+
+test('Save: #npStatus reads Testing… while the test after UNTESTED is still running (ux-2-1)', async () => {
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  let puts = 0;
+  const m = mount({
+    'PUT /api/proxy/settings': () => (++puts === 1 ? { ok: false, status: 409, data: { code: 'UNTESTED', error: 'Test these proxy settings first…' } }
+      : { ok: true, status: 200, data: { networkProxy: {}, restartNeeded: false, pending: [], notes: {} } }),
+    'POST /api/proxy/test': () => gate.then(() => ({ ok: true, status: 200, data: { ok: true, upstream: 'proxy.acme.example:8080', results: [] } })),
+  });
+  await tick();
+  m.$('npEnabled').checked = true;
+  m.$('npHost').value = 'proxy.acme.example'; m.$('npPort').value = '8080';
+  m.$('npSave').click();
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(m.$('npStatus').textContent, TESTING_TEXT, 'the deferred test has not answered yet');
+  release();
+  for (let i = 0; i < 10; i++) await tick();
+  assert.equal(m.$('npStatus').textContent, SAVED_TEXT);
+  m.close();
+});
+
+test('Save: an upstreamError answer shows the server sentence and flags the host field (ux-2-3)', async () => {
+  const m = mount({ 'PUT /api/proxy/settings': { ok: true, status: 200, data: { networkProxy: {}, restartNeeded: false, pending: [], notes: {}, upstreamError: 'networkProxy.upstream: "http://:0" has no host' } } });
+  await tick();
+  m.$('npEnabled').checked = true;
+  m.$('npSave').click();
+  for (let i = 0; i < 5; i++) await tick();
+  assert.match(m.$('npStatus').textContent, /has no host/);
+  assert.equal(m.$('npHost').getAttribute('aria-invalid'), 'true');
+  m.close();
+});
+
+test('Save: turning off says connections go direct', async () => {
+  const m = mount({ 'PUT /api/proxy/settings': { ok: true, status: 200, data: { networkProxy: { enabled: false }, restartNeeded: false, pending: [], notes: {} } } });
+  await tick();
+  m.$('npEnabled').checked = false;
+  m.$('npSave').click();
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(m.$('npStatus').textContent, 'Saved. New connections go direct now.');
+  m.close();
+});
+
+test('Test keeps the typed values: only the status line repaints (ux-1-1)', async () => {
+  const m = mount({
+    'GET /api/proxy/status': { ok: true, status: 200, data: { state: 'ready', line: 'ready: saved proxy', settings: { enabled: true, upstream: 'http://saved.acme.example:8080' } } },
+    'POST /api/proxy/test': { ok: true, status: 200, data: { ok: true, upstream: 'typed.acme.example:3128', results: [{ host: 'github.com', ok: true, via: 'upstream', ms: 9 }] } },
+  });
+  await tick();
+  m.$('npHost').value = 'typed.acme.example'; m.$('npPort').value = '3128';
+  m.$('npTest').click();
+  for (let i = 0; i < 10; i++) await tick();
+  assert.equal(m.calls.find((c) => c.url === '/api/proxy/test').body.networkProxy.upstream, 'http://typed.acme.example:3128');
+  assert.equal(m.$('npHost').value, 'typed.acme.example');
+  assert.equal(m.$('npPort').value, '3128');
+  m.close();
+});
+
+test('the switch is labelled and the More chevron is hidden from screen readers', async () => {
+  const m = mount();
+  await tick();
+  assert.equal(m.$('npEnabled').closest('label').textContent.trim(), 'Use a corporate proxy');
+  assert.equal(m.$('network-proxy-settings-card').querySelector('details.np-more .adv-chev').getAttribute('aria-hidden'), 'true');
+  m.close();
+});
+
+test('Save: a port change says it applies at the next start', async () => {
+  const m = mount({ 'PUT /api/proxy/settings': { ok: true, status: 200, data: { networkProxy: {}, restartNeeded: true, pending: ['fixedPort'], notes: { fixedPort: 'Applies at the next start' } } } });
+  await tick();
+  m.$('npEnabled').checked = true;
+  m.$('npSave').click();
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(m.$('npStatus').textContent, 'Saved. New connections use it now. The local proxy port applies at the next start.');
+  m.close();
 });

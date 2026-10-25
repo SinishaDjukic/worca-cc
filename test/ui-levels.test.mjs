@@ -69,6 +69,7 @@ test('every nav item, Settings tab and card, and detail tab declares an explicit
       const doc = shell();
       assert.equal(doc.querySelector('#settings-tabs [data-tab="presets"]').dataset.minLevel, 'advanced');
       assert.equal(doc.getElementById('presets-settings-card').dataset.minLevel, 'advanced');
+      assert.equal(doc.getElementById('network-proxy-settings-card').dataset.minLevel, 'simple');
       for (const id of ['preset-row', 'preset-btn', 'preset-clear']) {
         assert.equal(doc.getElementById(id).closest('[data-min-level="advanced"], [data-min-level="expert"]'), null, `#${id} is Simple`);
       }

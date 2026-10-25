@@ -74,6 +74,12 @@ export function useEnvProxy({ env = process.env, api, undici } = {}) {
   }
 }
 
+/** D8: the proxy variables changed at runtime: undo the previous install, then install from env again. */
+export function reinstallEnvProxy(prev, opts = {}) {
+  try { prev?.restore?.(); } catch { /* the old dispatcher is gone */ }
+  return useEnvProxy(opts);
+}
+
 /**
  * The one line an entry point prints about useEnvProxy()'s result, or null for 'off'.
  * @param {{status: string, error?: string}} result

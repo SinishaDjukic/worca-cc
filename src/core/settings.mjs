@@ -2881,7 +2881,7 @@ export function effectiveNetworkWait(env = process.env) {
   return { enabled, maxWaitMs };
 }
 
-// Settings › Network proxy (corporateProxy flag; read at boot by egress-policy.mjs).
+// Settings › Network proxy (networkProxy.enabled; applied live by egress-policy.mjs startLiveEgress).
 // The same list as upstream-proxy.mjs AUTH_MODES: this module imports nothing from the core graph (test pins it).
 export const NETWORK_PROXY_AUTH = Object.freeze(['auto', 'none', 'basic', 'ntlm', 'digest']);
 const NETWORK_PROXY_TIMEOUTS = ['connectMs', 'authMs', 'idleMs'];
@@ -2892,6 +2892,61 @@ const isFixedPort = (v) => Number.isInteger(v) && v >= 1024 && v <= 65535;
 export function networkProxySettings() {
   const v = readSettings().networkProxy;
   return v && typeof v === 'object' && !Array.isArray(v) ? { ...v } : {};
+}
+
+/** True when the corporate proxy is on (D6). A leftover flags.corporateProxy (a home the boot
+ *  migration could not write) still counts, unless networkProxy.enabled says false. */
+export function networkProxyEnabled(settings = readSettings()) {
+  const s = settings && typeof settings === 'object' ? settings : {};
+  const np = s.networkProxy && typeof s.networkProxy === 'object' ? s.networkProxy : {};
+  if (typeof np.enabled === 'boolean') return np.enabled;
+  return !!(s.flags && s.flags.corporateProxy === true);
+}
+
+/** D6: the Labs flag that became networkProxy.enabled. Pure: {changed, settings}. */
+export function migrateLegacyProxyFlag(settings) {
+  const s = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {};
+  const flags = s.flags && typeof s.flags === 'object' && !Array.isArray(s.flags) ? s.flags : null;
+  if (!flags || !Object.prototype.hasOwnProperty.call(flags, 'corporateProxy')) return { changed: false, settings: s };
+  const { corporateProxy: was, ...restFlags } = flags;
+  const next = { ...s };
+  if (Object.keys(restFlags).length) next.flags = restFlags; else delete next.flags;
+  const np = next.networkProxy && typeof next.networkProxy === 'object' ? next.networkProxy : {};
+  if (was === true && typeof np.enabled !== 'boolean') next.networkProxy = { ...np, enabled: true };
+  return { changed: true, settings: next };
+}
+
+/** Run once per process start (server boot, CLI main), before the egress proxy starts. @returns {Promise<boolean>} wrote */
+export async function migrateCorporateProxyFlag() {
+  const r = migrateLegacyProxyFlag(readSettings());
+  if (!r.changed) return false;
+  try { await persistSettings(r.settings); return true; } catch { return false; }   // networkProxyEnabled still reads the flag
+}
+
+/** Poll settings.json by stat signature (the watchProxyLogin pattern, proxy-credentials.mjs). @returns {() => void} stop */
+export function watchSettingsFile(onChange, { intervalMs = 1000 } = {}) {
+  const file = settingsFile();
+  const sig = () => {
+    try { const st = statSync(file); return `${st.ino}|${st.mtimeMs}|${st.ctimeMs}|${st.size}`; } catch (err) { return err && err.code ? err.code : 'error'; }
+  };
+  let last = sig();
+  const timer = setInterval(() => {
+    const cur = sig();
+    if (cur === last) return;
+    last = cur;
+    try { onChange(); } catch { /* ignore */ }
+  }, intervalMs);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
+/** readSettings() for watchers: null when the file is missing or is not a JSON object, so a tick
+ *  mid-write, a broken hand edit or a deleted file never reads as "proxy off" (R-sec-5). */
+export function readSettingsStrict() {
+  try {
+    const d = JSON.parse(readFileSync(settingsFile(), 'utf8'));
+    return d && typeof d === 'object' && !Array.isArray(d) ? d : null;
+  } catch { return null; }
 }
 
 /** "host:port" or "http://host:port" -> "http://host:port"; throws on userinfo or another scheme. */
@@ -2908,7 +2963,8 @@ function normalizeProxyUpstream(raw) {
 export function assertNetworkProxyInput(patch) {
   if (patch === null || patch === '') return;
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('networkProxy must be an object');
-  for (const k of Object.keys(patch)) if (!['upstream', 'auth', 'noProxy', 'timeouts', 'fixedPort'].includes(k)) throw new Error(`unknown networkProxy setting: ${k}`);
+  for (const k of Object.keys(patch)) if (!['enabled', 'upstream', 'auth', 'noProxy', 'timeouts', 'fixedPort'].includes(k)) throw new Error(`unknown networkProxy setting: ${k}`);
+  if (patch.enabled != null && typeof patch.enabled !== 'boolean') throw new Error('networkProxy.enabled must be true or false');
   if (patch.upstream != null && patch.upstream !== '') normalizeProxyUpstream(patch.upstream);
   if (patch.auth != null && !NETWORK_PROXY_AUTH.includes(patch.auth)) throw new Error(`networkProxy.auth must be one of ${NETWORK_PROXY_AUTH.join(', ')}`);
   if (patch.fixedPort != null && !isFixedPort(patch.fixedPort)) throw new Error('networkProxy.fixedPort must be a port from 1024 to 65535');

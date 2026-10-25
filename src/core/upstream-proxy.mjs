@@ -1,6 +1,6 @@
 // src/core/upstream-proxy.mjs — the corporate (upstream) proxy the local proxy chains to.
 //
-// Behind the `corporateProxy` flag (checked in egress-policy.mjs). createProxy in egress-proxy.mjs
+// On while settings networkProxy.enabled is true (checked in egress-policy.mjs). createProxy in egress-proxy.mjs
 // receives the connector built here and calls route()/tunnel()/forward() for hosts that go to the
 // upstream; egress-proxy.mjs itself keeps importing node: modules only (the Docker sidecar runs
 // it as one file). NTLM authenticates a CONNECTION: Type 1 -> 407/Type 2 -> Type 3 run on one
@@ -74,6 +74,8 @@ export class ProxyCredentials {
 
 /** "host:port", bracketing an IPv6 host. */
 export const upstreamLabel = (h, p) => `${h.includes(':') ? `[${h}]` : h}:${p}`;
+/** What a test proves and a swap needs (D9): the host:port the login would go to, and how. */
+export const upstreamKey = (up) => (up && !up.error ? `${upstreamLabel(up.host, up.port)}|${up.auth}` : '');
 const hostPort = upstreamLabel;
 
 /** "http://DOMAIN%5Cuser:pass@host:port" -> { host, port, credentials } or { error } (never quoting the value). */

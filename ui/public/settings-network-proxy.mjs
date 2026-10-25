@@ -1,9 +1,14 @@
-// ui/public/settings-network-proxy.mjs — Settings › Network proxy (corporateProxy flag).
-// The body exists only while the flag is on: off, nothing is built and no /api/proxy call goes out.
-import { flagOn, onFlagChange } from './flags.mjs';
+// ui/public/settings-network-proxy.mjs — Settings › Network proxy (networkProxy.enabled, Simple level).
+// Save applies live (the server swaps the upstream); a new upstream must pass a Test first (UNTESTED).
 import { withButton, fieldError, clearFieldErrors } from './feedback.mjs';
+import { makeSwitch } from './switch.mjs';
 
-export const NETWORK_PROXY_FLAG = 'corporateProxy';
+export const FIXED_PORT_NOTE = 'Applies at the next start';
+export const SAVED_TEXT = 'Saved. New connections use it now.';
+export const PORT_PENDING_TEXT = ' The local proxy port applies at the next start.';
+export const NOT_SAVED_TEXT = 'Not saved: the test did not pass. Fix the values and Save again.';
+export const SAVED_OFF_TEXT = 'Saved. New connections go direct now.';
+export const TESTING_TEXT = 'Testing…';
 const AUTH_OPTIONS = [['auto', 'NTLMv2 (recommended)'], ['basic', 'Basic (password in cleartext)'], ['digest', 'Digest (password from HTTPS_PROXY)'], ['none', 'No login']];
 /** Login modes that need the password itself, so Log in (a saved NT hash) is off, with this hint (D16). */
 const PASSWORD_NOTES = {
@@ -57,6 +62,19 @@ function select(doc, options) {
   return { wrap, sel };
 }
 
+/** The New run page's disclosure (details.advanced, index.html), named np-more here. */
+function moreFold(doc, ...rows) {
+  const d = make(doc, 'details', 'advanced np-more');
+  const s = make(doc, 'summary');
+  const chev = make(doc, 'span', 'adv-chev');
+  chev.setAttribute('aria-hidden', 'true');
+  s.append(chev, make(doc, 'span', '', 'More'));
+  const inner = make(doc, 'div', 'advanced-body drows');
+  inner.append(...rows);
+  d.append(s, inner);
+  return d;
+}
+
 function build(doc, body) {
   const host = input(doc, 'text', { placeholder: 'proxy.acme.example', autocomplete: 'off', spellcheck: 'false' });
   const port = input(doc, 'number', { min: '1', max: '65535', placeholder: '8080' });
@@ -69,11 +87,19 @@ function build(doc, body) {
   const domain = input(doc, 'text', { placeholder: 'ACME', autocomplete: 'off', spellcheck: 'false' });
   const user = input(doc, 'text', { placeholder: 'jdoe', autocomplete: 'username', spellcheck: 'false' });
   const password = input(doc, 'password', { autocomplete: 'new-password' });
+  const { row: enabledRow, input: enabled } = makeSwitch(doc, { label: 'Use a corporate proxy', rowClass: 'np-switch' });
+  enabled.id = 'npEnabled';
+  const portNote = make(doc, 'small', 'hint', '');
+  portNote.id = 'npFixedPortNote';
+  const fixedRow = field(doc, 'npFixedPort', 'Local proxy port', fixedPort);
+  fixedRow.querySelector('.drow-control').append(portNote);
   const drows = make(doc, 'div', 'drows');
   drows.append(
+    enabledRow,
     field(doc, 'npHost', 'Proxy host', host), field(doc, 'npPort', 'Port', port), field(doc, 'npAuth', 'Login', auth, authWrap),
-    field(doc, 'npNoProxy', 'Hosts that go direct', noProxy), field(doc, 'npFixedPort', 'Local proxy port', fixedPort),
-    field(doc, 'npConnectS', 'Connect timeout (s)', connectS), field(doc, 'npAuthS', 'Login timeout (s)', authS), field(doc, 'npIdleS', 'Idle timeout (s)', idleS),
+    field(doc, 'npNoProxy', 'Hosts that go direct', noProxy),
+    moreFold(doc, fixedRow, field(doc, 'npConnectS', 'Connect timeout (s)', connectS),
+      field(doc, 'npAuthS', 'Login timeout (s)', authS), field(doc, 'npIdleS', 'Idle timeout (s)', idleS)),
     field(doc, 'npDomain', 'Domain', domain), field(doc, 'npUser', 'User name', user), field(doc, 'npPassword', 'Password', password),
   );
   const actions = make(doc, 'div', 'add-project-actions');
@@ -91,11 +117,13 @@ function build(doc, body) {
   const results = make(doc, 'ul', 'np-results');
   results.id = 'npTestResults';
   body.append(drows, actions, basicNote, status, results);
-  return { host, port, auth, noProxy, fixedPort, connectS, authS, idleS, domain, user, password, save, login, logout, test, basicNote, status, results };
+  portNote.textContent = FIXED_PORT_NOTE;
+  return { enabled, host, port, auth, noProxy, fixedPort, connectS, authS, idleS, domain, user, password, save, login, logout, test, basicNote, status, results };
 }
 
 function fill(f, st) {
   const s = (st && st.settings) || {};
+  f.enabled.checked = s.enabled === true;
   if (s.upstream) { try { const u = new URL(s.upstream); f.host.value = u.hostname; f.port.value = u.port || '80'; } catch { /* left empty */ } }
   f.auth.value = s.auth || 'auto';
   f.noProxy.value = Array.isArray(s.noProxy) ? s.noProxy.join(', ') : (s.noProxy || '');
@@ -105,6 +133,11 @@ function fill(f, st) {
   f.authS.value = t.authMs ? String(t.authMs / 1000) : '';
   f.idleS.value = t.idleMs ? String(t.idleMs / 1000) : '';
   if (st && st.login) { f.domain.value = st.login.domain; f.user.value = st.login.user; }
+  fillStatus(f, st);
+}
+
+/** The server's state line only: the inputs keep what the person typed (after a Test, ux-1-1). */
+function fillStatus(f, st) {
   f.status.textContent = statusText(st);
   f.status.dataset.state = st ? st.state : '';
   basicMode(f);
@@ -129,7 +162,7 @@ export function renderResults(list, results) {
   }));
 }
 
-/** Mount the card; returns an unsubscribe function. */
+/** Mount the card; returns a no-op unsubscribe (the card has no flag to follow). */
 export function mountNetworkProxyCard({ doc = globalThis.document, fetchJson = defaultFetchJson } = {}) {
   const card = doc.getElementById('network-proxy-settings-card');
   const body = card && card.querySelector('#networkProxyBody');
@@ -140,22 +173,42 @@ export function mountNetworkProxyCard({ doc = globalThis.document, fetchJson = d
     const r = await fetchJson('/api/proxy/status');
     if (f && r.ok) fill(f, r.data);
   }
-  function paint(on) {
+  function paint() {
     body.replaceChildren();
-    f = null;
-    if (!on) return;
     f = build(doc, body);
     const cur = f;
     cur.auth.addEventListener('change', () => basicMode(cur));
+    /** The form as a networkProxy patch: Save and Test send the same values. */
+    const patchOf = (c) => ({
+      enabled: c.enabled.checked,
+      upstream: c.host.value.trim() ? `http://${c.host.value.trim()}:${c.port.value.trim() || '8080'}` : null,
+      auth: c.auth.value, noProxy: c.noProxy.value.trim() || null,
+      fixedPort: c.fixedPort.value.trim() ? Number(c.fixedPort.value) : null,
+      timeouts: { connectMs: ms(c.connectS), authMs: ms(c.authS), idleMs: ms(c.idleS) },
+    });
+    /** Test these values (saved or not); one row per host. @returns {Promise<boolean|null>} passed; null: it could not run */
+    const runTest = async (c, patch) => {
+      const r = await fetchJson('/api/proxy/test', { method: 'POST', body: { networkProxy: patch } });
+      // NOT_CONFIGURED / UPSTREAM_INVALID / TEST_RUNNING: the server's sentence, as is.
+      if (!r.ok) { c.status.textContent = r.data.error || 'The test could not run'; renderResults(c.results, []); return null; }
+      renderResults(c.results, r.data.results);
+      return !!r.data.ok;
+    };
     cur.save.addEventListener('click', () => withButton(cur.save, async () => {
       clearFieldErrors(body);
-      const upstream = cur.host.value.trim() ? `http://${cur.host.value.trim()}:${cur.port.value.trim() || '8080'}` : null;
-      const r = await fetchJson('/api/proxy/settings', { method: 'PUT', body: { networkProxy: {
-        upstream, auth: cur.auth.value, noProxy: cur.noProxy.value.trim() || null,
-        fixedPort: cur.fixedPort.value.trim() ? Number(cur.fixedPort.value) : null,
-        timeouts: { connectMs: ms(cur.connectS), authMs: ms(cur.authS), idleMs: ms(cur.idleS) } } } });
+      const patch = patchOf(cur);
+      const put = () => fetchJson('/api/proxy/settings', { method: 'PUT', body: { networkProxy: patch } });
+      let r = await put();
+      if (!r.ok && r.data && r.data.code === 'UNTESTED') {
+        cur.status.textContent = TESTING_TEXT;   // #npStatus is the live region; the button keeps withButton's spinner
+        if (!(await runTest(cur, patch))) { cur.status.textContent = NOT_SAVED_TEXT; return { ok: false }; }
+        r = await put();
+      }
       if (!r.ok) { fieldError(cur.host, r.data.error || 'Could not save'); return { ok: false }; }
-      cur.status.textContent = 'Saved. Restart Worca to use the new proxy settings.';
+      const port = (r.data.pending || []).includes('fixedPort') ? PORT_PENDING_TEXT : '';
+      // Saved, but the running proxy kept its connector (Decision 6a): say why and point at the host (ux-2-3).
+      if (r.data.upstreamError) { cur.status.textContent = r.data.upstreamError; fieldError(cur.host, r.data.upstreamError, { focus: false }); }
+      else cur.status.textContent = (patch.enabled ? SAVED_TEXT : SAVED_OFF_TEXT) + port;
       return { ok: true };
     }));
     cur.login.addEventListener('click', () => withButton(cur.login, async () => {
@@ -171,17 +224,18 @@ export function mountNetworkProxyCard({ doc = globalThis.document, fetchJson = d
       if (r.ok) fill(cur, r.data);
       return { ok: r.ok };
     }, { busy: 'Logging out…', done: 'Logged out' }));
+    /** After a Test: the server's state line only. The inputs keep what the person typed (ux-1-1). */
+    const refreshStatus = async () => {
+      const r = await fetchJson('/api/proxy/status');
+      if (f === cur && r.ok) fillStatus(cur, r.data);
+    };
     cur.test.addEventListener('click', () => withButton(cur.test, async () => {
-      const r = await fetchJson('/api/proxy/test', { method: 'POST', body: {} });
-      // RESTART_NEEDED / NOT_CONFIGURED / TEST_RUNNING: the server's sentence, as is.
-      if (!r.ok) { cur.status.textContent = r.data.error || 'The test could not run'; renderResults(cur.results, []); return { ok: false }; }
-      renderResults(cur.results, r.data.results);
-      void refresh();
-      return { ok: r.data.ok };
-    }, { busy: 'Testing…', done: 'Tested' }));
+      const ok = await runTest(cur, patchOf(cur));
+      if (ok !== null) void refreshStatus();   // a refusal keeps the server's sentence in the status line
+      return { ok: !!ok };
+    }, { busy: TESTING_TEXT, done: 'Tested' }));
     void refresh();
   }
-  const off = onFlagChange(NETWORK_PROXY_FLAG, (on) => paint(on));
-  paint(flagOn(NETWORK_PROXY_FLAG, doc));
-  return off;
+  paint();
+  return () => {};
 }
