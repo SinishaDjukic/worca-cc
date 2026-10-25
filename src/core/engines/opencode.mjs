@@ -24,9 +24,13 @@
 // - OpenCode Zen's free models refuse a request whose tool list lacks the shell ("OpenCode's free tier can only be
 //   used from within OpenCode", 403): a set that denies the whole shell cannot run them.
 // - OPENCODE_CONFIG_CONTENT is inline config, merged over the user's ~/.config/opencode config; `{env:NAME}` in it
-//   expands from the process env. OPENCODE_DISABLE_PROJECT_CONFIG=1 ignores the checkout's opencode.json, its
-//   `.opencode/` folder (plugin(s)/*.js included: none load, and nothing is written there) and its AGENTS.md /
-//   CLAUDE.md (worca names those again as absolute `instructions`).
+//   expands from the process env. OPENCODE_DISABLE_PROJECT_CONFIG=1 ignores the checkout's opencode.json, the MCP
+//   servers and tool(s)/*.js of its `.opencode/` folder, and its AGENTS.md / CLAUDE.md (worca names those again as
+//   absolute `instructions`).
+// - Neither that switch nor `--pure` stops `.opencode/plugin/*.js` and `.opencode/plugins/*.js`: OpenCode loads them
+//   into its own process (the provider key in its env) from its project folder (PWD) and each folder above it, up to
+//   the first one holding `.git`, or up to `/` outside a repository. So a spawn is refused while any of them exists
+//   (opencodePluginDirs; test/fixtures/opencode/README.md has the probe).
 // - Plugins from the user's ~/.config/opencode (plugin/*.js, npm plugins its config names) still load; `--pure` turns
 //   them off. OpenCode's built-in default plugins (provider sign-in) are a separate switch and stay on.
 // - An agent's `steps` caps its loop: at step `steps` OpenCode takes the tools away and asks for a text reply, so
@@ -61,9 +65,9 @@
 // - `--pure` keeps the user's plugins out (none ran); OPENCODE_DISABLE_PROJECT_CONFIG the checkout's config. The
 //   user's own MCP servers still start (their tools are denied); their instructions files still reach the prompt.
 // - OpenCode Zen's free models (`opencode/…`) refuse a request without the shell, so a chat never runs on them.
-import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync, realpathSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync, lstatSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, relative } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
@@ -234,6 +238,19 @@ const envRefNames = (mcp) => [...new Set([...JSON.stringify(mcp).matchAll(/\{env
 /** `opencode run --format json --auto --pure --print-logs --log-level ERROR [--agent A] [-m M] [--variant E] [-s S]`;
  *  the prompt goes on stdin. `--pure`: no user-level or npm plugins. Error logs on stderr carry the cause an
  *  `UnknownError` event hides. */
+/** The plugin folders OpenCode would load code from for project folder `cwd`, whatever worca's switches: `.opencode/plugin`
+ *  and `.opencode/plugins` in `cwd` and each folder above it, up to the first holding `.git` (the repository's top) or
+ *  the filesystem root. A link counts, dangling or not. Probed on opencode 1.18.23. */
+export function opencodePluginDirs(cwd) {
+  const found = [];
+  const there = (p) => { try { lstatSync(p); return true; } catch { return false; } };
+  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
+    for (const sub of ['plugin', 'plugins']) { const p = join(dir, '.opencode', sub); if (there(p)) found.push(p); }
+    if (there(join(dir, '.git')) || dirname(dir) === dir) break;
+  }
+  return found;
+}
+
 export function buildOpencodeArgs({ agent, model, effort, sessionId } = {}) {
   const args = ['run', '--format', 'json', '--auto', '--pure', '--print-logs', '--log-level', 'ERROR'];
   if (agent) args.push('--agent', String(agent));
@@ -518,6 +535,10 @@ export async function runOpencodeProcess({
   // gate did not see. With no `-m` OpenCode runs its own default, which can send the checkout to OpenCode Zen.
   if (!(typeof model === 'string' && model.trim())) throw new Error(`${bin}: OpenCode needs a model; pick one for this step`);
   if (ask && ZEN_PROVIDER_RE.test(model)) throw new Error(`${bin}: OpenCode Zen's free models refuse a chat (it has no shell) — pick a model of another provider`);
+  // Code OpenCode loads into its own process although every project switch is off (opencodePluginDirs): checked at each
+  // spawn, so a folder an earlier step made is caught too.
+  { const plugins = opencodePluginDirs(cwd);
+    if (plugins.length) throw new Error(`${bin}: refusing to start OpenCode: it would load the plugin code in ${plugins.join(', ')}, which worca cannot switch off. Remove ${plugins.length === 1 ? 'that folder' : 'those folders'}, or run this step on another engine.`); }
   const secrets = Array.isArray(redactValues) ? redactValues : [];
   let redactor = secrets.length ? createRedactor(secrets) : null;
   const sniffed = { cause: null };
