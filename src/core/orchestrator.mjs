@@ -2070,6 +2070,7 @@ export class GraphOrchestrator extends RunHarness {
       if (status === 'start') step.endedAt = null;
     }
     if (terminal) step.endedAt = now;
+    if (this.telemetry) this.telemetry.stepStatus(key, ctx.nodeId, status);
     // Turns this execution's spawn never closed with a `result` (a pause, a stop, a crash, a retried
     // attempt): counted apart on the row (run-harness _closeOpenTurns). A result already cleared them.
     // At 'start' only on RE-entry (a retry, a resume): a fresh execution has nothing of its own to

@@ -18,7 +18,7 @@ import { mkdir, writeFile, unlink, rm, readdir, lstat } from 'node:fs/promises';
 import { runClaude } from '../claude-runner.mjs';
 import { CLAUDE_SIGNED_OUT_CODE } from '../preflight.mjs';
 import { failedBecauseSignedOut } from '../claude-auth.mjs';
-import { resolveModelEnv, resolveModelCost, estimateCost, liveCostRates as defaultLiveCostRates } from '../config.mjs';
+import { resolveModelEnv, resolveModelCost, estimateCost, isPriceableUsage, liveCostRates as defaultLiveCostRates } from '../config.mjs';
 import { worcaHome, listProjects, displayPath } from '../projects.mjs';
 import { gitAvailable } from '../git-available.mjs';
 import { generateTitle } from '../title.mjs';
@@ -56,9 +56,8 @@ import { engineLabel } from '../../shared/engine-switch.mjs';
 import { revalidateWorkflowProposal } from './workflow-deps.mjs';
 import { composerCardFrom } from './composer-payload.mjs';
 import { askLimits, ASK_LIMITS } from './limits.mjs';
-import { codexPreflight, codexAskSupport, codexModelPriced, codexResumeNotFound, CODEX_ASK_LOCKDOWN } from '../engines/codex.mjs';
-import { copilotPreflight, copilotAskSupport, copilotResumeNotFound, COPILOT_ASK_LOCKDOWN } from '../engines/copilot.mjs';
-import { hasCodexEndpoint } from '../engines/codex-endpoint.mjs';
+import { chatDescriptor, chatCostCapRefusal } from '../engines/chat.mjs';
+import { chatModelRates } from './chat-price.mjs';
 import { codexMemoryLine } from './prompt.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
 import { withRole } from '../model-roles.mjs';
@@ -82,18 +81,22 @@ const SUB_ACTION_WORDS = Object.freeze({ change_setting: 'change a setting', pau
 // tail-capped tighter than this; the slice(-N) here only bounds the unusual
 // non-runner error paths so a huge message can never bloat the persisted block.
 const ERROR_DETAIL_MAX = 2000;
-// Ask Worca on Codex (cascading-settings-design.md §4.6, D13, D14).
-export const CODEX_NOT_READY_CODE = 'codex-not-ready';
-export const CODEX_SETUP_DOCS_URL = 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md#codex';
-export const CODEX_NO_LOCKDOWN_MESSAGE = "Chat on Codex is unavailable: this codex version cannot switch off its image viewer (which reads any image on disk) or its sub-agents, and a chat must stay inside its own files. Use a Claude chat.";
+// Chat on an engine other than Claude (cascading-settings-design.md §4.6, D13, D14): each engine's words and checks are
+// its chat descriptor's (engines/chat.mjs); these names stay for the callers and tests that read them.
+export const CODEX_NOT_READY_CODE = chatDescriptor('codex').notReady.code;
+export const CODEX_SETUP_DOCS_URL = chatDescriptor('codex').notReady.docsUrl;
+export const CODEX_NO_LOCKDOWN_MESSAGE = chatDescriptor('codex').noLockdownMessage;
 export const CODEX_MCP_NOTE = 'Your MCP servers are available in Claude chats';
-export const CODEX_SHELL_TRIPPED_MESSAGE = 'Codex tried to run a shell command although its shell was switched off — worca stopped the turn.';
-/** D13 fail-closed beyond the shell: a Codex chat may call worca's own tools (mcp__…) only. */
+export const CODEX_SHELL_TRIPPED_MESSAGE = chatDescriptor('codex').shellTrippedMessage;
+/** D13 fail-closed beyond the shell: a locked-down chat may call worca's own tools (mcp__…) only. */
 export const codexToolTrippedMessage = (what, engine = 'codex') => `${engineLabel(engine)} used ${what}, which a chat must not have — worca stopped the turn.`;
-// Ask Worca on Copilot: the same lockdown watch as Codex (engines/copilot.mjs askLockdown).
-export const COPILOT_NOT_READY_CODE = 'copilot-not-ready';
-export const COPILOT_SETUP_DOCS_URL = 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md#github-copilot-cli';
-export const COPILOT_SHELL_TRIPPED_MESSAGE = 'Copilot tried to run a shell command although it was given none — worca stopped the turn.';
+export const COPILOT_NOT_READY_CODE = chatDescriptor('copilot').notReady.code;
+export const COPILOT_SETUP_DOCS_URL = chatDescriptor('copilot').notReady.docsUrl;
+export const COPILOT_SHELL_TRIPPED_MESSAGE = chatDescriptor('copilot').shellTrippedMessage;
+/** The per-engine stand-ins a test may hand a turn (`codexAskSupport`, `qwenSelfTest`, …): each replaces the descriptor's
+ *  own function of that name. */
+const ENGINE_DEP_RE = /^[a-z]+(?:Preflight|AskSupport|Lockdown|ModelPriced|SelfTest)$/;
+const engineDeps = (deps) => Object.fromEntries(Object.entries(deps).filter(([k, v]) => ENGINE_DEP_RE.test(k) && typeof v === 'function'));
 // Model roles (D3): an unset Chat slot takes the everyday role.
 const askSlotOf = (engine) => { try { return withRole(resolveSetting(`models.${engine}.ask`).value, engine, 'askModels'); } catch { return undefined; } };
 
@@ -153,9 +156,10 @@ class AskTurn extends EventEmitter {
     this.threadId = threadId;
     // The chat's engine (D12) — fixed by the server from the chat's model; a Claude turn never reads the fields below.
     this.engine = ASK_ENGINES.includes(engine) ? engine : 'claude';
-    // Codex and Copilot run locked down (no shell, no file tools of their own): worca's read_file/grep/glob, the
-    // stream watchdog, no registry copies, memory read by hand. Their readiness gates differ (_codexGate, _copilotGate).
+    // Every engine but Claude runs locked down (no shell, no file tools of its own): worca's read_file/grep/glob, the
+    // stream watchdog, no registry copies, memory read by hand. Its readiness gate is its chat descriptor's (_engineGate).
     this.lockedDown = this.engine !== 'claude';
+    this.chat = this.lockedDown ? chatDescriptor(this.engine) : null;
     this.images = Array.isArray(images) ? images.filter((p) => typeof p === 'string' && p) : [];   // D16: this turn's images (-i)
     this.mcpCodexNote = this.lockedDown && mcpCodexNote === true;
     this._cap = null;                 // Task 10: the watchdog's verdict ('max_turns' | 'max_budget' | 'shell')
@@ -222,13 +226,7 @@ class AskTurn extends EventEmitter {
     this.deps = {
       runClaudeImpl: deps.runClaudeImpl ?? runClaude,
       failedBecauseSignedOut: deps.failedBecauseSignedOut ?? failedBecauseSignedOut,
-      codexPreflight: deps.codexPreflight ?? ((o) => codexPreflight(o)),
-      codexAskSupport: deps.codexAskSupport ?? ((o) => codexAskSupport(o)),
-      codexLockdown: deps.codexLockdown ?? (() => CODEX_ASK_LOCKDOWN),
-      codexModelPriced: deps.codexModelPriced ?? codexModelPriced,
-      copilotPreflight: deps.copilotPreflight ?? ((o) => copilotPreflight(o)),
-      copilotAskSupport: deps.copilotAskSupport ?? ((o) => copilotAskSupport(o)),
-      copilotLockdown: deps.copilotLockdown ?? (() => COPILOT_ASK_LOCKDOWN),
+      ...engineDeps(deps),
       askSlot: deps.askSlot ?? askSlotOf,
       memoryMount: deps.memoryMount ?? refreshAskMemoryMount,
       // Skills registry §4.4: the per-turn set-skill mount (P3) and its removal.
@@ -285,6 +283,7 @@ class AskTurn extends EventEmitter {
       limits: deps.limits ?? ASK_LIMITS,
       resolveModelEnv: deps.resolveModelEnv ?? resolveModelEnv,
       resolveModelCost: deps.resolveModelCost ?? resolveModelCost,
+      chatModelRates: deps.chatModelRates ?? chatModelRates,
       worcaHome: deps.worcaHome ?? worcaHome,
       buildMcpConfig: deps.buildMcpConfig ?? buildMcpConfig,
       // git on this machine (P0): handed to the classic MCP child (WORCA_GIT) and to the sub-agent note.
@@ -926,7 +925,7 @@ class AskTurn extends EventEmitter {
     // One settings read per attempt, never per frame. null → the frames carry
     // estimatedCostUsd:null and the footer keeps today's behaviour.
     let liveRates = null;
-    try { liveRates = d.liveCostRates(this.model) ?? null; } catch { liveRates = null; }
+    try { liveRates = (this.lockedDown ? this._ratesFor() : d.liveCostRates(this.model)) ?? null; } catch { liveRates = null; }
     this.reducer = createTurnReducer({
       onFrame: (f) => this._frame(f),
       now: d.now,
@@ -1246,8 +1245,12 @@ class AskTurn extends EventEmitter {
     if (e.type === 'subagent' && e.event === 'spawn') { this._trip('tool', 'a sub-agent'); return; }
     if (e.type === 'tool' && Array.isArray(e.calls)) {
       if (e.calls.some((c) => c && c.name === 'Bash')) { this._trip('shell'); return; }
-      // Any other tool that is not worca's (a native web search, a file edit, …) means the lockdown did not hold either.
-      const foreign = e.calls.find((c) => c && !String(c.name || '').startsWith('mcp__'));
+      // Any other tool that is not worca's or one of this turn's registry copies' (a native web search, a file edit, a
+      // server of the user's own, …) means the lockdown did not hold either; only the engine's own meta tools its chat
+      // descriptor names (plans/: Goose's load_skill) are kept.
+      const meta = this.chat ? this.chat.metaTools : [];
+      const servers = ['worca', ...(this.mcp ? this.mcp.copies.map((c) => c.name) : [])];
+      const foreign = e.calls.find((c) => c && !servers.some((s) => String(c.name || '').startsWith(`mcp__${s}__`)) && !meta.includes(String(c.name || '')));
       if (foreign) { this._trip('tool', String(foreign.name || 'an unknown tool')); return; }
       if ((e.parentId ?? null) !== null) return;
       this._toolCalls += e.calls.length;
@@ -1263,6 +1266,24 @@ class AskTurn extends EventEmitter {
     }
   }
 
+  /** worca's rates for `model` on this chat's engine (ask/chat-price.mjs), or null; read once per turn. */
+  _ratesFor(model = this.model) {
+    if (model !== this.model) return this.deps.chatModelRates(this.chat, model);
+    if (this._rates === undefined) this._rates = this.deps.chatModelRates(this.chat, this.model);
+    return this._rates;
+  }
+
+  /** A locked-down turn's `result` that carries no cost, priced with worca's rates from its token usage when worca has a
+   *  price: an engine that reports no cost (Copilot, Gemini CLI, Qwen Code) is booked and capped like one that does. A
+   *  reported cost passes through (the reducer re-prices it with a Models page price, resolveModelCost). */
+  _priced(e) {
+    if (!e || e.type !== 'result' || Number.isFinite(e.costUsd) || !isPriceableUsage(e.usage)) return e;
+    const rates = this._ratesFor();
+    if (!rates) return e;
+    const costUsd = Math.round(estimateCost(e.usage, rates) * 1e6) / 1e6;
+    return Number.isFinite(costUsd) ? { ...e, costUsd } : e;
+  }
+
   _trip(kind, what = null) {
     this._cap = kind;
     this._capWhat = what;
@@ -1276,61 +1297,50 @@ class AskTurn extends EventEmitter {
 
   /** The error a fail-closed trip ends the turn with, or null for a cap (a stop, not an error). */
   _trippedMessage() {
-    if (this._cap === 'shell') return this.engine === 'copilot' ? COPILOT_SHELL_TRIPPED_MESSAGE : CODEX_SHELL_TRIPPED_MESSAGE;
+    if (this._cap === 'shell') return this.chat ? this.chat.shellTrippedMessage : CODEX_SHELL_TRIPPED_MESSAGE;
     if (this._cap === 'tool') return codexToolTrippedMessage(this._capWhat, this.engine);
     return null;
   }
 
-  /** A Codex turn starts only with its lockdown, a priced model under a cost cap (D14), a codex that has every lockdown
-   *  flag, and a ready codex (§4.6). Returns
-   *  the completed result when it refuses, else null. The mock never asks the real binary. */
-  async _codexGate(limitsNow) {
+  /** A locked-down turn starts only with its engine's lockdown (chat descriptor, engines/chat.mjs), a per-turn cost cap
+   *  it can keep (D14: a priced model on an engine that reports cost; never on one that reports none), a binary that has
+   *  every lockdown flag, a passed self-test where the engine has one (engines/chat-selftest.mjs: the lockdown proven on
+   *  this binary and this user's config), and a ready, signed-in engine (§4.6). Returns the completed result when it
+   *  refuses, else null. The mock never asks the real binary. */
+  async _engineGate(limitsNow) {
     const d = this.deps;
-    if (!d.codexLockdown()) return this._complete({ kind: 'error', message: CODEX_NO_LOCKDOWN_MESSAGE });
-    if (limitsNow.maxBudgetUsd != null && !d.codexModelPriced(this.model)) {
-      return this._complete({ kind: 'error', message: `A per-turn cost cap is set, and ${this.model} has no known price on Codex, so worca cannot keep this turn under it. Pick a priced Codex model, or turn the cap off (Settings › Chat).` });
-    }
-    if (this.mock) return null;
-    const refuse = (refusal) => {
-      this.reducer.addBlock({ kind: 'notice', text: `Codex isn't ready: ${refusal}`, href: CODEX_SETUP_DOCS_URL, hrefLabel: 'Codex setup', codexSetup: true });
-      return this._complete({ kind: 'error', message: refusal, code: CODEX_NOT_READY_CODE });
-    };
-    // The lockdown's flags must all exist in this codex (codexAskSupport): a property of the binary, so a relayed turn,
-    // which runs the same binary as the person's agent user, is checked too.
-    let support = null;
-    try { support = await d.codexAskSupport(); } catch (err) { support = { refusal: err?.message || String(err) }; }
-    if (support && support.refusal) return refuse(support.refusal);
-    // A relayed turn runs codex as the person's agent user, with that user's HOME and sign-in (agent-user.mjs): a check
-    // run here would ask about the server user's codex instead. Its sign-in failure surfaces from the turn itself.
-    if (this.relay) return null;
-    let pf = null;
-    // A chat model on its own endpoint needs no codex sign-in, only the binary (codex-endpoint.mjs).
-    try { pf = await d.codexPreflight({ signIn: !hasCodexEndpoint(this.model) }); } catch (err) { pf = { warning: err?.message || String(err) }; }
-    if (pf && pf.refusal) return refuse(pf.refusal);
-    return null;
-  }
-
-  /** A Copilot turn starts only with its lockdown, no per-turn cost cap (copilot reports no dollar cost, so worca could
-   *  not keep the turn under one), a copilot that has every lockdown flag, and a copilot binary that runs. Copilot has
-   *  no sign-in status command: a signed-out CLI fails the turn itself (auth class). Returns the completed result when
-   *  it refuses, else null. The mock never asks the real binary. */
-  async _copilotGate(limitsNow) {
-    const d = this.deps;
-    if (!d.copilotLockdown()) return this._complete({ kind: 'error', message: 'Chat on Copilot is unavailable: this copilot cannot be locked down for a chat. Use a Claude chat.' });
+    const c = this.chat;
+    const own = (k) => d[`${this.engine}${k}`];
+    const lockdown = own('Lockdown') ?? c.lockdown;
+    if (!lockdown()) return this._complete({ kind: 'error', message: c.noLockdownMessage });
+    const modelProblem = c.modelProblem(this.model);
+    if (modelProblem) return this._complete({ kind: 'error', message: `${this.model} cannot run a chat on ${c.label}: ${modelProblem}. Pick another model for this chat.` });
     if (limitsNow.maxBudgetUsd != null) {
-      return this._complete({ kind: 'error', message: 'A per-turn cost cap is set, and Copilot reports no cost, so worca cannot keep this turn under it. Turn the cap off (Settings › Chat), or use a Claude or Codex chat.' });
+      const capped = chatCostCapRefusal(c, this.model, own('ModelPriced') ?? ((m) => !!this._ratesFor(m)));
+      if (capped) return this._complete({ kind: 'error', message: capped });
     }
     if (this.mock) return null;
     const refuse = (refusal) => {
-      this.reducer.addBlock({ kind: 'notice', text: `Copilot isn't ready: ${refusal}`, href: COPILOT_SETUP_DOCS_URL, hrefLabel: 'Copilot setup', copilotSetup: true });
-      return this._complete({ kind: 'error', message: refusal, code: COPILOT_NOT_READY_CODE });
+      this.reducer.addBlock({ kind: 'notice', text: `${c.notReady.prefix}: ${refusal}`, href: c.notReady.docsUrl, hrefLabel: c.notReady.setupLabel, [c.notReady.flag]: true });
+      return this._complete({ kind: 'error', message: refusal, code: c.notReady.code });
     };
+    // The lockdown's flags must all exist in this binary (askSupport), and where the lockdown is built from the CLI's
+    // own switches, a self-test proves it: properties of the binary, so a relayed turn, which runs the same binary as the
+    // person's agent user, is checked too.
     let support = null;
-    try { support = await d.copilotAskSupport(); } catch (err) { support = { refusal: err?.message || String(err) }; }
+    try { support = await c.askSupport(undefined, own('AskSupport')); } catch (err) { support = { refusal: err?.message || String(err) }; }
     if (support && support.refusal) return refuse(support.refusal);
+    const selfTest = c.selfTest ? () => c.selfTest(undefined, own('SelfTest')) : own('SelfTest');
+    if (selfTest) {
+      let st = null;
+      try { st = await selfTest(); } catch (err) { st = { refusal: err?.message || String(err) }; }
+      if (st && st.refusal) return refuse(st.refusal);
+    }
+    // A relayed turn runs the engine as the person's agent user, with that user's HOME and sign-in (agent-user.mjs): a
+    // check run here would ask about the server user's sign-in instead. Its sign-in failure surfaces from the turn itself.
     if (this.relay) return null;
     let pf = null;
-    try { pf = await d.copilotPreflight(); } catch (err) { pf = { warning: err?.message || String(err) }; }
+    try { pf = await c.preflight({ model: this.model }, own('Preflight')); } catch (err) { pf = { warning: err?.message || String(err) }; }
     if (pf && pf.refusal) return refuse(pf.refusal);
     return null;
   }
@@ -1384,7 +1394,7 @@ class AskTurn extends EventEmitter {
       mcpConfigPath = join(scratchDir, `mcp-${this.assistantMessageId}.json`);
       // A Codex turn's set skills (#635): this message's mount folder only, read through read_file for this turn only.
       const skillRoot = this.lockedDown && this.skills && this.skillMount ? this._skillBase : null;
-      this.relay = d.agentRelay ? d.agentRelay({ threadId: this.threadId, reader: this.reader || null, web: this.web, ...(skillRoot ? { skillRoot } : {}) }) : null;
+      this.relay = d.agentRelay ? d.agentRelay({ threadId: this.threadId, reader: this.reader || null, web: this.web, ...(this.lockedDown ? { model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}) }) : null;
       // Agent mode never rides the relay: relay mode is agent isolation, where the terminal refuses agent callers.
       this.commands = !this.relay && this.agentMode && d.commandBridge ? d.commandBridge({ threadId: this.threadId }) : null;
       this.proxyBridge = !this.relay && d.proxyBridge ? d.proxyBridge({ threadId: this.threadId }) : null;
@@ -1396,7 +1406,7 @@ class AskTurn extends EventEmitter {
       await d.fs.writeFile(
         mcpConfigPath,
         // MCP registry §9.2: the copies ride after `worca` — refs only (`${MCPSECRET_…}`); the values go in spawnEnv.
-        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, git: d.gitAvailable(), ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.proxyBridge ? { proxy: this.proxyBridge } : {}), ...(this.lockedDown ? { engine: this.engine } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
+        JSON.stringify(d.buildMcpConfig({ homeBase, threadId: this.threadId, serverPath: d.serverPath, git: d.gitAvailable(), ...(claudeAuth ? { claudeAuth } : {}), ...(this.reader ? { reader: this.reader } : {}), ...(this.relay ? { relay: this.relay } : {}), ...(this.web ? { web: this.web } : {}), ...(this.mcp ? { extraServers: this.mcp.servers } : {}), ...(this.commands ? { commands: this.commands } : {}), ...(this.proxyBridge ? { proxy: this.proxyBridge } : {}), ...(this.lockedDown ? { engine: this.engine, model: this.model } : {}), ...(skillRoot ? { skillRoot } : {}) }), null, 2),
         // Never a key value (webKeyVar: the key rides the process env). A relayed turn runs as
         // the person's agent user (agent-pool.mjs), which reads this file through its group: the
         // scratch dir is setgid worca-share (2770), so 0640 reaches the agent users and nobody
@@ -1411,10 +1421,11 @@ class AskTurn extends EventEmitter {
       // D12: read fresh every turn. The pinned project's team policy may start the limits off (team-policy §5).
       const limitsNow = d.askLimits({ projectKey: this.pinnedScope?.projectKey || null });
       if (this.lockedDown) {
-        out = this.engine === 'codex' ? await this._codexGate(limitsNow) : await this._copilotGate(limitsNow);
-        // A refused turn never starts the engine — not even for the title, which falls back to the prompt's own words.
-        if (out) this._titleOffline = true;
-        else this._kickoffTitle();
+        out = await this._engineGate(limitsNow);
+        // A refused turn never starts the engine — not even for the title, which falls back to the prompt's own words,
+        // as it does on an engine that makes no title call (chat descriptor `titles`).
+        if (out || !this.chat.titles) this._titleOffline = true;
+        if (!out) this._kickoffTitle();
       }
       out = out || await this._attempts(limitsNow, mcpConfigPath, scratchDir);
     } catch (err) {
@@ -1480,6 +1491,7 @@ class AskTurn extends EventEmitter {
               this.sessionId = e.sessionId;
               try { d.store.updateThread(this.threadId, { sessionId: e.sessionId }); } catch { /* deleted thread */ }
             }
+            if (this.lockedDown) e = this._priced(e);          // worca's prices, the same on every engine (chat-price.mjs)
             this.reducer.push(e);
             if (this.lockedDown) this._watch(e, limitsNow);   // D13/D14: Claude's caps are the CLI's own
             // §10: the turn's own init only (the normalizer sets mcpServers on a main-stream init only), and only with
@@ -1559,8 +1571,7 @@ class AskTurn extends EventEmitter {
         // never produced an init or said "No conversation found".
         if (!isRetry && this.resumeSessionId
           && (!s.sawInit || s.errors.some((m) => /No conversation found/.test(m))
-            || (this.engine === 'codex' && codexResumeNotFound(err))     // §4.6: codex's own "no rollout found"
-            || (this.engine === 'copilot' && copilotResumeNotFound(err)))) {
+            || (this.chat && this.chat.resumeNotFound(err)))) {     // §4.6: the engine's own no-such-session error
           continue;
         }
         // (4) Everything else is a turn failure.
@@ -1587,17 +1598,19 @@ class AskTurn extends EventEmitter {
     // Stored for test determinism, never awaited by run() (orchestrator.mjs:3821).
     // NO signal: a user stop aborts this.abort mid-turn and would kill the call
     // before it spawns. permissionMode 'dontAsk' is the B-1 fix.
+    const aux = this._auxCwd();
     this.titlePromise = Promise.resolve()
       .then(() => (this._titleOffline ? '' : d.generateTitle(this.firstText, {
-        cwd: this.scratchDir || join(d.worcaHome(), 'tmp', 'ask'),
+        cwd: aux.cwd,
         tools: [], strictMcpConfig: true, settingSources: ['project'],
         disableSlashCommands: true, envScrub: true, envAllowlist: [],
         permissionMode: 'dontAsk',
         // The chat's own model is the title default (#422) — a chat on a
         // custom endpoint titles itself there, not on a first-party Haiku.
         runModel: this.model,
-        // §4.6: a Codex chat titles itself on Codex, read-only (D11), with the Ask slot's model or the chat's own.
-        ...(this.lockedDown ? { engine: this.engine, model: d.askSlot(this.engine)?.model || this.model } : {}),
+        // §4.6: a locked-down chat titles itself on its own engine, locked down as the chat is but with no MCP server
+        // (title.mjs auxTextCall askLockdown), with the Ask slot's model or the chat's own.
+        ...(this.lockedDown ? { engine: this.engine, askLockdown: true, model: d.askSlot(this.engine)?.model || this.model } : {}),
         onError: ({ model, error }) => console.warn(
           `[worca-ask] thread ${this.threadId}: title generation failed (${model ? `model ${model}` : 'the CLI default model'}): ${error?.message || error} — keeping the fallback title`),
       })))
@@ -1618,7 +1631,20 @@ class AskTurn extends EventEmitter {
           try { d.onOutOfTurn({ type: 'ask-title', title }); } catch { /* sink */ }
         }
       })
-      .catch(() => { /* generateTitle already swallows; final backstop */ });
+      .catch(() => { /* generateTitle already swallows; final backstop */ })
+      .finally(aux.done);
+  }
+
+  /** Where a helper call of this chat (its title, its suggestion) runs: the scratch dir, or — on an engine that keeps its
+   *  settings and sessions per folder (chat descriptor `ownFolder`: Gemini CLI writes the lockdown's settings file into
+   *  the cwd) — a fresh folder of its own, removed when the call is over, so it never shares one with the chat or with
+   *  another helper call. */
+  _auxCwd() {
+    const d = this.deps;
+    const base = this.scratchDir || join(d.worcaHome(), 'tmp', 'ask');
+    if (!this.chat || !this.chat.ownFolder) return { cwd: base, done: () => {} };
+    const cwd = join(base, this.engine, `aux-${this.threadId}-${Math.random().toString(36).slice(2, 10)}`);
+    return { cwd, done: () => rm(cwd, { recursive: true, force: true }).catch(() => {}) };
   }
 
   /** The next-prompt suggestion (ask-suggestion): one cheap, tool-less, out-of-turn call after a turn that finished
@@ -1631,16 +1657,17 @@ class AskTurn extends EventEmitter {
     let model = null;
     try {
       if (!d.suggestionsEnabled() || d.budgetStatus().blocked) return;
-      model = d.suggestionModel(this.engine);
+      model = d.suggestionModel(this.engine, { chatModel: this.model });
     } catch { return; }
     if (!model) return;
     const ctl = d.claimSuggestion(this.threadId);
     const signal = AbortSignal.any([ctl.signal, AbortSignal.timeout(SUGGESTION_TIMEOUT_MS)]);
+    const aux = this._auxCwd();
     this.suggestionPromise = Promise.resolve()
       .then(() => d.generateSuggestion({ userText: this.firstText, replyText: this._replyText }, {
-        cwd: this.scratchDir || join(d.worcaHome(), 'tmp', 'ask'),
+        cwd: aux.cwd,
         model,
-        ...(this.lockedDown ? { engine: this.engine } : {}),
+        ...(this.lockedDown ? { engine: this.engine, askLockdown: true, rates: this._ratesFor(model) } : {}),
         tools: [], strictMcpConfig: true, settingSources: ['project'],
         disableSlashCommands: true, envScrub: true, envAllowlist: [],
         permissionMode: 'dontAsk',
@@ -1662,6 +1689,6 @@ class AskTurn extends EventEmitter {
         try { d.onOutOfTurn({ type: 'ask-suggestion', messageId: this.assistantMessageId, text }); } catch { /* sink */ }
       })
       .catch(() => { /* generateSuggestion never throws; final backstop */ })
-      .finally(() => { try { d.releaseSuggestion(this.threadId, ctl); } catch { /* best effort */ } });
+      .finally(() => { try { d.releaseSuggestion(this.threadId, ctl); } catch { /* best effort */ } aux.done(); });
   }
 }

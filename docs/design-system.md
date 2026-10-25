@@ -303,6 +303,11 @@ and hand the focus back to the opener.
   page; the ⌄ only expands. One row is highlighted at a time, the one whose page is open: a collapsed group whose run
   is open shows the lighter `--row-open` fill over its whole row; expanded, only the open run's row is highlighted.
   Rows inside a group draw no dividers; the group keeps its own divider before the next row.
+- Two row levels in the Runs list and the Chats column. A top-level row (a single run, Needs you, a group row) has a
+  13px / 500 title over a 12px status line; a group row's title is 600. A row inside a group is one line, 26px (40px on
+  touch screens): a 12px / 400 title, then its status at the right (it drops the Working / Starting word its dot says
+  and ellipsises first), then its PR chip; no label chips and no Independent tag. A live member's 3px line sits under
+  its title. Its ⋯ stays 28px, centred.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
   not from a filter button in the list's header. The Marketplace's Browse search is the one exception
   (Marketplace exceptions).

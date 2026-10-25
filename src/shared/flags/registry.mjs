@@ -129,6 +129,18 @@ export const FLAGS = Object.freeze([
     reviewBy: '2027-01-16',
     docs: 'docs/requirements.md',
   }),
+  entry({
+    key: 'runTelemetry',
+    title: 'Run telemetry',
+    description: 'Runs record detailed statistics: context size, tokens and timing of every model call, tool time, retries and compactions per agent, plus how long Worca\'s own saves and live updates take. Shown on the run page\'s Agents tab. Recording only: runs behave the same.',
+    stage: 'experimental',
+    default: false,
+    owner: 'Bulibas',
+    since: '1.14.0',
+    added: '2026-10-25',
+    reviewBy: '2027-01-23',
+    docs: 'docs/run-telemetry.md',
+  }),
 ]);
 
 const BY_KEY = new Map(FLAGS.map((f) => [f.key, f]));

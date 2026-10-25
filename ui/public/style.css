@@ -2288,6 +2288,21 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 .run-flow .node.is-active .fan .fl{color:var(--blue-ink);}
 @keyframes sqPulse{0%,100%{opacity:1;}50%{opacity:.38;}}
 
+/* Run telemetry (Labs, docs/run-telemetry.md): one line of figures + a context chart per agent card. */
+.ag-tel{padding:6px 12px 8px;display:flex;flex-direction:column;gap:6px;}
+.ag-tel[hidden]{display:none;}
+.tel-figs{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:var(--fs-caption);color:var(--ink-2);}
+.tel-fig.is-warn{color:var(--amber-ink);}
+.tel-fig.is-high{color:var(--red-ink);}
+.tel-chart{display:block;width:100%;height:48px;}
+.tel-chart .tel-line{fill:none;stroke:var(--blue);stroke-width:1.5;vector-effect:non-scaling-stroke;}
+.tel-chart .tel-win{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:4 3;vector-effect:non-scaling-stroke;}
+.tel-chart .tel-trig{stroke:var(--amber);stroke-width:1;stroke-dasharray:1 3;vector-effect:non-scaling-stroke;}
+.tel-chart .tel-compact{stroke:var(--amber);stroke-width:1;vector-effect:non-scaling-stroke;}
+.tel-harness{display:flex;align-items:baseline;gap:8px;font-size:var(--fs-caption);margin:0 0 8px;}
+.tel-harness .flag-chip{flex:none;}
+.tel-harness-tx{flex:1 1 0;min-width:0;}
+
 /* Selector lists that used to pair the retired run-card tree with the History
    detail's Agents tab. `.subs-stat` is only ever styled here, so a bare appended
    `.subs-stat.stop{…}` would tie on specificity and still lose to this rule's
@@ -3778,12 +3793,15 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mimp{width:min(980px,100%);max-height:86vh;display:flex;flex-direction:column;gap:14px;overflow:hidden;}
 .mimp-src{display:grid;grid-template-columns:minmax(190px,250px) minmax(0,1fr);align-items:start;gap:12px 16px;}
 .mimp-src .mv-field{min-width:0;}
-.mimp-src .mimp-base-field.hidden{display:none;}
+.mimp-src .mimp-base-field.hidden,.mimp-src .mimp-key-field.hidden{display:none;}
+.mimp-src .mimp-key-field{grid-column:2;}
+@media (max-width:560px){.mimp-src{grid-template-columns:minmax(0,1fr);}.mimp-src .mimp-key-field{grid-column:auto;}}
 /* One source: the picker takes the row rather than leaving a gap where a URL would be. */
 .mimp-src:has(.mimp-base-field.hidden) .mimp-source-field{grid-column:1 / -1;}
 .mimp-base-row{display:flex;gap:8px;min-width:0;}
 .mimp-base-row .input{flex:1 1 auto;min-width:0;}
 .mimp-base-row .btn{flex:0 0 auto;}
+.mimp-presets{display:flex;gap:6px;}
 /* The note and the warnings sit clear of the scroll edge: flush against it, Chrome clipped their
    first glyph. The table is what may scroll sideways, and it starts below them. */
 #mimp-body .mvi>.hint,#mimp-body .mvi-warn{padding-right:2px;}
@@ -4839,7 +4857,22 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-members{grid-column:1 / -1;list-style:none;margin:0;padding:0;}
 /* Rows inside a group draw no dividers; the group item's own bottom border separates it from the next top-level row. */
 .runs-members > .runs-item{border-bottom:0;}
-.runs-members .runs-pick,.runs-members .runs-row-title,.runs-members .runs-row-sub{padding-left:16px;}
+.runs-members .runs-pick,.runs-members .runs-row-title{padding-left:16px;}
+/* #955: two row levels. A row inside a group is one line: a 12px / 400 title, its status on the same line at the right
+   (it ellipsises first), then the PR chip; 26px (18px line + 4px + 4px), 40px on touch screens. A live member's 3px
+   line sits under its title. The ⋯ keeps its 28px (list-row action) centred in the 26px tail. */
+.runs-members .runs-row{flex-wrap:nowrap;padding:4px 0;}
+.runs-members .runs-row-title{flex:1 1 auto;font-size:var(--fs-meta);font-weight:400;}
+.runs-members .runs-row-sub{order:1;flex:0 1000 auto;min-width:0;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.runs-members .runs-row-right{order:2;flex:0 1 auto;min-width:0;margin-left:0;flex-wrap:nowrap;overflow:hidden;}
+.runs-members .runs-pr{min-width:0;}
+.runs-members .runs-pr-word{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.runs-members .runs-row:has(> .runs-row-prog){position:relative;padding-bottom:11px;}
+.runs-members .runs-row > .runs-row-prog{position:absolute;left:16px;right:0;bottom:4px;margin:0;}
+.runs-members .runs-pick,.runs-members .runs-row-tail{height:26px;}
+@media (pointer: coarse){.runs-members .runs-pick,.runs-members .runs-row-tail{height:40px;}.runs-members .runs-row{min-height:40px;}}
+/* A group row heads its runs. */
+.runs-row-chain > .runs-row-title,.runs-row-chat-group > .runs-row-title{font-weight:600;}
 .runs-pr{display:inline-flex;gap:4px;align-items:center;font-size:12px;}
 .runs-pr.is-draft{color:var(--ink-2);}
 .runs-pr.is-ready{color:var(--green-ink);}

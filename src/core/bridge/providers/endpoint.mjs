@@ -22,6 +22,12 @@
 //                                       top_provider (the window it serves, the output cap),
 //                                       supported_parameters (tools, reasoning), modalities and
 //                                       per-token pricing — everything the generic list lacks.
+//   Gemini      GET {origin}/v1beta/models  recognised by its host (generativelanguage.googleapis.com) and
+//                                       never probed: Google's own list (key in x-goog-api-key) carries
+//                                       inputTokenLimit / outputTokenLimit, `thinking` and the generation
+//                                       methods; the OpenAI list at {base}/models (ids only) is the fallback.
+//   Qwen        GET {base}/models       Alibaba Model Studio (dashscope*.aliyuncs.com compatible mode),
+//                                       recognised by its host: ids only, so no window is pinned.
 //
 // The window a model is SERVED with and the one it was TRAINED for are different numbers, and only
 // the served one may become a prompt limit: Ollama serves 4096 by default however large the model
@@ -29,14 +35,17 @@
 // built WITHOUT a prompt limit and the caller's warning says so — a wrong window is worse than
 // none, because the CLI would compact against a number the endpoint never had.
 
-import { isLocalBaseUrl } from '../../model-env.mjs';
+import { isLocalBaseUrl, isGeminiBaseUrl, isQwenBaseUrl } from '../../model-env.mjs';
 import { isOpenRouter } from '../openrouter.mjs';
 
 const SERVERS = Object.freeze({
-  'llama.cpp': 'llama.cpp', ollama: 'Ollama', lmstudio: 'LM Studio', vllm: 'vLLM', openrouter: 'OpenRouter', 'openai-compatible': 'OpenAI-compatible',
+  'llama.cpp': 'llama.cpp', ollama: 'Ollama', lmstudio: 'LM Studio', vllm: 'vLLM', openrouter: 'OpenRouter', gemini: 'Google Gemini',
+  qwen: 'Alibaba Model Studio', 'openai-compatible': 'OpenAI-compatible',
 });
+/** Hosted APIs: their models bill (no `free` cost on import) and the catalog id keeps the vendor's own id. */
+const HOSTED = new Set(['openrouter', 'gemini', 'qwen']);
 /** The catalog-id prefix per server, so two endpoints' models never collide. */
-const ID_PREFIX = Object.freeze({ 'llama.cpp': 'llama', ollama: 'ollama', lmstudio: 'lmstudio', vllm: 'vllm', openrouter: 'openrouter', 'openai-compatible': 'local' });
+const ID_PREFIX = Object.freeze({ 'llama.cpp': 'llama', ollama: 'ollama', lmstudio: 'lmstudio', vllm: 'vllm', openrouter: 'openrouter', gemini: 'google', qwen: 'dashscope', 'openai-compatible': 'local' });
 
 // Re-exported for the import's callers; the one host rule lives in model-env (via ../openrouter.mjs).
 export { isOpenRouter };
@@ -191,6 +200,31 @@ function openRouterPricing(p) {
 
 const money = (n) => `$${Number(n.toFixed(2))}`;
 
+/** Google's names for models that do not answer a chat in text (embeddings, image, video and speech generation). */
+const GEMINI_NOT_CHAT_RE = /embedding|imagen|veo|-tts|-image|aqa|lyria|-live-/i;
+
+/** Google's own model list (GET /v1beta/models) as rows: the window it serves and the output cap it lists. */
+function geminiModels(list) {
+  return (Array.isArray(list && list.models) ? list.models : [])
+    .filter((m) => m && Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
+    .map((m) => {
+      const id = String(m.name || '').replace(/^models\//, '');
+      return {
+        id,
+        name: String(m.displayName || id),
+        kind: GEMINI_NOT_CHAT_RE.test(id) ? 'other' : 'llm',
+        servedContext: num(m.inputTokenLimit),   // Google serves the window it lists, as OpenRouter does
+        trainedContext: null,
+        maxOutputTokens: num(m.outputTokenLimit),
+        toolCalls: null,                         // not in the list: unknown, not "no"
+        vision: null,
+        reasoning: m.thinking === true,
+        loaded: null,
+        detail: typeof m.description === 'string' && m.description ? m.description.slice(0, 120) : null,
+      };
+    }).filter((m) => m.id);
+}
+
 function openRouterModels(list) {
   return (Array.isArray(list && list.data) ? list.data : []).map((m) => {
     const arch = m.architecture || {};
@@ -236,7 +270,10 @@ function warningsFor(server, models, props) {
   if (server === 'openrouter' && models.some((m) => m.free)) {
     w.push(':free models run on a pool OpenRouter shares with every user: while it is busy EVERY request gets a 429, however few you send — Max concurrent requests cannot help. For pipelines use the paid variant, add your own provider key on OpenRouter (BYOK), or give the model a fallback in its Connection.');
   }
-  if (server === 'openai-compatible' && models.every((m) => !m.servedContext)) {
+  if (server === 'gemini' || server === 'qwen') {
+    w.push(`${SERVERS[server]} bills every call: imported models carry no price, so their cost shows as not verified until you set one on each.`);
+  }
+  if ((server === 'openai-compatible' || server === 'qwen') && models.every((m) => !m.servedContext)) {
     w.push('This endpoint does not report context windows — set each model\'s prompt limit by hand after importing.');
   }
   const small = models.filter((m) => m.kind !== 'embedding' && m.servedContext && m.servedContext < MIN_PIPELINE_WINDOW);
@@ -271,6 +308,27 @@ export async function listEndpointModels(baseUrl, { apiKey = '', fetch: f = glob
     models = openRouterModels(list);
     models.sort((a, b) => (Number(b.kind === 'llm') - Number(a.kind === 'llm')) || a.id.localeCompare(b.id));
     return { server: 'openrouter', serverLabel: SERVERS.openrouter, baseUrl: base, models, warnings: warningsFor('openrouter', models, null) };
+  }
+
+  if (isGeminiBaseUrl(realBaseUrl || base)) {
+    // Google's own list carries the windows; its key header is x-goog-api-key. Through a broker slot only the
+    // OpenAI list at the slot is reachable.
+    const native = realBaseUrl ? null : await json(f, `${new URL(base).origin}/v1beta/models?pageSize=1000`, { timeoutMs, headers: apiKey ? { 'x-goog-api-key': apiKey } : {} });
+    models = geminiModels(native);
+    if (!models.length) {
+      const list = await json(f, `${base}/models`, opt);
+      if (!list) throw new Error(`no model list at ${base}/models — check the base URL and the API key (an AI Studio key)`);
+      models = openAiModels(list).map((m) => ({ ...m, id: m.id.replace(/^models\//, ''), name: m.id.replace(/^models\//, ''), detail: null }));
+    }
+    models.sort((a, b) => (Number(b.kind === 'llm') - Number(a.kind === 'llm')) || a.id.localeCompare(b.id));
+    return { server: 'gemini', serverLabel: SERVERS.gemini, baseUrl: base, models, warnings: warningsFor('gemini', models, null) };
+  }
+  if (isQwenBaseUrl(realBaseUrl || base)) {
+    const list = await json(f, `${base}/models`, opt);
+    if (!list) throw new Error(`no model list at ${base}/models — check the base URL (international or mainland China) and the API key`);
+    models = openAiModels(list).map((m) => ({ ...m, detail: null }));
+    models.sort((a, b) => a.id.localeCompare(b.id));
+    return { server: 'qwen', serverLabel: SERVERS.qwen, baseUrl: base, models, warnings: warningsFor('qwen', models, null) };
   }
 
   const props0 = await json(f, `${root}/props`, opt);
@@ -319,7 +377,7 @@ export async function listEndpointModels(baseUrl, { apiKey = '', fetch: f = glob
  * @param {object} m           a row from listEndpointModels
  * @param {{server:string, baseUrl:string, providerBaseUrl?:string}} ctx
  */
-export function catalogEntryForEndpointModel(m, { server = 'openai-compatible', baseUrl, providerBaseUrl = '' } = {}) {
+export function catalogEntryForEndpointModel(m, { server = 'openai-compatible', baseUrl, providerBaseUrl = '', apiKey = '' } = {}) {
   const window = num(m.servedContext);
   const outCap = num(m.maxOutputTokens);
   const capabilities = {
@@ -331,12 +389,12 @@ export function catalogEntryForEndpointModel(m, { server = 'openai-compatible', 
   };
   const own = String(baseUrl || '').replace(/\/+$/, '');
   const provider = String(providerBaseUrl || '').replace(/\/+$/, '');
-  const hosted = server === 'openrouter';
+  const hosted = HOSTED.has(server);
   // A hosted catalog keeps the vendor in the id (`qwen/…`, `anthropic/…`): the last path segment
   // alone collides across vendors there. A local server's ids stay as they were.
   const stem = hosted ? String(m.id).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || 'model' : slugModelId(m.id);
   // A model on your own machine bills nothing; OpenRouter lists its price, and one it lists as
-  // variable is left unset rather than claimed free.
+  // variable is left unset rather than claimed free. Gemini and Qwen list no price: unset too.
   const cost = hosted ? (m.pricing || undefined) : { free: true };
   return {
     id: `${endpointIdPrefix(server, own)}-${stem}`,
@@ -345,6 +403,7 @@ export function catalogEntryForEndpointModel(m, { server = 'openai-compatible', 
     upstream: {
       provider: 'openai', api: 'openai-chat', model: m.id,
       ...(own && own !== provider ? { baseUrl: own } : {}),
+      ...(apiKey ? { apiKey } : {}),
       ...(Object.keys(capabilities).length ? { capabilities } : {}),
     },
     ...(cost ? { cost } : {}),

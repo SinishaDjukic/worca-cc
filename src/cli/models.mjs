@@ -13,7 +13,7 @@ import {
   endpointModelsForImport, importEndpointModels, OPENROUTER_BASE_URL,
 } from '../core/bridge/provider-ops.mjs';
 import { listModels } from '../core/config.mjs';
-import { isTranslatedApi } from '../core/model-env.mjs';
+import { isTranslatedApi, GEMINI_OPENAI_BASE_URL, QWEN_OPENAI_BASE_URL, QWEN_CN_OPENAI_BASE_URL } from '../core/model-env.mjs';
 
 export const MODELS_HELP = `worca models — the model catalog and its providers
 
@@ -31,6 +31,12 @@ Usage:
                                           (llama.cpp, Ollama, LM Studio, vLLM, OpenRouter, a gateway);
                                           the filters narrow the listing and --all
   worca models import openrouter …        The same, against https://openrouter.ai/api/v1
+  worca models import gemini [--api-key '\${GEMINI_API_KEY}'] …
+                                          The same, against Google's OpenAI-compatible Gemini endpoint;
+                                          the key (default \${GEMINI_API_KEY}) is stored on each entry
+  worca models import qwen [--api-key '\${DASHSCOPE_API_KEY}'] [--base-url <url>] …
+                                          The same, against Alibaba Model Studio (international; pass
+                                          --base-url ${QWEN_CN_OPENAI_BASE_URL} for mainland China)
   worca models test <provider>            Reachability + auth check (copilot|openai|anthropic|openrouter);
                                           for OpenRouter also the key's credit and free-model allowance
   worca models set <provider> <key>=<value> …
@@ -41,10 +47,18 @@ Usage:
 Notes:
   OpenRouter is the openai (OpenAI-compatible) provider with OpenRouter's base URL — one key and
   one concurrency cap. A model can still point elsewhere on its own Connection.
+  --api-key gives an endpoint that is not the provider's its own key ('\${VAR}' or a literal), stored on
+  each imported entry; the provider's key is only ever sent to the provider's own host.
   Copilot: GitHub allows Copilot only through supported clients and has suspended
   access for automated use. \`login\` prints the notice; --accept-terms records the
   acknowledgement non-interactively. Pipelines are automated, high-volume use.
 `;
+
+/** `worca models import gemini|qwen`: the endpoint and the key reference each defaults to. */
+const HOSTED_IMPORTS = Object.freeze({
+  gemini: Object.freeze({ baseUrl: GEMINI_OPENAI_BASE_URL, apiKey: '${GEMINI_API_KEY}' }),
+  qwen: Object.freeze({ baseUrl: QWEN_OPENAI_BASE_URL, apiKey: '${DASHSCOPE_API_KEY}' }),
+});
 
 /** The notice text, mirrored from ui/public/bridge-view.mjs COPILOT_TERMS (kept
  *  here too: the CLI must not import UI modules). */
@@ -131,13 +145,17 @@ const sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); if (t.un
  * @returns {Promise<number>} exit code
  */
 export async function cmdModels(argv, { out, c, fail, sleep: wait = sleep }) {
-  const args = modelsArgs(argv, ['--pick', '--base-url', '--search', '--min-context'], ['--accept-terms', '--all', '--yes', '--free', '--tools', '-h', '--help'], fail);
+  const args = modelsArgs(argv, ['--pick', '--base-url', '--api-key', '--search', '--min-context'], ['--accept-terms', '--all', '--yes', '--free', '--tools', '-h', '--help'], fail);
   const [verb, ...rest] = args._;
   // `openrouter` is not a provider of its own: it is the openai provider at OpenRouter's URL, so
   // every verb below sees `openai` and a base URL that defaults to OpenRouter's.
   const viaOpenRouter = rest[0] === 'openrouter';
   if (viaOpenRouter) rest[0] = 'openai';
-  const baseUrlArg = args['base-url'] || (viaOpenRouter ? OPENROUTER_BASE_URL : '');
+  // `gemini` and `qwen` (import only) are the openai provider at Google's / Alibaba's endpoint, with a key of their own.
+  const viaHosted = verb === 'import' && HOSTED_IMPORTS[rest[0]] ? HOSTED_IMPORTS[rest[0]] : null;
+  if (viaHosted) rest[0] = 'openai';
+  const baseUrlArg = args['base-url'] || (viaOpenRouter ? OPENROUTER_BASE_URL : viaHosted ? viaHosted.baseUrl : '');
+  const apiKeyArg = typeof args['api-key'] === 'string' ? args['api-key'] : (viaHosted ? viaHosted.apiKey : '');
   if (!verb || args.help || args.h || verb === 'help') { out(MODELS_HELP); return 0; }
 
   if (verb === 'list') {
@@ -195,13 +213,13 @@ export async function cmdModels(argv, { out, c, fail, sleep: wait = sleep }) {
       minCtx = Math.round(Number(mm[1]) * ({ k: 1000, m: 1e6 }[mm[2].toLowerCase()] || 1));
     }
     let out0;
-    try { out0 = await endpointModelsForImport({ baseUrl: baseUrlArg }); } catch (err) { return fail(err.message || String(err)); }
+    try { out0 = await endpointModelsForImport({ baseUrl: baseUrlArg, apiKey: apiKeyArg }); } catch (err) { return fail(err.message || String(err)); }
     const fmtCtx = (m) => (m.servedContext ? `${Math.round(m.servedContext / 1000)}k` : m.trainedContext ? `?/${Math.round(m.trainedContext / 1000)}k` : '-');
     // A hosted catalog is hundreds of rows: the filters narrow the listing AND what --all takes.
     const q = String(args.search || '').trim().toLowerCase();
     const shown = out0.models.filter((m) => (!q || m.id.toLowerCase().includes(q) || String(m.name || '').toLowerCase().includes(q))
       && (!args.free || m.free === true) && (!args.tools || m.toolCalls === true) && (!minCtx || (m.servedContext || 0) >= minCtx));
-    const hosted = out0.server === 'openrouter';
+    const hosted = ['openrouter', 'gemini'].includes(out0.server);
     let ids;
     if (args.pick) ids = String(args.pick).split(',').map((x) => x.trim()).filter(Boolean);
     else if (args.all) ids = shown.filter((m) => m.importable).map((m) => m.id);
@@ -217,7 +235,7 @@ export async function cmdModels(argv, { out, c, fail, sleep: wait = sleep }) {
     }
     for (const w of out0.warnings) out(c('yellow', `! ${w}`));
     if (!(await confirm(`Import ${ids.length} model${ids.length === 1 ? '' : 's'} into the catalog?`, args.yes, { c }))) return fail('cancelled');
-    const r = await importEndpointModels(ids, { baseUrl: baseUrlArg });
+    const r = await importEndpointModels(ids, { baseUrl: baseUrlArg, apiKey: apiKeyArg });
     for (const id of r.created) out(`  + ${id}`);
     for (const id of r.updated) out(`  ~ ${id} (upstream refreshed)`);
     for (const sk of r.skipped) out(`  - ${sk.id} (skipped: ${sk.why})`);

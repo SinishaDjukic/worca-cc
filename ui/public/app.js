@@ -82,6 +82,7 @@ const state = {
 const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false };
 
 import { icon } from './icons.mjs';
+import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
 import { readLogView, writeLogView, paintLogMsg, applyLogView, syncLogViewSeg } from './log-view.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
@@ -198,7 +199,7 @@ import {
 } from './models-view.mjs';
 import {
   renderProvidersCard, collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
-  applyProviderPreset, endpointRowMatches,
+  applyProviderPreset, endpointRowMatches, ENDPOINT_PRESETS,
   setModelUpstream, COPILOT_TERMS,
 } from './bridge-view.mjs';
 import {
@@ -979,6 +980,8 @@ const el = {
   mimpSource: $('#mimp-source'),
   mimpBase: $('#mimp-base'),
   mimpBaseField: null,          // set below: the label wrapping #mimp-base
+  mimpKey: $('#mimp-key'),
+  mimpKeyField: null,           // set below: the label wrapping #mimp-key
   mimpList: $('#mimp-list'),
   mimpMsg: $('#mimp-msg'),
   mimpFilter: $('#mimp-filter'),
@@ -19448,6 +19451,7 @@ function paintImportSource() {
   }));
   // Copilot has no base URL, and loads by itself; the whole field (with its button) goes away.
   if (el.mimpBaseField) el.mimpBaseField.classList.toggle('hidden', mimp.source !== 'openai');
+  if (el.mimpKeyField) el.mimpKeyField.classList.toggle('hidden', mimp.source !== 'openai');
 }
 
 /**
@@ -19462,6 +19466,7 @@ function openImportDialog({ source, baseUrl, goToModels } = {}) {
   mimp.baseUrl = baseUrl || (mvState.providers && mvState.providers.openai && mvState.providers.openai.baseUrl) || '';
   mimp.payload = null;
   if (el.mimpBase) el.mimpBase.value = mimp.baseUrl;
+  if (el.mimpKey) el.mimpKey.value = '';
   paintImportSource();
   if (el.mimpBody) el.mimpBody.replaceChildren();
   if (el.mimpGo) el.mimpGo.disabled = true;
@@ -19509,13 +19514,15 @@ function closeImportDialog() {
 async function listImportModels() {
   const endpoint = mimp.source === 'openai';
   mimp.baseUrl = el.mimpBase ? el.mimpBase.value.trim() : '';
+  mimp.apiKey = el.mimpKey ? el.mimpKey.value.trim() : '';
   if (endpoint && !mimp.baseUrl) { setImportMsg('Give the endpoint a base URL, e.g. http://127.0.0.1:11434/v1', 'err'); el.mimpBase?.focus(); return; }
   if (el.mimpList) el.mimpList.disabled = true;
   if (el.mimpGo) el.mimpGo.disabled = true;
   setImportMsg(endpoint ? 'Asking the endpoint what it serves…' : 'Loading Copilot models…');
   try {
     const url = endpoint ? `/api/providers/openai/models?baseUrl=${encodeURIComponent(mimp.baseUrl)}` : '/api/providers/copilot/models';
-    const res = await fetch(url);
+    // The endpoint's own key rides a header, never the URL (server logs, history).
+    const res = await fetch(url, endpoint && mimp.apiKey ? { headers: { 'X-Worca-Endpoint-Key': mimp.apiKey } } : {});
     const data = await safeJson(res);
     if (!res.ok) { setImportMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
     mimp.payload = data;
@@ -19555,7 +19562,7 @@ async function importModelsFlow() {
   setImportMsg('Importing…');
   try {
     const res = endpoint
-      ? await fetch('/api/providers/openai/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, baseUrl: sheet.dataset.baseurl || '' }) })
+      ? await fetch('/api/providers/openai/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, baseUrl: sheet.dataset.baseurl || '', ...(mimp.apiKey ? { apiKey: mimp.apiKey } : {}) }) })
       : await fetch('/api/providers/copilot/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
     const data = await safeJson(res);
     if (!res.ok) { setImportMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
@@ -19929,6 +19936,17 @@ for (const host of [el.modelsList, el.modelEditorModal]) {
 // ── Import dialog wiring ────────────────────────────────────────────────────
 if (el.modelImportModal) {
   el.mimpBaseField = el.mimpBase ? el.mimpBase.closest('.mimp-base-field') : null;
+  el.mimpKeyField = el.mimpKey ? el.mimpKey.closest('.mimp-key-field') : null;
+  // A hosted API's preset fills its base URL and the usual ${VAR} for its key (bridge-view.mjs ENDPOINT_PRESETS).
+  for (const b of el.modelImportModal.querySelectorAll('.mimp-preset')) {
+    b.addEventListener('click', () => {
+      const p = ENDPOINT_PRESETS[b.dataset.preset];
+      if (!p) return;
+      if (el.mimpBase) el.mimpBase.value = p.baseUrl;
+      if (el.mimpKey) el.mimpKey.value = p.keyRef;
+      listImportModels();
+    });
+  }
   el.modelImportBtn?.addEventListener('click', () => openImportDialog({}));
   el.mimpSource?.addEventListener('change', () => {
     mimp.source = el.mimpSource.value;
@@ -19941,6 +19959,7 @@ if (el.modelImportModal) {
   });
   el.mimpList?.addEventListener('click', () => listImportModels());
   el.mimpBase?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); listImportModels(); } });
+  el.mimpKey?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); listImportModels(); } });
   el.mimpFilter?.addEventListener('input', () => applyImportFilter());
   el.mimpGo?.addEventListener('click', () => importModelsFlow());
   el.mimpCancel?.addEventListener('click', () => importGuard?.cancel());
@@ -28930,6 +28949,7 @@ function buildHdAgents(sec, record, data) {
       `<span class="hd-ag-meta mono">${escapeHtml(metaBits)}</span>` +
       skillPillsHtml(skillsByGroup[key]);
     card.appendChild(head);
+    card.insertAdjacentHTML('beforeend', telemetrySlotHtml(sep >= 0 ? String(key).slice(sep + 1) : null));
     if (!list.length) {
       const note = document.createElement('div');
       note.className = 'hint hd-ag-none';
@@ -28962,6 +28982,7 @@ function buildHdAgents(sec, record, data) {
     }
     sec.appendChild(card);
   }
+  paintTelemetry(sec, (st && st.id) || (record && record.id));
 }
 
 // A preview file of a PERSISTED ask. historyRunUrl already splits the workspace
@@ -30352,6 +30373,7 @@ function rdAgentsBody(sec, r) {
       `<span class="rd-ag-meta mono">${escapeHtml(metaBits)}</span>` +
       skillPillsHtml(skillsByGroup[key]);
     card.appendChild(head);
+    card.insertAdjacentHTML('beforeend', telemetrySlotHtml(sep >= 0 ? String(key).slice(sep + 1) : null));
     if (!list.length) {
       const note = document.createElement('div');
       note.className = 'hint rd-ag-none';
@@ -30387,6 +30409,7 @@ function rdAgentsBody(sec, r) {
   // after the run began) left every node card without one until the user happened
   // to open the separate Artifacts tab. Seed here too; it no-ops once done.
   attachNodeArtifactAffordances(cardsByNode, r.artifacts, r.pipelineId || r.id, sec);
+  paintTelemetry(sec, r.pipelineId || r.id, { live: true });
   hydrateRunArtifacts(r).then((added) => {
     if (added) attachNodeArtifactAffordances(cardsByNode, r.artifacts, r.pipelineId || r.id, sec);
   });
@@ -33521,10 +33544,13 @@ function paintRunsList() {
     if (g && typeof g.scrollIntoView === 'function') g.scrollIntoView({ block: 'start' });
   }
 }
-/** P2/P7: move every group line to its fraction IN PLACE — a rebuild would restart the glide. Group rows only: a
- *  single row's four-section stage block is painted whole by paintProgressBar in renderItem. */
+/** P2/P7: move every group line to its fraction IN PLACE — a rebuild would restart the glide. Group rows and their open members only: a
+ *  top-level single row's four-section stage block is painted whole by paintProgressBar in renderItem. */
 function paintRunsProgress(host, model) {
-  const rows = model.sections.flatMap((s) => (s.collapsed ? [] : s.rows)).filter((r) => r.kind === 'chain' && r.model.progress);
+  // #955: an open group's live members draw the same 3px line as their group row.
+  const rows = model.sections.flatMap((s) => (s.collapsed ? [] : s.rows))
+    .flatMap((r) => (r.kind === 'chain' ? [r, ...(r.open ? r.members || [] : [])] : []))
+    .filter((r) => r.model && r.model.progress);
   for (const r of rows) {
     for (const line of host.querySelectorAll(`.runs-item[data-row-key="${cssEscape(r.key)}"] > a.runs-row > .runs-row-prog`)) {
       line.firstElementChild.style.width = progressWidth(r.model.progress.fraction);

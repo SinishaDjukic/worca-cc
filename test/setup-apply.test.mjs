@@ -374,7 +374,7 @@ test('OpenAI-compatible: the pending id comes from the endpoint listing; an unre
   const plan = await planSetupApply(body, ok.deps);
   assert.equal(plan.values.modelRoles.claude.everyday.model, 'llamacpp-qwen3-coder');
   assert.equal(seen[0].baseUrl, 'http://127.0.0.1:8080/v1');           // the PLANNED base URL and key (D-C)
-  assert.equal(seen[0].apiKey, 'sk-local');
+  assert.equal(seen[0].providerApiKey, 'sk-local');
   const down = fakeDeps({ checkModelRoles: realRoleCheck,
     endpointModels: async () => { throw new Error('no OpenAI-compatible model list at http://u:pw@127.0.0.1:8080/v1/models'); } });
   await assert.rejects(planSetupApply(body, down.deps), (err) => err.field.startsWith('models.modelRoles')
