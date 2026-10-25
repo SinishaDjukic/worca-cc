@@ -28,7 +28,7 @@ const SOURCES = {
   workflows: [], schedules: [], tickets: [],
 };
 
-function setup({ platform = '', sources = SOURCES, lazy = null } = {}) {
+function setup({ platform = '', sources = SOURCES, lazy = null, searchChats = null, chatsFirst = () => false } = {}) {
   const { window } = new JSDOM(PAGE);
   const doc = window.document;
   if (platform) Object.defineProperty(window.navigator, 'platform', { value: platform, configurable: true });
@@ -43,6 +43,7 @@ function setup({ platform = '', sources = SOURCES, lazy = null } = {}) {
     navigate: (href) => calls.navigate.push(href),
     openWorkflow: (id) => calls.workflow.push(id),
     onLabel: (l) => calls.label.push(l),
+    searchChats, chatsFirst,
   });
   const $ = (id) => doc.getElementById(id);
   const key = (target, k, init = {}) => {
@@ -509,4 +510,56 @@ test('a label row: tag icon, Enter calls onLabel with the word and never navigat
   key($('tsearch-input'), 'Enter');
   assert.deepEqual(calls.label, ['hotfix']);
   assert.deepEqual(calls.navigate, []);
+});
+
+test('#948 s2: the Chats group comes first or after Runs, shows a query that only matches chats, drops a stale answer', async () => {
+  const CHATS = [{ kind: 'chat', id: 'ask_00000001', title: 'Login chat', sub: '…the login form…', meta: 'Fri', href: '#chat/ask_00000001' },
+    { kind: 'chat', id: 'ask_00000002', title: 'Old login', sub: '', meta: 'Archived · Oct 9', href: '#chat/ask_00000002' }];
+  const wait = () => new Promise((r) => setTimeout(r, 200));
+  const labels = (doc) => [...doc.querySelectorAll('#tsearch-pop .tsearch-label')].map((n) => n.textContent);
+  await checkRows([
+    { name: 'first when chatsFirst(), after Runs otherwise; the snippet is under the title', run: async () => {
+      for (const [first, want] of [[true, ['Chats', 'Runs']], [false, ['Runs', 'Chats']]]) {
+        const { doc, key, type, options } = setup({ searchChats: async () => CHATS, chatsFirst: () => first });
+        key(null, 'k', { metaKey: true });
+        type('login');
+        await wait();
+        assert.deepEqual(labels(doc).slice(0, 2), want);
+        assert.equal(options().at(-1).querySelector('.tsearch-title').textContent, 'Ask in Chat');
+        const chat = doc.querySelector('#tsearch-pop .tsearch-opt-chat');
+        assert.equal(chat.querySelector('.tsearch-sub').textContent, '…the login form…');
+      }
+    } },
+    { name: 'a query that matches only chats lists Chats and no "No matches"', run: async () => {
+      const { doc, key, type } = setup({ searchChats: async () => CHATS });
+      key(null, 'k', { metaKey: true });
+      type('zzqx');
+      await wait();
+      assert.deepEqual(labels(doc), ['Chats']);
+      assert.equal(doc.querySelector('#tsearch-pop .tsearch-none'), null);
+    } },
+    { name: 'a stale answer for an older query is dropped', run: async () => {
+      const answers = [];
+      const { doc, key, type } = setup({ searchChats: (q) => new Promise((r) => answers.push([q, r])) });
+      key(null, 'k', { metaKey: true });
+      type('log');
+      await wait();
+      type('login');
+      await wait();
+      const [[q1, r1], [q2, r2]] = answers;
+      assert.deepEqual([q1, q2], ['log', 'login']);
+      r2([CHATS[0]]);
+      await wait();
+      r1(CHATS);
+      await wait();
+      assert.equal(doc.querySelectorAll('#tsearch-pop .tsearch-opt-chat').length, 1);
+    } },
+    { name: 'no searchChats: no Chats group', run: async () => {
+      const { doc, key, type } = setup();
+      key(null, 'k', { metaKey: true });
+      type('login');
+      await wait();
+      assert.ok(!labels(doc).includes('Chats'));
+    } },
+  ]);
 });

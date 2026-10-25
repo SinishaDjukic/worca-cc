@@ -63,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 74;
+export const SCHEMA_VERSION = 75;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -882,7 +882,9 @@ const INCREMENTAL_COLUMNS = {
                             agent_mode: 'INTEGER',   // v51 (#574): the chat's Agent mode switch, 0/1; NULL = on
                             engine: 'TEXT',          // v53 (#635): the engine the chat is locked to; NULL = before v53 (read from its model)
                             mode: 'TEXT',            // v54 (Workflows view): 'composer' for the editor's chat; NULL = an Ask Worca chat
-                            composer: 'TEXT' },      // v54: JSON {sessionId, docToken, graph, selection, dirty, drafts} — the canvas the last message carried
+                            composer: 'TEXT',        // v54: JSON {sessionId, docToken, graph, selection, dirty, drafts} — the canvas the last message carried
+                            archived_at: 'TEXT',     // v75 (#948 s2): when the chat was archived; NULL = not archived
+                            pinned_at: 'TEXT' },     // v75 (#948 s2): when the chat was pinned; NULL = not pinned
   shape_features:         { ship_mode: 'TEXT',        // v58 (D24): 'stacked' | 'one'; NULL = not shipped
                             ship_pr_url: 'TEXT',      // v58: the one PR (mode 'one'); NULL otherwise
                             shipped_at: 'TEXT',       // v58: when Ship as ran
@@ -2505,6 +2507,7 @@ export function migrate(db) {
     // v74 requirements: the product brief + ledger.brief_id. The repair runs again here: req_cost_ledger is created at
     // v72, after the hoisted repair, so a DB coming from below 72 gets brief_id only from this call.
     if (current < 74) { db.exec(REQUIREMENTS_BRIEFS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
+    // v75 (#948 s2): ask_threads.archived_at / pinned_at — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

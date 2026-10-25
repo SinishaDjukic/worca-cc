@@ -29,7 +29,8 @@ export function keyHint(tokens, mac) {
 
 /**
  * The action for a keydown in a list: 'toggle' | 'all' | 'clear' | 'down' | 'up' | 'extend-down' | 'extend-up' |
- * 'open' | 'unfold' | 'fold' | 'menu' | 'stop' | 'archive' | 'add-to-group' | 'leave-group' | 'delete' | 'help' | null.
+ * 'open' | 'unfold' | 'fold' | 'menu' | 'stop' | 'rename' | 'pin' | 'archive' | 'add-to-group' | 'leave-group' | 'delete' |
+ * 'help' | null. Rename and pin are the Chats list's only (#948 s2).
  * `e` carries key, metaKey, ctrlKey, altKey, shiftKey, targetIsRow (focus on a row link) and inField.
  * `level` is the UI level (ui-level.mjs); Delete and the group keys need Advanced on the Runs list, as its ⋯ menu.
  */
@@ -53,8 +54,25 @@ export function listKeyAction(e, { size = 0, list = 'runs', level } = {}) {
     case '.': return 'menu';
     case 'e': return 'archive';
     case 's': return list === 'runs' ? 'stop' : null;
+    case 'r': return list === 'chats' ? 'rename' : null;   // #948 s2
+    case 'p': return list === 'chats' ? 'pin' : null;      // #948 s2
     case 'g': return adv ? 'add-to-group' : null;
     case 'Backspace': case 'Delete': return adv ? 'delete' : null;
     default: return null;
   }
+}
+
+/**
+ * The Chat page's own keys (#948 s2): 'new-chat' (⌥⌘N) | 'toggle-list' (⌘\) | 'focus-list' (⌘⇧L) | 'prev-chat' /
+ * 'next-chat' (⌥↑ / ⌥↓) | null. `e` carries key, code, the four modifiers and inField. ⌘ is Ctrl off a Mac. The ⌘ combos
+ * work in a text field (as ⌘K does); ⌥↑ / ⌥↓ do not (they move the caret there). Off a Mac ⌥⌘N also needs e.key 'n':
+ * AltGr is Ctrl+Alt there, and AltGr+N types a letter on some layouts.
+ */
+export function chatPageKeyAction(e, { mac = false } = {}) {
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && e.altKey && !e.shiftKey && e.code === 'KeyN' && (mac || /^n$/i.test(e.key))) return 'new-chat';
+  if (mod && !e.altKey && !e.shiftKey && (e.code === 'Backslash' || e.key === '\\')) return 'toggle-list';
+  if (mod && !e.altKey && e.shiftKey && e.code === 'KeyL') return 'focus-list';
+  if (e.altKey && !mod && !e.shiftKey && !e.inField && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) return e.key === 'ArrowUp' ? 'prev-chat' : 'next-chat';
+  return null;
 }

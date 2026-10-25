@@ -615,3 +615,28 @@ test('whenLabel: rowTime style with the clock after a non-today day (F-9)', () =
   const inst = Date.UTC(2026, 8, 14, 3, 30);                // 12:30 in Tokyo
   assert.equal(whenLabel(inst, inst, 'Asia/Tokyo'), '12:30');
 });
+
+test('#948 s2 renderRunsList: a bare section has no head, emptyByShow / loadingText / offlineText notes, retry on the offline note, moreLabel', () => {
+  const chatRowItem = { key: 'chat:a', id: 'a', kind: 'chat', title: 'Chat a', href: '#chat/a', labels: [], cost: 0.4, activityMs: NOW - 60000,
+    model: { state: 'idle', word: 'Idle', line: 'worka-cc · $0.40 · 11:00', dot: 'grey', pulse: false, symbol: null, icon: 'chat' } };
+  const flat = { sections: [{ id: 'all', title: 'Chats', rows: [chatRowItem], count: 1, bare: true, more: true, moreLabel: 'Show more' }],
+    view: { show: 'all' }, now: NOW, total: 1, shown: 1, spansProjects: false };
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, flat));
+  assert.equal(host.querySelectorAll('.runs-sec-head').length, 0);
+  assert.equal(host.querySelectorAll('.runs-item').length, 1);
+  assert.equal(host.querySelector('.runs-row-sub').textContent, 'worka-cc · $0.40 · 11:00', 'a chat row reads its model line');
+  assert.equal(host.querySelector('.runs-older').textContent, 'Show more');
+  const empty = (show, total = 0) => ({ sections: [], view: { show }, now: NOW, total, shown: 0, spansProjects: false });
+  assert.equal(renderRunsList(doc, empty('archived'), { emptyByShow: { archived: 'No archived chats.' } }).at(-1).textContent, 'No archived chats.');
+  const loading = renderRunsList(doc, empty('all'), { loading: true, loadingText: 'Loading chats…' });
+  assert.equal(loading[0].className, 'runs-note runs-loading');
+  assert.equal(loading[0].textContent, 'Loading chats…');
+  const off = renderRunsList(doc, empty('all'), { offline: true, retry: true, offlineText: 'The chats show here once Worca\'s server is reachable again.' });
+  assert.equal(off.length, 1);
+  assert.ok(off[0].classList.contains('runs-offline'));
+  assert.equal(off[0].querySelectorAll('[data-runs-retry]').length, 1);
+  assert.equal(off[0].firstChild.textContent, 'The chats show here once Worca\'s server is reachable again.');
+  const runsOff = renderRunsList(doc, empty('all'), { offline: true });
+  assert.equal(runsOff[0].querySelectorAll('[data-runs-retry]').length, 0, 'Runs (retry only with a note) keeps its plain offline note');
+});
