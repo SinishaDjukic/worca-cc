@@ -210,7 +210,8 @@ export function diffRows(saved, answers) {
       value: n.mode === 'proxy' ? `Corporate proxy · ${n.host}:${n.port || '8080'}` : 'Direct' },
     { group: 'access', step: 'access', label: 'Model access', changed: !!body.access, team: false, value: sources.join(', ') || 'None' },
     { group: 'models', step: 'models', label: 'Models', changed: !!body.models, team: teamIn('models'),
-      value: MODEL_ROLES.map((r) => `${ROLE_LABELS[r]} · ${roles[r]?.model || 'each job’s own default'}`).join('; ') },
+      value: MODEL_ROLES.map((r) => `${ROLE_LABELS[r]} · ${roles[r]?.model || 'each job’s own default'}`).join('; '),
+      lines: MODEL_ROLES.map((r) => ({ role: ROLE_LABELS[r], model: roles[r]?.model || null })) },
     { group: 'work', step: 'work', label: 'How you work', changed: !!body.work, team: teamIn('work'),
       value: `${LEVEL_INFO[w.uiLevel || 'simple']?.label || 'Simple'} interface · per run ${money(w.pipelineCostLimitUsd)} · total ${money(w.totalCostLimitUsd)}` },
   ];
@@ -386,6 +387,13 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     if (line) main.append(el('div', 'sa-row-line', line));
     li.append(...(mark ? [mark] : []), main);
     return li;
+  }
+  /** A titled group inside a step: `.sa-section > h3 + hint? + children`; consecutive sections get a rule between them. */
+  function section(title, hint, ...children) {
+    const s = el('section', 'sa-section'); s.append(el('h3', 'sa-section-title', title));
+    if (hint) s.append(el('p', 'hint sa-section-hint', hint));
+    s.append(...children);
+    return s;
   }
   /** `.field > label + control`, the input tagged with its apply field (markField). */
   function field(label, control, saField, input = control) {
@@ -674,56 +682,96 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     body.append(rows('sa-team-unmapped', ...un.map((u) => row(null, `${ROLE_LABELS[u.role] || u.role} · ${u.upstream}`, kept(u) ? `${u.line} Your pick is kept.` : u.line))));
   }
 
+  // Copilot models Apply would import, shaped like the entry the import writes (copilot.mjs: upstream.provider
+  // 'copilot', "<name> (Copilot)"), so the role pickers group them under GitHub Copilot, not the Claude sign-in.
+  // Only the models GitHub's own picker shows (model_picker_enabled): the rest are older dated snapshots under the
+  // same names. A name that still repeats carries its model id.
+  function pendingCopilotModels(list) {
+    const rows = (list || []).filter((m) => !m.inCatalog && m.pickerEnabled !== false);
+    const seen = new Map(); for (const m of rows) { const n = m.name || m.id; seen.set(n, (seen.get(n) || 0) + 1); }
+    return rows.map((m) => {
+      const name = m.name || m.id;
+      return { id: m.catalogId, label: seen.get(name) > 1 ? `${name} · ${m.id} (Copilot)` : `${name} (Copilot)`,
+        upstream: { provider: 'copilot', api: m.api || null, model: m.id }, cost: { free: true } };
+    });
+  }
+  // Copilot already connected when the dialog opened: its models are fetched once, on the first visit to Models
+  // (a sign-in in the dialog fetches them itself). Until then the pickers show the catalog alone.
+  async function loadCopilotModels() {
+    S.copilotModelsAsked = true;
+    const list = await call('/api/providers/copilot/models');
+    if (closed) return;
+    if (list.ok && Array.isArray(list.data?.models)) { S.copilotModels = list.data.models; if (S.step === 'models') paintBody(); }
+  }
   function paintModels() {
+    const a = S.answers.access;
+    if (a.copilot && a.copilotConnected && !S.copilotModels.length && !S.copilotModelsAsked && !S.saved.providers?.broker?.enabled) void loadCopilotModels();
     if ((S.answers.found.team || []).some((k) => k.startsWith('models.'))) paintTeamLine('Your team recommends these roles.');
     paintUnmapped();
     const host = el('div', 'sa-roles');
-    const pending = S.copilotModels.filter((m) => !m.inCatalog);
-    const catalog = [...S.saved.catalog, ...pending.map((m) => ({ id: m.catalogId, label: `${m.name || m.id} · Copilot` }))];
+    const pending = pendingCopilotModels(S.copilotModels);
+    const catalog = [...S.saved.catalog, ...pending];
     body.append(host);
     renderRolesSection(host, { roles: S.answers.models.modelRoles, catalog, engine: S.answers.work.runEngine || 'claude', onChange: (next) => {
       // A click that changes nothing (the harness switch) keeps the answers as they were.
       if (!Object.keys(rolePatch(S.answers.models.modelRoles, next)).length) return;
       S.answers.models.modelRoles = next;
       const picked = new Set(Object.values(next).flatMap((h) => Object.values(h || {}).map((v) => v?.model)).filter(Boolean));
-      S.answers.access.importModels = pending.filter((m) => picked.has(m.catalogId)).map((m) => m.catalogId.replace(/^copilot-/, ''));
+      S.answers.access.importModels = pending.filter((m) => picked.has(m.id)).map((m) => m.id.replace(/^copilot-/, ''));
       paintFoot();
     } });
-    body.append(sw('Test each model after Apply', S.answers.models.testRoles, (on) => { S.answers.models.testRoles = on; paintFoot(); }, 'sa-test-roles'));
   }
 
   function paintWork() {
     if ((S.answers.found.team || []).some((k) => k.startsWith('work.'))) paintTeamLine('Your team recommends some of these values.');
     const w = S.answers.work;
+    // Three titled sections, a rule between them: what the interface shows, what runs may spend, what helpers write.
     const shown = w.uiLevel || doc.documentElement.dataset.level || 'simple';
-    body.append(field('Interface', seg(UI_LEVELS.map((l) => [l, LEVEL_INFO[l].label]), shown, (v) => { w.uiLevel = v; paint(); }, { label: 'Interface' }), null));
+    body.append(section('Interface', LEVEL_INFO[shown]?.who ? `${LEVEL_INFO[shown].who}.` : '',
+      seg(UI_LEVELS.map((l) => [l, LEVEL_INFO[l].label]), shown, (v) => { w.uiLevel = v; paint(); }, { label: 'Interface' })));
     const money = (k, label) => {
-      const i = textInput('number', w[k] == null ? '' : String(w[k]), (v) => { w[k] = v.trim() === '' ? null : Number(v); }, { min: '0', step: '0.01', placeholder: '$' });
+      const i = textInput('number', w[k] == null ? '' : String(w[k]), (v) => { w[k] = v.trim() === '' ? null : Number(v); }, { min: '0', step: '0.01', placeholder: 'No limit' });
       return field(label, i, `work.${k}`);
     };
-    const limits = el('div', 'sa-pair'); limits.append(money('pipelineCostLimitUsd', 'Per-run limit ($)'), money('totalCostLimitUsd', 'Total limit ($)'));
-    body.append(limits);
-    body.append(field('Reset', seg([['weekly', 'Weekly'], ['monthly', 'Monthly']], w.costLimitResetPeriod || 'monthly', (v) => { w.costLimitResetPeriod = v; paint(); }, { label: 'Reset' }), null));
-    body.append(sw('AI-written PR descriptions', w.autoGeneratePrDescription !== false, (on) => { w.autoGeneratePrDescription = on; paintFoot(); }, 'sa-pr-desc'));
+    const limits = el('div', 'sa-pair'); limits.append(money('pipelineCostLimitUsd', 'Per run ($)'), money('totalCostLimitUsd', 'Total ($)'));
+    body.append(section('Spending limits', 'Leave a limit empty for none. The total counts every run until it resets.', limits,
+      field('Total resets', seg([['weekly', 'Weekly'], ['monthly', 'Monthly']], w.costLimitResetPeriod || 'monthly', (v) => { w.costLimitResetPeriod = v; paint(); }, { label: 'Total resets' }), null)));
     const naming = w.smartNaming || {};
-    body.append(sw('Smart run names', naming.suggestTitle !== false && naming.suggestBranch !== false,
-      (on) => { w.smartNaming = { ...naming, suggestTitle: on, suggestBranch: on }; paintFoot(); }, 'sa-smart-naming'));
+    body.append(section('AI helpers', 'Short model calls that save you typing. They use the Quick jobs model.',
+      sw('AI-written PR descriptions', w.autoGeneratePrDescription !== false, (on) => { w.autoGeneratePrDescription = on; paintFoot(); }, 'sa-pr-desc'),
+      sw('Smart run names', naming.suggestTitle !== false && naming.suggestBranch !== false,
+        (on) => { w.smartNaming = { ...naming, suggestTitle: on, suggestBranch: on }; paintFoot(); }, 'sa-smart-naming')));
   }
 
+  // A table like the Check step's: the group and its value stacked on the left, its badges and Change on the right,
+  // top-aligned. Models gets one line per role, by the model's label (a Copilot model still to import included).
   function paintReview() {
-    const list = rows('sa-review');
+    const list = el('table', 'sa-review'); const tbody = el('tbody'); list.append(tbody);
+    const labelOf = (() => { const all = [...S.saved.catalog, ...pendingCopilotModels(S.copilotModels)]; return (id) => all.find((m) => m.id === id)?.label || id; })();
     for (const r of diffRows(S.saved, S.answers)) {
       const netSaved = r.group === 'network' && !!S.netSaved && !r.changed;
       if (entry !== 'first' && !r.changed && !netSaved) continue;
-      const li = row(null, r.label, r.value); li.dataset.group = r.group;
-      if (r.changed) li.append(badge('amber', 'Changed'));
-      if (netSaved) li.append(badge('green', 'Saved'));
-      if (r.team) li.append(badge('team', 'Team'));
-      li.append(btn('Change', 'btn btn-sm btn-quiet sa-change', () => goTo(r.step)));
-      list.append(li);
+      const tr = el('tr'); tr.dataset.group = r.group;
+      const what = el('td', 'sa-review-what'); what.append(el('div', 'sa-review-name', r.label));
+      if (r.lines) {
+        const ul = el('ul', 'sa-review-lines');
+        for (const l of r.lines) { const li = el('li'); li.append(el('span', 'sa-review-role', l.role), doc.createTextNode(l.model ? labelOf(l.model) : 'each job’s own default')); ul.append(li); }
+        what.append(ul);
+      } else what.append(el('div', 'sa-review-value', r.value));
+      const marks = el('td', 'sa-review-marks');
+      if (r.changed) marks.append(badge('amber', 'Changed'));
+      if (netSaved) marks.append(badge('green', 'Saved'));
+      if (r.team) marks.append(badge('team', 'Team'));
+      const act = el('td', 'sa-review-act'); act.append(btn('Change', 'btn btn-sm btn-quiet sa-change', () => goTo(r.step)));
+      tr.append(what, marks, act); tbody.append(tr);
     }
     body.append(list);
-    if (entry === 'team' && !list.children.length) body.append(el('p', 'hint sa-review-empty', S.answers.found.teamGone ? TEAM_GONE_LINE : TEAM_MATCHES_LINE));
+    // Next to the Apply button it governs: the role tests run on the Apply step, after the network, sign-ins and
+    // imports are saved, so they test what will run. Only with changed roles: the body carries testRoles only then.
+    if (diffRows(S.saved, S.answers).some((r) => r.group === 'models' && r.changed)) {
+      body.append(sw('Test models after applying', S.answers.models.testRoles, (on) => { S.answers.models.testRoles = on; paintFoot(); }, 'sa-test-roles'));
+    }
+    if (entry === 'team' && !tbody.children.length) body.append(el('p', 'hint sa-review-empty', S.answers.found.teamGone ? TEAM_GONE_LINE : TEAM_MATCHES_LINE));
     paintUnmapped();
   }
 
@@ -773,7 +821,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     const gate = S.answers ? nextGate(S.step, S.answers, { saved: S.saved, tested: S.tested, now: now(), detect: S.detect, entry, netSaved: S.netSaved }) : { ok: false, reason: '' };
     const skipLabel = S.answers && idx() >= 1 && idx() <= 4 ? skipLabelFor(gate) : null;
     if (skipLabel) actions.append(btn(skipLabel, 'btn btn-quiet sa-skip', () => { void skip(); }));
-    const label = S.step === 'check' ? 'Start' : S.step === 'review' ? (gate.finish ? 'Finish' : entry === 'first' ? 'Apply setup' : 'Apply changes') : 'Next';
+    const label = S.step === 'check' ? 'Start' : S.step === 'review' ? (gate.finish ? 'Finish' : 'Apply') : 'Next';
     const onNext = () => (S.step === 'network' ? nextFromNetwork() : S.step !== 'review' ? goTo(SETUP_STEPS[idx() + 1].id) : gate.finish ? teardown('done') : startApply(null));
     const next = btn(label, 'btn btn-primary sa-next', onNext);
     next.disabled = !gate.ok || S.testing; actions.append(next);
@@ -927,7 +975,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
         a.copilotConnected = true; a.copilotLogin = r.data.login || ''; S.cpFlow = null;
         const list = await call('/api/providers/copilot/models');
         if (closed) return;
-        S.copilotModels = list.ok && Array.isArray(list.data?.models) ? list.data.models : [];
+        S.copilotModels = list.ok && Array.isArray(list.data?.models) ? list.data.models : []; S.copilotModelsAsked = true;
         paint(); return;
       }
       if (r.status === 0) { S.cpT = timers.setTimeout(poll, Math.max(3, S.cpFlow.interval || 5) * 1000); return; }   // unreachable for a moment (ux-2-5)

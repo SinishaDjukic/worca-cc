@@ -102,7 +102,7 @@ async function open({ entry = 'first', step = 'check', settings = SETTINGS, prox
   return h;
 }
 
-/** From an open re-run: per-run limit 5 → 7, Review, Apply changes. */
+/** From an open re-run: per-run limit 5 → 7, Review, Apply. */
 async function applyLimit(h, value = '7') {
   await h.goTo('work');
   await h.type('work.pipelineCostLimitUsd', value);
@@ -288,10 +288,10 @@ test('corporate Copilot path: proxy test → Next applies the network → notice
     await h.click('.sa-next');                               // → Models
     await h.pick(h.$('.inherit-field[data-setting="models.claude.roles.deep"] .inherit-model'), 'copilot-claude-opus-5-5');
     await h.click('.sa-next'); await h.click('.sa-next');    // → How you work → Review
-    const netRow = h.$('.sa-review li[data-group="network"]');
+    const netRow = h.$('.sa-review tr[data-group="network"]');
     assert.match(netRow.textContent, /Saved/);
     assert.doesNotMatch(netRow.textContent, /Changed/);
-    assert.equal(h.next().textContent, 'Apply setup');
+    assert.equal(h.next().textContent, 'Apply');
     await h.click('.sa-next');
     const urls = h.log.map((r) => r.url);
     assert.ok(urls.indexOf('/api/providers/copilot/acknowledge') < urls.indexOf('/api/providers/copilot/login'), 'acknowledge first');
@@ -527,7 +527,7 @@ test('Network applies on Next: unchanged values post nothing (D19); Direct after
         assert.equal(h.title(), 'Where should Worca get its models?');
         assert.equal(h.$('.sa-net-saved').textContent, 'Direct connection saved.');
         await h.goTo('review');
-        const li = h.$('.sa-review li[data-group="network"]');
+        const li = h.$('.sa-review tr[data-group="network"]');
         assert.ok(li, 'a re-run lists the saved network row');
         assert.match(li.textContent, /Saved/);
         assert.equal(h.next().textContent, 'Finish');
@@ -813,15 +813,15 @@ test('re-run: saved values in the fields, only changed rows on Review, nothing c
   const h = await open({ entry: 'rerun' });
   try {
     await h.goTo('review');
-    assert.equal(h.$$('.sa-review li').length, 0);
+    assert.equal(h.$$('.sa-review tbody tr').length, 0);
     assert.equal(h.next().disabled, true);
     assert.equal(h.status().textContent, 'Nothing changed.');
-    assert.equal(h.next().textContent, 'Apply changes');
+    assert.equal(h.next().textContent, 'Apply');
     await h.goTo('work');
     assert.equal(h.field('work.pipelineCostLimitUsd').value, '5');
     await h.type('work.pipelineCostLimitUsd', '7');
     await h.goTo('review');
-    const rows = h.$$('.sa-review li');
+    const rows = h.$$('.sa-review tbody tr');
     assert.equal(rows.length, 1);
     assert.equal(rows[0].querySelector('.badge.amber').textContent, 'Changed');
     await h.click(rows[0].querySelector('.sa-change'));
@@ -879,6 +879,48 @@ test('entry steps and the handle: fix › network, fix › access with Copilot o
     await applyLimit(h);
     await h.goTo('network');
     assert.equal(h.title(), 'Setting up Worca…', 'goTo is a no-op on Apply');
+  } finally { h.close(); }
+});
+
+test('the role-test switch sits on Review, only with changed roles, and its value rides the apply body', async () => {
+  const h = await open({ entry: 'rerun', routes: { '/api/setup/apply': reply({ id: 'stp_1', steps: STEPS3 }, 202) } });
+  try {
+    await h.goTo('models');
+    assert.equal(h.$('.sa-test-roles'), null, 'not on the Models step');
+    await h.goTo('review');
+    assert.equal(h.$('.sa-test-roles'), null, 'no changed roles: no tests to run, no switch');
+    await h.goTo('models');
+    await h.pick(h.$('.inherit-field[data-setting="models.claude.roles.deep"] .inherit-model'), 'claude-opus-5-5');
+    await h.goTo('review');
+    assert.equal(h.$('.sa-test-roles').checked, true, 'on by default');
+    await h.toggle('.sa-test-roles');
+    await h.click('.sa-next');
+    assert.equal(h.applies()[0].body.models.testRoles, false);
+  } finally { h.close(); }
+});
+
+test('Models step: Copilot models still to import group under GitHub Copilot; old snapshots are left out; a repeated name shows its id', async () => {
+  const copilot = { connected: true, termsCurrent: true, accountType: 'individual', login: 'jdoe' };
+  const models = [
+    { id: 'gpt-6-sol', name: 'GPT-6 Sol', api: 'responses', catalogId: 'copilot-gpt-6-sol', inCatalog: false, pickerEnabled: true },
+    { id: 'gpt-4o-2024-05-13', name: 'GPT-4o', api: 'chat', catalogId: 'copilot-gpt-4o-2024-05-13', inCatalog: false, pickerEnabled: false },
+    { id: 'gpt-5.6-a', name: 'GPT-5.6', api: 'responses', catalogId: 'copilot-gpt-5.6-a', inCatalog: false, pickerEnabled: true },
+    { id: 'gpt-5.6-b', name: 'GPT-5.6', api: 'responses', catalogId: 'copilot-gpt-5.6-b', inCatalog: false, pickerEnabled: true },
+  ];
+  const h = await open({ entry: 'rerun', providers: { ...PROVIDERS, copilot }, routes: { '/api/providers/copilot/models': reply({ models }) } });
+  try {
+    await h.goTo('access');
+    await h.goTo('models');
+    await h.flush();
+    const sel = h.$('.inherit-field[data-setting="models.claude.roles.deep"] .inherit-model');
+    const group = [...sel.querySelectorAll('optgroup')].find((g) => g.label === 'GitHub Copilot');
+    assert.ok(group, 'a GitHub Copilot group');
+    const labels = [...group.querySelectorAll('option')].map((o) => o.textContent);
+    assert.ok(labels.includes('GPT-6 Sol (Copilot)'));
+    assert.ok(labels.includes('GPT-5.6 · gpt-5.6-a (Copilot)') && labels.includes('GPT-5.6 · gpt-5.6-b (Copilot)'));
+    assert.equal(labels.some((l) => l.startsWith('GPT-4o')), false, 'not in GitHub\'s picker: left out');
+    const signin = [...sel.querySelectorAll('optgroup')].find((g) => g.label === 'Claude sign-in');
+    assert.equal([...(signin?.querySelectorAll('option') || [])].some((o) => /Copilot/.test(o.textContent)), false, 'none under the Claude sign-in');
   } finally { h.close(); }
 });
 
@@ -1062,7 +1104,7 @@ test('AC-5.4: a first start pre-fills blanks from the team file and marks the ro
     assert.equal(h.$('.sa-check tr[data-check="teamSetup"] .badge.team').textContent, 'Team');
     assert.equal(h.$('.sa-check tr[data-check="claude"] .badge.team'), null);          // only the teamSetup ok row
     await h.goTo('review');
-    const work = h.$('.sa-review li[data-group="work"]');
+    const work = h.$('.sa-review tr[data-group="work"]');
     assert.equal(work.querySelector('.badge.team').textContent, 'Team');
     assert.match(work.textContent, /Advanced interface · per run \$8/);
   } finally { h.close(); }
@@ -1077,7 +1119,7 @@ test('AC-5.4: blank means "not in settings.json": defaulted keys of a fresh home
     routes: { '/api/setup/apply': reply({ id: 'stp_1', steps: [] }, 202) } });
   try {
     await h.goTo('review');
-    assert.match(h.$('.sa-review li[data-group="work"]').textContent, /Advanced interface · per run \$8/);
+    assert.match(h.$('.sa-review tr[data-group="work"]').textContent, /Advanced interface · per run \$8/);
     await h.click('.sa-next');
     const work = bodyOf(h.applies()[0]).work;
     assert.equal(work.uiLevel, 'advanced');
@@ -1088,7 +1130,7 @@ test('AC-5.4: blank means "not in settings.json": defaulted keys of a fresh home
   const kept = await open({ entry: 'first', team: { ...team, savedKeys: ['uiLevel'] }, settings: { ...SETTINGS, pipelineCostLimitUsd: null } });
   try {
     await kept.goTo('review');
-    assert.match(kept.$('.sa-review li[data-group="work"]').textContent, /Simple interface · per run \$8/);
+    assert.match(kept.$('.sa-review tr[data-group="work"]').textContent, /Simple interface · per run \$8/);
   } finally { kept.close(); }
 });
 
@@ -1149,7 +1191,7 @@ test('AC-5.4: saved values win on a first start: the team fills only what is bla
   const h = await open({ entry: 'first', team: TEAM_FILE, settings: { ...SETTINGS, pipelineCostLimitUsd: 3 } });
   try {
     await h.goTo('review');
-    assert.match(h.$('.sa-review li[data-group="work"]').textContent, /per run \$3/);
+    assert.match(h.$('.sa-review tr[data-group="work"]').textContent, /per run \$3/);
   } finally { h.close(); }
 });
 
@@ -1157,11 +1199,11 @@ test('AC-5.7: entry team opens on Review, lists only changed rows and writes not
   const team = { file: { found: false }, homes: [{ home: 'acme/gateway', hash: 'bbbb', unmapped: [], values: { work: { totalCostLimitUsd: 40 } }, keys: ['work.totalCostLimitUsd'] }] };
   const h = await open({ entry: 'team', step: 'review', teamHome: 'acme/gateway', team, routes: { '/api/setup/apply': reply({ id: 'stp_1', steps: [] }, 202) } });
   try {
-    const rows = h.$$('.sa-review li');
+    const rows = h.$$('.sa-review tbody tr');
     assert.deepEqual(rows.map((r) => r.dataset.group), ['work']);
     assert.equal(rows[0].querySelector('.badge.amber').textContent, 'Changed');
     assert.equal(rows[0].querySelector('.badge.team').textContent, 'Team');
-    assert.equal(h.next().textContent, 'Apply changes');
+    assert.equal(h.next().textContent, 'Apply');
     assert.deepEqual(h.writes(), []);                 // no POST /api/settings, no POST /api/setup/apply
     await h.click('.sa-next');
     assert.deepEqual(h.writes().map((w) => w.url), ['/api/setup/apply']);
@@ -1174,7 +1216,7 @@ test('AC-5.7: entry team with nothing differing says it already matches and offe
   const team = { file: { found: false }, homes: [{ home: 'acme/gateway', hash: 'cccc', unmapped: [], values: { work: { pipelineCostLimitUsd: 5 } }, keys: ['work.pipelineCostLimitUsd'] }] };
   const h = await open({ entry: 'team', step: 'review', teamHome: 'acme/gateway', team });
   try {
-    assert.equal(h.$$('.sa-review li').length, 0);
+    assert.equal(h.$$('.sa-review tbody tr').length, 0);
     assert.equal(h.$('.sa-review-empty').textContent, "Your setup already matches your team's recommendation.");
     assert.equal(h.next().textContent, 'Finish'); assert.equal(h.next().disabled, false);
     await h.click('.sa-next');

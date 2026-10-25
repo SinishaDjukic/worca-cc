@@ -19776,11 +19776,6 @@ if (el.providersList) {
     if (!t) return;
     if (t.classList.contains('mv-cp-signin')) copilotSignInFlow();
     else if (t.classList.contains('mv-cp-cancel')) { stopCopilotPoll(); mvState.signIn = null; renderProvidersViewBody(); }
-    else if (t.classList.contains('mv-cp-copy')) {
-      try { navigator.clipboard.writeText(t.dataset.code || ''); t.textContent = 'Copied'; } catch (e) {
-        notify({ tone: 'err', title: 'Could not copy the code', detail: e.message, key: 'copy-device-code' });
-      }
-    }
     else if (t.classList.contains('mv-cp-signout')) copilotSignOutFlow();
     else if (t.classList.contains('mv-cp-terms')) ensureCopilotTerms({ force: true }).then(() => renderProvidersViewBody());
     else if (t.classList.contains('mv-cp-fetch-models')) openImportDialog({ source: 'copilot' });

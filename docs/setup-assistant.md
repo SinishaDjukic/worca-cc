@@ -153,9 +153,9 @@ labels put the step back to its saved values and move on:
 | 1 Check this machine | Nothing. One row per detect check, with OK, Check or No. |
 | 2 Network | Direct, or through a corporate proxy: host and port (**Auto-detect** fills them in from the system settings, see [Auto-detect](network-proxy.md#auto-detect)), login mode, account and password (NTLMv2 only), the hosts that go direct, and under **More** the timeouts (filled in with their defaults) and the local proxy port. **Reset to defaults** puts the login mode, the no-proxy hosts, the local port and the timeouts back. A proxy found in `HTTPS_PROXY` on a first start shows as one "Found in your environment" line with **Change**. **Next** saves and applies these values at once (only when they changed), with its progress inline. |
 | 3 Model access | Which sources to use: Claude Code sign-in, GitHub Copilot, OpenAI-compatible, Anthropic-compatible. Copilot shows its notice, the "I understand" switch, the plan, and the device sign-in inside the dialog. With the credential broker on, keys and the Copilot sign-in stay on the broker's key page. Already connected: Claude Code's **Sign in again** shows the terminal steps (`claude`, then `/logout` and `/login`) and a **Check again** that reads the sign-in past its cache; Copilot's **Use another account** asks first, signs out and runs the device sign-in in the dialog; a saved API key is replaced by typing a new one. |
-| 4 Models | The Models page's Roles: Deep thinking, Everyday coding and Quick jobs per harness, plus "Test each model after Apply". Copilot models picked here are imported by Apply. |
+| 4 Models | The Models page's Roles: Deep thinking, Everyday coding and Quick jobs per harness. Copilot models picked here are imported by Apply; the list shows the models GitHub's own picker offers, under GitHub Copilot. |
 | 5 How you work | Interface mode, the per-run and total limits, the reset period, AI-written PR descriptions and smart run names. |
-| 6 Review | One row per group. A row that differs from the saved value carries **Changed**, and **Change** jumps back. A re-run lists only the changed rows, plus Network as **Saved** once Next applied it. |
+| 6 Review | One row per group. With changed roles, "Test each changed role's model after applying" sits above Apply (on by default): the tests run on the Apply step, once the network, sign-ins and imports are saved. A row that differs from the saved value carries **Changed**, and **Change** jumps back. A re-run lists only the changed rows, plus Network as **Saved** once Next applied it. |
 | 7 Apply | One row per apply step, filled from the `setup-apply` frames (or the poll). |
 
 **The Network gate.** With a corporate proxy picked, **Next** stays disabled until **Test** passes for exactly
@@ -175,7 +175,7 @@ Review offers **Finish**.
 
 **Re-run.** Settings › General › Setup assistant › **Run setup** opens the dialog with the saved values
 in every field. Only the changed groups and fields are sent, and a cleared role is sent as `null`. With nothing
-changed, **Apply changes** is disabled ("Nothing changed."). A first start with nothing to change shows
+changed, **Apply** is disabled ("Nothing changed."). A first start with nothing to change shows
 **Finish** instead and posts nothing.
 
 **Fix-it links.** The Network proxy card's **Fix in setup assistant** (shown while the proxy needs a login) opens
@@ -218,7 +218,7 @@ sources offer it." on Models and on Review.
 
 **The account-menu notice.** When a team policy home's Setup fields change, the account menu shows "Your team
 updated the recommended setup · Review". Review lists only the rows that differ from what is saved, and nothing
-changes before **Apply changes**. When nothing differs, Review says "Your setup already matches your team's
+changes before **Apply**. When nothing differs, Review says "Your setup already matches your team's
 recommendation." and offers **Finish**. The notice hides once that review ends with Apply then Continue, or with
 Finish; **Set up later** keeps it.
 

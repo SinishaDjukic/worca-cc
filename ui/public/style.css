@@ -3817,11 +3817,22 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 @media (prefers-reduced-motion: reduce){.mv-sec-caret,.advanced .adv-chev{transition:none;}}
 .mv-pv-row .input,.mv-pv-row .select{font-family:var(--mono);font-size:12px;padding:0 12px;}
 .mv-pv-row .mv-pv-conc{max-width:120px;}
-.mv-cp-signin-box{display:grid;gap:8px;padding:12px 14px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);}
-.mv-cp-code-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
-.mv-cp-code{font-family:var(--mono);font-size:22px;font-weight:700;padding:4px 10px;border-radius:var(--r-sm);background:var(--panel);border:1px solid var(--line);}
+.mv-cp-signin-box{display:grid;gap:12px;padding:14px 16px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);min-width:0;}
+/* The code and Copy are one group; Open follows. All three share the .btn height (32px) so the row lines up. */
+.mv-cp-code-row{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;min-width:0;}
+.mv-cp-code-group{display:flex;align-items:center;gap:8px;}
+.mv-cp-code{display:inline-flex;align-items:center;height:32px;box-sizing:border-box;padding:0 12px;font-family:var(--mono);font-size:var(--fs-subpage);font-weight:700;
+  border-radius:var(--r-sm);background:var(--panel);border:1px solid var(--line-2);user-select:all;}
+/* The wait (spinner + line) on the left, Cancel on the right of the same row. */
+.mv-cp-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;}
+.mv-cp-wait{display:flex;align-items:center;gap:8px;min-width:0;}
+.mv-cp-wait .mv-cp-status{min-width:0;overflow-wrap:anywhere;}
 .mv-cp-status.err{color:var(--red);}
-.mv-cp-signin-box .mv-cp-cancel{justify-self:start;}
+.mv-cp-signin-box .mv-cp-cancel{flex:none;}
+/* Copy code swaps its copy icon for a green tick once copied (the branch copy buttons' pattern). */
+.mv-cp-copy .ico-check{display:none;}
+.mv-cp-copy.copied .ico-copy{display:none;}
+.mv-cp-copy.copied .ico-check{display:inline;color:var(--green-ink);}
 .mv-needs-signin{display:inline-flex;align-items:center;gap:6px;}
 .mv-degradation{display:block;margin:4px 0 0;}
 .mv-conn{display:grid;gap:12px;}
@@ -10736,8 +10747,30 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 .setup-card .sa-step{display:flex;flex-direction:column;gap:16px;min-width:0;}
 /* The step's 16px gap spaces its children; .field's own 18px bottom margin on top of it doubled the space between fields. */
 .setup-card .sa-step > .field{margin-bottom:0;}
+/* A titled section inside a step (How you work): title, a one-line hint, its controls; a rule between sections.
+   Fields inside drop .field's own 18px margin: the section's gap spaces them. */
+.setup-card .sa-section{display:flex;flex-direction:column;gap:12px;min-width:0;}
+.setup-card .sa-section + .sa-section{border-top:1px solid var(--line);padding-top:16px;}
+.setup-card .sa-section-title{margin:0;font-size:var(--fs-section);font-weight:600;line-height:var(--lh-title);}
+.setup-card .sa-section-hint{margin:-8px 0 0;}
+.setup-card .sa-section .field{margin-bottom:0;}
+.setup-card .sa-section > .seg{align-self:flex-start;}
 /* Buttons in the step column keep their own width instead of stretching across it. */
 .setup-card .sa-step > .btn,.setup-card .sa-step > .link-btn{align-self:flex-start;}
+/* Review: group + value | badges | Change, top-aligned, a rule between groups. */
+.setup-card .sa-review{width:100%;border-collapse:collapse;}
+.setup-card .sa-review td{padding:10px 0;vertical-align:top;}
+.setup-card .sa-review tr + tr td{border-top:1px solid var(--line);}
+.setup-card .sa-review-what{min-width:0;overflow-wrap:anywhere;}
+.setup-card .sa-review-name{font-weight:500;}
+.setup-card .sa-review-value,.setup-card .sa-review-lines{color:var(--ink-2);font-size:var(--fs-meta);margin-top:2px;}
+.setup-card .sa-review-lines{list-style:none;padding:0;display:flex;flex-direction:column;gap:2px;}
+.setup-card .sa-review-role{color:var(--ink);}
+.setup-card .sa-review-role::after{content:"·";margin:0 6px 0 2px;color:var(--ink-2);}
+.setup-card .sa-review-marks{width:1%;white-space:nowrap;padding-left:12px;text-align:right;}
+.setup-card .sa-review-marks .badge{margin-left:6px;}
+.setup-card .sa-review-act{width:1%;white-space:nowrap;padding-left:8px;}
+.setup-card .sa-review-act .btn{margin-top:-4px;}   /* the 28px button centres on the 20px name line */
 .setup-card .sa-proxy-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}   /* Test, then Reset to defaults */
 /* Auto-detect under the proxy address, its result line beside it (wrapping below on a narrow card). */
 .setup-card .sa-detect-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;min-width:0;}
