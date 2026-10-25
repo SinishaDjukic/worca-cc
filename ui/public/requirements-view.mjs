@@ -338,6 +338,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     seqShown = next;
     const b = /^brief\/(project|workspace)\/([^/]+)$/.exec(param);
     const nextBrief = b ? { scopeType: b[1], scopeKey: decodeKey(b[2]) } : null;
+    if (nextBrief && (!briefShown || scopeId(nextBrief) !== scopeId(briefShown))) {
+      // another brief's Documents card (board 19): its files' ui state and live nodes start afresh, as a feature's do
+      for (const map of [fileUi, fileMsgs, fileMsgList, fileNodes, refusalEls, fileWas, droppedKeys]) map.clear();
+      filesLive = null;
+    }
     if (!nextBrief || !briefShown || scopeId(nextBrief) !== scopeId(briefShown)) {
       briefData = null; notesBase = null; notesDraft = null;
       briefEditing = null; briefEditVal = null; notesEditing = false; briefFolds = { notes: true, read: false }; briefFocusNext = null;
@@ -890,11 +895,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     else if (srcs.length) from = ['Made from ', h('code', { text: `${srcs[0].branch ? `${srcs[0].branch} @ ` : ''}${srcs[0].sha.slice(0, 7)}` })];
     else from = ['Made'];
     const used = (data.usedBy || []).length;
+    const docs = docsOf(data).length;
     const seed = b.seed && b.seed.kind === 'workspace-map' ? b.seed : null;
     return [
       h('span', { class: 'chip' }, ...from, when ? (srcs.length ? ` · ${when}` : ` ${when}`) : ''),
       h('span', { class: 'chip', text: usd(b.costUsd) }),
       h('span', { class: 'chip', text: `Used by ${plural(used, 'feature')}` }),
+      docs ? h('span', { class: 'chip', text: plural(docs, 'document') }) : null,   // A8 board 19
       seed ? h('span', { class: 'chip', text: `Built from the workspace map${seed.scannedAt ? `, scanned ${String(seed.scannedAt).slice(0, 10)}` : ''}` }) : null,
     ];
   }
@@ -933,7 +940,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const who = !ids.length ? 'No feature uses this brief yet.'
         : ids.length === 1 ? `${ids[0]} uses this brief; it goes back to looking at the code when asked.`
           : `${joinAnd(ids)} use this brief; they go back to looking at the code when asked.`;
-      if (!window.confirm(`Delete the brief? ${who}`)) return;
+      // A8 (design §6): the brief's documents go with it
+      const nDocs = docsOf(briefData).length;
+      const docsWord = nDocs === 1 ? ' Its 1 document is deleted too.' : nDocs ? ` Its ${nDocs} documents are deleted too.` : '';
+      if (!window.confirm(`Delete the brief? ${who}${docsWord}`)) return;
       briefEditing = null; briefEditVal = null; notesEditing = false;
       const data = await api('DELETE', briefApi(s));
       briefFocusNext = 'brief-create';
@@ -1015,18 +1025,23 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('div', { class: 'req-actions' }, refreshButton(data, `Refresh${estimateText(data)}`, 'brief-refresh'))));
   }
 
+  // A8 (board 19): a made brief's documents (a page from before A8 has none), and a brief item's source (D13) as
+  // "(from <name>)" after its text.
+  const docsOf = (data) => (data && Array.isArray(data.documents) ? data.documents : []);
+  const fromHint = (x) => (x && typeof x.source === 'string' && x.source ? h('span', { class: 'hint req-brief-src', text: ` (from ${x.source})` }) : null);
+
   /** One section's body as read (D2, §6): the product text, users with the name bold, terms as a grid, areas as rows. */
   function briefSectionBody(key, value) {
     const none = () => h('p', { class: 'hint', text: 'Not yet.' });
     if (key === 'product') return typeof value === 'string' && value.trim() ? h('p', { class: 'req-brief-product', text: value }) : none();
     const list = Array.isArray(value) ? value.filter((x) => x && typeof x === 'object') : [];
     if (!list.length) return none();
-    if (key === 'users') return h('ul', { class: 'req-brief-users' }, ...list.map((u) => h('li', {}, h('b', { text: u.name || '' }), u.can ? `: ${u.can}` : '')));
-    if (key === 'terms') return h('div', { class: 'req-brief-terms' }, ...list.flatMap((t) => [h('b', { text: t.term || '' }), h('span', { text: t.meaning || '' })]));
+    if (key === 'users') return h('ul', { class: 'req-brief-users' }, ...list.map((u) => h('li', {}, h('b', { text: u.name || '' }), u.can ? `: ${u.can}` : '', fromHint(u))));
+    if (key === 'terms') return h('div', { class: 'req-brief-terms' }, ...list.flatMap((t) => [h('b', { text: t.term || '' }), h('span', {}, t.meaning || '', fromHint(t))]));
     return h('div', { class: 'req-brief-areas' }, ...list.map((a) => {
       const st = AREA_STATUS[a.status];
       return h('div', { class: 'req-brief-area' },
-        h('span', {}, h('b', { text: areaLabel(a) || '' }), a.text ? ` · ${a.text}` : ''),
+        h('span', {}, h('b', { text: areaLabel(a) || '' }), a.text ? ` · ${a.text}` : '', fromHint(a)),
         st ? ' ' : null, st ? h('span', { class: `badge ${st.cls}`, text: st.label }) : null);
     }));
   }
@@ -1086,10 +1101,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'notes-edit',
           onclick: () => { notesEditing = true; notesDraft = null; briefFocusNext = 'notes-body'; redrawBrief(); } }, 'Edit notes'));
     const files = Array.isArray(b.files) ? b.files.filter((p) => typeof p === 'string') : [];
+    const reads = docsOf(data).length ? `Every interview round for ${name} reads the brief and these documents. ` : `Every interview round for ${name} reads it. `;
     return h('aside', { class: 'req-brief-side' },
+      docsCard(data, name),
       h('section', { class: 'card req-brief-how', 'aria-label': 'How Worca uses it' },
         h('h3', { text: 'How Worca uses it' }),
-        h('p', {}, `Every interview round for ${name} reads it. New features no longer need their own look at the code; `,
+        h('p', {}, `${reads}New features no longer need their own look at the code; `,
           h('b', { text: 'Look closer' }), ' on a feature adds one when the brief is not enough.'),
         used.length ? h('p', { class: 'req-brief-used' }, 'Used by ', ...used.flatMap((u, i) => [i ? ', ' : null, featureLink(u)])) : null),
       notes,
@@ -1824,8 +1841,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   /** D7: the page's early checks, the accepted files in requests of at most 100 MB, the refusals in the card's alert line.
    *  The focus goes back to Add files (`focusUi`) once the card is painted again; when the upload filled the card and
-   *  Add files is disabled, to the card's heading (`fallbackUi`, tabindex=-1). */
-  async function uploadFiles({ url, key, existing, owner, rerender, focusUi = 'files-add', fallbackUi = 'files-head' }, files) {
+   *  Add files is disabled, to the card's heading (`fallbackUi`, tabindex=-1). `setFocus` names the field the owner's next
+   *  paint focuses (the feature page's by default; the brief page passes its own). */
+  async function uploadFiles({ url, key, existing, owner, rerender, focusUi = 'files-add', fallbackUi = 'files-head',
+    setFocus = (k) => { focusNext = k; } }, files) {
     const errors = [];
     const ok = [];
     const pending = existing.map((x) => ({ name: x.name, bytes: x.bytes }));
@@ -1837,13 +1856,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     }
     fileMsgs.set(key, errors.join(' '));
     fileMsgList.set(key, errors);
-    focusNext = focusUi;
+    setFocus(focusUi);
     if (!ok.length) { rerender(); return; }
     await act(async () => {
       try {
         for (const batch of uploadBatches(ok)) await api('POST', url, { attachments: await Promise.all(batch.map(encodeFile)) });
       } finally {
-        focusNext = focusUi;
+        setFocus(focusUi);
         await paint();   // the batches already sent show, also when a later one is refused (the message comes after)
         const add = host.querySelector(`[data-ui="${focusUi}"]`);
         if (add && add.disabled) host.querySelector(`[data-ui="${fallbackUi}"]`)?.focus();
@@ -2223,6 +2242,40 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       filesStatus(list),
       list.length ? h('div', { class: 'req-files-list' }, ...rows)
         : h('p', { class: 'hint req-files-empty', text: 'No files yet. Add emails, a spec, screenshots or a mockup.' }));
+  }
+
+  /** The Documents card (board 19, D2 (c)): a made brief's documents, used by every feature of its scope. The rows, ⋯ menu,
+   *  editor, Ask, Replace and Remove are the Files card's (`ctx.doc` names the switch "Send with every run" and the replace
+   *  hint); the routes are the documents' (each row's `href`). Allowed while a refresh runs (A7-D6), so never locked. A
+   *  page from before A8 (no `documents`) has no card. */
+  function docsCard(data, name) {
+    if (!Array.isArray(data.documents)) return null;
+    const s = briefShown;
+    const list = data.documents;
+    const key = `brief:${scopeId(s)}`;
+    const setFocus = (k) => { briefFocusNext = k; };
+    const say1 = (text) => { fileMsgs.set(key, text); fileMsgList.set(key, text ? [text] : []); };
+    const ctx = { doc: true, locked: false, period: data.resetPeriod, list, redraw: redrawBrief, focus: setFocus, addUi: 'docs-add', headUi: 'docs-head',
+      dropped: () => { say1(DROPPED_DRAFT); droppedKeys.add(key); },
+      refuse: (text) => { droppedKeys.delete(key); say1(text); const el = refusalAlert(key); if (!el.isConnected) redrawBrief(); } };
+    for (const id of fileNodes.keys()) if (!list.some((a) => a.id === id)) fileNodes.delete(id);
+    const input = filePicker((files) => {
+      droppedKeys.delete(key);
+      uploadFiles({ url: `${briefApi(s)}/documents`, key, existing: list, owner: 'brief', rerender: redrawBrief, focusUi: 'docs-add', fallbackUi: 'docs-head', setFocus }, files);
+    });
+    const rows = list.map((a) => fileRow(a, ctx));   // before the message line: a row may put a line there
+    if (droppedKeys.has(key) && !list.some((a) => a.status === 'reading')) { droppedKeys.delete(key); say1(''); }
+    return h('section', { class: 'card req-files req-docs', 'aria-label': 'Documents', 'data-ui': 'docs-card' },
+      h('div', { class: 'req-card-head req-files-head' },
+        h('div', {}, h('h3', { text: `Documents · ${list.length}`, tabindex: '-1', 'data-ui': 'docs-head' }),
+          h('p', { class: 'hint', text: `Worca uses these for every feature in ${name}.` })),
+        h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'docs-add', disabled: list.length >= REQ_ATTACH.maxFiles, onclick: () => input.click() }, 'Add documents'),
+        input),
+      privacyNote(data.interview),
+      refusalAlert(key),
+      filesStatus(list),
+      list.length ? h('div', { class: 'req-files-list' }, ...rows) : h('p', { class: 'hint req-files-empty', text: 'No documents yet.' }),
+      h('p', { class: 'hint req-docs-foot', text: `Interviews use a new document right away. The brief's sections change only when you Refresh it. “Send with every run” adds the document to every run started from a ${name} feature; each start card lists it.` }));
   }
 
   // The looks at the code this feature made (A2: the orientation turns not skipped), and what they cost.

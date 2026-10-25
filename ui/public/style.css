@@ -10560,6 +10560,12 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
   .req-fpick::after{content:"";position:absolute;inset:-8px 0}
 }
 
+/* Board 19: the brief's Documents card. It is a .req-files card, so the Files card's rows, menus, alert and 44px hit
+   areas apply as they are; the footer sits under a rule. A brief item's source "(from <name>)" is inline, in the hint's
+   --ink-2 (AA), one step down the type scale. */
+.req-docs .req-docs-foot{margin:0;padding-top:10px;border-top:1px solid var(--line)}
+.req-brief-src{display:inline;margin:0;font-size:var(--fs-meta)}
+
 /* ── marketplace P3 ── */
 /* Plugin icons (U7, board 0.1): the kind colour lives only in this tile; hue families carry the dark arms. */
 .mk-mt{display:inline-flex;align-items:center;justify-content:center;flex:none;width:40px;height:40px;border-radius:var(--r-md);}

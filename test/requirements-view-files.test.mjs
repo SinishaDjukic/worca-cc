@@ -971,6 +971,8 @@ test('error copy: the Replace dialog, the ask panel and the start dialog never s
   [...document.querySelectorAll('.req-dialog button')].at(-1).click();
   await settle();
   assert.equal(document.querySelector('.req-dialog .req-dlg-msg').textContent, 'Worca could not finish that. Try again.');
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));   // close it: its key handler is on the document
+  assert.equal(document.querySelector('.req-dialog'), null);
 });
 
 test('Replace with a newer version… hands the focus to the ⋯ before the picker, so a cancelled picker leaves it there', async () => {
@@ -1218,4 +1220,251 @@ test('style.css: board 18 on the type scale and the 6px corner; AA inks; 44px hi
   const phone = block.slice(block.indexOf('/* Board 18 at phone width'));
   assert.match(phone, /\.req-fpick::after\{content:"";position:absolute;inset:-8px 0\}/);
   assert.match(phone, /\.req-fpicks\{row-gap:14px\}/);
+});
+
+// ── board 19: the brief's Documents ─────────────────
+const BRIEF_URL = '/api/requirements/brief/project/shop-1';
+const madeBrief = (over = {}) => ({
+  brief: { id: 3, scopeType: 'project', scopeKey: 'shop-1', status: 'ready', sections: { product: 'A shop.', users: [{ name: 'Buyer', can: 'buys', source: 'glossary.pdf' }],
+    terms: [{ term: 'Order', meaning: 'a purchase', source: 'glossary.pdf' }], areas: [{ name: 'Orders', text: 'checkout', status: 'exists', files: [], source: 'glossary.pdf' }] },
+  edited: {}, sources: [{ project: 'shop-1', branch: 'main', ref: 'refs/heads/main', sha: '3f9c2a1deadbeef00' }], files: [], seed: null, model: 'claude-opus-5-5',
+  costUsd: 1.42, error: null, madeBy: 'po', madeAt: new Date(Date.now() - 2 * 86400000).toISOString(), updatedAt: '2026-10-21T10:00:00Z' },
+  target: { name: 'shop', branch: 'main', repositories: 1, leftOut: [], slow: [] }, notes: { scopeType: 'project', scopeKey: 'shop-1', body: '', lookAtCode: true },
+  estimate: { costUsd: 1.5, model: { id: 'claude-opus-5-5', label: 'Opus 5.5' } }, usedBy: [], staleness: null,
+  documents: [doc({ sendWithEveryRun: false })], interview: INTERVIEW, resetPeriod: 'monthly', ...over });
+const openBriefPage = async (body, extra = {}) => {
+  const calls = fakeApi({ ...BASE, [`GET ${BRIEF_URL}`]: () => body, ...extra });
+  const m = make();
+  await m.view.show('brief/project/shop-1');
+  return { ...m, calls };
+};
+
+test('board 19: the first card of the right column; head, hint, Add documents, rows with Send with every run, the footer', async () => {
+  const { host } = await openBriefPage(madeBrief());
+  const side = host.querySelector('.req-brief-side');
+  const card = side.firstElementChild;
+  assert.equal(card.getAttribute('aria-label'), 'Documents');
+  assert.equal(card.querySelector('h3').textContent, 'Documents · 1');
+  assert.equal(card.querySelector('.req-files-head .hint').textContent, 'Worca uses these for every feature in shop.');
+  assert.equal(card.querySelector('[data-ui="docs-add"]').textContent, 'Add documents');
+  const sw = card.querySelector('[data-ui="file-send-ratt_0000000000d1"]');
+  assert.deepEqual([sw.getAttribute('aria-label'), text(sw.closest('.switch-row'))], ['Send glossary.pdf with every run', 'Send with every run']);
+  assert.equal(card.querySelector('.req-docs-foot').textContent, 'Interviews use a new document right away. The brief\'s sections change only when you Refresh it. '
+    + '“Send with every run” adds the document to every run started from a shop feature; each start card lists it.');
+  assert.ok([...host.querySelectorAll('.req-brief-chips .chip')].some((c) => c.textContent === '1 document'));
+  assert.match(text(host.querySelector('.req-brief-how > p')), /^Every interview round for shop reads the brief and these documents\. New features no longer need their own look/);
+});
+
+test('board 19: brief items from a document end in "(from <name>)"; Add documents posts to the brief; the switch posts sendWithEveryRun', async () => {
+  const { host, calls } = await openBriefPage(madeBrief(), { [`POST ${BRIEF_URL}/documents`]: madeBrief(), [`PATCH ${DOC_HREF}`]: madeBrief() });
+  for (const sel of ['.req-brief-users li', '.req-brief-terms', '.req-brief-area']) assert.match(text(host.querySelector(sel)), /\(from glossary\.pdf\)/, sel);
+  pick(host.querySelector('.req-docs input[type="file"]'), [mkFile('tone.md', 'friendly')]);
+  await settle();
+  assert.deepEqual(calls.find((c) => c.method === 'POST').body.attachments.map((x) => x.name), ['tone.md']);
+  const sw = host.querySelector('[data-ui="file-send-ratt_0000000000d1"]');
+  sw.checked = true;
+  sw.dispatchEvent(new window.Event('change'));
+  await settle();
+  assert.deepEqual(calls.find((c) => c.method === 'PATCH').body, { sendWithEveryRun: true });
+});
+
+test('a brief not made yet shows board 11 unchanged: no Documents card; Delete the brief names its documents', async () => {
+  const none = await openBriefPage({ ...madeBrief(), brief: null, documents: [] });
+  assert.equal(none.host.querySelector('.req-docs'), null);
+  const empty = await openBriefPage(madeBrief({ documents: [] }));
+  assert.equal(empty.host.querySelector('.req-docs .req-files-empty').textContent, 'No documents yet.');
+  const { host } = await openBriefPage(madeBrief(), { [`DELETE ${BRIEF_URL}`]: { ...madeBrief(), brief: null, documents: [] } });
+  asked.length = 0;
+  host.querySelector('[data-ui="brief-more"]').click();
+  host.querySelector('[data-ui="mi-brief-delete"]').click();
+  await settle();
+  assert.equal(asked[0], 'Delete the brief? No feature uses this brief yet. Its 1 document is deleted too.');
+});
+
+test('style.css: board 19 rules inside the Requirements block, tokens only', () => {
+  assertInRequirementsBlock(['.req-docs-foot', '.req-brief-src']);
+});
+
+// ── board 19: the documents behave as the Files card's files ─────────────────
+const DOC2 = `${BRIEF_URL}/documents/ratt_0000000000d2`;
+const docN = (i, over = {}) => doc({ id: `ratt_00000000${String(i).padStart(2, '0')}dd`, name: `d${i}.md`, kind: 'text', href: `${BRIEF_URL}/documents/ratt_00000000${String(i).padStart(2, '0')}dd`, ...over });
+
+test('board 19: a document row is the Files card row: name, kind · size · cost, What Worca took from it (edited by you), the pencil and the ⋯', async () => {
+  const { host } = await openBriefPage(madeBrief({ documents: [doc({ summaryEdited: true, summary: 'Words of the shop.' })] }));
+  const row = host.querySelector('.req-docs .req-file[data-file="ratt_0000000000d1"]');
+  assert.equal(row.querySelector('.req-file-name').textContent, 'glossary.pdf');
+  assert.equal(row.querySelector('.req-file-name').getAttribute('href'), DOC_HREF);
+  assert.equal(row.querySelector('.req-file-meta').textContent, 'PDF · 2.1 MB · read for $0.12');
+  assert.equal(text(row.querySelector('.req-file-cap')), 'What Worca took from it · edited by you');
+  assert.equal(row.querySelector('.req-file-took').textContent, 'Words of the shop.');
+  assert.equal(row.querySelector('.req-file-pencil').getAttribute('aria-label'), 'Edit what Worca took from glossary.pdf');
+  assert.equal(row.querySelector('[data-ui="file-more-ratt_0000000000d1"]').getAttribute('aria-label'), 'More for glossary.pdf');
+  host.querySelector('[data-ui="file-more-ratt_0000000000d1"]').click();
+  const list = host.querySelector('[data-menu="file-ratt_0000000000d1"] [role="menu"]');
+  assert.equal(list.hidden, false);
+  assert.deepEqual(labels(list), ['Open', 'Edit what Worca took from it', 'Ask about this file…', 'Replace with a newer version…', 'Read again', '—', 'Remove']);
+  assert.equal(host.querySelector('.req-docs .req-files-privacy').textContent,
+    'Worca sends each file to Opus 5.5 to read it. Text is checked for keys and passwords first; images and PDFs go as they are.');
+});
+
+test('board 19: a document being read or asked about waits as a file does: Reading… / Asking…, only Open and Remove, no switch while read', async () => {
+  const { host } = await openBriefPage(madeBrief({ documents: [doc({ status: 'reading', summary: null }),
+    doc({ id: 'ratt_0000000000d2', name: 'tone.md', kind: 'text', asking: 'the tone', href: DOC2 })] }));
+  const [one, two] = host.querySelectorAll('.req-docs .req-file');
+  assert.equal(one.querySelector('.badge.blue').textContent, 'Reading…');
+  assert.equal(one.querySelector('.badge.blue').getAttribute('role'), 'status');
+  assert.equal(one.querySelector('.switch-row'), null, 'no switch while read (D1)');
+  assert.equal(two.querySelector('.req-file-asking').textContent, 'Worca is looking for: “the tone”…');
+  assert.equal(two.querySelector('.badge.blue').textContent, 'Asking…');
+  for (const id of ['ratt_0000000000d1', 'ratt_0000000000d2']) {
+    host.querySelector(`[data-ui="file-more-${id}"]`).click();
+    assert.deepEqual(labels(host.querySelector(`[data-menu="file-${id}"] [role="menu"]`)), ['Open', '—', 'Remove'], id);
+  }
+});
+
+test('board 19: the summary editor on a document: Escape cancels to the pencil; Save patches the document and comes back to it', async () => {
+  const { host, calls } = await openBriefPage(madeBrief(), { [`PATCH ${DOC_HREF}`]: madeBrief() });
+  host.querySelector('.req-docs .req-file-pencil').click();
+  let ta = host.querySelector('[data-ui="file-edit-text-ratt_0000000000d1"]');
+  assert.equal(document.activeElement, ta, 'the editor takes the focus');
+  ta.value = 'Half typed';
+  ta.dispatchEvent(new window.Event('input'));
+  const ev = new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  ta.dispatchEvent(ev);
+  assert.equal(ev.defaultPrevented, true);
+  assert.equal(host.querySelector('[data-ui="file-edit-text-ratt_0000000000d1"]'), null);
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'file-edit-ratt_0000000000d1');
+  host.querySelector('.req-docs .req-file-pencil').click();
+  ta = host.querySelector('[data-ui="file-edit-text-ratt_0000000000d1"]');
+  ta.value = 'The shop words.';
+  ta.dispatchEvent(new window.Event('input'));
+  host.querySelector('[data-ui="file-save-ratt_0000000000d1"]').click();
+  await settle();
+  assert.deepEqual(calls.find((c) => c.method === 'PATCH'), { method: 'PATCH', url: DOC_HREF, body: { summary: 'The shop words.' } });
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'file-edit-ratt_0000000000d1');
+});
+
+test('board 19: the editor keeps its text, focus and caret across a live repaint of the brief page', async () => {
+  const { host, view } = await openBriefPage(madeBrief());
+  host.querySelector('.req-docs .req-file-pencil').click();
+  const ta = host.querySelector('[data-ui="file-edit-text-ratt_0000000000d1"]');
+  ta.value = 'abcdefgh';
+  ta.dispatchEvent(new window.Event('input'));
+  ta.focus();
+  ta.setSelectionRange(2, 5);
+  await view.changed(undefined, 'project:shop-1');
+  const now = host.querySelector('[data-ui="file-edit-text-ratt_0000000000d1"]');
+  assert.notEqual(now, ta, 'repainted');
+  assert.deepEqual([now.value, document.activeElement === now, now.selectionStart, now.selectionEnd], ['abcdefgh', true, 2, 5]);
+});
+
+test('board 19: Ask about this file… on a document posts the question to the document', async () => {
+  const { host, calls } = await openBriefPage(madeBrief(), { [`POST ${DOC_HREF}/ask`]: madeBrief() });
+  host.querySelector('[data-ui="file-more-ratt_0000000000d1"]').click();
+  host.querySelector('[data-ui="fmi-ask-ratt_0000000000d1"]').click();
+  const input = host.querySelector('[data-ui="file-ask-text-ratt_0000000000d1"]');
+  assert.equal(document.activeElement, input);
+  input.value = 'the refund words';
+  input.dispatchEvent(new window.Event('input'));
+  host.querySelector('[data-ui="file-ask-go-ratt_0000000000d1"]').click();
+  await settle();
+  assert.deepEqual(calls.find((c) => c.method === 'POST').body, { question: 'the refund words' });
+  assert.equal(calls.find((c) => c.method === 'POST').url, `${DOC_HREF}/ask`);
+});
+
+test('board 19: Replace on a document: the dialog keeps “Send with every run” and the document hint; Replace posts to the document', async () => {
+  const { calls } = await openBriefPage(madeBrief({ documents: [doc()] }), { [`POST ${DOC_HREF}/replace`]: madeBrief() });
+  pick(document.querySelector('[data-menu="file-ratt_0000000000d1"] input[type="file"]'), [mkFile('glossary-v2.pdf', '%PDF-1.7 v2', 'application/pdf')]);
+  const dlg = document.querySelector('.req-dialog[role="dialog"]');
+  assert.equal(dlg.querySelector('h2').textContent, 'Replace glossary.pdf');
+  assert.equal(text(dlg.querySelector('.req-replace-lead')), 'New file: glossary-v2.pdf · PDF · 11 B. Worca reads it again (about $0.12); “Send with every run” stays on.');
+  assert.equal(dlg.querySelector('.req-replace-hint').textContent, "Interviews use the new version right away; the brief's sections change only when you Refresh it.");
+  dlg.querySelector('[data-ui="replace-go"]').click();
+  await settle();
+  assert.deepEqual(calls.find((c) => c.url === `${DOC_HREF}/replace`).body.attachments.map((x) => x.name), ['glossary-v2.pdf']);
+  assert.equal(document.querySelector('.req-dialog'), null);
+});
+
+test('board 19: Remove asks first, deletes the document, and hands the focus to Add documents when none is left', async () => {
+  let page = madeBrief();
+  const { host, calls } = await openBriefPage(null, { [`GET ${BRIEF_URL}`]: () => page,
+    [`DELETE ${DOC_HREF}`]: () => { page = madeBrief({ documents: [] }); return page; } });
+  asked.length = 0;
+  host.querySelector('[data-ui="file-more-ratt_0000000000d1"]').click();
+  host.querySelector('[data-ui="fmi-remove-ratt_0000000000d1"]').click();
+  await settle();
+  assert.equal(asked[0], 'Remove glossary.pdf? The file and what Worca took from it are deleted.');
+  assert.ok(calls.some((c) => c.method === 'DELETE' && c.url === DOC_HREF));
+  assert.equal(host.querySelector('.req-docs .req-files-empty').textContent, 'No documents yet.');
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'docs-add');
+});
+
+test("board 19: a refused pick says so in the card's alert line (bold names); the accepted ones still post; the focus goes back to Add documents", async () => {
+  const nine = Array.from({ length: 9 }, (_, i) => docN(i));
+  const { host, calls } = await openBriefPage(madeBrief({ documents: nine }), { [`POST ${BRIEF_URL}/documents`]: madeBrief({ documents: nine }) });
+  const alert = host.querySelector('.req-docs .req-file-refused');
+  assert.deepEqual([alert.getAttribute('role'), alert.hidden], ['alert', true], 'one stable alert node, hidden while empty');
+  pick(host.querySelector('.req-docs input[type="file"]'), [mkFile('plan.docx', 'x'), mkFile('a.md', 'a'), mkFile('b.md', 'b')]);
+  await settle();
+  const now = host.querySelector('.req-docs .req-file-refused');
+  assert.equal(now, alert, 'the same node');
+  assert.equal(text(now), 'plan.docx was not added: Worca reads text, images and PDF. Save it as PDF to attach it here. b.md was not added: a brief takes up to 10 documents.');
+  assert.deepEqual([...now.querySelectorAll('b')].map((b) => b.textContent), ['plan.docx', 'b.md']);
+  assert.deepEqual(calls.find((c) => c.method === 'POST').body.attachments.map((x) => x.name), ['a.md']);
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'docs-add');
+});
+
+test('board 19: at 10 documents Add documents is disabled; a document Start could not send (sendable: false) cannot be switched on', async () => {
+  const ten = Array.from({ length: 10 }, (_, i) => docN(i, { sendWithEveryRun: false, sendable: i !== 0 }));
+  const { host } = await openBriefPage(madeBrief({ documents: ten }));
+  assert.equal(host.querySelector('[data-ui="docs-add"]').disabled, true);
+  assert.equal(host.querySelector('.req-docs h3').getAttribute('data-ui'), 'docs-head');
+  assert.equal(host.querySelector('.req-docs h3').getAttribute('tabindex'), '-1');
+  const sw = host.querySelector('[data-ui="file-send-ratt_0000000000dd"]');
+  assert.equal(sw.disabled, true);
+  assert.equal(document.getElementById(sw.getAttribute('aria-describedby')).textContent,
+    'd0.md cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.');
+  assert.equal(host.querySelector('[data-ui="file-send-ratt_0000000001dd"]').disabled, false);
+  const on = await openBriefPage(madeBrief({ documents: [doc({ sendable: false, sendWithEveryRun: true })] }));
+  assert.equal(on.host.querySelector('[data-ui="file-send-ratt_0000000000d1"]').disabled, false, 'switching off still works');
+});
+
+test('board 19: names, summaries and sources are text only', async () => {
+  const b = madeBrief();
+  const { host } = await openBriefPage(madeBrief({ documents: [doc({ name: '<img src=x onerror=alert(1)>.md', summary: '<b>bold</b>' })],
+    brief: { ...b.brief, sections: { ...b.brief.sections, users: [{ name: 'Buyer', can: 'buys', source: '<i>x</i>.md' }] } } }));
+  assert.equal(host.querySelector('.req-docs img'), null);
+  assert.equal(host.querySelector('.req-docs .req-file-took b'), null);
+  assert.equal(host.querySelector('.req-brief-users i'), null);
+  assert.match(text(host.querySelector('.req-brief-users li')), /\(from <i>x<\/i>\.md\)$/);
+});
+
+test("board 19: without documents the page is A7's: How Worca uses it reads the brief, no chip; a pre-A8 view has no card; Delete names 2", async () => {
+  const empty = await openBriefPage(madeBrief({ documents: [] }));
+  assert.match(text(empty.host.querySelector('.req-brief-how > p')), /^Every interview round for shop reads it\. New features no longer need their own look/);
+  assert.ok(![...empty.host.querySelectorAll('.req-brief-chips .chip')].some((c) => /document/.test(c.textContent)));
+  const { documents, interview, resetPeriod, ...old } = madeBrief();
+  const a7 = await openBriefPage(old);
+  assert.equal(a7.host.querySelector('.req-docs'), null);
+  assert.equal(a7.host.querySelector('.req-brief-side').firstElementChild.getAttribute('aria-label'), 'How Worca uses it');
+  const two = await openBriefPage(madeBrief({ documents: [doc(), doc({ id: 'ratt_0000000000d2', name: 'tone.md', href: DOC2 })] }));
+  asked.length = 0;
+  answer = false;
+  two.host.querySelector('[data-ui="brief-more"]').click();
+  two.host.querySelector('[data-ui="mi-brief-delete"]').click();
+  await settle();
+  answer = true;
+  assert.equal(asked[0], 'Delete the brief? No feature uses this brief yet. Its 2 documents are deleted too.');
+  assert.ok([...two.host.querySelectorAll('.req-brief-chips .chip')].some((c) => c.textContent === '2 documents'));
+  assert.equal(two.host.querySelector('.req-docs h3').textContent, 'Documents · 2');
+});
+
+test('style.css: board 19 at phone width: the Documents card shares the Files card rules (44px hit areas), the source hint is on the type scale', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
+  const block = css.slice(start, css.indexOf('/* ── marketplace P3 ── */'));
+  const rule = (sel) => { const at = block.indexOf(`\n${sel}{`); return at < 0 ? '' : block.slice(at + sel.length + 2, block.indexOf('}', at)); };
+  assert.match(rule('.req-docs .req-docs-foot'), /border-top:1px solid var\(--line\)/);
+  assert.match(rule('.req-brief-src'), /font-size:var\(--fs-meta\)/);
+  assert.match(block, /\.req-files \.switch-row::after\{content:"";position:absolute;inset:-8px 0\}/, 'the Documents card is a .req-files card');
 });
