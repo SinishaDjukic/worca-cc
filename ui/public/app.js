@@ -82,6 +82,7 @@ const state = {
 const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false };
 
 import { icon } from './icons.mjs';
+import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
 import { readLogView, writeLogView, paintLogMsg, applyLogView, syncLogViewSeg } from './log-view.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
@@ -28913,6 +28914,7 @@ function buildHdAgents(sec, record, data) {
       `<span class="hd-ag-meta mono">${escapeHtml(metaBits)}</span>` +
       skillPillsHtml(skillsByGroup[key]);
     card.appendChild(head);
+    card.insertAdjacentHTML('beforeend', telemetrySlotHtml(sep >= 0 ? String(key).slice(sep + 1) : null));
     if (!list.length) {
       const note = document.createElement('div');
       note.className = 'hint hd-ag-none';
@@ -28945,6 +28947,7 @@ function buildHdAgents(sec, record, data) {
     }
     sec.appendChild(card);
   }
+  paintTelemetry(sec, (st && st.id) || (record && record.id));
 }
 
 // A preview file of a PERSISTED ask. historyRunUrl already splits the workspace
@@ -30335,6 +30338,7 @@ function rdAgentsBody(sec, r) {
       `<span class="rd-ag-meta mono">${escapeHtml(metaBits)}</span>` +
       skillPillsHtml(skillsByGroup[key]);
     card.appendChild(head);
+    card.insertAdjacentHTML('beforeend', telemetrySlotHtml(sep >= 0 ? String(key).slice(sep + 1) : null));
     if (!list.length) {
       const note = document.createElement('div');
       note.className = 'hint rd-ag-none';
@@ -30370,6 +30374,7 @@ function rdAgentsBody(sec, r) {
   // after the run began) left every node card without one until the user happened
   // to open the separate Artifacts tab. Seed here too; it no-ops once done.
   attachNodeArtifactAffordances(cardsByNode, r.artifacts, r.pipelineId || r.id, sec);
+  paintTelemetry(sec, r.pipelineId || r.id, { live: true });
   hydrateRunArtifacts(r).then((added) => {
     if (added) attachNodeArtifactAffordances(cardsByNode, r.artifacts, r.pipelineId || r.id, sec);
   });
