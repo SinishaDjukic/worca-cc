@@ -3,7 +3,10 @@
 // feature is ONE open row in the Runs list (members "1 · …", no row of its own for slice 2's run, the row links to
 // #feature/ID), and #feature/ID renders the full-width page (one segmented bar and no stage bar, "merge first", the rare
 // actions in ⋯ with Approve each unchecked, the halted line in amber), and both views pass the one-button-style audit
-// (tools/button-audit.mjs) in light and dark. NOT part of `npm test`: it needs Chrome. Screenshots of both land in a temp dir; their paths are printed.
+// (tools/button-audit.mjs) in light and dark. The unified page head (docs/design-system.md Navigation): the top bar's
+// breadcrumb and up link, the title row and one tab strip on the group page, a saved member run and a live mock run, at
+// 1440, 700 and 375px, light and dark. NOT part of `npm test`: it needs Chrome. Screenshots land in a temp dir; their
+// paths are printed.
 // Run: node tools/verify-feature-page-cdp.mjs   (or: npm run verify:feature-page)
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -48,7 +51,7 @@ for (const a of [['init', '-q', '-b', 'main'], ['config', 'user.email', 'proof@w
 await writeFile(path.join(proj, 'README.md'), '# feature page proof\n');
 execFileSync('git', ['add', '-A'], { cwd: proj });
 execFileSync('git', ['commit', '-qm', 'init'], { cwd: proj });
-const { server } = await import(new URL('../ui/server.mjs', import.meta.url).href);
+const { server, runs: liveRuns } = await import(new URL('../ui/server.mjs', import.meta.url).href);
 const { getDb } = await import(new URL('../src/core/db.mjs', import.meta.url).href);
 const { projectKey } = await import(new URL('../src/core/store.mjs', import.meta.url).href);
 const { writeStoreMeta } = await import(new URL('../src/core/artifacts.mjs', import.meta.url).href);
@@ -174,35 +177,37 @@ await cdp('Page.navigate', { url: `${base}/?w=1440#runs` });
 await waitFor("!!document.querySelector('#runs-list .runs-item[data-level=\"top\"][data-row-key^=\"chain:\"] > a.runs-row')", 'the feature row at 1440');
 await ev(`document.querySelector('#runs-list .runs-item[data-level="top"][data-row-key^="chain:"] > a.runs-row').click();0`);
 await waitFor("!!document.querySelector('#runs-pane[data-kind=\"group\"] #group-detail .gpage .run-members.is-table')", 'the group page in the pane');
+// The trail lives in the top bar (docs/design-system.md Navigation): it ends at the parent; the page is the h1.
+const TRAIL = `[...document.querySelectorAll('#topnav-crumbs:not([hidden]) .nav-trail a')].map((c) => c.textContent)`;
 const inPane = await ev(`(() => {
   const row = document.querySelector('#runs-list .runs-item[data-level="top"][data-row-key^="chain:"] > a.runs-row');
+  const pane = document.getElementById('runs-pane').getBoundingClientRect();
   return { listW: document.getElementById('runs-list-pane').offsetWidth, selected: row.classList.contains('selected'),
     current: row.getAttribute('aria-current'), kind: document.getElementById('runs-pane').dataset.kind,
-    crumbs: [...document.querySelectorAll('#group-detail .gpage-bar .rd-crumbs:not([hidden]) .rd-crumb')].map((c) => c.textContent),
-    bar: document.querySelector('#group-detail .gpage-bar').getBoundingClientRect().height,
-    headGap: document.querySelector('#group-detail .gpage-head').getBoundingClientRect().top - document.querySelector('#group-detail .gpage-bar').getBoundingClientRect().bottom };
+    crumbs: ${TRAIL},
+    h1Top: Math.round(document.querySelector('#group-detail .ph .rd-page-title').getBoundingClientRect().top - pane.top) };
 })()`);
 check(inPane.listW > 0 && inPane.selected && inPane.current === 'true', `PASS group page in the pane: the list stays and the feature row is .selected (${JSON.stringify(inPane)})`);
 check(inPane.kind === 'group', `PASS group page in the pane: #runs-pane[data-kind="group"] (${inPane.kind})`);
-check(JSON.stringify(inPane.crumbs) === JSON.stringify(['Runs', 'Run tags and cost allocation']), `PASS group page in the pane: the breadcrumb reads Runs › the feature (${JSON.stringify(inPane.crumbs)})`);
+check(JSON.stringify(inPane.crumbs) === JSON.stringify(['Runs']), `PASS group page in the pane: the top bar trail reads Runs (${JSON.stringify(inPane.crumbs)})`);
 // Member 2 (the paused slice) from the group page's runs table: its run page opens beside the list.
 await ev(`[...document.querySelectorAll('#group-detail .run-member-title')].find((a) => /Run tags$/.test(a.textContent)).click();0`);
-await waitFor("!!document.querySelector('#runs-pane[data-kind=\"hist\"] #hist-detail .hd-glance .rd-page-title')", 'member 2\'s run page');
-await waitFor("document.querySelectorAll('#hist-detail .hd-bar .rd-crumbs:not([hidden]) .rd-crumb').length === 3", 'the run page breadcrumb');
+await waitFor("!!document.querySelector('#runs-pane[data-kind=\"hist\"] #hist-detail .ph .rd-page-title')", 'member 2\'s run page');
+await waitFor("document.querySelectorAll('#topnav-crumbs:not([hidden]) .nav-trail a').length === 2", 'the run page trail');
 const member = await ev(`(() => {
   const row = document.querySelector('#runs-list .runs-item[data-level="top"][data-row-key^="chain:"] > a.runs-row');
+  const pane = document.getElementById('runs-pane').getBoundingClientRect();
   return { open: row.classList.contains('member-open'), selected: row.classList.contains('selected'), current: row.getAttribute('aria-current'),
-    crumbs: [...document.querySelectorAll('#hist-detail .hd-bar .rd-crumbs .rd-crumb')].map((c) => c.textContent),
-    chip: document.querySelector('#hist-detail .hd-glance .rd-title-row .kind-chip').textContent,
-    bar: document.querySelector('#hist-detail .hd-bar').getBoundingClientRect().height,
-    headGap: document.querySelector('#hist-detail .hd-glance .rd-page-head').getBoundingClientRect().top - document.querySelector('#hist-detail .hd-bar').getBoundingClientRect().bottom };
+    crumbs: ${TRAIL},
+    chip: document.querySelector('#hist-detail .rd-title-row .kind-chip').textContent,
+    h1Top: Math.round(document.querySelector('#hist-detail .ph .rd-page-title').getBoundingClientRect().top - pane.top) };
 })()`);
 check(member.open && !member.selected && member.current === 'location', `PASS group page in the pane: a member open turns its group row member-open (${JSON.stringify(member)})`);
-check(JSON.stringify(member.crumbs) === JSON.stringify(['Runs', 'Run tags and cost allocation', 'Run 2']) && member.chip === 'Run 2 of 3',
-  `PASS group page in the pane: the run page reads Runs › the feature › Run 2, chip "Run 2 of 3" (${JSON.stringify(member.crumbs)}, ${member.chip})`);
-check(Math.abs(inPane.bar - member.bar) <= 1 && Math.abs(inPane.headGap - member.headGap) <= 1,
-  `PASS group page in the pane: the group bar is the run page's bar (height ${inPane.bar} vs ${member.bar}) and the title sits as far under it (${inPane.headGap} vs ${member.headGap})`);
-// A phone: the row tap slides the group page in, full screen, with its Back; the list is inert.
+check(JSON.stringify(member.crumbs) === JSON.stringify(['Runs', 'Run tags and cost allocation']) && member.chip === 'Run 2 of 3',
+  `PASS group page in the pane: the run page's trail reads Runs › the feature (the run is the h1), chip "Run 2 of 3" (${JSON.stringify(member.crumbs)}, ${member.chip})`);
+check(Math.abs(inPane.h1Top - member.h1Top) <= 1,
+  `PASS group page in the pane: the group page's head sits where the run page's does (h1 at ${inPane.h1Top} vs ${member.h1Top}px in the pane)`);
+// A phone: the row tap slides the group page in, full screen; the top bar's up link is the way back; the list is inert.
 await cdp('Emulation.setDeviceMetricsOverride', { width: 375, height: 800, deviceScaleFactor: 1, mobile: true });
 await ev(`localStorage.removeItem('worca-cc.runs.last');0`);
 await cdp('Page.navigate', { url: `${base}/?w=375#runs` });
@@ -210,12 +215,12 @@ await waitFor("!!document.querySelector('#runs-list .runs-item[data-level=\"top\
 await ev(`document.querySelector('#runs-list .runs-item[data-level="top"][data-row-key^="chain:"] > a.runs-row').click();0`);
 await waitFor("!!document.querySelector('#runs-pane[data-kind=\"group\"] #group-detail .gpage')", 'the group page at 375');
 await sleep(600);   // the slide
-const phone = await ev(`(() => { const b = document.querySelector('#group-detail .gpage-back'); const bar = b.closest('.gpage-bar'); const p = document.getElementById('runs-pane').getBoundingClientRect();
-  return { back: !!b && b.offsetWidth > 0, chevron: !!b.querySelector('svg'), backInset: Math.round(b.getBoundingClientRect().left - bar.getBoundingClientRect().left), barPad: Math.round(parseFloat(getComputedStyle(bar).paddingLeft)),
-    inert: document.getElementById('runs-list-pane').hasAttribute('inert'), paneLeft: Math.round(p.left), paneW: Math.round(p.width),
-    crumbs: getComputedStyle(document.querySelector('#group-detail .rd-crumbs')).display }; })()`);
-check(phone.back && phone.chevron && Math.abs(phone.backInset - phone.barPad) <= 1 && phone.inert && phone.paneLeft === 0 && phone.crumbs === 'none',
-  `PASS group page in the pane at 375px: full screen with Back (chevron, at the bar's padding), the list inert, no breadcrumb (${JSON.stringify(phone)})`);
+const phone = await ev(`(() => { const up = document.querySelector('#topnav-crumbs .nav-up'); const p = document.getElementById('runs-pane').getBoundingClientRect();
+  return { up: !!up && up.offsetWidth > 0, text: up ? up.textContent : '', chevron: !!(up && up.querySelector('svg')),
+    trail: getComputedStyle(document.querySelector('#topnav-crumbs .nav-trail')).display, back: !!document.querySelector('.gpage-back'),
+    inert: document.getElementById('runs-list-pane').hasAttribute('inert'), paneLeft: Math.round(p.left), paneW: Math.round(p.width) }; })()`);
+check(phone.up && phone.text === 'Runs' && phone.chevron && phone.trail === 'none' && !phone.back && phone.inert && phone.paneLeft === 0,
+  `PASS group page in the pane at 375px: full screen with the ‹ Runs up link in the top bar, the list inert (${JSON.stringify(phone)})`);
 await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
 
 // ---- the feature page: the group page's model block owns the head, status and members; its Overview tab holds Shaper's
@@ -278,8 +283,166 @@ for (const width of [290, 375, 1440]) {
   }
   await auditButtonsBoth(`the group page at ${width}px`);
 }
+// ---- the unified page head (docs/design-system.md Navigation) on the group page, a saved member run and a live run.
+const metrics = (width) => cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
+const open = async (width, hash, ready, what) => {
+  await metrics(width);
+  await ev(`localStorage.removeItem('worca-cc.runs.last');0`);
+  await cdp('Page.navigate', { url: `${base}/?w=${width}&n=${Date.now()}#${hash}` });
+  await waitFor(ready, what);
+  await sleep(600);   // the slide, and the late repaints
+};
+const OLD_WAYS = '.rd-back, .hd-back, .gpage-back, .rd-to-run, .hd-to-run, .rd-crumbs';
+const noOldWays = async (where) => {
+  const n = await ev(`document.querySelectorAll(${JSON.stringify(OLD_WAYS)}).length`);
+  check(n === 0, `${where}: no Back, "‹ Run" or in-page breadcrumb element at all (${n})`);
+};
+// A live mock run, held at its clarify question: a live page waiting for an answer.
+const started = await (await fetch(`${base}/api/run`, { method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ projectDir: proj, prompt: 'add a flag', workflowId: 'wf_default', mock: true }) })).json();
+const liveId = started.runId;
+for (let i = 0; i < 400 && !(liveRuns.get(liveId) || {}).pendingQuestion; i += 1) await sleep(100);
+check(!!(liveRuns.get(liveId) || {}).pendingQuestion, `a live mock run waits at its clarify question (${liveId})`);
+const LIVE_READY = "!!document.querySelector('#run-detail .ph .rd-page-title') && !!document.querySelector('#run-detail .ph-tabs [role=\"tab\"]')";
+const SAVED = `history/${key}/fp000002`;
+const SAVED_READY = "!!document.querySelector('#hist-detail .ph .rd-page-title') && !!document.querySelector('#hist-detail .ph-tabs [role=\"tab\"]')";
+
+// 1440px
+await open(1440, `running/${liveId}`, LIVE_READY, 'the live run page at 1440');
+await noOldWays('the live run at 1440px');
+const live = await ev(`(() => ({ title: getComputedStyle(document.getElementById('topnav-title')).display,
+  h1: getComputedStyle(document.querySelector('#run-detail .ph .rd-page-title')).fontSize,
+  first: document.querySelector('#run-detail .ph-tabs [role="tab"]').dataset.sec,
+  badge: (document.querySelector('#run-detail .rd-tab[data-sec="overview"] .rd-tab-badge') || {}).textContent || '' }))()`);
+check(live.title === 'none', `the top bar title gives way to the trail (#topnav-title display ${live.title})`);
+check(live.h1 === '22px', `the page h1 is 22px (${live.h1})`);
+check(live.first === 'overview', `Summary leads the strip (${live.first})`);
+check(live.badge === '?', `a run waiting for an answer marks Summary with ? (${JSON.stringify(live.badge)})`);
+await ev(`document.querySelector('#run-detail .rd-tab[data-sec="diff"]').click();0`);
+await waitFor(`location.hash === ${JSON.stringify(`#running/${liveId}/diff`)}`, 'the Diff tab address');
+check(true, `a Diff tab click gives #running/${liveId}/diff`);
+await ev(`document.querySelector('#run-detail .rd-tab[data-sec="overview"]').click();0`);
+await waitFor(`location.hash === ${JSON.stringify(`#running/${liveId}`)}`, 'the Summary address');
+const qShown = await ev(`(() => { const q = document.querySelector('#run-detail .rd-questions'); return !!q && !q.hidden && q.getBoundingClientRect().height > 0; })()`);
+check(qShown, 'Summary shows the waiting question');
+// The Details header moved into Summary: never a card inside the card, and nothing the card already says drawn again
+// (no second status word, step, project, start, time or plain cost; no branch where Where the work is names it).
+const movedHead = async (where, screen) => {
+  const m = await ev(`(() => { const h = document.querySelector('${screen} .rd-sheet > :is(.rd-header,.hd-header)');
+    if (!h) return null;
+    const cs = getComputedStyle(h);
+    const shown = (e) => !!e && e.getClientRects().length > 0;
+    const route = shown(document.querySelector('${screen} .rd-route .rd-route-copy'));
+    return { border: cs.borderLeftWidth + ' ' + cs.borderRightWidth + ' ' + cs.borderBottomWidth, radius: cs.borderTopLeftRadius, bg: cs.backgroundColor,
+      repeats: [...h.querySelectorAll('.hd-status-word, .rd-project, .rd-clock, .rd-step, .hd-day, .hd-clock, .rd-dur, .hd-dur, :is(.rd-cost,.hd-cost):not(.cost-bd-btn,.cost-unknown)')].filter(shown).map((e) => e.textContent),
+      branch: route && [...h.querySelectorAll('.rd-branch-copy, .hd-branch-copy')].some(shown) }; })()`);
+  check(!!m && m.border === '0px 0px 0px' && m.radius === '0px' && m.bg === 'rgba(0, 0, 0, 0)' && m.repeats.length === 0 && !m.branch,
+    `${where}: the moved Details header draws no box and repeats no status, project, time, cost or branch (${JSON.stringify(m)})`);
+};
+await movedHead('the live run at 1440px', '#run-detail');
+const liveShot = await shot('nav-live-1440-light');
+await open(1440, SAVED, SAVED_READY, 'the member run page at 1440');
+await noOldWays('the member run at 1440px');
+await movedHead('the paused saved run at 1440px', '#hist-detail');
+// Crumb colours in both themes: the first crumb is --ink, a later one --ink-2 (tokens only).
+for (const theme of ['light', 'dark']) {
+  await ev(`document.documentElement.dataset.theme=${JSON.stringify(theme)};0`);
+  const c = await ev(`(() => { const probe = (v) => { const s = document.createElement('span'); s.style.color = 'var(' + v + ')'; document.body.append(s);
+      const c = getComputedStyle(s).color; s.remove(); return c; };
+    const a = [...document.querySelectorAll('#topnav-crumbs .nav-trail a')];
+    return { first: getComputedStyle(a[0]).color, later: getComputedStyle(a[a.length - 1]).color, ink: probe('--ink'), ink2: probe('--ink-2'), n: a.length }; })()`);
+  check(c.n === 2 && c.first === c.ink && c.later === c.ink2, `${theme}: the first crumb is --ink, a later one --ink-2 (${JSON.stringify(c)})`);
+  await shot(`nav-run-1440-${theme}`).then((f) => log(`screenshot ${f}`));
+}
+await ev(`document.documentElement.dataset.theme='light';0`);
+await open(1440, `history/${key}/fp000001`, SAVED_READY, 'member 1 (it has a PR) at 1440');
+const pr = await ev(`(() => { const head = document.querySelector('#hist-detail .hd-glance .rd-sheet-head');
+  const shown = (e) => !!e && !e.hidden && e.getBoundingClientRect().width > 0;
+  const row1 = [...document.querySelectorAll('#hist-detail .hd-row1 > :is(.hist-merge,.hd-pr,.hd-publish,.hd-pr-link,.hd-push)')].filter((e) => !e.hidden);
+  const glance = [...head.querySelectorAll('button, a')].filter(shown).map((e) => e.textContent.trim());
+  return { slot: shown(head.querySelector('.rd-pr-slot')) || glance.length > 0, glance, row1: row1.map((e) => [e.className.split(' ').find((c) => c.startsWith('h')), e.textContent.trim()]) }; })()`);
+// The PR comes from the PR host (enrichPipelinesPr): a sandbox with none shows no PR control on either header. Every
+// control the hidden Details header would offer must have its counterpart on Summary.
+const missing = pr.row1.filter(([, label]) => !pr.glance.some((g) => label && g.includes(label)));
+for (const [cls, label] of pr.row1) log(`Details control .${cls} "${label}": Summary counterpart ${missing.some(([c]) => c === cls) ? 'MISSING (record as a deviation)' : 'found'}`);
+check(missing.length === 0, `every Details header PR control has its Summary counterpart (Details ${JSON.stringify(pr.row1)}, Summary ${JSON.stringify(pr.glance)}${pr.slot ? '' : ', no PR host in this sandbox'})`);
+await open(1440, `${SAVED}/workflow`, "!!document.querySelector('#hist-detail .hd-sec[data-sec=\"workflow\"]:not([hidden]) .run-flow')", 'the saved Workflow tab');
+const flowW = await ev(`document.querySelector('#hist-detail .hd-sec[data-sec="workflow"] .run-flow').getBoundingClientRect().width`);
+check(flowW > 0, `the saved Workflow tab paints its graph (${Math.round(flowW)}px wide)`);
+await open(1440, `feature/${f.id}`, "!!document.querySelector('#group-detail .gpage > .ph .gpage-title')", 'the feature page at 1440');
+await noOldWays('the feature page at 1440px');
+const edges1440 = await ev(`Math.round(document.querySelector('#group-detail .gpage-title').getBoundingClientRect().left - document.querySelector('#group-detail .gpage-card').getBoundingClientRect().left)`);
+check(Math.abs(edges1440) <= 1, `the feature page's h1 starts at the status card's left edge at 1440 (${edges1440}px)`);
+// The kind chip sits beside the title, as on the run pages, not pushed to the far right.
+const fchip = await ev(`(() => { const r = document.querySelector('#group-detail .rd-title-row'); const h = r.querySelector('.gpage-title').getBoundingClientRect();
+  const c = r.querySelector('.kind-chip').getBoundingClientRect(); return { gap: Math.round(c.left - h.right), sameLine: c.top < h.bottom }; })()`);
+check(fchip.sameLine && fchip.gap >= 0 && fchip.gap <= 16, `the feature page's chip sits beside its h1 at 1440 (${JSON.stringify(fchip)})`);
+const featureShot = await shot('nav-feature-1440-light');
+
+// 700px (between the top bar's 760px and the content's 640px breakpoints)
+await open(700, `running/${liveId}`, LIVE_READY, 'the live run page at 700');
+const mid = await ev(`(() => { const up = document.querySelector('#topnav-crumbs .nav-up'); const row = document.querySelector('#run-detail .ph-row');
+  const h1 = row.querySelector('.rd-page-title'); const acts = row.querySelector('.ph-actions'); const after = document.querySelector('#run-detail .rd-after');
+  return { up: !!up && up.offsetWidth > 0, sameLine: h1.offsetTop === acts.offsetTop, after: !!after && !after.hidden && after.offsetWidth > 0 }; })()`);
+check(mid.up && mid.sameLine && mid.after, `at 700px: the up link, the h1 and the actions on one line, Run after shown (${JSON.stringify(mid)})`);
+// The saved member run: Run after inside the page's edge and ⋯ on its line (no clipped or wrapped control).
+await open(700, SAVED, SAVED_READY, 'the member run at 700');
+const mid2 = await ev(`(() => { const row = document.querySelector('#hist-detail .ph-row'); const after = row.querySelector('.hd-after'); const more = row.querySelector('.hd-bar-more');
+  const r = row.getBoundingClientRect(); const a = after.getBoundingClientRect(); const m = more.getBoundingClientRect();
+  return { after: !after.hidden && a.width > 0, inside: m.right <= r.right + 1 && a.right <= r.right + 1, oneLine: Math.abs(a.top - m.top) < 8,
+    sameLine: row.querySelector('.rd-page-title').offsetTop === row.querySelector('.ph-actions').offsetTop }; })()`);
+check(mid2.after && mid2.inside && mid2.oneLine && mid2.sameLine, `at 700px the member run's actions fit on the h1's line, Run after and ⋯ together (${JSON.stringify(mid2)})`);
+
+// 375px
+const strip = async (where, sel) => {
+  const s = await ev(`(() => { const list = document.querySelector(${JSON.stringify(sel)} + ' .ph-tabs > [role="tablist"]'); const on = list.querySelector('[aria-selected="true"]');
+    const a = list.getBoundingClientRect(); const b = on.getBoundingClientRect(); const d = document.scrollingElement;
+    return { overflow: getComputedStyle(list).overflowX, inside: b.left >= a.left - 1 && b.right <= a.right + 1, sw: d.scrollWidth, cw: d.clientWidth, on: on.dataset.sec,
+      a: [Math.round(a.left), Math.round(a.right)], b: [Math.round(b.left), Math.round(b.right)], sl: list.scrollLeft, lw: list.scrollWidth }; })()`);
+  check(s.overflow === 'auto' && s.inside && s.sw === s.cw, `${where} at 375px: the strip scrolls inside itself, the selected tab in view, no page scroll sideways (${JSON.stringify(s)})`);
+};
+await open(375, `running/${liveId}/qa`, LIVE_READY, 'the live run on Q&A at 375');
+await noOldWays('the live run at 375px');
+await strip('the live run', '#run-detail');
+await open(375, `${SAVED}/qa`, SAVED_READY, 'the member run on Q&A at 375');
+await noOldWays('the member run at 375px');
+await strip('the member run', '#hist-detail');
+await open(375, SAVED, SAVED_READY, 'the member run at 375');
+// The h1 wraps in full (no clamp), the chip goes under it, and Run after folds into ⋯.
+const phoneHead = await ev(`(() => { const row = document.querySelector('#hist-detail .rd-title-row'); const h = row.querySelector('.rd-page-title');
+  const c = row.querySelector('.kind-chip').getBoundingClientRect(); const after = document.querySelector('#hist-detail .hd-after');
+  const s = getComputedStyle(h);
+  return { wraps: s.display !== '-webkit-box' && s.webkitLineClamp === 'none' && s.overflow === 'visible', lines: Math.round(h.clientHeight / parseFloat(s.lineHeight)), chipUnder: c.top >= h.getBoundingClientRect().bottom - 1, afterFolded: !after || after.offsetWidth === 0 }; })()`);
+check(phoneHead.wraps && phoneHead.chipUnder && phoneHead.afterFolded, `the member run's head at 375px: the h1 unclamped, the chip under it, Run after in ⋯ (${JSON.stringify(phoneHead)})`);
+const runPhoneShot = await shot('nav-run-375-light');
+await open(375, `feature/${f.id}`, "!!document.querySelector('#group-detail .gpage > .ph .gpage-title')", 'the feature page at 375');
+await noOldWays('the feature page at 375px');
+const edges375 = await ev(`Math.round(document.querySelector('#group-detail .gpage-title').getBoundingClientRect().left - document.querySelector('#group-detail .gpage-card').getBoundingClientRect().left)`);
+check(Math.abs(edges375) <= 1, `the feature page's h1 starts at the status card's left edge at 375 (${edges375}px)`);
+// Going up keeps the list: its scroll, and focus on the row the run was opened from.
+await open(375, 'runs', `!!document.querySelector('#runs-list .runs-row[data-run-id=${JSON.stringify(liveId)}]')`, 'the Runs list at 375');
+// #runs-list is the scroller (overflow-y:auto); its padding makes it overflow so a 300px scroll can hold.
+await ev(`document.getElementById('runs-list').style.paddingBottom = '2000px'; document.getElementById('runs-list').scrollTop = 300; 0`);
+const top0 = await ev(`document.getElementById('runs-list').scrollTop`);
+// The browser clamps 300 to what the list can scroll (CI's window holds less than a local one): any real scroll proves it.
+check(top0 > 100, `the list scrolls before the run is opened (scrollTop ${top0})`);
+await ev(`document.querySelector('#runs-list .runs-row[data-run-id=${JSON.stringify(liveId)}]').click();0`);
+await waitFor(LIVE_READY, 'the live run opened from its row');
+await sleep(600);
+await ev(`document.querySelector('#topnav-crumbs .nav-up').click();0`);
+await waitFor("location.hash === '#runs'", 'back on the list');
+await sleep(800);
+const upKept = await ev(`(() => ({ top: document.getElementById('runs-list').scrollTop, row: (document.activeElement && document.activeElement.dataset.runId) || '' }))()`);
+check(upKept.top === top0 && upKept.row === liveId, `going up keeps the list's scroll (${top0} -> ${upKept.top}) and focus on the row it was opened from (${upKept.row})`);
+for (const width of [290, 375, 1440]) {
+  await open(width, `feature/${f.id}`, "!!document.querySelector('#runs-pane #group-detail .gpage .run-members.is-table')", `the group page head at ${width}`);
+  const bad = await ev(LAYOUT_AUDIT);
+  check(bad.length === 0, `the group page with its head at ${width}px: one column${bad.length ? ` — ${JSON.stringify(bad)}` : ''}`);
+}
+await fetch(`${base}/api/stop`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId: liveId }) }).catch(() => {});
+
 await cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
 check(errors.length === 0, `no page errors${errors.length ? `: ${errors.join(' | ')}` : ''}`);
-console.log(`screenshots:\n  ${runsShot}\n  ${pageShot}`);
+console.log(`screenshots:\n  ${runsShot}\n  ${pageShot}\n  ${liveShot}\n  ${featureShot}\n  ${runPhoneShot}`);
 console.log(failed ? `${failed} check(s) FAILED` : 'all checks passed');
 await shutdown(failed ? 1 : 0);

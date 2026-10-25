@@ -121,8 +121,9 @@ test('Open full page: the run page takes the screen over on the same tab, and th
   click(ctx, screen.querySelector('.crp-full'));
   ctx.window.dispatchEvent(new ctx.window.Event('hashchange'));
   await ctx.settle(6);
-  assert.equal(ctx.window.location.hash, '#running/r1/details/logs');
+  assert.equal(ctx.window.location.hash, '#running/r1/logs', 'the canonical page address, on the same tab');
   assert.ok(doc.querySelector('#run-shell').classList.contains('detail-open'));
+  assert.ok(doc.querySelector('#run-detail .rd .ph'), 'the page has its head');
   assert.ok(doc.querySelector('#run-detail .rd'));
   assert.equal(doc.querySelector('#run-detail .rd-tab.active').dataset.sec, 'logs');
   assert.equal(panelOf(ctx).hidden, true);

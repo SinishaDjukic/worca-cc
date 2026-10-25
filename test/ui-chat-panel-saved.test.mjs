@@ -258,7 +258,7 @@ test('Open full page on the saved screen goes to its History page on the same ta
   const screen = await openPanel(ctx, `${ROW.id}/diff`, 8);
   click(ctx, screen.querySelector('.crp-full'));
   await ctx.settle(8);
-  assert.equal(ctx.window.location.hash, `#history/${KEY}/${ROW.id}/details/diff`);
+  assert.equal(ctx.window.location.hash, `#history/${KEY}/${ROW.id}/diff`);
   assert.ok(ctx.window.document.querySelector('#hist-detail .hd'));
   assert.equal(panelOf(ctx).hidden, true);
 });

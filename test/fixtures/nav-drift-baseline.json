@@ -1,0 +1,25 @@
+{
+  "_why": "Back buttons, breadcrumbs and tab strips outside ui/public/nav/ that slices 2 and 3 remove. A rise fails; a drop fails until this file is lowered, so the counts only shrink.",
+  "files": {
+    "ui/public/activity-menu.mjs": { "tablist": 1 },
+    "ui/public/app.js": { "back": 9, "tablist": 3 },
+    "ui/public/artifact-picker.mjs": { "back": 2 },
+    "ui/public/ask-panel.mjs": { "back": 6, "tablist": 1 },
+    "ui/public/ask/widgets-layout.mjs": { "tablist": 1 },
+    "ui/public/chat/home-lists.mjs": { "tablist": 1 },
+    "ui/public/extension-settings-view.mjs": { "tablist": 1 },
+    "ui/public/group-page.mjs": { "tablist": 1 },
+    "ui/public/guardrails-view.mjs": { "back": 1 },
+    "ui/public/index.html": { "back": 4, "crumbs": 1, "tablist": 7, "backLabel": 2 },
+    "ui/public/memory-view.mjs": { "tablist": 1 },
+    "ui/public/requirements-view.mjs": { "back": 3, "tablist": 2 },
+    "ui/public/run-head.mjs": { "back": 1 },
+    "ui/public/script-wizard.mjs": { "back": 1 },
+    "ui/public/scripts-view.mjs": { "back": 1 },
+    "ui/public/skill-import.mjs": { "backLabel": 1 },
+    "ui/public/team-metrics-timeline.mjs": { "crumbs": 3 },
+    "ui/public/team-policy-view.mjs": { "tablist": 1 },
+    "ui/public/terminal-pane.mjs": { "tablist": 1 },
+    "ui/public/workflows/library.mjs": { "tablist": 1 }
+  }
+}

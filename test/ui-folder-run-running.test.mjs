@@ -8,7 +8,7 @@ const COUNTS = { added: 9, modified: 4, deleted: 1 };
 const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
 const tabs = (ctx) => [...ctx.window.document.querySelectorAll('#run-detail .rd-tab')].map((b) => b.dataset.sec);
 const $ = (ctx, sel) => ctx.window.document.querySelector(`#run-detail ${sel}`);
-const FOLDER_TABS = ['overview', 'changes', 'artifacts', 'workflow', 'qa', 'logs', 'agents'];
+const FOLDER_TABS = ['overview', 'changes', 'artifacts', 'workflow', 'logs', 'agents', 'qa'];   // the route table's order
 
 test('a live folder run: Changes in place of Diff and Actions, from its hello or its run-created frame', async () => {
   await checkRows([
@@ -271,7 +271,7 @@ test('P5: a finished all-Folder workspace run before its saved row lands: no run
   helloRun(ctx, { runId: 'w2', pipelineId: 'pw', status: 'done', workMode: 'folder', kind: 'workspace-run', workspaceId: 'wks-1', projectDir: '/tmp/ws' });
   ctx.go('running/w2/details/changes');   // the tabs are built before the saved state lands, then rebuilt from it
   await ctx.settle(8);
-  assert.equal(ctx.window.location.hash, '#running/w2/details/changes', 'no saved row yet: it stays here');
+  assert.equal(ctx.window.location.hash, '#running/w2/changes', 'no saved row yet: it stays here');
   assert.equal($(ctx, '.rd-tab[data-sec="changes"] .rd-tab-badge').textContent, '5');
   const secs = [...ctx.window.document.querySelectorAll('#run-detail .rd-sec[data-sec="changes"] section[data-member-key]')];
   assert.deepEqual(secs.map((n) => [n.dataset.memberKey, n.querySelector('.fc-bar-l').textContent]),
@@ -328,6 +328,7 @@ test('P5: a reload on a live mixed workspace run\'s Changes tab opens Changes on
       { projectKey: 'notes-00000004', projectName: 'notes', projectDir: '/r/notes', workMode: 'folder' }] });
   await ctx.settle();
   assert.equal($(ctx, '.rd-tab.active')?.dataset.sec, 'changes');
+  assert.equal(ctx.window.location.hash, '#running/w1/changes', 'the address names the tab it opened');
   // A tab the person picks while Changes is still pending wins: the rebuild keeps it.
   const ctx2 = await bootApp();
   helloRun(ctx2, { runId: 'w1', pipelineId: 'pw', kind: 'workspace-run', workspaceId: 'wks-1', projectNames: ['api', 'notes'], projectDir: '/tmp/ws' });
@@ -379,4 +380,22 @@ test('P5: a finished mixed workspace run on the run page badges Diff with its Gi
   await ctx.settle(12);
   assert.equal($(ctx, '.rd-tab[data-sec="changes"] .rd-tab-badge')?.textContent, '2', 'the saved state landed');
   assert.equal($(ctx, '.rd-tab[data-sec="diff"] .rd-tab-badge')?.textContent, '1', 'the Git member\'s 1 file, not 1 + the Folder member\'s 2');
+});
+
+test('P5: after the waited-for Changes opens, the address names it and a click on Summary opens Summary (one routing pass)', async () => {
+  const ctx = await bootApp();
+  helloRun(ctx, { runId: 'w1', pipelineId: 'pw', kind: 'workspace-run', workspaceId: 'wks-1', projectNames: ['api', 'notes'], projectDir: '/tmp/ws' });
+  ctx.window.location.hash = 'running/w1/changes';   // jsdom's own hashchange only: one routing pass (ctx.go adds a second)
+  await ctx.settle();
+  assert.equal(ctx.window.location.hash, '#running/w1', 'the fallback names Summary');
+  ctx.dispatch({ type: 'state', runId: 'w1', id: 'pw', status: 'running', steps: [], target: 'workspace',
+    projects: [{ projectKey: 'api-00000001', projectName: 'api', projectDir: '/r/api' },
+      { projectKey: 'notes-00000004', projectName: 'notes', projectDir: '/r/notes', workMode: 'folder' }] });
+  await ctx.settle();
+  assert.equal($(ctx, '.rd-tab.active')?.dataset.sec, 'changes');
+  assert.equal(ctx.window.location.hash, '#running/w1/changes', 'the address follows the tab on screen');
+  $(ctx, '.rd-tab[data-sec="overview"]').click();
+  await ctx.settle();
+  assert.equal(ctx.window.location.hash, '#running/w1');
+  assert.equal($(ctx, '.rd-tab.active')?.dataset.sec, 'overview');
 });

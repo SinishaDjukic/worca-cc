@@ -36,6 +36,11 @@ const EXPECTED_ROWS = [
   ['Stopped reviews', '≥$0.02', '1 review · not in total'],
   ['Stopped agent turns', '≥$0.31', '2 turns · not in total'],
 ];
+// The glance's cost tile whatever it reads ($3.33, cost unknown, —): the page's Summary has no stat cards of its own.
+const costTileValue = (scope) => {
+  const tile = [...scope.querySelectorAll('.rd-facts .rd-stats > div')].find((t) => /cost/.test(t.querySelector('span').textContent));
+  return tile ? tile.querySelector('b').textContent : null;
+};
 const glanceCost = (scope) => {
   const tile = [...scope.querySelectorAll('.rd-facts .rd-stats > div')].find((t) => /\$/.test(t.querySelector('b').textContent));
   return tile ? [tile.querySelector('b').textContent, tile.querySelector('span').textContent] : null;
@@ -86,7 +91,7 @@ test('run page: the header cost opens its breakdown; a repaint keeps it open; a 
   const ctx = await bootRun();
   const { window, rd } = ctx;
   const doc = window.document;
-  const btn = rd.querySelector('.rd-meta .rd-cost');
+  const btn = rd.querySelector('.rd-glance .rd-meta .rd-cost');
   assert.equal(btn.tagName, 'BUTTON', 'the cost is the trigger');
   assert.equal(btn.textContent, '$3.33');
   assert.match(btn.title, /Estimated cost/, 'the estimate tooltip stays');
@@ -97,7 +102,7 @@ test('run page: the header cost opens its breakdown; a repaint keeps it open; a 
   assert.equal(btn.getAttribute('aria-expanded'), 'false');
   btn.click();
   assert.equal(pop.hidden, false);
-  assert.equal(rd.querySelector('.rd-meta .rd-cost').getAttribute('aria-expanded'), 'true');
+  assert.equal(rd.querySelector('.rd-glance .rd-meta .rd-cost').getAttribute('aria-expanded'), 'true');
   assert.deepEqual(panelRows(pop), EXPECTED_ROWS);
   // Every frame repaints the header (its meta line only when what it says changed): the open panel
   // (the same element) stays open.
@@ -105,7 +110,7 @@ test('run page: the header cost opens its breakdown; a repaint keeps it open; a 
   await settle(window, 3);
   assert.equal(rd.querySelector('.rd-header > .cost-pop'), pop);
   assert.equal(pop.hidden, false, 'still open after a repaint');
-  assert.equal(rd.querySelector('.rd-meta .rd-cost').getAttribute('aria-expanded'), 'true');
+  assert.equal(rd.querySelector('.rd-glance .rd-meta .rd-cost').getAttribute('aria-expanded'), 'true');
   // Same numbers: the panel's rows are not rebuilt (no flicker under the pointer).
   const firstRow = pop.querySelector('.cost-bd-row');
   ctx.frame({ type: 'state', runId: 'r1', status: 'running', steps: STEPS(), totalCostUsd: TOTAL });
@@ -122,24 +127,25 @@ test('run page: the header cost opens its breakdown; a repaint keeps it open; a 
   click(window, rd.querySelector('.rd-title'));
   assert.equal(pop.hidden, true);
   // Escape closes an open panel and stays on Details (the capture-phase arm would otherwise go back to the glance).
-  rd.querySelector('.rd-meta .rd-cost').click();
+  rd.querySelector('.rd-glance .rd-meta .rd-cost').click();
   assert.equal(pop.hidden, false);
   const hash = window.location.hash;
   doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await settle(window, 2);
   assert.equal(pop.hidden, true, 'Escape closed the panel');
   assert.equal(window.location.hash, hash, 'and did not leave Details');
-  assert.equal(doc.activeElement, rd.querySelector('.rd-meta .rd-cost'), 'focus back on the trigger');
-  // With the panel closed, Escape is the page's again.
+  assert.equal(doc.activeElement, rd.querySelector('.rd-glance .rd-meta .rd-cost'), 'focus back on the trigger');
+  // With the panel closed, Escape is the page's again: in the slide layout it goes up to the Runs list.
+  doc.getElementById('runs-shell').dataset.layout = 'slide';
   doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await settle(window, 2);
-  assert.notEqual(window.location.hash, hash);
+  assert.equal(window.location.hash, '#runs');
 });
 
 test('run page: the panel\'s Total is the header\'s total, not a re-sum of the steps', async () => {
   const ctx = await bootRun({ total: 3.5 });   // Σ steps is 3.3319: the run total is what the header says
   const { rd } = ctx;
-  const btn = rd.querySelector('.rd-meta .rd-cost');
+  const btn = rd.querySelector('.rd-glance .rd-meta .rd-cost');
   assert.equal(btn.textContent, '$3.50');
   btn.click();
   const rows = panelRows(rd.querySelector('.rd-header > .cost-pop'));
@@ -151,7 +157,7 @@ test('run page: agent turns a pause cut off open the breakdown even with no Away
   const ctx = await bootRun({ total: 1, steps: [{ key: 'n_impl:1', executionId: 'n_impl:1', nodeId: 'n_impl', status: 'done', costUsd: 1,
     stoppedTurns: { turns: 1, tokens: 21000, floorUsd: 0.07 } }] });
   const { window, rd } = ctx;
-  const btn = rd.querySelector('.rd-meta .rd-cost');
+  const btn = rd.querySelector('.rd-glance .rd-meta .rd-cost');
   assert.equal(btn.tagName, 'BUTTON');
   btn.click();
   assert.deepEqual(panelRows(rd.querySelector('.rd-header > .cost-pop')),
@@ -166,23 +172,21 @@ test('run page: agent turns a pause cut off open the breakdown even with no Away
 // --- the run page and the History run page ------------------------------------------------------
 const histDetail = (steps) => ({ ...DETAIL, state: { ...DETAIL.state, steps, totalCostUsd: TOTAL } });
 
-test('run page and History: the header cost opens the same breakdown; glance tile and Overview card carry the Away mode share', async () => {
+test('run page and History: the header cost opens the same breakdown; the glance tile carries the Away mode share', async () => {
   await checkRows([
-    { name: 'run page: the glance cost tile and the Overview cost card carry the Away mode share', run: async () => {
+    { name: 'run page: the glance cost tile carries the Away mode share (Summary has no second cost card)', run: async () => {
       const ctx = await bootRun();
       const { rd } = ctx;
-      const ov = rd.querySelector('.rd-sec[data-sec="overview"] .hd-ov-card-cost') || rd.querySelector('.hd-ov-card-cost');
-      assert.ok(ov, 'the Overview cost card renders');
-      assert.match(ov.querySelector('.hd-ov-sub').textContent, / · incl\. \$0\.12 Away mode$/);
+      assert.equal(rd.querySelector('.rd-sec[data-sec="overview"] .hd-ov-card-cost'), null, 'the cost is said once, on the glance');
       go(ctx.window, 'running/r1');
       await settle(ctx.window, 6);
       assert.deepEqual(glanceCost(rd.querySelector('.rd-glance')), ['$3.33', 'incl. $0.12 Away mode']);
     } },
-    { name: 'History: the header cost opens the same breakdown; the glance and the Overview carry the share', run: async () => {
+    { name: 'History: the header cost opens the same breakdown; the glance carries the share', run: async () => {
       const ctx = await bootDetail({ detail: histDetail(STEPS()) });
       await openDetail(ctx, 'details/overview');
       const doc = ctx.window.document;
-      const btn = doc.querySelector('#hist-detail .hd-meta .hd-cost');
+      const btn = doc.querySelector('#hist-detail .hd-glance .hd-meta .hd-cost');
       assert.equal(btn.tagName, 'BUTTON');
       assert.equal(btn.textContent, '$3.33');
       const pop = doc.getElementById(btn.getAttribute('aria-controls'));
@@ -196,10 +200,61 @@ test('run page and History: the header cost opens the same breakdown; glance til
       await settle(ctx.window, 2);
       assert.equal(pop.hidden, true);
       assert.equal(ctx.window.location.hash, hash);
-      const card = secOf(doc, 'overview').querySelector('.hd-ov-card-cost');
-      assert.equal(card.querySelector('.hd-ov-sub').textContent, 'across 4 steps · incl. $0.12 Away mode');
+      assert.equal(secOf(doc, 'overview').querySelector('.hd-ov-card-cost'), null, 'the cost is said once, on the glance');
       await openDetail(ctx, '');
       assert.deepEqual(glanceCost(doc.querySelector('#hist-detail .hd-glance')), ['$3.33', 'incl. $0.12 Away mode']);
+    } },
+  ]);
+});
+
+// Web UI review cycle 2 (major): on a page Summary showed the cost twice, the tile and the moved header's $0.00
+// trigger right under it. The tile is now the trigger; CSS hides the meta line's own.
+test('a page\'s Summary: the cost tile opens the breakdown, and the moved header\'s cost trigger hides', async () => {
+  const css = (await import('node:fs')).readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.ok(css.includes('.rd-sheet:has(.rd-stat-cost-btn) > .rd-header .rd-meta:not(:has(> .cost-unknown))'), 'the live meta line hides');
+  assert.ok(css.includes('.rd-sheet:has(.rd-stat-cost-btn) > .hd-header .hd-meta > :is(.hd-cost.cost-bd-btn,.hd-dot:has(+ .hd-cost.cost-bd-btn))'),
+    'the saved meta line drops its cost trigger and its dot');
+  const tileFlow = async (window, scope) => {
+    const doc = window.document;
+    const tile = scope.querySelector('.rd-facts .rd-stats > .rd-stat-cost > b > button.cost-bd-btn.rd-stat-cost-btn');
+    assert.ok(tile, 'the cost tile holds the trigger');
+    assert.equal(tile.textContent, '$3.33');
+    assert.deepEqual(glanceCost(scope), ['$3.33', 'incl. $0.12 Away mode']);
+    const pop = doc.getElementById(tile.getAttribute('aria-controls'));
+    assert.ok(pop && pop.classList.contains('cost-pop'));
+    assert.equal(pop.hidden, true);
+    tile.click();
+    assert.equal(pop.hidden, false);
+    assert.equal(tile.getAttribute('aria-expanded'), 'true');
+    assert.deepEqual(panelRows(pop), EXPECTED_ROWS);
+    tile.focus();
+    const hash = window.location.hash;
+    doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await settle(window, 2);
+    assert.equal(pop.hidden, true, 'Escape closed the panel');
+    assert.equal(window.location.hash, hash);
+    assert.equal(tile.getAttribute('aria-expanded'), 'false');
+    assert.equal(doc.activeElement, scope.querySelector('.rd-stat-cost-btn'), 'focus back on the tile');
+  };
+  await checkRows([
+    { name: 'run page', run: async () => {
+      const ctx = await bootRun({ hash: 'running/r1' });
+      await tileFlow(ctx.window, ctx.rd.querySelector('.rd-glance'));
+      // A frame with the same numbers keeps the same trigger.
+      const tile = ctx.rd.querySelector('.rd-stat-cost-btn');
+      ctx.frame({ type: 'state', runId: 'r1', status: 'running', steps: STEPS(), totalCostUsd: TOTAL });
+      await settle(ctx.window, 3);
+      assert.equal(ctx.rd.querySelector('.rd-stat-cost-btn'), tile);
+    } },
+    { name: 'History', run: async () => {
+      const ctx = await bootDetail({ detail: histDetail(STEPS()) });
+      await openDetail(ctx, '');
+      await tileFlow(ctx.window, ctx.window.document.querySelector('#hist-detail .hd-glance'));
+    } },
+    { name: 'an old run: a plain tile, no trigger', run: async () => {
+      const ctx = await bootRun({ steps: OLD_STEPS(), hash: 'running/r1' });
+      assert.equal(ctx.rd.querySelector('.rd-stat-cost-btn'), null);
+      assert.deepEqual(glanceCost(ctx.rd.querySelector('.rd-glance')), ['$3.33', 'cost']);
     } },
   ]);
 });
@@ -209,7 +264,7 @@ test('an old run (no shares kept), live or History: plain cost, no panel, no \'i
     { name: 'run page, an old run (no shares kept): the plain cost, no panel, no "incl.", no NaN or undefined', run: async () => {
       const ctx = await bootRun({ steps: OLD_STEPS() });
       const { rd } = ctx;
-      const seg = rd.querySelector('.rd-meta .rd-cost');
+      const seg = rd.querySelector('.rd-glance .rd-meta .rd-cost');
       assert.equal(seg.tagName, 'SPAN');
       assert.equal(seg.textContent, '$3.33');
       assert.equal(rd.querySelector('.cost-bd-btn'), null);
@@ -225,8 +280,8 @@ test('an old run (no shares kept), live or History: plain cost, no panel, no \'i
       const ctx = await bootDetail({ detail: histDetail(OLD_STEPS()) });
       await openDetail(ctx, 'details/overview');
       const doc = ctx.window.document;
-      assert.equal(doc.querySelector('#hist-detail .hd-meta .hd-cost').tagName, 'SPAN');
-      assert.equal(secOf(doc, 'overview').querySelector('.hd-ov-card-cost .hd-ov-sub').textContent, 'across 4 steps');
+      assert.equal(doc.querySelector('#hist-detail .hd-glance .hd-meta .hd-cost').tagName, 'SPAN');
+      assert.equal(secOf(doc, 'overview').querySelector('.hd-ov-card-cost'), null);
       await openDetail(ctx, '');
       assert.deepEqual(glanceCost(doc.querySelector('#hist-detail .hd-glance')), ['$3.33', 'cost']);
       assert.doesNotMatch(doc.querySelector('#hist-detail').textContent, /incl\.|NaN|undefined/);
@@ -289,30 +344,31 @@ test('cost unknown, never $0.00: a Cursor run on the run page and in History; a 
     return ctx.window.document.querySelector('#run-detail .rd');
   };
   await checkRows([
-    { name: 'run page, Cursor: the header and the Overview card read cost unknown', run: async () => {
+    { name: 'run page, Cursor: Summary\'s cost line reads cost unknown and the glance shows no $0.00 tile', run: async () => {
       const rd = await runPage('cursor');
-      assert.equal(rd.querySelector('.rd-meta .rd-cost').textContent, 'cost unknown');
-      assert.match(rd.querySelector('.rd-meta .rd-cost').title, /Cursor reports no cost/);
-      assert.equal(rd.querySelector('.hd-ov-card-cost .hd-ov-value').textContent, 'cost unknown');
+      assert.equal(rd.querySelector('.rd-glance .rd-meta .rd-cost').textContent, 'cost unknown');
+      assert.match(rd.querySelector('.rd-glance .rd-meta .rd-cost').title, /Cursor reports no cost/);
+      assert.equal(costTileValue(rd.querySelector('.rd-glance')), null, 'no cost tile, never $0.00');
+      assert.equal(rd.querySelector('.rd-sec[data-sec="overview"] .hd-ov-card-cost'), null);
       assert.doesNotMatch(rd.querySelector('.rd-meta').textContent, /\$0\.00/);
     } },
     { name: 'run page, Codex with 0: $0.00 as today', run: async () => {
       const rd = await runPage('codex');
-      assert.equal(rd.querySelector('.rd-meta .rd-cost').textContent, '$0.00');
+      assert.equal(rd.querySelector('.rd-glance .rd-meta .rd-cost').textContent, '$0.00');
     } },
-    { name: 'History, Cursor: the header and the COST card read cost unknown', run: async () => {
+    { name: 'History, Cursor: Summary\'s cost line reads cost unknown and the glance shows no $0.00 tile', run: async () => {
       const ctx = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, steps: OLD_STEPS(), totalCostUsd: 0, runEngine: 'cursor' } } });
       await openDetail(ctx, 'details/overview');
       const doc = ctx.window.document;
-      assert.equal(doc.querySelector('#hist-detail .hd-meta .hd-cost').textContent, 'cost unknown');
-      assert.equal(secOf(doc, 'overview').querySelector('.hd-ov-card-cost .hd-ov-value').textContent, 'cost unknown');
+      assert.equal(doc.querySelector('#hist-detail .hd-glance .hd-meta .hd-cost').textContent, 'cost unknown');
+      assert.equal(costTileValue(doc.querySelector('#hist-detail .hd-glance')), null, 'no cost tile, never $0.00');
     } },
-    { name: 'History, a reporting engine with no cost number: the empty header cost and the — card as today', run: async () => {
+    { name: 'History, a reporting engine with no cost number: the empty header cost; Summary has no cost card', run: async () => {
       const ctx = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, steps: OLD_STEPS(), totalCostUsd: undefined, runEngine: 'codex' } } });
       await openDetail(ctx, 'details/overview');
       const doc = ctx.window.document;
-      assert.equal(doc.querySelector('#hist-detail .hd-meta .hd-cost'), null);
-      assert.equal(secOf(doc, 'overview').querySelector('.hd-ov-card-cost .hd-ov-value').textContent, '—');
+      assert.equal(doc.querySelector('#hist-detail .hd-glance .hd-meta .hd-cost'), null);
+      assert.equal(secOf(doc, 'overview').querySelector('.hd-ov-card-cost'), null);
     } },
   ]);
 });
