@@ -52,10 +52,12 @@ export function sizeLabel(bytes) {
 
 export const OFFICE_EXTENSIONS = Object.freeze(['.docx', '.xlsx', '.pptx']);
 const READS = 'Worca reads text, images and PDF.';
+// An upload without a usable name (an API caller's bare value) reads "A file was not added: …", not "file was not added".
+const shown = (name) => (String(name ?? '').trim() ? displayName(name) : 'A file');
 
 /** A type Worca does not read: Office files get the PDF hint. */
 export function officeRefusal(name, ext) {
-  const n = displayName(name);
+  const n = shown(name);
   return OFFICE_EXTENSIONS.includes(String(ext || '').toLowerCase()) ? `${n} was not added: ${READS} Save it as PDF to attach it here.` : `${n} was not added: ${READS}`;
 }
 
@@ -68,11 +70,11 @@ export function reqUploadOptions({ owner = 'feature', create = false } = {}) {
     notAllowed: officeRefusal,
     messages: {
       notArray: () => 'attachments must be a list of files',
-      tooMany: (_max, name) => `${displayName(name)} was not added: ${cap}`,
-      tooBig: (name) => `${displayName(name)} was not added: it is over 25 MB.`,
+      tooMany: (_max, name) => `${shown(name)} was not added: ${cap}`,
+      tooBig: (name) => `${shown(name)} was not added: it is over 25 MB.`,
       totalTooBig: (_cap, name) => (create
-        ? `${displayName(name)} was not added: a new feature's files can be up to 100 MB in all; add more on the feature page.`
-        : `${displayName(name)} was not added: add up to 100 MB at a time.`),
+        ? `${shown(name)} was not added: a new feature's files can be up to 100 MB in all; add more on the feature page.`
+        : `${shown(name)} was not added: add up to 100 MB at a time.`),
     },
   };
 }

@@ -1,8 +1,9 @@
 // test/attachment-upload.test.mjs — the shared upload validation (plans/requirements-a8-design.md D7, D10): Ask's rules and
 // messages by default (its route tests stay green), the Requirements page's limits and messages through reqUploadOptions.
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { validateAttachmentUploads } from '../src/core/attachment-upload.mjs';
 import { reqUploadOptions, officeRefusal } from '../src/core/requirements/attachments.mjs';
 
@@ -62,4 +63,42 @@ test('the Requirements page: types, Office, 25 MB, 10 files and the New feature 
   const page = { ...feat, maxBytesTotal: 10 };
   assert.deepEqual(no([up('a.md', 'x'.repeat(6)), up('b.md', 'y'.repeat(6))], page), [413, 'b.md was not added: add up to 100 MB at a time.']);
   assert.equal(officeRefusal('../x/plan.docx', '.docx'), 'plan.docx was not added: Worca reads text, images and PDF. Save it as PDF to attach it here.');
+});
+// Counts createHash calls made by the module under test: the CommonJS crypto is patched and the builtin's ESM named
+// exports re-synced, so the module's live `createHash` binding goes through the spy.
+function hashCalls(fn) {
+  const crypto = createRequire(import.meta.url)('node:crypto');
+  const spy = mock.method(crypto, 'createHash');
+  syncBuiltinESMExports();
+  try { fn(); return spy.mock.callCount(); } finally { spy.mock.restore(); syncBuiltinESMExports(); }
+}
+
+test('hash: false (Ask) makes no hash at all; the default hashes each accepted file once', () => {
+  const list = [up('a.md', '# hi'), up('c.png', PNG), up('d.pdf', PDF)];
+  let r;
+  assert.equal(hashCalls(() => { r = validateAttachmentUploads(list, { ...ASK, hash: false }); }), 0);
+  assert.equal(r.ok, true);
+  assert.ok(r.files.every((f) => !('sha256' in f)), 'no sha256 field');
+  assert.equal(hashCalls(() => { r = validateAttachmentUploads(list, ASK); }), 3);
+  assert.ok(r.files.every((f) => /^[0-9a-f]{64}$/.test(f.sha256)));
+});
+
+test('a refused file is never hashed: the hash comes after every check', () => {
+  for (const bad of [up('a.png', PDF), up('a.md', Buffer.from([0xff, 0xfe, 0x41])), up('a.md', 'a\u0000b'), up('a.md', 'x'.repeat(1001)),
+    { name: 'a.md', dataBase64: '' }, up('a.exe', 'x')]) {
+    let r;
+    assert.equal(hashCalls(() => { r = validateAttachmentUploads([bad], ASK); }), 0, bad.name);
+    assert.equal(r.ok, false);
+  }
+  // the first file passed its checks (hashed), the second is refused (not hashed)
+  assert.equal(hashCalls(() => validateAttachmentUploads([up('a.md', 'ok'), up('b.png', PDF)], ASK)), 1);
+});
+
+test('the Requirements messages for an upload without a usable name read "A file was not added"', () => {
+  const feat = reqUploadOptions({ owner: 'feature' });
+  const tooMany = [...Array.from({ length: 10 }, (_, i) => up(`n${i}.md`, 'x')), 'not an object'];
+  assert.deepEqual(no(tooMany, feat), [400, 'A file was not added: a feature takes up to 10 files.']);
+  assert.deepEqual(no([...tooMany.slice(0, 10), null], reqUploadOptions({ owner: 'brief' })), [400, 'A file was not added: a brief takes up to 10 documents.']);
+  assert.deepEqual(no([{ dataBase64: b64('x') }], feat), [400, 'A file was not added: Worca reads text, images and PDF.']);
+  assert.equal(officeRefusal('', ''), 'A file was not added: Worca reads text, images and PDF.');
 });

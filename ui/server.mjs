@@ -14877,12 +14877,13 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
 
     // §7.3 — validate EVERY attachment before ANY write (all-or-nothing), through the validation the Requirements page
     // shares (src/core/attachment-upload.mjs): Ask's caps, its engine refusals and its messages. The engine is read per
-    // file, as before; the objects handed on are Ask's own shapes (no sha256, no raw bytes for a text kind).
+    // file, as before; the objects handed on are Ask's own shapes (no hash is made, no raw bytes for a text kind).
     const files = [];
     if (body.attachments !== undefined) {
       const v = validateAttachmentUploads(body.attachments, {
         maxFiles: ASK_LIMITS.attachment.maxFiles, maxBytesPerFile: ASK_LIMITS.attachment.maxBytesPerFile,
         maxBytesPerBinaryFile: ASK_LIMITS.attachment.maxBytesPerBinaryFile, maxBytesTotal: ASK_LIMITS.attachment.maxBytesPerMessage,
+        hash: false,
         refuse: (cls, name) => {
           const attachEngine = askTurnEngine(id, thread, mv.model);
           // D16: a Codex chat has no PDF reader (out of scope, §10); a Copilot chat takes no image or PDF.

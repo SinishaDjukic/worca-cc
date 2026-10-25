@@ -3,7 +3,8 @@
 // POST /api/ask/threads/:id/messages for the Requirements page, plans/requirements-a8-design.md D10). The extension
 // claims a type through Ask's tables; text kinds are proven by UTF-8 decoding and the absence of NUL bytes, binary
 // kinds (images, PDF) by their magic number. Ask's messages are the defaults, byte for byte, and Ask's order holds:
-// the list, its length, each file in turn, then the total.
+// the list, its length, each file in turn, then the total. A file is hashed (sha256) only once it has passed every
+// check, and not at all with `hash: false` (Ask, which keeps no hash).
 import { createHash } from 'node:crypto';
 import { classifyExtension, sniffMime } from './ask/attachment-kind.mjs';
 
@@ -21,13 +22,14 @@ const askNotAllowed = (name) => `attachment type not allowed: ${name || '(unname
 const nameOf = (a) => (a && typeof a.name === 'string' ? a.name : '');
 
 export function validateAttachmentUploads(list, { maxFiles, maxBytesPerFile, maxBytesPerBinaryFile, maxBytesTotal,
-  refuse = () => null, notAllowed = askNotAllowed, messages = {} } = {}) {
+  refuse = () => null, notAllowed = askNotAllowed, messages = {}, hash = true } = {}) {
   const m = { ...ASK_MESSAGES, ...messages };
   const no = (status, error) => ({ ok: false, status, error });
   if (!Array.isArray(list)) return no(400, m.notArray());
   if (list.length > maxFiles) return no(400, m.tooMany(maxFiles, nameOf(list[maxFiles])));
   const dec = new TextDecoder('utf-8', { fatal: true });
   const files = [];
+  const digest = (buf) => (hash ? { sha256: createHash('sha256').update(buf).digest('hex') } : {});
   for (const a of list) {
     const name = nameOf(a);
     const dot = name.lastIndexOf('.');
@@ -41,16 +43,15 @@ export function validateAttachmentUploads(list, { maxFiles, maxBytesPerFile, max
     if (!buf.length) return no(400, m.empty(name));
     const cap = cls.kind === 'text' ? maxBytesPerFile : maxBytesPerBinaryFile;
     if (buf.length > cap) return no(413, m.tooBig(name, cap));
-    const sha256 = createHash('sha256').update(buf).digest('hex');
     if (cls.kind !== 'text') {
       if (sniffMime(buf) !== cls.mime) return no(400, m.mismatch(name));
-      files.push({ name, kind: cls.kind, mime: cls.mime, data: buf, bytes: buf.length, sha256 });
+      files.push({ name, kind: cls.kind, mime: cls.mime, data: buf, bytes: buf.length, ...digest(buf) });
       continue;
     }
     let text;
     try { text = dec.decode(buf); } catch { return no(400, m.notUtf8(name)); }
     if (text.includes('\u0000')) return no(400, m.nul(name));
-    files.push({ name, kind: 'text', mime: cls.mime, data: buf, text, bytes: buf.length, sha256 });
+    files.push({ name, kind: 'text', mime: cls.mime, data: buf, text, bytes: buf.length, ...digest(buf) });
   }
   let total = 0;
   for (const f of files) {
