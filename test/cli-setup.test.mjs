@@ -112,3 +112,14 @@ test('bare `worca setup` prints help and exits 2; the CLI dispatches setup', asy
   assert.equal(help.status, 0, help.stderr);
   assert.match(help.stdout, /worca setup --from/);
 });
+
+test('the setup assistant\'s repro body plans the same with the CLI\'s deps (shared plan code)', async () => {
+  fresh();
+  const { CLI_APPLY_DEPS } = await import('../src/cli/setup.mjs');
+  const { planSetupApply } = await import('../src/core/setup/apply.mjs');
+  const roles = { claude: { deep: { model: 'copilot-claude-opus-5.5', effort: 'high' } } };
+  const plan = await planSetupApply({ access: { copilot: { importModels: ['claude-opus-5.5'] } }, models: { modelRoles: roles, testRoles: true } }, CLI_APPLY_DEPS);
+  assert.deepEqual(plan.written, ['modelRoles']);
+  assert.deepEqual(plan.values.modelRoles, roles);
+  assert.deepEqual(plan.steps.map((s) => [s.id, s.importedBy ?? null]), [['copilot-import', null], ['role-test.claude.deep', 'copilot-import']]);
+});

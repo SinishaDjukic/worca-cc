@@ -34,6 +34,8 @@ const savedAt = (settings, key) => getPath(settings, key.split('.').slice(1).joi
 const shown = (v) => (v == null ? 'not set' : Array.isArray(v) ? v.join(', ') : typeof v === 'object' ? (v.model || 'not set') : String(v));
 const isRecord = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 // The labels of the work fields the CLI never asks about (the same words as the registry's Setup rows).
+/** The deps `worca setup` plans with: no network change ever; the rest are planSetupApply's defaults. */
+export const CLI_APPLY_DEPS = Object.freeze({ checkProxy: async () => { throw new Error('worca setup never changes the network.'); } });
 const EXTRA_LABELS = Object.freeze({ sync: 'Sync before run', networkWait: 'Wait for the network', smartNaming: 'Smart run names', hideBuiltinModels: 'Hide built-in models' });
 
 function lineReader(input, output) {
@@ -76,7 +78,7 @@ export async function cmdSetup(argv, {
     if (body.models?.modelRoles) body.models.testRoles = false;
     for (const [k, v] of Object.entries(body.work || {})) if (sameValue(v, current[k])) delete body.work[k];
     if (body.work && !Object.keys(body.work).length) delete body.work;
-    const plan = await planSetupApply(body, { checkProxy: async () => { throw new Error('worca setup never changes the network.'); } });
+    const plan = await planSetupApply(body, CLI_APPLY_DEPS);
     if (!plan.written.length) { out(`Nothing to change: your settings already match ${from}.`); return 0; }
     // Show the change before the one write (security-1-7); --yes is the person's prior consent.
     for (const q of CLI_QUESTIONS) {

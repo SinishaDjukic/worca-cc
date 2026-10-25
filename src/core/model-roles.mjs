@@ -9,15 +9,28 @@ export { MODEL_ROLES, ROLE_LABELS, SLOT_ROLES, roleOf, roleOfJob, jobSlot };
 
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 
+// The harnesses that run a catalog id, or null for an id no catalog layer knows. config.mjs registers the SAME
+// synchronous reader the slot cascade uses (setCascadeModelOwnerReader → enginesOfModel: no listModels, no
+// async), so a role costs what a slot pick already costs. Not imported here: config.mjs imports this module.
+let roleOwnerReader = null;
+export function setRoleModelOwnerReader(fn) { roleOwnerReader = typeof fn === 'function' ? fn : null; }
+
 /** `engine`'s pick for `role`, effort mapped to the nearest one the harness takes, or null when unset (D5: a harness
- *  without roles keeps today's fallbacks). `roles` is injectable for tests.
+ *  without roles keeps today's fallbacks) or when its model is not in the catalog / not runnable on `engine` (a failed
+ *  import after setup saved the role): the slot then falls back as for an empty role (D3). `roles` and `owners`
+ *  are injectable for tests (`owners: null` skips the catalog check).
  *  @returns {{model:string, effort:(string|undefined), role:string, source:'role'}|null} */
-export function resolveRoleModel(engine, role, { roles = modelRolesSetting() } = {}) {
+export function resolveRoleModel(engine, role, { roles = modelRolesSetting(), owners = roleOwnerReader } = {}) {
   if (!MODEL_ENGINES.includes(engine) || !MODEL_ROLES.includes(role)) return null;
   const forEngine = isObj(roles) ? roles[engine] : null;
   const pick = isObj(forEngine) ? forEngine[role] : null;
   const model = isObj(pick) && typeof pick.model === 'string' ? pick.model.trim() : '';
   if (!model) return null;
+  if (owners) {
+    let harnesses = null;
+    try { harnesses = owners(model); } catch { harnesses = null; }
+    if (!Array.isArray(harnesses) || !harnesses.includes(engine)) return null;
+  }
   const effort = typeof pick.effort === 'string' && pick.effort ? (effortOn(pick.effort, engine) || undefined) : undefined;
   return { model, effort, role, source: 'role' };
 }

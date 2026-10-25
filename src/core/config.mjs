@@ -33,7 +33,7 @@ import { PREDEFINED_LIST_PRICES, CODEX_PRICES, codexCachedRate } from './list-pr
 import { validateNightPatch } from './night/config.mjs';
 import { normalizeProjectActions, EMPTY_PROJECT_ACTIONS } from './actions/model.mjs';
 import { setCascadeModelOwnerReader, resolveSetting } from './settings-cascade.mjs';
-import { resolveRoleModel, roleOf, projectRoles } from './model-roles.mjs';
+import { resolveRoleModel, roleOf, projectRoles, setRoleModelOwnerReader } from './model-roles.mjs';
 
 /**
  * Recompute the agent step list FRESH from the layered registry (repo agents/ +
@@ -788,6 +788,8 @@ export function engineOfModel(modelId, { projectDir = null } = {}) {
 
 // The cascade drops a slot pick its engine cannot run (settings-cascade.mjs pairCheck): it reads the harness list.
 setCascadeModelOwnerReader((id, { projectDir = null } = {}) => enginesOfModel(id, { projectDir }));
+// Roles check their model with the same reader (a role on a model a failed import never created falls back, D3).
+setRoleModelOwnerReader((id) => enginesOfModel(id));
 
 /** Why a run-level model cannot run on `engine` (no harness of its connection is that engine), else null. */
 export function foreignRunModel(model, engine, projectDir = null) {
@@ -815,16 +817,20 @@ export function modelForEngine(modelId, engine = 'claude', { projectDir = null }
   return modelRunsOn(modelId, engine, { projectDir }) === false ? undefined : modelId;
 }
 
-export async function assertSlotModels(items, { projectDir = '' } = {}) {
+export async function assertSlotModels(items, { projectDir = '', pending = [] } = {}) {
   const list = (Array.isArray(items) ? items : []).filter((item) => item?.value?.model);
   if (!list.length) return;
   const models = await listModels(projectDir || '');
   for (const { id, engine, value } of list) {
     const bad = (message) => Object.assign(new Error(`${id}: ${message}`), { status: 400 });
-    const hit = models.find((model) => model?.id?.toLowerCase() === value.model.toLowerCase());
+    const lc = value.model.toLowerCase();
+    // `pending`: catalog rows a setup apply is about to import ({id, harnesses}); a slot may name one (setup D20).
+    const hit = models.find((model) => model?.id?.toLowerCase() === lc)
+      || (Array.isArray(pending) ? pending.find((p) => p?.id?.toLowerCase() === lc) : null);
     if (!hit) throw bad(`unknown model "${value.model}" — add it to the catalog first`);
     if (!runsOn(hit, engine)) throw bad(`"${hit.id}" runs on ${harnessesLabel(hit)} — this slot picks a model ${engineLabel(engine)} can run`);
-    if (value.effort && !effortsOn(hit, engine).includes(value.effort)) throw bad(`${hit.id} does not offer effort "${value.effort}" on ${engineLabel(engine)}`);
+    // A pending row has no efforts yet; only a catalog row is checked (role efforts never reach here, A7).
+    if (value.effort && models.includes(hit) && !effortsOn(hit, engine).includes(value.effort)) throw bad(`${hit.id} does not offer effort "${value.effort}" on ${engineLabel(engine)}`);
   }
 }
 

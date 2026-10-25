@@ -11986,18 +11986,21 @@ app.post('/api/settings', async (req, res) => {
 });
 
 /** The catalog checks on an asserted modelRoles patch, shared by POST /api/settings and setup apply (A18).
- *  Returns the patch with each model rewritten to the catalog's canonical id. */
-async function checkModelRolesPatch(patch) {
+ *  Returns the patch with each model rewritten to the catalog's canonical id. `pending`: the catalog rows
+ *  this setup apply's own imports will create (pendingImportIds); POST /api/settings passes none. */
+async function checkModelRolesPatch(patch, { pending = [] } = {}) {
   const items = [];
   // Model and harness only: the role effort is mapped when used (effortOn), never refused here (A7).
   for (const [engine, roles] of Object.entries(patch)) for (const [role, value] of Object.entries(roles)) if (value) items.push({ id: `modelRoles.${engine}.${role}`, engine, value: { model: value.model } });
-  await assertSlotModels(items);
-  // Store the catalog's canonical id (A8), so every consumer matches the same spelling.
+  await assertSlotModels(items, { pending });
+  // Store the catalog's canonical id (A8), so every consumer matches the same spelling; a pending id keeps the
+  // spelling its import will write.
   if (items.length) {
     const models = await listModels('');
     for (const roles of Object.values(patch)) for (const value of Object.values(roles)) {
       if (!value) continue;
-      const hit = models.find((m) => m?.id?.toLowerCase() === value.model.toLowerCase());
+      const lc = value.model.toLowerCase();
+      const hit = models.find((m) => m?.id?.toLowerCase() === lc) || pending.find((p) => p.id.toLowerCase() === lc);
       if (hit) value.model = hit.id;
     }
   }
@@ -13431,7 +13434,7 @@ function setupDeps() {
     fixedPortNow: () => proxyHost.fixedPortNow(),
     applyProxy: (np, beforeFixed) => proxyHost.applyWritten(np, beforeFixed),
     reloadLogin: () => egressNow()?.reloadLogin?.(),
-    checkModelRoles: (patch) => checkModelRolesPatch(patch),
+    checkModelRoles: (patch, o) => checkModelRolesPatch(patch, o),
     testModel: async (id) => {
       const key = String(id).toLowerCase();
       if (modelTestsInFlight.has(key)) return { ok: false, message: 'test already running for this model' };

@@ -18,7 +18,9 @@ delete process.env.WORCA_BROKER_URL;
 const { planSetupApply, commitSetupPlan, runSetupSteps, SetupFieldError, SetupConflictError, sameValue, PROVIDER_LABELS, LOGIN_LABELS } = await import('../src/core/setup/apply.mjs');
 const settings = await import('../src/core/settings.mjs');
 const { createProxyHost } = await import('../src/core/proxy-host.mjs');
-const { brokerRefusal } = await import('../src/core/bridge/provider-ops.mjs');
+const { brokerRefusal, copilotCatalogId } = await import('../src/core/bridge/provider-ops.mjs');
+const { catalogEntryForCopilotModel, _resetCopilotCache } = await import('../src/core/bridge/providers/copilot.mjs');
+const { assertSlotModels } = await import('../src/core/config.mjs');
 const { savedLoginRefusal } = await import('../src/core/proxy-credentials.mjs');
 const { INTERNAL_KEY, userLine } = await import('../src/core/settings-errors.mjs');
 const { SAVED_TEXT, SAVED_OFF_TEXT, PORT_PENDING_TEXT } = await import('../src/shared/network-proxy-text.mjs');
@@ -41,6 +43,7 @@ function fakeDeps(over = {}) {
     importEndpoint: async (ids) => { calls.push('openai-import'); return { created: ids, updated: [], skipped: [] }; },
     testModel: async (id) => { calls.push(`test:${id}`); return { ok: true, text: 'OK' }; },
     brokerRefusal: () => null,
+    endpointModels: async () => ({ server: 'llamacpp', serverLabel: 'llama.cpp', baseUrl: 'http://127.0.0.1:8080/v1', models: [] }),
     ...over,
   } };
 }
@@ -50,6 +53,14 @@ async function applyAll(body, deps) {
   await commitSetupPlan(plan, deps);
   return { plan, out: await runSetupSteps(plan, { deps }) };
 }
+/** checkModelRolesPatch's catalog check without the server: assertSlotModels with the plan's pending ids. */
+const realRoleCheck = async (patch, { pending = [] } = {}) => {
+  const items = [];
+  for (const [engine, roles] of Object.entries(patch)) for (const [role, v] of Object.entries(roles)) if (v) items.push({ id: `modelRoles.${engine}.${role}`, engine, value: { model: v.model } });
+  await assertSlotModels(items, { pending });
+  return patch;
+};
+const COPILOT_ROLES = { claude: { deep: { model: 'copilot-claude-opus-5.5', effort: 'high' }, quick: { model: 'copilot-gpt-5.5-mini' } } };
 
 // ── Step 1: settings.mjs ──
 test('writeSettingsKeys: one write, listed keys set or deleted, others untouched', async () => {
@@ -99,6 +110,12 @@ test('brokerRefusal returns the pointer without throwing', () => {
   process.env.WORCA_BROKER_URL = 'http://127.0.0.1:1';
   try { assert.match(brokerRefusal('store a provider key').message, /^worca can't store a provider key: with the credential broker, each person does that on the key page/); }
   finally { delete process.env.WORCA_BROKER_URL; }
+});
+
+test('copilotCatalogId is the id the Copilot import writes', () => {
+  const m = { id: 'claude-opus-5.5', name: 'Claude Opus 5.5', vendor: 'Anthropic', toolCalls: true, vision: true, reasoning: false };
+  assert.equal(copilotCatalogId('claude-opus-5.5'), 'copilot-claude-opus-5.5');
+  assert.equal(catalogEntryForCopilotModel(m).id, copilotCatalogId(m.id));
 });
 
 test('no user-facing text holds an internal key or a credential', async () => {
@@ -249,6 +266,124 @@ test('a failing role test fails that step only and skips the rest', async () => 
   assert.deepEqual(out.results.map((r) => r.state), ['failed', 'skipped']);
   assert.equal(out.results[0].line, 'Model not found. Pick another model.');
   assert.equal(out.retry, 'role-test.claude.deep');
+});
+
+test('roles on models this apply imports are planned, written once, and tested after the import', async () => {
+  seed({});
+  const { calls, writes, deps } = fakeDeps({
+    checkModelRoles: realRoleCheck,
+    importCopilot: async (ids) => { calls.push('copilot-import'); return { created: ids.map((id) => `copilot-${id}`), updated: [], skipped: [] }; },
+  });
+  const { plan, out } = await applyAll({
+    access: { copilot: { importModels: ['claude-opus-5.5', 'gpt-5.5-mini'] } },
+    models: { modelRoles: COPILOT_ROLES, testRoles: true },
+  }, deps);
+  assert.deepEqual(writes, [['modelRoles']]);
+  assert.deepEqual(read().modelRoles, COPILOT_ROLES);
+  assert.deepEqual(plan.steps.map((s) => s.id), ['copilot-import', 'role-test.claude.deep', 'role-test.claude.quick']);
+  assert.equal(plan.steps[1].importedBy, 'copilot-import');
+  assert.deepEqual(calls, ['copilot-import', 'test:copilot-claude-opus-5.5', 'test:copilot-gpt-5.5-mini']);
+  assert.equal(out.ok, true);
+});
+
+test('a role on a model neither in the catalog nor imported is still refused, field named, nothing written', async () => {
+  seed({ theme: 'dark' });
+  const before = readFileSync(settingsPath(), 'utf8');
+  const { deps } = fakeDeps({ checkModelRoles: realRoleCheck });
+  await assert.rejects(planSetupApply({
+    access: { copilot: { importModels: ['claude-opus-5.5'] } },
+    models: { modelRoles: { claude: { deep: { model: 'copilot-not-picked' } } } },
+  }, deps), (err) => err instanceof SetupFieldError && err.field.startsWith('models.modelRoles')
+    && /unknown model "copilot-not-picked" — add it to the catalog first/.test(err.message));
+  assert.equal(readFileSync(settingsPath(), 'utf8'), before);
+});
+
+test('a pending Copilot model on a Codex role is refused: Copilot imports run on Claude Code', async () => {
+  seed({});
+  const { deps } = fakeDeps({ checkModelRoles: realRoleCheck });
+  await assert.rejects(planSetupApply({
+    access: { copilot: { importModels: ['claude-opus-5.5'] } },
+    models: { modelRoles: { codex: { deep: { model: 'copilot-claude-opus-5.5' } } } },
+  }, deps), (err) => err.field.startsWith('models.modelRoles') && /runs on Claude — this slot picks a model Codex can run/.test(err.message));
+});
+
+test('a failed import marks its role tests not run and offers Retry from the import', async () => {
+  seed({});
+  const { calls, deps } = fakeDeps({
+    checkModelRoles: realRoleCheck,
+    importCopilot: async () => { calls.push('copilot-import'); throw new Error('Copilot /models answered 401'); },
+  });
+  const { out } = await applyAll({
+    access: { copilot: { importModels: ['claude-opus-5.5', 'gpt-5.5-mini'] } },
+    models: { modelRoles: COPILOT_ROLES, testRoles: true },
+  }, deps);
+  assert.deepEqual(calls, ['copilot-import']);                       // no role test ran
+  const rows = out.results.filter((r) => r.id.startsWith('role-test.'));
+  assert.deepEqual(rows.map((r) => [r.state, r.line]), [
+    ['skipped', 'Not run: copilot-claude-opus-5.5 was not imported.'],
+    ['skipped', 'Not run: copilot-gpt-5.5-mini was not imported.'],
+  ]);
+  assert.equal(out.ok, false);
+  assert.equal(out.retry, 'copilot-import');
+});
+
+test('an import that skips a role\'s model: that role is not run, the others are, Retry is the import', async () => {
+  seed({});
+  const { calls, deps } = fakeDeps({
+    checkModelRoles: realRoleCheck,
+    importCopilot: async () => { calls.push('copilot-import'); return { created: ['copilot-claude-opus-5.5'], updated: [], skipped: ['gpt-5.5-mini'] }; },
+  });
+  const { out } = await applyAll({
+    access: { copilot: { importModels: ['claude-opus-5.5', 'gpt-5.5-mini'] } },
+    models: { modelRoles: COPILOT_ROLES, testRoles: true },
+  }, deps);
+  assert.deepEqual(calls, ['copilot-import', 'test:copilot-claude-opus-5.5']);
+  assert.equal(out.results.find((r) => r.id === 'role-test.claude.quick').line, 'Not run: copilot-gpt-5.5-mini was not imported.');
+  assert.equal(out.ok, false);
+  assert.equal(out.retry, 'copilot-import');
+});
+
+test('a skipped role model and a later failing role test: Retry is the import, the earlier step', async () => {
+  seed({});
+  const roles = { claude: { quick: { model: 'copilot-gpt-5.5-mini' }, everyday: { model: 'claude-sonnet-5-5' } } };
+  const { deps } = fakeDeps({
+    checkModelRoles: realRoleCheck,
+    importCopilot: async () => ({ created: [], updated: [], skipped: ['gpt-5.5-mini'] }),
+    testModel: async () => ({ ok: false, message: 'the model did not answer' }),
+  });
+  const { out } = await applyAll({
+    access: { copilot: { importModels: ['gpt-5.5-mini'] } },
+    models: { modelRoles: roles, testRoles: true },
+  }, deps);
+  assert.equal(out.results.find((r) => r.id === 'role-test.claude.quick').line, 'Not run: copilot-gpt-5.5-mini was not imported.');
+  assert.equal(out.results.find((r) => r.id === 'role-test.claude.everyday').state, 'failed');
+  assert.equal(out.ok, false);
+  assert.equal(out.retry, 'copilot-import');
+});
+
+test('OpenAI-compatible: the pending id comes from the endpoint listing; an unreachable endpoint refuses the role', async () => {
+  seed({});
+  const listing = { server: 'llamacpp', serverLabel: 'llama.cpp', baseUrl: 'http://127.0.0.1:8080/v1',
+    models: [{ id: 'qwen3-coder', catalogId: 'llamacpp-qwen3-coder', inCatalog: false, importable: true, toolCalls: true }] };
+  const seen = [];
+  const ok = fakeDeps({ checkModelRoles: realRoleCheck, endpointModels: async (o) => { seen.push(o); return listing; } });
+  const body = {
+    access: { openai: { baseUrl: 'http://127.0.0.1:8080/v1', apiKey: 'sk-local', importModels: ['qwen3-coder'] } },
+    models: { modelRoles: { claude: { everyday: { model: 'llamacpp-qwen3-coder' } } } },
+  };
+  const plan = await planSetupApply(body, ok.deps);
+  assert.equal(plan.values.modelRoles.claude.everyday.model, 'llamacpp-qwen3-coder');
+  assert.equal(seen[0].baseUrl, 'http://127.0.0.1:8080/v1');           // the PLANNED base URL and key (D-C)
+  assert.equal(seen[0].apiKey, 'sk-local');
+  const down = fakeDeps({ checkModelRoles: realRoleCheck,
+    endpointModels: async () => { throw new Error('no OpenAI-compatible model list at http://u:pw@127.0.0.1:8080/v1/models'); } });
+  await assert.rejects(planSetupApply(body, down.deps), (err) => err.field.startsWith('models.modelRoles')
+    && /unknown model "llamacpp-qwen3-coder"/.test(err.message)
+    && /could not reach the OpenAI-compatible endpoint/.test(err.message) && !/pw@/.test(err.message));
+  // A reason with a camelCase token is left out, so the 400 keeps its unknown-model text (D-E).
+  const odd = fakeDeps({ checkModelRoles: realRoleCheck, endpointModels: async () => { throw new Error('baseUrl must be an http(s) URL'); } });
+  await assert.rejects(planSetupApply(body, odd.deps), (err) => /unknown model "llamacpp-qwen3-coder"/.test(err.message)
+    && /this setup imports\.$/.test(err.message) && !/baseUrl/.test(err.message));
 });
 
 test('an import whose ids were all there says so', async () => {
@@ -452,6 +587,76 @@ test('POST /api/setup/apply: 202, then one frame per side effect and a terminal 
   assert.ok(frames.some((f) => f.type === 'settings-changed'));
   assert.ok(frames.some((f) => f.type === 'budget-changed'));
   assert.equal(JSON.parse(fileNow()).pipelineCostLimitUsd, 6);
+});
+
+const realFetch = globalThis.fetch;
+const jsonRes = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+/** GitHub + Copilot for the import; the test's own server passes through. `tokenStatus` 401 = an import that fails. */
+const copilotNet = ({ tokenStatus = 200 } = {}) => async (url, init = {}) => {
+  const u = String(url);
+  if (u.startsWith(base)) return realFetch(url, init);
+  if (/copilot_internal\/v2\/token$/.test(u)) return tokenStatus === 200
+    ? jsonRes(200, { token: 'cp_t', expires_at: Math.floor(Date.now() / 1000) + 1800, endpoints: { api: 'https://api.individual.githubcopilot.com' } })
+    : jsonRes(tokenStatus, {});
+  if (/githubcopilot\.com\/models$/.test(u)) return jsonRes(200, { data: [
+    { id: 'claude-opus-5.5', name: 'Claude Opus 5.5', vendor: 'Anthropic', capabilities: { type: 'chat', supports: { tool_calls: true, vision: true }, limits: { max_context_window_tokens: 200000 } } },
+    { id: 'gpt-5.5-mini', name: 'GPT-5.5 mini', vendor: 'OpenAI', capabilities: { type: 'chat', supports: { tool_calls: true, reasoning_effort: true }, limits: { max_prompt_tokens: 100000 } } },
+  ] });
+  return jsonRes(404, { message: `no stub for ${u}` });
+};
+const REPRO = {
+  access: { copilot: { importModels: ['claude-opus-5.5', 'gpt-5.5-mini'] } },
+  models: { modelRoles: { claude: { deep: { model: 'copilot-claude-opus-5.5', effort: 'high' }, quick: { model: 'copilot-gpt-5.5-mini' } } }, testRoles: true },
+};
+
+test('E2E POST /api/setup/apply: roles on the models this apply imports (the repro) are accepted and tested', async () => {
+  seed({ providers: { copilot: { githubToken: 'gho_test' } } });      // signed in live in step 3
+  _resetCopilotCache();
+  const tested = [];
+  testing.setSetupDeps({ testModel: async (id) => { tested.push(id); return { ok: true, text: 'OK' }; } });
+  globalThis.fetch = copilotNet();
+  try {
+    const res = await post(REPRO);
+    assert.equal(res.status, 202, await res.clone().text());
+    const { id, written, steps } = await res.json();
+    assert.deepEqual(written, ['modelRoles']);
+    assert.deepEqual(steps.map((s) => s.id), ['copilot-import', 'role-test.claude.deep', 'role-test.claude.quick']);
+    const job = await settled(id);
+    assert.equal(job.ok, true, JSON.stringify(job.results));
+    assert.deepEqual(tested, ['copilot-claude-opus-5.5', 'copilot-gpt-5.5-mini']);
+    const s = read();
+    assert.equal(s.modelRoles.claude.deep.model, 'copilot-claude-opus-5.5');
+    assert.ok(s.models.some((m) => m.id === 'copilot-claude-opus-5.5' && m.upstream.provider === 'copilot'));
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test('E2E POST /api/setup/apply: a failed import reports its roles not run and retries from the import', async () => {
+  seed({ providers: { copilot: { githubToken: 'gho_test' } } });
+  _resetCopilotCache();
+  testing.setSetupDeps({ testModel: async () => { throw new Error('must not run'); } });
+  globalThis.fetch = copilotNet({ tokenStatus: 401 });
+  try {
+    const res = await post(REPRO);
+    assert.equal(res.status, 202);
+    const job = await settled((await res.json()).id);
+    assert.equal(job.ok, false);
+    assert.equal(job.retry, 'copilot-import');
+    assert.equal(job.results.find((r) => r.id === 'copilot-import').state, 'failed');
+    assert.deepEqual(job.results.filter((r) => r.id.startsWith('role-test.')).map((r) => r.line),
+      ['Not run: copilot-claude-opus-5.5 was not imported.', 'Not run: copilot-gpt-5.5-mini was not imported.']);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test('E2E POST /api/setup/apply: a role on a model neither in the catalog nor imported is a 400 naming the field', async () => {
+  seed({});
+  const before = fileNow();
+  const res = await post({ access: { copilot: { importModels: ['claude-opus-5.5'] } },
+    models: { modelRoles: { claude: { deep: { model: 'copilot-not-picked' } } } } });
+  assert.equal(res.status, 400);
+  const j = await res.json();
+  assert.ok(j.field.startsWith('models.modelRoles'), j.field);
+  assert.match(j.error, /unknown model "copilot-not-picked"/);
+  assert.equal(fileNow(), before);
 });
 
 test('POST /api/setup/apply: 400 names the field and writes nothing', async () => {

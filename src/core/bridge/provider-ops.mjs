@@ -17,13 +17,16 @@ import { modelEnvRef, maskModelEnvValue, COPILOT_TERMS_VERSION, UPSTREAM_PROVIDE
 import {
   startDeviceFlow, pollDeviceFlow, githubLogin, copilotToken, invalidateCopilotToken,
   listCopilotModels, copilotUsage, catalogEntryForCopilotModel, copilotApiFor,
-  copilotHeaders, normalizeCopilotModel,
+  copilotHeaders, normalizeCopilotModel, copilotCatalogId,
 } from './providers/copilot.mjs';
 import { keyOptional } from './registry.mjs';
 import { listEndpointModels, catalogEntryForEndpointModel, importableModel } from './providers/endpoint.mjs';
 import { brokerEnabled, brokerInfo, cachedBrokerInfo, mintSpawnToken, revokeSpawnToken, slotBaseUrl, personSlots } from '../broker-client.mjs';
 import { routeUpstream } from '../broker-routing.mjs';
 import { resolveBillTo } from '../billing.mjs';
+import { harnessesOf } from '../../shared/connections.mjs';
+
+export { copilotCatalogId };
 
 // ── credential broker (docs/credential-broker.md) ────────────────────────────
 
@@ -256,7 +259,7 @@ export async function copilotModelsForImport({ fetch: f } = {}) {
     list = await listCopilotModels(token, { accountType: c.accountType, fetch: f });
   }
   const have = new Set(listGlobalModels().map((m) => m.id.toLowerCase()));
-  return list.map((m) => ({ ...m, api: copilotApiFor(m), catalogId: `copilot-${m.id}`, inCatalog: have.has(`copilot-${m.id}`.toLowerCase()) }))
+  return list.map((m) => { const catalogId = copilotCatalogId(m.id); return { ...m, api: copilotApiFor(m), catalogId, inCatalog: have.has(catalogId.toLowerCase()) }; })
     .sort((a, b) => (Number(b.pickerEnabled) - Number(a.pickerEnabled)) || a.name.localeCompare(b.name));
 }
 
@@ -316,11 +319,13 @@ function endpointBase(baseUrl) {
 /**
  * What an OpenAI-compatible endpoint serves, each row with `catalogId` and `inCatalog` (§8.4's
  * Copilot import, for a server you run: llama.cpp, Ollama, LM Studio, vLLM, a gateway).
- * @param {{baseUrl?:string, fetch?:typeof fetch}} [opts]
+ * @param {{baseUrl?:string, apiKey?:string, providerBaseUrl?:string, fetch?:typeof fetch}} [opts]
+ *   apiKey / providerBaseUrl: the values a setup apply is about to store (default: the stored ones).
  */
-export async function endpointModelsForImport({ baseUrl, fetch: f } = {}) {
-  const base = endpointBase(baseUrl);
+export async function endpointModelsForImport({ baseUrl, apiKey, providerBaseUrl, fetch: f } = {}) {
   const p = providerConfig('openai');
+  const providerBase = providerBaseUrl ?? p.baseUrl;
+  const base = endpointBase(baseUrl || providerBase);
   let out;
   const route = brokerEnabled() ? routeUpstream({ provider: 'openai', baseUrl: base }, { slots: (await brokerInfo()).slots || [] }) : null;
   if (route && route.error) throw new Error(route.error);
@@ -331,18 +336,17 @@ export async function endpointModelsForImport({ baseUrl, fetch: f } = {}) {
     out = { ...out, baseUrl: base };
   } else {
     // Keyless local endpoints are reached directly, as without the broker.
-    const key = brokerEnabled() ? '' : resolveProviderSecret(p.apiKey);
+    const key = brokerEnabled() ? '' : resolveProviderSecret(apiKey !== undefined ? apiKey : p.apiKey);
     out = await listEndpointModels(base, { apiKey: key, fetch: f });
   }
-  const have = new Set(listGlobalModels().map((m) => m.id.toLowerCase()));
+  const models = listGlobalModels();
+  const ctx = { server: out.server, baseUrl: out.baseUrl, providerBaseUrl: providerBase };
   return {
     ...out,
     models: out.models.map((m) => {
-      const entry = catalogEntryForEndpointModel(m, { server: out.server, baseUrl: out.baseUrl, providerBaseUrl: p.baseUrl });
+      const t = endpointImportTarget(m, ctx, models);
       const usable = importableModel(m);
-      const existing = existingEndpointEntry(m.id, out.baseUrl, p.baseUrl);
-      const catalogId = existing ? existing.id : entry.id;
-      return { ...m, catalogId, inCatalog: !!existing || have.has(entry.id.toLowerCase()), importable: usable.ok, ...(usable.ok ? {} : { blocked: usable.why }) };
+      return { ...m, catalogId: t.catalogId, inCatalog: !!t.current, importable: usable.ok, ...(usable.ok ? {} : { blocked: usable.why }) };
     }),
   };
 }
@@ -356,10 +360,23 @@ const trimUrl = (u) => String(u || '').trim().replace(/\/+$/, '').toLowerCase();
  * base URL (its own, or the provider's when it carries none) — and refreshes the entry the user
  * already has instead of adding a twin under the new id.
  */
-function existingEndpointEntry(upstreamId, baseUrl, providerBaseUrl) {
+function existingEndpointEntry(upstreamId, baseUrl, providerBaseUrl, models = listGlobalModels()) {
   const want = trimUrl(baseUrl);
-  return listGlobalModels().find((x) => x.upstream && x.upstream.provider === 'openai'
+  return models.find((x) => x.upstream && x.upstream.provider === 'openai'
     && x.upstream.model === upstreamId && trimUrl(x.upstream.baseUrl || providerBaseUrl) === want) || null;
+}
+
+/**
+ * The one rule for where an endpoint model lands in the catalog: the entry that already imports it (whatever its
+ * id), else an entry with the derived id, else the new entry. The listing's `catalogId`, the import and setup's
+ * pending roles all come from here, so they cannot drift.
+ * @returns {{entry:object, current:object|null, catalogId:string}}
+ */
+function endpointImportTarget(m, { server, baseUrl, providerBaseUrl = '' }, models = listGlobalModels()) {
+  const entry = catalogEntryForEndpointModel(m, { server, baseUrl, providerBaseUrl });
+  const current = existingEndpointEntry(m.id, baseUrl, providerBaseUrl, models)
+    || models.find((x) => x.id.toLowerCase() === entry.id.toLowerCase()) || null;
+  return { entry, current, catalogId: current ? current.id : entry.id };
 }
 
 /**
@@ -379,9 +396,7 @@ export async function importEndpointModels(ids, { baseUrl, fetch: f } = {}) {
     const m = byId.get(id);
     if (!m) { skipped.push({ id, why: 'the endpoint does not serve it' }); continue; }
     if (!m.importable) { skipped.push({ id, why: m.blocked || 'not usable in a pipeline' }); continue; }
-    const entry = catalogEntryForEndpointModel(m, { server: out.server, baseUrl: out.baseUrl, providerBaseUrl: p.baseUrl });
-    const current = existingEndpointEntry(m.id, out.baseUrl, p.baseUrl)
-      || listGlobalModels().find((x) => x.id.toLowerCase() === entry.id.toLowerCase());
+    const { entry, current } = endpointImportTarget(m, { server: out.server, baseUrl: out.baseUrl, providerBaseUrl: p.baseUrl });
     if (current) {
       if (!current.upstream || current.upstream.provider !== 'openai') { skipped.push({ id, why: `"${current.id}" already exists and is not an OpenAI-compatible entry` }); continue; }
       await updateGlobalModel(current.id, { upstream: { ...current.upstream, model: entry.upstream.model, ...(entry.upstream.baseUrl ? { baseUrl: entry.upstream.baseUrl } : {}), ...(entry.upstream.capabilities ? { capabilities: entry.upstream.capabilities } : {}) } });
@@ -392,6 +407,42 @@ export async function importEndpointModels(ids, { baseUrl, fetch: f } = {}) {
     }
   }
   return { created, updated, skipped, server: out.server, serverLabel: out.serverLabel, baseUrl: out.baseUrl, warnings: out.warnings };
+}
+
+const stripUserinfo = (s) => String(s).replace(/(\/\/)[^/\s:@]+(?::[^/\s@]*)?@/g, '$1');
+
+/**
+ * Setup apply, phase 1 (D20): the catalog ids this apply's planned imports will create, so a role may name one
+ * before it exists. Copilot ids follow copilotCatalogId; endpoint ids come from the read-only listing (the
+ * import's own rule). Ids already in the catalog are not pending. Never throws: an endpoint it cannot list
+ * yields no openai ids and `unreachable` says why (no credentials in it).
+ * @param {{copilot?:string[]|null, openai?:{ids:string[], baseUrl?:string, apiKey?:string, providerBaseUrl?:string}|null}} imports
+ * @returns {Promise<{pending:Array<{id:string, harnesses:string[], from:string}>, unreachable:string|null}>}
+ */
+export async function pendingImportIds({ copilot = null, openai = null } = {}, { endpointModels = endpointModelsForImport } = {}) {
+  const have = new Set(listGlobalModels().map((m) => m.id.toLowerCase()));
+  const pending = [];
+  // The entry importCopilotModels writes has upstream.provider 'copilot' and no engine: bridged, Claude Code only.
+  const copilotHarnesses = harnessesOf({ upstream: { provider: 'copilot' } });
+  for (const id of copilot || []) {
+    const catalogId = copilotCatalogId(id);
+    if (!have.has(catalogId.toLowerCase())) pending.push({ id: catalogId, harnesses: copilotHarnesses, from: 'copilot-import' });
+  }
+  let unreachable = null;
+  if (openai && Array.isArray(openai.ids) && openai.ids.length) {
+    try {
+      const out = await endpointModels({ baseUrl: openai.baseUrl, apiKey: openai.apiKey, providerBaseUrl: openai.providerBaseUrl });
+      const want = new Set(openai.ids);
+      for (const m of out.models || []) {
+        if (!want.has(m.id) || !m.importable || m.inCatalog) continue;
+        const entry = catalogEntryForEndpointModel(m, { server: out.server, baseUrl: out.baseUrl, providerBaseUrl: openai.providerBaseUrl || '' });
+        pending.push({ id: m.catalogId, harnesses: harnessesOf(entry), from: 'openai-import' });
+      }
+    } catch (err) {
+      unreachable = stripUserinfo(err && err.message ? err.message : err).replace(/\.$/, '');
+    }
+  }
+  return { pending, unreachable };
 }
 
 // ── OpenRouter: the key's own limits ────────────────────────────────────────

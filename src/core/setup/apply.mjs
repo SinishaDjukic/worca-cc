@@ -9,9 +9,9 @@ import {
   nextSyncSettings, nextNetworkWait, assertHideBuiltinModelsInput, DEFAULT_HIDE_BUILTIN_MODELS,
 } from '../settings.mjs';
 import { COPILOT_TERMS_VERSION } from '../model-env.mjs';
-import { settingsErrorReply, userLine } from '../settings-errors.mjs';
+import { settingsErrorReply, userLine, INTERNAL_KEY } from '../settings-errors.mjs';
 import { assertProxyLoginInput, savedLoginRefusal, saveProxyLogin, ProxyLoginError } from '../proxy-credentials.mjs';
-import { brokerRefusal, testProviderConnection, importCopilotModels, importEndpointModels } from '../bridge/provider-ops.mjs';
+import { brokerRefusal, testProviderConnection, importCopilotModels, importEndpointModels, endpointModelsForImport, pendingImportIds } from '../bridge/provider-ops.mjs';
 import { testModel } from '../model-test.mjs';
 import { ROLE_LABELS } from '../../shared/model-roles.mjs';
 import { ENGINES } from '../../shared/engine-switch.mjs';
@@ -102,6 +102,7 @@ const isMaskedEcho = (v) => typeof v === 'string' && v.startsWith('••');
 export async function planSetupApply(body, deps = {}) {
   // checkProxy has no default on purpose: a caller that forgets it must not skip the UNTESTED gate (fail closed).
   const d = { readSettings, brokerRefusal, checkProxy: null, checkModelRoles: async (p) => p,
+    endpointModels: (o) => endpointModelsForImport(o),
     fixedPortNow: () => null, now: () => new Date(), ...deps };
   if (!isObj(body)) throw new SetupFieldError(null, 'Send the setup as one JSON object.');
   for (const k of Object.keys(body)) if (!own(SETUP_GROUPS, k) && k !== 'fromStep') throw new SetupFieldError(k, `Worca has no setup group “${k}”.`);
@@ -126,13 +127,9 @@ export async function planSetupApply(body, deps = {}) {
   // The person (or their team setup) has now chosen, as setHideBuiltinModels records.
   if (own(work, 'hideBuiltinModels')) next.hideBuiltinModelsChosen = true;
 
-  // ── models ──
+  // ── models ── (the shape is checked here; the catalog check runs after access, with its planned imports)
   const models = body.models || {};
-  let rolePatch = null;
-  if (own(models, 'modelRoles')) {
-    rolePatch = await check('models', 'modelRoles', async () => d.checkModelRoles(assertModelRolesInput(models.modelRoles)));
-    next.modelRoles = nextModelRoles(current.modelRoles, rolePatch);
-  }
+  const roleInput = own(models, 'modelRoles') ? await check('models', 'modelRoles', () => assertModelRolesInput(models.modelRoles)) : null;
   if (own(models, 'testRoles') && typeof models.testRoles !== 'boolean') throw new SetupFieldError('models.testRoles', '“Models · Test the roles” must be true or false.');
 
   // ── network ──
@@ -169,6 +166,7 @@ export async function planSetupApply(body, deps = {}) {
   const imports = {};
   let signIn = false;
   let signInRefused = false;
+  let openaiKey;
   // The body's own order (every key was checked against SETUP_GROUPS.access above), so refusal rows
   // follow the order the person entered the providers in; the side-effect steps keep the D20 order below.
   for (const name of Object.keys(access)) {
@@ -183,6 +181,7 @@ export async function planSetupApply(body, deps = {}) {
       if (err) refused.push({ id: `provider-key.${name}`, label: `${PROVIDER_LABELS[name]} · API key`, state: 'refused', line: err.message });
       else patch.apiKey = typeof a.apiKey === 'string' && !a.apiKey.trim() ? '' : a.apiKey;   // whitespace-only is a clear, never a stored ''
     }
+    if (name === 'openai' && own(patch, 'apiKey')) openaiKey = patch.apiKey;
     if (name === 'copilot') {
       if (own(a, 'acknowledgeTerms') && a.acknowledgeTerms !== true) throw new SetupFieldError('access.copilot.acknowledgeTerms', '“GitHub Copilot · Acknowledge the notice” must be true.');
       if (a.acknowledgeTerms === true && !copilotTermsAcknowledged()) Object.assign(patch, { acknowledgedTerms: d.now().toISOString(), termsVersion: COPILOT_TERMS_VERSION });
@@ -200,6 +199,30 @@ export async function planSetupApply(body, deps = {}) {
     }
   }
   if (providers !== current.providers) next.providers = providers;
+
+  // ── model roles (D20): a role may name a model this apply's own import creates (pending ids) ──
+  let rolePatch = null;
+  let pending = [];
+  if (roleInput) {
+    const openaiBase = providers?.openai?.baseUrl || undefined;
+    const p = await pendingImportIds({
+      copilot: imports.copilot && !signInRefused ? imports.copilot : null,           // a skipped import creates nothing
+      openai: imports.openai ? { ids: imports.openai, baseUrl: openaiBase, apiKey: openaiKey, providerBaseUrl: openaiBase } : null,
+    }, { endpointModels: d.endpointModels });
+    pending = p.pending;
+    rolePatch = await check('models', 'modelRoles', async () => {
+      try { return await d.checkModelRoles(roleInput, { pending }); }
+      catch (err) {
+        if (p.unreachable && /unknown model/.test(String(err && err.message))) {
+          // A camelCase token in the reason would make settingsErrorReply's safe() replace the WHOLE line (D-E).
+          const why = INTERNAL_KEY.test(p.unreachable) ? '' : `: ${p.unreachable}`;
+          err.message = `${String(err.message).replace(/\.$/, '')}. Worca could not reach the OpenAI-compatible endpoint to list the models this setup imports${why}`;
+        }
+        throw err;
+      }
+    });
+    next.modelRoles = nextModelRoles(current.modelRoles, rolePatch);
+  }
 
   // ── diff (D19) and steps (D20 order) ──
   const fromStep = body.fromStep ?? null;
@@ -220,9 +243,12 @@ export async function planSetupApply(body, deps = {}) {
     baseUrl: (providers?.openai?.baseUrl) || undefined });
   if (models.testRoles === true) {
     const roles = rolePatch || (isObj(current.modelRoles) ? current.modelRoles : {});
+    const importedBy = new Map(pending.map((p) => [p.id.toLowerCase(), p.from]));
     for (const [engine, byRole] of Object.entries(roles)) for (const [role, pair] of Object.entries(byRole || {})) {
-      if (pair && pair.model) steps.push({ id: `role-test.${engine}.${role}`,
-        label: `${ROLE_LABELS[role] || role} · ${ENGINES[engine]?.label || engine}`, model: pair.model });
+      if (!pair || !pair.model) continue;
+      const from = importedBy.get(pair.model.toLowerCase());
+      steps.push({ id: `role-test.${engine}.${role}`, label: `${ROLE_LABELS[role] || role} · ${ENGINES[engine]?.label || engine}`,
+        model: pair.model, ...(from ? { importedBy: from } : {}) });
     }
   }
   if (fromStep !== null && !steps.some((s) => s.id === fromStep)) throw new SetupFieldError('fromStep', 'That step is not part of this setup, so there is nothing to retry there.');
@@ -248,6 +274,8 @@ const importedLine = (r, from) => {
   const n = r.created.length + r.updated.length;
   return n ? `Imported ${plural(n, 'model')} from ${from}.` : 'Those models were already imported.';
 };
+/** The catalog ids an import now holds (created or updated), read defensively (D-H). */
+const importedIds = (r) => [...(r?.created || []), ...(r?.updated || [])];
 const DEFAULT_RUN_DEPS = {
   applyProxy: async () => { throw new Error('the proxy cannot be applied outside the Worca server'); },
   reloadLogin: () => {},
@@ -279,11 +307,11 @@ const RUNNERS = {
   },
   'copilot-import': async (s, d) => {
     const r = await d.importCopilot(s.ids);
-    return { ok: true, line: importedLine(r, 'GitHub Copilot') };
+    return { ok: true, line: importedLine(r, 'GitHub Copilot'), imported: importedIds(r) };
   },
   'openai-import': async (s, d) => {
     const r = await d.importEndpoint(s.ids, { baseUrl: s.baseUrl });
-    return { ok: true, line: importedLine(r, String(r.baseUrl || s.baseUrl).replace(/(\/\/)[^/\s:@]+(?::[^/\s@]*)?@/, '$1')) };   // no user:pass@ in the row
+    return { ok: true, line: importedLine(r, String(r.baseUrl || s.baseUrl).replace(/(\/\/)[^/\s:@]+(?::[^/\s@]*)?@/, '$1')), imported: importedIds(r) };   // no user:pass@ in the row
   },
   'role-test': async (s, d) => {
     const r = await d.testModel(s.model);
@@ -299,7 +327,8 @@ const failLine = (step, err) => {
 
 /**
  * Phase 3: the side effects, in order. Refusals first (they never stop the run), then each step;
- * the first failure names itself as `retry` and every later step is skipped.
+ * the first failure names itself as `retry` and every later step is skipped. A role test on a model this
+ * apply imports is not run when that import failed or did not import it: Retry is then the import (D-H).
  * @returns {Promise<{ok:boolean, retry:string|null, results:object[]}>}
  */
 export async function runSetupSteps(plan, { deps = {}, onResult = () => {} } = {}) {
@@ -308,16 +337,31 @@ export async function runSetupSteps(plan, { deps = {}, onResult = () => {} } = {
   const emit = (r) => { results.push(r); onResult(r); };
   for (const r of plan.refused) emit(r);
   const start = plan.fromStep ? plan.steps.findIndex((s) => s.id === plan.fromStep) : 0;
+  const imported = new Map();        // import step id -> lower-cased catalog ids it created or updated
   let failed = null;
+  let notImported = null;            // the import step a role test waited on in vain
+  const indexOf = (id) => plan.steps.findIndex((s) => s.id === id);
   for (const [i, step] of plan.steps.entries()) {
     const base = { id: step.id, label: step.label };
     if (i < start) { emit({ ...base, state: 'skipped', line: 'Done before; not run again.' }); continue; }
+    if (step.importedBy && (failed?.id === step.importedBy
+      || (imported.has(step.importedBy) && !imported.get(step.importedBy).has(String(step.model).toLowerCase())))) {
+      notImported ||= step.importedBy;
+      emit({ ...base, state: 'skipped', line: `Not run: ${step.model} was not imported.` });
+      continue;
+    }
     if (failed) { emit({ ...base, state: 'skipped', line: `Not run: ${failed.label} failed first.` }); continue; }
     if (step.skip) { emit({ ...base, state: 'skipped', line: step.skip }); continue; }      // a broker-refused sign-in's import: not a failure
     let r;
     try { r = await runnerOf(step.id)(step, d); } catch (err) { r = { ok: false, line: failLine(step, err) }; }
-    if (r.ok) emit({ ...base, state: 'ok', line: r.line });
-    else { failed = step; emit({ ...base, state: 'failed', line: r.line, retry: step.id }); }
+    if (r.ok) {
+      if (Array.isArray(r.imported)) imported.set(step.id, new Set(r.imported.map((x) => String(x).toLowerCase())));
+      emit({ ...base, state: 'ok', line: r.line });
+    } else { failed = step; emit({ ...base, state: 'failed', line: r.line, retry: step.id }); }
   }
-  return { ok: !failed, retry: failed ? failed.id : null, results };
+  // Retry from the EARLIEST step that needs a re-run (D-H): an import that skipped a role's model comes before a
+  // role test that failed later, and retrying that role test alone would test a model that was never imported.
+  const candidates = [failed?.id, notImported].filter(Boolean);
+  const retry = candidates.length ? candidates.reduce((a, b) => (indexOf(b) < indexOf(a) ? b : a)) : null;
+  return { ok: !failed && !notImported, retry, results };
 }

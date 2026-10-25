@@ -125,6 +125,21 @@ test('withScanRole: the quick role is the scan model; the sub-agent alias keeps 
   assert.equal(withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS, { roles: {} }), null);
 });
 
+test('a role naming a model missing from the catalog falls back like an empty role (D3)', async () => {
+  // An import that failed after the roles were saved: the role names copilot-gone, which no catalog layer has.
+  writeUser({ modelRoles: { claude: { deep: { model: 'copilot-gone', effort: 'high' }, quick: QUICK } } });
+  assert.equal(resolveRoleModel('claude', 'deep'), null);
+  assert.equal(resolveRoleModel('claude', 'quick').model, 'claude-haiku-5-5');        // a known model still resolves
+  assert.equal((await resolveStepModels(projectDir, undefined, 'claude')).planner.model, undefined);   // deep slot: today's fallback
+  // Once the import lands, the same role resolves.
+  writeUser({ modelRoles: { claude: { deep: { model: 'copilot-gone' } } },
+    models: [{ id: 'copilot-gone', label: 'Gone (Copilot)', efforts: ['medium'], upstream: { provider: 'copilot', api: 'anthropic', model: 'gone' }, cost: { free: true } }] });
+  assert.equal(resolveRoleModel('claude', 'deep').model, 'copilot-gone');
+  // The injected reader decides; null turns the check off (the pure resolver tests).
+  assert.equal(resolveRoleModel('claude', 'deep', { roles: { claude: { deep: { model: 'x' } } }, owners: () => null }), null);
+  assert.equal(resolveRoleModel('claude', 'deep', { roles: { claude: { deep: { model: 'x' } } }, owners: null }).model, 'x');
+});
+
 // --- titles (AC-1.1, AC-1.2) ------------------------------------------------
 
 test('titles: the quick role beats the run model; a stored titleModel beats the role', () => {
