@@ -82,7 +82,6 @@ test('style.css "Chat P4: run panel": width, 900px sheet, pinned tabs, scrolling
   assert.match(sec, /\.crp :is\(\.rd-tabs,\.hd-tabs\)\{top:0;/);
   assert.match(sec, /@media \(prefers-reduced-motion:reduce\)\{\s*\.chat-page\[data-panel="open"\] \.chat-panel\{animation:none;\}/);
   assert.match(sec, /animation:crp-in \.24s cubic-bezier\(\.2,\.7,\.3,1\) backwards;/, 'no transform is kept once the slide-in ends');
-  assert.match(sec, /\.crp :is\(\.rd-bar,\.hd-bar\) > \.rd-bar-mid\{display:none;\}/, 'the bar keeps one row');
   assert.match(sec, /\.crp \.rd-questions \.gate-actions \.btn\{flex:0 1 auto;max-width:100%;white-space:normal;/, 'answer buttons wrap inside the card');
   assert.match(sec, /\.crp \.crp-head > :is\(\.rd-banners,\.hd-banners\):not\(:has\(> :not\(\[hidden\]\)\)\)\{display:none;\}/);
   assert.match(sec, /\.chat-page\[data-panel="open"\] \.chat-panel:focus\{outline:none;\}/);

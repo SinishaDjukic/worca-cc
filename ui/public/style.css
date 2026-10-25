@@ -339,6 +339,21 @@ body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;pa
 .topnav-r{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0;}
 .topnav-title{min-width:0;margin:0;font-size:var(--fs-body);font-weight:600;line-height:20px;letter-spacing:-.005em;color:var(--ink);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* Navigation (docs/design-system.md): the breadcrumb takes the top bar title's place on a page under a section. */
+.topnav-title[hidden]{display:none;}
+.topnav-crumbs{min-width:0;font-size:var(--fs-body);line-height:20px;}
+.topnav-crumbs[hidden]{display:none;}
+.nav-trail{display:flex;align-items:center;gap:4px;min-width:0;margin:0;padding:0;list-style:none;}
+.nav-crumb{display:flex;align-items:center;gap:4px;min-width:0;}
+.nav-crumb a{color:var(--ink-2);text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40ch;}
+.nav-crumb:first-child a{color:var(--ink);font-weight:600;}
+.nav-crumb a:hover{color:var(--ink);text-decoration:underline;}
+.nav-crumb-sep{display:inline-flex;color:var(--ink-2);}
+.nav-up{display:none;align-items:center;gap:4px;min-width:0;max-width:100%;color:var(--ink);font-weight:600;text-decoration:none;
+  white-space:nowrap;}
+.nav-up > .ic{flex:none;}
+.nav-up-label{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.topnav-crumbs a:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .side-toggle{flex:none;}
 .side-toggle svg{width:20px;height:20px;flex:none;}
 .side-toggle .side-toggle-fill,.side-toggle[aria-expanded="false"] .side-toggle-line{display:none;}
@@ -4733,7 +4748,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
    page's Resume, no `.btn` either) — which matters most for `.hd-back`, the
    node openHistDetail focuses programmatically, and for the `.hd-tab` tablist.
    `.hd-diff-file` already has its own (inset) ring and is not repeated here. */
-.hd-back:focus-visible,.pd-back:focus-visible,.pd-new:focus-visible,.pd-history:focus-visible,.pd-sec:focus-visible,.proj-open:focus-visible,.pd-ov-link:focus-visible,
+.pd-back:focus-visible,.pd-new:focus-visible,.pd-history:focus-visible,.pd-sec:focus-visible,.proj-open:focus-visible,.pd-ov-link:focus-visible,
 .hd-report:focus-visible,.hd-archive:focus-visible,.hd-sec:focus-visible,.shipit-cancel:focus-visible{
   outline:2px solid var(--ink);outline-offset:2px;}
 
@@ -4884,8 +4899,6 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-page-title:focus{outline:none;}
 /* Side by side: only the open detail shows. */
 .runs-shell[data-layout="split"] .runs-pane > :is(.run-shell,.hist-shell,.group-shell):not(.detail-open){display:none;}
-/* Run 3 (D6): the slide layout keeps the one Back button; the breadcrumb is for the split layout. */
-.runs-shell[data-layout="slide"] .rd-crumbs{display:none;}
 /* Narrow: the slide the two old screens used (D7). */
 .runs-shell[data-layout="slide"]{display:block;}
 .runs-shell[data-layout="slide"] > :is(.runs-list-pane,.runs-pane){position:absolute;inset:0;transition:transform .46s cubic-bezier(.65,.02,.28,1);}
@@ -4952,9 +4965,6 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .hd-stop[hidden],.rd-stop[hidden]{display:none;}
 .rd-error{margin-top:24px;color:var(--red-ink);font-size:var(--fs-body);}
 .rd-error[hidden]{display:none;}
-/* .rd-back is focused programmatically by openRunDetail — same reasoning as the .hd-back arm. */
-.rd-back,.hd-back,.gpage-back{display:inline-flex;align-items:center;justify-content:center;}   /* slice 2: a 28px icon button (btn-sm btn-icon) */
-.rd-back:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
 /* MUST sit after the rules above: @media contributes no specificity, so an
    earlier placement would lose the source-order tie (see the note at :1927-1932). */
@@ -4973,23 +4983,57 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
    switch's visible label first: the select keeps its aria-label and tooltip, the pill says what
    happens. */
 @container rd-bar (max-width:900px){ .rd-night-wrap > .txt{display:none;} }
-.rd-bar-mid{flex:1 1 0;display:flex;justify-content:flex-start;align-items:center;gap:8px;min-width:0;}   /* basis 0: the name truncates before the controls wrap; flex-start: it sits at the bar's left, the controls at its right */
-/* The run's name. Details has it as its header's title, so the bar leaves it blank there. */
-/* The glance's page title owns the name; the bar repeats it only once that heading has
-   scrolled out of view (app.js watchPageTitle sets data-title-out), like a large title
-   collapsing into the navigation bar. Details has its own header, so never there. */
-.rd-bar-title{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font:600 var(--fs-body) var(--sans);color:var(--ink);
-  opacity:0;transition:opacity .2s;}
-.rd[data-title-out="1"][data-mode="glance"] .rd-bar-title,.hd[data-title-out="1"][data-mode="glance"] .rd-bar-title{opacity:1;}
-@media (prefers-reduced-motion:reduce){.rd-bar-title{transition:none;}}
+/* Navigation (docs/design-system.md): one head on a page screen (data-presentation="page", the host's). .ph is the
+   rd-bar container, so the bar's container queries still read the page width. */
+/* 28px on top, as the glance's and the group page's (.gpage) padding: the h1 sits at one height on all three pages. */
+.ph{display:flex;flex-direction:column;gap:12px;padding:28px 32px 0;container:rd-bar / inline-size;}
+.ph-row{display:flex;align-items:flex-start;gap:12px;min-width:0;}
+.ph-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:4px;}
+.ph-meta{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+.ph-meta[hidden]{display:none;}
+/* The actions keep their width (the h1 wraps instead), so no control is clipped or wraps under the others. */
+.ph-actions{flex:none;max-width:100%;display:flex;justify-content:flex-end;}
+.ph :is(.rd-bar,.hd-bar){position:static;padding:0;border:0;background:none;container:none;}
+.ph-tabs[hidden],.ph-tabs:empty,.ph-tabs:not(:has([role="tab"])){display:none;}
+/* The strip inside the head: no sticky offset (it has no page to stick to here), and it scrolls sideways inside
+   itself at 375px (the .tabs class initDetailTabs adds already sets overflow-x; this states it for every strip). */
+.ph-tabs{min-width:0;}
+.ph-tabs > [role="tablist"]{position:static;padding-top:0;margin-bottom:0;overflow-x:auto;scrollbar-width:none;}
+/* The group page pads itself (.gpage 28px 32px; 16px at 640px): its head adds no second inset. */
+.gpage > .ph{padding:0;}
+.ph-tabs .rd-tab[data-sec="overview"] .rd-tab-badge{background:var(--amber-bg);color:var(--amber-ink-strong);}
+/* The Details header is the Chat run panel's head until slice 3. On a page mountRunHead moves it into Summary under
+   the facts row for the rows only it carries; the title, status and PR control the page head says are not drawn twice.
+   Never a card inside the card: a divider under the facts, no box of its own. Nothing the card already says is drawn
+   again either: the status word and step, project, start, time and cost (the status block, the Project row, the tiles; the
+   breakdown trigger and "cost unknown" stay), and the branch where Where the work is names it (with its copy). A
+   hidden segment takes its separator dot with it; the live meta keeps only the cost trigger, so it drops every dot. */
+.rd-sheet > :is(.rd-header,.hd-header){margin:0;padding:14px 0 0;border:0;border-top:1px solid var(--line);border-radius:0;background:none;}
+.rd-sheet > .rd-header .rd-meta > :not(.cost-bd-btn,.cost-unknown),
+.rd-sheet > .rd-header .rd-meta:not(:has(> :is(.cost-bd-btn,.cost-unknown))),
+.rd-sheet > .hd-header .hd-meta > :is(.hd-status-word,.hd-status-word + .hd-dot,.hd-day,.hd-clock,.hd-dur,.hd-cost:not(.cost-bd-btn,.cost-unknown)),
+.rd-sheet > .hd-header .hd-meta > .hd-dot:has(+ :is(.hd-day,.hd-clock,.hd-dur,.hd-cost:not(.cost-bd-btn,.cost-unknown))){display:none;}
+.rd-sheet > .rd-header .rd-meta{margin-top:0;}
+/* There the cost tile is the breakdown trigger (syncCostTile), so the meta line's own trigger goes, with its dot. */
+.rd-sheet:has(.rd-stat-cost-btn) > .rd-header .rd-meta:not(:has(> .cost-unknown)),
+.rd-sheet:has(.rd-stat-cost-btn) > .hd-header .hd-meta > :is(.hd-cost.cost-bd-btn,.hd-dot:has(+ .hd-cost.cost-bd-btn)){display:none;}
+:is(.rd,.hd):has(.rd-route:not([hidden]) .rd-route-copy) .rd-sheet > :is(.rd-header,.hd-header) :is(.rd-base,.hd-base,.rd-branch-copy,.hd-branch-copy,.rd-copied,.hd-copied){display:none;}
+.rd-sheet > :is(.rd-header,.hd-header) :is(.rd-title,.hd-title,.rd-status,.hd-sic,.auto-badge,.hd-pr,.hd-pr-link){display:none;}
+.rd-sheet > :is(.rd-header,.hd-header) :is(.rd-row1,.hd-row1):not(:has(> :not(.rd-title,.hd-title,.rd-status,.auto-badge,.hd-pr,.hd-pr-link,[hidden],:empty))){display:none;}
+/* .hd-graph only where it waits in the Details body: the Workflow tab moves it into its own section. */
+:is(.rd,.hd)[data-presentation="page"] .hd-body > .hd-graph{display:none;}
+:is(.rd,.hd)[data-presentation="page"] .rd-now > .rd-page-head:empty{display:none;}
+:is(.rd,.hd)[data-presentation="page"]:has(.ph-tabs [role="tab"][data-sec="overview"][aria-selected="false"]) :is(.rd-glance,.hd-glance){display:none;}
+.gpage:not([data-tab="runs"]) > .gpage-card{display:none;}
+/* Phone width: the h1 wraps in full (no clamp), the kind chip goes under it, and Run after folds into ⋯ (app.js). */
+@media (max-width:640px){ .ph{padding:16px 16px 0;} .gpage > .ph{padding:0;} .ph-row{flex-wrap:wrap;}
+  .ph .rd-title-row{flex-wrap:wrap;}
+  .ph .rd-title-row > .rd-page-title{flex:1 1 100%;display:block;-webkit-line-clamp:unset;overflow:visible;}
+  .ph :is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-after,.hd-after){display:none;} }
 .rd-bar-end{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;min-width:0;}
 /* Every control in the bar keeps its words on one line: a squeezed bar wraps whole controls
    onto a second row, never the text inside one ("Run after" over two lines). */
 .rd-bar-end > *{flex:none;white-space:nowrap;}
-.rd-to-run,.hd-to-run{display:inline-flex;align-items:center;gap:8px;}
-.rd-to-run.ask{background:var(--panel);border-color:var(--amber);color:var(--amber-ink);}   /* a question waits on the glance */
-.rd-back[hidden],.hd-bar .hd-back[hidden],.hd-to-run[hidden],.rd-to-run[hidden]{display:none;}
-.rd-to-run:focus-visible,.hd-to-run:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* A page that focuses its way back (or a menu handing focus back to its trigger) would otherwise paint that as
    :focus-visible after a click. The ring shows only to keyboard users (app.js sets data-input from the last keydown /
    pointerdown). Fields are not listed: a clicked field keeps its ink border. */
@@ -5722,6 +5766,8 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 }
 @media (max-width:760px){
   .rd-ov-state .limit-resume{flex-basis:100%;width:100%}
+  .nav-trail{display:none;}
+  .nav-up{display:inline-flex;}
   .mbar-menu{position:relative;display:flex;flex:0 0 auto;}
   .mbar-menu svg{width:22px;height:22px;}
   .mbar-menu .nav-rollup{position:absolute;top:6px;right:6px;margin:0;border:2px solid var(--panel);}
@@ -9166,16 +9212,15 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .crp-host:empty{display:none;}
 .crp-host > :is(.rd,.hd)[data-presentation="panel"]{height:100%;display:flex;flex-direction:column;}
 .crp :is(.rd-bar,.hd-bar){position:static;flex:none;gap:8px;padding:8px 8px 8px 16px;}
-/* One row at every panel width: the bar's empty middle goes (the name is the Details header's), the controls take
-   the row, and the Away mode pill gives way (the select keeps its value; the full page shows the pill). */
-.crp :is(.rd-bar,.hd-bar) > .rd-bar-mid{display:none;}
+/* One row at every panel width: the controls take the row, and the Away mode pill gives way (the select keeps its
+   value; the full page shows the pill). */
 .crp .rd-bar-end{flex:1 1 auto;flex-wrap:nowrap;margin-left:auto;}
 .crp .rd-bar .rd-night-pill{display:none;}
 /* A paused run's Resume split is wider than Pause: the Away select gives way first (down to 72px; its aria-label
    names it) rather than Open full page and Close dropping onto a second row. */
 .crp .rd-bar-end > .rd-night-wrap{flex:0 1 auto;min-width:72px;}
 .crp .rd-bar .rd-night{flex:1 1 auto;width:100%;min-width:0;}
-.crp :is(.rd-to-run,.hd-to-run,.term-opener){display:none;}
+.crp .term-opener{display:none;}
 .crp :is(.rd > .rd-error,.hd > .hd-error){flex:none;margin:8px 16px 0;}
 .crp :is(.rd-details,.hd-details){flex:1 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;}
 .crp :is(.rd-header,.hd-header){margin:12px 16px 0;padding:16px 18px 14px;}
@@ -9754,13 +9799,6 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 /* ⋯ is .btn-quiet in markup; on the bar it wears its neighbours' border and fill. */
 :is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-bar-more,.hd-bar-more){background:var(--panel);border-color:var(--line-2);color:var(--ink);}
 :is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-bar-more,.hd-bar-more):hover:not(:disabled){background-color:var(--btn-hover);}
-/* Run 3 (D6): the breadcrumb at the bar's left (split layout only). */
-.rd-crumbs{display:flex;align-items:center;gap:4px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);}
-.rd-crumbs[hidden]{display:none;}
-.rd-crumb{min-width:0;max-width:24ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:inherit;text-decoration:none;}
-a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
-.rd-crumb[aria-current="page"]{color:var(--ink);}
-.rd-crumb-sep{display:inline-flex;flex:none;color:var(--ink-3);}
 /* Run 3 (D8): the facts block — 12px labels in one column, 13px values; label over value in a narrow card. */
 .rd-kv{container:rd-kv / inline-size;margin:0;display:flex;flex-direction:column;}
 .rd-kv-row{display:grid;grid-template-columns:96px minmax(0,1fr);gap:12px;align-items:baseline;padding:8px 0;}
@@ -9958,10 +9996,7 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .gpage{display:flex;flex-direction:column;gap:22px;margin:0 auto;padding:28px 32px var(--ask-dock-clearance);box-sizing:border-box;max-width:1216px;}
 .gpage > *{width:100%;box-sizing:border-box;}
 .gpage-bar{display:flex;align-items:center;gap:8px;}
-/* Run 3 (D15): the run page's spacing — the bar spans the pane like the run page's .rd-bar (its height and padding), and
-   the title sits as far under it as the run page's (the glance's 28px top padding, 20px on a phone; the page gap is 22px). */
-.gpage > .gpage-bar.rd-bar{width:auto;margin:-28px -32px 6px;}
-@media (max-width:640px){.gpage{padding:16px 16px var(--ask-dock-clearance);}.gpage > .gpage-bar.rd-bar{margin:-16px -16px -2px;}}
+@media (max-width:640px){.gpage{padding:16px 16px var(--ask-dock-clearance);}}
 .gpage-spacer{flex:1;}
 .gpage-actions{display:inline-flex;gap:6px;}
 .gpage-ship{margin:8px 0 0;font-size:13px;color:var(--ink-2);}
@@ -10014,7 +10049,8 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 }
 /* QA 8: the group heading keeps a sane width; the kind chip wraps under it when there is no room. */
 .gpage .rd-title-row{flex-wrap:wrap;}
-.gpage .gpage-title{flex:1 1 160px;min-width:min(100%,160px);}
+/* The chip sits beside the title, as on the run pages (0 1 auto); the min-width keeps a sane heading width. */
+.gpage .gpage-title{flex:0 1 auto;min-width:min(100%,160px);}
 
 /* Chat: answer ref chips (ui/public/ask-ref-chips.mjs). A neutral chip with the token corner; the
    status is a coloured word (the .runs-pr.is-* pattern), never a filled pill. */

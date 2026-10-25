@@ -155,16 +155,18 @@ test('Run page: the after button appears once the pipeline id is known, deep-lin
 });
 
 // Run after is a quick button on both run pages' bars, beside the Resume split and Stop: no rule folds it into ⋯ on
-// an unshaped bar (a shaped run's bar still does, D31), and ⋯ does not repeat it there.
+// an unshaped bar (a shaped run's bar still does, D31, and so does a page at phone width, inside the 640px rule where
+// ⋯ carries it), and ⋯ does not repeat it there.
 test('Run after sits on the bar, not in ⋯: no rule hides it on an unshaped bar, and the run page\'s ⋯ leaves it out', async () => {
   const css = readFileSync(fileURLToPath(new URL('../ui/public/style.css', import.meta.url)), 'utf8');
   const { document: cssDoc } = new JSDOM(`<style>${css}</style>`).window;
   const folds = [];
-  (function walk(list) {
+  (function walk(list, phone = false) {
     for (const rule of list) {
       if (typeof rule.selectorText === 'string' && rule.style.display === 'none' && /\.(rd|hd)-after\b/.test(rule.selectorText)
-        && !/\[hidden\]|\[data-shaped\]/.test(rule.selectorText)) folds.push(rule.selectorText);
-      if (rule.cssRules?.length) walk(rule.cssRules);
+        && !/\[hidden\]|\[data-shaped\]/.test(rule.selectorText)
+        && !(phone && /^\.ph /.test(rule.selectorText))) folds.push(rule.selectorText);
+      if (rule.cssRules?.length) walk(rule.cssRules, phone || /max-width:\s*640px/.test(rule.conditionText || rule.media?.mediaText || ''));
     }
   })(cssDoc.styleSheets[0].cssRules);
   assert.deepEqual(folds, [], 'Run after is never folded off an unshaped bar');

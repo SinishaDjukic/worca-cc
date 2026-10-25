@@ -273,7 +273,7 @@ test('a Needs-you question row for the run already open lands the pane on its qu
   window.Element.prototype.scrollIntoView = function () { scrolled += 1; };
   click(window, doc.querySelector('#runs-list .runs-sec[data-section="needs"] a.runs-row[data-run-id="q1"]')); await settle(window);
   assert.equal(window.location.hash, '#running/q1');
-  assert.equal(screen.dataset.mode, 'glance');
+  assert.equal(screen.querySelector('.rd-tab[data-sec="overview"]').getAttribute('aria-selected'), 'true', 'Summary, where the question is');
   assert.ok(scrolled > 0, 'scrolled to the question without waiting for a panel rebuild');
 });
 
@@ -1308,7 +1308,7 @@ test('run 3: all four deep links render inside #runs-pane with Runs visible', as
   }
 });
 
-test('run 3: on a phone (slide layout) the group pane is full screen with Back, in its page, gone and error states', async () => {
+test('run 3: on a phone (slide layout) the group pane is full screen with the top bar\'s up link, in its page, gone and error states', async () => {
   const fail = (window) => {
     const f = window.fetch;
     window.fetch = globalThis.fetch = (u, init) => (String(u).endsWith('/api/run-groups')
@@ -1321,23 +1321,25 @@ test('run 3: on a phone (slide layout) the group pane is full screen with Back, 
     doc.getElementById('runs-shell').dataset.layout = 'slide';
     go(window, `feature/${id}`); await settle(window, 6);
     assert.equal(doc.getElementById('runs-list-pane').hasAttribute('inert'), true, `${id}: the list is inert`);
-    const back = doc.querySelector('#group-detail .gpage-back');
-    assert.ok(back, `${id}: the group pane carries Back`);
-    assert.equal(doc.activeElement, back, `${id}: focus lands on Back`);
+    assert.equal(doc.querySelector('#group-detail .gpage-back'), null, `${id}: no Back in the pane`);
+    const up = doc.querySelector('#topnav-crumbs a.nav-up');
+    assert.ok(up, `${id}: the top bar carries the up link`);
+    assert.equal(up.textContent, 'Runs');
+    if (!text) assert.equal(doc.activeElement, doc.querySelector('#group-detail .gpage-title'), `${id}: focus lands on the h1`);
     if (text) assert.match(doc.querySelector('#group-detail').textContent, text);
-    back.click(); await settle(window, 6);
-    assert.equal(window.location.hash, '#runs', `${id}: Back returns to the list`);
+    up.click(); await settle(window, 6);
+    assert.equal(window.location.hash, '#runs', `${id}: the up link returns to the list`);
     window.close();
   }
 });
-test('slice 2: side by side (split) the group Back shows the list, with the group pane closed', async () => {
+test('slice 2: side by side (split) the Runs crumb shows the list, with the group pane closed', async () => {
   const { window, doc } = await boot({ runGroups: [FEATURE_GROUP], history: [] });
   go(window, 'runs'); await settle(window);
   doc.getElementById('runs-shell').dataset.layout = 'split';
   go(window, `feature/${FEATURE_GROUP.id}`); await settle(window, 6);
   const shell = doc.getElementById('group-shell');
   assert.ok(shell.classList.contains('detail-open'));
-  doc.querySelector('#group-detail .gpage-back').click(); await settle(window, 6);
+  doc.querySelector('#topnav-crumbs .nav-trail a[data-crumb="runs"]').click(); await settle(window, 6);
   assert.equal(window.location.hash, '#runs');
   assert.equal(shell.classList.contains('detail-open'), false, 'the group page closed');
   window.dispatchEvent(new window.Event('hashchange')); await settle(window, 6);

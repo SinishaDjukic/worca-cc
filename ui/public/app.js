@@ -107,7 +107,11 @@ import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.m
 import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
 import { setShipDialogOpener, shipReason } from './shape/ship-card.mjs';
-import { runPositionLabel, groupKindWord, pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
+import { runPositionLabel, groupKindWord, pageModel, runTitleText, syncFacts } from './run-page-head.mjs';
+import { parseRoute, formatRoute, pageKey, tabKey, engineTab, groupRoute, ROUTES } from './nav/routes.mjs';
+import { trailFor, paintTrail, onCrumbs } from './nav/crumbs.mjs';
+import { mountPageHead, focusPageTitle } from './nav/page-head.mjs';
+import { wireTabs } from './nav/tabs.mjs';
 import { headModel, routeModel, routeGroupOf, renderHeadButtons, renderRoute, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
   hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip } from './run-head.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
@@ -1363,11 +1367,140 @@ for (const m of [phoneNavMq, railTierMq]) {
   if (typeof m.addEventListener === 'function') m.addEventListener('change', onNavTierChange);
   else if (typeof m.addListener === 'function') m.addListener(onNavTierChange);   // Safari < 14
 }
-/** The top bar names the open page (topnav.mjs#pageTitle). `name` is the route itself, so
- *  #running/<id> and #history/<key>/<id> read "Runs" like the list. Painted on every showView. */
-function paintTopnavTitle(name) {
+// Unified navigation (docs/design-system.md Navigation). Generic over ROUTES (nav/routes.mjs) and NAV_SCREENS below:
+// adding a view is one row in each. Nothing here branches on a view name.
+const navOwns = (view) => Object.hasOwn(ROUTES, view) && !ROUTES[view].section;
+// Page or Chat run panel is the HOST's: openRunDetail / openHistDetail know it when they clone the template, and the
+// screen carries it as data-presentation ('panel' from presentRunScreenInPanel, 'page' from navMount). The panel keeps
+// its Details mode until slice 3.
+const onPage = (screen) => !!screen && screen.dataset.presentation === 'page';
+const navState = { route: null, ctx: {}, focusedKey: '' };
+
+// Per view: where its page screen is (never the panel's), which of its nodes form the head, and its tablist's label.
+// `kind` is the engine's ('live' | 'saved') for the run tab engines; the group page has none.
+const NAV_SCREENS = {
+  running: { screen: () => (runDetailState.host !== 'panel' ? runDetailState.screen : null), kind: 'live',
+    titleRow: '.rd-title-row', bar: '.rd-bar', tablist: '.rd-tabs', label: 'Run sections' },
+  history: { screen: () => (histDetailState && histDetailState.host !== 'panel' ? histDetailState.screen : null), kind: 'saved',
+    titleRow: '.rd-title-row', bar: '.hd-bar', tablist: '.hd-tabs', label: 'Run sections' },
+  feature: { screen: () => GROUP_PAGE.host && GROUP_PAGE.host.querySelector('.gpage'),
+    titleRow: '.rd-title-row', bar: '.gpage-bar', tablist: '.gpage-tabs', label: 'Group sections' },
+  group: { screen: () => GROUP_PAGE.host && GROUP_PAGE.host.querySelector('.gpage'),
+    titleRow: '.rd-title-row', bar: '.gpage-bar', tablist: '.gpage-tabs', label: 'Group sections' },
+};
+// The screen -> view lookup for code that starts from a strip (reselectHiddenDetailTabs). Only rows with an engine
+// kind have detail tabs; the group page's fallback is paintGroupPage's own.
+const navViewOf = (screen) => Object.keys(NAV_SCREENS).find((v) => NAV_SCREENS[v].kind && NAV_SCREENS[v].screen() === screen) || '';
+
+// The one tab predicate for every page strip: [hidden], the interface level and the git gate.
+const navTabShown = (t) => !t.hidden && levelAtLeast(t.dataset.minLevel || 'simple') && (gitOn() || !('needsGit' in t.dataset));
+
+/** Go to `route`: a push (Back walks it), or a replace for a rewrite. */
+function navGo(route, { replace = false } = {}) {
+  const want = formatRoute(route);
+  if (location.hash === want) return;
+  if (replace) { try { window.history.replaceState(null, '', want); } catch { /* sandboxed */ } return; }
+  location.hash = want;
+}
+
+/** showView's one rewrite: an old form of a registered view's address is replaced in place, with no history entry.
+ *  Returns the canonical param, so showView's own hash sync then finds nothing to change. */
+function navCanonicalParam(view, param) {
+  if (!navOwns(view)) return param;
+  const r = parseRoute(`#${view}/${param || ''}`);
+  if (r.view !== view || r.canonical) return param;
+  navGo(r, { replace: true });
+  return formatRoute(r).slice(view.length + 2);
+}
+
+/** The top bar for `view`: the breadcrumb on a registered page, the plain title elsewhere. Page context (the parent)
+ *  survives a tab change, because pageKey ignores the tab. */
+function paintNavTrail(view, param) {
+  const route = navOwns(view) ? parseRoute(`#${view}/${param || ''}`) : null;
+  const same = !!route && !!navState.route && pageKey(route) === pageKey(navState.route);
+  navState.route = route;
+  if (!same) navState.ctx = {};
+  if (!route) navState.focusedKey = '';             // coming back to the same page focuses its h1 again
+  const h = document.getElementById('topnav-title');
+  if (h) h.hidden = !!route;
+  navPaintTrail();
+}
+/** The one trail painter: the current route's trail, or a hidden nav off a registered page. */
+function navPaintTrail() {
+  const nav = document.getElementById('topnav-crumbs');
+  if (!nav) return;
+  if (!navState.route) { nav.hidden = true; return; }
+  paintTrail(nav, trailFor(navState.route, navState.ctx));
+}
+/** The top bar names the open page (topnav.mjs#pageTitle); on a registered page the breadcrumb takes its place.
+ *  Painted on every showView. */
+function paintTopnavTitle(name, param = '') {
   const t = document.getElementById('topnav-title');
   if (t) t.textContent = pageTitle(name);
+  paintNavTrail(name, param);
+}
+
+/** A page reports its parent route ({ view, id, title }) once it knows it; the trail repaints. `key` is the reporting
+ *  page's pageKey: a late report from a page already left is ignored. */
+function setNavParent(key, parent) {
+  if (!navState.route || pageKey(navState.route) !== key) return;
+  navState.ctx = { parent };
+  navPaintTrail();
+}
+
+/** The one tab-fallback replace: the page cannot show the asked tab, so the address names the tab it opened instead
+ *  (any key form; the default is left out), with no history entry. */
+function navDropTab(view, tab = '') {
+  if (!navState.route || navState.route.view !== view) return;
+  // A replace fires no hashchange: the route keeps in step here, or a later tab click compares against a stale tab.
+  navState.route = { ...navState.route, tab: tabKey(view, tab) };
+  navGo(navState.route, { replace: true });
+}
+
+/** Mount the unified head on a PAGE screen of `view` (NAV_SCREENS row). Idempotent per screen. Never the panel's. */
+function navMount(view, screen) {
+  const row = NAV_SCREENS[view];
+  if (!row || !screen || screen.dataset.presentation === 'panel') return null;
+  screen.dataset.presentation = 'page';
+  const tablist = screen.querySelector(row.tablist);   // every row names its strip (no generic tablist selector here)
+  const head = mountPageHead(screen, {
+    titleRow: screen.querySelector(row.titleRow),
+    actions: screen.querySelector(row.bar),
+    tablist,
+  });
+  wireTabs(tablist, {
+    label: row.label,
+    keyOf: (t) => t.dataset.sec || t.dataset.tab,
+    isShown: navTabShown,
+    onSelect: (key) => { if (navState.route) navGo({ ...navState.route, tab: tabKey(navState.route.view, key) }); },
+  });
+  return head;
+}
+
+/** The one focus routine: the h1 of a page just entered (pageKey changed). Side by side, focus already in the Runs
+ *  list (the row just opened) stays; in the slide layout the list is inert, so the h1 always wins. Called by showView,
+ *  and again by paintGroupPageNow once the async-built group page exists. Once per pageKey. */
+function navFocus(view) {
+  if (!navOwns(view) || !navState.route || navState.route.view !== view) return;
+  const key = pageKey(navState.route);
+  if (navState.focusedKey === key) return;
+  const screen = NAV_SCREENS[view] && NAV_SCREENS[view].screen();
+  if (!screen || !screen.__pageHead) return;
+  navState.focusedKey = key;
+  focusPageTitle(screen.__pageHead, { keep: runsLayout() === 'split' ? el.runsListPane : null });
+}
+
+// Going up: the crumbs and Escape share one map. Runs is backToRunsList, the deleted Back's own action (forget the run,
+// show the list, never reopen it on a bare #runs). Any other parent is a plain hash push.
+const NAV_UP = { runs: () => backToRunsList() };
+onCrumbs(document.getElementById('topnav-crumbs'), NAV_UP);
+/** Escape's way up (D20): the last crumb, through NAV_UP. False when the page has no parent. */
+function navUp() {
+  const trail = navState.route ? trailFor(navState.route, navState.ctx) : [];
+  const up = trail[trail.length - 1];
+  if (!up) return false;
+  if (Object.hasOwn(NAV_UP, up.view)) NAV_UP[up.view](); else location.hash = up.href;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -23250,31 +23383,22 @@ function renderHistoryError(message) {
 // ---------------------------------------------------------------------------
 // History detail screen (#history/<projectKey>/<id>)
 // ---------------------------------------------------------------------------
-// The param after "history/" is "<projectKey>/<id>", optionally followed by
-// "/details[/<tab>]" (the Details mode, as on the Running page). projectKey contains a
-// slash ONLY as the fixed "workspaces/<wk>" prefix, and ids never contain "/", so once
-// the suffix is off, splitting at the LAST slash is unambiguous.
+// The param after "history/" is "<projectKey>/<id>[/tab]" (projectKey holds a slash only as the fixed
+// "workspaces/<wk>" prefix). Every run address is the route table's (nav/routes.mjs): the canonical form out, every
+// old form (…/details[/tab]) in, as redirects.
 function histDetailParam(p) { return `${p.projectKey}/${p.id}`; }
 
-const HIST_DETAILS_SUFFIX = /\/details(?:\/([a-z]+))?$/;
-
+// A page address always names a tab (Summary when none): the readers get mode 'details' and the ENGINE's tab key.
 function parseHistDetailParam(param) {
-  let s = String(param || '');
-  const m = s.match(HIST_DETAILS_SUFFIX);
-  const mode = m ? 'details' : 'glance';
-  const tab = m && m[1] ? m[1] : '';
-  if (m) s = s.slice(0, m.index);
-  const i = s.lastIndexOf('/');
-  if (i <= 0 || i === s.length - 1) return null;
-  const projectKey = s.slice(0, i);
-  const id = s.slice(i + 1);
-  return { projectKey, id, workspace: projectKey.startsWith('workspaces/'), mode, tab };
+  const r = parseRoute(`#history/${param || ''}`);
+  if (r.view !== 'history') return null;
+  return { projectKey: r.projectKey, id: r.id, workspace: r.projectKey.startsWith('workspaces/'), mode: 'details', tab: engineTab('history', r.tab) };
 }
 
+// `mode` stays a parameter so the callers and the panel's Open full page need no edit: only 'details' carries a tab.
 function hdHash(parsedOrState, mode = 'glance', tab = '') {
-  const base = `history/${parsedOrState.projectKey || parsedOrState.key}/${parsedOrState.id}`;
-  if (mode !== 'details') return base;
-  return tab ? `${base}/details/${tab}` : `${base}/details`;
+  const projectKey = parsedOrState.projectKey || parsedOrState.key;
+  return formatRoute({ view: 'history', projectKey, id: parsedOrState.id, tab: mode === 'details' ? tab : '' }).slice(1);
 }
 
 // The OPEN saved screen's address: its Runs page route, or the Chat run panel's (Chat P4).
@@ -23298,24 +23422,22 @@ function hdGoDetails(tab = '') {
 // setRdMode, for the History screen). `tab` opens that tab when the level shows it.
 function setHdMode(screen, mode, tab = '', { focus = true } = {}) {
   if (!screen) return;
+  // A page has no Details mode: every route is a tab of one page (docs/design-system.md Navigation).
+  if (onPage(screen)) { setRunTab(screen, 'history', mode === 'details' ? tab : ''); return; }
+  // The Chat run panel (slice 3 moves it onto the page head): its Details mode, as before.
   const details = mode === 'details';
   const changed = screen.dataset.mode !== (details ? 'details' : 'glance');
   screen.dataset.mode = details ? 'details' : 'glance';
   screen.querySelector('.hd-glance').hidden = details;
   screen.querySelector('.hd-details').hidden = !details;
-  screen.querySelector('.hd-back').hidden = details;
-  screen.querySelector('.hd-to-run').hidden = !details;
   if (details) {
     const tabs = detailTabsOf(screen);
     if (tabs && tab && tabs.cells.has(tab) && levelAtLeast(tabs.cells.get(tab).tab.level || 'simple') && (gitOn() || !tabs.cells.get(tab).tab.needsGit)) tabs.activate(tab);
     else if (!tabs && tab) screen.dataset.wantTab = tab;   // the data is still loading
   }
   if (changed && el.histDetail) el.histDetail.scrollTop = 0;
-  if (changed && focus) {
-    // Side by side the glance's way back to the list is hidden (the list is in view), so
-    // coming back from Details lands on the glance's title (tabindex="-1") instead.
-    const target = details ? screen.querySelector('.hd-to-run')
-      : runsLayout() === 'split' ? screen.querySelector('.hd-glance .rd-page-title') : screen.querySelector('.hd-back');
+  if (changed && focus && !details) {
+    const target = screen.querySelector('.rd-page-title');
     if (target && !target.hidden) target.focus({ preventScroll: true });
   }
 }
@@ -23390,34 +23512,35 @@ function openHistDetail(parsed, { instant = false, host: where = 'page' } = {}) 
   const screen = $('#hist-detail-tpl').content.firstElementChild.cloneNode(true);
   host.appendChild(screen);
   histDetailState.screen = screen;
-  // The panel has no glance, so there is no page title to watch.
-  if (panel) presentRunScreenInPanel(screen); else watchPageTitle(screen, 'hd');
+  if (panel) presentRunScreenInPanel(screen); else mountRunHead(screen, 'history');
 
-  screen.querySelector('.hd-back').addEventListener('click', () => backToRunsList());   // slice 2: the list itself, never the D6 restore
-  // Glance <-> Details are routes, so the browser's back and forward walk them.
+  // Every tab is a route, so the browser's back and forward walk them.
   const toDetails = (tab = '') => { hdGoDetails(tab); };
-  const toRun = () => { if (histDetailState && histDetailState.host !== 'panel') location.hash = hdHash(histDetailState); };
-  screen.querySelector('.hd-to-run').addEventListener('click', toRun);
   // Run 3 (D13): the saved bar is the primary action, Run after, Stop and ⋯; ⋯ drives the controls CSS hides there.
   screen.querySelector('.hd-bar-more')?.addEventListener('click', (e) => {
-    toggleMenu({ doc: document, anchor: e.currentTarget, items: runMoreItems(screen), align: 'end', label: 'More for this run' });
+    // A page at phone width hides Run after (style.css), so ⋯ carries it there, as on the live bar.
+    const after = screen.querySelector('.hd-after');
+    const extra = after && !after.hidden && levelAtLeast('advanced') && onPage(screen)
+      && typeof matchMedia === 'function' && matchMedia('(max-width: 640px)').matches
+      ? [{ label: after.querySelector('.hd-btn-label').textContent, title: after.title, onSelect: () => after.click() }] : [];
+    toggleMenu({ doc: document, anchor: e.currentTarget, items: runMoreItems(screen, { extra }), align: 'end', label: 'More for this run' });
   });
   screen.querySelector('.hd-glance .rd-sheet').addEventListener('click', (e) => {
     const row = e.target.closest && e.target.closest('[data-rd-tab]');
     if (row) toDetails(row.dataset.rdTab);
   });
-  // The address follows the open tab without a history entry per click.
+  // The Chat run panel's address follows the open tab without a history entry per click (a page pushes its tab route).
   screen.querySelector('.hd-tabs').addEventListener('click', (e) => {
     const btn = e.target.closest && e.target.closest('.hd-tab');
-    if (!btn || !histDetailState || screen.dataset.mode !== 'details') return;
+    if (!btn || !histDetailState || histDetailState.host !== 'panel') return;
     const want = `#${hdScreenHash('details', btn.dataset.sec)}`;
     if (location.hash !== want) { try { window.history.replaceState(null, '', want); } catch { /* ignore */ } }
   });
   screen.querySelector('.hd-title').textContent = record.title || parsed.id;
   // paintPageHead runs only once the details land: name the run now, so the title is never blank while loading.
-  const hdPageTitle = screen.querySelector('.hd-glance .rd-page-title');
-  hdPageTitle.textContent = record.title || parsed.id;
-  hdPageTitle.title = hdPageTitle.textContent;
+  const hdPageTitle = screen.querySelector('.rd-page-title');
+  if (onPage(screen)) { hdPageTitle.dataset.fullTitle = record.title || parsed.id; setRunH1(screen); }
+  else { hdPageTitle.textContent = record.title || parsed.id; hdPageTitle.title = hdPageTitle.textContent; }
   paintHistStatusIcon(screen.querySelector('.hd-sic'), record);
 
   // Chat P4: the run panel is not the Runs page — no pane to open, no focus hand-off, no remembered run.
@@ -23427,8 +23550,7 @@ function openHistDetail(parsed, { instant = false, host: where = 'page' } = {}) 
     host.setAttribute('aria-hidden', 'false');
     host.removeAttribute('inert');
     syncRunsPane();
-    if (runsLayout() === 'slide') screen.querySelector('.hd-back').focus({ preventScroll: true });
-    else keepPaneFocus(screen);
+    keepPaneFocus(screen);                               // the slide layout's focus is navFocus's (the h1)
     // The row to hand focus back to on a slide close (the list row, by its data stamps).
     histReturnFocus = { id: parsed.id, projectKey: parsed.projectKey };
     rememberRun({ runId: '', pipelineId: parsed.id, projectKey: parsed.projectKey });
@@ -23516,10 +23638,17 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
     if (m && !m.runId && m.pipelineId === parsed.id && m.projectKey === parsed.projectKey) forgetLastRun();
     const err = screen.querySelector('.hd-error');
     if (err) { err.hidden = false; err.textContent = `Could not load run: ${e.message}`; }
+    // No kind chip for a run that is not there (paintRunPlace finds none to repaint).
+    screen.querySelector('.rd-title-row .kind-chip')?.remove();
+    // Nor a ⋯ (its menu would hold only Terminal) or the run's card, which would sit empty under the error.
+    const more = screen.querySelector('.hd-bar-more');
+    if (more) more.hidden = true;
+    const sheet = screen.querySelector('.hd-glance .rd-sheet');
+    if (sheet) sheet.hidden = true;
     // The meta line's first text node, as paintPageHead writes it: textContent would delete the branch button.
     const hg = screen.querySelector('.hd-glance');
-    const ht = hg && hg.querySelector('.rd-page-title');
-    paintPageHead(hg, ht ? ht.textContent : '', ['Could not load this run']);
+    const ht = screen.querySelector('.rd-page-title');
+    paintPageHead(hg, ht ? ht.dataset.fullTitle || ht.textContent : '', ['Could not load this run']);
     return;
   }
   if (!histDetailState || histDetailState.screen !== screen) return;   // navigated away mid-fetch
@@ -23564,9 +23693,11 @@ async function loadHistDetailScreen(screen, record, parsed, ship = null) {
   setupHdActions(screen, rec, data);
   initHdTabs(screen, rec, data);
   wireHdGraphLogLinks(screen);   // AFTER initHdTabs: it reads the screen's tab cells
-  // A deep link to a tab (#history/<key>/<id>/details/<tab>) waited for the tabs.
+  // A deep link to a tab (#history/<key>/<id>/<tab>) waited for the tabs. A page opens it as its route (a tab it
+  // cannot show falls back, and the address says so); the panel as before.
   const want = screen.dataset.wantTab;
-  if (want) {
+  if (want && onPage(screen)) { delete screen.dataset.wantTab; setRunTab(screen, 'history', want); }
+  else if (want) {
     delete screen.dataset.wantTab;
     const tabs = detailTabsOf(screen);
     if (tabs && tabs.cells.has(want) && levelAtLeast(tabs.cells.get(want).tab.level || 'simple') && (gitOn() || !tabs.cells.get(want).tab.needsGit)) tabs.activate(want);
@@ -24997,10 +25128,9 @@ function paintHdGlance(screen, record, data) {
   });
   screen.dataset.glance = copy.state;
 
-  // The bar names the run; its state is the headline below.
+  // The page title names the run; its state is the headline below.
   const hdTitle = screen.querySelector('.hd-title');
   const runName = (hdTitle && hdTitle.textContent) || record.title || '';
-  screen.querySelector('.hd-bar .rd-bar-title').textContent = runName;
   const { day, clock } = splitDateStamp(st.startedAt || record.startedAt || record.mtime);
   paintPageHead(glance, runName, [mode === 'none' ? '' : projectName(record.projectDir), [day, clock].filter(Boolean).join(' ')]);
   paintRunKindChip(glance.querySelector('.rd-page-meta'), mode);
@@ -25736,14 +25866,14 @@ function paintHdHeaderMeta(screen, record, data) {
     ['hd-day', day, false],
     ['hd-clock', clock, false],
     ['hd-dur', typeof st.totalActiveMs === 'number' ? fmtDuration(st.totalActiveMs) : '', true],
-    ['hd-cost', hdCost.text, true],
+    [`hd-cost${engineReportsCost(st.runEngine) ? '' : ' cost-unknown'}`, hdCost.text, true],
   ]) {
     if (!text) continue;
     meta.appendChild(hdDot());
     const seg = document.createElement('span');
     seg.className = cls + (strong ? ' strong' : '');
     seg.textContent = text;
-    if (cls === 'hd-cost') seg.title = hdCost.title || estTitle(st.totalCostUsd);
+    if (cls.startsWith('hd-cost')) seg.title = hdCost.title || estTitle(st.totalCostUsd);
     if (cls === 'hd-day') seg.title = fmtDate(st.startedAt || record.startedAt || record.mtime);
     meta.appendChild(seg);
   }
@@ -26761,6 +26891,7 @@ function paintCostBreakdown(header, seg, b, refocus = false, { agentsUnknown = f
       if (seg.title) span.title = seg.title;
       seg.replaceWith(span);
     }
+    syncCostTile(header);
     return;
   }
   // A trigger the meta line kept (nothing it says changed) is reused as it is: a <button>
@@ -26782,10 +26913,47 @@ function paintCostBreakdown(header, seg, b, refocus = false, { agentsUnknown = f
     pop.dataset.sig = sig;
     pop.replaceChildren(costBreakdownEl(document, b, { fmtUsd, agentsUnknown }));
   }
-  if (!pop.hidden) placeCostPop(header, btn, pop);
+  const tile = syncCostTile(header);
+  if (!pop.hidden) placeCostPop(header, pop.dataset.opener === 'tile' && tile ? tile : btn, pop);
   // preventScroll: a browser focuses a clicked button, so a plain focus() after a rebuild scrolled
   // the page back to the header while the user read further down.
   if (refocus && document.activeElement !== btn) btn.focus({ preventScroll: true });
+}
+
+/** The glance's cost tile when the header sits in the page's sheet (mountRunHead), else null. */
+function costTileOf(header) {
+  return header && header.parentElement && header.parentElement.classList.contains('rd-sheet')
+    ? header.parentElement.querySelector('.rd-facts .rd-stat-cost > b') : null;
+}
+
+/** On a page the moved header sits under the glance tiles, so the cost tile is the breakdown's trigger and CSS hides
+ *  the meta line's own (the cost shows once). The Chat run panel keeps the meta trigger. @returns the tile's trigger. */
+function syncCostTile(header, refocus = false) {
+  const b = costTileOf(header);
+  if (!b) return null;
+  const metaBtn = header.querySelector(':is(.rd-meta,.hd-meta) .cost-bd-btn');
+  let btn = b.querySelector(':scope > .rd-stat-cost-btn');
+  if (!metaBtn) {
+    if (btn) b.textContent = btn.textContent;
+    return null;
+  }
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'cost-bd-btn rd-stat-cost-btn';
+    btn.textContent = b.textContent;
+    b.replaceChildren(btn);
+  }
+  btn.title = metaBtn.title;
+  btn.setAttribute('aria-controls', metaBtn.getAttribute('aria-controls'));
+  btn.setAttribute('aria-expanded', metaBtn.getAttribute('aria-expanded'));
+  if (refocus && document.activeElement !== btn) btn.focus({ preventScroll: true });
+  return btn;
+}
+
+/** The header's triggers: the meta line's, and on a page the cost tile's. */
+function costTriggers(header) {
+  return [header.querySelector('.cost-bd-btn'), costTileOf(header)?.querySelector('.rd-stat-cost-btn')].filter(Boolean);
 }
 
 /** Close any open cost panel. @returns whether one was open. */
@@ -26794,11 +26962,10 @@ function closeCostPop({ focusTrigger = false } = {}) {
   for (const pop of document.querySelectorAll('.cost-pop:not([hidden])')) {
     pop.hidden = true;
     closed = true;
-    const btn = pop.parentElement && pop.parentElement.querySelector('.cost-bd-btn');
-    if (btn) {
-      btn.setAttribute('aria-expanded', 'false');
-      if (focusTrigger) btn.focus();
-    }
+    const triggers = pop.parentElement ? costTriggers(pop.parentElement) : [];
+    for (const btn of triggers) btn.setAttribute('aria-expanded', 'false');
+    const back = (pop.dataset.opener === 'tile' && triggers.find((x) => x.classList.contains('rd-stat-cost-btn'))) || triggers[0];
+    if (back && focusTrigger) back.focus();
   }
   return closed;
 }
@@ -26807,11 +26974,13 @@ document.addEventListener('click', (e) => {
   const t = e.target;
   const btn = t && typeof t.closest === 'function' ? t.closest('.cost-bd-btn') : null;
   if (!btn) return;
-  const header = btn.closest('.rd-header, .hd-header');
+  const tile = btn.classList.contains('rd-stat-cost-btn');
+  const header = tile ? btn.closest('.rd-sheet')?.querySelector(':scope > :is(.rd-header,.hd-header)') : btn.closest('.rd-header, .hd-header');
   const pop = header && header.querySelector(':scope > .cost-pop');
   if (!pop) return;
   pop.hidden = !pop.hidden;
-  btn.setAttribute('aria-expanded', String(!pop.hidden));
+  pop.dataset.opener = tile ? 'tile' : 'meta';
+  for (const x of costTriggers(header)) x.setAttribute('aria-expanded', String(!pop.hidden));
   if (!pop.hidden) placeCostPop(header, btn, pop);
 });
 // A click anywhere else closes it (capture phase, like the ⋯ menu's closer); the trigger toggles itself.
@@ -26929,10 +27098,12 @@ function detailTabsOf(screen) {
 //   initial   — (ctx) => key for the initially active tab; first visible otherwise
 //   buildArgs — (ctx) => extra args appended after `sec`, evaluated at ACTIVATION
 //               time so a builder sees late-corrected context (History's record)
+//   clickActivates — false on a page screen: a click reaches only the tab controller (nav/tabs.mjs), which pushes
+//               the address, and the route activates the tab once. The Chat run panel keeps its per-button activate.
 function initDetailTabs(screen, tabs, ctx, opts) {
   const {
     tabsSel, secsSel, tabClass, secClass, badgeClass, idPrefix,
-    initial = null, buildArgs = null,
+    initial = null, buildArgs = null, clickActivates = true,
   } = opts;
   const bar = screen.querySelector(tabsSel);
   const secs = screen.querySelector(secsSel);
@@ -26976,7 +27147,7 @@ function initDetailTabs(screen, tabs, ctx, opts) {
     sec.hidden = true;
     secs.appendChild(sec);
     cells.set(t.key, { tab: t, btn, sec });
-    btn.addEventListener('click', () => activate(t.key));
+    if (clickActivates) btn.addEventListener('click', () => activate(t.key));
   }
   function activate(key) {
     // TWO PHASES on purpose. Building inside the toggle loop means a throwing
@@ -27014,11 +27185,19 @@ function initDetailTabs(screen, tabs, ctx, opts) {
   activate(showsTab(want) ? want : (first || cells.keys().next().value));
 }
 // A mode change can hide the tab that is open. Its pill would vanish with the section still up, so
-// the first tab the new mode shows takes over. (A deep link never lands here: tabs have no route.)
+// the first tab the new mode shows takes over.
 function reselectHiddenDetailTabs() {
   for (const active of $$('.rd-tab.active, .hd-tab.active, .pd-tab.active')) {
     const shows = (b) => levelAtLeast(b.dataset.minLevel || 'simple') && (gitOn() || b.dataset.needsGit === undefined);
     if (shows(active)) continue;
+    const screen = active.closest('[data-presentation="page"]');
+    if (screen) {
+      // A page falls back through setRunTab (navDropTab replaces the address, no history entry). navViewOf skips rows
+      // without an engine kind, so the group page is left to paintGroupPage's own fallback.
+      const view = navViewOf(screen);
+      if (view) setRunTab(screen, view, '');
+      continue;
+    }
     const next = [...active.parentElement.children].find(shows);
     if (next) next.click();
   }
@@ -27099,8 +27278,11 @@ function initHdTabs(screen, record, data) {
   const ch = hdChangesOf(record, data); const fm = hdFolderMembers(record, data);
   const ctx = (ch && data && data.changes !== ch) || fm.length ? { ...data, ...(ch ? { changes: ch } : {}), folderMembers: fm } : data;
   const noProject = isNoProjectRun({ ...hdCurrentRecord(record), state: data && data.state });
-  initDetailTabs(screen, HD_TABS.map((t) => ({ ...t, icon: t.key === 'workflow' ? RD_WORKFLOW_ICON : HD_TAB_ICONS[t.key], ...(t.key === 'artifacts' && noProject ? { level: 'simple' } : {}) })), ctx, {
-    initial: () => (noProject ? 'artifacts' : null),
+  const page = onPage(screen);
+  initDetailTabs(screen, (page ? HD_NAV_TABS() : HD_TABS).map((t) => ({ ...t, icon: t.key === 'workflow' ? RD_WORKFLOW_ICON : HD_TAB_ICONS[t.key], ...(t.key === 'artifacts' && noProject ? { level: 'simple' } : {}) })), ctx, {
+    // A page with no tab in its address opens on Summary; the panel keeps its rule.
+    initial: () => (page ? 'overview' : noProject ? 'artifacts' : null),
+    clickActivates: !page,
     tabsSel: '.hd-tabs', secsSel: '.hd-sections',
     tabClass: 'hd-tab', secClass: 'hd-sec', badgeClass: 'hd-tab-badge',
     idPrefix: 'hd',
@@ -27197,7 +27379,7 @@ function wireHdGraphLogLinks(screen) {
       const patch = { node: node.dataset.nodeId };
       if (typeof cell.sec.__setLogFilter === 'function') cell.sec.__setLogFilter(patch);
       else cell.sec.__pendingLogFilter = patch;
-      tabs.activate('logs');
+      openLogs();
       cell.sec.scrollIntoView({ block: 'nearest' });
       return;
     }
@@ -27207,9 +27389,11 @@ function wireHdGraphLogLinks(screen) {
     // activate() is load-bearing: activate() is what triggers the fetch.
     if (typeof cell.sec.__setLogSource === 'function') cell.sec.__setLogSource(list);
     else cell.sec.__pendingLogSource = list;
-    tabs.activate('logs');
+    openLogs();
     cell.sec.scrollIntoView({ block: 'nearest' });   // AFTER activate: the panel is no longer hidden
   };
+  // A page pushes the Logs address (Back returns to Workflow); the Chat run panel keeps its tab switch.
+  const openLogs = () => { if (onPage(screen)) navOpenTab(screen, 'history', 'logs'); else tabs.activate('logs'); };
 
   // Delegated, so the real event target — always a descendant (.nmeta b, .nic
   // svg, .nstat), never the node div — still resolves, and so a STRUCTURAL
@@ -28626,7 +28810,8 @@ function hdFilesChangedBox(sec, results, { diffLink = true } = {}) {
   open.addEventListener('click', () => {
     const screen = histDetailState && histDetailState.screen;   // the state is keyed on the cloned template root
     const tabs = screen && detailTabState.get(screen);
-    if (tabs && tabs.cells.has('diff')) tabs.activate('diff');
+    if (!tabs || !tabs.cells.has('diff')) return;
+    if (onPage(screen)) navOpenTab(screen, 'history', 'diff'); else tabs.activate('diff');
   });
   head.append(l);
   if (diffLink) head.append(open);
@@ -28651,7 +28836,7 @@ function hdFilesChangedBox(sec, results, { diffLink = true } = {}) {
   return box;
 }
 
-function buildHdOverview(sec, record, data) {
+function buildHdOverview(sec, record, data, { inSummary = false } = {}) {
   sec.innerHTML = '';
   const st = data.state;
   const results = data.results;
@@ -28683,7 +28868,8 @@ function buildHdOverview(sec, record, data) {
     chip.textContent = word;
     verdict.append(chip, document.createTextNode(' No review results captured. The run did not complete.'));
   }
-  if (verdict.childNodes.length) wrap.appendChild(verdict);
+  // A page's Summary sits under the glance, which already shows the run's state and its numbers.
+  if (verdict.childNodes.length && !inSummary) wrap.appendChild(verdict);
   // The open pull request(s) as GitHub sees them now, beside the review's verdict from the run.
   const prs = document.createElement('div');
   prs.className = 'hd-ov-prs';
@@ -28740,7 +28926,7 @@ function buildHdOverview(sec, record, data) {
   // refreshHdFromRow — nothing else ever rebuilds a tab. (Do not "simplify" that
   // call away: the header painters run on every row arrival, but the tab bodies do
   // not, so without it the card would read `released` for the life of the screen.)
-  wrap.appendChild(grid);
+  if (!inSummary) wrap.appendChild(grid);
   // The row and the notice card read one model (audit F-2): a checkout shows here as well as on the card.
   const ovModel = worktreeNoticeModel({ ...hdRetainedFor(record, st), checkout: hdCheckoutFor(record),
     workspace: record.target === 'workspace', names: memberNamesOf(record) });
@@ -29167,13 +29353,33 @@ const RD_TABS = [
   },
 ];
 
+// The page's tabs: the engines' Overview becomes Summary (same key 'overview'), built without the state banner and
+// stats grid the glance shows, and the strip takes the order of ROUTES.running.tabs.keys. The live Summary's badge is
+// the waiting question (D22); rdPaintTabBadges repaints it on every frame.
+function navTabs(view, list, summaryBuild, summaryBadge = null) {
+  const order = ROUTES[view].tabs.keys;
+  const rank = (t) => order.indexOf(tabKey(view, t.key));
+  return list
+    .map((t) => (t.key === 'overview' ? { ...t, label: 'Summary', build: summaryBuild, ...(summaryBadge ? { badge: summaryBadge } : {}) } : t))
+    .sort((a, b) => rank(a) - rank(b));
+}
+// D22: a live run waiting for an answer marks Summary, where its question is (.rd-questions sits in the glance).
+// rdPaintTabBadges repaints it on every frame, so it comes and goes with the question.
+const rdAskBadge = (ctx) => (ctx && ctx.run && ctx.run.pendingQuestion ? '?' : null);
+const RD_NAV_TABS = () => navTabs('running', RD_TABS, (sec, ctx) => buildRdOverview(sec, ctx, { inSummary: true }), rdAskBadge);
+const HD_NAV_TABS = () => navTabs('history', HD_TABS, (sec, record, data) => buildHdOverview(sec, record, data, { inSummary: true }));
+
 // Build the pill row + the lazy panels into an open detail screen. Called once per
 // screen build; live frames go through rdUpdateSections, never through a rebuild.
-// No `initial`: the engine opens the first tab the interface level shows (Overview).
+// No `initial` in the panel: the engine opens the first tab the interface level shows (Overview).
 function initRdTabs(screen, r) {
   const noProject = isNoProjectRun(r);
-  initDetailTabs(screen, noProject ? RD_TABS.map((t) => (t.key === 'artifacts' ? { ...t, level: 'simple' } : t)) : RD_TABS, rdCtx(r), {
-    initial: () => (noProject ? 'artifacts' : null),
+  const page = onPage(screen);
+  const list = page ? RD_NAV_TABS() : RD_TABS;
+  initDetailTabs(screen, noProject ? list.map((t) => (t.key === 'artifacts' ? { ...t, level: 'simple' } : t)) : list, rdCtx(r), {
+    // A page with no tab in its address opens on Summary; the panel keeps its rule.
+    initial: () => (page ? 'overview' : noProject ? 'artifacts' : null),
+    clickActivates: !page,
     tabsSel: '.rd-tabs',
     secsSel: '.rd-sections',
     tabClass: 'rd-tab',
@@ -29629,7 +29835,8 @@ function ensureRdTabs(screen, r) {
   screen.dataset.tabsMode = sig;
   initRdTabs(screen, r);
   const want = screen.dataset.wantTab;
-  if (want) {
+  if (want && onPage(screen)) { delete screen.dataset.wantTab; setRunTab(screen, 'running', want); }
+  else if (want) {
     delete screen.dataset.wantTab;
     const tabs = detailTabsOf(screen);
     if (tabs && tabs.cells.has(want) && levelAtLeast(tabs.cells.get(want).tab.level || 'simple') && (gitOn() || !tabs.cells.get(want).tab.needsGit)) tabs.activate(want);
@@ -30221,7 +30428,7 @@ function paintRdChecklists(host, run) {
   });
 }
 
-function buildRdOverview(sec, ctx) {
+function buildRdOverview(sec, ctx, { inSummary = false } = {}) {
   sec.innerHTML = '';
   const wrap = document.createElement('div');
   wrap.className = 'hd-ov';
@@ -30241,14 +30448,20 @@ function buildRdOverview(sec, ctx) {
   const checklists = document.createElement('div');   // Perspective checklists (spec D7)
   checklists.className = 'rd-checklists';
   checklists.hidden = true;
-  wrap.append(banner, strip, grid, checklists, skills, rdOvTask(ctx.run));
+  // A page's Summary sits under the glance, whose tiles already show the stats. The state banner stays: it carries the
+  // usage-limit Resume at, Resume on another engine and Switch model…, which the glance does not offer.
+  wrap.append(...(inSummary ? [banner, strip, checklists, skills] : [banner, strip, grid, checklists, skills]), rdOvTask(ctx.run));
   sec.appendChild(wrap);
   const paintStrip = (run) => {
     const on = gitOn() && isGitRun(run) && isTerminalStatus(run.status) && !!run.pipelineId;
     strip.hidden = !on;
     if (on && strip.dataset.runId !== run.pipelineId) paintActionsStrip(strip, run.pipelineId, rdScopeQuery(run));
   };
-  const paint = (c) => { rdOvStateBanner(banner, c.run); paintStrip(c.run); rdOvStats(grid, c.run); paintRdChecklists(checklists, c.run); paintRunSkills(skills, c.run.skillMount); };
+  const paint = (c) => {
+    rdOvStateBanner(banner, c.run);
+    if (!inSummary) rdOvStats(grid, c.run);
+    paintStrip(c.run); paintRdChecklists(checklists, c.run); paintRunSkills(skills, c.run.skillMount);
+  };
   paint(ctx);
   sec.__update = paint;
 }
@@ -30393,11 +30606,13 @@ function rdOpenRun() {
 // repaint them from the table on every frame so a hidden tab still shows the
 // truth. Creates/removes the badge node rather than leaving an empty pill.
 function rdPaintTabBadges(screen, ctx) {
-  for (const t of RD_TABS) {
+  for (const t of onPage(screen) ? RD_NAV_TABS() : RD_TABS) {
     const btn = screen.querySelector(`.rd-tab[data-sec="${t.key}"]`);
     if (!btn) continue;
     const want = t.badge(ctx);
     let b = btn.querySelector('.rd-tab-badge');
+    // D22: the waiting question's cue on Summary names itself.
+    if (t.badge === rdAskBadge) { if (want == null) btn.removeAttribute('title'); else btn.title = 'Waiting for your answer'; }
     if (want == null) { if (b) b.remove(); continue; }
     if (!b) {
       b = document.createElement('span');
@@ -30574,11 +30789,8 @@ document.addEventListener('keydown', (e) => {
   // a guard here is the only way to opt a subtree out.
   if (e.target && typeof e.target.closest === 'function' && e.target.closest('.hd-cmt-composer')) return;
   if (closeCostPop({ focusTrigger: true })) return;
-  // Details steps back to the run's glance; the glance steps back to the list, in the
-  // slide only: side by side the list is already there.
-  const hs = histDetailState;
-  if (hs && hs.screen && hs.screen.dataset.mode === 'details') { location.hash = hdHash(hs); return; }
-  if (runsLayout() === 'slide') location.hash = 'runs';
+  // The page goes up to its parent (the last crumb), in the slide only: side by side the list is already there.
+  if (runsLayout() === 'slide') navUp();
 }, true);
 
 // Escape on the Running detail screen navigates back to the list — but never
@@ -30595,11 +30807,9 @@ document.addEventListener('keydown', (e) => {
   if (e.target?.closest?.('.wf-log-drawer')) return;                 // the step log drawer owns its Escape (closes itself)
   // The header cost's breakdown owns Escape while it is open (same reason as History's ⋯ menu).
   if (closeCostPop({ focusTrigger: true })) return;
-  // Details steps back to the run's glance; the glance steps back to the list, in the
-  // slide only: side by side the list is already there.
-  const screen = runDetailState.screen;
-  if (screen && screen.dataset.mode === 'details') { location.hash = rdHash(runDetailState.runId); return; }
-  if (runsLayout() === 'slide') location.hash = 'runs';
+  // The page goes up to its parent (the last crumb: a slice run's feature, else the list), in the slide only: side by
+  // side the list is already there.
+  if (runsLayout() === 'slide') navUp();
 }, true);
 
 // Escape on a project page navigates back to the list — never while an overlay modal is open,
@@ -31310,6 +31520,9 @@ function focusQuestionOf(btn, ref = {}) {
   // `.rd` is the run template's root, so the Chat run panel's copy of the run page (not inside #run-detail) is found too.
   const root = (btn && btn.closest('.chat-rc, .gpage, .rd')) || document;
   const q = questionFocusTarget(root);
+  // A run page's question sits on Summary: from another tab, open it first (a pushed address), as the gate pip does.
+  const view = navViewOf(root);
+  if (q && view && onPage(root) && !summaryShown(root)) navOpenTab(root, view, '');
   if (q) { if (typeof q.scrollIntoView === 'function') q.scrollIntoView({ block: 'nearest' }); q.focus(); return; }
   if (ref.runId) location.hash = rdHash(ref.runId);
   else if (ref.href) location.hash = ref.href;
@@ -32069,9 +32282,12 @@ function focusLogExecution(ctx, executionId, nodeId) {
     if (!cell) return;
     if (typeof cell.sec.__setLogFilter === 'function') cell.sec.__setLogFilter(patch);
     else cell.sec.__pendingLogFilter = patch;
-    if (histDetailState.screen.dataset.mode !== 'details') setHdMode(histDetailState.screen, 'details', '', { focus: false });
-    tabs.activate('logs');
-    try { window.history.replaceState(null, '', `#${hdScreenHash('details', 'logs')}`); } catch { /* ignore */ }
+    if (onPage(histDetailState.screen)) navOpenTab(histDetailState.screen, 'history', 'logs');
+    else {
+      if (histDetailState.screen.dataset.mode !== 'details') setHdMode(histDetailState.screen, 'details', '', { focus: false });
+      tabs.activate('logs');
+      try { window.history.replaceState(null, '', `#${hdScreenHash('details', 'logs')}`); } catch { /* ignore */ }
+    }
     cell.sec.scrollIntoView({ block: 'nearest' });   // AFTER activate: the panel is no longer hidden
     return;
   }
@@ -32079,13 +32295,16 @@ function focusLogExecution(ctx, executionId, nodeId) {
   const screen = runDetailState.runId === r.runId ? runDetailState.screen : null;
   const tabs = screen ? detailTabsOf(screen) : null;
   if (!tabs || !tabs.cells.has('logs')) return;
-  // A row clicked on the glance (or the Workflow tab) opens Details › Live log.
-  const logsHash = `#${rdScreenHash('details', 'logs')}`;   // the Runs page's address, or the Chat run panel's
-  if (screen.dataset.mode !== 'details' || location.hash !== logsHash) {
-    setRdMode(screen, 'details', 'logs', { focus: false });
-    try { window.history.replaceState(null, '', logsHash); } catch { /* ignore */ }
+  // A row clicked on Summary (or the Workflow tab) opens Logs; in the Chat run panel, Details › Live log.
+  if (onPage(screen)) navOpenTab(screen, 'running', 'logs');
+  else {
+    const logsHash = `#${rdScreenHash('details', 'logs')}`;   // the Chat run panel's address
+    if (screen.dataset.mode !== 'details' || location.hash !== logsHash) {
+      setRdMode(screen, 'details', 'logs', { focus: false });
+      try { window.history.replaceState(null, '', logsHash); } catch { /* ignore */ }
+    }
+    tabs.activate('logs');                          // the builder reads r.logFilter
   }
-  tabs.activate('logs');                            // the builder reads r.logFilter
   const sec = screen.querySelector('.rd-sec-logs');
   if (sec) sec.scrollIntoView({ block: 'nearest' });
 }
@@ -32096,17 +32315,17 @@ function focusQuestionPanel(ctx) {
   const screen = runDetailState.screen;
   const panel = screen && screen.querySelector('.rd-questions');
   if (!panel) return;
-  // The question lives on the glance: a gate pip clicked in Details › Workflow goes back to it.
-  // Not in the Chat run panel: it has no glance; the question sits under its Details header (Chat P4).
-  if (screen && screen.dataset.mode === 'details' && screen.dataset.presentation !== 'panel' && screen.contains(panel)) {
-    setRdMode(screen, 'glance', '', { focus: false });
-    try { window.history.replaceState(null, '', `#${rdHash(runDetailState.runId)}`); } catch { /* ignore */ }
-  }
+  // The question lives on Summary (the glance): a gate pip clicked on another tab (Workflow) opens Summary, a pushed
+  // address. Not in the Chat run panel: it has no glance; the question sits under its Details header (Chat P4).
+  if (onPage(screen) && !summaryShown(screen) && screen.contains(panel)) navOpenTab(screen, 'running', '');
   if (screen && screen.contains(panel)) { scrollToQuestions(screen); return; }
   panel.scrollIntoView({ block: 'nearest' });
   const focusable = questionFocusTarget(panel);
   if (focusable && typeof focusable.focus === 'function') focusable.focus();
 }
+
+// The page's Summary tab is the one selected (the glance shows).
+const summaryShown = (screen) => detailTabsOf(screen)?.cells.get('overview')?.btn.getAttribute('aria-selected') === 'true';
 
 let wantQuestionsFor = null;   // { runId, at }: set by a Needs-you question row's click, consumed once the run page has its question
 
@@ -33104,33 +33323,12 @@ async function loadRunGroups() {
   pokeAskRuns(null, 'run-groups');                 // Chat cards (a finished one gets no frame) become group cards now
 }
 // ── The group page (runs redesign slice 4, D13 to D17): #feature/ID[/tab] and #group/ID[/tab] ──
-// Run 3 (D2): loading / gone / error keep the bar's Back, so a phone is never stranded. Returns the message line.
+// Loading / gone / error: the message alone (the top bar's breadcrumb is the way up). Returns the message line.
 function groupMessage(host, cls, text) {
-  const back = Object.assign(document.createElement('a'), { className: 'btn btn-sm btn-quiet btn-icon gpage-back', href: '#runs' });
-  back.append(icon(document, 'chevron-left', 16));       // slice 2: the run page's 28px Back
-  back.setAttribute('aria-label', 'Back to Runs');
-  back.title = 'Back to Runs';
-  const bar = Object.assign(document.createElement('div'), { className: 'gpage-bar rd-bar' });
-  bar.append(back);
   const p = Object.assign(document.createElement('p'), { className: cls, textContent: text });
-  keepGroupBack(host, () => host.replaceChildren(bar, p));
+  host.replaceChildren(p);
   return p;
 }
-// A rebuild of the pane (message -> page) keeps a focused Back focused (rule: app-js-repaint-drops-focus).
-function keepGroupBack(host, rebuild) {
-  const a = document.activeElement;
-  const had = !!a && host.contains(a) && a.matches('.gpage-back');
-  rebuild();
-  if (had) host.querySelector('.gpage-back')?.focus({ preventScroll: true });
-}
-// Slice 2: the group Back is a link (#runs) for a middle-click, but a plain click asks for the list itself; at split a
-// bare #runs would reopen this very group (D6).
-el.groupDetail?.addEventListener('click', (e) => {
-  const back = e.target.closest && e.target.closest('.gpage-back');
-  if (!back || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-  e.preventDefault();
-  backToRunsList();
-});
 async function mountGroupPage(host, { route, id, tab, reentered = false }) {
   const fresh = GROUP_PAGE.host !== host || GROUP_PAGE.route !== route || GROUP_PAGE.id !== id;
   Object.assign(GROUP_PAGE, { host, route, id, tab, reentered, ...(fresh ? { featureId: '', gone: false, failed: false, resolving: false } : {}) });
@@ -33202,9 +33400,9 @@ function paintGroupPageNow() {
     host.__gp = buildGroupPage(document);
     // Run 4 (D2): a Shaper card set or changed its primary's label: the bar's Answer follows it.
     host.__gp.addEventListener('step-primary', () => scheduleGroupPagePaint());
-    keepGroupBack(host, () => host.replaceChildren(host.__gp));
+    host.replaceChildren(host.__gp);
+    navMount(route, host.__gp);                    // the head is the page's own; this wires its tab strip
   }
-  const base = `${route === 'feature' ? '#feature' : '#group'}/${encodeURIComponent(id)}`;
   // The run page's Logs tab is Expert-only, so the group page offers its Logs (links to those tabs) at Expert too.
   // Run 3 (D15): the group's Labels fact is the read-only union of its members' History labels.
   const labels = [...new Set(row.members.flatMap((mb) => (histOf(mb.pipelineId) || {}).labels || []))].sort();
@@ -33222,7 +33420,6 @@ function paintGroupPageNow() {
       if (had && !inHead(document.activeElement)) focusGroupHead();
     },
     labelChip: (d, l) => labelChip(d, l, {}),
-    onTab: (t) => { location.hash = t === 'runs' ? base : `${base}/${t}`; },
     mountQuestion: (slot, mb) => paintGroupQuestion(slot, mb),
     answerLabel: () => answerLabelOf(host.__gp.querySelector('.gpage-question')),
     // Mount once per feature: paintGroupPageNow runs on every run frame, and a remount would refetch and rebuild the
@@ -33241,9 +33438,12 @@ function paintGroupPageNow() {
     // A member with no run page yet (a waiting ticket) links its row's own href.
     logsHref: (mb) => {
       const page = mb.runId ? `#running/${mb.runId}` : mb.href || '#runs';
-      return mb.runId || page.startsWith('#history/') ? `${page}/details/logs` : page;
+      return mb.runId || page.startsWith('#history/') ? `${page}/logs` : page;
     },
   });
+  // A tab this group does not offer (Overview with Shaper off, Logs below Expert) opened Runs: the address says so.
+  if (host.__gp.dataset.tab !== tab) { GROUP_PAGE.tab = host.__gp.dataset.tab; navDropTab(route, GROUP_PAGE.tab); }
+  navFocus(route);                                 // the page exists only now (after the async group load)
 }
 // Frames arrive in bursts: paint the group page once per microtask. The flag lives on GROUP_PAGE (declared at the
 // top) because History's cached paint can call this during boot, before a `let` down here is initialised.
@@ -33573,13 +33773,6 @@ el.runsList?.addEventListener('click', (e) => {
     setRdMode(screen, 'glance', '', { focus: false });   // idempotent; the hashchange echo is too
     scrollToQuestions(screen);
   }
-});
-// Run 3 (D6): the breadcrumb's "Runs" is the list itself (goRunsList: no D6 restore of the page just left).
-el.runsPane?.addEventListener('click', (e) => {
-  const c = e.target.closest && e.target.closest('.rd-crumb[data-crumb="runs"]');
-  if (!c || (e.button || 0) !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-  e.preventDefault();
-  goRunsList();
 });
 function toggleRunsGroup(key) {
   if (runsUi.collapsed.has(key)) runsUi.collapsed.delete(key); else runsUi.collapsed.add(key);
@@ -34090,12 +34283,12 @@ function setRunsLayout(w) {
   shell.dataset.layout = want;
   syncRunsPane();
   // Narrowed with a run open: the list it covers just went inert under the focused row.
-  // Hand focus to the open screen's way back (the glance's, or Details' "back to the run").
+  // Hand focus to the open page's head (its h1).
   const open = el.runsPane && el.runsPane.dataset.kind;
   if (want !== 'slide' || !inList || !open) return;
-  const screen = open === 'live' ? el.runDetail : open === 'group' ? el.groupDetail : el.histDetail;
-  const back = screen && [...screen.querySelectorAll('.rd-back, .hd-back, .rd-to-run, .hd-to-run, .gpage-back')].find((b) => !b.hidden);
-  if (back) back.focus({ preventScroll: true });
+  const view = navState.route && navState.route.view;
+  const screen = view && NAV_SCREENS[view] ? NAV_SCREENS[view].screen() : null;
+  if (screen && screen.__pageHead) focusPageTitle(screen.__pageHead);
 }
 // showView calls this as the section becomes visible, before routing opens anything, so the
 // first open on a narrow window already knows it is in the slide (focus, inert).
@@ -34165,7 +34358,7 @@ function keepPaneFocus(screen) {
   const a = document.activeElement;
   const lost = !a || a === document.body || !document.contains(a) || (el.runsPane && el.runsPane.contains(a));
   if (!lost) return;
-  const title = screen.querySelector('.rd-glance .rd-page-title');   // the hd glance is .rd-glance too
+  const title = screen.querySelector('.rd-page-title');   // one per screen (in .ph on a page)
   if (title) title.focus({ preventScroll: true });
 }
 
@@ -34298,19 +34491,15 @@ function bounceUnknownRun(runId) {
 // park that still offers Pause/Stop. NOT exported on `window.__np` (C10: it is a `const`).
 const RD_TERMINAL = ['done', 'stopped', 'error'];
 
-// The Running param is `<runId>` (the glance) or `<runId>/details[/<tab>]`. The
-// runId is a server UUID and never contains '/', so the first segment is the id.
-function runDetailParts(param) {
-  const segs = String(param || '').split('/');
-  const runId = segs[0] || '';
-  const mode = segs[1] === 'details' ? 'details' : 'glance';
-  const tab = mode === 'details' && segs[2] ? segs[2] : '';
-  return { runId, mode, tab };
-}
-
+// Every run address is the route table's (nav/routes.mjs): the canonical form out, every old form in (redirects).
+// `mode` stays a parameter so the ~20 callers and the panel's Open full page need no edit: only 'details' carries a tab.
 function rdHash(runId, mode = 'glance', tab = '') {
-  if (mode !== 'details') return `running/${runId}`;
-  return tab ? `running/${runId}/details/${tab}` : `running/${runId}/details`;
+  return formatRoute({ view: 'running', id: runId, tab: mode === 'details' ? tab : '' }).slice(1);
+}
+// A page address always names a tab (Summary when none): the readers get mode 'details' and the ENGINE's tab key.
+function runDetailParts(param) {
+  const r = parseRoute(`#running/${param || ''}`);
+  return r.view === 'running' ? { runId: r.id, mode: 'details', tab: engineTab('running', r.tab) } : { runId: '', mode: 'glance', tab: '' };
 }
 
 // The OPEN live screen's address in `mode`/`tab`: its Runs page route, or — mounted in the Chat run
@@ -34354,13 +34543,14 @@ installInputMode(document);
 
 function setRdMode(screen, mode, tab = '', { focus = true } = {}) {
   if (!screen) return;
+  // A page has no Details mode: every route is a tab of one page (docs/design-system.md Navigation).
+  if (onPage(screen)) { setRunTab(screen, 'running', mode === 'details' ? tab : ''); return; }
+  // The Chat run panel (slice 3 moves it onto the page head): its Details mode, as before.
   const details = mode === 'details';
   const changed = screen.dataset.mode !== (details ? 'details' : 'glance');
   screen.dataset.mode = details ? 'details' : 'glance';
   screen.querySelector('.rd-glance').hidden = details;
   screen.querySelector('.rd-details').hidden = !details;
-  screen.querySelector('.rd-back').hidden = details;
-  screen.querySelector('.rd-to-run').hidden = !details;
   if (details) {
     const tabs = detailTabsOf(screen);
     // P5: a tab the bar has leaves nothing pending, so a later rebuild keeps the person's pick.
@@ -34369,19 +34559,53 @@ function setRdMode(screen, mode, tab = '', { focus = true } = {}) {
     // A deep link that lands before `hello` has no tabs yet, or names a tab the run learns later (P5: a mixed
     // workspace's Changes, from its first state frame): ensureRdTabs opens it when it rebuilds.
     else if (tab && !(tabs && tabs.cells.has(tab))) screen.dataset.wantTab = tab;
-    // The graph laid out while its section sat in a hidden subtree measured 0px wide;
-    // repaint it now that it is visible.
-    const r = rdOpenRun();
-    if (r && changed) paintRdGraph(screen, r);
+    if (changed) repaintRunGraph(screen, 'running');
   }
   if (changed && el.runDetail) el.runDetail.scrollTop = 0;
-  if (changed && focus) {
-    // Side by side the glance's way back to the list is hidden (the list is in view), so
-    // coming back from Details lands on the glance's title (tabindex="-1") instead.
-    const target = details ? screen.querySelector('.rd-to-run')
-      : runsLayout() === 'split' ? screen.querySelector('.rd-glance .rd-page-title') : screen.querySelector('.rd-back');
+  if (changed && focus && !details) {
+    const target = screen.querySelector('.rd-page-title');
     if (target && !target.hidden) target.focus({ preventScroll: true });
   }
+}
+
+// Open tab `key` (any form) on a page screen of `view`. Before the tabs exist (the record is still loading) the engine
+// key waits in dataset.wantTab (ensureRdTabs / initHdTabs consume it). Once they exist, a tab this run does not offer,
+// or one the level or git gate hides, falls back to the default and the address says so (replace).
+function setRunTab(screen, view, key) {
+  const k = engineTab(view, key);
+  const tabs = detailTabsOf(screen);
+  if (!tabs) { screen.dataset.wantTab = k; return; }
+  // The default (Summary), or the first shown tab when this run offers no Summary.
+  const def = engineTab(view, '');
+  // A tab the person picks replaces a pending one; the bare page address (an echo of a fallback) keeps it.
+  if (k !== def) delete screen.dataset.wantTab;
+  const shown = (key) => { const c = tabs.cells.get(key); return !!c && navTabShown(c.btn); };
+  const ok = shown(k);
+  const fallback = shown(def) ? def : ([...tabs.cells.keys()].find(shown) || def);
+  const open = ok ? k : fallback;
+  tabs.activate(open);
+  // The address names the tab on screen: a fallback, or a waited-for tab a rebuild just opened (no history entry).
+  const route = navState.route;
+  if (!ok || (route && route.view === view && tabKey(view, route.tab) !== tabKey(view, open))) navDropTab(view, open);
+  // A tab this run may still learn (P5: a mixed workspace's Changes, from its first state frame) waits for the rebuild.
+  if (!tabs.cells.has(k)) screen.dataset.wantTab = k;
+  if (open === 'workflow' || open === def) repaintRunGraph(screen, view);
+}
+
+// A link on the page to another of its tabs (Open the diff, Open in Logs, a log row, a gate pip): a pushed address, so
+// Back returns to the tab before, and the tab opens now (the hashchange that follows finds it open).
+function navOpenTab(screen, view, key) {
+  const route = navState.route;
+  if (route && route.view === view) { navState.route = { ...route, tab: tabKey(view, key) }; navGo(navState.route); }
+  setRunTab(screen, view, key);
+}
+
+// The graph laid out while its section sat in a hidden subtree measured 0px wide; repaint it now that it is visible.
+// The live run repaints its graph from its frames; the saved one moved its painted graph into the Workflow tab.
+function repaintRunGraph(screen, view) {
+  if (view !== 'running') return;
+  const r = rdOpenRun();
+  if (r) paintRdGraph(screen, r);
 }
 
 // `host: 'panel'` mounts the screen in the Chat run panel instead of the Runs page (Chat P4).
@@ -34398,14 +34622,10 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
   const screen = $('#run-detail-tpl').content.firstElementChild.cloneNode(true);
   host.appendChild(screen);
   runDetailState = { runId, screen, host: panel ? 'panel' : 'page' };
-  // The panel has no glance, so there is no page title to watch (the bar never repeats the name there).
-  if (panel) presentRunScreenInPanel(screen); else watchPageTitle(screen, 'rd');
+  if (panel) presentRunScreenInPanel(screen); else mountRunHead(screen, 'running');
 
-  screen.querySelector('.rd-back').addEventListener('click', () => backToRunsList());
-  // Glance <-> Details are routes, so the browser's own back and forward walk them.
+  // Every tab is a route, so the browser's own back and forward walk them.
   const toDetails = (tab = '') => { rdGoDetails(tab); };
-  const toRun = () => { if (runDetailState.host !== 'panel') location.hash = rdHash(runDetailState.runId); };
-  screen.querySelector('.rd-to-run').addEventListener('click', toRun);
   // While a question waits, the status header ("? Waiting for you / Step: …") is a way to it.
   const statusTop = screen.querySelector('.rd-now-top');
   const toQuestions = () => { if (screen.dataset.glance === 'ask') scrollToQuestions(screen); };
@@ -34427,10 +34647,11 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
   liveSwitch.addEventListener('keydown', onKey(flipLive));
   livePanel.addEventListener('click', () => toDetails('workflow'));
   livePanel.addEventListener('keydown', onKey(() => toDetails('workflow')));
-  // Keep the address in step with the open tab without adding a history entry per click.
+  // The Chat run panel keeps its address in step with the open tab without a history entry per click (a page pushes
+  // its tab route).
   screen.querySelector('.rd-tabs').addEventListener('click', (e) => {
     const btn = e.target.closest && e.target.closest('.rd-tab');
-    if (!btn || screen.dataset.mode !== 'details') return;
+    if (!btn || runDetailState.host !== 'panel') return;
     const want = `#${rdScreenHash('details', btn.dataset.sec)}`;
     if (location.hash !== want) { try { window.history.replaceState(null, '', want); } catch { /* ignore */ } }
   });
@@ -34568,8 +34789,11 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
       }
       away.push({ sep: true });
     }
-    // Run after is the bar's own quick button; only a shaped run's bar folds it (D31), so only there does ⋯ carry it.
-    const extra = after && !after.hidden && levelAtLeast('advanced') && screen.querySelector('.rd-bar')?.hasAttribute('data-shaped')
+    // Run after is the bar's own quick button; a shaped run's bar folds it (D31), and so does a page at phone width
+    // (style.css hides it there), so only then does ⋯ carry it.
+    const folded = screen.querySelector('.rd-bar')?.hasAttribute('data-shaped')
+      || (onPage(screen) && typeof matchMedia === 'function' && matchMedia('(max-width: 640px)').matches);
+    const extra = after && !after.hidden && levelAtLeast('advanced') && folded
       ? [{ label: after.querySelector('.rd-btn-label').textContent, title: after.title, onSelect: () => after.click() }] : [];
     toggleMenu({ doc: document, anchor: e.currentTarget, items: runMoreItems(screen, { away, extra }), align: 'end', label: 'More for this run' });
   });
@@ -34598,10 +34822,9 @@ function openRunDetail(runId, { instant = false, host: where = 'page' } = {}) {
   host.setAttribute('aria-hidden', 'false');
   host.removeAttribute('inert');
   syncRunsPane();
-  // In the slide the list went away (inert), so focus follows the screen. Side by side it stays
+  // In the slide the list went away (inert), so focus follows the screen (navFocus: the h1). Side by side it stays
   // where the user acted (the row, a sidebar entry), unless the old screen took it along.
-  if (runsLayout() === 'slide') screen.querySelector('.rd-back').focus({ preventScroll: true });
-  else keepPaneFocus(screen);
+  keepPaneFocus(screen);
   rememberOpenRun(runId);                              // keeps the saved page before `hello`
 }
 
@@ -34656,14 +34879,12 @@ function openGroupPane(route, id, tab, { reentered = false } = {}) {
   const shell = el.groupShell;
   const host = el.groupDetail;
   if (!shell || !host) return;
-  const wasOpen = shell.classList.contains('detail-open');
   host.removeAttribute('inert');
   host.setAttribute('aria-hidden', 'false');
   shell.classList.add('detail-open');
   syncRunsPane();
   rememberRun({ group: `${route}/${encodeURIComponent(id)}` });
   void mountGroupPage(host, { route, id, tab, reentered });
-  if (!wasOpen && runsLayout() === 'slide') queueMicrotask(() => host.querySelector('.gpage-back')?.focus({ preventScroll: true }));
 }
 function closeGroupPane({ instant = false } = {}) {
   const shell = el.groupShell;
@@ -35528,11 +35749,11 @@ function paintGroupLine(el, pipelineId, title, home) {
   b.addEventListener('click', () => openAddToGroup(b, { pipelineId, title }));
   el.replaceChildren(b);
 }
-/** Run 3 (D6, D7): the kind chip ("Run 2 of 3") and the breadcrumb, from the run's group. In a group the chip links
- *  the group page ("›" is CSS). The breadcrumb is the split layout's alone: the Chat run panel keeps none (its "Runs"
- *  crumb would leave Chat). */
+/** Run 3 (D6, D7): the kind chip ("Run 2 of 3") from the run's group, and on a page the top bar's parent (the
+ *  breadcrumb) and the h1. In a group the chip links the group page ("›" is CSS). The Chat run panel reports no parent
+ *  (its "Runs" crumb would leave Chat). */
 function paintRunPlace(screen, home) {
-  const old = screen.querySelector('.rd-glance .rd-title-row .kind-chip');
+  const old = screen.querySelector('.rd-title-row .kind-chip');
   const word = runPositionLabel(home);
   const href = home ? groupHref(home.row) : '';
   let chip = old;
@@ -35548,8 +35769,38 @@ function paintRunPlace(screen, home) {
       chip.setAttribute('aria-label', `${word}, open ${groupKindWord(home.row).toLowerCase()} ${home.row.title}`);
     }
   }
-  paintCrumbs(screen.querySelector(':is(.rd-bar,.hd-bar) .rd-crumbs'), screen.dataset.presentation === 'panel' ? [] : runCrumbs(home));
+  if (onPage(screen) && screen.isConnected) {
+    // The page this paint is for; a paint for a page the user has left is ignored by setNavParent.
+    const self = screen === runDetailState.screen ? { view: 'running', id: runDetailState.runId }
+      : histDetailState && screen === histDetailState.screen ? { view: 'history', projectKey: histDetailState.key, id: histDetailState.id } : null;
+    const row = home && home.row;
+    if (self) setNavParent(pageKey(self), row ? groupRoute(row) : null);
+    setRunH1(screen, home);
+  }
   syncFacts(screen.querySelector('.rd-glance .rd-kv'));
+}
+// The run pages' mount: no Details mode on a page; both halves shown, CSS picks by the selected tab.
+function mountRunHead(screen, view) {
+  for (const sec of screen.querySelectorAll(':scope .rd-glance, :scope .rd-details, :scope .hd-details')) sec.hidden = false;
+  navMount(view, screen);
+  // Until slice 3 the Details header is the Chat run panel's head. On a page it moves into Summary under the facts row,
+  // because only it carries Publish / Push, the base check, the cost breakdown ("cost unknown" too), the branch and
+  // Sync. What the page head and the glance already say (title, status, the PR control) is not drawn there (style.css).
+  const header = screen.querySelector('.rd-header, .hd-header');
+  const facts = screen.querySelector('.rd-facts');
+  if (header && facts) facts.after(header);
+}
+// The run h1's shown text: runTitleText over the full title the painters stored.
+function setRunH1(screen, home = screen.__navHome) {
+  if (!onPage(screen)) return;
+  screen.__navHome = home;
+  const h = screen.querySelector('.rd-page-title');
+  if (!h) return;
+  const full = h.dataset.fullTitle || h.textContent;
+  h.dataset.fullTitle = full;
+  h.title = full;
+  const text = runTitleText(full, home);
+  if (h.textContent !== text) h.textContent = text;
 }
 /** The open run page's Group row (and status), repainted after the groups reload or the level changes. */
 function repaintOpenRunGroupLine() {
@@ -35635,14 +35886,6 @@ function paintRdGlance(screen, r) {
   paintRdLive(screen, live);
   paintRdNowList(screen, r, copy.state);
   paintRdResult(screen, r, { glance: copy.state, trailCount: trail.count });
-  // In Details the way back doubles as the cue that a question waits on the glance.
-  const back = screen.querySelector('.rd-to-run');
-  if (back) {
-    const ask = copy.state === 'ask';
-    back.classList.toggle('ask', ask);
-    back.querySelector('.rd-to-run-label').textContent = ask ? 'Answer' : 'Run';
-    back.setAttribute('aria-label', ask ? 'Back to the run to answer' : 'Back to the run');
-  }
 }
 
 function rdSheetRow({ label, detail = '', value = '', tab = '', state = '', icon = null, since = '' }) {
@@ -35769,10 +36012,15 @@ function paintActionsRowValue(screen, checkout, canTry, carrier, kept = null) {
 // The run's name as the glance's page title, with a short meta line under it.
 function paintPageHead(glance, title, meta) {
   if (!glance) return;
-  const h = glance.querySelector('.rd-page-title');
+  // On a page the title row sits in the head (.ph), outside the glance: one h1 per screen.
+  const screen = glance.closest('.rd, .hd') || glance;
+  const h = screen.querySelector('.rd-page-title');
   const m = glance.querySelector('.rd-page-meta');
-  if (h && h.textContent !== title) h.textContent = title;
-  if (h && h.title !== title) h.title = title;   // D13: the heading clamps at 2 lines; the full title is the tooltip
+  if (h && onPage(screen)) { h.dataset.fullTitle = title; setRunH1(screen); }
+  else {
+    if (h && h.textContent !== title) h.textContent = title;
+    if (h && h.title !== title) h.title = title;   // D13: the heading clamps at 2 lines; the full title is the tooltip
+  }
   if (m) {
     const text = meta.filter(Boolean).join(' · ');
     const node = m.firstChild && m.firstChild.nodeType === 3 ? m.firstChild : null;
@@ -35787,23 +36035,6 @@ function paintRunKindChip(meta, mode) {
   for (const c of [...meta.children]) if (c.classList.contains('kind-chip')) c.remove();
   const chip = kindChip(document, RUN_KIND_CHIP[mode]);
   if (chip) meta.appendChild(chip);
-}
-
-// The bar repeats the run's name only once the page title has scrolled under it
-// (CSS: [data-title-out]). One observer per page kind; a new screen replaces the old.
-const pageTitleWatch = { rd: null, hd: null };
-function watchPageTitle(screen, kind) {
-  if (pageTitleWatch[kind]) { pageTitleWatch[kind].disconnect(); pageTitleWatch[kind] = null; }
-  const h = screen && screen.querySelector('.rd-page-title');
-  if (!h || typeof IntersectionObserver !== 'function') return;
-  const io = new IntersectionObserver(([e]) => {
-    if (!e) return;
-    const bar = screen.querySelector('.rd-bar, .hd-bar');
-    const under = bar ? bar.getBoundingClientRect().bottom : 0;
-    screen.dataset.titleOut = !e.isIntersecting && e.boundingClientRect.bottom <= under + 1 ? '1' : '';
-  }, { rootMargin: '-64px 0px 0px 0px' });
-  io.observe(h);
-  pageTitleWatch[kind] = io;
 }
 
 // The Overview row's preview: what the review made of the run.
@@ -35856,7 +36087,11 @@ function glanceTiles({ summary = null, liveFiles = null, activeMs = null, cost =
     return t;
   };
   if (activeMs != null) tiles.append(tile(fmtDuration(activeMs) || '0s', 'time', ticking ? 'run-time' : ''));
-  if (cost != null) tiles.append(tile(fmtUsd(cost), costNote || 'cost'));
+  if (cost != null) {
+    const t = tile(fmtUsd(cost), costNote || 'cost');
+    t.className = 'rd-stat-cost';   // on a page it becomes the breakdown trigger (syncCostTile)
+    tiles.append(t);
+  }
   if (changes) tiles.append(tile(renderCountsNode(document, changes), 'files changed', 'fc-tile'));
   else if (summary) {
     const files = (summary.filesNew || 0) + (summary.filesChanged || 0);
@@ -35904,7 +36139,9 @@ function paintGlanceFacts(glance, opts) {
   if (host.dataset.sig === sig || (opts.ticking && host.dataset.sig && host.dataset.sig.startsWith('t|') && host.dataset.rest === rest)) return;
   host.dataset.sig = sig;
   host.dataset.rest = rest;
+  const costFocus = host.contains(document.activeElement) && document.activeElement.classList.contains('rd-stat-cost-btn');
   host.replaceChildren(...[tiles].filter(Boolean));
+  syncCostTile(screen.querySelector('.rd-sheet > :is(.rd-header,.hd-header)'), costFocus);
   if (tagsHost && tagsHost.dataset.sig !== tagSig) {
     tagsHost.dataset.sig = tagSig;
     tagsHost.replaceChildren(...[row].filter(Boolean));
@@ -37141,7 +37378,6 @@ function paintRunLabels(host, { pipelineId, labels, onSaved = () => {} }) {
 
 function paintRdHeader(screen, r) {
   screen.querySelector('.rd-title').textContent = r.title || r.runId;
-  screen.querySelector('.rd-bar-title').textContent = r.title || r.runId;
   paintPageHead(screen.querySelector('.rd-glance'), r.title || r.runId,
     [isNoProjectRun(r) ? '' : projectName(r.projectDir), r.startedAt ? `started ${whenLabel(r.startedAt)}` : '']);
   paintAutoBadge(screen.querySelector('.rd-row1 .auto-badge'), r.stepper);
@@ -37195,7 +37431,7 @@ function paintRdHeader(screen, r) {
     // Model bridge (model-bridge-design.md §8.6): a run that went through the
     // bridge shows its request count beside the dollars, so a "$0" reads as a
     // unit mismatch (Copilot bills requests), not as free.
-    ['rd-cost', runCostText(r, r.totalCostUsd).text + (freeRequestsSuffix(r.steps) || bridgeRequestsSuffix(r.steps)), true],
+    [`rd-cost${engineReportsCost(r.runEngine) ? '' : ' cost-unknown'}`, runCostText(r, r.totalCostUsd).text + (freeRequestsSuffix(r.steps) || bridgeRequestsSuffix(r.steps)), true],
     ['rd-step', stepText, false],
   ];
   // Rebuilt only when what it says changed. Every frame of every run repaints this header, and a
@@ -37219,9 +37455,9 @@ function paintRdHeader(screen, r) {
     const seg = document.createElement('span');
     seg.className = cls + (strong ? ' strong' : '');
     seg.textContent = txt;
-    if (cls === 'rd-cost' && freeRequestsSuffix(r.steps)) seg.title = estTitle(r.totalCostUsd || 0) + ' Free requests: calls this run made to OpenRouter :free models (every call, tool-loop continuations too), out of the day\'s free allowance.';
-    else if (cls === 'rd-cost') seg.title = estTitle(r.totalCostUsd || 0) + (bridgeRequestsSuffix(r.steps) ? ' Requests: calls this run initiated through the model bridge (Copilot bills premium requests, not tokens); tool-loop continuations are not counted.' : '');
-    if (cls === 'rd-cost' && !engineReportsCost(r.runEngine)) seg.title = runCostText(r, r.totalCostUsd).title;   // the unknown cost wins
+    if (cls.startsWith('rd-cost') && freeRequestsSuffix(r.steps)) seg.title = estTitle(r.totalCostUsd || 0) + ' Free requests: calls this run made to OpenRouter :free models (every call, tool-loop continuations too), out of the day\'s free allowance.';
+    else if (cls.startsWith('rd-cost')) seg.title = estTitle(r.totalCostUsd || 0) + (bridgeRequestsSuffix(r.steps) ? ' Requests: calls this run initiated through the model bridge (Copilot bills premium requests, not tokens); tool-loop continuations are not counted.' : '');
+    if (cls.startsWith('rd-cost') && !engineReportsCost(r.runEngine)) seg.title = runCostText(r, r.totalCostUsd).title;   // the unknown cost wins
     meta.appendChild(seg);
   });
   paintCostBreakdown(screen.querySelector('.rd-header'), meta.querySelector('.rd-cost'), runCostBreakdown(r.steps, r.totalCostUsd), costFocus,
@@ -37723,8 +37959,8 @@ const gsRunPageHops = (first) => {
     return [{ id: 'card', info: true, nextLabel: 'Done', target: card,
       text: 'This is your run. Open it to follow what it is doing; a question it needs answered shows there too. When it finishes, its row says how it ended.' }];
   }
-  const on = (sel) => [`#run-detail .rd[data-mode="glance"] ${sel}`, ...card];
-  const asking = !!document.querySelector('#run-detail .rd[data-mode="glance"] .rd-questions:not([hidden])');
+  const on = (sel) => [`#run-detail .rd[data-presentation="page"] ${sel}`, ...card];
+  const asking = !!document.querySelector('#run-detail .rd[data-presentation="page"] .rd-questions:not([hidden])');
   return [
     { id: 'card', info: true, target: on('.rd-now-top'), text: first },
     { id: 'facts', info: true, target: on('.rd-facts'),
@@ -38460,8 +38696,8 @@ function showView(name, param = '') {
   // so there the close is instant, as before.
   if (currentShownView === 'history' && name !== 'history') closeHistDetail({ instant: name !== 'runs' });
   // Run 3 (D2): the group page's pane, the same way.
-  const groupRoute = (n) => n === 'feature' || n === 'group';
-  if (groupRoute(currentShownView) && !groupRoute(name)) closeGroupPane({ instant: name !== 'runs' });
+  const isGroupView = (n) => n === 'feature' || n === 'group';
+  if (isGroupView(currentShownView) && !isGroupView(name)) closeGroupPane({ instant: name !== 'runs' });
   // Same for the Projects track: leaving must not park a project page mid-slide behind the next
   // view, and its Memory controller must not outlive the view.
   if (currentShownView === 'projects' && name !== 'projects') closeProjDetail({ instant: true });
@@ -38503,7 +38739,9 @@ function showView(name, param = '') {
 
   // Sync hash so direct callers (beginRun, resume, boot) don't leave hash stale.
   // Reconstruct the full hash (view + optional param) so a focused Running deep
-  // link (running/<id>) is preserved rather than collapsed to a bare view.
+  // link (running/<id>) is preserved rather than collapsed to a bare view. An old address of a page the route table
+  // owns (…/details/qa) is rewritten in place first (no history entry), so the sync below finds nothing to change.
+  param = navCanonicalParam(name, param);
   const targetHash = param ? `${name}/${param}` : name;
   if (name !== 'workflows') wfvReturn = targetHash;
   if (location.hash.slice(1) !== targetHash) {
@@ -38519,7 +38757,7 @@ function showView(name, param = '') {
     if (on) b.setAttribute('aria-current', 'page');
     else b.removeAttribute('aria-current');
   });
-  paintTopnavTitle(name);
+  paintTopnavTitle(name, param);
   setMobileNavOpen(false);   // any route (a drawer tap, back/forward, a deep link) puts the drawer away
   // Any route puts the Actions flyout away (a click inside it already did).
   sideActionsFlyout?.close();
@@ -38568,6 +38806,7 @@ function showView(name, param = '') {
       storage: { getItem: (k) => localStorage.getItem(k), setItem: (k, v) => localStorage.setItem(k, v) },
       focusAfter: document.querySelector('.runs-head-title') });
     syncRunsPane();
+    navFocus(name);
   }
   if (name === 'stats') loadStatsView();
   if (name === 'requirements') void requirementsView.show(param);
@@ -39027,7 +39266,9 @@ function liveRunContext(ctx, r, screen, mode) {
   if (r.pipelineId) ctx.pipelineId = r.pipelineId;
   if (r.kind === 'workspace-run' && r.workspaceId) ctx.workspaceId = r.workspaceId;
   else if (r.projectDir) ctx.projectDir = r.projectDir;
-  ctx.runPage = runPagePart(screen, mode);
+  // A page's Summary is its glance (the Ask header reads "the run summary").
+  const part = runPagePart(screen, mode);
+  ctx.runPage = onPage(screen) && part === 'overview' ? 'glance' : part;
   // The file open in the (live) Diff tab, as on History below.
   const diffSec = screen && screen.querySelector('.rd-sec[data-sec="diff"]:not([hidden])');
   const selected = ctx.runPage === 'diff' && diffSec ? diffSec.querySelector('.rd-diff-row.active') : null;
@@ -39044,7 +39285,9 @@ function savedRunContext(ctx, p, screen, mode) {
   ctx.pipelineId = p.id;
   if (p.workspace) ctx.workspaceId = p.projectKey.slice('workspaces/'.length);
   else ctx.projectKey = p.projectKey;
-  ctx.runPage = runPagePart(screen, mode);
+  // A page's Summary is its glance (the Ask header reads "the run summary").
+  const part = runPagePart(screen, mode);
+  ctx.runPage = onPage(screen) && part === 'overview' ? 'glance' : part;
   // The file open in the Diff tab, so "this file" / "the comments here" resolve
   // without the user naming a path. A repo-relative path is server-resolvable
   // data — the "never a title, never a name" rule above holds.

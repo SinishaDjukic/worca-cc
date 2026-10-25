@@ -455,10 +455,10 @@ const states = [
   // The Runs list (one list for live and finished runs). The audit id keeps its old name so
   // test/fixtures/contrast-baseline-light.json still matches.
   ['running-list', async () => { await go('runs'); await until(`document.querySelector('#runs-list .runs-row')`, 'a run row'); }],
-  // The Running detail has two modes on one route: the glance (#running/<id>) and
-  // Details (#running/<id>/details[/<tab>]). Each mode is its own audited state.
-  ['running-detail', async () => { await go(`running/${runId}`); await until(`document.querySelector('#run-detail .rd-glance:not([hidden]) .rd-page-title')?.textContent`, 'the glance'); }],
-  ['running-detail-details', async () => { await go(`running/${runId}/details`); await until(`document.querySelector('#run-detail .rd-details:not([hidden]) .rd-tabs .rd-tab')`, 'detail tabs'); await freeze('details'); }],
+  // The run page (docs/design-system.md Navigation): one page with tabs in its head; Summary is the glance. The old
+  // …/details addresses redirect to it, and each address stays its own audited state.
+  ['running-detail', async () => { await go(`running/${runId}`); await until(`document.querySelector('#run-detail .ph .rd-page-title')?.textContent && document.querySelector('#run-detail .rd-glance:not([hidden])')`, 'the glance'); }],
+  ['running-detail-details', async () => { await go(`running/${runId}/details`); await until(`document.querySelector('#run-detail .ph-tabs .rd-tabs .rd-tab')`, 'detail tabs'); await freeze('details'); }],
   ['running-detail-tabs', async () => { const n = await ev(`document.querySelectorAll('#run-detail .rd-tab').length`); if (n < 2) throw new Error(`running-detail has ${n} tab(s): nothing to audit`); for (let i = 1; i < n; i += 1) { await ev(`document.querySelectorAll('#run-detail .rd-tab')[${i}].click();0`); await freeze('tab'); await auditCurrent(`running-detail-tab-${i}`); } }],
   // No finished Running page: a finished run IS its saved run (app.js rdSavedRoute), and after
   // the reload every go() does, #running/<id> lands on #history/… — the history-detail states.
@@ -471,7 +471,7 @@ const states = [
   // The run header's ⋯ menu, open (measured by CONTROL_CHECKS; the page behind it is audited as history-detail-details). (the shared .menu: 8px corner, the menu shadow, rows of 30px or more).
   // The ⋯ lives in the Details pane. Its trigger and rows stay hidden for a run that can be neither archived nor reported (app.js setupHdActions): the
   // proof un-hides them to measure the menu's CSS.
-  ['history-menu', async () => { await go(`history/${projectKey}/${pipelineId}/details`); await until(`document.querySelector('.hd-details:not([hidden]) .hd-tabs .hd-tab')`, 'history tabs'); await clickSel('#hist-detail .hd-bar-more'); await until(`document.querySelector('body > .wfv-menu')`, 'the ⋯ menu'); },
+  ['history-menu', async () => { await go(`history/${projectKey}/${pipelineId}/details`); await until(`document.querySelector('#hist-detail .ph-tabs .hd-tabs .hd-tab')`, 'history tabs'); await clickSel('#hist-detail .hd-bar-more'); await until(`document.querySelector('body > .wfv-menu')`, 'the ⋯ menu'); },
     async () => { await ev(`document.querySelector('#hist-detail .hd-bar-more').click()`); }],
   ['history-detail-cost-tags', async () => {
     const json = { 'content-type': 'application/json' };
@@ -517,7 +517,7 @@ const states = [
     await api(`/api/runs/${encodeURIComponent(pipelineId)}/tags`, { method: 'PUT', headers: json, body: JSON.stringify({ tags: [] }) });
     await api('/api/flags', { method: 'PATCH', headers: json, body: JSON.stringify({ runTags: null }) });
   }],
-  ['history-detail-details', async () => { await go(`history/${projectKey}/${pipelineId}/details`); await until(`document.querySelector('.hd-details:not([hidden]) .hd-tabs .hd-tab')`, 'history tabs'); await freeze('details'); }],
+  ['history-detail-details', async () => { await go(`history/${projectKey}/${pipelineId}/details`); await until(`document.querySelector('#hist-detail .ph-tabs .hd-tabs .hd-tab')`, 'history tabs'); await freeze('details'); }],
   ['history-detail-tabs', async () => { const n = await ev(`document.querySelectorAll('.hd-tabs .hd-tab').length`); if (n < 2) throw new Error(`history-detail has ${n} tab(s): nothing to audit`); for (let i = 1; i < n; i += 1) { await ev(`document.querySelectorAll('.hd-tabs .hd-tab')[${i}].click();0`); await until(`!document.querySelector('.hd-diff-pane') || document.querySelector('.hd-diff-pane .hd-dl-row, .hd-diff-none, .hd-diff-note')`, 'tab content'); await freeze('tab'); await auditCurrent(`history-detail-tab-${i}`); } }],
   // The Workflows view (full screen): the canvas with the Library open, the Library's Scripts section with general expanded,
   // the save dialog the engine opens itself, the agent sheet and the open chat.

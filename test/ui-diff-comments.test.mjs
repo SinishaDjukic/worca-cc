@@ -426,11 +426,12 @@ test('Cancel and Esc close the composer without POSTing or leaving Details; Esc 
       assert.ok(doc.querySelector('#hist-detail .hd-diff-body'), 'the diff is still rendered');
       assert.equal(ctx.cbox.calls.length, 0, 'Esc never POSTs');
     } },
-    { name: 'Esc with no composer open still steps back out of Details (the guard is scoped)', run: async () => {
+    { name: 'Esc with no composer open is the page\'s again (the guard is scoped)', run: async () => {
+      // In the slide layout the page's Escape goes up to its parent, the Runs list (side by side it does nothing).
+      window.document.getElementById('runs-shell').dataset.layout = 'slide';
       keydown(window, window.document.querySelector('#hist-detail .hd-diff-pane'), 'Escape');
       await settle(window);
-      // Details › Diff → the run's glance (one more Escape would reach the list).
-      assert.equal(window.location.hash.replace(/^#/, ''), `history/${KEY}/${ROW.id}`, 'the existing behaviour is untouched');
+      assert.equal(window.location.hash.replace(/^#/, ''), 'runs', 'the page\'s own Escape ran');
     } },
   ]);
 });

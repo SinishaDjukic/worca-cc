@@ -30,6 +30,8 @@ test('chip refs: links, text and keys (src/shared/chip-refs.mjs)', async () => {
       assert.equal(refFromHref('#history/worca-cc-ace1a602/1a2b3c4d/details/diff').key, 'run:1a2b3c4d');
       assert.equal(refFromHref('#history/workspaces/wks-a-1234abcd/1a2b3c4d').key, 'run:1a2b3c4d');
       assert.equal(refFromHref(`#running/${UUID}`).key, `run:${UUID}`);
+      assert.equal(refFromHref('#history/worca-cc-ace1a602/1a2b3c4d/diff').key, 'run:1a2b3c4d');   // the canonical tab form
+      assert.equal(refFromHref(`#running/${UUID}/qa`).key, `run:${UUID}`);
       assert.equal(refFromHref('#chat/ask_1a2b3c4d').key, 'chat:ask_1a2b3c4d');
       for (const h of ['#history/p/1', '#running/abc-123', '#chat/ask_1a2b3c4d/run/aaaa1111', '#projects/x', '#history/k-1234abcd/1a2b3c4d/raw',
         `#running/${UUID}/details/diff/extra`]) assert.equal(refFromHref(h), null, h);

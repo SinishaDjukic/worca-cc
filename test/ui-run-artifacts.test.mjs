@@ -941,13 +941,14 @@ test('the popup viewer owns Escape over the Running detail, and every opener rea
         fetchHandler: (url) => (url.includes('/api/runs/p1/artifact?rel=') ? ok({ rel: 'plans/plan.md', text: '# plan' }) : null),
       });
       await openRunWithArtifacts(ctx);
-      // Details mode: there the page's own capture-phase Escape arm steps back to the glance (#running/r1). A tab click
-      // in jsdom's split layout stays on the glance, where that arm does nothing and this row could not fail.
+      // The slide layout: there the page's own capture-phase Escape arm goes up to the Runs list. Side by side that
+      // arm does nothing, and this row could not fail.
       go(ctx.window, 'running/r1/details/artifacts');
       await settle(ctx.window);
       const doc = ctx.window.document;
+      doc.getElementById('runs-shell').dataset.layout = 'slide';
       const hash = ctx.window.location.hash;
-      assert.equal(hash, '#running/r1/details/artifacts');
+      assert.equal(hash, '#running/r1/artifacts');
       await ctx.window.__np.openRunArtifactPopup({ pipelineId: 'p1' }, { kind: 'plan', relPath: 'plans/plan.md', nodeId: 'plan', cycle: 1 });
       assert.ok(doc.querySelector('.apv'), 'the popup is open');
       assert.equal(doc.querySelector('.apv .apv-meta').textContent, 'Plan · cycle 1', 'the live run names the step');
