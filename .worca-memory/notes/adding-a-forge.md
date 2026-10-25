@@ -2,7 +2,7 @@
 name: adding-a-forge
 description: Read before adding or changing a code host (forge) — GitHub/Azure DevOps/Bitbucket; lists the two-way forge splits a new forge silently falls through.
 paths: src/core/forge.mjs, src/core/host-credentials.mjs, src/core/git-info.mjs, src/core/marketplace-publish.mjs
-updated: 2026-10-25T14:23:50.763Z
+updated: 2026-10-25T16:03:47.209Z
 author: Bulibas
 ---
 
@@ -27,5 +27,9 @@ Bitbucket (#907, 2026-10-25):
   `(info.githubRepo || info.azure || …)` conditions in `fastForward` and `readEnvFor` (Resolve and the #620 merge-tree
   check on a PRIVATE repo), and `pluginGitEnv`. Copy the Azure fetch / fast-forward tests in `test/git-sync.test.mjs`
   (runner answers `remote get-url` with the forge URL) and add a merge-tree env test in `test/git-sync-base-merge.test.mjs`.
+- Still untested after two sweeps (impl review cycle 1, 2026-10-25), in the REST PR adapter `src/core/pr/bitbucket.mjs`:
+  the same-repo (fork) filter in each lookup is a SEPARATE guard per function (`openPr`, `findPrForBranch`,
+  `listPullRequestsForBranches`, `readPr`): a test for one does not cover the others (`findPrForBranch`'s survived).
+  The query-literal escape (`lit`, BBQL quotes/backslashes) also survived: assert the decoded `q=` of a branch holding `"`.
 
 Find the splits: `git grep -nE "forge\)? ?(===|!==) ?'(github|azure)'|\.forge (===|!==) '(github|azure)'" -- src ui`.
