@@ -325,6 +325,7 @@ import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
 import { registerRequirementsRoutes, requirementsChangeNotifier } from '../src/core/requirements/routes.mjs';
+import { registerWorkflowVersionRoutes } from '../src/core/workflow-versions-routes.mjs';
 import { createRunEventHook } from '../src/core/requirements/start.mjs';
 import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
 import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
@@ -13046,6 +13047,9 @@ app.post('/api/workflows', async (req, res) => {
     return sendWorkflowShareError(res, err);
   }
 });
+
+// Workflow versions + history (plans/workflow-tests-plan.md Part 1; #721 workflow part). Flag workflowTests.
+registerWorkflowVersionRoutes(app, { agentsDir: AGENTS_DIR });
 
 // ---------------------------------------------------------------------------
 // Share a workflow as JSON (issue #421). GET .../json is the unstamped v2 graph
