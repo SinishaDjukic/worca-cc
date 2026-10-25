@@ -81,6 +81,9 @@ ring for every button, link, summary, tab, switch and `[tabindex]` while `data-i
 back. Only a key that moves or acts on focus counts (Tab, the arrows, Enter, Space or Escape outside a field): typing,
 Enter in a field and a modifier alone keep the pointer mode (`ui/public/input-mode.mjs`). Fields keep their ink border
 on focus. Rings sit on `:focus-visible`, never on `:focus`.
+A divided list with list keys (`ui/public/list-keys.mjs`, the Runs list and the Chats column) is one Tab stop with a
+moving focus (`ui/public/list-dom.mjs`, the one module both lists use): rows and foldable section heads take ↑ ↓ / J K,
+their ⌄, ⋯ and checkbox are `tabindex="-1"`.
 
 ## Components
 ### Button (checked)
@@ -166,6 +169,7 @@ or a policy origin is `.badge.slate`; "not installed" and "built-in" are grey.
 ### Status dot and symbols
 A dot is the state: peach working (pulses), grey paused or waiting, green ready, violet merged. Needs you is an amber
 "?" only when Worca asks; a PR problem is a plain amber dot with the reason in the PR chip; failed is a red "!".
+An idle chat shows the chat bubble line icon in the dot's place.
 ### Card head
 The first line of a card is its headline. When the page title sits above the card (the run page, the group page),
 the state is the headline: `.run-status-word`, 1–3 words at `--fs-section` / 600 / `--lh-title`, never truncated, the
@@ -212,7 +216,7 @@ is appended inside it (a `.btn-split.mini`) and placed by its CSS; a `{ switch: 
 switch row (help line, `.switch`) whose toggle keeps the menu open. The run page's View PR ▾ is built with it. The sidebar flyouts (`.nav-fly`), the
 composer pickers (`.ask-pop`) and the split-button menus (`.btn-split-menu`) keep their
 own builders and positions and add `.menu` / `.menu-item`; they carry no box or row skin of their own. No hand-built
-dropdowns.
+dropdowns. An item that has a key shows it as its `hint` (the 11px `--ink-2` count slot): the Runs row ⋯ reads `S`, `E`, `⌫`.
 ### Row button
 `.row-btn`: a whole divided-list row that a person opens (a Library folder, a Memory row, a keyed project row): full
 width, `--hover` fill and `--r-sm` corner on hover, an inset ring on keyboard focus. Each list keeps its own grid and
@@ -257,6 +261,12 @@ header with negative margins, and keep a nested scroller only for a bordered box
 on purpose. Under 640px of height the head compacts (smaller hero, tighter gap) but stays. The Marketplace's
 `.mk-dialog` / `.mk-sheet` follow the same model with their own class names.
 
+Keyboard shortcuts sheet (`ui/public/keys-sheet.mjs`): the one sheet listing the list keys, opened by `?` on a list page
+or View › Keyboard shortcuts. A 760px `.card` dialog in the shared anatomy: two columns of divided rows (label left, key
+chips right, "or" between alternatives), stacked under 640px, and a foot with a 12px note and Close. Its `kbd.kbd`
+chips share the top search's `.tsearch-kbd` rule; there is no second key-chip style. Esc, Close or the backdrop close it
+and hand the focus back to the opener.
+
 ## Patterns
 - Status line: "State · detail", for example "Failed · Review · Review Implementation". No colon forms. In a card head
   the two parts split: the state is the headline and the detail is the line under it (Card head).
@@ -299,6 +309,15 @@ on purpose. Under 640px of height the head compacts (smaller hero, tighter gap) 
 - Phones: one 16px gutter; nothing scrolls sideways at 290px.
 - Runs list order: Needs you (most urgent first), Running, Waiting, Recent. Each section is newest dispatch first (a
   run's start, a waiting ticket's creation); a section with no rows is not drawn.
+- Chats list: the Runs list anatomy in the Chat page's column; the open chat's figures sit once in the conversation
+  head as a readout control (`button.chat-head-meter`, 11px mono, like the cost breakdown's `.cost-bd-btn`), not a
+  §1.2 button; sections Pinned · Today · Recent
+  (the 10 latest before today) · Older (folded); Archive is disabled while a chat replies, runs a command or follows a
+  live run; an archived chat reads Restore, as a run does; New chat is the one + after the list toggle; a topic group is
+  a Runs group row (count, ⌄, members indented 16px, no dividers) placed by its newest chat; its sub line names its
+  project or `N projects`; Group by Project files a group spanning projects under Several projects, never No project;
+  Group by Topic shows one section per group, then Ungrouped; the group dialog's name field
+  uses Smart run naming's Suggested chip only while that flag is on.
 - Waiting says what it waits for: `Waiting · starts after Complete Design Language Rollout · run 3`,
   `Waiting · starts 14:00`. A group in Needs you leads with the reason: `Run 1 needs you · Checks failing`.
 - Question options are divided rows: one --line between rows, no box per option; the picked row takes the --field fill

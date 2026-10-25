@@ -136,7 +136,13 @@ import {
   findRunLinksByPipeline as askFindRunLinksByPipeline, runLinkTarget,
   finishMessage as askFinishMessage, newAskId,
   newAskId as askNewId, findPullRequestCards as askFindPullRequestCards, findFixRunCards as askFindFixRunCards,
+  setArchived as askSetArchived, setPinned as askSetPinned, listThreadsPage as askListThreadsPage, THREAD_SORTS,
+  createChatGroup as askCreateChatGroup, getChatGroup as askGetChatGroup, listChatGroups as askListChatGroups,
+  renameChatGroup as askRenameChatGroup, addToChatGroup as askAddToChatGroup, removeFromChatGroup as askRemoveFromChatGroup,
+  deleteChatGroup as askDeleteChatGroup, chatGroupThreadIds as askChatGroupThreadIds, firstUserText as askFirstUserText,
+  ChatGroupError,
 } from '../src/core/ask/store.mjs';
+import { CHAT_BUSY, chatBusyReason, chatGroupBusyText } from '../src/shared/chat-busy.mjs';
 import { revealTargetFor as askRevealTargetFor } from '../src/core/ask/show-files-deps.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { stripIntentLead } from '../src/shared/intent-leads.mjs';
@@ -168,7 +174,7 @@ import { validateMcpOff, resolveAskMcp, askMcpPromptInput, askMcpPreview, askMcp
 import { attachRunFollower } from '../src/core/ask/follow.mjs';
 import { mockEnabled, MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride, recordUtilityCost } from '../src/core/cost-budget.mjs';
-import { resolveNamingModel, suggestNames, mockSuggestion, estimateNamingUsd, legacyBranchHint } from '../src/core/naming.mjs';
+import { resolveNamingModel, suggestNames, mockSuggestion, estimateNamingUsd, legacyBranchHint, suggestGroupName } from '../src/core/naming.mjs';
 import { createCommandSummariser, summariseCommandCard, commandSummariesWanted } from '../src/core/ask/command-summary.mjs';
 import { getStats, budgetWindowSavings, shapingGroups } from '../src/core/stats.mjs';
 import {
@@ -13716,6 +13722,11 @@ function askTrackingCount(threadId) {
   return n;
 }
 
+/** #948 s2: why this chat cannot be archived now (chat-busy.mjs), or null. */
+function askBusyReason(threadId) {
+  return chatBusyReason({ inFlight: !!askInFlight(threadId), commands: askCommands.running(threadId), tracking: askTrackingCount(threadId) });
+}
+
 /** worca Chat (the History column's amber dot): how many of this chat's followed, unsettled runs wait on a question
  *  or gate — entry.pendingQuestion, the same truth the Running page reads. */
 function askWaitingCount(threadId) {
@@ -13816,15 +13827,34 @@ app.get('/api/ask/threads', (req, res) => {
     const mode = !req.worcaExtension && req.query.mode === 'composer' ? 'composer' : null;
     // q = the History column's search (title or any message's text); the owner and surface filters above still apply.
     const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
-    const threads = askListThreads({ limit, visibleTo, mode, query }).map((t) => {
+    const decorate = (t) => {
       const trackingRuns = askTrackingCount(t.id);
-      return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns, waiting: askWaitingCount(t.id) > 0 };
-    });
+      return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns, waiting: askWaitingCount(t.id) > 0,
+        commands: askCommands.running(t.id), archived: !!t.archivedAt, scope: chatScopeOf(t.context) };
+    };
+    // #948 s2: the Chats column pages (show / sort / cursor). Without them the answer keeps today's top-level keys.
+    const cursor = typeof req.query.cursor === 'string' && req.query.cursor ? req.query.cursor : null;
+    // A cursor alone pages Show = All, so `total` and the rows describe the same set.
+    const show = ['all', 'needs', 'archived'].includes(req.query.show) ? req.query.show : (cursor ? 'all' : null);
+    if (show) {
+      const sort = THREAD_SORTS.includes(req.query.sort) ? req.query.sort : 'activity';
+      const needIds = [...askFollowers.keys()].filter((tid) => askWaitingCount(tid) > 0);
+      const base = { visibleTo, mode, query };
+      const page = askListThreadsPage({ ...base, limit, sort, cursor, show: show === 'needs' ? 'all' : show, ids: show === 'needs' ? needIds : null });
+      const counts = {
+        all: askCountThreads({ ...base, show: 'all' }),
+        needs: askCountThreads({ ...base, show: 'all', ids: needIds }),
+        archived: askCountThreads({ ...base, show: 'archived' }),
+      };
+      return res.json({ threads: page.threads.map(decorate), cursor: page.cursor, total: counts[show], counts });
+    }
+    const threads = askListThreads({ limit, visibleTo, mode, query }).map(decorate);
     // total = EVERY saved chat (the History popover's meter), not the capped page above; while searching, the chats
     // the search matches, with all = every saved chat ("3 of 54 chats").
     const total = askCountThreads({ visibleTo, mode, query });
     res.json(query ? { threads, total, all: askCountThreads({ visibleTo, mode }) } : { threads, total });
   } catch (err) {
+    if (err && err.code === 'BAD_CURSOR') return badRequest(res, 'invalid cursor');
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
@@ -14050,6 +14080,22 @@ app.patch('/api/ask/threads/:id', async (req, res) => {
   try {
     if (req.worcaExtension && askGetThread(id)?.mode === 'composer') return res.status(403).json({ error: 'the browser extension uses Ask threads only', code: 'extension-route' });
     const body = req.body || {};
+    // #948 s2: archive and pin, alone in the body. Archive waits for an idle chat (chat-busy.mjs); unarchive and pin
+    // never wait. Neither bumps the chat's Last activity.
+    if (body.archived !== undefined || body.pinned !== undefined) {
+      if (Object.keys(body).some((k) => k !== 'archived' && k !== 'pinned')) return badRequest(res, 'archived and pinned are sent on their own');
+      for (const k of ['archived', 'pinned']) {
+        if (body[k] !== undefined && typeof body[k] !== 'boolean') return badRequest(res, `${k} must be true or false`);
+      }
+      if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+      if (body.archived === true) {
+        const reason = askBusyReason(id);
+        if (reason) return res.status(409).json({ error: CHAT_BUSY[reason], code: 'CHAT_BUSY', reason });
+      }
+      if (body.archived !== undefined) askSetArchived(id, body.archived);
+      if (body.pinned !== undefined) askSetPinned(id, body.pinned);
+      return res.json({ thread: askGetThread(id) });
+    }
     const patch = {};
     // The Ask panel's model · effort picker, moved while this chat is open: the pair
     // travels together, so a switch away and back finds it before any send.
@@ -14153,8 +14199,10 @@ app.delete('/api/ask/threads/:id', async (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
   try {
-    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    const t = askGetThread(id);
+    if (!t) return res.status(404).json({ error: 'thread not found' });
     await deleteAskThreadFully(id);
+    if (t.groupId) emitChanged('ask-groups-changed', 'removed');   // #948 s3: its delete may have dropped the group
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -14944,6 +14992,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       catch (err) { if (err.code === 'TURN_IN_FLIGHT') return res.status(409).json({ error: 'turn in flight' }); throw err; }
     }
     if (composerState) askUpdateThread(id, { composer: composerState });
+    if (thread.archivedAt) askSetArchived(id, false);   // #948 s2: a message brings an archived chat back
     const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, client: req.worcaExtension ? 'browser-extension' : null });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
@@ -15159,6 +15208,144 @@ app.post('/api/naming/suggest', namingOn, async (req, res) => {
     if (r.source !== 'model') return fallback(r.error);
     res.json({ ...r, title: cfg.suggestTitle ? r.title : undefined, branch: cfg.suggestBranch ? r.branch : undefined });
   } catch (err) { if (!res.headersSent) res.status(500).json({ error: 'suggestion failed' }); }   // Express 4 swallows async throws
+});
+
+// ---------------------------------------------------------------------------
+// #948 s3: the Chats column's topic groups. suggest-name answers 404 while smartRunNaming is off (namingOn, the /api/naming/* gate above). Every write broadcasts
+// ask-groups-changed, so other tabs re-read their column.
+// ---------------------------------------------------------------------------
+function chatGroupError(res, err) {
+  if (err instanceof ChatGroupError) return res.status(err.status).json({ error: err.message, code: err.code });
+  return res.status(500).json({ error: err && err.message ? err.message : String(err) });
+}
+/** `raw` as chat ids this person sees: 400 for a bad list, 404 for a missing or hidden chat; null after answering. */
+function askGroupThreads(req, res, raw) {
+  if (!Array.isArray(raw) || !raw.length || raw.length > 200 || raw.some((x) => typeof x !== 'string' || !ASK_ID_RE.test(x))) {
+    badRequest(res, 'threadIds must list 1 to 200 chat ids');
+    return null;
+  }
+  const ids = [...new Set(raw)];
+  for (const id of ids) {
+    const t = askGetThread(id);
+    if (!t || !askThreadVisible(t, req)) { res.status(404).json({ error: 'thread not found' }); return null; }
+  }
+  return ids;
+}
+/** The group named by :id that this person sees, or null after answering 400 / 404. */
+function askGroupFor(req, res) {
+  const id = askIdParam(res, req.params.id, 'group');
+  if (!id) return null;
+  const g = askGetChatGroup(id);
+  const viewer = askViewer(req);
+  if (!g || (viewer && g.createdBy && g.createdBy !== viewer)) { res.status(404).json({ error: 'group not found' }); return null; }
+  return g;
+}
+
+app.get('/api/ask/groups', (req, res) => {
+  try { res.json({ groups: askListChatGroups({ visibleTo: askViewer(req) }) }); } catch (err) { chatGroupError(res, err); }
+});
+
+app.post('/api/ask/groups', (req, res) => {
+  try {
+    const b = req.body || {};
+    const ids = askGroupThreads(req, res, b.threadIds);
+    if (!ids) return;
+    const group = askCreateChatGroup({ name: b.name, nameSource: b.nameSource, threadIds: ids, createdBy: actorOf(req) });
+    emitChanged('ask-groups-changed', 'created');
+    res.status(201).json({ group });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.patch('/api/ask/groups/:id', (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const group = askRenameChatGroup(g.id, { name: req.body?.name, nameSource: req.body?.nameSource });
+    emitChanged('ask-groups-changed', 'renamed');
+    res.json({ group });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.post('/api/ask/groups/:id/threads', (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const ids = askGroupThreads(req, res, req.body?.threadIds);
+    if (!ids) return;
+    const group = askAddToChatGroup(g.id, ids);
+    emitChanged('ask-groups-changed', 'moved');
+    res.json({ group });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.delete('/api/ask/groups/:id/threads/:threadId', (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const tid = askIdParam(res, req.params.threadId, 'thread');
+    if (!tid) return;
+    const t = askGetThread(tid);
+    if (!t || t.groupId !== g.id || !askThreadVisible(t, req)) return res.status(404).json({ error: 'thread not found' });
+    const r = askRemoveFromChatGroup(tid);
+    emitChanged('ask-groups-changed', 'removed');
+    res.json({ ok: true, ...r });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.post('/api/ask/groups/:id/archive', (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const archived = req.body?.archived;
+    if (typeof archived !== 'boolean') return badRequest(res, 'archived must be true or false');
+    // Only the members whose state changes: Undo restores exactly these, and a chat archived before stays archived.
+    const ids = askChatGroupThreadIds(g.id).filter((id) => !!askGetThread(id)?.archivedAt !== archived);
+    // Synchronous from here to the writes: no `await` between the busy check and setArchived, or a turn could start
+    // in between and a busy chat would be archived.
+    if (archived) {
+      for (const id of ids) {
+        const reason = askBusyReason(id);
+        if (reason) return res.status(409).json({ error: chatGroupBusyText(askGetThread(id)?.title), code: 'CHAT_BUSY', reason, threadId: id });
+      }
+    }
+    for (const id of ids) askSetArchived(id, archived);
+    emitChanged('ask-groups-changed', archived ? 'archived' : 'restored');
+    res.json({ ok: true, threadIds: ids });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.delete('/api/ask/groups/:id', async (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const deleteChats = req.query.deleteChats === 'true';
+    const ids = askChatGroupThreadIds(g.id);
+    let deleted = 0;
+    // One at a time, as the bulk thread DELETE: each worktree removal spawns git.
+    if (deleteChats) for (const id of ids) { const r = await deleteAskThreadFully(id); if (r.deleted) deleted += 1; }
+    askDeleteChatGroup(g.id);                 // a no-op once the last chat's delete dropped the group
+    emitChanged('ask-groups-changed', deleteChats ? 'deleted' : 'ungrouped');
+    res.json({ ok: true, threadIds: ids, deleted });
+  } catch (err) { if (!res.headersSent) chatGroupError(res, err); }
+});
+
+// POST /api/ask/groups/suggest-name {threadIds} -> { source: 'model', name } | { source: 'fallback', error }.
+// The Run naming helper model (namingPick); the prompt carries each chat's title and first message only.
+app.post('/api/ask/groups/suggest-name', namingOn, async (req, res) => {
+  try {
+    const ids = askGroupThreads(req, res, req.body?.threadIds);
+    if (!ids) return;
+    if (!namingBucket.tryConsume()) return res.status(429).json({ error: 'too many suggestions, try again in a moment' });
+    if (budgetStatus().blocked) return res.json({ source: 'fallback', error: 'total cost limit reached' });
+    if (mockEnabled({})) return res.json({ source: 'model', name: 'Mock group' });   // deterministic, spawns nothing
+    const chats = ids.map((id) => ({ title: askGetThread(id)?.title || '', firstMessage: askFirstUserText(id) }));
+    const ac = new AbortController();
+    res.on('close', () => { if (!res.writableEnded) ac.abort(); });
+    const pick = await namingPick();
+    const r = await suggestGroupName({ chats, signal: ac.signal },
+      { pickModel: () => pick, onCost: (c) => { try { recordUtilityCost('naming', c); } catch { /* a ledger write never fails a suggestion */ } } });
+    res.json(r.source === 'model' ? { source: 'model', name: r.name } : { source: 'fallback', error: r.error });
+  } catch (err) { if (!res.headersSent) res.status(500).json({ error: 'suggestion failed' }); }
 });
 
 // ---------------------------------------------------------------------------

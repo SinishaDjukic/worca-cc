@@ -18,7 +18,7 @@ export const WORKFLOWS_MAX = 12;
 /** The server's built-ins (ui/server.mjs GET /api/workflows; library.mjs RESERVED). */
 export const BUILTIN_WORKFLOW_IDS = Object.freeze(['wf_default', 'wf_memory_defrag']);
 const PANEL_ID = 'chat-home-panel';
-/** The History column's screen-reader words for the same three dots (worca Chat P1), so both lists say the same. */
+/** The screen-reader words for the three dots (worca Chat P1): Replying, Needs you, Following a run. */
 const DOT_TEXT = Object.freeze({ think: 'Replying', wait: 'Needs you', live: 'Following a run' });
 
 const make = (doc, tag, cls, text) => {

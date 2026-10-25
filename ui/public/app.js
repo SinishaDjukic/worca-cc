@@ -112,8 +112,11 @@ import { headModel, routeModel, routeGroupOf, renderHeadButtons, renderRoute, pr
   hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip } from './run-head.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
 import { loadRunsView, saveRunsView, viewChip, viewMenuItems } from './runs-view-menu.mjs';
-import { createRunsSelection, runsKeyAction, rowTarget, barModel, bulkBody, rangeKeys, labelTargets } from './runs-selection.mjs';
-import { bulkConfirm } from '../../src/shared/run-bulk.mjs';
+import { createRunsSelection, rowTarget, barModel, bulkBody, rangeKeys, labelTargets } from './runs-selection.mjs';
+import { bulkConfirm, planBulk, skipText } from '../../src/shared/run-bulk.mjs';
+import { listKeyAction, keyHint, isMac, LIST_FIELD } from './list-keys.mjs';
+import { openKeysSheet } from './keys-sheet.mjs';
+import { createListRove, paintBulkBar, LIST_NAV, navKey } from './list-dom.mjs';
 import { openGroupPicker } from './group-picker.mjs';
 import { ACTION_LABEL, HEAD_ACTIONS, MENU_ACTIONS, groupModel, runModel } from '../../src/shared/run-model.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
@@ -293,6 +296,7 @@ import { renderPattern, patternProblem, PRESET_TYPES, TYPE_RE } from '../../src/
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
+import { chatRows, CHAT_LIMIT } from './global-search.mjs';
 import { pageTitle } from './topnav.mjs';
 import { activityCounts } from './activity-model.mjs';
 import { createChatHome, findFollowingThread } from './chat/home.mjs';
@@ -416,6 +420,13 @@ let lastChatHomeFlags = null;   // the switches chatHomeFlags last read: onHello
 const chatDeps = {
   openRunPanel: (ref, opts) => chatOpenRunPage(ref, opts),
   openArtifact: (ref, artifact) => chatDeps.openRunPanel(ref, { tab: 'artifacts' }),
+  // #948 s2: Rename… in the Chats column, and the project or workspace name on a chat row.
+  prompt: (o) => promptModal(o),
+  scopeName: (s) => {
+    if (s && s.projectKey) { const p = (state.projects || []).find((x) => x.key === s.projectKey); return p ? p.name || projectName(p.path) : ''; }
+    if (s && s.workspaceId) { const w = (state.workspaces || []).find((x) => x.id === s.workspaceId); return w ? w.name : ''; }
+    return '';
+  },
 };
 
 /** L11: open feature views by id, repainted on `shape-feature` and `schedules-changed`. host -> feature id. */
@@ -1279,6 +1290,10 @@ if (topnavSearchRoot) createTopnavSearch({
     if (!runsUi.view.labels.includes(label)) setRunsView({ labels: [...runsUi.view.labels, label] });
     goRunsList();
   },
+  // #948 s2: the Chats group (title and message text, server-side), first on the Chat page.
+  searchChats: (q) => fetch(`/api/ask/threads?limit=${CHAT_LIMIT}&q=${encodeURIComponent(q)}`).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+    .then((b) => chatRows(b && Array.isArray(b.threads) ? b.threads : [])),
+  chatsFirst: () => document.body.classList.contains('view-chat'),
 });
 
 // Restore before the first paint. `.sidebar` transitions width/flex-basis over
@@ -13693,7 +13708,7 @@ const confirmGuard = el.confirmModal ? guardModal(el.confirmModal) : null;
 let shellDone = null;
 function modalShell({
   title = 'Confirm', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel',
-  checkbox = null, danger = false, fields = null, messageTone = null,
+  checkbox = null, danger = false, fields = null, messageTone = null, focus = 'ok',
 } = {}) {
   return new Promise((resolve) => {
     modalGen += 1;   // the extension pair prompt checks this to detect a confirm opened over it (see promptExtensionPair)
@@ -13770,7 +13785,7 @@ function modalShell({
     el.confirmCheckboxLabel.textContent = checkbox ? checkbox.label : '';
     el.confirmModal.classList.remove('hidden');
     confirmGuard?.opened({ kind: fields ? 'form' : 'decision', close: () => done(false) });
-    (inputs[0] || el.confirmOk).focus();
+    (inputs[0] || (focus === 'cancel' ? el.confirmCancel : el.confirmOk)).focus();
 
     let settled = false;
     const done = (val) => {
@@ -32914,7 +32929,8 @@ const RUNS_COLLAPSED_KEY = 'worca-cc.runs.collapsed';   // project / date sectio
 const runsUi = { view: loadRunsView(localStorage), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false,
   groupsToggled: new Map(), recentShown: RECENT_PAGE, selecting: false, anchorKey: null,
   sel: createRunsSelection(), rowsByKey: new Map(), memos: new Map(), lastModel: null, listCounts: null,
-  pendingSelect: null };   // pendingSelect: the pipeline ids "Tag N runs" (Statistics › Cost) asked to tick
+  pendingSelect: null, focusKey: null };   // pendingSelect: the pipeline ids "Tag N runs" (Statistics › Cost) asked to tick
+// focusKey: the list's roving Tab stop across repaints, `row:KEY` or `sec:KEY` (list-keys.mjs, issue #948).
 const memoFor = (id) => { if (!runsUi.memos.has(id)) runsUi.memos.set(id, {}); return runsUi.memos.get(id); };
 
 function histGroupName(p) {
@@ -33407,8 +33423,9 @@ const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, 
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over, then the selected row stands in;
-// a focused ⌄, checkbox, ⋯ or section head is found by its row or section.
-function runsFocusTarget(host, { key, pid, section, chain, check, more }) {
+// a focused ⌄, checkbox, ⋯ or section head is found by its row or section. `near`: the row or head that took a gone
+// row's place (issue #948), ahead of the open run's row.
+function runsFocusTarget(host, { key, pid, section, chain, check, more, near = null }) {
   const q = (sel) => host.querySelector(sel);
   const item = (k) => `.runs-item[data-row-key="${cssEscape(k)}"]`;
   if (chain) return q(`${item(chain)} > .runs-row-tail .runs-expand`);
@@ -33417,7 +33434,7 @@ function runsFocusTarget(host, { key, pid, section, chain, check, more }) {
   if (section) return q(`.runs-sec-head[data-section-key="${cssEscape(section)}"]`);
   if (!key) return null;
   const p = pid ? cssEscape(pid) : '';
-  return q(`a.runs-row[data-row-key="${cssEscape(key)}"]`) || (p && q(`a.runs-row[data-pipeline-id="${p}"]`)) || q('a.runs-row.selected');
+  return q(`a.runs-row[data-row-key="${cssEscape(key)}"]`) || (p && q(`a.runs-row[data-pipeline-id="${p}"]`)) || near || q('a.runs-row.selected');
 }
 function paintRunsList() {
   const host = el.runsList;
@@ -33468,6 +33485,8 @@ function paintRunsList() {
       const of = (cls) => (a.classList.contains(cls) && item ? item.dataset.rowKey : '');
       refocus = { key: a.matches('a.runs-row') ? (a.dataset.rowKey || '') : '', pid: a.dataset.pipelineId || '',
         section: a.dataset.sectionKey || '', chain: of('runs-expand'), check: of('runs-check'), more: of('runs-more') };
+      // A focused row the repaint drops (E, ⌫, an archive from elsewhere) hands the focus to its next, else previous, neighbour.
+      refocus.nearKeys = a.matches('a.runs-row') ? runsRove.around(a) : [];
     }
     // P2: each group line's current width, by row key, so its rebuilt twin starts where this one is.
     const lineFrom = new Map();
@@ -33484,9 +33503,11 @@ function paintRunsList() {
   paintRunsBar();
   paintRunsSelection();   // before the focus restore: its last fallback is the selected row
   if (refocus) {
-    const back = runsFocusTarget(host, refocus);
+    const near = runsRove.find(refocus.nearKeys);
+    const back = runsFocusTarget(host, { ...refocus, near });
     if (back) back.focus({ preventScroll: true });
   }
+  roveRunsList();   // every rebuild keeps the list one Tab stop (issue #948)
   // Only once the section is actually shown: `inRunsView()` reads the hash, which already says
   // #runs before its hashchange routes, and a WS frame painting in that gap must not use it up.
   if (runsUi.reveal && RUNS_VIEWS.has(currentShownView)) {
@@ -33599,8 +33620,11 @@ function toggleRunsGroup(key) {
 // ── The View menu (runs-view-menu.mjs, D3-D6) ──
 /** The View menu's "Started by" choices (shared deployments): the people in the loaded History, the viewer first. */
 const runsPeople = () => historyPeople().map((pp) => ({ key: pp.key, name: pp.label }));
+const runsSheet = (opener) => openKeysSheet({ doc: document, opener, advanced: levelAtLeast('advanced'),
+  fallback: () => roveRunsList() || document.getElementById('runs-view-btn') });
 function setRunsView(patch) {
   if (patch.select) { runsUi.selecting = true; paintRunsList(); return; }
+  if (patch.shortcuts) { runsSheet(document.getElementById('runs-view-btn')); return; }
   runsUi.view = { ...runsUi.view, ...patch };
   saveRunsView(localStorage, runsUi.view);
   runsUi.recentShown = RECENT_PAGE;
@@ -33682,15 +33706,89 @@ document.getElementById('runs-all')?.addEventListener('change', (e) => {
   runsUi.selecting = runsUi.sel.size > 0;
   paintRunsList();
 });
+// ── The list keys (list-keys.mjs, issue #948): one Tab stop, a moving focus, letter keys on the row or the selection ──
+const RUNS_NAV = LIST_NAV;
+const runsRove = createListRove({ host: el.runsList, state: runsUi });   // one Tab stop, focusin bookkeeping (list-dom.mjs)
+const runsNavItems = () => runsRove.items();
+const runsNavKey = navKey;
+const runsRowLink = (item) => item?.querySelector(':scope > a.runs-row') || null;
+/** The one Tab stop (list-dom.mjs): the remembered row or head, else the open run's row, else the first row. */
+function roveRunsList() { return runsRove.rove(); }
+function focusRunsNav(n) { runsRove.focus(n); }
+function moveRunsFocus(from, dir) { runsRove.move(from, dir); }
+const topKeyOf = (item) => (item.dataset.level === 'top' ? item.dataset.rowKey
+  : item.parentElement?.closest('.runs-item[data-level="top"]')?.dataset.rowKey);
+function extendRunsSelection(item, dir) {
+  const top = visibleTopKeys();
+  const from = item ? topKeyOf(item) : null;
+  const i = top.indexOf(from);
+  const to = top[i < 0 ? 0 : Math.max(0, Math.min(top.length - 1, i + dir))];
+  if (!to) return;
+  if (!top.includes(runsUi.anchorKey)) runsUi.anchorKey = from || to;
+  runsUi.selecting = true;
+  runsUi.sel.selectAll(rangeKeys(top, runsUi.anchorKey, to));   // adds, as Shift-click does
+  paintRunsList();
+  runsUi.focusKey = `row:${to}`;   // after the paint: its refocus of the old row records that row in focusin
+  focusRunsNav(roveRunsList());
+}
+function foldRunsKey(open, nav, item) {
+  if (nav && nav.matches('button.runs-sec-head')) {
+    if ((nav.getAttribute('aria-expanded') === 'true') !== open) nav.click();   // toggleRunsGroup, via the head's click
+    return;
+  }
+  const r = item && runsUi.rowsByKey.get(item.dataset.rowKey);
+  if (r && r.kind === 'chain') {
+    if (!!r.open !== open) item.querySelector(':scope > .runs-row-tail .runs-expand')?.click();   // repaint keeps the row focused
+    else if (open) focusRunsNav(item.querySelector('.runs-members a.runs-row'));
+    return;
+  }
+  if (!open && item?.dataset.level === 'member') focusRunsNav(runsRowLink(item.parentElement.closest('.runs-item[data-level="top"]')));
+}
+/** S / E / ⌫ / G / ⇧G: the selection through the bar's action, else the focused row's own ⋯ item (same rule, same level). */
+function runsLetterKey(action, item) {
+  // Where the focus goes back to: the same row, else the row that took its place (next, then previous), never the top.
+  const keys = runsRove.around(runsNavItems().find((n) => runsNavKey(n) === runsUi.focusKey), { self: true });
+  // After a confirm, activeElement sits on the hidden modal for a frame (jsdom has no requestAnimationFrame).
+  const frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (fn) => setTimeout(fn, 0);
+  const refocus = () => frame(() => {
+    if (el.runsListPane.contains(document.activeElement)) return;
+    const n = runsRove.find(keys);
+    if (n) runsUi.focusKey = runsNavKey(n);
+    focusRunsNav(n || roveRunsList());
+  });
+  if (runsUi.sel.size && (action === 'stop' || action === 'archive' || action === 'delete')) {
+    const act = action === 'archive' && runsUi.view.show === 'archived' ? 'restore' : action;
+    const plan = planBulk(act, selectedTargets());
+    if (plan.apply.length + plan.cancel.length) void runBulkAction(act, selectedTargets()).then(refocus);
+    return;
+  }
+  const r = item && runsUi.rowsByKey.get(item.dataset.rowKey);
+  if (!r || r.kind === 'sched') return;   // a waiting ticket's ⋯ has only Start now / Cancel
+  const more = item.querySelector(':scope > .runs-row-tail .runs-more');
+  const it = runsRowMenuItems(r, more).find((x) => x.key === action);
+  if (!it || it.disabled) return;   // what the ⋯ menu greys out (or leaves out) the key does not do
+  const out = it.onSelect();
+  if (out && typeof out.then === 'function') void out.then(refocus);
+}
 document.getElementById('runs-list-pane')?.addEventListener('keydown', (e) => {
   const t = e.target;
-  const action = runsKeyAction({ key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, targetIsRow: !!t.closest?.('a.runs-row'),
-    inField: !!t.closest?.('input:not([type="checkbox"]), textarea, select, [contenteditable="true"]') }, { size: runsUi.sel.size });
-  if (!action || action === 'clear') return;   // Escape is the document listener's (below)
+  const action = listKeyAction({ key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey,
+    targetIsRow: !!t.closest?.('a.runs-row'), inField: !!t.closest?.(LIST_FIELD) },
+  { size: runsUi.sel.size, list: 'runs', level: currentLevel(document) });
+  if (!action || action === 'clear' || action === 'help') return;   // Escape and ? are the document listeners' (below)
+  if (action !== 'all' && !el.runsList.contains(t)) return;   // the head's View button and the selection bar keep their keys
+  const item = t.closest?.('.runs-item') || null;
+  const nav = t.closest?.(RUNS_NAV) || runsRowLink(item);
   e.preventDefault();
   e.stopPropagation();
-  if (action === 'toggle') toggleRunsKey(t.closest('.runs-item').dataset.rowKey);
-  else { runsUi.sel.selectAll(visibleTopKeys()); runsUi.selecting = true; paintRunsList(); }
+  if (action === 'toggle') toggleRunsKey(item.dataset.rowKey);
+  else if (action === 'all') { runsUi.sel.selectAll(visibleTopKeys()); runsUi.selecting = true; paintRunsList(); }
+  else if (action === 'down' || action === 'up') moveRunsFocus(nav, action === 'down' ? 1 : -1);
+  else if (action === 'extend-down' || action === 'extend-up') extendRunsSelection(item, action === 'extend-down' ? 1 : -1);
+  else if (action === 'open') runsRowLink(item)?.click();   // the row's click handler routes it
+  else if (action === 'unfold' || action === 'fold') foldRunsKey(action === 'unfold', nav, item);
+  else if (action === 'menu') item?.querySelector(':scope > .runs-row-tail .runs-more')?.click();
+  else runsLetterKey(action, item);
 });
 // Esc clears the selection wherever focus is (the list, the open run beside it, the page). A menu, the group picker or
 // a modal owns its own Escape first.
@@ -33700,7 +33798,7 @@ function runsListOwnsEscape() {
 }
 function overlayUp() {
   return [el.confirmModal, el.viewerCard, el.pluginModal, el.reportModal, document.getElementById('stop-modal'), document.getElementById('shipit-modal')]
-    .some((m) => m && !m.classList.contains('hidden'));
+    .some((m) => m && !m.classList.contains('hidden')) || !!document.querySelector('.keys-modal');
 }
 document.addEventListener('keydown', (e) => {
   // openMenu (workflows/menu.mjs) and the group picker stop their Escape at the menu, so it never gets here.
@@ -33711,6 +33809,16 @@ document.addEventListener('keydown', (e) => {
   runsUi.selecting = false;
   runsUi.anchorKey = null;
   paintRunsList();
+});
+// ? anywhere on the Runs page (not while typing, not over a menu or a modal): the one Keyboard shortcuts sheet.
+document.addEventListener('keydown', (e) => {
+  if (e.defaultPrevented || document.querySelector('section.view[data-view="runs"]')?.classList.contains('hidden') !== false) return;
+  const t = e.target;
+  if (listKeyAction({ key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey,
+    targetIsRow: false, inField: !!t.closest?.(LIST_FIELD) }) !== 'help') return;
+  if (overlayUp() || document.querySelector('.wfv-menu, .group-picker, .label-picker, .keys-modal')) return;
+  e.preventDefault();
+  runsSheet(document.activeElement);
 });
 // Touch: a long-press starts selecting (§3.2); the click that follows is swallowed.
 let runsPress = null;
@@ -33755,14 +33863,7 @@ function paintRunsBar() {
   }
   if (!on) return;
   const m = barModel(selectedTargets());
-  document.getElementById('runs-bulk-n').textContent = m.label;
-  for (const a of ['stop', 'archive', 'delete']) {
-    const b = bar.querySelector(`[data-bulk="${a}"]`);
-    if (!b) continue;
-    b.querySelector('.runs-bulk-c').textContent = String(m[a].count);
-    b.disabled = m[a].count === 0;
-    if (m[a].title) b.title = m[a].title; else b.removeAttribute('title');
-  }
+  paintBulkBar(bar, { label: m.label, actions: { stop: m.stop, archive: m.archive, delete: m.delete } });
   const labelBtn = bar.querySelector('[data-bulk="label"]');
   if (labelBtn) {
     labelBtn.disabled = !labelTargets(selectedTargets()).length;
@@ -33783,7 +33884,7 @@ function reloadRunsHistory() {
 const runsWord = (n) => `${n} run${n === 1 ? '' : 's'}`;
 async function runBulkAction(action, targets = selectedTargets()) {
   // Archive asks only when it takes an interrupted run that could still resume (bulkConfirm answers null otherwise).
-  const ask = bulkConfirm(action, barModel(targets)[action].plan);
+  const ask = bulkConfirm(action, planBulk(action, targets));
   if (ask && !(await confirmModal(ask))) return;
   try {
     const out = await postBulk(bulkBody(action, targets));
@@ -33791,7 +33892,7 @@ async function runBulkAction(action, targets = selectedTargets()) {
     runsUi.selecting = false;
     const n = out.done.length + out.cancelled.length;
     const skipped = out.skipped.length ? `Skipped ${out.skipped.length}: ${out.skipped.map((s) => `${s.title} (${s.reason})`).join(', ')}.` : '';
-    const verb = { stop: 'Stopped', archive: 'Archived', delete: 'Deleted' }[action];
+    const verb = { stop: 'Stopped', archive: 'Archived', delete: 'Deleted', restore: 'Restored' }[action];
     // D19: its toast offers Undo (restore), for TOAST_AUTO_MS.
     const undo = action === 'archive' && out.done.length ? { label: 'Undo', run: () => postBulk({ action: 'restore', targets: out.done.map((d) => ({ pipelineId: d.id })), groups: [] })
       .then(() => reloadRunsHistory())
@@ -33799,7 +33900,7 @@ async function runBulkAction(action, targets = selectedTargets()) {
       .catch((e) => notify(actionError('undo the archive', e, { next: 'The runs stay archived; restore them from Show = Archived.' }))) } : null;
     notify({ tone: n ? 'ok' : 'warn', title: `${verb} ${runsWord(n)}`, detail: skipped, action: undo });
     // The archived / deleted runs' parked live cards leave at once, ahead of the server's pipelines-changed frame.
-    if (action !== 'stop' && out.done.length) {
+    if ((action === 'archive' || action === 'delete') && out.done.length) {
       const gone = new Set(out.done.map((d) => d.id));
       dropParkedRuns((e) => gone.has(e.pipelineId));
     }
@@ -33835,22 +33936,29 @@ el.runsList?.addEventListener('click', (e) => {
   }
   openMenu({ doc: document, anchor: more, align: 'end', label: `More for ${r.title}`, items: runsRowMenuItems(r, more) });
 });
-/** The row ⋯ items (§3.4, D13): also the group page's ⋯ (run 3, D13), less Select and Open feature. */
+/** The row ⋯ items (§3.4, D13): also the group page's ⋯ (run 3, D13), less Select and Open feature. `key` is the
+ *  list-keys action that runs the item from the keyboard (issue #948); `hint` shows it. */
 function runsRowMenuItems(r, more) {
   const t = rowTarget(r);
   const m = barModel([t]);
   const adv = levelAtLeast('advanced');
+  const mac = isMac(window);
+  const k = (...tokens) => keyHint(tokens, mac);
   const g = r.kind === 'chain' || !r.pipelineId ? null : groupOfRun(r.pipelineId);
   const adhoc = !!(g && g.members.some((x) => x.adhoc && x.pipelineId === r.pipelineId));
   // A group offers its current member's PR (D31: a group raised to Needs you by a PR offers View PR).
   const prUrl = (r.model.pr && r.model.pr.url) || (r.kind === 'chain' && r.model.current && r.model.current.pr && r.model.current.pr.url) || '';
+  // An archived row's E brings it back (D7): the run page's word, the bulk restore action.
+  const back = r.archived ? planBulk('restore', [t]) : null;
   return [
-    { label: 'Select', onSelect: () => { runsUi.selecting = true; runsUi.anchorKey = r.key; toggleRunsKey(r.key); } },
-    { label: 'Stop', disabled: !m.stop.count, title: m.stop.title, onSelect: () => runBulkAction('stop', [t]) },
-    { label: 'Archive', disabled: !m.archive.count, title: m.archive.title, onSelect: () => runBulkAction('archive', [t]) },
-    ...(adv ? [{ label: 'Delete', disabled: !m.delete.count, title: m.delete.title, onSelect: () => runBulkAction('delete', [t]) }] : []),
-    ...(adv && r.kind !== 'chain' && r.pipelineId && !g ? [{ sep: true }, { label: 'Add to group…', onSelect: () => openAddToGroup(more, r) }] : []),
-    ...(adv && adhoc ? [{ sep: true }, { label: 'Remove from group', onSelect: () => removeRunFromGroup(r) }] : []),
+    { label: 'Select', key: 'toggle', hint: k('Space'), onSelect: () => { runsUi.selecting = true; runsUi.anchorKey = r.key; toggleRunsKey(r.key); } },
+    { label: 'Stop', key: 'stop', hint: k('S'), disabled: !m.stop.count, title: m.stop.title, onSelect: () => runBulkAction('stop', [t]) },
+    back
+      ? { label: 'Restore', key: 'archive', hint: k('E'), disabled: !back.apply.length, title: skipText(back), onSelect: () => runBulkAction('restore', [t]) }
+      : { label: 'Archive', key: 'archive', hint: k('E'), disabled: !m.archive.count, title: m.archive.title, onSelect: () => runBulkAction('archive', [t]) },
+    ...(adv ? [{ label: 'Delete', key: 'delete', hint: k('Backspace'), disabled: !m.delete.count, title: m.delete.title, onSelect: () => runBulkAction('delete', [t]) }] : []),
+    ...(adv && r.kind !== 'chain' && r.pipelineId && !g ? [{ sep: true }, { label: 'Add to group…', key: 'add-to-group', hint: k('G'), onSelect: () => openAddToGroup(more, r) }] : []),
+    ...(adv && adhoc ? [{ sep: true }, { label: 'Remove from group', key: 'leave-group', hint: k('shift', 'G'), onSelect: () => removeRunFromGroup(r) }] : []),
     ...(prUrl ? [{ label: VIEW_PR_LABEL, onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
     ...(r.groupKind === 'feature' ? [{ label: 'Open feature', onSelect: () => { location.hash = r.href; } }] : []),
   ];
@@ -33881,7 +33989,8 @@ async function groupFeatureMenuItems(anchor, row) {
 async function openGroupMoreMenu(anchor, row) {
   // A second press while the fetch is pending is ignored (it would queue a toggle that closes the menu again).
   if (anchor.getAttribute('aria-busy') === 'true') return;
-  const items = runsRowMenuItems(row, anchor).filter((it) => it.label !== 'Select' && it.label !== 'Open feature');
+  const items = runsRowMenuItems(row, anchor).filter((it) => it.label !== 'Select' && it.label !== 'Open feature')
+    .map(({ hint, ...it }) => it);   // the list keys do not act on the group page: no key hints there
   anchor.setAttribute('aria-busy', 'true');
   let feature;
   try { feature = await groupFeatureMenuItems(anchor, row); } finally { anchor.removeAttribute('aria-busy'); }
@@ -38567,6 +38676,15 @@ function showView(name, param = '') {
       refreshNewPipelinePickers();
     }
   }
+  paintSearchPlaceholder();
+}
+/** #948 s2: the top search says what it finds on the Chat page. */
+function paintSearchPlaceholder() {
+  const input = document.getElementById('tsearch-input');
+  if (!input) return;
+  const text = document.body.classList.contains('view-chat') ? 'Search chats or ask' : 'Search or ask';
+  input.placeholder = text;
+  input.setAttribute('aria-label', text);
 }
 // Paint one Settings tab and run its loader. Called from showView ONLY, so every
 // entry point (tab click, hash, deep link, legacy redirect, boot, a direct

@@ -188,9 +188,9 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Run page Overview: Perspective checklists (Shaper, gated): the latest review cycle as one summary line, unmet items open with their evidence, met items behind "Show N met items", earlier cycles behind "Earlier cycles" | S |
 | Run page: usage-limit notice (reset time, Resume at HH:MM, Cancel) | S |
 | Runs list / glance: "resets HH:MM" / "resumes HH:MM" | S |
-| Runs list: the View menu (Show with counts, Group by, Started by on a shared deployment, Select) and its chip; the row and member checkboxes, Select all, Space / ⌘A / Esc; the action bar's Stop and Archive (Undo); the row ⋯ menu's Stop, Archive, View PR and Open feature | S |
+| Runs list: the View menu (Show with counts, Group by, Started by on a shared deployment, Select, Keyboard shortcuts) and its chip; the row and member checkboxes, Select all, Space / ⌘A / Esc; the list keys (↑ ↓ / J K, ↵, → ←, `.`, S, E, Space, ⇧↑ ⇧↓, ⌘A, Esc), `?` and the Keyboard shortcuts sheet; the action bar's Stop and Archive (Undo); the row ⋯ menu's Stop, Archive (Restore on an archived row), View PR and Open feature, each with its key as a hint | S |
 | Runs list: the label filter (chosen from the top search, "Runs labelled hotfix" or label:hotfix) and its chips with × under the header; the action bar's Label (with runLabels) | S |
-| Runs list: Delete (the action bar and the row ⋯ menu); Add to group… and Remove from group (the row ⋯ menu) | A |
+| Runs list: Delete (the action bar and the row ⋯ menu); Add to group… and Remove from group (the row ⋯ menu); their keys ⌫, G and ⇧G | A |
 | Run page: "Add to group…" on the Group row of a run in no group, the same as in the list's row menu | A |
 | Resume menu: Resume at HH:MM (when the limit resets) | A |
 | Run page glance: the run's name as the page title, the status line (state, then the step), time · cost (with its Away mode share) · changes; the Cost tags row under them (with `runTags`), the Live view switch and its fogged graph of the running step(s), parallel steps (Now), one row per tab, a waiting question below its own heading, the result actions | S |

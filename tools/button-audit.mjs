@@ -21,7 +21,7 @@ export const BUTTON_SPEC = Object.freeze({
     'button.chat-home-wf', 'button.chat-home-chat', 'button.chat-home-plan-open', 'button.release-row-edit',
     '.row-btn', 'button.mcp-setrow', 'button.xtoggle', 'button.gs-tile', 'button.mk-tile', 'button.mk-facet', 'button.mk-name',
     '.mk-upd > button.mk-disc',
-    '.mv-cp-terms-pill', '.cost-bd-btn', '.linkish', '.hd-dl-more-btn', '.plan-fold', '.plan-persp-edit', '.qopt', '.afb-main',
+    '.mv-cp-terms-pill', '.cost-bd-btn', 'button.chat-head-meter', '.linkish', '.hd-dl-more-btn', '.plan-fold', '.plan-persp-edit', '.qopt', '.afb-main',
     '.afb-folder', '.acct', '.sn-btn', '[class*="chip"]'],
   // .btn labels that still type "+" instead of icon(doc, 'plus'), exactly as shown; slice 3 emptied this
   // (docs/design-system.md › Button). The static twin is DEBT.typedPlus in test/fixtures/design-debt.json.

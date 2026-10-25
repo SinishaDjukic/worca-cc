@@ -400,9 +400,28 @@ body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;pa
   font:400 var(--fs-body) var(--sans);-webkit-appearance:none;appearance:none;}
 .tsearch-input::placeholder{color:var(--ink-2);}
 .tsearch-input::-webkit-search-cancel-button,.tsearch-input::-webkit-search-decoration{-webkit-appearance:none;}
-.tsearch-kbd{display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:20px;height:20px;padding:0 5px;
+/* The top search chip is the one key chip (issue #948): the Keyboard shortcuts sheet's kbd shares it */
+.tsearch-kbd,.kbd{display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:20px;height:20px;padding:0 5px;
   border-radius:var(--r-sm);background:var(--panel);box-shadow:inset 0 0 0 1px var(--line-2);color:var(--ink-3);
   font:500 11px/1 var(--sans);white-space:nowrap;}
+/* The Keyboard shortcuts sheet (keys-sheet.mjs) */
+.keys-modal .card.keys-dlg{width:min(760px,100%);}   /* beats .viewer-modal .card's 860px (0,2,0) */
+.chat-group-modal .card.chat-group-dlg{width:min(440px,100%);}   /* beats .viewer-modal .card's 860px, as .keys-dlg */
+.chat-group-sub{margin:4px 0 12px;color:var(--ink-2);font-size:13px;}
+.chat-group-label{display:flex;align-items:center;margin-bottom:6px;font-size:12px;font-weight:600;color:var(--ink-2);}
+.chat-group-hint{margin:6px 0 0;min-height:16px;font-size:12px;color:var(--ink-2);}
+.chat-group-err{margin:0 0 8px;font-size:12px;color:var(--red-ink);}
+.chat-group-foot{display:flex;justify-content:flex-end;gap:8px;}
+.keys-title{margin:0;font:600 var(--fs-section)/1.25 var(--sans);}   /* the .card h2 size */
+.keys-cols{display:grid;grid-template-columns:1fr 1fr;gap:0 32px;}
+.keys-sec + .keys-sec{margin-top:16px;}
+.keys-h{margin:0 0 4px;font:600 var(--fs-meta)/1.5 var(--sans);color:var(--ink-2);}
+.keys-row{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:30px;border-top:1px solid var(--line);font-size:var(--fs-body);}
+.keys-combo{display:inline-flex;align-items:center;gap:4px;}
+.keys-or{margin:0 4px;color:var(--ink-3);font-size:var(--fs-meta);}
+.keys-note{margin:0 0 12px;color:var(--ink-2);font-size:var(--fs-meta);}
+.keys-foot{display:flex;justify-content:flex-end;}
+@media (max-width:640px){.keys-cols{grid-template-columns:1fr;}.keys-col + .keys-col{margin-top:16px;}}
 .tsearch-kbd:empty{display:none;}
 .tsearch-pop{position:absolute;z-index:30;top:calc(100% + 8px);left:50%;transform:translateX(-50%);width:100%;min-width:360px;
   max-height:min(480px,calc(100vh - 72px));overflow-y:auto;display:flex;flex-direction:column;padding:6px;
@@ -417,6 +436,8 @@ body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;pa
 .tsearch-title{min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .tsearch-meta{flex:0 1 auto;min-width:0;max-width:55%;margin-left:auto;padding-left:12px;overflow:hidden;text-overflow:ellipsis;
   font-size:12px;color:var(--ink-3);}
+.tsearch-tx{display:flex;flex-direction:column;min-width:0;padding:4px 0;}
+.tsearch-sub{font-size:12px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .tsearch-dot{flex:none;width:8px;height:8px;margin:0 4px;border-radius:50%;background:var(--seq);}
 .tsearch-dot.tone-need{background:var(--amber);}
 .tsearch-dot.tone-run{background:var(--blue);}
@@ -5030,6 +5051,8 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .status-dot.is-grey-ring{color:var(--slate);background:none;box-shadow:inset 0 0 0 2px currentColor;}
 .status-dot.has-sym{width:12px;height:12px;background:none;}
 .status-dot.has-sym > svg{display:block;}
+.status-dot.has-ic{width:14px;height:14px;background:none;color:var(--ink-2);}
+.status-dot.has-ic > svg{display:block;}
 .status-sym > g{stroke:var(--on-signal);}
 .status-dot.is-pulse{animation:wr-pulse 1.6s ease-in-out infinite;}
 @media (prefers-reduced-motion: reduce){.status-dot.is-pulse{animation:none;}}
@@ -6304,8 +6327,8 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 /* Context window levels (ask-panel.mjs ctxLevel): amber from 75% of the compaction trigger, red from 90%. */
 .ask-ctx-ring.is-ctx-warn .ask-ctx-ring-arc{stroke:var(--amber);}
 .ask-ctx-ring.is-ctx-high .ask-ctx-ring-arc{stroke:var(--red);}
-.ask-thread-fill.is-ctx-warn,.ask-agent-tokens.is-ctx-warn{color:var(--amber-ink);}
-.ask-thread-fill.is-ctx-high,.ask-agent-tokens.is-ctx-high{color:var(--red-ink);font-weight:600;}
+.ask-agent-tokens.is-ctx-warn{color:var(--amber-ink);}
+.ask-agent-tokens.is-ctx-high{color:var(--red-ink);font-weight:600;}
 .ask-model-btn{display:flex;align-items:center;gap:7px;}
 .ask-model-btn-effort{font-weight:500;color:var(--ink-3);}
 .ask-send,.ask-stop{display:inline-flex;align-items:center;justify-content:center;flex:none;}
@@ -6414,34 +6437,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-model-tag.is-key{flex:0 0 auto;max-width:none;background:var(--green-bg);color:var(--green-ink);}
 .ask-model-item .ask-model-name{flex:0 1 auto;min-width:4.5ch;overflow:hidden;text-overflow:ellipsis;
   white-space:nowrap;}
-/* A History group's rows (worca Chat P1): the column's body is the scrollport, so a group never scrolls on its own. */
-.ask-threads-list{display:flex;flex-direction:column;gap:1px;}
-.ask-thread-row{display:flex;align-items:center;border-radius:var(--r-sm);}
-.ask-thread-row:hover{background:var(--hover);}
-.ask-thread-pick{flex:1 1 auto;min-width:0;padding:8px 4px 8px 10px;border-radius:var(--r-sm);}
-/* The date leads the meter line: bold and on --ink so it anchors the scan while
-   the ctx/cost/agent figures beside it keep the meter's grey. An inline span, so
-   the mono and the 10px come from .ask-thread-meter; nowrap is what now keeps it
-   on one line, flex:0 0 auto having gone with the left-edge column. */
-.ask-thread-when{font-weight:700;color:var(--ink);white-space:nowrap;}
-/* Scoped to the threads rows -- .ask-dot elsewhere (agents popover, agent rows)
-   keeps showing its --seq dot. Here a dot means "this chat is
-   live", so an idle row shows none; display, not visibility, so the 6px slot and
-   the row's 10px gap collapse with it and the title moves to the left edge.
-   Two independent arms: green = the chat's own turn is thinking, violet = the
-   chat follows a live run (track_run / a card launch). Each span collapses on
-   its own, so tracking-only shows one violet dot at the edge. Both armed: the
-   spans sit under the pick's 10px gap, and the tracking dot pulls itself back
-   6px so the pair reads 4px apart instead of a full slot. */
-.ask-thread-dot{display:none;}
-.ask-thread-dot.ask-dot-live{display:block;}
-.ask-thread-dot.ask-dot-track{display:block;background:var(--slate);animation:wr-pulse 1.6s ease-in-out infinite;}
-.ask-thread-dot.ask-dot-live+.ask-thread-dot.ask-dot-track{margin-left:-6px;}
-.ask-thread-col{display:flex;flex-direction:column;gap:1px;min-width:0;}
-.ask-thread-title{font-weight:500;font-size:12px;color:var(--ink);display:-webkit-box;
-  -webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;}
-.ask-thread-meter{font-family:var(--mono);font-size:11px;color:var(--ink-3);}
-.ask-thread-topics{color:var(--ink-2);}
+/* The worktree rows' trash (the context popover's Worktrees section). */
 .ask-thread-trash{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;
   flex:0 0 26px;margin-right:5px;border:0;border-radius:var(--r-sm);background:transparent;color:var(--seq);
   cursor:pointer;transition:.15s;}
@@ -8823,53 +8819,24 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
   .chat-page .ask-composer-row{gap:4px;}
   .chat-page .ask-composer-row > .ask-meter{display:none;}
 }
-/* History (ask-panel.mjs buildHistory): a 264px push column; below 1100px an overlay over the page with a scrim. Rows
-   reuse the .ask-thread-* rules; the trash shows on hover and focus (always on touch). */
+/* History (ask-panel.mjs buildHistory): the Chats column's host, a push column; below 1100px an overlay over the page
+   with a scrim. */
 .chat-history{flex:0 0 264px;width:264px;min-width:0;min-height:0;display:flex;flex-direction:column;box-sizing:border-box;border-right:1px solid var(--line);background:var(--panel);}
 .chat-history:focus{outline:none;}
-/* A row is a list item, not a menu item: keyboard focus draws a ring (inside: the column body is a scroller), not the hover wash. */
-.chat-history .ask-thread-pick:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-.chat-history-head{position:relative;flex:none;display:flex;align-items:center;gap:8px;height:52px;padding:0 44px 0 14px;box-sizing:border-box;border-bottom:1px solid var(--line);}
-.chat-history-title{font-weight:600;font-size:13px;color:var(--ink);transition:opacity .16s,visibility .16s;}
-.chat-history-head.is-searching .chat-history-title{opacity:0;visibility:hidden;}
-.chat-history-meter{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-3);}
-/* The search (buildHistorySearch), the Workflows Library's look: folded, the box is just its button right of the meter;
-   open, its left edge slides over the title and the meter's resting place, the field fills it and the meter rides at
-   its end. */
-.chat-history-sbox{position:absolute;top:calc(50% - 15px);right:8px;left:calc(100% - 38px);height:30px;display:flex;align-items:center;gap:4px;overflow:hidden;transition:left .24s cubic-bezier(.2,.8,.2,1);}
-.chat-history-head.is-searching .chat-history-sbox{left:8px;}
-.chat-history-search-btn{flex:0 0 auto;width:30px;height:30px;display:grid;place-items:center;padding:0;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);cursor:pointer;}
-.chat-history-search-btn svg{width:16px;height:16px;}
-.chat-history-search-btn:hover{background:var(--hover);color:var(--ink);}
-.chat-history-search-btn[aria-expanded="true"]:not(:hover){background:none;color:var(--ink);}
-/* Inside: the box clips (overflow:hidden) a ring drawn outside the button. */
-.chat-history-search-btn:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-.chat-history-search-input{flex:1 1 auto;min-width:0;height:30px;padding:0 4px;border:0;background:none;color:var(--ink);font:inherit;font-size:13px;opacity:0;transition:opacity .18s;-webkit-appearance:none;appearance:none;}
-.chat-history-head.is-searching .chat-history-search-input{opacity:1;}
-.chat-history-search-input:focus{outline:none;}
-.chat-history-search-input::placeholder{color:var(--ink-2);}
-.chat-history-search-input::-webkit-search-cancel-button{display:none;}
-.chat-history-sbox .chat-history-meter{flex:none;margin-left:0;padding-right:4px;}
-@media (prefers-reduced-motion:reduce){.chat-history-sbox,.chat-history-title,.chat-history-search-input{transition:none;}}
-/* A search hit in a message: the server's excerpt under the title. */
-.chat-history .ask-thread-match{font-size:11px;color:var(--ink-2);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;overflow-wrap:anywhere;}
-/* The column's New chat leads the list as a fixed first row: the rows' inset (the body's 6px), their 10px text start and radius. */
-.chat-history-new.chat-new-btn{flex:none;justify-content:flex-start;margin:6px 6px 0;}
-.chat-history-body{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:6px;}
-.chat-history-group + .chat-history-group{margin-top:10px;border-top:1px solid var(--line-2);}
-.chat-history-group-label{padding:12px 10px 6px;font-weight:600;font-size:12px;letter-spacing:.02em;color:var(--ink-2);}
-.chat-history-empty{padding:12px 10px;font-size:12px;color:var(--ink-3);}
-.ask-thread-row.is-current{background:var(--field);}
-.ask-thread-dot.ask-dot-wait{display:block;background:var(--amber);}
-.ask-thread-dot.ask-dot-live+.ask-thread-dot.ask-dot-wait{margin-left:-6px;}
-.chat-history .ask-thread-trash{opacity:0;}
-.chat-history .ask-thread-row:hover .ask-thread-trash,.chat-history .ask-thread-trash:focus{opacity:1;}
-@media (hover:none){.chat-history .ask-thread-trash{opacity:1;}}
 .chat-scrim{display:none;}
 @media (max-width:1099px){
   .chat-history{position:absolute;top:0;bottom:0;left:0;z-index:6;width:min(300px,86vw);box-shadow:var(--shadow-sheet);}
   .chat-scrim:not([hidden]){display:block;position:absolute;inset:0;z-index:5;background:var(--scrim-soft);}
 }
+/* Chats column (#948 s2): the Runs list anatomy in the History aside; width from runs-resize.mjs. */
+.chat-page[data-chats="on"] .chat-history{position:relative;flex:0 0 var(--chats-list-w,clamp(280px,340px,min(50%,640px)));width:var(--chats-list-w,clamp(280px,340px,min(50%,640px)));}
+.chat-page[data-chats="on"] .chat-history .runs-list{padding-inline:8px;}
+.chat-page.is-resizing{cursor:col-resize;user-select:none;}
+.chat-page.is-resizing .runs-resize::before{content:"";position:absolute;top:0;bottom:0;left:2px;width:2px;background:var(--line-2);}
+.btn.chat-head-meter{display:block;text-align:left;line-height:26px;margin-left:auto;min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono);font-size:11px;color:var(--ink-3);white-space:nowrap;}
+.chat-page[data-chats="on"] .chat-new-plus{flex:none;}
+.chat-page[data-chats="on"] [data-ask-meter]{display:none;}
+@media (max-width:1099px){.chat-page[data-chats="on"] .chat-history{position:absolute;width:min(340px,86vw);}.chat-page[data-chats="on"] .runs-resize{display:none;}}
 
 /* ===== Chat P2: Action cards ===== */
 /* Receipts (act, then undo), the stop warning and the pull-request offer (ui/public/chat/action-cards.mjs), on the Ask
