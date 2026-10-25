@@ -2,17 +2,21 @@
 import { test, after, beforeEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import {
   createFeature, getFeature, listTurns, updateFeature, appendTurn, setContext, getBrief, beginBrief, saveBriefResult, deleteBrief,
+  insertAttachment, mintAttachmentId, updateAttachment, getAttachment, deleteAttachmentRow,
 } from '../src/core/requirements/store.mjs';
 import { REPO_LOOK_TOOLS, REPO_LOOK_MAX_TURNS, REPO_LOOK_TIMEOUT_MS } from '../src/core/auto/classify.mjs';
 import {
   startOrientation, submitAnswers, finishInterview, followUp, retry, settled, isBusy, recoverInterrupted, requirementsModel, MAX_JOBS, interviewCallOptions, callModel,
-  userClaudeSignIn, interviewModel, DEFAULT_INTERVIEW_EFFORT,
+  userClaudeSignIn, interviewModel, DEFAULT_INTERVIEW_EFFORT, assertCapacity,
 } from '../src/core/requirements/interview.mjs';
+import { addAttachments, readsSettled } from '../src/core/requirements/attachment-job.mjs';
+import { ATTACHMENT_SYSTEM_PROMPT } from '../src/core/requirements/attachments.mjs';
 import { requirementsWindowedSpendUsd } from '../src/core/cost-budget.mjs';
 import { ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT } from '../src/core/requirements/round.mjs';
 import { removeCriterion, setAssumption } from '../src/core/requirements/edits.mjs';
@@ -1252,4 +1256,119 @@ test('A8: readGuard, when given at all, is an absolute path: an empty or relativ
     assert.throws(() => interviewCallOptions('look', { cwd: '/c', prompt: 'P', model: 'm1', tools: ['Read'], readGuard: bad }), /readGuard/, String(bad));
   }
   assert.equal(interviewCallOptions('look', { cwd: '/c', prompt: 'P', model: 'm1', tools: ['Read'], readGuard: join(tmpdir(), 'a.pdf') }).readGuard, join(tmpdir(), 'a.pdf'));
+});
+
+// ── A8: files in the interview (plans/requirements-a8-design.md D2, D5, D6) ─────────────────
+const upload = (name, text) => { const data = Buffer.from(text); return { name, kind: 'text', mime: 'text/markdown', data, text, bytes: data.length, sha256: createHash('sha256').update(data).digest('hex') }; };
+/** Replies per call: a file read gets its summary, a round the round reply. */
+function fileRunner({ summary = 'Refunds within 14 days.', round = ROUND1 } = {}) {
+  const calls = [];
+  const runClaudeImpl = async (opts) => {
+    calls.push(opts);
+    const text = JSON.stringify(opts.systemPrompt === ATTACHMENT_SYSTEM_PROMPT ? { summary } : round);
+    opts.onEvent?.({ type: 'result', raw: { type: 'result', total_cost_usd: 0.1, result: text }, costUsd: 0.1 });
+    return { text };
+  };
+  return { calls, runClaudeImpl };
+}
+
+test('A8 D2: a feature created with files reads them before round 1, and round 1 already uses them', async () => {
+  setContext('project', 'shop-1234abcd', { lookAtCode: false });
+  const r = fileRunner();
+  const f = newFeature();
+  addAttachments({ type: 'feature', id: f.seq }, [upload('policy.md', 'Refunds in 14 days.')], {}, deps(r));
+  await startOrientation(f.seq, {}, deps(r));
+  assert.deepEqual(r.calls.map((c) => c.systemPrompt === ATTACHMENT_SYSTEM_PROMPT ? 'read' : 'round'), ['read', 'round']);
+  const prompt = r.calls[1].prompt;
+  assert.ok(prompt.includes('<attachments>\npolicy.md (text, 19 B)\nWhat Worca took from it:\nRefunds within 14 days.\nFull text:\nRefunds in 14 days.\n</attachments>'), prompt);
+});
+
+test('A8 D2: five creates whose reads end together start round 1 at most MAX_JOBS (4) at a time', async () => {
+  setContext('project', 'shop-1234abcd', { lookAtCode: false });
+  let openReads;
+  let openRounds;
+  const readGate = new Promise((res) => { openReads = res; });
+  const roundGate = new Promise((res) => { openRounds = res; });
+  let inflight = 0;
+  let most = 0;
+  const r = fileRunner();
+  const held = { ...r, runClaudeImpl: async (o) => {
+    if (o.systemPrompt === ATTACHMENT_SYSTEM_PROMPT) { await readGate; return r.runClaudeImpl(o); }
+    inflight += 1; most = Math.max(most, inflight);
+    try { await roundGate; return await r.runClaudeImpl(o); } finally { inflight -= 1; }
+  } };
+  const five = Array.from({ length: 5 }, (_, i) => {
+    const f = newFeature();
+    addAttachments({ type: 'feature', id: f.seq }, [upload(`five${i}.md`, `five${i}`)], {}, deps(held));
+    startOrientation(f.seq, {}, deps(held, { round1WaitMs: 60_000 }));
+    return f;
+  });
+  await new Promise((res) => setTimeout(res, 30));
+  openReads();
+  await Promise.all(five.map((f) => readsSettled({ type: 'feature', id: f.seq })));
+  await new Promise((res) => setTimeout(res, 30));
+  assert.deepEqual([inflight, most], [MAX_JOBS, MAX_JOBS], 'four rounds run; the fifth waits for a slot');
+  openRounds();
+  await Promise.all(five.map((f) => settled(f.seq)));
+  assert.equal(most, MAX_JOBS);
+  assert.equal(r.calls.filter((c) => c.systemPrompt !== ATTACHMENT_SYSTEM_PROMPT).length, 5, 'and then the fifth ran');
+});
+
+test('A8 D2: creates waiting for their reads do not count against MAX_JOBS; round 1 runs after ROUND1_WAIT_MS with a file still being read', async () => {
+  setContext('project', 'shop-1234abcd', { lookAtCode: false });
+  let open;
+  const gate = new Promise((res) => { open = res; });
+  const r = fileRunner();
+  const held = { ...r, runClaudeImpl: async (o) => { if (o.systemPrompt === ATTACHMENT_SYSTEM_PROMPT) await gate; return r.runClaudeImpl(o); } };
+  const waiting = Array.from({ length: MAX_JOBS }, (_, i) => {
+    const f = newFeature();
+    addAttachments({ type: 'feature', id: f.seq }, [upload(`w${i}.md`, `w${i}`)], {}, deps(held));
+    startOrientation(f.seq, {}, deps(held, { round1WaitMs: 60_000 }));
+    return f;
+  });
+  await new Promise((res) => setTimeout(res, 30));
+  assert.doesNotThrow(() => assertCapacity(), 'creates waiting for reads leave room for other features');
+  const late = newFeature();
+  addAttachments({ type: 'feature', id: late.seq }, [upload('late.md', 'late')], {}, deps(held));
+  await startOrientation(late.seq, {}, deps(held, { round1WaitMs: 50 }));
+  const round = r.calls.filter((c) => c.systemPrompt !== ATTACHMENT_SYSTEM_PROMPT).at(-1);
+  assert.match(round.prompt, /late\.md \(text, 4 B\): being read; known by name only\./);
+  open();
+  await Promise.all([...waiting, late].map((f) => settled(f.seq)));
+});
+
+test('A8: a round without files reads the budget once (queueUnread makes no budget call)', async () => {
+  setContext('project', 'shop-1234abcd', { lookAtCode: false });
+  let n = 0;
+  const f = newFeature();
+  await startOrientation(f.seq, {}, deps(fakeRunner([ROUND1]), { budget: () => { n += 1; return { blocked: false }; } }));
+  assert.equal(n, 1);
+});
+
+test('A8 D5: a file the limit stopped is read again when the next round starts with the budget open', async () => {
+  setContext('project', 'shop-1234abcd', { lookAtCode: false });
+  let blocked = true;
+  const r = fileRunner({ round: ROUND2 });
+  const d = deps(r, { budget: () => ({ blocked }) });
+  const f = newFeature();
+  const [a] = addAttachments({ type: 'feature', id: f.seq }, [upload('faq.md', 'faq')], {}, d);
+  await readsSettled({ type: 'feature', id: f.seq });
+  assert.equal(getAttachment(a.id).status, 'unread-budget');
+  blocked = false;
+  await finishInterview(f.seq, {}, d);
+  await readsSettled({ type: 'feature', id: f.seq });
+  assert.equal(getAttachment(a.id).status, 'done');
+});
+
+test('A8 D6: the scope\'s documents ride inside <product_brief>, after its sections', async () => {
+  const b = savedBrief();
+  const d0 = insertAttachment({ id: mintAttachmentId(), ownerType: 'brief', ownerId: b.id, name: 'glossary.pdf', kind: 'binary', mime: 'application/pdf', bytes: 10, sha256: 'g1' });
+  updateAttachment(d0.id, { status: 'done', summary: 'Terms.' });
+  try {
+    const r = fileRunner({ round: ROUND2 });
+    const f = newBriefFeature();
+    await startOrientation(f.seq, {}, deps(r));
+    const round = r.calls.find((c) => c.systemPrompt !== ATTACHMENT_SYSTEM_PROMPT);
+    assert.match(round.prompt, /- Orders \(partly\): checkout and history\.\n\nDocuments:\nglossary\.pdf: Terms\.\n<\/product_brief>/);
+  } finally { deleteAttachmentRow(d0.id); }   // the later A7 tests read this brief without documents
 });

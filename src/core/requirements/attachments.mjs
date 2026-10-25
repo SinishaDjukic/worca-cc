@@ -174,3 +174,72 @@ export function readRule(path) {
   const parts = String(path).replaceAll('\\', '/').split('/').filter(Boolean);
   return `Read(//**/${parts.at(-2)}/${parts.at(-1)})`;
 }
+
+// ---- the prompt blocks (§4, D6) ----
+
+/** The text files whose redacted text the <attachments> block carries in full: upload order, while the texts stay within
+ *  `budget` bytes in all; the first that does not fit ends the list. `readText(row)` → the redacted text, or null. */
+export function selectInlineAttachments(rows, readText, budget = REQ_ATTACH_LIMITS.inlineBytes) {
+  const out = new Map();
+  let left = budget;
+  for (const r of rows || []) {
+    if (!r || r.kind !== 'text') continue;
+    if (r.bytes > left) break;
+    const t = readText(r);
+    if (typeof t !== 'string') continue;
+    const n = Buffer.byteLength(t, 'utf8');
+    if (n > left) break;
+    out.set(r.id, t);
+    left -= n;
+  }
+  return out;
+}
+
+const KNOWN_BY_NAME = Object.freeze({
+  reading: 'being read; known by name only.',
+  'unread-budget': 'not read yet; known by name only.',
+  failed: 'Worca could not read it; known by name only.',
+});
+/** A file has text to show: its read is done, or the product owner wrote it. */
+const hasText = (r) => !!r.summary && (r.summaryEdited || r.status === 'done');
+
+/** `first` (which holds the summary), then the answers newest first while the entry stays within 3,000 characters. */
+function entry(first, r) {
+  const lines = [first];
+  let used = first.length;
+  const asks = [...(Array.isArray(r.asks) ? r.asks : [])].reverse();
+  let kept = 0;
+  for (const a of asks) {
+    const qa = `Q: ${a.question}\nA: ${a.answer}`;
+    if (used + 1 + qa.length > REQ_ATTACH_LIMITS.entry) break;
+    lines.push(qa);
+    used += 1 + qa.length;
+    kept += 1;
+  }
+  if (kept < asks.length) lines.push(`(… ${asks.length - kept} earlier answers)`);
+  return lines.join('\n');
+}
+
+/** The <attachments> block's text (the caller wraps it in asData), in upload order; `texts` from selectInlineAttachments. */
+export function renderAttachmentsForPrompt(rows, { texts = new Map() } = {}) {
+  return (rows || []).map((r) => {
+    const head = `${r.name} (${KIND_WORDS[r.kind] || 'text'}, ${sizeLabel(r.bytes)})`;
+    const parts = [hasText(r)
+      ? entry(`${head}\nWhat Worca took from it${r.summaryEdited ? " (the product owner's words)" : ''}:\n${r.summary}`, r)
+      : `${head}: ${KNOWN_BY_NAME[r.status] || KNOWN_BY_NAME.reading}`];
+    if (texts.has(r.id)) parts.push(`Full text:\n${texts.get(r.id)}`);
+    return parts.join('\n');
+  }).join('\n\n');
+}
+
+/** A brief's documents for <product_brief> and <brief_documents>: "<name>: <summary>" and its answers; unread by name. */
+export function renderDocumentsForPrompt(rows) {
+  return (rows || []).map((r) => (hasText(r) ? entry(`${r.name}: ${r.summary}`, r) : r.name)).join('\n');
+}
+
+/** The names a reply may give as a "source": the feature's files, then the scope's documents, each once (ignoring case). */
+export function sourceNames(files = [], documents = []) {
+  const out = [];
+  for (const r of [...files, ...documents]) if (r && r.name && !out.some((x) => x.toLowerCase() === r.name.toLowerCase())) out.push(r.name);
+  return out;
+}

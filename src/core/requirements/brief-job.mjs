@@ -19,10 +19,12 @@ import { defaultBranchRef, commitOf, isAncestor } from '../worktree.mjs';
 import { commitsAhead, commitFilesSince } from '../git-info.mjs';
 import { RequirementsError } from './spec.mjs';
 import { RoundError } from './round.mjs';
+import { REQUIREMENTS_READ_DENY_RULES } from '../ask/deny-rules.mjs';
 import { callModel, interviewModel } from './interview.mjs';
 import {
-  getContext, getBrief, beginBrief, saveBriefResult, failBrief, addBriefCost, listMakingBriefs, recentBriefCosts,
+  getContext, getBrief, beginBrief, saveBriefResult, failBrief, addBriefCost, listMakingBriefs, recentBriefCosts, listAttachments,
 } from './store.mjs';
+import { renderDocumentsForPrompt } from './attachments.mjs';
 import {
   BRIEF_SYSTEM_PROMPT, BRIEF_OUT_OF_STEPS, buildBriefPrompt, normalizeBrief, mergeBrief, mockBrief, touchedAreas,
 } from './brief.mjs';
@@ -87,11 +89,13 @@ export async function briefModel(d) {
 
 /** The brief's one model call (D5) through A1.1's call path: a look (replace mode, the hermetic flags, the
  *  look's tools REPO_LOOK_TOOLS) with the brief's own system prompt and turn cap. callModel does not fill the
- *  effort, so the interview's effort is passed here. */
+ *  effort, so the interview's effort is passed here. A8 (D15): the look reads summaries of the product owner's documents,
+ *  third-party material, so it carries Ask's deny rules (REQUIREMENTS_READ_DENY_RULES: the checkout under tmp/requirements
+ *  stays readable). */
 function briefCall(d, { cwd, prompt, model, effort, timeoutMs }) {
   return callModel(d, {
     kind: 'look', cwd, prompt, model, ...(effort ? { effort } : {}), timeoutMs,
-    systemPrompt: BRIEF_SYSTEM_PROMPT, maxTurns: BRIEF_MAX_TURNS,
+    systemPrompt: BRIEF_SYSTEM_PROMPT, maxTurns: BRIEF_MAX_TURNS, permissionRules: { deny: [...REQUIREMENTS_READ_DENY_RULES] },
   });
 }
 
@@ -223,9 +227,11 @@ function runJob(row, target, scopeType, scopeKey, by, d) {
         assertBriefBudget(d);   // again: the limit may have been reached since the press (a recorded failure now)
         const now = getBrief(scopeType, scopeKey);
         const members = look.members || null;
+        const docs = listAttachments('brief', row.id);   // A8 D6: the brief's documents, the product owner's material
         const prompt = buildBriefPrompt({
           scopeName: target.name, notes: getContext(scopeType, scopeKey).body, workspaceDescription: target.description || '',
           current: now && now.madeAt ? now.sections : null, edited: (now && now.edited) || {}, members, cwd: look.cwd,
+          documents: docs.length ? renderDocumentsForPrompt(docs) : '',
         });
         const timeoutMs = deadline - Date.now();
         if (timeoutMs < MIN_CALL_MS) throw coded('TIMEOUT', CHECKOUT_TIMEOUT);   // not "no reply within 0 seconds"

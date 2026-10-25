@@ -21,7 +21,7 @@ import { RequirementsError, clip } from './spec.mjs';
 import { RoundError } from './round.mjs';
 import {
   REQ_ATT_ID_RE, REQ_ATTACH_LIMITS, ATTACHMENT_SYSTEM_PROMPT, buildReadPrompt, buildAskPrompt, normalizeSummary, mockSummary, checkNewFiles,
-  readRule, normalizeAnswer, mockAnswer, pushHistory,
+  readRule, normalizeAnswer, mockAnswer, pushHistory, selectInlineAttachments, renderAttachmentsForPrompt, renderDocumentsForPrompt, sourceNames,
 } from './attachments.mjs';
 import {
   mintAttachmentId, insertAttachment, getAttachment, listAttachments, updateAttachment, addAttachmentCost, deleteAttachmentRow,
@@ -537,6 +537,19 @@ export function queueUnread(seq, deps = {}) {
     enqueue({ id: r.id, name: r.name, owner, kind: 'read', by: null, d });
   }
   return waiting.length;
+}
+
+// ---------------------------------------------------------------- the prompts (D6)
+
+/** What a round's prompt carries of the files (D6): the feature's <attachments> text (null without files), the scope's
+ *  documents for <product_brief> ('' without any), the names a reply may give as a source, and the rows. */
+export function promptFiles(f) {
+  const rows = listAttachments('feature', f.seq);
+  const brief = usableBrief(f.scopeType, f.scopeKey);
+  const docs = brief ? listAttachments('brief', brief.id) : [];
+  const texts = selectInlineAttachments(rows, (r) => { try { return redactAskText(readFileSync(attachmentFile(r), 'utf8')); } catch { return null; } });
+  return { rows, docs, attachments: rows.length ? renderAttachmentsForPrompt(rows, { texts }) : null,
+    documents: docs.length ? renderDocumentsForPrompt(docs) : '', sources: sourceNames(rows, docs) };
 }
 
 // ---------------------------------------------------------------- boot, estimates

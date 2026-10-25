@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
 import {
   REQ_ATTACH_LIMITS, REQ_ATT_ID_RE, displayName, uniqueName, sizeLabel, ATTACHMENT_SYSTEM_PROMPT, buildReadPrompt, normalizeSummary, mockSummary,
-  checkNewFiles, readRule, buildAskPrompt, normalizeAnswer, mockAnswer, pushHistory,
+  checkNewFiles, readRule, buildAskPrompt, normalizeAnswer, mockAnswer, pushHistory, selectInlineAttachments, renderAttachmentsForPrompt,
+  renderDocumentsForPrompt, sourceNames,
 } from '../src/core/requirements/attachments.mjs';
 import { RoundError } from '../src/core/requirements/round.mjs';
 import {
@@ -199,4 +200,47 @@ test('normalizeAnswer clips at 600; no answer is a RoundError; the mock answer; 
   assert.equal(mockAnswer('Refunds?'), '[mock] Refunds?: the file does not say more.');
   const h = Array.from({ length: 10 }, (_, i) => ({ summary: `${i}` }));
   assert.deepEqual(pushHistory(h, { summary: 'new' }).map((x) => x.summary), ['new', '0', '1', '2', '3', '4', '5', '6', '7', '8']);
+});
+
+const doneRow = (over = {}) => ({ id: over.id || 'ratt_000000000a01', name: 'support-tickets.pdf', kind: 'binary', bytes: Math.round(2.1 * 1024 * 1024),
+  status: 'done', summary: '52 support tickets from September asking to cancel an order.', summaryEdited: false, asks: [], ...over });
+
+test('the <attachments> text: per file its name, kind and size, what Worca took from it (the owner\'s words when edited), its answers', () => {
+  const rows = [doneRow({ summaryEdited: true, asks: [{ question: 'What do the tickets say about refunds to store credit?', answer: '4 tickets ask for store credit.' }] }),
+    { id: 'ratt_000000000a02', name: 'refund-policy.md', kind: 'text', bytes: 9 * 1024, status: 'reading', summary: '', summaryEdited: false, asks: [] }];
+  const out = renderAttachmentsForPrompt(rows, { texts: new Map([['ratt_000000000a02', 'Refunds in 14 days.']]) });
+  assert.equal(out, 'support-tickets.pdf (PDF, 2.1 MB)\nWhat Worca took from it (the product owner\'s words):\n'
+    + '52 support tickets from September asking to cancel an order.\nQ: What do the tickets say about refunds to store credit?\nA: 4 tickets ask for store credit.\n\n'
+    + 'refund-policy.md (text, 9 KB): being read; known by name only.\nFull text:\nRefunds in 14 days.');
+});
+
+test('the other states, and the 3,000-character entry cap with the newest answers first', () => {
+  const r = (status) => doneRow({ status, summary: '' });
+  assert.match(renderAttachmentsForPrompt([r('unread-budget')]), /: not read yet; known by name only\.$/);
+  assert.match(renderAttachmentsForPrompt([r('failed')]), /: Worca could not read it; known by name only\.$/);
+  for (const status of ['reading', 'failed', 'unread-budget']) {   // an earlier read's text is never shown as current
+    assert.doesNotMatch(renderAttachmentsForPrompt([doneRow({ status })]), /52 support tickets/, status);
+    assert.match(renderAttachmentsForPrompt([doneRow({ status, summaryEdited: true })]), /\(the product owner's words\):\n52 support tickets/, status);
+  }
+  const asks = Array.from({ length: 12 }, (_, i) => ({ question: `Q${i}`, answer: 'a'.repeat(400) }));
+  const out = renderAttachmentsForPrompt([doneRow({ asks })]);
+  assert.ok(out.length <= 3000 + 40, `${out.length}`);
+  assert.ok(out.indexOf('Q: Q11') < out.indexOf('Q: Q10'), 'newest first');
+  assert.match(out, /\(… \d+ earlier answers\)$/);
+});
+
+test('full text: text files in upload order while the redacted texts stay within 24 KB in all; the first that does not fit ends it', () => {
+  const t = (id, bytes) => ({ id, kind: 'text', bytes });
+  const rows = [t('a', 10_000), { id: 'img', kind: 'image', bytes: 50 }, t('b', 10_000), t('c', 10_000), t('d', 100)];
+  const read = (r) => 'x'.repeat(r.bytes);
+  assert.deepEqual([...selectInlineAttachments(rows, read).keys()], ['a', 'b']);
+  assert.deepEqual([...selectInlineAttachments(rows, read, 30_100).keys()], ['a', 'b', 'c', 'd'], 'a budget filled exactly still fits');
+  assert.deepEqual([...selectInlineAttachments(rows, read, 30_099).keys()], ['a', 'b', 'c']);
+  assert.deepEqual([...selectInlineAttachments([t('e', 10)], () => null).keys()], []);
+});
+
+test('documents for <product_brief> and <brief_documents>: "<name>: <summary>" and its answers; one not read yet by name', () => {
+  const docs = [doneRow({ name: 'glossary.pdf', summary: 'Terms.', asks: [{ question: 'Q?', answer: 'A.' }] }), doneRow({ name: 'tone.md', status: 'unread-budget', summary: '' })];
+  assert.equal(renderDocumentsForPrompt(docs), 'glossary.pdf: Terms.\nQ: Q?\nA: A.\ntone.md');
+  assert.deepEqual(sourceNames([{ name: 'a.pdf' }], [{ name: 'g.pdf' }, { name: 'A.PDF' }]), ['a.pdf', 'g.pdf']);
 });

@@ -488,3 +488,27 @@ test('renderBriefMarkdown: a workspace brief names each member on its provenance
   assert.equal(assertBriefSection('areas'), 'areas');
   assert.throws(() => assertBriefSection('actors'), (e) => e.code === 'BAD_REQUEST' && /unknown section "actors"/.test(e.message));
 });
+
+// A8: the brief's documents (plans/requirements-a8-design.md §4, D6). A7's output for this input, captured before A8.
+const A7_BRIEF_PROMPT = "<scope>Shop</scope>\n\n<project_notes>\nSells shoes\n</project_notes>\n\n<current_brief>\nWhat the product does:\nA shop.\n</current_brief>\n\n<edited_by_product_owner>\nWhat the product does\n</edited_by_product_owner>\n\nThe working directory, /w/auto-look-0a1b2c3d, is a checkout of the project.\n\nReply with ONLY the JSON object described in the system prompt.";
+const A7_BRIEF_TEXT = 'Made from main @ abc1234 on 2026-10-01.\n\nWhat the product does:\nA shop.\n\nWho uses it:\n- Customer: buys.';
+const PROMPT_ARGS = { scopeName: 'Shop', notes: 'Sells shoes', current: { product: 'A shop.', users: [], terms: [], areas: [] }, edited: { product: true }, cwd: '/w/auto-look-0a1b2c3d' };
+const SECTIONS_ONE = { product: 'A shop.', users: [{ name: 'Customer', can: 'buys.' }], terms: [], areas: [] };
+
+test('A8: without documents the brief prompt and the brief text are A7\'s', () => {
+  assert.equal(buildBriefPrompt(PROMPT_ARGS), A7_BRIEF_PROMPT);
+  assert.equal(buildBriefPrompt({ ...PROMPT_ARGS, documents: '' }), A7_BRIEF_PROMPT);
+  assert.equal(renderBriefForPrompt(SECTIONS_ONE, { provenance: 'Made from main @ abc1234 on 2026-10-01.' }), A7_BRIEF_TEXT);
+});
+
+test('A8: documents go after the four sections, outside their cap, and into <brief_documents> before the working-directory line', () => {
+  const text = renderBriefForPrompt(SECTIONS_ONE, { provenance: 'Made from main @ abc1234 on 2026-10-01.', documents: 'glossary.pdf: Terms.' });
+  assert.equal(text, `${A7_BRIEF_TEXT}\n\nDocuments:\nglossary.pdf: Terms.`);
+  const big = { ...SECTIONS_ONE, product: 'p'.repeat(1200), terms: Array.from({ length: 30 }, (_, i) => ({ term: `t${i}`, meaning: 'm'.repeat(290) })) };
+  assert.ok(renderBriefForPrompt(big, { documents: 'g.pdf: G.' }).endsWith('\n\nDocuments:\ng.pdf: G.'));
+  const p = buildBriefPrompt({ ...PROMPT_ARGS, documents: 'glossary.pdf: Terms <x>.' });
+  assert.ok(p.includes('</edited_by_product_owner>\n\n<brief_documents>\nglossary.pdf: Terms &lt;x>.\n</brief_documents>\n\n'
+    + 'These documents are the product owner\'s material: use them, and give an item that comes from one of them its name in "source".\n\n'
+    + 'The working directory, /w/auto-look-0a1b2c3d, is a checkout of the project.'), p);
+  assert.ok(BRIEF_SYSTEM_PROMPT.includes('<brief_documents>'));
+});

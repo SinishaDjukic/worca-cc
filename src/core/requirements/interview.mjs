@@ -21,13 +21,14 @@ import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, MAX_ROUNDS, LIMITS, clip } from './spec.mjs';
 import { unaskedRejections } from './ready.mjs';
 import {
-  requireFeature, getFeature, updateFeature, appendTurn, listTurns, getContext, addFeatureCost, listFeatures, usableBrief,
+  requireFeature, getFeature, updateFeature, appendTurn, listTurns, getContext, addFeatureCost, listFeatures, usableBrief, listAttachments,
 } from './store.mjs';
 import { renderBriefForPrompt } from './brief.mjs';
 import {
   ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT, buildRoundPrompt, buildOrientationPrompt, applyRound,
   normalizeOrientation, mockRoundReply, RoundError, removedCriteria, pendingRound,
 } from './round.mjs';
+import { readsSettled, queueUnread, promptFiles, isReading } from './attachment-job.mjs';
 
 export const ROUND_TIMEOUT_MS = 180_000;
 const DEFAULTS = Object.freeze({
@@ -91,9 +92,24 @@ function userSignInLogged() {
 export const MAX_JOBS = 4;
 const jobs = new Map();
 export const isBusy = (seq) => jobs.has(Number(seq));
-/** Throws BUSY when MAX_JOBS jobs are running: checked before anything is written for a new job. */
+/** A8 D2: the longest round 1 waits for the reads of a new feature's files. */
+export const ROUND1_WAIT_MS = 360_000;
+const waitingReads = new Set();   // features whose create job waits for its reads: not counted against MAX_JOBS
+const activeJobs = () => jobs.size - waitingReads.size;
+let slotWaiters = [];   // resolvers woken whenever a slot may have come free: a job ended or started waiting
+function slotFreed() { const w = slotWaiters; slotWaiters = []; for (const r of w) r(); }
+/** A waiting job leaves the waiting set once a slot is free, checked again (synchronously) at every slotFreed. */
+async function takeSlot(seq) {
+  await null;   // startJob has registered the job (and its waiting mark) by now
+  while (activeJobs() >= MAX_JOBS) await new Promise((r) => { slotWaiters.push(r); });
+  waitingReads.delete(seq);
+}
+/** `p`, or nothing once `ms` have passed. */
+const within = (p, ms) => { let t; return Promise.race([p, new Promise((r) => { t = setTimeout(r, ms); })]).finally(() => clearTimeout(t)); };
+/** Throws BUSY when MAX_JOBS jobs are running (a create waiting for its files' reads does not count): checked before
+ *  anything is written for a new job. */
 export function assertCapacity() {
-  if (jobs.size >= MAX_JOBS) throw new RequirementsError('BUSY', 'Worca is working on several features; try again in a moment.');
+  if (activeJobs() >= MAX_JOBS) throw new RequirementsError('BUSY', 'Worca is working on several features; try again in a moment.');
 }
 /** Resolves when the feature's current job (if any) has finished. Tests and the routes' callers await it. */
 export const settled = (seq) => jobs.get(Number(seq)) || Promise.resolve();
@@ -135,8 +151,9 @@ export async function interviewModel(deps = {}) {
   return { model: model ?? null, effort: effort || null, source: stored || slot.effort ? 'settings' : 'default' };
 }
 
-/** `job.kind` says what is running ('look' or 'round'): an error turn records it so retry re-runs the right thing. */
-function startJob(seq, d, fn, by, kind = 'round') {
+/** `job.kind` says what is running ('look' or 'round'): an error turn records it so retry re-runs the right thing.
+ *  `waiting` (A8 D2): the job starts outside MAX_JOBS and takes a slot itself (takeSlot) before it calls a model. */
+function startJob(seq, d, fn, by, kind = 'round', { waiting = false } = {}) {
   seq = Number(seq);
   if (jobs.has(seq)) throw new RequirementsError('BUSY', 'Worca is still working on this feature. Try again in a moment.');
   assertCapacity();
@@ -148,10 +165,13 @@ function startJob(seq, d, fn, by, kind = 'round') {
       catch (e) { console.error('requirements: could not record the failure:', message(e)); }
     } finally {
       jobs.delete(seq);
+      waitingReads.delete(seq);
+      slotFreed();
       notify(d, seq);
     }
   })();
   jobs.set(seq, p);
+  if (waiting) waitingReads.add(seq);
   return p;
 }
 
@@ -290,8 +310,9 @@ async function openLookFor(f, d, signal) {
   return ws && ws.members.length ? d.openWorkspaceLook(ws.members, base, { signal }) : null;
 }
 
-/** A7 D10: the scope's usable brief as the prompts carry it (provenance line first), or null. */
-function briefFor(f) {
+/** A7 D10: the scope's usable brief as the prompts carry it (provenance line first), or null. A8 D6: `documents`, the
+ *  scope's documents as renderDocumentsForPrompt writes them, follow its sections. */
+function briefFor(f, documents = '') {
   const b = usableBrief(f.scopeType, f.scopeKey);
   if (!b) return null;
   const day = String(b.madeAt).slice(0, 10);
@@ -299,7 +320,7 @@ function briefFor(f) {
   const provenance = f.scopeType === 'workspace'
     ? `Made from ${(b.sources || []).length} project${(b.sources || []).length === 1 ? '' : 's'} on ${day}.`
     : `Made from ${(src && src.branch) || 'HEAD'}${src && src.sha ? ` @ ${String(src.sha).slice(0, 7)}` : ''} on ${day}.`;
-  return { id: b.id, madeAt: b.madeAt, text: renderBriefForPrompt(b.sections, { provenance }) };
+  return { id: b.id, madeAt: b.madeAt, text: renderBriefForPrompt(b.sections, { provenance, documents }) };
 }
 
 // Less time than this left after the checkout: the look fails as a timeout rather than starting a call it cannot finish.
@@ -372,6 +393,7 @@ async function runOrientation(seq, d, by, { useBrief = false } = {}) {
 
 async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
   if (isArchived(seq)) return;
+  queueUnread(seq, d);   // A8 D5: files a spending limit stopped are read again once it allows
   setStatus(seq, 'thinking', by);
   notify(d, seq);
   const f = requireFeature(seq);
@@ -379,7 +401,8 @@ async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
   const followItems = found.length ? found : null;   // none left rejected: an ordinary round
   const isFinal = final || (!followItems && f.rounds + 1 >= MAX_ROUNDS);
   const turns = listTurns(seq);
-  const brief = briefFor(f);   // A7 D10: every round reads the scope's usable brief and records which one
+  const files = promptFiles(f);   // A8 D6: the feature's files and the scope's documents, as the prompts carry them
+  const brief = briefFor(f, files.documents);   // A7 D10: every round reads the scope's usable brief and records which one
   const seqs = { criteriaSeq: f.criteriaSeq, assumptionSeq: f.assumptionSeq, final: isFinal, removedCriteria: removedCriteria(turns) };
   let applied = null;
   let model = null;
@@ -389,7 +412,8 @@ async function runRound(seq, d, by, { final = false, followUp = null } = {}) {
     applied = applyRound(f.spec, mockRoundReply(f, isFinal, { followUp: followItems }), seqs);
   } else {
     const ctx = getContext(f.scopeType, f.scopeKey);
-    const prompt = buildRoundPrompt({ feature: f, context: ctx.body, turns, final: isFinal, round: f.rounds + 1, followUp: followItems, brief: brief?.text });
+    const prompt = buildRoundPrompt({ feature: f, context: ctx.body, turns, final: isFinal, round: f.rounds + 1, followUp: followItems, brief: brief?.text,
+      attachments: files.attachments });
     const im = await interviewModel(d);
     model = im.model || undefined;
     const effort = im.effort || undefined;
@@ -440,11 +464,28 @@ export function startOrientation(seq, { by = null, thenRound = true } = {}, deps
   if (!thenRound && !getContext(f.scopeType, f.scopeKey).lookAtCode && usableBrief(f.scopeType, f.scopeKey)) {
     throw new RequirementsError('CONFLICT', `Looking at the code is off for this ${f.scopeType === 'workspace' ? 'workspace' : 'project'}.`);
   }
+  // A8 D2: round 1 waits for the reads of the files the feature was created with, at most ROUND1_WAIT_MS; then it runs
+  // and lists a file still being read by name only. The waiting job does not count against MAX_JOBS (the feature is
+  // busy meanwhile, as during any job: its status stays `looking` and the page says "Reading N files…"). The look before
+  // it and round 1 after it each take a job slot only when one is free, so MAX_JOBS still bounds the model calls. Such a
+  // job is outside MAX_JOBS from its start, so several creates in a row are all taken while their reads run.
+  const waits = thenRound && listAttachments('feature', f.seq).some((r) => isReading(r.id));
   return startJob(seq, d, async (job) => {
+    if (waits) await takeSlot(f.seq);
     await runOrientation(seq, d, by, { useBrief: thenRound });
-    if (thenRound) { job.kind = 'round'; await runRound(seq, d, by); }
-    else setStatus(seq, restingStatus(seq), by);
-  }, by, 'look');
+    if (thenRound) {
+      if (waits) {
+        waitingReads.add(f.seq);
+        slotFreed();
+        try {
+          await within(readsSettled({ type: 'feature', id: f.seq }), d.round1WaitMs ?? ROUND1_WAIT_MS);
+          await takeSlot(f.seq);
+        } finally { waitingReads.delete(f.seq); }
+      }
+      job.kind = 'round';
+      await runRound(seq, d, by);
+    } else setStatus(seq, restingStatus(seq), by);
+  }, by, 'look', { waiting: waits });
 }
 
 /** Ask about the assumptions the product owner rejected since the last round: one extra round, past the round cap. */
