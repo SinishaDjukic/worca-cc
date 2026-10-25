@@ -10490,6 +10490,42 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 @media (max-width:600px){
   .req-file-pencil{display:none}
 }
+/* Board 21: a file's menu, Replace, Ask about this file, the spec's source tags. Remove takes --red-ink-strong: AA on the
+   menu's --panel and on its --red-bg hover (upstream's --red-ink is 3.9:1 there). */
+.req-menu .menu-item.is-danger{color:var(--red-ink-strong)}
+.req-menu .menu-item.is-danger:is(:disabled,[aria-disabled="true"]){color:var(--ink-3)}
+.req-files .req-menu .menu-item{white-space:nowrap}   /* board 21: one line a row */
+/* D13: a source after an item's text; a link while the file exists (--blue-ink-strong on --field, 5.5:1), else --ink-2. */
+.req-src-tag{display:inline-flex;align-items:center;gap:4px;margin-left:6px;padding:1px 6px;border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);font-size:12px;line-height:1.4;text-decoration:none;vertical-align:baseline;overflow-wrap:anywhere}
+.req-src-tag > svg{flex:none}
+a.req-src-tag{color:var(--blue-ink-strong)}
+a.req-src-tag:hover{color:var(--ink)}
+a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-file-askpanel{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-md)}
+.req-file-askpanel label{font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-file-askfoot{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}
+.req-file-askfoot .hint{flex:1 1 160px;margin:0}
+.req-file-askmsg:empty{display:none}
+.req-file-q.req-file-added{color:var(--ink-2)}
+.req-replace-lead b{font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+.req-replace-choice{display:flex;flex-direction:column;gap:8px;min-width:0;margin:0;padding:0;border:0}
+.req-replace-choice legend{margin:0 0 6px;padding:0;font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-replace-opt{display:flex;align-items:flex-start;gap:10px;font-size:13px;cursor:pointer}
+.req-replace-opt input{flex:none;margin:3px 0 0}
+.req-replace-opt .hint{display:inline;margin:0}
+.req-replace-hint{margin:0}
+@media (max-width:600px){
+  /* 44px targets (board 20's pattern): the menu rows, the question field, the choice rows, the dialog's buttons */
+  .req-files .req-menu .menu-item{min-height:44px}
+  .req-file-askpanel{gap:10px}
+  .req-file-askpanel input{min-height:44px}
+  .req-replace-opt{min-height:44px;align-items:center}
+  .req-replace-opt input{margin:0}
+  .req-replace .req-dlg-btns .btn{position:relative}
+  .req-replace .req-dlg-btns .btn::after{content:"";position:absolute;inset:-7px 0}
+  .req-spec a.req-src-tag{position:relative}
+  .req-spec a.req-src-tag::after{content:"";position:absolute;inset:-13px -4px}
+}
 
 /* ── marketplace P3 ── */
 /* Plugin icons (U7, board 0.1): the kind colour lives only in this tile; hue families carry the dark arms. */

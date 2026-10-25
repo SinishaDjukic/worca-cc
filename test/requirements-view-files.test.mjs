@@ -410,14 +410,14 @@ test("board 16/20: a file's ⋯ is named for it and opens a menu with Open and E
   const list = host.querySelector('[data-menu="file-ratt_00000000000a"] [role="menu"]');
   assert.equal(list.hidden, false);
   assert.ok(list.classList.contains('menu'));
-  assert.deepEqual([...list.children].map((x) => x.textContent), ['Open', 'Edit what Worca took from it']);
+  assert.deepEqual([...list.querySelectorAll('[role="menuitem"]')].slice(0, 2).map((x) => x.textContent), ['Open', 'Edit what Worca took from it']);
   const open = list.querySelector('a[role="menuitem"]');
   assert.deepEqual([open.getAttribute('href'), open.getAttribute('target'), open.className], ['/api/requirements/4/attachments/ratt_00000000000a', '_blank', 'menu-item req-menu-item']);
   list.children[1].click();
   assert.equal(document.activeElement, host.querySelector('[data-ui="file-edit-text-ratt_00000000000a"]'), 'the editor takes the focus');
   const reading = await openFeature(feature({ attachments: [att({ status: 'reading', summary: '' })] }));
   reading.host.querySelector('[data-ui="file-more-ratt_00000000000a"]').click();
-  assert.deepEqual([...reading.host.querySelectorAll('[data-menu="file-ratt_00000000000a"] [role="menuitem"]')].map((x) => x.textContent), ['Open']);
+  assert.deepEqual([...reading.host.querySelectorAll('[data-menu="file-ratt_00000000000a"] [role="menuitem"]')].map((x) => x.textContent), ['Open', 'Remove']);
 });
 
 test('a11y: the focus after Save and Cancel goes back to the pencil, after Show all to the text, after Try again to the file name', async () => {
@@ -578,11 +578,14 @@ test('a draft whose file is read again (or loses its text) under the open editor
   assert.equal(document.activeElement.getAttribute('data-ui'), 'file-more-ratt_00000000000a', "the focus goes to the file's ⋯");
   f = feature();
   await view.changed(4);
+  assert.deepEqual([line.hidden, line.textContent], [true, ''], 'cleared on the next paint once no file is read');
   host.querySelector('.req-file-pencil').click();
   f = feature({ attachments: [att({ status: 'failed', summary: '', error: { code: 'TIMEOUT', message: 'x' } })] });
   await view.changed(4);
   assert.equal(host.querySelector('[data-ui="file-edit-text-ratt_00000000000a"]'), null, 'lost its text: closed too');
-  assert.equal(host.querySelector('.req-files .req-file-refused').textContent, 'Worca is reading this file.');
+  const after = host.querySelector('.req-files .req-file-refused');
+  assert.deepEqual([after.hidden, after.textContent], [true, ''], 'a file that went straight to failed is not being read: its own alert says why');
+  assert.match(host.querySelector('.req-file-failed').textContent, /^Worca could not read this file: it ran out of time\./);
 });
 
 test('an upload that fills the card (10 files) disables Add files; the focus goes to the Files heading', async () => {
@@ -595,4 +598,283 @@ test('an upload that fills the card (10 files) disables Add files; the focus goe
   assert.equal(host.querySelector('[data-ui="files-add"]').disabled, true);
   const head = host.querySelector('.req-files h3');
   assert.deepEqual([document.activeElement === head, head.getAttribute('tabindex'), head.textContent], [true, '-1', 'Files · 10']);
+});
+
+// ── board 21: the menu, Replace, Ask, sources ─────────────────
+const HREF = '/api/requirements/4/attachments/ratt_00000000000a';
+const OK = { feature: feature(), turns: [] };
+const openMenu = (host) => { host.querySelector('[data-ui="file-more-ratt_00000000000a"]').click(); return host.querySelector('[data-menu="file-ratt_00000000000a"] [role="menu"]'); };
+const labels = (list) => [...list.children].map((x) => (x.classList.contains('menu-sep') ? '—' : x.textContent));
+const item = (host, label) => [...openMenu(host).children].find((x) => x.textContent === label);
+
+test("board 21: the ⋯ menu, named for its file: Open, Edit, Ask, Replace, Read again, a separator, Remove (red)", async () => {
+  const { host } = await openFeature(feature());
+  const trigger = host.querySelector('[data-ui="file-more-ratt_00000000000a"]');
+  assert.deepEqual([trigger.getAttribute('aria-label'), trigger.getAttribute('aria-haspopup')], ['More for support-tickets.pdf', 'menu']);
+  const list = openMenu(host);
+  assert.deepEqual(labels(list), ['Open', 'Edit what Worca took from it', 'Ask about this file…', 'Replace with a newer version…', 'Read again', '—', 'Remove']);
+  assert.deepEqual([...list.querySelectorAll('[role="menuitem"]')].map((x) => x.getAttribute('data-ui')),
+    ['open', 'edit', 'ask', 'replace', 'again', 'remove'].map((k) => `fmi-${k}-ratt_00000000000a`));
+  assert.equal(list.querySelector('.menu-sep').getAttribute('role'), 'separator');
+  assert.equal(list.querySelector('a[role="menuitem"]').getAttribute('href'), HREF);
+  assert.ok(list.lastElementChild.classList.contains('is-danger'));
+  list.children[1].click();
+  assert.ok(host.querySelector('[data-ui="file-edit-text-ratt_00000000000a"]'), 'the menu opens the editor (the pencil at phone width)');
+});
+
+test('board 21: each state offers only what applies: reading, failed, a version that could not be stored, not read yet; the lock disables', async () => {
+  const offered = async (over, f = null) => labels(openMenu((await openFeature(f || feature({ attachments: [att(over)] }))).host));
+  assert.deepEqual(await offered({ status: 'reading', summary: '' }), ['Open', '—', 'Remove'], 'no Ask, Replace or Read again while it is read');
+  assert.deepEqual(await offered({ status: 'failed', summary: '', error: { code: 'TIMEOUT', message: 'x' } }),
+    ['Open', 'Replace with a newer version…', 'Read again', '—', 'Remove'], 'no Ask on a file Worca could not read');
+  assert.deepEqual(await offered({ status: 'failed', summary: '', error: { code: 'STORE_FAILED', message: 'Worca could not store the new version. Replace it again.' } }),
+    ['Open', 'Replace with a newer version…', '—', 'Remove'], 'the server refuses Read again here: Replace mends it');
+  assert.deepEqual(await offered({ status: 'unread-budget', summary: '' }), ['Open', 'Replace with a newer version…', 'Read again', '—', 'Remove']);
+  const { host } = await openFeature(feature({ busy: true }));
+  const list = openMenu(host);
+  assert.deepEqual([...list.querySelectorAll('button[role="menuitem"]')].map((b) => b.disabled), [true, true, true, true, true]);
+});
+
+test('a version that could not be stored says the server\'s words and offers Replace, not Try again', async () => {
+  const { host } = await openFeature(feature({ attachments: [att({ status: 'failed', summary: '',
+    error: { code: 'STORE_FAILED', message: 'Worca could not store the new version. Replace it again.' } })] }));
+  const line = host.querySelector('.req-file-failed');
+  assert.equal(line.getAttribute('role'), 'alert');
+  assert.equal(line.querySelector('.req-file-failed-text').textContent, 'Worca could not store the new version. Replace it again.');
+  const btn = line.querySelector('button');
+  assert.deepEqual([btn.textContent, btn.getAttribute('data-ui')], ['Replace with a newer version…', 'file-replace-ratt_00000000000a']);
+  let opened = 0;
+  host.querySelector('[data-menu="file-ratt_00000000000a"] input[type="file"]').addEventListener('click', () => { opened += 1; });
+  btn.click();
+  assert.equal(opened, 1, 'it opens the file picker');
+});
+
+test('board 21: Ask about this file: the panel, its estimate, Ask posts the question; the answer, newest first, labelled', async () => {
+  let f = feature({ attachments: [att({ asks: [{ question: 'Older?', answer: 'Older answer.' }] })] });
+  const calls = fakeApi({ ...BASE, 'GET /api/requirements/4': () => ({ feature: f, turns: [] }), [`POST ${HREF}/ask`]: OK });
+  const { host, view } = make();
+  await view.show('feature/4');
+  item(host, 'Ask about this file…').click();
+  const panel = host.querySelector('.req-file-askpanel');
+  assert.equal(panel.querySelector('label').textContent, 'What should Worca look for?');
+  assert.equal(panel.querySelector('.hint').textContent, 'One more read of this file · about $0.12');
+  const input = panel.querySelector('input');
+  assert.deepEqual([document.activeElement, input.getAttribute('maxlength'), panel.querySelector('label').getAttribute('for')], [input, '200', input.id]);
+  const go = panel.querySelector('[data-ui="file-ask-go-ratt_00000000000a"]');
+  assert.equal(go.disabled, true, 'a question is 1 to 200 characters');
+  input.value = 'What about refunds?';
+  input.dispatchEvent(new window.Event('input'));
+  assert.equal(go.disabled, false);
+  f = feature({ attachments: [att({ asks: [{ question: 'Older?', answer: 'Older answer.' }, { question: 'What about refunds?', answer: '4 ask for store credit.' }] })] });
+  go.click();
+  await settle();
+  assert.deepEqual(calls.find((c) => c.url === `${HREF}/ask`).body, { question: 'What about refunds?' });
+  assert.equal(host.querySelector('.req-file-askpanel'), null, 'the panel closes');
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'file-more-ratt_00000000000a');
+  assert.equal(host.querySelector('.req-file-added').textContent, 'Added to what Worca took from it · Q: What about refunds?');
+  assert.deepEqual([...host.querySelectorAll('.req-file-ask')].map(text),
+    ['Added to what Worca took from it · Q: What about refunds? 4 ask for store credit.', 'Q: Older? Older answer.'], 'newest first');
+  assert.equal(host.querySelector('.req-files-live').textContent, 'Added to what Worca took from it · Q: What about refunds?', 'said once in the status line');
+  const none = await openFeature(feature({ attachments: [att({ estimateUsd: null })] }));
+  item(none.host, 'Ask about this file…').click();
+  assert.equal(none.host.querySelector('.req-file-askpanel .hint').textContent, 'One more read of this file · about $0.05–0.15');
+});
+
+test('Ask: the budget refusal shows in the panel, word for word, and keeps the question; Escape and Cancel close it', async () => {
+  const BUDGET = 'The spending limit of $5 is reached for this period. Worca can read the file when the limit resets or is raised.';
+  const { host, view } = await openFeature(feature(), { [`POST ${HREF}/ask`]: { __status: 409, body: { error: BUDGET } } });
+  item(host, 'Ask about this file…').click();
+  const input = host.querySelector('[data-ui="file-ask-text-ratt_00000000000a"]');
+  input.value = 'Refunds?';
+  input.dispatchEvent(new window.Event('input'));
+  host.querySelector('[data-ui="file-ask-go-ratt_00000000000a"]').click();
+  await settle();
+  const msg = host.querySelector('.req-file-askpanel .req-file-askmsg');
+  assert.deepEqual([msg.getAttribute('role'), msg.textContent], ['alert', BUDGET]);
+  assert.equal(host.querySelector('[data-ui="file-ask-text-ratt_00000000000a"]').value, 'Refunds?');
+  await view.changed(4);
+  assert.equal(host.querySelector('.req-file-askpanel .req-file-askmsg'), msg, 'the same alert node across a repaint');
+  const ev = new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  host.querySelector('[data-ui="file-ask-text-ratt_00000000000a"]').dispatchEvent(ev);
+  assert.equal(host.querySelector('.req-file-askpanel'), null);
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'file-more-ratt_00000000000a');
+  item(host, 'Ask about this file…').click();
+  assert.equal(host.querySelector('.req-file-askmsg').textContent, '', 'a new panel starts without the old refusal');
+  [...host.querySelectorAll('.req-file-askpanel button')].find((b) => b.textContent === 'Cancel').click();
+  assert.equal(host.querySelector('.req-file-askpanel'), null);
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'file-more-ratt_00000000000a');
+});
+
+test('a failed ask says so under the file, one alert node across repaints', async () => {
+  const { host, view } = await openFeature(feature({ attachments: [att({ error: { code: 'TIMEOUT', message: 'x', job: 'ask', question: 'Refunds?', at: 't1' } })] }));
+  const line = host.querySelector('.req-file-ask-failed');
+  assert.deepEqual([line.getAttribute('role'), line.textContent], ['alert', 'Worca could not answer “Refunds?”: it ran out of time.']);
+  await view.changed(4);
+  assert.equal(host.querySelector('.req-file-ask-failed'), line);
+});
+
+test('board 21: Replace opens the picker, then the dialog; an edited summary offers rewrite (default) or keep; Replace posts', async () => {
+  const { host, calls } = await openFeature(feature({ attachments: [att({ summaryEdited: true, sendWithRun: true })] }), { [`POST ${HREF}/replace`]: OK });
+  const trigger = host.querySelector('[data-ui="file-more-ratt_00000000000a"]');
+  trigger.focus();
+  pick(host.querySelector('[data-menu="file-ratt_00000000000a"] input[type="file"]'), [mkFile('tickets-v2.pdf', '%PDF-1.7 v2', 'application/pdf')]);
+  const dlg = document.querySelector('.req-dialog[role="dialog"]');
+  assert.equal(dlg.getAttribute('aria-modal'), 'true');
+  assert.equal(document.getElementById(dlg.getAttribute('aria-labelledby')), dlg.querySelector('h2'));
+  assert.equal(dlg.querySelector('h2').textContent, 'Replace support-tickets.pdf');
+  assert.equal(text(dlg.querySelector('.req-replace-lead')), 'New file: tickets-v2.pdf · PDF · 11 B. Worca reads it again (about $0.12); “Send with the run” stays on.');
+  assert.equal(dlg.querySelector('.req-replace-lead b').textContent, 'tickets-v2.pdf');
+  assert.equal(dlg.querySelector('legend').textContent, 'You edited what Worca took from the old file');
+  assert.deepEqual([...dlg.querySelectorAll('.req-replace-opt')].map(text),
+    ["Let Worca write it again from the new file (your text is kept in the file's history)", 'Keep my text']);
+  assert.equal(dlg.querySelector('[data-ui="replace-rewrite"]').checked, true);
+  assert.equal(document.activeElement, dlg.querySelector('[data-ui="replace-rewrite"]'), 'the choice takes the focus');
+  assert.equal(host.inert, true, 'the page behind is inert');
+  assert.equal(text(dlg.querySelector('.req-replace-hint')),
+    'The next round uses the new version. A Ready feature gets one short follow-up round; after the start it counts as a change since the start.');
+  dlg.querySelector('[data-ui="replace-keep"]').click();
+  dlg.querySelector('[data-ui="replace-go"]').click();
+  await settle();
+  const post = calls.find((c) => c.url === `${HREF}/replace`);
+  assert.deepEqual([post.body.keepSummary, post.body.attachments[0].name, typeof post.body.attachments[0].dataBase64], [true, 'tickets-v2.pdf', 'string']);
+  assert.equal(document.querySelector('.req-dialog'), null, 'closed after Replace');
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'file-more-ratt_00000000000a', 'the focus goes back to the ⋯');
+});
+
+test("Replace: Tab stays in the dialog; the server's refusals show in it, word for word; Replace without the choice sends keepSummary false", async () => {
+  const { host, calls } = await openFeature(feature(), { [`POST ${HREF}/replace`]: { __status: 409, body: { error: 'This is the same version as support-tickets.pdf.' } } });
+  pick(host.querySelector('[data-menu="file-ratt_00000000000a"] input[type="file"]'), [mkFile('b.md', '# b')]);
+  const dlg = document.querySelector('.req-dialog');
+  const go = dlg.querySelector('[data-ui="replace-go"]');
+  assert.equal(document.activeElement, go, 'without a choice, Replace takes the focus');
+  const tab = (shiftKey) => document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Tab', shiftKey, bubbles: true, cancelable: true }));
+  tab(false);
+  assert.equal(document.activeElement.textContent, 'Cancel', 'Tab from the last control wraps to the first');
+  tab(true);
+  assert.equal(document.activeElement, go);
+  go.click();
+  await settle();
+  assert.deepEqual([calls.find((c) => c.url === `${HREF}/replace`).body.keepSummary, dlg.querySelector('.req-dlg-msg').textContent],
+    [false, 'This is the same version as support-tickets.pdf.']);
+  assert.ok(dlg.isConnected, 'the dialog stays open');
+  for (const error of ['Worca could not store the new version. Replace it again.', 'Try again in a moment.', 'Worca is reading this file.']) {
+    globalThis.fetch = async () => ({ ok: false, status: 409, json: async () => ({ error }) });
+    go.click();
+    await settle();
+    assert.equal(dlg.querySelector('.req-dlg-msg').textContent, error);
+  }
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(document.querySelector('.req-dialog'), null);
+  assert.equal(host.inert, false);
+});
+
+test('board 21: Replace without an edited summary has no choice; Escape and Cancel close; a refused pick never opens it', async () => {
+  const { host } = await openFeature(feature());
+  const input = () => host.querySelector('[data-menu="file-ratt_00000000000a"] input[type="file"]');
+  pick(input(), [mkFile('b.md', '# b')]);
+  assert.equal(document.querySelector('.req-dialog legend'), null);
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(document.querySelector('.req-dialog'), null);
+  pick(input(), [mkFile('c.md', '# c')]);
+  [...document.querySelectorAll('.req-dialog button')].find((b) => b.textContent === 'Cancel').click();
+  assert.equal(document.querySelector('.req-dialog'), null);
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'file-more-ratt_00000000000a');
+  pick(input(), [mkFile('deck.pptx', 'x')]);
+  assert.equal(document.querySelector('.req-dialog'), null);
+  const line = host.querySelector('.req-files .req-file-refused');
+  assert.deepEqual([line.hidden, line.textContent], [false, 'deck.pptx was not added: Worca reads text, images and PDF. Save it as PDF to attach it here.']);
+  const big = mkFile('huge.pdf', 'x', 'application/pdf');
+  Object.defineProperty(big, 'size', { value: 26 * 1024 * 1024 });
+  pick(input(), [big]);
+  assert.equal(document.querySelector('.req-dialog'), null);
+  assert.equal(host.querySelector('.req-files .req-file-refused').textContent, 'huge.pdf was not added: it is over 25 MB.');
+});
+
+test('board 21: Read again asks first on an edited summary; Remove asks before deleting', async () => {
+  const { host, calls } = await openFeature(feature({ attachments: [att({ summaryEdited: true })] }), { [`POST ${HREF}/read-again`]: OK, [`DELETE ${HREF}`]: OK });
+  asked.length = 0;
+  item(host, 'Read again').click();
+  await settle();
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'file-more-ratt_00000000000a', 'after Read again the focus is on the ⋯');
+  item(host, 'Remove').click();
+  await settle();
+  assert.deepEqual(asked, ["Read again? Your text goes to the file's history.", 'Remove support-tickets.pdf? The file and what Worca took from it are deleted.']);
+  assert.deepEqual(calls.filter((c) => c.method !== 'GET').map((c) => `${c.method} ${c.url}`), [`POST ${HREF}/read-again`, `DELETE ${HREF}`]);
+  answer = false;
+  item(host, 'Remove').click();
+  await settle();
+  answer = true;
+  assert.equal(calls.filter((c) => c.method === 'DELETE').length, 1, 'a No sends nothing');
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'file-more-ratt_00000000000a', 'a No leaves the focus on the ⋯');
+  asked.length = 0;
+  const plain = await openFeature(feature(), { [`POST ${HREF}/read-again`]: OK });
+  item(plain.host, 'Read again').click();
+  await settle();
+  assert.deepEqual([asked.length, plain.calls.filter((c) => c.method === 'POST').length], [0, 1], 'no question on a text Worca wrote');
+});
+
+test('Remove: the focus goes to the next file, else the previous one, else Add files', async () => {
+  const mk = (k) => att({ id: `ratt_00000000000${k}`, name: `${k}.md`, kind: 'text', bytes: 3, href: `/api/requirements/4/attachments/ratt_00000000000${k}` });
+  let files = ['b', 'c', 'd'].map(mk);
+  const del = (k) => () => { files = files.filter((a) => a.id !== `ratt_00000000000${k}`); return OK; };
+  const { host } = await openFeature(null, { 'GET /api/requirements/4': () => ({ feature: feature({ attachments: files }), turns: [] }),
+    'DELETE /api/requirements/4/attachments/ratt_00000000000b': del('b'), 'DELETE /api/requirements/4/attachments/ratt_00000000000c': del('c'),
+    'DELETE /api/requirements/4/attachments/ratt_00000000000d': del('d') });
+  const remove = async (k) => {
+    host.querySelector(`[data-ui="file-more-ratt_00000000000${k}"]`).click();
+    host.querySelector(`[data-ui="fmi-remove-ratt_00000000000${k}"]`).click();
+    await settle();
+    return document.activeElement.getAttribute('data-ui');
+  };
+  assert.equal(await remove('c'), 'file-name-ratt_00000000000d', 'the next file');
+  assert.equal(await remove('d'), 'file-name-ratt_00000000000b', 'the last one gone: the previous file');
+  assert.equal(await remove('b'), 'files-add', 'none left: Add files');
+});
+
+test('D13: the spec card shows a source as a tag after the text, a link while the file exists, plain text once it is gone', async () => {
+  const spec = { ...feature().spec, criteria: [{ id: 'R-po-1', text: 'Cancel until printed', source: 'support-tickets.pdf' }, { id: 'R-po-2', text: 'Plain' }],
+    assumptions: [{ id: 'A-1', text: 'Card refunds', status: 'open', source: 'gone.md' }, { id: 'A-2', text: 'From the brief', status: 'open', source: 'Policy.MD' }] };
+  const { host } = await openFeature(feature({ spec, briefDocuments: [att({ id: 'ratt_00000000000f', name: 'policy.md', kind: 'text', href: '/api/requirements/brief/project/shop-1/documents/ratt_00000000000f' })] }));
+  const tag = host.querySelector('[data-criterion="R-po-1"] .req-src-tag');
+  assert.deepEqual([tag.tagName, tag.textContent, tag.getAttribute('href'), tag.getAttribute('target')], ['A', 'support-tickets.pdf', HREF, '_blank']);
+  assert.deepEqual([tag.parentElement.className, tag.parentElement.firstChild.textContent], ['req-item-text', 'Cancel until printed'], 'after the text, in its line');
+  assert.equal(tag.querySelector('svg').getAttribute('aria-hidden'), 'true');
+  assert.equal(host.querySelector('[data-criterion="R-po-2"] .req-src-tag'), null);
+  const gone = host.querySelector('[data-assumption="A-1"] .req-src-tag');
+  assert.deepEqual([gone.tagName, gone.textContent], ['SPAN', 'gone.md']);
+  const doc = host.querySelector('[data-assumption="A-2"] .req-src-tag');
+  assert.deepEqual([doc.tagName, doc.getAttribute('href')], ['A', '/api/requirements/brief/project/shop-1/documents/ratt_00000000000f'], 'a brief document, matched case-insensitively');
+});
+
+test('D13: a removed file\'s tag loses its link on the next paint', async () => {
+  const spec = { ...feature().spec, criteria: [{ id: 'R-po-1', text: 'Cancel until printed', source: 'support-tickets.pdf' }] };
+  let f = feature({ spec });
+  const { host } = await openFeature(null, { 'GET /api/requirements/4': () => ({ feature: f, turns: [] }),
+    [`DELETE ${HREF}`]: () => { f = feature({ spec, attachments: [] }); return OK; } });
+  assert.equal(host.querySelector('.req-src-tag').tagName, 'A');
+  item(host, 'Remove').click();
+  await settle();
+  assert.deepEqual([host.querySelector('.req-src-tag').tagName, host.querySelector('.req-src-tag').textContent], ['SPAN', 'support-tickets.pdf']);
+});
+
+test('XSS: a question, an answer and a source are text, never markup', async () => {
+  const bad = '<img src=x onerror="window.__pwn=1">';
+  const spec = { ...feature().spec, criteria: [{ id: 'R-po-1', text: 'x', source: bad }] };
+  const { host } = await openFeature(feature({ spec, attachments: [att({ asks: [{ question: bad, answer: bad }], error: { code: 'X', message: bad, job: 'ask', question: bad } })] }));
+  assert.equal(host.querySelectorAll('img').length, 0);
+  assert.ok(host.querySelector('.req-src-tag').textContent.includes('<img'));
+});
+
+test('style.css: board 20 puts the pencil in the menu below 600 px; board 21 rules inside the Requirements block, AA ink, 44 px targets', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /@media \(max-width:600px\)\{\s*\.req-file-pencil\{display:none\}/);
+  assert.equal(css.match(/\.req-file-pencil\{display:none\}/g).length, 1, 'one pencil rule');
+  assertInRequirementsBlock(['.req-src-tag', '.req-file-askpanel', '.req-replace-opt', '.req-file-added', '.req-menu .menu-item.is-danger', '.req-files .req-menu .menu-item{min-height:44px}']);
+  const rule = (sel) => (css.match(new RegExp(`${sel.replace(/[.[\]()]/g, '\\$&')}\\{([^}]*)\\}`)) || [])[1] || '';
+  assert.match(rule('.req-menu .menu-item.is-danger'), /color:var\(--red-ink-strong\)/, 'Remove: AA on the panel and on its red hover');
+  assert.match(rule('a.req-src-tag'), /color:var\(--blue-ink-strong\)/);
+  assert.match(rule('.req-src-tag'), /background:var\(--field\);color:var\(--ink-2\)/);
+  assert.match(rule('.req-files .req-menu .menu-item'), /white-space:nowrap/, 'board 21: one line a menu row');
+  assert.match(rule('.req-replace-opt .hint'), /display:inline/, "the history note follows the choice's words");
+  assert.match(rule('.req-spec a.req-src-tag::after'), /inset:-13px -4px/, 'a source link has a 44 px target at phone width');
 });
