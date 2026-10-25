@@ -2,7 +2,7 @@
 name: ask-ui-hidden-pins
 description: Read before planning or reviewing a change to the Chat panel's DOM, the top bar, the page shell, openChat entry points or a new ask-api server test — the pins a
 paths: ui/public/ask-panel.mjs, ui/public/app.js, ui/public/index.html, ui/public/style.css, ui/public/topnav-search.mjs, test/ask-api-*.test.mjs, test/ui-chat-*.test.mjs, test/ask-panel*.test.mjs
-updated: 2026-10-25T03:58:17.196Z
+updated: 2026-10-25T05:19:37.942Z
 author: Denislav Prinov
 ---
 
@@ -24,8 +24,9 @@ Found replaying "Ask worca beside the page" (2026-10-24, 8 tasks). Each one turn
 - The Chat home's `.chat-page[data-view="home"] .ask-composer > .ask-pop` opens composer menus DOWNWARD; a composer docked at the bottom on home needs an upward override.
 - `openPage()` always focused the composer; `enterChatView` on a bare `#chat` opens the UNREAD chat — use `chat/new` to keep a new chat.
 - app.js page-level Escape arms (History/Running detail, project page, workspace-create) are document CAPTURE listeners: they run before element handlers, so they need an exemption for any new surface holding a text field.
-- Page changes with NO click and NO hashchange: the History Diff opens its first file itself (`renderFileTree` `initialKey`), the live Diff's first `pick()` is a direct call, a reload on a live run gets the run from the `hello` frame after the first paint. Hook `paintFileList`, that `pick`, and `askRunStore.subscribe` (`pokeAskRuns` fires on every frame and also after the projects load — it masks a `loadProjects` hook's guard in tests).
-- A queue item (`enqueueDraft`) must snapshot anything page-derived it sends: it drains after the person may have navigated.
+- Page changes with NO click and NO hashchange: the History Diff opens its first file itself (`renderFileTree` `initialKey`), the live Diff's first `pick()` is a direct call, a reload on a live run gets the run from the `hello` frame after the first paint, a native `<select>` choice (New run's `#projectSelect`) fires `change` with no click. Hook `paintFileList`, that `pick`, and `askRunStore.subscribe` (`pokeAskRuns` fires on every frame and also after the projects load — it masks a `loadProjects` hook's guard in tests).
+- A queue item (`enqueueDraft`) must snapshot anything page-derived it sends: it drains after the person may have navigated. So must `sendMessage` BEFORE its first await (the new-chat `POST /api/ask/threads`): until it answers `isNewChat()` holds, so a route also re-follows the page scope (cycle-1 review minor).
+- Reviewer trap: a jsdom `btn.focus(); btn.click()` probe ignores hit-testing — the dock chats menu's scrim (`.chat-page` absolute, scrim z 5) covers the head, so "the title cannot close its dropdown" was a false positive.
 - `showThread(null)` from `wantThread === undefined` (nothing ever shown) runs a full `newThread()` reset (scope, Sets, model). Tests booting `bootChat` on `#chat` start at `null` and never see it — boot on another page with the column open.
 - app.js hides the panel BEFORE moving its root, so `openPage`'s unconditional re-pin covers the move; a panel-level `setHost` while open needs its own `applyPin()`.
 - CSS: a `position:fixed;top:…;bottom:0` override under a base `height:100%` keeps the height (bottom ignored): add `height:auto` — the dock's phone tier hid the composer 48px below the screen; only a real browser shows it.
