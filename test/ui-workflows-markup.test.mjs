@@ -15,7 +15,7 @@ test('one workflows view; the composer, agents, scripts and agent-create views a
 
 test('top bar: Back, Workflows ▾, name, Canvas · Versions, chip | Library toggle, Save version, Save — and nothing else', () => {
   const tl = doc.querySelector('.wfv-tl .wfv-bar');
-  assert.deepEqual([...tl.querySelectorAll('button, input')].map((e) => e.id || e.dataset.page), ['wfv-back', 'wfv-wf-menu', 'wfv-name', 'canvas', 'versions', 'wfv-errors', 'wfv-import-file']);
+  assert.deepEqual([...tl.querySelectorAll('button, input')].map((e) => e.id), ['wfv-back', 'wfv-wf-menu', 'wfv-name', 'wfv-page-canvas', 'wfv-page-versions', 'wfv-errors', 'wfv-import-file']);
   assert.equal(doc.getElementById('wfv-name').placeholder, 'Untitled pipeline');
   const tr = doc.querySelector('.wfv-tr .wfv-bar');
   assert.deepEqual([...tr.querySelectorAll('button')].map((e) => e.id), ['wfv-lib-toggle', 'wfv-saveversion', 'wfv-save']);
@@ -84,4 +84,11 @@ test('versions (flag workflowTests): Canvas / Versions switch, the status line, 
   // Under the floating top bars (so Canvas stays reachable) and fenced from the canvas keys (Delete never edits the hidden graph).
   assert.equal(page.parentElement.id, 'wfv-stage');
   assert.equal(page.dataset.canvasKeys, 'off');
+  // Focusable, so a click on its text keeps the focus inside the fence (not on <body>).
+  assert.equal(page.getAttribute('tabindex'), '-1');
+  // The tablist names what each tab shows.
+  assert.equal(page.getAttribute('role'), 'tabpanel');
+  assert.equal(page.getAttribute('aria-labelledby'), 'wfv-page-versions');
+  assert.equal(doc.getElementById('wfv-page-versions').getAttribute('aria-controls'), 'wfv-versions');
+  assert.equal(doc.getElementById('wfv-page-canvas').getAttribute('aria-controls'), 'wfv-canvas');
 });

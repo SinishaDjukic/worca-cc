@@ -36,8 +36,9 @@ function frame({ doc, win, title, body, confirmLabel, onConfirm }) {
   return dlg;
 }
 
-/** Save version N: what changed since the last version, a short note, and "Also use vN for new runs". */
-export function openSaveVersionDialog({ doc, win, nextNo, changes, onSubmit }) {
+/** Save version N: what changed since the latest version `sinceNo` (null: this is the first version), a short note,
+ *  and "Also use vN for new runs". `changes` compares with v<sinceNo>, the version Save version compares against. */
+export function openSaveVersionDialog({ doc, win, nextNo, sinceNo = null, changes, onSubmit }) {
   const label = el(doc, 'label', 'label', 'What changed, in a few words '); label.htmlFor = 'wfv-sv-note';
   label.append(el(doc, 'span', 'opt', 'optional'));
   const note = el(doc, 'input'); note.type = 'text'; note.id = 'wfv-sv-note'; note.maxLength = 200;
@@ -45,9 +46,12 @@ export function openSaveVersionDialog({ doc, win, nextNo, changes, onSubmit }) {
   const use = el(doc, 'input'); use.type = 'checkbox'; use.id = 'wfv-sv-use';
   useWrap.append(use, el(doc, 'span', '', ` Also use v${nextNo} for new runs`));
   const field = el(doc, 'div', 'field'); field.append(label, note);
+  const since = Number.isInteger(sinceNo)
+    ? [el(doc, 'p', 'hint wfv-sv-since', `What changed since v${sinceNo}:`), changesList(doc, changes, `Nothing changed since v${sinceNo}.`)]
+    : [el(doc, 'p', 'hint wfv-sv-since', 'This is the first version.')];
   return frame({
     doc, win, title: `Save version ${nextNo}`, confirmLabel: `Save version ${nextNo}`,
-    body: [el(doc, 'p', 'hint', 'What changed since the last version:'), changesList(doc, changes, 'No changes since the last version.'), field, useWrap],
+    body: [...since, field, useWrap],
     onConfirm: () => onSubmit({ note: note.value.trim(), use: use.checked }),
   });
 }

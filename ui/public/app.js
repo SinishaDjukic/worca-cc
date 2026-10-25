@@ -207,7 +207,7 @@ import {
 import { renderStatsBody, renderStatsView, renderBudgetReadout, renderCostPauseBanner, statsQuery, groupsToCsv, statsRangeLabel, DEFAULT_FMT } from './stats-view.mjs';
 import { createCostReport } from './cost-report.mjs';
 import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow } from './account-menu.mjs';
-import { createComposer, isReservedWorkflowId } from './graph/composer.mjs';
+import { createComposer, isReservedWorkflowId, pluginOriginName } from './graph/composer.mjs';
 import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
 import { createLibrary } from './workflows/library.mjs';
 import { createChatDock } from './workflows/chat-dock.mjs';
@@ -3214,11 +3214,16 @@ const gvApi = {
     setTimeout(() => void wfvRefreshVersions(), 0);
     return { ok: true, workflow: (d && d.workflow) || d };
   },
-  versions: async (id) => {
-    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/versions`);
-    if (!res.ok) return null;
-    return safeJson(res);
+  // {ok, overview} | {ok: false, status, error}: never throws (a refused fetch is status 0). 400 = this row cannot
+  // have versions (a plugin's, or not a graph).
+  versionsRead: async (id) => {
+    try {
+      const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/versions`);
+      const d = await safeJson(res);
+      return res.ok ? { ok: true, overview: d } : { ok: false, status: res.status, error: (d && d.error) || `versions failed (${res.status})` };
+    } catch (e) { return { ok: false, status: 0, error: `Worca did not answer (${e.message}).` }; }
   },
+  versions: async (id) => { const r = await gvApi.versionsRead(id); return r.ok ? r.overview : null; },
   saveVersion: async (id, body) => {
     const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/versions`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
     const d = await safeJson(res);
@@ -3415,18 +3420,27 @@ function wfvSetLibraryOpen(open) {
 
 // Workflow versions (plans/workflow-tests-plan.md Part 1): the Canvas · Versions switch, the status line and Save version.
 let wfvVersionsOverview = null;
+let wfvVersionsError = null;     // {status, error} of the last failed read (status 0: no answer, 400: cannot have versions)
+/** Read the open workflow's versions, paint the status line and (when shown) the Versions page. Never rejects. */
 async function wfvRefreshVersions() {
   const els = wfvEls();
+  const paintPage = () => { if (els.versions && !els.versions.hidden) wfvRenderVersionsPage(); };
   const t = gvComposer && gvComposer.template();
-  if (!flagOn('workflowTests') || !t || !t.id) { wfvVersionsOverview = null; if (els.vstatus) els.vstatus.hidden = true; return null; }
-  const overview = await gvApi.versions(t.id);
+  if (!flagOn('workflowTests') || !t || !t.id) {
+    wfvVersionsOverview = null; wfvVersionsError = null;
+    if (els.vstatus) els.vstatus.hidden = true;
+    paintPage();
+    return null;
+  }
+  const r = await gvApi.versionsRead(t.id);
   // Another workflow opened while this one was asked for: its own refresh paints the line, not this late answer.
   const now = gvComposer.template();
-  if (!now || now.id !== t.id) return wfvVersionsOverview;
-  wfvVersionsOverview = overview;
+  if (!now || now.id !== t.id) return null;
+  wfvVersionsOverview = r.ok ? r.overview : null;
+  wfvVersionsError = r.ok ? null : { status: r.status, error: r.error };
   const text = statusText(wfvVersionsOverview);
   if (els.vstatus) { els.vstatus.textContent = text; els.vstatus.hidden = !text; }
-  if (els.versions && !els.versions.hidden) wfvRenderVersionsPage();
+  paintPage();
   return wfvVersionsOverview;
 }
 function wfvShowPage(page) {
@@ -3436,17 +3450,42 @@ function wfvShowPage(page) {
     b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false');
   }
   if (els.versions) els.versions.hidden = page !== 'versions';
-  if (page === 'versions') void wfvRefreshVersions().then(() => wfvRenderVersionsPage());
+  if (page !== 'versions') return;
+  // The canvas keys skip only targets inside [data-canvas-keys="off"]: nothing stays selected on the hidden canvas,
+  // and the focus sits on the page (tabindex -1), so a click on its text never hands Delete or the arrows to <body>.
+  gvComposer?.select(null);
+  els.versions?.focus();
+  void wfvRefreshVersions();       // paints the page (it is shown now)
 }
-async function wfvSaveVersion() {
+async function wfvSaveVersion({ afterSave = false } = {}) {
   // Save the draft first when the canvas has unsaved changes: the same path Export… takes (wfvShellActions
   // exportCurrent → gvComposer.openSaveDialog({ then })), so an unsaved canvas is never versioned by surprise.
-  if (gvComposer.isDirty() || !gvComposer.template().id) { gvComposer.openSaveDialog({ then: () => void wfvSaveVersion() }); return; }
+  // A plugin's row and the built-ins never have versions: their Save is Save a copy (composer saveMode), and the copy can.
   const t = gvComposer.template();
-  if (!t || !t.id) return;
-  const o = (await wfvRefreshVersions()) || { versions: [], draft: null };
-  const nextNo = (o.versions[0] ? o.versions[0].versionNo : 0) + 1;
-  openSaveVersionDialog({ doc: document, win: window, nextNo, changes: o.draft ? o.draft.changes : [],
+  const copyFirst = !t || !t.id || isReservedWorkflowId(t.id) || Boolean(pluginOriginName(gvComposer.origin()));
+  // afterSave is the loop guard: a save that still left nothing to version (an edit during the save) stops here.
+  const stop = () => notify({ tone: 'err', title: 'Save version did not start', detail: 'Save the pipeline, then press Save version again.' });
+  if (gvComposer.isDirty() || copyFirst) {
+    if (afterSave) { stop(); return; }
+    gvComposer.openSaveDialog({ then: () => void wfvSaveVersion({ afterSave: true }) });
+    return;
+  }
+  const o = await wfvRefreshVersions();
+  if (gvComposer.template().id !== t.id) return;            // another workflow opened meanwhile
+  if (!o && wfvVersionsError && wfvVersionsError.status === 400) {
+    // The server says this row cannot have versions: save it (a copy where the composer must) first.
+    if (afterSave) { stop(); return; }
+    gvComposer.openSaveDialog({ then: () => void wfvSaveVersion({ afterSave: true }) });
+    return;
+  }
+  if (!o) {
+    notify({ tone: 'err', title: 'Versions are not available', detail: (wfvVersionsError && wfvVersionsError.error) || 'Worca did not answer.' });
+    return;
+  }
+  // What Save version compares against: the latest version (null: this will be the first).
+  const since = o.sinceLatest || null;
+  openSaveVersionDialog({ doc: document, win: window, nextNo: (since ? since.versionNo : 0) + 1,
+    sinceNo: since ? since.versionNo : null, changes: since ? since.changes : [],
     onSubmit: async (body) => { const r = await gvApi.saveVersion(t.id, body); if (r.ok) await wfvRefreshVersions(); return r; } });
 }
 function wfvRenderVersionsPage() {             // Task 8 replaces this body with renderVersionsPage(…)

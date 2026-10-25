@@ -1953,3 +1953,113 @@ test('F-26: the Save reason shows as text, linked by aria-describedby, and hides
   await tick(); await tick();
   assert.equal(reason.hidden, true);
 });
+
+// ------------------------------------------------- Workflow versions (plans/workflow-tests-plan.md Part 1, Task 7)
+const VERSIONS_OVERVIEW = {
+  workflowId: 'wf_g', name: 'Graph one', liveVersionNo: 1,
+  draft: { changed: true, changes: ['Renamed since v1'], partsChanged: [], sinceLatest: { versionNo: 2, changes: ['New step Fact check'] } },
+  sinceLatest: { versionNo: 2, changes: ['New step Fact check'] },
+  versions: [{ id: 2, versionNo: 2, note: null, by: null, createdAt: '2026-10-25', inUse: false, runs: 0, changes: [] },
+    { id: 1, versionNo: 1, note: null, by: null, createdAt: '2026-10-24', inUse: true, runs: 0, changes: ['First version'] }],
+  history: [],
+};
+async function bootVersions({ versions = () => Promise.resolve({ ok: true, status: 200, json: async () => VERSIONS_OVERVIEW }), workflows } = {}) {
+  const calls = [];
+  const booted = await boot({
+    ...(workflows ? { workflows } : {}),
+    fetchHandler: (url, init) => {
+      if (!/\/api\/workflows\/[^/?]+\/versions(?:\/|$|\?)/.test(url)) return null;
+      calls.push({ url, method: init.method || 'GET' });
+      return versions(url, init);
+    },
+  });
+  booted.window.document.documentElement.dataset.flags = 'workflowTests';
+  return { ...booted, calls };
+}
+const clickEl = (w, el) => el.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+
+test('Versions page: focusable, takes the focus and clears the canvas selection, so Delete never edits the hidden graph', async () => {
+  const { window: w } = await bootVersions();
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  const page = doc.getElementById('wfv-versions');
+  assert.equal(page.getAttribute('tabindex'), '-1');
+  assert.equal(page.getAttribute('role'), 'tabpanel');
+  const gv = w.__gv().c;
+  gv.select({ kind: 'node', id: 'n_end' });
+  assert.ok(gv.selection());
+  const nodes = doc.querySelectorAll('#wfv-canvas .gv-world .node').length;
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  assert.equal(page.hidden, false);
+  assert.equal(doc.activeElement, page, 'the page holds the focus, inside the canvas-keys fence');
+  assert.equal(gv.selection(), null, 'nothing stays selected on the hidden canvas');
+  doc.activeElement.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+  await tick();
+  assert.equal(doc.querySelectorAll('#wfv-canvas .gv-world .node').length, nodes);
+  assert.equal(page.textContent, 'Draft · new runs use v1', 'the page is painted once the overview arrives');
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="canvas"]'));
+  assert.equal(page.hidden, true);
+});
+
+test('Save version on a saved, clean canvas: "Save version 3" lists what changed since the latest version (v2)', async () => {
+  const { window: w } = await bootVersions();
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  clickEl(w, w.document.getElementById('wfv-saveversion'));
+  await tick(4);
+  const doc = w.document;
+  assert.equal(doc.querySelector('#mk-dialog-title').textContent, 'Save version 3');
+  assert.equal(doc.querySelector('.wfv-sv-since').textContent, 'What changed since v2:');
+  assert.deepEqual([...doc.querySelectorAll('.wfv-changes li')].map((li) => li.textContent), ['New step Fact check']);
+});
+
+test('Save version on an unsaved canvas saves it first: the canvas Save dialog opens, no version dialog, no versions request', async () => {
+  const { window: w, calls } = await bootVersions();
+  await go(w, 'workflows');
+  await tick(2);
+  clickEl(w, w.document.getElementById('wfv-saveversion'));
+  await tick(4);
+  assert.ok(w.document.querySelector('#wfv-dialog-host dialog[open]'), 'the canvas Save dialog');
+  assert.equal(w.document.getElementById('mk-dialog'), null);
+  assert.deepEqual(calls.filter((c) => c.method === 'GET' && c.url.endsWith('/versions')).length, 0);
+});
+
+test('Save version on a plugin-owned or built-in canvas saves a copy first, never a version of the row that cannot have one', async () => {
+  const PLUGIN_ROW = { ...DEFAULT_ROW, id: 'wfp_demo_quick', name: 'Quick', origin: 'plugin:demo' };
+  for (const id of ['wfp_demo_quick', 'wf_default']) {
+    const { window: w, calls } = await bootVersions({ workflows: [DEFAULT_ROW, PLUGIN_ROW] });
+    await go(w, `workflows/${id}`);
+    await tick(4);
+    clickEl(w, w.document.getElementById('wfv-saveversion'));
+    await tick(4);
+    const dlg = w.document.querySelector('#wfv-dialog-host dialog[open]');
+    assert.ok(dlg, `${id}: the Save dialog`);
+    assert.equal(dlg.dataset.saveAs, '1', `${id}: as a copy`);
+    assert.equal(w.document.getElementById('mk-dialog'), null, id);
+    assert.equal(calls.filter((c) => c.method === 'POST').length, 0, id);
+  }
+});
+
+test('Save version when the versions cannot be read: an error toast, no "Save version 1" guess', async () => {
+  const { window: w } = await bootVersions({ versions: () => Promise.reject(new Error('down')) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  clickEl(w, w.document.getElementById('wfv-saveversion'));
+  await tick(4);
+  assert.equal(w.document.getElementById('mk-dialog'), null);
+  const t = lastToast(w.document);
+  assert.equal(t && t.title, 'Versions are not available');
+});
+
+test('source: wfvSaveVersion saves a dirty or unsaved canvas through openSaveDialog before any version, with a loop guard', () => {
+  const src = readFileSync(appPath, 'utf8');
+  const body = src.slice(src.indexOf('async function wfvSaveVersion('), src.indexOf('function wfvRenderVersionsPage('));
+  assert.ok(body.length > 0, 'wfvSaveVersion found');
+  const save = body.indexOf('gvComposer.openSaveDialog(');
+  assert.ok(save > 0, 'routes through openSaveDialog');
+  assert.match(body, /gvComposer\.isDirty\(\)/);
+  assert.ok(save < body.indexOf('openSaveVersionDialog('), 'the save comes before the version dialog');
+  assert.match(body, /afterSave/, 'a save that did not leave a versionable row does not reopen the dialog forever');
+});

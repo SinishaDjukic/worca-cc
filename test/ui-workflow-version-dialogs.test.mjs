@@ -13,11 +13,12 @@ test('statusText: nothing, in use, or draft', () => {
   assert.equal(statusText({ liveVersionNo: 4, draft: { changed: true, changes: ['x'] } }), 'Draft · new runs use v4');
 });
 
-test('Save version: title, the changes, a note, and "Also use v5 for new runs"', async () => {
+test('Save version: title, the changes since the latest version, a note, and "Also use v5 for new runs"', async () => {
   const { doc, win } = dom();
   let sent = null;
-  openSaveVersionDialog({ doc, win, nextNo: 5, changes: ['New step Fact check'], onSubmit: async (b) => { sent = b; return { ok: true }; } });
+  openSaveVersionDialog({ doc, win, nextNo: 5, sinceNo: 4, changes: ['New step Fact check'], onSubmit: async (b) => { sent = b; return { ok: true }; } });
   assert.equal(doc.querySelector('#mk-dialog-title').textContent, 'Save version 5');
+  assert.equal(doc.querySelector('.wfv-sv-since').textContent, 'What changed since v4:');
   assert.deepEqual([...doc.querySelectorAll('.wfv-changes li')].map((li) => li.textContent), ['New step Fact check']);
   doc.querySelector('#wfv-sv-note').value = 'Cheaper drafting';
   doc.querySelector('#wfv-sv-use').checked = true;
@@ -27,14 +28,24 @@ test('Save version: title, the changes, a note, and "Also use v5 for new runs"',
   assert.equal(doc.querySelector('#mk-dialog'), null, 'closes on success');
 });
 
-test('Save version shows the error and stays open on failure', async () => {
+test('Save version with nothing changed since the latest version: says so, shows the refusal and stays open', async () => {
   const { doc, win } = dom();
-  openSaveVersionDialog({ doc, win, nextNo: 2, changes: [], onSubmit: async () => ({ ok: false, error: 'nothing changed since version 1' }) });
-  assert.equal(doc.querySelector('.wfv-changes-none').textContent, 'No changes since the last version.');
+  openSaveVersionDialog({ doc, win, nextNo: 2, sinceNo: 1, changes: [], onSubmit: async () => ({ ok: false, error: 'nothing changed since version 1' }) });
+  assert.equal(doc.querySelector('.wfv-changes-none').textContent, 'Nothing changed since v1.');
   click([...doc.querySelectorAll('.mk-dialog-foot button')].find((b) => b.textContent === 'Save version 2'));
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(doc.querySelector('.wfv-dlg-error').textContent, 'nothing changed since version 1');
   assert.ok(doc.querySelector('#mk-dialog'));
+});
+
+test('Save version 1: "This is the first version." and no comparison', () => {
+  const { doc, win } = dom();
+  openSaveVersionDialog({ doc, win, nextNo: 1, sinceNo: null, changes: [], onSubmit: async () => ({ ok: true }) });
+  assert.equal(doc.querySelector('#mk-dialog-title').textContent, 'Save version 1');
+  assert.equal(doc.querySelector('.wfv-sv-since').textContent, 'This is the first version.');
+  assert.equal(doc.querySelector('.wfv-changes'), null);
+  assert.equal(doc.querySelector('.wfv-changes-none'), null);
+  assert.doesNotMatch(doc.querySelector('.mk-dialog-body').textContent, /What changed since|No changes since/);
 });
 
 test('Use dialog: plain words and one confirming button', async () => {

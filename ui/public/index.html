@@ -1481,7 +1481,7 @@
               <div class="wfv-canvas gv-canvas" id="wfv-canvas">
                 <div class="gv-chip" id="wfv-chip" hidden></div>
               </div>
-              <section class="wfv-versions" id="wfv-versions" data-flag="workflowTests" data-canvas-keys="off" aria-label="Versions" hidden></section>
+              <section class="wfv-versions" id="wfv-versions" role="tabpanel" aria-labelledby="wfv-page-versions" tabindex="-1" data-flag="workflowTests" data-canvas-keys="off" hidden></section>
               <div class="wfv-float wfv-tl" data-canvas-keys="off">
                 <div class="wfv-bar">
                   <button type="button" class="btn btn-quiet btn-icon" id="wfv-back" aria-label="Back" title="Back">
@@ -1498,8 +1498,8 @@
                   <span class="wfv-vstatus hint" id="wfv-vstatus" data-flag="workflowTests" aria-live="polite" hidden></span>
                   <span class="wfv-sep" aria-hidden="true" data-flag="workflowTests"></span>
                   <div class="seg wfv-pages" id="wfv-pages" role="tablist" aria-label="Workflow views" data-flag="workflowTests">
-                    <button type="button" role="tab" aria-selected="true" class="on" data-page="canvas">Canvas</button>
-                    <button type="button" role="tab" aria-selected="false" data-page="versions" data-flag-chip="workflowTests">Versions</button>
+                    <button type="button" role="tab" aria-selected="true" class="on" id="wfv-page-canvas" aria-controls="wfv-canvas" data-page="canvas">Canvas</button>
+                    <button type="button" role="tab" aria-selected="false" id="wfv-page-versions" aria-controls="wfv-versions" data-page="versions" data-flag-chip="workflowTests">Versions</button>
                   </div>
                   <button type="button" class="btn btn-sm btn-danger wfv-errchip" id="wfv-errors" hidden></button>
                   <input type="file" id="wfv-import-file" accept=".json,application/json" hidden>
