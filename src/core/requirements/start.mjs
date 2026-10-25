@@ -9,6 +9,7 @@ import {
   requireFeature, listTurns, latestStart, createStart, appendTurn, linkPipeline, startByRunId, startByPipelineId,
 } from './store.mjs';
 import { isBusy } from './interview.mjs';
+import { markStarting, unmarkStarting, isStarting } from './starting.mjs';
 import { readiness } from './ready.mjs';
 import { renderTaskMarkdown } from './markdown.mjs';
 
@@ -16,10 +17,9 @@ export const REASON_MAX = 500;
 export const DEFAULT_WORKFLOW_ID = 'wf_auto';
 const WORKFLOW_ID = /^wf_[a-z0-9_-]+$/i;
 
-/** Features with a start between the run handler's call and the stored row: a second start waits its turn. */
-const starting = new Set();
-/** A start is between the run handler's call and its stored row: archive and a scope change wait (edits.mjs). */
-export const isStarting = (seq) => starting.has(Number(seq));
+/** A start is between the run handler's call and its stored row (starting.mjs): a second start waits its turn, and so do
+ *  archive, a scope change (edits.mjs) and a follow-up round (interview.mjs). */
+export { isStarting };
 
 /** The run handler's refusal as a RequirementsError (D6): 403 budget → BUDGET, 400 → BAD_REQUEST, other 4xx
  *  → CONFLICT, anything else a plain Error (500). Carries the handler's own message. */
@@ -49,8 +49,8 @@ export async function startFeature(seq, { reason, workflowId, sourceBranch } = {
   const f = requireFeature(seq);
   if (f.status === 'archived') throw new RequirementsError('CONFLICT', 'this feature is archived; restore it first');
   if (isBusy(f.seq)) throw new RequirementsError('BUSY', 'Worca is still working on this feature. Try again in a moment.');
-  if (starting.has(f.seq)) throw new RequirementsError('BUSY', 'this feature is already starting a run. Try again in a moment.');
-  starting.add(f.seq);   // before the first await: two starts at once cannot both pass
+  if (isStarting(f.seq)) throw new RequirementsError('BUSY', 'this feature is already starting a run. Try again in a moment.');
+  markStarting(f.seq);   // before the first await: two starts at once cannot both pass
   try {
     const r = readiness(f, { turns: listTurns(f.seq), target });
     if (!target || !target.ok) throw new RequirementsError('CONFLICT', r.checks.find((c) => c.key === 'target').hint);
@@ -95,7 +95,7 @@ export async function startFeature(seq, { reason, workflowId, sourceBranch } = {
     }
     return { runId: stored, version };
   } finally {
-    starting.delete(f.seq);
+    unmarkStarting(f.seq);
   }
 }
 

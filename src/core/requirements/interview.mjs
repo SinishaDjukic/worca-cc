@@ -28,7 +28,8 @@ import {
   ROUND_SYSTEM_PROMPT, ORIENTATION_SYSTEM_PROMPT, buildRoundPrompt, buildOrientationPrompt, applyRound,
   normalizeOrientation, mockRoundReply, RoundError, removedCriteria, pendingRound,
 } from './round.mjs';
-import { readsSettled, queueUnread, promptFiles, isReading } from './attachment-job.mjs';
+import { readsSettled, queueUnread, promptFiles, isReading, filesPending } from './attachment-job.mjs';
+import { isStarting, STARTING_MESSAGE } from './starting.mjs';
 
 export const ROUND_TIMEOUT_MS = 180_000;
 const DEFAULTS = Object.freeze({
@@ -167,6 +168,9 @@ function startJob(seq, d, fn, by, kind = 'round', { waiting = false } = {}) {
       jobs.delete(seq);
       waitingReads.delete(seq);
       slotFreed();
+      // A8 D8: a job that kept Worca's own follow-up from starting (a look or a round while a read ended) lets it start now.
+      // No loop: a round that carried every file leaves none unasked, and a follow-up never starts while a read is pending.
+      if (!filesPending({ type: 'feature', id: seq })) maybeFollowUpFiles(seq, d);
       notify(d, seq);
     }
   })();
@@ -502,9 +506,15 @@ export function followUp(seq, { by = null, filesOnly = false } = {}, deps = {}) 
   const turns = listTurns(seq);
   // The round waiting for answers comes first: its answers start the next round, which sees the rejection.
   if (f.status === 'your_turn' && pendingRound(turns)) throw new RequirementsError('CONFLICT', 'answer the questions waiting first');
+  if (isStarting(seq)) throw new RequirementsError('BUSY', STARTING_MESSAGE);   // the run gets the spec as it is now
   const ids = filesOnly ? [] : unaskedRejections(f.spec, turns);
-  const files = unaskedFiles(listAttachments('feature', f.seq), turns);
-  if (!ids.length && !files.length) throw new RequirementsError('CONFLICT', 'nothing is waiting for a follow-up');
+  // Only files whose text the prompt carries: one still being read (by name only) stays unasked for the follow-up after its read.
+  const unasked = unaskedFiles(listAttachments('feature', f.seq), turns);
+  const carried = unasked.length ? promptFiles(f).carried : [];
+  const files = unasked.filter((id) => carried.includes(id));
+  if (!ids.length && !files.length) {
+    throw new RequirementsError('CONFLICT', unasked.length ? 'Worca is reading this file.' : 'nothing is waiting for a follow-up');
+  }
   appendTurn(seq, { kind: 'followup', payload: { assumptions: ids, ...(files.length ? { files } : {}) } }, { by });
   return startJob(seq, d, () => runRound(seq, d, by, { followUp: ids, followUpFiles: files.length ? files : null }), by);
 }
@@ -516,7 +526,7 @@ export function maybeFollowUpFiles(seq, deps = {}) {
   try {
     const d = { ...DEFAULTS, ...deps };
     const f = getFeature(seq);
-    if (!f || f.status !== 'done' || isBusy(seq) || activeJobs() >= MAX_JOBS) return false;
+    if (!f || f.status !== 'done' || isBusy(seq) || isStarting(seq) || activeJobs() >= MAX_JOBS) return false;
     if (!unaskedFiles(listAttachments('feature', f.seq), listTurns(seq)).length) return false;
     const b = d.budget();
     if (b && b.blocked) return false;

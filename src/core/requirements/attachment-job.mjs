@@ -21,7 +21,7 @@ import { RequirementsError, clip } from './spec.mjs';
 import { RoundError } from './round.mjs';
 import {
   REQ_ATT_ID_RE, REQ_ATTACH_LIMITS, ATTACHMENT_SYSTEM_PROMPT, buildReadPrompt, buildAskPrompt, normalizeSummary, mockSummary, checkNewFiles,
-  readRule, normalizeAnswer, mockAnswer, pushHistory, selectInlineAttachments, renderAttachmentsForPrompt, renderDocumentsForPrompt, sourceNames,
+  readRule, normalizeAnswer, mockAnswer, pushHistory, selectInlineAttachments, renderAttachmentsForPrompt, renderDocumentsForPrompt, sourceNames, hasText,
 } from './attachments.mjs';
 import {
   mintAttachmentId, insertAttachment, getAttachment, listAttachments, updateAttachment, addAttachmentCost, deleteAttachmentRow,
@@ -90,6 +90,8 @@ const waiters = new Map(); // owner key → readsSettled resolvers
 const pendingFor = (key) => queue.some((e) => ownerKey(e.owner) === key) || [...running.values()].some((e) => ownerKey(e.owner) === key);
 export const isReading = (id) => queue.some((e) => e.id === id && e.kind === 'read') || running.get(id)?.kind === 'read';
 export const isAsking = (id) => queue.some((e) => e.id === id && e.kind === 'ask') || running.get(id)?.kind === 'ask';
+/** Whether the owner has a read or ask queued or running (readsSettled waits for none). */
+export const filesPending = (owner) => pendingFor(ownerKey(owner));
 
 /** Resolves once the owner has no read or ask queued or running. */
 export function readsSettled(owner) {
@@ -553,7 +555,7 @@ export function promptFiles(f) {
   const texts = selectInlineAttachments(rows, (r) => { try { return redactAskText(readFileSync(attachmentFile(r), 'utf8')); } catch { return null; } });
   return { rows, docs, attachments: rows.length ? renderAttachmentsForPrompt(rows, { texts }) : null,
     documents: docs.length ? renderDocumentsForPrompt(docs) : '', sources: sourceNames(rows, docs),
-    carried: rows.filter((r) => (r.summary && (r.summaryEdited || r.status === 'done')) || texts.has(r.id)).map((r) => r.id) };
+    carried: rows.filter((r) => hasText(r) || texts.has(r.id)).map((r) => r.id) };   // the same test the render uses
 }
 
 // ---------------------------------------------------------------- boot, estimates

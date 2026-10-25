@@ -201,7 +201,7 @@ const STATE_NOTES = Object.freeze({
 });
 const stateNote = (r) => (r.status === 'failed' && r.error?.code === 'STORE_FAILED' ? STATE_NOTES.stored : STATE_NOTES[r.status] || STATE_NOTES.reading);
 /** A file has text to show: its read is done, or the product owner wrote it. */
-const hasText = (r) => !!r.summary && (r.summaryEdited || r.status === 'done');
+export const hasText = (r) => !!r.summary && (r.summaryEdited || r.status === 'done');
 
 /** `first` (which holds the summary), then the answers newest first while the entry stays within 3,000 characters. */
 function entry(first, r) {

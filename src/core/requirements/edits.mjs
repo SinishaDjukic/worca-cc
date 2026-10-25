@@ -6,9 +6,7 @@ import { requireFeature, updateFeature, appendTurn, listTurns, listStarts, lates
 import { BRIEF_LIMITS, relPath } from './brief.mjs';
 import { tx } from '../db.mjs';
 import { isBusy } from './interview.mjs';
-import { isStarting } from './start.mjs';   // no cycle: start.mjs never imports this module
-
-const STARTING = 'this feature is starting a run. Try again in a moment.';
+import { isStarting, STARTING_MESSAGE as STARTING } from './starting.mjs';
 
 function editable(seq) {
   const f = requireFeature(seq);
