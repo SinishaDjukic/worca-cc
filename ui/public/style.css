@@ -10414,6 +10414,9 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-new-files-note[hidden]{display:none}
 .req-reading{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0;padding:12px 16px;border-radius:var(--r-md);background:var(--field);font-size:13px}
 .req-reading .hint{margin:0;color:var(--ink-2)}
+/* A create's "<name> was not added: Worca could not store it." on the feature page: the refusal box's AA pair, not the
+   shared .form-msg.warn (amber ink on the page background is under 4.5:1). */
+.form-msg.req-msg-warn{padding:8px 10px;border-radius:var(--r-md);background:var(--amber-bg);color:var(--amber-ink-strong);overflow-wrap:anywhere}
 @media (max-width:600px){
   /* 44px touch targets on phones: the hit area grows past the visible control (a 32px × plus 6px each side) */
   .req-drop .link-btn{position:relative}

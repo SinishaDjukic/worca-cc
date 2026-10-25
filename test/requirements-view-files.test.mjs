@@ -178,7 +178,8 @@ test('board 15: a file the server could not store is named on the feature page t
   [...host.querySelectorAll('.req-new .btn-primary')].at(-1).click();
   await settle();
   await view.show('feature/4');
-  assert.deepEqual([msgEl.textContent, msgEl.className], ['b.md was not added: Worca could not store it. Add it on the feature page.', 'form-msg warn']);
+  assert.deepEqual([msgEl.textContent, msgEl.className], ['b.md was not added: Worca could not store it. Add it on the feature page.', 'form-msg req-msg-warn'],
+    'its own amber pair (--amber-ink-strong on --amber-bg, AA), not the shared .form-msg.warn');
   await view.show('feature/4');
   assert.equal(msgEl.textContent, '', 'said once');
 });
@@ -212,6 +213,58 @@ test('board 15: a second press of Start the interview while the files are sent p
   assert.equal(calls.filter((c) => c.method === 'POST' && c.url === '/api/requirements').length, 1);
 });
 
+test('a11y: Enter or Space on the focused drop zone opens the file picker; a key on Choose files does not open it twice', async () => {
+  const { host, zone } = await openNew();
+  const input = host.querySelector('#req-new-files-input');
+  let opened = 0;
+  input.click = () => { opened += 1; };
+  const key = (el, k) => { const ev = new window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }); el.dispatchEvent(ev); return ev; };
+  assert.equal(key(zone, 'Enter').defaultPrevented, true);
+  assert.equal(opened, 1);
+  assert.equal(key(zone, ' ').defaultPrevented, true);
+  assert.equal(opened, 2);
+  key(zone, 'a');
+  assert.equal(opened, 2, 'other keys do nothing');
+  key(zone.querySelector('.link-btn'), 'Enter');
+  assert.equal(opened, 2, 'the button keeps its own Enter (its click opens the picker)');
+});
+
+test('a11y: the drop zone is described by the optional hint, its limits and the privacy note', async () => {
+  const { host, zone } = await openNew();
+  const ids = zone.getAttribute('aria-describedby').split(' ');
+  assert.deepEqual(ids.map((id) => host.querySelector(`#${id}`)?.textContent), [
+    'optional: emails, a spec, screenshots, a mockup',
+    'Text, images and PDF · up to 10 files, 25 MB each',
+    'Worca sends each file to Opus 5.5 to read it. Text is checked for keys and passwords first; images and PDFs go as they are.']);
+});
+
+test('a11y: the reading line is one role=status node across paints, so 2 → 1 is announced in place', async () => {
+  const reading = (n) => Array.from({ length: n }, (_, i) => att({ id: `ratt_00000000000${i}`, name: `f${i}.md`, kind: 'text', status: 'reading' }));
+  let f = feature({ status: 'looking', state: 'looking', busy: true, rounds: 0, attachments: reading(2) });
+  const { host, view } = await openFeature(null, { 'GET /api/requirements/4': () => ({ feature: f, turns: [] }) });
+  const line = host.querySelector('.req-reading');
+  assert.equal(line.querySelector('.badge').textContent, 'Reading 2 files…');
+  f = feature({ status: 'looking', state: 'looking', busy: true, rounds: 0, attachments: [...reading(1), att()] });
+  await view.changed(4);
+  assert.equal(host.querySelector('.req-reading'), line, 'the same node');
+  assert.equal(line.getAttribute('role'), 'status');
+  assert.equal(line.querySelector('.badge').textContent, 'Reading 1 file…');
+  f = feature({ status: 'your_turn', state: 'your_turn', rounds: 1, attachments: [att()] });
+  await view.changed(4);
+  assert.equal(host.querySelector('.req-reading'), null);
+});
+
+test('board 15: a refused create says why in the message region and stays on the form', async () => {
+  const { host, zone, msgEl, routed } = await openNew(LIST, { 'POST /api/requirements': { __status: 409, body: { error: 'Try again in a moment.' } } });
+  host.querySelector('#req-new-title').value = 'Cancel';
+  drop(zone, [mkFile('notes.md', '# n')]);
+  [...host.querySelectorAll('.req-new .btn-primary')].at(-1).click();
+  await settle();
+  assert.deepEqual([msgEl.textContent, msgEl.className], ['Try again in a moment.', 'form-msg err']);
+  assert.deepEqual(routed, []);
+  assert.equal(host.querySelectorAll('.req-new-chip').length, 1, 'the picked files stay');
+});
+
 test('style.css: board 15 rules inside the Requirements block, tokens only', () => {
-  assertInRequirementsBlock(['.req-new-files', '.req-drop', '.req-new-chip', '.req-file-refused', '.req-reading', '.req-files-privacy']);
+  assertInRequirementsBlock(['.req-new-files', '.req-drop', '.req-new-chip', '.req-file-refused', '.req-reading', '.req-files-privacy', '.req-msg-warn']);
 });

@@ -170,7 +170,7 @@ function readRange(kinds, estimates) {
   return lo === hi ? usd(lo) : `${usd(lo)}–${usd(hi).slice(1)}`;
 }
 /** D15: the privacy note, naming the interview model. */
-const privacyNote = (interview) => h('p', { class: 'hint req-files-privacy' }, icon(ICONS.info, { size: 14 }),
+const privacyNote = (interview, id = null) => h('p', { class: 'hint req-files-privacy', id }, icon(ICONS.info, { size: 14 }),
   h('span', { text: `Worca sends each file to ${(interview && (interview.label || interview.model)) || 'the interview model'} to read it. Text is checked for keys and passwords first; images and PDFs go as they are.` }));
 /** A refusal line of the files' amber alert, the file's name in bold (board 15). */
 function refusalLine(message) {
@@ -269,6 +269,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   let focusLater = null;     // a data-ui to focus once it is on screen, while the focus is lost (a round sent)
   let relook = null;         // New feature's look line, said again when git appears or goes missing
   let carry = null;          // { param, text }: a create's message that the page it routes to says (A8 filesNotStored)
+  let readingEl = null;      // the feature page's "Reading N files…" role=status line, kept across paints (A8 D2)
   // Start in Worca: the workflow / branch choices per feature seq ({ workflowId, sourceBranch, open }),
   // the workflow list and each project's branches (loaded once, when Change opens), a start in flight,
   // and the start-before-Ready dialog ({ wrap, trigger, triggerUi }).
@@ -312,7 +313,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const m = /^feature\/(?:FEAT-)?(\d+)$/.exec(param);
     const next = m ? Number(m[1]) : null;
     if (next !== seqShown) {
-      draft = null; revising = null; revDraft = null; editing = null; current = null; ui = freshUi(); focusLater = null;
+      draft = null; revising = null; revDraft = null; editing = null; current = null; ui = freshUi(); focusLater = null; readingEl = null;
       closeDialog(false);
     }
     seqShown = next;
@@ -324,7 +325,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       if (ui.menu && ui.menu.startsWith('brief-')) ui.menu = null;
     }
     briefShown = nextBrief;
-    if (carry && carry.param === param) say(carry.text, 'warn'); else say('');
+    // .req-msg-warn: --amber-ink-strong on --amber-bg (AA); the shared .form-msg.warn is under 4.5:1 on --bg
+    if (carry && carry.param === param) say(carry.text, 'req-msg-warn'); else say('');
     carry = null;
     await paint();
   }
@@ -598,11 +600,18 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     };
     input.addEventListener('change', () => { const files = [...(input.files || [])]; input.value = ''; addPicked(files); });
     const namer = createPasteNamer((parts, n, o) => new File(parts, n, o));
-    const zone = h('div', { class: 'req-drop', tabindex: '0', role: 'group', 'aria-label': 'Drop files here, paste them, or choose files' },
+    const zone = h('div', { class: 'req-drop', tabindex: '0', role: 'group', 'aria-label': 'Drop files here, paste them, or choose files',
+      'aria-describedby': 'req-new-files-opt req-new-files-limits req-new-files-privacy' },
       'Drop files here, paste them, or ',
       choose,
-      h('span', { class: 'hint', text: 'Text, images and PDF · up to 10 files, 25 MB each' }),
+      h('span', { class: 'hint', id: 'req-new-files-limits', text: 'Text, images and PDF · up to 10 files, 25 MB each' }),
       h('span', { class: 'req-drop-ico' }, icon(ICONS.clip, { size: 22, width: 1.8 })));
+    // Enter or Space on the focused zone opens the picker, as Choose files does (the button keeps its own keys).
+    zone.addEventListener('keydown', (e) => {
+      if (e.target !== zone || (e.key !== 'Enter' && e.key !== ' ')) return;
+      e.preventDefault();
+      input.click();
+    });
     zone.addEventListener('dragover', (e) => { if (!carriesFiles(e.dataTransfer)) return; e.preventDefault(); zone.classList.add('over'); });
     zone.addEventListener('dragleave', () => zone.classList.remove('over'));
     zone.addEventListener('drop', (e) => {
@@ -639,8 +648,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         field('req-new-title', ['Title'], title),
         field('req-new-desc', ['Describe it ', h('span', { class: 'opt', text: 'who needs it, what they want to do, and why' })], desc),
         h('div', { class: 'field req-new-files' },
-          h('label', { for: 'req-new-files-input' }, 'Files ', h('span', { class: 'opt', text: 'optional: emails, a spec, screenshots, a mockup' })),
-          input, zone, privacyNote(interview), chips, refused),
+          h('label', { for: 'req-new-files-input' }, 'Files ', h('span', { class: 'opt', id: 'req-new-files-opt', text: 'optional: emails, a spec, screenshots, a mockup' })),
+          input, zone, privacyNote(interview, 'req-new-files-privacy'), chips, refused),
         field('req-new-target', ['For'], h('div', { class: 'select-wrap' }, select), lookHint),
         actions),
       note));
@@ -1161,12 +1170,19 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         }))));
   }
 
-  // A8 D2: a feature created with files reads them before round 1.
+  // A8 D2: a feature created with files reads them before round 1. One role=status node for the page, moved into
+  // each paint and updated in place, so a screen reader announces the count as it drops (2 → 1).
   function readingLine(f) {
     const n = (f.attachments || []).filter((a) => a && a.status === 'reading').length;
-    if (!n || (Number(f.rounds) || 0) > 0 || f.pending) return null;
-    return h('p', { class: 'req-reading', role: 'status' }, h('span', { class: 'badge blue', text: `Reading ${plural(n, 'file')}…` }), ' ',
-      h('span', { class: 'hint', text: 'Worca reads the files first, then shows round 1.' }));
+    if (!n || (Number(f.rounds) || 0) > 0 || f.pending) { readingEl = null; return null; }
+    if (!readingEl) {
+      readingEl = h('p', { class: 'req-reading', role: 'status' }, h('span', { class: 'badge blue' }), ' ',
+        h('span', { class: 'hint', text: 'Worca reads the files first, then shows round 1.' }));
+    }
+    const badgeEl = readingEl.querySelector('.badge');
+    const words = `Reading ${plural(n, 'file')}…`;
+    if (badgeEl.textContent !== words) badgeEl.textContent = words;
+    return readingEl;
   }
 
   function conversation(f, turns, rounds) {
