@@ -33,6 +33,7 @@ import { PREDEFINED_LIST_PRICES, CODEX_PRICES, codexCachedRate } from './list-pr
 import { validateNightPatch } from './night/config.mjs';
 import { normalizeProjectActions, EMPTY_PROJECT_ACTIONS } from './actions/model.mjs';
 import { setCascadeModelOwnerReader, resolveSetting } from './settings-cascade.mjs';
+import { resolveRoleModel, roleOf } from './model-roles.mjs';
 
 /**
  * Recompute the agent step list FRESH from the layered registry (repo agents/ +
@@ -848,10 +849,13 @@ export async function resolveStepModels(projectDir, fallbackModel, engine = 'cla
   const slots = stepSlotDefaults(eng, { projectDir });
   const fallback = modelForEngine(fallbackModel || undefined, eng, { projectDir });
   const out = {};
-  for (const { key } of agentSteps()) {
+  for (const { key, label } of agentSteps()) {
     const own = eng === 'claude' ? (cfg.steps[key] || {}) : {};
     const sel = own.model || own.effort ? own : (slots[key] || {});
-    out[key] = { model: sel.model || fallback || undefined, effort: sel.effort || undefined };
+    // Model roles (D3): after the slot's own value and the run's model, before "no --model".
+    const role = !sel.model && !sel.effort && !fallback ? resolveRoleModel(eng, roleOf(`steps.${key}`, { name: label })) : null;
+    const roleModel = role ? modelForEngine(role.model, eng, { projectDir }) : undefined;
+    out[key] = { model: sel.model || fallback || roleModel || undefined, effort: sel.effort || (roleModel ? role.effort : undefined) };
   }
   return out;
 }

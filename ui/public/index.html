@@ -2562,6 +2562,14 @@
                 </button>
               </div>
             </div>
+            <!-- Models › Roles (setup-assistant-design.md D1): the model each kind of work falls back to. -->
+            <section class="card" id="model-roles-card" data-min-level="simple">
+              <div class="card-head"><div class="label-row"><h2>Roles</h2></div></div>
+              <small class="hint">Every job without a model of its own uses its role's model.</small>
+              <small class="hint err" id="modelRolesCatalogMsg" hidden>Could not load the model list. Reload the page to try again.</small>
+              <div id="model-roles-root" class="drows"></div>
+              <div class="add-project-actions engine-save-row" style="margin-top:14px"><small class="hint" id="modelRolesMsg"></small><button type="button" id="modelRolesSave" class="btn btn-primary btn-sm">Save</button></div>
+            </section>
             <section class="card" id="engine-settings-card" data-min-level="expert">
               <div class="card-head"><div class="label-row"><h2>Engines</h2></div></div>
               <div id="engine-settings-root" class="drows"></div>

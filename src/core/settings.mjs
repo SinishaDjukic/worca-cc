@@ -63,8 +63,9 @@ import {
   EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, OWN_SIGNIN_ENGINES, aModelOf, ownSignInNote, modelIdProblem, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
   assertModelUpstream, upstreamEnvConflict, modelEnvRef, codexUpstreamProblem,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
-  COPILOT_TERMS_VERSION, isUpstreamBaseUrl,
+  COPILOT_TERMS_VERSION, isUpstreamBaseUrl, REASONING_EFFORT_LEVELS,
 } from './model-env.mjs';
+import { MODEL_ROLES } from '../shared/model-roles.mjs';
 import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
@@ -1260,7 +1261,8 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'networkWait',                             // Settings › Runs › Wait for the network {enabled, maxWaitMin}
   'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
   'runEngine', 'stepModels', 'utilityModels',
-  'requirementsInterview',                   // Models › Engines › Claude: the requirements interview { model, effort }
+  'modelRoles',                              // Models › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
+  'requirementsInterview',                  // Models › Engines › Claude: the requirements interview { model, effort }
   'askEngine', 'askModels',                  // Chat's engine for new chats and its model per engine (user-only, D17)
   'tagDimensions',                           // Settings › Tags › Tag dimensions [{ key, label, values, required, default? }]
   'enforceTags',                             // Settings › Tags › Require mandatory tags to start a run
@@ -1387,6 +1389,50 @@ export async function setStepModels(input) {
   }
   if (Object.keys(all).length) settings.stepModels = all; else delete settings.stepModels;
   await persistSettings(settings); return { stepModels: stepModelsSetting() };
+}
+/** modelRoles (D1, D5): { <engine>: { deep|everyday|quick: { model, effort? } } }. Empty under node:test (homeGuarded). */
+export function modelRolesSetting() {
+  if (homeGuarded()) return {};
+  const value = readSettings().modelRoles;
+  return isObj(value) ? value : {};
+}
+/** A role names a model; its effort is any reasoning level, mapped to the harness's nearest one when used (effortOn). */
+export function normalizeRolePair(input, label = 'role') {
+  if (input === null || input === undefined || input === '') return null;
+  if (!isObj(input)) throw new Error(`${label} must be { model, effort } or null`);
+  for (const key of Object.keys(input)) if (key !== 'model' && key !== 'effort') throw new Error(`${label}: unknown field "${key}"`);
+  const model = typeof input.model === 'string' ? input.model.trim() : '';
+  const effort = typeof input.effort === 'string' ? input.effort.trim() : '';
+  if (!model) throw new Error(`${label}.model is required: a role names the model its jobs use`);
+  if (model.length > MODEL_PAIR_MAX_LEN) throw new Error(`${label}.model is too long`);
+  if (effort && !REASONING_EFFORT_LEVELS.includes(effort)) throw new Error(`${label}.effort must be one of ${REASONING_EFFORT_LEVELS.join(' | ')}`);
+  return { model, ...(effort ? { effort } : {}) };
+}
+export function assertModelRolesInput(input) {
+  if (!isObj(input)) throw new Error('modelRoles must be { <engine>: { deep|everyday|quick: { model, effort } | null } }');
+  const out = {};
+  for (const [engine, roles] of Object.entries(input)) {
+    if (!MODEL_ENGINES.includes(engine)) throw new Error(`modelRoles: unknown engine "${engine}"`);
+    if (!isObj(roles)) throw new Error(`modelRoles.${engine} must be an object of role → { model, effort } | null`);
+    out[engine] = {};
+    for (const [role, value] of Object.entries(roles)) {
+      if (!MODEL_ROLES.includes(role)) throw new Error(`modelRoles.${engine}: unknown role "${role}" (one of ${MODEL_ROLES.join(', ')})`);
+      out[engine][role] = normalizeRolePair(value, `modelRoles.${engine}.${role}`);
+    }
+  }
+  return out;
+}
+/** Merge a role patch (null clears a role) and write it. Returns what it wrote, so the answer holds under homeGuarded. */
+export async function setModelRoles(input) {
+  const patch = assertModelRolesInput(input); const settings = readSettings();
+  const all = isObj(settings.modelRoles) ? { ...settings.modelRoles } : {};
+  for (const [engine, roles] of Object.entries(patch)) {
+    const current = isObj(all[engine]) ? { ...all[engine] } : {};
+    for (const [role, pair] of Object.entries(roles)) { if (pair === null) delete current[role]; else current[role] = pair; }
+    if (Object.keys(current).length) all[engine] = current; else delete all[engine];
+  }
+  if (Object.keys(all).length) settings.modelRoles = all; else delete settings.modelRoles;
+  await persistSettings(settings); return { modelRoles: all };
 }
 export function assertUtilityModelsInput(input) {
   if (!isObj(input)) throw new Error('utilityModels must be { <engine>: { <job>: { model, effort } | null } }');

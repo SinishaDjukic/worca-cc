@@ -79,6 +79,7 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   chat: 'Chat notifications',
   runEngine: 'Default engine',
   stepModels: 'Step models',
+  modelRoles: 'Model roles',
   utilityModels: 'Helper models',
   askEngine: 'Engine for new chats',
   askModels: 'Chat model',

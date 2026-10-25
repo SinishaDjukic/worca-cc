@@ -238,7 +238,7 @@ import { trayKey as pinpointTrayKey } from './pinpoint-model.mjs';
 import { createArtifactBrowser } from './artifacts/browser.mjs';
 import { baseName as artifactBaseName } from './artifacts/common.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
-import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody } from './engine-settings-view.mjs';
+import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody, renderRolesSection, readRolesValues, rolesPatchToSettingsBody, paintRoleFallbacks } from './engine-settings-view.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
 import { mountHouseBrief } from './house-brief-view.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
@@ -19001,11 +19001,15 @@ const CLAUDE_USER_HELPER_OWN = (data) => ({
   commandSummary: helperPair(data.commandSummaryModel),
 });
 let lastEngineSettingsData = null;
-async function paintEngineSettings(data) {
+// The catalog the Models cards last painted with, and whether it loaded (the Roles card's catalog-failure line).
+let lastModelCatalog = []; let lastModelCatalogOk = true;
+/** The Engines card, then the Roles card (each paints on its own). A repaint that a Save of this card did not ask for
+ *  (`force`) keeps a card with unsaved rows as it is: another card's Save or a settings-changed broadcast. */
+async function paintEngineSettings(data, { force = false } = {}) {
   const root = document.getElementById('engine-settings-root');
   if (!root) return;
-  let cfg = {};
-  try { cfg = await safeJson(await fetch('/api/config')); } catch {}
+  let cfg = {}; let cfgOk = true;
+  try { const res = await fetch('/api/config'); cfgOk = res.ok; cfg = await safeJson(res); } catch { cfgOk = false; }
   const roles = Array.isArray(cfg?.steps) ? cfg.steps : Object.keys(cfg?.config?.steps || {}).map((key) => ({ key, label: key }));
   const catalog = Array.isArray(cfg?.models) ? cfg.models : [];
   const fields = { 'run.engine': { own: data.runEngine, inherited: { value: 'claude', source: 'default' } } };
@@ -19024,15 +19028,46 @@ async function paintEngineSettings(data) {
   if (fields[utilityId('claude', 'commandSummary')] && csAuto && csAuto.source === 'auto' && csAuto.model) {
     fields[utilityId('claude', 'commandSummary')].inherited = { value: { model: csAuto.model }, source: 'default' };
   }
-  renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
-    noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
-    defaultLabels: { claude: 'the default model' },
-    jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] } });
+  lastModelCatalog = catalog; lastModelCatalogOk = cfgOk && catalog.length > 0;
+  const keep = !force && root.querySelector('.inherit-field[data-dirty="1"]');
+  if (!keep) {
+    renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
+      noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
+      defaultLabels: { claude: 'the default model' },
+      jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] }, modelRoles: data.modelRoles || {} });
+  }
   lastEngineSettingsData = data;
+  paintModelRoles(data);
   // Each non-Claude card's readiness line (GET /api/engines). Only on the Models page, where the cards live: a
   // settings-changed broadcast repaints this from any view, and that must not spawn a preflight.
   if (currentView() === 'models') void paintEngineCardStatus(root);
 }
+/** Models › Roles: the role rows, then every unset Engines row's "From Everyday coding · …" text from them (AC-1.5). */
+function paintModelRoles(data, { force = false } = {}) {
+  const rolesRoot = document.getElementById('model-roles-root'); const engineRoot = document.getElementById('engine-settings-root');
+  if (!rolesRoot) return;
+  const keep = !force && rolesRoot.querySelector('.inherit-field[data-dirty="1"]');
+  if (!keep) {
+    renderRolesSection(rolesRoot, { roles: data.modelRoles || {}, catalog: lastModelCatalog, engine: data.runEngine || 'claude',
+      status: document.getElementById('modelRolesMsg'), onChange: (roles) => { if (engineRoot) paintRoleFallbacks(engineRoot, roles, lastModelCatalog); } });
+  }
+  if (engineRoot) paintRoleFallbacks(engineRoot, readRolesValues(rolesRoot), lastModelCatalog);
+  // The catalog failure has its own line, so the dirty counter and "Saved." on #modelRolesMsg never hide it.
+  const catalogMsg = document.getElementById('modelRolesCatalogMsg');
+  if (catalogMsg) catalogMsg.hidden = lastModelCatalogOk;
+}
+document.getElementById('modelRolesSave')?.addEventListener('click', async () => {
+  const rolesRoot = document.getElementById('model-roles-root');
+  const body = rolesPatchToSettingsBody(readEngineSection(rolesRoot));
+  if (!body.modelRoles) { setHintMsg('modelRolesMsg', 'Nothing changed.', ''); return; }
+  try {
+    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await safeJson(res);
+    if (!res.ok) return setHintMsg('modelRolesMsg', data?.error || `HTTP ${res.status}`, 'err');
+    // Only the Roles card repaints; the Engines rows take the new roles through paintRoleFallbacks.
+    lastEngineSettingsData = data; paintModelRoles(data, { force: true }); setHintMsg('modelRolesMsg', 'Saved.', 'ok');
+  } catch (error) { setHintMsg('modelRolesMsg', error?.message || 'network error', 'err'); }
+});
 /** Fill each engine card's `.engine-card-status` from GET /api/engines: text only (no buttons). An answer
  *  with no `engines` array leaves the lines empty. */
 async function paintEngineCardStatus(root) {
@@ -19047,7 +19082,7 @@ async function paintEngineCardStatus(root) {
 }
 // The flag flips while the Models page is open: the Engines card gains / loses the interview row. Refetched, since
 // GET /api/settings carries the row's stored pair and its default only while the flag is on.
-onFlagChange('requirements', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintHelperModelCards(); });
+onFlagChange('requirements', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintHelperModelCards({ force: true }); });
 document.getElementById('engineSettingsSave')?.addEventListener('click', async () => {
   const root = document.getElementById('engine-settings-root');
   const body = enginePatchToSettingsBody(readEngineSection(root));
@@ -19056,7 +19091,7 @@ document.getElementById('engineSettingsSave')?.addEventListener('click', async (
     const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await safeJson(res);
     if (!res.ok) return setHintMsg('engineSettingsMsg', data?.error || `HTTP ${res.status}`, 'err');
-    await paintEngineSettings(data); setHintMsg('engineSettingsMsg', 'Saved.', 'ok');
+    await paintEngineSettings(data, { force: true }); setHintMsg('engineSettingsMsg', 'Saved.', 'ok');
   } catch (error) { setHintMsg('engineSettingsMsg', error?.message || 'network error', 'err'); }
 });
 
@@ -19090,11 +19125,11 @@ async function loadModelsView() {
 
 // Models › Engines: its pickers list the catalog, so they repaint whenever it loads — a model added a moment ago is
 // selectable without leaving the page.
-async function paintHelperModelCards() {
+async function paintHelperModelCards({ force = false } = {}) {
   try {
     const res = await fetch('/api/settings');
     if (!res.ok) return;
-    await paintEngineSettings(await safeJson(res));
+    await paintEngineSettings(await safeJson(res), { force });
   } catch { /* the card keeps its last paint */ }
 }
 

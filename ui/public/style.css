@@ -554,6 +554,8 @@ input[type="file"]{font-size:var(--fs-meta);color:var(--ink-3);background:transp
 /* A card's one Save, with the line that counts unsaved changes (or says Saved.) just left of it. */
 .engine-save-row{align-items:center;}
 .engine-save-row > .hint{margin:0;}
+/* Models › Roles sits above Engines: the house 18px gap between stacked panels. */
+#model-roles-card{margin-bottom:18px;}
 /* Settings → Chat history: a text-style destructive action so its label sits on
    the same left edge as the "Chat history" heading and the counts line under it
    (a pill's inner padding indented the text). Same shape as .hd-cmt-btn. */

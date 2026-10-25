@@ -4,6 +4,7 @@ import { normalizingOnEvent } from './engines/claude-events.mjs';
 import { resolveModelEnv, resolveModelCost, catalogHasModel } from './config.mjs';
 import { titleModel as storedTitleModel } from './settings.mjs';
 import { AUX_EFFORT } from './model-env.mjs';
+import { roleModelFor } from './model-roles.mjs';
 import { withRecoveryRetry } from './recovery-backoff.mjs';
 import { bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
 import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
@@ -37,6 +38,8 @@ export function clipTitle(text, max) {
   return (sp >= Math.floor(max / 2) ? cut.slice(0, sp) : t.slice(0, max)).replace(/[\s,;:–—-]+$/, '').trim();
 }
 
+const roleTitleModel = () => roleModelFor('claude', 'titleModel')?.model || '';
+
 /**
  * Which model writes a title, decided PER CALL (#422) — nothing is captured at
  * import, so a Settings save or an env change reaches the very next title:
@@ -45,19 +48,20 @@ export function clipTitle(text, max) {
  *                                verbatim, no catalog check: an operator escape hatch
  *   3. the stored `titleModel` — only while it is still a catalog member; a stale
  *                                id (plugin removed, entry deleted) is reported and skipped
- *   4. `opts.runModel`         — the model of the run / chat that asked for the title,
+ *   4. the quick model role    — modelRoles.claude.quick (D3), only while it is a catalog member
+ *   5. `opts.runModel`         — the model of the run / chat that asked for the title,
  *                                which is what makes an install with NO first-party
  *                                model produce titles with zero configuration
- *   5. DEFAULT_TITLE_MODEL     — the built-in Haiku, only while it is a catalog member
+ *   6. DEFAULT_TITLE_MODEL     — the built-in Haiku, only while it is a catalog member
  *                                and ready; otherwise model null: NO --model flag, the
  *                                claude CLI's own default (a title never hinges on Haiku)
  * Pure apart from the injectable readers. Exported for tests and for the
  * settings API (describeTitleModel below).
  * @param {{model?:string, runModel?:string}} [opts]
- * @param {{env?:NodeJS.ProcessEnv, stored?:()=>string|null, inCatalog?:(id:string)=>boolean, ready?:(id:string)=>boolean}} [deps]
- * @returns {{model:string|null, source:'explicit'|'env'|'settings'|'run'|'builtin', stale:string|null}}
+ * @param {{env?:NodeJS.ProcessEnv, stored?:()=>string|null, role?:()=>string, inCatalog?:(id:string)=>boolean, ready?:(id:string)=>boolean}} [deps]
+ * @returns {{model:string|null, source:'explicit'|'env'|'settings'|'role'|'run'|'builtin', stale:string|null}}
  */
-export function resolveTitleModel(opts = {}, { env = process.env, stored = storedTitleModel, inCatalog = (id) => catalogHasModel(id, { engine: 'claude' }), ready = modelReady } = {}) {
+export function resolveTitleModel(opts = {}, { env = process.env, stored = storedTitleModel, role = roleTitleModel, inCatalog = (id) => catalogHasModel(id, { engine: 'claude' }), ready = modelReady } = {}) {
   const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : '');
   const explicit = str(opts.model);
   if (explicit) return { model: explicit, source: 'explicit', stale: null };
@@ -69,6 +73,8 @@ export function resolveTitleModel(opts = {}, { env = process.env, stored = store
     if (inCatalog(configured)) return { model: configured, source: 'settings', stale: null };
     stale = configured;
   }
+  const fromRole = str(role());
+  if (fromRole && inCatalog(fromRole)) return { model: fromRole, source: 'role', stale };
   const runModel = str(opts.runModel);
   if (runModel) return { model: runModel, source: 'run', stale };
   const builtin = inCatalog(DEFAULT_TITLE_MODEL) && ready(DEFAULT_TITLE_MODEL) ? DEFAULT_TITLE_MODEL : null;

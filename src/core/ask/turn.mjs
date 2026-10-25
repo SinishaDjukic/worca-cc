@@ -61,6 +61,7 @@ import { copilotPreflight, copilotAskSupport, copilotResumeNotFound, COPILOT_ASK
 import { hasCodexEndpoint } from '../engines/codex-endpoint.mjs';
 import { codexMemoryLine } from './prompt.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
+import { withRole } from '../model-roles.mjs';
 import { mentionedRefs } from './contexts.mjs';
 import {
   newAskId, finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, getAttachment, listMessages, ASK_ID_RE,
@@ -93,7 +94,8 @@ export const codexToolTrippedMessage = (what, engine = 'codex') => `${engineLabe
 export const COPILOT_NOT_READY_CODE = 'copilot-not-ready';
 export const COPILOT_SETUP_DOCS_URL = 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md#github-copilot-cli';
 export const COPILOT_SHELL_TRIPPED_MESSAGE = 'Copilot tried to run a shell command although it was given none — worca stopped the turn.';
-const askSlotOf = (engine) => { try { return resolveSetting(`models.${engine}.ask`).value; } catch { return undefined; } };
+// Model roles (D3): an unset Chat slot takes the everyday role.
+const askSlotOf = (engine) => { try { return withRole(resolveSetting(`models.${engine}.ask`).value, engine, 'askModels'); } catch { return undefined; } };
 
 // MCP registry §10 (Ask column): what a registry copy's `system/init` status reads as (connected/pending: nothing).
 const MCP_UNAVAILABLE = Object.freeze({

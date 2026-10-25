@@ -102,6 +102,7 @@ import {
   networkProxySettings,
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
   stepModelsSetting, assertStepModelsInput, setStepModels,
+  modelRolesSetting, assertModelRolesInput, setModelRoles,
   utilityModelsSetting, assertUtilityModelsInput, setUtilityModels,
   requirementsInterviewSetting, assertRequirementsInterviewInput, setRequirementsInterview,
   askEngineSetting, assertAskEngineInput, setAskEngineSetting, askModelsSetting, assertAskModelsInput, setAskModels,
@@ -113,6 +114,7 @@ import { effectiveNightConfig, nightLayers } from '../src/core/night/effective.m
 import { readNightDecisions, nightAnsweredSince } from '../src/core/night/store.mjs';
 import { createAwayHoursWatch } from '../src/core/night/hours-watch.mjs';
 import { resolveDefragModel, defragDefaultModel, defragWorkflowView, checkStartPair } from '../src/core/memory-defrag-model.mjs';
+import { withRole, withScanRole } from '../src/core/model-roles.mjs';
 import { parseRunOverlay, checkRunOverlay, overlayWorkflowRefusal, OVERLAY_ERRORS } from '../src/core/run-overlay.mjs';
 import { listPresets, readPreset, createPreset, updatePreset, duplicatePreset, deletePreset, readRunSetup, createPresetFromRun } from '../src/core/run-presets-store.mjs';
 import { presetRefusals, completeSnapshot } from '../src/core/run-presets-check.mjs';
@@ -11093,7 +11095,8 @@ async function scanModelsFor(body, projectPaths, workspace = null) {
   }
   return resolveScanModels({
     explicit: body && body.models,
-    stored: workspaceScanModels(),
+    // Model roles (D3): with no stored pick, the quick role is the scan model.
+    stored: withScanRole(workspaceScanModels(), WORKSPACE_SCAN_DEFAULT_MODELS),
     workspacePick: workspace && workspace.scanModels ? workspace.scanModels : null,
     models,
   });
@@ -11397,6 +11400,7 @@ const settingsState = () => ({
   workspaceScanDefault: WORKSPACE_SCAN_DEFAULT_MODELS,    // what null means: Sonnet 5 · medium, project agents sonnet · medium
   runEngine: runEngineSetting() ?? null,
   stepModels: stepModelsSetting(),
+  modelRoles: modelRolesSetting(),                         // Models › Roles (D1): { <engine>: { deep|everyday|quick: { model, effort } } }
   utilityModels: utilityModelsSetting(),
   askEngine: askEngineSetting() ?? null,                  // Chat: the engine new chats start on (D17)
   // Models › Engines › Claude: the STORED { model?, effort? } (null = the default); only while the requirements flag is on
@@ -11440,19 +11444,19 @@ async function prDescriptionModelState() {
  *  (the stored catalog model, else the CLI default). Async because the catalog is. */
 async function agentGenModelState() {
   const stored = storedAgentGenModel();
-  return { agentGenModel: stored, agentGenModelEffective: resolveAgentGenModel(stored, await listModels('')) };
+  return { agentGenModel: stored, agentGenModelEffective: resolveAgentGenModel(withRole(stored, 'claude', 'agentGenModel'), await listModels('')) };
 }
 
 /** Models › Helper jobs › Run naming: the stored pair + what a suggestion will actually run on. */
 async function namingModelState() {
   const stored = storedNamingModel();
-  return { namingModel: stored, namingModelEffective: resolveNamingModel(stored, await listModels(''), modelCostConfig) };
+  return { namingModel: stored, namingModelEffective: resolveNamingModel(withRole(stored, 'claude', 'namingModel'), await listModels(''), modelCostConfig) };
 }
 
 /** Models › Helper jobs › Command summaries: the stored pair + what a summary will actually run on. */
 async function commandSummaryModelState() {
   const stored = storedCommandSummaryModel();
-  return { commandSummaryModel: stored, commandSummaryModelEffective: resolveNamingModel(stored, await listModels(''), modelCostConfig) };
+  return { commandSummaryModel: stored, commandSummaryModelEffective: resolveNamingModel(withRole(stored, 'claude', 'commandSummaryModel'), await listModels(''), modelCostConfig) };
 }
 
 // ---------------------------------------------------------------------------
@@ -12021,6 +12025,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasWorkspaceScanKey = has('workspaceScan');
   const hasRunEngineKey = has('runEngine');
   const hasStepModelsKey = has('stepModels');
+  const hasModelRolesKey = has('modelRoles');
   const hasUtilityModelsKey = has('utilityModels');
   const hasAskEngineKey = has('askEngine');
   const hasAskModelsKey = has('askModels');
@@ -12108,6 +12113,23 @@ async function applySettingsPatch(body, { person = null } = {}) {
       for (const [engine, roles] of Object.entries(patch)) for (const [role, value] of Object.entries(roles)) if (value) items.push({ id: `stepModels.${engine}.${role}`, engine, value });
       await assertSlotModels(items);
     });
+    let modelRolesPatch = null;
+    if (hasModelRolesKey) await asSettingsField('modelRoles', async () => {
+      modelRolesPatch = assertModelRolesInput(body.modelRoles);
+      const items = [];
+      // Model and harness only: the role effort is mapped when used (effortOn), never refused here (A7).
+      for (const [engine, roles] of Object.entries(modelRolesPatch)) for (const [role, value] of Object.entries(roles)) if (value) items.push({ id: `modelRoles.${engine}.${role}`, engine, value: { model: value.model } });
+      await assertSlotModels(items);
+      // Store the catalog's canonical id (A8), so every consumer matches the same spelling.
+      if (items.length) {
+        const models = await listModels('');
+        for (const roles of Object.values(modelRolesPatch)) for (const value of Object.values(roles)) {
+          if (!value) continue;
+          const hit = models.find((m) => m?.id?.toLowerCase() === value.model.toLowerCase());
+          if (hit) value.model = hit.id;
+        }
+      }
+    });
     if (hasUtilityModelsKey) await asSettingsField('utilityModels', async () => {
       const patch = assertUtilityModelsInput(body.utilityModels); const items = [];
       for (const [engine, jobs] of Object.entries(patch)) for (const [job, value] of Object.entries(jobs)) if (value) items.push({ id: `utilityModels.${engine}.${job}`, engine, value });
@@ -12172,6 +12194,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasWorkspaceScanKey) await setWorkspaceScanModels(body.workspaceScan, { models: wsScanModels });
     if (hasRunEngineKey) await asSettingsField('runEngine', () => setRunEngineSetting(body.runEngine));
     if (hasStepModelsKey) await asSettingsField('stepModels', () => setStepModels(body.stepModels));
+    if (hasModelRolesKey) await asSettingsField('modelRoles', () => setModelRoles(modelRolesPatch));
     if (hasUtilityModelsKey) await asSettingsField('utilityModels', () => setUtilityModels(body.utilityModels));
     if (hasAskEngineKey) await asSettingsField('askEngine', () => setAskEngineSetting(body.askEngine));
     if (hasAskModelsKey) await asSettingsField('askModels', () => setAskModels(body.askModels));
@@ -12190,7 +12213,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey || hasUpdateCheckKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -15135,7 +15158,7 @@ app.get('/api/extension/status', (req, res) => {
 // the Models page's Command summaries helper job — the redacted command alone, cached per process.
 // ---------------------------------------------------------------------------
 const commandSummariser = createCommandSummariser({
-  pickModel: async () => resolveNamingModel(storedCommandSummaryModel(), await listModels(''), modelCostConfig),
+  pickModel: async () => resolveNamingModel(withRole(storedCommandSummaryModel(), 'claude', 'commandSummaryModel'), await listModels(''), modelCostConfig),
   onCost: (c) => { try { recordUtilityCost('commandSummary', c); } catch { /* a ledger write never fails a summary */ } },
 });
 /** Read before the call and after the answer: the Labs flag, the person's Settings › Chat switch, no mock, the cost limit not reached. */
@@ -15155,7 +15178,7 @@ const NAMING_PICK_TTL_MS = 60_000;
 const warnedStaleNaming = new Set();
 async function namingCatalog() {
   const rows = await listModels('');
-  const picked = resolveNamingModel(storedNamingModel(), rows, modelCostConfig);
+  const picked = resolveNamingModel(withRole(storedNamingModel(), 'claude', 'namingModel'), rows, modelCostConfig);
   if (picked.stale && !warnedStaleNaming.has(picked.stale)) {
     warnedStaleNaming.add(picked.stale);
     console.warn(`[worca] namingModel ${JSON.stringify(picked.stale)} is no longer in the catalog — run naming uses the cheapest ready Claude model`);
@@ -16359,7 +16382,7 @@ function agentErrorBody(err) {
 async function startAgentGen(input) {
   // The Models page's Claude tab › Agent generation, read per Generate. Unset, or a model the
   // catalog no longer carries: no --model, the CLI's default (as before the setting existed).
-  const pick = resolveAgentGenModel(storedAgentGenModel(), await listModels(''));
+  const pick = resolveAgentGenModel(withRole(storedAgentGenModel(), 'claude', 'agentGenModel'), await listModels(''));
   if (pick.stale) console.warn(`[worca] agentGenModel ${JSON.stringify(pick.stale)} is no longer in the catalog — agent generation uses the CLI default`);
   const orch = createAgentGen({
     ...input,

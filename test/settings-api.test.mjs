@@ -288,6 +288,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       networkWait: null,
       actions: {},
       runEngine: null, stepModels: {}, utilityModels: {},   // cascading settings (Plan 2a): null / {} change nothing
+      modelRoles: {},                                        // Models › Roles: {} changes nothing
       askEngine: null, askModels: {},                        // Chat's engine (Plan 2b, D17): null / {} change nothing
       flags: {},                                             // feature flags (docs/feature-flags.md): {} is a no-op
       tagDimensions: [],                                     // Settings › Tags › Tag dimensions: [] clears (already clear)
@@ -467,4 +468,23 @@ test('chat.summariseCommands defaults on, saves false, rejects a non-boolean (#9
   const body = await r.json();
   assert.equal(body.field, 'chat');
   assert.equal(typeof body.error, 'string');
+});
+
+test('POST modelRoles: a model outside the catalog or a bad effort is 400 and writes nothing; ids are stored canonical', async () => {
+  const file = join(home, '.worca-cc', 'settings.json');
+  const ok0 = await postJson({ enforceTags: false });   // the file exists before the byte comparison
+  assert.equal(ok0.status, 200);
+  const before = readFileSync(file);
+  const unknown = await postJson({ modelRoles: { claude: { deep: { model: 'nope' } } } });
+  assert.equal(unknown.status, 400);
+  assert.match((await unknown.json()).field, /^modelRoles/);
+  const effort = await postJson({ modelRoles: { claude: { deep: { model: 'claude-opus-5-5', effort: 'rm -rf' } } } });
+  assert.equal(effort.status, 400);
+  assert.equal((await effort.json()).field, 'modelRoles.claude.deep.effort');
+  assert.deepEqual(readFileSync(file), before, 'a refused POST leaves settings.json byte-identical');
+  const canon = await postJson({ modelRoles: { claude: { deep: { model: 'Claude-Opus-5-5' } } } });
+  assert.equal(canon.status, 200);
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).modelRoles, { claude: { deep: { model: 'claude-opus-5-5' } } });
+  assert.equal((await postJson({ modelRoles: { claude: { deep: null } } })).status, 200);
+  assert.equal('modelRoles' in JSON.parse(readFileSync(file, 'utf8')), false);
 });
