@@ -14,6 +14,25 @@ our own design rules come first.
 Already fixed during the review: the detail line printed `[object Object]` in every state (a key clash in the model),
 the phone Runs tab wrapped one word per line, and two highlights used a 2px radius instead of a token.
 
+## Status after the review round (2026-10-25, mock and canvas)
+
+| P0 | State |
+|---|---|
+| 1 Numbers agree | Done: steps add up to the card total, Changes count = files, PR sizes add up to the diff |
+| 2 Rebuild loses focus, fade replays | Done in the mock: focus kept or moved on every action, fade only when a stage opens. The real build still has to patch nodes in place |
+| 3 Tabs and menus by keyboard | Done: both tab rows are tablists (arrows, Home, End, one Tab stop, wired panels); menus take arrows, Escape and Tab return focus |
+| 4 Colour rules | Done: finished cells use `--seq`, review is a hollow cell, checks running shows a working dot, Approved reads Ready to merge. Paused keeps the app's slate dot colour |
+| 5 Stop and ⋯ | Done: the page bar shows Pause and Stop while the run's own work is unfinished, ⋯ always |
+| 6 Ship choice | Done: a radio group; "What it opens" is not folded yet |
+| 7 Light contrast, reduced motion | Done: "8s ago" 6.6:1, the review word 5.9:1; the step-link scroll respects reduced motion |
+| 8 320px and 200% zoom | Done: no sideways scroll in any case or tab at 320, 375, 900px or 200% zoom |
+| 9 design-system.md | Open: the rule changes ship with the implementation (enrollment plan, phase 1 slice 4) |
+| 10 Escaping | Done in the mock; required again in the build |
+
+P1 done: failure evidence in Activity, cost against the budget and the diff size as card figures, Away-mode cost in
+Decisions, cost per step only in Activity, the One PR reason corrected. Open: answer in place, Away mark on the card,
+"Merge all in order when green". Verified by Playwright on every case and tab (`plans/mocks/run-card-stepper.html`).
+
 ## P0: before anything is built
 
 | # | Finding | Raised by | Fix |
