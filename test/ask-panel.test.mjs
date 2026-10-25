@@ -202,11 +202,10 @@ test('ask-panel: a slower, older thread load cannot overwrite a newer switch', a
   };
   const ctx = makePanel({ fetchHandler });
   ctx.panel.open();
-  await ctx.tick();                                                    // the first show loaded the History column
-  const row = (i) => ctx.doc.querySelectorAll('[data-chat-history] .ask-thread-pick')[i];
-  row(0).click();                                                      // A: its GET hangs
   await ctx.tick();
-  row(1).click();                                                      // B: resolves at once
+  ctx.panel.open({ threadId: 'ask_00000001' });                        // A: its GET hangs
+  await ctx.tick();
+  ctx.panel.open({ threadId: 'ask_00000002' });                        // B: resolves at once
   await ctx.tick(); await ctx.tick();
   ctx.flush();
   assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'Fast B');

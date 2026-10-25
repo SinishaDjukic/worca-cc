@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
 
-import { makePanel, key } from './helpers/ask-panel-harness.mjs';
+import { makePanel, key, openChat } from './helpers/ask-panel-harness.mjs';
 import { replayFixture, stampFrames } from './helpers/ask-frames.mjs';
 
 const TID = 'ask_00000001';
@@ -29,12 +29,7 @@ function handlerFor(snapshotRef) {
 
 async function openWith(snapshotRef, overrides = {}) {
   const ctx = makePanel({ fetchHandler: handlerFor(snapshotRef), ...overrides });
-  ctx.panel.open();
-  await ctx.tick();                                    // the first show loaded the History column
-  ctx.doc.querySelector('[data-chat-history] .ask-thread-pick').click();
-  await ctx.tick();
-  await ctx.tick();
-  ctx.flush();
+  await openChat(ctx, TID);
   return ctx;
 }
 
@@ -390,13 +385,7 @@ test('ask-panel-stream: switching off a streaming thread resets the stop button'
   };
   const ctx = makePanel({ fetchHandler: handler });
   ctx.panel.open();
-  const pick = async (i) => {
-    await ctx.tick();
-    ctx.doc.querySelectorAll('[data-chat-history] .ask-thread-pick')[i].click();
-    await ctx.tick();
-    await ctx.tick();
-    ctx.flush();
-  };
+  const pick = (i) => openChat(ctx, [TID, TID2][i]);
   await pick(0);
   ctx.panel.pushServerFrame({ type: 'ask-start', userMessageId: 'u', model: 'm', effort: 'high', startedAt: 'x', threadId: TID, messageId: MID, seq: 1 });
   ctx.flush();
@@ -429,13 +418,7 @@ test('ask-panel-stream: switching back to a chat whose turn still runs re-subscr
   };
   const ctx = makePanel({ fetchHandler: handler });
   ctx.panel.open();
-  const pick = async (i) => {
-    await ctx.tick();
-    ctx.doc.querySelectorAll('[data-chat-history] .ask-thread-pick')[i].click();
-    await ctx.tick();
-    await ctx.tick();
-    ctx.flush();
-  };
+  const pick = (i) => openChat(ctx, [TID, TID2][i]);
   const subs = () => ctx.wsSends.filter((s) => s.type === 'subscribe' && s.threadId === TID).length;
   await pick(0);
   assert.equal(subs(), 1, 'the first load subscribed A');

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
 
-import { makePanel } from './helpers/ask-panel-harness.mjs';
+import { makePanel, openChat } from './helpers/ask-panel-harness.mjs';
 
 const TID = 'ask_00000001';
 
@@ -560,13 +560,9 @@ function threadsHandler({ threads, models = CATALOG_WIDE } = {}) {
 
 async function settle(ctx) { for (let i = 0; i < 4; i++) await ctx.tick(); }
 
-/** Open History and pick the row titled `title` — the user-facing switch. */
+/** Switch to the chat titled `title` (Alpha, Beta, Gamma), as app.js routes to it. */
 async function pickThread(ctx, title) {
-  ctx.doc.querySelector('[data-ask-threads-btn]').click();
-  await ctx.tick();
-  const row = [...ctx.doc.querySelectorAll('.ask-thread-pick')].find((b) => b.textContent.includes(title));
-  assert.ok(row, `History lists "${title}"`);
-  row.click();
+  await openChat(ctx, { Alpha: TID_A, Beta: TID_B, Gamma: TID_C }[title]);
   await settle(ctx);
 }
 

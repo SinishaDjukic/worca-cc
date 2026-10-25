@@ -102,6 +102,17 @@ export function makePanel(overrides = {}) {
   return { panel, window, doc: window.document, fetchCalls, wsSends, flush, tick, storage, resizeObservers, orbFrames };
 }
 
+/**
+ * Open chat `id` the way app.js routes to it (panel.open with a threadId), not through a row of the Chats list: a
+ * suite about the conversation never depends on the list's markup. Shows the page first when it is hidden.
+ */
+export async function openChat(ctx, id) {
+  ctx.panel.open({ threadId: id });
+  await ctx.tick();
+  await ctx.tick();
+  ctx.flush();
+}
+
 export function key(window, target, key, init = {}) {
   const e = new window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init });
   (target || window.document).dispatchEvent(e);
