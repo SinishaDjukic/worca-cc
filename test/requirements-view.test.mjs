@@ -10,6 +10,8 @@ const clip = [];
 Object.defineProperty(globalThis, 'navigator', { value: { clipboard: { writeText: async (t) => { clip.push(t); } } }, configurable: true, writable: true });
 window.confirm = () => true;
 const tick = () => new Promise((r) => setTimeout(r, 0));
+/** n calendar days before today, at local noon: age() counts calendar days, so DST cannot shift it. */
+const daysAgo = (n) => { const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - n); return d.toISOString(); };
 after(() => window.close());
 const { createRequirementsView } = await import('../ui/public/requirements-view.mjs');
 
@@ -1720,11 +1722,10 @@ test('brief page: unsaved notes survive a live repaint; a workspace has the same
 });
 
 test('list: each group header names its brief: none yet with Create, being made, or its age; each links to the brief page', async () => {
-  const day = 86400000;
   fakeApi({ ...LIST_BASE, 'GET /api/workspaces': { workspaces: [{ id: 'ws:1', name: 'Storefront' }, { id: 'ws2', name: 'Mall' }] },
     'GET /api/requirements': listOf([row(), row({ seq: 3, scopeType: 'workspace', scopeKey: 'ws:1' }), row({ seq: 6, scopeType: 'workspace', scopeKey: 'ws2' })], {
       briefs: [{ scopeType: 'workspace', scopeKey: 'ws:1', status: 'making', madeAt: null, lookAtCode: true },
-        { scopeType: 'workspace', scopeKey: 'ws2', status: 'ready', madeAt: new Date(Date.now() - 3 * day).toISOString(), lookAtCode: true }] }) });
+        { scopeType: 'workspace', scopeKey: 'ws2', status: 'ready', madeAt: daysAgo(3), lookAtCode: true }] }) });
   const { host, view, routed } = make();
   await view.show('');
   assert.deepEqual([...host.querySelectorAll('.req-group h2')].map((x) => x.textContent), ['Project · shop', 'Workspace · Storefront', 'Workspace · Mall']);
@@ -1810,7 +1811,6 @@ test('style.css: the req-brief rules use tokens only', () => {
 // ---- A7 Task 8: the brief page with a made brief (board 12): chips, the code-moved-on notice, the brief card and
 // its editors, the right column, Export and ⋯ ----
 
-const DAY = 86400000;
 const MADE_SECTIONS = {
   product: 'An online shop for home goods. Shoppers browse a catalog and follow their order.',
   users: [{ name: 'Shopper', can: 'browses, orders, pays.' }, { name: 'Support agent', can: 'sees every order.' }],
@@ -1824,7 +1824,7 @@ const MADE_SECTIONS = {
 };
 const madeRow = (over = {}) => briefRow({ status: 'ready', sections: MADE_SECTIONS, edited: { users: true },
   sources: [{ project: 'shop-1', branch: 'main', ref: 'refs/heads/main', sha: '3f9c2a1deadbeef00' }], files: ['README.md', 'src/orders.mjs', 'src/slip.mjs'],
-  model: 'claude-opus-5-5', costUsd: 1.42, madeBy: 'po', madeAt: new Date(Date.now() - 2 * DAY).toISOString(), ...over });
+  model: 'claude-opus-5-5', costUsd: 1.42, madeBy: 'po', madeAt: daysAgo(2), ...over });
 const STALE = { known: true, commits: 38, touching: 6, areas: ['Orders', 'Payments'], checked: true, partial: false,
   sources: [{ project: 'shop-1', branch: 'main', ref: 'refs/heads/main', sha: '3f9c2a1deadbeef00', known: true, commits: 38 }] };
 const madeBody = (over = {}) => briefBody({ brief: madeRow(), usedBy: [{ seq: 2, id: 'FEAT-2' }, { seq: 3, id: 'FEAT-3' }], staleness: STALE, ...over });
@@ -2295,7 +2295,7 @@ test('brief page, made: Copy Markdown that fails says so and copies nothing', as
 
 // ---- A7 Task 9: New feature with a brief (board 13); What Worca knows on the feature page (board 14); ⋯ ----
 
-const usableBrief = (over = {}) => ({ scopeType: 'project', scopeKey: 'shop-1', status: 'ready', madeAt: new Date(Date.now() - 2 * DAY).toISOString(), lookAtCode: true, ...over });
+const usableBrief = (over = {}) => ({ scopeType: 'project', scopeKey: 'shop-1', status: 'ready', madeAt: daysAgo(2), lookAtCode: true, ...over });
 const NEW_TARGETS = { 'GET /api/projects': { projects: [{ key: 'shop-1', name: 'shop' }, { key: 'blog', name: 'blog' }] }, 'GET /api/workspaces': { workspaces: [{ id: 'ws1', name: 'Storefront' }] } };
 const forField = (host) => [...host.querySelectorAll('.req-new .field')][3];   // Title, Describe it, Files (A8), For
 
@@ -2366,7 +2366,7 @@ test('new feature with a brief (A1.1 merged): the model part stays; only the wor
   assert.doesNotMatch(host.textContent, /null|undefined/);
 });
 
-const briefOf = (over = {}) => ({ id: 3, status: 'ready', madeAt: new Date(Date.now() - 2 * DAY).toISOString(), sources: [], matches: ['Orders', 'Packing', 'Packing slip'], matchesMore: 0, lookAtCode: true, ...over });
+const briefOf = (over = {}) => ({ id: 3, status: 'ready', madeAt: daysAgo(2), sources: [], matches: ['Orders', 'Packing', 'Packing slip'], matchesMore: 0, lookAtCode: true, ...over });
 const SKIPPED = { summary: '', files: [], skipped: 'brief', briefMadeAt: '2026-10-20T10:00:00Z' };
 const knowsFeature = (over = {}) => feature({ brief: briefOf(), lookCostUsd: 0.25, orientation: SKIPPED, ...over });
 const knows = (host) => host.querySelector('.req-left > section.req-knows');

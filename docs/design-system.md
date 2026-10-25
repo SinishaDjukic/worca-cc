@@ -216,6 +216,9 @@ switch row (help line, `.switch`) whose toggle keeps the menu open. The run page
 composer pickers (`.ask-pop`) and the split-button menus (`.btn-split-menu`) keep their
 own builders and positions and add `.menu` / `.menu-item`; they carry no box or row skin of their own. No hand-built
 dropdowns.
+The Requirements pages build their header and file menus as `.menu.hd-menu` and place them through their own
+`.req-menu` wrapper, since upstream f92a7148d removed the `.hd-menu` placement rules; their danger row (Remove) takes
+`--red-ink-strong`, which keeps AA on `--panel` and on the `--red-bg` hover.
 ### Row button
 `.row-btn`: a whole divided-list row that a person opens (a Library folder, a Memory row, a keyed project row): full
 width, `--hover` fill and `--r-sm` corner on hover, an inset ring on keyboard focus. Each list keeps its own grid and

@@ -110,7 +110,10 @@ has Worca read the file again for one question; the answer is kept under the sum
 switch, and asks whether to keep your text when you edited it; **Read again** reads the same file again. Earlier
 texts are kept in the file's history (**Earlier text**, in Advanced mode). A file that could not be read says why
 ("it ran out of time", "Worca restarted", …) and offers **Try again**; until then the interview knows it by name only.
-Files cannot be changed while Worca works on the feature, while it is archived or while a run starts.
+Files cannot be changed while Worca works on the feature, while it is archived or while a run starts. When a new
+version cannot be stored, the file says "Worca could not store the new version. Replace it again." and cannot go with
+the run until it is replaced. When New feature cannot store one of its files, the feature is still created and its page
+names the file: "<name> was not added: Worca could not store it. Add it on the feature page."
 
 **What it costs.** A read costs about as much as a look at the code (each file says what its reads cost), and counts
 toward your spending limit. When the limit is reached, a new file waits as **Not read yet**, at no cost, and is read
@@ -130,9 +133,10 @@ inside this file. Try again."). Every read, every question and the product brief
 
 **When a file changes the interview.** During the interview the next round uses a new or replaced file. After the
 interview finished, Worca asks about it in one short follow-up round; until that round has run, the feature shows
-**Decide** and the interview check says "<file> to ask about". When Worca cannot start the round itself (the feature is
-busy or was archived, four looks or rounds already run, or the spending limit is reached), the Decide panel offers
-**Ask about <file>**. After you started a run, a change to the files counts as a change since the start.
+**Decide** and the interview check says "<file> to ask about". A feature that is busy gets its follow-up as soon as its
+current round or look ends. When Worca cannot start the round itself (the feature was archived, Worca is already
+running four interviews or looks, or the spending limit is reached), the Decide panel offers **Ask about <file>**.
+After you started a run, a change to the files counts as a change since the start.
 
 **Sources.** A criterion, an assumption or a question that came from a file names it, on the page, in the Markdown and in
 the run's task ("(from <file>)").
@@ -140,7 +144,10 @@ the run's task ("(from <file>)").
 **Files and runs.** A file goes to the run only when you switch on **Send with the run** (also on the **Ready to build**
 card's **Files for the run** row, whose chips are the same switches). The run gets it as an attached file, and the
 started version records which files went with it. A file whose stored copy Worca cannot open cannot go with the run:
-Start names it, and you replace it or leave it out. **Changed since the run started** lists a file that goes with the
+Start names it, and you replace it or leave it out. The run's copies are named after the files, made safe for Windows
+(`: * ? " < > |` become `_`, trailing dots and spaces go, a device name such as `CON` gets a leading `_`, and a name
+used twice gets " (2)"); the start keeps the files' own names. The copies Worca stages for a start are removed once the
+run has its own copy, or when the start is refused. **Changed since the run started** lists a file that goes with the
 run now, no longer goes, or was replaced; **Undo my changes** puts the files' Send switches back, but not a removed or
 replaced file, and not the documents' switches.
 

@@ -28,7 +28,7 @@
 // the jsdom tests test/requirements-view.test.mjs and test/requirements-app.test.mjs.
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -71,7 +71,12 @@ process.env.WORCA_HOME = home;
 process.env.HOME = home;
 process.env.USERPROFILE = home;
 process.env.WORCA_MOCK = '1';
-process.env.WORCA_MOCK_READ_MS = '1500';   // A8: a mock read waits, so "Reading N files…" can be seen
+// A8: a mock read waits READ_MS, so "Reading N files…" can be seen; a step that checks a state while it lasts holds the
+// reads for HOLD_MS instead, and a wait for a held read to end allows AFTER_HOLD_MS.
+const READ_MS = 1500;
+const HOLD_MS = 6000;
+const AFTER_HOLD_MS = HOLD_MS + 14_000;
+process.env.WORCA_MOCK_READ_MS = String(READ_MS);
 delete process.env.WORCA_FLAGS;
 const projDir = path.join(home, 'shop');
 await mkdir(projDir, { recursive: true });
@@ -257,7 +262,7 @@ check('the list header says "Product brief: none yet · Create" for the project'
     const h = g?.querySelector('.req-group-brief'); return !!h && h.textContent === 'Product brief: none yet · Create' && !!h.querySelector('a'); })()`)));
 await A.evalJs(`document.querySelector('#requirements-host .req-group-brief a').click()`);
 // The card paints once the page's GET answers, which waits for git (BRIEF_WAIT_MS above): on a loaded machine the
-// default 8 s wait ran out before the server's own 10 s probe did (the flake of Tasks 12 and 15).
+// default 8 s wait ran out before the server's own 10 s probe did (seen on a loaded machine).
 check('the brief page (none yet) shows Give Worca a head start and Create the brief',
   await until(() => A.evalJs(`(() => { const c = document.querySelector('#requirements-host .req-brief-start');
     return location.hash.startsWith('#requirements/brief/project/') && !!c
@@ -303,9 +308,9 @@ check('Add this to the brief: the brief page lists the added area and "Used by 1
   await until(() => A.evalJs(`(() => { const t = document.querySelector('#requirements-host').textContent;
     return /Orders: Orders report/.test(t) && /Orders · checkout and order history/.test(t) && /Used by 1 feature/.test(t); })()`), BRIEF_WAIT_MS));
 // ---- A8: files, end to end in mock mode (each mock read waits WORCA_MOCK_READ_MS). The server runs in this process
-// and reads the variable at each read, so a step that must see a state (Reading…, Asking…) holds it longer than the
-// page needs to paint, however slow the machine.
-const holdReads = (ms) => { process.env.WORCA_MOCK_READ_MS = String(ms); };
+// and reads the variable at each read, so a step that must see a state (Reading…, Asking…) holds it for HOLD_MS: well
+// past a normal paint. A page slower than that fails the check; it never passes without having seen the state.
+const holdReads = (on) => { process.env.WORCA_MOCK_READ_MS = String(on ? HOLD_MS : READ_MS); };
 const dropFiles = (sel, files) => A.evalJs(`(() => { const dt = new DataTransfer();
   for (const [n, body, type] of ${JSON.stringify(files)}) dt.items.add(new File([body], n, { type }));
   document.querySelector(${JSON.stringify(sel)}).dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); return true; })()`);
@@ -323,15 +328,15 @@ await dropFiles('.req-new-files .req-drop', [['refund-policy.md', '# Refund poli
 check('New feature with two files: two chips and the privacy note naming the model',
   await until(() => A.evalJs(`document.querySelectorAll('.req-new-chip').length === 2
     && /^Worca sends each file to .+ to read it\\./.test(document.querySelector('.req-new-files .req-files-privacy')?.textContent || '')`)));
-holdReads(6000);
+holdReads(true);
 await A.evalJs(`[...document.querySelectorAll('.req-new .btn-primary')].at(-1).click()`);
 check('the feature page says "Reading 2 files…" and the Files card shows each file as Reading…',
   await until(() => A.evalJs(`(() => { const rows = [...document.querySelectorAll('#requirements-host .req-files .req-file')];
     return /Reading 2 files…/.test(document.querySelector('#requirements-host .req-reading')?.textContent || '')
       && rows.length === 2 && rows.every((r) => r.querySelector('.badge.blue')?.textContent === 'Reading…'
-        && /^Worca is reading it/.test(r.querySelector('.req-file-state')?.textContent || '')); })()`), 8000));
-holdReads(1500);
-check('then round 1 shows', await until(() => A.evalJs(`!!document.querySelector('#requirements-host .qpanel .qopt')`), 20000));
+        && /^Worca is reading it/.test(r.querySelector('.req-file-state')?.textContent || '')); })()`), HOLD_MS));
+holdReads(false);
+check('then round 1 shows', await until(() => A.evalJs(`!!document.querySelector('#requirements-host .qpanel .qopt')`), AFTER_HOLD_MS));
 const filesSeq = await A.evalJs(`location.hash.split('/').pop()`);
 const filesHash = `#requirements/feature/${filesSeq}`;
 const fileIds = await A.evalJs(`[...document.querySelectorAll('#requirements-host .req-files .req-file')].map((r) => r.getAttribute('data-file'))`);
@@ -355,16 +360,16 @@ check("a read file's ⋯ menu: Open, Edit what Worca took from it, Ask about thi
     return items.join('|') === 'Open|Edit what Worca took from it|Ask about this file…|Replace with a newer version…|Read again|Remove'; })()`));
 await A.evalJs(`document.querySelector('[data-ui="file-more-${firstId}"]').click(); document.querySelector('[data-ui="fmi-ask-${firstId}"]').click()`);
 await until(() => A.evalJs(`!!document.querySelector('[data-ui="file-ask-text-${firstId}"]')`));
-holdReads(6000);
+holdReads(true);
 await A.evalJs(`(() => { const i = document.querySelector('[data-ui="file-ask-text-${firstId}"]'); i.value = 'What about store credit?';
   i.dispatchEvent(new Event('input')); document.querySelector('[data-ui="file-ask-go-${firstId}"]').click(); })()`);
 check('while Worca answers, the file says Asking… and what it is looking for',
   await until(() => A.evalJs(`(() => { const r = document.querySelector('[data-file="${firstId}"]');
     return [...r.querySelectorAll('.badge.blue')].some((b) => b.textContent === 'Asking…')
-      && r.querySelector('.req-file-asking')?.textContent === 'Worca is looking for: “What about store credit?”…'; })()`), 8000));
-holdReads(1500);
+      && r.querySelector('.req-file-asking')?.textContent === 'Worca is looking for: “What about store credit?”…'; })()`), HOLD_MS));
+holdReads(false);
 check('Ask about this file: "Added to what Worca took from it · Q: …"',
-  await until(() => A.evalJs(`/Added to what Worca took from it · Q: What about store credit\\?/.test(document.querySelector('#requirements-host').textContent)`), 15000));
+  await until(() => A.evalJs(`/Added to what Worca took from it · Q: What about store credit\\?/.test(document.querySelector('#requirements-host').textContent)`), AFTER_HOLD_MS));
 await pickFiles(`[data-menu="file-${secondId}"] input[type="file"]`, [['tickets-v2.pdf', '%PDF-1.7\n%v2\n', 'application/pdf']]);
 check('Replace opens its dialog for the file',
   await until(() => A.evalJs(`document.querySelector('.req-dialog h2')?.textContent === 'Replace tickets.pdf'`)));
@@ -376,15 +381,15 @@ await A.evalJs(`document.querySelector('#requirements-host .req-skip').click()`)
 await until(() => A.evalJs(`!!document.querySelector('#requirements-host [data-ui="confirm-all"], #requirements-host .req-build')`), 15000);
 // A file added after the interview finished is asked about in one follow-up round. Worca starts it itself when the read
 // ends, unless it cannot (here: the feature is archived while the file is read); restored, Decide offers Ask about <file>.
-holdReads(6000);
+holdReads(true);
 const faqId = await A.evalJs(`(async () => {
   const up = await fetch('/api/requirements/${filesSeq}/attachments', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ attachments: [{ name: 'faq.txt', dataBase64: btoa('Store credit never expires.\\n') }] }) });
   const f = (await up.json()).feature;
   await fetch('/api/requirements/${filesSeq}/archive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
   return up.status === 202 && f ? (f.attachments.find((a) => a.name === 'faq.txt') || {}).id || null : null; })()`);
-holdReads(1500);
-const faqRead = await until(async () => ((await featureApi(filesSeq)).attachments || []).some((a) => a.id === faqId && a.status === 'done'), 15000);
+holdReads(false);
+const faqRead = await until(async () => ((await featureApi(filesSeq)).attachments || []).some((a) => a.id === faqId && a.status === 'done'), AFTER_HOLD_MS);
 await A.evalJs(`fetch('/api/requirements/${filesSeq}/archive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ restore: true }) })`);
 check('a file added after the interview, which Worca could not ask about itself: Decide offers "Ask about faq.txt"',
   !!faqId && faqRead && await until(() => A.evalJs(`document.querySelector('#requirements-host .req-decide [data-ui="follow-up"]')?.textContent === 'Ask about faq.txt'`), 10000));
@@ -411,9 +416,10 @@ const filesRunId = await (async () => { let id = null; await until(async () => {
 // The start stages the files in the OS temp dir (orchestrator-extras-<runId>); the run's pipeline copies them into its own
 // extras folder, and the staged folder is removed then.
 const pipelineExtras = () => { const dir = filesRunId && runs.get(filesRunId)?.orch?.pipeline?.dir; return dir ? path.join(dir, 'extras') : null; };
-check('Start sends the switched-on file: the run\'s extras hold it under its name, and only it',
-  await until(() => { const x = pipelineExtras(); return !!x && existsSync(path.join(x, 'refund-policy.md')); }, 15000)
-  && !existsSync(path.join(pipelineExtras(), 'tickets-v2.pdf')));
+const extrasNow = () => { const x = pipelineExtras(); try { return x ? readdirSync(x).sort() : []; } catch { return []; } };
+check('Start sends the switched-on file: the run\'s extras hold exactly it, under its name',
+  await until(() => extrasNow().length > 0, 15000) && JSON.stringify(extrasNow()) === JSON.stringify(['refund-policy.md']),
+  JSON.stringify(extrasNow()));
 check('the staged copies are removed once the run has its own',
   await until(() => !existsSync(path.join(tmpdir(), `orchestrator-extras-${filesRunId}`)), 15000));
 check('the start records the file it sent',

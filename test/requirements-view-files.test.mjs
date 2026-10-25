@@ -14,6 +14,8 @@ let answer = true;
 window.confirm = (q) => { asked.push(q); return answer; };
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async () => { for (let i = 0; i < 8; i += 1) await tick(); };
+/** n calendar days before today, at local noon: age() counts calendar days, so DST cannot shift it. */
+const daysAgo = (n) => { const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - n); return d.toISOString(); };
 after(() => window.close());
 const { createRequirementsView, sizeText, uploadBatches } = await import('../ui/public/requirements-view.mjs');
 
@@ -1228,7 +1230,7 @@ const madeBrief = (over = {}) => ({
   brief: { id: 3, scopeType: 'project', scopeKey: 'shop-1', status: 'ready', sections: { product: 'A shop.', users: [{ name: 'Buyer', can: 'buys', source: 'glossary.pdf' }],
     terms: [{ term: 'Order', meaning: 'a purchase', source: 'glossary.pdf' }], areas: [{ name: 'Orders', text: 'checkout', status: 'exists', files: [], source: 'glossary.pdf' }] },
   edited: {}, sources: [{ project: 'shop-1', branch: 'main', ref: 'refs/heads/main', sha: '3f9c2a1deadbeef00' }], files: [], seed: null, model: 'claude-opus-5-5',
-  costUsd: 1.42, error: null, madeBy: 'po', madeAt: new Date(Date.now() - 2 * 86400000).toISOString(), updatedAt: '2026-10-21T10:00:00Z' },
+  costUsd: 1.42, error: null, madeBy: 'po', madeAt: daysAgo(2), updatedAt: '2026-10-21T10:00:00Z' },
   target: { name: 'shop', branch: 'main', repositories: 1, leftOut: [], slow: [] }, notes: { scopeType: 'project', scopeKey: 'shop-1', body: '', lookAtCode: true },
   estimate: { costUsd: 1.5, model: { id: 'claude-opus-5-5', label: 'Opus 5.5' } }, usedBy: [], staleness: null,
   documents: [doc({ sendWithEveryRun: false })], interview: INTERVIEW, resetPeriod: 'monthly', ...over });
