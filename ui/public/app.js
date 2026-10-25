@@ -420,7 +420,7 @@ let lastChatHomeFlags = null;   // the switches chatHomeFlags last read: onHello
 const chatDeps = {
   openRunPanel: (ref, opts) => chatOpenRunPage(ref, opts),
   openArtifact: (ref, artifact) => chatDeps.openRunPanel(ref, { tab: 'artifacts' }),
-  // #948 s2 (chatsColumn): Rename… in the Chats column, and the project or workspace name on a chat row.
+  // #948 s2: Rename… in the Chats column, and the project or workspace name on a chat row.
   prompt: (o) => promptModal(o),
   scopeName: (s) => {
     if (s && s.projectKey) { const p = (state.projects || []).find((x) => x.key === s.projectKey); return p ? p.name || projectName(p.path) : ''; }
@@ -1290,11 +1290,9 @@ if (topnavSearchRoot) createTopnavSearch({
     if (!runsUi.view.labels.includes(label)) setRunsView({ labels: [...runsUi.view.labels, label] });
     goRunsList();
   },
-  // #948 s2: the Chats group while chatsColumn is on (title and message text, server-side), first on the Chat page.
-  searchChats: (q) => (flagOn('chatsColumn')
-    ? fetch(`/api/ask/threads?limit=${CHAT_LIMIT}&q=${encodeURIComponent(q)}`).then((r) => (r.ok ? r.json() : null)).catch(() => null)
-      .then((b) => chatRows(b && Array.isArray(b.threads) ? b.threads : []))
-    : Promise.resolve([])),
+  // #948 s2: the Chats group (title and message text, server-side), first on the Chat page.
+  searchChats: (q) => fetch(`/api/ask/threads?limit=${CHAT_LIMIT}&q=${encodeURIComponent(q)}`).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+    .then((b) => chatRows(b && Array.isArray(b.threads) ? b.threads : [])),
   chatsFirst: () => document.body.classList.contains('view-chat'),
 });
 
@@ -38646,11 +38644,11 @@ function showView(name, param = '') {
   }
   paintSearchPlaceholder();
 }
-/** #948 s2 (chatsColumn): the top search says what it finds on the Chat page. */
+/** #948 s2: the top search says what it finds on the Chat page. */
 function paintSearchPlaceholder() {
   const input = document.getElementById('tsearch-input');
   if (!input) return;
-  const text = flagOn('chatsColumn') && document.body.classList.contains('view-chat') ? 'Search chats or ask' : 'Search or ask';
+  const text = document.body.classList.contains('view-chat') ? 'Search chats or ask' : 'Search or ask';
   input.placeholder = text;
   input.setAttribute('aria-label', text);
 }
@@ -40143,12 +40141,6 @@ askPanel = createAskPanel({
 // Command summaries (#911): read the person's switch once, and follow the flag.
 Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).then((d) => setChatSummariesPref(d && d.chat)).catch(() => { /* keep: on */ });
 onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); void paintHelperModelCards(); });
-// #948 s2: the Chats column swaps in and out live; the unsubscribe is a test hook (flags.mjs listeners outlive a jsdom boot).
-if (typeof window !== 'undefined') {
-  window.__np = window.__np || {};
-  window.__np.offChatsColumnFlag?.();
-  window.__np.offChatsColumnFlag = onFlagChange('chatsColumn', () => { askPanel?.chatsColumnChanged(); paintSearchPlaceholder(); });
-}
 // One delegated handler for every Summaries / Raw switch (Logs tab, History Logs, both drawers, Chat's run
 // panel): they are cloned on every build, so per-node listeners would be lost on each rebuild.
 document.addEventListener('click', (e) => {

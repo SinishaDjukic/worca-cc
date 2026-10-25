@@ -1554,7 +1554,7 @@ test('list keys: ? opens one Keyboard shortcuts sheet; Esc closes it and keeps t
   assert.equal(doc.activeElement, doc.getElementById('runs-view-btn'));
 });
 
-test('list keys: ? opens nothing while typing, over a row menu, or on the Chat page', async () => {
+test('list keys: ? opens nothing while typing or over a row menu; on the Chat page it opens the Chat sheet, not the Runs one', async () => {
   const { window, doc } = await boot();
   go(window, 'runs'); await settle(window);
   const input = doc.getElementById('tsearch-input');
@@ -1567,7 +1567,8 @@ test('list keys: ? opens nothing while typing, over a row menu, or on the Chat p
   press(window, doc.activeElement, 'Escape');
   go(window, 'chat/new'); await settle(window);
   press(window, doc.body, '?', { shiftKey: true });
-  assert.equal(doc.querySelectorAll('.keys-modal').length, 0, 'on the Chat page');
+  const heads = [...doc.querySelectorAll('.keys-modal h3.keys-h')].map((n) => n.textContent);
+  assert.ok(heads.includes('Chat page') && !heads.includes('Runs list'), 'on the Chat page');
 });
 
 test('list keys: Enter on a focused ⋯ keeps the button\'s own Enter (no open, no hash change)', async () => {

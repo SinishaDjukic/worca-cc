@@ -1,4 +1,4 @@
-// The Chats column (issue #948 slice 2, flag chatsColumn), mounted by ask-panel.mjs into its aside.chat-history. The Runs
+// The Chats column (issue #948 slice 2), mounted by ask-panel.mjs into its aside.chat-history. The Runs
 // list's parts: the head (Chats + View), the view chip, renderRunsList's sections, rows and notes, the ⋯ menu (openMenu),
 // the .runs-bulk bar (list-dom.mjs paintBulkBar), createRunsSelection / rangeKeys, the roving Tab stop (list-dom.mjs
 // createListRove), the resize handle and the shared list keys. It owns the fetch and the paging; the panel owns
@@ -97,12 +97,12 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
       body = r && r.ok ? await r.json() : null;
       groupsBody = gr && gr.ok ? await gr.json().catch(() => null) : null;
     } catch { body = null; }
-    if (st.destroyed || gen !== st.gen) return;
+    if (st.destroyed || gen !== st.gen) return null;
     if (!body || !Array.isArray(body.threads)) {
       // Nothing loaded yet: the offline note with Try again. Rows on screen: keep them and say so once.
       if (!st.threads.length) { st.failed = true; paint(); }
       else notify({ tone: 'err', title: 'Could not load the chats', key: 'chats-load' }, { doc });
-      return;
+      return false;
     }
     if (cursor) {
       const have = new Set(st.threads.map((t) => t.id));
@@ -115,7 +115,9 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     st.loaded = true;
     st.failed = false;
     paint();
+    return true;
   }
+  /** Re-read the list: true once it painted, false when the fetch failed, null when a newer load or destroy won. */
   const refresh = () => load();
   // `requestRefresh` (ask-panel.mjs): the panel's debounced refresh, which only marks the list stale while Chat is hidden.
   function scheduleRefresh() {
@@ -146,7 +148,8 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     if (st.near.length && !rove.find([st.focusKey])) { const n = rove.find(st.near); if (n) st.focusKey = navKey(n); }
     st.near = [];
     const target = rove.rove();
-    if (hadFocus && target) target.focus();
+    // The focused rows went with the list (the last chat deleted, a Delete all): the column keeps the focus, never <body>.
+    if (hadFocus) { if (target) target.focus(); else try { host.focus({ preventScroll: true }); } catch { /* detached */ } }
   }
   function paintCurrent() {
     const id = currentId();

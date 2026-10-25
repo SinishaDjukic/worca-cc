@@ -194,9 +194,6 @@ const THREADS_REFRESH_MS = 250;
 const HISTORY_KEY = 'worca-cc.chat.history';
 const HISTORY_OPEN_MIN_W = 1600;
 const HISTORY_OVERLAY_BELOW = 1100;
-const HISTORY_GROUPS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['earlier', 'Earlier']];
-/** The column's search waits this long after the last keystroke before it asks the server. */
-const HISTORY_SEARCH_MS = 200;
 
 export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true }) {
   const homePick = browserPick();         // hoisted declaration (defined below)
@@ -241,13 +238,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     wantThread: undefined,    // the chat the page shows or is loading: an id, null = home (a new chat), undefined = none yet
     unread: false,            // what onUnread was last told (the Chat row's dot)
     historyStale: true,       // the History rows need a fetch at the next show (a refresh frame landed while hidden)
-    historyLoaded: false,     // rows (or the empty line) have been painted once
-    historyGen: 0,            // drops a stale list response
     historyAsPush: false,     // the column was opened as a push column: narrowing the window below 1100px closes it
-    historySearchOpen: false, // the column's search field is unfolded (the head's .is-searching)
-    historyQuery: '',         // the search field's text; loadHistory sends it trimmed as ?q=
-    historyListQuery: '',     // the trimmed query the last list request carried ('' = the full list, null = it failed)
-    historySearchTimer: null, // the typing debounce (HISTORY_SEARCH_MS)
     unreadThread: null,       // the chat whose reply lit the dot — the most recent one (app.js opens it from the Chat row)
     askedIn: new Set(),       // chats this tab sent a message in: only their replies (and the open chat's) light the dot
     pendingFiles: [],
@@ -418,23 +409,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     b.addEventListener('click', onClick);
     return b;
   }
-  /** "+ New chat" — the head's and the History column's: a labelled ghost button (style.css .chat-new-btn). Both carry
-   *  [data-ask-new-btn], which the add-ons' capture-phase listeners read (chat/home-flip.mjs arms the glide,
-   *  chat/intent.mjs drops the intent). Below 1100px the overlay closes first, as after a pick, so the new chat has its
-   *  room and newThread() can focus its composer. */
-  function newChatButton(className) {
-    const b = make('button', `btn btn-sm btn-quiet chat-new-btn ${className}`);
-    b.type = 'button';
-    b.setAttribute('data-ask-new-btn', '');
-    b.appendChild(svgIcon(ICONS.plus, 14, 2));
-    b.appendChild(make('span', null, 'New chat'));
-    b.addEventListener('click', () => {
-      if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
-      newThread();
-      route(null);
-    });
-    return b;
-  }
   /** The History toggle's glyph: a page with a folded corner and lines of text (the saved chats). */
   function historyIcon() {
     return svgIcon(['M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z', 'M14 3v4a1 1 0 0 0 1 1h4',
@@ -466,7 +440,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
     const convo = make('div', 'chat-convo');
     const head = make('header', 'chat-head');
-    el.head = head;                                   // applyChatsMode swaps the head's New chat and meter
+    el.head = head;                                   // mountChats adds the head's New chat + and meter
     const threadsBtn = iconButton('btn btn-quiet btn-icon chat-head-btn chat-history-toggle', 'History', historyIcon(), () => toggleHistory());
     threadsBtn.setAttribute('data-ask-threads-btn', '');
     threadsBtn.setAttribute('aria-controls', 'chat-history');
@@ -475,8 +449,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.title = make('div', 'ask-title', 'New chat');
     head.appendChild(el.title);
     head.appendChild(make('span', 'chat-head-spacer'));
-    el.headNew = newChatButton('chat-head-btn');
-    head.appendChild(el.headNew);
     convo.appendChild(head);
 
     el.home = make('div', 'chat-home');
@@ -523,7 +495,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.sheet = convo;         // the popover host outside the composer — the floating sheet's role, its name kept
     el.page = page;
     paintHistory();
-    applyChatsMode();
+    mountChats();
     return page;
   }
 
@@ -732,7 +704,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const liveCost = lv ? (Number.isFinite(lv.costUsd) ? lv.costUsd : (Number.isFinite(lv.estimatedCostUsd) ? lv.estimatedCostUsd : null)) : null;
     if (liveCost != null) el.meterCost.textContent = `≈${fmtUsd((Number.isFinite(totals.costUsd) ? totals.costUsd : 0) + liveCost)}`;
     else el.meterCost.textContent = totals.costUsd == null ? '' : (fmtUsd(totals.costUsd) || '');
-    // #948 s2 (chatsColumn): the head meter. Its cost is el.meterCost's text just written (stored total, or "≈" with the
+    // #948 s2: the head meter. Its cost is el.meterCost's text just written (stored total, or "≈" with the
     // live figure), so the two never disagree.
     if (el.headMeter) {
       el.headMeter.textContent = [pct != null ? `${pct}%` : '', el.meterCost.textContent, fmtAgents(totals.agents) || '']
@@ -1754,7 +1726,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function ownsKey(e) {
     if (e.key !== 'Escape' || e.defaultPrevented || st.destroyed || !st.open || modalUp() || el.page.closest('[inert]')) return false;
     if (e.target && typeof e.target.closest === 'function' && e.target.closest('.term-pane, [data-chat-panel]')) return false;
-    if (e.target === el.historySearchInput) return false;   // the History search clears, then folds, before the overlay closes
     return !!st.popover || historyOverlayOpen();
   }
 
@@ -1846,55 +1817,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   // ---- the History column (worca Chat P1) -----------------------------------
-  /** History-row topics: the first one's name plus "+N", every name in the hover. Display-only — the row is the click target. */
-  function threadTopics(t) {
-    const list = validContexts(t.contexts);
-    if (!list.length) return null;
-    const name = (c) => c.label || c.id;
-    const span = make('span', 'ask-thread-topics', list.length > 1 ? `${name(list[0])} +${list.length - 1}` : name(list[0]));
-    span.title = list.map((c) => `${name(c)}${c.source === 'chat' ? ' (mentioned)' : ''}`).join('\n');
-    return span;
-  }
-
-  // The start date leads the meter line, bold and on the primary ink, so the eye
-  // scans it down the list while the cost/agent figures keep the meter's grey.
-  // Hence an element rather than a string: only the date changes weight and
-  // colour. An unusable createdAt drops the span and its separator with it.
-  function threadMeter(t) {
-    const meter = make('span', 'ask-thread-meter');
-    const tot = t.totals || {};
-    const when = fmtStarted(t.createdAt, now());
-    if (when) meter.appendChild(make('span', 'ask-thread-when', when));
-    // With a known window the fill is its own span (level colour + hover); without one it stays plain
-    // text, so a legacy row's meter is exactly the date element plus "… · $x · n agents".
-    const fillText = fmtCtx(tot.ctx, tot.ctxWindow);
-    let fill = fillText;
-    if (fillText && Number.isInteger(tot.ctxWindow) && tot.ctxWindow > 0) {
-      const level = ctxLevel(tot.ctx, tot.ctxWindow);
-      fill = make('span', `ask-thread-fill${level === 'warn' ? ' is-ctx-warn' : level === 'high' ? ' is-ctx-high' : ''}`, fillText);
-      const title = ctxTitle(tot.ctx, tot.ctxWindow);
-      if (title) fill.title = title;
-    }
-    const parts = [threadTopics(t), fill, fmtUsd(tot.costUsd), fmtAgents(tot.agents)].filter(Boolean);
-    parts.forEach((p, i) => {
-      if (when || i > 0) meter.appendChild(doc.createTextNode(' · '));
-      meter.appendChild(typeof p === 'string' ? doc.createTextNode(p) : p);
-    });
-    return meter;
-  }
-
-  /** History meter: "12 chats" / "1 chat" / '' at 0 (same empty-string convention as the agents meter). */
-  function fmtChats(n) {
-    return Number.isFinite(n) && n > 0 ? `${n} chat${n === 1 ? '' : 's'}` : '';
-  }
-  /** History meter while searching: "3 of 54 chats" (the matches of every saved chat). */
-  function fmtMatches(n, all) {
-    return Number.isInteger(all) && all > 0 ? `${n} of ${all} chat${all === 1 ? '' : 's'}` : fmtChats(n);
-  }
-
-  // CONTRACT §1 aside.chat-history: every saved chat, newest first, grouped Today / Yesterday / Earlier by its last
-  // activity; a row opens the chat, its trash deletes it (confirm). A 264px push column, an overlay with a scrim below
-  // 1100px (style.css). The page's data-history attribute is the truth (setHistoryOpen, P4 reads and sets it).
+  // CONTRACT §1 aside.chat-history: the Chats column's host (chats-column.mjs, mounted by mountChats). A push column, an
+  // overlay with a scrim below 1100px (style.css). The page's data-history attribute is the truth (setHistoryOpen, P4
+  // reads and sets it).
   function buildHistory() {
     const aside = make('aside', 'chat-history');
     aside.setAttribute('data-chat-history', '');
@@ -1902,90 +1827,58 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     aside.setAttribute('aria-label', 'Chats');
     aside.tabIndex = -1;                             // the overlay takes focus when it opens (toggleHistory)
     // Below 1100px the column is an overlay over the chat: focus leaving it (Tab past the last row, Shift+Tab out)
-    // closes it, so the keyboard never walks the controls hidden under it. A dialog it opened (delete) keeps it.
+    // closes it, so the keyboard never walks the controls hidden under it. A menu, picker or dialog it opened keeps it.
     aside.addEventListener('focusout', (e) => {
       const to = e.relatedTarget;
-      if (!historyOverlayOpen() || !to || aside.contains(to) || (typeof to.closest === 'function' && to.closest('.viewer-modal'))) return;
+      if (!historyOverlayOpen() || !to || aside.contains(to) || (typeof to.closest === 'function' && to.closest('.viewer-modal, .wfv-menu, .group-picker, .keys-modal'))) return;
       setHistoryOpen(false, { persist: false });
     });
-    fillHistory(aside);
     return aside;
   }
-  /** The column's content (head, search, New chat, body). Rebuilt when the Chats column (flag chatsColumn) goes away. */
-  function fillHistory(aside) {
-    // The head is built once and kept across repaints (renderHistory touches only the meter's text and the body), so the
-    // search box's slide (style.css .is-searching) runs and typing never loses the caret. Folded: "Chats  54 chats 🔍".
-    // Open: "🔍 Search chats…  3 of 54 chats" — the box's left edge slides over the title and the meter's resting place
-    // (the Workflows Library's search), and the meter rides at the end of the field.
-    const head = make('div', 'chat-history-head');
-    el.historyHead = head;
-    head.appendChild(make('span', 'chat-history-title', 'Chats'));
-    el.historyMeter = make('span', 'chat-history-meter', '');
-    head.appendChild(el.historyMeter);
-    head.appendChild(buildHistorySearch());
-    aside.appendChild(head);
-    // New chat leads the list, outside the body renderHistory repaints: a refresh or a search never drops it.
-    aside.appendChild(newChatButton('chat-history-new'));
-    el.historyBody = make('div', 'chat-history-body');
-    aside.appendChild(el.historyBody);
-    syncHistorySearch();
-  }
-
-  // ---- Chats column (#948 s2, flag chatsColumn) -------------------------------------------------------------------
+  // ---- Chats column (#948 s2) -----------------------------------------------------------------------------------
   let chatsCol = null;
-  /** The head's one New chat in chats mode: a + right after the list toggle (mock 11). Same click as the labelled one, and
-   *  the same data-ask-new-btn, so chat/intent.mjs and chat/home-flip.mjs hook it unchanged. */
+  /** The head's one New chat: a + right after the list toggle (mock 11). It carries [data-ask-new-btn], which the add-ons'
+   *  capture-phase listeners read (chat/home-flip.mjs arms the glide, chat/intent.mjs drops the intent). Below 1100px
+   *  the overlay closes first, as after a pick, so the new chat has its room and newThread() can focus its composer. */
   function newChatPlus() {
     const b = iconButton('btn btn-quiet btn-icon chat-head-btn chat-new-plus', `New chat ${keyHint(['alt', 'mod', 'N'], isMac(win))}`,
       svgIcon(ICONS.plus, 16, 2), () => { if (historyOverlayOpen()) setHistoryOpen(false, { persist: false }); newThread(); route(null); });
     b.setAttribute('data-ask-new-btn', '');
     return b;
   }
-  function applyChatsMode() {
-    const on = flagOn('chatsColumn', doc);
-    if (on === !!chatsCol) return;
-    const aside = el.history;
-    if (on) {
-      el.page.dataset.chats = 'on';
-      chatsCol = mountChatsColumn({ host: aside, fetch, storage, win, now, level: () => currentLevel(doc),
-        scopeName: (sc) => chatDep('scopeName', sc) || '', currentId: () => (typeof st.wantThread === 'string' ? st.wantThread : st.threadId),
-        onOpen: (id) => { if (historyOverlayOpen()) setHistoryOpen(false, { persist: false }); showThread(id); route(id); },
-        onRename: (r) => { void renameThread(r); }, onDelete: (r) => { void deleteThread({ id: r.id, title: r.title }); },
-        onHelp: (opener) => openChatKeys(opener),
-        flagOn: (k) => flagOn(k, doc), confirm: (o) => confirm(o), requestRefresh: () => scheduleThreadsRefresh(),
-        // #948 s3: Delete group removed these chats; the open one goes home, as a deleted chat does (deleteThread).
-        onChatsGone: (ids) => {
-          for (const id of ids) { if (readStoredThread() === id) storeThread(null); st.askedIn.delete(id); st.queues.delete(id); }
-          if (ids.includes(st.threadId) || ids.includes(st.wantThread)) {
-            if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
-            newThread();
-            route(null, { replace: true });
-          }
-        } });
-      el.headNew.remove();
-      el.historyBtn.after(el.headPlus = newChatPlus());
-      // D28: the open chat's figures, once, as the context popover's button (the composer's .ask-meter hides by CSS).
-      el.headMeter = make('button', 'btn btn-sm btn-quiet chat-head-meter');
-      el.headMeter.type = 'button';
-      el.headMeter.setAttribute('aria-haspopup', 'menu');
-      el.headMeter.setAttribute('aria-expanded', 'false');
-      el.headMeter.addEventListener('click', () => openCtxPopover(el.headMeter));
-      el.head.appendChild(el.headMeter);
-      updateMeters();
-      loadHistory();                              // hidden (a boot on another page): stale until Chat shows
-    } else {
-      chatsCol.destroy();
-      chatsCol = null;
-      delete el.page.dataset.chats;
-      fillHistory(aside);                         // today's head, search, New chat and body
-      if (st.popover && st.popover.trigger === el.headMeter) closePopover({ focusTrigger: false });
-      el.headPlus.remove();
-      el.headPlus = null;
-      el.headMeter.remove();
-      el.headMeter = null;
-      el.head.appendChild(el.headNew);            // after the spacer, as today
-      loadHistory();
-    }
+  function mountChats() {
+    el.page.dataset.chats = 'on';
+    chatsCol = mountChatsColumn({ host: el.history, fetch, storage, win, now, level: () => currentLevel(doc),
+      scopeName: (sc) => chatDep('scopeName', sc) || '', currentId: () => (typeof st.wantThread === 'string' ? st.wantThread : st.threadId),
+      onOpen: (id) => {
+        const overlay = historyOverlayOpen();
+        if (overlay) setHistoryOpen(false, { persist: false });   // the overlay gives the chat its room
+        showThread(id);
+        route(id);
+        if (overlay) focusComposer();                // the picked row is hidden now: focus goes to the chat
+      },
+      onRename: (r) => { void renameThread(r); }, onDelete: (r) => { void deleteThread({ id: r.id, title: r.title }); },
+      onHelp: (opener) => openChatKeys(opener),
+      flagOn: (k) => flagOn(k, doc), confirm: (o) => confirm(o), requestRefresh: () => scheduleThreadsRefresh(),
+      // #948 s3: Delete group removed these chats; the open one goes home, as a deleted chat does (deleteThread).
+      onChatsGone: (ids) => {
+        for (const id of ids) { if (readStoredThread() === id) storeThread(null); st.askedIn.delete(id); st.queues.delete(id); }
+        if (ids.includes(st.threadId) || ids.includes(st.wantThread)) {
+          if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
+          newThread();
+          route(null, { replace: true });
+        }
+      } });
+    el.historyBtn.after(el.headPlus = newChatPlus());
+    // D28: the open chat's figures, once, as the context popover's button (the composer's .ask-meter hides by CSS).
+    el.headMeter = make('button', 'btn btn-sm btn-quiet chat-head-meter');
+    el.headMeter.type = 'button';
+    el.headMeter.setAttribute('aria-haspopup', 'menu');
+    el.headMeter.setAttribute('aria-expanded', 'false');
+    el.headMeter.addEventListener('click', () => openCtxPopover(el.headMeter));
+    el.head.appendChild(el.headMeter);
+    updateMeters();
+    loadHistory();                                // hidden (a boot on another page): stale until Chat shows
   }
   async function renameThread(r) {
     const v = await chatDep('prompt', { title: 'Rename chat', fields: [{ id: 'title', label: 'Title', value: r.title, required: true }] });
@@ -2022,71 +1915,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
   }
 
-  /** The search box: its button (aria-controls the field) and the field. The server searches titles and message text
-   *  (GET /api/ask/threads?q=); the field only holds the text. */
-  function buildHistorySearch() {
-    const box = make('div', 'chat-history-sbox');
-    const input = make('input', 'chat-history-search-input');
-    input.id = 'chat-history-search';
-    input.type = 'search';
-    input.autocomplete = 'off';
-    input.spellcheck = false;
-    input.placeholder = 'Search chats…';
-    input.setAttribute('aria-label', 'Search chats');
-    const btn = iconButton('chat-history-search-btn', 'Search chats', ICONS.search, () => {
-      if (!st.historySearchOpen) { st.historySearchOpen = true; syncHistorySearch(); input.focus(); return; }
-      if (st.historyQuery) { input.focus(); return; }            // a field with text stays open
-      closeHistorySearch(btn);
-    });
-    btn.id = 'chat-history-search-btn';
-    btn.setAttribute('aria-controls', input.id);
-    // Typing waits for a pause, then fetches: only the body repaints, so the caret and an IME composition survive.
-    input.addEventListener('input', () => {
-      st.historyQuery = input.value;
-      clearTimeout(st.historySearchTimer);
-      st.historySearchTimer = setTimeout(searchHistoryNow, HISTORY_SEARCH_MS);
-      if (st.historySearchTimer && typeof st.historySearchTimer.unref === 'function') st.historySearchTimer.unref();
-    });
-    // Escape clears the text first, then folds the field (ownsKey leaves it to the field, even over the overlay).
-    input.addEventListener('keydown', (e) => {
-      if (e.key !== 'Escape') return;
-      e.preventDefault();
-      e.stopPropagation();
-      if (st.historyQuery) { st.historyQuery = ''; input.value = ''; searchHistoryNow(); } else closeHistorySearch(btn);
-    });
-    box.append(btn, input);
-    el.historySearch = box;
-    el.historySearchBtn = btn;
-    el.historySearchInput = input;
-    return box;
-  }
-  /** The head follows the search state: the slide, aria-expanded, the folded field inert (no focus, no Tab stop), and
-   *  the meter beside the button (folded) or at the end of the open field. */
-  function syncHistorySearch() {
-    const open = st.historySearchOpen;
-    el.historyHead.classList.toggle('is-searching', open);
-    el.historySearchBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    el.historySearchInput.toggleAttribute('inert', !open);
-    if (el.historySearchInput.value !== st.historyQuery) el.historySearchInput.value = st.historyQuery;
-    if (open) el.historySearch.appendChild(el.historyMeter);
-    else el.historyHead.insertBefore(el.historyMeter, el.historySearch);
-  }
-  /** Fold the search and drop its text; `focusEl` takes the focus (the field goes inert — never leave it on <body>). */
-  function closeHistorySearch(focusEl) {
-    st.historyQuery = '';
-    st.historySearchOpen = false;
-    syncHistorySearch();
-    searchHistoryNow();
-    if (focusEl) focusEl.focus();
-  }
-  /** Run the search for the field's text now (the debounce ended, or Escape / a fold cleared it): fetch only when the
-   *  list shows something else, so a fold with nothing searched fetches nothing. */
-  function searchHistoryNow() {
-    clearTimeout(st.historySearchTimer);
-    st.historySearchTimer = null;
-    if (st.destroyed) return;
-    if (st.historyQuery.trim() !== st.historyListQuery) loadHistory();
-  }
   function overlayMode() { return (win.innerWidth || 0) < HISTORY_OVERLAY_BELOW; }
   function historyOpen() { return !!el.page && el.page.dataset.history === 'open'; }
   function historyOverlayOpen() { return historyOpen() && overlayMode(); }
@@ -2122,34 +1950,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (el.scrim) el.scrim.hidden = !(open && overlayMode());
   }
 
-  /** Fetch the list and paint it. A failed refresh keeps the rows already shown and marks the list stale, so the next
-   *  show tries again (a boot whose endpoints failed does not keep "No saved chats." for good). While the column's
-   *  search holds text, every fetch (a show, a refresh frame, a delete) asks for its matches. */
+  /** Refresh the Chats column. While Chat is hidden it only marks the list stale; the next show fetches it. */
   function loadHistory() {
-    if (chatsCol) {                                    // #948 s2: the Chats column takes every refresh path
-      if (!st.open) { st.historyStale = true; return; }
-      st.historyStale = false;
-      void chatsCol.refresh();
-      return;
-    }
+    if (!chatsCol) return;
+    if (!st.open) { st.historyStale = true; return; }
     st.historyStale = false;
-    const gen = ++st.historyGen;
-    const query = st.historyQuery.trim();
-    st.historyListQuery = query;
-    Promise.resolve()
-      .then(() => fetch(query ? `/api/ask/threads?limit=50&q=${encodeURIComponent(query)}` : '/api/ask/threads?limit=50'))
-      .then((r) => (r && r.ok ? r.json() : null))
-      .catch(() => null)
-      .then((body) => {
-        if (st.destroyed || gen !== st.historyGen) return;
-        if (!body || !Array.isArray(body.threads)) {
-          st.historyStale = true;
-          st.historyListQuery = null;            // the list still shows the last good answer: any text asks again
-          if (!st.historyLoaded) renderHistory([], 0);
-          return;
-        }
-        renderHistory(body.threads, body.total, query ? { query, all: body.all } : {});
-      });
+    void chatsCol.refresh().then((ok) => { if (ok === false) st.historyStale = true; });   // failed: the next show asks again
   }
 
   /** A refresh frame landed (a run some chat follows moved, a turn started or ended, a question notice, a title):
@@ -2169,106 +1975,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.threadsRefresh && typeof st.threadsRefresh.unref === 'function') st.threadsRefresh.unref();
   }
 
-  /** Today / Yesterday / Earlier by the chat's last activity in the browser's own day; an unreadable date is Earlier. */
-  function historyGroupOf(t, nowMs) {
-    const ms = Date.parse((t && (t.updatedAt || t.createdAt)) || '');
-    if (!Number.isFinite(ms)) return 'earlier';
-    const day = new Date(nowMs);
-    day.setHours(0, 0, 0, 0);
-    if (ms >= day.getTime()) return 'today';
-    const prev = new Date(day);
-    prev.setDate(prev.getDate() - 1);
-    return ms >= prev.getTime() ? 'yesterday' : 'earlier';
-  }
-
-  /** One row: the dots lead the title (green = this chat's turn is thinking; amber = a run it follows waits on you,
-   *  else violet = a run it follows is running), the meter line under it, the trash on hover. */
-  function historyRow(t) {
-    const rowEl = make('div', 'ask-thread-row');
-    rowEl.setAttribute('role', 'listitem');
-    rowEl.dataset.threadId = t.id;
-    const pick = make('button', 'menu-item ask-pop-item ask-thread-pick');
-    pick.type = 'button';
-    pick.appendChild(make('span', `ask-dot ask-thread-dot${t.inFlight ? ' ask-dot-live' : ''}`));
-    pick.appendChild(make('span', `ask-dot ask-thread-dot${t.waiting ? ' ask-dot-wait' : t.tracking ? ' ask-dot-track' : ''}`));
-    const col = make('span', 'ask-thread-col');
-    // A null title = the haiku title has not landed yet; "New chat" is the label the turn falls back to.
-    col.appendChild(make('span', 'ask-thread-title', t.title || 'New chat'));
-    // A search hit in a message (not in the title): the server's excerpt around it, as text.
-    const snippet = t.match && typeof t.match.snippet === 'string' ? t.match.snippet : '';
-    if (snippet) col.appendChild(make('span', 'ask-thread-match', snippet));
-    col.appendChild(threadMeter(t));
-    pick.appendChild(col);
-    const status = [t.inFlight ? 'Replying' : '', t.waiting ? 'Needs you' : (t.tracking ? 'Following a run' : '')].filter(Boolean).join(', ');
-    if (status) pick.appendChild(make('span', 'sr-only', status));
-    pick.addEventListener('click', () => {
-      const overlay = historyOverlayOpen();
-      if (overlay) setHistoryOpen(false, { persist: false });   // the overlay gives the chat its room
-      showThread(t.id);
-      route(t.id);
-      if (overlay) focusComposer();                  // the picked row is hidden now: focus goes to the chat
-    });
-    rowEl.appendChild(pick);
-    rowEl.appendChild(buildThreadTrash(t));
-    return rowEl;
-  }
-
-  /** Paint the list (rows replaced in place; keyboard focus inside the column stays on the same chat's button). A
-   *  `query` = these are its matches: the meter reads "n of N chats" (`all` = every saved chat), none = "No chats match." */
-  function renderHistory(threads, total, { query = '', all = null } = {}) {
-    if (!el.historyBody) return;
-    st.historyLoaded = true;
-    const n = Number.isInteger(total) && total >= 0 ? total : threads.length;
-    el.historyMeter.textContent = query ? fmtMatches(n, all) : fmtChats(n);
-    const buttons = () => [...el.historyBody.querySelectorAll('button')];
-    const focusAt = el.historyBody.contains(doc.activeElement) ? buttons().indexOf(doc.activeElement) : -1;
-    // A refresh can reorder the rows: focus follows the chat; a row that is gone (deleted) falls back to the index.
-    const focusRow = focusAt >= 0 ? doc.activeElement.closest('.ask-thread-row') : null;
-    const focusId = focusRow ? focusRow.dataset.threadId : null;
-    const focusSel = focusRow && doc.activeElement.classList.contains('ask-thread-trash') ? '.ask-thread-trash' : '.ask-thread-pick';
-    el.historyBody.replaceChildren();
-    if (!threads.length) {
-      el.historyBody.appendChild(make('div', 'chat-history-empty', query ? 'No chats match.' : 'No saved chats.'));
-      // The focused row went with the list (the last chat deleted): the column keeps the focus, never <body>.
-      if (focusAt >= 0) { try { el.history.focus({ preventScroll: true }); } catch { /* detached */ } }
-      return;
-    }
-    const t0 = now();
-    for (const [key, label] of HISTORY_GROUPS) {
-      const rows = threads.filter((t) => t && t.id && historyGroupOf(t, t0) === key);
-      if (!rows.length) continue;
-      const group = make('div', 'chat-history-group');
-      group.dataset.group = key;
-      const cap = make('div', 'chat-history-group-label', label);
-      cap.id = `chat-history-${key}`;
-      group.appendChild(cap);
-      const list = make('div', 'ask-threads-list');
-      list.setAttribute('role', 'list');
-      list.setAttribute('aria-labelledby', cap.id);
-      for (const t of rows) list.appendChild(historyRow(t));
-      group.appendChild(list);
-      el.historyBody.appendChild(group);
-    }
-    paintHistoryCurrent();
-    if (focusAt >= 0) {
-      const same = focusId ? [...el.historyBody.querySelectorAll('.ask-thread-row')].find((r) => r.dataset.threadId === focusId) : null;
-      const b = (same && same.querySelector(focusSel)) || buttons()[Math.min(focusAt, buttons().length - 1)];
-      if (b) { try { b.focus(); } catch { /* ignore */ } }
-    }
-  }
-
   /** Mark the chat the page shows (or is loading). */
   function paintHistoryCurrent() {
     if (chatsCol) chatsCol.paintCurrent();
-    if (!el.historyBody) return;
-    const cur = typeof st.wantThread === 'string' ? st.wantThread : st.threadId;
-    for (const rowEl of el.historyBody.querySelectorAll('.ask-thread-row')) {
-      const on = !!cur && rowEl.dataset.threadId === cur;
-      rowEl.classList.toggle('is-current', on);
-      const pick = rowEl.querySelector('.ask-thread-pick');
-      if (on) pick.setAttribute('aria-current', 'true');
-      else pick.removeAttribute('aria-current');
-    }
   }
 
   // ---- catalog + picker (D8) ------------------------------------------------
@@ -3271,7 +2980,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   async function deleteThread(t) {
     closePopover({ focusTrigger: false });
-    // A trash in the History column keeps the focus in the column (below 1100px the composer sits under the overlay).
+    // A delete from the Chats column keeps the focus in the column (below 1100px the composer sits under the overlay).
     const from = el.history && el.history.contains(doc.activeElement) ? doc.activeElement : null;
     const back = () => {
       if (!from) { focusComposer(); return; }
@@ -3296,15 +3005,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       newThread();                                   // clears + focuses the textarea (D14)
       route(null, { replace: true });
     } else back();
-  }
-
-  function buildThreadTrash(t) {
-    const b = make('button', 'ask-thread-trash');
-    b.type = 'button';
-    b.setAttribute('aria-label', `Delete "${t.title || 'New chat'}"`);
-    b.appendChild(svgIcon('M4 7h16M9.5 7V4.8h5V7M6.5 7l.9 12.2h9.2L17.5 7', 14, 1.8));
-    b.addEventListener('click', (e) => { e.stopPropagation(); deleteThread(t); });
-    return b;
   }
 
   // ---- stubs the later tasks replace wholesale ------------------------------
@@ -6800,11 +6500,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // Settings → "Delete all chat history" broadcast (seq-less, threadId-less): every
   // row is gone server-side, so a tab still holding st.threadId would keep a dead
   // chat in memory until its next fetch 404s. Reset exactly like the "+" button.
-  function onHistoryCleared({ scoped = false } = {}) {
+  function onHistoryCleared() {
     closePopover({ focusTrigger: false });
-    // Every row is gone server-side: no fetch. A shared clear removed only the caller's chats: refetch the rest.
-    if (scoped) scheduleThreadsRefresh();
-    else renderHistory([], 0);
+    // The Chats column already dropped the rows (chats-column.mjs onFrame) and re-reads the list.
     if (st.threadId) { newThread(); route(null, { replace: true }); }
   }
 
@@ -6822,7 +6520,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (st.unread && (!Array.isArray(frame.threadIds) || frame.threadIds.includes(st.unreadThread))) setUnread(false);
       // A shared deployment's clear names the threads it removed: only a tab showing one of them resets.
       if (Array.isArray(frame.threadIds) && !frame.threadIds.includes(st.threadId)) { scheduleThreadsRefresh(); return; }
-      onHistoryCleared({ scoped: Array.isArray(frame.threadIds) });
+      onHistoryCleared();
       return;
     }
     if (frame.type === 'ask-command') {                         // #574: a command card's live state, this chat only
@@ -7106,7 +6804,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   const root = buildRoot();
   mountAddons();
   doc.addEventListener('keydown', onDocKeydown, true);
-  doc.addEventListener('keydown', onChatKeys);       // #948 s2: the Chat page keys (chatsColumn only)
+  doc.addEventListener('keydown', onChatKeys);       // #948 s2: the Chat page keys
   doc.addEventListener('pointerdown', onDocPointerdown, true);
   // A mode change (ui-level.mjs applyLevel) re-decides every activity toggle: a mode that hides the rows opens nothing.
   const onLevelChange = () => { if (st.rowEls) for (const entry of st.rowEls.values()) if (entry.relevel) entry.relevel(); };
@@ -7141,7 +6839,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.destroyed = true;
     closePopover({ focusTrigger: false });
     if (st.threadsRefresh) { clearTimeout(st.threadsRefresh); st.threadsRefresh = null; }
-    if (st.historySearchTimer) { clearTimeout(st.historySearchTimer); st.historySearchTimer = null; }
     if (st.elapsedTimer) { clearInterval(st.elapsedTimer); st.elapsedTimer = null; }
     orbs.destroy();
     doc.removeEventListener('keydown', onDocKeydown, true);
@@ -7183,7 +6880,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     ownsKey,
     setScope: (scope) => setScopeFromApi(scope),
     optionsChanged: () => { st.cardOptions = null; },   // projects-changed / workspaces-changed: the next read refetches
-    chatsColumnChanged: () => applyChatsMode(),        // #948 s2: app.js onFlagChange('chatsColumn')
     destroy,
   });
 }

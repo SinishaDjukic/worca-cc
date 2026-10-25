@@ -1,4 +1,4 @@
-// The Chats column's model (issue #948 slice 2, flag chatsColumn): the view (Show / Sort by / Group by, per browser),
+// The Chats column's model (issue #948 slice 2): the view (Show / Sort by / Group by, per browser),
 // the chat rows in the Runs list's item shape (runs-list.mjs renderRunsList draws them), the sections Pinned · Today ·
 // Recent · Older, the busy rule for Archive and the row ⋯ items. Pure: no DOM, no fetch; chats-column.mjs mounts it.
 import { timeMs, rowTime } from './runs-list.mjs';

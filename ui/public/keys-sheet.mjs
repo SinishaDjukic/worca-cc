@@ -1,5 +1,5 @@
 // ui/public/keys-sheet.mjs — the one Keyboard shortcuts sheet (issue #948, mock 10): ? on a list page, or View ›
-// Keyboard shortcuts. One sheet for every list page: the Runs list's keys, and on the Chat page (flag chatsColumn, #948
+// Keyboard shortcuts. One sheet for every list page: the Runs list's keys, and on the Chat page (#948
 // slice 2) the Chat page and Chats list keys. Built on the shared dialog anatomy (dialog-layout.mjs), in folder-changes.mjs's openApplyDialog pattern.
 import { layoutDialog } from './dialog-layout.mjs';
 import { isMac, keyGlyph } from './list-keys.mjs';

@@ -1,4 +1,4 @@
-// test/ui-chats-column.test.mjs — the Chats column (issue #948 slice 2, flag chatsColumn), mounted by the real panel.
+// test/ui-chats-column.test.mjs — the Chats column (issue #948 slice 2), mounted by the real panel.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makePanel } from './helpers/ask-panel-harness.mjs';
@@ -53,8 +53,7 @@ async function bootOn(opts = {}) {
   const rec = { calls: [], patches: [], groupCalls: [], groups: opts.groups || [] };
   const ctx = makePanel({ innerWidth: 1600, now: () => NOW, platform: 'MacIntel', fetchHandler: api(rec, opts), deps: opts.deps,
     ...(opts.confirm ? { confirm: opts.confirm } : {}) });
-  applyFlags({ chatsColumn: true, ...(opts.flags || {}) }, ctx.doc);
-  ctx.panel.chatsColumnChanged();
+  applyFlags({ ...(opts.flags || {}) }, ctx.doc);
   ctx.panel.open({ threadId: null });
   await ticks(ctx);
   return { ctx, rec, doc: ctx.doc, col: ctx.doc.querySelector('[data-chat-history]') };
@@ -64,7 +63,7 @@ const key = (doc, target, init) => target.dispatchEvent(new doc.defaultView.Keyb
 const toastTitles = (doc) => [...doc.querySelectorAll('.toast .tt')].map((n) => n.textContent);
 const listGets = (rec) => rec.calls.filter((c) => c.startsWith('GET /api/ask/threads?'));
 
-test('flag on: head is Chats + View; Pinned · Today · Recent · Older; Recent holds 10; no search, labelled New chat or trash', async () => {
+test('head is Chats + View; Pinned · Today · Recent · Older; Recent holds 10; no search, labelled New chat or trash', async () => {
   const { col } = await bootOn();
   assert.deepEqual([...col.querySelector('.runs-head').children].map((n) => n.textContent.trim()), ['Chats', 'View']);
   assert.deepEqual([...col.querySelectorAll('.runs-sec-head .runs-sec-title')].map((n) => n.textContent), ['Pinned', 'Today', 'Recent', 'Older']);
@@ -76,8 +75,6 @@ test('flag on: head is Chats + View; Pinned · Today · Recent · Older; Recent 
 test('loading, then offline with Try again; Try again re-fetches and paints the rows', async () => {
   const rec = { calls: [], patches: [], failList: true };
   const ctx = makePanel({ innerWidth: 1600, now: () => NOW, fetchHandler: api(rec) });
-  applyFlags({ chatsColumn: true }, ctx.doc);
-  ctx.panel.chatsColumnChanged();
   const col = ctx.doc.querySelector('[data-chat-history]');
   assert.equal(col.querySelector('.runs-loading')?.textContent, 'Loading chats…', 'before any answer');
   assert.equal(col.querySelector('.runs-note:not(.runs-loading)'), null, 'never "No chats yet." while loading');
@@ -96,8 +93,6 @@ test('loading, then offline with Try again; Try again re-fetches and paints the 
 test('hidden, the column fetches nothing: the first show loads it once; a frame while hidden waits for the next show', async () => {
   const rec = { calls: [], patches: [] };
   const ctx = makePanel({ innerWidth: 1600, now: () => NOW, fetchHandler: api(rec) });
-  applyFlags({ chatsColumn: true }, ctx.doc);
-  ctx.panel.chatsColumnChanged();
   await ticks(ctx);
   assert.equal(listGets(rec).length, 0, 'a boot on another page asks for no chats');
   ctx.panel.open({ threadId: null });
@@ -211,19 +206,6 @@ test('Chat page keys: ⌥⌘N starts a new chat through the +, ⌘\\ hides the l
   const composer = doc.querySelector('.chat-page textarea');
   key(doc, composer, { key: '?', code: 'Slash', shiftKey: true });
   assert.equal(doc.querySelectorAll('.keys-modal').length, 0, '? typed in the composer opens nothing');
-});
-
-test('flag off after on: the old column, the labelled New chat and the trash come back; the handle goes', async () => {
-  const { ctx, doc } = await bootOn();
-  applyFlags({ chatsColumn: false }, doc);
-  ctx.panel.chatsColumnChanged();
-  await ticks(ctx);
-  const aside = doc.querySelector('[data-chat-history]');
-  assert.equal(aside.querySelectorAll('.chat-history-search-input').length, 1);
-  assert.equal(aside.querySelectorAll('.chat-history-new').length, 1);
-  assert.equal(doc.querySelectorAll('.chat-head .chat-new-btn').length, 1);
-  assert.equal(doc.querySelectorAll('.chat-new-plus, .chat-head-meter, .runs-resize, #chats-list').length, 0);
-  assert.ok(aside.querySelectorAll('.ask-thread-trash').length > 0, 'the old rows draw their trash again');
 });
 
 test('J moves to the next row and Enter opens it; exactly one Tab stop, inner controls out of the Tab order', async () => {

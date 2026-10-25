@@ -286,9 +286,9 @@ test('the Escape that closes the search never steps an open run back to the list
 
 const CHAT = (i) => ({ id: `ask_0000000${i}`, title: `Login chat ${i}`, updatedAt: AGO(i * 6e4), archivedAt: null, archived: false });
 
-test('#948 s2 (chatsColumn): a typed chat title lists under Chats, first on #chat and after Runs on #runs, 5 rows at most', async () => {
+test('#948 s2: a typed chat title lists under Chats, first on #chat and after Runs on #runs, 5 rows at most', async () => {
   const threads = Array.from({ length: 7 }, (_, i) => CHAT(i + 1));
-  const { window, doc, input, key, type, calls } = await boot({ flags: 'chatsColumn', threads });
+  const { window, doc, input, key, type, calls } = await boot({ threads });
   const labels = () => [...doc.querySelectorAll('#tsearch-pop .tsearch-label')].map((n) => n.textContent);
   const chatOpts = () => doc.querySelectorAll('#tsearch-pop [role="option"].tsearch-opt-chat').length;
   window.location.hash = '#chat';
@@ -312,14 +312,3 @@ test('#948 s2 (chatsColumn): a typed chat title lists under Chats, first on #cha
   assert.deepEqual(labels().slice(0, 2), ['Runs', 'Chats']);
 });
 
-test('#948 s2: with chatsColumn off the Chat page keeps "Search or ask" and the search asks the server for no chats', async () => {
-  const { window, doc, input, key, type, calls } = await boot({ threads: [CHAT(1)] });
-  window.location.hash = '#chat';
-  await settle(window, 4);
-  assert.equal(input.placeholder, 'Search or ask');
-  key(doc.body, 'k', { metaKey: true });
-  type('login');
-  await new Promise((r) => setTimeout(r, 200));
-  await settle(window, 4);
-  assert.ok(!calls.some((u) => u.startsWith('/api/ask/threads?') && u.includes('q=')));
-});

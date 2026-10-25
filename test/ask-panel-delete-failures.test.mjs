@@ -3,7 +3,7 @@
 // (injected) document and keeps the item; a successful delete removes it quietly.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makePanel } from './helpers/ask-panel-harness.mjs';
+import { makePanel, deleteFromList } from './helpers/ask-panel-harness.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const TID = 'ask_00000001';
@@ -65,9 +65,7 @@ async function wtCount(ctx) {
 }
 
 async function trashThread(ctx) {
-  ctx.doc.querySelector('[data-ask-threads-btn]').click();
-  await settle(ctx);
-  ctx.doc.querySelector('.ask-thread-trash').click();
+  await deleteFromList(ctx, TID);
   await settle(ctx);
 }
 

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
 
-import { makePanel, openChat } from './helpers/ask-panel-harness.mjs';
+import { makePanel, openChat, deleteFromList } from './helpers/ask-panel-harness.mjs';
 
 const TID = 'ask_00000001';
 
@@ -396,10 +396,7 @@ test('ask-panel-pickers: delete asks first — confirm DELETEs and clears the cu
       ctx.storage.setItem('worca-cc.ask.thread', TID);
       ctx.panel.open();
       await ctx.tick(); await ctx.tick(); await ctx.tick();
-      ctx.doc.querySelector('[data-ask-threads-btn]').click();
-      await ctx.tick();
-      ctx.doc.querySelector('.ask-thread-trash').click();
-      await ctx.tick(); await ctx.tick();
+      await deleteFromList(ctx, TID);
       assert.equal(confirms.length, 1);
       assert.deepEqual(confirms[0], { title: 'Delete this chat?', message: '“Stored” and its transcript are removed. This cannot be undone.', confirmLabel: 'Delete', danger: true });
       assert.ok(ctx.fetchCalls.some((c) => c.url === `/api/ask/threads/${TID}` && c.opts.method === 'DELETE'));
@@ -411,10 +408,7 @@ test('ask-panel-pickers: delete asks first — confirm DELETEs and clears the cu
       const ctx = makePanel({ fetchHandler: handler(), confirm: async () => false });
       ctx.panel.open();
       await ctx.tick(); await ctx.tick();
-      ctx.doc.querySelector('[data-ask-threads-btn]').click();
-      await ctx.tick();
-      ctx.doc.querySelector('.ask-thread-trash').click();
-      await ctx.tick(); await ctx.tick();
+      await deleteFromList(ctx, TID);
       assert.ok(!ctx.fetchCalls.some((c) => c.opts.method === 'DELETE'));
     } },
   ]);
@@ -451,8 +445,7 @@ test('ask-panel-pickers: ask-history-cleared closes the popover and resets the a
   ctx.panel.pushServerFrame({ type: 'ask-history-cleared' });
   ctx.flush();
   assert.equal(ctx.doc.querySelector('.ask-pop'), null, 'popover closed');
-  assert.equal(ctx.doc.querySelectorAll('[data-chat-history] .ask-thread-row').length, 0, 'the History column emptied');
-  assert.equal(ctx.doc.querySelector('.chat-history-empty').textContent, 'No saved chats.');
+  assert.equal(ctx.doc.querySelectorAll('[data-chat-history] .runs-item').length, 0, 'the Chats column emptied');
   assert.equal(ctx.storage.getItem('worca-cc.ask.thread'), null, 'stored thread forgotten');
   assert.equal(ctx.doc.querySelector('.ask-title').textContent, 'New chat');
   assert.equal(ctx.fetchCalls.length, fetchesBefore, 'no fetch — the rows are gone server-side');
