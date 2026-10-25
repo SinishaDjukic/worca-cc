@@ -1,7 +1,7 @@
 ---
 name: pipeline-worktree-node-modules
 description: Read before running tests or plan shell lines in a worca run worktree, or a task file's commit/count checks — node_modules link, test runner, waiting, zsh traps
-updated: 2026-10-25T04:14:34.410Z
+updated: 2026-10-25T07:35:56.772Z
 author: Denislav Prinov
 ---
 
@@ -18,6 +18,7 @@ A run worktree (`~/.worca-cc/runs/<id>/repos/<key>`) has NO `node_modules`: anyt
 
 ## Task files' commit steps vs "Commit nothing"
 Task files copy the plan's `git commit` step and "`git log --oneline <checkpoint>..HEAD` should show N commits; if wrong, STOP". The implementer prompt's "Commit nothing" wins (the orchestrator stages and intent-to-adds): the count is 0, do not STOP. Confirm earlier phases with `git status --short` / `git diff --stat`, skip the commit, append one `DEVIATIONS.md` entry per phase (absolute pipeline path, append-only) naming the plan's `git add` list and message plus shared files holding earlier phases' hunks — unless the task file says the skipped commit gets no entry (the task file wins). "N/N" counts quoted from later plan versions can include tests a LATER task adds: trust the step's own "PASS, 0 fail".
+- Conflict-fix runs (`conflictBrief`: "run `git merge --no-ff <ref>` … and commit the merge") vs "Commit nothing": `git merge --no-ff --no-commit <ref>`, resolve, `git add` the conflicted files, leave `MERGE_HEAD`. Teardown `_commitWork` (`git add -A` + `git commit -m`) concludes it as the two-parent merge; it never checks for markers (`add -A` marks them resolved), so `git grep -nE '^(<<<<<<< |>>>>>>> )'` and `grep -n '^=======$'` per file first. Preview with `git merge-tree --write-tree -z --name-only --no-messages HEAD <ref>`.
 
 ## zsh — the Bash tool runs zsh; run every plan shell line in zsh
 - `kill $VAR` makes the host-guard hook reject the WHOLE call: `process.kill(pid)` from node or `kill <literal pid>`. `rm` on a command substitution (`rm -r "$(dirname $A)"`) refuses the whole call, earlier `&&` steps included — `rm` a variable or a literal.
