@@ -53,6 +53,7 @@ import { cmdModels } from './models.mjs';
 import { cmdContainer } from './container.mjs';
 import { cmdExtension } from './extension.mjs';
 import { cmdProxy } from './proxy.mjs';
+import { cmdSetup } from './setup.mjs';
 import { cmdRun } from './run-preset.mjs';
 import {
   DEFAULT_UI_HOST, DEFAULT_UI_PORT, probeUi, stopUi, readUiInstance, uiUrl, waitForUiState,
@@ -344,6 +345,8 @@ Subcommands:
                               See: worca extension help (docs/browser-extension.md)
   proxy <cmd> [...]           Corporate proxy login: status|login|logout|test.
                               See: worca proxy help (docs/network-proxy.md)
+  setup --from FILE [--yes]   Apply a team setup file; asks only for what it leaves out.
+                              See: docs/setup-assistant.md
   broker [serve|secrets|revoke --person <email>]
                               The credential broker: holds model keys outside worca's container
                               (docs/credential-broker.md)
@@ -3460,7 +3463,7 @@ async function resolveTeamNote(team, { key, project, name, a }) {
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'proxy', 'memory']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'proxy', 'memory', 'setup']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3508,10 +3511,11 @@ async function main() {
   // A hosting platform's outbound network policy (src/core/egress-policy.mjs). `worca ui` leaves
   // it to the server it starts; any other command (a pipeline started by hand in the container)
   // runs its own policy proxy, or reuses the one a parent worca put in the environment.
-  // `worca proxy` skips it too, so `proxy test` talks to the corporate proxy itself (D15).
+  // `worca proxy` skips it too, so `proxy test` talks to the corporate proxy itself (D15), and `worca setup`
+  // reads a local file and talks to no one.
   // The settings watcher keeps a long run live: a saved networkProxy change swaps its upstream (AC-2.6).
   let fetchProxy = null;
-  if (process.argv[2] !== 'ui' && process.argv[2] !== 'proxy') {
+  if (process.argv[2] !== 'ui' && process.argv[2] !== 'proxy' && process.argv[2] !== 'setup') {
     try {
       const egress = await startLiveEgress({ unref: true, log: (l) => process.stderr.write(`worca: egress: ${l}\n`),
         // D8: a proxy turned on at runtime: this process's own fetch follows the new HTTPS_PROXY.
@@ -3561,6 +3565,7 @@ async function main() {
     if (sub === 'container') return cmdContainer(rest, { out, c, fail });
     if (sub === 'extension') return cmdExtension(rest, { out, c, fail });
     if (sub === 'proxy') return cmdProxy(rest, { out, c, fail });
+    if (sub === 'setup') return cmdSetup(rest, { out });
     if (sub === 'broker') {
       // Loaded lazily: the broker is its own process and needs none of the core graph.
       const { runBrokerCli } = await import('../broker/main.mjs');

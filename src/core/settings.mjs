@@ -2865,18 +2865,21 @@ export function assertSyncSettingsInput(patch) {
   if (set('refreshMinutes') && !(Number.isInteger(patch.refreshMinutes) && patch.refreshMinutes >= 0 && patch.refreshMinutes <= 1440)) throw new Error('sync.refreshMinutes must be an integer 0–1440 (0 = never)');
   if (set('onDiverged') && !SYNC_ON_DIVERGED.includes(patch.onDiverged)) throw new Error(`sync.onDiverged must be one of ${SYNC_ON_DIVERGED.join(' | ')}`);
 }
-export async function setSyncDefaults(patch) {
+/** The stored `sync` after `patch` (undefined = delete the key). Pure; shared by the setter and the setup apply. */
+export function nextSyncSettings(current, patch) {
   assertSyncSettingsInput(patch);
+  if (patch === null || patch === '') return undefined;
+  // Store only the keys someone set: a key left out follows the built-in default as it changes.
+  const prev = isObj(current) ? current : {};
+  const next = {};
+  for (const k of Object.keys(DEFAULT_SYNC_SETTINGS)) if (Object.hasOwn(prev, k)) next[k] = normalizeSyncSettings(prev)[k];
+  for (const [k, v] of Object.entries(patch)) { if (v === null) delete next[k]; else next[k] = v; }
+  return Object.keys(next).length ? next : undefined;
+}
+export async function setSyncDefaults(patch) {
   const settings = readSettings();
-  if (patch === null || patch === '') delete settings.sync;
-  else {
-    // Store only the keys someone set: a key left out follows the built-in default as it changes.
-    const prev = settings.sync && typeof settings.sync === 'object' && !Array.isArray(settings.sync) ? settings.sync : {};
-    const next = {};
-    for (const k of Object.keys(DEFAULT_SYNC_SETTINGS)) if (Object.hasOwn(prev, k)) next[k] = normalizeSyncSettings(prev)[k];
-    for (const [k, v] of Object.entries(patch)) { if (v === null) delete next[k]; else next[k] = v; }
-    if (Object.keys(next).length) settings.sync = next; else delete settings.sync;
-  }
+  const v = nextSyncSettings(settings.sync, patch);
+  if (v === undefined) delete settings.sync; else settings.sync = v;
   await persistSettings(settings);
   return syncDefaults();
 }
@@ -2909,18 +2912,21 @@ export function assertNetworkWaitInput(patch) {
   if (set('maxWaitMin') && !isNetworkMaxWaitMin(patch.maxWaitMin)) throw new Error('networkWait.maxWaitMin must be a whole number of minutes from 1 to 1440');
 }
 
-export async function setNetworkWait(patch) {
+/** The stored `networkWait` after `patch` (undefined = delete the key). Pure; shared by the setter and the setup apply. */
+export function nextNetworkWait(current, patch) {
   assertNetworkWaitInput(patch);
+  if (patch === null || patch === '') return undefined;
+  // Store only the keys someone set: a key left out follows the built-in default as it changes.
+  const prev = isObj(current) ? current : {};
+  const next = {};
+  for (const k of Object.keys(DEFAULT_NETWORK_WAIT)) if (Object.hasOwn(prev, k)) next[k] = normalizeNetworkWait(prev)[k];
+  for (const [k, v] of Object.entries(patch)) { if (v === null) delete next[k]; else next[k] = v; }
+  return Object.keys(next).length ? next : undefined;
+}
+export async function setNetworkWait(patch) {
   const settings = readSettings();
-  if (patch === null || patch === '') delete settings.networkWait;
-  else {
-    // Store only the keys someone set: a key left out follows the built-in default as it changes.
-    const prev = settings.networkWait && typeof settings.networkWait === 'object' && !Array.isArray(settings.networkWait) ? settings.networkWait : {};
-    const next = {};
-    for (const k of Object.keys(DEFAULT_NETWORK_WAIT)) if (Object.hasOwn(prev, k)) next[k] = normalizeNetworkWait(prev)[k];
-    for (const [k, v] of Object.entries(patch)) { if (v === null) delete next[k]; else next[k] = v; }
-    if (Object.keys(next).length) settings.networkWait = next; else delete settings.networkWait;
-  }
+  const v = nextNetworkWait(settings.networkWait, patch);
+  if (v === undefined) delete settings.networkWait; else settings.networkWait = v;
   await persistSettings(settings);
   return networkWaitSettings();
 }

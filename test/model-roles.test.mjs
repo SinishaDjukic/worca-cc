@@ -255,3 +255,101 @@ test('setModelRoles merges, returns what it wrote, and drops the key when empty'
   assert.ok(existsSync(settingsPath));
   assert.equal(Object.hasOwn(JSON.parse(readFileSync(settingsPath, 'utf8')), 'modelRoles'), false);
 });
+
+const { upstreamKey, mapUpstreamModel, projectRoles, shareUpstream, NO_SOURCE_LINE } = await import('../src/core/model-roles.mjs');
+
+const OPUS_BUILTIN = { id: 'claude-opus-5-5', engine: 'claude', harnesses: ['claude'] };
+const COPILOT_OPUS = { id: 'copilot-claude-opus-5-5', custom: 'global', bridged: 'copilot', upstreamModel: 'claude-opus-5.5', harnesses: ['claude'] };
+const OR_OPUS = { id: 'or-anthropic-claude-opus-5-5', custom: 'global', bridged: 'openai', upstreamModel: 'anthropic/claude-opus-5.5', harnesses: ['claude'] };
+
+test('upstreamKey: dots, vendor prefix, [1m] and date suffix compare equal', () => {
+  for (const id of ['claude-opus-5.5', 'anthropic/claude-opus-5.5', 'Claude-Opus-5-5[1m]', 'claude-opus-5-5-20261001']) assert.equal(upstreamKey(id), 'claude-opus-5-5', id);
+});
+
+test('AC-5.3: on a Copilot-only machine claude-opus-5-5 resolves to the Copilot import', () => {
+  const hit = mapUpstreamModel('claude-opus-5-5', 'claude', { catalog: [OPUS_BUILTIN, COPILOT_OPUS], claudeAuth: 'signed-out' });
+  assert.deepEqual(hit, { id: 'copilot-claude-opus-5-5', source: 'copilot' });
+});
+
+test('AC-5.3: no entry serves it → "None of your sources offer it."', () => {
+  const miss = mapUpstreamModel('claude-opus-5-5', 'claude', { catalog: [OPUS_BUILTIN, { ...COPILOT_OPUS, needsSignIn: true }], claudeAuth: 'signed-out' });
+  assert.deepEqual(miss, { id: null, line: NO_SOURCE_LINE });
+  assert.match(NO_SOURCE_LINE, /none of your sources offer it/i);
+  assert.deepEqual(mapUpstreamModel('claude-opus-5-5', 'claude', { catalog: [] }), { id: null, line: NO_SOURCE_LINE });
+});
+
+test('mapping never picks a team policy, plugin or project row (a team artifact cannot add a source)', () => {
+  for (const custom of ['policy', 'plugin', 'project']) {
+    const row = { ...COPILOT_OPUS, id: `x-${custom}`, custom };
+    assert.deepEqual(mapUpstreamModel('claude-opus-5-5', 'claude', { catalog: [row], claudeAuth: 'signed-out' }), { id: null, line: NO_SOURCE_LINE }, custom);
+    assert.deepEqual(mapUpstreamModel('claude-opus-5-5', 'claude', { catalog: [{ id: 'claude-opus-5-5', custom, harnesses: ['claude'] }], claudeAuth: 'signed-in' }), { id: null, line: NO_SOURCE_LINE }, custom);
+  }
+});
+
+test('mapping ranks the Claude sign-in, then Copilot, then API-key entries, then an unknown sign-in', () => {
+  const catalog = [OR_OPUS, COPILOT_OPUS, OPUS_BUILTIN];
+  assert.equal(mapUpstreamModel('claude-opus-5-5', 'claude', { catalog, claudeAuth: 'signed-in' }).id, 'claude-opus-5-5');
+  assert.equal(mapUpstreamModel('claude-opus-5-5', 'claude', { catalog: [OR_OPUS, OPUS_BUILTIN], claudeAuth: 'signed-out' }).id, 'or-anthropic-claude-opus-5-5');
+  assert.equal(mapUpstreamModel('claude-opus-5-5', 'claude', { catalog: [OPUS_BUILTIN], claudeAuth: 'unknown' }).id, 'claude-opus-5-5');
+  assert.equal(mapUpstreamModel('claude-opus-5-5', 'codex', { catalog }).id, null);   // no entry runs on codex
+});
+
+test('projectRoles: default fills only unset roles; soft wins; unmapped roles are reported', () => {
+  const team = (kind) => ({ kind, value: { claude: { deep: { model: 'claude-opus-5-5', effort: 'high' }, quick: { model: 'gpt-9' } } } });
+  const user = { claude: { deep: { model: 'mine' } } };
+  const d = projectRoles('claude', { user, team: team('default'), catalog: [COPILOT_OPUS], claudeAuth: 'signed-out' });
+  assert.deepEqual(d.roles.claude.deep, { model: 'mine' });
+  assert.deepEqual(d.unmapped, [{ role: 'quick', upstream: 'gpt-9', line: NO_SOURCE_LINE }]);
+  const s = projectRoles('claude', { user, team: team('soft'), catalog: [COPILOT_OPUS], claudeAuth: 'signed-out' });
+  assert.deepEqual(s.roles.claude.deep, { model: 'copilot-claude-opus-5-5', effort: 'high' });
+});
+
+test('shareUpstream: a Copilot or OpenRouter entry shares the built-in id; anything else is not shared', () => {
+  const catalog = [OPUS_BUILTIN, COPILOT_OPUS, OR_OPUS, { id: 'my-local-model', custom: 'global', harnesses: ['claude'] }];
+  assert.equal(shareUpstream('copilot-claude-opus-5-5', catalog), 'claude-opus-5-5');
+  assert.equal(shareUpstream('or-anthropic-claude-opus-5-5', catalog), 'claude-opus-5-5');
+  assert.equal(shareUpstream('claude-opus-5-5', catalog), 'claude-opus-5-5');
+  assert.equal(shareUpstream('my-local-model', catalog), null);        // a custom id never leaves the machine
+  assert.equal(shareUpstream('not-in-catalog', catalog), null);
+});
+
+test('AC-5.2: a project policy models.roles reaches step models without writing settings.json', async () => {
+  const { addProject } = await import('../src/core/projects.mjs');
+  const { writeTeamPolicyPrefs, _resetRoleAuthForTests } = await import('../src/core/config.mjs');
+  _resetRoleAuthForTests();
+  const proj = mkdtempSync(join(tmpdir(), 'worca-roles-team-'));
+  await addProject({ name: 'roles-team', path: proj });
+  writeTeamPolicyPrefs(projectKey(proj), { present: true, hasOrigin: true, docKnown: true, slug: 'acme/gateway', headSha: 'abc1234', delegateTo: null,
+    unknownSchema: false, warnings: [], checkedAt: new Date().toISOString(),
+    doc: { schema: 1, fields: { 'models.roles': { kind: 'default', value: { claude: { deep: { model: 'claude-opus-5-5', effort: 'high' } } } } }, workspaceRuns: {}, catalogs: { guardrailSets: [], models: [] } } });
+  const before = existsSync(settingsPath) ? readFileSync(settingsPath, 'utf8') : null;
+  const prevMock = process.env.WORCA_MOCK; process.env.WORCA_MOCK = '1';
+  try {
+    const steps = await resolveStepModels(proj, null, 'claude');
+    assert.equal(steps.planner.model, 'claude-opus-5-5');
+    assert.equal(steps.planner.effort, 'high');
+    // The workflow graph's roleFor takes the same team roles (R-arch-3).
+    _resetRoleAuthForTests();
+    const g = await resolveGraph(proj, 'wf_default', REG());
+    assert.equal(nodeOf(g, 'planner').model, 'claude-opus-5-5');
+    assert.equal(nodeOf(g, 'planner').effort, 'high');
+  } finally { if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock; _resetRoleAuthForTests(); rmSync(proj, { recursive: true, force: true }); }
+  assert.equal(existsSync(settingsPath) ? readFileSync(settingsPath, 'utf8') : null, before);
+});
+
+test('projectRolesFor: a signed-out Claude login skips the built-in; a refused team value is dropped', async () => {
+  const { projectRolesFor, _resetRoleAuthForTests } = await import('../src/core/config.mjs');
+  _resetRoleAuthForTests();
+  const team = { kind: 'default', value: { claude: { deep: { model: 'claude-opus-5-5' } } } };
+  const out = await projectRolesFor('claude', null, { user: {}, team, catalog: [OPUS_BUILTIN], claudeAuth: 'signed-out' });
+  assert.equal(out.roles.claude.deep, undefined);
+  assert.deepEqual(out.unmapped, [{ role: 'deep', upstream: 'claude-opus-5-5', line: NO_SOURCE_LINE }]);
+  // A value checkTeamSetup refuses (a secret-looking model id) never reaches a run (security-2-2).
+  const bad = { kind: 'default', value: { claude: { deep: { model: 'sk-ant-abcdefghijklmnopqrst' } } } };
+  const logs = [];
+  const r = await projectRolesFor('claude', null, { user: {}, team: bad, catalog: [OPUS_BUILTIN], claudeAuth: 'signed-in', log: (s) => logs.push(s) });
+  assert.deepEqual(r, { roles: {}, unmapped: [] });
+  assert.equal(logs.length, 1);
+  assert.doesNotMatch(logs[0], /sk-ant-/);
+  _resetRoleAuthForTests();
+});

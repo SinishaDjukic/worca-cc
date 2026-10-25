@@ -15,7 +15,7 @@ import { effortOn } from '../shared/connections.mjs';
 
 import { getDb, prepare, tx } from './db.mjs';
 import { worcaHome } from './projects.mjs';
-import { resolveRunConfig, readConfig, EFFORTS, stepSlotDefaults, modelForEngine } from './config.mjs';
+import { resolveRunConfig, readConfig, EFFORTS, stepSlotDefaults, modelForEngine, projectRolesFor } from './config.mjs';
 import { isSubagentModelValue, SUBAGENT_MODELS, ALL_EFFORTS, effortsForEngine, MODEL_ENGINES } from './model-env.mjs';
 
 /** Enum guard for one resolveGraph layer: a legal value passes, anything else
@@ -681,9 +681,11 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
   // Model roles (D3, D4): the last layer, for a node no other layer names. A run started with its own model keeps it
   // for every unset step (D3's per-run pick); an Auto run owns its tuning and skips it, like the user step slots.
   const runModel = typeof opts.runModel === 'string' && opts.runModel.trim() ? opts.runModel.trim() : null;
+  // D15: the project's team roles join the person's own; a workspace run keeps the person's roles only.
+  const { roles: projectRoleSet } = ignore || runModel ? { roles: undefined } : await projectRolesFor(engine, isWorkspace ? null : projectDir);
   const roleFor = (authored, meta) => {
     if (ignore || runModel) return {};
-    const hit = resolveRoleModel(engine, roleOf(`steps.${authored}`, { name: meta?.displayName || '' }));
+    const hit = resolveRoleModel(engine, roleOf(`steps.${authored}`, { name: meta?.displayName || '' }), projectRoleSet ? { roles: projectRoleSet } : {});
     return hit ? owned(hit) : {};
   };
   // Memory defragment (Settings › Memory, memory-defrag-model.mjs): the run's model/effort PAIR —

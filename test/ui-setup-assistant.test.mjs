@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import {
   SETUP_STEPS, TEST_PASS_MS, LOGIN_RETRY_STEPS, proxyKey, initialAnswers, rolePatch, diffRows, buildApplyBody, nextGate,
-  stepOfField, setupStepForSignIn, safeHttpUrl, openSetupAssistant,
+  stepOfField, setupStepForSignIn, safeHttpUrl, openSetupAssistant, teamNotice,
 } from '../ui/public/setup-assistant.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { backdropClick, pressEscape, discardPrompt, keepEditing } from './helpers/popups.mjs';
@@ -39,7 +39,9 @@ function deferred() { let resolve; const promise = new Promise((r) => { resolve 
  * Open the dialog over routed fakes. `routes`: url (exact, or a prefix ending in '/') → an answer, or
  * (opts, n) => answer | Promise | throw. Returns the handle, the request log, timers and the clock.
  */
-async function open({ entry = 'first', step = 'check', settings = SETTINGS, proxy = PROXY_OFF, providers = PROVIDERS, detect = DETECT, routes = {}, level = 'simple' } = {}) {
+const TEAM_NONE = { file: { found: false }, homes: [] };
+async function open({ entry = 'first', step = 'check', settings = SETTINGS, proxy = PROXY_OFF, providers = PROVIDERS, detect = DETECT, routes = {}, level = 'simple',
+  team = TEAM_NONE, teamHome = null } = {}) {
   const dom = new JSDOM('<!doctype html><html><body><button id="opener">open</button></body></html>', { url: 'http://localhost/' });
   const { window } = dom; const doc = window.document;
   if (level) doc.documentElement.dataset.level = level;
@@ -48,6 +50,7 @@ async function open({ entry = 'first', step = 'check', settings = SETTINGS, prox
     '/api/settings': reply(settings), '/api/proxy/status': reply(proxy), '/api/providers': reply(providers),
     '/api/config': reply({ models: CATALOG }), '/api/setup/detect': detect ? reply(detect) : reply({ error: 'no' }, 500),
     '/api/proxy/test': reply({ ok: true, results: [{ host: 'api.anthropic.com', ok: true, ms: 12 }] }),
+    '/api/setup/team': reply(team),
     ...routes,
   };
   const fetchJson = async (url, opts = {}) => {
@@ -65,7 +68,7 @@ async function open({ entry = 'first', step = 'check', settings = SETTINGS, prox
   };
   const clock = { t: 1_000_000 };
   const closes = [];
-  const handle = openSetupAssistant({ doc, fetchJson, entry, step, timers, now: () => clock.t, onClose: (how) => closes.push(how) });
+  const handle = openSetupAssistant({ doc, fetchJson, entry, step, team: teamHome, timers, now: () => clock.t, onClose: (how) => closes.push(how) });
   await settle();
   const $ = (sel) => doc.querySelector(`#setup-modal ${sel}`);
   const h = {
@@ -92,6 +95,7 @@ async function open({ entry = 'first', step = 'check', settings = SETTINGS, prox
     },
     async goTo(id) { handle.goTo(id); await settle(); },
     applies: () => log.filter((r) => r.url === '/api/setup/apply' && r.method === 'POST'),
+    writes: () => log.filter((r) => r.method !== 'GET'),
     close() { handle.close(); window.close(); },
   };
   return h;
@@ -741,9 +745,13 @@ test('CSS: 290px layout, --ink-2 scoping and no ink-3 under .setup- (AC-4.7, fit
   assert.match(css, /\.setup-card \.sa-row\{[^}]*flex-wrap:wrap[^}]*min-width:0[^}]*\}/);
   assert.ok(css.includes('.setup-card .sa-pair{display:flex;flex-wrap:wrap;gap:8px;}'));
   assert.ok(css.includes('.setup-card .sa-pair > *{flex:1 1 100px;min-width:0;}'));
-  assert.ok(css.includes('.setup-card .dlg-foot .confirm-actions{flex-wrap:wrap;}'));
+  assert.ok(css.includes('.setup-card .dlg-foot .confirm-actions{flex-wrap:wrap;}'));   // Share and Continue stack at 290px
+  assert.ok(css.includes('.badge.team{background:var(--blue-bg);color:var(--blue-ink-strong);}'));
+  assert.ok(css.includes('.setup-card .sa-team-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--ink-2);}'));
   assert.ok(css.includes('.setup-modal .card.setup-card{width:min(640px,100%);}'));
   assert.ok(css.includes('.setup-card .hint{color:var(--ink-2);}'));
+  // An error line stays red: .setup-card .hint comes after .hint.err with the same specificity (webui-4).
+  assert.ok(css.indexOf('.setup-card .hint.err{color:var(--red-ink);}') > css.indexOf('.setup-card .hint{color:var(--ink-2);}'));
   assert.ok(css.includes('.setup-card .input::placeholder{color:var(--ink-2);}'));
   assert.ok(css.includes('.setup-card .input[aria-invalid="true"].input::placeholder{color:var(--ink-2);}'));
   assert.equal(/sa-muted/.test(css), false);
@@ -764,4 +772,199 @@ test('module source: no HTML sinks, no CSS.escape; built on layoutDialog and gua
   assert.ok(read('docs/setup-assistant.md').includes('## The dialog'));
   const gs = read('docs/getting-started.md');
   assert.ok(gs.includes('Set up later')); assert.ok(gs.includes('Run setup again'));
+});
+
+const bodyOf = (w) => (typeof w.body === 'string' ? JSON.parse(w.body) : w.body);
+const TEAM_FILE = { file: { found: true, ok: true, path: '~/.worca-cc/team-setup.json', hash: 'aaaa', warnings: [], unmapped: [],
+  values: { work: { pipelineCostLimitUsd: 8, uiLevel: 'advanced' } }, keys: ['work.pipelineCostLimitUsd', 'work.uiLevel'] }, homes: [] };
+
+const TEAM_CHECK = { id: 'teamSetup', label: 'Team setup', state: 'ok', line: 'Found a team setup in ~/.worca-cc/team-setup.json.' };
+
+test('AC-5.4: a first start pre-fills blanks from the team file and marks the rows Team', async () => {
+  // Both team keys must be blank in what is saved, or D19 keeps the saved values (qa-2-2).
+  const h = await open({ entry: 'first', team: TEAM_FILE, settings: { ...SETTINGS, uiLevel: null, pipelineCostLimitUsd: null },
+    detect: { ...DETECT, checks: [...DETECT.checks, TEAM_CHECK] } });
+  try {
+    assert.equal(h.$('.sa-check li[data-check="teamSetup"] .badge.team').textContent, 'Team');
+    assert.equal(h.$('.sa-check li[data-check="claude"] .badge.team'), null);          // only the teamSetup ok row
+    await h.goTo('review');
+    const work = h.$('.sa-review li[data-group="work"]');
+    assert.equal(work.querySelector('.badge.team').textContent, 'Team');
+    assert.match(work.textContent, /Advanced interface · per run \$8/);
+  } finally { h.close(); }
+});
+
+test('AC-5.4: blank means "not in settings.json": defaulted keys of a fresh home take the team values (webui-1)', async () => {
+  // A fresh home: GET /api/settings fills in defaults, so uiLevel and networkWait are not null, but savedKeys is empty.
+  const team = { ...TEAM_FILE, savedKeys: [], file: { ...TEAM_FILE.file,
+    values: { work: { pipelineCostLimitUsd: 8, uiLevel: 'advanced', networkWait: { enabled: true, maxWaitMin: 60 } } },
+    keys: ['work.pipelineCostLimitUsd', 'work.uiLevel', 'work.networkWait'] } };
+  const h = await open({ entry: 'first', team, settings: { ...SETTINGS, pipelineCostLimitUsd: null, networkWait: { enabled: true, maxWaitMin: 240 } },
+    routes: { '/api/setup/apply': reply({ id: 'stp_1', steps: [] }, 202) } });
+  try {
+    await h.goTo('review');
+    assert.match(h.$('.sa-review li[data-group="work"]').textContent, /Advanced interface · per run \$8/);
+    await h.click('.sa-next');
+    const work = bodyOf(h.applies()[0]).work;
+    assert.equal(work.uiLevel, 'advanced');
+    assert.equal(work.pipelineCostLimitUsd, 8);
+    assert.deepEqual(work.networkWait, { enabled: true, maxWaitMin: 60 });
+  } finally { h.close(); }
+  // A key the person saved keeps its value even when the team names it.
+  const kept = await open({ entry: 'first', team: { ...team, savedKeys: ['uiLevel'] }, settings: { ...SETTINGS, pipelineCostLimitUsd: null } });
+  try {
+    await kept.goTo('review');
+    assert.match(kept.$('.sa-review li[data-group="work"]').textContent, /Simple interface · per run \$8/);
+  } finally { kept.close(); }
+});
+
+test('AC-5.7: a partial team record merges over the saved one, so a matching record is no change (webui-3)', () => {
+  const s = saved({ settings: { ...SETTINGS, sync: { beforeRun: true, remote: 'origin', refreshMinutes: 10, onDiverged: 'ask' } } });
+  const team = { values: { work: { sync: { onDiverged: 'ask' } } }, keys: ['work.sync'], unmapped: [] };
+  const same = initialAnswers({ saved: s, entry: 'team', team });
+  assert.equal(buildApplyBody(s, same).work, undefined);
+  assert.equal(nextGate('review', same, { saved: s, entry: 'team' }).finish, true);
+  const diff = initialAnswers({ saved: s, entry: 'team', team: { ...team, values: { work: { sync: { onDiverged: 'rebase' } } } } });
+  assert.deepEqual(buildApplyBody(s, diff).work, { sync: { beforeRun: true, remote: 'origin', refreshMinutes: 10, onDiverged: 'rebase' } });
+});
+
+test('the Check step: a refused team file gets the amber Check badge and no Team chip', async () => {
+  const warn = { ...TEAM_CHECK, state: 'warn', line: 'The team setup in ~/.worca-cc/team-setup.json was not used: A team setup never carries network settings: “networkProxy”. Remove it and try again.' };
+  const h = await open({ entry: 'first', detect: { ...DETECT, checks: [...DETECT.checks, warn] } });
+  try {
+    const li = h.$('.sa-check li[data-check="teamSetup"]');
+    assert.equal(li.querySelector('.badge.amber').textContent, 'Check');
+    assert.equal(li.querySelector('.badge.team'), null);
+    assert.match(li.textContent, /“networkProxy”/);
+  } finally { h.close(); }
+});
+
+test('AC-5.4: saved values win on a first start: the team fills only what is blank', async () => {
+  const h = await open({ entry: 'first', team: TEAM_FILE, settings: { ...SETTINGS, pipelineCostLimitUsd: 3 } });
+  try {
+    await h.goTo('review');
+    assert.match(h.$('.sa-review li[data-group="work"]').textContent, /per run \$3/);
+  } finally { h.close(); }
+});
+
+test('AC-5.7: entry team opens on Review, lists only changed rows and writes nothing before Apply', async () => {
+  const team = { file: { found: false }, homes: [{ home: 'acme/gateway', hash: 'bbbb', unmapped: [], values: { work: { totalCostLimitUsd: 40 } }, keys: ['work.totalCostLimitUsd'] }] };
+  const h = await open({ entry: 'team', step: 'review', teamHome: 'acme/gateway', team, routes: { '/api/setup/apply': reply({ id: 'stp_1', steps: [] }, 202) } });
+  try {
+    const rows = h.$$('.sa-review li');
+    assert.deepEqual(rows.map((r) => r.dataset.group), ['work']);
+    assert.equal(rows[0].querySelector('.badge.amber').textContent, 'Changed');
+    assert.equal(rows[0].querySelector('.badge.team').textContent, 'Team');
+    assert.equal(h.next().textContent, 'Apply changes');
+    assert.deepEqual(h.writes(), []);                 // no POST /api/settings, no POST /api/setup/apply
+    await h.click('.sa-next');
+    assert.deepEqual(h.writes().map((w) => w.url), ['/api/setup/apply']);
+    assert.deepEqual(bodyOf(h.writes()[0]).work, { totalCostLimitUsd: 40 });
+    assert.equal(bodyOf(h.writes()[0]).network, undefined);
+  } finally { h.close(); }
+});
+
+test('AC-5.7: entry team with nothing differing says it already matches and offers an enabled Finish', async () => {
+  const team = { file: { found: false }, homes: [{ home: 'acme/gateway', hash: 'cccc', unmapped: [], values: { work: { pipelineCostLimitUsd: 5 } }, keys: ['work.pipelineCostLimitUsd'] }] };
+  const h = await open({ entry: 'team', step: 'review', teamHome: 'acme/gateway', team });
+  try {
+    assert.equal(h.$$('.sa-review li').length, 0);
+    assert.equal(h.$('.sa-review-empty').textContent, "Your setup already matches your team's recommendation.");
+    assert.equal(h.next().textContent, 'Finish'); assert.equal(h.next().disabled, false);
+    await h.click('.sa-next');
+    assert.deepEqual(h.closes, ['done']);
+    assert.deepEqual(h.writes(), []);
+  } finally { h.close(); }
+});
+
+test('nextGate: team entry finishes when nothing differs; rerun still says Nothing changed', () => {
+  const s = saved();
+  const a = initialAnswers({ saved: s, entry: 'team' });
+  assert.deepEqual(nextGate('review', a, { saved: s, entry: 'team' }), { ok: true, finish: true, reason: "Your setup already matches your team's recommendation." });
+  assert.deepEqual(nextGate('review', a, { saved: s, entry: 'rerun' }), { ok: false, reason: 'Nothing changed.' });
+});
+
+test('an unmapped team role says none of your sources offer it on Models and on Review', async () => {
+  const team = { ...TEAM_FILE, file: { ...TEAM_FILE.file, unmapped: [{ harness: 'claude', role: 'deep', upstream: 'claude-opus-5-5', line: 'None of your sources offer it.' }] } };
+  // With the person's own Deep thinking model, the line says it is kept.
+  const mine = await open({ entry: 'first', team, settings: { ...SETTINGS, modelRoles: { claude: { deep: { model: 'claude-sonnet-5-5' } } } } });
+  try {
+    for (const step of ['models', 'review']) {
+      await mine.goTo(step);
+      const li = mine.$('.sa-team-unmapped li');
+      assert.equal(li.querySelector('.sa-row-main > div').textContent, 'Deep thinking · claude-opus-5-5', step);
+      assert.equal(li.querySelector('.sa-row-line').textContent, 'None of your sources offer it. Your pick is kept.', step);
+    }
+  } finally { mine.close(); }
+  // Without one, nothing is "kept" (ux-2-1).
+  const none = await open({ entry: 'first', team });
+  try {
+    await none.goTo('models');
+    assert.equal(none.$('.sa-team-unmapped li .sa-row-line').textContent, 'None of your sources offer it.');
+  } finally { none.close(); }
+});
+
+test('entry team with a vanished home says so and offers an enabled Finish', async () => {
+  const h = await open({ entry: 'team', step: 'review', teamHome: 'acme/gone', team: TEAM_NONE });
+  try {
+    assert.equal(h.$('.sa-review-empty').textContent, "Your team's setup is no longer available.");
+    assert.equal(h.next().textContent, 'Finish'); assert.equal(h.next().disabled, false);
+    await h.click('.sa-next');
+    assert.deepEqual(h.closes, ['done']); assert.deepEqual(h.writes(), []);
+  } finally { h.close(); }
+});
+
+test('teamNotice: once per hash, "has" for a new home and "updated" for a changed one', () => {
+  const homes = [{ home: 'acme/gateway', hash: 'h2', keys: ['work.uiLevel'] }];
+  assert.equal(teamNotice(homes, {}).label, 'Your team has a recommended setup');
+  assert.equal(teamNotice(homes, { 'acme/gateway': 'h1' }).label, 'Your team updated the recommended setup');
+  assert.equal(teamNotice(homes, { 'acme/gateway': 'h2' }), null);
+  assert.equal(teamNotice([{ home: 'x', hash: 'h', keys: [] }], {}), null);
+  // the ?homes=1 shape (policy keys) is enough
+  assert.equal(teamNotice([{ home: 'acme/gateway', hash: 'h3', keys: ['setup.uiLevel'] }], { 'acme/gateway': 'h2' }).hash, 'h3');
+});
+
+test('AC-5.6: Share as team setup downloads the draft as team-setup.json; it is disabled while fetching', async () => {
+  const held = deferred();
+  const h = await open({ entry: 'rerun', routes: {
+    '/api/setup/apply': reply({ id: 'stp_1', steps: STEPS3 }, 202),
+    '/api/setup/team/draft': () => held.promise,
+  } });
+  try {
+    await applyLimit(h);
+    h.handle.onFrame({ type: 'setup-apply', id: 'stp_1', done: true, ok: true });
+    const kids = [...h.$('.confirm-actions').children].map((b) => b.textContent);
+    assert.deepEqual(kids, ['Share as team setup', 'Continue']);
+    const clicks = []; h.window.HTMLAnchorElement.prototype.click = function () { clicks.push(this.download); };
+    const revoked = [];
+    h.window.URL.createObjectURL = () => 'blob:x'; h.window.URL.revokeObjectURL = (u) => { revoked.push(u); };
+    await h.click('.sa-share');
+    assert.equal(h.status().textContent, 'Preparing the team setup…');
+    assert.equal(h.$('.sa-share').disabled, true);           // a double click cannot download twice
+    held.resolve(reply({ doc: { schema: 1, fields: {} }, text: '{"schema":1}\n', warnings: [] }));
+    await settle();
+    assert.deepEqual(clicks, ['team-setup.json']);
+    assert.equal(h.status().textContent, 'Saved team-setup.json. It has no network settings, model sources or keys.');
+    assert.equal(h.$('.sa-share').disabled, false);
+    assert.equal(h.window.document.activeElement, h.$('.sa-share'));      // focus survives the foot repaint (ux-2-2)
+    assert.equal(h.status().getAttribute('role'), 'status');
+    assert.equal(h.log.filter((r) => r.url === '/api/setup/team/draft').length, 1);
+    assert.deepEqual(revoked, []);            // not at once: Firefox can cancel a download whose URL is revoked at once
+    await new Promise((r) => setTimeout(r, 1100));
+    assert.deepEqual(revoked, ['blob:x']);
+  } finally { h.close(); }
+});
+
+test('Share: a failed draft shows the server error in the err class', async () => {
+  const h = await open({ entry: 'rerun', routes: {
+    '/api/setup/apply': reply({ id: 'stp_1', steps: STEPS3 }, 202),
+    '/api/setup/team/draft': reply({ error: 'Worca could not prepare the team setup. Try again.' }, 500),
+  } });
+  try {
+    await applyLimit(h);
+    h.handle.onFrame({ type: 'setup-apply', id: 'stp_1', done: true, ok: true });
+    await h.click('.sa-share');
+    assert.equal(h.status().textContent, 'Worca could not prepare the team setup. Try again.');
+    assert.ok(h.status().classList.contains('err'));
+  } finally { h.close(); }
 });

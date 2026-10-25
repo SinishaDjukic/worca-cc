@@ -717,6 +717,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .flag-row-docs{display:inline-block;margin-top:4px;font-size:12px;}
 .badge.flag-stage-experimental{background:var(--violet-bg);color:var(--violet-ink);}
 .badge.flag-stage-beta{background:var(--blue-bg);color:var(--blue-ink-strong);}
+.badge.team{background:var(--blue-bg);color:var(--blue-ink-strong);}
 
 /* ---------- Design system: shared components (docs/design-system.md) ---------- */
 /* Headings and the one-line page intro (docs/design-system.md › Type). */
@@ -7951,6 +7952,9 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .tp-edit-row .seg button:disabled{opacity:.4;cursor:not-allowed;}
 .tp-control{display:flex;flex-direction:column;gap:8px;min-width:0;}
 .tp-control .check-row{margin-top:2px;}
+/* The Setup tab's roles and record rows (slice 5): labels on --ink-2, a new surface. */
+.tp-role-row .tp-role-label,.tp-rec-row .tp-rec-label{min-width:170px;color:var(--ink-2);font-size:12px;}
+.tp-control .tp-role-row + .tp-role-row,.tp-control .tp-rec-row + .tp-rec-row{margin-top:6px;}
 .tp-list{display:flex;flex-wrap:wrap;gap:6px;}
 .tp-chip{display:inline-flex;align-items:center;gap:2px;padding-block:0;padding-right:0;}
 .tp-list-empty{color:var(--ink-3);font-size:12px;}
@@ -10721,6 +10725,9 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 .setup-card .sa-step{display:flex;flex-direction:column;gap:16px;min-width:0;}
 .setup-card .sa-rows{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;}
 .setup-card .sa-row{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px;min-width:0;}
+/* Team setup (slice 5): the Team line above a step the team filled, and the chip on a row. */
+.setup-card .sa-team-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--ink-2);}
+.setup-card .sa-row .badge.team{margin-left:6px;}
 .setup-card .sa-row-main{flex:1 1 120px;min-width:0;overflow-wrap:anywhere;}
 .setup-card .sa-row-line{font-size:var(--fs-meta);color:var(--ink-2);}
 .setup-card .sa-row .badge{flex:none;white-space:nowrap;}
@@ -10730,6 +10737,7 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 .setup-card .dlg-foot .confirm-actions{flex-wrap:wrap;}
 .setup-card .sa-status{min-width:0;overflow-wrap:anywhere;}
 .setup-card .hint{color:var(--ink-2);}
+.setup-card .hint.err{color:var(--red-ink);}
 .setup-card .input::placeholder{color:var(--ink-2);}
 .setup-card .input[aria-invalid="true"].input::placeholder{color:var(--ink-2);}
 .mk-add-msg{align-items:flex-start;}

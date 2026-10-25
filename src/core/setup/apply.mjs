@@ -6,6 +6,7 @@ import {
   readSettings, writeSettingsKeys, assertCostLimitInputs, assertModelRolesInput, assertTestSettingsAccess,
   nextUsdCap, nextCostLimitResetPeriod, nextUiLevel, nextAutoGeneratePrDescription, nextSmartNaming, nextRunEngine,
   nextModelRoles, nextNetworkProxy, nextProviders, copilotTermsAcknowledged,
+  nextSyncSettings, nextNetworkWait, assertHideBuiltinModelsInput, DEFAULT_HIDE_BUILTIN_MODELS,
 } from '../settings.mjs';
 import { COPILOT_TERMS_VERSION } from '../model-env.mjs';
 import { settingsErrorReply, userLine } from '../settings-errors.mjs';
@@ -20,7 +21,8 @@ export const SETUP_GROUPS = Object.freeze({
   network: Object.freeze(['networkProxy', 'login']),
   access: Object.freeze(['copilot', 'openai', 'anthropic']),
   models: Object.freeze(['modelRoles', 'testRoles']),
-  work: Object.freeze(['uiLevel', 'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod', 'autoGeneratePrDescription', 'smartNaming', 'runEngine']),
+  work: Object.freeze(['uiLevel', 'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod', 'autoGeneratePrDescription', 'smartNaming', 'runEngine',
+    'hideBuiltinModels', 'sync', 'networkWait']),
 });
 const PROVIDER_FIELDS = Object.freeze({
   copilot: ['acknowledgeTerms', 'accountType', 'signIn', 'importModels'],
@@ -40,6 +42,9 @@ const WORK_NEXT = Object.freeze({
   autoGeneratePrDescription: (_cur, v) => nextAutoGeneratePrDescription(v),
   smartNaming: (cur, v) => nextSmartNaming(cur, v),
   runEngine: (_cur, v) => nextRunEngine(v),
+  hideBuiltinModels: (_cur, v) => { assertHideBuiltinModelsInput(v); return v === DEFAULT_HIDE_BUILTIN_MODELS ? undefined : v; },
+  sync: (cur, v) => nextSyncSettings(cur, v),
+  networkWait: (cur, v) => nextNetworkWait(cur, v),
 });
 const COST_KEYS = ['pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod'];
 const MAX_IMPORT_IDS = 200;
@@ -118,6 +123,8 @@ export async function planSetupApply(body, deps = {}) {
     catch (err) { throw settingsFieldError('work', costs.find((k) => String(err.message).startsWith(k)) || costs[0], err); }
   }
   for (const [k, fn] of Object.entries(WORK_NEXT)) if (own(work, k)) next[k] = await check('work', k, () => fn(current[k], work[k]));
+  // The person (or their team setup) has now chosen, as setHideBuiltinModels records.
+  if (own(work, 'hideBuiltinModels')) next.hideBuiltinModelsChosen = true;
 
   // ── models ──
   const models = body.models || {};

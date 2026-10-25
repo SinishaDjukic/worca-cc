@@ -10,6 +10,8 @@ import { upstreamEnv } from '../proxy-credentials.mjs';
 import { loadUndici } from '../env-proxy.mjs';
 import { CLAUDE_SIGNED_OUT_HINT } from '../model-test.mjs';
 import { userLine } from '../settings-errors.mjs';
+import { readTeamSetupFile } from './team-file.mjs';
+import { homedir } from 'node:os';
 
 export const DETECT_BUDGET_MS = 2500;
 export const OLLAMA_URL = 'http://127.0.0.1:11434';
@@ -53,6 +55,7 @@ export function defaultProbes({ sourceEnv = () => upstreamEnv(process.env), rech
         return { models: Array.isArray(body.models) ? body.models.length : 0 };
       } catch { return null; }   // nothing listening on 11434 is the normal "absent", not a failed check
     },
+    teamSetup: () => { const r = readTeamSetupFile(); return r.path ? { ...r, path: r.path.replace(homedir(), '~') } : r; },
   };
 }
 
@@ -95,6 +98,11 @@ export const DETECT_CHECKS = Object.freeze([
       : ['no', 'No Ollama is running on port 11434.'] },
   { id: 'apiKey', label: 'Anthropic API key', run: (p) => p.processEnv(), read: (env) =>
     env.ANTHROPIC_API_KEY ? ['ok', 'ANTHROPIC_API_KEY is set in your environment.'] : ['no', 'ANTHROPIC_API_KEY is not set.'] },
+  // The team setup file (D16, T13): ~/.worca-cc/team-setup.json or WORCA_TEAM_SETUP; a refusal names the field.
+  { id: 'teamSetup', label: 'Team setup', run: (p) => p.teamSetup(), read: (t) =>
+    !t?.found ? ['no', 'No team setup file was found.']
+      : !t.ok ? ['warn', `The team setup in ${t.path || 'WORCA_TEAM_SETUP'} was not used: ${t.error}`, { path: t.path, field: t.field }]
+        : ['ok', `Found a team setup in ${t.path}.`, { path: t.path, source: t.source, fields: Object.keys(t.doc?.fields || {}).length }] },
 ]);
 
 /**

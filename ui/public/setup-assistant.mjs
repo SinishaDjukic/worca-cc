@@ -24,7 +24,22 @@ export const SETUP_STEPS = Object.freeze([
 /** A proxy test pass counts this long: under the server's TESTED_TTL_MS (src/core/proxy-host.mjs, 10 min). */
 export const TEST_PASS_MS = 9 * 60_000;
 const GROUP_STEP = Object.freeze({ network: 'network', access: 'access', models: 'models', work: 'work' });
-const WORK_KEYS = Object.freeze(['uiLevel', 'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod', 'autoGeneratePrDescription', 'smartNaming', 'runEngine']);
+const WORK_KEYS = Object.freeze(['uiLevel', 'pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod', 'autoGeneratePrDescription', 'smartNaming', 'runEngine',
+  'hideBuiltinModels', 'sync', 'networkWait']);
+/** The Review line when a team's values already match what is saved (T17). */
+export const TEAM_MATCHES_LINE = "Your setup already matches your team's recommendation.";
+/** The Review line when the notice's policy home is no longer cached by the time the dialog loads (T17). */
+export const TEAM_GONE_LINE = "Your team's setup is no longer available.";
+/** The browser's record of the team setup hashes it has shown (T15): { [policy home]: hash }. */
+export const TEAM_SEEN_KEY = 'worca-cc.teamSetupSeen';
+/** The account-menu notice for the first home whose Setup hash this browser has not seen, or null (D15, AC-5.7). */
+export function teamNotice(homes = [], seen = {}) {
+  for (const h of Array.isArray(homes) ? homes : []) {
+    if (!h?.home || !h.hash || !Array.isArray(h.keys) || !h.keys.length || seen?.[h.home] === h.hash) continue;
+    return { home: h.home, hash: h.hash, label: seen?.[h.home] ? 'Your team updated the recommended setup' : 'Your team has a recommended setup' };
+  }
+  return null;
+}
 const UNREACHABLE = 'Worca could not be reached. Check that it is still running.';
 /** Failed steps whose retry needs the proxy password again: the server saves it only in proxy-login (A24). */
 export const LOGIN_RETRY_STEPS = Object.freeze(['proxy-swap', 'proxy-login']);
@@ -55,8 +70,35 @@ function same(a, b) {
  * /api/setup/detect answer (or null). Saved values always win; on `entry: 'first'` detection fills only a
  * blank: a proxy host from HTTPS_PROXY, and the corporate mode when there is no direct route (D19).
  * `step: 'access'` on a fix-it entry switches Copilot on, since the pill was a Copilot sign-in (AC-4.5).
+ * `team` = { values, keys, unmapped } from GET /api/setup/team: on 'first' it fills only blanks (D19: saved values
+ * win); on 'team' it replaces the answers for the team's keys (T17). `null` on 'team': the home is gone.
+ * `savedKeys` = the keys settings.json really holds (GET /api/setup/team): GET /api/settings fills in defaults, so
+ * "blank" is "not saved", not "null" (webui-1). Without it, a null answer is blank. A team record (sync,
+ * networkWait…) is merged over the saved one: the team names only the sub-keys it recommends (webui-3).
  */
-export function initialAnswers({ saved, detect = null, entry = 'first', step = null }) {
+export function initialAnswers({ saved, detect = null, entry = 'first', step = null, team = undefined, savedKeys = null }) {
+  const a = answersFrom(saved, detect, entry, step);
+  a.found.team = [];
+  const roles = team?.values?.models?.modelRoles || {};
+  for (const [harness, picks] of Object.entries(roles)) {
+    for (const [role, pick] of Object.entries(picks || {})) {
+      const blank = !a.models.modelRoles?.[harness]?.[role]?.model;
+      if (entry === 'team' || (entry === 'first' && blank)) { ((a.models.modelRoles[harness] ||= {})[role]) = { ...pick }; a.found.team.push(`models.modelRoles.${harness}.${role}`); }
+    }
+  }
+  for (const [k, v] of Object.entries(team?.values?.work || {})) {
+    if (!WORK_KEYS.includes(k)) continue;
+    const blank = Array.isArray(savedKeys) ? !savedKeys.includes(k) : a.work[k] == null;
+    if (entry !== 'team' && !(entry === 'first' && blank)) continue;
+    a.work[k] = isRecord(v) && isRecord(a.work[k]) ? { ...a.work[k], ...structuredClone(v) } : structuredClone(v);
+    a.found.team.push(`work.${k}`);
+  }
+  a.found.unmapped = Array.isArray(team?.unmapped) ? team.unmapped : [];
+  a.found.teamGone = entry === 'team' && team === null;   // the home vanished between the menu click and the load (ux-2-4)
+  return a;
+}
+const isRecord = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+function answersFrom(saved, detect, entry, step) {
   const s = saved.settings || {}; const p = saved.proxy?.settings || {}; const pv = saved.providers || {};
   let host = ''; let port = '';
   if (p.upstream) { try { const u = new URL(p.upstream); host = u.hostname; port = u.port || '80'; } catch { /* left blank */ } }
@@ -153,13 +195,15 @@ export function diffRows(saved, answers) {
   const sources = [a.claude && 'Claude Code', a.copilot && 'GitHub Copilot', a.openai && 'OpenAI-compatible', a.anthropic && 'Anthropic-compatible'].filter(Boolean);
   const roles = answers.models.modelRoles[w.runEngine || 'claude'] || {};
   const money = (v) => (v == null ? 'none' : `$${v}`);
+  // Whether the team filled a key of this group (the Team chip); network and access never: D12.
+  const teamIn = (group) => (answers.found?.team || []).some((k) => k.startsWith(`${group}.`));
   return [
-    { group: 'network', step: 'network', label: 'Network', changed: !!body.network,
+    { group: 'network', step: 'network', label: 'Network', changed: !!body.network, team: false,
       value: n.mode === 'proxy' ? `Corporate proxy · ${n.host}:${n.port || '8080'}` : 'Direct' },
-    { group: 'access', step: 'access', label: 'Model access', changed: !!body.access, value: sources.join(', ') || 'None' },
-    { group: 'models', step: 'models', label: 'Models', changed: !!body.models,
+    { group: 'access', step: 'access', label: 'Model access', changed: !!body.access, team: false, value: sources.join(', ') || 'None' },
+    { group: 'models', step: 'models', label: 'Models', changed: !!body.models, team: teamIn('models'),
       value: MODEL_ROLES.map((r) => `${ROLE_LABELS[r]} · ${roles[r]?.model || 'each job’s own default'}`).join('; ') },
-    { group: 'work', step: 'work', label: 'How you work', changed: !!body.work,
+    { group: 'work', step: 'work', label: 'How you work', changed: !!body.work, team: teamIn('work'),
       value: `${LEVEL_INFO[w.uiLevel || 'simple']?.label || 'Simple'} interface · per run ${money(w.pipelineCostLimitUsd)} · total ${money(w.totalCostLimitUsd)}` },
   ];
 }
@@ -184,7 +228,10 @@ export function nextGate(step, answers, { saved, tested = null, now = Date.now()
     if (a.claude && claude && claude.state !== 'ok') return { ok: false, reason: 'Run claude /login in a terminal first' };
   }
   if (step === 'review' && !diffRows(saved, answers).some((r) => r.changed)) {
-    return entry === 'first' ? { ok: true, finish: true, reason: 'Nothing to change: your current setup already works.' } : { ok: false, reason: 'Nothing changed.' };
+    if (entry === 'first') return { ok: true, finish: true, reason: 'Nothing to change: your current setup already works.' };
+    // 'team' finishes like 'first' (T17): Finish closes with done, which marks the notice seen.
+    if (entry === 'team') return { ok: true, finish: true, reason: answers.found?.teamGone ? TEAM_GONE_LINE : TEAM_MATCHES_LINE };
+    return { ok: false, reason: 'Nothing changed.' };
   }
   return { ok: true, reason: '' };
 }
@@ -231,11 +278,12 @@ function paintApplyRows(doc, list, results, done) {
 }
 
 /**
- * Open the assistant. entry 'first' | 'rerun' | 'fix'; `step` opens on that step (a fix-it link).
+ * Open the assistant. entry 'first' | 'rerun' | 'fix' | 'team'; `step` opens on that step (a fix-it link); `team` is the
+ * policy home a 'team' entry reviews (the account-menu notice).
  * onClose(how): 'later' (Set up later / Cancel / Close / Discard), 'done' (Continue after Apply, or Finish).
  * Returns { onFrame(msg), goTo(step), close() }; goTo is a no-op on Apply and switches Copilot on for 'access'.
  */
-export function openSetupAssistant({ doc = globalThis.document, fetchJson = defaultFetchJson, entry = 'first', step = 'check', onClose = () => {}, now = () => Date.now(),
+export function openSetupAssistant({ doc = globalThis.document, fetchJson = defaultFetchJson, entry = 'first', step = 'check', team: teamHome = null, onClose = () => {}, now = () => Date.now(),
   timers = { setTimeout: (f, ms) => doc.defaultView.setTimeout(f, ms), clearTimeout: (t) => doc.defaultView.clearTimeout(t) } } = {}) {
   const el = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const btn = (text, cls, on) => { const b = el('button', cls, text); b.type = 'button'; b.addEventListener('click', on); return b; };
@@ -243,7 +291,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   const call = async (url, opts) => { try { return await fetchJson(url, opts); } catch { return { ok: false, status: 0, data: { error: UNREACHABLE } }; } };
   const S = { step, saved: null, detect: null, answers: null, opened: null, loadError: '', tested: null, testing: false, testResults: [],
     applying: false, early: [], job: null, results: new Map(), body: null, done: null, error: '', errField: null, pollT: null, pollFails: 0, passT: null,
-    cpFlow: null, cpT: null, copilotModels: [], expanded: false, more: false, hadLogin: false, retryLogin: null };
+    cpFlow: null, cpT: null, copilotModels: [], expanded: false, more: false, hadLogin: false, retryLogin: null, note: '', sharing: false, team: null };
 
   const stepOf = el('span', 'sa-step-of'); const title = el('h2', null); title.id = 'setup-title'; const sub = el('p', 'sa-sub');
   const head = el('div', 'card-head'); head.append(stepOf, title, sub);
@@ -382,7 +430,12 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   function paintCheck() {
     const list = rows('sa-check');
     if (!S.detect) list.append(row(badge('amber', 'Couldn\'t check this machine.'), 'Worca continues without it.'));
-    else for (const c of S.detect.checks || []) { const [tone, text] = CHECK_BADGE[c.state] || CHECK_BADGE.no; list.append(row(badge(tone, text), c.label, c.line)); }
+    else for (const c of S.detect.checks || []) {
+      const [tone, text] = CHECK_BADGE[c.state] || CHECK_BADGE.no;
+      const li = row(badge(tone, text), c.label, c.line); li.dataset.check = c.id;
+      if (c.id === 'teamSetup' && c.state === 'ok') li.append(badge('team', 'Team'));
+      list.append(li);
+    }
     body.append(list);
   }
 
@@ -493,7 +546,21 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     }
   }
 
+  // The Team line above a step the team filled, and the roles no source here serves (T18).
+  function paintTeamLine(text) {
+    const line = el('p', 'hint sa-team-line'); line.append(badge('team', 'Team'), doc.createTextNode(` ${text}`)); body.append(line);
+  }
+  function paintUnmapped() {
+    const un = S.answers.found.unmapped || [];
+    if (!un.length) return;
+    // "Your pick is kept." only when there is a pick to keep (ux-2-1).
+    const kept = (u) => !!S.answers.models.modelRoles?.[u.harness || 'claude']?.[u.role]?.model;
+    body.append(rows('sa-team-unmapped', ...un.map((u) => row(null, `${ROLE_LABELS[u.role] || u.role} · ${u.upstream}`, kept(u) ? `${u.line} Your pick is kept.` : u.line))));
+  }
+
   function paintModels() {
+    if ((S.answers.found.team || []).some((k) => k.startsWith('models.'))) paintTeamLine('Your team recommends these roles.');
+    paintUnmapped();
     const host = el('div', 'sa-roles');
     const pending = S.copilotModels.filter((m) => !m.inCatalog);
     const catalog = [...S.saved.catalog, ...pending.map((m) => ({ id: m.catalogId, label: `${m.name || m.id} · Copilot` }))];
@@ -510,6 +577,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   }
 
   function paintWork() {
+    if ((S.answers.found.team || []).some((k) => k.startsWith('work.'))) paintTeamLine('Your team recommends some of these values.');
     const w = S.answers.work;
     const shown = w.uiLevel || doc.documentElement.dataset.level || 'simple';
     body.append(field('Interface', seg(UI_LEVELS.map((l) => [l, LEVEL_INFO[l].label]), shown, (v) => { w.uiLevel = v; paint(); }, { label: 'Interface' }), null));
@@ -532,10 +600,13 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       if (entry !== 'first' && !r.changed) continue;
       const li = row(null, r.label, r.value); li.dataset.group = r.group;
       if (r.changed) li.append(badge('amber', 'Changed'));
+      if (r.team) li.append(badge('team', 'Team'));
       li.append(btn('Change', 'btn btn-sm btn-quiet sa-change', () => goTo(r.step)));
       list.append(li);
     }
     body.append(list);
+    if (entry === 'team' && !list.children.length) body.append(el('p', 'hint sa-review-empty', S.answers.found.teamGone ? TEAM_GONE_LINE : TEAM_MATCHES_LINE));
+    paintUnmapped();
   }
 
   function paintApply() {
@@ -548,13 +619,17 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     actions.replaceChildren();
     const first = idx() === 0;
     if (S.step === 'apply') {
-      if (S.done?.ok) actions.append(btn('Continue', 'btn btn-primary sa-continue', () => teardown('done')));
-      else if (S.done) {
+      if (S.done?.ok) {
+        const share = btn('Share as team setup', 'btn btn-quiet sa-share', () => { void shareDraft(); });
+        share.disabled = S.sharing;                              // one draft at a time (ux-1-5)
+        actions.append(share);
+        actions.append(btn('Continue', 'btn btn-primary sa-continue', () => teardown('done')));
+      } else if (S.done) {
         actions.append(btn('Close', 'btn sa-close', () => teardown('later')));
         actions.append(S.done.retry ? btn('Retry', 'btn btn-primary sa-retry', () => retry(S.done.retry))
           : btn('Back to review', 'btn btn-primary sa-back-review', () => goTo('review')));
       }
-      status.className = `hint sa-status${S.error ? ' err' : ''}`; status.textContent = S.error || (S.done ? '' : 'Working…');
+      status.className = `hint sa-status${S.error ? ' err' : ''}`; status.textContent = S.error || S.note || (S.done ? '' : 'Working…');
       return;
     }
     if (S.applying) { status.className = 'hint sa-status'; status.textContent = 'Working…'; return; }
@@ -577,6 +652,29 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     status.className = `hint sa-status${S.error ? ' err' : ''}`; status.textContent = S.error || gate.reason;
   }
 
+  // D17: the saved settings as a team setup draft, downloaded. The server builds it (network and access never read).
+  async function shareDraft() {
+    if (S.sharing) return;
+    S.sharing = true; S.error = ''; S.note = 'Preparing the team setup…'; paintFoot(); refocusShare();
+    const r = await call('/api/setup/team/draft', { method: 'POST', body: {} });
+    if (closed) return;
+    S.sharing = false;
+    if (!r.ok || typeof r.data?.text !== 'string') { S.note = ''; S.error = r.data?.error || "Couldn't prepare the team setup."; paintFoot(); refocusShare(); return; }
+    const win = doc.defaultView;
+    const url = win.URL.createObjectURL(new win.Blob([r.data.text], { type: 'application/json' }));
+    const a = el('a'); a.href = url; a.download = 'team-setup.json'; doc.body.append(a); a.click(); a.remove();
+    win.setTimeout(() => win.URL.revokeObjectURL(url), 1000);   // not 0: Firefox can cancel a download whose URL is revoked at once
+    const left = (r.data.warnings || []).filter((w) => w.startsWith('models.roles.')).map((w) => {
+      const [path, why] = w.split(': '); return `${ROLE_LABELS[path.split('.').at(-1)] || path} (${why.replace(/ — left out$/, '')})`;
+    });
+    S.note = `Saved team-setup.json. It has no network settings, model sources or keys.${left.length ? ` Left out: ${left.join(', ')}.` : ''}`;
+    paintFoot();
+    refocusShare();
+  }
+  // paintFoot() rebuilds the foot, so the focused Share button is replaced; put focus back on the new one (ux-2-2).
+  // The status line is the dialog's small.hint.sa-status[role=status], so each note is announced.
+  function refocusShare() { if (!closed) actions.querySelector('.sa-share')?.focus(); }
+
   // Skip keeps the saved values for that step (mockup: "Skipping a step keeps its saved values").
   function skip() {
     const saved = initialAnswers({ saved: S.saved, entry: 'rerun' });
@@ -590,14 +688,17 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   // keepAnswers: a 409 SETTINGS_CHANGED reloads what is saved and keeps what the person typed (A20).
   async function load({ keepAnswers = false } = {}) {
     S.loadError = ''; if (!keepAnswers) S.error = ''; paint();   // a successful Try again leaves no stale error (ux-2-1)
-    const [settings, proxy, providers, cfg, detect] = await Promise.all(['/api/settings', '/api/proxy/status', '/api/providers', '/api/config', '/api/setup/detect'].map((u) => call(u)));
+    const [settings, proxy, providers, cfg, detect, teamRes] = await Promise.all(['/api/settings', '/api/proxy/status', '/api/providers', '/api/config', '/api/setup/detect', '/api/setup/team'].map((u) => call(u)));
     if (closed) return;
     const bad = [settings, proxy, providers].find((r) => !r.ok);
     if (bad) { S.loadError = "Couldn't load your settings."; S.error = `${S.loadError} ${bad.data?.error || `HTTP ${bad.status}`}`; paint(); return; }
     S.saved = { settings: settings.data, proxy: proxy.data, providers: providers.data, catalog: Array.isArray(cfg.data?.models) ? cfg.data.models : [] };
     S.detect = detect.ok ? detect.data : null;
+    // 'team': the home the notice named (null when it is gone); any other entry: a valid team setup file.
+    const t = teamRes.ok ? teamRes.data : null;
+    S.team = entry === 'team' ? (t?.homes || []).find((x) => x.home === teamHome) || null : (t?.file?.ok ? t.file : null);
     if (!keepAnswers || !S.answers) {
-      S.answers = initialAnswers({ saved: S.saved, detect: S.detect, entry, step });
+      S.answers = initialAnswers({ saved: S.saved, detect: S.detect, entry, step, team: S.team, savedKeys: Array.isArray(t?.savedKeys) ? t.savedKeys : null });
       S.opened = JSON.stringify(S.answers);
     }
     paint();

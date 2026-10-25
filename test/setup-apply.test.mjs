@@ -520,3 +520,13 @@ test('all three setup routes refuse an agent caller', async () => {
     assert.equal(fileNow(), before);
   } finally { delete process.env.WORCA_AGENT_USER; delete process.env.WORCA_AGENT_HOME; }
 });
+
+test('work.hideBuiltinModels / sync / networkWait: validated, merged and written once', async () => {
+  seed({ sync: { remote: 'upstream' } });
+  const { deps } = fakeDeps();
+  const plan = await planSetupApply({ work: { hideBuiltinModels: true, sync: { beforeRun: false }, networkWait: { maxWaitMin: 60 } } }, deps);
+  assert.deepEqual(plan.written.sort(), ['hideBuiltinModels', 'hideBuiltinModelsChosen', 'networkWait', 'sync']);
+  assert.deepEqual(plan.values.sync, { remote: 'upstream', beforeRun: false });
+  await assert.rejects(planSetupApply({ work: { sync: { remote: 'https://x' } } }, deps), (e) => e.field === 'work.sync.remote' && /remote NAME/.test(e.message));
+  await assert.rejects(planSetupApply({ work: { networkWait: { maxWaitMin: 0 } } }, deps), (e) => e.field === 'work.networkWait.maxWaitMin');
+});

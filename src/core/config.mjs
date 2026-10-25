@@ -22,18 +22,18 @@ import { engineLabel } from '../shared/engine-switch.mjs';
 import { normaliseTags } from '../shared/run-tags.mjs';
 import { connectionOf, harnessesOf, runsOn, harnessesLabel, effortsOn } from '../shared/connections.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
-import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings, memoryDefragModel, setMemoryDefragModel } from './settings.mjs';
+import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels, readSettings, memoryDefragModel, setMemoryDefragModel, modelRolesSetting } from './settings.mjs';
 /** Whether the developer stored the hide-built-ins flag (a team default applies only when not). */
 const readSettingsHideStored = () => { const s = readSettings(); return typeof s.hideBuiltinModels === 'boolean' || s.hideBuiltinModelsChosen === true; };
 import { listPluginModels, allPluginModels, flattenPluginModelEnv } from './plugin-models.mjs';
 import { brokerEnabled } from './broker-client.mjs';
 // Team policy defaults (team-policy design §6, §8): read from the discovery CACHE only (a leaf module).
-import { policyCatalogModels, teamDefault } from './policy/cache.mjs';
+import { policyCatalogModels, teamDefault, cachedFieldsFor } from './policy/cache.mjs';
 import { PREDEFINED_LIST_PRICES, CODEX_PRICES, codexCachedRate } from './list-prices.mjs';
 import { validateNightPatch } from './night/config.mjs';
 import { normalizeProjectActions, EMPTY_PROJECT_ACTIONS } from './actions/model.mjs';
 import { setCascadeModelOwnerReader, resolveSetting } from './settings-cascade.mjs';
-import { resolveRoleModel, roleOf } from './model-roles.mjs';
+import { resolveRoleModel, roleOf, projectRoles } from './model-roles.mjs';
 
 /**
  * Recompute the agent step list FRESH from the layered registry (repo agents/ +
@@ -844,16 +844,49 @@ export function stepSlotDefaults(engine = 'claude', { projectDir = null, workspa
   }
   return out;
 }
+/**
+ * D15: the model roles for runs on `projectDir`, the person's own (settings.json) layered with the project's team
+ * `models.roles`. Reads only. preflight is imported lazily: only a project with team roles pays for the auth probe,
+ * and its state is kept for ROLE_AUTH_TTL_MS so one run's step and graph resolution probe once.
+ */
+export const ROLE_AUTH_TTL_MS = 60_000;
+let roleAuthMemo = null;   // { state, at }
+async function roleClaudeAuth(now = Date.now()) {
+  if (roleAuthMemo && now - roleAuthMemo.at < ROLE_AUTH_TTL_MS) return roleAuthMemo.state;
+  const state = (await import('./preflight.mjs').then((m) => m.probeClaudeAuth()).catch(() => ({ state: 'unknown' })))?.state || 'unknown';
+  roleAuthMemo = { state, at: now };
+  return state;
+}
+/** Test seam: forget the memoised auth state (qa-2-4). */
+export function _resetRoleAuthForTests() { roleAuthMemo = null; }
+export async function projectRolesFor(engine, projectDir, deps = {}) {
+  const user = deps.user ?? modelRolesSetting();
+  let team = deps.team !== undefined ? deps.team : (projectDir ? cachedFieldsFor(projectDir)['models.roles'] || null : null);
+  if (!team) return { roles: user, unmapped: [] };
+  // T8/T9: the policy home's roles pass the team setup reader's check, like a file. team-file.mjs is imported lazily
+  // so config.mjs gains no static edge to it.
+  const { checkTeamSetup } = await import('./setup/team-file.mjs');
+  const checked = checkTeamSetup({ schema: 1, fields: { 'models.roles': team } });
+  if (!checked.ok || !checked.doc.fields['models.roles']) {
+    (deps.log ?? console.warn)(`[policy] models.roles for ${projectDir || 'this run'} not applied: ${checked.ok ? 'the value is not valid' : checked.error}`);
+    return { roles: user, unmapped: [] };
+  }
+  team = checked.doc.fields['models.roles'];
+  const catalog = deps.catalog ?? await listModels(projectDir);
+  const claudeAuth = deps.claudeAuth ?? await roleClaudeAuth();
+  return projectRoles(engine, { user, team, catalog, claudeAuth });
+}
 export async function resolveStepModels(projectDir, fallbackModel, engine = 'claude') {
   const eng = MODEL_ENGINES.includes(engine) ? engine : 'claude'; const cfg = readRaw(projectDir);
   const slots = stepSlotDefaults(eng, { projectDir });
   const fallback = modelForEngine(fallbackModel || undefined, eng, { projectDir });
+  const { roles } = await projectRolesFor(eng, projectDir);
   const out = {};
   for (const { key, label } of agentSteps()) {
     const own = eng === 'claude' ? (cfg.steps[key] || {}) : {};
     const sel = own.model || own.effort ? own : (slots[key] || {});
-    // Model roles (D3): after the slot's own value and the run's model, before "no --model".
-    const role = !sel.model && !sel.effort && !fallback ? resolveRoleModel(eng, roleOf(`steps.${key}`, { name: label })) : null;
+    // Model roles (D3, D15): after the slot's own value and the run's model, before "no --model"; team roles included.
+    const role = !sel.model && !sel.effort && !fallback ? resolveRoleModel(eng, roleOf(`steps.${key}`, { name: label }), { roles }) : null;
     const roleModel = role ? modelForEngine(role.model, eng, { projectDir }) : undefined;
     out[key] = { model: sel.model || fallback || roleModel || undefined, effort: sel.effort || (roleModel ? role.effort : undefined) };
   }

@@ -42,3 +42,80 @@ export function withScanRole(stored, defaults, deps = {}) {
   const role = roleModelFor('claude', 'workspaceScan', deps);
   return role ? { ...defaults, scanModel: role.model, ...(role.effort ? { scanEffort: role.effort } : {}) } : null;
 }
+
+/** What a role shows when no source on this machine serves the team's model (D13, AC-5.3). */
+export const NO_SOURCE_LINE = 'None of your sources offer it.';
+
+/** The comparable form of an upstream model id: claude-opus-5.5, anthropic/claude-opus-5.5 and claude-opus-5-5 are one model. */
+export function upstreamKey(id) {
+  return String(id ?? '').trim().toLowerCase()
+    .replace(/^[a-z0-9._-]+\//, '')     // vendor prefix (OpenRouter anthropic/…)
+    .replace(/\[1m\]$/, '')
+    .replace(/-\d{8}$/, '')             // dated snapshot
+    .replace(/\./g, '-');
+}
+
+// Lower ranks win (D13's order): the harness sign-in, a Copilot import, an API-key / OpenRouter entry; a sign-in
+// whose state is unknown last, so a probe gap never beats a source that is known to work.
+const SOURCE_RANK = Object.freeze({ copilot: 1, openai: 2, anthropic: 2 });
+const runsOnEngine = (r, engine) => (Array.isArray(r.harnesses) ? r.harnesses.includes(engine) : (r.engine || 'claude') === engine);
+// Only a harness built-in (no `custom`) or the person's own entry (`custom: 'global'`, config.mjs listModels) may
+// serve a team role. Policy, plugin and project rows are excluded: a team artifact must never pick a source it added.
+const ownRow = (r) => !r.custom || r.custom === 'global';
+
+/**
+ * D13: the catalog entry that serves `upstream` on `engine` here, or why none does. Pure: `catalog` is listModels()
+ * rows (bridged rows carry `bridged`, `upstreamModel`, `needsSignIn`), `claudeAuth` probeClaudeAuth().state.
+ * @returns {{id:string, source:string}|{id:null, line:string}}
+ */
+export function mapUpstreamModel(upstream, engine, { catalog = [], claudeAuth = 'unknown' } = {}) {
+  const want = upstreamKey(upstream);
+  let best = null;
+  for (const r of Array.isArray(catalog) ? catalog : []) {
+    if (!r || typeof r.id !== 'string' || !want || !ownRow(r) || !runsOnEngine(r, engine)) continue;
+    let rank = -1; let source = null;
+    if (r.bridged) {
+      if (!r.needsSignIn && upstreamKey(r.upstreamModel) === want) { rank = SOURCE_RANK[r.bridged] ?? 3; source = r.bridged; }
+    } else if (!r.custom && upstreamKey(r.id) === want) {
+      // A harness built-in (config.mjs PREDEFINED_MODELS / CODEX_BUILTIN_MODELS): served by that harness's own sign-in.
+      const state = engine === 'claude' ? claudeAuth : 'signed-in';
+      rank = state === 'signed-in' ? 0 : state === 'unknown' ? 4 : -1; source = 'signin';
+    }
+    if (rank >= 0 && (!best || rank < best.rank)) best = { id: r.id, source, rank };
+  }
+  return best ? { id: best.id, source: best.source } : { id: null, line: NO_SOURCE_LINE };
+}
+
+/**
+ * D17: the upstream name a catalog id is shared as: the harness built-in id it stands for, or null. A Copilot or
+ * OpenRouter entry for a built-in model shares the built-in id. A custom or unknown id is never shared (T24): it would
+ * name a source of this machine and serve nobody else.
+ */
+export function shareUpstream(id, catalog = []) {
+  const rows = Array.isArray(catalog) ? catalog : [];
+  const row = rows.find((r) => r?.id === id);
+  if (!row) return null;
+  const raw = row.upstreamModel || id;
+  const builtin = rows.find((r) => r && !r.bridged && !r.custom && upstreamKey(r.id) === upstreamKey(raw));
+  return builtin ? builtin.id : null;
+}
+
+/**
+ * D15: the roles runs on one project use for `engine`. `team` is the project's `models.roles` entry from
+ * fieldsForRun ({ kind, value }) or null. Default: the person's own role wins. Soft: the team's does. A team role no
+ * source serves is left out (the person's role or today's fallback applies) and listed in `unmapped`.
+ */
+export function projectRoles(engine, { user = {}, team = null, catalog = [], claudeAuth = 'unknown' } = {}) {
+  const mine = isObj(user?.[engine]) ? user[engine] : {};
+  const theirs = isObj(team?.value?.[engine]) ? team.value[engine] : {};
+  const out = { ...mine }; const unmapped = [];
+  for (const role of MODEL_ROLES) {
+    const pick = theirs[role];
+    if (!isObj(pick) || typeof pick.model !== 'string') continue;
+    if (team.kind !== 'soft' && isObj(mine[role]) && typeof mine[role].model === 'string' && mine[role].model.trim()) continue;
+    const hit = mapUpstreamModel(pick.model, engine, { catalog, claudeAuth });
+    if (!hit.id) { unmapped.push({ role, upstream: pick.model, line: hit.line }); continue; }
+    out[role] = { model: hit.id, ...(pick.effort ? { effort: pick.effort } : {}) };
+  }
+  return { roles: { ...(isObj(user) ? user : {}), [engine]: out }, unmapped };
+}

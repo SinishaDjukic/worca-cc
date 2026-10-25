@@ -5,7 +5,7 @@ API it uses. The user guide for the dialog lands with the dialog itself.
 
 ## Server API
 
-All three routes refuse an agent caller under agent isolation with 403 `SETUP_AGENT_BLOCKED`.
+Every route below refuses an agent caller under agent isolation with 403 `SETUP_AGENT_BLOCKED`.
 
 ### `GET /api/setup/detect`
 
@@ -82,6 +82,31 @@ A result's `state` is `ok`, `failed`, `skipped` or `refused`:
 Only one apply runs at a time. A second POST while one runs answers 409 `SETUP_RUNNING` with the running
 apply's `id`.
 
+### `GET /api/setup/team`
+
+The team setup this machine can see, in two parts:
+
+- `file`: the [team setup file](#team-setup). `{ found: false, path }` when there is none;
+  `{ found: true, ok: false, path, field, error }` when it was refused; otherwise
+  `{ found: true, ok: true, path, source, warnings, hash, values, keys, unmapped }`.
+- `homes`: one entry per cached team policy home that sets any team setup field:
+  `{ home, hash, values, keys, unmapped }`.
+
+`values` is the part of a `POST /api/setup/apply` body the team setup stands for (`models.modelRoles` and
+`work`), with each role mapped to a model this machine can run. `keys` lists the apply-body paths the team
+filled. `unmapped` lists the roles no source here offers: `{ harness, role, upstream, line }`, where `line` is
+"None of your sources offer it." `hash` changes when, and only when, a team setup field changes.
+
+`GET /api/setup/team?homes=1` answers `{ homes: [{ home, hash, keys }] }` only, where `keys` are the policy
+keys present. It reads no model catalog and runs no sign-in check. The account menu uses it.
+
+### `POST /api/setup/team/draft`
+
+Builds a team setup draft from the saved settings and answers `{ doc, text, warnings }`. Only the model roles
+and the work settings are read: never `networkProxy`, `providers` or a proxy login. A role on a model that only
+this machine knows is left out with a warning, such as
+"models.roles.claude.deep: my-local-model is not a model every machine knows — left out".
+
 ### Contracts for the dialog
 
 - **A new proxy must pass a test first.** Run `POST /api/proxy/test` on the new proxy upstream; that test
@@ -131,3 +156,45 @@ Refused and its line. **Continue** closes the dialog. On a first start or a re-r
 come next. A failed step that names a retry shows **Retry**, which resends the same answers from that step. The
 dialog keeps no secret after the 202, so a retry at `proxy-swap` or `proxy-login` reopens Network and asks for the
 proxy password again. A failed job without a retry, or a job Worca lost track of, shows **Back to review**.
+
+## Team setup
+
+A team setup is a team policy document limited to the Setup fields: the model roles (`models.roles`), the
+interface level, AI-written PR descriptions, Smart run names, the coding agent, Sync before run and Wait for the
+network (`setup.*`), plus the spend limits (`cost.pipelineLimitUsd`, `cost.totalLimitUsd`, `cost.resetPeriod`)
+and `models.hideBuiltins`. It comes from a team policy home (see [Team policy](team-policy.md#team-setup)) or
+from a file.
+
+**The file.** Worca looks for `~/.worca-cc/team-setup.json`, or the path in `WORCA_TEAM_SETUP`. A URL there is
+refused: Worca reads a team setup only from a file on this machine. The file is at most 64 KB. Any other field is
+dropped with a warning. Tags are dropped too: they come from the project's team policy (`runs.tagDimensions`,
+`runs.enforceTags`).
+
+**Refused files.** A team setup never carries network settings, model sources, keys, tokens or passwords. A
+file that carries one, by key name or by a value that looks like a key, is refused whole, with the field named:
+"A team setup never carries network settings: “networkProxy”. Remove it and try again." The Check step shows
+the refusal on its **Team setup** row.
+
+**In the dialog.** On a first start, the file's values fill only the answers that are blank, and each Review
+row they filled carries a **Team** chip. A team role that no source on this machine offers shows "None of your
+sources offer it." on Models and on Review.
+
+**The account-menu notice.** When a team policy home's Setup fields change, the account menu shows "Your team
+updated the recommended setup · Review". Review lists only the rows that differ from what is saved, and nothing
+changes before **Apply changes**. When nothing differs, Review says "Your setup already matches your team's
+recommendation." and offers **Finish**. The notice hides once that review ends with Apply then Continue, or with
+Finish; **Set up later** keeps it.
+
+**Share as team setup.** After a successful Apply, **Share as team setup** downloads `team-setup.json` from
+your saved settings ([`POST /api/setup/team/draft`](#post-apisetupteamdraft)). It has no network settings,
+model sources or keys, and its roles name upstream models (`claude-opus-5-5`), so each machine maps them to its
+own source.
+
+**`worca setup --from FILE [--yes]`.** Applies a team setup file with one settings write. It asks one question
+for each of these that the file leaves out: Interface level, Coding agent, Per-run limit ($), Total limit ($),
+Reset, AI-written PR descriptions, and the Deep thinking, Everyday coding and Quick jobs models. Enter keeps the
+current value. A role the file names but no source here serves counts as set. Then it prints one line per changed
+setting (one per changed sub-key for Sync before run, Wait for the network and Smart run names) and asks
+`Apply these changes? [y/N]`; anything but yes exits 1 with "Nothing changed.". `--yes` asks nothing. A
+refused file exits 2 and names the field. It never changes the network or model access: use the setup assistant
+or `worca proxy` for those.

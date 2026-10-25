@@ -206,7 +206,7 @@ import { skillDeviations as policySkillDeviations } from '../src/core/policy/eff
 import { resolveSkillRegistry as policySkillRegistry } from '../src/core/skills-registry/resolve.mjs';
 import { skillSkipReasonText as policySkillWhy } from '../src/core/skills-registry/texts.mjs';
 import { policyForScope, policyPayload } from '../src/core/policy/scope.mjs';
-import { policyCatalogModels } from '../src/core/policy/cache.mjs';
+import { policyCatalogModels, cachedPolicyHomes } from '../src/core/policy/cache.mjs';
 import { pickFolderNative, pickAppNative, nativeDialogAvailable } from '../src/core/folder-dialog.mjs';
 import {
   readRemoteAccessConfig, checkRemoteAccessConfig, isRemoteMode, createHostGuard, createIdentityCheck, isInContainer,
@@ -266,7 +266,7 @@ import {
   readNightModePrefs, writeNightModePrefs, readProjectDefaultTags, writeProjectDefaultTags,
   readProjectActions, writeProjectActions, readActionsMeta, writeActionsMeta, writeTeamRepo,
 } from '../src/core/config.mjs';
-import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
+import { listGlobalModels, addGlobalModel, updateGlobalModel, readSettings } from '../src/core/settings.mjs';
 import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, COPILOT_EFFORTS, GOOSE_EFFORTS, OPENCODE_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
 import { engineLabel, ENGINE_NAMES, engineRefusalFor } from '../src/shared/engine-switch.mjs';
 import { engineReadiness, engineLocks } from '../src/core/engines/readiness.mjs';
@@ -282,6 +282,7 @@ import { speechAssetStore } from '../src/core/speech-assets.mjs';
 import { listPluginModels, modelSecretsSchema, pluginModelSecretStatus } from '../src/core/plugin-models.mjs';
 import { testModel } from '../src/core/model-test.mjs';
 import { detectSetup, defaultProbes } from '../src/core/setup/detect.mjs';
+import { teamSetupState, buildTeamSetup, SHARE_SETTING_KEYS } from '../src/core/setup/team-file.mjs';
 import { planSetupApply, commitSetupPlan, runSetupSteps, SetupFieldError, SetupConflictError } from '../src/core/setup/apply.mjs';
 import {
   DEFAULT_UI_PORT, UI_HEALTH_NAME, newUiToken, writeUiInstance, removeUiInstance, uiUrl,
@@ -13448,6 +13449,30 @@ app.get('/api/setup/detect', async (req, res) => {
       sourceEnv: () => upstreamEnv(egressNow()?.sourceEnv ?? process.env) });
     res.json(await detectSetup({ probes }));
   } catch (err) { console.error('[setup] detect failed:', err); res.status(500).json({ error: 'Worca could not check this machine. Try again.' }); }
+});
+
+app.get('/api/setup/team', async (req, res) => {
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: SETUP_AGENT_TEXT, code: 'SETUP_AGENT_BLOCKED' });
+  try {
+    // The account notice polls nothing: it reads ?homes=1 on boot and on each menu open, which costs no catalog
+    // and no claude CLI probe (fit-1-4).
+    if (req.query.homes === '1') return res.json(teamSetupState({ homes: cachedPolicyHomes, homesOnly: true }));
+    const [catalog, auth] = await Promise.all([listModels(null), probeClaudeAuth().catch(() => ({ state: 'unknown' }))]);
+    // savedKeys: which shareable keys settings.json really holds, since GET /api/settings fills in defaults. A first
+    // start fills only keys missing here (webui-1); only key names leave, never values.
+    const all = readSettings();
+    res.json({ ...teamSetupState({ catalog, claudeAuth: auth.state, homes: cachedPolicyHomes }), savedKeys: SHARE_SETTING_KEYS.filter((k) => Object.hasOwn(all, k)) });
+  } catch (err) { console.error('[setup] team setup failed:', err); res.status(500).json({ error: 'Worca could not read the team setup. Try again.' }); }
+});
+app.post('/api/setup/team/draft', async (req, res) => {
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: SETUP_AGENT_TEXT, code: 'SETUP_AGENT_BLOCKED' });
+  try {
+    // Only the keys Share may carry leave settings.json (T14): networkProxy, providers and logins are never read.
+    const all = readSettings();
+    const settings = Object.fromEntries(SHARE_SETTING_KEYS.filter((k) => Object.hasOwn(all, k)).map((k) => [k, all[k]]));
+    const { doc, text, warnings } = buildTeamSetup({ settings, catalog: await listModels(null) });
+    res.json({ doc, text, warnings });
+  } catch (err) { console.error('[setup] team draft failed:', err); res.status(500).json({ error: 'Worca could not prepare the team setup. Try again.' }); }
 });
 
 app.post('/api/setup/apply', async (req, res) => {

@@ -25,6 +25,7 @@ const mockProbes = {
   direct: fast(false),
   engines: fast([{ name: 'claude', label: 'Claude Code', ready: true, reason: null }, { name: 'codex', label: 'Codex', ready: false, reason: 'not signed in' }]),
   ollama: fast({ models: 3 }),
+  teamSetup: () => ({ found: false, path: '/h/.worca-cc/team-setup.json' }),
 };
 
 test('detectClaude: the tile and the check agree', async () => {
@@ -43,7 +44,7 @@ test('AC-3.1: every check, a state and a line, under 3 s', async () => {
   const { checks } = await detectSetup({ probes: mockProbes });
   assert.ok(Date.now() - t0 < 3000);
   assert.deepEqual(checks.map((c) => c.id), DETECT_CHECKS.map((c) => c.id));
-  assert.equal(checks.length, 7);
+  assert.equal(checks.length, 8);
   for (const c of checks) {
     assert.ok(['ok', 'warn', 'no'].includes(c.state), c.id);
     assert.ok(c.line.length > 0, c.id);
@@ -127,7 +128,7 @@ after(async () => {
 });
 beforeEach(() => testing?.resetSetup());
 
-test('GET /api/setup/detect answers the 7 checks from the injected probes', async () => {
+test('GET /api/setup/detect answers the 8 checks from the injected probes', async () => {
   testing.setSetupProbes(mockProbes);
   const r = await fetch(`${base}/api/setup/detect`);
   assert.equal(r.status, 200);
@@ -144,4 +145,49 @@ test('GET /api/setup/detect refuses an agent caller', async () => {
     assert.equal(r.status, 403);
     assert.equal((await r.json()).code, 'SETUP_AGENT_BLOCKED');
   } finally { delete process.env.WORCA_AGENT_USER; delete process.env.WORCA_AGENT_HOME; }
+});
+
+test('teamSetup: found, missing and refused, in plain words', async () => {
+  const at = (r) => detectSetup({ probes: { ...mockProbes, teamSetup: () => r } }).then(({ checks }) => checks.find((c) => c.id === 'teamSetup'));
+  assert.deepEqual(await at({ found: true, ok: true, path: '~/.worca-cc/team-setup.json', source: 'home', doc: { fields: { 'setup.uiLevel': {} } } }),
+    { id: 'teamSetup', label: 'Team setup', state: 'ok', line: 'Found a team setup in ~/.worca-cc/team-setup.json.', facts: { path: '~/.worca-cc/team-setup.json', source: 'home', fields: 1 } });
+  assert.equal((await at({ found: false })).line, 'No team setup file was found.');
+  const bad = await at({ found: true, ok: false, path: '~/.worca-cc/team-setup.json', field: 'networkProxy', error: 'A team setup never carries network settings: “networkProxy”. Remove it and try again.' });
+  assert.equal(bad.state, 'warn');
+  assert.equal(bad.line, 'The team setup in ~/.worca-cc/team-setup.json was not used: A team setup never carries network settings: “networkProxy”. Remove it and try again.');
+  assert.equal(bad.facts.field, 'networkProxy');
+});
+
+test('GET /api/setup/team and POST /api/setup/team/draft refuse an agent caller', async () => {
+  // The same switch as 'GET /api/setup/detect refuses an agent caller' above: agentMayBeCaller reads these two vars.
+  process.env.WORCA_AGENT_USER = 'worca-agent';
+  process.env.WORCA_AGENT_HOME = join(home, 'agent');
+  try {
+    for (const [url, opts] of [['/api/setup/team', {}], ['/api/setup/team?homes=1', {}],
+      ['/api/setup/team/draft', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }]]) {
+      const r = await fetch(`${base}${url}`, opts);
+      assert.equal(r.status, 403, url);
+      assert.equal((await r.json()).code, 'SETUP_AGENT_BLOCKED', url);
+    }
+  } finally { delete process.env.WORCA_AGENT_USER; delete process.env.WORCA_AGENT_HOME; }
+});
+
+test('GET /api/setup/team answers { file, homes, savedKeys }; ?homes=1 answers { homes }; the draft carries no proxy or provider', async () => {
+  const team = await (await fetch(`${base}/api/setup/team`)).json();
+  assert.deepEqual(Object.keys(team).sort(), ['file', 'homes', 'savedKeys']);
+  // savedKeys: the shareable keys settings.json really holds, never a value and never networkProxy (webui-1).
+  const { settingsFile } = await import('../src/core/settings.mjs');
+  const fs = await import('node:fs');
+  const file = settingsFile(); const before = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
+  fs.mkdirSync(join(home, '.worca-cc'), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ ...(before ? JSON.parse(before) : {}), uiLevel: 'advanced', networkProxy: { enabled: false } }));
+  try {
+    const saved = (await (await fetch(`${base}/api/setup/team`)).json()).savedKeys;
+    assert.ok(saved.includes('uiLevel')); assert.ok(!saved.includes('networkProxy')); assert.ok(!saved.includes('networkWait'));
+  } finally { if (before === null) fs.unlinkSync(file); else fs.writeFileSync(file, before); }
+  assert.deepEqual(Object.keys(await (await fetch(`${base}/api/setup/team?homes=1`)).json()), ['homes']);
+  const draft = await (await fetch(`${base}/api/setup/team/draft`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json();
+  assert.equal(draft.doc.schema, 1);
+  assert.ok(Array.isArray(draft.warnings));
+  assert.doesNotMatch(draft.text, /networkProxy|providers|apiKey|token/i);
 });
