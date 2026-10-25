@@ -484,6 +484,12 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
 
 /** The OpenRouter preset (docs/models.md "OpenRouter"); mirrors provider-ops OPENROUTER_BASE_URL. */
 export const OPENROUTER_PRESET = Object.freeze({ baseUrl: 'https://openrouter.ai/api/v1', keyRef: '${OPENROUTER_KEY}' });
+/** The Import dialog's hosted-API presets: an endpoint with a key of its own, stored on each imported entry
+ *  (src/core/model-env.mjs GEMINI_OPENAI_BASE_URL / QWEN_OPENAI_BASE_URL; docs/models.md › Gemini and Qwen models). */
+export const ENDPOINT_PRESETS = Object.freeze({
+  gemini: Object.freeze({ baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', keyRef: '${GEMINI_API_KEY}' }),
+  qwen: Object.freeze({ baseUrl: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1', keyRef: '${DASHSCOPE_API_KEY}' }),
+});
 
 /**
  * Apply a preset to a provider row's fields — the base URL always, the key only when the row has
@@ -644,7 +650,9 @@ export function renderEndpointSheet(payload, { doc = globalThis.document } = {})
   root.appendChild(h(doc, 'h3', 'mv-editor-title', `Import from ${p.serverLabel || 'this endpoint'}`));
   root.appendChild(h(doc, 'small', 'hint', hosted
     ? `${p.baseUrl || ''}: these run through the translation layer (no web tools). Worca reads each model's window, output cap, tool and reasoning support and its listed price, and pins them on the entry.`
-    : `${p.baseUrl || ''}: these run through the translation layer (no thinking blocks, no web tools) and are priced free: a model on your own machine bills nothing. Worca pins the prompt limit only when the server reports the window it really serves.`));
+    : p.server === 'gemini' || p.server === 'qwen'
+      ? `${p.baseUrl || ''}: these run through the translation layer (no web tools) and bill to your ${p.serverLabel || 'provider'} account. Worca pins the windows the endpoint lists; set a price on each to see its cost.`
+      : `${p.baseUrl || ''}: these run through the translation layer (no thinking blocks, no web tools) and are priced free: a model on your own machine bills nothing. Worca pins the prompt limit only when the server reports the window it really serves.`));
   for (const w of Array.isArray(p.warnings) ? p.warnings : []) root.appendChild(h(doc, 'small', 'hint mvi-warn', w));
   // A hosted catalog lists hundreds of models: beside the dialog's text filter, narrow by what a
   // pipeline decides on. The controls only mark the view — endpointRowMatches reads them — so, like

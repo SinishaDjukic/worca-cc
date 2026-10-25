@@ -185,7 +185,7 @@ test('catalog models: a Codex entry keeps its engine, Codex efforts and a Respon
   assert.ok(warnings.some((w) => w.includes('acme-odd') && w.includes('engine')), warnings.join('\n'));
 });
 
-test('catalog models: a Cursor entry keeps its engine with no efforts; env or an upstream drops it', () => {
+test('catalog models: a Cursor entry keeps its engine with no efforts, a Gemini one its own; env or an upstream drops it', () => {
   const { doc, warnings } = normalizePolicyDoc({
     schema: 1,
     catalogs: { models: [
@@ -199,7 +199,7 @@ test('catalog models: a Cursor entry keeps its engine with no efforts; env or an
   });
   assert.deepEqual(doc.catalogs.models, [
     { id: 'acme-cursor', label: 'acme-cursor', efforts: [], engine: 'cursor' },
-    { id: 'acme-gemini', label: 'acme-gemini', efforts: [], engine: 'gemini' },
+    { id: 'acme-gemini', label: 'acme-gemini', efforts: ['high'], engine: 'gemini' },
     { id: 'acme-claude', label: 'acme-claude', efforts: ['medium', 'high'] },
   ]);
   assert.ok(warnings.some((w) => w.includes('acme-cursor-env') && w.includes('a cursor model takes no env')), warnings.join('\n'));

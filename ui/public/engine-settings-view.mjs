@@ -1,12 +1,13 @@
 import { icon } from './icons.mjs';
 import { renderInheritField, readDirtyFields } from './inherit-field.mjs';
-import { engineLabel, engineChoiceLabel, isBetaEngine, ENGINE_NAMES, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, engineChoiceLabel, isBetaEngine, ENGINE_NAMES, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES, CHAT_ENGINE_NAMES, ENGINES } from '../../src/shared/engine-switch.mjs';
 import { applyEngineLocks, engineLock } from './engine-locks.mjs';
 // The own-sign-in engines have no effort flag, except Goose and OpenCode.
 export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', 'high', 'xhigh', 'max']), codex: Object.freeze(['minimal', 'low', 'medium', 'high']),
   copilot: Object.freeze(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']),
   ...Object.fromEntries(SIGN_IN_ENGINE_NAMES.map((e) => [e, Object.freeze([])])),
-  goose: Object.freeze(['low', 'medium', 'high', 'max']), opencode: Object.freeze(['minimal', 'low', 'medium', 'high', 'max']) });
+  goose: Object.freeze(['low', 'medium', 'high', 'max']), opencode: Object.freeze(['minimal', 'low', 'medium', 'high', 'max']),
+  gemini: Object.freeze(['low', 'medium', 'high']), qwen: Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']) });
 // An inherited value's label; an unset one stays null, so the field shows its bare heading.
 const engineName = (v) => (v == null ? null : engineLabel(v));
 const helpersNote = (engine) => (engine === 'copilot' ? "Copilot runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on its own default model."
@@ -180,13 +181,16 @@ export function enginePatchToSettingsBody(patch) {
  *  chats start with. User-only; `defaults` are the catalog's built-in picks, shown as "<value> (default)". */
 export function renderAskEngineSection(host, { catalog = [], askEngine, askModels = {}, defaults = {}, onTest = null, status = null } = {}) {
   const doc = host.ownerDocument; host.replaceChildren();
-  // The catalog lists no Codex model while this codex cannot be locked down for a chat (docs/models.md#codex): a saved
-  // Codex choice then starts new chats on Claude, and the card says so instead of offering an empty model row.
-  // Copilot: its rows are listed while the credential broker is off (the Copilot CLI is never probed here).
-  const others = ['codex', 'copilot'];
+  // Every chat engine but Claude (engine-switch.mjs `chat`). The catalog lists no Codex model while this codex cannot be
+  // locked down for a chat (docs/models.md#codex): a saved Codex choice then starts new chats on Claude, and the card
+  // says so instead of offering an empty model row. Copilot, Gemini CLI and Qwen Code: their rows are listed while the
+  // credential broker is off (the CLI is never probed here); Gemini CLI and Qwen Code ship no model, so without one the
+  // card says to add one.
+  const others = CHAT_ENGINE_NAMES.filter((e) => e !== 'claude');
   const offered = Object.fromEntries(others.map((e) => [e, catalog.some((m) => m && m.engine === e)]));
   const unavailable = (e) => (engineLock(e) !== null ? `Chat on ${engineLabel(e)} is off while the credential broker is on, so new chats start on Claude.`
-    : `Chat on ${engineLabel(e)} is unavailable on this ${e} version, so new chats start on Claude.`);
+    : ENGINES[e].signin ? `Chat on ${engineLabel(e)} needs a ${engineLabel(e)} model: add one on the Models page.`
+      : `Chat on ${engineLabel(e)} is unavailable on this ${e} version, so new chats start on Claude.`);
   const notes = others.filter((e) => !offered[e]).map(unavailable).join(' ');
   host.append(renderInheritField(doc, { id: 'askEngine', label: 'Engine for new chats', kind: 'select', level: 'user',
     hint: `A chat keeps the engine it started on; to switch, start a new chat.${notes ? ` ${notes}` : ''}`,
@@ -199,8 +203,8 @@ export function renderAskEngineSection(host, { catalog = [], askEngine, askModel
     if (engine !== 'claude' && !offered[engine]) continue;
     const id = `models.${engine}.ask`; const label = engineChoiceLabel(engine);
     rows.push({ id, label, set: askModels[engine] != null,
-      hint: engine === 'codex' ? 'On Codex the per-turn cost cap is checked when a reply ends, and needs a model worca can price.'
-        : engine === 'copilot' ? 'Copilot reports no cost: its chats run only while the per-turn cost cap is off.' : null,
+      hint: engine === 'claude' ? null
+        : `On ${engineLabel(engine)} the per-turn cost cap is checked when a reply ends, and needs a model worca can price (its Models page price, or a list price worca knows).`,
       el: renderInheritField(doc, { id, label, kind: 'model', level: 'user', engine, catalog, efforts: ENGINE_EFFORTS[engine], own: askModels[engine], inherited: { value: defaults[engine] || undefined, source: 'default' } }) });
   }
   host.append(slotTable(doc, 'ask-chat-models', 'Chat models', rows, { what: 'engine', from: "Worca's defaults", onTest, always: true }));
@@ -210,11 +214,12 @@ export function renderAskEngineSection(host, { catalog = [], askEngine, askModel
   }
 }
 export const readAskEngineSection = (host) => readDirtyFields(host);
+const ASK_SLOT_RE = new RegExp(`^models\\.(${CHAT_ENGINE_NAMES.join('|')})\\.ask$`);
 export function askPatchToSettingsBody(patch) {
   const body = {};
   for (const [id, value] of Object.entries(patch || {})) {
     if (id === 'askEngine') { body.askEngine = value; continue; }
-    const match = /^models\.(claude|codex|copilot)\.ask$/.exec(id);
+    const match = ASK_SLOT_RE.exec(id);
     if (match) (body.askModels ||= {})[match[1]] = value;
   }
   return body;

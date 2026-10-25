@@ -296,6 +296,21 @@ test('resume: --resume=<session>, and only the turn\'s delta of the cumulative u
   assert.deepEqual(again.find((e) => e.type === 'result').usage, { input_tokens: 1500, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 30 });
 });
 
+test('an agent-user spawn (relay mode, a run step): its scratch folder is the group\'s to write (Copilot writes its usage file there), its agent folder to read', POSIX, async () => {
+  const dir = tmp();
+  writeFileSync(join(dir, 'sudo'), '#!/bin/sh\nwhile [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n', { mode: 0o755 });
+  const f = fakeCopilot(dir, { fixture: fixturePath('tools.jsonl'), usage: USAGE(10, 5) });
+  const keys = ['PATH', 'WORCA_AGENT_USER', 'WORCA_AGENT_HOME', 'WORCA_AGENT_GID', 'WORCA_AGENT_POOL'];
+  const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  Object.assign(process.env, { PATH: `${dir}:${process.env.PATH}`, WORCA_AGENT_USER: 'worca-agent', WORCA_AGENT_HOME: join(dir, 'agent-home'), WORCA_AGENT_GID: String(process.getgid() || 1) });
+  delete process.env.WORCA_AGENT_POOL;
+  try {
+    await runCopilotProcess({ bin: f.bin, cwd: dir, prompt: 'p', askLockdown: true, sandbox: 'read-only', asAgent: true, usageDir: join(dir, 'usage'), scratchBase: join(worcaHome(), 'tmp', 'copilot') });
+  } finally { for (const k of keys) if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
+  assert.equal(f.record().scratchMode, 0o770);
+  assert.equal(f.record().agentsMode & 0o050, 0o050, 'a staged sub-folder stays readable and traversable');
+});
+
 test('a foreign stored session starts a fresh copilot session and says so', POSIX, async () => {
   const dir = tmp();
   const f = fakeCopilot(dir, { fixture: fixturePath('tools.jsonl') });

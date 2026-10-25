@@ -1,6 +1,6 @@
 // test/helpers/fake-copilot.mjs
 // A stand-in `copilot` binary for the Copilot adapter's spawn tests: it records what it was handed (argv,
-// stdin, the env names and values a test asks for, the node agent file, the MCP config), writes the usage
+// stdin, the env names and values a test asks for, the node agent file, the MCP config, the scratch folders' modes), writes the usage
 // file when asked (--usage-output-file), prints a captured JSONL fixture and exits with the given code.
 import { writeFileSync, chmodSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -27,7 +27,9 @@ let stdin = ''; process.stdin.on('data', (d) => { stdin += d; }).on('end', () =>
   const investigator = addDirs.length ? read(path.join(addDirs[0], '.github', 'agents', 'worca-investigator.agent.md')) : null;
   const mcp = at('--additional-mcp-config');
   const env = Object.fromEntries(cfg.envNames.map((n) => [n, process.env[n] ?? null]));
-  fs.writeFileSync(cfg.rec, JSON.stringify({ argv, stdin, cwd: process.cwd(), env, agentFile, investigator, mcp: mcp ? read(mcp.replace(/^@/, '')) : null }));
+  const mode = (p) => { try { return fs.statSync(p).mode & 0o777; } catch { return null; } };
+  fs.writeFileSync(cfg.rec, JSON.stringify({ argv, stdin, cwd: process.cwd(), env, agentFile, investigator, mcp: mcp ? read(mcp.replace(/^@/, '')) : null,
+    scratchMode: addDirs.length ? mode(addDirs[0]) : null, agentsMode: addDirs.length ? mode(path.join(addDirs[0], '.github', 'agents')) : null }));
   const usageFile = at('--usage-output-file');
   if (usageFile && cfg.usage) fs.writeFileSync(usageFile, JSON.stringify(cfg.usage));
   if (cfg.stderr) process.stderr.write(cfg.stderr + '\\n');

@@ -3,7 +3,7 @@
 // {list(), call()} tool table: the Ask Worca child's worca tools (mcp-stdio.mjs) and a Codex helper job's
 // file tools (engines/codex-files-mcp.mjs). No tool imports, so a small server stays small.
 import { createRequire } from 'node:module';
-import { AskToolError } from './tools.mjs';
+import { AskToolError, MCP_CONTENT } from './tools.mjs';
 
 const SUPPORTED_PROTOCOLS = Object.freeze(['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25']);
 const DEFAULT_PROTOCOL = '2025-06-18';
@@ -45,7 +45,10 @@ export function createRpcServer({ tools, write, log = (s) => process.stderr.writ
         if (args === null || typeof args !== 'object' || Array.isArray(args)) return error(id, -32602, 'Invalid params: arguments must be an object');
         try {
           const out = await tools.call(name, args);
-          return result(id, { content: [{ type: 'text', text: JSON.stringify(out ?? null) }] });   // never `undefined` → invalid JSON text
+          // A media read's image or PDF rides as its own content block after the JSON text (tools.mjs MCP_CONTENT).
+          const extra = out && typeof out === 'object' && Array.isArray(out[MCP_CONTENT]) ? out[MCP_CONTENT] : null;
+          const body = extra ? Object.fromEntries(Object.entries(out).filter(([k]) => k !== MCP_CONTENT)) : out;
+          return result(id, { content: [{ type: 'text', text: JSON.stringify(body ?? null) }, ...(extra || [])] });   // never `undefined` → invalid JSON text
         } catch (err) {
           const message = err && err.message ? err.message : String(err);
           if (!(err instanceof AskToolError)) log(`[ask-mcp] ${name} failed: ${err && err.stack ? err.stack : message}`);

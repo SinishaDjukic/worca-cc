@@ -2616,7 +2616,16 @@
               <input id="mimp-base" class="input" type="text" placeholder="http://127.0.0.1:11434/v1" />
               <button type="button" id="mimp-list" class="btn">List models</button>
             </span>
-            <small class="hint">llama.cpp, Ollama, LM Studio, vLLM or a gateway, on this machine or your network.</small>
+            <small class="hint">llama.cpp, Ollama, LM Studio, vLLM or a gateway, on this machine or your network — or a hosted API:</small>
+            <span class="mimp-presets">
+              <button type="button" class="btn btn-sm btn-quiet mimp-preset" data-preset="gemini">Gemini</button>
+              <button type="button" class="btn btn-sm btn-quiet mimp-preset" data-preset="qwen">Qwen</button>
+            </span>
+          </label>
+          <label class="mv-field mimp-key-field">
+            <span class="mv-field-label">API key (optional)</span>
+            <input id="mimp-key" class="input" type="text" autocomplete="off" spellcheck="false" placeholder="${GEMINI_API_KEY}" />
+            <small class="hint">For an endpoint that is not the OpenAI-compatible provider's: stored on each imported model. A <code>${VAR}</code> keeps the key itself out of settings.json. The provider's own key is only ever sent to its own host.</small>
           </label>
         </div>
         <p id="mimp-msg" class="form-msg" aria-live="polite"></p>
