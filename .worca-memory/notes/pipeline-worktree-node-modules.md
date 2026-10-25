@@ -1,7 +1,7 @@
 ---
 name: pipeline-worktree-node-modules
 description: Read before running tests or plan shell lines in a worca run worktree, or a task file's commit/count checks — node_modules link, test runner, waiting, zsh traps
-updated: 2026-10-23T08:31:15.216Z
+updated: 2026-10-25T04:14:34.410Z
 author: Denislav Prinov
 ---
 
@@ -23,7 +23,7 @@ Task files copy the plan's `git commit` step and "`git log --oneline <checkpoint
 - `kill $VAR` makes the host-guard hook reject the WHOLE call: `process.kill(pid)` from node or `kill <literal pid>`. `rm` on a command substitution (`rm -r "$(dirname $A)"`) refuses the whole call, earlier `&&` steps included — `rm` a variable or a literal.
 - `$?` after a `$(…)` in the same word is the substitution's status: `cmd; e=$?; echo "exit=$e"`.
 - Each plan step is a new Bash call: variables from an earlier block are EMPTY (`/base.log` on read-only `/`; a "prints nothing" check passed on a broken run). Re-derive per block or write to a known file; judge "prints nothing" by exit status too.
-- No word-splitting: `$CLI args` fails — use a function, redefined every call; loop `for n in ${=ORDER}`. `$PWD` in a function body resolves at CALL time: capture `CLI=/abs/path` before any `cd`. Run `graphify` from the repo root.
+- No word-splitting: `$CLI args` fails — use a function, redefined every call; loop `for n in ${=ORDER}`. `$PWD` in a function body resolves at CALL time: capture `CLI=/abs/path` before any `cd`. Run `graphify` from the repo root. A file list as a zsh array (`files=(${(f)"$(grep -l …)"})` or `${(f)"$(cat list)"}` as runner args) is refused unrun ("could not be checked for dangerous rm operations"): build the list and `spawnSync('node', ['tools/test.mjs', ...files])` in one node script (delete the three env keys from its `env`).
 - `$path` is tied to `$PATH` (`while read -r hash path` empties the search path: name it `file`). A word starting with `=` expands (`echo =====`): quote it. `$VAR:path` applies history modifiers (`$T10:ui/x.mjs` → `:u`, after a `>` already truncated the target): write `"${T10}:ui/x.mjs"`; guard restores with `[ -s file ]`.
 - An unmatched glob aborts the command (`--include=*.mjs` → "no matches found"): quote globs or use Grep. A parse error kills the whole call: chain with `&&`, never `;` after a step that can fail (`set -e` ignores a failure piped into `| wc -l`).
 - The cwd resets to the real worktree every call: a helper writing relative paths without its own `cd` in the SAME call edits the real checkout — end such calls with `git -C <worktree> status --short`.
