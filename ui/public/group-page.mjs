@@ -1,14 +1,13 @@
 // ui/public/group-page.mjs — the group page (runs redesign spec §3.4, §3.5): today's Feature page as the group page,
-// and the page for user groups and Run-after chains. Same head as the run page (docs/design-system.md Navigation): the
-// title row (title + kind, then the bar's primary action, Stop, ⋯) and the tabs Runs · Overview · Decisions · Logs, then
-// the card (status block, facts block, inline question). Pure DOM; app.js owns the data (runs-list.mjs groupRow) and binds every dep. Classes
+// and the page for user groups and Run-after chains. Same head as the run page (run 3): the bar (crumbs, the one
+// primary action, Stop, ⋯) · title + kind · the card (status block, facts block, inline question) · tabs Runs ·
+// Overview · Decisions · Logs. Pure DOM; app.js owns the data (runs-list.mjs groupRow) and binds every dep. Classes
 // use `gpage-`: group-picker.mjs owns `gp-`.
 import { paintRunStatus, syncActions, renderMemberRows, groupShipLine, groupBarShows } from './run-status-card.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
-import { groupKindWord, pageModel, buildFacts, setFactText, factRow, syncFacts, GROUP_FACTS } from './run-page-head.mjs';
+import { groupKindWord, pageModel, paintCrumbs, buildFacts, setFactText, factRow, syncFacts, GROUP_FACTS } from './run-page-head.mjs';
 import { icon } from './icons.mjs';
 import { groupHead } from './run-head.mjs';
-import { mountPageHead } from './nav/page-head.mjs';
 
 export const GROUP_TABS = Object.freeze([['runs', 'Runs'], ['overview', 'Overview'], ['decisions', 'Decisions'], ['logs', 'Logs']]);
 const el = (doc, tag, cls, text = '') => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
@@ -27,12 +26,19 @@ function keepUnchanged(host, kids) {
   if (was) [...host.querySelectorAll('a[href]')].find((n) => at(n) === was)?.focus();
 }
 
-/** The page skeleton, built once per host: the head (docs/design-system.md Navigation: the title row with the bar's
- *  actions on the right, then the tabs), the card, the panels. app.js navMount wires the tab strip. */
+/** The page skeleton, built once per host. */
 export function buildGroupPage(doc) {
   const root = el(doc, 'div', 'gpage');
-  // The run page's bar: the primary action, Stop, ⋯ (the way up is the top bar's breadcrumb).
+  // Run 3 (D13): the run page's bar — Back (slide layout) or the crumbs (split), then the primary action, Stop, ⋯.
   const bar = el(doc, 'div', 'gpage-bar rd-bar');
+  const back = el(doc, 'a', 'btn btn-sm btn-quiet btn-icon gpage-back');
+  back.append(icon(doc, 'chevron-left', 16));            // slice 2: the run page's 28px Back
+  back.setAttribute('href', '#runs');
+  back.setAttribute('aria-label', 'Back to Runs');
+  back.title = 'Back to Runs';
+  const crumbs = el(doc, 'nav', 'rd-crumbs');
+  crumbs.setAttribute('aria-label', 'Breadcrumb');
+  crumbs.hidden = true;
   const stop = el(doc, 'button', 'btn btn-danger gpage-stop', 'Stop');
   stop.type = 'button';
   stop.hidden = true;
@@ -45,11 +51,11 @@ export function buildGroupPage(doc) {
   more.title = 'More for this group';
   more.append(icon(doc, 'more', 16));
   more.addEventListener('click', () => { if (root.__onMore) root.__onMore(more); });
-  bar.append(el(doc, 'span', 'gpage-spacer'), el(doc, 'span', 'gpage-actions'), stop, more);
+  bar.append(back, crumbs, el(doc, 'span', 'gpage-spacer'), el(doc, 'span', 'gpage-actions'), stop, more);
+  const head = el(doc, 'header', 'gpage-head');
   const titleRow = el(doc, 'div', 'rd-title-row');
-  const h1 = el(doc, 'h1', 'gpage-title rd-page-title');
-  h1.tabIndex = -1;
-  titleRow.append(h1, el(doc, 'span', 'kind-chip'));
+  titleRow.append(el(doc, 'h1', 'gpage-title rd-page-title'), el(doc, 'span', 'kind-chip'));
+  head.append(titleRow);
   const card = el(doc, 'section', 'gpage-card rd-sheet');
   const q = el(doc, 'div', 'gpage-question');
   q.hidden = true;
@@ -80,8 +86,8 @@ export function buildGroupPage(doc) {
   panels[1].append(el(doc, 'div', 'gpage-overview'));
   panels[2].append(el(doc, 'div', 'gpage-decisions'));
   panels[3].append(el(doc, 'ul', 'gpage-logs'));
-  root.append(card, ...panels);
-  mountPageHead(root, { titleRow, actions: bar, tablist: tabs });
+  root.append(bar, head, card, tabs, ...panels);
+  tabs.addEventListener('click', (e) => { const t = e.target.closest('.rd-tab'); if (t && root.__onTab) root.__onTab(t.dataset.tab); });
   return root;
 }
 
@@ -115,7 +121,7 @@ export function groupPrList(row) {
 /**
  * Paint (idempotent). `view`: { row (groupRow output), project, tab, overview:boolean, logs:boolean, labels: [] (the
  * members' labels) }.
- * `deps`: { onAction(id, btn), onMore(anchor), mountQuestion(slot, member|null), answerLabel?(), mountOverview(host),
+ * `deps`: { onAction(id, btn), onTab(tab), onMore(anchor), mountQuestion(slot, member|null), answerLabel?(), mountOverview(host),
  * mountDecisions(host, row), logsHref(member), labelChip(doc, label), paintHead?(acts, slot, head) } — paintHead paints
  * groupHead's head (Create PR, View PR ▾, View PRs ▾) into the card head; without it the slot stays hidden.
  */
@@ -123,12 +129,14 @@ export function paintGroupPage(root, view, deps) {
   const doc = root.ownerDocument;
   const { row } = view;
   const m = row.model;
+  root.__onTab = deps.onTab;
   root.__onAction = deps.onAction;
   root.__onMore = deps.onMore || null;
   const title = root.querySelector('.gpage-title');
   title.textContent = row.title;
   title.title = row.title;   // D13: the heading clamps at 2 lines
-  root.querySelector('.rd-title-row .kind-chip').textContent = groupKindWord(row);   // run 3 (D7): the group's kind
+  root.querySelector('.gpage-head .kind-chip').textContent = groupKindWord(row);   // run 3 (D7): the group's kind
+  paintCrumbs(root.querySelector('.gpage-bar .rd-crumbs'), [{ label: 'Runs', href: '#runs' }, { label: row.title }]);
   const pm = pageModel(m);
   paintRunStatus(root.querySelector('.gpage-card .run-status'), pm, { hold: true });   // run 3 (D10); slice 3: keep the last bar
   // Run 3 (D15): the facts block — Project, Runs, Total cost, Labels (the read-only union of the members' labels).
@@ -162,7 +170,6 @@ export function paintGroupPage(root, view, deps) {
   }
   const offered = (id) => (id !== 'overview' || !!view.overview) && (id !== 'logs' || !!view.logs);
   const tab = GROUP_TABS.some(([id]) => id === view.tab) && offered(view.tab) ? view.tab : 'runs';
-  root.dataset.tab = tab;                                  // the status card shows on the Runs tab only (style.css)
   for (const t of root.querySelectorAll('.gpage-tabs .rd-tab')) {
     t.hidden = !offered(t.dataset.tab);
     t.setAttribute('aria-selected', String(t.dataset.tab === tab));

@@ -55,8 +55,7 @@ test('#feature/:id for an unknown id says so; #group/:id renders a user group wi
   ctx.go('feature/feat_gone');
   await ctx.settle(6);
   assert.equal(pageOf(ctx).querySelector('.feature-page-gone').textContent.trim(), 'This feature no longer exists. Open the Runs list');
-  assert.equal(pageOf(ctx).querySelector('.gpage-bar, .gpage-back'), null, 'the gone state draws no bar: the top bar\'s trail is the way up');
-  assert.deepEqual([...ctx.window.document.querySelectorAll('#topnav-crumbs .nav-trail a')].map((a) => a.textContent), ['Runs']);
+  assert.ok(pageOf(ctx).querySelector('.gpage-bar .gpage-back'), 'the gone state keeps the bar\'s Back');
   ctx.go('group/g_1');
   await ctx.settle(6);
   const gp = pageOf(ctx).querySelector('.gpage');
@@ -101,7 +100,7 @@ test('gone offers a way back: an answered "no such group" links the Runs list', 
   assert.equal(a.textContent, 'Open the Runs list');
 });
 
-test('Logs follows the run page\'s Expert Logs tab: hidden at Advanced (/logs shows Runs and says so), back at Expert without a reload', async () => {
+test('Logs follows the run page\'s Expert Logs tab: hidden at Advanced (/logs shows Runs), back at Expert without a reload', async () => {
   const ctx = await boot();
   const doc = ctx.window.document;
   const setLevel = (lv) => { doc.documentElement.dataset.level = lv; doc.dispatchEvent(new ctx.window.Event('worca:level')); };
@@ -111,15 +110,9 @@ test('Logs follows the run page\'s Expert Logs tab: hidden at Advanced (/logs sh
   const gp = pageOf(ctx).querySelector('.gpage');
   assert.equal(gp.querySelector('.rd-tab[data-tab="logs"]').hidden, true);
   assert.equal(gp.querySelector('.rd-tab[aria-selected="true"]').dataset.tab, 'runs');
-  // The address names the tab on screen (replaced, no history entry).
-  assert.equal(ctx.window.location.hash, '#group/g_1');
   setLevel('expert');
   await ctx.settle(4);
   assert.equal(gp.querySelector('.rd-tab[data-tab="logs"]').hidden, false);
-  assert.equal(gp.querySelector('.rd-tab[aria-selected="true"]').dataset.tab, 'runs', 'the page stays where its address says');
-  gp.querySelector('.rd-tab[data-tab="logs"]').click();
-  await ctx.settle(4);
-  assert.equal(ctx.window.location.hash, '#group/g_1/logs');
   assert.equal(gp.querySelector('.rd-tab[aria-selected="true"]').dataset.tab, 'logs');
 });
 

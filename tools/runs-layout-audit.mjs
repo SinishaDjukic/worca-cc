@@ -59,7 +59,7 @@ export function auditRunsLayout(root, env, doc = root.ownerDocument) {
 export function auditGroupPageLayout(root, env, doc) {
   const rect = (env && env.rect) || ((e) => e.getBoundingClientRect());
   const out = [];
-  const blocks = ['.gpage > .ph', '.gpage-card', '.gpage-tabs', '.run-members.is-table'];
+  const blocks = ['.gpage-head', '.gpage-card', '.gpage-tabs', '.run-members.is-table'];
   const found = blocks.map((s) => [s, root.querySelector(s)]).filter(([, e]) => e && !e.closest('[hidden]'));
   const ref = found.length ? rect(found[0][1]) : null;
   for (const [s, e] of found.slice(1)) {

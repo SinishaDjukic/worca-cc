@@ -839,7 +839,7 @@ test('applyRunLogFilter assigns onto r.logFilter and repaints; focusLogExecution
   np.focusLogExecution({ run: r, runId: 'r1' }, 'x:n_a:1', 'n_a');
   assert.equal(sec.hidden, false, 'a footer-row click activates the Logs tab');
   assert.equal(screen.querySelector('.rd-tab[data-sec="logs"]').classList.contains('active'), true);
-  assert.equal(screen.dataset.presentation, 'page', 'a page: its tabs are the one strip (no Details mode)');
+  assert.equal(screen.dataset.mode, 'details', 'and opens Details when the glance was showing');
   assert.equal(screen.querySelector('.rd-details').hidden, false);
   assert.equal(r.logFilter.execution, 'x:n_a:1');
   window.location.hash = '';
@@ -866,7 +866,7 @@ test('a card click on the Workflow tab opens its log in the drawer under the gra
   card.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   assert.equal(drawer.hidden, false, 'the card opened the drawer');
   assert.equal(wf.hidden, false, 'the page stays on the Workflow tab');
-  assert.equal(window.location.hash, '#running/r1/workflow', 'and the URL does not move');
+  assert.equal(window.location.hash, '#running/r1/details/workflow', 'and the URL does not move');
   assert.equal(drawer.querySelector('.wf-log-title').textContent, 'Planner');
   const shown = () => [...drawer.querySelectorAll('.log-line')].map((n) => n.textContent);
   assert.equal(shown().length, 1);
@@ -898,12 +898,10 @@ test('a card click on the Workflow tab opens its log in the drawer under the gra
   // Esc inside the drawer closes it, and only it: the detail screen stays open.
   np.detailTabsOf(screen).activate('workflow');
   let last = screen.querySelector('.rd-sec[data-sec="workflow"] .wf-log-drawer');
-  // The slide layout, where the page's own Escape would go up to the list: the drawer keeps it.
-  window.document.getElementById('runs-shell').dataset.layout = 'slide';
   last.querySelector('.wf-log-body').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal(last.hidden, true);
-  assert.match(window.location.hash, /^#running\/r1\//, 'the page-level Escape did not also leave the page');
-  window.document.getElementById('runs-shell').dataset.layout = 'split';
+  assert.equal(screen.dataset.mode, 'details', 'the page-level Escape did not also leave the detail');
+  assert.match(window.location.hash, /^#running\/r1\/details/);
   // × closes and clears the target.
   np.openStepLog(screen.querySelector('.rd-graph .run-flow'), { run: r, runId: 'r1' }, 'x:n_a:1', 'n_a');
   last = screen.querySelector('.rd-sec[data-sec="workflow"] .wf-log-drawer');

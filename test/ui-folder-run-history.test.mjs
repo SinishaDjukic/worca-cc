@@ -385,7 +385,7 @@ test('the head follows the server: another tab applied it; none while not finish
       doc.querySelector('.fc-modal .fc-cancel').dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
       await settle(ctx.window, 3);
       assert.equal(doc.querySelector('.fc-modal'), null);
-      assert.equal(ctx.window.location.hash, `#history/${ROW.projectKey}/${ID}/changes`);
+      assert.equal(ctx.window.location.hash, `#history/${ROW.projectKey}/${ID}/details/changes`);
     } },
   ]);
 });

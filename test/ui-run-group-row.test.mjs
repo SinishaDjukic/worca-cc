@@ -1,5 +1,5 @@
 // test/ui-run-group-row.test.mjs — runs redesign slice 4 (D18), run 3 (D6-D8): a single run's kind chip says which
-// group it belongs to ("Run 3 of 3", a link to the group page) and the top bar's breadcrumb "Runs › Run tags"; its
+// group it belongs to ("Run 3 of 3", a link to the group page) and its bar's breadcrumb "Runs › Run tags › Run 3"; its
 // facts block has no group row then. A run in no group offers "Add to group…" there at Advanced and above.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +15,6 @@ const GROUPS = { groups: [{ id: 'feat_1', kind: 'feature', title: 'Run tags', pr
   cost: { usd: 0, byPipeline: {} } }] };
 const handler = (groups) => (url) => (url.startsWith('/api/run-groups') ? json(groups) : null);
 const text = (el) => el.textContent.replace(/\s+/g, ' ').trim();
-const trail = (doc) => [...doc.querySelectorAll('#topnav-crumbs .nav-trail a')].map(text);
 
 test('a member run\'s page has no Feature row; its kind chip "Run 3 of 3" links the group page', async () => {
   const ctx = await bootApp({ fetchHandler: handler(GROUPS) });
@@ -33,8 +32,7 @@ test('a member run\'s page has no Feature row; its kind chip "Run 3 of 3" links 
   assert.equal(chip.getAttribute('href'), '#feature/feat_1');
   assert.equal(chip.textContent, 'Run 3 of 3', 'the › is CSS, not text');
   assert.match(chip.getAttribute('aria-label'), /^Run 3 of 3, open feature Run tags$/);
-  assert.deepEqual(trail(doc), ['Runs', 'Run tags'], 'the trail ends at the parent: the run itself is the h1');
-  assert.equal(doc.querySelector('#run-detail .rd-crumbs'), null, 'no in-page breadcrumb');
+  assert.deepEqual([...doc.querySelectorAll('#run-detail .rd-bar .rd-crumbs .rd-crumb')].map(text), ['Runs', 'Run tags', 'Run 3']);
   assert.equal(doc.querySelector('#run-detail .rd-page-head .rd-page-meta'), null, 'the title meta line is gone');
   ctx.dispatch({ type: 'state', runId: 'r3', status: 'running', steps: [], active: [] });   // a repaint
   await ctx.settle();
@@ -57,9 +55,9 @@ test('a member run in the Chat run panel keeps no breadcrumb; its screen carries
   assert.equal(chip.textContent, 'Run 1 of 3', 'the › is CSS');
   const g = screen.querySelector('.rd-kv [data-fact="group"]');
   assert.equal(g.hidden, true, 'no Feature row in the panel either');
-  assert.equal(screen.querySelector('.rd-crumbs'), null, 'no in-page breadcrumb');
-  assert.equal(screen.querySelector('.ph'), null, 'the panel has no page head');
-  assert.equal(ctx.window.document.getElementById('topnav-crumbs').hidden, true, 'Chat shows no trail');
+  const nav = screen.querySelector('.rd-bar .rd-crumbs');
+  assert.equal(nav.hidden, true);
+  assert.equal(nav.querySelectorAll('.rd-crumb').length, 0);
 });
 
 test('a run in no group shows "Add to group…" at Advanced, which opens the picker; Simple hides the row', async () => {
@@ -80,7 +78,7 @@ test('a run in no group shows "Add to group…" at Advanced, which opens the pic
   assert.equal(doc.querySelector('#run-detail .rd-kv [data-fact="group"]').hidden, true, 'below Advanced the row is hidden');
   assert.equal(doc.querySelector('#run-detail .rd-title-row .kind-chip').textContent, 'Run', 'a single run\'s chip');
   assert.equal(doc.querySelector('#run-detail .rd-title-row .kind-chip').tagName, 'SPAN');
-  assert.deepEqual(trail(doc), ['Runs'], 'a single run\'s parent is the Runs list');
+  assert.equal(doc.querySelector('#run-detail .rd-bar .rd-crumbs').hidden, true, 'a single run has no breadcrumb');
   applyLevel('expert', doc);
 });
 
@@ -94,10 +92,10 @@ test('the finished page has no Group row: its kind chip links the group', async 
   await settle(ctx.window, 6);
   const row = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="group"]');
   assert.equal(row.hidden, true, 'no Feature row: the chip links the group');
-  const chip = ctx.window.document.querySelector('#hist-detail .rd-title-row .kind-chip');
+  const chip = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-title-row .kind-chip');
   assert.equal(chip.textContent, 'Run 2 of 3');
   assert.equal(chip.getAttribute('href'), '#feature/feat_1');
-  assert.deepEqual(trail(ctx.window.document), ['Runs', 'Run tags']);
+  assert.deepEqual([...ctx.window.document.querySelectorAll('#hist-detail .hd-bar .rd-crumbs .rd-crumb')].map(text), ['Runs', 'Run tags', 'Run 2']);
 });
 
 test('s2: a feature run built on Run 1\'s branch reads "Merged into dev" in its route, never Run 1\'s branch', async () => {
