@@ -36,6 +36,8 @@ No run is ever blocked by a policy. The two Chat web fields are the exception to
 | Chat web access | off switches web access off for chats pinned to the project; a policy can never switch it on | soft (off only) |
 | Chat web allowlist | the most a developer may allow: hosts outside it are dropped from their own list for chats pinned to the project; it never adds a host | soft |
 | Guardrails default set / minimum tier | what the New pipeline picker starts on; a run below the tier warns | default / soft |
+| Model roles (`models.roles`) | Deep thinking, Everyday coding, Quick jobs per harness, by upstream model; each machine maps it to its own source | default / soft |
+| Interface level, AI-written PR descriptions, Smart run names, Coding agent, Sync before run, Wait for the network (`setup.*`) | offered in the setup assistant on Review; nothing changes before Apply | default |
 | Allowed models, step defaults, hide built-ins | pickers warn on an off-list model; roles you have not configured start from the team's | soft / default |
 | Marketplaces, required plugins, blocked plugins | marketplaces are added once (metadata only); required plugins go through the setup checklist with consent; blocked ones warn | default / soft |
 | Required MCP servers (`mcp.required`) | servers each developer turns on with consent; they form the **Team** set ([below](#mcp-servers-the-team-set)); never in `workspaceRuns` | soft |
@@ -49,6 +51,30 @@ No run is ever blocked by a policy. The two Chat web fields are the exception to
 A document may also carry a **`workspaceRuns`** block: the same fields, applied instead of the
 project-run values to runs that target a workspace (they span several repositories and are
 usually larger, so one cap is normally wrong for one of the two).
+
+## Team setup
+
+The **Setup** fields (`models.roles` and `setup.*`), with the spend limits and `models.hideBuiltins`, form a
+team setup: "which models do which work" and the team's working defaults, published once.
+
+- **Never carried.** A team setup never carries network or proxy settings, model sources, provider addresses,
+  keys, tokens or passwords. A policy home whose Setup fields carry one is not offered, and a `models.roles`
+  value that would be refused is not applied to runs.
+- **Mapping.** A role names an upstream model (`claude-opus-5-5`). Each machine maps it to its own source: the
+  harness sign-in first, then a GitHub Copilot import, then an OpenAI- or Anthropic-compatible entry. Only
+  built-in models and the developer's own entries are picked, never a policy, plugin or project catalog row. A
+  role no source serves shows "None of your sources offer it." and the developer's own pick applies.
+- **Reach of `models.roles`.** Team roles apply to the pipeline steps of this project's runs. Titles, run
+  naming, PR descriptions, Chat, Auto and workspace runs use each developer's own roles. `default` fills the
+  roles a developer has not set; `soft` applies over their own. Nothing is written to their settings.
+- **The notice.** When the Setup fields of a policy home change, each developer's account menu shows "Your team
+  updated the recommended setup · Review", which opens the setup assistant on Review with only the changed rows.
+- **The Setup tab.** The Team policy editor has a Setup tab: six model-role rows (Claude and Codex × Deep
+  thinking, Everyday coding, Quick jobs) and one control per sub-key of each record field.
+- **Tags stay here.** Team tags stay in `runs.tagDimensions` and `runs.enforceTags`; a team setup file does not
+  carry them.
+
+A team setup can also be a standalone file: see [Setup assistant › Team setup](setup-assistant.md#team-setup).
 
 ## Homes, following, workspaces
 

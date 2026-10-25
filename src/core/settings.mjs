@@ -63,8 +63,9 @@ import {
   EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, OWN_SIGNIN_ENGINES, aModelOf, ownSignInNote, modelIdProblem, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
   assertModelUpstream, upstreamEnvConflict, modelEnvRef, codexUpstreamProblem,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
-  COPILOT_TERMS_VERSION, isUpstreamBaseUrl,
+  COPILOT_TERMS_VERSION, isUpstreamBaseUrl, REASONING_EFFORT_LEVELS,
 } from './model-env.mjs';
+import { MODEL_ROLES } from '../shared/model-roles.mjs';
 import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
@@ -137,6 +138,14 @@ async function persistSettings(settings) {
   const tmp = `${file}.${randomBytes(4).toString('hex')}.tmp`;
   await writeFile(tmp, JSON.stringify(settings, null, 2) + '\n', 'utf8');
   await rename(tmp, file);
+}
+
+/** Setup apply (D20): set or delete whole top-level keys in ONE read and ONE persistSettings. `undefined` deletes. */
+export async function writeSettingsKeys(values) {
+  const settings = readSettings();
+  for (const [k, v] of Object.entries(values)) { if (v === undefined) delete settings[k]; else settings[k] = v; }
+  await persistSettings(settings);
+  return Object.keys(values);
 }
 
 /**
@@ -880,14 +889,20 @@ export function smartNaming(scope) {
   return merged;
 }
 
+/** setSmartNaming's merge, pure: `null` deletes; keys equal to the default are dropped. undefined = delete the block. */
+export function nextSmartNaming(current, input) {
+  if (input === null) return undefined;
+  const { model: _legacyModel, ...prev } = isObj(current) ? current : {};   // dropped on save
+  const next = { ...prev, ...assertSmartNamingInput(input) };
+  for (const [k, def] of Object.entries(SMART_NAMING_DEFAULTS)) if (JSON.stringify(next[k]) === JSON.stringify(def)) delete next[k];
+  return Object.keys(next).length ? next : undefined;
+}
+
 /** `null` deletes the block; otherwise the validated keys merge over the stored block and keys equal to the default are dropped. */
 export async function setSmartNaming(input) {
   const settings = readSettings();
-  if (input === null) { delete settings.smartNaming; await persistSettings(settings); return { smartNaming: smartNaming() }; }
-  const { model: _legacyModel, ...prev } = isObj(settings.smartNaming) ? settings.smartNaming : {};   // dropped on save
-  const next = { ...prev, ...assertSmartNamingInput(input) };
-  for (const [k, def] of Object.entries(SMART_NAMING_DEFAULTS)) if (JSON.stringify(next[k]) === JSON.stringify(def)) delete next[k];
-  if (Object.keys(next).length) settings.smartNaming = next; else delete settings.smartNaming;
+  const next = nextSmartNaming(settings.smartNaming, input);
+  if (next !== undefined) settings.smartNaming = next; else delete settings.smartNaming;
   await persistSettings(settings);
   return { smartNaming: smartNaming() };
 }
@@ -1031,12 +1046,15 @@ export async function addAskWebHost(host) {
     search: s ? { url: s.url, key: s.key, keyHeader: s.keyHeader, keyPrefix: s.keyPrefix } : null });
 }
 
+/** setUsdCap's value, pure: the number to store, or undefined = delete (unlimited). */
+export function nextUsdCap(key, input) { assertUsdCapInput(key, input); return isClearInput(input) ? undefined : input; }
+
 /** Write (or clear) a USD cap key. @throws {Error} unless positive finite number (or empty). */
 async function setUsdCap(key, input) {
-  assertUsdCapInput(key, input);
+  const v = nextUsdCap(key, input);
   const settings = readSettings();
-  if (isClearInput(input)) delete settings[key];  // reset to unlimited
-  else settings[key] = input;
+  if (v === undefined) delete settings[key];  // reset to unlimited
+  else settings[key] = v;
   await persistSettings(settings);
   return { [key]: readUsdCap(key) };            // the EFFECTIVE value
 }
@@ -1127,12 +1145,15 @@ export async function setChatPrefs(patch = {}) {
   return chatPrefs();
 }
 
+/** setCostLimitResetPeriod's value, pure: undefined = delete (back to 'monthly'). */
+export function nextCostLimitResetPeriod(input) { assertResetPeriodInput(input); return isClearInput(input) ? undefined : input; }
+
 /** @throws {Error} unless `input` is 'weekly' | 'monthly' (or empty, which resets). */
 export async function setCostLimitResetPeriod(input) {
-  assertResetPeriodInput(input);
+  const v = nextCostLimitResetPeriod(input);
   const settings = readSettings();
-  if (isClearInput(input)) delete settings.costLimitResetPeriod;  // reset to 'monthly'
-  else settings.costLimitResetPeriod = input;
+  if (v === undefined) delete settings.costLimitResetPeriod;  // reset to 'monthly'
+  else settings.costLimitResetPeriod = v;
   await persistSettings(settings);
   return { costLimitResetPeriod: costLimitResetPeriod() };
 }
@@ -1260,7 +1281,8 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'networkWait',                             // Settings › Runs › Wait for the network {enabled, maxWaitMin}
   'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
   'runEngine', 'stepModels', 'utilityModels',
-  'requirementsInterview',                   // Models › Engines › Claude: the requirements interview { model, effort }
+  'modelRoles',                              // Models › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
+  'requirementsInterview',                  // Models › Engines › Claude: the requirements interview { model, effort }
   'askEngine', 'askModels',                  // Chat's engine for new chats and its model per engine (user-only, D17)
   'tagDimensions',                           // Settings › Tags › Tag dimensions [{ key, label, values, required, default? }]
   'enforceTags',                             // Settings › Tags › Require mandatory tags to start a run
@@ -1355,10 +1377,12 @@ export function assertRunEngineInput(input) {
   if (!RUN_ENGINES.includes(input)) throw new Error(`runEngine must be one of ${RUN_ENGINES.join(' | ')}`);
   return input;
 }
+/** setRunEngineSetting's value, pure: undefined = delete. */
+export function nextRunEngine(input) { const v = assertRunEngineInput(input); return v === null ? undefined : v; }
 export async function setRunEngineSetting(input) {
-  const value = assertRunEngineInput(input);
+  const value = nextRunEngine(input);
   const settings = readSettings();
-  if (value === null) delete settings.runEngine; else settings.runEngine = value;
+  if (value === undefined) delete settings.runEngine; else settings.runEngine = value;
   await persistSettings(settings);
   return { runEngine: runEngineSetting() ?? null };
 }
@@ -1387,6 +1411,55 @@ export async function setStepModels(input) {
   }
   if (Object.keys(all).length) settings.stepModels = all; else delete settings.stepModels;
   await persistSettings(settings); return { stepModels: stepModelsSetting() };
+}
+/** modelRoles (D1, D5): { <engine>: { deep|everyday|quick: { model, effort? } } }. Empty under node:test (homeGuarded). */
+export function modelRolesSetting() {
+  if (homeGuarded()) return {};
+  const value = readSettings().modelRoles;
+  return isObj(value) ? value : {};
+}
+/** A role names a model; its effort is any reasoning level, mapped to the harness's nearest one when used (effortOn). */
+export function normalizeRolePair(input, label = 'role') {
+  if (input === null || input === undefined || input === '') return null;
+  if (!isObj(input)) throw new Error(`${label} must be { model, effort } or null`);
+  for (const key of Object.keys(input)) if (key !== 'model' && key !== 'effort') throw new Error(`${label}: unknown field "${key}"`);
+  const model = typeof input.model === 'string' ? input.model.trim() : '';
+  const effort = typeof input.effort === 'string' ? input.effort.trim() : '';
+  if (!model) throw new Error(`${label}.model is required: a role names the model its jobs use`);
+  if (model.length > MODEL_PAIR_MAX_LEN) throw new Error(`${label}.model is too long`);
+  if (effort && !REASONING_EFFORT_LEVELS.includes(effort)) throw new Error(`${label}.effort must be one of ${REASONING_EFFORT_LEVELS.join(' | ')}`);
+  return { model, ...(effort ? { effort } : {}) };
+}
+export function assertModelRolesInput(input) {
+  if (!isObj(input)) throw new Error('modelRoles must be { <engine>: { deep|everyday|quick: { model, effort } | null } }');
+  const out = {};
+  for (const [engine, roles] of Object.entries(input)) {
+    if (!MODEL_ENGINES.includes(engine)) throw new Error(`modelRoles: unknown engine "${engine}"`);
+    if (!isObj(roles)) throw new Error(`modelRoles.${engine} must be an object of role → { model, effort } | null`);
+    out[engine] = {};
+    for (const [role, value] of Object.entries(roles)) {
+      if (!MODEL_ROLES.includes(role)) throw new Error(`modelRoles.${engine}: unknown role "${role}" (one of ${MODEL_ROLES.join(', ')})`);
+      out[engine][role] = normalizeRolePair(value, `modelRoles.${engine}.${role}`);
+    }
+  }
+  return out;
+}
+/** setModelRoles' merge, pure, over an ALREADY asserted patch (the server canonicalises ids in between). undefined = delete. */
+export function nextModelRoles(current, patch) {
+  const all = isObj(current) ? { ...current } : {};
+  for (const [engine, roles] of Object.entries(patch)) {
+    const cur = isObj(all[engine]) ? { ...all[engine] } : {};
+    for (const [role, pair] of Object.entries(roles)) { if (pair === null) delete cur[role]; else cur[role] = pair; }
+    if (Object.keys(cur).length) all[engine] = cur; else delete all[engine];
+  }
+  return Object.keys(all).length ? all : undefined;
+}
+/** Merge a role patch (null clears a role) and write it. Returns what it wrote, so the answer holds under homeGuarded. */
+export async function setModelRoles(input) {
+  const patch = assertModelRolesInput(input); const settings = readSettings();
+  const v = nextModelRoles(settings.modelRoles, patch);
+  if (v === undefined) delete settings.modelRoles; else settings.modelRoles = v;
+  await persistSettings(settings); return { modelRoles: v ?? {} };
 }
 export function assertUtilityModelsInput(input) {
   if (!isObj(input)) throw new Error('utilityModels must be { <engine>: { <job>: { model, effort } | null } }');
@@ -1837,12 +1910,18 @@ export function autoGeneratePrDescription() {
   return DEFAULT_AUTO_GENERATE_PR_DESCRIPTION;
 }
 
+/** setAutoGeneratePrDescription's value, pure: the default is elided (undefined = delete). */
+export function nextAutoGeneratePrDescription(input) {
+  assertAutoGeneratePrDescriptionInput(input);
+  return input === DEFAULT_AUTO_GENERATE_PR_DESCRIPTION ? undefined : input;
+}
+
 /** @throws {Error} unless `input` is a boolean. */
 export async function setAutoGeneratePrDescription(input) {
-  assertAutoGeneratePrDescriptionInput(input);
+  const v = nextAutoGeneratePrDescription(input);
   const settings = readSettings();
-  if (input === DEFAULT_AUTO_GENERATE_PR_DESCRIPTION) delete settings.autoGeneratePrDescription;
-  else settings.autoGeneratePrDescription = input;
+  if (v === undefined) delete settings.autoGeneratePrDescription;
+  else settings.autoGeneratePrDescription = v;
   await persistSettings(settings);
   return { autoGeneratePrDescription: autoGeneratePrDescription() };
 }
@@ -2091,7 +2170,7 @@ function assertEnvPairs(env, { allowNull = false } = {}) {
 
 /** Catalog WRITES under node:test would hit the user's REAL settings.json —
  *  throw unless the test sandboxes HOME and opts in (worcaHome-guard mirror). */
-function assertTestSettingsAccess() {
+export function assertTestSettingsAccess() {
   if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) {
     throw new Error(
       'global model catalog write under the node:test runner — sandbox HOME/USERPROFILE ' +
@@ -2353,16 +2432,9 @@ export function copilotTermsAcknowledged() {
   return !!c.acknowledgedTerms && (c.termsVersion || 0) >= COPILOT_TERMS_VERSION;
 }
 
-/**
- * Patch a provider's stored block. Omitted keys are kept; null/'' deletes a
- * key. Validates the whole patch before writing. `dryRun` returns the
- * would-be effective config without persisting.
- * @returns {Promise<object>} the effective config
- * @throws {Error}
- */
-export async function updateProvider(name, patch = {}, { dryRun = false } = {}) {
+/** updateProvider's validation alone (it throws the same messages). */
+export function assertProviderPatch(name, patch) {
   if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
-  assertTestSettingsAccess();
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('provider patch must be an object');
   const allowed = new Set([...PROVIDER_SECRET_KEYS[name], 'maxConcurrent',
     ...(name === 'copilot' ? ['accountType', 'acknowledgedTerms', 'termsVersion', 'login'] : ['baseUrl'])]);
@@ -2384,18 +2456,44 @@ export async function updateProvider(name, patch = {}, { dryRun = false } = {}) 
       if (!Number.isInteger(v) || v <= 0) throw new Error('termsVersion must be a positive integer');
     }
   }
-  const settings = readSettings();
-  const all = settings.providers && typeof settings.providers === 'object' && !Array.isArray(settings.providers) ? settings.providers : {};
-  const cur = all[name] && typeof all[name] === 'object' && !Array.isArray(all[name]) ? { ...all[name] } : {};
+}
+
+/** One provider's stored block after `patch` (validated by the caller). */
+function mergeProviderBlock(currentProviders, name, patch) {
+  const cur = isObj(currentProviders) && isObj(currentProviders[name]) ? { ...currentProviders[name] } : {};
   for (const [k, v] of Object.entries(patch)) {
     if (isClearInput(v)) delete cur[k];
     else if (k === 'maxConcurrent') cur[k] = Number(v);
     else if (k === 'baseUrl') cur[k] = v.trim().replace(/\/+$/, '');
     else cur[k] = typeof v === 'string' ? v.trim() : v;
   }
-  if (dryRun) return { ...providerDefaults(name), ...sanitizeProvider(name, cur) };
+  return cur;
+}
+
+/** updateProvider's merge, pure: the whole next `providers` block (undefined = delete it). */
+export function nextProviders(currentProviders, name, patch) {
+  assertProviderPatch(name, patch);
+  const all = isObj(currentProviders) ? { ...currentProviders } : {};
+  const cur = mergeProviderBlock(currentProviders, name, patch);
   if (Object.keys(cur).length) all[name] = cur; else delete all[name];
-  if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
+  return Object.keys(all).length ? all : undefined;
+}
+
+/**
+ * Patch a provider's stored block. Omitted keys are kept; null/'' deletes a
+ * key. Validates the whole patch before writing. `dryRun` returns the
+ * would-be effective config without persisting.
+ * @returns {Promise<object>} the effective config
+ * @throws {Error}
+ */
+export async function updateProvider(name, patch = {}, { dryRun = false } = {}) {
+  if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
+  assertTestSettingsAccess();
+  assertProviderPatch(name, patch);
+  const settings = readSettings();
+  if (dryRun) return { ...providerDefaults(name), ...sanitizeProvider(name, mergeProviderBlock(settings.providers, name, patch)) };
+  const v = nextProviders(settings.providers, name, patch);
+  if (v === undefined) delete settings.providers; else settings.providers = v;
   await persistSettings(settings);
   return providerConfig(name);
 }
@@ -2543,12 +2641,15 @@ export function assertUiLevelInput(input) {
   if (!isUiLevel(input)) throw new Error('uiLevel must be simple, advanced or expert');
 }
 
+/** setUiLevel's value, pure: undefined = delete (a clear). */
+export function nextUiLevel(input) { assertUiLevelInput(input); return isClearInput(input) ? undefined : input; }
+
 /** Persist the mode. Every valid value is stored (there is no fixed default to elide); a clear deletes the key. */
 export async function setUiLevel(input) {
-  assertUiLevelInput(input);
+  const v = nextUiLevel(input);
   const settings = readSettings();
-  if (isClearInput(input)) delete settings.uiLevel;
-  else settings.uiLevel = input;
+  if (v === undefined) delete settings.uiLevel;
+  else settings.uiLevel = v;
   await persistSettings(settings);
   return { uiLevel: uiLevel() };
 }
@@ -2764,18 +2865,21 @@ export function assertSyncSettingsInput(patch) {
   if (set('refreshMinutes') && !(Number.isInteger(patch.refreshMinutes) && patch.refreshMinutes >= 0 && patch.refreshMinutes <= 1440)) throw new Error('sync.refreshMinutes must be an integer 0–1440 (0 = never)');
   if (set('onDiverged') && !SYNC_ON_DIVERGED.includes(patch.onDiverged)) throw new Error(`sync.onDiverged must be one of ${SYNC_ON_DIVERGED.join(' | ')}`);
 }
-export async function setSyncDefaults(patch) {
+/** The stored `sync` after `patch` (undefined = delete the key). Pure; shared by the setter and the setup apply. */
+export function nextSyncSettings(current, patch) {
   assertSyncSettingsInput(patch);
+  if (patch === null || patch === '') return undefined;
+  // Store only the keys someone set: a key left out follows the built-in default as it changes.
+  const prev = isObj(current) ? current : {};
+  const next = {};
+  for (const k of Object.keys(DEFAULT_SYNC_SETTINGS)) if (Object.hasOwn(prev, k)) next[k] = normalizeSyncSettings(prev)[k];
+  for (const [k, v] of Object.entries(patch)) { if (v === null) delete next[k]; else next[k] = v; }
+  return Object.keys(next).length ? next : undefined;
+}
+export async function setSyncDefaults(patch) {
   const settings = readSettings();
-  if (patch === null || patch === '') delete settings.sync;
-  else {
-    // Store only the keys someone set: a key left out follows the built-in default as it changes.
-    const prev = settings.sync && typeof settings.sync === 'object' && !Array.isArray(settings.sync) ? settings.sync : {};
-    const next = {};
-    for (const k of Object.keys(DEFAULT_SYNC_SETTINGS)) if (Object.hasOwn(prev, k)) next[k] = normalizeSyncSettings(prev)[k];
-    for (const [k, v] of Object.entries(patch)) { if (v === null) delete next[k]; else next[k] = v; }
-    if (Object.keys(next).length) settings.sync = next; else delete settings.sync;
-  }
+  const v = nextSyncSettings(settings.sync, patch);
+  if (v === undefined) delete settings.sync; else settings.sync = v;
   await persistSettings(settings);
   return syncDefaults();
 }
@@ -2808,18 +2912,21 @@ export function assertNetworkWaitInput(patch) {
   if (set('maxWaitMin') && !isNetworkMaxWaitMin(patch.maxWaitMin)) throw new Error('networkWait.maxWaitMin must be a whole number of minutes from 1 to 1440');
 }
 
-export async function setNetworkWait(patch) {
+/** The stored `networkWait` after `patch` (undefined = delete the key). Pure; shared by the setter and the setup apply. */
+export function nextNetworkWait(current, patch) {
   assertNetworkWaitInput(patch);
+  if (patch === null || patch === '') return undefined;
+  // Store only the keys someone set: a key left out follows the built-in default as it changes.
+  const prev = isObj(current) ? current : {};
+  const next = {};
+  for (const k of Object.keys(DEFAULT_NETWORK_WAIT)) if (Object.hasOwn(prev, k)) next[k] = normalizeNetworkWait(prev)[k];
+  for (const [k, v] of Object.entries(patch)) { if (v === null) delete next[k]; else next[k] = v; }
+  return Object.keys(next).length ? next : undefined;
+}
+export async function setNetworkWait(patch) {
   const settings = readSettings();
-  if (patch === null || patch === '') delete settings.networkWait;
-  else {
-    // Store only the keys someone set: a key left out follows the built-in default as it changes.
-    const prev = settings.networkWait && typeof settings.networkWait === 'object' && !Array.isArray(settings.networkWait) ? settings.networkWait : {};
-    const next = {};
-    for (const k of Object.keys(DEFAULT_NETWORK_WAIT)) if (Object.hasOwn(prev, k)) next[k] = normalizeNetworkWait(prev)[k];
-    for (const [k, v] of Object.entries(patch)) { if (v === null) delete next[k]; else next[k] = v; }
-    if (Object.keys(next).length) settings.networkWait = next; else delete settings.networkWait;
-  }
+  const v = nextNetworkWait(settings.networkWait, patch);
+  if (v === undefined) delete settings.networkWait; else settings.networkWait = v;
   await persistSettings(settings);
   return networkWaitSettings();
 }
@@ -2835,7 +2942,7 @@ export function effectiveNetworkWait(env = process.env) {
   return { enabled, maxWaitMs };
 }
 
-// Settings › Network proxy (corporateProxy flag; read at boot by egress-policy.mjs).
+// Settings › Network proxy (networkProxy.enabled; applied live by egress-policy.mjs startLiveEgress).
 // The same list as upstream-proxy.mjs AUTH_MODES: this module imports nothing from the core graph (test pins it).
 export const NETWORK_PROXY_AUTH = Object.freeze(['auto', 'none', 'basic', 'ntlm', 'digest']);
 const NETWORK_PROXY_TIMEOUTS = ['connectMs', 'authMs', 'idleMs'];
@@ -2846,6 +2953,61 @@ const isFixedPort = (v) => Number.isInteger(v) && v >= 1024 && v <= 65535;
 export function networkProxySettings() {
   const v = readSettings().networkProxy;
   return v && typeof v === 'object' && !Array.isArray(v) ? { ...v } : {};
+}
+
+/** True when the corporate proxy is on (D6). A leftover flags.corporateProxy (a home the boot
+ *  migration could not write) still counts, unless networkProxy.enabled says false. */
+export function networkProxyEnabled(settings = readSettings()) {
+  const s = settings && typeof settings === 'object' ? settings : {};
+  const np = s.networkProxy && typeof s.networkProxy === 'object' ? s.networkProxy : {};
+  if (typeof np.enabled === 'boolean') return np.enabled;
+  return !!(s.flags && s.flags.corporateProxy === true);
+}
+
+/** D6: the Labs flag that became networkProxy.enabled. Pure: {changed, settings}. */
+export function migrateLegacyProxyFlag(settings) {
+  const s = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {};
+  const flags = s.flags && typeof s.flags === 'object' && !Array.isArray(s.flags) ? s.flags : null;
+  if (!flags || !Object.prototype.hasOwnProperty.call(flags, 'corporateProxy')) return { changed: false, settings: s };
+  const { corporateProxy: was, ...restFlags } = flags;
+  const next = { ...s };
+  if (Object.keys(restFlags).length) next.flags = restFlags; else delete next.flags;
+  const np = next.networkProxy && typeof next.networkProxy === 'object' ? next.networkProxy : {};
+  if (was === true && typeof np.enabled !== 'boolean') next.networkProxy = { ...np, enabled: true };
+  return { changed: true, settings: next };
+}
+
+/** Run once per process start (server boot, CLI main), before the egress proxy starts. @returns {Promise<boolean>} wrote */
+export async function migrateCorporateProxyFlag() {
+  const r = migrateLegacyProxyFlag(readSettings());
+  if (!r.changed) return false;
+  try { await persistSettings(r.settings); return true; } catch { return false; }   // networkProxyEnabled still reads the flag
+}
+
+/** Poll settings.json by stat signature (the watchProxyLogin pattern, proxy-credentials.mjs). @returns {() => void} stop */
+export function watchSettingsFile(onChange, { intervalMs = 1000 } = {}) {
+  const file = settingsFile();
+  const sig = () => {
+    try { const st = statSync(file); return `${st.ino}|${st.mtimeMs}|${st.ctimeMs}|${st.size}`; } catch (err) { return err && err.code ? err.code : 'error'; }
+  };
+  let last = sig();
+  const timer = setInterval(() => {
+    const cur = sig();
+    if (cur === last) return;
+    last = cur;
+    try { onChange(); } catch { /* ignore */ }
+  }, intervalMs);
+  timer.unref();
+  return () => clearInterval(timer);
+}
+
+/** readSettings() for watchers: null when the file is missing or is not a JSON object, so a tick
+ *  mid-write, a broken hand edit or a deleted file never reads as "proxy off" (R-sec-5). */
+export function readSettingsStrict() {
+  try {
+    const d = JSON.parse(readFileSync(settingsFile(), 'utf8'));
+    return d && typeof d === 'object' && !Array.isArray(d) ? d : null;
+  } catch { return null; }
 }
 
 /** "host:port" or "http://host:port" -> "http://host:port"; throws on userinfo or another scheme. */
@@ -2862,7 +3024,8 @@ function normalizeProxyUpstream(raw) {
 export function assertNetworkProxyInput(patch) {
   if (patch === null || patch === '') return;
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('networkProxy must be an object');
-  for (const k of Object.keys(patch)) if (!['upstream', 'auth', 'noProxy', 'timeouts', 'fixedPort'].includes(k)) throw new Error(`unknown networkProxy setting: ${k}`);
+  for (const k of Object.keys(patch)) if (!['enabled', 'upstream', 'auth', 'noProxy', 'timeouts', 'fixedPort'].includes(k)) throw new Error(`unknown networkProxy setting: ${k}`);
+  if (patch.enabled != null && typeof patch.enabled !== 'boolean') throw new Error('networkProxy.enabled must be true or false');
   if (patch.upstream != null && patch.upstream !== '') normalizeProxyUpstream(patch.upstream);
   if (patch.auth != null && !NETWORK_PROXY_AUTH.includes(patch.auth)) throw new Error(`networkProxy.auth must be one of ${NETWORK_PROXY_AUTH.join(', ')}`);
   if (patch.fixedPort != null && !isFixedPort(patch.fixedPort)) throw new Error('networkProxy.fixedPort must be a port from 1024 to 65535');
@@ -2902,11 +3065,16 @@ export function previewNetworkProxy(patch) {
   return mergeNetworkProxy(networkProxySettings(), patch);
 }
 
+/** setNetworkProxy's merge, pure (previewNetworkProxy validates). undefined = delete. */
+export function nextNetworkProxy(patch) {
+  const next = previewNetworkProxy(patch);
+  return Object.keys(next).length ? next : undefined;
+}
+
 export async function setNetworkProxy(patch) {
-  assertNetworkProxyInput(patch);
+  const next = nextNetworkProxy(patch);
   const settings = readSettings();
-  const next = mergeNetworkProxy(networkProxySettings(), patch);
-  if (Object.keys(next).length) settings.networkProxy = next; else delete settings.networkProxy;
+  if (next !== undefined) settings.networkProxy = next; else delete settings.networkProxy;
   await persistSettings(settings);
   return networkProxySettings();
 }

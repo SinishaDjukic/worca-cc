@@ -24,7 +24,7 @@ const NO_FOOT = new Set(['#viewer-card']);
 const INNER_OK = ['.export-plan', '.export-pr-preview > pre', '.proj-bulk-list', '.report-modal #report-preview', '.viewer', '.artifact-view'];
 
 // The JS builders' modal and column classes, as they build them (branch-sync.mjs:432/530, folder-changes.mjs:123,
-// schedule-sheet.mjs:267, modal-guard.mjs:152, app.js openModelEditorDialog → #mv-editor-host), so the CSS census
+// schedule-sheet.mjs:267, setup-assistant.mjs, modal-guard.mjs:152, app.js openModelEditorDialog → #mv-editor-host), so the CSS census
 // covers the JS-built dialogs too. The builders' real output is pinned by the extended suites below.
 const REGIONS = '<div class="dlg-head"></div><div class="dlg-body"></div><div class="dlg-foot"></div>';
 page.body.insertAdjacentHTML('beforeend', `
@@ -32,6 +32,7 @@ page.body.insertAdjacentHTML('beforeend', `
   <div class="viewer-modal confirm-modal sync-modal"><div class="card" data-js="refusal-card"><div class="qpanel dlg" data-js="refusal">${REGIONS}</div></div></div>
   <div class="viewer-modal confirm-modal fc-modal"><div class="card fc-dlg dlg" data-js="apply">${REGIONS}</div></div>
   <div class="viewer-modal confirm-modal sched-modal"><div class="card sched-card dlg" data-js="schedule">${REGIONS}</div></div>
+  <div class="viewer-modal confirm-modal setup-modal"><div class="card setup-card dlg" data-js="setup">${REGIONS}</div></div>
   <dialog class="viewer-modal confirm-modal discard-modal"><div class="card dlg" data-js="discard">${REGIONS}</div></dialog>`);
 page.getElementById('mv-editor-host').innerHTML = `<section class="card mv-editor dlg" data-js="model-editor">${REGIONS}</section>`;
 const JS_CARDS = [...page.querySelectorAll('[data-js]')];

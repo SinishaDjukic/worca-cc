@@ -1,13 +1,15 @@
 // test/ask-api-proxy-cards.test.mjs
-// The corporate proxy card over the cards route (ui/server.mjs, WORCA_MOCK): Apply of a settings card saves through
-// the PUT /api/proxy/settings path (proxyHost.saveSettings, so D14's marker is set too); Apply of the flag card turns
-// corporateProxy on through setFlags; an agent under isolation cannot apply; the event turn says what happened.
-// HOME is pinned to a temp dir: settings.json (networkProxy, the flags) lives under HOME, never WORCA_HOME.
+// The corporate proxy card over the cards route (ui/server.mjs, WORCA_MOCK): Apply of a settings card and of the
+// enable card saves through the PUT /api/proxy/settings path (proxyHost.saveSettings and its UNTESTED gate: an
+// untested upstream is tested first); an agent under isolation cannot apply; the event turn says what happened.
+// HOME is pinned to a temp dir: settings.json (networkProxy) lives under HOME, never WORCA_HOME.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import net from 'node:net';
+import { startFakeUpstream } from './helpers/fake-upstream-proxy.mjs';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 import { _resetForTests as closeDbForTests } from '../src/core/db.mjs';
@@ -15,7 +17,7 @@ import { _resetForTests as closeDbForTests } from '../src/core/db.mjs';
 useTempHome(after);
 
 const PROXY_ENV = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'NO_PROXY', 'no_proxy', 'WORCA_EGRESS_PROXY_URL'];
-let homeDir; let osHome; let mod; let store; let srv; let base; let testing; let networkProxySettings; let flagEnabled;
+let homeDir; let osHome; let mod; let store; let srv; let base; let testing; let networkProxySettings; let networkProxyEnabled; let setNetworkProxy;
 const prevEnv = {};
 const JSONH = { 'Content-Type': 'application/json' };
 const post = (p, body) => fetch(`${base}${p}`, { method: 'POST', headers: JSONH, body: JSON.stringify(body) });
@@ -39,19 +41,16 @@ async function withAgent(fn) {
 before(async () => {
   homeDir = await mkdtemp(join(tmpdir(), 'worca-cc-askproxy-'));
   osHome = await mkdtemp(join(tmpdir(), 'worca-cc-askproxy-os-'));   // settings.json lives under the OS home
-  for (const k of ['WORCA_HOME', 'HOME', 'USERPROFILE', 'WORCA_MOCK', 'WORCA_FLAGS', 'WORCA_AGENT_USER', 'WORCA_AGENT_HOME', 'WORCA_TEST_ALLOW_HOME_FALLBACK', ...PROXY_ENV]) prevEnv[k] = process.env[k];
+  for (const k of ['WORCA_HOME', 'HOME', 'USERPROFILE', 'WORCA_MOCK', 'WORCA_AGENT_USER', 'WORCA_AGENT_HOME', ...PROXY_ENV]) prevEnv[k] = process.env[k];
   for (const k of PROXY_ENV) delete process.env[k];
   delete process.env.WORCA_AGENT_USER; delete process.env.WORCA_AGENT_HOME;
   process.env.WORCA_HOME = homeDir;
   process.env.HOME = osHome; process.env.USERPROFILE = osHome;
-  process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';   // the flag card's setFlags writes the temp settings.json
   process.env.WORCA_MOCK = '1';
-  process.env.WORCA_FLAGS = 'corporateProxy';
   mod = await import('../ui/server.mjs');
   testing = mod._testing;
   store = await import('../src/core/ask/store.mjs');
-  ({ networkProxySettings } = await import('../src/core/settings.mjs'));
-  ({ flagEnabled } = await import('../src/core/flags.mjs'));
+  ({ networkProxySettings, networkProxyEnabled, setNetworkProxy } = await import('../src/core/settings.mjs'));
   srv = mod.server;
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
@@ -81,13 +80,26 @@ async function seedCard(card) {
   return { threadId: thread.id, cardId };
 }
 const SETTINGS_CARD = { type: 'proxy', kind: 'settings', patch: { upstream: 'proxy2.acme.test:3128' },
-  changes: [{ field: 'upstream', label: 'Proxy', before: 'none (…)', after: 'proxy2.acme.test:3128' }], summary: 'Proxy: proxy2.acme.test:3128', upstreamChanged: true, restartNote: 'Restart Worca to apply.', note: '' };
-const FLAG_CARD = { type: 'proxy', kind: 'flag', set: { corporateProxy: true }, changes: [{ field: 'corporateProxy', label: 'Corporate proxy (Labs)', before: 'Off', after: 'On' }],
-  summary: 'Corporate proxy (Labs): On', restartNote: 'Restart Worca to apply.', note: '' };
+  changes: [{ field: 'upstream', label: 'Proxy', before: 'none (…)', after: 'proxy2.acme.test:3128' }], summary: 'Proxy: proxy2.acme.test:3128', upstreamChanged: true, restartNote: 'New connections use it now.', note: '' };
+const ENABLE_CARD = { type: 'proxy', kind: 'enable', patch: { enabled: true }, changes: [{ field: 'enabled', label: 'Network proxy', before: 'Off', after: 'On' }],
+  summary: 'Network proxy: On', restartNote: 'New connections use it now.', note: '' };
 const eventRow = async (threadId) => (await snapshot(threadId)).messages.find((m) => m.role === 'user' && /^\[worca event\] proxy card /.test(m.text || ''));
+function echoOrigin() {
+  return new Promise((resolve) => {
+    const s = net.createServer((c) => { c.on('error', () => {}); c.on('data', (d) => c.write(`echo:${d}`)); });
+    s.listen(0, '127.0.0.1', () => resolve({ server: s, port: s.address().port }));
+  });
+}
+async function closedPort() {
+  const s = net.createServer();
+  await new Promise((r) => s.listen(0, '127.0.0.1', r));
+  const { port } = s.address();
+  await new Promise((r) => s.close(r));
+  return port;
+}
 
-test('proxy card: Apply saves through the PUT path (marker set: test then says RESTART_NEEDED), an agent cannot apply, the event turn says so', async () => {
-  process.env.WORCA_FLAGS = 'corporateProxy';
+test('proxy card: Apply with the proxy off saves with no test, an agent cannot apply, the event turn says so', async () => {
+  await setNetworkProxy(null);
   const { threadId, cardId } = await seedCard(SETTINGS_CARD);
   await withAgent(async () => {
     const r = await post(`/api/ask/threads/${threadId}/cards/${cardId}`, { state: 'applied' });
@@ -97,18 +109,14 @@ test('proxy card: Apply saves through the PUT path (marker set: test then says R
   assert.equal(res.status, 200, await res.clone().text());
   const r = { body: await res.json() };
   assert.equal(r.body.block.state, 'applied');
-  assert.equal(r.body.block.card.result.detail, 'Saved. Restart Worca to apply.');
+  assert.equal(r.body.block.card.result.detail, 'Saved. New connections use it now.');
   assert.equal(networkProxySettings().upstream, 'http://proxy2.acme.test:3128');
-  assert.equal(testing.proxyHost.changedSinceBoot(), true, 'the same marker PUT /api/proxy/settings sets');
-  assert.equal((await (await post('/api/proxy/test', {})).json()).code, 'RESTART_NEEDED');
   assert.ok(r.body.turn && (r.body.turn.assistantMessageId || r.body.turn.deferred), 'an event turn was started or queued');
   const ev = await waitFor(() => eventRow(threadId));
-  assert.match(ev.text, /^\[worca event\] proxy card \S+ applied; "Proxy: proxy2\.acme\.test:3128"; Saved\. Restart Worca to apply\./);
-  testing.setEgress(null);   // clears the marker (a restart) for the next test
+  assert.match(ev.text, /^\[worca event\] proxy card \S+ applied; "Proxy: proxy2\.acme\.test:3128"; Saved\. New connections use it now\./);
 });
 
 test('proxy card: Keep as is declines and posts the event; nothing is written', async () => {
-  process.env.WORCA_FLAGS = 'corporateProxy';
   const before = networkProxySettings();
   const { threadId, cardId } = await seedCard({ ...SETTINGS_CARD, patch: { upstream: 'proxy3.acme.test:3128' }, summary: 'Proxy: proxy3.acme.test:3128' });
   const r = await post(`/api/ask/threads/${threadId}/cards/${cardId}`, { state: 'declined' });
@@ -119,26 +127,40 @@ test('proxy card: Keep as is declines and posts the event; nothing is written', 
   assert.equal(ev.text, '[worca event] proxy card ' + cardId + ' declined; "Proxy: proxy3.acme.test:3128"');
 });
 
-test('flag off: a settings card fails; a locked flag fails the flag card; the flag card turns corporateProxy on through setFlags', async () => {
-  delete process.env.WORCA_FLAGS;   // unset, not "-corporateProxy" (that locks it)
-  assert.equal(flagEnabled('corporateProxy'), false);
-  const s = await seedCard({ ...SETTINGS_CARD, patch: { upstream: 'proxy4.acme.test:3128' } });
-  const sr = await (await post(`/api/ask/threads/${s.threadId}/cards/${s.cardId}`, { state: 'applied' })).json();
-  assert.equal(sr.block.state, 'failed');
-  assert.match(sr.block.error, /corporate proxy is off/);
-
-  process.env.WORCA_FLAGS = '-corporateProxy';
+test('proxy on: an untested upstream is tested first; a failing test fails the card and saves nothing; a passing one saves', async () => {
+  const origin = await echoOrigin();
+  const fake = await startFakeUpstream({ scheme: 'none', originPort: origin.port });
   try {
-    const l = await seedCard(FLAG_CARD);
-    const lr = await (await post(`/api/ask/threads/${l.threadId}/cards/${l.cardId}`, { state: 'applied' })).json();
-    assert.equal(lr.block.state, 'failed');
-    assert.match(lr.block.error, /WORCA_FLAGS/);
-  } finally { delete process.env.WORCA_FLAGS; }
+    await setNetworkProxy({ enabled: true, upstream: 'proxy.acme.test:8080' });
+    const dead = await closedPort();
+    const bad = await seedCard({ ...SETTINGS_CARD, patch: { upstream: `127.0.0.1:${dead}` } });
+    const br = await (await post(`/api/ask/threads/${bad.threadId}/cards/${bad.cardId}`, { state: 'applied' })).json();
+    assert.equal(br.block.state, 'failed', JSON.stringify(br.block));
+    assert.match(br.block.error, /the proxy test did not pass/);
+    assert.equal(networkProxySettings().upstream, 'http://proxy.acme.test:8080', 'nothing was saved');
 
-  const f = await seedCard(FLAG_CARD);
+    const good = await seedCard({ ...SETTINGS_CARD, patch: { upstream: `127.0.0.1:${fake.port}` } });
+    const gr = await (await post(`/api/ask/threads/${good.threadId}/cards/${good.cardId}`, { state: 'applied' })).json();
+    assert.equal(gr.block.state, 'applied', JSON.stringify(gr.block));
+    assert.ok(fake.stats.sockets >= 1, 'the test went through the new host');
+    assert.equal(gr.block.card.result.detail, 'Saved. New connections use it now.');
+    assert.equal(networkProxySettings().upstream, `http://127.0.0.1:${fake.port}`);
+  } finally { await setNetworkProxy(null); await fake.close(); origin.server.close(); }
+});
+
+test('enable card: turns networkProxy.enabled on through the same save path; a pre-upgrade flag card still applies', async () => {
+  await setNetworkProxy(null);
+  assert.equal(networkProxyEnabled(), false);
+  const f = await seedCard(ENABLE_CARD);
   await withAgent(async () => assert.equal((await post(`/api/ask/threads/${f.threadId}/cards/${f.cardId}`, { state: 'applied' })).status, 403));
   const fr = await (await post(`/api/ask/threads/${f.threadId}/cards/${f.cardId}`, { state: 'applied' })).json();
   assert.equal(fr.block.state, 'applied', JSON.stringify(fr));
-  assert.equal(fr.block.card.result.detail, 'Corporate proxy is on. Restart Worca to start the local proxy.');
-  assert.equal(flagEnabled('corporateProxy'), true);
+  assert.equal(fr.block.card.result.detail, 'Saved. New connections use it now.');
+  assert.equal(networkProxyEnabled(), true);
+  await setNetworkProxy(null);
+  const old = await seedCard({ type: 'proxy', kind: 'flag', set: { corporateProxy: true }, changes: [], summary: 'Corporate proxy (Labs): On', note: '' });
+  const or = await (await post(`/api/ask/threads/${old.threadId}/cards/${old.cardId}`, { state: 'applied' })).json();
+  assert.equal(or.block.state, 'applied', JSON.stringify(or));
+  assert.equal(networkProxyEnabled(), true);
+  await setNetworkProxy(null);
 });

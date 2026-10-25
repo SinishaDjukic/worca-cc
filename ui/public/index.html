@@ -153,6 +153,9 @@
             <small class="id-via"></small>
           </div>
           <div class="msect" role="group">
+            <button type="button" class="mi menu-item" id="acct-team-setup" role="menuitem" data-min-level="simple" hidden>
+              <span class="mi-ic" aria-hidden="true">●</span><span class="mi-lbl">Your team updated the recommended setup</span><span class="mi-val">Review</span>
+            </button>
             <button type="button" class="mi menu-item" id="acct-lvl" role="menuitem" data-min-level="simple" aria-haspopup="menu" aria-expanded="false" aria-controls="lvl-menu">
               <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h9M17 7.5h3M4 16.5h3M11 16.5h9"></path><circle cx="15" cy="7.5" r="2"></circle><circle cx="9" cy="16.5" r="2"></circle></svg>
               <span class="mi-lbl">Interface mode</span><span class="mi-val">Expert</span>
@@ -1682,6 +1685,16 @@
               </div>
             </div>
 
+            <!-- Setup assistant: Run setup reopens the seven-step dialog with the saved values
+                 (ui/public/setup-assistant.mjs). No info-tip and no static .hint (the row explains itself). -->
+            <section class="card settings-card" id="setup-assistant-card" data-min-level="simple">
+              <div class="label-row"><h2>Setup assistant</h2></div>
+              <div class="gs-settings-row">
+                <p class="gs-settings-text">Configure your Worca installation.</p>
+                <button type="button" id="setupRunAgain" class="btn btn-sm">Run setup</button>
+              </div>
+            </section>
+
             <section class="card settings-card" id="appearance-card" data-min-level="simple">
               <div class="card-head">
                 <div class="label-row">
@@ -2272,10 +2285,10 @@
               </div>
             </section>
 
-            <!-- Network proxy (docs/network-proxy.md, corporateProxy flag): the corporate proxy Worca's local
+            <!-- Network proxy (docs/network-proxy.md, networkProxy.enabled): the corporate proxy Worca's local
                  proxy logs in to, and the saved login (domain, user, NT hash). The body is built by
-                 settings-network-proxy.mjs only while the flag is on. -->
-            <section class="card settings-card" id="network-proxy-settings-card" data-min-level="advanced" data-flag="corporateProxy" data-flag-chip>
+                 settings-network-proxy.mjs; timeouts and the local port fold under "More". -->
+            <section class="card settings-card" id="network-proxy-settings-card" data-min-level="simple">
               <div class="card-head">
                 <div class="label-row">
                   <h2>Network proxy</h2>
@@ -2562,6 +2575,14 @@
                 </button>
               </div>
             </div>
+            <!-- Models › Roles (setup-assistant-design.md D1): the model each kind of work falls back to. -->
+            <section class="card" id="model-roles-card" data-min-level="simple">
+              <div class="card-head"><div class="label-row"><h2>Roles</h2></div></div>
+              <small class="hint">Every job without a model of its own uses its role's model.</small>
+              <small class="hint err" id="modelRolesCatalogMsg" hidden>Could not load the model list. Reload the page to try again.</small>
+              <div id="model-roles-root" class="drows"></div>
+              <div class="add-project-actions engine-save-row" style="margin-top:14px"><small class="hint" id="modelRolesMsg"></small><button type="button" id="modelRolesSave" class="btn btn-primary btn-sm">Save</button></div>
+            </section>
             <section class="card" id="engine-settings-card" data-min-level="expert">
               <div class="card-head"><div class="label-row"><h2>Engines</h2></div></div>
               <div id="engine-settings-root" class="drows"></div>

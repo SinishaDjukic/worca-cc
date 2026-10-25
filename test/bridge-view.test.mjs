@@ -280,3 +280,23 @@ test('editor: an imported Responses entry keeps its effort list on save, offers 
   setModelUpstream(conn, { provider: 'copilot', api: 'openai-responses', model: 'gpt-5.4', capabilities: { reasoning: true } });
   assert.equal('reasoningEfforts' in collectConnection(conn).upstream.capabilities, false);
 });
+
+test('Copy code copies by itself (any page that mounts the box): copy icon, then a green tick and "Copied"; a refusal says so', async () => {
+  const dom = new JSDOM('<!doctype html><body></body>');
+  const d = dom.window.document;
+  const copied = [];
+  Object.defineProperty(dom.window.navigator, 'clipboard', { value: { writeText: async (t) => { copied.push(t); } }, configurable: true });
+  const box = renderCopilotSignIn({ userCode: 'ABCD-1234' }, { doc: d });
+  const btn = box.querySelector('.mv-cp-copy');
+  assert.ok(btn.querySelector('.ico-copy') && btn.querySelector('.ico-check'), 'the copy and tick icons');
+  assert.equal(btn.textContent, 'Copy code');
+  btn.click(); await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(copied, ['ABCD-1234']);
+  assert.ok(btn.classList.contains('copied'));
+  assert.equal(btn.querySelector('.mv-cp-copy-label').textContent, 'Copied');
+  Object.defineProperty(dom.window.navigator, 'clipboard', { value: { writeText: async () => { throw new Error('denied'); } }, configurable: true });
+  btn.click(); await new Promise((r) => setTimeout(r, 0));
+  assert.equal(btn.classList.contains('copied'), false);
+  assert.equal(btn.querySelector('.mv-cp-copy-label').textContent, 'Copy failed: select the code');
+  dom.window.close();
+});

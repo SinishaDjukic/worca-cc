@@ -54,6 +54,7 @@ import {
   memoryCaps,
 } from './settings.mjs';
 import { hasProjectSetting, utilityModelFor } from './settings-cascade.mjs';
+import { withRole, roleModelFor, jobSlot } from './model-roles.mjs';
 import { mountDirs, mountMemory, refreshMount, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY } from './memory-sync.mjs';
 import { createUsageTally, drainMemoryLoads, memoryLoadLogPath, noteOfMemoryRel, recordMemoryUsage, rulesHaveScopedNote } from './memory-usage.mjs';
 import { memoryRoot, listMemory, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief } from './memory-store.mjs';
@@ -3607,7 +3608,10 @@ export class RunHarness extends EventEmitter {
 
   _utilitySlot(job) {
     const scope = this._settingsScope();
-    return utilityModelFor(this._helperEngine(), job, scope ? { projectDir: scope } : { workspace: true });
+    const engine = this._helperEngine();
+    const slot = utilityModelFor(engine, job, scope ? { projectDir: scope } : { workspace: true });
+    // Model roles (D3): an unset helper slot takes its role (Claude's classifier → everyday, every other job → quick).
+    return withRole(slot, engine, jobSlot(engine, job));
   }
 
   /** The engine worca's helper jobs run on (model-env.mjs helperEngineFor): Claude on a Cursor run. */
@@ -6570,8 +6574,13 @@ export class RunHarness extends EventEmitter {
         : modelForEngine(this.claude.model || null, engine, { projectDir: this.projectDir })) || null;
     // Named before the effort is checked, so an effort codex's default model does not offer (max, xhigh) drops to medium.
     const fallback = !runModel && engine === 'codex' ? CODEX_DEFAULT_MODEL : null;
-    const pair = resolveDeciderPair({ deciderModel: config.deciderModel, deciderEffort: config.deciderEffort, runModel: runModel || fallback },
-      { models: models.filter((m) => m && runsOn(m, engine)) });
+    // Model roles (D3): an unset decider takes the deep role.
+    const role = config.deciderModel ? null : roleModelFor(engine, 'nightMode.deciderModel');
+    const pair = resolveDeciderPair({
+      deciderModel: config.deciderModel || role?.model,
+      deciderEffort: config.deciderModel ? config.deciderEffort : (role?.effort ?? config.deciderEffort),
+      runModel: runModel || fallback,
+    }, { models: models.filter((m) => m && runsOn(m, engine)) });
     if (fallback && pair.model === fallback && pair.source === 'run') pair.source = 'default';
     const warn = (text) => {
       if ((this._nightWarned ||= new Set()).has(text)) return;
