@@ -232,7 +232,7 @@ const previewDeps = (skills) => ({
   readMcpStore: async () => ({ projects: {} }), loadCatalog: async () => [],
 });
 
-test('askMcpPreview on a Codex chat: skills under the names the chat loads them by, no servers, and how many servers wait for Claude', async () => {
+test('askMcpPreview on a Codex chat: skills under the names the chat loads them by, and the servers Codex can attach', async () => {
   const sk = { ...SKILLS(), blocked: 'sideload-disabled', skipped: [{ setId: 'ops', setName: 'Ops', pluginName: 'ops', qualifiedName: 'ops:notes', skillId: 'skill:library:notes', name: 'notes', reason: 'off' }],
     sets: [{ id: 'billing', name: 'Billing', group: 'set', routes: [], skills: 2, started: 2 }, { id: 'ops', name: 'Ops', group: 'set', routes: [], skills: 2, started: 1 }] };
   const p = await askMcpPreview({ ctx: { pinned: true, projectKey: 'billing-00000001' }, model: 'gpt-5.5', engine: 'codex' }, previewDeps(sk));
@@ -240,8 +240,9 @@ test('askMcpPreview on a Codex chat: skills under the names the chat loads them 
   assert.equal(p.skills.skipped[0].qualifiedName, 'notes');
   assert.equal(p.skills.started, 3, 'Claude Code\'s --plugin-dir block does not apply on Codex');
   assert.deepEqual(p.skills.layer, { blocked: null, text: null });
-  assert.deepEqual([p.copies, p.started, p.skipped, p.codexServers], [[], 0, [], 1]);
-  assert.deepEqual(p.sets.map((x) => [x.id, x.members, x.started, x.skills, x.startedSkills]), [['billing', 0, 0, 2, 2], ['ops', 0, 0, 2, 1]]);
+  assert.equal(p.started, p.copies.length, 'a locked-down chat starts the copies its engine attaches');
+  assert.deepEqual(p.copies.map((c) => c.name), ['jira']);
+  assert.equal('codexServers' in p, false);
   // A Claude chat's preview is unchanged: qualified names, the copy, no codexServers.
   const c = await askMcpPreview({ ctx: { pinned: true, projectKey: 'billing-00000001' }, model: 'claude-opus-5-5' }, previewDeps({ ...SKILLS(), sets: [] }));
   assert.deepEqual(c.skills.mounted.map((m) => m.qualifiedName), ['billing:deploy', 'billing:graphify', 'ops:deploy']);

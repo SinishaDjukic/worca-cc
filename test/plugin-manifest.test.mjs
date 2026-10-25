@@ -833,9 +833,9 @@ test('models: a Codex model names its engine, takes Codex efforts and refuses ro
   assert.ok(gsEnv.errors.some((e) => /a goose model takes no env/.test(e)), JSON.stringify(gsEnv.errors));
   const gsId = normalizeManifest({ name: 'p', models: [{ id: 'bare', engine: 'goose' }] });
   assert.ok(gsId.errors.some((e) => /a goose model id is provider\/model/.test(e)), JSON.stringify(gsId.errors));
-  for (const engine of ['gemini', 'qwen']) {
+  for (const [engine, efforts] of [['gemini', ['low', 'medium', 'high']], ['qwen', ['low', 'medium', 'high', 'xhigh', 'max']]]) {
     const ok = normalizeManifest({ name: 'p', models: [{ id: 'g', engine }] });
-    assert.deepEqual(ok.manifest.models[0], { id: 'g', label: 'g', engine, efforts: [] });
+    assert.deepEqual(ok.manifest.models[0], { id: 'g', label: 'g', engine, efforts });
     const withEnv = normalizeManifest({ name: 'p', models: [{ id: 'g', engine, env: { X: '1' } }] });
     assert.ok(withEnv.errors.some((e) => new RegExp(`"g".*a ${engine} model takes no env`).test(e)), JSON.stringify(withEnv.errors));
   }

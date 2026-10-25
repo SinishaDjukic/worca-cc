@@ -11,13 +11,13 @@ import { bridgedBadge, needsSignInPill, degradationLine, renderConnectionSection
 import { credentialBadge } from './credential-badges.mjs';
 import { icon } from './icons.mjs';
 import { makeSwitch } from './switch.mjs';
-import { engineLabel, engineChoiceLabel, isBetaEngine, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES, engineReportsCost } from '../../src/shared/engine-switch.mjs';
-import { harnessesOf, runsOn, suggestModelHandle } from '../../src/shared/connections.mjs';
+import { engineLabel, engineChoiceLabel, isBetaEngine, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES, CHAT_ENGINE_NAMES, engineReportsCost } from '../../src/shared/engine-switch.mjs';
+import { harnessesOf, runsOn, suggestModelHandle, HARNESS_EFFORTS } from '../../src/shared/connections.mjs';
 
-/** Each model engine's effort list: Claude's, Codex's, Copilot's, Goose's and OpenCode's as given; the other sign-in
- *  engines (Cursor, Gemini CLI, Qwen Code) have no effort flag. */
+/** Each model engine's effort list: Claude's, Codex's, Copilot's, Goose's and OpenCode's as given, Gemini CLI's and Qwen
+ *  Code's their harness's (src/shared/connections.mjs); Cursor has no effort flag. */
 const effortLists = (efforts, codexEfforts, copilotEfforts = [], gooseEfforts = [], opencodeEfforts = []) => ({ claude: efforts, codex: codexEfforts, copilot: copilotEfforts,
-  ...Object.fromEntries(SIGN_IN_ENGINE_NAMES.map((e) => [e, []])), goose: gooseEfforts, opencode: opencodeEfforts });
+  ...Object.fromEntries(SIGN_IN_ENGINE_NAMES.map((e) => [e, [...(HARNESS_EFFORTS[e] || [])]])), goose: gooseEfforts, opencode: opencodeEfforts });
 
 /** The sign-in choices of the model editor: which subscription, in the harness that holds it. */
 const SIGNIN_CHOICES = { claude: 'Claude Code: your Claude login', codex: 'Codex: your ChatGPT sign-in', cursor: 'Cursor: your Cursor sign-in',
@@ -656,12 +656,12 @@ export function setModelEngine(rootEl, engine) {
   if (envField) envField.hidden = noEnv;
   const btns = rootEl.querySelector('.mv-env-btns');
   if (btns) btns.hidden = noEnv;
-  // A sign-in engine's model that reports no cost and has no effort flag (Cursor, Gemini CLI, Qwen Code): worca cannot
-  // price it and it takes no effort, so those fields hide (and come back on another engine). Goose and OpenCode price
-  // their own runs and have efforts.
+  // A sign-in engine's model that reports no cost: its price matters only to a chat on it (the per-turn cost cap and the
+  // chat's spend, src/core/ask/chat-price.mjs), so the field shows for a Chat engine (Gemini CLI, Qwen Code) and hides
+  // for Cursor; Goose and OpenCode price their own runs. A field with no effort hides (Cursor).
   const signIn = SIGN_IN_ENGINE_NAMES.includes(next);
   const pricing = rootEl.querySelector('.mv-cost-edit')?.closest('.mv-field');
-  if (pricing) pricing.hidden = signIn && !engineReportsCost(next);
+  if (pricing) pricing.hidden = signIn && !engineReportsCost(next) && !CHAT_ENGINE_NAMES.includes(next);
   const effField = rootEl.querySelector('.mv-efforts')?.closest('.mv-field');
   let nextEfforts = [];
   try { nextEfforts = (JSON.parse(rootEl.dataset.effortLists || '{}') || {})[next] || []; } catch { nextEfforts = []; }

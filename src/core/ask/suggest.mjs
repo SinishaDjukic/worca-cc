@@ -4,10 +4,12 @@
 // One call per thread at a time — a newer one, or a new turn on the thread, aborts the older one.
 import { auxTextCall, DEFAULT_TITLE_MODEL, modelReady } from '../title.mjs';
 import { catalogHasModel } from '../config.mjs';
+import { chatDescriptor } from '../engines/chat.mjs';
+import { CHAT_MODEL } from '../engines/chat-descriptor.mjs';
 
 export const SUGGESTION_TIMEOUT_MS = 30_000;
-/** Codex's suggestion model: the cheapest priced gpt-5.6 model (list-prices.mjs). */
-export const CODEX_SUGGESTION_MODEL = 'gpt-5.6-luna';
+/** Codex's suggestion model: the cheapest priced gpt-5.6 model (list-prices.mjs; its chat descriptor's). */
+export const CODEX_SUGGESTION_MODEL = chatDescriptor('codex').suggestionModel;
 const MAX_LEN = 80;
 const MAX_WORDS = 12;
 
@@ -20,11 +22,15 @@ const SYSTEM = [
 ].join(' ');
 
 /** The fixed cheap model per engine: Haiku on Claude while it is in the catalog and ready (else null: no
- *  suggestion — never the chat's own, possibly expensive, model), the small model on Codex. Copilot: none — every
- *  copilot call spends a premium request, and a Copilot chat makes no Claude call. */
-export function suggestionModel(engine, { inCatalog = (id) => catalogHasModel(id, { engine: 'claude' }), ready = modelReady } = {}) {
-  if (engine === 'codex') return CODEX_SUGGESTION_MODEL;
-  if (engine === 'copilot') return null;
+ *  suggestion — never the chat's own, possibly expensive, model); on another engine its chat descriptor's (Codex: its
+ *  small model; Copilot: an included model, no premium request on a paid plan; Gemini CLI, Goose, OpenCode, Qwen Code:
+ *  the chat's own model — worca knows no model of theirs that the person's sign-in surely serves). The call runs locked
+ *  down like the chat, with no MCP server (title.mjs auxTextCall). */
+export function suggestionModel(engine, { inCatalog = (id) => catalogHasModel(id, { engine: 'claude' }), ready = modelReady, chatModel = null } = {}) {
+  if (engine && engine !== 'claude') {
+    const m = chatDescriptor(engine)?.suggestionModel ?? null;
+    return m === CHAT_MODEL ? (typeof chatModel === 'string' && chatModel ? chatModel : null) : m;
+  }
   try { return inCatalog(DEFAULT_TITLE_MODEL) && ready(DEFAULT_TITLE_MODEL) ? DEFAULT_TITLE_MODEL : null; } catch { return null; }
 }
 
@@ -69,7 +75,7 @@ export async function generateSuggestion({ userText, replyText }, opts = {}) {
       systemPrompt: SYSTEM,
       prompt: suggestionPrompt(userText, replyText),
       model: opts.model,
-      engine: opts.engine === 'codex' ? 'codex' : null,
+      engine: opts.engine && opts.engine !== 'claude' ? opts.engine : null,
     }, opts);
     return sanitizeSuggestion(out);
   } catch (err) {

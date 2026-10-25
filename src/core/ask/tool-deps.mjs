@@ -13,7 +13,7 @@ import { GUARDRAIL_PRESETS } from '../guardrails.mjs';
 import { buildCatalog } from './catalog.mjs';
 import { validateProposal } from './proposal.mjs';
 import { chatScopeOf, scopeCardKeys, validateScopeSwitch } from './scope.mjs';
-import { readAttachmentText, getAttachment, attachmentPath, getThread, listAttachments, listMessages } from './store.mjs';
+import { readAttachmentText, readAttachmentRaw, getAttachment, attachmentPath, getThread, listAttachments, listMessages } from './store.mjs';
 import { redactAskText } from './redact.mjs';
 import { htmlToText } from './html-text.mjs';
 import { ASK_LIMITS } from './limits.mjs';
@@ -132,6 +132,8 @@ export function defaultToolDeps({ threadId, viewer = null }) {
       const path = attachmentPath(threadId, id);
       return path ? { name: row.name, kind: row.kind, mime: row.mime, bytes: row.bytes, path } : null;
     },
+    // A locked-down chat's image or PDF attachment, sent as an MCP content block (tools.mjs read_attachment): the body.
+    readAttachmentBody: (id) => (threadId ? readAttachmentRaw(threadId, id)?.buffer ?? null : null),
     // read_attachment `as: "text"`: HTML attachment -> readable text (the web_fetch
     // converter). Injected, never imported — tools.mjs stays import-free by house rule.
     htmlToText,
