@@ -319,7 +319,7 @@ import {
 import { createRunEventHook } from '../src/core/requirements/start.mjs';
 import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
 import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
-import { recoverAttachmentReads, sweepReadFolders, sweepTempBodies } from '../src/core/requirements/attachment-job.mjs';
+import { recoverAttachmentReads, sweepReadFolders, sweepTempBodies, withStagedRunFiles } from '../src/core/requirements/attachment-job.mjs';
 import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import { exportWorkflowToMarketplace, listPublishTargets } from '../src/core/marketplace-publish.mjs';
@@ -2828,9 +2828,12 @@ const startRunHandler = async (req, res) => {
     // createPipeline copies them into <pipeline>/extras/.
     // A ticket's extras were staged durably when it was scheduled (the OS temp dir
     // does not survive a reboot); a schedule stages them below, once it is validated.
+    // A8 D14: a requirements start hands its files' staged copies in-process (req._extrasPaths, set by invokeStartRun
+    // only, never from HTTP, like _roundOf); they replace body.extras.
+    const handed = Array.isArray(req._extrasPaths) ? req._extrasPaths.filter((x) => typeof x === 'string' && fs.existsSync(x)) : null;
     const extras = internal
       ? (Array.isArray(stored.extrasPaths) ? stored.extrasPaths.filter((x) => typeof x === 'string' && fs.existsSync(x)) : [])
-      : (sched ? [] : await writeExtras(runId, body.extras));
+      : (sched ? [] : handed || await writeExtras(runId, body.extras));
 
     // #620 Resolve in a pipeline: the run it resolves. Set in-process by /resolve-pipeline only, never from HTTP.
     const resolveOf = req._resolveOf && typeof req._resolveOf === 'object' && typeof req._resolveOf.runId === 'string' ? req._resolveOf : null;
@@ -3689,17 +3692,24 @@ function requirementsRunSummary({ runId, pipelineId }) {
   };
 }
 
-/** Call startRunHandler without HTTP. Resolves { status, body }. */
-async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null } = {}) {
-  let out = { status: 200, body: null };
-  const res = {
-    statusCode: 200,
-    status(code) { this.statusCode = code; return this; },
-    json(payload) { out = { status: this.statusCode, body: payload }; return this; },
+/** Call startRunHandler without HTTP. Resolves { status, body }. A8 D14: `extrasFiles` ([{ name, path, sha256? }], a
+ *  requirements start) are staged into the run's extras folder first and handed over as req._extrasPaths; a refused
+ *  start removes them again (withStagedRunFiles). */
+async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null } = {}) {
+  const files = Array.isArray(extrasFiles) && extrasFiles.length ? extrasFiles : null;
+  const id = files ? (runId || randomUUID()) : runId;   // the extras folder is named by the run id
+  const run = async (extrasPaths) => {
+    let out = { status: 200, body: null };
+    const res = {
+      statusCode: 200,
+      status(code) { this.statusCode = code; return this; },
+      json(payload) { out = { status: this.statusCode, body: payload }; return this; },
+    };
+    await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: id,
+      _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}), ...(extrasPaths ? { _extrasPaths: extrasPaths } : {}) }, res);
+    return out;
   };
-  await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: runId,
-    _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}) }, res);
-  return out;
+  return files ? withStagedRunFiles(id, files, run) : run(null);
 }
 
 /** Shaper s5 (D20): a Watch PR fix run is round n+1 of the run that opened the PR. Null on bad input or a read error,

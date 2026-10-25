@@ -103,7 +103,10 @@ export function displayState(feature, { ready, starts = [] } = {}) {
 
 const diffList = (b, a) => ({ added: a.filter((x) => !b.includes(x)), removed: b.filter((x) => !a.includes(x)) });
 
-export function changedSince(before, after) {
+/** The changes since a start (A2 D11), and with the files lists (A8 D14) the files the start sent against the ones it
+ *  would send now: one line for a file added to the list, one left out of it (its switch off, or removed), one replaced
+ *  (another sha256). Without both lists, no file lines. */
+export function changedSince(before, after, { filesBefore = null, filesNow = null } = {}) {
   const b = before || {}, a = after || {};
   const out = [];
   for (const field of ['text', 'measure']) {
@@ -126,6 +129,15 @@ export function changedSince(before, after) {
   for (const [id, x] of aa) {
     if (!ba.has(id)) out.push({ kind: 'assumption', id, change: 'added', after: x.text });
     else if (ba.get(id).status !== x.status) out.push({ kind: 'assumption', id, change: 'status', before: ba.get(id).status, after: x.status });
+  }
+  if (Array.isArray(filesBefore) && Array.isArray(filesNow)) {
+    const was = new Map(filesBefore.map((x) => [x.id, x]));
+    const now = new Map(filesNow.map((x) => [x.id, x]));
+    for (const [id, x] of now) {
+      if (!was.has(id)) out.push({ kind: 'file', change: 'added', name: x.name });
+      else if (was.get(id).sha256 !== x.sha256) out.push({ kind: 'file', change: 'replaced', name: x.name });
+    }
+    for (const [id, x] of was) if (!now.has(id)) out.push({ kind: 'file', change: 'removed', name: x.name });
   }
   return out;
 }

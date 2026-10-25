@@ -671,3 +671,68 @@ test("Ask is refused on a file Worca could not read; a failed ask stores its own
   await job.readsSettled(own(f));
   assert.deepEqual([getAttachment(b.id).error, getAttachment(b.id).asks.map((x) => x.answer)], [null, ['Now.']]);
 });
+
+test('D14: staged run files: display names, " (2)" for a repeat; removed after a refusal or a throw; a body gone is a 409 naming the file', async (t) => {
+  const log = t.mock.method(console, 'error', () => {});
+  const base = join(worcaHome(), 'tmp', 'stage-test');
+  mkdirSync(base, { recursive: true });
+  const src = join(base, 'a.bin');
+  writeFileSync(src, 'a');
+  const leaf = (p) => p.split(/[\\/]/).pop();
+  const ok = await job.withStagedRunFiles('r-ok', [{ name: 'notes.md', path: src }, { name: 'NOTES.md', path: src }], async (paths) => ({ status: 201, body: { paths } }), { base });
+  assert.deepEqual(ok.body.paths.map(leaf), ['notes.md', 'NOTES (2).md']);
+  assert.equal(existsSync(join(base, 'orchestrator-extras-r-ok')), true);
+  assert.deepEqual(ok.body.paths.map((p) => readFileSync(p, 'utf8')), ['a', 'a']);
+  const no = await job.withStagedRunFiles('r-403', [{ name: 'a.md', path: src }], async () => ({ status: 403, body: { error: 'total cost limit reached' } }), { base });
+  assert.deepEqual([no.status, existsSync(join(base, 'orchestrator-extras-r-403'))], [403, false]);
+  await assert.rejects(job.withStagedRunFiles('r-throw', [{ name: 'a.md', path: src }], async () => { throw new Error('boom'); }, { base }), /boom/);
+  assert.equal(existsSync(join(base, 'orchestrator-extras-r-throw')), false);
+  let ran = false;
+  const gone = await job.withStagedRunFiles('r-gone', [{ name: 'ok.md', path: src }, { name: 'tone.md', path: join(base, 'missing.bin') }], async () => { ran = true; return { status: 201 }; }, { base });
+  assert.deepEqual([gone.status, gone.body.error], [409, 'tone.md could not be sent with the run: it changed while the run started. Try again.']);
+  assert.equal(existsSync(join(base, 'orchestrator-extras-r-gone')), false, 'the copies made before it go too');
+  assert.equal(ran, false, 'the start never runs');
+  assert.equal(log.mock.calls.length, 1, 'the raw error goes to the log');
+});
+
+test('D14: a staged copy that is not the version the start chose (its sha256) is a 409 naming it; a matching one goes', async (t) => {
+  const log = t.mock.method(console, 'error', () => {});
+  const base = join(worcaHome(), 'tmp', 'stage-test-sha');
+  mkdirSync(base, { recursive: true });
+  const src = join(base, 'b.bin');
+  writeFileSync(src, 'new bytes');
+  let ran = false;
+  const changed = await job.withStagedRunFiles('r-sha', [{ name: 'spec.pdf', path: src, sha256: sha(Buffer.from('old bytes')) }], async () => { ran = true; return { status: 201 }; }, { base });
+  assert.deepEqual([changed.status, changed.body], [409, { error: 'spec.pdf could not be sent with the run: it changed while the run started. Try again.' }]);
+  assert.deepEqual([ran, existsSync(join(base, 'orchestrator-extras-r-sha'))], [false, false]);
+  assert.equal(log.mock.calls.length, 1);
+  const same = await job.withStagedRunFiles('r-sha-ok', [{ name: 'spec.pdf', path: src, sha256: sha(Buffer.from('new bytes')) }], async (paths) => ({ status: 200, body: { paths } }), { base });
+  assert.equal(same.status, 200);
+  assert.equal(readFileSync(same.body.paths[0], 'utf8'), 'new bytes');
+  assert.deepEqual(readdirSync(join(base, 'orchestrator-extras-r-sha-ok')), ['spec.pdf']);
+});
+
+test('D14: runFiles lists the switched-on feature files, then the switched-on documents of the scope\'s made brief', async () => {
+  process.env.WORCA_MOCK = '1';
+  const f = createFeature({ scopeType: 'project', scopeKey: 'shop-run', title: 'Run files', description: 'd' });
+  const fo = { type: 'feature', id: f.seq };
+  const [a, b] = job.addAttachments(fo, [textFile('a.md', 'a'), textFile('b.md', 'b')]);
+  await job.readsSettled(fo);
+  updateAttachment(b.id, { sendWithRun: true });
+  assert.deepEqual(job.runFiles(f).map((x) => x.name), ['b.md'], 'no brief yet');
+  const brief = beginBrief('project', 'shop-run');
+  const bo = { type: 'brief', id: brief.id, scopeType: 'project', scopeKey: 'shop-run' };
+  saveBriefResult(brief.id, { sections: { product: 'P', users: [], terms: [], areas: [] } });
+  const [g] = job.addAttachments(bo, [textFile('g.md', 'g')]);
+  await job.readsSettled(bo);
+  updateAttachment(g.id, { sendWithRun: true });
+  updateAttachment(a.id, { sendWithRun: true });
+  const list = job.runFiles(f);
+  assert.deepEqual(list.map(({ id, name, sha256, from }) => ({ id, name, sha256, from })), [
+    { id: a.id, name: 'a.md', sha256: a.sha256, from: 'feature' }, { id: b.id, name: 'b.md', sha256: b.sha256, from: 'feature' },
+    { id: g.id, name: 'g.md', sha256: g.sha256, from: 'brief' }]);
+  assert.deepEqual(list.map((x) => x.path), [a, b, g].map((r) => job.attachmentFile(r)));
+  assert.equal(job.unsendableRunFile(list), null);
+  rmSync(job.attachmentFile(g));
+  assert.equal(job.unsendableRunFile(job.runFiles(f)).name, 'g.md');
+});

@@ -2,10 +2,12 @@
 // A feature's files and a made brief's documents (plans/requirements-a8-design.md D3–D5, D9–D12): their bodies on disk,
 // the one read per file through A1.1's callModel, the queue (MAX_READ_JOBS across every feature and brief), the spend,
 // recovery after a restart, the boot sweep and the estimates. A read never throws out: a failure is the file's `failed`
-// status, and a read the spending limit stops leaves it `unread-budget`.
+// status, and a read the spending limit stops leaves it `unread-budget`. And what a start sends to its run (D14).
 // interview.mjs and this module import each other: neither uses the other's bindings at module top level.
-import { chmodSync, copyFileSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { chmodSync, copyFileSync, createReadStream, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFile, mkdir, rm } from 'node:fs/promises';
+import { createHash, randomBytes } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { tx } from '../db.mjs';
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
@@ -22,7 +24,7 @@ import { RoundError } from './round.mjs';
 import {
   REQ_ATT_ID_RE, REQ_ATTACH_LIMITS, ATTACHMENT_SYSTEM_PROMPT, buildReadPrompt, buildAskPrompt, normalizeSummary, mockSummary, checkNewFiles,
   readRule, normalizeAnswer, mockAnswer, pushHistory, selectInlineAttachments, renderAttachmentsForPrompt, renderDocumentsForPrompt, sourceNames, hasText,
-  mentions,
+  mentions, displayName, uniqueName,
 } from './attachments.mjs';
 import {
   mintAttachmentId, insertAttachment, getAttachment, listAttachments, updateAttachment, addAttachmentCost, deleteAttachmentRow,
@@ -543,6 +545,70 @@ export function queueUnread(seq, deps = {}) {
     enqueue({ id: r.id, name: r.name, owner, kind: 'read', by: null, d });
   }
   return waiting.length;
+}
+
+// ---------------------------------------------------------------- the run hand-off (D14)
+
+/** D14: what a start sends: the feature's files with Send with the run on, then the documents of the scope's made brief
+ *  with Send with every run on, each with its body's path. `bytes` and `stored` (the row describes a body on disk: not a
+ *  replace whose new version could not be stored) are for unsendableRunFile. */
+export function runFiles(f) {
+  const brief = usableBrief(f.scopeType, f.scopeKey);
+  const pick = (rows, from) => rows.filter((r) => r.sendWithRun).map((r) => ({ id: r.id, name: r.name, sha256: r.sha256, from,
+    path: attachmentFile(r), bytes: r.bytes, stored: !storeFailed(r) }));
+  return [...pick(listAttachments('feature', f.seq), 'feature'), ...(brief ? pick(listAttachments('brief', brief.id), 'brief') : [])];
+}
+
+/** D14: the first of runFiles' list that cannot go with the run, else null: a version Worca could not store, or a body
+ *  that is missing or not the row's size. A file whose read failed, or that the budget stopped, still goes (D1). The
+ *  staging then checks every copy against its sha256. */
+export function unsendableRunFile(list) {
+  return (list || []).find((x) => {
+    if (!x.stored) return true;
+    try { const st = statSync(x.path); return !st.isFile() || st.size !== x.bytes; } catch { return true; }
+  }) || null;
+}
+
+const sha256OfFile = (path) => new Promise((resolve, reject) => {
+  const h = createHash('sha256');
+  createReadStream(path).on('error', reject).on('data', (c) => h.update(c)).on('end', () => resolve(h.digest('hex')));
+});
+
+/** D14: a start's files copied under their display names into the run's extras folder (writeExtras'
+ *  orchestrator-extras-<runId>, which createPipeline copies into <pipeline>/extras by base name); a name already used in
+ *  that run gets " (2)", so no file overwrites another. An entry's `sha256`, when given, is checked against its copy, so
+ *  the run gets exactly the version the start chose. `start(paths)` runs the start; a refused start (not 2xx) or a throw
+ *  removes the folder again, so nothing is left in the temp dir. A body removed or replaced meanwhile (a brief
+ *  document's routes do not wait for a start) answers 409 naming the file, never its path, and the start never runs. */
+export async function withStagedRunFiles(runId, list, start, { base = tmpdir() } = {}) {
+  const dir = join(base, `orchestrator-extras-${runId}`);
+  const drop = () => rm(dir, { recursive: true, force: true }).catch((e) => console.error(`requirements: could not remove the staged files of run ${runId}:`, message(e)));
+  try { await mkdir(dir, { recursive: true, mode: DIR_MODE }); } catch (err) {
+    console.error(`requirements: could not stage the files of run ${runId}:`, message(err));
+    await drop();
+    return { status: 500, body: { error: 'Worca could not finish that. Try again.' } };
+  }
+  const taken = [];
+  const paths = [];
+  for (const f of list) {
+    const name = uniqueName(displayName(f.name), taken);
+    taken.push(name);
+    const dest = join(dir, name);
+    try {
+      await copyFile(f.path, dest);   // async: up to 10 × 25 MB plus documents, off the request's thread
+      if (f.sha256 && (await sha256OfFile(dest)) !== f.sha256) throw new Error('the copy is not the version the start chose');
+    } catch (err) {
+      console.error(`requirements: a file of run ${runId} could not be staged:`, message(err));
+      await drop();
+      return { status: 409, body: { error: `${displayName(f.name)} could not be sent with the run: it changed while the run started. Try again.` } };
+    }
+    paths.push(dest);
+  }
+  let out;
+  try { out = await start(paths); } catch (err) { await drop(); throw err; }
+  const status = Number(out && out.status);
+  if (!(status >= 200 && status <= 299)) await drop();
+  return out;
 }
 
 // ---------------------------------------------------------------- the prompts (D6)

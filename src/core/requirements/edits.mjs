@@ -2,7 +2,9 @@
 // The product owner's edits (plans/requirements-design.md D6): ground truth the model may ask about but
 // never undo. Every edit is a turn, so the next round sees it in the thread.
 import { RequirementsError, SECTIONS, SCOPE_TYPES, ASSUMPTION_STATUSES, LIMITS, clip, normalizeSection, nextIdNumber } from './spec.mjs';
-import { requireFeature, updateFeature, appendTurn, listTurns, listStarts, latestStart, usableBrief, setBriefSections } from './store.mjs';
+import {
+  requireFeature, updateFeature, appendTurn, listTurns, listStarts, latestStart, usableBrief, setBriefSections, listAttachments, updateAttachment,
+} from './store.mjs';
 import { BRIEF_LIMITS, relPath } from './brief.mjs';
 import { tx } from '../db.mjs';
 import { isBusy } from './interview.mjs';
@@ -133,13 +135,19 @@ export function confirmOpenAssumptions(seq, { by = null } = {}) {
 }
 
 /** Undo the changes made since a start (A2 D11): the spec goes back to that start's frozen copy. The id
- *  counters stay where they are (A1-D3), so an id given out after the start is never reused. */
+ *  counters stay where they are (A1-D3), so an id given out after the start is never reused. A8 D14: the feature files'
+ *  Send with the run switches go back to the start's choice; a removed or replaced body stays as it is now, and the
+ *  documents' switches (a setting of the whole scope) are left alone. */
 export function revertToStart(seq, version, { by = null } = {}) {
   editable(seq);
   const start = listStarts(seq).find((s) => s.version === Number(version));
   if (!start) throw new RequirementsError('NOT_FOUND', `no build v${String(version).slice(0, 12)} of this feature`);
+  const sent = new Set((start.files || []).filter((x) => x.from === 'feature').map((x) => x.id));
   return tx(() => {
     appendTurn(seq, { kind: 'edit', payload: { reverted: start.version } }, { by });
+    for (const r of listAttachments('feature', seq)) {
+      if (r.sendWithRun !== sent.has(r.id)) updateAttachment(r.id, { sendWithRun: sent.has(r.id) }, { by });
+    }
     return updateFeature(seq, { spec: start.spec }, { by });
   });
 }

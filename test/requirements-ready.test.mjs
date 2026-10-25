@@ -204,3 +204,12 @@ test('readiness: the interview check fails with "<name> to ask about" / "N files
   assert.equal(check([]).ok, true);
   assert.equal(check([file('a')], { pending: { questions: [{}] } }).hint, '1 question waiting');
 });
+
+test('changedSince: a file added to the send set, left out of it, or replaced is one line each', () => {
+  const was = [{ id: 'a', name: 'a.pdf', sha256: '1' }, { id: 'b', name: 'b.md', sha256: '2' }, { id: 'c', name: 'c.png', sha256: '3' }];
+  const now = [{ id: 'a', name: 'a.pdf', sha256: '1' }, { id: 'c', name: 'c-v2.png', sha256: '9' }, { id: 'd', name: 'd.md', sha256: '4' }];
+  assert.deepEqual(changedSince({}, {}, { filesBefore: was, filesNow: now }), [
+    { kind: 'file', change: 'replaced', name: 'c-v2.png' }, { kind: 'file', change: 'added', name: 'd.md' }, { kind: 'file', change: 'removed', name: 'b.md' }]);
+  assert.deepEqual(changedSince({}, {}), [], 'no file lists: no file lines');
+  assert.deepEqual(changedSince({}, {}, { filesBefore: was, filesNow: was }), [], 'the same files: no file lines');
+});

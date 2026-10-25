@@ -18,7 +18,7 @@ import {
 import { REQ_ATTACH_LIMITS, REQ_ATT_ID_RE, reqUploadOptions, checkNewFiles } from './attachments.mjs';
 import {
   addAttachments, removeAttachment, editSummary, setSend, readAgain, askAttachment, replaceAttachment, ownAttachment, fileView, readEstimates,
-  attachmentFile, removeOwnerBodies, stopJobs,
+  attachmentFile, removeOwnerBodies, stopJobs, runFiles,
 } from './attachment-job.mjs';
 import { isStarting, STARTING_MESSAGE } from './starting.mjs';
 import { startOrientation, submitAnswers, finishInterview, followUp, retry, isBusy, assertCapacity, interviewModel } from './interview.mjs';
@@ -186,6 +186,13 @@ function featureBrief(f) {
     lookAtCode: getContext(f.scopeType, f.scopeKey).lookAtCode };
 }
 
+/** A8 D14: the feature files the start sent and the ones a start would send now, for Changed since the run started. A
+ *  document's switch is a setting of the whole scope that Undo leaves as it is, so documents are not compared. */
+const sentFiles = (start, f) => {
+  const own = (list) => list.filter((x) => x.from === 'feature');
+  return { filesBefore: own(start.files || []), filesNow: own(runFiles(f)) };
+};
+
 /** A feature's view (A1 §5, A2 §4): the stored feature plus what the page derives nothing of itself:
  *  readiness, the displayed state, the unasked rejections, the starts (newest first; the newest with its
  *  frozen spec, for the version switch) and the changes since the latest start. */
@@ -211,7 +218,7 @@ export async function featureView(seq, d = {}) {
   return {
     feature: { ...f, busy, pending, lastError: last && last.kind === 'error' ? last.payload.message : null,
       readiness: ready, state: displayState({ ...f, busy }, { ready, starts: rows }), unaskedRejections: unaskedRejections(f.spec, turns),
-      starts, changedSinceStart: rows.length ? changedSince(rows[0].spec, f.spec) : [],
+      starts, changedSinceStart: rows.length ? changedSince(rows[0].spec, f.spec, sentFiles(rows[0], f)) : [],
       brief: featureBrief(f), lookCostUsd: lookCostUsd(model),
       attachments: files.map((r) => fileView(r, { spec: f.spec, href: `${P}/${seq}/attachments/${r.id}`, estimates })),
       briefDocuments: docs.map((r) => fileView(r, { spec: f.spec, href: `${briefPathOf(f.scopeType, f.scopeKey)}/documents/${r.id}`, doc: true, estimates })),
