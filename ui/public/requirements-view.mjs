@@ -13,6 +13,9 @@
 import { gitOn, onGitChange, GIT_MISSING_TEXT } from './git-gate.mjs';
 import { makeSwitch } from './switch.mjs';
 import { icon as sharedIcon } from './icons.mjs';
+import {
+  ATTACH_BINARY, extOf, checkAttachment, bytesToBase64, carriesFiles, pastedFiles, createPasteNamer, REQ_ATTACH, reqLimits, reqTypeMessage,
+} from './attach-files.mjs';
 
 // The displayed state (A2 §4), always the server's `f.state`: the page never derives it. `started` is
 // drawn as the latest run's pill (runPill), not as a badge.
@@ -84,6 +87,11 @@ const ICONS = Object.freeze({
     ['path', { d: 'M9.9 9.1a2.2 2.2 0 1 1 3.2 2c-.7.4-1.1.9-1.1 1.6' }], ['path', { d: 'M12 15v.01' }]],
   play: [['path', { d: 'M6 4l14 8-14 8V4Z' }]],
   warn: [['path', { d: 'M12 3l9.5 17h-19L12 3z' }], ['path', { d: 'M12 10v4.5M12 17.5v.01' }]],
+  // A8 (board 15): the drop zone's clip, a file chip's page and picture, the privacy note's i
+  clip: [['path', { d: 'M21 12.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9.2-9.2a3.7 3.7 0 0 1 5.2 5.2l-9.2 9.2a1.8 1.8 0 0 1-2.6-2.6l8.5-8.5' }]],
+  file: [['path', { d: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z' }], ['path', { d: 'M14 3v5h5' }]],
+  image: [['rect', { x: 3.5, y: 4.5, width: 17, height: 15, rx: 2 }], ['circle', { cx: 9, cy: 10, r: 1.6 }], ['path', { d: 'M20.5 16l-5-5-8.5 8.5' }]],
+  info: [['circle', { cx: 12, cy: 12, r: 9 }], ['path', { d: 'M12 8h.01M11 12h1v5h1' }]],
 });
 const AUTO_WORKFLOW = 'wf_auto';
 // Workflows a feature never starts with: the memory defragment is a maintenance run, not a build.
@@ -126,6 +134,48 @@ export function age(iso, now = Date.now()) {
 function ageOld(iso) {
   const a = age(iso);
   return a === 'today' || a === 'yesterday' ? `made ${a}` : a ? `${a} old` : 'made';
+}
+
+// ---- A8: files (plans/requirements-a8-design.md §6; design round 3, boards 15–21) ----
+const KIND_TITLE = Object.freeze({ text: 'Text', image: 'Image', binary: 'PDF' });
+const READ_RANGE = '$0.05–0.20';   // a read's cost before any read has been made
+/** 640 B, 9 KB, 2.1 MB (the server's sizeLabel). */
+export function sizeText(bytes) {
+  const v = Number(bytes) || 0;
+  if (v < 1024) return `${v} B`;
+  if (v < 1024 * 1024) return `${Math.round(v / 1024)} KB`;
+  return `${(v / (1024 * 1024)).toFixed(1)} MB`;
+}
+const kindOfName = (name) => { const m = ATTACH_BINARY[extOf(name)]; return m ? (m.startsWith('image/') ? 'image' : 'binary') : 'text'; };
+/** The picks of the feature and brief pages, in requests of at most 100 MB each (D7). */
+export function uploadBatches(files) {
+  const out = [];
+  let cur = [];
+  let n = 0;
+  for (const f of files) {
+    if (cur.length && n + f.size > REQ_ATTACH.maxRequestBytes) { out.push(cur); cur = []; n = 0; }
+    cur.push(f);
+    n += f.size;
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+const encodeFile = async (file) => ({ name: file.name, dataBase64: bytesToBase64(new Uint8Array(await file.arrayBuffer())) });
+/** "$0.05", "$0.05–0.12", or READ_RANGE while none of the kinds has an estimate (board 15). */
+function readRange(kinds, estimates) {
+  const known = [...new Set(kinds)].map((k) => estimates && estimates[k]).filter((x) => typeof x === 'number');
+  if (!known.length) return READ_RANGE;
+  const lo = Math.min(...known);
+  const hi = Math.max(...known);
+  return lo === hi ? usd(lo) : `${usd(lo)}–${usd(hi).slice(1)}`;
+}
+/** D15: the privacy note, naming the interview model. */
+const privacyNote = (interview) => h('p', { class: 'hint req-files-privacy' }, icon(ICONS.info, { size: 14 }),
+  h('span', { text: `Worca sends each file to ${(interview && (interview.label || interview.model)) || 'the interview model'} to read it. Text is checked for keys and passwords first; images and PDFs go as they are.` }));
+/** A refusal line of the files' amber alert, the file's name in bold (board 15). */
+function refusalLine(message) {
+  const m = /^(.+?) (was not added: .*)$/.exec(message);
+  return h('span', { class: 'req-file-refusal' }, ...(m ? [h('b', { text: m[1] }), ` ${m[2]}`] : [message]));
 }
 /** "a", "a and b", "a, b and c". */
 const joinAnd = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
@@ -218,6 +268,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   const seqScope = new Map();
   let focusLater = null;     // a data-ui to focus once it is on screen, while the focus is lost (a round sent)
   let relook = null;         // New feature's look line, said again when git appears or goes missing
+  let carry = null;          // { param, text }: a create's message that the page it routes to says (A8 filesNotStored)
   // Start in Worca: the workflow / branch choices per feature seq ({ workflowId, sourceBranch, open }),
   // the workflow list and each project's branches (loaded once, when Change opens), a start in flight,
   // and the start-before-Ready dialog ({ wrap, trigger, triggerUi }).
@@ -273,7 +324,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       if (ui.menu && ui.menu.startsWith('brief-')) ui.menu = null;
     }
     briefShown = nextBrief;
-    say('');
+    if (carry && carry.param === param) say(carry.text, 'warn'); else say('');
+    carry = null;
     await paint();
   }
   // A live frame never touches the new-feature form. The list repaints on every frame; a feature page on its own
@@ -316,7 +368,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         const look = list && list.lookCostUsd;
         const interview = list && list.interview && typeof list.interview === 'object' ? list.interview : null;
         const briefs = list && Array.isArray(list.briefs) ? list.briefs : [];
-        if (mine === paintNo) { paintNew(typeof look === 'number' ? look : null, interview, briefs); paintedKey = key; }
+        const estimates = list && list.readEstimates && typeof list.readEstimates === 'object' ? list.readEstimates : {};
+        if (mine === paintNo) { paintNew(typeof look === 'number' ? look : null, interview, briefs, estimates); paintedKey = key; }
         return;
       }
       if (seqShown != null) {
@@ -442,23 +495,37 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
   const briefLink = (to) => h('a', { class: 'req-brief-link', href: `#requirements/${to}`, onclick: (e) => { e.preventDefault(); route(to); } }, 'product brief');
 
-  // The line under the form: who interviews (A1.1), then what it costs. With a usable brief for the chosen
-  // target there is no code look (A7 D10), so only the cost words after the dot change, to "cents per round"
-  // (board 13); the model part never does. Without interview info: A2's hint, hidden with a brief.
-  function costHint(lookCost, interview) {
+  // The line under the form: who interviews (A1.1), then what it costs. With a usable brief for the chosen target (or
+  // without git) there is no code look (A7 D10), so only the cost words after the dot change; the model part never does.
+  // A8 (board 15): with files picked, the words say each file is read once before round 1. Without interview info:
+  // A2's sentence; with nothing to say (no look estimate, no files) there is no line at all, as in A2.
+  function costHint(lookCost, interview, estimates = {}) {
+    let noLook = false;
+    let kinds = [];
+    const lookPart = () => (lookCost != null && !noLook ? `about ${usd(lookCost)} for the code look, ` : '');
+    const words = () => (kinds.length
+      ? `${lookPart()}reads each file once before round 1, about ${readRange(kinds, estimates)} a file, then cents per round`
+      : lookPart() ? `${lookPart()}then cents per round` : 'cents per round');
     if (!interview) {
-      const el = lookCost != null ? h('span', { class: 'hint req-new-cost', text: `About ${usd(lookCost)} for the code look, then cents per round.` }) : null;
-      return { el, brief: (on) => { if (el) el.hidden = on; } };
+      let el = lookCost != null ? h('span', { class: 'hint req-new-cost' }) : null;
+      const sync = () => {
+        if (!el && kinds.length) el = h('span', { class: 'hint req-new-cost' });
+        if (!el) return;
+        const w = words();
+        el.textContent = `${w[0].toUpperCase()}${w.slice(1)}.`;
+        el.hidden = !lookPart() && !kinds.length;
+      };
+      sync();
+      return { get el() { return el; }, brief: (on) => { noLook = on; sync(); }, files: (k) => { kinds = k; sync(); } };
     }
     const name = interview.label || interview.model;
     const who = `Worca interviews with ${name}${interview.effort ? ` at ${interview.effort} effort` : ''}`;
-    const words = (on) => (lookCost != null && !on ? ` · about ${usd(lookCost)} for the code look, then cents per round` : ' · cents per round');
-    const tail = document.createTextNode(words(false));
-    return { el: h('span', { class: 'hint req-new-cost' }, h('span', { class: 'req-new-model', text: who }), tail),
-      brief: (on) => { tail.data = words(on); } };
+    const tail = document.createTextNode(` · ${words()}`);
+    const el = h('span', { class: 'hint req-new-cost' }, h('span', { class: 'req-new-model', text: who }), tail);
+    return { el, brief: (on) => { noLook = on; tail.data = ` · ${words()}`; }, files: (k) => { kinds = k; tail.data = ` · ${words()}`; } };
   }
 
-  function paintNew(lookCost, interview = null, briefs = []) {
+  function paintNew(lookCost, interview = null, briefs = [], estimates = {}) {
     const select = h('select', { id: 'req-new-target' },
       targets.projects.length ? h('optgroup', { label: 'Projects' }, targets.projects.map((p) => h('option', { value: `project:${p.key}`, text: p.name }))) : null,
       targets.workspaces.length ? h('optgroup', { label: 'Workspaces' }, targets.workspaces.map((w) => h('option', { value: `workspace:${w.id}`, text: w.name }))) : null);
@@ -466,7 +533,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const desc = h('textarea', { id: 'req-new-desc', rows: '5', placeholder: 'A few sentences, the way you would tell a colleague.' });
     // A brief is usable once made (D10), also while it is being refreshed.
     const usable = new Map(briefs.filter((b) => b && b.scopeType && b.scopeKey && b.madeAt).map((b) => [scopeId(b), b]));
-    const cost = costHint(lookCost, interview);
+    const cost = costHint(lookCost, interview, estimates);
     let lookHint = h('span', { class: 'hint req-new-look' });
     const sayLook = () => {
       const [scopeType, ...rest] = select.value.split(':');
@@ -488,11 +555,80 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     select.addEventListener('change', sayLook);
     sayLook();
     relook = sayLook;
-    const create = () => act(async () => {
-      const [scopeType, ...rest] = select.value.split(':');
-      const data = await api('POST', '/api/requirements', { scopeType, scopeKey: rest.join(':'), title: title.value, description: desc.value });
-      route(`feature/${data.feature.seq}`);
+    // A8 (board 15): the Files field. Picks are checked here (D7: 10 files, 25 MB each, 100 MB in all on this form);
+    // a refused one is named in the amber alert and not added; a chip per accepted file.
+    let picked = [];
+    const chips = h('div', { class: 'req-new-chips' });
+    const refused = h('p', { class: 'req-file-refused', role: 'alert', hidden: true });
+    const note = h('p', { class: 'hint req-new-files-note', hidden: true, text: 'Files stay on the feature. Which files go with a run is chosen later, on the feature page.' });
+    const actions = h('div', { class: 'actions req-new-actions' });
+    const input = h('input', { type: 'file', id: 'req-new-files-input', multiple: true, accept: REQ_ATTACH.accept, hidden: true });
+    const choose = h('button', { type: 'button', class: 'link-btn', onclick: () => input.click() }, 'Choose files');
+    const sync = () => {
+      chips.replaceChildren(...picked.map((file) => {
+        const kind = kindOfName(file.name);
+        return h('span', { class: 'req-new-chip' },
+          icon(kind === 'image' ? ICONS.image : ICONS.file, { size: 16 }),
+          h('span', { class: 'req-new-chip-name', text: file.name }),
+          h('span', { class: 'hint', text: `${KIND_TITLE[kind]} · ${sizeText(file.size)}` }),
+          icoBtn('remove', `Remove ${file.name}`, () => removePicked(file), { cls: 'req-new-chip-x' }));
+      }));
+      note.hidden = !picked.length;
+      cost.files(picked.map((p) => kindOfName(p.name)));
+      if (cost.el && cost.el.parentNode !== actions) actions.prepend(cost.el);   // A2's line appears with the first file
+    };
+    // A removed chip hands the focus to the next chip's ×, else the previous one's, else Choose files.
+    const removePicked = (file) => {
+      const at = picked.indexOf(file);
+      picked = picked.filter((p) => p !== file);
+      sync();
+      const xs = chips.querySelectorAll('.req-new-chip-x');
+      (xs[Math.min(at, xs.length - 1)] || choose).focus();
+    };
+    const addPicked = (files) => {
+      const errors = [];
+      for (const file of files) {
+        const c = checkAttachment(file, { pending: picked.map((p) => ({ name: p.name, bytes: p.size })), limits: reqLimits({ create: true }), typeMessage: reqTypeMessage });
+        if (!c.ok) { errors.push(c.error); continue; }
+        picked = [...picked.filter((p) => p.name !== file.name), file];
+      }
+      refused.replaceChildren(...errors.flatMap((e, i) => (i ? [' ', refusalLine(e)] : [refusalLine(e)])));
+      refused.hidden = !errors.length;
+      sync();
+    };
+    input.addEventListener('change', () => { const files = [...(input.files || [])]; input.value = ''; addPicked(files); });
+    const namer = createPasteNamer((parts, n, o) => new File(parts, n, o));
+    const zone = h('div', { class: 'req-drop', tabindex: '0', role: 'group', 'aria-label': 'Drop files here, paste them, or choose files' },
+      'Drop files here, paste them, or ',
+      choose,
+      h('span', { class: 'hint', text: 'Text, images and PDF · up to 10 files, 25 MB each' }),
+      h('span', { class: 'req-drop-ico' }, icon(ICONS.clip, { size: 22, width: 1.8 })));
+    zone.addEventListener('dragover', (e) => { if (!carriesFiles(e.dataTransfer)) return; e.preventDefault(); zone.classList.add('over'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+    zone.addEventListener('drop', (e) => {
+      if (!carriesFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      zone.classList.remove('over');
+      addPicked([...e.dataTransfer.files]);
     });
+    zone.addEventListener('paste', (e) => { const files = pastedFiles(e.clipboardData); if (!files) return; e.preventDefault(); addPicked(namer(files)); });
+    // One create at a time: reading the files slows the press down, so a second press while it runs does nothing.
+    let sending = false;
+    const create = () => (sending ? undefined : act(async () => {
+      sending = true;
+      try {
+        const [scopeType, ...rest] = select.value.split(':');
+        const attachments = picked.length ? await Promise.all(picked.map(encodeFile)) : undefined;
+        const data = await api('POST', '/api/requirements', { scopeType, scopeKey: rest.join(':'), title: title.value, description: desc.value, ...(attachments ? { attachments } : {}) });
+        // A file the server could not store is named on the feature page (the feature stays; Task 9's filesNotStored).
+        const lost = Array.isArray(data.filesNotStored) ? data.filesNotStored : [];
+        if (lost.length) carry = { param: `feature/${data.feature.seq}`, text: lost.map((n) => `${n} was not added: Worca could not store it. Add it on the feature page.`).join(' ') };
+        route(`feature/${data.feature.seq}`);
+      } finally { sending = false; }
+    }));
+    actions.append(...[cost.el, h('div', { class: 'req-new-btns' },
+      h('button', { type: 'button', class: 'btn', onclick: () => route('') }, 'Cancel'),
+      h('button', { type: 'button', class: 'btn btn-primary', onclick: create }, 'Start the interview'))].filter(Boolean));
     const field = (id, label, control, ...after) => h('div', { class: 'field' }, h('label', { for: id }, ...label), control, ...after);
     paintHost(h('div', { class: 'req-new-page' },
       h('a', { href: '#requirements', class: 'hint req-back', onclick: (e) => { e.preventDefault(); route(''); } }, '← All features'),
@@ -502,12 +638,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       h('div', { class: 'card req-new' },
         field('req-new-title', ['Title'], title),
         field('req-new-desc', ['Describe it ', h('span', { class: 'opt', text: 'who needs it, what they want to do, and why' })], desc),
+        h('div', { class: 'field req-new-files' },
+          h('label', { for: 'req-new-files-input' }, 'Files ', h('span', { class: 'opt', text: 'optional: emails, a spec, screenshots, a mockup' })),
+          input, zone, privacyNote(interview), chips, refused),
         field('req-new-target', ['For'], h('div', { class: 'select-wrap' }, select), lookHint),
-        h('div', { class: 'actions req-new-actions' },
-          cost.el,
-          h('div', { class: 'req-new-btns' },
-            h('button', { type: 'button', class: 'btn', onclick: () => route('') }, 'Cancel'),
-            h('button', { type: 'button', class: 'btn btn-primary', onclick: create }, 'Start the interview'))))));
+        actions),
+      note));
   }
 
   // ---- the Product brief page (A7 §6; board BriefEmpty.dc.html): the header, Give Worca a head start while
@@ -1025,6 +1161,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         }))));
   }
 
+  // A8 D2: a feature created with files reads them before round 1.
+  function readingLine(f) {
+    const n = (f.attachments || []).filter((a) => a && a.status === 'reading').length;
+    if (!n || (Number(f.rounds) || 0) > 0 || f.pending) return null;
+    return h('p', { class: 'req-reading', role: 'status' }, h('span', { class: 'badge blue', text: `Reading ${plural(n, 'file')}…` }), ' ',
+      h('span', { class: 'hint', text: 'Worca reads the files first, then shows round 1.' }));
+  }
+
   function conversation(f, turns, rounds) {
     const working = isWorking(f);
     const open = !isLocked(f);
@@ -1045,7 +1189,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       hasStarts ? runsCard(f) : null,
       hasStarts && (f.changedSinceStart || []).length ? changedNotice(f) : null,
       f.status === 'archived' ? h('p', { class: 'hint req-note', text: 'This feature is archived. Restore it to continue.' }) : null,
-      working ? h('p', { class: 'hint req-working', text: f.status === 'looking' ? 'Worca is looking at the code…' : 'Worca is thinking…' }) : null,
+      readingLine(f) || (working ? h('p', { class: 'hint req-working', text: f.status === 'looking' ? 'Worca is looking at the code…' : 'Worca is thinking…' }) : null),
       open && f.lastError ? h('div', { class: 'req-error form-msg err' }, f.lastError, ' ',
         h('button', { type: 'button', class: 'btn btn-sm req-retry', onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/retry`, {}); await paint(); }) }, 'Try again')) : null,
       card,

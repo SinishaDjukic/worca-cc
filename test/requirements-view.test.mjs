@@ -403,19 +403,19 @@ test('new feature: back link, heading, field blocks, the For select with its gro
   const form = host.querySelector('.card.req-new');
   assert.ok(form);
   const fields = [...form.querySelectorAll('.field')];
-  assert.deepEqual(fields.map((f) => f.querySelector('label').firstChild.textContent.trim()), ['Title', 'Describe it', 'For']);
+  assert.deepEqual(fields.map((f) => f.querySelector('label').firstChild.textContent.trim()), ['Title', 'Describe it', 'Files', 'For']);
   assert.equal(fields[0].querySelector('#req-new-title').tagName, 'INPUT');
   assert.equal(fields[1].querySelector('#req-new-desc').tagName, 'TEXTAREA');
   assert.equal(fields[1].querySelector('label .opt').textContent, 'who needs it, what they want to do, and why');
-  const select = fields[2].querySelector('.select-wrap select#req-new-target');
+  const select = fields[3].querySelector('.select-wrap select#req-new-target');
   assert.ok(select);
   assert.deepEqual([...select.querySelectorAll('optgroup')].map((g) => g.label), ['Projects', 'Workspaces']);
   assert.deepEqual([...select.options].map((o) => o.value), ['project:shop-1', 'workspace:ws1']);
-  assert.equal(fields[2].querySelector('.hint').textContent, "Worca looks at this project's code once, read-only, to learn what already exists. Change that in Your notes for Worca.");
+  assert.equal(fields[3].querySelector('.hint').textContent, "Worca looks at this project's code once, read-only, to learn what already exists. Change that in Your notes for Worca.");
   select.value = 'workspace:ws1';
   select.dispatchEvent(new window.Event('change'));
-  assert.equal(fields[2].querySelector('.hint').textContent, "Worca looks at the code of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca.");
-  assert.equal(fields[2].querySelector('.req-brief-line'), null, 'no brief, no green line');
+  assert.equal(fields[3].querySelector('.hint').textContent, "Worca looks at the code of this workspace's projects once, read-only, to learn what already exists. Change that in Your notes for Worca.");
+  assert.equal(fields[3].querySelector('.req-brief-line'), null, 'no brief, no green line');
   assert.deepEqual([...form.querySelectorAll('.btn, .btn-primary')].map((b) => b.textContent), ['Cancel', 'Start the interview']);
   assert.ok([...form.querySelectorAll('.btn-primary')].at(-1).textContent === 'Start the interview', 'the CDP proof clicks the last .req-new .btn-primary');
   assert.doesNotMatch(host.textContent, /null|false|undefined/);
@@ -2297,7 +2297,7 @@ test('brief page, made: Copy Markdown that fails says so and copies nothing', as
 
 const usableBrief = (over = {}) => ({ scopeType: 'project', scopeKey: 'shop-1', status: 'ready', madeAt: new Date(Date.now() - 2 * DAY).toISOString(), lookAtCode: true, ...over });
 const NEW_TARGETS = { 'GET /api/projects': { projects: [{ key: 'shop-1', name: 'shop' }, { key: 'blog', name: 'blog' }] }, 'GET /api/workspaces': { workspaces: [{ id: 'ws1', name: 'Storefront' }] } };
-const forField = (host) => [...host.querySelectorAll('.req-new .field')][2];
+const forField = (host) => [...host.querySelectorAll('.req-new .field')][3];   // Title, Describe it, Files (A8), For
 
 test('new feature: with a brief, the green line names it and links to it; the code-look cost is not shown; it follows the select', async () => {
   fakeApi({ ...NEW_TARGETS, 'GET /api/requirements': listOf([], { lookCostUsd: 0.25,

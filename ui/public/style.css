@@ -10390,6 +10390,37 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
   .req-brief-card{padding:16px}
   .req-brief-terms{grid-template-columns:minmax(0,38%) minmax(0,1fr)}
 }
+/* A8 (plans/requirements-a8-design.md §6): files on New feature (design round 3, board 15), the Files card (16, 17, 20), its
+   menus and dialogs (21), the Ready row (18) and the brief's Documents (19). Tokens only. */
+.req-new-files .req-drop{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px 6px;padding:18px 16px;border:1.5px dashed var(--line-2);border-radius:var(--r-md);background:var(--field);font-size:13px;color:var(--ink);text-align:center}
+.req-new-files .req-drop.over{border-color:var(--blue-ink);background:var(--blue-bg)}
+.req-new-files .req-drop:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-drop .req-drop-ico{order:-1;flex-basis:100%;display:flex;justify-content:center;color:var(--ink-3)}
+.req-drop .link-btn{font-size:inherit}
+.req-drop .hint{flex-basis:100%;margin:0}
+.req-files-privacy{display:flex;align-items:flex-start;gap:8px;margin:8px 0 0}
+.req-files-privacy > svg{flex:none;margin-top:2px}
+.req-new-chips{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}
+.req-new-chips:empty{display:none}
+.req-new-chip{display:inline-flex;align-items:center;gap:8px;max-width:100%;box-sizing:border-box;padding:4px 4px 4px 8px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);font-size:12px}
+.req-new-chip > svg{flex:none;color:var(--ink-2)}
+.req-new-chip-name{min-width:0;overflow-wrap:anywhere}
+.req-new-chip .hint{margin:0;white-space:nowrap}
+.req-new-chip .req-new-chip-x{width:24px;height:24px}
+.req-file-refused{display:flex;flex-direction:column;gap:4px;margin:10px 0 0;padding:8px 10px;border-radius:var(--r-md);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:12px;overflow-wrap:anywhere}
+.req-file-refused[hidden]{display:none}
+.req-file-refused b{font-weight:600}
+.req-new-files-note{margin:0}
+.req-new-files-note[hidden]{display:none}
+.req-reading{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0;padding:12px 16px;border-radius:var(--r-md);background:var(--field);font-size:13px}
+.req-reading .hint{margin:0;color:var(--ink-2)}
+@media (max-width:600px){
+  /* 44px touch targets on phones: the hit area grows past the visible control (a 32px × plus 6px each side) */
+  .req-drop .link-btn{position:relative}
+  .req-drop .link-btn::after{content:"";position:absolute;inset:-13px -6px}
+  .req-new-chip .req-new-chip-x{position:relative;width:32px;height:32px}
+  .req-new-chip .req-new-chip-x::after{content:"";position:absolute;inset:-6px}
+}
 
 /* ── marketplace P3 ── */
 /* Plugin icons (U7, board 0.1): the kind colour lives only in this tile; hue families carry the dark arms. */
