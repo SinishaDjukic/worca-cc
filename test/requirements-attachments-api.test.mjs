@@ -6,6 +6,8 @@ import { existsSync, mkdirSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { request as httpRequest } from 'node:http';
+import express from 'express';
 
 let home; let srv; let base; let prev; let projKey; let projDir; let mod;
 before(async () => {
@@ -217,4 +219,95 @@ test('a start in flight refuses the file routes; downloads take no lock', async 
     }
     assert.equal((await call('GET', a.href)).status, 200);
   } finally { unmarkStarting(seq); }
+});
+
+// A bare app with the requirements routes and injected deps (as requirements-start.test.mjs): the same process, database
+// and file queue as the server above, so a body write or the spend read can be made to fail.
+async function bareApp(deps) {
+  const { registerRequirementsRoutes } = await import('../src/core/requirements/routes.mjs');
+  const app = express();
+  app.use(express.json({ limit: '10mb' }));
+  registerRequirementsRoutes(app, { broadcast: () => {}, deps });
+  const s = app.listen(0, '127.0.0.1');
+  await new Promise((r) => s.once('listening', r));
+  const at = `http://127.0.0.1:${s.address().port}`;
+  const go = async (method, path, body) => {
+    const r = await fetch(`${at}${path}`, { method, headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    return { status: r.status, json: await r.json().catch(() => null) };
+  };
+  const close = async () => { s.closeAllConnections?.(); await Promise.race([new Promise((r) => s.close(r)), new Promise((r) => setTimeout(r, 500))]); };
+  return { go, close };
+}
+const quietErrors = async (fn) => {
+  const logged = [];
+  const err = console.error;
+  console.error = (...a) => logged.push(a.map(String).join(' '));
+  try { return { out: await fn(), logged }; } finally { console.error = err; }
+};
+
+test('a create keeps its feature when a file cannot be stored: 201, the files not stored by name, the interview goes on', async () => {
+  const { writeFileSync } = await import('node:fs');
+  let writes = 0;
+  const app = await bareApp({ writeBody: (...a) => { writes += 1; if (writes === 2) throw Object.assign(new Error('EACCES: permission denied, open /home/me/secret-place/att/b.txt'), { code: 'EACCES' }); return writeFileSync(...a); } });
+  try {
+    const { out: c, logged } = await quietErrors(() => app.go('POST', '/api/requirements', { scopeType: 'project', scopeKey: projKey, title: 'Partly stored',
+      description: 'd', attachments: [up('a.md', 'one'), up('b.md', 'two'), up('c.md', 'three')] }));
+    assert.equal(c.status, 201, JSON.stringify(c.json));
+    assert.deepEqual(c.json.filesNotStored, ['b.md', 'c.md'], 'the failing file and the one never tried');
+    assert.equal(JSON.stringify(c.json).includes('secret-place'), false, 'no path in the answer');
+    assert.ok(logged.some((l) => /EACCES/.test(l)), 'the raw error goes to the log');
+    const seq = c.json.feature.seq;
+    const { listFeatures } = await import('../src/core/requirements/store.mjs');
+    assert.equal(listFeatures({}).filter((f) => f.title === 'Partly stored').length, 1, 'the feature exists exactly once');
+    await waitFor(async () => (await view(seq)).status === 'your_turn');
+    assert.deepEqual((await view(seq)).attachments.map((x) => [x.name, x.status]), [['a.md', 'done']]);
+    const ok = await app.go('POST', '/api/requirements', { scopeType: 'project', scopeKey: projKey, title: 'All stored', description: 'd', attachments: [up('z.md', 'zzz')] });
+    assert.deepEqual([ok.status, ok.json.filesNotStored], [201, []]);
+    await waitFor(async () => (await view(ok.json.feature.seq)).status === 'your_turn');
+  } finally { await app.close(); }
+});
+
+test("a file route's unexpected failure answers the fallback copy; a list whose spend cannot be read still answers", async () => {
+  const seq = (await create(undefined, 'Fallback')).json.feature.seq;
+  await waitFor(async () => (await view(seq)).status === 'your_turn');
+  const app = await bareApp({
+    writeBody: () => { throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' }); },
+    requirementsSpend: () => { throw new Error('the budget store is gone'); },
+  });
+  try {
+    const { out: r, logged } = await quietErrors(() => app.go('POST', `/api/requirements/${seq}/attachments`, { attachments: [up('w.md', 'write me')] }));
+    assert.deepEqual([r.status, r.json], [500, { error: 'Worca could not finish that. Try again.' }]);
+    assert.ok(logged.some((l) => /ENOSPC/.test(l)));
+    const { out: l, logged: l2 } = await quietErrors(() => app.go('GET', '/api/requirements'));
+    assert.equal(l.status, 200, JSON.stringify(l.json));
+    assert.equal(l.json.spend, null);
+    assert.ok(Array.isArray(l.json.features) && l.json.features.length > 0);
+    assert.ok(l2.some((x) => /budget store is gone/.test(x)));
+  } finally { await app.close(); }
+});
+
+test('at most two uploads in flight: a third answers 409; a slot frees on an aborted request and on an error', async () => {
+  const { port } = srv.address();
+  // a request whose body never ends holds its slot
+  const hold = () => {
+    const req = httpRequest({ host: '127.0.0.1', port, method: 'POST', path: '/api/requirements/1/attachments',
+      headers: { 'content-type': 'application/json', 'content-length': '1000000' } });
+    req.on('error', () => {});
+    req.write('{"attachments": [');
+    return req;
+  };
+  const held = [hold(), hold()];
+  try {
+    await waitFor(async () => (await call('POST', '/api/requirements/1/attachments', { attachments: [] })).status === 409);
+    const r = await call('POST', `/api/requirements/brief/project/${projKey}/documents`, { attachments: [] });
+    assert.deepEqual([r.status, r.json], [409, { error: 'Try again in a moment.' }], 'the cap spans the five upload routes');
+    assert.notEqual((await call('GET', '/api/requirements')).status, 409, 'other routes are not capped');
+  } finally { for (const h of held) h.destroy(); }
+  await waitFor(async () => (await call('POST', '/api/requirements/1/attachments', '{"attachments": [')).status === 400);
+  for (let i = 0; i < 4; i += 1) {
+    const bad = await call('POST', '/api/requirements/1/attachments', '{"attachments": [');
+    assert.equal(bad.status, 400, 'a parser error frees its slot');
+    const refused = await call('POST', '/api/requirements/999999/attachments', { attachments: [] });
+    assert.equal(refused.status, 404, 'a route refusal frees its slot');
+  }
 });

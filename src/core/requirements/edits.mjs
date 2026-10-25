@@ -8,7 +8,8 @@ import { tx } from '../db.mjs';
 import { isBusy } from './interview.mjs';
 import { isStarting, STARTING_MESSAGE as STARTING } from './starting.mjs';
 
-function editable(seq) {
+/** A feature the product owner may edit: not busy (the A1 lock), not archived. The file routes use it too (A8 D10). */
+export function editable(seq) {
   const f = requireFeature(seq);
   if (isBusy(seq)) throw new RequirementsError('BUSY', 'Worca is still working on this feature. Try again in a moment.');
   if (f.status === 'archived') throw new RequirementsError('CONFLICT', 'this feature is archived; restore it first');

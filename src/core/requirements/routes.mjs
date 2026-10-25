@@ -26,7 +26,7 @@ import { listModels } from '../config.mjs';
 import { pendingRound } from './round.mjs';
 import {
   updateHeader, setSection, releaseSection, addCriterion, editCriterion, removeCriterion, setAssumption, confirmOpenAssumptions, setArchived,
-  revertToStart, addToBrief,
+  revertToStart, addToBrief, editable,
 } from './edits.mjs';
 import { readiness, displayState, changedSince, unaskedRejections, unaskedFiles } from './ready.mjs';
 import { startFeature, startView } from './start.mjs';
@@ -87,13 +87,32 @@ function uploadsOf(list, opts) {
   return v.files;
 }
 
-/** A feature's file routes (D10): editable() (busy, archived), and a start in flight refuses too. */
+/** A feature's file routes (D10): edits.mjs's editable() (busy, archived), and a start in flight refuses too. */
 function featureOwner(seq) {
-  const f = requireFeature(seq);
-  if (isBusy(seq)) throw new RequirementsError('BUSY', 'Worca is still working on this feature. Try again in a moment.');
-  if (f.status === 'archived') throw new RequirementsError('CONFLICT', 'this feature is archived; restore it first');
+  const f = editable(seq);
   if (isStarting(seq)) throw new RequirementsError('BUSY', STARTING_MESSAGE);
   return { type: 'feature', id: f.seq };
+}
+
+/** At most this many requests on the upload routes at once (each body can be 100 MB of base64, parsed in memory). */
+export const MAX_UPLOADS_IN_FLIGHT = 2;
+const UPLOADS_BUSY = 'Try again in a moment.';
+/** The upload routes' shared slots, as Express middleware that ui/server.mjs mounts after the flag's gate and before the
+ *  upload parser (so a refused request is never parsed). A slot is freed once on every path: the response finished,
+ *  the connection closed (an aborted upload), or an error answered. */
+export function requirementsUploadSlots(max = MAX_UPLOADS_IN_FLIGHT) {
+  let inFlight = 0;
+  return (req, res, next) => {
+    if (req.requirementsUploadSlot) return next();   // one request, one slot
+    if (inFlight >= max) return res.status(409).json({ error: UPLOADS_BUSY });
+    inFlight += 1;
+    req.requirementsUploadSlot = true;
+    let held = true;
+    const free = () => { if (held) { held = false; inFlight -= 1; } };
+    res.once('finish', free);
+    res.once('close', free);
+    return next();
+  };
 }
 /** A made brief's documents (D2): allowed while a refresh runs (A7-D6). */
 function briefOwner(scopeType, scopeKey) {
@@ -128,6 +147,9 @@ function sendBody(req, res, row) {
   if (row.status === 'failed' && row.error && row.error.code === 'STORE_FAILED') throw new RequirementsError('NOT_FOUND', row.error.message);
   const file = attachmentFile(row);
   if (!existsSync(file)) throw new RequirementsError('NOT_FOUND', 'file not found');
+  // The ETag is the row's sha256, so the bytes sent must be read in the same synchronous step as the row: no await between
+  // the row read and the body read, and no sendFile or streaming. If streaming is ever adopted, the ETag must come from
+  // the bytes actually served.
   const etag = `"${row.sha256}"`;
   const fresh = req.headers['if-none-match'] === etag;
   const body = fresh ? null : readFileSync(file);   // before any header: a failed read answers JSON, not a typed body
@@ -472,7 +494,12 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
       const features = await Promise.all(list.map((f) => summary(f, targetOf, d.runSummary || noSummary)));
       const interview = await interviewInfo(() => (d.interviewModel || interviewModel)(d), d.listModels || listModels);
       const briefs = listBriefs().map((b) => ({ ...b, lookAtCode: getContext(b.scopeType, b.scopeKey).lookAtCode }));
-      res.json({ features, interview, lookCostUsd: lookCostUsd(interview && interview.model), spend: requirementsSpend(), briefs,
+      // A budget that cannot be read leaves the spend out (null), never the list: the page names no limit then.
+      let spend = null;
+      try { spend = (d.requirementsSpend || requirementsSpend)(); } catch (err) {
+        console.error('requirements: the spend for the list could not be read:', err && err.message ? err.message : err);
+      }
+      res.json({ features, interview, lookCostUsd: lookCostUsd(interview && interview.model), spend, briefs,
         readEstimates: readEstimates() });   // the New feature line's "about $X a file" (board 15)
     },
     [`POST ${P}`]: fileRoute(async (req, res) => {
@@ -482,12 +509,20 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
       const files = b.attachments === undefined ? [] : checkNewFiles('feature', [], uploadsOf(b.attachments, { owner: 'feature', create: true }));
       assertCapacity();   // before creating: a refused start must not leave a feature stuck at "looking"
       const f = createFeature({ scopeType: b.scopeType, scopeKey: b.scopeKey, title: b.title, description: b.description }, { by: by(req) });
-      try {
-        if (files.length) addAttachments({ type: 'feature', id: f.seq }, files, { by: by(req) }, d);
-      } finally {
-        startOrientation(f.seq, { by: by(req) }, d);   // a file that could not be stored never leaves the feature stuck at "looking"
+      // The feature exists now: a file that cannot be stored (a disk or database error; the refusals all came before the
+      // create) never undoes it. The files stored so far stay and are read; the page names the others ("<name> was not
+      // added: Worca could not store it. Add it on the feature page.") and the interview starts as usual.
+      let filesNotStored = [];
+      if (files.length) {
+        try { addAttachments({ type: 'feature', id: f.seq }, files, { by: by(req) }, d); } catch (err) {
+          console.error(`requirements: storing the files of new feature ${f.seq} failed:`, err && err.message ? err.message : err);
+          const stored = new Set(listAttachments('feature', f.seq).map((r) => r.name));
+          filesNotStored = files.map((x) => x.name).filter((n) => !stored.has(n));   // the failing file and those never tried
+        }
       }
-      await changed(res, f.seq, 201);
+      startOrientation(f.seq, { by: by(req) }, d);
+      onChange(f.seq);
+      res.status(201).json({ ...(await featureView(f.seq, d)), filesNotStored });
     }),
     [`GET ${P}/:seq`]: async (req, res) => res.json(await featureView(seqOf(req), d)),
     [`PATCH ${P}/:seq`]: async (req, res) => {

@@ -314,7 +314,7 @@ import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
 import {
-  registerRequirementsRoutes, requirementsChangeNotifier, REQUIREMENTS_UPLOAD_ROUTES, REQUIREMENTS_UPLOAD_JSON_LIMIT,
+  registerRequirementsRoutes, requirementsChangeNotifier, REQUIREMENTS_UPLOAD_ROUTES, REQUIREMENTS_UPLOAD_JSON_LIMIT, requirementsUploadSlots,
 } from '../src/core/requirements/routes.mjs';
 import { createRunEventHook } from '../src/core/requirements/start.mjs';
 import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
@@ -1785,8 +1785,12 @@ app.post('/api/run', express.json({ limit: ASK_UPLOAD_JSON_LIMIT }));
 app.put('/api/scripts/:key/cases', express.json({ limit: '64mb' }));
 // Requirements files (plans/requirements-a8-design.md D10) ride base64 in these bodies, up to 100 MB per request: Ask's
 // window, registered BEFORE the global parser and BEHIND the flag's gate (with the flag off the gate answers 404 first,
-// so nothing is parsed).
-for (const p of REQUIREMENTS_UPLOAD_ROUTES) app.post(p, requireFlag('requirements'), express.json({ limit: REQUIREMENTS_UPLOAD_JSON_LIMIT }));
+// so nothing is parsed). One set of slots spans the five routes: at most two such requests at once, a third answers 409
+// before its body is read.
+const requirementsUploadSlot = requirementsUploadSlots();
+for (const p of REQUIREMENTS_UPLOAD_ROUTES) {
+  app.post(p, requireFlag('requirements'), requirementsUploadSlot, express.json({ limit: REQUIREMENTS_UPLOAD_JSON_LIMIT }));
+}
 app.use(express.json({ limit: '8mb' }));
 
 // Credential broker billing (src/core/billing.mjs): every claude spawn a request causes —

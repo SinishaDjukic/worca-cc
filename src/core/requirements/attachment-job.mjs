@@ -37,6 +37,7 @@ const DEFAULTS = Object.freeze({
   runClaudeImpl: runClaude, listModels, listProjects, workspaceTarget, budget: () => budgetStatus(),
   onChange: () => {}, onBriefChange: () => {}, mockEnabled: () => mockEnabled({}), readTimeoutMs: READ_TIMEOUT_MS,
   renameBody: renameSync, copyBody: copyFileSync,   // how a replaced body is put in place (a test makes them fail)
+  writeBody: writeFileSync,                         // how an added file's body is written (a test makes it fail)
 });
 const READING = 'Worca is reading this file.';
 // What a failed read stores (D5): product messages only; the raw error goes to the log, with the file's id.
@@ -347,7 +348,7 @@ export function addAttachments(owner, files, { by = null } = {}, deps = {}) {
     for (const p of planned) {
       let row;
       try {
-        writeFileSync(attachmentFile(p), p.data, { mode: FILE_MODE });   // the uploaded bytes, as they came (D15)
+        d.writeBody(attachmentFile(p), p.data, { mode: FILE_MODE });   // the uploaded bytes, as they came (D15)
         row = tx(() => {
           const r = insertAttachment({ id: p.id, ownerType: owner.type, ownerId: owner.id, name: p.name, kind: p.kind, mime: p.mime,
             bytes: p.bytes, sha256: p.sha256 }, { by });
