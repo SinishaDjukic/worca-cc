@@ -87,6 +87,15 @@ test('run: at most 3 at once per chat; a finished one frees a slot and its idle 
   assert.equal(terminals.opened.length, 3);
 });
 
+test('#948 s2: running(threadId) counts the chat\'s running commands, 0 after they end and for another chat', async () => {
+  const { svc, terminals } = make();
+  const a = await svc.run('ask_0000aaaa', { command: 'sleep 1' });
+  assert.equal(svc.running('ask_0000aaaa'), 1);
+  assert.equal(svc.running('ask_0000bbbb'), 0);
+  terminals.finish(a.sessionId, 0);
+  assert.equal(svc.running('ask_0000aaaa'), 0);
+});
+
 test('a shell cd-ed within the project is kept: the check and runCommand use its real folder', async () => {
   const { svc, terminals } = make();
   const a = await svc.run('ask_0000aaaa', { command: 'cd packages/x' });

@@ -83,7 +83,7 @@ test('boot: the pill mounts at the top of the sidebar and routes to the page (wh
   assert.ok(pillHost && pillHost.classList.contains('gs-pill-host'), 'the pill host is the first child of the nav (New run has no row)');
   assert.equal(pillHost.nextElementSibling.dataset.nav, 'chat', 'right above Chat');
   assert.equal(pillHost.querySelector('.gs-pill .nav-count').textContent, '1/9');
-  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 13, 'the nav census (Chat, Schedules, Team policy, Workflows and the four Add-ons pages included; Running and History are one Runs item; Settings is in the account menu; New run is the top bar\'s button)');
+  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 14, 'the nav census (Chat, Schedules, Team policy, Workflows, Requirements and the four Add-ons pages included; Running and History are one Runs item; Settings is in the account menu; New run is the top bar\'s button)');
   assert.equal(doc.getElementById('welcome-modal').classList.contains('hidden'), false, 'first visit to the home page (Chat): welcome up');
   assert.deepEqual(posts, [], 'showing the welcome writes nothing until a choice');
   click(window, doc.querySelector('#welcome-modal .ob-skip'));

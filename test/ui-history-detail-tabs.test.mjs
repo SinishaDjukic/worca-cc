@@ -562,7 +562,7 @@ test('a failed log fetch re-arms the Logs tab for a retry', async () => {
 // from the card accordion onto this screen).
 // ---------------------------------------------------------------------------
 
-// Slice 3 (D13): kept work's Discard is a card head button; the recovery patch is the tracker's Download patch.
+// Slice 3 (D13): kept work's Discard is a card head button; the recovery patch is the route's Download patch.
 const DISCARD_KEPT = '#hist-detail .hd-glance .rd-head-acts [data-head="discard-kept"]';
 const keptLine = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-sheet .run-status').dataset.line;
 
@@ -597,13 +597,13 @@ test('discard confirms honestly, POSTs the keyed route and shows/links the saved
       assert.match(doc.querySelector('#viewer').textContent, /retained-work\.patch/,
         'the saved patch path is surfaced, not swallowed');
     } },
-    { name: 'the Kept work row links the recovery patch honestly (retained-work name)', run: async () => {
+    { name: 'the route\'s branch row links the recovery patch honestly (retained-work name)', run: async () => {
       const ctx = await bootDetail({
         rows: [retainedRow()],
         detail: { ...DETAIL, artifacts: [{ kind: 'retained-work-patch', relPath: 'retained-work.patch' }] },
       });
       await openDetail(ctx);
-      const link = [...ctx.window.document.querySelectorAll('#hist-detail .hd-glance .rd-kv [data-fact="kept"] a.rd-fact-link')]
+      const link = [...ctx.window.document.querySelectorAll('#hist-detail .hd-glance .rd-route .rd-route-row:first-child .rd-route-second a.rd-fact-link')]
         .find((a) => a.textContent === 'Download patch');
       assert.ok(link, 'the alternate-recovery link renders for a retained-work-patch artifact');
       assert.equal(link.download, `retained-work-${ROW.id}.patch`, 'download name matches what the route prefers');
@@ -1625,8 +1625,8 @@ test('History bar: a live pause after load (error cause named / total-budget pau
 });
 
 // Slice 3: the card head holds the PR control at every level: Create PR beside Try it when eligible, View PR │ ▾ for an
-// open or merged PR (its words on the tracker), and a closed PR is a struck tracker step with Create PR again.
-test('History glance: the card head\'s Create PR (every level), View PR │ ▾, and a closed PR on the tracker', async () => {
+// open or merged PR (its words on the route), and a closed PR is a closed route row with Create PR again.
+test('History glance: the card head\'s Create PR (every level), View PR │ ▾, and a closed PR on the route', async () => {
   const rows = [];
   const url = 'https://github.com/o/r/pull/7';
   for (const [label, pr, level] of [
@@ -1641,15 +1641,17 @@ test('History glance: the card head\'s Create PR (every level), View PR │ ▾,
         arms: (u) => (u.endsWith('/api/history') ? ok({ pipelines: [row], ghAvailable: true }) : null),
       });
       if (level) ctx.window.document.documentElement.dataset.level = level;
+      ctx.window.localStorage.setItem('worca-cc.run.showRoute', '1');   // an end state's rows, not its fold
       await openDetail(ctx, '');
       await settle(ctx.window, 6);
+      ctx.window.localStorage.removeItem('worca-cc.run.showRoute');
       const glance = ctx.window.document.querySelector('#hist-detail .hd-glance');
       const slot = glance.querySelector('.rd-pr-slot');
       assert.equal(slot.closest('.hd-result'), null, 'outside the result host paintHdGlance rebuilds');
       assert.equal(slot.parentElement, glance.querySelector('.rd-sheet > .rd-sheet-head > .rd-head-acts'), 'the control sits in the head');
       assert.equal(glance.querySelector('.rd-pr-box'), null, 'no PR bar');
       assert.equal(glance.querySelector('.rd-result [data-rd-cta]'), null, 'nothing PR-shaped under Results');
-      const steps = [...glance.querySelectorAll('.rd-track .rd-track-step')];
+      const steps = [...glance.querySelectorAll('.rd-route .rd-route-row')];
       assert.equal(steps.length, 3);
       if (!pr || pr.state === 'CLOSED') {
         assert.equal(slot.hidden, false);
@@ -1663,8 +1665,8 @@ test('History glance: the card head\'s Create PR (every level), View PR │ ▾,
         if (pr) {
           assert.equal(glance.querySelector('.run-status').dataset.line, 'Ready to ship · the PR was closed');
           assert.ok(steps[1].classList.contains('is-closed'));
-          const chip = glance.querySelector('.rd-kv [data-fact="pr"] a.runs-pr.is-closed');
-          assert.equal(chip.querySelector('.runs-pr-word').textContent, 'Closed', 'the Pull request fact says it was closed');
+          assert.equal(steps[1].querySelector('.rd-route-place a.rd-fact-link').textContent, 'o/r#7');
+          assert.equal(steps[1].querySelector('.rd-route-second').textContent, 'Closed without merging', 'the route says it was closed');
         }
         return;
       }
@@ -1675,11 +1677,10 @@ test('History glance: the card head\'s Create PR (every level), View PR │ ▾,
       assert.equal(main.classList.contains('btn-primary'), false);
       assert.equal(main.querySelector(':scope > .ic svg').innerHTML, ICONS[pr.state === 'MERGED' ? 'merge' : 'pull-request']);
       assert.ok(slot.querySelector('.rd-pr-split > button.rd-pr-more[aria-haspopup="menu"]'));
-      assert.equal(steps[1].textContent, 'Pull request', 'the step carries its label only');
-      const chip = glance.querySelector('.rd-kv [data-fact="pr"] a.runs-pr');
-      assert.equal(chip.querySelector('.runs-pr-num').textContent, 'PR #7');
-      assert.equal(chip.getAttribute('href'), url);
-      assert.ok(steps[pr.state === 'MERGED' ? 2 : 1].classList.contains(pr.state === 'MERGED' ? 'is-merged' : 'is-ready'));
+      const link = steps[1].querySelector('.rd-route-place a.rd-fact-link');
+      assert.equal(link.textContent, 'o/r#7');
+      assert.equal(link.getAttribute('href'), url);
+      assert.ok(steps[pr.state === 'MERGED' ? 2 : 1].classList.contains(pr.state === 'MERGED' ? 'is-merged' : 'is-review'));
     } });
   }
   await checkRows(rows);
@@ -1756,48 +1757,44 @@ test('History glance PR lookup pending: a busy placeholder morphs in place into 
   ]);
 });
 
-// Run 3 (D8): the chip is the facts block's Branch row; the Project row's value keeps paintPageHead's text.
-test('History glance facts: a feature-branch chip that copies it, none without a branch', async () => {
+// s2: the route's branch row copies the branch (D15); the Project row's value keeps paintPageHead's text.
+test('History glance: the route\'s branch row copies the branch, none without a branch', async () => {
   await checkRows([
-    { name: 'History glance: the Branch row carries the feature branch as a chip that copies it', run: async () => {
+    { name: 'History glance: the route\'s branch row carries the feature branch and one copy button', run: async () => {
       const ctx = await bootDetail();
       await openDetail(ctx, '');
       await settle(ctx.window, 6);
       const { window } = ctx;
       const meta = window.document.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="project"] .rd-page-meta');
-      const branchRow = window.document.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="branch"]');
-      const chip = branchRow.querySelector('.rd-page-branch');
-      assert.ok(chip, 'the chip is in the Branch row');
-      assert.equal(chip.hidden, false);
-      assert.equal(branchRow.hidden, false);
-      assert.equal(chip.dataset.minLevel, 'advanced', 'the Details branch button\'s level');
-      assert.equal(chip.querySelector('.rd-page-branch-name').textContent, ROW.branch);
-      assert.equal(chip.title, ROW.branch, 'the full name in the tooltip');
+      const route = window.document.querySelector('#hist-detail .hd-glance .rd-route');
+      const copies = route.querySelectorAll('button.rd-route-copy');
+      assert.equal(copies.length, 1, 'exactly one copy button');
+      const copy = copies[0];
+      assert.equal(route.querySelector('.rd-route-name').title, ROW.branch, 'the full name in the tooltip');
+      assert.equal(copy.title, ROW.branch);
       assert.equal(meta.firstChild.nodeType, 3, 'paintPageHead\'s text stays the line\'s first node');
       assert.match(meta.firstChild.data, /^proj · /);
       const writes = [];
       Object.defineProperty(window.navigator, 'clipboard', { configurable: true, value: { writeText: async (t) => { writes.push(t); } } });
-      click(window, chip);
+      click(window, copy);
       await settle(window, 2);
       assert.deepEqual(writes, [ROW.branch]);
-      assert.ok(chip.classList.contains('copied'), 'the copied tick, as in Details');
-      // The row repaints the header (refreshHdFromRow): the same chip, bound once.
+      assert.ok(copy.classList.contains('copied'), 'the copied tick, as in Details');
+      // The row repaints the header (refreshHdFromRow): still one copy button, one copy per click.
       await deliverRows(ctx, [{ ...ROW }]);
-      assert.equal(branchRow.querySelectorAll('.rd-page-branch').length, 1);
-      assert.equal(branchRow.querySelector('.rd-page-branch'), chip);
-      click(window, chip);
+      assert.equal(route.querySelectorAll('button.rd-route-copy').length, 1);
+      click(window, route.querySelector('button.rd-route-copy'));
       await settle(window, 2);
       assert.deepEqual(writes, [ROW.branch, ROW.branch], 'one copy per click');
     } },
-    { name: 'History glance: a run without a feature branch shows no chip', run: async () => {
+    { name: 'History glance: a run without a feature branch shows no copy button', run: async () => {
       const ctx = await bootDetail({
         rows: [{ ...ROW, branch: undefined }],
         detail: { ...DETAIL, state: { ...DETAIL.state, branch: null } },
       });
       await openDetail(ctx, '');
       await settle(ctx.window, 6);
-      assert.equal(ctx.window.document.querySelector('#hist-detail .hd-glance .rd-page-branch').hidden, true);
-      assert.equal(ctx.window.document.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="branch"]').hidden, true);
+      assert.equal(ctx.window.document.querySelector('#hist-detail .hd-glance .rd-route .rd-route-copy'), null);
     } },
   ]);
 });

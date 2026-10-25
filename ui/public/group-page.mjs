@@ -11,6 +11,20 @@ import { groupHead } from './run-head.mjs';
 
 export const GROUP_TABS = Object.freeze([['runs', 'Runs'], ['overview', 'Overview'], ['decisions', 'Decisions'], ['logs', 'Logs']]);
 const el = (doc, tag, cls, text = '') => { const e = doc.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
+// Slice 3: replace a host's children only when their HTML changed. The last HTML is kept in a JS property, never in
+// the DOM. Contract: the member table (renderMemberRows) and the Logs items carry no listeners, so a kept node acts
+// as a new one would. A row that gains a listener or other non-HTML state breaks that contract: bind it on the host.
+// A focused link in a replaced host moves to its successor: the link of the same class and href in the same row.
+function keepUnchanged(host, kids) {
+  const sig = kids.map((k) => k.outerHTML).join('');
+  if (host.__sig === sig) return;
+  host.__sig = sig;
+  const a = host.ownerDocument.activeElement;
+  const at = (n) => [n.className, n.getAttribute('href'), n.closest('[data-key]')?.dataset.key].join('\n');
+  const was = a && a !== host && host.contains(a) && a.matches('a[href]') ? at(a) : null;
+  host.replaceChildren(...kids);
+  if (was) [...host.querySelectorAll('a[href]')].find((n) => at(n) === was)?.focus();
+}
 
 /** The page skeleton, built once per host. */
 export function buildGroupPage(doc) {
@@ -124,7 +138,7 @@ export function paintGroupPage(root, view, deps) {
   root.querySelector('.gpage-head .kind-chip').textContent = groupKindWord(row);   // run 3 (D7): the group's kind
   paintCrumbs(root.querySelector('.gpage-bar .rd-crumbs'), [{ label: 'Runs', href: '#runs' }, { label: row.title }]);
   const pm = pageModel(m);
-  paintRunStatus(root.querySelector('.gpage-card .run-status'), pm);   // run 3 (D10)
+  paintRunStatus(root.querySelector('.gpage-card .run-status'), pm, { hold: true });   // run 3 (D10); slice 3: keep the last bar
   // Run 3 (D15): the facts block — Project, Runs, Total cost, Labels (the read-only union of the members' labels).
   const kv = root.querySelector('.gpage-card > .rd-kv');
   const { done, total } = m.count;
@@ -162,7 +176,8 @@ export function paintGroupPage(root, view, deps) {
     t.classList.toggle('active', t.dataset.tab === tab);
   }
   for (const p of root.querySelectorAll('.gpage-panel')) p.hidden = p.dataset.tab !== tab;
-  root.querySelector('.gpage-runs').replaceChildren(renderMemberRows(doc, row));
+  // Slice 3: a frame that changes nothing in the table keeps its nodes (a focused row, the scroll anchor).
+  keepUnchanged(root.querySelector('.gpage-runs'), [renderMemberRows(doc, row)]);
   const line = groupShipLine(row);
   const ship = root.querySelector('.gpage-ship');
   ship.textContent = line;
@@ -170,7 +185,7 @@ export function paintGroupPage(root, view, deps) {
   if (tab === 'overview') deps.mountOverview(root.querySelector('.gpage-overview'));
   if (tab === 'decisions') deps.mountDecisions(root.querySelector('.gpage-decisions'), row);
   const numbered = (mb) => !mb.isPlanning && !mb.adhoc && row.groupKind !== 'user';
-  root.querySelector('.gpage-logs').replaceChildren(...all.map((mb) => {
+  keepUnchanged(root.querySelector('.gpage-logs'), all.map((mb) => {
     const li = el(doc, 'li', 'gpage-log');
     const a = el(doc, 'a', 'btn btn-sm btn-quiet', 'Open logs');
     a.setAttribute('href', deps.logsHref(mb));

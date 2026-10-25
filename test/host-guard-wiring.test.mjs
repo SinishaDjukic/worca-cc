@@ -10,9 +10,9 @@ import { mkdtemp, rm, writeFile, readFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  buildClaudeArgs, buildSettingsPayload, planClaudeInvocation, runClaude,
+  buildClaudeArgs, buildSettingsPayload, planClaudeInvocation, runClaude, redactArgvForLog,
 } from '../src/core/claude-runner.mjs';
-import { hostGuardEnabled } from '../src/core/host-guard.mjs';
+import { hostGuardEnabled, hostGuardSystemPrompt } from '../src/core/host-guard.mjs';
 
 const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script' : false };
 const BASE = { prompt: 'p', permissionMode: 'acceptEdits' };
@@ -113,6 +113,45 @@ test('runClaude spawns with the guard settings, the preamble, and WORCA_HOST_PID
   assert.match(sys, new RegExp(String(process.pid)), 'preamble names the host PID');
   assert.ok(sys.endsWith('ROLE PROMPT'), 'role prompt survives after the preamble');
   assert.equal(await readFile(envFile, 'utf8'), String(process.pid), 'child sees WORCA_HOST_PID');
+});
+
+// Requirements A1.1: a REPLACED system prompt still opens with the host-guard preamble.
+test('runClaude systemPromptMode replace: --system-prompt starts with the preamble and ends with the role prompt', POSIX_SHIM, async () => {
+  const dir = await tmp();
+  const argvFile = join(dir, 'argv.txt');
+  const envFile = join(dir, 'env.txt');
+  const bin = await fakeBin(dir, argvFile, envFile);
+  await withEnv({ WORCA_MOCK: undefined, ORCH_MOCK: undefined, WORCA_HOST_GUARD: undefined, WORCA_BROKER_URL: undefined },
+    () => runClaude({ cwd: dir, prompt: 'hi', systemPrompt: 'SYS', systemPromptMode: 'replace', bin }));
+  const argv = (await readFile(argvFile, 'utf8')).split('\0');
+  assert.ok(!argv.includes('--append-system-prompt'), 'no append flag when replacing');
+  const sys = argv[argv.indexOf('--system-prompt') + 1];
+  assert.ok(sys.startsWith(hostGuardSystemPrompt(process.pid)), 'preamble first');
+  assert.ok(sys.endsWith('SYS'), 'role prompt last');
+  assert.match(argv[argv.indexOf('--settings') + 1], /host-guard\.mjs/, 'guard hook still in --settings');
+});
+
+// The same gate, runnable on every OS: WORCA_DEBUG_SPAWN logs the exact argv just before the
+// spawn, and a bin that does not exist makes the spawn itself fail (nothing runs).
+test('runClaude systemPromptMode replace reaches the spawn argv with the preamble at its head (spawn-debug, any OS)', async () => {
+  const dir = await tmp();
+  const events = [];
+  await withEnv({ WORCA_MOCK: undefined, ORCH_MOCK: undefined, WORCA_HOST_GUARD: undefined, WORCA_BROKER_URL: undefined, WORCA_DEBUG_SPAWN: '1' }, async () => {
+    await assert.rejects(runClaude({
+      cwd: dir, prompt: 'hi', systemPrompt: 'SYS', systemPromptMode: 'replace',
+      bin: join(dir, 'no-such-claude'), onEvent: (e) => events.push(e),
+    }));
+  });
+  const line = events.find((e) => e.type === 'stderr' && /spawn-debug/.test(e.text))?.text;
+  assert.ok(line, `spawn-debug line emitted: ${JSON.stringify(events)}`);
+  const m = line.match(/argv=(\[.*?\]) promptViaStdin/);
+  assert.ok(m, `spawn-debug line carries the argv: ${line}`);
+  const argv = JSON.parse(m[1]);
+  assert.ok(!argv.includes('--append-system-prompt'));
+  const i = argv.indexOf('--system-prompt');
+  assert.ok(i > -1, JSON.stringify(argv));
+  assert.equal(argv[i + 1], redactArgvForLog([`${hostGuardSystemPrompt(process.pid)}\n\nSYS`])[0],
+    'the preview is exactly the preamble + role prompt (head and length)');
 });
 
 test('runClaude with WORCA_HOST_GUARD=0 spawns the legacy argv and no env var', POSIX_SHIM, async () => {

@@ -363,7 +363,7 @@ test('the sidebar\'s Add-ons group sits between Workflows and Manage: a label an
   const sect = [...doc.querySelectorAll('.nav > .nav-sect')].find((s) => s.textContent.trim() === 'Add-ons');
   assert.ok(sect, 'the Add-ons label');
   assert.equal(sect.dataset.minLevel, 'advanced', 'the label hides with its Advanced rows');
-  assert.equal(sect.previousElementSibling.dataset.nav, 'workflows', 'right after the Workflows row');
+  assert.equal(sect.previousElementSibling.dataset.nav, 'requirements', 'right after the last Build row (Requirements follows Workflows)');
   const rows = [];
   for (let n = sect.nextElementSibling; n && n.tagName === 'BUTTON'; n = n.nextElementSibling) rows.push(n);
   assert.deepEqual(rows.map((b) => [b.dataset.nav, b.dataset.minLevel, b.querySelector(':scope > span').textContent]), [

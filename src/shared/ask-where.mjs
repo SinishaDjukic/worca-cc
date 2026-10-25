@@ -16,6 +16,7 @@ export const WHERE_PAGES = Object.freeze({
   stats: page('Statistics', 'metrics'),
   'team-metrics': page('Team metrics', 'metrics'),
   'team-policy': page('Team policy', 'shield'),
+  requirements: page('Requirements', 'shape'),
   marketplace: page('Marketplace', 'bag'),
   connectors: page('Connectors', 'plug'),
   models: page('Models', 'cube'),

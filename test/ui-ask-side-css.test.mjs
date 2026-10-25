@@ -86,6 +86,20 @@ test('the dock look of the chat page: its own head, the History column as a drop
   assert.deepEqual([decl(pop, 'top'), decl(pop, 'bottom')], ['auto', 'calc(var(--ask-box-top) + 6px)'], 'the docked composer opens its menus upward even on home');
 });
 
+test('the dock beside the Chats column: the dropdown comes after the column rules it ties, no resize handle, the composer meter back', () => {
+  const at = (sel, media = '') => ALL.findIndex((r) => r.sel === sel && r.media === media);
+  const dock = at('.chat-page[data-host="dock"] .chat-history');
+  assert.ok(dock > at('.chat-page[data-chats="on"] .chat-history'), 'same specificity as the push column: it must come later to win');
+  assert.ok(dock > at('.chat-page[data-chats="on"] .chat-history', '@media (max-width:1099px)'), '…and later than the overlay width below 1100px');
+  assert.equal(decl(rule('.chat-page[data-host="dock"] .runs-resize'), 'display'), 'none', 'the Chat page\'s list width is not the dropdown\'s');
+  const meter = at('.chat-page[data-host="dock"] [data-ask-meter]');
+  assert.equal(decl(ALL[meter], 'display'), 'flex', 'the head meter hides in the column (the hide list): the composer\'s shows');
+  assert.ok(meter > at('.chat-page[data-chats="on"] [data-ask-meter]'), 'later than the rule that hides it on the Chat page');
+  assert.ok(meter < ALL.findIndex((r) => r.sel === '.chat-page .ask-composer-row > .ask-meter' && r.media.startsWith('@container')), 'a narrow column still drops it');
+  assert.equal(decl(rule('.ask-side-recent-when'), 'font-weight'), '700', 'the recent rows keep their meter look');
+  assert.equal(decl(rule('.ask-side-recent-fill.is-ctx-high'), 'color'), 'var(--red-ink)');
+});
+
 test('the row under the bar fills it and makes no stacking context (the column at z 38 competes with the terminal, scrim and drawer)', () => {
   const row = rule('.main-row');
   assert.deepEqual(['flex', 'min-width', 'min-height'].map((p) => decl(row, p)), ['1', '0', '0']);
@@ -94,7 +108,7 @@ test('the row under the bar fills it and makes no stacking context (the column a
 
 test('the Chat page hides the column-only controls; the column hides the page-only ones; a thread hides the empty state', () => {
   assert.equal(decl(rule('.chat-page:not([data-host="dock"]) :is(.ask-side-thread,.ask-side-btn,.chat-history-foot,.ask-side-empty)'), 'display'), 'none');
-  const hides = rule('.chat-page[data-host="dock"] :is(.chat-history-toggle,.chat-head > .ask-title,.chat-head-spacer,.chat-head > .chat-new-btn,.chat-home,.chat-panel)');
+  const hides = rule('.chat-page[data-host="dock"] :is(.chat-history-toggle,.chat-head > .ask-title,.chat-head-spacer,.chat-new-plus,.chat-head-meter,.chat-home,.chat-panel)');
   assert.equal(decl(hides, 'display'), 'none');
   assert.equal(decl(rule('.chat-page[data-host="dock"][data-view="thread"] .ask-side-empty'), 'display'), 'none');
 });

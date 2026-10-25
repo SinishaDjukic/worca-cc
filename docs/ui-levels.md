@@ -136,6 +136,7 @@ be skipped by forgetting it.
 |---|---|
 | New pipeline, Getting started, Runs, Projects | S |
 | Build: the group label, Workflows (the full-screen editor; agents and scripts live in its Library) | S |
+| Build: Requirements (behind the requirements flag) | S |
 | Runs counts: the amber Needs-you number (no symbol), else the live count as a grey number | S — each hidden at zero |
 | Chat (the first sidebar row; the app's home) | S |
 | Chat home: Start from a preset chips; "N more…" opens New run below Advanced and Settings › Presets from Advanced | S |
@@ -175,7 +176,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | "Scheduled" group (runs due within 24 h) | S — it only exists when something is scheduled |
 | Needs-input pill and banner; clarify questions; Auto proposal ("Review the workflow": preview that opens a pan/zoom popup, Accept) — all answered on the run page | S |
 | Recovery prompt, cycle gate, cost-pause banner | all |
-| Run page card head: the status line, the head buttons (Try it, Create PR, Push, View PR │ ▾, Fix conflicts, Ask for changes, Discard / Apply to branch, How to merge, Discard / Apply to folder, Report) and the tracker | S |
+| Run page card head: the status line, the head buttons (Try it, Create PR, Push, View PR │ ▾, Fix conflicts, Ask for changes, Discard / Apply to branch, How to merge, Discard / Apply to folder, Report) and the route (Where the work is) | S |
 | View PR ▾ › Watch | A |
 | Summary card › a live checkout: the Results row with Discard / Unlink | S |
 | Summary card › the Actions row value (`Local copy open · since 18:12`, `Try it on this machine`) and the Actions tab's Download patch | A |
@@ -187,9 +188,9 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Run page Overview: Perspective checklists (Shaper, gated): the latest review cycle as one summary line, unmet items open with their evidence, met items behind "Show N met items", earlier cycles behind "Earlier cycles" | S |
 | Run page: usage-limit notice (reset time, Resume at HH:MM, Cancel) | S |
 | Runs list / glance: "resets HH:MM" / "resumes HH:MM" | S |
-| Runs list: the View menu (Show with counts, Group by, Started by on a shared deployment, Select) and its chip; the row and member checkboxes, Select all, Space / ⌘A / Esc; the action bar's Stop and Archive (Undo); the row ⋯ menu's Stop, Archive, View PR and Open feature | S |
+| Runs list: the View menu (Show with counts, Group by, Started by on a shared deployment, Select, Keyboard shortcuts) and its chip; the row and member checkboxes, Select all, Space / ⌘A / Esc; the list keys (↑ ↓ / J K, ↵, → ←, `.`, S, E, Space, ⇧↑ ⇧↓, ⌘A, Esc), `?` and the Keyboard shortcuts sheet; the action bar's Stop and Archive (Undo); the row ⋯ menu's Stop, Archive (Restore on an archived row), View PR and Open feature, each with its key as a hint | S |
 | Runs list: the label filter (chosen from the top search, "Runs labelled hotfix" or label:hotfix) and its chips with × under the header; the action bar's Label (with runLabels) | S |
-| Runs list: Delete (the action bar and the row ⋯ menu); Add to group… and Remove from group (the row ⋯ menu) | A |
+| Runs list: Delete (the action bar and the row ⋯ menu); Add to group… and Remove from group (the row ⋯ menu); their keys ⌫, G and ⇧G | A |
 | Run page: "Add to group…" on the Group row of a run in no group, the same as in the list's row menu | A |
 | Resume menu: Resume at HH:MM (when the limit resets) | A |
 | Run page glance: the run's name as the page title, the status line (state, then the step), time · cost (with its Away mode share) · changes; the Cost tags row under them (with `runTags`), the Live view switch and its fogged graph of the running step(s), parallel steps (Now), one row per tab, a waiting question below its own heading, the result actions | S |
@@ -235,7 +236,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 An open github.com or Azure DevOps pull request shows its state as GitHub's merge box would
 (Draft, Merge conflicts, Changes requested, checks failed or running, Review
 required, Out of date, Blocked, Ready to merge) in two places: the run page card's
-status line (its checks line in the facts list's Checks row), and a "Pull request" row under the review verdict
+status line (its checks line in the route's pull request row), and a "Pull request" row under the review verdict
 on the Overview tab (one row per repository for a workspace run). Both show at
 every level. Watch is changed from the View PR ▾ menu (Advanced) and from the
 Overview row's switch (Advanced).
@@ -337,16 +338,42 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 |---|---|
 | Marketplace page: the Browse, Installed and Marketplaces tabs, install, update, Add marketplace, Health (Check health), leftover data and Purge | A |
 | Connectors page: the Sets, Servers and Skills views | A |
-| Models page: the catalog, and the Engines card (Default engine, Models per engine: Step models and Helper jobs tables, including titles, Auto classifier, PR description and Memory defragment) | E |
+| Models page: the catalog, and the Engines card (Default engine, Models per engine: Step models and Helper jobs tables, including titles, Auto classifier, PR description, Memory defragment, Agent generation and, behind the `requirements` flag, Requirements interview) | E |
 | Models page: the catalog toolbar (search, filter chips, folding groups), the editor dialog's Connection section, the Import-models dialog (Copilot and OpenAI-compatible sources) | E |
 | Providers page: Providers card (Copilot sign-in, account type, concurrency cap, key rows) and its Import-models shortcuts | E |
 | The Copilot notice modal; a card's "needs sign-in" pill and button; the New pipeline caption's "needs sign-in" note | all (rule 1 — they block a run) |
+
+### Requirements (behind the `requirements` flag)
+
+| Element | Level |
+|---|---|
+| The list: the filter tabs (All open, Needs you, Ready, Started, Archived; the counts leave archived out), New feature, the feature rows grouped by project or workspace (id, title, the state line, the state badge or the latest run's pill, cost), "Spent on requirements this month" | S — product owners are its users |
+| The list's group header: "Product brief: none yet · Create", "Product brief: being made…", "Product brief · <age> old" | S |
+| New feature: Title, Describe it, For, the code-look hint or the green "Worca knows <name> from its product brief" line, "Worca interviews with <model> at <effort> effort" and the cost words, Cancel, Start the interview | S — the interview model is shown here, changed only on Models (E) |
+| A feature's header: id, title, state, the target, round and cost chips, "Saved as specs/…"; Export ▾ (Save to specs/, Copy Markdown, Download .md); ⋯ (Your notes for Worca, Look closer / Look again, Archive / Restore) | S |
+| A feature's interview: the question card (options, Recommended, your own answer, Finish now, Skip, use recommended, Submit), Earlier rounds and Change, the working line, the error line and Try again | S |
+| A feature's spec card: the sections and their edits, Let Worca rewrite this, criteria add / remove, assumptions Confirm / Reject, the folded flow, edge cases, rules and out of scope | S |
+| Ready to start?: the six checks and what each misses, Start in Worca, "Start before it's Ready…" and its dialog (the failing checks, the required reason, "Recorded as") | S |
+| Decide the assumptions: Confirm / Reject, Show the other N, Confirm the N left, "Done, ask about A-n" | S |
+| Ready to build: what Start does, the Workflow and Branch from chips, Start in Worca | S — the chips show a non-default workflow or branch at every level (rule 2) |
+| Ready to build: Change (the Workflow and Branch from pickers) | A — like New pipeline's workflow list and branches |
+| A started feature: Runs from this feature (each run's pill, spec version, "started before Ready", cost and link; the total; Start again with v<n>), Changed since the run started and Undo my changes, the "v<n> draft / v<n> started" switch | S |
+| What Worca found in the code (a feature whose project or workspace has no product brief): the summary, how often Worca looked and what it cost, Look again | S |
+| What Worca found in the code: the files Worca read | A |
+| What Worca knows (a feature with a product brief): "from the product brief · <age>", what the brief describes, "Look closer · about $X" and its hint; after a closer look, "brief + a closer look · N files · $X", the summary, Add this to the brief, Look again | S |
+| Product brief page, none yet: Give Worca a head start (the four parts), the look box (branch, estimate, model, Create the brief / Try again, and why it cannot), the members left out, Your notes for Worca (the notes, "Let Worca look at the code", Save notes) | S — the switch shows its value on this page at every level (rule 2) |
+| Product brief page, made: the chips (Made from <branch> @ <commit> · <age>, cost, Used by N features, Built from the workspace map), Export ▾ (Copy Markdown, Download .md), ⋯ (Refresh the brief · about $X, Delete the brief), Refreshing and the failed-refresh line, "The code moved on since this brief" and Refresh, the four sections with their pencils, "edited by you" and Let Worca rewrite this, How Worca uses it, Your notes for Worca and Edit notes | S |
+| Product brief page: What Worca read (the files) | A — as the files of a code look |
+
+Create the brief, Refresh, Look closer and Look again read the code with git: they are hidden while git is
+missing (`data-needs-git`), at every level.
 
 ### Statistics, Team metrics, Team policy, Chat, Getting started
 
 | Element | Level |
 |---|---|
 | Statistics page | A |
+| Statistics: the Requirements tile (spend, features, a link to the page; behind the `requirements` flag), the Requirements row in the Group by tables and in the Cost report (money already spent there stays listed while the flag is off) | A — with the page |
 | Team metrics page and every surface of it elsewhere | E |
 | Team policy page and its Policy / Plugins / Catalog tabs | E |
 | Team-policy notes on New pipeline; the team caps readout under Budget & cost limits | all — a team cap applies in every mode, so the reason it applies is never hidden |

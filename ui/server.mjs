@@ -103,6 +103,7 @@ import {
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
   stepModelsSetting, assertStepModelsInput, setStepModels,
   utilityModelsSetting, assertUtilityModelsInput, setUtilityModels,
+  requirementsInterviewSetting, assertRequirementsInterviewInput, setRequirementsInterview,
   askEngineSetting, assertAskEngineInput, setAskEngineSetting, askModelsSetting, assertAskModelsInput, setAskModels,
   chatHomePinsFor, setChatHomePinsFor,
 } from '../src/core/settings.mjs';
@@ -135,7 +136,13 @@ import {
   findRunLinksByPipeline as askFindRunLinksByPipeline, runLinkTarget,
   finishMessage as askFinishMessage, newAskId,
   newAskId as askNewId, findPullRequestCards as askFindPullRequestCards, findFixRunCards as askFindFixRunCards,
+  setArchived as askSetArchived, setPinned as askSetPinned, listThreadsPage as askListThreadsPage, THREAD_SORTS,
+  createChatGroup as askCreateChatGroup, getChatGroup as askGetChatGroup, listChatGroups as askListChatGroups,
+  renameChatGroup as askRenameChatGroup, addToChatGroup as askAddToChatGroup, removeFromChatGroup as askRemoveFromChatGroup,
+  deleteChatGroup as askDeleteChatGroup, chatGroupThreadIds as askChatGroupThreadIds, firstUserText as askFirstUserText,
+  ChatGroupError,
 } from '../src/core/ask/store.mjs';
+import { CHAT_BUSY, chatBusyReason, chatGroupBusyText } from '../src/shared/chat-busy.mjs';
 import { revealTargetFor as askRevealTargetFor } from '../src/core/ask/show-files-deps.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { stripIntentLead } from '../src/shared/intent-leads.mjs';
@@ -167,7 +174,7 @@ import { validateMcpOff, resolveAskMcp, askMcpPromptInput, askMcpPreview, askMcp
 import { attachRunFollower } from '../src/core/ask/follow.mjs';
 import { mockEnabled, MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride, recordUtilityCost } from '../src/core/cost-budget.mjs';
-import { resolveNamingModel, suggestNames, mockSuggestion, estimateNamingUsd, legacyBranchHint } from '../src/core/naming.mjs';
+import { resolveNamingModel, suggestNames, mockSuggestion, estimateNamingUsd, legacyBranchHint, suggestGroupName } from '../src/core/naming.mjs';
 import { createCommandSummariser, summariseCommandCard, commandSummariesWanted } from '../src/core/ask/command-summary.mjs';
 import { getStats, budgetWindowSavings, shapingGroups } from '../src/core/stats.mjs';
 import {
@@ -314,6 +321,10 @@ import { chatScopeOf, withChatScope, sameScope, scopeBody, targetInScope, scopeR
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
+import { registerRequirementsRoutes, requirementsChangeNotifier } from '../src/core/requirements/routes.mjs';
+import { createRunEventHook } from '../src/core/requirements/start.mjs';
+import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
+import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
 import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import { exportWorkflowToMarketplace, listPublishTargets } from '../src/core/marketplace-publish.mjs';
@@ -1098,6 +1109,10 @@ function broadcast(obj) {
 // CONTRACT §0: a git flip (installed / removed) reaches every open tab as one `git` frame.
 onGitChange((s) => broadcast({ type: 'git', git: { available: s.available, version: s.version } }));
 
+/** Requirements (A2 D9): the one run-event hook wireRun calls for every run; it notifies through the same
+ *  `requirements-changed` notifier the routes use (silent while the flag is off). */
+const requirementsRunEvent = createRunEventHook({ notify: requirementsChangeNotifier(broadcast) });
+
 // Per-person delivery of Ask frames (step 3): on a shared sign-in an ask-* frame that names a
 // thread goes only to sockets of that thread's owner (and to non-shared sockets, e.g. an
 // in-container tool), like the HTTP guard on /api/ask/threads/:id. Owners never change, so
@@ -1441,6 +1456,9 @@ function wireRun(entry) {
           }
         }
       }
+      // Requirements (A2 D9): a run a feature started learns its pipeline id; the feature hears status changes.
+      // The entry's pipeline id finds the start of a resumed run (a new UUID, the same pipeline).
+      requirementsRunEvent(id, name, payload, entry.pipelineId || null);   // never throws
       if (entry.ticketId && (name === 'done' || name === 'error') && !entry._outcomeRecorded) {
         // Scheduled runs: report how the fired run ended (feed item, failure streak).
         // 'error' is the launch-error channel — a failure before the pipeline row exists.
@@ -3645,6 +3663,28 @@ function releaseAskCard(item) {
       flipCard(item.askThreadId, item.askCardId, { state: 'proposed', runId: null, scheduledFor: null, scheduleId: null, sentence: null });
     }
   } catch (err) { console.error(`[worca-ui] ask card release failed: ${err && err.message ? err.message : err}`); }
+}
+
+/** A requirements start's run as the feature shows it (A2 D10): the live entry while the server has it,
+ *  else the pipeline row on disk (after a restart). null when neither knows the run. A resume gives the run
+ *  a new UUID, so the pipeline id finds the live entry first. `href`: the live run's page while the server
+ *  has it, else the saved run's History page (#history/<projectKey | workspaces/<key>>/<pipelineId>). */
+function requirementsRunSummary({ runId, pipelineId }) {
+  const live = (pipelineId && liveRunEntry(pipelineId)) || liveRunEntry(runId);
+  const id = pipelineId || (live && live.pipelineId) || null;
+  let state = null;
+  if (id) { try { state = readPipelineStateById(id); } catch { state = null; } }
+  if (!live && !state) return null;
+  const key = state && (state.target === 'workspace' && state.workspaceKey ? `workspaces/${state.workspaceKey}` : state.projectKey);
+  return {
+    status: (live && live.status) || (state && state.status) || null,
+    phase: (state && state.phase) || null,
+    costUsd: state?.totalCostUsd ?? null,
+    pipelineId: id,
+    href: live ? `#running/${live.id}` : key && id ? `#history/${key}/${id}` : null,
+    // waits on a question, a gate or the Auto confirmation: entry.pendingQuestion, as the Running page reads it
+    waiting: !!(live && live.pendingQuestion && !SETTLED_RUN.has(String(live.status || ''))),
+  };
 }
 
 /** Call startRunHandler without HTTP. Resolves { status, body }. */
@@ -10418,6 +10458,11 @@ app.get('/api/memory/health', async (_req, res) => {
 registerMemoryRoutes('/api/memory/global', { family: 'global' });
 registerMemoryRoutes('/api/memory/projects/:key', { family: 'projects' });
 
+// Requirements (plans/requirements-design.md): product-owner feature specs, behind the `requirements` flag.
+registerRequirementsRoutes(app, { broadcast, deps: {
+  startRun: (body, opts) => invokeStartRun(body, null, opts),   // D6: through the run handler, as PR watch does
+  runSummary: requirementsRunSummary,
+} });
 // /api/memory/team/:key — the team layer of one registered project (team memory 1a; phase 1b's Team tab reads it).
 // The switch itself is the project setting `memory.team` (PATCH /api/projects/:key/settings).
 async function teamProject(req, res) {
@@ -11355,6 +11400,8 @@ const settingsState = () => ({
   stepModels: stepModelsSetting(),
   utilityModels: utilityModelsSetting(),
   askEngine: askEngineSetting() ?? null,                  // Chat: the engine new chats start on (D17)
+  // Models › Engines › Claude: the STORED { model?, effort? } (null = the default); only while the requirements flag is on
+  ...(flagEnabled('requirements') ? { requirementsInterview: requirementsInterviewSetting() ?? null } : {}),
   askModels: askModelsSetting(),                          // Chat: the model per engine (D17)
   nightMode: nightModeSettings(),                         // night mode: the user layer (only the fields set)
   nightModeEffective: resolveNightConfig({ user: nightModeSettings() }).config,   // no project: the global view
@@ -11376,6 +11423,12 @@ async function autoModelState() {
   return { autoWorkflowModel: stored, autoWorkflowModelEffective: { model, source } };
 }
 
+/** What "(default)" means for the Requirements interview row: the newest plain Opus at medium effort (A1-D8).
+ *  Nothing while the requirements flag is off. */
+async function requirementsInterviewState() {
+  if (!flagEnabled('requirements')) return {};
+  return { requirementsInterviewDefault: { model: (await requirementsModel(() => listModels(''))) ?? null, effort: DEFAULT_INTERVIEW_EFFORT } };
+}
 /** Settings ▸ PR description model: the stored id + what Generate with AI will actually
  *  use (stored catalog id > the Sonnet-class default). Async because the catalog is. */
 async function prDescriptionModelState() {
@@ -11813,7 +11866,7 @@ app.post('/api/shutdown', (req, res) => {
 
 app.get('/api/settings', async (req, res) => {
   const person = awayPersonOf(req);   // B4: a signed-in person sees their own Away switch
-  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await commandSummaryModelState()), chat: chatPrefs(), app: APP_INFO });
+  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await commandSummaryModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(), app: APP_INFO });
 });
 
 // GET  /api/app/version       → { current, latest, status, checkedAt, enabled, links } (issue #841);
@@ -11916,7 +11969,7 @@ app.post('/api/settings', async (req, res) => {
     has('projectsRoot') ? normalizeProjectPath(body.projectsRoot) : null]))) return;
   try {
     const { actionsWarnings } = await applySettingsPatch(body, { person: awayPersonOf(req) });
-    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await commandSummaryModelState()), chat: chatPrefs(),
+    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await commandSummaryModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(),
       ...(actionsWarnings ? { actionsWarnings } : {}) });
   } catch (err) {
     // 400 with the user's words and, when known, the body path of the bad field (#555).
@@ -11972,6 +12025,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasUtilityModelsKey = has('utilityModels');
   const hasAskEngineKey = has('askEngine');
   const hasAskModelsKey = has('askModels');
+  const hasRequirementsInterviewKey = has('requirementsInterview') && flagEnabled('requirements');   // ignored while the flag is off
   const hasActionsKey = has('actions');
   const hasNetworkWaitKey = has('networkWait');
   const wsScanModels = hasWorkspaceScanKey ? (autoModels || defragModels || await listModels('')) : null;
@@ -11997,7 +12051,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   if (has('askMaxTurns')) ask.askMaxTurns = body.askMaxTurns ?? '';
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   {   // was the route's try: a refusal now reaches the caller (the route maps it to 400, the chat to a notice)
-    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'namingModel', 'commandSummaryModel', 'workspaceScan']) {
+    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'namingModel', 'commandSummaryModel', 'workspaceScan', ...(hasRequirementsInterviewKey ? ['requirementsInterview'] : [])]) {
       if (has(key)) asSettingsField(key, () => refuseNonClaudeUtilityModel(key, body[key]));
     }
     // Each validator / setter that can refuse a value runs tagged with the body key it checks,
@@ -12041,6 +12095,10 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasWorkspaceScanKey) asSettingsField('workspaceScan', () => assertWorkspaceScanInput(body.workspaceScan, wsScanModels));
     if (hasRunEngineKey) asSettingsField('runEngine', () => assertRunEngineInput(body.runEngine));
     if (hasAskEngineKey) asSettingsField('askEngine', () => assertAskEngineInput(body.askEngine));
+    if (hasRequirementsInterviewKey) await asSettingsField('requirementsInterview', async () => {
+      const v = assertRequirementsInterviewInput(body.requirementsInterview);
+      if (v?.model) await assertSlotModels([{ id: 'requirementsInterview', engine: 'claude', value: v }]);
+    });
     if (hasAskModelsKey) await asSettingsField('askModels', async () => {
       const patch = assertAskModelsInput(body.askModels);
       await assertSlotModels(Object.entries(patch).filter(([, value]) => value).map(([engine, value]) => ({ id: `askModels.${engine}`, engine, value })));
@@ -12118,6 +12176,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasUtilityModelsKey) await asSettingsField('utilityModels', () => setUtilityModels(body.utilityModels));
     if (hasAskEngineKey) await asSettingsField('askEngine', () => setAskEngineSetting(body.askEngine));
     if (hasAskModelsKey) await asSettingsField('askModels', () => setAskModels(body.askModels));
+    if (hasRequirementsInterviewKey) await asSettingsField('requirementsInterview', () => setRequirementsInterview(body.requirementsInterview));
     if (has('schedule')) await asSettingsField('schedule', () => setScheduleDefaults(body.schedule && typeof body.schedule === 'object' ? body.schedule : {}));
     if (has('nightMode')) await setNightMode(body.nightMode);
     if (has('nightModeToggle') && !(await setPersonNightModeToggle(person, body.nightModeToggle))) await setNightModeToggle(body.nightModeToggle);
@@ -12132,7 +12191,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey || hasUpdateCheckKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey || hasUpdateCheckKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -13653,6 +13712,11 @@ function askTrackingCount(threadId) {
   return n;
 }
 
+/** #948 s2: why this chat cannot be archived now (chat-busy.mjs), or null. */
+function askBusyReason(threadId) {
+  return chatBusyReason({ inFlight: !!askInFlight(threadId), commands: askCommands.running(threadId), tracking: askTrackingCount(threadId) });
+}
+
 /** worca Chat (the History column's amber dot): how many of this chat's followed, unsettled runs wait on a question
  *  or gate — entry.pendingQuestion, the same truth the Running page reads. */
 function askWaitingCount(threadId) {
@@ -13753,15 +13817,34 @@ app.get('/api/ask/threads', (req, res) => {
     const mode = !req.worcaExtension && req.query.mode === 'composer' ? 'composer' : null;
     // q = the History column's search (title or any message's text); the owner and surface filters above still apply.
     const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
-    const threads = askListThreads({ limit, visibleTo, mode, query }).map((t) => {
+    const decorate = (t) => {
       const trackingRuns = askTrackingCount(t.id);
-      return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns, waiting: askWaitingCount(t.id) > 0 };
-    });
+      return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns, waiting: askWaitingCount(t.id) > 0,
+        commands: askCommands.running(t.id), archived: !!t.archivedAt, scope: chatScopeOf(t.context) };
+    };
+    // #948 s2: the Chats column pages (show / sort / cursor). Without them the answer keeps today's top-level keys.
+    const cursor = typeof req.query.cursor === 'string' && req.query.cursor ? req.query.cursor : null;
+    // A cursor alone pages Show = All, so `total` and the rows describe the same set.
+    const show = ['all', 'needs', 'archived'].includes(req.query.show) ? req.query.show : (cursor ? 'all' : null);
+    if (show) {
+      const sort = THREAD_SORTS.includes(req.query.sort) ? req.query.sort : 'activity';
+      const needIds = [...askFollowers.keys()].filter((tid) => askWaitingCount(tid) > 0);
+      const base = { visibleTo, mode, query };
+      const page = askListThreadsPage({ ...base, limit, sort, cursor, show: show === 'needs' ? 'all' : show, ids: show === 'needs' ? needIds : null });
+      const counts = {
+        all: askCountThreads({ ...base, show: 'all' }),
+        needs: askCountThreads({ ...base, show: 'all', ids: needIds }),
+        archived: askCountThreads({ ...base, show: 'archived' }),
+      };
+      return res.json({ threads: page.threads.map(decorate), cursor: page.cursor, total: counts[show], counts });
+    }
+    const threads = askListThreads({ limit, visibleTo, mode, query }).map(decorate);
     // total = EVERY saved chat (the History popover's meter), not the capped page above; while searching, the chats
     // the search matches, with all = every saved chat ("3 of 54 chats").
     const total = askCountThreads({ visibleTo, mode, query });
     res.json(query ? { threads, total, all: askCountThreads({ visibleTo, mode }) } : { threads, total });
   } catch (err) {
+    if (err && err.code === 'BAD_CURSOR') return badRequest(res, 'invalid cursor');
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
@@ -13987,6 +14070,22 @@ app.patch('/api/ask/threads/:id', async (req, res) => {
   try {
     if (req.worcaExtension && askGetThread(id)?.mode === 'composer') return res.status(403).json({ error: 'the browser extension uses Ask threads only', code: 'extension-route' });
     const body = req.body || {};
+    // #948 s2: archive and pin, alone in the body. Archive waits for an idle chat (chat-busy.mjs); unarchive and pin
+    // never wait. Neither bumps the chat's Last activity.
+    if (body.archived !== undefined || body.pinned !== undefined) {
+      if (Object.keys(body).some((k) => k !== 'archived' && k !== 'pinned')) return badRequest(res, 'archived and pinned are sent on their own');
+      for (const k of ['archived', 'pinned']) {
+        if (body[k] !== undefined && typeof body[k] !== 'boolean') return badRequest(res, `${k} must be true or false`);
+      }
+      if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+      if (body.archived === true) {
+        const reason = askBusyReason(id);
+        if (reason) return res.status(409).json({ error: CHAT_BUSY[reason], code: 'CHAT_BUSY', reason });
+      }
+      if (body.archived !== undefined) askSetArchived(id, body.archived);
+      if (body.pinned !== undefined) askSetPinned(id, body.pinned);
+      return res.json({ thread: askGetThread(id) });
+    }
     const patch = {};
     // The Ask panel's model · effort picker, moved while this chat is open: the pair
     // travels together, so a switch away and back finds it before any send.
@@ -14090,8 +14189,10 @@ app.delete('/api/ask/threads/:id', async (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
   try {
-    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    const t = askGetThread(id);
+    if (!t) return res.status(404).json({ error: 'thread not found' });
     await deleteAskThreadFully(id);
+    if (t.groupId) emitChanged('ask-groups-changed', 'removed');   // #948 s3: its delete may have dropped the group
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -14900,6 +15001,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       catch (err) { if (err.code === 'TURN_IN_FLIGHT') return res.status(409).json({ error: 'turn in flight' }); throw err; }
     }
     if (composerState) askUpdateThread(id, { composer: composerState });
+    if (thread.archivedAt) askSetArchived(id, false);   // #948 s2: a message brings an archived chat back
     const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, client: req.worcaExtension ? 'browser-extension' : null });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
@@ -15115,6 +15217,144 @@ app.post('/api/naming/suggest', namingOn, async (req, res) => {
     if (r.source !== 'model') return fallback(r.error);
     res.json({ ...r, title: cfg.suggestTitle ? r.title : undefined, branch: cfg.suggestBranch ? r.branch : undefined });
   } catch (err) { if (!res.headersSent) res.status(500).json({ error: 'suggestion failed' }); }   // Express 4 swallows async throws
+});
+
+// ---------------------------------------------------------------------------
+// #948 s3: the Chats column's topic groups. suggest-name answers 404 while smartRunNaming is off (namingOn, the /api/naming/* gate above). Every write broadcasts
+// ask-groups-changed, so other tabs re-read their column.
+// ---------------------------------------------------------------------------
+function chatGroupError(res, err) {
+  if (err instanceof ChatGroupError) return res.status(err.status).json({ error: err.message, code: err.code });
+  return res.status(500).json({ error: err && err.message ? err.message : String(err) });
+}
+/** `raw` as chat ids this person sees: 400 for a bad list, 404 for a missing or hidden chat; null after answering. */
+function askGroupThreads(req, res, raw) {
+  if (!Array.isArray(raw) || !raw.length || raw.length > 200 || raw.some((x) => typeof x !== 'string' || !ASK_ID_RE.test(x))) {
+    badRequest(res, 'threadIds must list 1 to 200 chat ids');
+    return null;
+  }
+  const ids = [...new Set(raw)];
+  for (const id of ids) {
+    const t = askGetThread(id);
+    if (!t || !askThreadVisible(t, req)) { res.status(404).json({ error: 'thread not found' }); return null; }
+  }
+  return ids;
+}
+/** The group named by :id that this person sees, or null after answering 400 / 404. */
+function askGroupFor(req, res) {
+  const id = askIdParam(res, req.params.id, 'group');
+  if (!id) return null;
+  const g = askGetChatGroup(id);
+  const viewer = askViewer(req);
+  if (!g || (viewer && g.createdBy && g.createdBy !== viewer)) { res.status(404).json({ error: 'group not found' }); return null; }
+  return g;
+}
+
+app.get('/api/ask/groups', (req, res) => {
+  try { res.json({ groups: askListChatGroups({ visibleTo: askViewer(req) }) }); } catch (err) { chatGroupError(res, err); }
+});
+
+app.post('/api/ask/groups', (req, res) => {
+  try {
+    const b = req.body || {};
+    const ids = askGroupThreads(req, res, b.threadIds);
+    if (!ids) return;
+    const group = askCreateChatGroup({ name: b.name, nameSource: b.nameSource, threadIds: ids, createdBy: actorOf(req) });
+    emitChanged('ask-groups-changed', 'created');
+    res.status(201).json({ group });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.patch('/api/ask/groups/:id', (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const group = askRenameChatGroup(g.id, { name: req.body?.name, nameSource: req.body?.nameSource });
+    emitChanged('ask-groups-changed', 'renamed');
+    res.json({ group });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.post('/api/ask/groups/:id/threads', (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const ids = askGroupThreads(req, res, req.body?.threadIds);
+    if (!ids) return;
+    const group = askAddToChatGroup(g.id, ids);
+    emitChanged('ask-groups-changed', 'moved');
+    res.json({ group });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.delete('/api/ask/groups/:id/threads/:threadId', (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const tid = askIdParam(res, req.params.threadId, 'thread');
+    if (!tid) return;
+    const t = askGetThread(tid);
+    if (!t || t.groupId !== g.id || !askThreadVisible(t, req)) return res.status(404).json({ error: 'thread not found' });
+    const r = askRemoveFromChatGroup(tid);
+    emitChanged('ask-groups-changed', 'removed');
+    res.json({ ok: true, ...r });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.post('/api/ask/groups/:id/archive', (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const archived = req.body?.archived;
+    if (typeof archived !== 'boolean') return badRequest(res, 'archived must be true or false');
+    // Only the members whose state changes: Undo restores exactly these, and a chat archived before stays archived.
+    const ids = askChatGroupThreadIds(g.id).filter((id) => !!askGetThread(id)?.archivedAt !== archived);
+    // Synchronous from here to the writes: no `await` between the busy check and setArchived, or a turn could start
+    // in between and a busy chat would be archived.
+    if (archived) {
+      for (const id of ids) {
+        const reason = askBusyReason(id);
+        if (reason) return res.status(409).json({ error: chatGroupBusyText(askGetThread(id)?.title), code: 'CHAT_BUSY', reason, threadId: id });
+      }
+    }
+    for (const id of ids) askSetArchived(id, archived);
+    emitChanged('ask-groups-changed', archived ? 'archived' : 'restored');
+    res.json({ ok: true, threadIds: ids });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.delete('/api/ask/groups/:id', async (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const deleteChats = req.query.deleteChats === 'true';
+    const ids = askChatGroupThreadIds(g.id);
+    let deleted = 0;
+    // One at a time, as the bulk thread DELETE: each worktree removal spawns git.
+    if (deleteChats) for (const id of ids) { const r = await deleteAskThreadFully(id); if (r.deleted) deleted += 1; }
+    askDeleteChatGroup(g.id);                 // a no-op once the last chat's delete dropped the group
+    emitChanged('ask-groups-changed', deleteChats ? 'deleted' : 'ungrouped');
+    res.json({ ok: true, threadIds: ids, deleted });
+  } catch (err) { if (!res.headersSent) chatGroupError(res, err); }
+});
+
+// POST /api/ask/groups/suggest-name {threadIds} -> { source: 'model', name } | { source: 'fallback', error }.
+// The Run naming helper model (namingPick); the prompt carries each chat's title and first message only.
+app.post('/api/ask/groups/suggest-name', namingOn, async (req, res) => {
+  try {
+    const ids = askGroupThreads(req, res, req.body?.threadIds);
+    if (!ids) return;
+    if (!namingBucket.tryConsume()) return res.status(429).json({ error: 'too many suggestions, try again in a moment' });
+    if (budgetStatus().blocked) return res.json({ source: 'fallback', error: 'total cost limit reached' });
+    if (mockEnabled({})) return res.json({ source: 'model', name: 'Mock group' });   // deterministic, spawns nothing
+    const chats = ids.map((id) => ({ title: askGetThread(id)?.title || '', firstMessage: askFirstUserText(id) }));
+    const ac = new AbortController();
+    res.on('close', () => { if (!res.writableEnded) ac.abort(); });
+    const pick = await namingPick();
+    const r = await suggestGroupName({ chats, signal: ac.signal },
+      { pickModel: () => pick, onCost: (c) => { try { recordUtilityCost('naming', c); } catch { /* a ledger write never fails a suggestion */ } } });
+    res.json(r.source === 'model' ? { source: 'model', name: r.name } : { source: 'fallback', error: r.error });
+  } catch (err) { if (!res.headersSent) res.status(500).json({ error: 'suggestion failed' }); }
 });
 
 // ---------------------------------------------------------------------------
@@ -18177,7 +18417,7 @@ app.use((err, _req, res, next) => {
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, sweptV1: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, bench: null };
+  const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
   // Runs left 'running' by a previous process that died before writing a terminal
@@ -18199,6 +18439,22 @@ export async function bootMaintenance({ log } = {}) {
     if (swept.length) console.log(`[worca-ui] retired ${swept.length} run(s) paused on the v1 engine`);
   } catch (err) {
     console.error(`[worca-ui] v1-run sweep failed: ${err && err.message ? err.message : err}`);
+  }
+
+  // Requirements: a round cut short by this restart goes back to the product owner (design §4).
+  try {
+    const n = recoverRequirements();
+    if (n) console.log(`[worca-ui] requirements: ${n} interrupted round(s) handed back`);
+  } catch (err) {
+    console.error(`[worca-ui] requirements sweep failed: ${err && err.message ? err.message : err}`);
+  }
+  // Requirements A7 (D15): a product brief left `making` by this restart gets INTERRUPTED. This runs before the
+  // first await, but boot maintenance is not awaited before listen, so recoverBriefs skips a brief whose job runs.
+  try {
+    summary.recoveredBriefs = recoverBriefs();
+    if (summary.recoveredBriefs) console.log(`[worca-ui] requirements: ${summary.recoveredBriefs} interrupted product brief(s) marked`);
+  } catch (err) {
+    console.error(`[worca-ui] product brief sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   try {
@@ -18319,6 +18575,16 @@ export async function bootMaintenance({ log } = {}) {
     if (r.failed.length) console.error(`[worca-ui] repo-look sweep: ${r.failed.length} dir(s) could not be removed`);
   } catch (err) {
     console.error(`[worca-ui] repo-look sweep failed: ${err && err.message ? err.message : err}`);
+  }
+
+  // Requirements code looks (plans/requirements-design.md D7) a restart cut short, under <worcaHome>/tmp/requirements.
+  try {
+    const r = await sweepRepoLooks(path.join(worcaHome(), 'tmp', 'requirements'), { log: sink('repo-look') });
+    summary.requirementsRepoLooks = r;
+    if (r.removed.length) console.log(`[worca-ui] requirements repo-look sweep: removed ${r.removed.length} stale look dir(s)`);
+    if (r.failed.length) console.error(`[worca-ui] requirements repo-look sweep: ${r.failed.length} dir(s) could not be removed`);
+  } catch (err) {
+    console.error(`[worca-ui] requirements repo-look sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   // Script bench folders (workbench W11): the newest folder per script key
@@ -18626,7 +18892,7 @@ export const _testing = {
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
   startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES, MARKET_JOBS, pruneMarketJobs, marketJobFailure,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
-  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,
+  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,
   uiControl, bearerMatches,
   broadcast, sockets, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,

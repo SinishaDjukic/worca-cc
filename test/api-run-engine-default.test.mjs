@@ -47,7 +47,7 @@ after(async () => {
     new Promise((r) => { const t = setTimeout(r, 500); t.unref?.(); }),
   ]);
   for (const k of Object.keys(prevEnv)) { if (prevEnv[k] === undefined) delete process.env[k]; else process.env[k] = prevEnv[k]; }
-  await rm(sandboxHome, { recursive: true, force: true });
+  await rm(sandboxHome, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }).catch(() => {});
 });
 
 test('a body without an engine starts on the project default (codex refuses this set at once)', async () => {

@@ -3,7 +3,7 @@ import { projectKey as keyOfDir } from './store.mjs';
 import {
   readSettings, setProjectLayerReader, nightModeSettings, memoryDefragModel,
   runEngineSetting, stepModelsSetting, utilityModelsSetting, normalizeModelPair, SETTING_CHECKS,
-  askEngineSetting, askModelsSetting,
+  askEngineSetting, askModelsSetting, requirementsInterviewSetting,
   assertAskWebInput, askWebStoreShape, assertSmartNamingInput, SMART_NAMING_DEFAULTS, UTILITY_JOBS,
   DEFAULT_CONTEXT_MAX_BYTES_PER_FILE, DEFAULT_CONTEXT_MAX_BYTES_TOTAL, DEFAULT_SKILL_MOUNT,
   DEFAULT_MEMORY_SOFT_BYTES_PER_FILE, DEFAULT_MEMORY_HARD_BYTES_PER_FILE, DEFAULT_MEMORY_MAX_FILES_PER_SCOPE,
@@ -111,10 +111,16 @@ function askModelEntry(engine) {
   return { id: `models.${engine}.ask`, family: 'ask', engine, path: ['askModels', engine], store: 'settings', default: undefined, userOnly: true,
     validate: pairCheck(engine), readUser: () => pickPair(askModelsSetting()[engine]), readProject: () => undefined, team: null };
 }
+// The Requirements interview (A1.1 D1): Claude-only and user-only, found by id like the Ask entries and never listed by
+// settingIds(); not a UTILITY_JOBS entry, so utilityModels.codex.requirementsInterview is an unknown job.
+const REQUIREMENTS_INTERVIEW = Object.freeze({ id: 'models.claude.requirementsInterview', family: 'utility', engine: 'claude', job: 'requirementsInterview',
+  path: ['requirementsInterview'], store: 'settings', default: undefined, userOnly: true, validate: pairCheck('claude'),
+  readUser: () => pickPair(requirementsInterviewSetting()), readProject: () => undefined, team: null });
 export function settingEntry(id) {
   if (typeof id !== 'string') return null;
   if (STATIC.has(id)) return STATIC.get(id);
   if (id === 'askEngine') return ASK_ENGINE;
+  if (id === REQUIREMENTS_INTERVIEW.id) return REQUIREMENTS_INTERVIEW;
   const ask = ASK_MODEL_RE.exec(id);
   if (ask) return askModelEntry(ask[1]);
   let match = STEP_RE.exec(id);

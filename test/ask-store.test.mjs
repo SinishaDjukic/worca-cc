@@ -18,6 +18,7 @@ import {
   addAttachment, listAttachments, getAttachment, readAttachmentText, readAttachmentRaw,
   attachmentPath, attachmentSourcePath, attachmentSourceOrigin,
   linkRun, updateRunLink, listRunLinks,
+  listThreadsPage, setArchived, setPinned, THREAD_SORTS,
 } from '../src/core/ask/store.mjs';
 
 const HOME = useTempHome(after);
@@ -40,7 +41,7 @@ test('threads: create/get/update/setThreadTitle; listThreads newest-first with r
       const t = createThread({ model: 'claude-opus-5-5', effort: 'high' });
       assert.match(t.id, /^ask_[0-9a-f]{8}$/);
       assert.deepEqual(Object.keys(t).sort(),
-        ['agentMode', 'context', 'contexts', 'createdAt', 'createdBy', 'effort', 'engine', 'id', 'mcpOff', 'model', 'sessionId', 'title', 'totals', 'updatedAt']);
+        ['agentMode', 'archivedAt', 'context', 'contexts', 'createdAt', 'createdBy', 'effort', 'engine', 'groupId', 'id', 'mcpOff', 'model', 'pinnedAt', 'sessionId', 'title', 'totals', 'updatedAt']);
       assert.equal(t.mcpOff, null, 'no MCP picker choices yet (v45)');
       assert.equal(t.agentMode, true, 'agent mode is on by default (v51, #574)');
       assert.equal(t.engine, null, 'no engine until the first turn stores one (v53, #635)');
@@ -735,4 +736,73 @@ test('findFixRunCards / updateCardBlock: a PR fix-run card is found by its run i
   const b = updateCardBlock(t.id, 'card_0000f001', { card: { pipelineId: 'fix00001', fix: { ...fix.card.fix, outcome } } });
   assert.deepEqual([b.card.pipelineId, b.card.fix.outcome, b.card.runId, b.state], ['fix00001', outcome, 'run-uuid-9', 'tracked']);
   assert.equal(updateCardBlock(t.id, 'card_0000f002', { card: { pipelineId: 'zzzz0000' } }).card.pipelineId, 'abcd1234', 'track_run cards stay immutable');
+});
+
+test('#948 s2: archive, pin and the paged list', async () => {
+  await checkRows([
+    { name: 'setArchived hides a thread from show=all and lists it under show=archived; no show lists it as before', run: () => {
+      const t = createThread({ title: 'arch-s2 one' });
+      const before = getThread(t.id).updatedAt;
+      assert.equal(setArchived(t.id, true).archivedAt != null, true);
+      assert.equal(getThread(t.id).updatedAt, before, 'archiving keeps Last activity');
+      const ids = (show) => listThreadsPage({ query: 'arch-s2', show }).threads.map((x) => x.id);
+      assert.ok(!ids('all').includes(t.id));
+      assert.ok(ids('archived').includes(t.id));
+      assert.ok(listThreads({ query: 'arch-s2' }).some((x) => x.id === t.id), 'listThreads is unchanged');
+      assert.equal(setArchived(t.id, false).archivedAt, null);
+      assert.ok(ids('all').includes(t.id));
+    } },
+    { name: 'a second archive keeps the first time; a missing id answers null', run: () => {
+      const t = createThread({ title: 'arch-s2 twice' });
+      const first = setArchived(t.id, true).archivedAt;
+      assert.equal(setArchived(t.id, true).archivedAt, first);
+      assert.equal(setArchived('ask_ffffffff', true), null);
+    } },
+    { name: 'pinned threads come first in every sort', run: () => {
+      const a = createThread({ title: 'pin-s2 a' });
+      const b = createThread({ title: 'pin-s2 b' });
+      setPinned(a.id, true);
+      for (const sort of THREAD_SORTS) assert.equal(listThreadsPage({ query: 'pin-s2', sort }).threads[0].id, a.id, sort);
+      assert.equal(getThread(b.id).pinnedAt, null);
+    } },
+    { name: 'listing returns a cursor after 50 threads, and the pages hold each thread once', run: () => {
+      const made = Array.from({ length: 51 }, (_, i) => createThread({ title: `page-s2 ${i}` }).id);
+      try {
+        const first = listThreadsPage({ query: 'page-s2', limit: 50 });
+        assert.equal(first.threads.length, 50);
+        assert.equal(typeof first.cursor, 'string');
+        const second = listThreadsPage({ query: 'page-s2', limit: 50, cursor: first.cursor });
+        assert.equal(second.threads.length, 1);
+        assert.equal(second.cursor, null);
+        const seen = [...first.threads, ...second.threads].map((x) => x.id);
+        assert.equal(new Set(seen).size, 51);
+        assert.deepEqual([...seen].sort(), [...made].sort());
+      } finally {
+        // The file shares one DB: 51 rows left behind would push other cases' threads off a 50-row listThreads page.
+        for (const id of made) deleteThread(id);
+      }
+    } },
+    { name: 'title and cost sorts page in their own order', run: () => {
+      const z = createThread({ title: 'sort-s2 zebra' });
+      const a = createThread({ title: 'sort-s2 Apple' });
+      addThreadTotals(z.id, { costUsd: 2 });
+      addThreadTotals(a.id, { costUsd: 1 });
+      const ids = (sort) => listThreadsPage({ query: 'sort-s2', sort, limit: 1 });
+      assert.equal(ids('title').threads[0].id, a.id);
+      assert.equal(listThreadsPage({ query: 'sort-s2', sort: 'title', limit: 1, cursor: ids('title').cursor }).threads[0].id, z.id);
+      assert.equal(ids('cost').threads[0].id, z.id);
+    } },
+    { name: 'a cursor of another sort, or garbage, throws BAD_CURSOR', run: () => {
+      createThread({ title: 'bad-s2 1' }); createThread({ title: 'bad-s2 2' });
+      const c = listThreadsPage({ query: 'bad-s2', limit: 1 }).cursor;
+      assert.throws(() => listThreadsPage({ query: 'bad-s2', sort: 'title', cursor: c }), (e) => e.code === 'BAD_CURSOR');
+      assert.throws(() => listThreadsPage({ cursor: 'not-json' }), (e) => e.code === 'BAD_CURSOR');
+    } },
+    { name: 'ids limits the page and the count; an empty ids list is empty', run: () => {
+      const t = createThread({ title: 'ids-s2' });
+      assert.deepEqual(listThreadsPage({ ids: [t.id] }).threads.map((x) => x.id), [t.id]);
+      assert.equal(countThreads({ ids: [t.id], show: 'all' }), 1);
+      assert.deepEqual(listThreadsPage({ ids: [] }).threads, []);
+    } },
+  ]);
 });

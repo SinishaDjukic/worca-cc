@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Chat sidebar aligned with Runs + shared list keyboard
+
+- Shared list keyboard: Runs aligned + Keyboard shortcuts sheet: Cycle 2 fixes the web UI review's one major issue.
+- Chats column with the Runs anatomy: sections, View menu, pin, archive (busy-blocked), search in the top bar, New chat +: Both webui cycle-1 majors are fixed: ask-history-cleared now empties (full) or prunes (scoped threadIds) the Chats column and refetches, and the head meter is a start-aligned block so its ellipsis applies.
+- Topic groups for chats: Add to group, group dialog with suggested names, Group by Topic: Cycle 2 fixes both web UI majors: the Date view's Older count now counts the chats behind each group row (no phantom Older), and multi-project groups get their own 'Several projects' section.
+
+### Run card: "Where the work is" route + group page jump
+
+- Run page head: fixed 32px head row and full-width stage bar: The CSS-only s1 change matches plan v3 exactly: a 32px (40px touch) head row, the status block subgridded across the head so the stage bar is full width, no overhang, and a 16px gap.
+- 'Where the work is' route replaces the delivery tracker and Branch row: Both cycle-1 majors are fixed and tested.
+- Feature (group) page: no layout jump during live updates: The web UI review's major is fixed: keepUnchanged now refocuses the matching member link (same class, href and row data-key) after replacing a changed table.
+
+- Run page: a 'Where the work is' route replaces the tracker, the Branch row and the PR fact rows; a feature run no longer reads 'Merged into' the previous run's branch.
+
 ### Command summaries in chat (#911)
 
 - Chat: one-line command summaries, grouped cards, 760px column: Clean: the cycle-1 web UI major (the group head total froze while a grouped command ran) is fixed.

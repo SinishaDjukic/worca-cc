@@ -62,12 +62,16 @@ test('the quote chip has the Ask panel quote chip skeleton', async () => {
   assert.deepEqual(skeleton(buildQuoteChip(h.doc, { text: 'token bucket', src: 'docs.example.com' }, () => {})), skeleton(ref));
 });
 
-test('the head\'s New chat button is the Chat head\'s (ask-panel.mjs newChatButton): classes, label, glyph', async () => {
+test('the head\'s New chat button is the Chat head\'s + (ask-panel.mjs newChatPlus): classes, glyph; named New chat', async () => {
   const h = await loaded();
   const ref = h.doc.querySelector('.chat-head [data-ask-new-btn]');
   assert.ok(ref, 'the Ask panel rendered its New chat button');
   const mine = buildNewChatButton(h.doc, 'chat-head-btn', () => {});
-  const attrs = (b) => ({ cls: b.className, title: b.title, label: b.getAttribute('aria-label'), type: b.type, skel: skeleton(b), text: b.textContent,
+  // The panel's title adds its ⌥⌘N hint; the sidebar has no such key, so its name is just "New chat".
+  assert.equal(mine.title, 'New chat');
+  assert.equal(mine.getAttribute('aria-label'), 'New chat');
+  assert.match(ref.title, /^New chat /);
+  const attrs = (b) => ({ cls: b.className, type: b.type, skel: skeleton(b), text: b.textContent,
     attrs: [...b.attributes].map((a) => a.name).sort(),
     svg: [...b.querySelector('svg').attributes].map((a) => `${a.name}=${a.value}`).sort(), d: [...b.querySelectorAll('path')].map((p) => p.getAttribute('d')) });
   assert.deepEqual(attrs(mine), attrs(ref));

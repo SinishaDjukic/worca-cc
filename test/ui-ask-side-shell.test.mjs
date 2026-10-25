@@ -966,3 +966,47 @@ test('beside the page (> 1080px), a topic row chosen by keyboard keeps the colum
   assert.equal(els(ctx).aside.hidden, false, 'the column stays beside the page');
   assert.equal(e.doc.activeElement, e.page.querySelector('textarea.ask-input'));
 });
+
+// ---- the merge with the Chats column (#948): its menus open in <body>, outside #ask-side (merge review cycle 1) ------
+const LISTED = { ...SNAP.thread, createdAt: '2026-10-24T10:00:00.000Z', updatedAt: '2026-10-24T10:00:00.000Z' };
+const listArms = (href, opts, box) => (href.split('?')[0].endsWith('/api/ask/threads')
+  ? ok({ threads: [LISTED], total: 1, counts: { all: 1, needs: 0, archived: 0 } }) : threadArms(href, opts, box));
+/** Opens a chat row's ⋯ menu from the column's chats menu; answers the menu (it sits in <body>, not in the column). */
+const openRowMenu = async (ctx) => {
+  const e = els(ctx);
+  if (e.aside.hidden) { click(ctx, e.btn); await ctx.settle(4); }
+  if (e.page.dataset.history !== 'open') e.page.querySelector('[data-ask-side-thread]').click();
+  await ctx.settle(4);
+  e.page.querySelector(`[data-chat-history] .runs-item[data-row-key="chat:${TID}"] .runs-more`).click();
+  const menu = e.doc.querySelector('.wfv-menu');
+  assert.ok(menu && !e.aside.contains(menu), 'precondition: the row menu sits outside the column');
+  return menu;
+};
+
+test('Escape in a chat row menu the column opened closes the menu only: the project page and the New workspace wizard stay', async () => {
+  const ctx = await bootChat({ arms: listArms });
+  for (const hash of ['projects/worca-cc-551183d0', 'workspace-create']) {
+    await nav(ctx, hash, 10);
+    const at = ctx.window.location.hash;
+    const menu = await openRowMenu(ctx);
+    escape(ctx, menu.querySelector('[role="menuitem"]'));
+    await ctx.settle(4);
+    assert.equal(ctx.window.location.hash, at, `${hash}: the page stays`);
+    assert.equal(els(ctx).doc.querySelector('.wfv-menu'), null, `${hash}: the Escape closed the menu`);
+  }
+});
+
+test('? typed in the column on the Runs page opens the Chat keys, not the Runs keys', async () => {
+  const ctx = await bootChat({ arms: listArms });
+  await nav(ctx, 'runs', 8);
+  click(ctx, els(ctx).btn);
+  await ctx.settle(4);
+  const e = els(ctx);
+  const thread = e.page.querySelector('[data-ask-side-thread]');
+  thread.focus();
+  thread.dispatchEvent(new ctx.window.KeyboardEvent('keydown', { key: '?', shiftKey: true, bubbles: true, cancelable: true }));
+  await ctx.settle(2);
+  const heads = [...e.doc.querySelectorAll('.keys-modal .keys-h')].map((n) => n.textContent);
+  assert.ok(heads.includes('Chat page'), `the Chat sheet (${heads.join(', ')})`);
+  assert.ok(!heads.includes('Runs list'), 'not the Runs sheet');
+});

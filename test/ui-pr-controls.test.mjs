@@ -23,7 +23,7 @@ function glyphOf(el) {
 }
 const doc = () => new JSDOM('<!doctype html><body></body>').window.document;
 
-test('slice 3: the card head holds the head buttons with the one PR slot, then the tracker; no PR bar, in both templates', () => {
+test('slice 3: the card head holds the head buttons with the one PR slot, then the route; no PR bar, in both templates', () => {
   const page = new JSDOM(html).window.document;
   for (const id of ['run-detail-tpl', 'hist-detail-tpl']) {
     const tpl = page.getElementById(id).content;
@@ -35,9 +35,10 @@ test('slice 3: the card head holds the head buttons with the one PR slot, then t
     assert.ok(slot.hasAttribute('data-needs-git'), `${id}: the slot hides with git off`);
     assert.ok(tpl.querySelector('.rd-sheet-head > .rd-pr-feed[hidden]'), `${id}: the hidden PR status feed`);
     const head = tpl.querySelector('.rd-sheet-head');
-    assert.ok(head.nextElementSibling.matches('.rd-track'), `${id}: the tracker follows the head`);
-    assert.equal(tpl.querySelectorAll('.rd-track').length, 1, `${id}: one tracker`);
+    assert.ok(head.nextElementSibling.matches('.rd-route'), `${id}: the route follows the head`);
+    assert.equal(tpl.querySelectorAll('.rd-route').length, 1, `${id}: one route`);
     assert.equal(tpl.querySelector('.rd-pr-box'), null, `${id}: no PR bar`);
+    assert.ok(tpl.querySelector('.rd-sheet-head > .rd-now-top.run-status:first-child'), `${id}: the status block opens the head`);
   }
   const live = page.getElementById('run-detail-tpl').content.querySelector('.rd-sheet-head > .rd-head-acts');
   assert.ok(live.previousElementSibling.matches('.rd-live-row'), 'the head buttons come after the Live view row');

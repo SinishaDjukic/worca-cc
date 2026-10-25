@@ -144,6 +144,9 @@ test('run 3: the group page shares the run page head — kind word, crumbs, fact
   const kv = root.querySelector('.gpage-card.rd-sheet > .rd-kv');
   assert.ok(kv.previousElementSibling.matches('.rd-sheet-head') && kv.previousElementSibling.querySelector(':scope > .run-status'),
     'facts right under the status head (the one ship flow\'s status line + PR slot)');
+  const gHead = root.querySelector('.gpage-card.rd-sheet > .rd-sheet-head');
+  assert.ok(gHead.querySelector(':scope > .run-status:first-child'), 's1: a bare .run-status opens the head, so the card-head CSS reaches it');
+  assert.ok(gHead.querySelector(':scope > .rd-head-acts'), 's1: the buttons sit beside it in the same head');
   const shown = [...kv.querySelectorAll('.rd-kv-row:not([hidden])')].map((r) => [r.dataset.fact, r.querySelector('.rd-kv-v').textContent]);
   assert.deepEqual(shown, [['project', 'acme-app'], ['runs', '3 runs'], ['cost', '$4.20']]);
   assert.equal(root.querySelector('.run-status-group .run-chain-label').textContent, '1 done', 'said once: on the group bar');
@@ -224,4 +227,110 @@ test('slice 3: a user group\'s PR controls sit on the status line; separate read
   assert.deepEqual(one.head.cta, { state: 'view', href: gh(9).url, menu: true });
   assert.ok(one.root.querySelector('.gpage-card .run-status').dataset.text.includes('In review · 1 PR'));
   assert.equal(one.root.querySelector('.gpage-ship').hidden, true, 'no ship line after One');
+});
+
+// Slice 3 (no layout jump): the live hand-off the reproduction logged. Run 1 ends → run 2 waits → its ticket fires →
+// it runs before its graph is known → it has its graph. The card's stage bar is never hidden or rebuilt.
+const F = REPLAY_FRAMES;
+const WAIT2 = { ticket: { status: 'scheduled', after: { index: 1 } } };
+const liveRow = (raws, pr = null) => {
+  const model = groupModel({ kind: 'feature', title: 'Run tags', members: raws, pr }, { now: NOW });
+  return { kind: 'chain', groupKind: 'feature', groupId: 'feat_1', title: 'Run tags', model, costUsd: 0, planning: null,
+    members: model.members.map((m, i) => ({ position: i + 1, title: `Slice ${i + 1}`, href: `#running/r${i + 1}`, runId: `r${i + 1}`, model: m, cost: null })) };
+};
+const livePage = (opts = {}) => {
+  const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
+  const root = buildGroupPage(doc);
+  doc.body.append(root);
+  const paint = (raws, more = {}) => paintGroupPage(root, { row: liveRow(raws, more.pr), project: '', tab: 'runs', overview: false, logs: !!opts.logs }, NOOP);
+  return { doc, root, paint, bar: () => root.querySelector('.gpage-card .run-status-bar') };
+};
+
+test('slice 3: a live hand-off keeps the last stage bar — never hidden, same nodes, edge still', () => {
+  const { paint, bar: barOf, root } = livePage();
+  paint([F[15], WAIT2]);
+  const bar = barOf();
+  const track = bar.querySelector('.run-prog-track');
+  const marks = bar.querySelector('.run-prog-marks');
+  assert.equal(bar.hidden, false);
+  assert.equal(bar.dataset.mode, 'stages');
+  const text = () => root.querySelector('.gpage-card .run-status').dataset.text;
+  for (const [label, raws, line] of [
+    ['run 1 done, run 2 waiting', [F.at(-1), WAIT2], 'Run 2 of 2 · waiting for run 1'],
+    ['run 2 ticket fired', [F.at(-1), { ticket: { status: 'fired' } }], 'Run 2 of 2 · starting'],
+    ['run 2 running before its graph (a blank nodes progress)', [F.at(-1), { status: 'running' }], 'Run 2 of 2 · starting'],
+  ]) {
+    paint(raws);
+    assert.equal(text(), line, `${label}: the status line is the one the model gives, unchanged by the hold`);
+    assert.equal(bar.hidden, false, `${label}: the bar row stays`);
+    assert.equal(bar.dataset.mode, 'stages', `${label}: no flip to the markless bar`);
+    assert.equal(bar.querySelector('.run-prog-track'), track, `${label}: same track node`);
+    assert.equal(bar.querySelector('.run-prog-marks'), marks, `${label}: same marks node`);
+    assert.equal(bar.dataset.pulse, 'off', `${label}: nothing works on the kept bar`);
+  }
+  paint([F.at(-1), F[3]]);                                           // run 2 has its graph
+  assert.equal(bar.hidden, false);
+  assert.equal(bar.querySelector('.run-prog-track'), track, 'run 2\'s stages reuse the same skeleton');
+  assert.match(text(), /Run 2 of 2/);
+});
+
+test('slice 3: the hold never covers a real change — PR needs you, failed, stopped, ready and in review hide the bar', () => {
+  const PR = (extra = {}) => ({ url: 'https://github.com/o/r/pull/781', number: 781, state: 'OPEN', ...extra });
+  const prNeedsRun = { status: 'done', pr: PR({ checks: { state: 'failing', total: 12, failed: 3, pending: 0 } }) };
+  const openPrRun = { ...F.at(-1), pr: PR() };
+  for (const [label, raws, state] of [
+    ['a run in Needs you only through its PR', [prNeedsRun, WAIT2], 'needs-you'],
+    ['a failed member', [F.at(-1), { status: 'error' }], 'failed'],
+    ['a stopped member', [F.at(-1), { status: 'stopped' }], 'stopped'],
+    ['a group ready to ship', [F.at(-1), F.at(-1)], 'ready'],
+    ['a group in review', [openPrRun, openPrRun], 'in-review'],
+  ]) {
+    const { paint, bar } = livePage();
+    paint([F[15], WAIT2]);
+    assert.equal(bar().hidden, false, `${label}: painted first`);
+    assert.equal(liveRow(raws).model.state, state, `${label}: the fixture is the state it names`);
+    paint(raws);
+    assert.equal(bar().hidden, true, `${label}: hides the bar, as before`);
+  }
+});
+
+test('slice 3 (guard): a real nodes workflow (a step is active) repaints a painted stages bar as nodes', () => {
+  const { paint, bar: barOf } = livePage();
+  paint([F[15], WAIT2]);
+  const nodesRun = { status: 'running', stepper: { version: 2, graph: { nodes: [{ id: 'n1', kind: 'agent', key: 'build', label: 'Build' }] } },
+    steps: [], active: [{ nodeId: 'n1', executionId: 'e1' }] };
+  const prog = liveRow([F.at(-1), nodesRun]).model.current.progress;
+  assert.equal(prog.mode, 'nodes');
+  assert.ok(prog.step, 'the fixture has an active step, so it is not a blank progress');
+  paint([F.at(-1), nodesRun]);
+  const bar = barOf();
+  assert.equal(bar.hidden, false);
+  assert.equal(bar.dataset.mode, 'nodes', 'a known graph with no stages is the markless bar');
+});
+
+test('slice 3: an unchanged repaint keeps the Runs table and the Logs items (same nodes, focus kept); a change replaces them', () => {
+  const { doc, root, paint } = livePage({ logs: true });
+  paint([F[15], WAIT2]);
+  const ol = root.querySelector('.gpage-runs .run-members');
+  const log = root.querySelector('.gpage-logs .gpage-log');
+  const link = ol.querySelector('.run-member-title');
+  link.focus();
+  assert.equal(doc.activeElement, link);
+  paint([F[15], WAIT2]);
+  assert.equal(root.querySelector('.gpage-runs .run-members'), ol, 'same table node');
+  assert.equal(root.querySelector('.gpage-logs .gpage-log'), log, 'same Logs item');
+  assert.equal(doc.activeElement, link, 'focus stays on the member link');
+  paint([F.at(-1), WAIT2]);                                           // run 1's row now reads done
+  assert.notEqual(root.querySelector('.gpage-runs .run-members'), ol, 'a changed table is replaced');
+});
+
+test('slice 3: a focused member link keeps focus when ANOTHER row changes and the table is replaced', () => {
+  const { doc, root, paint } = livePage();
+  paint([F.at(-1), WAIT2]);
+  const ol = root.querySelector('.gpage-runs .run-members');
+  ol.querySelector('.run-member-title').focus();                    // row 1, done
+  paint([F.at(-1), F[3]]);                                            // row 2 starts running
+  const next = root.querySelector('.gpage-runs .run-members');
+  assert.notEqual(next, ol, 'the table was replaced');
+  assert.equal(doc.activeElement, next.querySelector('.run-member-title'), 'focus moved to the new row 1 link');
 });

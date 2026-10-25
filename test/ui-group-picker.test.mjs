@@ -32,3 +32,14 @@ test('the picker draws Needs you / Failed with the ? / ! symbol, filters by name
   name.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
   assert.deepEqual(picked, ['grp_2', 'new:Q4 work']);
 });
+
+test('onNew: New group closes the picker and hands over instead of the inline field', () => {
+  const { window } = new JSDOM('<!doctype html><body><button id="a">more</button></body>', { pretendToBeVisual: true });
+  const doc = window.document;
+  let asked = 0;
+  const p = openGroupPicker({ doc, anchor: doc.getElementById('a'), groups: GROUPS, onPick: () => {}, onNew: () => { asked += 1; } });
+  p.el.querySelector('.gp-new').click();
+  assert.equal(asked, 1);
+  assert.equal(doc.querySelector('.group-picker'), null);
+  assert.equal(doc.querySelector('input.gp-name'), null);
+});

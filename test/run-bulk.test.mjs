@@ -74,6 +74,12 @@ test('Archive asks first only when it takes a run that could still resume; Delet
   assert.doesNotMatch(bulkConfirm('delete', planBulk('delete', [dead])).message, /resumed/);
 });
 
+test('Restore asks nothing; Delete\'s confirm opens on Cancel (issue #948)', () => {
+  assert.equal(bulkConfirm('restore', planBulk('restore', [T('a', 'merged')])), null);
+  assert.equal(bulkConfirm('delete', planBulk('delete', [T('a', 'merged')])).focus, 'cancel');
+  assert.equal(bulkConfirm('stop', planBulk('stop', [T('a', 'working')])).focus, undefined);
+});
+
 test('a waiting group member that Archive skips reads "not started yet", not "never started"', () => {
   const plan = planBulk('archive', [T('g', 'waiting', { members: [T('t2', 'waiting', { ticketId: 't2' })] })]);
   assert.deepEqual(plan.skip.map((t) => t.reason), ['not started yet']);

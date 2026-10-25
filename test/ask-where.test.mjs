@@ -23,6 +23,7 @@ test('list and detail pages', () => {
   assert.deepEqual(whereOf({ view: 'workspaces', pageWorkspaceId: 'wks-havn-649ebfe7' }), { label: 'Workspace', icon: 'workspace' });
   assert.deepEqual(whereOf({ view: 'schedules' }), { label: 'Schedules', icon: 'schedule' });
   assert.deepEqual(whereOf({ view: 'runs' }), { label: 'Runs', icon: 'run' });
+  assert.deepEqual(whereOf({ view: 'requirements' }), { label: 'Requirements', icon: 'shape' }, 'a page of its own (app.js VIEW_NAMES)');
 });
 
 test('no page for Chat, Workflows, an unknown view, no view or no context', () => {

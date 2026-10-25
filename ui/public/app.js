@@ -108,12 +108,15 @@ import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './grou
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
 import { setShipDialogOpener, shipReason } from './shape/ship-card.mjs';
 import { runPositionLabel, groupKindWord, pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
-import { headModel, trackerModel, factsModel, renderHeadButtons, renderTracker, renderFacts, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
+import { headModel, routeModel, routeGroupOf, renderHeadButtons, renderRoute, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
   hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip } from './run-head.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
 import { loadRunsView, saveRunsView, viewChip, viewMenuItems } from './runs-view-menu.mjs';
-import { createRunsSelection, runsKeyAction, rowTarget, barModel, bulkBody, rangeKeys, labelTargets } from './runs-selection.mjs';
-import { bulkConfirm } from '../../src/shared/run-bulk.mjs';
+import { createRunsSelection, rowTarget, barModel, bulkBody, rangeKeys, labelTargets } from './runs-selection.mjs';
+import { bulkConfirm, planBulk, skipText } from '../../src/shared/run-bulk.mjs';
+import { listKeyAction, keyHint, isMac, LIST_FIELD } from './list-keys.mjs';
+import { openKeysSheet } from './keys-sheet.mjs';
+import { createListRove, paintBulkBar, LIST_NAV, navKey } from './list-dom.mjs';
 import { openGroupPicker } from './group-picker.mjs';
 import { ACTION_LABEL, HEAD_ACTIONS, MENU_ACTIONS, groupModel, runModel } from '../../src/shared/run-model.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
@@ -276,6 +279,7 @@ import { runCostBreakdown, floorText, auxLabelForSubagent } from '../../src/shar
 import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdown.mjs';
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
+import { createRequirementsView } from './requirements-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
 import { gitOn, applyGit, onGitChange as onGitFlip, refreshGit, GIT_MISSING_TEXT } from './git-gate.mjs';
@@ -294,6 +298,7 @@ import { renderPattern, patternProblem, PRESET_TYPES, TYPE_RE } from '../../src/
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
+import { chatRows, CHAT_LIMIT } from './global-search.mjs';
 import { pageTitle } from './topnav.mjs';
 import { activityCounts } from './activity-model.mjs';
 import { createChatHome, findFollowingThread } from './chat/home.mjs';
@@ -420,6 +425,13 @@ let lastChatHomeFlags = null;   // the switches chatHomeFlags last read: onHello
 const chatDeps = {
   openRunPanel: (ref, opts) => chatOpenRunPage(ref, opts),
   openArtifact: (ref, artifact) => chatDeps.openRunPanel(ref, { tab: 'artifacts' }),
+  // #948 s2: Rename… in the Chats column, and the project or workspace name on a chat row.
+  prompt: (o) => promptModal(o),
+  scopeName: (s) => {
+    if (s && s.projectKey) { const p = (state.projects || []).find((x) => x.key === s.projectKey); return p ? p.name || projectName(p.path) : ''; }
+    if (s && s.workspaceId) { const w = (state.workspaces || []).find((x) => x.id === s.workspaceId); return w ? w.name : ''; }
+    return '';
+  },
 };
 
 /** L11: open feature views by id, repainted on `shape-feature` and `schedules-changed`. host -> feature id. */
@@ -1289,6 +1301,10 @@ if (topnavSearchRoot) createTopnavSearch({
     if (!runsUi.view.labels.includes(label)) setRunsView({ labels: [...runsUi.view.labels, label] });
     goRunsList();
   },
+  // #948 s2: the Chats group (title and message text, server-side), first on the Chat page.
+  searchChats: (q) => fetch(`/api/ask/threads?limit=${CHAT_LIMIT}&q=${encodeURIComponent(q)}`).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+    .then((b) => chatRows(b && Array.isArray(b.threads) ? b.threads : [])),
+  chatsFirst: () => document.body.classList.contains('view-chat'),
 });
 
 // Restore before the first paint. `.sidebar` transitions width/flex-basis over
@@ -1756,6 +1772,12 @@ function handleServerMessage(msg) {
   // is global, so repaint it regardless of the open view.
   if (msg.type === 'budget-changed') {
     refreshBudget();
+    return;
+  }
+  // Requirements: a feature changed (a round finished, an edit, another tab), or a Product brief (`brief`:
+  // '<scopeType>:<scopeKey>', A7 §5). Only the open page repaints, and only when the frame concerns it.
+  if (msg.type === 'requirements-changed') {
+    if (currentView() === 'requirements') void requirementsView.changed(msg.seq, msg.brief);
     return;
   }
   // Scheduled runs: a ticket or a repeating schedule changed (here, in another tab, from the
@@ -11054,6 +11076,7 @@ document.addEventListener('keydown', (e) => {
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
   if (e.target?.closest?.('#ask-side')) return;                      // Ask worca beside the page: an Escape typed in the side column is the chat's
+  if (document.querySelector('.wfv-menu, .group-picker, .label-picker')) return;   // an open menu or picker (in <body>: the side column's Chats list too) closes first
   if (dialogOpen(document)) return;                                    // a pop-up owns Escape
   if (document.querySelector('.viewer-modal:not(.hidden), .guide-layer')) return; // a dialog or the guide owns Escape
   if (el.wizClose) el.wizClose.click();
@@ -13685,7 +13708,7 @@ const confirmGuard = el.confirmModal ? guardModal(el.confirmModal) : null;
 let shellDone = null;
 function modalShell({
   title = 'Confirm', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel',
-  checkbox = null, danger = false, fields = null, messageTone = null,
+  checkbox = null, danger = false, fields = null, messageTone = null, focus = 'ok',
 } = {}) {
   return new Promise((resolve) => {
     modalGen += 1;   // the extension pair prompt checks this to detect a confirm opened over it (see promptExtensionPair)
@@ -13762,7 +13785,7 @@ function modalShell({
     el.confirmCheckboxLabel.textContent = checkbox ? checkbox.label : '';
     el.confirmModal.classList.remove('hidden');
     confirmGuard?.opened({ kind: fields ? 'form' : 'decision', close: () => done(false) });
-    (inputs[0] || el.confirmOk).focus();
+    (inputs[0] || (focus === 'cancel' ? el.confirmCancel : el.confirmOk)).focus();
 
     let settled = false;
     const done = (val) => {
@@ -18976,17 +18999,24 @@ const HELPER_ENGINES = ['claude', 'codex'];
 // summaries only while commandSummaries is on.
 const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen', 'naming', 'commandSummary'];
 const helperPair = (p) => (p && p.model ? { model: p.model, ...(p.effort ? { effort: p.effort } : {}) } : undefined);
+// Run naming shows only while smartRunNaming is on, Command summaries only while commandSummaries is on; the
+// Requirements interview is a user-only slot (settings key requirementsInterview), listed only while its flag is on.
+// All asked at paint time, never a module constant.
+const claudeUserHelperJobs = () => [...CLAUDE_USER_HELPER_JOBS.filter((job) => (job !== 'naming' || flagOn('smartRunNaming'))
+  && (job !== 'commandSummary' || flagOn('commandSummaries'))),
+  ...(flagOn('requirements') ? ['requirementsInterview'] : [])];
 const CLAUDE_USER_HELPER_OWN = (data) => ({
   title: data.titleModel ? { model: data.titleModel } : undefined,
   classifier: data.autoWorkflowModel ? { model: data.autoWorkflowModel } : undefined,
   prDescription: data.prDescriptionModel ? { model: data.prDescriptionModel } : undefined,
   memoryDefrag: helperPair(data.memoryDefrag),
   agentGen: helperPair(data.agentGenModel),
+  requirementsInterview: data.requirementsInterview && (data.requirementsInterview.model || data.requirementsInterview.effort)
+    ? { ...(data.requirementsInterview.model ? { model: data.requirementsInterview.model } : {}), ...(data.requirementsInterview.effort ? { effort: data.requirementsInterview.effort } : {}) } : undefined,
   naming: helperPair(data.namingModel),
   commandSummary: helperPair(data.commandSummaryModel),
 });
-const claudeHelperJobs = () => CLAUDE_USER_HELPER_JOBS.filter((job) => (job !== 'naming' || flagOn('smartRunNaming'))
-  && (job !== 'commandSummary' || flagOn('commandSummaries')));
+let lastEngineSettingsData = null;
 async function paintEngineSettings(data) {
   const root = document.getElementById('engine-settings-root');
   if (!root) return;
@@ -19000,8 +19030,11 @@ async function paintEngineSettings(data) {
     for (const job of CODEX_HELPER_JOBS) fields[utilityId(engine, job)] = { own: data.utilityModels?.[engine]?.[job], inherited: { value: undefined, source: 'default' } };
   }
   const claudeOwn = CLAUDE_USER_HELPER_OWN(data || {});
-  const claudeJobs = claudeHelperJobs();
+  const claudeJobs = claudeUserHelperJobs();
   for (const job of claudeJobs) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
+  // The interview's empty choices read "Opus 5.5 (default)" and "medium (default)" (the answer's requirementsInterviewDefault).
+  const interviewDefault = data?.requirementsInterviewDefault;
+  if (interviewDefault?.model && claudeJobs.includes('requirementsInterview')) fields[utilityId('claude', 'requirementsInterview')].inherited = { value: { model: interviewDefault.model, ...(interviewDefault.effort ? { effort: interviewDefault.effort } : {}) }, source: 'default' };
   // Command summaries: unset runs on the cheapest ready Claude model, so the empty option names it ("Haiku 5.5 (default)").
   const csAuto = data?.commandSummaryModelEffective;
   if (fields[utilityId('claude', 'commandSummary')] && csAuto && csAuto.source === 'auto' && csAuto.model) {
@@ -19011,6 +19044,7 @@ async function paintEngineSettings(data) {
     noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
     defaultLabels: { claude: 'the default model' },
     jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] } });
+  lastEngineSettingsData = data;
   // Each non-Claude card's readiness line (GET /api/engines). Only on the Models page, where the cards live: a
   // settings-changed broadcast repaints this from any view, and that must not spawn a preflight.
   if (currentView() === 'models') void paintEngineCardStatus(root);
@@ -19027,6 +19061,9 @@ async function paintEngineCardStatus(root) {
       : `${e.label} can start runs: its CLI is installed and signed in.${e.reason ? ` Note: ${String(e.reason).replace(/\.$/, '')}.` : ''}`;
   }
 }
+// The flag flips while the Models page is open: the Engines card gains / loses the interview row. Refetched, since
+// GET /api/settings carries the row's stored pair and its default only while the flag is on.
+onFlagChange('requirements', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintHelperModelCards(); });
 document.getElementById('engineSettingsSave')?.addEventListener('click', async () => {
   const root = document.getElementById('engine-settings-root');
   const body = enginePatchToSettingsBody(readEngineSection(root));
@@ -24985,7 +25022,7 @@ function paintHdGlance(screen, record, data) {
   paintRunKindChip(glance.querySelector('.rd-page-meta'), mode);
 
   // Runs redesign slice 4: the one status block and the Group row, as on the live page (no bar: the run is finished).
-  // Slice 3: the status block is the card head's (paintHdHead: status line, head buttons, tracker).
+  // Slice 3: the status block is the card head's (paintHdHead: status line, head buttons, route).
   paintHdHead(screen, record, data);
   const home = groupHomeOf(record.id || '');
   paintGroupLine(glance.querySelector('.rd-kv .rd-group-line'), record.id || '', record.title || '', home);
@@ -25812,7 +25849,7 @@ function paintHdHeaderMeta(screen, record, data) {
     }));
   }
   // Branch row.
-  if (!(gitOn() && isGitRun(hdRunOf(record, data)))) { screen.querySelector('.hd-base').hidden = true; screen.querySelector('.hd-branch-copy').hidden = true; paintPageBranch(screen.querySelector('.hd-glance'), ''); return; }
+  if (!(gitOn() && isGitRun(hdRunOf(record, data)))) { screen.querySelector('.hd-base').hidden = true; screen.querySelector('.hd-branch-copy').hidden = true; return; }
   const base = screen.querySelector('.hd-base');
   const copyBtn = screen.querySelector('.hd-branch-copy');
   const br = st.branch && typeof st.branch === 'object' ? st.branch : {};
@@ -25829,7 +25866,6 @@ function paintHdHeaderMeta(screen, record, data) {
     : (source ? (mergedBack ? `Merged into ${source}` : `${source} ${same ? '←' : '→'}`) : '');
   base.hidden = !dropped && !source;
   copyBtn.hidden = dropped || mergedBack || !feature;
-  paintPageBranch(screen.querySelector('.hd-glance'), mergedBack ? source : feature);
   if (feature && !dropped && !mergedBack) {
     screen.querySelector('.hd-branch-name').textContent = feature;
     if (copyBtn.dataset.bound !== '1') {              // paintHdHeaderMeta re-runs (refreshHdFromRow)
@@ -26143,7 +26179,7 @@ function paintHdBanners(screen, record, data) {
   }
 
   // Kept work (the end-of-run commit failed); a live checkout is the Actions row. Slice 3 (D13): the card head carries
-  // Discard · Apply to branch and the tracker its patch and commands (screen._headKept). A PROVISIONAL retention (deep
+  // Discard · Apply to branch and the route its patch and commands (screen._headKept). A PROVISIONAL retention (deep
   // link, cache-warm row) offers no action: Apply and Discard must act on the authoritative row, which arrives one
   // fetch later and re-runs this painter. Handlers read the record at click time (hdCurrentRecord): refreshHdFromRow
   // REPLACES histDetailState.record.
@@ -30595,6 +30631,7 @@ document.addEventListener('keydown', (e) => {
   if (askPanel?.ownsKey(e)) return;
   if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
   if (e.target?.closest?.('#ask-side')) return;                      // Ask worca beside the page: an Escape typed in the side column is the chat's
+  if (document.querySelector('.wfv-menu, .group-picker, .label-picker')) return;   // an open menu or picker (in <body>: the side column's Chats list too) closes first
   if (dialogOpen(document)) return;                                    // a pop-up owns Escape (modal-guard.mjs)
   if (currentView() !== 'projects') return;
   if (!el.projShell || !el.projShell.classList.contains('detail-open')) return;
@@ -31373,7 +31410,7 @@ const chatRunControls = {
     // so a chain's card finds its group off those views too. The card repaints on its next frame or poll.
     if (!schedulesView.isLoaded() && !chatRunControls.__chainsAsked) {
       chatRunControls.__chainsAsked = true;
-      void withWorkspaces().then(() => schedulesView.load()).catch(() => {});
+      void withWorkspaces().then(() => schedulesView.load()).catch(() => {}).then(() => { routeChainsSettled = true; repaintOpenRunGroupLine(); });
     }
     // `shaping` is memory-only: after a reload only withShaper's card knows the feature.
     const fid = (snap && snap.shaper && snap.shaper.card && snap.shaper.card.feature && snap.shaper.card.feature.id)
@@ -32866,6 +32903,17 @@ const schedulesView = createSchedulesView({
   },
 });
 
+// Requirements (plans/requirements-design.md section 6): the page module owns its host; app.js routes and relays frames.
+const requirementsView = createRequirementsView({
+  host: $('#requirements-host'),
+  subEl: $('#requirements-sub'),
+  msgEl: $('#requirements-msg'),
+  // who: the signed-in person on a shared deployment (the start-before-Ready dialog's "Recorded as"), else nobody
+  deps: { route: (p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; }, who: () => viewer.name },
+});
+// Turning the flag off while the page is open leaves it for Chat (a hidden page must not stay up).
+onFlagChange('requirements', (on) => { if (!on && currentView() === 'requirements') showView('chat', ''); });
+
 /** The workspace read-model, loaded once: a scheduled run card names "Workspace · <name>", not an id. */
 function withWorkspaces() {
   return (state.workspaces || []).length ? Promise.resolve() : loadWorkspaces();
@@ -32881,7 +32929,8 @@ const RUNS_COLLAPSED_KEY = 'worca-cc.runs.collapsed';   // project / date sectio
 const runsUi = { view: loadRunsView(localStorage), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false,
   groupsToggled: new Map(), recentShown: RECENT_PAGE, selecting: false, anchorKey: null,
   sel: createRunsSelection(), rowsByKey: new Map(), memos: new Map(), lastModel: null, listCounts: null,
-  pendingSelect: null };   // pendingSelect: the pipeline ids "Tag N runs" (Statistics › Cost) asked to tick
+  pendingSelect: null, focusKey: null };   // pendingSelect: the pipeline ids "Tag N runs" (Statistics › Cost) asked to tick
+// focusKey: the list's roving Tab stop across repaints, `row:KEY` or `sec:KEY` (list-keys.mjs, issue #948).
 const memoFor = (id) => { if (!runsUi.memos.has(id)) runsUi.memos.set(id, {}); return runsUi.memos.get(id); };
 
 function histGroupName(p) {
@@ -33367,8 +33416,9 @@ const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, 
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over, then the selected row stands in;
-// a focused ⌄, checkbox, ⋯ or section head is found by its row or section.
-function runsFocusTarget(host, { key, pid, section, chain, check, more }) {
+// a focused ⌄, checkbox, ⋯ or section head is found by its row or section. `near`: the row or head that took a gone
+// row's place (issue #948), ahead of the open run's row.
+function runsFocusTarget(host, { key, pid, section, chain, check, more, near = null }) {
   const q = (sel) => host.querySelector(sel);
   const item = (k) => `.runs-item[data-row-key="${cssEscape(k)}"]`;
   if (chain) return q(`${item(chain)} > .runs-row-tail .runs-expand`);
@@ -33377,7 +33427,7 @@ function runsFocusTarget(host, { key, pid, section, chain, check, more }) {
   if (section) return q(`.runs-sec-head[data-section-key="${cssEscape(section)}"]`);
   if (!key) return null;
   const p = pid ? cssEscape(pid) : '';
-  return q(`a.runs-row[data-row-key="${cssEscape(key)}"]`) || (p && q(`a.runs-row[data-pipeline-id="${p}"]`)) || q('a.runs-row.selected');
+  return q(`a.runs-row[data-row-key="${cssEscape(key)}"]`) || (p && q(`a.runs-row[data-pipeline-id="${p}"]`)) || near || q('a.runs-row.selected');
 }
 function paintRunsList() {
   const host = el.runsList;
@@ -33428,6 +33478,8 @@ function paintRunsList() {
       const of = (cls) => (a.classList.contains(cls) && item ? item.dataset.rowKey : '');
       refocus = { key: a.matches('a.runs-row') ? (a.dataset.rowKey || '') : '', pid: a.dataset.pipelineId || '',
         section: a.dataset.sectionKey || '', chain: of('runs-expand'), check: of('runs-check'), more: of('runs-more') };
+      // A focused row the repaint drops (E, ⌫, an archive from elsewhere) hands the focus to its next, else previous, neighbour.
+      refocus.nearKeys = a.matches('a.runs-row') ? runsRove.around(a) : [];
     }
     // P2: each group line's current width, by row key, so its rebuilt twin starts where this one is.
     const lineFrom = new Map();
@@ -33444,9 +33496,11 @@ function paintRunsList() {
   paintRunsBar();
   paintRunsSelection();   // before the focus restore: its last fallback is the selected row
   if (refocus) {
-    const back = runsFocusTarget(host, refocus);
+    const near = runsRove.find(refocus.nearKeys);
+    const back = runsFocusTarget(host, { ...refocus, near });
     if (back) back.focus({ preventScroll: true });
   }
+  roveRunsList();   // every rebuild keeps the list one Tab stop (issue #948)
   // Only once the section is actually shown: `inRunsView()` reads the hash, which already says
   // #runs before its hashchange routes, and a WS frame painting in that gap must not use it up.
   if (runsUi.reveal && RUNS_VIEWS.has(currentShownView)) {
@@ -33559,8 +33613,11 @@ function toggleRunsGroup(key) {
 // ── The View menu (runs-view-menu.mjs, D3-D6) ──
 /** The View menu's "Started by" choices (shared deployments): the people in the loaded History, the viewer first. */
 const runsPeople = () => historyPeople().map((pp) => ({ key: pp.key, name: pp.label }));
+const runsSheet = (opener) => openKeysSheet({ doc: document, opener, advanced: levelAtLeast('advanced'),
+  fallback: () => roveRunsList() || document.getElementById('runs-view-btn') });
 function setRunsView(patch) {
   if (patch.select) { runsUi.selecting = true; paintRunsList(); return; }
+  if (patch.shortcuts) { runsSheet(document.getElementById('runs-view-btn')); return; }
   runsUi.view = { ...runsUi.view, ...patch };
   saveRunsView(localStorage, runsUi.view);
   runsUi.recentShown = RECENT_PAGE;
@@ -33642,15 +33699,89 @@ document.getElementById('runs-all')?.addEventListener('change', (e) => {
   runsUi.selecting = runsUi.sel.size > 0;
   paintRunsList();
 });
+// ── The list keys (list-keys.mjs, issue #948): one Tab stop, a moving focus, letter keys on the row or the selection ──
+const RUNS_NAV = LIST_NAV;
+const runsRove = createListRove({ host: el.runsList, state: runsUi });   // one Tab stop, focusin bookkeeping (list-dom.mjs)
+const runsNavItems = () => runsRove.items();
+const runsNavKey = navKey;
+const runsRowLink = (item) => item?.querySelector(':scope > a.runs-row') || null;
+/** The one Tab stop (list-dom.mjs): the remembered row or head, else the open run's row, else the first row. */
+function roveRunsList() { return runsRove.rove(); }
+function focusRunsNav(n) { runsRove.focus(n); }
+function moveRunsFocus(from, dir) { runsRove.move(from, dir); }
+const topKeyOf = (item) => (item.dataset.level === 'top' ? item.dataset.rowKey
+  : item.parentElement?.closest('.runs-item[data-level="top"]')?.dataset.rowKey);
+function extendRunsSelection(item, dir) {
+  const top = visibleTopKeys();
+  const from = item ? topKeyOf(item) : null;
+  const i = top.indexOf(from);
+  const to = top[i < 0 ? 0 : Math.max(0, Math.min(top.length - 1, i + dir))];
+  if (!to) return;
+  if (!top.includes(runsUi.anchorKey)) runsUi.anchorKey = from || to;
+  runsUi.selecting = true;
+  runsUi.sel.selectAll(rangeKeys(top, runsUi.anchorKey, to));   // adds, as Shift-click does
+  paintRunsList();
+  runsUi.focusKey = `row:${to}`;   // after the paint: its refocus of the old row records that row in focusin
+  focusRunsNav(roveRunsList());
+}
+function foldRunsKey(open, nav, item) {
+  if (nav && nav.matches('button.runs-sec-head')) {
+    if ((nav.getAttribute('aria-expanded') === 'true') !== open) nav.click();   // toggleRunsGroup, via the head's click
+    return;
+  }
+  const r = item && runsUi.rowsByKey.get(item.dataset.rowKey);
+  if (r && r.kind === 'chain') {
+    if (!!r.open !== open) item.querySelector(':scope > .runs-row-tail .runs-expand')?.click();   // repaint keeps the row focused
+    else if (open) focusRunsNav(item.querySelector('.runs-members a.runs-row'));
+    return;
+  }
+  if (!open && item?.dataset.level === 'member') focusRunsNav(runsRowLink(item.parentElement.closest('.runs-item[data-level="top"]')));
+}
+/** S / E / ⌫ / G / ⇧G: the selection through the bar's action, else the focused row's own ⋯ item (same rule, same level). */
+function runsLetterKey(action, item) {
+  // Where the focus goes back to: the same row, else the row that took its place (next, then previous), never the top.
+  const keys = runsRove.around(runsNavItems().find((n) => runsNavKey(n) === runsUi.focusKey), { self: true });
+  // After a confirm, activeElement sits on the hidden modal for a frame (jsdom has no requestAnimationFrame).
+  const frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (fn) => setTimeout(fn, 0);
+  const refocus = () => frame(() => {
+    if (el.runsListPane.contains(document.activeElement)) return;
+    const n = runsRove.find(keys);
+    if (n) runsUi.focusKey = runsNavKey(n);
+    focusRunsNav(n || roveRunsList());
+  });
+  if (runsUi.sel.size && (action === 'stop' || action === 'archive' || action === 'delete')) {
+    const act = action === 'archive' && runsUi.view.show === 'archived' ? 'restore' : action;
+    const plan = planBulk(act, selectedTargets());
+    if (plan.apply.length + plan.cancel.length) void runBulkAction(act, selectedTargets()).then(refocus);
+    return;
+  }
+  const r = item && runsUi.rowsByKey.get(item.dataset.rowKey);
+  if (!r || r.kind === 'sched') return;   // a waiting ticket's ⋯ has only Start now / Cancel
+  const more = item.querySelector(':scope > .runs-row-tail .runs-more');
+  const it = runsRowMenuItems(r, more).find((x) => x.key === action);
+  if (!it || it.disabled) return;   // what the ⋯ menu greys out (or leaves out) the key does not do
+  const out = it.onSelect();
+  if (out && typeof out.then === 'function') void out.then(refocus);
+}
 document.getElementById('runs-list-pane')?.addEventListener('keydown', (e) => {
   const t = e.target;
-  const action = runsKeyAction({ key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, targetIsRow: !!t.closest?.('a.runs-row'),
-    inField: !!t.closest?.('input:not([type="checkbox"]), textarea, select, [contenteditable="true"]') }, { size: runsUi.sel.size });
-  if (!action || action === 'clear') return;   // Escape is the document listener's (below)
+  const action = listKeyAction({ key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey,
+    targetIsRow: !!t.closest?.('a.runs-row'), inField: !!t.closest?.(LIST_FIELD) },
+  { size: runsUi.sel.size, list: 'runs', level: currentLevel(document) });
+  if (!action || action === 'clear' || action === 'help') return;   // Escape and ? are the document listeners' (below)
+  if (action !== 'all' && !el.runsList.contains(t)) return;   // the head's View button and the selection bar keep their keys
+  const item = t.closest?.('.runs-item') || null;
+  const nav = t.closest?.(RUNS_NAV) || runsRowLink(item);
   e.preventDefault();
   e.stopPropagation();
-  if (action === 'toggle') toggleRunsKey(t.closest('.runs-item').dataset.rowKey);
-  else { runsUi.sel.selectAll(visibleTopKeys()); runsUi.selecting = true; paintRunsList(); }
+  if (action === 'toggle') toggleRunsKey(item.dataset.rowKey);
+  else if (action === 'all') { runsUi.sel.selectAll(visibleTopKeys()); runsUi.selecting = true; paintRunsList(); }
+  else if (action === 'down' || action === 'up') moveRunsFocus(nav, action === 'down' ? 1 : -1);
+  else if (action === 'extend-down' || action === 'extend-up') extendRunsSelection(item, action === 'extend-down' ? 1 : -1);
+  else if (action === 'open') runsRowLink(item)?.click();   // the row's click handler routes it
+  else if (action === 'unfold' || action === 'fold') foldRunsKey(action === 'unfold', nav, item);
+  else if (action === 'menu') item?.querySelector(':scope > .runs-row-tail .runs-more')?.click();
+  else runsLetterKey(action, item);
 });
 // Esc clears the selection wherever focus is (the list, the open run beside it, the page). A menu, the group picker or
 // a modal owns its own Escape first.
@@ -33660,7 +33791,7 @@ function runsListOwnsEscape() {
 }
 function overlayUp() {
   return [el.confirmModal, el.viewerCard, el.pluginModal, el.reportModal, document.getElementById('stop-modal'), document.getElementById('shipit-modal')]
-    .some((m) => m && !m.classList.contains('hidden'));
+    .some((m) => m && !m.classList.contains('hidden')) || !!document.querySelector('.keys-modal');
 }
 document.addEventListener('keydown', (e) => {
   // openMenu (workflows/menu.mjs) and the group picker stop their Escape at the menu, so it never gets here.
@@ -33672,6 +33803,17 @@ document.addEventListener('keydown', (e) => {
   runsUi.selecting = false;
   runsUi.anchorKey = null;
   paintRunsList();
+});
+// ? anywhere on the Runs page (not while typing, not over a menu or a modal): the one Keyboard shortcuts sheet.
+document.addEventListener('keydown', (e) => {
+  if (e.defaultPrevented || document.querySelector('section.view[data-view="runs"]')?.classList.contains('hidden') !== false) return;
+  if (e.target?.closest?.('#ask-side')) return;   // Ask worca beside the page: a ? typed in the side column opens the Chat keys
+  const t = e.target;
+  if (listKeyAction({ key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey,
+    targetIsRow: false, inField: !!t.closest?.(LIST_FIELD) }) !== 'help') return;
+  if (overlayUp() || document.querySelector('.wfv-menu, .group-picker, .label-picker, .keys-modal')) return;
+  e.preventDefault();
+  runsSheet(document.activeElement);
 });
 // Touch: a long-press starts selecting (§3.2); the click that follows is swallowed.
 let runsPress = null;
@@ -33716,14 +33858,7 @@ function paintRunsBar() {
   }
   if (!on) return;
   const m = barModel(selectedTargets());
-  document.getElementById('runs-bulk-n').textContent = m.label;
-  for (const a of ['stop', 'archive', 'delete']) {
-    const b = bar.querySelector(`[data-bulk="${a}"]`);
-    if (!b) continue;
-    b.querySelector('.runs-bulk-c').textContent = String(m[a].count);
-    b.disabled = m[a].count === 0;
-    if (m[a].title) b.title = m[a].title; else b.removeAttribute('title');
-  }
+  paintBulkBar(bar, { label: m.label, actions: { stop: m.stop, archive: m.archive, delete: m.delete } });
   const labelBtn = bar.querySelector('[data-bulk="label"]');
   if (labelBtn) {
     labelBtn.disabled = !labelTargets(selectedTargets()).length;
@@ -33744,7 +33879,7 @@ function reloadRunsHistory() {
 const runsWord = (n) => `${n} run${n === 1 ? '' : 's'}`;
 async function runBulkAction(action, targets = selectedTargets()) {
   // Archive asks only when it takes an interrupted run that could still resume (bulkConfirm answers null otherwise).
-  const ask = bulkConfirm(action, barModel(targets)[action].plan);
+  const ask = bulkConfirm(action, planBulk(action, targets));
   if (ask && !(await confirmModal(ask))) return;
   try {
     const out = await postBulk(bulkBody(action, targets));
@@ -33752,7 +33887,7 @@ async function runBulkAction(action, targets = selectedTargets()) {
     runsUi.selecting = false;
     const n = out.done.length + out.cancelled.length;
     const skipped = out.skipped.length ? `Skipped ${out.skipped.length}: ${out.skipped.map((s) => `${s.title} (${s.reason})`).join(', ')}.` : '';
-    const verb = { stop: 'Stopped', archive: 'Archived', delete: 'Deleted' }[action];
+    const verb = { stop: 'Stopped', archive: 'Archived', delete: 'Deleted', restore: 'Restored' }[action];
     // D19: its toast offers Undo (restore), for TOAST_AUTO_MS.
     const undo = action === 'archive' && out.done.length ? { label: 'Undo', run: () => postBulk({ action: 'restore', targets: out.done.map((d) => ({ pipelineId: d.id })), groups: [] })
       .then(() => reloadRunsHistory())
@@ -33760,7 +33895,7 @@ async function runBulkAction(action, targets = selectedTargets()) {
       .catch((e) => notify(actionError('undo the archive', e, { next: 'The runs stay archived; restore them from Show = Archived.' }))) } : null;
     notify({ tone: n ? 'ok' : 'warn', title: `${verb} ${runsWord(n)}`, detail: skipped, action: undo });
     // The archived / deleted runs' parked live cards leave at once, ahead of the server's pipelines-changed frame.
-    if (action !== 'stop' && out.done.length) {
+    if ((action === 'archive' || action === 'delete') && out.done.length) {
       const gone = new Set(out.done.map((d) => d.id));
       dropParkedRuns((e) => gone.has(e.pipelineId));
     }
@@ -33796,22 +33931,29 @@ el.runsList?.addEventListener('click', (e) => {
   }
   openMenu({ doc: document, anchor: more, align: 'end', label: `More for ${r.title}`, items: runsRowMenuItems(r, more) });
 });
-/** The row ⋯ items (§3.4, D13): also the group page's ⋯ (run 3, D13), less Select and Open feature. */
+/** The row ⋯ items (§3.4, D13): also the group page's ⋯ (run 3, D13), less Select and Open feature. `key` is the
+ *  list-keys action that runs the item from the keyboard (issue #948); `hint` shows it. */
 function runsRowMenuItems(r, more) {
   const t = rowTarget(r);
   const m = barModel([t]);
   const adv = levelAtLeast('advanced');
+  const mac = isMac(window);
+  const k = (...tokens) => keyHint(tokens, mac);
   const g = r.kind === 'chain' || !r.pipelineId ? null : groupOfRun(r.pipelineId);
   const adhoc = !!(g && g.members.some((x) => x.adhoc && x.pipelineId === r.pipelineId));
   // A group offers its current member's PR (D31: a group raised to Needs you by a PR offers View PR).
   const prUrl = (r.model.pr && r.model.pr.url) || (r.kind === 'chain' && r.model.current && r.model.current.pr && r.model.current.pr.url) || '';
+  // An archived row's E brings it back (D7): the run page's word, the bulk restore action.
+  const back = r.archived ? planBulk('restore', [t]) : null;
   return [
-    { label: 'Select', onSelect: () => { runsUi.selecting = true; runsUi.anchorKey = r.key; toggleRunsKey(r.key); } },
-    { label: 'Stop', disabled: !m.stop.count, title: m.stop.title, onSelect: () => runBulkAction('stop', [t]) },
-    { label: 'Archive', disabled: !m.archive.count, title: m.archive.title, onSelect: () => runBulkAction('archive', [t]) },
-    ...(adv ? [{ label: 'Delete', disabled: !m.delete.count, title: m.delete.title, onSelect: () => runBulkAction('delete', [t]) }] : []),
-    ...(adv && r.kind !== 'chain' && r.pipelineId && !g ? [{ sep: true }, { label: 'Add to group…', onSelect: () => openAddToGroup(more, r) }] : []),
-    ...(adv && adhoc ? [{ sep: true }, { label: 'Remove from group', onSelect: () => removeRunFromGroup(r) }] : []),
+    { label: 'Select', key: 'toggle', hint: k('Space'), onSelect: () => { runsUi.selecting = true; runsUi.anchorKey = r.key; toggleRunsKey(r.key); } },
+    { label: 'Stop', key: 'stop', hint: k('S'), disabled: !m.stop.count, title: m.stop.title, onSelect: () => runBulkAction('stop', [t]) },
+    back
+      ? { label: 'Restore', key: 'archive', hint: k('E'), disabled: !back.apply.length, title: skipText(back), onSelect: () => runBulkAction('restore', [t]) }
+      : { label: 'Archive', key: 'archive', hint: k('E'), disabled: !m.archive.count, title: m.archive.title, onSelect: () => runBulkAction('archive', [t]) },
+    ...(adv ? [{ label: 'Delete', key: 'delete', hint: k('Backspace'), disabled: !m.delete.count, title: m.delete.title, onSelect: () => runBulkAction('delete', [t]) }] : []),
+    ...(adv && r.kind !== 'chain' && r.pipelineId && !g ? [{ sep: true }, { label: 'Add to group…', key: 'add-to-group', hint: k('G'), onSelect: () => openAddToGroup(more, r) }] : []),
+    ...(adv && adhoc ? [{ sep: true }, { label: 'Remove from group', key: 'leave-group', hint: k('shift', 'G'), onSelect: () => removeRunFromGroup(r) }] : []),
     ...(prUrl ? [{ label: VIEW_PR_LABEL, onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
     ...(r.groupKind === 'feature' ? [{ label: 'Open feature', onSelect: () => { location.hash = r.href; } }] : []),
   ];
@@ -33842,7 +33984,8 @@ async function groupFeatureMenuItems(anchor, row) {
 async function openGroupMoreMenu(anchor, row) {
   // A second press while the fetch is pending is ignored (it would queue a toggle that closes the menu again).
   if (anchor.getAttribute('aria-busy') === 'true') return;
-  const items = runsRowMenuItems(row, anchor).filter((it) => it.label !== 'Select' && it.label !== 'Open feature');
+  const items = runsRowMenuItems(row, anchor).filter((it) => it.label !== 'Select' && it.label !== 'Open feature')
+    .map(({ hint, ...it }) => it);   // the list keys do not act on the group page: no key hints there
   anchor.setAttribute('aria-busy', 'true');
   let feature;
   try { feature = await groupFeatureMenuItems(anchor, row); } finally { anchor.removeAttribute('aria-busy'); }
@@ -34928,8 +35071,9 @@ function crpShow(target, tab = '', { replace = false } = {}) {
   crp.kind = target.kind;
   crp.id = id;
   // A usage-limit pause's "Resume at" reads the resume tickets, which only the Runs views and Schedules load: Chat
-  // boots without them, and a second resume for a run that already has one booked is refused.
-  if (!schedulesView.isLoaded()) void withWorkspaces().then(() => schedulesView.load()).then(() => repaintLimitNotices());
+  // boots without them, and a second resume for a run that already has one booked is refused. s2 (D2): the load also
+  // ends the route's pending state, so the open run's head and route repaint with the landing branch.
+  if (!schedulesView.isLoaded()) void withWorkspaces().then(() => schedulesView.load()).then(() => { routeChainsSettled = true; repaintOpenRunGroupLine(); repaintLimitNotices(); });
   // P1: the page context moved — a boot deep link resolving, a hand-off or a resume follow write no hash, so the
   // composer's own hashchange refresh (its MCP preview) never runs for them.
   if (askPanel && typeof askPanel.contextChanged === 'function') askPanel.contextChanged();
@@ -35322,7 +35466,7 @@ const rdModel = (r) => runModel(rdModelRun(r), { memo: memoFor(r.pipelineId || r
 function paintRdStatus(screen, r) {
   const m = rdModel(r);
   const block = screen.querySelector('.rd-sheet .run-status');
-  paintRdHead(screen, r, m);                                 // slice 3: the card head (status line, head buttons, tracker)
+  paintRdHead(screen, r, m);                                 // slice 3: the card head (status line, head buttons, route)
   // The run page's bar takes over the removed .rd-prog's focus stop ("Run progress"): the D30 one-line wait state
   // shows only its stage words and gives it the focus ring.
   const bar = block && block.querySelector('.run-status-bar');
@@ -35449,6 +35593,7 @@ function repaintOpenRunGroupLine() {
     const home = groupHomeOf(hd.record.id || '');
     paintGroupLine(hd.screen.querySelector('.hd-glance .rd-kv .rd-group-line'), hd.record.id || '', hd.record.title || '', home);
     paintRunPlace(hd.screen, home);
+    if (hd.data) paintHdHead(hd.screen, hdCurrentRecord(hd.record), hd.data);   // s2: the route reads the group
   }
 }
 
@@ -35664,31 +35809,6 @@ function paintPageHead(glance, title, meta) {
     const node = m.firstChild && m.firstChild.nodeType === 3 ? m.firstChild : null;
     if (!node) m.prepend(document.createTextNode(text)); else if (node.data !== text) node.data = text;
   }
-}
-
-// The run's feature branch in the glance's meta line: the template's one chip, updated in
-// place (paintPageHead owns the line's first text node, the Running page appends a person
-// chip after it), hidden when there is none. Copies like the Details header's button. Bound
-// once; the click reads the PAINTED name, never the one this paint saw (the stale-capture
-// note in paintHdHeaderMeta). `fact`: the facts row it sits in, Branch or Merged (the base branch the work is in).
-function paintPageBranch(glance, name, fact = 'branch') {
-  const btn = glance && glance.querySelector(`.rd-kv-row[data-fact="${fact}"] .rd-page-branch`);
-  if (!btn) return;
-  btn.hidden = !name;
-  const row = btn.closest('.rd-kv-row');            // run 3 (D8): the facts block's Branch row
-  if (row) row.hidden = !name;
-  const label = btn.querySelector('.rd-page-branch-name');
-  if (name && label.textContent !== name) {
-    label.textContent = name;
-    btn.title = name;
-    btn.setAttribute('aria-label', `Copy ${fact === 'merged' ? 'the branch it was merged into' : 'branch name'} ${name}`);
-  }
-  if (btn.dataset.bound === '1') return;
-  btn.dataset.bound = '1';
-  btn.addEventListener('click', () => {
-    const painted = label.textContent || '';
-    if (painted) copyBranchToClipboard(btn, painted, painted);
-  });
 }
 
 // Projects, any way: the run's kind chip on a run page's meta line (RUN_KIND_CHIP). A span with no handler, so it is
@@ -35971,11 +36091,11 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
   });
 }
 
-/** Slice 3 (D4): what the card head and tracker read, the same on both run pages. `rec` is the History row (null while
+/** Slice 3 (D4): what the card head and route read, the same on both run pages. `rec` is the History row (null while
  *  a live run has none), `m` the page model, `kept` screen._headKept, `repaint` the page's head painter.
  *  Side effect: it starts the PR status reads it needs (the feed's, and each open workspace member's through
  *  ensurePrStatus); a landed member read calls `repaint`, which then finds it cached, so it cannot loop. */
-function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, repaint, liveSource = '' }) {
+function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, repaint, liveSource = '', liveBranch = '', pipelineId = '' }) {
   const ws = !!rec && rec.target === 'workspace' && hasWsMembers(rec);
   const own = !ws && rec && rec.pr && typeof rec.pr === 'object' && rec.pr.url ? rec.pr : null;
   const open = !!own && String(own.state || '').toUpperCase() === 'OPEN';
@@ -35991,14 +36111,22 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, re
       if (!hit || Date.now() - hit.at > PR_STATUS_STALE_MS) void ensurePrStatus(memberScope(x)).then((st) => { if (st && st !== hit && screen.isConnected) repaint(); });
     }
   }
+  const source = (rec && rec.sourceBranch) || liveSource || '';
+  const group = routeGroupOf(groupHomeOf((rec && rec.id) || pipelineId), { sourceBranch: source, histOf });
   return {
     m, mode, gitChrome, folder, canTry, kept, level: currentLevel(),
     workspace: ws ? { members: histWsMembers(rec).map((x) => ({
       key: x.memberKey, name: (names && names[x.memberKey]) || String(x.projectKey || x.memberKey).replace(/-[0-9a-f]{8}$/, ''),
       pr: x.pr && typeof x.pr === 'object' ? x.pr : null,
-      prStatus: prStatusCache.get(prStatusKey(memberScope(x))) || null })) } : null,
-    base: (prStatus && prStatus.base) || (rec && rec.sourceBranch) || liveSource || '',
-    source: (rec && rec.sourceBranch) || liveSource || '',
+      prStatus: prStatusCache.get(prStatusKey(memberScope(x))) || null,
+      // s2: the route's member row (branch → target; an unchanged member says so).
+      branch: x.branch || '', target: x.sourceBranch || '', affected: x.affected !== false })) } : null,
+    base: (prStatus && prStatus.base) || source,
+    source,
+    // s2: the route's own-branch row and its place in a feature or chain (read-only, from loaded data).
+    branch: (rec && rec.branch) || liveBranch || '',
+    group,
+    groupPending: !group && routeGroupsPending(),   // D2: never guess the landing branch before the groups answer
     pr: own, prInput: glancePrInput(rec), prStatus, watch: (rec && rec.watch) || null,
     canCreatePr: !!rec && histPrEligible(rec) && !(own && open),
     push: !!rec && !!rec.sameAsSource && rec.target !== 'workspace' && rec.mergeBack?.merged === true && !!rec.sourceBranch,
@@ -36007,7 +36135,16 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, re
   };
 }
 
-/** Slice 3: the card's status line, head buttons and tracker. `h`: the page's calls (headHandlers). */
+// D2/D7: the chains come from the Runs-section entry load (showView, RUNS_VIEWS holds `running` and `history`) or, in
+// Chat, the run panel's and chatRunControls.groupOf's loads; each sets this when it settles, success or not
+// (schedulesView.load() catches its own errors and resolves) and repaints the open run's head.
+let routeChainsSettled = false;
+/** D2: true until both group sources have answered once (loadRunGroups sets runGroupsLoaded on every outcome). */
+function routeGroupsPending() {
+  return !state.runGroupsLoaded || !(schedulesView.isLoaded() || routeChainsSettled);
+}
+
+/** Slice 3: the card's status line, head buttons and route. `h`: the page's calls (headHandlers). */
 function paintRunHead(screen, f, h) {
   const head = headModel(f);
   const block = screen.querySelector('.rd-sheet .run-status');
@@ -36021,8 +36158,8 @@ function paintRunHead(screen, f, h) {
   if (slot) slot._prMenu = (anchor) => h.onMenu(anchor, f);
   renderHeadButtons(screen.querySelector('.rd-head-acts'), head, slot, h);
   if (slot && slot._prMenuOpen) slot._prMenuOpen(f);
-  renderTracker(screen.querySelector('.rd-track'), trackerModel(f));
-  renderFacts(screen.querySelector('.rd-kv'), factsModel(f), { ...h, onMerged: (name) => paintPageBranch(screen, name, 'merged') });
+  // storage: app.js's guarded localStorage (reading window.localStorage throws with site data blocked).
+  renderRoute(screen.querySelector('.rd-route'), routeModel(f), { ...h, storage: localStorage, onCopy: (btn, name) => copyBranchToClipboard(btn, name, name) });
   return head;
 }
 
@@ -36042,15 +36179,15 @@ function paintHdHead(screen, record, data) {
   const m = pageModel(runModel(hdModelRun(rec, data), { memo: memoFor(record.id) }));
   const repaint = () => { if (glance.isConnected && histDetailState && histDetailState.screen === screen) paintHdHead(screen, hdCurrentRecord(record), histDetailState.data || data); };
   const f = headFactsOf(glance, record, {
-    m, mode, gitChrome: gitOn() && isGitRun(hdRunOf(record, data)), kept, repaint,
-    folder: bar ? { state: bar.state, total: changesCounts(changes).total } : null,
+    m, mode, gitChrome: gitOn() && isGitRun(hdRunOf(record, data)), kept, repaint, pipelineId: record.id,
+    folder: bar ? { state: bar.state, total: changesCounts(changes).total, dir: record.projectDir || '' } : null,
     canTry: hdCanTry(record, st, held.retained, held.provisional) && !hdCheckoutFor(record),
   });
   paintRunHead(glance, f, headHandlers(glance, () => hdCurrentRecord(record), { kept, ctaCls: 'hd-g-pr', folderTotal: f.folder ? f.folder.total : 0,
     onCreate: () => { const b = screen.querySelector('.hd-pr'); if (b) b.click(); } }));
 }
 
-/** Slice 3 (D11): the head buttons' and the tracker's calls. `cur()` re-reads the record at click time. */
+/** Slice 3 (D11): the head buttons' and the route's calls. `cur()` re-reads the record at click time. */
 function headHandlers(screen, cur, { onCreate, kept, ctaCls = '', folderTotal = 0 }) {
   const scopeOf = (memberKey) => { const rec = cur(); return { id: rec.id, projectKey: rec.projectKey, ...(memberKey ? { memberKey } : {}) }; };
   const feed = () => screen.querySelector('.rd-pr-feed');
@@ -36343,7 +36480,7 @@ async function loadRdPrStatus(host, scope) {
   }
 }
 /** Slice 3 (D10): the glance's hidden .rd-pr-feed is a paintRdPrStatus host whose answers repaint the card head and
- *  tracker (feed._prRender) instead of drawing a PR bar. Every other host draws its status line as before. */
+ *  route (feed._prRender) instead of drawing a PR bar. Every other host draws its status line as before. */
 function renderPrHost(host, scope, s) {
   if (!host._prRender) { renderRdPrStatus(host, scope, s); return; }
   const sig = JSON.stringify([s.checks, s.status, s.watch, s.resolveError]);
@@ -36577,7 +36714,9 @@ function paintRdHead(screen, r, m = rdModel(r)) {
     m: pageModel(m), mode, gitChrome: gitOn() && isGitRun(r), kept, repaint,
     // A live run has no History row yet: the state frame keeps its branch record and the sticky source (onState).
     liveSource: r.branchSource || (r.branch && typeof r.branch === 'object' && r.branch.source) || '',
-    folder: bar ? { state: bar.state, total: changesCounts(changes).total } : null,
+    liveBranch: (r.branch && typeof r.branch === 'object' && r.branch.feature) || r.branchFeature || '',
+    pipelineId: r.pipelineId || '',
+    folder: bar ? { state: bar.state, total: changesCounts(changes).total, dir: r.projectDir || '' } : null,
     canTry: !!(rec && rec.branch) && terminal && !kept && !!r.pipelineId && !hdCheckoutFor(rec),
   });
   paintRunHead(screen, f, headHandlers(screen, () => rdNoticeCarrier(r), { kept, ctaCls: 'rd-create-pr', folderTotal: f.folder ? f.folder.total : 0, onCreate: () => {
@@ -36839,7 +36978,7 @@ function paintRdWorktreeNotice(screen, r) {
     const open = runDetailState.screen;
     if (open && runDetailState.runId === r.runId) paintRdBanners(open, r);
   };
-  // Slice 3 (D13): the card head carries Discard · Apply to branch, the tracker the patch and the commands.
+  // Slice 3 (D13): the card head carries Discard · Apply to branch, the route the patch and the commands.
   screen._headKept = model && model.kind === 'retained' ? { provisional: !!model.provisional,
     recovery: r.pipelineId ? recoveryLinkOf(r.projectDir || null, rdNoticeCarrier(r), model) : null, commands: retainedCommands(model),
     onApply: (btn) => applyRetainedFlow(btn, rdNoticeCarrier(r), model, () => { r._retainedApplied = true; repaint(); }),
@@ -37141,8 +37280,7 @@ function paintRdHeader(screen, r) {
   const copyBtn = screen.querySelector('.rd-branch-copy');
   copyBtn.hidden = !feature;
   if (feature) screen.querySelector('.rd-branch-name').textContent = feature;
-  paintPageBranch(screen.querySelector('.rd-glance'), feature);
-  } else { for (const sel of ['.rd-base', '.rd-branch-copy', '.rd-sync']) { const n = screen.querySelector(sel); if (n) n.hidden = true; } paintPageBranch(screen.querySelector('.rd-glance'), ''); }
+  } else { for (const sel of ['.rd-base', '.rd-branch-copy', '.rd-sync']) { const n = screen.querySelector(sel); if (n) n.hidden = true; } }
 
   // Actions. A terminal run offers neither (D8); a later task adds the History
   // link here.
@@ -38106,7 +38244,7 @@ const navLinks = $$('.nav button[data-nav], #acct-settings');
 // guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
 // (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
 // Settings tabs once, pages of their own now.
-const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'feature', 'group'];
+const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'feature', 'group'];
 // One Runs page, five route names: the bare list (#runs), the two run routes every deep link already uses
 // (#running/<id>…, #history/<projectKey>/<id>…) and the group page's two (#feature/<id>…, #group/<id>…, run 3 D1).
 // All five render the `data-view="runs"` section and light the one Runs nav button.
@@ -38145,6 +38283,7 @@ const VIEW_TITLES = Object.freeze({
   guardrails: 'Guardrails', memory: 'Memory', ask: 'Chat', tags: 'Labels & cost tags',
   marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
   schedules: 'Schedules', presets: 'Presets',
+  requirements: 'Requirements',
 });
 function pageMinLevel() {
   if (currentShownView === 'settings') return { key: currentSettingsTab, min: SETTINGS_TAB_MIN_LEVEL[currentSettingsTab] || 'simple' };
@@ -38275,6 +38414,8 @@ function showView(name, param = '') {
     const moved = redirectRoute(name, param);
     if (moved) return showView(moved[0], moved[1]);
   }
+  // Requirements is behind its flag (docs/feature-flags.md): a deep link while it is off lands on Chat.
+  if (name === 'requirements' && !flagOn('requirements')) return showView('chat', '');
   // A bare #running / #history is the Runs list now (both lists merged into it). Replace the
   // entry rather than letting the hash sync below PUSH #runs: Back would land on #history
   // again, normalize again, and never get past it.
@@ -38430,7 +38571,7 @@ function showView(name, param = '') {
       // enrichment and blanks resolved PR words mid-navigation (was the History rule).
       loadHistoryView();
       // The open run's Group row reads the chains too (a Run-after chain is a group, runs redesign slice 4 D18).
-      void withWorkspaces().then(() => schedulesView.load()).then(() => { if (inRunsView()) { paintRunsList(); repaintOpenRunGroupLine(); } repaintLimitNotices(); });
+      void withWorkspaces().then(() => schedulesView.load()).then(() => { routeChainsSettled = true; if (inRunsView()) { paintRunsList(); repaintOpenRunGroupLine(); } repaintLimitNotices(); });
     }
     if (name === 'running') {
       routeRunDetail(param, { instant: entering });
@@ -38460,6 +38601,7 @@ function showView(name, param = '') {
     syncRunsPane();
   }
   if (name === 'stats') loadStatsView();
+  if (name === 'requirements') void requirementsView.show(param);
   if (name === 'schedules') { schedulesView.showTab(param); void withWorkspaces().then(() => schedulesView.load()); }
   if (name === 'team-metrics') {
     // #team-metrics/timeline opens the Timeline tab. Switching tabs inside the page only repaints:
@@ -38532,6 +38674,15 @@ function showView(name, param = '') {
       refreshNewPipelinePickers();
     }
   }
+  paintSearchPlaceholder();
+}
+/** #948 s2: the top search says what it finds on the Chat page. */
+function paintSearchPlaceholder() {
+  const input = document.getElementById('tsearch-input');
+  if (!input) return;
+  const text = document.body.classList.contains('view-chat') ? 'Search chats or ask' : 'Search or ask';
+  input.placeholder = text;
+  input.setAttribute('aria-label', text);
 }
 // Paint one Settings tab and run its loader. Called from showView ONLY, so every
 // entry point (tab click, hash, deep link, legacy redirect, boot, a direct

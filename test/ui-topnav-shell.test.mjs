@@ -263,10 +263,10 @@ test('New run opens #new from any page, a started run\'s page included, and is n
   } })));
 });
 
-test('the sidebar has no New run row: 13 pages, Chat first; New run is the top bar\'s button', () => {
+test('the sidebar has no New run row: 14 pages, Chat first; New run is the top bar\'s button', () => {
   const doc = new JSDOM(html).window.document;
   assert.equal(doc.querySelector('.nav [data-nav="new"]'), null);
-  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 13);
+  assert.equal(doc.querySelectorAll('.nav button[data-nav]').length, 14);
   assert.equal(doc.querySelector('.nav').firstElementChild.dataset.nav, 'chat');
 });
 

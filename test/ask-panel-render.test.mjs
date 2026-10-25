@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
 
-import { makePanel } from './helpers/ask-panel-harness.mjs';
+import { makePanel, openChat } from './helpers/ask-panel-harness.mjs';
 import { applyLevel } from '../ui/public/ui-level.mjs';
 import { registerFilesCard } from '../ui/public/chat/files-card.mjs';
 import { _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
@@ -37,12 +37,7 @@ function handlerFor(snapshot) {
 }
 
 async function openThread(ctx) {
-  ctx.panel.open();
-  await ctx.tick();                                    // the first show loaded the History column (closed at 1024px; rows built)
-  ctx.doc.querySelector('[data-chat-history] .ask-thread-pick').click();
-  await ctx.tick();
-  await ctx.tick();
-  ctx.flush();
+  await openChat(ctx, TID);
 }
 
 const userRow = (id, seq, text, blocks = []) => ({ id, threadId: TID, seq, role: 'user', text, blocks, status: null, reason: null, model: null, effort: null, usage: null, costUsd: null, durationMs: null, createdAt: 't' });

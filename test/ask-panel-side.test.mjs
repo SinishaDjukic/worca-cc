@@ -2,7 +2,7 @@
 // chips, "Leave … out" and the "on <page>" caption (Task 4), then the side column host (Task 5).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makePanel, key } from './helpers/ask-panel-harness.mjs';
+import { makePanel, key, deleteFromList } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
 import { pageChips } from '../ui/public/ask-page-chips.mjs';
 
@@ -655,17 +655,17 @@ test('the column lists untitled chats as New chat, hides the Recent block when t
   await ticks(ctx, 4);
   const rows = [...ctx.doc.querySelectorAll('.ask-side-recent-row')];
   assert.deepEqual(rows.map((r) => r.querySelector('.ask-side-recent-t').textContent), ['New chat', 'Two']);
-  assert.ok(rows[0].querySelector('.ask-thread-meter'), 'each row carries its meter');
+  assert.ok(rows[0].querySelector('.ask-side-recent-meter'), 'each row carries its meter');
   assert.equal(ctx.doc.querySelector('.ask-side-recent').hidden, false);
   ctx.doc.querySelector('.ask-side-history').click();
   assert.equal(ctx.panel.root.dataset.history, 'open');
   ctx.panel.destroy();
 });
 
-test('a History search never replaces the recent chats the empty state lists', async () => {
+test('a Chats column view other than All (Archived, Needs you) never replaces the recent chats the empty state lists', async () => {
   const state = { list: [listRow('ask_00000005', 'Alpha'), listRow('ask_00000006', 'Beta')] };
   const ctx = makePanel({ fetchHandler: (url, o) => {
-    if (url.startsWith('/api/ask/threads?') && /[?&]q=/.test(url)) return { ok: true, status: 200, json: async () => ({ threads: [listRow('ask_00000009', 'Gamma hit')], total: 1 }) };
+    if (url.startsWith('/api/ask/threads?') && /[?&]show=archived/.test(url)) return { ok: true, status: 200, json: async () => ({ threads: [{ ...listRow('ask_00000009', 'Gamma archived'), archivedAt: '2026-10-24T11:00:00.000Z' }], total: 1 }) };
     return api(state)(url, o);
   } });
   ctx.panel.setHost('dock');
@@ -674,12 +674,10 @@ test('a History search never replaces the recent chats the empty state lists', a
   const recent = () => [...ctx.doc.querySelectorAll('.ask-side-recent-row .ask-side-recent-t')].map((n) => n.textContent);
   assert.deepEqual(recent(), ['Alpha', 'Beta']);
   ctx.doc.querySelector('[data-ask-side-thread]').click();
-  const search = ctx.doc.querySelector('.chat-history input[type="search"], .chat-history input');
-  search.value = 'gamma';
-  search.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 260));
+  ctx.doc.querySelector('#chats-view-btn').click();
+  [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Archived').click();
   await ticks(ctx, 6);
-  assert.ok([...ctx.doc.querySelectorAll('.chat-history-body button')].some((b) => /Gamma hit/.test(b.textContent)), 'the menu shows the search hit');
+  assert.ok(ctx.doc.querySelector('[data-chat-history] a.runs-row[data-row-key="chat:ask_00000009"]'), 'the menu shows the archived chat');
   assert.deepEqual(recent(), ['Alpha', 'Beta'], 'the empty state still lists the newest chats');
   ctx.panel.destroy();
 });
@@ -972,7 +970,7 @@ test('deleting the chat the dot is lit for clears the dot: the button never open
   ctx.doc.querySelector('[data-ask-side-thread]').click();   // the chats menu
   await ticks(ctx, 4);
   state.list = [listRow(TID, 'Deck chat')];
-  ctx.doc.querySelector(`.ask-thread-row[data-thread-id="${NEWS}"] .ask-thread-trash`).click();
+  await deleteFromList(ctx, NEWS);
   await ticks(ctx, 8);
   assert.equal(ctx.panel.unreadThreadId(), null);
   assert.deepEqual(dots, [true, false]);
@@ -1031,7 +1029,7 @@ test('deleting another chat leaves the dot lit for the chat with the news', asyn
   ctx.doc.querySelector('[data-ask-side-thread]').click();   // the chats menu
   await ticks(ctx, 4);
   state.list = [listRow(NEWS, 'News chat')];
-  ctx.doc.querySelector(`.ask-thread-row[data-thread-id="${TID}"] .ask-thread-trash`).click();   // a chat that is not the news
+  await deleteFromList(ctx, TID);                            // a chat that is not the news
   await ticks(ctx, 8);
   assert.equal(ctx.panel.unreadThreadId(), NEWS, 'its news is still unseen');
   assert.deepEqual(dots, [true]);
@@ -1054,19 +1052,18 @@ test('a chat the person declines to delete, or whose delete the server refuses, 
   ctx.panel.pushServerFrame(newsFrame(NEWS));                // news in another chat while the column shows a new chat
   ctx.doc.querySelector('[data-ask-side-thread]').click();   // the chats menu
   await ticks(ctx, 4);
-  const trash = () => ctx.doc.querySelector(`.ask-thread-row[data-thread-id="${NEWS}"] .ask-thread-trash`);
-  trash().click();                                           // declined in the dialog
+  await deleteFromList(ctx, NEWS);                           // declined in the dialog
   await ticks(ctx, 6);
   assert.equal(ctx.panel.unreadThreadId(), NEWS, 'declined: the chat stays, so does its dot');
   box.confirm = true;
   box.fail = true;
-  trash().click();                                           // confirmed, the server answers 500
+  await deleteFromList(ctx, NEWS);                           // confirmed, the server answers 500
   await ticks(ctx, 8);
   assert.equal(ctx.panel.unreadThreadId(), NEWS, 'refused: the chat is still there');
   assert.deepEqual(dots, [true]);
   box.fail = false;
   state.list = [listRow(TID, 'Deck chat')];
-  trash().click();                                           // and now it goes
+  await deleteFromList(ctx, NEWS);                           // and now it goes
   await ticks(ctx, 8);
   assert.equal(ctx.panel.unreadThreadId(), null);
   assert.deepEqual(dots, [true, false]);
@@ -1083,15 +1080,15 @@ test('the recent chats repaint for a rename or a new meter (same ids), and as th
   await ticks(ctx, 6);
   const row = () => recentRows(ctx.doc)[0];
   assert.equal(row().querySelector('.ask-side-recent-t').textContent, 'Deck chat');
-  assert.equal(row().querySelector('.ask-thread-when').textContent, 'just now');
+  assert.equal(row().querySelector('.ask-side-recent-when').textContent, 'just now');
   clock.t = at + 5 * 60_000;
   ctx.panel.pageChanged();                                   // nothing but the time moved
-  assert.equal(row().querySelector('.ask-thread-when').textContent, '5m ago');
+  assert.equal(row().querySelector('.ask-side-recent-when').textContent, '5m ago');
   state.list = [{ ...RECENT[0], title: 'Renamed chat', totals: { costUsd: 1.5 } }, ...RECENT.slice(1)];
   ctx.doc.querySelector('[data-ask-side-thread]').click();   // the chats menu refetches the list
   await ticks(ctx, 8);
   assert.equal(row().querySelector('.ask-side-recent-t').textContent, 'Renamed chat');
-  assert.match(row().querySelector('.ask-thread-meter').textContent, /\$1\.5/);
+  assert.match(row().querySelector('.ask-side-recent-meter').textContent, /\$1\.5/);
   ctx.panel.destroy();
 });
 
@@ -1133,5 +1130,257 @@ test('under a dialog the History overlay takes no focus: a welcome or a confirm 
   ctx.panel.setHistoryOpen(true, { persist: false });
   ctx.panel.open();                                          // the composer refuses (the dialog and the overlay)
   assert.equal(ctx.doc.activeElement, ctx.doc.body, 'the focus stays for the dialog');
+  ctx.panel.destroy();
+});
+
+// ---- the merge with the Chats column (#948): its menus, its keys and its views beside the page ----------------------------
+test('beside the page a press in a menu the Chats column opened keeps the chats menu open; a press on the page closes it', async () => {
+  const ctx = makePanel({ fetchHandler: api({ list: [listRow(TID, 'Deck chat')] }) });
+  ctx.panel.setHost('dock');
+  ctx.panel.open();
+  await ticks(ctx, 4);
+  ctx.doc.querySelector('[data-ask-side-thread]').click();
+  await ticks(ctx, 4);
+  ctx.doc.querySelector(`[data-chat-history] .runs-item[data-row-key="chat:${TID}"] .runs-more`).click();
+  const menu = ctx.doc.querySelector('.wfv-menu');
+  assert.ok(menu && !ctx.panel.root.contains(menu), 'precondition: the row menu sits outside the column');
+  menu.querySelector('[role="menuitem"]').dispatchEvent(new ctx.window.Event('pointerdown', { bubbles: true, cancelable: true }));
+  assert.equal(ctx.panel.root.dataset.history, 'open', 'a press in the row menu keeps the chats menu');
+  const outside = ctx.doc.createElement('div');
+  ctx.doc.body.appendChild(outside);
+  outside.dispatchEvent(new ctx.window.Event('pointerdown', { bubbles: true, cancelable: true }));
+  assert.equal(ctx.panel.root.dataset.history, 'closed', 'a press on the page beside it closes it');
+  ctx.panel.destroy();
+});
+
+test('beside the page the Chat keys act only from inside the column: the page keeps its own ? and ⌥⌘N', async () => {
+  const ctx = makePanel({ fetchHandler: api({ list: [listRow(TID, 'Deck chat')] }) });
+  ctx.panel.setHost('dock');
+  ctx.panel.open();
+  await ticks(ctx, 4);
+  const onPage = ctx.doc.createElement('button');
+  ctx.doc.body.appendChild(onPage);
+  onPage.focus();
+  assert.equal(key(ctx.window, onPage, '?').defaultPrevented, false, 'the page\'s ? is its own');
+  assert.equal(ctx.doc.querySelector('.keys-modal'), null, 'no Chat keys sheet over the page');
+  assert.equal(key(ctx.window, onPage, 'n', { code: 'KeyN', metaKey: true, altKey: true }).defaultPrevented, false, 'nor ⌥⌘N');
+  const field = ctx.doc.querySelector('textarea.ask-input');
+  assert.equal(key(ctx.window, field, 'n', { code: 'KeyN', metaKey: true, altKey: true }).defaultPrevented, true, 'inside the column the Chat keys work');
+  ctx.panel.destroy();
+});
+
+test('a history clear empties the recent chats even while the Chats column shows another view', async () => {
+  const state = { list: [listRow('ask_00000005', 'Alpha'), listRow('ask_00000006', 'Beta')] };
+  const ctx = makePanel({ fetchHandler: (url, o) => {
+    if (url.startsWith('/api/ask/threads?') && /[?&]show=archived/.test(url)) return { ok: true, status: 200, json: async () => ({ threads: [], total: 0 }) };
+    return api(state)(url, o);
+  } });
+  ctx.panel.setHost('dock');
+  ctx.panel.open();
+  await ticks(ctx, 4);
+  ctx.doc.querySelector('[data-ask-side-thread]').click();
+  ctx.doc.querySelector('#chats-view-btn').click();
+  [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Archived').click();
+  await ticks(ctx, 6);
+  assert.equal(ctx.doc.querySelectorAll('.ask-side-recent-row').length, 2, 'precondition: the recent chats outlive the view change');
+  ctx.panel.pushServerFrame({ type: 'ask-history-cleared', threadIds: ['ask_00000005'] });
+  assert.deepEqual([...ctx.doc.querySelectorAll('.ask-side-recent-t')].map((n) => n.textContent), ['Beta'], 'the chats it names leave');
+  ctx.panel.pushServerFrame({ type: 'ask-history-cleared' });
+  assert.equal(ctx.doc.querySelector('.ask-side-recent').hidden, true, 'a clear of every chat leaves none');
+  ctx.panel.destroy();
+});
+
+test('a recent chat deleted from the Needs you view leaves the recent chats, even when no list can be read again', async () => {
+  const alpha = { ...listRow('ask_00000005', 'Alpha'), waiting: true, tracking: true };
+  const state = { list: [alpha, listRow('ask_00000006', 'Beta')] };
+  const ctx = makePanel({ fetchHandler: (url, o) => {
+    if (state.down && url.startsWith('/api/ask/threads?')) return { ok: false, status: 500, json: async () => ({}) };
+    if (url.startsWith('/api/ask/threads?') && /[?&]show=needs/.test(url)) return { ok: true, status: 200, json: async () => ({ threads: state.list.filter((t) => t.waiting), total: 1 }) };
+    if (url === '/api/ask/threads/ask_00000005' && o && o.method === 'DELETE') {
+      state.list = state.list.filter((t) => t.id !== 'ask_00000005');
+      state.down = true;                                     // only the delete itself can take the row out
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    }
+    return api(state)(url, o);
+  } });
+  ctx.panel.setHost('dock');
+  ctx.panel.open();
+  await ticks(ctx, 4);
+  ctx.doc.querySelector('[data-ask-side-thread]').click();
+  ctx.doc.querySelector('#chats-view-btn').click();
+  [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Needs you').click();
+  await ticks(ctx, 6);
+  assert.deepEqual([...ctx.doc.querySelectorAll('.ask-side-recent-t')].map((n) => n.textContent), ['Alpha', 'Beta'], 'precondition');
+  await deleteFromList(ctx, 'ask_00000005');
+  await ticks(ctx, 8);
+  assert.deepEqual([...ctx.doc.querySelectorAll('.ask-side-recent-t')].map((n) => n.textContent), ['Beta']);
+  ctx.panel.destroy();
+});
+
+test('the recent chats are the newest by activity, whatever leads the Chats column (a pinned older chat)', async () => {
+  const pinnedOld = { ...listRow('ask_00000005', 'Pinned old'), pinnedAt: '2026-10-20T09:00:00.000Z', updatedAt: '2026-10-20T09:00:00.000Z' };
+  const fresh = { ...listRow('ask_00000006', 'Fresh'), updatedAt: '2026-10-24T12:00:00.000Z' };
+  const ctx = makePanel({ fetchHandler: api({ list: [pinnedOld, listRow('ask_00000007', 'Middle'), fresh] }) });
+  ctx.panel.setHost('dock');
+  ctx.panel.open();
+  await ticks(ctx, 4);
+  assert.deepEqual([...ctx.doc.querySelectorAll('.ask-side-recent-t')].map((n) => n.textContent), ['Fresh', 'Middle', 'Pinned old']);
+  ctx.panel.destroy();
+});
+
+test('Delete group (the Chats column) clears the dot and the recent row of a chat it removed, as a delete does', async () => {
+  const GID = 'askg_00000001';
+  const dots = [];
+  const state = { list: [{ ...listRow(NEWS, 'News chat'), groupId: GID }, listRow(TID, 'Deck chat')] };
+  const base = api(state);
+  const ctx = makePanel({ fetchHandler: (url, o = {}) => {
+    if (url === '/api/ask/groups') return { ok: true, status: 200, json: async () => ({ groups: state.list.some((t) => t.groupId) ? [{ id: GID, name: 'Release prep', count: 1, total: 1 }] : [] }) };
+    if (url === `/api/ask/groups/${GID}?deleteChats=true` && o.method === 'DELETE') {
+      state.list = state.list.filter((t) => t.groupId !== GID);
+      state.down = true;                                     // the list's re-read fails: only the ids it names take the row out
+      return { ok: true, status: 200, json: async () => ({ threadIds: [NEWS] }) };
+    }
+    if (state.down && url.startsWith('/api/ask/threads?')) return { ok: false, status: 500, json: async () => ({}) };
+    return base(url, o);
+  }, deps: { onUnread: (on) => dots.push(on) } });
+  ctx.panel.setHost('dock');
+  ctx.panel.open();
+  await ticks(ctx, 4);
+  ctx.panel.pushServerFrame(newsFrame(NEWS));                // news in a grouped chat while the column shows a new chat
+  assert.equal(ctx.panel.unreadThreadId(), NEWS, 'precondition: the dot is lit for it');
+  assert.ok([...ctx.doc.querySelectorAll('.ask-side-recent-t')].some((n) => n.textContent === 'News chat'), 'precondition: a recent row');
+  ctx.doc.querySelector('[data-ask-side-thread]').click();   // the chats menu
+  await ticks(ctx, 4);
+  ctx.doc.querySelector(`[data-chat-history] .runs-item[data-row-key="cgroup:${GID}"] .runs-more`).click();
+  [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Delete group…').click();
+  await ticks(ctx, 10);
+  assert.equal(ctx.panel.unreadThreadId(), null, 'the button never opens a chat that is gone');
+  assert.deepEqual(dots, [true, false]);
+  assert.deepEqual([...ctx.doc.querySelectorAll('.ask-side-recent-t')].map((n) => n.textContent), ['Deck chat']);
+  ctx.panel.destroy();
+});
+
+// ---- the side column's Recent chats whatever view the Chats column was left on (merge review cycle 1, M2) ----------
+/** A storage holding the Chats view the person left the list on (chats-list.mjs CHATS_VIEW_KEY). */
+const savedView = (view) => {
+  const map = new Map([['worca-cc.chats.view', JSON.stringify(view)]]);
+  return { getItem: (k) => (map.has(k) ? map.get(k) : null), setItem: (k, v) => { map.set(k, String(v)); }, removeItem: (k) => { map.delete(k); } };
+};
+const recentTitles = (doc) => [...doc.querySelectorAll('.ask-side-recent-t')].map((n) => n.textContent);
+const pickView = (ctx, label) => {
+  ctx.doc.querySelector('#chats-view-btn').click();
+  [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === label).click();
+};
+
+test('a Chats list left on Needs you: the column still lists the newest chats and History; an archive and a view change keep them right', async () => {
+  const alpha = { ...listRow('ask_00000005', 'Alpha'), waiting: true };
+  const state = { list: [alpha, listRow('ask_00000006', 'Beta')] };
+  const base = api(state);
+  const ctx = makePanel({ storage: savedView({ show: 'needs' }), fetchHandler: (url, o = {}) => {
+    if (url.startsWith('/api/ask/threads?') && /[?&]show=needs/.test(url)) {
+      const threads = state.list.filter((t) => t.waiting);
+      return { ok: true, status: 200, json: async () => ({ threads, total: threads.length }) };
+    }
+    if (url === '/api/ask/threads/ask_00000005' && o.method === 'PATCH' && JSON.parse(o.body).archived === true) {
+      state.list = state.list.filter((t) => t.id !== 'ask_00000005');
+      return { ok: true, status: 200, json: async () => ({ thread: alpha }) };
+    }
+    return base(url, o);
+  } });
+  ctx.panel.setHost('dock');
+  ctx.panel.open();
+  await ticks(ctx, 6);
+  assert.deepEqual(recentTitles(ctx.doc), ['Alpha', 'Beta'], 'the newest chats, not the Needs you list');
+  assert.equal(ctx.doc.querySelector('.ask-side-recent').hidden, false, 'with its History button');
+  ctx.doc.querySelector('[data-ask-side-thread]').click();
+  await ticks(ctx, 4);
+  ctx.doc.querySelector('[data-chat-history] .runs-item[data-row-key="chat:ask_00000005"] .runs-more').click();
+  [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Archive').click();
+  await ticks(ctx, 8);
+  assert.deepEqual(recentTitles(ctx.doc), ['Beta'], 'a chat archived from Needs you leaves them');
+  pickView(ctx, 'All');
+  assert.deepEqual(recentTitles(ctx.doc), ['Beta'], 'while the All view loads they stay');
+  await ticks(ctx, 6);
+  assert.deepEqual(recentTitles(ctx.doc), ['Beta']);
+  ctx.panel.destroy();
+});
+
+test('a Chats list sorted by title with more to page: the column still lists the newest chats by activity', async () => {
+  const old = (id, title) => ({ ...listRow(id, title), updatedAt: '2026-10-01T10:00:00.000Z' });
+  const fresh = { ...listRow('ask_00000007', 'Zulu fresh'), updatedAt: '2026-10-24T12:00:00.000Z' };
+  const ctx = makePanel({ storage: savedView({ show: 'all', sort: 'title', groupBy: 'none' }), fetchHandler: (url, o = {}) => {
+    if (url.startsWith('/api/ask/threads?') && /[?&]sort=title/.test(url)) {
+      return { ok: true, status: 200, json: async () => ({ threads: [old('ask_00000005', 'Alpha'), old('ask_00000006', 'Beta')], cursor: 'next', total: 3 }) };
+    }
+    return api({ list: [fresh, old('ask_00000005', 'Alpha'), old('ask_00000006', 'Beta')] })(url, o);
+  } });
+  ctx.panel.setHost('dock');
+  ctx.panel.open();
+  await ticks(ctx, 6);
+  assert.deepEqual(recentTitles(ctx.doc), ['Zulu fresh', 'Alpha', 'Beta'], 'not the first page of the A–Z list');
+  ctx.panel.destroy();
+});
+
+test('Rename in the Chats column renames the chat the column shows on its menu button too', async () => {
+  const state = { snap: snapOf([userRow('askm_u0000001', 1, 'hi')]), list: [listRow(TID, 'Deck chat')] };
+  const ctx = makePanel({ fetchHandler: api(state), deps: { chatDeps: { prompt: async () => ({ title: 'Renamed chat' }) } } });
+  ctx.panel.setHost('dock');
+  ctx.panel.open({ threadId: TID });
+  await ticks(ctx, 4);
+  ctx.flush();
+  const menu = ctx.doc.querySelector('[data-ask-side-thread]');
+  assert.equal(menu.textContent, 'Deck chat');
+  menu.click();
+  await ticks(ctx, 4);
+  ctx.doc.querySelector(`[data-chat-history] .runs-item[data-row-key="chat:${TID}"] .runs-more`).click();
+  [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Rename…').click();
+  await ticks(ctx, 6);
+  assert.equal(menu.textContent, 'Renamed chat');
+  ctx.panel.destroy();
+});
+
+test('the Chat page asks nothing apart for the recent rows; the side column asks once it shows the chat page, and a repaint of the same list asks nothing more', async () => {
+  const alpha = { ...listRow('ask_00000005', 'Alpha'), waiting: true };
+  const base = api({ list: [alpha, listRow('ask_00000006', 'Beta')] });
+  const ctx = makePanel({ storage: savedView({ show: 'needs' }), fetchHandler: (url, o = {}) => {
+    if (url.startsWith('/api/ask/threads?') && /[?&]show=needs/.test(url)) return { ok: true, status: 200, json: async () => ({ threads: [alpha], total: 1 }) };
+    return base(url, o);
+  } });
+  const apart = () => ctx.fetchCalls.filter((c) => c.url.startsWith('/api/ask/threads?show=all&sort=activity')).length;
+  ctx.panel.open();                                          // the Chat page
+  await ticks(ctx, 6);
+  assert.ok(ctx.doc.querySelector('[data-chat-history] a.runs-row[data-row-key="chat:ask_00000005"]'), 'precondition: the Needs you list loaded');
+  assert.equal(apart(), 0, 'the Chat page shows no recent rows: nothing asked');
+  ctx.panel.setHost('dock');
+  await ticks(ctx, 4);
+  assert.deepEqual(recentTitles(ctx.doc), ['Alpha', 'Beta'], 'the side column catches up');
+  assert.equal(apart(), 1);
+  ctx.doc.querySelector('[data-chat-history] .runs-item[data-row-key="chat:ask_00000005"] .runs-check').click();
+  await ticks(ctx, 4);
+  assert.ok(ctx.doc.querySelector('[data-chat-history] .is-selecting'), 'precondition: the selection repainted the list');
+  assert.equal(apart(), 1, 'the same list: nothing asked again');
+  ctx.panel.destroy();
+});
+
+test('an apart answer for the recent rows that lands after the All view loaded never paints over its newest chats', async () => {
+  const base = api({ list: [listRow('ask_00000005', 'Alpha'), listRow('ask_00000006', 'Beta')] });
+  let release = null;
+  const ctx = makePanel({ storage: savedView({ show: 'needs' }), fetchHandler: (url, o = {}) => {
+    if (url.startsWith('/api/ask/threads?') && /[?&]show=needs/.test(url)) return { ok: true, status: 200, json: async () => ({ threads: [], total: 0 }) };
+    if (!release && url.startsWith('/api/ask/threads?show=all')) {   // the first apart fetch: held
+      return new Promise((r) => { release = () => r({ ok: true, status: 200, json: async () => ({ threads: [listRow('ask_00000009', 'Stale')], total: 1 }) }); });
+    }
+    return base(url, o);
+  } });
+  ctx.panel.setHost('dock');
+  ctx.panel.open();
+  await ticks(ctx, 4);
+  assert.ok(release, 'precondition: the apart fetch is held');
+  pickView(ctx, 'All');
+  await ticks(ctx, 6);
+  assert.deepEqual(recentTitles(ctx.doc), ['Alpha', 'Beta'], 'the All view gives them');
+  release();
+  await ticks(ctx, 4);
+  assert.deepEqual(recentTitles(ctx.doc), ['Alpha', 'Beta'], 'the late answer is dropped');
   ctx.panel.destroy();
 });

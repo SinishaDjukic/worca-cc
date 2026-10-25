@@ -12,6 +12,10 @@ import { CREATE_PR_LABEL } from './ship-words.mjs';
 
 const BAR_STATES = new Set(['starting', 'working', 'needs-you', 'paused']);       // D20: the states the list draws a bar for
 const GROUP_ENDED = new Set(['ready', 'in-review', 'merged']);
+// Slice 3 (the group page's `hold`): a member between two runs, or before its graph is known, keeps the last bar.
+const BETWEEN_RUNS = new Set(['waiting', 'starting']);
+// A progress that knows nothing yet: runProgress's P6 answer for a run with no graph (no step, nothing done).
+const blankProgress = (p) => !!p && p.mode === 'nodes' && !p.step && !(p.fraction > 0);
 // View PR is navigation, never the primary (design system, PR controls).
 const PRIMARY = new Set(['answer', 'resume', 'retry', 'start-now', 'ship']);
 // A PR bar button leads with its icons.mjs glyph, 14px on .btn-sm.
@@ -59,8 +63,9 @@ export function kindLabel(row) {
   return `${kind} · ${n} run${n === 1 ? '' : 's'}`;
 }
 
-/** Paint the status block into `host` (idempotent): dot or symbol, status text, group bar, current run bar. */
-export function paintRunStatus(host, m) {
+/** Paint the status block into `host` (idempotent): dot or symbol, status text, group bar, current run bar.
+ *  `hold` (the group page, slice 3): a live group's member between runs keeps the last bar, edge still. */
+export function paintRunStatus(host, m, { hold = false } = {}) {
   if (!host || !m) return;
   const doc = host.ownerDocument;
   if (!host.__rs) {
@@ -111,6 +116,14 @@ export function paintRunStatus(host, m) {
         row.dataset.role = x.key;
         return row;
       })));
+  }
+  // Slice 3: keep the last good bar (same nodes, never hidden or rebuilt markless for a frame). Never for a member in
+  // Needs you through its PR, a failed or stopped one, or an ended group: those are real changes.
+  const keep = hold && g && !!cur && !cur.prNeeds && !bar.hidden && !!bar.dataset.mode
+    && (show ? blankProgress(cur.progress) : BETWEEN_RUNS.has(cur.state));
+  if (keep) {
+    bar.dataset.pulse = 'off';
+    return;
   }
   bar.hidden = !show;
   if (show) paintProgressBar(bar, cur.progress, { pulse: !!cur.pulse });

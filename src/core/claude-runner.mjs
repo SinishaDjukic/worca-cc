@@ -65,7 +65,10 @@ export function mockEnabled(opts) {
  *
  * @param {object} o
  * @param {string} o.cwd                 working directory for claude
- * @param {string} [o.systemPrompt]      appended system prompt
+ * @param {string} [o.systemPrompt]      appended system prompt (or the replacing one, see systemPromptMode)
+ * @param {'append'|'replace'} [o.systemPromptMode]  'replace' ⇒ systemPrompt REPLACES Claude Code's own
+ *   (--system-prompt / staged --system-prompt-file; Requirements A1.1). Anything else, absent included ⇒
+ *   today's --append-system-prompt(-file), argv byte-identical. The host-guard preamble heads it either way.
  * @param {string} o.prompt              the user prompt (-p)
  * @param {string[]} [o.allowedTools]    e.g. ["Read","Write","Edit","Bash"]
  * @param {string} [o.permissionMode]    e.g. "acceptEdits"
@@ -129,6 +132,7 @@ export async function runClaude(o = {}) {
   const {
     cwd = process.cwd(),
     systemPrompt = '',
+    systemPromptMode,
     prompt = '',
     allowedTools,
     permissionMode = 'acceptEdits',
@@ -207,6 +211,8 @@ export async function runClaude(o = {}) {
     // workspaceWriteTargets is the one option that is mock-ONLY (§8.10) and it must be
     // named HERE too, or the mock implementer never sees it (this call is a gate, not
     // a pass-through; test/spawn-args.test.mjs asserts the forwarding end to end).
+    // systemPromptMode is not named here on purpose: the mock has no Claude Code system
+    // prompt to replace, so it is a real-spawn-only option (the call below carries it).
     return engine.run({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessionId, workspaceWriteTargets, permissionMode });
   }
 
@@ -227,6 +233,7 @@ export async function runClaude(o = {}) {
   return engine.run({
     cwd,
     systemPrompt,
+    systemPromptMode,
     prompt,
     allowedTools,
     noGit,

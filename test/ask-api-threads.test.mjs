@@ -741,3 +741,125 @@ test('PATCH agentMode (#574): a boolean alone is not the title error; GET return
   assert.equal((await (await fetch(`${base}${url}`)).json()).thread.agentMode, true, 'the message stores it');
   await idle();
 });
+
+test('#948 s2: archive is blocked while the chat is busy; unarchive and pin never are', async () => {
+  const { thread } = await (await post('/api/ask/threads', { title: 'busy-s2' })).json();
+  mod._testing.askJobs.set(thread.id, { turn: { stop: () => {} }, status: 'running', graceTimer: null });
+  try {
+    const r = await patch(`/api/ask/threads/${thread.id}`, { archived: true });
+    assert.equal(r.status, 409);
+    const j = await r.json();
+    assert.equal(j.code, 'CHAT_BUSY');
+    assert.equal(j.reason, 'replying');
+    assert.equal(j.error, "Can't archive while this chat is replying. Wait for the reply or stop it.");
+    assert.equal((await patch(`/api/ask/threads/${thread.id}`, { pinned: true })).status, 200);
+  } finally { mod._testing.askJobs.delete(thread.id); }
+  const orig = mod._testing.askCommands.running;
+  mod._testing.askCommands.running = (id) => (id === thread.id ? 1 : 0);
+  try {
+    assert.equal((await (await patch(`/api/ask/threads/${thread.id}`, { archived: true })).json()).reason, 'command');
+  } finally { mod._testing.askCommands.running = orig; }
+  const ok = await patch(`/api/ask/threads/${thread.id}`, { archived: true });
+  assert.equal(ok.status, 200);
+  assert.ok((await ok.json()).thread.archivedAt);
+  const back = await patch(`/api/ask/threads/${thread.id}`, { archived: false });
+  assert.equal(back.status, 200);
+  assert.equal((await back.json()).thread.archivedAt, null);
+});
+
+test('#948 s2: archive is blocked while the chat follows a live run; a cursor alone pages Show = All', async () => {
+  const { EventEmitter } = await import('node:events');
+  const { thread } = await (await post('/api/ask/threads', { title: 'follow-s2' })).json();
+  const entry = { id: 'uuid-FOLLOW-S2', orch: new EventEmitter(), projectDir: '/tmp/x', title: 't', status: 'running',
+    startedAt: new Date().toISOString(), events: [], pendingQuestion: null, pipelineId: 'dddd4444' };
+  mod.runs.set(entry.id, entry);
+  mod._testing.askFollowers.set(thread.id, new Set([{ runId: entry.id, detached: false, detach() {} }]));
+  try {
+    const r = await patch(`/api/ask/threads/${thread.id}`, { archived: true });
+    assert.equal(r.status, 409);
+    const j = await r.json();
+    assert.equal(j.reason, 'following');
+    assert.equal(j.error, "Can't archive while this chat is following a run that is still going. Wait for the run to finish.");
+  } finally {
+    mod._testing.askFollowers.delete(thread.id);
+    mod.runs.delete(entry.id);
+  }
+  const first = await (await fetch(`${base}/api/ask/threads?show=all&limit=1`)).json();
+  assert.equal(typeof first.cursor, 'string');
+  const next = await (await fetch(`${base}/api/ask/threads?limit=1&cursor=${encodeURIComponent(first.cursor)}`)).json();
+  assert.equal(next.total, first.counts.all, 'a cursor alone is read as show=all');
+  assert.notEqual(next.threads[0].id, first.threads[0].id);
+});
+
+test('#948 s2: PATCH archived / pinned validation, the paged list shapes, Show = Needs you and a message unarchiving', async () => {
+  const { EventEmitter } = await import('node:events');
+  await checkRows([
+    { name: 'a non-boolean or a mixed body is 400; an unknown thread is 404', run: async () => {
+      const { thread } = await (await post('/api/ask/threads', { title: 'val-s2' })).json();
+      let r = await patch(`/api/ask/threads/${thread.id}`, { archived: 'yes' });
+      assert.equal(r.status, 400); await r.json();
+      r = await patch(`/api/ask/threads/${thread.id}`, { archived: true, title: 'x' });
+      assert.equal(r.status, 400); await r.json();
+      r = await patch(`/api/ask/threads/${thread.id}`, { pinned: 1 });
+      assert.equal(r.status, 400); await r.json();
+      r = await patch('/api/ask/threads/ask_fffffff0', { archived: true });
+      assert.equal(r.status, 404); await r.json();
+    } },
+    { name: 'show=all leaves an archived chat out, show=archived lists it, a plain GET keeps the old shape and lists it', run: async () => {
+      const { thread } = await (await post('/api/ask/threads', { title: 'shape-s2' })).json();
+      assert.equal((await patch(`/api/ask/threads/${thread.id}`, { archived: true })).status, 200);
+      const all = await (await fetch(`${base}/api/ask/threads?show=all&limit=200`)).json();
+      assert.ok(!all.threads.some((t) => t.id === thread.id));
+      const arch = await (await fetch(`${base}/api/ask/threads?show=archived&limit=200`)).json();
+      const row = arch.threads.find((t) => t.id === thread.id);
+      assert.equal(row.archived, true);
+      assert.deepEqual(Object.keys(arch.counts).sort(), ['all', 'archived', 'needs']);
+      for (const k of ['all', 'needs', 'archived']) assert.equal(typeof arch.counts[k], 'number');
+      const plain = await (await fetch(`${base}/api/ask/threads?limit=200`)).json();
+      assert.deepEqual(Object.keys(plain).sort(), ['threads', 'total']);
+      assert.ok(plain.threads.some((t) => t.id === thread.id), 'the old list still holds archived chats');
+      for (const t of plain.threads) {
+        assert.equal(typeof t.commands, 'number');
+        assert.equal(typeof t.archived, 'boolean');
+        assert.ok('scope' in t);
+      }
+    } },
+    { name: 'show=all&limit=1 answers a string cursor; a garbage cursor is 400 and the next request is answered', run: async () => {
+      await post('/api/ask/threads', { title: 'cur-s2 a' });
+      await post('/api/ask/threads', { title: 'cur-s2 b' });
+      const first = await (await fetch(`${base}/api/ask/threads?show=all&limit=1`)).json();
+      assert.equal(typeof first.cursor, 'string');
+      const bad = await fetch(`${base}/api/ask/threads?show=all&cursor=garbage`);
+      assert.equal(bad.status, 400);
+      assert.deepEqual(await bad.json(), { error: 'invalid cursor' });
+      assert.equal((await fetch(`${base}/api/ask/threads?show=all`)).status, 200);
+    } },
+    { name: 'show=needs lists only a chat whose followed run waits on a question', run: async () => {
+      const { thread: waiting } = await (await post('/api/ask/threads', { title: 'needs-s2 w' })).json();
+      await post('/api/ask/threads', { title: 'needs-s2 idle' });
+      const entry = { id: 'uuid-NEEDS-S2', orch: new EventEmitter(), projectDir: '/tmp/x', title: 't', status: 'running',
+        startedAt: new Date().toISOString(), events: [], pendingQuestion: { kind: 'clarify' }, pipelineId: 'eeee5555' };
+      mod.runs.set(entry.id, entry);
+      mod._testing.askFollowers.set(waiting.id, new Set([{ runId: entry.id, detached: false, detach() {} }]));
+      try {
+        const j = await (await fetch(`${base}/api/ask/threads?show=needs`)).json();
+        assert.deepEqual(j.threads.map((t) => t.id), [waiting.id]);
+        assert.equal(j.counts.needs, 1);
+        assert.equal(j.total, 1);
+      } finally {
+        mod._testing.askFollowers.delete(waiting.id);
+        mod.runs.delete(entry.id);
+      }
+    } },
+    { name: 'a message posted to an archived chat unarchives it', run: async () => {
+      await idle();
+      const { thread } = await (await post('/api/ask/threads', { title: 'msg-s2' })).json();
+      assert.equal((await patch(`/api/ask/threads/${thread.id}`, { archived: true })).status, 200);
+      const r = await post(`/api/ask/threads/${thread.id}/messages`, { text: 'hi', model: 'claude-opus-5-5', effort: 'high' });
+      assert.equal(r.status, 202, await r.clone().text());
+      await r.json();
+      await idle();
+      assert.equal((await (await fetch(`${base}/api/ask/threads/${thread.id}`)).json()).thread.archivedAt, null);
+    } },
+  ]);
+});

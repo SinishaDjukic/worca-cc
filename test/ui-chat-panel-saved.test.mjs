@@ -471,3 +471,19 @@ test('Runs page, slide layout: going back to the list empties the saved host aft
   await new Promise((r) => setTimeout(r, 650));
   assert.ok(doc.querySelector('#hist-detail .hd'), 'the re-opened screen survives the earlier clear');
 });
+
+test('s2 (M2): Chat boot, a saved run in the panel: once the schedules answer, the route names its base branch', async () => {
+  // /api/schedules answers only when the test says so: until then the chains are unknown (D2, "The base branch").
+  let answer = null;
+  const late = (url) => (url.split('?')[0].endsWith('/api/schedules')
+    ? new Promise((r) => { answer = () => r({ ok: true, status: 200, json: async () => ({ schedules: [], tickets: [], chains: [], counts: {} }) }); })
+    : null);
+  const ctx = await bootSaved({ arms: late });
+  const screen = await openPanel(ctx, ROW.id, 8);
+  const target = () => [...screen.querySelectorAll('.rd-route .rd-route-row')].at(-1).querySelector('.rd-route-place');
+  assert.ok(answer, 'the panel asked for the schedules');
+  assert.equal(target().textContent, 'The base branch', 'pending: never a guessed branch');
+  answer();
+  await ctx.settle(8);
+  assert.equal(target().textContent, ROW.sourceBranch, 'repainted once the chains are known');
+});

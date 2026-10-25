@@ -4,7 +4,7 @@
 import { renderStatusDot } from './status-dot.mjs';
 import { placeFlyout } from './side-flyout.mjs';
 
-export function openGroupPicker({ doc, anchor, groups, onPick, onCreate, onClose = () => {} }) {
+export function openGroupPicker({ doc, anchor, groups, onPick, onCreate, onNew = null, onClose = () => {} }) {
   const el = doc.createElement('div');
   el.className = 'group-picker';
   el.setAttribute('role', 'dialog');
@@ -40,6 +40,7 @@ export function openGroupPicker({ doc, anchor, groups, onPick, onCreate, onClose
   neu.className = 'btn btn-sm btn-quiet gp-new';
   neu.textContent = 'New group';
   neu.addEventListener('click', () => {
+    if (onNew) { close(); onNew(); return; }   // #948 s3: the Chats column names a new group in its dialog
     const name = doc.createElement('input');
     name.className = 'input gp-name';
     name.placeholder = 'Group name';
