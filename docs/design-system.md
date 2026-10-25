@@ -142,6 +142,9 @@ extension sidebar's own settings checkbox (`.wx-settings-check`) keeps its nativ
 A checked checkbox and a checked radio fill `--ink`, never green; the tick is the page colour (`--tick`, `--tick-dash`).
 A disabled checked box fills `--seq`. A selected option row (`.opt-row`, `.chip-select label`) takes the `--field` fill and
 an ink border.
+Requirements' pressed toggles are the one green on/off: a pressed Confirm on an assumption (`.req-confirm`) takes a green
+outline and green text, and a Files for the run chip that goes with the run (`.req-fpick.on`) a green outline and a check
+on `--panel`; neither is ever green-filled.
 ### Segmented control
 `.seg`: one `--field` container, 28px / 13px buttons, the selected one `--surface`. `.seg-sm` is the same size.
 The run log's Summaries / Raw switch (`.log-view-seg`, flag `commandSummaries`) is a `.seg-sm` in the Logs bar and the step

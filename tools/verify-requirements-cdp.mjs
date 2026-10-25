@@ -10,7 +10,11 @@
 // left leading to the Ready to build card; Start in Worca on that card gives one run row linking to #running/<id>
 // and the API's starts[0].runId (the mock run is then stopped); the feature page has no context panel and its
 // menu's Your notes for Worca opens the project's brief page with the notes (A7 D12); the product brief flow
-// (Create, the code moved on, New feature knows the brief, Look closer, Add this to the brief); no page errors.
+// (Create, the code moved on, New feature knows the brief, Look closer, Add this to the brief); files (New feature with
+// two files, Reading 2 files…, the Files card, an edit, the ⋯ menu, Ask (Asking…) and Replace, a source tag, a file
+// added after the interview offered as Decide's Ask about <file>, Remove, the Ready row's chips, Start sends the files,
+// the brief's Documents card; at 390 px the Files card fits, its ⋯ menu holds the pencil's entry, 44 px targets); no
+// page errors.
 // NOT part of `npm test`.
 // Run: npm run verify:requirements   (set CHROME_BIN to a Chrome/Chromium binary if it is not auto-found,
 // e.g. CHROME_BIN="C:/Program Files/Google/Chrome/Application/chrome.exe" on Windows)
@@ -67,6 +71,7 @@ process.env.WORCA_HOME = home;
 process.env.HOME = home;
 process.env.USERPROFILE = home;
 process.env.WORCA_MOCK = '1';
+process.env.WORCA_MOCK_READ_MS = '1500';   // A8: a mock read waits, so "Reading N files…" can be seen
 delete process.env.WORCA_FLAGS;
 const projDir = path.join(home, 'shop');
 await mkdir(projDir, { recursive: true });
@@ -79,6 +84,11 @@ await (await import(new URL('../src/core/projects.mjs', import.meta.url).href)).
 // http.createServer(app) answers the /ws upgrade with 404 and no frame arrives).
 const { server, runs } = await import(new URL('../ui/server.mjs', import.meta.url).href);
 srv = server;
+// The brief page's GET waits for its git probes up to STALENESS_TIMEOUT_MS (they then read as "slow", not as an
+// answer), and a Create press up to BRIEF_PRESS_PROBE_MS: a wait for a brief page is longer than the server's own bound,
+// so a busy machine (the mock run just started a worktree) is not a failed check.
+const { MEMO_MS, STALENESS_TIMEOUT_MS, BRIEF_PRESS_PROBE_MS } = await import(new URL('../src/core/requirements/brief-job.mjs', import.meta.url).href);
+const BRIEF_WAIT_MS = STALENESS_TIMEOUT_MS + 10_000;
 await new Promise((r) => srv.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${srv.address().port}`;
 log(`server on ${base}`);
@@ -238,7 +248,7 @@ check('the feature page has no context panel; Your notes for Worca (the menu) op
     if (!item || item.textContent !== 'Your notes for Worca') return false;
     item.click(); return true; })()`)
   && await until(() => A.evalJs(`location.hash.startsWith('#requirements/brief/project/')
-    && !!document.querySelector('#requirements-host [data-req-brief] [data-ui="notes-body"]')`)));
+    && !!document.querySelector('#requirements-host [data-req-brief] [data-ui="notes-body"]')`), BRIEF_WAIT_MS));
 // ---- A7: the product brief, end to end in mock mode (no model; the brief is canned).
 const briefHash = await A.evalJs(`location.hash.startsWith('#requirements/brief/project/') ? location.hash : null`);
 await A.evalJs(`location.hash = '#requirements'`);
@@ -246,19 +256,20 @@ check('the list header says "Product brief: none yet · Create" for the project'
   await until(() => A.evalJs(`(() => { const g = [...document.querySelectorAll('#requirements-host .req-group')].find((x) => x.querySelector('h2')?.textContent === 'Project · shop');
     const h = g?.querySelector('.req-group-brief'); return !!h && h.textContent === 'Product brief: none yet · Create' && !!h.querySelector('a'); })()`)));
 await A.evalJs(`document.querySelector('#requirements-host .req-group-brief a').click()`);
+// The card paints once the page's GET answers, which waits for git (BRIEF_WAIT_MS above): on a loaded machine the
+// default 8 s wait ran out before the server's own 10 s probe did (the flake of Tasks 12 and 15).
 check('the brief page (none yet) shows Give Worca a head start and Create the brief',
   await until(() => A.evalJs(`(() => { const c = document.querySelector('#requirements-host .req-brief-start');
     return location.hash.startsWith('#requirements/brief/project/') && !!c
       && c.querySelector('h3')?.textContent === 'Give Worca a head start'
-      && c.querySelector('[data-ui="brief-create"]')?.textContent === 'Create the brief'; })()`)));
+      && c.querySelector('[data-ui="brief-create"]')?.textContent === 'Create the brief'; })()`), BRIEF_WAIT_MS));
 await A.evalJs(`document.querySelector('#requirements-host [data-ui="brief-create"]').click()`);
 check('Create in mock mode: the made brief page shows its four sections and "Made from"',
   await until(() => A.evalJs(`(() => { const h = document.querySelector('#requirements-host');
     const keys = [...h.querySelectorAll('.req-brief-card [data-section]')].map((x) => x.getAttribute('data-section'));
-    return keys.length === 4 && /Made from/.test(h.textContent); })()`), 15000));
+    return keys.length === 4 && /Made from/.test(h.textContent); })()`), BRIEF_PRESS_PROBE_MS + 10_000));
 // A commit to the test repo: the brief page then says the code moved on. The server remembers a repository
 // check for MEMO_MS (brief-job.mjs), so wait that out, then reopen the page so it is read again.
-const { MEMO_MS } = await import(new URL('../src/core/requirements/brief-job.mjs', import.meta.url).href);
 await sleep(MEMO_MS + 1000);
 writeFileSync(path.join(projDir, 'README.md'), 'orders\n');
 git('add', 'README.md'); git('commit', '-m', 'moved on');
@@ -267,7 +278,7 @@ await sleep(300);
 await A.evalJs(`location.hash = ${JSON.stringify(briefHash)}`);
 check('after a commit: "The code moved on since this brief" shows with a Refresh',
   await until(() => A.evalJs(`(() => { const n = document.querySelector('#requirements-host .req-brief-stale');
-    return !!n && /The code moved on since this brief/.test(n.textContent) && !!n.querySelector('[data-brief-go]'); })()`), 15000));
+    return !!n && /The code moved on since this brief/.test(n.textContent) && !!n.querySelector('[data-brief-go]'); })()`), BRIEF_WAIT_MS));
 await A.evalJs(`location.hash = '#requirements/new'`);
 const picked = await until(() => A.evalJs(`(() => { const sel = document.getElementById('req-new-target'); if (!sel) return false;
   const opt = [...sel.options].find((o) => o.text === 'shop'); if (!opt) return false; sel.value = opt.value;
@@ -290,33 +301,179 @@ await until(() => A.evalJs(`!document.querySelector('#requirements-host [data-ui
 await A.evalJs(`location.hash = ${JSON.stringify(briefHash)}`);
 check('Add this to the brief: the brief page lists the added area and "Used by 1 feature"',
   await until(() => A.evalJs(`(() => { const t = document.querySelector('#requirements-host').textContent;
-    return /Orders: Orders report/.test(t) && /Orders · checkout and order history/.test(t) && /Used by 1 feature/.test(t); })()`), 15000));
+    return /Orders: Orders report/.test(t) && /Orders · checkout and order history/.test(t) && /Used by 1 feature/.test(t); })()`), BRIEF_WAIT_MS));
+// ---- A8: files, end to end in mock mode (each mock read waits WORCA_MOCK_READ_MS). The server runs in this process
+// and reads the variable at each read, so a step that must see a state (Reading…, Asking…) holds it longer than the
+// page needs to paint, however slow the machine.
+const holdReads = (ms) => { process.env.WORCA_MOCK_READ_MS = String(ms); };
+const dropFiles = (sel, files) => A.evalJs(`(() => { const dt = new DataTransfer();
+  for (const [n, body, type] of ${JSON.stringify(files)}) dt.items.add(new File([body], n, { type }));
+  document.querySelector(${JSON.stringify(sel)}).dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); return true; })()`);
+const pickFiles = (sel, files) => A.evalJs(`(() => { const dt = new DataTransfer();
+  for (const [n, body, type] of ${JSON.stringify(files)}) dt.items.add(new File([body], n, { type }));
+  const i = document.querySelector(${JSON.stringify(sel)}); i.files = dt.files; i.dispatchEvent(new Event('change')); return true; })()`);
+const featureApi = (seq) => A.evalJs(`fetch('/api/requirements/${seq}').then((r) => r.json()).then((d) => d.feature)`);
+await A.evalJs(`location.hash = '#requirements/new'`);
+await until(() => A.evalJs(`!!document.querySelector('.req-new-files .req-drop')`));
+await A.evalJs(`(() => { const sel = document.getElementById('req-new-target'); sel.value = [...sel.options].find((o) => o.text === 'shop').value;
+  sel.dispatchEvent(new Event('change', { bubbles: true }));
+  document.getElementById('req-new-title').value = 'Refund to store credit';
+  document.getElementById('req-new-desc').value = 'Customers ask for store credit instead of a card refund'; })()`);
+await dropFiles('.req-new-files .req-drop', [['refund-policy.md', '# Refund policy\nRefunds in 14 days.\n', 'text/markdown'], ['tickets.pdf', '%PDF-1.7\n%mock\n', 'application/pdf']]);
+check('New feature with two files: two chips and the privacy note naming the model',
+  await until(() => A.evalJs(`document.querySelectorAll('.req-new-chip').length === 2
+    && /^Worca sends each file to .+ to read it\\./.test(document.querySelector('.req-new-files .req-files-privacy')?.textContent || '')`)));
+holdReads(6000);
+await A.evalJs(`[...document.querySelectorAll('.req-new .btn-primary')].at(-1).click()`);
+check('the feature page says "Reading 2 files…" and the Files card shows each file as Reading…',
+  await until(() => A.evalJs(`(() => { const rows = [...document.querySelectorAll('#requirements-host .req-files .req-file')];
+    return /Reading 2 files…/.test(document.querySelector('#requirements-host .req-reading')?.textContent || '')
+      && rows.length === 2 && rows.every((r) => r.querySelector('.badge.blue')?.textContent === 'Reading…'
+        && /^Worca is reading it/.test(r.querySelector('.req-file-state')?.textContent || '')); })()`), 8000));
+holdReads(1500);
+check('then round 1 shows', await until(() => A.evalJs(`!!document.querySelector('#requirements-host .qpanel .qopt')`), 20000));
+const filesSeq = await A.evalJs(`location.hash.split('/').pop()`);
+const filesHash = `#requirements/feature/${filesSeq}`;
+const fileIds = await A.evalJs(`[...document.querySelectorAll('#requirements-host .req-files .req-file')].map((r) => r.getAttribute('data-file'))`);
+check('the Files card lists both files, read, each with What Worca took from it',
+  await until(() => A.evalJs(`(() => { const rows = [...document.querySelectorAll('#requirements-host .req-files .req-file')];
+    return rows.length === 2 && rows.every((r) => /What Worca took from it/.test(r.textContent) && !r.querySelector('.badge.blue')); })()`)));
+check('a source tag: the spec card names the first file',
+  await until(() => A.evalJs(`[...document.querySelectorAll('#requirements-host .req-spec .req-src-tag')].some((t) => t.textContent.endsWith('refund-policy.md'))`)));
+const [firstId, secondId] = fileIds;
+await A.evalJs(`document.querySelector('[data-ui="file-edit-${firstId}"]').click()`);
+await until(() => A.evalJs(`!!document.querySelector('[data-ui="file-edit-text-${firstId}"]')`));
+await A.evalJs(`(() => { const ta = document.querySelector('[data-ui="file-edit-text-${firstId}"]'); ta.value = 'Refunds in 14 days; store credit on request.';
+  ta.dispatchEvent(new Event('input')); document.querySelector('[data-ui="file-save-${firstId}"]').click(); })()`);
+check('a summary edit shows "· edited by you"',
+  await until(() => A.evalJs(`/edited by you/.test(document.querySelector('[data-file="${firstId}"] .req-file-cap')?.textContent || '')`)));
+check("a read file's ⋯ menu: Open, Edit what Worca took from it, Ask about this file…, Replace with a newer version…, Read again, Remove",
+  await A.evalJs(`(() => { document.querySelector('[data-ui="file-more-${firstId}"]').click();
+    const m = document.querySelector('[data-menu="file-${firstId}"] [role="menu"]');
+    const items = m && !m.hidden ? [...m.querySelectorAll('[role="menuitem"]')].map((x) => x.textContent) : [];
+    document.querySelector('[data-ui="file-more-${firstId}"]').click();
+    return items.join('|') === 'Open|Edit what Worca took from it|Ask about this file…|Replace with a newer version…|Read again|Remove'; })()`));
+await A.evalJs(`document.querySelector('[data-ui="file-more-${firstId}"]').click(); document.querySelector('[data-ui="fmi-ask-${firstId}"]').click()`);
+await until(() => A.evalJs(`!!document.querySelector('[data-ui="file-ask-text-${firstId}"]')`));
+holdReads(6000);
+await A.evalJs(`(() => { const i = document.querySelector('[data-ui="file-ask-text-${firstId}"]'); i.value = 'What about store credit?';
+  i.dispatchEvent(new Event('input')); document.querySelector('[data-ui="file-ask-go-${firstId}"]').click(); })()`);
+check('while Worca answers, the file says Asking… and what it is looking for',
+  await until(() => A.evalJs(`(() => { const r = document.querySelector('[data-file="${firstId}"]');
+    return [...r.querySelectorAll('.badge.blue')].some((b) => b.textContent === 'Asking…')
+      && r.querySelector('.req-file-asking')?.textContent === 'Worca is looking for: “What about store credit?”…'; })()`), 8000));
+holdReads(1500);
+check('Ask about this file: "Added to what Worca took from it · Q: …"',
+  await until(() => A.evalJs(`/Added to what Worca took from it · Q: What about store credit\\?/.test(document.querySelector('#requirements-host').textContent)`), 15000));
+await pickFiles(`[data-menu="file-${secondId}"] input[type="file"]`, [['tickets-v2.pdf', '%PDF-1.7\n%v2\n', 'application/pdf']]);
+check('Replace opens its dialog for the file',
+  await until(() => A.evalJs(`document.querySelector('.req-dialog h2')?.textContent === 'Replace tickets.pdf'`)));
+await A.evalJs(`document.querySelector('[data-ui="replace-go"]').click()`);
+check('after Replace the file is read again under its new name',
+  await until(() => A.evalJs(`[...document.querySelectorAll('#requirements-host .req-file-name')].some((a) => a.textContent === 'tickets-v2.pdf')
+    && !document.querySelector('#requirements-host .req-files .badge.blue')`), 10000));
+await A.evalJs(`document.querySelector('#requirements-host .req-skip').click()`);
+await until(() => A.evalJs(`!!document.querySelector('#requirements-host [data-ui="confirm-all"], #requirements-host .req-build')`), 15000);
+// A file added after the interview finished is asked about in one follow-up round. Worca starts it itself when the read
+// ends, unless it cannot (here: the feature is archived while the file is read); restored, Decide offers Ask about <file>.
+holdReads(6000);
+const faqId = await A.evalJs(`(async () => {
+  const up = await fetch('/api/requirements/${filesSeq}/attachments', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ attachments: [{ name: 'faq.txt', dataBase64: btoa('Store credit never expires.\\n') }] }) });
+  const f = (await up.json()).feature;
+  await fetch('/api/requirements/${filesSeq}/archive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  return up.status === 202 && f ? (f.attachments.find((a) => a.name === 'faq.txt') || {}).id || null : null; })()`);
+holdReads(1500);
+const faqRead = await until(async () => ((await featureApi(filesSeq)).attachments || []).some((a) => a.id === faqId && a.status === 'done'), 15000);
+await A.evalJs(`fetch('/api/requirements/${filesSeq}/archive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ restore: true }) })`);
+check('a file added after the interview, which Worca could not ask about itself: Decide offers "Ask about faq.txt"',
+  !!faqId && faqRead && await until(() => A.evalJs(`document.querySelector('#requirements-host .req-decide [data-ui="follow-up"]')?.textContent === 'Ask about faq.txt'`), 10000));
+await A.evalJs(`document.querySelector('#requirements-host .req-decide [data-ui="follow-up"]')?.click()`);
+check('Ask about faq.txt runs the follow-up round: nothing is left to ask about',
+  await until(async () => { const f = await featureApi(filesSeq); return (f.unaskedFiles || []).length === 0 && ['done', 'your_turn'].includes(f.status); }, 15000));
+if (await until(() => A.evalJs(`!!document.querySelector('#requirements-host .qpanel .qopt')`), 2000)) await A.evalJs(`document.querySelector('#requirements-host .req-skip').click()`);
+await until(() => A.evalJs(`!!document.querySelector('#requirements-host [data-ui="confirm-all"], #requirements-host .req-build')`), 15000);
+// Remove (the ⋯ menu's last entry) asks first: the proof answers yes.
+await A.evalJs(`(() => { window.__confirm = window.confirm; window.confirm = () => true;
+  document.querySelector('[data-ui="file-more-${faqId}"]').click(); document.querySelector('[data-ui="fmi-remove-${faqId}"]').click(); })()`);
+check('Remove deletes the file: the card and the API list the two others',
+  await until(async () => (await A.evalJs(`!document.querySelector('[data-file="${faqId}"]') && document.querySelectorAll('#requirements-host .req-files .req-file').length === 2`))
+    && ((await featureApi(filesSeq)).attachments || []).length === 2));
+await A.evalJs(`window.confirm = window.__confirm`);
+await A.evalJs(`document.querySelector('#requirements-host [data-ui="confirm-all"]')?.click()`);
+check('Ready to build shows Files for the run', await until(() => A.evalJs(`!!document.querySelector('#requirements-host .req-build .req-build-files')`), 15000));
+await A.evalJs(`document.querySelector('[data-ui="fpick-${firstId}"]').click()`);
+check('a chip flips the file\'s switch (aria-pressed and the API agree)',
+  await until(() => A.evalJs(`(async () => document.querySelector('[data-ui="fpick-${firstId}"]')?.getAttribute('aria-pressed') === 'true'
+    && (await (await fetch('/api/requirements/${filesSeq}')).json()).feature.attachments.find((a) => a.id === '${firstId}').sendWithRun === true)()`)));
+await A.evalJs(`document.querySelector('#requirements-host .req-build [data-ui="start-go"]').click()`);
+const filesRunId = await (async () => { let id = null; await until(async () => { id = (await featureApi(filesSeq)).starts?.[0]?.runId || null; return !!id; }, 15000); return id; })();
+// The start stages the files in the OS temp dir (orchestrator-extras-<runId>); the run's pipeline copies them into its own
+// extras folder, and the staged folder is removed then.
+const pipelineExtras = () => { const dir = filesRunId && runs.get(filesRunId)?.orch?.pipeline?.dir; return dir ? path.join(dir, 'extras') : null; };
+check('Start sends the switched-on file: the run\'s extras hold it under its name, and only it',
+  await until(() => { const x = pipelineExtras(); return !!x && existsSync(path.join(x, 'refund-policy.md')); }, 15000)
+  && !existsSync(path.join(pipelineExtras(), 'tickets-v2.pdf')));
+check('the staged copies are removed once the run has its own',
+  await until(() => !existsSync(path.join(tmpdir(), `orchestrator-extras-${filesRunId}`)), 15000));
+check('the start records the file it sent',
+  await until(async () => { const s = (await featureApi(filesSeq)).starts?.[0]; return (s?.files || []).map((x) => x.name).join('|') === 'refund-policy.md'; }));
+await A.evalJs(`location.hash = ${JSON.stringify(briefHash)}`);
+await until(() => A.evalJs(`!!document.querySelector('#requirements-host .req-docs')`), BRIEF_WAIT_MS);
+await pickFiles('#requirements-host .req-docs input[type="file"]', [['tone.md', 'Tone: friendly and short.\n', 'text/markdown']]);
+check("the brief's Documents card lists the document, read, with Send with every run, and the header says 1 document",
+  await until(() => A.evalJs(`(() => { const r = document.querySelector('#requirements-host .req-docs .req-file');
+    return !!r && /What Worca took from it/.test(r.textContent) && !!r.querySelector('[aria-label="Send tone.md with every run"]')
+      && [...document.querySelectorAll('#requirements-host .chip')].some((c) => c.textContent === '1 document'); })()`), 10000));
 // ---- The header menus have their panel (upstream's .menu box), and at phone width (390 px) every page fits and
 // every menu opens inside the screen.
 const featureHash = `#requirements/feature/${seqNo}`;
-const MENUS = { [featureHash]: ['menu-export', 'menu-more'], [briefHash]: ['brief-export', 'brief-more'] };
+const MENUS = { [featureHash]: ['menu-export', 'menu-more'], [filesHash]: ['menu-export', 'menu-more'], [briefHash]: ['brief-export', 'brief-more'] };
 /** Open one header menu, measure its list (inside [0, clientWidth], a background that is not transparent), close it. */
 const menuBox = (ui) => A.evalJs(`(() => { const t = document.querySelector('#requirements-host [data-ui="${ui}"]'); if (!t) return null;
   t.click(); const m = t.parentElement.querySelector('[role="menu"]'); if (!m || m.hidden) return null;
   const r = m.getBoundingClientRect(); const bg = getComputedStyle(m).backgroundColor; const w = document.documentElement.clientWidth;
   t.click(); return { left: Math.round(r.left), right: Math.round(r.right), w, bg }; })()`);
 const menuOk = (b) => !!b && b.left >= 0 && b.right <= b.w && b.bg !== 'rgba(0, 0, 0, 0)' && b.bg !== 'transparent';
-const goTo = async (hash, ready) => { await A.evalJs(`location.hash = ${JSON.stringify(hash)}`); return until(() => A.evalJs(ready)); };
+const goTo = async (hash, ready) => { await A.evalJs(`location.hash = ${JSON.stringify(hash)}`); return until(() => A.evalJs(ready), BRIEF_WAIT_MS); };
 const READY = { [featureHash]: `!!document.querySelector('#requirements-host [data-ui="menu-more"]')`,
+  [filesHash]: `!!document.querySelector('#requirements-host .req-files')`,
   [briefHash]: `!!document.querySelector('#requirements-host [data-ui="brief-more"]')`,
   '#requirements': `!!document.querySelector('#requirements-host .req-row')`, '#requirements/new': `!!document.getElementById('req-new-title')` };
 await goTo(featureHash, READY[featureHash]);
 const wide = await menuBox('menu-export');
 check('desktop: the Export menu has its panel (a background, not transparent)', menuOk(wide), JSON.stringify(wide));
 await A.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
-for (const hash of ['#requirements', '#requirements/new', featureHash, briefHash]) {
+for (const hash of ['#requirements', '#requirements/new', featureHash, filesHash, briefHash]) {
   const shown = await goTo(hash, READY[hash]);
   await sleep(200);
   const fit = await A.evalJs(`document.documentElement.scrollWidth === document.documentElement.clientWidth`);
-  check(`390 px: ${hash.replace(/\/\d+$/, '/<n>').replace(/brief\/.*/, 'brief/<project>')} fits the screen (no sideways scroll)`, shown && fit);
+  const page = `${hash.replace(/\/\d+$/, '/<n>').replace(/brief\/.*/, 'brief/<project>')}${hash === filesHash ? ' (with files)' : ''}`;
+  check(`390 px: ${page} fits the screen (no sideways scroll)`, shown && fit);
   for (const ui of MENUS[hash] || []) {
     const b = await menuBox(ui);
     check(`390 px: ${ui} opens inside the screen with its panel`, menuOk(b), JSON.stringify(b));
+  }
+  if (hash === filesHash) {
+    // A target is its hit area (board 20, style.css): the control's own box, grown by an absolutely placed ::after whose
+    // negative insets reach past the padding box (a 28px button: 26 + 2 × 9). An icon button must be 44 px wide too.
+    const small = await A.evalJs(`(() => { const card = document.querySelector('#requirements-host .req-files');
+      const hit = (b) => { const r = b.getBoundingClientRect(); const cs = getComputedStyle(b); const a = getComputedStyle(b, '::after');
+        let hh = r.height; let ww = r.width;
+        if (a.content !== 'none' && a.position === 'absolute' && cs.position !== 'static') {
+          const px = (v) => parseFloat(v) || 0;
+          hh = Math.max(hh, r.height - px(cs.borderTopWidth) - px(cs.borderBottomWidth) - px(a.top) - px(a.bottom));
+          ww = Math.max(ww, r.width - px(cs.borderLeftWidth) - px(cs.borderRightWidth) - px(a.left) - px(a.right));
+        }
+        return { hh, ww }; };
+      return [...card.querySelectorAll('.btn, .req-ico, .switch-row, .link-btn, .req-file-name')].filter((b) => b.offsetParent !== null)
+        .map((b) => [b, hit(b)]).filter(([b, s]) => s.hh < 44 || (b.classList.contains('req-ico') && s.ww < 44))
+        .map(([b, s]) => (b.getAttribute('data-ui') || b.className) + ':' + Math.round(s.hh) + 'x' + Math.round(s.ww)); })()`);
+    check('390 px: the pencil is in the ⋯ menu, not on the row; the Files card\'s targets are 44 px',
+      await A.evalJs(`(() => { const card = document.querySelector('#requirements-host .req-files');
+        const pencil = card.querySelector('.req-file-pencil');
+        const menuHas = !!card.querySelector('[data-ui^="fmi-edit-"]');
+        return (!pencil || getComputedStyle(pencil).display === 'none') && menuHas; })()`) && small.length === 0, JSON.stringify(small));
   }
 }
 await A.send('Emulation.clearDeviceMetricsOverride');

@@ -32,7 +32,7 @@ project's working tree, so nothing is ever committed to your repo.
       skipped/           the run's version of files Apply to folder skipped
       skills/            the run's set skills (docs/skills.md): one generated plugin per set, passed
                          with --plugin-dir; rebuilt on resume, never inside a checkout
-      extras/            any optional extra files you attached
+      extras/            any optional extra files you attached (a Requirements start's switched-on files too)
                          Internal, line-anchored review comments on that diff are DB
                          rows (diff_comments), never files; ask_card_comments carries
                          a proposal's comment ids from propose_run through to launch.
@@ -68,6 +68,15 @@ project's working tree, so nothing is ever committed to your repo.
                                         removed with the thread, reconciled at boot)
   ask/<threadId>/skills/<messageId>/    an Ask turn's set skills, one generated plugin per set;
                                         written before the turn's spawn, removed when the turn ends
+  requirements/att/<id>.<ext>           Requirements files and brief documents — .txt for text kinds, the real
+                                        extension for images and PDF; the name is the store's id (ratt_<12 hex>),
+                                        never the file's. Rows: req_attachments (v75). Folder 0700, files 0600.
+                                        Removed with the file, or with the brief for its documents; an archived
+                                        feature keeps its files. A replace writes <id>.<ext>.tmp-<8 hex> and renames
+                                        it over the body; one a crash left, older than an hour, is swept at boot
+  tmp/requirements/att-read-<8 hex>/    one file read's folder: a copy of that one file (a text file's copy is its
+                                        redacted text), mode 0700 / 0600, removed when the read ends (a restart's
+                                        leftovers older than an hour are swept at boot)
   tmp/ask/                              the Chat assistant's scratch cwd + per-turn
                                         mcp-<messageId>.json, mode 0600 (never a project folder)
   logs/ask-web.jsonl                    Chat web access: one line per web_fetch/web_search
