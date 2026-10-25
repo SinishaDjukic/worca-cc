@@ -42,6 +42,10 @@ export const ASK_DENY_RULES = Object.freeze([
  *  classifier read the run's checkout (under .worca-cc/runs) and its plans (in the store). */
 export const RUN_READ_DENY_RULES = Object.freeze(ASK_DENY_RULES.filter((r) => !/\.worca-cc\/(store|runs)\//.test(r)));
 
+/** Requirements reads and the product brief's look (plans/requirements-a8-design.md D3, D6): Ask's denies minus the tmp
+ *  one, since a read's one-file folder and a look's checkout live under <home>/tmp/requirements. */
+export const REQUIREMENTS_READ_DENY_RULES = Object.freeze(ASK_DENY_RULES.filter((r) => r !== 'Read(//**/.worca-cc/tmp/**)'));
+
 const READ_RULE = /^Read\((.+)\)$/;
 export const toPosix = (p) => String(p).replace(/\\/g, '/');
 

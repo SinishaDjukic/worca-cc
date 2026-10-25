@@ -10,6 +10,7 @@ import { bridgeEvents } from '../bridge/telemetry.mjs';
 import { explainUnspawnableClaude, resolveClaudeBin } from '../preflight.mjs';
 import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { memoryUsageHookEntry } from '../memory-usage.mjs';
+import { readGuardHookEntry } from '../file-read-guard.mjs';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -55,8 +56,9 @@ function extraSettingsOf(extraSettings) {
  *  which the guard does not need). `extraSettings` (skills registry §4.1) merges in
  *  first, so the runner's own `hooks` / `permissions` always win. `memoryLoadLog` (memory usage, U3: set by the
  *  harness only when the mounted rules hold a note with `paths:`) adds the `InstructionsLoaded` counting hook the
- *  same way — never into the user's settings files. */
-export function buildSettingsPayload(permissionRules, { hostGuard = false, extraSettings = null, memoryLoadLog = null } = {}) {
+ *  same way — never into the user's settings files. `readGuard` (Requirements A8: the one file a read may open) adds
+ *  the file-read guard (file-read-guard.mjs) on every tool, with `disableAllHooks: false`; absent, nothing changes. */
+export function buildSettingsPayload(permissionRules, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null } = {}) {
   const hook = buildHookSettings();
   const extra = extraSettingsOf(extraSettings);
   const guard = hostGuard && hostGuardEnabled() ? hostGuardHookEntry() : null;
@@ -71,7 +73,10 @@ export function buildSettingsPayload(permissionRules, { hostGuard = false, extra
       && Object.values(permissionRules).some((a) => a != null && !Array.isArray(a))) {
     console.warn('[worca] guardrails: permissionRules is malformed (deny/allow/ask must be arrays of strings) — ignoring it; this spawn carries NO permission rules');
   }
-  if (!hook && !hasRules && !guard && !extra && !usage) return null;
+  // A8: a Requirements file read's guard (file-read-guard.mjs): every tool, fail-closed; the user settings cannot turn it off.
+  // Any truthy value goes to readGuardHookEntry, which throws unless it is an absolute path: never a silent no-guard.
+  const read = readGuard ? readGuardHookEntry(readGuard) : null;
+  if (!hook && !hasRules && !guard && !extra && !usage && !read) return null;
   const settings = { ...(extra ?? {}) };
   if (hook) settings.hooks = { ...hook.hooks };
   if (guard) {
@@ -81,6 +86,11 @@ export function buildSettingsPayload(permissionRules, { hostGuard = false, extra
   if (usage) {
     settings.hooks = settings.hooks ?? {};
     settings.hooks.InstructionsLoaded = [...(settings.hooks.InstructionsLoaded ?? []), usage];
+  }
+  if (read) {
+    settings.hooks = settings.hooks ?? {};
+    settings.hooks.PreToolUse = [...(settings.hooks.PreToolUse ?? []), read];
+    settings.disableAllHooks = false;
   }
   if (hasRules) settings.permissions = permissionRules;
   return { hook: !!hook, settings };
@@ -276,12 +286,13 @@ export function isHookEvent(evt) {
  * [] when there is nothing to say, so the baseline argv is byte-identical.
  * @param {{deny?:string[],allow?:string[],ask?:string[]}|null|undefined} permissionRules
  * @param {string|null} [settingsFile] staged path (GH #380): `--settings <path>` carries the same JSON
- * @param {{hostGuard?:boolean, extraSettings?:object|null}} [opts] host-process guard (runClaudeProcess sets it; see
- *   buildSettingsPayload) and extra settings merged into the same payload (skills registry §4.1)
+ * @param {{hostGuard?:boolean, extraSettings?:object|null, readGuard?:string|null}} [opts] host-process guard (runClaudeProcess
+ *   sets it; see buildSettingsPayload), extra settings merged into the same payload (skills registry §4.1) and the A8
+ *   file-read guard's one allowed file
  * @returns {string[]}
  */
-export function buildSettingsArgs(permissionRules, settingsFile = null, { hostGuard = false, extraSettings = null, memoryLoadLog = null } = {}) {
-  const payload = buildSettingsPayload(permissionRules, { hostGuard, extraSettings, memoryLoadLog });
+export function buildSettingsArgs(permissionRules, settingsFile = null, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null } = {}) {
+  const payload = buildSettingsPayload(permissionRules, { hostGuard, extraSettings, memoryLoadLog, readGuard });
   if (!payload) return [];
   const args = [];
   if (payload.hook) args.push('--include-hook-events');
@@ -324,7 +335,7 @@ export function buildClaudeArgs({
   // --allowedTools union).
   tools: builtinTools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
   maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard, addDirs, disallowedTools, agents,
-  pluginDirs, extraSettings, memoryLoadLog,
+  pluginDirs, extraSettings, memoryLoadLog, readGuard,
   // Requirements A1.1: 'replace' swaps Claude Code's own system prompt for ours
   // (--system-prompt / --system-prompt-file). Anything else, absent included, is
   // today's --append-system-prompt(-file), so every other argv stays byte-identical.
@@ -352,7 +363,7 @@ export function buildClaudeArgs({
   // SINGLE inline JSON (two --settings flags would be last-wins at the CLI). [] when
   // there is neither, so the baseline argv is unchanged; a CLI that rejects these
   // flags would only ever fail when the operator opted in.
-  for (const a of buildSettingsArgs(permissionRules, settingsFile, { hostGuard, extraSettings, memoryLoadLog })) args.push(a);
+  for (const a of buildSettingsArgs(permissionRules, settingsFile, { hostGuard, extraSettings, memoryLoadLog, readGuard })) args.push(a);
   if (mcpConfigPath) args.push('--mcp-config', mcpConfigPath);
   const tools = Array.isArray(allowedTools) ? allowedTools.slice() : [];
   for (const s of (Array.isArray(mcpServerGrants) ? mcpServerGrants : [])) {
@@ -441,7 +452,7 @@ export function planClaudeInvocation(opts, { bin = DEFAULT_BIN, dir = null, limi
     files.push({ path: systemPromptFile, content: opts.systemPrompt });
   }
   let settingsFile = null;
-  const payload = buildSettingsPayload(opts.permissionRules, { hostGuard: opts.hostGuard, extraSettings: opts.extraSettings, memoryLoadLog: opts.memoryLoadLog });
+  const payload = buildSettingsPayload(opts.permissionRules, { hostGuard: opts.hostGuard, extraSettings: opts.extraSettings, memoryLoadLog: opts.memoryLoadLog, readGuard: opts.readGuard });
   if (payload) {
     settingsFile = join(dir, 'settings.json');
     files.push({ path: settingsFile, content: JSON.stringify(payload.settings) });
@@ -461,7 +472,7 @@ export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_IN
   return { ...plan, dir };
 }
 
-export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
+export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode, readGuard }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
   // MCP registry §5.5.3: with registry secrets in this spawn's env, every emit, the result text and the error
   // message leave redacted — wrapped once here, so the broker path (which calls runClaudeProcess) is covered too.
   const redactor = Array.isArray(redactValues) && redactValues.length ? createRedactor(redactValues) : null;
@@ -553,7 +564,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
         mcpConfigPath, mcpServerGrants, permissionRules,
         tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages,
         maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, disallowedTools, agents,
-        pluginDirs, extraSettings, memoryLoadLog, systemPromptMode,
+        pluginDirs, extraSettings, memoryLoadLog, systemPromptMode, readGuard,
       }, { bin: resolved.bin, limit });
     } catch (err) {
       rejectP(new Error(`Failed to stage the claude prompt files: ${err.message}`));

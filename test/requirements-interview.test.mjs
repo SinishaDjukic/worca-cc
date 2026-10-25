@@ -1198,3 +1198,13 @@ test('a look has one deadline: the call gets only the time the checkout left', a
   } finally { mock.timers.reset(); }
   assert.equal(getFeature(f.seq).orientation.skipped, 'failed');
 });
+
+test('A8: permissionRules and readGuard are overrides of their own; without them every call is unchanged', () => {
+  const o = interviewCallOptions('look', { cwd: '/c', prompt: 'P', model: 'm1', tools: ['Read'], permissionRules: { deny: ['Read(~/.aws/**)'] }, readGuard: '/c/a.pdf' });
+  assert.deepEqual([o.permissionRules, o.readGuard], [{ deny: ['Read(~/.aws/**)'] }, '/c/a.pdf']);
+  for (const kind of ['look', 'round']) {
+    const plain = interviewCallOptions(kind, { cwd: '/c', prompt: 'P', model: 'm1' });
+    assert.equal('permissionRules' in plain, false, kind);
+    assert.equal('readGuard' in plain, false, kind);
+  }
+});

@@ -114,6 +114,7 @@ export function mockEnabled(opts) {
  *   materializeSkillMount). Absent/empty/non-strings ⇒ nothing emitted.
  * @param {object} [o.extraSettings]  merged into the one --settings payload (skills registry §4.1: Ask's
  *   `disableSkillShellExecution`); never replaces `permissions` / `hooks`. Absent ⇒ unchanged.
+ * @param {string} [o.readGuard] A8: the one file a Requirements read may open (file-read-guard.mjs); absent ⇒ argv unchanged
  * @param {Record<string,string>} [o.spawnEnv]  run-level spawn env (wsmap D9: runOpts sets
  *   CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY on every fan-out node, and CLAUDE_CODE_DISABLE_BACKGROUND_TASKS
  *   on the scan's two). Merged OVER the guardrail env and UNDER modelEnv (a catalog entry that sets the
@@ -173,6 +174,8 @@ export async function runClaude(o = {}) {
     agents,
     pluginDirs,
     extraSettings,
+    // Requirements A8: the one file a read may open (file-read-guard.mjs). Claude only, like memoryLoadLog.
+    readGuard,
     // Memory usage (memory-usage.mjs): this execution's hook file; set only when the mounted rules hold a note
     // with `paths:`. Claude only (the InstructionsLoaded hook); other engines ignore it. Never a spawn flag of its own.
     memoryLoadLog,
@@ -212,7 +215,8 @@ export async function runClaude(o = {}) {
     // named HERE too, or the mock implementer never sees it (this call is a gate, not
     // a pass-through; test/spawn-args.test.mjs asserts the forwarding end to end).
     // systemPromptMode is not named here on purpose: the mock has no Claude Code system
-    // prompt to replace, so it is a real-spawn-only option (the call below carries it).
+    // prompt to replace, so it is a real-spawn-only option (the call below carries it). readGuard is not named either:
+    // the mock spawns nothing, so there is no tool call to guard.
     return engine.run({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessionId, workspaceWriteTargets, permissionMode });
   }
 
@@ -271,6 +275,7 @@ export async function runClaude(o = {}) {
     agents,
     pluginDirs,
     extraSettings: settings,
+    readGuard,
     memoryLoadLog,
     argvInlineLimit,
     asAgent,
