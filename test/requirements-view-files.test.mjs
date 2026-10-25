@@ -268,3 +268,257 @@ test('board 15: a refused create says why in the message region and stays on the
 test('style.css: board 15 rules inside the Requirements block, tokens only', () => {
   assertInRequirementsBlock(['.req-new-files', '.req-drop', '.req-new-chip', '.req-file-refused', '.req-reading', '.req-files-privacy', '.req-msg-warn']);
 });
+
+// ── board 16: the Files card ─────────────────
+
+test('board 16: the Files card follows Ready to start? in the right column; head, hint, Add files, the privacy note; the header chip "N files"', async () => {
+  const { host } = await openFeature(feature());
+  const right = host.querySelector('.req-right');
+  const card = right.querySelector('section[aria-label="Files"]');
+  assert.ok(right.firstElementChild.classList.contains('req-ready'), "A2's Ready panel stays first (test/requirements-view.test.mjs, \"first in the right column\")");
+  assert.equal(card.previousElementSibling, right.querySelector('.req-ready'), 'the Files card comes right after it, as boards 16 and 18 place it');
+  assert.equal(card.querySelector('h3').textContent, 'Files · 1');
+  assert.equal(card.querySelector('.req-files-head .hint').textContent, 'Worca reads each one once and uses what it took from it in every round.');
+  assert.equal(card.querySelector('[data-ui="files-add"]').textContent, 'Add files');
+  assert.ok(card.querySelector('.req-files-privacy'));
+  assert.ok([...host.querySelectorAll('.req-chips .chip')].some((c) => c.textContent === '1 file'));
+});
+
+test('board 16: a read file: the name opens it, kind · size · read for $X, the pencil, What Worca took from it, the switch', async () => {
+  const long = 'x'.repeat(300);
+  const { host, calls } = await openFeature(feature({ attachments: [att({ summary: long, mentions: ['R-po-1'],
+    asks: [{ question: 'What about refunds?', answer: '4 ask for store credit.' }] })] }), { 'PATCH /api/requirements/4/attachments/ratt_00000000000a': { feature: feature(), turns: [] } });
+  const row = host.querySelector('.req-file[data-file="ratt_00000000000a"]');
+  const name = row.querySelector('.req-file-name');
+  assert.deepEqual([name.textContent, name.getAttribute('href'), name.getAttribute('target')], ['support-tickets.pdf', '/api/requirements/4/attachments/ratt_00000000000a', '_blank']);
+  assert.equal(row.querySelector('.req-file-meta').textContent, 'PDF · 2.1 MB · read for $0.12');
+  assert.equal(row.querySelector('.req-file-pencil').getAttribute('aria-label'), 'Edit what Worca took from support-tickets.pdf');
+  assert.equal(row.querySelector('.req-file-cap').textContent, 'What Worca took from it');
+  assert.ok(row.querySelector('.req-file-took').classList.contains('req-clamp'));
+  row.querySelector('.req-file-all').click();
+  assert.ok(!host.querySelector('.req-file[data-file="ratt_00000000000a"] .req-file-took').classList.contains('req-clamp'));
+  assert.equal(text(host.querySelector('.req-file-ask')), 'Q: What about refunds? 4 ask for store credit.');
+  const sw = host.querySelector('[data-ui="file-send-ratt_00000000000a"]');
+  assert.deepEqual([sw.getAttribute('role'), sw.getAttribute('aria-label'), sw.checked], ['switch', 'Send support-tickets.pdf with the run', false]);
+  assert.equal(text(sw.closest('.req-file-send')), 'Send with the run The spec mentions this file (R-po-1).');
+  sw.checked = true;
+  sw.dispatchEvent(new window.Event('change'));
+  await settle();
+  assert.deepEqual(calls.filter((c) => c.method === 'PATCH').map((c) => c.body), [{ sendWithRun: true }]);
+});
+
+test('board 16: "· edited by you"; the pencil opens the editor, Save sends the text (1500 at most), Cancel closes', async () => {
+  const route = 'PATCH /api/requirements/4/attachments/ratt_00000000000a';
+  const { host, calls } = await openFeature(feature({ attachments: [att({ summaryEdited: true })] }), { [route]: { feature: feature(), turns: [] } });
+  assert.equal(text(host.querySelector('.req-file-cap')), 'What Worca took from it · edited by you');
+  host.querySelector('.req-file-pencil').click();
+  const ta = host.querySelector('[data-ui="file-edit-text-ratt_00000000000a"]');
+  assert.deepEqual([ta.value, ta.getAttribute('maxlength'), document.activeElement === ta], [att().summary, '1500', true]);
+  ta.value = 'Mine.';
+  ta.dispatchEvent(new window.Event('input'));
+  host.querySelector('[data-ui="file-save-ratt_00000000000a"]').click();
+  await settle();
+  assert.deepEqual(calls.filter((c) => c.method === 'PATCH').map((c) => c.body), [{ summary: 'Mine.' }]);
+});
+
+test('board 16: reading (with and without an estimate), failed with each reason and Try again, not read yet for a month or a week', async () => {
+  const states = [
+    att({ id: 'ratt_000000000001', name: 'r.md', status: 'reading', summary: '' }),
+    att({ id: 'ratt_000000000002', name: 'r2.md', status: 'reading', summary: '', estimateUsd: null }),
+    att({ id: 'ratt_000000000003', name: 'f.pdf', status: 'failed', summary: '', error: { code: 'TIMEOUT', message: 'Worca got no reply within 180 seconds. Try again.' } }),
+    att({ id: 'ratt_000000000004', name: 'g.pdf', status: 'failed', summary: '', error: { code: 'BAD_REPLY', message: 'x' } }),
+    att({ id: 'ratt_000000000005', name: 'h.pdf', status: 'failed', summary: '', error: { code: 'INTERRUPTED', message: 'x' } }),
+    att({ id: 'ratt_000000000006', name: 'i.pdf', status: 'failed', summary: '', error: { code: 'FAILED', message: 'the file could not be opened.' } }),
+    att({ id: 'ratt_000000000007', name: 'u.md', status: 'unread-budget', summary: '' }),
+  ];
+  const again = 'POST /api/requirements/4/attachments/ratt_000000000003/read-again';
+  const { host, calls } = await openFeature(feature({ attachments: states.map((a) => ({ ...a, href: `/api/requirements/4/attachments/${a.id}` })) }), { [again]: { feature: feature(), turns: [] } });
+  const row = (id) => host.querySelector(`.req-file[data-file="${id}"]`);
+  const badge = row('ratt_000000000001').querySelector('.badge.blue');
+  assert.deepEqual([badge.textContent, badge.getAttribute('role')], ['Reading…', 'status']);
+  assert.equal(row('ratt_000000000001').querySelector('.req-file-state').textContent, 'Worca is reading it (about $0.12). The next round uses it.');
+  assert.equal(row('ratt_000000000002').querySelector('.req-file-state').textContent, 'Worca is reading it. The next round uses it.');
+  const failed = (id) => row(id).querySelector('.req-file-failed');
+  assert.equal(failed('ratt_000000000003').getAttribute('role'), 'alert');
+  assert.equal(text(failed('ratt_000000000003')), 'Worca could not read this file: it ran out of time. The interview lists it by name only. Try again');
+  assert.match(text(failed('ratt_000000000004')), /: its reply could not be read\. /);
+  assert.match(text(failed('ratt_000000000005')), /: Worca restarted\. /);
+  assert.match(text(failed('ratt_000000000006')), /: the file could not be opened\. The interview/);
+  failed('ratt_000000000003').querySelector('button').click();
+  await settle();
+  assert.ok(calls.some((c) => c.method === 'POST' && c.url.endsWith('/ratt_000000000003/read-again')));
+  assert.equal(row('ratt_000000000007').querySelector('.badge.amber').textContent, 'Not read yet');
+  assert.equal(row('ratt_000000000007').querySelector('.req-file-state').textContent,
+    'The Requirements budget is used up for this month. Worca reads it when the budget allows; until then the interview lists it by name only.');
+  const week = await openFeature(feature({ resetPeriod: 'weekly', attachments: [states[6]] }));
+  assert.match(week.host.querySelector('.req-file-state').textContent, /used up for this week\./);
+  for (const id of ['ratt_000000000001', 'ratt_000000000003', 'ratt_000000000007']) assert.equal(row(id).querySelector('.req-file-pencil'), null, id);
+  // D1: every file has its switch, except while it is being read (a file Worca could not read may still go to the run)
+  assert.equal(row('ratt_000000000001').querySelector('[data-ui="file-send-ratt_000000000001"]'), null, 'not while reading');
+  for (const id of ['ratt_000000000003', 'ratt_000000000007']) assert.ok(row(id).querySelector(`[data-ui="file-send-${id}"]`), id);
+});
+
+test('board 16: no files yet; Add files is disabled while the feature is busy or archived; the history folds at the advanced level', async () => {
+  const empty = await openFeature(feature({ attachments: [] }));
+  assert.equal(empty.host.querySelector('.req-files-empty').textContent, 'No files yet. Add emails, a spec, screenshots or a mockup.');
+  const busy = await openFeature(feature({ busy: true, status: 'thinking', state: 'thinking' }));
+  assert.equal(busy.host.querySelector('[data-ui="files-add"]').disabled, true);
+  const old = await openFeature(feature({ attachments: [att({ history: [{ at: '2026-10-19T08:00:00Z', name: 'old.pdf', summary: 'Before.', reason: 'replaced' }] })] }));
+  const h = old.host.querySelector('.req-file-history');
+  assert.deepEqual([h.tagName, h.getAttribute('data-min-level'), h.querySelector('summary').textContent], ['DETAILS', 'advanced', 'Earlier text (1)']);
+  assert.equal(text(h.querySelector('li')), '2026-10-19 · old.pdf Before.');
+});
+
+test('board 16: Add files posts the accepted picks and names the refused ones in the card', async () => {
+  const add = 'POST /api/requirements/4/attachments';
+  const { host, calls } = await openFeature(feature(), { [add]: { feature: feature(), turns: [] } });
+  pick(host.querySelector('.req-files input[type="file"]'), [mkFile('notes.md', '# n'), mkFile('deck.pptx', 'x')]);
+  await settle();
+  const post = calls.find((c) => c.method === 'POST' && c.url === '/api/requirements/4/attachments');
+  assert.deepEqual(post.body.attachments.map((x) => x.name), ['notes.md']);
+  assert.equal(host.querySelector('.req-files .req-file-refused').textContent, 'deck.pptx was not added: Worca reads text, images and PDF. Save it as PDF to attach it here.');
+});
+
+test('a question that came from a file says "From <name>:" before its why; What Worca knows says "and the files below"', async () => {
+  const q = [{ id: 'when', question: 'Until when?', options: ['Label', 'Pick-up'], recommended: 'Label', why: '38 of the 52 tickets came before pick-up.', source: 'support-tickets.pdf' }];
+  const brief = { id: 3, status: 'ready', madeAt: new Date().toISOString(), sources: [], matches: ['Orders'], matchesMore: 0, lookAtCode: true };
+  const { host } = await openFeature(feature({ pending: { turnId: 9, questions: q, note: '' }, brief, orientation: { summary: '', files: [], skipped: 'brief' } }));
+  assert.equal(text(host.querySelector('.req-why')), 'From support-tickets.pdf: 38 of the 52 tickets came before pick-up.');
+  assert.equal(host.querySelector('.req-knows-text').textContent,
+    'Worca works from the shop brief and the files below. Orders is described in the brief. It has not looked at the code for this feature.');
+});
+
+// The brief asserted `.req-files .btn,…{min-height:44px}`; upstream's design-language test bans a 44px height on a
+// control (OFF_SCALE), so the 44 px targets are hit areas past the visible control (Task 11's pattern).
+test('style.css: the Files card rules (and the phone rules) inside the Requirements block, tokens only', () => {
+  assertInRequirementsBlock(['.req-files{', '.req-file{', '.req-file-top', '.req-file-took', '.req-clamp', '.req-file-failed', '.req-file-history', '.req-file-send']);
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /@media \(max-width:600px\)\{[^}]*\.req-file-top\{flex-wrap:wrap\}/);
+  assert.match(css, /\.req-files \.btn-sm::after\{content:"";position:absolute;inset:-9px 0\}/, 'a 28px button: 9px past its 26px padding box, above and below');
+  assert.match(css, /\.req-files \.switch-row::after\{content:"";position:absolute;inset:-8px 0\}/, 'the 28px switch row');
+  assert.match(css, /\.req-files \.req-ico::after\{content:"";position:absolute;inset:-8px\}/, 'a 28px icon button: 44 x 44');
+});
+
+// ── boards 16 / 20: Task 12's own checks (the ⋯ menu, focus, live regions, uploads, XSS, flag off) ─────────────────
+
+test("board 16/20: a file's ⋯ is named for it and opens a menu with Open and Edit what Worca took from it (the pencil at phone width)", async () => {
+  const { host } = await openFeature(feature());
+  const trigger = host.querySelector('[data-ui="file-more-ratt_00000000000a"]');
+  assert.deepEqual([trigger.getAttribute('aria-label'), trigger.getAttribute('aria-haspopup'), trigger.getAttribute('aria-expanded')],
+    ['More for support-tickets.pdf', 'menu', 'false']);
+  trigger.click();
+  const list = host.querySelector('[data-menu="file-ratt_00000000000a"] [role="menu"]');
+  assert.equal(list.hidden, false);
+  assert.ok(list.classList.contains('menu'));
+  assert.deepEqual([...list.children].map((x) => x.textContent), ['Open', 'Edit what Worca took from it']);
+  const open = list.querySelector('a[role="menuitem"]');
+  assert.deepEqual([open.getAttribute('href'), open.getAttribute('target'), open.className], ['/api/requirements/4/attachments/ratt_00000000000a', '_blank', 'menu-item req-menu-item']);
+  list.children[1].click();
+  assert.equal(document.activeElement, host.querySelector('[data-ui="file-edit-text-ratt_00000000000a"]'), 'the editor takes the focus');
+  const reading = await openFeature(feature({ attachments: [att({ status: 'reading', summary: '' })] }));
+  reading.host.querySelector('[data-ui="file-more-ratt_00000000000a"]').click();
+  assert.deepEqual([...reading.host.querySelectorAll('[data-menu="file-ratt_00000000000a"] [role="menuitem"]')].map((x) => x.textContent), ['Open']);
+});
+
+test('a11y: the focus after Save and Cancel goes back to the pencil, after Show all to the text, after Try again to the file name', async () => {
+  const route = 'PATCH /api/requirements/4/attachments/ratt_00000000000a';
+  const { host } = await openFeature(feature({ attachments: [att({ summary: 'y'.repeat(300) })] }), { [route]: { feature: feature(), turns: [] } });
+  host.querySelector('.req-file-pencil').click();
+  [...host.querySelectorAll('.req-file-edit button')].find((b) => b.textContent === 'Cancel').click();
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'file-edit-ratt_00000000000a', 'Cancel');
+  host.querySelector('.req-file-pencil').click();
+  host.querySelector('[data-ui="file-save-ratt_00000000000a"]').click();
+  await settle();
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'file-edit-ratt_00000000000a', 'Save');
+  host.querySelector('.req-file-all').click();
+  assert.equal(document.activeElement, host.querySelector('.req-file-took'), 'Show all: the whole text takes the focus');
+  assert.equal(document.activeElement.getAttribute('tabindex'), '-1');
+  const failed = att({ status: 'failed', summary: '', error: { code: 'TIMEOUT', message: 'x' } });
+  const f2 = await openFeature(feature({ attachments: [failed] }), { 'POST /api/requirements/4/attachments/ratt_00000000000a/read-again': { feature: feature(), turns: [] } });
+  f2.host.querySelector('[data-ui="file-retry-ratt_00000000000a"]').click();
+  await settle();
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'file-name-ratt_00000000000a');
+});
+
+test('a11y: the switch keeps the focus across the repaint its PATCH causes; Add files has it back after an upload', async () => {
+  const { host } = await openFeature(feature(), { 'PATCH /api/requirements/4/attachments/ratt_00000000000a': { feature: feature(), turns: [] },
+    'POST /api/requirements/4/attachments': { feature: feature(), turns: [] } });
+  const sw = host.querySelector('[data-ui="file-send-ratt_00000000000a"]');
+  sw.focus();
+  sw.checked = true;
+  sw.dispatchEvent(new window.Event('change'));
+  await settle();
+  assert.notEqual(host.querySelector('[data-ui="file-send-ratt_00000000000a"]'), sw, 'repainted');
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'file-send-ratt_00000000000a');
+  pick(host.querySelector('.req-files input[type="file"]'), [mkFile('notes.md', '# n')]);
+  await settle();
+  assert.equal(document.activeElement.getAttribute('data-ui'), 'files-add');
+});
+
+test("a11y: a failed line and the refusal line stay the same role=alert nodes across repaints; a read result is said in the card's status line", async () => {
+  let f = feature({ attachments: [att({ id: 'ratt_000000000001', name: 'r.md', status: 'reading', summary: '' }),
+    att({ id: 'ratt_000000000002', name: 'f.pdf', status: 'failed', summary: '', error: { code: 'TIMEOUT', message: 'x' } }),
+    att({ id: 'ratt_000000000003', name: 'u.md', status: 'reading', summary: '' })] });
+  const { host, view } = await openFeature(null, { 'GET /api/requirements/4': () => ({ feature: f, turns: [] }) });
+  const alertNode = host.querySelector('.req-file-failed');
+  const live = host.querySelector('.req-files-live');
+  assert.deepEqual([live.getAttribute('role'), live.classList.contains('sr-only'), live.textContent], ['status', true, '']);
+  pick(host.querySelector('.req-files input[type="file"]'), [mkFile('deck.pptx', 'x')]);
+  const refused = host.querySelector('.req-files .req-file-refused');
+  assert.deepEqual([refused.getAttribute('role'), refused.hidden], ['alert', false]);
+  f = feature({ attachments: [att({ id: 'ratt_000000000001', name: 'r.md' }),
+    att({ id: 'ratt_000000000002', name: 'f.pdf', status: 'failed', summary: '', error: { code: 'TIMEOUT', message: 'x' } }),
+    att({ id: 'ratt_000000000003', name: 'u.md', status: 'unread-budget', summary: '' })] });
+  await view.changed(4);
+  assert.equal(host.querySelector('.req-file-failed'), alertNode, 'the same failed line');
+  assert.equal(host.querySelector('.req-files .req-file-refused'), refused, 'the same refusal line');
+  assert.equal(host.querySelector('.req-files-live'), live, 'the same status line');
+  assert.equal(live.textContent, 'Worca read r.md. u.md: Not read yet.');
+  await view.changed(4);
+  assert.equal(live.textContent, 'Worca read r.md. u.md: Not read yet.', 'a repaint with no change says nothing new');
+});
+
+test('uploads: a pick over 100 MB goes in two requests; the server\'s 409 "Try again in a moment." is shown', async () => {
+  const MB = 1024 * 1024;
+  const big = (n) => ({ name: `part-${n}.pdf`, size: 24 * MB, type: 'application/pdf', arrayBuffer: async () => new Uint8Array([0x25, 0x50]).buffer });
+  const { host, calls } = await openFeature(feature(), { 'POST /api/requirements/4/attachments': { feature: feature(), turns: [] } });
+  pick(host.querySelector('.req-files input[type="file"]'), [1, 2, 3, 4, 5].map(big));
+  await settle();
+  const posts = calls.filter((c) => c.method === 'POST' && c.url === '/api/requirements/4/attachments');
+  assert.deepEqual(posts.map((p) => p.body.attachments.map((x) => x.name)), [['part-1.pdf', 'part-2.pdf', 'part-3.pdf', 'part-4.pdf'], ['part-5.pdf']]);
+  const busy = await openFeature(feature(), { 'POST /api/requirements/4/attachments': { __status: 409, body: { error: 'Try again in a moment.' } } });
+  pick(busy.host.querySelector('.req-files input[type="file"]'), [mkFile('notes.md', '# n')]);
+  await settle();
+  assert.deepEqual([busy.msgEl.textContent, busy.msgEl.className], ['Try again in a moment.', 'form-msg err']);
+});
+
+test('XSS: a file name and a summary are text, never markup', async () => {
+  const evil = '<img src=x onerror=alert(1)>.md';
+  const { host } = await openFeature(feature({ attachments: [att({ name: evil, summary: '<script>alert(1)</script><b>bold</b>', mentions: ['R-po-1'] })] }));
+  assert.equal(host.querySelector('.req-files img'), null);
+  assert.equal(host.querySelector('.req-files script'), null);
+  assert.equal(host.querySelector('.req-files .req-file-took b'), null);
+  assert.equal(host.querySelector('.req-file-name').textContent, evil);
+  assert.equal(host.querySelector('.req-file-pencil').getAttribute('aria-label'), `Edit what Worca took from ${evil}`);
+});
+
+test('flag off: the feature route answers 404 and the page shows no Files card; a view without files has none either', async () => {
+  const off = await openFeature(null, { 'GET /api/requirements/4': { __status: 404, body: { error: 'not found' } } });
+  assert.equal(off.host.querySelector('.req-files'), null);
+  assert.equal(off.host.querySelector('input[type="file"]'), null);
+  const old = await openFeature(feature({ attachments: undefined }));
+  assert.equal(old.host.querySelector('.req-files'), null);
+  assert.ok(![...old.host.querySelectorAll('.req-chips .chip')].some((c) => /file/.test(c.textContent)));
+});
+
+test('style.css: board 20 hides the pencil below 600 px (it is in the ⋯ menu); AA ink for the badges, the failed line and the caption', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assert.match(css, /@media \(max-width:600px\)\{\s*\.req-file-pencil\{display:none\}/);
+  assertInRequirementsBlock(['.req-file-name', '.req-file-cap', '.req-file .badge.blue', '.req-file .badge.amber', '.req-menu{']);
+  const rule = (sel) => (css.match(new RegExp(`${sel.replace(/[.[\]()]/g, '\\$&')}\\{([^}]*)\\}`)) || [])[1] || '';
+  assert.match(rule('.req-file .badge.blue'), /color:var\(--blue-ink-strong\)/);
+  assert.match(rule('.req-file .badge.amber'), /color:var\(--amber-ink-strong\)/);
+  assert.match(rule('.req-file-failed'), /color:var\(--red-ink-strong\)/);
+  assert.match(rule('.req-file-cap'), /color:var\(--ink-2\)/);
+  assert.match(rule('.req-menu .hd-menu'), /position:absolute/, 'a menu floats under its trigger');
+});

@@ -10126,7 +10126,9 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .req-ico:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-ico:disabled{opacity:.45;cursor:not-allowed}
 /* The menus are upstream's one menu (.menu box, .menu-item rows) placed like the header ⋯ (.hd-more-wrap, .hd-menu). */
-.req-menu .hd-menu{min-width:200px}
+/* the open list floats under its trigger, right-aligned (upstream dropped .hd-more-wrap / .hd-menu's own placement) */
+.req-menu{position:relative;display:inline-flex}
+.req-menu .hd-menu{position:absolute;top:calc(100% + 6px);right:0;z-index:5;min-width:200px}
 .req-menu-item{box-sizing:border-box;text-decoration:none}   /* Download .md is a link row */
 .req-actions{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}
 .req-cols{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:22px;align-items:start}
@@ -10423,6 +10425,68 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
   .req-drop .link-btn::after{content:"";position:absolute;inset:-13px -6px}
   .req-new-chip .req-new-chip-x{position:relative;width:32px;height:32px}
   .req-new-chip .req-new-chip-x::after{content:"";position:absolute;inset:-6px}
+}
+/* The feature page's Files card (board 16; board 17 is the same in the dark theme; board 20 at 390 px): after Ready to
+   start? in the right column. Each file is a divided row: the name (a link), "Kind · size · read for $X", the pencil and
+   ⋯; What Worca took from it, clamped to three lines; the answers; the history (advanced); the Send with the run switch. */
+.req-files{padding:16px 18px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.req-files-head{align-items:flex-start;gap:10px;margin:0}
+.req-files-head h3{margin:0}
+.req-files-head .hint{margin:2px 0 0}
+.req-files-head .btn{flex:none}
+.req-files .req-files-privacy{margin:0}
+.req-files .req-file-refused{margin:0}
+.req-files-empty{margin:0}
+.req-files-list{display:flex;flex-direction:column}
+.req-file{display:flex;flex-direction:column;gap:6px;padding:12px 0;border-top:1px solid var(--line);min-width:0}
+.req-files-list > .req-file:first-child{border-top:0;padding-top:4px}
+.req-file-top{display:flex;align-items:center;gap:6px 8px;min-width:0}
+.req-file-name{font-weight:600;font-size:13px;color:var(--blue-ink-strong);overflow-wrap:anywhere;min-width:0}
+.req-file-name:hover{color:var(--ink)}
+.req-file-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs)}
+.req-file-meta{margin:0;white-space:nowrap}
+.req-file-gap{flex:1 1 auto}
+/* AA on --blue-bg / --amber-bg at badge size: the -ink-strong shades (the plain -ink ones are under 4.5:1 there) */
+.req-file .badge.blue{color:var(--blue-ink-strong)}
+.req-file .badge.amber{color:var(--amber-ink-strong)}
+.req-file-cap{margin:0;font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-file-took{margin:0;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}
+.req-file-took:focus{outline:none}
+.req-file-took.req-clamp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.req-file-all{align-self:flex-start;font-size:12px}
+.req-file-asks{display:flex;flex-direction:column;gap:6px}
+.req-file-ask p{margin:0;font-size:13px;overflow-wrap:anywhere}
+.req-file-q{font-weight:600}
+.req-file-state{margin:0}
+.req-file-failed{margin:0;font-size:13px;color:var(--red-ink-strong);overflow-wrap:anywhere}
+.req-file-failed .btn{margin-left:6px}
+.req-file-history summary{cursor:pointer;font-size:12px;color:var(--ink-2)}
+.req-file-history ol{margin:6px 0 0;padding-left:18px;font-size:12px}
+.req-file-history li .hint{margin:0}
+.req-file-history li p{margin:2px 0 6px;overflow-wrap:anywhere}
+.req-file-send{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}
+.req-file-send .hint{margin:0}
+.req-file-edit{margin:0}
+.req-file-edit textarea{width:100%;min-height:96px}
+.req-why-src{font-weight:600}
+@media (max-width:600px){
+  .req-file-top{flex-wrap:wrap}
+  .req-file-meta{order:3;flex-basis:100%;white-space:normal}
+  /* 44px touch targets (board 20): the hit area grows past the visible control, as on New feature. A 28px button's
+     area starts inside its 1px border (26 + 2 × 9); the 28px icon button and switch row have none (28 + 2 × 8); a 20px
+     or 18px link line takes 13 each side. The rows' gap keeps neighbouring areas apart. */
+  .req-files .btn-sm,.req-files .req-ico,.req-files .link-btn,.req-files .req-file-name,.req-files .switch-row{position:relative}
+  .req-files .switch-row{min-height:28px}
+  .req-files .btn-sm::after{content:"";position:absolute;inset:-9px 0}
+  .req-files .switch-row::after{content:"";position:absolute;inset:-8px 0}
+  .req-files .req-ico::after{content:"";position:absolute;inset:-8px}
+  .req-files .link-btn::after,.req-files .req-file-name::after{content:"";position:absolute;inset:-13px -4px}
+  .req-file{gap:22px}
+  .req-file-failed .btn{display:flex;margin:10px 0 0}
+}
+/* Board 20: at phone width the pencil is in each file's ⋯ menu. */
+@media (max-width:600px){
+  .req-file-pencil{display:none}
 }
 
 /* ── marketplace P3 ── */

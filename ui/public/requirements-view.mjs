@@ -270,6 +270,16 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   let relook = null;         // New feature's look line, said again when git appears or goes missing
   let carry = null;          // { param, text }: a create's message that the page it routes to says (A8 filesNotStored)
   let readingEl = null;      // the feature page's "Reading N files…" role=status line, kept across paints (A8 D2)
+  // A8 (board 16): the Files card. Per file id its open editor text, ask text, Show all and history fold; per owner key
+  // ('feature:<seq>') the last pick's refusals. The live nodes are kept across paints so they speak once (role=alert /
+  // role=status): each file's Reading… badge and failed line, each owner's refusal line, and the card's status line.
+  const fileUi = new Map();
+  const fileMsgs = new Map();
+  const fileMsgList = new Map();    // the same refusals, one per file, for the bold names
+  const fileNodes = new Map();      // a file id → { badge, failed }
+  const refusalEls = new Map();     // an owner key → its role=alert line
+  const fileWas = new Map();        // a file id → its status at the last paint (what the status line says changed)
+  let filesLive = null;             // the Files card's sr-only role=status line
   // Start in Worca: the workflow / branch choices per feature seq ({ workflowId, sourceBranch, open }),
   // the workflow list and each project's branches (loaded once, when Change opens), a start in flight,
   // and the start-before-Ready dialog ({ wrap, trigger, triggerUi }).
@@ -314,6 +324,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const next = m ? Number(m[1]) : null;
     if (next !== seqShown) {
       draft = null; revising = null; revDraft = null; editing = null; current = null; ui = freshUi(); focusLater = null; readingEl = null;
+      for (const map of [fileUi, fileMsgs, fileMsgList, fileNodes, refusalEls, fileWas]) map.clear();
+      filesLive = null;
       closeDialog(false);
     }
     seqShown = next;
@@ -1139,7 +1151,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         queueMicrotask(sync);
         return h('div', { class: 'qblock' },
           h('div', { class: 'qtext' }, h('span', { class: 'qn', text: String(i + 1) }), q.question),
-          q.why ? h('div', { class: 'hint req-why', text: q.why }) : null,
+          // A8 (board 16): a question that came from a file names it before its why
+          q.why || q.source ? h('div', { class: 'hint req-why' }, q.source ? h('span', { class: 'req-why-src', text: `From ${q.source}: ` }) : null, q.why || '') : null,
           h('div', { class: 'qopts' }, ...buttons), free);
       }),
       h('div', { class: 'qpanel-foot' }, count, ...foot));
@@ -1701,6 +1714,205 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
             onclick: (e) => startFlow(f, { override: false, trigger: e.currentTarget }) }, 'Start in Worca'))));
   }
 
+  // ---- A8: the Files card (board 16; 17 is its dark theme; 20 its phone width) ----
+  const fu = (id) => { if (!fileUi.has(id)) fileUi.set(id, { all: false, edit: null, ask: null, asked: null, history: false }); return fileUi.get(id); };
+  const hasTextOf = (a) => !!a.summary && (a.summaryEdited || a.status === 'done');
+  const READ_REASON = Object.freeze({ TIMEOUT: 'it ran out of time', BAD_REPLY: 'its reply could not be read', INTERRUPTED: 'Worca restarted' });
+  const reasonOf = (error) => READ_REASON[error && error.code] || String((error && error.message) || 'it could not be read').replace(/\.\s*$/, '');
+  const CLAMP_CHARS = 240;   // board 16: three lines of the card
+  const isClamped = (s) => s.length > CLAMP_CHARS || (s.match(/\n/g) || []).length >= 3;
+  // At phone width the pencil is in the ⋯ menu (board 20, style.css): the focus goes back to whichever is shown.
+  const narrow = () => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(max-width:600px)').matches;
+  const editReturn = (a) => (narrow() ? `file-more-${a.id}` : `file-edit-${a.id}`);
+  const fileNode = (id) => { if (!fileNodes.has(id)) fileNodes.set(id, { badge: null, failed: null }); return fileNodes.get(id); };
+
+  /** A hidden file input; `onFiles` gets the picked files. */
+  function filePicker(onFiles, { multiple = true } = {}) {
+    const input = h('input', { type: 'file', accept: REQ_ATTACH.accept, hidden: true, multiple: multiple || null, tabindex: '-1', 'aria-hidden': 'true' });
+    input.addEventListener('change', () => { const files = [...(input.files || [])]; input.value = ''; if (files.length) onFiles(files); });
+    return input;
+  }
+
+  /** D7: the page's early checks, the accepted files in requests of at most 100 MB, the refusals in the card's alert line.
+   *  The focus goes back to Add files (`focusUi`) once the card is painted again. */
+  async function uploadFiles({ url, key, existing, owner, rerender, focusUi = 'files-add' }, files) {
+    const errors = [];
+    const ok = [];
+    const pending = existing.map((x) => ({ name: x.name, bytes: x.bytes }));
+    for (const file of files) {
+      const c = checkAttachment(file, { pending, limits: reqLimits({ owner }), typeMessage: reqTypeMessage });
+      if (!c.ok) { errors.push(c.error); continue; }
+      ok.push(file);
+      pending.push({ name: file.name, bytes: file.size });
+    }
+    fileMsgs.set(key, errors.join(' '));
+    fileMsgList.set(key, errors);
+    focusNext = focusUi;
+    if (!ok.length) { rerender(); return; }
+    await act(async () => {
+      try {
+        for (const batch of uploadBatches(ok)) await api('POST', url, { attachments: await Promise.all(batch.map(encodeFile)) });
+      } finally {
+        focusNext = focusUi;
+        await paint();   // the batches already sent show, also when a later one is refused (the message comes after)
+      }
+    });
+  }
+
+  /** An owner's refusal line (role=alert), one node across paints: it speaks when a pick is refused, not on every repaint. */
+  function refusalAlert(key) {
+    let el = refusalEls.get(key);
+    if (!el) { el = h('p', { class: 'req-file-refused', role: 'alert', hidden: true }); el.said = ''; refusalEls.set(key, el); }
+    const msg = fileMsgs.get(key) || '';
+    if (el.said !== msg) {
+      el.said = msg;
+      const list = fileMsgList.get(key) || (msg ? [msg] : []);
+      el.replaceChildren(...list.flatMap((e, i) => (i ? [' ', refusalLine(e)] : [refusalLine(e)])));
+      el.hidden = !msg;
+    }
+    return el;
+  }
+
+  function editBox(a, ctx) {
+    const s = fu(a.id);
+    const ta = h('textarea', { rows: '5', maxlength: '1500', 'aria-label': `What Worca took from ${a.name}`, 'data-ui': `file-edit-text-${a.id}` });
+    ta.value = s.edit;
+    ta.addEventListener('input', () => { s.edit = ta.value; });
+    return h('div', { class: 'req-edit req-file-edit' }, ta,
+      h('div', { class: 'req-actions' },
+        h('button', { type: 'button', class: 'btn btn-sm', onclick: () => { s.edit = null; ctx.focus(editReturn(a)); ctx.redraw(); } }, 'Cancel'),
+        h('button', { type: 'button', class: 'btn btn-sm btn-primary', 'data-ui': `file-save-${a.id}`, disabled: ctx.locked,
+          onclick: () => act(async () => { await api('PATCH', a.href, { summary: ta.value }); s.edit = null; ctx.focus(editReturn(a)); await paint(); }) }, 'Save')));
+  }
+  const openEdit = (a, ctx) => { fu(a.id).edit = a.summary; ctx.focus(`file-edit-text-${a.id}`); ctx.redraw(); };
+
+  /** The ⋯ of a file (board 16): Open, and Edit what Worca took from it, which is the pencil at phone width (board 20).
+   *  Task 13 adds Ask, Replace, Read again and Remove. */
+  function fileMenu(a, ctx) {
+    const items = [
+      h('a', { role: 'menuitem', class: 'menu-item req-menu-item', 'data-ui': `mi-file-open-${a.id}`, href: a.href, target: '_blank', rel: 'noopener' }, 'Open'),
+      hasTextOf(a) && a.status !== 'reading'
+        ? menuItem('Edit what Worca took from it', () => openEdit(a, ctx), { disabled: ctx.locked, ui: `mi-file-edit-${a.id}` }) : null,
+    ];
+    return menu(`file-${a.id}`, h('button', { type: 'button', class: 'req-ico req-file-more', 'aria-label': `More for ${a.name}`, title: `More for ${a.name}`, 'data-ui': `file-more-${a.id}` },
+      icon(ICONS.dots, { size: 16, fill: 'currentColor', stroke: 'none' })), items);
+  }
+
+  /** The Reading… badge (role=status), one node per file while it is read. */
+  function readingBadge(a) {
+    const n = fileNode(a.id);
+    if (!n.badge) n.badge = h('span', { class: 'badge blue', role: 'status', text: 'Reading…' });
+    return n.badge;
+  }
+  /** The failed line (role=alert) with Try again, one node per failure: a repaint updates it in place and says nothing. */
+  function failedLine(a, ctx) {
+    const n = fileNode(a.id);
+    if (!n.failed) {
+      const words = h('span', { class: 'req-file-failed-text' });
+      const btn = h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': `file-retry-${a.id}` }, 'Try again');
+      btn.addEventListener('click', () => n.failed.run());
+      n.failed = { p: h('p', { class: 'req-file-failed', role: 'alert' }, words, ' ', btn), words, btn, run: () => {} };
+    }
+    const said = `Worca could not read this file: ${reasonOf(a.error)}. The interview lists it by name only.`;
+    if (n.failed.words.textContent !== said) n.failed.words.textContent = said;
+    n.failed.btn.disabled = ctx.locked;
+    n.failed.run = () => act(async () => { await api('POST', `${a.href}/read-again`, {}); ctx.focus(`file-name-${a.id}`); await paint(); });
+    return n.failed.p;
+  }
+
+  /** One file of the Files card or of the Documents card (boards 16, 19, 20). The switch shows in every state but Reading (D1):
+   *  a file Worca could not read, or that the budget stopped, may still go to the run. Names and summaries are text only. */
+  function fileRow(a, ctx) {
+    const s = fu(a.id);
+    const reading = a.status === 'reading';
+    const hasText = hasTextOf(a);
+    const n = fileNode(a.id);
+    if (!reading) n.badge = null;
+    if (a.status !== 'failed') n.failed = null;   // a later failure is a new alert
+    const sendKey = ctx.doc ? 'sendWithEveryRun' : 'sendWithRun';
+    const meta = [`${KIND_TITLE[a.kind] || 'Text'} · ${sizeText(a.bytes)}`, a.costUsd > 0 ? `read for ${usd(a.costUsd)}` : null].filter(Boolean).join(' · ');
+    const top = h('div', { class: 'req-file-top' },
+      h('a', { class: 'req-file-name', href: a.href, target: '_blank', rel: 'noopener', 'data-ui': `file-name-${a.id}`, text: a.name }),
+      h('span', { class: 'hint req-file-meta', text: meta }),
+      h('span', { class: 'req-file-gap' }),
+      reading ? readingBadge(a) : null,
+      a.status === 'unread-budget' ? h('span', { class: 'badge amber', text: 'Not read yet' }) : null,
+      hasText && !reading ? icoBtn('pencil', `Edit what Worca took from ${a.name}`, () => openEdit(a, ctx),
+        { cls: 'req-file-pencil', disabled: ctx.locked, 'data-ui': `file-edit-${a.id}` }) : null,
+      fileMenu(a, ctx));
+    const state = reading
+      ? h('p', { class: 'hint req-file-state', text: typeof a.estimateUsd === 'number'
+        ? `Worca is reading it (about ${usd(a.estimateUsd)}). The next round uses it.` : 'Worca is reading it. The next round uses it.' })
+      : a.status === 'failed' ? failedLine(a, ctx)
+        : a.status === 'unread-budget'
+          ? h('p', { class: 'hint req-file-state', text: `The Requirements budget is used up for this ${ctx.period === 'weekly' ? 'week' : 'month'}. Worca reads it when the budget allows; until then the interview lists it by name only.` })
+          : null;
+    if (s.edit != null && (!hasText || reading)) s.edit = null;   // the text went away (read again, replaced) under the editor
+    const clamp = hasText && !s.all && isClamped(a.summary);
+    const took = s.edit != null ? editBox(a, ctx) : hasText ? [
+      h('p', { class: 'req-file-cap' }, 'What Worca took from it', a.summaryEdited ? h('span', { class: 'req-edited', text: ' · edited by you' }) : null),
+      h('p', { class: `req-file-took${clamp ? ' req-clamp' : ''}`, 'data-ui': `file-took-${a.id}`, tabindex: '-1', text: a.summary }),
+      clamp ? h('button', { type: 'button', class: 'link-btn req-file-all', 'data-ui': `file-all-${a.id}`,
+        onclick: () => { s.all = true; ctx.focus(`file-took-${a.id}`); ctx.redraw(); } }, 'Show all') : null,
+    ] : null;
+    const asks = (a.asks || []).length ? h('div', { class: 'req-file-asks' }, ...a.asks.map((q) => h('div', { class: 'req-file-ask' },
+      h('p', { class: 'req-file-q', text: `Q: ${q.question}` }), ' ', h('p', { class: 'req-file-a', text: q.answer })))) : null;
+    let history = null;
+    if ((a.history || []).length) {
+      history = h('details', { class: 'req-file-history', 'data-min-level': 'advanced', open: s.history },   // as a look's files (docs/ui-levels.md)
+        h('summary', {}, `Earlier text (${a.history.length})`),
+        h('ol', {}, ...a.history.map((x) => h('li', {}, h('span', { class: 'hint', text: `${String(x.at || '').slice(0, 10)} · ${x.name}` }), ' ', h('p', { text: x.summary })))));
+      history.addEventListener('toggle', () => { s.history = history.open; });
+    }
+    let send = null;
+    if (!reading) {
+      const sw = makeSwitch(document, { label: ctx.doc ? 'Send with every run' : 'Send with the run',
+        ariaLabel: ctx.doc ? `Send ${a.name} with every run` : `Send ${a.name} with the run`, checked: !!a[sendKey], data: { ui: `file-send-${a.id}` } });
+      sw.input.disabled = ctx.locked;
+      // the focused switch keeps the focus across the repaint (capture() reads its data-ui)
+      sw.input.addEventListener('change', () => act(async () => { await api('PATCH', a.href, { [sendKey]: sw.input.checked }); await paint(); }));
+      send = h('div', { class: 'req-file-send' }, sw.row,
+        ...((a.mentions || []).length ? [' ', h('span', { class: 'hint', text: `The spec mentions this file (${a.mentions.join(', ')}).` })] : []));
+    }
+    return h('div', { class: 'req-file', 'data-file': a.id }, top, state, took, asks, history, send);
+  }
+
+  /** What changed since the last paint, said once in the card's status line: a read that finished or that the budget stopped
+   *  (a failed read has its own alert). */
+  function filesStatus(list) {
+    if (!filesLive) filesLive = h('p', { class: 'sr-only req-files-live', role: 'status' });
+    const said = [];
+    for (const a of list) {
+      const was = fileWas.get(a.id);
+      if (was === 'reading' && a.status === 'done') said.push(`Worca read ${a.name}.`);
+      else if (was === 'reading' && a.status === 'unread-budget') said.push(`${a.name}: Not read yet.`);
+    }
+    fileWas.clear();
+    for (const a of list) fileWas.set(a.id, a.status);
+    if (said.length) filesLive.textContent = said.join(' ');
+    return filesLive;
+  }
+
+  function filesCard(f) {
+    if (!Array.isArray(f.attachments)) return null;   // a feature view from before A8
+    const list = f.attachments;
+    const locked = isLocked(f) || starting;
+    const key = `feature:${f.seq}`;
+    const ctx = { doc: false, locked, period: f.resetPeriod, redraw, focus: (k) => { focusNext = k; } };
+    for (const id of fileNodes.keys()) if (!list.some((a) => a.id === id)) fileNodes.delete(id);
+    const input = filePicker((files) => uploadFiles({ url: `/api/requirements/${f.seq}/attachments`, key, existing: list, owner: 'feature', rerender: redraw }, files));
+    return h('section', { class: 'card req-files', 'aria-label': 'Files', 'data-ui': 'files-card' },
+      h('div', { class: 'req-card-head req-files-head' },
+        h('div', {}, h('h3', { text: `Files · ${list.length}` }), h('p', { class: 'hint', text: 'Worca reads each one once and uses what it took from it in every round.' })),
+        h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'files-add', disabled: locked || list.length >= REQ_ATTACH.maxFiles, onclick: () => input.click() }, 'Add files'),
+        input),
+      privacyNote(f.interview),
+      refusalAlert(key),
+      filesStatus(list),
+      list.length ? h('div', { class: 'req-files-list' }, ...list.map((a) => fileRow(a, ctx)))
+        : h('p', { class: 'hint req-files-empty', text: 'No files yet. Add emails, a spec, screenshots or a mockup.' }));
+  }
+
   // The looks at the code this feature made (A2: the orientation turns not skipped), and what they cost.
   function looksOf(turns) {
     const looks = turns.filter((t) => t.kind === 'orientation' && !(t.payload && t.payload.skipped));
@@ -1748,9 +1960,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       // the brief's own names (areas first, then terms), at most 3, and how many more matched (A7 §5)
       const names = (Array.isArray(b.matches) ? b.matches : []).filter((m) => typeof m === 'string' && m);
       const more = names.length && Number.isInteger(b.matchesMore) && b.matchesMore > 0 ? b.matchesMore : 0;
-      const what = names.length ? `: ${more ? `${names.join(', ')} and ${more} more` : joinAnd(names)} ${names.length + more === 1 ? 'is' : 'are'} described there.` : '.';
+      const subject = names.length ? (more ? `${names.join(', ')} and ${more} more` : joinAnd(names)) : '';
+      const isAre = names.length + more === 1 ? 'is' : 'are';
+      const said = (f.attachments || []).length
+        // A8 (board 16): the feature's files are part of what Worca works from
+        ? `Worca works from the ${targetName(f)} brief and the files below.${subject ? ` ${subject[0].toUpperCase()}${subject.slice(1)} ${isAre} described in the brief.` : ''} It has not looked at the code for this feature.`
+        : `Worca works from the ${targetName(f)} brief${names.length ? `: ${subject} ${isAre} described there.` : '.'} It has not looked at the code for this feature.`;
       meta = ['from the ', briefLink(to), ` · ${ageOld(b.madeAt)}`];
-      body = [h('p', { class: 'req-knows-text', text: `Worca works from the ${targetName(f)} brief${what} It has not looked at the code for this feature.` }),
+      body = [h('p', { class: 'req-knows-text', text: said }),
         o && o.skipped === 'failed' ? h('p', { class: 'hint req-knows-failed', text: 'Worca could not look at the code this time.' }) : null];
       if (lookOn) {
         // a look checks out the code: the hint and Look closer hide while git is missing (git-gate.mjs)
@@ -1840,6 +2057,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           h('span', { class: 'chip', text: targetLabel(f) }),
           h('span', { class: 'chip', text: done ? `Interview done · ${plural(rounds, 'round')}` : `Round ${Math.min(rounds || 1, MAX_ROUNDS)} of ${MAX_ROUNDS}` }),
           h('span', { class: 'chip', text: `${usd(f.costUsd)} so far` }),
+          (f.attachments || []).length ? h('span', { class: 'chip', text: plural(f.attachments.length, 'file') }) : null,   // A8 (board 16)
           f.savedPath ? h('span', { class: 'chip', text: `Saved as ${f.savedPath}` }) : null)),
       h('div', { class: 'req-head-tools' },
         menu('export', h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'menu-export' }, 'Export', sharedIcon(document, 'chevron-down', 14)), [
@@ -1875,7 +2093,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       header(f),
       h('div', { class: 'req-cols' },
         conversation(f, turns, rounds),
-        h('div', { class: 'req-right' }, readyPanel(f), specCard(f)))));
+        // A2's Ready panel stays first; boards 16 and 18 draw the Files card above the spec
+        h('div', { class: 'req-right' }, readyPanel(f), filesCard(f), specCard(f)))));
     if (ui.editVals && ui.editVals.key !== editing) ui.editVals = null;
     const want = focusNext || focus;
     focusNext = null;
