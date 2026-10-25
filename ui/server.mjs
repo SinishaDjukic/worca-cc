@@ -5,7 +5,9 @@
 // Run:  node ui/server.mjs   (or `npm start`)
 // Env:  PORT (default 4317), WORCA_MOCK / ORCH_MOCK (truthy = every run and Claude job is a
 //       mock, whatever body.mock says; the UI shows a MOCK pill and locks its Mock switch on)
+// Flag: --scratch (`npm start --scratch`) = a temp WORCA_HOME and a free port; see scratch-start.mjs
 
+import '../src/core/scratch-start.mjs'; // first: sets env before any module reads it
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import http from 'node:http';
@@ -664,7 +666,8 @@ const VOICE_VENDOR = [
   } },
 ];
 
-const PORT = Number(process.env.PORT) || DEFAULT_UI_PORT;
+// PORT=0 is a real value (the OS picks a free port; `--scratch` uses it), not "unset".
+const PORT = process.env.PORT === '0' ? 0 : Number(process.env.PORT) || DEFAULT_UI_PORT;
 // Bind to loopback by default (S1). Power users who knowingly want LAN exposure
 // can set WORCA_HOST=0.0.0.0, but the localhost-only Host/Origin guard still
 // applies unless they also front it with auth.
@@ -18799,7 +18802,7 @@ if (isMain) {
   // archived, or by the boot sweep below, and the server would lose its own code.
   const hostingRun = runFolderHosting(PROJECT_ROOT, worcaHome());
   if (hostingRun) {
-    console.error(`[worca-ui] Worca is started from a run's folder (${hostingRun}), which Worca deletes when that run is discarded or archived. Start Worca from your own clone or another worktree. Not starting.`);
+    console.error(`[worca-ui] Worca is started from a run's folder (${hostingRun}), which Worca deletes when that run is discarded or archived. Start Worca from your own clone or another worktree, or run \`npm start --scratch\` for a throwaway home and port. Not starting.`);
     process.exit(1);
   }
 
