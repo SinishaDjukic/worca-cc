@@ -63,3 +63,13 @@ test('QA 6: a plain Needs-you dot (no symbol) still names itself "Needs you"', (
   assert.equal(el.getAttribute('aria-label'), 'Needs you');
   assert.equal(el.getAttribute('aria-hidden'), null);
 });
+
+test('#948 s2: an idle chat paints the bubble line icon in the dot\'s place; a plain dot model empties it', () => {
+  const el = renderStatusDot(doc, { state: 'idle', dot: 'grey', icon: 'chat', word: 'Idle' });
+  assert.ok(el.classList.contains('has-ic'));
+  assert.equal(el.querySelectorAll('svg.status-ic').length, 1);
+  assert.equal(el.getAttribute('aria-hidden'), 'true');
+  paintStatusDot(el, model('working'));
+  assert.equal(el.querySelector('svg'), null);
+  assert.ok(!el.classList.contains('has-ic'));
+});

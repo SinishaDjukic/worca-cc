@@ -141,6 +141,18 @@ export const FLAGS = Object.freeze([
     reviewBy: '2027-01-16',
     docs: 'docs/requirements.md',
   }),
+  entry({
+    key: 'chatsColumn',
+    title: 'Chats column',
+    description: 'The Chat page list takes the Runs list\'s design: sections Pinned, Today, Recent and Older, a View menu (show, sort, group), pin, archive (blocked while a chat is busy), a resizable column, list keys, a Chats group in the top-bar search and one + for New chat in the conversation head. Off: today\'s chat history column.',
+    stage: 'experimental',
+    default: false,
+    owner: 'e-angelov',
+    since: '1.14.0',
+    added: '2026-10-25',
+    reviewBy: '2027-01-23',
+    docs: 'docs/feature-flags.md',
+  }),
 ]);
 
 const BY_KEY = new Map(FLAGS.map((f) => [f.key, f]));

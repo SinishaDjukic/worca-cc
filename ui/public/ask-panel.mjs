@@ -35,6 +35,9 @@ import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
 import { flagOn } from './flags.mjs';
+import { mountChatsColumn } from './chats-column.mjs';
+import { chatPageKeyAction, keyHint, isMac, LIST_FIELD } from './list-keys.mjs';
+import { openKeysSheet } from './keys-sheet.mjs';
 import { gitOn } from './git-gate.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME, NEEDS_REPO_NOTE } from '../../src/shared/no-project.mjs';
 import { createTagInput, fetchTagVocabulary, createTagRulesLine } from './tag-input.mjs';
@@ -463,6 +466,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
     const convo = make('div', 'chat-convo');
     const head = make('header', 'chat-head');
+    el.head = head;                                   // applyChatsMode swaps the head's New chat and meter
     const threadsBtn = iconButton('btn btn-quiet btn-icon chat-head-btn chat-history-toggle', 'History', historyIcon(), () => toggleHistory());
     threadsBtn.setAttribute('data-ask-threads-btn', '');
     threadsBtn.setAttribute('aria-controls', 'chat-history');
@@ -471,7 +475,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.title = make('div', 'ask-title', 'New chat');
     head.appendChild(el.title);
     head.appendChild(make('span', 'chat-head-spacer'));
-    head.appendChild(newChatButton('chat-head-btn'));
+    el.headNew = newChatButton('chat-head-btn');
+    head.appendChild(el.headNew);
     convo.appendChild(head);
 
     el.home = make('div', 'chat-home');
@@ -518,6 +523,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.sheet = convo;         // the popover host outside the composer — the floating sheet's role, its name kept
     el.page = page;
     paintHistory();
+    applyChatsMode();
     return page;
   }
 
@@ -726,6 +732,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const liveCost = lv ? (Number.isFinite(lv.costUsd) ? lv.costUsd : (Number.isFinite(lv.estimatedCostUsd) ? lv.estimatedCostUsd : null)) : null;
     if (liveCost != null) el.meterCost.textContent = `≈${fmtUsd((Number.isFinite(totals.costUsd) ? totals.costUsd : 0) + liveCost)}`;
     else el.meterCost.textContent = totals.costUsd == null ? '' : (fmtUsd(totals.costUsd) || '');
+    // #948 s2 (chatsColumn): the head meter. Its cost is el.meterCost's text just written (stored total, or "≈" with the
+    // live figure), so the two never disagree.
+    if (el.headMeter) {
+      el.headMeter.textContent = [pct != null ? `${pct}%` : '', el.meterCost.textContent, fmtAgents(totals.agents) || '']
+        .filter(Boolean).join(' · ');
+      el.headMeter.setAttribute('aria-label', pct != null ? `Context window, ${pct}% full` : 'Context window');
+      if (figure) el.headMeter.title = el.ctxBtn.title; else el.headMeter.removeAttribute('title');
+    }
   }
 
   function stopTurn() {
@@ -1894,6 +1908,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (!historyOverlayOpen() || !to || aside.contains(to) || (typeof to.closest === 'function' && to.closest('.viewer-modal'))) return;
       setHistoryOpen(false, { persist: false });
     });
+    fillHistory(aside);
+    return aside;
+  }
+  /** The column's content (head, search, New chat, body). Rebuilt when the Chats column (flag chatsColumn) goes away. */
+  function fillHistory(aside) {
     // The head is built once and kept across repaints (renderHistory touches only the meter's text and the body), so the
     // search box's slide (style.css .is-searching) runs and typing never loses the caret. Folded: "Chats  54 chats 🔍".
     // Open: "🔍 Search chats…  3 of 54 chats" — the box's left edge slides over the title and the meter's resting place
@@ -1910,7 +1929,87 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.historyBody = make('div', 'chat-history-body');
     aside.appendChild(el.historyBody);
     syncHistorySearch();
-    return aside;
+  }
+
+  // ---- Chats column (#948 s2, flag chatsColumn) -------------------------------------------------------------------
+  let chatsCol = null;
+  /** The head's one New chat in chats mode: a + right after the list toggle (mock 11). Same click as the labelled one, and
+   *  the same data-ask-new-btn, so chat/intent.mjs and chat/home-flip.mjs hook it unchanged. */
+  function newChatPlus() {
+    const b = iconButton('btn btn-quiet btn-icon chat-head-btn chat-new-plus', `New chat ${keyHint(['alt', 'mod', 'N'], isMac(win))}`,
+      svgIcon(ICONS.plus, 16, 2), () => { if (historyOverlayOpen()) setHistoryOpen(false, { persist: false }); newThread(); route(null); });
+    b.setAttribute('data-ask-new-btn', '');
+    return b;
+  }
+  function applyChatsMode() {
+    const on = flagOn('chatsColumn', doc);
+    if (on === !!chatsCol) return;
+    const aside = el.history;
+    if (on) {
+      el.page.dataset.chats = 'on';
+      chatsCol = mountChatsColumn({ host: aside, fetch, storage, win, now, level: () => currentLevel(doc),
+        scopeName: (sc) => chatDep('scopeName', sc) || '', currentId: () => (typeof st.wantThread === 'string' ? st.wantThread : st.threadId),
+        onOpen: (id) => { if (historyOverlayOpen()) setHistoryOpen(false, { persist: false }); showThread(id); route(id); },
+        onRename: (r) => { void renameThread(r); }, onDelete: (r) => { void deleteThread({ id: r.id, title: r.title }); },
+        onHelp: (opener) => openChatKeys(opener) });
+      el.headNew.remove();
+      el.historyBtn.after(el.headPlus = newChatPlus());
+      // D28: the open chat's figures, once, as the context popover's button (the composer's .ask-meter hides by CSS).
+      el.headMeter = make('button', 'btn btn-sm btn-quiet chat-head-meter');
+      el.headMeter.type = 'button';
+      el.headMeter.setAttribute('aria-haspopup', 'menu');
+      el.headMeter.setAttribute('aria-expanded', 'false');
+      el.headMeter.addEventListener('click', () => openCtxPopover(el.headMeter));
+      el.head.appendChild(el.headMeter);
+      updateMeters();
+      void chatsCol.refresh();
+    } else {
+      chatsCol.destroy();
+      chatsCol = null;
+      delete el.page.dataset.chats;
+      fillHistory(aside);                         // today's head, search, New chat and body
+      if (st.popover && st.popover.trigger === el.headMeter) closePopover({ focusTrigger: false });
+      el.headPlus.remove();
+      el.headPlus = null;
+      el.headMeter.remove();
+      el.headMeter = null;
+      el.head.appendChild(el.headNew);            // after the spacer, as today
+      loadHistory();
+    }
+  }
+  async function renameThread(r) {
+    const v = await chatDep('prompt', { title: 'Rename chat', fields: [{ id: 'title', label: 'Title', value: r.title, required: true }] });
+    const title = v && typeof v.title === 'string' ? v.title.trim() : '';
+    if (!title || title === r.title) return;
+    const res = await fetch(`/api/ask/threads/${encodeURIComponent(r.id)}`, { method: 'PATCH',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title }) }).catch(() => null);
+    if (!res || !res.ok) { notify({ tone: 'err', title: 'Could not rename the chat', detail: res ? (await res.json().catch(() => ({}))).error || '' : '' }, { doc }); return; }
+    if (r.id === st.threadId) el.title.textContent = title;
+    loadHistory();
+  }
+  function openChatKeys(opener) {
+    openKeysSheet({ doc, opener, page: 'chat', advanced: levelShows(currentLevel(doc), 'advanced'), fallback: () => chatsCol && chatsCol.focusTarget() });
+  }
+  function onChatKeys(e) {
+    if (!chatsCol || !st.open || st.destroyed || e.defaultPrevented || modalUp() || el.page.closest('[inert]')) return;
+    const t = e.target;
+    const inField = !!(t && typeof t.closest === 'function' && t.closest(LIST_FIELD));
+    const act = chatPageKeyAction({ key: e.key, code: e.code, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey, inField }, { mac: isMac(win) });
+    if (act) {
+      e.preventDefault();
+      if (act === 'new-chat') el.headPlus.click();              // the click the intent / home-flip hooks see
+      else if (act === 'toggle-list') toggleHistory();
+      else if (act === 'focus-list') { if (!historyOpen()) setHistoryOpen(true, { persist: !overlayMode() }); chatsCol.focusList(); }
+      else {
+        const id = chatsCol.neighbour(st.threadId, act === 'next-chat' ? 1 : -1);
+        if (id) { showThread(id); route(id); }
+      }
+      return;
+    }
+    if (e.key === '?' && !inField && !e.metaKey && !e.ctrlKey && !e.altKey && !st.popover && !doc.querySelector('.wfv-menu, .keys-modal')) {
+      e.preventDefault();
+      openChatKeys(t);
+    }
   }
 
   /** The search box: its button (aria-controls the field) and the field. The server searches titles and message text
@@ -2017,6 +2116,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
    *  show tries again (a boot whose endpoints failed does not keep "No saved chats." for good). While the column's
    *  search holds text, every fetch (a show, a refresh frame, a delete) asks for its matches. */
   function loadHistory() {
+    if (chatsCol) { void chatsCol.refresh(); return; }   // #948 s2: the Chats column takes every refresh path
     st.historyStale = false;
     const gen = ++st.historyGen;
     const query = st.historyQuery.trim();
@@ -2144,6 +2244,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   /** Mark the chat the page shows (or is loading). */
   function paintHistoryCurrent() {
+    if (chatsCol) chatsCol.paintCurrent();
     if (!el.historyBody) return;
     const cur = typeof st.wantThread === 'string' ? st.wantThread : st.threadId;
     for (const rowEl of el.historyBody.querySelectorAll('.ask-thread-row')) {
@@ -6694,6 +6795,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function pushServerFrame(frame) {
     if (st.destroyed || !frame) return;
+    if (chatsCol) chatsCol.onFrame(frame);   // #948 s2: before the ask-command branch below returns
     if (frame.type === 'ask-history-cleared') {
       // The chats it removed (every one when it names none) leave the "asked in" set, and a Chat row dot lit for one
       // of them goes out: the Chat row never routes to a deleted chat.
@@ -6989,6 +7091,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   const root = buildRoot();
   mountAddons();
   doc.addEventListener('keydown', onDocKeydown, true);
+  doc.addEventListener('keydown', onChatKeys);       // #948 s2: the Chat page keys (chatsColumn only)
   doc.addEventListener('pointerdown', onDocPointerdown, true);
   // A mode change (ui-level.mjs applyLevel) re-decides every activity toggle: a mode that hides the rows opens nothing.
   const onLevelChange = () => { if (st.rowEls) for (const entry of st.rowEls.values()) if (entry.relevel) entry.relevel(); };
@@ -7027,6 +7130,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.elapsedTimer) { clearInterval(st.elapsedTimer); st.elapsedTimer = null; }
     orbs.destroy();
     doc.removeEventListener('keydown', onDocKeydown, true);
+    doc.removeEventListener('keydown', onChatKeys);
+    if (chatsCol) { chatsCol.destroy(); chatsCol = null; }
     doc.removeEventListener('pointerdown', onDocPointerdown, true);
     doc.removeEventListener('worca:level', onLevelChange);
     win.removeEventListener('resize', onWinResize);
@@ -7063,6 +7168,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     ownsKey,
     setScope: (scope) => setScopeFromApi(scope),
     optionsChanged: () => { st.cardOptions = null; },   // projects-changed / workspaces-changed: the next read refetches
+    chatsColumnChanged: () => applyChatsMode(),        // #948 s2: app.js onFlagChange('chatsColumn')
     destroy,
   });
 }

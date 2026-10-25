@@ -116,6 +116,7 @@ import { createRunsSelection, rowTarget, barModel, bulkBody, rangeKeys, labelTar
 import { bulkConfirm, planBulk, skipText } from '../../src/shared/run-bulk.mjs';
 import { listKeyAction, keyHint, isMac, LIST_FIELD } from './list-keys.mjs';
 import { openKeysSheet } from './keys-sheet.mjs';
+import { createListRove, paintBulkBar, LIST_NAV, navKey } from './list-dom.mjs';
 import { openGroupPicker } from './group-picker.mjs';
 import { ACTION_LABEL, HEAD_ACTIONS, MENU_ACTIONS, groupModel, runModel } from '../../src/shared/run-model.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
@@ -295,6 +296,7 @@ import { renderPattern, patternProblem, PRESET_TYPES, TYPE_RE } from '../../src/
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
+import { chatRows, CHAT_LIMIT } from './global-search.mjs';
 import { pageTitle } from './topnav.mjs';
 import { activityCounts } from './activity-model.mjs';
 import { createChatHome, findFollowingThread } from './chat/home.mjs';
@@ -418,6 +420,13 @@ let lastChatHomeFlags = null;   // the switches chatHomeFlags last read: onHello
 const chatDeps = {
   openRunPanel: (ref, opts) => chatOpenRunPage(ref, opts),
   openArtifact: (ref, artifact) => chatDeps.openRunPanel(ref, { tab: 'artifacts' }),
+  // #948 s2 (chatsColumn): Rename… in the Chats column, and the project or workspace name on a chat row.
+  prompt: (o) => promptModal(o),
+  scopeName: (s) => {
+    if (s && s.projectKey) { const p = (state.projects || []).find((x) => x.key === s.projectKey); return p ? p.name || projectName(p.path) : ''; }
+    if (s && s.workspaceId) { const w = (state.workspaces || []).find((x) => x.id === s.workspaceId); return w ? w.name : ''; }
+    return '';
+  },
 };
 
 /** L11: open feature views by id, repainted on `shape-feature` and `schedules-changed`. host -> feature id. */
@@ -1281,6 +1290,12 @@ if (topnavSearchRoot) createTopnavSearch({
     if (!runsUi.view.labels.includes(label)) setRunsView({ labels: [...runsUi.view.labels, label] });
     goRunsList();
   },
+  // #948 s2: the Chats group while chatsColumn is on (title and message text, server-side), first on the Chat page.
+  searchChats: (q) => (flagOn('chatsColumn')
+    ? fetch(`/api/ask/threads?limit=${CHAT_LIMIT}&q=${encodeURIComponent(q)}`).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+      .then((b) => chatRows(b && Array.isArray(b.threads) ? b.threads : []))
+    : Promise.resolve([])),
+  chatsFirst: () => document.body.classList.contains('view-chat'),
 });
 
 // Restore before the first paint. `.sidebar` transitions width/flex-basis over
@@ -33443,9 +33458,7 @@ function paintRunsList() {
       refocus = { key: a.matches('a.runs-row') ? (a.dataset.rowKey || '') : '', pid: a.dataset.pipelineId || '',
         section: a.dataset.sectionKey || '', chain: of('runs-expand'), check: of('runs-check'), more: of('runs-more') };
       // A focused row the repaint drops (E, ⌫, an archive from elsewhere) hands the focus to its next, else previous, neighbour.
-      const items = runsNavItems();
-      const i = a.matches('a.runs-row') ? items.indexOf(a) : -1;
-      refocus.nearKeys = i < 0 ? [] : [items[i + 1], items[i - 1]].filter(Boolean).map(runsNavKey);
+      refocus.nearKeys = a.matches('a.runs-row') ? runsRove.around(a) : [];
     }
     // P2: each group line's current width, by row key, so its rebuilt twin starts where this one is.
     const lineFrom = new Map();
@@ -33462,8 +33475,7 @@ function paintRunsList() {
   paintRunsBar();
   paintRunsSelection();   // before the focus restore: its last fallback is the selected row
   if (refocus) {
-    const now = runsNavItems();
-    const near = refocus.nearKeys.map((k) => now.find((x) => runsNavKey(x) === k)).find(Boolean) || null;
+    const near = runsRove.find(refocus.nearKeys);
     const back = runsFocusTarget(host, { ...refocus, near });
     if (back) back.focus({ preventScroll: true });
   }
@@ -33667,36 +33679,15 @@ document.getElementById('runs-all')?.addEventListener('change', (e) => {
   paintRunsList();
 });
 // ── The list keys (list-keys.mjs, issue #948): one Tab stop, a moving focus, letter keys on the row or the selection ──
-const RUNS_NAV = 'a.runs-row, button.runs-sec-head[data-section-key]';
-const runsNavItems = () => [...el.runsList.querySelectorAll(RUNS_NAV)].filter((n) => !n.closest('[hidden]'));
-const runsNavKey = (n) => (n.dataset.rowKey ? `row:${n.dataset.rowKey}` : `sec:${n.dataset.sectionKey}`);
+const RUNS_NAV = LIST_NAV;
+const runsRove = createListRove({ host: el.runsList, state: runsUi });   // one Tab stop, focusin bookkeeping (list-dom.mjs)
+const runsNavItems = () => runsRove.items();
+const runsNavKey = navKey;
 const runsRowLink = (item) => item?.querySelector(':scope > a.runs-row') || null;
-/** The one Tab stop: the remembered row or head, else the open run's row, else the first row. Called after each paint. */
-function roveRunsList() {
-  const items = runsNavItems();
-  const want = items.find((n) => runsNavKey(n) === runsUi.focusKey) || el.runsList.querySelector('a.runs-row.selected')
-    || items.find((n) => n.matches('a.runs-row')) || items[0] || null;
-  // Every match, hidden or not: an <a href> with no tabindex attribute is a Tab stop, so none may keep the default.
-  for (const n of el.runsList.querySelectorAll(RUNS_NAV)) n.tabIndex = n === want ? 0 : -1;
-  for (const b of el.runsList.querySelectorAll('.runs-more, .runs-expand, .runs-check')) b.tabIndex = -1;
-  return want;
-}
-el.runsList?.addEventListener('focusin', (e) => {
-  const n = e.target.closest?.(RUNS_NAV);
-  if (!n) return;
-  runsUi.focusKey = runsNavKey(n);
-  for (const x of el.runsList.querySelectorAll(RUNS_NAV)) x.tabIndex = x === n ? 0 : -1;
-});
-function focusRunsNav(n) {
-  if (!n) return;
-  n.focus();
-  n.scrollIntoView?.({ block: 'nearest' });
-}
-function moveRunsFocus(from, dir) {
-  const items = runsNavItems();
-  const i = from ? items.indexOf(from) : -1;
-  focusRunsNav(i < 0 ? roveRunsList() : items[Math.max(0, Math.min(items.length - 1, i + dir))]);
-}
+/** The one Tab stop (list-dom.mjs): the remembered row or head, else the open run's row, else the first row. */
+function roveRunsList() { return runsRove.rove(); }
+function focusRunsNav(n) { runsRove.focus(n); }
+function moveRunsFocus(from, dir) { runsRove.move(from, dir); }
 const topKeyOf = (item) => (item.dataset.level === 'top' ? item.dataset.rowKey
   : item.parentElement?.closest('.runs-item[data-level="top"]')?.dataset.rowKey);
 function extendRunsSelection(item, dir) {
@@ -33728,15 +33719,12 @@ function foldRunsKey(open, nav, item) {
 /** S / E / ⌫ / G / ⇧G: the selection through the bar's action, else the focused row's own ⋯ item (same rule, same level). */
 function runsLetterKey(action, item) {
   // Where the focus goes back to: the same row, else the row that took its place (next, then previous), never the top.
-  const items = runsNavItems();
-  const at = items.findIndex((n) => runsNavKey(n) === runsUi.focusKey);
-  const keys = at < 0 ? [] : [items[at], items[at + 1], items[at - 1]].filter(Boolean).map(runsNavKey);
+  const keys = runsRove.around(runsNavItems().find((n) => runsNavKey(n) === runsUi.focusKey), { self: true });
   // After a confirm, activeElement sits on the hidden modal for a frame (jsdom has no requestAnimationFrame).
   const frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (fn) => setTimeout(fn, 0);
   const refocus = () => frame(() => {
     if (el.runsListPane.contains(document.activeElement)) return;
-    const now = runsNavItems();
-    const n = keys.map((k) => now.find((x) => runsNavKey(x) === k)).find(Boolean);
+    const n = runsRove.find(keys);
     if (n) runsUi.focusKey = runsNavKey(n);
     focusRunsNav(n || roveRunsList());
   });
@@ -33847,14 +33835,7 @@ function paintRunsBar() {
   }
   if (!on) return;
   const m = barModel(selectedTargets());
-  document.getElementById('runs-bulk-n').textContent = m.label;
-  for (const a of ['stop', 'archive', 'delete']) {
-    const b = bar.querySelector(`[data-bulk="${a}"]`);
-    if (!b) continue;
-    b.querySelector('.runs-bulk-c').textContent = String(m[a].count);
-    b.disabled = m[a].count === 0;
-    if (m[a].title) b.title = m[a].title; else b.removeAttribute('title');
-  }
+  paintBulkBar(bar, { label: m.label, actions: { stop: m.stop, archive: m.archive, delete: m.delete } });
   const labelBtn = bar.querySelector('[data-bulk="label"]');
   if (labelBtn) {
     labelBtn.disabled = !labelTargets(selectedTargets()).length;
@@ -38663,6 +38644,15 @@ function showView(name, param = '') {
       refreshNewPipelinePickers();
     }
   }
+  paintSearchPlaceholder();
+}
+/** #948 s2 (chatsColumn): the top search says what it finds on the Chat page. */
+function paintSearchPlaceholder() {
+  const input = document.getElementById('tsearch-input');
+  if (!input) return;
+  const text = flagOn('chatsColumn') && document.body.classList.contains('view-chat') ? 'Search chats or ask' : 'Search or ask';
+  input.placeholder = text;
+  input.setAttribute('aria-label', text);
 }
 // Paint one Settings tab and run its loader. Called from showView ONLY, so every
 // entry point (tab click, hash, deep link, legacy redirect, boot, a direct
@@ -40153,6 +40143,12 @@ askPanel = createAskPanel({
 // Command summaries (#911): read the person's switch once, and follow the flag.
 Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).then((d) => setChatSummariesPref(d && d.chat)).catch(() => { /* keep: on */ });
 onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); void paintHelperModelCards(); });
+// #948 s2: the Chats column swaps in and out live; the unsubscribe is a test hook (flags.mjs listeners outlive a jsdom boot).
+if (typeof window !== 'undefined') {
+  window.__np = window.__np || {};
+  window.__np.offChatsColumnFlag?.();
+  window.__np.offChatsColumnFlag = onFlagChange('chatsColumn', () => { askPanel?.chatsColumnChanged(); paintSearchPlaceholder(); });
+}
 // One delegated handler for every Summaries / Raw switch (Logs tab, History Logs, both drawers, Chat's run
 // panel): they are cloned on every build, so per-node listeners would be lost on each rebuild.
 document.addEventListener('click', (e) => {

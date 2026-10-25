@@ -81,8 +81,9 @@ ring for every button, link, summary, tab, switch and `[tabindex]` while `data-i
 back. Only a key that moves or acts on focus counts (Tab, the arrows, Enter, Space or Escape outside a field): typing,
 Enter in a field and a modifier alone keep the pointer mode (`ui/public/input-mode.mjs`). Fields keep their ink border
 on focus. Rings sit on `:focus-visible`, never on `:focus`.
-A divided list with list keys (`ui/public/list-keys.mjs`, the Runs list) is one Tab stop with a moving focus: rows and
-foldable section heads take ↑ ↓ / J K, their ⌄, ⋯ and checkbox are `tabindex="-1"`.
+A divided list with list keys (`ui/public/list-keys.mjs`, the Runs list and the Chats column) is one Tab stop with a
+moving focus (`ui/public/list-dom.mjs`, the one module both lists use): rows and foldable section heads take ↑ ↓ / J K,
+their ⌄, ⋯ and checkbox are `tabindex="-1"`.
 
 ## Components
 ### Button (checked)
@@ -168,6 +169,7 @@ or a policy origin is `.badge.slate`; "not installed" and "built-in" are grey.
 ### Status dot and symbols
 A dot is the state: peach working (pulses), grey paused or waiting, green ready, violet merged. Needs you is an amber
 "?" only when Worca asks; a PR problem is a plain amber dot with the reason in the PR chip; failed is a red "!".
+An idle chat shows the chat bubble line icon in the dot's place.
 ### Card head
 The first line of a card is its headline. When the page title sits above the card (the run page, the group page),
 the state is the headline: `.run-status-word`, 1–3 words at `--fs-section` / 600 / `--lh-title`, never truncated, the
@@ -307,6 +309,9 @@ and hand the focus back to the opener.
 - Phones: one 16px gutter; nothing scrolls sideways at 290px.
 - Runs list order: Needs you (most urgent first), Running, Waiting, Recent. Each section is newest dispatch first (a
   run's start, a waiting ticket's creation); a section with no rows is not drawn.
+- Chats list (flag `chatsColumn`): the Runs list anatomy in the Chat page's column; sections Pinned · Today · Recent
+  (the 10 latest before today) · Older (folded); Archive is disabled while a chat replies, runs a command or follows a
+  live run; an archived chat reads Restore, as a run does; New chat is the one + after the list toggle.
 - Waiting says what it waits for: `Waiting · starts after Complete Design Language Rollout · run 3`,
   `Waiting · starts 14:00`. A group in Needs you leads with the reason: `Run 1 needs you · Checks failing`.
 - Question options are divided rows: one --line between rows, no box per option; the picked row takes the --field fill

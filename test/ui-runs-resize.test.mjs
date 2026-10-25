@@ -127,3 +127,22 @@ test('bundle QA 2: a stored width wins over the 340px default, even a narrower o
   assert.equal(shell.style.getPropertyValue('--runs-list-w'), '300px');
   assert.equal(handle.getAttribute('aria-valuenow'), '300');
 });
+
+test('#948 s2: key, cssVar, paneSel and label options; destroy() removes the handle', () => {
+  const dom = trackDom(new JSDOM('<!doctype html><body><div class="chat-page"><aside class="chat-history"></aside><div class="chat-convo"></div></div></body>'));
+  const win = dom.window;
+  Object.defineProperty(win, 'innerWidth', { configurable: true, value: 1440 });
+  const page = win.document.querySelector('.chat-page');
+  const storage = memStorage();
+  const api = mountRunsResize(page, { storage, win, key: 'worca-cc.chats.listWidth', cssVar: '--chats-list-w', paneSel: '.chat-history',
+    label: 'Resize the chats list' });
+  const handle = page.querySelector('.chat-history > .runs-resize');
+  assert.equal(handle.getAttribute('aria-label'), 'Resize the chats list');
+  key(win, handle, 'ArrowRight');
+  assert.ok(storage.m.has('worca-cc.chats.listWidth'));
+  assert.ok(!storage.m.has(LIST_W_KEY));
+  assert.ok(page.style.getPropertyValue('--chats-list-w'));
+  assert.equal(page.style.getPropertyValue('--runs-list-w'), '');
+  api.destroy();
+  assert.equal(page.querySelector('.runs-resize'), null);
+});

@@ -353,6 +353,7 @@ function needsWhy(row) {
 /** §3.1 "say each thing once": the row's one status line. `section`: 'needs' | 'running' | '' (mixed). */
 export function listLine(row, { section = '', time = '' } = {}) {
   const m = row.model;
+  if (row.kind === 'chat') return m.line;   // #948 s2: a Chats column row brings its whole sub line (chats-list.mjs)
   if (row.archived) return and('Archived', time);
   if (row.kind === 'chain') {
     const p = posOf(m);
@@ -681,7 +682,8 @@ export const RUNS_LOADING = 'Loading runs…';
 export const RUNS_OFFLINE = "The runs show here once Worca's server is reachable again.";
 
 export function renderRunsList(doc, model, { checked = new Set(), selecting = false, lineFrom = null, emptyText = 'No runs yet.', note = '',
-  loading = false, offline = false, retry = false } = {}) {
+  loading = false, offline = false, retry = false, emptyByShow = SHOW_EMPTY, loadingText = RUNS_LOADING,
+  offlineText = RUNS_OFFLINE } = {}) {
   const out = [];
   for (const s of model.sections) {
     const sec = doc.createElement('section');
@@ -689,37 +691,46 @@ export function renderRunsList(doc, model, { checked = new Set(), selecting = fa
     sec.dataset.section = s.id;
     sec.setAttribute('aria-label', s.title);
     const collapsible = s.collapsed !== undefined;   // project and date sections fold, as today's group heads
-    const head = doc.createElement(collapsible ? 'button' : 'div');
-    head.className = 'runs-sec-head';
-    if (collapsible) { head.type = 'button'; head.dataset.sectionKey = s.id; head.setAttribute('aria-expanded', s.collapsed ? 'false' : 'true'); }
-    head.append(textEl(doc, 'span', 'runs-sec-title', s.title), ...(s.kind ? [kindChip(doc, s.kind)].filter(Boolean) : []), textEl(doc, 'span', 'runs-count', String(s.count)));
+    // A bare section (#948 s2: the Chats column's flat lists) draws no head: the view chip names the list.
+    const head = s.bare ? null : doc.createElement(collapsible ? 'button' : 'div');
+    if (head) {
+      head.className = 'runs-sec-head';
+      if (collapsible) { head.type = 'button'; head.dataset.sectionKey = s.id; head.setAttribute('aria-expanded', s.collapsed ? 'false' : 'true'); }
+      head.append(textEl(doc, 'span', 'runs-sec-title', s.title), ...(s.kind ? [kindChip(doc, s.kind)].filter(Boolean) : []), textEl(doc, 'span', 'runs-count', String(s.count)));
+    }
     const rows = doc.createElement('div');
     rows.className = 'runs-sec-rows';
     rows.hidden = !!s.collapsed;
     const sectionWord = s.id === 'needs' || s.id === 'running' ? s.id : '';
     if (!s.collapsed) for (const r of s.rows) rows.append(renderItem(doc, r, { section: sectionWord, checked, selecting, spansProjects: model.spansProjects, lineFrom, now: model.now }));
-    sec.append(head, rows);
+    sec.append(...(head ? [head] : []), rows);
     if (s.more) {
-      const b = textEl(doc, 'button', 'btn btn-sm btn-quiet runs-older', 'Show older');
+      // #948 s2: "Show more" under the Chats column's project and flat lists; Runs keeps "Show older".
+      const b = textEl(doc, 'button', 'btn btn-sm btn-quiet runs-older', s.moreLabel || 'Show older');
       b.type = 'button';
       sec.append(b);
     }
     out.push(sec);
   }
+  const retryBtn = () => {
+    const b = textEl(doc, 'button', 'btn btn-sm btn-secondary runs-retry', 'Try again');
+    b.type = 'button';
+    b.dataset.runsRetry = '1';
+    return b;
+  };
   if (!model.shown) {
     // Only a list with nothing at all says loading or offline: a Show-filtered empty view keeps its own note.
-    if (loading && !model.total) out.push(textEl(doc, 'p', 'runs-note runs-loading', RUNS_LOADING));
-    else if (offline && !model.total) out.push(textEl(doc, 'p', 'runs-note runs-offline', RUNS_OFFLINE));
-    else out.push(textEl(doc, 'p', 'runs-note', SHOW_EMPTY[model.view.show] || emptyText));
+    if (loading && !model.total) out.push(textEl(doc, 'p', 'runs-note runs-loading', loadingText));
+    else if (offline && !model.total) {
+      const p = textEl(doc, 'p', 'runs-note runs-offline', offlineText);
+      // #948 s2: a retry with no error note sits on the offline note (Runs always sends retry with a note).
+      if (retry && !note) p.append(' ', retryBtn());
+      out.push(p);
+    } else out.push(textEl(doc, 'p', 'runs-note', emptyByShow[model.view.show] || emptyText));
   }
   if (note) {
     const p = textEl(doc, 'p', 'runs-note runs-note-err', note);
-    if (retry) {
-      const b = textEl(doc, 'button', 'btn btn-sm btn-secondary runs-retry', 'Try again');
-      b.type = 'button';
-      b.dataset.runsRetry = '1';
-      p.append(' ', b);
-    }
+    if (retry) p.append(' ', retryBtn());
     out.push(p);
   }
   return out;

@@ -260,6 +260,8 @@ export function createAskCommands({ terminals, store, resolveTarget, onFinish, o
 
   return {
     seen: (blockId) => seenEnd.has(blockId),
+    /** #948 s2: how many Ask-run commands of this chat are running now (the archive busy check). */
+    running: (threadId) => runningCount(threadId),
 
     async run(threadId, input = {}) {
       if (runningCount(threadId) >= limits.commandsPerThread) {

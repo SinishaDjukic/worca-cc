@@ -66,6 +66,9 @@ function rowToThread(r) {
     // The engine the chat is locked to (#635): written with the model on every turn. NULL (a chat from
     // before v53) is read from its model (ask/models.mjs chatEngine).
     engine: r.engine ?? null,
+    // #948 s2 (v75): archive and pin timestamps; null = not archived / not pinned.
+    archivedAt: r.archived_at ?? null,
+    pinnedAt: r.pinned_at ?? null,
     // Workflows view (v54): a composer chat's mode and the canvas its last message carried. Absent on Ask chats.
     ...(r.mode ? { mode: r.mode } : {}),
     ...(r.composer ? { composer: parse(r.composer, null) } : {}),
@@ -130,11 +133,18 @@ const SEARCHED_MESSAGE = `NOT (m.role = 'user' AND COALESCE(m.blocks, '') LIKE '
  *  "Delete all" count, which deletes composer chats too) skips the surface filter. A `query` (the History search) also
  *  keeps only chats whose title OR any message's text holds it — case-insensitive (SQLite's LIKE folds ASCII only).
  *  `alias` must name the threads table: the message subquery has an `id` of its own. */
-function listWhere(visibleTo, mode, alias, query) {
+function listWhere(visibleTo, mode, alias, query, { show = null, ids = null } = {}) {
   const where = [];
   const args = [];
   if (visibleTo) { where.push(`(${alias}created_by IS NULL OR ${alias}created_by = ?)`); args.push(visibleTo); }
   if (mode !== 'any') where.push(mode === 'composer' ? `${alias}mode = 'composer'` : `(${alias}mode IS NULL OR ${alias}mode <> 'composer')`);
+  // #948 s2: 'all' = not archived, 'archived' = archived only; null (every caller before s2) = both.
+  if (show === 'all') where.push(`${alias}archived_at IS NULL`);
+  else if (show === 'archived') where.push(`${alias}archived_at IS NOT NULL`);
+  if (Array.isArray(ids)) {
+    if (!ids.length) where.push('0');
+    else { where.push(`${alias}id IN (${ids.map(() => '?').join(', ')})`); args.push(...ids); }
+  }
   const q = searchText(query);
   if (q) {
     where.push(`(${alias}title LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM ask_messages m WHERE m.thread_id = ${alias}id AND m.text LIKE ? ESCAPE '\\' AND ${SEARCHED_MESSAGE}))`);
@@ -155,6 +165,13 @@ function excerptAround(text, q) {
   return `${from > 0 ? '…' : ''}${flat.slice(from, to)}${to < flat.length ? '…' : ''}`;
 }
 
+/** A list row: the thread without its composer canvas, its link counts and, for a message hit, the excerpt. */
+function toListRow(r, q) {
+  const { composer: _canvas, ...t } = rowToThread(r);
+  const match = q && !r.title_hit && r.hit_text != null ? { match: { snippet: excerptAround(r.hit_text, q) } } : {};
+  return { ...t, runLinks: r.run_links, worktrees: r.worktrees, ...match };
+}
+
 export function listThreads({ limit = 50, visibleTo = null, mode = null, query = '' } = {}) {
   getDb();
   const n = Number.isInteger(limit) && limit > 0 ? limit : 50;
@@ -170,18 +187,87 @@ export function listThreads({ limit = 50, visibleTo = null, mode = null, query =
     FROM ask_threads t${w.sql} ORDER BY t.updated_at DESC, t.id LIMIT ?
   `).all(...(q ? [likeContains(q), likeContains(q)] : []), ...w.args, n);
   // A list row never carries the composer canvas (up to 256 KB each): getThread does.
-  return rows.map((r) => {
-    const { composer: _canvas, ...t } = rowToThread(r);
-    const match = q && !r.title_hit && r.hit_text != null ? { match: { snippet: excerptAround(r.hit_text, q) } } : {};
-    return { ...t, runLinks: r.run_links, worktrees: r.worktrees, ...match };
-  });
+  return rows.map((r) => toListRow(r, q));
+}
+
+/** #948 s2: the Chats column's sort keys. `expr` is SQL over `t`; the page also selects it AS sort_key for the cursor. */
+const THREAD_SORT_SQL = Object.freeze({
+  activity: { expr: 't.updated_at', desc: true },
+  created: { expr: 't.created_at', desc: true },
+  title: { expr: "lower(COALESCE(t.title, ''))", desc: false },
+  cost: { expr: "COALESCE(json_extract(t.totals, '$.costUsd'), 0)", desc: true },
+});
+export const THREAD_SORTS = Object.freeze(Object.keys(THREAD_SORT_SQL));
+
+const badCursor = () => Object.assign(new Error('invalid cursor'), { code: 'BAD_CURSOR' });
+const encodeCursor = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+function decodeCursor(s, sort) {
+  let o = null;
+  try { o = JSON.parse(Buffer.from(String(s), 'base64url').toString('utf8')); } catch { throw badCursor(); }
+  const keyOk = typeof o?.k === 'string' || typeof o?.k === 'number';
+  if (!o || o.s !== sort || (o.p !== 0 && o.p !== 1) || typeof o.id !== 'string' || !keyOk) throw badCursor();
+  return o;
+}
+
+/**
+ * One page of the Chats column: pinned first, then `sort`, then id. `cursor` is the previous page's answer (null for
+ * the first page); the answer's `cursor` is null on the last page. `show`: 'all' | 'archived' | null; `ids` limits the
+ * page to those threads (Show = Needs you). Throws `code: 'BAD_CURSOR'` for a cursor of another sort or garbage.
+ */
+export function listThreadsPage({ limit = 50, visibleTo = null, mode = null, query = '', show = null, sort = 'activity', cursor = null, ids = null } = {}) {
+  getDb();
+  const s = THREAD_SORT_SQL[sort] ? sort : 'activity';
+  const { expr, desc } = THREAD_SORT_SQL[s];
+  const n = Number.isInteger(limit) && limit > 0 ? limit : 50;
+  const q = searchText(query);
+  const w = listWhere(visibleTo, mode, 't.', q, { show, ids });
+  const after = cursor ? decodeCursor(cursor, s) : null;
+  const keyset = after
+    ? `${w.sql ? ' AND' : ' WHERE'} ((t.pinned_at IS NULL) > ? OR ((t.pinned_at IS NULL) = ? AND (${expr} ${desc ? '<' : '>'} ? OR (${expr} = ? AND t.id > ?))))`
+    : '';
+  const hit = q ? `,
+           (t.title LIKE ? ESCAPE '\\') AS title_hit,
+           (SELECT m.text FROM ask_messages m WHERE m.thread_id = t.id AND m.text LIKE ? ESCAPE '\\' AND ${SEARCHED_MESSAGE} ORDER BY m.seq LIMIT 1) AS hit_text` : '';
+  const rows = prepare(`
+    SELECT t.*, (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id) AS run_links,
+           (SELECT count(*) FROM ask_worktrees w WHERE w.thread_id = t.id) AS worktrees,
+           ${expr} AS sort_key, (t.pinned_at IS NULL) AS unpinned${hit}
+    FROM ask_threads t${w.sql}${keyset}
+    ORDER BY (t.pinned_at IS NULL), ${expr} ${desc ? 'DESC' : 'ASC'}, t.id LIMIT ?
+  `).all(...(q ? [likeContains(q), likeContains(q)] : []), ...w.args,
+    ...(after ? [after.p, after.p, after.k, after.k, after.id] : []), n + 1);
+  const page = rows.slice(0, n);
+  const last = page.at(-1);
+  return {
+    threads: page.map((r) => toListRow(r, q)),
+    cursor: rows.length > n && last ? encodeCursor({ s, p: Number(last.unpinned), k: last.sort_key, id: last.id }) : null,
+  };
+}
+
+/** #948 s2: archive (on) or unarchive. Never bumps updated_at (Last activity keeps its order); a second archive keeps
+ *  the first time. The thread, or null when it does not exist. */
+export function setArchived(id, on) {
+  getDb();
+  const info = on
+    ? prepare('UPDATE ask_threads SET archived_at = COALESCE(archived_at, ?) WHERE id = ?').run(now(), id)
+    : prepare('UPDATE ask_threads SET archived_at = NULL WHERE id = ?').run(id);
+  return info.changes ? getThread(id) : null;
+}
+
+/** #948 s2: pin (on) or unpin, the same rules as setArchived. */
+export function setPinned(id, on) {
+  getDb();
+  const info = on
+    ? prepare('UPDATE ask_threads SET pinned_at = COALESCE(pinned_at, ?) WHERE id = ?').run(now(), id)
+    : prepare('UPDATE ask_threads SET pinned_at = NULL WHERE id = ?').run(id);
+  return info.changes ? getThread(id) : null;
 }
 
 /** Total saved chats — the History popover shows this, not the capped page listThreads returns. With a `query`, the
  *  chats the search matches (same filter as listThreads). */
-export function countThreads({ visibleTo = null, mode = null, query = '' } = {}) {
+export function countThreads({ visibleTo = null, mode = null, query = '', show = null, ids = null } = {}) {
   getDb();
-  const w = listWhere(visibleTo, mode, 't.', query);
+  const w = listWhere(visibleTo, mode, 't.', query, { show, ids });
   const row = prepare(`SELECT count(*) AS n FROM ask_threads t${w.sql}`).get(...w.args);
   return row ? Number(row.n) : 0;
 }

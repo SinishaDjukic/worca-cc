@@ -136,7 +136,9 @@ import {
   findRunLinksByPipeline as askFindRunLinksByPipeline, runLinkTarget,
   finishMessage as askFinishMessage, newAskId,
   newAskId as askNewId, findPullRequestCards as askFindPullRequestCards, findFixRunCards as askFindFixRunCards,
+  setArchived as askSetArchived, setPinned as askSetPinned, listThreadsPage as askListThreadsPage, THREAD_SORTS,
 } from '../src/core/ask/store.mjs';
+import { CHAT_BUSY, chatBusyReason } from '../src/shared/chat-busy.mjs';
 import { revealTargetFor as askRevealTargetFor } from '../src/core/ask/show-files-deps.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { stripIntentLead } from '../src/shared/intent-leads.mjs';
@@ -13705,6 +13707,11 @@ function askTrackingCount(threadId) {
   return n;
 }
 
+/** #948 s2: why this chat cannot be archived now (chat-busy.mjs), or null. */
+function askBusyReason(threadId) {
+  return chatBusyReason({ inFlight: !!askInFlight(threadId), commands: askCommands.running(threadId), tracking: askTrackingCount(threadId) });
+}
+
 /** worca Chat (the History column's amber dot): how many of this chat's followed, unsettled runs wait on a question
  *  or gate — entry.pendingQuestion, the same truth the Running page reads. */
 function askWaitingCount(threadId) {
@@ -13805,15 +13812,34 @@ app.get('/api/ask/threads', (req, res) => {
     const mode = !req.worcaExtension && req.query.mode === 'composer' ? 'composer' : null;
     // q = the History column's search (title or any message's text); the owner and surface filters above still apply.
     const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
-    const threads = askListThreads({ limit, visibleTo, mode, query }).map((t) => {
+    const decorate = (t) => {
       const trackingRuns = askTrackingCount(t.id);
-      return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns, waiting: askWaitingCount(t.id) > 0 };
-    });
+      return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns, waiting: askWaitingCount(t.id) > 0,
+        commands: askCommands.running(t.id), archived: !!t.archivedAt, scope: chatScopeOf(t.context) };
+    };
+    // #948 s2: the Chats column pages (show / sort / cursor). Without them the answer keeps today's top-level keys.
+    const cursor = typeof req.query.cursor === 'string' && req.query.cursor ? req.query.cursor : null;
+    // A cursor alone pages Show = All, so `total` and the rows describe the same set.
+    const show = ['all', 'needs', 'archived'].includes(req.query.show) ? req.query.show : (cursor ? 'all' : null);
+    if (show) {
+      const sort = THREAD_SORTS.includes(req.query.sort) ? req.query.sort : 'activity';
+      const needIds = [...askFollowers.keys()].filter((tid) => askWaitingCount(tid) > 0);
+      const base = { visibleTo, mode, query };
+      const page = askListThreadsPage({ ...base, limit, sort, cursor, show: show === 'needs' ? 'all' : show, ids: show === 'needs' ? needIds : null });
+      const counts = {
+        all: askCountThreads({ ...base, show: 'all' }),
+        needs: askCountThreads({ ...base, show: 'all', ids: needIds }),
+        archived: askCountThreads({ ...base, show: 'archived' }),
+      };
+      return res.json({ threads: page.threads.map(decorate), cursor: page.cursor, total: counts[show], counts });
+    }
+    const threads = askListThreads({ limit, visibleTo, mode, query }).map(decorate);
     // total = EVERY saved chat (the History popover's meter), not the capped page above; while searching, the chats
     // the search matches, with all = every saved chat ("3 of 54 chats").
     const total = askCountThreads({ visibleTo, mode, query });
     res.json(query ? { threads, total, all: askCountThreads({ visibleTo, mode }) } : { threads, total });
   } catch (err) {
+    if (err && err.code === 'BAD_CURSOR') return badRequest(res, 'invalid cursor');
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
@@ -14039,6 +14065,22 @@ app.patch('/api/ask/threads/:id', async (req, res) => {
   try {
     if (req.worcaExtension && askGetThread(id)?.mode === 'composer') return res.status(403).json({ error: 'the browser extension uses Ask threads only', code: 'extension-route' });
     const body = req.body || {};
+    // #948 s2: archive and pin, alone in the body. Archive waits for an idle chat (chat-busy.mjs); unarchive and pin
+    // never wait. Neither bumps the chat's Last activity.
+    if (body.archived !== undefined || body.pinned !== undefined) {
+      if (Object.keys(body).some((k) => k !== 'archived' && k !== 'pinned')) return badRequest(res, 'archived and pinned are sent on their own');
+      for (const k of ['archived', 'pinned']) {
+        if (body[k] !== undefined && typeof body[k] !== 'boolean') return badRequest(res, `${k} must be true or false`);
+      }
+      if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+      if (body.archived === true) {
+        const reason = askBusyReason(id);
+        if (reason) return res.status(409).json({ error: CHAT_BUSY[reason], code: 'CHAT_BUSY', reason });
+      }
+      if (body.archived !== undefined) askSetArchived(id, body.archived);
+      if (body.pinned !== undefined) askSetPinned(id, body.pinned);
+      return res.json({ thread: askGetThread(id) });
+    }
     const patch = {};
     // The Ask panel's model · effort picker, moved while this chat is open: the pair
     // travels together, so a switch away and back finds it before any send.
@@ -14933,6 +14975,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       catch (err) { if (err.code === 'TURN_IN_FLIGHT') return res.status(409).json({ error: 'turn in flight' }); throw err; }
     }
     if (composerState) askUpdateThread(id, { composer: composerState });
+    if (thread.archivedAt) askSetArchived(id, false);   // #948 s2: a message brings an archived chat back
     const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, client: req.worcaExtension ? 'browser-extension' : null });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
