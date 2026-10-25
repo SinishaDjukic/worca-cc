@@ -288,6 +288,7 @@ export function createOpencodeNormalizer({ model = null, mcpServers = [], server
   const subSessions = [];   // {sessionId, toolUseId}: a sub-agent's session and the `task` call that ran it
   let sessionId = null; let error = null; let errorName = null; let statusCode = null;
   let costUsd = 0; let priced = false; let unpriced = false; let usage = { ...ZERO_USAGE }; let steps = 0;
+  let stopped = false;   // the last step finished with reason `stop` and no step started after it: the turn is over
 
   function push(line) {
     let evt = line;
@@ -305,7 +306,7 @@ export function createOpencodeNormalizer({ model = null, mcpServers = [], server
     const part = evt.part && typeof evt.part === 'object' ? evt.part : {};
     switch (evt.type) {
       case 'step_start':
-        steps++;
+        steps++; stopped = false;
         break;
       case 'text': {
         const t = str(part.text);
@@ -341,6 +342,7 @@ export function createOpencodeNormalizer({ model = null, mcpServers = [], server
         break;
       }
       case 'step_finish': {
+        stopped = part.reason === 'stop';
         const u = claudeStyleUsage(part.tokens);
         usage = addUsage(usage, u);
         if (Number.isFinite(part.cost) && (part.cost > 0 || !spent(u))) { costUsd += part.cost; priced = true; } else if (spent(u)) unpriced = true;
@@ -361,7 +363,7 @@ export function createOpencodeNormalizer({ model = null, mcpServers = [], server
     return out;
   }
   return { push, finish: () => ({ text: texts.join(''), error, errorName, statusCode, sessionId, costUsd: priced && !unpriced ? costUsd : null,
-    usage, subSessions: [...subSessions], steps }) };
+    usage, subSessions: [...subSessions], steps }), over: () => stopped };
 }
 
 /**
@@ -672,6 +674,8 @@ export async function runOpencodeProcess({
           if (e.type === 'session') { sawSession = true; safeEmit(onEvent, { type: 'session', sessionId: e.sessionId }); }
         }
       },
+      // The last step's `stop`: what the step leaves running after it is killed (superviseSpawn, R15).
+      turnOver: () => normalizer.over(),
     }).catch(async (err) => {
       await spendOnExit(normalizer.finish());
       if (capped && !signal?.aborted) throw turnCap();

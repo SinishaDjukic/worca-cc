@@ -463,6 +463,7 @@ export async function runFamilyProcess(spec, {
       const normalizer = spec.createNormalizer({ model, mcpNames, cwd, ruleKinds: (permissionRules?.deny || []).map((r) => ruleKind(String(r))) });
       const ctrl = new AbortController();
       let toolCalls = 0; let capped = false; let fatal = null; let sawOutput = false;
+      let turnDone = false;   // the closing `result`: what the step leaves running after it is killed (R15)
       const spawnSignal = signal ? AbortSignal.any([signal, ctrl.signal]) : ctrl.signal;
       const { env: spawnEnv, route } = await attemptEnv();
       // A sandbox's stream is the sandbox's word: each result carries what the relay measured instead (remote-env.mjs).
@@ -478,10 +479,12 @@ export async function runFamilyProcess(spec, {
         spawnError: (err, pfx) => Object.assign(new Error(`${pfx}: ${err.message}`), { errorClass: /ENOENT|EINVAL/.test(String(err.code || err.message)) ? 'network' : null }),
         onDone: (code) => ({ code }),
         onStderrLine: spec.fatalStderrRe ? (line) => { if (!fatal && spec.fatalStderrRe.test(line)) { fatal = line.trim(); ctrl.abort(); } } : null,
+        turnOver: () => turnDone,
         onStdoutLine: (line) => {
           sawOutput = true;
           for (const e of normalizer.push(line)) {
             safeEmit(ev, e);
+            if (e.type === 'result') turnDone = true;
             if (cap && !capped && e.type === 'tool' && (e.parentId ?? null) === null && (toolCalls += e.calls.length) > cap) { capped = true; ctrl.abort(); }
           }
         },

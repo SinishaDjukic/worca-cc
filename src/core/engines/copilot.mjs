@@ -431,6 +431,7 @@ export function createCopilotNormalizer({ model = null, sessionId: qualifiedId =
   let errorType = null;
   let sessionId = null;
   let exitCode = null;
+  let resulted = false;   // the closing `result` frame was seen: the turn is over
 
   const parentOf = (evt) => {
     const d = evt.data || {};
@@ -500,6 +501,7 @@ export function createCopilotNormalizer({ model = null, sessionId: qualifiedId =
         errorType = text(d.errorType) || null;
         return [{ type: 'stderr', stream: 'err', text: `copilot: ${error}` }];
       case 'result':
+        resulted = true;
         if (typeof evt.sessionId === 'string') sessionId = evt.sessionId;
         if (Number.isFinite(evt.exitCode)) exitCode = evt.exitCode;
         return [];
@@ -509,7 +511,7 @@ export function createCopilotNormalizer({ model = null, sessionId: qualifiedId =
   }
 
   const finalError = () => error || (exitCode != null && exitCode !== 0 ? `copilot exited with code ${exitCode}` : null);
-  return { push, finish: () => ({ text: texts.join('\n'), error: finalError(), errorType, sessionId, exitCode, model }) };
+  return { push, finish: () => ({ text: texts.join('\n'), error: finalError(), errorType, sessionId, exitCode, model }), over: () => resulted };
 }
 
 // ── errors and preflight ─────────────────────────────────────────────────────
@@ -822,6 +824,8 @@ export async function runCopilotProcess({
           }
         }
       },
+      // The closing `result` frame: what the step leaves running after it is killed (superviseSpawn, R15).
+      turnOver: () => normalizer.over(),
     }).catch(async (err) => {
       await settleRemote();
       spendOnExit(settleUsage());

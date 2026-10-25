@@ -7,6 +7,8 @@
 // Like envd (plans/2026-10-22-e2b-kill-egress-checks.md §1), a command's pid does not lead a process group (it runs in
 // the group of a per-command stand-in for envd's) and a handle kill reaches that one pid only: a backgrounded
 // grandchild survives it, as it does in E2B. `setsid` is on PATH (a perl shim where the host has none: macOS).
+// `holdPipes: true` makes a command end the way design §9 measured it on a real sandbox: only once the last holder of
+// its stdout closes it (`sleep 8 & echo x` takes 8 s). Without it a command ends a short drain after its process does.
 import { spawn, spawnSync } from 'node:child_process';
 import { appendFileSync, chmodSync, createReadStream, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
@@ -36,7 +38,7 @@ function networkRefusal(network) {
   return null;
 }
 
-export function createFakeE2b({ root, onCommand = null, logFile = null } = {}) {
+export function createFakeE2b({ root, onCommand = null, logFile = null, holdPipes = false } = {}) {
   const live = new Map();   // sandboxId -> FakeSandbox
   const events = [];
   let seq = 0;
@@ -100,13 +102,13 @@ export function createFakeE2b({ root, onCommand = null, logFile = null } = {}) {
         child.stdin.on('error', () => {});   // a write after the command closed its stdin (EPIPE) must not crash the process
         child.stdout.setEncoding('utf8').on('data', (d) => { stdout += d; onStdout?.(d); });
         child.stderr.setEncoding('utf8').on('data', (d) => { stderr += d; onStderr?.(d); });
-        // Like envd, the command ends when its process does, not when the last holder of its pipes does (a backgrounded
-        // grandchild keeps them open): a short drain for the output, then the exit code.
+        // The command ends when its process does, not when the last holder of its pipes does (a backgrounded grandchild
+        // keeps them open): a short drain for the output, then the exit code. With `holdPipes`, when the last holder does.
         let closed = false;
         child.on('close', () => { closed = true; });
         child.on('exit', (code) => {
           const end = () => { this.children.delete(child); resolveP(killed ? 137 : code ?? 1); };
-          if (closed) end(); else { const t = setTimeout(end, 200); child.on('close', () => { clearTimeout(t); end(); }); }
+          if (closed) end(); else { const t = holdPipes ? null : setTimeout(end, 200); child.on('close', () => { clearTimeout(t); end(); }); }
         });
       });
       const wait = async () => { const exitCode = await done;

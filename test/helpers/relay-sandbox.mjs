@@ -22,11 +22,12 @@ const shq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 /**
  * @param {import('node:test').TestContext} t
  * @param {{engine:string, tmp:(p:string)=>string, upstream?:{relayUpstreams:object}|null, serverEnv?:object,
- *   fake?:Record<string,string>|null, lines?:string[]|null}} o
- *   fake: FAKE_* knobs (setFake replaces them per case); lines: canned stdout (default: the engine's stream fixture)
+ *   fake?:Record<string,string>|null, lines?:string[]|null, holdPipes?:boolean}} o
+ *   fake: FAKE_* knobs (setFake replaces them per case); lines: canned stdout (default: the engine's stream fixture);
+ *   holdPipes: a command ends only when its stdout's last holder closes it (e2b-fake.mjs, design §9)
  * @returns {Promise<{env:E2bExecEnv, f:object, seen:object[], setFake:(knobs:object)=>void, close:()=>Promise<void>}>}
  */
-export async function relaySandbox(t, { engine, tmp, upstream = null, serverEnv = {}, fake = null, lines = null }) {
+export async function relaySandbox(t, { engine, tmp, upstream = null, serverEnv = {}, fake = null, lines = null, holdPipes = false }) {
   const cli = ENGINE_CLI[engine];
   const seen = [];
   const canned = lines || readFileSync(join(HERE, '..', 'fixtures', 'engines', engine, 'stream.jsonl'), 'utf8').split('\n').filter(Boolean);
@@ -43,7 +44,7 @@ export async function relaySandbox(t, { engine, tmp, upstream = null, serverEnv 
     process.env.PATH = `${bin}${delimiter}${prev}`;
     t.after(() => { process.env.PATH = prev; });
   }
-  const sdk = createFakeE2b({ root: tmp('worca-relay-sandbox-root-'), onCommand: (cmd, o) => {
+  const sdk = createFakeE2b({ root: tmp('worca-relay-sandbox-root-'), holdPipes, onCommand: (cmd, o) => {
     const probe = cmd.match(/^command -v '([^']+)'/)?.[1];
     if (probe) return { lines: [`/usr/local/bin/${probe}`] };
     if (!cmd.startsWith(`'${cli}'`)) return null;

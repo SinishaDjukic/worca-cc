@@ -495,6 +495,7 @@ export async function runCursorProcess({
     const normalizer = createCursorNormalizer({ model });
     const capCtrl = new AbortController();
     let toolCalls = 0; let capped = false; let sawSession = false;
+    let turnDone = false;   // the closing `result`: what the step leaves running after it is killed (R15)
     const spawnSignal = cap ? (signal ? AbortSignal.any([signal, capCtrl.signal]) : capCtrl.signal) : signal;
     const ev = route ? remote.meteredEvents(route.id, onEvent) : onEvent;
     let args; let env2 = spawnEnv;
@@ -513,9 +514,11 @@ export async function runCursorProcess({
         redactText: redactor ? (t) => redactor.text(t) : null,
         spawnError: (err, pfx) => Object.assign(new Error(`${pfx}: ${err.message}`), { errorClass: /ENOENT|EINVAL/.test(String(err.code || err.message)) ? 'network' : null }),
         onDone: (code) => ({ code }),
+        turnOver: () => turnDone,
         onStdoutLine: (line) => {
           for (const e of normalizer.push(line)) {
             safeEmit(ev, e);
+            if (e.type === 'result') turnDone = true;
             if (cap && !capped && e.type === 'tool' && (e.parentId ?? null) === null && (toolCalls += e.calls.length) > cap) { capped = true; capCtrl.abort(); }
             // Pause/Resume: the runner's own session event (no `init`) is the one the harness stamps on the step.
             if (e.type === 'session') { sawSession = true; safeEmit(ev, { type: 'session', sessionId: e.sessionId }); }

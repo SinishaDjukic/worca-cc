@@ -16,7 +16,7 @@ import { conformanceRow } from './helpers/conformance.mjs';
 import { scratchDirs, fixture, makeEnvOpts } from './helpers/e2b-fixture.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { getEngine, ruleSupport, subagentPolicy, removeRunSessions } from '../src/core/engines/index.mjs';
-import { superviseSpawn, argValue, sigkillGraceMs, childEnv } from '../src/core/spawn.mjs';
+import { superviseSpawn, argValue, sigkillGraceMs, leftoverGraceMs, childEnv } from '../src/core/spawn.mjs';
 import { createFakeE2b } from '../src/core/exec-env/e2b-fake.mjs';
 import { E2bExecEnv } from '../src/core/exec-env/e2b-env.mjs';
 import { ENGINES, ENGINE_NAMES, RULE_KINDS, engineEntry, setCatalogForTest } from '../src/shared/engine-switch.mjs';
@@ -47,7 +47,8 @@ const FAKE = join(HERE, 'fixtures', 'fake-engine.mjs');
 const RULES_DIR = join(HERE, 'fixtures', 'engine-rules');
 const POSIX = process.platform === 'win32' ? { skip: 'POSIX process groups and shell fixtures' } : {};
 const { tmp, cleanup } = scratchDirs(); after(cleanup);
-const FAKE_VARS = ['FAKE_OUT', 'FAKE_STREAM', 'FAKE_HOLD', 'FAKE_GRANDCHILD', 'FAKE_EXIT', 'FAKE_FILES', 'FAKE_CALL', 'FAKE_CALL_MODEL', 'FAKE_HOLD_AFTER'];
+const FAKE_VARS = ['FAKE_OUT', 'FAKE_STREAM', 'FAKE_HOLD', 'FAKE_GRANDCHILD', 'FAKE_EXIT', 'FAKE_FILES', 'FAKE_CALL', 'FAKE_CALL_MODEL', 'FAKE_HOLD_AFTER',
+  'FAKE_GRANDCHILD_STDOUT', 'FAKE_PAUSE'];
 
 process.env.WORCA_SIGKILL_GRACE_MS = '200';
 let saved;
@@ -208,6 +209,80 @@ conformanceRow('C-GROUPKILL', "(sandbox) a stopped step's grandchild dies; the s
   assert.equal(box.env.lost, null, 'the sandbox lives on');
   assert.equal(box.env.relay.alive, true, 'the model relay lives on');
 }, POSIX);
+
+// R15: after the engine's final frame (its stream fixture's last line) and the leftover grace, what the step left
+// running is group-killed, so a step whose background child holds its stdout settles. Per engine: each adapter tells
+// superviseSpawn when its turn is over (turnOver). Every case kills its grandchild in a `finally`.
+const LEFTOVER_ENV = { WORCA_LEFTOVER_GRACE_MS: '300' };
+const leftoverLine = (events) => events.filter((e) => e.type === 'stderr' && /^\[worca\] .*after its result/.test(e.text || ''));
+
+conformanceRow('C-GROUPKILL', 'after its result, a step whose background child holds its stdout settles; the child dies', async (engine) => {
+  Object.assign(process.env, LEFTOVER_ENV);
+  const events = [];
+  let settled = null;
+  const p = runFake(engine, { env: { FAKE_GRANDCHILD_STDOUT: '1' }, onEvent: (e) => events.push(e) }).then((r) => { settled = r; });
+  const out = await waitFor(() => process.env.FAKE_OUT);
+  const gp = await waitFor(() => { try { return Number(readFileSync(`${out}.grand`, 'utf8').trim()) || null; } catch { return null; } });
+  try {
+    await waitFor(() => settled, leftoverGraceMs() + sigkillGraceMs() + 5000);
+    assert.equal(settled.error, null, String(settled.error?.message));
+    await waitFor(() => !alive(gp), sigkillGraceMs() + 1000);
+    assert.equal(leftoverLine(events).length, 1, 'one run-log line');
+  } finally {
+    try { process.kill(gp, 'SIGKILL'); } catch { /* gone, as it should be */ }
+    await p;
+  }
+}, POSIX);
+
+conformanceRow('C-GROUPKILL', "(sandbox) after its result, a step whose background child holds its stdout settles; the sandbox lives on", async (engine, t) => {
+  if (!ENGINES[engine].remote) { t.skip('no sandbox runs this engine yet (catalog remote: false)'); return; }
+  Object.assign(process.env, LEFTOVER_ENV);
+  const upstream = await startEngineUpstream();
+  t.after(() => upstream.close());
+  const out = join(tmp('worca-conf-gk-'), 'rec.json');
+  // holdPipes: the command ends only when its stdout's last holder closes it, as on a real sandbox (design §9).
+  const box = await relaySandbox(t, { engine, tmp, upstream, serverEnv: serverEnvFor(engine, upstream), holdPipes: true,
+    fake: { FAKE_OUT: out, FAKE_GRANDCHILD_STDOUT: '1', FAKE_STREAM: join(HERE, 'fixtures', 'engines', engine, 'stream.jsonl') } });
+  const events = [];
+  let settled = null;
+  const run = runClaude({ engine, cwd: box.f.repo, prompt: 'P', execEnv: box.env, model: STEP_MODEL[engine], onEvent: (e) => events.push(e),
+    bin: `/nonexistent/worca-test/${engine}`,
+    ...(engine === 'claude' ? { modelEnv: { ANTHROPIC_BASE_URL: upstream.url, ANTHROPIC_API_KEY: ANTHROPIC_KEY } } : {}) })
+    .then(() => { settled = { error: null }; }, (e) => { settled = { error: e }; });
+  const gp = await waitFor(() => { try { return Number(readFileSync(`${out}.grand`, 'utf8').trim()) || null; } catch { return null; } }, 30000);
+  try {
+    await waitFor(() => settled, leftoverGraceMs() + sigkillGraceMs() + 10000);
+    assert.equal(settled.error, null, String(settled.error?.message));
+    await waitFor(() => !alive(gp), sigkillGraceMs() + 1000);
+    assert.equal(leftoverLine(events).length, 1, 'one run-log line');
+    assert.equal(box.env.lost, null, 'the sandbox lives on');
+    assert.equal(box.env.relay.alive, true, 'the model relay lives on');
+  } finally {
+    try { process.kill(gp, 'SIGKILL'); } catch { /* gone, as it should be */ }
+    await run;
+  }
+}, POSIX);
+
+// R15-1: Claude Code with a background sub-agent gives its main turn's `result`, goes quiet while the agent works, then
+// runs the agent's notification turn to a second `result`. The quiet is no leftover: the step runs to its last result.
+test('claude: a background agent silent past the leftover grace is not killed; the step ends at its last result', POSIX, async () => {
+  Object.assign(process.env, LEFTOVER_ENV);
+  const events = [];
+  // Line 24 is the main turn's result; the notification turn follows after 4 graces of silence.
+  const { result, error } = await runFake('claude', { stream: 'background-agent.jsonl', env: { FAKE_GRANDCHILD: '0', FAKE_PAUSE: `24:${4 * leftoverGraceMs()}` },
+    onEvent: (e) => events.push(e) });
+  assert.equal(error, null, String(error?.message));
+  assert.match(result.text, /pong$/, 'the notification turn`s result is the step`s');
+  assert.deepEqual(leftoverLine(events), [], 'nothing was stopped');
+});
+
+test('claude: an engine still running after its last result is stopped and fails; it is never a success', POSIX, async () => {
+  Object.assign(process.env, LEFTOVER_ENV);
+  const events = [];
+  const { error } = await runFake('claude', { env: { FAKE_GRANDCHILD: '0' }, hold: true, onEvent: (e) => events.push(e) });
+  assert.match(String(error?.message), /was still running [\d.]+s after its result and was stopped/);
+  assert.equal(leftoverLine(events).length, 1);
+});
 
 // ── C-PREFLIGHT-ENV ──────────────────────────────────────────────────────────
 

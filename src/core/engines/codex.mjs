@@ -982,6 +982,7 @@ export async function runCodexProcess({
   const cap = !askLockdown && Number.isInteger(maxTurns) && maxTurns > 0 ? maxTurns : null;
   const capCtrl = new AbortController();
   let toolCalls = 0; let capped = false;
+  let turnDone = false;   // `turn.completed` (its `result` event): what the step leaves running after it is killed (R15)
   const spawnSignal = cap ? (signal ? AbortSignal.any([signal, capCtrl.signal]) : capCtrl.signal) : signal;
   // The broker token (when taken) lives as long as the spawn: revoked once it settles, whatever way it ended.
   let res;
@@ -999,12 +1000,14 @@ export async function runCodexProcess({
       classify: (m) => classifyCodexError(m),
       spawnError: (err, pfx) => Object.assign(new Error(`${pfx}: ${err.message}`), { errorClass: /ENOENT|EINVAL/.test(String(err.code || err.message)) ? 'network' : null }),
       onDone: (code) => ({ code }),
+      turnOver: () => turnDone,
       onStdoutLine: (line) => {
         for (const e of normalizer.push(line)) {
           safeEmit(onEvent, e);
           if (cap && !capped && e.type === 'tool' && (e.parentId ?? null) === null && (toolCalls += Array.isArray(e.calls) ? e.calls.length : 1) > cap) {
             capped = true; capCtrl.abort();
           }
+          if (e.type === 'result') turnDone = true;
           if (e.type === 'session') {
             sawThread = codexThreadOf(e.sessionId);
             // Pause/Resume: the runner's own session event (no `init`) is the one the

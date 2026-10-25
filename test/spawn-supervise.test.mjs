@@ -7,7 +7,8 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { superviseSpawn, argValue, sigkillGraceMs, spawnChild } from '../src/core/spawn.mjs';
+import { execFileSync } from 'node:child_process';
+import { superviseSpawn, argValue, sigkillGraceMs, leftoverGraceMs, spawnChild } from '../src/core/spawn.mjs';
 import { groupLine, groupKillLine } from '../src/core/exec-env/remote-child.mjs';
 import { createFakeE2b } from '../src/core/exec-env/e2b-fake.mjs';
 import { E2bExecEnv } from '../src/core/exec-env/e2b-env.mjs';
@@ -20,6 +21,7 @@ const POSIX = { skip: process.platform === 'win32' ? 'process groups are POSIX-o
 const { tmp, cleanup } = scratchDirs(); after(cleanup);
 
 process.env.WORCA_SIGKILL_GRACE_MS = '200';
+process.env.WORCA_LEFTOVER_GRACE_MS = '300';
 
 const waitFor = async (cond, ms = 10000) => {
   const end = Date.now() + ms;
@@ -29,13 +31,24 @@ const waitFor = async (cond, ms = 10000) => {
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code !== 'ESRCH'; } };
 const grandPid = (out) => { try { return Number(readFileSync(`${out}.grand`, 'utf8').trim()) || null; } catch { return null; } };
 
-function supervise({ file = process.execPath, args = [FAKE], env, signal, execEnv = null, cwd }) {
+function supervise({ file = process.execPath, args = [FAKE], env, signal, execEnv = null, cwd, onEvent = () => {}, onStdoutLine = () => {}, turnOver, asAgent = false }) {
   return superviseSpawn({
-    file, args, displayBin: 'fake', cwd, env, stdin: null, signal, asAgent: false, stagedDir: null,
-    cleanup: () => {}, onEvent: () => {}, onStdoutLine: () => {}, stdoutErrorDetail: () => '',
-    classify: () => null, spawnError: (err) => err, onDone: (code) => ({ exitCode: code }), execEnv,
+    file, args, displayBin: 'fake', cwd, env, stdin: null, signal, asAgent, stagedDir: null,
+    cleanup: () => {}, onEvent, onStdoutLine, stdoutErrorDetail: () => '',
+    classify: () => null, spawnError: (err) => err, onDone: (code) => ({ exitCode: code }), execEnv, turnOver,
   });
 }
+const STREAM = join(HERE, 'fixtures', 'engines', 'claude', 'stream.jsonl');
+/** A supervise() of the fake engine that knows its turn is over at the stream's `result` line (an adapter's turnOver),
+ *  recording its events and when it settled. `settled` is null until then. */
+function superviseTurn({ env, execEnv = null, cwd }) {
+  const s = { events: [], settled: null, at: null, result: false };
+  s.p = supervise({ env: { FAKE_STREAM: STREAM, ...env }, execEnv, cwd, onEvent: (e) => s.events.push(e),
+    onStdoutLine: (line) => { if (JSON.parse(line).type === 'result') s.result = true; }, turnOver: () => s.result })
+    .then((r) => { s.settled = r; }, (e) => { s.settled = e; }).finally(() => { s.at = Date.now(); });
+  return s;
+}
+const leftoverLines = (events) => events.filter((e) => e.type === 'stderr' && /^\[worca\] fake: /.test(e.text));
 
 test('abort kills a backgrounded grandchild', POSIX, async () => {
   const dir = tmp('worca-sup-');
@@ -160,6 +173,235 @@ test('the SIGKILL escalation spares a group whose id was reused after the run\'s
 test('the SIGKILL escalation spares a group whose leader pid now belongs to another process', POSIX, async () => {
   // Members were left when the leader exited; they died, and X went to a new leader of a group X.
   assert.deepEqual(await stopWithReusedGroup({ atExit: true, held: true, groupLater: true }), []);
+});
+
+// R15: a step's leftovers after its final result. Every case kills its grandchild in a `finally`: no case can leave one.
+
+test('a step whose background child holds its stdout settles after its result: the leftovers are group-killed', POSIX, async () => {
+  const dir = tmp('worca-sup-');
+  const out = join(dir, 'rec.json');
+  const s = superviseTurn({ env: { ...process.env, FAKE_OUT: out, FAKE_GRANDCHILD_STDOUT: '1' }, cwd: dir });
+  const gp = await waitFor(() => grandPid(out));
+  try {
+    await waitFor(() => s.result);
+    const t0 = Date.now();
+    await waitFor(() => s.settled !== null, leftoverGraceMs() + sigkillGraceMs() + 3000);
+    assert.deepEqual(s.settled, { exitCode: 0 }, 'the engine exited 0 on its own: the step is done');
+    assert.ok(s.at - t0 >= leftoverGraceMs() - 50, 'not before the grace');
+    await waitFor(() => !alive(gp), sigkillGraceMs() + 1000);
+    const lines = leftoverLines(s.events);
+    assert.equal(lines.length, 1, 'one run-log line');
+    assert.match(lines[0].text, /after its result/);
+  } finally {
+    try { process.kill(gp, 'SIGKILL'); } catch { /* gone, as it should be */ }
+  }
+});
+
+test('an engine still running after its result is stopped with its group, and fails: the kill is no exit of its own (R15-1)', POSIX, async () => {
+  const dir = tmp('worca-sup-');
+  const out = join(dir, 'rec.json');
+  const s = superviseTurn({ env: { ...process.env, FAKE_OUT: out, FAKE_HOLD: '1' }, cwd: dir });
+  const gp = await waitFor(() => grandPid(out));
+  const rec = JSON.parse(readFileSync(out, 'utf8'));
+  try {
+    await waitFor(() => s.settled !== null, leftoverGraceMs() + sigkillGraceMs() + 3000);
+    assert.ok(s.settled instanceof Error, 'never a success');
+    assert.match(s.settled.message, /^fake was still running [\d.]+s after its result and was stopped/);
+    await waitFor(() => !alive(rec.pid) && !alive(gp), sigkillGraceMs() + 1000);
+    assert.equal(leftoverLines(s.events).length, 1);
+  } finally {
+    for (const pid of [gp, rec.pid]) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
+  }
+});
+
+test('a leftover that ignores SIGTERM gets the SIGKILL after the kill grace', POSIX, async () => {
+  const dir = tmp('worca-sup-');
+  const pidFile = join(dir, 'gp');
+  const res = '{"type":"result","subtype":"success","is_error":false,"result":"ok"}';
+  // The leader prints its result and exits; a child that ignores SIGTERM keeps its stdout.
+  const script = `(trap '' TERM; while :; do sleep 1; done) & echo $! > ${pidFile}; echo '${res}'`;
+  let result = false; let settled = null; const events = [];
+  supervise({ file: 'bash', args: ['-c', script], env: process.env, cwd: dir, onEvent: (e) => events.push(e),
+    onStdoutLine: (line) => { if (line.includes('"type":"result"')) result = true; }, turnOver: () => result })
+    .then((r) => { settled = r; }, (e) => { settled = e; });
+  const gp = await waitFor(() => { try { return Number(readFileSync(pidFile, 'utf8')) || null; } catch { return null; } });
+  try {
+    await waitFor(() => settled !== null, leftoverGraceMs() + sigkillGraceMs() + 3000);
+    assert.deepEqual(settled, { exitCode: 0 });
+    await waitFor(() => !alive(gp), 1000);
+    assert.equal(leftoverLines(events).length, 1);
+  } finally {
+    try { process.kill(gp, 'SIGKILL'); } catch { /* gone, as it should be */ }
+  }
+});
+
+const RESULT = '{"type":"result","subtype":"success","is_error":false,"result":"ok"}';
+/** Supervise `bash -c script`, its turn over at the result line; records events and how it settled. */
+function superviseScript(script, { dir, asAgent = false, signal } = {}) {
+  const s = { events: [], settled: null, result: false };
+  supervise({ file: 'bash', args: ['-c', script], env: process.env, cwd: dir, asAgent, signal, onEvent: (e) => s.events.push(e),
+    onStdoutLine: (line) => { if (line.includes('"type":"result"')) s.result = true; }, turnOver: () => s.result })
+    .then((r) => { s.settled = r; }, (e) => { s.settled = e; });
+  return s;
+}
+const pidIn = (file) => () => { try { return Number(readFileSync(file, 'utf8')) || null; } catch { return null; } };
+/** process.kill with group signals recorded (signal 0 aside); `deny(target, signal)` makes one throw EPERM. */
+function spyKill(deny = () => false) {
+  const real = process.kill; const groupSignals = [];
+  process.kill = function spy(target, signal) {
+    if (target < 0 && signal !== 0 && signal !== undefined) {
+      groupSignals.push([target, signal]);
+      if (deny(target, signal)) throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
+    }
+    if (target < 0 && signal === 0 && deny(target, signal)) return true;
+    return real.call(process, target, signal);
+  };
+  return { groupSignals, restore: () => { process.kill = real; } };
+}
+
+test('a leftover that keeps printing is killed at one deadline from the result; its lines never move it (R15-2)', POSIX, async () => {
+  const dir = tmp('worca-sup-');
+  const pidFile = join(dir, 'gp');
+  // The leader prints its result and exits; its child holds stdout and prints a line every 100 ms.
+  const s = superviseScript(`(while :; do echo tick; sleep 0.1; done) & echo $! > ${pidFile}; echo '${RESULT}'`, { dir });
+  const gp = await waitFor(pidIn(pidFile));
+  try {
+    await waitFor(() => s.result);
+    const t0 = Date.now();
+    await waitFor(() => s.settled !== null, leftoverGraceMs() + sigkillGraceMs() + 3000);
+    assert.deepEqual(s.settled, { exitCode: 0 }, 'the engine exited 0 on its own');
+    assert.ok(Date.now() - t0 < leftoverGraceMs() + sigkillGraceMs() + 1000, 'not held off by its lines');
+    await waitFor(() => !alive(gp), 1000);
+  } finally {
+    try { process.kill(gp, 'SIGKILL'); } catch { /* gone, as it should be */ }
+  }
+});
+
+test('a turn that opens again after its result clears the deadline', POSIX, async () => {
+  const dir = tmp('worca-sup-');
+  // A result, then a quiet longer than the grace while the turn is open again, then the last result and a clean exit.
+  let result = false;
+  const s = { events: [], settled: null };
+  supervise({ file: 'bash', args: ['-c', `echo '${RESULT}'; echo reopen; sleep ${(3 * leftoverGraceMs()) / 1000}; echo '${RESULT}'`], env: process.env, cwd: dir,
+    onEvent: (e) => s.events.push(e), onStdoutLine: (line) => { result = line.includes('"type":"result"'); }, turnOver: () => result })
+    .then((r) => { s.settled = r; }, (e) => { s.settled = e; });
+  await waitFor(() => s.settled !== null, 4 * leftoverGraceMs() + 3000);
+  assert.deepEqual(s.settled, { exitCode: 0 });
+  assert.deepEqual(leftoverLines(s.events), [], 'the open turn was never reaped');
+});
+
+test('a Stop after the leftover kill still signals the group and escalates (R15-4)', POSIX, async () => {
+  const dir = tmp('worca-sup-');
+  const pidFile = join(dir, 'holder');
+  // A holder in a session of its own keeps stdout past the group kill.
+  const holder = `perl -MPOSIX -e 'fork and exit; POSIX::setsid(); open(my $f, ">", "${pidFile}"); print $f $$; close $f; sleep 30'`;
+  const ac = new AbortController();
+  const spy = spyKill();
+  const s = superviseScript(`${holder}; echo '${RESULT}'; exec sleep 30`, { dir, signal: ac.signal });
+  const hp = await waitFor(pidIn(pidFile));
+  try {
+    await waitFor(() => leftoverLines(s.events).length === 1, leftoverGraceMs() + 3000);
+    await new Promise((r) => setTimeout(r, sigkillGraceMs() + 100));
+    const before = spy.groupSignals.length;
+    ac.abort();
+    await waitFor(() => spy.groupSignals.length > before, 1000);
+    assert.equal(spy.groupSignals[before][1], 'SIGTERM', 'the Stop signals the group again');
+    process.kill(hp, 'SIGKILL');
+    await waitFor(() => s.settled !== null, 3000);
+    assert.equal(s.settled.name, 'AbortError');
+  } finally {
+    spy.restore();
+    try { process.kill(hp, 'SIGKILL'); } catch { /* gone */ }
+  }
+});
+
+test('a group seen empty after its leader exited is never signalled again (R15-5)', POSIX, async () => {
+  const dir = tmp('worca-sup-');
+  const pidFile = join(dir, 'holder');
+  const holder = `perl -MPOSIX -e 'fork and exit; POSIX::setsid(); open(my $f, ">", "${pidFile}"); print $f $$; close $f; sleep 30'`;
+  // The leader exits with one member left (so its group outlives it), and that member exits before the deadline; a
+  // holder outside the group keeps stdout, so the deadline still comes.
+  const spy = spyKill();
+  let s; let hp;
+  try {
+    s = superviseScript(`${holder}; (sleep ${leftoverGraceMs() / 3000}) & echo '${RESULT}'`, { dir });
+    hp = await waitFor(pidIn(pidFile));
+    await waitFor(() => leftoverLines(s.events).length === 1, leftoverGraceMs() + 3000);
+    await new Promise((r) => setTimeout(r, sigkillGraceMs() + 200));
+    assert.deepEqual(spy.groupSignals, [], 'no TERM, no KILL to an id that may be someone else`s');
+  } finally {
+    spy.restore();
+    try { process.kill(hp, 'SIGKILL'); } catch { /* gone */ }
+  }
+  await waitFor(() => s.settled !== null, 3000);
+  assert.deepEqual(s.settled, { exitCode: 0 });
+});
+
+test('an agent-user step: its leftovers are killed through sudo once sudo itself has exited (R15-3)', POSIX, async () => {
+  const dir = tmp('worca-sup-');
+  const bin = tmp('worca-sudo-');
+  const log = join(dir, 'sudo.log');
+  // A stand-in sudo: logs its argv and runs the command as this user (the real one switches to the agent's uid).
+  writeFileSync(join(bin, 'sudo'), '#!/bin/sh\necho "$*" >> "$SUDO_LOG"\nwhile [ "$1" != "--" ]; do shift; done; shift\nexec "$@"\n', { mode: 0o755 });
+  const names = ['PATH', 'WORCA_AGENT_USER', 'WORCA_AGENT_HOME', 'SUDO_LOG'];
+  const saved = Object.fromEntries(names.map((k) => [k, process.env[k]]));
+  Object.assign(process.env, { PATH: `${bin}:${process.env.PATH}`, WORCA_AGENT_USER: 'worca-agent', WORCA_AGENT_HOME: dir, SUDO_LOG: log });
+  // The agent's processes are another uid: every group signal of the server's fails (EPERM); only sudo reaches them.
+  const spy = spyKill(() => true);
+  const pidFile = join(dir, 'gp');
+  let gp = null;
+  try {
+    const s = superviseScript(`(trap '' TERM; while :; do sleep 1; done) & echo $! > ${pidFile}; echo '${RESULT}'`, { dir, asAgent: true });
+    gp = await waitFor(pidIn(pidFile));
+    const pgid = Number(execFileSync('ps', ['-o', 'pgid=', '-p', String(gp)], { encoding: 'utf8' }).trim());
+    await waitFor(() => s.settled !== null, leftoverGraceMs() + sigkillGraceMs() + 3000);
+    assert.deepEqual(s.settled, { exitCode: 0 }, 'sudo`s command exited 0 on its own');
+    assert.match(readFileSync(log, 'utf8'), new RegExp(`-u worca-agent -- kill -KILL -- -${pgid}\n`), 'sudo killed the agent`s group');
+    await waitFor(() => !alive(gp), 2000);
+  } finally {
+    spy.restore();
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    try { process.kill(gp, 'SIGKILL'); } catch { /* gone, as it should be */ }
+  }
+});
+
+test('a normal exit with nothing left behind logs nothing and signals no group', POSIX, async () => {
+  const dir = tmp('worca-sup-');
+  const real = process.kill; const groupSignals = [];
+  process.kill = function spy(target, signal) { if (target < 0 && signal !== 0) groupSignals.push([target, signal]); return real.call(process, target, signal); };
+  try {
+    const s = superviseTurn({ env: { ...process.env, FAKE_OUT: join(dir, 'rec.json'), FAKE_GRANDCHILD: '0' }, cwd: dir });
+    await waitFor(() => s.settled !== null, 5000);
+    assert.deepEqual(s.settled, { exitCode: 0 });
+    await new Promise((r) => setTimeout(r, leftoverGraceMs() + sigkillGraceMs() + 200));
+    assert.deepEqual(leftoverLines(s.events), []);
+    assert.deepEqual(groupSignals, []);
+  } finally { process.kill = real; }
+});
+
+test('a sandbox step whose background child holds its stdout settles after its result; the sandbox lives on', POSIX, async () => {
+  const f = fixture(tmp);
+  // holdPipes: the command ends only when its stdout's last holder closes it, as on a real sandbox (design §9).
+  const sdk = createFakeE2b({ root: tmp('worca-e2b-root-'), holdPipes: true, onCommand: (cmd) => (/^command -v /.test(cmd) ? { lines: ['/usr/local/bin/x'] } : null) });
+  const env = new E2bExecEnv(makeEnvOpts(tmp, sdk, f));
+  await env.start();
+  let gp = null;
+  try {
+    const out = join(f.repo, 'rec.json');
+    const s = superviseTurn({ env: { FAKE_OUT: env.sb(out), FAKE_GRANDCHILD_STDOUT: '1' }, execEnv: env, cwd: f.repo });
+    gp = await waitFor(() => grandPid(env.sb(out)));
+    await waitFor(() => s.settled !== null, leftoverGraceMs() + sigkillGraceMs() + 5000);
+    assert.deepEqual(s.settled, { exitCode: 0 }, 'the engine exited 0 on its own: the step is done');
+    await waitFor(() => !alive(gp), sigkillGraceMs() + 1000);
+    assert.equal(leftoverLines(s.events).length, 1, 'one run-log line');
+    const kills = sdk.events.filter((e) => e.type === 'command' && /^kill -(TERM|KILL) -- -\d+/.test(e.cmd)).map((e) => e.cmd.split(' ')[1]);
+    assert.deepEqual(kills.slice(0, 1), ['-TERM'], 'TERM to the step group first');
+    assert.equal(env.lost, null, 'the sandbox is still up');
+    assert.equal(env.relay.alive, true, 'the model relay command still runs');
+  } finally {
+    if (gp) { try { process.kill(gp, 'SIGKILL'); } catch { /* gone, as it should be */ } }
+    await env.close('test');
+  }
 });
 
 test('remote line runs under setsid; the stop commands signal its group', () => {

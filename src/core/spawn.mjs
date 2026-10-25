@@ -19,8 +19,8 @@ import { isWithin } from './fs-scope.mjs';
 import { withNoGitPath } from './nogit-stub.mjs';
 import { composeChildEnv } from './child-env.mjs';
 
-export { formatDropped, SPAWN_ENV_BASE, DEFAULT_SIGKILL_GRACE_MS, sigkillGraceMs, WIN32_ENV_BASELINE, proxyHasCredentials } from './child-env.mjs';
-import { sigkillGraceMs } from './child-env.mjs';
+export { formatDropped, SPAWN_ENV_BASE, DEFAULT_SIGKILL_GRACE_MS, sigkillGraceMs, DEFAULT_LEFTOVER_GRACE_MS, leftoverGraceMs, WIN32_ENV_BASELINE, proxyHasCredentials } from './child-env.mjs';
+import { sigkillGraceMs, leftoverGraceMs } from './child-env.mjs';
 
 // The kinds that get no no-git PATH stub: git itself (worca runs it only where git is installed), and plugin children
 // (spec §7.2: exactly their names).
@@ -172,6 +172,8 @@ function groupStillOwned(child, orphaned) {
  *  Ctrl+C no longer reaches it, and a worca that exits first (the CLI's hard exit, a crash) must take them along.
  *  An 'exit' listener must be synchronous: process.kill is. A SIGKILLed worca cannot run it; nothing can. */
 const liveGroups = new Set();
+/** How often a group whose leader exited is sampled for members (a group seen empty is never signalled again). */
+const GROUP_SAMPLE_MS = 1000;
 process.on('exit', () => { for (const pid of liveGroups) { try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ } } });
 
 // Cap for the stderr detail embedded in a non-zero-exit Error message. The
@@ -228,11 +230,17 @@ export async function abandonRoute(execEnv, route, onEvent) {
  *   the command runs in its sandbox through a child-like handle (no host pid, stdin as a file); null on local runs
  * @param {{id:string}|null} [o.route]            the spawn's model route on `execEnv`'s relay: closed on every terminal
  *   path (abandonRoute), before `cleanup` and before the promise settles
+ * @param {(() => boolean)|null} [o.turnOver]     whether the engine's turn is over for good (its final frame seen and
+ *   nothing it launched still pending), asked after each stdout line. leftoverGraceMs() after it first says yes (one
+ *   deadline: later lines do not move it, so a leftover that keeps printing cannot hold it off; a no again clears it),
+ *   what the step left running is group-killed (R15): a background child holding the step's stdout, or the engine
+ *   itself kept alive by one. The spawn then settles as the engine's own exit says. An engine the kill itself ended
+ *   (no exit code of its own) failed: it was still running after its turn. null: never.
  */
 export function superviseSpawn(o) {
   const { file, args, displayBin, cwd, env, stdin, signal, asAgent, stagedDir, agentHome = null, cleanup, onEvent,
     onStdoutLine, onStderrLine = null, stdoutErrorDetail, classify, isBenignStderr = () => false, redactText = null, spawnError, onDone, execEnv = null,
-    route = null } = o;
+    route = null, turnOver = null } = o;
   if (!env || typeof env !== 'object') throw new Error(`superviseSpawn ${displayBin}: env is required (build it with childEnv)`);
   const remote = execEnv?.remote ? execEnv : null;
   return new Promise((resolveP, rejectP) => {
@@ -277,30 +285,80 @@ export function superviseSpawn(o) {
     let stdoutFatalError = null;
     let settled = false;
     let killTimer = null;
-    let terminationStarted = false;
+    let terminationStarted = false;   // a stop (abort, a fatal line): once only
+    // The leftover kill (R15): one deadline from the turn's end. `reaped`: it ran. Not a stop: a Stop, a pause or a
+    // timeout after it still signals and escalates.
+    let leftoverTimer = null;
+    let reaped = false;
 
     const group = !remote && GROUP_KILL && typeof child.pid === 'number';
     if (group) liveGroups.add(child.pid);
-    // Whether the group outlived its leader (members left when it exited): the escalation's ownership check.
+    const leaderGone = () => child.exitCode !== null || child.signalCode !== null;
+    // Whether the group outlived its leader (members left when it exited): the escalation's ownership check. Once the
+    // group is seen empty its id may be anyone's, so it is never the step's again (R15-5): sampled each second after
+    // the leader's exit, and again right before any signal.
     let orphaned = false;
-    if (group) child.once('exit', () => { orphaned = groupExists(child.pid); });
+    const forgetIfEmpty = () => {
+      if (orphaned && leaderGone() && !groupExists(child.pid)) { orphaned = false; liveGroups.delete(child.pid); }
+    };
+    if (group) {
+      child.once('exit', () => {
+        orphaned = groupExists(child.pid);
+        if (!orphaned) return;
+        const watch = setInterval(() => { forgetIfEmpty(); if (!orphaned || !liveGroups.has(child.pid)) clearInterval(watch); }, GROUP_SAMPLE_MS);
+        watch.unref?.();
+      });
+    }
+    /** Whether the step's group may be signalled as its own now (groupStillOwned, after a fresh sample). */
+    const ownsGroup = () => { if (!group || !liveGroups.has(child.pid)) return false; forgetIfEmpty(); return liveGroups.has(child.pid) && groupStillOwned(child, orphaned); };
+    // Escalate if it ignores SIGTERM.
+    const escalate = () => {
+      if (killTimer) clearTimeout(killTimer);
+      killTimer = setTimeout(() => {
+        // Only a sudo still running holds the group: after it exits the pid may be reused.
+        const stuck = !leaderGone();
+        // The group may outlive its leader (a backgrounded grandchild), but never a reused group: it must still be this
+        // child's (groupStillOwned). The leader alone only while it still runs.
+        const owned = ownsGroup();
+        if (owned) signalGroup(child, 'SIGKILL', true);
+        else if (stuck) signalGroup(child, 'SIGKILL', false);
+        // An agent's processes run under its own uid, which the server cannot signal: sudo kills them, also once sudo
+        // itself has exited and only the group, still the step's, is left (R15-3).
+        if (agentId && (stuck || owned)) killAgentGroup(child.pid, agentId);
+      }, sigkillGraceMs()).unref?.();
+    };
     const terminateChild = () => {
       if (terminationStarted) return;
       terminationStarted = true;
+      if (leftoverTimer) clearTimeout(leftoverTimer);
       // The whole group: a backgrounded grandchild (`npm run dev &`) dies with the step. A remote child signals its
       // own group in the sandbox (remote-child.mjs: the line runs under `setsid`).
       signalGroup(child, 'SIGTERM', group);
-      // Escalate if it ignores SIGTERM.
-      killTimer = setTimeout(() => {
-        // Only a sudo still running holds the group: after it exits the pid may be reused.
-        const stuck = child.exitCode === null && child.signalCode === null;
-        // The group may outlive its leader (a backgrounded grandchild), but never a reused group: it must still be this
-        // child's (groupStillOwned). The leader alone only while it still runs.
-        const owned = group && liveGroups.has(child.pid) && groupStillOwned(child, orphaned);
-        if (owned) signalGroup(child, 'SIGKILL', true);
-        else if (stuck) signalGroup(child, 'SIGKILL', false);
-        if (agentId && stuck) killAgentGroup(child.pid, agentId);
-      }, sigkillGraceMs()).unref?.();
+      escalate();
+    };
+    // What the step left running after its turn ended (R15): the same TERM, grace, KILL as a stop, but the group is
+    // signalled only while it is still the step's (ownsGroup: the leader may be gone, its group not), and the spawn
+    // settles as the engine's exit says, not as an abort. A remote child signals its group in the sandbox without
+    // marking itself stopped (remote-child.mjs reapGroup), so its command can end.
+    const leftoverSeconds = () => Math.round(leftoverGraceMs() / 100) / 10;
+    const reapLeftovers = () => {
+      leftoverTimer = null;
+      if (settled || terminationStarted || reaped || !turnOver()) return;
+      reaped = true;
+      safeEmit(onEvent, { type: 'stderr', stream: 'err', text: `[worca] ${displayBin}: the step is still running ${leftoverSeconds()}s after its result — stopping what it left behind` });
+      if (remote) { child.reapGroup?.(); return; }
+      if (ownsGroup()) signalGroup(child, 'SIGTERM', true);
+      else if (!leaderGone()) signalGroup(child, 'SIGTERM', false);
+      escalate();
+    };
+    // One deadline from the moment the turn is over (R15-2): a line after it never moves it, or a leftover printing
+    // every few seconds would keep the step (and its relay route) open; a turn that opens again clears it.
+    const armLeftoverKill = () => {
+      if (settled || terminationStarted || reaped || !turnOver) return;
+      if (!turnOver()) { if (leftoverTimer) clearTimeout(leftoverTimer); leftoverTimer = null; return; }
+      if (leftoverTimer) return;
+      leftoverTimer = setTimeout(reapLeftovers, leftoverGraceMs());
+      leftoverTimer.unref?.();
     };
     const onAbort = () => terminateChild();
     if (signal) {
@@ -311,10 +369,11 @@ export function superviseSpawn(o) {
     const finish = (fn, arg) => {
       if (settled) return;
       settled = true;
-      // Kept until the grace kill once a stop started: the group may outlive its leader.
-      if (group && !terminationStarted) liveGroups.delete(child.pid);
+      // Kept until the grace kill once a stop or the leftover kill started: the group may outlive its leader.
+      if (group && !terminationStarted && !reaped) liveGroups.delete(child.pid);
       else if (group) setTimeout(() => liveGroups.delete(child.pid), sigkillGraceMs() + 50).unref?.();
       if (signal) signal.removeEventListener?.('abort', onAbort);
+      if (leftoverTimer) clearTimeout(leftoverTimer);
       // A group's escalation outlives its leader's exit (above); a lone child's ends with it.
       if (killTimer && !group) clearTimeout(killTimer);
       // The spawn's model route (relay): closed on every terminal path, before the adapter's cleanup and before the
@@ -331,7 +390,9 @@ export function superviseSpawn(o) {
       if (fatal instanceof Error) {
         stdoutFatalError = fatal;
         terminateChild();
+        return;
       }
+      armLeftoverKill();
     });
 
     // stderr is a FIRST-CLASS log stream, not just failure evidence. The CLI puts
@@ -361,7 +422,7 @@ export function superviseSpawn(o) {
       const text = line.trim();
       // A pause/stop SIGTERMs the child: whatever it writes while dying (and the
       // torn fragment readline flushes at stream end) is not run output.
-      if (text && !signal?.aborted && !stdoutFatalError) safeEmit(onEvent, { type: 'stderr', stream: 'err', text });
+      if (text && !signal?.aborted && !stdoutFatalError && !reaped) safeEmit(onEvent, { type: 'stderr', stream: 'err', text });
     });
 
     child.on('error', (err) => {
@@ -379,6 +440,14 @@ export function superviseSpawn(o) {
       }
       if (stdoutFatalError) {
         finish(rejectP, stdoutFatalError);
+        return;
+      }
+      // An engine the leftover kill itself ended (no exit code of its own) was still running after its turn: never a
+      // success (R15-1). One that had exited on its own keeps its own code.
+      if (reaped && code === null) {
+        const err = new Error(`${displayBin} was still running ${leftoverSeconds()}s after its result and was stopped`);
+        err.errorClass = classify(stdoutErrorDetail() || err.message);
+        finish(rejectP, err);
         return;
       }
       if (code !== 0) {

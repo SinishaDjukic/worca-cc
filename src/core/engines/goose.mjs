@@ -338,7 +338,7 @@ export function createGooseNormalizer({ model = null, sessionName, mcpServers = 
   }
   /** The events still held at the end of the stream (an assistant text with no `complete` after it). */
   const end = () => flush();
-  return { push, finish, end };
+  return { push, finish, end, over: () => completed };
 }
 
 // ── errors and preflight ─────────────────────────────────────────────────────
@@ -677,6 +677,8 @@ export async function runGooseProcess({
       spawnError: (err, pfx) => Object.assign(new Error(`${pfx}: ${err.message}`), { errorClass: /ENOENT|EINVAL/.test(String(err.code || err.message)) ? 'network' : null }),
       onDone: (code) => ({ code }),
       onStdoutLine: (line) => { for (const e of normalizer.push(line)) emit(e); },
+      // goose's closing `complete`: what the step leaves running after it is killed (superviseSpawn, R15).
+      turnOver: () => normalizer.over(),
     }).catch((err) => {
       spendOnExit(normalizer.finish(), sessionName, before);
       if (capped && !signal?.aborted) throw turnCap();

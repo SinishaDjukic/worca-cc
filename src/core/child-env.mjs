@@ -19,6 +19,14 @@ export function sigkillGraceMs() {
   const n = Number(process.env.WORCA_SIGKILL_GRACE_MS);
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_SIGKILL_GRACE_MS;
 }
+// Grace between a step's final `result` and the kill of what it left running (superviseSpawn's leftover kill, R15). An
+// engine exits within a second of its result (Claude Code saves its session first); a step still running after this
+// is held up by a background child (a dev server, an async tool shell), which no turn is waiting for any more.
+export const DEFAULT_LEFTOVER_GRACE_MS = 5000;
+export function leftoverGraceMs() {
+  const n = Number(process.env.WORCA_LEFTOVER_GRACE_MS);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_LEFTOVER_GRACE_MS;
+}
 
 // Base env every child needs to function at all; everything else is withheld unless a catalog entry, a sign-in mode,
 // the project allowlist or the caller names it (exact names: an engine's own config and auth are its catalog

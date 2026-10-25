@@ -18,6 +18,9 @@
 //                       FAKE_CALL_MODEL, else the argv's model flag (-m for codex, --model for the others). The reply is
 //                       read to its end before the stream lines.
 //   FAKE_HOLD_AFTER=N   prints N stream lines, then waits to be stopped.
+//   FAKE_PAUSE=N:MS     prints N stream lines, goes quiet for MS ms, then prints the rest (a background agent at work).
+//   FAKE_GRANDCHILD_STDOUT=1  the grandchild keeps the engine's stdout open (an agent's `npm run dev &` that writes to
+//                       it): the step's output never ends while it runs, though the engine itself exits.
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -126,7 +129,8 @@ const rec = { argv, env: process.env, cwd: process.cwd(), pid: process.pid, pgid
 if (process.env.FAKE_FILES === '1') rec.files = stagedFiles();
 if (out) writeFileSync(out, JSON.stringify(rec));
 if (out && process.env.FAKE_GRANDCHILD !== '0') {
-  spawn('sh', ['-c', 'sleep 600 & echo $! > "$1"; wait', 'fake-engine', `${out}.grand`], { stdio: 'ignore' });
+  spawn('sh', ['-c', 'sleep 600 & echo $! > "$1"; wait', 'fake-engine', `${out}.grand`],
+    { stdio: ['ignore', process.env.FAKE_GRANDCHILD_STDOUT === '1' ? 'inherit' : 'ignore', 'ignore'] });
 }
 if (process.env.FAKE_CALL === '1') {
   rec.call = await modelCall();
@@ -135,7 +139,11 @@ if (process.env.FAKE_CALL === '1') {
 const holdAfter = process.env.FAKE_HOLD_AFTER != null && process.env.FAKE_HOLD_AFTER !== '' ? Number(process.env.FAKE_HOLD_AFTER) : null;
 if (process.env.FAKE_STREAM) {
   const lines = readFileSync(process.env.FAKE_STREAM, 'utf8').split('\n').filter((l) => l.trim());
-  for (const line of holdAfter == null ? lines : lines.slice(0, holdAfter)) process.stdout.write(`${line}\n`);
+  const [pauseAt, pauseMs] = String(process.env.FAKE_PAUSE || '').split(':').map(Number);
+  for (const [i, line] of (holdAfter == null ? lines : lines.slice(0, holdAfter)).entries()) {
+    if (i === pauseAt && pauseMs > 0) await new Promise((r) => setTimeout(r, pauseMs));
+    process.stdout.write(`${line}\n`);
+  }
 }
 if (process.env.FAKE_HOLD === '1' || holdAfter != null) setInterval(() => {}, 1000);
 else setTimeout(() => process.exit(Number(process.env.FAKE_EXIT || 0)), 50);

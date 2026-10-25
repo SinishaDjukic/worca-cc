@@ -15,3 +15,7 @@ second tool call, two Cursor `tool_call` pairs) and `spend-error.jsonl` (a faile
 Cursor's `is_error` result with usage, codex's `turn.completed` then an error, a Copilot `session.error`). Cursor's
 `stream.jsonl` result carries `usage` (10 in / 2 out) so its tokens can be booked. `fake-engine.mjs` knobs for these
 rows: `FAKE_FILES`, `FAKE_CALL` (+ `FAKE_CALL_MODEL`) and `FAKE_HOLD_AFTER` (see its header).
+
+Claude's `background-agent.jsonl` is `test/fixtures/hooks/subagent-background.jsonl` as captured: a turn that launches a
+background sub-agent, its `result`, then the agent's notification turn (a second `init` and `result`). With
+`FAKE_PAUSE` the fake goes quiet between the two, as Claude Code does while the agent works (R15).

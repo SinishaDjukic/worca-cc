@@ -172,6 +172,15 @@ that imports `node:child_process`. It owns four things.
     `worca-agent`.
   - On stop, worca runs a second command, `kill -TERM -- -<pid>`. After `sigkillGraceMs()` it runs
     `kill -KILL -- -<pid>`, and then calls `handle.kill()` as a backstop.
+  - Leftovers (R15). Each adapter tells `superviseSpawn` when its turn is over for good
+    (`turnOver`): its final frame seen and nothing it launched still pending (Claude: every
+    background agent's notification turn has run). `leftoverGraceMs()` (5 s) after that, one
+    deadline that later lines do not move, the step's group gets the same TERM, grace, KILL: locally
+    only while the group is still the step's (`groupStillOwned`, and a group once seen empty never
+    again), through `killAgentGroup` for an agent user's group, in a sandbox through
+    `RemoteChild.reapGroup` (the two kill commands, no `handle.kill()`). A stop after it still
+    escalates. The step then settles as the engine's exit says; an engine the kill itself ended
+    fails. The run log gets one line.
   - The model relay is a separate command with its own pid and group, so a step's group kill never
     reaches it. Worca never signals envd's default group.
   - `e2b-fake.mjs:22-23` already models this group kill.
@@ -594,10 +603,9 @@ fixtures, sign-in modes). That is the only per-engine test work an engine PR add
   process group or cgroup. Owner decision: keep it, or drop it from the templates?
 - **Leaked stdout on normal exit.** A remote command whose process exits while a background child
   still holds its stdout does not finish until that child exits: `commands.run('sleep 8 & echo x')`
-  took 8.0 s. A `RemoteChild` step can then look hung rather than done. The group kill fixes this
-  only for stop. Owner decision for a follow-up: after a step's final `result` frame and a grace
-  period, should worca group-kill what the step left behind? That also fixes the same case
-  locally.
+  took 8.0 s. A `RemoteChild` step can then look hung rather than done. Answered (R15): after a
+  step's final frame and a grace period, worca group-kills what the step left behind, locally and
+  in a sandbox (§4.1 item 2). `e2b-fake.mjs` models the wait with `holdPipes`.
 - **Claude Code's small-fast model.** Which model ids does a step really call? Read a relay meter
   `byModel` from a real run, then set Claude's `relay.auxModels`.
 - **Broker Copilot slot.** The existing slot is a GitHub device-flow token (`broker/slots.mjs:60`,

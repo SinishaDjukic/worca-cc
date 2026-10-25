@@ -281,6 +281,42 @@ export function isHookEvent(evt) {
 }
 
 /**
+ * Whether a Claude Code step's turn is over for good (superviseSpawn turnOver, R15): no more turn can come. A step with
+ * background sub-agents gives a `result` per turn (test/fixtures/hooks/subagent-background.jsonl): its main turn's, and
+ * after an agent's `system/task_notification` another `init` and a turn of its own whose `result` carries
+ * `origin.kind: "task-notification"`. So the turn is over at a `result` only when every agent launched
+ * (`tool_use_result.status: "async_launched"`) has sent its notification and every notification has had its turn (a
+ * notification-origin result after an `init` that came once it arrived); a notification is matched to its launch by
+ * `tool_use_id`, since a foreground agent sends one too. A later `init` opens a turn again. One that
+ * never reports either keeps the turn open, so its leftovers wait for its own exit, as before R15. A `result` that says
+ * more turns are queued (`queued_turn_count`) does not end it either.
+ * `see(evt)` each parsed stdout frame; `over()` the answer.
+ */
+export function claudeTurnTracker() {
+  // Background agents by the id of the tool call that launched them: a foreground agent sends a task_notification too,
+  // but no turn follows it.
+  const launched = new Set(); const notifiedIds = new Set();
+  let notified = 0; let answered = 0; let seenAtInit = 0; let done = false;
+  return {
+    see(evt) {
+      if (evt?.type === 'system' && evt.subtype === 'init') { done = false; seenAtInit = notified; }
+      else if (evt?.type === 'system' && evt.subtype === 'task_notification') {
+        const id = evt.tool_use_id;
+        if (launched.has(id) && !notifiedIds.has(id)) { notifiedIds.add(id); notified++; }
+      } else if (evt?.type === 'user' && evt.tool_use_result?.status === 'async_launched') {
+        const id = (Array.isArray(evt.message?.content) ? evt.message.content : []).find((c) => c?.type === 'tool_result')?.tool_use_id;
+        launched.add(typeof id === 'string' && id ? id : `unnamed-${launched.size}`);
+      } else if (evt?.type === 'result') {
+        if (evt.origin?.kind === 'task-notification') answered = Math.max(answered, seenAtInit);
+        // A turn Claude Code has queued already (`queued_turn_count`) comes next.
+        done = !(Number(evt.queued_turn_count) > 0);
+      }
+    },
+    over: () => done && notified >= launched.size && answered >= notified,
+  };
+}
+
+/**
  * The ONE --settings seam. Telemetry hook settings (gated, default off) and the
  * guardrails `permissions` rules merge into a SINGLE inline JSON — two --settings
  * flags would be last-wins at the CLI, silently dropping one payload.
@@ -652,6 +688,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
 
     let resultText = '';
     let assistantText = '';
+    const turn = claudeTurnTracker();   // whether its last turn is over: what the step leaves running after it is killed (R15)
     // In stream-json mode claude reports failures (auth, unknown/unavailable
     // model, API errors) as a terminal `result` event with is_error:true on
     // STDOUT and exits non-zero with EMPTY stderr. Capture that text so a
@@ -713,6 +750,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
       // A8: a guarded read also returns its guard's decisions (read before cleanup removes the log), so the caller can
       // check that every tool call was decided (file-read-guard.mjs guardDecisionsCover).
       onDone: (code) => ({ text: resultText || assistantText, exitCode: code, ...(plan.readGuardLog ? { readGuardDecisions: readGuardDecisions(plan.readGuardLog) } : {}) }),
+      turnOver: () => turn.over(),
       onStdoutLine: (trimmed) => {
         let evt;
         try {
@@ -732,6 +770,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
           assistantText += text;
           if (API_ERROR_TEXT_RE.test(text.trim())) apiErrorText = text.trim();
         }
+        turn.see(evt);
         if (evt?.type === 'result' && typeof evt.result === 'string') resultText += evt.result;
         // Remember the most specific error text we see, for the non-zero-exit path.
         if (evt?.type === 'result' && evt.is_error) {
