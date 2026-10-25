@@ -260,3 +260,12 @@ html,body{height:auto;overflow:visible;margin:0;}
 .sc-subs .rd-route-place{flex-wrap:wrap;row-gap:0;}
 .sc-subs .rd-route-name{flex:0 0 auto;max-width:100%;min-width:0;}   /* never squeezed: truncates only at full width */
 .sc-subs .sc-meta{flex:0 1 auto;flex-wrap:wrap;row-gap:0;min-width:0;}   /* details wrap rather than push the row wider */
+/* The + picker: a small field with existing values; the chip inside a run opened from its group goes back to it. */
+.rc-pop > .rc-picker{padding:10px;display:flex;flex-direction:column;gap:8px;min-width:260px;}
+.rc-picker .menu-h{padding:0;}
+.rc-picker .menu-help{padding:0;}
+.rc-suggest{display:flex;flex-wrap:wrap;gap:6px;}
+.rc-suggest:empty{display:none;}
+.rc-kind-link{border:0;cursor:pointer;font:inherit;}
+.rc-kind-link:hover{background:var(--hover);color:var(--ink);}
+.rc-kind-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}

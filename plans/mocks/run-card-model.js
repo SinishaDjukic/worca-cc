@@ -83,33 +83,33 @@
         tail: [{ key: 'ship', label: 'Ship', subs: [next('With the feature', { live: 'One stacked PR each, from the feature page' })] }] }) },
 
     // Groups
-    { id: 'feature', group: 'Groups', runCosts: ['$26.40', '$30.70', ''], label: 'Feature, run 2', kind: 'Feature', word: 'Working', dot: 'is-peach is-pulse', branch: '', figs: [['Time', '3h 20m'], ['Cost', '$61.10'], ['Rate', '$18.30/h']], tabs: GROUP_TABS,
+    { id: 'feature', group: 'Groups', runCases: ['ready', 'slice', 'starting'], runCosts: ['$26.40', '$30.70', ''], label: 'Feature, run 2', kind: 'Feature', word: 'Working', dot: 'is-peach is-pulse', branch: '', figs: [['Time', '3h 20m'], ['Cost', '$61.10'], ['Rate', '$18.30/h']], tabs: GROUP_TABS,
       stages: [{ key: 'plan', label: 'Plan', subs: [ok('Clarify', '34s'), ok('Plan', '33m 57s'), ok('Cut into runs', '7m', { live: '3 runs, one PR each' })] },
         member(1, RUNS[0], ['done', 'done', 'done', 'done'], { times: ['22m', '58m', '31m', ''] }),
         member(2, RUNS[1], ['done', 'now', 'next', 'next'], { times: ['18m', '40m'], live: ['', 'Editing app.js'], when: ['', '3s ago'] }),
         member(3, RUNS[2], ['next', 'next', 'next', 'next']),
         { key: 'pr', label: 'PRs', subs: [next('#1'), next('#2'), next('#3')] }] },
-    { id: 'featureready', group: 'Groups', runCosts: ['$26.40', '$31.20', '$30.80'], label: 'Feature ready', kind: 'Feature', word: 'Ready', dot: 'is-green', branch: '', action: A('Create 3 PRs', 'prc', true, ['Try it', 'Discard']), figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS,
+    { id: 'featureready', group: 'Groups', runCases: ['ready', 'ready', 'ready'], runCosts: ['$26.40', '$31.20', '$30.80'], label: 'Feature ready', kind: 'Feature', word: 'Ready', dot: 'is-green', branch: '', action: A('Create 3 PRs', 'prc', true, ['Try it', 'Discard']), figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS,
       stack: { mode: 'create', runs: RUNS, rec: 'stack', sizes: ['+278 \u221264', '+41 \u221258', '+39 \u221222'], reason: '3 runs and 502 changed lines, most of them in run 1: three focused reviews go faster than one mixed one.' },
       stages: [{ key: 'plan', label: 'Plan', subs: [ok('Clarify', '34s'), ok('Plan', '33m 57s'), ok('Cut into runs', '7m')] },
         member(1, RUNS[0], ['done', 'done', 'done', 'done'], { times: ['22m', '58m', '31m'] }), member(2, RUNS[1], ['done', 'done', 'done', 'done'], { times: ['18m', '1h 2m', '27m'] }),
         member(3, RUNS[2], ['done', 'done', 'done', 'done'], { times: ['12m', '44m', '19m'] }),
         { key: 'pr', label: 'PRs', subs: [next('#1'), next('#2'), next('#3')] }] },
-    { id: 'featureone', group: 'Groups', label: 'Feature ready, small', kind: 'Feature', word: 'Ready', dot: 'is-green', branch: '', action: A('Create PR', 'prc', true, ['Try it', 'Discard']), figs: [['Time', '1h 40m'], ['Cost', '$21.70']], tabs: GROUP_TABS,
+    { id: 'featureone', group: 'Groups', runCases: ['ready', 'ready'], label: 'Feature ready, small', kind: 'Feature', word: 'Ready', dot: 'is-green', branch: '', action: A('Create PR', 'prc', true, ['Try it', 'Discard']), figs: [['Time', '1h 40m'], ['Cost', '$21.70']], tabs: GROUP_TABS,
       diff: '+158 \u221262', stack: { mode: 'create', runs: RUNS.slice(0, 2), rec: 'one', sizes: ['+120 \u221240', '+38 \u221222'], reason: '2 small runs, 220 changed lines, that combine without conflicts: one review is enough.' },
       stages: [{ key: 'plan', label: 'Plan', subs: [ok('Clarify', '34s'), ok('Plan', '12m'), ok('Cut into runs', '3m')] },
         member(1, RUNS[0], ['done', 'done', 'done', 'done'], { times: ['8m', '31m', '12m'] }), member(2, RUNS[1], ['done', 'done', 'done', 'done'], { times: ['6m', '22m', '9m'] }),
         { key: 'pr', label: 'PRs', subs: [next('#1'), next('#2')] }] },
-    { id: 'featureblocked', group: 'Groups', runCosts: ['$26.40', '$31.20', '$30.80'], label: 'Feature ready, One PR off', kind: 'Feature', word: 'Ready', dot: 'is-green', branch: '', action: A('Create 3 PRs', 'prc', true, ['Try it', 'Discard']), figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS,
+    { id: 'featureblocked', group: 'Groups', runCases: ['ready', 'ready', 'ready'], runCosts: ['$26.40', '$31.20', '$30.80'], label: 'Feature ready, One PR off', kind: 'Feature', word: 'Ready', dot: 'is-green', branch: '', action: A('Create 3 PRs', 'prc', true, ['Try it', 'Discard']), figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS,
       stack: { mode: 'create', runs: RUNS, rec: 'stack', sizes: ['+278 \u221264', '+41 \u221258', '+39 \u221222'], oneBlocked: 'Not possible: runs 2 and 3 started from the same branch and both change ui/public/app.js lines 36,380\u201336,412, so they conflict on one branch.', reason: 'Runs 2 and 3 don\u2019t build on each other and conflict; stacked, each lands on top of the one before.' },
       stages: [{ key: 'plan', label: 'Plan', subs: [ok('Clarify', '34s'), ok('Plan', '33m 57s'), ok('Cut into runs', '7m')] },
         member(1, RUNS[0], ['done', 'done', 'done', 'done'], { times: ['22m', '58m', '31m'] }), member(2, RUNS[1], ['done', 'done', 'done', 'done'], { times: ['18m', '1h 2m', '27m'] }),
         member(3, RUNS[2], ['done', 'done', 'done', 'done'], { times: ['12m', '44m', '19m'] }),
         { key: 'pr', label: 'PRs', subs: [next('#1'), next('#2'), next('#3')] }] },
-    { id: 'chain', group: 'Groups', runPRs: ['#959', '#960', '#961'], runCosts: ['$26.40', '$31.20', '$30.80'], label: 'Stack in review', kind: 'Chain', word: 'In review', dot: 'is-green', branch: '', action: A('Merge PR 1 of 3', 'merge', true, ['View PRs', 'Watch PRs', 'Copy PR links']), figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS,
+    { id: 'chain', group: 'Groups', runCases: ['approved', 'checks', 'failing'], runPRs: ['#959', '#960', '#961'], runCosts: ['$26.40', '$31.20', '$30.80'], label: 'Stack in review', kind: 'Chain', word: 'In review', dot: 'is-green', branch: '', action: A('Merge PR 1 of 3', 'merge', true, ['View PRs', 'Watch PRs', 'Copy PR links']), figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS,
       stack: { mode: 'review' },
       stages: [{ key: 'plan', label: 'Plan', subs: [ok('Clarify', '34s'), ok('Plan', '33m 57s'), ok('Cut into runs', '7m')] },
-        member(1, RUNS[0], ['done', 'done', 'done', 'done']), member(2, RUNS[1], ['done', 'done', 'done', 'done']), member(3, RUNS[2], ['done', 'done', 'done', 'done']),
+        member(1, RUNS[0], ['done', 'done', 'done', 'done'], { times: ['22m', '58m', '31m'] }), member(2, RUNS[1], ['done', 'done', 'done', 'done'], { times: ['18m', '1h 2m', '27m'] }), member(3, RUNS[2], ['done', 'done', 'done', 'done'], { times: ['12m', '44m', '19m'] }),
         { key: 'pr', label: 'PRs', subs: [ok('#959'), s('#960', 'review'), s('#961', 'problem')] }] },
   ];
 
@@ -262,16 +262,31 @@
     const live = c.word !== 'Failed' && !work.every((x) => x.subs.every(isDone));
     return {
       bar: { pause: live && c.word !== 'Paused', stop: live, more: true },
-      id: c.id, title: c.title || 'Unified page navigation: one head, breadcrumb in the top', kind: c.kind || '',
+      id: c.id, title: ui.title || c.title || 'Unified page navigation: one head, breadcrumb in the top', kind: ui.kind || c.kind || '',
       project: c.project || 'worka-cc', branch: c.branch === undefined ? 'feat/unified-page-navigation-one-head-breadcrumb' : c.branch, folder: c.folder || '',
       started: 'started 08:31', chips: ui.chips || [],
       word: c.word, dot: c.dot || '', sym: c.sym || '', detail: c.detail || '', action,
       stages: c.stages.map((x) => ({ key: x.key, label: x.label, meta: stageMeta(x), selected: x.key === open, live: stageState(x.subs) === 'live',
         aria: [x.label, STAGE_WORD[stageState(x.subs)], stageMeta(x)].filter(Boolean).join(', '),
         cells: x.subs.map((y) => 'is-' + y.state) })),
-      open: { key: open, label: st.label, title: st.title || '', isRun: !!st.run, browsing: open !== now,
-        rows: stack ? [] : st.subs.map((x, i) => Object.assign(rowOf(x, st.subs[i + 1]), { ref: st.run ? '' : st.key + '/' + x.name })), stack },
-      figs: c.figs.filter(([k]) => k !== 'Rate').map(([k, v]) => {
+      open: (() => {
+        const rows = stack ? [] : st.subs.map((x, i) => Object.assign(rowOf(x, st.subs[i + 1]), { ref: st.run ? '' : st.key + '/' + x.name }));
+        if (!st.run) return { key: open, label: st.label, title: st.title || '', isRun: false, browsing: open !== now, rows, stack };
+        // A run inside a group: its stages, then its PR as the group's stack sees it, its time and cost, and a way in.
+        const i = +st.key.slice(3) - 1;
+        const pr = c.stack && c.stack.mode === 'review' ? STACKS.review.rows[i]
+          : { num: 'PR', state: 'next', word: c.stack && c.stack.mode === 'create' ? 'Not opened yet' : 'Opens with the feature', sub: '' };
+        rows.push(Object.assign(rowOf({ state: pr.state }), { name: pr.num === 'PR' ? 'PR' : 'PR ' + pr.num, live: [pr.word, pr.sub].filter(Boolean).join(' \u00b7 ') }));
+        return { key: open, label: st.label, title: st.title || '', isRun: true, browsing: open !== now, rows, stack,
+          meta: [stageMeta(st), (c.runCosts || [])[i]].filter(Boolean).join(' \u00b7 '), runIndex: i, canOpen: !!(c.runCases || [])[i] };
+      })(),
+      runCases: c.runCases || [], runTitles: RUNS,
+      figs: (() => {
+        const mins = c.stages.reduce((a, x) => a + x.subs.reduce((b, y) => b + (y.time ? toMin(y.time) : 0), 0), 0);
+        const cost = c.stages.filter((x) => !x.run).reduce((a, x) => a + x.subs.reduce((b, y) => b + (y.state === 'next' ? 0 : money(COST_OF[y.name] || 0)), 0), 0)
+          + (c.runCosts || []).reduce((a, v) => a + money(v), 0);
+        return c.figs.filter(([k]) => k !== 'Rate').map(([k, v]) => [k, k === 'Time' && mins ? fmtMin(mins) : k === 'Cost' && cost ? '$' + cost.toFixed(2) : v]);
+      })().map(([k, v]) => {
         if (k !== 'Cost') return { k, v };
         const pct = Math.round((money(v) / DETAIL.budget) * 100);
         return { k, v, of: 'of $' + DETAIL.budget, warn: pct >= 80, title: pct + '% of the run\u2019s budget' };
@@ -290,8 +305,9 @@
     };
   }
 
-  const ADD = [{ kind: 'label', text: 'ui', menu: 'Label', help: 'Find and filter runs by it in the Runs list' },
-    { kind: 'tag', text: 'team: web', menu: 'Cost tag', help: 'Splits this run’s cost in Statistics' },
-    { kind: 'group', text: 'Navigation ›', menu: 'Add to group', help: 'Tracks it with related runs on one page' }];
+  // The + menu: what each kind is for, a placeholder for typing one, and the existing values to pick from.
+  const ADD = [{ kind: 'label', menu: 'Label', help: 'Find and filter runs by it in the Runs list', placeholder: 'Type or pick a label', suggest: ['ui', 'hotfix', 'needs demo'] },
+    { kind: 'tag', menu: 'Cost tag', help: 'Splits this run’s cost in Statistics', placeholder: 'key: value', suggest: ['team: web', 'team: api', 'client: acme'] },
+    { kind: 'group', menu: 'Add to group', help: 'Tracks it with related runs on one page', placeholder: 'New group name', suggest: ['Navigation', 'Billing export', 'Onboarding'] }];
   window.RunCardModel = { cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group })), view, add: ADD };
 })();

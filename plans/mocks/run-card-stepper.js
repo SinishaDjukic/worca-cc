@@ -23,7 +23,7 @@ const ICON = {
 const svg = (name, size) => (ICON[name] ? `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>` : '');
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-let ui = { caseId: 'working', open: null, chips: [], ship: '', menu: '', tab: '', focus: '', view: 'steps' };
+let ui = { caseId: 'working', open: null, chips: [], ship: '', menu: '', tab: '', focus: '', view: 'steps', kind: '', title: '', back: null };
 
 function statusDot(v) {
   if (v.sym) {
@@ -43,7 +43,16 @@ function chip(c, i) {
   const x = `<button type="button" class="tag-x" aria-label="Remove ${esc(c.text)}" data-unchip="${i}">${svg('x', 10)}</button>`;
   if (c.kind === 'label') return `<span class="label-chip"><span class="label-dot hue-blue"></span><span class="label-chip-t">${esc(c.text)}</span>${x}</span>`;
   if (c.kind === 'tag') return `<span class="badge tag-chip">${esc(c.text)}${x}</span>`;
-  return `<span class="kind-chip">${esc(c.text)}</span>`;
+  return `<span class="kind-chip">${esc(c.text)} ›</span>`;
+}
+// The + picker: after choosing Label, Cost tag or group, a small field to type one, with existing values to pick.
+function pickerHtml(kind) {
+  const k = M.add.find((x) => x.kind === kind);
+  const taken = ui.chips.filter((c) => c.kind === kind).map((c) => c.text);
+  return `<div class="menu rc-picker" role="dialog" aria-label="Add ${esc(k.menu.toLowerCase())}"><p class="menu-h">${esc(k.menu)}</p>
+    <input class="input input-sm" type="text" placeholder="${esc(k.placeholder)}" aria-label="${esc(k.menu)}" data-key="pick-input">
+    <div class="rc-suggest">${k.suggest.filter((x) => !taken.includes(x)).map((x) => `<button type="button" class="btn btn-sm" data-suggest="${esc(x)}" data-key="suggest:${esc(x)}">${esc(x)}</button>`).join('')}</div>
+    <p class="menu-help">Enter adds it · Esc closes</p></div>`;
 }
 // Every focusable control carries data-key, so a render keeps keyboard focus on it (or moves it on purpose via
 // pendingFocus) instead of dropping it to the page.
@@ -107,7 +116,7 @@ function runsPanel(v) {
   const runs = v.activity.filter((st) => /^run/.test(st.key));
   return `<ul class="rtab-dec is-runs">${runs.map((st, i) => { const live = st.rows.find((r) => /is-(now|ask|problem|failed)/.test(r.rowCls)); const done = st.rows.every((r) => /is-done/.test(r.rowCls));
     const line = [done ? 'Done' : live ? live.name : 'Waiting', st.meta, v.runPRs[i]].filter(Boolean).join(' · ');
-    return `<li><span class="status-dot ${done ? 'is-green' : live ? 'is-peach is-pulse' : 'is-grey-ring'}" aria-hidden="true"></span><span class="rtab-q">${esc(st.label)} · ${esc(st.title)}</span><span class="rtab-dim">${esc(line)}</span><button type="button" class="btn btn-sm btn-quiet" data-key="run:${i}">Open</button></li>`; }).join('')}</ul>`;
+    return `<li><span class="status-dot ${done ? 'is-green' : live ? 'is-peach is-pulse' : 'is-grey-ring'}" aria-hidden="true"></span><span class="rtab-q">${esc(st.label)} · ${esc(st.title)}</span><span class="rtab-dim">${esc(line)}</span>${v.runCases[i] ? `<button type="button" class="btn btn-sm btn-quiet" data-open-run="${i}" data-key="run:${i}">Open</button>` : ''}</li>`; }).join('')}</ul>`;
 }
 function panelHtml(v) {
   const id = (v.tabs.find((t) => t.sel) || v.tabs[0]).id;
@@ -124,19 +133,20 @@ function render() {
   const v = M.view(ui.caseId, ui);
   const a = v.action;
   const action = a ? `<div class="rc-side"><div class="btn-split rc-action rc-pop is-right"><button type="button" class="btn ${a.primary ? 'btn-primary' : ''}" title="${esc(a.help)}" data-key="act-main">${svg(a.icon, 16)}${esc(a.label)}</button>${a.items.length ? `<button type="button" class="btn btn-icon ${a.primary ? 'btn-primary' : ''}" aria-label="More actions" aria-haspopup="menu" aria-expanded="${ui.menu === 'act'}" data-menu="act" data-key="menu:act">${svg('chevron', 16)}</button>${menu('act', a.items, a.help)}` : ''}</div></div>` : '';
-  const addable = M.add.filter((x) => !ui.chips.some((c) => c.kind === x.kind));
+  const addable = M.add.filter((x) => x.kind !== 'group' || !ui.chips.some((c) => c.kind === 'group'));   // many labels and tags, one group
   const place = v.branch ? `<span class="sc-branch" title="${esc(v.branch)}"><code>${esc(v.branch)}</code><button type="button" class="btn btn-sm btn-quiet btn-icon" aria-label="Copy branch name" data-key="copy">${svg('copy', 12)}</button></span>`
     : v.folder ? `<span class="sc-branch" title="${esc(v.folder)}"><code>${esc(v.folder)}</code></span>` : '';
-  const facts = [v.kind ? `<span class="kind-chip">${esc(v.kind)}</span>` : '', `<span class="rc-trunc">${esc(v.project)}</span>`, place, `<span>${esc(v.started)}</span>`].filter(Boolean)
+  const kindChip = !v.kind ? '' : ui.back ? `<button type="button" class="kind-chip rc-kind-link" data-back-group data-key="back-group" title="Back to the ${esc(ui.back.word)}">${esc(v.kind)}</button>` : `<span class="kind-chip">${esc(v.kind)}</span>`;
+  const facts = [kindChip, `<span class="rc-trunc">${esc(v.project)}</span>`, place, `<span>${esc(v.started)}</span>`].filter(Boolean)
     .join('<span class="rc-sep">·</span>') + ui.chips.map(chip).join('')
-    + (addable.length ? `<span class="rc-pop"><button type="button" class="btn btn-sm btn-quiet btn-icon rc-add" aria-label="Add a label, cost tag or group" aria-haspopup="menu" aria-expanded="${ui.menu === 'add'}" data-menu="add" data-key="menu:add">${svg('plus', 14)}</button>${menu('add', addable.map((x) => ({ id: x.kind, text: x.menu, help: x.help })))}</span>` : '');
+    + (addable.length ? `<span class="rc-pop"><button type="button" class="btn btn-sm btn-quiet btn-icon rc-add" aria-label="Add a label, cost tag or group" aria-haspopup="menu" aria-expanded="${ui.menu === 'add' || ui.menu.startsWith('pick-')}" data-menu="add" data-key="menu:add">${svg('plus', 14)}</button>${ui.menu.startsWith('pick-') ? pickerHtml(ui.menu.slice(5)) : menu('add', addable.map((x) => ({ id: x.kind, text: x.menu, help: x.help })))}</span>` : '');
 
   const track = v.stages.map((st) => `<div class="sc-seg">${st.cells.map((c) => `<span class="sc-cell ${c}"></span>`).join('')}</div>`).join('');
   // The stage row is a real tablist: one Tab stop (the selected stage), arrows move, each tab names the panel it controls.
   const stages = v.stages.map((st) => `<button type="button" class="sc-stage" role="tab" id="st-${st.key}" aria-controls="stage-panel" aria-selected="${st.selected}" tabindex="${st.selected ? 0 : -1}" data-stage="${st.key}" data-key="stage:${st.key}" aria-label="${esc(st.aria)}"><span class="l">${esc(st.label)}</span><span class="m">${esc(st.meta)}</span></button>`).join('');
   const o = v.open;
   const enter = o.key !== lastOpen; lastOpen = o.key;   // the steps fade in only when another stage opens, never on a repaint
-  const head = o.isRun ? `<div class="sc-head"><span class="sc-run" title="${esc(o.title)}">${esc(o.label)} · ${esc(o.title)}</span><button type="button" class="btn btn-sm btn-quiet" data-key="open-run">Open run</button></div>`
+  const head = o.isRun ? `<div class="sc-head"><span class="sc-run" title="${esc(o.title)}">${esc(o.label)} · ${esc(o.title)}${o.meta ? `<span class="rtab-dim"> · ${esc(o.meta)}</span>` : ''}</span>${o.canOpen ? `<button type="button" class="btn btn-sm" data-open-run="${o.runIndex}" data-key="open-run">Open run</button>` : ''}</div>`
     : o.browsing ? '<div class="sc-head is-end"><button type="button" class="btn btn-sm btn-quiet" data-back data-key="back">Back to now</button></div>' : '';
   const panel = o.stack ? stackHtml(Object.assign({}, o.stack, { enter })) : `<ol class="rd-route-list sc-subs${enter ? ' is-enter' : ''}" aria-label="${esc(o.label)} steps" style="grid-column:1 / -1">${o.rows.map((r) => rowHtml(r)).join('')}</ol>`;
   const sel = (v.tabs.find((t) => t.sel) || v.tabs[0]).id;
@@ -164,7 +174,12 @@ function render() {
 const pick = document.getElementById('case');
 const groups = [...new Set(M.cases.map((c) => c.group))];
 pick.innerHTML = groups.map((g) => `<optgroup label="${g}">${M.cases.filter((c) => c.group === g).map((c) => `<option value="${c.id}"${c.id === ui.caseId ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</optgroup>`).join('');
-pick.addEventListener('change', () => { ui = Object.assign(ui, { caseId: pick.value, open: null, ship: '', menu: '', tab: '', focus: '', chips: [] }); render(); });
+pick.addEventListener('change', () => { ui = Object.assign(ui, { caseId: pick.value, open: null, ship: '', menu: '', tab: '', focus: '', chips: [], kind: '', title: '', back: null }); render(); });
+function addChip(text) {
+  const kind = ui.menu.slice(5); const t = String(text).trim();
+  if (t && !ui.chips.some((c) => c.kind === kind && c.text === t)) ui.chips = ui.chips.concat({ kind, text: t });
+  ui.menu = ''; pendingFocus = 'menu:add';
+}
 
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 document.addEventListener('click', (e) => {
@@ -178,9 +193,17 @@ document.addEventListener('click', (e) => {
   const d = t.dataset;
   if (d.menu) { const opening = ui.menu !== d.menu; ui.menu = opening ? d.menu : ''; if (opening) pendingFocus = 'menu-first'; }
   else if (d.menuPick) {
-    const add = M.add.find((x) => x.kind === d.menuPick);
-    if (ui.menu === 'add' && add) ui.chips = ui.chips.concat({ kind: add.kind, text: add.text });
-    pendingFocus = 'menu:' + ui.menu; ui.menu = '';
+    if (ui.menu === 'add' && M.add.some((x) => x.kind === d.menuPick)) { ui.menu = 'pick-' + d.menuPick; pendingFocus = 'pick-input'; }
+    else { pendingFocus = 'menu:' + ui.menu; ui.menu = ''; }
+  } else if (d.suggest !== undefined) { addChip(d.suggest); }
+  else if (d.openRun !== undefined) {
+    const v = M.view(ui.caseId, ui); const i = +d.openRun;
+    ui.back = { caseId: ui.caseId, open: ui.open, tab: ui.tab, word: v.kind.toLowerCase() };
+    Object.assign(ui, { caseId: v.runCases[i], kind: `Run ${i + 1} of ${v.runCases.length} \u203a`, title: v.runTitles[i], open: null, tab: '', focus: '', menu: '' });
+    pick.value = ui.caseId; pendingFocus = 'back-group';
+  } else if ('backGroup' in d && ui.back) {
+    Object.assign(ui, { caseId: ui.back.caseId, open: ui.back.open, tab: ui.back.tab, kind: '', title: '', back: null, menu: '' });
+    pick.value = ui.caseId; pendingFocus = 'open-run';
   } else if (d.unchip !== undefined) { ui.chips = ui.chips.filter((_, i) => i !== +d.unchip); ui.menu = ''; pendingFocus = 'menu:add'; }
   else if (d.stage) { ui.open = d.stage; ui.menu = ''; }
   else if ('back' in d) { ui.open = null; pendingFocus = 'stage:' + (M.view(ui.caseId, Object.assign({}, ui, { open: null })).open.key); }
@@ -196,8 +219,9 @@ document.addEventListener('click', (e) => {
 // menus take ↑ ↓ Home End, and Escape or Tab close them with focus back on their trigger.
 document.addEventListener('keydown', (e) => {
   const t = e.target;
+  if (t.dataset && t.dataset.key === 'pick-input' && e.key === 'Enter') { e.preventDefault(); addChip(t.value); render(); return; }
   if (ui.menu && (e.key === 'Escape' || (e.key === 'Tab' && t.closest && t.closest('.menu')))) {
-    pendingFocus = 'menu:' + ui.menu; ui.menu = ''; render(); if (e.key === 'Escape') e.preventDefault(); return;
+    pendingFocus = ui.menu.startsWith('pick-') ? 'menu:add' : 'menu:' + ui.menu; ui.menu = ''; render(); if (e.key === 'Escape') e.preventDefault(); return;
   }
   const keys = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1, Home: 'first', End: 'last' };
   if (!(e.key in keys) || !t.closest) return;
