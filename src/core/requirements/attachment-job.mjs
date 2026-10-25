@@ -35,6 +35,7 @@ export const READ_MAX_TURNS = 5;
 const DEFAULTS = Object.freeze({
   runClaudeImpl: runClaude, listModels, listProjects, workspaceTarget, budget: () => budgetStatus(),
   onChange: () => {}, onBriefChange: () => {}, mockEnabled: () => mockEnabled({}), readTimeoutMs: READ_TIMEOUT_MS,
+  renameBody: renameSync, copyBody: copyFileSync,   // how a replaced body is put in place (a test makes them fail)
 });
 const READING = 'Worca is reading this file.';
 // What a failed read stores (D5): product messages only; the raw error goes to the log, with the file's id.
@@ -290,7 +291,7 @@ async function runAsk(e) {
   let model = null;
   try {
     const b = d.budget();   // again before the call (D12): a limit reached since the press fails the ask, nothing spent
-    if (b && b.blocked) { failAsk(e, { code: 'BUDGET', message: budgetMessage(b) }, 0, null); return; }
+    if (b && b.blocked) { failAsk(e, { code: 'BUDGET', message: budgetMessage(b) }, 0, null, { book: false }); return; }   // like a read: no turn
     if (d.mockEnabled()) { finishAsk(e, { answer: mockAnswer(e.question), costUsd: 0, model: null }); return; }
     const r = await readCall(e, row, { question: e.question });
     cost = r.costUsd;
@@ -308,11 +309,11 @@ async function runAsk(e) {
 // a failed read's error stays until the file is read again.
 const askError = (row) => !row.error || row.error.job === 'ask';
 
-function failAsk(e, failure, costUsd, model) {
+function failAsk(e, failure, costUsd, model, { book = true } = {}) {
   tx(() => {
     const now = e.cancelled ? null : getAttachment(e.id);
     if (now && askError(now)) updateAttachment(now.id, { error: { ...failure, at: iso(), job: 'ask', question: e.question } });
-    bookWrites(e, costUsd, model, 'asked', now);
+    if (book) bookWrites(e, costUsd, model, 'asked', now);
   });
 }
 
@@ -399,7 +400,11 @@ export function setSend(owner, id, on, { by = null } = {}, deps = {}) {
 }
 
 const ASKING = 'Worca is already answering a question about this file.';
+// A replace whose new body could not be put in place: the row (code STORE_FAILED) describes a version that has no body on
+// disk, so only Replace mends it; a download of such a row finds no body and answers 404 (D10's route).
 const STORE_FAILED = 'Worca could not store the new version. Replace it again.';
+const READ_FIRST = 'Read it again first: Worca could not read this file.';
+const storeFailed = (row) => row.status === 'failed' && row.error?.code === 'STORE_FAILED';
 const budgetMessage = (b) => `The spending limit${b && b.totalLimitUsd != null ? ` of $${b.totalLimitUsd}` : ''} is reached for this period. Worca can read the file when the limit resets or is raised.`;
 /** One job per file: no replace, ask or read again while the file is read or a question about it is answered. */
 function notIdle(row) {
@@ -413,6 +418,7 @@ export function readAgain(owner, id, { by = null } = {}, deps = {}) {
   const d = { ...DEFAULTS, ...deps };
   const row = ownAttachment(owner, id);
   notIdle(row);
+  if (storeFailed(row)) throw new RequirementsError('CONFLICT', STORE_FAILED);
   const patch = { status: 'reading', error: null };
   if (row.summary) {
     patch.history = pushHistory(row.history, { at: iso(), by, reason: 'read-again', name: row.name, sha256: row.sha256, summary: row.summary,
@@ -432,8 +438,17 @@ export function askAttachment(owner, id, question, { by = null } = {}, deps = {}
   const q = typeof question === 'string' ? question.trim().replace(/\s+/g, ' ') : '';
   if (!q || q.length > REQ_ATTACH_LIMITS.question) throw new RequirementsError('BAD_REQUEST', `the question must be 1 to ${REQ_ATTACH_LIMITS.question} characters`);
   notIdle(row);
+  if (storeFailed(row)) throw new RequirementsError('CONFLICT', STORE_FAILED);
+  if (row.status === 'failed' && !(row.error && row.error.job === 'ask')) throw new RequirementsError('CONFLICT', READ_FIRST);
   if (row.asks.length >= REQ_ATTACH_LIMITS.asks) throw new RequirementsError('CONFLICT', `This file has ${REQ_ATTACH_LIMITS.asks} answers already.`);
-  const b = d.budget();
+  let b;
+  try { b = d.budget(); } catch (err) {
+    // A budget that cannot be read is a failed ask, never a raw error: nothing is queued or spent.
+    console.error(`requirements: the budget check for an ask about file ${row.id} failed:`, message(err));
+    const out = updateAttachment(row.id, { error: { code: 'FAILED', message: TRY_AGAIN, at: iso(), job: 'ask', question: q } }, { by });
+    notifyOwner(owner, d);
+    return out;
+  }
   if (b && b.blocked) throw new RequirementsError('BUDGET', budgetMessage(b));
   enqueue({ id: row.id, name: row.name, owner, kind: 'ask', question: q, by, d });
   notifyOwner(owner, d);
@@ -443,17 +458,19 @@ export function askAttachment(owner, id, question, { by = null } = {}, deps = {}
 /** The new body into place after its row committed: a rename, else once more as a copy (Windows refuses a rename onto a
  *  file another reader holds open for a moment); else the file is failed, so the page offers Replace again. The temp
  *  file goes on every path. */
-function storeBody(temp, target, id) {
-  try { renameSync(temp, target); return true; } catch { /* once more as a copy */ }
+function storeBody(temp, target, id, d) {
+  try { d.renameBody(temp, target); return true; } catch { /* once more as a copy */ }
   try {
-    copyFileSync(temp, target);
+    d.copyBody(temp, target);
     return true;
   } catch (err) {
     console.error(`requirements: could not store the new version of file ${id}:`, message(err));
   } finally {
     try { rmSync(temp, { force: true }); } catch (x) { console.error('requirements: could not remove a temp body:', message(x)); }
   }
-  try { updateAttachment(id, { status: 'failed', error: { code: 'FAILED', message: STORE_FAILED, at: iso() } }); } catch (x) {
+  // Whatever stands at the target (the old body under the same extension, or a part of the copy) is not this version.
+  try { rmSync(target, { force: true }); } catch (x) { console.error(`requirements: could not remove the stale body of file ${id}:`, message(x)); }
+  try { updateAttachment(id, { status: 'failed', error: { code: 'STORE_FAILED', message: STORE_FAILED, at: iso() } }); } catch (x) {
     console.error('requirements: could not mark a replaced file failed:', message(x));
   }
   return false;
@@ -466,6 +483,7 @@ export function replaceAttachment(owner, id, upload, { keepSummary = false, by =
   const d = { ...DEFAULTS, ...deps };
   const row = ownAttachment(owner, id);
   notIdle(row);
+  if (upload && upload.sha256 === row.sha256 && !storeFailed(row)) throw new RequirementsError('CONFLICT', `This is the same version as ${row.name}.`);
   const [next] = checkNewFiles(owner.type, listAttachments(owner.type, owner.id).filter((r) => r.id !== row.id), [upload]);
   const keep = !!keepSummary && row.summaryEdited;
   const history = pushHistory(row.history, { at: iso(), by, reason: 'replaced', name: row.name, sha256: row.sha256,
@@ -479,19 +497,24 @@ export function replaceAttachment(owner, id, upload, { keepSummary = false, by =
   let out;
   try {
     writeFileSync(temp, next.data, { mode: FILE_MODE });
-    out = tx(() => {
-      if (owner.type === 'feature') appendTurn(owner.id, { kind: 'file', payload: { action: 'replaced', id: row.id, name: next.name, before: row.name } }, { by });
-      return updateAttachment(row.id, { name: next.name, kind: next.kind, mime: next.mime, bytes: next.bytes, sha256: next.sha256,
+    out = tx(() => updateAttachment(row.id, { name: next.name, kind: next.kind, mime: next.mime, bytes: next.bytes, sha256: next.sha256,
         status: 'reading', error: null, summary: keep ? row.summary : '', summaryEdited: keep, asks: [], history,
-        readCostUsd: null, readModel: null, readAt: null }, { by });
-    });
+        readCostUsd: null, readModel: null, readAt: null }, { by }));
   } catch (err) {
     try { rmSync(temp, { force: true }); } catch (x) { console.error('requirements: could not remove a temp body:', message(x)); }
     throw err;
   }
-  const stored = storeBody(temp, newFile, row.id);
+  const stored = storeBody(temp, newFile, row.id, d);
   if (newFile !== oldFile) { try { rmSync(oldFile, { force: true }); } catch (x) { console.error('requirements: could not remove an old body:', message(x)); } }
-  if (stored) enqueue({ id: row.id, name: next.name, owner, kind: 'read', by, d });
+  if (stored) {
+    // The thread's "replaced" line only for a version that is in place; the replace stands even if the line cannot be written.
+    if (owner.type === 'feature') {
+      try { appendTurn(owner.id, { kind: 'file', payload: { action: 'replaced', id: row.id, name: next.name, before: row.name } }, { by }); } catch (x) {
+        console.error(`requirements: could not record the replace of file ${row.id}:`, message(x));
+      }
+    }
+    enqueue({ id: row.id, name: next.name, owner, kind: 'read', by, d });
+  }
   notifyOwner(owner, d);
   return stored ? out : getAttachment(row.id);
 }
@@ -540,6 +563,23 @@ export function sweepReadFolders(base = join(worcaHome(), 'tmp', 'requirements')
     try {
       if (now - statSync(p).mtimeMs < olderThanMs) continue;
       rmSync(p, { recursive: true, force: true });
+      out.removed.push(p);
+    } catch { out.failed.push(p); }
+  }
+  return out;
+}
+
+/** D9: temp bodies a crash left between a replace's write and its rename, older than an hour. */
+export function sweepTempBodies(dir = attachmentsDir(), { olderThanMs = 60 * 60 * 1000, now = Date.now() } = {}) {
+  const out = { removed: [], failed: [] };
+  let names = [];
+  try { names = readdirSync(dir); } catch { return out; }
+  for (const n of names) {
+    if (!/^ratt_[0-9a-f]{12}\.[a-z0-9]+\.tmp-[0-9a-f]{8}$/.test(n)) continue;
+    const p = join(dir, n);
+    try {
+      if (now - statSync(p).mtimeMs < olderThanMs) continue;
+      rmSync(p, { force: true });
       out.removed.push(p);
     } catch { out.failed.push(p); }
   }

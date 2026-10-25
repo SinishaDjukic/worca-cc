@@ -460,6 +460,7 @@ test('ask: 409 BUDGET at the press; a limit reached before the call records the 
   await job.readsSettled(own(f));
   assert.deepEqual([getAttachment(a.id).asks.length, getAttachment(a.id).error.code, getAttachment(a.id).error.job, getAttachment(a.id).status],
     [0, 'BUDGET', 'ask', 'done']);
+  assert.equal(listTurns(f.seq).filter((x) => x.payload.action === 'asked').length, 0, 'a budget-stopped ask writes no turn, like a read');
   assert.equal(busy.length, 2);
   updateAttachment(a.id, { asks: Array.from({ length: 20 }, (_, i) => ({ question: `${i}`, answer: 'a' })) });
   blocked = false;
@@ -536,25 +537,85 @@ test('a replace whose row update fails leaves the old body and row as they were;
   assert.deepEqual(readdirSync(job.attachmentsDir()).filter((n) => n.includes('.tmp-')), []);
 });
 
-test('a new body that cannot be put in place: the file fails with "Replace it again", nothing is read, no temp file is left', async (t) => {
+test('a new body that cannot be put in place: STORE_FAILED, nothing read, no turn, no temp; read again and ask refused; Replace mends it', async (t) => {
   const log = t.mock.method(console, 'error', () => {});
   const f = feature();
-  const r = fakeRunner([{ summary: 'Stored.' }]);
+  const r = fakeRunner([{ summary: 'Stored.' }, { summary: 'Mended.' }]);
   const [a] = job.addAttachments(own(f), [pdfFile('stuck.pdf', Buffer.from('%PDF-1.7\nstuck\n'))], {}, deps(r));
   await job.readsSettled(own(f));
+  const oldBody = job.attachmentFile(getAttachment(a.id));
   const target = job.attachmentFile({ id: a.id, kind: 'image', mime: 'image/png' });
+  const png = binFile('stuck.png', Buffer.from([...PNG, 9]), 'image', 'image/png');
   mkdirSync(target);   // a folder where the new body goes: neither the rename nor the copy can put it there
   try {
-    const out = job.replaceAttachment(own(f), a.id, binFile('stuck.png', Buffer.from([...PNG, 9]), 'image', 'image/png'), {}, deps(r));
+    const out = job.replaceAttachment(own(f), a.id, png, {}, deps(r));
     assert.deepEqual([out.name, out.status, out.error.code, out.error.message],
-      ['stuck.png', 'failed', 'FAILED', 'Worca could not store the new version. Replace it again.']);
+      ['stuck.png', 'failed', 'STORE_FAILED', 'Worca could not store the new version. Replace it again.']);
     assert.equal(job.isReading(a.id), false, 'no read is queued for a body that is not there');
     await job.readsSettled(own(f));
     assert.equal(r.calls.length, 1);
+    assert.equal(existsSync(oldBody), false);
     assert.deepEqual(readdirSync(job.attachmentsDir()).filter((n) => n.includes('.tmp-')), []);
-    assert.equal(log.mock.calls.length, 1, 'the raw error goes to the log');
+    assert.equal(listTurns(f.seq).filter((x) => x.payload.action === 'replaced').length, 0, 'no "replaced" line for a version not in place');
+    assert.equal(log.mock.calls.length, 2, 'the failed store and the stale target go to the log');
     assert.doesNotMatch(JSON.stringify(getAttachment(a.id).error), /ratt_|[\\/]/);
+    for (const press of [() => job.readAgain(own(f), a.id, {}, deps(r)), () => job.askAttachment(own(f), a.id, 'Q?', {}, deps(r))]) {
+      assert.throws(press, (e) => e.code === 'CONFLICT' && e.message === 'Worca could not store the new version. Replace it again.');
+    }
   } finally { rmSync(target, { recursive: true, force: true }); }
+  const again = job.replaceAttachment(own(f), a.id, png, {}, deps(r));   // the same bytes: Replace it again
+  assert.equal(again.status, 'reading');
+  await job.readsSettled(own(f));
+  assert.deepEqual([getAttachment(a.id).status, getAttachment(a.id).summary, existsSync(target)], ['done', 'Mended.', true]);
+});
+
+test('a version that cannot be stored under the same extension leaves no stale body: the old body never stands in for it', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  const f = feature();
+  const [a] = job.addAttachments(own(f), [pdfFile('same.pdf', Buffer.from('%PDF-1.7\nold\n'))], {}, deps(fakeRunner([{ summary: 'Old.' }])));
+  await job.readsSettled(own(f));
+  const body = job.attachmentFile(getAttachment(a.id));
+  const r = fakeRunner([]);
+  const failing = deps(r, {
+    renameBody: () => { throw Object.assign(new Error('EBUSY: busy'), { code: 'EBUSY' }); },
+    copyBody: (_from, to) => { writeFileSync(to, '%PDF-1.7\npart'); throw Object.assign(new Error('ENOSPC: full'), { code: 'ENOSPC' }); },
+  });
+  const out = job.replaceAttachment(own(f), a.id, pdfFile('same-v2.pdf', Buffer.from('%PDF-1.7\nnew\n')), {}, failing);
+  assert.deepEqual([out.name, out.status, out.error.code], ['same-v2.pdf', 'failed', 'STORE_FAILED']);
+  assert.equal(existsSync(body), false, 'neither the old body nor a part of the copy stands at the path');
+  assert.deepEqual(readdirSync(job.attachmentsDir()).filter((n) => n.includes('.tmp-')), []);
+  await job.readsSettled(own(f));
+  assert.equal(r.calls.length, 0);
+});
+
+test('Replace refuses the same version; a throwing budget at the press is a failed ask, nothing queued', async (t) => {
+  const log = t.mock.method(console, 'error', () => {});
+  const f = feature();
+  const r = fakeRunner([{ summary: 'Same.' }]);
+  const [a] = job.addAttachments(own(f), [textFile('same.md', 'same')], {}, deps(r));
+  await job.readsSettled(own(f));
+  assert.throws(() => job.replaceAttachment(own(f), a.id, textFile('same-again.md', 'same'), {}, deps(r)),
+    (e) => e.code === 'CONFLICT' && e.message === 'This is the same version as same.md.');
+  const out = job.askAttachment(own(f), a.id, 'Q?', {}, deps(r, { budget: () => { throw new Error('db locked'); } }));
+  assert.deepEqual([out.error.code, out.error.job, out.error.question, out.error.message, out.status, job.isAsking(a.id)],
+    ['FAILED', 'ask', 'Q?', 'Worca could not read it. Try again.', 'done', false]);
+  assert.equal(r.calls.length, 1);
+  assert.equal(log.mock.calls.length, 1);
+});
+
+test('sweepTempBodies removes temp bodies a crash left, older than an hour, nothing else', () => {
+  const dir = job.attachmentsDir();
+  mkdirSync(dir, { recursive: true });
+  const names = ['ratt_0123456789ab.pdf.tmp-0a1b2c3d', 'ratt_0123456789ab.png.tmp-0a1b2c3e', 'ratt_0123456789ac.pdf', 'ratt_0123456789ad.pdf.tmp-zz'];
+  const paths = names.map((n) => join(dir, n));
+  for (const x of paths) writeFileSync(x, 'x');
+  const t = (Date.now() - 2 * 3600_000) / 1000;
+  for (const i of [0, 2, 3]) utimesSync(paths[i], t, t);
+  const out = job.sweepTempBodies(dir);
+  assert.deepEqual([out.removed, out.failed], [[paths[0]], []]);
+  assert.deepEqual(paths.map((x) => existsSync(x)), [false, true, true, true]);
+  for (const x of paths.slice(1)) rmSync(x, { force: true });
+  assert.deepEqual(job.sweepTempBodies(join(dir, 'missing')), { removed: [], failed: [] });
 });
 
 test("one job per file: replace and read again wait for an ask; a removed file's ask books its cost and stores nothing", async () => {
@@ -589,21 +650,15 @@ test('mock mode: an ask answers with the [mock] line and spends nothing', async 
   assert.deepEqual([r.calls.length, getAttachment(a.id).asks[0].answer, getAttachment(a.id).costUsd], [0, '[mock] Refunds?: the file does not say more.', 0]);
 });
 
-test("an ask's failure never overwrites a failed read's error; its answer clears only an ask's error", async (t) => {
+test("Ask is refused on a file Worca could not read; a failed ask stores its own error and a later answer clears it", async (t) => {
   const log = t.mock.method(console, 'error', () => {});
   const f = feature();
-  const r = fakeRunner(['not json', new Error('down'), { answer: 'Yes.' }, { answer: 'Again.' }]);
+  const r = fakeRunner(['not json']);
   const [a] = job.addAttachments(own(f), [textFile('err.md', 'e')], {}, deps(r));
   await job.readsSettled(own(f));
-  const readError = getAttachment(a.id).error;
-  assert.equal(readError.code, 'BAD_REPLY');
-  job.askAttachment(own(f), a.id, 'Q?', {}, deps(r));
-  await job.readsSettled(own(f));
-  assert.deepEqual(getAttachment(a.id).error, readError, 'the failed ask leaves the read error');
-  assert.equal(log.mock.calls.length, 1, 'the raw error goes to the log');
-  job.askAttachment(own(f), a.id, 'Q2?', {}, deps(r));
-  await job.readsSettled(own(f));
-  assert.deepEqual([getAttachment(a.id).error, getAttachment(a.id).asks.length], [readError, 1], 'an answer keeps the read error');
+  assert.equal(getAttachment(a.id).error.code, 'BAD_REPLY');
+  assert.throws(() => job.askAttachment(own(f), a.id, 'Q?', {}, deps(r)),
+    (e) => e.code === 'CONFLICT' && e.message === 'Read it again first: Worca could not read this file.');
   const [b] = job.addAttachments(own(f), [textFile('ok.md', 'ok')], {}, deps(fakeRunner([{ summary: 'Fine.' }])));
   await job.readsSettled(own(f));
   const d2 = deps(fakeRunner([new Error('down'), { answer: 'Now.' }]));
@@ -611,6 +666,7 @@ test("an ask's failure never overwrites a failed read's error; its answer clears
   await job.readsSettled(own(f));
   assert.deepEqual([getAttachment(b.id).error.code, getAttachment(b.id).error.job, getAttachment(b.id).error.question, getAttachment(b.id).error.message],
     ['FAILED', 'ask', 'Q?', 'Worca could not read it. Try again.']);
+  assert.equal(log.mock.calls.length, 1, 'the raw error goes to the log');
   job.askAttachment(own(f), b.id, 'Q again?', {}, d2);
   await job.readsSettled(own(f));
   assert.deepEqual([getAttachment(b.id).error, getAttachment(b.id).asks.map((x) => x.answer)], [null, ['Now.']]);
