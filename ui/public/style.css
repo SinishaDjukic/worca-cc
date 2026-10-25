@@ -10711,6 +10711,27 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 @media (prefers-reduced-motion:reduce){.mk-phase-spin{animation:none;}}
 /* Forced colours paint a transparent border in CanvasText: the spinner would close into the pending dot's full ring. */
 @media (forced-colors:active){.mk-phase-spin{border-right-color:Canvas;}}
+
+/* The setup assistant (ui/public/setup-assistant.mjs). Layout only; tokens only.
+   A new surface scopes its greys to --ink-2 (the .mv-* rule): --ink-3 fails verify:theme here. */
+.setup-modal .card.setup-card{width:min(640px,100%);}
+.setup-card .card-head{flex-direction:column;align-items:flex-start;gap:4px;}
+.setup-card .sa-step-of{font-size:var(--fs-meta);color:var(--ink-2);}
+.setup-card .sa-sub{margin:0;color:var(--ink-2);}
+.setup-card .sa-step{display:flex;flex-direction:column;gap:16px;min-width:0;}
+.setup-card .sa-rows{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;}
+.setup-card .sa-row{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px;min-width:0;}
+.setup-card .sa-row-main{flex:1 1 120px;min-width:0;overflow-wrap:anywhere;}
+.setup-card .sa-row-line{font-size:var(--fs-meta);color:var(--ink-2);}
+.setup-card .sa-row .badge{flex:none;white-space:nowrap;}
+.setup-card .sa-pair{display:flex;flex-wrap:wrap;gap:8px;}
+.setup-card .sa-pair > *{flex:1 1 100px;min-width:0;}
+.setup-card .sa-broker{margin:0;color:var(--ink-2);}
+.setup-card .dlg-foot .confirm-actions{flex-wrap:wrap;}
+.setup-card .sa-status{min-width:0;overflow-wrap:anywhere;}
+.setup-card .hint{color:var(--ink-2);}
+.setup-card .input::placeholder{color:var(--ink-2);}
+.setup-card .input[aria-invalid="true"].input::placeholder{color:var(--ink-2);}
 .mk-add-msg{align-items:flex-start;}
 .mk-add-msg-body{display:flex;flex-direction:column;gap:4px;min-width:0;overflow-wrap:anywhere;}
 .mk-add-msg-detail{font-size:var(--fs-meta);}

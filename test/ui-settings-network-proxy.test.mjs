@@ -4,7 +4,7 @@ import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { mountNetworkProxyCard, SAVED_TEXT, NOT_SAVED_TEXT, TESTING_TEXT } from '../ui/public/settings-network-proxy.mjs';
+import { mountNetworkProxyCard, AUTH_OPTIONS, SAVED_TEXT, NOT_SAVED_TEXT, TESTING_TEXT } from '../ui/public/settings-network-proxy.mjs';
 import { BUTTON_DONE_MS } from '../ui/public/feedback.mjs';
 
 const HTML = readFileSync(new URL('../ui/public/index.html', import.meta.url), 'utf8');
@@ -22,7 +22,7 @@ const TEST_OK = { ok: false, upstream: 'proxy.acme.example:8080', results: [
 const tick = () => new Promise((r) => setImmediate(r));
 
 /** A fresh page and card; `answers` maps "METHOD url" to { ok, status, data }. */
-function mount(answers = {}) {
+function mount(answers = {}, { onOpenSetup } = {}) {
   const dom = new JSDOM(HTML);
   const doc = dom.window.document;
   const calls = [];
@@ -32,7 +32,7 @@ function mount(answers = {}) {
     const a = answers[`${method} ${url}`];
     return (typeof a === 'function' ? await a() : a) || { ok: true, status: 200, data: STATUS };
   };
-  const off = mountNetworkProxyCard({ doc, fetchJson });
+  const off = mountNetworkProxyCard({ doc, fetchJson, ...(onOpenSetup ? { onOpenSetup } : {}) });
   const $ = (id) => doc.getElementById(id);
   const close = () => { off(); dom.window.close(); };
   return { dom, doc, calls, $, close };
@@ -292,4 +292,27 @@ test('Save: a port change says it applies at the next start', async () => {
   for (let i = 0; i < 5; i++) await tick();
   assert.equal(m.$('npStatus').textContent, 'Saved. New connections use it now. The local proxy port applies at the next start.');
   m.close();
+});
+
+test('needs-login shows Fix in setup assistant, which opens the assistant on Network; ready, or no onOpenSetup, hides it (AC-4.5)', async (t) => {
+  const NEEDS = { ...STATUS, state: 'needs-login', line: 'Log in again (worca proxy login)' };
+  const opened = [];
+  const p = mount({ 'GET /api/proxy/status': { ok: true, status: 200, data: NEEDS } }, { onOpenSetup: (step) => opened.push(step) });
+  t.after(p.close);
+  await tick();
+  const fix = p.$('npSetup');
+  assert.equal(fix.textContent, 'Fix in setup assistant');
+  assert.equal(fix.hidden, false);
+  assert.equal(p.$('npLogin').textContent, 'Log in', 'the card\'s own button keeps its label');
+  fix.click();
+  assert.deepEqual(opened, ['network']);
+  const ready = mount({}, { onOpenSetup: () => {} });
+  t.after(ready.close);
+  await tick();
+  assert.equal(ready.$('npSetup').hidden, true, 'ready');
+  const bare = mount({ 'GET /api/proxy/status': { ok: true, status: 200, data: NEEDS } });
+  t.after(bare.close);
+  await tick();
+  assert.equal(bare.$('npSetup').hidden, true, 'no onOpenSetup');
+  assert.equal(AUTH_OPTIONS.length, 4);
 });

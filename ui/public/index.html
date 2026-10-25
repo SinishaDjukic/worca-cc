@@ -1842,6 +1842,16 @@
               </div>
             </section>
 
+            <!-- Setup assistant: Run setup again reopens the seven-step dialog with the saved values
+                 (ui/public/setup-assistant.mjs). No info-tip and no static .hint (the row explains itself). -->
+            <section class="card settings-card" id="setup-assistant-card" data-min-level="simple">
+              <div class="label-row"><h2>Setup assistant</h2></div>
+              <div class="gs-settings-row">
+                <p class="gs-settings-text">Network, models and limits in one pass.</p>
+                <button type="button" id="setupRunAgain" class="btn btn-sm">Run setup again</button>
+              </div>
+            </section>
+
             <!-- Getting started: the checklist's Hide is undone here. Only the checklist —
                  the welcome dialog stays seen. No info-tip (the row explains itself);
                  the .hint is painted by app.js like every other settings status line. -->

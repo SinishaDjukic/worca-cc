@@ -1963,13 +1963,15 @@ app.use('/src/shared', (_req, res) => {
 // Interface mode (docs/ui-levels.md): the stored choice, else the install's default. "Fresh" =
 // the welcome dialog was never dismissed and the store holds no project and no run; anything
 // else is an install that predates the mode (or has outgrown it) and keeps the full UI.
+/** A fresh install: welcome not seen, no project, no run (D18). Derived on every call, never stored. */
+function isFreshInstall() {
+  try { return !onboardingPrefs().welcomeSeen && countProjects() === 0 && countPipelines() === 0; }
+  catch { return false; }
+}
 function effectiveUiLevel() {
   const stored = storedUiLevel();
   if (stored) return stored;
-  let fresh = false;
-  try { fresh = !onboardingPrefs().welcomeSeen && countProjects() === 0 && countPipelines() === 0; }
-  catch { fresh = false; }
-  return defaultUiLevel({ fresh });
+  return defaultUiLevel({ fresh: isFreshInstall() });
 }
 // "Fresh" is derived from state the user changes (welcomeSeen, the first project), so a new user's
 // mode would jump from simple to expert the moment they act. Each of those writes pins the derived
@@ -6426,7 +6428,7 @@ app.get('/api/history', async (req, res) => {
 // ---------------------------------------------------------------------------
 // ?recheck=1 skips the remembered Claude sign-in answer (the dialog's Check again).
 app.get('/api/onboarding', async (req, res) => {
-  try { res.json(await onboardingStatus({ recheck: isTruthy(req.query.recheck) })); }
+  try { res.json({ ...(await onboardingStatus({ recheck: isTruthy(req.query.recheck) })), fresh: isFreshInstall() }); }
   catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 app.post('/api/onboarding', async (req, res) => {
@@ -6436,7 +6438,7 @@ app.post('/api/onboarding', async (req, res) => {
   }
   catch (err) { return badRequest(res, err && err.message ? err.message : String(err)); }
   emitChanged('onboarding-changed');
-  try { res.json(await onboardingStatus()); }
+  try { res.json({ ...(await onboardingStatus()), fresh: isFreshInstall() }); }
   catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err), ...onboardingPrefs() }); }
 });
 

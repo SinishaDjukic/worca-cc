@@ -7,14 +7,16 @@ import { makeSwitch } from './switch.mjs';
 export { FIXED_PORT_NOTE, SAVED_TEXT, PORT_PENDING_TEXT, NOT_SAVED_TEXT, SAVED_OFF_TEXT } from '../../src/shared/network-proxy-text.mjs';
 import { FIXED_PORT_NOTE, SAVED_TEXT, PORT_PENDING_TEXT, NOT_SAVED_TEXT, SAVED_OFF_TEXT } from '../../src/shared/network-proxy-text.mjs';
 export const TESTING_TEXT = 'Testing…';
-const AUTH_OPTIONS = [['auto', 'NTLMv2 (recommended)'], ['basic', 'Basic (password in cleartext)'], ['digest', 'Digest (password from HTTPS_PROXY)'], ['none', 'No login']];
+/** The login choices; exported for the setup assistant's Login select (fit-1-2). */
+export const AUTH_OPTIONS = [['auto', 'NTLMv2 (recommended)'], ['basic', 'Basic (password in cleartext)'], ['digest', 'Digest (password from HTTPS_PROXY)'], ['none', 'No login']];
 /** Login modes that need the password itself, so Log in (a saved NT hash) is off, with this hint (D16). */
 const PASSWORD_NOTES = {
   basic: 'Basic sends the password in cleartext and cannot use a saved login: put DOMAIN%5Cuser:password@ in HTTPS_PROXY, or choose NTLMv2.',
   digest: 'Digest cannot use a saved login (it needs the password): put DOMAIN%5Cuser:password@ in HTTPS_PROXY, or choose NTLMv2.',
 };
 
-async function defaultFetchJson(url, { method = 'GET', body } = {}) {
+/** The card's JSON request helper; exported for the setup assistant (A18). */
+export async function fetchJson(url, { method = 'GET', body } = {}) {
   const r = await fetch(url, { method, headers: body ? { 'content-type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
   let data = {};
   try { data = await r.json(); } catch { /* an empty body */ }
@@ -114,9 +116,14 @@ function build(doc, body) {
   status.setAttribute('role', 'status');
   const results = make(doc, 'ul', 'np-results');
   results.id = 'npTestResults';
-  body.append(drows, actions, basicNote, status, results);
+  // needs-login only: the setup assistant's Network step (AC-4.5); the card's own Log in keeps its label.
+  const setup = make(doc, 'button', 'btn btn-sm np-setup', 'Fix in setup assistant');
+  setup.type = 'button';
+  setup.id = 'npSetup';
+  setup.hidden = true;
+  body.append(drows, actions, basicNote, status, setup, results);
   portNote.textContent = FIXED_PORT_NOTE;
-  return { enabled, host, port, auth, noProxy, fixedPort, connectS, authS, idleS, domain, user, password, save, login, logout, test, basicNote, status, results };
+  return { enabled, host, port, auth, noProxy, fixedPort, connectS, authS, idleS, domain, user, password, save, login, logout, test, basicNote, status, setup, results };
 }
 
 function fill(f, st) {
@@ -138,6 +145,7 @@ function fill(f, st) {
 function fillStatus(f, st) {
   f.status.textContent = statusText(st);
   f.status.dataset.state = st ? st.state : '';
+  if (f.setup) f.setup.hidden = !(st && st.state === 'needs-login' && f.onOpenSetup);
   basicMode(f);
 }
 
@@ -161,20 +169,22 @@ export function renderResults(list, results) {
 }
 
 /** Mount the card; returns a no-op unsubscribe (the card has no flag to follow). */
-export function mountNetworkProxyCard({ doc = globalThis.document, fetchJson = defaultFetchJson } = {}) {
+export function mountNetworkProxyCard({ doc = globalThis.document, fetchJson: fj = fetchJson, onOpenSetup = null } = {}) {
   const card = doc.getElementById('network-proxy-settings-card');
   const body = card && card.querySelector('#networkProxyBody');
   if (!body) return () => {};
   let f = null;
   const ms = (el) => (el.value.trim() ? Math.round(Number(el.value) * 1000) : null);
   async function refresh() {
-    const r = await fetchJson('/api/proxy/status');
+    const r = await fj('/api/proxy/status');
     if (f && r.ok) fill(f, r.data);
   }
   function paint() {
     body.replaceChildren();
     f = build(doc, body);
     const cur = f;
+    cur.onOpenSetup = onOpenSetup;
+    cur.setup.addEventListener('click', () => onOpenSetup?.('network'));
     cur.auth.addEventListener('change', () => basicMode(cur));
     /** The form as a networkProxy patch: Save and Test send the same values. */
     const patchOf = (c) => ({
@@ -186,7 +196,7 @@ export function mountNetworkProxyCard({ doc = globalThis.document, fetchJson = d
     });
     /** Test these values (saved or not); one row per host. @returns {Promise<boolean|null>} passed; null: it could not run */
     const runTest = async (c, patch) => {
-      const r = await fetchJson('/api/proxy/test', { method: 'POST', body: { networkProxy: patch } });
+      const r = await fj('/api/proxy/test', { method: 'POST', body: { networkProxy: patch } });
       // NOT_CONFIGURED / UPSTREAM_INVALID / TEST_RUNNING: the server's sentence, as is.
       if (!r.ok) { c.status.textContent = r.data.error || 'The test could not run'; renderResults(c.results, []); return null; }
       renderResults(c.results, r.data.results);
@@ -195,7 +205,7 @@ export function mountNetworkProxyCard({ doc = globalThis.document, fetchJson = d
     cur.save.addEventListener('click', () => withButton(cur.save, async () => {
       clearFieldErrors(body);
       const patch = patchOf(cur);
-      const put = () => fetchJson('/api/proxy/settings', { method: 'PUT', body: { networkProxy: patch } });
+      const put = () => fj('/api/proxy/settings', { method: 'PUT', body: { networkProxy: patch } });
       let r = await put();
       if (!r.ok && r.data && r.data.code === 'UNTESTED') {
         cur.status.textContent = TESTING_TEXT;   // #npStatus is the live region; the button keeps withButton's spinner
@@ -211,20 +221,20 @@ export function mountNetworkProxyCard({ doc = globalThis.document, fetchJson = d
     }));
     cur.login.addEventListener('click', () => withButton(cur.login, async () => {
       clearFieldErrors(body);
-      const r = await fetchJson('/api/proxy/login', { method: 'POST', body: { domain: cur.domain.value.trim(), user: cur.user.value.trim(), password: cur.password.value } });
+      const r = await fj('/api/proxy/login', { method: 'POST', body: { domain: cur.domain.value.trim(), user: cur.user.value.trim(), password: cur.password.value } });
       cur.password.value = '';
       if (!r.ok) { fieldError(({ user: cur.user, domain: cur.domain, password: cur.password, auth: cur.auth })[r.data.field] || cur.user, r.data.error || 'Could not log in'); return { ok: false }; }
       fill(cur, r.data);
       return { ok: true };
     }, { busy: 'Logging in…', done: 'Logged in', idleDisabled: () => !!PASSWORD_NOTES[cur.auth.value] }));   // stays off in Basic/Digest after "Logged in"
     cur.logout.addEventListener('click', () => withButton(cur.logout, async () => {
-      const r = await fetchJson('/api/proxy/logout', { method: 'POST', body: {} });
+      const r = await fj('/api/proxy/logout', { method: 'POST', body: {} });
       if (r.ok) fill(cur, r.data);
       return { ok: r.ok };
     }, { busy: 'Logging out…', done: 'Logged out' }));
     /** After a Test: the server's state line only. The inputs keep what the person typed (ux-1-1). */
     const refreshStatus = async () => {
-      const r = await fetchJson('/api/proxy/status');
+      const r = await fj('/api/proxy/status');
       if (f === cur && r.ok) fillStatus(cur, r.data);
     };
     cur.test.addEventListener('click', () => withButton(cur.test, async () => {

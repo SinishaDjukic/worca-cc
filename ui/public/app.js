@@ -178,6 +178,7 @@ import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, colle
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
+import { openSetupAssistant, setupStepForSignIn } from './setup-assistant.mjs';
 import { loadCredentials, credentialSuffix } from './credential-badges.mjs';
 import { freeRequestsSuffix, typicalFreeRun, newRunFreeWarning, providerFreeLine } from './openrouter-free-view.mjs';
 import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SYNC_EXECUTION_ID } from '../../src/shared/graph/constants.mjs';
@@ -1675,6 +1676,7 @@ function handleServerMessage(msg) {
     return;
   }
   if (msg.type === 'git') { applyGit(msg.git); return; }
+  if (msg.type === 'setup-apply') { setupDialog?.onFrame(msg); return; }
 
   if (msg.type === 'channel-status') {
     onChannelStatus(msg);
@@ -16662,7 +16664,7 @@ document.getElementById('smartNamingReset')?.addEventListener('click', (e) => po
 settingsCardDirty('smartNamingSave');
 onFlagChange('smartRunNaming', () => { snPaintMuted(); void snPaintCost(null); void paintHelperModelCards(); });
 // Settings › Network proxy (networkProxy.enabled; Simple level, no flag).
-mountNetworkProxyCard();
+mountNetworkProxyCard({ onOpenSetup: (step) => openSetup({ entry: 'fix', step }) });
 
 function paintAskSettings(data) {
   const turns = document.getElementById('askMaxTurns');
@@ -19863,7 +19865,8 @@ function onModelsClick(ev) {
     } else if (t.classList.contains('mv-test')) {
       testModelFlow(t);
     } else if (t.classList.contains('mv-signin')) {
-      goToProviders(t.dataset.provider);
+      const step = setupStepForSignIn(t);   // a Copilot pill signs in inside the setup assistant (AC-4.5)
+      if (step) openSetup({ entry: 'fix', step }); else goToProviders(t.dataset.provider);
     } else if (t.classList.contains('mvx-export')) {
       exportPluginFlow();
     } else if (t.classList.contains('mvx-cancel')) {
@@ -37516,9 +37519,22 @@ function paintScheduleCounts(c) {
 // and PATH — never written here); this block only paints it and runs guides.
 // A guide is transient state: a reload clears it, the shelf re-summons it.
 // ---------------------------------------------------------------------------
-const gs = { status: null, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, refreshTimer: 0, poll: 0, startedRunId: "" };
+const gs = { status: null, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, setupShown: false, refreshTimer: 0, poll: 0, startedRunId: "" };
 let gsPillHost = null;
 let gsWelcomeUnbind = null;
+let setupDialog = null;
+/** The setup assistant (D18). A second open while one is up moves it to `step` instead. */
+function openSetup({ entry = 'rerun', step = 'check' } = {}) {
+  if (setupDialog) { setupDialog.goTo(step); return; }
+  setMobileNavOpen(false);
+  setupDialog = openSetupAssistant({ doc: document, entry, step, onClose: (how) => {
+    setupDialog = null;
+    // A7: a first start always continues to the welcome; a finished re-run ends on the doors; a fix-it
+    // run (entry 'fix') returns to the page it came from (product-1-2).
+    if (entry === 'first') showWelcome();
+    else if (entry === 'rerun' && how === 'done') showWelcome({ force: true });
+  } });
+}
 
 function gsShelfHost() { return document.getElementById('getting-started-host'); }
 /** The pill is the nav's first row (New run has no sidebar row: it is the top bar's button).
@@ -37607,6 +37623,8 @@ function paintGsSettings() {
     ? `Hidden from the sidebar · ${done} of ${total} done`
     : `In the sidebar · ${done} of ${total} done`);
 }
+// Settings › General › Setup assistant: Run setup again (AC-4.4).
+document.getElementById('setupRunAgain')?.addEventListener('click', () => openSetup({ entry: 'rerun' }));
 document.getElementById('gsShowAgain')?.addEventListener('click', async () => {
   if (gs.status && gs.status.hidden) {
     if (!(await setOnboardingPrefs({ hidden: false }))) return;
@@ -37618,12 +37636,19 @@ document.getElementById('gsShowAgain')?.addEventListener('click', async () => {
 function maybeWelcome() {
   const s = gs.status;
   // The welcome greets the home page: Chat since worca Chat (U5), New run before it.
-  if (!s || s.welcomeSeen || gs.welcomeShown || (currentShownView !== 'new' && currentShownView !== 'chat')) return;
+  if (!s || s.welcomeSeen || gs.welcomeShown || setupDialog || (currentShownView !== 'new' && currentShownView !== 'chat')) return;
+  // A fresh install meets the setup assistant first, once per page load; its close shows the welcome (A5).
+  if (s.fresh === true && !gs.setupShown) { gs.setupShown = true; openSetup({ entry: 'first' }); return; }
   // Nothing left to teach: an install that has done everything skips the welcome.
   if (allStepsDone(s)) { gs.welcomeShown = true; setOnboardingPrefs({ welcomeSeen: true }); return; }
+  showWelcome();
+}
+/** The welcome's three doors. `force`: after a re-run's Apply, even when the welcome was seen before (A7). */
+function showWelcome({ force = false } = {}) {
   const modal = document.getElementById('welcome-modal');
-  if (!modal) return;
+  if (!modal || (!force && (gs.welcomeShown || gs.status?.welcomeSeen))) return;
   gs.welcomeShown = true;
+  if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; }   // A6: never two sets of door listeners
   setMobileNavOpen(false);   // a phone drawer opened before the onboarding fetch landed must not stay up behind the dialog
   const close = () => { modal.classList.add('hidden'); if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; } };
   gsWelcomeUnbind = bindWelcome(modal, {

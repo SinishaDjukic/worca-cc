@@ -134,3 +134,24 @@ test('welcome bindings: doors hand over their step, Skip / backdrop / Esc skip',
   doc.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
   assert.equal(skips, 3, 'unbound');
 });
+
+test('welcome bindings: a second bind after an unbind leaves each door with one listener (A6)', () => {
+  const { window } = dom();
+  const doc = window.document;
+  doc.body.innerHTML = `
+    <div id="welcome-modal" class="viewer-modal">
+      <div class="card"><button type="button" data-door="project">a</button><button type="button" class="ob-skip">Skip</button></div>
+    </div>`;
+  const modal = doc.getElementById('welcome-modal');
+  const doors = []; let skips = 0;
+  const h = { onDoor: (d) => doors.push(d), onSkip: () => skips++ };
+  bindWelcome(modal, h)();
+  const unbind = bindWelcome(modal, h);
+  click(window, modal.querySelector('[data-door="project"]'));
+  click(window, modal.querySelector('.ob-skip'));
+  assert.deepEqual(doors, ['project'], 'one call per door click');
+  assert.equal(skips, 1);
+  unbind();
+  click(window, modal.querySelector('[data-door="project"]'));
+  assert.deepEqual(doors, ['project'], 'unbound doors are silent');
+});
