@@ -1006,6 +1006,16 @@ test('board 18: the row (role=group): "n of m go with it", a chip per file then 
   assert.equal(text(row.querySelector('.req-build-files-note')), 'Left out, a file still shaped the spec through what Worca took from it. The spec mentions support-tickets.pdf (R-po-3).');
 });
 
+test('board 18: the mentions are one sentence: "The spec mentions a.pdf (R-po-3) and b.md (R-po-5, A-1)."', async () => {
+  const mk = (id, name, mentions) => att({ id, name, mentions, href: `/api/requirements/4/attachments/${id}` });
+  const two = await openFeature(ready({ attachments: [mk('ratt_00000000000b', 'a.pdf', ['R-po-3']), mk('ratt_00000000000c', 'b.md', ['R-po-5', 'A-1'])] }));
+  assert.equal(text(two.host.querySelector('.req-build-files-note')),
+    'Left out, a file still shaped the spec through what Worca took from it. The spec mentions a.pdf (R-po-3) and b.md (R-po-5, A-1).');
+  const three = await openFeature(ready({ attachments: [mk('ratt_00000000000b', 'a.pdf', ['R-po-3']), mk('ratt_00000000000c', 'b.md', ['R-po-5'])],
+    briefDocuments: [doc({ mentions: ['R-po-1'] })] }));
+  assert.match(text(three.host.querySelector('.req-build-files-note')), /The spec mentions a\.pdf \(R-po-3\), b\.md \(R-po-5\) and glossary\.pdf \(R-po-1\)\.$/);
+});
+
 test('board 18: a chip flips its switch: the file\'s Send with the run, a document\'s Send with every run', async () => {
   const f = ready({ briefDocuments: [doc()] });
   const { host, calls } = await openFeature(f, { [`PATCH ${HREF}`]: OK, [`PATCH ${DOC_HREF}`]: OK });
@@ -1058,24 +1068,32 @@ test('board 18: a second press while the first is on its way sends nothing more'
   assert.equal(calls.filter((c) => c.method === 'PATCH').length, 1);
 });
 
-test('board 18: a file Worca cannot send cannot be switched on: the chip shows it and says why; switched on, it can be left out', async () => {
-  const stuck = att({ status: 'failed', summary: '', error: { code: 'STORE_FAILED', message: 'Worca could not store the new version. Replace it again.' } });
-  const gone = att({ id: 'ratt_00000000000b', name: 'notes.md', status: 'failed', summary: '', sendWithRun: true,
-    error: { code: 'FAILED', message: 'Worca could not open the stored file. Remove it and attach it again.' }, href: '/api/requirements/4/attachments/ratt_00000000000b' });
-  const slow = att({ id: 'ratt_00000000000c', name: 'slow.png', status: 'failed', summary: '', error: { code: 'TIMEOUT', message: 'x' },
-    href: '/api/requirements/4/attachments/ratt_00000000000c' });
-  const { host, calls } = await openFeature(ready({ attachments: [stuck, gone, slow] }), { 'PATCH /api/requirements/4/attachments/ratt_00000000000b': OK });
+test('board 18: a file the server says cannot go (sendable: false) cannot be switched on, chip or switch; switched on, it can be left out', async () => {
+  const stuck = att({ status: 'failed', summary: '', sendable: false, error: { code: 'STORE_FAILED', message: 'Worca could not store the new version. Replace it again.' } });
+  const gone = att({ id: 'ratt_00000000000b', name: 'notes.md', sendable: false, sendWithRun: true, href: '/api/requirements/4/attachments/ratt_00000000000b' });
+  // a read that failed on a temporary copy, its body fine: the server says it can go, whatever the error's words
+  const copy = att({ id: 'ratt_00000000000c', name: 'slow.png', status: 'failed', summary: '', sendable: true,
+    error: { code: 'FAILED', message: 'Worca could not open the stored file. Remove it and attach it again.' }, href: '/api/requirements/4/attachments/ratt_00000000000c' });
+  const { host, calls } = await openFeature(ready({ attachments: [stuck, gone, copy] }), { 'PATCH /api/requirements/4/attachments/ratt_00000000000b': OK });
   const [a, b, c] = [...host.querySelectorAll('.req-fpick')];
-  assert.deepEqual([a.disabled, a.getAttribute('aria-pressed'), a.classList.contains('bad')], [true, 'false', true], 'off and unusable: it cannot be switched on');
-  assert.deepEqual([b.disabled, b.getAttribute('aria-pressed'), b.classList.contains('bad')], [false, 'true', true], 'on and unusable: it can be left out');
-  assert.deepEqual([c.disabled, c.classList.contains('bad')], [false, false], 'a file Worca could not read may still go (D1)');
+  assert.deepEqual([a.disabled, a.getAttribute('aria-pressed'), a.classList.contains('bad')], [true, 'false', true], 'off and not sendable: it cannot be switched on');
+  assert.deepEqual([b.disabled, b.getAttribute('aria-pressed'), b.classList.contains('bad')], [false, 'true', true], 'on and not sendable: it can be left out');
+  assert.deepEqual([c.disabled, c.classList.contains('bad'), c.hasAttribute('aria-describedby')], [false, false, false], 'sendable: no error words decide it');
   for (const x of [a, b]) assert.equal(x.querySelector('svg path').getAttribute('d'), 'M12 3l9.5 17h-19L12 3z');
+  const why = (name) => `${name} cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.`;
   const lines = [...host.querySelectorAll('.req-build-files-bad')];
-  assert.deepEqual(lines.map((l) => l.textContent), [
-    'support-tickets.pdf cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.',
-    'notes.md cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.']);
+  assert.deepEqual(lines.map((l) => l.textContent), [why('support-tickets.pdf'), why('notes.md')]);
   assert.equal(document.getElementById(a.getAttribute('aria-describedby')), lines[0]);
   assert.equal(document.getElementById(b.getAttribute('aria-describedby')), lines[1]);
+  // the Files card's switch is the same setting: disabled while off, with the same words
+  const sw = (id) => host.querySelector(`[data-ui="file-send-${id}"]`);
+  assert.deepEqual([sw('ratt_00000000000a').disabled, sw('ratt_00000000000b').disabled, sw('ratt_00000000000c').disabled], [true, false, false]);
+  for (const id of ['ratt_00000000000a', 'ratt_00000000000b']) {
+    const line = document.getElementById(sw(id).getAttribute('aria-describedby'));
+    assert.ok(line && line.closest('.req-files'), 'the line is on the Files card');
+  }
+  assert.equal(text(document.getElementById(sw('ratt_00000000000a').getAttribute('aria-describedby'))), why('support-tickets.pdf'));
+  assert.equal(sw('ratt_00000000000c').hasAttribute('aria-describedby'), false);
   a.click();
   b.click();
   await settle();
@@ -1155,8 +1173,25 @@ test('Decide: three to ask about read "Ask about <first> and 2 more"; a file sti
   const reading = await openFeature(feature({ status: 'done', state: 'decide', unaskedFiles: ['ratt_00000000000c'],
     attachments: [mk('ratt_00000000000c', 'b.pdf', { status: 'reading', summary: '' })] }));
   assert.equal(reading.host.querySelector('[data-ui="follow-up"]'), null, 'the follow-up waits for the read (D8)');
+  // one read, one still being read: no file button at all, the follow-up takes both after the read
+  const mixed = await openFeature(feature({ status: 'done', state: 'decide', unaskedFiles: ['ratt_00000000000b', 'ratt_00000000000c'],
+    attachments: [mk('ratt_00000000000b', 'a.pdf'), mk('ratt_00000000000c', 'b.pdf', { status: 'reading', summary: '' })] }));
+  assert.equal(mixed.host.querySelector('[data-ui="follow-up"]'), null);
+  const mixedRej = await openFeature(feature({ status: 'done', state: 'decide', spec, unaskedRejections: ['A-4'], unaskedFiles: ['ratt_00000000000b', 'ratt_00000000000c'],
+    attachments: [mk('ratt_00000000000b', 'a.pdf'), mk('ratt_00000000000c', 'b.pdf', { status: 'reading', summary: '' })] }));
+  assert.equal(mixedRej.host.querySelector('[data-ui="follow-up"]').textContent, 'Done, ask about A-4', 'a rejection still asks as in A2');
   const rej = await openFeature(feature({ status: 'done', state: 'decide', spec, unaskedRejections: ['A-4'] }));
   assert.equal(rej.host.querySelector('[data-ui="follow-up"]').textContent, 'Done, ask about A-4');
+});
+
+test('Decide without assumptions: the panel is named for the new file or the new files', async () => {
+  const mk = (id, name) => att({ id, name, href: `/api/requirements/4/attachments/${id}` });
+  const one = await openFeature(feature({ status: 'done', state: 'decide', unaskedFiles: ['ratt_00000000000b'], attachments: [mk('ratt_00000000000b', 'a.pdf')] }));
+  assert.equal(one.host.querySelector('.req-decide').getAttribute('aria-label'), 'Ask about the new file');
+  const two = await openFeature(feature({ status: 'done', state: 'decide', unaskedFiles: ['ratt_00000000000b', 'ratt_00000000000c'],
+    attachments: [mk('ratt_00000000000b', 'a.pdf'), mk('ratt_00000000000c', 'b.pdf')] }));
+  assert.equal(two.host.querySelector('.req-decide').getAttribute('aria-label'), 'Ask about the new files');
+  assert.equal(two.host.querySelector('[data-ui="follow-up"]').textContent, 'Ask about a.pdf and b.pdf');
 });
 
 test('style.css: board 18 rules inside the Requirements block, tokens only', () => {
@@ -1173,8 +1208,12 @@ test('style.css: board 18 on the type scale and the 6px corner; AA inks; 44px hi
   assert.match(chip, /border-radius:var\(--r-sm\)/);
   assert.match(chip, /font-size:var\(--fs-meta\)/);
   assert.match(chip, /color:var\(--ink-2\)/, 'the name and the + on --panel: 6.6:1');
-  assert.match(rule('.req-fpick[aria-pressed="true"]'), /background:var\(--green-bg\);color:var\(--green-ink-strong\)/, 'the check on --green-bg: 4.9:1');
-  assert.match(rule('.req-fpick.on .req-fpick-name'), /color:var\(--ink\)/);
+  // attached (user decision): a green outline and a green check, no fill (A2's .req-confirm[aria-pressed="true"] pattern);
+  // on .on, so ui-shared-controls' "no on control is filled green" watches it
+  assert.equal(rule('.req-fpick.on'), 'border:1px solid var(--green-ink-strong);background:var(--panel);color:var(--green-ink-strong)', 'the check and outline 5.7:1 on --panel');
+  assert.equal(rule('.req-fpick.on .req-fpick-name'), 'color:var(--ink)', 'one weight on and off: no shift when pressed');
+  assert.doesNotMatch(block, /(?:^|\n)\.req-fpick(?![\w-])[^{]*\{[^}]*(?:--green-bg|font-weight)/, 'no green fill and no weight change on any chip rule');
+  assert.doesNotMatch(block, /\.req-fpick\[aria-pressed/, 'no aria-pressed selector beside .on');
   assert.match(rule('.req-fpick-group'), /color:var\(--ink-2\)/);
   const phone = block.slice(block.indexOf('/* Board 18 at phone width'));
   assert.match(phone, /\.req-fpick::after\{content:"";position:absolute;inset:-8px 0\}/);

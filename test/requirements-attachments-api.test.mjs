@@ -61,7 +61,8 @@ test('create with two files: stored, read before round 1, round 1 names the firs
     ['tickets.pdf', 'binary', 'done', '[mock] What Worca took from tickets.pdf: two rules, one number and an open point.']]);
   const a = f.attachments[0];
   assert.deepEqual(Object.keys(a).sort(), ['asking', 'asks', 'bytes', 'costUsd', 'error', 'estimateUsd', 'history', 'href', 'id', 'kind', 'mentions', 'mime',
-    'name', 'readAt', 'readModel', 'sendWithRun', 'status', 'summary', 'summaryEdited'].sort());
+    'name', 'readAt', 'readModel', 'sendWithRun', 'sendable', 'status', 'summary', 'summaryEdited'].sort());
+  assert.equal(a.sendable, true);
   assert.equal(a.href, `/api/requirements/${seq}/attachments/${a.id}`);
   assert.equal(f.spec.criteria[0].source, 'notes.md');
   assert.deepEqual(a.mentions, ['R-po-1']);

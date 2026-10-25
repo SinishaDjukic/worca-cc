@@ -786,6 +786,29 @@ test('D14: staged names are Windows-safe and unique after the mapping; a success
   assert.equal(existsSync(join(base, 'orchestrator-extras-r-names')), false, 'the caller removes the folder once the run has its own copy');
 });
 
+test('D14: bodyUsable decides fileView.sendable and unsendableRunFile alike: a missing body or a version not stored cannot go; a failed read with its body can', async () => {
+  process.env.WORCA_MOCK = '1';
+  const f = createFeature({ scopeType: 'project', scopeKey: 'shop-sendable', title: 'Sendable', description: 'd' });
+  const fo = { type: 'feature', id: f.seq };
+  const [a, b, c, e] = job.addAttachments(fo, [textFile('a.md', 'a'), textFile('b.md', 'b'), textFile('c.md', 'c'), textFile('e.md', 'e')]);
+  await job.readsSettled(fo);
+  const view = (id) => job.fileView(getAttachment(id), { href: 'x' });
+  assert.deepEqual([a, b, c, e].map((r) => view(r.id).sendable), [true, true, true, true]);
+  rmSync(job.attachmentFile(a));   // a done file whose body went missing
+  updateAttachment(b.id, { status: 'failed', error: { code: 'FAILED', message: 'Worca could not open the stored file. Remove it and attach it again.', at: 'x' } });   // a temp-copy error, the body fine
+  updateAttachment(c.id, { status: 'failed', error: { code: 'STORE_FAILED', message: 'Worca could not store the new version. Replace it again.', at: 'x' } });
+  writeFileSync(job.attachmentFile(e), 'ee');   // not the row's size
+  assert.deepEqual([a, b, c, e].map((r) => [job.bodyUsable(getAttachment(r.id)), view(r.id).sendable]), [[false, false], [true, true], [false, false], [false, false]]);
+  for (const r of [a, b, c, e]) updateAttachment(r.id, { sendWithRun: true });
+  assert.deepEqual(job.runFiles(f).filter((x) => !job.bodyUsable(x.row)).map((x) => x.name), ['a.md', 'c.md', 'e.md']);
+  assert.equal(job.unsendableRunFile(job.runFiles(f)).name, 'a.md');
+  updateAttachment(a.id, { sendWithRun: false });
+  updateAttachment(c.id, { sendWithRun: false });
+  assert.equal(job.unsendableRunFile(job.runFiles(f)).name, 'e.md');
+  updateAttachment(e.id, { sendWithRun: false });
+  assert.equal(job.unsendableRunFile(job.runFiles(f)), null, 'b.md goes: its read failed, its body is fine');
+});
+
 test('fileView: asking is the question of the running or queued ask, null otherwise; the answer frame has it cleared', async () => {
   const f = feature();
   const r = fakeRunner([{ summary: 'A.' }, { summary: 'B.' }, { summary: 'C.' }]);

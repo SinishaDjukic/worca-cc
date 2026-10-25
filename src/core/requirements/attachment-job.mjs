@@ -562,24 +562,27 @@ export function queueUnread(seq, deps = {}) {
 
 // ---------------------------------------------------------------- the run hand-off (D14)
 
+/** D14: whether a row's body can go with a run: the row describes a body on disk (not a replace whose new version could not
+ *  be stored) and that body is there at the row's size. A file whose read failed, or that the budget stopped, can go
+ *  (D1) when its body is fine. The one rule for fileView's `sendable` and for unsendableRunFile; the staging then checks
+ *  every copy against its sha256. */
+export function bodyUsable(row) {
+  if (!row || storeFailed(row)) return false;
+  try { const st = statSync(attachmentFile(row)); return st.isFile() && st.size === row.bytes; } catch { return false; }
+}
+
 /** D14: what a start sends: the feature's files with Send with the run on, then the documents of the scope's made brief
- *  with Send with every run on, each with its body's path. `bytes` and `stored` (the row describes a body on disk: not a
- *  replace whose new version could not be stored) are for unsendableRunFile. */
+ *  with Send with every run on, each with its body's path. `row` is for unsendableRunFile. */
 export function runFiles(f) {
   const brief = usableBrief(f.scopeType, f.scopeKey);
   const pick = (rows, from) => rows.filter((r) => r.sendWithRun).map((r) => ({ id: r.id, name: r.name, sha256: r.sha256, from,
-    path: attachmentFile(r), bytes: r.bytes, stored: !storeFailed(r) }));
+    path: attachmentFile(r), bytes: r.bytes, row: r }));
   return [...pick(listAttachments('feature', f.seq), 'feature'), ...(brief ? pick(listAttachments('brief', brief.id), 'brief') : [])];
 }
 
-/** D14: the first of runFiles' list that cannot go with the run, else null: a version Worca could not store, or a body
- *  that is missing or not the row's size. A file whose read failed, or that the budget stopped, still goes (D1). The
- *  staging then checks every copy against its sha256. */
+/** D14: the first of runFiles' list whose body cannot go with the run (bodyUsable), else null. */
 export function unsendableRunFile(list) {
-  return (list || []).find((x) => {
-    if (!x.stored) return true;
-    try { const st = statSync(x.path); return !st.isFile() || st.size !== x.bytes; } catch { return true; }
-  }) || null;
+  return (list || []).find((x) => !bodyUsable(x.row)) || null;
 }
 
 const sha256OfFile = (path) => new Promise((resolve, reject) => {
@@ -730,5 +733,6 @@ export function fileView(row, { spec = null, href, doc = false, estimates = null
     [doc ? 'sendWithEveryRun' : 'sendWithRun']: row.sendWithRun, costUsd: row.costUsd, readAt: row.readAt, readModel: row.readModel,
     estimateUsd: estimates ? (estimates[row.kind] ?? null) : readEstimate(row.kind), mentions: spec ? mentions(spec, row.name) : [], href,
     asking: askingQuestion(row.id),
+    sendable: bodyUsable(row),   // D14: Start would refuse it otherwise; the page lets it be switched off, not on
   };
 }

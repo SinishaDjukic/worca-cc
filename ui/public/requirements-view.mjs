@@ -1264,9 +1264,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       btn('Confirm', 'confirmed', 'req-yes req-confirm', 'confirm'), btn('Reject', 'rejected', 'req-no req-reject', 'reject'));
   }
 
-  // A8 D8: the files to ask about whose read is done, in upload order. One still being read waits: the follow-up takes
-  // it once the read is done (the server asks only about files whose text the prompt carries).
-  const askableFiles = (f) => (f.attachments || []).filter((a) => a && a.status === 'done' && (f.unaskedFiles || []).includes(a.id));
+  // A8 D8: the files to ask about, in upload order, once none of them is still being read: Worca starts the follow-up
+  // itself when the read is done, and it takes them all then (the server asks only about files whose text the prompt
+  // carries). While one is read the Decide panel offers no file button.
+  const askableFiles = (f) => {
+    const files = (f.attachments || []).filter((a) => a && (f.unaskedFiles || []).includes(a.id));
+    return files.some((a) => a.status === 'reading') ? [] : files.filter((a) => a.status === 'done');
+  };
 
   function decideCard(f) {
     const all = (f.spec && f.spec.assumptions) || [];
@@ -1281,7 +1285,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const askBtn = askItems.length ? h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'follow-up', onclick: () => post('follow-up', {}) }, askLabel) : null;
     if (!all.length) {
       const done = h('p', { class: 'hint req-note', text: 'The interview is done. Edit the spec on the right; every change is kept.' });
-      return askBtn ? h('section', { class: 'qpanel req-decide', 'aria-label': 'Ask about the new files' }, done, h('div', { class: 'qpanel-foot' }, askBtn)) : done;
+      return askBtn ? h('section', { class: 'qpanel req-decide', 'aria-label': fileNames.length === 1 ? 'Ask about the new file' : 'Ask about the new files' },
+        done, h('div', { class: 'qpanel-foot' }, askBtn)) : done;
     }
     const open = all.filter((a) => a.status === 'open');
     const waiting = all.filter((a) => a.status === 'rejected' && waitingIds.includes(a.id));
@@ -1374,11 +1379,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
   // ---- Files for the run (board 18, D14): a chip per feature file, then the brief's documents. A chip is the same setting
   // as the file's switch on the Files card (a document's: Send with every run); the row is hidden with no files and no
-  // documents. A file Start would refuse (a version Worca could not store, a stored file it cannot open) cannot be
-  // switched on and says why in Start's words; switched on, it can still be left out. A file being read has no switch
-  // (D1): its chip waits. Names are text only.
-  const STORED_GONE = 'Worca could not open the stored file. Remove it and attach it again.';   // attachment-job's read failure
-  const unsendable = (a) => storeFailedOf(a) || (a.status === 'failed' && !!a.error && a.error.message === STORED_GONE);
+  // documents. A file Start would refuse (the server's `sendable: false`: a version Worca could not store, a body missing
+  // or not its size) cannot be switched on and says why in Start's words; switched on, it can still be left out. A file
+  // being read has no switch (D1): its chip waits. Names are text only.
+  const unsendable = (a) => a.sendable === false;
+  const cannotGo = (name) => `${name} cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.`;
   function filesForRun(f) {
     const files = Array.isArray(f.attachments) ? f.attachments : [];
     const docs = Array.isArray(f.briefDocuments) ? f.briefDocuments : [];
@@ -1391,8 +1396,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const reading = a.status === 'reading';
       const stuck = !reading && unsendable(a);
       const why = stuck || reading ? `req-fpick-why-${a.id}` : null;
-      if (stuck) bad.push(h('p', { class: 'hint req-build-files-bad', id: why,
-        text: `${a.name} cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.` }));
+      if (stuck) bad.push(h('p', { class: 'hint req-build-files-bad', id: why, text: cannotGo(a.name) }));
       return h('button', { type: 'button', class: `req-fpick${sel ? ' on' : ''}${stuck ? ' bad' : ''}`, 'aria-pressed': sel ? 'true' : 'false',
         'aria-label': doc ? `Send ${a.name} with every run` : `Send ${a.name} with the run`, 'aria-describedby': why, 'data-ui': `fpick-${a.id}`,
         disabled: starting || reading || (stuck && !sel),
@@ -1408,7 +1412,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       h('span', { class: 'req-fpick-name', text: a.name }),
       reading ? [' ', h('span', { class: 'req-fpick-state', id: why, text: 'Reading…' })] : null);
     };
-    const told = [...files, ...docs].filter((a) => (a.mentions || []).length);
+    const told = [...files, ...docs].filter((a) => (a.mentions || []).length).map((a) => `${a.name} (${a.mentions.join(', ')})`);
     return h('div', { class: 'req-build-files', role: 'group', 'aria-labelledby': 'req-build-files-h' },
       h('div', { class: 'req-build-files-head' }, h('h4', { id: 'req-build-files-h', text: 'Files for the run' }),
         h('span', { class: 'hint', text: `${on} of ${files.length + docs.length} go with it · click a file to add or leave it out` })),
@@ -1416,7 +1420,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       docs.length ? h('div', { class: 'req-fpicks' }, h('span', { class: 'req-fpick-group', text: 'From the brief' }), ...docs.map((a) => chip(a, true))) : null,
       ...bad,
       h('p', { class: 'hint req-build-files-note' }, 'Left out, a file still shaped the spec through what Worca took from it.',
-        ...told.map((a) => ` The spec mentions ${a.name} (${a.mentions.join(', ')}).`)));
+        told.length ? ` The spec mentions ${joinAnd(told)}.` : null));
   }
   function buildCard(f) {
     const c = choiceOf(f);
@@ -2157,11 +2161,15 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     if (!reading) {
       const sw = makeSwitch(document, { label: ctx.doc ? 'Send with every run' : 'Send with the run',
         ariaLabel: ctx.doc ? `Send ${a.name} with every run` : `Send ${a.name} with the run`, checked: !!a[sendKey], data: { ui: `file-send-${a.id}` } });
-      sw.input.disabled = ctx.locked;
+      // D14: a file Start would refuse (sendable: false) can be switched off, not on, as its Files for the run chip
+      const stuck = unsendable(a);
+      sw.input.disabled = ctx.locked || (stuck && !a[sendKey]);
+      if (stuck) sw.input.setAttribute('aria-describedby', `req-file-why-${a.id}`);
       // the focused switch keeps the focus across the repaint (capture() reads its data-ui)
       sw.input.addEventListener('change', () => act(async () => { await api('PATCH', a.href, { [sendKey]: sw.input.checked }); await paint(); }));
       send = h('div', { class: 'req-file-send' }, sw.row,
-        ...((a.mentions || []).length ? [' ', h('span', { class: 'hint', text: `The spec mentions this file (${a.mentions.join(', ')}).` })] : []));
+        ...((a.mentions || []).length ? [' ', h('span', { class: 'hint', text: `The spec mentions this file (${a.mentions.join(', ')}).` })] : []),
+        stuck ? h('p', { class: 'hint req-file-unsendable', id: `req-file-why-${a.id}`, text: cannotGo(a.name) }) : null);
     }
     const ask = s.ask != null ? askPanel(a, ctx) : null;
     return h('div', { class: 'req-file', 'data-file': a.id }, top, state, took, ask, askFailedLine(a), asks, history, send);

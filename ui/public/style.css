@@ -10526,9 +10526,10 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
   .req-spec a.req-src-tag{position:relative}
   .req-spec a.req-src-tag::after{content:"";position:absolute;inset:-13px -4px}
 }
-/* Board 18: Files for the run on Ready to build (D14). A chip is the file's Send switch. On: --green-bg, a check in
-   --green-ink-strong (4.9:1 light) and the name in --ink. Left out: a dashed outline (an --ink-2 / --ink-3 mix, 3.7:1
-   on --panel), a + and the name in --ink-2 (6.6:1). No strikethrough and no red: those say rejected and error. */
+/* Board 18: Files for the run on Ready to build (D14). A chip is the file's Send switch. Attached (the user's decision,
+   A2's .req-confirm pattern): a --green-ink-strong outline and check on --panel, no fill (5.7:1 light), the name in --ink.
+   Left out: a dashed outline (an --ink-2 / --ink-3 mix, 3.7:1 on --panel), a + and the name in --ink-2 (6.6:1). One
+   weight either way, so a press never shifts the row. No strikethrough and no red: those say rejected and error. */
 .req-build-files{display:flex;flex-direction:column;gap:8px;margin-top:10px;padding-top:12px;border-top:1px solid var(--line)}
 .req-build-files-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px}
 .req-build-files-head h4{margin:0;font-size:var(--fs-body);font-weight:600}
@@ -10537,9 +10538,8 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-fpick{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-height:30px;box-sizing:border-box;padding:4px 10px 4px 8px;border:1px dashed color-mix(in srgb,var(--ink-2) 35%,var(--ink-3));border-radius:var(--r-sm);background:transparent;color:var(--ink-2);font:inherit;font-size:var(--fs-meta);line-height:1.4;text-align:left;cursor:pointer}
 .req-fpick > svg{flex:none}
 .req-fpick:hover:not(:disabled):not(.on){border-style:solid;background:var(--hover)}
-/* A pressed toggle button, as board 18 draws it (and as .af-gal-card): green says the file is in, not a checked box. */
-.req-fpick[aria-pressed="true"]{border:1px solid transparent;background:var(--green-bg);color:var(--green-ink-strong)}
-.req-fpick.on .req-fpick-name{color:var(--ink);font-weight:600}
+.req-fpick.on{border:1px solid var(--green-ink-strong);background:var(--panel);color:var(--green-ink-strong)}
+.req-fpick.on .req-fpick-name{color:var(--ink)}
 .req-fpick:focus-visible{outline:2px solid var(--blue-ink-strong);outline-offset:2px}
 .req-fpick:disabled{cursor:not-allowed}
 .req-fpick:disabled:not(.bad){opacity:.6}
@@ -10550,6 +10550,7 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-build .req-build-files-note,.req-build .req-build-files-bad{margin:0;font-size:var(--fs-meta)}
 .req-build .req-build-files-bad{color:var(--amber-ink-strong)}   /* 6.1:1 on --panel */
 .req-changed-body .req-changed-files{margin:0}
+.req-file-send .req-file-unsendable{flex-basis:100%;margin:4px 0 0;color:var(--amber-ink-strong)}
 /* Board 18 at phone width: a chip's hit area is 44px tall (the 28px inside its 1px border, and 8px above and below);
    rows 14px apart, so no two areas overlap. */
 @media (max-width:600px){
