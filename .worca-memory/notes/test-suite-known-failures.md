@@ -2,7 +2,7 @@
 name: test-suite-known-failures
 description: Read before calling a red, cancelled or hung full-suite test a regression — env-var, load, clock, disk and archive-copy failures that also hit base.
 paths: test/**, tools/test.mjs, tools/test-run.mjs
-updated: 2026-10-25T16:17:41.711Z
+updated: 2026-10-25T17:01:35.584Z
 author: Bulibas
 ---
 
@@ -54,6 +54,9 @@ fail in ~30 ms at some local times (03:24, 2026-10-25), on base too: they build 
 - This Mac (2026-10-19, origin/dev 735b354a, ffmpeg installed): `git-sync:371` "a timed-out fetch kills its whole
   process group" (ENOENT on `ssh-<n>.pid`), `promo-kit-tools` mixAudio x2 and exportFilm, `promo-narrate:401` finishSfx.
   12,381 with exactly these 5 red is the baseline.
+- macOS, origin/dev 83f69224 (2026-10-25): `qwen-gemini-ask-adapter:101` "Gemini chat spawn: the chat folder's settings…"
+  expects `/var/folders/…` but gets the realpath `/private/var/folders/…`. Red scoped and on a clean `git archive` copy.
+  Full suite there: 16,632 tests, only this and the `project-create` insteadOf row red.
 - Linux run host (2026-10-21): `api-run-engine-default:112` "GET /api/engines … ?recheck=1"; `marketplace-publish-flow:126`
   expects commit author `'Worca'` but gets the host's git user; `memory-team-lifecycle` D3 `spawn E2BIG` (a 300 KiB argv
   string vs Linux's 128 KiB per-argument cap; slow tier, so `test:fast` never runs it).
