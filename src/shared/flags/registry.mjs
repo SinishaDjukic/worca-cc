@@ -142,6 +142,18 @@ export const FLAGS = Object.freeze([
     docs: 'docs/requirements.md',
   }),
   entry({
+    key: 'workflowTests',
+    title: 'Workflow versions and tests',
+    description: 'Save named versions of a workflow, choose which version new runs use, and restore any earlier save. Later: test a version on your own examples and compare it with another before runs use it.',
+    stage: 'experimental',
+    default: false,
+    owner: 'TomicaB',
+    since: '1.14.0',
+    added: '2026-10-25',
+    reviewBy: '2027-01-22',
+    docs: 'docs/feature-flags.md',
+  }),
+  entry({
     key: 'runTelemetry',
     title: 'Run telemetry',
     description: 'Runs record detailed statistics: context size, tokens and timing of every model call, tool time, retries and compactions per agent, plus how long Worca\'s own saves and live updates take. Shown on the run page\'s Agents tab. Recording only: runs behave the same.',

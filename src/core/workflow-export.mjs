@@ -397,7 +397,7 @@ async function buildExportSet({ workflowId, destination, projectDir, slug, inclu
   //    with resolveGraph's full node (tools/fanOut/askQuestions/model/effort/meta) and
   //    its consumes/produces (derived from ports + wires, §2). Flow cards (task/end/
   //    and/or/combine) are NOT dispatched — only agent nodes become steps.
-  const graph = await resolveGraph(destination === 'project' ? projectDir : null, workflowId, registry);
+  const graph = await resolveGraph(destination === 'project' ? projectDir : null, workflowId, registry, undefined, { use: 'draft' });
   // D19: the exported skill tree simulates the graph in Claude Code; a child-process
   // card has no rendering there yet. Refuse loudly rather than export a skill that
   // silently skips the gate.

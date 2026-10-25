@@ -189,6 +189,7 @@ export class GraphOrchestrator extends RunHarness {
     const hasWires = Object.keys(overlayWires).length > 0;
     const overlay = hasNodes || hasWires ? { ...(hasNodes ? { nodes: overlayNodes } : {}), ...(hasWires ? { wires: overlayWires } : {}) } : null;
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
+      use: this.opts && this.opts.workflowUse !== undefined ? this.opts.workflowUse : 'live',
       engine: this.claude.engine || 'claude', isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(overlay ? { overlay } : {}), ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
       ...(scan ? { agentPair: scan.agentPair, subagentPin: scan.subagentPin } : {}),
     });
@@ -220,6 +221,8 @@ export class GraphOrchestrator extends RunHarness {
     // What THIS run was told to use over the project's settings, beside the cells it resolved to (the run page marks
     // those pills "this run only"; resume reads the cells, never this).
     if (overlay) manifest.runOverlay = structuredClone(overlay);
+    // D8: the named version this run used (plans/workflow-tests-plan.md); absent = the workflow's row.
+    if (Number.isInteger(resolved.versionNo)) manifest.workflowVersion = { no: resolved.versionNo };
     return {
       manifest,
       agentKeys: new Set(this.resolved.agentKeys),
