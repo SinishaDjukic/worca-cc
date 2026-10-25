@@ -275,7 +275,7 @@
         if (k !== 'Cost') return { k, v };
         const pct = Math.round((money(v) / DETAIL.budget) * 100);
         return { k, v, of: 'of $' + DETAIL.budget, warn: pct >= 80, title: pct + '% of the run\u2019s budget' };
-      }).concat(NO_DIFF[c.id] ? [] : [{ k: 'Changes', v: c.diff || '+358 \u2212144', tab: 'changes' }]),
+      }).concat(NO_DIFF[c.id] ? [] : [{ k: 'Changes', v: c.diff || '+358 \u2212144', tab: (c.tabs || RUN_TABS).some((t) => t[0] === 'changes') ? 'changes' : '' }]),   // links only where a Changes tab exists
       tabs: (c.tabs || RUN_TABS).map(([id, l, n], i, all) => ({ id, l, n: n || '', sel: id === (all.some((t) => t[0] === ui.tab) ? ui.tab : all[0][0]) })),
       activity: c.stages.map((x) => {
         const cost = x.subs.reduce((a, y) => a + (y.state === 'next' ? 0 : money(COST_OF[y.name] || x.costs && x.costs[y.name] || 0)), 0);
