@@ -2,7 +2,7 @@
 name: adding-a-forge
 description: Read before adding or changing a code host (forge) — GitHub/Azure DevOps/Bitbucket; lists the two-way forge splits a new forge silently falls through.
 paths: src/core/forge.mjs, src/core/host-credentials.mjs, src/core/git-info.mjs, src/core/marketplace-publish.mjs
-updated: 2026-10-25T12:32:14.210Z
+updated: 2026-10-25T14:23:50.763Z
 author: Bulibas
 ---
 
@@ -22,5 +22,10 @@ Bitbucket (#907, 2026-10-25):
   those arms strip them too. `hostLookupNeeded` must open for the new credential, or pushes never read the push URL.
 - Hand-written key lists pin "no credential reaches a child": `test/spawn-args`, `actions-spawn`,
   `graph-script-runner`, `claude-runner-broker`, plus `tools/test.mjs`, which deletes the developer's own variables.
+
+- Untested by default (a cycle-2 mutation sweep, 2026-10-25): git-sync `readCred`'s new arm and the
+  `(info.githubRepo || info.azure || …)` conditions in `fastForward` and `readEnvFor` (Resolve and the #620 merge-tree
+  check on a PRIVATE repo), and `pluginGitEnv`. Copy the Azure fetch / fast-forward tests in `test/git-sync.test.mjs`
+  (runner answers `remote get-url` with the forge URL) and add a merge-tree env test in `test/git-sync-base-merge.test.mjs`.
 
 Find the splits: `git grep -nE "forge\)? ?(===|!==) ?'(github|azure)'|\.forge (===|!==) '(github|azure)'" -- src ui`.
