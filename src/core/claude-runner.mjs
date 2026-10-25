@@ -114,7 +114,8 @@ export function mockEnabled(opts) {
  *   materializeSkillMount). Absent/empty/non-strings ⇒ nothing emitted.
  * @param {object} [o.extraSettings]  merged into the one --settings payload (skills registry §4.1: Ask's
  *   `disableSkillShellExecution`); never replaces `permissions` / `hooks`. Absent ⇒ unchanged.
- * @param {string} [o.readGuard] A8: the one file a Requirements read may open (file-read-guard.mjs); absent ⇒ argv unchanged
+ * @param {string} [o.readGuard] A8: the one file a Requirements read may open (file-read-guard.mjs); absent ⇒ argv unchanged.
+ *   Claude only: any other engine throws rather than run unguarded. The result then carries `readGuardDecisions`.
  * @param {Record<string,string>} [o.spawnEnv]  run-level spawn env (wsmap D9: runOpts sets
  *   CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY on every fan-out node, and CLAUDE_CODE_DISABLE_BACKGROUND_TASKS
  *   on the scan's two). Merged OVER the guardrail env and UNDER modelEnv (a catalog entry that sets the
@@ -200,6 +201,11 @@ export async function runClaude(o = {}) {
     threadId,
     bin = DEFAULT_BIN,
   } = o;
+
+  // A8: the file-read guard is a Claude Code hook; another engine would run the read unguarded, so it never runs at all.
+  if (readGuard != null && (engineName || 'claude') !== 'claude') {
+    throw new Error(`runClaude: readGuard needs the claude engine, not ${JSON.stringify(engineName)}`);
+  }
 
   if (signal?.aborted) {
     const err = new Error('aborted');

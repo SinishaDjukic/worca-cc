@@ -5,7 +5,7 @@
 // back to the product owner. Spend is checked before every call and booked after it (D9).
 import { mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, isAbsolute } from 'node:path';
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
 import { normalizingOnEvent } from '../engines/claude-events.mjs';
 import { resolveModelEnv, resolveModelCost, listModels } from '../config.mjs';
@@ -201,7 +201,8 @@ const CALL_KEYS = new Set(['cwd', 'prompt', 'model', 'systemPrompt', 'tools', 'm
  * The runClaude options of one interview call, without `signal` / `onEvent` (design §9, the lane contract).
  * `kind` is 'look' or 'round'; systemPrompt, tools, maxTurns and effort override that kind's defaults.
  * Two overrides of their own, emitted only when given (A8, plans/requirements-a8-design.md D3): `permissionRules`
- * (a file read's and the brief look's deny rules) and `readGuard` (the one file a read may open, file-read-guard.mjs).
+ * (a file read's and the brief look's deny rules) and `readGuard` (the one file a read may open, file-read-guard.mjs),
+ * which when present at all must be an absolute path: an empty or relative value throws instead of meaning "no guard".
  * Every call, whatever the overrides, replaces Claude Code's system prompt with Worca's and turns slash
  * commands off; it also loads only the project's setting sources (no user plugins, hooks or skills,
  * A1.1 D6) unless `keepUserSettings` (the user settings carry sign-in: `userClaudeSignIn`).
@@ -210,6 +211,10 @@ const CALL_KEYS = new Set(['cwd', 'prompt', 'model', 'systemPrompt', 'tools', 'm
 export function interviewCallOptions(kind, args = {}, { keepUserSettings = false } = {}) {
   if (!Object.hasOwn(CALL_KINDS, kind)) throw new TypeError(`interviewCallOptions: unknown kind ${JSON.stringify(kind)}`);
   for (const k of Object.keys(args)) if (!CALL_KEYS.has(k)) throw new TypeError(`interviewCallOptions: unknown option "${k}"`);
+  const guarded = Object.hasOwn(args, 'readGuard');
+  if (guarded && (typeof args.readGuard !== 'string' || !isAbsolute(args.readGuard))) {
+    throw new TypeError('interviewCallOptions: readGuard must be the absolute path of the one file the call may read');
+  }
   const def = CALL_KINDS[kind]();
   const { cwd, prompt, model } = args;
   const pick = (k) => (args[k] !== undefined ? args[k] : def[k]);
@@ -222,7 +227,7 @@ export function interviewCallOptions(kind, args = {}, { keepUserSettings = false
     ...(keepUserSettings ? {} : { settingSources: ['project'] }), disableSlashCommands: true,
     ...(maxTurns ? { maxTurns } : {}),
     ...(args.effort ? { effort: args.effort } : {}),
-    ...(args.permissionRules ? { permissionRules: args.permissionRules } : {}), ...(args.readGuard ? { readGuard: args.readGuard } : {}),
+    ...(args.permissionRules ? { permissionRules: args.permissionRules } : {}), ...(guarded ? { readGuard: args.readGuard } : {}),
     permissionMode: 'acceptEdits',
     spawnKind: 'aux',   // credential broker: a short-lived token, as pr-description.mjs
   };

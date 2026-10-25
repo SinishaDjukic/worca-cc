@@ -1208,3 +1208,10 @@ test('A8: permissionRules and readGuard are overrides of their own; without them
     assert.equal('readGuard' in plain, false, kind);
   }
 });
+
+test('A8: readGuard, when given at all, is an absolute path: an empty or relative one never means "no guard"', () => {
+  for (const bad of ['', 'a.pdf', 'x/a.pdf', undefined, null, 1]) {
+    assert.throws(() => interviewCallOptions('look', { cwd: '/c', prompt: 'P', model: 'm1', tools: ['Read'], readGuard: bad }), /readGuard/, String(bad));
+  }
+  assert.equal(interviewCallOptions('look', { cwd: '/c', prompt: 'P', model: 'm1', tools: ['Read'], readGuard: join(tmpdir(), 'a.pdf') }).readGuard, join(tmpdir(), 'a.pdf'));
+});
