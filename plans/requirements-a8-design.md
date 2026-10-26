@@ -4,7 +4,7 @@ Date: 2026-10-24. Base: `dev` (e929f1c9). Branch: `feat/req-a8-attachments`. Par
 A1 is `plans/requirements-design.md` (A1-D<n>), A2 is `plans/requirements-a2-design.md` (A2-D<n>), A1.1 is
 `plans/requirements-a11-design.md` (A1.1-D<n>), A7 is `plans/requirements-a7-design.md` (A7-D<n>); all four are on
 `dev`. The screens were agreed as a mock first (Claude Design canvas "Requirements — design rounds 1, 2 and 3",
-boards 15–21, https://claude.ai/artifact/HA9pr2jTxZeGf4juJStJYy); this document is the build contract for them.
+boards 15–21); this document is the build contract for them.
 
 ## 1. Goal
 
@@ -235,8 +235,8 @@ dark theme of board 16 and needs nothing but the tokens.
   files below." when the feature has files.
 - **Ready to build: Files for the run** (board 18): under the Workflow and Branch chips, a `role="group"` row
   headed **Files for the run** with "<n> of <m> go with it · click a file to add or leave it out"; a chip per
-  feature file, then "From the brief" and a chip per document. A chip that goes with the run is green with a check,
-  one left out grey and dashed with a +; pressing it flips the file's switch. Below: "Left out, a file still shaped
+  feature file, then "From the brief" and a chip per document. A chip that goes with the run has a green outline and a
+  check (never a green fill); one left out is dashed grey with a +; pressing it flips the file's switch. Below: "Left out, a file still shaped
   the spec through what Worca took from it." and, when the spec mentions files, "The spec mentions <name> (<ids>)."
   for each. The row is hidden when the feature has no files and the scope no documents.
 - **Product brief, Documents card** (board 19): the first card of the right column of a made brief; the chips row
@@ -274,6 +274,8 @@ dark theme of board 16 and needs nothing but the tokens.
   documents' switches."
 - Decide panel: with unasked files, the primary action reads **Ask about <name>** (**Ask about A-4 and <name>**
   with a rejection waiting too).
+- While a question is answered, the file shows the badge **Asking…** and "Worca is looking for: “<question>”…"; its
+  menu offers Open and Remove only.
 
 ## 7. Code changes
 
@@ -327,8 +329,8 @@ dark theme of board 16 and needs nothing but the tokens.
 ## 8. Testing
 
 - **The file-read guard** (`test/file-read-guard.test.mjs`): the copy allowed; a sibling, a `..` escape, another absolute path, a symlink out of the folder (POSIX), Windows and POSIX forms, every other tool and an unreadable payload refused; the hook CLI's exit codes; the runner's settings payload and (POSIX) the spawn argv.
-- **The guard on each platform** (with the real reads): a trusted probe whose own prompt tells the model to Read a canary file outside its copy, then the copy; the canary Read must be refused by the guard and the copy Read must work, on Windows and in WSL. If the guard does not fire on a platform, the work stops there: no read path ships whose guard does not run.
-- **Real reads** (only with the user's go-ahead, about $0.30–0.60, hard cap $1.00 in all, every call capped with `--max-budget-usd` at what is left), with one small inline text too: one PDF, one PNG, a text over 24 KB, an image over the API's size limit and a text that asks the reader to open a file outside its copy, through `addAttachments` and the real runner in a sandbox `WORCA_HOME`; the cost, the summaries, the oversized image's outcome and the guard's refusal go into the PR description.
+- **The guard on each platform:** the blocking logic is proven by tests that run the real hook command (`test/file-read-guard.test.mjs`: the hook CLI's decisions and its fail-closed exit codes) on Windows and Linux. On Linux the guard in the spawned call is covered by the fake-claude tests (the settings payload, the argv, the decision log) and CI. Live, the guard ran on Windows: every Read of the real reads below logged a guard decision. The tool's trusted canary probe (a read whose own prompt asks the model to Read a file outside its copy, then the copy) did not force a live refusal: on the Windows run the model declined to attempt the canary Read.
+- **Real reads** (`tools/requirements-real-read.mjs`, run by hand on Windows, capped with `--max-usd`; every call gets what is left as `--max-budget-usd`): one PDF, one PNG, a text over 24 KB, an image over the API's size limit, a small inline text and a text that asks the reader to open another file, through `addAttachments` and the real runner in a sandbox `WORCA_HOME`. Every read's tool calls are covered by the guard's decision log, and no `att-read-*` folder is left. The cost and the summaries go into the PR description.
 - **Validation** (`test/attachment-upload.test.mjs`): every type allowed and refused, Office's own message, the
   magic-number and UTF-8 / NUL checks, the per-file, per-request and file-count caps; Ask's route keeps its exact
   messages (its existing tests stay green).
