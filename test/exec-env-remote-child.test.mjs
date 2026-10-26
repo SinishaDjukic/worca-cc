@@ -84,7 +84,7 @@ test('an abort also ends a handle whose wait() rejects without an exit code', PO
   let killed = 0; let launched = false;
   const realRun = env.sandbox.commands.run;
   env.sandbox.commands.run = async (cmd, opts) => {
-    if (!opts?.background) return realRun(cmd, opts);
+    if (!opts?.background || !cmd.startsWith("'bash'")) return realRun(cmd, opts);   // worca's own commands run too (_sh)
     launched = true;
     let fail; const ended = new Promise((_, rej) => { fail = rej; });
     return { pid: 4242, wait: () => ended, kill: async () => { killed += 1; fail(new Error('stream closed')); return true; } };

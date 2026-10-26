@@ -44,6 +44,9 @@ const MAX_FILE_BYTES = 128 * 1024 * 1024;
 const MAX_LABEL = '128 MiB';
 // What one sync and one run may bring back into the run's folders: a runaway agent must not fill the host's disk.
 const SYNC_BUDGET = Object.freeze({ syncFiles: 20_000, syncBytes: 2 * 1024 ** 3, runBytes: 8 * 1024 ** 3 });
+// What one sandbox command may print to worca (the file snapshot, tree ids, git output): far above what worca's own
+// scripts print, and the end of a command root in the sandbox makes print without end (audit 2.7).
+const MAX_SHELL_OUTPUT = 64 * 1024 * 1024;
 const mib = (n) => `${Math.round(n / 1024 ** 2)} MiB`;
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const sigOf = (st) => `${st.size}:${st.mtimeMs}`;
@@ -63,7 +66,7 @@ export class RemoteExecEnv {
     injected = [], refreshPaths = [], syncExcludes = [], supportFiles = SCRIPT_SUPPORT_FILES, metadata, scratchDir,
     log = () => {}, env = process.env, startedAt = Date.now(), onMaxWait = null, onPark = null, onReview = null, syncBudget = null,
     mcpjsonProjectDir = null, homeDir = homedir(), rebuildHint = backend.rebuildHint ?? null, relayUpstreams = null,
-    secretPaths = DEFAULT_SECRET_PATHS, network = null }) {
+    secretPaths = DEFAULT_SECRET_PATHS, network = null, maxShellOutput = MAX_SHELL_OUTPUT }) {
     Object.assign(this, { backend, client, environment, environmentBuild, worktreeDir, pipelineDir, storeRoots, mcpConfigPath, injected,
       refreshPaths, syncExcludes, supportFiles, metadata, scratchDir, log, env, startedAt, onMaxWait, onPark, onReview,
       mcpjsonProjectDir, homeDir, rebuildHint, secretPaths, network });
@@ -94,7 +97,7 @@ export class RemoteExecEnv {
     this._clis = new Map();        // engine CLI -> Promise<boolean>: whether this sandbox's template has it (ensureCli)
     this._chain = Promise.resolve();
     this._heartbeat = null; this._patchNo = 0; this._seq = 0;
-    this._budget = { ...SYNC_BUDGET, ...(syncBudget || {}) }; this._pulledBytes = 0;
+    this._budget = { ...SYNC_BUDGET, ...(syncBudget || {}) }; this._pulledBytes = 0; this.maxShellOutput = maxShellOutput;
     this._waiting = 0; this._maxWaitMs = 0; this._parked = false; this._held = false; this._maxWaitTimer = null;
     this._tchain = Promise.resolve();
     // One relay per sandbox: every model call of a spawn goes through it, and the credential stays in worca.
@@ -154,17 +157,34 @@ export class RemoteExecEnv {
     try { await this.client.info(this.sandboxId); return false; }
     catch (e) { return this.client.classifyError(e) === 'gone'; }
   }
-  /** Foreground sandbox command; a non-zero exit is an Error with the stderr tail. */
+  /** A sandbox command, awaited; a non-zero exit is an Error with the stderr tail. Its output is counted as it
+   *  arrives: past maxShellOutput chars the command is killed and the sync fails (the sandbox may print without end). */
   async _sh(cmd, { root = false, cwd } = {}) {
     return this._call(async () => {
+      let n = 0; let over = false; let handle = null;
+      const count = (d) => {
+        n += String(d).length;
+        if (n > this.maxShellOutput && !over) { over = true; handle?.kill().catch(() => {}); }
+      };
+      const tooMuch = () => this._failSync(`The ${this.label} printed more than ${mib(this.maxShellOutput)} for one of worca's commands, more than any of them prints.`);
       try {
-        const r = await this.client.run(this.sandbox, cmd, { timeoutMs: SHELL_COMMAND_TIMEOUT_MS, ...(root ? { user: 'root' } : {}), ...(cwd ? { cwd } : {}) });
+        handle = await this.client.run(this.sandbox, cmd, { background: true, timeoutMs: SHELL_COMMAND_TIMEOUT_MS, onStdout: count, onStderr: count,
+          ...(root ? { user: 'root' } : {}), ...(cwd ? { cwd } : {}) });
+        if (over) await handle.kill().catch(() => {});
+        const r = await handle.wait();
+        if (over) throw tooMuch();
         return r.stdout;
       } catch (err) {
+        if (over) throw tooMuch();
         if (typeof err?.exitCode === 'number') throw new Error(`sandbox command failed (exit ${err.exitCode}): ${String(err.stderr || '').slice(-1500)}`);
         throw err;
       }
     });
+  }
+  /** Fail the sync for good with the budget code: the run stops, and the host keeps what it had. */
+  _failSync(message) {
+    this.syncFailure ||= new ExecEnvSyncError(message, { code: EXEC_ENV_CODES.syncBudget });
+    return this.syncFailure;
   }
   /** Mirrored host dirs (/Users/…, /var/folders/…) sit under root-owned parents in the VM. */
   async _ensureDirs(hostDirs) {
@@ -177,7 +197,13 @@ export class RemoteExecEnv {
     await this._ensureDirs([dirname(hostPath)]);
     return this._call(() => this.client.writeFile(this.sandbox, this.sb(hostPath), buf));
   }
-  async _get(sbPath) { return this._call(() => this.client.readFile(this.sandbox, sbPath)); }
+  /** A sandbox file, read with a hard cap: the sandbox reports sizes, but only the bytes read count (audit 2.7). Past
+   *  `maxBytes` the read stops and this throws `code` E_TOO_LARGE. */
+  async _get(sbPath, maxBytes) {
+    const data = await this._call(() => this.client.readFile(this.sandbox, sbPath, { maxBytes }));
+    if (data.length > maxBytes) throw Object.assign(new Error(`${sbPath} is larger than ${mib(maxBytes)}`), { code: 'E_TOO_LARGE' });
+    return data;
+  }
   /** Upload a tar of `files` (relative to `cwd`) and extract it at the mirrored `cwd`. */
   async _putTree(cwd, files, name, { dereference = true } = {}) {
     const tar = join(this.scratchDir, `${name}.tgz`);
@@ -447,20 +473,28 @@ export class RemoteExecEnv {
       if (size > MAX_FILE_BYTES) { this._known.set(p, sig); this.log('warn', `not syncing ${host}: larger than ${MAX_LABEL}`); continue; }
       todo.push({ p, sig, host, size });
     }
-    // The budget is checked before anything downloads: past it the run fails, and the host keeps what it had.
+    // The budget is checked on the sizes the sandbox reports before anything downloads, and again on the bytes each
+    // read really returns: past it the run fails, and the host keeps what it had.
     const bytes = todo.reduce((n, t) => n + t.size, 0);
     const { syncFiles, syncBytes, runBytes } = this._budget;
-    const over = todo.length > syncFiles ? `${todo.length} files in one step (the limit is ${syncFiles})`
-      : bytes > syncBytes ? `${mib(bytes)} in one step (the limit is ${mib(syncBytes)})`
-        : this._pulledBytes + bytes > runBytes ? `${mib(this._pulledBytes + bytes)} over this run (the limit is ${mib(runBytes)})` : null;
-    if (over) {
-      this.syncFailure = new ExecEnvSyncError(`The ${this.label} wrote more into the run's folders than worca brings back: ${over}. Nothing of this step was downloaded.`, { code: EXEC_ENV_CODES.syncBudget });
-      throw this.syncFailure;
-    }
-    for (const { p, sig, host, size } of todo) {
+    const overText = (step, run) => (step > syncBytes ? `${mib(step)} in one step (the limit is ${mib(syncBytes)})`
+      : run > runBytes ? `${mib(run)} over this run (the limit is ${mib(runBytes)})` : null);
+    const over = todo.length > syncFiles ? `${todo.length} files in one step (the limit is ${syncFiles})` : overText(bytes, this._pulledBytes + bytes);
+    const budgetFail = (what) => this._failSync(`The ${this.label} wrote more into the run's folders than worca brings back: ${what}.`);
+    if (over) throw budgetFail(`${over}. Nothing of this step was downloaded`);
+    let stepBytes = 0;
+    for (const { p, sig, host } of todo) {
       this._known.set(p, sig);
-      this._pulledBytes += size;
-      const data = await this._get(p);
+      const room = Math.min(syncBytes - stepBytes, runBytes - this._pulledBytes);
+      let data;
+      try { data = await this._get(p, Math.min(MAX_FILE_BYTES, room)); }
+      catch (err) {
+        if (err?.code !== 'E_TOO_LARGE') throw err;
+        if (room <= MAX_FILE_BYTES) throw budgetFail(`${host} held more than the sandbox reported, past the limit of ${mib(syncBytes)} a step and ${mib(runBytes)} a run`);
+        this.log('warn', `not syncing ${host}: larger than ${MAX_LABEL}`);
+        continue;
+      }
+      stepBytes += data.length; this._pulledBytes += data.length;
       await mkdir(dirname(host), { recursive: true });
       const base = host.split(sep).pop();
       if (APPEND_ONLY.has(base) && existsSync(host)) {
@@ -498,9 +532,17 @@ export class RemoteExecEnv {
     const out = this.sb(`${this.work}/step.patch`);
     const size = Number((await this._sh(diffScript({ dir, from: this.syncedTree, to: tree, out }))).trim());
     if (size > 0) {
+      // The patch counts against the step's and the run's budget like any download, on the bytes read (audit 2.7).
+      const { syncBytes, runBytes } = this._budget;
+      const room = Math.min(syncBytes, runBytes - this._pulledBytes);
+      const tooBig = () => this._failSync(`The ${this.label}'s code changes are larger than worca brings back (${mib(room)} left of this step's ${mib(syncBytes)} and this run's ${mib(runBytes)}). Nothing of this step was applied.`);
+      if (size > room) throw tooBig();
+      let data;
+      try { data = await this._get(out, room); } catch (err) { throw err?.code === 'E_TOO_LARGE' ? tooBig() : err; }
+      this._pulledBytes += data.length;
       const local = join(this.scratchDir, 'step.patch');
       await mkdir(this.scratchDir, { recursive: true });
-      await writeFile(local, await this._get(out));
+      await writeFile(local, data);
       const touched = await patchPaths({ worktreeDir: this.worktreeDir, patchFile: local });
       const list = (ps) => `${ps.slice(0, 5).join(', ')}${ps.length > 5 ? ', and more' : ''}`;
       const refuse = async (message, code) => {

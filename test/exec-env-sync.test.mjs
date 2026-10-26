@@ -169,6 +169,60 @@ test('what syncs back has a budget: past it the run fails before anything is dow
   await env2.close('test');
 });
 
+test('a file the sandbox reports smaller than it is cannot pass the budget: the read stops at it (audit 2.7)', POSIX, async (t) => {
+  const f = fixture();
+  const env = makeEnv(createFakeE2b({ root: tmp('worca-e2b-root-') }), f, { syncBudget: { syncFiles: 100, syncBytes: 10_000, runBytes: 20_000 } });
+  await env.start();
+  t.after(() => env.close('test'));
+  const real = env._snapshot.bind(env);
+  env._snapshot = async () => Object.fromEntries(Object.entries(await real()).map(([k, v]) => [k, `10:${v.split(':')[1]}`]));   // root lies
+  await env.beforeSpawn();
+  writeFileSync(env.sb(join(f.pipelineDir, 'small.md')), 'x'.repeat(4_000));
+  writeFileSync(env.sb(join(f.pipelineDir, 'huge.bin')), 'h'.repeat(50_000));
+  let read = 0; const get = env.client.readFile;
+  env.client.readFile = async (...a) => { const b = await get(...a); read += b.length; return b; };
+  await assert.rejects(env.afterSpawn(), (e) => e.code === 'EXEC_ENV_SYNC_BUDGET' && /held more than the sandbox reported/.test(e.message));
+  assert.equal(existsSync(join(f.pipelineDir, 'huge.bin')), false);
+  assert.ok(read <= 10_000, `worca read ${read} bytes for a 10 000-byte budget`);
+});
+
+test('the code patch counts against the budget and is read with a cap, whatever size the sandbox prints (audit 2.7)', POSIX, async (t) => {
+  for (const lie of [false, true]) {
+    const f = fixture();
+    const sdk = createFakeE2b({ root: tmp('worca-e2b-root-'), onCommand: lie ? async (cmd) => {
+      // root's own git diff: a large patch, and a size of 10 bytes
+      const m = /git diff --binary .* > '([^']+)'; wc -c/.exec(cmd);
+      if (!m) return null;
+      writeFileSync(m[1], 'p'.repeat(60_000));
+      return { lines: ['10'], exitCode: 0 };
+    } : null });
+    const env = makeEnv(sdk, f, { syncBudget: { syncFiles: 100, syncBytes: 20_000, runBytes: 40_000 } });
+    await env.start();
+    t.after(() => env.close('test'));
+    await env.beforeSpawn();
+    writeFileSync(join(env.sb(f.repo), 'big.txt'), 'b'.repeat(30_000));
+    await assert.rejects(env.afterSpawn(), (e) => e.code === 'EXEC_ENV_SYNC_BUDGET' && /code changes are larger/.test(e.message), `lie ${lie}`);
+    assert.equal(existsSync(join(f.repo, 'big.txt')), false, 'nothing applied');
+  }
+  const f = fixture();
+  const env = makeEnv(createFakeE2b({ root: tmp('worca-e2b-root-') }), f, { syncBudget: { syncFiles: 100, syncBytes: 20_000, runBytes: 40_000 } });
+  await env.start();
+  t.after(() => env.close('test'));
+  await env.beforeSpawn(); writeFileSync(join(env.sb(f.repo), 'c.txt'), 'c'.repeat(15_000)); await env.afterSpawn();
+  assert.ok(env._pulledBytes >= 15_000, 'an applied patch is counted in the run total');
+});
+
+test('a sandbox command that prints without end is killed past the output cap and fails the sync (audit 2.7)', POSIX, async (t) => {
+  const f = fixture();
+  const env = makeEnv(createFakeE2b({ root: tmp('worca-e2b-root-') }), f, { maxShellOutput: 4_000 });
+  await env.start();
+  t.after(() => env.close('test'));
+  await env.beforeSpawn();
+  for (let i = 0; i < 100; i++) writeFileSync(env.sb(join(f.pipelineDir, `out-${String(i).padStart(40, '0')}.md`)), 'x');
+  await assert.rejects(env.afterSpawn(), (e) => e.code === 'EXEC_ENV_SYNC_BUDGET' && /printed more than/.test(e.message));
+  await assert.rejects(env._sh('yes'), (e) => e.code === 'EXEC_ENV_SYNC_BUDGET', 'an endless command ends too');
+});
+
 test('injected paths never travel back: an edit to the symlinked skill copy makes no patch', POSIX, async () => {
   const f = fixture(); const sdk = createFakeE2b({ root: tmp('worca-e2b-root-') });
   const env = makeEnv(sdk, f); await env.start();
