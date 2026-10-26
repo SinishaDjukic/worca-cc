@@ -24,7 +24,7 @@ Every screen reads down one rail, and everything has one place on it.
 |---|---|---|
 | Top bar | The trail `Runs › place › group` (the page is never a crumb; `‹ Parent` at 760px and below) and, on a run inside a group, the pager `‹ 2 of 3 ›` at the right | Buttons for the run |
 | Title | The title, one line with an ellipsis; a tap shows it whole | Chips, buttons |
-| Metadata line | In this order: the kind (group pages only), where the code lives as a phrase (`#959 merges branch into dev`, `branch into dev`, `merged into`, `main to origin/main`, `into ~/folder`; the branch copies itself), then the tag group: a tag mark, labels, then cost tags (`key: value`), each in a quiet outline with no colour; one line, the rest folds into `+N`, the full list in its tooltip. With nothing set, the mark alone | The project (in the trail), the start time (in the Time figure), counts the card already shows, colour |
+| Metadata line | In this order: the kind (group pages only), where the code lives as a phrase (`#959 merges branch into dev`, `branch into dev`, `merged into`, `main to origin/main`, `into ~/folder`; the branch copies itself), then the tag group: a tag mark, labels, then cost tags (`key: value`), a label as an outline with a small dot, a cost tag as a soft fill, no colour; a small × on the chip under the pointer (or with keyboard focus) removes it; one line, the rest folds into `+N`, the full list in its tooltip. With nothing set, the mark alone | The project (in the trail), the start time (in the Time figure), counts the card already shows, colour |
 | Status line | The state word with one detail line; at its right the run's controls together: the action (main + ▾), then ⋯ | — |
 | Stepper | One segment per stage (per run on a group page); cells are steps; the label under a segment is its time | — |
 | Open stage | The selected stage's steps (circle · name · time · loops), the live line; a question is answered here, under its step; on a group, the selected run with its cost and Open run; the PR stage holds the PRs | — |
@@ -40,11 +40,26 @@ Every screen reads down one rail, and everything has one place on it.
 | A fact's detail | Its figure (Cost opens the breakdown, Changes its tab) |
 | The code's own actions | The Changes head: Check out ▾ (Download patch, Copy git commands, Refresh) |
 | A yes or no, or a one-line answer | The strip under the top bar: confirms, Run after |
-| A form | The app's dialog: Create PR (into, PRs, title, description with Generate, Draft, Watch) |
-| Labels and cost tags | The tag group is one button: it (or `L`) opens one editor with a field (a word adds a label, `key: value` a cost tag) and two checked lists, Labels and Cost tags; removing happens there, so the group has no `×` |
+| A form | The app's dialog. Create PR: (for a group, the PRs and stacked or one), Title, Description, the phrase `branch into dev ▾`, then Draft and Watch with the issue it closes. Title and description are suggested as on the New run form: a sparkle inside the field, a Suggested chip, the shimmer while it writes; an eye shows the description rendered |
+| Checking out the code | Check out, in the Changes head (a group: Check out the whole feature, in its action's ▾); nowhere else |
+| Labels and cost tags | The tag group is one button: it (or `L`) opens one editor with a field (a word adds a label, `key: value` a cost tag) and two checked lists, Labels and Cost tags; removing also works there, and on touch screens only there |
 | Group membership | ⋯: Move to group…, or Leave it |
 
+## Type roles
+
+| Role | Size and weight | For |
+|---|---|---|
+| Page | 22, bold, ink | The title |
+| Headline | 18, semibold, ink | The state word |
+| Value | 15, semibold, ink | Time, cost, changes |
+| Body | 13, regular, ink (the live or asking step semibold) | Step and stage names, questions, Overview text |
+| Meta | 12, regular, grey | The metadata line, times, labels of figures, details |
+| Caption | 11 | Chips, hints; faint grey only for marks and separators |
+
 ## Rules
+
+- The violet shimmer means Worca is writing text for you, in a field you will review (run title and branch, PR title
+  and description, a drafted answer, a change request). It never means loading or a run state.
 
 - Each fact once. A count, time, cost, PR number or question appears in one place on the page.
 - Menus are the app's compact menu: one line per item, a leading check for a choice, hints at the right, help in the

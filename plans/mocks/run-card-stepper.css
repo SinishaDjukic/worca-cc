@@ -614,3 +614,74 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rc .menu-item[role="menuitemcheckbox"][aria-checked="true"]::before{background:currentColor;}
 .rc .menu-item[role="menuitemcheckbox"] > .mi-l{grid-column:2;}
 .rc .menu-item[role="menuitemcheckbox"] > .mi-hint{grid-column:3;}
+
+/* Labels vs cost tags without colour: a label is an outline with a small dot, a cost tag a soft fill. */
+.rc-tags{cursor:pointer;}
+.rc-tags.is-open{background:var(--hover);}
+.rc-tags-mark{display:inline-grid;place-items:center;width:18px;height:20px;padding:0;border:0;background:none;color:var(--ink-3);cursor:pointer;border-radius:var(--r-xs);}
+.rc-tags:hover .rc-tags-mark,.rc-tags-mark:focus-visible{color:var(--ink-2);}
+.rc-tags-mark:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.rc-tag{gap:5px;padding:0 3px 0 7px;}
+.rc-tag.is-label::before{content:"";flex:none;width:5px;height:5px;margin-left:-1px;border-radius:50%;background:var(--ink-3);}
+.rc-tag.is-tag{box-shadow:none;background:var(--field);}
+.rc-tags:hover .rc-tag.is-tag{box-shadow:none;}
+/* × on hover or keyboard focus; its room is always there, so nothing moves */
+.rc-tag-x{display:inline-grid;place-items:center;width:12px;height:12px;margin-left:-1px;padding:0;border:0;border-radius:2px;background:none;color:var(--ink-2);cursor:pointer;opacity:0;}
+.rc-tag:hover .rc-tag-x,.rc-tag-x:focus-visible{opacity:1;}
+.rc-tag-x:hover{background:var(--hover);color:var(--ink);}
+.rc-tag-x:focus-visible{outline:2px solid var(--ink);outline-offset:0;}
+@media (hover: none){ .rc-tag-x{display:none;} .rc-tag{padding-right:7px;} }   /* touch: remove in the editor */
+
+/* Create PR, simplified: title, description, where it merges, two switches. Suggestions as on the New run form:
+   a sparkle inside the field, a "Suggested" chip, the violet shimmer while Worca writes. */
+.pd2{position:relative;width:min(560px,100%);max-height:min(86vh,760px);overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-menu);display:flex;flex-direction:column;}
+.pd2-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 0;}
+.pd2-body{display:flex;flex-direction:column;gap:16px;padding:16px 20px 20px;}
+.pd2-foot{display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--line);}
+.pd-f{display:flex;flex-direction:column;gap:6px;min-width:0;}
+.pd-lab{display:flex;align-items:center;gap:6px;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);}
+.pd-lab label{color:inherit;}
+.pd-sug{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--r-xs);background:var(--violet-bg);color:var(--violet-ink);font-size:var(--fs-caption);font-weight:500;}
+.pd-eye{margin-left:auto;display:inline-grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:var(--r-xs);background:none;color:var(--ink-2);cursor:pointer;}
+.pd-eye.is-on,.pd-eye:hover{background:var(--hover);color:var(--ink);}
+.pd-adorn{position:relative;min-width:0;}
+.pd-adorn .input,.pd-adorn .textarea{width:100%;padding-right:40px;}
+.pd-adorn .textarea{min-height:150px;font:400 var(--fs-meta)/1.6 var(--mono);resize:vertical;display:block;}
+.pd-adorn .pd-preview{padding-right:40px;}
+.pd-act{position:absolute;right:6px;top:6px;display:inline-flex;gap:4px;}
+.pd-adorn:has(> .input) .pd-act{top:50%;transform:translateY(-50%);}
+.pd-ai,.pd-stop{display:inline-grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:var(--r-xs);cursor:pointer;}
+.pd-ai{background:var(--violet-bg);color:var(--violet-ink);}
+.pd-stop{background:var(--line-2);color:var(--ink-2);font:600 14px/1 var(--sans);}
+.pd-ai:focus-visible,.pd-stop:focus-visible,.pd-eye:focus-visible,.pd-base:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.pd-adorn.is-writing :is(.input,.textarea){background:linear-gradient(90deg,var(--field),var(--violet-wash),var(--field));background-size:200% 100%;animation:pd-wash 1.4s linear infinite;}
+@keyframes pd-wash{from{background-position:100% 0}to{background-position:-100% 0}}
+@media (prefers-reduced-motion: reduce){.pd-adorn.is-writing :is(.input,.textarea){animation:none;background:var(--violet-wash);}}
+.pd-into{display:flex;align-items:center;gap:6px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
+.pd-br{min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono);}
+.pd-into > span{flex:none;}
+.pd-base{display:inline-flex;align-items:center;gap:2px;padding:1px 4px;margin:-1px -2px;border:0;border-radius:var(--r-xs);background:none;color:var(--ink);font:400 var(--fs-meta)/1 var(--mono);cursor:pointer;}
+.pd-base:hover,.pd-base[aria-expanded="true"]{background:var(--hover);}
+.pd-base svg{color:var(--ink-2);}
+.pd-basepop .menu{min-width:140px;}
+.pd-hint{font-size:var(--fs-caption);color:var(--ink-2);}
+.pd-hint.is-warn{color:var(--amber-ink-strong);}
+.pd-opts{display:flex;align-items:center;gap:20px;flex-wrap:wrap;font-size:var(--fs-meta);}
+.pd-check{display:inline-flex;align-items:center;gap:8px;color:var(--ink);cursor:pointer;}
+.pd-check input{margin:0;accent-color:var(--ink);}
+.pd-closes{margin-left:auto;}
+
+/* Type roles (spec): Page 22 · Headline 18 · Value 15 · Body 13 · Meta 12 · Caption 11. Two greys: --ink-2 for what
+   supports, --ink-3 only for marks and separators. Numbers lead their labels. */
+.rc-word{font-size:var(--fs-subpage);}
+.rc-figs{align-items:baseline;row-gap:8px;}
+.rc-figs b{font-size:var(--fs-section);}
+.sc-subs .rd-route-name{font-size:var(--fs-body);font-weight:400;color:var(--ink);}
+.sc-subs .rd-route-row:is(.is-now,.is-ask,.is-problem,.is-failed,.is-paused) .rd-route-name{font-weight:600;}
+.sc-subs .rd-route-row.is-next .rd-route-name{color:var(--ink-2);}
+.sc-stage .l{font-size:var(--fs-body);font-weight:400;color:var(--ink-2);}
+.sc-stage[aria-selected="true"] .l{color:var(--ink);font-weight:600;}
+.sc-stage .m{font-size:var(--fs-meta);margin-top:2px;}
+.rtab-panel{gap:32px;}
+.rtab-h{margin-bottom:4px;}
+.sc-head .sc-run{font-size:var(--fs-body);}
