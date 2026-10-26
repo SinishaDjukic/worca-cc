@@ -484,10 +484,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     sheetInert = [];
     const sheet = host.querySelector('.req-help');
     const mq = sheetQuery();
-    if (!sheet || !mq || !mq.matches) return;
+    // not while the page is hidden (another view is shown): nothing outside this view may stay inert
+    if (!sheet || !mq || !mq.matches || host.closest('.hidden, [hidden]')) return;
     for (let node = sheet; node && node !== document.body && node.parentElement; node = node.parentElement) {
       for (const sib of node.parentElement.children) {
         if (sib === node || sib.inert || sib.classList.contains('req-dlg-wrap')) continue;
+        // the page's live regions (the message line, the subtitle) keep announcing
+        if ((msgEl && sib.contains(msgEl)) || (subEl && sib.contains(subEl))) continue;
         sib.inert = true; sib.setAttribute('inert', '');
         sheetInert.push(sib);
       }
@@ -3024,5 +3027,5 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     if (paintedKey === 'new') { if (relook) relook(); } else if (paintedKey && paintedKey.startsWith('brief/')) void paint();
   });
 
-  return { show, changed, destroy: () => { paintNo += 1; closeDialog(false); offGit(); document.removeEventListener('click', onDocClick, true); if (sheetMq && typeof sheetMq.removeEventListener === 'function') sheetMq.removeEventListener('change', syncSheetInert); host.replaceChildren(); syncSheetInert(); } };
+  return { show, changed, leave: () => syncSheetInert(), destroy: () => { paintNo += 1; closeDialog(false); offGit(); document.removeEventListener('click', onDocClick, true); if (sheetMq && typeof sheetMq.removeEventListener === 'function') sheetMq.removeEventListener('change', syncSheetInert); host.replaceChildren(); syncSheetInert(); } };
 }

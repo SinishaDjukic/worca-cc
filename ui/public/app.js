@@ -38646,6 +38646,7 @@ function showView(name, param = '') {
   }
   if (name === 'stats') loadStatsView();
   if (name === 'requirements') void requirementsView.show(param);
+  else requirementsView.leave();   // the Ask Worca phone sheet makes the page inert; leaving the view puts it back
   if (name === 'schedules') { schedulesView.showTab(param); void withWorkspaces().then(() => schedulesView.load()); }
   if (name === 'team-metrics') {
     // #team-metrics/timeline opens the Timeline tab. Switching tabs inside the page only repaints:

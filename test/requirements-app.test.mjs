@@ -18,6 +18,10 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..', 'ui', 'public')
 const html = readFileSync(join(root, 'index.html'), 'utf8');
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async () => { for (let i = 0; i < 5; i++) await tick(); };
+test('leaving the Requirements view tells it to release the Ask Worca sheet (the page must not stay inert)', () => {
+  const app = readFileSync(join(root, 'app.js'), 'utf8');
+  assert.ok(app.replace(/\r?\n\s*/g, ' ').includes("if (name === 'requirements') void requirementsView.show(param); else requirementsView.leave();"));
+});
 const hidden = (doc, view) => doc.querySelector(`[data-view="${view}"]`).classList.contains('hidden');
 
 async function boot(flags) {

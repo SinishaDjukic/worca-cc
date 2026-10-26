@@ -562,11 +562,15 @@ const helpColors = () => A.evalJs(`(() => { const p = document.querySelector('#r
   return { panel: getComputedStyle(p).backgroundColor, ink: getComputedStyle(p).color, chip: chip ? getComputedStyle(chip).borderTopColor : null }; })()`);
 const themeWas = await A.evalJs(`document.documentElement.dataset.theme || ''`);
 await A.evalJs(`document.documentElement.dataset.theme = 'light'`);
-await sleep(200);
+const panelColor = () => A.evalJs(`getComputedStyle(document.querySelector('#requirements-host .req-help')).backgroundColor`);
+await until(async () => (await panelColor()) !== 'rgba(0, 0, 0, 0)');
+await until(() => A.evalJs(`document.getAnimations().length === 0`));
 const lightC = await helpColors();
 const lightLow = await lowContrast(A3_TEXT);
+const lightPanel = await panelColor();
 await A.evalJs(`document.documentElement.dataset.theme = 'dark'`);
-await sleep(200);
+await until(async () => (await panelColor()) !== lightPanel);
+await until(() => A.evalJs(`document.getAnimations().length === 0`));   // the colours have finished changing
 const darkC = await helpColors();
 const darkLow = await lowContrast(A3_TEXT);
 await A.evalJs(`document.querySelector('.req-help-card.is-accepted').scrollIntoView({ block: 'start' })`);
@@ -581,7 +585,7 @@ check('A3: the text of the chat, the draft chip and Help me answer is AA in ligh
   JSON.stringify({ light: lightLow, dark: darkLow }));
 // Board 25: at 390 px the panel is a full-screen sheet with Back; Back keeps the drafts in the question card.
 await A.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
-await sleep(300);
+await until(() => A.evalJs(`window.innerWidth === 390 && getComputedStyle(document.querySelector('#requirements-host .req-help')).position === 'fixed'`));
 const sheetNow = () => A.evalJs(`(() => { const p = document.querySelector('#requirements-host .req-help'); if (!p) return null;
   const r = p.getBoundingClientRect(); const back = p.querySelector('[data-ui="helper-back"]'); const close = p.querySelector('[data-ui="helper-close"]');
   const w = document.documentElement.clientWidth; const hh = window.innerHeight;
@@ -640,7 +644,7 @@ log(`note A3 390 px: Tab from the composer ${JSON.stringify(tabOut)}; Shift+Tab 
 const inertNow = await A.evalJs(`(() => { const p = document.querySelector('#requirements-host .req-help');
   return { sheetInert: !!p.closest('[inert]'), pageInert: !!document.querySelector('#requirements-host .req-head')?.closest('[inert]') }; })()`);
 check('A3 board 25 a11y: Tab and Shift+Tab from the ends of the open sheet never land on the page underneath, which is inert; the sheet is not',
-  [...tabOut, ...tabBack].every((t) => !t.outside) && inertNow.pageInert && !inertNow.sheetInert, JSON.stringify({ tabOut, tabBack, inertNow }));
+  [...tabOut, ...tabBack].every((t) => !t.outside) && tabOut.at(-1).inSheet && tabBack.at(-1).inSheet && inertNow.pageInert && !inertNow.sheetInert, JSON.stringify({ tabOut, tabBack, inertNow }));
 await A.evalJs(`document.querySelector('[data-ui="helper-back"]').click()`);
 check('A3 D2: Back returns to the feature; the drafted answer is still in the question card; Help me answer is a 44 px line',
   await until(() => A.evalJs(`(() => { const b = document.querySelector('#requirements-host .qpanel .qblock'); if (document.querySelector('.req-help') || !b) return false;

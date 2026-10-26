@@ -1146,3 +1146,53 @@ test('board 25 a11y: on a desktop width nothing is inert while the panel is open
     assert.deepEqual(inertIn(), [], 'widened again, the page is back');
   } finally { phone.restore(); }
 });
+
+test('board 25 a11y: leaving the page with the sheet open leaves nothing inert; a resize while away re-applies nothing; coming back re-applies it only if the sheet is still open', async () => {
+  const phone = withPhone(true);
+  try {
+    const s = {};
+    fakeApi({ ...BASE, 'GET /api/requirements/7': () => ({ feature: s.f = s.f || feature(), turns: TURNS }), 'GET /api/requirements/7/helper': () => chat() });
+    const m = make();
+    const section = document.createElement('section'); section.className = 'view';
+    const other = document.createElement('section'); other.className = 'view hidden';   // another view of the app
+    document.body.prepend(section, other);
+    section.append(m.host);
+    await m.view.show('feature/7');
+    await openPanel(m);
+    assert.ok(other.inert, 'the sheet is open: the other views are inert');
+    section.classList.add('hidden'); other.classList.remove('hidden');   // the app shows another view ...
+    m.view.leave();                                                       // ... and tells this one
+    assert.deepEqual(inertIn(), [], 'leaving releases the page');
+    phone.set(false); phone.set(true);                                    // a resize while away
+    assert.deepEqual(inertIn(), [], 'a resize while hidden re-applies nothing');
+    section.classList.remove('hidden'); other.classList.add('hidden');
+    await m.view.show('feature/7');
+    await settle();
+    assert.ok(m.host.querySelector('.req-help') && other.inert, 'back with the sheet still open: modal again');
+    m.host.querySelector('[data-ui="helper-back"]').click();
+    await settle();
+    section.classList.add('hidden');
+    m.view.leave();
+    section.classList.remove('hidden');
+    await m.view.show('feature/7');
+    await settle();
+    assert.deepEqual(inertIn(), [], 'back with the sheet closed: nothing is inert');
+  } finally { phone.restore(); }
+});
+
+test('board 25 a11y: a dialog opened over the sheet stays operable, and the live regions are not made inert', async () => {
+  const phone = withPhone(true);
+  try {
+    const m = await openFeature();
+    m.host.before(m.msgEl);   // the message line beside the host, as in the app
+    await openPanel(m);
+    assert.ok(!m.msgEl.closest('[inert]'), 'the message line keeps announcing');
+    assert.ok(!m.msgEl.inert);
+    const wrap = document.createElement('div'); wrap.className = 'viewer-modal req-dlg-wrap'; document.body.append(wrap);
+    phone.set(false); phone.set(true);   // a re-sync with the dialog mounted at <body>
+    assert.ok(!wrap.inert && !wrap.closest('[inert]'), 'a dialog on <body> is not inert');
+    const inner = document.createElement('div'); inner.className = 'req-dlg-wrap'; m.host.append(inner);
+    phone.set(false); phone.set(true);
+    assert.ok(!inner.inert && !inner.closest('[inert]'), 'nor one mounted beside the sheet');
+  } finally { phone.restore(); }
+});
