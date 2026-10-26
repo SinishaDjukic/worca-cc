@@ -34,17 +34,6 @@ test('a new chat lists both engines under their names', async () => {
   assert.deepEqual(names(ctx), ['Opus 5.5', 'GPT-5.5']);
 });
 
-test('inside a Codex chat the picker lists only Codex models', async () => {
-  const ctx = makePanel({ fetchHandler: handler({ thread: { model: 'gpt-5.5', effort: 'low' }, messages: [
-    { id: 'askm_u0000001', seq: 1, role: 'user', text: 'hi', blocks: [] },
-    { id: 'askm_00000001', seq: 2, role: 'assistant', text: 'yo', blocks: [], status: 'done', model: 'gpt-5.5', effort: 'low' }] }) });
-  ctx.storage.setItem('worca-cc.ask.thread', TID);
-  ctx.panel.open(); await ctx.tick(); await ctx.tick(); await ctx.tick();
-  ctx.doc.querySelector('[data-ask-model-btn]').click(); await ctx.tick();
-  assert.deepEqual(groups(ctx), []);
-  assert.deepEqual(names(ctx), ['GPT-5.5']);
-});
-
 test('askEngine codex: a new chat starts on the Codex default; a stored Claude pick does not override it', async () => {
   const ctx = makePanel({ fetchHandler: handler({ catalog: { ...CATALOG, askEngine: 'codex', default: CATALOG.defaults.codex } }) });
   ctx.storage.setItem('worca-cc.ask.model', JSON.stringify({ model: 'claude-opus-5-5', effort: 'high' }));
@@ -262,4 +251,258 @@ test('the main list holds the newest of each Copilot family; More models names e
   ctx.doc.querySelector('[data-ask-more-models]').click(); await ctx.tick();
   assert.deepEqual(groups(ctx), ['Claude', 'Copilot (beta)'], 'Codex has no more models: no heading for it');
   assert.deepEqual(names(ctx), ['Opus 5', 'Claude Sonnet 5', 'GPT-5.4 Mini']);
+});
+
+// ---- #943: a chat moves to another engine in place ----
+const CODEX_CHAT = { thread: { model: 'gpt-5.5', effort: 'low', engine: 'codex' }, messages: [
+  { id: 'askm_u0000001', seq: 1, role: 'user', text: 'hi', blocks: [] },
+  { id: 'askm_00000001', seq: 2, role: 'assistant', text: 'yo', blocks: [], status: 'done', model: 'gpt-5.5', effort: 'low', engine: 'codex' }] };
+const PLAN = { from: 'codex', to: 'claude', model: 'claude-opus-5-5', effort: 'high',
+  changes: [{ key: 'tools', text: 'Claude reads with its own Read, Grep and Glob tools and may start sub-agents.' }],
+  mcpLost: [], attachments: [], transcript: { totalTurns: 1, droppedTurns: 0 } };
+function switchHandler({ posts, refuse = null, inFlight = null } = {}) {
+  const base = handler(CODEX_CHAT);
+  return (url, opts) => {
+    if (url === `/api/ask/threads/${TID}/engine` && opts.method === 'POST') {
+      const body = JSON.parse(opts.body);
+      posts.push(body);
+      if (body.dryRun) return { ok: true, status: 200, json: async () => PLAN };
+      if (refuse) return { ok: false, status: 409, json: async () => refuse };
+      return { ok: true, status: 200, json: async () => ({ ok: true,
+        thread: { id: TID, model: 'claude-opus-5-5', effort: 'high', engine: 'claude', sessionId: null, totals: { costUsd: 0, turns: 1 } },
+        message: { id: 'askm_s0000001', threadId: TID, seq: 3, role: 'system', text: 'Switched from Codex to Claude', blocks: [
+          { kind: 'divider', text: 'Switched from Codex to Claude', engineSwitch: { from: 'codex', to: 'claude' } }] },
+        engineSwitch: { engine: 'claude', model: 'claude-opus-5-5', effort: 'high' } }) };
+    }
+    if (inFlight && url === `/api/ask/threads/${TID}` && (!opts.method || opts.method === 'GET')) {
+      return { ok: true, status: 200, json: async () => ({ thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', sessionId: null, context: null, totals: {}, ...CODEX_CHAT.thread },
+        messages: CODEX_CHAT.messages, attachments: [], runLinks: [], inFlight }) };
+    }
+    return base(url, opts);
+  };
+}
+async function openCodexChat(over) {
+  const ctx = makePanel(over);
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  ctx.panel.open(); await ctx.tick(); await ctx.tick(); await ctx.tick();
+  return ctx;
+}
+const row = (ctx, name) => [...ctx.doc.querySelectorAll('.ask-pop-model .ask-model-item')].find((b) => b.querySelector('.ask-model-name').textContent === name);
+const settle = async (ctx) => { for (let i = 0; i < 8; i++) await ctx.tick(); ctx.flush(); };
+
+test('inside a Codex chat the picker lists every engine and marks the chat\'s own', async () => {
+  const ctx = await openCodexChat({ fetchHandler: handler(CODEX_CHAT) });
+  assert.equal(modelBtn(ctx).dataset.engine, 'codex');
+  modelBtn(ctx).click(); await ctx.tick();
+  assert.deepEqual(groups(ctx), ['Claude', 'Codex (beta) · this chat']);
+  assert.deepEqual(names(ctx), ['Opus 5.5', 'GPT-5.5']);
+});
+
+test('picking a Claude model in a Codex chat previews, asks, then switches in place', async () => {
+  const posts = [];
+  const confirms = [];
+  const ctx = await openCodexChat({ fetchHandler: switchHandler({ posts }), confirm: async (o) => { confirms.push(o); return true; } });
+  modelBtn(ctx).click(); await ctx.tick();
+  row(ctx, 'Opus 5.5').click();
+  await settle(ctx);
+  assert.deepEqual(posts, [
+    { engine: 'claude', model: 'claude-opus-5-5', effort: 'high', dryRun: true },
+    { engine: 'claude', model: 'claude-opus-5-5', effort: 'high', dropTurns: 0 }]);
+  assert.equal(confirms[0].title, 'Switch this chat to Claude?');
+  assert.match(confirms[0].message, /• Claude reads with its own Read/);
+  assert.match(modelBtn(ctx).textContent, /Opus 5\.5/);
+  assert.equal(modelBtn(ctx).dataset.engine, 'claude');
+  assert.equal(ctx.doc.querySelector('.ask-divider-engine .ask-divider-t').textContent, 'Switched from Codex to Claude');
+  assert.deepEqual(JSON.parse(ctx.storage.getItem('worca-cc.ask.enginePicks')).claude, { model: 'claude-opus-5-5', effort: 'high' });
+  assert.equal(ctx.fetchCalls.some((c) => c.opts.method === 'PATCH'), false, 'a switch is never a PATCH');
+});
+
+test('declining the switch sends no commit and keeps the engine', async () => {
+  const posts = [];
+  const ctx = await openCodexChat({ fetchHandler: switchHandler({ posts }), confirm: async () => false });
+  modelBtn(ctx).click(); await ctx.tick();
+  row(ctx, 'Opus 5.5').click();
+  await settle(ctx);
+  assert.deepEqual(posts.map((p) => !!p.dryRun), [true]);
+  assert.match(modelBtn(ctx).textContent, /GPT-5\.5/);
+  assert.equal(modelBtn(ctx).dataset.engine, 'codex');
+});
+
+test('a refused switch keeps the chat on its engine and says why', async () => {
+  const posts = [];
+  const ctx = await openCodexChat({ fetchHandler: switchHandler({ posts, refuse: { error: 'Claude Code is not signed in — run claude, then /login', code: 'claude-signed-out' } }) });
+  ctx.doc.getElementById('toasts')?.replaceChildren();
+  modelBtn(ctx).click(); await ctx.tick();
+  row(ctx, 'Opus 5.5').click();
+  await settle(ctx);
+  assert.equal(posts.length, 2);
+  assert.equal(modelBtn(ctx).dataset.engine, 'codex');
+  const toasts = [...ctx.doc.querySelectorAll('#toasts .toast.err')];
+  assert.equal(toasts.length, 1);
+  assert.match(toasts[0].textContent, /Could not switch this chat to Claude/);
+  assert.match(toasts[0].textContent, /not signed in/);
+});
+
+test('while a reply runs, other engines\' models are disabled and nothing is sent', async () => {
+  const posts = [];
+  const ctx = await openCodexChat({ fetchHandler: switchHandler({ posts, inFlight: { messageId: 'askm_00000001' } }) });
+  modelBtn(ctx).click(); await ctx.tick();
+  assert.equal(row(ctx, 'Opus 5.5').disabled, true);
+  assert.equal(row(ctx, 'GPT-5.5').disabled, false, 'the chat\'s own engine stays pickable');
+  ctx.doc.getElementById('toasts')?.replaceChildren();
+  row(ctx, 'Opus 5.5').dispatchEvent(new ctx.window.Event('click'));   // a plain Event reaches a disabled button's listener; HTMLElement.click() does not
+  await settle(ctx);
+  assert.deepEqual(posts, []);
+  assert.match(ctx.doc.querySelector('#toasts .toast.err').textContent, /A reply is running/, 'a row enabled from before the reply says why nothing happens');
+});
+
+test('a model or effort picked on an engine is remembered for that engine', async () => {
+  const ctx = await openCodexChat({ fetchHandler: handler(CODEX_CHAT) });
+  modelBtn(ctx).click(); await ctx.tick();
+  ctx.doc.querySelector('[data-ask-effort-row]').click();
+  [...ctx.doc.querySelectorAll('.ask-pop-model [role="menuitem"]')].find((b) => b.textContent === 'high').click();
+  assert.deepEqual(JSON.parse(ctx.storage.getItem('worca-cc.ask.enginePicks')).codex, { model: 'gpt-5.5', effort: 'high' });
+});
+
+test('a model picked in a Codex chat is remembered for Codex', async () => {
+  const ctx = makePanel({ fetchHandler: freshHandler({ thread: { model: 'gpt-5.5', effort: 'low', engine: 'codex' }, messages: CODEX_CHAT.messages }) });
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  ctx.panel.open(); await ctx.tick(); await ctx.tick(); await ctx.tick();
+  await openSelector(ctx);
+  pickItem(ctx, 'GPT-5.4');
+  assert.deepEqual(JSON.parse(ctx.storage.getItem('worca-cc.ask.enginePicks')).codex, { model: 'gpt-5.4', effort: 'low' });
+});
+
+test('another engine\'s section leads with the model last used there, tagged', async () => {
+  const cat = { ...CATALOG, models: [CATALOG.models[0], { id: 'claude-opus-5', label: 'Opus 5', efforts: ['medium', 'high'], custom: false }, CATALOG.models[1]] };
+  const ctx = makePanel({ fetchHandler: handler({ ...CODEX_CHAT, catalog: cat }) });
+  ctx.storage.setItem('worca-cc.ask.enginePicks', JSON.stringify({ claude: { model: 'claude-opus-5', effort: 'high' } }));
+  ctx.storage.setItem('worca-cc.ask.thread', TID);
+  ctx.panel.open(); await ctx.tick(); await ctx.tick(); await ctx.tick();
+  modelBtn(ctx).click(); await ctx.tick();
+  assert.equal(names(ctx)[0], 'Opus 5');
+  assert.equal(row(ctx, 'Opus 5').querySelector('.ask-model-tag').textContent, 'last used');
+  assert.equal(row(ctx, 'GPT-5.5').querySelector('.ask-model-tag'), null, 'the chat\'s own section is untagged');
+  ctx.doc.querySelector('[data-ask-more-models]').click(); await ctx.tick();
+  assert.deepEqual(names(ctx), ['Opus 5.5'], 'the model the lead displaced is under More models, never lost');
+});
+
+test('the model button names the chat\'s engine in text when the catalog has more than one engine, and none with one', async () => {
+  const ctx = await openCodexChat({ fetchHandler: handler(CODEX_CHAT) });
+  const eng = ctx.doc.querySelector('.ask-model-btn-engine');
+  assert.deepEqual([eng.hidden, eng.textContent], [false, 'Codex']);
+  const one = await openCodexChat({ fetchHandler: handler({ ...CODEX_CHAT, catalog: { ...CATALOG, models: [CATALOG.models[1]] } }) });
+  assert.deepEqual([one.doc.querySelector('.ask-model-btn-engine').hidden, one.doc.querySelector('.ask-model-btn-engine').textContent], [true, '']);
+});
+
+test('a resync that finds the chat on another engine (switched in a tab that was offline) moves the picker too', async () => {
+  let moved = false;
+  const base = handler(CODEX_CHAT);
+  const ctx = await openCodexChat({ fetchHandler: (url, opts) => {
+    if (moved && url === `/api/ask/threads/${TID}` && (!opts.method || opts.method === 'GET')) {
+      return { ok: true, status: 200, json: async () => ({ thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', sessionId: null, context: null, totals: {}, model: 'claude-opus-5-5', effort: 'high', engine: 'claude' },
+        messages: [...CODEX_CHAT.messages, { id: 'askm_s0000001', seq: 3, role: 'system', text: 'Switched from Codex to Claude', blocks: [
+          { kind: 'divider', text: 'Switched from Codex to Claude', engineSwitch: { from: 'codex', to: 'claude' } }] }],
+        attachments: [], runLinks: [], inFlight: null }) };
+    }
+    return base(url, opts);
+  } });
+  assert.equal(modelBtn(ctx).dataset.engine, 'codex');
+  moved = true;
+  ctx.panel.onHello([]);   // a reconnect: resync → loadThread of the same chat
+  await settle(ctx);
+  assert.equal(modelBtn(ctx).dataset.engine, 'claude');
+  assert.match(modelBtn(ctx).textContent, /Opus 5\.5/, 'the next message is not sent with the Codex model the server would refuse');
+});
+
+test('a chat begun in this tab follows a switch made elsewhere while it was offline', async () => {
+  const sent = [];
+  let moved = false;
+  const fresh = freshHandler({ catalog: CATALOG, sent });
+  const ctx = makePanel({ fetchHandler: (url, opts) => {
+    if (moved && url === `/api/ask/threads/${TID}` && (!opts.method || opts.method === 'GET')) {
+      return { ok: true, status: 200, json: async () => ({ thread: { id: TID, title: 'T', createdAt: 't', updatedAt: 't', sessionId: null, context: null, totals: {}, model: 'claude-opus-5-5', effort: 'high', engine: 'claude' },
+        messages: [{ id: 'askm_u0000001', seq: 1, role: 'user', text: 'hi', blocks: [] },
+          { id: 'askm_00000001', seq: 2, role: 'assistant', text: 'yo', blocks: [], status: 'done', model: 'gpt-5.5', effort: 'low', engine: 'codex' },
+          { id: 'askm_s0000001', seq: 3, role: 'system', text: 'Switched from Codex to Claude', blocks: [{ kind: 'divider', text: 'Switched from Codex to Claude', engineSwitch: { from: 'codex', to: 'claude' } }] }],
+        attachments: [], runLinks: [], inFlight: null }) };
+    }
+    return fresh(url, opts);
+  } });
+  ctx.panel.open(); await ctx.tick(); await ctx.tick();
+  await openSelector(ctx);
+  pickItem(ctx, 'GPT-5.5');   // a new chat, on Codex: its thread payload has no engine yet
+  ctx.doc.querySelector('textarea.ask-input').value = 'hi';
+  ctx.doc.querySelector('[data-ask-send]').click();
+  await settle(ctx);
+  ctx.panel.pushServerFrame({ type: 'ask-start', threadId: TID, messageId: 'askm_00000001', userMessageId: 'askm_u0000001', seq: 1, startedAt: '2026-10-26T00:00:00Z', model: 'gpt-5.5', effort: 'low' });
+  ctx.panel.pushServerFrame({ type: 'ask-done', threadId: TID, messageId: 'askm_00000001', seq: 2, text: 'yo', status: 'done' });
+  await settle(ctx);
+  assert.equal(modelBtn(ctx).dataset.engine, 'codex');
+  moved = true;
+  ctx.panel.onHello([]);
+  await settle(ctx);
+  assert.equal(modelBtn(ctx).dataset.engine, 'claude');
+  ctx.doc.querySelector('textarea.ask-input').value = 'next';
+  ctx.doc.querySelector('[data-ask-send]').click();
+  await settle(ctx);
+  assert.equal(sent.at(-1).model, 'claude-opus-5-5', 'the next send uses the new engine\'s model');
+});
+
+test('a switch starts the context meter over: the old engine\'s fill and window are gone', async () => {
+  const sw = switchHandler({ posts: [] });
+  const ctx = await openCodexChat({ confirm: async () => true, fetchHandler: (url, opts) => {
+    const r = sw(url, opts);
+    if (url !== `/api/ask/threads/${TID}` || (opts.method && opts.method !== 'GET')) return r;
+    return { ...r, json: async () => { const b = await r.json(); b.thread.totals = { costUsd: 0, turns: 1, ctx: 180_000, ctxWindow: 200_000 }; return b; } };
+  } });
+  const meter = () => ctx.doc.querySelector('.ask-ctx-ring');
+  assert.equal(meter().getAttribute('aria-label'), 'Context window, 90% full');
+  modelBtn(ctx).click(); await ctx.tick();
+  row(ctx, 'Opus 5.5').click();
+  await settle(ctx);
+  assert.equal(modelBtn(ctx).dataset.engine, 'claude');
+  assert.equal(meter().getAttribute('aria-label'), 'Context window');
+});
+
+test('a reply that starts while the confirm is open: no commit, and the toast says why', async () => {
+  const posts = [];
+  let ctxRef = null;
+  const ctx = await openCodexChat({ fetchHandler: switchHandler({ posts }), confirm: async () => {
+    ctxRef.panel.pushServerFrame({ type: 'ask-start', threadId: TID, messageId: 'askm_00000009', userMessageId: 'askm_u0000009', seq: 1, startedAt: '2026-10-26T00:00:00Z', model: 'gpt-5.5', effort: 'low' });
+    return true;
+  } });
+  ctxRef = ctx;
+  ctx.doc.getElementById('toasts')?.replaceChildren();
+  modelBtn(ctx).click(); await ctx.tick();
+  row(ctx, 'Opus 5.5').click();
+  await settle(ctx);
+  assert.deepEqual(posts.map((p) => !!p.dryRun), [true], 'only the preview');
+  assert.equal(modelBtn(ctx).dataset.engine, 'codex');
+  assert.match(ctx.doc.querySelector('#toasts .toast.err').textContent, /A reply is running\. Switch engines when it finishes\./);
+});
+
+test('a refused switch offers the next step: a new preview when more turns now drop, else the engine\'s setup page', async () => {
+  const posts = [];
+  const ctx = await openCodexChat({ fetchHandler: switchHandler({ posts, refuse: { error: 'Claude will not see the 2 oldest turns of this chat: confirm that first', code: 'confirm-dropped-turns', droppedTurns: 2 } }) });
+  ctx.doc.getElementById('toasts')?.replaceChildren();
+  modelBtn(ctx).click(); await ctx.tick();
+  row(ctx, 'Opus 5.5').click();
+  await settle(ctx);
+  const again = ctx.doc.querySelector('#toasts .toast.err .toast-act');
+  assert.equal(again.textContent, 'Review again');
+  again.click();
+  await settle(ctx);
+  assert.deepEqual(posts.map((p) => !!p.dryRun), [true, false, true, false], 'a new preview, then a new commit');
+  const opened = [];
+  const setup = await openCodexChat({ fetchHandler: switchHandler({ posts: [], refuse: { error: 'Claude Code is not signed in', code: 'claude-signed-out', docsUrl: 'https://docs.example.test/claude', setupLabel: 'Set up Claude' } }) });
+  setup.window.open = (...a) => { opened.push(a); return null; };
+  setup.doc.getElementById('toasts')?.replaceChildren();
+  modelBtn(setup).click(); await setup.tick();
+  row(setup, 'Opus 5.5').click();
+  await settle(setup);
+  const act = setup.doc.querySelector('#toasts .toast.err .toast-act');
+  assert.equal(act.textContent, 'Set up Claude');
+  act.click();
+  assert.deepEqual(opened, [['https://docs.example.test/claude', '_blank', 'noopener']]);
 });

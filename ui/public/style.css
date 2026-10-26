@@ -9227,6 +9227,8 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .ask-divider-in{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:calc(100% - 56px);font-weight:500;}
 .ask-divider-in > svg{flex:none;}
 .ask-divider-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-divider-engine{color:var(--ink);}
+.ask-model-btn-engine{font-weight:500;color:var(--ink-2);}
 /* The chat question card (chat/question.mjs; canvas SwitchAsk): the Runs page's white ask-card grammar with grey lines,
    the canvas 18px heading, a name line (label + chip) over a mono sub-line per tile; two columns once the card is wide. */
 .chat-q{container:chat-q / inline-size;}

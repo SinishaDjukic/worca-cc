@@ -18,7 +18,7 @@ import {
   addAttachment, listAttachments, getAttachment, readAttachmentText, readAttachmentRaw,
   attachmentPath, attachmentSourcePath, attachmentSourceOrigin,
   linkRun, updateRunLink, listRunLinks,
-  listThreadsPage, setArchived, setPinned, THREAD_SORTS,
+  listThreadsPage, setArchived, setPinned, THREAD_SORTS, switchThreadEngine,
 } from '../src/core/ask/store.mjs';
 
 const HOME = useTempHome(after);
@@ -805,4 +805,23 @@ test('#948 s2: archive, pin and the paged list', async () => {
       assert.deepEqual(listThreadsPage({ ids: [] }).threads, []);
     } },
   ]);
+});
+
+test('appendMessage keeps a reply\'s engine; switchThreadEngine moves the chat and writes its divider in one transaction (#943)', () => {
+  const t = createThread();
+  updateThread(t.id, { model: 'gpt-5.5', effort: 'low', engine: 'codex', sessionId: 'codex:abc' });
+  appendMessage(t.id, { role: 'user', text: 'u' });
+  const a = appendMessage(t.id, { role: 'assistant', text: 'x', status: 'done', model: 'gpt-5.5', effort: 'low', engine: 'codex' });
+  addThreadTotals(t.id, { costUsd: 1.5, usage: { input: 10, output: 5, ctx: 180_000, ctxWindow: 200_000 } });
+  assert.equal(getMessage(a.id).engine, 'codex');
+  assert.equal(listMessages(t.id)[0].engine, null, 'a user row has none');
+  const { thread, message } = switchThreadEngine(t.id, { engine: 'claude', model: 'claude-opus-5-5', effort: 'high',
+    text: 'Switched from Codex to Claude', blocks: [{ kind: 'divider', text: 'Switched from Codex to Claude', engineSwitch: { from: 'codex', to: 'claude' } }] });
+  assert.deepEqual([thread.engine, thread.model, thread.effort, thread.sessionId], ['claude', 'claude-opus-5-5', 'high', null]);
+  assert.deepEqual([message.role, message.seq, message.text], ['system', 3, 'Switched from Codex to Claude']);
+  assert.deepEqual(message.blocks[0].engineSwitch, { from: 'codex', to: 'claude' });
+  assert.deepEqual([thread.totals.costUsd, thread.totals.turns, thread.totals.input], [1.5, 1, 10], 'the chat total spans every engine');
+  assert.deepEqual(['ctx' in thread.totals, 'ctxWindow' in thread.totals], [false, false], 'the context meter starts over');
+  assert.throws(() => switchThreadEngine('ask_ffffffff', { engine: 'claude', model: 'm', effort: 'high', text: 't', blocks: [] }), /unknown thread/);
+  assert.equal(listMessages(t.id).length, 3, 'nothing half-written');
 });

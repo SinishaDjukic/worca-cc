@@ -1313,7 +1313,7 @@ export function utilityModelsSetting() {
   const value = readSettings().utilityModels;
   return isObj(value) ? value : {};
 }
-/** Ask Worca's engine for NEW chats (cascading-settings-design.md D17): user-only; a chat keeps the engine it started on. */
+/** Ask Worca's engine for NEW chats (cascading-settings-design.md D17): user-only; a chat can move to another engine later (#943, POST /api/ask/threads/:id/engine). */
 export function askEngineSetting() {
   if (homeGuarded()) return undefined;
   const value = readSettings().askEngine;

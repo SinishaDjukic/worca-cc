@@ -28,7 +28,7 @@ import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
-import { engineOfEntry, chatEngineOf, pickerGroups, ASK_CHAT_ENGINES, isEngineSetupNotice } from './ask-engine.mjs';
+import { engineOfEntry, chatEngineOf, pickerGroups, ASK_CHAT_ENGINES, isEngineSetupNotice, engineSwitchConfirm, readEnginePicks, rememberEnginePick, engineLead, switchEffort, pickerEngineName } from './ask-engine.mjs';
 import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
 import { ATTACH_ACCEPT, ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
@@ -251,6 +251,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     pendingFiles: [],
     quote: null,          // Pinpoint (#669): {text, src?, code?} sent above the next message as a blockquote
     sending: false,
+    switching: false,
     subscribedFor: null,
     elapsedTimer: null,
     elapsedStart: null,
@@ -1553,8 +1554,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     modelBtn.type = 'button';
     modelBtn.setAttribute('data-ask-model-btn', '');
     modelBtn.dataset.minLevel = 'advanced';
+    el.modelBtnEngine = make('span', 'ask-model-btn-engine');   // #943: the engine, when the catalog offers more than one
+    el.modelBtnEngine.hidden = true;
     el.modelBtnLabel = make('span', 'ask-model-btn-label', st.picker.model);
     el.modelBtnEffort = make('span', 'ask-model-btn-effort', st.picker.effort);
+    modelBtn.appendChild(el.modelBtnEngine);
     modelBtn.appendChild(el.modelBtnLabel);
     modelBtn.appendChild(el.modelBtnEffort);
     modelBtn.appendChild(svgIcon(ICONS.chevronDown, 12, 2));
@@ -2005,13 +2009,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   // ---- catalog + picker (D8) ------------------------------------------------
   function catalogEntry(id) { return st.catalog ? st.catalog.models.find((m) => m && m.id === id) || null : null; }
-  /** The engine this chat is locked to (D12), or null for a chat without a turn yet. */
-  function lockedEngine() {
+  /** The engine this chat runs on now (D12; #943 lets the person move it), or null for a chat without a turn yet. */
+  function activeEngine() {
     const thread = st.model && typeof st.model.thread === 'function' ? st.model.thread() : null;
     return chatEngineOf(st.model ? st.model.messages() : [], st.picker.model, st.catalog, thread && thread.engine);
   }
-  /** The engine the next message will run on: the lock, else the picked model's. */
-  function pickerEngine() { return lockedEngine() || engineOfEntry(catalogEntry(st.picker.model)); }
+  /** The engine the next message will run on: the chat's, else the picked model's. */
+  function pickerEngine() { return activeEngine() || engineOfEntry(catalogEntry(st.picker.model)); }
 
   function updatePickerButton() {
     if (!el.modelBtnLabel) return;
@@ -2023,6 +2027,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // A model that takes no reasoning effort shows none (the bridge leaves it out).
     el.modelBtnEffort.textContent = entry && entry.noEffort ? '' : st.picker.effort;
     el.modelBtnEffort.hidden = !!(entry && entry.noEffort);
+    // #943: the button names the engine the next message runs on, in text whenever the catalog offers more than one
+    // engine (the extension's button says the same).
+    const eng = pickerEngine();
+    const engName = pickerEngineName(st.catalog ? st.catalog.models : [], eng);
+    el.modelBtnEngine.textContent = engName;
+    el.modelBtnEngine.hidden = !engName;
+    const btn = el.modelBtnLabel.parentNode;
+    if (btn) { btn.dataset.engine = eng; btn.title = `${engineLabel(eng)} · ${entry ? entry.label : st.picker.model}`; }
   }
 
   function coerceEffort(entry, effort) {
@@ -2182,6 +2194,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.pickerFromThread = false;                    // the user's own pick now, not the thread's
     st.pickerExplicit = true;
     storeModel();
+    rememberEnginePick(storage, pickerEngine(), st.picker);   // #943: this browser's last pick on this engine
     persistThreadPick();
     updatePickerButton();
     scheduleMcpRefresh();                           // the model sets the §5.6 tool-name limit
@@ -2193,10 +2206,77 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.picker = { ...st.picker, effort };
     st.effortFromStore = true;                      // the effort only — the model slot is untouched (D11)
     storeModel();
+    rememberEnginePick(storage, pickerEngine(), st.picker);   // #943: this browser's last pick on this engine
     persistThreadPick();
     updatePickerButton();
     closePopover({ focusTrigger: false });
     focusComposer();
+  }
+
+  // ---- engine switch (#943) ---------------------------------------------------
+  /** A model row's click: a model of the chat's engine (or any, before its first reply) is a pick; another engine's
+   *  model moves the chat there, after the server's preview and the person's confirm. */
+  function pickModelRow(m, engine) {
+    const active = activeEngine();
+    if (!active || engine === active) { setPickerModel(m.id); return; }
+    closePopover({ focusTrigger: false });
+    void switchEngine(m, engine);
+  }
+
+  async function postEngine(id, body) {
+    const res = await fetch(`/api/ask/threads/${id}/engine`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      // The refusal's code and setup link ride along: the toast offers the next step (askEnginePreflight).
+      const { code = null, docsUrl = null, setupLabel = null } = data || {};
+      throw Object.assign(new Error((data && data.error) || `request failed (${res.status})`), { code, docsUrl, setupLabel });
+    }
+    return data;
+  }
+
+  async function switchEngine(m, engine) {
+    const id = st.threadId;
+    if (!id || st.switching) return;
+    // Never mid-reply: the server refuses it too (TURN_IN_FLIGHT). A row can be enabled still when the menu opened
+    // before the reply began, so say why nothing happens.
+    const busyNote = () => notify({ tone: 'err', title: `Could not switch this chat to ${engineLabel(engine)}`, detail: 'A reply is running. Switch engines when it finishes.', key: `ask-engine-${id}` }, { doc });
+    if (turnBusy()) { busyNote(); return; }
+    st.switching = true;
+    try {
+      const effort = switchEffort(m, engine, readEnginePicks(storage), st.catalog && st.catalog.defaults);
+      const plan = await postEngine(id, { engine, model: m.id, effort, dryRun: true });
+      if (st.threadId !== id || st.destroyed) return;
+      const ok = await confirm(engineSwitchConfirm(plan, m.label || m.id, { noEffort: !!m.noEffort }));
+      if (!ok || st.threadId !== id || st.destroyed) { focusComposer(); return; }
+      if (turnBusy()) { busyNote(); focusComposer(); return; }   // a reply began while the confirm was open: the server would refuse
+      const done = await postEngine(id, { engine, model: plan.model, effort: plan.effort, dropTurns: plan.transcript.droppedTurns });
+      rememberEnginePick(storage, engine, done.engineSwitch);
+      // The same frames the server broadcast, applied now: this tab need not wait for the socket (a repeat is a no-op).
+      pushServerFrame({ type: 'ask-message', threadId: id, message: done.message });
+      pushServerFrame({ type: 'ask-engine', threadId: id, ...done.engineSwitch, ...(done.thread && done.thread.totals ? { threadTotals: done.thread.totals } : {}) });
+      focusComposer();
+    } catch (e) {
+      // The next step, when there is one: a new preview (more turns now drop), or the engine's setup page.
+      const again = !!e && e.code === 'confirm-dropped-turns';
+      const action = again ? { label: 'Review again', run: () => { void switchEngine(m, engine); } }
+        : e && e.docsUrl ? { label: e.setupLabel || 'Set up', run: () => { try { win.open(e.docsUrl, '_blank', 'noopener'); } catch { /* blocked */ } } }
+          : null;
+      notify({ tone: 'err', title: `Could not switch this chat to ${engineLabel(engine)}`, detail: (e && e.message) || 'network error', action, key: `ask-engine-${id}` }, { doc });
+      focusComposer();
+    } finally {
+      st.switching = false;
+    }
+  }
+
+  /** The open chat moved to another engine (this tab's switch, or another tab's ask-engine frame): the picker shows the
+   *  new pair as the thread's own. */
+  function applyEnginePick(frame) {
+    if (frame.threadId !== st.threadId || typeof frame.model !== 'string' || typeof frame.effort !== 'string') return;
+    st.picker = { model: frame.model, effort: frame.effort };
+    st.pickerFromThread = true;
+    st.pickerExplicit = false;
+    updatePickerButton();
+    scheduleMcpRefresh();
   }
 
   function openModelPopover(trigger) {
@@ -2208,8 +2288,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (title) t.title = title;
       return t;
     };
-    const modelItem = (m) => {
-      const item = menuItem('ask-model-item', () => setPickerModel(m.id));
+    const modelItem = (m, engine) => {
+      const active = activeEngine();
+      const moves = !!active && !!engine && engine !== active;   // #943: this row moves the chat to another engine
+      const item = menuItem('ask-model-item', () => pickModelRow(m, engine || engineOfEntry(m)));
+      if (moves) {
+        item.dataset.engine = engine;
+        if (turnBusy() || st.switching) { item.disabled = true; item.title = 'Wait for this reply to finish before switching engines.'; }
+      }
       // The row carries NO provenance: a plugin name is arbitrary text and an origin
       // badge starved the label in a 292px panel. Where a model comes from is the
       // Models view's job; here the name is the thing being picked.
@@ -2226,10 +2312,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (m.needsSignIn) {
         item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet. See the Providers page.'));
       }
+      if (moves && (readEnginePicks(storage)[engine] || {}).model === m.id) item.appendChild(tag('last used', null, 'The model you last used on this engine.'));
       // Credential broker: whether the signed-in person has the key this model spends from.
       const cb = credentialBadge(m.id);
       if (cb) item.appendChild(tag(cb.text, cb.missing ? 'is-err' : 'is-key', cb.title));
-      if (m.id === st.picker.model) item.appendChild(checkMark());
+      if (m.id === st.picker.model && !moves) item.appendChild(checkMark());   // #943: never on the same model in another engine's section
       return item;
     };
     // Inside an engine's section the models group by connection, like every model picker (modelGroups); a sub-heading
@@ -2238,8 +2325,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const groups = modelGroups(models, { engine });
       for (const c of groups) {
         if (groups.length > 1) panel.appendChild(make('div', 'ask-pop-subgroup', c.label));
-        for (const m of c.models) panel.appendChild(modelItem(m));
+        for (const m of c.models) panel.appendChild(modelItem(m, engine));
       }
+    };
+    // #943: another engine's section leads with the model last used there (else its default), in BOTH panes, so the
+    // main/more split is the same and no model falls between them.
+    const sectionSplit = (g, active) => {
+      const lead = active && g.engine !== active ? engineLead(g.models, readEnginePicks(storage)[g.engine], ((st.catalog && st.catalog.defaults) || {})[g.engine]) : null;
+      return splitCatalog(lead ? [lead, ...g.models.filter((x) => x !== lead)] : g.models);
     };
     let shownPane = 'main';
     let effortPaneKey = '';   // the model + effort list the effort pane was painted from
@@ -2268,19 +2361,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         panel.appendChild(back);
         panel.appendChild(make('div', 'ask-pop-divider'));
         // Each engine's more models under its name, as in the main pane, when more than one engine has some.
-        const more = pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() })
-          .map((g) => ({ ...g, rest: splitCatalog(g.models).rest })).filter((g) => g.rest.length);
+        const activeNow = activeEngine();
+        const more = pickerGroups(st.catalog ? st.catalog.models : [], { active: activeNow })
+          .map((g) => ({ ...g, rest: sectionSplit(g, activeNow).rest })).filter((g) => g.rest.length);
         for (const g of more) {
           if (more.length > 1) panel.appendChild(make('div', 'ask-pop-group', g.label));
           appendByConnection(g.rest, g.engine);
         }
       } else {
-        // D12: a new chat shows each engine under its name; inside a chat only the chat's engine is offered.
-        const sections = pickerGroups(st.catalog ? st.catalog.models : [], { lock: lockedEngine() });
+        // D12 / #943: every engine under its name; the chat's own is marked, and another engine's section leads with the
+        // model last used there (else its default): picking one moves the chat after a confirm.
+        const active = activeEngine();
+        const sections = pickerGroups(st.catalog ? st.catalog.models : [], { active });
         const rest = [];
         for (const g of sections) {
           if (sections.length > 1) panel.appendChild(make('div', 'ask-pop-group', g.label));
-          const split = splitCatalog(g.models);
+          const split = sectionSplit(g, active);
           appendByConnection(split.primary, g.engine);
           rest.push(...split.rest);
         }
@@ -3086,12 +3182,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // centered between two hairlines. A project's Git/Folder chip comes from the cached /api/projects; No project and an
   // unknown project get none.
   function buildDivider(b) {
-    const s = scopeFromContext(b.scope);
     const text = String(b.text || '');
     const d = make('div', 'ask-divider');
     d.setAttribute('role', 'separator');
     d.setAttribute('aria-label', text);
     const inner = make('span', 'ask-divider-in');
+    if (b.engineSwitch) {   // #943: "Switched from Codex to Claude", between two hairlines
+      d.classList.add('ask-divider-engine');
+      inner.appendChild(make('span', 'ask-divider-t', text));
+      d.appendChild(inner);
+      return d;
+    }
+    const s = scopeFromContext(b.scope);
     inner.append(scopeIcon(doc, scopeKind(s), 13), make('span', 'ask-divider-t', text));
     if (s.workspaceId) inner.appendChild(kindChip(doc, 'ws'));
     else if (s.projectKey) {
@@ -6463,6 +6565,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (switched) stopVoice();
     st.threadId = id;
     if (st.open && st.unread && st.unreadThread === id) setUnread(false);   // the dot's chat is on screen now
+    // #943: the engine this tab last knew. activeEngine, not thread.engine: a chat begun in this tab was loaded from
+    // the create answer, whose engine is null until a reload.
+    const wasEngine = !switched && st.model ? activeEngine() : null;
     st.model = createThreadModel({ threadId: id });
     st.model.load(snap);
     if (switched) { st.hist = { idx: -1, draft: '' }; st.suggestDismissed = null; }
@@ -6477,7 +6582,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     setContexts(snap.thread && snap.thread.contexts);
     // The picker follows the chat — on a SWITCH only: a resync of the same thread
     // would otherwise clobber a pick the user just made (its PATCH may not have landed).
-    if (switched) applyThreadPick(snap.thread);
+    // #943: and on a resync that finds the chat on another engine (moved in another tab while this one was offline):
+    // the old pick would only be refused.
+    const nowEngine = snap.thread && snap.thread.engine;
+    if (switched || (wasEngine && nowEngine && nowEngine !== wasEngine)) applyThreadPick(snap.thread);
     if (switched) st.mcp.off = mcpOffOf(snap.thread && snap.thread.mcpOff);   // §9.4: the chat's own choices
     scheduleMcpRefresh();
     renderTranscript();
@@ -6611,6 +6719,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     else if (frame.type === 'ask-message' && frame.message && typeof frame.message.text === 'string'
       && /is waiting for your answer/.test(frame.message.text)) announce('run needs an answer');
+    if (frame.type === 'ask-engine') applyEnginePick(frame);   // #943
   }
 
   // Settings → "Delete all chat history" broadcast (seq-less, threadId-less): every

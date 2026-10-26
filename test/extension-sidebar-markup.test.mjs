@@ -127,3 +127,12 @@ test('the file chip and the drop overlay have Ask\'s skeleton', async () => {
   assert.deepEqual(skeleton(buildDropOverlay(h.doc)), skeleton(refDrop));
   assert.equal(buildDropOverlay(h.doc).textContent, refDrop.textContent);
 });
+
+test('#943: an engine switch\'s row shows its "Switched from … to …" line, then the note', async () => {
+  const h = await loaded();
+  const row = { id: 'askm_s0000001', threadId: TID, seq: 4, role: 'system', text: 'Switched from Codex to Claude', blocks: [
+    { kind: 'divider', text: 'Switched from Codex to Claude', engineSwitch: { from: 'codex', to: 'claude', model: 'claude-opus-5-5', effort: 'high', droppedTurns: 0 } },
+    { kind: 'notice', text: 'Claude starts a fresh session with this chat\'s transcript as its context.' }], createdAt: 't' };
+  const lines = [...buildRow(h.doc, row, opts(row)).el.querySelectorAll('.ask-notice')].map((n) => n.textContent);
+  assert.deepEqual(lines, ['Switched from Codex to Claude', 'Claude starts a fresh session with this chat\'s transcript as its context.']);
+});

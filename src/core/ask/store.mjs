@@ -81,7 +81,7 @@ function rowToMessage(r) {
   return {
     id: r.id, threadId: r.thread_id, seq: r.seq, role: r.role, text: r.text ?? '',
     blocks: parse(r.blocks, null), status: r.status ?? null, reason: r.reason ?? null,
-    model: r.model ?? null, effort: r.effort ?? null, usage: parse(r.usage, null),
+    model: r.model ?? null, effort: r.effort ?? null, engine: r.engine ?? null, usage: parse(r.usage, null),
     costUsd: r.cost_usd ?? null, durationMs: r.duration_ms ?? null, createdAt: r.created_at,
   };
 }
@@ -540,21 +540,51 @@ export function sweepEmptyThreads({ olderThanMs = 24 * 60 * 60 * 1000, now: nowM
 
 // ── messages ────────────────────────────────────────────────────────────────
 
-/** seq = MAX(seq)+1 inside tx(): follower notices interleave with turns (spec §7.1). */
-export function appendMessage(threadId, { role, text = '', blocks = null, status = null, model = null, effort = null } = {}) {
+/** One message row, inside the caller's tx(): seq = MAX(seq)+1 (spec §7.1). Returns the new id. */
+function insertMessage(threadId, { role, text = '', blocks = null, status = null, model = null, effort = null, engine = null }, t) {
+  const { next } = prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM ask_messages WHERE thread_id = ?').get(threadId);
+  const id = newAskId('askm');
+  prepare(`INSERT INTO ask_messages (id, thread_id, seq, role, text, blocks, status, model, effort, engine, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, threadId, next, role, String(text ?? ''), str(blocks), status, model, effort, engine, t);
+  return id;
+}
+
+/** seq = MAX(seq)+1 inside tx(): follower notices interleave with turns (spec §7.1). `engine`: the engine a reply runs
+ *  on (#943), null for user and system rows. */
+export function appendMessage(threadId, { role, text = '', blocks = null, status = null, model = null, effort = null, engine = null } = {}) {
   if (!ROLES.has(role)) throw new Error(`appendMessage: invalid role ${JSON.stringify(role)}`);
   return tx(() => {
     if (!prepare('SELECT 1 FROM ask_threads WHERE id = ?').get(threadId)) {
       throw new Error(`appendMessage: unknown thread ${threadId}`);
     }
-    const { next } = prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM ask_messages WHERE thread_id = ?').get(threadId);
-    const id = newAskId('askm');
     const t = now();
-    prepare(`INSERT INTO ask_messages (id, thread_id, seq, role, text, blocks, status, model, effort, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, threadId, next, role, String(text ?? ''), str(blocks), status, model, effort, t);
+    const id = insertMessage(threadId, { role, text, blocks, status, model, effort, engine }, t);
     prepare('UPDATE ask_threads SET updated_at = ? WHERE id = ?').run(t, threadId);
     return getMessage(id);
+  });
+}
+
+/**
+ * #943: move a chat to another engine in ONE transaction: the thread's engine, model and effort, no provider session
+ * (the destination starts a fresh one from the transcript, turn.mjs), and the system row that marks the boundary.
+ * Throws for an unknown thread and writes nothing then.
+ */
+export function switchThreadEngine(threadId, { engine, model, effort, text, blocks }) {
+  return tx(() => {
+    const t = now();
+    const row = prepare('SELECT totals FROM ask_threads WHERE id = ?').get(threadId);
+    if (!row) throw new Error(`switchThreadEngine: unknown thread ${threadId}`);
+    // The context meter starts over: the fresh session has no fill yet, and the old model's window is not the new
+    // one (addThreadTotals keeps the last window when a turn reports none, and only Claude reports one). Cost, tokens
+    // and turns stay: the chat's total spans every engine.
+    const totals = { ...emptyTotals(), ...(parse(row.totals, {}) || {}) };
+    delete totals.ctx;
+    delete totals.ctxWindow;
+    prepare('UPDATE ask_threads SET engine = ?, model = ?, effort = ?, session_id = NULL, totals = ?, updated_at = ? WHERE id = ?')
+      .run(engine, model, effort, JSON.stringify(totals), t, threadId);
+    const id = insertMessage(threadId, { role: 'system', text, blocks }, t);
+    return { thread: getThread(threadId), message: getMessage(id) };
   });
 }
 

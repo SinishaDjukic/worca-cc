@@ -11,6 +11,24 @@ import { modelHasBaseUrlRouting } from './config.mjs';
 import { configuredClaudeBin } from './onboarding.mjs';
 
 /**
+ * Whether a chat moving to Claude must be refused because the CLI is signed out (#943, POST
+ * /api/ask/threads/:id/engine): only a definite 'signed-out' does. A relayed chat runs as the person's agent user, with
+ * that user's own sign-in (turn.mjs _engineGate skips the check for it), and a model routed to an endpoint or the
+ * bridge authenticates there (as failedBecauseSignedOut below), so neither asks the CLI's sign-in.
+ * @param {{model?:string, relay?:boolean, mock?:boolean, bin?:string, probe?:typeof probeClaudeAuth, routed?:(model:string)=>boolean}} o
+ *   `probe` / `routed` are injectable for tests.
+ * @returns {Promise<boolean>}
+ */
+export async function claudeChatSignedOut({
+  model, relay = false, mock, bin = configuredClaudeBin(), probe = probeClaudeAuth, routed = modelHasBaseUrlRouting,
+} = {}) {
+  try {
+    if (relay || (model && routed(model))) return false;
+    return (await probe({ bin, mock })).state === 'signed-out';
+  } catch { return false; }
+}
+
+/**
  * Never throws.
  * @param {{message?:string, model?:string, bin?:string, probe?:typeof probeClaudeAuth, routed?:(model:string)=>boolean}} o
  *   `probe` / `routed` are injectable for tests.

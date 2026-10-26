@@ -3,7 +3,7 @@
 // so nothing here spawns a claude binary.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { failedBecauseSignedOut } from '../src/core/claude-auth.mjs';
+import { failedBecauseSignedOut, claudeChatSignedOut } from '../src/core/claude-auth.mjs';
 
 const probeSays = (state, calls = []) => async (o) => { calls.push(o); return { state, source: 'cli', detail: null }; };
 const notRouted = () => false;
@@ -31,4 +31,17 @@ test('a model routed to an endpoint / the bridge never blames the CLI sign-in', 
 
 test('never throws', async () => {
   assert.equal(await failedBecauseSignedOut({ message: 'x', probe: async () => { throw new Error('boom'); }, routed: notRouted }), false);
+});
+
+test('claudeChatSignedOut: a switch to Claude asks the CLI sign-in only for a first-party model on a chat that is not relayed (#943)', async () => {
+  const calls = [];
+  assert.equal(await claudeChatSignedOut({ model: 'claude-opus-5-5', bin: 'claude', mock: false, probe: probeSays('signed-out', calls), routed: notRouted }), true);
+  assert.deepEqual(calls, [{ bin: 'claude', mock: false }]);
+  assert.equal(await claudeChatSignedOut({ model: 'claude-opus-5-5', probe: probeSays('signed-in'), routed: notRouted }), false);
+  assert.equal(await claudeChatSignedOut({ model: 'claude-opus-5-5', probe: probeSays('unknown'), routed: notRouted }), false, 'unknown never refuses');
+  calls.length = 0;
+  assert.equal(await claudeChatSignedOut({ model: 'claude-opus-5-5', relay: true, probe: probeSays('signed-out', calls), routed: notRouted }), false, 'a relayed chat signs in as its agent user');
+  assert.equal(await claudeChatSignedOut({ model: 'glm-4.7', probe: probeSays('signed-out', calls), routed: () => true }), false, 'an endpoint-routed model authenticates at its endpoint');
+  assert.equal(calls.length, 0);
+  assert.equal(await claudeChatSignedOut({ model: 'claude-opus-5-5', probe: async () => { throw new Error('boom'); }, routed: notRouted }), false, 'never throws');
 });

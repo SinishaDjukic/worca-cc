@@ -147,13 +147,13 @@ import {
   createChatGroup as askCreateChatGroup, getChatGroup as askGetChatGroup, listChatGroups as askListChatGroups,
   renameChatGroup as askRenameChatGroup, addToChatGroup as askAddToChatGroup, removeFromChatGroup as askRemoveFromChatGroup,
   deleteChatGroup as askDeleteChatGroup, chatGroupThreadIds as askChatGroupThreadIds, firstUserText as askFirstUserText,
-  ChatGroupError,
+  ChatGroupError, switchThreadEngine as askSwitchThreadEngine,
 } from '../src/core/ask/store.mjs';
 import { CHAT_BUSY, chatBusyReason, chatGroupBusyText } from '../src/shared/chat-busy.mjs';
 import { revealTargetFor as askRevealTargetFor } from '../src/core/ask/show-files-deps.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { stripIntentLead } from '../src/shared/intent-leads.mjs';
-import { ASK_LIMITS } from '../src/core/ask/limits.mjs';
+import { ASK_LIMITS, askLimits as askLimitsFor } from '../src/core/ask/limits.mjs';
 import { contextEntries as askContextEntries } from '../src/core/ask/contexts.mjs';
 import { askWebAccess, WEB_OFF } from '../src/core/ask/web-access.mjs';
 import { askCatalog, validateModelEffort, chatEngine as askChatEngineOf, askEventPick as askEventPickOf, eventFallbackNotice } from '../src/core/ask/models.mjs';
@@ -161,6 +161,7 @@ import { buildCatalog as askBuildCatalog } from '../src/core/ask/catalog.mjs';
 import {
   buildSystemPrompt as askBuildSystemPrompt, buildComposerSystemPrompt as askBuildComposerSystemPrompt, buildContextHeader as askBuildContextHeader,
   buildTurnPrompt as askBuildTurnPrompt, buildRestoredPrompt as askBuildRestoredPrompt,
+  buildHandoffPrompt as askBuildHandoffPrompt, handoffBudgetChars as askHandoffBudgetChars, needsHandoff as askNeedsHandoff,
   selectInlineAttachments as askSelectInlineAttachments, validateClientContext,
 } from '../src/core/ask/prompt.mjs';
 import { askScriptPromptInput, scriptToolsEnabled } from '../src/core/ask/script-deps.mjs';
@@ -273,8 +274,10 @@ import {
 } from '../src/core/config.mjs';
 import { listGlobalModels, addGlobalModel, updateGlobalModel, readSettings } from '../src/core/settings.mjs';
 import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, COPILOT_EFFORTS, GOOSE_EFFORTS, OPENCODE_EFFORTS, helperEngineFor, ASK_ENGINES, lockedChatEngine } from '../src/core/model-env.mjs';
-import { engineLabel, ENGINE_NAMES, engineRefusalFor, ENGINES, chatAttachRefusal } from '../src/shared/engine-switch.mjs';
+import { engineLabel, ENGINE_NAMES, engineRefusalFor, ENGINES, chatAttachRefusal, chatSwitchChanges } from '../src/shared/engine-switch.mjs';
 import { engineReadiness, engineLocks } from '../src/core/engines/readiness.mjs';
+import { chatDescriptor, chatEngineGate } from '../src/core/engines/chat.mjs';   // #943: the switch route runs the turn's gate
+import { chatModelRates } from '../src/core/ask/chat-price.mjs';
 import { providerReadiness } from '../src/core/bridge/registry.mjs';
 import { startBridge } from '../src/core/bridge/server.mjs';
 import {
@@ -433,7 +436,7 @@ import { onboardingPrefs, setOnboardingPrefs } from '../src/core/settings.mjs';
 import { settingsErrorReply, asSettingsField } from '../src/core/settings-errors.mjs';
 import { configuredClaudeBin, onboardingStatus } from '../src/core/onboarding.mjs';   // a THIRD settings import line (the two blocks above are unrelated readers)
 import { probeClaudeAuth, CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../src/core/preflight.mjs';
-import { failedBecauseSignedOut } from '../src/core/claude-auth.mjs';
+import { failedBecauseSignedOut, claudeChatSignedOut } from '../src/core/claude-auth.mjs';
 import { createAgentGen, resolveAgentGenModel } from '../src/core/agent-gen.mjs';
 import { listAgents, readAgent, createAgent, updateAgent, deleteAgent, AGENT_KEY_RE } from '../src/core/agent-store.mjs';
 import {
@@ -14799,7 +14802,7 @@ function mockAskCard(ctx = {}, text = '') {
     note: 'Mock proposal: a fixed shape so the offline card can be exercised.' };
 }
 
-/** The engine an existing Ask chat is locked to (D12), or null before its first turn (any engine may start it). */
+/** The engine an existing Ask chat runs on now (D12; #943 moves it), or null before its first turn (any engine may start it). */
 function askChatEngine(threadId, thread) {
   if (!thread) return null;
   return askListMessages(threadId).some((m) => m && m.role === 'assistant') ? askChatEngineOf(thread) : null;
@@ -14856,6 +14859,12 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
   // loser leaves no rows.
   if (askDeleting.has(id)) return { ok: false, status: 409, error: 'thread is being deleted' };
   if (askInFlight(id)) return { ok: false, status: 409, error: 'turn in flight' };
+  // #943: an engine switch can commit while the caller awaited after reading `thread` (a scope change, askEventPick).
+  // A turn from that snapshot would run on the engine the chat just left, resume its session and store it again.
+  const live = askGetThread(id);
+  if (live && askChatEngine(id, live) !== askChatEngine(id, thread)) {   // null before the first reply: nothing to protect yet
+    return { ok: false, status: 409, error: 'this chat moved to another engine meanwhile: send your message again', code: 'engine-changed' };
+  }
   const composerMode = thread.mode === 'composer';
   // D5 backstop, before anything is stored: an engine Ask does not run on (Cursor). The catalog filter
   // (ask/models.mjs) already makes such a model unknown to validateModelEffort.
@@ -14916,7 +14925,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       ]);
     }
     broadcast({ type: 'ask-message', threadId: id, message: askGetMessage(userMsg.id) }); // echo for other tabs
-    asstMsg = askAppendMessage(id, { role: 'assistant', text: '', status: 'streaming', model, effort });
+    asstMsg = askAppendMessage(id, { role: 'assistant', text: '', status: 'streaming', model, effort, engine: modelEngine || 'claude' });   // #943: per-reply engine
     job.messageId = asstMsg.id;
 
     // Prompt assembly (§6.5) — the route owns it; the turn only spawns. The header context
@@ -14962,6 +14971,12 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const prompt = askBuildTurnPrompt(composerBlock ? `${header}\n\n${composerBlock}` : header, text, inline);
     const prior = askListMessages(id).filter((m) => m.seq < userMsg.seq);
     const restoredPrompt = askBuildRestoredPrompt(prior, prompt);
+    // #943: no provider session but replies already — the first turn after an engine switch, or after a failed resume
+    // cleared the session — starts fresh WITH the transcript (text plus one line per tool call, card, run, attachment;
+    // never a tool's output), cut to the model's budget.
+    const handoff = askNeedsHandoff(thread, prior)
+      ? askBuildHandoffPrompt(prior, prompt, { to: engine, maxChars: askHandoffBudgetChars(await askContextTokens(model)) })
+      : null;
     const attachmentNames = {};
     for (const a of askListAttachments(id)) attachmentNames[a.id] = a.name;
 
@@ -14971,7 +14986,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     turn = createAskTurn({
       threadId: id, assistantMessageId: asstMsg.id, userMessageId: userMsg.id,
       reader: turnReader,
-      prompt, systemPrompt, restoredPrompt,
+      prompt: handoff ? handoff.prompt : prompt, systemPrompt, restoredPrompt,
       model, effort,
       resumeSessionId: thread.sessionId || null,
       firstTurn: !synthetic && userMsg.seq === 1 && titleWasAuto, // P3: an event never titles the thread (D13 guard kept)
@@ -15063,6 +15078,136 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
   return { ok: true, job, userMessageId: job.userMessageId, assistantMessageId: job.messageId, attachments: echoAttachments };
 }
 
+// ---------------------------------------------------------------------------
+// #943: an existing chat moves to another engine. Preview (dryRun) → the panel's confirm → commit. Both phases run the
+// destination's own checks first, so a refused engine never reaches the confirm, and the commit changes everything in
+// ONE transaction, so a refusal leaves the chat as it was.
+// ---------------------------------------------------------------------------
+const ASK_ENGINE_BUSY = 'wait for this reply to finish before switching the chat\'s engine';
+/** The text of the system row that marks a switch (and that the handoff transcript then carries). */
+const askEngineSwitchText = (from, to) => `Switched from ${engineLabel(from)} to ${engineLabel(to)}`;
+
+/** A model's context in tokens (model-tiers.mjs modelFacts; null = unknown, which handoffBudgetChars reads as 200k). */
+async function askContextTokens(model) {
+  try {
+    const f = modelFacts(await listModels('')).find((x) => x.id === model) || modelFacts([{ id: model }])[0];
+    return f ? f.context : null;
+  } catch { return null; }
+}
+
+/** The destination's checks before any write, for a model the route already validated: broker policy, the person's
+ *  key, then Claude's sign-in (claudeChatSignedOut) or the engine's own turn gate (lockdown, model, cost cap,
+ *  binary flags, self-test, sign-in). → {ok:true} | {ok:false, status, error, code, docsUrl?, setupLabel?} */
+async function askEnginePreflight({ thread, engine, model, req }) {
+  const broker = brokerEngineRefusal(engine);
+  if (broker) return { ok: false, status: 409, error: `${engineLabel(engine)}: ${broker}`, code: 'engine-broker' };
+  const mock = mockEnabled({});
+  if (!mock) {
+    const refusal = await brokerStartRefusal(req, [model]);
+    if (refusal) return { ok: false, status: 409, error: refusal, code: 'credential-missing' };
+  }
+  if (engine === 'claude') {
+    // As the turn: a relayed chat signs in as its agent user, and an endpoint-routed model at its endpoint.
+    if (await claudeChatSignedOut({ model, relay: !!agentIdentity(), mock })) {
+      return { ok: false, status: 409, error: CLAUDE_SIGNED_OUT_MESSAGE, code: CLAUDE_SIGNED_OUT_CODE };
+    }
+    return { ok: true };
+  }
+  const d = chatDescriptor(engine);
+  const limits = askLimitsFor({ projectKey: chatScopeOf(thread.context)?.projectKey || null });
+  const gate = await chatEngineGate(d, { model, capped: limits.maxBudgetUsd != null,
+    modelPriced: (m) => !!chatModelRates(d, m), mock, relay: !!agentIdentity() });
+  if (gate) {
+    return { ok: false, status: 409, error: gate.message, code: gate.code || 'engine-refused',
+      ...(gate.notReady ? { docsUrl: d.notReady.docsUrl, setupLabel: d.notReady.setupLabel } : {}) };
+  }
+  return { ok: true };
+}
+
+/** The turns the first turn after a switch leaves out of its transcript, counted WITH the switch's own row (that turn
+ *  sees it). Synchronous, so the commit can recount with no await before its transaction. */
+function askSwitchTranscript(id, { from, to, budget }) {
+  const rows = [...askListMessages(id), { role: 'system', text: askEngineSwitchText(from, to), blocks: [] }];
+  const hand = askBuildHandoffPrompt(rows, '', { to, maxChars: budget });
+  return { totalTurns: hand.totalTurns, droppedTurns: hand.droppedTurns };
+}
+
+/** What the switch would do, for the confirm: the static changes, both models' context windows, the MCP servers the
+ *  destination cannot start, the attachments it cannot view (it gets their names), and the turns its context leaves
+ *  out. Writes nothing. */
+async function askEngineSwitchPlan(id, thread, { from, to, model, effort }) {
+  const [fromTokens, toTokens] = await Promise.all([askContextTokens(thread.model), askContextTokens(model)]);
+  const attachments = askListAttachments(id)
+    .filter((a) => chatAttachRefusal({ engine: to, kind: a.kind, pdf: a.mime === 'application/pdf' }))
+    .map((a) => ({ id: a.id, name: a.name }));
+  const ctx = thread.context || {};
+  const [src, dst] = await Promise.all([
+    resolveAskMcp({ ctx, threadId: id, off: thread.mcpOff, model: thread.model, engine: from }),
+    resolveAskMcp({ ctx, threadId: id, off: thread.mcpOff, model, engine: to }),
+  ]);
+  const kept = new Set(((dst.result && dst.result.copies) || []).map((c) => c.name));
+  const mcpLost = ((src.result && src.result.copies) || []).filter((c) => !kept.has(c.name)).map((c) => c.copy || c.name);
+  return { from, to, model, effort, changes: chatSwitchChanges(from, to), mcpLost, attachments,
+    context: { from: fromTokens, to: toTokens },
+    transcript: askSwitchTranscript(id, { from, to, budget: askHandoffBudgetChars(toTokens) }) };
+}
+
+/** The switch itself: one transaction (store.mjs switchThreadEngine), then the frames every open tab applies. */
+function commitAskEngineSwitch(id, { from, to, model, effort, droppedTurns }) {
+  const text = askEngineSwitchText(from, to);
+  const note = `${engineLabel(to)} starts a fresh session with this chat's transcript as its context${droppedTurns ? `, without the ${droppedTurns} oldest turns` : ''}. Earlier tool calls, cards and runs are not repeated.`;
+  const done = askSwitchThreadEngine(id, { engine: to, model, effort, text,
+    blocks: [{ kind: 'divider', text, engineSwitch: { from, to, model, effort, droppedTurns } }, { kind: 'notice', text: note }] });
+  broadcast({ type: 'ask-message', threadId: id, message: done.message });
+  broadcast({ type: 'ask-engine', threadId: id, engine: to, model, effort, threadTotals: done.thread.totals });
+  return done;
+}
+
+app.post('/api/ask/threads/:id/engine', async (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  try {
+    const thread = askGetThread(id);
+    if (!thread) return res.status(404).json({ error: 'thread not found' });
+    if (req.worcaExtension) return res.status(403).json({ error: 'switch a chat\'s engine in the Worca app', code: 'extension-route' });
+    if (thread.mode === 'composer') return badRequest(res, 'a Workflows chat keeps its engine');
+    const body = req.body || {};
+    if (typeof body.engine !== 'string' || !ASK_ENGINES.includes(body.engine)) return badRequest(res, 'engine must be a chat engine');
+    if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') return badRequest(res, 'dryRun must be true or false');
+    if (body.dropTurns !== undefined && !(Number.isInteger(body.dropTurns) && body.dropTurns >= 0)) return badRequest(res, 'dropTurns must be a whole number');
+    if (askDeleting.has(id)) return res.status(409).json({ error: 'thread is being deleted' });
+    if (askInFlight(id)) return res.status(409).json({ error: ASK_ENGINE_BUSY, code: 'TURN_IN_FLIGHT' });
+    const from = askChatEngine(id, thread);
+    if (!from) return res.status(409).json({ error: 'this chat has no reply yet: its first message runs on the model you pick', code: 'no-engine-yet' });
+    const to = body.engine;
+    if (to === from) return badRequest(res, `this chat already runs on ${engineLabel(to)}`);
+    const mv = await validateModelEffort(body.model, body.effort, { engine: to });
+    // validateModelEffort words a model of another engine for a message ("this chat runs on …"): a switch names its target.
+    if (!mv.ok) return badRequest(res, /^this chat runs on /.test(mv.error) ? `${body.model} does not run on ${engineLabel(to)}: pick a model from its section` : mv.error);
+    const plan = await askEngineSwitchPlan(id, thread, { from, to, model: mv.model, effort: mv.effort });
+    const pre = await askEnginePreflight({ thread, engine: to, model: mv.model, req });
+    if (!pre.ok) {
+      return res.status(pre.status).json({ error: pre.error, code: pre.code, ...(pre.docsUrl ? { docsUrl: pre.docsUrl, setupLabel: pre.setupLabel } : {}) });
+    }
+    if (body.dryRun === true) return res.json(plan);
+    // From here no await: re-check what the awaits above may have changed, then one transaction.
+    if (askDeleting.has(id)) return res.status(409).json({ error: 'thread is being deleted' });
+    if (askInFlight(id)) return res.status(409).json({ error: ASK_ENGINE_BUSY, code: 'TURN_IN_FLIGHT' });
+    const cur = askGetThread(id);
+    if (!cur) return res.status(404).json({ error: 'thread not found' });
+    if (askChatEngine(id, cur) !== from) return res.status(409).json({ error: 'this chat changed engine meanwhile: open the model picker again', code: 'engine-changed' });
+    // Recounted now, not taken from the plan: a turn that ran during the preflight's awaits can have added rows.
+    const dropped = askSwitchTranscript(id, { from, to, budget: askHandoffBudgetChars(plan.context.to) }).droppedTurns;
+    if (dropped > 0 && body.dropTurns !== dropped) {
+      return res.status(409).json({ error: `${engineLabel(to)} will not see the ${dropped} oldest turns of this chat: confirm that first`, code: 'confirm-dropped-turns', droppedTurns: dropped });
+    }
+    const done = commitAskEngineSwitch(id, { from, to, model: mv.model, effort: mv.effort, droppedTurns: dropped });
+    res.json({ ok: true, thread: done.thread, message: done.message, engineSwitch: { engine: to, model: mv.model, effort: mv.effort } });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 app.post('/api/ask/threads/:id/messages', async (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
@@ -15088,7 +15233,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     // readable by the agent. Refused before the model check, which no longer lists Codex rows.
     const chatEngine = askChatEngine(id, thread);
     const engineRefusal = brokerEngineRefusal(chatEngine);
-    if (engineRefusal) return res.status(409).json({ error: `This chat runs on ${engineLabel(chatEngine)}: ${engineRefusal}. Start a new chat on Claude.`, code: 'engine-broker' });
+    if (engineRefusal) return res.status(409).json({ error: `This chat runs on ${engineLabel(chatEngine)}: ${engineRefusal}. Switch it to Claude from the Chat model picker.`, code: 'engine-broker' });
     const mv = await validateModelEffort(body.model, body.effort, { engine: chatEngine });
     if (!mv.ok) return badRequest(res, mv.error);
     if (!mockEnabled({})) {
@@ -15174,7 +15319,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     if (composerState) askUpdateThread(id, { composer: composerState });
     if (thread.archivedAt) askSetArchived(id, false);   // #948 s2: a message brings an archived chat back
     const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, client: req.worcaExtension ? 'browser-extension' : null });
-    if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.budget ? { budget: r.budget } : {}) });
+    if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.code ? { code: r.code } : {}), ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
     // image thumbnails and the thread budget off them (the ask-message broadcast
     // may have raced ahead of this response, or been missed on a brand-new thread).
@@ -19072,7 +19217,7 @@ export const _testing = {
   pkgVersion: RUNNING_VERSION,
   wireRun, summarizeRuns, scanRequest, fireTicket, afterMembersChanged, markResumedRescan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, answerRun,
-  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
+  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, startAskTurn, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
   startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES, MARKET_JOBS, pruneMarketJobs, marketJobFailure,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
   askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,

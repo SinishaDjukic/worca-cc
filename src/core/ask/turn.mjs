@@ -56,7 +56,7 @@ import { engineLabel } from '../../shared/engine-switch.mjs';
 import { revalidateWorkflowProposal } from './workflow-deps.mjs';
 import { composerCardFrom } from './composer-payload.mjs';
 import { askLimits, ASK_LIMITS } from './limits.mjs';
-import { chatDescriptor, chatCostCapRefusal } from '../engines/chat.mjs';
+import { chatDescriptor, chatEngineGate } from '../engines/chat.mjs';
 import { chatModelRates } from './chat-price.mjs';
 import { codexMemoryLine } from './prompt.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
@@ -1311,38 +1311,17 @@ class AskTurn extends EventEmitter {
     const d = this.deps;
     const c = this.chat;
     const own = (k) => d[`${this.engine}${k}`];
-    const lockdown = own('Lockdown') ?? c.lockdown;
-    if (!lockdown()) return this._complete({ kind: 'error', message: c.noLockdownMessage });
-    const modelProblem = c.modelProblem(this.model);
-    if (modelProblem) return this._complete({ kind: 'error', message: `${this.model} cannot run a chat on ${c.label}: ${modelProblem}. Pick another model for this chat.` });
-    if (limitsNow.maxBudgetUsd != null) {
-      const capped = chatCostCapRefusal(c, this.model, own('ModelPriced') ?? ((m) => !!this._ratesFor(m)));
-      if (capped) return this._complete({ kind: 'error', message: capped });
-    }
-    if (this.mock) return null;
-    const refuse = (refusal) => {
-      this.reducer.addBlock({ kind: 'notice', text: `${c.notReady.prefix}: ${refusal}`, href: c.notReady.docsUrl, hrefLabel: c.notReady.setupLabel, [c.notReady.flag]: true });
-      return this._complete({ kind: 'error', message: refusal, code: c.notReady.code });
-    };
-    // The lockdown's flags must all exist in this binary (askSupport), and where the lockdown is built from the CLI's
-    // own switches, a self-test proves it: properties of the binary, so a relayed turn, which runs the same binary as the
-    // person's agent user, is checked too.
-    let support = null;
-    try { support = await c.askSupport(undefined, own('AskSupport')); } catch (err) { support = { refusal: err?.message || String(err) }; }
-    if (support && support.refusal) return refuse(support.refusal);
-    const selfTest = c.selfTest ? () => c.selfTest(undefined, own('SelfTest')) : own('SelfTest');
-    if (selfTest) {
-      let st = null;
-      try { st = await selfTest(); } catch (err) { st = { refusal: err?.message || String(err) }; }
-      if (st && st.refusal) return refuse(st.refusal);
-    }
-    // A relayed turn runs the engine as the person's agent user, with that user's HOME and sign-in (agent-user.mjs): a
-    // check run here would ask about the server user's sign-in instead. Its sign-in failure surfaces from the turn itself.
-    if (this.relay) return null;
-    let pf = null;
-    try { pf = await c.preflight({ model: this.model }, own('Preflight')); } catch (err) { pf = { warning: err?.message || String(err) }; }
-    if (pf && pf.refusal) return refuse(pf.refusal);
-    return null;
+    const r = await chatEngineGate(c, {
+      model: this.model,
+      capped: limitsNow.maxBudgetUsd != null,
+      modelPriced: (m) => !!this._ratesFor(m),
+      mock: !!this.mock,
+      relay: !!this.relay,
+      seams: { lockdown: own('Lockdown'), modelPriced: own('ModelPriced'), askSupport: own('AskSupport'), selfTest: own('SelfTest'), preflight: own('Preflight') },
+    });
+    if (!r) return null;
+    if (r.notReady) this.reducer.addBlock({ kind: 'notice', text: `${c.notReady.prefix}: ${r.message}`, href: c.notReady.docsUrl, hrefLabel: c.notReady.setupLabel, [c.notReady.flag]: true });
+    return this._complete({ kind: 'error', message: r.message, ...(r.code ? { code: r.code } : {}) });
   }
 
   async run() {

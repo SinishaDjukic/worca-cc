@@ -31,6 +31,8 @@ export const ASK_LIMITS = Object.freeze({
   contextHeaderMaxChars: 1024,             // [worca context] block
   inlineAttachmentsMaxBytes: 24 * 1024,    // inlined into the turn prompt
   restoredMaxChars: 30_000,                // DB-replay fallback prompt
+  handoffMaxChars: 400_000,                // #943: the transcript a fresh session on another engine gets, at most
+  handoffContextShare: 0.5,                // …and at most this share of the destination model's context
   blockIoMaxChars: 2048,                   // persisted tool input / error per block
   agentLogMaxLines: 50,
   listRunsDefaultLimit: 20,

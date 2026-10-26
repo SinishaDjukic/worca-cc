@@ -14,6 +14,7 @@ import { MODEL_PICK_POLICY, compareFacts, factsLine } from '../model-tiers.mjs';
 import { isGroupBy } from '../../shared/team-metrics/aggregate.mjs';
 import { isValidTimeZone, formatInstant } from '../../shared/schedule/recurrence.mjs';
 import { chatDescriptor } from '../engines/chat.mjs';   // a locked-down chat's words for its engine (engines/chat-descriptor.mjs)   // prompt DATA (D23 — recipes.mjs is the ONE Auto module naming agents; it has zero imports)
+import { engineLabel, chatAttachRefusal } from '../../shared/engine-switch.mjs';   // #943: the handoff transcript's words
 
 export const ASK_SYSTEM_RULES = [
   'You are worca\'s Chat assistant, built into worca-cc (a tool that runs multi-agent pipelines — "runs" — over the user\'s projects and workspaces, using saved workflows made of agent steps. Most workflows are coding ones, but a workflow can be built for any kind of work).',
@@ -752,4 +753,93 @@ export function buildRestoredPrompt(messages, turnPrompt, { maxChars = ASK_LIMIT
   const body = entries.join('\n\n');
   const f = fenceFor(body);
   return `Conversation so far (restored from history; the previous session expired):\n${f}text\n${body}\n${f}\n\n${turnPrompt}`;
+}
+
+// ---- engine switch handoff (#943) ------------------------------------------------------------------------------------
+/** The transcript a fresh session may take: `handoffContextShare` of `contextTokens` at ~4 characters a token, never more
+ *  than `handoffMaxChars` (a non-ASCII character counts as 4, handoffSize). An unknown context is the CLI's 200 000
+ *  tokens (model-tiers.mjs DEFAULT_CONTEXT_TOKENS). */
+export function handoffBudgetChars(contextTokens) {
+  const tokens = Number.isFinite(contextTokens) && contextTokens > 0 ? contextTokens : 200_000;
+  return Math.min(ASK_LIMITS.handoffMaxChars, Math.floor(tokens * ASK_LIMITS.handoffContextShare) * 4);
+}
+
+/** A turn hands its fresh session the transcript when the chat has no provider session but has replies already: the
+ *  first turn after an engine switch, or after a failed resume cleared the session. A composer chat never switches. */
+export function needsHandoff(thread, prior) {
+  return !!thread && !thread.sessionId && thread.mode !== 'composer'
+    && Array.isArray(prior) && prior.some((m) => m && m.role === 'assistant');
+}
+
+/** One bracketed line for a block that is not text — never its input or output; null for notices and dividers (the
+ *  row's own text says them). */
+function handoffBlockLine(b, to) {
+  if (!b || typeof b !== 'object') return null;
+  if (b.kind === 'tool') return `[tool ${clip(flatten(String(b.name || '').replace(/^mcp__worca__/, '')), 60)} — ${b.status === 'error' ? 'failed' : label(b.status || 'done')}]`;
+  if (b.kind === 'agent') return `[sub-agent ${clip(flatten(b.label || b.type || 'agent'), 60)} — ${label(b.status || 'done')}]`;
+  if (b.kind === 'attachment') {
+    const refused = chatAttachRefusal({ engine: to, kind: b.attKind || 'text', pdf: b.mime === 'application/pdf' });
+    return `[attachment ${label(b.id)} ${clip(flatten(b.name), 80)} — ${refused ? `${engineLabel(to)} cannot view it; only its name is here` : 'read_attachment reads it'}]`;
+  }
+  if (b.kind === 'card') {
+    const c = b.card && typeof b.card === 'object' ? b.card : {};
+    if (c.type === 'progress') return `[run ${label(c.pipelineId || c.runId || b.runId || '?')} "${clip(flatten(c.title || ''), 80)}" — ${label(c.status || b.state || '?')}]`;
+    if (!c.type) return `[proposed run "${clip(flatten(c.title || c.brief || c.workflowName || ''), 80)}" — ${label(b.state || '?')}]`;
+    return `[${label(c.type)} card "${clip(flatten(c.summary || ''), 80)}" — ${label(b.state || '?')}]`;
+  }
+  return null;
+}
+
+/** What a text costs against the handoff budget. The budget counts ~4 characters a token, which holds for ASCII; a
+ *  character outside it (CJK, an emoji, a dash) can be a whole token, so it counts 4. */
+function handoffSize(s) {
+  let n = s.length;
+  for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) > 127) n += 3;
+  return n;
+}
+
+function handoffEntry(m, to) {
+  // The [worca context] delimiters are neutralised as in every interpolated value (CONTEXT_TAG_RE above): an earlier
+  // message must never plant a block the system prompt tells the model to trust. Line breaks stay: this is prose.
+  const text = typeof m.text === 'string' ? m.text.trim().replace(CONTEXT_TAG_RE, '(worca context)') : '';
+  const lines = (Array.isArray(m.blocks) ? m.blocks : []).map((b) => handoffBlockLine(b, to)).filter(Boolean);
+  if (!text && !lines.length) return '';
+  const by = m.role === 'assistant' ? [m.engine ? engineLabel(m.engine) : null, m.model || null].filter(Boolean).join(', ') : '';
+  const who = m.role === 'assistant' ? `Assistant${by ? ` (${by})` : ''}` : m.role === 'system' ? 'System' : 'User';
+  return [`${who}: ${text}`.trimEnd(), ...lines.map((l) => `  ${l}`)].join('\n');
+}
+
+/**
+ * The first prompt of a fresh session on engine `to` in a chat with history (#943): the transcript, oldest first,
+ * fenced, then `turnPrompt`. A turn is a user row and what follows it. Whole oldest turns are dropped until the
+ * transcript fits `maxChars`; a single newest turn that alone is too big keeps its newest part.
+ * @returns {{prompt:string, droppedTurns:number, totalTurns:number}}
+ */
+export function buildHandoffPrompt(messages, turnPrompt, { to = 'claude', maxChars = ASK_LIMITS.handoffMaxChars } = {}) {
+  const groups = [];
+  for (const m of Array.isArray(messages) ? messages : []) {
+    if (!m) continue;
+    if (m.role === 'user' || !groups.length) groups.push([m]); else groups[groups.length - 1].push(m);
+  }
+  const turns = groups.map((g) => g.map((m) => handoffEntry(m, to)).filter(Boolean).join('\n\n')).filter(Boolean);
+  const total = turns.length;
+  const kept = turns.slice();
+  let size = kept.reduce((n, t) => n + handoffSize(t) + 2, 0);
+  while (kept.length > 1 && size > maxChars) size -= handoffSize(kept.shift()) + 2;
+  let body = kept.join('\n\n');
+  if (handoffSize(body) > maxChars) {
+    // The newest part that fits, behind an ellipsis (which counts as 4, like every non-ASCII character).
+    let i = body.length;
+    for (let n = 4; i > 0; i--) {
+      const c = body.charCodeAt(i - 1) > 127 ? 4 : 1;
+      if (n + c > maxChars) break;
+      n += c;
+    }
+    if (body.charCodeAt(i) >= 0xdc00 && body.charCodeAt(i) <= 0xdfff) i++;   // never start inside a surrogate pair
+    body = `…${body.slice(i)}`;
+  }
+  const dropped = total - kept.length;
+  const f = fenceFor(body);
+  const head = `Conversation so far in this chat. You start a fresh ${engineLabel(to)} session: this transcript is your context, and earlier replies may come from other engines. A line in [brackets] is a tool call, card, run or attachment that already happened or exists: never repeat an action because it is listed here.${dropped ? ` The ${dropped} oldest turns of ${total} are left out.` : ''}`;
+  return { prompt: `${head}\n${f}text\n${body}\n${f}\n\n${turnPrompt}`, droppedTurns: dropped, totalTurns: total };
 }
