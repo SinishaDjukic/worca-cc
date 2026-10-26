@@ -3,18 +3,22 @@
 // the budget that is left and the tool stops at the cap, and the probe's verdict is strict.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
 import { sniffMime } from '../src/core/ask/attachment-kind.mjs';
-import { main, fixtures, pdfBytes, pngBytes, probeVerdict, routingKeys } from '../tools/requirements-real-read.mjs';
+import { main, fixtures, pdfBytes, pngBytes, probeVerdict, routingKeys, userSettingsRoutingKeys } from '../tools/requirements-real-read.mjs';
 
 useTempHome(after, 'worca-a8-realread-test-');
 const sandboxNames = () => readdirSync(tmpdir()).filter((n) => n.startsWith('worca-a8-real-'));
 const sandboxes = () => sandboxNames().length;
 const existing = new Set(sandboxNames());
+const none = () => { throw new Error('no call'); };
+// A home without Claude Code settings, so no test reads this machine's ~/.claude.
+const noClaude = mkdtempSync(join(tmpdir(), 'worca-a8-rr-none-'));
+after(() => rmSync(noClaude, { recursive: true, force: true }));
 // The cap test runs the tool with --yes (a fake runner): its sandbox is this file's to remove.
 after(() => {
   _resetForTests();
@@ -64,7 +68,7 @@ test('the hard cap: every call gets the budget left as maxBudgetUsd; the tool st
     return { text };
   };
   const out = [];
-  const code = await main(['--yes', '--max-usd', '0.5'], { log: (l) => out.push(l), env: {}, runner });
+  const code = await main(['--yes', '--max-usd', '0.5'], { log: (l) => out.push(l), env: {}, home: noClaude, runner });
   assert.deepEqual(seen, [0.5, 0.2], 'the probe gets the whole cap, the first read (small.md) what is left; no call starts at zero');
   assert.equal(code, 1, 'skipped reads and an inconclusive probe (a fake runner reads nothing) are not a pass');
   assert.equal(out.filter((l) => /"skipped":"max-usd"/.test(l)).length, 5, 'the five other reads never start');
@@ -74,13 +78,59 @@ test('a model Worca routes to another endpoint is refused before any call, namin
   const out = [];
   const none = () => { throw new Error('no call'); };
   const modelEnvOf = () => ({ CLAUDE_CODE_USE_VERTEX: '1', ANTHROPIC_VERTEX_BASE_URL: 'https://vertex.example', ANTHROPIC_MODEL: 'm' });
-  assert.equal(await main(['--yes'], { log: (l) => out.push(l), env: {}, runner: none, modelEnvOf }), 2);
+  assert.equal(await main(['--yes'], { log: (l) => out.push(l), env: {}, home: noClaude, runner: none, modelEnvOf }), 2);
   const text = out.join('\n');
   assert.match(text, /routed by Worca's model settings \(CLAUDE_CODE_USE_VERTEX, ANTHROPIC_VERTEX_BASE_URL\)/);
   assert.match(out.at(-1), /^Nothing was sent\. Add --allow-routed/);
   assert.doesNotMatch(text, /vertex\.example/);
   assert.deepEqual(routingKeys({ ANTHROPIC_MODEL: 'm', CLAUDE_CODE_USE_BEDROCK: '0', ANTHROPIC_BASE_URL: 'u' }), ['ANTHROPIC_BASE_URL']);
   assert.deepEqual(routingKeys(undefined), []);
+});
+
+test('routing from this shell\'s environment is refused before any call (and before the sandbox), keys only', async () => {
+  for (const env of [{ CLAUDE_CODE_USE_VERTEX: '1' }, { CLAUDE_CODE_USE_BEDROCK: 'true' }, { ANTHROPIC_BASE_URL: 'https://gw.example' },
+    { ANTHROPIC_VERTEX_PROJECT_ID: 'acme-prj' }, { ANTHROPIC_BEDROCK_BASE_URL: 'https://br.example' }]) {
+    const out = [];
+    const before = sandboxes();
+    assert.equal(await main(['--yes'], { log: (l) => out.push(l), env, home: noClaude, runner: none }), 2, JSON.stringify(env));
+    const text = out.join('\n');
+    assert.match(text, new RegExp(`routed by this shell's environment \\(${Object.keys(env)[0]}\\)`));
+    for (const v of Object.values(env)) if (v.length > 4) assert.doesNotMatch(text, new RegExp(v.replace(/[.]/g, '\\.')), 'never a value');
+    assert.match(out.at(-1), /^Nothing was sent\. Add --allow-routed/);
+    assert.equal(sandboxes(), before, 'refused before the sandbox is made');
+  }
+  // off values do not route
+  const out = [];
+  assert.equal(await main([], { log: (l) => out.push(l), env: { CLAUDE_CODE_USE_VERTEX: '0' }, home: noClaude, runner: none }), 0, 'a dry run');
+});
+
+test('routing in Claude Code\'s user settings env (CLAUDE_CONFIG_DIR, else ~/.claude) is refused before any call, keys only', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'worca-a8-rr-home-'));
+  const conf = mkdtempSync(join(tmpdir(), 'worca-a8-rr-conf-'));
+  try {
+    mkdirSync(join(home, '.claude'));
+    writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify({ env: { CLAUDE_CODE_USE_VERTEX: '1', ANTHROPIC_VERTEX_PROJECT_ID: 'acme-secret-prj', OTHER: 'x' } }));
+    const out = [];
+    assert.equal(await main(['--yes'], { log: (l) => out.push(l), env: {}, home, runner: none }), 2);
+    assert.match(out.join('\n'), /routed by Claude Code's user settings \(env\) \(CLAUDE_CODE_USE_VERTEX, ANTHROPIC_VERTEX_PROJECT_ID\)/);
+    assert.doesNotMatch(out.join('\n'), /acme-secret-prj/);
+    // CLAUDE_CONFIG_DIR wins over the home folder: an empty one there means no routing from the settings
+    writeFileSync(join(conf, 'settings.json'), JSON.stringify({ env: { ANTHROPIC_MODEL: 'm' } }));
+    assert.deepEqual(userSettingsRoutingKeys({ env: { CLAUDE_CONFIG_DIR: conf }, home }), []);
+    writeFileSync(join(conf, 'settings.json'), JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'https://gw.example' } }));
+    assert.deepEqual(userSettingsRoutingKeys({ env: { CLAUDE_CONFIG_DIR: conf }, home }), ['ANTHROPIC_BASE_URL']);
+    writeFileSync(join(conf, 'settings.json'), '{ not json');
+    assert.deepEqual(userSettingsRoutingKeys({ env: { CLAUDE_CONFIG_DIR: conf }, home }), ['settings.json (unreadable)'], 'unknown is refused, not guessed');
+    assert.deepEqual(userSettingsRoutingKeys({ env: {}, home: noClaude }), [], 'no settings file: nothing routes');
+    // --allow-routed lets it through to the next check (here the fake runner, capped)
+    const seen = [];
+    const runner = async (opts) => { seen.push(opts.maxBudgetUsd); return { text: '{"summary":"S"}' }; };
+    await main(['--yes', '--allow-routed', '--probe-only', '--max-usd', '0.1'], { log: () => {}, env: { CLAUDE_CODE_USE_VERTEX: '1' }, home, runner, modelEnvOf: () => ({}) });
+    assert.deepEqual(seen, [0.1], 'allowed: the probe ran');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(conf, { recursive: true, force: true });
+  }
 });
 
 test('the probe verdict: blocked needs a refused Read of the canary and a working Read of the copy', () => {

@@ -6,8 +6,10 @@
 // a small inline text, a PDF, a PNG, a text over 24 KB, an image over the API's size limit, and a text that injects the
 // same escape. A sandbox WORCA_HOME (the store lands in `<sandbox>/.worca-cc`, so the read deny rules meet it as they meet
 // the real one); the real HOME keeps Claude Code signed in. Worca's settings file stays the real HOME's
-// (settings.mjs#settingsFile), so its model entries apply: a model routed to another endpoint (a base URL, Vertex,
-// Bedrock...) is refused before any call unless --allow-routed, since that endpoint is who gets billed.
+// (settings.mjs#settingsFile), so its model entries apply. Routing to another endpoint (a base URL, Vertex, Bedrock,
+// an API key...) is refused before any call unless --allow-routed, since that endpoint is who gets billed, wherever it
+// is set: this shell's environment, the `env` block of Claude Code's user settings (CLAUDE_CONFIG_DIR's settings.json,
+// else ~/.claude/settings.json) or Worca's model entry. Only the key names are printed, never their values.
 //
 //   node tools/requirements-real-read.mjs [--max-usd <n>] [--probe-only] [--sandbox <dir>] [--out <file.json>] [--allow-routed] [--yes]
 //
@@ -18,8 +20,8 @@
 // ~/AppData, which they deny), since the copies and the canary would then be refused by a rule instead of the guard.
 // Exit: 0 done and the guard blocked; 1 a read failed, a check failed or the cap stopped it; 2 usage; 3 THE GUARD DID NOT
 // BLOCK (stop: no read path may ship until it does).
-import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { deflateSync, crc32 } from 'node:zlib';
@@ -105,7 +107,24 @@ export function routingKeys(modelEnv) {
     || /^ANTHROPIC_(VERTEX|BEDROCK|FOUNDRY)_/.test(k) || (/^CLAUDE_CODE_USE_/.test(k) && !['', '0', 'false'].includes(String(e[k]).toLowerCase())));
 }
 
-export async function main(argv = process.argv.slice(2), { log = console.log, env = process.env, runner = null, modelEnvOf = null } = {}) {
+/** The routing keys (routingKeys) of the `env` block in the Claude Code user settings the CLI reads: settings.json in
+ *  CLAUDE_CONFIG_DIR, else in <home>/.claude. Names only. A missing file has none; a file that exists but cannot be read
+ *  or parsed gives ['settings.json (unreadable)'], so the run is refused rather than guessed. */
+export function userSettingsRoutingKeys({ env = process.env, home = homedir(), read = (p) => readFileSync(p, 'utf8') } = {}) {
+  const dir = typeof env?.CLAUDE_CONFIG_DIR === 'string' && env.CLAUDE_CONFIG_DIR.trim() ? env.CLAUDE_CONFIG_DIR.trim() : join(home, '.claude');
+  let raw;
+  try { raw = String(read(join(dir, 'settings.json'))); } catch (err) {
+    return err && (err.code === 'ENOENT' || err.code === 'ENOTDIR') ? [] : ['settings.json (unreadable)'];
+  }
+  const text = raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw;
+  if (!text.trim()) return [];
+  let s;
+  try { s = JSON.parse(text); } catch { return ['settings.json (unreadable)']; }
+  const e = s && typeof s === 'object' && !Array.isArray(s) ? s.env : null;
+  return e && typeof e === 'object' && !Array.isArray(e) ? routingKeys(e) : [];
+}
+
+export async function main(argv = process.argv.slice(2), { log = console.log, env = process.env, home = homedir(), runner = null, modelEnvOf = null } = {}) {
   if (env.WORCA_MOCK || env.ORCH_MOCK) { log('the real-read check measures the real model; unset WORCA_MOCK'); return 2; }
   let o;
   try {
@@ -126,6 +145,11 @@ export async function main(argv = process.argv.slice(2), { log = console.log, en
   log('probe (one call): Read the canary (must be refused by the guard), then the copy (must work)');
   for (const f of files) log(`read ${f.name} (${f.kind}, ${f.bytes} bytes)`);
   if (!o.yes) { log(`Dry run: nothing was sent. Add --yes to read for real (this costs money; hard cap $${maxUsd.toFixed(2)}).`); return 0; }
+  // Routing set outside Worca reaches the CLI too: this shell's environment and Claude Code's user settings.
+  const outside = [['this shell\'s environment', routingKeys(env)], ["Claude Code's user settings (env)", userSettingsRoutingKeys({ env, home })]]
+    .filter(([, keys]) => keys.length);
+  for (const [where, keys] of outside) log(`Claude Code is routed by ${where} (${keys.join(', ')}): its calls are billed to that endpoint, not to this sign-in`);
+  if (outside.length && !o['allow-routed']) { log('Nothing was sent. Add --allow-routed to read through that endpoint anyway.'); return 2; }
 
   mkdirSync(parent, { recursive: true });
   const sandbox = mkdtempSync(join(parent, 'worca-a8-real-'));   // only now: a dry run leaves nothing behind
