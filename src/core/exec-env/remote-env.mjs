@@ -321,11 +321,18 @@ export class RemoteExecEnv {
   /** What the relay measured on route `id` since the last take (relay-usage.mjs `take`), or null for no such route:
    *  the cost a remote spawn books, because the sandbox writes the CLI's own `result` frames. */
   routeUsage(id) { return this._meters.get(id)?.take() ?? null; }
-  /** End route `id`; returns what its meter counted since the last take (null for no such route). */
-  closeModelRoute(id) {
-    this.relay.removeRoute(id);
-    const rest = this.routeUsage(id);
+  /** End route `id`; returns what its meter counted since the last take (null for no such route). Calls the route still
+   *  has in flight run on to their end (model-relay.mjs: the sandbox cannot cut a reply short of its usage), and what
+   *  they used goes to `onLate(take)` once the last one has ended, when it is anything. */
+  closeModelRoute(id, onLate = null) {
+    const settled = this.relay.removeRoute(id);
+    const meter = this._meters.get(id);
     this._meters.delete(id);
+    const rest = meter?.take() ?? null;
+    if (meter && onLate) {
+      settled.then(() => { const late = meter.take(); if (late.messages) onLate(late); })
+        .catch((err) => this.log('warn', `model relay: booking a call that ended after its spawn failed: ${err?.message || err}`));
+    }
     return rest;
   }
 
@@ -357,10 +364,11 @@ export class RemoteExecEnv {
     };
   }
   /** End an engine route at its spawn's end. With `cost`, the calls no result covered go out as `relayCost` (booked
-   *  like a result's, as a claude spawn's are). */
+   *  like a result's, as a claude spawn's are), also those that end after the spawn did. */
   closeEngineRoute(id, onEvent, { cost = false } = {}) {
-    const rest = this.closeModelRoute(id);
-    if (cost && rest?.messages) { try { onEvent({ type: 'relayCost', messages: rest.messages, byModel: rest.byModel }); } catch { /* listener */ } }
+    const book = (t) => { try { onEvent({ type: 'relayCost', messages: t.messages, byModel: t.byModel }); } catch { /* listener */ } };
+    const rest = this.closeModelRoute(id, cost ? book : null);
+    if (cost && rest?.messages) book(rest);
   }
 
   async _cloneIn() {

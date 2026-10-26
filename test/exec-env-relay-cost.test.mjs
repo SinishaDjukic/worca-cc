@@ -176,3 +176,39 @@ test('calls no result covered are booked from the relay when the spawn ends; the
   orch._closeOpenTurns('x:n_impl:1');
   assert.equal(orch.state.steps[0].stoppedTurns, undefined, 'the relay priced those turns');
 });
+
+/** An E2B env on the loopback fake whose `claude` starts one streamed model call and lets go of it: `hangup` reads the
+ *  first bytes and hangs up; `leave` exits with the reply still streaming. The usage comes last (message_delta). */
+async function sandboxLetsGo(t, how) {
+  up.set({ streamDelayMs: 400 });
+  t.after(() => up.set({ streamDelayMs: 5 }));
+  const sdk = createFakeE2b({ root: tmp('worca-relay-cost-root-'), onCommand: async (cmd, o) => {
+    if (!cmd.startsWith("'claude'")) return null;
+    const ac = new AbortController();
+    const r = await fetch(`${o.envs.ANTHROPIC_BASE_URL}/v1/messages`, { method: 'POST', signal: ac.signal,
+      headers: { authorization: `Bearer ${o.envs.ANTHROPIC_AUTH_TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-sonnet-5', stream: true, max_tokens: 5, messages: [{ role: 'user', content: 'hi' }] }) });
+    if (how === 'hangup') { await r.body.getReader().read(); ac.abort(); }
+    return { lines: [JSON.stringify(INIT)], exitCode: 0 };
+  } });
+  const f = fixture(tmp);
+  const env = new E2bExecEnv(makeEnvOpts(tmp, sdk, f, { env: {} }));
+  await env.start();
+  t.after(() => env.close('test'));
+  const events = [];
+  const normalize = createClaudeNormalizer();
+  await runClaude({ cwd: f.repo, prompt: 'hi', model: 'claude-sonnet-5', execEnv: env,
+    modelEnv: { ANTHROPIC_BASE_URL: up.url, ANTHROPIC_API_KEY: KEY }, onEvent: (e) => events.push(...normalize(e)) });
+  return { env, events };
+}
+const bookedOutput = (events) => events.filter((e) => e.type === 'relayCost' || e.relay)
+  .reduce((n, e) => n + (((e.relay || e).byModel || {})['claude-sonnet-5']?.output_tokens || 0), 0);
+
+for (const how of ['hangup', 'leave']) {
+  test(`a sandbox that ${how === 'hangup' ? 'hangs up on a reply' : 'exits with a reply still streaming'} cannot keep its output tokens off the books (audit 2.3, 2.4)`, POSIX, async (t) => {
+    const { events, env } = await sandboxLetsGo(t, how);
+    for (let i = 0; bookedOutput(events) < 500 && i < 300; i++) await new Promise((r) => setTimeout(r, 10));
+    assert.equal(bookedOutput(events), 500, JSON.stringify(events.filter((e) => e.type === 'relayCost')));
+    assert.equal(env.relay.routes.size, 0, 'the route closed with the spawn');
+  });
+}
