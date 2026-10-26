@@ -91,3 +91,21 @@ test('I1: a part hash is portable — moving the agent file or changing display 
   await writeFile(join(b, 'drafter.md'), `${text} Name a goal.`);
   assert.notEqual((await hashes(meta(b), script(b)))[0], here[0], 'the agent text is a change');
 });
+
+test('N2: every field of a built-in agent or script meta is classified — hashed or excluded with a reason', async () => {
+  const { AGENT_HASH_FIELDS, AGENT_HASH_EXCLUDED, SCRIPT_HASH_FIELDS, SCRIPT_HASH_EXCLUDED } = await import('../src/core/workflow-parts.mjs');
+  const { loadAgentRegistry } = await import('../src/core/agent-registry.mjs');
+  const { loadScriptRegistry } = await import('../src/core/script-registry.mjs');
+  const agents = loadAgentRegistry(undefined, { userAgentsDir: null, includePlugins: false });
+  const scripts = loadScriptRegistry({ agentKeys: Object.keys(agents), userScriptsDir: null, includePlugins: false });
+  assert.ok(Object.keys(agents).length > 0 && Object.keys(scripts).length > 0, 'the built-in agents and scripts load');
+  const check = (what, metas, hashed, excluded) => {
+    for (const [field, reason] of Object.entries(excluded)) assert.ok(typeof reason === 'string' && reason.trim(), `${what} exclusion ${field} has a reason`);
+    for (const field of hashed) assert.equal(field in excluded, false, `${what} field ${field} is both hashed and excluded`);
+    const seen = new Set(Object.values(metas).filter((m) => m.origin === 'builtin').flatMap((m) => Object.keys(m)));
+    const unclassified = [...seen].filter((f) => !hashed.includes(f) && !(f in excluded)).sort();
+    assert.deepEqual(unclassified, [], `classify each new ${what} meta field: add it to the hash list or to the exclusions with a reason (src/core/workflow-parts.mjs)`);
+  };
+  check('agent', agents, AGENT_HASH_FIELDS, AGENT_HASH_EXCLUDED);
+  check('script', scripts, SCRIPT_HASH_FIELDS, SCRIPT_HASH_EXCLUDED);
+});

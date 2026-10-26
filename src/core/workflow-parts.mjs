@@ -20,6 +20,39 @@ export const AGENT_HASH_FIELDS = Object.freeze(['key', 'origin', 'runnerType', '
   'wantsRequest', 'needsRepo', 'workspaceFanOut', 'workspaceStrategy', 'workspaceVariantOf', 'mockRole']);
 export const SCRIPT_HASH_FIELDS = Object.freeze(['key', 'origin', 'runtime', 'file', 'command', 'timeoutMs', 'params', 'ports',
   'defaultPorts', 'inputs', 'outputs', 'verdict', 'mock']);
+// Every other meta field, with why it is left out. test/workflow-fingerprint.test.mjs (N2) fails on a field of a
+// built-in agent or script that is in neither list, so a new behaviour field cannot be silently left out of the hash.
+export const AGENT_HASH_EXCLUDED = Object.freeze({
+  displayName: 'display only',
+  description: 'display only (an edit in the frontmatter is in the hashed markdown text)',
+  descriptionDerived: 'computed display marker',
+  color: 'display only',
+  icon: 'display only',
+  order: 'palette order, display only',
+  domain: 'organisational tag, display only',
+  portSummary: 'derived text of inputs/outputs, which are hashed',
+  placeable: 'palette visibility, not run behaviour',
+  progressStage: 'run page progress label, display only',
+  humanEffort: 'a savings estimate for Statistics, not run behaviour',
+  metaVersion: 'the sidecar format, not behaviour',
+  agentFile: 'the file name; its text is hashed',
+  agentPath: 'absolute path, install-specific',
+  frontmatter: 'parsed from the markdown text, which is hashed whole',
+});
+export const SCRIPT_HASH_EXCLUDED = Object.freeze({
+  displayName: 'display only',
+  description: 'display only',
+  color: 'display only',
+  icon: 'display only',
+  order: 'palette order, display only',
+  domain: 'organisational tag, display only',
+  portSummary: 'derived text of the ports, which are hashed',
+  placeable: 'palette visibility, not run behaviour',
+  metaVersion: 'the sidecar format, not behaviour',
+  scriptPath: 'absolute path, install-specific (the source is hashed)',
+  scriptsDir: 'absolute path, install-specific',
+  commandResolved: 'command with absolute paths, install-specific (command is hashed)',
+});
 const pick = (meta, fields) => (meta && typeof meta === 'object' ? Object.fromEntries(fields.filter((f) => meta[f] !== undefined).map((f) => [f, meta[f]])) : null);
 
 const defaultScriptSource = async (key) => {
