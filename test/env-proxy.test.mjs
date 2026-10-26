@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { useEnvProxy } from '../src/core/env-proxy.mjs';
+import { useEnvProxy, reinstallEnvProxy } from '../src/core/env-proxy.mjs';
 import { egressChildEnv } from '../src/core/egress-policy.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -112,4 +112,13 @@ test('corporate proxy: the child env of the local proxy turns fetch proxying on,
   const noProxy = api.calls[0].NO_PROXY.split(',');
   for (const h of ['intranet.example', '127.0.0.1', 'localhost', '::1', '[::1]']) assert.ok(noProxy.includes(h), h);
   assert.equal(api.calls[0].HTTPS_PROXY, 'http://127.0.0.1:41234');
+});
+
+test('reinstallEnvProxy: restores the previous install, then installs from the new env', () => {
+  const calls = [];
+  const api = { setGlobalProxyFromEnv: (e) => { calls.push(e.HTTPS_PROXY); return () => calls.push('restore'); } };
+  const first = useEnvProxy({ env: { HTTPS_PROXY: 'http://127.0.0.1:1' }, api });
+  const second = reinstallEnvProxy(first, { env: { HTTPS_PROXY: 'http://127.0.0.1:2' }, api });
+  assert.deepEqual(calls, ['http://127.0.0.1:1', 'restore', 'http://127.0.0.1:2']);
+  assert.equal(second.status, 'on');
 });

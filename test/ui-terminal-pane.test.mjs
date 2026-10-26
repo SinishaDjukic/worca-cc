@@ -763,6 +763,20 @@ test('a card click opens the pane on that tab and focuses it, even after the use
   assert.equal(sent.filter((m) => m.type === 'term-attach').at(-1).sessionId, 't-a');
 });
 
+test('showSession resolves whether it showed the tab: false for a closed or unknown shell, so the card can say so', async () => {
+  const routes = { 'GET /api/terminal': { ...INFO, sessions: [ASK] } };
+  const { pane } = makePane({ ctx: { view: 'stats' }, routes });
+  assert.equal(await pane.showSession('t-a'), true);
+  assert.equal(await pane.showSession('t-gone'), false);
+  // Ask's idle close: the server's frame and its list both say closed.
+  routes['GET /api/terminal'] = { ...INFO, sessions: [{ ...ASK, status: 'closed' }] };
+  pane.onFrame({ type: 'term-status', snapshot: { ...ASK, status: 'closed' } });
+  assert.equal(await pane.showSession('t-a'), false);
+  // A Worca restart: the server no longer has it at all.
+  routes['GET /api/terminal'] = { ...INFO, sessions: [] };
+  assert.equal(await pane.showSession('t-a'), false);
+});
+
 test('moving to another page after a card click showed Ask\'s tab: that page\'s own shell is attached; Ask\'s tab stays a tab', async () => {
   const { pane, doc, sent, env } = makePane({ ctx: RUN_CTX, routes: attachedRoutes({
     'GET /api/terminal': { ...INFO, sessions: [SNAP, ASK, PROJ_SNAP] },

@@ -106,6 +106,31 @@ test('a late content block of a written call is not a second call; a session tot
   assert.deepEqual(lines.filter((r) => r.t === 'call').map((r) => r.msg), ['m1']);
 });
 
+test('a tool result between two content blocks of one message: one call with both blocks\' tools', () => {
+  const { rec, lines } = setup();
+  rec.bind('/d');
+  // Claude Code 2.1.310: Read runs and returns before the frame with the same message's Bash block.
+  rec.observe({ type: 'usage', messageId: 'P', parentId: null, phase: 'message', usage: u(1, 900, 0, 5) }, ATTR);
+  rec.observe({ type: 'tool', parentId: null, messageId: 'P', calls: [{ name: 'Read', toolUseId: 'r1' }] }, ATTR);
+  rec.observe({ type: 'toolResult', parentId: null, results: [{ toolUseId: 'r1' }] }, ATTR);
+  rec.observe({ type: 'usage', messageId: 'P', parentId: null, phase: 'message', usage: u(1, 900, 0, 5) }, ATTR);
+  rec.observe({ type: 'tool', parentId: null, messageId: 'P', calls: [{ name: 'Bash', toolUseId: 'b1' }] }, ATTR);
+  rec.observe({ type: 'toolResult', parentId: null, results: [{ toolUseId: 'b1' }] }, ATTR);
+  rec.observe({ type: 'usage', messageId: 'Q', parentId: null, phase: 'message', usage: u(1, 950, 0, 5) }, ATTR);
+  rec.stepStatus('x:n_impl:1', 'n_impl', 'done');
+  const calls = lines.filter((r) => r.t === 'call');
+  assert.deepEqual(calls.map((r) => [r.msg, r.tools]), [['P', ['Read', 'Bash']], ['Q', []]]);
+  assert.deepEqual(lines.filter((r) => r.t === 'tool').map((r) => r.name), ['Read', 'Bash']);
+});
+
+test('a result whose input already holds the cache (Goose): ctx is the input alone', () => {
+  const { rec, lines } = setup();
+  rec.bind('/d');
+  rec.observe({ type: 'result', usage: u(8598, 1614, 0, 267), inputIncludesCache: true }, ATTR);
+  const r = lines.find((x) => x.t === 'result');
+  assert.deepEqual([r.ctx, r.inc], [8598, true]);
+});
+
 test('events with no step are ignored; harness work is windowed', async () => {
   const { rec, lines } = setup();
   rec.bind('/d');

@@ -10,6 +10,7 @@ import { icon } from './icons.mjs';
 import { makeSwitch } from './switch.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
 import { normaliseDimension } from '../../src/shared/tag-dimensions.mjs';
+import { MODEL_ROLES, ROLE_HARNESSES, ROLE_LABELS } from '../../src/shared/model-roles.mjs';
 const MO = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const POLICY_PAUSE_REASONS = Object.freeze(['cost_pipeline_policy', 'cost_total_policy']);
 export const PROTECT_HINT = 'Protect worca-policy on your git host so only maintainers can push. Worca reads it for everyone and writes it only from the Team policy page.';
@@ -240,7 +241,7 @@ export function renderPolicyEnableDialogBody({ project, origin, candidates = [],
 }
 
 // ---- Team policy page: read mode (board 4) ----------------------------------------------
-const GROUP_LABELS = { cost: 'Cost', ask: 'Chat', guardrails: 'Guardrails', models: 'Models', plugins: 'Plugins', runs: 'Runs' };
+const GROUP_LABELS = { cost: 'Cost', ask: 'Chat', guardrails: 'Guardrails', models: 'Models', setup: 'Setup', plugins: 'Plugins', runs: 'Runs', night: 'Away mode' };
 const kindChip = (doc, kind, declaredKind) => {
   const c = h(doc, 'span', `tp-kind ${declaredKind === 'hard' ? 'hard' : kind}`, declaredKind === 'hard' ? 'hard' : kind);
   if (declaredKind === 'hard') c.title = 'Hard constraints are not enforced by this version, so they are treated as soft';
@@ -770,6 +771,41 @@ function valueControl(doc, meta, entry, row) {
       add.append(role, model, sw, b); wrap.append(add);
       break;
     }
+    case 'roles': {
+      // models.roles (team setup D13): six fixed rows, harness × role, each an upstream model id and an effort.
+      for (const hn of ROLE_HARNESSES) for (const r of MODEL_ROLES) {
+        const line = h(doc, 'div', 'path-row tp-role-row'); line.dataset.harness = hn; line.dataset.role = r;
+        const name = `${engineLabel(hn)} · ${ROLE_LABELS[r]}`;
+        const model = h(doc, 'input', 'input tp-role-model'); model.type = 'text'; model.placeholder = 'upstream model id (claude-opus-5-5)';
+        model.value = v?.[hn]?.[r]?.model || ''; model.setAttribute('aria-label', `${name} model`);
+        const sw = h(doc, 'div', 'select-wrap'); const effort = h(doc, 'select', 'select tp-role-effort'); effort.setAttribute('aria-label', `${name} effort`);
+        const none = h(doc, 'option', null, 'effort'); none.value = ''; effort.append(none);
+        for (const e of (hn === 'codex' ? CODEX_EFFORTS : EFFORTS)) { const o = h(doc, 'option', null, e); o.value = e; if (v?.[hn]?.[r]?.effort === e) o.selected = true; effort.append(o); }
+        sw.append(effort); line.append(h(doc, 'span', 'tp-role-label', name), model, sw); wrap.append(line);
+      }
+      break;
+    }
+    case 'record': {
+      // One labelled control per shape key; the blank choice means "not set".
+      for (const [k, want] of Object.entries(meta.shape || {})) {
+        const line = h(doc, 'label', 'path-row tp-rec-row'); line.dataset.rec = k; line.dataset.want = Array.isArray(want) ? 'enum' : want;
+        line.append(h(doc, 'span', 'tp-rec-label', k));
+        const cur = v?.[k];
+        if (want === 'bool' || Array.isArray(want)) {
+          const sw = h(doc, 'div', 'select-wrap'); const sel = h(doc, 'select', 'select tp-rec-val'); sel.setAttribute('aria-label', `${meta.label} · ${k}`);
+          const opts = want === 'bool' ? [['', 'not set'], ['true', 'on'], ['false', 'off']] : [['', 'not set'], ...want.map((x) => [x, x])];
+          for (const [val, text] of opts) { const o = h(doc, 'option', null, text); o.value = val; if (String(cur ?? '') === val) o.selected = true; sel.append(o); }
+          sw.append(sel); line.append(sw);
+        } else {
+          const inp = h(doc, 'input', 'input tp-rec-val'); inp.type = want === 'int' ? 'number' : 'text'; inp.setAttribute('aria-label', `${meta.label} · ${k}`);
+          inp.value = cur == null ? '' : Array.isArray(cur) ? cur.join(', ') : String(cur);
+          if (want === 'string[]') inp.placeholder = 'comma-separated';
+          line.append(inp);
+        }
+        wrap.append(line);
+      }
+      break;
+    }
     case 'criteria': {
       // Night mode criteria weights (0-10); a blank input keeps that criterion's default.
       for (const c of ['matchesMemory', 'reversible', 'smallestScope', 'codebaseConventions', 'cost']) {
@@ -899,6 +935,10 @@ function ensureKind(row) {
   const first = [...seg.querySelectorAll('button')].find((b) => !b.disabled);
   if (first) { first.classList.add('on'); seg.dispatchEvent(new (row.ownerDocument.defaultView.Event)('click', { bubbles: true })); }
 }
+
+/** The controls that hold a row's value: an edit there picks the row's kind (roles and records included, webui-2). */
+const VALUE_CONTROLS = ['tp-val', 'tp-null', 'tp-role-model', 'tp-role-effort', 'tp-rec-val'];
+const isValueControl = (t) => VALUE_CONTROLS.some((c) => t.classList.contains(c));
 
 function wireEditor(doc, root, registry) {
   const metaOf = (key) => registry.find((m) => m.key === key);
@@ -1051,13 +1091,13 @@ function wireEditor(doc, root, registry) {
       if (e.target.closest && (e.target.closest('.tp-doc-head') || e.target.closest('.tp-catalogs'))) root.dispatchEvent(new (doc.defaultView.Event)('tp-change', { bubbles: true }));
       return;
     }
-    if (!(e.target.classList.contains('tp-val') || e.target.classList.contains('tp-null'))) return;
+    if (!isValueControl(e.target)) return;
     ensureKind(row);
     root.dispatchEvent(new (doc.defaultView.Event)('tp-change', { bubbles: true }));
   });
   root.addEventListener('change', (e) => {
     const row = e.target.closest && e.target.closest('.tp-edit-row');
-    if (row && (e.target.classList.contains('tp-val') || e.target.classList.contains('tp-null'))) ensureKind(row);
+    if (row && isValueControl(e.target)) ensureKind(row);
     if (e.target.closest && (e.target.closest('.tp-edit-row') || e.target.closest('.tp-doc-head') || e.target.closest('.tp-catalogs'))) {
       root.dispatchEvent(new (doc.defaultView.Event)('tp-change', { bubbles: true }));
     }
@@ -1123,6 +1163,7 @@ export function renderPolicyEditor(policyDoc, { registry = [], doc = globalThis.
     if (g === 'cost') head.append(h(doc, 'small', 'hint', 'Caps apply per developer. Soft caps pause and can be continued past.'));
     if (g === 'plugins') head.append(h(doc, 'small', 'hint', 'Worca offers to install; it never installs without the developer\'s consent.'));
     if (g === 'models') head.append(h(doc, 'small', 'hint', 'Catalog entries may use ${VAR} for tokens. Literal secrets are refused.'));
+    if (g === 'setup') head.append(h(doc, 'small', 'hint', 'A team setup never carries network settings, model sources, keys or tokens. Developers review it in the setup assistant; nothing changes before they apply it.'));
     card.append(head);
     for (const m of registry.filter((x) => x.group === g)) card.append(editorRow(doc, m, src.fields?.[m.key] || null, 'fields'));
     sec.append(card);
@@ -1215,6 +1256,24 @@ function rowValue(row, meta) {
     case 'string[]': return readItems(row);
     case 'plugins': case 'mcpServers': case 'skills': case 'tagDimensions': return readItems(row);
     case 'steps': { const out = {}; for (const it of readItems(row)) { const s = {}; if (it.model) s.model = it.model; if (it.effort) s.effort = it.effort; out[it.role] = s; } return out; }
+    case 'roles': {
+      const out = {};
+      for (const line of row.querySelectorAll('.tp-role-row')) {
+        const model = line.querySelector('.tp-role-model').value.trim(); if (!model) continue;
+        const effort = line.querySelector('.tp-role-effort').value;
+        ((out[line.dataset.harness] ||= {})[line.dataset.role]) = { model, ...(effort ? { effort } : {}) };
+      }
+      return out;
+    }
+    case 'record': {
+      const out = {};
+      for (const line of row.querySelectorAll('.tp-rec-row')) {
+        const raw = line.querySelector('.tp-rec-val').value.trim(); if (raw === '') continue;
+        const want = line.dataset.want;
+        out[line.dataset.rec] = want === 'bool' ? raw === 'true' : want === 'int' ? Math.round(Number(raw)) : want === 'string[]' ? raw.split(',').map((x) => x.trim()).filter(Boolean) : raw;
+      }
+      return out;
+    }
     case 'criteria': { const out = {}; for (const i of row.querySelectorAll('.tp-crit-val')) { const t = i.value.trim(); const n = Number(t); if (t !== '' && Number.isFinite(n)) out[i.dataset.crit] = n; } return Object.keys(out).length ? out : undefined; }
     default: return undefined;
   }
@@ -1232,7 +1291,7 @@ export function docFromEditor(root, { registry = [] } = {}) {
     const value = rowValue(row, meta);
     if (value === undefined) continue;
     if ((meta.type === 'string[]' || meta.type === 'plugins' || meta.type === 'mcpServers' || meta.type === 'skills' || meta.type === 'tagDimensions') && !value.length) continue;
-    if (meta.type === 'steps' && !Object.keys(value).length) continue;
+    if ((meta.type === 'steps' || meta.type === 'roles' || meta.type === 'record') && !Object.keys(value).length) continue;
     const entry = { kind, value };
     // An attribute at its default is written only when the document already carried it: a fresh
     // editor over a document that omits "onBreach": "pause" must read as unchanged.

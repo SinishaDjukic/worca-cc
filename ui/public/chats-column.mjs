@@ -6,7 +6,7 @@
 import { renderRunsList } from './runs-list.mjs';
 import { createRunsSelection, rangeKeys } from './runs-selection.mjs';
 import { listKeyAction, LIST_FIELD, isMac } from './list-keys.mjs';
-import { createListRove, paintBulkBar, navKey } from './list-dom.mjs';
+import { createListRove, paintBulkBar, navKey, bindPointerSelect } from './list-dom.mjs';
 import { mountRunsResize } from './runs-resize.mjs';
 import { openMenu } from './workflows/menu.mjs';
 import { notify } from './feedback.mjs';
@@ -77,6 +77,12 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
   host.classList.add('chats-col');
   host.replaceChildren(head, chip, list, bar);
   const rove = createListRove({ host: list, state: st });   // the Runs list's one Tab stop (list-dom.mjs)
+  // A11: ⌘/Ctrl-click, Shift-click and a touch long-press select chats as they select runs (list-dom.mjs). A group row
+  // selects like a row; selectedRows() expands it. The range is the one Shift+↑/↓ extends over.
+  const unbindSelect = bindPointerSelect({ list, win, visibleKeys: () => rove.items().map((n) => n.dataset.rowKey).filter(Boolean),
+    getAnchor: () => st.anchorKey, setAnchor: (k) => { st.anchorKey = k; },
+    toggle: (k) => { st.selecting = true; toggleSel(k); },
+    selectRange: (keys) => { st.selecting = true; st.sel.selectAll(keys); paint(); } });
   const page = host.closest('[data-chat-page]') || host.parentElement;
   const resize = mountRunsResize(page, { storage, win, key: CHATS_LIST_W_KEY, cssVar: '--chats-list-w', paneSel: '.chat-history',
     label: 'Resize the chats list' });
@@ -396,7 +402,7 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
       case 'menu': if (r) openRowMenu(r, rowEl.closest('.runs-item').querySelector('.runs-more')); return;
       case 'toggle': if (r) { st.selecting = true; toggleSel(r.key); } return;
       case 'all': st.selecting = true; st.sel.selectAll([...st.byKey.keys()]); paint(); return;
-      case 'clear': st.sel.clear(); st.selecting = false; paint(); return;
+      case 'clear': st.sel.clear(); st.selecting = false; st.anchorKey = null; paint(); return;
       default: break;
     }
     if (act === 'archive' && st.sel.size) { void archive(selectedRows(), { unarchive: st.view.show === 'archived' }); return; }
@@ -410,7 +416,7 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     if (it && !it.disabled) it.onSelect();
   });
   viewBtn.addEventListener('click', () => {
-    openMenu({ doc, anchor: viewBtn, align: 'end', label: 'View', items: chatsViewMenuItems(st.view, st.counts, { onPick: (p) => {
+    openMenu({ doc, anchor: viewBtn, align: 'end', label: 'View', className: 'wfv-view-menu', items: chatsViewMenuItems(st.view, st.counts, { mac: isMac(win), onPick: (p) => {
       if (p.select) { st.selecting = true; paint(); return; }
       if (p.shortcuts) { onHelp(viewBtn); return; }
       setView(p);
@@ -425,6 +431,7 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     st.total = null;          // "Loading chats…" until the new view answers, never the old view's count
     st.loaded = false;
     st.sel.clear();
+    st.anchorKey = null;
     st.olderOpen = false;
     paint();
     void refresh();
@@ -432,7 +439,7 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
   bar.addEventListener('click', (e) => {
     const b = e.target.closest('[data-bulk]');
     if (!b || b.disabled) return;
-    if (b.dataset.bulk === 'cancel') { st.sel.clear(); st.selecting = false; paint(); return; }
+    if (b.dataset.bulk === 'cancel') { st.sel.clear(); st.selecting = false; st.anchorKey = null; paint(); return; }
     if (b.dataset.bulk === 'group') { addToGroup(selectedRows(), b); return; }
     void archive(selectedRows(), { unarchive: st.view.show === 'archived' });
   });
@@ -470,6 +477,7 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     },
     focusTarget: () => rove.rove() || viewBtn,
     destroy() {
+      unbindSelect();
       st.destroyed = true;
       if (st.timer) win.clearTimeout(st.timer);
       resize.destroy();

@@ -1841,9 +1841,11 @@ const CHAIN_OF_THREE = () => [{ id: 'p:p0', title: 'Chain', members: [
 ] }];
 const FEATURE_OF_THREE = () => [{ id: 'feat_1', kind: 'feature', title: 'Charts', projectKey: null, planning: null, cost: { usd: 0, byPipeline: {} },
   members: [1, 2, 3].map((i) => ({ position: i, title: `Slice ${i}`, pipelineId: `p${i - 1}`, ticketId: null, status: i === 1 ? 'done' : 'running', pr: null, ticket: null, adhoc: false, after: null })) }];
-// A run in a group has no group row in its facts block: its kind chip ("Run 2 of 3") links the group page.
+// A run in a group has no group row in its facts block and no kind chip: the breadcrumb names its place and links the group.
 const groupLineOf = (screen) => screen.querySelector('.rd-glance .rd-sheet .rd-kv [data-fact="group"]');
-const chipOf = (screen) => screen.querySelector('.rd-glance .rd-title-row .kind-chip');
+const headChip = (screen) => screen.querySelector('.rd-glance .rd-page-head .kind-chip');
+const crumbs = (screen) => [...screen.querySelectorAll('.rd-bar .rd-crumbs .rd-crumb')].map((c) => [c.textContent, c.getAttribute('href')]);
+const groupCrumbHref = (screen) => (crumbs(screen)[1] || [])[1] || null;
 
 async function openChainRun(ctx) {
   frame(ctx, { type: 'run-created', runId: 'r1', title: 'Add dark mode', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
@@ -1853,19 +1855,19 @@ async function openChainRun(ctx) {
   return ctx.window.document.querySelector('#run-detail');
 }
 
-test('a run in a chain of three: its chip "Run 2 of 3" links the chain\'s group page; no group row, no chain bar', async () => {
+test('a run in a chain of three: its breadcrumb links the chain\'s group page; no group row, no chip, no chain bar', async () => {
   const ctx = await bootRunning();
   ctx.box.chains = CHAIN_OF_THREE();
   const screen = await openChainRun(ctx);
   assert.equal(groupLineOf(screen).hidden, true);
-  assert.equal(chipOf(screen).tagName, 'A');
-  assert.equal(chipOf(screen).textContent, 'Run 2 of 3');
-  assert.equal(chipOf(screen).getAttribute('href'), '#group/p%3Ap0');
+  assert.equal(headChip(screen), null);
+  assert.equal(groupCrumbHref(screen), '#group/p%3Ap0');
+  assert.equal(crumbs(screen).at(-1)[0], 'Run 2');
   assert.equal(screen.querySelector('.rd-prog-chain'), null);
   assert.equal(runBarOf(screen).querySelectorAll('.run-prog-sec').length, 4, 'only the run\'s own four sections');
 });
 
-test('a live slice\'s chip "Run 2 of 3" links the feature page; a repaint keeps one chip', async () => {
+test('a live slice\'s breadcrumb links the feature page; no chip; a repaint keeps one breadcrumb', async () => {
   const ctx = await bootRunning();
   frame(ctx, { type: 'hello', flags: { shapeFirst: true }, runs: [] });
   ctx.box.groups = FEATURE_OF_THREE();
@@ -1873,26 +1875,24 @@ test('a live slice\'s chip "Run 2 of 3" links the feature page; a repaint keeps 
   await settle(ctx.window, 4);
   const screen = await openChainRun(ctx);
   assert.equal(groupLineOf(screen).hidden, true);
-  assert.equal(chipOf(screen).textContent, 'Run 2 of 3');
-  assert.equal(chipOf(screen).getAttribute('href'), '#feature/feat_1');
-  assert.equal(screen.querySelector('.rd-slice-line'), null, 'the chip replaces the slice line');
+  assert.equal(headChip(screen), null);
+  assert.equal(groupCrumbHref(screen), '#feature/feat_1');
+  assert.equal(screen.querySelector('.rd-slice-line'), null, 'no slice line');
   frame(ctx, { type: 'state', runId: 'r1', id: 'p1', status: 'running', stepper: STAGED_V2(), steps: V2_STEPS(), active: [{ nodeId: 'n_impl', executionId: 'x:n_impl:2' }], subAgents: [], totalCostUsd: 2 });
   await settle(ctx.window, 4);
-  assert.equal(screen.querySelectorAll('.rd-glance .rd-title-row .kind-chip').length, 1, 'painting twice leaves one chip');
-  assert.equal(chipOf(screen).tagName, 'A');
+  assert.equal(headChip(screen), null);
+  assert.equal(screen.querySelectorAll('.rd-bar .rd-crumbs .rd-crumb').length, 3, 'painting twice leaves one breadcrumb');
 });
 
-test('chain freshness: no group at first, a schedules-changed frame then links the chip', async () => {
+test('chain freshness: no group at first, a schedules-changed frame then links the breadcrumb', async () => {
   const ctx = await bootRunning();
   const screen = await openChainRun(ctx);
-  assert.equal(chipOf(screen).tagName, 'SPAN');
-  assert.equal(chipOf(screen).textContent, 'Run');
+  assert.equal(headChip(screen), null);
+  assert.equal(screen.querySelector('.rd-bar .rd-crumbs').hidden, true);
   ctx.box.chains = CHAIN_OF_THREE();
   frame(ctx, { type: 'schedules-changed' });
   await settle(ctx.window, 8);
-  assert.equal(chipOf(screen).tagName, 'A');
-  assert.equal(chipOf(screen).getAttribute('href'), '#group/p%3Ap0');
-  assert.equal(chipOf(screen).textContent, 'Run 2 of 3');
+  assert.equal(groupCrumbHref(screen), '#group/p%3Ap0');
 });
 
 test('a failing /api/schedules is not refetched by repaints; the run reads as in no group', async () => {
@@ -1906,8 +1906,8 @@ test('a failing /api/schedules is not refetched by repaints; the run reads as in
     await settle(ctx.window, 4);
   }
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/api/schedules')).length, asked, 'repaints do not refetch a failing lookup');
-  assert.equal(chipOf(screen).tagName, 'SPAN');
-  assert.equal(chipOf(screen).textContent, 'Run');
+  assert.equal(headChip(screen), null);
+  assert.equal(screen.querySelector('.rd-bar .rd-crumbs').hidden, true);
 });
 
 test('run page: Apply to branch clears the kept head, and a later state frame does not bring it back', async () => {

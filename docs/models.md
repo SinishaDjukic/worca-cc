@@ -83,6 +83,45 @@ box (id, label or upstream id) and filter chips — *All*, *Yours*, *Built-in*,
 *Plugin*, *Team*, *Needs setup*, plus *Just imported* right after an import.
 Each group folds, with the count in its header; built-in models start folded.
 
+## Model roles
+
+Every model slot that has no value of its own falls back to one of three
+roles. The Roles card on the Models page (above the Engines card) sets them:
+
+| Role | Setting key | What it covers |
+|---|---|---|
+| Deep thinking | `deep` | Plans and reviews: the Plan, Plan review, Refine plan, Review implementation, Deck review and Bug Root Cause steps, and Away mode's decider (`nightMode.deciderModel`) |
+| Everyday coding | `everyday` | Every other step, Chat (`askModels`), Agent generation (`agentGenModel`), the Requirements interview (`requirementsInterview`) and Claude's Auto classifier (`autoWorkflowModel`) |
+| Quick jobs | `quick` | Titles (`titleModel`), Run naming (`namingModel`), Command summaries (`commandSummaryModel`), PR description (`prDescriptionModel`), Memory defragment (`memoryDefrag`, including its step), Workspace scan (`workspaceScan`, the scan model only) and every `utilityModels.<engine>.*` job, Codex's Auto classifier included |
+
+Where a slot looks, in order:
+
+- **Steps:** the node's own pick, the project's step model, your or the team's
+  step model, the workflow template's own model, then the role. A run started
+  with its own model (`--model`) uses that model for every unset step instead
+  of the role, and an Auto run skips the role, as it skips your step models.
+- **Helper jobs:** the job's own setting, then the role, then today's
+  fallback (for titles: the run's model, then the built-in Haiku).
+
+Roles are kept per harness (`modelRoles.claude`, `modelRoles.codex`): a Claude
+run never reads the Codex roles, and a harness with no roles keeps today's
+fallbacks. With no `modelRoles` at all, every slot resolves exactly as it did
+before roles existed.
+
+A role names a catalog model that runs on its harness; the server refuses any
+other and stores the catalog's own spelling of the id (`Claude-Opus-5-5` is
+saved as `claude-opus-5-5`). The effort is any reasoning level; when a job
+uses the role, the effort is mapped to the nearest one the harness takes (on
+Claude, `low` runs as `medium`).
+
+```sh
+curl -X POST http://localhost:4317/api/settings -H 'Content-Type: application/json' \
+  -d '{ "modelRoles": { "claude": { "quick": { "model": "claude-haiku-5-5", "effort": "low" } } } }'
+```
+
+`null` clears a role (`{ "modelRoles": { "claude": { "quick": null } } }`).
+Chat's `change_setting` sets the same values as `models.<harness>.roles.<role>`.
+
 ## Providers
 
 The **Providers** card has a page of its own, **Providers** (Expert level). A

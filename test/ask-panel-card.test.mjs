@@ -2541,3 +2541,15 @@ test('#958: the run proposal card\'s title field keeps the focus, value and care
   assert.deepEqual([title.selectionStart, title.selectionEnd], [4, 9]);
   ctx.panel.destroy();
 });
+
+test('#959 run proposal: shared fields (.select/.input), the branch carries its value as its tooltip, the switch field is on its own row', async () => {
+  const ctx = await openWithCard({ ...PROJECT_CARD, featureBranch: 'worca/a-very-long-feature-branch-name' });
+  const cardEl = ctx.doc.querySelector('.ask-card.ask-rp');
+  for (const s of cardEl.querySelectorAll('.ask-rp-grid select')) assert.ok(s.classList.contains('select'), s.className);
+  const feat = cardEl.querySelector('.ask-card-feature');
+  assert.ok(feat.classList.contains('input'));
+  assert.equal(feat.title, 'worca/a-very-long-feature-branch-name');
+  feat.value = 'worca/x'; feat.dispatchEvent(new ctx.window.Event('input'));
+  assert.equal(feat.title, 'worca/x', 'the tooltip follows the typed value');
+  assert.ok(cardEl.querySelector('.ask-card-same-source').closest('.ask-rp-field').querySelector(':scope > .switch-row'), 'the switch field (style.css spans it)');
+});

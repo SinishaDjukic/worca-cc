@@ -108,7 +108,7 @@ import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.m
 import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
 import { setShipDialogOpener, shipReason } from './shape/ship-card.mjs';
-import { runPositionLabel, groupKindWord, pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
+import { pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
 import { headModel, routeModel, routeGroupOf, renderHeadButtons, renderRoute, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
   hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip } from './run-head.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
@@ -117,7 +117,7 @@ import { createRunsSelection, rowTarget, barModel, bulkBody, rangeKeys, labelTar
 import { bulkConfirm, planBulk, skipText } from '../../src/shared/run-bulk.mjs';
 import { listKeyAction, keyHint, isMac, LIST_FIELD } from './list-keys.mjs';
 import { openKeysSheet } from './keys-sheet.mjs';
-import { createListRove, paintBulkBar, LIST_NAV, navKey } from './list-dom.mjs';
+import { createListRove, paintBulkBar, LIST_NAV, navKey, bindPointerSelect } from './list-dom.mjs';
 import { openGroupPicker } from './group-picker.mjs';
 import { ACTION_LABEL, HEAD_ACTIONS, MENU_ACTIONS, groupModel, runModel } from '../../src/shared/run-model.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
@@ -179,6 +179,7 @@ import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, colle
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
+import { openSetupAssistant, setupStepForSignIn, teamNotice, TEAM_SEEN_KEY } from './setup-assistant.mjs';
 import { loadCredentials, credentialSuffix } from './credential-badges.mjs';
 import { freeRequestsSuffix, typicalFreeRun, newRunFreeWarning, providerFreeLine } from './openrouter-free-view.mjs';
 import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SYNC_EXECUTION_ID } from '../../src/shared/graph/constants.mjs';
@@ -242,7 +243,7 @@ import { trayKey as pinpointTrayKey } from './pinpoint-model.mjs';
 import { createArtifactBrowser } from './artifacts/browser.mjs';
 import { baseName as artifactBaseName } from './artifacts/common.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
-import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody } from './engine-settings-view.mjs';
+import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody, renderRolesSection, readRolesValues, rolesPatchToSettingsBody, paintRoleFallbacks } from './engine-settings-view.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
 import { mountHouseBrief } from './house-brief-view.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
@@ -1622,7 +1623,8 @@ const acctState = { account: describeAccount(null), away: null };   // away: des
 const acctBtn = document.getElementById('side-acct');
 const acctMenu = document.getElementById('acct-menu');
 // focusChecked: false — a keyboard open lands on the spend card, not on the checked theme icon.
-const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', focusChecked: false });
+// The team setup notice repaints each time the menu opens (paintTeamNotice is a hoisted function declaration below).
+const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', focusChecked: false, onOpen: () => { void paintTeamNotice(); } });
 // Interface mode's side menu hangs off the menu (side-flyout closes it with the menu, and Escape
 // closes it first); ui-level.mjs fills it, and a pick there is a choose like a dialog card.
 createFlyout({ trigger: document.getElementById('acct-lvl'), menu: document.getElementById('lvl-menu'), mode: 'beside', parent: acctMenu });
@@ -1681,6 +1683,7 @@ function handleServerMessage(msg) {
     return;
   }
   if (msg.type === 'git') { applyGit(msg.git); return; }
+  if (msg.type === 'setup-apply') { setupDialog?.onFrame(msg); return; }
 
   if (msg.type === 'channel-status') {
     onChannelStatus(msg);
@@ -1884,6 +1887,7 @@ function handleServerMessage(msg) {
   // elsewhere — refetch the scopes and repaint every open policy surface.
   if (msg.type === 'team-policy-changed') {
     scheduleOnboardingRefresh();
+    void paintTeamNotice();
     tpCache.at = 0;
     if (currentView() === 'projects') paintProjectPolicyCells(true);
     if (currentView() === 'workspaces') paintWsPolicyLines(true);
@@ -16898,8 +16902,8 @@ document.getElementById('smartNamingReset')?.addEventListener('click', (e) => po
   { smartNaming: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('smartNamingSave');
 onFlagChange('smartRunNaming', () => { snPaintMuted(); void snPaintCost(null); void paintHelperModelCards(); });
-// Settings › Network proxy: builds its body only while the corporateProxy flag is on.
-mountNetworkProxyCard();
+// Settings › Network proxy (networkProxy.enabled; Simple level, no flag).
+mountNetworkProxyCard({ onOpenSetup: (step) => openSetup({ entry: 'fix', step }) });
 
 function paintAskSettings(data) {
   const turns = document.getElementById('askMaxTurns');
@@ -19238,11 +19242,15 @@ const CLAUDE_USER_HELPER_OWN = (data) => ({
   commandSummary: helperPair(data.commandSummaryModel),
 });
 let lastEngineSettingsData = null;
-async function paintEngineSettings(data) {
+// The catalog the Models cards last painted with, and whether it loaded (the Roles card's catalog-failure line).
+let lastModelCatalog = []; let lastModelCatalogOk = true;
+/** The Engines card, then the Roles card (each paints on its own). A repaint that a Save of this card did not ask for
+ *  (`force`) keeps a card with unsaved rows as it is: another card's Save or a settings-changed broadcast. */
+async function paintEngineSettings(data, { force = false } = {}) {
   const root = document.getElementById('engine-settings-root');
   if (!root) return;
-  let cfg = {};
-  try { cfg = await safeJson(await fetch('/api/config')); } catch {}
+  let cfg = {}; let cfgOk = true;
+  try { const res = await fetch('/api/config'); cfgOk = res.ok; cfg = await safeJson(res); } catch { cfgOk = false; }
   const roles = Array.isArray(cfg?.steps) ? cfg.steps : Object.keys(cfg?.config?.steps || {}).map((key) => ({ key, label: key }));
   const catalog = Array.isArray(cfg?.models) ? cfg.models : [];
   const fields = { 'run.engine': { own: data.runEngine, inherited: { value: 'claude', source: 'default' } } };
@@ -19261,15 +19269,46 @@ async function paintEngineSettings(data) {
   if (fields[utilityId('claude', 'commandSummary')] && csAuto && csAuto.source === 'auto' && csAuto.model) {
     fields[utilityId('claude', 'commandSummary')].inherited = { value: { model: csAuto.model }, source: 'default' };
   }
-  renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
-    noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
-    defaultLabels: { claude: 'the default model' },
-    jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] } });
+  lastModelCatalog = catalog; lastModelCatalogOk = cfgOk && catalog.length > 0;
+  const keep = !force && root.querySelector('.inherit-field[data-dirty="1"]');
+  if (!keep) {
+    renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
+      noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
+      defaultLabels: { claude: 'the default model' },
+      jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] }, modelRoles: data.modelRoles || {} });
+  }
   lastEngineSettingsData = data;
+  paintModelRoles(data);
   // Each non-Claude card's readiness line (GET /api/engines). Only on the Models page, where the cards live: a
   // settings-changed broadcast repaints this from any view, and that must not spawn a preflight.
   if (currentView() === 'models') void paintEngineCardStatus(root);
 }
+/** Models › Roles: the role rows, then every unset Engines row's "From Everyday coding · …" text from them (AC-1.5). */
+function paintModelRoles(data, { force = false } = {}) {
+  const rolesRoot = document.getElementById('model-roles-root'); const engineRoot = document.getElementById('engine-settings-root');
+  if (!rolesRoot) return;
+  const keep = !force && rolesRoot.querySelector('.inherit-field[data-dirty="1"]');
+  if (!keep) {
+    renderRolesSection(rolesRoot, { roles: data.modelRoles || {}, catalog: lastModelCatalog, engine: data.runEngine || 'claude',
+      status: document.getElementById('modelRolesMsg'), onChange: (roles) => { if (engineRoot) paintRoleFallbacks(engineRoot, roles, lastModelCatalog); } });
+  }
+  if (engineRoot) paintRoleFallbacks(engineRoot, readRolesValues(rolesRoot), lastModelCatalog);
+  // The catalog failure has its own line, so the dirty counter and "Saved." on #modelRolesMsg never hide it.
+  const catalogMsg = document.getElementById('modelRolesCatalogMsg');
+  if (catalogMsg) catalogMsg.hidden = lastModelCatalogOk;
+}
+document.getElementById('modelRolesSave')?.addEventListener('click', async () => {
+  const rolesRoot = document.getElementById('model-roles-root');
+  const body = rolesPatchToSettingsBody(readEngineSection(rolesRoot));
+  if (!body.modelRoles) { setHintMsg('modelRolesMsg', 'Nothing changed.', ''); return; }
+  try {
+    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await safeJson(res);
+    if (!res.ok) return setHintMsg('modelRolesMsg', data?.error || `HTTP ${res.status}`, 'err');
+    // Only the Roles card repaints; the Engines rows take the new roles through paintRoleFallbacks.
+    lastEngineSettingsData = data; paintModelRoles(data, { force: true }); setHintMsg('modelRolesMsg', 'Saved.', 'ok');
+  } catch (error) { setHintMsg('modelRolesMsg', error?.message || 'network error', 'err'); }
+});
 /** Fill each engine card's `.engine-card-status` from GET /api/engines: text only (no buttons). An answer
  *  with no `engines` array leaves the lines empty. */
 async function paintEngineCardStatus(root) {
@@ -19284,7 +19323,7 @@ async function paintEngineCardStatus(root) {
 }
 // The flag flips while the Models page is open: the Engines card gains / loses the interview row. Refetched, since
 // GET /api/settings carries the row's stored pair and its default only while the flag is on.
-onFlagChange('requirements', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintHelperModelCards(); });
+onFlagChange('requirements', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintHelperModelCards({ force: true }); });
 document.getElementById('engineSettingsSave')?.addEventListener('click', async () => {
   const root = document.getElementById('engine-settings-root');
   const body = enginePatchToSettingsBody(readEngineSection(root));
@@ -19293,7 +19332,7 @@ document.getElementById('engineSettingsSave')?.addEventListener('click', async (
     const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await safeJson(res);
     if (!res.ok) return setHintMsg('engineSettingsMsg', data?.error || `HTTP ${res.status}`, 'err');
-    await paintEngineSettings(data); setHintMsg('engineSettingsMsg', 'Saved.', 'ok');
+    await paintEngineSettings(data, { force: true }); setHintMsg('engineSettingsMsg', 'Saved.', 'ok');
   } catch (error) { setHintMsg('engineSettingsMsg', error?.message || 'network error', 'err'); }
 });
 
@@ -19327,11 +19366,11 @@ async function loadModelsView() {
 
 // Models › Engines: its pickers list the catalog, so they repaint whenever it loads — a model added a moment ago is
 // selectable without leaving the page.
-async function paintHelperModelCards() {
+async function paintHelperModelCards({ force = false } = {}) {
   try {
     const res = await fetch('/api/settings');
     if (!res.ok) return;
-    await paintEngineSettings(await safeJson(res));
+    await paintEngineSettings(await safeJson(res), { force });
   } catch { /* the card keeps its last paint */ }
 }
 
@@ -19978,11 +20017,6 @@ if (el.providersList) {
     if (!t) return;
     if (t.classList.contains('mv-cp-signin')) copilotSignInFlow();
     else if (t.classList.contains('mv-cp-cancel')) { stopCopilotPoll(); mvState.signIn = null; renderProvidersViewBody(); }
-    else if (t.classList.contains('mv-cp-copy')) {
-      try { navigator.clipboard.writeText(t.dataset.code || ''); t.textContent = 'Copied'; } catch (e) {
-        notify({ tone: 'err', title: 'Could not copy the code', detail: e.message, key: 'copy-device-code' });
-      }
-    }
     else if (t.classList.contains('mv-cp-signout')) copilotSignOutFlow();
     else if (t.classList.contains('mv-cp-terms')) ensureCopilotTerms({ force: true }).then(() => renderProvidersViewBody());
     else if (t.classList.contains('mv-cp-fetch-models')) openImportDialog({ source: 'copilot' });
@@ -20069,7 +20103,8 @@ function onModelsClick(ev) {
     } else if (t.classList.contains('mv-test')) {
       testModelFlow(t);
     } else if (t.classList.contains('mv-signin')) {
-      goToProviders(t.dataset.provider);
+      const step = setupStepForSignIn(t);   // a Copilot pill signs in inside the setup assistant (AC-4.5)
+      if (step) openSetup({ entry: 'fix', step }); else goToProviders(t.dataset.provider);
     } else if (t.classList.contains('mvx-export')) {
       exportPluginFlow();
     } else if (t.classList.contains('mvx-cancel')) {
@@ -31512,7 +31547,6 @@ function groupHomeOf(pipelineId, featureId = '') {
   const planning = !member && !!(pipelineId && row.planning && row.planning.pipelineId === pipelineId);
   return { row, planning, member, position: member ? member.position : null, total: row.model.count.total };
 }
-const groupHref = (row) => (row.groupKind === 'feature' ? `#feature/${encodeURIComponent(row.groupId)}` : `#group/${encodeURIComponent(row.groupId)}`);
 /** D5: a thin ref (a group member, a card) completed from the run's History row. chatRunControls.stop stops a paused
  *  run it holds no live copy of only when ref.status is 'paused'; resume's fallback needs the project dir and key. */
 function fullRef(ref) {
@@ -33163,7 +33197,8 @@ const RUNS_COLLAPSED_KEY = 'worca-cc.runs.collapsed';   // project / date sectio
 const runsUi = { view: loadRunsView(localStorage), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false,
   groupsToggled: new Map(), recentShown: RECENT_PAGE, selecting: false, anchorKey: null,
   sel: createRunsSelection(), rowsByKey: new Map(), memos: new Map(), lastModel: null, listCounts: null,
-  pendingSelect: null, focusKey: null };   // pendingSelect: the pipeline ids "Tag N runs" (Statistics › Cost) asked to tick
+  pendingSelect: null, focusKey: null,   // pendingSelect: the pipeline ids "Tag N runs" (Statistics › Cost) asked to tick
+  archivedTotal: null };   // /api/counts' archived rows: the Show › Archived count before its feed loads
 // focusKey: the list's roving Tab stop across repaints, `row:KEY` or `sec:KEY` (list-keys.mjs, issue #948).
 const memoFor = (id) => { if (!runsUi.memos.has(id)) runsUi.memos.set(id, {}); return runsUi.memos.get(id); };
 
@@ -33864,9 +33899,11 @@ function setRunsView(patch) {
 }
 document.getElementById('runs-view-btn')?.addEventListener('click', (e) => {
   const btn = e.currentTarget;
-  openMenu({ doc: document, anchor: btn, align: 'end', label: 'View',
-    items: viewMenuItems(runsUi.view, { ...(runsUi.listCounts || {}), archived: runsUi.lastModel ? runsUi.lastModel.counts.archived : null },
-      { people: viewer.shared ? runsPeople() : [], onPick: setRunsView }) });
+  // Show › Archived: the loaded feed's length, else the server's count (the feed loads only when Archived is picked).
+  const archived = runsUi.lastModel?.counts.archived ?? runsUi.archivedTotal;
+  openMenu({ doc: document, anchor: btn, align: 'end', label: 'View', className: 'wfv-view-menu',
+    items: viewMenuItems(runsUi.view, { ...(runsUi.listCounts || {}), archived },
+      { people: viewer.shared ? runsPeople() : [], onPick: setRunsView, mac: isMac(window) }) });
 });
 function paintRunsChip(model) {
   const chip = document.getElementById('runs-view-chip');
@@ -34050,30 +34087,12 @@ document.addEventListener('keydown', (e) => {
   e.preventDefault();
   runsSheet(document.activeElement);
 });
-// Touch: a long-press starts selecting (§3.2); the click that follows is swallowed.
-let runsPress = null;
-let runsPressed = '';
-el.runsList?.addEventListener('pointerdown', (e) => {
-  if (e.pointerType !== 'touch') return;
-  const item = e.target.closest && e.target.closest('.runs-item');
-  if (!item) return;
-  runsPress = setTimeout(() => { runsPressed = item.dataset.rowKey; runsUi.selecting = true; toggleRunsKey(runsPressed); }, 500);
-});
-for (const type of ['pointerup', 'pointercancel', 'pointermove']) el.runsList?.addEventListener(type, () => { clearTimeout(runsPress); runsPress = null; });
-el.runsList?.addEventListener('click', (e) => { if (runsPressed) { e.preventDefault(); e.stopPropagation(); runsPressed = ''; } }, true);
-// A11 (spec §3.2): ⌘/Ctrl-click toggles a row and enters selection; Shift-click adds the range from the anchor. Neither opens the run.
-el.runsList?.addEventListener('click', (e) => {
-  const row = e.target.closest?.('a.runs-row');
-  if (!row || !(e.metaKey || e.ctrlKey || e.shiftKey)) return;
-  const key = row.dataset.rowKey || row.closest('.runs-item')?.dataset.rowKey;
-  if (!key) return;
-  e.preventDefault();
-  e.stopPropagation();
-  runsUi.selecting = true;
-  const range = e.shiftKey && runsUi.anchorKey ? rangeKeys(visibleTopKeys(), runsUi.anchorKey, key) : [];
-  if (range.length) { runsUi.sel.selectAll(range); paintRunsList(); }   // selectAll adds; the range joins the selection
-  else { runsUi.anchorKey = key; toggleRunsKey(key); }                   // toggleRunsKey repaints and leaves selection when empty
-}, true);
+// A11 (spec §3.2): ⌘/Ctrl-click toggles a row and enters selection; Shift-click adds the range from the anchor; a touch
+// long-press starts selecting and swallows its click. None opens the run (list-dom.mjs, shared with the Chats column).
+bindPointerSelect({ list: el.runsList, win: window, visibleKeys: visibleTopKeys,
+  getAnchor: () => runsUi.anchorKey, setAnchor: (k) => { runsUi.anchorKey = k; },
+  toggle: (k) => { runsUi.selecting = true; toggleRunsKey(k); },
+  selectRange: (keys) => { runsUi.selecting = true; runsUi.sel.selectAll(keys); paintRunsList(); } });
 
 const selectedTargets = () => [...runsUi.sel.keys()].map((k) => runsUi.rowsByKey.get(k)).filter(Boolean).map(rowTarget);
 function paintRunsBar() {
@@ -35771,8 +35790,9 @@ function paintRdActions(screen, r, m = rdModel(r)) {
   });
   if (split) split.hidden = !!pause && pause.hidden;      // the split wrapper follows its button
 }
-/** D18, run 3 D8: the facts block's group row. A run in a group has none: its kind chip names its place and links the
- *  group page (paintRunPlace). A run in no group offers "Add to group…" at Advanced; the row hides below it. */
+/** D18, run 3 D8: the facts block's group row (its last row). A run in a group has none: the split view's breadcrumb
+ *  names its place and links the group page (paintRunPlace). A run in no group offers "Add to group…" at Advanced; the
+ *  row hides below it. */
 function paintGroupLine(el, pipelineId, title, home) {
   if (!el) return;
   const row = el.closest('.rd-kv-row') || el;
@@ -35788,26 +35808,9 @@ function paintGroupLine(el, pipelineId, title, home) {
   b.addEventListener('click', () => openAddToGroup(b, { pipelineId, title }));
   el.replaceChildren(b);
 }
-/** Run 3 (D6, D7): the kind chip ("Run 2 of 3") and the breadcrumb, from the run's group. In a group the chip links
- *  the group page ("›" is CSS). The breadcrumb is the split layout's alone: the Chat run panel keeps none (its "Runs"
- *  crumb would leave Chat). */
+/** Run 3 (D6): the breadcrumb, from the run's group, and the facts rows' hidden state. The breadcrumb is the split
+ *  layout's alone: the Chat run panel keeps none (its "Runs" crumb would leave Chat). The run head has no kind chip. */
 function paintRunPlace(screen, home) {
-  const old = screen.querySelector('.rd-glance .rd-title-row .kind-chip');
-  const word = runPositionLabel(home);
-  const href = home ? groupHref(home.row) : '';
-  let chip = old;
-  if (chip && (chip.tagName === 'A') !== !!href) {
-    chip = document.createElement(href ? 'a' : 'span');
-    chip.className = 'kind-chip';
-    old.replaceWith(chip);
-  }
-  if (chip) {
-    if (chip.textContent !== word) chip.textContent = word;
-    if (href) {
-      if (chip.getAttribute('href') !== href) chip.setAttribute('href', href);
-      chip.setAttribute('aria-label', `${word}, open ${groupKindWord(home.row).toLowerCase()} ${home.row.title}`);
-    }
-  }
   paintCrumbs(screen.querySelector(':is(.rd-bar,.hd-bar) .rd-crumbs'), screen.dataset.presentation === 'panel' ? [] : runCrumbs(home));
   syncFacts(screen.querySelector('.rd-glance .rd-kv'));
 }
@@ -36032,7 +36035,7 @@ function paintPageHead(glance, title, meta) {
   const h = glance.querySelector('.rd-page-title');
   const m = glance.querySelector('.rd-page-meta');
   if (h && h.textContent !== title) h.textContent = title;
-  if (h && h.title !== title) h.title = title;   // D13: the heading clamps at 2 lines; the full title is the tooltip
+  if (h && h.title !== title) h.title = title;   // D13: the heading is one line cut with "…"; the full title is the tooltip
   if (m) {
     const text = meta.filter(Boolean).join(' · ');
     const node = m.firstChild && m.firstChild.nodeType === 3 ? m.firstChild : null;
@@ -37707,6 +37710,7 @@ async function refreshAllCounts() {
   } catch {
     return;
   }
+  if (Number.isFinite(data.archivedPipelines)) runsUi.archivedTotal = data.archivedPipelines;
   if (data.schedules) paintScheduleCounts(data.schedules);
 }
 
@@ -37741,9 +37745,44 @@ function paintScheduleCounts(c) {
 // and PATH — never written here); this block only paints it and runs guides.
 // A guide is transient state: a reload clears it, the shelf re-summons it.
 // ---------------------------------------------------------------------------
-const gs = { status: null, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, refreshTimer: 0, poll: 0, startedRunId: "" };
+const gs = { status: null, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, setupShown: false, refreshTimer: 0, poll: 0, startedRunId: "" };
 let gsPillHost = null;
 let gsWelcomeUnbind = null;
+let setupDialog = null;
+/** The setup assistant (D18). A second open while one is up moves it to `step` instead. */
+function openSetup({ entry = 'rerun', step = 'check', team = null, teamHash = null } = {}) {
+  if (setupDialog) { setupDialog.goTo(step); return; }
+  setMobileNavOpen(false);
+  setupDialog = openSetupAssistant({ doc: document, entry, step, team, onClose: (how) => {
+    setupDialog = null;
+    // A7: a first start always continues to the welcome; a finished re-run ends on the doors; a fix-it
+    // run (entry 'fix') returns to the page it came from (product-1-2).
+    if (entry === 'first') showWelcome();
+    else if (entry === 'rerun' && how === 'done') showWelcome({ force: true });
+    // T15: Apply then Continue, or Finish when nothing differs. Set up later / Escape keep the notice.
+    else if (entry === 'team' && how === 'done' && team && teamHash) { markTeamSeen(team, teamHash); void paintTeamNotice(); }
+  } });
+}
+
+function readTeamSeen() { try { const v = JSON.parse(localStorage.getItem(TEAM_SEEN_KEY) || '{}'); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } catch { return {}; } }
+function markTeamSeen(home, hash) {
+  try { localStorage.setItem(TEAM_SEEN_KEY, JSON.stringify({ ...readTeamSeen(), [home]: hash })); } catch { /* private mode: shows again next time */ }
+}
+let teamNoticeNow = null;
+/** The account menu's team row (D15): the cheap ?homes=1 read, no catalog and no claude probe. */
+async function paintTeamNotice() {
+  const btnEl = document.getElementById('acct-team-setup'); if (!btnEl) return;
+  const data = await fetch('/api/setup/team?homes=1').then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  teamNoticeNow = data ? teamNotice(data.homes, readTeamSeen()) : null;
+  btnEl.hidden = !teamNoticeNow;
+  if (teamNoticeNow) btnEl.querySelector('.mi-lbl').textContent = teamNoticeNow.label;
+  if (acctFly.isOpen()) acctFly.reposition();
+}
+document.getElementById('acct-team-setup')?.addEventListener('click', () => {
+  const n = teamNoticeNow; if (!n) return;
+  acctFly.close();
+  openSetup({ entry: 'team', step: 'review', team: n.home, teamHash: n.hash });
+});
 
 function gsShelfHost() { return document.getElementById('getting-started-host'); }
 /** The pill is the nav's first row (New run has no sidebar row: it is the top bar's button).
@@ -37832,6 +37871,8 @@ function paintGsSettings() {
     ? `Hidden from the sidebar · ${done} of ${total} done`
     : `In the sidebar · ${done} of ${total} done`);
 }
+// Settings › General › Setup assistant: Run setup (AC-4.4).
+document.getElementById('setupRunAgain')?.addEventListener('click', () => openSetup({ entry: 'rerun' }));
 document.getElementById('gsShowAgain')?.addEventListener('click', async () => {
   if (gs.status && gs.status.hidden) {
     if (!(await setOnboardingPrefs({ hidden: false }))) return;
@@ -37843,12 +37884,19 @@ document.getElementById('gsShowAgain')?.addEventListener('click', async () => {
 function maybeWelcome() {
   const s = gs.status;
   // The welcome greets the home page: Chat since worca Chat (U5), New run before it.
-  if (!s || s.welcomeSeen || gs.welcomeShown || (currentShownView !== 'new' && currentShownView !== 'chat')) return;
+  if (!s || s.welcomeSeen || gs.welcomeShown || setupDialog || (currentShownView !== 'new' && currentShownView !== 'chat')) return;
+  // A fresh install meets the setup assistant first, once per page load; its close shows the welcome (A5).
+  if (s.fresh === true && !gs.setupShown) { gs.setupShown = true; openSetup({ entry: 'first' }); return; }
   // Nothing left to teach: an install that has done everything skips the welcome.
   if (allStepsDone(s)) { gs.welcomeShown = true; setOnboardingPrefs({ welcomeSeen: true }); return; }
+  showWelcome();
+}
+/** The welcome's three doors. `force`: after a re-run's Apply, even when the welcome was seen before (A7). */
+function showWelcome({ force = false } = {}) {
   const modal = document.getElementById('welcome-modal');
-  if (!modal) return;
+  if (!modal || (!force && (gs.welcomeShown || gs.status?.welcomeSeen))) return;
   gs.welcomeShown = true;
+  if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; }   // A6: never two sets of door listeners
   setMobileNavOpen(false);   // a phone drawer opened before the onboarding fetch landed must not stay up behind the dialog
   const close = () => { modal.classList.add('hidden'); if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; } };
   gsWelcomeUnbind = bindWelcome(modal, {
@@ -38464,6 +38512,7 @@ function onboardingViewChanged(name) {
 }
 
 loadOnboarding();
+void paintTeamNotice();
 
 const views = $$('.view');
 // Settings lives in the account menu (#acct-settings) and lights like a nav row while it is open.

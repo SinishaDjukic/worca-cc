@@ -9,6 +9,7 @@ import {
   renderTeamCapPauseBanner, renderRequiredStrip, renderSetupChecklist, POLICY_PAUSE_REASONS, requiredAllLabel,
 } from '../ui/public/team-policy-view.mjs';
 import { renderCostPauseBanner } from '../ui/public/stats-view.mjs';
+import { FIELDS } from '../src/core/policy/registry.mjs';
 
 const dom = new JSDOM('<!doctype html><body></body>');
 const doc = dom.window.document;
@@ -357,4 +358,45 @@ test('editor: runs.tagDimensions chips, add row adds a dimension, docFromEditor 
   assert.ok(enforceRow, 'runs.enforceTags renders through the generic bool control');
   assert.equal(enforceRow.closest('[data-group]')?.dataset.group, 'runs');
   root.remove();
+});
+
+test('Setup tab: roles and record controls round-trip through docFromEditor; Away mode has its label', () => {
+  const policy = { schema: 1, title: 't', fields: {
+    'models.roles': { kind: 'default', value: { claude: { deep: { model: 'claude-opus-5-5', effort: 'high' } } } },
+    'setup.networkWait': { kind: 'default', value: { maxWaitMin: 60 } },
+  }, workspaceRuns: {}, catalogs: { guardrailSets: [], models: [] } };
+  const root = renderPolicyEditor(policy, { registry: FIELDS, doc });
+  const tabs = [...root.querySelectorAll('[role="tab"]')].map((t) => t.textContent.replace(/\d+$/, '').trim());
+  assert.ok(tabs.includes('Setup')); assert.ok(tabs.includes('Away mode')); assert.ok(!tabs.includes('night'));
+  assert.equal(root.querySelectorAll('.tp-edit-row[data-scope="fields"][data-key="models.roles"] .tp-role-row').length, 6);   // the fields scope (workspaceRuns has its own row)
+  const out = docFromEditor(root, { registry: FIELDS });
+  assert.deepEqual(out.fields['models.roles'].value, { claude: { deep: { model: 'claude-opus-5-5', effort: 'high' } } });
+  assert.deepEqual(out.fields['setup.networkWait'].value, { maxWaitMin: 60 });
+});
+
+test('Setup tab: typing a role or a record sub-key gives the row a kind and is a change (webui-2)', () => {
+  const policy = { schema: 1, title: 't', fields: {}, workspaceRuns: {}, catalogs: { guardrailSets: [], models: [] } };
+  const root = renderPolicyEditor(policy, { registry: FIELDS, doc });
+  doc.body.append(root);
+  let changes = 0; root.addEventListener('tp-change', () => { changes++; });
+  try {
+    const roles = root.querySelector('.tp-edit-row[data-scope="fields"][data-key="models.roles"]');
+    const line = roles.querySelector('.tp-role-row');
+    line.querySelector('.tp-role-model').value = 'claude-opus-5-5';
+    line.querySelector('.tp-role-model').dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    assert.equal(changes, 1);
+    const effort = line.querySelector('.tp-role-effort');
+    effort.value = [...effort.options].find((o) => o.value).value;
+    effort.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    const wait = root.querySelector('.tp-edit-row[data-scope="fields"][data-key="setup.networkWait"]');
+    const sub = [...wait.querySelectorAll('.tp-rec-val')].find((n) => n.tagName === 'INPUT' && n.type === 'number');
+    sub.value = '60';
+    sub.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
+    assert.equal(changes, 3);
+    const out = docFromEditor(root, { registry: FIELDS });
+    assert.equal(out.fields['models.roles'].kind, 'default');
+    assert.deepEqual(out.fields['models.roles'].value, { [line.dataset.harness]: { [line.dataset.role]: { model: 'claude-opus-5-5', effort: effort.value } } });
+    assert.equal(out.fields['setup.networkWait'].kind, 'default');
+    assert.deepEqual(out.fields['setup.networkWait'].value, { [sub.closest('.tp-rec-row').dataset.rec]: 60 });
+  } finally { root.remove(); }
 });

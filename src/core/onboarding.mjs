@@ -70,6 +70,17 @@ export function claudeReady(bin = configuredClaudeBin(), opts = {}) {
 }
 
 /**
+ * The one Claude Code detection the Getting started tile and the setup machine check share (D21).
+ * `connected` is the tile's tick: the CLI found AND not signed out ('unknown' never un-ticks it).
+ * @returns {Promise<{ready:boolean, bin:string, hint:string|null, auth:'signed-in'|'signed-out'|'unknown'|null, connected:boolean}>}
+ */
+export async function detectClaude({ recheck = false, ready = claudeReady, probe = probeClaudeAuth } = {}) {
+  const claude = ready();
+  const auth = claude.ready ? (await probe({ bin: configuredClaudeBin(), force: recheck })).state : null;
+  return { ready: claude.ready, bin: claude.bin, hint: claude.hint, auth, connected: claude.ready && auth !== 'signed-out' };
+}
+
+/**
  * The nine ticks plus the two stored flags, in one call. The Claude step needs
  * the CLI found AND not signed out (`auth` is preflight's probeClaudeAuth state;
  * 'unknown' — mock, an older CLI — never un-ticks it). `recheck` skips the
@@ -82,8 +93,7 @@ export function claudeReady(bin = configuredClaudeBin(), opts = {}) {
 export async function onboardingStatus({ recheck = false } = {}) {
   const db = getDb();
   const count = (sql) => { const row = db.prepare(sql).get(); return row ? Number(row.n) : 0; };
-  const claude = claudeReady();
-  const auth = claude.ready ? (await probeClaudeAuth({ bin: configuredClaudeBin(), force: recheck })).state : null;
+  const claude = await detectClaude({ recheck });
   let teamMetrics = false;
   // Cached status only (no discovery): this is read at boot and after every change
   // broadcast, and the Team metrics page owns the expensive refresh.
@@ -93,7 +103,7 @@ export async function onboardingStatus({ recheck = false } = {}) {
   let teamPolicy = false;
   try { teamPolicy = !!(await listPolicyScopes()).anyEnabled; } catch { /* offline / no git: not enabled */ }
   const steps = {
-    claude: claude.ready && auth !== 'signed-out',
+    claude: claude.connected,
     project: countProjects() > 0,
     run: count("SELECT COUNT(*) AS n FROM pipelines WHERE status = 'done'") > 0,
     realRun: count('SELECT COUNT(*) AS n FROM pipelines WHERE total_cost_usd > 0') > 0,
@@ -107,5 +117,5 @@ export async function onboardingStatus({ recheck = false } = {}) {
     teamPolicy,
   };
   const done = ONBOARDING_STEPS.filter((id) => steps[id]).length;
-  return { steps, done, total: ONBOARDING_STEPS.length, claude: { bin: claude.bin, hint: claude.hint, auth }, ...onboardingPrefs() };
+  return { steps, done, total: ONBOARDING_STEPS.length, claude: { bin: claude.bin, hint: claude.hint, auth: claude.auth }, ...onboardingPrefs() };
 }

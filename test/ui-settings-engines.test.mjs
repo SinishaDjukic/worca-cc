@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { renderEngineSection, renderAskEngineSection, enginePatchToSettingsBody, ENGINE_EFFORTS, utilityId } from '../ui/public/engine-settings-view.mjs';
+import { renderEngineSection, renderAskEngineSection, enginePatchToSettingsBody, ENGINE_EFFORTS, utilityId, renderRolesSection } from '../ui/public/engine-settings-view.mjs';
 import { EFFORTS, CODEX_EFFORTS } from '../src/core/model-env.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
 
@@ -112,12 +112,13 @@ test('renderAskEngineSection offers no Cursor engine', () => {
   assert.match(host.textContent, /Chat on Qwen Code needs a Qwen Code model: add one on the Models page\./, 'an engine that ships no model says how to get one');
 });
 
-async function boot(settings = {}, { hash = 'settings', engines = null, flags = '' } = {}) {
+async function boot(settings = {}, { hash = 'settings', engines = null, flags = '', steps = STEPS, catalog = CATALOG, configStatus = 200, postReply = null } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
   const { window } = dom;
   if (flags) window.document.documentElement.dataset.flags = flags;
   window.Element.prototype.scrollIntoView = function () {};
-  window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
+  // The socket keeps its listeners, so a test can deliver a server frame (settings-changed) through `window.__ws`.
+  window.WebSocket = class { constructor() { this.readyState = 1; this.listeners = {}; window.__ws = this; } send() {} close() {} addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); } };
   const posts = [];
   const body = () => ({ root: '/w', projectsRoot: '/p', projectsRootDefault: '/p', default: {}, chat: {}, titleModel: null,
     titleModelEffective: { model: null, source: 'run', stale: null }, hideBuiltinModels: false, ...(typeof settings === 'function' ? settings(window) : settings) });
@@ -126,12 +127,13 @@ async function boot(settings = {}, { hash = 'settings', engines = null, flags = 
     const method = (opts.method || 'GET').toUpperCase();
     const ok = (b) => Promise.resolve({ ok: true, status: 200, json: async () => b });
     if (u.includes('/api/settings')) {
-      if (method === 'POST') { const b = JSON.parse(opts.body); posts.push(b); return ok({ ...body(), ...b }); }
+      if (method === 'POST') { const b = JSON.parse(opts.body); posts.push(b); if (postReply) return Promise.resolve(postReply); return ok({ ...body(), ...b }); }
       return ok(body());
     }
     if (u.includes('/api/projects')) return ok({ projects: [] });
     if (engines && u.endsWith('/api/engines')) return ok({ engines });
-    return ok({ config: { steps: {}, customModels: [] }, models: CATALOG, steps: STEPS, efforts: ['medium', 'high'] });
+    if (configStatus !== 200) return Promise.resolve({ ok: false, status: configStatus, json: async () => ({ error: 'boom' }) });
+    return ok({ config: { steps: {}, customModels: [] }, models: catalog, steps, efforts: ['medium', 'high'] });
   };
   for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
     try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch { /* keep */ }
@@ -382,4 +384,155 @@ test('renderEngineSection: one card at a time, only the changed steps, one-line 
   host.querySelector('.engine-switch button[data-engine="claude"]').click();
   assert.deepEqual(cards(), ['claude']);
   assert.equal(host.querySelector('.engine-card[data-engine="claude"] .engine-slot-rest').textContent, 'Every step follows your settings.');
+});
+
+// --- Models › Roles (setup-assistant-design.md slice 1, AC-1.5) -----------------------------------------------------
+const ROLE_CATALOG = [
+  { id: 'claude-opus-5-5', label: 'Opus 5.5', engine: 'claude', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
+  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', engine: 'claude', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
+  { id: 'claude-haiku-5-5', label: 'Haiku 5.5', engine: 'claude', efforts: ['medium', 'high', 'xhigh', 'max'], custom: false },
+  { id: 'gpt-5.5', label: 'GPT-5.5', engine: 'codex', efforts: ['minimal', 'low', 'medium', 'high'], custom: false, builtin: true },
+];
+const ROLE_STEPS = [{ key: 'planner', label: 'Plan' }, { key: 'implementer', label: 'Implement' }, { key: 'reviewer', label: 'Review' }];
+const EVERYDAY_SONNET = { claude: { everyday: { model: 'claude-sonnet-5-5', effort: 'medium' } } };
+const bootRoles = (settings, opts = {}) => boot(settings, { hash: 'models', steps: ROLE_STEPS, catalog: ROLE_CATALOG, ...opts });
+const emptyOption = (doc, id) => doc.querySelector(`#engine-settings-root [data-setting="${id}"] .inherit-model`).options[0].textContent;
+const roleRow = (doc, engine, role) => doc.querySelector(`#model-roles-root [data-setting="models.${engine}.roles.${role}"]`);
+const pickRole = (window, doc, engine, role, value) => {
+  const sel = roleRow(doc, engine, role).querySelector('.inherit-model');
+  sel.value = value; sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+};
+const stepsRest = (doc) => doc.querySelector('#engine-settings-root .engine-card[data-engine="claude"] .engine-steps .engine-slot-rest').textContent;
+
+test('Roles card: three rows; a role change rewrites the unset Engines rows before Save; clearing restores them', async () => {
+  const { doc, window } = await bootRoles({ modelRoles: EVERYDAY_SONNET });
+  const labels = [...doc.querySelectorAll('#model-roles-root .roles-engine[data-engine="claude"] .inherit-field label:not(.inherit-sub)')].map((l) => l.textContent);
+  assert.deepEqual(labels, ['Deep thinking', 'Everyday coding', 'Quick jobs']);
+  assert.equal(roleRow(doc, 'claude', 'deep').querySelector('.inherit-model').options[0].textContent, "Each job's own default");
+  assert.equal(emptyOption(doc, 'models.claude.steps.implementer'), 'From Everyday coding · Sonnet 5.5');
+  assert.equal(emptyOption(doc, 'models.claude.steps.planner'), "The workflow's model");
+  pickRole(window, doc, 'claude', 'everyday', 'claude-opus-5-5');
+  assert.equal(emptyOption(doc, 'models.claude.steps.implementer'), 'From Everyday coding · Opus 5.5');
+  assert.equal(roleRow(doc, 'claude', 'everyday').querySelector('.inherit-effort').value, 'medium');
+  assert.equal(emptyOption(doc, 'models.claude.steps.planner'), "The workflow's model");
+  assert.equal(doc.getElementById('modelRolesMsg').textContent, '1 unsaved change');
+  const clear = roleRow(doc, 'claude', 'everyday').querySelector('.inherit-clear');
+  assert.equal(clear.getAttribute('aria-label'), 'Clear Everyday coding');
+  assert.equal(clear.title, 'Clear: each job uses its own default');
+  clear.click();
+  assert.equal(emptyOption(doc, 'models.claude.steps.implementer'), "The workflow's model");
+});
+
+test('Roles card: the folded Step models summary follows the live roles', async () => {
+  const all = { claude: { deep: { model: 'claude-opus-5-5' }, everyday: { model: 'claude-sonnet-5-5' }, quick: { model: 'claude-haiku-5-5' } } };
+  const { doc } = await bootRoles({ modelRoles: all });
+  assert.equal(stepsRest(doc), 'Every step follows its model role.');
+  assert.equal(doc.querySelector('#engine-settings-root [data-setting="models.claude.steps.implementer"] .inherit-clear').title, 'Clear: follow Everyday coding');
+  roleRow(doc, 'claude', 'deep').querySelector('.inherit-clear').click();
+  assert.equal(stepsRest(doc), "Every step follows its model role or Worca's defaults.");
+  assert.equal(doc.querySelector('#engine-settings-root [data-setting="models.claude.steps.planner"] .inherit-clear').title, "Clear: follow Worca's defaults");
+});
+
+test('Roles card: Save posts the dirty roles, then "Saved."; a second Save says "Nothing changed."', async () => {
+  const { doc, window, posts, tick } = await bootRoles({ modelRoles: EVERYDAY_SONNET });
+  pickRole(window, doc, 'claude', 'everyday', 'claude-opus-5-5');
+  doc.getElementById('modelRolesSave').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.deepEqual(posts.at(-1), { modelRoles: { claude: { everyday: { model: 'claude-opus-5-5', effort: 'medium' } } } });
+  assert.equal(doc.getElementById('modelRolesMsg').textContent, 'Saved.');
+  // The save's own settings-changed broadcast repaints the now clean card: "Saved." stays.
+  for (const fn of window.__ws.listeners.message || []) fn({ data: JSON.stringify({ type: 'settings-changed' }) });
+  for (let i = 0; i < 10; i++) await tick();
+  assert.equal(doc.getElementById('modelRolesMsg').textContent, 'Saved.');
+  const n = posts.length;
+  doc.getElementById('modelRolesSave').click();
+  for (let i = 0; i < 4; i++) await tick();
+  assert.equal(posts.length, n);
+  assert.equal(doc.getElementById('modelRolesMsg').textContent, 'Nothing changed.');
+});
+
+test('Roles card: a refused POST shows the server\'s message', async () => {
+  const error = 'modelRoles.claude.everyday: unknown model "x"';
+  const { doc, window, tick } = await bootRoles({}, { postReply: { ok: false, status: 400, json: async () => ({ error }) } });
+  pickRole(window, doc, 'claude', 'everyday', 'claude-opus-5-5');
+  doc.getElementById('modelRolesSave').click();
+  for (let i = 0; i < 6; i++) await tick();
+  assert.equal(doc.getElementById('modelRolesMsg').textContent, error);
+  assert.match(doc.getElementById('modelRolesMsg').className, /err/);
+});
+
+test('Roles card: a Roles Save and a settings-changed broadcast keep an unsaved Engines row', async () => {
+  const { doc, window, tick } = await bootRoles({ modelRoles: EVERYDAY_SONNET });
+  const impl = doc.querySelector('#engine-settings-root [data-setting="models.claude.steps.implementer"]');
+  const sel = impl.querySelector('.inherit-model'); sel.value = 'claude-haiku-5-5'; sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  pickRole(window, doc, 'claude', 'deep', 'claude-opus-5-5');
+  doc.getElementById('modelRolesSave').click();
+  for (let i = 0; i < 6; i++) await tick();
+  for (const fn of window.__ws.listeners.message || []) fn({ data: JSON.stringify({ type: 'settings-changed' }) });
+  for (let i = 0; i < 10; i++) await tick();
+  const now = doc.querySelector('#engine-settings-root [data-setting="models.claude.steps.implementer"]');
+  assert.equal(now.querySelector('.inherit-model').value, 'claude-haiku-5-5');
+  assert.equal(now.dataset.dirty, '1');
+});
+
+test('Roles card: a Roles row with unsaved changes survives an Engines Save', async () => {
+  const { doc, window, tick } = await bootRoles({ modelRoles: EVERYDAY_SONNET });
+  pickRole(window, doc, 'claude', 'quick', 'claude-haiku-5-5');
+  const plan = doc.querySelector('#engine-settings-root [data-setting="models.claude.steps.planner"] .inherit-model');
+  plan.value = 'claude-opus-5-5'; plan.dispatchEvent(new window.Event('change', { bubbles: true }));
+  doc.getElementById('engineSettingsSave').click();
+  for (let i = 0; i < 8; i++) await tick();
+  assert.equal(roleRow(doc, 'claude', 'quick').dataset.dirty, '1');
+  assert.equal(roleRow(doc, 'claude', 'quick').querySelector('.inherit-model').value, 'claude-haiku-5-5');
+});
+
+test('Roles card: a hand-set Engines row keeps its own model when its role changes', async () => {
+  const { doc, window } = await bootRoles({ modelRoles: EVERYDAY_SONNET, stepModels: { claude: { implementer: { model: 'claude-haiku-5-5' } } } });
+  pickRole(window, doc, 'claude', 'everyday', 'claude-opus-5-5');
+  assert.equal(doc.querySelector('#engine-settings-root [data-setting="models.claude.steps.implementer"] .inherit-model').value, 'claude-haiku-5-5');
+});
+
+test('Roles card: on a Codex default the Codex panel shows and its rows read the Codex role', async () => {
+  const { doc } = await bootRoles({ runEngine: 'codex', modelRoles: { codex: { everyday: { model: 'gpt-5.5' } } } });
+  assert.equal(doc.querySelector('#model-roles-root .roles-engine[data-engine="codex"]').hidden, false);
+  assert.equal(doc.querySelector('#model-roles-root .roles-engine[data-engine="claude"]').hidden, true);
+  assert.equal(emptyOption(doc, 'models.codex.steps.implementer'), 'From Everyday coding · GPT-5.5');
+  assert.equal(emptyOption(doc, 'models.claude.steps.implementer'), "The workflow's model");
+});
+
+test('Roles card: a failed catalog load says so on its own line, which stays through an edit', async () => {
+  const { doc, window } = await bootRoles({}, { configStatus: 500 });
+  const msg = doc.getElementById('modelRolesCatalogMsg');
+  assert.equal(msg.hidden, false);
+  assert.equal(msg.textContent, 'Could not load the model list. Reload the page to try again.');
+  const effort = roleRow(doc, 'claude', 'deep').querySelector('.inherit-effort');
+  effort.value = 'high'; effort.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.equal(msg.hidden, false);
+  assert.equal(doc.getElementById('modelRolesMsg').textContent, '1 unsaved change');
+});
+
+test('Roles card: the unsaved count covers the hidden harness panel', async () => {
+  const { doc, window } = await bootRoles({});
+  doc.querySelector('#model-roles-root .engine-switch button[data-engine="codex"]').click();
+  pickRole(window, doc, 'codex', 'deep', 'gpt-5.5');
+  doc.querySelector('#model-roles-root .engine-switch button[data-engine="claude"]').click();
+  assert.equal(doc.querySelector('#model-roles-root .roles-engine[data-engine="codex"]').hidden, true);
+  assert.equal(doc.getElementById('modelRolesMsg').textContent, '1 unsaved change');
+});
+
+test('Roles card: Simple level for the card, Expert for its harness switch', async () => {
+  const { doc } = await bootRoles({});
+  assert.equal(doc.getElementById('model-roles-card').dataset.minLevel, 'simple');
+  assert.equal(doc.querySelector('#model-roles-root .engine-switch').dataset.minLevel, 'expert');
+});
+
+test('renderRolesSection: painting one host twice binds its listeners once', () => {
+  const { window } = new JSDOM('<!doctype html><div id="h"></div>');
+  const host = window.document.getElementById('h');
+  let calls = 0;
+  renderRolesSection(host, { catalog: ROLE_CATALOG, onChange: () => { calls += 1; } });
+  renderRolesSection(host, { catalog: ROLE_CATALOG, onChange: () => { calls += 1; } });
+  const sel = host.querySelector('[data-setting="models.claude.roles.deep"] .inherit-model');
+  sel.value = 'claude-opus-5-5'; sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.equal(calls, 1);
 });

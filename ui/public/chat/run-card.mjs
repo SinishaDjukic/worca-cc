@@ -195,11 +195,14 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
 
   const el = h('div', 'ask-card ask-rc chat-rc');
   el.dataset.cardId = id.cardId || '';
-  // ---- head: dot · title · kind chip · Open › (runs redesign slice 4, D10); the status block sits under it
+  // ---- head: dot · title · kind chip · Open › (runs redesign slice 4, D10); the meta line and the status block sit under it.
+  // #959: the run page head's rule (#967): a single run has no kind chip; a group keeps it, as the group page title
+  // does (kindOf). The meta line (the project) comes right under the head.
   const head = h('div', 'ask-rc-head');
   const headDot = h('span', 'status-dot');
   const title = h('div', 'ask-rc-title', id.title || 'Run');
-  const kind = h('span', 'kind-chip', id.fix ? 'PR fix run' : 'Run');
+  const kind = h('span', 'kind-chip');
+  kind.hidden = true;
   const open = h('a', 'ask-rc-open', 'Open');
   const chev = h('span', 'chat-rc-chev', ' ›');
   chev.setAttribute('aria-hidden', 'true');
@@ -234,8 +237,9 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   agentsBox.hidden = true;
   agentsBox.setAttribute('role', 'group');
   agentsBox.setAttribute('aria-label', 'Active agents');
-  // ---- the graph well (U9): a run-hosts `card` host inside a .run-flow-wrap, so the run monitor's status CSS applies
-  const well = h('div', 'run-flow-wrap chat-rc-well');
+  // ---- the graph well (U9): a run-hosts `card` host inside a .run-flow-wrap, so the run monitor's status CSS applies.
+  // #959: a .gv-well, like the workflow card's: the one shared rule widens it past the text column (style.css).
+  const well = h('div', 'run-flow-wrap chat-rc-well gv-well');
   well.hidden = true;
   well.setAttribute('role', 'group');
   const graphHost = h('div', 'run-flow chat-rc-graph');
@@ -300,7 +304,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   const changesSlot = h('div', 'chat-rc-changes');
   changesSlot.hidden = true;
   // Card order: the model's head / status / members, then Shaper's slots; the log sits before the open step.
-  el.append(head, statusEl, labelsEl, sub, fixEl, shapedEl, membersEl, stats, agentsBox, well, logEl, notesEl, watchEl, qSec, resultSec, reason, foot);
+  el.append(head, sub, statusEl, labelsEl, fixEl, shapedEl, membersEl, stats, agentsBox, well, logEl, notesEl, watchEl, qSec, resultSec, reason, foot);
 
   let last = null, graph = null, agentsSig = null, resultSig = '', painted = null, sent = null, inFlight = false, dead = false, pauseAsked = '';
   let shownFor = null;   // the question whose receipt shows the "Answered" fallback (its answer may still be in flight)
@@ -353,9 +357,15 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     openPlan,
   };
 
-  /** D7: a Watch PR fix-run card (#773) and an open shaping plan name themselves; everything else is kindLabel. */
-  const kindOf = (row, s) => (id.fix ? 'PR fix run'
-    : !row && shapeFirstOn() && s && s.shaping && !s.shaping.approved ? 'Shaping' : kindLabel(row));
+  // #959: the chip names a group only (kindLabel's `Feature/Chain/Group · N runs`), and Shaping for the feature a
+  // shaped run becomes. A single run has none (kindLabel's 'Run'; a PR fix run's fix line leads with its kind), like
+  // the run page title (#967).
+  const kindOf = (row, s) => {
+    if (id.fix) return '';
+    if (!row) return shapeFirstOn() && s && s.shaping && !s.shaping.approved ? 'Shaping' : '';
+    const word = kindLabel(row);
+    return word === 'Run' ? '' : word;
+  };
 
   /** D6: runModel's input. The snapshot's own status and question win over the raw run's: they are what paintFoot /
    *  paintQuestion draw from, so the model and the own-button map never disagree. The PR too: resolve() merges the REST
@@ -876,7 +886,9 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const sig = labels.join('\n');
     if (sig !== labelsSig) { labelsSig = sig; labelsEl.replaceChildren(...labels.map((l) => labelChip(doc, l))); }
     title.textContent = curRow ? curRow.title : (s && s.title) || id.title || 'Run';
-    kind.textContent = kindOf(curRow, s);
+    const kindWord = kindOf(curRow, s);
+    kind.textContent = kindWord;
+    kind.hidden = !kindWord;
     open.setAttribute('href', curRow ? (curRow.groupKind === 'feature' ? `#feature/${encodeURIComponent(curRow.groupId)}` : `#group/${encodeURIComponent(curRow.groupId)}`) : progressRoute(id, s));
     if (curRow) { membersEl.replaceChildren(renderMemberRows(doc, curRow)); membersEl.hidden = false; } else { membersEl.replaceChildren(); membersEl.hidden = true; }
     // Run 4 (D20): no id in visible text — the run id is the sub line's tooltip.
@@ -919,7 +931,8 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   function paintFix() {
     const f = id.fix && typeof id.fix === 'object' ? id.fix : null;
     if (!f) { fixEl.hidden = true; fixEl.replaceChildren(); return; }
-    const parts = [h('span', 'chat-rc-fix-why', f.triggerLabel || 'Pull request feedback')];
+    const parts = [h('span', 'chat-rc-fix-kind', 'PR fix run'), h('span', 'chat-rc-fix-sep', '·'),
+      h('span', 'chat-rc-fix-why', f.triggerLabel || 'Pull request feedback')];
     if (isWebUrl(f.prUrl)) {
       const a = h('a', 'chat-rc-fix-pr', `PR #${String(f.prUrl).replace(/\/+$/, '').split('/').pop()}`);
       a.href = f.prUrl; a.target = '_blank'; a.rel = 'noopener noreferrer';

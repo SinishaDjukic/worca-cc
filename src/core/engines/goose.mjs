@@ -532,8 +532,10 @@ export async function runGooseProcess({
     }
     const { final } = out;
     const text = redactor ? redactor.text(final.text) : final.text;
+    // `inputIncludesCache`: goose's input_tokens already holds the cache read and write (checked on Gemini and on
+    // claude-code, goose 1.55), so input + cache would count it twice. Run telemetry reads it; nothing else does.
     safeEmit(onEvent, { type: 'result', text, isError: false, sessionId: GOOSE_SESSION_PREFIX + out.sessionName,
-      ...(final.usage ? { usage: final.usage } : {}), ...(final.costUsd != null ? { costUsd: final.costUsd } : {}) });
+      ...(final.usage ? { usage: final.usage, inputIncludesCache: true } : {}), ...(final.costUsd != null ? { costUsd: final.costUsd } : {}) });
     return { text, exitCode: out.exitCode };
   } catch (err) {
     throw redacted(err);

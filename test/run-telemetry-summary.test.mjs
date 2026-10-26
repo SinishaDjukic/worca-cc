@@ -40,14 +40,29 @@ test('per-call steps: peak, final, series, time split, sessions, sub-agents, win
   assert.equal(s.version, 1);
 });
 
-test('an engine with no per-call usage: one end-of-session point, marked', () => {
+test('wall time counts running stretches only: a pause\'s parked time is left out', () => {
+  const s = summarizeTelemetry([
+    { t: 'step', ts: 1000, step: 'x:p:1', node: 'p', status: 'start' },
+    { t: 'step', ts: 3000, step: 'x:p:1', node: 'p', status: 'paused' },
+    { t: 'step', ts: 60_000, step: 'x:p:1', node: 'p', status: 'start' },
+    { t: 'step', ts: 60_000, step: 'x:p:1', node: 'p', status: 'start' },   // a repeated start opens nothing new
+    { t: 'step', ts: 64_000, step: 'x:p:1', node: 'p', status: 'done' },
+    { t: 'step', ts: 0, step: 'x:q:1', node: 'q', status: 'start' },       // still running: no wall time yet
+  ]);
+  assert.equal(s.steps['x:p:1'].wallMs, 6000);
+  assert.equal(s.steps['x:p:1'].status, 'done');
+  assert.equal(s.steps['x:q:1'].wallMs, null);
+});
+
+test('an engine with no per-call usage: a session input sum, never a context peak', () => {
   const s = summarizeTelemetry([
     { t: 'step', ts: 0, step: 'x:b:1', node: 'b', status: 'start' },
     { t: 'result', ts: 900, step: 'x:b:1', session: 'T', in: 100, cr: 400, cw: 0, out: 50, ctx: 500 },
   ]);
   const st = s.steps['x:b:1'];
   assert.equal(st.perCall, false);
-  assert.equal(st.peak, 500);
+  assert.equal(st.peak, null);
+  assert.equal(st.sessionInput, 500);
   assert.equal(st.output, 50);
   assert.equal(st.cacheShare, null);
   assert.deepEqual(st.series, [[900, 500, 50, 0]]);
@@ -74,6 +89,7 @@ test('output comes from the results when they carry it (a call\'s count is a pla
 test('an all-zero result is no usage, not a context of 0', () => {
   const s = summarizeTelemetry([{ t: 'result', ts: 1, step: 'x:c:1', in: 0, cr: 0, cw: 0, out: 0, ctx: 0 }]);
   assert.equal(s.steps['x:c:1'].peak, null);
+  assert.equal(s.steps['x:c:1'].sessionInput, null);
 });
 
 test('downsampleMax keeps the largest value of every bucket, so the peak survives', () => {
