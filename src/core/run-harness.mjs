@@ -7786,13 +7786,13 @@ export class RunHarness extends EventEmitter {
   }
 
   /** The cost a REMOTE result books (security evaluation 2026-10-21, E4): the sandbox writes the CLI's result frames,
-   *  so its figure is a claim, and `relay` is what worca's own relay measured upstream since the previous result. A
-   *  fully priced measure is booked, and a sandbox figure far from it is named in the run log. With a model the relay
-   *  cannot price, the sandbox figure stands, but never below what the relay could price. */
+   *  so its figure is a claim, and `relay` is what worca's own relay measured upstream since the previous result. The
+   *  measure is booked, and a sandbox figure far from it is named in the run log. A model worca has no price for is
+   *  booked at the fallback rate (relay-usage.mjs priceRelayUsage, audit 2.8), never at the sandbox's figure. */
   _relayedCost(relay, cliCost, attr) {
     let measured;
     try { measured = priceRelayUsage(relay, attr?.model || null); } catch { return cliCost; }
-    if (measured.unpriced.length) return Number.isFinite(cliCost) ? Math.max(cliCost, measured.costUsd) : (measured.costUsd > 0 ? measured.costUsd : cliCost);
+    if (measured.unpriced.length) { this._warnUnpriced(relay.messages, measured.unpriced, attr); return measured.costUsd; }
     const gap = Number.isFinite(cliCost) ? Math.abs(cliCost - measured.costUsd) : 0;
     if (gap > Math.max(0.01, 0.25 * Math.max(cliCost, measured.costUsd))) {
       this._log('orchestrator', 'warn', `the sandbox reported $${cliCost.toFixed(4)} for this call, the model relay measured $${measured.costUsd.toFixed(4)}` +
@@ -7807,10 +7807,12 @@ export class RunHarness extends EventEmitter {
     let measured;
     try { measured = priceRelayUsage(e, attr?.model || null); } catch { return; }
     if (attr?.stepKey) this._openTurns?.delete(attr.stepKey);
-    if (measured.unpriced.length) {
-      this._log('orchestrator', 'warn', `model relay: ${e.messages} model ${e.messages === 1 ? 'reply' : 'replies'} after the last result include a model worca has no price for (${measured.unpriced.join(', ')}); only the priced part is booked`, attr);
-    }
+    if (measured.unpriced.length) this._warnUnpriced(e.messages, measured.unpriced, attr);
     if (measured.costUsd > 0) this._recordCost(measured.costUsd, attr?.stepKey);
+  }
+
+  _warnUnpriced(messages, models, attr) {
+    this._log('orchestrator', 'warn', `model relay: ${messages} model ${messages === 1 ? 'reply' : 'replies'} include a model worca has no price for (${models.join(', ')}); booked at the highest list rate. Give the model a price to book it exactly`, attr);
   }
 
   /** What a result's CLI cost adds to the step. A `cumulativeCost` figure (Claude Code) is the
