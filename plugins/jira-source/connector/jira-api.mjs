@@ -28,7 +28,8 @@ export async function jiraFetch(jira, path, { method = 'GET', body, anonymous = 
   if (res.status !== 204) { try { json = await res.json(); } catch { json = null; } }
   if (!res.ok) {
     const detail = [...(json?.errorMessages || []), ...Object.values(json?.errors || {})].join('; ');
-    throw err('plugin', `Jira ${res.status}${detail ? `: ${detail}` : ''} (${method} ${path})`, { status: res.status });
+    // `body`: Jira's own errors, for an export op that turns a refused field into a result (A6 D11)
+    throw err('plugin', `Jira ${res.status}${detail ? `: ${detail}` : ''} (${method} ${path})`, { status: res.status, body: json });
   }
   return json;
 }
