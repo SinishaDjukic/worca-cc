@@ -375,7 +375,7 @@ test('a timed-out fetch kills its whole process group (no orphaned ssh left wait
   await writeFile(fake, `#!/bin/sh\necho $$ > "${pidFile}"\nexec sleep 30\n`); await chmod(fake, 0o755);
   g(a, 'config', 'core.sshCommand', fake);
   g(a, 'remote', 'set-url', 'origin', 'ssh://git@example.invalid/x.git');
-  const r = await fetchRemote(a, { timeoutMs: 700, maxAgeMs: 0 });
+  const r = await fetchRemote(a, { timeoutMs: 3_000, maxAgeMs: 0 });   // room for git to start the ssh under a loaded suite (700 ms raced it); the stand-in sleeps 30 s
   assert.equal(r.ok, false); assert.equal(r.kind, 'timeout');
   const pid = Number((await readFile(pidFile, 'utf8')).trim());
   const deadline = Date.now() + 5_000;
