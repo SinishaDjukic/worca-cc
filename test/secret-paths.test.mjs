@@ -138,12 +138,26 @@ test('tracked secret is warned about, not masked: a committed .env is in the bun
   assert.deepEqual(out.masked, []);
   const lines = overlaySecretLines(out);
   assert.equal(lines.length, 1);
-  assert.match(lines[0].text, /^sandbox upload: 1 committed file looks like a secret and reaches the sandbox with the git history: \.env\./);
+  assert.match(lines[0].text, /^sandbox upload: 1 committed file looks like a secret and reaches the sandbox with the git history: \.env\. Deleting a file in a new commit keeps it in the older ones: rewrite the history/);
   writeFileSync(join(repo, '.env'), 'TOKEN=changed\n');                       // changed: the new content stays home
   out = await overlayFiles({ worktreeDir: repo });
   assert.deepEqual(out.masked, ['.env']);
   assert.deepEqual(out.trackedSecrets, ['.env']);
   assert.deepEqual(overlaySecretLines({ masked: [], trackedSecrets: [] }), []);
+});
+
+test('a secret committed once and deleted later is named: the bundle carries the branch\'s older commits (audit 2.9)', POSIX, async () => {
+  const repo = secretRepo();
+  git(repo, 'add', '.env'); git(repo, 'commit', '-qm', 'oops');
+  git(repo, 'rm', '-q', '.env'); git(repo, 'commit', '-qm', 'remove the key');
+  const out = await overlayFiles({ worktreeDir: repo });
+  assert.deepEqual(out.trackedSecrets, []);
+  assert.deepEqual(out.historySecrets, ['.env']);
+  const lines = overlaySecretLines(out);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0].text, /^sandbox upload: 1 file that looks like a secret was deleted from the branch but is still in its older commits, which reach the sandbox with the git history: \.env\. Deleting a file in a new commit keeps it in the older ones: rewrite the history/);
+  git(repo, 'checkout', '-qb', 'other', 'HEAD~2');                      // a branch that never had it: nothing to name
+  assert.deepEqual((await overlayFiles({ worktreeDir: repo })).historySecrets, []);
 });
 
 test('overlay: a secret only staged is not in the bundle (HEAD), so it is masked, never called committed; a staged new file goes', POSIX, async () => {

@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { shq } from './shell.mjs';
 import { guardedGitEnv } from '../git-guard.mjs';
-import { DEFAULT_SECRET_PATHS, isSecretPath } from '../secret-paths.mjs';
+import { DEFAULT_SECRET_PATHS, HISTORY_ADDED_ARGS, HISTORY_REMEDY, isSecretPath } from '../secret-paths.mjs';
 
 const execFileP = promisify(execFile);
 const MAX_BUFFER = 256 * 1024 * 1024;
@@ -51,7 +51,8 @@ export async function walkFiles(p, { onSkip = () => {} } = {}) {
  *  graphify-out/ which ignores itself; sent dereferenced), and the deletions to replay.
  *  A file or mount path matching `secretPaths` (secret-paths.mjs) stays on this machine and is listed in `masked`.
  *  A committed one (in HEAD, so in the git bundle already) is listed in `trackedSecrets` to warn about, never masked,
- *  so the sandbox clone still equals git. */
+ *  so the sandbox clone still equals git. One the branch's history added and a later commit deleted is in the bundle
+ *  too, in its older commits: `historySecrets` (audit 2.9). */
 export async function overlayFiles({ worktreeDir, injected = [], onSkip, secretPaths = DEFAULT_SECRET_PATHS }) {
   const z = (s) => s.split('\0').filter(Boolean);
   const deleted = z(await git(['ls-files', '-z', '--deleted'], worktreeDir));
@@ -74,14 +75,18 @@ export async function overlayFiles({ worktreeDir, injected = [], onSkip, secretP
       if (r && !r.startsWith('..')) { const p = r.split(sep).join('/'); if (keep(p)) mounts.add(p); }
     }
   }
-  // What the bundle carries is HEAD: a secret only staged is not in it (it is masked above), only a committed one.
-  const trackedSecrets = (await head(['ls-tree', '-r', '-z', '--name-only', 'HEAD'])).filter(secret);
+  // What the bundle carries is HEAD and its history: a secret only staged is not in it (it is masked above), only a
+  // committed one, also one a later commit deleted.
+  const inHead = new Set(await head(['ls-tree', '-r', '-z', '--name-only', 'HEAD']));
+  const everAdded = (await head([...HISTORY_ADDED_ARGS, 'HEAD'])).map((f) => f.replace(/^\n+/, '')).filter(Boolean);
+  const trackedSecrets = [...inHead].filter(secret);
+  const historySecrets = everAdded.filter((f) => !inHead.has(f) && secret(f));
   return { files: [...new Set(files)].sort(), mounts: [...mounts].sort(), deleted: deleted.sort(),
-    masked: [...masked].sort(), trackedSecrets: [...new Set(trackedSecrets)].sort() };
+    masked: [...masked].sort(), trackedSecrets: [...new Set(trackedSecrets)].sort(), historySecrets: [...new Set(historySecrets)].sort() };
 }
 
-/** The run-log lines for overlayFiles' `masked` and `trackedSecrets`: each list named once, paths only. */
-export function overlaySecretLines({ masked = [], trackedSecrets = [] }) {
+/** The run-log lines for overlayFiles' `masked`, `trackedSecrets` and `historySecrets`: each list named once, paths only. */
+export function overlaySecretLines({ masked = [], trackedSecrets = [], historySecrets = [] }) {
   const lines = [];
   if (masked.length) {
     lines.push({ level: 'warn', text: `sandbox upload: ${masked.length} secret file${masked.length === 1 ? '' : 's'} kept on this machine: ${masked.join(', ')}` });
@@ -89,7 +94,12 @@ export function overlaySecretLines({ masked = [], trackedSecrets = [] }) {
   if (trackedSecrets.length) {
     const one = trackedSecrets.length === 1;
     lines.push({ level: 'warn', text: `sandbox upload: ${trackedSecrets.length} committed file${one ? ' looks' : 's look'} like ${one ? 'a secret' : 'secrets'} and `
-      + `reach${one ? 'es' : ''} the sandbox with the git history: ${trackedSecrets.join(', ')}. Remove ${one ? 'it' : 'them'} from the repository to keep ${one ? 'it' : 'them'} out.` });
+      + `reach${one ? 'es' : ''} the sandbox with the git history: ${trackedSecrets.join(', ')}. ${HISTORY_REMEDY}` });
+  }
+  if (historySecrets.length) {
+    const one = historySecrets.length === 1;
+    lines.push({ level: 'warn', text: `sandbox upload: ${historySecrets.length} file${one ? '' : 's'} that look${one ? 's' : ''} like ${one ? 'a secret was' : 'secrets were'} deleted from the branch `
+      + `but ${one ? 'is' : 'are'} still in its older commits, which reach the sandbox with the git history: ${historySecrets.join(', ')}. ${HISTORY_REMEDY}` });
   }
   return lines;
 }
