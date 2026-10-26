@@ -7,9 +7,9 @@ them into the next page and empties this file.
 
 **Save a workflow as a version, choose which one new runs use, and go back.**
 
-Workflow versions (Labs, flag `workflowTests`): Save version on a workflow, choose which version new runs use, see what changed, and restore any of the last 50 saves. Every save keeps the workflow as it was just before; a version records its agents and scripts by content hash, so it runs today's agent text and the Versions page says when one changed in the Library.
+Workflow versions (Labs, flag `workflowTests`): Save version on a workflow, choose which version new runs use, see what changed, and restore any of the last 50 saves. Every save keeps the workflow as it was just before; a version keeps the workflow's steps and settings, and runs today's agent and script text from the Library.
 
-Export can export the version in use or your draft: the Export dialog's Version field picks which, and starts on the version new runs use.
+Export can export the version in use or your draft: the Export dialog's Version field picks which, and starts on the version new runs use. An exported skill or plugin keeps the workflow's name, so exporting an older version updates it.
 
 Chips: Save version · Versions · Use for new runs · Restore · experimental: turn it on in Settings › Labs
 
