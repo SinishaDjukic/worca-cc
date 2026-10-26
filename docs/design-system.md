@@ -245,7 +245,9 @@ In the Chat conversation every card (run, files, applied change, command, run pr
 text column: `.ask-transcript-col` caps it at `--chat-text-max` (760px) and no card kind sets its own width. Only a graph
 well (`.gv-well`: the workflow card's and the run card's graph) widens, through one rule (`.chat-convo .ask-msg
 .gv-well`), up to `--chat-card-max` (1040px) and centred on the column; it is 1px `--line`, a 6px corner and the canvas
-fill, and its host fits the graph into it (≤ 1×, down to 0.3×; only a wider graph pans). The transcript reserves its
+fill, and its host fits the graph into it (≤ 1×, down to 0.3×; only a wider graph pans, and it opens at its start edge
+with the first node in view, never centred with both ends cut). The well is as tall as the graph at that zoom (220–480px),
+set once, so it never jumps on a resize and a shrunk graph never sits in an empty box. The transcript reserves its
 scrollbar gutter on both edges (`scrollbar-gutter:stable both-edges`), so the column, the composer and Jump to latest
 share one centre. The dock is opaque from its top edge down after a 32px fade band (`--chat-dock-fade`); Jump to latest
 sits in that band, right above the dock, and the transcript's bottom clearance includes it, so nothing reads under

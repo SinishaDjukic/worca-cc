@@ -2,7 +2,9 @@
 // tools/verify-chat-layout-cdp.mjs — headless-Chrome proof of the Chat layout rules (#959): one column edge for every
 // card, every graph inside its well, the run card's dot centred on its title line, one centre for the column, the
 // composer and Jump to latest, nothing under the composer, and the run proposal's fields (one-line labels, a whole
-// placeholder, an ellipsized branch with its tooltip, no pill). Mock mode: `worca ui start --mock` as a child on a
+// placeholder, an ellipsized branch with its tooltip, no pill), and the proposed workflow card's well: a graph that fits
+// is drawn whole, one still wider than its well at the 0.3 floor opens at its start edge, and no well is taller than
+// its placed graph needs. Mock mode: `worca ui start --mock` as a child on a
 // free port, with a scratch HOME and WORCA_HOME, at 1024 and 1440 px, dark theme. NOT part of `npm test`.
 // Run: npm run verify:chat-layout [-- --root DIR] [--label before|after] [--report-only]
 //   --root DIR    the tree whose CLI is started and whose store seeds the chats (default: this repo)
@@ -116,6 +118,21 @@ try {
   const rp = { ...v.card, tags: ['client:acme'], featureBranch: BRANCH };
   store.appendMessage(b.id, { role: 'user', text: 'Propose a run to page the contacts search.' });
   store.appendMessage(b.id, { role: 'assistant', status: 'done', text: 'Here is a run for it:', blocks: [{ kind: 'card', id: 'card_rp000001', state: 'proposed', card: rp }] });
+  // Chat C — two proposed workflow cards, built the way turn.mjs _onWorkflowResult builds one: a 2-agent shape that fits
+  // its well, and a 9-agent one still wider than its well at the 0.3 floor (it pans, and must open at its Task node).
+  const { revalidateWorkflowProposal } = await import(pathToFileURL(path.join(ROOT, 'src/core/ask/workflow-deps.mjs')).href);
+  const wfCard = async (note, stages) => {
+    const r = await revalidateWorkflowProposal({ shape: { name: note, taskKind: 'prompt', reasoning: note, size: 'medium', signals: [], stages }, projectKey: key });
+    return { kind: 'card', id: store.newAskId('card'), state: 'proposed', card: { type: 'workflow', mode: 'shape', projectKey: key, projectName: 'proj',
+      workspaceId: null, workspaceName: null, note, thenRun: false, shape: r.shape, summary: r.summary, ...r.proposal } };
+  };
+  const c = store.createThread({ title: 'Layout: workflows' });
+  store.appendMessage(c.id, { role: 'user', text: 'Propose a small workflow and a big one.' });
+  store.appendMessage(c.id, { role: 'assistant', status: 'done', text: 'Two workflows:', blocks: [
+    await wfCard('Small', [{ agent: 'implementer' }, { agent: 'reviewer' }]),
+    await wfCard('Big', [{ agent: 'clarify' }, { agent: 'planner' }, { agent: 'planReviewer' }, { agent: 'refiner', selfLoop: true }, { agent: 'decomposer' },
+      { agent: 'implementer', fanOut: true }, { agent: 'reviewer' }, { agent: 'manualTestsChecklist' }, { agent: 'manualWebUiTesting' }]),
+  ] });
 
   // ---- chrome + cdp (verify-run-monitor-cdp.mjs). Scrollbars stay drawn: the proof measures classic ones.
   profile = await mkdtemp(path.join(tmpdir(), 'worca-chatlayout-profile-'));
@@ -195,9 +212,20 @@ try {
       jump: jumpEl && !jumpEl.hidden ? R(jumpEl) : null };
     const CARDS = '.ask-transcript-col > .ask-msg > :is(.ask-card,.ask-card-stub,.ask-ccard)';
     for (const c of page.querySelectorAll(CARDS)) out.cards.push({ cls: c.className, ...R(c) });
+    // A proposal well (.ask-wfcard) PANS by design when its graph is still wider than the span left of the nav cluster
+    // (proposal-host NAV_INSET 54) at the 0.3 floor: then it opens at its start edge. Its height is the placed graph's
+    // (the world's drawn content, nodes, wires and their pills, at its zoom) plus the padding, clamped 220..480; view.bounds
+    // also lets a pill hang 12 px below its wire, so the check allows that much.
     for (const w of page.querySelectorAll('.ask-transcript-col .gv-well')) {
       const nodes = [...w.querySelectorAll('.gv-world .node')].filter((n) => n.offsetParent).map(R);
-      out.wells.push({ well: R(w), l: Math.min(...nodes.map((n) => n.l)), r: Math.max(...nodes.map((n) => n.r)), n: nodes.length });
+      const world = w.querySelector('.gv-world');
+      const z = world ? new DOMMatrix(getComputedStyle(world).transform).a || 1 : 1;
+      const drawn = world ? [...world.querySelectorAll('.node, svg path, .wbadge')].map(R).filter((x) => x.w || x.h) : [];
+      const l = Math.min(...nodes.map((n) => n.l)), r = Math.max(...nodes.map((n) => n.r));
+      const wf = !!w.closest('.ask-wfcard');
+      out.wells.push({ well: R(w), l, r, n: nodes.length, z, wf, first: nodes.length ? nodes.reduce((a, x) => (x.l < a.l ? x : a)) : null,
+        pans: wf && z <= 0.3 + 1e-6 && r - l + 2 * 24 * z > R(w).w - 54 + 1,
+        graphH: drawn.length ? Math.max(...drawn.map((x) => x.b)) - Math.min(...drawn.map((x) => x.t)) : 0 });
     }
     const dot = page.querySelector('.chat-rc .ask-rc-head > .status-dot'), ttl = page.querySelector('.chat-rc .ask-rc-head > .ask-rc-title');
     if (dot && ttl) out.head = { dot: R(dot).cy, title: R(ttl).cy, chip: !!page.querySelector('.chat-rc .ask-rc-head > .kind-chip:not([hidden])') };
@@ -238,7 +266,8 @@ try {
   // height over the line height.)
 
   const near = (x, y, tol) => Math.abs(x - y) <= tol;
-  const THREADS = [['cards', a.id, '.chat-rc .chat-rc-well .gv-world .node'], ['proposal', b.id, '.ask-card.ask-rp .ask-card-feature']];
+  const THREADS = [['cards', a.id, '.chat-rc .chat-rc-well .gv-world .node'], ['proposal', b.id, '.ask-card.ask-rp .ask-card-feature'],
+    ['workflows', c.id, '.ask-wfcard .gv-well .gv-world .node']];
   let n = 0;
   for (const w of WIDTHS) {
     for (const [t, id, ready] of THREADS) {
@@ -254,7 +283,16 @@ try {
       await settle(`${w} ${t}`); await sleep(400); await settle(`${w} ${t}`);
       const m = await ev(MEASURE);
       check(`${w}px ${t}: every card's left and right edge is the text column's`, m.cards.length > 0 && m.cards.every((c) => near(c.l, m.col.l, 0.5) && near(c.r, m.col.r, 0.5)), JSON.stringify(m.cards.filter((c) => !near(c.l, m.col.l, 0.5) || !near(c.r, m.col.r, 0.5))));
-      check(`${w}px ${t}: no graph wider than its well`, m.wells.every((x) => x.n && x.l >= x.well.l - 1 && x.r <= x.well.r + 1), JSON.stringify(m.wells));
+      const fits = m.wells.filter((x) => !x.pans);
+      check(`${w}px ${t}: no graph wider than its well`, fits.every((x) => x.n && x.l >= x.well.l - 1 && x.r <= x.well.r + 1), JSON.stringify(fits));
+      if (t === 'workflows') {
+        const wf = m.wells.filter((x) => x.wf);
+        check(`${w}px ${t}: both workflow cards host a graph, and the 9-agent one pans at the floor`, wf.length === 2 && wf.filter((x) => x.pans).length === 1, JSON.stringify(wf.map((x) => ({ n: x.n, z: x.z, pans: x.pans }))));
+        check(`${w}px ${t}: a graph that does not fit opens at 0.3x at its start edge, its first node wholly inside the well`,
+          wf.filter((x) => x.pans).every((x) => near(x.z, 0.3, 1e-3) && x.first.l >= x.well.l - 0.5 && x.first.l <= x.well.l + 24), JSON.stringify(wf.filter((x) => x.pans).map((x) => ({ z: x.z, first: x.first.l, well: x.well.l }))));
+        check(`${w}px ${t}: no well taller than its placed graph plus padding (within 220..480)`,
+          wf.every((x) => x.well.h <= Math.min(480, Math.max(220, Math.ceil(x.graphH + (2 * 24 + 12) * x.z))) + 1), JSON.stringify(wf.map((x) => ({ h: x.well.h, graphH: x.graphH, z: x.z }))));
+      }
       check(`${w}px ${t}: every well is centred on the column`, m.wells.every((x) => near(x.well.cx, m.col.cx, 0.5)), JSON.stringify(m.wells.map((x) => x.well.cx)) + ` vs ${m.col.cx}`);
       if (t === 'cards') check(`${w}px ${t}: the run card hosts a graph`, m.wells.length >= 1 && !!m.head);
       if (m.head) check(`${w}px ${t}: the run card dot is centred on its title line (≤1px)`, near(m.head.dot, m.head.title, 1), `${m.head.dot} vs ${m.head.title}`);

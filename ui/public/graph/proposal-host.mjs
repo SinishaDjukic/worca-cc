@@ -7,17 +7,18 @@
 // mostly horizontal wheel pans, ⌘/ctrl+wheel zooms, a plain vertical wheel stays the chat's scroll, and a pan or zoom
 // never leaves the graph. Unlike it there is no run decor and no follow camera, and the well OPENS FITTED (#959): a graph
 // that fits is drawn at zoom 1, centred; a wider one is shrunk to fit, down to WELL_ZOOM_MIN, and only past that it
-// pans. It never re-flows into rows. The nav cluster is the run monitor's (same
-// glyphs, .gv-nav / .gv-nav-btn) plus Expand, which hands the workflow to the host (the Workflows composer).
+// pans, opening at its start edge (the Task node in view). It never re-flows into rows. The nav cluster is the run
+// monitor's (same glyphs, .gv-nav / .gv-nav-btn) plus Expand, which hands the workflow to the host (the Workflows composer).
 //
 // Measurement: `viewport` (a function, or null) is handed VERBATIM to createGraphView; the width is view.readRect()'s.
-// The well height comes from the MODEL bounds at zoom 1 (view.bounds), so it is right before the card is attached.
+// The well height comes from the MODEL bounds (view.bounds): at zoom 1 until the well is measured, then ONCE at the
+// zoom the first measured placement uses (the chat run card's rule: the zoom picks the height).
 import { createGraphView } from './view.mjs';
 import { NAV_BTNS, NAV_INSET, fitInto } from './run-hosts.mjs';
 import { autoLayout } from '../../../src/shared/graph/layout.mjs';
 import { ZOOM_STEP } from '../../../src/shared/graph/geometry.mjs';
 
-/** The well height: the graph's padded height at zoom 1, clamped (the chat run card's CARD_MIN_H..CARD_MAX_H rule). */
+/** The well height: the graph's padded height at its placed zoom, clamped (the chat run card's CARD_MIN_H..CARD_MAX_H rule). */
 export const WELL_MIN_H = 220, WELL_MAX_H = 480, WELL_PAD = 24;
 /** Zoom: out to the run monitor's 0.3 floor, in to 1 — never past the canvas's own card size. */
 export const WELL_ZOOM_MIN = 0.3, WELL_ZOOM_MAX = 1;
@@ -87,12 +88,13 @@ export function mountProposalGraph(hostEl, template, {
 
   const listeners = [];
   const on = (target, type, fn, o) => { target.addEventListener(type, fn, o); listeners.push([target, type, fn, o]); };
-  let wellH = WELL_MIN_H, last = null, lastW = 0, nav = null, ro = null, expanding = false, dead = false;
+  let wellH = WELL_MIN_H, sized = false, last = null, lastW = 0, nav = null, ro = null, expanding = false, dead = false;
 
-  /** The well's height: the padded graph at zoom 1, clamped. Set once — no width, band or description changes it. */
-  function sizeWell() {
+  /** The well's height: the padded graph at zoom `z`, clamped. Zoom 1 while unmeasured; then set once, by the first
+   *  placement that sees a width — no later width, band or description changes it, so the well never jumps. */
+  function sizeWell(z) {
     const b = view.bounds(WELL_PAD);
-    wellH = b ? clamp(Math.ceil(b.h), WELL_MIN_H, WELL_MAX_H) : WELL_MIN_H;
+    wellH = b ? clamp(Math.ceil(b.h * z), WELL_MIN_H, WELL_MAX_H) : WELL_MIN_H;
     hostEl.style.height = `${wellH}px`;
   }
   /** The span the graph may use across: the well minus the nav cluster's column (NAV_INSET), so neither a placement
@@ -114,14 +116,20 @@ export function mountProposalGraph(hostEl, template, {
     return { x: sx ? axis(t.x, sx, b.x, b.w, t.z) : t.x, y: axis(t.y, wellH, b.y, b.h, t.z), z: t.z };
   }
   /** #959: the well opens with its whole graph in view, the Center button's fit: ≤ 1× (a graph that fits stays at
-   *  zoom 1, centred), down to WELL_ZOOM_MIN, clamped. Unmeasured, the start edge at zoom 1; the first relayout()
-   *  that sees a width places it for real. */
+   *  zoom 1, centred), down to WELL_ZOOM_MIN, clamped. A graph still wider than the span at WELL_ZOOM_MIN opens at its
+   *  START edge (centred, both ends would be cut and the Task node lost); the user pans to the rest. The first
+   *  placement that sees a width sizes the well to that zoom. Unmeasured, the start edge at zoom 1; the first
+   *  relayout() that sees a width places it for real. */
   function place() {
     const b = view.bounds(WELL_PAD);
     if (!b) return;
     const sx = spanX();
-    const t = sx ? clampWell(fitInto(b, sx, wellH, { zoomMin: WELL_ZOOM_MIN }))
-      : { x: -b.x, y: axis(-b.y, wellH, b.y, b.h, 1), z: 1 };
+    if (sx && !sized) { sized = true; sizeWell(fitInto(b, sx, WELL_MAX_H, { zoomMin: WELL_ZOOM_MIN }).z); }
+    let t = { x: -b.x, y: axis(-b.y, wellH, b.y, b.h, 1), z: 1 };
+    if (sx) {
+      t = clampWell(fitInto(b, sx, wellH, { zoomMin: WELL_ZOOM_MIN }));
+      if (b.w * t.z > sx) t = { ...t, x: -b.x * t.z };
+    }
     view.setTransform(t);
     last = view.getTransform();
     lastW = sx;
@@ -193,7 +201,7 @@ export function mountProposalGraph(hostEl, template, {
     });
   }
 
-  sizeWell();
+  sizeWell(1);
   buildNav();
   // Drag pans and ⌘/ctrl+wheel zooms (the view's nav); every such write is kept inside the well.
   view.createNav({ onTransform: (t) => {

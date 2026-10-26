@@ -1260,6 +1260,16 @@ test('card host: the Workflows rendering in a chat-card well — width-led zoom 
       const b = m.view.bounds(CARD_PAD);
       near(xform(host.querySelector('.gv-world')).x, -b.x * CARD_ZOOM_MIN, 'the first node is clamped to the start edge, never past it');
     } },
+    { name: '#959: a wide graph before any step runs opens at the floor at its START edge, not centred (the first node in view)', run: async () => {
+      calls = [];
+      const { m, host } = mountHost('card', 150);
+      m.update('run1', LINE, decorFromState(lineRun()));
+      const t = xform(host.querySelector('.gv-world'));
+      const b = m.view.bounds(CARD_PAD);
+      near(t.z, CARD_ZOOM_MIN, 'the floor');
+      assert.ok(b.w * CARD_ZOOM_MIN > 150, 'LINE overflows a 150px well at the floor');
+      near(t.x, -b.x * CARD_ZOOM_MIN, 'nothing to follow: the start edge');
+    } },
   ]);
 });
 
