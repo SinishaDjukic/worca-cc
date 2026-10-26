@@ -1,7 +1,7 @@
 ---
 name: refiner-scratch-tree-reuse
 description: Implementing a big prose-heavy plan: reuse the refiner's replayed scratch tree, but audit every prose bullet, because the tree lags the final plan version
-updated: 2026-10-26T16:29:08.919Z
+updated: 2026-10-26T18:06:45.789Z
 author: Bulibas
 ---
 
@@ -37,3 +37,12 @@ replay there, and something it ran put the run worktree's files back over the re
 edits kept). Nothing errored. The next test run failed on a missing export. Keep your replay in a uniquely named
 subfolder (`scratchpad/rf<issue>/tree`). Tell lanes to use their own named subfolder. Check `git -C <tree> status --short`
 before trusting a green run.
+
+**Fast path that worked (#943 implement, 2026-10-26: 35 files, 9 tasks, ~1 h).** The refiner's lanes now write paths
+like `scratchpad/rf<issue>c<N>/tree`, so widen the grep to `[A-Za-z0-9_-]*\(/[A-Za-z0-9_-]*\)\?`. Check
+`git -C <tree> diff | md5` against the saved `c<N>.diff` first. Then confirm every fenced block of the final plan appears
+in the tree's changed files (compare whitespace-normalised text; a block that is absent should be the OLD side of a
+"replace"). Then copy the files whole, task by task: tests first and run red, then code and run green. Afterwards
+`cmp` every file against the tree. A whole-file copy also copies any wrong placement that four refine cycles missed.
+Here it was a new JSDoc + function put between an existing function's JSDoc and its `export` line, because the plan's
+anchor was "directly above `export async function X`". Only a read-only prose audit lane caught it.
