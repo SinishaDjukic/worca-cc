@@ -35,7 +35,7 @@ const server = http.createServer((req, res) => {
   req.on('data', (c) => { n += c.length; if (n > MAX_BODY) { over = true; chunks.length = 0; } else chunks.push(c); });
   req.on('end', () => {
     pending.set(id, res);
-    // The client hung up before worca finished: tell worca, so it stops the upstream call.
+    // The client hung up before worca finished: tell worca, so it stops forwarding (it reads the upstream on, to book it).
     res.on('close', () => { if (pending.delete(id)) out({ t: 'close', id }); });
     out({ t: 'req', id, method: req.method, path: req.url, headers: req.headers,
       b64: over ? '' : Buffer.concat(chunks).toString('base64'), ...(over ? { over: true } : {}) });
