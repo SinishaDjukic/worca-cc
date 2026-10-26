@@ -36,8 +36,8 @@ function statusDot(v) {
 function menu(id, items, lead) {
   if (ui.menu !== id) return '';
   const head = lead ? `<p class="menu-lead">${esc(lead)}</p><div class="menu-sep"></div>` : '';
-  const danger = /^(Discard|Stop)$/;
-  return `<div class="menu" role="menu">${head}${items.map((it) => `<button type="button" class="menu-item has-help${danger.test(it.text) ? ' is-danger' : ''}" role="menuitem" data-menu-pick="${esc(it.id || it.text)}"><span>${esc(it.text)}</span>${it.help ? `<span class="menu-help">${esc(it.help)}</span>` : ''}</button>`).join('')}</div>`;
+  const danger = /^(Discard|Stop|Stop the run)$/;
+  return `<div class="menu" role="menu">${head}${items.map((it) => `<button type="button" class="menu-item has-help${danger.test(it.text) ? ' is-danger' : ''}" role="menuitem" data-menu-pick="${esc(it.id || it.text)}"${it.narrow ? ' data-narrow' : ''}><span>${esc(it.text)}</span>${it.help ? `<span class="menu-help">${esc(it.help)}</span>` : ''}</button>`).join('')}</div>`;
 }
 function chip(c, i) {
   const x = `<button type="button" class="tag-x" aria-label="Remove ${esc(c.text)}" data-unchip="${i}">${svg('x', 10)}</button>`;
@@ -65,10 +65,10 @@ function rowHtml(r, full) {
     : `<span class="rd-route-name sc-name" title="${esc(r.name)}"${r.akey ? ` tabindex="-1" data-key="act:${esc(r.akey)}"` : ''}>${esc(r.name)}</span>`;
   const loops = !r.loops ? '' : r.roundsKey ? `<button type="button" class="sc-loop is-btn" aria-expanded="${!!r.roundsOpen}" data-rounds="${esc(r.roundsKey)}" data-key="rounds:${esc(r.roundsKey)}" title="${r.roundsOpen ? 'Hide' : 'Show'} the ${r.loops} rounds">${svg('refresh', 11)}${r.loops}</button>`
     : `<span class="sc-loop" title="Ran ${r.loops} times">${svg('refresh', 11)}${r.loops}</span>`;
-  const log = full && !/is-next/.test(r.rowCls) && !r.evidence ? `<button type="button" class="btn btn-sm btn-quiet rtab-log" data-key="log:${esc(r.akey)}">Log</button>` : '';
+  const log = full && !/is-next/.test(r.rowCls) && !r.evidence ? `<button type="button" class="btn btn-sm btn-quiet rtab-log" data-key="log:${esc(r.akey)}" data-say="Opens the log of ${esc(r.name)}">Log</button>` : '';
   const rest = `<span class="sc-rest"><span class="sc-loops">${loops}</span>${full ? `<span class="sc-model">${esc(r.model || '')}</span><span class="sc-cost">${esc(r.cost || '')}</span><span class="sc-act">${log}</span>` : ''}</span>`;
   // A failed or blocked step shows what broke, its last lines and a way into the log, in Activity only.
-  const ev = r.evidence ? `<div class="rtab-ev"><p class="rtab-ev-t">${esc(r.evidence.title)}</p><pre class="rtab-ev-l">${r.evidence.lines.map(esc).join('\n')}</pre><button type="button" class="btn btn-sm rtab-ev-btn" data-key="log:${esc(r.akey)}">${esc(r.evidence.log)}</button></div>` : '';
+  const ev = r.evidence ? `<div class="rtab-ev"><p class="rtab-ev-t">${esc(r.evidence.title)}</p><pre class="rtab-ev-l">${r.evidence.lines.map(esc).join('\n')}</pre><button type="button" class="btn btn-sm rtab-ev-btn" data-key="log:${esc(r.akey)}" data-say="${esc(r.evidence.log)}: opens the log there">${esc(r.evidence.log)}</button></div>` : '';
   return `<li class="rd-route-row sc-row ${r.rowCls}${r.focus ? ' is-focus' : ''}"><span class="rd-route-dot ${r.dotCls}" role="img" aria-label="${esc(r.word)}">${svg(r.icon, 10)}</span>
     ${name}<span class="sc-time">${esc(r.time || '')}</span>${rest}
     ${r.live ? `<div class="rd-route-second sc-line" title="${esc(r.live)}">${esc(r.live)}${r.when ? `<span class="rc-when"> · ${esc(r.when)}</span>` : ''}</div>` : ''}${ev}</li>`;
@@ -98,21 +98,21 @@ function focusHtml(v) {
   if (!f) return '';
   if (f.kind === 'ask') {
     const pick = ui.answer === undefined || ui.answer === null ? f.pick : ui.answer;
-    return `<section class="rtab ov-focus is-ask" id="ov-focus"><h2 class="rtab-h">Worca asks${f.n ? ` <span class="n">${esc(f.n)}</span>` : ''}</h2>
+    return `<section class="rtab ov-focus is-ask${ui.flash ? ' is-flash' : ''}" id="ov-focus"><h2 class="rtab-h">Worca asks${f.n ? ` <span class="n">${esc(f.n)}</span>` : ''}</h2>
       <p class="ov-q">${esc(f.q)}</p><p class="rtab-dim rtab-p">${esc(f.why)}</p>
       <div class="qopts" role="radiogroup" aria-label="${esc(f.q)}">${f.options.map((o, i) => `<button type="button" class="qopt${i === pick ? ' sel' : ''}" role="radio" aria-checked="${i === pick}" tabindex="${i === pick ? 0 : -1}" data-answer="${i}" data-key="answer:${i}"><span class="sk-opt"><span class="sk-opt-l">${esc(o)}${i === f.pick ? '<span class="qrec">Worca’s pick</span>' : ''}</span></span></button>`).join('')}</div>
       <input class="input input-sm" type="text" placeholder="Or write your own answer" aria-label="Your own answer" data-key="answer-own">
-      <div class="ov-acts"><button type="button" class="btn btn-sm btn-primary" data-key="answer-send">Send answer</button><span class="rtab-dim">The run goes on from ${esc(v.open.label)} as soon as you send</span></div></section>`;
+      <div class="ov-acts"><button type="button" class="btn btn-sm btn-primary" data-key="answer-send" data-act="Answer">Send answer</button><span class="rtab-dim">The run goes on from ${esc(v.open.label)} as soon as you send</span></div></section>`;
   }
   if (f.kind === 'plan') {
-    return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">The plan <span class="n">${f.items.length} steps</span></h2>
+    return `<section class="rtab ov-focus${ui.flash ? ' is-flash' : ''}" id="ov-focus"><h2 class="rtab-h">The plan <span class="n">${f.items.length} steps</span></h2>
       <ol class="ov-plan">${f.items.map((x, i) => `<li><span class="ov-n">${i + 1}</span><span>${esc(x.t)}</span></li>`).join('')}</ol>
       <h3 class="ov-sub is-warn">${f.issues.length} open issues</h3><ul class="rtab-list">${f.issues.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
-      <div class="ov-acts"><button type="button" class="btn btn-sm btn-primary" data-key="plan-approve">Approve and build</button><button type="button" class="btn btn-sm" data-key="plan-change">Ask for changes</button><button type="button" class="btn btn-sm btn-quiet" data-key="plan-full">Full plan</button></div></section>`;
+      <div class="ov-acts"><button type="button" class="btn btn-sm btn-primary" data-key="plan-approve" data-act="Approve and build">Approve and build</button><button type="button" class="btn btn-sm" data-key="plan-change" data-act="Ask for changes">Ask for changes</button><button type="button" class="btn btn-sm btn-quiet" data-key="plan-full" data-act="Full plan">Full plan</button></div></section>`;
   }
   if (f.kind === 'broke') {
     return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">What broke</h2>
-      <div class="rtab-ev"><p class="rtab-ev-t">${esc(f.ev.title)}</p><pre class="rtab-ev-l">${f.ev.lines.map(esc).join('\n')}</pre><button type="button" class="btn btn-sm rtab-ev-btn" data-key="ov-log">${esc(f.ev.log)}</button></div>
+      <div class="rtab-ev"><p class="rtab-ev-t">${esc(f.ev.title)}</p><pre class="rtab-ev-l">${f.ev.lines.map(esc).join('\n')}</pre><button type="button" class="btn btn-sm rtab-ev-btn" data-key="ov-log" data-say="${esc(f.ev.log)}: opens the log there">${esc(f.ev.log)}</button></div>
       ${f.next ? `<p class="rtab-dim rtab-p">${esc(f.next)} is the card’s action: ${esc((v.action || {}).help || '')}.</p>` : ''}</section>`;
   }
   const rows = f.items.map((x, i) => {
@@ -134,7 +134,7 @@ function summaryPanel(v) {
   const asked = `<section class="rtab"><h2 class="rtab-h">What you asked</h2><p class="rtab-p ov-task${ui.taskOpen ? ' is-open' : ''}">${esc(o.task)}</p></section>`;
   const where = o.areas.length ? `<section class="rtab"><h2 class="rtab-h">Where it changed <button type="button" class="btn btn-sm btn-quiet ov-more" data-tab="changes" data-key="ov-changes">All ${v.tabData.files.length} files</button></h2>
     <ul class="ov-areas">${o.areas.map((x) => `<li><code>${esc(x.dir)}</code><span class="rtab-dim">${x.n} ${x.n === 1 ? 'file' : 'files'}</span><span class="ov-bar" aria-hidden="true"><i class="add" style="width:${Math.round(x.pct * x.add / (x.add + x.del))}%"></i><i class="del" style="width:${Math.round(x.pct * x.del / (x.add + x.del))}%"></i></span><span class="ct"><span class="add">+${x.add}</span><span class="del">−${x.del}</span></span></li>`).join('')}</ul></section>` : '';
-  const arts = o.artifacts.length ? `<section class="rtab"><h2 class="rtab-h">Artifacts <span class="n">${o.artifacts.length}</span></h2><ul class="ov-arts">${o.artifacts.map(([f, step], i) => `<li><code title="${esc(f)}">${esc(f)}</code><span class="rtab-dim">${esc(step)}</span><button type="button" class="btn btn-sm btn-quiet" data-key="art:${i}" aria-label="Open ${esc(f)}">Open</button></li>`).join('')}</ul></section>` : '';
+  const arts = o.artifacts.length ? `<section class="rtab"><h2 class="rtab-h">Artifacts <span class="n">${o.artifacts.length}</span></h2><ul class="ov-arts">${o.artifacts.map(([f, step], i) => `<li><code title="${esc(f)}">${esc(f)}</code><span class="rtab-dim">${esc(step)}</span><button type="button" class="btn btn-sm btn-quiet" data-key="art:${i}" data-say="Opens ${esc(f)}" aria-label="Open ${esc(f)}">Open</button></li>`).join('')}</ul></section>` : '';
   return focusHtml(v) + did + asked + where + arts;
 }
 function changesPanel(v) {
@@ -146,7 +146,7 @@ function changesPanel(v) {
   const open = ui.file === undefined || ui.file === null ? -1 : ui.file;
   const rows = groups.map((g) => `<li class="ch-dir"><code>${esc(g.dir)}</code><span class="rtab-dim">${g.rows.length}</span></li>` + g.rows.map((r) => {
     const m = d.fileMeta[r.p] || { st: 'M' };
-    const diff = open === r.i ? `<div class="ch-diff"><p class="ch-at">${esc(d.hunk.at)}</p><pre>${d.hunk.lines.map(([k, t]) => `<span class="${k === '+' ? 'add' : k === '-' ? 'del' : ''}">${esc(k + ' ' + t)}</span>`).join('\n')}</pre><button type="button" class="btn btn-sm" data-key="file-full">Open the whole diff</button></div>` : '';
+    const diff = open === r.i ? `<div class="ch-diff"><p class="ch-at">${esc(d.hunk.at)}</p><pre>${d.hunk.lines.map(([k, t]) => `<span class="${k === '+' ? 'add' : k === '-' ? 'del' : ''}">${esc(k + ' ' + t)}</span>`).join('\n')}</pre><button type="button" class="btn btn-sm" data-key="file-full" data-say="Opens the whole diff of the file">Open the whole diff</button></div>` : '';
     return `<li class="ch-file${open === r.i ? ' is-open' : ''}"><button type="button" class="ch-row" aria-expanded="${open === r.i}" data-file="${r.i}" data-key="file:${r.i}"><span class="ch-st is-${m.st}" title="${m.st === 'A' ? 'Added' : 'Modified'}">${m.st}</span><span class="ch-name" title="${esc(r.p)}">${esc(r.name)}</span>${m.notes ? `<span class="ch-notes" title="${m.notes} review comments">${m.notes}</span>` : '<span class="ch-notes"></span>'}<span class="ct"><span class="add">+${r.a}</span><span class="del">−${r.dl}</span></span><span class="ch-blocks" aria-hidden="true">${blocks(r.a, r.dl)}</span></button>${diff}</li>`;
   }).join('')).join('');
   const where = v.place.folder ? `In a copy of ${v.place.folder}; Apply writes them into the folder.` : v.place.branch ? `${v.place.branch} into ${v.place.base || 'dev'}` : '';
@@ -173,7 +173,7 @@ function activityPanel(v) {
       return row + sub;
     }).join('');
   }).join('');
-  return `<div class="rtab-bar">${seg}<button type="button" class="btn btn-sm btn-quiet" data-key="graph">Open the graph</button></div><section class="rtab rtab-stage"><ol class="rd-route-list sc-subs is-full" aria-label="Steps">${rows || '<li class="sc-stage-row"><p class="rtab-dim rtab-p">No problems or questions in this run.</p></li>'}</ol></section>`;
+  return `<div class="rtab-bar">${seg}<button type="button" class="btn btn-sm btn-quiet" data-key="graph" data-say="Opens the run graph, centred on the live step">Open the graph</button></div><section class="rtab rtab-stage"><ol class="rd-route-list sc-subs is-full" aria-label="Steps">${rows || '<li class="sc-stage-row"><p class="rtab-dim rtab-p">No problems or questions in this run.</p></li>'}</ol></section>`;
 }
 function decisionsPanel(v) {
   const ds = v.tabData.decisions;
@@ -192,7 +192,7 @@ function panelHtml(v) {
   return ({ summary: summaryPanel, changes: changesPanel, activity: activityPanel, decisions: decisionsPanel, runs: runsPanel })[id](v);
 }
 function figHtml(f) {
-  if (f.tab) return `<button type="button" class="rc-fig-link" data-tab="${f.tab}" data-key="fig:${f.tab}" title="Open Changes">${esc(f.k)}<b>${esc(f.v)}</b></button>`;
+  if (f.tab) return `<button type="button" class="rc-fig-link" data-tab="${f.tab}" data-key="fig:${f.tab}" title="Open Changes"${ui.tab === f.tab ? ' aria-current="true"' : ''}>${esc(f.k)}<b>${esc(f.v)}</b></button>`;
   return `<span${f.title ? ` title="${esc(f.title)}"` : ''}>${esc(f.k)} <b>${esc(f.v)}</b>${f.of ? `<span class="rc-of${f.warn ? ' is-warn' : ''}">${esc(f.of)}</span>` : ''}</span>`;
 }
 
@@ -212,9 +212,9 @@ function render() {
   const pl = v.place;
   const mid = (t) => { const k = Math.max(t.lastIndexOf('-'), t.lastIndexOf('/')); const cut = k > 0 && t.length - k <= 16 ? k : Math.max(0, t.length - 12); return `<code class="rc-mid" title="${esc(t)}"><span class="rc-mid-a">${esc(t.slice(0, cut))}</span><span class="rc-mid-b">${esc(t.slice(cut))}</span></code>`; };
   const where = pl.folder ? `<span class="rc-place">${mid(pl.folder)}</span>`
-    : pl.branch ? `<span class="rc-place">${mid(pl.branch)}${pl.copy ? `<button type="button" class="btn btn-sm btn-quiet btn-icon" aria-label="Copy branch name" data-key="copy">${svg('copy', 12)}</button>` : ''}${pl.base ? `<span class="rc-to" aria-label="into">→</span><code class="rc-base">${esc(pl.base)}</code>` : ''}</span>` : '';
+    : pl.branch ? `<span class="rc-place">${mid(pl.branch)}${pl.copy ? `<button type="button" class="btn btn-sm btn-quiet btn-icon" aria-label="Copy branch name" data-key="copy" data-say="Copied ${esc(pl.branch)}">${svg('copy', 12)}</button>` : ''}${pl.base ? `<span class="rc-to" aria-label="into">→</span><code class="rc-base">${esc(pl.base)}</code>` : ''}</span>` : '';
   const repos = pl.repos.length ? `<span>${pl.repos.length} repositories</span>` : '';
-  const pr = pl.pr ? `<a class="rc-pr" href="#" data-key="pr" title="Open ${esc(pl.pr)} on GitHub">${esc(pl.pr)}</a>` : '';
+  const pr = pl.pr ? `<a class="rc-pr" href="#" data-key="pr" data-say="Opens ${esc(pl.pr)} on GitHub" title="Open ${esc(pl.pr)} on GitHub">${esc(pl.pr)}</a>` : '';
   // + stays at the end of the place line; labels and tags, once added, get their own wrapping row under it.
   const chipRow = v.chips.length ? `<div class="rc-chips">${ui.chips.map((c, i) => (c.kind === 'group' ? '' : chip(c, i))).join('')}</div>` : '';
   const kind = v.kind ? `<span class="kind-chip">${esc(v.kind)}</span>` : '';
@@ -222,7 +222,7 @@ function render() {
   const add = (addable.length ? `<span class="rc-pop"><button type="button" class="btn btn-sm btn-quiet btn-icon rc-add" aria-label="Add a label, cost tag or group" aria-haspopup="menu" aria-expanded="${ui.menu === 'add' || ui.menu.startsWith('pick-')}" data-menu="add" data-key="menu:add">${svg('plus', 14)}</button>${ui.menu.startsWith('pick-') ? pickerHtml(ui.menu.slice(5)) : menu('add', addable)}</span>` : '');
   const facts = placeLine + add;
   // Where you are: Runs › place › group, the page itself never a crumb; on a narrow card only the parent, as ‹ Parent.
-  const crumbs = `<nav class="rc-crumbs" aria-label="Breadcrumb"><ol>${v.crumbs.map((c, i) => `<li${i === v.crumbs.length - 1 ? ' class="is-parent"' : ''}>${c.go ? `<button type="button" class="rc-crumb" data-crumb="${i}" data-key="crumb:${i}" title="${esc(c.t)}">${esc(c.t)}</button>` : `<a class="rc-crumb" href="#" data-key="crumb:${i}" title="${esc(c.t)}">${esc(c.t)}</a>`}</li>`).join('')}</ol></nav>`;
+  const crumbs = `<nav class="rc-crumbs" aria-label="Breadcrumb"><ol>${v.crumbs.map((c, i) => `<li${i === v.crumbs.length - 1 ? ' class="is-parent"' : ''}>${c.go ? `<button type="button" class="rc-crumb" data-crumb="${i}" data-key="crumb:${i}" title="${esc(c.t)}">${esc(c.t)}</button>` : `<a class="rc-crumb" href="#" data-key="crumb:${i}" data-say="Goes to ${esc(i ? (c.group ? 'the ' + c.t + ' group' : c.t + ' runs') : 'the Runs list')}" title="${esc(c.t)}">${esc(c.t)}</a>`}</li>`).join('')}</ol></nav>`;
   // A run in a group steps to its siblings; a run that has not started has no page yet.
   const pg = v.pager;
   const left = svg('chevron', 14).replace('M6 9.5l6 6 6-6', 'M14.5 6l-6 6 6 6');
@@ -243,7 +243,8 @@ function render() {
 
   document.getElementById('card').innerHTML = `
   <div class="rc">
-    <div class="rc-bar">${crumbs}${pager}<span class="rc-bar-end">${v.bar.pause ? `<button type="button" class="btn btn-sm" data-key="bar:pause"${scope}>${svg('pause', 14)}Pause</button>` : ''}${v.bar.stop ? `<button type="button" class="btn btn-sm btn-danger" data-key="bar:stop"${scope}>Stop</button>` : ''}<button type="button" class="btn btn-sm btn-icon" aria-label="More for this run" data-key="bar:more"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg></button></span></div>
+    <div class="rc-bar">${crumbs}${pager}<span class="rc-bar-end">${v.bar.pause ? `<span class="rc-pop is-right"><button type="button" class="btn btn-sm" data-menu="pause" data-key="menu:pause" aria-haspopup="menu" aria-expanded="${ui.menu === 'pause'}"${scope}>${svg('pause', 14)}Pause</button>${menu('pause', PAUSE)}</span>` : ''}${v.bar.stop ? `<button type="button" class="btn btn-sm btn-danger" data-run="stop" data-key="bar:stop"${scope}>Stop</button>` : ''}<span class="rc-pop is-right"><button type="button" class="btn btn-sm btn-icon" aria-label="More for this run" aria-haspopup="menu" aria-expanded="${ui.menu === 'more'}" data-menu="more" data-key="menu:more"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg></button>${menu('more', moreItems(v))}</span></span></div>
+    ${ui.confirm ? `<div class="rc-confirm" role="alertdialog" aria-labelledby="rc-confirm-t"><span class="rc-confirm-t" id="rc-confirm-t">${esc(ui.confirm.text)}</span><span class="rc-confirm-acts"><button type="button" class="btn btn-sm ${ui.confirm.danger ? 'btn-danger' : 'btn-primary'}" data-confirm="yes" data-key="confirm:yes">${esc(ui.confirm.yes)}</button><button type="button" class="btn btn-sm btn-quiet" data-confirm="no" data-key="confirm:no">Cancel</button></span></div>` : ''}
     <div class="rc-head"><div class="rc-title-row"><h1 class="rc-heading${ui.titleOpen ? ' is-open' : ''}" title="${esc(v.title)}" data-title>${esc(v.title)}</h1></div>${facts ? `<div class="rc-facts">${facts}</div>` : ''}${chipRow}</div>
     <section class="rc-card" aria-label="Run status">
       <div class="rc-zone"><span class="rc-rail">${statusDot(v)}</span><span class="rc-main rc-word">${esc(v.word)}</span>${action}${v.detail ? `<span class="rc-detail" title="${esc(v.detail)}">${esc(v.detail)}</span>` : ''}</div>
@@ -252,10 +253,12 @@ function render() {
       <div class="rc-zone is-ruled"><div class="rc-figs">${v.figs.map(figHtml).join('')}</div></div>
     </section>
     <div class="tabs rc-tabs" role="tablist" aria-label="Run detail">${v.tabs.map((t) => `<button type="button" class="tab" role="tab" id="tab-${t.id}" aria-controls="rtab-panel" aria-selected="${t.sel}" tabindex="${t.sel ? 0 : -1}" data-tab="${t.id}" data-key="tab:${t.id}">${esc(t.l)}${t.n ? `<span class="n">${esc(t.n)}</span>` : ''}</button>`).join('')}</div>
+    <div class="rc-toast${ui.toast ? ' is-on' : ''}" role="status" aria-live="polite">${esc(ui.toast || '')}</div>
     <div class="rtab-panel" role="tabpanel" id="rtab-panel" aria-labelledby="tab-${sel}" tabindex="0">${panelHtml(v)}</div>
   </div>`;
 
   fitMenus();
+  const nx = document.getElementById('next-event'); if (nx) { const to = (M.flow[ui.caseId] || {}).next; nx.disabled = !to; nx.title = to ? 'Event: ' + EVENT[ui.caseId] : 'Nothing outside the run happens next here; use the card'; }
   document.querySelector('.rc-tabs .tab[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   if (keep) {
     const el = keep === 'menu-first' ? document.querySelector('.menu .menu-item') : document.querySelector(`[data-key="${CSS.escape(keep)}"]`);
@@ -276,7 +279,39 @@ function fitMenus() {
 const pick = document.getElementById('case');
 const groups = [...new Set(M.cases.map((c) => c.group))];
 pick.innerHTML = groups.map((g) => `<optgroup label="${g}">${M.cases.filter((c) => c.group === g).map((c) => `<option value="${c.id}"${c.id === ui.caseId ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</optgroup>`).join('');
-pick.addEventListener('change', () => { ui = Object.assign(ui, { caseId: pick.value, open: null, ship: '', menu: '', tab: '', focus: '', chips: (M.cases.find((c) => c.id === pick.value) || {}).chips || [], parent: null, back: null, titleOpen: false, answer: null, file: null, rounds: [], ticks: [], actFilter: 'all' }); render(); });
+pick.addEventListener('change', () => { ui = Object.assign(ui, { caseId: pick.value, open: null, ship: '', menu: '', tab: '', focus: '', chips: (M.cases.find((c) => c.id === pick.value) || {}).chips || [], toast: '', confirm: null, parent: null, back: null, titleOpen: false, answer: null, file: null, rounds: [], ticks: [], actFilter: 'all' }); render(); });
+// The prototype's flow (RunCardModel.flow): an action moves the run to its next case or does its job in place and
+// says so in the toast; a destructive or outward one (Stop, Discard, Merge, Apply) asks first in a confirm strip.
+const PAUSE = [{ id: 'pause:now', text: 'Pause now', help: 'Stops at once; Resume starts the current step again' }, { id: 'pause:after', text: 'Pause after this step', help: 'Lets the current step finish, then pauses' }];
+function moreItems(v) {
+  return (v.bar.pause ? PAUSE.map((x) => Object.assign({ narrow: true }, x)) : []).concat([
+    { id: 'more:link', text: 'Copy link to this run', help: 'Paste it in Chat or an issue' },
+    { id: 'more:again', text: 'Start a new run with this task', help: 'Same task and settings, a fresh branch' },
+    { id: 'more:logs', text: 'Download logs', help: 'Every step’s log as one .zip' },
+    { id: 'more:chat', text: 'Ask about this run in Chat', help: 'Chat opens with this run attached' }],
+    v.bar.stop ? [{ id: 'more:stop', text: 'Stop the run', help: 'Ends it; the branch and changes stay' }] : []);
+}
+const MORE_SAY = { 'more:link': 'Copied the link to this run', 'more:logs': 'Downloading logs.zip', 'more:chat': 'Opens Chat with this run attached' };
+let toastTimer = 0;
+function toast(text) { ui.toast = text; clearTimeout(toastTimer); toastTimer = setTimeout(() => { ui.toast = ''; const el = document.querySelector('.rc-toast'); if (el) { el.classList.remove('is-on'); el.textContent = ''; } }, 4000); }
+function goCase(id) {
+  Object.assign(ui, { caseId: id, open: null, ship: '', menu: '', tab: '', focus: '', parent: null, back: null, titleOpen: false, answer: null, file: null, rounds: [], ticks: [], actFilter: 'all', confirm: null });
+  pick.value = id; pendingFocus = 'act-main';
+}
+function follow(f, label) {
+  if (f.confirm && !(ui.confirm && ui.confirm.ok)) {
+    ui.confirm = { text: f.confirm, yes: label.replace(/ the run$/, '') || 'Confirm', danger: /^(Stop|Discard)/.test(label), f, label }; ui.menu = ''; pendingFocus = 'confirm:yes'; return;
+  }
+  ui.confirm = null; ui.menu = '';
+  if (f.to) { goCase(f.to); toast(f.say || 'Now: ' + M.view(f.to, {}).word); } else { toast(f.say); pendingFocus = pendingFocus || 'act-main'; }
+}
+function act(label) {
+  if (label === 'Try it') { toast(M.view(ui.caseId, ui).tryIt); ui.menu = ''; pendingFocus = 'act-main'; return; }
+  const f = (M.flow[ui.caseId] || {})[label];
+  if (f) follow(f, label); else toast(label + ': done');
+}
+const EVENT = { starting: 'Plan is under way', working: 'Review passed', checks: '2 checks failed', failing: 'dev moved on: 2 files conflict', conflicts: 'Checks green, a reviewer approved', feature: 'Runs 2 and 3 finished' };
+function nextEvent() { const to = (M.flow[ui.caseId] || {}).next; if (!to) return; const say = EVENT[ui.caseId]; goCase(to); toast('Event: ' + say); render(); }
 function goMember(group, i) {
   Object.assign(ui, { caseId: M.view(group, {}).runCases[i], parent: { caseId: group, index: i }, open: null, tab: '', focus: '', menu: '', titleOpen: false });
   pick.value = ui.caseId; pendingFocus = 'crumb:' + (M.view(ui.caseId, ui).crumbs.length - 1);
@@ -290,19 +325,31 @@ function addChip(text) {
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 document.addEventListener('click', (e) => {
   const t = e.target.closest('button');
+  if (t && t.id === 'next-event') { nextEvent(); return; }
+  if (t && t.id === 'restart') { goCase('starting'); ui.chips = []; toast('Restarted: a new run'); render(); return; }
   if (t && t.dataset.themePick) {
     document.documentElement.dataset.theme = t.dataset.themePick;
     document.querySelectorAll('[data-theme-pick]').forEach((b) => b.setAttribute('aria-pressed', String(b === t)));
     return;
   }
+  const sayEl = e.target.closest('#card [data-say]');
+  if (sayEl) { e.preventDefault(); toast(sayEl.dataset.say); pendingFocus = sayEl.dataset.key || ''; ui.menu = ''; render(); return; }
   const tick = e.target.closest('[data-tick]');
   if (tick) { const i = +tick.dataset.tick; ui.ticks = tick.checked ? ui.ticks.concat(i) : ui.ticks.filter((x) => x !== i); pendingFocus = 'tick:' + i; render(); return; }
   if (!t && e.target.closest('[data-title]')) { ui.titleOpen = !ui.titleOpen; render(); return; }
   if (!t || !t.closest('#card')) { if (ui.menu && !e.target.closest('.menu')) { ui.menu = ''; render(); } return; }
   const d = t.dataset;
-  if (d.menu) { const opening = ui.menu !== d.menu; ui.menu = opening ? d.menu : ''; if (opening) pendingFocus = 'menu-first'; }
+  if (d.confirm) { if (d.confirm === 'yes') { ui.confirm.ok = true; follow(ui.confirm.f, ui.confirm.label); } else { ui.confirm = null; pendingFocus = 'act-main'; } }
+  else if (d.run === 'stop') follow(M.runFlow.stop, 'Stop the run');
+  else if (d.act) act(d.act);
+  else if (d.menu) { const opening = ui.menu !== d.menu; ui.menu = opening ? d.menu : ''; if (opening) pendingFocus = 'menu-first'; }
   else if (d.menuPick) {
-    if (d.menuPick === 'ungroup') { ui.chips = ui.chips.filter((c) => c.kind !== 'group'); ui.menu = ''; pendingFocus = 'menu:add'; }
+    const runCtl = { 'pause:now': 'pauseNow', 'pause:after': 'pauseAfter', 'more:stop': 'stop' }[d.menuPick];
+    if (runCtl) follow(M.runFlow[runCtl], runCtl === 'stop' ? 'Stop the run' : 'Pause');
+    else if (d.menuPick === 'more:again') { goCase('starting'); toast('A new run with the same task'); }
+    else if (MORE_SAY[d.menuPick]) { toast(MORE_SAY[d.menuPick]); pendingFocus = 'menu:more'; ui.menu = ''; }
+    else if (ui.menu === 'act') act(d.menuPick);
+    else if (d.menuPick === 'ungroup') { ui.chips = ui.chips.filter((c) => c.kind !== 'group'); ui.menu = ''; pendingFocus = 'menu:add'; }
     else if (ui.menu === 'add' && M.add.some((x) => x.kind === d.menuPick)) { ui.menu = 'pick-' + d.menuPick; pendingFocus = 'pick-input'; }
     else { pendingFocus = 'menu:' + ui.menu; ui.menu = ''; }
   } else if (d.suggest !== undefined) { addChip(d.suggest); }
@@ -324,9 +371,10 @@ document.addEventListener('click', (e) => {
   else if (d.file !== undefined) { ui.file = ui.file === +d.file ? null : +d.file; pendingFocus = 'file:' + d.file; }
   else if (d.filter) { ui.actFilter = d.filter; pendingFocus = 'filter:' + d.filter; }
   else if (d.rounds) { ui.rounds = ui.rounds.includes(d.rounds) ? ui.rounds.filter((x) => x !== d.rounds) : ui.rounds.concat(d.rounds); pendingFocus = 'rounds:' + d.rounds; }
-  else if (d.key === 'act-main' && /^(Answer|Approve and build)$/.test(t.textContent.trim())) {
+  else if (d.key === 'act-main' && !/^(Answer|Approve and build)$/.test(t.textContent.trim())) act(t.textContent.trim());
+  else if (d.key === 'act-main') {
     // The card's Answer opens the question in Overview, focused on Worca's pick: the answer happens there, in place.
-    ui.tab = 'summary'; render(); const el = document.querySelector('#ov-focus [aria-checked="true"], #ov-focus .btn-primary'); el?.focus({ preventScroll: true }); document.getElementById('ov-focus')?.scrollIntoView({ block: 'nearest' }); return;
+    ui.tab = 'summary'; ui.flash = true; render(); ui.flash = false; const el = document.querySelector('#ov-focus [aria-checked="true"], #ov-focus .btn-primary'); el?.focus({ preventScroll: true }); document.getElementById('ov-focus')?.scrollIntoView({ block: 'nearest' }); return;
   }
   else { if (ui.menu) { ui.menu = ''; render(); } return; }
   render();
@@ -337,6 +385,7 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   const t = e.target;
   if (t.dataset && t.dataset.key === 'pick-input' && e.key === 'Enter') { e.preventDefault(); addChip(t.value); render(); return; }
+  if (ui.confirm && e.key === 'Escape') { ui.confirm = null; pendingFocus = 'act-main'; render(); return; }
   if (ui.menu && (e.key === 'Escape' || (e.key === 'Tab' && t.closest && t.closest('.menu')))) {
     pendingFocus = ui.menu.startsWith('pick-') ? 'menu:add' : 'menu:' + ui.menu; ui.menu = ''; render(); if (e.key === 'Escape') e.preventDefault(); return;
   }

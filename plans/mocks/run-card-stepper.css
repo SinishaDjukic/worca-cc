@@ -449,3 +449,19 @@ html,body{height:auto;overflow:visible;margin:0;}
 .dc-body p{margin:0;}
 .dc-a{font-size:var(--fs-body);color:var(--ink);}
 .dc-link{padding:0;border:0;background:none;font:inherit;color:var(--ink);text-decoration:underline;text-underline-offset:3px;cursor:pointer;}
+
+/* Prototype feedback: a confirm strip for actions that cannot be taken back, a toast for what an action did. */
+.rc-confirm{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--panel);font-size:var(--fs-body);}
+.rc-confirm-t{color:var(--ink);font-weight:500;}
+.rc-confirm-acts{display:flex;gap:8px;}
+.rc-toast{position:fixed;left:50%;bottom:24px;z-index:50;transform:translate(-50%,8px);max-width:calc(100vw - 32px);padding:8px 14px;border-radius:var(--r-md);
+  background:var(--ink);color:var(--bg);font-size:var(--fs-meta);box-shadow:0 4px 16px rgb(0 0 0 / .18);opacity:0;pointer-events:none;transition:opacity .15s,transform .15s;}
+.rc-toast.is-on{opacity:1;transform:translate(-50%,0);}
+.rc-toast:empty{display:none;}
+@media (prefers-reduced-motion: reduce){.rc-toast{transition:none;}}
+.menu-item[data-narrow]{display:none;}
+@container (max-width: 520px){ .menu-item[data-narrow]{display:flex;} }
+/* The card's Answer lands here: the block marks itself once, so the eye follows the jump. */
+.ov-focus.is-flash{animation:ov-flash 1.2s ease-out;}
+@keyframes ov-flash{from{box-shadow:0 0 0 6px var(--row-selected);background:var(--row-selected);}to{box-shadow:0 0 0 6px transparent;background:transparent;}}
+@media (prefers-reduced-motion: reduce){.ov-focus.is-flash{animation:none;outline:2px solid var(--line-2);outline-offset:6px;}}
