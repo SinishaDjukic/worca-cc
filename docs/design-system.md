@@ -131,6 +131,9 @@ chips (`.runs-pr`) are chips, not PR controls.
 `.input` / `.select` / text, number and select elements: 32px, 13px, `--field` fill, 6px corner, ink border on focus.
 `.input-sm` / `.select-sm`: 28px, 12px. A textarea grows; it keeps the same fill, corner and padding sides. Search, url, email,
 password and date inputs follow the same field; each joins the base rule when its screen moves.
+A chat card's form (the run proposal) uses the same `.input` / `.select`; its fields sit on one auto-fit grid
+(`.ask-rp-grid`), a switch field takes a whole row, labels stay on one line, and a long value ellipsizes with its whole
+text as the tooltip.
 ### Switch (checked)
 One switch, `.switch`: a 32×18 `--r-pill` track and a 14px round knob that is always visible. Off is `--switch-off` with
 the `--knob` knob; on is `--ink` with the `--on-ink` knob, never green. Disabled or locked: no opacity fade; the track
@@ -166,7 +169,7 @@ border, ink text. Never a solid ink fill. A count sits in `.n`. It is the only f
 One chip: 18px, 11px / 500 sans, 4px corner, filled, no border (checked). The Labs (violet) and Beta (blue) flag chips are
 the reference size. Colour carries meaning only. The "Suggested" chip on the New run form's title and branch (`.sn-chip`, Smart run naming) is a permitted Labs-violet use: the whole feature is a Labs feature. Cost-tag chips (`.tag-chip`), the Projects sync pill (`.ps-pill`), the
 Chat command card's state (`.ask-cmd-pill`) and the Team policy tab count (`.tp-tab-badge`) are the same chip; on the
-active tab the count turns neutral (`--line-2` fill, ink text). A chat command in summary mode (flag `commandSummaries`) shows the runs status dot and no state chip; the full card keeps `.ask-cmd-pill`. The missing-key slot is the one outlined chip: a 1px dashed
+active tab the count turns neutral (`--line-2` fill, ink text). A chat command in summary mode (flag `commandSummaries`) shows the runs status dot and no state chip; consecutive commands share one card under a quiet disclosure head (`--ink-2`, `--hover`, › turning down), with the rows split by one `--line`; an opened command uses `--field` boxes (command, folder chip, output panel); the full card keeps `.ask-cmd-pill`. The missing-key slot is the one outlined chip: a 1px dashed
 `--amber` outline on a transparent fill. A removable chip's × is a 14px quiet button inside the chip. A source, "Official"
 or a policy origin is `.badge.slate`; "not installed" and "built-in" are grey.
 ### Status dot and symbols
@@ -180,7 +183,10 @@ status dot centred on it and the head buttons and the Live switch centred on its
 `--rd-word-line`). Under it, `.run-status-detail`: 12px `--ink-2`, at most 2 lines (the whole text as its tooltip),
 and only what no row below says ("not in dev yet", "Failed · Build · Implementation" → "Build · Implementation",
 "14 files changed in a copy", "conflicts with dev", GitHub's verdict); absent otherwise. A card with its own title
-(the chat run card) keeps the state at 13px / 600 under it. Titles are static or short ("Change Away mode?"); dynamic
+(the chat run card) keeps the state at 13px / 600 under it. Its head is one row centred on the title's line box (no
+margin on the title, no nudge on the dot), the project is the meta line right under it, and a single run has no kind
+chip, as the run page title (a PR fix run's fix line leads with "PR fix run"); a group keeps its chip
+(`Feature · 3 runs`, `Shaping`), as the group page title. Titles are static or short ("Change Away mode?"); dynamic
 names go in the target or meta line (`.ask-mcard-target`); a title that can still grow (a run or feature name) gets
 an ellipsis and its text as a tooltip. Chips say the kind or state once; the line after a chip never repeats its word.
 ### Route
@@ -240,6 +246,19 @@ keep their divider, and an empty list draws no card. Each Settings section is on
 760px, centred), and so are the Guardrails and Memory lists. `.drow-wide` puts a wide control
 (a textarea, a table, a path row) under its label at full width; `.drow-stack` holds rich block content (a schedule,
 a preset, a guardrail) with the same divider and padding.
+### Chat cards
+In the Chat conversation every card (run, files, applied change, command, run proposal, workflow, stubs) sits on the
+text column: `.ask-transcript-col` caps it at `--chat-text-max` (760px) and no card kind sets its own width. Only a graph
+well (`.gv-well`: the workflow card's and the run card's graph) widens, through one rule (`.chat-convo .ask-msg
+.gv-well`), up to `--chat-card-max` (1040px) and centred on the column; it is 1px `--line`, a 6px corner and the canvas
+fill, and its host fits the graph into it (≤ 1×, down to 0.3×; only a wider graph pans, and it opens at its start edge
+with the first node in view, never centred with both ends cut). The well is as tall as the graph at that zoom (220–480px),
+set once, so it never jumps on a resize and a shrunk graph never sits in an empty box. The transcript reserves its
+scrollbar gutter on both edges (`scrollbar-gutter:stable both-edges`), so the column, the composer and Jump to latest
+share one centre. The dock is opaque from its top edge down after a 32px fade band (`--chat-dock-fade`); Jump to latest
+sits in that band, right above the dock, and the transcript's bottom clearance includes it, so nothing reads under
+the composer. A row rises in (`data-ask-enter`) only the first time the page shows it, in any chat; the card inside it
+never rises on its own. No part of a chat card is a pill; inner corners stay at or under the card's 8px.
 ### Table
 `.table-wrap` > `.table`: 12px / 600 `--ink-2` headers, 13px cells, 8px 12px 8px 0 cell padding, one `--line` under
 each row, no outer box. Under 560px it stacks one block per row using each cell's `data-label`; it never scrolls sideways.

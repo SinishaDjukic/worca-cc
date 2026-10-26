@@ -581,3 +581,29 @@ test('#958: a structural flush (a new row, a resync) keeps every row element con
   assert.deepEqual(removed.filter((n) => before.includes(n)), [], 'no kept row was ever taken out of the column');
   ctx.panel.destroy();
 });
+
+test('#959 entry rise: a row rises the first time the page shows it — a switch back replays nothing, a new row still rises', async () => {
+  const TID2 = 'ask_00000002';
+  const inB = (row) => ({ ...row, threadId: TID2 });   // userRow/asstRow stamp TID
+  const snaps = {
+    [TID]: snapBody([userRow('askm_u0000001', 1, 'first'), asstRow('askm_00000001', 2)]),
+    [TID2]: snapBody([inB(userRow('askm_u0000002', 1, 'other')), inB(asstRow('askm_00000002', 2))], { thread: { ...snapBody([]).thread, id: TID2, title: 'Other' } }),
+  };
+  const ctx = makePanel({ fetchHandler: (url) => {
+    const m = url.match(/^\/api\/ask\/threads\/(ask_[0-9a-f]{8})(?:$|[?/])/);
+    if (m && snaps[m[1]]) return { ok: true, status: 200, json: async () => snaps[m[1]] };
+    if (url.startsWith('/api/ask/threads')) return { ok: true, status: 200, json: async () => listBody() };
+    return { ok: true, status: 200, json: async () => ({}) };
+  } });
+  const rising = () => [...ctx.doc.querySelectorAll('.ask-msg[data-ask-enter]')].map((m) => m.textContent);
+  await openChat(ctx, TID);
+  assert.equal(rising().length, 2, 'a chat never shown rises in');
+  await openChat(ctx, TID2);
+  assert.equal(rising().length, 2, 'so does another one');
+  await openChat(ctx, TID);
+  assert.deepEqual(rising(), [], 'a switch back replays nothing');
+  snaps[TID] = snapBody([...snaps[TID].messages, userRow('askm_u0000003', 3, 'more')]);
+  await resync(ctx);
+  assert.equal(rising().length, 1, 'a row this chat never showed still rises');
+  assert.match(rising()[0], /more/);
+});

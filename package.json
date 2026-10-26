@@ -80,6 +80,7 @@
     "verify:feature-page": "node --disable-warning=ExperimentalWarning tools/verify-feature-page-cdp.mjs",
     "verify:runs-list": "node --disable-warning=ExperimentalWarning tools/verify-runs-list-cdp.mjs",
     "verify:requirements": "node --disable-warning=ExperimentalWarning tools/verify-requirements-cdp.mjs",
+    "verify:chat-layout": "node --disable-warning=ExperimentalWarning tools/verify-chat-layout-cdp.mjs",
     "test": "node tools/test.mjs",
     "test:fast": "node tools/test.mjs --tier fast",
     "test:slow": "node tools/test.mjs --tier slow",
