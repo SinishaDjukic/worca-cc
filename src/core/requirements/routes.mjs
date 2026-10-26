@@ -30,13 +30,14 @@ import {
 } from './edits.mjs';
 import { readiness, displayState, changedSince, unaskedRejections, unaskedFiles } from './ready.mjs';
 import { startFeature, startView } from './start.mjs';
+import { exportSetupView, exportOptions, saveSetup, previewExport, runExport, forgetLink, exportView } from './export.mjs';
 import { budgetStatus, requirementsWindowedSpendUsd } from '../cost-budget.mjs';
 import { renderSpecMarkdown } from './markdown.mjs';
 import { saveSpecToCheckout, specFileName } from './save.mjs';
 import { assertBriefSection, parseSectionValue, renderBriefMarkdown, briefFileName, briefMatches } from './brief.mjs';
 import { makeBrief, isBriefBusy, briefTarget, briefEstimate, briefStaleness } from './brief-job.mjs';
 
-const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, CONFLICT: 409, BUDGET: 409, NOT_READY: 409, TOO_LARGE: 413 });
+const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, CONFLICT: 409, BUDGET: 409, NOT_READY: 409, TOO_LARGE: 413, TRACKER: 502 });
 const P = '/api/requirements';
 
 /** Every requirements route, in registration order: the one list registerRequirementsRoutes registers from
@@ -52,6 +53,9 @@ export const REQUIREMENTS_ROUTES = Object.freeze([
   ['GET', `${P}/brief/:scopeType/:scopeKey/documents/:attId`], ['PATCH', `${P}/brief/:scopeType/:scopeKey/documents/:attId`],
   ['DELETE', `${P}/brief/:scopeType/:scopeKey/documents/:attId`], ['POST', `${P}/brief/:scopeType/:scopeKey/documents/:attId/replace`],
   ['POST', `${P}/brief/:scopeType/:scopeKey/documents/:attId/ask`], ['POST', `${P}/brief/:scopeType/:scopeKey/documents/:attId/read-again`],
+  // A6 §6: the export setup of a project or workspace, before the /:seq routes
+  ['GET', `${P}/export-setup/:scopeType/:scopeKey`], ['PUT', `${P}/export-setup/:scopeType/:scopeKey`],
+  ['POST', `${P}/export-setup/:scopeType/:scopeKey/options`],
   ['GET', P], ['POST', P],
   ['GET', `${P}/:seq`], ['PATCH', `${P}/:seq`],
   ['POST', `${P}/:seq/answers`], ['POST', `${P}/:seq/finish`], ['POST', `${P}/:seq/retry`], ['POST', `${P}/:seq/look`],
@@ -63,6 +67,7 @@ export const REQUIREMENTS_ROUTES = Object.freeze([
   ['POST', `${P}/:seq/archive`],
   ['GET', `${P}/:seq/markdown`], ['POST', `${P}/:seq/save`],
   ['POST', `${P}/:seq/start`], ['POST', `${P}/:seq/revert`],
+  ['POST', `${P}/:seq/export/preview`], ['POST', `${P}/:seq/export`], ['DELETE', `${P}/:seq/export/link`],
 ].map(([method, path]) => Object.freeze({ method, path })));
 
 /** The routes whose whole purpose is git (making or refreshing a product brief, Look closer / Look again check out
@@ -199,7 +204,7 @@ const sentFiles = (start, f) => {
 export async function featureView(seq, d = {}) {
   const f = requireFeature(seq);
   const turns = listTurns(seq);
-  const last = turns.filter((t) => t.kind !== 'file').at(-1);   // A8: a file's turns never hide the error line
+  const last = turns.filter((t) => t.kind !== 'file' && t.kind !== 'export').at(-1);   // A8 / A6: never hide the error line
   const busy = isBusy(seq);
   const pending = f.status === 'your_turn' ? pendingRound(turns) : null;
   const files = listAttachments('feature', seq);
@@ -224,7 +229,8 @@ export async function featureView(seq, d = {}) {
       briefDocuments: docs.map((r) => fileView(r, { spec: f.spec, href: `${briefPathOf(f.scopeType, f.scopeKey)}/documents/${r.id}`, doc: true, estimates })),
       unaskedFiles: unaskedFiles(files, turns),
       interview: await interviewInfo(async () => im, d.listModels || listModels),
-      resetPeriod: resetPeriod() },
+      resetPeriod: resetPeriod(),
+      export: await exportView(f, turns, d) },   // A6 §6: the menu, the chip, the History card, Report back (never throws)
     turns,
   };
 }
@@ -343,6 +349,12 @@ async function targetFor(f) {
   try { return await checkTarget(f.scopeType, f.scopeKey); } catch {
     return { ok: false, hint: f.scopeType === 'workspace' ? 'the workspace no longer exists' : 'the project is not registered' };
   }
+}
+
+/** A workspace's member projects (D2: their source bindings decide the default connection when they agree); [] otherwise. */
+async function memberKeysOf(scopeType, scopeKey) {
+  if (scopeType !== 'workspace') return [];
+  try { return (((await workspaceTarget(scopeKey)) || {}).members || []).map((m) => m.projectKey).filter(Boolean); } catch { return []; }
 }
 
 /**
@@ -489,6 +501,22 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
       readAgain(briefOwner(...scope(req)), attIdOf(req), { by: by(req) }, d);
       await answerBrief(req, res, t, 202);
     }),
+    // ---- A6: export to a tracker (plans/requirements-a6-design.md §6) ----
+    [`GET ${P}/export-setup/:scopeType/:scopeKey`]: async (req, res) => {
+      await checkTarget(...scope(req));
+      res.json(await exportSetupView({ scopeType: req.params.scopeType, scopeKey: req.params.scopeKey }, { memberKeys: await memberKeysOf(...scope(req)) }, d));
+    },
+    [`PUT ${P}/export-setup/:scopeType/:scopeKey`]: async (req, res) => {
+      await checkTarget(...scope(req));
+      const s = { scopeType: req.params.scopeType, scopeKey: req.params.scopeKey };
+      const setup = await saveSetup(s, req.body || {}, { by: by(req) }, d);
+      for (const x of listFeatures(s)) onChange(x.seq);   // the scope's open pages learn hasSetup and the tracker's name
+      res.json({ setup });
+    },
+    [`POST ${P}/export-setup/:scopeType/:scopeKey/options`]: async (req, res) => {
+      await checkTarget(...scope(req));
+      res.json(await exportOptions({ scopeType: req.params.scopeType, scopeKey: req.params.scopeKey }, req.body || {}, d));
+    },
     [`GET ${P}`]: async (req, res) => {
       const q = req.query || {};
       const targets = new Map();
@@ -688,6 +716,22 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
       const v = (req.body || {}).version;
       if (!Number.isInteger(v) || v < 1) throw new RequirementsError('BAD_REQUEST', 'version must be a whole number of at least 1');
       revertToStart(seq, v, { by: by(req) });
+      await changed(res, seq);
+    },
+    [`POST ${P}/:seq/export/preview`]: async (req, res) => {
+      const seq = seqOf(req);
+      res.json(await previewExport(seq, req.body || {}, { target: await targetFor(requireFeature(seq)) }, d));
+    },
+    [`POST ${P}/:seq/export`]: async (req, res) => {
+      const seq = seqOf(req);
+      const target = await targetFor(requireFeature(seq));
+      const r = await runExport(seq, req.body || {}, { by: by(req), target }, d);   // the export lock is taken inside, before its first await
+      onChange(seq);
+      res.json({ ...r, ...(await featureView(seq, d)) });
+    },
+    [`DELETE ${P}/:seq/export/link`]: async (req, res) => {
+      const seq = seqOf(req);
+      forgetLink(seq, { by: by(req) });
       await changed(res, seq);
     },
   };
