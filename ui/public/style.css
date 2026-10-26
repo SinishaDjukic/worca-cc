@@ -10661,6 +10661,25 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
   .req-help-drafted-x{position:relative}
   .req-help-drafted-x::after{content:"";position:absolute;left:50%;top:50%;width:44px;height:44px;transform:translate(-50%,-50%)}
 }
+/* A3 (board 24): a proposed change as a card: Before / After / New / Remove / Confirm / Reject rows, the old side muted. Accepted is
+   green ink with a check, never a fill; the stale line is the amber alert. On the type scale (the board's 11.5 / 12.5px are off
+   it); on a phone Reject and Accept share the row and reach 44 px through the panel's .btn-sm ::after hit area above (a 44px
+   .btn is off the control scale). */
+.req-help-card{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel)}
+.req-help-card-head{margin:0;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2)}
+.req-help-ba{display:grid;grid-template-columns:56px minmax(0,1fr);gap:4px 10px;font-size:var(--fs-body)}
+.req-help-ba > span{overflow-wrap:anywhere}
+.req-help-k{padding-top:1px;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2)}
+.req-help-old,.req-help-id{color:var(--ink-2)}
+.req-help-card .req-help-reason{margin:0}
+.req-help-btns{display:flex;justify-content:flex-end;gap:8px}
+.req-help-state{margin:0;display:flex;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink-2)}
+.req-help-state.ok{color:var(--green-ink-strong)}
+.req-help-stale{margin:0;padding:8px 10px;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:var(--fs-meta)}
+@media (max-width:900px){
+  .req-help-ba{grid-template-columns:52px minmax(0,1fr);gap:4px 8px}
+  .req-help-btns .btn{flex:1}
+}
 
 /* ── marketplace P3 ── */
 /* Plugin icons (U7, board 0.1): the kind colour lives only in this tile; hue families carry the dark arms. */

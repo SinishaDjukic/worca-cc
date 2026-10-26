@@ -788,3 +788,195 @@ test('Fix 5: a Try again (reload) of the chat that ends after a switch does not 
   await settle();
   assert.deepEqual(m.posts.filter((x) => x[0] === '8'), [['8', 'About B']]);
 });
+
+// ── Task 8: proposal cards (board 24, D7–D11, D16, D18) ─────────────────
+
+const prop = (n, over) => ({ n, id: null, value: null, before: null, reason: 'r', state: 'proposed', stale: false, askedAgain: false, ...over });
+const cardsChat = (over = {}) => chat([po(1, 'What would you change?'), worca(2, 'I suggest these.', { proposals: [
+  prop(1, { target: 'goal', change: 'set', value: { text: 'Customers cancel an order, or the items not yet picked up, themselves from their order history.', measure: '' },
+    before: { text: 'Customers cancel an order themselves before it ships.', measure: '' }, reason: 'partly shipped orders are 9 of 52 tickets.' }),
+  prop(2, { target: 'criterion', change: 'reword', id: 'R-po-3', value: 'The confirm dialog names the order number and its total.', before: 'The confirm dialog is clear.', reason: '“clear” cannot be tested.' }),
+  prop(3, { target: 'assumption', change: 'reject', id: 'A-2', before: { text: 'A cancelled order frees its stock at once.', status: 'open' }, reason: 'the brief says stock is freed by the warehouse job.' }),
+  prop(4, { target: 'criterion', change: 'add', value: 'An order with some items shipped can cancel only the items not yet picked up.', state: 'accepted', appliedId: 'R-po-6' }),
+  prop(5, { target: 'edgeCases', change: 'set', value: ['A cancelled order sends an SMS.'], before: [], added: ['A cancelled order sends an SMS.'], removed: [], state: 'rejected' }),
+] }), worca(3, 'And these.', { proposals: [
+  prop(1, { target: 'rules', change: 'set', value: ['A refund goes back to the card.', 'A refund goes back the way the order was paid.'], before: ['A refund goes back to the card.'],
+    added: ['A refund goes back the way the order was paid.'], removed: [], stale: true }),
+  prop(2, { target: 'criterion', change: 'add', value: 'A new one.' }),
+  prop(3, { target: 'criterion', change: 'remove', id: 'R-po-3', before: 'The confirm dialog is clear.' }),
+  prop(4, { target: 'assumption', change: 'confirm', id: 'A-2', before: { text: 'A cancelled order frees its stock at once.', status: 'open' } }),
+] })], over);
+const card = (host, id) => host.querySelector(`[data-proposal="${id}"]`);
+const rows = (c) => [...c.querySelectorAll('.req-help-ba > span')].map((x) => text(x));
+const head = (c) => c.querySelector('.req-help-card-head').textContent;
+const btns = (c) => [...c.querySelectorAll('.btn')].map((b) => [b.textContent, b.classList.contains('btn-primary'), b.disabled]);
+const openCards = async (f = feature(), over = {}, extra = {}) => {
+  const s = { f: { ...f, helper: { answering: !!over.answering, messages: 3 } }, helper: cardsChat(over) };
+  const m = await openFeature(s, extra);
+  await openPanel(m);
+  return m;
+};
+
+test('board 24 cards 1–3: change a section (Before / After), reword a criterion, reject an assumption; Why, Reject and Accept', async () => {
+  const m = await openCards();
+  const goal = card(m.host, '2-1');
+  assert.deepEqual([goal.getAttribute('role'), goal.getAttribute('aria-label')], ['group', 'Proposed change: Goal']);
+  assert.equal(head(goal), 'Proposed change · Goal');
+  assert.deepEqual(rows(goal), ['Before', 'Customers cancel an order themselves before it ships.', 'After', 'Customers cancel an order, or the items not yet picked up, themselves from their order history.']);
+  assert.ok(goal.querySelectorAll('.req-help-ba > span')[1].classList.contains('req-help-old'));
+  assert.equal(goal.querySelector('.req-help-reason').textContent, 'Why: partly shipped orders are 9 of 52 tickets.');
+  assert.deepEqual(btns(goal), [['Reject', false, false], ['Accept', true, false]]);
+  const reword = card(m.host, '2-2');
+  assert.equal(reword.getAttribute('aria-label'), 'Proposed change: R-po-3');
+  assert.equal(head(reword), 'Proposed change · Acceptance criteria · R-po-3');
+  assert.deepEqual(rows(reword), ['Before', 'The confirm dialog is clear.', 'After', 'The confirm dialog names the order number and its total.']);
+  const rej = card(m.host, '2-3');
+  assert.deepEqual([rej.getAttribute('aria-label'), head(rej)], ['Proposed change: A-2', 'Proposed change · Assumptions · reject A-2']);
+  assert.deepEqual(rows(rej), ['Reject', 'A cancelled order frees its stock at once.']);
+});
+
+test('board 24 cards 4–6: Accepted (the id it got, a green check, role=status), Rejected, and the spec changed meanwhile (role=alert)', async () => {
+  const m = await openCards();
+  const acc = card(m.host, '2-4');
+  assert.equal(head(acc), 'Change · Acceptance criteria · add');
+  assert.deepEqual(rows(acc), ['New', 'R-po-6 An order with some items shipped can cancel only the items not yet picked up.']);
+  const st = acc.querySelector('.req-help-state');
+  assert.deepEqual([st.getAttribute('role'), st.textContent, st.classList.contains('ok'), !!st.querySelector('svg')], ['status', 'Accepted · now in the spec as your edit', true, true]);
+  assert.deepEqual([acc.querySelector('.btn'), acc.querySelector('.req-help-reason')], [null, null]);
+  const rejd = card(m.host, '2-5');
+  assert.equal(head(rejd), 'Change · Edge cases');
+  assert.deepEqual(rows(rejd), ['After', 'A cancelled order sends an SMS.']);
+  assert.deepEqual([rejd.querySelector('.req-help-state').getAttribute('role'), rejd.querySelector('.req-help-state').textContent], ['status', 'Rejected']);
+  const stale = card(m.host, '3-1');
+  assert.equal(head(stale), 'Proposed change · Business rules');
+  assert.deepEqual(rows(stale), ['After', 'A refund goes back the way the order was paid.'], 'D8: the one added line, as board 24');
+  const alert = stale.querySelector('.req-help-stale');
+  assert.deepEqual([alert.getAttribute('role'), alert.textContent], ['alert', 'The spec changed since Worca proposed this.']);
+  assert.deepEqual(btns(stale).map(([t]) => t), ['Reject', 'Ask again']);
+  assert.ok(stale.classList.contains('is-stale'));
+});
+
+test('board 24: a pending add shows New without an id; a criterion removal; an assumption confirm', async () => {
+  const m = await openCards();
+  const add = card(m.host, '3-2');
+  assert.deepEqual([add.getAttribute('aria-label'), head(add), rows(add)], ['Proposed change: Acceptance criteria', 'Proposed change · Acceptance criteria · add', ['New', 'A new one.']]);
+  const rem = card(m.host, '3-3');
+  assert.deepEqual([rem.getAttribute('aria-label'), head(rem), rows(rem)], ['Proposed change: R-po-3', 'Proposed change · Acceptance criteria · remove R-po-3', ['Remove', 'The confirm dialog is clear.']]);
+  const conf = card(m.host, '3-4');
+  assert.deepEqual([head(conf), rows(conf)], ['Proposed change · Assumptions · confirm A-2', ['Confirm', 'A cancelled order frees its stock at once.']]);
+});
+
+test('D10: Accept, Reject and Ask again post to their proposal and fetch the feature again; a refusal shows under the composer', async () => {
+  const posted = [];
+  const routes = {};
+  for (const [id, what] of [['2/proposals/1', 'accept'], ['2/proposals/2', 'reject'], ['3/proposals/1', 'ask-again']]) {
+    routes[`POST /api/requirements/7/helper/messages/${id}/${what}`] = () => { posted.push(`${id}/${what}`); return cardsChat(); };
+  }
+  routes['POST /api/requirements/7/helper/messages/3/proposals/2/accept'] = { __status: 409, body: { error: 'The spec changed since Worca proposed this.' } };
+  routes['POST /api/requirements/7/helper/messages/3/proposals/3/accept'] = { __status: 404, body: { error: 'This change is no longer in the chat.' } };
+  const m = await openCards(feature(), {}, routes);
+  const gets = () => m.calls.filter((c) => c.method === 'GET' && c.url === '/api/requirements/7').length;
+  const before = gets();
+  for (const ui of ['prop-accept-2-1', 'prop-reject-2-2', 'prop-ask-again-3-1']) {
+    m.host.querySelector(`[data-ui="${ui}"]`).click();
+    await settle();
+  }
+  assert.deepEqual(posted, ['2/proposals/1/accept', '2/proposals/2/reject', '3/proposals/1/ask-again']);
+  assert.equal(gets(), before + 3, 'each one repaints the feature (an accepted change is in the spec)');
+  m.host.querySelector('[data-ui="prop-accept-3-2"]').click();
+  await settle();
+  assert.equal(m.host.querySelector('.req-help-refusal').textContent, 'The spec changed since Worca proposed this.');
+  m.host.querySelector('[data-ui="prop-accept-3-3"]').click();
+  await settle();
+  assert.equal(m.host.querySelector('.req-help-refusal').textContent, 'This change is no longer in the chat.', 'a 404 naming the change says so, not "turned off"');
+});
+
+test('D11/D16: Accept and Ask again wait while Worca answers or a round runs; nothing is decided on an archived feature; asked again: only the alert', async () => {
+  let m = await openCards(feature(), { answering: true });
+  assert.deepEqual(btns(card(m.host, '2-1')), [['Reject', false, false], ['Accept', true, true]], 'Reject is allowed while Worca answers');
+  assert.deepEqual(btns(card(m.host, '3-1')), [['Reject', false, false], ['Ask again', false, true]]);
+  m = await openCards(feature({ busy: true, status: 'thinking', state: 'thinking' }));
+  assert.equal(btns(card(m.host, '2-1'))[1][2], true, 'Accept waits while a round runs');
+  m = await openCards(feature({ status: 'archived', state: 'archived', pending: null }));
+  assert.ok([...m.host.querySelectorAll('.req-help-card .btn')].every((b) => b.disabled), 'archived: read only');
+  const s = { f: feature({ helper: { answering: false, messages: 4 } }), helper: cardsChat() };
+  s.helper.messages[2].proposals[0].askedAgain = true;
+  s.helper.messages.push(po(4, 'Propose this again for the current spec.', { askAgain: { msgId: 3, n: 1 } }));
+  m = await openFeature(s);
+  await openPanel(m);
+  const stale = card(m.host, '3-1');
+  assert.deepEqual([!!stale.querySelector('.req-help-stale'), stale.querySelector('.btn')], [true, null], 'the stale card keeps only its alert');
+  assert.equal(m.host.querySelector('[data-msg="4"] .req-help-cap').textContent, 'Ask again · Business rules');
+});
+
+test('style.css: the cards use tokens only; Accepted is green ink, never a fill; the stale line is the amber alert; 44 px targets on a phone', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
+  const end = css.indexOf('/* ── marketplace P3 ── */');
+  for (const sel of ['.req-help-card{', '.req-help-card-head', '.req-help-ba{', '.req-help-k', '.req-help-old', '.req-help-btns', '.req-help-state', '.req-help-stale']) {
+    const at = css.indexOf(sel);
+    assert.ok(at > start && at < end, `${sel} inside the Requirements block`);
+  }
+  const block = css.slice(start, end);
+  const lines = block.split('\n').filter((l) => /req-help/.test(l));
+  assert.ok(lines.every((l) => !/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(l)), 'tokens only');
+  assert.ok(lines.every((l) => !/background:var\(--green/.test(l)), 'never a green fill');
+  assert.match(block, /\.req-help-state\.ok\{color:var\(--green-ink-strong\)\}/);
+  assert.match(block, /\.req-help-stale\{[^}]*background:var\(--amber-bg\);color:var\(--amber-ink-strong\)/);
+  const phone = block.slice(block.indexOf('@media (max-width:900px){', block.indexOf('.req-help-card{')));
+  // a 44px .btn is off the control scale (ui-design-language): the card's .btn-sm buttons take the panel's ::after hit area
+  assert.match(phone, /\.req-help-btns \.btn\{flex:1\}/);
+  assert.match(block, /\.req-help \.btn-sm::after\{content:"";position:absolute;inset:-9px 0\}/);
+});
+
+test('D18: a Worca row whose cards are all decided keeps its node across a Send (answering false → true → false)', async () => {
+  const decided = () => [po(1, 'A'), worca(2, 'B', { proposals: [prop(1, { target: 'criterion', change: 'add', value: 'X.', state: 'accepted', appliedId: 'R-po-6' }),
+    prop(2, { target: 'rules', change: 'set', value: ['Y.'], before: [], added: ['Y.'], removed: [], state: 'rejected' })] })];
+  const s = { f: feature({ helper: { answering: false, messages: 2 } }), helper: chat(decided()) };
+  const m = await openFeature(s, { 'POST /api/requirements/7/helper/messages': (b) => (s.helper = chat([...decided(), po(3, b.text)], { answering: true })) });
+  const p = await openPanel(m);
+  const log = p.querySelector('.req-help-log');
+  const reply = log.querySelector('[data-msg="2"]');
+  const removed = [];
+  const watch = new window.MutationObserver((recs) => recs.forEach((r) => removed.push(...r.removedNodes)));
+  watch.observe(log, { childList: true });
+  type(p.querySelector('[data-ui="helper-in"]'), 'C');
+  p.querySelector('[data-ui="helper-send"]').click();
+  await settle();
+  assert.ok(m.host.querySelector('.req-help-waiting'), 'answering');
+  assert.equal(log.querySelector('[data-msg="2"]'), reply, 'a send keeps the decided cards\' row');
+  s.helper = chat([...decided(), po(3, 'C'), worca(4, 'D')]);
+  s.f = feature({ helper: { answering: false, messages: 4 } });
+  await m.view.changed(7);
+  await settle();
+  s.f = feature({ busy: true, status: 'thinking', state: 'thinking', pending: null, helper: { answering: false, messages: 4 } });
+  await m.view.changed(7);
+  await settle();
+  watch.takeRecords().forEach((r) => removed.push(...r.removedNodes));
+  watch.disconnect();
+  assert.equal(log.querySelector('[data-msg="2"]'), reply, 'the answer and a round starting keep it too');
+  assert.ok(!removed.includes(reply), 'never taken out of the live region and put back');
+});
+
+test('D18: a row with a card waiting for a decision is rebuilt when its Accept turns off and on (a send), and only then', async () => {
+  const rows2 = () => [po(1, 'A'), worca(2, 'B', { proposals: [prop(1, { target: 'criterion', change: 'add', value: 'X.' })] })];
+  const s = { f: feature({ helper: { answering: false, messages: 2 } }), helper: chat(rows2()) };
+  const m = await openFeature(s, { 'POST /api/requirements/7/helper/messages': (b) => (s.helper = chat([...rows2(), po(3, b.text)], { answering: true })) });
+  await openPanel(m);
+  const acc = () => m.host.querySelector('[data-ui="prop-accept-2-1"]');
+  assert.equal(acc().disabled, false);
+  const reply = m.host.querySelector('[data-msg="2"]');
+  await m.view.changed(7);
+  await settle();
+  assert.equal(m.host.querySelector('[data-msg="2"]'), reply, 'a repaint with nothing new keeps it');
+  type(m.host.querySelector('[data-ui="helper-in"]'), 'C');
+  m.host.querySelector('[data-ui="helper-send"]').click();
+  await settle();
+  assert.equal(acc().disabled, true, 'Accept waits while Worca answers');
+  assert.notEqual(m.host.querySelector('[data-msg="2"]'), reply, 'so its row is rebuilt');
+  s.helper = chat([...rows2(), po(3, 'C'), worca(4, 'D')]);
+  s.f = feature({ helper: { answering: false, messages: 4 } });
+  await m.view.changed(7);
+  await settle();
+  assert.equal(acc().disabled, false, 'and comes back with the reply');
+});

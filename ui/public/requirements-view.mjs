@@ -2558,6 +2558,66 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     return dr && dr.why ? dr.why : '';
   };
 
+  // Board 24: a proposed change as a card. The head names the section (and the id or the change for criteria and assumptions);
+  // a decided card says "Change"; "Why" only while it waits for a decision.
+  const proposalSuffix = (p) => (p.target === 'criterion' ? (p.change === 'add' ? ' · add' : p.change === 'remove' ? ` · remove ${p.id}` : ` · ${p.id}`)
+    : p.target === 'assumption' ? ` · ${p.change} ${p.id}` : '');
+  /** The rows: Before / After (a section, a reworded criterion; a list section shows only its changed lines, D8), New (an add: its
+   *  id once accepted), Remove, Confirm / Reject (an assumption's text). The old side is muted. */
+  function proposalRows(p) {
+    const row = (k, value, old = false) => [h('span', { class: 'req-help-k', text: k }), h('span', { class: old ? 'req-help-old' : null }, ...[].concat(value))];
+    if (p.target === 'goal') {
+      const b = p.before || { text: '', measure: '' };
+      const a = p.value || { text: '', measure: '' };
+      const measures = b.measure !== a.measure;
+      const show = (g) => (measures && g.measure ? `${g.text} · Measure: ${g.measure}` : g.text);
+      return [...(b.text ? row('Before', show(b), true) : []), ...row('After', show(a))];
+    }
+    if (Array.isArray(p.added) || Array.isArray(p.removed)) {
+      return [...(p.removed || []).flatMap((x) => row('Before', x, true)), ...(p.added || []).flatMap((x) => row('After', x))];
+    }
+    if (p.target === 'criterion') {
+      if (p.change === 'add') return row('New', p.appliedId ? [h('code', { class: 'req-help-id', text: p.appliedId }), ' ', p.value] : p.value);
+      if (p.change === 'reword') return [...row('Before', p.before, true), ...row('After', p.value)];
+      return row('Remove', p.before, true);
+    }
+    const t = (p.before && p.before.text) || p.id;
+    return p.change === 'confirm' ? row('Confirm', t) : row('Reject', t, true);
+  }
+  /** A card's buttons and whether each is off (D10, D11, D16), or null when it has none (decided, or stale and asked again).
+   *  Reject is off only on an archived feature; Accept waits while Worca answers and while the feature is locked; Ask again (a
+   *  stale card) waits while Worca answers or works. The card and helperRowKey both read this, so the key holds exactly them. */
+  function proposalOff(p, ctx) {
+    if (p.state !== 'proposed') return null;
+    if (p.stale) return p.askedAgain ? null : { reject: ctx.archived, other: ctx.answering || ctx.working || ctx.archived };
+    return { reject: ctx.archived, other: ctx.answering || ctx.locked };
+  }
+  /** One card (D10, D18): Reject / Accept; stale: the amber alert, Reject / Ask again (only the alert once asked again); Accepted
+   *  (green check) and Rejected as role=status lines. Nothing is decided on an archived feature. */
+  function proposalCard(f, m, p, ctx) {
+    const label = helpLabel(p);
+    const decided = p.state === 'accepted' || p.state === 'rejected';
+    const stale = p.state === 'proposed' && !!p.stale;
+    const id = `${m.id}-${p.n}`;
+    const off = proposalOff(p, ctx);
+    const act = (what, words, primary, disabled) => h('button', { type: 'button', class: `btn btn-sm${primary ? ' btn-primary' : ''}`, 'data-ui': `prop-${what}-${id}`, disabled,
+      onclick: () => helperPost(f, 'POST', `/messages/${m.id}/proposals/${p.n}/${what}`, 'helper-in') }, words);
+    const btns = (other) => h('div', { class: 'req-help-btns' }, act('reject', 'Reject', false, off.reject), other);
+    let foot = null;
+    if (p.state === 'accepted') foot = h('p', { class: 'req-help-state ok', role: 'status' }, icon(ICONS.check, { size: 14, width: 2.4 }), 'Accepted · now in the spec as your edit');
+    else if (p.state === 'rejected') foot = h('p', { class: 'req-help-state', role: 'status', text: 'Rejected' });
+    else if (stale) {
+      foot = [h('p', { class: 'req-help-stale', role: 'alert', text: 'The spec changed since Worca proposed this.' }),
+        off ? btns(act('ask-again', 'Ask again', false, off.other)) : null];
+    } else foot = btns(act('accept', 'Accept', true, off.other));
+    return h('div', { class: `req-help-card is-${stale ? 'stale' : p.state}`, role: 'group', 'data-proposal': id,
+      'aria-label': `Proposed change: ${p.id && p.change !== 'add' ? p.id : label}` },
+      h('p', { class: 'req-help-card-head', text: `${decided ? 'Change' : 'Proposed change'} · ${label}${proposalSuffix(p)}` }),
+      h('div', { class: 'req-help-ba' }, ...proposalRows(p)),
+      !decided && !stale ? h('p', { class: 'hint req-help-reason', text: `Why: ${p.reason}` }) : null,
+      ...[].concat(foot));
+  }
+
   /** Send (the composer's text or a starter's): a refusal keeps the typed text and says why under the composer; a spent budget
    *  says so in the chat instead (§6). */
   async function sendHelper(f, text = helperUi.text, focus = helperUi.focus) {
@@ -2638,11 +2698,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     if (code === 'STOPPED') return h('p', { class: 'hint req-help-stopped' }, 'You stopped this reply.', again ? ' ' : null, again);
     return h('p', { class: 'req-help-fail', role: 'alert' }, HELP_FAILED, again ? ' ' : null, again);
   }
-  /** What a reply carries besides its text: the dropped-draft line (D6); Task 8 adds the proposal cards. */
-  function helperExtras(f, m) {
+  /** What a reply carries besides its text: the dropped-draft line (D6) and its proposed changes (board 24). */
+  function helperExtras(f, m, ctx) {
     return [
       (m.drafts || []).some((x) => x.dropped)
         ? h('p', { class: 'hint req-help-dropped', text: "The question you asked about has been answered, so Worca's draft for it was dropped." }) : null,
+      ...(m.proposals || []).map((p) => proposalCard(f, m, p, ctx)),
     ];
   }
   function helperMessage(f, m, ctx) {
@@ -2658,8 +2719,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   /** D18: a message's node is rebuilt only when this key changes, so the key holds the message and ONLY the parts of `ctx` (and of
    *  `f`) that change that message's DOM: a rebuilt node in the role=log live region is read out again, so a key with the whole
    *  ctx would re-read the history on every Send, reply and round. This is the one place a row's dependencies are listed: the
-   *  dropped-draft line (D6) reads only `m.drafts`, already in the key; Task 8 (the proposal cards: their state, stale mark, Ask
-   *  again, and the ctx their Accept / Reject / Ask again read) adds its parts here. */
+   *  dropped-draft line (D6) reads only `m.drafts`, already in the key; the proposal cards (board 24) read their own state, stale
+   *  mark, Ask again and applied id (all in `m.proposals`) and, only while a card waits for a decision, whether its buttons are
+   *  off (`proposalOff`): a row whose cards are all decided keeps its node whatever the ctx. */
   function helperRowKey(f, m, ctx) {
     if (m.role === 'po') return JSON.stringify([m, helpCap(m)]);
     const code = m.error ? m.error.code : null;
@@ -2667,7 +2729,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     // round or look runs
     const again = !!code && code !== 'BUDGET' && ctx.newest && !ctx.answering && !ctx.archived;
     const line = !code ? null : code === 'BUDGET' ? f.resetPeriod : [again, again && ctx.working];
-    return JSON.stringify([m, line]);
+    return JSON.stringify([m, line, (m.proposals || []).map((p) => proposalOff(p, ctx))]);
   }
   /** The log's message nodes; an unchanged message keeps its node across paints (D18: a live region announces only what is new). */
   function helperLogNodes(f, msgs, ctx) {
