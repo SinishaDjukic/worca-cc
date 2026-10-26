@@ -789,6 +789,51 @@ test('D14: staged names are Windows-safe and unique after the mapping; a success
 test('D14: bodyUsable decides fileView.sendable and unsendableRunFile alike: a missing body or a version not stored cannot go; a failed read with its body can', async () => {
   process.env.WORCA_MOCK = '1';
   const f = createFeature({ scopeType: 'project', scopeKey: 'shop-sendable', title: 'Sendable', description: 'd' });
+test('D14: staged names follow downloadFilename: every reserved device name, at most 255 UTF-8 bytes with the extension, unique repeats within the cap', async () => {
+  assert.deepEqual(['CON .txt', 'COM¹.md', 'lpt³', 'CONIN$', 'conout$.log', 'AUX.tar.gz', 'console.md'].map(job.stagedName),
+    ['_CON .txt', '_COM¹.md', '_lpt³', '_CONIN$', '_conout$.log', '_AUX.tar.gz', 'console.md']);
+  const bytes = (s) => Buffer.byteLength(s, 'utf8');
+  const cjk = `${'要'.repeat(100)}.pdf`;   // 100 characters, 300 UTF-8 bytes before the extension
+  const one = job.stagedName(cjk);
+  assert.ok(bytes(one) <= 255 && one.endsWith('.pdf') && one.startsWith('要'), `${bytes(one)} bytes`);
+  const names = [];
+  for (let i = 0; i < 4; i += 1) names.push(job.uniqueStagedName(job.stagedName(cjk), names));
+  assert.equal(new Set(names.map((n) => n.toLowerCase())).size, 4, 'four repeats, four names');
+  for (const n of names) assert.ok(bytes(n) <= 255 && Array.from(n).length <= 200 && n.endsWith('.pdf'), `${n}: ${bytes(n)} bytes`);
+  assert.deepEqual(names.slice(1).map((n) => n.slice(-8)), [' (2).pdf', ' (3).pdf', ' (4).pdf']);
+  const long = `${'a'.repeat(198)}.md`;   // 200 code points: the suffix shortens the stem
+  assert.equal(Array.from(job.uniqueStagedName(job.stagedName(long), [long])).length, 200);
+  assert.equal(job.uniqueStagedName('Notes.md', ['notes.md', 'NOTES (2).md']), 'Notes (3).md', 'case-insensitive');
+  // the names stage on this file system, with their repeats
+  const base = join(worcaHome(), 'tmp', 'stage-test-long');
+  mkdirSync(base, { recursive: true });
+  const src = join(base, 's.bin');
+  writeFileSync(src, 's');
+  const out = await job.withStagedRunFiles('r-long', [cjk, cjk, 'CON .txt', 'CONIN$'].map((name) => ({ name, path: src })),
+    async (paths) => ({ status: 201, body: { paths } }), { base });
+  assert.equal(out.status, 201, JSON.stringify(out.body));
+  assert.equal(readdirSync(join(base, 'orchestrator-extras-r-long')).length, 4);
+});
+
+test('D14: a copy that fails on the temp side while the stored body is intact answers "Worca could not finish that", not the stored file', async (t) => {
+  t.mock.method(console, 'error', () => {});
+  process.env.WORCA_MOCK = '1';
+  const base = join(worcaHome(), 'tmp', 'stage-test-dest');
+  mkdirSync(base, { recursive: true });
+  const f = createFeature({ scopeType: 'project', scopeKey: 'shop-dest', title: 'Dest', description: 'd' });
+  const fo = { type: 'feature', id: f.seq };
+  const [a] = job.addAttachments(fo, [textFile('a.md', 'aaaa')]);
+  await job.readsSettled(fo);
+  const entry = { id: a.id, name: 'a.md', path: job.attachmentFile(a), sha256: a.sha256 };
+  // a file where the run's folder should be: the folder is fine, the copy into it fails (the destination's fault)
+  const dir = join(base, 'orchestrator-extras-r-dest');
+  mkdirSync(dir, { recursive: true });
+  mkdirSync(join(dir, 'a.md'));   // a folder takes the copy's name: copyFile fails, the source is intact
+  let ran = false;
+  const out = await job.withStagedRunFiles('r-dest', [entry], async () => { ran = true; return { status: 201 }; }, { base });
+  assert.deepEqual([out.status, out.body.error, ran], [500, 'Worca could not finish that. Try again.', false]);
+});
+
   const fo = { type: 'feature', id: f.seq };
   const [a, b, c, e] = job.addAttachments(fo, [textFile('a.md', 'a'), textFile('b.md', 'b'), textFile('c.md', 'c'), textFile('e.md', 'e')]);
   await job.readsSettled(fo);

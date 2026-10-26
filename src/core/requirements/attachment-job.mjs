@@ -19,12 +19,13 @@ import { redactAskText } from '../ask/redact.mjs';
 import { REQUIREMENTS_READ_DENY_RULES } from '../ask/deny-rules.mjs';
 import { extensionForAttachment } from '../ask/attachment-kind.mjs';
 import { guardDecisionsCover, toolCalls } from '../file-read-guard.mjs';
+import { downloadFilename } from '../download-filename.mjs';
 import { RequirementsError, clip } from './spec.mjs';
 import { RoundError } from './round.mjs';
 import {
   REQ_ATT_ID_RE, REQ_ATTACH_LIMITS, ATTACHMENT_SYSTEM_PROMPT, buildReadPrompt, buildAskPrompt, normalizeSummary, mockSummary, checkNewFiles,
   readRule, normalizeAnswer, mockAnswer, pushHistory, selectInlineAttachments, renderAttachmentsForPrompt, renderDocumentsForPrompt, sourceNames, hasText,
-  mentions, displayName, uniqueName,
+  mentions, displayName,
 } from './attachments.mjs';
 import {
   mintAttachmentId, insertAttachment, getAttachment, listAttachments, updateAttachment, addAttachmentCost, deleteAttachmentRow,
@@ -593,18 +594,43 @@ const sha256OfFile = (path) => new Promise((resolve, reject) => {
 /** D14: what a start answers for a switched-on file whose stored body Worca cannot open (or that is not its version). */
 export const cannotGoWithRun = (name) => `${name} cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.`;
 
-/** D14: a staged copy's file name, from the display name: safe on Windows (`: * ? " < > |` become `_`, trailing dots
- *  and spaces go, a device name such as CON gets a leading `_`). Only the copy is named so; the start row keeps the
- *  display name. */
+/** D14: a staged copy's file name, from the display name, by downloadFilename's rules: legal on Windows, macOS and Linux
+ *  (`: * ? " < > |` become `_`, trailing dots and spaces go, a reserved device name such as CON, `CON .txt`, COM¹ or
+ *  CONIN$ gets a leading `_`) and at most 200 code points and 255 UTF-8 bytes, the extension kept; 'file' when nothing
+ *  is left. Only the copy is named so; the start row keeps the display name. */
 export function stagedName(name) {
-  let s = displayName(name).replace(/[:*?"<>|]/g, '_').replace(/[. ]+$/, '');
-  if (!s) s = 'file';
-  if (/^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)/i.test(s)) s = `_${s}`;
-  return s;
+  const d = displayName(name);
+  return d.replace(/[. ]+$/, '') ? downloadFilename(d) : 'file';
+}
+
+const STAGED_MAX_NAME = 200;     // code points, as downloadFilename
+const STAGED_MAX_BYTES = 255;    // UTF-8 bytes: the name limit of ext4 and APFS
+const utf8Size = (s) => Buffer.byteLength(s, 'utf8');
+
+/** D14: `name` (a stagedName), else "<stem> (2)<ext>", "<stem> (3)<ext>" …: the first not in `taken` (ignoring case, as
+ *  Windows and macOS do). The stem is shortened so the name with its suffix stays within 200 code points and 255 UTF-8
+ *  bytes; the suffix and the extension are never cut. */
+export function uniqueStagedName(name, taken = []) {
+  const used = new Set(taken.map((t) => String(t).toLowerCase()));
+  if (!used.has(name.toLowerCase())) return name;
+  const dot = name.lastIndexOf('.');
+  const ext = dot > 0 && name.length - dot <= 16 ? name.slice(dot) : '';   // downloadFilename's extension rule
+  const stem = Array.from(ext ? name.slice(0, -ext.length) : name);
+  for (let k = 2; ; k += 1) {
+    const tail = ` (${k})${ext}`;
+    const cut = stem.slice(0, Math.max(1, STAGED_MAX_NAME - Array.from(tail).length));
+    while (cut.length > 1 && utf8Size(cut.join('') + tail) > STAGED_MAX_BYTES) cut.pop();
+    const cand = `${cut.join('')}${tail}`;
+    if (!used.has(cand.toLowerCase())) return cand;
+  }
 }
 
 /** Whether the row a staged copy came from still stands as the start chose it (same id, same sha256): then a copy that
  *  failed or does not match is the stored body's fault, not a change made during the start. */
+/** Whether the stored body at `path` is still the version `sha256` names (a failed copy whose source is fine is the
+ *  staging's fault, not the stored file's). */
+const sourceIntact = async (path, sha256) => { try { return (await sha256OfFile(path)) === sha256; } catch { return false; } };
+
 function rowAsChosen(f) {
   if (!f.id || !f.sha256) return false;
   try { const row = getAttachment(f.id); return !!row && row.sha256 === f.sha256; } catch { return false; }
@@ -617,7 +643,9 @@ function rowAsChosen(f) {
  *  the caller to call once the run has its own copy); a refused start (not 2xx) or a throw removes the folder again, so
  *  nothing is left in the temp dir. A copy that fails or does not match answers 409 naming the file, never its path, and
  *  the start never runs: "changed while the run started" when its row was removed or replaced meanwhile (a brief
- *  document's routes do not wait for a start), else cannotGoWithRun (the stored body itself is damaged). */
+ *  document's routes do not wait for a start), else cannotGoWithRun when the stored body itself is damaged or gone; a
+ *  copy that failed although the stored body is intact (the temp folder's side: no space, a name the file system
+ *  refuses) answers 500 "Worca could not finish that. Try again." */
 export async function withStagedRunFiles(runId, list, start, { base = tmpdir() } = {}) {
   const dir = join(base, `orchestrator-extras-${runId}`);
   const drop = () => rm(dir, { recursive: true, force: true }).catch((e) => console.error(`requirements: could not remove the staged files of run ${runId}:`, message(e)));
@@ -629,7 +657,7 @@ export async function withStagedRunFiles(runId, list, start, { base = tmpdir() }
   const taken = [];
   const paths = [];
   for (const f of list) {
-    const name = uniqueName(stagedName(f.name), taken);   // unique after the mapping: "notes.md." and "notes.md" differ
+    const name = uniqueStagedName(stagedName(f.name), taken);   // unique after the mapping: "notes.md." and "notes.md" differ
     taken.push(name);
     const dest = join(dir, name);
     try {
@@ -639,8 +667,9 @@ export async function withStagedRunFiles(runId, list, start, { base = tmpdir() }
       console.error(`requirements: a file of run ${runId} could not be staged:`, message(err));
       await drop();
       const shown = displayName(f.name);
-      return { status: 409, body: { error: rowAsChosen(f) ? cannotGoWithRun(shown)
-        : `${shown} could not be sent with the run: it changed while the run started. Try again.` } };
+      if (!rowAsChosen(f)) return { status: 409, body: { error: `${shown} could not be sent with the run: it changed while the run started. Try again.` } };
+      if (await sourceIntact(f.path, f.sha256)) return { status: 500, body: { error: 'Worca could not finish that. Try again.' } };
+      return { status: 409, body: { error: cannotGoWithRun(shown) } };
     }
     paths.push(dest);
   }
