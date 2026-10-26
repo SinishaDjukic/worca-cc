@@ -130,6 +130,9 @@ const ARCHIVED = 'this feature is archived; restore it first';
 const WORKING = 'Worca is still working on this feature. Try again in a moment.';
 export const ALREADY_EXPORTING = 'Worca is already exporting this feature.';
 const STALE = 'The spec changed since the preview. Look at the preview again.';
+/** How long a lost create's marker that the tracker's search does not find yet is kept (Jira Cloud's search lags a create
+ *  by a few seconds): meanwhile an export answers BUSY instead of making a second ticket. */
+export const PENDING_SEARCH_GRACE_MS = 120_000;
 const text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 /** A one-line field in the ticket (the Export anyway reason, a file name): its line breaks cannot make Markdown structure. */
 const oneLine = (v) => String(v).replace(/\s+/g, ' ').trim();
@@ -258,11 +261,14 @@ function planExport(f, body = {}, { target = { ok: false }, now = new Date() } =
   const conn = connOf(mode === 'update' || mode === 'comment' ? link : setup);
   const name = sourceName(conn);
   if (mode === 'comment') {
+    // a ticket linked from another connection or project has no spec copy: a comment would list the whole spec as added
+    if (!link.spec) throw new RequirementsError('CONFLICT', `Update ${link.key} once to give Worca a starting point for comments.`);
     const changes = exportChanges(link.spec, f.spec);
     if (!changes.length) throw new RequirementsError('CONFLICT', 'Nothing changed since the last export.');
     const comment = renderExportComment(f, changes, { since: exportDate(link.exportedAt, { year: false }), reason });
+    // the hash covers the connection too: a setup moved to another site between preview and send is a stale preview
     return { mode, link, setup, conn, name, reason, changes, comment, ticket: null, sent: null, fields: null,
-      previewHash: ticketHash({ mode, key: link.key, comment }) };
+      previewHash: ticketHash({ mode, conn: connKey(conn), key: link.key, comment }) };
   }
   // update: the fields last sent (D7), except that a setup on the link's connection and tracker project gives the criteria,
   // the issue type and the priority, so Change the export setup can fix a refused update; create and new: the setup's. The
@@ -279,7 +285,10 @@ function planExport(f, body = {}, { target = { ok: false }, now = new Date() } =
   const issueTypeName = text(body.issueType, 100) ? (text(body.issueTypeName, 200) || issueType) : (base.issueTypeName || issueType);
   const priority = body.priority === undefined ? (base.priority || null) : (text(body.priority, 100) || null);
   const priorityName = !priority ? null : body.priority === undefined ? (base.priorityName || priority) : (text(body.priorityName, 200) || priority);
-  const criteria = base.criteria && base.criteria.target === 'field' && base.criteria.field ? base.criteria : { target: 'description' };
+  // a link with no fields last sent (linked from another site) takes the setup's defaults, but never a criteria field id
+  // from the setup's other connection: its criteria stay in the description
+  const foreign = mode === 'update' && !link.fields && !sameConn(setup, link);
+  const criteria = !foreign && base.criteria && base.criteria.target === 'field' && base.criteria.field ? base.criteria : { target: 'description' };
   const ticket = buildTicket(f, { project: base.project, issueType, labels: Array.isArray(body.labels) ? body.labels : (base.labels || []), priority, criteria,
     reason, exportedOn: exportDate(now.toISOString()), mentionedFiles: mentionedFiles(f).map(oneLine) });
   const fixed = exportLabel(f);
@@ -292,7 +301,7 @@ function planExport(f, body = {}, { target = { ok: false }, now = new Date() } =
     summary: f.title,
   };
   return { mode, link, setup, conn, name, reason, changes: link ? exportChanges(link.spec, f.spec) : [], comment: null, ticket, sent, fields,
-    previewHash: ticketHash({ mode, key: link ? link.key : null, ticket }) };
+    previewHash: ticketHash({ mode, conn: connKey(conn), key: link ? link.key : null, ticket }) };
 }
 
 /** The plan an export sends: the preview's, which its hash names. The ticket's export date is the preview's, today's or,
@@ -363,19 +372,29 @@ export async function runExport(seq, body = {}, { by = null, target } = {}, d = 
       if (hit && typeof hit.key === 'string' && hit.key && hit.marker === row.pendingMarker && Array.isArray(hit.labels) && hit.labels.includes(label)
         && String(hit.lastLine || '').startsWith(`From Worca ${f.id} ·`)) {
         const madeAt = row.pendingAt || at;
-        // A first export's lost ticket made through another connection or tracker project than the setup's (the setup
-        // changed since): it is linked, but the preview showed a ticket for the setup's project, so nothing is sent.
+        // The found ticket is linked, but nothing is sent to it unless the preview named it: a first export's lost ticket
+        // made through another connection or tracker project than the setup's (the setup changed since), or a lost New
+        // ticket found while the preview was an update of, or a comment on, the old ticket, is a stale preview.
         const elsewhere = !row.key && !(plan.setup && sameConn(plan.setup, row) && plan.setup.trackerProject === row.trackerProject);
+        const notPreviewed = elsewhere || ((mode === 'update' || mode === 'comment') && hit.key !== plan.link.key);
         tx(() => {
           saveExportLink(f.seq, { ...where.conn, trackerProject: where.project, key: hit.key, url: hit.url || null, createdAt: madeAt, exportedAt: madeAt,
             spec: row.key ? row.spec : null, fields: row.key ? row.fields : (elsewhere ? null : plan.sent), fingerprint: hit.fingerprint || null }, { by });
           turn('linked', hit.key, hit.url);
         });
-        if (elsewhere) throw new RequirementsError('CONFLICT', STALE, { stale: true, linked: hit.key });
+        if (notPreviewed) throw new RequirementsError('CONFLICT', STALE, { stale: true, linked: hit.key });
         link = getExportLink(f.seq);
         found = true;
         if (mode === 'create' || mode === 'new') mode = 'update';
-      } else clearPendingExport(f.seq);
+      } else {
+        // Nothing found yet while the marker is young: the tracker's search may lag the create, so the marker stays and
+        // nothing is made; past the grace, or a ticket that fails the checks, is a definite no
+        const age = now.getTime() - Date.parse(row.pendingAt || '');
+        if (!(hit && hit.key) && age >= 0 && age < PENDING_SEARCH_GRACE_MS) {
+          throw new RequirementsError('BUSY', `Worca is still checking whether ${plan.name} made the ticket. Try again in a moment.`);
+        }
+        clearPendingExport(f.seq);
+      }
     }
     if (mode === 'create' || mode === 'new') {
       const conn = connOf(plan.setup);
@@ -412,6 +431,8 @@ export async function runExport(seq, body = {}, { by = null, target } = {}, d = 
       });
       return { action: 'updated', key: link.key, url };
     }
+    // A comment has no duplicate guard (design accepted): a comment whose answer was lost (a timeout), then Try again, can
+    // post the same comment twice. Comments carry no marker and cannot be found again the way a created ticket is.
     const r = await trackerCall(d, plan.name, conn, 'commentTicket', { key: link.key, body: plan.comment });
     if (r && r.gone) throw goneError(link.key, plan.name);
     tx(() => {

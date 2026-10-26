@@ -392,6 +392,14 @@ test('saveSetup and exportOptions: the connection must be a listed tracker; a re
 
 // ---- review notes on the brief (task 5): the export date, a one-line reason, a keyless pending row from elsewhere ----
 
+const STALE = 'The spec changed since the preview. Look at the preview again.';
+/** Deps whose clock runs `ms` ahead (default: past the two minutes a lost create's marker waits for the tracker's search). */
+const later = (ms = 121_000) => ({ ...d, now: () => new Date(Date.now() + ms) });
+async function exportVia(seq, body, deps) {
+  const p = await previewExport(seq, body, { target: TARGET }, deps);
+  return runExport(seq, { ...body, previewHash: p.previewHash }, { by: 'po', target: TARGET }, deps);
+}
+
 test("the export date is the preview's: a preview made before midnight is sent after it; a preview two days old is stale", async () => {
   reset();
   const f = readyFeature();
@@ -444,7 +452,92 @@ test('a keyless pending row from another connection or project is looked for whe
   reset();
   const g = readyFeature();
   setPendingExport(g.seq, elsewhere);
-  const r = await exportNow(g.seq);
+  const r = await exportVia(g.seq, { mode: 'create' }, later());   // past the search lag's two minutes
   assert.deepEqual([r.action, r.key], ['created', 'SHOP-123']);
   assert.deepEqual(ops(), [['findTicket', 'beta', 'OPS'], ['createTicket', 'acme', null]], 'not there: the setup makes the ticket');
+});
+
+// ---- fix round 1: never a ticket the preview did not name; the hash covers the connection; a link with no spec copy;
+// the tracker's search lag after a lost create ----
+
+test('a lost New ticket never takes over a later Update or Comment of the old ticket: linked, nothing sent, the preview is stale', async () => {
+  for (const mode of ['update', 'comment']) {
+    reset();
+    const f = readyFeature();
+    await exportNow(f.seq);
+    setMockSourceResponses({ createTicket: () => { throw new PluginOpError('timeout', 'exceeded'); } });
+    await assert.rejects(exportNow(f.seq, { mode: 'new' }), (e) => e.data.kind === 'timeout');
+    const marker = getExportLink(f.seq).pendingMarker;
+    assert.deepEqual([getExportLink(f.seq).key, /^rexp_/.test(marker)], ['SHOP-123', true]);
+    updateFeature(f.seq, { spec: { ...readySpec(), rules: ['A new rule'] } });
+    setMockSourceResponses({ findTicket: (a) => (a.marker === marker ? { key: 'SHOP-124', url: 'https://mock.test/browse/SHOP-124', fingerprint: 'f124',
+      lastLine: `From Worca ${f.id} · exported 26 Oct 2026`, marker, labels: ['worca', a.label] } : null) });
+    const p = await previewExport(f.seq, { mode }, { target: TARGET }, d);
+    assert.equal(p.key, 'SHOP-123', mode);
+    seen.length = 0;
+    await assert.rejects(runExport(f.seq, { mode, previewHash: p.previewHash }, { by: 'po', target: TARGET }, d),
+      (e) => e.code === 'CONFLICT' && e.data.stale === true && e.data.linked === 'SHOP-124' && e.message === STALE, mode);
+    assert.deepEqual(seen.map((c) => c.op), ['findTicket'], `${mode}: nothing sent to a ticket the preview did not name`);
+    assert.deepEqual([getExportLink(f.seq).key, getExportLink(f.seq).pendingMarker], ['SHOP-124', null]);
+    assert.deepEqual(exportTurns(f.seq).map((t) => t.payload.action), ['created', 'linked']);
+    assert.equal(isExporting(f.seq), false);
+  }
+});
+
+test('the preview hash covers the connection: a setup switched to another site between preview and send is stale', async () => {
+  reset();
+  const was = getExportSetup('project', 'shop-1');
+  const f = readyFeature();
+  const p = await previewExport(f.seq, { mode: 'create' }, { target: TARGET }, d);
+  try {
+    upsertExportSetup({ ...SCOPE, ...was, profile: 'beta' });
+    await assert.rejects(runExport(f.seq, { mode: 'create', previewHash: p.previewHash }, { by: 'po', target: TARGET }, d),
+      (e) => e.code === 'CONFLICT' && e.data.stale === true);
+    assert.equal(seen.filter((c) => c.op === 'createTicket').length, 0);
+    assert.equal(getExportLink(f.seq), null);
+  } finally { upsertExportSetup({ ...SCOPE, ...was }); }
+});
+
+test('a link with no spec copy (linked from another site): no comment until one update; its update keeps the criteria in the description', async () => {
+  reset();
+  const was = getExportSetup('project', 'shop-1');
+  try {
+    upsertExportSetup({ ...SCOPE, ...was, criteria: { target: 'field', field: 'customfield_10070', name: 'Acceptance Criteria' } });
+    const f = readyFeature();
+    setPendingExport(f.seq, { plugin: 'jira-source', sourceId: 'jira', profile: 'beta', trackerProject: 'OPS', marker: 'rexp_00000000000c' });
+    setMockSourceResponses({ findTicket: (a) => ({ key: 'OPS-9', url: 'https://mock.test/browse/OPS-9', fingerprint: null,
+      lastLine: `From Worca ${f.id} · exported 26 Oct 2026`, marker: a.marker, labels: ['worca', a.label] }) });
+    await assert.rejects(exportNow(f.seq), (e) => e.data.linked === 'OPS-9');
+    assert.equal(getExportLink(f.seq).spec, null);
+    await assert.rejects(previewExport(f.seq, { mode: 'comment' }, { target: TARGET }, d),
+      (e) => e.code === 'CONFLICT' && e.message === 'Update OPS-9 once to give Worca a starting point for comments.');
+    setMockSourceResponses(null);
+    const u = await previewExport(f.seq, { mode: 'update' }, { target: TARGET }, d);
+    assert.deepEqual([u.ticket.criteria, u.fields.criteria], [{ target: 'description' }, { target: 'description' }],
+      "no custom field id from the setup's other site");
+    assert.match(u.ticket.description, /## Acceptance criteria/);
+    assert.equal((await runExport(f.seq, { mode: 'update', previewHash: u.previewHash }, { by: 'po', target: TARGET }, d)).action, 'updated');
+    updateFeature(f.seq, { spec: { ...readySpec(), rules: ['A rule'] } });
+    assert.ok((await previewExport(f.seq, { mode: 'comment' }, { target: TARGET }, d)).comment.includes('Business rules: added “A rule”'),
+      'after one update a comment lists what changed');
+  } finally { upsertExportSetup({ ...SCOPE, ...was }); }
+});
+
+test("the tracker's search lag: a lost create's marker younger than two minutes that finds nothing is kept (BUSY); older, a ticket is made", async () => {
+  reset();
+  const f = readyFeature();
+  setMockSourceResponses({ createTicket: () => { throw new PluginOpError('timeout', 'exceeded'); } });
+  await assert.rejects(exportNow(f.seq), (e) => e.data.kind === 'timeout');
+  const marker = getExportLink(f.seq).pendingMarker;
+  setMockSourceResponses(null);
+  seen.length = 0;
+  await assert.rejects(exportNow(f.seq), (e) => e.code === 'BUSY'
+    && e.message === 'Worca is still checking whether Jira made the ticket. Try again in a moment.');
+  assert.deepEqual(seen.filter((c) => c.op !== 'capabilities').map((c) => c.op), ['findTicket']);
+  assert.deepEqual([getExportLink(f.seq).key, getExportLink(f.seq).pendingMarker], [null, marker], 'the marker stays');
+  assert.equal(isExporting(f.seq), false);
+  seen.length = 0;
+  const r = await exportVia(f.seq, { mode: 'create' }, later());
+  assert.deepEqual([r.action, r.key], ['created', 'SHOP-123']);
+  assert.deepEqual(seen.filter((c) => c.op !== 'capabilities').map((c) => c.op), ['findTicket', 'createTicket']);
 });
