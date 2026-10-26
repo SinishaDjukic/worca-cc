@@ -234,6 +234,8 @@ function rowMeta(f) {
 const isWorking = (f) => !!f.busy || f.status === 'looking' || f.status === 'thinking';
 // Worca is working, or the feature is archived: nothing on the page may be changed.
 const isLocked = (f) => isWorking(f) || f.status === 'archived';
+// The goal's success measure, as the spec card shows it (and Ask Worca's goal card, A3 board 24).
+const measureText = (measure) => `Measure: ${measure}`;
 
 export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   const route = deps.route || ((p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; });
@@ -1614,7 +1616,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
             editing = null; ui.editVals = null; await paint();
           }) }, 'Save')));
     } else if (key === 'goal') {
-      body = s.goal.text ? h('div', {}, h('p', { text: s.goal.text }), s.goal.measure ? h('p', { class: 'hint', text: `Measure: ${s.goal.measure}` }) : null) : h('p', { class: 'hint', text: 'Not yet.' });
+      body = s.goal.text ? h('div', {}, h('p', { text: s.goal.text }), s.goal.measure ? h('p', { class: 'hint', text: measureText(s.goal.measure) }) : null) : h('p', { class: 'hint', text: 'Not yet.' });
     } else {
       const list = s[key] || [];
       body = list.length ? h(key === 'flow' ? 'ol' : 'ul', {}, ...list.map((t) => h('li', { text: t }))) : h('p', { class: 'hint', text: 'Not yet.' });
@@ -2570,7 +2572,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const b = p.before || { text: '', measure: '' };
       const a = p.value || { text: '', measure: '' };
       const measures = b.measure !== a.measure;
-      const show = (g) => (measures && g.measure ? `${g.text} · Measure: ${g.measure}` : g.text);
+      // a changed measure reads as the spec card shows it: its own line under the text
+      const show = (g) => (measures && g.measure ? [g.text, ' ', h('span', { class: 'hint req-help-measure', text: measureText(g.measure) })] : g.text);
       return [...(b.text ? row('Before', show(b), true) : []), ...row('After', show(a))];
     }
     if (Array.isArray(p.added) || Array.isArray(p.removed)) {
@@ -2586,14 +2589,28 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
   /** A card's buttons and whether each is off (D10, D11, D16), or null when it has none (decided, or stale and asked again).
    *  Reject is off only on an archived feature; Accept waits while Worca answers and while the feature is locked; Ask again (a
-   *  stale card) waits while Worca answers or works. The card and helperRowKey both read this, so the key holds exactly them. */
+   *  stale card) waits while Worca answers or works. The card draws them from this, and a kept row is patched from it
+   *  (helperRowCtl, patchProposalButtons): `disabled` changes in place, never by rebuilding the row (D18). */
   function proposalOff(p, ctx) {
     if (p.state !== 'proposed') return null;
     if (p.stale) return p.askedAgain ? null : { reject: ctx.archived, other: ctx.answering || ctx.working || ctx.archived };
     return { reject: ctx.archived, other: ctx.answering || ctx.locked };
   }
+  /** A kept row's card buttons made what proposalOff says now (a `disabled` change is not announced; a rebuilt row would be). */
+  function patchProposalButtons(el, m, ctx) {
+    for (const p of m.proposals || []) {
+      const off = proposalOff(p, ctx);
+      if (!off) continue;
+      for (const [what, v] of [['reject', off.reject], ['accept', off.other], ['ask-again', off.other]]) {
+        const b = el.querySelector(`[data-ui="prop-${what}-${m.id}-${p.n}"]`);
+        if (b) b.disabled = !!v;
+      }
+    }
+  }
   /** One card (D10, D18): Reject / Accept; stale: the amber alert, Reject / Ask again (only the alert once asked again); Accepted
-   *  (green check) and Rejected as role=status lines. Nothing is decided on an archived feature. */
+   *  (green check) and Rejected as role=status lines, which take the focus after Accept or Reject (Ask again: the composer, where
+   *  the new message goes; a refusal leaves the focus where it was). Its name says its state, as board 24. Nothing is decided
+   *  on an archived feature. */
   function proposalCard(f, m, p, ctx) {
     const label = helpLabel(p);
     const decided = p.state === 'accepted' || p.state === 'rejected';
@@ -2601,17 +2618,20 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const id = `${m.id}-${p.n}`;
     const off = proposalOff(p, ctx);
     const act = (what, words, primary, disabled) => h('button', { type: 'button', class: `btn btn-sm${primary ? ' btn-primary' : ''}`, 'data-ui': `prop-${what}-${id}`, disabled,
-      onclick: () => helperPost(f, 'POST', `/messages/${m.id}/proposals/${p.n}/${what}`, 'helper-in') }, words);
+      onclick: () => helperPost(f, 'POST', `/messages/${m.id}/proposals/${p.n}/${what}`, what === 'ask-again' ? 'helper-in' : `prop-state-${id}`, null) }, words);
     const btns = (other) => h('div', { class: 'req-help-btns' }, act('reject', 'Reject', false, off.reject), other);
+    const stateLine = (cls, ...kids) => h('p', { class: cls, role: 'status', tabindex: '-1', 'data-ui': `prop-state-${id}` }, ...kids);
+    const what = p.id && p.change !== 'add' ? p.id : label;
+    const name = p.state === 'accepted' ? `Accepted change: ${p.appliedId || what}` : p.state === 'rejected' ? `Rejected change: ${what}`
+      : stale ? `Out-of-date change: ${what}` : `Proposed change: ${what}`;
     let foot = null;
-    if (p.state === 'accepted') foot = h('p', { class: 'req-help-state ok', role: 'status' }, icon(ICONS.check, { size: 14, width: 2.4 }), 'Accepted · now in the spec as your edit');
-    else if (p.state === 'rejected') foot = h('p', { class: 'req-help-state', role: 'status', text: 'Rejected' });
+    if (p.state === 'accepted') foot = stateLine('req-help-state ok', icon(ICONS.check, { size: 14, width: 2.4 }), 'Accepted · now in the spec as your edit');
+    else if (p.state === 'rejected') foot = stateLine('req-help-state', 'Rejected');
     else if (stale) {
       foot = [h('p', { class: 'req-help-stale', role: 'alert', text: 'The spec changed since Worca proposed this.' }),
         off ? btns(act('ask-again', 'Ask again', false, off.other)) : null];
     } else foot = btns(act('accept', 'Accept', true, off.other));
-    return h('div', { class: `req-help-card is-${stale ? 'stale' : p.state}`, role: 'group', 'data-proposal': id,
-      'aria-label': `Proposed change: ${p.id && p.change !== 'add' ? p.id : label}` },
+    return h('div', { class: `req-help-card is-${stale ? 'stale' : p.state}`, role: 'group', 'data-proposal': id, 'aria-label': name },
       h('p', { class: 'req-help-card-head', text: `${decided ? 'Change' : 'Proposed change'} · ${label}${proposalSuffix(p)}` }),
       h('div', { class: 'req-help-ba' }, ...proposalRows(p)),
       !decided && !stale ? h('p', { class: 'hint req-help-reason', text: `Why: ${p.reason}` }) : null,
@@ -2647,8 +2667,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   /** Stop, Try again, Clear chat, and Tasks 8's Accept / Reject / Ask again: the server's chat comes back, then the feature is
    *  fetched again (an accepted change is in the spec). A spent budget shows in the chat, any other refusal under the composer.
    *  A press while another chat POST is in flight is ignored; the follow-up refetch does not hold the guard (a Stop pressed while
-   *  it runs is sent). A reply that lands after another feature was opened is dropped. */
-  async function helperPost(f, method, path, focusUi = null) {
+   *  it runs is sent). A reply that lands after another feature was opened is dropped. `focusUi` is focused after the paint,
+   *  `refusedFocus` after a refusal (null: the focus stays where it was). */
+  async function helperPost(f, method, path, focusUi = null, refusedFocus = focusUi) {
     if (helperBusy) return;
     helperBusy = true;
     const seq = f.seq;
@@ -2656,6 +2677,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const gen = ++helperGen;
     helperUi.error = null;
     let late = false;
+    let refused = false;
     try {
       const data = await api(method, `/api/requirements/${seq}/helper${path}`, method === 'DELETE' ? undefined : {});
       if (seqShown !== seq || vg !== viewGen) { late = true; return; }
@@ -2664,11 +2686,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     } catch (err) {
       if (seqShown !== seq || vg !== viewGen) { late = true; return; }
       helpRefused(err);
+      refused = true;
     } finally {
       if (gen === helperGen) helperBusy = false;
     }
     if (late) return;
-    if (focusUi) focusNext = focusUi;
+    const to = refused ? refusedFocus : focusUi;
+    if (to) focusNext = to;
     await paint();
   }
   /** Try again on a chat that could not be read: the feature and its chat are fetched again. */
@@ -2720,8 +2744,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
    *  `f`) that change that message's DOM: a rebuilt node in the role=log live region is read out again, so a key with the whole
    *  ctx would re-read the history on every Send, reply and round. This is the one place a row's dependencies are listed: the
    *  dropped-draft line (D6) reads only `m.drafts`, already in the key; the proposal cards (board 24) read their own state, stale
-   *  mark, Ask again and applied id (all in `m.proposals`) and, only while a card waits for a decision, whether its buttons are
-   *  off (`proposalOff`): a row whose cards are all decided keeps its node whatever the ctx. */
+   *  mark, Ask again and applied id (all in `m.proposals`). Whether a waiting card's buttons are off is NOT in this key: it is
+   *  helperRowCtl, patched in place on a kept node (a rebuilt row would re-read old replies, fire a stale card's alert again and
+   *  drop the focus from its Reject). */
   function helperRowKey(f, m, ctx) {
     if (m.role === 'po') return JSON.stringify([m, helpCap(m)]);
     const code = m.error ? m.error.code : null;
@@ -2729,8 +2754,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     // round or look runs
     const again = !!code && code !== 'BUDGET' && ctx.newest && !ctx.answering && !ctx.archived;
     const line = !code ? null : code === 'BUDGET' ? f.resetPeriod : [again, again && ctx.working];
-    return JSON.stringify([m, line, (m.proposals || []).map((p) => proposalOff(p, ctx))]);
+    return JSON.stringify([m, line]);
   }
+  /** The second signature of a row: its waiting cards' buttons, off or on (proposalOff); "" for a row with none. */
+  const helperRowCtl = (m, ctx) => (m.role === 'worca' && (m.proposals || []).some((p) => proposalOff(p, ctx))
+    ? JSON.stringify((m.proposals || []).map((p) => proposalOff(p, ctx))) : '');
   /** The log's message nodes; an unchanged message keeps its node across paints (D18: a live region announces only what is new). */
   function helperLogNodes(f, msgs, ctx) {
     const out = [];
@@ -2738,8 +2766,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     msgs.forEach((m, i) => {
       const c = { ...ctx, newest: i === msgs.length - 1 };
       const sig = helperRowKey(f, m, c);
+      const ctl = helperRowCtl(m, c);
       let node = helperNodes.get(m.id);
-      if (!node || node.sig !== sig) node = { sig, el: helperMessage(f, m, c) };
+      if (!node || node.sig !== sig) node = { sig, ctl, el: helperMessage(f, m, c) };
+      else if (node.ctl !== ctl) { patchProposalButtons(node.el, m, c); node.ctl = ctl; }
       keep.set(m.id, node);
       out.push(node.el);
     });

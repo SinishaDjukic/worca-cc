@@ -897,6 +897,8 @@ test('D11/D16: Accept and Ask again wait while Worca answers or a round runs; no
   assert.deepEqual(btns(card(m.host, '3-1')), [['Reject', false, false], ['Ask again', false, true]]);
   m = await openCards(feature({ busy: true, status: 'thinking', state: 'thinking' }));
   assert.equal(btns(card(m.host, '2-1'))[1][2], true, 'Accept waits while a round runs');
+  assert.equal(btns(card(m.host, '2-1'))[0][2], false, 'Reject stays allowed while a round runs');
+  assert.deepEqual(btns(card(m.host, '3-1')), [['Reject', false, false], ['Ask again', false, true]], 'Ask again waits while a round runs');
   m = await openCards(feature({ status: 'archived', state: 'archived', pending: null }));
   assert.ok([...m.host.querySelectorAll('.req-help-card .btn')].every((b) => b.disabled), 'archived: read only');
   const s = { f: feature({ helper: { answering: false, messages: 4 } }), helper: cardsChat() };
@@ -926,7 +928,11 @@ test('style.css: the cards use tokens only; Accepted is green ink, never a fill;
   const phone = block.slice(block.indexOf('@media (max-width:900px){', block.indexOf('.req-help-card{')));
   // a 44px .btn is off the control scale (ui-design-language): the card's .btn-sm buttons take the panel's ::after hit area
   assert.match(phone, /\.req-help-btns \.btn\{flex:1\}/);
-  assert.match(block, /\.req-help \.btn-sm::after\{content:"";position:absolute;inset:-9px 0\}/);
+  const tap = block.indexOf('.req-help .btn-sm::after{content:"";position:absolute;inset:-9px 0}');
+  const media = block.lastIndexOf('@media (max-width:900px){', tap);
+  assert.ok(tap > 0 && media > 0, 'the tap-area rule follows a 900 px media query');
+  const between = block.slice(media, tap);
+  assert.equal((between.match(/\{/g) || []).length - (between.match(/\}/g) || []).length, 1, 'and sits inside it');
 });
 
 test('D18: a Worca row whose cards are all decided keeps its node across a Send (answering false → true → false)', async () => {
@@ -958,25 +964,106 @@ test('D18: a Worca row whose cards are all decided keeps its node across a Send 
   assert.ok(!removed.includes(reply), 'never taken out of the live region and put back');
 });
 
-test('D18: a row with a card waiting for a decision is rebuilt when its Accept turns off and on (a send), and only then', async () => {
-  const rows2 = () => [po(1, 'A'), worca(2, 'B', { proposals: [prop(1, { target: 'criterion', change: 'add', value: 'X.' })] })];
+test('D18: a row with cards waiting for a decision keeps its node while Worca answers and a round runs; only their buttons turn off and on', async () => {
+  const rows2 = () => [po(1, 'A'), worca(2, 'B', { proposals: [prop(1, { target: 'criterion', change: 'add', value: 'X.' }),
+    prop(2, { target: 'rules', change: 'set', value: ['Y.'], before: [], added: ['Y.'], removed: [], stale: true })] })];
   const s = { f: feature({ helper: { answering: false, messages: 2 } }), helper: chat(rows2()) };
   const m = await openFeature(s, { 'POST /api/requirements/7/helper/messages': (b) => (s.helper = chat([...rows2(), po(3, b.text)], { answering: true })) });
   await openPanel(m);
-  const acc = () => m.host.querySelector('[data-ui="prop-accept-2-1"]');
-  assert.equal(acc().disabled, false);
-  const reply = m.host.querySelector('[data-msg="2"]');
-  await m.view.changed(7);
-  await settle();
-  assert.equal(m.host.querySelector('[data-msg="2"]'), reply, 'a repaint with nothing new keeps it');
+  const log = m.host.querySelector('.req-help-log');
+  const reply = log.querySelector('[data-msg="2"]');
+  const alert = reply.querySelector('.req-help-stale');
+  const off = () => ['prop-reject-2-1', 'prop-accept-2-1', 'prop-reject-2-2', 'prop-ask-again-2-2'].map((k) => m.host.querySelector(`[data-ui="${k}"]`).disabled);
+  assert.deepEqual(off(), [false, false, false, false]);
+  const removed = [];
+  const watch = new window.MutationObserver((recs) => recs.forEach((r) => removed.push(...r.removedNodes)));
+  watch.observe(log, { childList: true });
   type(m.host.querySelector('[data-ui="helper-in"]'), 'C');
   m.host.querySelector('[data-ui="helper-send"]').click();
   await settle();
-  assert.equal(acc().disabled, true, 'Accept waits while Worca answers');
-  assert.notEqual(m.host.querySelector('[data-msg="2"]'), reply, 'so its row is rebuilt');
+  assert.deepEqual(off(), [false, true, false, true], 'Accept and Ask again wait while Worca answers');
+  assert.equal(log.querySelector('[data-msg="2"]'), reply, 'the row stays');
   s.helper = chat([...rows2(), po(3, 'C'), worca(4, 'D')]);
   s.f = feature({ helper: { answering: false, messages: 4 } });
   await m.view.changed(7);
   await settle();
-  assert.equal(acc().disabled, false, 'and comes back with the reply');
+  assert.deepEqual(off(), [false, false, false, false], 'and come back with the reply');
+  s.f = feature({ busy: true, status: 'thinking', state: 'thinking', pending: null, helper: { answering: false, messages: 4 } });
+  await m.view.changed(7);
+  await settle();
+  assert.deepEqual(off(), [false, true, false, true], 'a round running');
+  s.f = feature({ helper: { answering: false, messages: 4 } });
+  await m.view.changed(7);
+  await settle();
+  assert.deepEqual(off(), [false, false, false, false]);
+  watch.takeRecords().forEach((r) => removed.push(...r.removedNodes));
+  watch.disconnect();
+  assert.equal(log.querySelector('[data-msg="2"]'), reply, 'the row is never rebuilt');
+  assert.equal(reply.querySelector('.req-help-stale'), alert, 'so the stale alert does not fire again');
+  assert.ok(!removed.includes(reply), 'never taken out of the live region and put back');
+});
+
+test('D18: a focused Reject keeps the focus (the same button) when a reply lands', async () => {
+  const rows2 = () => [po(1, 'A'), worca(2, 'B', { proposals: [prop(1, { target: 'criterion', change: 'add', value: 'X.' })] }), po(3, 'C')];
+  const s = { f: feature({ helper: { answering: true, messages: 3 } }), helper: chat(rows2(), { answering: true }) };
+  const m = await openFeature(s);
+  await openPanel(m);
+  const rej = m.host.querySelector('[data-ui="prop-reject-2-1"]');
+  assert.equal(rej.disabled, false);
+  rej.focus();
+  s.helper = chat([...rows2(), worca(4, 'D')]);
+  s.f = feature({ helper: { answering: false, messages: 4 } });
+  await m.view.changed(7);
+  await settle();
+  assert.equal(document.activeElement, rej, 'the same Reject button, still focused');
+  assert.equal(m.host.querySelector('[data-ui="prop-accept-2-1"]').disabled, false);
+});
+
+test('board 24 names: Accepted change, Rejected change, Out-of-date change, by the id it got or the section', async () => {
+  const m = await openCards();
+  const label = (id) => card(m.host, id).getAttribute('aria-label');
+  assert.deepEqual(['2-1', '2-2', '2-4', '2-5', '3-1', '3-2'].map(label),
+    ['Proposed change: Goal', 'Proposed change: R-po-3', 'Accepted change: R-po-6', 'Rejected change: Edge cases', 'Out-of-date change: Business rules', 'Proposed change: Acceptance criteria']);
+});
+
+test('a changed goal measure reads as the spec card does ("Measure: …")', async () => {
+  const s = { f: feature({ helper: { answering: false, messages: 2 } }), helper: chat([po(1, 'A'), worca(2, 'B', { proposals: [
+    prop(1, { target: 'goal', change: 'set', value: { text: 'G.', measure: 'Under 5 tickets a week.' }, before: { text: 'G.', measure: '' } })] })]) };
+  const m = await openFeature(s);
+  await openPanel(m);
+  assert.deepEqual(rows(card(m.host, '2-1')), ['Before', 'G.', 'After', 'G. Measure: Under 5 tickets a week.']);
+  assert.equal(card(m.host, '2-1').querySelector('.req-help-measure').textContent, 'Measure: Under 5 tickets a week.');
+});
+
+test("D18: after Accept or Reject the focus moves to the card's new status line; after Ask again to the composer; a refused Accept keeps it", async () => {
+  const s = { f: feature({ helper: { answering: false, messages: 3 } }), helper: cardsChat() };
+  const decided = (more) => () => {
+    s.helper = cardsChat();
+    for (const [msg, n, state] of more) s.helper.messages[msg].proposals[n - 1].state = state;
+    return s.helper;
+  };
+  const m = await openFeature(s, {
+    'POST /api/requirements/7/helper/messages/2/proposals/1/accept': decided([[1, 1, 'accepted']]),
+    'POST /api/requirements/7/helper/messages/2/proposals/2/reject': decided([[1, 1, 'accepted'], [1, 2, 'rejected']]),
+    'POST /api/requirements/7/helper/messages/3/proposals/1/ask-again': () => s.helper,
+    'POST /api/requirements/7/helper/messages/3/proposals/2/accept': { __status: 409, body: { error: 'The spec changed since Worca proposed this.' } },
+  });
+  await openPanel(m);
+  const ui = () => document.activeElement && document.activeElement.getAttribute('data-ui');
+  m.host.querySelector('[data-ui="prop-accept-2-1"]').click();
+  await settle();
+  assert.equal(ui(), 'prop-state-2-1');
+  assert.deepEqual([document.activeElement.getAttribute('tabindex'), document.activeElement.textContent], ['-1', 'Accepted · now in the spec as your edit']);
+  m.host.querySelector('[data-ui="prop-reject-2-2"]').click();
+  await settle();
+  assert.deepEqual([ui(), document.activeElement.textContent], ['prop-state-2-2', 'Rejected']);
+  m.host.querySelector('[data-ui="prop-ask-again-3-1"]').click();
+  await settle();
+  assert.equal(ui(), 'helper-in');
+  const acc = m.host.querySelector('[data-ui="prop-accept-3-2"]');
+  acc.focus();
+  acc.click();
+  await settle();
+  assert.equal(m.host.querySelector('.req-help-refusal').textContent, 'The spec changed since Worca proposed this.');
+  assert.equal(ui(), 'prop-accept-3-2', 'a refusal leaves the focus on Accept');
 });
