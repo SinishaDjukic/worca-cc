@@ -125,8 +125,23 @@ export default function createTaskSource(ctx) {
 | `listTasks` | `({inputs, search, cursor})` | `{tasks:[{id,title,url,state,labels,updatedAt}], cursor?}` |
 | `getTask` | `(id)` — **positional** | `{...summary, body /* markdown */, meta}` |
 | `reportResult` | `(id, {status, summary, links, inputs})` — **positional** | anything |
-| `capabilities` | `({inputs})` — optional | `{writeBack, incrementalSync}`; missing → `writeBack: true` |
+| `capabilities` | `({inputs})` — optional | `{writeBack, incrementalSync, export?}`; missing → `writeBack: true`; `export: true` turns on the export ops below |
+| `exportOptions` | `({project?, issueType?})` — optional, export | `{projects:[{value,label}], issueTypes?, priorities?, criteriaFields?, doneStatus, tooOld?}` — `issueTypes` with a project, the last two with both |
+| `createTicket` | `({ticket})` — optional, export | `{key, url, fingerprint}` \| `{refused:{field, message}}` |
+| `updateTicket` | `({key, ticket})` — optional, export | `{key, url, fingerprint}` \| `{gone:true}` \| `{refused}` |
+| `commentTicket` | `({key, body})` — optional, export | `{ok:true}` \| `{gone:true}` |
+| `ticketState` | `({key})` — optional, export | `{exists:true, url, fingerprint}` \| `{exists:false}` |
+| `findTicket` | `({project, label, marker})` — optional, export | `{key, url, fingerprint, lastLine, marker, labels}` \| `null` |
 | custom | `(args)` | whatever the widget needs |
+
+The export ops (Requirements' **Export to a tracker**) receive a tool-neutral ticket: `{project, issueType, title, description
+(Markdown), labels (already normalised, never with spaces), priority (id or null), criteria: {target:'description'} |
+{target:'field', field, items}, marker?}`. Write the description in your tracker's format, store `marker` invisibly on a
+create (Worca finds a ticket whose create answer was lost by it), add labels on an update without removing any, and return
+`fingerprint`: a hash of the description as your tracker stores it (read it back), normalised so the same stored text
+always gives the same string. Worca compares fingerprints only. A field the tracker refuses and a ticket that is gone are
+results (`refused`, `gone`), not throws; every call runs in the host, never from the browser, with a 60 s limit. The
+reference implementation is `plugins/jira-source`.
 
 `ctx` = `{ apiVersion, profile, config, state: {get, set}, log }` — `apiVersion` is the negotiated highest version your range admits.
 

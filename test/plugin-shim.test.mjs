@@ -310,6 +310,11 @@ test('WORCA_MOCK=1 short-circuits without spawning (plugin need not exist)', asy
     assert.equal(overridden.tasks[0].id, 'T-override');
     // …and an op with NO canned response mirrors the real child's kind
     // 'unimplemented' (the capabilities tolerant-default keys on it).
+    await rejectsKind(callSource({ plugin: 'x', sourceId: 'x', op: 'noSuchOp' }), 'unimplemented');
+    // A6: capabilities has a canned answer now: write-back stays on, and the mock source can export.
+    assert.deepEqual(await callSource({ plugin: 'x', sourceId: 'x', op: 'capabilities', args: { inputs: {} } }), { writeBack: true, export: true });
+    // A map entry set to undefined still means "no canned response" (writeback.test.mjs keeps the missing-op default that way).
+    setMockSourceResponses({ capabilities: undefined });
     await rejectsKind(callSource({ plugin: 'x', sourceId: 'x', op: 'capabilities' }), 'unimplemented');
     // Behavioral parity: when the plugin IS installed, the profile invariant
     // holds in mock mode too — a mock run must catch a missing profile exactly
@@ -318,6 +323,38 @@ test('WORCA_MOCK=1 short-circuits without spawning (plugin need not exist)', asy
       callSource({ plugin: NAME, sourceId: 'prof', op: 'listTasks' }),
       'plugin', /per-profile configuration/,
     );
+  } finally {
+    delete process.env.WORCA_MOCK;
+    setMockSourceResponses(null);
+  }
+});
+
+test('WORCA_MOCK=1: the export ops answer (A6 design §4): options, tickets numbered from 123, state follows the last write', async () => {
+  process.env.WORCA_MOCK = '1';
+  const call = (op, args) => callSource({ plugin: 'not-installed', sourceId: 'x', op, args });
+  try {
+    setMockSourceResponses(null);
+    const o = await call('exportOptions', {});
+    assert.deepEqual(o, { projects: [{ value: 'SHOP', label: 'SHOP — Shop web' }, { value: 'OPS', label: 'OPS — Operations' }], doneStatus: 'Done' });
+    assert.deepEqual((await call('exportOptions', { project: 'SHOP' })).issueTypes.map((t) => t.label), ['Story', 'Task', 'Bug']);
+    const both = await call('exportOptions', { project: 'SHOP', issueType: '10001' });
+    assert.deepEqual(both.priorities.map((p) => p.label), ['Highest', 'High', 'Medium', 'Low']);
+    assert.deepEqual(both.criteriaFields, [{ value: 'customfield_10070', label: 'Acceptance Criteria' }, { value: 'customfield_10071', label: 'Definition of Done' }]);
+    const made = await call('createTicket', { ticket: { project: 'SHOP', description: 'd1' } });
+    assert.deepEqual([made.key, made.url], ['SHOP-123', 'https://mock.test/browse/SHOP-123']);
+    assert.match(made.fingerprint, /^[0-9a-f]{64}$/);
+    assert.equal((await call('createTicket', { ticket: { project: 'OPS', description: 'd2' } })).key, 'OPS-124');
+    assert.deepEqual(await call('ticketState', { key: 'SHOP-123' }), { exists: true, url: 'https://mock.test/browse/SHOP-123', fingerprint: made.fingerprint });
+    const upd = await call('updateTicket', { key: 'SHOP-123', ticket: { description: 'd3' } });
+    assert.equal(upd.key, 'SHOP-123');
+    assert.notEqual(upd.fingerprint, made.fingerprint);
+    assert.equal((await call('ticketState', { key: 'SHOP-123' })).fingerprint, upd.fingerprint);
+    assert.deepEqual(await call('commentTicket', { key: 'SHOP-123', body: 'c' }), { ok: true });
+    assert.equal(await call('findTicket', { project: 'SHOP', label: 'worca-FEAT-1', marker: 'rexp_000000000000' }), null);
+    setMockSourceResponses({ ticketState: { exists: false } });   // a test override wins
+    assert.deepEqual(await call('ticketState', { key: 'SHOP-123' }), { exists: false });
+    setMockSourceResponses(null);
+    assert.equal((await call('createTicket', { ticket: { project: 'SHOP', description: 'x' } })).key, 'SHOP-123', 'a reset starts again at 123');
   } finally {
     delete process.env.WORCA_MOCK;
     setMockSourceResponses(null);
