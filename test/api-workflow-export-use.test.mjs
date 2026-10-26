@@ -81,15 +81,18 @@ test('POST …/export { use }: the skill dry run builds from that version; a wri
     assert.equal(r.status, 200);
     return r.json();
   };
-  assert.equal(skillDir(await plan({ use: 1 })), 'export-api');
+  // Version 1 is "Export API", the draft "Export API draft": the skill is the workflow's, so every use gives the same
+  // default slug (the dialog previews it from the workflow's name) and exporting v1 updates that one skill.
+  assert.equal(skillDir(await plan({ use: 1 })), 'export-api-draft');
   assert.equal(skillDir(await plan({ use: 'draft' })), 'export-api-draft');
   assert.equal(skillDir(await plan({})), 'export-api-draft');
+  assert.equal(skillDir(await plan({ use: 1, slug: 'typed' })), 'typed');
 
   const pluginDir = join(await tmp(), 'use-plugin');
   const r = await post(`/api/workflows/${ID}/export`, { destination: 'plugin', pluginDir, use: 1 });
   assert.equal(r.status, 200, JSON.stringify(await r.clone().json()));
   const written = JSON.parse(await readFile(join(pluginDir, 'workflows', 'api_use.json'), 'utf8'));
-  assert.equal(written.name, 'Export API');
+  assert.equal(written.name, 'Export API', 'the content is version 1\'s');
 });
 
 test('POST …/export: 400 for a bad use on every destination, before anything else runs; 404 for an unknown version', async () => {

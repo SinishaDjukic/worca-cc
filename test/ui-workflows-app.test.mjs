@@ -2480,3 +2480,51 @@ test('Export… a late versions read never lands in a re-opened dialog', async (
   assert.equal(field.classList.contains('hidden'), true, 'the first open\'s answer is dropped');
   assert.equal(select.options.length, 0);
 });
+
+test('Export… while the versions read is out: Download, Preview and Export wait (disabled, a click does nothing); then the version in use goes', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const { win, doc, g, posts, downloads } = await openExportUse({ versions: () => held.then(() => okJson(EXPORT_OVERVIEW)) });
+  const apply = g('export-apply-btn');
+  assert.equal(apply.disabled, true, 'Download waits for the versions');
+  apply.dispatchEvent(new win.Event('click'));                // a synthetic click reaches a disabled button
+  assert.deepEqual(downloads, [], 'never the draft while the default is still unknown');
+  pickFormat(win, doc, 'skill');
+  assert.deepEqual([g('export-plan-btn').disabled, apply.disabled], [true, true], 'a format switch keeps them waiting');
+  g('export-plan-btn').dispatchEvent(new win.Event('click'));
+  apply.dispatchEvent(new win.Event('click'));
+  await tick(3);
+  assert.deepEqual(posts, [], 'no Preview, no Export before the versions');
+  release();
+  await tick(4);
+  assert.deepEqual([g('export-plan-btn').disabled, apply.disabled], [false, false]);
+  apply.dispatchEvent(new win.Event('click'));               // the dry run and the write: ONE body per click
+  await tick(4);
+  assert.deepEqual(posts.map((p) => [p.use, !!p.dryRun]), [[1, true], [1, false]]);
+  assert.deepEqual(Object.keys(posts[0]).filter((k) => k !== 'dryRun').sort(), Object.keys(posts[1]).filter((k) => k !== 'resolutions').sort());
+});
+
+test('Export… a failed or empty versions read gives the buttons back at once (the draft, as before)', async () => {
+  for (const versions of [() => Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) }),
+    () => okJson({ ...EXPORT_OVERVIEW, liveVersionNo: null, draft: null, versions: [] }), () => Promise.reject(new Error('down'))]) {
+    const { win, g, downloads } = await openExportUse({ versions });
+    assert.equal(g('export-apply-btn').disabled, false);
+    g('export-apply-btn').dispatchEvent(new win.Event('click'));
+    assert.deepEqual(downloads, ['/api/workflows/wf_g/json']);
+  }
+});
+
+test('Export… from the canvas (Workflows ▾ › Export…) shows the Version field and sends use', async () => {
+  const { win, doc, g, downloads } = await openExportUse();
+  g('export-cancel').dispatchEvent(new win.Event('click'));
+  await go(win, 'workflows/wf_g');
+  await tick(4);
+  clickEl(win, g('wfv-wf-menu'));
+  clickEl(win, [...doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.startsWith('Export')));
+  await tick(4);
+  assert.equal(g('export-modal').classList.contains('hidden'), false);
+  assert.equal(g('export-use-field').classList.contains('hidden'), false, 'the canvas entry passes a versionable row too');
+  assert.equal(g('export-use').value, '1');
+  g('export-apply-btn').dispatchEvent(new win.Event('click'));
+  assert.equal(downloads.at(-1), '/api/workflows/wf_g/json?use=1');
+});

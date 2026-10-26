@@ -33,8 +33,7 @@ export function exportUseHint(choices, value) {
 /** The select's value as the request's `use`: a version number, 'draft', or undefined (no field: send nothing). */
 export function exportUseValue(value) {
   if (value === 'draft') return 'draft';
-  const n = Number(value);
-  return typeof value === 'string' && /^[1-9]\d*$/.test(value) && Number.isInteger(n) ? n : undefined;
+  return typeof value === 'string' && /^[1-9]\d*$/.test(value) ? Number(value) : undefined;
 }
 
 /**

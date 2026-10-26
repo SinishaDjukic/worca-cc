@@ -16,7 +16,8 @@ import { basename, dirname, join, relative, sep } from 'node:path';
 import { listMarketplaces } from './marketplaces.mjs';
 import { discoverAtCommit, parseMarketplaceManifest } from './plugin-repo.mjs';
 import { exportWorkflowPlugin } from './workflow-export.mjs';
-import { readRunnableWorkflow } from './workflows.mjs';
+import { readWorkflow } from './workflows.mjs';
+import { exportContentOf } from './workflow-share.mjs';
 import { PLUGIN_NAME_RE } from './plugin-manifest.mjs';
 import { runPluginScriptCases } from './plugin-script-cases.mjs';
 import { parseRemoteUrl, forgeOf, remoteRepoSlug, FORGE_LABEL } from './forge.mjs';
@@ -437,8 +438,9 @@ export async function exportWorkflowToMarketplace({ workflowId, marketplaceId, p
   const refusal = publishRefusal(entry);
   if (refusal) throw err(`marketplace "${entry.name || entry.id}" cannot take a pull request from this Worca: ${refusal}`, 'UNSUPPORTED');
   const target = publishTargetOf(entry);
-  const tpl = await readRunnableWorkflow(workflowId, { use });
-  if (!tpl) throw err(`workflow not found: ${workflowId}`, 'NOT_FOUND');
+  // D17: `use` picks the content only; the plugin name and its PR branch come from the stored workflow.
+  const tpl = await readWorkflow(workflowId);
+  if (!exportContentOf(tpl, use)) throw err(`workflow not found: ${workflowId}`, 'NOT_FOUND');
   const asked = typeof pluginName === 'string' ? pluginName.trim() : '';
   const name = asked || derivePluginName(tpl.name);
   if (!name || !PLUGIN_NAME_RE.test(name) || name.length > 64) {

@@ -25,7 +25,7 @@ import { loadScriptRegistry } from './script-registry.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { validateGraph, AGENT_TUNABLES } from '../shared/graph/validate.mjs';
 import { effectiveScriptParams, CONFIRM_PARAM_TYPES } from '../shared/graph/script-meta.mjs';
-import { readRunnableWorkflow, writeGraphWorkflow } from './workflows.mjs';
+import { readWorkflow, runnableOf, writeGraphWorkflow } from './workflows.mjs';
 
 /** How many `Name (n)` retries an import makes before giving up. */
 export const SUFFIX_CAP = 20;
@@ -108,6 +108,21 @@ export function nodeDefaultsError(raw, models, where) {
   return '';
 }
 
+/** D17: what an export exports — 'draft' (the stored row) or a saved version number. The ONE rule every export path
+ *  (JSON file, Claude Code skill, plugin, marketplace) and the HTTP routes share; 'live' is not an export choice. */
+export function isExportUse(use) { return use === 'draft' || (Number.isInteger(use) && use > 0); }
+
+/**
+ * What an export of the stored `row` carries for `use` (D17): the row for 'draft', else that saved version
+ * (runnableOf). Only this CONTENT follows `use`: an export's identity (skill slug, plugin name, PR branch) stays the
+ * stored row's, so exporting v1 after renaming the draft updates the same skill or plugin. A null row stays null.
+ * @throws code BAD_REQUEST on any other `use`; NOT_FOUND for a version that does not exist
+ */
+export function exportContentOf(row, use = 'draft') {
+  if (!isExportUse(use)) throw err(`use must be 'draft' or a version number, not ${JSON.stringify(use)}`, 'BAD_REQUEST');
+  return runnableOf(row, { use });
+}
+
 /**
  * The shareable form of a saved v2 workflow: the STORED row (not the resolved
  * graph the Claude Code exporter snapshots — that one applies workspace-variant
@@ -118,7 +133,7 @@ export function nodeDefaultsError(raw, models, where) {
  * @param {{use?: 'draft'|number}} [opts]
  */
 export async function exportGraphJson(id, { use = 'draft' } = {}) {
-  const tpl = await readRunnableWorkflow(id, { use });
+  const tpl = exportContentOf(await readWorkflow(id), use);
   if (!tpl) throw err(`workflow not found: ${id}`, 'NOT_FOUND');
   if (tpl.auto) throw err('the Auto entry has no graph to export — it is decided per run', 'UNSUPPORTED');
   if (tpl.version !== 2) {

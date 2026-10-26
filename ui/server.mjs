@@ -333,7 +333,7 @@ import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STAT
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import { exportWorkflowToMarketplace, listPublishTargets } from '../src/core/marketplace-publish.mjs';
 import {
-  saveGraphWorkflow, importGraphWorkflow, exportGraphJson, workflowFileSlug, nodeDefaultsError,
+  saveGraphWorkflow, importGraphWorkflow, exportGraphJson, isExportUse, workflowFileSlug, nodeDefaultsError,
 } from '../src/core/workflow-share.mjs';
 import { loadAgentRegistry } from '../src/core/agent-registry.mjs';
 import { loadScriptRegistry } from '../src/core/script-registry.mjs';
@@ -13082,15 +13082,14 @@ app.post('/api/workflows/import-json', async (req, res) => {
   }
 });
 
-// D17 (plans/workflow-tests-plan.md): what an export exports — 'draft' (missing: today's behaviour) or a saved
-// version number. The query form is the digits of a positive integer; the body form a positive integer. Anything
-// else, 'live' included, is a caller error. No flag gate: an explicit version number needs none (runnableOf).
+// D17 (plans/workflow-tests-plan.md): what an export exports. Missing = 'draft' (today's behaviour). The query form
+// is parsed here (the digits of a positive integer become a number); the rule itself is the core's isExportUse, so
+// 'live' and anything else is a caller error. No flag gate: an explicit version number needs none (runnableOf).
 const EXPORT_USE_ERROR = "use must be 'draft' or a version number (1, 2, …)";
 function exportUseOf(raw, { query = false } = {}) {
-  if (raw === undefined || raw === 'draft') return { use: 'draft' };
-  if (query && typeof raw === 'string' && /^[1-9]\d*$/.test(raw)) return { use: Number(raw) };
-  if (!query && Number.isInteger(raw) && raw > 0) return { use: raw };
-  return { error: EXPORT_USE_ERROR };
+  if (raw === undefined) return { use: 'draft' };
+  const use = query && typeof raw === 'string' && /^[1-9]\d*$/.test(raw) ? Number(raw) : raw;
+  return isExportUse(use) ? { use } : { error: EXPORT_USE_ERROR };
 }
 
 app.get('/api/workflows/:id/json', async (req, res) => {

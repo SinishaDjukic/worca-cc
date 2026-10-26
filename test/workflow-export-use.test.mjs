@@ -12,7 +12,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { createV2Agent } from './helpers/export-fixtures.mjs';
 import { writeGraphWorkflow } from '../src/core/workflows.mjs';
 import { createVersion } from '../src/core/workflow-versions.mjs';
-import { exportGraphJson } from '../src/core/workflow-share.mjs';
+import { exportGraphJson, isExportUse } from '../src/core/workflow-share.mjs';
 import { planExport, exportWorkflowPlugin } from '../src/core/workflow-export.mjs';
 
 useTempHome(after);
@@ -54,22 +54,40 @@ test('exportGraphJson: use n exports version n; the default and "draft" export t
 });
 
 test('exportGraphJson: a bad use is BAD_REQUEST, a version that does not exist NOT_FOUND, an unknown workflow still NOT_FOUND', async () => {
-  for (const use of ['abc', 0, -1, 1.5, '1']) {
+  for (const use of ['abc', 0, -1, 1.5, '1', 'live', null]) {
     await assert.rejects(exportGraphJson(ID, { use }), { code: 'BAD_REQUEST' }, `use ${JSON.stringify(use)}`);
   }
   await assert.rejects(exportGraphJson(ID, { use: 9 }), { code: 'NOT_FOUND' });
   await assert.rejects(exportGraphJson('wf_nope'), { code: 'NOT_FOUND' });
 });
 
+test('isExportUse: the one D17 rule — \'draft\' or a positive integer, nothing else (not \'live\')', () => {
+  for (const ok of ['draft', 1, 2, 40]) assert.equal(isExportUse(ok), true, JSON.stringify(ok));
+  for (const bad of ['live', 'abc', '1', 0, -1, 1.5, null, undefined, true, NaN, Infinity]) assert.equal(isExportUse(bad), false, String(bad));
+});
+
 test('Claude Code skill: planExport({ use: 1 }) builds from version 1, the default from the draft', async () => {
   const has = (p, re) => [...p.created, ...p.updated, ...p.noop].some((f) => re.test(f.split(sep).join('/')));
   const v1 = await planExport({ workflowId: ID, destination: 'project', projectDir: await tmp(), use: 1 });
-  assert.ok(has(v1, /\/skills\/export-use\/SKILL\.md$/), 'the slug comes from version 1\'s name');
   assert.ok(has(v1, /\/agents\/[^/]*sharedAgent[^/]*\.md$/i), 'version 1 dispatches the user agent');
   const draft = await planExport({ workflowId: ID, destination: 'project', projectDir: await tmp() });
-  assert.ok(has(draft, /\/skills\/export-use-draft\/SKILL\.md$/));
   assert.equal(has(draft, /sharedAgent/i), false, 'the draft no longer has that agent');
   await assert.rejects(planExport({ workflowId: ID, destination: 'project', projectDir: await tmp(), use: 9 }), { code: 'NOT_FOUND' });
+  for (const use of ['live', 'abc', 0]) {
+    await assert.rejects(planExport({ workflowId: ID, destination: 'project', projectDir: await tmp(), use }), { code: 'BAD_REQUEST' });
+  }
+});
+
+test('Claude Code skill: the skill (its slug, its command) is the workflow\'s, whatever version is exported', async () => {
+  // Version 1 is named "Export Use", the draft "Export Use Draft": exporting v1 updates the same skill.
+  const has = (p, re) => [...p.created, ...p.updated, ...p.noop].some((f) => re.test(f.split(sep).join('/')));
+  for (const use of [1, 'draft', undefined]) {
+    const plan = await planExport({ workflowId: ID, destination: 'project', projectDir: await tmp(), ...(use === undefined ? {} : { use }) });
+    assert.ok(has(plan, /\/skills\/export-use-draft\/SKILL\.md$/), `use ${use}: the stored workflow's name`);
+    assert.equal(has(plan, /\/skills\/export-use\/SKILL\.md$/), false, `use ${use}: never a second skill named after the version`);
+  }
+  const named = await planExport({ workflowId: ID, destination: 'project', projectDir: await tmp(), use: 1, slug: 'mine' });
+  assert.ok(has(named, /\/skills\/mine\/SKILL\.md$/), 'a typed slug still wins');
 });
 
 test('Worca plugin: use 1 bundles version 1 (its agent, its graph); the slug stays the workflow id\'s', async () => {
@@ -87,5 +105,11 @@ test('Worca plugin: use 1 bundles version 1 (its agent, its graph); the slug sta
   assert.equal(r.validation.ok, true, JSON.stringify(r.validation.problems));
   const written = JSON.parse(await readFile(join(dir1, 'workflows', 'export-use.json'), 'utf8'));
   assert.deepEqual(written, await exportGraphJson(ID, { use: 1 }), 'exactly the version\'s JSON share payload');
-  await assert.rejects(exportWorkflowPlugin({ workflowId: ID, targetDir: join(await tmp(), 'x'), dryRun: true, use: 'abc' }), { code: 'BAD_REQUEST' });
+  const manifest = JSON.parse(await readFile(join(dir1, 'worca-cc-plugin.json'), 'utf8'));
+  assert.equal(manifest.name, 'use-one', 'the plugin name is the folder\'s, never the version\'s');
+  assert.equal(manifest.worca.exports['export-use'].name, 'Export Use Draft', 'the export entry names the workflow itself');
+  assert.equal(manifest.description, 'Workflows shared from Worca — Export Use Draft');
+  for (const use of ['abc', 'live']) {
+    await assert.rejects(exportWorkflowPlugin({ workflowId: ID, targetDir: join(await tmp(), 'x'), dryRun: true, use }), { code: 'BAD_REQUEST' });
+  }
 });

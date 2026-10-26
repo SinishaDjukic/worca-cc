@@ -17,8 +17,8 @@ import { existsSync } from 'node:fs';
 import { readFile, writeFile, mkdir, cp, readdir, rename } from 'node:fs/promises';
 import { join, resolve, dirname, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readRunnableWorkflow, resolveGraph } from './workflows.mjs';
-import { exportGraphJson, workflowFileSlug, summarizeUnknownAgents } from './workflow-share.mjs';
+import { readWorkflow, resolveGraph } from './workflows.mjs';
+import { exportGraphJson, exportContentOf, workflowFileSlug, summarizeUnknownAgents } from './workflow-share.mjs';
 import { validatePluginDir, PLUGIN_NAME_RE } from './plugin-manifest.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { validateGraph, formatIssue } from '../shared/graph/validate.mjs';
@@ -381,12 +381,15 @@ function deriveNodeIo(graph, tnode, nodeKey, { cycle = 1, channelDefs } = {}) {
 // ── Step 2: buildExportSet (shared deterministic core) ───────────────────────
 
 async function buildExportSet({ workflowId, destination, projectDir, slug, includeAgents = true, repoRoot, use = 'draft' }) {
-  const tpl = await readRunnableWorkflow(workflowId, { use });
+  // D17: the content follows `use`; the skill itself (its default slug, so its /command) is the stored workflow's —
+  // the dialog previews the slug from that name, and exporting v1 after renaming the draft updates the same skill.
+  const row = await readWorkflow(workflowId);
+  const tpl = exportContentOf(row, use);
   if (!tpl) throw err(`workflow not found: ${workflowId}`, 'NOT_FOUND');
   if (tpl.auto) throw err('the Auto entry has no graph to export — it is decided per run', 'UNSUPPORTED');
 
   const dest = resolveDest({ destination, projectDir });
-  const finalSlug = assertName(slug || slugify(tpl.name).slice(0, 48) || 'workflow', 'slug');
+  const finalSlug = assertName(slug || slugify(row.name).slice(0, 48) || 'workflow', 'slug');
 
   const registry = loadAgentRegistry();
   const channelDefs = collectChannelDefs(registry);     // custom channel kind/filename map (mirrors allocate())
@@ -1051,8 +1054,9 @@ export async function exportWorkflowPlugin({ workflowId, targetDir, pluginName, 
   if (!workflowId || typeof workflowId !== 'string') throw err('workflowId is required', 'BAD_REQUEST');
   if (!targetDir || typeof targetDir !== 'string' || !targetDir.trim()) throw err('a target plugin folder is required', 'BAD_REQUEST');
   const dir = resolve(targetDir);
-  const tpl = await readRunnableWorkflow(workflowId, { use });
-  if (!tpl) throw err(`workflow not found: ${workflowId}`, 'NOT_FOUND');
+  // D17: the graph follows `use`; the plugin's identity (slug, manifest description, export entry) is the stored row's.
+  const tpl = await readWorkflow(workflowId);
+  if (!exportContentOf(tpl, use)) throw err(`workflow not found: ${workflowId}`, 'NOT_FOUND');
   const payload = await exportGraphJson(workflowId, { use });   // UNSUPPORTED for a v1 row
   const slug = workflowFileSlug(tpl.id);
   const warnings = [];
