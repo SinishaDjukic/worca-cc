@@ -483,15 +483,34 @@ export async function createDetachedWorktree({ projectDir, worktreeDir, ref, sig
     throw new Error(`ref is not a valid commit-ish: ${JSON.stringify(ref ?? null)}`);
   }
   await git(projectDir, ['worktree', 'prune']);
+  // Never spawn with an already-aborted signal: Node kills the child only on the next tick,
+  // and a fast git can register the worktree first — a checkout no caller knows to remove.
+  if (signal?.aborted) throw abortError('git worktree add --detach aborted before it started');
+  const existed = existsSync(worktreeDir);
   const r = await git(projectDir, ['worktree', 'add', '--detach', '--', worktreeDir, ref],
     { signal, timeout: SLOW_GIT_TIMEOUT_MS });
   if (!r.ok) {
-    const err = new Error(`git worktree add --detach failed: ${r.stderr.trim() || `exit ${r.code}`}`);
-    if (signal?.aborted) err.name = 'AbortError';
-    throw err;
+    if (signal?.aborted) {
+      // Killed mid-way: git may already have registered (or even finished) the checkout.
+      // Undo it only when this add created the dir — a dir that existed before may be
+      // someone's worktree with uncommitted work — then prune any registration left dangling.
+      if (!existed) {
+        await git(projectDir, ['worktree', 'remove', '--force', '--', worktreeDir]);
+        await rm(worktreeDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }).catch(() => {});
+      }
+      await git(projectDir, ['worktree', 'prune']);
+      throw abortError(`git worktree add --detach aborted: ${r.stderr.trim() || `exit ${r.code}`}`);
+    }
+    throw new Error(`git worktree add --detach failed: ${r.stderr.trim() || `exit ${r.code}`}`);
   }
   const head = await git(worktreeDir, ['rev-parse', 'HEAD']);
   return { worktreeDir, commit: head.ok ? head.stdout.trim() : null };
+}
+
+function abortError(message) {
+  const err = new Error(message);
+  err.name = 'AbortError';
+  return err;
 }
 
 /** HEAD commit sha of any checkout (worktree or repo), or null. */
