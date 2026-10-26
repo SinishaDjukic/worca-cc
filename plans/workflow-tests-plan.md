@@ -38,6 +38,10 @@
 | D16 | The Use dialog lists only graph changes (`changesFromInUse`): every version runs today's Library text (D6), so a Library edit is no difference between versions. When a version recorded older agent or script text, the dialog says once: "Agents and scripts edited in the Library since are used by every version." The draft status and Save version keep "changed in the Library", where it is true. |
 | D14 | Unreliable criteria (Part 3) still run and show, but do not decide better or worse. A criterion becomes unreliable only after ≥ 10 answers. |
 | D17 | Export picks what it exports (decided 2026-10-26, canvas board 21 "Version" field). Every export path (JSON file, Claude Code skill, Worca plugin to a folder or a marketplace) takes `use`: 'draft' or a version number; omitted = 'draft' (today's behaviour, API and CLI unchanged). The Export dialog shows a Version field only with the flag on and at least one version; it defaults to the version new runs use. |
+| D18 | Automatic checks are built-in exact checks anyone can fill in (length in words, sections, must or must not mention, a file in the result) plus Library scripts for developers; no AI. See [workflow-tests-part2-plan.md](workflow-tests-part2-plan.md) D18. |
+| D19 | Test tries use no memory: nothing is mounted, nothing is written back. See [workflow-tests-part2-plan.md](workflow-tests-part2-plan.md) D19. |
+| D20 | Part 2 tests only workflows that run without a project; project and coding workflows come in the next part, behind one seam. See [workflow-tests-part2-plan.md](workflow-tests-part2-plan.md) D20. |
+| D21 | Test tries are hidden from the Runs lists, Statistics, team metrics, chat notifications and Requirements links; their cost counts in the spending limit. See [workflow-tests-part2-plan.md](workflow-tests-part2-plan.md) D21. |
 
 ## Global Constraints
 
@@ -2125,7 +2129,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ## Parts 2–5 (outline; detailed tasks are written when the part before is merged)
 
-### Part 2 — Examples and testing a version (canvas boards 1–6, 19, 20)
+### Part 2 — Examples and testing a version: the detailed plan is [workflow-tests-part2-plan.md](workflow-tests-part2-plan.md) (it supersedes this outline)
 
 - **Store:** new tables (one migration):
   - `wf_test_examples(workflow_id, id, name, request, files JSON, answers JSON, basics JSON, auto_checks JSON, tries, created_from_run)`
