@@ -24,6 +24,7 @@
   const member = (n, title, states, o) => ({ key: 'run' + n, label: 'Run ' + n, title, run: true,
     subs: ['Plan', 'Build', 'Review', 'Ready'].map((st, i) => s(st, states[i], (o && o.times && o.times[i]) || '', { live: (o && o.live && o.live[i]) || '', when: (o && o.when && o.when[i]) || '' })) });
   const RUNS = ['One head for run and group pages', 'Breadcrumb in the top bar', 'Phone layout of the head'];
+  const SLICE = [0.42, 0.31, 0.27];   // how much of a whole run each slice of a feature takes
   const SIZES = ['+278 \u221264', '+41 \u221258', '+39 \u221222'];   // each run's diff; a group's is their sum
 
   const LIVE_FIGS = [['Time', '4h 38m'], ['Cost', '$84.10'], ['Rate', '$18.20/h']];
@@ -32,7 +33,7 @@
   // Folder run's files), Activity (how it ran: every step with its log, model and cost; the graph is a view of it),
   // Decisions (questions, answers and approvals). Artifacts sit in Summary; Try it and the patch are the action's ▾.
   const RUN_TABS = [['summary', 'Overview'], ['changes', 'Changes', '5'], ['activity', 'Activity'], ['decisions', 'Decisions', '3']];
-  const GROUP_TABS = [['runs', 'Runs', '3'], ['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions', '4']];
+  const GROUP_TABS = [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions', '4']];   // the stepper is the list of runs
   const A = (label, icon, primary, items) => ({ label, icon, primary: !!primary, items: items || [] });
 
   const CASES = [
@@ -41,7 +42,7 @@
       stages: run({ plan: [s('Clarify', 'now', '', { live: 'Setting up the worktree', when: 'now' }), next('Plan'), next('Refine plan'), next('Plan review')], build: allNext(BUILD), review: allNext(REVIEW) }) },
     { id: 'working', group: 'Run', label: 'Working', word: 'Working', dot: 'is-peach is-pulse', figs: LIVE_FIGS,
       stages: run({ review: [REVIEW[0], REVIEW[1], s('Manual web UI testing', 'now', '21m', { live: 'Opening the Runs page at 375px to check the breadcrumb', when: '8s ago' })] }) },
-    { id: 'question', group: 'Run', label: 'Needs you', word: 'Needs you', sym: 'q', action: A('Answer', '', true, ['Use the default answer']), figs: LIVE_FIGS,
+    { id: 'question', group: 'Run', label: 'Needs you', word: 'Needs you', sym: 'q', action: A('Send answer', 'check', true, ['Use the default answer']), figs: LIVE_FIGS,
       stages: run({ review: [s('Review implementation', 'ask', '12m', { live: 'Keep the breadcrumb on phones under 600px, or show only Back there?', when: '4m' }), next('Manual tests checklist'), next('Manual web UI testing')] }) },
     { id: 'paused', group: 'Run', label: 'Paused', word: 'Paused', dot: 'is-grey', detail: 'Usage limit · resumes at 14:00', action: A('Resume now', 'play', false, ['Don’t resume at 14:00', 'Resume on Codex', 'Switch model…', 'Resume at…']), figs: [['Time', '2h 40m'], ['Cost', '$48.30']],
       stages: run({ build: [s('Implementation', 'paused', '1h 2m')], review: allNext(REVIEW) }) },
@@ -91,7 +92,7 @@
       stages: run({ tail: [{ key: 'done', label: 'Done', subs: [ok('3 artifacts', '', { live: 'In Overview' })] }] }) },
 
     // Shaper
-    { id: 'clarify', group: 'Shaper', label: 'Clarify', word: 'Needs you', sym: 'q', action: A('Answer', '', true, ['Use defaults']), figs: [['Time', '2m'], ['Cost', '$0.76']],
+    { id: 'clarify', group: 'Shaper', label: 'Clarify', word: 'Needs you', sym: 'q', action: A('Send answer', 'check', true, ['Use defaults']), figs: [['Time', '2m'], ['Cost', '$0.76']],
       stages: run({ plan: [s('Clarify', 'ask', '34s', { live: '3 questions · which pages, what Back does, phones', when: '1m' }), next('Plan'), next('Refine plan'), next('Plan review')], build: allNext(BUILD), review: allNext(REVIEW) }) },
     { id: 'plan', group: 'Shaper', label: 'Plan ready', word: 'Needs you', sym: 'q', action: A('Approve and build', 'check', true, ['Ask for changes', 'Full plan']), figs: [['Time', '34m'], ['Cost', '$15.41']],
       stages: run({ plan: [ok('Clarify', '34s'), s('Plan', 'ask', '33m 57s', { live: '6 steps · 2 open issues · waiting for you', when: '4m' }), next('Refine plan'), next('Plan review')], build: allNext(BUILD), review: allNext(REVIEW) }) },
@@ -181,8 +182,6 @@
     asks: {
       question: { q: 'Keep the breadcrumb on phones under 600px, or show only Back there?', why: 'Review implementation found the trail wraps to two lines at 375px.',
         options: ['Keep the full breadcrumb, truncate the middle crumbs', 'Show only ‹ Parent under 600px', 'Hide the breadcrumb on phones'], pick: 1 },
-      gate: { q: 'Review still finds 1 minor issue after 3 rounds. Accept it, or run another cycle?', why: 'The minor issue: the ‹ Parent link has no visible focus ring at 375px.',
-        options: ['Accept as is and go on to the manual tests', 'Run another Build and Review cycle'], pick: 0 },
       clarify: { q: 'Which pages get the breadcrumb?', why: 'The task names the run page; group and saved run pages share its head.', n: '1 of 3',
         options: ['Run pages only', 'Run and group pages', 'Every page with a parent'], pick: 1 } },
     budget: 120,
@@ -203,7 +202,7 @@
 
   // One line on what each action does: the main button's tooltip and the head of its ▾ menu, and each menu item's help.
   const HELP = {
-    'Answer': 'Opens the question Worca is waiting on',
+    'Send answer': 'Sends the answer you picked or wrote; the run goes on',
     'Use the default answer': 'Goes on with what Worca would pick',
     'Use defaults': 'Skips the questions; the planner picks sensible answers',
     'Resume': 'Starts again from the step it paused in',
@@ -264,6 +263,7 @@
     'worca-api #212': 'Merged into main', 'worca-web #88': 'Checks running', 'worca-docs #31': 'Conflicts with main',
   };
 
+  const NEW = new Set(['Merge PR', 'Merge #959', 'Fix checks', 'Fix checks on #961', 'Restart Build', 'Raise the cap', 'Pause after this step', 'Start a new run', 'Send answer', 'Copy link']);
   const LIVE = { now: 1, ask: 1, problem: 1, failed: 1, paused: 1, review: 1 };
   const isDone = (x) => x.state === 'done' || x.state === 'merged';
   // Each sub-step state: the rail circle, its icon, the word a screen reader hears, the bar cell.
@@ -305,10 +305,13 @@
   const BRANCH = 'feat/unified-page-navigation-one-head-breadcrumb';
   function asMember(c0, g, i) {
     const chain = g.kind === 'Chain';
-    const stages = chain ? c0.stages : c0.stages.filter((x) => !SHIP.test(x.key))
+    let stages = chain ? c0.stages : c0.stages.filter((x) => !SHIP.test(x.key))
       .concat({ key: 'ship', label: 'Ship', subs: [next('With the feature', { live: 'From the feature page, with the other runs' })] });
     const keep = c0.action && FIX.test(c0.action.label);
-    return Object.assign({}, c0, { stages, title: RUNS[i], kind: '', branch: BRANCH + '-' + (i + 1), diff: ((g.stack && g.stack.sizes) || SIZES)[i],
+    const k = SLICE[i] || 0.3;
+    const scaled = (c0.stages).map((st) => Object.assign({}, st, { subs: st.subs.map((x) => (x.time ? Object.assign({}, x, { time: fmtMin(toMin(x.time) * k) }) : x)) }));
+    stages = chain ? scaled : scaled.filter((x) => !SHIP.test(x.key)).concat(stages.slice(-1));
+    return Object.assign({}, c0, { stages, scale: k, title: RUNS[i], kind: '', branch: BRANCH + '-' + (i + 1), diff: ((g.stack && g.stack.sizes) || SIZES)[i],
       action: keep ? c0.action : !chain && c0.word === 'Ready' ? A('Try it', 'play', false) : null, detail: c0.detail || (keep ? '' : chain ? 'Merges in order, from the chain' : c0.word === 'Ready' ? 'Ships with the feature' : ''),
       pr: chain ? g.runPRs[i] : '', base: chain ? (i ? g.runPRs[i - 1] : 'dev') : '', group: g, index: i });
   }
@@ -331,29 +334,28 @@
   function totals(c) {
     const mins = c.stages.reduce((a, x) => a + x.subs.reduce((b, y) => b + (y.time ? toMin(y.time) : 0), 0), 0);
     const cost = c.stages.reduce((a, x) => a + (x.run ? (x.member ? totals(resolve(x.member)).cost : 0)
-      : x.subs.reduce((b, y) => b + (y.state === 'next' ? 0 : money(COST_OF[y.name] || 0)), 0)), 0);
+      : x.subs.reduce((b, y) => b + (y.state === 'next' ? 0 : money(COST_OF[y.name] || 0)), 0) * (c.scale || 1)), 0);
     return { mins, cost };
   }
   // Overview leads with what this state needs from you: an answer, a plan to approve, what broke, or what to check;
   // a running run shows its plan's progress. The rest (what it did, what you asked, where it changed, artifacts)
   // follows, each only once there is something to say.
-  function overview(c) {
+  function overview(c, live) {
     const built = c.stages.some((x) => x.key === 'build' && x.subs.some(isDone));
     const planDone = c.stages.some((x) => x.key === 'plan' && x.subs.every(isDone));
     const buildLive = c.stages.some((x) => x.key === 'build' && x.subs.some((y) => LIVE[y.state]));
     const ev = c.id === 'kept' ? EVIDENCE['review/Manual web UI testing'] : c.id === 'failed' ? EVIDENCE['build/Implementation'] : c.id === 'failing' ? EVIDENCE['pr/Checks'] : /^(conflicts|workspace)$/.test(c.id) ? EVIDENCE['pr/Up to date with dev'] : null;
     let focus = null;
-    if (DETAIL.asks[c.id]) focus = Object.assign({ kind: 'ask' }, DETAIL.asks[c.id]);
-    else if (c.id === 'plan') focus = { kind: 'plan', items: DETAIL.plan.map((t) => ({ t, state: 'next' })), issues: DETAIL.planIssues };
+    if (c.id === 'plan') focus = { kind: 'plan', items: DETAIL.plan.map((t) => ({ t, state: 'next' })), issues: DETAIL.planIssues };
     else if (ev) focus = { kind: 'broke', ev, next: c.action ? c.action.label : '' };
     else if (planDone && !c.runCases && (buildLive || c.stages.some((x) => x.key === 'review' && x.subs.some((y) => LIVE[y.state])))) {
       const doneN = buildLive ? 3 : DETAIL.plan.length;
-      focus = { kind: 'progress', items: DETAIL.plan.map((t, i) => ({ t, state: i < doneN ? 'done' : i === doneN ? 'now' : 'next' })) };
+      focus = { kind: 'progress', note: buildLive ? doneN + ' of ' + DETAIL.plan.length + ' built' : 'all ' + DETAIL.plan.length + ' built · now in Review', items: DETAIL.plan.map((t, i) => ({ t, state: i < doneN ? 'done' : i === doneN ? 'now' : 'next' })) };
     } else if (built && !c.runCases && !/^(Failed|Merged|Archived|Discarded|Applied|Stopped|Finished)$/.test(c.word)) focus = { kind: 'check', items: DETAIL.check, title: prOpen(c) ? 'Before you merge' : 'Before you ship' };
     const areas = {};
     if (built && !NO_DIFF[c.id]) DETAIL.files.forEach(([f, a, d]) => { const k = f.slice(0, f.lastIndexOf('/') + 1); const x = areas[k] || (areas[k] = { dir: k, n: 0, add: 0, del: 0 }); x.n++; x.add += a; x.del += d; });
     const max = Math.max(1, ...Object.values(areas).map((x) => x.add + x.del));
-    return { focus, outcome: built ? DETAIL.outcome : [], task: DETAIL.task,
+    return { focus, outcome: built && !live ? DETAIL.outcome : [], task: DETAIL.task,   // what it did, once it is done
       areas: Object.values(areas).map((x) => Object.assign(x, { pct: Math.round(((x.add + x.del) / max) * 100) })),
       artifacts: planDone || built ? DETAIL.artifacts : DETAIL.artifacts.slice(0, 0) };
   }
@@ -370,33 +372,33 @@
     const open = ui.open && c.stages.some((st) => st.key === ui.open) ? ui.open : now;
     const st = c.stages.find((x) => x.key === open);
     let stack = null;
+    // Stacked or one PR: Worca recommends one and says why; the choice itself is the action's ▾ and the Create PR
+    // dialog, never a form in the card.
+    const sh = c.stack && c.stack.mode === 'create' ? c.stack : null;
+    const pick = sh ? (ui.ship && !(ui.ship === 'one' && sh.oneBlocked) ? ui.ship : sh.rec) : '';
+    const shipWord = (id) => (id === 'one' ? 'one PR' : sh.runs.length + ' stacked PRs');
     if (c.stack && (open === 'pr' || (c.stack.mode === 'outline' && open === 'plan'))) {
       const src = STACKS[c.stack.mode];
       let rows = src.rows || [];
       let choice = null;
       if (src.choice) {
-        // One PR or stacked: Worca recommends one and says why; an option that cannot work is off, with its reason.
-        const sh = c.stack;
         const n = sh.runs.length;
-        const pick = ui.ship && !(ui.ship === 'one' && sh.oneBlocked) ? ui.ship : sh.rec;
-        choice = { reason: sh.reason, options: [
-          { id: 'stack', label: 'Stacked · ' + n + ' PRs', help: 'One PR per run, each into the one before. Small reviews, merged in order.', rec: sh.rec === 'stack', disabled: '', selected: pick === 'stack' },
-          { id: 'one', label: 'One PR', help: sh.oneBlocked || 'All ' + n + ' runs on one branch. One review, one merge.', rec: sh.rec === 'one', disabled: sh.oneBlocked || '', selected: pick === 'one' }] };
         rows = pick === 'one'
           ? [{ num: 'One PR', title: 'All ' + n + ' runs, one branch', state: 'next', word: 'Not opened', sub: 'Into dev' }]
           : sh.runs.map((t, i) => ({ num: 'PR ' + (i + 1), title: t, state: 'next', word: 'Not opened', sub: (i ? 'Into PR ' + i + '’s branch' : 'Into dev') + (sh.sizes ? ' · ' + sh.sizes[i] : '') }));
-        c.__pick = pick;
+        choice = { note: (pick === sh.rec ? 'Worca suggests ' + shipWord(sh.rec) : 'You picked ' + shipWord(pick) + '; Worca suggests ' + shipWord(sh.rec)) + ': ' + sh.reason };
       }
       rows = rows.map((r) => Object.assign(rowOf({ state: r.state }), r, { rowCls: 'is-' + r.state + (r.isNext ? ' is-next-up' : '') }));
-      stack = { title: src.title, note: src.note || '', choice, rows };
+      stack = { title: sh ? (pick === 'one' ? 'What it opens: one PR' : 'What it opens: ' + sh.runs.length + ' stacked PRs') : src.title, note: choice ? choice.note : src.note || '', choice: null, rows };
     }
     let action = null;
     const liveNow = c.word !== 'Failed' && c.word !== 'Waiting' && !c.over && !c.stages.filter((x) => !SHIP.test(x.key)).every((x) => x.subs.every(isDone));
     if (!c.action && liveNow && c.word !== 'Paused') c = Object.assign({}, c, { action: A('Pause', 'pause', false, ['Pause after this step']) });
     if (c.action) {
-      const label = c.stack && c.stack.mode === 'create' ? (c0.__pick === 'one' || c.__pick === 'one' ? 'Create PR' : 'Create ' + c.stack.runs.length + ' PRs') : c.action.label;
-      const items = c.action.items.concat(liveNow && !c.action.items.includes('Stop') ? ['Stop the run'] : []);
-      action = Object.assign({}, c.action, { label, help: HELP[label] || '', items: items.map((t) => ({ text: t, help: HELP[t] || '' })) });
+      const label = sh ? (pick === 'one' ? 'Create PR' : 'Create ' + sh.runs.length + ' PRs') : c.action.label;
+      const alt = sh ? [pick === 'one' ? 'Create ' + sh.runs.length + ' stacked PRs instead' : 'Create one PR instead'] : [];
+      const items = alt.concat(c.action.items.filter((t) => !/^Create (PR|\d+ PRs)$/.test(t))).concat(liveNow && !c.action.items.includes('Stop') ? ['Stop the run'] : []);
+      action = Object.assign({}, c.action, { label, isNew: NEW.has(label), help: HELP[label] || '', items: items.map((t) => ({ text: t, isNew: NEW.has(t), help: sh && / instead$/.test(t) ? (/one PR/.test(t) && sh.oneBlocked ? 'Not possible: ' + sh.oneBlocked.replace(/^Not possible: /, '') : sh.reason) : HELP[t] || '', off: /one PR instead/.test(t) && sh && !!sh.oneBlocked })) });
     }
     // The run is live while any work stage (everything before shipping) is unfinished and it has not failed;
     // waiting on CI, reviewers or a merge is the PR's business, not the run's, so Pause and Stop go. A run waiting on
@@ -416,11 +418,12 @@
     return {
       bar: { pause: live && c.word !== 'Paused' && c.sym !== 'q', stop: live, more: true, scope: runStages.length ? c.kind.toLowerCase() : '' },
       id: c.id, title: c.title || 'Unified page navigation: one head, breadcrumb in the top',
-      kind: runStages.length && c.kind ? c.kind + ' · ' + runStages.length + ' runs' : '',
+      kind: runStages.length && c.kind ? c.kind : '',   // the stepper already counts the runs
       crumbs, pager: g ? { index: par.index, n: g.stages.filter((x) => x.run).length, prev: sibling(par.index - 1), next: sibling(par.index + 1), group: g.id } : null,
       // The place line: where the code lives and where it goes, the PR once it exists. Each part once on the page.
       place: { branch, copy: !!branch && branch !== 'main', base: c.base || (branch === 'main' ? 'origin/main' : branch ? 'dev' : ''),
-        pr: c.pr !== undefined && c.pr !== '' ? c.pr : prOpen(c) ? '#959' : '', folder: c.folder || '', repos: c.repos || [] },
+        pr: c.pr !== undefined && c.pr !== '' ? c.pr : prOpen(c) ? '#959' : '', folder: c.folder || '', repos: c.repos || [],
+        merged: c.stages.some((x) => x.key === 'merged' && x.subs.length && x.subs.every((y) => y.state === 'merged')), applied: c.word === 'Applied' },
       chips: (ui.chips || []).filter((x) => x.kind !== 'group'), inGroup: !!g || runStages.length > 0, addedGroup: ((ui.chips || []).find((x) => x.kind === 'group') || {}).text || '',
       word: c.word, dot: c.dot || '', sym: c.sym || '', detail: c.detail || '', action, archived: !!c.archived,
       finished: !live && !/^(Waiting)$/.test(c.word),
@@ -459,20 +462,21 @@
       tabs: (c.tabs || RUN_TABS).map(([id, l], i, all) => ({ id, l, n: id === 'runs' ? String(runStages.length) : id === 'changes' ? String(DETAIL.files.length) : id === 'decisions' ? String(DETAIL.decisions.length) : '',
         sel: id === (all.some((x) => x[0] === ui.tab) ? ui.tab : all[0][0]) })),
       activity: c.stages.map((x) => {
-        const cost = x.run ? (x.member ? totals(resolve(x.member)).cost : 0) : x.subs.reduce((a, y) => a + (y.state === 'next' ? 0 : money(COST_OF[y.name] || 0)), 0);
+        const cost = x.run ? (x.member ? totals(resolve(x.member)).cost : 0) : x.subs.reduce((a, y) => a + (y.state === 'next' ? 0 : money(COST_OF[y.name] || 0)), 0) * (c.scale || 1);
         return { key: x.key, label: x.label, title: x.title || '', meta: cost ? '$' + cost.toFixed(2) : '',
           rows: x.subs.map((y, i) => Object.assign(rowOf(y, x.subs[i + 1]), { model: x.run ? '' : MODEL_OF[y.name] || '',
-            cost: x.run || y.state === 'next' || !COST_OF[y.name] ? '' : COST_OF[y.name] + (/^(now|ask|paused)$/.test(y.state) ? ' so far' : ''),
+            cost: x.run || y.state === 'next' || !COST_OF[y.name] ? '' : '$' + (money(COST_OF[y.name]) * (c.scale || 1)).toFixed(2) + (/^(now|ask|paused)$/.test(y.state) ? ' so far' : ''),
             evidence: /^(failed|problem)$/.test(y.state) ? EVIDENCE[x.key + '/' + y.name] || null : null,
             focus: ui.focus === x.key + '/' + y.name, ref: x.key + '/' + y.name })) };
       }),
       tryIt: (() => {
         if (g) return 'Copied: git switch ' + BRANCH + '-' + (par.index + 1) + (par.index ? ' · runs 1\u2013' + (par.index + 1) + ' together' : ' · run 1 alone');
-        if (runStages.length) return c.__pick === 'one' || (c.stack && c.stack.rec === 'one' && !ui.ship) ? 'Copied: git switch ' + BRANCH + ' · all ' + runStages.length + ' runs on one branch'
+        if (runStages.length) return pick === 'one' ? 'Copied: git switch ' + BRANCH + ' · all ' + runStages.length + ' runs on one branch'
           : 'Copied: git switch ' + BRANCH + '-' + runStages.length + ' · the top of the stack holds all ' + runStages.length + ' runs';
         return branch ? 'Copied: git switch ' + branch : 'Opened the copy in a terminal';
       })(),
-      runCases: c.runCases || [], parent: par, over: overview(c), rounds: DETAIL.rounds,
+      ship: sh ? { pick, rec: sh.rec, n: sh.runs.length, reason: sh.reason, oneBlocked: sh.oneBlocked || '' } : null,
+      runCases: c.runCases || [], parent: par, over: overview(c, live), ask: DETAIL.asks[c.id] || null, rounds: DETAIL.rounds,
       tabData: DETAIL,
     };
   }
@@ -482,10 +486,10 @@
   const FLOW = {
     starting: { next: 'working' },
     working: { next: 'ready' },
-    question: { Answer: { to: 'working', say: 'Answer sent; Review goes on' }, 'Use the default answer': { to: 'working', say: 'Worca’s pick sent; Review goes on' } },
+    question: { 'Send answer': { to: 'working', say: 'Answer sent; Review goes on' }, 'Use the default answer': { to: 'working', say: 'Worca’s pick sent; Review goes on' } },
     paused: { 'Resume now': { to: 'working', say: 'Resumed from Implementation' }, 'Don’t resume at 14:00': { say: 'The 14:00 resume is cancelled' }, 'Resume on Codex': { to: 'working', say: 'Resumed on Codex' }, 'Switch model…': { say: 'Model picker: Opus 5.5, Sonnet 5.5, Haiku 5.5' }, 'Resume at…': { say: 'Time picker: resume at a time you choose' } },
     scheduled: { 'Start now': { to: 'starting', say: 'Started now; it no longer waits' }, Cancel: { to: 'discarded', confirm: 'Delete this scheduled run?' } },
-    gate: { Answer: { to: 'working', say: 'Sent; Review goes on' }, 'Accept as is': { to: 'working', say: 'Review accepted; manual tests start' }, 'Run another cycle': { to: 'working', say: 'One more Build and Review round' }, Stop: { to: 'stopped', confirm: 'Stop the run? The branch and changes stay.' } },
+    gate: { 'Accept as is': { to: 'working', say: 'Review accepted; manual tests start' }, 'Run another cycle': { to: 'working', say: 'One more Build and Review round' }, Stop: { to: 'stopped', confirm: 'Stop the run? The branch and changes stay.' } },
     capped: { 'Continue without cap': { to: 'working', confirm: 'Go on with no cost cap for this run?' }, 'Raise the cap': { say: 'Cap raised to $180; the run goes on' }, 'Open budget settings': { say: 'Opens Settings › Runs › Budget' } },
     kept: { 'Apply to branch': { to: 'ready', say: 'Committed to the branch' }, 'Download patch': { say: 'Downloading run.patch' }, 'Commit it yourself': { say: 'Commands: cd the worktree, git add -A, git commit --no-verify' }, Discard: { to: 'discarded', confirm: 'Discard the kept work? A patch is saved first.' } },
     archived: {},
@@ -503,11 +507,11 @@
     folder: { 'Apply to folder': { to: 'applied', confirm: 'Write 5 files into ~/src/marketing-site?' }, 'Try it': { say: 'Opened the copy in a terminal' }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
     applied: { 'Open the folder': { say: 'Opens ~/src/marketing-site' } },
     workspace: { 'Fix conflicts': { say: 'A short run is fixing worca-docs #31' }, 'worca-api #212': { say: 'Opens worca-api #212' }, 'worca-web #88': { say: 'Opens worca-web #88' }, 'worca-docs #31': { say: 'Opens worca-docs #31' }, 'Copy PR links': { say: 'Copied 3 PR links' } },
-    clarify: { Answer: { to: 'plan', say: 'Answers sent; the planner writes the plan' }, 'Use defaults': { to: 'plan', say: 'Defaults used; the planner writes the plan' } },
+    clarify: { 'Send answer': { to: 'plan', say: 'Answers sent; the planner writes the plan' }, 'Use defaults': { to: 'plan', say: 'Defaults used; the planner writes the plan' } },
     plan: { 'Approve and build': { to: 'working', say: 'Plan approved; Build starts' }, 'Ask for changes': { say: 'Sent to the planner; it plans again' }, 'Full plan': { say: 'Opens plan.md' } },
     outline: { 'Approve 3 runs': { to: 'feature', say: 'The feature has 3 runs; run 1 starts' }, 'Ask me before each run': { say: 'Worca asks before runs 2 and 3 start' }, 'Don’t split': { to: 'plan', say: 'One run, one PR' }, 'Ask for changes': { say: 'Sent to the planner; it cuts again' } },
     feature: { next: 'featureready' },
-    featureready: { 'Create 3 PRs': { to: 'chain', say: 'Opened #959, #960 and #961, each into the one before', dialog: 'pr' }, 'Create PR': { to: 'chain', say: 'Opened one PR for all 3 runs' }, 'Try it': { say: 'Copied: git switch feat/unified-page-navigation' }, Discard: { to: 'discarded', confirm: 'Discard all 3 runs’ changes?' } },
+    featureready: { 'Create 3 PRs': { to: 'chain', say: 'Opened #959, #960 and #961, each into the one before', dialog: 'pr' }, 'Create PR': { to: 'checks', say: 'Opened #959 for all 3 runs', dialog: 'pr' }, 'Try it': { say: 'Copied: git switch feat/unified-page-navigation' }, Discard: { to: 'discarded', confirm: 'Discard all 3 runs’ changes?' } },
     featureone: { 'Create PR': { to: 'checks', say: 'Opened #959 for both runs', dialog: 'pr' }, 'Create 2 PRs': { to: 'chain', say: 'Opened #959 and #960', dialog: 'pr' }, 'Try it': { say: 'Copied: git switch feat/unified-page-navigation' }, Discard: { to: 'discarded', confirm: 'Discard both runs’ changes?' } },
     featureblocked: { 'Create 3 PRs': { to: 'chain', say: 'Opened #959, #960 and #961, each into the one before', dialog: 'pr' }, 'Try it': { say: 'Copied: git switch feat/unified-page-navigation' }, Discard: { to: 'discarded', confirm: 'Discard all 3 runs’ changes?' } },
     chain: { 'Fix checks on #961': { say: 'A short run is fixing #961’s checks' }, 'Merge #959': { say: 'Merged #959 into dev; #960 now points at dev', confirm: 'Merge #959 into dev?' }, 'View PRs': { say: 'Opens #959, #960 and #961 on GitHub' }, 'Watch PRs': { say: 'Worca watches all three PRs' }, 'Copy PR links': { say: 'Copied 3 PR links' } },
@@ -520,5 +524,5 @@
   const ADD = [{ kind: 'label', menu: 'Label', help: 'Find and filter runs by it in the Runs list', placeholder: 'Type or pick a label', suggest: ['ui', 'hotfix', 'needs demo'] },
     { kind: 'tag', menu: 'Cost tag', help: 'Splits this run’s cost in Statistics', placeholder: 'key: value', suggest: ['team: web', 'team: api', 'client: acme'] },
     { kind: 'group', menu: 'Add to group', help: 'Tracks it with related runs on one page', placeholder: 'New group name', suggest: ['Navigation', 'Billing export', 'Onboarding'] }];
-  window.RunCardModel = { flow: FLOW, runFlow: RUN_FLOW, cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group, chips: c.chips || [] })), view, add: ADD };
+  window.RunCardModel = { isNew: (t) => NEW.has(t), flow: FLOW, runFlow: RUN_FLOW, cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group, chips: c.chips || [] })), view, add: ADD };
 })();

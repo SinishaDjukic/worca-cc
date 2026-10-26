@@ -60,6 +60,26 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
       });
       for (const [k, wh] of found) add(k, `${scheme}/${w}/${c}/${t}: ${wh}`);
     }
+    // Menus and dialogs: each opens inside the window, and nothing a click does moves the page.
+    await p.selectOption('#case', 'starting'); await p.selectOption('#case', c);
+    await p.evaluate(() => window.scrollTo(0, 260));
+    const triggers = await p.$$eval('#card [data-menu], #card .tab, #card .sc-stage, #card [data-key="act-main"]', (xs) => xs.filter((x) => x.offsetParent).map((x) => x.dataset.key));
+    for (const key of triggers) {
+      const before = await p.evaluate(() => window.scrollY);
+      const el = await p.$(`#card [data-key="${key}"]`); if (!el) continue;
+      await el.evaluate((x) => x.click());   // a real click, without the test scrolling to the element first
+      const r = await p.evaluate(() => {
+        const vw = document.documentElement.clientWidth, vh = window.innerHeight;
+        const box = document.querySelector('#card .menu, #card .pd-card');
+        const b = box && box.getBoundingClientRect();
+        return { y: window.scrollY, off: b ? (b.left < 15.5 || b.right > vw - 15.5 || (box.classList.contains('pd-card') && (b.top < 0 || b.bottom > vh))) : false, side: document.documentElement.scrollWidth > vw + 1 };
+      });
+      if (Math.abs(r.y - before) > 1 && key !== 'act-main') add('page moved on click', `${scheme}/${w}/${c}: ${key} (${before} → ${r.y})`);
+      if (r.off) add('menu or dialog outside the window', `${scheme}/${w}/${c}: ${key}`);
+      if (r.side) add('page scrolls sideways with a menu open', `${scheme}/${w}/${c}: ${key}`);
+      await p.keyboard.press('Escape');
+      await p.selectOption('#case', 'starting'); await p.selectOption('#case', c); await p.evaluate(() => window.scrollTo(0, 260));
+    }
   }
   await p.close();
 }

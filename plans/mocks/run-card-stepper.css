@@ -25,7 +25,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rc-title-row > .kind-chip{flex:none;}
 .rc-facts{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
 .rc-facts > *{flex:none;max-width:100%;}
-.rc-facts > .rc-place{flex:0 1 auto;min-width:0;display:inline-flex;align-items:center;gap:4px;}
+.rc-facts .rc-place{flex:0 1 auto;min-width:0;display:inline-flex;align-items:center;gap:4px;}
 .rc-place .btn{margin-block:-6px;flex:none;}
 .rc-mid{display:inline-flex;min-width:0;font-family:var(--mono);}   /* loses its middle, keeps its end */
 .rc-mid-a{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
@@ -34,11 +34,6 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rc-base{flex:none;font-family:var(--mono);}
 .rc-pr{color:var(--ink);text-decoration:none;font-weight:500;font-variant-numeric:tabular-nums;}
 .rc-pr:hover{text-decoration:underline;text-underline-offset:3px;}
-.rc-chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;}
-.rc-chips .label-chip,.rc-chips .tag-chip{max-width:24ch;flex:none;}
-.rc-chips .label-chip{height:18px;font-size:var(--fs-caption);font-weight:500;border-radius:var(--r-xs);}
-.rc-chips .label-chip-t{overflow:hidden;text-overflow:ellipsis;}
-.rc-chips .tag-chip{overflow:hidden;text-overflow:ellipsis;}
 .rc-sep{color:var(--ink-3);}
 
 /* The card: zones on the shared grid, split by one --line. */
@@ -159,8 +154,6 @@ html,body{height:auto;overflow:visible;margin:0;}
 .sc-head.is-end{justify-content:flex-end;}
 
 /* The facts line: project · branch · start, then chips that exist, then + to add one. */
-.rc-chips .label-chip,.rc-chips .tag-chip,.rc-facts .kind-chip{flex:none;}
-.rc-chips .tag-chip{height:18px;font-size:var(--fs-caption);font-weight:500;border-radius:var(--r-xs);}
 .rc-facts .rc-add{margin-block:-6px;flex:none;}
 .rc-pop{position:relative;display:inline-flex;}
 .rc-pop > .menu{position:absolute;z-index:5;top:calc(100% + 6px);left:0;min-width:180px;}
@@ -542,3 +535,60 @@ html,body{height:auto;overflow:visible;margin:0;}
 .pd-row{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;}
 .pd-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:var(--dlg-gap-foot);}
 .pd-foot-end{display:flex;gap:8px;}
+
+/* The metadata line wraps only between its groups: the place (branch → base, PR) shrinks first, chips and + wrap together. */
+.rc-facts{flex-wrap:wrap;row-gap:6px;}
+.rc-placeset{display:inline-flex;align-items:center;gap:8px;min-width:0;flex:0 1 auto;max-width:100%;}
+.rc-placeset > *{flex:none;}
+.rc-placeset > .rc-place{flex:0 1 auto;min-width:0;}
+
+/* The answer, under its step on the text column: options as one choice (a radio dot), Worca's pick marked at the right. */
+.sc-subs > .sc-answer{grid-column:2 / -1;list-style:none;display:flex;flex-direction:column;gap:8px;padding:4px 0 12px;min-width:0;}
+.sc-ans-q{margin:0;font-size:var(--fs-body);font-weight:500;color:var(--ink);}
+.sc-ans-why{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+.sc-ans-opts{display:flex;flex-direction:column;gap:2px;}
+.sc-ans-opt{display:grid;grid-template-columns:16px minmax(0,1fr) auto;align-items:center;column-gap:10px;min-height:32px;padding:4px 8px;margin-inline:-8px;
+  border:0;border-radius:var(--r-sm);background:none;color:var(--ink);font:inherit;font-size:var(--fs-body);text-align:left;cursor:pointer;}
+.sc-ans-opt:hover{background:var(--hover);}
+.sc-ans-opt:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.sc-ans-dot{width:14px;height:14px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--ink-3);}
+.sc-ans-opt[aria-checked="true"] .sc-ans-dot{box-shadow:inset 0 0 0 4px var(--ink);}
+.sc-ans-l{min-width:0;}
+.sc-ans-hint{font-size:var(--fs-caption);color:var(--ink-2);white-space:nowrap;}
+.sc-answer .input{max-width:420px;}
+
+/* The PR stage: Worca's suggestion first, then what it opens. */
+.sk-rec{margin:0 0 4px;}
+.menu-item[aria-disabled="true"]{color:var(--ink-3);}
+
+/* Proposed, not in today's app: a quiet tag, never a colour of its own. */
+.new-tag{margin-left:6px;padding:0 4px;border-radius:var(--r-xs);box-shadow:inset 0 0 0 1px var(--line-2);font:500 10px/16px var(--sans);letter-spacing:.02em;color:var(--ink-2);}
+.rc .mi-hint.new-tag{font:500 10px/16px var(--sans);}
+.btn-primary .new-tag{color:inherit;box-shadow:inset 0 0 0 1px currentColor;opacity:.7;}
+/* A shorter tab never pulls the page up: the panel keeps at least a screen of height. */
+.rtab-panel{min-height:100vh;}
+.rc-chipset{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;}
+.rc-chipset .label-chip,.rc-chipset .tag-chip{height:18px;font-size:var(--fs-caption);font-weight:500;border-radius:var(--r-xs);max-width:24ch;}
+.rc-chipset .label-chip-t,.rc-chipset .tag-chip{overflow:hidden;text-overflow:ellipsis;}
+/* Narrow cards: the controls may take two lines (the action first, ⋯ after); never wider than the card. */
+@container (max-width: 420px){ .rc-zone > .rc-side{flex-wrap:wrap;max-width:100%;} }
+
+/* The place phrase: names in mono, the joining words in the body face; the branch is its own copy button. */
+.rc-place{gap:6px !important;}
+.rc-word-sm{color:var(--ink-2);font-family:var(--sans);}
+.rc-branch{display:inline-flex;min-width:0;padding:0;border:0;background:none;color:var(--ink-2);font:inherit;cursor:copy;border-radius:var(--r-xs);}
+.rc-branch:hover .rc-mid{color:var(--ink);text-decoration:underline dotted;text-underline-offset:3px;}
+.rc-branch:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.rc-add.has-text{gap:4px;padding:0 6px;margin-block:-6px;color:var(--ink-2);font-size:var(--fs-meta);}
+.rc-add.has-text:hover{color:var(--ink);}
+
+/* Artifacts: the name is the link; the download icon's box sits on the rows' right edge. */
+.ov-art-name{justify-self:start;min-width:0;max-width:100%;padding:0;border:0;background:none;color:var(--ink);font:inherit;cursor:pointer;text-align:left;border-radius:var(--r-xs);}
+.ov-art-name code{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ov-art-name:hover code{text-decoration:underline;text-underline-offset:3px;}
+.ov-art-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ov-arts .btn-icon{justify-self:end;}
+
+/* Decisions' "Answer it in the card" lands here: the block marks itself once. */
+.sc-answer.is-flash{animation:ov-flash 1.2s ease-out;border-radius:var(--r-sm);}
+@media (prefers-reduced-motion: reduce){.sc-answer.is-flash{animation:none;outline:2px solid var(--line-2);outline-offset:4px;}}

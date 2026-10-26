@@ -176,3 +176,21 @@ in the place its kind already has, so nothing new sits beside the structure:
 
 Today's Logs tab filters, Agents tab and the Actions tab's services (setup, stack) are Expert-level views; they map to
 Activity and the Changes tools at build time and are not drawn in the prototype.
+
+## Round 3: the batch after self-review (26 Oct)
+
+The structure is now fixed in `plans/run-card-v2-spec.md` (One Rail): change the spec first, then the prototype.
+
+- A question is answered under its step in the card (one choice, your own words, the card's Send answer); Overview no
+  longer repeats it.
+- Overview follows the state: the plan to approve, what broke, what to check before shipping or merging, or the plan's
+  progress while it runs; "What it did" only once the run is done.
+- Group pages have no Runs tab: the stepper is the list of runs.
+- Stacked or one PR: the card shows Worca's suggestion and what it opens; the choice is the action's ▾ ("Create one PR
+  instead", off with the reason when it cannot work) and the Create PR dialog's switch.
+- The metadata line is one phrase: kind (groups), "#959 merges branch into dev" (or "into", "merged into", "to
+  origin/main", "into ~/folder"), labels and tags, then "+ Label" (a bare + once chips exist). The branch copies itself.
+- A run inside a group is a slice of the work, with its own time and cost; actions today's app lacks carry a New mark.
+- Artifacts: the name opens it, one download icon at the row's end.
+- The gate (`plans/mocks/run-card-sweep.mjs`) now opens every menu and dialog and fails on any page jump; a shorter tab
+  no longer pulls the page up.
