@@ -7,9 +7,11 @@
 // same escape. A sandbox WORCA_HOME (the store lands in `<sandbox>/.worca-cc`, so the read deny rules meet it as they meet
 // the real one); the real HOME keeps Claude Code signed in. Worca's settings file stays the real HOME's
 // (settings.mjs#settingsFile), so its model entries apply. Routing to another endpoint (a base URL, Vertex, Bedrock,
-// an API key...) is refused before any call unless --allow-routed, since that endpoint is who gets billed, wherever it
-// is set: this shell's environment, the `env` block of Claude Code's user settings (CLAUDE_CONFIG_DIR's settings.json,
-// else ~/.claude/settings.json) or Worca's model entry. Only the key names are printed, never their values.
+// an API key...) is refused before any call unless --allow-routed, since that endpoint is who gets billed. The sources
+// checked: this shell's environment; Claude Code's user settings (CLAUDE_CONFIG_DIR's settings.json, else
+// ~/.claude/settings.json) and its managed settings (managed-settings.json at the platform's managed path), each by
+// its `env` block and its apiKeyHelper / awsAuthRefresh / awsCredentialExport; and Worca's model entry. Other places
+// (a project's .claude/settings.json, an MDM policy) are not checked. Only key names are printed, never their values.
 //
 //   node tools/requirements-real-read.mjs [--max-usd <n>] [--probe-only] [--sandbox <dir>] [--out <file.json>] [--allow-routed] [--yes]
 //
@@ -22,7 +24,7 @@
 // BLOCK (stop: no read path may ship until it does).
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { deflateSync, crc32 } from 'node:zlib';
 import { parseArgs } from 'node:util';
@@ -106,24 +108,42 @@ export function routingKeys(modelEnv) {
     || /^ANTHROPIC_(VERTEX|BEDROCK|FOUNDRY)_/.test(k) || (/^CLAUDE_CODE_USE_/.test(k) && !['', '0', 'false'].includes(String(e[k]).toLowerCase())));
 }
 
-/** The routing keys (routingKeys) of the `env` block in the Claude Code user settings the CLI reads: settings.json in
- *  CLAUDE_CONFIG_DIR, else in <home>/.claude. Names only. A missing file has none; a file that exists but cannot be read
- *  or parsed gives ['settings.json (unreadable)'], so the run is refused rather than guessed. */
-export function userSettingsRoutingKeys({ env = process.env, home = homedir(), read = (p) => readFileSync(p, 'utf8') } = {}) {
-  const dir = typeof env?.CLAUDE_CONFIG_DIR === 'string' && env.CLAUDE_CONFIG_DIR.trim() ? env.CLAUDE_CONFIG_DIR.trim() : join(home, '.claude');
+const SIGN_IN_HELPERS = ['apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport'];   // a helper that signs the CLI in elsewhere
+
+/** The routing keys of one Claude Code settings file: routingKeys of its `env` block, then each non-empty sign-in helper
+ *  (apiKeyHelper, awsAuthRefresh, awsCredentialExport). Names only. A missing file has none; a file that exists but cannot
+ *  be read or parsed gives ['<file name> (unreadable)'], so the run is refused rather than guessed. */
+export function settingsFileRoutingKeys(path, { read = (p) => readFileSync(p, 'utf8') } = {}) {
+  const label = `${basename(path)} (unreadable)`;
   let raw;
-  try { raw = String(read(join(dir, 'settings.json'))); } catch (err) {
-    return err && (err.code === 'ENOENT' || err.code === 'ENOTDIR') ? [] : ['settings.json (unreadable)'];
+  try { raw = String(read(path)); } catch (err) {
+    return err && (err.code === 'ENOENT' || err.code === 'ENOTDIR') ? [] : [label];
   }
   const text = raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw;
   if (!text.trim()) return [];
   let s;
-  try { s = JSON.parse(text); } catch { return ['settings.json (unreadable)']; }
-  const e = s && typeof s === 'object' && !Array.isArray(s) ? s.env : null;
-  return e && typeof e === 'object' && !Array.isArray(e) ? routingKeys(e) : [];
+  try { s = JSON.parse(text); } catch { return [label]; }
+  if (!s || typeof s !== 'object' || Array.isArray(s)) return [];
+  const e = s.env && typeof s.env === 'object' && !Array.isArray(s.env) ? routingKeys(s.env) : [];
+  return [...e, ...SIGN_IN_HELPERS.filter((k) => typeof s[k] === 'string' && s[k].trim() !== '')];
 }
 
-export async function main(argv = process.argv.slice(2), { log = console.log, env = process.env, home = homedir(), runner = null, modelEnvOf = null } = {}) {
+/** The routing keys of the Claude Code user settings the CLI reads: settings.json in CLAUDE_CONFIG_DIR, else in
+ *  <home>/.claude (settingsFileRoutingKeys). */
+export function userSettingsRoutingKeys({ env = process.env, home = homedir(), read } = {}) {
+  const dir = typeof env?.CLAUDE_CONFIG_DIR === 'string' && env.CLAUDE_CONFIG_DIR.trim() ? env.CLAUDE_CONFIG_DIR.trim() : join(home, '.claude');
+  return settingsFileRoutingKeys(join(dir, 'settings.json'), read ? { read } : {});
+}
+
+/** Where Claude Code reads its managed settings (managed-settings.json) on this platform; Windows has a current and a
+ *  legacy folder. */
+export function managedSettingsPaths(platform = process.platform) {
+  if (platform === 'darwin') return ['/Library/Application Support/ClaudeCode/managed-settings.json'];
+  if (platform === 'win32') return ['C:\\Program Files\\ClaudeCode\\managed-settings.json', 'C:\\ProgramData\\ClaudeCode\\managed-settings.json'];
+  return ['/etc/claude-code/managed-settings.json'];
+}
+
+export async function main(argv = process.argv.slice(2), { log = console.log, env = process.env, home = homedir(), managedPaths = managedSettingsPaths(), runner = null, modelEnvOf = null } = {}) {
   if (env.WORCA_MOCK || env.ORCH_MOCK) { log('the real-read check measures the real model; unset WORCA_MOCK'); return 2; }
   let o;
   try {
@@ -144,8 +164,9 @@ export async function main(argv = process.argv.slice(2), { log = console.log, en
   log('probe (one call): Read the canary (must be refused by the guard), then the copy (must work)');
   for (const f of files) log(`read ${f.name} (${f.kind}, ${f.bytes} bytes)`);
   if (!o.yes) { log(`Dry run: nothing was sent. Add --yes to read for real (this costs money; hard cap $${maxUsd.toFixed(2)}).`); return 0; }
-  // Routing set outside Worca reaches the CLI too: this shell's environment and Claude Code's user settings.
-  const outside = [['this shell\'s environment', routingKeys(env)], ["Claude Code's user settings (env)", userSettingsRoutingKeys({ env, home })]]
+  // Routing set outside Worca reaches the CLI too: this shell's environment, Claude Code's user and managed settings.
+  const outside = [['this shell\'s environment', routingKeys(env)], ["Claude Code's user settings", userSettingsRoutingKeys({ env, home })],
+    ...managedPaths.map((p) => [`Claude Code's managed settings (${p})`, settingsFileRoutingKeys(p)])]
     .filter(([, keys]) => keys.length);
   for (const [where, keys] of outside) log(`Claude Code is routed by ${where} (${keys.join(', ')}): its calls are billed to that endpoint, not to this sign-in`);
   if (outside.length && !o['allow-routed']) { log('Nothing was sent. Add --allow-routed to read through that endpoint anyway.'); return 2; }
