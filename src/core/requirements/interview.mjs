@@ -98,7 +98,8 @@ export const isBusy = (seq) => jobs.has(Number(seq));
 /** A8 D2: the longest round 1 waits for the reads of a new feature's files. */
 export const ROUND1_WAIT_MS = 360_000;
 const waitingReads = new Set();   // features whose create job waits for its reads: not counted against MAX_JOBS
-const activeJobs = () => jobs.size - waitingReads.size;
+let heldSlots = 0;   // A3 D11: slots held by Ask Worca calls (helper.mjs), which never make their feature busy
+const activeJobs = () => jobs.size - waitingReads.size + heldSlots;
 let slotWaiters = [];   // resolvers woken whenever a slot may have come free: a job ended or started waiting
 function slotFreed() { const w = slotWaiters; slotWaiters = []; for (const r of w) r(); }
 /** A waiting job leaves the waiting set once a slot is free, checked again (synchronously) at every slotFreed. */
@@ -114,11 +115,25 @@ const within = (p, ms) => { let t; return Promise.race([p, new Promise((r) => { 
 export function assertCapacity() {
   if (activeJobs() >= MAX_JOBS) throw new RequirementsError('BUSY', 'Worca is working on several features; try again in a moment.');
 }
+/** A3 D11: one of the MAX_JOBS slots for an Ask Worca call, which does not make its feature busy. Throws BUSY when every slot
+ *  is taken (assertCapacity's message). Returns the release: it frees the slot once (a second call does nothing) and wakes
+ *  the creates waiting for a slot. */
+export function holdSlot() {
+  assertCapacity();
+  heldSlots += 1;
+  let held = true;
+  return () => {
+    if (!held) return;
+    held = false;
+    heldSlots -= 1;
+    slotFreed();
+  };
+}
 /** Resolves when the feature's current job (if any) has finished. Tests and the routes' callers await it. */
 export const settled = (seq) => jobs.get(Number(seq)) || Promise.resolve();
 
 const message = (err) => (err && err.message ? err.message : String(err));
-const scratchDir = () => { const d = join(worcaHome(), 'tmp', 'requirements'); mkdirSync(d, { recursive: true }); return d; };
+export const scratchDir = () => { const d = join(worcaHome(), 'tmp', 'requirements'); mkdirSync(d, { recursive: true }); return d; };
 
 /** D8: the first plain (not [1m]) Opus in the catalog, which lists the newest first. */
 export async function requirementsModel(list = listModels) {
@@ -201,7 +216,7 @@ function setStatus(seq, status, by, extra = {}) {
   updateFeature(seq, { ...extra, status: now && now.status === 'archived' ? 'archived' : status }, { by });
 }
 
-function assertBudget(d) {
+export function assertBudget(d) {
   const b = d.budget();
   if (b && b.blocked) {
     throw new RequirementsError('BUDGET', `The spending limit${b.totalLimitUsd != null ? ` of $${b.totalLimitUsd}` : ''} is reached for this period. The interview continues when the limit resets or is raised.`);
@@ -214,6 +229,20 @@ function charge(seq, turnId, costUsd, model) {
   tx(() => {
     addFeatureCost(seq, costUsd);
     recordRequirementsCostDelta({ featureSeq: seq, turnId, amountUsd: costUsd, model: model || null });
+  });
+}
+
+/** A3 D13: Worca's reply row (`writeRow()`, which returns it), the call's cost on the feature ("$X so far") and its ledger row
+ *  (`helper_message_id` = the row's id, no turn), all in one transaction, so the reply never stands without what it cost and the
+ *  cost counts toward the spending limit like every requirements call. A call that cost nothing writes the row only. */
+export function chargeHelper(seq, costUsd, model, writeRow) {
+  return tx(() => {
+    const row = writeRow();
+    if (costUsd > 0) {
+      addFeatureCost(seq, costUsd);
+      recordRequirementsCostDelta({ featureSeq: seq, helperMessageId: row.id, amountUsd: costUsd, model: model || null });
+    }
+    return row;
   });
 }
 
@@ -321,7 +350,7 @@ async function openLookFor(f, d, signal) {
 
 /** A7 D10: the scope's usable brief as the prompts carry it (provenance line first), or null. A8 D6: `documents`, the
  *  scope's documents as renderDocumentsForPrompt writes them, follow its sections. */
-function briefFor(f, documents = '') {
+export function briefFor(f, documents = '') {
   const b = usableBrief(f.scopeType, f.scopeKey);
   if (!b) return null;
   const day = String(b.madeAt).slice(0, 10);

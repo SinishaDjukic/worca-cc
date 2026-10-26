@@ -2,9 +2,18 @@
 // Ask Worca beside the feature spec (plans/requirements-a3-design.md). The pure part: the system prompt, the limits, the
 // prompt (a round's stable part verbatim, then the chat's own changing part), the strict reply check (nothing in a reply is
 // trusted for ids, old values or state), the snapshots that tell a stale proposal, and the mock reply.
-import { SECTIONS, LIMITS, MAX_QUESTIONS, clip, normalizeSection } from './spec.mjs';
-import { asData, roundPromptParts, threadText, specBlocks, RoundError } from './round.mjs';
+import { runClaude, mockEnabled } from '../claude-runner.mjs';
+import { budgetStatus } from '../cost-budget.mjs';
+import { safeParseJson } from '../protocol.mjs';
+import { RequirementsError, SECTIONS, LIMITS, MAX_QUESTIONS, clip, normalizeSection } from './spec.mjs';
+import { asData, roundPromptParts, threadText, specBlocks, RoundError, pendingRound, removedCriteria } from './round.mjs';
 import { diffList } from './ready.mjs';
+import {
+  requireFeature, listTurns, getContext, insertHelperMessage, listHelperMessages, recentHelperCosts,
+} from './store.mjs';
+import { isBusy, holdSlot, assertBudget, scratchDir, chargeHelper, callModel, interviewModel, briefFor } from './interview.mjs';
+import { promptFiles } from './attachment-job.mjs';
+import { isStarting, STARTING_MESSAGE } from './starting.mjs';
 
 export const HELPER_TIMEOUT_MS = 180_000;
 export const HELPER_LIMITS = Object.freeze({ message: 2000, reply: 3000, why: 300, reason: 200, drafts: MAX_QUESTIONS, proposals: 5, history: 12000 });
@@ -235,4 +244,198 @@ export function mockHelperReply(pending, message) {
     drafts: option ? [{ question: q.id, option, text: null, why: "[mock] Worca's reason for this draft." }] : [],
     proposals: [{ target: 'criterion', change: 'add', id: null, value: '[mock] A criterion Worca suggests.', reason: "[mock] Worca's reason for this change." }],
   };
+}
+
+// ---------------------------------------------------------------- the call (D3, D11–D13, D19, D20)
+
+const DEFAULTS = Object.freeze({ runClaudeImpl: runClaude, budget: () => budgetStatus(), onChange: () => {} });
+const ANSWERING = 'Worca is still answering. Try again in a moment.';
+const COULD_NOT = 'Worca could not answer. Try again.';
+const STOPPED = Object.freeze({ code: 'STOPPED', message: 'You stopped this reply.' });
+
+/** D11: the running call of each feature (seq → { ctrl, promise }), at most one. */
+const helperCalls = new Map();
+export const isAnswering = (seq) => helperCalls.has(Number(seq));
+/** Resolves when the feature's helper call (if any) has finished. Tests and Stop await it. */
+export const helperSettled = (seq) => (helperCalls.get(Number(seq)) || {}).promise || Promise.resolve();
+
+const message = (err) => (err && err.message ? err.message : String(err));
+function notify(d, seq) {
+  try { d.onChange(seq); } catch (e) { console.error('requirements: onChange failed:', message(e)); }
+}
+/** The round waiting for the product owner, as the feature view shows it (only while it is their turn). */
+const pendingOf = (f, turns) => (f.status === 'your_turn' ? pendingRound(turns) : null);
+
+/** D13: the budget before every call; a refusal names its code in the body, so the page can say it in the chat. */
+function checkBudget(d) {
+  try { assertBudget(d); } catch (err) {
+    if (err instanceof RequirementsError && err.code === 'BUDGET') throw new RequirementsError('BUDGET', err.message, { code: 'BUDGET' });
+    throw err;
+  }
+}
+
+/** D11/D16: who may send now. Refusals in the design's order of concern; nothing is written before they pass. */
+function sendable(seq) {
+  const f = requireFeature(seq);
+  if (f.status === 'archived') throw new RequirementsError('CONFLICT', 'this feature is archived; restore it first');
+  if (isBusy(f.seq)) throw new RequirementsError('BUSY', 'Worca is still working on this feature. Try again in a moment.');
+  if (isStarting(f.seq)) throw new RequirementsError('BUSY', STARTING_MESSAGE);
+  if (isAnswering(f.seq)) throw new RequirementsError('BUSY', ANSWERING);
+  return f;
+}
+
+function messageText(v) {
+  const t = typeof v === 'string' ? v.trim() : '';
+  if (!t || t.length > HELPER_LIMITS.message) throw new RequirementsError('BAD_REQUEST', 'a message is 1 to 2,000 characters');
+  return t;
+}
+
+/** D1: a Help me answer focus, kept only when it names a question of the pending round (the server numbers it). */
+function questionFocus(pending, raw) {
+  if (!pending || !raw || typeof raw !== 'object' || Number(raw.roundTurnId) !== pending.turnId) return null;
+  const i = pending.questions.findIndex((q) => q.id === raw.questionId);
+  return i < 0 ? null : { roundTurnId: pending.turnId, questionId: pending.questions[i].id, n: i + 1 };
+}
+
+/** The refusals, the budget (not in mock mode: no call follows), a slot, the product owner's row, then the call. */
+function ask(seq, text, focusFor, by, deps) {
+  const d = { ...DEFAULTS, ...deps };
+  const f = sendable(seq);
+  if (!mockEnabled({})) checkBudget(d);
+  const focus = focusFor(f);
+  const release = holdSlot();
+  let po;
+  try { po = insertHelperMessage({ featureSeq: f.seq, role: 'po', text, focus }, { by }); } catch (err) { release(); throw err; }
+  return startCall(f.seq, po, d, release);
+}
+
+/** Send (D1, D11): `{ text, focus? }`. Throws a refusal synchronously; otherwise returns the call's promise (it never rejects). */
+export function sendMessage(seq, input = {}, { by = null } = {}, deps = {}) {
+  const text = messageText(input && input.text);
+  return ask(seq, text, (f) => questionFocus(pendingOf(f, listTurns(f.seq)), input && input.focus), by, deps);
+}
+
+/** D20 Try again: the newest message that has no reply, or whose reply is an error, is asked again (its rows stay). */
+export function retryMessage(seq, { by = null } = {}, deps = {}) {
+  const d = { ...DEFAULTS, ...deps };
+  const f = sendable(seq);
+  const all = listHelperMessages(f.seq);
+  const lastRow = all.at(-1);
+  const po = !lastRow ? null : lastRow.role === 'po' ? lastRow
+    : lastRow.error ? all.filter((m) => m.role === 'po' && m.id < lastRow.id).at(-1) || null : null;
+  if (!po) throw new RequirementsError('CONFLICT', 'There is nothing to try again.');
+  if (!mockEnabled({})) checkBudget(d);
+  const release = holdSlot();
+  return startCall(f.seq, po, d, release);
+}
+
+/** D12 Stop: aborts the running call's own controller; resolves once Worca's row is written. */
+export function stopHelper(seq) {
+  const e = helperCalls.get(Number(seq));
+  if (!e) throw new RequirementsError('CONFLICT', 'Worca is not answering.');
+  e.ctrl.abort();
+  return e.promise;
+}
+
+function startCall(seq, po, d, release) {
+  const ctrl = new AbortController();
+  const entry = { ctrl, promise: null };
+  helperCalls.set(seq, entry);
+  entry.promise = (async () => {
+    try { await answer(seq, po, d, ctrl.signal); } catch (err) {
+      console.error('requirements: an Ask Worca call failed:', message(err));
+      // Worca's row could not be written as it should: an error row, else D20's line ("could not answer") shows anyway.
+      try { insertHelperMessage({ featureSeq: seq, role: 'worca', error: { code: 'FAILED', message: COULD_NOT } }); } catch { /* D20 */ }
+    } finally {
+      helperCalls.delete(seq);
+      release();
+      notify(d, seq);
+    }
+  })();
+  notify(d, seq);
+  return entry.promise;
+}
+
+/** Mock mode only (A8's WORCA_MOCK_READ_MS device): a mock reply waits this long, so the browser proof sees Answering… and Stop. */
+function mockWait(signal) {
+  const ms = Number(process.env.WORCA_MOCK_HELPER_MS) || 0;
+  if (!(ms > 0) || signal.aborted) return Promise.resolve();
+  return new Promise((res) => {
+    const t = setTimeout(res, ms);
+    signal.addEventListener('abort', () => { clearTimeout(t); res(); }, { once: true });
+  });
+}
+
+/** The <question_in_focus> of a stored focus: the question while its round is still pending, or (Ask again) the proposal. */
+function resolveFocus(fo, pending, all) {
+  if (fo && fo.questionId && pending && pending.turnId === fo.roundTurnId) {
+    const q = pending.questions.find((x) => x.id === fo.questionId);
+    return q ? { question: q } : null;
+  }
+  if (fo && fo.askAgain) {
+    const m = all.find((x) => x.id === fo.askAgain.msgId);
+    const p = m && (m.proposals || []).find((x) => x.n === fo.askAgain.n);
+    return p ? { proposal: p } : null;
+  }
+  return null;
+}
+
+/** One message's call (D3): the prompt of this moment, at most two attempts (an unreadable reply is asked once more, as a round),
+ *  the budget before each, then Worca's row and its cost, written in one transaction (D13). Never throws for a failed call: it becomes the
+ *  row's error, in product copy (the reason goes to the log). */
+async function answer(seq, po, d, signal) {
+  const f = requireFeature(seq);
+  const turns = listTurns(seq);
+  const pending = pendingOf(f, turns);
+  const all = listHelperMessages(seq);
+  const history = all.filter((m) => m.id < po.id);
+  const focus = resolveFocus(po.focus, pending, all);
+  const ctx = { spec: f.spec, pending, removed: removedCriteria(turns) };
+  let reply = null;
+  let cost = 0;
+  let model = null;
+  let error = null;
+  if (mockEnabled({})) {
+    await mockWait(signal);
+    if (signal.aborted) error = STOPPED;
+    else reply = normalizeHelperReply(mockHelperReply(pending, po.text), ctx);
+  } else {
+    const files = promptFiles(f);
+    const brief = briefFor(f, files.documents);
+    const prompt = buildHelperPrompt({ feature: f, context: getContext(f.scopeType, f.scopeKey).body, turns, brief: brief ? brief.text : null,
+      attachments: files.attachments, pending, history, focus, message: po.text });
+    const im = await interviewModel(d);
+    model = im.model || null;
+    let lastErr = null;
+    try {
+      for (let attempt = 1; attempt <= 2 && !reply && !signal.aborted; attempt += 1) {
+        checkBudget(d);   // before every call; an earlier attempt is already in `cost`
+        const r = await callModel(d, { kind: 'round', cwd: scratchDir(), prompt, model: model || undefined, systemPrompt: HELPER_SYSTEM_PROMPT, tools: [],
+          noSessionPersistence: true, ...(im.effort ? { effort: im.effort } : {}), timeoutMs: HELPER_TIMEOUT_MS, signal });
+        cost += r.costUsd;
+        try { reply = normalizeHelperReply(safeParseJson(r.text), ctx); } catch (err) { if (!(err instanceof RoundError)) throw err; lastErr = err; }
+      }
+      if (!reply) {
+        error = signal.aborted ? STOPPED : { code: 'BAD_REPLY', message: COULD_NOT };
+        if (lastErr) console.error('requirements: an Ask Worca reply could not be read:', lastErr.message);
+      }
+    } catch (err) {
+      cost += Number(err && err.costUsd) || 0;
+      if (signal.aborted) error = STOPPED;
+      else if (err && err.code === 'TIMEOUT') error = { code: 'TIMEOUT', message: COULD_NOT };
+      else if (err && err.code === 'BUDGET') error = { code: 'BUDGET', message: err.message };
+      else { error = { code: 'FAILED', message: COULD_NOT }; console.error('requirements: an Ask Worca call failed:', message(err)); }
+    }
+  }
+  chargeHelper(seq, cost, model, () => insertHelperMessage({ featureSeq: seq, role: 'worca', text: reply ? reply.text : '',
+    roundTurnId: pending ? pending.turnId : null, drafts: reply ? reply.drafts : [], proposals: reply ? reply.proposals : [], error,
+    costUsd: cost > 0 ? cost : null, model }));
+}
+
+/** D13: the lowest and highest cost of the last 10 helper calls, or null before any. */
+export function helperEstimate() {
+  const c = recentHelperCosts(10);
+  if (!c.length) return null;
+  const r = (n) => Math.round(n * 1e4) / 1e4;
+  return { low: r(Math.min(...c)), high: r(Math.max(...c)) };
 }
