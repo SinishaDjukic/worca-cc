@@ -156,8 +156,11 @@ test('Providers is a page of its own: its loader, its title, its level banner, a
 });
 
 test('Models is a page of its own: the catalog, the Engines card from GET /api/settings, a card deep link, its banner and leave-guard', async () => {
-  // A bridged catalog row that is not signed in yet: its "Sign in" leaves for the Providers page.
-  const CP = { id: 'cp-gpt', label: 'GPT (Copilot)', efforts: ['medium'], upstream: { provider: 'copilot', api: 'openai-chat', model: 'gpt-5' },
+  // A bridged catalog row that is not signed in yet: an OpenAI-compatible "Sign in" leaves for the Providers page;
+  // a Copilot one opens the setup assistant on Model access instead (AC-4.5, the row after this one).
+  const CP = { id: 'oa-gpt', label: 'GPT (OpenAI-compatible)', efforts: ['medium'], upstream: { provider: 'openai', api: 'openai-chat', model: 'gpt-5' },
+    bridged: 'openai', needsSignIn: true, signInReason: 'not_signed_in', signInMessage: 'not signed in' };
+  const COPILOT = { id: 'cp-gpt', label: 'GPT (Copilot)', efforts: ['medium'], upstream: { provider: 'copilot', api: 'openai-chat', model: 'gpt-5' },
     bridged: 'copilot', needsSignIn: true, signInReason: 'not_signed_in', signInMessage: 'not signed in' };
   await checkRows([
     { name: 'a catalog row\'s Sign in opens the Providers page; the OpenAI row\'s Import models… opens the Models page with the import dialog', run: async () => {
@@ -172,6 +175,15 @@ test('Models is a page of its own: the catalog, the Engines card from GET /api/s
       assert.equal(window.location.hash, '#models');
       assert.deepEqual(shownView(doc), ['models']);
       assert.equal(doc.getElementById('model-import-modal').classList.contains('hidden'), false, 'the import dialog opens over the catalog');
+    } },
+    { name: 'a Copilot row\'s Sign in opens the setup assistant on Model access, and the page stays (AC-4.5, R-qa-4)', run: async () => {
+      const { window, doc } = await boot({ routes: { '/api/models': { models: [COPILOT], predefined: [], efforts: [] } } });
+      await go(window, 'models');
+      doc.querySelector('#models-list .mv-signin[data-provider="copilot"]').click();
+      await settle();
+      assert.ok(doc.getElementById('setup-modal'), 'the assistant is up');
+      assert.equal(doc.querySelector('#setup-modal h2#setup-title').textContent, 'Where should Worca get its models?');
+      assert.equal(window.location.hash, '#models');
     } },
     { name: '#models loads the catalog and GET /api/settings into its own section, titled Models; Settings has no Models tab', run: async () => {
       const { window, doc, calls } = await boot({ routes: { '/api/settings': { root: '/tmp/x', default: '/tmp/x', runEngine: 'codex' } } });
@@ -363,7 +375,7 @@ test('the sidebar\'s Add-ons group sits between Workflows and Manage: a label an
   const sect = [...doc.querySelectorAll('.nav > .nav-sect')].find((s) => s.textContent.trim() === 'Add-ons');
   assert.ok(sect, 'the Add-ons label');
   assert.equal(sect.dataset.minLevel, 'advanced', 'the label hides with its Advanced rows');
-  assert.equal(sect.previousElementSibling.dataset.nav, 'workflows', 'right after the Workflows row');
+  assert.equal(sect.previousElementSibling.dataset.nav, 'requirements', 'right after the last Build row (Requirements follows Workflows)');
   const rows = [];
   for (let n = sect.nextElementSibling; n && n.tagName === 'BUTTON'; n = n.nextElementSibling) rows.push(n);
   assert.deepEqual(rows.map((b) => [b.dataset.nav, b.dataset.minLevel, b.querySelector(':scope > span').textContent]), [

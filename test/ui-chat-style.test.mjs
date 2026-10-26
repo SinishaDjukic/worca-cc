@@ -112,30 +112,15 @@ test('the mockup look (2026-10-10, corners and shadows per the runs redesign): t
   assert.doesNotMatch(bare, /chat-history-toggle-(line|fill)/, 'the panel glyph\'s open/closed parts are gone');
 });
 
-test('History: a 264px push column that turns into an overlay with a scrim below 1100px; the threads popover rule is gone', () => {
+test('History: the Chats column\'s host, a push column that turns into an overlay with a scrim below 1100px; the old rows\' rules are gone', () => {
   assert.match(css, /\n\.chat-history\{flex:0 0 264px;width:264px;/, 'the base rule (ruleBody would find the earlier closed-state rule first)');
   assert.equal(ruleBody('.chat-page[data-history="closed"] .chat-history'), 'display:none;');
   assert.match(css, /@media \(max-width:1099px\)\{\n {2}\.chat-history\{position:absolute;top:0;bottom:0;left:0;z-index:6;width:min\(300px,86vw\);/);
   assert.match(css, /\.chat-scrim:not\(\[hidden\]\)\{display:block;position:absolute;inset:0;z-index:5;background:var\(--scrim-soft\);\}/);
-  assert.equal(ruleBody('.ask-thread-dot.ask-dot-wait'), 'display:block;background:var(--amber);');
   assert.doesNotMatch(bare, /\.ask-pop-threads\b/);
-  assert.equal(ruleBody('.ask-threads-list'), 'display:flex;flex-direction:column;gap:1px;');
-});
-
-test('New chat is a labelled small quiet button (.btn.btn-sm): in the head, and leading the History column at the rows\' inset', () => {
-  assert.equal(ruleBody('.ask-icon-btn.chat-new-btn'), null, 'no skin of its own');
-  assert.equal(ruleBody('.chat-history-new.chat-new-btn'), 'flex:none;justify-content:flex-start;margin:6px 6px 0;', 'layout only: .btn .btn-sm sizes it');
-});
-
-test('the History list scrolls, the open chat\'s row is marked, the trash waits for hover', () => {
-  assert.match(ruleBody('.chat-history-body'), /min-height:0;overflow-y:auto;/, 'older chats stay reachable');
-  assert.equal(ruleBody('.ask-thread-row.is-current'), 'background:var(--field);');
-  assert.equal(ruleBody('.chat-history .ask-thread-trash'), 'opacity:0;');
-  assert.equal(ruleBody('.chat-history .ask-thread-pick:focus-visible'), 'outline:2px solid var(--ink);outline-offset:-2px;', 'a keyboard ring, not the near-invisible hover wash');
-});
-
-test('a focused trash shows without :focus-visible too (a mouse Cancel puts the focus back on it)', () => {
-  assert.match(css, /,\.chat-history \.ask-thread-trash:focus\{opacity:1;\}/);
+  // #952: the old History rows, search and labelled New chat went with the chatsColumn flag.
+  assert.doesNotMatch(bare, /\.(ask-threads-list|ask-thread-(row|pick|dot|col|title|meter|when|fill|topics|match)|chat-history-(head|title|meter|sbox|search|new|body|group|empty)|chat-new-btn)\b/);
+  assert.match(ruleBody('.ask-wt-row .ask-thread-trash'), /^flex:none;$/, 'the worktree rows keep their trash');
 });
 
 test('the run proposal card fits the 760px text column and its kicker is not monospace (F-27)', () => {
@@ -144,4 +129,17 @@ test('the run proposal card fits the 760px text column and its kicker is not mon
   assert.match(width, /^width:min\(var\(--chat-text-max\),100cqi\);margin-left:calc\(\(100% - min\(var\(--chat-text-max\),100cqi\)\) \/ 2\);/);
   assert.doesNotMatch(width, /chat-card-max/);
   for (const sel of ['.ask-rp-kicker', '.ask-rp-from', '.ask-rp-summary']) assert.doesNotMatch(ruleBody(sel), /var\(--mono\)/, sel);
+});
+
+test('command cards take the 760px text column, like the run proposal (#911)', () => {
+  const width = ruleBody('.chat-convo .ask-msg > .ask-card.ask-cmd');
+  assert.match(width, /^width:min\(var\(--chat-text-max\),100cqi\);margin-left:calc\(\(100% - min\(var\(--chat-text-max\),100cqi\)\) \/ 2\);/);
+  assert.doesNotMatch(width, /chat-card-max/);
+});
+
+test('summary rows: one line, joined in a group, the raw command in mono (#911)', () => {
+  assert.match(ruleBody('.ask-cmd-sum'), /white-space:nowrap;/);
+  assert.match(ruleBody('.ask-cmd-sum.is-raw'), /font-family:var\(--mono\)/);
+  assert.match(ruleBody('.ask-cmd.in-group:not(.is-g-first)'), /margin-top:-7px;/);
+  assert.match(ruleBody('.ask-cmd-row:hover'), /background:var\(--hover\)/);
 });

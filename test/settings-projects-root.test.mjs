@@ -325,8 +325,8 @@ test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, defaul
     const j = await getApi();
     // `app` = static identity for the Settings ▸ About card (version, repo URL,
     // release-tag URL — read from package.json). GET-only: POST still echoes settingsState() + chat.
-    assert.deepEqual(Object.keys(j).sort(), ['actions', 'actionsDetected', 'actionsGate', 'agentGenModel', 'agentGenModelEffective', 'app', 'askEngine', 'askMaxBudgetUsd', 'askMaxTurns', 'askModels', 'askWeb', 'autoGeneratePrDescription', 'autoWorkflowModel', 'autoWorkflowModelEffective', 'chat', 'costLimitResetPeriod',
-      'debugSpawnEffective', 'debugSpawnEnabled', 'default', 'enforceTags', 'flags', 'git', 'hideBuiltinModels', 'humanRateUsdPerHour', 'memoryDefrag', 'memoryDefragDefault', 'namingModel', 'namingModelEffective', 'networkWait', 'nightMode', 'nightModeEffective', 'nightModeToggle', 'pipelineCostLimitUsd', 'prDescriptionModel', 'prDescriptionModelEffective', 'projectsRoot', 'projectsRootDefault', 'resumeAfterUsageLimit', 'root', 'runEngine',
+    assert.deepEqual(Object.keys(j).sort(), ['actions', 'actionsDetected', 'actionsGate', 'agentGenModel', 'agentGenModelEffective', 'app', 'askEngine', 'askMaxBudgetUsd', 'askMaxTurns', 'askModels', 'askWeb', 'autoGeneratePrDescription', 'autoWorkflowModel', 'autoWorkflowModelEffective', 'chat', 'commandSummaryModel', 'commandSummaryModelEffective', 'costLimitResetPeriod',
+      'debugSpawnEffective', 'debugSpawnEnabled', 'default', 'enforceTags', 'flags', 'git', 'hideBuiltinModels', 'humanRateUsdPerHour', 'memoryDefrag', 'memoryDefragDefault', 'modelRoles', 'namingModel', 'namingModelEffective', 'networkWait', 'nightMode', 'nightModeEffective', 'nightModeToggle', 'pipelineCostLimitUsd', 'prDescriptionModel', 'prDescriptionModelEffective', 'projectsRoot', 'projectsRootDefault', 'resumeAfterUsageLimit', 'root', 'runEngine',
       'schedule', 'smartNaming', 'stepModels', 'sync', 'tagDimensions', 'theme', 'titleModel', 'titleModelEffective', 'totalCostLimitUsd', 'uiLevel', 'updateCheck', 'utilityModels', 'workspaceScan', 'workspaceScanDefault']);
     assert.deepEqual(Object.keys(j.actionsDetected).sort(), ['editor', 'terminal'], 'what blank Editor / Terminal fall back to');
     assert.equal(j.autoWorkflowModel, '', 'no classifier model stored -> the catalog default applies');
@@ -337,6 +337,7 @@ test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, defaul
     assert.equal(j.memoryDefragDefault, 'claude-sonnet-5');
     assert.deepEqual(j.agentGenModel, { model: null, effort: null }, 'no agent generation model stored -> the CLI default');
     assert.deepEqual(j.namingModel, { model: null, effort: null }, 'no run naming model stored -> the cheapest ready Claude model');
+    assert.deepEqual(j.commandSummaryModel, { model: null, effort: null }, 'no command summaries model stored -> the cheapest ready Claude model');
     assert.equal(j.workspaceScan, null, 'no scan models stored -> the defaults');
     assert.deepEqual(j.workspaceScanDefault, { scanModel: 'claude-sonnet-5', scanEffort: 'medium', agentModel: 'sonnet', agentEffort: 'medium' });
     assert.equal(j.root, '', 'nothing set yet');

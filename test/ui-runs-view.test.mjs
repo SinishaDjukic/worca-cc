@@ -696,7 +696,7 @@ test('A11: the row ⋯ menu offers Select, which enters selection with that row'
   go(window, 'runs'); await settle(window);
   const item = itemOf(doc, '[data-run-id="r1"]');
   click(window, item.querySelector(':scope > .runs-row-tail .runs-more'));
-  const sel = [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.textContent.trim() === 'Select');
+  const sel = [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.querySelector('.wfv-menu-l').textContent === 'Select');
   assert.ok(sel, 'the ⋯ menu lists Select');
   click(window, sel);
   await settle(window);
@@ -769,7 +769,7 @@ test('an interrupted run that could resume: its ⋯ menu archives (never stops) 
   go(window, 'runs'); await settle(window);
   const menu = () => {
     click(window, itemOf(doc, '[data-pipeline-id="dddd0004"]').querySelector(':scope > .runs-row-tail .runs-more'));
-    return Object.fromEntries([...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].map((n) => [n.textContent.trim(), n]));
+    return Object.fromEntries([...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].map((n) => [n.querySelector('.wfv-menu-l').textContent, n]));
   };
   let items = menu();
   assert.equal(items.Stop.getAttribute('aria-disabled') === 'true' || items.Stop.disabled === true, true, 'Stop stays disabled');
@@ -804,7 +804,7 @@ test('an archived live interrupted run leaves Running: in the acting tab, and in
   go(a.window, 'runs'); await settle(a.window);
   assert.ok(rowEl(a.doc, '[data-run-id="r-park"]'), 'the interrupted run is listed live');
   click(a.window, itemOf(a.doc, '[data-run-id="r-park"]').querySelector(':scope > .runs-row-tail .runs-more'));
-  click(a.window, [...a.doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.textContent.trim() === 'Archive'));
+  click(a.window, [...a.doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.querySelector('.wfv-menu-l').textContent === 'Archive'));
   await settle(a.window);
   await a.confirmWith(true);
   assert.equal(a.posts.at(-1).action, 'archive');
@@ -885,7 +885,8 @@ test('Add to group / Remove from group repaint the group with its new count and 
   const exp = groupRowEl().querySelector(':scope > .runs-row-tail .runs-expand');
   if (exp.getAttribute('aria-expanded') !== 'true') { click(window, exp); await settle(window); }
   const member = groupRowEl().querySelector('.runs-members .runs-row[data-pipeline-id="pw000002"]').closest('.runs-item');
-  assert.equal(member.querySelector('.runs-indep').textContent, 'Independent');
+  assert.equal(member.querySelector('.runs-indep'), null, '#955: a one-line member drops Independent');
+  assert.doesNotMatch(member.querySelector('.runs-row-title').textContent, /^\d+ · /, 'an ad hoc member has no position');
   click(window, member.querySelector(':scope > .runs-row-tail .runs-more'));
   click(window, [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.textContent.includes('Remove from group')));
   await settle(window, 8);
@@ -1174,7 +1175,7 @@ test('D1/D2: a finished member still live, with no History PR yet, shows its gro
   assert.equal(mm.querySelector('.runs-pr-word').textContent, 'Checks failing');
   go(window, `history/${KEY}/p-roll1`); await settle(window, 8);
   // Run 3 (D10): the run page's PR bar carries "PR #821", so its status line drops the second mention.
-  assert.equal(doc.querySelector('#hist-detail .hd-glance .run-status-text').textContent, 'Needs you · Checks failing',
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .run-status').dataset.text, 'Needs you · Checks failing',
     'the run page reads what the list reads, without a second PR mention');
 });
 
@@ -1343,4 +1344,316 @@ test('slice 2: side by side (split) the group Back shows the list, with the grou
   window.dispatchEvent(new window.Event('hashchange')); await settle(window, 6);
   assert.equal(shell.classList.contains('detail-open'), false, 'and is not reopened by the D6 restore');
   window.close();
+});
+
+// Dividers (running rows lost their line?): jsdom drops `border-bottom:1px solid var(--line)` from getComputedStyle,
+// so the cascade's inputs are checked instead. Every style.css rule that declares a border (top-level or inside any
+// @media, so the 375px rules count too) is matched against the rendered row with el.matches().
+const STYLE_CSS = readFileSync(join(__dir, '..', 'ui', 'public', 'style.css'), 'utf8');
+const BORDER_DECL = /(^|[;{\s])border(-bottom|-top)?(-(color|width|style))?\s*:/;
+function borderRules(doc) {
+  const st = doc.createElement('style');
+  st.textContent = STYLE_CSS;
+  doc.head.append(st);
+  const out = [];
+  const walk = (list) => {
+    for (const r of list) {
+      if (r.selectorText) { if (BORDER_DECL.test(r.style.cssText)) out.push(r); }
+      else if (r.cssRules) walk(r.cssRules);   // @media / @supports bodies; @keyframes children have no selectorText
+    }
+  };
+  walk(st.sheet.cssRules);
+  return out;
+}
+const borderHits = (rules, el) => rules.filter((r) => { try { return el.matches(r.selectorText); } catch { return false; } })
+  .map((r) => r.selectorText);
+const DIVIDER = '.runs-item';   // style.css: .runs-item{…border-bottom:1px solid var(--line);}
+const CHAINS_2 = () => ['pchain01', 'pchain02'].map((pid, i) => ({ id: `p:${pid}`, title: `Chain ${i + 1}`, members: [
+  { pipelineId: pid, ticketId: null, state: 'current', title: `Chain ${i + 1} root`, projectDir: PROJECT, after: null },
+  { pipelineId: null, ticketId: `tick${i}`, state: 'waiting', title: `Chain ${i + 1} next`, projectDir: PROJECT, after: 1 }] }));
+
+test('dividers: two running runs and two running groups each keep one --line divider, in both views', async () => {
+  for (const groupBy of ['none', 'project']) {
+    const { window, doc, recv } = await boot({ chains: CHAINS_2(), storage: VIEW({ groupBy }) });
+    recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pchain01' }), live('r2', { pipelineId: 'pchain02' }), live('r3'), live('r4')] });
+    go(window, 'runs'); await settle(window);
+    const rules = borderRules(doc);
+    const base = rules.find((r) => r.selectorText === DIVIDER);
+    assert.ok(base && /border-bottom:\s*1px solid var\(--line\)/.test(base.style.cssText), 'the one divider rule is intact');
+    const groups = ['chain:p:pchain01', 'chain:p:pchain02'].map((k) => groupItem(doc, k));
+    const runsTop = ['r3', 'r4'].map((id) => itemOf(doc, `[data-run-id="${id}"]`));
+    for (const [what, items] of [['running group', groups], ['running run', runsTop]]) {
+      for (const it of items) {
+        assert.ok(it, `${what} is drawn (${groupBy})`);
+        assert.equal(it.dataset.level, 'top');
+        // A plain row: not Needs you, not selected, not a group whose run is open (the three designed exceptions).
+        assert.ok(!it.classList.contains('is-needs'), `${what} is not a Needs-you row`);
+        assert.equal(it.querySelector(':scope > a.runs-row.selected, :scope > a.runs-row.member-open'), null, `${what} is not highlighted`);
+        // Only the divider rule: nothing hides it (transparent / 0), recolours it, or adds a second (top) border.
+        assert.deepEqual(borderHits(rules, it), [DIVIDER], `${what} ${it.dataset.rowKey} keeps exactly one divider (${groupBy})`);
+      }
+    }
+    // Running groups open by default; their members still draw none (the members rule is untouched).
+    for (const g of groups) {
+      assert.equal(g.querySelector(':scope > .runs-row-tail .runs-expand').getAttribute('aria-expanded'), 'true');
+      for (const m of g.querySelectorAll(':scope > .runs-members > .runs-item')) {
+        assert.ok(borderHits(rules, m).includes('.runs-members > .runs-item'), 'a member row draws no divider');
+      }
+      assert.deepEqual(borderHits(rules, g.querySelector(':scope > .runs-members')), [], 'the members list adds no line');
+    }
+    window.close();
+  }
+});
+
+test('dividers: a highlighted row (selected, Needs you, collapsed group with its run open) still drops its own', async () => {
+  const { window, doc, recv } = await boot({ chains: CHAINS_2(), history: [] });
+  recv({ type: 'hello', runs: [live('r1', { pipelineId: 'pchain01' }), live('r3')] });
+  go(window, 'runs'); await settle(window);
+  const rules = borderRules(doc);
+  // Probes carry the real classes, appended and removed in one go (as tools/verify-runs-list-cdp.mjs does).
+  const row = itemOf(doc, '[data-run-id="r3"]');
+  const probe = (cls, inner) => { const p = row.cloneNode(false); if (cls) p.classList.add(cls); p.innerHTML = inner; row.after(p); return p; };
+  const sel = probe('', '<a class="runs-row selected"></a>');
+  const needs = probe('is-needs', '<a class="runs-row"></a>');
+  const openShut = probe('', '<a class="runs-row member-open"></a>');
+  const openExpanded = probe('', '<a class="runs-row member-open"></a><div class="runs-members"></div>');
+  assert.ok(borderHits(rules, sel).includes('.runs-item:has(> a.runs-row.selected)'));
+  assert.ok(borderHits(rules, needs).includes('.runs-item.is-needs'));
+  assert.ok(borderHits(rules, openShut).includes('.runs-item:has(> a.runs-row.member-open):not(:has(> .runs-members))'));
+  assert.deepEqual(borderHits(rules, openExpanded), [DIVIDER], 'an expanded group whose run is open keeps its divider');
+  for (const p of [sel, needs, openShut, openExpanded]) p.remove();
+  window.close();
+});
+
+// ── The list keys (list-keys.mjs, issue #948): one Tab stop, a moving focus, letter keys on the row or the selection ──
+const stops = (doc) => [...doc.querySelectorAll('#runs-list a.runs-row, #runs-list button.runs-sec-head')].filter((n) => n.tabIndex === 0);
+const press = (window, node, key, o = {}) => {
+  const ev = new window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...o });
+  node.dispatchEvent(ev);
+  return ev;
+};
+const rows = (doc) => [...doc.querySelectorAll('#runs-list a.runs-row')];
+function oneStop(doc, why) {
+  assert.equal(stops(doc).length, 1, `one Tab stop ${why}`);
+  for (const b of doc.querySelectorAll('#runs-list .runs-more, #runs-list .runs-expand, #runs-list .runs-check')) assert.equal(b.tabIndex, -1, `${b.className} ${why}`);
+}
+const MORE = { id: 'aaaa0003', projectKey: KEY, projectName: 'proj', projectDir: PROJECT, title: 'Third thing', status: 'done',
+  startedAt: '2026-09-29T07:00:00Z', mtime: 1 };
+
+test('list keys: one Tab stop on every paint (boot, unfold, Show, ⇧↓, a live row), and it follows the focus', async () => {
+  const { window, doc, recv } = await boot({ runGroups: [FEATURE_GROUP] });
+  recv({ type: 'hello', runs: [live('r-live', { pipelineId: 'p-live' })] });
+  go(window, 'runs'); await settle(window);
+  oneStop(doc, 'after boot');
+  const g = () => groupItem(doc, `chain:${FEATURE_GROUP.id}`).querySelector(':scope > a.runs-row');
+  g().focus();
+  press(window, g(), 'ArrowLeft'); await settle(window);
+  press(window, g(), 'ArrowRight'); await settle(window);
+  oneStop(doc, 'after the group unfolds');
+  await pickView(window, doc, 'Archived');
+  oneStop(doc, 'under Show = Archived');
+  await pickView(window, doc, 'All');
+  oneStop(doc, 'back on All');
+  rows(doc)[0].focus();
+  press(window, rows(doc)[0], 'ArrowDown', { shiftKey: true }); await settle(window);
+  oneStop(doc, 'after ⇧↓');
+  const second = rows(doc)[1];
+  second.focus();
+  const key = second.dataset.rowKey;
+  recv({ type: 'run-created', runId: 'r-new', title: 'New one', projectDir: PROJECT, status: 'running', kind: 'run', startedAt: '10:01:00' });
+  await settle(window);
+  assert.ok(rowEl(doc, '[data-run-id="r-new"]'), 'the live row is listed');
+  oneStop(doc, 'after a live row');
+  assert.equal(stops(doc)[0].dataset.rowKey, key, 'the stop stays on the focused row');
+});
+
+test('list keys: j moves to the next row and Enter opens it', async () => {
+  const { window, doc } = await boot();
+  go(window, 'runs'); await settle(window);
+  const [first, second] = rows(doc);
+  first.focus();
+  press(window, first, 'j');
+  assert.equal(doc.activeElement, second);
+  press(window, second, 'Enter'); await settle(window);
+  assert.equal(window.location.hash, second.getAttribute('href'));
+});
+
+test('list keys: E archives an idle finished row with Undo; on a working row it posts nothing', async () => {
+  const { window, doc, recv, posts } = await boot({ bulk: () => ({ ok: true, action: 'archive', done: [{ id: 'aaaa0001', title: 'Merged thing' }], cancelled: [], skipped: [] }) });
+  recv({ type: 'hello', runs: [live('r1')] });
+  go(window, 'runs'); await settle(window);
+  const working = rowEl(doc, '[data-run-id="r1"]');
+  working.focus();
+  press(window, working, 'e'); await settle(window, 8);
+  assert.equal(posts.length, 0, 'a running row has nothing to archive');
+  const done = rowEl(doc, '[data-pipeline-id="aaaa0001"]');
+  done.focus();
+  press(window, done, 'e'); await settle(window, 8);
+  assert.equal(posts.at(-1).action, 'archive');
+  assert.match(JSON.stringify(posts.at(-1).targets), /aaaa0001/);
+  const toast = doc.querySelector('#toasts .toast');
+  assert.equal(toast.querySelector('.tt').textContent, 'Archived 1 run');
+  assert.equal(toast.querySelector('.toast-act').textContent, 'Undo');
+});
+
+test('list keys: in Show = Archived, E restores and the ⋯ reads Restore with hint E', async () => {
+  const { window, doc, posts } = await boot({ storage: VIEW({ show: 'archived' }),
+    bulk: () => ({ ok: true, action: 'restore', done: [{ id: 'cccc0009', title: 'Archived thing' }], cancelled: [], skipped: [] }) });
+  go(window, 'runs'); await settle(window, 8);
+  const row = () => rowEl(doc, '[data-pipeline-id="cccc0009"]');
+  click(window, row().closest('.runs-item').querySelector(':scope > .runs-row-tail .runs-more'));
+  const restore = [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.querySelector('.wfv-menu-l').textContent === 'Restore');
+  assert.ok(restore, 'the archived row offers Restore');
+  assert.equal(restore.querySelector('.wfv-menu-hint').textContent, 'E');
+  press(window, doc.querySelector('.wfv-menu [role^="menuitem"]'), 'Escape');
+  row().focus();
+  press(window, row(), 'e'); await settle(window, 8);
+  assert.equal(posts.at(-1).action, 'restore');
+  assert.equal(doc.querySelector('#toasts .toast .tt').textContent, 'Restored 1 run');
+});
+
+test('list keys: ⌫ opens the Delete confirm on Cancel from Advanced; at Simple it does nothing', async () => {
+  const { applyLevel } = await import('../ui/public/ui-level.mjs');
+  const { window, doc, confirmWith } = await boot();
+  go(window, 'runs'); await settle(window);
+  const row = rowEl(doc, '[data-pipeline-id="aaaa0002"]');
+  applyLevel('simple', doc);
+  row.focus();
+  press(window, row, 'Backspace'); await settle(window);
+  assert.equal(doc.getElementById('confirm-modal').classList.contains('hidden'), true, 'Simple has no Delete');
+  applyLevel('expert', doc);
+  press(window, row, 'Backspace'); await settle(window);
+  assert.equal(doc.getElementById('confirm-modal').classList.contains('hidden'), false);
+  assert.match(doc.getElementById('confirm-modal').textContent, /Delete 1 run permanently\?/);
+  assert.equal(doc.activeElement.id, 'confirm-cancel');
+  await confirmWith(false);
+});
+
+test('list keys: the row ⋯ shows each item\'s key on a Mac', async () => {
+  const { window, doc } = await boot({ setup: (w) => Object.defineProperty(w.navigator, 'platform', { value: 'MacIntel', configurable: true }) });
+  go(window, 'runs'); await settle(window);
+  click(window, itemOf(doc, '[data-pipeline-id="aaaa0001"]').querySelector(':scope > .runs-row-tail .runs-more'));
+  const hints = [...doc.querySelectorAll('.wfv-menu .wfv-menu-hint')].map((h) => h.textContent);
+  for (const h of ['Space', 'S', 'E', '⌫']) assert.ok(hints.includes(h), `hint ${h} in ${hints.join(' ')}`);
+});
+
+test('list keys: ? opens one Keyboard shortcuts sheet; Esc closes it and keeps the selection; View › Keyboard shortcuts too', async () => {
+  const { window, doc } = await boot();
+  go(window, 'runs'); await settle(window);
+  const first = rows(doc)[0];
+  first.focus();
+  press(window, first, ' '); await settle(window);
+  assert.equal(doc.querySelectorAll('#runs-list .runs-item.is-checked').length, 1);
+  press(window, doc.activeElement, '?', { shiftKey: true });
+  assert.equal(doc.querySelectorAll('.keys-modal').length, 1);
+  press(window, doc.activeElement, 'Escape'); await settle(window);
+  assert.equal(doc.querySelectorAll('.keys-modal').length, 0);
+  assert.equal(doc.querySelectorAll('#runs-list .runs-item.is-checked').length, 1, 'Esc closed the sheet, not the selection');
+  await pickView(window, doc, 'Keyboard shortcuts');
+  assert.equal(doc.querySelectorAll('.keys-modal').length, 1);
+  click(window, doc.querySelector('.keys-modal .keys-close'));
+  assert.equal(doc.activeElement, doc.getElementById('runs-view-btn'));
+});
+
+test('list keys: ? opens nothing while typing or over a row menu; on the Chat page it opens the Chat sheet, not the Runs one', async () => {
+  const { window, doc } = await boot();
+  go(window, 'runs'); await settle(window);
+  const input = doc.getElementById('tsearch-input');
+  input.focus();
+  press(window, input, '?', { shiftKey: true });
+  assert.equal(doc.querySelectorAll('.keys-modal').length, 0, 'typing ? in the search');
+  click(window, itemOf(doc, '[data-pipeline-id="aaaa0001"]').querySelector(':scope > .runs-row-tail .runs-more'));
+  press(window, doc.activeElement, '?', { shiftKey: true });
+  assert.equal(doc.querySelectorAll('.keys-modal').length, 0, 'over the row ⋯ menu');
+  press(window, doc.activeElement, 'Escape');
+  go(window, 'chat/new'); await settle(window);
+  press(window, doc.body, '?', { shiftKey: true });
+  const heads = [...doc.querySelectorAll('.keys-modal h3.keys-h')].map((n) => n.textContent);
+  assert.ok(heads.includes('Chat page') && !heads.includes('Runs list'), 'on the Chat page');
+});
+
+test('list keys: Enter on a focused ⋯ keeps the button\'s own Enter (no open, no hash change)', async () => {
+  const { window, doc } = await boot();
+  go(window, 'runs'); await settle(window);
+  const before = window.location.hash;
+  const more = itemOf(doc, '[data-pipeline-id="aaaa0001"]').querySelector(':scope > .runs-row-tail .runs-more');
+  more.focus();
+  const ev = press(window, more, 'Enter');
+  assert.equal(ev.defaultPrevented, false, 'the list keys leave Enter to the button');
+  click(window, more);   // what the browser's native Enter on a button does
+  assert.equal(doc.querySelectorAll('.wfv-menu').length, 1);
+  assert.equal(window.location.hash, before);
+});
+
+test('list keys: with a selection, E on the View button or the bar\'s Archive posts nothing', async () => {
+  const { window, doc, posts } = await boot();
+  go(window, 'runs'); await settle(window);
+  tick(window, itemOf(doc, '[data-pipeline-id="aaaa0001"]').querySelector('.runs-check'));
+  await settle(window);
+  for (const b of [doc.getElementById('runs-view-btn'), doc.querySelector('#runs-bulk [data-bulk="archive"]')]) {
+    b.focus();
+    press(window, b, 'e'); await settle(window, 8);
+  }
+  assert.equal(posts.length, 0);
+});
+
+test('list keys: E on the second of 3 finished rows leaves the focus on the row that was third', async () => {
+  let hist = [...HIST, MORE];
+  let late = false;   // after the archive, History answers a beat later, as it does over the network
+  const { window, doc, posts } = await boot({ history: () => (late ? new Promise((r) => setTimeout(() => r(hist), 30)) : hist), bulk: (body) => {
+    const id = body.targets[0].pipelineId;
+    hist = hist.filter((p) => p.id !== id);
+    late = true;
+    return { ok: true, action: 'archive', done: [{ id, title: id }], cancelled: [], skipped: [] };
+  } });
+  go(window, 'runs'); await settle(window);
+  const [, second, third] = rows(doc);
+  const thirdKey = third.dataset.rowKey;
+  second.focus();
+  press(window, second, 'e'); await settle(window, 8);
+  assert.equal(doc.activeElement, second, 'the row keeps the focus until History drops it');
+  await new Promise((r) => setTimeout(r, 60)); await settle(window);
+  assert.equal(posts.length, 1);
+  assert.equal(doc.querySelector(`#runs-list a.runs-row[data-row-key="${second.dataset.rowKey}"]`), null, 'the repaint dropped it');
+  assert.equal(doc.activeElement.dataset.rowKey, thirdKey);
+});
+
+test('list keys: → / ← fold a group row; j skips a folded group\'s members and enters an open one', async () => {
+  const { window, doc, recv } = await boot({ runGroups: [FEATURE_GROUP] });
+  recv({ type: 'hello', runs: [live('r-live', { pipelineId: 'p-live' })] });
+  go(window, 'runs'); await settle(window);
+  const gi = () => groupItem(doc, `chain:${FEATURE_GROUP.id}`);
+  const g = () => gi().querySelector(':scope > a.runs-row');
+  const tog = () => gi().querySelector(':scope > .runs-row-tail .runs-expand');
+  g().focus();
+  press(window, g(), 'ArrowLeft'); await settle(window);
+  assert.equal(tog().getAttribute('aria-expanded'), 'false');
+  assert.equal(doc.activeElement, g(), 'the repaint keeps the group row focused');
+  const after = rows(doc)[rows(doc).indexOf(g()) + 1];
+  assert.equal(after.closest('.runs-item').dataset.level, 'top');
+  press(window, g(), 'j');
+  assert.equal(doc.activeElement, after, 'j skips the folded members');
+  g().focus();
+  press(window, g(), 'ArrowRight'); await settle(window);
+  assert.equal(tog().getAttribute('aria-expanded'), 'true');
+  press(window, g(), 'j');
+  assert.equal(doc.activeElement, gi().querySelector('.runs-members a.runs-row'), 'j enters the open group');
+});
+
+test('list keys: ⇧↓ from the first row selects two rows and shows the bar', async () => {
+  const third = { ...HIST[1], id: 'aaaa0003', title: 'Third thing', startedAt: '2026-09-29T07:00:00Z', mtime: 1 };
+  const { window, doc } = await boot({ history: [...HIST, third] });
+  go(window, 'runs'); await settle(window);
+  const first = rows(doc)[0];
+  first.focus();
+  press(window, first, 'ArrowDown', { shiftKey: true }); await settle(window);
+  assert.equal(doc.querySelectorAll('#runs-list .runs-item.is-checked').length, 2);
+  assert.equal(doc.getElementById('runs-bulk').hidden, false);
+  // The rebuild's own refocus of the old row must not win: the first press already moves the focus.
+  assert.equal(doc.activeElement, rows(doc)[1], 'the first ⇧↓ moves the focus to the second row');
+  press(window, doc.activeElement, 'ArrowDown', { shiftKey: true }); await settle(window);
+  assert.equal(doc.querySelectorAll('#runs-list .runs-item.is-checked').length, 3, 'a second ⇧↓ extends to three rows');
+  assert.equal(doc.activeElement, rows(doc)[2]);
+  press(window, doc.activeElement, 'ArrowUp', { shiftKey: true }); await settle(window);
+  assert.equal(doc.activeElement, rows(doc)[1], '⇧↑ steps the focus back one row');
 });

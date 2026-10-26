@@ -5,7 +5,9 @@
 // Run:  node ui/server.mjs   (or `npm start`)
 // Env:  PORT (default 4317), WORCA_MOCK / ORCH_MOCK (truthy = every run and Claude job is a
 //       mock, whatever body.mock says; the UI shows a MOCK pill and locks its Mock switch on)
+// Flag: --scratch (`npm start --scratch`) = a temp WORCA_HOME and a free port; see scratch-start.mjs
 
+import '../src/core/scratch-start.mjs'; // first: sets env before any module reads it
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import http from 'node:http';
@@ -24,7 +26,11 @@ import { preflightDeps } from '../src/core/preflight-deps.mjs';
 import { committedMcpStatus, approveCommittedMcp } from '../src/core/mcpjson-approval.mjs';
 import { runFolderHosting } from '../src/core/preflight-host.mjs';
 import { createOrchestratorFor } from '../src/core/engine-select.mjs';
-import { createUpdateChecker, fetchNpmLatest, isSourceBuild, parseVersion, releaseLinks } from '../src/core/update-check.mjs';
+import { createUpdateChecker, fetchNpmLatest, isSourceBuild, parseVersion, releaseLinks,
+  createVersionLister, fetchNpmVersions, fakeVersionList, annotateVersions, findListedVersion, canonicalVersion,
+  canAutoRestart, compareVersions, AUTO_RESTART_MIN } from '../src/core/update-check.mjs';
+import { UPDATE_EXIT_CODE, supervisorMatches, readUpdateRecord, writeUpdateRecord, startCommand } from '../src/core/ui-update.mjs';
+import { isSharedInstall, updateEligibility, probeNpmGlobal, UPDATE_MESSAGES } from '../src/core/update-eligibility.mjs';
 import { limitResumeDecision } from '../src/core/limit-resume.mjs';
 import { selectRunEngine } from '../src/core/engines/index.mjs';
 import { mockSlowMs } from '../src/core/engines/mock.mjs';
@@ -63,6 +69,9 @@ import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/c
 import { gitState, gitAvailable, currentGitState, onGitChange, GIT_MISSING } from '../src/core/git-available.mjs';
 import { teamOverHttps, teamRepoState, setTypedTeamRepo } from '../src/core/git-free/team-repo.mjs';
 import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, FlagError, requireFlag } from '../src/core/flags.mjs';
+import { TELEMETRY_FILE } from '../src/core/telemetry/recorder.mjs';
+import { summarizeTelemetry } from '../src/core/telemetry/summary.mjs';
+import { modelFacts } from '../src/core/model-tiers.mjs';
 import { createKeepAwake, countWorking } from '../src/core/keep-awake.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
@@ -87,6 +96,7 @@ import {
   memoryDefragModel, setMemoryDefragModel, assertMemoryDefragModelInput,
   agentGenModel as storedAgentGenModel, setAgentGenModel, assertAgentGenModelInput,
   namingModel as storedNamingModel, setNamingModel, assertNamingModelInput,
+  commandSummaryModel as storedCommandSummaryModel, setCommandSummaryModel, assertCommandSummaryModelInput,
   workspaceScanModels, setWorkspaceScanModels, assertWorkspaceScanInput,
   scheduleDefaults, setScheduleDefaults,
   userTagDimensions, setUserTagDimensions, userEnforceTags, setUserEnforceTags,
@@ -95,9 +105,12 @@ import {
   actionsSettings, setActionsSettings, assertActionsInput,
   syncDefaults, setSyncDefaults, assertSyncSettingsInput, DEFAULT_SYNC_SETTINGS,
   networkWaitSettings, assertNetworkWaitInput, setNetworkWait, effectiveNetworkWait,
+  networkProxySettings, networkProxyEnabled, migrateCorporateProxyFlag,
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
   stepModelsSetting, assertStepModelsInput, setStepModels,
+  modelRolesSetting, assertModelRolesInput, setModelRoles,
   utilityModelsSetting, assertUtilityModelsInput, setUtilityModels,
+  requirementsInterviewSetting, assertRequirementsInterviewInput, setRequirementsInterview,
   askEngineSetting, assertAskEngineInput, setAskEngineSetting, askModelsSetting, assertAskModelsInput, setAskModels,
   chatHomePinsFor, setChatHomePinsFor,
 } from '../src/core/settings.mjs';
@@ -107,6 +120,7 @@ import { effectiveNightConfig, nightLayers } from '../src/core/night/effective.m
 import { readNightDecisions, nightAnsweredSince } from '../src/core/night/store.mjs';
 import { createAwayHoursWatch } from '../src/core/night/hours-watch.mjs';
 import { resolveDefragModel, defragDefaultModel, defragWorkflowView, checkStartPair } from '../src/core/memory-defrag-model.mjs';
+import { withRole, withScanRole } from '../src/core/model-roles.mjs';
 import { parseRunOverlay, checkRunOverlay, overlayWorkflowRefusal, OVERLAY_ERRORS } from '../src/core/run-overlay.mjs';
 import { listPresets, readPreset, createPreset, updatePreset, duplicatePreset, deletePreset, readRunSetup, createPresetFromRun } from '../src/core/run-presets-store.mjs';
 import { presetRefusals, completeSnapshot } from '../src/core/run-presets-check.mjs';
@@ -130,7 +144,13 @@ import {
   findRunLinksByPipeline as askFindRunLinksByPipeline, runLinkTarget,
   finishMessage as askFinishMessage, newAskId,
   newAskId as askNewId, findPullRequestCards as askFindPullRequestCards, findFixRunCards as askFindFixRunCards,
+  setArchived as askSetArchived, setPinned as askSetPinned, listThreadsPage as askListThreadsPage, THREAD_SORTS,
+  createChatGroup as askCreateChatGroup, getChatGroup as askGetChatGroup, listChatGroups as askListChatGroups,
+  renameChatGroup as askRenameChatGroup, addToChatGroup as askAddToChatGroup, removeFromChatGroup as askRemoveFromChatGroup,
+  deleteChatGroup as askDeleteChatGroup, chatGroupThreadIds as askChatGroupThreadIds, firstUserText as askFirstUserText,
+  ChatGroupError,
 } from '../src/core/ask/store.mjs';
+import { CHAT_BUSY, chatBusyReason, chatGroupBusyText } from '../src/shared/chat-busy.mjs';
 import { revealTargetFor as askRevealTargetFor } from '../src/core/ask/show-files-deps.mjs';
 import { sanitizeTitle as askSanitizeTitle } from '../src/core/title.mjs';
 import { stripIntentLead } from '../src/shared/intent-leads.mjs';
@@ -162,7 +182,8 @@ import { validateMcpOff, resolveAskMcp, askMcpPromptInput, askMcpPreview, askMcp
 import { attachRunFollower } from '../src/core/ask/follow.mjs';
 import { mockEnabled, MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
 import { budgetStatus, readCostCapOverride, setCostCapOverride, recordUtilityCost } from '../src/core/cost-budget.mjs';
-import { resolveNamingModel, suggestNames, mockSuggestion, estimateNamingUsd, legacyBranchHint } from '../src/core/naming.mjs';
+import { resolveNamingModel, suggestNames, mockSuggestion, estimateNamingUsd, legacyBranchHint, suggestGroupName } from '../src/core/naming.mjs';
+import { createCommandSummariser, summariseCommandCard, commandSummariesWanted } from '../src/core/ask/command-summary.mjs';
 import { getStats, budgetWindowSavings, shapingGroups } from '../src/core/stats.mjs';
 import {
   enableTeamMetrics, setRecordMyRuns, flushSlug, flushAll, flushProject, scheduleFlush, discoverProject,
@@ -191,7 +212,7 @@ import { skillDeviations as policySkillDeviations } from '../src/core/policy/eff
 import { resolveSkillRegistry as policySkillRegistry } from '../src/core/skills-registry/resolve.mjs';
 import { skillSkipReasonText as policySkillWhy } from '../src/core/skills-registry/texts.mjs';
 import { policyForScope, policyPayload } from '../src/core/policy/scope.mjs';
-import { policyCatalogModels } from '../src/core/policy/cache.mjs';
+import { policyCatalogModels, cachedPolicyHomes } from '../src/core/policy/cache.mjs';
 import { pickFolderNative, pickAppNative, nativeDialogAvailable } from '../src/core/folder-dialog.mjs';
 import {
   readRemoteAccessConfig, checkRemoteAccessConfig, isRemoteMode, createHostGuard, createIdentityCheck, isInContainer,
@@ -251,9 +272,9 @@ import {
   readNightModePrefs, writeNightModePrefs, readProjectDefaultTags, writeProjectDefaultTags,
   readProjectActions, writeProjectActions, readActionsMeta, writeActionsMeta, writeTeamRepo,
 } from '../src/core/config.mjs';
-import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
-import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, COPILOT_EFFORTS, helperEngineFor, ASK_ENGINES } from '../src/core/model-env.mjs';
-import { engineLabel, ENGINE_NAMES, engineRefusalFor } from '../src/shared/engine-switch.mjs';
+import { listGlobalModels, addGlobalModel, updateGlobalModel, readSettings } from '../src/core/settings.mjs';
+import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, COPILOT_EFFORTS, GOOSE_EFFORTS, OPENCODE_EFFORTS, helperEngineFor, ASK_ENGINES, lockedChatEngine } from '../src/core/model-env.mjs';
+import { engineLabel, ENGINE_NAMES, engineRefusalFor, ENGINES, chatAttachRefusal } from '../src/shared/engine-switch.mjs';
 import { engineReadiness, engineLocks } from '../src/core/engines/readiness.mjs';
 import { providerReadiness } from '../src/core/bridge/registry.mjs';
 import { startBridge } from '../src/core/bridge/server.mjs';
@@ -266,6 +287,9 @@ import { speechState, transcribe, synthesize, testSpeech } from '../src/core/spe
 import { speechAssetStore } from '../src/core/speech-assets.mjs';
 import { listPluginModels, modelSecretsSchema, pluginModelSecretStatus } from '../src/core/plugin-models.mjs';
 import { testModel } from '../src/core/model-test.mjs';
+import { detectSetup, defaultProbes } from '../src/core/setup/detect.mjs';
+import { teamSetupState, buildTeamSetup, SHARE_SETTING_KEYS } from '../src/core/setup/team-file.mjs';
+import { planSetupApply, commitSetupPlan, runSetupSteps, SetupFieldError, SetupConflictError } from '../src/core/setup/apply.mjs';
 import {
   DEFAULT_UI_PORT, UI_HEALTH_NAME, newUiToken, writeUiInstance, removeUiInstance, uiUrl,
 } from '../src/core/ui-instance.mjs';
@@ -308,6 +332,10 @@ import { chatScopeOf, withChatScope, sameScope, scopeBody, targetInScope, scopeR
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
+import { registerRequirementsRoutes, requirementsChangeNotifier } from '../src/core/requirements/routes.mjs';
+import { createRunEventHook } from '../src/core/requirements/start.mjs';
+import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
+import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
 import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import { exportWorkflowToMarketplace, listPublishTargets } from '../src/core/marketplace-publish.mjs';
@@ -319,12 +347,12 @@ import { loadScriptRegistry } from '../src/core/script-registry.mjs';
 import { probePython, pythonRuntimeState } from '../src/core/graph/python-probe.mjs';
 import {
   listLocalBranches, currentBranch, isValidSourceRef, sweepRunRoots, sweepLegacyWorktreesAll, resolveDefaultBranch, worktreePathForBranch,
-  sanitizeBranchName,
+  sanitizeBranchName, suggestBranchName,
 } from '../src/core/worktree.mjs';
 import {
   fetchRemote, remoteInfo, syncStatus, fastForward, resolveSourceRef, commitsBetween, isSafeBranchName, isSafeRemoteName, scrubGitText,
   INTERACTIVE_TTL_MS, INTERACTIVE_TIMEOUT_MS, RUN_TIMEOUT_MS, checkBaseMerge, mergeBaseInto, startConflictMerge, branchCheckouts,
-  commitFileOnBranch,
+  commitFileOnBranch, checkCombine, writeCombinedBranch,
 } from '../src/core/git-sync.mjs';
 import { shipFeature, SHIP_MODES, shipCardVerb } from '../src/core/shape/ship.mjs';
 import { releaseVersionHint, recordRunRelease, draftReleasesOnMerge } from '../src/core/draft-release.mjs';
@@ -393,8 +421,14 @@ import { ensureHouseBrief, writeHouseBriefPins } from '../src/core/house-brief.m
 import { validateMemoryScope, withStoreLock } from '../src/core/memory-sync.mjs';
 import {
   memoryRoot, GLOBAL_SCOPE, projectScope, scopeKey, isValidMemoryName, MEMORY_NAME_HELP, memoryScopeReport,
-  readMemory, writeMemory, removeMemory, listSnapshots, restoreSnapshot,
+  readMemory, writeMemory, removeMemory, listSnapshots, restoreSnapshot, listMemory,
 } from '../src/core/memory-store.mjs';
+import {
+  queueTeamChanges, changedNoteNames, teamMemoryStatus, flushTeamMemory, refreshTeamLayer, deleteTeamNote, isTeamMemoryOn,
+  switchTeamMemoryOn, teamMemorySettingChanged, startTeamMemoryBackground, teamMemoryEvents, teamClientText,
+  previewTeamSeed, seedTeamMemory, resolveTeamClash, undoTeamSeed, dismissSeedOffer,
+  detectTeamMemory, teamMemoryAvailability, dismissTeamMemoryOffer,
+} from '../src/core/memory-team.mjs';
 import { memoryCaps } from '../src/core/settings.mjs';
 import { onboardingPrefs, setOnboardingPrefs } from '../src/core/settings.mjs';
 import { settingsErrorReply, asSettingsField } from '../src/core/settings-errors.mjs';
@@ -442,7 +476,7 @@ import { TokenBucket } from '../src/core/chat/rate-limiter.mjs';
 import { renderTest } from '../src/core/chat/renderers.mjs';
 import { readPluginsLock, pluginCurrentDir } from '../src/core/plugins-lock.mjs';
 import { normalizeManifest, validatePluginDir, PLUGIN_NAME_RE as MANIFEST_PLUGIN_NAME_RE } from '../src/core/plugin-manifest.mjs';
-import { listTaskSources, retryWriteback, resolveTaskInput } from '../src/core/sources.mjs';
+import { listTaskSources, retryWriteback, resolveTaskInput, sourcePlaceholderTitle } from '../src/core/sources.mjs';
 import {
   createTicket, getTicket, listTickets, updateTicket, cancelTicket, requestRunNow, setTicketPipeline,
   createSchedule, getSchedule, listSchedules, updateSchedule, pauseSchedule, resumeSchedule, skipNext,
@@ -491,8 +525,13 @@ import * as skStore from '../src/core/mcp/store.mjs';
 import * as skViews from '../src/core/mcp/views.mjs';
 import * as skClone from '../src/core/clone-project.mjs';
 import { HLJS_GRAMMAR_IDS } from './public/hljs-loader.mjs';
-import { useEnvProxy, proxyNotice } from '../src/core/env-proxy.mjs';
-import { startEgressPolicy, egressNotice, egressSummary } from '../src/core/egress-policy.mjs';
+import { useEnvProxy, reinstallEnvProxy, proxyNotice } from '../src/core/env-proxy.mjs';
+import { startLiveEgress, egressNotice, egressSummary } from '../src/core/egress-policy.mjs';
+import { detectSystemProxy } from '../src/core/system-proxy.mjs';
+import { saveProxyLogin, clearProxyLogin, parseAccount, ProxyLoginError, upstreamEnv, savedLoginRefusal } from '../src/core/proxy-credentials.mjs';
+import { createProxyHost, PROXY_AGENT_TEXT } from '../src/core/proxy-host.mjs';
+import { applyProxyChange, validateProxyChange, validateProxyFlagOn } from '../src/core/ask/proxy-deps.mjs';
+import { proxyEventPrompt, proxyNoticeText } from '../src/core/ask/proxy-proposal.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -632,7 +671,8 @@ const VOICE_VENDOR = [
   } },
 ];
 
-const PORT = Number(process.env.PORT) || DEFAULT_UI_PORT;
+// PORT=0 is a real value (the OS picks a free port; `--scratch` uses it), not "unset".
+const PORT = process.env.PORT === '0' ? 0 : Number(process.env.PORT) || DEFAULT_UI_PORT;
 // Bind to loopback by default (S1). Power users who knowingly want LAN exposure
 // can set WORCA_HOST=0.0.0.0, but the localhost-only Host/Origin guard still
 // applies unless they also front it with auth.
@@ -743,6 +783,79 @@ const MAX_BUFFER = 5000;
 // ---------------------------------------------------------------------------
 const app = express();
 const server = http.createServer(app);
+
+// Settings › About manual update (issue #841). The version list (npm packument, cached 12 h like the
+// check above), who may update, and the handoff record's last result. Never at boot, never under mock
+// or node:test (the default fetcher and probe refuse without I/O). Tests swap them via _testing.
+let versionsFetcherOverride = null;
+function defaultVersionsFetcher() {
+  const fake = process.env.WORCA_UPDATE_CHECK_LATEST;
+  if (fake && parseVersion(fake)) return Promise.resolve(fakeVersionList(PKG_VERSION, fake));
+  if (serverMockMode() || process.env.NODE_TEST_CONTEXT) return Promise.reject(new Error('version list is off under mock / tests'));
+  return fetchNpmVersions();
+}
+const versionLister = createVersionLister({ fetchList: () => (versionsFetcherOverride || defaultVersionsFetcher)() });
+
+let npmProbeOverride = null; let npmProbePromise = null; let updateDeploymentOverride = null; let updateMockOverride = null;
+function npmProbe() {
+  if (npmProbeOverride) return Promise.resolve(npmProbeOverride());
+  if (serverMockMode() || process.env.NODE_TEST_CONTEXT) return Promise.resolve(null);
+  return (npmProbePromise ||= probeNpmGlobal({ packageRoot: PROJECT_ROOT }));   // once per process: the install cannot move under us
+}
+const updateDeployment = () => updateDeploymentOverride ?? DEPLOYMENT;
+// Read per call (tests flip it); the value must be our direct parent's pid, never an inherited copy.
+const updateSupervised = () => !!uiControl.token && typeof uiControl.onShutdown === 'function' && supervisorMatches(process.env);
+const RUNNING_VERSION = canonicalVersion(PKG_VERSION);
+const UPDATE_SCHEDULE_WINDOW_MS = 30 * 60_000;
+const UPDATE_RESULT_TTL_MS = { failed: 24 * 3600_000, installed: 30 * 60_000 };
+let updateRequested = false;
+
+async function currentUpdateEligibility(req = null) {
+  if (req && agentMayBeCaller(req)) return { canUpdate: false, reason: 'agent', message: UPDATE_MESSAGES.agent, dryRun: false };
+  const deployment = updateDeployment();
+  const sourceBuild = sourceBuildOverride ?? isSourceBuild(PROJECT_ROOT);
+  const supervised = updateSupervised();
+  // Spawn `npm root -g` only when its answer can change the verdict (never on a shared install).
+  const needNpm = !isSharedInstall({ deployment, env: process.env }) && !sourceBuild && supervised;
+  return updateEligibility({
+    deployment, env: process.env, sourceBuild, supervised,
+    npm: needNpm ? await npmProbe() : null,
+    mock: updateMockOverride ?? serverMockMode(),
+  });
+}
+const updatePort = () => Number(server.address?.()?.port) || PORT;
+
+function lastUpdateResult() {
+  let rec; try { rec = readUpdateRecord(); } catch { return null; }
+  if (!rec || !(rec.state in UPDATE_RESULT_TTL_MS)) return null;
+  const at = Date.parse(rec.finishedAt || '');
+  if (!Number.isFinite(at) || Date.now() - at > UPDATE_RESULT_TTL_MS[rec.state]) return null;
+  if (rec.state === 'installed' && rec.to !== RUNNING_VERSION) return null;
+  // "Still on <from>" is only true while <from> runs: a failure followed by a by-hand update is stale.
+  if (rec.state === 'failed' && rec.from && rec.from !== RUNNING_VERSION) return null;
+  return { state: rec.state, from: rec.from || null, to: rec.to || null, reason: rec.reason || '', output: rec.output || '',
+    finishedAt: rec.finishedAt, resumed: Number.isInteger(rec.resumed) ? rec.resumed : null };
+}
+
+function updateCallerOk(req, res) {
+  if (!terminalSameOrigin(req)) { res.status(403).json({ error: 'Updates only answer pages served by this Worca.', code: 'UPDATE_CROSS_ORIGIN' }); return false; }
+  if (agentMayBeCaller(req)) { res.status(403).json({ error: UPDATE_MESSAGES.agent, code: 'UPDATE_AGENT_BLOCKED' }); return false; }
+  if (isSharedInstall({ deployment: updateDeployment(), env: process.env })) { res.status(403).json({ error: UPDATE_MESSAGES.shared, code: 'UPDATE_DISABLED' }); return false; }
+  return true;
+}
+
+function updatePreview() {
+  // drainActiveEntries() returns the raw `runs` Map entries (id = runId, pipelineId, title, status, …).
+  const runsNow = drainActiveEntries().map((e) => ({ id: e.pipelineId || e.id, title: e.title || e.pipelineId || e.id }));
+  const soon = Date.now() + UPDATE_SCHEDULE_WINDOW_MS;
+  let scheduled = [];
+  try {
+    scheduled = listTickets().filter((t) => t.status === 'scheduled' && !t.after && Date.parse(t.runAt) <= soon)
+      .map((t) => ({ id: t.id, title: t.title || '', runAt: t.runAt }));
+  } catch { /* the note is optional */ }
+  // Paused runs continue on the next boot only when auto-resume is on (autoResumeOnBoot, drain.mjs).
+  return { runs: runsNow, scheduled, autoResume: autoResumeMode(process.env) !== 'off' };
+}
 // Refuse during the upgrade (before any replay is sent): the Host/Origin guard
 // first, then the identity check when remote access is on. The 'connection'
 // handler below re-checks the host guard as a second line.
@@ -1006,6 +1119,10 @@ function broadcast(obj) {
 }
 // CONTRACT §0: a git flip (installed / removed) reaches every open tab as one `git` frame.
 onGitChange((s) => broadcast({ type: 'git', git: { available: s.available, version: s.version } }));
+
+/** Requirements (A2 D9): the one run-event hook wireRun calls for every run; it notifies through the same
+ *  `requirements-changed` notifier the routes use (silent while the flag is off). */
+const requirementsRunEvent = createRunEventHook({ notify: requirementsChangeNotifier(broadcast) });
 
 // Per-person delivery of Ask frames (step 3): on a shared sign-in an ask-* frame that names a
 // thread goes only to sockets of that thread's owner (and to non-shared sockets, e.g. an
@@ -1350,6 +1467,9 @@ function wireRun(entry) {
           }
         }
       }
+      // Requirements (A2 D9): a run a feature started learns its pipeline id; the feature hears status changes.
+      // The entry's pipeline id finds the start of a resumed run (a new UUID, the same pipeline).
+      requirementsRunEvent(id, name, payload, entry.pipelineId || null);   // never throws
       if (entry.ticketId && (name === 'done' || name === 'error') && !entry._outcomeRecorded) {
         // Scheduled runs: report how the fired run ended (feed item, failure streak).
         // 'error' is the launch-error channel — a failure before the pipeline row exists.
@@ -1697,7 +1817,8 @@ const GIT_ONLY_ROUTES = Object.freeze([
   ['post', '/api/runs/:id/checkout'], ['delete', '/api/runs/:id/checkout'], ['get', '/api/runs/:id/checkout/diff'],
   ['post', '/api/projects/:key/actions/:actionId/try'],
   ['get', '/api/pr/remotes'], ['post', '/api/pr'], ['post', '/api/pr/resolve'], ['post', '/api/runs/:id/publish'],
-  ['post', '/api/push'], ['post', '/api/shape/features/:id/ship'],
+  ['post', '/api/push'], ['post', '/api/shape/features/:id/ship'], ['post', '/api/chains/:id/ship'],
+  ['get', '/api/run-groups/:id/combine'], ['post', '/api/run-groups/:id/ship'],
   ['post', '/api/sync'], ['post', '/api/projects/:key/sync'], ['post', '/api/sync/all'], ['post', '/api/workspaces/:id/sync'],
   ['post', '/api/runs/:id/base-check'], ['post', '/api/runs/:id/update-branch'],
   ['post', '/api/runs/:id/resolve-pipeline'], ['post', '/api/runs/:id/resolve-terminal'],
@@ -1851,13 +1972,15 @@ app.use('/src/shared', (_req, res) => {
 // Interface mode (docs/ui-levels.md): the stored choice, else the install's default. "Fresh" =
 // the welcome dialog was never dismissed and the store holds no project and no run; anything
 // else is an install that predates the mode (or has outgrown it) and keeps the full UI.
+/** A fresh install: welcome not seen, no project, no run (D18). Derived on every call, never stored. */
+function isFreshInstall() {
+  try { return !onboardingPrefs().welcomeSeen && countProjects() === 0 && countPipelines() === 0; }
+  catch { return false; }
+}
 function effectiveUiLevel() {
   const stored = storedUiLevel();
   if (stored) return stored;
-  let fresh = false;
-  try { fresh = !onboardingPrefs().welcomeSeen && countProjects() === 0 && countPipelines() === 0; }
-  catch { fresh = false; }
-  return defaultUiLevel({ fresh });
+  return defaultUiLevel({ fresh: isFreshInstall() });
 }
 // "Fresh" is derived from state the user changes (welcomeSeen, the first project), so a new user's
 // mode would jump from simple to expert the moment they act. Each of those writes pins the derived
@@ -2123,7 +2246,7 @@ async function promptFileProblem(source, projectDir) {
 // the task and settles the real title via the title event.
 function fallbackRunTitle(effectivePrompt, source) {
   if (effectivePrompt) return effectivePrompt.slice(0, 80);
-  if (source && source.type === 'plugin') return `${source.plugin}: ${source.taskId}`;
+  if (source && source.type === 'plugin') return sourcePlaceholderTitle(source);
   const text = (source && (source.prompt || source.promptText || source.promptFile)) || 'task';
   return String(text).slice(0, 80);
 }
@@ -3555,6 +3678,28 @@ function releaseAskCard(item) {
   } catch (err) { console.error(`[worca-ui] ask card release failed: ${err && err.message ? err.message : err}`); }
 }
 
+/** A requirements start's run as the feature shows it (A2 D10): the live entry while the server has it,
+ *  else the pipeline row on disk (after a restart). null when neither knows the run. A resume gives the run
+ *  a new UUID, so the pipeline id finds the live entry first. `href`: the live run's page while the server
+ *  has it, else the saved run's History page (#history/<projectKey | workspaces/<key>>/<pipelineId>). */
+function requirementsRunSummary({ runId, pipelineId }) {
+  const live = (pipelineId && liveRunEntry(pipelineId)) || liveRunEntry(runId);
+  const id = pipelineId || (live && live.pipelineId) || null;
+  let state = null;
+  if (id) { try { state = readPipelineStateById(id); } catch { state = null; } }
+  if (!live && !state) return null;
+  const key = state && (state.target === 'workspace' && state.workspaceKey ? `workspaces/${state.workspaceKey}` : state.projectKey);
+  return {
+    status: (live && live.status) || (state && state.status) || null,
+    phase: (state && state.phase) || null,
+    costUsd: state?.totalCostUsd ?? null,
+    pipelineId: id,
+    href: live ? `#running/${live.id}` : key && id ? `#history/${key}/${id}` : null,
+    // waits on a question, a gate or the Auto confirmation: entry.pendingQuestion, as the Running page reads it
+    waiting: !!(live && live.pendingQuestion && !SETTLED_RUN.has(String(live.status || ''))),
+  };
+}
+
 /** Call startRunHandler without HTTP. Resolves { status, body }. */
 async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null } = {}) {
   let out = { status: 200, body: null };
@@ -3779,23 +3924,22 @@ function withChainFeatures(chains) {
 // fetched on `done` predates it, and a chained run waits on it (pipelineGate answers `waiting` until then).
 // orch.run()/orch.resume() settle only after teardown, so refresh both then. Best effort: never the run's outcome.
 const ranMergeBack = (st) => !!st && [st.branch, ...Object.values(st.branches || {})].some((b) => b && b.mergeBack);
-// D24: a slice that settled done opens its draft PR here, after teardown committed the run's work (`done` fires
-// before teardown). First, so it runs whether or not the run merged back. Returns the draft promise (the test awaits it).
+// One ship flow: a settled slice opens no PR of its own (the feature ships through Create PR); a done slice offers the
+// Ship card here, after teardown (`done` fires before teardown). Returns the card's promise (the test awaits it).
 function afterRunSettled(orch) {
-  let draft;
+  let card;
   try {
     const st = orch.getState?.();
+    // The Ship card is offered once the last slice is done (offerShipCard checks, and is gated on shapeFirst).
     if (orch.runShape?.slice && st?.status === 'done' && st.id) {
-      // s4: the draft first, then the Ship card (it needs the last slice's PR for "View PR").
-      draft = openSliceDraft(st.id).catch((err) => console.error(`[worca-ui] slice draft PR failed: ${err?.message || err}`))
-        .then(() => offerShipCard(st.id))
+      card = Promise.resolve().then(() => offerShipCard(st.id))
         .catch((err) => console.error(`[worca-ui] ship card failed: ${err?.message || err}`));
     }
-    if (!ranMergeBack(st)) return draft;
+    if (!ranMergeBack(st)) return card;
     emitChanged('pipelines-changed', 'updated');
     setTimeout(() => { void schedulerTick(); }, 0);
   } catch { /* a refresh hint only */ }
-  return draft;
+  return card;
 }
 
 let _schedulerBusy = false;
@@ -3955,7 +4099,7 @@ app.get('/api/schedules', (req, res) => {
       schedules: listSchedules({ projectDir, workspaceId }).map(schedulePresetName),
       tickets: listTickets({ projectDir, workspaceId, all }).map(withAfter).map(ticketPresetName),
       // Run progress (P8): every open "Run after" chain, unscoped (a chain may cross projects).
-      chains: withChainFeatures(runChains({ isLive: liveProbe })),
+      chains: withChainFeatures(runChains({ isLive: liveProbe, keepDone: true })),
       counts: { ...scheduleCounts(), unread: unreadCount('schedule', { reader: notifReader(req) }) },
       defaults: scheduleDefaults(),
     });
@@ -4914,9 +5058,17 @@ async function refreshSliceBody(prUrl, pid, repoDir) {
   return editPrBody({ projectDir: repoDir, prUrl, body: [fresh, ...lines.slice(end)].join('\n') });
 }
 const SHIPPING = new Set();     // feature ids with a Ship as in flight (ship_mode is written only at the end)
+/** One ship flow: a PR a ship opened or marked ready is stored as an open, ready PR at once, so the group page and its
+ *  Runs row stop reading Draft (or Ready to ship) before the next PR lookup. persistPrState keeps an old verdict
+ *  unless it is given one; a different PR (a closed draft's row taking the one PR) starts from a fresh verdict. */
+function storeReadyPr(pid, pr) {
+  const cur = readPrState(pid);
+  const { fixing, url, number, state, ...verdict } = cur && cur.url === pr.url ? cur : {};
+  persistPrState(pid, { url: pr.url, number: pr.number ?? number ?? null, state: 'OPEN', verdict: { ...verdict, draft: false } });
+}
 // Shaper s4: one ship path for the group page route and the Ship card. → { status, body }. `release` = { version } |
 // null (validated by the caller).
-async function shipFeatureNow(id, mode, { actor = null, release = null } = {}) {
+async function shipFeatureNow(id, mode, { actor = null, release = null, watch = false } = {}) {
   if (!SHIP_MODES.includes(mode)) return { status: 400, body: { error: 'mode must be stacked or one' } };
   if (SHIPPING.has(id)) return { status: 409, body: { error: 'this feature is already shipping' } };
   const view = featureView(id, { live: liveSliceOf });
@@ -4930,16 +5082,27 @@ async function shipFeatureNow(id, mode, { actor = null, release = null } = {}) {
   if (!view.ship.ready) return { status: 409, body: { error: 'every slice must be done before the feature ships' } };
   SHIPPING.add(id);
   try {
-    // A slice whose draft never opened (a CLI-started run, or the auto draft failed at the time) gets its PR now,
-    // the same way; a failure stays visible as shipFeature's "slice K has no pull request yet".
+    // One ship flow: stacked gives each slice without a PR its own, ready, on its stacked base, in merge order;
+    // One makes no slice PRs (shipFeature closes only those that exist, e.g. an in-flight feature's drafts).
     let shown = view;
-    if (shown.slices.some((s) => s.pipelineId && !s.pr)) {
-      for (const s of shown.slices) if (s.pipelineId && !s.pr) await openSliceDraft(s.pipelineId);
+    // D5: One closes slice drafts only; a ready slice PR (made by a partly finished stacked ship) is never closed.
+    if (mode === 'one' && shown.slices.some((s) => s.pr && s.pr.url && s.pr.state !== 'CLOSED' && !s.pr.draft)) {
+      return { status: 409, body: { error: 'a run in this feature already has a PR: create one PR per run' } };
+    }
+    if (mode === 'stacked' && shown.slices.some((s) => s.pipelineId && !s.pr)) {
+      const made = [];
+      for (const s of shown.slices) {
+        if (!s.pipelineId || s.pr) continue;
+        const r = await openMemberPr(s.pipelineId, { actor });
+        if (!r.ok) return { status: r.status || 500, body: { error: `could not create run ${s.index}'s PR: ${r.error}. Create PR again to continue.`, prs: made } };
+        made.push(r.pr.url);
+      }
       shown = featureView(id, { live: liveSliceOf }) || view;
     }
     const input = await featureShipInput(shown);
     const ctx = shipCtxOf(shown);
     if (ctx.error) return { status: 409, body: { error: ctx.error } };
+    let onePr = null;
     const out = await shipFeature({ feature: input, mode, maxBody: PR_BODY_MAX - 2000 }, {
       commitChangelog: (pid, update) => commitFileOnBranch(ctx.target.repoDir, {
         branch: ctx.target.feature, path: 'CHANGELOG.md', update, message: `Changelog: ${view.title}` }),
@@ -4952,6 +5115,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null } = {}) {
       openOnePr: async ({ pipelineId, title, body }) => {
         const r = await createRunPr({ id: pipelineId, state: ctx.state, target: ctx.target, base: ctx.base,
           description: body, title, actor, preamble: false });
+        if (r.ok) onePr = r.pr;
         return r.ok ? { ok: true, url: r.pr.url, existed: !!r.pr.existed } : { ok: false, error: r.error };
       },
       adoptOnePr: async ({ url, body }) => {
@@ -4960,7 +5124,12 @@ async function shipFeatureNow(id, mode, { actor = null, release = null } = {}) {
         if (forgeOfPrUrl(url) !== 'azure') await editPrBody({ projectDir: ctx.target.repoDir, prUrl: url, body }).catch(() => null);
         return { ok: true };
       },
-      markReady: (prUrl) => markPrReady({ prUrl }),
+      markReady: async (prUrl) => {
+        const r = await markPrReady({ prUrl });
+        const s = r.ok ? shown.slices.find((x) => x.pipelineId && x.pr && x.pr.url === prUrl) : null;
+        if (s) storeReadyPr(s.pipelineId, { url: prUrl });
+        return r;
+      },
       close: async (prUrl, comment, pid) => {
         const r = await closePr({ prUrl, comment });
         if (r.ok) { const pr = readPrState(pid); if (pr && pr.url === prUrl) persistPrState(pid, { ...pr, state: 'CLOSED' }); }
@@ -4969,22 +5138,241 @@ async function shipFeatureNow(id, mode, { actor = null, release = null } = {}) {
       refreshBody: (prUrl, pid) => refreshSliceBody(prUrl, pid, ctx.target.repoDir),
     });
     if (!out.ok) return { status: out.status, body: { error: out.error } };
+    // The one PR is every slice's PR, as a chain shipped as One records it on every run: the group reads In review.
+    if (out.mode === 'one' && out.prUrl) {
+      for (const s of shown.slices) if (s.pipelineId) storeReadyPr(s.pipelineId, { url: out.prUrl, number: onePr && onePr.url === out.prUrl ? onePr.number : null });
+    }
     recordShip(id, { mode: out.mode, prUrl: out.prUrl, closed: out.closed, release: release ? { version: release.version, target: ctx.base } : null });
     appendAuditById(ctx.state.id, `Feature shipped as ${out.mode === 'one' ? 'one PR' : 'stacked PRs'}${byActor(actor)}${out.prUrl ? `: ${out.prUrl}` : ''}`
       + `${release ? ` · draft release ${release.version} after merge` : ''}`, { actor });
     broadcastFeature(id);
     syncShipCard(id);
+    emitChanged('pipelines-changed', 'updated');      // the Runs list and the group page reload History and run groups
+    if (watch) {
+      const after = featureView(id, { live: liveSliceOf }) || shown;   // the slice PRs now marked ready
+      const pairs = out.prUrl ? [[out.prUrl, ctx.state.id]] : after.slices.filter((s) => s.pr && s.pr.url).map((s) => [s.pr.url, s.pipelineId]);
+      await watchShipped(pairs, ctx.target.repoDir, actor);
+    }
     return { status: 200, body: { ok: true, mode: out.mode, prUrl: out.prUrl, warnings: out.warnings } };
   } finally { SHIPPING.delete(id); }
+}
+/** Watch PR for each shipped PR (D18): the push remote the PR came from, as POST /api/pr does. Best effort. */
+async function watchShipped(pairs, repoDir, actor) {
+  const picked = await pickPrRemotes({}, repoDir).catch(() => ({}));
+  for (const [prUrl, pipelineId] of pairs) {
+    try { setWatch({ prUrl, pipelineId, memberKey: '', pushRemote: picked.pushRemote || 'origin', enabled: true, enabledBy: actor }); }
+    catch (err) { console.error(`[worca-ui] watch after ship failed: ${err?.message || err}`); }
+  }
 }
 app.post('/api/shape/features/:id/ship', async (req, res) => {
   if (!requireShapeFirst(req, res)) return;
   try {
-    const rel = parseReleaseChoice(req.body && req.body.release);
+    const b = req.body || {};
+    if (!(b.watch === undefined || typeof b.watch === 'boolean')) return badRequest(res, 'watch must be a boolean');
+    const rel = parseReleaseChoice(b.release);
     if (rel.error) return badRequest(res, rel.error);
-    const r = await shipFeatureNow(String(req.params.id), req.body && req.body.mode, { actor: actorOf(req), release: rel.value });
+    const r = await shipFeatureNow(String(req.params.id), b.mode, { actor: actorOf(req), release: rel.value, watch: b.watch === true });
     res.status(r.status).json(r.body);
   } catch (err) { if (!res.headersSent) shapeRouteError(res, err); }
+});
+
+// ── One ship flow (slice 2): a Run-after chain ships through Create PR ───────────────────────────────────────────
+const CHAIN_SHIPPING = new Set();   // chain ids with a ship in flight
+const NO_PR_HOST = 'No pull request host is available: install the GitHub CLI (gh), or set WORCA_ADO_TOKEN for Azure DevOps';
+const livePr = (pid) => { const pr = readPrState(pid); return !!(pr && pr.url && pr.state !== 'CLOSED'); };
+/** After a chain or group ship, done or stopped part-way: Watch PR on each PR it made (when asked), then repaint. */
+function settleShipped(opened, watch, actor) {
+  if (watch) {
+    for (const p of opened) {
+      try { setWatch({ prUrl: p.url, pipelineId: p.pipelineId, memberKey: '', pushRemote: p.pushRemote, enabled: true, enabledBy: actor }); }
+      catch (err) { console.error(`[worca-ui] watch after ship failed: ${err?.message || err}`); }
+    }
+  }
+  if (opened.length) emitChanged('pipelines-changed', 'updated');
+}
+/** One ship flow (D6, D7): a Run-after chain ships as one PR per run (stacked) or one PR from its last run. → { status, body } */
+async function shipChainNow(chainId, mode, { actor = null, title = null, body = '', draft = false, watch = false } = {}) {
+  if (!SHIP_MODES.includes(mode)) return { status: 400, body: { error: 'mode must be stacked or one' } };
+  const chain = runChains({ keepDone: 'all' }).find((c) => c.id === chainId);
+  if (!chain) return { status: 404, body: { error: 'unknown chain' } };
+  if (!chain.members.every((m) => m.state === 'done' && m.pipelineId)) return { status: 409, body: { error: 'every run in the chain must be done before it ships' } };
+  const todo = chain.members.filter((m) => !livePr(m.pipelineId));
+  if (!todo.length) return { status: 409, body: { error: 'every run in the chain already has a PR' } };
+  // Before any PR: a run with no branch of its own (a workspace or Folder run) would stop the ship part-way.
+  const lost = todo.findIndex((m) => !m.canPr);
+  if (lost >= 0) return { status: 409, body: { error: `run ${chain.members.indexOf(todo[lost]) + 1} has no branch to ship: create its PR from its own page` } };
+  if (mode === 'one') {
+    if (todo.length !== chain.members.length) return { status: 409, body: { error: 'a run in this chain already has a PR: create one PR per run' } };
+    if (chain.members.some((m, i) => i > 0 && m.after !== i)) return { status: 409, body: { error: 'a chain that forks ships as one PR per run' } };
+    // One is the last run's branch: it holds every run's work only when each run started from the one before it.
+    if (chain.members.some((m, i) => i > 0 && (!m.stacks || m.projectKey !== chain.members[0].projectKey))) {
+      return { status: 409, body: { error: "a run in this chain does not start from the previous run's branch: create one PR per run" } };
+    }
+  }
+  if (!(await anyPrHost())) return { status: 409, body: { error: NO_PR_HOST } };
+  if (CHAIN_SHIPPING.has(chainId)) return { status: 409, body: { error: 'this chain is already shipping' } };
+  CHAIN_SHIPPING.add(chainId);
+  try {
+    const opened = [];
+    if (mode === 'stacked') {
+      for (const m of todo) {                           // chain order = merge order: each base is the run before it
+        const r = await openMemberPr(m.pipelineId, { actor });
+        if (!r.ok) {
+          settleShipped(opened, watch, actor);           // the PRs made before the failure are watched and shown
+          return { status: r.status || 500, body: { error: `could not create run ${chain.members.indexOf(m) + 1}'s PR: ${r.error}. Create PR again to continue.`, prs: opened.map((p) => p.url) } };
+        }
+        opened.push({ url: r.pr.url, pipelineId: m.pipelineId, pushRemote: r.pushRemote || 'origin' });
+      }
+    } else {
+      const last = chain.members[chain.members.length - 1];
+      const state = readPipelineStateById(last.pipelineId);
+      const target = state ? prTargetFor(state) : { error: 'the last run has no state' };
+      if (target.error || !target.repoDir || !target.feature) return { status: 409, body: { error: target.error || 'the last run has no branch to ship' } };
+      const base = chainRootFor(last.pipelineId, target);
+      if (!base) return { status: 409, body: { error: 'the chain has no base branch' } };
+      const r = await createRunPr({ id: last.pipelineId, state, target, base, title, description: body, draft, actor, preamble: false });
+      if (!r.ok) return { status: r.status || 500, body: { error: r.error } };
+      // The one PR is every run's PR: the rows show its chip, prCount reads 1, and One stays disabled afterwards.
+      for (const m of chain.members) {
+        if (m === last) continue;
+        persistPrState(m.pipelineId, { url: r.pr.url, number: r.pr.number ?? null, state: r.pr.state || 'OPEN' });
+        appendAuditById(m.pipelineId, `Shipped with its chain as one PR${byActor(actor)}: ${r.pr.url}`, { actor });
+      }
+      opened.push({ url: r.pr.url, pipelineId: last.pipelineId, pushRemote: r.pushRemote || 'origin' });
+    }
+    settleShipped(opened, watch, actor);
+    return { status: 200, body: { ok: true, mode, prs: opened.map((p) => p.url) } };
+  } finally { CHAIN_SHIPPING.delete(chainId); }
+}
+app.post('/api/chains/:id/ship', async (req, res) => {
+  try {
+    const b = req.body || {};
+    for (const k of ['watch', 'draft']) if (!(b[k] === undefined || typeof b[k] === 'boolean')) return badRequest(res, `${k} must be a boolean`);
+    if (b.title != null && (typeof b.title !== 'string' || b.title.length > PR_TITLE_MAX)) return badRequest(res, `title must be a string of at most ${PR_TITLE_MAX} characters`);
+    if (b.body != null && (typeof b.body !== 'string' || b.body.length > PR_BODY_MAX)) return badRequest(res, `body must be a string of at most ${PR_BODY_MAX} characters`);
+    const r = await shipChainNow(String(req.params.id), b.mode, { actor: actorOf(req), title: (b.title || '').trim() || null,
+      body: (b.body || '').trimEnd(), draft: b.draft === true, watch: b.watch === true });
+    res.status(r.status).json(r.body);
+  } catch (err) { if (!res.headersSent) res.status(500).json({ error: err?.message || String(err) }); }
+});
+
+// ── One ship flow (slice 3): a user group ships as one PR per run (separate) or one PR from a combined branch ──────
+const GROUP_SHIP_MODES = Object.freeze(['separate', 'one']);
+const GROUP_SHIPPING = new Set();   // user group ids with a ship in flight
+const COMBINE_FILES_SHOWN = 3;
+/** A user group's members in position order, each with its state and PR target; null for an unknown group. */
+function userGroupMembers(groupId) {
+  const group = listRunGroups().find((g) => g.id === groupId && g.kind === 'user') || null;
+  if (!group) return null;
+  const members = group.members.filter((m) => m.pipelineId).map((m) => {
+    const state = readPipelineStateById(m.pipelineId);
+    return { m, state, target: state ? prTargetFor(state) : { error: 'the run has no state' } };
+  });
+  return { group, members };
+}
+const conflictReason = (c) => {
+  const shown = c.files.slice(0, COMBINE_FILES_SHOWN);
+  const more = c.fileCount - shown.length;
+  return `The runs conflict in ${shown.join(', ')}${more > 0 ? ` and ${more} more` : ''}`;
+};
+/** D5/D6: may this group ship as One? → { oneOff: '' | why not, line?, base?, repoDir?, combine? } */
+async function combineFor(members) {
+  if (members.some((x) => livePr(x.m.pipelineId))) return { oneOff: 'A run already has a PR' };
+  if (members.length < 2) return { oneOff: 'A group of one run ships as its own PR' };
+  if (members.some((x) => x.state && x.state.target === 'workspace')) return { oneOff: 'A workspace run ships as its own PR' };
+  const lost = members.find((x) => x.target.error || !x.target.repoDir || !x.target.feature || !x.target.source);
+  if (lost) return { oneOff: `${lost.m.title || 'A run'} has no branch to combine` };
+  if (new Set(members.map((x) => x.target.repoDir)).size > 1) return { oneOff: 'The runs are in different projects' };
+  const repoDir = members[0].target.repoDir;
+  const names = ((await listRemotes(repoDir)).remotes || []).map((r) => r.name);
+  const bases = [...new Set(await Promise.all(members.map((x) => prBaseBranch(repoDir, x.target.source, names))))];
+  if (bases.length > 1) return { oneOff: `The runs start from different branches: ${bases.join(', ')}` };
+  const combine = await checkCombine(repoDir, { branches: members.map((x) => x.target.feature) });
+  if (combine.status === 'conflicts') return { oneOff: conflictReason(combine), combine };
+  if (combine.status === 'no-branch') return { oneOff: `${combine.branch} is not in the repository`, combine };
+  if (combine.status !== 'clean') return { oneOff: `Could not check whether the runs combine: ${combine.error}`, combine };
+  return { oneOff: '', line: `The ${members.length} runs combine without conflicts`, base: bases[0], repoDir, combine };
+}
+/** D3: the combined branch is named after the group, and fixed per group (its id), so nothing new is stored. */
+const groupBranchName = (group) => suggestBranchName({ title: group.title, pipelineId: String(group.id).replace(/^grp_/, '') });
+/** D8: the one PR's default body, when the dialog's description is blank. */
+const combinedGroupBody = (members) => ['Combines these runs, each from its own branch:', '',
+  ...members.map((x) => `- ${x.m.title || x.target.feature} (\`${x.target.feature}\`)`)].join('\n');
+
+/** → { status, body } */
+async function shipUserGroupNow(groupId, mode, { actor = null, title = null, body = '', draft = false, watch = false } = {}) {
+  if (!GROUP_SHIP_MODES.includes(mode)) return { status: 400, body: { error: 'mode must be one or separate' } };
+  const found = userGroupMembers(groupId);
+  if (!found) return { status: 404, body: { error: 'unknown group' } };
+  const { group, members } = found;
+  if (!members.length || !members.every((x) => x.m.status === 'done')) {
+    return { status: 409, body: { error: 'every run in the group must be done before it ships' } };
+  }
+  const todo = members.filter((x) => !livePr(x.m.pipelineId));
+  if (!todo.length) return { status: 409, body: { error: 'every run in the group already has a PR' } };
+  if (mode === 'separate') {
+    // Before any PR: a workspace run or a run with no branch of its own would stop the ship part-way, every retry.
+    const lost = todo.find((x) => (x.state && x.state.target === 'workspace') || x.target.error || !x.target.repoDir || !x.target.feature);
+    if (lost) return { status: 409, body: { error: `${lost.m.title || 'A run'} has no branch to ship here: create its PR from its own page` } };
+  }
+  if (!(await anyPrHost())) return { status: 409, body: { error: NO_PR_HOST } };
+  if (GROUP_SHIPPING.has(groupId)) return { status: 409, body: { error: 'this group is already shipping' } };
+  GROUP_SHIPPING.add(groupId);
+  try {
+    const opened = [];
+    let branch = null;
+    if (mode === 'separate') {
+      for (const x of todo) {                           // D7: each into its own base, in position order
+        const r = await openMemberPr(x.m.pipelineId, { actor });
+        if (!r.ok) {
+          settleShipped(opened, watch, actor);           // the PRs made before the failure are watched and shown
+          return { status: r.status || 500, body: { error: `could not create the PR for ${x.m.title || 'a run'}: ${r.error}. Create PR again to continue.`, prs: opened.map((p) => p.url) } };
+        }
+        opened.push({ url: r.pr.url, pipelineId: x.m.pipelineId, pushRemote: r.pushRemote || 'origin' });
+      }
+    } else {
+      const c = await combineFor(members);              // again: a branch may have moved since the dialog's check
+      if (c.oneOff) return { status: 409, body: { error: c.oneOff } };
+      const last = members[members.length - 1];
+      branch = groupBranchName(group);
+      const w = await writeCombinedBranch(c.repoDir, { branch, combine: c.combine, message: `Combine ${members.length} runs: ${group.title}` });
+      if (!w.ok) return { status: w.kind === 'exists' || w.kind === 'identity' ? 409 : 500, body: { error: w.error } };
+      const target = { ...last.target, feature: branch, source: c.base };
+      const r = await createRunPr({ id: last.m.pipelineId, state: last.state, target, base: c.base, title: title || group.title,
+        description: body || combinedGroupBody(members), draft, actor, preamble: false });
+      // The branch stays: Create PR again reuses it (writeCombinedBranch 'reused') while the member heads are the same.
+      if (!r.ok) return { status: r.status || 500, body: { error: r.error } };
+      // The one PR is every run's PR: each row shows its chip, prCount reads 1, and One stays disabled afterwards.
+      for (const x of members) {
+        if (x === last) continue;
+        persistPrState(x.m.pipelineId, { url: r.pr.url, number: r.pr.number ?? null, state: r.pr.state || 'OPEN' });
+        appendAuditById(x.m.pipelineId, `Shipped with its group as one PR${byActor(actor)}: ${r.pr.url}`, { actor });
+      }
+      opened.push({ url: r.pr.url, pipelineId: last.m.pipelineId, pushRemote: r.pushRemote || 'origin' });
+    }
+    settleShipped(opened, watch, actor);
+    return { status: 200, body: { ok: true, mode, prs: opened.map((p) => p.url), ...(branch ? { branch } : {}) } };
+  } finally { GROUP_SHIPPING.delete(groupId); }
+}
+app.get('/api/run-groups/:id/combine', async (req, res) => {
+  try {
+    const found = userGroupMembers(String(req.params.id));
+    if (!found) return res.status(404).json({ error: 'unknown group' });
+    const c = await combineFor(found.members);
+    res.json({ n: found.members.length, oneOff: c.oneOff, line: c.line || '', base: c.base || null,
+      files: (c.combine && c.combine.files) || [] });
+  } catch (err) { if (!res.headersSent) res.status(500).json({ error: err?.message || String(err) }); }
+});
+app.post('/api/run-groups/:id/ship', async (req, res) => {
+  try {
+    const b = req.body || {};
+    for (const k of ['watch', 'draft']) if (!(b[k] === undefined || typeof b[k] === 'boolean')) return badRequest(res, `${k} must be a boolean`);
+    if (b.title != null && (typeof b.title !== 'string' || b.title.length > PR_TITLE_MAX)) return badRequest(res, `title must be a string of at most ${PR_TITLE_MAX} characters`);
+    if (b.body != null && (typeof b.body !== 'string' || b.body.length > PR_BODY_MAX)) return badRequest(res, `body must be a string of at most ${PR_BODY_MAX} characters`);
+    const r = await shipUserGroupNow(String(req.params.id), b.mode, { actor: actorOf(req), title: (b.title || '').trim() || null,
+      body: (b.body || '').trimEnd(), draft: b.draft === true, watch: b.watch === true });
+    res.status(r.status).json(r.body);
+  } catch (err) { if (!res.headersSent) res.status(500).json({ error: err?.message || String(err) }); }
 });
 
 /** Shaper s4: the feature's Ship card in a thread ({ message, block }) or null. */
@@ -5733,6 +6121,28 @@ app.get('/api/runs/:id/artifact', async (req, res) => {
   }
 });
 
+// GET /api/runs/:id/telemetry -> Run telemetry (Labs): telemetry.ndjson summarised per step
+// (src/core/telemetry/summary.mjs), by the pipeline id alone like /artifact above. 404 while the
+// flag is off, and when the run recorded none (it ran with the flag off).
+app.get('/api/runs/:id/telemetry', requireFlag('runTelemetry'), async (req, res) => {
+  try {
+    const row = findPipelineRowById(req.params.id);
+    if (!row) return res.status(404).json({ error: 'pipeline not found' });
+    let text;
+    try { text = await fsp.readFile(path.join(await runDirForRow(row), TELEMETRY_FILE), 'utf8'); } catch { return res.status(404).json({ error: 'no telemetry' }); }
+    let facts = [];
+    try { facts = modelFacts(await listModels(''), { costOf: modelCostConfig }); } catch { facts = []; }
+    const windowOf = (model) => {
+      if (!model) return null;
+      const f = facts.find((x) => x.id === model) || modelFacts([{ id: model }])[0];
+      return f ? { tokens: f.context, from: f.contextFrom } : null;
+    };
+    res.json(summarizeTelemetry(text, { windowOf }));
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 app.get('/api/runs/:id/artifacts', async (req, res) => {
   try {
     const row = findPipelineRowById(req.params.id);
@@ -6119,7 +6529,7 @@ app.get('/api/history', async (req, res) => {
 // ---------------------------------------------------------------------------
 // ?recheck=1 skips the remembered Claude sign-in answer (the dialog's Check again).
 app.get('/api/onboarding', async (req, res) => {
-  try { res.json(await onboardingStatus({ recheck: isTruthy(req.query.recheck) })); }
+  try { res.json({ ...(await onboardingStatus({ recheck: isTruthy(req.query.recheck) })), fresh: isFreshInstall() }); }
   catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 app.post('/api/onboarding', async (req, res) => {
@@ -6129,7 +6539,7 @@ app.post('/api/onboarding', async (req, res) => {
   }
   catch (err) { return badRequest(res, err && err.message ? err.message : String(err)); }
   emitChanged('onboarding-changed');
-  try { res.json(await onboardingStatus()); }
+  try { res.json({ ...(await onboardingStatus()), fresh: isFreshInstall() }); }
   catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err), ...onboardingPrefs() }); }
 });
 
@@ -6758,7 +7168,8 @@ app.get('/api/tag-dimensions', async (req, res) => {
       const src = prefillSources({ projectDir, person: startedByOf(req) });
       const prefill = prefillTags(info.dims, [], src);
       // s2 (D7, D8): the New run / Ask card fill, sent ONLY for a project target (a workspace has no single project).
-      const autofill = projectDir ? autoFillTags({ dims: info.dims, lastRun: src.lastUsed, projectDefaults: src.projectDefaults }) : undefined;
+      // #923: the project's defaults plus the slots; the last run's tags only fill mandatory dimensions.
+      const autofill = projectDir ? autoFillTags({ dims: info.dims, lastUsed: src.lastUsed, projectDefaults: src.projectDefaults }) : undefined;
       return res.json({ ...info, enforce: flagEnabled('runTags') && info.enforce === true, prefill, ...(autofill ? { autofill } : {}) });
     }
     res.json({ ...(await allTagDimensions()), team: await teamTagPolicy() });
@@ -6785,7 +7196,8 @@ app.get('/api/projects/:key/settings', async (req, res) => {
 });
 app.patch('/api/projects/:key/settings', async (req, res) => {
   const project = await tmProject(req, res); if (!project) return;
-  try { res.json(await applyProjectSettingsPatch(project, req.body)); } catch (error) { badRequest(res, error?.message || String(error)); }
+  // A refused team-memory switch keeps its code (NO_GIT, FOLDER_PROJECT, NO_ORIGIN) so the client can say why.
+  try { res.json(await applyProjectSettingsPatch(project, req.body)); } catch (error) { res.status(400).json({ error: error?.message || String(error), ...(error?.status === 400 && typeof error.code === 'string' ? { code: error.code } : {}) }); }
 });
 
 /** PATCH /api/projects/:key/settings' body for one registered project ({key, path}): validate, write in one
@@ -6795,7 +7207,15 @@ async function applyProjectSettingsPatch(project, patch) {
   const roles = agentSteps().map(({ key }) => key);
   const items = assertProjectSettingsPatch(patch, { roles });
   await assertSlotModels(items.filter(({ entry, value }) => entry.family && value).map(({ entry, value }) => ({ id: entry.id, engine: entry.engine, value })), { projectDir: project.path });
-  writeProjectSettings({ projectDir: project.path }, patch, { roles });
+  const teamSwitch = items.find(({ entry }) => entry.id === 'memory.team');
+  const write = () => writeProjectSettings({ projectDir: project.path }, patch, { roles });
+  // `true` (load local and team notes) or "only" (team notes only) — team-memory-load-choice.md. Only a switch from
+  // off is a switch-on; Team ↔ Both changes what loads, nothing else.
+  const wasOn = teamSwitch ? isTeamMemoryOn(project.key) : false;
+  const turnsOn = teamSwitch && !wasOn && (teamSwitch.value === true || teamSwitch.value === 'only');
+  if (turnsOn) await switchTeamMemoryOn(project.key, project.path, write);   // 400 NO_GIT / FOLDER_PROJECT / NO_ORIGIN first; baseline + switch under the team lock (D1)
+  else write();
+  if (teamSwitch && isTeamMemoryOn(project.key) !== wasOn) void teamMemorySettingChanged(project.key, project.path).catch(teamWarn);   // on: fetch now · off: drop the queue
   emitChanged('settings-changed');
   return projectSettingsState(project.path);
 }
@@ -8752,27 +9172,31 @@ app.get('/api/pr/remotes', async (req, res) => {
     chain, defaultBase, branches, baseStatus, issue, release: await releaseVersionHint(repoDir) });   // s4: the release row's hint
 });
 
-/** D24: a finished slice opens a draft PR for early review (best effort: a failure is an audit line). */
-async function openSliceDraft(pipelineId) {
-  if (!shapeFirstEnabled() || !pipelineId || readPrState(pipelineId)) return null;
-  if (!(await anyPrHost())) return null;
-  const state = readPipelineStateById(pipelineId);
-  if (!state || !state.projectDir) return null;
-  const target = prTargetFor(state);
-  if (target.error || !target.repoDir) return null;
-  // The PR dialog's default base (GET /api/pr/remotes): the chain without the feature branch itself, stacked on the
-  // previous run's branch until that run's PR merges.
+/** A run's chain without its own branch (GET /api/pr/remotes' `chain`, unmapped): the walked chain, else its source. */
+function chainOf(pipelineId, target) {
   const walked = chainBaseBranchesOf(pipelineId);
-  const chain = (walked.length ? walked : (target.source ? [target.source] : [])).filter((b) => b !== target.feature);
-  let base = null;
-  try { base = stackedPrBaseOf(pipelineId, chain) || chain[0] || null; } catch { base = chain[0] || null; }
-  if (!base) return null;
-  let out = await createRunPr({ id: pipelineId, state, target, base, draft: true });
-  // A forge that refuses drafts (GitHub's free plan for private repositories): open it ready instead.
-  if (!out.ok && /draft/i.test(out.error || '')) out = await createRunPr({ id: pipelineId, state, target, base, draft: false });
-  if (!out.ok) { appendAuditById(pipelineId, `Could not open the slice's pull request: ${out.error}`); return out; }
-  if (out.newDraft) { try { recordSliceDraft(pipelineId, out.pr.url); } catch { /* the "draft" label only */ } }
-  broadcastFeaturesOf(() => { const at = featureOfPipeline(pipelineId); return at ? [at.featureId] : []; });
+  return (walked.length ? walked : (target.source ? [target.source] : [])).filter((b) => b !== target.feature);
+}
+/** The chain root: where a whole chain (One) or its first run merges. null = no base. */
+function chainRootFor(pipelineId, target) { return chainOf(pipelineId, target)[0] || null; }
+/** A chained run's own PR base: stacked on the previous run's branch until that run's PR merges; the root otherwise. */
+function stackedBaseFor(pipelineId, target) {
+  const chain = chainOf(pipelineId, target);
+  try { return stackedPrBaseOf(pipelineId, chain) || chain[0] || null; } catch { return chain[0] || null; }
+}
+/** One ship flow: a member's own PR, ready for review, on its stacked base (feature slices and chain runs). */
+async function openMemberPr(pipelineId, { actor = null } = {}) {
+  const had = readPrState(pipelineId);
+  if (had && had.url && had.state !== 'CLOSED') return { ok: true, existed: true, pr: had };   // once only
+  const state = readPipelineStateById(pipelineId);
+  if (!state || !state.projectDir) return { ok: false, status: 409, error: 'the run has no project' };
+  const target = prTargetFor(state);
+  if (target.error || !target.repoDir || !target.feature) return { ok: false, status: 409, error: target.error || 'the run has no branch to ship' };
+  const base = stackedBaseFor(pipelineId, target);
+  if (!base) return { ok: false, status: 409, error: 'the run has no base branch' };
+  const out = await createRunPr({ id: pipelineId, state, target, base, actor });
+  if (!out.ok) appendAuditById(pipelineId, `Could not create the run's PR: ${out.error}`);
+  else broadcastFeaturesOf(() => { const at = featureOfPipeline(pipelineId); return at ? [at.featureId] : []; });
   return out;
 }
 
@@ -8787,7 +9211,7 @@ async function openSliceDraft(pipelineId) {
 async function createRunPr({ id, state, target, base, memberKey = null, remotes: chosen = {}, description = '',
   draft = false, actor = null, title = null, preamble = true }) {
   const { repoDir, feature, source } = target;
-  if (!repoDir || !feature || !source) return { ok: false, status: 400, error: 'pipeline has no branch info to open a PR' };
+  if (!repoDir || !feature || !source) return { ok: false, status: 400, error: 'pipeline has no branch info to create a PR' };
   const picked = await pickPrRemotes(chosen, repoDir);
   if (picked.error) return { ok: false, status: picked.status, error: picked.error };
   const { remotes, pushRemote, baseRemote, pushR, baseR } = picked;
@@ -8843,7 +9267,7 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   // D22: a slice's PR starts with its place in the feature and links the other slices' PRs.
   let lead0 = '';
   if (preamble && shapeFirstEnabled() && !memberKey) { try { lead0 = slicePrPreamble(pipelineIdForPr); } catch { lead0 = ''; } }
-  const lead = description || state.title || feature;
+  const lead = description || title || state.title || feature;
   const prBody = lead0 || description || closing || checklistMd || footer
     ? `${lead0 ? `${lead0}\n\n` : ''}${lead}${closing ? `\n\n${closing}` : ''}${checklistMd ? `\n\n${checklistMd}` : ''}${footer}` : '';
   const pr = await createPr({
@@ -8866,7 +9290,7 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
     else persistPrState(pipelineIdForPr, facts);
     // Who shipped it (the footer names who STARTED the run). No actor: worca opened it (a slice's draft).
     const where = memberKey ? ` in \`${target.memberName}\`` : '';
-    appendAuditById(pipelineIdForPr, `Pull request ${pr.existed ? 'linked' : (newDraft ? 'opened (draft)' : 'opened')}${where}${byActor(actor)}: ${pr.url}`, { actor });
+    appendAuditById(pipelineIdForPr, `PR ${pr.existed ? 'linked' : (newDraft ? 'created (draft)' : 'created')}${where}${byActor(actor)}: ${pr.url}`, { actor });
   }
   return { ok: true, pr, newDraft, remotes, pushRemote, baseRemote, repo, headOwner, baseR, pipelineIdForPr };
 }
@@ -8877,7 +9301,7 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
 // forge: Azure DevOps over REST (no forks: 422 before the push), every other host
 // via the GitHub CLI. 409 { error, forge } when that forge is not usable here.
 // Mergeability is read back only here (never during list rendering).
-// body: { id, projectDir?, projectKey?, memberKey?, pushRemote?, baseRemote?, baseBranch?, body?, draft? } —
+// body: { id, projectDir?, projectKey?, memberKey?, pushRemote?, baseRemote?, baseBranch?, title?, body?, draft? } —
 // a workspace run (projectKey 'workspaces/<wks-…>') REQUIRES memberKey (the member repo
 // to ship; its PR is recorded per member and the response echoes memberKey) —
 // remote names are validated against the repo's real remote list (never trusted
@@ -8887,8 +9311,10 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
 // characters): it becomes the PR body, the attribution footer after it. Absent,
 // null or blank keeps the title-only body exactly as before. `draft` (boolean) opens a
 // new PR as a draft; the run's GitHub issue source adds a `Closes` line between the
-// description and the footer.
+// description and the footer. `title` (a string of at most 256 characters) replaces the run title as the PR title;
+// blank keeps the run title.
 // ---------------------------------------------------------------------------
+const PR_TITLE_MAX = 256;
 app.post('/api/pr', async (req, res) => {
   const body = req.body || {};
   if (!(typeof body.id === 'string' && body.id.trim())) return badRequest(res, 'id is required');
@@ -8897,6 +9323,12 @@ app.post('/api/pr', async (req, res) => {
     if (typeof body.body !== 'string') return badRequest(res, 'body must be a string');
     if (body.body.length > PR_BODY_MAX) return badRequest(res, `body must be at most ${PR_BODY_MAX} characters`);
     description = body.body.trim() ? body.body.trimEnd() : '';
+  }
+  let title = null;
+  if (body.title !== undefined && body.title !== null) {
+    if (typeof body.title !== 'string') return badRequest(res, 'title must be a string');
+    if (body.title.length > PR_TITLE_MAX) return badRequest(res, `title must be at most ${PR_TITLE_MAX} characters`);
+    title = body.title.trim() || null;
   }
   if (!(body.draft === undefined || body.draft === true || body.draft === false)) {
     return badRequest(res, 'draft must be a boolean');
@@ -8921,7 +9353,7 @@ app.post('/api/pr', async (req, res) => {
     askPrLink = { threadId: body.askThreadId, cardId: body.askCardId };   // the card itself is checked once the target is known
   }
   if (!(await anyPrHost())) {
-    return res.status(409).json({ error: 'No pull request host is available: install the GitHub CLI (gh), or set WORCA_ADO_TOKEN for Azure DevOps' });
+    return res.status(409).json({ error: NO_PR_HOST });
   }
   const resolved = await resolvePrPipeline(body, res);
   if (!resolved) return;
@@ -8932,7 +9364,7 @@ app.post('/api/pr', async (req, res) => {
   const sameBr = (body.memberKey && state.branches && state.branches[body.memberKey]) || state.branch;
   if (sameBr && sameBr.sameAsSource === true && sameBr.mergeBack?.merged !== false) {
     return res.status(409).json({ error: sameBr.mergeBack?.merged === true
-      ? 'this run\'s work is already on its source branch. Push the source instead of opening a pull request'
+      ? 'this run\'s work is already on its source branch. Push the source instead of creating a PR'
       : 'this run is still merging its work back into the source branch. Try again in a moment' });
   }
 
@@ -8949,7 +9381,7 @@ app.post('/api/pr', async (req, res) => {
     if (refusal) return res.status(refusal.status).json({ error: refusal.error });
   }
   if (!repoDir || !feature || !source) {
-    return badRequest(res, 'pipeline has no branch info to open a PR');
+    return badRequest(res, 'pipeline has no branch info to create a PR');
   }
   // The base branch: the dialog's pick (a run chain defaults to its root there),
   // else the run's own source. Per run — never remembered with the remotes.
@@ -8961,7 +9393,7 @@ app.post('/api/pr', async (req, res) => {
     base = b;
   }
 
-  const out = await createRunPr({ id, state, target, base, memberKey,
+  const out = await createRunPr({ id, state, target, base, memberKey, title,
     remotes: { pushRemote: body.pushRemote, baseRemote: body.baseRemote }, description, draft, actor: actorOf(req) });
   if (!out.ok) {
     return res.status(out.status).json({ error: out.error, ...(out.kind ? { kind: out.kind } : {}), ...(out.forge ? { forge: out.forge } : {}) });
@@ -9053,7 +9485,7 @@ app.post('/api/pr/watch', async (req, res) => {
 const resolveRefusals = (host) => ({
   BUSY: [409, 'A fix run is already working on this pull request.'],
   RATE_LIMITED: [429, `${host} is rate limiting Worca; try again in a minute.`],
-  ORIGIN_GONE: [409, 'The run that opened this pull request, or its branch, is gone.'],
+  ORIGIN_GONE: [409, 'The run that created this PR, or its branch, is gone.'],
   READ_FAILED: [502, `Could not read the pull request from ${host}.`],
   PR_CLOSED: [409, 'The pull request is no longer open.'],
   NO_CONFLICT: [409, `${host} reports no merge conflicts on this pull request now.`],
@@ -9193,7 +9625,7 @@ app.post('/api/push', async (req, res) => {
   if (!resolved) return;
   const { id, state } = resolved;
   const b = state.branch || {};
-  if (b.sameAsSource !== true) return res.status(409).json({ error: 'only a run on its source branch is pushed here. Open a pull request instead' });
+  if (b.sameAsSource !== true) return res.status(409).json({ error: 'only a run on its source branch is pushed here. Create a PR instead' });
   if (state.target === 'workspace') return res.status(409).json({ error: 'a workspace run is pushed per project by hand (see its merge-back banner)' });
   // isSafeBranchName: setup already refused any other source; this keeps an edited record out of git's argv.
   if (!state.projectDir || !b.source || !isSafeBranchName(b.source)) return badRequest(res, 'pipeline has no branch info to push');
@@ -9626,7 +10058,9 @@ async function projectsForApi(list) {
   return list.map((p) => {
     const made = p.exists ? worcaNestedRepoOf(p.path) : null;
     return { ...p, workMode: effectiveWorkMode(p.vcs, available), displayPath: displayPath(p.path), ownedFolder: ownsProjectFolder(p),
-      ...(made ? { nestedRepo: { repoRoot: made.repoRoot, hint: worcaNestedRepoHint(p.path, made) } } : {}) };
+      ...(made ? { nestedRepo: { repoRoot: made.repoRoot, hint: worcaNestedRepoHint(p.path, made) } } : {}),
+      // E10: origin has a worca-memory branch and the project is off — the Overview's line, the import list's mark.
+      ...(teamMemoryAvailability(p.key).offer ? { teamMemoryOffer: true } : {}) };
   });
 }
 
@@ -9661,6 +10095,7 @@ app.post('/api/projects', async (req, res) => {
     // Its team policy at once too (MCP registry spec §11.2): removing a project drops its policy cache, so a re-added or
     // re-cloned project's home must not read "no project here follows" (a greyed Team set) until the background discovery.
     discoverPolicy(normalizeProjectPath(body.path), { force: true }).catch(() => { /* offline: the background discovery retries */ });
+    detectTeamMemorySoon(normalizeProjectPath(body.path));
     res.json({ projects: await projectsForApi(projects) });
   } catch (err) {
     if (err?.code === 'NESTED_IN_REPO') return res.status(400).json({ error: err.message, code: err.code, partOf: err.partOf, repoRoot: err.repoRoot });
@@ -9697,6 +10132,8 @@ app.post('/api/projects/bulk', async (req, res) => {
           await discoverPolicy(p, { force: true }).catch(() => { /* offline: the background discovery retries */ });
         }
       })();
+      // Team memory's check (E10) on its own queue, one remote at a time too: a slow origin never holds the discovery.
+      void (async () => { for (const p of addedPaths) await detectTeamMemory(p); })();
     }
     res.json({ projects: await projectsForApi(projects), results });
   } catch (err) {
@@ -9719,7 +10156,11 @@ function afterProjectRegistered(project, action = 'created') {
     .then(() => emitChanged('team-metrics-changed', 'discovered'))
     .catch(() => { /* offline or no origin: discovery retries hourly */ });
   discoverPolicy(project.path, { force: true }).catch(() => { /* offline: the background discovery retries */ });
+  detectTeamMemorySoon(project.path);
 }
+/** E10: whether origin already has a worca-memory branch, in the background (it never throws, never blocks the add,
+ *  and is skipped without git, for a Folder project or without origin). Its answer reaches the page as projects-changed. */
+function detectTeamMemorySoon(dir) { void detectTeamMemory(dir); }
 
 // POST /api/projects/create — New: a project by name under the projects root (U6). No requireFsAllowed: the only
 // path is <projects root>/<one checked folder name>.
@@ -9783,6 +10224,7 @@ async function startCloneJob(req) {
         .then(() => emitChanged('team-metrics-changed', 'discovered'))
         .catch(() => { /* offline or not a git repo: discovery retries hourly */ });
       discoverPolicy(project.path, { force: true }).catch(() => { /* offline: the background discovery retries */ });
+      detectTeamMemorySoon(project.path);
     } catch (err) {
       Object.assign(job, { state: 'error', code: err instanceof CloneError ? err.code : 'failed', error: err && err.message ? err.message : String(err) });
     }
@@ -9943,6 +10385,19 @@ function memoryError(res, err) {
   return res.status(status).json({ error: status === 500 ? 'memory store error' : message });
 }
 
+const teamWarn = (err) => console.warn(`[worca-ui] team memory: ${err && err.message ? err.message : err}`);
+
+/** Ask's remember/forget (MCP child or relay) is the same scope change a REST write makes: broadcast it, and — team
+ *  memory 1a — queue it for an opted-in project. The scope key and name come from worca's OWN tool result; both are
+ *  shape-checked here (and queueTeamChanges re-validates the name). Exported through _testing. */
+function askMemoryMutation({ scope, name = null, threadId = null } = {}) {
+  const projectKeyOf = typeof scope === 'string' && scope.startsWith('projects/') && PROJECT_KEY_RE.test(scope.slice('projects/'.length)) ? scope.slice('projects/'.length) : null;
+  if (scope === 'global' || projectKeyOf) emitMemoryChanged(scope);
+  if (projectKeyOf && typeof name === 'string' && name) {
+    queueTeamChanges(projectKeyOf, [name], { source: `ask:${threadId || 'unknown'}` }).catch(teamWarn);
+  }
+}
+
 /** Thread-less, seq-less frame (B5): an Ask tool, a REST write or a run that mounted memory
  *  changed a scope; open Memory views refetch. Best effort. Exported through _testing. */
 function emitMemoryChanged(scopeKeyStr) {
@@ -10037,25 +10492,47 @@ function registerMemoryRoutes(prefix, { family }) {
     const text = req.body && typeof req.body.text === 'string' ? req.body.text : null;
     if (text === null) return badRequest(res, 'text (string) is required');
     if (defragLocked(res, key)) return;
-    const r = await withStoreLock(memoryRoot(), () => writeMemory(memoryRoot(), scope, name, text, { source: 'user', caps: memoryCaps(project ? { projectDir: project.path } : null) }));
+    // Team memory: the tracked-copy marker (`team:`) is this machine's state, never the editor's (teamClientText). The
+    // page reloads a note right after its Save, before the push marks it, and a follow in another process sends it no
+    // frame: a Save without an edit must never read as a change pushed over a teammate's version (D13), and an old
+    // `team:` line saved after a team delete must never re-mark the copy for the next refresh to delete (D12).
+    const r = await withStoreLock(memoryRoot(), async () => writeMemory(memoryRoot(), scope, name, await teamClientText(scope, name, text),
+      { source: 'user', caps: memoryCaps(project ? { projectDir: project.path } : null) }));
     emitMemoryChanged(key);
+    if (project) await queueTeamChanges(project.key, [name], { source: 'user' }).catch(teamWarn);
     res.json({ ok: true, name, created: r.created, bytes: r.bytes });
   }));
-  app.delete(`${prefix}/files/:name`, scoped(async (req, res, { scope, key }) => {
+  app.delete(`${prefix}/files/:name`, scoped(async (req, res, { scope, key, project }) => {
     const name = named(req, res); if (name === null) return;
     if (defragLocked(res, key)) return;
     const removed = await withStoreLock(memoryRoot(), () => removeMemory(memoryRoot(), scope, name, { source: 'user' }));
     if (!removed) return res.status(404).json({ error: 'memory file not found' });
     emitMemoryChanged(key);
+    if (project) await queueTeamChanges(project.key, [name], { source: 'user' }).catch(teamWarn);
     res.json({ ok: true });
   }));
   app.get(`${prefix}/history`, scoped(async (_req, res, { scope }) => {
     const snapshots = (await listSnapshots(memoryRoot(), scope)).map((s) => ({ id: s.id, files: s.files }));
     res.json({ snapshots });
   }));
-  app.post(`${prefix}/history/:id/restore`, scoped(async (req, res, { scope, key }) => {
+  app.post(`${prefix}/history/:id/restore`, scoped(async (req, res, { scope, key, project }) => {
+    // Opted in, a restore pushes to the team (D13): the same caller check as every team route (E8).
+    if (project && isTeamMemoryOn(project.key) && !teamOriginOk(req, res)) return;
     if (defragLocked(res, key)) return;
-    await withStoreLock(memoryRoot(), () => restoreSnapshot(memoryRoot(), scope, String(req.params.id || ''), { source: 'user' }));   // ENAME -> 400, ENOSCOPE -> 404
+    // ONE store lock for the restore, its diff and its team queue: a concurrent write is never mistaken for the
+    // restore's, and a team follow (it takes this lock) can never slip in between the restore and its queue and undo it.
+    await withStoreLock(memoryRoot(), async () => {
+      const team = project && isTeamMemoryOn(project.key);   // off: exactly the restore of before (D1)
+      const before = team ? await listMemory(memoryRoot(), scope) : [];
+      await restoreSnapshot(memoryRoot(), scope, String(req.params.id || ''), { source: 'user' });   // ENAME -> 400, ENOSCOPE -> 404
+      if (!team) return;
+      const changed = changedNoteNames(before, await listMemory(memoryRoot(), scope));
+      // A restore is whole-scope (decisions D12, D13): on the team it undoes only this machine's own shared writes — a
+      // teammate's version followed here since the snapshot is never reverted or removed — and a note it only took back
+      // to its baseline (an edit that never reached the team, undone) stays local (D1).
+      // queueTeamChanges takes no store lock (no nesting); its flush runs later, outside this one.
+      if (changed.length) await queueTeamChanges(project.key, changed, { restore: true, source: 'user' }).catch(teamWarn);
+    });
     emitMemoryChanged(key);
     res.json({ ok: true });
   }));
@@ -10085,6 +10562,142 @@ app.get('/api/memory/health', async (_req, res) => {
 });
 registerMemoryRoutes('/api/memory/global', { family: 'global' });
 registerMemoryRoutes('/api/memory/projects/:key', { family: 'projects' });
+
+// Requirements (plans/requirements-design.md): product-owner feature specs, behind the `requirements` flag.
+registerRequirementsRoutes(app, { broadcast, deps: {
+  startRun: (body, opts) => invokeStartRun(body, null, opts),   // D6: through the run handler, as PR watch does
+  runSummary: requirementsRunSummary,
+} });
+// /api/memory/team/:key — the team layer of one registered project (team memory 1a; phase 1b's Team tab reads it).
+// The switch itself is the project setting `memory.team` (PATCH /api/projects/:key/settings).
+async function teamProject(req, res) {
+  const key = String(req.params.key || '');
+  const p = PROJECT_KEY_RE.test(key) ? (await listProjects()).find((x) => x.key === key) : null;
+  if (!p) res.status(404).json({ error: 'project not found' });
+  return p || null;
+}
+const teamOff = (res) => res.status(409).json({ error: 'team memory is off for this project', code: 'DISABLED' });
+app.get('/api/memory/team/:key', async (req, res) => {
+  try { const p = await teamProject(req, res); if (!p) return; res.json(await teamMemoryStatus(p.key)); }
+  catch (err) { return memoryError(res, err); }
+});
+app.post('/api/memory/team/:key/sync', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    if (!isTeamMemoryOn(p.key)) return teamOff(res);
+    const flush = await flushTeamMemory(p.key, { projectDir: p.path });
+    const refresh = await refreshTeamLayer(p.key, { projectDir: p.path, maxAgeMs: 0 });
+    if (refresh?.followed?.length || refresh?.removed?.length) emitMemoryChanged(`projects/${p.key}`);
+    res.json({ flush, status: await teamMemoryStatus(p.key) });
+  } catch (err) { return memoryError(res, err); }
+});
+app.delete('/api/memory/team/:key/notes/:name', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    const name = String(req.params.name || '');
+    if (!isValidMemoryName(name)) return badRequest(res, `invalid memory name — ${MEMORY_NAME_HELP}`);
+    if (!isTeamMemoryOn(p.key)) return teamOff(res);
+    // B23, like every memory write: a live defragment run's final sync wins over a store write to a note it changed.
+    const live = liveDefragRun(`projects/${p.key}`);
+    if (live) return res.status(409).json({ error: 'a defragment run is live on this memory scope — wait for it to finish', runId: live.id });
+    await deleteTeamNote(p.key, name);
+    res.json({ ok: true, status: await teamMemoryStatus(p.key) });
+  } catch (err) { return err?.code === 'DISABLED' ? teamOff(res) : memoryError(res, err); }   // switched off meanwhile
+});
+// Team memory 1b: share existing notes (seeding), Compare on one clash, Undo of the last seeding, the one-time offer.
+function teamRouteError(res, err) {
+  const code = err && err.code;
+  if (code === 'DISABLED') return teamOff(res);
+  if (code === 'EBADREQ') return badRequest(res, err.message);
+  if (code === 'STALE') return res.status(409).json({ error: err.message, code, names: Array.isArray(err.names) ? err.names : [] });
+  if (code === 'ENOSEED') return res.status(404).json({ error: err.message, code });
+  if (code === 'FETCH_FAILED') return res.status(502).json({ error: err.message, code });   // a share needs the branch as it is now (502, as team metrics and policy)
+  return memoryError(res, err);   // MemoryError codes (ETOOBIG → 413, …), else 500
+}
+/** These routes push notes off the machine or rewrite them: a browser page must be served by THIS Worca —
+ *  isLocalRequest checks the hostname, never the port, and a body-less POST needs no CORS preflight (decision E8).
+ *  A possible agent is refused too, as on the Update routes: seeding is the person's consent (E3). */
+function teamOriginOk(req, res) {
+  // An <img> or a link from another page sends no Origin, but a browser marks it with Sec-Fetch-Site (another localhost
+  // port is `same-site`): the seed preview GET fetches and follows, so it must not be triggered that way either.
+  const site = req.headers['sec-fetch-site'];
+  if (!terminalSameOrigin(req) || (site && site !== 'same-origin' && site !== 'none')) {
+    res.status(403).json({ error: 'Team memory only answers pages served by this Worca.', code: 'CROSS_ORIGIN' });
+    return false;
+  }
+  if (!agentMayBeCaller(req)) return true;
+  res.status(403).json({ error: 'Team memory cannot be changed from inside the container while agent isolation is on. Open Worca through its published address.', code: 'TEAM_AGENT_BLOCKED' });
+  return false;
+}
+/** B23, like every memory write: a live defragment run's final sync wins over a store write to a note it changed. */
+function teamDefragLocked(res, key) {
+  const live = liveDefragRun(`projects/${key}`);
+  if (!live) return false;
+  res.status(409).json({ error: 'a defragment run is live on this memory scope — wait for it to finish', runId: live.id });
+  return true;
+}
+app.get('/api/memory/team/:key/seed', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;   // it fetches and follows (previewTeamSeed), and its hashes feed a share
+    const p = await teamProject(req, res); if (!p) return;
+    const name = typeof req.query.name === 'string' && req.query.name !== '' ? req.query.name : null;
+    if (name !== null && !isValidMemoryName(name)) return badRequest(res, `invalid memory name — ${MEMORY_NAME_HELP}`);
+    res.json(await previewTeamSeed(p.key, { projectDir: p.path, name }));
+  } catch (err) { return teamRouteError(res, err); }
+});
+app.post('/api/memory/team/:key/seed', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    if (!isTeamMemoryOn(p.key)) return teamOff(res);
+    if (teamDefragLocked(res, p.key)) return;
+    const r = await seedTeamMemory(p.key, req.body?.decisions, { projectDir: p.path });
+    if (r.tookTeam.length) emitMemoryChanged(`projects/${p.key}`);
+    res.json({ ok: true, ...r, status: await teamMemoryStatus(p.key) });
+  } catch (err) { return teamRouteError(res, err); }
+});
+app.post('/api/memory/team/:key/resolve', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    if (!isTeamMemoryOn(p.key)) return teamOff(res);
+    if (teamDefragLocked(res, p.key)) return;
+    const r = await resolveTeamClash(p.key, req.body || {}, { projectDir: p.path });
+    if (r.tookTeam.length) emitMemoryChanged(`projects/${p.key}`);
+    res.json({ ok: true, ...r, status: await teamMemoryStatus(p.key) });
+  } catch (err) { return teamRouteError(res, err); }
+});
+app.post('/api/memory/team/:key/seed/undo', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    if (!isTeamMemoryOn(p.key)) return teamOff(res);
+    if (teamDefragLocked(res, p.key)) return;
+    const r = await undoTeamSeed(p.key);
+    if (r.restored.length) emitMemoryChanged(`projects/${p.key}`);
+    res.json({ ok: true, ...r, status: await teamMemoryStatus(p.key) });
+  } catch (err) { return teamRouteError(res, err); }
+});
+app.post('/api/memory/team/:key/seed/dismiss', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    await dismissSeedOffer(p.key);
+    res.json({ ok: true, status: await teamMemoryStatus(p.key) });
+  } catch (err) { return teamRouteError(res, err); }
+});
+// E10: Not now on "Your team shares memory for this repository" — for good on this machine. Turn on is the switch itself
+// (PATCH /api/projects/:key/settings {"memory.team": true}).
+app.post('/api/memory/team/:key/available/dismiss', async (req, res) => {
+  try {
+    if (!teamOriginOk(req, res)) return;
+    const p = await teamProject(req, res); if (!p) return;
+    const available = dismissTeamMemoryOffer(p.key);
+    res.json({ ok: true, available });
+  } catch (err) { return teamRouteError(res, err); }
+});
 
 // ---------------------------------------------------------------------------
 // Filesystem browsing for the add-project folder selector. Hybrid picker:
@@ -10586,7 +11199,8 @@ async function scanModelsFor(body, projectPaths, workspace = null) {
   }
   return resolveScanModels({
     explicit: body && body.models,
-    stored: workspaceScanModels(),
+    // Model roles (D3): with no stored pick, the quick role is the scan model.
+    stored: withScanRole(workspaceScanModels(), WORKSPACE_SCAN_DEFAULT_MODELS),
     workspacePick: workspace && workspace.scanModels ? workspace.scanModels : null,
     models,
   });
@@ -10890,8 +11504,11 @@ const settingsState = () => ({
   workspaceScanDefault: WORKSPACE_SCAN_DEFAULT_MODELS,    // what null means: Sonnet 5 · medium, project agents sonnet · medium
   runEngine: runEngineSetting() ?? null,
   stepModels: stepModelsSetting(),
+  modelRoles: modelRolesSetting(),                         // Models › Roles (D1): { <engine>: { deep|everyday|quick: { model, effort } } }
   utilityModels: utilityModelsSetting(),
   askEngine: askEngineSetting() ?? null,                  // Chat: the engine new chats start on (D17)
+  // Models › Engines › Claude: the STORED { model?, effort? } (null = the default); only while the requirements flag is on
+  ...(flagEnabled('requirements') ? { requirementsInterview: requirementsInterviewSetting() ?? null } : {}),
   askModels: askModelsSetting(),                          // Chat: the model per engine (D17)
   nightMode: nightModeSettings(),                         // night mode: the user layer (only the fields set)
   nightModeEffective: resolveNightConfig({ user: nightModeSettings() }).config,   // no project: the global view
@@ -10913,6 +11530,12 @@ async function autoModelState() {
   return { autoWorkflowModel: stored, autoWorkflowModelEffective: { model, source } };
 }
 
+/** What "(default)" means for the Requirements interview row: the newest plain Opus at medium effort (A1-D8).
+ *  Nothing while the requirements flag is off. */
+async function requirementsInterviewState() {
+  if (!flagEnabled('requirements')) return {};
+  return { requirementsInterviewDefault: { model: (await requirementsModel(() => listModels(''))) ?? null, effort: DEFAULT_INTERVIEW_EFFORT } };
+}
 /** Settings ▸ PR description model: the stored id + what Generate with AI will actually
  *  use (stored catalog id > the Sonnet-class default). Async because the catalog is. */
 async function prDescriptionModelState() {
@@ -10925,13 +11548,19 @@ async function prDescriptionModelState() {
  *  (the stored catalog model, else the CLI default). Async because the catalog is. */
 async function agentGenModelState() {
   const stored = storedAgentGenModel();
-  return { agentGenModel: stored, agentGenModelEffective: resolveAgentGenModel(stored, await listModels('')) };
+  return { agentGenModel: stored, agentGenModelEffective: resolveAgentGenModel(withRole(stored, 'claude', 'agentGenModel'), await listModels('')) };
 }
 
 /** Models › Helper jobs › Run naming: the stored pair + what a suggestion will actually run on. */
 async function namingModelState() {
   const stored = storedNamingModel();
-  return { namingModel: stored, namingModelEffective: resolveNamingModel(stored, await listModels(''), modelCostConfig) };
+  return { namingModel: stored, namingModelEffective: resolveNamingModel(withRole(stored, 'claude', 'namingModel'), await listModels(''), modelCostConfig) };
+}
+
+/** Models › Helper jobs › Command summaries: the stored pair + what a summary will actually run on. */
+async function commandSummaryModelState() {
+  const stored = storedCommandSummaryModel();
+  return { commandSummaryModel: stored, commandSummaryModelEffective: resolveNamingModel(withRole(stored, 'claude', 'commandSummaryModel'), await listModels(''), modelCostConfig) };
 }
 
 // ---------------------------------------------------------------------------
@@ -11122,14 +11751,14 @@ async function askPrCardFacts(row) {
 
 const askRelays = new Map();   // token -> { rpc, out, billTo, owner }
 
-function askAgentRelay({ threadId, reader, web = null, engine = 'claude', skillRoot = null }) {
+function askAgentRelay({ threadId, reader, web = null, engine = 'claude', model = null, skillRoot = null }) {
   const token = randomBytes(24).toString('base64url');
   const life = new AbortController();
   const entry = { out: [], billTo: currentBillTo(), owner: currentOwner() };
   // The tools run here, so this turn's web access rides a private env copy (never process.env itself);
   // the search key is read from worca's own environment, where it was set.
-  // A Codex turn's set skills (#635): this message's mount, one more read root for this relay (this turn) only.
-  const env = { ...process.env, ...askWebMcpEnv(web), ...(engine === 'codex' || engine === 'copilot' ? { WORCA_ASK_ENGINE: engine, ...(skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}) } : {}) };
+  // A locked-down turn's set skills (#635): this message's mount, one more read root for this relay (this turn) only.
+  const env = { ...process.env, ...askWebMcpEnv(web), ...(lockedChatEngine(engine) ? { WORCA_ASK_ENGINE: engine, ...(typeof model === 'string' && model ? { WORCA_ASK_MODEL: model } : {}), ...(skillRoot ? { WORCA_ASK_SKILL_ROOT: skillRoot } : {}) } : {}) };
   entry.rpc = createAskToolServer({
     threadId, reader, signal: life.signal, env, write: (s) => { entry.out.push(s); },
     // The tools run in THIS process, which holds the live runs: get_run_diff can read a run
@@ -11151,6 +11780,8 @@ function askAgentRelay({ threadId, reader, web = null, engine = 'claude', skillR
       },
       // Shaper (D7): here the tools see the live runs, so an open step's refusal reaches the model as the tool result.
       ...defaultShapeToolDeps({ threadId, live: (id) => liveSliceOf(id) }),
+      // Corporate proxy: read in-process; Test is refused under agent isolation (relayProxyDeps).
+      proxy: relayProxyDeps(),
     },
   });
   askRelays.set(token, entry);
@@ -11342,7 +11973,7 @@ app.post('/api/shutdown', (req, res) => {
 
 app.get('/api/settings', async (req, res) => {
   const person = awayPersonOf(req);   // B4: a signed-in person sees their own Away switch
-  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), chat: chatPrefs(), app: APP_INFO });
+  res.json({ ...settingsState(), ...(person ? { nightModeToggle: nightModeToggleFor(person), nightModePerPerson: person } : {}), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await commandSummaryModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(), app: APP_INFO });
 });
 
 // GET  /api/app/version       → { current, latest, status, checkedAt, enabled, links } (issue #841);
@@ -11354,6 +11985,61 @@ app.get('/api/app/version', async (req, res) => {
 });
 app.post('/api/app/version/check', async (req, res) => {
   res.set('Cache-Control', 'no-store').json(versionPayload(await updateChecker.status({ force: true })));
+});
+
+// Manual update (issue #841). GET reads only; POST asks the `worca ui` supervisor to install: it
+// writes <worcaHome>/update.json, drains like a stop, and exits UPDATE_EXIT_CODE. Nothing installs here.
+app.get('/api/app/update', async (req, res) => {
+  const elig = await currentUpdateEligibility(req);
+  const list = updateCheckEnabled() ? await versionLister.get() : versionLister.peek();
+  const rc = list?.distTags?.rc || null;
+  res.set('Cache-Control', 'no-store').json({
+    ...elig, current: RUNNING_VERSION, distTags: list?.distTags || null,
+    rcNewer: !!(rc && parseVersion(PKG_VERSION) && compareVersions(parseVersion(rc), parseVersion(PKG_VERSION)) > 0),
+    autoRestartMin: AUTO_RESTART_MIN, startCommand: startCommand(updatePort()), lastResult: lastUpdateResult(),
+  });
+});
+app.get('/api/app/update/versions', async (req, res) => {
+  const list = await versionLister.get({ force: req.query.refresh === '1' });
+  if (!list) return res.status(502).json({ error: 'Could not load the version list from npm. Try again in a moment.', code: 'VERSIONS_UNAVAILABLE' });
+  res.set('Cache-Control', 'no-store').json({ current: RUNNING_VERSION, distTags: list.distTags, versions: annotateVersions(list, PKG_VERSION) });
+});
+app.get('/api/app/update/preview', async (req, res) => {
+  // Lists run titles: answer only this Worca's own pages, never an agent.
+  if (!terminalSameOrigin(req) || agentMayBeCaller(req)) return res.status(403).json({ error: 'Updates only answer pages served by this Worca.', code: 'UPDATE_CROSS_ORIGIN' });
+  const target = canonicalVersion(req.query.version);
+  if (!target) return res.status(400).json({ error: 'Pick a version from the list.', code: 'UPDATE_BAD_VERSION' });
+  res.set('Cache-Control', 'no-store').json({ target, autoRestart: canAutoRestart(target), startCommand: startCommand(updatePort()), ...updatePreview() });
+});
+app.post('/api/app/update', async (req, res) => {
+  if (!updateCallerOk(req, res)) return;
+  if (updateRequested || DRAIN.on) return res.status(503).json({ error: 'Worca is already stopping.', code: 'UPDATE_IN_PROGRESS' });
+  const target = canonicalVersion(req.body?.version);
+  if (!target) return res.status(400).json({ error: 'Pick a version from the list.', code: 'UPDATE_BAD_VERSION' });
+  if (target === RUNNING_VERSION) return res.status(400).json({ error: `Worca ${target} is already running.`, code: 'UPDATE_SAME_VERSION' });
+  const elig = await currentUpdateEligibility(req);
+  if (!elig.canUpdate) return res.status(409).json({ error: elig.message, code: 'UPDATE_UNAVAILABLE', reason: elig.reason });
+  const list = await versionLister.get();
+  if (!list) return res.status(502).json({ error: 'Could not reach the npm registry. Try again in a moment.', code: 'VERSIONS_UNAVAILABLE' });
+  if (!findListedVersion(list, target)) return res.status(400).json({ error: `@worca/app@${target} is not on npm.`, code: 'UPDATE_BAD_VERSION' });
+  if (updateRequested || DRAIN.on) return res.status(503).json({ error: 'Worca is already stopping.', code: 'UPDATE_IN_PROGRESS' });
+  const autoRestart = canAutoRestart(target); const port = updatePort();
+  updateRequested = true;
+  try {
+    writeUpdateRecord({ state: 'requested', from: RUNNING_VERSION, to: target, autoRestart, port, requestedAt: new Date().toISOString(), pid: process.pid });
+  } catch (err) {
+    updateRequested = false;
+    return res.status(500).json({ error: `Could not record the update request: ${err.message}`, code: 'UPDATE_RECORD_FAILED' });
+  }
+  console.log(`[worca] update to ${target} requested; draining and handing over to worca ui`);
+  res.status(202).json({ ok: true, target, autoRestart, startCommand: startCommand(port) });
+  setImmediate(() => uiControl.onShutdown('update'));
+});
+app.post('/api/app/update/dismiss', (req, res) => {
+  if (!terminalSameOrigin(req) || agentMayBeCaller(req)) return res.status(403).json({ error: 'Not from here.', code: 'UPDATE_CROSS_ORIGIN' });
+  const rec = readUpdateRecord();
+  if (rec && (rec.state === 'failed' || rec.state === 'installed')) writeUpdateRecord({ ...rec, state: 'dismissed' });
+  res.json({ ok: true });
 });
 
 app.get('/api/budget', (_req, res) => {
@@ -11390,7 +12076,7 @@ app.post('/api/settings', async (req, res) => {
     has('projectsRoot') ? normalizeProjectPath(body.projectsRoot) : null]))) return;
   try {
     const { actionsWarnings } = await applySettingsPatch(body, { person: awayPersonOf(req) });
-    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), chat: chatPrefs(),
+    res.json({ ...settingsState(), ...(await autoModelState()), ...(await prDescriptionModelState()), ...(await agentGenModelState()), ...(await namingModelState()), ...(await commandSummaryModelState()), ...(await requirementsInterviewState()), chat: chatPrefs(),
       ...(actionsWarnings ? { actionsWarnings } : {}) });
   } catch (err) {
     // 400 with the user's words and, when known, the body path of the bad field (#555).
@@ -11398,6 +12084,28 @@ app.post('/api/settings', async (req, res) => {
     return res.status(400).json({ error, ...(field ? { field } : {}) });
   }
 });
+
+/** The catalog checks on an asserted modelRoles patch, shared by POST /api/settings and setup apply (A18).
+ *  Returns the patch with each model rewritten to the catalog's canonical id. `pending`: the catalog rows
+ *  this setup apply's own imports will create (pendingImportIds); POST /api/settings passes none. */
+async function checkModelRolesPatch(patch, { pending = [] } = {}) {
+  const items = [];
+  // Model and harness only: the role effort is mapped when used (effortOn), never refused here (A7).
+  for (const [engine, roles] of Object.entries(patch)) for (const [role, value] of Object.entries(roles)) if (value) items.push({ id: `modelRoles.${engine}.${role}`, engine, value: { model: value.model } });
+  await assertSlotModels(items, { pending });
+  // Store the catalog's canonical id (A8), so every consumer matches the same spelling; a pending id keeps the
+  // spelling its import will write.
+  if (items.length) {
+    const models = await listModels('');
+    for (const roles of Object.values(patch)) for (const value of Object.values(roles)) {
+      if (!value) continue;
+      const lc = value.model.toLowerCase();
+      const hit = models.find((m) => m?.id?.toLowerCase() === lc) || pending.find((p) => p.id.toLowerCase() === lc);
+      if (hit) value.model = hit.id;
+    }
+  }
+  return patch;
+}
 
 /**
  * POST /api/settings' body without the request: validate every present key before any write, write them (root
@@ -11438,12 +12146,16 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const agentGenModels = hasAgentGenKey ? (autoModels || defragModels || await listModels('')) : null;
   const hasNamingModelKey = has('namingModel');
   const namingModels = hasNamingModelKey ? (autoModels || defragModels || agentGenModels || await listModels('')) : null;
+  const hasCommandSummaryModelKey = has('commandSummaryModel');
+  const csModels = hasCommandSummaryModelKey ? (autoModels || defragModels || agentGenModels || namingModels || await listModels('')) : null;
   const hasWorkspaceScanKey = has('workspaceScan');
   const hasRunEngineKey = has('runEngine');
   const hasStepModelsKey = has('stepModels');
+  const hasModelRolesKey = has('modelRoles');
   const hasUtilityModelsKey = has('utilityModels');
   const hasAskEngineKey = has('askEngine');
   const hasAskModelsKey = has('askModels');
+  const hasRequirementsInterviewKey = has('requirementsInterview') && flagEnabled('requirements');   // ignored while the flag is off
   const hasActionsKey = has('actions');
   const hasNetworkWaitKey = has('networkWait');
   const wsScanModels = hasWorkspaceScanKey ? (autoModels || defragModels || await listModels('')) : null;
@@ -11469,7 +12181,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   if (has('askMaxTurns')) ask.askMaxTurns = body.askMaxTurns ?? '';
   if (has('askMaxBudgetUsd')) ask.askMaxBudgetUsd = body.askMaxBudgetUsd === undefined ? '' : body.askMaxBudgetUsd;
   {   // was the route's try: a refusal now reaches the caller (the route maps it to 400, the chat to a notice)
-    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'namingModel', 'workspaceScan']) {
+    for (const key of ['titleModel', 'autoWorkflowModel', 'prDescriptionModel', 'memoryDefrag', 'agentGenModel', 'namingModel', 'commandSummaryModel', 'workspaceScan', ...(hasRequirementsInterviewKey ? ['requirementsInterview'] : [])]) {
       if (has(key)) asSettingsField(key, () => refuseNonClaudeUtilityModel(key, body[key]));
     }
     // Each validator / setter that can refuse a value runs tagged with the body key it checks,
@@ -11509,9 +12221,14 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasMemoryDefragKey) asSettingsField('memoryDefrag', () => assertMemoryDefragModelInput(body.memoryDefrag, defragModels));
     if (hasAgentGenKey) asSettingsField('agentGenModel', () => assertAgentGenModelInput(body.agentGenModel, agentGenModels));
     if (hasNamingModelKey) asSettingsField('namingModel', () => assertNamingModelInput(body.namingModel, namingModels));
+    if (hasCommandSummaryModelKey) asSettingsField('commandSummaryModel', () => assertCommandSummaryModelInput(body.commandSummaryModel, csModels));
     if (hasWorkspaceScanKey) asSettingsField('workspaceScan', () => assertWorkspaceScanInput(body.workspaceScan, wsScanModels));
     if (hasRunEngineKey) asSettingsField('runEngine', () => assertRunEngineInput(body.runEngine));
     if (hasAskEngineKey) asSettingsField('askEngine', () => assertAskEngineInput(body.askEngine));
+    if (hasRequirementsInterviewKey) await asSettingsField('requirementsInterview', async () => {
+      const v = assertRequirementsInterviewInput(body.requirementsInterview);
+      if (v?.model) await assertSlotModels([{ id: 'requirementsInterview', engine: 'claude', value: v }]);
+    });
     if (hasAskModelsKey) await asSettingsField('askModels', async () => {
       const patch = assertAskModelsInput(body.askModels);
       await assertSlotModels(Object.entries(patch).filter(([, value]) => value).map(([engine, value]) => ({ id: `askModels.${engine}`, engine, value })));
@@ -11521,6 +12238,10 @@ async function applySettingsPatch(body, { person = null } = {}) {
       const items = [];
       for (const [engine, roles] of Object.entries(patch)) for (const [role, value] of Object.entries(roles)) if (value) items.push({ id: `stepModels.${engine}.${role}`, engine, value });
       await assertSlotModels(items);
+    });
+    let modelRolesPatch = null;
+    if (hasModelRolesKey) await asSettingsField('modelRoles', async () => {
+      modelRolesPatch = await checkModelRolesPatch(assertModelRolesInput(body.modelRoles));
     });
     if (hasUtilityModelsKey) await asSettingsField('utilityModels', async () => {
       const patch = assertUtilityModelsInput(body.utilityModels); const items = [];
@@ -11582,12 +12303,15 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasMemoryDefragKey) await setMemoryDefragModel(body.memoryDefrag, { models: defragModels });
     if (hasAgentGenKey) await setAgentGenModel(body.agentGenModel, { models: agentGenModels });
     if (hasNamingModelKey) await setNamingModel(body.namingModel, { models: namingModels });
+    if (hasCommandSummaryModelKey) await setCommandSummaryModel(body.commandSummaryModel, { models: csModels });
     if (hasWorkspaceScanKey) await setWorkspaceScanModels(body.workspaceScan, { models: wsScanModels });
     if (hasRunEngineKey) await asSettingsField('runEngine', () => setRunEngineSetting(body.runEngine));
     if (hasStepModelsKey) await asSettingsField('stepModels', () => setStepModels(body.stepModels));
+    if (hasModelRolesKey) await asSettingsField('modelRoles', () => setModelRoles(modelRolesPatch));
     if (hasUtilityModelsKey) await asSettingsField('utilityModels', () => setUtilityModels(body.utilityModels));
     if (hasAskEngineKey) await asSettingsField('askEngine', () => setAskEngineSetting(body.askEngine));
     if (hasAskModelsKey) await asSettingsField('askModels', () => setAskModels(body.askModels));
+    if (hasRequirementsInterviewKey) await asSettingsField('requirementsInterview', () => setRequirementsInterview(body.requirementsInterview));
     if (has('schedule')) await asSettingsField('schedule', () => setScheduleDefaults(body.schedule && typeof body.schedule === 'object' ? body.schedule : {}));
     if (has('nightMode')) await setNightMode(body.nightMode);
     if (has('nightModeToggle') && !(await setPersonNightModeToggle(person, body.nightModeToggle))) await setNightModeToggle(body.nightModeToggle);
@@ -11602,7 +12326,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey || hasUpdateCheckKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -11891,8 +12615,9 @@ app.get('/api/models', (req, res) => {
   res.json({
     models: maskedGlobalModels(), plugin: pluginModelsPayload(), predefined: PREDEFINED_MODELS, efforts: EFFORTS,
     codex: CODEX_BUILTIN_MODELS, codexEfforts: CODEX_EFFORTS,   // §3.1a: the Codex built-ins group + the editor's Codex efforts
-    cursorEfforts: CURSOR_EFFORTS,                               // none: Cursor has no effort flag (no Cursor built-ins)
     copilot: COPILOT_BUILTIN_MODELS, copilotEfforts: COPILOT_EFFORTS,   // the Copilot built-ins group + the editor's Copilot efforts
+    gooseEfforts: GOOSE_EFFORTS,                                 // GOOSE_THINKING_EFFORT values (no Goose built-ins)
+    opencodeEfforts: OPENCODE_EFFORTS,                           // OpenCode's --variant values (no OpenCode built-ins)
     hideBuiltinModels: hideBuiltinModels(),   // the Models-view checkbox (#422)
     // Team policy catalog entries (team-policy design §8): read-only, env masked like a global's.
     policy: policyCatalogModels().map((m) => maskedGlobalModel(m, readiness)),
@@ -12061,7 +12786,9 @@ app.get('/api/providers/copilot/models', async (req, res) => {
 // saving it first. Same reach as Test connection: the UI is loopback-only.
 app.get('/api/providers/openai/models', async (req, res) => {
   try {
-    res.json(await endpointModelsForImport({ baseUrl: typeof req.query.baseUrl === 'string' ? req.query.baseUrl : '' }));
+    // The endpoint's own key (Gemini, Qwen) arrives in a header, never the query string.
+    const apiKey = typeof req.get('x-worca-endpoint-key') === 'string' ? req.get('x-worca-endpoint-key') : '';
+    res.json(await endpointModelsForImport({ baseUrl: typeof req.query.baseUrl === 'string' ? req.query.baseUrl : '', apiKey }));
   } catch (err) {
     return providerError(res, err);
   }
@@ -12070,7 +12797,7 @@ app.get('/api/providers/openai/models', async (req, res) => {
 app.post('/api/providers/openai/import-models', async (req, res) => {
   const b = req.body || {};
   try {
-    const result = await importEndpointModels(b.ids, { baseUrl: typeof b.baseUrl === 'string' ? b.baseUrl : '' });
+    const result = await importEndpointModels(b.ids, { baseUrl: typeof b.baseUrl === 'string' ? b.baseUrl : '', apiKey: typeof b.apiKey === 'string' ? b.apiKey : '' });
     emitChanged('settings-changed');
     res.json({ ...result, models: maskedGlobalModels() });
   } catch (err) {
@@ -12728,6 +13455,238 @@ app.put('/api/chat-home/pins', async (req, res) => {
   }
 });
 
+// No worcaHome() call here: the login file path resolves per call (project rule server-import-time-worcahome).
+/** A startEgressPolicy() result set by tests (_testing.setEgress). */
+let EGRESS = null;
+/** startLiveEgress() once the boot block ran (null in tests that import the app). */
+let EGRESS_LIVE = null;
+const egressNow = () => (EGRESS_LIVE ? EGRESS_LIVE.current() : EGRESS);
+/** The proxy's shared logic (src/core/proxy-host.mjs): the routes, the chat bridge and the proxy card all use it. */
+const proxyHost = createProxyHost({ egress: egressNow, apply: (np) => (EGRESS_LIVE ? EGRESS_LIVE.apply(np) : null) });
+const proxyStatusPayload = () => proxyHost.status();
+
+/** D9: login, logout, test and settings act as the user; an agent under isolation must not. */
+function refuseProxyAgent(req, res) {
+  if (!agentMayBeCaller(req)) return false;
+  res.status(403).json({ error: PROXY_AGENT_TEXT, code: 'PROXY_AGENT_BLOCKED' });
+  return true;
+}
+
+// The chat's proxy bridge (src/core/ask/proxy-deps.mjs): classic mode only — relay mode is agent isolation, which
+// passes in-process deps (askAgentRelay) and refuses Test. One token per turn, dropped when the turn ends.
+const askProxyBridges = new Map();   // token -> threadId
+function askProxyBridge({ threadId }) {
+  if (agentIdentity()) return null;
+  const token = randomBytes(24).toString('base64url');
+  askProxyBridges.set(token, threadId);
+  const port = server.address()?.port || PORT;
+  return { url: `http://127.0.0.1:${port}/api/ask/proxy`, token, dispose: () => askProxyBridges.delete(token) };
+}
+app.post('/api/ask/proxy', async (req, res) => {
+  if (!isInContainer(req)) return res.status(403).json({ error: 'proxy: loopback callers only' });
+  if (!askProxyBridges.has(String(req.headers['x-worca-ask-proxy'] || ''))) return res.status(403).json({ error: 'proxy: unknown or finished turn' });
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: PROXY_AGENT_TEXT, code: 'PROXY_AGENT_BLOCKED' });
+  const op = req.body && req.body.op;
+  if (op === 'status') return res.json({ result: proxyHost.chatStatus() });
+  if (op === 'test') {
+    // proxyHost.test() releases its lock in `finally`; a throw from checkUpstream still needs a JSON reply here
+    // (the MCP child reads j.error).
+    try {
+      const r = await proxyHost.test();
+      return res.json({ result: r.status === 200 ? r.body : { ok: false, ...r.body } });
+    } catch (err) {
+      return res.status(500).json({ error: `the proxy test failed: ${err && err.message ? err.message : String(err)}` });
+    }
+  }
+  return badRequest(res, 'proxy: unknown op');
+});
+
+/** Relay mode (agent isolation): the proxy tools run here; reading is allowed (GET /api/proxy/status is not agent-refused), Test is not. */
+const relayProxyDeps = () => ({
+  status: async () => proxyHost.chatStatus(),
+  test: null,
+  testOff: PROXY_AGENT_TEXT,
+  validateChange: validateProxyChange,
+  validateFlagOn: validateProxyFlagOn,
+});
+
+// Settings › Network proxy (docs/network-proxy.md). The routes always exist; agents are refused below.
+
+/** Decision 15a: JSON only, so a cross-site page needs a CORS preflight it cannot pass. */
+function refuseNonJson(req, res) {
+  if (req.is('application/json')) return false;
+  res.status(415).json({ error: 'proxy: send the body as application/json', code: 'JSON_REQUIRED' });
+  return true;
+}
+const owns = (o, k) => !!o && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k);
+
+// Setup assistant (docs/setup-assistant.md): the machine check and the one-shot apply. The progress follows
+// the clone-job pattern: 202, one 'setup-apply' frame per step, a terminal frame, and a poll route.
+const SETUP_JOBS = new Map();            // id -> { id, state, results, ok, retry, startedAt, endedAt }
+const SETUP_JOB_TTL_MS = 60 * 60_000;
+let setupRunning = null;
+let setupDepsOverride = {};
+let setupProbesOverride = null;
+const SETUP_AGENT_TEXT = 'Setup cannot run from inside the container while agent isolation is on. Open Worca through its published address.';
+const publicSetupJob = (j) => ({ id: j.id, done: j.state !== 'running', ok: j.ok, retry: j.retry, results: j.results, startedAt: j.startedAt, endedAt: j.endedAt });
+
+function setupDeps() {
+  return {
+    checkProxy: (patch, login) => proxyHost.checkSave(patch, { login }),
+    fixedPortNow: () => proxyHost.fixedPortNow(),
+    applyProxy: (np, beforeFixed) => proxyHost.applyWritten(np, beforeFixed),
+    reloadLogin: () => egressNow()?.reloadLogin?.(),
+    checkModelRoles: (patch, o) => checkModelRolesPatch(patch, o),
+    testModel: async (id) => {
+      const key = String(id).toLowerCase();
+      if (modelTestsInFlight.has(key)) return { ok: false, message: 'test already running for this model' };
+      modelTestsInFlight.add(key);
+      try { return await testModel(id); } finally { modelTestsInFlight.delete(key); }
+    },
+    ...setupDepsOverride,
+  };
+}
+
+app.get('/api/setup/detect', async (req, res) => {
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: SETUP_AGENT_TEXT, code: 'SETUP_AGENT_BLOCKED' });
+  try {
+    const probes = setupProbesOverride || defaultProbes({ recheck: isTruthy(req.query.recheck),
+      sourceEnv: () => upstreamEnv(egressNow()?.sourceEnv ?? process.env) });
+    res.json(await detectSetup({ probes }));
+  } catch (err) { console.error('[setup] detect failed:', err); res.status(500).json({ error: 'Worca could not check this machine. Try again.' }); }
+});
+
+app.get('/api/setup/team', async (req, res) => {
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: SETUP_AGENT_TEXT, code: 'SETUP_AGENT_BLOCKED' });
+  try {
+    // The account notice polls nothing: it reads ?homes=1 on boot and on each menu open, which costs no catalog
+    // and no claude CLI probe (fit-1-4).
+    if (req.query.homes === '1') return res.json(teamSetupState({ homes: cachedPolicyHomes, homesOnly: true }));
+    const [catalog, auth] = await Promise.all([listModels(null), probeClaudeAuth().catch(() => ({ state: 'unknown' }))]);
+    // savedKeys: which shareable keys settings.json really holds, since GET /api/settings fills in defaults. A first
+    // start fills only keys missing here (webui-1); only key names leave, never values.
+    const all = readSettings();
+    res.json({ ...teamSetupState({ catalog, claudeAuth: auth.state, homes: cachedPolicyHomes }), savedKeys: SHARE_SETTING_KEYS.filter((k) => Object.hasOwn(all, k)) });
+  } catch (err) { console.error('[setup] team setup failed:', err); res.status(500).json({ error: 'Worca could not read the team setup. Try again.' }); }
+});
+app.post('/api/setup/team/draft', async (req, res) => {
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: SETUP_AGENT_TEXT, code: 'SETUP_AGENT_BLOCKED' });
+  try {
+    // Only the keys Share may carry leave settings.json (T14): networkProxy, providers and logins are never read.
+    const all = readSettings();
+    const settings = Object.fromEntries(SHARE_SETTING_KEYS.filter((k) => Object.hasOwn(all, k)).map((k) => [k, all[k]]));
+    const { doc, text, warnings } = buildTeamSetup({ settings, catalog: await listModels(null) });
+    res.json({ doc, text, warnings });
+  } catch (err) { console.error('[setup] team draft failed:', err); res.status(500).json({ error: 'Worca could not prepare the team setup. Try again.' }); }
+});
+
+app.post('/api/setup/apply', async (req, res) => {
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: SETUP_AGENT_TEXT, code: 'SETUP_AGENT_BLOCKED' });
+  if (!req.is('application/json')) return res.status(415).json({ error: 'Setup needs its answers sent as JSON.', code: 'JSON_REQUIRED' });
+  if (setupRunning) return res.status(409).json({ error: 'Setup is already applying. Wait for it to finish, then try again.', code: 'SETUP_RUNNING', id: setupRunning });
+  // Claim the lock synchronously, before the first await, so two POSTs can never both plan (security-1-1).
+  const id = `stp_${randomBytes(6).toString('hex')}`;
+  setupRunning = id;
+  const deps = setupDeps();
+  let plan;
+  try {
+    plan = await planSetupApply(req.body, deps);
+    await commitSetupPlan(plan, deps);
+  } catch (err) {
+    setupRunning = null;                                        // every early return releases the lock
+    if (err instanceof SetupFieldError) return res.status(400).json({ error: err.message, field: err.field, ...(err.code ? { code: err.code } : {}) });
+    if (err instanceof SetupConflictError) return res.status(409).json({ error: err.message, code: err.code });
+    console.error('[setup] apply failed before its steps:', err);
+    return res.status(500).json({ error: plan ? 'Settings were not saved. Try Apply again.' : 'Worca could not check this setup. Try Apply again.' });
+  }
+  if (plan.written.some((k) => ['pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod'].includes(k))) emitChanged('budget-changed');
+  if (plan.written.length) emitChanged('settings-changed');
+  const job = { id, state: 'running', results: [], ok: null, retry: null, startedAt: Date.now(), endedAt: null };
+  SETUP_JOBS.set(job.id, job);
+  res.status(202).json({ id: job.id, written: plan.written, steps: [...plan.refused, ...plan.steps].map((s) => ({ id: s.id, label: s.label })) });
+  runSetupSteps(plan, { deps, onResult: (r) => { job.results.push(r); broadcast({ type: 'setup-apply', id: job.id, result: r }); } })
+    .then((out) => Object.assign(job, { ok: out.ok, retry: out.retry }))
+    .catch((err) => Object.assign(job, { ok: false, retry: null, error: err && err.message ? err.message : String(err) }))
+    .finally(() => {
+      Object.assign(job, { state: 'done', endedAt: Date.now() });
+      setupRunning = null;
+      broadcast({ type: 'setup-apply', id: job.id, done: true, ok: job.ok, retry: job.retry });
+      if (job.results.some((r) => r.state === 'ok' && /-import$|^copilot-signin$/.test(r.id))) emitChanged('settings-changed');
+      setTimeout(() => SETUP_JOBS.delete(job.id), SETUP_JOB_TTL_MS).unref?.();
+    });
+});
+
+app.get('/api/setup/apply/:id', (req, res) => {
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: SETUP_AGENT_TEXT, code: 'SETUP_AGENT_BLOCKED' });
+  const job = SETUP_JOBS.get(req.params.id);
+  if (!job) return res.status(404).json({ error: 'No such setup apply. It may have finished more than an hour ago.' });
+  res.json(publicSetupJob(job));
+});
+
+app.get('/api/proxy/status', (req, res) => {
+  res.set('Cache-Control', 'no-store').json(proxyStatusPayload());
+});
+
+// Auto-detect (setup assistant › Network, the Network proxy card): the proxy this machine's own settings pick for
+// api.anthropic.com — a PAC file, auto-discovery or a manual proxy (src/core/system-proxy.mjs). Read-only: the
+// caller fills its fields and still Tests before saving. Never a 500: an unreadable setting is a found:false line.
+let detectSystemProxyImpl = detectSystemProxy;
+app.get('/api/proxy/detect', async (req, res) => {
+  // Like the proxy routes that act: it fetches a PAC file and starts processes, so an agent run is refused.
+  if (refuseProxyAgent(req, res)) return;
+  res.set('Cache-Control', 'no-store').json(await detectSystemProxyImpl());
+});
+
+app.post('/api/proxy/login', (req, res) => {
+  if (refuseProxyAgent(req, res)) return;
+  const body = req.body || {};
+  const { auth } = networkProxySettings();
+  const refusal = savedLoginRefusal(auth);
+  // The code keeps its slice-2 name on purpose: it now covers Digest too (tests and the card pin it).
+  if (refusal) return res.status(409).json({ error: refusal, field: 'auth', code: 'BASIC_NO_SAVED_LOGIN' });
+  const account = body.domain ? { domain: body.domain, user: body.user } : parseAccount(body.user);
+  const password = typeof body.password === 'string' ? body.password : '';
+  body.password = undefined;
+  try {
+    saveProxyLogin({ ...account, password });
+  } catch (err) {
+    if (err instanceof ProxyLoginError) return res.status(400).json({ error: err.message, field: err.field });
+    return res.status(500).json({ error: `the login could not be saved (${err && err.code ? err.code : 'error'})` });
+  }
+  egressNow()?.reloadLogin?.();
+  res.json(proxyStatusPayload());
+});
+
+app.post('/api/proxy/logout', (req, res) => {
+  if (refuseProxyAgent(req, res)) return;
+  clearProxyLogin();
+  egressNow()?.reloadLogin?.();
+  res.json(proxyStatusPayload());
+});
+
+// D9: the body's networkProxy is a candidate merged over the saved values; a pass is recorded for the UNTESTED gate.
+// `login` ({ domain, user, password }): the setup dialog's typed login, used for this test only, never written or logged.
+app.post('/api/proxy/test', async (req, res) => {
+  if (refuseProxyAgent(req, res) || refuseNonJson(req, res)) return;
+  const body = req.body || {};
+  const r = await proxyHost.test(owns(body, 'networkProxy') ? body.networkProxy : undefined,
+    { record: true, ...(owns(body, 'login') ? { login: body.login } : {}) });
+  res.status(r.status).json(r.body);
+});
+
+app.put('/api/proxy/settings', async (req, res) => {
+  if (refuseProxyAgent(req, res) || refuseNonJson(req, res)) return;
+  if (!owns(req.body, 'networkProxy')) return res.status(400).json({ error: 'networkProxy is required (null clears it)', field: 'networkProxy' });
+  try {
+    const r = await proxyHost.saveSettings(req.body.networkProxy);
+    if (r.refused) return res.status(r.refused.status).json(r.refused.body);
+    emitChanged('settings-changed');
+    res.json(r);
+  } catch (err) {
+    res.status(400).json({ error: err && err.message ? err.message : String(err), field: 'networkProxy' });
+  }
+});
+
 app.use('/api/presets', requireFlag('runPresets'));
 
 app.get('/api/presets', (req, res) => {
@@ -13017,6 +13976,11 @@ function askTrackingCount(threadId) {
   return n;
 }
 
+/** #948 s2: why this chat cannot be archived now (chat-busy.mjs), or null. */
+function askBusyReason(threadId) {
+  return chatBusyReason({ inFlight: !!askInFlight(threadId), commands: askCommands.running(threadId), tracking: askTrackingCount(threadId) });
+}
+
 /** worca Chat (the History column's amber dot): how many of this chat's followed, unsettled runs wait on a question
  *  or gate — entry.pendingQuestion, the same truth the Running page reads. */
 function askWaitingCount(threadId) {
@@ -13117,15 +14081,34 @@ app.get('/api/ask/threads', (req, res) => {
     const mode = !req.worcaExtension && req.query.mode === 'composer' ? 'composer' : null;
     // q = the History column's search (title or any message's text); the owner and surface filters above still apply.
     const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
-    const threads = askListThreads({ limit, visibleTo, mode, query }).map((t) => {
+    const decorate = (t) => {
       const trackingRuns = askTrackingCount(t.id);
-      return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns, waiting: askWaitingCount(t.id) > 0 };
-    });
+      return { ...t, inFlight: !!askInFlight(t.id), tracking: trackingRuns > 0, trackingRuns, waiting: askWaitingCount(t.id) > 0,
+        commands: askCommands.running(t.id), archived: !!t.archivedAt, scope: chatScopeOf(t.context) };
+    };
+    // #948 s2: the Chats column pages (show / sort / cursor). Without them the answer keeps today's top-level keys.
+    const cursor = typeof req.query.cursor === 'string' && req.query.cursor ? req.query.cursor : null;
+    // A cursor alone pages Show = All, so `total` and the rows describe the same set.
+    const show = ['all', 'needs', 'archived'].includes(req.query.show) ? req.query.show : (cursor ? 'all' : null);
+    if (show) {
+      const sort = THREAD_SORTS.includes(req.query.sort) ? req.query.sort : 'activity';
+      const needIds = [...askFollowers.keys()].filter((tid) => askWaitingCount(tid) > 0);
+      const base = { visibleTo, mode, query };
+      const page = askListThreadsPage({ ...base, limit, sort, cursor, show: show === 'needs' ? 'all' : show, ids: show === 'needs' ? needIds : null });
+      const counts = {
+        all: askCountThreads({ ...base, show: 'all' }),
+        needs: askCountThreads({ ...base, show: 'all', ids: needIds }),
+        archived: askCountThreads({ ...base, show: 'archived' }),
+      };
+      return res.json({ threads: page.threads.map(decorate), cursor: page.cursor, total: counts[show], counts });
+    }
+    const threads = askListThreads({ limit, visibleTo, mode, query }).map(decorate);
     // total = EVERY saved chat (the History popover's meter), not the capped page above; while searching, the chats
     // the search matches, with all = every saved chat ("3 of 54 chats").
     const total = askCountThreads({ visibleTo, mode, query });
     res.json(query ? { threads, total, all: askCountThreads({ visibleTo, mode }) } : { threads, total });
   } catch (err) {
+    if (err && err.code === 'BAD_CURSOR') return badRequest(res, 'invalid cursor');
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
@@ -13351,6 +14334,22 @@ app.patch('/api/ask/threads/:id', async (req, res) => {
   try {
     if (req.worcaExtension && askGetThread(id)?.mode === 'composer') return res.status(403).json({ error: 'the browser extension uses Ask threads only', code: 'extension-route' });
     const body = req.body || {};
+    // #948 s2: archive and pin, alone in the body. Archive waits for an idle chat (chat-busy.mjs); unarchive and pin
+    // never wait. Neither bumps the chat's Last activity.
+    if (body.archived !== undefined || body.pinned !== undefined) {
+      if (Object.keys(body).some((k) => k !== 'archived' && k !== 'pinned')) return badRequest(res, 'archived and pinned are sent on their own');
+      for (const k of ['archived', 'pinned']) {
+        if (body[k] !== undefined && typeof body[k] !== 'boolean') return badRequest(res, `${k} must be true or false`);
+      }
+      if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+      if (body.archived === true) {
+        const reason = askBusyReason(id);
+        if (reason) return res.status(409).json({ error: CHAT_BUSY[reason], code: 'CHAT_BUSY', reason });
+      }
+      if (body.archived !== undefined) askSetArchived(id, body.archived);
+      if (body.pinned !== undefined) askSetPinned(id, body.pinned);
+      return res.json({ thread: askGetThread(id) });
+    }
     const patch = {};
     // The Ask panel's model · effort picker, moved while this chat is open: the pair
     // travels together, so a switch away and back finds it before any send.
@@ -13454,8 +14453,10 @@ app.delete('/api/ask/threads/:id', async (req, res) => {
   const id = askIdParam(res, req.params.id, 'thread');
   if (!id) return;
   try {
-    if (!askGetThread(id)) return res.status(404).json({ error: 'thread not found' });
+    const t = askGetThread(id);
+    if (!t) return res.status(404).json({ error: 'thread not found' });
     await deleteAskThreadFully(id);
+    if (t.groupId) emitChanged('ask-groups-changed', 'removed');   // #948 s3: its delete may have dropped the group
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -13814,7 +14815,7 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
         // Workflows chat (D13): a composer card names its type, state and name — never the run-card shape.
         const cc = composerHeaderCard(b);
         if (cc) { cards.push(cc); continue; }
-        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away' || b.card.type === 'scope-switch' || b.card.type === 'project')) {
+        if (b.card && (b.card.type === 'metrics' || b.card.type === 'policy' || b.card.type === 'clone' || b.card.type === 'web' || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away' || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'proxy')) {
           cards.push({ id: b.id, type: b.card.type, state: b.state, summary: b.card.summary || '' });
           continue;
         }
@@ -14008,13 +15009,11 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const web = askWebAccessFor(id, ctx);
     // MCP registry §9.1–9.3: General + the targets in play (the tagged dropdown fallback excluded), minus the chat's
     // picker choices — resolved ONCE per turn, so the per-turn file, the spawn and the prompt section agree.
-    const mcp = composerMode ? { result: null } : await resolveAskMcp({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff, model });
-    // D12: the chat's engine is its (validated, engine-locked) model's. A Codex or Copilot chat gets no registry copies
-    // (§4.6, §10) and is told so once per chat.
+    // D12: the chat's engine is its (validated, engine-locked) model's. Every chat gets the registry copies its engine
+    // can attach (ask/mcp.mjs mcpForEngine): a locked-down chat's lockdown allows them by name beside worca's own server.
     const engine = ASK_ENGINES.includes(modelEngine) ? modelEngine : 'claude';
     const lockedDown = engine !== 'claude';
-    const mcpCodexNote = !composerMode && lockedDown && mcp.result.copies.length > 0
-      && !askListMessages(id).some((m) => Array.isArray(m.blocks) && m.blocks.some((b) => b && b.mcpCodex));
+    const mcp = composerMode ? { result: null } : await resolveAskMcp({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff, model, engine });
     // Skills registry §4.4: the same targets and choices for the skills from sets — resolved ONCE per turn; the turn
     // mounts them and appends the prompt section naming exactly what it wrote (a Codex chat reads them through read_file).
     const skills = composerMode ? { result: null } : await resolveAskSkills({ ctx, threadId: id, off: mcpOff !== undefined ? mcpOff : thread.mcpOff });
@@ -14023,7 +15022,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const agentOn = !composerMode && askCommandsEnabled();
     const systemPrompt = composerMode
       ? await askComposerSystemPromptFor(catalog, { web, engine })
-      : await askSystemPromptFor(catalog, { web, mcp: lockedDown ? null : await askMcpPromptInput(mcp), commands: agentOn, engine });
+      : await askSystemPromptFor(catalog, { web, mcp: await askMcpPromptInput(mcp), commands: agentOn, engine });
     // Shared terminal: what the user ran in this chat's Ask tabs since its last user turn (their commands never wake
     // the chat; an event turn leaves them for the next user turn).
     if (!synthetic && askCommandsEnabled()) headerCtx.personCommands = askCommands.takePersonCommands(id);
@@ -14050,17 +15049,16 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       deterministicTitle,
       pinnedScope: pinned,                          // #397: proposal defaulting + mismatch flag
       web,
-      mcp: lockedDown ? null : mcp.result,
+      mcp: mcp.result,
       skills: skills.result,
       agentMode: agentOn,
       composer: composerMode ? ((askGetThread(id) || {}).composer || null) : null,
       suggest: !synthetic,                          // ask-suggestion: a user's message only — an event turn suggests nothing
-      ...(engine === 'copilot' ? { engine, mcpCodexNote } : {}),   // no images: the route refused them
-      ...(engine === 'codex' ? {
+      ...(lockedDown ? {
         engine,
-        mcpCodexNote,
-        // D16: this message's images ride the turn as `codex exec -i` (PDFs never reach here: the route refused them).
-        images: attRows.filter((a) => a.kind === 'image').map((a) => askAttachmentPath(id, a.id)).filter(Boolean),
+        // D16: this message's images ride the turn on an engine that takes them (`codex exec -i`); the route refused
+        // what the engine cannot take (engine-switch.mjs chatAttachRefusal).
+        ...(ENGINES[engine].chat.images ? { images: attRows.filter((a) => a.kind === 'image').map((a) => askAttachmentPath(id, a.id)).filter(Boolean) } : {}),
       } : {}),
       timeZone: ctx.timeZone || (thread.context && thread.context.timeZone) || null,   // scheduled runs: the user's clock
       memoryProject: headerCtx.project ? { key: headerCtx.project.key, name: headerCtx.project.name || '' } : null,   // native-rules revision: the turn mounts global + this project through --add-dir
@@ -14071,6 +15069,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         // user and its worca tools run here, through the relay. null = the classic MCP child.
         agentRelay: agentIdentity() ? (o) => askAgentRelay({ ...o, engine }) : null,
         commandBridge: askCommandBridge,                     // #574: null unless agent mode can work here
+        proxyBridge: askProxyBridge,                         // the corporate proxy bridge: null for an agent caller
         onFrame: stampAskFrames(id, job),
         onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
         onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
@@ -14081,13 +15080,14 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         // A remember/forget in the MCP child is the same scope change a REST write makes (B29).
         // The key is parsed out of worca's OWN tool result, never written by the model; shape-check
         // it anyway before it rides a broadcast (I2-#22).
-        onMemoryMutation: ({ scope }) => {
-          if (scope === 'global' || (typeof scope === 'string' && scope.startsWith('projects/') && PROJECT_KEY_RE.test(scope.slice('projects/'.length)))) emitMemoryChanged(scope);
-        },
+        onMemoryMutation: (e) => askMemoryMutation({ ...e, threadId: id }),
         // A save_script in the MCP child is the same change a REST write makes (spec §3.3):
         // the open Scripts tabs drop their list and the composer marks its script list dirty.
         onScriptMutation: () => { emitChanged('scripts-changed', 'updated'); },
         trackRun: (input, { pin } = {}) => askTrackRun(id, input, pin ?? null),
+        // #911 slice 2: the Command summaries helper job for a command card the chat left without a summary.
+        summariseCommand: (c) => { void summariseCommandCard({ threadId: id, ...c },
+          { enabled: commandSummariesOpen, summariser: commandSummariser, flipCard, broadcast }); },
         // set_away_now / set_run_away_mode and (worca Chat P2) the chat's act-then-undo tools: askChatTurnDeps.
         ...askChatTurnDeps(turnReader),
         resolveMentions: resolveAskMentions,
@@ -14204,12 +15204,11 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
         // does not match its claim is refused here, before any write.
         const cls = askClassifyExtension(ext);
         if (!cls) return badRequest(res, `attachment type not allowed: ${name || '(unnamed)'}`);
-        // D16: a Codex chat has no PDF reader (out of scope, §10) — refused at attach time, before any write.
-        // (askClassifyExtension gives kind text|image|binary; a PDF is kind 'binary', mime 'application/pdf'.)
-        const attachEngine = askTurnEngine(id, thread, mv.model);
-        if (cls.mime === 'application/pdf' && attachEngine === 'codex') return badRequest(res, `PDFs need a Claude chat: ${name}`);
-        // A Copilot chat takes no image or PDF (the adapter has no image input).
-        if (cls.kind !== 'text' && attachEngine === 'copilot') return badRequest(res, `images and PDFs need a Claude chat: ${name}`);
+        // D16: what the chat's engine cannot take (a Codex chat no PDF; Copilot, Gemini CLI and Qwen Code no image or
+        // PDF) is refused at attach time, before any write. (askClassifyExtension gives kind text|image|binary; a PDF is
+        // kind 'binary', mime 'application/pdf'.)
+        const attachRefused = chatAttachRefusal({ engine: askTurnEngine(id, thread, mv.model), kind: cls.kind, pdf: cls.mime === 'application/pdf' });
+        if (attachRefused) return badRequest(res, `${attachRefused}: ${name}`);
         const raw = typeof a.dataBase64 === 'string' ? a.dataBase64 : '';
         const buf = raw ? Buffer.from(raw, 'base64') : Buffer.alloc(0);
         if (!buf.length) return badRequest(res, `attachment is empty or not valid base64: ${name}`);
@@ -14243,6 +15242,7 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
       catch (err) { if (err.code === 'TURN_IN_FLIGHT') return res.status(409).json({ error: 'turn in flight' }); throw err; }
     }
     if (composerState) askUpdateThread(id, { composer: composerState });
+    if (thread.archivedAt) askSetArchived(id, false);   // #948 s2: a message brings an archived chat back
     const r = await startAskTurn({ threadId: id, thread, ctx, model: mv.model, effort: mv.effort, text, files, signedIn: askSignedIn(req), reader: askViewer(req), mcpOff: mo.value, agentMode: body.agentMode, client: req.worcaExtension ? 'browser-extension' : null });
     if (!r.ok) return res.status(r.status).json({ error: r.error, ...(r.budget ? { budget: r.budget } : {}) });
     // `attachments` carries the store-minted ids so the sender's own echo can key
@@ -14392,6 +15392,18 @@ app.get('/api/extension/status', (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Command summaries (#911 slice 2, flag commandSummaries): a chat command the chat gave no summary gets one from
+// the Models page's Command summaries helper job — the redacted command alone, cached per process.
+// ---------------------------------------------------------------------------
+const commandSummariser = createCommandSummariser({
+  pickModel: async () => resolveNamingModel(withRole(storedCommandSummaryModel(), 'claude', 'commandSummaryModel'), await listModels(''), modelCostConfig),
+  onCost: (c) => { try { recordUtilityCost('commandSummary', c); } catch { /* a ledger write never fails a summary */ } },
+});
+/** Read before the call and after the answer: the Labs flag, the person's Settings › Chat switch, no mock, the cost limit not reached. */
+const commandSummariesOpen = () => commandSummariesWanted({ flag: flagEnabled('commandSummaries'),
+  summariseCommands: chatPrefs().summariseCommands, mock: mockEnabled({}), blocked: budgetStatus().blocked });
+
+// ---------------------------------------------------------------------------
 // Smart run naming (flag smartRunNaming, docs/feature-flags.md): the New run form asks for a title, a branch type and
 // a slug. Both routes answer 404 while the flag is off. Naming never blocks a start: a refusal, a budget stop and a
 // model failure all answer { source: 'fallback' } with today's name as a hint.
@@ -14404,7 +15416,7 @@ const NAMING_PICK_TTL_MS = 60_000;
 const warnedStaleNaming = new Set();
 async function namingCatalog() {
   const rows = await listModels('');
-  const picked = resolveNamingModel(storedNamingModel(), rows, modelCostConfig);
+  const picked = resolveNamingModel(withRole(storedNamingModel(), 'claude', 'namingModel'), rows, modelCostConfig);
   if (picked.stale && !warnedStaleNaming.has(picked.stale)) {
     warnedStaleNaming.add(picked.stale);
     console.warn(`[worca] namingModel ${JSON.stringify(picked.stale)} is no longer in the catalog — run naming uses the cheapest ready Claude model`);
@@ -14446,6 +15458,144 @@ app.post('/api/naming/suggest', namingOn, async (req, res) => {
     if (r.source !== 'model') return fallback(r.error);
     res.json({ ...r, title: cfg.suggestTitle ? r.title : undefined, branch: cfg.suggestBranch ? r.branch : undefined });
   } catch (err) { if (!res.headersSent) res.status(500).json({ error: 'suggestion failed' }); }   // Express 4 swallows async throws
+});
+
+// ---------------------------------------------------------------------------
+// #948 s3: the Chats column's topic groups. suggest-name answers 404 while smartRunNaming is off (namingOn, the /api/naming/* gate above). Every write broadcasts
+// ask-groups-changed, so other tabs re-read their column.
+// ---------------------------------------------------------------------------
+function chatGroupError(res, err) {
+  if (err instanceof ChatGroupError) return res.status(err.status).json({ error: err.message, code: err.code });
+  return res.status(500).json({ error: err && err.message ? err.message : String(err) });
+}
+/** `raw` as chat ids this person sees: 400 for a bad list, 404 for a missing or hidden chat; null after answering. */
+function askGroupThreads(req, res, raw) {
+  if (!Array.isArray(raw) || !raw.length || raw.length > 200 || raw.some((x) => typeof x !== 'string' || !ASK_ID_RE.test(x))) {
+    badRequest(res, 'threadIds must list 1 to 200 chat ids');
+    return null;
+  }
+  const ids = [...new Set(raw)];
+  for (const id of ids) {
+    const t = askGetThread(id);
+    if (!t || !askThreadVisible(t, req)) { res.status(404).json({ error: 'thread not found' }); return null; }
+  }
+  return ids;
+}
+/** The group named by :id that this person sees, or null after answering 400 / 404. */
+function askGroupFor(req, res) {
+  const id = askIdParam(res, req.params.id, 'group');
+  if (!id) return null;
+  const g = askGetChatGroup(id);
+  const viewer = askViewer(req);
+  if (!g || (viewer && g.createdBy && g.createdBy !== viewer)) { res.status(404).json({ error: 'group not found' }); return null; }
+  return g;
+}
+
+app.get('/api/ask/groups', (req, res) => {
+  try { res.json({ groups: askListChatGroups({ visibleTo: askViewer(req) }) }); } catch (err) { chatGroupError(res, err); }
+});
+
+app.post('/api/ask/groups', (req, res) => {
+  try {
+    const b = req.body || {};
+    const ids = askGroupThreads(req, res, b.threadIds);
+    if (!ids) return;
+    const group = askCreateChatGroup({ name: b.name, nameSource: b.nameSource, threadIds: ids, createdBy: actorOf(req) });
+    emitChanged('ask-groups-changed', 'created');
+    res.status(201).json({ group });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.patch('/api/ask/groups/:id', (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const group = askRenameChatGroup(g.id, { name: req.body?.name, nameSource: req.body?.nameSource });
+    emitChanged('ask-groups-changed', 'renamed');
+    res.json({ group });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.post('/api/ask/groups/:id/threads', (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const ids = askGroupThreads(req, res, req.body?.threadIds);
+    if (!ids) return;
+    const group = askAddToChatGroup(g.id, ids);
+    emitChanged('ask-groups-changed', 'moved');
+    res.json({ group });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.delete('/api/ask/groups/:id/threads/:threadId', (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const tid = askIdParam(res, req.params.threadId, 'thread');
+    if (!tid) return;
+    const t = askGetThread(tid);
+    if (!t || t.groupId !== g.id || !askThreadVisible(t, req)) return res.status(404).json({ error: 'thread not found' });
+    const r = askRemoveFromChatGroup(tid);
+    emitChanged('ask-groups-changed', 'removed');
+    res.json({ ok: true, ...r });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.post('/api/ask/groups/:id/archive', (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const archived = req.body?.archived;
+    if (typeof archived !== 'boolean') return badRequest(res, 'archived must be true or false');
+    // Only the members whose state changes: Undo restores exactly these, and a chat archived before stays archived.
+    const ids = askChatGroupThreadIds(g.id).filter((id) => !!askGetThread(id)?.archivedAt !== archived);
+    // Synchronous from here to the writes: no `await` between the busy check and setArchived, or a turn could start
+    // in between and a busy chat would be archived.
+    if (archived) {
+      for (const id of ids) {
+        const reason = askBusyReason(id);
+        if (reason) return res.status(409).json({ error: chatGroupBusyText(askGetThread(id)?.title), code: 'CHAT_BUSY', reason, threadId: id });
+      }
+    }
+    for (const id of ids) askSetArchived(id, archived);
+    emitChanged('ask-groups-changed', archived ? 'archived' : 'restored');
+    res.json({ ok: true, threadIds: ids });
+  } catch (err) { chatGroupError(res, err); }
+});
+
+app.delete('/api/ask/groups/:id', async (req, res) => {
+  try {
+    const g = askGroupFor(req, res);
+    if (!g) return;
+    const deleteChats = req.query.deleteChats === 'true';
+    const ids = askChatGroupThreadIds(g.id);
+    let deleted = 0;
+    // One at a time, as the bulk thread DELETE: each worktree removal spawns git.
+    if (deleteChats) for (const id of ids) { const r = await deleteAskThreadFully(id); if (r.deleted) deleted += 1; }
+    askDeleteChatGroup(g.id);                 // a no-op once the last chat's delete dropped the group
+    emitChanged('ask-groups-changed', deleteChats ? 'deleted' : 'ungrouped');
+    res.json({ ok: true, threadIds: ids, deleted });
+  } catch (err) { if (!res.headersSent) chatGroupError(res, err); }
+});
+
+// POST /api/ask/groups/suggest-name {threadIds} -> { source: 'model', name } | { source: 'fallback', error }.
+// The Run naming helper model (namingPick); the prompt carries each chat's title and first message only.
+app.post('/api/ask/groups/suggest-name', namingOn, async (req, res) => {
+  try {
+    const ids = askGroupThreads(req, res, req.body?.threadIds);
+    if (!ids) return;
+    if (!namingBucket.tryConsume()) return res.status(429).json({ error: 'too many suggestions, try again in a moment' });
+    if (budgetStatus().blocked) return res.json({ source: 'fallback', error: 'total cost limit reached' });
+    if (mockEnabled({})) return res.json({ source: 'model', name: 'Mock group' });   // deterministic, spawns nothing
+    const chats = ids.map((id) => ({ title: askGetThread(id)?.title || '', firstMessage: askFirstUserText(id) }));
+    const ac = new AbortController();
+    res.on('close', () => { if (!res.writableEnded) ac.abort(); });
+    const pick = await namingPick();
+    const r = await suggestGroupName({ chats, signal: ac.signal },
+      { pickModel: () => pick, onCost: (c) => { try { recordUtilityCost('naming', c); } catch { /* a ledger write never fails a suggestion */ } } });
+    res.json(r.source === 'model' ? { source: 'model', name: r.name } : { source: 'fallback', error: r.error });
+  } catch (err) { if (!res.headersSent) res.status(500).json({ error: 'suggestion failed' }); }
 });
 
 // ---------------------------------------------------------------------------
@@ -14712,8 +15862,8 @@ async function saveWorkflowCard(threadId, block, body = {}) {
       for (const [nid, sel] of Object.entries(ans.nodes)) nodes[nid] = { ...(nodes[nid] || {}), ...sel };
     }
   }
-  // `adopted` tells the saved card which line to show ("Uses your saved workflow"
-  // vs "Saved as a new workflow, tagged Auto") — card.match is set on BOTH paths.
+  // `adopted` tells the saved card whether to add "Uses a workflow you already had" (a new workflow has no line:
+  // its chip says Saved, its tag Auto) — card.match is set on BOTH paths.
   const flipped = flipCard(threadId, block.id, {
     state: 'saved', workflowId, card: { name, nodes, match: { id: workflowId, name }, adopted: matched },
   });
@@ -14833,9 +15983,9 @@ async function startMetricsEventTurn(threadId, block) {
   const state = block.state === 'declined' ? 'declined' : block.state === 'failed' ? 'failed' : 'applied';
   const result = card.result || null;
   // One event turn for every non-workflow card; the type picks the wording. Metrics is the fallback.
-  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' ? card.type : 'metrics';
-  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, web: webEventPrompt, workspace: workspaceEventPrompt, actions: actionsEventPrompt, away: awayEventPrompt, project: projectEventPrompt, metrics: metricsEventPrompt }[kind];
-  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, web: webNoticeText, workspace: workspaceNoticeText, actions: actionsNoticeText, away: awayNoticeText, project: projectNoticeText, metrics: metricsNoticeText }[kind];
+  const kind = card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy' ? card.type : 'metrics';
+  const eventPrompt = { policy: policyEventPrompt, schedule: scheduleEventPrompt, model: modelEventPrompt, clone: cloneEventPrompt, web: webEventPrompt, workspace: workspaceEventPrompt, actions: actionsEventPrompt, away: awayEventPrompt, project: projectEventPrompt, proxy: proxyEventPrompt, metrics: metricsEventPrompt }[kind];
+  const noticeText = { policy: policyNoticeText, schedule: scheduleNoticeText, model: modelNoticeText, clone: cloneNoticeText, web: webNoticeText, workspace: workspaceNoticeText, actions: actionsNoticeText, away: awayNoticeText, project: projectNoticeText, proxy: proxyNoticeText, metrics: metricsNoticeText }[kind];
   const text = eventPrompt({ cardId: block.id, state, card, result });
   const notice = noticeText({ state, card, result });
   const mv = await askEventPick(threadId, thread);
@@ -15082,7 +16232,7 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
     if (found.block.card && found.block.card.type === 'pull-request') {
       // worca Chat P2 (R9): "Not now" only — the pull request is opened from the Ship it dialog, and POST /api/pr flips
       // the card to applied through its ask link.
-      if (body.state !== 'declined') return badRequest(res, 'state must be "declined". A pull request is opened from the Create PR dialog');
+      if (body.state !== 'declined') return badRequest(res, 'state must be "declined". A PR is created from the Create PR dialog');
       if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
       const block = flipCard(id, cardId, { state: 'declined' });
       if (!block) return res.status(409).json({ error: 'card vanished' });
@@ -15239,6 +16389,35 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
         block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
       } finally { askCardBusy.delete(cardId); }
       if (!block) return res.status(409).json({ error: 'card vanished' });
+      const turn = await startMetricsEventTurn(id, block);
+      return res.json({ block, turn });
+    }
+    if (found.block.card && found.block.card.type === 'proxy') {
+      // Corporate proxy card (docs/network-proxy.md "From Chat"): proposed → applied | failed | declined. A settings
+      // card and the enable card both save through proxyHost.saveSettings (the PUT /api/proxy/settings path, with its
+      // UNTESTED gate): an untested upstream is tested first, a person's Apply records the pass. Both re-validate first.
+      if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
+      if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
+      // D9: the proxy is changed as the user — an agent under isolation must not (refuseProxyAgent's rule).
+      if (body.state === 'applied' && agentMayBeCaller(req)) return res.status(403).json({ error: PROXY_AGENT_TEXT, code: 'PROXY_AGENT_BLOCKED' });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      if (body.state === 'declined') {
+        const block = flipCard(id, cardId, { state: 'declined' });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        const turn = await startMetricsEventTurn(id, block);
+        return res.json({ block, turn });
+      }
+      askCardBusy.add(cardId);
+      let block;
+      try {
+        let result;
+        try { result = await applyProxyChange(found.block.card, { saveSettings: (p) => proxyHost.saveSettings(p), test: (p) => proxyHost.test(p, { record: true }) }); }
+        catch (err) { result = { ok: false, error: err && err.message ? err.message : String(err), code: (err && err.code) || 'ERROR' }; }
+        block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
+      } finally { askCardBusy.delete(cardId); }
+      if (!block) return res.status(409).json({ error: 'card vanished' });
+      // An open Settings › Runs tab repaints.
+      if (block.state === 'applied') emitChanged('settings-changed');
       const turn = await startMetricsEventTurn(id, block);
       return res.json({ block, turn });
     }
@@ -15440,7 +16619,7 @@ function agentErrorBody(err) {
 async function startAgentGen(input) {
   // The Models page's Claude tab › Agent generation, read per Generate. Unset, or a model the
   // catalog no longer carries: no --model, the CLI's default (as before the setting existed).
-  const pick = resolveAgentGenModel(storedAgentGenModel(), await listModels(''));
+  const pick = resolveAgentGenModel(withRole(storedAgentGenModel(), 'claude', 'agentGenModel'), await listModels(''));
   if (pick.stale) console.warn(`[worca] agentGenModel ${JSON.stringify(pick.stale)} is no longer in the catalog — agent generation uses the CLI default`);
   const orch = createAgentGen({
     ...input,
@@ -17478,7 +18657,7 @@ app.use((err, _req, res, next) => {
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, sweptV1: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, bench: null };
+  const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
   // Runs left 'running' by a previous process that died before writing a terminal
@@ -17500,6 +18679,22 @@ export async function bootMaintenance({ log } = {}) {
     if (swept.length) console.log(`[worca-ui] retired ${swept.length} run(s) paused on the v1 engine`);
   } catch (err) {
     console.error(`[worca-ui] v1-run sweep failed: ${err && err.message ? err.message : err}`);
+  }
+
+  // Requirements: a round cut short by this restart goes back to the product owner (design §4).
+  try {
+    const n = recoverRequirements();
+    if (n) console.log(`[worca-ui] requirements: ${n} interrupted round(s) handed back`);
+  } catch (err) {
+    console.error(`[worca-ui] requirements sweep failed: ${err && err.message ? err.message : err}`);
+  }
+  // Requirements A7 (D15): a product brief left `making` by this restart gets INTERRUPTED. This runs before the
+  // first await, but boot maintenance is not awaited before listen, so recoverBriefs skips a brief whose job runs.
+  try {
+    summary.recoveredBriefs = recoverBriefs();
+    if (summary.recoveredBriefs) console.log(`[worca-ui] requirements: ${summary.recoveredBriefs} interrupted product brief(s) marked`);
+  } catch (err) {
+    console.error(`[worca-ui] product brief sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   try {
@@ -17622,6 +18817,16 @@ export async function bootMaintenance({ log } = {}) {
     console.error(`[worca-ui] repo-look sweep failed: ${err && err.message ? err.message : err}`);
   }
 
+  // Requirements code looks (plans/requirements-design.md D7) a restart cut short, under <worcaHome>/tmp/requirements.
+  try {
+    const r = await sweepRepoLooks(path.join(worcaHome(), 'tmp', 'requirements'), { log: sink('repo-look') });
+    summary.requirementsRepoLooks = r;
+    if (r.removed.length) console.log(`[worca-ui] requirements repo-look sweep: removed ${r.removed.length} stale look dir(s)`);
+    if (r.failed.length) console.error(`[worca-ui] requirements repo-look sweep: ${r.failed.length} dir(s) could not be removed`);
+  } catch (err) {
+    console.error(`[worca-ui] requirements repo-look sweep failed: ${err && err.message ? err.message : err}`);
+  }
+
   // Script bench folders (workbench W11): the newest folder per script key
   // outlives its run so the output tabs can still read it; 24 h later it is
   // junk. os.tmpdir() would have been cleaned under us on macOS, hence
@@ -17702,7 +18907,7 @@ if (isMain) {
   // archived, or by the boot sweep below, and the server would lose its own code.
   const hostingRun = runFolderHosting(PROJECT_ROOT, worcaHome());
   if (hostingRun) {
-    console.error(`[worca-ui] Worca is started from a run's folder (${hostingRun}), which Worca deletes when that run is discarded or archived. Start Worca from your own clone or another worktree. Not starting.`);
+    console.error(`[worca-ui] Worca is started from a run's folder (${hostingRun}), which Worca deletes when that run is discarded or archived. Start Worca from your own clone or another worktree, or run \`npm start --scratch\` for a throwaway home and port. Not starting.`);
     process.exit(1);
   }
 
@@ -17710,9 +18915,16 @@ if (isMain) {
   // the policy proxy starts on loopback and its address goes into process.env before anything
   // else runs, so every child and worca's own fetch() (useEnvProxy, next) go through it. It fails
   // closed: without the proxy, agents would have no restriction at all.
+  // D6: the old Labs flag becomes networkProxy.enabled, once, before the proxy reads it.
+  await migrateCorporateProxyFlag();
+  let fetchProxy = null;
   try {
-    const egress = await startEgressPolicy({ log: (l) => console.log(`[worca-ui] egress: ${l}`) });
-    const egressLine = egressNotice(egress);
+    EGRESS_LIVE = await startLiveEgress({
+      log: (l) => console.log(`[worca-ui] egress: ${l}`),
+      // D8: a proxy turned on at runtime: Worca's own fetch follows the new HTTPS_PROXY.
+      onEnvChange: () => { fetchProxy = reinstallEnvProxy(fetchProxy); },
+    });
+    const egressLine = egressNotice(EGRESS_LIVE.current());
     if (egressLine) console[egressLine.level === 'warn' ? 'warn' : 'log'](`[worca-ui] ${egressLine.text}`);
   } catch (err) {
     console.error(`[worca-ui] outbound network policy: the policy proxy could not start (${err && err.message ? err.message : err}). Not starting.`);
@@ -17721,7 +18933,8 @@ if (isMain) {
 
   // Outbound calls honor HTTP(S)_PROXY / NO_PROXY (src/core/env-proxy.mjs). First: the
   // broker check below is already one.
-  const proxyLine = proxyNotice(useEnvProxy());
+  fetchProxy = useEnvProxy();
+  const proxyLine = proxyNotice(fetchProxy);
   if (proxyLine) console[proxyLine.level === 'warn' ? 'warn' : 'log'](`[worca-ui] ${proxyLine.text}`);
   // A proxy URL with credentials never reaches plugin code (scrubbedEnv). Said here, before
   // any plugin spawns, so the once-per-process warning is never spent unseen by a caller
@@ -17771,6 +18984,19 @@ if (isMain) {
   bootMaintenance().then((summary) => {
     // B3: continue what the last stop paused (and, with WORCA_AUTO_RESUME=1, what a crash interrupted).
     autoResumeOnBoot({ interruptedIds: summary?.reconciledIds || [] })
+      .then((boot) => {
+        // #841: tell the About card how the update went ("N runs resumed"), and close a request
+        // that a different process left behind (its parent died, or never handled the exit).
+        try {
+          const rec = readUpdateRecord();
+          if (rec && rec.resumed == null && ((rec.state === 'installed' && rec.to === RUNNING_VERSION) || (rec.state === 'failed' && rec.from === RUNNING_VERSION))) {
+            writeUpdateRecord({ ...rec, resumed: boot?.resumed?.length ?? 0 });
+          } else if (rec && (rec.state === 'requested' || rec.state === 'installing') && rec.pid !== process.pid) {
+            writeUpdateRecord({ ...rec, state: 'failed', reason: 'Worca restarted before the update ran. Update from a terminal instead.', output: '', finishedAt: new Date().toISOString() });
+          }
+        } catch { /* the record is advisory */ }
+        return boot;
+      })
       .catch((err) => console.error(`[worca-ui] auto-resume failed: ${err && err.message ? err.message : err}`));
   }, (err) => {
     bootMaintenanceFailed = true;
@@ -17795,7 +19021,7 @@ if (isMain) {
   // same path serves POST /api/shutdown (`worca ui stop`), which exits 0.
   let shuttingDown = false;
   let wroteInstanceFile = false;
-  const exitCodeFor = (signal) => (signal === 'SIGINT' ? 130 : signal === 'SIGTERM' ? 143 : 0);
+  const exitCodeFor = (signal) => (signal === 'SIGINT' ? 130 : signal === 'SIGTERM' ? 143 : signal === 'update' ? UPDATE_EXIT_CODE : 0);
   const shutdown = (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -17840,6 +19066,17 @@ if (isMain) {
     }
     try { startTeamMetricsBackground({ log: (m) => console.warn(m) }); }
     catch (err) { console.warn(`[worca-ui] team metrics background: ${err?.message || err}`); }
+    try {
+      startTeamMemoryBackground({ log: (m) => console.warn(m) });
+      teamMemoryEvents.on('changed', ({ projectKey: key, action }) => {
+        try {
+          broadcast({ type: 'memory-team-changed', projectKey: key, action });
+          // E10: the project list carries the offer (teamMemoryOffer), so its pages repaint.
+          if (action === 'available' || action === 'available-dismissed') emitChanged('projects-changed', 'updated');
+          if (action === 'followed' && PROJECT_KEY_RE.test(key)) emitMemoryChanged(`projects/${key}`);
+        } catch { /* best effort */ }
+      });
+    } catch (err) { console.warn(`[worca-ui] team memory background: ${err?.message || err}`); }
     try { startProjectSyncBackground({ log: (m) => console.warn(m) }); }
     catch (err) { console.warn(`[worca-ui] project sync background: ${err?.message || err}`); }
     // Watch PR (#619): its stop is awaited by shutdown's settleShutdownSteps.
@@ -17886,22 +19123,37 @@ if (isMain) {
 export { app, server, runs };
 export const _testing = {
   updateChecker,
+  // The startEgressPolicy() result the /api/proxy routes read, or a startLiveEgress() that also applies saves.
+  setEgress: (e) => { EGRESS = e; },
+  setLiveEgress: (l) => { EGRESS_LIVE = l; },
+  setSystemProxyDetect: (fn) => { detectSystemProxyImpl = fn || detectSystemProxy; },
+  proxyHost,
+  // Setup assistant: swap the apply side effects / detect probes; resetSetup drops overrides, the lock and the jobs.
+  setSetupDeps: (o) => { setupDepsOverride = o || {}; },
+  setSetupProbes: (p) => { setupProbesOverride = p || null; },
+  resetSetup: () => { setupDepsOverride = {}; setupProbesOverride = null; setupRunning = null; SETUP_JOBS.clear(); },
   setUpdateFetcher: (fn) => { updateFetcherOverride = typeof fn === 'function' ? fn : null; updateChecker.clear(); },
   setSourceBuild: (v) => { sourceBuildOverride = typeof v === 'boolean' ? v : null; updateChecker.clear(); },
+  setVersionsFetcher: (fn) => { versionsFetcherOverride = typeof fn === 'function' ? fn : null; versionLister.clear(); },
+  setNpmProbe: (fn) => { npmProbeOverride = typeof fn === 'function' ? fn : null; },
+  setUpdateDeployment: (d) => { updateDeploymentOverride = d || null; },
+  setUpdateMockOverride: (v) => { updateMockOverride = typeof v === 'boolean' ? v : null; },
+  resetUpdateRequest: () => { updateRequested = false; },
+  pkgVersion: RUNNING_VERSION,
   wireRun, summarizeRuns, scanRequest, fireTicket, afterMembersChanged, markResumedRescan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, answerRun,
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
   startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES, MARKET_JOBS, pruneMarketJobs, marketJobFailure,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
-  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor,
+  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,
   uiControl, bearerMatches,
   broadcast, sockets, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
-  askCommandBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
+  askCommandBridge, askProxyBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
   prWatcherDeps, askPrFixRun, askLinkIsPrFix, prFixRoundOf,
   applySettingsPatch, applyProjectSettingsPatch, askChatActions, askChatSettings, askChatTurnDeps, askShapeAction,
-  openSliceDraft, afterRunSettled, offerShipCard, syncShipCard, draftReleasesOnMerge,
+  openMemberPr, stackedBaseFor, chainRootFor, shipChainNow, afterRunSettled, offerShipCard, syncShipCard, draftReleasesOnMerge,
   networkWatchTick: () => networkWatch().tick(),
   setNetworkProbe(fn) { _networkProbe = fn; },
   setAutoRescan(on) { autoRescanOn = on !== false; },

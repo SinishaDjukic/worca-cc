@@ -11,15 +11,15 @@ const PROJECTS = [{ key: 'acme-api', name: 'ACME API' }, { key: 'acme-web', name
 const WORKSPACES = [{ id: 'ws_1', name: 'ACME platform' }];
 const TID = 'askt_00000001';
 
-test('the head keeps the chat list and adds worca\'s labelled "+ New chat" button next to it; it opens an empty chat, the draft stays', async () => {
+test('the head keeps the chat list and adds worca\'s New chat + next to it; it opens an empty chat, the draft stays', async () => {
   const h = await bootSidebar({ storage: STORE, route: pairedRoutes((p) => (p === `/api/ask/threads/${TID}` ? ok(SNAP(TID)) : null), { threads: [{ id: TID, title: 'Rate limits' }] }) });
   const chats = h.$('.chat-head select[aria-label="Chat"]');
   assert.ok(chats, 'the chat list stays');
   const btn = h.$('.chat-head button[data-ask-new-btn]');
   assert.ok(btn, 'a New chat button');
-  assert.equal(btn.className, 'btn btn-sm btn-quiet chat-new-btn chat-head-btn');
-  assert.equal(btn.textContent, 'New chat', 'a labelled button, not an icon');
-  assert.equal(btn.getAttribute('aria-label'), null, 'the visible label is its name');
+  assert.equal(btn.className, 'btn btn-quiet btn-icon chat-head-btn chat-new-plus');
+  assert.equal(btn.textContent, '', 'an icon button, as the Chat head\'s +');
+  assert.equal(btn.getAttribute('aria-label'), 'New chat');
   assert.equal(btn.querySelector('svg').getAttribute('aria-hidden'), 'true');
   assert.equal(btn.querySelector('svg path').getAttribute('d'), 'M12 5v14M5 12h14');
   assert.equal(chats.nextElementSibling, btn, 'the chat list sits right next to it');

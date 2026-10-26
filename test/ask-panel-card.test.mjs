@@ -1214,8 +1214,8 @@ test('ask-panel-card: the Engine field — Default sends none, a proposed engine
       const sel = ctx.doc.querySelector('.ask-card-engine');
       assert.equal(sel.value, '');
       assert.equal(sel.options[0].textContent, 'Codex (default)');
-      assert.deepEqual([...sel.options].slice(1).map((o) => o.textContent), ['Claude', 'Codex (Beta)', 'Copilot (Beta)', 'Cursor (Beta)']);
-      assert.deepEqual([...sel.options].filter((o) => !o.hidden).map((o) => o.value), ['', 'claude', 'copilot', 'cursor'], 'Codex is listed once, as the default');
+      assert.deepEqual([...sel.options].slice(1).map((o) => o.textContent), ['Claude', 'Codex (Beta)', 'Copilot (Beta)', 'Cursor (Beta)', 'Gemini CLI (Beta)', 'Goose (Beta)', 'OpenCode (Beta)', 'Qwen Code (Beta)']);
+      assert.deepEqual([...sel.options].filter((o) => !o.hidden).map((o) => o.value), ['', 'claude', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen'], 'Codex is listed once, as the default');
       ctx.doc.querySelector('[data-ask-card-start]').click();
       for (let i = 0; i < 6; i++) await ctx.tick();
       assert.equal(rec.runBodies.length, 1);
@@ -2471,9 +2471,9 @@ test('ask-panel-card: a Folder member is listed but gets no per-member source in
   ]);
 });
 
-test('s2: a proposal for project acme lists the person\'s last-run cost tags plus required keys', async () => {
+test('s2: a proposal for project acme lists the project\'s default cost tags plus required keys', async () => {
   const rec = { tagRules: { dims: [{ key: 'client', label: 'Client', values: [], required: true }], enforce: false, prefill: [],
-    autofill: { tags: ['team:web'], from: 'last-run' } } };
+    autofill: { tags: ['team:web'], from: 'defaults' } } };
   const { ctx, card } = await openFlagged({ ...PROJECT_CARD, projectName: 'acme', tags: ['spike'] }, rec);
   await ctx.tick();
   assert.deepEqual(rec.tagRuleQueries, ['projectDir=%2Frepos%2Fproj']);
@@ -2509,4 +2509,30 @@ test('ask-panel-card: a derived branch is marked suggested on Start only while t
   ctx2.doc.querySelector('[data-ask-card-start]').click();
   await ctx2.tick(); await ctx2.tick();
   assert.equal('featureBranchSuggested' in plain.runBodies[0], false, 'a flag-off card (no marker) keeps its body');
+});
+
+test('#958: the run proposal card\'s title field keeps the focus, value and caret across ask-done and a new ask-message row', async () => {
+  const ctx = await openWithCard(PROJECT_CARD);
+  const title = ctx.doc.querySelector('.ask-card .ask-rp-title input');
+  assert.ok(title, 'the proposal card is on screen');
+  title.focus();
+  title.value = 'Fix the login flow';
+  title.setSelectionRange(4, 9);
+  // The reply finishes: a real ask-done carries the full block list.
+  const [done] = stampFrames([{ type: 'ask-done', text: 'Here is the plan.', blocks: [{ kind: 'card', id: CARD_ID, state: 'proposed', card: PROJECT_CARD }],
+    usage: null, costUsd: 0, durationMs: 5, model: 'm', status: 'done', threadTotals: {} }], { threadId: TID, messageId: MID, seqStart: 3 });
+  ctx.panel.pushServerFrame(done);
+  ctx.flush();
+  await ctx.tick();
+  assert.equal(ctx.doc.activeElement, title, 'ask-done kept the focus');
+  assert.deepEqual([title.selectionStart, title.selectionEnd], [4, 9]);
+  assert.equal(title.value, 'Fix the login flow');
+  // A command result / scope switch lands as a new row.
+  ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID,
+    message: { id: 'askm_s0000001', threadId: TID, seq: 9, role: 'system', text: 'note', blocks: [{ kind: 'notice', text: 'note' }], status: null, createdAt: 't' } });
+  ctx.flush();
+  await ctx.tick();
+  assert.equal(ctx.doc.activeElement, title, 'a new row kept the focus');
+  assert.deepEqual([title.selectionStart, title.selectionEnd], [4, 9]);
+  ctx.panel.destroy();
 });

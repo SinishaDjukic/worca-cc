@@ -7,7 +7,7 @@ import { readFileSync, readdirSync, readlinkSync, existsSync, statSync } from 'n
 import { join, resolve, dirname, sep, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WORCA_PLUGIN_API, WORCA_PLUGIN_APIS, WORCA_AGENT_DATA_API, WORCA_ASK_FORMS_API, WORCA_MCP_API } from './plugin-api.mjs';
-import { EFFORTS, MODEL_ENGINES, effortsForEngine, isReservedModelEnvKey, isMcpRegistryEnvKey, assertModelCost, assertModelUpstream, upstreamEnvConflict, codexUpstreamProblem } from './model-env.mjs';
+import { EFFORTS, MODEL_ENGINES, OWN_SIGNIN_ENGINES, aModelOf, ownSignInNote, modelIdProblem, effortsForEngine, isReservedModelEnvKey, isMcpRegistryEnvKey, assertModelCost, assertModelUpstream, upstreamEnvConflict, codexUpstreamProblem } from './model-env.mjs';
 import { validateMetaV2, normalizeAgentMeta, indexByKey } from '../shared/graph/agent-meta.mjs';
 import { engineList } from '../shared/engine-switch.mjs';
 import { portsFnFor } from '../shared/graph/ports.mjs';
@@ -549,13 +549,18 @@ export function normalizeManifest(raw, { dir = '' } = {}) {
         errors.push(`${at} ("${id}"): a codex model takes no env — codex ignores routing env`);
         return;
       }
-      // A cursor model runs through cursor-agent's own sign-in: no routing env, no upstream, no effort.
-      if (engine === 'cursor' && Object.keys(env).length) {
-        errors.push(`${at} ("${id}"): a cursor model takes no env — cursor-agent connects with its own sign-in`);
+      // A model of an own-sign-in engine (Cursor, Gemini CLI, Goose, OpenCode, Qwen Code) runs through the engine's own sign-in: no routing env, no upstream.
+      if (OWN_SIGNIN_ENGINES.includes(engine) && Object.keys(env).length) {
+        errors.push(`${at} ("${id}"): ${aModelOf(engine)} takes no env — ${ownSignInNote(engine)}`);
         return;
       }
-      if (engine === 'cursor' && upstream) {
-        errors.push(`${at} ("${id}"): a cursor model takes no upstream — cursor-agent connects with its own sign-in`);
+      if (OWN_SIGNIN_ENGINES.includes(engine) && upstream) {
+        errors.push(`${at} ("${id}"): ${aModelOf(engine)} takes no upstream — ${ownSignInNote(engine)}`);
+        return;
+      }
+      const idWhy = modelIdProblem(engine, id);
+      if (idWhy) {
+        errors.push(`${at} ("${id}"): ${idWhy}`);
         return;
       }
       // A copilot model runs through the Copilot CLI's own sign-in: no routing env, no upstream.

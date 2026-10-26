@@ -3,7 +3,7 @@
 // built from real fields only, and the ⌘K / Ctrl K chord and label.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { searchRows, shortcutLabel, isSearchCombo, RUN_LIMIT, OTHER_LIMIT } from '../ui/public/global-search.mjs';
+import { searchRows, shortcutLabel, isSearchCombo, RUN_LIMIT, OTHER_LIMIT, chatRows, CHAT_LIMIT } from '../ui/public/global-search.mjs';
 
 const NOW = new Date(2026, 9, 9, 15, 0).getTime();            // Fri Oct 9 2026, 15:00 local
 const at = (d, h, m = 0) => new Date(2026, 9, d, h, m).toISOString();
@@ -207,4 +207,26 @@ test('labels: "hotfix", "label:hot" and "label:hotfix" offer "Runs labelled hotf
   assert.deepEqual(run(src, 'runs').other, [], 'the row title is not searched: "runs" does not list every label');
   assert.deepEqual(run({}, 'hotfix').other, []);
   assert.deepEqual(run(src, '').other, [], 'an empty query lists runs only');
+});
+
+test('#948 s2 chatRows: at most 5 of 7; an archived chat reads "Archived · time"; the snippet is the sub line; #chat/ID', () => {
+  const now = new Date(2026, 9, 25, 12, 0, 0).getTime();
+  const at = (d) => new Date(now - d * 864e5).toISOString();
+  const threads = Array.from({ length: 7 }, (_, i) => ({ id: `ask_0000000${i}`, title: `Chat ${i}`, updatedAt: at(i + 1), archived: false }));
+  threads[0] = { ...threads[0], archived: true, archivedAt: at(1) };
+  threads[1] = { ...threads[1], match: { snippet: '…a login form…' } };
+  threads[2] = { ...threads[2], title: null };
+  const rows = chatRows(threads, { now });
+  assert.equal(CHAT_LIMIT, 5);
+  assert.equal(rows.length, 5);
+  assert.match(rows[0].meta, /^Archived · /);
+  assert.equal(rows[1].sub, '…a login form…');
+  assert.equal(rows[1].meta, 'Fri');
+  assert.equal(rows[2].title, 'New chat');
+  assert.deepEqual([rows[3].kind, rows[3].href, rows[3].sub], ['chat', '#chat/ask_00000003', '']);
+});
+
+test('chatRows: a chat found by its group name reads "Group · NAME"', () => {
+  const [r] = chatRows([{ id: 'ask_00000001', title: 'Fix the login', updatedAt: new Date().toISOString(), match: { group: 'Release prep' } }]);
+  assert.equal(r.sub, 'Group · Release prep');
 });

@@ -376,7 +376,9 @@ enforces the set's latest definition.
   **Agent mode (always on where the host allows it).** Every Ask chat
   lets the assistant run shell commands in Worca terminals (`run_command`,
   `read_output`, `wait_for`, `stop_command`, `list_blocks`): tests, builds, git
-  status, and file changes through commands when you ask for them. The shell runs
+  status, and file changes through commands when you ask for them. Each
+  `run_command` may carry an optional `summary` (one line, clipped to 120
+  characters) that the chat shows instead of the command. The shell runs
   as the Worca server's user, like a person's terminal and Actions. It starts from
   a cleaned environment (PATH, HOME, locale, proxy and CA variables and
   `SSH_AUTH_SOCK`; no model, GitHub or server tokens, and none of your shell rc

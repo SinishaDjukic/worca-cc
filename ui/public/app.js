@@ -82,7 +82,9 @@ const state = {
 const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false };
 
 import { icon } from './icons.mjs';
+import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
 import { logLineClass, logLineTime, serializeLog, cycleSeparatorBefore, newCycleState, projectLogRecord } from './log-line.mjs';
+import { readLogView, writeLogView, paintLogMsg, applyLogView, syncLogViewSeg } from './log-view.mjs';
 import { logLineVisible, logFacets, compileLogFilter } from './log-filter.mjs';
 import { alreadyApplied, noteBoot } from './ws-seq.mjs';
 import { createAlerts, mountAlertsCard } from './alerts.mjs';
@@ -98,19 +100,24 @@ import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, proj
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
-import { CREATE_PR_LABEL, doneStatusWord } from './ship-words.mjs';
+import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, createPrLabel, doneStatusWord } from './ship-words.mjs';
 import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
 import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel } from './runs-list.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
-import { buildGroupPage, paintGroupPage, runReceipts } from './group-page.mjs';
-import { runPositionLabel, groupKindWord, pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
-import { headModel, trackerModel, renderHeadButtons, renderTracker, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
+import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
+import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
+import { setShipDialogOpener, shipReason } from './shape/ship-card.mjs';
+import { pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
+import { headModel, routeModel, routeGroupOf, renderHeadButtons, renderRoute, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
   hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip } from './run-head.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
 import { loadRunsView, saveRunsView, viewChip, viewMenuItems } from './runs-view-menu.mjs';
-import { createRunsSelection, runsKeyAction, rowTarget, barModel, bulkBody, rangeKeys, labelTargets } from './runs-selection.mjs';
-import { bulkConfirm } from '../../src/shared/run-bulk.mjs';
+import { createRunsSelection, rowTarget, barModel, bulkBody, rangeKeys, labelTargets } from './runs-selection.mjs';
+import { bulkConfirm, planBulk, skipText } from '../../src/shared/run-bulk.mjs';
+import { listKeyAction, keyHint, isMac, LIST_FIELD } from './list-keys.mjs';
+import { openKeysSheet } from './keys-sheet.mjs';
+import { createListRove, paintBulkBar, LIST_NAV, navKey } from './list-dom.mjs';
 import { openGroupPicker } from './group-picker.mjs';
 import { ACTION_LABEL, HEAD_ACTIONS, MENU_ACTIONS, groupModel, runModel } from '../../src/shared/run-model.mjs';
 // Import list only — `statusChip`/`diffBadges`/`mergeFindings`/`reportResultControl`
@@ -122,9 +129,11 @@ import { workflowPickerLabel, memoryChangesRows } from './results-view.mjs';
 import {
   memoryRoute, renderHealthCard, renderFileList, renderEditor, collectEditor,
   renderMemoryHistory, MEMORY_NAME_HELP, formatWhen, parseSnapshotId, patchRunRefs,
+  MEMORY_TEAM_SUB, renderMemoryViews, renderTeamCard, renderTeamNotes, renderSeedReview, renderClashCompare, teamLoadOf, teamLoadValue,
+  collectSeedDecisions, seedSummary, seedableCount, renderTeamAvailableLine,
 } from './memory-view.mjs';
 import { createScriptsController, nextCopyKey } from './scripts-view.mjs';
-import { renderRunPill, renderOverviewStrip, renderShipItStrip, renderRunningActionRows, historyActionBadges, createActionsController, releaseCheckout } from './actions-view.mjs';
+import { renderRunPill, renderOverviewStrip, renderShipItStrip, shipItTryState, renderRunningActionRows, historyActionBadges, createActionsController, releaseCheckout } from './actions-view.mjs';
 import { editorFieldEl, renderProjectActionsEditor, renderStackEditor } from './actions-config-view.mjs';
 import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, setMcpStripRenderer } from './mcp-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
@@ -135,6 +144,7 @@ import { registerScopeSwitchCard } from './chat/scope-switch-card.mjs';
 import { registerFilesCard, filesForViewer, fileViewerUrls } from './chat/files-card.mjs';
 import { createTerminalPane } from './terminal-pane.mjs';
 import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS } from './feedback.mjs';
+import { layoutDialog, watchDialogEdges } from './dialog-layout.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
 import { guardModal, dialogOpen } from './modal-guard.mjs';
 import { createVoiceController } from './ask-voice.mjs';
@@ -165,16 +175,18 @@ import {
   channelBadge, renderNeedsGit,
 } from './plugins-view.mjs';
 import { mountMarketplace, tabFromParam } from './marketplace/index.mjs';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
+import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
+import { openSetupAssistant, setupStepForSignIn, teamNotice, TEAM_SEEN_KEY } from './setup-assistant.mjs';
 import { loadCredentials, credentialSuffix } from './credential-badges.mjs';
 import { freeRequestsSuffix, typicalFreeRun, newRunFreeWarning, providerFreeLine } from './openrouter-free-view.mjs';
 import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SYNC_EXECUTION_ID } from '../../src/shared/graph/constants.mjs';
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
 import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS } from '../../src/shared/connections.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
@@ -187,7 +199,7 @@ import {
 } from './models-view.mjs';
 import {
   renderProvidersCard, collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
-  applyProviderPreset, endpointRowMatches,
+  applyProviderPreset, endpointRowMatches, ENDPOINT_PRESETS,
   setModelUpstream, COPILOT_TERMS,
 } from './bridge-view.mjs';
 import {
@@ -228,7 +240,7 @@ import { trayKey as pinpointTrayKey } from './pinpoint-model.mjs';
 import { createArtifactBrowser } from './artifacts/browser.mjs';
 import { baseName as artifactBaseName } from './artifacts/common.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
-import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody } from './engine-settings-view.mjs';
+import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody, renderRolesSection, readRolesValues, rolesPatchToSettingsBody, paintRoleFallbacks } from './engine-settings-view.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
 import { mountHouseBrief } from './house-brief-view.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
@@ -251,6 +263,7 @@ import {
   renderProjectTmCell, renderProjectTmChip, projectTmSummary, renderEnableDialogBody, renderMetricsHomePicker, renderWsMetricsRow, renderWsSummary, renderRouteResults, renderWsMetricsPending } from './team-metrics-surfaces.mjs';
 import { renderMapTab, emptyMapFilters } from './workspace-map-view.mjs';
 import { paintAboutInto, paintVersionStatusInto, paintUpdateMarkerInto } from './about-links.mjs';
+import { createUpdateUi } from './update-view.mjs';
 import { renderReasonOptions, renderOptIns, previewText, reportBlobParts, REPORT_PREVIEW_DEBOUNCE_MS } from './report-run.mjs';
 import { openScheduleSheet, closeScheduleSheet, browserTimeZone } from './schedule-sheet.mjs';
 import {
@@ -266,6 +279,7 @@ import { runCostBreakdown, floorText, auxLabelForSubagent } from '../../src/shar
 import { costBreakdownEl, costSummaryText, awayTotalText } from './cost-breakdown.mjs';
 import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/away-mode/describe.mjs';
 import { createSchedulesView } from './schedules-view.mjs';
+import { createRequirementsView } from './requirements-view.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
 import { gitOn, applyGit, onGitChange as onGitFlip, refreshGit, GIT_MISSING_TEXT } from './git-gate.mjs';
@@ -275,15 +289,16 @@ import { runPresetScopeOptions, runPresetRequest, runPresetErrorText, RUN_PRESET
 import { renderPresetsList } from './run-presets-view.mjs';
 import { presetSetupSummary, presetSavedNote, workflowNamesFrom } from './run-presets-names.mjs';
 import { setupFromBody } from '../../src/shared/run-presets.mjs';
-import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor, flashFilled, missingSlot } from './tag-input.mjs';
+import { createTagInput, tagChip, fetchTagVocabulary, createDimensionSlots, createDimensionEditor, missingSlot } from './tag-input.mjs';
 import { normaliseTags, formatTag, parseTag } from '../../src/shared/run-tags.mjs';
-import { splitByDimensions, tagGroupOptions, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
+import { prefillTags, splitByDimensions, tagGroupOptions, tagsProblemText } from '../../src/shared/tag-dimensions.mjs';
 import { createFlagsView, bindFlagSwitch } from './flags-view.mjs';
 import { createSmartNaming } from './smart-naming.mjs';
 import { renderPattern, patternProblem, PRESET_TYPES, TYPE_RE } from '../../src/shared/naming/pattern.mjs';
 import { createFlyout } from './side-flyout.mjs';
 import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
+import { chatRows, CHAT_LIMIT } from './global-search.mjs';
 import { pageTitle } from './topnav.mjs';
 import { activityCounts } from './activity-model.mjs';
 import { createChatHome, findFollowingThread } from './chat/home.mjs';
@@ -386,6 +401,13 @@ function bindMarkdownReady() {
 const pageMarkdown = (text) => (hdMarkdown.isReady() ? hdMarkdown.render(text) : { kind: 'plain' });
 
 let askPanel = null;           // Chat panel — assigned by the boot mount; every seam uses askPanel?.
+let chatSummariesPref = true;    // Settings › Chat › Summarise commands (#911): GET /api/settings chat.summariseCommands
+function setChatSummariesPref(chat) {
+  const on = !(chat && chat.summariseCommands === false);
+  if (on === chatSummariesPref) return;
+  chatSummariesPref = on;
+  askPanel?.refreshCommandCards();
+}
 // Pinpoint (#669): one selection controller for the page. Created at load, so its window key handler runs ahead of
 // the artifact viewer's (added when a popup opens).
 const pinpoint = createPinpoint({ doc: document, win: window, fetch: (u, o) => fetch(u, o) });
@@ -401,6 +423,13 @@ let lastChatHomeFlags = null;   // the switches chatHomeFlags last read: onHello
 const chatDeps = {
   openRunPanel: (ref, opts) => chatOpenRunPage(ref, opts),
   openArtifact: (ref, artifact) => chatDeps.openRunPanel(ref, { tab: 'artifacts' }),
+  // #948 s2: Rename… in the Chats column, and the project or workspace name on a chat row.
+  prompt: (o) => promptModal(o),
+  scopeName: (s) => {
+    if (s && s.projectKey) { const p = (state.projects || []).find((x) => x.key === s.projectKey); return p ? p.name || projectName(p.path) : ''; }
+    if (s && s.workspaceId) { const w = (state.workspaces || []).find((x) => x.id === s.workspaceId); return w ? w.name : ''; }
+    return '';
+  },
 };
 
 /** L11: open feature views by id, repainted on `shape-feature` and `schedules-changed`. host -> feature id. */
@@ -952,6 +981,8 @@ const el = {
   mimpSource: $('#mimp-source'),
   mimpBase: $('#mimp-base'),
   mimpBaseField: null,          // set below: the label wrapping #mimp-base
+  mimpKey: $('#mimp-key'),
+  mimpKeyField: null,           // set below: the label wrapping #mimp-key
   mimpList: $('#mimp-list'),
   mimpMsg: $('#mimp-msg'),
   mimpFilter: $('#mimp-filter'),
@@ -978,6 +1009,8 @@ const el = {
   reportCreate: $('#report-create-issue'),
   reportFiled: $('#report-filed'),
 };
+// The shared dialog anatomy (dialog-layout.mjs): keep the head/foot edge dividers of every static .dlg current.
+watchDialogEdges(document);
 
 // #555: one dirty tracker per Settings card, keyed by card id (settingsCardDirty). Declared up here,
 // not beside postSettingsCard: the Chat and Root cards create theirs at top level further up the file.
@@ -1262,6 +1295,10 @@ if (topnavSearchRoot) createTopnavSearch({
     if (!runsUi.view.labels.includes(label)) setRunsView({ labels: [...runsUi.view.labels, label] });
     goRunsList();
   },
+  // #948 s2: the Chats group (title and message text, server-side), first on the Chat page.
+  searchChats: (q) => fetch(`/api/ask/threads?limit=${CHAT_LIMIT}&q=${encodeURIComponent(q)}`).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+    .then((b) => chatRows(b && Array.isArray(b.threads) ? b.threads : [])),
+  chatsFirst: () => document.body.classList.contains('view-chat'),
 });
 
 // Restore before the first paint. `.sidebar` transitions width/flex-basis over
@@ -1584,7 +1621,8 @@ const acctState = { account: describeAccount(null), away: null };   // away: des
 const acctBtn = document.getElementById('side-acct');
 const acctMenu = document.getElementById('acct-menu');
 // focusChecked: false — a keyboard open lands on the spend card, not on the checked theme icon.
-const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', focusChecked: false });
+// The team setup notice repaints each time the menu opens (paintTeamNotice is a hoisted function declaration below).
+const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', focusChecked: false, onOpen: () => { void paintTeamNotice(); } });
 // Interface mode's side menu hangs off the menu (side-flyout closes it with the menu, and Escape
 // closes it first); ui-level.mjs fills it, and a pick there is a choose like a dialog card.
 createFlyout({ trigger: document.getElementById('acct-lvl'), menu: document.getElementById('lvl-menu'), mode: 'beside', parent: acctMenu });
@@ -1643,6 +1681,7 @@ function handleServerMessage(msg) {
     return;
   }
   if (msg.type === 'git') { applyGit(msg.git); return; }
+  if (msg.type === 'setup-apply') { setupDialog?.onFrame(msg); return; }
 
   if (msg.type === 'channel-status') {
     onChannelStatus(msg);
@@ -1733,6 +1772,12 @@ function handleServerMessage(msg) {
     refreshBudget();
     return;
   }
+  // Requirements: a feature changed (a round finished, an edit, another tab), or a Product brief (`brief`:
+  // '<scopeType>:<scopeKey>', A7 §5). Only the open page repaints, and only when the frame concerns it.
+  if (msg.type === 'requirements-changed') {
+    if (currentView() === 'requirements') void requirementsView.changed(msg.seq, msg.brief);
+    return;
+  }
   // Scheduled runs: a ticket or a repeating schedule changed (here, in another tab, from the
   // CLI, or because the scheduler tick started/missed/skipped something).
   if (msg.type === 'schedules-changed') {
@@ -1794,7 +1839,8 @@ function handleServerMessage(msg) {
     scheduleOnboardingRefresh();
     refreshAllCounts();
     tmCache.at = 0;
-    if (currentView() === 'projects') void refreshProjectsPage(); else void loadProjects(selectedProjectRow()?.name || '', { quiet: true });
+    if (currentView() === 'projects') void refreshProjectsPage();
+    else void loadProjects(selectedProjectRow()?.name || '', { quiet: true }).then(() => { if (state.wizard && state.wizard.imports.length) renderWizardImports(); });
     return;
   }
   if (msg.type === 'workspaces-changed') {
@@ -1842,6 +1888,7 @@ function handleServerMessage(msg) {
   // elsewhere — refetch the scopes and repaint every open policy surface.
   if (msg.type === 'team-policy-changed') {
     scheduleOnboardingRefresh();
+    void paintTeamNotice();
     tpCache.at = 0;
     if (currentView() === 'projects') paintProjectPolicyCells(true);
     if (currentView() === 'workspaces') paintWsPolicyLines(true);
@@ -1888,7 +1935,15 @@ function handleServerMessage(msg) {
   if (msg.type === 'memory-changed') {
     const scope = String(msg.scope || '');
     if (scope === 'global' && currentView() === 'settings' && currentSettingsTab === 'memory' && memoryTabCtl) pokeGlobalMemory();
-    else if (scope && currentView() === 'projects' && projDetail && projDetail.memCtl && projDetail.memCtl.scopeKey === scope) pokeProjectMemory();
+    else if (scope && currentView() === 'projects' && projDetail && projDetail.memCtl && projDetail.memCtl.scopeKey === scope) {
+      pokeProjectMemory();
+      if (projDetail.memView === 'team') pokeProjectTeam();   // a write changes the notes' team states too
+    }
+    return;
+  }
+  // Team memory (1b): a push, a block, a follow, a seeding or an Undo — refetch the open project's Team view.
+  if (msg.type === 'memory-team-changed') {
+    if (currentView() === 'projects' && projDetail && projDetail.teamCtl && projDetail.memView === 'team' && projDetail.key === msg.projectKey) pokeProjectTeam();
     return;
   }
 
@@ -3376,7 +3431,7 @@ function wfvShellActions() {
     importFile: async (f) => {
       let obj;
       try { obj = JSON.parse(await f.text()); }
-      catch (e) { notify({ tone: 'err', title: `${f.name} is not valid JSON: ${e.message}` }); return; }
+      catch (e) { notify({ tone: 'err', title: 'Not a valid workflow file', detail: `${f.name} is not valid JSON: ${e.message}` }); return; }
       await gvImportWorkflowObject(obj);
     },
     // Export reads the SAVED row by id, so an unsaved canvas (new, or edited since its save) is saved
@@ -3513,13 +3568,13 @@ async function routeWorkflows(param = '') {
   // and normalise the hash, or say why not — never nothing.
   try { window.history.replaceState(null, '', '#workflows'); } catch { /* sandboxed */ }
   if (!WF_ID_RE.test(head)) {
-    notify({ tone: 'err', title: `Could not open "${head}"`, detail: 'It is not a workflow id or a Workflows address.' });
+    notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${head}" is not a workflow id or a Workflows address.` });
     return;
   }
   let full = null;
   try { full = await gvApi.readWorkflow(head); } catch { full = null; }   // a refused fetch: say so below
   if (!full) {
-    notify({ tone: 'err', title: `Could not open workflow "${head}"`, detail: 'It was deleted or renamed, or Worca did not answer.' });
+    notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${head}" was deleted or renamed, or Worca did not answer.` });
     return;
   }
   if (await gvComposer.openTemplate(full)) gvComposer.fit();
@@ -4628,7 +4683,7 @@ function renderAgentRows(rows) {
     keepVisible(tagLevel(fanWrap, 'expert'), !!row.fanOut !== !!rowDef.fanOut);
     keepVisible(tagLevel(sWrap, 'expert'), (row.subagentModel || '') !== (rowDef.subagentModel || ''));
     // Only a Claude run has a sub-agent model to pick: Codex has its own spawn_agent, Copilot's sub-agents run on the
-    // node's own model, and Cursor has none.
+    // node's own model, OpenCode's investigator runs on the node's model, and Cursor, Gemini CLI, Goose and Qwen Code have none.
     if (state.engine !== 'claude') sWrap.hidden = true;
     if (row.askQuestions !== null && row.askQuestions !== undefined) {
       const lockWhy = row.questionsLocked ? (row.askQuestions ? 'Always on for this agent' : 'Always off for this agent') : null;
@@ -4850,6 +4905,8 @@ function paintEngineHints() {
       ? `GitHub Copilot CLI runs this pipeline, including titles and summaries (on its default model). Step models: ${project ? 'project Settings' : 'Models › Copilot'}. Sign in once with copilot login.`
       : state.engine === 'cursor'
       ? `Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Cursor'}.`
+      : SIGN_IN_ENGINE_NAMES.includes(state.engine)
+      ? `${engineLabel(state.engine)} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : `Models › ${engineLabel(state.engine)}`}.`
       : `Codex runs this pipeline, including titles and summaries. Its models: ${project ? 'project Settings' : 'Models › Codex'}`;
   }
   if (el.engineDefaultHint) {
@@ -4921,16 +4978,12 @@ async function refreshRunTagDims() {
   if (q) { try { const r = await fetch(`/api/tag-dimensions${q}`); info = r.ok ? await safeJson(r) : null; } catch {} }
   if (gen !== runTagDimsGen) return;
   runTagInput.resetSuggestions();
-  // s2: the person's last tagged run in this project fills the field (D6, D9); else the project's defaults, as before.
-  const fill = info?.autofill?.from === 'last-run' ? info.autofill.tags : (state.runTagDefaults || []);
-  const { slots, rest } = splitByDimensions(fill, info?.dims || []);
-  const filled = !runTagInput.dirty() && info?.autofill?.from === 'last-run';
+  // #923: the project's defaults fill the field; the last run's tags are never copied.
+  const { slots, rest } = splitByDimensions(state.runTagDefaults || [], info?.dims || []);
   if (!runTagInput.dirty()) runTagInput.set(rest);
-  // D4: the server's pre-fill (project default → Default → last used) when it sent one; the last run's slots win.
-  const slotTags = filled ? Object.entries(slots).map(([key, value]) => formatTag({ key, value }))
-    : Array.isArray(info?.prefill) ? info.prefill : Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
+  // D4: the server's pre-fill (project default → Default → last used, mandatory only) when it sent one.
+  const slotTags = Array.isArray(info?.prefill) ? info.prefill : Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
   paintRunTagDims(info, slotTags);
-  if (filled) flashFilled(runTagInput.el, rest);
 }
 document.getElementById('runTagsSaveDefault')?.addEventListener('click', async (e) => {
   const btn = e.currentTarget;
@@ -5203,7 +5256,7 @@ function goAddModel(restore) {
   mvState.editing = null;
   mvState.openCreate = true;
   mvState.openShare = false;
-  // "+ Add model…" on a Codex or Cursor run starts a model of that engine (D10); the editor applies `engine`.
+  // "+ Add model…" on a non-Claude run starts a model of that engine (D10); the editor applies `engine`.
   mvState.prefill = state.engine !== 'claude' ? { id: '', engine: state.engine } : null;
   mvState.openEditorOnLoad = true;         // survives the view switch: loadModelsView opens it
   showView('models');
@@ -5358,9 +5411,24 @@ function effectiveDefaultsOf(row) {
 // ---------------------------------------------------------------------------
 const MAX_LOG_LINES = testHookInt('maxLogLines', 4000);
 
+// Run logs: Summaries / Raw (#911 slice 3). The stored choice applies only while commandSummaries is on;
+// off, every line reads raw (as before the flag). Read once; the guarded module-level `localStorage` never throws.
+let logViewPref = readLogView(localStorage);
+const logView = () => (flagOn('commandSummaries') ? logViewPref : 'raw');
+function setLogView(view) {
+  logViewPref = view === 'raw' ? 'raw' : 'summary';
+  writeLogView(localStorage, logViewPref);
+  applyLogView(document, logView());
+}
+const cloneLogViewSeg = () => {
+  const seg = document.getElementById('log-bar-tpl').content.querySelector('.log-view-seg').cloneNode(true);
+  syncLogViewSeg(seg, logView());
+  return seg;
+};
+
 // Build one .log-line node from a normalized log record. (Same DOM shape the
 // old global appendLog produced: ts/src/msg spans + lvl class.)
-function buildLogLine({ source, level, text, ts, sub, path, kind }) {
+function buildLogLine({ source, level, text, ts, sub, path, kind, desc }) {
   const line = document.createElement('div');
   line.className = logLineClass(level, sub);
 
@@ -5381,11 +5449,12 @@ function buildLogLine({ source, level, text, ts, sub, path, kind }) {
     m.href = '#';
     m.dataset.path = String(path);
     if (kind) m.dataset.kind = String(kind);
+    m.textContent = String(text);
   } else {
     m = document.createElement('span');
     m.className = 'log-msg';
+    paintLogMsg(m, { text, desc }, logView());   // a Bash description reads in place of the command (Summaries)
   }
-  m.textContent = String(text);
 
   line.append(t, s, m);
   return line;
@@ -5608,6 +5677,7 @@ function onLog(r, msg) {
     ...(msg.stream ? { stream: msg.stream } : {}),
     ...(msg.path != null ? { path: msg.path } : {}),
     ...(msg.kind != null ? { kind: msg.kind } : {}),
+    ...(typeof msg.desc === 'string' && msg.desc ? { desc: msg.desc } : {}),
   };
   r.logLines.push(rec);
   if (r.logLines.length > MAX_LOG_LINES) r.logLines.shift();
@@ -7362,14 +7432,14 @@ function clearTask(submitted) {
   if (!sameTask(snapshotTask(), submitted)) return;
   lastTask = submitted;
   setTask({ title: '', prompt: '', markdown: '', mdFileName: '', extras: [] });
-  { // #718 + s2: the next run starts from the last run's cost tags (D6), else the project's defaults, the dimension keys in their slots
+  { // #718 + #923: the next run starts from the project's defaults, the dimension keys in their slots; never this run's tags
     const sent = normaliseTags([...runTagInput.get(), ...runTagDims.get()]).tags;
-    if (state.tagDims?.autofill && sent.length) state.tagDims.autofill = { tags: sent, from: 'last-run' };   // project target only (D8)
-    const lastRun = state.tagDims?.autofill?.from === 'last-run';
-    const { slots, rest } = splitByDimensions(lastRun ? state.tagDims.autofill.tags : (state.runTagDefaults || []), state.tagDims.dims);
+    const { slots, rest } = splitByDimensions(state.runTagDefaults || [], state.tagDims.dims);
     const slotTags = Object.entries(slots).map(([key, value]) => formatTag({ key, value }));
+    // The run just started is now the person's last used: a mandatory slot takes its value (project target only, D8).
+    if (state.tagDims?.autofill && sent.length) state.tagDims.prefill = prefillTags(state.tagDims.dims, [], { projectDefaults: state.runTagDefaults || [], lastUsed: sent });
     runTagInput.set(rest, { clearText: true });
-    runTagDims.set(lastRun ? slotTags : Array.isArray(state.tagDims.prefill) ? state.tagDims.prefill : slotTags);
+    runTagDims.set(Array.isArray(state.tagDims.prefill) ? state.tagDims.prefill : slotTags);
     paintRunTagDimsWarn();
   }
   el.reuseTask.hidden = false;
@@ -10675,6 +10745,8 @@ function renderWizardImports() {
     badge.className = `badge ${tone}`;
     badge.textContent = label;
     row.append(cb, name, sub, badge);
+    // Team memory E10: the repository's origin has a worca-memory branch (checked in the background after the add).
+    if (r.status === 'registered' && state.projects.some((p) => p && p.path === r.path && p.teamMemoryOffer)) row.appendChild(teamMemoryMark());
     const why = r.status === 'problem' ? r.problem
       : r.liftedFrom.length ? `Repository top folder of ${r.liftedFrom.join(', ')}` : '';
     if (why) {
@@ -12320,6 +12392,13 @@ function nestedRepoBadge(p) {
   return b;
 }
 
+/** Team memory E10: the "team memory available" chip of a project row whose origin has worca-memory while it is off
+ *  (the Projects list after Add / Add projects, the workspace wizard's import list). The offer itself is on its Overview. */
+function teamMemoryMark() {
+  return Object.assign(document.createElement('span'), { className: 'badge blue team-mem-mark', textContent: 'team memory available',
+    title: 'Your team shares memory for this repository. Turn it on from the project\'s Overview.' });
+}
+
 function buildProjectRow(p) {
   const item = document.createElement('div');
   item.className = 'pl-item';
@@ -12345,6 +12424,7 @@ function buildProjectRow(p) {
   }
   const nestedBadge = nestedRepoBadge(p);
   if (nestedBadge) name.append(' ', nestedBadge);
+  if (p.teamMemoryOffer) name.append(' ', tagLevel(teamMemoryMark(), 'advanced'));
   const path = document.createElement('div');
   path.className = 'proj-path';
   appendBreakable(path, p.displayPath || p.path);   // a narrow column breaks it after a /, not mid-name
@@ -13013,7 +13093,7 @@ function projParamFor(key, tab = 'overview', sub = '') {
 const projectByKey = (key) => state.projects.find((x) => x && x.key === key) || null;
 const projectHistoryRows = (key) => (state.historyAll || []).filter((r) => r && r.projectKey === key);
 
-let projDetail = null;      // { key, name, screen, memCtl } while a page is open
+let projDetail = null;      // { key, name, screen, memCtl, teamCtl, memView } while a page is open
 let projReturnFocus = '';   // the key of the row that opened the page; closeProjDetail hands focus back
 
 function routeProjectDetail(param, { instant = false } = {}) {
@@ -13041,7 +13121,7 @@ function openProjDetail(p, parsed, { instant = false } = {}) {
   host.scrollTop = 0;                       // a prior visit's scroll must not carry over
   const screen = $('#proj-detail-tpl').content.firstElementChild.cloneNode(true);
   host.appendChild(screen);
-  projDetail = { key: p.key, name: p.name, screen, memCtl: null };
+  projDetail = { key: p.key, name: p.name, screen, memCtl: null, teamCtl: null, memView: 'notes' };
 
   // Handlers close over the KEY and re-resolve the row at click time: a projects-changed
   // rebuild replaces the object in state.projects.
@@ -13134,6 +13214,7 @@ function syncProjHistoryButton(screen, key) {
 
 function teardownProjDetail() {
   if (projDetail && projDetail.memCtl) projDetail.memCtl.destroy();
+  if (projDetail && projDetail.teamCtl) projDetail.teamCtl.destroy();
   projDetail = null;
 }
 
@@ -13168,6 +13249,7 @@ function closeProjDetail({ instant = false } = {}) {
   // content, not a blank body (closeHistDetail keeps its graph mounts the same way). `clear`
   // below destroys it; the state is dropped NOW so a frame poke paints nothing meanwhile.
   const ctl = projDetail && projDetail.memCtl;
+  const teamCtl = projDetail && projDetail.teamCtl;
   projDetail = null;
   host.setAttribute('aria-hidden', 'true');
   // Un-inert the list FIRST — focus() is a no-op inside an inert subtree.
@@ -13187,6 +13269,7 @@ function closeProjDetail({ instant = false } = {}) {
     shell.classList.add('no-anim');
     shell.classList.remove('detail-open');
     if (ctl) ctl.destroy();
+    if (teamCtl) teamCtl.destroy();
     host.innerHTML = '';
     rafSafe(() => shell.classList.remove('no-anim'));
     return;
@@ -13195,7 +13278,7 @@ function closeProjDetail({ instant = false } = {}) {
   // Empty the screen after the slide (or via the timeout under reduced motion / jsdom). The
   // closed page's controller is destroyed either way; the host is emptied only if no NEW page
   // was mounted meanwhile (a page->page hop replaces the screen itself).
-  const clear = () => { if (ctl) ctl.destroy(); if (!projDetail) host.innerHTML = ''; };
+  const clear = () => { if (ctl) ctl.destroy(); if (teamCtl) teamCtl.destroy(); if (!projDetail) host.innerHTML = ''; };
   const onEnd = (e) => {
     if (e.target !== host || e.propertyName !== 'transform') return;
     host.removeEventListener('transitionend', onEnd);
@@ -13272,7 +13355,7 @@ function initPdTabs(screen, p) {
   screen.querySelector('.pd-tabs').addEventListener('click', (e) => {
     const btn = e.target.closest && e.target.closest('button[data-sec]');
     if (!btn || !projDetail) return;
-    const sub = btn.dataset.sec === 'memory' && projDetail.memCtl ? projDetail.memCtl.selectedName() : '';
+    const sub = btn.dataset.sec === 'memory' && projDetail.memCtl ? (projDetail.memView === 'team' ? MEMORY_TEAM_SUB : projDetail.memCtl.selectedName()) : '';
     const target = `projects/${projParamFor(projDetail.key, btn.dataset.sec, sub)}`;
     if (location.hash.slice(1) !== target) location.hash = target;
   });
@@ -13288,8 +13371,10 @@ function activateProjTab(tab, sub = '') {
   if (!tabs) return;
   tabs.activate(tabs.cells.has(tab) && (gitOn() || !tabs.cells.get(tab).tab.needsGit) ? tab : 'overview');
   if (tab !== 'memory' || !projDetail.memCtl) return;
-  const ctl = projDetail.memCtl;
   const name = sub ? safeDecode(sub) : '';
+  if (name === MEMORY_TEAM_SUB) { showProjMemoryView('team'); if (projDetail.teamCtl) void projDetail.teamCtl.load(); return; }
+  showProjMemoryView('notes');
+  const ctl = projDetail.memCtl;
   void ctl.load(name, { keepDraft: ctl.loaded() && name === ctl.selectedName() });
 }
 
@@ -13311,6 +13396,8 @@ function buildPdOverview(sec, key) {
   sec.classList.add('pd-sec-overview');
   const p = projectByKey(key);
   if (!p) return;
+  // Team memory E10: origin already has the team branch and this project is off — one line, advanced like the switch.
+  if (p.teamMemoryOffer) sec.appendChild(tagLevel(pdTeamAvailableLine(key), 'advanced'));
   const grid = document.createElement('div');
   grid.className = 'pd-ov-grid';
 
@@ -13366,6 +13453,29 @@ function buildPdOverview(sec, key) {
   void paintProjectPolicyCells();
   paintPdBranchCards();
   void refreshSyncChips();
+}
+
+// "Your team shares memory for this repository" (team memory E10). Turn on is the normal switch (PATCH memory.team:
+// its git and origin checks, then a fetch at once); Not now closes the offer for good on this machine. Either answer
+// repaints the list and the Overview without it, as the projects-changed frame the server sends does in other tabs.
+function pdTeamAvailableLine(key) {
+  const line = renderTeamAvailableLine();
+  const fail = (r) => (r.data && r.data.error) || `HTTP ${r.status}`;
+  const busy = (on) => { for (const b of line.querySelectorAll('button')) b.disabled = on; };
+  line.addEventListener('click', async (e) => {
+    const on = e.target.closest && e.target.closest('.mem-team-turn-on');
+    const later = e.target.closest && e.target.closest('.mem-team-not-now');
+    if (!on && !later) return;
+    busy(true);
+    const r = on
+      ? await memoryApi('PATCH', `/api/projects/${encodeURIComponent(key)}/settings`, { 'memory.team': true })
+      : await memoryApi('POST', `/api/memory/team/${encodeURIComponent(key)}/available/dismiss`);
+    if (!r.ok) { busy(false); notify({ tone: 'err', title: on ? 'Team memory is still off' : 'Not dismissed', detail: fail(r) }); return; }
+    if (on) notify({ tone: 'ok', title: 'Team memory is on', detail: 'Teammates\' notes load into runs and chats. Memory › Team shows them.' });
+    line.remove();
+    void refreshProjectsPage();   // the list's mark goes too (the server's projects-changed frame says the same)
+  });
+  return line;
 }
 
 // ---- Branch card (project page) / Branches card (workspace page) ----
@@ -13563,22 +13673,45 @@ function refreshProjOverview() {
 }
 
 // ---- Memory tab ----
-// The same grid Settings → Memory paints, for scope 'projects/<key>', hash-first (navigate: true):
-// memoryRoute() yields 'projects/<key>/memory[/<name>]', so the controller's routes are this page's
-// own routes. No load here — activateProjTab loads what the hash names.
+// Two views, hash-first like the pills (team memory 1b): Notes is `projects/<key>/memory[/<name>]` (the grid Settings →
+// Memory paints, for scope 'projects/<key>': memoryRoute() yields those routes, so the controller's routes are this
+// page's own), Team is `projects/<key>/memory/~team`. No load here — activateProjTab loads what the hash names.
 function buildPdMemory(sec, key) {
   sec.innerHTML = '';
   sec.classList.add('pd-sec-memory');
   const msg = document.createElement('p');
   msg.className = 'form-msg';
   msg.setAttribute('aria-live', 'polite');
+  const views = renderMemoryViews('notes');
   const host = document.createElement('div');
   host.className = 'mem-host';
-  sec.append(msg, host);
+  const teamHost = document.createElement('div');
+  teamHost.className = 'mem-team-host';
+  teamHost.hidden = true;
+  sec.append(msg, views, host, teamHost);
   if (!projDetail) return;
   if (projDetail.memCtl) projDetail.memCtl.destroy();
   ensureHistoryLoaded();   // the file meta and History name runs from these rows (D4)
+  if (projDetail.teamCtl) projDetail.teamCtl.destroy();
   projDetail.memCtl = createMemoryController({ host, msgEl: msg, scopeKey: `projects/${key}`, navigate: true });
+  projDetail.teamCtl = createTeamMemoryController({ host: teamHost, msgEl: msg, projectKey: key, current: () => projDetail && projDetail.teamCtl });
+  projDetail.memView = 'notes';
+  views.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('.mem-view');
+    if (!b || !projDetail || !projDetail.memCtl) return;
+    const sub = b.dataset.view === 'team' ? MEMORY_TEAM_SUB : projDetail.memCtl.selectedName();
+    const target = `projects/${projParamFor(projDetail.key, 'memory', sub)}`;
+    if (location.hash.slice(1) !== target) location.hash = target;
+  });
+}
+/** Show the Memory tab's Notes or Team view: the other stays mounted (a Notes draft survives a look at Team). */
+function showProjMemoryView(view) {
+  const sec = projDetail && projDetail.screen && projDetail.screen.querySelector('.pd-sec[data-sec="memory"]');
+  if (!sec || !sec.querySelector('.mem-team-host')) return;
+  projDetail.memView = view;
+  sec.querySelector('.mem-host').hidden = view === 'team';
+  sec.querySelector('.mem-team-host').hidden = view !== 'team';
+  for (const b of sec.querySelectorAll('.mem-view')) { const on = b.dataset.view === view; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); }
 }
 
 // ---- Reusable confirm / prompt modal ---------------------------------------
@@ -13602,7 +13735,7 @@ const confirmGuard = el.confirmModal ? guardModal(el.confirmModal) : null;
 let shellDone = null;
 function modalShell({
   title = 'Confirm', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel',
-  checkbox = null, danger = false, fields = null, messageTone = null,
+  checkbox = null, danger = false, fields = null, messageTone = null, focus = 'ok',
 } = {}) {
   return new Promise((resolve) => {
     modalGen += 1;   // the extension pair prompt checks this to detect a confirm opened over it (see promptExtensionPair)
@@ -13679,7 +13812,7 @@ function modalShell({
     el.confirmCheckboxLabel.textContent = checkbox ? checkbox.label : '';
     el.confirmModal.classList.remove('hidden');
     confirmGuard?.opened({ kind: fields ? 'form' : 'decision', close: () => done(false) });
-    (inputs[0] || el.confirmOk).focus();
+    (inputs[0] || (focus === 'cancel' ? el.confirmCancel : el.confirmOk)).focus();
 
     let settled = false;
     const done = (val) => {
@@ -15476,9 +15609,23 @@ function paintAbout(info) {
 // and the sidebar marker. The server owns the cache and the 24 h interval; a failed read paints
 // unknown (nothing), never an error — the check is a nicety, not a status anyone must act on.
 let versionStatusSeq = 0;
+// Manual update (#841): the About card's Update row, the version picker / confirm modal and the
+// updating overlay (update-view.mjs). GET /api/app/update says who may update and to what.
+async function copyText(text) {
+  try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(text); return true; } return legacyCopy(text); }
+  catch { return legacyCopy(text); }
+}
+const updateGuards = new Map();
+const updateUi = createUpdateUi({
+  doc: document, fetchImpl: (...a) => fetch(...a), copyText,
+  report: (msg, kind) => reportStatus(null, '', msg, kind),
+  guardModal: (modal, opts) => { if (!updateGuards.has(modal)) updateGuards.set(modal, guardModal(modal)); updateGuards.get(modal).opened(opts); },
+});
+updateUi.wire();
 function paintVersionStatus(vs) {
   paintVersionStatusInto(document, vs);
   paintUpdateMarkerInto(document, vs);
+  updateUi.setVersionStatus(vs);
 }
 async function refreshVersionStatus({ force = false } = {}) {
   const mine = ++versionStatusSeq;
@@ -15488,6 +15635,7 @@ async function refreshVersionStatus({ force = false } = {}) {
     if (res.ok) vs = await safeJson(res);
   } catch { /* offline: unknown */ }
   if (mine === versionStatusSeq) paintVersionStatus(vs);
+  updateUi.refresh();
   return vs;
 }
 
@@ -16556,6 +16704,8 @@ document.getElementById('smartNamingReset')?.addEventListener('click', (e) => po
   { smartNaming: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('smartNamingSave');
 onFlagChange('smartRunNaming', () => { snPaintMuted(); void snPaintCost(null); void paintHelperModelCards(); });
+// Settings › Network proxy (networkProxy.enabled; Simple level, no flag).
+mountNetworkProxyCard({ onOpenSetup: (step) => openSetup({ entry: 'fix', step }) });
 
 function paintAskSettings(data) {
   const turns = document.getElementById('askMaxTurns');
@@ -16572,6 +16722,9 @@ function paintAskSettings(data) {
   if (scriptHost) scriptHost.replaceChildren(renderScriptToolsToggle({ prefs: data.chat || {} }, { doc: document }));
   const suggestHost = document.getElementById('ask-suggestions-host');
   if (suggestHost) suggestHost.replaceChildren(renderSuggestionsToggle({ prefs: data.chat || {} }, { doc: document }));
+  const summariesHost = document.getElementById('ask-summaries-host');
+  if (summariesHost) summariesHost.replaceChildren(renderSummariesToggle({ prefs: data.chat || {} }, { doc: document }));
+  setChatSummariesPref(data.chat);
   // Web access: repainted from every GET and save response, which also resets its dirty flag.
   const webHost = document.getElementById('ask-web-host');
   if (webHost) webHost.replaceChildren(renderAskWebFields({ askWeb: data.askWeb }, { doc: document }));
@@ -16622,9 +16775,11 @@ function saveAskLimits(e) {
   const webHost = document.getElementById('ask-web-host');
   const askWebBody = webHost ? collectAskWebFields(webHost) : null;   // null = the web fields were not touched
   const suggestHost = document.getElementById('ask-suggestions-host');
+  const summariesHost = document.getElementById('ask-summaries-host');
   const chat = {
     ...(scriptHost ? collectScriptToolsToggle(scriptHost) : {}),
     ...(suggestHost ? collectSuggestionsToggle(suggestHost) : {}),
+    ...(summariesHost ? collectSummariesToggle(summariesHost) : {}),
   };
   postAskLimits({ askMaxTurns, askMaxBudgetUsd,
     ...(Object.keys(chat).length ? { chat } : {}),
@@ -16901,6 +17056,7 @@ function pluginModal(title, bodyEl, actions = [], guard = {}) {
   pluginModalAfterClose = null;
   el.pluginModalTitle.textContent = title;
   el.pluginModalBody.replaceChildren(bodyEl);
+  cardAlert(el.pluginModalActions.parentElement, null);   // a refusal an earlier dialog put in the pinned foot goes with it
   el.pluginModalActions.replaceChildren(...actions.map(([label, cls, fn]) => {
     const b = document.createElement('button');
     // Dialog actions are 32px (docs/design-system.md › Sizes): the shell drops the callers' btn-sm.
@@ -17680,6 +17836,229 @@ function createMemoryController({ host, msgEl, scopeKey, hostProject = null, nav
   };
 }
 
+// ── The project page's Memory › Team view (team memory 1b) ──
+// memory-view.mjs paints it; this owns /api/memory/team/:key[/…], the switch (the project setting memory.team) and the
+// seeding / Compare dialog in #plugin-modal — which the project page's Escape arm already stands down for.
+// `current`: the page's team controller now — a closed page drops it at once, and destroys it only after its slide-out.
+function createTeamMemoryController({ host, msgEl, projectKey, current = null }) {
+  const base = `/api/memory/team/${encodeURIComponent(projectKey)}`;
+  const st = { status: null, busy: false };
+  let seq = 0;
+  let dialogSeq = 0;
+  let self = null;
+  let dead = false;
+  let dialogBody = null;   // the body of the seeding / Compare dialog this controller opened last
+  const say = (text, kind) => reportStatus(msgEl, 'form-msg', text, kind);
+  const fail = (r) => (r.data && r.data.error) || `HTTP ${r.status}`;
+  const firstLine = (s) => String(s || '').trim().split('\n').find(Boolean) || '';
+  // Destroyed, or no longer its page's (the page closed or another one opened): it opens no dialog and acts on no click.
+  const gone = () => dead || (!!current && current() !== self);
+  // #plugin-modal shows THIS dialog — not just any: once ours is closed, another feature may hold the modal.
+  const holds = (body) => !!body && !el.pluginModal.classList.contains('hidden') && el.pluginModalBody.contains(body);
+  const ours = (body) => !gone() && holds(body);
+  // A dialog's refusal sits in its pinned foot, above the actions: `.dlg-body` is the only scroller, and an alert under
+  // a long review would be out of sight (docs/design-system.md › Modals). null clears it.
+  const footAlert = (opts) => { const box = cardAlert(el.pluginModalActions.parentElement, opts); if (box) el.pluginModalActions.before(box); };
+  function paint() {
+    host.replaceChildren();
+    if (!st.status) return;
+    host.appendChild(renderTeamCard(st.status, { busy: st.busy }));
+    if (st.status.enabled) host.appendChild(renderTeamNotes(st.status, { busy: st.busy }));
+  }
+  const setStatus = (status) => { if (status && typeof status.enabled === 'boolean') { st.status = status; paint(); } };
+  async function load() {
+    const my = ++seq;
+    const r = await memoryApi('GET', base);
+    if (my !== seq) return;
+    // A 200 without the status shape (an older server) is an error, never "off". A failed REFETCH keeps the last status
+    // on screen: only a first load has nothing to show.
+    if (!r.ok || !r.data || typeof r.data.enabled !== 'boolean') { paint(); say(fail(r), 'err-inline'); return; }
+    setStatus(r.data);
+  }
+  /** Local · Team · Both (team-memory-load-choice.md): Local is the switch-off (its confirm), Team or Both from Local
+   *  the switch-on (its seeding offer), Team ↔ Both changes only what loads. */
+  async function setLoad(next) {
+    const was = teamLoadOf(st.status);
+    if (!st.status || next === was) return;
+    const on = next !== 'local';
+    if (!on) {
+      const ok = await confirmModal({
+        title: 'Turn team memory off',
+        message: 'Stop sharing this project\'s notes? Nothing is fetched, loaded or pushed any more, and changes waiting to be pushed from this machine are dropped. Your notes stay here.',
+        confirmLabel: 'Turn off', danger: true,
+      });
+      if (!ok) { paint(); return; }
+    }
+    st.busy = true; paint();
+    const r = await memoryApi('PATCH', `/api/projects/${encodeURIComponent(projectKey)}/settings`, { 'memory.team': teamLoadValue(next) });
+    st.busy = false;
+    if (!r.ok) notify({ tone: 'err', title: was === 'local' ? 'Team memory is still off' : on ? 'What loads did not change' : 'Team memory is still on', detail: fail(r) });
+    await load();
+    // The first switch-on raises the offer (Q&A seed-offer); the Team view keeps it until finished or dismissed. Never
+    // over another page: this one may have closed while the switch was saved.
+    if (r.ok && on && was === 'local' && !gone() && st.status && st.status.enabled && st.status.seed && st.status.seed.offer === 'pending' && seedableCount(st.status) > 0) await openSeeding();
+  }
+  /** Every request of this view and its dialog, one at a time: while it runs, every control waits for it (a second Undo
+   *  would answer "Not undone" right after the first one's success; Compare's other side would race it). */
+  async function request(method, path, body) {
+    st.busy = true; paint();
+    ++seq;   // a load() under way is older than this answer: it never repaints over it
+    const r = await memoryApi(method, `${base}${path}`, body);
+    st.busy = false;
+    if (r.ok) setStatus(r.data.status); else paint();
+    return r;
+  }
+  const post = (path, body) => request('POST', path, body);
+  async function sync() {
+    const r = await post('/sync');
+    if (!r.ok) { notify({ tone: 'err', title: 'Sync failed', detail: fail(r) }); return; }
+    const f = r.data.flush;
+    if (f && f.ok === false) notify({ tone: 'warn', title: 'The push failed', detail: `${firstLine(f.stderr) || f.code}${f.hint ? ` — to fix: ${f.hint}` : ''}` });
+    else say('Synced with the team.', 'ok');
+  }
+  async function dismiss() { const r = await post('/seed/dismiss'); if (!r.ok) say(fail(r), 'err'); }
+  async function undo() {
+    const ok = await confirmModal({
+      title: 'Undo last seeding',
+      message: 'Put back the notes the last seeding changed on this machine and release the notes it held? Nothing is pushed: what it shared stays on the team. The notes as they are now stay in History.',
+      confirmLabel: 'Undo',
+    });
+    if (!ok) return;
+    const r = await post('/seed/undo');
+    if (!r.ok) { notify({ tone: 'err', title: 'Not undone', detail: fail(r) }); return; }
+    const d = r.data;
+    const parts = [d.restored.length ? `${d.restored.length} put back` : '', d.released.length ? `${d.released.length} released` : '', d.cancelled.length ? `${d.cancelled.length} not pushed after all` : ''].filter(Boolean);
+    notify({ tone: d.failed.length ? 'warn' : 'ok', title: parts.length ? `Seeding undone: ${parts.join(' · ')}` : 'Seeding undone — nothing needed putting back',
+      detail: d.failed.map((x) => `${x.name}.md: ${x.error}`).join('; ') });
+  }
+  async function removeFromTeam(name) {
+    const local = !!(st.status && (st.status.notes || []).some((n) => n.name === name && n.local));   // a team-only note has no copy here
+    const ok = await confirmModal({
+      title: 'Remove from the team',
+      message: `Remove “${name}.md” from the team branch? ${local ? 'A copy on this machine stays as a plain local note; the' : 'The'} branch's git history keeps the team's version.`,
+      confirmLabel: 'Remove', danger: true,
+    });
+    if (!ok) return;
+    const r = await request('DELETE', `/notes/${encodeURIComponent(name)}`);
+    if (!r.ok) { notify({ tone: 'err', title: 'Not removed', detail: fail(r) }); return; }
+    say(`${name}.md is being removed from the team.`, 'ok');
+  }
+  /** The seeding dialog — or, with `name`, Compare on one clash. Fetches a fresh preview each time it opens. */
+  async function openSeeding({ name = '' } = {}) {
+    const my = ++dialogSeq;
+    const body = document.createElement('div');
+    body.className = 'mem-seed-host';
+    body.appendChild(Object.assign(document.createElement('p'), { className: 'hint', textContent: 'Fetching the team\'s notes…' }));
+    const title = name ? `Compare ${name}.md with the team` : 'Share existing notes with the team';
+    const cancel = ['Cancel', 'btn btn-sm btn-quiet', () => closePluginModal()];
+    dialogBody = body;
+    pluginModal(title, body, [cancel]);
+    const r = await memoryApi('GET', `${base}/seed${name ? `?name=${encodeURIComponent(name)}` : ''}`);
+    if (my !== dialogSeq || !ours(body)) return;   // closed or opened again meanwhile, its page gone, or another dialog holds the modal
+    if (!r.ok) { body.replaceChildren(); cardAlert(body, { title: 'Could not read the notes', detail: fail(r) }); return; }
+    if (name) { paintCompare(body, r.data, name, title, cancel); return; }
+    body.replaceChildren(renderSeedReview(r.data));
+    pluginModal(title, body, [cancel, ['Share', 'btn btn-primary btn-sm mem-seed-submit', () => void commit(body)]]);
+    const label = () => {
+      const btn = el.pluginModalActions.querySelector('.mem-seed-submit');
+      if (!btn || btn.dataset.fbState) return;   // withButton owns the label while busy / done
+      const d = collectSeedDecisions(body);
+      const shares = d.filter((x) => x.action === 'share').length;
+      btn.disabled = !d.length;
+      btn.textContent = shares ? `Share ${shares} note${shares === 1 ? '' : 's'}` : 'Apply';
+    };
+    body.addEventListener('change', label);
+    label();
+  }
+  /** A dialog's POST, through `post` (one request at a time): only from this page's own dialog. null: nothing was sent. */
+  async function dialogRequest(body, btn, path, payload, busy) {
+    if (st.busy || !ours(body)) return null;
+    const r = await withButton(btn, async () => {
+      const res = await post(path, payload);
+      return res.ok ? res : { ...res, ok: false };
+    }, { busy, done: 'Done' });
+    return r.skipped ? null : r;
+  }
+  /** After a dialog's POST: true when it was applied. A dialog still this page's shows a refusal in place (STALE opens
+   *  the review again) and closes on success; one closed meanwhile (Cancel, its page left) leaves #plugin-modal alone —
+   *  another dialog may hold it by now — and a refusal, a STALE too, is a toast. */
+  async function settleDialog(body, r, { refused, reopen }) {
+    const open = ours(body);
+    if (!r.ok && open && r.status === 409 && r.data && r.data.code === 'STALE') { await reopen(); return false; }
+    if (!r.ok) { if (open) footAlert({ title: refused, detail: fail(r) }); else notify({ tone: 'err', title: refused, detail: fail(r) }); return false; }
+    if (open) closePluginModal();
+    return true;
+  }
+  async function commit(body) {
+    footAlert(null);
+    const r = await dialogRequest(body, el.pluginModalActions.querySelector('.mem-seed-submit'), '/seed', { decisions: collectSeedDecisions(body) }, 'Sharing…');
+    // A refused commit writes nothing (E3).
+    if (!r || !(await settleDialog(body, r, { refused: 'Nothing was applied',
+      reopen: async () => { say('Some notes changed since you opened this — review them again.', 'warn'); await openSeeding(); } }))) return;
+    const f = r.data.flush;
+    // A share the remote refused is blocked, never pending (seedSummary's rule): only one still waiting stays pending.
+    const rows = new Map(((r.data.status && r.data.status.notes) || []).map((n) => [n.name, n.state]));
+    const pending = (r.data.shared || []).some((n) => rows.get(n) !== 'shared' && rows.get(n) !== 'blocked');
+    notify({ tone: f && f.ok === false ? 'warn' : 'ok', title: seedSummary(r.data),
+      detail: f && f.ok === false ? `The push failed (${f.code})${pending ? ' — the notes stay pending' : ''}; the Team view says why.` : '' });
+  }
+  function paintCompare(body, preview, name, title, cancel) {
+    const note = (preview.notes || []).find((n) => n.name === name);
+    if (!note || !note.team || note.team.same) {
+      body.replaceChildren(Object.assign(document.createElement('p'), { className: 'hint', textContent: `${name}.md no longer differs from a team version.` }));
+      return;
+    }
+    body.replaceChildren(renderClashCompare(note));
+    if (note.blocked) body.appendChild(Object.assign(document.createElement('p'), { className: 'hint', textContent: `Your version is blocked by the secret check: ${note.blocked.reason}` }));
+    const actions = [cancel];
+    // A note recorded BLOCKED (its edit was blocked, the host refused it) stays here until an edit passes the check:
+    // no side can be picked for it — the commit refuses one.
+    if (note.state !== 'blocked') {
+      if (!note.team.tooBig) actions.push(['Take team', 'btn btn-sm btn-quiet mem-cmp-take', () => void resolve(body, note, 'take-team')]);
+      if (!note.blocked) actions.push(['Keep mine', 'btn btn-primary btn-sm mem-cmp-keep', () => void resolve(body, note, 'share')]);
+    }
+    pluginModal(title, body, actions);
+  }
+  async function resolve(body, note, action) {
+    const btn = el.pluginModalActions.querySelector(action === 'share' ? '.mem-cmp-keep' : '.mem-cmp-take');
+    const other = el.pluginModalActions.querySelector(action === 'share' ? '.mem-cmp-take' : '.mem-cmp-keep');
+    if (other) other.disabled = true;   // one side at a time
+    const r = await dialogRequest(body, btn, '/resolve', { name: note.name, action, hash: note.hash, teamHash: note.team.hash }, 'Saving…');
+    if (other) other.disabled = false;
+    if (!r || !(await settleDialog(body, r, { refused: 'Not changed', reopen: () => openSeeding({ name: note.name }) }))) return;
+    // Mine is shared once the returned status shows it on the team, blocked when the remote refused it (seedSummary's
+    // rule): else it waits to be pushed.
+    const mine = action === 'share' ? ((r.data.status?.notes || []).find((n) => n.name === note.name) || {}).state : null;
+    const onTeam = action !== 'share' || mine === 'shared';
+    notify({ tone: onTeam ? 'ok' : 'warn', title: action !== 'share' ? `${note.name}.md: the team's version is here now`
+      : onTeam ? `${note.name}.md: your version is shared`
+        : `${note.name}.md: your version ${mine === 'blocked' ? 'is blocked' : 'waits to be pushed'} — the Team view says why` });
+  }
+  const onClick = (e) => {
+    if (st.busy || gone()) return;   // one request at a time (its controls are disabled meanwhile); never a page that left
+    const hit = (cls) => (e.target.closest ? e.target.closest(`.${cls}`) : null);
+    if (hit('mem-team-load')) { void setLoad(hit('mem-team-load').dataset.load); return; }
+    if (hit('mem-team-sync')) { void sync(); return; }
+    if (hit('mem-team-seed')) { void openSeeding(); return; }
+    if (hit('mem-team-dismiss')) { void dismiss(); return; }
+    if (hit('mem-team-undo')) { void undo(); return; }
+    if (hit('mem-team-compare')) { void openSeeding({ name: hit('mem-team-compare').dataset.name }); return; }
+    if (hit('mem-team-remove')) void removeFromTeam(hit('mem-team-remove').dataset.name);
+  };
+  host.addEventListener('click', onClick);
+  self = {
+    projectKey,
+    load,
+    destroy() {
+      const owned = holds(dialogBody);
+      dead = true;
+      host.removeEventListener('click', onClick); host.replaceChildren();
+      if (owned) closePluginModal();   // the dialog this page opened goes with it — never another feature's
+    },
+  };
+  return self;
+}
+
 /** The project that hosts a GLOBAL defragment run (B32): the one picked on New pipeline, else the
  *  first registered project that exists. Disabled only when NO project is registered (spec §7.3). */
 function globalDefragHost() {
@@ -17974,29 +18353,56 @@ function paintHistActionBadges() {
   }
 }
 
-// ---- Ship It "Try it first" ----
+// ---- Create PR "Try it first": the footer button, then the strip once checked out ----
 // Follows loadShipItRemotes: every await re-checks the generation, and nothing here ever
 // blocks .shipit-ok.
 async function paintShipItTry(modal, record, gen, isClosed) {
   const box = modal.querySelector('.shipit-try');
-  if (!box) return;
-  box.hidden = true;
-  box.replaceChildren();
+  const tryBtn = modal.querySelector('.shipit-try-btn');
+  if (!box || !tryBtn) return;
+  box.hidden = true; box.replaceChildren();
+  tryBtn.hidden = true; tryBtn.onclick = null;
+  let tryFocused = false;   // set on click: a disabled button can drop focus, so read it before disabling
+  let checkingOut = false;  // an actions-changed repaint while the POST is out must not re-enable the button
+  // Focus never falls to <body>: back on Try it first when it is still shown, else on Create PR.
+  const settleTryFocus = () => {
+    if (!tryFocused) return;
+    tryFocused = false;
+    (tryBtn.hidden ? modal.querySelector('.shipit-ok') : tryBtn).focus();
+  };
   const scope = runActionQuery(record.projectDir, record).toString();
   const call = (method, tail, body) => actionsCall(method, actionsRunUrl(record.id, tail, scope), body);
   const repaint = async () => {
     if (gen !== shipItRemotesGen || isClosed()) return;   // a closed dialog stops following actions-changed
     const r = await call('GET', '/actions');
     if (gen !== shipItRemotesGen || isClosed()) return;
-    if (!r.ok) { box.hidden = true; box.replaceChildren(); return; }
+    if (!r.ok) { box.hidden = true; box.replaceChildren(); tryBtn.hidden = true; settleTryFocus(); return; }
     actionsModelCache.set(record.id, r.data);
     paintActionsStrips(record.id);
-    const node = renderShipItStrip(r.data, { doc: document, handlers });
+    const state = shipItTryState(r.data);
+    tryBtn.hidden = state !== 'checkout';
+    tryBtn.disabled = checkingOut;
+    tryBtn.onclick = state === 'checkout'
+      ? () => {
+        tryFocused = document.activeElement === tryBtn;
+        tryBtn.disabled = true;
+        handlers.onCheckout(r.data.workspace ? undefined : [r.data.members.find((m) => m.branch).projectKey]);
+      }
+      : null;
+    const node = state === 'strip' ? renderShipItStrip(r.data, { doc: document, handlers }) : null;
     box.replaceChildren(...(node ? [node] : []));
     box.hidden = !node;
+    settleTryFocus();
   };
   const handlers = {
-    onCheckout: async (members) => { await call('POST', '/checkout', members ? { members } : {}); await repaint(); },
+    // A failed checkout says so on the card; repaint() re-enables (or hides) the button either way.
+    onCheckout: async (members) => {
+      checkingOut = true;
+      const r = await call('POST', '/checkout', members ? { members } : {});
+      checkingOut = false;
+      cardAlert(modal.querySelector('.shipit-card'), r.ok ? null : { title: 'Not checked out', detail: r.data?.error || 'The checkout failed.' });
+      await repaint();
+    },
     onStart: async (member, actionId) => { await call('POST', `/actions/${encodeURIComponent(actionId)}/start`, { member }); await repaint(); },
     onBuiltin: async (member, key) => { await call('POST', `/builtins/${encodeURIComponent(key)}`, { member }); },
     onStop: async (member, actionId) => { await call('POST', `/actions/${encodeURIComponent(actionId)}/stop`, { member }); await repaint(); },
@@ -18392,9 +18798,10 @@ function renderModelsViewBody() {
     predefined: d.predefined || [],
     codex: d.codex || [],
     codexEfforts: d.codexEfforts || [],
-    cursorEfforts: d.cursorEfforts || [],
     copilot: d.copilot || [],
     copilotEfforts: d.copilotEfforts || [],
+    gooseEfforts: d.gooseEfforts || [],
+    opencodeEfforts: d.opencodeEfforts || [],
     efforts: d.efforts || [],
     hideBuiltin: !!d.hideBuiltinModels,
     projectName: pp ? pp.split('/').pop() : '',
@@ -18432,10 +18839,12 @@ function modelEditorEl() {
 function openModelEditorDialog() {
   if (!el.modelEditorModal || !el.modelEditorHost) return;
   const d = mvState.data || { efforts: [] };
-  const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels, ...(d.codexEfforts ? { codexEfforts: d.codexEfforts } : {}), cursorEfforts: d.cursorEfforts || [], copilotEfforts: d.copilotEfforts || [] });
+  const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels, ...(d.codexEfforts ? { codexEfforts: d.codexEfforts } : {}), cursorEfforts: d.cursorEfforts || [], copilotEfforts: d.copilotEfforts || [], gooseEfforts: d.gooseEfforts || [], opencodeEfforts: d.opencodeEfforts || [] });
   if (!mvState.editing && mvState.prefill) prefillModelEditor(editor, mvState.prefill);
   const title = editor.querySelector('.mv-editor-title');
   if (title) title.id = 'mv-editor-heading';
+  // The shared dialog anatomy: the title stays pinned, the Save/Cancel row too (dialog-layout.mjs).
+  layoutDialog(editor, { head: [title], foot: [editor.querySelector(':scope > .mv-editor-msg'), editor.querySelector(':scope > .mv-editor-btns')] });
   el.modelEditorHost.replaceChildren(editor);
   mvEditor.lastFocus = document.activeElement;
   el.modelEditorModal.classList.remove('hidden');
@@ -18611,25 +19020,39 @@ const CODEX_HELPER_JOBS = ['title', 'classifier', 'overview', 'prDescription', '
 // src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the engines with helper slots of their own.
 const HELPER_ENGINES = ['claude', 'codex'];
 // Claude's helper slots at user level are their own settings keys (settings-cascade.mjs CLAUDE_USER): a model id for
-// titles, Auto and PR descriptions (no effort), and the Memory defragment, Agent generation and Run naming pairs. No
-// user-level overview slot. Agent generation and Run naming are Claude's alone (they always run on Claude), so no other
-// tab has their rows; Run naming shows only while smartRunNaming is on.
-const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen', 'naming'];
+// titles, Auto and PR descriptions (no effort), and the Memory defragment, Agent generation, Run naming and Command
+// summaries pairs. No user-level overview slot. Agent generation, Run naming and Command summaries are Claude's alone
+// (they always run on Claude), so no other tab has their rows; Run naming shows only while smartRunNaming is on, Command
+// summaries only while commandSummaries is on.
+const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen', 'naming', 'commandSummary'];
 const helperPair = (p) => (p && p.model ? { model: p.model, ...(p.effort ? { effort: p.effort } : {}) } : undefined);
+// Run naming shows only while smartRunNaming is on, Command summaries only while commandSummaries is on; the
+// Requirements interview is a user-only slot (settings key requirementsInterview), listed only while its flag is on.
+// All asked at paint time, never a module constant.
+const claudeUserHelperJobs = () => [...CLAUDE_USER_HELPER_JOBS.filter((job) => (job !== 'naming' || flagOn('smartRunNaming'))
+  && (job !== 'commandSummary' || flagOn('commandSummaries'))),
+  ...(flagOn('requirements') ? ['requirementsInterview'] : [])];
 const CLAUDE_USER_HELPER_OWN = (data) => ({
   title: data.titleModel ? { model: data.titleModel } : undefined,
   classifier: data.autoWorkflowModel ? { model: data.autoWorkflowModel } : undefined,
   prDescription: data.prDescriptionModel ? { model: data.prDescriptionModel } : undefined,
   memoryDefrag: helperPair(data.memoryDefrag),
   agentGen: helperPair(data.agentGenModel),
+  requirementsInterview: data.requirementsInterview && (data.requirementsInterview.model || data.requirementsInterview.effort)
+    ? { ...(data.requirementsInterview.model ? { model: data.requirementsInterview.model } : {}), ...(data.requirementsInterview.effort ? { effort: data.requirementsInterview.effort } : {}) } : undefined,
   naming: helperPair(data.namingModel),
+  commandSummary: helperPair(data.commandSummaryModel),
 });
-const claudeHelperJobs = () => CLAUDE_USER_HELPER_JOBS.filter((job) => job !== 'naming' || flagOn('smartRunNaming'));
-async function paintEngineSettings(data) {
+let lastEngineSettingsData = null;
+// The catalog the Models cards last painted with, and whether it loaded (the Roles card's catalog-failure line).
+let lastModelCatalog = []; let lastModelCatalogOk = true;
+/** The Engines card, then the Roles card (each paints on its own). A repaint that a Save of this card did not ask for
+ *  (`force`) keeps a card with unsaved rows as it is: another card's Save or a settings-changed broadcast. */
+async function paintEngineSettings(data, { force = false } = {}) {
   const root = document.getElementById('engine-settings-root');
   if (!root) return;
-  let cfg = {};
-  try { cfg = await safeJson(await fetch('/api/config')); } catch {}
+  let cfg = {}; let cfgOk = true;
+  try { const res = await fetch('/api/config'); cfgOk = res.ok; cfg = await safeJson(res); } catch { cfgOk = false; }
   const roles = Array.isArray(cfg?.steps) ? cfg.steps : Object.keys(cfg?.config?.steps || {}).map((key) => ({ key, label: key }));
   const catalog = Array.isArray(cfg?.models) ? cfg.models : [];
   const fields = { 'run.engine': { own: data.runEngine, inherited: { value: 'claude', source: 'default' } } };
@@ -18638,16 +19061,56 @@ async function paintEngineSettings(data) {
     for (const job of CODEX_HELPER_JOBS) fields[utilityId(engine, job)] = { own: data.utilityModels?.[engine]?.[job], inherited: { value: undefined, source: 'default' } };
   }
   const claudeOwn = CLAUDE_USER_HELPER_OWN(data || {});
-  const claudeJobs = claudeHelperJobs();
+  const claudeJobs = claudeUserHelperJobs();
   for (const job of claudeJobs) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
-  renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
-    noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
-    defaultLabels: { claude: 'the default model' },
-    jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [] } });
+  // The interview's empty choices read "Opus 5.5 (default)" and "medium (default)" (the answer's requirementsInterviewDefault).
+  const interviewDefault = data?.requirementsInterviewDefault;
+  if (interviewDefault?.model && claudeJobs.includes('requirementsInterview')) fields[utilityId('claude', 'requirementsInterview')].inherited = { value: { model: interviewDefault.model, ...(interviewDefault.effort ? { effort: interviewDefault.effort } : {}) }, source: 'default' };
+  // Command summaries: unset runs on the cheapest ready Claude model, so the empty option names it ("Haiku 5.5 (default)").
+  const csAuto = data?.commandSummaryModelEffective;
+  if (fields[utilityId('claude', 'commandSummary')] && csAuto && csAuto.source === 'auto' && csAuto.model) {
+    fields[utilityId('claude', 'commandSummary')].inherited = { value: { model: csAuto.model }, source: 'default' };
+  }
+  lastModelCatalog = catalog; lastModelCatalogOk = cfgOk && catalog.length > 0;
+  const keep = !force && root.querySelector('.inherit-field[data-dirty="1"]');
+  if (!keep) {
+    renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
+      noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
+      defaultLabels: { claude: 'the default model' },
+      jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] }, modelRoles: data.modelRoles || {} });
+  }
+  lastEngineSettingsData = data;
+  paintModelRoles(data);
   // Each non-Claude card's readiness line (GET /api/engines). Only on the Models page, where the cards live: a
   // settings-changed broadcast repaints this from any view, and that must not spawn a preflight.
   if (currentView() === 'models') void paintEngineCardStatus(root);
 }
+/** Models › Roles: the role rows, then every unset Engines row's "From Everyday coding · …" text from them (AC-1.5). */
+function paintModelRoles(data, { force = false } = {}) {
+  const rolesRoot = document.getElementById('model-roles-root'); const engineRoot = document.getElementById('engine-settings-root');
+  if (!rolesRoot) return;
+  const keep = !force && rolesRoot.querySelector('.inherit-field[data-dirty="1"]');
+  if (!keep) {
+    renderRolesSection(rolesRoot, { roles: data.modelRoles || {}, catalog: lastModelCatalog, engine: data.runEngine || 'claude',
+      status: document.getElementById('modelRolesMsg'), onChange: (roles) => { if (engineRoot) paintRoleFallbacks(engineRoot, roles, lastModelCatalog); } });
+  }
+  if (engineRoot) paintRoleFallbacks(engineRoot, readRolesValues(rolesRoot), lastModelCatalog);
+  // The catalog failure has its own line, so the dirty counter and "Saved." on #modelRolesMsg never hide it.
+  const catalogMsg = document.getElementById('modelRolesCatalogMsg');
+  if (catalogMsg) catalogMsg.hidden = lastModelCatalogOk;
+}
+document.getElementById('modelRolesSave')?.addEventListener('click', async () => {
+  const rolesRoot = document.getElementById('model-roles-root');
+  const body = rolesPatchToSettingsBody(readEngineSection(rolesRoot));
+  if (!body.modelRoles) { setHintMsg('modelRolesMsg', 'Nothing changed.', ''); return; }
+  try {
+    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await safeJson(res);
+    if (!res.ok) return setHintMsg('modelRolesMsg', data?.error || `HTTP ${res.status}`, 'err');
+    // Only the Roles card repaints; the Engines rows take the new roles through paintRoleFallbacks.
+    lastEngineSettingsData = data; paintModelRoles(data, { force: true }); setHintMsg('modelRolesMsg', 'Saved.', 'ok');
+  } catch (error) { setHintMsg('modelRolesMsg', error?.message || 'network error', 'err'); }
+});
 /** Fill each engine card's `.engine-card-status` from GET /api/engines: text only (no buttons). An answer
  *  with no `engines` array leaves the lines empty. */
 async function paintEngineCardStatus(root) {
@@ -18660,6 +19123,9 @@ async function paintEngineCardStatus(root) {
       : `${e.label} can start runs: its CLI is installed and signed in.${e.reason ? ` Note: ${String(e.reason).replace(/\.$/, '')}.` : ''}`;
   }
 }
+// The flag flips while the Models page is open: the Engines card gains / loses the interview row. Refetched, since
+// GET /api/settings carries the row's stored pair and its default only while the flag is on.
+onFlagChange('requirements', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintHelperModelCards({ force: true }); });
 document.getElementById('engineSettingsSave')?.addEventListener('click', async () => {
   const root = document.getElementById('engine-settings-root');
   const body = enginePatchToSettingsBody(readEngineSection(root));
@@ -18668,7 +19134,7 @@ document.getElementById('engineSettingsSave')?.addEventListener('click', async (
     const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await safeJson(res);
     if (!res.ok) return setHintMsg('engineSettingsMsg', data?.error || `HTTP ${res.status}`, 'err');
-    await paintEngineSettings(data); setHintMsg('engineSettingsMsg', 'Saved.', 'ok');
+    await paintEngineSettings(data, { force: true }); setHintMsg('engineSettingsMsg', 'Saved.', 'ok');
   } catch (error) { setHintMsg('engineSettingsMsg', error?.message || 'network error', 'err'); }
 });
 
@@ -18702,11 +19168,11 @@ async function loadModelsView() {
 
 // Models › Engines: its pickers list the catalog, so they repaint whenever it loads — a model added a moment ago is
 // selectable without leaving the page.
-async function paintHelperModelCards() {
+async function paintHelperModelCards({ force = false } = {}) {
   try {
     const res = await fetch('/api/settings');
     if (!res.ok) return;
-    await paintEngineSettings(await safeJson(res));
+    await paintEngineSettings(await safeJson(res), { force });
   } catch { /* the card keeps its last paint */ }
 }
 
@@ -19021,6 +19487,7 @@ function paintImportSource() {
   }));
   // Copilot has no base URL, and loads by itself; the whole field (with its button) goes away.
   if (el.mimpBaseField) el.mimpBaseField.classList.toggle('hidden', mimp.source !== 'openai');
+  if (el.mimpKeyField) el.mimpKeyField.classList.toggle('hidden', mimp.source !== 'openai');
 }
 
 /**
@@ -19035,6 +19502,7 @@ function openImportDialog({ source, baseUrl, goToModels } = {}) {
   mimp.baseUrl = baseUrl || (mvState.providers && mvState.providers.openai && mvState.providers.openai.baseUrl) || '';
   mimp.payload = null;
   if (el.mimpBase) el.mimpBase.value = mimp.baseUrl;
+  if (el.mimpKey) el.mimpKey.value = '';
   paintImportSource();
   if (el.mimpBody) el.mimpBody.replaceChildren();
   if (el.mimpGo) el.mimpGo.disabled = true;
@@ -19082,13 +19550,15 @@ function closeImportDialog() {
 async function listImportModels() {
   const endpoint = mimp.source === 'openai';
   mimp.baseUrl = el.mimpBase ? el.mimpBase.value.trim() : '';
+  mimp.apiKey = el.mimpKey ? el.mimpKey.value.trim() : '';
   if (endpoint && !mimp.baseUrl) { setImportMsg('Give the endpoint a base URL, e.g. http://127.0.0.1:11434/v1', 'err'); el.mimpBase?.focus(); return; }
   if (el.mimpList) el.mimpList.disabled = true;
   if (el.mimpGo) el.mimpGo.disabled = true;
   setImportMsg(endpoint ? 'Asking the endpoint what it serves…' : 'Loading Copilot models…');
   try {
     const url = endpoint ? `/api/providers/openai/models?baseUrl=${encodeURIComponent(mimp.baseUrl)}` : '/api/providers/copilot/models';
-    const res = await fetch(url);
+    // The endpoint's own key rides a header, never the URL (server logs, history).
+    const res = await fetch(url, endpoint && mimp.apiKey ? { headers: { 'X-Worca-Endpoint-Key': mimp.apiKey } } : {});
     const data = await safeJson(res);
     if (!res.ok) { setImportMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
     mimp.payload = data;
@@ -19128,7 +19598,7 @@ async function importModelsFlow() {
   setImportMsg('Importing…');
   try {
     const res = endpoint
-      ? await fetch('/api/providers/openai/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, baseUrl: sheet.dataset.baseurl || '' }) })
+      ? await fetch('/api/providers/openai/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, baseUrl: sheet.dataset.baseurl || '', ...(mimp.apiKey ? { apiKey: mimp.apiKey } : {}) }) })
       : await fetch('/api/providers/copilot/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
     const data = await safeJson(res);
     if (!res.ok) { setImportMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
@@ -19349,11 +19819,6 @@ if (el.providersList) {
     if (!t) return;
     if (t.classList.contains('mv-cp-signin')) copilotSignInFlow();
     else if (t.classList.contains('mv-cp-cancel')) { stopCopilotPoll(); mvState.signIn = null; renderProvidersViewBody(); }
-    else if (t.classList.contains('mv-cp-copy')) {
-      try { navigator.clipboard.writeText(t.dataset.code || ''); t.textContent = 'Copied'; } catch (e) {
-        notify({ tone: 'err', title: 'Could not copy the code', detail: e.message, key: 'copy-device-code' });
-      }
-    }
     else if (t.classList.contains('mv-cp-signout')) copilotSignOutFlow();
     else if (t.classList.contains('mv-cp-terms')) ensureCopilotTerms({ force: true }).then(() => renderProvidersViewBody());
     else if (t.classList.contains('mv-cp-fetch-models')) openImportDialog({ source: 'copilot' });
@@ -19440,7 +19905,8 @@ function onModelsClick(ev) {
     } else if (t.classList.contains('mv-test')) {
       testModelFlow(t);
     } else if (t.classList.contains('mv-signin')) {
-      goToProviders(t.dataset.provider);
+      const step = setupStepForSignIn(t);   // a Copilot pill signs in inside the setup assistant (AC-4.5)
+      if (step) openSetup({ entry: 'fix', step }); else goToProviders(t.dataset.provider);
     } else if (t.classList.contains('mvx-export')) {
       exportPluginFlow();
     } else if (t.classList.contains('mvx-cancel')) {
@@ -19506,6 +19972,17 @@ for (const host of [el.modelsList, el.modelEditorModal]) {
 // ── Import dialog wiring ────────────────────────────────────────────────────
 if (el.modelImportModal) {
   el.mimpBaseField = el.mimpBase ? el.mimpBase.closest('.mimp-base-field') : null;
+  el.mimpKeyField = el.mimpKey ? el.mimpKey.closest('.mimp-key-field') : null;
+  // A hosted API's preset fills its base URL and the usual ${VAR} for its key (bridge-view.mjs ENDPOINT_PRESETS).
+  for (const b of el.modelImportModal.querySelectorAll('.mimp-preset')) {
+    b.addEventListener('click', () => {
+      const p = ENDPOINT_PRESETS[b.dataset.preset];
+      if (!p) return;
+      if (el.mimpBase) el.mimpBase.value = p.baseUrl;
+      if (el.mimpKey) el.mimpKey.value = p.keyRef;
+      listImportModels();
+    });
+  }
   el.modelImportBtn?.addEventListener('click', () => openImportDialog({}));
   el.mimpSource?.addEventListener('change', () => {
     mimp.source = el.mimpSource.value;
@@ -19518,6 +19995,7 @@ if (el.modelImportModal) {
   });
   el.mimpList?.addEventListener('click', () => listImportModels());
   el.mimpBase?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); listImportModels(); } });
+  el.mimpKey?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); listImportModels(); } });
   el.mimpFilter?.addEventListener('input', () => applyImportFilter());
   el.mimpGo?.addEventListener('click', () => importModelsFlow());
   el.mimpCancel?.addEventListener('click', () => importGuard?.cancel());
@@ -20271,7 +20749,10 @@ function openStopModal(target) {
 // The ONE source of the filter bar's markup is #log-bar-tpl; the run page's Logs tab and History
 // clone it so the two bars can never drift (control order, classes, a11y).
 function buildLogFilterBar() {
-  return document.getElementById('log-bar-tpl').content.querySelector('.log-filters').cloneNode(true);
+  const bar = document.getElementById('log-bar-tpl').content.querySelector('.log-filters').cloneNode(true);
+  const seg = bar.querySelector('.log-view-seg');
+  if (seg) syncLogViewSeg(seg, logView());   // every cloned bar shows the current choice
+  return bar;
 }
 
 // The ONE filter reader for both bars. The search box is read by PRESENCE, not
@@ -22153,7 +22634,7 @@ function shellSingleQuote(value) {
 // text (git stderr and branch names are data).
 function mergeBackText(p) {
   const failed = (Array.isArray(p?.mergeBack?.members) ? p.mergeBack.members : []).filter((m) => m && m.merged === false);
-  const out = ['Not merged back into the source branch', 'The run’s work stayed on its own branch. To land it, open a pull request or merge it by hand:'];
+  const out = ['Not merged back into the source branch', 'The run’s work stayed on its own branch. To land it, create a PR or merge it by hand:'];
   for (const m of failed) {
     // A person reads the project's name, not its store key (<name>-<8 hex>).
     const name = m.name || (p.target !== 'workspace' && p.projectName)
@@ -22190,7 +22671,7 @@ function mergeBackRecipe(m, p) {
     case 'dirty':
       return { lead: `Commit or stash your changes in ${m.source} first (or move the file in the way), then:`, cmd: inSource };
     case 'diverged':
-      return { lead: `${m.source} has new commits, so it needs a real merge (or open a pull request instead):`, cmd: `${cd}git switch ${src} && git merge ${br} && ${del}` };
+      return { lead: `${m.source} has new commits, so it needs a real merge (or create a PR instead):`, cmd: `${cd}git switch ${src} && git merge ${br} && ${del}` };
     case 'not-done':
       return { lead: 'The run did not finish. Check its work in Diff before you merge it:', cmd: inSource };
     default:
@@ -22641,6 +23122,10 @@ const pokeGlobalMemory = coalesce(() => {
 const pokeProjectMemory = coalesce(() => {
   const ctl = projDetail && projDetail.memCtl;
   if (ctl) void ctl.load(ctl.selectedName(), { fromFrame: true });
+}, COMMENT_POKE_MS);
+const pokeProjectTeam = coalesce(() => {
+  const ctl = projDetail && projDetail.teamCtl;
+  if (ctl && projDetail.memView === 'team') void ctl.load();
 }, COMMENT_POKE_MS);
 
 // Resolve the saved-pipeline detail URL ({state, auditMarkdown}) for a history
@@ -23304,6 +23789,19 @@ function paintHistStatusIcon(host, p) {
 let shipItClose = null;
 function closeShipItModal() { if (shipItClose) shipItClose(); }
 
+/** The Create PR dialog's title, its aria-label and its confirm say the same words (docs/design-system.md, PR controls). */
+function setShipItLabel(modal, label) {
+  modal.setAttribute('aria-label', label);
+  modal.querySelector('.shipit-title').textContent = label;
+  setCtaContent(modal.querySelector('.shipit-ok'), 'pr-create', label);
+}
+
+/** Single run: Into hides when it holds nothing (no base name, no branch pick, no remotes). */
+function paintShipItInto(modal) {
+  const q = (s) => modal.querySelector(s);
+  q('.shipit-into').hidden = !q('.shipit-base').textContent && q('.shipit-base-wrap').hidden && q('.shipit-remotes').hidden;
+}
+
 // Per-open generation for the remotes fetch. Cancel stays live while the remotes
 // load, so a response can land after the modal was closed and re-opened for a NEWER
 // generation; it must not repopulate selects it does not own. Same guard as
@@ -23346,7 +23844,7 @@ function fillShipItBaseSelect(select, chain, remoteName, remoteBranches, fallbac
   select.value = offered(keep) ? keep : (offered(fallback) ? fallback : (select.options[0]?.value || ''));
 }
 
-// The base label names the base remote's PR host ("Open PR in (Azure DevOps)"). The hint
+// The Into label names the base remote's PR host ("Into (Azure DevOps)"). The hint
 // under the selects says why that host cannot open the PR (no credential, or an Azure
 // cross-repo PR), else names the cross-repo head when the two remotes point at different
 // repositories ("me:branch → up/repo main"); empty otherwise. Pure, so the single modal
@@ -23362,15 +23860,15 @@ function crossRepoHint(remotes, pushName, baseName, branch, baseBranch) {
 
 function paintShipItRemotesHint(modal, remotes, record) {
   const base = remotes.find((r) => r.name === modal.querySelector('.shipit-base-remote').value);
-  const label = modal.querySelector('label[for="shipit-base-remote"]');
-  if (label) label.textContent = base && base.prHost ? `Open PR in (${base.prHost})` : 'Open PR in';
+  const label = modal.querySelector('#shipit-into-label');
+  if (label) label.textContent = base && base.prHost ? `Into (${base.prHost})` : 'Into';
   modal.querySelector('.shipit-remotes-hint').textContent = crossRepoHint(remotes,
     modal.querySelector('.shipit-push-remote').value, modal.querySelector('.shipit-base-remote').value,
     record.branch, shipItChosenBase(modal, record));
 }
 
 function setShipItRemotesDisabled(modal, on) {
-  for (const s of modal.querySelectorAll('.shipit-remotes select, .shipit-base-branch')) s.disabled = on;
+  for (const s of modal.querySelectorAll('.shipit-into select')) s.disabled = on;
 }
 
 // s4: Ship it's Watch PR starts from the project's 'Watch new pull requests' (cascade id watchNewPrs, default off).
@@ -23386,7 +23884,7 @@ async function shipItWatchDefault(projectKey) {
 }
 
 // Load the project's remotes into the two selects, and the base-branch choices into
-// the summary's pick. `isClosed` reports whether this generation's modal was already
+// the Into zone's pick. `isClosed` reports whether this generation's modal was already
 // torn down. On any failure (network, non-2xx, or a body without a `remotes` array —
 // safeJson answers `{}` for an unparseable body and the UI test harness answers
 // un-armed URLs with a generic config payload) the block stays hidden and the POST
@@ -23405,6 +23903,8 @@ async function loadShipItRemotes(modal, record, gen, isClosed) {
   branchWrap.hidden = true;
   branchSel.innerHTML = '';
   setShipItRemotesDisabled(modal, true);
+  modal.querySelector('#shipit-into-label').textContent = 'Into';   // a previous run's host suffix never carries over
+  paintShipItInto(modal);                                            // nothing loaded yet: an empty Into hides
   modal.querySelector('.shipit-remotes-hint').textContent = '';
   const closes = modal.querySelector('.shipit-closes');
   closes.hidden = true; closes.textContent = '';
@@ -23434,8 +23934,14 @@ async function loadShipItRemotes(modal, record, gen, isClosed) {
       const d = data.defaults || {};
       fillRemoteSelect(pushSel, remotes, d.pushRemote);
       fillRemoteSelect(baseSel, remotes, d.baseRemote);
-      box.hidden = false;
     }
+    // Hidden still means "no remotes loaded" (the POST sends the remotes whenever it shows); one remote shows only
+    // the branch, so the remote fields inside it show from two up.
+    box.hidden = !remotes.length;
+    const many = remotes.length > 1;
+    modal.querySelector('.shipit-base-remote-field').hidden = !many;
+    modal.querySelector('.shipit-push-field').hidden = !many;
+    modal.querySelector('.shipit-into-row').dataset.cols = many ? '2' : '1';
     // The base remote's branches come with the list (one per remote), so a switch
     // of the base remote re-lists them without a fetch of its own.
     const byRemote = data.branches && typeof data.branches === 'object' ? data.branches : {};
@@ -23445,8 +23951,8 @@ async function loadShipItRemotes(modal, record, gen, isClosed) {
       paintBranches();
       branchWrap.hidden = false;
       modal.querySelector('.shipit-base').textContent = '';
-      modal.querySelector('.shipit-summary').hidden = false;
     }
+    paintShipItInto(modal);
     const paintBaseCheck = () => modal._paintShipBase?.();   // #620: the pick may name another base now
     paintBaseCheck();
     // Confirm may already have been pressed (okBtn disabled = POST in flight, sent
@@ -23497,13 +24003,13 @@ function resetShipItDesc(modal) {
   err.hidden = true; err.textContent = '';
 }
 
-// Generate with AI in flight: the button is disabled and says so, Stop shows, the
+// Generate in flight: the button is disabled and says so, Stop shows, the
 // textarea is read-only so nothing typed meanwhile is overwritten by the draft, and
 // the field wears the shimmer veil (.is-generating) that also swallows clicks.
 function setShipItGenerating(modal, on) {
   const btn = modal.querySelector('.shipit-generate');
   btn.disabled = on;
-  btn.textContent = on ? 'Generating…' : 'Generate with AI';
+  btn.textContent = on ? 'Generating…' : 'Generate';
   modal.querySelector('.shipit-generate-stop').hidden = !on;
   modal.querySelector('.shipit-desc-input').readOnly = on;
   const field = modal.querySelector('.shipit-desc-field');
@@ -23525,7 +24031,7 @@ function setShipItGenerating(modal, on) {
 async function openShipItFor(ref = {}, link = null) {
   const id = ref && (ref.pipelineId || ref.id);
   const projectKey = ref && ref.workspaceId ? `workspaces/${ref.workspaceId}` : ref && ref.projectKey;
-  if (!id || !projectKey) return { opened: false, error: 'This run has no project to open a pull request in.' };
+  if (!id || !projectKey) return { opened: false, error: 'This run has no project to create a PR in.' };
   const rowOf = () => (state.historyAll || []).find((r) => r && r.id === id && r.projectKey === projectKey) || null;
   // Off the Runs views no History refresh runs (pipelines-changed and finishRun reload only there), so a row loaded while
   // the run ran stays stale on the Chat page — a workspace row's members read affected:false until the run ends. Reload
@@ -23552,7 +24058,7 @@ async function openShipItFor(ref = {}, link = null) {
     data = await safeJson(res);
     if (!res.ok || !data || !data.state) throw new Error((data && data.error) || `HTTP ${res.status}`);
   } catch (e) { return { opened: false, error: `Could not load this run: ${e.message}` }; }
-  if (!histCanShip(record)) return { opened: false, error: prLive(record.pr) ? 'This run already has a pull request.' : 'No pull request can be opened for this run.' };
+  if (!histCanShip(record)) return { opened: false, error: prLive(record.pr) ? 'This run already has a pull request.' : 'No PR can be created for this run.' };
   const askLink = link && link.askThreadId && link.askCardId ? { askThreadId: link.askThreadId, askCardId: link.askCardId } : null;
   return new Promise((resolve) => {
     const shown = openShipItModal(record, data, { link: askLink, onClose: (out) => resolve(out) });
@@ -23573,6 +24079,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   if (!modal) return false;
   if (!modal.classList.contains('hidden')) return false;  // double-open guard: a second open
                                                           // would stack a second onOk -> two POSTs
+  resetGroupShip(modal);                                  // one ship flow: a feature's or a chain's zone from the last open
   modal.dataset.pipelineId = String((record && record.id) || '');   // Chat P4: whose dialog this is (crpCloseShipItFor)
   // D22: a slice with a next slice says to merge this PR first. The first open usually finds the cache empty: the
   // answer fills the note, if the dialog still shows this run.
@@ -23587,18 +24094,12 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   if (record.target === 'workspace') return openShipItWsModal(record, data, { link, onClose });
   modal.querySelector('#shipit-repos').hidden = true;   // a previous workspace open may have shown it
   const q = (sel) => modal.querySelector(sel);
-  q('.shipit-sub').textContent =
-    `This opens a pull request for ${record.title || record.id} and puts it up for review.`;
-  const sums = data && data.results && data.results.summary;
-  // 'D' rows already count inside filesChanged — do not add filesDeleted.
-  const nFiles = sums ? (sums.filesNew || 0) + (sums.filesChanged || 0) : null;
-  const added = sums ? sums.linesAdded : (record.survived ? record.added : null);
-  const removed = sums ? sums.linesRemoved : (record.survived ? record.removed : null);
-  q('.shipit-files').textContent = nFiles != null ? `${nFiles} file${nFiles === 1 ? '' : 's'}` : '';
-  q('.shipit-add').textContent = added != null ? `+${added}` : '';
-  q('.shipit-del').textContent = removed != null ? `−${removed}` : '';   // U+2212 — a COUNT
-  q('.shipit-branch').textContent = record.branch || '';
+  // A previous workspace open hid Into and the title field and relabelled the PR zone.
+  q('.shipit-into').hidden = false;
+  q('.shipit-title-input').hidden = false;
+  q('#shipit-pr-label').textContent = 'Title and description';
   q('.shipit-base').textContent = record.sourceBranch || '';
+  paintShipItInto(modal);
   // #620: the local conflict check before a PR exists (the forge pill takes over once one does). Re-run by
   // loadShipItRemotes when the base pick appears or changes. The newer of the detail's and the row's check, as the
   // History detail reads it; one that may be out of date is redone quietly (shipItBaseRecheck).
@@ -23613,19 +24114,17 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
     const md = baseCheckModel(rec);
     el.className = `hint shipit-basecheck tone-${md.tone}`;
     el.textContent = rec.status === 'conflicts'
-      ? `${md.label} with ${rec.base} (${md.when}). Resolve them first, or open the PR anyway.`
+      ? `${md.label} with ${rec.base} (${md.when}). Resolve them first, or create the PR anyway.`
       : `${md.label} (${md.when}). Update branch first to test against it.`;
   };
   modal._paintShipBase = paintShipBase;
   paintShipBase();
   shipItBaseRecheck(modal, record, data, [{ rec: shipBaseRec(), published: shipBranch().published }], paintShipBase);
-  // Spec §5.10: omit the whole summary line when there is nothing to summarize.
-  // (No `&& !record.branch` term: histPrEligible gates BOTH doors into this modal
-  // and requires `branch`, so that clause could never be false.)
-  q('.shipit-summary').hidden = nFiles == null && added == null;
   const card = q('.shipit-actions').parentElement;
   cardAlert(card, null);
   resetShipItDesc(modal);
+  const titleIn = q('.shipit-title-input');
+  titleIn.value = record.title || '';
   q('.shipit-draft-input').checked = false;          // D1: draft is opt-in per ship, never remembered
   // s4: Watch PR starts unchecked and turns on when the project's setting answers true (below, after the guard).
   // A pick the user makes first wins.
@@ -23640,7 +24139,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   modal._releaseRow = relRow;
   const okBtn = q('.shipit-ok');
   const cancelBtn = q('.shipit-cancel');
-  okBtn.disabled = false; okBtn.textContent = 'Create pull request';
+  okBtn.disabled = false; setShipItLabel(modal, CREATE_PR_LABEL);
   cancelBtn.disabled = false;                       // a previous open may have parked it mid-POST
   modal.classList.remove('hidden');
   okBtn.focus();
@@ -23656,7 +24155,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
   // open stacks another `onOk`, i.e. one click = N POSTs.
   let closed = false;
   let posting = false;                              // the PR POST is out
-  // The in-flight Generate with AI request (null when idle). Stop and done() abort
+  // The in-flight Generate request (null when idle). Stop and done() abort
   // it; its handler acts only while it is still THIS open's current request.
   let genCtl = null;
   let shipped = null;                                // worca Chat P2: {opened:true, url?} once a PR opened
@@ -23696,7 +24195,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
     if (!auto && descInput.value.trim()) {
       const replace = await confirmModal({
         title: 'Replace the description?',
-        message: 'Generate with AI replaces what you have written in the PR description.',
+        message: 'Generate replaces what you have written in the description.',
         confirmLabel: 'Replace',
       });
       if (!replace || closed || genCtl) return;
@@ -23744,7 +24243,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
     okBtn.disabled = true;
     posting = true;
     cancelBtn.disabled = true;
-    okBtn.textContent = 'Opening…';
+    setCtaContent(okBtn, 'pr-create', CREATING_PR);
     setShipItRemotesDisabled(modal, true);
     cardAlert(card, null);
     const payload = { projectDir: record.projectDir || null, projectKey: record.projectKey, id: record.id };
@@ -23762,6 +24261,9 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
     if (q('.shipit-draft-input').checked) payload.draft = true;
     if (q('.shipit-watch-input').checked) payload.watch = true;
     if (rel.value) payload.release = rel.value;      // a collapsed row sends nothing
+    // The title only when it was edited: an untouched field keeps the payload (and the PR) as before.
+    const title = q('.shipit-title-input').value.trim();
+    if (title && title !== String(record.title || '').trim()) payload.title = title;
     try {
       const res = await fetch('/api/pr', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -23805,7 +24307,7 @@ function openShipItModal(record, data, { link = null, onClose = null } = {}) {
       if (closed) return;
       okBtn.disabled = false;
       cancelBtn.disabled = false;
-      okBtn.textContent = 'Create pull request';
+      setShipItLabel(modal, CREATE_PR_LABEL);
       if (!q('.shipit-remotes').hidden || !q('.shipit-base-wrap').hidden) setShipItRemotesDisabled(modal, false);
       cardAlert(card, { title: 'Not shipped', detail: e2.message });
     }
@@ -23866,7 +24368,7 @@ function paintShipItRepoBase(row, rec) {
   if (row.baseNote.hidden) return;
   const md = baseCheckModel(rec);
   row.baseNote.className = `hint shipit-basecheck tone-${md.tone}`;
-  row.baseNote.textContent = `${md.label} with ${rec.base}${md.when ? ` (${md.when})` : ''}. Resolve them first, or open the PR anyway.`;
+  row.baseNote.textContent = `${md.label} with ${rec.base}${md.when ? ` (${md.when})` : ''}. Resolve them first, or create the PR anyway.`;
 }
 
 // --- Ship-it, workspace mode: one row per affected member repo --------------
@@ -23888,7 +24390,7 @@ function buildShipItRepoRow(member, summary, canShip) {
     row.pick.type = 'checkbox';
     row.pick.className = 'shipit-repo-pick';
     row.pick.checked = true;                                   // default: every affected repo
-    row.pick.setAttribute('aria-label', `Open a pull request in ${member.name || member.memberKey}`);
+    row.pick.setAttribute('aria-label', `Create a PR in ${member.name || member.memberKey}`);
     head.appendChild(row.pick);
   }
   const name = document.createElement('b');
@@ -23909,7 +24411,7 @@ function buildShipItRepoRow(member, summary, canShip) {
   if (!canShip) {                                               // shown for context, never offered
     row.done = true;
     if (prLive(member.pr)) setShipItRowOpened(row, member.pr);
-    else setShipItRowStatus(row, `${wsMemberNote(member)}. No PR can be opened.`, '');   // the exact cause
+    else setShipItRowStatus(row, `${wsMemberNote(member)}. No PR can be created.`, '');   // the exact cause
     el.appendChild(row.statusEl);
     return row;
   }
@@ -23953,8 +24455,8 @@ function buildShipItRepoRow(member, summary, canShip) {
     row.remotesBox.appendChild(f);
     return sel;
   };
-  row.pushSel = field('Push branch to', 'shipit-repo-push-remote');
-  row.baseSel = field('Open PR in', 'shipit-repo-base-remote');
+  row.pushSel = field('Push remote', 'shipit-repo-push-remote');
+  row.baseSel = field('Into', 'shipit-repo-base-remote');
   row.hint = document.createElement('small');
   row.hint.className = 'shipit-remotes-hint hint';               // :empty hides it (style.css)
   row.remotesBox.appendChild(row.hint);
@@ -23983,7 +24485,7 @@ function prRepoLink(pr) {
   const a = document.createElement('a');
   a.className = merged ? 'hd-pr-repo-link merged' : 'hd-pr-repo-link';
   a.href = pr.url; a.target = '_blank'; a.rel = 'noopener';
-  a.append(icon(document, merged ? 'merge' : 'pull-request', 14), 'View PR');
+  a.append(icon(document, merged ? 'merge' : 'pull-request', 14), VIEW_PR_LABEL);
   return a;
 }
 
@@ -24040,11 +24542,11 @@ async function crossLinkWsPrs(record) {
       body: JSON.stringify({ projectKey: record.projectKey, id: record.id }),
     });
     const dd = await safeJson(res);
-    if (!res.ok) return `The pull requests were opened but could not be cross-linked: ${(dd && dd.error) || `HTTP ${res.status}`}`;
+    if (!res.ok) return `The pull requests were created but could not be cross-linked: ${(dd && dd.error) || `HTTP ${res.status}`}`;
     const failed = Array.isArray(dd.failed) ? dd.failed : [];
     return failed.length ? `Could not cross-link ${failed.length} pull request${failed.length === 1 ? '' : 's'} (${failed.map((f) => f.memberKey).join(', ')}).` : '';
   } catch (e) {
-    return `The pull requests were opened but could not be cross-linked: ${e.message}`;
+    return `The pull requests were created but could not be cross-linked: ${e.message}`;
   }
 }
 
@@ -24084,9 +24586,216 @@ function paintWsMergePills(record, rows) {
 
 // The workspace Ship-it dialog. Its shell mirrors openShipItModal: the double-open
 // guard, shipItClose, the `closed` flag, backdrop/Escape.
+/** One ship flow (slice 2): Create PR for a Shaper feature or a Run-after chain. `view`: { kind, id, title, members,
+ *  suggested, hint, base, release, projectKey }. Posts to the feature or the chain ship route. It shares the
+ *  single-run dialog's helpers (setShipItLabel, guardModal, cardAlert, shipItWatchDefault); the per-open wiring
+ *  differs (no remotes, no Generate, no Try it first), so it is its own opener like openShipItWsModal. */
+function openShipItGroupModal(view, { opener = null, refocus = null } = {}) {
+  const modal = document.getElementById('shipit-modal');
+  if (!modal || !modal.classList.contains('hidden')) return false;
+  const q = (sel) => modal.querySelector(sel);
+  delete modal.dataset.pipelineId;                       // Chat P4's single-run owner check never matches a group
+  q('.shipit-into').hidden = false;
+  q('#shipit-into-label').textContent = 'Into';
+  q('.shipit-remotes').hidden = true;
+  q('.shipit-remotes-hint').textContent = '';
+  q('.shipit-base-wrap').hidden = true;
+  q('.shipit-basecheck').hidden = true;
+  modal._paintShipBase = null;
+  q('#shipit-repos').hidden = true;
+  q('.shipit-title-input').hidden = false;               // a workspace open hides it and relabels the zone
+  q('#shipit-pr-label').textContent = 'Title and description';
+  const closes = q('.shipit-closes'); closes.hidden = true; closes.textContent = '';
+  const baseWarn = q('#shipit-base-warn'); if (baseWarn) { baseWarn.hidden = true; baseWarn.textContent = ''; }
+  const tryBox = q('.shipit-try'); tryBox.hidden = true; tryBox.replaceChildren();
+  const tryBtn = q('.shipit-try-btn'); tryBtn.hidden = true; tryBtn.onclick = null;   // Try it first is single-run only
+  resetShipItDesc(modal);
+  q('.shipit-title-input').value = '';
+  // Slice 3 (D8): a blank Title ships as the group title, so the placeholder says so; resetGroupShip restores it.
+  if (view.kind === 'user') { const t = q('.shipit-title-input'); t.dataset.ph = t.placeholder; t.placeholder = view.title; }
+  q('.shipit-draft-input').checked = false;
+  const paintBase = (mode) => { q('.shipit-base').textContent = mode === 'one' ? view.base
+    : view.kind === 'user' ? 'Each run\'s own base branch' : `${view.base}, then each run's branch`; };
+  const ctl = paintGroupShip(modal, { ...view, onMode: paintBase }, { setLabel: (l) => setShipItLabel(modal, l) });
+  const relSlot = q('.shipit-release');
+  relSlot.replaceChildren();
+  modal._releaseRow = null;
+  if (view.kind === 'feature') { modal._releaseRow = renderReleaseRow(document, view.release || null); relSlot.append(modal._releaseRow.el); }
+  relSlot.hidden = view.kind !== 'feature';
+  const watchIn = q('.shipit-watch-input');
+  watchIn.checked = false;
+  let watchTouched = false;
+  watchIn.onchange = () => { watchTouched = true; };
+  const card = q('.shipit-actions').parentElement;
+  cardAlert(card, null);
+  const okBtn = q('.shipit-ok');
+  const cancelBtn = q('.shipit-cancel');
+  okBtn.disabled = false;
+  cancelBtn.disabled = false;                            // a previous open may have parked it mid-POST
+  modal.classList.remove('hidden');
+  ctl.first().focus();
+  let closed = false;
+  let posting = false;
+  // D20: `shipped` — focus goes to the repainted control (refocus, after the reload); otherwise back to the opener.
+  const done = (shipped = false) => {
+    if (closed) return;
+    closed = true;
+    modal.classList.add('hidden');
+    resetGroupShip(modal);
+    if (shipItClose === done) shipItClose = null;
+    okBtn.removeEventListener('click', onOk);
+    cancelBtn.removeEventListener('click', onCancel);
+    if (shipped !== true) {
+      const back = opener && opener.isConnected ? opener : null;
+      if (back) back.focus(); else if (refocus) refocus();
+    }
+  };
+  shipItClose = done;
+  // Slice 3 (D13): the combine check answers after the dialog is open; One reads "Checking…" until then. It is fetched
+  // only while the answer is unknown, and its base is what Into reads for One.
+  if (view.loadCheck && ctl.checking()) {
+    view.loadCheck().then((c) => { if (closed) return; if (c.base) view.base = c.base; ctl.setCheck(c); },
+      (e) => { if (!closed) ctl.setCheck({ oneOff: `Could not check whether the runs combine: ${e.message}`, line: '' }); });
+  }
+  const guard = guardModal(modal, { kind: 'form', close: () => done(false), busy: () => posting });
+  guard.opened();
+  shipItWatchDefault(view.projectKey).then((on) => { if (on && !closed && !watchTouched) { watchIn.checked = true; if (!guard.touched) guard.markClean(); } });
+  const onCancel = () => guard.cancel();
+  const onOk = async () => {
+    const rel = modal._releaseRow ? modal._releaseRow.check() : { ok: true, value: null };
+    if (!rel.ok) return;
+    const mode = ctl.mode();
+    const title = q('.shipit-title-input').value.trim();
+    const desc = q('.shipit-desc-input').value.trim();
+    const payload = { mode, ...(watchIn.checked ? { watch: true } : {}) };
+    if (view.kind === 'feature' && rel.value) payload.release = rel.value;
+    if ((view.kind === 'chain' || view.kind === 'user') && mode === 'one') Object.assign(payload, title ? { title } : {}, desc ? { body: desc } : {},
+      q('.shipit-draft-input').checked ? { draft: true } : {});
+    const url = view.kind === 'feature' ? `/api/shape/features/${encodeURIComponent(view.id)}/ship`
+      : view.kind === 'user' ? `/api/run-groups/${encodeURIComponent(view.id)}/ship`
+      : `/api/chains/${encodeURIComponent(view.id)}/ship`;
+    posting = true;
+    okBtn.disabled = true;
+    setCtaContent(okBtn, 'pr-create', CREATING_PR);
+    cardAlert(card, null);
+    try {
+      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const out = await safeJson(res);
+      if (!res.ok) throw Object.assign(new Error((out && out.error) || `HTTP ${res.status}`), { prs: out && out.prs });
+      posting = false;
+      done(true);
+      notify({ tone: 'ok', title: PR_CREATED });
+      // D20: repaint first, then focus the control that replaced Create PR (never leave focus on <body>).
+      await Promise.all([loadRunGroups(), schedulesView.load()]).catch(() => {});
+      paintGroupPageNow();
+      if (refocus) refocus();
+    } catch (e) {
+      posting = false;
+      if (closed) return;
+      okBtn.disabled = false;
+      // D21: PRs the server made before failing count as made, so N, One and the labels match a retry.
+      if (Array.isArray(e.prs) && e.prs.length) ctl.markCreated(e.prs.length);
+      else setShipItLabel(modal, createPrLabel(ctl.count()));
+      cardAlert(card, { tone: 'err', title: CREATE_PR_FAILED, detail: e.message });
+      okBtn.focus();
+    }
+  };
+  okBtn.addEventListener('click', onOk);
+  cancelBtn.addEventListener('click', onCancel);
+  return true;
+}
+/** The chain root for a group's dialog (D19): GET /api/pr/remotes for its last member, as the single-run dialog reads it. */
+async function groupShipBase(pipelineId, projectKey) {
+  const res = await fetch(`/api/pr/remotes?${new URLSearchParams({ id: pipelineId, ...(projectKey ? { projectKey } : {}) })}`);
+  const rem = await safeJson(res);
+  const base = rem && ((Array.isArray(rem.chain) && rem.chain[0]) || rem.defaultBase);
+  if (!base) throw new Error((rem && rem.error) || `HTTP ${res.status}`);
+  return base;
+}
+/** D20: after a group page ship, focus the slot's control, else the status line. */
+function focusGroupHead() {
+  const card = document.querySelector('#group-detail .gpage-card');
+  if (!card) return;
+  const slot = card.querySelector('.rd-pr-slot');
+  const ctl = slot && !slot.hidden ? slot.querySelector('button, a') : null;
+  const target = ctl || card.querySelector('.run-status');
+  if (!target) return;
+  if (!ctl) target.setAttribute('tabindex', '-1');
+  target.focus({ preventScroll: true });
+}
+/** D20: after a Ship card ship, focus the card (it repaints as shipped), else its re-rendered copy. */
+const shipCardRefocus = (featureId, card) => () => {
+  const at = card && card.isConnected ? card
+    : [...document.querySelectorAll('[data-ship-feature]')].find((n) => n.dataset.shipFeature === featureId);
+  if (!at) return;
+  const ctl = at.querySelector('a, button:not([disabled])');
+  if (!ctl) at.setAttribute('tabindex', '-1');
+  (ctl || at).focus({ preventScroll: true });
+};
+/** The feature's dialog view, from GET /api/shape/features/:id (ship.suggested / linesAdded / hint). */
+async function openFeatureShip(featureId, { opener = null, card = null } = {}) {
+  const res = await fetch(`/api/shape/features/${encodeURIComponent(featureId)}`);
+  const f = await safeJson(res);
+  if (!res.ok || !f || !Array.isArray(f.slices) || !f.slices.length) throw new Error((f && f.error) || `HTTP ${res.status}`);
+  const base = await groupShipBase(f.slices[f.slices.length - 1].pipelineId, f.projectKey);
+  openShipItGroupModal({ kind: 'feature', id: f.id, title: f.title, projectKey: f.projectKey, base,
+    members: f.slices.map((s) => ({ position: s.index, pr: s.pr || null })), suggested: f.ship && f.ship.suggested,
+    hint: shipReason(f.ship && f.ship.suggested, f.ship && f.ship.linesAdded), release: (f.ship && f.ship.hint) || null },
+    { opener, refocus: card ? shipCardRefocus(f.id, card) : focusGroupHead });
+}
+const shipMemberOf = (mb) => { const pr = mb.model && mb.model.pr;
+  return { position: mb.position, stacks: mb.stacks, pr: pr && pr.url ? { url: pr.url, state: pr.id === 'closed' ? 'CLOSED' : 'OPEN' } : null }; };
+async function openChainShip(row, { opener = null } = {}) {
+  const last = row.members[row.members.length - 1];
+  const projectKey = last.projectKey || row.members[0].projectKey || '';
+  const base = await groupShipBase(last.pipelineId, projectKey);
+  openShipItGroupModal({ kind: 'chain', id: row.groupId, title: row.title, projectKey, base,
+    members: row.members.map(shipMemberOf) },
+    { opener, refocus: focusGroupHead });
+}
+/** Slice 3: a user group's dialog: N separate by default. One waits on GET /api/run-groups/:id/combine, which also names
+ *  the base One merges into (D5), so no /api/pr/remotes read is needed: separate PRs each go into their own base. */
+function openUserGroupShip(row, { opener = null } = {}) {
+  const projectKey = (row.members.find((mb) => mb.projectKey) || {}).projectKey || '';
+  const loadCheck = async () => {
+    const res = await fetch(`/api/run-groups/${encodeURIComponent(row.groupId)}/combine`);
+    const j = await safeJson(res);
+    if (!res.ok || !j || typeof j.oneOff !== 'string') throw new Error((j && j.error) || `HTTP ${res.status}`);
+    return j;
+  };
+  openShipItGroupModal({ kind: 'user', id: row.groupId, title: row.title, projectKey, base: null,
+    members: row.members.map(shipMemberOf), loadCheck }, { opener, refocus: focusGroupHead });
+}
+/** Create PR on a feature's or a chain's status line (D19, D20): the slot's Create PR shows `pending`, a head button
+ *  (a partly shipped group) goes disabled + aria-busy, until the dialog is open; an error notice on failure. */
+let groupShipLoading = false;                             // a double click while the dialog loads opens one dialog
+async function groupShip(row, slot, btn = null) {
+  if (groupShipLoading) return;
+  groupShipLoading = true;
+  const viaSlot = !btn && !!slot && slot.dataset.state === 'create';
+  if (viaSlot) paintPrCta(slot, { state: 'pending' });
+  if (btn) { btn.disabled = true; btn.setAttribute('aria-busy', 'true'); }
+  // Where Cancel returns focus: the head button, else the slot's Create PR as the repaint rebuilds it.
+  const opener = btn || { isConnected: true, focus: () => { const c = slot && slot.querySelector('button'); if (c) c.focus(); } };
+  try {
+    if (row.groupKind === 'feature') await openFeatureShip(row.groupId, { opener });
+    else if (row.groupKind === 'user') openUserGroupShip(row, { opener });
+    else await openChainShip(row, { opener });
+  } catch (e) {
+    notify({ tone: 'err', title: CREATE_PR_FAILED, detail: e.message });
+  } finally {
+    groupShipLoading = false;
+    if (btn) { btn.disabled = false; btn.removeAttribute('aria-busy'); }
+    if (viaSlot) paintGroupPageNow();                     // the next paint restores the control
+  }
+}
+// Every boot re-registers (the last boot wins). The Ship card passes its button and its card (D20).
+setShipDialogOpener((featureId, { opener = null, card = null } = {}) => openFeatureShip(featureId, { opener, card }));
+
 function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
   const modal = document.getElementById('shipit-modal');
   if (!modal || !modal.classList.contains('hidden')) return false;
+  resetGroupShip(modal);                                  // one ship flow: a feature's or a chain's zone from the last open
   const q = (sel) => modal.querySelector(sel);
   // s4: Watch PR starts unchecked and turns on when the project's setting answers true (below, after the guard).
   // A pick the user makes first wins.
@@ -24098,6 +24807,11 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
   const ws = q('.shipit-release');
   if (ws) { ws.replaceChildren(); ws.hidden = true; }
   modal._releaseRow = null;
+  // Try it first is single-run only: drop the button and strip an earlier single-run open painted.
+  const tryBox = q('.shipit-try');
+  if (tryBox) { tryBox.hidden = true; tryBox.replaceChildren(); }
+  const tryBtn = q('.shipit-try-btn');
+  if (tryBtn) { tryBtn.hidden = true; tryBtn.onclick = null; }
   const list = q('#shipit-repos');
   const members = histWsMembers(record);
   const shippable = new Set(histWsShippable(record).map((m) => m.memberKey));
@@ -24105,10 +24819,10 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
   // A changed Folder member (P5) has no branch to ship: named on its own line, never a repo row (no remotes read).
   const folderSkipped = members.filter((m) => m.workMode === 'folder' && m.affected);
   const perProject = (data && data.results && data.results.perProject) || {};
-  q('.shipit-sub').textContent =
-    `This opens a pull request in each repository ${record.title || record.id} changed and puts them up for review.`;
-  q('.shipit-summary').hidden = true;                 // the single-repo summary/remotes stay out of the way
-  q('.shipit-remotes').hidden = true;
+  // Each repo row carries its own remotes and base, and each repo's PR keeps the run title: no Into, no title field.
+  q('.shipit-into').hidden = true;
+  q('.shipit-title-input').hidden = true;
+  q('#shipit-pr-label').textContent = 'Description';
   q('.shipit-basecheck').hidden = true;               // #620: each repo row carries its own line instead
   modal._paintShipBase = null;
   list.replaceChildren();
@@ -24152,9 +24866,9 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
     if (n === 0 && openedHere) { okBtn.disabled = false; okBtn.textContent = 'Close'; return; }
     okBtn.disabled = n === 0;
     // "Retry" only when the pick is exactly failed rows: re-ticking a repo that was never
-    // tried (the user unticked it before the first round) makes it a plain "Open".
-    okBtn.textContent = n > 0 && sel.every((r) => r.failed)
-      ? `Retry ${n} failed` : `Open ${n} pull request${n === 1 ? '' : 's'}`;
+    // tried (the user unticked it before the first round) makes it a plain Create. The title keeps the last Create label.
+    if (n > 0 && sel.every((r) => r.failed)) { setCtaContent(okBtn, 'pr-create', `Retry ${n} failed`); return; }
+    setShipItLabel(modal, createPrLabel(Math.max(n, 1)));
   };
   for (const r of rows) if (r.pick) r.pick.onchange = paintOk;
   paintOk();
@@ -24194,14 +24908,14 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
     const watch = q('.shipit-watch-input').checked;
     if (!batch.length) { done(); return; }             // the "Close" state after a finished batch
     okBtn.disabled = true;
-    okBtn.textContent = 'Opening…';
+    setCtaContent(okBtn, 'pr-create', CREATING_PR);
     cardAlert(card, null);
     for (const r of rows) { r.busy = true; setShipItRowDisabled(r, true); }
     const opened = [];
     const failedRows = [];
     for (const r of batch) {
       if (closed) break;
-      setShipItRowStatus(r, 'Opening…', '');
+      setShipItRowStatus(r, 'Creating…', '');
       try {
         const res = await fetch('/api/pr', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -24221,7 +24935,7 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
       } catch (e2) {
         r.failed = true;
         failedRows.push(r);
-        if (!closed) setShipItRowStatus(r, `Could not open PR: ${e2.message}`, 'err');
+        if (!closed) setShipItRowStatus(r, `${CREATE_PR_FAILED}: ${e2.message}`, 'err');
       }
     }
     // Deliberately NOT guarded on `closed`: a cancel mid-batch stops further POSTs, but
@@ -24235,7 +24949,7 @@ function openShipItWsModal(record, data, { link = null, onClose = null } = {}) {
     if (!failedRows.length && !note) { done(); return; }
     const msgs = [];
     if (failedRows.length) {
-      msgs.push(`${failedRows.length} of ${batch.length} pull request${batch.length === 1 ? '' : 's'} could not be opened. ` +
+      msgs.push(`${failedRows.length} of ${batch.length} PR${batch.length === 1 ? '' : 's'} could not be created. ` +
         'Opened ones stay open. Fix the cause and retry the rest.');
     }
     if (note) msgs.push(note);
@@ -24429,7 +25143,7 @@ function paintHdGlance(screen, record, data) {
   paintRunKindChip(glance.querySelector('.rd-page-meta'), mode);
 
   // Runs redesign slice 4: the one status block and the Group row, as on the live page (no bar: the run is finished).
-  // Slice 3: the status block is the card head's (paintHdHead: status line, head buttons, tracker).
+  // Slice 3: the status block is the card head's (paintHdHead: status line, head buttons, route).
   paintHdHead(screen, record, data);
   const home = groupHomeOf(record.id || '');
   paintGroupLine(glance.querySelector('.rd-kv .rd-group-line'), record.id || '', record.title || '', home);
@@ -24794,7 +25508,7 @@ function paintHdPr(screen, record, data) {
   if (pr && (prState === 'OPEN' || prState === 'MERGED') && pr.url) {
     link.hidden = false;
     link.href = pr.url;
-    setCtaContent(link, prState === 'MERGED' ? 'merge' : 'pull-request', 'View PR');
+    setCtaContent(link, prState === 'MERGED' ? 'merge' : 'pull-request', VIEW_PR_LABEL);
     link.classList.toggle('merged', prState === 'MERGED');
     return;
   }
@@ -25269,7 +25983,7 @@ function paintHdHeaderMeta(screen, record, data) {
     }));
   }
   // Branch row.
-  if (!(gitOn() && isGitRun(hdRunOf(record, data)))) { screen.querySelector('.hd-base').hidden = true; screen.querySelector('.hd-branch-copy').hidden = true; paintPageBranch(screen.querySelector('.hd-glance'), ''); return; }
+  if (!(gitOn() && isGitRun(hdRunOf(record, data)))) { screen.querySelector('.hd-base').hidden = true; screen.querySelector('.hd-branch-copy').hidden = true; return; }
   const base = screen.querySelector('.hd-base');
   const copyBtn = screen.querySelector('.hd-branch-copy');
   const br = st.branch && typeof st.branch === 'object' ? st.branch : {};
@@ -25286,7 +26000,6 @@ function paintHdHeaderMeta(screen, record, data) {
     : (source ? (mergedBack ? `Merged into ${source}` : `${source} ${same ? '←' : '→'}`) : '');
   base.hidden = !dropped && !source;
   copyBtn.hidden = dropped || mergedBack || !feature;
-  paintPageBranch(screen.querySelector('.hd-glance'), mergedBack ? source : feature);
   if (feature && !dropped && !mergedBack) {
     screen.querySelector('.hd-branch-name').textContent = feature;
     if (copyBtn.dataset.bound !== '1') {              // paintHdHeaderMeta re-runs (refreshHdFromRow)
@@ -25600,7 +26313,7 @@ function paintHdBanners(screen, record, data) {
   }
 
   // Kept work (the end-of-run commit failed); a live checkout is the Actions row. Slice 3 (D13): the card head carries
-  // Discard · Apply to branch and the tracker its patch and commands (screen._headKept). A PROVISIONAL retention (deep
+  // Discard · Apply to branch and the route its patch and commands (screen._headKept). A PROVISIONAL retention (deep
   // link, cache-warm row) offers no action: Apply and Discard must act on the authoritative row, which arrives one
   // fetch later and re-runs this painter. Handlers read the record at click time (hdCurrentRecord): refreshHdFromRow
   // REPLACES histDetailState.record.
@@ -28339,6 +29052,7 @@ function buildHdAgents(sec, record, data) {
       `<span class="hd-ag-meta mono">${escapeHtml(metaBits)}</span>` +
       skillPillsHtml(skillsByGroup[key]);
     card.appendChild(head);
+    card.insertAdjacentHTML('beforeend', telemetrySlotHtml(sep >= 0 ? String(key).slice(sep + 1) : null));
     if (!list.length) {
       const note = document.createElement('div');
       note.className = 'hint hd-ag-none';
@@ -28371,6 +29085,7 @@ function buildHdAgents(sec, record, data) {
     }
     sec.appendChild(card);
   }
+  paintTelemetry(sec, (st && st.id) || (record && record.id));
 }
 
 // A preview file of a PERSISTED ask. historyRunUrl already splits the workspace
@@ -29762,6 +30477,7 @@ function rdAgentsBody(sec, r) {
       `<span class="rd-ag-meta mono">${escapeHtml(metaBits)}</span>` +
       skillPillsHtml(skillsByGroup[key]);
     card.appendChild(head);
+    card.insertAdjacentHTML('beforeend', telemetrySlotHtml(sep >= 0 ? String(key).slice(sep + 1) : null));
     if (!list.length) {
       const note = document.createElement('div');
       note.className = 'hint rd-ag-none';
@@ -29797,6 +30513,7 @@ function rdAgentsBody(sec, r) {
   // after the run began) left every node card without one until the user happened
   // to open the separate Artifacts tab. Seed here too; it no-ops once done.
   attachNodeArtifactAffordances(cardsByNode, r.artifacts, r.pipelineId || r.id, sec);
+  paintTelemetry(sec, r.pipelineId || r.id, { live: true });
   hydrateRunArtifacts(r).then((added) => {
     if (added) attachNodeArtifactAffordances(cardsByNode, r.artifacts, r.pipelineId || r.id, sec);
   });
@@ -30700,7 +31417,6 @@ function groupHomeOf(pipelineId, featureId = '') {
   const planning = !member && !!(pipelineId && row.planning && row.planning.pipelineId === pipelineId);
   return { row, planning, member, position: member ? member.position : null, total: row.model.count.total };
 }
-const groupHref = (row) => (row.groupKind === 'feature' ? `#feature/${encodeURIComponent(row.groupId)}` : `#group/${encodeURIComponent(row.groupId)}`);
 /** D5: a thin ref (a group member, a card) completed from the run's History row. chatRunControls.stop stops a paused
  *  run it holds no live copy of only when ref.status is 'paused'; resume's fallback needs the project dir and key. */
 function fullRef(ref) {
@@ -30734,7 +31450,7 @@ function runAction(ref0, id, btn = null, m = null) {
       const shipRef = { ...ref, pipelineId: pid, projectKey: ref.projectKey || (hist && hist.projectKey) || '',
         workspaceId: ref.workspaceId || (r && r.workspaceId) || null };
       return Promise.resolve(chatRunControls.openShipIt(shipRef)).then((res) => {
-        if (res && res.error) notify({ tone: 'err', title: 'Could not open Create PR', detail: res.error });
+        if (res && res.error) notify({ tone: 'err', title: CREATE_PR_FAILED, detail: res.error });
       });
     }
     case 'open-pr': { const url = m && m.pr && m.pr.url; if (url) window.open(url, '_blank', 'noopener'); return undefined; }
@@ -30832,7 +31548,7 @@ const chatRunControls = {
     // so a chain's card finds its group off those views too. The card repaints on its next frame or poll.
     if (!schedulesView.isLoaded() && !chatRunControls.__chainsAsked) {
       chatRunControls.__chainsAsked = true;
-      void withWorkspaces().then(() => schedulesView.load()).catch(() => {});
+      void withWorkspaces().then(() => schedulesView.load()).catch(() => {}).then(() => { routeChainsSettled = true; repaintOpenRunGroupLine(); });
     }
     // `shaping` is memory-only: after a reload only withShaper's card knows the feature.
     const fid = (snap && snap.shaper && snap.shaper.card && snap.shaper.card.feature && snap.shaper.card.feature.id)
@@ -31388,7 +32104,7 @@ function revealLogDrawer(sec) {
   sec.scrollIntoView({ block: 'end', behavior: still ? 'auto' : 'smooth' });
 }
 function newLogDrawer(sec, { onClose, onOpenInLogs }) {
-  const d = createLogDrawer({ doc: document, win: window, storage: LOG_DRAWER_STORAGE, onClose, onOpenInLogs });
+  const d = createLogDrawer({ doc: document, win: window, storage: LOG_DRAWER_STORAGE, onClose, onOpenInLogs, tools: cloneLogViewSeg() });
   // Follow the tail only while the reader is at the bottom (one geometry read per scroll, not per line).
   d.body.addEventListener('scroll', () => {
     d.body.__pinned = d.body.scrollTop + d.body.clientHeight >= d.body.scrollHeight - 24;
@@ -32326,6 +33042,17 @@ const schedulesView = createSchedulesView({
   },
 });
 
+// Requirements (plans/requirements-design.md section 6): the page module owns its host; app.js routes and relays frames.
+const requirementsView = createRequirementsView({
+  host: $('#requirements-host'),
+  subEl: $('#requirements-sub'),
+  msgEl: $('#requirements-msg'),
+  // who: the signed-in person on a shared deployment (the start-before-Ready dialog's "Recorded as"), else nobody
+  deps: { route: (p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; }, who: () => viewer.name },
+});
+// Turning the flag off while the page is open leaves it for Chat (a hidden page must not stay up).
+onFlagChange('requirements', (on) => { if (!on && currentView() === 'requirements') showView('chat', ''); });
+
 /** The workspace read-model, loaded once: a scheduled run card names "Workspace · <name>", not an id. */
 function withWorkspaces() {
   return (state.workspaces || []).length ? Promise.resolve() : loadWorkspaces();
@@ -32341,7 +33068,8 @@ const RUNS_COLLAPSED_KEY = 'worca-cc.runs.collapsed';   // project / date sectio
 const runsUi = { view: loadRunsView(localStorage), collapsed: loadIdSet(RUNS_COLLAPSED_KEY), reveal: '', skipRestore: false,
   groupsToggled: new Map(), recentShown: RECENT_PAGE, selecting: false, anchorKey: null,
   sel: createRunsSelection(), rowsByKey: new Map(), memos: new Map(), lastModel: null, listCounts: null,
-  pendingSelect: null };   // pendingSelect: the pipeline ids "Tag N runs" (Statistics › Cost) asked to tick
+  pendingSelect: null, focusKey: null };   // pendingSelect: the pipeline ids "Tag N runs" (Statistics › Cost) asked to tick
+// focusKey: the list's roving Tab stop across repaints, `row:KEY` or `sec:KEY` (list-keys.mjs, issue #948).
 const memoFor = (id) => { if (!runsUi.memos.has(id)) runsUi.memos.set(id, {}); return runsUi.memos.get(id); };
 
 function histGroupName(p) {
@@ -32451,7 +33179,8 @@ function memberRun(m) {
   const h = histOf(m.pipelineId);
   // Runs redesign slice 4 (D24): a member's round / Watch PR facts pass through untouched; the run model words them.
   const facts = { round: m.round || (h && h.round) || null, watch: m.watch || (h && h.watch) || null };
-  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: runPrFor(h, m.pr), ...(h.inBase ? { inBase: h.inBase } : {}), ...facts };
+  // A chain member carries its PR as `prUrl` (a shared One PR before History has it), a run-groups member as `pr`.
+  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: runPrFor(h, m.pr || (m.prUrl ? { url: m.prUrl } : null)), ...(h.inBase ? { inBase: h.inBase } : {}), ...facts };
   if (m.status) return { status: m.status, pr: runPrFor(null, m.pr), ...facts };
   return { status: CHAIN_MEMBER_STATUS[m.state] || 'stopped', pr: runPrFor(null, m.prUrl ? { url: m.prUrl } : null), ...facts };
 }
@@ -32479,6 +33208,8 @@ function runsGroupItem({ id, groupKind, title, members, cost = null, planning = 
     const href = r ? `#running/${r.runId}` : m.pipelineId && pk ? `#history/${pk}/${m.pipelineId}`
       : groupKind === 'feature' ? `#feature/${encodeURIComponent(id)}` : m.ticketId ? '#schedules/once' : '#runs';
     return { position: m.position || i + 1, title: m.title, adhoc: !!m.adhoc, href, pipelineId: m.pipelineId || (r && r.pipelineId) || null,
+      projectKey: m.projectKey || pk || null,   // one ship flow: the chain dialog's GET /api/pr/remotes
+      stacks: m.stacks,                         // one ship flow: a chain run started from the previous run's branch
       ticketId: m.ticketId || null, runId: r ? r.runId : '', kind: r ? 'live' : m.pipelineId ? 'hist' : 'sched', run,
       memo: memoFor(m.pipelineId || m.ticketId || `${id}:${i}`),
       startedAt: (r && r.startedAt) || (h && h.startedAt) || null,       // D12: the group's dispatch time
@@ -32616,7 +33347,7 @@ function paintGroupPageNow() {
     // "Gone" only after every source has answered: a frame while the replaced-id lookup or the chains load is in
     // flight must not flash "no longer exists".
     if (GROUP_PAGE.gone || (state.runGroupsLoaded && !GROUP_PAGE.resolving)) {
-      // runChains lists a chain only while a member is current or waiting; its id is the root's key (p:… / t:…).
+      // runChains lists a chain while a member is current or waiting, or (D8) until its PRs end; its id is the root's key.
       const chain = route === 'group' && /^[pt]:/.test(id);
       const gone = groupMessage(host, 'feature-page-gone', route === 'feature' ? 'This feature no longer exists.'
         : chain ? 'This chain has finished. Its runs are in the Runs list.' : 'This group no longer exists.');
@@ -32642,6 +33373,16 @@ function paintGroupPageNow() {
   paintGroupPage(host.__gp, { row, project: row.groupName || '', tab, overview: row.groupKind === 'feature' && shapeFirstOn(), logs: levelAtLeast('expert'), labels }, {
     onAction: (aid, b) => groupAction(row, aid, b),
     onMore: (anchor) => openGroupMoreMenu(anchor, row),
+    // One ship flow (D11): Create PR / View PR ▾ / View PRs ▾ on the status line, for every group kind.
+    paintHead: (acts, slot, head) => {
+      // D20: a late repaint (drafts closed, PRs readied) rebuilds the control under focus: keep focus on the head.
+      const inHead = (n) => !!n && (acts.contains(n) || slot.contains(n));
+      const had = inHead(document.activeElement);
+      paintPrCta(slot, { ...(head.cta || { state: 'none' }), onClick: () => groupAction(row, 'ship', null) });
+      slot._prMenu = (anchor) => openGroupPrMenu(row, anchor);
+      renderHeadButtons(acts, head, slot, { onHead: (id, b) => (id === 'ship' ? groupAction(row, 'ship', b) : undefined) });
+      if (had && !inHead(document.activeElement)) focusGroupHead();
+    },
     labelChip: (d, l) => labelChip(d, l, {}),
     onTab: (t) => { location.hash = t === 'runs' ? base : `${base}/${t}`; },
     mountQuestion: (slot, mb) => paintGroupQuestion(slot, mb),
@@ -32701,15 +33442,14 @@ function groupAction(row, id, btn) {
   switch (id) {
     case 'stop': case 'archive': return runBulkAction(id, [rowTarget(row)]);
     case 'ship': {
-      if (row.groupKind === 'feature' && shapeFirstOn()) {
-        // The Shaper's "Ship as" lives on Overview. Already there: no hashchange would fire, so bring it into view.
-        const want = `${groupHref(row)}/overview`;
-        if (location.hash !== want) location.hash = want;
-        else { const o = document.querySelector('.gpage .gpage-overview'); if (o) o.scrollIntoView({ block: 'start' }); }
-        return undefined;
+      // One ship flow: a feature (Shaper on), a chain and a user group ship through the group Create PR dialog.
+      if ((row.groupKind === 'feature' && shapeFirstOn()) || row.groupKind === 'chain' || row.groupKind === 'user') {
+        // The slot's own Create PR passes no button; a head button (a partly shipped group) passes itself.
+        const slot = document.querySelector('#group-detail .gpage-card .rd-pr-slot');
+        return groupShip(row, slot, btn && btn.dataset && btn.dataset.head === 'ship' ? btn : null);
       }
-      // A user group, a chain, or a feature with the Shaper flag off has no group ship flow: each run ships on its
-      // own, so Ship opens Ship it for the first ready member.
+      // A feature with the Shaper off: each run ships on its own, so Create PR opens the single-run dialog for the
+      // first ready member.
       const next = row.members.find((mb) => mb.model && mb.model.state === 'ready') || null;
       return next ? runAction({ runId: next.runId || null, pipelineId: next.pipelineId || null, title: next.title }, 'ship', btn, next.model) : undefined;
     }
@@ -32815,8 +33555,9 @@ const runsRowSig = (r) => [r.key, r.pipelineId, r.href, r.title, r.model.state, 
 // Where focus goes back to after the list is rebuilt under it. A row can change key in the
 // rebuild: opening a finished run acknowledges it, and the same paint turns live:<runId> into
 // hist:<projectKey>/<pipelineId>. Its pipeline id carries over, then the selected row stands in;
-// a focused ⌄, checkbox, ⋯ or section head is found by its row or section.
-function runsFocusTarget(host, { key, pid, section, chain, check, more }) {
+// a focused ⌄, checkbox, ⋯ or section head is found by its row or section. `near`: the row or head that took a gone
+// row's place (issue #948), ahead of the open run's row.
+function runsFocusTarget(host, { key, pid, section, chain, check, more, near = null }) {
   const q = (sel) => host.querySelector(sel);
   const item = (k) => `.runs-item[data-row-key="${cssEscape(k)}"]`;
   if (chain) return q(`${item(chain)} > .runs-row-tail .runs-expand`);
@@ -32825,7 +33566,7 @@ function runsFocusTarget(host, { key, pid, section, chain, check, more }) {
   if (section) return q(`.runs-sec-head[data-section-key="${cssEscape(section)}"]`);
   if (!key) return null;
   const p = pid ? cssEscape(pid) : '';
-  return q(`a.runs-row[data-row-key="${cssEscape(key)}"]`) || (p && q(`a.runs-row[data-pipeline-id="${p}"]`)) || q('a.runs-row.selected');
+  return q(`a.runs-row[data-row-key="${cssEscape(key)}"]`) || (p && q(`a.runs-row[data-pipeline-id="${p}"]`)) || near || q('a.runs-row.selected');
 }
 function paintRunsList() {
   const host = el.runsList;
@@ -32876,6 +33617,8 @@ function paintRunsList() {
       const of = (cls) => (a.classList.contains(cls) && item ? item.dataset.rowKey : '');
       refocus = { key: a.matches('a.runs-row') ? (a.dataset.rowKey || '') : '', pid: a.dataset.pipelineId || '',
         section: a.dataset.sectionKey || '', chain: of('runs-expand'), check: of('runs-check'), more: of('runs-more') };
+      // A focused row the repaint drops (E, ⌫, an archive from elsewhere) hands the focus to its next, else previous, neighbour.
+      refocus.nearKeys = a.matches('a.runs-row') ? runsRove.around(a) : [];
     }
     // P2: each group line's current width, by row key, so its rebuilt twin starts where this one is.
     const lineFrom = new Map();
@@ -32892,9 +33635,11 @@ function paintRunsList() {
   paintRunsBar();
   paintRunsSelection();   // before the focus restore: its last fallback is the selected row
   if (refocus) {
-    const back = runsFocusTarget(host, refocus);
+    const near = runsRove.find(refocus.nearKeys);
+    const back = runsFocusTarget(host, { ...refocus, near });
     if (back) back.focus({ preventScroll: true });
   }
+  roveRunsList();   // every rebuild keeps the list one Tab stop (issue #948)
   // Only once the section is actually shown: `inRunsView()` reads the hash, which already says
   // #runs before its hashchange routes, and a WS frame painting in that gap must not use it up.
   if (runsUi.reveal && RUNS_VIEWS.has(currentShownView)) {
@@ -32903,10 +33648,13 @@ function paintRunsList() {
     if (g && typeof g.scrollIntoView === 'function') g.scrollIntoView({ block: 'start' });
   }
 }
-/** P2/P7: move every group line to its fraction IN PLACE — a rebuild would restart the glide. Group rows only: a
- *  single row's four-section stage block is painted whole by paintProgressBar in renderItem. */
+/** P2/P7: move every group line to its fraction IN PLACE — a rebuild would restart the glide. Group rows and their open members only: a
+ *  top-level single row's four-section stage block is painted whole by paintProgressBar in renderItem. */
 function paintRunsProgress(host, model) {
-  const rows = model.sections.flatMap((s) => (s.collapsed ? [] : s.rows)).filter((r) => r.kind === 'chain' && r.model.progress);
+  // #955: an open group's live members draw the same 3px line as their group row.
+  const rows = model.sections.flatMap((s) => (s.collapsed ? [] : s.rows))
+    .flatMap((r) => (r.kind === 'chain' ? [r, ...(r.open ? r.members || [] : [])] : []))
+    .filter((r) => r.model && r.model.progress);
   for (const r of rows) {
     for (const line of host.querySelectorAll(`.runs-item[data-row-key="${cssEscape(r.key)}"] > a.runs-row > .runs-row-prog`)) {
       line.firstElementChild.style.width = progressWidth(r.model.progress.fraction);
@@ -33007,8 +33755,11 @@ function toggleRunsGroup(key) {
 // ── The View menu (runs-view-menu.mjs, D3-D6) ──
 /** The View menu's "Started by" choices (shared deployments): the people in the loaded History, the viewer first. */
 const runsPeople = () => historyPeople().map((pp) => ({ key: pp.key, name: pp.label }));
+const runsSheet = (opener) => openKeysSheet({ doc: document, opener, advanced: levelAtLeast('advanced'),
+  fallback: () => roveRunsList() || document.getElementById('runs-view-btn') });
 function setRunsView(patch) {
   if (patch.select) { runsUi.selecting = true; paintRunsList(); return; }
+  if (patch.shortcuts) { runsSheet(document.getElementById('runs-view-btn')); return; }
   runsUi.view = { ...runsUi.view, ...patch };
   saveRunsView(localStorage, runsUi.view);
   runsUi.recentShown = RECENT_PAGE;
@@ -33090,15 +33841,89 @@ document.getElementById('runs-all')?.addEventListener('change', (e) => {
   runsUi.selecting = runsUi.sel.size > 0;
   paintRunsList();
 });
+// ── The list keys (list-keys.mjs, issue #948): one Tab stop, a moving focus, letter keys on the row or the selection ──
+const RUNS_NAV = LIST_NAV;
+const runsRove = createListRove({ host: el.runsList, state: runsUi });   // one Tab stop, focusin bookkeeping (list-dom.mjs)
+const runsNavItems = () => runsRove.items();
+const runsNavKey = navKey;
+const runsRowLink = (item) => item?.querySelector(':scope > a.runs-row') || null;
+/** The one Tab stop (list-dom.mjs): the remembered row or head, else the open run's row, else the first row. */
+function roveRunsList() { return runsRove.rove(); }
+function focusRunsNav(n) { runsRove.focus(n); }
+function moveRunsFocus(from, dir) { runsRove.move(from, dir); }
+const topKeyOf = (item) => (item.dataset.level === 'top' ? item.dataset.rowKey
+  : item.parentElement?.closest('.runs-item[data-level="top"]')?.dataset.rowKey);
+function extendRunsSelection(item, dir) {
+  const top = visibleTopKeys();
+  const from = item ? topKeyOf(item) : null;
+  const i = top.indexOf(from);
+  const to = top[i < 0 ? 0 : Math.max(0, Math.min(top.length - 1, i + dir))];
+  if (!to) return;
+  if (!top.includes(runsUi.anchorKey)) runsUi.anchorKey = from || to;
+  runsUi.selecting = true;
+  runsUi.sel.selectAll(rangeKeys(top, runsUi.anchorKey, to));   // adds, as Shift-click does
+  paintRunsList();
+  runsUi.focusKey = `row:${to}`;   // after the paint: its refocus of the old row records that row in focusin
+  focusRunsNav(roveRunsList());
+}
+function foldRunsKey(open, nav, item) {
+  if (nav && nav.matches('button.runs-sec-head')) {
+    if ((nav.getAttribute('aria-expanded') === 'true') !== open) nav.click();   // toggleRunsGroup, via the head's click
+    return;
+  }
+  const r = item && runsUi.rowsByKey.get(item.dataset.rowKey);
+  if (r && r.kind === 'chain') {
+    if (!!r.open !== open) item.querySelector(':scope > .runs-row-tail .runs-expand')?.click();   // repaint keeps the row focused
+    else if (open) focusRunsNav(item.querySelector('.runs-members a.runs-row'));
+    return;
+  }
+  if (!open && item?.dataset.level === 'member') focusRunsNav(runsRowLink(item.parentElement.closest('.runs-item[data-level="top"]')));
+}
+/** S / E / ⌫ / G / ⇧G: the selection through the bar's action, else the focused row's own ⋯ item (same rule, same level). */
+function runsLetterKey(action, item) {
+  // Where the focus goes back to: the same row, else the row that took its place (next, then previous), never the top.
+  const keys = runsRove.around(runsNavItems().find((n) => runsNavKey(n) === runsUi.focusKey), { self: true });
+  // After a confirm, activeElement sits on the hidden modal for a frame (jsdom has no requestAnimationFrame).
+  const frame = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (fn) => setTimeout(fn, 0);
+  const refocus = () => frame(() => {
+    if (el.runsListPane.contains(document.activeElement)) return;
+    const n = runsRove.find(keys);
+    if (n) runsUi.focusKey = runsNavKey(n);
+    focusRunsNav(n || roveRunsList());
+  });
+  if (runsUi.sel.size && (action === 'stop' || action === 'archive' || action === 'delete')) {
+    const act = action === 'archive' && runsUi.view.show === 'archived' ? 'restore' : action;
+    const plan = planBulk(act, selectedTargets());
+    if (plan.apply.length + plan.cancel.length) void runBulkAction(act, selectedTargets()).then(refocus);
+    return;
+  }
+  const r = item && runsUi.rowsByKey.get(item.dataset.rowKey);
+  if (!r || r.kind === 'sched') return;   // a waiting ticket's ⋯ has only Start now / Cancel
+  const more = item.querySelector(':scope > .runs-row-tail .runs-more');
+  const it = runsRowMenuItems(r, more).find((x) => x.key === action);
+  if (!it || it.disabled) return;   // what the ⋯ menu greys out (or leaves out) the key does not do
+  const out = it.onSelect();
+  if (out && typeof out.then === 'function') void out.then(refocus);
+}
 document.getElementById('runs-list-pane')?.addEventListener('keydown', (e) => {
   const t = e.target;
-  const action = runsKeyAction({ key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, targetIsRow: !!t.closest?.('a.runs-row'),
-    inField: !!t.closest?.('input:not([type="checkbox"]), textarea, select, [contenteditable="true"]') }, { size: runsUi.sel.size });
-  if (!action || action === 'clear') return;   // Escape is the document listener's (below)
+  const action = listKeyAction({ key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey,
+    targetIsRow: !!t.closest?.('a.runs-row'), inField: !!t.closest?.(LIST_FIELD) },
+  { size: runsUi.sel.size, list: 'runs', level: currentLevel(document) });
+  if (!action || action === 'clear' || action === 'help') return;   // Escape and ? are the document listeners' (below)
+  if (action !== 'all' && !el.runsList.contains(t)) return;   // the head's View button and the selection bar keep their keys
+  const item = t.closest?.('.runs-item') || null;
+  const nav = t.closest?.(RUNS_NAV) || runsRowLink(item);
   e.preventDefault();
   e.stopPropagation();
-  if (action === 'toggle') toggleRunsKey(t.closest('.runs-item').dataset.rowKey);
-  else { runsUi.sel.selectAll(visibleTopKeys()); runsUi.selecting = true; paintRunsList(); }
+  if (action === 'toggle') toggleRunsKey(item.dataset.rowKey);
+  else if (action === 'all') { runsUi.sel.selectAll(visibleTopKeys()); runsUi.selecting = true; paintRunsList(); }
+  else if (action === 'down' || action === 'up') moveRunsFocus(nav, action === 'down' ? 1 : -1);
+  else if (action === 'extend-down' || action === 'extend-up') extendRunsSelection(item, action === 'extend-down' ? 1 : -1);
+  else if (action === 'open') runsRowLink(item)?.click();   // the row's click handler routes it
+  else if (action === 'unfold' || action === 'fold') foldRunsKey(action === 'unfold', nav, item);
+  else if (action === 'menu') item?.querySelector(':scope > .runs-row-tail .runs-more')?.click();
+  else runsLetterKey(action, item);
 });
 // Esc clears the selection wherever focus is (the list, the open run beside it, the page). A menu, the group picker or
 // a modal owns its own Escape first.
@@ -33108,7 +33933,7 @@ function runsListOwnsEscape() {
 }
 function overlayUp() {
   return [el.confirmModal, el.viewerCard, el.pluginModal, el.reportModal, document.getElementById('stop-modal'), document.getElementById('shipit-modal')]
-    .some((m) => m && !m.classList.contains('hidden'));
+    .some((m) => m && !m.classList.contains('hidden')) || !!document.querySelector('.keys-modal');
 }
 document.addEventListener('keydown', (e) => {
   // openMenu (workflows/menu.mjs) and the group picker stop their Escape at the menu, so it never gets here.
@@ -33119,6 +33944,16 @@ document.addEventListener('keydown', (e) => {
   runsUi.selecting = false;
   runsUi.anchorKey = null;
   paintRunsList();
+});
+// ? anywhere on the Runs page (not while typing, not over a menu or a modal): the one Keyboard shortcuts sheet.
+document.addEventListener('keydown', (e) => {
+  if (e.defaultPrevented || document.querySelector('section.view[data-view="runs"]')?.classList.contains('hidden') !== false) return;
+  const t = e.target;
+  if (listKeyAction({ key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey,
+    targetIsRow: false, inField: !!t.closest?.(LIST_FIELD) }) !== 'help') return;
+  if (overlayUp() || document.querySelector('.wfv-menu, .group-picker, .label-picker, .keys-modal')) return;
+  e.preventDefault();
+  runsSheet(document.activeElement);
 });
 // Touch: a long-press starts selecting (§3.2); the click that follows is swallowed.
 let runsPress = null;
@@ -33163,14 +33998,7 @@ function paintRunsBar() {
   }
   if (!on) return;
   const m = barModel(selectedTargets());
-  document.getElementById('runs-bulk-n').textContent = m.label;
-  for (const a of ['stop', 'archive', 'delete']) {
-    const b = bar.querySelector(`[data-bulk="${a}"]`);
-    if (!b) continue;
-    b.querySelector('.runs-bulk-c').textContent = String(m[a].count);
-    b.disabled = m[a].count === 0;
-    if (m[a].title) b.title = m[a].title; else b.removeAttribute('title');
-  }
+  paintBulkBar(bar, { label: m.label, actions: { stop: m.stop, archive: m.archive, delete: m.delete } });
   const labelBtn = bar.querySelector('[data-bulk="label"]');
   if (labelBtn) {
     labelBtn.disabled = !labelTargets(selectedTargets()).length;
@@ -33191,7 +34019,7 @@ function reloadRunsHistory() {
 const runsWord = (n) => `${n} run${n === 1 ? '' : 's'}`;
 async function runBulkAction(action, targets = selectedTargets()) {
   // Archive asks only when it takes an interrupted run that could still resume (bulkConfirm answers null otherwise).
-  const ask = bulkConfirm(action, barModel(targets)[action].plan);
+  const ask = bulkConfirm(action, planBulk(action, targets));
   if (ask && !(await confirmModal(ask))) return;
   try {
     const out = await postBulk(bulkBody(action, targets));
@@ -33199,7 +34027,7 @@ async function runBulkAction(action, targets = selectedTargets()) {
     runsUi.selecting = false;
     const n = out.done.length + out.cancelled.length;
     const skipped = out.skipped.length ? `Skipped ${out.skipped.length}: ${out.skipped.map((s) => `${s.title} (${s.reason})`).join(', ')}.` : '';
-    const verb = { stop: 'Stopped', archive: 'Archived', delete: 'Deleted' }[action];
+    const verb = { stop: 'Stopped', archive: 'Archived', delete: 'Deleted', restore: 'Restored' }[action];
     // D19: its toast offers Undo (restore), for TOAST_AUTO_MS.
     const undo = action === 'archive' && out.done.length ? { label: 'Undo', run: () => postBulk({ action: 'restore', targets: out.done.map((d) => ({ pipelineId: d.id })), groups: [] })
       .then(() => reloadRunsHistory())
@@ -33207,7 +34035,7 @@ async function runBulkAction(action, targets = selectedTargets()) {
       .catch((e) => notify(actionError('undo the archive', e, { next: 'The runs stay archived; restore them from Show = Archived.' }))) } : null;
     notify({ tone: n ? 'ok' : 'warn', title: `${verb} ${runsWord(n)}`, detail: skipped, action: undo });
     // The archived / deleted runs' parked live cards leave at once, ahead of the server's pipelines-changed frame.
-    if (action !== 'stop' && out.done.length) {
+    if ((action === 'archive' || action === 'delete') && out.done.length) {
       const gone = new Set(out.done.map((d) => d.id));
       dropParkedRuns((e) => gone.has(e.pipelineId));
     }
@@ -33243,23 +34071,30 @@ el.runsList?.addEventListener('click', (e) => {
   }
   openMenu({ doc: document, anchor: more, align: 'end', label: `More for ${r.title}`, items: runsRowMenuItems(r, more) });
 });
-/** The row ⋯ items (§3.4, D13): also the group page's ⋯ (run 3, D13), less Select and Open feature. */
+/** The row ⋯ items (§3.4, D13): also the group page's ⋯ (run 3, D13), less Select and Open feature. `key` is the
+ *  list-keys action that runs the item from the keyboard (issue #948); `hint` shows it. */
 function runsRowMenuItems(r, more) {
   const t = rowTarget(r);
   const m = barModel([t]);
   const adv = levelAtLeast('advanced');
+  const mac = isMac(window);
+  const k = (...tokens) => keyHint(tokens, mac);
   const g = r.kind === 'chain' || !r.pipelineId ? null : groupOfRun(r.pipelineId);
   const adhoc = !!(g && g.members.some((x) => x.adhoc && x.pipelineId === r.pipelineId));
   // A group offers its current member's PR (D31: a group raised to Needs you by a PR offers View PR).
   const prUrl = (r.model.pr && r.model.pr.url) || (r.kind === 'chain' && r.model.current && r.model.current.pr && r.model.current.pr.url) || '';
+  // An archived row's E brings it back (D7): the run page's word, the bulk restore action.
+  const back = r.archived ? planBulk('restore', [t]) : null;
   return [
-    { label: 'Select', onSelect: () => { runsUi.selecting = true; runsUi.anchorKey = r.key; toggleRunsKey(r.key); } },
-    { label: 'Stop', disabled: !m.stop.count, title: m.stop.title, onSelect: () => runBulkAction('stop', [t]) },
-    { label: 'Archive', disabled: !m.archive.count, title: m.archive.title, onSelect: () => runBulkAction('archive', [t]) },
-    ...(adv ? [{ label: 'Delete', disabled: !m.delete.count, title: m.delete.title, onSelect: () => runBulkAction('delete', [t]) }] : []),
-    ...(adv && r.kind !== 'chain' && r.pipelineId && !g ? [{ sep: true }, { label: 'Add to group…', onSelect: () => openAddToGroup(more, r) }] : []),
-    ...(adv && adhoc ? [{ sep: true }, { label: 'Remove from group', onSelect: () => removeRunFromGroup(r) }] : []),
-    ...(prUrl ? [{ label: 'View PR', onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
+    { label: 'Select', key: 'toggle', hint: k('Space'), onSelect: () => { runsUi.selecting = true; runsUi.anchorKey = r.key; toggleRunsKey(r.key); } },
+    { label: 'Stop', key: 'stop', hint: k('S'), disabled: !m.stop.count, title: m.stop.title, onSelect: () => runBulkAction('stop', [t]) },
+    back
+      ? { label: 'Restore', key: 'archive', hint: k('E'), disabled: !back.apply.length, title: skipText(back), onSelect: () => runBulkAction('restore', [t]) }
+      : { label: 'Archive', key: 'archive', hint: k('E'), disabled: !m.archive.count, title: m.archive.title, onSelect: () => runBulkAction('archive', [t]) },
+    ...(adv ? [{ label: 'Delete', key: 'delete', hint: k('Backspace'), disabled: !m.delete.count, title: m.delete.title, onSelect: () => runBulkAction('delete', [t]) }] : []),
+    ...(adv && r.kind !== 'chain' && r.pipelineId && !g ? [{ sep: true }, { label: 'Add to group…', key: 'add-to-group', hint: k('G'), onSelect: () => openAddToGroup(more, r) }] : []),
+    ...(adv && adhoc ? [{ sep: true }, { label: 'Remove from group', key: 'leave-group', hint: k('shift', 'G'), onSelect: () => removeRunFromGroup(r) }] : []),
+    ...(prUrl ? [{ label: VIEW_PR_LABEL, onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
     ...(r.groupKind === 'feature' ? [{ label: 'Open feature', onSelect: () => { location.hash = r.href; } }] : []),
   ];
 }
@@ -33289,7 +34124,8 @@ async function groupFeatureMenuItems(anchor, row) {
 async function openGroupMoreMenu(anchor, row) {
   // A second press while the fetch is pending is ignored (it would queue a toggle that closes the menu again).
   if (anchor.getAttribute('aria-busy') === 'true') return;
-  const items = runsRowMenuItems(row, anchor).filter((it) => it.label !== 'Select' && it.label !== 'Open feature');
+  const items = runsRowMenuItems(row, anchor).filter((it) => it.label !== 'Select' && it.label !== 'Open feature')
+    .map(({ hint, ...it }) => it);   // the list keys do not act on the group page: no key hints there
   anchor.setAttribute('aria-busy', 'true');
   let feature;
   try { feature = await groupFeatureMenuItems(anchor, row); } finally { anchor.removeAttribute('aria-busy'); }
@@ -34387,8 +35223,9 @@ function crpShow(target, tab = '', { replace = false } = {}) {
   crp.kind = target.kind;
   crp.id = id;
   // A usage-limit pause's "Resume at" reads the resume tickets, which only the Runs views and Schedules load: Chat
-  // boots without them, and a second resume for a run that already has one booked is refused.
-  if (!schedulesView.isLoaded()) void withWorkspaces().then(() => schedulesView.load()).then(() => repaintLimitNotices());
+  // boots without them, and a second resume for a run that already has one booked is refused. s2 (D2): the load also
+  // ends the route's pending state, so the open run's head and route repaint with the landing branch.
+  if (!schedulesView.isLoaded()) void withWorkspaces().then(() => schedulesView.load()).then(() => { routeChainsSettled = true; repaintOpenRunGroupLine(); repaintLimitNotices(); });
   // P1: the page context moved — a boot deep link resolving, a hand-off or a resume follow write no hash, so the
   // composer's own hashchange refresh (its MCP preview) never runs for them.
   if (askPanel && typeof askPanel.contextChanged === 'function') askPanel.contextChanged();
@@ -34775,7 +35612,7 @@ const rdModel = (r) => runModel(rdModelRun(r), { memo: memoFor(r.pipelineId || r
 function paintRdStatus(screen, r) {
   const m = rdModel(r);
   const block = screen.querySelector('.rd-sheet .run-status');
-  paintRdHead(screen, r, m);                                 // slice 3: the card head (status line, head buttons, tracker)
+  paintRdHead(screen, r, m);                                 // slice 3: the card head (status line, head buttons, route)
   // The run page's bar takes over the removed .rd-prog's focus stop ("Run progress"): the D30 one-line wait state
   // shows only its stage words and gives it the focus ring.
   const bar = block && block.querySelector('.run-status-bar');
@@ -34851,8 +35688,9 @@ function paintRdActions(screen, r, m = rdModel(r)) {
   });
   if (split) split.hidden = !!pause && pause.hidden;      // the split wrapper follows its button
 }
-/** D18, run 3 D8: the facts block's group row. A run in a group has none: its kind chip names its place and links the
- *  group page (paintRunPlace). A run in no group offers "Add to group…" at Advanced; the row hides below it. */
+/** D18, run 3 D8: the facts block's group row (its last row). A run in a group has none: the split view's breadcrumb
+ *  names its place and links the group page (paintRunPlace). A run in no group offers "Add to group…" at Advanced; the
+ *  row hides below it. */
 function paintGroupLine(el, pipelineId, title, home) {
   if (!el) return;
   const row = el.closest('.rd-kv-row') || el;
@@ -34868,26 +35706,9 @@ function paintGroupLine(el, pipelineId, title, home) {
   b.addEventListener('click', () => openAddToGroup(b, { pipelineId, title }));
   el.replaceChildren(b);
 }
-/** Run 3 (D6, D7): the kind chip ("Run 2 of 3") and the breadcrumb, from the run's group. In a group the chip links
- *  the group page ("›" is CSS). The breadcrumb is the split layout's alone: the Chat run panel keeps none (its "Runs"
- *  crumb would leave Chat). */
+/** Run 3 (D6): the breadcrumb, from the run's group, and the facts rows' hidden state. The breadcrumb is the split
+ *  layout's alone: the Chat run panel keeps none (its "Runs" crumb would leave Chat). The run head has no kind chip. */
 function paintRunPlace(screen, home) {
-  const old = screen.querySelector('.rd-glance .rd-title-row .kind-chip');
-  const word = runPositionLabel(home);
-  const href = home ? groupHref(home.row) : '';
-  let chip = old;
-  if (chip && (chip.tagName === 'A') !== !!href) {
-    chip = document.createElement(href ? 'a' : 'span');
-    chip.className = 'kind-chip';
-    old.replaceWith(chip);
-  }
-  if (chip) {
-    if (chip.textContent !== word) chip.textContent = word;
-    if (href) {
-      if (chip.getAttribute('href') !== href) chip.setAttribute('href', href);
-      chip.setAttribute('aria-label', `${word}, open ${groupKindWord(home.row).toLowerCase()} ${home.row.title}`);
-    }
-  }
   paintCrumbs(screen.querySelector(':is(.rd-bar,.hd-bar) .rd-crumbs'), screen.dataset.presentation === 'panel' ? [] : runCrumbs(home));
   syncFacts(screen.querySelector('.rd-glance .rd-kv'));
 }
@@ -34902,6 +35723,7 @@ function repaintOpenRunGroupLine() {
     const home = groupHomeOf(hd.record.id || '');
     paintGroupLine(hd.screen.querySelector('.hd-glance .rd-kv .rd-group-line'), hd.record.id || '', hd.record.title || '', home);
     paintRunPlace(hd.screen, home);
+    if (hd.data) paintHdHead(hd.screen, hdCurrentRecord(hd.record), hd.data);   // s2: the route reads the group
   }
 }
 
@@ -35111,37 +35933,12 @@ function paintPageHead(glance, title, meta) {
   const h = glance.querySelector('.rd-page-title');
   const m = glance.querySelector('.rd-page-meta');
   if (h && h.textContent !== title) h.textContent = title;
-  if (h && h.title !== title) h.title = title;   // D13: the heading clamps at 2 lines; the full title is the tooltip
+  if (h && h.title !== title) h.title = title;   // D13: the heading is one line cut with "…"; the full title is the tooltip
   if (m) {
     const text = meta.filter(Boolean).join(' · ');
     const node = m.firstChild && m.firstChild.nodeType === 3 ? m.firstChild : null;
     if (!node) m.prepend(document.createTextNode(text)); else if (node.data !== text) node.data = text;
   }
-}
-
-// The run's feature branch in the glance's meta line: the template's one chip, updated in
-// place (paintPageHead owns the line's first text node, the Running page appends a person
-// chip after it), hidden when there is none. Copies like the Details header's button. Bound
-// once; the click reads the PAINTED name, never the one this paint saw (the stale-capture
-// note in paintHdHeaderMeta).
-function paintPageBranch(glance, name) {
-  const btn = glance && glance.querySelector('.rd-page-branch');
-  if (!btn) return;
-  btn.hidden = !name;
-  const row = btn.closest('.rd-kv-row');            // run 3 (D8): the facts block's Branch row
-  if (row) row.hidden = !name;
-  const label = btn.querySelector('.rd-page-branch-name');
-  if (name && label.textContent !== name) {
-    label.textContent = name;
-    btn.title = name;
-    btn.setAttribute('aria-label', `Copy branch name ${name}`);
-  }
-  if (btn.dataset.bound === '1') return;
-  btn.dataset.bound = '1';
-  btn.addEventListener('click', () => {
-    const painted = label.textContent || '';
-    if (painted) copyBranchToClipboard(btn, painted, painted);
-  });
 }
 
 // Projects, any way: the run's kind chip on a run page's meta line (RUN_KIND_CHIP). A span with no handler, so it is
@@ -35319,8 +36116,8 @@ const PR_CTA_OUT_MS = 380;
 const PR_CTA_LOOK = {
   create: { look: '', icon: 'pr-create', label: CREATE_PR_LABEL },
   push: { look: '', icon: 'arrow-up', label: '' },   // a run on its source branch: the caller's label and title (paintHdPush)
-  view: { look: 'pr-view', icon: 'pull-request', label: 'View PR' },
-  merged: { look: 'pr-merged', icon: 'merge', label: 'View PR' },
+  view: { look: 'pr-view', icon: 'pull-request', label: VIEW_PR_LABEL },
+  merged: { look: 'pr-merged', icon: 'merge', label: VIEW_PR_LABEL },
 };
 function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '', label: own = '', title = '', disabled = false, menu = false, ws = false } = {}) {
   if (!slot) return;
@@ -35347,7 +36144,7 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
     slot.replaceChildren(spin, wait);
     slot.classList.add('is-pending');
     slot.setAttribute('aria-busy', 'true');
-    slot.setAttribute('aria-label', 'Checking the pull request…');
+    slot.setAttribute('aria-label', 'Checking the PR…');
     slot.hidden = false;
     return;
   }
@@ -35378,13 +36175,13 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
     caret.className = 'btn btn-icon rd-pr-more';     // joined by .btn-split > .btn + .btn (style.css)
     caret.setAttribute('aria-haspopup', 'menu');
     caret.setAttribute('aria-expanded', 'false');
-    caret.setAttribute('aria-label', ws ? 'Pull requests' : 'Pull request menu');
+    caret.setAttribute('aria-label', ws ? 'PRs' : 'PR menu');
     caret.append(icon(document, 'chevron-down', 16));
     caret.addEventListener('click', () => { if (slot._prMenu) slot._prMenu(caret); });
     if (ws) {                                       // a workspace: one button that opens the member list
       caret.className = 'btn rd-pr-more rd-pr-wsbtn';
       caret.setAttribute('data-rd-cta', '');
-      setCtaContent(caret, 'pull-request', own || 'View PRs');
+      setCtaContent(caret, 'pull-request', own || VIEW_PRS_LABEL);
       caret.append(icon(document, 'chevron-down', 16));
       ctl.append(caret);
     } else {
@@ -35424,11 +36221,11 @@ function paintPrCta(slot, { state = 'none', href = '', onClick = null, cls = '',
   });
 }
 
-/** Slice 3 (D4): what the card head and tracker read, the same on both run pages. `rec` is the History row (null while
+/** Slice 3 (D4): what the card head and route read, the same on both run pages. `rec` is the History row (null while
  *  a live run has none), `m` the page model, `kept` screen._headKept, `repaint` the page's head painter.
  *  Side effect: it starts the PR status reads it needs (the feed's, and each open workspace member's through
  *  ensurePrStatus); a landed member read calls `repaint`, which then finds it cached, so it cannot loop. */
-function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, repaint, liveSource = '' }) {
+function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, repaint, liveSource = '', liveBranch = '', pipelineId = '' }) {
   const ws = !!rec && rec.target === 'workspace' && hasWsMembers(rec);
   const own = !ws && rec && rec.pr && typeof rec.pr === 'object' && rec.pr.url ? rec.pr : null;
   const open = !!own && String(own.state || '').toUpperCase() === 'OPEN';
@@ -35444,14 +36241,22 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, re
       if (!hit || Date.now() - hit.at > PR_STATUS_STALE_MS) void ensurePrStatus(memberScope(x)).then((st) => { if (st && st !== hit && screen.isConnected) repaint(); });
     }
   }
+  const source = (rec && rec.sourceBranch) || liveSource || '';
+  const group = routeGroupOf(groupHomeOf((rec && rec.id) || pipelineId), { sourceBranch: source, histOf });
   return {
     m, mode, gitChrome, folder, canTry, kept, level: currentLevel(),
     workspace: ws ? { members: histWsMembers(rec).map((x) => ({
       key: x.memberKey, name: (names && names[x.memberKey]) || String(x.projectKey || x.memberKey).replace(/-[0-9a-f]{8}$/, ''),
       pr: x.pr && typeof x.pr === 'object' ? x.pr : null,
-      prStatus: prStatusCache.get(prStatusKey(memberScope(x))) || null })) } : null,
-    base: (prStatus && prStatus.base) || (rec && rec.sourceBranch) || liveSource || '',
-    source: (rec && rec.sourceBranch) || liveSource || '',
+      prStatus: prStatusCache.get(prStatusKey(memberScope(x))) || null,
+      // s2: the route's member row (branch → target; an unchanged member says so).
+      branch: x.branch || '', target: x.sourceBranch || '', affected: x.affected !== false })) } : null,
+    base: (prStatus && prStatus.base) || source,
+    source,
+    // s2: the route's own-branch row and its place in a feature or chain (read-only, from loaded data).
+    branch: (rec && rec.branch) || liveBranch || '',
+    group,
+    groupPending: !group && routeGroupsPending(),   // D2: never guess the landing branch before the groups answer
     pr: own, prInput: glancePrInput(rec), prStatus, watch: (rec && rec.watch) || null,
     canCreatePr: !!rec && histPrEligible(rec) && !(own && open),
     push: !!rec && !!rec.sameAsSource && rec.target !== 'workspace' && rec.mergeBack?.merged === true && !!rec.sourceBranch,
@@ -35460,7 +36265,16 @@ function headFactsOf(screen, rec, { m, mode, gitChrome, folder, canTry, kept, re
   };
 }
 
-/** Slice 3: the card's status line, head buttons and tracker. `h`: the page's calls (headHandlers). */
+// D2/D7: the chains come from the Runs-section entry load (showView, RUNS_VIEWS holds `running` and `history`) or, in
+// Chat, the run panel's and chatRunControls.groupOf's loads; each sets this when it settles, success or not
+// (schedulesView.load() catches its own errors and resolves) and repaints the open run's head.
+let routeChainsSettled = false;
+/** D2: true until both group sources have answered once (loadRunGroups sets runGroupsLoaded on every outcome). */
+function routeGroupsPending() {
+  return !state.runGroupsLoaded || !(schedulesView.isLoaded() || routeChainsSettled);
+}
+
+/** Slice 3: the card's status line, head buttons and route. `h`: the page's calls (headHandlers). */
 function paintRunHead(screen, f, h) {
   const head = headModel(f);
   const block = screen.querySelector('.rd-sheet .run-status');
@@ -35474,7 +36288,8 @@ function paintRunHead(screen, f, h) {
   if (slot) slot._prMenu = (anchor) => h.onMenu(anchor, f);
   renderHeadButtons(screen.querySelector('.rd-head-acts'), head, slot, h);
   if (slot && slot._prMenuOpen) slot._prMenuOpen(f);
-  renderTracker(screen.querySelector('.rd-track'), trackerModel(f), h);
+  // storage: app.js's guarded localStorage (reading window.localStorage throws with site data blocked).
+  renderRoute(screen.querySelector('.rd-route'), routeModel(f), { ...h, storage: localStorage, onCopy: (btn, name) => copyBranchToClipboard(btn, name, name) });
   return head;
 }
 
@@ -35494,15 +36309,15 @@ function paintHdHead(screen, record, data) {
   const m = pageModel(runModel(hdModelRun(rec, data), { memo: memoFor(record.id) }));
   const repaint = () => { if (glance.isConnected && histDetailState && histDetailState.screen === screen) paintHdHead(screen, hdCurrentRecord(record), histDetailState.data || data); };
   const f = headFactsOf(glance, record, {
-    m, mode, gitChrome: gitOn() && isGitRun(hdRunOf(record, data)), kept, repaint,
-    folder: bar ? { state: bar.state, total: changesCounts(changes).total } : null,
+    m, mode, gitChrome: gitOn() && isGitRun(hdRunOf(record, data)), kept, repaint, pipelineId: record.id,
+    folder: bar ? { state: bar.state, total: changesCounts(changes).total, dir: record.projectDir || '' } : null,
     canTry: hdCanTry(record, st, held.retained, held.provisional) && !hdCheckoutFor(record),
   });
   paintRunHead(glance, f, headHandlers(glance, () => hdCurrentRecord(record), { kept, ctaCls: 'hd-g-pr', folderTotal: f.folder ? f.folder.total : 0,
     onCreate: () => { const b = screen.querySelector('.hd-pr'); if (b) b.click(); } }));
 }
 
-/** Slice 3 (D11): the head buttons' and the tracker's calls. `cur()` re-reads the record at click time. */
+/** Slice 3 (D11): the head buttons' and the route's calls. `cur()` re-reads the record at click time. */
 function headHandlers(screen, cur, { onCreate, kept, ctaCls = '', folderTotal = 0 }) {
   const scopeOf = (memberKey) => { const rec = cur(); return { id: rec.id, projectKey: rec.projectKey, ...(memberKey ? { memberKey } : {}) }; };
   const feed = () => screen.querySelector('.rd-pr-feed');
@@ -35623,6 +36438,30 @@ async function resolvePrFlow(btn, scope, feed) {
   prStatusCache.set(k, next);
   if (btn && btn.isConnected) btn.disabled = false;
   if (feed && feed.dataset.key === k) renderPrHost(feed, scope, next);
+}
+/** One ship flow (D12): a group's View PR ▾ / View PRs ▾ menu, prMenuItems' words; several PRs add Watch PRs and
+ *  Copy PR links. */
+function openGroupPrMenu(row, anchor) {
+  const prs = groupPrList(row).map((p) => ({ ...p, watch: null,
+    scope: { id: p.pipelineId, projectKey: (row.members.find((mb) => mb.pipelineId === p.pipelineId) || {}).projectKey || '' } }));
+  const many = prs.length > 1;
+  toggleMenu({ doc: document, anchor, host: anchor.closest('.btn-split'), className: 'btn-split-menu rd-pr-menu', label: 'Pull request',
+    items: prMenuItems(prs, { level: currentLevel(),
+      onWatch: (p, b) => togglePrWatch(b, p.scope, null),
+      onCopy: (p) => copyPrLink(p.url),
+      onOpen: (p) => window.open(p.url, '_blank', 'noopener'),
+      onResolve: (p) => resolvePrFlow(anchor, p.scope, null),
+      ...(many ? {
+        onWatchAll: async (open) => {
+          const rs = await Promise.all(open.map((p) => fetch('/api/pr/watch', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...prScopeBody(p.scope), watch: true }) }).catch(() => null)));
+          notify(rs.every((r) => r && r.ok) ? { tone: 'ok', title: 'Watching every PR' } : { tone: 'err', title: 'Could not watch every PR' });
+        },
+        onCopyAll: async (all) => {
+          try { await navigator.clipboard.writeText(all.map((p) => p.url).join('\n')); notify({ tone: 'ok', title: 'PR links copied' }); }
+          catch { notify({ tone: 'err', title: 'Could not copy the links' }); }
+        },
+      } : {}) }) });
 }
 async function copyPrLink(url) {
   try { await navigator.clipboard.writeText(url); notify({ tone: 'ok', title: 'PR link copied' }); }
@@ -35771,7 +36610,7 @@ async function loadRdPrStatus(host, scope) {
   }
 }
 /** Slice 3 (D10): the glance's hidden .rd-pr-feed is a paintRdPrStatus host whose answers repaint the card head and
- *  tracker (feed._prRender) instead of drawing a PR bar. Every other host draws its status line as before. */
+ *  route (feed._prRender) instead of drawing a PR bar. Every other host draws its status line as before. */
 function renderPrHost(host, scope, s) {
   if (!host._prRender) { renderRdPrStatus(host, scope, s); return; }
   const sig = JSON.stringify([s.checks, s.status, s.watch, s.resolveError]);
@@ -35919,7 +36758,7 @@ function renderRdPrStatus(host, scope, s) {
     sw.removeAttribute('aria-hidden');
     sw.setAttribute('role', 'switch');
     sw.setAttribute('aria-checked', String(!!wst.watching));
-    sw.setAttribute('aria-label', 'Watch this pull request');
+    sw.setAttribute('aria-label', 'Watch this PR');
     sw.tabIndex = 0;
     row.append(word, sw);
     const toggle = async () => {
@@ -36005,7 +36844,9 @@ function paintRdHead(screen, r, m = rdModel(r)) {
     m: pageModel(m), mode, gitChrome: gitOn() && isGitRun(r), kept, repaint,
     // A live run has no History row yet: the state frame keeps its branch record and the sticky source (onState).
     liveSource: r.branchSource || (r.branch && typeof r.branch === 'object' && r.branch.source) || '',
-    folder: bar ? { state: bar.state, total: changesCounts(changes).total } : null,
+    liveBranch: (r.branch && typeof r.branch === 'object' && r.branch.feature) || r.branchFeature || '',
+    pipelineId: r.pipelineId || '',
+    folder: bar ? { state: bar.state, total: changesCounts(changes).total, dir: r.projectDir || '' } : null,
     canTry: !!(rec && rec.branch) && terminal && !kept && !!r.pipelineId && !hdCheckoutFor(rec),
   });
   paintRunHead(screen, f, headHandlers(screen, () => rdNoticeCarrier(r), { kept, ctaCls: 'rd-create-pr', folderTotal: f.folder ? f.folder.total : 0, onCreate: () => {
@@ -36267,7 +37108,7 @@ function paintRdWorktreeNotice(screen, r) {
     const open = runDetailState.screen;
     if (open && runDetailState.runId === r.runId) paintRdBanners(open, r);
   };
-  // Slice 3 (D13): the card head carries Discard · Apply to branch, the tracker the patch and the commands.
+  // Slice 3 (D13): the card head carries Discard · Apply to branch, the route the patch and the commands.
   screen._headKept = model && model.kind === 'retained' ? { provisional: !!model.provisional,
     recovery: r.pipelineId ? recoveryLinkOf(r.projectDir || null, rdNoticeCarrier(r), model) : null, commands: retainedCommands(model),
     onApply: (btn) => applyRetainedFlow(btn, rdNoticeCarrier(r), model, () => { r._retainedApplied = true; repaint(); }),
@@ -36569,8 +37410,7 @@ function paintRdHeader(screen, r) {
   const copyBtn = screen.querySelector('.rd-branch-copy');
   copyBtn.hidden = !feature;
   if (feature) screen.querySelector('.rd-branch-name').textContent = feature;
-  paintPageBranch(screen.querySelector('.rd-glance'), feature);
-  } else { for (const sel of ['.rd-base', '.rd-branch-copy', '.rd-sync']) { const n = screen.querySelector(sel); if (n) n.hidden = true; } paintPageBranch(screen.querySelector('.rd-glance'), ''); }
+  } else { for (const sel of ['.rd-base', '.rd-branch-copy', '.rd-sync']) { const n = screen.querySelector(sel); if (n) n.hidden = true; } }
 
   // Actions. A terminal run offers neither (D8); a later task adds the History
   // link here.
@@ -36813,9 +37653,44 @@ function paintScheduleCounts(c) {
 // and PATH — never written here); this block only paints it and runs guides.
 // A guide is transient state: a reload clears it, the shelf re-summons it.
 // ---------------------------------------------------------------------------
-const gs = { status: null, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, refreshTimer: 0, poll: 0, startedRunId: "" };
+const gs = { status: null, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, setupShown: false, refreshTimer: 0, poll: 0, startedRunId: "" };
 let gsPillHost = null;
 let gsWelcomeUnbind = null;
+let setupDialog = null;
+/** The setup assistant (D18). A second open while one is up moves it to `step` instead. */
+function openSetup({ entry = 'rerun', step = 'check', team = null, teamHash = null } = {}) {
+  if (setupDialog) { setupDialog.goTo(step); return; }
+  setMobileNavOpen(false);
+  setupDialog = openSetupAssistant({ doc: document, entry, step, team, onClose: (how) => {
+    setupDialog = null;
+    // A7: a first start always continues to the welcome; a finished re-run ends on the doors; a fix-it
+    // run (entry 'fix') returns to the page it came from (product-1-2).
+    if (entry === 'first') showWelcome();
+    else if (entry === 'rerun' && how === 'done') showWelcome({ force: true });
+    // T15: Apply then Continue, or Finish when nothing differs. Set up later / Escape keep the notice.
+    else if (entry === 'team' && how === 'done' && team && teamHash) { markTeamSeen(team, teamHash); void paintTeamNotice(); }
+  } });
+}
+
+function readTeamSeen() { try { const v = JSON.parse(localStorage.getItem(TEAM_SEEN_KEY) || '{}'); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } catch { return {}; } }
+function markTeamSeen(home, hash) {
+  try { localStorage.setItem(TEAM_SEEN_KEY, JSON.stringify({ ...readTeamSeen(), [home]: hash })); } catch { /* private mode: shows again next time */ }
+}
+let teamNoticeNow = null;
+/** The account menu's team row (D15): the cheap ?homes=1 read, no catalog and no claude probe. */
+async function paintTeamNotice() {
+  const btnEl = document.getElementById('acct-team-setup'); if (!btnEl) return;
+  const data = await fetch('/api/setup/team?homes=1').then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  teamNoticeNow = data ? teamNotice(data.homes, readTeamSeen()) : null;
+  btnEl.hidden = !teamNoticeNow;
+  if (teamNoticeNow) btnEl.querySelector('.mi-lbl').textContent = teamNoticeNow.label;
+  if (acctFly.isOpen()) acctFly.reposition();
+}
+document.getElementById('acct-team-setup')?.addEventListener('click', () => {
+  const n = teamNoticeNow; if (!n) return;
+  acctFly.close();
+  openSetup({ entry: 'team', step: 'review', team: n.home, teamHash: n.hash });
+});
 
 function gsShelfHost() { return document.getElementById('getting-started-host'); }
 /** The pill is the nav's first row (New run has no sidebar row: it is the top bar's button).
@@ -36904,6 +37779,8 @@ function paintGsSettings() {
     ? `Hidden from the sidebar · ${done} of ${total} done`
     : `In the sidebar · ${done} of ${total} done`);
 }
+// Settings › General › Setup assistant: Run setup (AC-4.4).
+document.getElementById('setupRunAgain')?.addEventListener('click', () => openSetup({ entry: 'rerun' }));
 document.getElementById('gsShowAgain')?.addEventListener('click', async () => {
   if (gs.status && gs.status.hidden) {
     if (!(await setOnboardingPrefs({ hidden: false }))) return;
@@ -36915,12 +37792,19 @@ document.getElementById('gsShowAgain')?.addEventListener('click', async () => {
 function maybeWelcome() {
   const s = gs.status;
   // The welcome greets the home page: Chat since worca Chat (U5), New run before it.
-  if (!s || s.welcomeSeen || gs.welcomeShown || (currentShownView !== 'new' && currentShownView !== 'chat')) return;
+  if (!s || s.welcomeSeen || gs.welcomeShown || setupDialog || (currentShownView !== 'new' && currentShownView !== 'chat')) return;
+  // A fresh install meets the setup assistant first, once per page load; its close shows the welcome (A5).
+  if (s.fresh === true && !gs.setupShown) { gs.setupShown = true; openSetup({ entry: 'first' }); return; }
   // Nothing left to teach: an install that has done everything skips the welcome.
   if (allStepsDone(s)) { gs.welcomeShown = true; setOnboardingPrefs({ welcomeSeen: true }); return; }
+  showWelcome();
+}
+/** The welcome's three doors. `force`: after a re-run's Apply, even when the welcome was seen before (A7). */
+function showWelcome({ force = false } = {}) {
   const modal = document.getElementById('welcome-modal');
-  if (!modal) return;
+  if (!modal || (!force && (gs.welcomeShown || gs.status?.welcomeSeen))) return;
   gs.welcomeShown = true;
+  if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; }   // A6: never two sets of door listeners
   setMobileNavOpen(false);   // a phone drawer opened before the onboarding fetch landed must not stay up behind the dialog
   const close = () => { modal.classList.add('hidden'); if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; } };
   gsWelcomeUnbind = bindWelcome(modal, {
@@ -37536,6 +38420,7 @@ function onboardingViewChanged(name) {
 }
 
 loadOnboarding();
+void paintTeamNotice();
 
 const views = $$('.view');
 // Settings lives in the account menu (#acct-settings) and lights like a nav row while it is open.
@@ -37545,7 +38430,7 @@ const navLinks = $$('.nav button[data-nav], #acct-settings');
 // guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
 // (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
 // Settings tabs once, pages of their own now.
-const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'feature', 'group'];
+const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'feature', 'group'];
 // One Runs page, five route names: the bare list (#runs), the two run routes every deep link already uses
 // (#running/<id>…, #history/<projectKey>/<id>…) and the group page's two (#feature/<id>…, #group/<id>…, run 3 D1).
 // All five render the `data-view="runs"` section and light the one Runs nav button.
@@ -37584,6 +38469,7 @@ const VIEW_TITLES = Object.freeze({
   guardrails: 'Guardrails', memory: 'Memory', ask: 'Chat', tags: 'Labels & cost tags',
   marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
   schedules: 'Schedules', presets: 'Presets',
+  requirements: 'Requirements',
 });
 function pageMinLevel() {
   if (currentShownView === 'settings') return { key: currentSettingsTab, min: SETTINGS_TAB_MIN_LEVEL[currentSettingsTab] || 'simple' };
@@ -37714,6 +38600,8 @@ function showView(name, param = '') {
     const moved = redirectRoute(name, param);
     if (moved) return showView(moved[0], moved[1]);
   }
+  // Requirements is behind its flag (docs/feature-flags.md): a deep link while it is off lands on Chat.
+  if (name === 'requirements' && !flagOn('requirements')) return showView('chat', '');
   // A bare #running / #history is the Runs list now (both lists merged into it). Replace the
   // entry rather than letting the hash sync below PUSH #runs: Back would land on #history
   // again, normalize again, and never get past it.
@@ -37869,7 +38757,7 @@ function showView(name, param = '') {
       // enrichment and blanks resolved PR words mid-navigation (was the History rule).
       loadHistoryView();
       // The open run's Group row reads the chains too (a Run-after chain is a group, runs redesign slice 4 D18).
-      void withWorkspaces().then(() => schedulesView.load()).then(() => { if (inRunsView()) { paintRunsList(); repaintOpenRunGroupLine(); } repaintLimitNotices(); });
+      void withWorkspaces().then(() => schedulesView.load()).then(() => { routeChainsSettled = true; if (inRunsView()) { paintRunsList(); repaintOpenRunGroupLine(); } repaintLimitNotices(); });
     }
     if (name === 'running') {
       routeRunDetail(param, { instant: entering });
@@ -37899,6 +38787,7 @@ function showView(name, param = '') {
     syncRunsPane();
   }
   if (name === 'stats') loadStatsView();
+  if (name === 'requirements') void requirementsView.show(param);
   if (name === 'schedules') { schedulesView.showTab(param); void withWorkspaces().then(() => schedulesView.load()); }
   if (name === 'team-metrics') {
     // #team-metrics/timeline opens the Timeline tab. Switching tabs inside the page only repaints:
@@ -37970,6 +38859,15 @@ function showView(name, param = '') {
       refreshNewPipelinePickers();
     }
   }
+  paintSearchPlaceholder();
+}
+/** #948 s2: the top search says what it finds on the Chat page. */
+function paintSearchPlaceholder() {
+  const input = document.getElementById('tsearch-input');
+  if (!input) return;
+  const text = document.body.classList.contains('view-chat') ? 'Search chats or ask' : 'Search or ask';
+  input.placeholder = text;
+  input.setAttribute('aria-label', text);
 }
 // Paint one Settings tab and run its loader. Called from showView ONLY, so every
 // entry point (tab click, hash, deep link, legacy redirect, boot, a direct
@@ -39392,7 +40290,10 @@ async function chatHomeFlags() {
   try {
     const res = await fetch('/api/settings');
     const data = await safeJson(res);
-    if (res.ok && data && data.chat && typeof data.chat === 'object') out.scripts = data.chat.scriptTools !== false;
+    if (res.ok && data && data.chat && typeof data.chat === 'object') {
+      out.scripts = data.chat.scriptTools !== false;
+      setChatSummariesPref(data.chat);
+    }
   } catch { /* keep the default: on */ }
   try {
     const res = await fetch('/api/sources');
@@ -39451,8 +40352,19 @@ askPanel = createAskPanel({
   chatDeps,
   onRoute: chatRoute,
   onUnread: paintChatUnread,
+  summariseCommands: () => chatSummariesPref,
 });
 ($('section.view[data-view="chat"]') || document.body).appendChild(askPanel.root);
+// Command summaries (#911): read the person's switch once, and follow the flag.
+Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).then((d) => setChatSummariesPref(d && d.chat)).catch(() => { /* keep: on */ });
+onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); void paintHelperModelCards(); });
+// One delegated handler for every Summaries / Raw switch (Logs tab, History Logs, both drawers, Chat's run
+// panel): they are cloned on every build, so per-node listeners would be lost on each rebuild.
+document.addEventListener('click', (e) => {
+  const b = e.target.closest && e.target.closest('.log-view-seg button[data-log-view]');
+  if (b) setLogView(b.dataset.logView);
+});
+onFlagChange('commandSummaries', () => applyLogView(document, logView()));
 // Pinpoint (#669) on the chat's answers: Disagree, Use this and Go deeper send at once with the quote.
 pinpoint.addSurface(askPanel.root, {
   kind: 'chat',
@@ -39674,20 +40586,20 @@ function exportSyncFormat() {
   document.getElementById('export-plan-btn').classList.toggle('hidden', json);
   document.getElementById('export-plan-btn').disabled = false;
   const apply = document.getElementById('export-apply-btn');
-  apply.textContent = json ? 'Download' : market ? 'Open pull request' : 'Export';
+  apply.textContent = json ? 'Download' : market ? CREATE_PR_LABEL : 'Export';
   apply.disabled = false;
   const name = exportModalState.item ? exportModalState.item.name : '';
   document.getElementById('export-subtitle').textContent = json
     ? `Download "${name}" as a JSON file another Worca user can import.`
     : market
-      ? `Open a pull request that adds "${name}" to a team marketplace as a Worca plugin.`
+      ? `Create a PR that adds "${name}" to a team marketplace as a Worca plugin.`
       : plugin
         ? `Export "${name}" as a Worca plugin folder to share with other Worca users.`
         : `Export "${name}" as a runnable /command skill.`;
   document.getElementById('export-format-hint').textContent = json
     ? 'The saved graph only. No agents or skills travel with it. The recipient uses Import… in their saved list.'
     : market
-      ? 'Builds the plugin in a fresh copy of the marketplace, lists it in worca-cc-marketplace.json, validates it (lint, script cases, the marketplace\'s own discovery) and opens one pull request on worca/plugin/<name>.'
+      ? 'Builds the plugin in a fresh copy of the marketplace, lists it in worca-cc-marketplace.json, validates it (lint, script cases, the marketplace\'s own discovery) and creates one PR on worca/plugin/<name>.'
       : plugin
         ? 'Bundles the pipeline, your own agents it uses and the skills they need. Built-in agents are not copied. The recipient runs: worca plugin link <folder>'
         : 'Writes a SKILL.md plus the agents it dispatches under .claude/, so the pipeline runs inside Claude Code without Worca.';
@@ -39943,7 +40855,7 @@ function bindExportModal() {
         exportRenderPlan({ ...plan.files, warnings: plan.warnings, conflicts: [] });
         document.getElementById('export-plan').appendChild(marketplacePlanExtras(plan, { doc: document }));
         exportSay(plan.status === 'unchanged' ? 'No changes. The marketplace already has this export.'
-          : 'Preview only. Nothing is pushed until you click Open pull request.');
+          : `Preview only. Nothing is pushed until you click ${CREATE_PR_LABEL}.`);
         return;
       }
       exportRenderPlan(plan);
@@ -39976,7 +40888,7 @@ function bindExportModal() {
     if (exportIsMarketplace()) {
       const nameProblem = marketplaceNameProblem(exportPluginName());
       if (nameProblem) { exportSay(nameProblem, true); return; }
-      exportSay('Building the plugin in a copy of the marketplace, validating, then opening the pull request…');
+      exportSay('Building the plugin in a copy of the marketplace, validating, then creating the PR…');
       exportSetBusy(true);                                 // about a minute: a second click must not start a second export
       // The inputs are locked while it runs, so the result is for what the dialog shows — it reports what
       // happened, not what would happen, so it is never stale. Only a dialog closed meanwhile is not painted:

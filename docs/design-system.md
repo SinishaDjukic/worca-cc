@@ -15,8 +15,8 @@ a `color-mix()` recipe used twice is a named token (`--btn-hover`, `--red-tint`,
 | green | `--green*` | done, OK, ready, in review | a checked box, an on switch, decoration |
 | amber | `--amber*` | needs you, attention, waiting; a PR problem | a brand mark, "not installed", "built-in" |
 | red | `--red*` | failed, destructive | a warning that needs no action |
-| blue | `--blue*` | information (the Beta chip), in-progress text, links | a status dot, a bar, team policy |
-| violet | `--violet*` | Labs only (the merged status dot, the merged run orb and the run page tracker's merged node `.rd-track-dot.is-merged` are the named exceptions; the Marketplace chat kind tile and dot follow its kind colours, › Marketplace exceptions) | sources, "Official", policy, a badge, a chart series |
+| blue | `--blue*` | information (the Beta chip), in-progress text, links | a status dot (except the route's with-reviewers circle `.rd-route-dot.is-review`), a bar, team policy |
+| violet | `--violet*` | Labs only (the merged status dot, the merged run orb and the run page route's merged circle `.rd-route-dot.is-merged` and merged words `.rd-fact-tx.is-merged` are the named exceptions; the Marketplace chat kind tile and dot follow its kind colours, › Marketplace exceptions) | sources, "Official", policy, a badge, a chart series |
 | slate | `--slate*` | neutral metadata: a source, "Official", policy (`.badge.slate`) | a state |
 Status-dot exceptions: peach = working (it pulses), violet = merged. They are the dots only, never a badge.
 Surfaces: `--panel` page, `--surface` raised, `--field` field and tint fill; `--line` dividers, `--line-2` control borders.
@@ -38,7 +38,7 @@ One scale, no half sizes. Use the tokens; never type a px size that is not a ste
 | `--fs-body` | 13px | 1.5 | body, rows, fields, buttons, tabs, the page intro |
 | `--fs-section` | 15px | 1.25 | section titles (`.section-title`, `.card h2`), 600 |
 | `--fs-subpage` | 18px | 1.25 | sub-page titles (`.subpage-title`), 600 |
-| `--fs-page` | 22px | 1.25 | page titles (`.page-title`, the run and group page title), 700, -0.02em, at most 2 lines |
+| `--fs-page` | 22px | 1.25 | page titles (`.page-title`, the run and group page title), 700, -0.02em; the run and group page title is one line, cut with "…" |
 | `--fs-stat` | 22px | 1.25 | stat tile values |
 | `--fs-hero` | 32px | 1.25 | the Chat home hero only (22px under 760px) |
 `--lh-body` is 1.5 and `--lh-title` is 1.25. A subsection or field label is 13px / 600. Relative sizes are allowed
@@ -81,13 +81,16 @@ ring for every button, link, summary, tab, switch and `[tabindex]` while `data-i
 back. Only a key that moves or acts on focus counts (Tab, the arrows, Enter, Space or Escape outside a field): typing,
 Enter in a field and a modifier alone keep the pointer mode (`ui/public/input-mode.mjs`). Fields keep their ink border
 on focus. Rings sit on `:focus-visible`, never on `:focus`.
+A divided list with list keys (`ui/public/list-keys.mjs`, the Runs list and the Chats column) is one Tab stop with a
+moving focus (`ui/public/list-dom.mjs`, the one module both lists use): rows and foldable section heads take ↑ ↓ / J K,
+their ⌄, ⋯ and checkbox are `tabindex="-1"`.
 
 ## Components
 ### Button (checked)
 `.btn` + one size (`.btn-sm`, `.btn-lg`) + one variant (`.btn-primary`, `.btn-quiet`, `.btn-danger`); `.btn-icon` is
 square. One primary per group. Labels of 1–3 words, verb first. Icons come from `icon(doc, 'plus')`
 (`ui/public/icons.mjs`), never a typed "+", "×" or "▾" (checked). The `eye` glyph is used only by the View PR ▾ menu's
-Watch item and the tracker's idle `Watching` button. `.info-tip` is a 28px square like `.btn-sm.btn-icon`; a
+Watch item and the route's idle `Watching` button. `.info-tip` is a 28px square like `.btn-sm.btn-icon`; a
 button outside `.btn` must be a shared control or a row a person opens (checked by the stray audit). The composer's
 disabled Save keeps its ink fill at 70% opacity, not the 45% grey of other disabled buttons, so it still reads as the
 primary.
@@ -95,16 +98,22 @@ primary.
 Every pull request button and link looks the same everywhere (`test/ui-pr-controls.test.mjs`).
 1. Variant. Create PR and Push are the ship actions: `.btn.btn-primary`. View PR is navigation: a plain secondary
    `.btn`, for an open PR and a merged one alike. Nothing is a custom pill.
-2. Size by context. On a page (the run page's card head, the History Details header, the Ship it dialog) `.btn`, 32px.
+2. Size by context. On a page (the run page's card head, the History Details header, the Create PR dialog) `.btn`, 32px.
    Inside a card or bar (the Chat run card, the Chat pull request card, the run and group page bar buttons that
    `syncActions` makes) `.btn.btn-sm`, 28px. Never full width (`.btn-block`).
 3. Icon. Every PR button leads with one glyph from `icon(doc, name, size)` (`ui/public/icons.mjs`): 16px on `.btn`,
    14px on `.btn-sm`. Create PR `pr-create`; View PR `pull-request` while the PR is open, `merge` once merged; Push
    `arrow-up`.
-4. Labels. "Create PR" (`CREATE_PR_LABEL`, `ui/public/ship-words.mjs`); "View PR" for an open and a merged PR; Push says
-   the header's `Push main` (the source branch). The Ship it dialog keeps its title "Create pull request", and its "Try
-   it first" Check out is a secondary `.btn-sm`, so the dialog has one primary.
-5. Links. A PR text link (`.rd-prs-link`, `.rd-track-pr`, `.chat-rc-watch-pr`, `.ask-prcard-link`, `.ask-shipcard-pr`,
+4. Labels. The words come from `ui/public/ship-words.mjs`. "Create PR" makes PRs everywhere; "View PR" goes to one PR
+   (a menu item names it: "View PR #812"); "View PRs ▾" lists several; "Ship" is a status word ("Ready to ship"), never
+   a button. Push says the header's `Push main` (the source branch). Buttons, menu items, aria-labels and dialog titles
+   say "PR"; "pull request" only in headings and sentences; "open" is not a PR verb. The Create PR dialog's title equals
+   its confirm ("Create PR", "Create 2 PRs"). Its zones, in order: Into (remote and branch on one row, the branch alone
+   with one remote), Pull requests (a feature, a chain or a user group only: One / N stacked, or N separate for a user group, the suggestion under them),
+   Title and description (with Draft), After it opens (Watch PR, Release). Its footer: a divider,
+   then Cancel and the primary on the right; "Try it first" is a secondary `.btn` on the left; one primary. Field
+   labels in it are nouns ("Into", "Push remote", "Draft").
+5. Links. A PR text link (`.rd-prs-link`, the route's PR link `.rd-fact-link`, `.chat-rc-watch-pr`, `.ask-prcard-link`, `.ask-shipcard-pr`,
    `.hd-pr-repo-link`) is `--blue-ink-strong`, weight 600.
 Placement: on the run page the PR control sits in the card's head at every level (`.rd-sheet-head > .rd-head-acts`, the
 `.rd-pr-slot` among the head buttons: Try it, Create PR, Push, Fix conflicts, Ask for changes, Discard / Apply, How to
@@ -112,7 +121,11 @@ merge, Report), centred on the status line, with at most one primary; under 420p
 their own row below the status, on the left edge. View PR is a split button `View PR │ ▾`
 (`.btn-split.mini.rd-pr-split`): the main half opens the PR, the ▾ (PR scope) holds Watch (Advanced and above), Copy PR
 link and Fix conflicts (while the PR conflicts). A workspace run has one `View PRs ▾` button that lists each member's PR.
-Nothing PR-related sits in the bar or in a PR bar; the PR's checks and Watch words are the tracker's PR step. Runs list PR
+The group page has the same head: Create PR, View PR ▾ or View PRs ▾ on the status line; View PRs ▾ holds each PR, then
+Watch PRs and Copy PR links.
+A user group's dialog offers One / N separate; One waits on the combine check (`The 3 runs combine without conflicts`,
+or why it is off) and ships from a new branch named after the group. Its ship line reads `Any order`.
+Nothing PR-related sits in the bar or in a PR bar; the PR's checks and Watch words are the route's pull request row. Runs list PR
 chips (`.runs-pr`) are chips, not PR controls.
 ### Field
 `.input` / `.select` / text, number and select elements: 32px, 13px, `--field` fill, 6px corner, ink border on focus.
@@ -134,6 +147,12 @@ A disabled checked box fills `--seq`. A selected option row (`.opt-row`, `.chip-
 an ink border.
 ### Segmented control
 `.seg`: one `--field` container, 28px / 13px buttons, the selected one `--surface`. `.seg-sm` is the same size.
+The run log's Summaries / Raw switch (`.log-view-seg`, flag `commandSummaries`) is a `.seg-sm` in the Logs bar and the step
+log drawer head. A summarised line's `title` shows the command on hover; that is a mouse convenience, and Raw is the
+accessible path to the command. With the switch, Open in Logs and × in the drawer head never shrink; the title ellipsizes.
+At 480px and below, the drawer head puts the step title on its own row and keeps the switch, Open in Logs and × together
+on the row below, with 7px switch padding (a 311px History drawer leaves 283px). The Logs bar wraps while the switch
+shows, so its selects keep their content width and search shares the switch row with copy.
 ### Tabs
 `.tabs` / `.tab`: underline tabs, 32px, never boxed (checked).
 ### Filter chip
@@ -144,26 +163,49 @@ border, ink text. Never a solid ink fill. A count sits in `.n`. It is the only f
 One chip: 18px, 11px / 500 sans, 4px corner, filled, no border (checked). The Labs (violet) and Beta (blue) flag chips are
 the reference size. Colour carries meaning only. The "Suggested" chip on the New run form's title and branch (`.sn-chip`, Smart run naming) is a permitted Labs-violet use: the whole feature is a Labs feature. Cost-tag chips (`.tag-chip`), the Projects sync pill (`.ps-pill`), the
 Chat command card's state (`.ask-cmd-pill`) and the Team policy tab count (`.tp-tab-badge`) are the same chip; on the
-active tab the count turns neutral (`--line-2` fill, ink text). The missing-key slot is the one outlined chip: a 1px dashed
+active tab the count turns neutral (`--line-2` fill, ink text). A chat command in summary mode (flag `commandSummaries`) shows the runs status dot and no state chip; the full card keeps `.ask-cmd-pill`. The missing-key slot is the one outlined chip: a 1px dashed
 `--amber` outline on a transparent fill. A removable chip's × is a 14px quiet button inside the chip. A source, "Official"
 or a policy origin is `.badge.slate`; "not installed" and "built-in" are grey.
 ### Status dot and symbols
 A dot is the state: peach working (pulses), grey paused or waiting, green ready, violet merged. Needs you is an amber
 "?" only when Worca asks; a PR problem is a plain amber dot with the reason in the PR chip; failed is a red "!".
-### Tracker
-The run page card's read-only "where is the work" line (`.rd-track`, `ui/public/run-head.mjs` `renderTracker`), under
-the status line after a `--line` divider, at every level. Three steps on one 3-column grid: the PR path (Changes ·
-Pull request · Merged into main: the real base, also while the run is live, or `Merged into base` when none is known),
-the Push path (Changes · In the source here · On the remote), a Folder run's two
-steps (Changes · Applied to your folder), and one row per workspace member with its name in a 44px column. Each step is
-a 16px node, a 12px label (600 when current, `--ink-3` when future) and a 1px connector, `--green` after a done node and
-`--line-2` otherwise. Nodes reuse the status-dot colours: done is a green fill with ✓, current is a ring with a dot
-(peach pulsing while working, green when ready, violet filled with ✓ once merged), a problem is an amber `!`, failed a
-red `!`, closed an `--ink-3` × with a struck label, future a hollow `--line-2` ring. Glyphs come from `icons.mjs`
-(`check`, `alert`, `x`). An optional 12px `--ink-2` second line holds the PR link (`#866`), GitHub's verdict, blue
-(`--blue-ink`) in-progress words and amber (`--amber-ink`) problems. Its links and its two quiet buttons (`Watching`,
-which opens the ▾ menu at Advanced, and kept work's `Commit it yourself`, `button.rd-track-act`) are its only controls.
-Labels wrap inside their column at every width and never run past the card; under 480px the connectors shrink to 8px.
+An idle chat shows the chat bubble line icon in the dot's place.
+### Card head
+The first line of a card is its headline. When the page title sits above the card (the run page, the group page),
+the state is the headline: `.run-status-word`, 1–3 words at `--fs-section` / 600 / `--lh-title`, never truncated, the
+status dot centred on it and the head buttons and the Live switch centred on its line (`.rd-sheet-head`,
+`--rd-word-line`). Under it, `.run-status-detail`: 12px `--ink-2`, at most 2 lines (the whole text as its tooltip),
+and only what no row below says ("not in dev yet", "Failed · Build · Implementation" → "Build · Implementation",
+"14 files changed in a copy", "conflicts with dev", GitHub's verdict); absent otherwise. A card with its own title
+(the chat run card) keeps the state at 13px / 600 under it. Titles are static or short ("Change Away mode?"); dynamic
+names go in the target or meta line (`.ask-mcard-target`); a title that can still grow (a run or feature name) gets
+an ellipsis and its text as a tooltip. Chips say the kind or state once; the line after a chip never repeats its word.
+### Route
+The run page card's read-only "Where the work is" route (`.rd-route`, `ui/public/run-head.mjs` `routeModel` /
+`renderRoute`), under the status line after a `--line` divider, at every level from the start of the run. The label
+"Where the work is" is sentence case, 12px `--ink-2` (`.rd-route-label`, the facts labels' style), and names the `ol`
+(`aria-labelledby`). One row per place the work passes through, in order: the PR path (the run's branch → Pull request →
+where it lands), the Push path (the source branch, after the run's own branch when it was not merged back → the remote,
+`remote/source`), a Folder run (The run's copy → the project folder) and a workspace (one row per member: its name, then
+`branch → target` in mono; an unchanged member reads "No changes in this repository"). Where a feature's or chain's run
+lands is the feature's base (`landingOf`), never the previous run's branch; while the group lists load it reads "The
+base branch". Each row is a 20px circle (`.rd-route-dot`: an 11px `icons.mjs` icon for the kind of place, `git`,
+`pull-request`, `merge`, `remote` or `folder`; a 1.5px ring in the state's colour, its `aria-label` the state word), the
+place (mono names truncate with an ellipsis, the full name in `title`) and one quiet 12px `--ink-2` status line
+(`.rd-route-second`, it wraps). States: working peach (pulses), done green, problem amber, review blue (with reviewers),
+failed red, merged violet, closed slate, future a hollow `--line-2` ring. A 1px connector runs under each circle but the
+last, `--green` between two done or merged rows (`.is-linked`), `--line-2` otherwise. The current row
+(`aria-current="step"`) is the first row in progress, needing someone or failed, else the last row that is not future.
+The run's own branch row carries the copy button (`.rd-route-copy`, `.btn.btn-sm.btn-quiet`, never shrinks; `margin-block:-4px`
+keeps the place line 20px so the name centres on its circle; the copied tick as `.hd-branch-copy`). The status lines hold what the facts rows used to: the checks line in its colour
+(`--green-ink` passed, `--blue-ink` running, `--amber-ink` failed; GitHub's verdict stays in the head status line),
+Download patch, `Commit it yourself` and `Watching` (a ▾ opener at Advanced and up) as `button.rd-fact-act`, View fix
+run, and the Watch-stopped hint and a failed Resolve's error each on their own line. The route's PR is a plain
+`owner/repo#N` link (`.rd-fact-link`): the circle and the status line carry its state, so it has no `prChip`; the Runs
+list keeps the `prChip` with its state word, since a list row has no circle. At an end state (merged, PR closed,
+pushed, applied or discarded, every changed workspace member merged) the route folds to one line (`.rd-route-fold`,
+for example "Merged into dev · worca/worka-cc#905") with a `Show route` / `Hide route` toggle (`.rd-route-toggle`,
+`aria-expanded`); the choice is remembered once for every run page (`worca-cc.run.showRoute`).
 ### Menu (checked)
 One menu skin. The box is `.menu`: 4px padding, `--panel`, 1px `--line`, `--r-md` (8px), `--shadow-menu`, 13px. A row is
 `.menu-item`: at least 30px, `--r-sm` (6px), `--hover` on hover and keyboard focus; `.menu-sep` and `.menu-h` (12px /
@@ -174,7 +216,7 @@ is appended inside it (a `.btn-split.mini`) and placed by its CSS; a `{ switch: 
 switch row (help line, `.switch`) whose toggle keeps the menu open. The run page's View PR ▾ is built with it. The sidebar flyouts (`.nav-fly`), the
 composer pickers (`.ask-pop`) and the split-button menus (`.btn-split-menu`) keep their
 own builders and positions and add `.menu` / `.menu-item`; they carry no box or row skin of their own. No hand-built
-dropdowns.
+dropdowns. An item that has a key shows it as its `hint` (the 11px `--ink-2` count slot): the Runs row ⋯ reads `S`, `E`, `⌫`.
 ### Row button
 `.row-btn`: a whole divided-list row that a person opens (a Library folder, a Memory row, a keyed project row): full
 width, `--hover` fill and `--r-sm` corner on hover, an inset ring on keyboard focus. Each list keeps its own grid and
@@ -202,13 +244,34 @@ under 300ms. Error: a plain sentence plus a "Details" quiet button, never the ra
 ### Toasts
 `notify({ tone, title, detail, action, key })` (`ui/public/feedback.mjs`): ok and info close after 5s, warn and err
 stay, never move focus.
+The title is at most 6 static words ("Could not open the workflow"). Names, ids and paths go in `detail`; a raw error
+goes in `detail` too, never in the title, and behind a Details action when it is long.
 ### Modals
 `confirmModal({ title, message, confirmLabel, danger })` (`ui/public/app.js`): a destructive confirm names what goes;
 only inside a confirm is `.btn-danger` solid red. Footer actions and the head Close are 32px `.btn`; inline field
 buttons stay 28px; the card keeps the shared 24px padding (checked by the theme proof's `dialog-sizes`).
 
+Dialog anatomy (`ui/public/dialog-layout.mjs`): a `.viewer-modal` card that can outgrow the window carries `.dlg` and
+three direct children. `.dlg-head` holds the hero, title and subtitle (and head actions such as Close); `.dlg-body` is
+the only scroller; `.dlg-foot` holds the status line and the action row. Head and foot never scroll away, and a 1px
+divider appears only while content sits under them. Static dialogs write the wrappers in `index.html`; a JS builder
+calls `layoutDialog(card, { head, foot })`. Keep the card's 24px padding (the regions bleed over it). Seams are the
+body's padding, `--dlg-gap-head` / `--dlg-gap-foot` (default 18px / 14px): set those, never a margin. Never add a sticky
+header with negative margins, and keep a nested scroller only for a bordered box (a list or a preview) that is bounded
+on purpose. Under 640px of height the head compacts (smaller hero, tighter gap) but stays. The Marketplace's
+`.mk-dialog` / `.mk-sheet` follow the same model with their own class names.
+
+Keyboard shortcuts sheet (`ui/public/keys-sheet.mjs`): the one sheet listing the list keys, opened by `?` on a list page
+or View › Keyboard shortcuts. A 760px `.card` dialog in the shared anatomy: two columns of divided rows (label left, key
+chips right, "or" between alternatives), stacked under 640px, and a foot with a 12px note and Close. Its `kbd.kbd`
+chips share the top search's `.tsearch-kbd` rule; there is no second key-chip style. Esc, Close or the backdrop close it
+and hand the focus back to the opener.
+
 ## Patterns
-- Status line: "State · detail", for example "Failed · Review · Review Implementation". No colon forms.
+- Status line: "State · detail", for example "Failed · Review · Review Implementation". No colon forms. In a card head
+  the two parts split: the state is the headline and the detail is the line under it (Card head).
+- Say each thing once. When a row, chip or route row in the card says a fact, the head does not: the row wins over
+  the head. The checks line, the base branch, Watch stopped and where the work is are the route's (Route); a result block never repeats the status line's state word.
 - "?" only means Worca is asking. An amber dot without "?" is a PR problem. "!" means failed.
 - Labels are 1–3 words. Plain words: never ids (`run:cc3b6fce`), raw timestamps or raw errors in visible text; ids
   belong in a tooltip.
@@ -219,14 +282,19 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
   the Cost tags row in the run page's facts block, never stacked inside a tile. The value is sans with tabular figures.
 - Run and group pages share one head: the bar (Back, a 28px chevron `Back to Runs`, in every layout; the breadcrumb
   `Runs › Run tags › Run 2` beside it when the list stands beside the page; Run after; on the right the one primary
-  action, Stop, ⋯), the title with its kind chip (`Run 2 of 3`, `Run`, or
-  `Feature` / `Chain` / `Group`; a run in a group's chip links its group page and ends in a CSS `›` (`Run 2 of 3 ›`), so
-  its facts block has no group row), then the card: the status block (the status line, the head buttons at its right,
-  with the PR control among them; see PR controls. Beside the stage bar the status line names only the step
-  (`Working · Refine Plan`); the stage is on the bar), the tracker under a `--line` divider, the facts block (`.rd-kv`: 12px
+  action, Stop, ⋯), the title (one line, cut with "…" where the column ends; the cut is CSS only, the stored name is
+  whole, its tooltip holds it, and the bar repeats it once the title scrolls away). A run page's title has no kind chip:
+  a run in a group has no group row in its facts block, and the breadcrumb names and links its group. A group page's
+  title keeps its kind chip (`Feature` / `Chain` / `Group`). Then the card: the status block (the state word as the card's headline with its detail under it, the head buttons at its right,
+  centred on the word's line, with the PR control among them; see Card head and PR controls. Beside the stage bar the
+  detail names only the step (`Working` / `Refine Plan`); the stage is on the bar), the route ("Where the work is") under a `--line` divider, the facts block (`.rd-kv`: Project, Labels, Cost tags and Group, in that order; 12px
   `--ink-2` labels, 13px values, one row per fact and one place to edit it; a quiet button that leads a value pulls back
   by its padding so its text sits on the value column), then the tiles (`--fs-stat` sans values with tabular figures,
   `--pad-tile` padding). No PR bar, no kept-work, merge-back or Apply box: their actions are head buttons.
+  On the group page a live update never moves the card. Once a stage bar has painted, between two runs or before a
+  run's stages are known, it keeps its last paint (its edge still) until the next run has a bar. It hides only when a
+  run needs you through its PR, or the group fails, stops or ends. This is the group page's one exception to "waiting
+  runs have no bar"; list rows and the run page keep that rule.
 - The run page's ⋯ holds run-scope actions, the same on the live and saved pages at every level: Away mode (while
   live), Save as preset, Terminal (Ctrl+`), then Report this run and Archive (Restore once archived). Archive asks
   "Archive this run?" and is disabled, with the reason as its tooltip, while a local copy is open or kept work waits.
@@ -236,12 +304,26 @@ buttons stay 28px; the card keeps the shared 24px padding (checked by the theme 
   page; the ⌄ only expands. One row is highlighted at a time, the one whose page is open: a collapsed group whose run
   is open shows the lighter `--row-open` fill over its whole row; expanded, only the open run's row is highlighted.
   Rows inside a group draw no dividers; the group keeps its own divider before the next row.
+- Two row levels in the Runs list and the Chats column. A top-level row (a single run, Needs you, a group row) has a
+  13px / 500 title over a 12px status line; a group row's title is 600. A row inside a group is one line, 26px (40px on
+  touch screens): a 12px / 400 title, then its status at the right (it drops the Working / Starting word its dot says
+  and ellipsises first), then its PR chip; no label chips and no Independent tag. A live member's 3px line sits under
+  its title. Its ⋯ stays 28px, centred.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
   not from a filter button in the list's header. The Marketplace's Browse search is the one exception
   (Marketplace exceptions).
 - Phones: one 16px gutter; nothing scrolls sideways at 290px.
 - Runs list order: Needs you (most urgent first), Running, Waiting, Recent. Each section is newest dispatch first (a
   run's start, a waiting ticket's creation); a section with no rows is not drawn.
+- Chats list: the Runs list anatomy in the Chat page's column; the open chat's figures sit once in the conversation
+  head as a readout control (`button.chat-head-meter`, 11px mono, like the cost breakdown's `.cost-bd-btn`), not a
+  §1.2 button; sections Pinned · Today · Recent
+  (the 10 latest before today) · Older (folded); Archive is disabled while a chat replies, runs a command or follows a
+  live run; an archived chat reads Restore, as a run does; New chat is the one + after the list toggle; a topic group is
+  a Runs group row (count, ⌄, members indented 16px, no dividers) placed by its newest chat; its sub line names its
+  project or `N projects`; Group by Project files a group spanning projects under Several projects, never No project;
+  Group by Topic shows one section per group, then Ungrouped; the group dialog's name field
+  uses Smart run naming's Suggested chip only while that flag is on.
 - Waiting says what it waits for: `Waiting · starts after Complete Design Language Rollout · run 3`,
   `Waiting · starts 14:00`. A group in Needs you leads with the reason: `Run 1 needs you · Checks failing`.
 - Question options are divided rows: one --line between rows, no box per option; the picked row takes the --field fill

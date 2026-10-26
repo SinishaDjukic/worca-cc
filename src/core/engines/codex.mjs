@@ -29,7 +29,9 @@ import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { ARGV_INLINE_LIMIT } from './claude.mjs';
 import { CODEX_PRICES, codexCachedRate } from '../list-prices.mjs';
-import { codexEndpointSpawn, findCodexEndpointEntry } from './codex-endpoint.mjs';
+import { codexEndpointSpawn, findCodexEndpointEntry, hasCodexEndpoint } from './codex-endpoint.mjs';
+import { makeChatDescriptor, openaiListRates } from './chat-descriptor.mjs';
+import { chatEnginesTaking } from '../../shared/engine-switch.mjs';
 import { scopeLauncherEnv } from '../mcp/launch.mjs';
 
 export const CODEX_DEFAULT_BIN = process.env.WORCA_CODEX_BIN || 'codex';
@@ -931,3 +933,30 @@ export async function runCodexProcess({
   }
   return { text: redactor ? redactor.text(final.text) : final.text, exitCode: res.code };
 }
+
+/** Codex's chat descriptor (engines/chat-descriptor.mjs; cascading-settings-design.md §4.6, D13, D14). The lockdown is
+ *  CODEX_ASK_LOCKDOWN; a chat model on its own endpoint needs no codex sign-in, only the binary (codex-endpoint.mjs).
+ *  Each `impl` is the function a test hands the turn in its place. */
+export const codexChat = makeChatDescriptor({
+  engine: 'codex',
+  lockdown: () => CODEX_ASK_LOCKDOWN,
+  noLockdownMessage: "Chat on Codex is unavailable: this codex version cannot switch off its image viewer (which reads any image on disk) or its sub-agents, and a chat must stay inside its own files. Use a Claude chat.",
+  askSupport: (o, impl = codexAskSupport) => impl(o),
+  preflight: ({ model } = {}, impl = codexPreflight) => impl({ signIn: !hasCodexEndpoint(model) }),
+  // OpenAI's list price, unless the model runs on an endpoint of its own (its Models page price then, or none).
+  listRates: (model) => { const m = model || CODEX_DEFAULT_MODEL; return findCodexEndpointEntry(m) ? null : openaiListRates(m); },
+  resumeNotFound: codexResumeNotFound,
+  shellTrippedMessage: 'Codex tried to run a shell command although its shell was switched off — worca stopped the turn.',
+  titles: true,
+  suggestionModel: 'gpt-5.6-luna',
+  turnImages: true,
+  signIn: () => ['CODEX_', 'OPENAI_'],
+  // codex's MCP resource tools (plans/ask-on-codex-spike.md (h)): they read what the chat's own MCP servers publish.
+  metaTools: ['mcp__codex__list_mcp_resources', 'mcp__codex__list_mcp_resource_templates', 'mcp__codex__read_mcp_resource'],
+  prompt: {
+    cli: "the Codex CLI with Codex's own sign-in",
+    attachments: `Image attachments are different: you see an image with the message it came with; read_attachment returns any image attachment itself as content[1] of its result — called directly, the image is attached to the result; called from exec, pass that block to image() to look at it again. A Codex chat cannot view a PDF: read_attachment returns only its kind and size, and ${chatEnginesTaking('pdfs')} chats can.`,
+    composerBinary: 'An image arrives with the message that carried it — you see it there; read_attachment returns it again as content[1] of its result (called from exec, pass that block to image()). A Codex chat cannot view a PDF.',
+    webOff: "Codex's own web search stays off.",
+  },
+});

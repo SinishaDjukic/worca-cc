@@ -248,4 +248,5 @@ test('Discard changes?: Keep editing is a plain small button, Discard the danger
   const q = discardPrompt(doc);
   assert.equal(q.querySelector('.discard-keep').className, 'btn discard-keep');
   assert.equal(q.querySelector('.discard-go').className, 'btn btn-danger discard-go');
+  assert.ok(doc.querySelector('dialog.discard-modal .card.dlg > .dlg-foot .discard-go'), 'the shared dialog anatomy');
 });

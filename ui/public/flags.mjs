@@ -65,8 +65,10 @@ const TAB_HOST = '[role="tab"], .tab, .tabs > button, .seg > button';
 /** D9: give a [data-flag] element its stage chip, linking to its row in Settings › Labs.
  *  Inside the host, or right after it when the host is interactive (no link inside a button). The
  *  chip carries the host's data-flag, so it is gated exactly like the host. A tab gets a plain span
- *  inside its label instead (review A4). A non-empty data-flag-chip value names the flag without
- *  gating the host, so its chip is never hidden by the flag gate. Idempotent. */
+ *  inside its label instead (review A4), and so does a row of the sidebar (a button in .nav), after
+ *  its label: a sibling would be a row of its own in the column-flex rail, and the row's own click
+ *  opens the page. A non-empty data-flag-chip value names the flag without gating the host, so its
+ *  chip is never hidden by the flag gate. Idempotent. */
 export function chip(el, doc) {
   const d = docOf(doc || (el && el.ownerDocument));
   const named = el && el.dataset && el.dataset.flagChip;
@@ -76,9 +78,10 @@ export function chip(el, doc) {
   const f = flagByKey(key);
   const label = STAGE_LABEL[f.stage] || f.stage;
   const title = `${f.title} is ${f.stage === 'beta' ? 'in beta' : 'in Labs'}.`;
-  if (el.matches(TAB_HOST)) {
+  if (el.matches(TAB_HOST) || el.matches('.nav button')) {
     const s = d.createElement('span');
     s.className = `flag-chip flag-chip-${f.stage}`;
+    if (el.dataset.flag) s.dataset.flag = el.dataset.flag;
     s.textContent = label;
     s.title = title;
     el.appendChild(s);

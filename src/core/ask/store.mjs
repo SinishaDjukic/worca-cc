@@ -66,6 +66,11 @@ function rowToThread(r) {
     // The engine the chat is locked to (#635): written with the model on every turn. NULL (a chat from
     // before v53) is read from its model (ask/models.mjs chatEngine).
     engine: r.engine ?? null,
+    // #948 s2 (v75): archive and pin timestamps; null = not archived / not pinned.
+    archivedAt: r.archived_at ?? null,
+    pinnedAt: r.pinned_at ?? null,
+    // #948 s3 (v76): the chat's topic group; null = ungrouped.
+    groupId: r.group_id ?? null,
     // Workflows view (v54): a composer chat's mode and the canvas its last message carried. Absent on Ask chats.
     ...(r.mode ? { mode: r.mode } : {}),
     ...(r.composer ? { composer: parse(r.composer, null) } : {}),
@@ -130,15 +135,24 @@ const SEARCHED_MESSAGE = `NOT (m.role = 'user' AND COALESCE(m.blocks, '') LIKE '
  *  "Delete all" count, which deletes composer chats too) skips the surface filter. A `query` (the History search) also
  *  keeps only chats whose title OR any message's text holds it — case-insensitive (SQLite's LIKE folds ASCII only).
  *  `alias` must name the threads table: the message subquery has an `id` of its own. */
-function listWhere(visibleTo, mode, alias, query) {
+function listWhere(visibleTo, mode, alias, query, { show = null, ids = null } = {}) {
   const where = [];
   const args = [];
   if (visibleTo) { where.push(`(${alias}created_by IS NULL OR ${alias}created_by = ?)`); args.push(visibleTo); }
   if (mode !== 'any') where.push(mode === 'composer' ? `${alias}mode = 'composer'` : `(${alias}mode IS NULL OR ${alias}mode <> 'composer')`);
+  // #948 s2: 'all' = not archived, 'archived' = archived only; null (every caller before s2) = both.
+  if (show === 'all') where.push(`${alias}archived_at IS NULL`);
+  else if (show === 'archived') where.push(`${alias}archived_at IS NOT NULL`);
+  if (Array.isArray(ids)) {
+    if (!ids.length) where.push('0');
+    else { where.push(`${alias}id IN (${ids.map(() => '?').join(', ')})`); args.push(...ids); }
+  }
   const q = searchText(query);
   if (q) {
-    where.push(`(${alias}title LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM ask_messages m WHERE m.thread_id = ${alias}id AND m.text LIKE ? ESCAPE '\\' AND ${SEARCHED_MESSAGE}))`);
-    args.push(likeContains(q), likeContains(q));
+    // #948 s3: a chat also matches through its topic group's name.
+    where.push(`(${alias}title LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM ask_messages m WHERE m.thread_id = ${alias}id AND m.text LIKE ? ESCAPE '\\' AND ${SEARCHED_MESSAGE})`
+      + ` OR EXISTS (SELECT 1 FROM ask_chat_groups g WHERE g.id = ${alias}group_id AND g.name LIKE ? ESCAPE '\\'))`);
+    args.push(likeContains(q), likeContains(q), likeContains(q));
   }
   return { sql: where.length ? ` WHERE ${where.join(' AND ')}` : '', args };
 }
@@ -155,6 +169,16 @@ function excerptAround(text, q) {
   return `${from > 0 ? '…' : ''}${flat.slice(from, to)}${to < flat.length ? '…' : ''}`;
 }
 
+/** A list row: the thread without its composer canvas, its link counts and, for a message hit, the excerpt. */
+function toListRow(r, q) {
+  const { composer: _canvas, ...t } = rowToThread(r);
+  // #948 s3: a group-name hit says so (the top-bar search prints "Group · NAME"); a title hit says nothing.
+  const match = !q || r.title_hit ? {}
+    : r.group_hit != null ? { match: { group: r.group_hit } }
+    : r.hit_text != null ? { match: { snippet: excerptAround(r.hit_text, q) } } : {};
+  return { ...t, runLinks: r.run_links, worktrees: r.worktrees, ...match };
+}
+
 export function listThreads({ limit = 50, visibleTo = null, mode = null, query = '' } = {}) {
   getDb();
   const n = Number.isInteger(limit) && limit > 0 ? limit : 50;
@@ -163,25 +187,228 @@ export function listThreads({ limit = 50, visibleTo = null, mode = null, query =
   // A search also reads whether the title holds the text and, if not, the first message that does (its excerpt).
   const hit = q ? `,
            (t.title LIKE ? ESCAPE '\\') AS title_hit,
-           (SELECT m.text FROM ask_messages m WHERE m.thread_id = t.id AND m.text LIKE ? ESCAPE '\\' AND ${SEARCHED_MESSAGE} ORDER BY m.seq LIMIT 1) AS hit_text` : '';
+           (SELECT m.text FROM ask_messages m WHERE m.thread_id = t.id AND m.text LIKE ? ESCAPE '\\' AND ${SEARCHED_MESSAGE} ORDER BY m.seq LIMIT 1) AS hit_text,
+           (SELECT g.name FROM ask_chat_groups g WHERE g.id = t.group_id AND g.name LIKE ? ESCAPE '\\') AS group_hit` : '';
   const rows = prepare(`
     SELECT t.*, (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id) AS run_links,
            (SELECT count(*) FROM ask_worktrees w WHERE w.thread_id = t.id) AS worktrees${hit}
     FROM ask_threads t${w.sql} ORDER BY t.updated_at DESC, t.id LIMIT ?
-  `).all(...(q ? [likeContains(q), likeContains(q)] : []), ...w.args, n);
+  `).all(...(q ? [likeContains(q), likeContains(q), likeContains(q)] : []), ...w.args, n);
   // A list row never carries the composer canvas (up to 256 KB each): getThread does.
-  return rows.map((r) => {
-    const { composer: _canvas, ...t } = rowToThread(r);
-    const match = q && !r.title_hit && r.hit_text != null ? { match: { snippet: excerptAround(r.hit_text, q) } } : {};
-    return { ...t, runLinks: r.run_links, worktrees: r.worktrees, ...match };
+  return rows.map((r) => toListRow(r, q));
+}
+
+/** #948 s2: the Chats column's sort keys. `expr` is SQL over `t`; the page also selects it AS sort_key for the cursor. */
+const THREAD_SORT_SQL = Object.freeze({
+  activity: { expr: 't.updated_at', desc: true },
+  created: { expr: 't.created_at', desc: true },
+  title: { expr: "lower(COALESCE(t.title, ''))", desc: false },
+  cost: { expr: "COALESCE(json_extract(t.totals, '$.costUsd'), 0)", desc: true },
+});
+export const THREAD_SORTS = Object.freeze(Object.keys(THREAD_SORT_SQL));
+
+const badCursor = () => Object.assign(new Error('invalid cursor'), { code: 'BAD_CURSOR' });
+const encodeCursor = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+function decodeCursor(s, sort) {
+  let o = null;
+  try { o = JSON.parse(Buffer.from(String(s), 'base64url').toString('utf8')); } catch { throw badCursor(); }
+  const keyOk = typeof o?.k === 'string' || typeof o?.k === 'number';
+  if (!o || o.s !== sort || (o.p !== 0 && o.p !== 1) || typeof o.id !== 'string' || !keyOk) throw badCursor();
+  return o;
+}
+
+/**
+ * One page of the Chats column: pinned first, then `sort`, then id. `cursor` is the previous page's answer (null for
+ * the first page); the answer's `cursor` is null on the last page. `show`: 'all' | 'archived' | null; `ids` limits the
+ * page to those threads (Show = Needs you). Throws `code: 'BAD_CURSOR'` for a cursor of another sort or garbage.
+ */
+export function listThreadsPage({ limit = 50, visibleTo = null, mode = null, query = '', show = null, sort = 'activity', cursor = null, ids = null } = {}) {
+  getDb();
+  const s = THREAD_SORT_SQL[sort] ? sort : 'activity';
+  const { expr, desc } = THREAD_SORT_SQL[s];
+  const n = Number.isInteger(limit) && limit > 0 ? limit : 50;
+  const q = searchText(query);
+  const w = listWhere(visibleTo, mode, 't.', q, { show, ids });
+  const after = cursor ? decodeCursor(cursor, s) : null;
+  const keyset = after
+    ? `${w.sql ? ' AND' : ' WHERE'} ((t.pinned_at IS NULL) > ? OR ((t.pinned_at IS NULL) = ? AND (${expr} ${desc ? '<' : '>'} ? OR (${expr} = ? AND t.id > ?))))`
+    : '';
+  const hit = q ? `,
+           (t.title LIKE ? ESCAPE '\\') AS title_hit,
+           (SELECT m.text FROM ask_messages m WHERE m.thread_id = t.id AND m.text LIKE ? ESCAPE '\\' AND ${SEARCHED_MESSAGE} ORDER BY m.seq LIMIT 1) AS hit_text,
+           (SELECT g.name FROM ask_chat_groups g WHERE g.id = t.group_id AND g.name LIKE ? ESCAPE '\\') AS group_hit` : '';
+  const rows = prepare(`
+    SELECT t.*, (SELECT count(*) FROM ask_run_links l WHERE l.thread_id = t.id) AS run_links,
+           (SELECT count(*) FROM ask_worktrees w WHERE w.thread_id = t.id) AS worktrees,
+           ${expr} AS sort_key, (t.pinned_at IS NULL) AS unpinned${hit}
+    FROM ask_threads t${w.sql}${keyset}
+    ORDER BY (t.pinned_at IS NULL), ${expr} ${desc ? 'DESC' : 'ASC'}, t.id LIMIT ?
+  `).all(...(q ? [likeContains(q), likeContains(q), likeContains(q)] : []), ...w.args,
+    ...(after ? [after.p, after.p, after.k, after.k, after.id] : []), n + 1);
+  const page = rows.slice(0, n);
+  const last = page.at(-1);
+  return {
+    threads: page.map((r) => toListRow(r, q)),
+    cursor: rows.length > n && last ? encodeCursor({ s, p: Number(last.unpinned), k: last.sort_key, id: last.id }) : null,
+  };
+}
+
+/** #948 s2: archive (on) or unarchive. Never bumps updated_at (Last activity keeps its order); a second archive keeps
+ *  the first time. The thread, or null when it does not exist. */
+export function setArchived(id, on) {
+  getDb();
+  const info = on
+    ? prepare('UPDATE ask_threads SET archived_at = COALESCE(archived_at, ?) WHERE id = ?').run(now(), id)
+    : prepare('UPDATE ask_threads SET archived_at = NULL WHERE id = ?').run(id);
+  return info.changes ? getThread(id) : null;
+}
+
+/** #948 s2: pin (on) or unpin, the same rules as setArchived. */
+export function setPinned(id, on) {
+  getDb();
+  const info = on
+    ? prepare('UPDATE ask_threads SET pinned_at = COALESCE(pinned_at, ?) WHERE id = ?').run(now(), id)
+    : prepare('UPDATE ask_threads SET pinned_at = NULL WHERE id = ?').run(id);
+  return info.changes ? getThread(id) : null;
+}
+
+// ── chat topic groups (#948 s3, v76) ─────────────────────────────────────────
+// A chat names its group in ask_threads.group_id (one at most). A group is never empty: a move, a Remove from group
+// or a chat delete that leaves it with no chat deletes it in the same transaction (run groups' removeFromGroup rule).
+
+export class ChatGroupError extends Error {
+  constructor(code, message, status = 400) { super(message); this.code = code; this.status = status; }
+}
+export const CHAT_GROUP_NAME_MAX = 120;
+const NAME_SOURCES = new Set(['suggested', 'user']);
+
+function rowToGroup(r) {
+  return { id: r.id, name: r.name, nameSource: r.name_source, createdBy: r.created_by ?? null,
+    createdAt: r.created_at, updatedAt: r.updated_at, ...(r.n != null ? { count: Number(r.n) } : {}) };
+}
+function groupName(name) {
+  const s = typeof name === 'string' ? name.replace(/\s+/g, ' ').trim() : '';
+  if (!s || s.length > CHAT_GROUP_NAME_MAX) throw new ChatGroupError('BAD_NAME', `a group name is 1 to ${CHAT_GROUP_NAME_MAX} characters`);
+  return s;
+}
+function nameSourceOf(src) {
+  if (src === undefined || src === null) return 'user';
+  if (!NAME_SOURCES.has(src)) throw new ChatGroupError('BAD_NAME_SOURCE', "nameSource is 'suggested' or 'user'");
+  return src;
+}
+/** Inside a tx: delete `groupId` when no chat names it any more. */
+function dropIfEmpty(groupId) {
+  if (groupId) prepare('DELETE FROM ask_chat_groups WHERE id = ? AND NOT EXISTS (SELECT 1 FROM ask_threads WHERE group_id = ?)').run(groupId, groupId);
+}
+/** Inside a tx: point every chat in `ids` at `groupId` (a grouped chat moves), then drop the groups it emptied. */
+function moveRows(groupId, ids) {
+  const left = new Set();
+  for (const tid of ids) {
+    const r = prepare('SELECT group_id FROM ask_threads WHERE id = ?').get(tid);
+    if (!r) throw new ChatGroupError('NO_THREAD', 'thread not found', 404);
+    if (r.group_id && r.group_id !== groupId) left.add(r.group_id);
+    prepare('UPDATE ask_threads SET group_id = ? WHERE id = ?').run(groupId, tid);
+  }
+  for (const g of left) dropIfEmpty(g);
+}
+const uniqueIds = (ids) => [...new Set(Array.isArray(ids) ? ids : [])];
+
+export function getChatGroup(id) {
+  getDb();
+  const r = prepare('SELECT * FROM ask_chat_groups WHERE id = ?').get(id);
+  return r ? rowToGroup(r) : null;
+}
+
+/** Every group this person sees, oldest first, with `count` = its chats that are not archived (the picker, the group
+ *  row) and `total` = every chat in it, archived included (the Delete group… confirm). */
+export function listChatGroups({ visibleTo = null } = {}) {
+  getDb();
+  const own = visibleTo ? ' WHERE (g.created_by IS NULL OR g.created_by = ?)' : '';
+  return prepare(`SELECT g.*,
+      (SELECT count(*) FROM ask_threads t WHERE t.group_id = g.id AND t.archived_at IS NULL) AS n,
+      (SELECT count(*) FROM ask_threads t WHERE t.group_id = g.id) AS n_all
+    FROM ask_chat_groups g${own} ORDER BY g.created_at, g.id`).all(...(visibleTo ? [visibleTo] : []))
+    .map((r) => ({ ...rowToGroup(r), total: Number(r.n_all) }));
+}
+
+/** A new group holding `threadIds` (at least one; a grouped chat moves). Never bumps a chat's updated_at. */
+export function createChatGroup({ name, nameSource, threadIds, createdBy = null } = {}) {
+  const n = groupName(name);
+  const src = nameSourceOf(nameSource);
+  const ids = uniqueIds(threadIds);
+  if (!ids.length) throw new ChatGroupError('NO_CHATS', 'a group starts with at least one chat');
+  getDb();
+  const id = newAskId('askg');
+  const t = now();
+  tx(() => {
+    prepare('INSERT INTO ask_chat_groups (id, name, name_source, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, n, src, createdBy || null, t, t);
+    moveRows(id, ids);
   });
+  return getChatGroup(id);
+}
+
+/** The group, renamed, or null when it does not exist. */
+export function renameChatGroup(id, { name, nameSource } = {}) {
+  const n = groupName(name);
+  const src = nameSourceOf(nameSource);
+  getDb();
+  const info = prepare('UPDATE ask_chat_groups SET name = ?, name_source = ?, updated_at = ? WHERE id = ?').run(n, src, now(), id);
+  return info.changes ? getChatGroup(id) : null;
+}
+
+/** Move `threadIds` into the group (404 NOT_FOUND when it is gone). */
+export function addToChatGroup(groupId, threadIds) {
+  const ids = uniqueIds(threadIds);
+  if (!ids.length) throw new ChatGroupError('NO_CHATS', 'name at least one chat');
+  if (!getChatGroup(groupId)) throw new ChatGroupError('NOT_FOUND', 'group not found', 404);
+  tx(() => moveRows(groupId, ids));
+  return getChatGroup(groupId);
+}
+
+/** Remove from group: { groupId, deleted } (deleted = that was its last chat), or null when the chat had no group. */
+export function removeFromChatGroup(threadId) {
+  getDb();
+  return tx(() => {
+    const r = prepare('SELECT group_id FROM ask_threads WHERE id = ?').get(threadId);
+    if (!r || !r.group_id) return null;
+    prepare('UPDATE ask_threads SET group_id = NULL WHERE id = ?').run(threadId);
+    dropIfEmpty(r.group_id);
+    return { groupId: r.group_id, deleted: !prepare('SELECT 1 FROM ask_chat_groups WHERE id = ?').get(r.group_id) };
+  });
+}
+
+/** The group's chat ids, latest activity first (archived ones included). */
+export function chatGroupThreadIds(groupId) {
+  getDb();
+  return prepare('SELECT id FROM ask_threads WHERE group_id = ? ORDER BY updated_at DESC, id').all(groupId).map((r) => r.id);
+}
+
+/** Ungroup: the chats stay, ungrouped, and the group goes. { deleted, threadIds }. The API's deleteChats=true deletes
+ *  the chats first (ui/server.mjs deleteAskThreadFully), then calls this. */
+export function deleteChatGroup(id) {
+  getDb();
+  return tx(() => {
+    const threadIds = prepare('SELECT id FROM ask_threads WHERE group_id = ?').all(id).map((r) => r.id);
+    prepare('UPDATE ask_threads SET group_id = NULL WHERE group_id = ?').run(id);
+    const deleted = prepare('DELETE FROM ask_chat_groups WHERE id = ?').run(id).changes > 0;
+    return { deleted, threadIds };
+  });
+}
+
+/** The chat's first message the person typed ('' when none): the group-name suggestion reads it, and nothing after it. */
+export function firstUserText(threadId) {
+  getDb();
+  const r = prepare(`SELECT m.text FROM ask_messages m WHERE m.thread_id = ? AND m.role = 'user' AND ${SEARCHED_MESSAGE}
+    ORDER BY m.seq LIMIT 1`).get(threadId);
+  return r ? String(r.text || '') : '';
 }
 
 /** Total saved chats — the History popover shows this, not the capped page listThreads returns. With a `query`, the
  *  chats the search matches (same filter as listThreads). */
-export function countThreads({ visibleTo = null, mode = null, query = '' } = {}) {
+export function countThreads({ visibleTo = null, mode = null, query = '', show = null, ids = null } = {}) {
   getDb();
-  const w = listWhere(visibleTo, mode, 't.', query);
+  const w = listWhere(visibleTo, mode, 't.', query, { show, ids });
   const row = prepare(`SELECT count(*) AS n FROM ask_threads t${w.sql}`).get(...w.args);
   return row ? Number(row.n) : 0;
 }
@@ -283,13 +510,16 @@ export function addThreadContexts(id, entries) {
 export function deleteThread(id) {
   if (typeof id !== 'string' || !ASK_ID_RE.test(id)) return false;
   const removed = tx(() => {
+    const gid = prepare('SELECT group_id FROM ask_threads WHERE id = ?').get(id)?.group_id || null;
     // ask_card_comments is keyed by card id, and card ids live inside message
     // blocks (JSON) — no FK can cascade them, so a deleted thread used to leave
     // its proposals' pending comment ids behind for ever (review of PR #376).
     prepare(`DELETE FROM ask_card_comments WHERE card_id IN (
                SELECT json_extract(b.value, '$.id') FROM ask_messages m, json_each(m.blocks) b
                WHERE m.thread_id = ? AND json_valid(m.blocks) AND json_extract(b.value, '$.kind') = 'card')`).run(id);
-    return prepare('DELETE FROM ask_threads WHERE id = ?').run(id).changes > 0;
+    const gone = prepare('DELETE FROM ask_threads WHERE id = ?').run(id).changes > 0;
+    if (gone) dropIfEmpty(gid);                       // #948 s3: a group is never left empty
+    return gone;
   });
   if (removed) rmSync(join(askRoot(), id), { recursive: true, force: true });
   return removed;
@@ -406,7 +636,7 @@ const CARD_PATCH_KEYS = ['state', 'runId', 'error', 'workflowId', 'scheduledFor'
 
 /** Patch ⊆ {state, runId, error, workflowId} on one card block. A WORKFLOW card (card.type === 'workflow') and a
  *  METRICS, POLICY, SCHEDULE or MODEL card (card.type 'metrics' | 'policy' | 'schedule' | 'model', whose `result` lands at Apply),
- *  and a PR fix-run `progress` card, whose outcome lands later, also take a SHALLOW `card` sub-patch; a run
+ *  a COMMAND card (its helper-job `summary`, #911 slice 2), and a PR fix-run `progress` card, whose outcome lands later, also take a SHALLOW `card` sub-patch; a run
  *  card's `card` is never touched (its key set is pinned). The 'proposed' precondition is the caller's (route) business. */
 export function updateCardBlock(threadId, cardId, patch = {}) {
   return tx(() => {
@@ -419,11 +649,11 @@ export function updateCardBlock(threadId, cardId, patch = {}) {
       if (!(b && b.kind === 'card' && b.id === cardId)) return b;
       const subPatchable = !!(b.card && (b.card.type === 'workflow' || b.card.type === 'metrics'
         || b.card.type === 'policy' || b.card.type === 'schedule' || b.card.type === 'model' || b.card.type === 'clone' || b.card.type === 'web'
-        || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away'
+        || b.card.type === 'workspace' || b.card.type === 'actions' || b.card.type === 'away' || b.card.type === 'proxy'
         || b.card.type === 'receipt' || b.card.type === 'run-stop' || b.card.type === 'pull-request' || b.card.type === 'ship'
         || b.card.type === 'changes' || b.card.type === 'route'
         || b.card.type === 'canvas-edit' || b.card.type === 'workflow-build' || b.card.type === 'agent-draft' || b.card.type === 'script-draft'
-        || b.card.type === 'scope-switch' || b.card.type === 'project'
+        || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'command'
         || (b.card.type === 'progress' && !!b.card.fix)));
       return { ...b, ...allowed, ...(sub && subPatchable ? { card: { ...(b.card || {}), ...sub } } : {}) };
     });

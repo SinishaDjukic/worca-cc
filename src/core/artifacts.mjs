@@ -2655,7 +2655,8 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
       const found = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl, withVerdict: true, includeClosed: true })) || null;
       // Positive observations only (null never clears). A closed PR is shown, never
       // recorded: pr_url keeps naming the open or merged PR the other readers act on.
-      if (found && found.state !== 'CLOSED') persistPrState(r.id, found);
+      // The recorded PR itself closing is recorded, so it stops counting as open (a chain's ship ends, Create PR again).
+      if (found && (found.state !== 'CLOSED' || (prUrl && found.url === prUrl))) persistPrState(r.id, found);
       if (!found) return { projectKey: r.projectKey, id: r.id, pr: null };
       // The live PR (isDraft / mergeable) plus the stored verdict and `fixing`, as rowToHistoryEntry builds it.
       const { verdict, ...fresh } = found;

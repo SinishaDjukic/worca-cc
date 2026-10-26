@@ -28,3 +28,22 @@ for a pinned workflow, then **More**.
 - **Deleted or hidden workflows.** A pinned workflow that the workflow list no longer holds (deleted,
   archived, or hidden by its flag) simply doesn't show. Its pin is kept, so it shows again if the
   workflow comes back.
+
+## Chats column
+
+The Chat page's list has the Runs list's anatomy: a head with "Chats" and View ⌄ (Show,
+Sort by, Group by, Select, Keyboard shortcuts), sections Pinned · Today · Recent (the 10 latest before today) · Older
+(folded), divided rows with a state column and a `project · state · cost · time` sub line, a row ⋯ menu, a selection
+bar, a resize handle and the shared list keys. Pin and archive are new: Archive is blocked while a chat replies, runs
+a command or follows a run that is still going (the server answers 409 `CHAT_BUSY`), and sending a message in an
+archived chat unarchives it. The column's search moves into the top-bar search as a Chats group, and New chat is one +
+right after the list toggle in the conversation head (the browser extension's sidebar head shows the same +). The
+column loads only once Chat shows: while Chat is hidden, a change only marks the list stale, and the next show fetches
+it once; a load that failed is tried again on the next show. Below 1100px the column is an overlay with a scrim; a
+menu, picker or dialog opened from it keeps it open, and picking a chat closes it and focuses the composer.
+
+Topic groups: Select › Group N or a chat's ⋯ › Add to group… puts chats in a group (one group per chat; adding a
+grouped chat moves it). A group row shows its count and expands with ⌄; View › Group by › Topic lists one section per
+group, then Ungrouped. Archive group is blocked while a chat in it is busy. With Smart run naming on, the group dialog
+suggests a name from the chat titles and first messages on the Run naming model; off, it is a plain name field and
+`POST /api/ask/groups/suggest-name` answers 404.

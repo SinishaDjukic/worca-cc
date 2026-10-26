@@ -15,11 +15,26 @@
 //   }
 //   Row = { kind: 'run'|'project'|'workspace'|'workflow'|'schedule'|'ticket'|'label', id, title, meta,
 //           tone?: 'need'|'run'|'fail'|'idle' (runs), href? (every kind but workflow and label), workflowId?, label? }
-import { liveRow, histRow } from './runs-list.mjs';
+import { liveRow, histRow, rowTime } from './runs-list.mjs';
 import { formatInstant } from '../../src/shared/schedule/recurrence.mjs';
+import { isMac } from './list-keys.mjs';
 
 export const RUN_LIMIT = 5;
 export const OTHER_LIMIT = 6;
+export const CHAT_LIMIT = 5;
+
+/** #948 s2: GET /api/ask/threads?q= items as Chats rows: title, the message snippet (when the hit was not the title) and
+ *  the time; an archived chat's time reads "Archived · Oct 9". */
+export function chatRows(threads = [], { now = Date.now() } = {}) {
+  return threads.slice(0, CHAT_LIMIT).map((t) => {
+    const at = Date.parse(t.updatedAt);
+    const time = Number.isFinite(at) ? rowTime(at, now) : '';
+    // #948 s3: a hit on the chat's topic group name says which group (store.mjs toListRow match.group).
+    const sub = t.match && t.match.group ? `Group · ${t.match.group}` : (t.match && t.match.snippet) || '';
+    return { kind: 'chat', id: t.id, title: t.title || 'New chat', sub,
+      meta: t.archived || t.archivedAt ? ['Archived', time].filter(Boolean).join(' · ') : time, href: `#chat/${t.id}` };
+  });
+}
 
 const ENDED_ICONS = new Set(['done', 'stop', 'fail']);
 const KIND_ORDER = Object.freeze({ project: 0, workspace: 1, workflow: 2, schedule: 3, ticket: 3, label: 4 });
@@ -27,9 +42,7 @@ const WORD_CHAR = /[\p{L}\p{N}]/u;
 
 /** The chip's glyph: ⌘K on a Mac, Ctrl K elsewhere (the key handler takes both chords everywhere). */
 export function shortcutLabel(win) {
-  const nav = win?.navigator;
-  const platform = String(nav?.userAgentData?.platform || nav?.platform || '');
-  return /mac|iphone|ipad|ipod/i.test(platform) ? '⌘K' : 'Ctrl K';
+  return isMac(win) ? '⌘K' : 'Ctrl K';
 }
 
 /** ⌘K or Ctrl+K (Shift allowed, Alt not). */

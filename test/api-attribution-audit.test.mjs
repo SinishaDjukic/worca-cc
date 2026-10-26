@@ -141,8 +141,8 @@ test('PR created and run archived are audited with who did it', async () => {
     const pr = await req('POST', '/api/pr', { id: pid, projectDir: dir }, 'grace@example.com');
     assert.equal(pr.status, 200, JSON.stringify(pr.body));
   } finally { gitInfo.reset(); }
-  const prLine = eventWith(pid, /^Pull request opened/);
-  assert.equal(prLine.text, 'Pull request opened by grace@example.com: https://github.com/acme/api/pull/7');
+  const prLine = eventWith(pid, /^PR created/);
+  assert.equal(prLine.text, 'PR created by grace@example.com: https://github.com/acme/api/pull/7');
   assert.equal(prLine.actor, 'grace@example.com');
 
   await until(async () => ['stopped', 'done', 'error'].includes(String((await readPipeline(dir, pid))?.state?.status)), 30000, 'the persisted terminal status');

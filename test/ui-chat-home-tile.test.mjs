@@ -46,6 +46,7 @@ test('a tile: title, project · workflow, the Running list pill, the stats line 
   assert.equal(el.tagName, 'ARTICLE');
   assert.equal(el.dataset.tileKey, 'live:r1');
   assert.equal(el.querySelector('button.chat-run-tile-open').textContent, 'Fix the upload test');
+  assert.equal(el.querySelector('button.chat-run-tile-open > .chat-run-tile-name').textContent, 'Fix the upload test');
   assert.equal(el.querySelector('.chat-run-tile-sub').textContent, 'worca-cc · T');
   const pill = el.querySelector('.chat-run-tile-pill');
   assert.ok(pill.classList.contains('st-peach'));

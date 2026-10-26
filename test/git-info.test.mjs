@@ -193,3 +193,59 @@ test('readPrBody / editPrBody use gh pr view --json body / gh pr edit --body', a
   assert.deepEqual(await editPrBody({ prUrl: 'https://github.com/o/r/pull/1', body: 'x' }), { ok: false, error: 'HTTP 404' });
   gitInfo.reset();
 });
+
+// ── commitFilesSince (Requirements A7: files changed since a brief's commit) ──────────────
+import { commitFilesSince } from '../src/core/git-info.mjs';
+import { mkdtempSync as mkTmp, rmSync as rmTmp, writeFileSync as wf } from 'node:fs';
+
+test('commitFilesSince parses the log through the runner; bad input → null without a call; failure/timeout → null', async () => {
+  const calls = [];
+  gitInfo.setRunner((cmd, args, o) => { calls.push({ cmd, args, o });
+    return Promise.resolve({ ok: true, stdout: '\x1e' + 'a'.repeat(40) + '\n\nsrc/a.js\nsrc/b.js\n\x1e' + 'b'.repeat(40) + '\n\nREADME.md\n', stderr: '', code: 0 }); });
+  const r = await commitFilesSince('/r', 'abc1234', 'main', { max: 5, timeout: 1234 });
+  assert.deepEqual(r, { commits: [{ sha: 'a'.repeat(40), files: ['src/a.js', 'src/b.js'] }, { sha: 'b'.repeat(40), files: ['README.md'] }] });
+  assert.equal(calls[0].cmd, 'git');
+  assert.deepEqual(calls[0].args, ['-c', 'core.quotePath=false', 'log', '--format=%x1e%H', '--name-only', '--no-renames', '-n', '5', 'abc1234..main', '--']);
+  assert.equal(calls[0].o.timeout, 1234);
+  assert.equal(calls[0].o.cwd, '/r');
+  const n = calls.length;
+  assert.equal(await commitFilesSince('/r', '--oops', 'main'), null);
+  assert.equal(await commitFilesSince('/r', 'zzzzzzz', 'main'), null);
+  assert.equal(await commitFilesSince('/r', 'abc1234', '-x'), null);
+  assert.equal(await commitFilesSince('', 'abc1234', 'main'), null);
+  assert.equal(calls.length, n, 'no git call for invalid input');
+  gitInfo.setRunner(() => Promise.resolve({ ok: false, stdout: '', stderr: 'git timed out after 10 ms', code: -1 }));
+  assert.equal(await commitFilesSince('/r', 'abc1234', 'main'), null);
+  gitInfo.reset();
+});
+
+test('commitFilesSince on a real repository: commits since a sha with their files; a merge commit lists none', async () => {
+  const dir = mkTmp(join(tmpdir(), 'worca-cfs-'));
+  try {
+    const g = (...a) => { const r = spawnSync('git', a, { cwd: dir, encoding: 'utf8' }); if (r.status !== 0) throw new Error(r.stderr); return r.stdout.trim(); };
+    g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@t'); g('config', 'user.name', 't'); g('config', 'commit.gpgsign', 'false');
+    g('commit', '-q', '--allow-empty', '-m', 'base');
+    const base = g('rev-parse', 'HEAD');
+    wf(join(dir, 'a.txt'), 'a\n'); g('add', '-A'); g('commit', '-q', '-m', 'a');
+    g('checkout', '-q', '-b', 'side'); wf(join(dir, 'b.txt'), 'b\n'); g('add', '-A'); g('commit', '-q', '-m', 'b');
+    g('checkout', '-q', 'main'); wf(join(dir, 'c.txt'), 'c\n'); g('add', '-A'); g('commit', '-q', '-m', 'c');
+    g('merge', '-q', '--no-ff', '-m', 'merge', 'side');
+    const r = await commitFilesSince(dir, base, 'main');
+    assert.equal(r.commits.length, 4);
+    const all = r.commits.flatMap((c) => c.files).sort();
+    assert.deepEqual(all, ['a.txt', 'b.txt', 'c.txt']);
+    assert.deepEqual(r.commits[0].files, [], 'the merge commit (newest) lists no files');
+    assert.deepEqual(await commitFilesSince(dir, g('rev-parse', 'HEAD'), 'main'), { commits: [] });
+    assert.equal(await commitFilesSince(dir, 'deadbeef', 'main'), null, 'unknown sha → git fails → null');
+  } finally { rmTmp(dir, { recursive: true, force: true, maxRetries: 3 }); }
+});
+
+test('commitsAhead forwards an additive timeout to the runner (none by default)', async () => {
+  const seen = [];
+  gitInfo.setRunner((cmd, args, o) => { seen.push(o); return Promise.resolve({ ok: true, stdout: '2\n', stderr: '', code: 0 }); });
+  assert.equal(await commitsAhead('/r', 'abc1234', 'main', { timeout: 1234 }), 2);
+  assert.equal(await commitsAhead('/r', 'abc1234', 'main'), 2);
+  gitInfo.reset();
+  assert.equal(seen[0].timeout, 1234);
+  assert.ok(!seen[1].timeout, 'no timeout unless asked');
+});

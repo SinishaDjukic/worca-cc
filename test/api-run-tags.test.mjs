@@ -407,13 +407,16 @@ test('GET /api/tag-dimensions: per target adds enforce + prefill; machine-wide a
 
 const dimsAs = async (email) => (await fetch(`${base}/api/tag-dimensions?projectDir=${encodeURIComponent(repo)}`,
   { headers: { 'x-forwarded-email': email } })).json();
-test('GET /api/tag-dimensions: autofill is the caller\'s last tagged run in this project; another person does not get it', async (t) => {
+test('GET /api/tag-dimensions (#923): autofill never copies the caller\'s last run; only a mandatory dimension takes its last value', async (t) => {
   withIdentity(t);
-  const r = await postAs({ tags: ['client:acme', 'team:web'] }, 'dee@x.io');
-  assert.ok(r.ok, String(r.status));
-  await untilSettled((await r.json()).runId);
-  assert.deepEqual((await dimsAs('dee@x.io')).autofill, { tags: ['client:acme', 'team:web'], from: 'last-run' });
-  assert.notEqual((await dimsAs('eve@x.io')).autofill.from, 'last-run');
+  await enforce([{ key: 'client', label: 'Client', values: [], required: true }, { key: 'team', label: 'Team', values: [], required: false }], false);
+  try {
+    const r = await postAs({ tags: ['client:acme', 'project:redesign', 'team:web'] }, 'dee@x.io');
+    assert.ok(r.ok, String(r.status));
+    await untilSettled((await r.json()).runId);
+    assert.deepEqual((await dimsAs('dee@x.io')).autofill, { tags: ['client:acme'], from: null });
+    assert.deepEqual((await dimsAs('eve@x.io')).autofill, { tags: [], from: null }, 'another person does not get dee\'s value');
+  } finally { await clear(); }
 });
 
 test('GET /api/tags?projectDir= scopes the vocabulary to that project', async () => {

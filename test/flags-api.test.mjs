@@ -131,7 +131,7 @@ test('HTTP: GET shape, PATCH true/false/null, 400/409, the flags frame, hello an
     await checkRows([
       { name: 'hello carries flags', run: async () => {
         await waitFor(() => msgs.some((m) => m.type === 'hello'));
-        assert.deepEqual(msgs.find((m) => m.type === 'hello').flags, { flagsDemo: false, keepAwake: true, shapeFirst: true, runTags: false, runPresets: true, runLabels: false, smartRunNaming: false });
+        assert.deepEqual(msgs.find((m) => m.type === 'hello').flags, { flagsDemo: false, keepAwake: true, shapeFirst: true, runTags: false, runPresets: true, commandSummaries: true, runLabels: false, smartRunNaming: false, requirements: false, runTelemetry: false });
       } },
       { name: 'GET /api/flags: the documented shape, plus docsUrl', run: async () => {
         const j = await (await fetch(`${base}/api/flags`)).json();
@@ -145,8 +145,8 @@ test('HTTP: GET shape, PATCH true/false/null, 400/409, the flags frame, hello an
         assert.equal((await r.json()).flags.find((f) => f.key === 'flagsDemo').on, true);
         assert.deepEqual(await stored(), { flagsDemo: true });
         await waitFor(() => msgs.some((m) => m.type === 'flags'));
-        assert.deepEqual(msgs.filter((m) => m.type === 'flags').at(-1), { type: 'flags', flags: { flagsDemo: true, keepAwake: true, shapeFirst: true, runTags: false, runPresets: true, runLabels: false, smartRunNaming: false } });
-        assert.match(await (await fetch(`${base}/`)).text(), /data-flags="flagsDemo keepAwake shapeFirst runPresets"/);
+        assert.deepEqual(msgs.filter((m) => m.type === 'flags').at(-1), { type: 'flags', flags: { flagsDemo: true, keepAwake: true, shapeFirst: true, runTags: false, runPresets: true, commandSummaries: true, runLabels: false, smartRunNaming: false, requirements: false, runTelemetry: false } });
+        assert.match(await (await fetch(`${base}/`)).text(), /data-flags="flagsDemo keepAwake shapeFirst runPresets commandSummaries"/);
         assert.equal((await (await fetch(`${base}/api/settings`)).json()).flags.flagsDemo, true);
       } },
       { name: 'PATCH {keepAwake:false} (the Settings › Runs switch) turns it off and broadcasts; null restores the default', run: async () => {
@@ -215,4 +215,11 @@ test('HTTP: GET shape, PATCH true/false/null, 400/409, the flags frame, hello an
       } },
     ]);
   } finally { ws.close(); }
+});
+
+test('GET /api/flags lists commandSummaries as beta, on with no override', async () => {
+  const { flags } = await (await fetch(`${base}/api/flags`)).json();
+  const f = flags.find((x) => x.key === 'commandSummaries');
+  assert.equal(f.stage, 'beta');
+  assert.equal(f.on, true);
 });

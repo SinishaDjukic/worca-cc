@@ -147,10 +147,12 @@ test('the folder run glance (board 10): Ready · 14 files changed in a copy, tim
   const doc = ctx.window.document;
   const g = doc.querySelector('#hist-detail .hd-glance');
   // Runs redesign: the one status block (run-model.mjs) words the run.
-  // Slice 3: the card head words a pending copy, and the tracker has the folder path's 2 steps.
+  // Slice 3: the card head words a pending copy, and the route has the folder path's 2 rows (s2).
   assert.equal(g.querySelector('.rd-now-top').dataset.word, 'Ready');
-  assert.equal(g.querySelector('.rd-now-top .run-status-text').textContent, 'Ready · 14 files changed in a copy');
-  assert.equal(g.querySelectorAll('.rd-track .rd-track-step').length, 2);
+  assert.equal(g.querySelector('.rd-now-top').dataset.text, 'Ready · 14 files changed in a copy');
+  const rows = g.querySelectorAll('.rd-route .rd-route-row');
+  assert.equal(rows.length, 2);
+  assert.ok(rows[0].classList.contains('is-done'));
   const tile = [...doc.querySelectorAll('#hist-detail .rd-facts .rd-stats > div')].at(-1);
   assert.equal(tile.lastElementChild.textContent, 'files changed');
   assert.equal(tile.querySelector('b').className, 'fc-tile');
@@ -167,7 +169,7 @@ test('a folder run shows no git chrome and asks git or a forge nothing', async (
       await openDetail(ctx, '');
       const doc = ctx.window.document;
       const g = doc.querySelector('#hist-detail .hd-glance');
-      assert.equal(g.querySelector('.rd-page-branch').hidden, true);
+      assert.equal(g.querySelector('.rd-route .rd-route-copy'), null);
       assert.equal(g.querySelector('.rd-pr-slot').hidden, true);
       for (const sel of ['.hd-base', '.hd-branch-copy', '.hd-pr', '.hd-publish', '.hd-pr-link', '.hd-push', '.hd-base-check']) {
         assert.equal(doc.querySelector(`#hist-detail ${sel}`).hidden, true, sel);
@@ -199,7 +201,7 @@ test('a folder run shows no git chrome and asks git or a forge nothing', async (
       await openDetail(ctx, '');
       const g = ctx.window.document.querySelector('#hist-detail .hd-glance');
       assert.equal(g.querySelector('.rd-page-meta .kind-chip'), null);
-      assert.equal(g.querySelector('.rd-page-branch').hidden, false);
+      assert.ok(g.querySelector('.rd-route .rd-route-copy'));
     } },
     { name: 'a git run while git is missing: the same predicates (gitOn() && isGitRun) hide its chrome; the line names nothing hidden', run: async () => {
       const ctx = await bootDetail();
@@ -207,10 +209,10 @@ test('a folder run shows no git chrome and asks git or a forge nothing', async (
       await openDetail(ctx, '');
       const doc = ctx.window.document;
       const g = doc.querySelector('#hist-detail .hd-glance');
-      assert.equal(g.querySelector('.rd-page-branch').hidden, true);
+      assert.equal(g.querySelector('.rd-route .rd-route-copy'), null);
       assert.equal(g.querySelector('.rd-pr-slot').hidden, true);
       for (const sel of ['.hd-base', '.hd-branch-copy', '.hd-pr', '.hd-publish', '.hd-push']) assert.equal(doc.querySelector(`#hist-detail ${sel}`).hidden, true, sel);
-      assert.equal(g.querySelector('.rd-now-top .run-status-text').textContent, 'Finished', 'not "Ready to ship": Ship it is hidden');
+      assert.equal(g.querySelector('.rd-now-top').dataset.text, 'Finished', 'not "Ready to ship": Ship it is hidden');
       assert.equal(g.querySelector('.rd-page-meta .kind-chip'), null, 'still a git run: no Folder chip');
       assert.ok(!ctx.calls.some((c) => /\/publish|\/base-check/.test(c.url)));
     } },
@@ -218,14 +220,16 @@ test('a folder run shows no git chrome and asks git or a forge nothing', async (
       const ctx = await bootDetail();
       const doc = ctx.window.document;
       doc.documentElement.dataset.git = 'off';
+      // s2 (D2): the head names the landing branch once the group lists answered; the hello loads them, as in the app.
+      ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', runs: [] }) });
       await openDetail(ctx, '');
       assert.equal(doc.querySelector('#hist-detail .hd-base').hidden, true);
       ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'git', git: { available: true } }) });
       await settle(ctx.window, 2);
       const g = doc.querySelector('#hist-detail .hd-glance');
       assert.equal(doc.querySelector('#hist-detail .hd-base').hidden, false);
-      assert.equal(g.querySelector('.rd-page-branch').hidden, false);
-      assert.equal(g.querySelector('.rd-now-top .run-status-text').textContent, 'Ready to ship · not in feat/log-ux yet');
+      assert.ok(g.querySelector('.rd-route .rd-route-copy'));
+      assert.equal(g.querySelector('.rd-now-top').dataset.text, 'Ready to ship · not in feat/log-ux yet');
     } },
     { name: 'git missing hides a git run\'s pull request link and slot (paintHdPr / the !gitChrome return)', run: async () => {
       const ctx = await bootDetail({ rows: [{ ...ROW, pr: { state: 'OPEN', url: 'https://github.com/a/b/pull/1' } }] });
@@ -272,14 +276,14 @@ test('a folder row that carries git-looking fields still shows no branch row and
   await openDetail(ctx, '');
   const doc = ctx.window.document;
   for (const sel of ['.hd-base', '.hd-branch-copy', '.hd-pr']) assert.equal(doc.querySelector(`#hist-detail ${sel}`).hidden, true, sel);
-  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-branch').hidden, true);
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-route .rd-route-copy'), null);
 });
 
 // Slice 3 (D14): the glance's Apply bar is the card head's Discard · Apply to folder; the Changes tab keeps its bar.
 const headOf = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-head-acts');
 const headBtn = (doc, id) => headOf(doc).querySelector(`[data-head="${id}"]`);
 const headLabels = (doc) => [...headOf(doc).querySelectorAll('[data-head]')].map((b) => b.textContent);
-const lineOf = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-now-top .run-status-text').textContent;
+const lineOf = (doc) => doc.querySelector('#hist-detail .hd-glance .rd-now-top').dataset.text;
 
 test('the head\'s Apply on the glance and the bar on Changes; Apply to folder applies 13 files, toasts, and settles to Applied', async () => {
   const ctx = await boot();
@@ -300,7 +304,10 @@ test('the head\'s Apply on the glance and the bar on Changes; Apply to folder ap
   assert.deepEqual(lastToast(doc), { tone: 'ok', title: 'Applied to folder', detail: '13 files · 1 skipped', action: '' });
   assert.deepEqual(headLabels(doc), [], 'nothing left to apply or discard');
   assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-now-top').dataset.word, 'Applied');
-  assert.deepEqual([...doc.querySelectorAll('#hist-detail .hd-glance .rd-track .rd-track-step')].map((x) => x.className), ['rd-track-step is-done', 'rd-track-step is-done']);
+  ctx.window.localStorage.setItem('worca-cc.run.showRoute', '1');   // the applied route's rows, not its fold
+  await deliverRows(ctx, ctx.box.rows);
+  assert.deepEqual([...doc.querySelectorAll('#hist-detail .hd-glance .rd-route .rd-route-row')].map((x) => x.classList.contains('is-done')), [true, true]);
+  ctx.window.localStorage.removeItem('worca-cc.run.showRoute');
   assert.deepEqual(ctx.calls.filter((c) => c.opts.method === 'POST' && c.url.includes(`/api/runs/${ID}/`)).map((c) => c.url), [`/api/runs/${ID}/apply`]);
   await openDetail(ctx, 'details/changes');
   await settle(ctx.window, 4);

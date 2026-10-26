@@ -172,9 +172,12 @@ test('#555: the model editor Save — a missing id is a field error, a refusal a
   doc.querySelector('.mv-edit[data-id="acme-fast"]').dispatchEvent(new window.Event('click', { bubbles: true }));
   for (let i = 0; i < 4; i++) await tick();
   const editor = doc.querySelector('#mv-editor-host .mv-editor');
+  assert.ok(doc.querySelector('#mv-editor-host .mv-editor.dlg > .dlg-foot .mv-editor-btns'), 'the shared dialog anatomy');
   editor.querySelector('.mv-save').click();
   for (let i = 0; i < 6; i++) await tick();
   assert.deepEqual(cardAlertOf(editor), { title: 'Not saved', detail: 'baseUrl must be http(s)' });
+  assert.ok(editor.querySelector(':scope > .dlg-foot > .card-alert'), 'the alert stays in the pinned foot');
+  assert.equal(editor.children.length, 3);
   assert.equal(editor.querySelector('.mv-save').dataset.fbState, undefined);
   assert.equal(doc.getElementById('model-editor-modal').classList.contains('hidden'), false);
   // Then it saves: the dialog closes and a toast names the thing.

@@ -183,12 +183,16 @@ test('ui-ask-integration: ask frames reach the panel, runId frames and an ask-le
   ]);
 });
 
-test('ui-ask-integration: delete flows through confirmModal and focus stays in the History column', async () => {
+test('ui-ask-integration: delete flows through confirmModal and focus stays in the Chats column', async () => {
   const { window, calls } = await boot();
   await openChat(window);
-  window.document.querySelector('[data-ask-threads-btn]').click();
+  const doc = window.document;
+  doc.querySelector('[data-ask-threads-btn]').click();
   await settle(window);
-  window.document.querySelector('.ask-thread-trash').click();
+  const row = () => doc.querySelector(`[data-chat-history] .runs-item[data-row-key="chat:${TID}"]`);
+  if (!row()) doc.querySelector('[data-chat-history] [data-section="older"] .runs-sec-head').click();
+  row().querySelector('.runs-more').click();
+  [...doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l')?.textContent === 'Delete…').click();
   await settle(window);
   const modal = window.document.querySelector('#confirm-modal');
   assert.equal(modal.classList.contains('hidden'), false, 'the app confirmModal is up');
@@ -196,8 +200,8 @@ test('ui-ask-integration: delete flows through confirmModal and focus stays in t
   window.document.querySelector('#confirm-ok').click();
   await settle(window, 6);
   assert.ok(calls.some((c) => c.url.includes(`/api/ask/threads/${TID}`) && c.opts.method === 'DELETE'));
-  // jsdom is 1024px wide: the History column is an overlay over the chat, so focus stays in it, never under its scrim.
-  assert.ok(window.document.querySelector('[data-chat-history]').contains(window.document.activeElement), 'focus stays in the History overlay');
+  // jsdom is 1024px wide: the Chats column is an overlay over the chat, so focus stays in it, never under its scrim.
+  assert.ok(window.document.querySelector('[data-chat-history]').contains(window.document.activeElement), 'focus stays in the Chats overlay');
 });
 
 test('ui-ask-integration: a Chat send carries { view: chat } (plus the run its panel shows); getPageContext still names every other page', async () => {

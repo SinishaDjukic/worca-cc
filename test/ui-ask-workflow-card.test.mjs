@@ -156,7 +156,8 @@ test('building → proposed: the trace renders first; the flip mounts the REAL g
   await openBuilding(ctx);
   const building = ctx.window.document.querySelector('[data-ask-wfcard="building"]');
   assert.ok(building); assert.equal(building.querySelectorAll('.ask-wfcard-step').length, 4);
-  assert.equal(building.querySelector('.ask-wfcard-title').textContent, 'Proposed workflow');
+  assert.equal(building.querySelector('.ask-wfcard-state').textContent, 'Proposed workflow', 'the head says the state as a chip');
+  assert.equal(building.querySelector('.ask-wfcard-title'), null, 'the name is the one headline');
   flip(ctx, 3, { state: 'proposed', card: wfCard() });
   await settle(ctx.window, 6);
   assert.equal(ctx.window.document.querySelector('[data-ask-wfcard="building"]'), null, 'the building element is gone');
@@ -218,7 +219,7 @@ test('chip picker: the model chip opens a menu in the conversation column; picki
 
 test('saved workflow card: graph stays with inert chips, footer is Open in Workflows alone (no paid-turn verb, also after ask-done), Open reads the row; declined/failed are stubs', async () => {
   await checkRows([
-    { name: 'saved: head "Saved workflow" + Auto tag + the check line; Open in Workflows navigates to #composer and reads the row; declined/failed are stubs', run: async () => {
+    { name: 'saved: head chip "Saved" + Auto tag, no line repeating them; Open in Workflows navigates to #composer and reads the row; declined/failed are stubs', run: async () => {
       const ctx = await boot();
       await openBuilding(ctx);
       flip(ctx, 3, { state: 'proposed', card: wfCard() });
@@ -227,10 +228,10 @@ test('saved workflow card: graph stays with inert chips, footer is Open in Workf
       await settle(ctx.window, 6);
       assert.equal(ctx.window.document.querySelector('[data-ask-wfcard="proposed"]'), null);
       const el = ctx.window.document.querySelector('[data-ask-wfcard="saved"]');
-      assert.equal(el.querySelector('.ask-wfcard-title').textContent, 'Saved workflow');
+      assert.equal(el.querySelector('.ask-wfcard-state').textContent, 'Saved');
       assert.equal(el.querySelector('.ask-wfcard-tag').textContent, 'Auto');
       assert.equal(el.querySelector('.ask-wfcard-saved span').textContent, 'Rename fix');
-      assert.equal(el.querySelector('.ask-wfcard-savedline').textContent, 'Saved as a new workflow, tagged Auto');
+      assert.equal(el.querySelector('.ask-wfcard-savedline'), null, 'a new workflow: the chip says Saved, the tag says Auto');
       assert.ok(el.querySelector('.ask-wfcard-graph .node'), 'the graph stays'); assert.equal(el.querySelector('.ask-wfcard-graph .bchip.model').tagName, 'SPAN', 'chips inert');
       assert.equal(el.querySelector('.ask-wfcard-match'), null, 'no match line on a saved card');
       assert.equal(el.querySelector('[data-ask-wf-run]'), null, 'no "Run with this": the save already fired the event turn, which proposes (thenRun) or offers (chat) the run');

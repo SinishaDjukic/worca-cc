@@ -340,7 +340,10 @@ export function cardAlert(card, opts) {
   x.addEventListener('click', () => box.remove());
   box.append(ic, body, x);
   const row = actionRowOf(card);
-  if (row) row.before(box); else card.append(box);
+  // A .dlg card (dialog-layout.mjs) with no action row: the alert goes to the end of its pinned foot,
+  // else its body — never a fourth direct child after the regions.
+  const tail = card.querySelector(':scope > .dlg-foot') || card.querySelector(':scope > .dlg-body') || card;
+  if (row) row.before(box); else tail.append(box);
   return box;
 }
 

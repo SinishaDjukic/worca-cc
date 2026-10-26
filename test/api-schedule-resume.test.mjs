@@ -150,7 +150,7 @@ test('fire: the tick resumes the paused run, audits via the orchestrator, and li
 
 test('engine: a scheduled resume on another engine stores it, fires on it, and a refused switch answers at once', async () => {
   const { id } = await pausedFixture({ pauseReason: 'usage_limit' });
-  assert.equal((await post('/api/schedules/resume', { pipelineId: id, scheduledFor: inFuture(60_000), engine: 'gemini' })).status, 400);
+  assert.equal((await post('/api/schedules/resume', { pipelineId: id, scheduledFor: inFuture(60_000), engine: 'gpt' })).status, 400);
   const r = await post('/api/schedules/resume', { pipelineId: id, scheduledFor: inFuture(60_000), engine: 'codex' });
   assert.equal(r.status, 202);
   const { runId: ticketId } = await r.json();

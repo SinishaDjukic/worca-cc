@@ -824,13 +824,33 @@ test('models: a Codex model names its engine, takes Codex efforts and refuses ro
   assert.equal(up.manifest.models[0].upstream.model, 'qwen', 'a Codex model may ship an OpenAI-compatible Responses endpoint');
   const chat = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'codex', upstream: { provider: 'openai', api: 'openai-chat', model: 'qwen' } }] });
   assert.ok(chat.errors.some((e) => /"cx".*Responses API only/.test(e)), JSON.stringify(chat.errors));
-  const bad = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'gemini' }] });
-  assert.ok(bad.errors.some((e) => /"engine" must be "claude", "codex", "copilot" or "cursor"/.test(e)), JSON.stringify(bad.errors));
+  const bad = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'gpt' }] });
+  assert.ok(bad.errors.some((e) => /"engine" must be "claude", "codex", "copilot", "cursor", "gemini", "goose", "opencode" or "qwen"/.test(e)), JSON.stringify(bad.errors));
+  const gs = normalizeManifest({ name: 'p', models: [{ id: 'google/x', engine: 'goose' }] });
+  assert.equal(gs.ok, true, JSON.stringify(gs.errors));
+  assert.deepEqual(gs.manifest.models[0], { id: 'google/x', label: 'google/x', engine: 'goose', efforts: ['low', 'medium', 'high', 'max'] });
+  const gsEnv = normalizeManifest({ name: 'p', models: [{ id: 'google/x', engine: 'goose', env: { X: '1' } }] });
+  assert.ok(gsEnv.errors.some((e) => /a goose model takes no env/.test(e)), JSON.stringify(gsEnv.errors));
+  const gsId = normalizeManifest({ name: 'p', models: [{ id: 'bare', engine: 'goose' }] });
+  assert.ok(gsId.errors.some((e) => /a goose model id is provider\/model/.test(e)), JSON.stringify(gsId.errors));
+  for (const [engine, efforts] of [['gemini', ['low', 'medium', 'high']], ['qwen', ['low', 'medium', 'high', 'xhigh', 'max']]]) {
+    const ok = normalizeManifest({ name: 'p', models: [{ id: 'g', engine }] });
+    assert.deepEqual(ok.manifest.models[0], { id: 'g', label: 'g', engine, efforts });
+    const withEnv = normalizeManifest({ name: 'p', models: [{ id: 'g', engine, env: { X: '1' } }] });
+    assert.ok(withEnv.errors.some((e) => new RegExp(`"g".*a ${engine} model takes no env`).test(e)), JSON.stringify(withEnv.errors));
+  }
   const cursor = normalizeManifest({ name: 'p', models: [{ id: 'cu', engine: 'cursor' }] });
   assert.equal(cursor.ok, true, JSON.stringify(cursor.errors));
   assert.deepEqual(cursor.manifest.models[0], { id: 'cu', label: 'cu', engine: 'cursor', efforts: [] });
   const cursorEnv = normalizeManifest({ name: 'p', models: [{ id: 'cu', engine: 'cursor', env: { X: '1' } }] });
   assert.ok(cursorEnv.errors.some((e) => /"cu".*a cursor model takes no env/.test(e)), JSON.stringify(cursorEnv.errors));
+  const oc = normalizeManifest({ name: 'p', models: [{ id: 'anthropic/x', engine: 'opencode' }] });
+  assert.equal(oc.ok, true, JSON.stringify(oc.errors));
+  assert.deepEqual(oc.manifest.models[0], { id: 'anthropic/x', label: 'anthropic/x', engine: 'opencode', efforts: ['minimal', 'low', 'medium', 'high', 'max'] });
+  const ocEnv = normalizeManifest({ name: 'p', models: [{ id: 'anthropic/x', engine: 'opencode', env: { X: '1' } }] });
+  assert.ok(ocEnv.errors.some((e) => /an opencode model takes no env/.test(e)), JSON.stringify(ocEnv.errors));
+  const ocId = normalizeManifest({ name: 'p', models: [{ id: 'bare', engine: 'opencode' }] });
+  assert.ok(ocId.errors.some((e) => /an opencode model id is provider\/model/.test(e)), JSON.stringify(ocId.errors));
   const eff = normalizeManifest({ name: 'p', models: [{ id: 'cx', engine: 'codex', efforts: ['max'] }] });
   assert.ok(eff.errors.some((e) => /unknown effort "max" — must be one of minimal \| low \| medium \| high/.test(e)), JSON.stringify(eff.errors));
 });
@@ -842,11 +862,11 @@ test('configSchema `advanced` folds an optional field: a boolean, no warning; th
   assert.deepEqual(r.manifest.chatChannels[0].configSchema.map((f) => [f.key, f.advanced]), [['a', true], ['b', false], ['c', false]]);
   const root = fileURLToPath(new URL('../plugins/', import.meta.url));
   const advanced = {};
-  for (const p of ['slack-chat', 'discord-chat', 'teams-chat', 'telegram-chat', 'github-source', 'azure-boards-source']) {
+  for (const p of ['slack-chat', 'discord-chat', 'teams-chat', 'telegram-chat', 'github-source', 'azure-boards-source', 'jira-source']) {
     const b = normalizeManifest(JSON.parse(readFileSync(join(root, p, 'worca-cc-plugin.json'), 'utf8')));
     assert.deepEqual([b.ok, b.warnings], [true, []], p);
     advanced[p] = [...b.manifest.taskSources, ...b.manifest.chatChannels].flatMap((s) => s.configSchema.filter((f) => f.advanced).map((f) => f.key));
   }
   assert.deepEqual(advanced, { 'slack-chat': ['channelAllowlist'], 'discord-chat': ['channelAllowlist'], 'teams-chat': ['tenantType', 'tenantId'],
-    'telegram-chat': [], 'github-source': [], 'azure-boards-source': [] });
+    'telegram-chat': [], 'github-source': [], 'azure-boards-source': [], 'jira-source': [] });
 });

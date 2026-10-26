@@ -5,6 +5,7 @@
 // (Escape and a real outside click close them; focus returns to the opener).
 import { icon } from './icons.mjs';
 import { guardModal } from './modal-guard.mjs';
+import { layoutDialog } from './dialog-layout.mjs';
 
 const WORD = { diverged: 'diverged', dirty: 'dirty', behind: 'behind', offline: 'offline', local: 'not on the remote', ok: 'up to date' };
 const TONE = { diverged: 'amber', dirty: 'amber', behind: 'blue', offline: 'grey', local: 'grey', ok: 'green' };
@@ -424,11 +425,11 @@ export function openSyncDialog({ title = 'Sync status', subtitle = '', sync, aut
     const closeBtn = h('button', { type: 'button', class: 'btn', text: 'Close' });
     const syncBtn = h('button', { type: 'button', class: 'btn btn-primary sync-go', text: 'Sync' });
     const prefsSection = prefs ? buildPrefsSection(prefs) : null;
-    const card = h('div', { class: 'card sync-card' },
-      h('div', { class: 'card-head' }, h('h2', { id: 'sync-dlg-title', text: title }), xBtn),
-      subtitle ? h('div', { class: 'sync-sub', text: subtitle }) : null,
-      pill, kv, commitsHead, commits, note, prefsSection,
-      h('div', { class: 'confirm-actions' }, closeBtn, syncBtn));
+    const head = h('div', { class: 'card-head' }, h('h2', { id: 'sync-dlg-title', text: title }), xBtn);
+    const sub = subtitle ? h('div', { class: 'sync-sub', text: subtitle }) : null;
+    const actions = h('div', { class: 'confirm-actions' }, closeBtn, syncBtn);
+    const card = h('div', { class: 'card sync-card' }, head, sub, pill, kv, commitsHead, commits, note, prefsSection, actions);
+    layoutDialog(card, { head: [head, sub], foot: [actions] });
     const modal = h('div', { class: 'viewer-modal confirm-modal sync-modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'sync-dlg-title' }, card);
 
     function paint() {
@@ -523,10 +524,11 @@ export function chooseSyncRefusal(data = {}) {
       }
     }
     const cancelBtn = h('button', { type: 'button', class: 'btn', text: 'Cancel' });
-    const panel = h('div', { class: 'qpanel' },
-      h('div', { class: 'qpanel-head' }, questionSvg(), h('b', { id: 'sync-refusal-title', text: head })),
-      body,
-      h('div', { class: 'qpanel-foot' }, cancelBtn, goBtn));
+    const panelHead = h('div', { class: 'qpanel-head' }, questionSvg(), h('b', { id: 'sync-refusal-title', text: head }));
+    const panelFoot = h('div', { class: 'qpanel-foot' }, cancelBtn, goBtn);
+    const panel = h('div', { class: 'qpanel' }, panelHead, body, panelFoot);
+    // The shared dialog anatomy one level down: the amber panel is the column, its .qbody the one scroller.
+    layoutDialog(panel, { head: [panelHead], foot: [panelFoot] });
     const modal = h('div', { class: 'viewer-modal confirm-modal sync-modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'sync-refusal-title' },
       h('div', { class: 'card' }, panel));
     const close = openModal(modal, { opener: document.activeElement, focusEl: goBtn || cancelBtn, onClose: resolve });

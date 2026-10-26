@@ -205,12 +205,12 @@ test('GET /api/app/version: unknown with no fetch under tests; a fake fetcher dr
     } },
     { name: 'POST updateCheck false clears the cached answer: back on = a fresh fetch', run: async () => {
       let calls = 0;
-      testing.setUpdateFetcher(async () => { calls++; return calls === 1 ? '99.0.0' : pkgVersion; });
+      testing.setUpdateFetcher(async () => { calls++; return calls === 1 ? '99.0.0' : '0.0.1'; });   // not pkgVersion: an RC is never an npm latest, so it reads unknown
       try {
         assert.equal((await get()).status, 'outdated');
         await postJson({ updateCheck: false });
         await postJson({ updateCheck: true });
-        assert.equal((await get()).status, 'up-to-date');
+        assert.equal((await get()).status, 'ahead', 'the second answer, not the cached one');
         assert.equal(calls, 2);
       } finally { await postJson({ updateCheck: true }); testing.setUpdateFetcher(null); }
     } },
@@ -277,8 +277,10 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       autoWorkflowModel: '',
       prDescriptionModel: '',
       memoryDefrag: null,
+      requirementsInterview: null,
       agentGenModel: null,
       namingModel: null,
+      commandSummaryModel: null,
       workspaceScan: null,
       schedule: {},
       nightMode: {}, nightModeToggle: 'auto',
@@ -286,6 +288,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       networkWait: null,
       actions: {},
       runEngine: null, stepModels: {}, utilityModels: {},   // cascading settings (Plan 2a): null / {} change nothing
+      modelRoles: {},                                        // Models › Roles: {} changes nothing
       askEngine: null, askModels: {},                        // Chat's engine (Plan 2b, D17): null / {} change nothing
       flags: {},                                             // feature flags (docs/feature-flags.md): {} is a no-op
       tagDimensions: [],                                     // Settings › Tags › Tag dimensions: [] clears (already clear)
@@ -450,4 +453,38 @@ test('POST enforceTags: a non-boolean is 400 with field enforceTags; true round-
   assert.equal((await (await fetch(`${base}/api/settings`)).json()).enforceTags, true);
   await postJson({ enforceTags: false });
   assert.equal((await (await fetch(`${base}/api/settings`)).json()).enforceTags, false);
+});
+
+test('chat.summariseCommands defaults on, saves false, rejects a non-boolean (#911)', async () => {
+  let s = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(s.chat.summariseCommands, true);
+  let r = await fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat: { summariseCommands: false } }) });
+  assert.equal(r.status, 200);
+  s = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(s.chat.summariseCommands, false);
+  r = await fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat: { summariseCommands: 'no' } }) });
+  assert.equal(r.status, 400);
+  // settingsErrorReply (src/core/settings-errors.mjs) answers { error, field }: the field is the body key validated.
+  const body = await r.json();
+  assert.equal(body.field, 'chat');
+  assert.equal(typeof body.error, 'string');
+});
+
+test('POST modelRoles: a model outside the catalog or a bad effort is 400 and writes nothing; ids are stored canonical', async () => {
+  const file = join(home, '.worca-cc', 'settings.json');
+  const ok0 = await postJson({ enforceTags: false });   // the file exists before the byte comparison
+  assert.equal(ok0.status, 200);
+  const before = readFileSync(file);
+  const unknown = await postJson({ modelRoles: { claude: { deep: { model: 'nope' } } } });
+  assert.equal(unknown.status, 400);
+  assert.match((await unknown.json()).field, /^modelRoles/);
+  const effort = await postJson({ modelRoles: { claude: { deep: { model: 'claude-opus-5-5', effort: 'rm -rf' } } } });
+  assert.equal(effort.status, 400);
+  assert.equal((await effort.json()).field, 'modelRoles.claude.deep.effort');
+  assert.deepEqual(readFileSync(file), before, 'a refused POST leaves settings.json byte-identical');
+  const canon = await postJson({ modelRoles: { claude: { deep: { model: 'Claude-Opus-5-5' } } } });
+  assert.equal(canon.status, 200);
+  assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).modelRoles, { claude: { deep: { model: 'claude-opus-5-5' } } });
+  assert.equal((await postJson({ modelRoles: { claude: { deep: null } } })).status, 200);
+  assert.equal('modelRoles' in JSON.parse(readFileSync(file, 'utf8')), false);
 });

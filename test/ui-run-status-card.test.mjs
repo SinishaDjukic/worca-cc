@@ -8,7 +8,7 @@ import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { runModel, groupModel } from '../src/shared/run-model.mjs';
 import { statusText, memberStatusText, kindLabel, paintRunStatus, syncActions, pauseResumeOwn, renderMemberRows, groupShipLine } from '../ui/public/run-status-card.mjs';
-import { RUN_STATE_ROWS, NOW } from './helpers/run-states.mjs';
+import { RUN_STATE_ROWS, NOW, REPLAY_FRAMES } from './helpers/run-states.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const dom = () => trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
@@ -20,6 +20,42 @@ test('statusText: the word leads only when the line does not already say it', as
     assert.equal(t.line, m.line);
     assert.equal(t.text.toLowerCase().split(m.word.toLowerCase()).length - 1, 1, `${state}: the word appears exactly once`);
   } })));
+});
+
+test('statusText: head and detail split the line; text stays the one-line form', () => {
+  const rows = [
+    [{ word: 'Needs you', line: 'Needs you · 1 question' }, 'Needs you', '1 question'],
+    [{ word: 'Working', line: 'Running · Round 2 · Plan', lineSaysState: true }, 'Running', 'Round 2 · Plan'],
+    [{ word: 'Working', line: 'Refine Plan' }, 'Working', 'Refine Plan'],
+    [{ word: 'Working', line: '' }, 'Working', ''],
+    [{ word: 'Ready', line: 'Ready to ship · not in dev yet' }, 'Ready to ship', 'not in dev yet'],
+    [{ word: 'Failed', line: 'Failed · Build · Implementation' }, 'Failed', 'Build · Implementation'],
+    [{ word: 'Failed', line: 'Build · failed · Implementation' }, 'Failed', 'Build · Implementation'],
+    [{ word: 'Needs you', line: 'Round 2 · Needs you' }, 'Needs you', 'Round 2'],
+    [{ word: 'Starting', line: 'Copying the folder' }, 'Starting', 'Copying the folder'],
+    [{ word: 'Finished', line: 'Finished' }, 'Finished', ''],
+  ];
+  for (const [m, head, detail] of rows) {
+    const t = statusText(m);
+    assert.deepEqual([t.head, t.detail], [head, detail], m.line);
+  }
+  assert.equal(statusText({ word: 'Ready', line: 'Ready to ship · not in dev yet' }).text, 'Ready to ship · not in dev yet');
+});
+
+test('paintRunStatus: the state word over a detail line; no detail, no line; data-text keeps the one line', () => {
+  const host = dom().createElement('div');
+  paintRunStatus(host, { state: 'in-review', word: 'In review', dot: 'green', line: 'In review · waiting for a review', lineSaysState: false });
+  assert.equal(host.querySelector('.run-status-word').textContent, 'In review');
+  const d = host.querySelector('.run-status-detail');
+  assert.equal(d.textContent, 'waiting for a review');
+  assert.equal(d.title, 'waiting for a review');
+  assert.equal(d.hidden, false);
+  assert.equal(host.dataset.text, 'In review · waiting for a review');
+  assert.equal(host.querySelector('.run-status-text'), null, 'the one-line element is gone');
+  paintRunStatus(host, { state: 'merged', word: 'Merged', dot: 'violet', line: 'Merged', lineSaysState: false });
+  assert.equal(host.querySelector('.run-status-word').textContent, 'Merged');
+  assert.equal(d.hidden, true, 'an empty detail is hidden');
+  assert.equal(host.querySelectorAll('.run-status-word').length, 1, 'idempotent');
 });
 
 test('statusText and actions for rounds and a stopped Watch PR: the model\'s words, never a second state word', () => {
@@ -199,7 +235,32 @@ test('kindLabel, member rows and ship lines for a feature group', () => {
   const ready = groupModel({ kind: 'feature', members: [done, done, done] }, { now: NOW });
   assert.equal(groupShipLine({ ...row, model: ready, members: ready.members.map((m, i) => ({ position: i + 1, model: m })) }),
     'Merge in order 1 → 2 → 3, or ship as one PR');
-  assert.equal(groupShipLine({ ...row, groupKind: 'user' }), '');
+  assert.equal(groupShipLine({ ...row, groupKind: 'user' }), 'Create PR comes when all 3 runs are done.');
+});
+
+test('groupShipLine (one ship flow): a chain waits, then reads the merge order; stacked In review keeps it, One drops it', () => {
+  const done = { status: 'done', endReached: true };
+  const gh = (n) => ({ url: `https://github.com/o/r/pull/${n}`, number: n, state: 'OPEN' });
+  const mk = (members) => { const model = groupModel({ kind: 'chain', members });
+    return { groupKind: 'chain', model, members: model.members.map((m, i) => ({ position: i + 1, model: m })) }; };
+  assert.equal(groupShipLine(mk([done, { status: 'running' }])), 'Create PR comes when all 2 runs are done.');
+  assert.equal(groupShipLine(mk([done, done])), 'Merge in order 1 → 2, or ship as one PR');
+  assert.equal(groupShipLine(mk([{ ...done, pr: gh(1) }, done, done])), 'Merge in order 1 → 2 → 3', 'partly shipped: One is disabled, so not offered');
+  assert.equal(groupShipLine(mk([{ ...done, pr: gh(1) }, { ...done, pr: gh(2) }])), 'Merge in order 1 → 2');
+  assert.equal(groupShipLine(mk([{ ...done, pr: gh(3) }, { ...done, pr: gh(3) }])), '', 'shipped as One');
+});
+
+test('groupShipLine (slice 3): a user group reads Any order, or as one PR when the runs combine; Any order in review', () => {
+  const done = { status: 'done', endReached: true };
+  const gh = (n) => ({ url: `https://github.com/o/r/pull/${n}`, number: n, state: 'OPEN' });
+  const mk = (members) => { const model = groupModel({ kind: 'user', members });
+    return { groupKind: 'user', model, members: model.members.map((m, i) => ({ position: i + 1, adhoc: true, model: m })) }; };
+  assert.equal(groupShipLine(mk([done, { status: 'running' }])), 'Create PR comes when all 2 runs are done.');
+  assert.equal(groupShipLine(mk([done, done, done])), 'Any order, or as one PR when the runs combine');
+  assert.equal(groupShipLine(mk([{ ...done, pr: gh(1) }, done, done])), 'Any order', 'a member PR turns One off');
+  assert.equal(groupShipLine(mk([{ ...done, pr: gh(1) }, { ...done, pr: gh(2) }, { ...done, pr: gh(3) }])), 'Any order');
+  assert.equal(groupShipLine(mk([{ ...done, pr: gh(4) }, { ...done, pr: gh(4) }, { ...done, pr: gh(4) }])), '', 'one PR on every run has no order');
+  assert.equal(groupShipLine(mk([done])), '', 'a group of one run');
 });
 
 test('QA 3: the run page status text names the reason the chip gives', () => {
@@ -266,12 +327,24 @@ test('paintRunStatus: beside the stage bar a working run reads "Working · STEP"
   const host = dom().createElement('div');
   paintRunStatus(host, m);
   assert.equal(host.querySelector('.run-status-bar').hidden, false);
-  assert.equal(host.querySelector('.run-status-text').textContent, m.barLine ? `Working · ${m.barLine}` : 'Working');
+  assert.equal(host.dataset.text, m.barLine ? `Working · ${m.barLine}` : 'Working');
+  assert.equal(host.querySelector('.run-status-word').textContent, 'Working');
   assert.equal(host.dataset.line, m.line, 'the canonical line is unchanged');
-  assert.ok(!host.querySelector('.run-status-text').textContent.includes(`${m.progress.label} ·`), 'the stage is said once, on the bar');
+  assert.ok(!host.dataset.text.includes(`${m.progress.label} ·`), 'the stage is said once, on the bar');
   // statusText without a bar keeps the stage.
   assert.equal(statusText(m).line, m.line);
   assert.equal(statusText(m, { stageBar: true }).line, m.barLine);
   // A model whose bar is hidden (prNeeds) or a non-working state never reads barLine.
   assert.equal(statusText({ ...m, barLine: null }, { stageBar: true }).line, m.line);
+});
+
+test('slice 3: without `hold` (the chat card, the run page) a group between runs hides its bar as before', () => {
+  const doc = dom();
+  const host = doc.createElement('div');
+  const F = REPLAY_FRAMES;
+  const WAIT2 = { ticket: { status: 'scheduled', after: { index: 1 } } };
+  paintRunStatus(host, groupModel({ kind: 'feature', title: 'T', members: [F[15], WAIT2] }, { now: NOW }));
+  assert.equal(host.querySelector('.run-status-bar').hidden, false);
+  paintRunStatus(host, groupModel({ kind: 'feature', title: 'T', members: [F.at(-1), WAIT2] }, { now: NOW }));
+  assert.equal(host.querySelector('.run-status-bar').hidden, true, 'no hold: the waiting group has no bar');
 });

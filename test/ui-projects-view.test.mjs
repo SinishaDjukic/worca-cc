@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { lastToast } from './helpers/feedback.mjs';
+import { lastToast, toastTitles, cardAlertOf } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { backdropClick, dragOut, pressEscape, discardPrompt, discardChanges } from './helpers/popups.mjs';
 
@@ -887,4 +887,594 @@ test('#693: a worca-made nested repository shows a "Nested repo" badge with the 
   assert.equal(line.textContent, hint);
   await goHash(window, 'projects/alpha-00000001');
   assert.equal(doc.querySelector('#proj-detail .pd-nested-hint').hidden, true);
+});
+
+// ---- Memory › Team (team memory 1b) ----
+const TEAM_ST = (over = {}) => ({
+  projectKey: 'alpha-00000001', enabled: true, branch: 'worca-memory', caps: { localMaxFiles: 50, teamMaxFiles: 50 },
+  remote: { exists: true, headSha: 'abcdef1234', fetchedAt: '2026-10-17T10:00:00.000Z', lastSyncAt: null, lastError: null, lastErrorCode: null, lastErrorAt: null, hint: null, lastFetchError: null },
+  counts: { local: 1 }, notes: [{ name: 'conv', state: 'local', local: true, team: false, mounted: false, updated: null, author: null, shadows: false }],
+  seed: { offer: 'pending', last: null }, ...over,
+});
+const PREVIEW = { projectKey: 'alpha-00000001', fetchedAt: '2026-10-17T10:00:00.000Z', fetchError: null, branchExists: true, offer: 'pending',
+  notes: [{ name: 'conv', state: 'local', hash: 'c'.repeat(40), description: 'Naming', blocked: null, team: null }] };
+
+test('Memory › Team: the deep link opens the Team view; switching on PATCHes memory.team and raises the offer; Share sends only the picked note', async () => {
+  const calls = [];
+  let status = TEAM_ST({ enabled: false, counts: {}, notes: [], remote: null });
+  const { window } = await boot({ fetchHandler: (u, o = {}) => {
+    const method = (o.method || 'GET').toUpperCase();
+    if (u.includes('/api/memory/team/') || u.endsWith('/settings')) calls.push({ u, method, body: o.body ? JSON.parse(o.body) : null });
+    if (u.endsWith('/api/projects/alpha-00000001/settings') && method === 'PATCH') { status = TEAM_ST(); return memJson({ own: { 'memory.team': true }, effective: {}, layers: {}, roles: [] }); }
+    if (u.endsWith('/api/memory/team/alpha-00000001/seed') && method === 'GET') return memJson(PREVIEW);
+    if (u.endsWith('/api/memory/team/alpha-00000001/seed') && method === 'POST') {
+      status = TEAM_ST({ counts: { shared: 1 }, notes: [{ ...TEAM_ST().notes[0], state: 'shared', team: true }], seed: { offer: 'done', last: { at: '2026-10-17T10:01:00.000Z', snapshotId: 's', shared: 1, tookTeam: 0, held: 0 } } });
+      return memJson({ ok: true, snapshotId: 's', shared: ['conv'], blocked: [], tookTeam: [], held: [], flush: { ok: true, pushed: 1 }, status });
+    }
+    if (u.endsWith('/api/memory/team/alpha-00000001')) return memJson(status);
+    return memFetch(u, o);
+  } });
+  await goHash(window, 'projects/alpha-00000001/memory/~team');
+  const doc = window.document;
+  const sec = doc.querySelector('.pd-sec[data-sec="memory"]');
+  assert.deepEqual([sec.querySelector('.mem-host').hidden, sec.querySelector('.mem-team-host').hidden], [true, false]);
+  assert.equal(sec.querySelector('.mem-view.on').dataset.view, 'team');
+  assert.equal(sec.querySelector('.mem-team-load.on').dataset.load, 'local');
+  click(window, sec.querySelector('.mem-team-load[data-load="both"]'));
+  for (let i = 0; i < 10; i++) await tick();
+  assert.deepEqual(calls.find((c) => c.method === 'PATCH').body, { 'memory.team': true });
+  const modal = doc.getElementById('plugin-modal');
+  assert.equal(modal.classList.contains('hidden'), false, 'the first switch-on raises the offer');
+  const pick = modal.querySelector('.mem-seed-check[data-name="conv"]');
+  assert.equal(pick.checked, false, 'nothing is ticked');
+  pick.click();   // HTMLElement.click(): jsdom toggles a checkbox only for a MouseEvent click, then fires change
+  const submit = modal.querySelector('.mem-seed-submit');
+  assert.equal(submit.textContent, 'Share 1 note');
+  click(window, submit);
+  for (let i = 0; i < 10; i++) await tick();
+  assert.deepEqual(calls.find((c) => c.method === 'POST' && c.u.endsWith('/seed')).body, { decisions: [{ name: 'conv', action: 'share', hash: 'c'.repeat(40), teamHash: null }] });
+  assert.equal(modal.classList.contains('hidden'), true);
+  assert.equal(sec.querySelector('.mem-team-row[data-name="conv"] .badge').textContent, 'Shared');
+  assert.ok(sec.querySelector('.mem-team-undo'));
+  click(window, sec.querySelector('.mem-view[data-view="notes"]'));
+  await tick(); await tick();
+  assert.equal(window.location.hash, '#projects/alpha-00000001/memory');
+});
+
+test('Memory › Team: Both → Team PATCHes "only" with no dialog and no offer; Team → Local asks first and PATCHes null', async () => {
+  const calls = [];
+  let status = TEAM_ST();   // on (Both), the offer pending with a note to share: only a switch from Local raises it
+  const { window } = await boot({ fetchHandler: (u, o = {}) => {
+    const method = (o.method || 'GET').toUpperCase();
+    if (u.endsWith('/api/projects/alpha-00000001/settings') && method === 'PATCH') {
+      const value = JSON.parse(o.body)['memory.team'];
+      calls.push(value);
+      status = value === null ? TEAM_ST({ enabled: false, counts: {}, notes: [], remote: null }) : TEAM_ST({ load: value === 'only' ? 'team' : 'both' });
+      return memJson({ own: { 'memory.team': value }, effective: {}, layers: {}, roles: [] });
+    }
+    if (u.endsWith('/api/memory/team/alpha-00000001')) return memJson(status);
+    return memFetch(u, o);
+  } });
+  await goHash(window, 'projects/alpha-00000001/memory/~team');
+  const doc = window.document;
+  const sec = doc.querySelector('.pd-sec[data-sec="memory"]');
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(sec.querySelector('.mem-team-load.on').dataset.load, 'both');
+  click(window, sec.querySelector('.mem-team-load[data-load="team"]'));
+  for (let i = 0; i < 10; i++) await tick();
+  assert.deepEqual(calls, ['only']);
+  assert.equal(doc.getElementById('confirm-modal').classList.contains('hidden'), true, 'no confirm');
+  assert.equal(doc.getElementById('plugin-modal').classList.contains('hidden'), true, 'no seeding offer');
+  assert.equal(sec.querySelector('.mem-team-load.on').dataset.load, 'team');
+  click(window, sec.querySelector('.mem-team-load[data-load="local"]'));
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(doc.getElementById('confirm-modal').classList.contains('hidden'), false, 'Local is the switch-off: it asks');
+  click(window, doc.getElementById('confirm-ok'));
+  for (let i = 0; i < 10; i++) await tick();
+  assert.deepEqual(calls, ['only', null]);
+  assert.equal(sec.querySelector('.mem-team-load.on').dataset.load, 'local');
+});
+
+test('Memory › Team: a memory-team-changed frame for the open project refetches the status; another project\'s does not', async () => {
+  const gets = [];
+  const { window } = await boot({ fetchHandler: (u, o = {}) => {
+    if (u.endsWith('/api/memory/team/alpha-00000001')) { gets.push(u); return memJson(TEAM_ST()); }
+    return memFetch(u, o);
+  } });
+  await goHash(window, 'projects/alpha-00000001/memory/~team');
+  const n = gets.length;
+  assert.ok(n >= 1);
+  const frame = (projectKey) => WSStub.last._listeners.message.forEach((fn) => fn({ data: JSON.stringify({ type: 'memory-team-changed', projectKey, action: 'flushed' }) }));
+  frame('beta-00000002');
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(gets.length, n);
+  frame('alpha-00000001');
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(gets.length, n + 1);
+});
+
+test('Memory › Team: Compare sends the reviewed hashes and opens again on STALE; Take team is not offered for a team version over the cap, Keep mine not for a blocked version, neither for a note recorded blocked; a Keep mine the remote refused says it is blocked', async () => {
+  const posts = [];
+  let previews = 0;
+  let reply = { ok: false, status: 409, body: { error: 'Some notes changed since you reviewed them — review them again.', code: 'STALE', names: ['build'] } };
+  const team = (name, over = {}) => ({ name, hash: 'd'.repeat(40), text: `---\nname: ${name}\n---\nTheirs.\n`, author: 'Ana', updated: null, bytes: 40, same: false, tooBig: false, ...over });
+  const NOTES = {
+    build: { name: 'build', state: 'held', hash: 'b'.repeat(40), description: 'Build', blocked: null, text: '---\nname: build\n---\nMine.\n', team: team('build') },
+    lint: { name: 'lint', state: 'local', hash: 'e'.repeat(40), description: 'Lint', blocked: { reason: 'line 4: an email address', findings: [] }, text: 'x\n', team: team('lint', { tooBig: true }) },
+    oncall: { name: 'oncall', state: 'blocked', hash: 'a'.repeat(40), description: 'Paging', blocked: { reason: 'the remote refused it', findings: [] }, text: 'z\n', team: team('oncall') },
+    docs: { name: 'docs', state: 'held', hash: 'f'.repeat(40), description: 'Docs', blocked: null, text: '---\nname: docs\n---\nMine.\n', team: team('docs') },
+  };
+  const row = (name, state) => ({ name, state, local: true, team: true, mounted: false, updated: null, author: 'Ana', shadows: state === 'local' });
+  const status = TEAM_ST({ counts: { held: 3, local: 1 }, notes: [row('build', 'held'), row('lint', 'local'), row('oncall', 'held'), row('docs', 'held')], seed: { offer: 'done', last: null } });
+  const { window } = await boot({ fetchHandler: (u, o = {}) => {
+    const method = (o.method || 'GET').toUpperCase();
+    const m = u.match(/\/api\/memory\/team\/alpha-00000001\/seed\?name=(\w+)$/);
+    if (m) { previews++; return memJson({ ...PREVIEW, notes: [NOTES[m[1]]] }); }
+    if (u.endsWith('/api/memory/team/alpha-00000001/resolve') && method === 'POST') {
+      posts.push(JSON.parse(o.body));
+      return Promise.resolve({ ok: reply.ok, status: reply.status, json: async () => reply.body });
+    }
+    if (u.endsWith('/api/memory/team/alpha-00000001')) return memJson(status);
+    return memFetch(u, o);
+  } });
+  await goHash(window, 'projects/alpha-00000001/memory/~team');
+  const doc = window.document;
+  const sec = doc.querySelector('.pd-sec[data-sec="memory"]');
+  const modal = doc.getElementById('plugin-modal');
+  const compare = async (name) => { click(window, sec.querySelector(`.mem-team-compare[data-name="${name}"]`)); for (let i = 0; i < 5; i++) await tick(); };
+  const offered = () => [!!modal.querySelector('.mem-cmp-take'), !!modal.querySelector('.mem-cmp-keep')];
+  await compare('build');
+  assert.equal(modal.classList.contains('hidden'), false);
+  assert.ok(modal.querySelector('.mem-cmp-mine .mem-cmp-diff'), 'side by side, the differing line marked');
+  assert.deepEqual(offered(), [true, true]);
+  click(window, modal.querySelector('.mem-cmp-keep'));
+  for (let i = 0; i < 10; i++) await tick();
+  assert.deepEqual(posts, [{ name: 'build', action: 'share', hash: 'b'.repeat(40), teamHash: 'd'.repeat(40) }]);
+  assert.deepEqual([previews, modal.classList.contains('hidden'), offered()], [2, false, [true, true]], 'STALE: Compare opens again on a fresh preview');
+  reply = { ok: false, status: 502, body: { error: 'Could not reach the team branch to check it before sharing (fatal: unable to access) — try again.', code: 'FETCH_FAILED' } };
+  click(window, modal.querySelector('.mem-cmp-keep'));
+  for (let i = 0; i < 10; i++) await tick();
+  const foot = doc.getElementById('plugin-modal-actions').parentElement;
+  assert.deepEqual(cardAlertOf(foot), { title: 'Not changed', detail: reply.body.error }, 'keep mine that cannot fetch first says why — in the pinned foot');
+  assert.equal(foot.querySelector('.card-alert').nextElementSibling.id, 'plugin-modal-actions', 'above the actions');
+  assert.deepEqual([previews, modal.classList.contains('hidden')], [2, false], 'the dialog stays open: try again');
+  assert.deepEqual([modal.querySelector('.mem-cmp-take').disabled, modal.querySelector('.mem-cmp-keep').disabled], [false, false], 'a refusal gives both sides back');
+  reply = { ok: true, status: 200, body: { ok: true, snapshotId: 's', shared: [], blocked: [], tookTeam: ['build'], held: [], flush: null,
+    status: { ...status, notes: [row('build', 'shared'), ...status.notes.slice(1)] } } };
+  click(window, modal.querySelector('.mem-cmp-take'));
+  for (let i = 0; i < 10; i++) await tick();
+  assert.deepEqual(posts.slice(1).map((p) => p.action), ['share', 'take-team']);
+  assert.deepEqual(posts[2], { name: 'build', action: 'take-team', hash: 'b'.repeat(40), teamHash: 'd'.repeat(40) });
+  assert.equal(modal.classList.contains('hidden'), true);
+  assert.equal(lastToast(doc).title, 'build.md: the team\'s version is here now');
+  assert.equal(sec.querySelector('.mem-team-row[data-name="build"] .badge').textContent, 'Shared');
+  await compare('lint');
+  assert.deepEqual(offered(), [false, false], 'the team\'s version is over the cap here; mine is blocked');
+  assert.match(doc.getElementById('plugin-modal-body').textContent, /blocked by the secret check: line 4: an email address/);
+  await compare('oncall');   // the Team view still shows it held; the fresh preview says it is recorded blocked
+  assert.deepEqual(offered(), [false, false], 'a note recorded blocked stays here: no side can be picked');
+  // Keep mine the remote refused: the returned status records it blocked — never "waits to be pushed" (seedSummary's rule).
+  reply = { ok: true, status: 200, body: { ok: true, snapshotId: null, shared: ['docs'], blocked: [], tookTeam: [], held: [], flush: { ok: false, code: 'PUSH_REJECTED', pushed: 0 },
+    status: { ...status, notes: [row('build', 'shared'), ...status.notes.slice(1, 3), row('docs', 'blocked')] } } };
+  await compare('docs');
+  click(window, modal.querySelector('.mem-cmp-keep'));
+  for (let i = 0; i < 10; i++) await tick();
+  assert.deepEqual([lastToast(doc).tone, lastToast(doc).title], ['warn', 'docs.md: your version is blocked — the Team view says why']);
+});
+
+test('Memory › Team: Undo asks first and says what it put back; Remove from team of a team-only note promises no local copy; a STALE Share warns and opens the review again; a Share that cannot fetch first says why in the dialog', async () => {
+  const calls = [];
+  let previews = 0;
+  let seedReply = { status: 409, body: { error: 'Some notes changed since you reviewed them — review them again.', code: 'STALE', names: ['conv'] } };
+  const status = TEAM_ST({ counts: { local: 1, team: 1 }, notes: [...TEAM_ST().notes, { name: 'ana', state: 'team', local: false, team: true, mounted: true, updated: null, author: 'Ana' }],
+    seed: { offer: 'done', last: { at: '2026-10-17T10:01:00.000Z', snapshotId: 's', shared: 1, tookTeam: 1, held: 1 } } });
+  const { window } = await boot({ fetchHandler: (u, o = {}) => {
+    const method = (o.method || 'GET').toUpperCase();
+    if (u.includes('/api/memory/team/')) calls.push(`${method} ${u.slice('/api/memory/team/alpha-00000001'.length)}`);
+    if (u.endsWith('/seed/undo') && method === 'POST') return memJson({ ok: true, restored: ['build'], released: ['lint'], cancelled: [], failed: [], status: { ...status, seed: { offer: 'done', last: null } } });
+    if (u.endsWith('/api/memory/team/alpha-00000001/seed') && method === 'GET') { previews++; return memJson(PREVIEW); }
+    if (u.endsWith('/api/memory/team/alpha-00000001/seed') && method === 'POST') return Promise.resolve({ ok: false, status: seedReply.status, json: async () => seedReply.body });
+    if (u.endsWith('/api/memory/team/alpha-00000001')) return memJson(status);
+    return memFetch(u, o);
+  } });
+  await goHash(window, 'projects/alpha-00000001/memory/~team');
+  const doc = window.document;
+  const sec = doc.querySelector('.pd-sec[data-sec="memory"]');
+  const confirm = doc.getElementById('confirm-modal');
+  click(window, sec.querySelector('.mem-team-undo'));
+  assert.deepEqual([confirm.classList.contains('hidden'), doc.getElementById('confirm-title').textContent], [false, 'Undo last seeding'], 'Undo asks first');
+  click(window, doc.getElementById('confirm-ok'));
+  for (let i = 0; i < 10; i++) await tick();
+  assert.ok(calls.includes('POST /seed/undo'));
+  assert.deepEqual([lastToast(doc).tone, lastToast(doc).title], ['ok', 'Seeding undone: 1 put back · 1 released']);
+  assert.equal(sec.querySelector('.mem-team-undo'), null, 'no seeding left to undo');
+  click(window, sec.querySelector('.mem-team-remove[data-name="ana"]'));
+  assert.doesNotMatch(doc.getElementById('confirm-message').textContent, /copy on this machine/, 'a team-only note has no local copy');
+  click(window, doc.getElementById('confirm-cancel'));
+  for (let i = 0; i < 3; i++) await tick();
+  // Share on a review that went stale meanwhile: a warning, then the review again from a fresh preview.
+  click(window, sec.querySelector('.mem-team-seed'));
+  for (let i = 0; i < 5; i++) await tick();
+  const modal = doc.getElementById('plugin-modal');
+  modal.querySelector('.mem-seed-check[data-name="conv"]').click();
+  click(window, modal.querySelector('.mem-seed-submit'));
+  for (let i = 0; i < 10; i++) await tick();
+  assert.ok(calls.includes('POST /seed'));
+  assert.deepEqual([lastToast(doc).tone, lastToast(doc).title], ['warn', 'Some notes changed since you opened this — review them again.']);
+  assert.deepEqual([previews, modal.classList.contains('hidden')], [2, false]);
+  assert.equal(modal.querySelector('.mem-seed-check[data-name="conv"]').checked, false, 'the review starts again');
+  seedReply = { status: 502, body: { error: 'Could not reach the team branch to check it before sharing (fatal: unable to access) — try again.', code: 'FETCH_FAILED' } };
+  modal.querySelector('.mem-seed-check[data-name="conv"]').click();
+  click(window, modal.querySelector('.mem-seed-submit'));
+  for (let i = 0; i < 10; i++) await tick();
+  assert.deepEqual(cardAlertOf(doc.getElementById('plugin-modal-actions').parentElement), { title: 'Nothing was applied', detail: seedReply.body.error }, 'not even a take team or a skip');
+  assert.equal(modal.classList.contains('hidden'), false, 'the dialog stays open: Share again');
+  const controls = [...sec.querySelectorAll('.mem-team-host button, .mem-team-host input')];
+  assert.ok(controls.length && controls.every((c) => !c.disabled), 'a refusal gives every control of the view back');
+});
+
+/** A held request: `replies` releases each one in order, answering `body`. */
+const holdReplies = () => {
+  const replies = [];
+  const held = (body) => new Promise((resolve) => replies.push(() => resolve({ ok: true, status: 200, json: async () => body })));
+  return { replies, held };
+};
+const HELD_BUILD = { name: 'build', state: 'held', hash: 'b'.repeat(40), description: 'Build', blocked: null, text: '---\nname: build\n---\nMine.\n',
+  team: { name: 'build', hash: 'd'.repeat(40), text: '---\nname: build\n---\nTheirs.\n', author: 'Ana', updated: null, bytes: 40, same: false, tooBig: false } };
+const teamRow = (name, state, over = {}) => ({ name, state, local: true, team: true, mounted: false, updated: null, author: 'Ana', ...over });
+
+test('Memory › Team: one request at a time — while a Compare side, an Undo or a Remove from team runs, every control waits for it; a Keep mine whose push failed says the note waits', async () => {
+  const sent = [];
+  const { replies, held } = holdReplies();
+  const ana = teamRow('ana', 'team', { local: false, mounted: true });
+  const status = TEAM_ST({ counts: { held: 1, team: 1 }, notes: [ana, teamRow('build', 'held')], seed: { offer: 'done', last: { at: '2026-10-17T10:01:00.000Z', snapshotId: 's', shared: 0, tookTeam: 0, held: 1 } } });
+  const after = { ...status, notes: [ana, teamRow('build', 'pending')] };
+  const { window } = await boot({ fetchHandler: (u, o = {}) => {
+    const method = (o.method || 'GET').toUpperCase();
+    const p = (u.match(/\/api\/memory\/team\/alpha-00000001(.*)$/) || [])[1];
+    if (p === undefined) return memFetch(u, o);
+    if (method !== 'GET') sent.push(`${method} ${p}`);
+    if (p === '/seed?name=build') return memJson({ ...PREVIEW, notes: [HELD_BUILD] });
+    if (p === '/resolve') return held({ ok: true, snapshotId: null, shared: ['build'], blocked: [], tookTeam: [], held: [], flush: { ok: false, code: 'PUSH_REJECTED', pushed: 0 }, status: after });
+    if (p === '/seed/undo') return held({ ok: true, restored: [], released: [], cancelled: [], failed: [], status: { ...after, seed: { offer: 'done', last: null } } });
+    if (p === '/notes/ana') return held({ ok: true, status: { ...after, notes: [teamRow('build', 'pending')], seed: { offer: 'done', last: null } } });
+    return memJson(status);
+  } });
+  await goHash(window, 'projects/alpha-00000001/memory/~team');
+  const doc = window.document;
+  const sec = doc.querySelector('.pd-sec[data-sec="memory"]');
+  const modal = doc.getElementById('plugin-modal');
+  const settle = async () => { for (let i = 0; i < 10; i++) await tick(); };
+  const controls = () => [...sec.querySelectorAll('.mem-team-host button, .mem-team-host input')];
+  // Compare: while Keep mine runs, Take team waits — and so does every control of the view behind the dialog.
+  click(window, sec.querySelector('.mem-team-compare[data-name="build"]'));
+  await settle();
+  click(window, modal.querySelector('.mem-cmp-keep'));
+  await settle();
+  assert.equal(modal.querySelector('.mem-cmp-take').disabled, true);
+  click(window, modal.querySelector('.mem-cmp-take'));
+  await settle();
+  assert.deepEqual(sent, ['POST /resolve'], 'the other side never posts');
+  assert.ok(controls().length && controls().every((c) => c.disabled), 'the view waits too');
+  replies.shift()();
+  await settle();
+  assert.equal(modal.classList.contains('hidden'), true);
+  assert.deepEqual([lastToast(doc).tone, lastToast(doc).title], ['warn', 'build.md: your version waits to be pushed — the Team view says why'], 'its push failed: not shared yet');
+  // Undo: while it runs, a second Undo — or any other control — waits.
+  click(window, sec.querySelector('.mem-team-undo'));
+  click(window, doc.getElementById('confirm-ok'));
+  await settle();
+  assert.ok(controls().every((c) => c.disabled));
+  click(window, sec.querySelector('.mem-team-undo'));
+  await settle();
+  assert.equal(doc.getElementById('confirm-modal').classList.contains('hidden'), true, 'no second Undo');
+  replies.shift()();
+  await settle();
+  // Remove from team: the same.
+  click(window, sec.querySelector('.mem-team-remove[data-name="ana"]'));
+  click(window, doc.getElementById('confirm-ok'));
+  await settle();
+  assert.ok(controls().every((c) => c.disabled));
+  click(window, sec.querySelector('.mem-team-remove[data-name="ana"]'));
+  await settle();
+  assert.deepEqual(sent, ['POST /resolve', 'POST /seed/undo', 'DELETE /notes/ana']);
+  replies.shift()();
+  await settle();
+  assert.ok(controls().length && controls().every((c) => !c.disabled), 'every control is back');
+});
+
+test('Memory › Team: the dialog belongs to its page — leaving closes the one it opened, never another feature\'s, and nothing posts; a late preview never takes over another dialog; a late switch-on reply opens none over another page', async () => {
+  const sent = [];
+  const { replies, held } = holdReplies();
+  let status = TEAM_ST({ counts: { held: 1 }, notes: [teamRow('build', 'held')], seed: { offer: 'done', last: null } });
+  const { window } = await boot({ fetchHandler: (u, o = {}) => {
+    const method = (o.method || 'GET').toUpperCase();
+    if (u.endsWith('/api/projects/alpha-00000001/settings') && method === 'PATCH') { sent.push('PATCH settings'); return held({ own: { 'memory.team': true }, effective: {}, layers: {}, roles: [] }); }
+    const p = (u.match(/\/api\/memory\/team\/alpha-00000001(.*)$/) || [])[1];
+    if (p === undefined) return memFetch(u, o);
+    sent.push(`${method} ${p}`);
+    if (p === '/seed?name=build') return memJson({ ...PREVIEW, notes: [HELD_BUILD] });
+    if (p === '/seed') return held(PREVIEW);   // the seeding dialog's preview, answered when the test says
+    return memJson(status);
+  } });
+  const doc = window.document;
+  const modal = doc.getElementById('plugin-modal');
+  const settle = async () => { for (let i = 0; i < 10; i++) await tick(); };
+  const sec = () => doc.querySelector('.pd-sec[data-sec="memory"]');
+  const teardown = () => new Promise((r) => setTimeout(r, 700));   // a closed page is torn down after its slide-out
+  const writes = () => sent.filter((s) => !s.startsWith('GET '));
+  // Compare open, then the page left (browser Back): while the page slides out, Keep mine posts nothing and its other
+  // controls open nothing — then the dialog goes with its page.
+  await goHash(window, 'projects/alpha-00000001/memory/~team');
+  const share = sec().querySelector('.mem-team-seed');
+  click(window, sec().querySelector('.mem-team-compare[data-name="build"]'));
+  await settle();
+  const keep = modal.querySelector('.mem-cmp-keep');
+  assert.ok(keep && !modal.classList.contains('hidden'));
+  await goHash(window, 'projects');
+  click(window, keep);
+  click(window, share);
+  await settle();
+  assert.deepEqual(replies, [], 'no seeding preview fetched');
+  await teardown();
+  assert.equal(modal.classList.contains('hidden'), true, 'the dialog went with its page');
+  assert.deepEqual(writes(), [], 'nothing posted');
+  // A late preview: the seeding dialog is cancelled while it loads, and another dialog takes #plugin-modal — the reply
+  // leaves that one alone.
+  await goHash(window, 'projects/alpha-00000001/memory/~team');
+  click(window, sec().querySelector('.mem-team-seed'));
+  await settle();
+  click(window, [...doc.querySelectorAll('#plugin-modal-actions button')].find((b) => b.textContent === 'Cancel'));
+  const other = doc.createElement('div');
+  doc.getElementById('plugin-modal-body').replaceChildren(other);
+  modal.classList.remove('hidden');
+  replies.shift()();
+  await settle();
+  assert.equal(doc.getElementById('plugin-modal-body').firstElementChild, other, 'another dialog keeps #plugin-modal');
+  // The page leaves with that dialog still up: its teardown closes only a dialog this page opened.
+  await goHash(window, 'projects');
+  await teardown();
+  assert.deepEqual([modal.classList.contains('hidden'), doc.getElementById('plugin-modal-body').firstElementChild], [false, other], 'the page left: another dialog keeps #plugin-modal');
+  modal.classList.add('hidden');
+  // A late switch-on reply: switched on, then the page left before the PATCH answered — no seeding dialog over the
+  // other page, and no preview is even fetched.
+  status = TEAM_ST({ enabled: false, counts: {}, notes: [], remote: null });
+  await goHash(window, 'projects/alpha-00000001/memory/~team');
+  await settle();
+  click(window, sec().querySelector('.mem-team-load[data-load="team"]'));
+  await settle();
+  assert.deepEqual(writes(), ['PATCH settings']);
+  await goHash(window, 'projects');
+  status = TEAM_ST();   // on, the offer pending, a note to share: the reply would raise the seeding dialog
+  replies.shift()();
+  await settle();
+  assert.equal(modal.classList.contains('hidden'), true, 'no dialog over the other page');
+  assert.deepEqual(replies, [], 'no preview fetched');
+  await teardown();
+});
+
+test('Memory › Team: a seeding dialog closed while its request runs leaves #plugin-modal alone — another dialog there stays — and the view waits; a refusal (a STALE too) then is a toast', async () => {
+  let answer = null;   // what the next held POST /seed answers
+  const replies = [];
+  const status = TEAM_ST({ seed: { offer: 'done', last: { at: '2026-10-17T10:01:00.000Z', snapshotId: 's', shared: 1, tookTeam: 0, held: 0 } } });
+  const { window } = await boot({ fetchHandler: (u, o = {}) => {
+    const method = (o.method || 'GET').toUpperCase();
+    const p = (u.match(/\/api\/memory\/team\/alpha-00000001(.*)$/) || [])[1];
+    if (p === undefined) return memFetch(u, o);
+    if (p === '/seed' && method === 'GET') return memJson(PREVIEW);
+    if (p === '/seed' && method === 'POST') { const a = answer; return new Promise((resolve) => replies.push(() => resolve(a))); }
+    return memJson(status);
+  } });
+  await goHash(window, 'projects/alpha-00000001/memory/~team');
+  const doc = window.document;
+  const sec = doc.querySelector('.pd-sec[data-sec="memory"]');
+  const modal = doc.getElementById('plugin-modal');
+  const settle = async () => { for (let i = 0; i < 10; i++) await tick(); };
+  const reply = (code, body) => ({ ok: code < 400, status: code, json: async () => body });
+  const offline = 'Could not reach the team branch to check it before sharing (offline) — try again.';
+  const stale = 'Some notes changed since you reviewed them — review them again.';
+  for (const [a, toast] of [
+    [reply(502, { error: offline, code: 'FETCH_FAILED' }), ['err', 'Nothing was applied', offline]],
+    [reply(409, { error: stale, code: 'STALE', names: ['conv'] }), ['err', 'Nothing was applied', stale]],   // nothing reopened either
+    // The remote refused the share: blocked, never "pending" (seedSummary's rule).
+    [reply(200, { ok: true, snapshotId: 's', shared: ['conv'], blocked: [], tookTeam: [], held: [], flush: { ok: false, code: 'PUSH_REJECTED', pushed: 0 },
+      status: { ...status, notes: [{ ...status.notes[0], state: 'blocked' }] } }), ['warn', '1 blocked by the secret check', 'The push failed (PUSH_REJECTED); the Team view says why.']],
+    [reply(200, { ok: true, snapshotId: 's', shared: ['conv'], blocked: [], tookTeam: [], held: [], flush: { ok: true, pushed: 1 },
+      status: { ...status, notes: [{ ...status.notes[0], state: 'shared', team: true }] } }), ['ok', '1 note shared', '']],
+  ]) {
+    answer = a;
+    click(window, sec.querySelector('.mem-team-seed'));
+    await settle();
+    modal.querySelector('.mem-seed-check[data-name="conv"]').click();
+    click(window, modal.querySelector('.mem-seed-submit'));
+    await settle();
+    click(window, [...doc.querySelectorAll('#plugin-modal-actions button')].find((b) => b.textContent === 'Cancel'));
+    const other = doc.createElement('div');   // another feature's dialog opens meanwhile
+    doc.getElementById('plugin-modal-body').replaceChildren(other);
+    modal.classList.remove('hidden');
+    click(window, sec.querySelector('.mem-team-undo'));   // the view waits for the seeding
+    assert.equal(doc.getElementById('confirm-modal').classList.contains('hidden'), true, 'no Undo while the seeding runs');
+    doc.getElementById('toasts').replaceChildren();   // at most TOAST_MAX stay: count this reply's alone
+    replies.shift()();
+    await settle();
+    assert.deepEqual([modal.classList.contains('hidden'), doc.getElementById('plugin-modal-body').firstElementChild], [false, other], `${a.status}: the other dialog stays`);
+    const t = lastToast(doc);
+    assert.deepEqual([toastTitles(doc).length, t.tone, t.title, t.detail], [1, ...toast], `${a.status}: a toast says what happened`);
+    modal.classList.add('hidden');
+  }
+});
+
+test('Memory › Team: a refusal that lands after the page left is a toast — not a card alert in the dialog that closes with its page — and nothing opens again', async () => {
+  const replies = [];
+  let previews = 0;
+  const status = TEAM_ST({ counts: { held: 1 }, notes: [teamRow('build', 'held')], seed: { offer: 'done', last: null } });
+  const { window } = await boot({ fetchHandler: (u, o = {}) => {
+    const p = (u.match(/\/api\/memory\/team\/alpha-00000001(.*)$/) || [])[1];
+    if (p === undefined) return memFetch(u, o);
+    if (p === '/seed?name=build') { previews++; return memJson({ ...PREVIEW, notes: [HELD_BUILD] }); }
+    if (p === '/resolve') return new Promise((resolve) => replies.push(resolve));   // Keep mine: answered when the test says
+    return memJson(status);
+  } });
+  const doc = window.document;
+  const modal = doc.getElementById('plugin-modal');
+  const settle = async () => { for (let i = 0; i < 10; i++) await tick(); };
+  const teardown = () => new Promise((r) => setTimeout(r, 700));   // a closed page is torn down after its slide-out
+  const reply = (code, body) => ({ ok: code < 400, status: code, json: async () => body });
+  const offline = 'Could not reach the team branch to check it before sharing (offline) — try again.';
+  const stale = 'Some notes changed since you reviewed them — review them again.';
+  for (const [a, detail] of [
+    [reply(502, { error: offline, code: 'FETCH_FAILED' }), offline],
+    [reply(409, { error: stale, code: 'STALE', names: ['build'] }), stale],   // nothing reopened either
+  ]) {
+    await goHash(window, 'projects/alpha-00000001/memory/~team');
+    click(window, doc.querySelector('.pd-sec[data-sec="memory"] .mem-team-compare[data-name="build"]'));
+    await settle();
+    click(window, modal.querySelector('.mem-cmp-keep'));
+    await settle();
+    await goHash(window, 'projects');   // Back while Keep mine runs: the dialog stays up while the page slides out
+    const fetched = previews;
+    doc.getElementById('toasts').replaceChildren();   // at most TOAST_MAX stay: count this reply's alone
+    replies.shift()(a);
+    await settle();
+    const t = lastToast(doc) || {};
+    assert.deepEqual([toastTitles(doc).length, t.tone, t.title, t.detail], [1, 'err', 'Not changed', detail], `${a.status}: a toast says it`);
+    assert.equal(cardAlertOf(doc.getElementById('plugin-modal-body').closest('.dlg')), null, `${a.status}: nothing is said in a dialog that is closing`);
+    assert.deepEqual([previews, modal.classList.contains('hidden')], [fetched, false], `${a.status}: no Compare opens again; the dialog is still up`);
+    await teardown();
+    assert.equal(modal.classList.contains('hidden'), true, `${a.status}: the dialog went with its page`);
+  }
+});
+
+test('Memory › Team: a refused Sync, Undo or Remove from team says why and gives every control of the view back', async () => {
+  const ana = teamRow('ana', 'team', { local: false, mounted: true });
+  const status = TEAM_ST({ counts: { held: 1, team: 1 }, notes: [ana, teamRow('build', 'held')], seed: { offer: 'done', last: { at: '2026-10-17T10:01:00.000Z', snapshotId: 's', shared: 0, tookTeam: 0, held: 1 } } });
+  const { window } = await boot({ fetchHandler: (u, o = {}) => {
+    const p = (u.match(/\/api\/memory\/team\/alpha-00000001(.*)$/) || [])[1];
+    if (p === undefined) return memFetch(u, o);
+    if ((o.method || 'GET').toUpperCase() !== 'GET') return Promise.resolve({ ok: false, status: 502, json: async () => ({ error: `offline: ${p}` }) });
+    return memJson(status);
+  } });
+  await goHash(window, 'projects/alpha-00000001/memory/~team');
+  const doc = window.document;
+  const sec = doc.querySelector('.pd-sec[data-sec="memory"]');
+  const controls = () => [...sec.querySelectorAll('.mem-team-host button, .mem-team-host input')];
+  const refused = async (title, detail) => {
+    for (let i = 0; i < 10; i++) await tick();
+    const t = lastToast(doc) || {};
+    assert.deepEqual([t.tone, t.title, t.detail], ['err', title, detail]);
+    assert.ok(controls().length && controls().every((c) => !c.disabled), 'every control is back');
+  };
+  await checkRows([
+    { name: 'Sync now', run: async () => { click(window, sec.querySelector('.mem-team-sync')); await refused('Sync failed', 'offline: /sync'); } },
+    { name: 'Undo last seeding', run: async () => { click(window, sec.querySelector('.mem-team-undo')); click(window, doc.getElementById('confirm-ok')); await refused('Not undone', 'offline: /seed/undo'); } },
+    { name: 'Remove from team', run: async () => { click(window, sec.querySelector('.mem-team-remove[data-name="ana"]')); click(window, doc.getElementById('confirm-ok')); await refused('Not removed', 'offline: /notes/ana'); } },
+  ]);
+});
+
+test('Memory › Team: a refetch older than a Remove from team never repaints over its answer (m8); a failed refetch keeps the view (m9); the switch waits while a request runs (m14)', async () => {
+  const ana = teamRow('ana', 'team', { local: false, mounted: true });
+  let status = TEAM_ST({ counts: { team: 1, local: 1 }, notes: [ana, TEAM_ST().notes[0]] });
+  let hold = null, failGet = false, releaseDelete;
+  const deleteHeld = new Promise((r) => { releaseDelete = r; });
+  const { window } = await boot({ fetchHandler: (u, o = {}) => {
+    const method = (o.method || 'GET').toUpperCase();
+    if (u.endsWith('/api/memory/team/alpha-00000001/notes/ana') && method === 'DELETE') {
+      status = TEAM_ST({ notes: [{ ...ana, state: 'deleting' }, TEAM_ST().notes[0]] });
+      return deleteHeld.then(() => memJson({ ok: true, status }));
+    }
+    if (u.endsWith('/api/memory/team/alpha-00000001')) {
+      if (failGet) return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'team.json unreadable' }) });
+      const old = status;
+      if (hold) return hold.then(() => memJson(old));   // a slow GET answers with the status of when it started
+      return memJson(status);
+    }
+    return memFetch(u, o);
+  } });
+  await goHash(window, 'projects/alpha-00000001/memory/~team');
+  const doc = window.document;
+  const sec = doc.querySelector('.pd-sec[data-sec="memory"]');
+  const badge = () => sec.querySelector('.mem-team-row[data-name="ana"] .badge').textContent;
+  const before = badge();
+  let release;
+  hold = new Promise((r) => { release = r; });
+  WSStub.last._listeners.message.forEach((fn) => fn({ data: JSON.stringify({ type: 'memory-team-changed', projectKey: 'alpha-00000001', action: 'flushed' }) }));
+  await new Promise((r) => setTimeout(r, 400));   // the frame's GET is out, held
+  click(window, sec.querySelector('.mem-team-remove[data-name="ana"]'));
+  click(window, doc.getElementById('confirm-ok'));
+  for (let i = 0; i < 5; i++) await tick();
+  const local = sec.querySelector('.mem-team-load[data-load="local"]');   // disabled while the DELETE runs; a click that slips through waits too
+  assert.equal(local.disabled, true);
+  local.disabled = false;
+  click(window, local);
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(doc.getElementById('confirm-modal').classList.contains('hidden'), true, 'no switch-off while a request runs');
+  assert.equal(sec.querySelector('.mem-team-load.on').dataset.load, 'both', 'still Both');
+  releaseDelete();
+  for (let i = 0; i < 10; i++) await tick();
+  const after = badge();
+  assert.notEqual(after, before, 'the DELETE\'s status is painted');
+  hold = null; release();
+  for (let i = 0; i < 10; i++) await tick();
+  assert.equal(badge(), after, 'the older GET never repaints over it');
+  failGet = true;
+  WSStub.last._listeners.message.forEach((fn) => fn({ data: JSON.stringify({ type: 'memory-team-changed', projectKey: 'alpha-00000001', action: 'flushed' }) }));
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(badge(), after, 'a failed refetch keeps the last status on screen');
+  assert.ok(sec.querySelector('.mem-team-load'), 'and the choice');
+});
+
+test('E10: the Overview line "Your team shares memory for this repository" — advanced, no dialog; Turn on is the normal switch, Not now its own POST, and the line goes', async () => {
+  let offered = [PROJECTS[0].key];   // the projects whose row carries teamMemoryOffer, as GET /api/projects marks them
+  const calls = [];
+  const { window } = await boot({
+    fetchHandler: (u, opts) => {
+      const method = (opts && opts.method) || 'GET';
+      if (/\/api\/projects\/[^/]+\/settings$/.test(u) && method === 'PATCH') {
+        calls.push([method, u, JSON.parse(opts.body)]);
+        offered = offered.filter((k) => !u.includes(k));
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ own: {}, effective: {}, layers: {}, roles: [] }) });
+      }
+      if (u.includes('/available/dismiss')) {
+        calls.push([method, u]);
+        offered = offered.filter((k) => !u.includes(k));
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, available: { state: 'dismissed', offer: false } }) });
+      }
+      if (u.endsWith('/api/projects') && method === 'GET') {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: PROJECTS.map((p) => (offered.includes(p.key) ? { ...p, teamMemoryOffer: true } : p)) }) });
+      }
+      return null;
+    },
+  });
+  await goHash(window, 'projects/alpha-00000001');
+  const doc = window.document;
+  // The list: a small mark on the row (Add projects closes on success; this list is what it added).
+  const marks = [...doc.querySelectorAll('#projects-list .pl-item')].map((r) => [r.dataset.key, r.querySelector('.team-mem-mark')?.textContent || null]);
+  assert.deepEqual(marks, [['alpha-00000001', 'team memory available'], ['beta-00000002', null]]);
+  assert.equal(doc.querySelector('#projects-list .team-mem-mark').dataset.minLevel, 'advanced');
+  const line = () => doc.querySelector('#proj-detail .pd-sec[data-sec="overview"] .mem-team-available');
+  const projectsChanged = async () => {
+    for (const fn of WSStub.last._listeners.message || []) fn({ data: JSON.stringify({ type: 'projects-changed', action: 'updated' }) });
+    for (let i = 0; i < 6; i++) await tick();
+  };
+  assert.ok(line(), 'the line shows while origin has the branch and the project is off');
+  assert.equal(line().dataset.minLevel, 'advanced');
+  assert.equal(line().querySelector('span').textContent, 'Your team shares memory for this repository');
+  click(window, line().querySelector('.mem-team-turn-on'));
+  for (let i = 0; i < 6; i++) await tick();
+  assert.deepEqual(calls, [['PATCH', '/api/projects/alpha-00000001/settings', { 'memory.team': true }]], 'the switch itself — no route of its own');
+  assert.equal(doc.querySelector('#confirm-modal').classList.contains('hidden'), true, 'no dialog');
+  assert.equal(line(), null, 'hidden once on');
+  assert.equal(doc.querySelector('#projects-list .team-mem-mark'), null, 'and the mark with it');
+  assert.equal(lastToast(doc).title, 'Team memory is on');
+  // A project the branch is on, Not now.
+  offered = [PROJECTS[0].key];
+  calls.length = 0;
+  await projectsChanged();
+  assert.ok(line(), 'a projects-changed frame (the check answered) brings it back');
+  click(window, line().querySelector('.mem-team-not-now'));
+  for (let i = 0; i < 6; i++) await tick();
+  assert.deepEqual(calls, [['POST', '/api/memory/team/alpha-00000001/available/dismiss']]);
+  assert.equal(line(), null);
+  await projectsChanged();
+  assert.equal(line(), null, 'Not now holds');
 });

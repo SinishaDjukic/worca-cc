@@ -65,6 +65,7 @@ export function projectLogRecord(rec) {
     ...(rec.stream ? { stream: rec.stream } : {}),
     ...(rec.path != null ? { path: rec.path } : {}),
     ...(rec.kind != null ? { kind: rec.kind } : {}),
+    ...(typeof rec.desc === 'string' && rec.desc ? { desc: rec.desc } : {}),
   };
 }
 

@@ -12,7 +12,7 @@ const POSIX = process.platform === 'win32' ? { skip: 'POSIX fake bin' } : {};
 const base = (over = {}) => ({
   thread: { id: 'ask_00000001', sessionId: null },
   turn: { prompt: 'hello', systemPrompt: 'SYS', model: 'gpt-5.5', effort: 'low', modelEnv: { X: '1' } },
-  limits: { maxTurns: 40, maxBudgetUsd: 2 },
+  limits: { maxTurns: 40, maxBudgetUsd: 2 }, env: {},
   mcpConfigPath: '/h/.worca-cc/tmp/ask/mcp-askm_00000001.json',
   scratchDir: '/h/.worca-cc/tmp/ask',
   memoryDir: '/h/.worca-cc/ask/memory/global',

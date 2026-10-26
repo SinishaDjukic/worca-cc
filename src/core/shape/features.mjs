@@ -211,7 +211,7 @@ export function featureView(id, { live = () => null } = {}) {
     const l = r.pipelineId ? live(r.pipelineId) : null;
     if (!ask && l && l.ask) ask = { index: r.index, runId: l.runId || null, pipelineId: r.pipelineId, id: l.ask.id, kind: l.ask.kind };
     const pr0 = r.pipelineId ? readPrState(r.pipelineId) : null;
-    // D24: the PR openSliceDraft opened as a draft reads "draft" until the feature ships (pr_state stays OPEN, P18).
+    // D24: a slice draft (opened before the one ship flow) reads "draft" until the feature ships (pr_state stays OPEN, P18).
     const pr = pr0 ? { ...pr0, draft: !f.ship_mode && !!r.draftPrUrl && r.draftPrUrl === pr0.url } : null;
     const s = f.outline.slices[r.index - 1] || {};
     return { index: r.index, title: r.title, goal: s.goal || '', estimate: s.estimate || null, state,
@@ -324,7 +324,7 @@ export function appendFeatureRun(featureId, { title, goal, kind, by = null, now 
   return { index, ticketId };
 }
 
-/** D24: openSliceDraft's draft, so the page can say "draft" (pipelines.pr_state stays OPEN, P18). */
+/** D24: a slice's draft PR (in-flight features from before the one ship flow), so the page can say "draft" (pipelines.pr_state stays OPEN, P18). */
 export function recordSliceDraft(pipelineId, url) {
   const at = featureOfPipeline(pipelineId);
   if (!at) return false;

@@ -8,27 +8,12 @@ import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
+import { cssRules as rules } from './helpers/css-rules.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 // Comments blanked but newlines kept, so a rule's line number is its real line.
 const css = readFileSync(join(ROOT, 'ui/public/style.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
 
-/** Every style rule as { sel, body, line }; @media/@container wrappers are walked through, @keyframes skipped. */
-function rules(text) {
-  const out = []; const stack = []; let start = 0; let line = 1;
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    if (ch === '\n') line += 1;
-    else if (ch === '{') { stack.push({ head: text.slice(start, i).trim(), at: i + 1, line }); start = i + 1; }
-    else if (ch === '}') {
-      const open = stack.pop();
-      const inKeyframes = stack.some((s) => /^@(-webkit-)?keyframes/.test(s.head));
-      if (open && !open.head.startsWith('@') && !inKeyframes) out.push({ sel: open.head.replace(/\s+/g, ' '), body: text.slice(open.at, i), line: open.line });
-      start = i + 1;
-    } else if (ch === ';' && (!stack.length || stack.at(-1).head.startsWith('@'))) start = i + 1;
-  }
-  return out;
-}
 /** Split on top-level commas only: commas inside color-mix(…), var(…) or :is(…) stay. */
 function splitTop(v) {
   const out = []; let depth = 0; let cur = '';
@@ -712,6 +697,24 @@ test('Runs list: one highlight at a time — a group whose run is open is filled
   assert.match(ALL.find((r) => r.sel === '.runs-item').body, /border-bottom:1px solid var\(--line\)/);
 });
 
+test('#955 Runs list: rows inside a group are one 26px line (40px on touch); a group title is 600', () => {
+  const bodyOf = (sel) => ALL.filter((r) => splitTop(r.sel).includes(sel)).map((r) => r.body).join(';');
+  assert.match(bodyOf('.runs-members .runs-row'), /flex-wrap:nowrap/);
+  assert.match(bodyOf('.runs-members .runs-row'), /padding:4px 0/);
+  assert.match(bodyOf('.runs-members .runs-row-title'), /font-size:var\(--fs-meta\)/);
+  assert.match(bodyOf('.runs-members .runs-row-title'), /font-weight:400/);
+  assert.match(bodyOf('.runs-members .runs-row-sub'), /text-overflow:ellipsis/);
+  assert.match(bodyOf('.runs-members .runs-row-sub'), /flex:0 1000 auto/, 'the status gives way before the title');
+  assert.match(bodyOf('.runs-members .runs-pick'), /height:26px/);
+  assert.match(bodyOf('.runs-members .runs-row-tail'), /height:26px/);
+  assert.match(css, /@media \(pointer: coarse\)\{\.runs-members \.runs-pick,\.runs-members \.runs-row-tail\{height:40px;\}/);
+  assert.match(bodyOf('.runs-row-chain > .runs-row-title'), /font-weight:600/);
+  assert.match(bodyOf('.runs-row-chat-group > .runs-row-title'), /font-weight:600/);
+  // Top-level rows unchanged.
+  assert.match(bodyOf('.runs-row-title'), /font-weight:500/);
+  assert.match(bodyOf('.runs-pick'), /height:36px/);
+});
+
 test('a script-focused control shows no ring for a pointer user; fields keep their focus border', () => {
   const r = ALL.find((x) => x.sel.startsWith(':root[data-input="pointer"] :is(button,'));
   assert.ok(r, 'the pointer suppressor covers every button, link, summary, tab, switch and [tabindex]');
@@ -842,7 +845,7 @@ test('charts: the guide sets their heights and text steps; off-scale SVG text si
 
 // F-8: a typed uppercase kicker is a string literal of capitals set as visible text.
 const STATE_CODES = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPEN', 'MERGED', 'CLOSED', 'UNKNOWN', 'UNAVAILABLE', 'FAILED', 'DRAFT',
-  'BUTTON', 'SELECT', 'SPAN', 'MERGEABLE', 'CONFLICTING', 'PENDING', 'NONE'];
+  'BUTTON', 'SELECT', 'SPAN', 'MERGEABLE', 'CONFLICTING', 'PENDING', 'NONE', 'STALE'];
 const KICKER = new RegExp(`(['"\`])(?!(?:${STATE_CODES.join('|')})\\1)[A-Z][A-Z0-9 ·&/-]{2,}[A-Z0-9]\\1`);
 const KICKER_FILES = ['ui/public/app.js', 'ui/public/team-metrics-view.mjs'].map((f) => join(ROOT, f));
 test('no typed uppercase kicker in app.js or team-metrics-view.mjs (F-8, spec §1.3)', () => {
@@ -869,7 +872,8 @@ test('no glyph at the edge of a visible string; use icon(doc, …) (F-12)', () =
 // two named exceptions (slice 1 shipped them as the shipped-state colour), plus the Smart run naming Labs chip and shimmer, and the
 // Marketplace kind colours give the chat kind its violet tile and facet dot (docs/design-system.md › Marketplace exceptions). Exact selectors, no substring match.
 const VIOLET_OK = new Set(['.badge.flag-stage-experimental', '.status-dot.is-violet', '.rg-orb-merged .rg-orb-bg', '.rg-orb-merged .rg-orb-line',
-  '.sn-chip', '.sn-adorn.sn-loading .input', '.mk-t-chat', '.mk-dot-chat', '.rd-track-dot.is-merged']);
+  '.sn-chip', '.sn-adorn.sn-loading .input', '.mk-t-chat', '.mk-dot-chat', '.rd-route-dot.is-merged',
+  '.rd-fact-tx.is-merged']);
 test('violet only inside Labs selectors and the merged dot and orb (F-13)', () => {
   const bad = ALL.filter((r) => r.sel !== ':root' && /var\(--violet/.test(r.body) && !splitTop(r.sel).every((s) => VIOLET_OK.has(s.trim())))
     .map((r) => where(r, 'violet'));
@@ -901,4 +905,20 @@ test('slice 3 (D18): the run page tiles read in the stat face, 22px sans with ta
   assert.match(body, /tabular-nums/);
   const tile = ALL.filter((x) => splitTop(x.sel).map((t) => t.trim()).includes('.rd-stats > div')).map((x) => x.body).join(';');
   assert.match(tile, /padding:var\(--pad-tile\) 8px/);
+});
+
+test('card head: the state word is a 15px/600 headline that never truncates; the detail is 12px --ink-2, 2 lines', () => {
+  const body = (sel) => ALL.filter((r) => splitTop(r.sel).map((t) => t.trim()).includes(sel)).map((r) => r.body).join(';');
+  const word = body('.run-status-word');
+  assert.match(word, /font-size:var\(--fs-section\)/);
+  assert.match(word, /font-weight:600/);
+  assert.doesNotMatch(word, /text-overflow|white-space:nowrap/, 'the headline is never cut');
+  const detail = body('.run-status-detail');
+  assert.match(detail, /font-size:var\(--fs-meta\)/);
+  assert.match(detail, /color:var\(--ink-2\)/);
+  assert.match(detail, /-webkit-line-clamp:2/);
+  // The old 13px one-line status head must not come back under any name.
+  assert.ok(!ALL.some((r) => /\.run-status-(?:head|word|text)\b/.test(r.sel) && /white-space:nowrap/.test(r.body) && /text-overflow:ellipsis/.test(r.body)),
+    'no status head is a nowrap ellipsis line');
+  assert.match(body('.chat-rc-status .run-status-word'), /font-size:var\(--fs-body\)/, 'beside a card title the state is 13px');
 });

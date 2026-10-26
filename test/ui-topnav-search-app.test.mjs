@@ -25,8 +25,10 @@ const ARMS = [
 ];
 
 // `down`: path → 'reject' (the network fails) or an HTTP status (the server answers with an error).
-async function boot({ down = {} } = {}) {
-  const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
+// `flags`: data-flags on the shell's html element, as the server renders it. `threads`: the /api/ask/threads?q= answer.
+async function boot({ down = {}, flags = '', threads = [] } = {}) {
+  const raw = readFileSync(htmlPath, 'utf8');
+  const dom = trackDom(new JSDOM(flags ? raw.replace('<html lang="en"', `<html lang="en" data-flags="${flags}"`) : raw, { url: 'http://localhost:4317/' }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
   let lastWs = null;
@@ -45,7 +47,7 @@ async function boot({ down = {} } = {}) {
     if (down[path]) return Promise.resolve({ ok: false, status: down[path], json: async () => ({ error: 'down' }) });
     const arm = ARMS.find(([p]) => path === p);
     if (arm) return Promise.resolve({ ok: true, status: 200, json: async () => arm[1]() });
-    if (path.startsWith('/api/ask/threads')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ threads: [] }) });
+    if (path.startsWith('/api/ask/threads')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ threads: url.includes('q=') ? threads : [] }) });
     return Promise.resolve({ ok: true, status: 200, json: async () => ({ config: { steps: {}, customModels: [] }, models: [], efforts: [], pipelines: 0, projects: 0, workspaces: 0 }) });
   };
   for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator']) {
@@ -76,7 +78,7 @@ async function boot({ down = {} } = {}) {
     o.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   };
   const count = (path) => calls.filter((u) => u.split('?')[0] === path).length;
-  return { window, doc, input, key, type, titles, click, count, recv };
+  return { window, doc, input, key, type, titles, click, count, recv, calls };
 }
 
 async function settle(window, n = 4) {
@@ -281,3 +283,32 @@ test('the Escape that closes the search never steps an open run back to the list
   await settle(window);
   assert.equal(window.location.hash, '#runs', 'with the search shut, Escape is the page’s again');
 });
+
+const CHAT = (i) => ({ id: `ask_0000000${i}`, title: `Login chat ${i}`, updatedAt: AGO(i * 6e4), archivedAt: null, archived: false });
+
+test('#948 s2: a typed chat title lists under Chats, first on #chat and after Runs on #runs, 5 rows at most', async () => {
+  const threads = Array.from({ length: 7 }, (_, i) => CHAT(i + 1));
+  const { window, doc, input, key, type, calls } = await boot({ threads });
+  const labels = () => [...doc.querySelectorAll('#tsearch-pop .tsearch-label')].map((n) => n.textContent);
+  const chatOpts = () => doc.querySelectorAll('#tsearch-pop [role="option"].tsearch-opt-chat').length;
+  window.location.hash = '#chat';
+  await settle(window, 4);
+  assert.equal(input.placeholder, 'Search chats or ask');
+  key(doc.body, 'k', { metaKey: true });
+  type('login');
+  await new Promise((r) => setTimeout(r, 200));   // past the 150ms debounce
+  await settle(window, 4);
+  assert.ok(calls.some((u) => u.startsWith('/api/ask/threads?limit=5&q=login')));
+  assert.equal(labels()[0], 'Chats');
+  assert.equal(chatOpts(), 5);
+  key(input, 'Escape');
+  window.location.hash = '#runs';
+  await settle(window, 4);
+  assert.equal(input.placeholder, 'Search or ask');
+  key(doc.body, 'k', { metaKey: true });
+  type('login');
+  await new Promise((r) => setTimeout(r, 200));
+  await settle(window, 4);
+  assert.deepEqual(labels().slice(0, 2), ['Runs', 'Chats']);
+});
+

@@ -19,6 +19,7 @@ export const PAGE_TITLES = Object.freeze({
   stats: 'Statistics',
   'team-metrics': 'Team metrics',
   workflows: 'Workflows',
+  requirements: 'Requirements',
   marketplace: 'Marketplace',
   connectors: 'Connectors',
   models: 'Models',

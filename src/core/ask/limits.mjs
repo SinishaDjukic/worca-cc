@@ -84,6 +84,7 @@ export const ASK_LIMITS = Object.freeze({
   commandWaitDefaultSec: 60,
   commandOutputPageChars: 8000,            // read_output page
   commandMaxChars: 4000,                   // one command line (= COMMAND_MAX_CHARS)
+  commandSummaryMaxChars: 120,             // run_command's optional summary (#911): clipped, never refused
   commandSessionIdleMs: 10 * 60_000,       // an idle Ask session closes
   commandCardTailChars: 4000,              // the chat card's live tail
   titleMaxChars: 120,

@@ -102,6 +102,9 @@ jobs:
               - 'test/workspace-scan-finalize-map.test.mjs'
               - 'test/git-sync.test.mjs'
               - 'test/metrics-sync.test.mjs'
+              - 'test/memory-team-sync.test.mjs'
+              - 'test/memory-team-lifecycle.test.mjs'
+              - 'test/memory-team-seed.test.mjs'
               - 'test/metrics-prune.test.mjs'
               - 'test/policy-sync.test.mjs'
               - 'test/sync-api.test.mjs'
@@ -202,8 +205,8 @@ jobs:
             proofs: "verify:composer verify:run-monitor verify:feature-page"
           - group: theme + memory + scripts
             proofs: "verify:theme verify:memory verify:scripts"
-          - group: ask-forms + workspace-map + flags
-            proofs: "verify:ask-forms verify:workspace-map verify:flags"
+          - group: ask-forms + workspace-map + flags + requirements
+            proofs: "verify:ask-forms verify:workspace-map verify:flags verify:requirements"
     steps:
       - uses: actions/checkout@v6
 

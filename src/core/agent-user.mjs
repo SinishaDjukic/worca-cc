@@ -14,7 +14,7 @@
 // as the server, as on every local install.
 import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, chownSync, readdirSync, statSync } from 'node:fs';
-import { delimiter, isAbsolute, join } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
 const USER_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
 
@@ -43,16 +43,17 @@ function defaultIsFile(p) {
 
 /**
  * The spawn for one agent command under `id`: `sudo -n -E -u <user> -- <abs bin> …args`,
- * with the agent's HOME, USER and LOGNAME in its env. Throws when `bin` cannot be resolved,
+ * with the agent's HOME (or `home`), USER and LOGNAME in its env. Throws when `bin` cannot be resolved,
  * rather than running something else.
  */
-export function agentSpawn(bin, args, env, id, { isFile = defaultIsFile } = {}) {
+export function agentSpawn(bin, args, env, id, { isFile = defaultIsFile, home = null } = {}) {
   const abs = resolveOnPath(bin, env.PATH || process.env.PATH || '', isFile);
   if (!abs) throw new Error(`cannot run ${bin} as ${id.user}: not found on PATH`);
   return {
     file: 'sudo',
     args: ['-n', '-E', '-u', id.user, '--', abs, ...args],
-    env: { ...env, HOME: id.home, USER: id.user, LOGNAME: id.user },
+    // `home`: a folder of the agent's own the command runs with as HOME instead (a Goose chat's home).
+    env: { ...env, HOME: home || id.home, USER: id.user, LOGNAME: id.user },
   };
 }
 
@@ -75,18 +76,31 @@ export function killAgentGroupSync(pgid, id, spawnSyncImpl = spawnSync) {
   } catch { /* nothing left to kill */ }
 }
 
-/** Let the agent read a directory the server made for one spawn (staged prompt files):
- *  the shared group, group read/traverse. Best effort; a failure surfaces as the agent's
- *  own read error. */
-export function shareWithAgent(dir, id) {
+/** Let the agent read a directory the server made for one spawn (staged prompt files, an engine's per-spawn settings,
+ *  wrapper scripts): the shared group on it and everything under it, group read/traverse (a sub-folder stays
+ *  traversable, an executable stays executable), plus group traverse — never listing — on each folder above it up to
+ *  `stopAt` (worca's tmp: the per-engine base `tmp/<engine>`, a chat's own folder under `tmp/ask`), which the server
+ *  creates for itself with no access for the group. Without `stopAt`, only its direct parent. `writable`: the agent
+ *  also writes into the folder. Best effort; a failure surfaces as the agent's own read error. */
+export function shareWithAgent(dir, id, { writable = false, stopAt = null } = {}) {
   if (!id || id.gid == null) return;
-  try {
-    chownSync(dir, -1, id.gid);
-    chmodSync(dir, 0o750);
-    for (const name of readdirSync(dir)) {
-      const p = join(dir, name);
+  const stop = stopAt ? resolve(stopAt) : null;
+  for (let p = dirname(resolve(dir)), n = 0; n < 8 && p !== dirname(p) && (stop ? p !== stop && p.startsWith(`${stop}${sep}`) : n < 1); p = dirname(p), n++) {
+    try {
       chownSync(p, -1, id.gid);
-      chmodSync(p, 0o640);
+      chmodSync(p, (statSync(p).mode & 0o7777) | 0o010);
+    } catch { /* the agent reports what it cannot read */ }
+  }
+  const share = (p, isDir) => {
+    chownSync(p, -1, id.gid);
+    chmodSync(p, isDir ? (writable ? 0o770 : 0o750) : (statSync(p).mode & 0o100 ? 0o750 : 0o640));
+  };
+  const walk = (d) => {
+    share(d, true);
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (e.isDirectory()) walk(join(d, e.name));
+      else if (e.isFile()) share(join(d, e.name), false);
     }
-  } catch { /* the agent reports what it cannot read */ }
+  };
+  try { walk(dir); } catch { /* the agent reports what it cannot read */ }
 }

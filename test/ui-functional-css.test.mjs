@@ -95,7 +95,7 @@ const ROWS = [
   // More dropped tests that asserted a [hidden] rule:
   ['.rd-night-sec', 'ui-night-mode: the answers sit under the run card'],
   ['.chat-panel', 'worca Chat: the run panel slot keeps its hidden twin'],
-  ...['.hd-resume', '.hd-pause', '.hd-stop', '.hd-resume-split', '.rd-page-branch', '.rd-pr-slot']
+  ...['.hd-resume', '.hd-pause', '.hd-stop', '.hd-resume-split', '.rd-route', '.rd-pr-slot']
     .map((sel) => [sel, 'ui-history-detail-tabs: the saved run bar shares the run page bar\'s rules']),
   ['.hd-sec', 'ui-projects-view: the projects shell is a twin of the History track'], ['.pd-sec', 'ui-projects-view: the projects shell is a twin of the History track'],
   ['.rd-questions', 'ui-running-detail: the question panel rises in'],

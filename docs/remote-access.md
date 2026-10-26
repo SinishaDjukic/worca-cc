@@ -367,6 +367,15 @@ against mistakes and well-behaved tools leaving the list, not as containment of 
 For that, run worca in Docker with the [egress overlay](docker.md#egress-allowlist): its internal
 network has no route out, so nothing but the proxy reaches the internet.
 
+### With a corporate proxy
+
+With the corporate proxy on (`networkProxy.enabled`), the policy still decides first, and the hosts it allows are
+forwarded to the corporate proxy instead of going direct (the boot line says `then forwarded to the
+corporate proxy host:port`). The saved login (`worca proxy login`) lives in `proxy-login.json` in
+the `WORCA_HOME` volume, so it survives an image upgrade. Run `worca proxy test` from the
+container shell to check that `github.com` and `api.anthropic.com` get through. See
+[Network proxy](network-proxy.md).
+
 ## Limits
 
 - **Every allowed person is an administrator.** Worca has one user: settings, credentials (the

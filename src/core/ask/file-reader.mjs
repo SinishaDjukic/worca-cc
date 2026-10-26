@@ -98,6 +98,13 @@ export function createAskFileReader({ roots = [], home = homedir(), rules = ASK_
     return { path: p, offset: start, lines: slice.length, totalLines: lines.length, nextOffset: end < lines.length ? end + 1 : null, text: redact(body),
       ...(cut ? { truncated: true, note: `the file is ${st.size} bytes; only its first ${limits.readMaxBytes} bytes were read (its last line may be cut)` } : {}) };
   }
+  // An image or PDF inside the roots, for a chat that views it (tools.mjs read_file): its size, and a reader for the body.
+  function readMedia({ path, maxBytes } = {}) {
+    const p = check(path, 'read_file');
+    const st = statSync(p);
+    if (!st.isFile()) throw new AskFileError(`read_file: ${path} is not a regular file`);
+    return { path: p, bytes: st.size, read: () => (st.size <= maxBytes ? readHead(p, st.size) : null) };
+  }
   function regexOf(pattern, tool) {
     const pat = typeof pattern === 'string' ? pattern : '';
     if (!pat) throw new AskFileError(`${tool}: pattern is required`);
@@ -171,5 +178,5 @@ export function createAskFileReader({ roots = [], home = homedir(), rules = ASK_
     }
     return { paths, truncated: truncated || seen.capped };
   }
-  return { readFile, grep, grepRaw, glob };
+  return { readFile, readMedia, grep, grepRaw, glob };
 }

@@ -18,6 +18,8 @@
 import { domainError } from '../web-allowlist.mjs';
 import { FIELD_LABELS } from '../../shared/away-mode/labels.mjs';
 import { normaliseDimension, MAX_DIMENSIONS } from '../../shared/tag-dimensions.mjs';
+import { MODEL_ROLES, ROLE_HARNESSES } from '../../shared/model-roles.mjs';
+import { ENGINES } from '../../shared/engine-switch.mjs';
 
 export const POLICY_SCHEMA = 1;
 export const KINDS = Object.freeze(['default', 'soft', 'hard']);
@@ -26,9 +28,13 @@ export const TIERS = Object.freeze(['permissive', 'normal', 'secure']);
 export const WINDOWS = Object.freeze(['weekly', 'monthly']);
 /** Text fields on the document (title, notes, updatedBy, override reasons) are clipped here. */
 export const TEXT_MAX = 200;
+// settings.mjs UI_LEVELS (not importable here: the registry stays a leaf); test/policy-registry.test.mjs pins equality.
+const SETUP_UI_LEVELS = Object.freeze(['simple', 'advanced', 'expert']);
+// `EFFORTS` (below) is the Claude scale; Codex roles use this one.
+const ROLE_CODEX_EFFORTS = Object.freeze(['minimal', 'low', 'medium', 'high']);
 
 const GROUPS = Object.freeze({
-  cost: 'Cost', ask: 'Chat', guardrails: 'Guardrails', models: 'Models', plugins: 'Plugins', runs: 'Runs',
+  cost: 'Cost', ask: 'Chat', guardrails: 'Guardrails', models: 'Models', setup: 'Setup', plugins: 'Plugins', runs: 'Runs',
   night: 'Away mode',
 });
 
@@ -55,6 +61,16 @@ export const FIELDS = Object.freeze([
   { key: 'models.allowed', group: 'models', label: 'Allowed models', help: 'A chosen step model outside this list warns and is recorded. Others still run.', type: 'string[]', kinds: ['soft'] },
   { key: 'models.steps', group: 'models', label: 'Step defaults', help: 'Model and effort per role, applied to roles the project has not configured.', type: 'steps', kinds: ['default'] },
   { key: 'models.hideBuiltins', group: 'models', label: 'Hide built-in models', help: 'Cosmetic; ids still resolve.', type: 'bool', kinds: ['default'], local: 'hideBuiltinModels' },
+  // Team setup (plans/setup-assistant-design.md D12–D15). models.roles applies to the project's runs (effective layer);
+  // the setup.* fields are user-level: the setup assistant offers them on Review, and nothing changes before Apply.
+  // A team setup never carries network settings, model sources, keys or tokens (D12, src/core/setup/team-file.mjs).
+  { key: 'models.roles', group: 'setup', label: 'Model roles', help: 'Deep thinking, Everyday coding and Quick jobs per harness, named by upstream model (claude-opus-5-5). Each machine maps it to one of its own sources. Default: fills the roles a developer has not set. Soft: applies on this project\'s runs over their own roles.', type: 'roles', kinds: ['default', 'soft'], local: 'modelRoles' },
+  { key: 'setup.uiLevel', group: 'setup', label: 'Interface level', help: 'Offered in the setup assistant.', type: 'enum', values: SETUP_UI_LEVELS, kinds: ['default'], local: 'uiLevel' },
+  { key: 'setup.autoPrDescription', group: 'setup', label: 'AI-written PR descriptions', help: 'Offered in the setup assistant.', type: 'bool', kinds: ['default'], local: 'autoGeneratePrDescription' },
+  { key: 'setup.smartNaming', group: 'setup', label: 'Smart run names', help: 'Title and branch suggestions, the branch pattern and its types.', type: 'record', shape: { suggestTitle: 'bool', suggestBranch: 'bool', pattern: 'string', types: 'string[]', trigger: ['debounce', 'manual'], addRunId: 'bool' }, kinds: ['default'], local: 'smartNaming' },
+  { key: 'setup.runEngine', group: 'setup', label: 'Coding agent', help: 'The harness new runs start on.', type: 'enum', values: Object.freeze(Object.keys(ENGINES)), kinds: ['default'], local: 'runEngine' },
+  { key: 'setup.sync', group: 'setup', label: 'Sync before run', help: 'The instance defaults each project inherits.', type: 'record', shape: { beforeRun: 'bool', remote: 'string', refreshMinutes: 'int', onDiverged: ['ask', 'origin', 'fail'] }, kinds: ['default'], local: 'sync' },
+  { key: 'setup.networkWait', group: 'setup', label: 'Wait for the network', help: 'A step that loses the network waits and retries.', type: 'record', shape: { enabled: 'bool', maxWaitMin: 'int' }, kinds: ['default'], local: 'networkWait' },
   { key: 'plugins.marketplaces', group: 'plugins', label: 'Marketplaces', help: 'Added to every teammate once; a local removal is remembered.', type: 'string[]', kinds: ['default'] },
   { key: 'plugins.required', group: 'plugins', label: 'Required plugins', help: 'Missing or below the floor: the setup checklist offers to install, with consent. Never automatic.', type: 'plugins', kinds: ['soft'] },
   // MCP registry spec §11.1. `workspaceRuns: false`: refused in the workspaceRuns block (a workspace run takes only the workspace policy's Team set).
@@ -95,12 +111,12 @@ export function groupLabel(id) { return GROUPS[id] || id; }
 export const GROUP_ORDER = Object.freeze(Object.keys(GROUPS));
 
 const SEMVER_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
-const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]{0,199}$/;
+const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/\-[\]]{0,199}$/;   // `/`: a Goose or OpenCode id is provider/model
 const PLUGIN_NAME_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 // Zero-import leaves only: model-env for the bridged-model `upstream` validator every
 // catalog layer shares (model-bridge-design.md §6.3), night/config for the night.* rules.
-import { assertModelUpstream, upstreamEnvConflict, codexUpstreamProblem, MODEL_ENGINES, effortsForEngine } from '../model-env.mjs';
+import { assertModelUpstream, upstreamEnvConflict, codexUpstreamProblem, MODEL_ENGINES, OWN_SIGNIN_ENGINES, aModelOf, modelIdProblem, effortsForEngine } from '../model-env.mjs';
 import { fieldError as nightFieldError, NIGHT_EFFORTS } from '../night/config.mjs';
 // The MCP definition rules (MCP registry spec §4.1, §4.3): pure, shared with manual definitions.
 import { validateMcpDefinition, screenNonSecretValue, SERVER_NAME_RE } from '../mcp/definitions.mjs';
@@ -301,6 +317,38 @@ function baseError(meta, value) {
     case 'tagDimensions':
       if (!Array.isArray(value)) return 'must be a list of { key, label, values?, required? }';
       return normalizeTagDimensions(value).dropped[0] ?? null;
+    case 'roles': {
+      if (!isPlainObject(value)) return 'must be an object of harness → { deep, everyday, quick }';
+      for (const [hn, roles] of Object.entries(value)) {
+        if (!ROLE_HARNESSES.includes(hn)) return `harness "${hn}" has no model roles (accepts ${ROLE_HARNESSES.join(' | ')})`;
+        if (!isPlainObject(roles)) return `${hn} must be an object of role → { model, effort }`;
+        for (const [r, sel] of Object.entries(roles)) {
+          if (!MODEL_ROLES.includes(r)) return `${hn}: role "${r}" is not one of ${MODEL_ROLES.join(' | ')}`;
+          if (!isPlainObject(sel) || !(typeof sel.model === 'string' && MODEL_ID_RE.test(sel.model))) return `${hn}.${r}: model must be an upstream model id`;
+          for (const k of Object.keys(sel)) if (k !== 'model' && k !== 'effort') return `${hn}.${r}: unknown field "${k}"`;
+          // Codex takes its own effort scale (team-policy-view.mjs CODEX_EFFORTS: minimal | low | medium | high).
+          const allowed = hn === 'codex' ? ROLE_CODEX_EFFORTS : EFFORTS;
+          if (sel.effort != null && !allowed.includes(sel.effort)) return `${hn}.${r}: effort must be one of ${allowed.join(' | ')}`;
+        }
+      }
+      return null;
+    }
+    case 'record': {
+      if (!isPlainObject(value)) return 'must be an object';
+      const words = { bool: 'true or false', int: 'a whole number', string: 'a non-empty string', 'string[]': 'a list of non-empty strings' };
+      const okText = (x) => typeof x === 'string' && x.trim() && x.length <= TEXT_MAX;
+      for (const [k, v] of Object.entries(value)) {
+        const want = Object.hasOwn(meta.shape, k) ? meta.shape[k] : null;
+        if (!want) return `unknown field "${k}" (accepts ${Object.keys(meta.shape).join(' | ')})`;
+        const good = Array.isArray(want) ? want.includes(v)
+          : want === 'bool' ? typeof v === 'boolean'
+            : want === 'int' ? Number.isInteger(v) && v >= 0
+              : want === 'string' ? okText(v)
+                : Array.isArray(v) && v.every(okText);
+        if (!good) return `${k} must be ${Array.isArray(want) ? `one of ${want.join(' | ')}` : words[want]}`;
+      }
+      return null;
+    }
     default: return 'unknown field type';
   }
 }
@@ -394,11 +442,13 @@ function normalizeModels(raw, warnings) {
     const allowed = engine === 'claude' ? EFFORTS : effortsForEngine(engine);
     const efforts = Array.isArray(m.efforts) ? m.efforts.filter((e) => allowed.includes(e)) : [];
     entry.efforts = efforts.length ? efforts : (engine === 'claude' ? ['medium', 'high'] : [...allowed]);
-    if (engine === 'cursor') {
-      // A cursor model runs through cursor-agent's own sign-in: no routing env, no upstream.
-      if (m.env != null) { warnings.push(`catalogs.models: ${m.id}: a cursor model takes no env — entry dropped`); continue; }
-      if (m.upstream != null) { warnings.push(`catalogs.models: ${m.id}: a cursor model takes no upstream — entry dropped`); continue; }
-      entry.engine = 'cursor';
+    if (OWN_SIGNIN_ENGINES.includes(engine)) {
+      // A model of an own-sign-in engine (Cursor, Gemini CLI, Goose, OpenCode, Qwen Code) runs through the engine's own sign-in: no routing env, no upstream.
+      if (m.env != null) { warnings.push(`catalogs.models: ${m.id}: ${aModelOf(engine)} takes no env — entry dropped`); continue; }
+      if (m.upstream != null) { warnings.push(`catalogs.models: ${m.id}: ${aModelOf(engine)} takes no upstream — entry dropped`); continue; }
+      const idWhy = modelIdProblem(engine, m.id);
+      if (idWhy) { warnings.push(`catalogs.models: ${m.id}: ${idWhy} — entry dropped`); continue; }
+      entry.engine = engine;
     }
     if (engine === 'copilot') {
       // A copilot model runs through the Copilot CLI's own sign-in: no routing env, no upstream.

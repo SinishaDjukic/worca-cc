@@ -42,7 +42,7 @@ import { createFormAsker } from './forms.mjs';
 import { kindLabel } from '../shared/away-mode/labels.mjs';
 import { pauseExitCode, describePauseReason, promptOptions, REASON } from '../core/failure-policy.mjs';
 import { sigtermGraceMs } from '../core/drain.mjs';
-import { effectiveDebugSpawn } from '../core/settings.mjs';
+import { effectiveDebugSpawn, migrateCorporateProxyFlag } from '../core/settings.mjs';
 import { SCHEDULE_VALUE_FLAGS, wantsSchedule, readScheduleFlags, createFromFlags, waitAndRun, cmdSchedule, resolveAfterId } from './schedule.mjs';
 import { applyTagRules } from '../core/tag-dimensions.mjs';
 import { inheritedTagsAtCreation } from '../core/scheduler.mjs';
@@ -53,14 +53,19 @@ import { cmdSwitchModel } from './switch-model.mjs';
 import { cmdModels } from './models.mjs';
 import { cmdContainer } from './container.mjs';
 import { cmdExtension } from './extension.mjs';
+import { cmdProxy } from './proxy.mjs';
+import { cmdSetup } from './setup.mjs';
 import { cmdRun } from './run-preset.mjs';
 import {
   DEFAULT_UI_HOST, DEFAULT_UI_PORT, probeUi, stopUi, readUiInstance, uiUrl, waitForUiState,
 } from '../core/ui-instance.mjs';
-import { useEnvProxy, proxyNotice } from '../core/env-proxy.mjs';
-import { startEgressPolicy, egressNotice } from '../core/egress-policy.mjs';
+import { useEnvProxy, reinstallEnvProxy, proxyNotice } from '../core/env-proxy.mjs';
+import { startLiveEgress, egressNotice } from '../core/egress-policy.mjs';
 import { gitState, GIT_MISSING } from '../core/git-available.mjs';
 import { workModeOfRow, workModeForStart, effectiveWorkMode } from '../core/project-kind.mjs';
+// Static on purpose (issue #841): after `npm i -g` the files on disk are the new version's.
+import { superviseUi } from '../core/ui-supervisor.mjs';
+import { SUPERVISOR_ENV, DRY_RUN_ENV, runNpmInstall, readUpdateRecord, writeUpdateRecord } from '../core/ui-update.mjs';
 
 // ── node:sqlite runtime guard + warning filter ──────────────────────────────────
 // Drop ONLY the one-time ExperimentalWarning emitted by node:sqlite (the module is
@@ -331,6 +336,7 @@ Subcommands:
   metrics push [--project <path>]   Push pending team-metrics run records (headless flush)
   metrics pr-workflow [--project <path>]   Add the GitHub Action that records PR merges for the Timeline
   policy <cmd> [...]          Team policy from the worca-policy branch: show|pull|init|setup. See: worca policy help
+  memory team <cmd> [...]    Team memory on the worca-memory branch: status|on|off|sync|rm. See: worca memory help
   schedule <cmd> [...]        Manage scheduled runs: list|show|run-now|move|cancel|skip|pause|resume|log.
                               See: worca schedule help
   models <cmd> [...]          Model catalog + providers: list|providers|login|logout|import|test|set.
@@ -340,6 +346,10 @@ Subcommands:
   extension [--browser <b>] [--open]
                               The browser extension packaged with this Worca: folder, version, install steps.
                               See: worca extension help (docs/browser-extension.md)
+  proxy <cmd> [...]           Corporate proxy login: status|login|logout|test.
+                              See: worca proxy help (docs/network-proxy.md)
+  setup --from FILE [--yes]   Apply a team setup file; asks only for what it leaves out.
+                              See: docs/setup-assistant.md
   broker [serve|secrets|revoke --person <email>]
                               The credential broker: holds model keys outside worca's container
                               (docs/credential-broker.md)
@@ -355,7 +365,7 @@ Options:
   --extras <paths>         Extra files copied into the pipeline's extras/ folder
                            (comma-separated; repeatable)
   --model <m>              Claude model id
-  --engine <name>          Agent harness for the pipeline's agent nodes: claude (default) | codex (beta) | copilot (beta) | cursor (beta)
+  --engine <name>          Agent harness for the pipeline's agent nodes: claude (default) | codex (beta) | copilot (beta) | cursor (beta) | gemini (beta) | goose (beta) | opencode (beta) | qwen (beta)
   --allow-unguarded-engine Run on an engine that cannot fully enforce the guardrail set's permission rules
   --permission-mode <m>    Claude permission mode: default | acceptEdits | plan |
                            bypassPermissions (default acceptEdits)
@@ -685,7 +695,7 @@ async function attachAndDrive(orch, flags, start) {
         if (ev.kind !== 'task') e.costUsd = mine.reduce((a, s) => a + (s.costUsd || 0), 0);
       }
     }
-    const line = formatExecLine(e, orch.state && orch.state.stepper, { color: c });
+    const line = formatExecLine(e, orch.state && orch.state.stepper, { color: c, engine: orch.claude?.engine || null });
     if (line) out(line);
   });
 
@@ -967,7 +977,7 @@ function openBrowser(url) {
   } catch { /* no browser opener on this box — the URL is printed anyway */ }
 }
 
-/** Spawn ui/server.mjs on `port` and inherit its stdio. Resolves with its exit code. */
+/** Spawn ui/server.mjs on `port` and inherit its stdio; on an update exit, install and start it again (superviseUi). Resolves with its exit code. */
 async function uiStart(a) {
   const { port, host } = resolveUiPort(a);
   const url = uiUrl({ host, port });
@@ -996,34 +1006,45 @@ async function uiStart(a) {
   const server = join(REPO_ROOT, 'ui', 'server.mjs');
   out(c('cyan', `Starting Worca UI on ${url}`));
   if (effectiveDebugSpawn().enabled) out(c('gray', `  node ${server}`));
-  const env = { ...process.env, PORT: String(port) };
+  const env = { ...process.env, PORT: String(port), [SUPERVISOR_ENV]: String(process.pid) };   // the server checks it against its ppid
   if (a.mock) env.WORCA_MOCK = '1';
-  const child = spawn(process.execPath, [server], { stdio: 'inherit', env });
-  if (a.open) {
-    waitForUiState({ host, port, states: ['worca'], timeoutMs: 20000 })
-      .then((r) => { if (r) openBrowser(url); })
-      .catch(() => {});
-  }
+  let child = null;
+  const ac = new AbortController();
   // Hand a stop to the server and wait for it (B2). In a container this process is what tini
   // signals (tini -> entrypoint -> `worca ui`), and without a handler Node exited at once on
   // SIGTERM: the server never saw the stop, so it neither paused its runs nor shut down cleanly.
   // Forwarding is safe twice over: a terminal's Ctrl+C already reaches the server too, and the
-  // server's shutdown runs once.
-  const forward = (sig) => () => { try { child.kill(sig); } catch { /* already gone */ } };
+  // server's shutdown runs once. During an install there is no child: the signal aborts npm
+  // instead, and the loop ends.
+  const forward = (sig) => () => { ac.abort(); if (child) { try { child.kill(sig); } catch { /* already gone */ } } };
   const handlers = { SIGTERM: forward('SIGTERM'), SIGINT: forward('SIGINT'), SIGHUP: forward('SIGHUP') };
   for (const [sig, fn] of Object.entries(handlers)) process.on(sig, fn);
   const unhook = () => { for (const [sig, fn] of Object.entries(handlers)) process.off(sig, fn); };
-  return new Promise((res) => {
-    child.on('exit', (code, signal) => {
-      unhook();
-      res(code ?? (signal === 'SIGTERM' ? 143 : signal === 'SIGINT' ? 130 : 0));
-    });
-    child.on('error', (err) => {
-      unhook();
-      process.stderr.write(`Failed to launch UI: ${err.message}\n`);
-      res(1);
-    });
+  let opened = false;
+  const startServer = () => new Promise((res) => {
+    let settled = false;
+    const done = (code) => { if (!settled) { settled = true; child = null; res(code); } };
+    child = spawn(process.execPath, [server], { stdio: 'inherit', env });
+    if (a.open && !opened) {
+      opened = true;
+      waitForUiState({ host, port, states: ['worca'], timeoutMs: 20000 })
+        .then((r) => { if (r) openBrowser(url); })
+        .catch(() => {});
+    }
+    child.on('exit', (code, signal) => done(code ?? (signal === 'SIGTERM' ? 143 : signal === 'SIGINT' ? 130 : 0)));
+    child.on('error', (err) => { process.stderr.write(`Failed to launch UI: ${err.message}\n`); done(1); });
   });
+  try {
+    return await superviseUi({
+      startServer,
+      install: (v, o) => runNpmInstall(v, o),
+      readRecord: () => readUpdateRecord(),
+      writeRecord: (r) => writeUpdateRecord(r),
+      log: (s) => out(s),
+      signal: ac.signal,
+      dryRun: /^(1|true|yes|on)$/i.test(String(process.env[DRY_RUN_ENV] || '')),
+    });
+  } finally { unhook(); }
 }
 
 /** Stop the UI on the resolved port. Idempotent: "not running" exits 0. */
@@ -1144,6 +1165,17 @@ function parseAddArgs(argv) {
   return { name: positionals[0], path: pathArg, clone: clone.url ? clone : null };
 }
 
+/** After `worca add`: one line when origin already has a worca-memory branch (team memory E10). It only says so —
+ *  the switch stays off — and never fails the add (detectTeamMemory never throws; bounded at 10 s). */
+async function teamMemoryHint(dir) {
+  try {
+    const { detectTeamMemory } = await import('../core/memory-team.mjs');
+    if (await detectTeamMemory(dir) !== true) return;
+    const here = resolve(process.cwd()) === resolve(dir);
+    out(`team memory is available for this repo — \`worca memory team on${here ? '' : ` --project ${JSON.stringify(dir)}`}\``);
+  } catch { /* a hint never blocks `worca add` */ }
+}
+
 /** `worca add --clone`: the same path as the UI's Clone from URL (src/core/clone-project.mjs). */
 async function cmdAddClone(clone, positionalName) {
   const { cloneProject } = await import('../core/clone-project.mjs');
@@ -1157,6 +1189,7 @@ async function cmdAddClone(clone, positionalName) {
       const m = await import('../core/metrics/sync.mjs');
       await m.discoverProject(project.path, { force: true });
     } catch { /* metrics never block `worca add` */ }
+    await teamMemoryHint(project.path);
     return 0;
   } catch (err) {
     process.stderr.write(`worca: ${err?.message || err}${err?.code ? ` (${err.code})` : ''}\n`);
@@ -1180,6 +1213,7 @@ async function cmdAdd(argv) {
       const m = await import('../core/metrics/sync.mjs');
       await m.discoverProject(target, { force: true });
     } catch { /* metrics never block `worca add` */ }
+    await teamMemoryHint(target);
     return 0;
   } catch (err) {
     process.stderr.write(`worca: ${err?.message || err}\n`);
@@ -1568,7 +1602,7 @@ async function cmdResume(argv) {
     resume: saved,
   });
   const code = await attachAndDrive(orch, { auto }, () => orch.resume());
-  await drainMetricsFlushes();
+  await drainTeamPushes();
   return code;
 }
 
@@ -3292,18 +3326,147 @@ async function cmdPolicy(argv) {
   }
 }
 
-/** Await in-flight metrics pushes before the CLI exits (decision 24). Never blocks past its
- *  own budget and never changes the run's exit code — metrics must not gate the CLI. */
-async function drainMetricsFlushes() {
+/** Await in-flight team-branch pushes (metrics records, team-memory notes) before the CLI exits (decision 24). Never
+ *  blocks past its own budget and never changes the exit code — team data must not gate the CLI. */
+async function drainTeamPushes() {
+  // Both at once: the exit waits 30 s at most, not one budget per branch kind.
+  await Promise.all([
+    import('../core/metrics/sync.mjs').then((m) => m.drainFlushes({ timeoutMs: 30_000 })).catch(() => { /* never blocks the exit */ }),
+    import('../core/memory-team.mjs').then((m) => m.drainTeamMemoryFlushes({ timeoutMs: 30_000 })).catch(() => { /* never blocks the exit */ }),
+  ]);
+}
+
+const MEMORY_HELP = `worca memory — agent memory
+
+  worca memory team status [--project <path>] [--json]  The team layer: on/off, the branch, every note's state
+  worca memory team on [--team-only] [--project <path>]
+                                                        Share this project's NEW and CHANGED notes on its worca-memory branch;
+                                                        runs and chats load local and team notes, or with --team-only only
+                                                        the team's (your notes that are not shared stay here, unloaded).
+                                                        Run again with or without --team-only to change what loads
+  worca memory team off [--project <path>]              Stop: nothing is fetched, loaded or pushed; this machine's queue is dropped
+  worca memory team sync [--project <path>] [--json]    Push the queue now and fetch the team's notes
+  worca memory team rm <name> [--project <path>]        Remove a note from the team (git history keeps it)
+  worca memory team resolve <name> [--keep-mine | --take-team] [--project <path>] [--json]
+                                                        A note that differs from the team's (held, or a local note
+                                                        with a team note's name): with no choice, show both versions;
+                                                        --keep-mine shares yours over the team's, --take-team replaces
+                                                        yours here with the team's (your text stays in History)
+
+Team memory is off by default and set per project (the project setting memory.team). Switching it on uploads none
+of the notes that already exist; notes written or changed afterwards are shared, each after a secret check.
+Share existing notes from the project's Memory tab (Team view) in the web UI.
+Exit codes: 0 ok · 1 failure · 2 usage.
+`;
+
+async function cmdMemory(argv) {
+  const [group, verb, ...rest] = argv;
+  if (!group || group === 'help' || (group === 'team' && (!verb || verb === 'help'))) { process.stdout.write(MEMORY_HELP); return 0; }
+  if (group !== 'team' || !['status', 'on', 'off', 'sync', 'rm', 'resolve'].includes(verb)) { process.stderr.write(MEMORY_HELP); return 2; }
+  const team = await import('../core/memory-team.mjs');
+  const { writeProjectSettings } = await import('../core/settings-cascade.mjs');
+  const a = pluginArgs(rest, ['--project'], ['--json', '--keep-mine', '--take-team', '--team-only']);
+  const projectDir = resolve(a.project || process.cwd());
+  const key = projectKey(projectDir);
+  const project = (await listProjects()).find((p) => p.key === key);
+  if (!project) { process.stderr.write(`worca memory team ${verb}: ${projectDir} is not a registered project — run \`worca add\` first\n`); return 1; }
   try {
-    const { drainFlushes } = await import('../core/metrics/sync.mjs');
-    await drainFlushes({ timeoutMs: 30_000 });
-  } catch { /* metrics never block the CLI exit */ }
+    if (verb === 'status') {
+      const st = await team.teamMemoryStatus(key);
+      if (a.json) { out(JSON.stringify(st, null, 2)); return 0; }
+      out(c('bold', `team memory for ${project.name}: ${st.enabled ? `on — runs and chats load ${st.load === 'team' ? 'team notes only' : 'local and team notes'}` : 'off'}`));
+      if (!st.enabled) return 0;
+      out(`  branch ${st.branch}: ${st.remote.exists === false ? 'not on origin yet' : (st.remote.headSha || '').slice(0, 7) || 'not fetched yet'}${st.remote.lastError ? c('yellow', ` · last push failed: ${st.remote.lastError.split('\n')[0]}`) : ''}`);
+      out(`  ${Object.entries(st.counts).map(([k, n]) => `${n} ${k}`).join(' · ') || 'no notes'}`);
+      for (const n of st.notes.filter((x) => x.state === 'blocked')) out(c('yellow', `  ! ${n.name}: ${n.reason}`));
+      for (const n of st.notes.filter((x) => x.state === 'held')) out(c('yellow', `  ~ ${n.name}: differs from the team's version — held until you keep yours or take theirs (\`worca memory team resolve ${n.name}\`)`));
+      return 0;
+    }
+    if (verb === 'on') {
+      const value = a['team-only'] ? 'only' : true;
+      const loads = a['team-only'] ? 'team notes only' : 'local and team notes';
+      // Already on: only what loads changes (team-memory-load-choice.md) — no switch-on, no fetch.
+      if (team.isTeamMemoryOn(key)) {
+        writeProjectSettings({ projectDir: project.path }, { 'memory.team': value });
+        out(`team memory is on for ${project.name} — runs and chats load ${loads}`);
+        return 0;
+      }
+      await team.switchTeamMemoryOn(key, project.path, () => writeProjectSettings({ projectDir: project.path }, { 'memory.team': value }));
+      // On from here: a first fetch that fails is retried by every run start, chat turn and the server's tick.
+      const r = await team.teamMemorySettingChanged(key, project.path).catch((err) => ({ error: err }));
+      if (r?.error) out(c('yellow', `team memory is on for ${project.name} — the first fetch failed (${r.error.message || r.error}); it is retried on the next run`));
+      else out(`team memory is on for ${project.name}${r?.snapshot && !r.snapshot.missing ? ` — ${Object.keys(r.snapshot.notes).length} team note(s)` : ' — the first note shared starts the worca-memory branch'}`);
+      if ((await team.readSeedOffer(key)) === 'pending') out(c('gray', '  notes that exist stay on this machine — pick the ones to share in the web UI: the project\'s Memory tab › Team'));
+      return 0;
+    }
+    if (verb === 'off') {
+      writeProjectSettings({ projectDir: project.path }, { 'memory.team': null });
+      await team.teamMemorySettingChanged(key, project.path);
+      out(`team memory is off for ${project.name}: nothing is fetched, loaded or pushed`);
+      return 0;
+    }
+    if (!team.isTeamMemoryOn(key)) { process.stderr.write(`worca memory team ${verb}: team memory is off for ${project.name} — \`worca memory team on\` first\n`); return 1; }
+    if (verb === 'resolve') return await resolveTeamNote(team, { key, project, name: a._[0], a });
+    if (verb === 'rm') {
+      const name = a._[0];
+      if (!name) { process.stderr.write(MEMORY_HELP); return 2; }
+      await team.deleteTeamNote(key, name, { flush: false });   // flushed just below, in this process
+    }
+    const flush = await team.flushTeamMemory(key, { projectDir: project.path });
+    const refresh = await team.refreshTeamLayer(key, { projectDir: project.path, maxAgeMs: 0 });
+    // The fetch half fails on its own (offline, nothing queued): say so — `sync` did not do what it says.
+    const fetchError = refresh?.error || null;
+    if (a.json) out(JSON.stringify({ flush, followed: refresh?.followed || [], removed: refresh?.removed || [], untracked: refresh?.untracked || [], ...(fetchError ? { fetchError } : {}) }, null, 2));
+    else {
+      out(flush.ok ? `pushed ${flush.pushed} change(s)` : c('red', `push failed (${flush.code}): ${String(flush.stderr).split('\n')[0]}${flush.hint ? `\nhint: ${flush.hint}` : ''}`));
+      if (fetchError) out(c('yellow', `could not fetch the team's notes (${fetchError}) — the last fetched ones stay in use`));
+    }
+    return flush.ok && !(verb === 'sync' && fetchError) ? 0 : 1;
+  } catch (err) {
+    // A refused switch names its code (NO_GIT, FOLDER_PROJECT, NO_ORIGIN) after the reason.
+    process.stderr.write(`worca memory team ${verb}: ${err?.message || err}${err?.status === 400 && typeof err.code === 'string' ? ` (${err.code})` : ''}${err?.stderr ? `\n${String(err.stderr).trim()}` : ''}${err?.hint ? `\nhint: ${err.hint}` : ''}\n`);
+    return err?.code === 'ENAME' ? 2 : 1;   // `rm 'my note'`: a usage error
+  }
+}
+
+/** `worca memory team resolve <name>`: the Team view's Compare for one note. With no choice it shows both versions;
+ *  with one it applies it against the versions it just fetched (a teammate's push meanwhile is STALE, nothing written). */
+async function resolveTeamNote(team, { key, project, name, a }) {
+  if (!name || (a['keep-mine'] && a['take-team'])) { process.stderr.write(MEMORY_HELP); return 2; }
+  const action = a['keep-mine'] ? 'share' : a['take-team'] ? 'take-team' : null;
+  const preview = await team.previewTeamSeed(key, { projectDir: project.path, name });
+  const note = preview.notes.find((n) => n.name === name) || null;
+  const refuse = (msg) => { process.stderr.write(`worca memory team resolve: ${msg}\n`); return 1; };
+  if (!note) return refuse(`${name} is not a local note of ${project.name} that differs from the team's — \`worca memory team status\` lists the notes`);
+  if (!note.team) return refuse(`the team holds no note named ${name}: there is nothing to resolve`);
+  if (note.state === 'blocked') return refuse(`${name} is blocked (${note.blocked?.reason || 'the secret check'}) — edit it first`);
+  if (!action) {
+    if (a.json) { out(JSON.stringify({ name, state: note.state, fetchError: preview.fetchError, mine: { hash: note.hash, text: note.text }, team: note.team }, null, 2)); return 0; }
+    if (preview.fetchError) out(c('yellow', `could not fetch the team's notes (${preview.fetchError}) — showing the last fetched version`));
+    if (note.team.same) { out(`${name}: your version and the team's are the same — nothing to resolve`); return 0; }
+    out(c('bold', `── yours (${name}${note.state === 'held' ? ', held' : ''})`));
+    out(String(note.text || '').trimEnd());
+    out(c('bold', `── the team's (${note.team.name}${note.team.author ? `, ${note.team.author}` : ''}${note.team.updated ? `, ${note.team.updated}` : ''})`));
+    out(String(note.team.text || '').trimEnd());
+    out(c('gray', `\nkeep yours: worca memory team resolve ${name} --keep-mine · take theirs: worca memory team resolve ${name} --take-team`));
+    return 0;
+  }
+  if (action === 'share' && note.blocked) return refuse(`your ${name} fails the secret check (${note.blocked.reason}) — edit it first`);
+  if (action === 'take-team' && note.team.tooBig) return refuse(`the team's ${note.team.name} is over this machine's per-file cap`);
+  const r = await team.resolveTeamClash(key, { name, action, hash: note.hash, teamHash: note.team.hash }, { projectDir: project.path });
+  if (a.json) { out(JSON.stringify(r, null, 2)); return r.flush && r.flush.ok === false ? 1 : 0; }
+  if (r.tookTeam.length) out(`${name}: took the team's version — your text stays in the project's Memory History`);
+  for (const b of r.blocked) out(c('yellow', `${b.name}: not shared — ${b.reason}`));
+  if (r.shared.length) {
+    if (r.flush?.ok === false) { out(c('red', `${name}: queued, but the push failed (${r.flush.code}): ${String(r.flush.stderr).split('\n')[0]} — it is retried later`)); return 1; }
+    out(`${name}: shared — your version replaces the team's`);
+  }
+  return r.blocked.length ? 1 : 0;
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'switch-model']);
+const SUBCOMMANDS = new Set(['add', 'list', 'remove', 'resume', 'run', 'runs', 'logs', 'stop', 'pause', 'doctor', 'plugin', 'marketplace', 'config', 'flags', 'ui', 'workflow', 'metrics', 'script', 'policy', 'schedule', 'models', 'container', 'broker', 'extension', 'proxy', 'memory', 'setup', 'switch-model']);
 
 /** Levenshtein distance, two-row. Only ever called on short argv tokens. */
 function editDistance(a, b) {
@@ -3346,14 +3509,23 @@ function nearestSubcommand(token) {
 }
 
 async function main() {
+  // D6: the old Labs flag becomes networkProxy.enabled, once, before the proxy reads it.
+  await migrateCorporateProxyFlag();
   // A hosting platform's outbound network policy (src/core/egress-policy.mjs). `worca ui` leaves
   // it to the server it starts; any other command (a pipeline started by hand in the container)
   // runs its own policy proxy, or reuses the one a parent worca put in the environment.
-  if (process.argv[2] !== 'ui') {
+  // `worca proxy` skips it too, so `proxy test` talks to the corporate proxy itself (D15), and `worca setup`
+  // reads a local file and talks to no one.
+  // The settings watcher keeps a long run live: a saved networkProxy change swaps its upstream (AC-2.6).
+  let fetchProxy = null;
+  if (process.argv[2] !== 'ui' && process.argv[2] !== 'proxy' && process.argv[2] !== 'setup') {
     try {
-      const egress = await startEgressPolicy({ unref: true, log: (l) => process.stderr.write(`worca: egress: ${l}\n`) });
-      const egressLine = egressNotice(egress);
-      if (egressLine?.level === 'warn') process.stderr.write(`worca: ${egressLine.text}\n`);
+      const egress = await startLiveEgress({ unref: true, log: (l) => process.stderr.write(`worca: egress: ${l}\n`),
+        // D8: a proxy turned on at runtime: this process's own fetch follows the new HTTPS_PROXY.
+        onEnvChange: () => { fetchProxy = reinstallEnvProxy(fetchProxy); } });
+      const egressLine = egressNotice(egress.current());
+      // Printed once per process, and only by commands that start the proxy (not `ui`, not `proxy`).
+      if (egressLine && (egressLine.level === 'warn' || egressLine.text.startsWith('Corporate proxy:'))) process.stderr.write(`worca: ${egressLine.text}\n`);
     } catch (err) {
       process.stderr.write(`worca: outbound network policy: the policy proxy could not start (${err && err.message ? err.message : err})\n`);
       return 78;
@@ -3361,7 +3533,8 @@ async function main() {
   }
   // Outbound calls (pipelines, `worca broker`) honor HTTP(S)_PROXY / NO_PROXY (src/core/env-proxy.mjs).
   // Only problems are printed: stdout belongs to the subcommand (some emit JSON).
-  const proxyLine = proxyNotice(useEnvProxy());
+  fetchProxy = useEnvProxy();
+  const proxyLine = proxyNotice(fetchProxy);
   if (proxyLine?.level === 'warn') process.stderr.write(`worca: ${proxyLine.text}\n`);
   const argv2 = process.argv.slice(2); if (argv2[0] !== 'ui' && argv2[0] !== 'help' && !argv2.includes('--ui')) await gitState();
   const sub = process.argv[2];
@@ -3390,10 +3563,13 @@ async function main() {
     if (sub === 'script') return flushed(cmdScript(rest));
     if (sub === 'metrics') return cmdMetrics(rest);
     if (sub === 'policy') return cmdPolicy(rest);
+    if (sub === 'memory') return cmdMemory(rest);
     if (sub === 'schedule') return cmdSchedule(rest, { out, c, fail });
     if (sub === 'models') return cmdModels(rest, { out, c, fail });
     if (sub === 'container') return cmdContainer(rest, { out, c, fail });
     if (sub === 'extension') return cmdExtension(rest, { out, c, fail });
+    if (sub === 'proxy') return cmdProxy(rest, { out, c, fail });
+    if (sub === 'setup') return cmdSetup(rest, { out });
     if (sub === 'broker') {
       // Loaded lazily: the broker is its own process and needs none of the core graph.
       const { runBrokerCli } = await import('../broker/main.mjs');
@@ -3593,7 +3769,7 @@ async function main() {
         return { code: exit, status: st.status || (exit === 0 ? 'done' : 'error'), pipelineId: st.id || null, reason: st.status === 'paused' ? (st.pauseReason || 'paused') : null, limitEngine: st.status === 'paused' ? (st.limitEngine || null) : null };
       },
     });
-    await drainMetricsFlushes();
+    await drainTeamPushes();
     return code;
   }
   const orch = await buildOrch();
@@ -3602,7 +3778,7 @@ async function main() {
   if (flags.mock) out(c('yellow', 'mock mode: no claude will be spawned'));
 
   const code = await attachAndDrive(orch, flags, () => orch.run());
-  await drainMetricsFlushes();
+  await drainTeamPushes();
   return code;
 }
 

@@ -315,3 +315,59 @@ test('renderMemoryBlock: parser contract (heading, one intro line, one dir line 
     } },
   ]);
 });
+
+import { setMemoryExtra, memoryBlockTeamSentence } from '../src/core/memory-store.mjs';
+import { memoryDirsFromPrompt } from '../src/core/claude-runner.mjs';
+
+test('setMemoryExtra: one extra key set or dropped in place — source/updated/body kept, no snapshot, no counter bump, compare-and-swap', async () => {
+  const r = await root();
+  const scope = projectScope('demo-00000001');
+  await writeMemory(r, scope, 'trap', 'Body line.\n', { source: 'run:p1', now: NOW, caps: CAPS });
+  const before = await readMemory(r, scope, 'trap');
+  const snaps = (await listSnapshots(r, scope)).length;
+  const state = await readScopeState(r, scope);
+  assert.equal(await setMemoryExtra(r, scope, 'trap', 'team', 'abc123', { expectHash: hashText(before.text) }), true);
+  const after = await readMemory(r, scope, 'trap');
+  assert.equal(after.meta.extra.team, 'abc123');
+  assert.equal(after.meta.source, 'run:p1');
+  assert.equal(after.meta.updated, NOW);
+  assert.equal(after.body, before.body);
+  assert.equal((await listSnapshots(r, scope)).length, snaps, 'not a write: no snapshot');
+  assert.deepEqual(await readScopeState(r, scope), state, 'not a write: no counter bump');
+  assert.equal(await setMemoryExtra(r, scope, 'trap', 'team', 'zzz', { expectHash: hashText(before.text) }), false, 'changed since it was read: left alone');
+  assert.equal(await setMemoryExtra(r, scope, 'trap', 'team', null), true);
+  assert.equal((await readMemory(r, scope, 'trap')).meta.extra.team, undefined);
+  await assert.rejects(setMemoryExtra(r, scope, 'trap', 'source', 'x'), { code: 'ENAME' }, 'a known key is never an extra');
+  assert.equal(await setMemoryExtra(r, scope, 'absent', 'team', 'x'), false);
+});
+
+test('writeMemory / removeMemory expectHash: a compare-and-swap checked after the snapshot — an edit landed meanwhile is ESTALE and stays', async () => {
+  const r = await root();
+  const scope = projectScope('demo-00000002');
+  await writeMemory(r, scope, 'cas', 'v1\n', { source: 'user', now: NOW, caps: CAPS });
+  const read = await readMemory(r, scope, 'cas');
+  // Another process writes between the caller's read and its write: the snapshot hook is the slow point in between.
+  const edit = () => writeMemory(r, scope, 'cas', 'their edit\n', { source: 'user', now: NOW, caps: CAPS, snapshot: false });
+  await assert.rejects(writeMemory(r, scope, 'cas', 'follow\n', { source: 'team', now: NOW, caps: CAPS, snapshot: edit, expectHash: hashText(read.text) }), { code: 'ESTALE' });
+  assert.match((await readMemory(r, scope, 'cas')).body, /their edit/);
+  const cur = await readMemory(r, scope, 'cas');
+  await assert.rejects(removeMemory(r, scope, 'cas', { source: 'team', now: NOW, snapshot: edit, expectHash: hashText(read.text) }), { code: 'ESTALE' });
+  assert.ok(await readMemory(r, scope, 'cas'), 'the removal left the edit alone');
+  assert.equal((await writeMemory(r, scope, 'cas', 'follow\n', { source: 'team', now: NOW, caps: CAPS, snapshot: false, expectHash: hashText(cur.text) })).changed, true, 'unchanged: written');
+  const now = await readMemory(r, scope, 'cas');
+  assert.equal(await removeMemory(r, scope, 'cas', { source: 'team', now: NOW, snapshot: false, expectHash: hashText(now.text) }), true);
+});
+
+test('renderMemoryBlock: a team folder adds ONE sentence to the ONE intro line; dir lines and the parser are unchanged', () => {
+  const sections = [{ label: 'Global', dir: '/m/global' }, { label: 'Project shop', dir: '/m/project' }];
+  const plain = renderMemoryBlock(sections);
+  const team = renderMemoryBlock(sections, { teamDir: '/w/.claude/rules/worca/team' });
+  assert.equal(team.split('\n').length, plain.split('\n').length);
+  assert.ok(team.split('\n')[1].endsWith(memoryBlockTeamSentence('/w/.claude/rules/worca/team')));
+  assert.match(team, /Teammates' shared notes \(team memory\) also load as rules, from \/w\/\.claude\/rules\/worca\/team/);
+  // The intro sends the built-in Explore and Plan sub-agents (they load no rules) to "the directories below" only.
+  assert.match(team, /from \/w\/\.claude\/rules\/worca\/team \(an Explore or Plan sub-agent reads them there\);/, 'those sub-agents are told where the team notes are');
+  assert.deepEqual(memoryDirsFromPrompt(team), ['/m/global', '/m/project'], 'the mock parser still reads the dir lines only');
+  assert.equal(renderMemoryBlock(sections, { teamDir: null }), plain, 'no team folder: byte-identical (the < 2100-byte pin holds)');
+  assert.match(renderMemoryBlock(sections, { engine: 'codex', teamDir: '/t' }), /are under \/t — read the ones whose `description` fits your task too/);
+});

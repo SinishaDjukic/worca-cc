@@ -193,13 +193,13 @@ const member = await ev(`(() => {
   const row = document.querySelector('#runs-list .runs-item[data-level="top"][data-row-key^="chain:"] > a.runs-row');
   return { open: row.classList.contains('member-open'), selected: row.classList.contains('selected'), current: row.getAttribute('aria-current'),
     crumbs: [...document.querySelectorAll('#hist-detail .hd-bar .rd-crumbs .rd-crumb')].map((c) => c.textContent),
-    chip: document.querySelector('#hist-detail .hd-glance .rd-title-row .kind-chip').textContent,
+    chip: !!document.querySelector('#hist-detail .hd-glance .rd-page-head .kind-chip'),
     bar: document.querySelector('#hist-detail .hd-bar').getBoundingClientRect().height,
     headGap: document.querySelector('#hist-detail .hd-glance .rd-page-head').getBoundingClientRect().top - document.querySelector('#hist-detail .hd-bar').getBoundingClientRect().bottom };
 })()`);
 check(member.open && !member.selected && member.current === 'location', `PASS group page in the pane: a member open turns its group row member-open (${JSON.stringify(member)})`);
-check(JSON.stringify(member.crumbs) === JSON.stringify(['Runs', 'Run tags and cost allocation', 'Run 2']) && member.chip === 'Run 2 of 3',
-  `PASS group page in the pane: the run page reads Runs › the feature › Run 2, chip "Run 2 of 3" (${JSON.stringify(member.crumbs)}, ${member.chip})`);
+check(JSON.stringify(member.crumbs) === JSON.stringify(['Runs', 'Run tags and cost allocation', 'Run 2']) && member.chip === false,
+  `PASS group page in the pane: the run page reads Runs › the feature › Run 2, no kind chip in its head (${JSON.stringify(member.crumbs)}, chip ${member.chip})`);
 check(Math.abs(inPane.bar - member.bar) <= 1 && Math.abs(inPane.headGap - member.headGap) <= 1,
   `PASS group page in the pane: the group bar is the run page's bar (height ${inPane.bar} vs ${member.bar}) and the title sits as far under it (${inPane.headGap} vs ${member.headGap})`);
 // A phone: the row tap slides the group page in, full screen, with its Back; the list is inert.
@@ -240,7 +240,7 @@ const page = await ev(`(() => {
   const el = document.querySelector('${OV}');
   const main = document.querySelector('#runs-pane');
   return {
-    statusLines: main.querySelectorAll('.run-status-text').length,
+    statusLines: main.querySelectorAll('.run-status-word').length,
     memberLists: main.querySelectorAll('ol.run-members').length,
     dupes: el.querySelectorAll('.shape-feature-head, .shape-feature-status, .shape-feature-runs, ol.chat-rc-members').length,
     replanButton: !!el.querySelector('[data-act="feature-replan"]'), more: !!el.querySelector('.shape-feature-more'),

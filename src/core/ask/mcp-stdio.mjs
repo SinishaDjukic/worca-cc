@@ -39,6 +39,7 @@ import { defaultCloneDeps } from './clone-deps.mjs';
 import { defaultProjectDeps } from './project-deps.mjs';
 import { defaultWorkspaceDeps } from './workspace-deps.mjs';
 import { defaultActionsDeps } from './actions-deps.mjs';
+import { defaultProxyDeps } from './proxy-deps.mjs';
 import { defaultWebDeps } from './web-deps.mjs';
 import { defaultFileDeps } from './file-deps.mjs';
 import { defaultCommandDeps } from './command-deps.mjs';
@@ -94,12 +95,14 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       ...defaultWorkspaceDeps(),
       // Actions (docs/actions.md "Chat"): read the config, checkouts and running services; propose config.
       ...defaultActionsDeps(),
+      // Corporate proxy (docs/network-proxy.md "From Chat"): read + test over the per-turn bridge; two cards.
+      ...defaultProxyDeps({ env }),
       // Branch reads + fetch-only (#527): list_branches, list_projects.sync, get_run.baseMoved.
       ...defaultBranchDeps(),
       // Web access: present only when this turn's env carries WORCA_ASK_WEB (web-deps.mjs) — the
       // child's env (classic), or the relay's own copy built from the turn's web access (ui/server.mjs).
       ...defaultWebDeps({ threadId, signal, env }),
-      // Codex and Copilot chats only (WORCA_ASK_ENGINE=codex|copilot): read_file / grep / glob under the shared deny rules (D13).
+      // Locked-down chats only (WORCA_ASK_ENGINE names the engine): read_file / grep / glob under the shared deny rules (D13).
       ...defaultFileDeps({ threadId, env, signal }),
       // Agent mode (#574): present only when this turn's env names the command bridge (command-deps.mjs).
       ...defaultCommandDeps({ env }),

@@ -1,0 +1,3 @@
+Error resuming session: Invalid session identifier "00000000-0000-4000-8000-000000000000".
+  Searched for sessions in /tmp/spike/home/.gemini/tmp/pg/chats.
+  Use --list-sessions to see available sessions, then use --resume {number}, --resume {uuid}, or --resume latest.

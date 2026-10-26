@@ -259,6 +259,10 @@ export function copilotEfforts(m) {
   return m.reasoning ? undefined : ['medium'];
 }
 
+/** The catalog id a Copilot import gives model `id`. The one rule: the listing, the import and setup's
+ *  pending roles all use it (provider-ops.mjs re-exports it). */
+export const copilotCatalogId = (id) => `copilot-${id}`;
+
 /** The catalog entry an import creates for a Copilot model (§8.4). */
 export function catalogEntryForCopilotModel(m) {
   const api = copilotApiFor(m);
@@ -269,7 +273,7 @@ export function catalogEntryForCopilotModel(m) {
     ...(api !== 'anthropic' && Array.isArray(m.reasoningEfforts) && m.reasoningEfforts.length ? { reasoningEfforts: m.reasoningEfforts } : {}),
   };
   return {
-    id: `copilot-${m.id}`,
+    id: copilotCatalogId(m.id),
     label: `${m.name} (Copilot)`,
     efforts: copilotEfforts(m),
     upstream: { provider: 'copilot', api, model: m.id, capabilities },

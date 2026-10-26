@@ -228,7 +228,8 @@ test('buildMcpConfig: resolved base, argv twins of the env, execPath default', (
   // v7: the chat's claude is env-scrubbed (envScrub:true above), so the nested classifier's knobs must ride mcpServers.env — only when set.
   const fwd = buildMcpConfig({ homeBase: '/b', threadId: 't', serverPath: '/s.mjs', env: { WORCA_CLAUDE_BIN: '/x/claude.exe', WORCA_AUTO_MODEL: 'claude-sonnet-5', HOME: '/h', WORCA_MOCK: '1' } });
   assert.deepEqual(fwd.mcpServers.worca.env, { WORCA_HOME: resolve('/b'), WORCA_ASK_THREAD_ID: 't', WORCA_CLAUDE_BIN: '/x/claude.exe', WORCA_AUTO_MODEL: 'claude-sonnet-5' }, 'HOME / WORCA_MOCK are not forwarded');
-  assert.deepEqual(MCP_FORWARD_ENV, ['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT', 'WORCA_CLONE_ALLOW', 'WORCA_FLAGS']);
+  assert.deepEqual(MCP_FORWARD_ENV, ['WORCA_CLAUDE_BIN', 'ORCH_CLAUDE_BIN', 'WORCA_AUTO_MODEL', 'WORCA_PROJECTS_ROOT', 'WORCA_CLONE_ALLOW', 'WORCA_FLAGS',
+    'WORCA_CODEX_BIN', 'WORCA_COPILOT_BIN', 'WORCA_GEMINI_BIN', 'WORCA_GOOSE_BIN', 'WORCA_OPENCODE_BIN', 'WORCA_QWEN_BIN']);
   assert.ok(!MCP_FORWARD_ENV.some((k) => /TOKEN|KEY|SECRET|GH_/.test(k)), 'no credential is ever forwarded to the MCP child');
   assert.throws(() => buildAskSpawnOptions({ ...base(), scratchDir: '' }), /scratchDir/);
   assert.throws(() => buildAskSpawnOptions({ ...base(), mcpConfigPath: undefined }), /mcpConfigPath/);
@@ -402,6 +403,22 @@ test('buildAskSpawnOptions: the command token rides spawnEnv; the sub-agent note
   assert.equal(o.spawnEnv.ASK_COMMAND_TOKEN, 'tok');
   assert.match(o.appendSubagentSystemPrompt, /never call run_command or stop_command/i);
   assert.deepEqual(o.permissionRules.deny, [...ASK_DENY_RULES]);          // Edit/Write/Bash still denied
+});
+
+test('the corporate proxy bridge: the token rides spawnEnv for every engine, the URL (never the token) rides the mcp env; none ⇒ unchanged', () => {
+  const proxy = { url: 'http://127.0.0.1:1/api/ask/proxy', token: 'pt' };
+  const base = { thread: { id: 'ask_0000aaaa' }, turn: {}, limits: {}, mcpConfigPath: '/m.json', scratchDir: '/t' };
+  for (const engine of ['claude', 'codex', 'copilot']) {
+    assert.equal(buildAskSpawnOptions({ ...base, engine, proxy }).spawnEnv.ASK_PROXY_TOKEN, 'pt', engine);
+    assert.deepEqual(buildAskSpawnOptions({ ...base, engine, proxy: null }), buildAskSpawnOptions({ ...base, engine }), engine);
+    assert.equal(buildAskSpawnOptions({ ...base, engine, proxy: null }).spawnEnv, undefined, engine);
+  }
+  const both = buildAskSpawnOptions({ ...base, proxy, commands: { url: 'u', token: 'ct' } }).spawnEnv;
+  assert.deepEqual([both.ASK_COMMAND_TOKEN, both.ASK_PROXY_TOKEN], ['ct', 'pt']);
+  const doc = buildMcpConfig({ homeBase: '/h', threadId: 'ask_0000aaaa', serverPath: '/s.mjs', env: {}, proxy });
+  assert.deepEqual(JSON.parse(doc.mcpServers.worca.env.WORCA_ASK_PROXY), { url: 'http://127.0.0.1:1/api/ask/proxy' });
+  assert.doesNotMatch(JSON.stringify(doc), /"pt"/);
+  assert.equal(buildMcpConfig({ homeBase: '/h', threadId: 'ask_0000aaaa', serverPath: '/s.mjs', env: {} }).mcpServers.worca.env.WORCA_ASK_PROXY, undefined);
 });
 
 test('without commands the sub-agent note and the mcp env are unchanged (#574)', () => {

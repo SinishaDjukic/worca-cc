@@ -42,3 +42,27 @@ test('menu items: Show with counts, Group by, Select; Started by only on shared 
   const shared = viewMenuItems(DEFAULT_VIEW, {}, { people: [{ key: 'ana', name: 'Ana' }], onPick: () => {} });
   assert.ok(shared.some((i) => i.header === 'Started by'));
 });
+
+test('menu items: Keyboard shortcuts is the last item, hint ?', () => {
+  let picked = null;
+  const items = viewMenuItems({ show: 'all', groupBy: 'none', person: '' }, {}, { onPick: (p) => { picked = p; } });
+  const last = items.at(-1);
+  assert.deepEqual([last.label, last.hint], ['Keyboard shortcuts', '?']);
+  last.onSelect();
+  assert.deepEqual(picked, { shortcuts: true });
+});
+
+test('#948 s2: with no options the items are the Runs list; sortOpts adds Sort by after Show; a group hint shows', () => {
+  const v = { show: 'all', groupBy: 'none', person: '' };
+  const runs = viewMenuItems(v, {}, { onPick: () => {} }).map((i) => i.label || i.header || 'sep');
+  assert.deepEqual(runs, ['Show', 'All', 'Needs you', 'Running', 'Waiting', 'Finished', 'Archived', 'Group by', 'None', 'Project', 'Date', 'sep', 'Select', 'Keyboard shortcuts']);
+  let picked = null;
+  const chats = viewMenuItems({ show: 'all', sort: 'activity', groupBy: 'date' }, { all: 54 }, { onPick: (p) => { picked = p; },
+    showOpts: [['all', 'All'], ['archived', 'Archived']], sortOpts: [['activity', 'Last activity'], ['cost', 'Cost']],
+    groupOpts: [['date', 'Date', 'Today · Recent · Older'], ['none', 'None']] });
+  assert.deepEqual(chats.filter((i) => i.header).map((i) => i.header), ['Show', 'Sort by', 'Group by']);
+  chats.find((i) => i.label === 'Cost').onSelect();
+  assert.deepEqual(picked, { sort: 'cost' });
+  assert.equal(chats.find((i) => i.label === 'Date').hint, 'Today · Recent · Older');
+  assert.equal(chats.find((i) => i.label === 'Last activity').checked, true);
+});

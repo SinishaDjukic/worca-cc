@@ -91,7 +91,7 @@ export function claimPipelineCommand(pipelineId, { now = Date.now(), by } = {}) 
 }
 
 /**
- * Record what a payload-bearing command did (v72 `result`): the issuing client polls for it
+ * Record what a payload-bearing command did (v77 `result`): the issuing client polls for it
  * (model-switch.mjs requestLiveModelSwitch). Only a CLAIMED row is written — a pending one has not run.
  * @param {number} id  the command id claimPipelineCommand returned
  * @param {object} result JSON-serializable

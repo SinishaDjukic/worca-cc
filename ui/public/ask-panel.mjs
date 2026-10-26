@@ -16,6 +16,7 @@ import { workflowPickerLabel } from './results-view.mjs';
 import { renderAutoProposal, AUTO_PROPOSAL_ORDER_CARD } from './auto-proposal.mjs';
 import { createRunProgressCard, snapshotFromState, PROGRESS_CARD_TYPE } from './ask-run-card.mjs';
 import { createCommandCard, COMMAND_CARD_TYPE } from './ask-command-card.mjs';
+import { commandRuns, groupHead } from './ask-command-group.mjs';
 import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
 import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
@@ -27,13 +28,17 @@ import { classifyLoops } from '../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../src/shared/graph/ports.mjs';
 import { parseMcpToolName } from '../../src/shared/mcp-tool-name.mjs';
 import { mcpSkipView, mcpCopyNote, skillSkipView } from './mcp-run-picker.mjs';
-import { engineOfEntry, chatEngineOf, pickerGroups, ASK_CHAT_ENGINES } from './ask-engine.mjs';
+import { engineOfEntry, chatEngineOf, pickerGroups, ASK_CHAT_ENGINES, isEngineSetupNotice } from './ask-engine.mjs';
 import { formatQuotedMessage, parseQuotedMessage } from './pinpoint-model.mjs';
 import { ATTACH_ACCEPT, ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, checkAttachment, createPasteNamer, pastedFiles } from './attach-files.mjs';
 import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
+import { keepFocus } from './chat/keep-focus.mjs';
 import { flagOn } from './flags.mjs';
+import { mountChatsColumn } from './chats-column.mjs';
+import { chatPageKeyAction, keyHint, isMac, LIST_FIELD } from './list-keys.mjs';
+import { openKeysSheet } from './keys-sheet.mjs';
 import { gitOn } from './git-gate.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME, NEEDS_REPO_NOTE } from '../../src/shared/no-project.mjs';
 import { createTagInput, fetchTagVocabulary, createTagRulesLine } from './tag-input.mjs';
@@ -190,11 +195,8 @@ const THREADS_REFRESH_MS = 250;
 const HISTORY_KEY = 'worca-cc.chat.history';
 const HISTORY_OPEN_MIN_W = 1600;
 const HISTORY_OVERLAY_BELOW = 1100;
-const HISTORY_GROUPS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['earlier', 'Earlier']];
-/** The column's search waits this long after the last keystroke before it asks the server. */
-const HISTORY_SEARCH_MS = 200;
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null }) {
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true }) {
   const homePick = browserPick();         // hoisted declaration (defined below)
   const st = {
     open: false,
@@ -231,17 +233,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     commands: new Map(),      // blockId → command card handle (ask-command-card.mjs)
     commandFrames: new Map(), // blockId → the last ask-command view that arrived before its card was built
     commandsOpen: new Set(),  // blockIds whose output the user unfolded (the card's toggle; outlives a rebuild of the card)
+    commandsRowOpen: new Map(),  // blockId → the person's open choice on a summary row (#911); absent = none
+    commandGroupOf: new Map(),   // blockId → the blockIds of its group (#911), for the head's live total
     pinned: true,
+    leftAt: null,          // #958: { threadId, top, pinned } recorded when the page hides; read on the next show
+    restoreTop: null,      // #958: a scrollTop the next applyPin() writes back (a same-chat return, unpinned)
+    scrollIntentAt: null,  // #958: now() of the last wheel / touch / press / key on the transcript
+    scrollHeld: false,     // #958: a press on the transcript (its scrollbar) is held until pointerup
+    cardMemo: null,        // #958: card id → element built in the current renderTranscript pass (one build per card)
     wantThread: undefined,    // the chat the page shows or is loading: an id, null = home (a new chat), undefined = none yet
     unread: false,            // what onUnread was last told (the Chat row's dot)
     historyStale: true,       // the History rows need a fetch at the next show (a refresh frame landed while hidden)
-    historyLoaded: false,     // rows (or the empty line) have been painted once
-    historyGen: 0,            // drops a stale list response
     historyAsPush: false,     // the column was opened as a push column: narrowing the window below 1100px closes it
-    historySearchOpen: false, // the column's search field is unfolded (the head's .is-searching)
-    historyQuery: '',         // the search field's text; loadHistory sends it trimmed as ?q=
-    historyListQuery: '',     // the trimmed query the last list request carried ('' = the full list, null = it failed)
-    historySearchTimer: null, // the typing debounce (HISTORY_SEARCH_MS)
     unreadThread: null,       // the chat whose reply lit the dot — the most recent one (app.js opens it from the Chat row)
     askedIn: new Set(),       // chats this tab sent a message in: only their replies (and the open chat's) light the dot
     pendingFiles: [],
@@ -412,23 +415,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     b.addEventListener('click', onClick);
     return b;
   }
-  /** "+ New chat" — the head's and the History column's: a labelled ghost button (style.css .chat-new-btn). Both carry
-   *  [data-ask-new-btn], which the add-ons' capture-phase listeners read (chat/home-flip.mjs arms the glide,
-   *  chat/intent.mjs drops the intent). Below 1100px the overlay closes first, as after a pick, so the new chat has its
-   *  room and newThread() can focus its composer. */
-  function newChatButton(className) {
-    const b = make('button', `btn btn-sm btn-quiet chat-new-btn ${className}`);
-    b.type = 'button';
-    b.setAttribute('data-ask-new-btn', '');
-    b.appendChild(svgIcon(ICONS.plus, 14, 2));
-    b.appendChild(make('span', null, 'New chat'));
-    b.addEventListener('click', () => {
-      if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
-      newThread();
-      route(null);
-    });
-    return b;
-  }
   /** The History toggle's glyph: a page with a folded corner and lines of text (the saved chats). */
   function historyIcon() {
     return svgIcon(['M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z', 'M14 3v4a1 1 0 0 0 1 1h4',
@@ -460,6 +446,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
     const convo = make('div', 'chat-convo');
     const head = make('header', 'chat-head');
+    el.head = head;                                   // mountChats adds the head's New chat + and meter
     const threadsBtn = iconButton('btn btn-quiet btn-icon chat-head-btn chat-history-toggle', 'History', historyIcon(), () => toggleHistory());
     threadsBtn.setAttribute('data-ask-threads-btn', '');
     threadsBtn.setAttribute('aria-controls', 'chat-history');
@@ -468,7 +455,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.title = make('div', 'ask-title', 'New chat');
     head.appendChild(el.title);
     head.appendChild(make('span', 'chat-head-spacer'));
-    head.appendChild(newChatButton('chat-head-btn'));
     convo.appendChild(head);
 
     el.home = make('div', 'chat-home');
@@ -481,6 +467,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.transcript = make('div', 'ask-transcript');
     el.transcript.setAttribute('data-ask-scroll', '');
     el.transcript.addEventListener('scroll', updatePinFromScroll);
+    el.transcript.addEventListener('wheel', noteScrollIntent, { passive: true });
+    el.transcript.addEventListener('touchmove', noteScrollIntent, { passive: true });
+    el.transcript.addEventListener('pointerdown', onScrollPress, true);   // capture: a card's stopPropagation cannot hide it
     // The transcript is only the scrollport; every row lands in this column, which style.css caps
     // (--ask-col-max) and centres. Scroll/pin logic keeps reading el.transcript.
     el.transcriptCol = make('div', 'ask-transcript-col');
@@ -515,6 +504,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     el.sheet = convo;         // the popover host outside the composer — the floating sheet's role, its name kept
     el.page = page;
     paintHistory();
+    mountChats();
     return page;
   }
 
@@ -723,6 +713,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const liveCost = lv ? (Number.isFinite(lv.costUsd) ? lv.costUsd : (Number.isFinite(lv.estimatedCostUsd) ? lv.estimatedCostUsd : null)) : null;
     if (liveCost != null) el.meterCost.textContent = `≈${fmtUsd((Number.isFinite(totals.costUsd) ? totals.costUsd : 0) + liveCost)}`;
     else el.meterCost.textContent = totals.costUsd == null ? '' : (fmtUsd(totals.costUsd) || '');
+    // #948 s2: the head meter. Its cost is el.meterCost's text just written (stored total, or "≈" with the
+    // live figure), so the two never disagree.
+    if (el.headMeter) {
+      el.headMeter.textContent = [pct != null ? `${pct}%` : '', el.meterCost.textContent, fmtAgents(totals.agents) || '']
+        .filter(Boolean).join(' · ');
+      el.headMeter.setAttribute('aria-label', pct != null ? `Context window, ${pct}% full` : 'Context window');
+      if (figure) el.headMeter.title = el.ctxBtn.title; else el.headMeter.removeAttribute('title');
+    }
   }
 
   function stopTurn() {
@@ -1617,7 +1615,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   /**
    * The page became visible (app.js: the #chat route) — or, with `req`, is routed: `{ threadId: null }` = home
-   * (a new chat; the draft stays), `{ threadId }` = that chat. Every hidden → shown step re-pins the transcript,
+   * (a new chat; the draft stays), `{ threadId }` = that chat. Every hidden → shown step restores the same chat's place (or pins),
    * repaints the run cards and re-previews the Sets; the FIRST one also loads the model catalog and — only for a
    * bare open() with no route — the stored chat. (`req`, not `route`: route() is the address callback below.)
    */
@@ -1628,7 +1626,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (showing) {
       st.open = true;
       setUnread(false);
-      st.pinned = true;
+      // #958: back on the chat the page left: restore that place (the bottom when it was following). Another chat,
+      // or home, opens at the bottom.
+      const back = st.leftAt;
+      st.leftAt = null;
+      const target = routed ? (typeof req.threadId === 'string' && req.threadId ? req.threadId : null)
+        : (typeof st.wantThread === 'string' ? st.wantThread : st.threadId);
+      if (back && back.threadId === target && !back.pinned) { st.pinned = false; st.restoreTop = back.top; }
+      else { st.pinned = true; st.restoreTop = null; }
       ensureFirstOpen({ restore: !routed });
       composerCards().stale();   // the chat was hidden: a wizard may have saved a draft meanwhile
       scheduleFlush();
@@ -1679,6 +1684,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   /** The page was hidden (app.js: another route). Voice stops and popovers close; focus belongs to the next page. */
   function closePage() {
     if (!st.open) return;
+    // #958: display:none drops the scroller's offset: remember it (and the pin) for a return to this chat. A switch
+    // still loading has no place worth keeping.
+    const loading = typeof st.wantThread === 'string' && st.wantThread !== st.threadId;
+    st.leftAt = st.threadId && !loading ? { threadId: st.threadId, top: el.transcript.scrollTop, pinned: st.pinned } : null;
     stopVoice();
     closePopover({ focusTrigger: false });
     if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
@@ -1737,7 +1746,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function ownsKey(e) {
     if (e.key !== 'Escape' || e.defaultPrevented || st.destroyed || !st.open || modalUp() || el.page.closest('[inert]')) return false;
     if (e.target && typeof e.target.closest === 'function' && e.target.closest('.term-pane, [data-chat-panel]')) return false;
-    if (e.target === el.historySearchInput) return false;   // the History search clears, then folds, before the overlay closes
+    // A menu or group picker the Chats column opened closes itself first: one Escape closes one thing.
+    if (doc.querySelector('.wfv-menu, .group-picker')) return false;
     return !!st.popover || historyOverlayOpen();
   }
 
@@ -1829,55 +1839,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   // ---- the History column (worca Chat P1) -----------------------------------
-  /** History-row topics: the first one's name plus "+N", every name in the hover. Display-only — the row is the click target. */
-  function threadTopics(t) {
-    const list = validContexts(t.contexts);
-    if (!list.length) return null;
-    const name = (c) => c.label || c.id;
-    const span = make('span', 'ask-thread-topics', list.length > 1 ? `${name(list[0])} +${list.length - 1}` : name(list[0]));
-    span.title = list.map((c) => `${name(c)}${c.source === 'chat' ? ' (mentioned)' : ''}`).join('\n');
-    return span;
-  }
-
-  // The start date leads the meter line, bold and on the primary ink, so the eye
-  // scans it down the list while the cost/agent figures keep the meter's grey.
-  // Hence an element rather than a string: only the date changes weight and
-  // colour. An unusable createdAt drops the span and its separator with it.
-  function threadMeter(t) {
-    const meter = make('span', 'ask-thread-meter');
-    const tot = t.totals || {};
-    const when = fmtStarted(t.createdAt, now());
-    if (when) meter.appendChild(make('span', 'ask-thread-when', when));
-    // With a known window the fill is its own span (level colour + hover); without one it stays plain
-    // text, so a legacy row's meter is exactly the date element plus "… · $x · n agents".
-    const fillText = fmtCtx(tot.ctx, tot.ctxWindow);
-    let fill = fillText;
-    if (fillText && Number.isInteger(tot.ctxWindow) && tot.ctxWindow > 0) {
-      const level = ctxLevel(tot.ctx, tot.ctxWindow);
-      fill = make('span', `ask-thread-fill${level === 'warn' ? ' is-ctx-warn' : level === 'high' ? ' is-ctx-high' : ''}`, fillText);
-      const title = ctxTitle(tot.ctx, tot.ctxWindow);
-      if (title) fill.title = title;
-    }
-    const parts = [threadTopics(t), fill, fmtUsd(tot.costUsd), fmtAgents(tot.agents)].filter(Boolean);
-    parts.forEach((p, i) => {
-      if (when || i > 0) meter.appendChild(doc.createTextNode(' · '));
-      meter.appendChild(typeof p === 'string' ? doc.createTextNode(p) : p);
-    });
-    return meter;
-  }
-
-  /** History meter: "12 chats" / "1 chat" / '' at 0 (same empty-string convention as the agents meter). */
-  function fmtChats(n) {
-    return Number.isFinite(n) && n > 0 ? `${n} chat${n === 1 ? '' : 's'}` : '';
-  }
-  /** History meter while searching: "3 of 54 chats" (the matches of every saved chat). */
-  function fmtMatches(n, all) {
-    return Number.isInteger(all) && all > 0 ? `${n} of ${all} chat${all === 1 ? '' : 's'}` : fmtChats(n);
-  }
-
-  // CONTRACT §1 aside.chat-history: every saved chat, newest first, grouped Today / Yesterday / Earlier by its last
-  // activity; a row opens the chat, its trash deletes it (confirm). A 264px push column, an overlay with a scrim below
-  // 1100px (style.css). The page's data-history attribute is the truth (setHistoryOpen, P4 reads and sets it).
+  // CONTRACT §1 aside.chat-history: the Chats column's host (chats-column.mjs, mounted by mountChats). A push column, an
+  // overlay with a scrim below 1100px (style.css). The page's data-history attribute is the truth (setHistoryOpen, P4
+  // reads and sets it).
   function buildHistory() {
     const aside = make('aside', 'chat-history');
     aside.setAttribute('data-chat-history', '');
@@ -1885,96 +1849,94 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     aside.setAttribute('aria-label', 'Chats');
     aside.tabIndex = -1;                             // the overlay takes focus when it opens (toggleHistory)
     // Below 1100px the column is an overlay over the chat: focus leaving it (Tab past the last row, Shift+Tab out)
-    // closes it, so the keyboard never walks the controls hidden under it. A dialog it opened (delete) keeps it.
+    // closes it, so the keyboard never walks the controls hidden under it. A menu, picker or dialog it opened keeps it.
     aside.addEventListener('focusout', (e) => {
       const to = e.relatedTarget;
-      if (!historyOverlayOpen() || !to || aside.contains(to) || (typeof to.closest === 'function' && to.closest('.viewer-modal'))) return;
+      if (!historyOverlayOpen() || !to || aside.contains(to) || (typeof to.closest === 'function' && to.closest('.viewer-modal, .wfv-menu, .group-picker, .keys-modal'))) return;
       setHistoryOpen(false, { persist: false });
     });
-    // The head is built once and kept across repaints (renderHistory touches only the meter's text and the body), so the
-    // search box's slide (style.css .is-searching) runs and typing never loses the caret. Folded: "Chats  54 chats 🔍".
-    // Open: "🔍 Search chats…  3 of 54 chats" — the box's left edge slides over the title and the meter's resting place
-    // (the Workflows Library's search), and the meter rides at the end of the field.
-    const head = make('div', 'chat-history-head');
-    el.historyHead = head;
-    head.appendChild(make('span', 'chat-history-title', 'Chats'));
-    el.historyMeter = make('span', 'chat-history-meter', '');
-    head.appendChild(el.historyMeter);
-    head.appendChild(buildHistorySearch());
-    aside.appendChild(head);
-    // New chat leads the list, outside the body renderHistory repaints: a refresh or a search never drops it.
-    aside.appendChild(newChatButton('chat-history-new'));
-    el.historyBody = make('div', 'chat-history-body');
-    aside.appendChild(el.historyBody);
-    syncHistorySearch();
     return aside;
   }
-
-  /** The search box: its button (aria-controls the field) and the field. The server searches titles and message text
-   *  (GET /api/ask/threads?q=); the field only holds the text. */
-  function buildHistorySearch() {
-    const box = make('div', 'chat-history-sbox');
-    const input = make('input', 'chat-history-search-input');
-    input.id = 'chat-history-search';
-    input.type = 'search';
-    input.autocomplete = 'off';
-    input.spellcheck = false;
-    input.placeholder = 'Search chats…';
-    input.setAttribute('aria-label', 'Search chats');
-    const btn = iconButton('chat-history-search-btn', 'Search chats', ICONS.search, () => {
-      if (!st.historySearchOpen) { st.historySearchOpen = true; syncHistorySearch(); input.focus(); return; }
-      if (st.historyQuery) { input.focus(); return; }            // a field with text stays open
-      closeHistorySearch(btn);
-    });
-    btn.id = 'chat-history-search-btn';
-    btn.setAttribute('aria-controls', input.id);
-    // Typing waits for a pause, then fetches: only the body repaints, so the caret and an IME composition survive.
-    input.addEventListener('input', () => {
-      st.historyQuery = input.value;
-      clearTimeout(st.historySearchTimer);
-      st.historySearchTimer = setTimeout(searchHistoryNow, HISTORY_SEARCH_MS);
-      if (st.historySearchTimer && typeof st.historySearchTimer.unref === 'function') st.historySearchTimer.unref();
-    });
-    // Escape clears the text first, then folds the field (ownsKey leaves it to the field, even over the overlay).
-    input.addEventListener('keydown', (e) => {
-      if (e.key !== 'Escape') return;
+  // ---- Chats column (#948 s2) -----------------------------------------------------------------------------------
+  let chatsCol = null;
+  /** The head's one New chat: a + right after the list toggle (mock 11). It carries [data-ask-new-btn], which the add-ons'
+   *  capture-phase listeners read (chat/home-flip.mjs arms the glide, chat/intent.mjs drops the intent). Below 1100px
+   *  the overlay closes first, as after a pick, so the new chat has its room and newThread() can focus its composer. */
+  function newChatPlus() {
+    const b = iconButton('btn btn-quiet btn-icon chat-head-btn chat-new-plus', `New chat ${keyHint(['alt', 'mod', 'N'], isMac(win))}`,
+      svgIcon(ICONS.plus, 16, 2), () => { if (historyOverlayOpen()) setHistoryOpen(false, { persist: false }); newThread(); route(null); });
+    b.setAttribute('data-ask-new-btn', '');
+    return b;
+  }
+  function mountChats() {
+    el.page.dataset.chats = 'on';
+    chatsCol = mountChatsColumn({ host: el.history, fetch, storage, win, now, level: () => currentLevel(doc),
+      scopeName: (sc) => chatDep('scopeName', sc) || '', currentId: () => (typeof st.wantThread === 'string' ? st.wantThread : st.threadId),
+      onOpen: (id) => {
+        const overlay = historyOverlayOpen();
+        if (overlay) setHistoryOpen(false, { persist: false });   // the overlay gives the chat its room
+        showThread(id);
+        route(id);
+        if (overlay) focusComposer();                // the picked row is hidden now: focus goes to the chat
+      },
+      onRename: (r) => { void renameThread(r); }, onDelete: (r) => { void deleteThread({ id: r.id, title: r.title }); },
+      onHelp: (opener) => openChatKeys(opener),
+      flagOn: (k) => flagOn(k, doc), confirm: (o) => confirm(o), requestRefresh: () => scheduleThreadsRefresh(),
+      // #948 s3: Delete group removed these chats; the open one goes home, as a deleted chat does (deleteThread).
+      onChatsGone: (ids) => {
+        for (const id of ids) { if (readStoredThread() === id) storeThread(null); st.askedIn.delete(id); st.queues.delete(id); }
+        if (ids.includes(st.threadId) || ids.includes(st.wantThread)) {
+          if (historyOverlayOpen()) setHistoryOpen(false, { persist: false });
+          newThread();
+          route(null, { replace: true });
+        }
+      } });
+    el.historyBtn.after(el.headPlus = newChatPlus());
+    // D28: the open chat's figures, once, as the context popover's button (the composer's .ask-meter hides by CSS).
+    el.headMeter = make('button', 'btn btn-sm btn-quiet chat-head-meter');
+    el.headMeter.type = 'button';
+    el.headMeter.setAttribute('aria-haspopup', 'menu');
+    el.headMeter.setAttribute('aria-expanded', 'false');
+    el.headMeter.addEventListener('click', () => openCtxPopover(el.headMeter));
+    el.head.appendChild(el.headMeter);
+    updateMeters();
+    loadHistory();                                // hidden (a boot on another page): stale until Chat shows
+  }
+  async function renameThread(r) {
+    const v = await chatDep('prompt', { title: 'Rename chat', fields: [{ id: 'title', label: 'Title', value: r.title, required: true }] });
+    const title = v && typeof v.title === 'string' ? v.title.trim() : '';
+    if (!title || title === r.title) return;
+    const res = await fetch(`/api/ask/threads/${encodeURIComponent(r.id)}`, { method: 'PATCH',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title }) }).catch(() => null);
+    if (!res || !res.ok) { notify({ tone: 'err', title: 'Could not rename the chat', detail: res ? (await res.json().catch(() => ({}))).error || '' : '' }, { doc }); return; }
+    if (r.id === st.threadId) el.title.textContent = title;
+    loadHistory();
+  }
+  function openChatKeys(opener) {
+    openKeysSheet({ doc, opener, page: 'chat', advanced: levelShows(currentLevel(doc), 'advanced'), fallback: () => chatsCol && chatsCol.focusTarget() });
+  }
+  function onChatKeys(e) {
+    if (!chatsCol || !st.open || st.destroyed || e.defaultPrevented || modalUp() || el.page.closest('[inert]')) return;
+    const t = e.target;
+    const inField = !!(t && typeof t.closest === 'function' && t.closest(LIST_FIELD));
+    const act = chatPageKeyAction({ key: e.key, code: e.code, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey, inField }, { mac: isMac(win) });
+    if (act) {
       e.preventDefault();
-      e.stopPropagation();
-      if (st.historyQuery) { st.historyQuery = ''; input.value = ''; searchHistoryNow(); } else closeHistorySearch(btn);
-    });
-    box.append(btn, input);
-    el.historySearch = box;
-    el.historySearchBtn = btn;
-    el.historySearchInput = input;
-    return box;
+      if (act === 'new-chat') el.headPlus.click();              // the click the intent / home-flip hooks see
+      else if (act === 'toggle-list') toggleHistory();
+      else if (act === 'focus-list') { if (!historyOpen()) setHistoryOpen(true, { persist: !overlayMode() }); chatsCol.focusList(); }
+      else {
+        const id = chatsCol.neighbour(st.threadId, act === 'next-chat' ? 1 : -1);
+        if (id) { showThread(id); route(id); }
+      }
+      return;
+    }
+    if (e.key === '?' && !inField && !e.metaKey && !e.ctrlKey && !e.altKey && !st.popover && !doc.querySelector('.wfv-menu, .keys-modal')) {
+      e.preventDefault();
+      openChatKeys(t);
+    }
   }
-  /** The head follows the search state: the slide, aria-expanded, the folded field inert (no focus, no Tab stop), and
-   *  the meter beside the button (folded) or at the end of the open field. */
-  function syncHistorySearch() {
-    const open = st.historySearchOpen;
-    el.historyHead.classList.toggle('is-searching', open);
-    el.historySearchBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-    el.historySearchInput.toggleAttribute('inert', !open);
-    if (el.historySearchInput.value !== st.historyQuery) el.historySearchInput.value = st.historyQuery;
-    if (open) el.historySearch.appendChild(el.historyMeter);
-    else el.historyHead.insertBefore(el.historyMeter, el.historySearch);
-  }
-  /** Fold the search and drop its text; `focusEl` takes the focus (the field goes inert — never leave it on <body>). */
-  function closeHistorySearch(focusEl) {
-    st.historyQuery = '';
-    st.historySearchOpen = false;
-    syncHistorySearch();
-    searchHistoryNow();
-    if (focusEl) focusEl.focus();
-  }
-  /** Run the search for the field's text now (the debounce ended, or Escape / a fold cleared it): fetch only when the
-   *  list shows something else, so a fold with nothing searched fetches nothing. */
-  function searchHistoryNow() {
-    clearTimeout(st.historySearchTimer);
-    st.historySearchTimer = null;
-    if (st.destroyed) return;
-    if (st.historyQuery.trim() !== st.historyListQuery) loadHistory();
-  }
+
   function overlayMode() { return (win.innerWidth || 0) < HISTORY_OVERLAY_BELOW; }
   function historyOpen() { return !!el.page && el.page.dataset.history === 'open'; }
   function historyOverlayOpen() { return historyOpen() && overlayMode(); }
@@ -2010,28 +1972,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (el.scrim) el.scrim.hidden = !(open && overlayMode());
   }
 
-  /** Fetch the list and paint it. A failed refresh keeps the rows already shown and marks the list stale, so the next
-   *  show tries again (a boot whose endpoints failed does not keep "No saved chats." for good). While the column's
-   *  search holds text, every fetch (a show, a refresh frame, a delete) asks for its matches. */
+  /** Refresh the Chats column. While Chat is hidden it only marks the list stale; the next show fetches it. */
   function loadHistory() {
+    if (!chatsCol) return;
+    if (!st.open) { st.historyStale = true; return; }
     st.historyStale = false;
-    const gen = ++st.historyGen;
-    const query = st.historyQuery.trim();
-    st.historyListQuery = query;
-    Promise.resolve()
-      .then(() => fetch(query ? `/api/ask/threads?limit=50&q=${encodeURIComponent(query)}` : '/api/ask/threads?limit=50'))
-      .then((r) => (r && r.ok ? r.json() : null))
-      .catch(() => null)
-      .then((body) => {
-        if (st.destroyed || gen !== st.historyGen) return;
-        if (!body || !Array.isArray(body.threads)) {
-          st.historyStale = true;
-          st.historyListQuery = null;            // the list still shows the last good answer: any text asks again
-          if (!st.historyLoaded) renderHistory([], 0);
-          return;
-        }
-        renderHistory(body.threads, body.total, query ? { query, all: body.all } : {});
-      });
+    void chatsCol.refresh().then((ok) => { if (ok === false) st.historyStale = true; });   // failed: the next show asks again
   }
 
   /** A refresh frame landed (a run some chat follows moved, a turn started or ended, a question notice, a title):
@@ -2051,105 +1997,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.threadsRefresh && typeof st.threadsRefresh.unref === 'function') st.threadsRefresh.unref();
   }
 
-  /** Today / Yesterday / Earlier by the chat's last activity in the browser's own day; an unreadable date is Earlier. */
-  function historyGroupOf(t, nowMs) {
-    const ms = Date.parse((t && (t.updatedAt || t.createdAt)) || '');
-    if (!Number.isFinite(ms)) return 'earlier';
-    const day = new Date(nowMs);
-    day.setHours(0, 0, 0, 0);
-    if (ms >= day.getTime()) return 'today';
-    const prev = new Date(day);
-    prev.setDate(prev.getDate() - 1);
-    return ms >= prev.getTime() ? 'yesterday' : 'earlier';
-  }
-
-  /** One row: the dots lead the title (green = this chat's turn is thinking; amber = a run it follows waits on you,
-   *  else violet = a run it follows is running), the meter line under it, the trash on hover. */
-  function historyRow(t) {
-    const rowEl = make('div', 'ask-thread-row');
-    rowEl.setAttribute('role', 'listitem');
-    rowEl.dataset.threadId = t.id;
-    const pick = make('button', 'menu-item ask-pop-item ask-thread-pick');
-    pick.type = 'button';
-    pick.appendChild(make('span', `ask-dot ask-thread-dot${t.inFlight ? ' ask-dot-live' : ''}`));
-    pick.appendChild(make('span', `ask-dot ask-thread-dot${t.waiting ? ' ask-dot-wait' : t.tracking ? ' ask-dot-track' : ''}`));
-    const col = make('span', 'ask-thread-col');
-    // A null title = the haiku title has not landed yet; "New chat" is the label the turn falls back to.
-    col.appendChild(make('span', 'ask-thread-title', t.title || 'New chat'));
-    // A search hit in a message (not in the title): the server's excerpt around it, as text.
-    const snippet = t.match && typeof t.match.snippet === 'string' ? t.match.snippet : '';
-    if (snippet) col.appendChild(make('span', 'ask-thread-match', snippet));
-    col.appendChild(threadMeter(t));
-    pick.appendChild(col);
-    const status = [t.inFlight ? 'Replying' : '', t.waiting ? 'Needs you' : (t.tracking ? 'Following a run' : '')].filter(Boolean).join(', ');
-    if (status) pick.appendChild(make('span', 'sr-only', status));
-    pick.addEventListener('click', () => {
-      const overlay = historyOverlayOpen();
-      if (overlay) setHistoryOpen(false, { persist: false });   // the overlay gives the chat its room
-      showThread(t.id);
-      route(t.id);
-      if (overlay) focusComposer();                  // the picked row is hidden now: focus goes to the chat
-    });
-    rowEl.appendChild(pick);
-    rowEl.appendChild(buildThreadTrash(t));
-    return rowEl;
-  }
-
-  /** Paint the list (rows replaced in place; keyboard focus inside the column stays on the same chat's button). A
-   *  `query` = these are its matches: the meter reads "n of N chats" (`all` = every saved chat), none = "No chats match." */
-  function renderHistory(threads, total, { query = '', all = null } = {}) {
-    if (!el.historyBody) return;
-    st.historyLoaded = true;
-    const n = Number.isInteger(total) && total >= 0 ? total : threads.length;
-    el.historyMeter.textContent = query ? fmtMatches(n, all) : fmtChats(n);
-    const buttons = () => [...el.historyBody.querySelectorAll('button')];
-    const focusAt = el.historyBody.contains(doc.activeElement) ? buttons().indexOf(doc.activeElement) : -1;
-    // A refresh can reorder the rows: focus follows the chat; a row that is gone (deleted) falls back to the index.
-    const focusRow = focusAt >= 0 ? doc.activeElement.closest('.ask-thread-row') : null;
-    const focusId = focusRow ? focusRow.dataset.threadId : null;
-    const focusSel = focusRow && doc.activeElement.classList.contains('ask-thread-trash') ? '.ask-thread-trash' : '.ask-thread-pick';
-    el.historyBody.replaceChildren();
-    if (!threads.length) {
-      el.historyBody.appendChild(make('div', 'chat-history-empty', query ? 'No chats match.' : 'No saved chats.'));
-      // The focused row went with the list (the last chat deleted): the column keeps the focus, never <body>.
-      if (focusAt >= 0) { try { el.history.focus({ preventScroll: true }); } catch { /* detached */ } }
-      return;
-    }
-    const t0 = now();
-    for (const [key, label] of HISTORY_GROUPS) {
-      const rows = threads.filter((t) => t && t.id && historyGroupOf(t, t0) === key);
-      if (!rows.length) continue;
-      const group = make('div', 'chat-history-group');
-      group.dataset.group = key;
-      const cap = make('div', 'chat-history-group-label', label);
-      cap.id = `chat-history-${key}`;
-      group.appendChild(cap);
-      const list = make('div', 'ask-threads-list');
-      list.setAttribute('role', 'list');
-      list.setAttribute('aria-labelledby', cap.id);
-      for (const t of rows) list.appendChild(historyRow(t));
-      group.appendChild(list);
-      el.historyBody.appendChild(group);
-    }
-    paintHistoryCurrent();
-    if (focusAt >= 0) {
-      const same = focusId ? [...el.historyBody.querySelectorAll('.ask-thread-row')].find((r) => r.dataset.threadId === focusId) : null;
-      const b = (same && same.querySelector(focusSel)) || buttons()[Math.min(focusAt, buttons().length - 1)];
-      if (b) { try { b.focus(); } catch { /* ignore */ } }
-    }
-  }
-
   /** Mark the chat the page shows (or is loading). */
   function paintHistoryCurrent() {
-    if (!el.historyBody) return;
-    const cur = typeof st.wantThread === 'string' ? st.wantThread : st.threadId;
-    for (const rowEl of el.historyBody.querySelectorAll('.ask-thread-row')) {
-      const on = !!cur && rowEl.dataset.threadId === cur;
-      rowEl.classList.toggle('is-current', on);
-      const pick = rowEl.querySelector('.ask-thread-pick');
-      if (on) pick.setAttribute('aria-current', 'true');
-      else pick.removeAttribute('aria-current');
-    }
+    if (chatsCol) chatsCol.paintCurrent();
   }
 
   // ---- catalog + picker (D8) ------------------------------------------------
@@ -2501,8 +2351,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.mcp.preview = st.mcp.failed ? null : data;
     const p = st.mcp.preview;
     // A failed preview leaves the chip as it was (the open picker says so): the user can reopen it to retry.
-    // §4.6: registry MCP servers are offered in Claude chats only; a Codex chat's preview carries its set skills alone
-    // (#635), so the picker shows there when a set has skills.
+    // Every chat starts the sets' MCP servers its engine can attach, and their skills.
     if (p) el.mcpBtn.hidden = !p.sets.some((x) => x.members > 0 || (x.skills || 0) > 0);
     el.mcpBtnLabel.textContent = p ? `Sets · ${p.started + ((p.skills && p.skills.started) || 0)}` : 'Sets · ?';
     if (st.mcp.render) st.mcp.render();
@@ -2650,8 +2499,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (!p.sets.length) panel.appendChild(make('div', 'ask-pop-empty', st.mcp.failed ? 'Could not load the sets. Reopen to retry.' : !st.mcp.preview ? 'Loading…' : 'No sets in play.'));
         // Skills registry §4.1: a host whose Claude Code refuses --plugin-dir mounts no skill — one muted line.
         if (sk.layer && sk.layer.blocked) panel.appendChild(make('div', 'ask-pop-empty', layerLine(sk)));
-        // §4.6 (#635): a Codex chat starts the sets' skills but none of their MCP servers — said, never just left out.
-        if (p.codexServers > 0) panel.appendChild(make('div', 'ask-pop-empty', 'MCP servers from sets are available in Claude chats'));
         panel.appendChild(make('div', 'ask-pop-divider'));
         panel.appendChild(mcpManageItem('Manage on the Connectors page', '#connectors'));
       }
@@ -3152,7 +2999,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   async function deleteThread(t) {
     closePopover({ focusTrigger: false });
-    // A trash in the History column keeps the focus in the column (below 1100px the composer sits under the overlay).
+    // A delete from the Chats column keeps the focus in the column (below 1100px the composer sits under the overlay).
     const from = el.history && el.history.contains(doc.activeElement) ? doc.activeElement : null;
     const back = () => {
       if (!from) { focusComposer(); return; }
@@ -3177,15 +3024,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       newThread();                                   // clears + focuses the textarea (D14)
       route(null, { replace: true });
     } else back();
-  }
-
-  function buildThreadTrash(t) {
-    const b = make('button', 'ask-thread-trash');
-    b.type = 'button';
-    b.setAttribute('aria-label', `Delete "${t.title || 'New chat'}"`);
-    b.appendChild(svgIcon('M4 7h16M9.5 7V4.8h5V7M6.5 7l.9 12.2h9.2L17.5 7', 14, 1.8));
-    b.addEventListener('click', (e) => { e.stopPropagation(); deleteThread(t); });
-    return b;
   }
 
   // ---- stubs the later tasks replace wholesale ------------------------------
@@ -3219,7 +3057,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (b.href) {
       n.appendChild(doc.createTextNode(' '));
       const a = make('a', 'ask-notice-link', b.hrefLabel || 'open');
-      if (b.codexSetup || b.copilotSetup) { a.target = '_blank'; a.rel = 'noopener'; }   // §4.6: the Codex / Copilot setup docs
+      if (isEngineSetupNotice(b)) { a.target = '_blank'; a.rel = 'noopener'; }   // §4.6: the engine's setup docs
       a.setAttribute('href', b.href);
       n.appendChild(a);
     }
@@ -3893,7 +3731,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const rootEl = make('div', `ask-card ask-wfcard is-${block.state}`);
     rootEl.setAttribute('data-ask-wfcard', block.state);
     const head = make('div', 'ask-wfcard-head');
-    head.appendChild(make('span', 'ask-wfcard-title', block.state === 'saved' ? 'Saved workflow' : 'Proposed workflow'));
+    // The name (body) is the card's one headline; the head says the state as a chip, with the round and, once saved, Auto.
+    head.appendChild(make('span', 'ask-wfcard-state', block.state === 'saved' ? 'Saved' : 'Proposed workflow'));
     head.appendChild(make('span', 'ask-wfcard-round', `round ${card.round || 1}`));
     if (block.state === 'saved') { head.appendChild(make('span', 'ask-wfcard-spacer')); head.appendChild(make('span', 'ask-wfcard-tag', 'Auto')); }
     rootEl.appendChild(head);
@@ -3919,9 +3758,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const saved = make('div', 'ask-wfcard-saved');
       saved.appendChild(svgIcon(WF_ICO.check, 15, 2.4));
       saved.appendChild(make('span', null, name));
-      const line = make('div', 'ask-wfcard-savedline', card.adopted ? 'Uses your saved workflow' : 'Saved as a new workflow, tagged Auto');
       handle.parts.name.replaceWith(saved);
-      saved.after(line);
+      // The chip says Saved and the tag says Auto: the line stays only when it says something new.
+      if (card.adopted) saved.after(make('div', 'ask-wfcard-savedline', 'Uses a workflow you already had'));
     } else if (matched) {
       const hint = make('div', 'ask-wfcard-hint', 'Model and effort come from that saved workflow. Edit them in the Workflows view.');
       handle.parts.match.after(hint);
@@ -4065,6 +3904,53 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     return line;
   }
+  /** The corporate proxy card (propose_network_proxy_change / propose_corporate_proxy_on): before → after, the live note.
+   *  kind 'flag' is a card stored before the proxy left Labs: it applies as 'enable', so it renders as one. */
+  function buildProxyCard(block) {
+    const card = block.card || {};
+    const LIVE_NOTE = 'New connections use it now.';
+    const turnOn = card.kind === 'enable' || card.kind === 'flag';
+    const note = card.kind === 'flag' ? LIVE_NOTE : (card.restartNote || LIVE_NOTE);
+    const changes = card.kind === 'flag' ? [{ label: 'Network proxy', before: 'Off', after: 'On' }] : (Array.isArray(card.changes) ? card.changes : []);
+    const summary = card.summary || '';
+    if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
+    const rootEl = make('div', `ask-card ask-mcard ask-pxcard is-${block.state}`);
+    rootEl.setAttribute('data-ask-pxcard', block.state);
+    const head = make('div', 'ask-mcard-head');
+    head.appendChild(make('span', 'ask-mcard-title', turnOn ? 'Turn on the corporate proxy?' : 'Change the network proxy?'));
+    rootEl.appendChild(head);
+    const body = make('div', 'ask-mcard-body');
+    if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
+    const list = make('ul', 'ask-mcard-changes');
+    for (const c of changes) list.appendChild(make('li', '', `${c.label}: ${c.before} → ${c.after}`));
+    body.appendChild(list);
+    const result = card.result || null;
+    if (block.state === 'failed') body.appendChild(make('div', 'ask-mcard-failed', `Could not apply: ${block.error || (result && result.error) || 'unknown error'}`));
+    else if (block.state === 'applied') {
+      body.appendChild(make('div', 'ask-awcard-saved', result && result.detail ? result.detail : `Saved. ${note}`));
+      const open = make('a', 'ask-card-sched-link', 'Open Settings › Runs › Network proxy');
+      open.href = '#settings/runs/network-proxy';
+      body.appendChild(open);
+    } else body.appendChild(make('div', 'ask-pxcard-restart', note));
+    rootEl.appendChild(body);
+    rootEl.appendChild(make('div', 'ask-card-err'));   // postCard writes a failed POST here (every card has one)
+    if (block.state === 'proposed') {
+      const actions = make('div', 'ask-mcard-actions');
+      const btn = (cls, text, attr, icon) => {
+        const b = make('button', cls, text); b.type = 'button'; b.setAttribute(attr, '');
+        if (icon) b.prepend(svgIcon(icon, 12, 2.2));
+        return b;
+      };
+      const keep = btn('btn btn-sm btn-quiet ask-card-not-now', 'Keep as is', 'data-ask-px-decline');
+      keep.addEventListener('click', () => postCard(block, rootEl, { state: 'declined' }, keep));
+      const apply = btn('btn btn-sm btn-primary', 'Apply', 'data-ask-px-apply', WF_ICO.save);
+      apply.addEventListener('click', () => postCard(block, rootEl, { state: 'applied' }, apply));
+      actions.append(make('span', 'ask-card-actions-spacer'), keep, apply);
+      rootEl.appendChild(actions);
+    }
+    return { el: rootEl };
+  }
+
   function buildAwayCard(block) {
     const card = block.card || {};
     const summary = card.summary || 'Away mode change';
@@ -4072,10 +3958,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const rootEl = make('div', `ask-card ask-mcard ask-awcard is-${block.state}`);
     rootEl.setAttribute('data-ask-awcard', block.state);
     const head = make('div', 'ask-mcard-head');
-    const where = card.level === 'project' ? `(project ${card.projectName || card.projectKey || ''})` : '(user settings)';
-    head.appendChild(make('span', 'ask-mcard-title', `Change Away mode? ${where}`));
+    head.appendChild(make('span', 'ask-mcard-title', 'Change Away mode?'));
     rootEl.appendChild(head);
     const body = make('div', 'ask-mcard-body');
+    // The scope is the target line, as on the other receipt cards: a long project name never widens the title.
+    body.appendChild(make('div', 'ask-mcard-target', card.level === 'project' ? `project ${card.projectName || card.projectKey || ''}` : 'user settings'));
     if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
     const before = Array.isArray(card.before) ? card.before : [];
     const after = Array.isArray(card.after) ? card.after : [];
@@ -5663,10 +5550,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (card.type === PROGRESS_CARD_TYPE) return true;
     if (card.type && chatCardBuilder(card.type)) return false;      // an extension type is never a run card, whatever its state
     if (ASK_COMPOSER_CARD_TYPES.includes(card.type)) return false;   // Ask's draft / graph cards are never run cards
-    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project') return false;
+    if (card.type === COMMAND_CARD_TYPE || card.type === 'workflow' || card.type === 'metrics' || card.type === 'policy' || card.type === 'schedule' || card.type === 'model' || card.type === 'clone' || card.type === 'web' || card.type === 'workspace' || card.type === 'actions' || card.type === 'away' || card.type === 'project' || card.type === 'proxy') return false;
     return block.state === 'started' || (block.state === 'failed' && !!block.runId);
   }
+  // #958: one build per card per reconcile. renderTranscript asks for a card twice (is it away? then the tail paint);
+  // a card the cache never keeps (a terminal proposal) or a stale one must not be built, and disposed, twice.
   function buildCard(block) {
+    if (!st.cardMemo) return buildCardNow(block);
+    if (!st.cardMemo.has(block.id)) st.cardMemo.set(block.id, buildCardNow(block));
+    return st.cardMemo.get(block.id);
+  }
+  function buildCardNow(block) {
     if (!st.cardEls) st.cardEls = new Map();
     const cached = st.cardEls.get(block.id);
     // CONTRACT §2: a registered builder wins. The built-ins' cache rule: reused while the state holds, rebuilt (the old
@@ -5704,16 +5598,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isWeb = !!(block.card && block.card.type === 'web');
     const isActions = !!(block.card && block.card.type === 'actions');
     const isAway = !!(block.card && block.card.type === 'away');
+    const isProxy = !!(block.card && block.card.type === 'proxy');
     const isCommand = !!(block.card && block.card.type === COMMAND_CARD_TYPE);
     const isComposer = !!(block.card && ASK_COMPOSER_CARD_TYPES.includes(block.card.type));
     const isProgress = isProgressBlock(block);
     // Proposed cards only: `card.nudge` stays on the block after it flips to 'started', and a live run card must never
     // be disposed and remounted because the gate changed.
     const nudgeStale = block.state === 'proposed' && !!(block.card && block.card.nudge) && cached && cached.shapeOn !== shapeFirstOn();
+    // #911: a command card is built in the mode the gate gives; a changed mode rebuilds it (the dispose below clears its ticker).
+    const sumStale = isCommand && cached && cached.sum !== summariesOn();
     // Ask's draft cards also change with the cards AROUND them (a newer draft of the key replaces one): rebuilt when
     // what they show changes, not only their state.
     const view = isComposer ? composerCards().view(block) : '';
-    if (cached && !nudgeStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isAway || isCommand || isComposer || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached && !nudgeStale && !sumStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isAway || isProxy || isCommand || isComposer || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
@@ -5725,12 +5622,13 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isWorkspace ? buildWorkspaceCard(block)
       : isActions ? buildActionsCard(block)
       : isAway ? buildAwayCard(block)
+      : isProxy ? buildProxyCard(block)
       : isCommand ? buildCommandCard(block)
       : isComposer ? composerCards().render(block)
       : isProgress ? buildProgressCard(block)
         : custom ? { el: make('div', 'ask-card-stub', (block.card && (block.card.summary || block.card.title)) || 'Card unavailable') }
         : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
-    st.cardEls.set(block.id, { el: built.el, state: block.state, view, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1, shapeOn: shapeFirstOn() });
+    st.cardEls.set(block.id, { el: built.el, state: block.state, view, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1, shapeOn: shapeFirstOn(), sum: summariesOn() });
     return built.el;
   }
   function disposeCardEntry(c) {
@@ -5779,15 +5677,21 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
 
   // ---- command cards (ui/public/ask-command-card.mjs; Ask agent mode, #574) ------------------------------------------
+  /** The gate (#911): the Labs flag and the person's Settings › Chat switch. */
+  function summariesOn() { return flagOn('commandSummaries', doc) && summariseCommands() !== false; }
   /** One command Ask ran: hydrated once over REST (a reload, a finished block), then live from ask-command frames. */
   function buildCommandCard(block) {
     const card = block.card || {};
     const blockId = String(card.blockId || '');
-    const handle = createCommandCard({ doc, card, onStop: (sid) => {
+    const sum = summariesOn();
+    const handle = createCommandCard({ doc, card, summarise: sum, onStop: (sid) => {
       fetch(`/api/terminal/sessions/${encodeURIComponent(sid)}/stop`, { method: 'POST' }).catch(() => { /* the next frame says what happened */ });
     }, onShow: (sid) => showTerminal(sid), expanded: st.commandsOpen.has(blockId), keepInPlace, onToggle: (open) => {
       if (open) st.commandsOpen.add(blockId); else st.commandsOpen.delete(blockId);
-    } });
+    },
+    rowOpen: st.commandsRowOpen.has(blockId) ? st.commandsRowOpen.get(blockId) : undefined,
+    onRowToggle: (open) => { st.commandsRowOpen.set(blockId, open); },
+    onTick: () => { const ids = st.commandGroupOf.get(blockId); if (ids) paintGroupHead(ids); } });
     st.commands.set(blockId, handle);
     const early = st.commandFrames.get(blockId);
     if (early) { st.commandFrames.delete(blockId); handle.update(early); }
@@ -5810,10 +5714,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function applyCommandFrame(view) {
     if (!view || typeof view.blockId !== 'string') return;
     const handle = st.commands.get(view.blockId);
-    if (handle) { handle.update(view); return; }
+    if (handle) {
+      handle.update(view);
+      const ids = st.commandGroupOf.get(view.blockId);
+      if (ids) paintGroupHead(ids);
+      return;
+    }
     st.commandFrames.set(view.blockId, view);                  // the turn's card block and the first frames race
     if (st.commandFrames.size > 50) st.commandFrames.delete(st.commandFrames.keys().next().value);
   }
+
+  /** #911: the group head's live total, on the group's first row. */
+  function paintGroupHead(ids) {
+    const first = st.commands.get(ids[0]);
+    if (!first || !first.setGroup) return;
+    first.setGroup({ role: 'first', head: groupHead(ids.map((id) => (st.commands.get(id) || {}).view || null)) });
+  }
+  /** #911: the flag or the person's switch changed: rebuild the command cards in the other mode. */
+  function refreshCommandCards() { if (st.model) { renderTranscript(); scheduleFlush(); } }
 
   // ---- run progress cards (ui/public/ask-run-card.mjs; D1 runStore seam, D9 REST hydration, D11 cadence) ------------
   const PROGRESS_TICK_MS = 1000, PROGRESS_REHYDRATE_MS = 30_000;
@@ -6200,7 +6118,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
   function renderAnswerPiece(div, text, isLive) {
     // Seed the >32 KB throttle clock here, not only in renderAnswerFor: a
-    // structural flush repaints answers through renderTranscript, which never
+    // structural flush repaints answers through renderTranscript (reconciled), which never
     // passes through renderAnswerFor — left at 0, the 250 ms window would be
     // permanently expired and the size ladder dead.
     st.lastAnswerRender = now();
@@ -6243,8 +6161,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       else if (b.kind === 'card') parts.push(`c:${b.id}:${b.state || ''}:${(b.card && b.card.type) || ''}:${b.runId || ''}:${b.error || ''}:${registeredCardBuilder(b) ? cardRev(b) : ''}`);
     }
     parts.push(`r:${row.status || ''}:${row.errorMessage || ''}:${row.errorCode || ''}:${isLiveRow(row) ? 1 : 0}`);
+    parts.push(`s:${summariesOn() ? 1 : 0}`);   // #911: a mode change rebuilds the command cards
     return parts.join('|');
   }
+
+  /** What an assistant row's answer shows: the live text while it streams, else its status and stored text. */
+  function answerKeyOf(r) {
+    const live = st.model && st.model.live();
+    return live && live.messageId === r.id ? `l:${live.text}` : `d:${r.status || ''}:${r.text || ''}`;
+  }
+  /** #958: a user/system row's content, to tell a resync's same row from a changed one (null: treat as changed). */
+  function shownKeyOf(r) { try { return JSON.stringify(r); } catch { return null; } }
 
   function buildMessage(row) {
     const wrap = make('div', `ask-msg ask-msg-${row.role}`);
@@ -6254,6 +6181,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     let patch = null;   // the in-place update for an assistant row; null ⇒ update() rebuilds
     let relevel = null; // re-decides the activity's toggle after a mode change (assistant rows only)
     let renderAnswer = null;
+    let retail = null;     // #958: forgets the tail signature, so the next patch re-renders the tail (assistant rows)
+    let answerKey = null;  // #958: answerKeyOf() of the answer on screen (assistant rows)
+    const shownKey = row.role === 'user' || row.role === 'system' ? shownKeyOf(row) : null;
     if (row.role === 'user') {
       // PD6: a synthetic row (a workflow-card event) is a notice, never a bubble — its text is the model-facing event line.
       const synthetic = (row.blocks || []).filter((b) => b && b.kind === 'notice' && b.synthetic);
@@ -6298,9 +6228,30 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // Inline cards (a command card) sit between answer pieces, in the order they happened: [card, piece] per card.
       let inline = [];
       const answerDivs = () => [answer, ...inline.map((x) => x.piece)];
-      renderAnswer = () => renderAnswerInto(answerDivs(), cur);
+      /** #911: consecutive command cards with only blank text between them share one card (summary mode only). */
+      const paintGroups = () => {
+        const cards = inlineCards(cur);
+        // Most streamed tokens land in a message with no command card: stop before any work (renderAnswer runs per token).
+        if (!cards.some((b) => b.card && b.card.type === COMMAND_CARD_TYPE)) return;
+        const handles = cards.map((b) => (b.card && b.card.type === COMMAND_CARD_TYPE ? st.commands.get(String(b.card.blockId || '')) : null));
+        for (const handle of handles) if (handle && handle.setGroup) handle.setGroup(null);
+        for (const b of cards) if (b.card && b.card.blockId) st.commandGroupOf.delete(String(b.card.blockId));
+        if (!summariesOn()) return;
+        const isLive = !!(st.model && st.model.live() && st.model.live().messageId === cur.id);
+        const pieces = answerPieces(isLive ? st.model.live().text : cur.text || '', cards);
+        for (const [a, z] of commandRuns(handles.map(Boolean), pieces)) {
+          const ids = cards.slice(a, z + 1).map((b) => String(b.card.blockId));
+          for (let i = a; i <= z; i += 1) {
+            st.commandGroupOf.set(ids[i - a], ids);
+            handles[i].setGroup({ role: i === a ? 'first' : i === z ? 'last' : 'mid' });
+          }
+          paintGroupHead(ids);
+        }
+      };
+      renderAnswer = () => { answerKey = answerKeyOf(cur); renderAnswerInto(answerDivs(), cur); paintGroups(); };
       renderAnswer();
       let tailSig = null;
+      retail = () => { tailSig = null; };
       const renderTail = () => {
         const sig = tailSignature(cur);
         if (sig === tailSig) return;
@@ -6308,10 +6259,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         const cards = inlineCards(cur);
         const sameInline = cards.length === inline.length && cards.every((b, i) => b.id === inline[i].id);
         if (sameInline) {
-          // Kept in place: a card swaps its element only when buildCard hands back a new one.
+          // Kept in place: a card swaps its element only when buildCard hands back a new one. #958: the old element
+          // may already be detached (a command card's dispose removes it), and the same element may sit in a gone
+          // row: in both cases the card goes back before its answer piece.
           cards.forEach((b, i) => {
             const cardEl = buildCard(b, cur);
-            if (cardEl !== inline[i].card) { inline[i].card.replaceWith(cardEl); inline[i].card = cardEl; }
+            if (cardEl !== inline[i].card || !wrap.contains(cardEl)) {
+              if (cardEl !== inline[i].card) inline[i].card.remove();
+              inline[i].piece.before(cardEl);
+              inline[i].card = cardEl;
+            }
           });
         }
         const last = inline.length ? inline[inline.length - 1].piece : answer;
@@ -6326,6 +6283,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           });
           renderAnswer();
         }
+        paintGroups();
         for (const b of cur.blocks || []) {
           if (!b) continue;
           if (b.kind === 'notice') wrap.appendChild(buildNotice(b));
@@ -6344,7 +6302,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
             // A classified notice (errorClass on the block) IS the explanation —
             // it renders the human line and, at expert, the raw detail in its
             // own expander. The raw line here is only for the unclassified case.
-            const classified = (cur.blocks || []).some((b) => b && b.kind === 'notice' && (b.errorClass || b.codexSetup || b.copilotSetup));
+            const classified = (cur.blocks || []).some((b) => b && b.kind === 'notice' && (b.errorClass || isEngineSetupNotice(b)));
             if (!classified) {
               const explained = (cur.blocks || []).some((b) => b && b.kind === 'notice');
               if (cur.errorMessage) wrap.appendChild(make('div', 'ask-error-line', cur.errorMessage));
@@ -6369,6 +6327,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       patch = (row2) => { cur = row2; activity.update(row2); renderTail(); };
       relevel = () => activity.update(cur);
     }
+    // #958: a card the row should hold but no longer does. buildCard hands back the cached element (its cache rule
+    // still runs: a stale card is rebuilt, once per pass through st.cardMemo) or a fresh one; either one outside
+    // `wrap` means the row must be painted again. A user row renders no cards, so it never asks.
+    const cardsAway = (r) => r.role !== 'user' && (r.blocks || []).some((b) => {
+      if (!b || b.kind !== 'card' || b.id == null) return false;
+      const c = buildCard(b);
+      return !!c && !wrap.contains(c);
+    });
     const entry = {
       el: wrap,
       renderAnswer,
@@ -6378,11 +6344,26 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         // `.ask-msg` on every ask-label and every ask-block frame, so the whole
         // message — entry animation, answer subtree and cards — was re-created
         // under the text being read. A user/system row carries nothing live and
-        // changes only through a structural repaint, so it still rebuilds.
+        // changes only through a structural repaint (reconciled: refresh), so it still rebuilds.
         if (patch) { patch(row2); return; }
         const fresh = buildMessage(row2);
         wrap.replaceWith(fresh.el);
         st.rowEls.set(row2.id, fresh);
+      },
+      /**
+       * #958: a structural flush refreshes a row it keeps instead of building it again. The element stays in the
+       * column, so the scroll position has nothing to clamp against and a focused control inside stays put.
+       */
+      refresh(row2) {
+        if (patch) {
+          if (cardsAway(row2)) retail();
+          patch(row2);
+          if (answerKey !== answerKeyOf(row2)) renderAnswer();
+          return;
+        }
+        const k = shownKeyOf(row2);
+        if (k != null && k === shownKey && !cardsAway(row2)) return;
+        entry.update(row2);
       },
     };
     return entry;
@@ -6393,20 +6374,37 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const keep = new Set();
     if (st.model) for (const row of st.model.messages()) for (const b of row.blocks || []) if (b && b.kind === 'card' && b.id != null) keep.add(b.id);
     pruneCardEls(keep);
+    const prev = st.rowEls || new Map();
     st.rowEls = new Map();
-    el.transcriptCol.replaceChildren();
-    if (!st.model) { syncView(); return; }
-    for (const row of st.model.messages()) {
-      const entry = buildMessage(row);
-      // The entry animation belongs to a message this transcript has never shown.
-      // ask-start, ask-done and every ask-message rebuild the WHOLE column, so
-      // without the ledger the rows already on screen would rise and fade in
-      // again — including on a mid-turn resync, which repaints the same thread.
-      // The ledger is written at the END of a flush, not here: see flush().
-      if (!st.seenRows.has(row.id)) entry.el.setAttribute('data-ask-enter', '');
-      st.rowEls.set(row.id, entry);
-      el.transcriptCol.appendChild(entry.el);
+    const col = el.transcriptCol;
+    if (!st.model) { col.replaceChildren(); syncView(); return; }
+    // #958: reconcile by message id. ask-start, ask-done, every ask-message and a resync used to empty the column and
+    // build every row again: a focused control lost the focus, and a card laying out mid-rebuild clamped the scroll
+    // position to the partial column. A kept row stays connected and is refreshed in place; new rows are built, gone
+    // ones removed, and only a row out of order moves.
+    const rows = st.model.messages();
+    const ids = new Set(rows.map((r) => r.id));
+    st.cardMemo = new Map();
+    try {
+      for (const [id, entry] of prev) if (!ids.has(id)) entry.el.remove();
+      for (const row of rows) {
+        const kept = prev.get(row.id);
+        if (kept) {
+          kept.refresh(row);                         // a rebuilt user/system row (update) stores its fresh entry itself
+          if (!st.rowEls.has(row.id)) st.rowEls.set(row.id, kept);
+        } else st.rowEls.set(row.id, buildMessage(row));
+        // The entry animation belongs to a message this transcript has never shown (a row update() rebuilt too). The
+        // ledger is written at the END of a flush, not here: see flush().
+        if (!st.seenRows.has(row.id)) st.rowEls.get(row.id).el.setAttribute('data-ask-enter', '');
+      }
+    } finally { st.cardMemo = null; }
+    let at = col.firstChild;
+    for (const row of rows) {
+      const node = st.rowEls.get(row.id).el;
+      if (node === at) at = at.nextSibling;
+      else col.insertBefore(node, at);
     }
+    while (at) { const next = at.nextSibling; at.remove(); at = next; }   // only row elements live in the column
     syncView();                                      // home ↔ thread: the composer follows the first message
   }
 
@@ -6462,7 +6460,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // The model owns the list (load() seeded it). It belongs here, not in
     // switchThread: resync()/onHello() come through loadThread too.
     setWorktrees(st.model.worktrees());
-    st.pinned = true;
+    // #958: a SWITCH opens at the bottom; a resync or reconnect of the same chat keeps the reader where they are.
+    if (switched) { st.pinned = true; st.restoreTop = null; }
     scheduleFlush();
     stopElapsed();      // a mid-stream thread switch must not leave the old
     updateSendStop();   // turn's timer or stop button behind (V3/D2 reset)
@@ -6591,16 +6590,15 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   // Settings → "Delete all chat history" broadcast (seq-less, threadId-less): every
   // row is gone server-side, so a tab still holding st.threadId would keep a dead
   // chat in memory until its next fetch 404s. Reset exactly like the "+" button.
-  function onHistoryCleared({ scoped = false } = {}) {
+  function onHistoryCleared() {
     closePopover({ focusTrigger: false });
-    // Every row is gone server-side: no fetch. A shared clear removed only the caller's chats: refetch the rest.
-    if (scoped) scheduleThreadsRefresh();
-    else renderHistory([], 0);
+    // The Chats column already dropped the rows (chats-column.mjs onFrame) and re-reads the list.
     if (st.threadId) { newThread(); route(null, { replace: true }); }
   }
 
   function pushServerFrame(frame) {
     if (st.destroyed || !frame) return;
+    if (chatsCol) chatsCol.onFrame(frame);   // #948 s2: before the ask-command branch below returns
     if (frame.type === 'ask-history-cleared') {
       // The chats it removed (every one when it names none) leave the "asked in" set, and a Chat row dot lit for one
       // of them goes out: the Chat row never routes to a deleted chat.
@@ -6612,13 +6610,20 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       if (st.unread && (!Array.isArray(frame.threadIds) || frame.threadIds.includes(st.unreadThread))) setUnread(false);
       // A shared deployment's clear names the threads it removed: only a tab showing one of them resets.
       if (Array.isArray(frame.threadIds) && !frame.threadIds.includes(st.threadId)) { scheduleThreadsRefresh(); return; }
-      onHistoryCleared({ scoped: Array.isArray(frame.threadIds) });
+      onHistoryCleared();
       return;
     }
     if (frame.type === 'ask-command') {                         // #574: a command card's live state, this chat only
       if (frame.threadId !== st.threadId) return;
       // Only the card: the terminal pane is never opened or switched for Ask's command (its tab waits there).
       applyCommandFrame(frame.command);
+      return;
+    }
+    if (frame.type === 'ask-command-summary') {                 // #911 slice 2: the helper job's line for one row, in place
+      if (frame.threadId !== st.threadId) return;
+      // flipCard's ask-card / ask-message frame already put it on st.model's block, so a later build paints it too;
+      // this frame repaints the row that is mounted now (buildCard keeps a cached row while mode and state hold).
+      st.commands.get(String(frame.blockId || ''))?.setSummary?.(frame.summary);
       return;
     }
     if (frame.type === 'ask-scope') {                           // Projects, any way P4 (CONTRACT §4): a server-side switch
@@ -6764,6 +6769,24 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.rowEls) for (const id of st.rowEls.keys()) st.seenRows.add(id);
   }
 
+  // #958: only the reader's own scroll (wheel, touch, a press on the transcript or its scrollbar, a key on the
+  // transcript) leaves the bottom. A scroll the browser makes after a layout change (a clamp while a card measures)
+  // is not theirs. Tab, and Enter/Space on a control, count: they can scroll a card control into view.
+  const USER_SCROLL_MS = 600;
+  const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+  function noteScrollIntent() { st.scrollIntentAt = now(); }
+  function onScrollPress() { st.scrollHeld = true; noteScrollIntent(); }
+  function onScrollRelease() { if (st.scrollHeld) { st.scrollHeld = false; noteScrollIntent(); } }
+  function onScrollKey(e) {
+    const tg = e.target;
+    if (tg !== doc.body && !(tg && el.transcript.contains(tg))) return;   // keys in the Chats list or a menu: not ours
+    const field = !!tg && (tg.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(tg.tagName || ''));
+    if (e.key === 'Tab' || (!field && (SCROLL_KEYS.has(e.key) || e.key === 'Enter'))) noteScrollIntent();
+  }
+  function userScrolling() {
+    return st.scrollHeld || (st.scrollIntentAt != null && now() - st.scrollIntentAt < USER_SCROLL_MS);
+  }
+
   function updatePinFromScroll() {
     const t = el.transcript;
     // The scroll event of our OWN pin write (applyPin, jumpToLatest) can arrive after the column grew again (a card's
@@ -6775,14 +6798,25 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       return;
     }
     st.pinWrite = null;
-    st.pinned = t.scrollHeight - t.scrollTop - t.clientHeight < 24;
+    const atBottom = t.scrollHeight - t.scrollTop - t.clientHeight < 24;
+    if (!userScrolling()) {                          // #958: not the reader: never unpins; reaching the bottom re-pins
+      if (st.pinned) applyPin();
+      else if (atBottom) { st.pinned = true; if (el.jump) el.jump.hidden = true; }
+      return;
+    }
+    st.pinned = atBottom;
     if (el.jump) el.jump.hidden = st.pinned;
   }
 
   function applyPin() {
     if (!st.open) return;
+    const t = el.transcript;
+    if (st.restoreTop != null && t.clientHeight > 0) {   // #958: a same-chat return, unpinned, once the page has a box
+      const top = st.restoreTop;
+      st.restoreTop = null;
+      if (!st.pinned) t.scrollTop = top;
+    }
     if (st.pinned) {
-      const t = el.transcript;
       // Only when the bottom has actually moved away. flush() runs this on EVERY
       // rAF of a stream, and an unconditional write re-snapped the scrollport on
       // each one — which is what turned a growing answer into a twitch.
@@ -6810,6 +6844,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   function jumpToLatest() {
     st.pinned = true;
+    st.restoreTop = null;
     el.transcript.scrollTop = el.transcript.scrollHeight;
     st.pinWrite = el.transcript.scrollTop;
     if (el.jump) el.jump.hidden = true;
@@ -6887,8 +6922,14 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
 
   // ---- mount ----------------------------------------------------------------
   const root = buildRoot();
+  const focusKeep = keepFocus(el.transcriptCol, doc);   // #958: every row and card keeps its focused control
+  doc.addEventListener('keydown', onScrollKey, true);
+  doc.addEventListener('pointerup', onScrollRelease, true);
+  doc.addEventListener('pointercancel', onScrollRelease, true);
+  win.addEventListener('blur', onScrollRelease);    // a release outside the window never reaches the document
   mountAddons();
   doc.addEventListener('keydown', onDocKeydown, true);
+  doc.addEventListener('keydown', onChatKeys);       // #948 s2: the Chat page keys
   doc.addEventListener('pointerdown', onDocPointerdown, true);
   // A mode change (ui-level.mjs applyLevel) re-decides every activity toggle: a mode that hides the rows opens nothing.
   const onLevelChange = () => { if (st.rowEls) for (const entry of st.rowEls.values()) if (entry.relevel) entry.relevel(); };
@@ -6923,12 +6964,18 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.destroyed = true;
     closePopover({ focusTrigger: false });
     if (st.threadsRefresh) { clearTimeout(st.threadsRefresh); st.threadsRefresh = null; }
-    if (st.historySearchTimer) { clearTimeout(st.historySearchTimer); st.historySearchTimer = null; }
     if (st.elapsedTimer) { clearInterval(st.elapsedTimer); st.elapsedTimer = null; }
     orbs.destroy();
     doc.removeEventListener('keydown', onDocKeydown, true);
+    doc.removeEventListener('keydown', onChatKeys);
+    if (chatsCol) { chatsCol.destroy(); chatsCol = null; }
     doc.removeEventListener('pointerdown', onDocPointerdown, true);
     doc.removeEventListener('worca:level', onLevelChange);
+    focusKeep.destroy();
+    doc.removeEventListener('keydown', onScrollKey, true);
+    doc.removeEventListener('pointerup', onScrollRelease, true);
+    doc.removeEventListener('pointercancel', onScrollRelease, true);
+    win.removeEventListener('blur', onScrollRelease);
     win.removeEventListener('resize', onWinResize);
     win.removeEventListener('hashchange', onHashChange);
     if (dockRo) { dockRo.disconnect(); dockRo = null; }
@@ -6958,6 +7005,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     setQuote,
     sendQuoted,
     pushServerFrame,
+    refreshCommandCards,
     onHello,
     ownsKey,
     setScope: (scope) => setScopeFromApi(scope),

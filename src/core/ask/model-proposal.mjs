@@ -10,7 +10,7 @@
 // and a wrong base URL or key breaks every pipeline that names the model. Credentials never
 // pass through here: a key is a ${VAR} reference or nothing, and the Copilot sign-in and its
 // notice stay on the Providers card.
-import { modelEnvRef, maskModelEnvValue, isLocalBaseUrl, isTranslatedApi, UPSTREAM_PROVIDERS } from '../model-env.mjs';
+import { modelEnvRef, maskModelEnvValue, isLocalBaseUrl, isTranslatedApi, UPSTREAM_PROVIDERS, effortsForEngine } from '../model-env.mjs';
 
 export const MODEL_CHANGE_KINDS = Object.freeze(['add_model', 'edit_model', 'remove_model', 'provider', 'import_copilot', 'import_endpoint']);
 const MAX_IMPORT = 40;
@@ -128,7 +128,7 @@ export function mergeEditPatch(current, patch) {
   return out;
 }
 
-const connectionOf = (m) => (m.engine === 'cursor' ? "cursor-agent's own sign-in" : m.engine === 'copilot' ? "the Copilot CLI's own sign-in" : m.upstream && m.engine === 'codex' ? 'codex, direct to an OpenAI-compatible endpoint' : m.upstream ? `through provider ${m.upstream.provider}` : m.env && m.env.ANTHROPIC_BASE_URL ? 'custom endpoint via env' : 'Anthropic API / CLI default');
+const connectionOf = (m) => (m.engine === 'cursor' ? "cursor-agent's own sign-in" : m.engine === 'gemini' || m.engine === 'qwen' ? `${m.engine}'s own sign-in` : m.engine === 'copilot' ? "the Copilot CLI's own sign-in" : m.engine === 'goose' ? "Goose's own providers" : m.engine === 'opencode' ? "OpenCode's own providers" : m.upstream && m.engine === 'codex' ? 'codex, direct to an OpenAI-compatible endpoint' : m.upstream ? `through provider ${m.upstream.provider}` : m.env && m.env.ANTHROPIC_BASE_URL ? 'custom endpoint via env' : 'Anthropic API / CLI default');
 const fmtEfforts = (e) => (Array.isArray(e) && e.length ? e.join(', ') : 'all');
 const fmtCost = (c) => (!c ? null : c.free ? 'free' : c.perMtok ? Object.entries(c.perMtok).map(([k, v]) => `${k} $${v}`).join(' · ') : JSON.stringify(c));
 const fmtCaps = (c) => (!c ? null : Object.entries(c).map(([k, v]) => `${k} ${v}`).join(' · '));
@@ -147,7 +147,7 @@ function entryRows(m) {
     if (m.upstream.capabilities) rows.push({ field: 'Limits', value: fmtCaps(m.upstream.capabilities) });
   }
   for (const [k, v] of Object.entries(m.env || {})) rows.push({ field: k, value: typeof v === 'string' ? maskEnvValue(k, v) : String(v) });
-  rows.push({ field: 'Efforts', value: m.engine === 'cursor' ? 'none' : fmtEfforts(m.efforts) });   // a Cursor model takes no effort
+  rows.push({ field: 'Efforts', value: effortsForEngine(m.engine).length ? fmtEfforts(m.efforts) : 'none' });   // Cursor: no effort
   const c = fmtCost(m.cost);
   if (c) rows.push({ field: 'Pricing', value: c });
   return rows;
@@ -327,8 +327,11 @@ export function createModelChangeValidator(r) {
     if (!ids.length || ids.length > MAX_IMPORT) return { ok: false, errors: [MODEL_ERRORS.endpointIds] };
     if (typeof r.endpointModels !== 'function') return { ok: false, errors: ['endpoint discovery is unavailable'] };
     const baseUrl = str(input.baseUrl);
+    // An endpoint with a key of its own (Gemini, Qwen): a ${VAR} reference only, stored on each imported entry.
+    const apiKey = str(input.apiKey);
+    if (apiKey && !modelEnvRef(apiKey)) return { ok: false, errors: [MODEL_ERRORS.secretKey('apiKey')] };
     let out;
-    try { out = await r.endpointModels(baseUrl); } catch (err) { return { ok: false, errors: [err.message] }; }
+    try { out = await r.endpointModels(baseUrl, apiKey); } catch (err) { return { ok: false, errors: [err.message] }; }
     const byId = new Map((out.models || []).map((m) => [m.id, m]));
     const unknown = ids.filter((id) => !byId.has(id));
     if (unknown.length) return { ok: false, errors: [`${out.serverLabel || 'the endpoint'} at ${out.baseUrl} does not serve: ${unknown.join(', ')} — list_endpoint_models shows what it does`] };
@@ -348,7 +351,8 @@ export function createModelChangeValidator(r) {
     return { ok: true, card: {
       type: 'model', kind: 'import_endpoint', target: out.baseUrl,
       summary: `Import ${ids.length} model${ids.length === 1 ? '' : 's'} from ${out.serverLabel || 'the endpoint'}`,
-      note, rows, warnings, change: { ids, ...(baseUrl ? { baseUrl } : {}) },
+      note, rows: apiKey ? [...rows, { field: 'Key', before: null, after: `${apiKey} on each entry` }] : rows, warnings,
+      change: { ids, ...(baseUrl ? { baseUrl } : {}), ...(apiKey ? { apiKey } : {}) },
     } };
   }
 

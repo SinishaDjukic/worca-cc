@@ -65,6 +65,8 @@ test('the sheet renders exactly one dismiss control: Cancel, no Close (F-17)', a
   const mod = await import(pathToFileURL(sheetPath).href + `?f17_${Math.random()}`);
   const done = mod.openScheduleSheet({ mode: 'create' });
   const modal = window.document.getElementById('schedule-modal');
+  const card = modal.querySelector('.card.dlg');
+  assert.ok(card?.querySelector(':scope > .dlg-head #sched-title') && card.querySelector(':scope > .dlg-foot .sched-ok') && card.querySelector(':scope > .dlg-foot .sched-err'), 'the shared dialog anatomy');
   const dismiss = [...modal.querySelectorAll('button')].filter((b) => /^(close|cancel)$/i.test(b.textContent.trim()));
   mod.closeScheduleSheet();
   await done;
