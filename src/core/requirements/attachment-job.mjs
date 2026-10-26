@@ -223,8 +223,10 @@ async function readCall(e, row, { question = null } = {}) {
     // D3, D15: every read carries Ask's deny rules; a Read-form read also the file-read guard, which lets Read open the
     // copy and nothing else (the allow rule is intent: the engine reads unmatched paths).
     const deny = { deny: [...REQUIREMENTS_READ_DENY_RULES] };
-    const call = inline ? { kind: 'round', cwd: readBase(), prompt, tools: [], permissionRules: deny }
-      : { kind: 'look', cwd: dir, prompt, tools: ['Read'], allowedTools: [readRule(path)], maxTurns: READ_MAX_TURNS, permissionRules: deny, readGuard: path };
+    // D15: no Claude Code session transcript either, so the file's content stays in Worca's store alone (Remove deletes it).
+    const call = inline ? { kind: 'round', cwd: readBase(), prompt, tools: [], permissionRules: deny, noSessionPersistence: true }
+      : { kind: 'look', cwd: dir, prompt, tools: ['Read'], allowedTools: [readRule(path)], maxTurns: READ_MAX_TURNS, permissionRules: deny, readGuard: path,
+        noSessionPersistence: true };
     const r = await callModel(d, { ...call, model: model || undefined, ...(im.effort ? { effort: im.effort } : {}),
       systemPrompt: ATTACHMENT_SYSTEM_PROMPT, timeoutMs: d.readTimeoutMs, signal: e.ctrl.signal });
     const costUsd = Number(r.costUsd) || 0;

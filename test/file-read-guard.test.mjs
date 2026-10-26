@@ -250,6 +250,17 @@ test('the runner carries the guard in the one --settings payload, with the deny 
   assert.deepEqual(off.hooks.PreToolUse.map((h) => h.matcher), ['*']);
 });
 
+test('the runner emits --no-session-persistence only for noSessionPersistence: true; otherwise the argv is byte-identical', () => {
+  const BASE = { prompt: 'p', permissionMode: 'acceptEdits' };
+  const args = buildClaudeArgs({ ...BASE, noSessionPersistence: true });
+  assert.equal(args.filter((a) => a === '--no-session-persistence').length, 1);
+  assert.deepEqual(args.filter((a) => a !== '--no-session-persistence'), buildClaudeArgs(BASE));
+  for (const v of [false, undefined, null, 'true', 1]) assert.deepEqual(buildClaudeArgs({ ...BASE, noSessionPersistence: v }), buildClaudeArgs(BASE), String(v));
+  const staged = planClaudeInvocation({ ...BASE, prompt: 'p'.repeat(50), noSessionPersistence: true }, { dir: '/staged', limit: 10 });
+  assert.equal(staged.staged, true);
+  assert.ok(staged.args.includes('--no-session-persistence'), 'the staged argv too');
+});
+
 test('the decision log lives in a private folder the server chooses, named in the hook command, staged or inline', () => {
   const copy = join(tmpdir(), 'att-read-0a1b2c3d', 'ratt_0123456789ab.pdf');
   const log = join(tmpdir(), 'staged', 'read-guard.jsonl');
@@ -313,7 +324,7 @@ test('runClaude forwards readGuard into the spawn argv (fake claude)', POSIX, as
   const prev = { mock: process.env.WORCA_MOCK, orch: process.env.ORCH_MOCK, broker: process.env.WORCA_BROKER_URL };
   delete process.env.WORCA_MOCK; delete process.env.ORCH_MOCK; delete process.env.WORCA_BROKER_URL;
   try {
-    await runClaude({ cwd: dir, prompt: 'hi', bin, readGuard: join(dir, 'ratt_0123456789ab.pdf'), permissionRules: { deny: ['Read(~/.aws/**)'] } });
+    await runClaude({ cwd: dir, prompt: 'hi', bin, readGuard: join(dir, 'ratt_0123456789ab.pdf'), permissionRules: { deny: ['Read(~/.aws/**)'] }, noSessionPersistence: true });
   } finally {
     for (const [k, v] of [['WORCA_MOCK', prev.mock], ['ORCH_MOCK', prev.orch], ['WORCA_BROKER_URL', prev.broker]]) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
@@ -322,6 +333,7 @@ test('runClaude forwards readGuard into the spawn argv (fake claude)', POSIX, as
   assert.ok(settings.hooks.PreToolUse.some((h) => h.matcher === '*' && /file-read-guard-cli\.mjs/.test(h.hooks[0].command)));
   assert.ok(settings.hooks.PreToolUse.some((h) => h.matcher === 'Bash'), 'the host guard stays');
   assert.deepEqual(settings.permissions.deny, ['Read(~/.aws/**)']);
+  assert.equal(argv.filter((a) => a === '--no-session-persistence').length, 1, 'runClaude forwards noSessionPersistence');
 });
 
 test('runClaude returns the guard\'s decisions; they cover the stream\'s tool calls (fake claude runs the hook)', POSIX, async () => {

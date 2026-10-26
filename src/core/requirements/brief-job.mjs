@@ -96,6 +96,7 @@ function briefCall(d, { cwd, prompt, model, effort, timeoutMs }) {
   return callModel(d, {
     kind: 'look', cwd, prompt, model, ...(effort ? { effort } : {}), timeoutMs,
     systemPrompt: BRIEF_SYSTEM_PROMPT, maxTurns: BRIEF_MAX_TURNS, permissionRules: { deny: [...REQUIREMENTS_READ_DENY_RULES] },
+    noSessionPersistence: true,   // A8 (D15): no Claude Code session transcript of the documents' summaries
   });
 }
 

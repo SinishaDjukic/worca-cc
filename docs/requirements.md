@@ -125,8 +125,10 @@ images and PDFs go as they are. A read can open only its own copy of the file: a
 other tool, so a file that asks the reader to open something else gets nowhere. Worca keeps a record of what the guard
 allowed, and throws away a read it cannot confirm ("Worca stopped this read: it could not confirm the read stayed
 inside this file. Try again."). Every read, every question and the product brief's look also refuse private files
-(keys, credentials, Worca's own data, other chats and stored files), as Ask Worca does. Where the files are kept:
-[storage.md](storage.md).
+(keys, credentials, Worca's own data, other chats and stored files), as Ask Worca does. Reads, questions and the
+brief's look also ask Claude Code to keep no session transcript of the call (`--no-session-persistence`), so a file's
+content is not left in Claude Code's own session logs; Remove deletes the file and what Worca took from it. Where the
+files are kept: [storage.md](storage.md).
 
 **Testing.** In mock mode (`WORCA_MOCK=1`) nothing is sent: a read writes a `[mock]` summary at once, or after
 `WORCA_MOCK_READ_MS` milliseconds when that is set (the browser proof uses it to see "Reading N files…").

@@ -116,6 +116,8 @@ export function mockEnabled(opts) {
  *   `disableSkillShellExecution`); never replaces `permissions` / `hooks`. Absent ⇒ unchanged.
  * @param {string} [o.readGuard] A8: the one file a Requirements read may open (file-read-guard.mjs); absent ⇒ argv unchanged.
  *   Claude only: any other engine throws rather than run unguarded. The result then carries `readGuardDecisions`.
+ * @param {boolean} [o.noSessionPersistence] A8: true ⇒ --no-session-persistence (Claude Code saves no session
+ *   transcript of the call; Requirements file reads, asks and the brief look). Claude only; absent ⇒ argv unchanged.
  * @param {Record<string,string>} [o.spawnEnv]  run-level spawn env (wsmap D9: runOpts sets
  *   CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY on every fan-out node, and CLAUDE_CODE_DISABLE_BACKGROUND_TASKS
  *   on the scan's two). Merged OVER the guardrail env and UNDER modelEnv (a catalog entry that sets the
@@ -177,6 +179,8 @@ export async function runClaude(o = {}) {
     extraSettings,
     // Requirements A8: the one file a read may open (file-read-guard.mjs). Claude only, like memoryLoadLog.
     readGuard,
+    // Requirements A8: no Claude Code session transcript of a file read. Claude only.
+    noSessionPersistence,
     // Memory usage (memory-usage.mjs): this execution's hook file; set only when the mounted rules hold a note
     // with `paths:`. Claude only (the InstructionsLoaded hook); other engines ignore it. Never a spawn flag of its own.
     memoryLoadLog,
@@ -282,6 +286,7 @@ export async function runClaude(o = {}) {
     pluginDirs,
     extraSettings: settings,
     readGuard,
+    noSessionPersistence,
     memoryLoadLog,
     argvInlineLimit,
     asAgent,

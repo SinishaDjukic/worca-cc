@@ -221,7 +221,7 @@ const CALL_KINDS = Object.freeze({
   look: () => ({ systemPrompt: ORIENTATION_SYSTEM_PROMPT, tools: REPO_LOOK_TOOLS, maxTurns: REPO_LOOK_MAX_TURNS }),
   round: () => ({ systemPrompt: ROUND_SYSTEM_PROMPT, tools: [], maxTurns: null }),
 });
-const CALL_KEYS = new Set(['cwd', 'prompt', 'model', 'systemPrompt', 'tools', 'allowedTools', 'maxTurns', 'effort', 'permissionRules', 'readGuard']);
+const CALL_KEYS = new Set(['cwd', 'prompt', 'model', 'systemPrompt', 'tools', 'allowedTools', 'maxTurns', 'effort', 'permissionRules', 'readGuard', 'noSessionPersistence']);
 
 /**
  * The runClaude options of one interview call, without `signal` / `onEvent` (design §9, the lane contract).
@@ -229,6 +229,8 @@ const CALL_KEYS = new Set(['cwd', 'prompt', 'model', 'systemPrompt', 'tools', 'a
  * Two overrides of their own, emitted only when given (A8, plans/requirements-a8-design.md D3): `permissionRules`
  * (a file read's and the brief look's deny rules) and `readGuard` (the one file a read may open, file-read-guard.mjs),
  * which when present at all must be an absolute path: an empty or relative value throws instead of meaning "no guard".
+ * A third, `noSessionPersistence: true` (D15: file reads, asks and the brief look), asks Claude Code to keep no session
+ * transcript of the call; any other value emits nothing, so the other calls' options stay as they were.
  * Every call, whatever the overrides, replaces Claude Code's system prompt with Worca's and turns slash
  * commands off; it also loads only the project's setting sources (no user plugins, hooks or skills,
  * A1.1 D6) unless `keepUserSettings` (the user settings carry sign-in: `userClaudeSignIn`).
@@ -257,6 +259,7 @@ export function interviewCallOptions(kind, args = {}, { keepUserSettings = false
     ...(maxTurns ? { maxTurns } : {}),
     ...(args.effort ? { effort: args.effort } : {}),
     ...(args.permissionRules ? { permissionRules: args.permissionRules } : {}), ...(guarded ? { readGuard: args.readGuard } : {}),
+    ...(args.noSessionPersistence === true ? { noSessionPersistence: true } : {}),
     permissionMode: 'acceptEdits',
     spawnKind: 'aux',   // credential broker: a short-lived token, as pr-description.mjs
   };

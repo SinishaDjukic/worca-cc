@@ -79,6 +79,7 @@ test('a small text file is read inline, redacted, with no tools, on the intervie
   assert.deepEqual([c.systemPrompt, c.systemPromptMode, c.tools, c.allowedTools, c.maxTurns, c.model, c.effort],
     [ATTACHMENT_SYSTEM_PROMPT, 'replace', [], [], undefined, 'claude-opus-5-5', 'medium']);
   assert.deepEqual([c.permissionRules, 'readGuard' in c], [{ deny: [...REQUIREMENTS_READ_DENY_RULES] }, false], 'deny rules; no tool, so no guard');
+  assert.equal(c.noSessionPersistence, true, 'D15: no Claude Code session transcript of the file');
   assert.match(c.prompt, /<file>\nName: policy\.md\nKind: Text\nSize: \d+ B\n\nRefunds in 14 days\. sk-ant-&lt;redacted>/);
   assert.doesNotMatch(c.prompt, /sk-ant-api03/);
   const a = getAttachment(row.id);
@@ -110,6 +111,7 @@ test('an image, a PDF and a 30 KB text are opened with Read from a fresh folder 
     assert.match(c.allowedTools[0], /^Read\(\/\/\*\*\/att-read-[0-9a-f]{8}\/ratt_[0-9a-f]{12}\.(png|pdf|txt)\)$/);
     assert.equal(c.readGuard, join(c.cwd, c.allowedTools[0].slice(c.allowedTools[0].lastIndexOf('/') + 1, -1)), 'the guard names the copy');
     assert.deepEqual(c.permissionRules, { deny: [...REQUIREMENTS_READ_DENY_RULES] });
+    assert.equal(c.noSessionPersistence, true, 'D15: no Claude Code session transcript of the file');
     assert.match(c.prompt, /holds only this file: .+\. Open it with the Read tool\./);
     assert.equal(existsSync(c.cwd), false, 'the read folder is gone');
   }
@@ -433,6 +435,7 @@ test('ask: a focused read with the question and the summary; the answer under it
   assert.throws(() => job.askAttachment(own(f), a.id, 'Again?', {}, deps(r)), /^RequirementsError: Worca is already answering a question about this file\.$/);
   await job.readsSettled(own(f));
   assert.match(r.calls[1].prompt, /<what_worca_took_from_it>\nTickets\.\n<\/what_worca_took_from_it>\n\n<question>What about store credit\?<\/question>/);
+  assert.equal(r.calls[1].noSessionPersistence, true, 'an ask keeps no Claude Code session transcript either');
   const after = getAttachment(a.id);
   assert.deepEqual([after.summary, after.asks.length, after.asks[0].question, after.asks[0].answer, after.asks[0].by, after.costUsd],
     ['Tickets.', 1, 'What about store credit?', '4 ask for store credit.', 'po', 0.2]);

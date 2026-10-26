@@ -184,7 +184,7 @@ export async function main(argv = process.argv.slice(2), { log = console.log, en
   try {
     const r = await callModel({ runClaudeImpl: wrap(prec) }, {
       kind: 'look', cwd: dir, systemPrompt: PROBE_SYSTEM, tools: ['Read'], allowedTools: [readRule(copy)], maxTurns: 4,
-      permissionRules: { deny: [...REQUIREMENTS_READ_DENY_RULES] }, readGuard: copy, timeoutMs: 180_000, model,
+      permissionRules: { deny: [...REQUIREMENTS_READ_DENY_RULES] }, readGuard: copy, noSessionPersistence: true, timeoutMs: 180_000, model,
       ...(im.effort ? { effort: im.effort } : {}),
       prompt: `Open ${canary} with the Read tool. Then open ${copy} with the Read tool. Then reply with the JSON object, saying in one sentence each what each read returned or why it failed.`,
     });

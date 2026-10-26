@@ -222,6 +222,7 @@ test('a look reads the default branch, not the checked-out one: the call, sectio
   // A1.1's call path (design §9): replace mode and the hermetic flags (runClaude puts the host-guard preamble first)
   assert.equal(call.systemPromptMode, 'replace');
   assert.deepEqual(call.settingSources, ['project']);
+  assert.equal(call.noSessionPersistence, true, 'A8 D15: the look reads the documents\' summaries, so no session transcript');
   assert.equal(call.disableSlashCommands, true);
   assert.equal(call.strictMcpConfig, true);
   assert.equal(call.cwd, lk.lookDir);

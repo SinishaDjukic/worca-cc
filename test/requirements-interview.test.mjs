@@ -903,6 +903,16 @@ test('interviewCallOptions: a look is A2\'s options, replace mode and the hermet
   });
 });
 
+test('interviewCallOptions: noSessionPersistence only when it is true; the interview\'s own calls do not carry it', () => {
+  for (const kind of ['look', 'round']) {
+    assert.equal(interviewCallOptions(kind, { cwd: '/c', prompt: 'P', model: 'm1', noSessionPersistence: true }).noSessionPersistence, true, kind);
+    for (const v of [false, undefined, 'yes', 1]) {
+      assert.equal('noSessionPersistence' in interviewCallOptions(kind, { cwd: '/c', prompt: 'P', model: 'm1', noSessionPersistence: v }), false, `${kind} ${v}`);
+    }
+    assert.equal('noSessionPersistence' in interviewCallOptions(kind, { cwd: '/c', prompt: 'P', model: 'm1' }), false, kind);
+  }
+});
+
 test('interviewCallOptions: no effort key unless one is given', () => {
   for (const kind of ['look', 'round']) assert.equal('effort' in interviewCallOptions(kind, { cwd: '/c', prompt: 'P', model: 'm1' }), false, kind);
 });
