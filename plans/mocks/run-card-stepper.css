@@ -255,8 +255,8 @@ html,body{height:auto;overflow:visible;margin:0;}
    20px rail + 12px gap, so a step in Activity lines up under the same step in the card, and headings and text share
    the card's text edge. */
 .rtab-panel{margin-inline:calc(var(--pad-card) + 1px);}
-.rc-tabs{margin-left:calc(var(--pad-card) + 1px + var(--rail) + var(--gap));margin-right:calc(var(--pad-card) + 1px);}
-.rtab,.rtab-bar,.ch-tools,.rtab-panel > .rtab-dec:not(.is-runs){padding-left:calc(var(--rail) + var(--gap));}
+.rc-tabs{margin-left:calc(var(--pad-card) + 1px + var(--rail) + var(--gap) - 2px);margin-right:calc(var(--pad-card) + 1px);}
+.rtab,.rtab-bar,.rtab-panel > .rtab-dec:not(.is-runs){padding-left:calc(var(--rail) + var(--gap));}
 .rtab-stage .sc-subs{margin-left:calc(-1 * (var(--rail) + var(--gap)));}   /* rows put their circle back on the rail */
 
 /* ---- Review round: bar, figures, evidence, radio, narrow widths ---- */
@@ -283,9 +283,9 @@ html,body{height:auto;overflow:visible;margin:0;}
 @container (max-width: 520px){
   .rc-bar .rc-pause{display:none;}   /* Pause moves into ⋯; Stop and ⋯ stay */
   /* below the card nothing frames an indent, so tabs and panels take the page's edge */
-  .rc-tabs{margin-inline:0;}
+  .rc-tabs{margin-inline:-2px 0;}
   .rtab-panel{margin-inline:0;}
-  .rtab,.rtab-bar,.ch-tools,.rtab-panel > .rtab-dec:not(.is-runs){padding-left:0;}
+  .rtab,.rtab-bar,.rtab-panel > .rtab-dec:not(.is-runs){padding-left:0;}
   .rtab-stage .sc-subs{margin-left:0;}
 }
 .menu{max-width:calc(100vw - 32px);}
@@ -401,7 +401,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .ct .del{color:var(--red-ink-strong,var(--red));}
 
 /* Changes: by folder; a file opens its first hunk in place. Columns: status · name · comments · counts · blocks. */
-.ch-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;min-width:0;margin-bottom:8px;}
+.ch-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;min-width:0;margin-bottom:16px;}
 .ch-head > .rtab-dim{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
 .ch-list{list-style:none;margin:0;padding:0;}
 .ch-dir{display:flex;align-items:baseline;gap:8px;padding:12px 0 4px;}
@@ -488,7 +488,10 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rc-cost li:first-child{border-top:0;}
 .rc-cost li.is-total{font-weight:600;}
 /* Changes: the code's actions above its files. */
-.ch-tools{display:flex;flex-wrap:wrap;gap:8px;}
+.ch-head{align-items:flex-start;}
+.ch-sum{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.ch-sum > .rtab-dim{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ch-act{flex:none;}
 .ov-after-t{font-size:var(--fs-body);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
 /* Menus, as the app's View menu (style.css › One menu): one line per item; a choice has a leading check column and a

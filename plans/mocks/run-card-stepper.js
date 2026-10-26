@@ -162,8 +162,11 @@ function changesPanel(v) {
     return `<li class="ch-file${open === r.i ? ' is-open' : ''}"><button type="button" class="ch-row" aria-expanded="${open === r.i}" data-file="${r.i}" data-key="file:${r.i}"><span class="ch-st is-${m.st}" title="${m.st === 'A' ? 'Added' : 'Modified'}">${m.st}</span><span class="ch-name" title="${esc(r.p)}">${esc(r.name)}</span>${m.notes ? `<span class="ch-notes" title="${m.notes} review comments">${m.notes}</span>` : '<span class="ch-notes"></span>'}<span class="ct"><span class="add">+${r.a}</span><span class="del">−${r.dl}</span></span><span class="ch-blocks" aria-hidden="true">${blocks(r.a, r.dl)}</span></button>${diff}</li>`;
   }).join('')).join('');
   const where = v.place.folder ? `In a copy of ${v.place.folder}; Apply writes them into the folder.` : v.place.branch ? `${v.place.branch} into ${v.place.base || 'dev'}` : '';
-  const tools = v.place.folder ? '' : `<div class="ch-tools">${v.bar.stop ? '<button type="button" class="btn btn-sm btn-quiet" data-key="ch:refresh" data-say="Diff refreshed from the worktree">Refresh</button>' : ''}<button type="button" class="btn btn-sm" data-key="ch:checkout" data-say="Checked out the branch on this machine">Check out</button><button type="button" class="btn btn-sm btn-quiet" data-key="ch:patch" data-say="Downloading run.patch">Download patch</button><button type="button" class="btn btn-sm btn-quiet" data-key="ch:copy" data-say="Copied: git fetch && git switch ${esc(v.place.branch || '')}">Copy git commands</button></div>`;
-  return tools + `<section class="rtab"><div class="ch-head"><h2 class="rtab-h">${f.length} files <span class="ct"><span class="add">+${add}</span><span class="del">−${del}</span></span></h2><span class="rtab-dim" title="${esc(where)}">${esc(where)}</span></div>
+  // The code's own actions sit in the Changes head, as the card's action does: Check out, the rest in its ▾.
+  const chItems = (v.bar.stop ? [{ id: 'ch:refresh', text: 'Refresh', help: 'Reload the diff from the worktree' }] : [])
+    .concat([{ id: 'ch:patch', text: 'Download patch', help: 'Every change as one .patch file' }, { id: 'ch:copy', text: 'Copy git commands', help: 'git fetch and git switch to this branch' }]);
+  const tools = v.place.folder ? '' : `<div class="btn-split rc-pop is-right ch-act"><button type="button" class="btn btn-sm" data-key="ch:checkout" data-say="Checked out ${esc(v.place.branch || 'the branch')} on this machine" title="Check the branch out on this machine">Check out</button><button type="button" class="btn btn-sm btn-icon" aria-label="More for these changes" aria-haspopup="menu" aria-expanded="${ui.menu === 'ch'}" data-menu="ch" data-key="menu:ch">${svg('chevron', 14)}</button>${menu('ch', chItems)}</div>`;
+  return `<section class="rtab"><div class="ch-head"><div class="ch-sum"><h2 class="rtab-h">${f.length} files <span class="ct"><span class="add">+${add}</span><span class="del">−${del}</span></span></h2><span class="rtab-dim" title="${esc(where)}">${esc(where)}</span></div>${tools}</div>
     <ul class="ch-list">${rows}</ul></section>`;
 }
 function activityPanel(v) {
@@ -317,6 +320,7 @@ function moreItems(v) {
   if (group) items.push({ id: 'group:cancel', text: 'Cancel the rest', help: 'Runs that have not started are dropped' });
   return items;
 }
+const CH_SAY = { 'ch:refresh': () => 'Diff refreshed from the worktree', 'ch:patch': () => 'Downloading run.patch', 'ch:copy': (v) => 'Copied: git fetch && git switch ' + v.place.branch };
 const MORE_SAY = { 'more:link': 'Copied the link to this run', 'more:preset': 'Saved as preset “Unified page navigation”', 'more:terminal': 'Terminal opened in the worktree', 'more:report': 'Report sent with the logs',
   'group:replan': 'The planner is re-cutting runs 3 and on', 'group:plan': 'Opens plan.md' };
 let toastTimer = 0;
@@ -407,6 +411,7 @@ document.addEventListener('click', (e) => {
     else if (d.menuPick === 'group:ask' || d.menuPick === 'group:go') { const ask = d.menuPick === 'group:ask'; ui.menu = ''; pendingFocus = 'menu:more';
       toast(ask === ui.askEach ? (ask ? 'Already asks first' : 'Already starts by itself') : ask ? 'Worca asks before each run starts' : 'Each run starts by itself'); ui.askEach = ask; }
     else if (d.menuPick === 'group:cancel') follow({ say: 'Run 3 is dropped; runs 1 and 2 stay', confirm: 'Cancel the runs that have not started?' }, 'Cancel the rest');
+    else if (CH_SAY[d.menuPick]) { toast(CH_SAY[d.menuPick](M.view(ui.caseId, ui))); pendingFocus = 'menu:ch'; ui.menu = ''; }
     else if (MORE_SAY[d.menuPick]) { toast(MORE_SAY[d.menuPick]); pendingFocus = 'menu:more'; ui.menu = ''; }
     else if (ui.menu === 'act') act(d.menuPick);
     else if (d.menuPick === 'ungroup') { ui.chips = ui.chips.filter((c) => c.kind !== 'group'); ui.menu = ''; pendingFocus = 'menu:add'; }
