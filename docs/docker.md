@@ -207,6 +207,10 @@ worca container up --no-project              # back to the whole folder
 - Its **untracked and ignored** files that look like secrets are covered by an empty read-only file: `cat .env`
   prints nothing, and writing or deleting it fails. The list is `.env*`, `*.pem`, `*.key`, `.npmrc`, `.netrc`,
   `id_*`, plus the project's `secretPaths` setting. `up` prints what it masked.
+- A mask covers one exact name. On a filesystem that opens a file under other spellings (macOS APFS by default:
+  `.ENV` or another Unicode form opens `.env`), the box could read a masked file through such a name, so `up` refuses
+  to start a box that needs masks there. Move the secret files out of the project, keep the project on a
+  case-sensitive volume, or leave files that are not secret unmasked with `secretPathsUnmask`.
 - **Committed** files that look like secrets are not masked (git would see them as changed, and a commit could
   empty them); they are in the git history the box has anyway. `up` names them, and also any that a commit deleted but
   older commits still hold, which the box can read through `.git`. Deleting a file in a new commit does not take it

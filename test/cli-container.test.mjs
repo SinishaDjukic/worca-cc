@@ -18,7 +18,7 @@ import {
   cmdContainer, detectRuntime, commonParent, seedEnv, composeFileArgs, initDir, OVERLAYS, COMPOSE_SRC_DIR,
 } from '../src/cli/container.mjs';
 import {
-  resolveProjectDir, planProjectMasks, renderMaskOverlay, maskSettingsFor, boxName, maskLines, MOUNT_FILE, EMPTY_FILE, MAX_MASKS,
+  resolveProjectDir, planProjectMasks, renderMaskOverlay, maskSettingsFor, boxName, maskLines, maskAliases, MOUNT_FILE, EMPTY_FILE, MAX_MASKS,
 } from '../src/cli/container-mounts.mjs';
 import { secretPathsFor } from '../src/core/secret-paths.mjs';
 import { settingEntry, writeProjectSettings } from '../src/core/settings-cascade.mjs';
@@ -47,10 +47,11 @@ function fakeExec(available = ['docker']) {
   };
   return { exec, calls };
 }
+// aliasesOf: no mask has another spelling here, as on a case-sensitive filesystem (a Mac's is not; see the alias tests).
 const io = () => {
   const lines = [];
   const fails = [];
-  return { out: (s) => lines.push(s), c: (_n, s) => s, fail: (m) => fails.push(m), lines, fails };
+  return { out: (s) => lines.push(s), c: (_n, s) => s, fail: (m) => fails.push(m), lines, fails, aliasesOf: () => [] };
 };
 const tmp = () => mkdtempSync(join(tmpdir(), 'worca-container-'));
 
@@ -271,6 +272,38 @@ test('planProjectMasks names a secret a commit deleted but older commits hold, o
     assert.match(hist || '', /2 files that look like secrets were deleted but are still in older commits, readable in the box through \.git: \.env\.local, deploy\.pem\. Deleting a file in a new commit keeps it in the older ones: rewrite the history/);
     assert.ok(lines.some((l) => /config\/\.env\. Deleting a file in a new commit keeps it/.test(l)), 'the committed-file remedy names history too');
   } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('maskAliases: a mask that another spelling opens on this filesystem is named (audit 2.2)', { skip: POSIX_ONLY }, () => {
+  const d = realpathSync.native(tmp());
+  try {
+    const cafe = 'config/café.pem'.normalize('NFC');
+    mkdirSync(join(d, 'config'));
+    writeFileSync(join(d, '.env'), 'x\n'); writeFileSync(join(d, cafe), 'k\n'); writeFileSync(join(d, 'plain.key'), 'k\n');
+    // What this filesystem does, probed apart from the code: APFS (a Mac) folds case and Unicode form, ext4 neither.
+    const folds = existsSync(join(d, '.ENV'));
+    const forms = existsSync(join(d, cafe.normalize('NFD')));
+    const got = maskAliases(d, ['.env', cafe, 'gone.pem']);
+    assert.deepEqual(got.map((a) => a.rel), [...(folds ? ['.env'] : []), ...(folds || forms ? [cafe] : [])]);
+    for (const a of got) assert.notEqual(a.alias, a.rel);
+    if (folds) assert.equal(got[0].alias, '.ENV');
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test('up --project refuses masks the box could read past under another spelling, and starts nothing (audit 2.2)', { skip: POSIX_ONLY }, async () => {
+  const dir = tmp();
+  const repo = secretProject();
+  try {
+    const { exec, calls } = fakeExec();
+    const o = io();
+    const seen = [];
+    const aliasesOf = (project, masks) => { seen.push(masks); return [{ rel: '.env', alias: '.ENV' }]; };
+    assert.equal(await cmdContainer(['up', '--project', repo, '--projects', '/Users/me/dev'], { ...o, exec, dir, aliasesOf }), 1);
+    assert.ok(seen[0].includes('.env'), 'the probe gets the masks');
+    assert.match(o.fails[0], /opens one file under other spellings \(\.ENV opens \.env\).*masks could be read past.*case-sensitive volume/);
+    assert.ok(!calls.some((k) => k.args.includes('up')), 'nothing started');
+    assert.equal(existsSync(join(dir, MOUNT_FILE)), false, 'no overlay written');
+  } finally { rmSync(repo, { recursive: true, force: true }); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('planProjectMasks without git: every match is masked, and the reason is given', { skip: POSIX_ONLY }, async (t) => {
