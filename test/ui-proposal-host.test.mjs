@@ -62,12 +62,13 @@ const xform = (world) => {
   return m ? { x: Number(m[1]), y: Number(m[2]), z: Number(m[3]) } : null;
 };
 const near = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-6, `${msg}: ${a} ≠ ${b}`);
-const wellHOf = (b) => Math.min(WELL_MAX_H, Math.max(WELL_MIN_H, Math.ceil(b.h)));
+/** The well height at zoom `z` (#959: the zoom the first measured placement uses; 1 while unmeasured). */
+const wellHOf = (b, z = 1) => Math.min(WELL_MAX_H, Math.max(WELL_MIN_H, Math.ceil(b.h * z)));
 const wheel = (window, init) => new window.WheelEvent('wheel', { bubbles: true, cancelable: true, ...init });
 
-test('mount: the Workflows rendering — template x/y, scale-1 cards with the description footer, orthogonal lanes, the ≤N pill — opening at zoom 1 in a well sized from the graph', async () => {
+test('mount: the Workflows rendering — template x/y, scale-1 cards with the description footer, orthogonal lanes, the ≤N pill — opening fitted (#959) in a well sized from the graph', async () => {
   await checkRows([
-    { name: 'a graph wider than the well: canvas cards at their own x/y, zoom 1, the start edge, centred vertically', run: async () => {
+    { name: 'a graph wider than the well opens fitted: the whole width, centred, ≥ WELL_ZOOM_MIN', run: async () => {
       const { host, well, world } = mount(LINE, { width: 700 });
       const v = well.view;
       assert.ok(host.classList.contains('gv-well'));
@@ -85,13 +86,13 @@ test('mount: the Workflows rendering — template x/y, scale-1 cards with the de
       }
       assert.equal(host.querySelector('.wbadge .wmax').textContent, '≤3', 'the loop pill');
       const b = v.bounds(WELL_PAD);
-      const h = wellHOf(b);
-      assert.equal(host.style.height, `${h}px`, 'the well height: the padded graph at zoom 1, clamped');
-      assert.equal(well.height(), h);
       const t = xform(world());
-      assert.equal(t.z, 1, 'opens at zoom 1 — never shrunk to fit');
-      near(t.x, -b.x, 'wider than the well: the start edge');
-      near(t.y, (h - b.h) / 2 - b.y, 'fits vertically: centred');
+      const h = wellHOf(b, t.z);
+      assert.equal(host.style.height, `${h}px`, 'the well height: the padded graph at its placed zoom, clamped');
+      assert.equal(well.height(), h);
+      assert.ok(t.z < 1 && t.z >= WELL_ZOOM_MIN, `shrunk to fit (z ${t.z}) — #959`);
+      assert.ok(b.w * t.z <= 700 - NAV_INSET + 1e-6, 'the whole width, left of the cluster');
+      near(t.x, (700 - NAV_INSET - b.w * t.z) / 2 - b.x * t.z, 'centred');
       assert.equal(v.stage.getAttribute('tabindex'), '-1', 'no dead tab stop');
       assert.equal(host.querySelectorAll('[tabindex="0"]').length, 0, 'nor on the cards');
     } },
@@ -101,6 +102,17 @@ test('mount: the Workflows rendering — template x/y, scale-1 cards with the de
       const t = xform(world());
       assert.equal(t.z, 1);
       near(t.x, (1600 - NAV_INSET - b.w) / 2 - b.x, 'centred in the span the cluster leaves');
+    } },
+    { name: 'a graph still wider than the span at WELL_ZOOM_MIN opens at WELL_ZOOM_MIN at its START edge, not centred', run: async () => {
+      const { well, world } = mount(LINE, { width: 300 });
+      const b = well.view.bounds(WELL_PAD);
+      assert.ok(b.w * WELL_ZOOM_MIN > 300 - NAV_INSET, 'the fixture is too wide at the floor');
+      const t = xform(world());
+      assert.equal(t.z, WELL_ZOOM_MIN);
+      near(t.x, -b.x * WELL_ZOOM_MIN, 'the padded left edge at the well\'s left: the first card in view');
+      near(t.y, (well.height() - b.h * t.z) / 2 - b.y * t.z, 'the vertical placement is unchanged: centred');
+      well.fit();
+      near(xform(world()).x, -b.x * WELL_ZOOM_MIN, 'Center places it there again');
     } },
     { name: 'unmeasured (detached / hidden): the height is already right, the view sits at the start edge; the first width places it', run: async () => {
       const { well, box, host, world } = mount(LINE, { width: 0 });
@@ -143,6 +155,8 @@ test('the chat\'s wheel policy: a plain vertical wheel scrolls the chat, shift /
   const { window, well, world } = mount(LINE, { width: 700 });
   const stage = well.view.stage;
   const b = well.view.bounds(WELL_PAD);
+  // #959: the well opens fitted; a user who zoomed in to 1 (Zoom in) has the start edge at zoom 1 to pan from.
+  well.view.setTransform({ x: -b.x, y: (wellHOf(b) - b.h) / 2 - b.y, z: 1 });
   const start = xform(world());
   const plain = wheel(window, { deltaY: 120 });
   stage.dispatchEvent(plain);
@@ -176,7 +190,7 @@ test('the chat\'s wheel policy: a plain vertical wheel scrolls the chat, shift /
 test('the nav cluster: the run monitor\'s glyphs + Expand; in/out disable at the zoom ends, Center fits the whole graph, Expand runs one open at a time', async () => {
   let release = null;
   const calls = [];
-  const { window, host, well, world } = mount(LINE, { width: 700, onExpand: () => { calls.push(1); return new Promise((r) => { release = r; }); } });
+  const { window, host, well, box, world } = mount(LINE, { width: 1600, onExpand: () => { calls.push(1); return new Promise((r) => { release = r; }); } });
   const nav = host.querySelector(':scope > .gv-nav');
   assert.ok(nav, 'the cluster sits in the well — a sibling of the stage, never in the drag pipeline');
   assert.deepEqual([...nav.querySelectorAll('.gv-nav-btn')].map((b) => [b.dataset.nav, b.getAttribute('aria-label'), b.title]),
@@ -191,6 +205,7 @@ test('the nav cluster: the run monitor\'s glyphs + Expand; in/out disable at the
   assert.equal(btn('in').disabled, false);
   btn('in').click();
   near(xform(world()).z, 1, 'and back');
+  box.width = 700; well.relayout();
   btn('center').click();
   const b = well.view.bounds(WELL_PAD);
   const t = xform(world());
@@ -227,9 +242,14 @@ test('relayout (a width change) never moves a node: an untouched view is placed 
   box.width = 1600; ros[0].cb([]);
   assert.deepEqual(cards(), before, 'no card moved');
   assert.equal(host.style.height, h0, 'nor did the well height');
-  near(xform(world()).x, (1600 - NAV_INSET - b.w) / 2 - b.x, 'untouched: placed again (now it fits: centred)');
+  const w = xform(world());
+  assert.ok(w.z <= well.height() / b.h + 1e-9, 'the set height caps the zoom: the well never grows');
+  near(w.x, (1600 - NAV_INSET - b.w * w.z) / 2 - b.x * w.z, 'untouched: placed again (it fits: centred)');
   box.width = 700; well.relayout();
-  near(xform(world()).x, -b.x, 'narrow again: the start edge');
+  const f = xform(world());
+  assert.ok(f.z < 1, 'narrow again: fitted again');
+  near(f.x, (700 - NAV_INSET - b.w * f.z) / 2 - b.x * f.z, 'narrow again: fitted again, centred');
+  well.view.setTransform({ x: -b.x, y: (wellHOf(b) - b.h) / 2 - b.y, z: 1 });   // the user zoomed in to 1 (#959)
   well.view.stage.dispatchEvent(wheel(window, { deltaY: 100, shiftKey: true }));
   box.width = 800; well.relayout();
   near(xform(world()).x, -b.x - 100, 'a panned view keeps its pan');
@@ -244,6 +264,28 @@ test('relayout (a width change) never moves a node: an untouched view is placed 
   const late = wheel(window, { deltaY: 100, shiftKey: true });
   host.dispatchEvent(late);
   assert.equal(late.defaultPrevented, false, 'the wheel listener is gone');
+});
+
+test('the well height follows the placed zoom, set once by the first measured placement: no later width changes it (#959)', () => {
+  const narrow = mount(LINE, { width: 700 });
+  const b = narrow.well.view.bounds(WELL_PAD);
+  const z = xform(narrow.world()).z;
+  assert.ok(z < 1);
+  assert.equal(narrow.well.height(), wellHOf(b, z), 'sized at the fitted zoom, not at zoom 1');
+  assert.ok(narrow.well.height() < wellHOf(b), 'so a shrunk graph sits in no mostly empty box');
+  for (const width of [1600, 300, 900]) {
+    narrow.box.width = width; narrow.well.relayout();
+    assert.equal(narrow.well.height(), wellHOf(b, z), `${width}px: unchanged`);
+    assert.equal(narrow.host.style.height, `${wellHOf(b, z)}px`);
+  }
+  const late = mount(LINE, { width: 0 });
+  assert.equal(late.well.height(), wellHOf(b), 'unmeasured: zoom 1');
+  late.box.width = 700; late.well.relayout();
+  assert.equal(late.well.height(), wellHOf(b, z), 'the first width sizes it to that placement');
+  late.box.width = 1600; late.well.relayout();
+  assert.equal(late.well.height(), wellHOf(b, z), 'and only the first');
+  const floor = mount(LINE, { width: 300 });
+  assert.equal(floor.well.height(), wellHOf(b, WELL_ZOOM_MIN), 'a graph that pans: its height at the floor');
 });
 
 test('descriptions: descriptionOf fills the footers at mount; setDescriptions repaints the text only (no card moves, no wire rewritten) and reports a change', () => {
@@ -261,14 +303,14 @@ test('descriptions: descriptionOf fills the footers at mount; setDescriptions re
   assert.equal(well.setDescriptions((k) => `About ${k}`), false, 'nothing changed');
 });
 
-test('style.css: the well pans with a grab cursor and selects no text, its cluster sits in its own corner, and only the well outgrows a build card\'s text column', () => {
+test('style.css: the well pans with a grab cursor and selects no text, its cluster sits in its own corner, and only a graph well outgrows a chat card\'s text column (#959)', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   for (const rule of [
     '.gv-well{user-select:none;-webkit-user-select:none;}',
     '.gv-well .gv-stage,.gv-well .gv-world .node{cursor:grab;}',
     '.gv-well .gv-stage.panning,.gv-well .gv-stage.panning *{cursor:grabbing !important;}',
     '.gv-well > .gv-nav{right:12px;bottom:12px;}',
-    '.chat-convo .ask-ccard .ask-wfcard-graph.gv-well{width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}',
+    '.chat-convo .ask-msg .gv-well{width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}',
   ]) assert.ok(css.includes(rule), `missing: ${rule}`);
   assert.ok(css.includes('.ask-ccard{margin:6px 0;max-width:760px;'), 'the build card\'s text column keeps its width');
 });

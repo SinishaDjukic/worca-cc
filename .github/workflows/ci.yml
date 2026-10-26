@@ -206,7 +206,7 @@ jobs:
           - group: theme + memory + scripts
             proofs: "verify:theme verify:memory verify:scripts"
           - group: ask-forms + workspace-map + flags + requirements
-            proofs: "verify:ask-forms verify:workspace-map verify:flags verify:requirements"
+            proofs: "verify:ask-forms verify:workspace-map verify:flags verify:requirements verify:chat-layout"
     steps:
       - uses: actions/checkout@v6
 

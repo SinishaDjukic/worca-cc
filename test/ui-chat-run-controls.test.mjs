@@ -604,10 +604,11 @@ test('a Chat card built before the run groups load becomes a group card once the
   { doc, win: ctx.window, fetch: (...a) => ctx.window.fetch(...a), openRunPanel: () => {}, openArtifact: () => {}, announce: () => {} });
   doc.body.appendChild(built.el);
   await ctx.settle(8);
-  assert.equal(built.el.querySelector('.kind-chip').textContent, 'Run', 'no groups yet');
+  assert.equal(built.el.querySelector('.kind-chip').hidden, true, 'no groups yet');
   release();
   await ctx.settle(8);
   assert.equal(built.el.querySelector('.kind-chip').textContent, 'Group · 4 runs', 'the groups load repaints the card, with no run frame');
+  assert.equal(built.el.querySelector('.kind-chip').hidden, false);
   // A stale paint hands act() no row: Stop still acts on the run's group.
   ctx.window.__np.chatRunControls.act({ pipelineId: P[1] }, 'stop', null, null);
   await ctx.settle(4);

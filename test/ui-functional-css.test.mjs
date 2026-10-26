@@ -174,10 +174,11 @@ test('the chat card footer actions are a wrapping row with a gap between the but
 
 test('run 4 D21, D14: the Chat run card is divided sections, the group page Ship card sits under one divider, and the in-card override stays last', () => {
   const body = (sel) => (flat.find((r) => r.selectorText === sel) || {}).style;
-  const section = body('.ask-card.chat-rc > :is(.ask-rc-stats,.chat-rc-well,.chat-rc-q,.chat-rc-result,.chat-rc-foot)');
+  const section = body('.ask-card.chat-rc > :is(.ask-rc-stats,.chat-rc-q,.chat-rc-result,.chat-rc-foot)');
   assert.ok(section, 'the section rule exists');
   assert.equal(section.getPropertyValue('border-top'), '1px solid var(--line)');
   assert.equal(section.getPropertyValue('padding-top'), '12px');
+  assert.equal(flat.some((r) => /chat-rc-well/.test(r.selectorText) && r.style.getPropertyValue('border-top')), false, 'the graph well is a bordered well, not a divider (#959)');
   const ship = body('.feature-page .shape-feature > .ask-shipcard');
   assert.ok(ship, 'the group page Ship card rule exists');
   assert.equal(ship.getPropertyValue('border-top'), '1px solid var(--line)');
