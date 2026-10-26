@@ -5,7 +5,7 @@ import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { _resetForTests } from '../src/core/db.mjs';
+import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { countPipelines } from '../src/core/artifacts.mjs';
 
@@ -32,7 +32,7 @@ after(async () => {
 test('GET /api/counts: zero on a fresh home', async () => {
   const r = await fetch(`${base}/api/counts`);
   assert.equal(r.status, 200);
-  assert.deepEqual(await r.json(), { pipelines: 0, projects: 0, workspaces: 0,
+  assert.deepEqual(await r.json(), { pipelines: 0, archivedPipelines: 0, projects: 0, workspaces: 0,
     schedules: { scheduled: 0, missed: 0, recurring: 0, unread: 0 } });   // v31: additive
 });
 
@@ -59,4 +59,15 @@ test('countPipelines() reflects newly-seeded rows (all statuses count)', async (
   assert.equal(countPipelines(), baseline + 2);
   let r = await fetch(`${base}/api/counts`);
   assert.equal((await r.json()).pipelines, baseline + 2); // endpoint agrees with the helper
+});
+
+test('GET /api/counts: archivedPipelines counts archived rows, pipelines the rest', async () => {
+  const live = countPipelines();
+  const arch = countPipelines({ archived: true });
+  const { id } = await seedPipeline(homeDir, { title: 'to archive', status: 'done' });
+  getDb().prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?').run(new Date().toISOString(), id);
+  assert.equal(countPipelines({ archived: true }), arch + 1);
+  assert.equal(countPipelines(), live);
+  const body = await (await fetch(`${base}/api/counts`)).json();
+  assert.deepEqual([body.pipelines, body.archivedPipelines], [live, arch + 1]);
 });

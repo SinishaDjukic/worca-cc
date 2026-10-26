@@ -57,7 +57,7 @@ function tick(window, node) {
 // The View menu: open it and pick an item by its label.
 async function pickView(window, doc, label) {
   click(window, doc.getElementById('runs-view-btn'));
-  const item = [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.querySelector('.wfv-menu-l').textContent === label);
+  const item = [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => (n.querySelector('.wfv-menu-l') || n).textContent === label);
   assert.ok(item, `the View menu lists ${label}`);
   click(window, item);
   await settle(window);
@@ -315,7 +315,7 @@ test('the View menu: Show and Group by narrow and regroup the list, the chip res
       const chip = doc.getElementById('runs-view-chip');
       assert.equal(chip.hidden, true, 'no chip for the default view');
       click(window, doc.getElementById('runs-view-btn'));
-      const items = [...doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')].map((n) => [n.querySelector('.wfv-menu-l').textContent, n.querySelector('.wfv-menu-hint')?.textContent || '']);
+      const items = [...doc.querySelectorAll('.wfv-menu .wfv-menu-item[role="menuitemradio"]')].map((n) => [n.querySelector('.wfv-menu-l').textContent, n.querySelector('.wfv-menu-hint')?.textContent || '']);
       assert.deepEqual(items.slice(0, 6), [['All', '3'], ['Needs you', '0'], ['Running', '1'], ['Waiting', '0'], ['Finished', '2'], ['Archived', '']]);
       click(window, doc.querySelector('.wfv-menu [role="menuitemradio"]'));   // All again: closes it
       await settle(window);
@@ -688,6 +688,44 @@ test('A11: no checkbox on hover; ⌘-click selects without navigating, Shift-cli
   modClick(keys[3], { shiftKey: true });
   await settle(window);
   assert.deepEqual(checked(), [keys[3]], 'Esc dropped the anchor: a Shift-click toggles one row');
+});
+
+test('A11: a touch long-press starts selecting that run and swallows the click that follows', async () => {
+  const { window, doc, recv } = await boot();
+  recv({ type: 'hello', runs: [live('r1'), live('r2')] });
+  go(window, 'runs'); await settle(window);
+  const k = doc.querySelector('#runs-list .runs-item[data-level="top"]').dataset.rowKey;
+  const rowOf = () => doc.querySelector(`#runs-list .runs-item[data-row-key="${k}"]`);
+  rowOf().querySelector('a.runs-row').dispatchEvent(new window.PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch' }));
+  await new Promise((r) => setTimeout(r, 550)); await settle(window);
+  assert.ok(rowOf().classList.contains('is-checked'));
+  assert.ok(doc.getElementById('runs-list').classList.contains('is-selecting'));
+  const notCancelled = rowOf().querySelector('a.runs-row').dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  assert.equal(notCancelled, false, 'the click after the press is swallowed');
+  await settle(window);
+  assert.equal(window.location.hash, '#runs');
+  assert.ok(rowOf().classList.contains('is-checked'), 'and does not toggle it back');
+});
+
+test('View › Show › Archived reads the server count before its feed loads; a 0 count is dimmed', async () => {
+  const { window, doc } = await boot();
+  let archivedFetches = 0;
+  const inner = window.fetch;
+  const wrapped = (u, init) => {
+    if (String(u).endsWith('/api/counts')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines: 2, projects: 1, workspaces: 0,
+      archivedPipelines: 12, schedules: { scheduled: 0, missed: 0, recurring: 0, unread: 0 } }) });
+    if (String(u).includes('/api/history?archived=1')) archivedFetches += 1;
+    return inner(u, init);
+  };
+  window.fetch = wrapped; globalThis.fetch = wrapped;
+  go(window, 'runs'); await settle(window);
+  click(window, doc.getElementById('runs-view-btn'));
+  const row = (label) => [...doc.querySelectorAll('.wfv-menu .wfv-menu-item[role="menuitemradio"]')].find((n) => n.querySelector('.wfv-menu-l').textContent === label);
+  assert.equal(row('Archived').querySelector('.wfv-menu-hint').textContent, '12');
+  assert.equal(archivedFetches, 0, 'the count needs no archived feed');
+  assert.ok(row('Needs you').querySelector('.wfv-menu-hint').classList.contains('is-zero'));
+  assert.ok(doc.querySelector('.wfv-menu').classList.contains('wfv-view-menu'));
+  assert.equal(doc.querySelector('.wfv-menu .wfv-seg').previousElementSibling.textContent, 'Group by');
 });
 
 test('A11: the row ⋯ menu offers Select, which enters selection with that row', async () => {

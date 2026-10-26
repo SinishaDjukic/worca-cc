@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadRunsView, saveRunsView, viewChip, viewMenuItems, DEFAULT_VIEW, VIEW_KEY } from '../ui/public/runs-view-menu.mjs';
+import { chatsViewMenuItems } from '../ui/public/chats-list.mjs';
 
 const mem = (seed = {}) => {
   const m = new Map(Object.entries(seed));
@@ -34,7 +35,8 @@ test('labels: the record round-trips them and drops non-strings; a labels-only f
 test('menu items: Show with counts, Group by, Select; Started by only on shared deployments', () => {
   const items = viewMenuItems({ show: 'all', groupBy: 'none', person: '' }, { all: 41, needs: 2, running: 3, waiting: 2, finished: 36, archived: null },
     { people: [], onPick: () => {} });
-  assert.deepEqual(items.filter((i) => i.header).map((i) => i.header), ['Show', 'Group by']);
+  assert.deepEqual(items.filter((i) => i.header).map((i) => i.header), ['Show']);
+  assert.deepEqual(items.filter((i) => i.segmented).map((i) => i.label), ['Group by']);
   assert.deepEqual(items.filter((i) => i.checked != null).slice(0, 6).map((i) => [i.label, i.hint, i.checked]),
     [['All', '41', true], ['Needs you', '2', false], ['Running', '3', false], ['Waiting', '2', false], ['Finished', '36', false], ['Archived', '', false]]);
   assert.equal(viewChip({ show: 'waiting', groupBy: 'none', person: '' }, { shown: 2, total: 41 }), 'Waiting · 2 of 41 runs');
@@ -52,17 +54,26 @@ test('menu items: Keyboard shortcuts is the last item, hint ?', () => {
   assert.deepEqual(picked, { shortcuts: true });
 });
 
-test('#948 s2: with no options the items are the Runs list; sortOpts adds Sort by after Show; a group hint shows', () => {
+test('#948 s2: with no options the items are the Runs list', () => {
   const v = { show: 'all', groupBy: 'none', person: '' };
   const runs = viewMenuItems(v, {}, { onPick: () => {} }).map((i) => i.label || i.header || 'sep');
-  assert.deepEqual(runs, ['Show', 'All', 'Needs you', 'Running', 'Waiting', 'Finished', 'Archived', 'Group by', 'None', 'Project', 'Date', 'sep', 'Select', 'Keyboard shortcuts']);
+  assert.deepEqual(runs, ['Show', 'All', 'Needs you', 'Running', 'Waiting', 'Finished', 'Archived', 'Group by', 'sep', 'Select', 'Keyboard shortcuts']);
+});
+
+test('#948 s2 + compact menu: Group by and Sort by are segmented items; titles carry the full names; Select hints ⌘ / Ctrl click', () => {
+  const v = { show: 'all', sort: 'activity', groupBy: 'date' };
   let picked = null;
-  const chats = viewMenuItems({ show: 'all', sort: 'activity', groupBy: 'date' }, { all: 54 }, { onPick: (p) => { picked = p; },
-    showOpts: [['all', 'All'], ['archived', 'Archived']], sortOpts: [['activity', 'Last activity'], ['cost', 'Cost']],
-    groupOpts: [['date', 'Date', 'Today · Recent · Older'], ['none', 'None']] });
-  assert.deepEqual(chats.filter((i) => i.header).map((i) => i.header), ['Show', 'Sort by', 'Group by']);
-  chats.find((i) => i.label === 'Cost').onSelect();
-  assert.deepEqual(picked, { sort: 'cost' });
-  assert.equal(chats.find((i) => i.label === 'Date').hint, 'Today · Recent · Older');
-  assert.equal(chats.find((i) => i.label === 'Last activity').checked, true);
+  const items = chatsViewMenuItems(v, { all: 54 }, { onPick: (p) => { picked = p; }, mac: true });
+  const [sort, group] = items.filter((i) => i.segmented);
+  assert.equal(sort.label, 'Sort by');
+  assert.equal(sort.value, 'activity');
+  assert.deepEqual(sort.options, [{ id: 'activity', label: 'Recent', title: 'Last activity' }, { id: 'created', label: 'Created' },
+    { id: 'title', label: 'A–Z', title: 'Title A–Z' }, { id: 'cost', label: 'Cost' }]);
+  assert.deepEqual(group.options.map((o) => [o.label, o.title || '']), [['Date', 'Today · Recent · Older'], ['Project', ''], ['Topic', ''], ['None', '']]);
+  sort.onSelect('cost'); assert.deepEqual(picked, { sort: 'cost' });
+  group.onSelect('topic'); assert.deepEqual(picked, { groupBy: 'topic' });
+  assert.equal(items.find((i) => i.label === 'Select').hint, '⌘ click');
+  assert.equal(viewMenuItems(DEFAULT_VIEW, {}, { onPick() {} }).find((i) => i.label === 'Select').hint, 'Ctrl click');
+  const runs = viewMenuItems(DEFAULT_VIEW, {}, { onPick() {} });
+  assert.deepEqual(runs.find((i) => i.segmented).options.map((o) => o.id), ['none', 'project', 'date']);
 });

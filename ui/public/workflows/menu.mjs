@@ -7,6 +7,7 @@
 import { icon } from '../icons.mjs';
 
 let current = null;
+let segSeq = 0;
 
 /**
  * @param {object} o
@@ -22,6 +23,9 @@ let current = null;
  * @param {string} [o.className]  extra classes on the menu
  * An item `{ switch: true, label, help, checked, onToggle(button) }` is a menuitemcheckbox switch row whose toggle keeps
  * the menu open (the account menu's rule); onToggle owns aria-checked.
+ * An item `{ segmented: true, label, options: [{ id, label, title? }], value, onSelect(id) }` is a `.menu-h` header and
+ * one `.seg` control (role=group of menuitemradio): ←/→ move inside it, ↑/↓ treat it as one stop, and a pick keeps the
+ * menu open (the View menus' Sort by / Group by).
  * @returns {{el:HTMLElement, close:() => void}}
  */
 export function openMenu({ doc, anchor, items, align = 'start', side = 'bottom', label = '', host = null, className = '' }) {
@@ -36,6 +40,36 @@ export function openMenu({ doc, anchor, items, align = 'start', side = 'bottom',
   for (const it of items) {
     if (it.sep) { const s = doc.createElement('div'); s.className = 'menu-sep wfv-menu-sep'; s.setAttribute('role', 'separator'); el.appendChild(s); continue; }
     if (it.header) { const h = doc.createElement('div'); h.className = 'menu-h wfv-menu-h'; h.textContent = it.header; el.appendChild(h); continue; }
+    if (it.segmented) {
+      const h = doc.createElement('div');
+      h.className = 'menu-h wfv-menu-h';
+      h.id = `wfv-seg-h-${++segSeq}`;
+      h.textContent = it.label;
+      const g = doc.createElement('div');
+      g.className = 'seg wfv-seg';
+      g.setAttribute('role', 'group');
+      g.setAttribute('aria-labelledby', h.id);
+      for (const o of it.options) {
+        const s = doc.createElement('button');
+        s.type = 'button';
+        s.tabIndex = -1;
+        s.setAttribute('role', 'menuitemradio');
+        s.setAttribute('aria-checked', o.id === it.value ? 'true' : 'false');
+        s.dataset.segId = o.id;
+        s.textContent = o.label;
+        if (o.title) s.title = o.title;
+        // A pick repaints the list behind and keeps the menu open (as a switch row); the picked segment again is a no-op.
+        s.addEventListener('click', () => {
+          if (s.getAttribute('aria-checked') === 'true') return;
+          for (const x of g.children) x.setAttribute('aria-checked', x === s ? 'true' : 'false');
+          if (typeof it.onSelect === 'function') it.onSelect(o.id);
+        });
+        g.appendChild(s);
+      }
+      el.append(h, g);
+      buttons.push(g);   // one ↑/↓ stop; focusAt lands on its checked segment
+      continue;
+    }
     const b = doc.createElement('button');
     b.type = 'button';
     if (it.switch) {
@@ -69,7 +103,7 @@ export function openMenu({ doc, anchor, items, align = 'start', side = 'bottom',
     l.textContent = it.label;
     b.appendChild(l);
     if (it.chip) b.appendChild(it.chip);                // a kind chip (B8): the one chip, never a text hint
-    if (it.hint) { const h = doc.createElement('span'); h.className = 'wfv-menu-hint'; h.textContent = it.hint; b.appendChild(h); }
+    if (it.hint) { const h = doc.createElement('span'); h.className = it.hint === '0' ? 'wfv-menu-hint is-zero' : 'wfv-menu-hint'; h.textContent = it.hint; b.appendChild(h); }
     if (it.disabled) { b.disabled = true; b.setAttribute('aria-disabled', 'true'); }
     if (it.title) b.title = it.title;
     // The pick removes the item that holds the focus: hand it back to the trigger first (the menu-button pattern),
@@ -107,15 +141,24 @@ export function openMenu({ doc, anchor, items, align = 'start', side = 'bottom',
   anchor.setAttribute('aria-expanded', 'true');
 
   const enabled = () => buttons.filter((b) => !b.disabled);
-  const focusAt = (i) => { const list = enabled(); if (!list.length) return; list[((i % list.length) + list.length) % list.length].focus(); };
+  // A segmented group is one stop: focus its checked segment (else its first).
+  const target = (s) => (s.classList.contains('wfv-seg') ? s.querySelector('[aria-checked="true"]') || s.firstElementChild : s);
+  const focusAt = (i) => { const list = enabled(); if (!list.length) return; target(list[((i % list.length) + list.length) % list.length]).focus(); };
   function onKey(ev) {
-    const i = enabled().indexOf(doc.activeElement);
+    const a = doc.activeElement;
+    const seg = a && a.closest ? a.closest('.wfv-seg') : null;
+    const i = enabled().indexOf(seg || a);
     if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); close(); anchor.focus(); return; }
     if (ev.key === 'Tab') { close(); return; }
     if (ev.key === 'ArrowDown') { ev.preventDefault(); focusAt(i + 1); }
     else if (ev.key === 'ArrowUp') { ev.preventDefault(); focusAt(i < 0 ? -1 : i - 1); }
     else if (ev.key === 'Home') { ev.preventDefault(); focusAt(0); }
     else if (ev.key === 'End') { ev.preventDefault(); focusAt(-1); }
+    else if (seg && (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight')) {
+      ev.preventDefault();
+      const segs = [...seg.children];
+      segs[(segs.indexOf(a) + (ev.key === 'ArrowRight' ? 1 : -1) + segs.length) % segs.length].focus();
+    }
     if (!ev.ctrlKey && !ev.metaKey) ev.stopPropagation();   // Enter/Space activate the focused button natively
   }
   const onDocDown = (ev) => { if (!el.contains(ev.target) && !anchor.contains(ev.target)) close(); };
