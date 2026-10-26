@@ -1,6 +1,13 @@
 // ui/public/workflows/versions-view.mjs — the Versions page of a workflow (plans/workflow-tests-plan.md Task 8;
 // canvas board 7). Pure DOM: app.js owns data and actions. Words per D10.
-const SOURCE_TEXT = { save: 'Saved', defaults: 'Step defaults changed', restore: 'Restored', delete: 'Deleted', version: 'Version saved' };
+// A history entry is the row as it was just BEFORE a write (workflow-revisions.mjs snapshotRowTx), stamped with the
+// write's time: each line says what Restore gives back, never the state after that write.
+const BEFORE_TEXT = {
+  save: (at) => `Before the save of ${at}`,
+  defaults: (at) => `Before step defaults changed, ${at}`,
+  restore: (at) => `Before the restore of ${at}`,
+  delete: (at) => `As it was when deleted, ${at}`,
+};
 
 const el = (doc, tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 const btn = (doc, label, onClick, cls = 'btn btn-sm') => { const b = el(doc, 'button', cls, label); b.type = 'button'; b.addEventListener('click', onClick); return b; };
@@ -14,13 +21,19 @@ const when = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()
  * @param {HTMLElement} root
  * @param {{name:string, liveVersionNo:number|null, draft:null|{changed:boolean, changes:string[]}, versions:Array, history:Array}} o
  * @param {{saveVersion:Function, useVersion:Function, restore:Function, openCanvas:Function}} actions
- * @param {{doc: Document, error?: string|null}} ctx  error: why there is no overview (the server's reason, or no answer)
+ * @param {{doc: Document, error?: string|null, loading?: boolean}} ctx  error: why there is no overview (the server's
+ *   reason, or no answer); loading: the overview of the workflow now open is still being read
  */
-export function renderVersionsPage(root, o, actions, { doc, error = null }) {
+export function renderVersionsPage(root, o, actions, { doc, error = null, loading = false }) {
   root.replaceChildren();
   const wrap = el(doc, 'div', 'wfv-vpage');
   wrap.append(el(doc, 'p', 'subtitle', 'Your changes stay in a draft until you choose Save version. Every run remembers which version it used, so you can always go back.'));
 
+  if (!o && loading) {
+    wrap.append(el(doc, 'p', 'hint wfv-vloading', 'Reading the versions…'));
+    root.append(wrap);
+    return;
+  }
   if (!o && error) {
     const box = el(doc, 'div', 'card wfv-vempty');
     box.append(el(doc, 'h2', '', 'Versions are not available'), el(doc, 'p', 'hint', error));
@@ -44,7 +57,7 @@ export function renderVersionsPage(root, o, actions, { doc, error = null }) {
       const row = el(doc, 'div', 'wfv-vt-row');
       const main = el(doc, 'span', 'wfv-vt-main');
       const head = el(doc, 'span', 'wfv-vt-head');
-      head.append(el(doc, 'b', '', v.note || v.changes[0] || `Version ${v.versionNo}`));
+      head.append(el(doc, 'b', '', v.note || `Version ${v.versionNo}`));
       if (v.inUse) head.append(el(doc, 'span', 'badge wfv-inuse', 'New runs use this'));
       main.append(head, el(doc, 'span', 'hint', [when(v.createdAt), v.by].filter(Boolean).join(' · ')),
         el(doc, 'span', 'hint', v.changes.join(' · ')));
@@ -61,12 +74,15 @@ export function renderVersionsPage(root, o, actions, { doc, error = null }) {
   if (o && Array.isArray(o.history) && o.history.length) {
     const hist = el(doc, 'section', 'wfv-vh');
     hist.setAttribute('aria-label', 'Every save');
-    hist.append(el(doc, 'h2', '', 'Every save'), el(doc, 'p', 'hint', 'Worca keeps the last 50 saves of this workflow, so any change can be undone.'));
+    hist.append(el(doc, 'h2', '', 'Every save'),
+      el(doc, 'p', 'hint', 'Each entry is the workflow as it was just before that change. Worca keeps the last 50, so any change can be undone.'));
     for (const h of o.history) {
       const row = el(doc, 'div', 'wfv-vh-row');
-      const text = `${SOURCE_TEXT[h.source] || 'Saved'}${h.by ? ` by ${h.by}` : ''}`;
-      row.append(el(doc, 'span', 'wfv-vh-when', when(h.createdAt)), el(doc, 'span', 'wfv-vh-what', text),
-        keyed(named(btn(doc, 'Restore', () => actions.restore(h.id, `the save of ${when(h.createdAt)}`), 'btn btn-sm btn-quiet'), `Restore the save of ${when(h.createdAt)} into draft`), `vp:history:${h.id}`));
+      const at = when(h.createdAt);
+      const text = (BEFORE_TEXT[h.source] || BEFORE_TEXT.save)(at);
+      const label = `the state from before ${at}`;
+      row.append(el(doc, 'span', 'wfv-vh-what', text), el(doc, 'span', 'hint wfv-vh-by', h.by ? `by ${h.by}` : ''),
+        keyed(named(btn(doc, 'Restore', () => actions.restore(h.id, label), 'btn btn-sm btn-quiet'), `Restore ${label} into draft`), `vp:history:${h.id}`));
       hist.append(row);
     }
     wrap.append(hist);

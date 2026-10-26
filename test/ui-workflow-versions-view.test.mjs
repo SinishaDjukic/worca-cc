@@ -49,11 +49,19 @@ test('version rows: number, note, who and when, in use, runs, and Use for new ru
   assert.deepEqual(calls.at(-1), ['restore', 20, 'v3']);
 });
 
-test('history lists every save in plain words with Restore', () => {
-  const { root, calls } = boot();
+test('history: each entry is the state from just BEFORE that change, in plain words, with Restore', () => {
+  const { root, calls } = boot({ ...overview(), history: [
+    ...overview().history,
+    { id: 39, source: 'defaults', by: null, createdAt: '2026-10-23T10:00:00Z', name: 'Product brief writer' },
+    { id: 38, source: 'delete', by: null, createdAt: '2026-10-22T10:00:00Z', name: 'Product brief writer' }] });
+  assert.match(root.querySelector('.wfv-vh').textContent, /Each entry is the workflow as it was just before that change/);
   const items = [...root.querySelectorAll('.wfv-vh-row')];
-  assert.match(items[0].textContent, /Saved/);
-  assert.match(items[1].textContent, /Restored by Tomica Brkovic/);
+  assert.match(items[0].querySelector('.wfv-vh-what').textContent, /^Before the save of \S/);
+  assert.match(items[1].querySelector('.wfv-vh-what').textContent, /^Before the restore of \S/);
+  assert.match(items[1].textContent, /by Tomica Brkovic/);
+  assert.match(items[2].querySelector('.wfv-vh-what').textContent, /^Before step defaults changed, \S/);
+  assert.match(items[3].querySelector('.wfv-vh-what').textContent, /^As it was when deleted, \S/);
+  assert.doesNotMatch(root.querySelector('.wfv-vh').textContent, /\b(Saved|Restored|Deleted)\b/, 'never the opposite state');
   click(items[0].querySelector('button'));
   assert.equal(calls.at(-1)[0], 'restore');
 });
@@ -78,9 +86,9 @@ test('row buttons name what they act on; a history Restore says which save', () 
   const v3 = root.querySelectorAll('.wfv-vt-row')[1];
   assert.deepEqual([...v3.querySelectorAll('button')].map((b) => b.getAttribute('aria-label')), ['Use v3 for new runs', 'Restore v3 into draft']);
   const h = root.querySelector('.wfv-vh-row button');
-  assert.match(h.getAttribute('aria-label'), /^Restore the save of .+ into draft$/);
+  assert.match(h.getAttribute('aria-label'), /^Restore the state from before .+ into draft$/);
   click(h);
-  assert.match(calls.at(-1)[2], /^the save of /);
+  assert.match(calls.at(-1)[2], /^the state from before \S/);
 });
 
 test('visible words never say revision, rev, fingerprint or live (D10)', () => {
@@ -92,4 +100,20 @@ test('every button carries a focus key, so a repaint or a closing dialog can fin
   const { root } = boot();
   const keys = [...root.querySelectorAll('button')].map((b) => b.dataset.focusKey);
   assert.deepEqual(keys, ['vp:save', 'vp:restore:30', 'vp:use:3', 'vp:restore:20', 'vp:history:41', 'vp:history:40']);
+});
+
+test('a version without a note is titled "Version N"; its changes stay in the detail line, once', () => {
+  const { root } = boot();
+  const v3 = root.querySelectorAll('.wfv-vt-row')[1];
+  assert.equal(v3.querySelector('.wfv-vt-head b').textContent, 'Version 3');
+  assert.equal(v3.textContent.split('Review loop: at most 2 rounds → 3').length - 1, 1);
+});
+
+test('while the versions are read: a plain "Reading the versions…", no stale rows, no buttons', () => {
+  const { window } = new JSDOM('<!doctype html><body><section id="root"></section></body>');
+  const root = window.document.getElementById('root');
+  renderVersionsPage(root, null, {}, { doc: window.document, loading: true });
+  assert.match(root.textContent, /Reading the versions…/);
+  assert.equal(root.querySelectorAll('button').length, 0);
+  assert.doesNotMatch(root.textContent, /No versions yet/);
 });

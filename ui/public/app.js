@@ -3236,9 +3236,11 @@ const gvApi = {
     return res.ok ? { ok: true, overview: d } : { ok: false, error: d && d.error };
   },
   restoreRevision: async (id, rev) => {
-    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/history/${rev}/restore`, { method: 'POST' });
-    const d = await safeJson(res);
-    return res.ok ? { ok: true, ...d } : { ok: false, error: d && d.error, errors: d && d.errors };
+    try {
+      const res = await fetch(`/api/workflows/${encodeURIComponent(id)}/history/${rev}/restore`, { method: 'POST' });
+      const d = await safeJson(res);
+      return res.ok ? { ok: true, ...d } : { ok: false, status: res.status, error: d && d.error, errors: d && d.errors };
+    } catch (e) { return { ok: false, status: 0, error: `Worca did not answer (${e.message}).` }; }
   },
   // {ok, error} — the refusal string comes from the JSON body, because every
   // delete this API can refuse (the built-in, a 404, a 409) says WHY there and
@@ -3433,12 +3435,14 @@ async function wfvRefreshVersions() {
     paintPage();
     return null;
   }
+  // Another workflow is open now: the page drops the rows of the one that left at once ("Reading the versions…").
+  if (!wfvVersionsOverview || wfvVersionsOverview.workflowId !== t.id) paintPage();
   const r = await gvApi.versionsRead(t.id);
   // Another workflow opened while this one was asked for: its own refresh paints the line, not this late answer.
   const now = gvComposer.template();
   if (!now || now.id !== t.id) return null;
   wfvVersionsOverview = r.ok ? r.overview : null;
-  wfvVersionsError = r.ok ? null : { status: r.status, error: r.error };
+  wfvVersionsError = r.ok ? null : { status: r.status, error: r.error, workflowId: t.id };
   const text = statusText(wfvVersionsOverview);
   if (els.vstatus) { els.vstatus.textContent = text; els.vstatus.hidden = !text; }
   paintPage();
@@ -3496,7 +3500,7 @@ function wfvRenderVersionsPage() {
   if (!els.versions || !gvComposer) return;
   const t = gvComposer.template();
   const id = t && t.id;
-  const o = id ? wfvVersionsOverview : null;
+  const o = id && wfvVersionsOverview && wfvVersionsOverview.workflowId === id ? wfvVersionsOverview : null;
   // A repaint replaces the page's buttons: the focus they held goes to the same button again (its data-focus-key),
   // else to the page, never <body>, where the canvas keys would answer.
   const focused = document.activeElement;
@@ -3509,17 +3513,19 @@ function wfvRenderVersionsPage() {
   }
 }
 function wfvPaintVersions(els, id, o) {
+  const err = wfvVersionsError && wfvVersionsError.workflowId === id ? wfvVersionsError : null;
   renderVersionsPage(els.versions, o, {
     saveVersion: () => void wfvSaveVersion(),
     useVersion: (no) => {
       if (!o) return;
-      const live = o.versions.find((v) => v.inUse);
       const target = o.versions.find((v) => v.versionNo === no);
       openUseVersionDialog({ doc: document, win: window, versionNo: no,
-        changes: target && live ? [`From v${live.versionNo} to v${no}`, ...target.changes] : (target ? target.changes : []),
+        // What changes for new runs: the version in use → this one (server changesFromInUse), not this version's own changes.
+        changes: target && Array.isArray(target.changesFromInUse) ? target.changesFromInUse : [],
         onConfirm: async () => {
           const r = await gvApi.useVersion(id, no);
-          if (r.ok) { wfvVersionsOverview = r.overview; await wfvRefreshVersions(); }
+          // Another workflow opened meanwhile: its overview is not this answer.
+          if (r.ok && gvComposer.template().id === id) { wfvVersionsOverview = r.overview; await wfvRefreshVersions(); }
           return r;
         } });
     },
@@ -3533,15 +3539,38 @@ function wfvPaintVersions(els, id, o) {
         if (!ok) return;
       }
       const r = await gvApi.restoreRevision(id, rev);
-      if (!r.ok) { notify({ tone: 'err', title: 'Not restored', detail: r.error || 'The saved state no longer fits the agents it uses.' }); return; }
-      if (gvComposer.template().id !== id) return;           // another workflow opened meanwhile: the row is restored, the canvas is not this one
+      if (!r.ok) { notify({ tone: 'err', title: 'Not restored', detail: wfvRestoreRefusal(r) }); return; }
+      if (gvComposer.template().id !== id) {
+        // Another workflow opened meanwhile: the canvas keeps it, and the toast says which workflow's draft changed.
+        notify({ tone: 'ok', title: `Restored ${label} into the draft of "${(o && o.name) || id}"` });
+        return;
+      }
       gvComposer.loadTemplate(r.workflow);
       wfvVersionsOverview = r.overview || wfvVersionsOverview;
       wfvRenderVersionsPage();
       notify({ tone: 'ok', title: `Restored ${label} into your draft` });
     },
     openCanvas: () => wfvShowPage('canvas'),
-  }, { doc: document, error: id && !o && wfvVersionsError ? wfvVersionsError.error : null });
+  }, { doc: document, error: id && !o && err ? err.error : null, loading: Boolean(id && !o && !err) });
+}
+/** A refused restore in plain words. A 422 carries the validator's issues under the bare message 'invalid graph':
+ *  name the agents and scripts they cite (display names where Worca knows them), never the code words. */
+function wfvRestoreRefusal(r) {
+  const errors = Array.isArray(r.errors) ? r.errors : [];
+  if (!errors.length && r.error && r.error !== 'invalid graph') return r.error;
+  const agents = (gvComposer.getAgents && gvComposer.getAgents()) || {};
+  const scripts = (gvComposer.getScripts && gvComposer.getScripts()) || {};
+  const names = [];
+  for (const e of errors) {
+    const m = /\b(?:agent|script) "([^"]+)"/.exec(String((e && e.message) || ''));
+    if (!m) continue;
+    const meta = agents[m[1]] || scripts[m[1]];
+    const name = (meta && meta.displayName) || m[1];
+    if (!names.includes(name)) names.push(name);
+  }
+  if (!names.length) return 'This saved state no longer fits the agents and steps it uses.';
+  const list = names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', ');
+  return `This saved state no longer fits the agents it uses: ${list}.`;
 }
 // ⌘Z / ⇧⌘Z reach the canvas even from a fenced button (composer.mjs onKeyDown, before its data-canvas-keys fence).
 // While the Versions page covers the canvas, an undo there would edit a graph nobody sees: it does nothing. Capture
@@ -3549,7 +3578,7 @@ function wfvPaintVersions(els, id, o) {
 document.addEventListener('keydown', (ev) => {
   if (!(ev.metaKey || ev.ctrlKey) || (ev.key !== 'z' && ev.key !== 'Z')) return;
   const page = document.getElementById('wfv-versions');
-  if (!page || page.hidden) return;
+  if (!page || page.hidden || page.closest('.view.hidden')) return;      // the Workflows view, its Versions page shown
   const t = ev.target;
   if (t && ((t.matches && t.matches('input, textarea, select')) || t.isContentEditable)) return;
   ev.preventDefault();
@@ -3887,7 +3916,9 @@ function wfvLibraryActions() {
       if (full && await gvComposer.openTemplate(full)) { gvComposer.fit(); wfvShowPage('versions'); }
     },
     // Plugin rows and the built-ins never have versions (D5); their ⋯ menu has no Versions….
-    versionsEnabled: (w) => flagOn('workflowTests') && !isReservedWorkflowId(w.id) && !String(w.origin || '').startsWith('plugin:'),
+    // A format-1 row is not a graph and cannot have versions either (isVersionableRow).
+    versionsEnabled: (w) => flagOn('workflowTests') && Number(w.version) === 2 && !isReservedWorkflowId(w.id)
+      && !String(w.origin || '').startsWith('plugin:'),
     deleteWorkflow: async (wf) => {
       const schedNote = await scheduleDependentsNote(`workflowId=${encodeURIComponent(wf.id)}`, 'They will fail to start until you point them at another pipeline.');
       const ok = await confirmModal({ title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',

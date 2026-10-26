@@ -1959,8 +1959,9 @@ const VERSIONS_OVERVIEW = {
   workflowId: 'wf_g', name: 'Graph one', liveVersionNo: 1,
   draft: { changed: true, changes: ['Renamed since v1'], partsChanged: [], sinceLatest: { versionNo: 2, changes: ['New step Fact check'] } },
   sinceLatest: { versionNo: 2, changes: ['New step Fact check'] },
-  versions: [{ id: 2, versionNo: 2, note: null, by: null, createdAt: '2026-10-25', inUse: false, runs: 0, changes: [] },
-    { id: 1, versionNo: 1, note: null, by: null, createdAt: '2026-10-24', inUse: true, runs: 0, changes: ['First version'] }],
+  versions: [{ id: 2, versionNo: 2, note: null, by: null, createdAt: '2026-10-25', inUse: false, runs: 0, changes: [],
+    changesFromInUse: ['New step Fact check', 'Plan: changed in the Library'] },
+    { id: 1, versionNo: 1, note: null, by: null, createdAt: '2026-10-24', inUse: true, runs: 0, changes: ['First version'], changesFromInUse: [] }],
   history: [],
 };
 async function bootVersions({ versions = () => Promise.resolve({ ok: true, status: 200, json: async () => VERSIONS_OVERVIEW }), workflows, extra = null } = {}) {
@@ -2108,6 +2109,9 @@ test('Versions page: the version table, and Use for new runs asks first, then sw
   clickEl(w, [...rows[0].querySelectorAll('button')].find((b) => b.textContent === 'Use for new runs'));
   await tick(2);
   assert.equal(doc.querySelector('#mk-dialog-title').textContent, 'Use v2 for new runs?');
+  assert.deepEqual([...doc.querySelectorAll('#mk-dialog .wfv-changes li')].map((li) => li.textContent),
+    ['New step Fact check', 'Plan: changed in the Library'], 'what changes for new runs: the version in use → v2');
+  assert.doesNotMatch(doc.getElementById('mk-dialog').textContent, /From v1/);
   assert.equal(calls.filter((c) => c.method === 'POST').length, 0, 'nothing switches before the confirm');
   clickEl(w, [...doc.querySelectorAll('#mk-dialog button')].find((b) => b.textContent === 'Use v2'));
   await tick(6);
@@ -2185,9 +2189,9 @@ test('Save version: when the versions still answer 400 after the save, the toast
   assert.equal(doc.querySelector('#wfv-dialog-host dialog[open]'), null, 'no Save dialog again');
 });
 
-test('Library ⋯ Versions… opens that workflow on its Versions page; not for a built-in, a plugin\'s row, or with the flag off', async () => {
+test('Library ⋯ Versions… opens that workflow on its Versions page; not for a built-in, a plugin\'s row, a format-1 row, or with the flag off', async () => {
   const PLUGIN_ROW = { ...DEFAULT_ROW, id: 'wfp_demo_quick', name: 'Quick', origin: 'plugin:demo' };
-  const { window: w } = await bootVersions({ workflows: [DEFAULT_ROW, V2_ROW, PLUGIN_ROW] });
+  const { window: w } = await bootVersions({ workflows: [DEFAULT_ROW, V2_ROW, PLUGIN_ROW, V1_ROW] });
   await go(w, 'workflows');
   await tick(4);
   const doc = w.document;
@@ -2201,7 +2205,7 @@ test('Library ⋯ Versions… opens that workflow on its Versions page; not for 
     clickEl(w, more);                       // close it again (toggle)
     return items;
   };
-  for (const id of ['wf_default', 'wfp_demo_quick']) assert.equal(menuOf(id).some((b) => b.textContent === 'Versions…'), false, id);
+  for (const id of ['wf_default', 'wfp_demo_quick', 'wf_old']) assert.equal(menuOf(id).some((b) => b.textContent === 'Versions…'), false, id);
   clickEl(w, doc.querySelector('.wfl-wf[data-id="wf_g"] .wfl-more'));
   const pick = [...doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent === 'Versions…');
   assert.ok(pick, 'Versions… for a saved workflow of yours');
@@ -2230,4 +2234,84 @@ test('Versions page: a repaint keeps the focus on the same button (never <body>)
   assert.equal(w.__gv().c.template().name, 'Graph one (restored)');
   assert.equal(b.isConnected, false, 'the page was repainted');
   assert.equal(doc.activeElement.dataset.focusKey, 'vp:restore:1');
+});
+
+test('Restore refused (422): plain words naming what no longer fits, never "invalid graph"', async () => {
+  const { window: w } = await bootVersions({
+    extra: (url, init) => (/\/history\/1\/restore$/.test(url) && init.method === 'POST'
+      ? okJson({ error: 'invalid graph', errors: [{ code: 'V4', message: 'unknown agent "factChecker" — no such key in the registry', nodeId: 'n_fc' },
+        { code: 'V4', message: 'agent "planner" has no v2 ports — port its sidecar to metaVersion 2', nodeId: 'n_plan' }], warnings: [] }, 422)
+      : null) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  clickEl(w, doc.querySelector('#wfv-versions [data-focus-key="vp:restore:1"]'));
+  await tick(6);
+  const t = lastToast(doc);
+  assert.equal(t.title, 'Not restored');
+  assert.equal(t.detail, 'This saved state no longer fits the agents it uses: factChecker, Plan.');
+  assert.doesNotMatch(t.detail, /invalid graph/);
+  assert.equal(w.__gv().c.template().name, 'Graph one', 'the canvas is unchanged');
+});
+
+test('another workflow opened while the Versions page shows: the page drops the old rows at once, then paints the new one', async () => {
+  const OTHER = { ...V2_ROW, id: 'wf_h', name: 'Graph two' };
+  let release;
+  const { window: w } = await bootVersions({ workflows: [DEFAULT_ROW, V2_ROW, OTHER],
+    versions: (url) => (url.includes('/wf_h/')
+      ? new Promise((r) => { release = () => r({ ok: true, status: 200, json: async () => ({ ...VERSIONS_OVERVIEW, workflowId: 'wf_h', name: 'Graph two' }) }); })
+      : okJson(VERSIONS_OVERVIEW)) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  const page = doc.getElementById('wfv-versions');
+  assert.equal(page.querySelectorAll('.wfv-vt-row').length, 2);
+  w.__gv().c.loadTemplate(OTHER);
+  await tick(2);
+  assert.equal(page.querySelectorAll('.wfv-vt-row').length, 0, 'no rows of the workflow that left');
+  assert.match(page.textContent, /Reading the versions…/);
+  release();
+  await tick(4);
+  assert.equal(page.querySelectorAll('.wfv-vt-row').length, 2);
+});
+
+test('a restore answered after another workflow opened: the toast names the workflow it restored into', async () => {
+  const OTHER = { ...V2_ROW, id: 'wf_h', name: 'Graph two' };
+  let release;
+  const { window: w } = await bootVersions({ workflows: [DEFAULT_ROW, V2_ROW, OTHER],
+    extra: (url, init) => (/\/history\/1\/restore$/.test(url) && init.method === 'POST'
+      ? new Promise((r) => { release = () => r({ ok: true, status: 200, json: async () => ({ workflow: V2_ROW, warnings: [], overview: VERSIONS_OVERVIEW }) }); })
+      : null) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  clickEl(w, doc.querySelector('#wfv-versions [data-focus-key="vp:restore:1"]'));
+  await tick(2);
+  w.__gv().c.loadTemplate(OTHER);
+  release();
+  await tick(6);
+  assert.equal(w.__gv().c.template().id, 'wf_h', 'the canvas keeps the workflow now open');
+  assert.equal(lastToast(doc).title, 'Restored v1 into the draft of "Graph one"');
+});
+
+test('the Versions page\'s undo guard holds only in the Workflows view: elsewhere ⌘Z is left alone', async () => {
+  const { window: w } = await bootVersions();
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  clickEl(w, w.document.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  const ev = () => new w.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true });
+  const here = ev();
+  w.document.body.dispatchEvent(here);
+  assert.equal(here.defaultPrevented, true, 'held on the Versions page');
+  await go(w, 'runs');
+  const away = ev();
+  w.document.body.dispatchEvent(away);
+  assert.equal(away.defaultPrevented, false, 'another view keeps its own ⌘Z');
 });

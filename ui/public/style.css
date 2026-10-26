@@ -8534,7 +8534,8 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wfv-vt-acts{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;}
 .badge.wfv-inuse{background:var(--blue-bg);color:var(--blue-ink-strong);}
 .wfv-vh{display:flex;flex-direction:column;gap:6px;}
-.wfv-vh-row{display:grid;grid-template-columns:160px minmax(0,1fr) auto;gap:12px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);}
+.wfv-vh-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);}
+.wfv-vh-by{margin-top:0;}
 @media (max-width:700px){.wfv-vt-draft,.wfv-vt-row{grid-template-columns:48px minmax(0,1fr);}.wfv-vt-used,.wfv-vt-acts{grid-column:2;justify-content:flex-start;}}
 .wfv-bar .btn:not(.btn-icon) svg{width:15px;height:15px;}
 .wfv-bar .wfv-chev{width:12px;height:12px;color:var(--ink-2);}
