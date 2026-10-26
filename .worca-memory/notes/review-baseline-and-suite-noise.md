@@ -1,7 +1,7 @@
 ---
 name: review-baseline-and-suite-noise
 description: Read before reviewing a worca run's diff or proving new tests catch their fixes — the checkpoint may not be the base, and many guard removals stay green.
-updated: 2026-10-25T19:50:31.802Z
+updated: 2026-10-26T18:22:16.823Z
 author: Bulibas
 ---
 
@@ -43,6 +43,9 @@ route's `if (!check) return`), even when the tests are copied verbatim from a re
   and `runClaudeProcess`'s stage call. Dropping it from `planClaudeInvocation`'s `buildSettingsPayload` call (the
   staged `settings.json` used once argv passes `ARGV_INLINE_LIMIT`, 20000) stayed green across 15 files (promo
   path guard, 2026-10-25). Demand a `planClaudeInvocation({prompt:'x'.repeat(30000), …}, {dir})` row that reads the staged file.
+- A preview/dry-run payload's computed LISTS (what a confirm warns about: lost MCP servers, unviewable attachments,
+  changed facts) are often pinned only as `[]` on an empty fixture. Mutate each list to `.filter(() => false)`: on #943
+  (2026-10-26) both `askEngineSwitchPlan` lists survived four refine cycles' mutation sweeps, which listed only guards.
 - A test of a deadline or timeout fix must assert a `settled` flag one `setImmediate` after the fake-clock tick, not
   `await` the promise: reverted, an `await` hangs to the per-file timeout instead of failing (2026-10-18).
 
