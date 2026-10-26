@@ -173,6 +173,10 @@
       { step: 'Clarify', q: 'Which pages get the breadcrumb?', a: 'Run and group pages', who: 'you', when: '08:33' },
       { step: 'Plan', q: 'Approve the plan', a: 'Approved · 6 steps, 2 open issues fixed', who: 'you', when: '09:12' },
       { step: 'Review implementation', q: 'Keep the breadcrumb on phones under 600px?', a: 'Show only Back there', who: 'away', when: '12:48', note: 'Sonnet 5.5 · $0.32' }],
+    issue: '#942',
+    // What Generate drafts: the run's own summary, its changes and how it was checked (the AI draft, as today).
+    prBody: (title, files) => ['## Summary', ...DETAIL.outcome.map((x) => '- ' + x), '', '## Changes', ...files.map(([f, a, d]) => '- `' + f + '` +' + a + ' \u2212' + d), '',
+      '## How it was checked', '- 96 new tests in test/ui-run-head.test.mjs', '- Review implementation: 3 rounds, no open issues', '- Manual web UI testing at 375px and 900px', '', 'Closes #942'].join('\n'),
     // The question a run is waiting on: the options Worca offers, the one it would pick, and why.
     asks: {
       question: { q: 'Keep the breadcrumb on phones under 600px, or show only Back there?', why: 'Review implementation found the trail wraps to two lines at 375px.',
@@ -495,7 +499,7 @@
     merged: { 'View PR': { say: 'Opens the merged #959 on GitHub' } },
     stopped: { 'Start a new run': { to: 'starting', say: 'A new run with the same task' }, 'Restart Build': { to: 'working', say: 'Build runs again from where it stopped' } },
     discarded: { 'Start a new run': { to: 'starting', say: 'A new run with the same task' } },
-    push: { 'Push main': { to: 'merged', say: 'Pushed to origin/main' }, 'Create PR instead': { to: 'checks', say: 'Opened #959 into dev' }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
+    push: { 'Push main': { to: 'merged', say: 'Pushed to origin/main' }, 'Create PR instead': { to: 'checks', say: 'Opened #959 into dev', dialog: 'pr' }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
     folder: { 'Apply to folder': { to: 'applied', confirm: 'Write 5 files into ~/src/marketing-site?' }, 'Try it': { say: 'Opened the copy in a terminal' }, Discard: { to: 'discarded', confirm: 'Discard the changes? The run stays in history.' } },
     applied: { 'Open the folder': { say: 'Opens ~/src/marketing-site' } },
     workspace: { 'Fix conflicts': { say: 'A short run is fixing worca-docs #31' }, 'worca-api #212': { say: 'Opens worca-api #212' }, 'worca-web #88': { say: 'Opens worca-web #88' }, 'worca-docs #31': { say: 'Opens worca-docs #31' }, 'Copy PR links': { say: 'Copied 3 PR links' } },
@@ -504,8 +508,8 @@
     outline: { 'Approve 3 runs': { to: 'feature', say: 'The feature has 3 runs; run 1 starts' }, 'Ask me before each run': { say: 'Worca asks before runs 2 and 3 start' }, 'Don’t split': { to: 'plan', say: 'One run, one PR' }, 'Ask for changes': { say: 'Sent to the planner; it cuts again' } },
     feature: { next: 'featureready' },
     featureready: { 'Create 3 PRs': { to: 'chain', say: 'Opened #959, #960 and #961, each into the one before', dialog: 'pr' }, 'Create PR': { to: 'chain', say: 'Opened one PR for all 3 runs' }, 'Try it': { say: 'Copied: git switch feat/unified-page-navigation' }, Discard: { to: 'discarded', confirm: 'Discard all 3 runs’ changes?' } },
-    featureone: { 'Create PR': { to: 'checks', say: 'Opened #959 for both runs' }, 'Create 2 PRs': { to: 'chain', say: 'Opened #959 and #960' }, 'Try it': { say: 'Copied: git switch feat/unified-page-navigation' }, Discard: { to: 'discarded', confirm: 'Discard both runs’ changes?' } },
-    featureblocked: { 'Create 3 PRs': { to: 'chain', say: 'Opened #959, #960 and #961, each into the one before' }, 'Try it': { say: 'Copied: git switch feat/unified-page-navigation' }, Discard: { to: 'discarded', confirm: 'Discard all 3 runs’ changes?' } },
+    featureone: { 'Create PR': { to: 'checks', say: 'Opened #959 for both runs', dialog: 'pr' }, 'Create 2 PRs': { to: 'chain', say: 'Opened #959 and #960', dialog: 'pr' }, 'Try it': { say: 'Copied: git switch feat/unified-page-navigation' }, Discard: { to: 'discarded', confirm: 'Discard both runs’ changes?' } },
+    featureblocked: { 'Create 3 PRs': { to: 'chain', say: 'Opened #959, #960 and #961, each into the one before', dialog: 'pr' }, 'Try it': { say: 'Copied: git switch feat/unified-page-navigation' }, Discard: { to: 'discarded', confirm: 'Discard all 3 runs’ changes?' } },
     chain: { 'Fix checks on #961': { say: 'A short run is fixing #961’s checks' }, 'Merge #959': { say: 'Merged #959 into dev; #960 now points at dev', confirm: 'Merge #959 into dev?' }, 'View PRs': { say: 'Opens #959, #960 and #961 on GitHub' }, 'Watch PRs': { say: 'Worca watches all three PRs' }, 'Copy PR links': { say: 'Copied 3 PR links' } },
   };
   // Run-wide controls: what Pause, Stop and ⋯ lead to, from any live run.

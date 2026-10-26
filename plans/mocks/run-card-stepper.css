@@ -505,3 +505,40 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rc .menu-item[role="menuitemradio"][aria-checked="true"]::before{background:currentColor;}
 .rc .menu-item[role="menuitemradio"] > .mi-l{grid-column:2;}
 .rc .menu-item[role="menuitemradio"] > .mi-hint{grid-column:3;}
+
+/* Create PR: the app's dialog (.viewer-modal .dlg) in four zones, each a small label then its controls. */
+.pd-card{width:min(560px,100%);height:auto;max-height:min(86vh,760px);}
+.pd-card > .dlg-body{padding:20px var(--pad-card);flex:0 1 auto;}
+.pd-h{margin:0;font:600 var(--fs-section)/var(--lh-title) var(--sans);}
+.pd-body{display:flex;flex-direction:column;gap:20px;}
+.pd-zone{display:flex;flex-direction:column;gap:8px;min-width:0;}
+.pd-label{font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);}
+.pd-into{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-meta);white-space:nowrap;}
+@container (max-width: 520px){ .pd-push{display:none;} }
+.pd-into .rc-mid{flex:0 1 auto;min-width:0;}
+.pd-into .select{flex:none;width:auto;}
+.pd-into .rtab-dim{flex:none;margin-left:auto;}
+.pd-hint{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+.pd-hint.is-warn{color:var(--amber-ink-strong);}
+.pd-prs{list-style:none;margin:0;padding:0;}
+.pd-prs li{display:grid;grid-template-columns:44px minmax(0,1fr) max-content;align-items:center;column-gap:12px;min-height:32px;border-top:1px solid var(--line);font-size:var(--fs-body);}
+.pd-prs li:first-child{border-top:0;}
+.pd-pr-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pd-desc-head{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.pd-field{position:relative;min-width:0;}
+.pd-field .textarea{width:100%;min-height:168px;resize:vertical;font:400 var(--fs-meta)/1.6 var(--mono);}
+.pd-preview{min-height:168px;max-height:320px;overflow:auto;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-sm);font-size:var(--fs-body);}
+.pd-preview h3{margin:12px 0 4px;font:600 var(--fs-body)/var(--lh-title) var(--sans);}
+.pd-preview h3:first-child{margin-top:0;}
+.pd-preview ul{margin:0;padding-left:18px;}
+.pd-preview p{margin:8px 0 0;}
+.pd-preview code{font:400 var(--fs-meta)/1 var(--mono);}
+/* Drafting: a quiet veil over the field that also takes the clicks while it is read-only. */
+.pd-busy{position:absolute;inset:0;display:grid;place-items:center;border-radius:var(--r-sm);background:color-mix(in srgb,var(--panel) 72%,transparent);}
+.pd-busy span{font-size:var(--fs-meta);color:var(--ink-2);}
+.pd-field.is-generating .pd-busy::before{content:"";position:absolute;inset:0;border-radius:inherit;background:linear-gradient(100deg,transparent 30%,var(--hover) 50%,transparent 70%);background-size:200% 100%;animation:pd-sweep 1.2s linear infinite;}
+@keyframes pd-sweep{from{background-position:120% 0}to{background-position:-80% 0}}
+@media (prefers-reduced-motion: reduce){.pd-field.is-generating .pd-busy::before{animation:none;}}
+.pd-row{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;}
+.pd-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:var(--dlg-gap-foot);}
+.pd-foot-end{display:flex;gap:8px;}

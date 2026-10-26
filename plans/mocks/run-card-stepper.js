@@ -273,6 +273,7 @@ function render() {
       <div class="rc-zone is-ruled"><div class="rc-figs">${v.figs.map((f) => figHtml(f, v)).join('')}</div></div>
     </section>
     <div class="tabs rc-tabs" role="tablist" aria-label="Run detail">${v.tabs.map((t) => `<button type="button" class="tab" role="tab" id="tab-${t.id}" aria-controls="rtab-panel" aria-selected="${t.sel}" tabindex="${t.sel ? 0 : -1}" data-tab="${t.id}" data-key="tab:${t.id}">${esc(t.l)}${t.n ? `<span class="n">${esc(t.n)}</span>` : ''}</button>`).join('')}</div>
+    ${prDialogHtml(v)}
     <div class="rc-toast${ui.toast ? ' is-on' : ''}" role="status" aria-live="polite">${esc(ui.toast || '')}</div>
     <div class="rtab-panel" role="tabpanel" id="rtab-panel" aria-labelledby="tab-${sel}" tabindex="0">${panelHtml(v)}</div>
   </div>`;
@@ -297,7 +298,17 @@ function fitMenus() {
   });
 }
 document.addEventListener('submit', (e) => e.preventDefault());
-document.addEventListener('input', (e) => { if (e.target.id === 'after-task') ui.afterDraft = e.target.value; });
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'after-task') ui.afterDraft = e.target.value;
+  if (ui.pr && e.target.id === 'pd-title') ui.pr.title = e.target.value;
+  if (ui.pr && e.target.id === 'pd-desc') ui.pr.desc = e.target.value;
+});
+document.addEventListener('change', (e) => {
+  if (!ui.pr) return;
+  if (e.target.id === 'pd-draft') ui.pr.draft = e.target.checked;
+  if (e.target.id === 'pd-watch') ui.pr.watch = e.target.checked;
+  if (e.target.id === 'pd-base') { ui.pr.base = e.target.value; pendingFocus = 'pd-base'; render(); }
+});
 const pick = document.getElementById('case');
 const groups = [...new Set(M.cases.map((c) => c.group))];
 pick.innerHTML = groups.map((g) => `<optgroup label="${g}">${M.cases.filter((c) => c.group === g).map((c) => `<option value="${c.id}"${c.id === ui.caseId ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</optgroup>`).join('');
@@ -330,7 +341,11 @@ function goCase(id) {
   pick.value = id; pendingFocus = 'act-main';
 }
 function follow(f, label) {
-  if (f.dialog && ui.dialog !== f.dialog) { ui.dialog = f.dialog; ui.dialogLabel = label; ui.dialogF = f; ui.menu = ''; pendingFocus = f.dialog + '-title'; return; }
+  if (f.dialog && ui.dialog !== f.dialog) {
+    ui.dialog = f.dialog; ui.dialogLabel = label; ui.dialogF = f; ui.menu = '';
+    if (f.dialog === 'pr') { const v = M.view(ui.caseId, ui); ui.pr = { title: v.title, desc: '', mode: 'write', gen: false, draft: false, watch: true, base: 'dev' }; if (!v.runs.length) generate(); pendingFocus = v.runs.length ? 'pd-ok' : 'pd-title'; }
+    return;
+  }
   ui.dialog = '';
   if (f.confirm && !(ui.confirm && ui.confirm.ok)) {
     ui.confirm = { text: f.confirm, yes: label.replace(/ the run$/, '') || 'Confirm', danger: /^(Stop|Discard)/.test(label), f, label }; ui.menu = ''; pendingFocus = 'confirm:yes'; return;
@@ -357,14 +372,41 @@ function stripHtml(v) {
       <input class="input input-sm" id="after-task" type="text" placeholder="What should the next run do?" aria-label="Task for the next run" data-key="after-task" value="${esc(ui.afterDraft || '')}">
       ${opts.length > 1 ? `<select class="select input-sm" id="after-when" aria-label="When it starts" data-key="after-when">${opts.map((o) => `<option>${esc(o)}</option>`).join('')}</select>` : `<span class="rtab-dim" id="after-when-t">${esc(opts[0])}</span>`}${acts(v.finished ? 'Start run' : 'Schedule', 'btn-primary')}</form>`;
   }
-  if (ui.dialog === 'pr') {
-    return `<form class="rc-confirm is-form" role="dialog" aria-labelledby="rc-strip-t" data-form="pr"><span class="rc-confirm-t" id="rc-strip-t">${esc(ui.dialogLabel)}</span>
-      <input class="input input-sm" id="pr-title" type="text" aria-label="PR title" value="${esc(v.title)}" data-key="pr-title">
-      <label class="rc-check"><input type="checkbox" id="pr-draft" data-key="pr-draft"> Draft</label><label class="rc-check"><input type="checkbox" id="pr-watch" checked data-key="pr-watch"> Watch: fix failing checks</label>
-      <span class="rtab-dim">Into ${esc(v.place.base || 'dev')}</span>${acts(ui.dialogLabel, 'btn-primary')}</form>`;
-  }
   if (ui.confirm) return `<div class="rc-confirm" role="alertdialog" aria-labelledby="rc-strip-t"><span class="rc-confirm-t" id="rc-strip-t">${esc(ui.confirm.text)}</span>${acts(ui.confirm.yes, ui.confirm.danger ? 'btn-danger' : 'btn-primary')}</div>`;
   return '';
+}
+// Create PR, as today's dialog: Into (base branch), the PRs for a group, the title and a description you write or
+// Generate drafts with AI (Write / Preview, Stop while it drafts), Draft and the issue it closes, then Watch. It is
+// the app's standard dialog (.viewer-modal .dlg), not the strip: it is a form, not a yes or no.
+const md = (t) => esc(t).split('\n').map((l) => (l.startsWith('## ') ? `<h3>${l.slice(3)}</h3>` : l.startsWith('- ') ? `<li>${l.slice(2).replace(/`([^`]+)`/g, '<code>$1</code>')}</li>` : l.trim() ? `<p>${l}</p>` : '')).join('').replace(/(<li>.*?<\/li>)+/g, (m) => `<ul>${m}</ul>`);
+function prDialogHtml(v) {
+  if (ui.dialog !== 'pr') return '';
+  const pr = ui.pr; const runs = v.runs.length;
+  const stacked = runs && !/^Create PR$/.test(ui.dialogLabel);
+  const into = `<section class="pd-zone"><span class="pd-label" id="pd-into">Into</span><div class="pd-into"><code class="rc-mid" title="${esc(v.place.branch || 'feat/unified-page-navigation')}"><span class="rc-mid-a">${esc(v.place.branch || 'feat/unified-page-navigation')}</span></code><span class="rc-to" aria-hidden="true">→</span>
+    <select class="select input-sm" id="pd-base" aria-labelledby="pd-into" data-key="pd-base">${['dev', 'main'].map((b) => `<option${pr.base === b ? ' selected' : ''}>${b}</option>`).join('')}</select><span class="rtab-dim pd-push">push to origin</span></div>
+    ${pr.base === 'main' ? '<p class="pd-hint is-warn">main is 41 commits behind dev; the PR would carry them too</p>' : '<p class="pd-hint">dev moved 2 commits since this run started; they merge cleanly</p>'}</section>`;
+  const prs = stacked ? `<section class="pd-zone"><span class="pd-label">Pull requests</span><ol class="pd-prs">${v.runs.map((r, i) => `<li><span class="sk-num">PR ${i + 1}</span><span class="pd-pr-t" title="${esc(r.title)}">${esc(r.title)}</span><span class="rtab-dim">${i ? 'into PR ' + i : 'into ' + esc(pr.base)}</span></li>`).join('')}</ol>
+    <p class="pd-hint">Each PR’s description is drafted from its own run.</p></section>` : '';
+  const desc = stacked ? '' : `<section class="pd-zone"><span class="pd-label" id="pd-pr">Title and description</span>
+    <input class="input" id="pd-title" type="text" maxlength="256" aria-label="PR title" value="${esc(pr.title)}" data-key="pd-title">
+    <div class="pd-desc-head"><div class="seg" role="group" aria-label="Description"><button type="button" aria-pressed="${pr.mode === 'write'}" data-pdmode="write" data-key="pd-write">Write</button><button type="button" aria-pressed="${pr.mode === 'preview'}" data-pdmode="preview" data-key="pd-preview">Preview</button></div>
+      ${pr.gen ? '<button type="button" class="btn btn-sm" data-pd="stop" data-key="pd-stop">Stop</button>' : `<button type="button" class="btn btn-sm" data-pd="gen" data-key="pd-gen" title="Drafts the description from the run: what it did, its changes and how it was checked">${pr.desc ? 'Generate again' : 'Generate'}</button>`}</div>
+    <div class="pd-field${pr.gen ? ' is-generating' : ''}" aria-busy="${pr.gen}">${pr.mode === 'write' ? `<textarea class="textarea" id="pd-desc" rows="8" aria-label="Description" placeholder="Describe this change, or use Generate" data-key="pd-desc"${pr.gen ? ' readonly' : ''}>${esc(pr.desc)}</textarea>` : `<div class="pd-preview">${pr.desc ? md(pr.desc) : '<p class="rtab-dim">Nothing to preview yet.</p>'}</div>`}
+      ${pr.gen ? '<div class="pd-busy" aria-hidden="true"><span>Drafting with AI…</span></div>' : ''}</div>
+    <div class="pd-row"><label class="switch-row" for="pd-draft"><input id="pd-draft" class="sw-input" type="checkbox" role="switch" data-key="pd-draft"${pr.draft ? ' checked' : ''}><span class="switch" aria-hidden="true"></span><span>Draft</span></label><span class="pd-hint">Will close ${esc(v.tabData.issue)}</span></div></section>`;
+  const after = `<section class="pd-zone"><span class="pd-label">After it opens</span><label class="switch-row" for="pd-watch"><input id="pd-watch" class="sw-input" type="checkbox" role="switch" data-key="pd-watch"${pr.watch ? ' checked' : ''}><span class="switch" aria-hidden="true"></span><span>Watch</span></label><p class="pd-hint">Follows checks and reviews, and fixes failing checks</p></section>`;
+  return `<div class="viewer-modal pd-modal" role="dialog" aria-modal="true" aria-labelledby="pd-h"><div class="card dlg pd-card">
+    <div class="dlg-head"><h2 class="pd-h" id="pd-h">${esc(ui.dialogLabel)}</h2></div>
+    <div class="dlg-body pd-body">${into}${prs}${desc}${after}</div>
+    <div class="dlg-foot pd-foot"><button type="button" class="btn btn-sm" data-pd="try" data-key="pd-try" data-say="Checked out the branch on this machine; the dialog stays open">Try it first</button><span class="pd-foot-end"><button type="button" class="btn btn-sm" data-pd="cancel" data-key="pd-cancel">Cancel</button><button type="button" class="btn btn-sm btn-primary" data-pd="ok" data-key="pd-ok">${esc(ui.dialogLabel)}</button></span></div>
+  </div></div>`;
+}
+let genTimer = 0;
+function generate() {
+  const v = M.view(ui.caseId, ui);
+  ui.pr.gen = true; ui.pr.mode = 'write'; clearTimeout(genTimer);
+  genTimer = setTimeout(() => { if (!ui.pr.gen) return; ui.pr.gen = false; ui.pr.desc = v.tabData.prBody(v.title, v.tabData.files); pendingFocus = 'pd-desc'; render(); }, 1400);
 }
 function goMember(group, i) {
   Object.assign(ui, { caseId: M.view(group, {}).runCases[i], parent: { caseId: group, index: i }, open: null, tab: '', focus: '', menu: '', titleOpen: false });
@@ -398,7 +440,11 @@ document.addEventListener('click', (e) => {
       ui.after = ui.after.concat({ task, when }); toast((when.startsWith('Now') ? 'Started: ' : 'Scheduled: ') + task + (when.startsWith('Now') ? '' : ' · ' + when.toLowerCase())); }
     ui.dialog = ''; ui.afterDraft = ''; pendingFocus = 'menu:more';
   }
-  else if (d.confirm && ui.dialog === 'pr') { if (d.confirm === 'yes') { const f = ui.dialogF; follow(Object.assign({}, f, { dialog: '' }), ui.dialogLabel); } else { ui.dialog = ''; pendingFocus = 'act-main'; } }
+  else if (d.pd === 'ok') { const f = ui.dialogF; const pr = ui.pr; ui.pr.gen = false; follow(Object.assign({}, f, { dialog: '', say: f.say + (pr.draft ? ' as a draft' : '') + (pr.watch ? '; Worca watches it' : '') }), ui.dialogLabel); }
+  else if (d.pd === 'cancel') { ui.dialog = ''; ui.pr.gen = false; pendingFocus = 'act-main'; }
+  else if (d.pd === 'gen') { generate(); pendingFocus = 'pd-stop'; }
+  else if (d.pd === 'stop') { ui.pr.gen = false; clearTimeout(genTimer); pendingFocus = 'pd-gen'; toast('Stopped drafting'); }
+  else if (d.pdmode) { ui.pr.mode = d.pdmode; pendingFocus = 'pd-' + d.pdmode; }
   else if (d.confirm) { if (d.confirm === 'yes') { ui.confirm.ok = true; follow(ui.confirm.f, ui.confirm.label); } else { ui.confirm = null; pendingFocus = 'act-main'; } }
   else if (d.run === 'stop') follow(M.runFlow.stop, 'Stop the run');
   else if (d.act) act(d.act);
@@ -451,7 +497,7 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   const t = e.target;
   if (t.dataset && t.dataset.key === 'pick-input' && e.key === 'Enter') { e.preventDefault(); addChip(t.value); render(); return; }
-  if ((ui.confirm || ui.dialog) && e.key === 'Escape') { ui.confirm = null; ui.dialog = ''; pendingFocus = 'act-main'; render(); return; }
+  if ((ui.confirm || ui.dialog) && e.key === 'Escape') { if (ui.pr) ui.pr.gen = false; ui.confirm = null; ui.dialog = ''; pendingFocus = 'act-main'; render(); return; }
   if (e.key === '`' && e.ctrlKey) { e.preventDefault(); toast('Terminal opened in the worktree'); render(); return; }
   if (e.key === 'Enter' && e.target.id === 'after-task') { e.preventDefault(); document.querySelector('[data-confirm="yes"]')?.click(); return; }
   if (ui.menu && (e.key === 'Escape' || (e.key === 'Tab' && t.closest && t.closest('.menu')))) {

@@ -172,7 +172,7 @@ in the place its kind already has, so nothing new sits beside the structure:
 | Supporting actions | ⋯, one compact menu like the app's View menu (one line per item, a leading check for a choice, hints right, help in the tooltip): Away mode (As set up · Answer for me · Never), then Run after, Save as preset, Terminal (Ctrl+`), Copy link, then Report this run and Archive or Restore | Groups: Next run (Starts by itself · Asks me first), Re-plan the rest, Open the plan, Cancel the rest |
 | A fact's detail | Its figure in the card | Cost opens its breakdown by stage, as Changes opens its tab |
 | The code's own actions | The Changes tab, above the files | Check out, Download patch, Copy git commands, Refresh while live |
-| Anything that asks you something | One strip under the bar | Confirms (Stop, Discard, Archive, Merge, Apply), the Run after form, the Create PR form (title, Draft, Watch) |
+| Anything that asks you something | One strip under the bar for a yes or no or a one-line answer; the app's dialog for a form | Strip: confirms (Stop, Discard, Archive, Merge, Apply) and Run after. Dialog: Create PR as today (Into with the base branch, the PRs for a group, title, description with Write / Preview and Generate (AI drafts it on open; Stop while it drafts), Draft and the issue it closes, Watch; Try it first, Cancel, Create PR) |
 
 Today's Logs tab filters, Agents tab and the Actions tab's services (setup, stack) are Expert-level views; they map to
 Activity and the Changes tools at build time and are not drawn in the prototype.
