@@ -24,6 +24,7 @@ import { readProxyLogin } from '../core/proxy-credentials.mjs';
 import { resolveUpstream, upstreamLabel } from '../core/upstream-proxy.mjs';
 import {
   MOUNT_FILE, MAX_MASKS, boxName, resolveProjectDir, maskSettingsFor, planProjectMasks, writeProjectMount, removeProjectMount, maskLines,
+  maskAliases, maskAliasRefusal,
 } from './container-mounts.mjs';
 
 /** The compose files shipped in the package (package.json `files`). */
@@ -284,7 +285,7 @@ export function boxCaCert({ env = process.env, envFile = () => '', dir = '.', ex
  * @param {object} io              { out, c, fail } from the CLI; `exec` and `dir` are injectable for tests
  */
 export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir: dirOverride = null, env: hostEnv = process.env,
-  settings = readSettings, login = readProxyLogin } = {}) {
+  settings = readSettings, login = readProxyLogin, aliasesOf = maskAliases } = {}) {
   const a = parse(argv);
   if (a.verb === 'help' || a.verb === '--help' || a.verb === '-h') { out(CONTAINER_HELP.trimEnd()); return 0; }
   const dir = resolve(a.dir || dirOverride || join(worcaHome(), 'container'));
@@ -359,6 +360,8 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
           fail(`--project: ${plan.masks.length} secret files to mask (the limit is ${MAX_MASKS}); leave some unmasked with the project's secretPathsUnmask setting, or move them out of ${project}`);
           return 1;
         }
+        const aliased = aliasesOf(project, plan.masks);
+        if (aliased.length) { fail(maskAliasRefusal(project, aliased)); return 1; }
         for (const line of maskLines({ projectDir: project, ...plan })) out(line.level === 'warn' ? c('yellow', line.text) : line.text);
       } else if (!overlays.includes('clonein')) {
         out(c('yellow', `projects  ${readEnvValue(dir, 'WORCA_PROJECTS') || '$HOME/dev'}   the whole folder is mounted, unmasked: every project in it and its secret files are readable in the box (narrow it: --project <dir>)`));

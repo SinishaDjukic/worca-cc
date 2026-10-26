@@ -6,7 +6,7 @@
 // renders it.
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, lstatSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, lstatSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, isAbsolute, join, parse, posix, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
@@ -117,6 +117,36 @@ export async function planProjectMasks(projectDir, { patterns, unmask = [] } = {
   const history = [...new Set(everAdded.filter((f) => !tracked?.has(f) && !notTheProjects(f) && isSecretPath(f, patterns)
     && !(unmask.length && isSecretPath(f, unmask))))].sort();
   return { masks: [...masks].sort(), committed: [...committed].sort(), history, skippedLinks: skippedLinks.sort(), trackedUnknown: tracked ? null : why };
+}
+
+const swapCase = (s) => [...s].map((ch) => (ch === ch.toLowerCase() ? ch.toUpperCase() : ch.toLowerCase())).join('');
+
+/**
+ * Masks the box can read past (audit 2.2): a mask is one bind on the exact name, and Docker Desktop resolves a lookup
+ * on the host. On a case-insensitive or normalisation-insensitive filesystem (macOS APFS by default) `.ENV`, or the
+ * other Unicode form of a name, opens the same host file through a path no mount covers. Probed on this filesystem:
+ * a mask whose case-swapped or NFC/NFD spelling is the same file is returned with that spelling.
+ * @returns {Array<{ rel: string, alias: string }>}
+ */
+export function maskAliases(projectDir, masks) {
+  const out = [];
+  for (const rel of masks) {
+    let st; try { st = statSync(join(projectDir, rel)); } catch { continue; }
+    for (const alias of new Set([swapCase(rel), rel.normalize('NFD'), rel.normalize('NFC')])) {
+      if (alias === rel) continue;
+      let as; try { as = lstatSync(join(projectDir, alias)); } catch { continue; }
+      if (as.ino === st.ino && as.dev === st.dev) { out.push({ rel, alias }); break; }
+    }
+  }
+  return out;
+}
+
+/** Why `up` refuses masks the box could read past (maskAliases), with the ways out. */
+export function maskAliasRefusal(projectDir, aliased) {
+  const shown = aliased.slice(0, 3).map((a) => `${a.alias} opens ${a.rel}`).join(', ');
+  return `--project: ${projectDir} is on a filesystem that opens one file under other spellings (${shown}${aliased.length > 3 ? ', …' : ''}), `
+    + 'and the box resolves a name on this machine, so its masks could be read past. Move the secret files out of the project, '
+    + 'keep the project on a case-sensitive volume, or leave files that are not secret unmasked with the project\'s secretPathsUnmask setting';
 }
 
 // compose interpolates `$` in every string, so a literal one is written `$$`.
