@@ -273,7 +273,7 @@ html,body{height:auto;overflow:visible;margin:0;}
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:32ch;}
 .rc-crumb:hover{color:var(--ink);text-decoration:underline;text-underline-offset:3px;}
 .rc-crumb:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
-.rc-pager{display:inline-flex;align-items:center;gap:2px;flex:none;padding-left:8px;border-left:1px solid var(--line);}
+.rc-pager{display:inline-flex;align-items:center;gap:2px;flex:none;margin-left:auto;}
 .rc-pager-n{font-size:var(--fs-meta);color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;padding-inline:2px;}
 @container (max-width: 728px){   /* Navigation R2: at 760px of window and below, one link, ‹ Parent name */
   .rc-crumbs li:not(.is-parent){display:none;}
