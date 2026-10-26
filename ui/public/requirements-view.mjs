@@ -291,6 +291,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   const branchLists = new Map();   // projectDir -> 'loading' | { branches, current }
   let starting = false;
   let dialog = null;
+  let dlgGen = 0;            // A6: bumped by every dialog open and close; a late answer for a dialog that is gone is dropped
+  let exportDone = null;     // A6: { seq, text } — "Created SHOP-123" after an export (board 29)
+  let exportDoneEl = null;   // its role=status line, kept across paints
+  const reportBack = new Map();   // A6 D15: seq → the Report back switch (on unless switched off)
   let workflowsFailed = false;     // GET /api/workflows failed: Auto only, and the card says so
   const assumePosting = new Set(); // assumption ids whose Confirm / Reject POST is in flight
   const pickPosting = new Set();   // file ids whose Files for the run chip PATCH is in flight (board 18)
@@ -334,6 +338,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       for (const map of [fileUi, fileMsgs, fileMsgList, fileNodes, refusalEls, fileWas, droppedKeys]) map.clear();
       filesLive = null;
       closeDialog(false);
+      exportDone = null; exportDoneEl = null;
     }
     seqShown = next;
     const b = /^brief\/(project|workspace)\/([^/]+)$/.exec(param);
@@ -1760,28 +1765,46 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     openModal(card, { trigger, first: area, canClose: () => !busy });
   }
   /** A modal on the page (the start dialog's pattern): Escape closes it when `canClose()`, Tab stays inside, the page
-   *  behind is inert; `first` takes the focus, and `closeDialog(true)` hands it back to `trigger`. */
-  function openModal(card, { trigger = null, first = null, canClose = () => true } = {}) {
-    const wrap = h('div', { class: 'viewer-modal req-dlg-wrap' }, card);
+   *  behind is inert; `first` takes the focus, and `closeDialog(true)` hands it back to `trigger`. A6 (`page`): an export
+   *  dialog — a full-screen sheet on a phone — makes every other child of <body> inert too, released on close. */
+  function openModal(card, { trigger = null, first = null, canClose = () => true, page = false } = {}) {
+    const wrap = h('div', { class: `viewer-modal req-dlg-wrap${page ? ' req-dlg-sheet' : ''}` }, card);
     const triggerUi = trigger && trigger.getAttribute ? trigger.getAttribute('data-ui') : null;
     // On the document, in the capture phase: Escape and Tab work wherever the focus is, even after a click
     // on the scrim left it on <body>. Removed on close.
     const onKey = (e) => {
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (canClose()) closeDialog(true); return; }
+      if (e.key === 'Escape') {
+        if (e.isComposing) return;   // Escape that ends an IME composition is the input method's, not the dialog's
+        e.preventDefault(); e.stopPropagation(); if (canClose()) closeDialog(true); return;
+      }
       if (e.key !== 'Tab') return;
-      // a radio group is one stop: its checked radio
-      const all = [...card.querySelectorAll('button, textarea, input, select, a[href]')].filter((el) => !el.disabled && !(el.type === 'radio' && !el.checked));
+      // a radio group is one stop: its checked radio. A control hidden by CSS (the sheet's ← FEAT-7 on a desktop) is no stop;
+      // checkVisibility is Chrome's (jsdom has none, so there every control counts).
+      const shown = (el) => typeof el.checkVisibility !== 'function' || el.checkVisibility();
+      const all = [...card.querySelectorAll('button, textarea, input, select, a[href], [tabindex="0"]')]
+        .filter((el) => !el.disabled && !el.hidden && !(el.type === 'radio' && !el.checked) && shown(el));
       if (!all.length) return;
       const head = all[0], last = all[all.length - 1];
       const at = document.activeElement;
-      if (e.shiftKey && (at === head || !card.contains(at))) { e.preventDefault(); last.focus(); }
+      // the title (tabindex=-1, where an export dialog starts) is before every stop: Shift+Tab from it wraps to the last one
+      const atTitle = !!at && at.tagName === 'H2' && card.contains(at);
+      if (e.shiftKey && (at === head || atTitle || !card.contains(at))) { e.preventDefault(); last.focus(); }
       else if (!e.shiftKey && (at === last || !card.contains(at))) { e.preventDefault(); head.focus(); }
     };
     document.addEventListener('keydown', onKey, true);
     document.body.append(wrap);
     // the page behind cannot be reached while the dialog is open
     host.inert = true; host.setAttribute('inert', '');
-    dialog = { wrap, trigger, triggerUi, onKey };
+    const inerted = [];
+    if (page) {
+      for (const el of document.body.children) {
+        if (el === wrap || el.hasAttribute('inert')) continue;
+        el.inert = true; el.setAttribute('inert', '');
+        inerted.push(el);
+      }
+    }
+    dlgGen += 1;
+    dialog = { wrap, trigger, triggerUi, onKey, canClose, inerted };
     if (first) first.focus();
   }
   function restoreFocus(trigger, triggerUi) {
@@ -1790,10 +1813,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
   function closeDialog(restore = true) {
     if (!dialog) return;
-    const { wrap, trigger, triggerUi, onKey } = dialog;
+    const { wrap, trigger, triggerUi, onKey, inerted = [] } = dialog;
     dialog = null;
+    dlgGen += 1;
     document.removeEventListener('keydown', onKey, true);
     host.inert = false; host.removeAttribute('inert');
+    for (const el of inerted) { el.inert = false; el.removeAttribute('inert'); }
     wrap.remove();
     if (restore) restoreFocus(trigger, triggerUi);
   }
@@ -2435,7 +2460,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           f.scopeType === 'project' ? menuItem('Save to specs/', save, { ui: 'mi-save' }) : null,
           menuItem('Copy Markdown', copy, { ui: 'mi-copy' }),
           h('a', { role: 'menuitem', class: 'menu-item req-menu-item', 'data-ui': 'mi-download', href: `/api/requirements/${f.seq}/markdown?download=1`, download: '' }, 'Download .md'),
+          ...exportItems(f),   // A6 D1: Export to <tracker>… and Export setup…, or Connect a tracker…
         ]),
+        exportArchNote(f),   // A6: why an archived feature cannot export, outside role="menu" (a menu holds only items)
         menu('more', h('button', { type: 'button', class: 'req-ico', 'aria-label': 'More actions', title: 'More actions', 'data-ui': 'menu-more' },
           icon(ICONS.dots, { size: 18, fill: 'currentColor', stroke: 'none' })), [
           // the notes moved to the brief page (A7 D12)
@@ -2450,6 +2477,238 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           }), { disabled: !!f.busy, ui: 'mi-archive' }),
         ])));
   }
+
+  // ---- A6: export to a tracker (plans/requirements-a6-design.md §7, boards 26–31). Every dialog is the page's modal with
+  // the page behind inert (openModal's `page`); dlgGen drops an answer for a dialog that is gone. ----
+  const xOf = (f) => (f && f.export) || null;
+  const linkOf = (f) => (xOf(f) && xOf(f).link) || null;
+  /** The menu's tracker name: "Jira", "a tracker" (several, none bound), or null (none can export). */
+  const trackerName = (f) => { const x = xOf(f); return x && x.tracker ? (x.tracker.name || 'a tracker') : null; };
+  const exportUrl = (f, path = '') => `/api/requirements/${f.seq}/export${path}`;
+  const setupUrl = (f, path = '') => `/api/requirements/export-setup/${f.scopeType}/${encodeURIComponent(f.scopeKey)}${path}`;
+  const connValue = (c) => `${c.plugin}|${c.sourceId}|${c.profile || ''}`;
+  const connFrom = (v) => { const [plugin, sourceId, profile] = String(v || '').split('|'); return { plugin, sourceId, profile: profile || null }; };
+  /** The dialog opened as generation `g` is still the one on screen. */
+  const live = (g) => g === dlgGen && !!dialog;
+  const exportTrigger = () => host.querySelector('[data-ui="menu-export"]');
+
+  const ARCHIVED_NOTE = 'Restore the feature to export it.';
+  /** D1: a separator, then Export to <tracker>… and Export setup…, or Connect a tracker…; archived: disabled, with why (its
+   *  title, and a description node outside the menu: exportArchNote). */
+  function exportItems(f) {
+    const x = xOf(f);
+    if (!x) return [];
+    const sep = h('div', { class: 'menu-sep', role: 'separator' });
+    if (!x.tracker) return [sep, menuItem('Connect a tracker…', () => openConnect(exportTrigger()), { ui: 'mi-connect' })];
+    const archived = f.status === 'archived';
+    const go = menuItem(`Export to ${trackerName(f)}…`, () => startExport(f, exportTrigger()), { disabled: archived || x.exporting, ui: 'mi-export' });
+    if (archived) { go.setAttribute('aria-describedby', 'req-export-arch'); go.title = ARCHIVED_NOTE; }
+    return [sep, go, menuItem('Export setup…', () => { void openSetup(f, { trigger: exportTrigger() }); }, { ui: 'mi-export-setup' })];
+  }
+  /** The archived item's description, beside the menu (a role="menu" holds only items and separators). */
+  const exportArchNote = (f) => (f.status === 'archived' && xOf(f) && xOf(f).tracker
+    ? h('span', { class: 'sr-only', id: 'req-export-arch', text: ARCHIVED_NOTE }) : null);
+
+  /** D2: where trackers are connected. The Marketplace button only at the Advanced level (docs/ui-levels.md). */
+  function openConnect(trigger) {
+    closeDialog(false);
+    const close = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'connect-close', onclick: () => closeDialog(true) }, 'Close');
+    const card = h('section', { class: 'card req-dialog req-export req-export-connect', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'req-connect-title' },
+      h('h2', { id: 'req-connect-title', text: 'Connect a tracker' }),
+      h('p', { class: 'req-dlg-lead', text: 'Trackers are connected on the Marketplace page (Advanced mode), or by whoever set up Worca.' }),
+      h('div', { class: 'req-dlg-btns' },
+        h('button', { type: 'button', class: 'btn', 'data-ui': 'connect-market', 'data-min-level': 'advanced',
+          onclick: () => { closeDialog(false); location.hash = '#marketplace'; } }, 'Open the Marketplace page'),
+        close));
+    openModal(card, { trigger, first: close, page: true });
+  }
+
+  /** A select in upstream's .select-wrap; `list` of { value, label }. */
+  function exportSelect({ id = null, ui, list, value, onchange, label = null, disabled = false, describedBy = null }) {
+    const s = h('select', { id, 'data-ui': ui, 'aria-label': label, 'aria-describedby': describedBy, disabled, onchange });
+    for (const o of list || []) { const op = h('option', { value: o.value, text: o.label }); op.selected = o.value === value; s.append(op); }
+    return h('div', { class: 'select-wrap' }, s);
+  }
+  /** A field: its label (a <label for> when it names a control, else a caption), the control, an optional hint. */
+  function exportField(labelFor, labelKids, control, hint = null, hintId = null) {
+    return h('div', { class: 'field req-export-fld' },
+      labelFor ? h('label', { for: labelFor }, ...[].concat(labelKids)) : h('span', { class: 'req-export-fl' }, ...[].concat(labelKids)),
+      ...[].concat(control), hint ? h('p', { class: 'hint', id: hintId, text: hint }) : null);
+  }
+  /** Labels as chips, each with a remove button, and a field that adds one (Enter or a comma); `fixed` (worca-FEAT-7) last and
+   *  for good (D6). onChange(next, focusUi): the caller repaints and puts the focus back in the field. */
+  function labelsField({ id, ui, labels, fixed = null, onChange }) {
+    const input = h('input', { type: 'text', id, class: 'req-export-labin', placeholder: 'Add a label', 'data-ui': `${ui}-in`,
+      'aria-describedby': fixed ? `${id}-fixed` : null });
+    const add = () => { const v = input.value.trim(); if (!v) return; input.value = ''; onChange([...labels, v], `${ui}-in`); };
+    input.addEventListener('keydown', (e) => {
+      if (e.isComposing) return;   // Enter that commits an IME composition adds nothing
+      if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add(); }
+    });
+    return h('div', { class: 'field req-export-fld' }, h('label', { for: id }, 'Labels'),
+      h('div', { class: 'req-export-chips' },
+        ...labels.map((l, i) => h('span', { class: 'chip req-export-lab' }, h('span', { text: l }),
+          h('button', { type: 'button', class: 'req-export-x', 'aria-label': `Remove label ${l}`, 'data-ui': `${ui}-x-${i}`,
+            onclick: () => onChange(labels.filter((_, j) => j !== i), `${ui}-in`) }, icon(ICONS.remove, { size: 12 })))),
+        fixed ? h('span', { class: 'chip req-export-lab req-export-fixed', 'aria-describedby': `${id}-fixed`, text: fixed }) : null),
+      input,
+      fixed ? h('p', { class: 'hint', id: `${id}-fixed`, text: `${fixed} stays: Worca uses this label to find the ticket again.` }) : null);
+  }
+  /** Board 31: a sheet's way back to the feature (shown at phone width only, by CSS). */
+  const backButton = (f) => h('button', { type: 'button', class: 'link-btn req-export-back', 'data-ui': 'export-back', 'aria-label': `Back to ${f.id}`,
+    onclick: () => { if (dialog && dialog.canClose()) closeDialog(true); } }, `← ${f.id}`);
+
+  /** Set up export for <name> (board 26, D2, D16), per project or workspace. Each select loads through …/options as the one
+   *  before it changes; a later change supersedes an answer still on its way. `then` goes on with the export after Save. */
+  async function openSetup(f, { trigger = null, then = null } = {}) {
+    closeDialog(false);
+    const scopeName = targetName(f);
+    const st = { trackers: [], conn: null, projects: [], project: null, types: [], type: null, prios: [], prio: null, fields: [],
+      crit: { target: 'description' }, labels: ['worca'], ready: false, tooOld: false, busy: false, loads: 0 };
+    const body = h('div', { class: 'req-export-body' });
+    const alertEl = h('p', { class: 'form-msg err req-export-alert', role: 'alert' });
+    const save = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'setup-save', disabled: true }, then ? 'Save and continue' : 'Save');
+    // the focus starts on the title (D20), so it is inside the dialog even when the load below fails
+    const title = h('h2', { id: 'req-setup-title', tabindex: '-1', text: `Set up export for ${scopeName}` });
+    const card = h('section', { class: 'card req-dialog req-export req-export-setup', role: 'dialog', 'aria-modal': 'true',
+      'aria-labelledby': 'req-setup-title', 'aria-describedby': 'req-setup-desc' },
+      backButton(f),
+      title,
+      h('p', { class: 'req-dlg-lead', id: 'req-setup-desc',
+        text: `Worca uses these for every export from ${scopeName}. You can change them for one export in the preview, or for good in Export ▾ › Export setup…` }),
+      body, alertEl,
+      h('div', { class: 'req-dlg-btns' },
+        h('button', { type: 'button', class: 'btn', 'data-ui': 'setup-cancel', onclick: () => { if (!st.busy) closeDialog(true); } }, 'Cancel'), save));
+    openModal(card, { trigger, first: title, canClose: () => !st.busy, page: true });
+    const g = dlgGen;
+    const nameIn = (list, v) => (list.find((x) => x.value === v) || {}).label || v;
+    const trackerNow = () => st.trackers.find((t) => st.conn && t.plugin === st.conn.plugin && t.sourceId === st.conn.sourceId) || null;
+
+    function draw(focusUi = null) {
+      const focus = focusUi || (card.contains(document.activeElement) ? document.activeElement.getAttribute('data-ui') : null);
+      const tn = (trackerNow() || {}).name || 'the tracker';
+      const several = st.trackers.length > 1;
+      const conns = st.trackers.flatMap((t) => t.profiles.map((p) => ({ value: connValue({ plugin: t.plugin, sourceId: t.sourceId, profile: p.id }),
+        label: `${several ? `${t.name} · ` : ''}${p.label}` })));
+      const toField = st.crit.target === 'field';
+      const firstField = st.fields[0] || null;
+      const radio = (ui, on, onpick, disabled = false) => {
+        const r = h('input', { type: 'radio', name: 'req-setup-crit', 'data-ui': ui, disabled, onchange: onpick });
+        r.checked = on;
+        return r;
+      };
+      body.replaceChildren(
+        exportField('req-setup-conn', 'Connection', exportSelect({ id: 'req-setup-conn', ui: 'setup-conn', list: conns, value: st.conn ? connValue(st.conn) : '',
+          describedBy: 'req-setup-conn-h', onchange: (e) => { st.conn = connFrom(e.currentTarget.value); void load('projects'); } }),
+        `Connections are added on the Marketplace page: Installed › ${tn} (Advanced mode).`, 'req-setup-conn-h'),
+        h('div', { class: 'req-export-pair' },
+          exportField('req-setup-proj', `${tn} project`, exportSelect({ id: 'req-setup-proj', ui: 'setup-project', list: st.projects, value: st.project,
+            onchange: (e) => { st.project = e.currentTarget.value; void load('types'); } })),
+          exportField('req-setup-type', 'Issue type', exportSelect({ id: 'req-setup-type', ui: 'setup-type', list: st.types, value: st.type,
+            onchange: (e) => { st.type = e.currentTarget.value; void load('fields'); } }))),
+        h('div', { class: 'req-export-pair' },
+          labelsField({ id: 'req-setup-lab', ui: 'setup-lab', labels: st.labels, onChange: (next, ui) => { st.labels = next; draw(ui); } }),
+          exportField('req-setup-prio', ['Priority ', h('span', { class: 'opt', text: 'optional' })], exportSelect({ id: 'req-setup-prio', ui: 'setup-prio',
+            list: [{ value: '', label: 'None' }, ...st.prios], value: st.prio || '', onchange: (e) => { st.prio = e.currentTarget.value || null; } }))),
+        h('div', { class: 'field req-export-fld req-export-crit', role: 'radiogroup', 'aria-labelledby': 'req-setup-crit-l' },
+          h('span', { class: 'req-export-fl', id: 'req-setup-crit-l', text: 'Acceptance criteria go to' }),
+          h('label', { class: 'req-export-rad' }, radio('setup-crit-desc', !toField, () => { st.crit = { target: 'description' }; draw(); }), 'A section of the description'),
+          h('div', { class: 'req-export-radrow' },
+            h('label', { class: 'req-export-rad' }, radio('setup-crit-field', toField, () => {
+              if (firstField) { st.crit = { target: 'field', field: firstField.value, name: firstField.label }; draw(); }
+            }, !firstField), `A ${tn} field`),
+            // board 26 names them "Acceptance Criteria (custom field)"; the saved name stays the field's own
+            exportSelect({ ui: 'setup-crit-select', list: st.fields.map((x) => ({ value: x.value, label: `${x.label} (custom field)` })),
+              value: toField ? st.crit.field : (firstField || {}).value,
+              label: `${tn} field for acceptance criteria`, disabled: !toField,
+              onchange: (e) => { st.crit = { target: 'field', field: e.currentTarget.value, name: nameIn(st.fields, e.currentTarget.value) }; } })),
+          h('p', { class: 'hint', text: `The list shows the text fields of ${st.project || tn} that can hold the criteria.` })));
+      save.disabled = st.busy || !st.ready;
+      if (focus) { const el = card.querySelector(`[data-ui="${focus}"]`); if (el && !el.disabled) el.focus(); }
+    }
+
+    async function load(from) {
+      const n = ++st.loads;
+      st.ready = false;
+      alertEl.textContent = '';
+      draw();
+      const ask = (args) => api('POST', setupUrl(f, '/options'), { ...st.conn, ...args });
+      try {
+        if (from === 'projects') {
+          const r = await ask({});
+          if (!live(g) || n !== st.loads) return;
+          st.projects = r.projects || [];
+          if (!st.projects.some((p) => p.value === st.project)) st.project = (st.projects[0] || {}).value || null;
+        }
+        if (from !== 'fields' && st.project) {
+          const r = await ask({ project: st.project });
+          if (!live(g) || n !== st.loads) return;
+          st.tooOld = r.tooOld === true;
+          st.types = r.issueTypes || [];
+          if (!st.types.some((t) => t.value === st.type)) st.type = (st.types.find((t) => t.label === 'Story') || st.types[0] || {}).value || null;
+        }
+        if (st.project && st.type && !st.tooOld) {
+          const r = await ask({ project: st.project, issueType: st.type });
+          if (!live(g) || n !== st.loads) return;
+          st.prios = r.priorities || [];
+          st.fields = r.criteriaFields || [];
+          if (st.prio && !st.prios.some((p) => p.value === st.prio)) st.prio = null;
+          if (st.crit.target === 'field' && !st.fields.some((x) => x.value === st.crit.field)) st.crit = { target: 'description' };
+        }
+        if (st.tooOld) alertEl.textContent = `This ${(trackerNow() || {}).name || 'tracker'} is too old for export setup.`;
+        st.ready = !!(st.project && st.type) && !st.tooOld;
+        draw();
+      } catch (err) {
+        if (!live(g) || n !== st.loads) return;
+        alertEl.textContent = errText(err);
+        draw();
+      }
+    }
+
+    save.addEventListener('click', async () => {
+      if (st.busy || !st.ready) return;
+      st.busy = true;
+      draw();
+      try {
+        await api('PUT', setupUrl(f), { ...st.conn, project: st.project, projectName: nameIn(st.projects, st.project), issueType: st.type,
+          issueTypeName: nameIn(st.types, st.type), labels: st.labels, priority: st.prio, priorityName: st.prio ? nameIn(st.prios, st.prio) : null,
+          criteria: st.crit });
+        if (!live(g)) return;
+        st.busy = false;
+        if (then) { then(); return; }   // the next dialog takes over (it closes this one)
+        closeDialog(true);
+        void paint();
+      } catch (err) {
+        if (!live(g)) return;
+        st.busy = false;
+        alertEl.textContent = errText(err);
+        draw();
+      }
+    });
+
+    try {
+      const r = await api('GET', setupUrl(f));
+      if (!live(g)) return;
+      st.trackers = r.trackers || [];
+      const s = r.setup;
+      st.conn = s ? { plugin: s.plugin, sourceId: s.sourceId, profile: s.profile } : r.defaultProfile;
+      if (s) Object.assign(st, { project: s.trackerProject, type: s.issueType, prio: s.priority, labels: s.labels || [], crit: s.criteria || { target: 'description' } });
+      draw('setup-conn');
+      if (st.conn) await load('projects');
+    } catch (err) {
+      if (live(g)) { alertEl.textContent = errText(err); draw(); }
+    }
+  }
+
+  /** Export to <tracker>… (D1, D2): the setup first when the scope has none, then the export goes on. */
+  function startExport(f, trigger) {
+    const x = xOf(f);
+    if (!x || !x.tracker || f.status === 'archived' || x.exporting) return;
+    if (!x.hasSetup) { void openSetup(f, { trigger, then: () => continueExport(f, trigger) }); return; }
+    continueExport(f, trigger);
+  }
+  // Task 9 gives this its body (Not Ready, Export again, the preview); until then the setup is where an export stops.
+  function continueExport(_f, _trigger) { closeDialog(true); }
 
   // A repaint from the feature on screen, without a fetch (a fold, an editor opened, Change, Cancel).
   function redraw() { if (current) paintFeature(current.f, current.turns); }

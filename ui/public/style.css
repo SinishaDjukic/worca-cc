@@ -10627,6 +10627,27 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-docs .req-docs-foot{margin:0;padding-top:10px;border-top:1px solid var(--line)}
 .req-brief-src{display:inline;margin:0;font-size:var(--fs-meta)}
 
+/* A6 (plans/requirements-a6-design.md §7): Export to a tracker. The dialogs are .req-dialog cards on the page's modal (the
+   setup 560 px, board 26); a field is its label over its control, two short fields share a row. The label chips' remove
+   button is the shared remove icon, in --ink-2 (an icon needs 3:1; --ink-3 is under it on white). */
+.req-dialog.req-export .req-export-body{display:flex;flex-direction:column;gap:14px;min-width:0}
+.req-export-fld{display:flex;flex-direction:column;gap:6px;margin:0;min-width:0}
+.req-export-fld > label,.req-export-fl{margin:0;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2)}
+.req-export-fld .opt{font-weight:400;color:var(--ink-3)}
+.req-export-fld > .hint{margin:0}
+.req-export-pair{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px}
+.req-export-chips{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.req-export-lab{display:inline-flex;align-items:center;gap:4px;max-width:100%;overflow-wrap:anywhere}
+.req-export-x{display:inline-flex;align-items:center;justify-content:center;padding:2px;border:0;border-radius:var(--r-xs);background:transparent;color:var(--ink-2);cursor:pointer}
+.req-export-x:hover{color:var(--ink)}
+.req-export-x:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
+.req-export-rad{display:flex;align-items:center;gap:10px;font-size:var(--fs-body);color:var(--ink);cursor:pointer}
+.req-export-rad input{margin:0}
+.req-export-radrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
+.req-export-radrow .select-wrap{flex:1 1 220px;min-width:0}
+.req-export-alert{margin:0}
+.req-export-alert:empty{display:none}
+
 /* ── marketplace P3 ── */
 /* Plugin icons (U7, board 0.1): the kind colour lives only in this tile; hue families carry the dark arms. */
 .mk-mt{display:inline-flex;align-items:center;justify-content:center;flex:none;width:40px;height:40px;border-radius:var(--r-md);}
