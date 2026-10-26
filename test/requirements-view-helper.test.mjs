@@ -653,3 +653,94 @@ test('style.css: the draft chip is dashed blue (blue means active); Help me answ
   assert.match(phone, /\.req-help-drafted-x\{position:relative\}/);
   assert.match(phone, /\.req-help-drafted-x::after\{content:"";position:absolute;[^}]*width:44px;height:44px/);
 });
+
+// ── Fix round 1: late replies, typed answers, button names ─────────────────
+
+/** Two features: 7 (the one a send is started on) and 8; the POST for 7 is held until `release()`. */
+async function twoFeatures() {
+  const s7 = { f: feature(), helper: chat() };
+  const s8 = { f: feature({ seq: 8, id: 'FEAT-8', title: 'Other feature' }), helper: chat([po(1, 'B asked')]) };
+  const posts = [];
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const calls = fakeApi({ ...BASE,
+    'GET /api/requirements/7': () => ({ feature: s7.f, turns: TURNS }), 'GET /api/requirements/7/helper': () => s7.helper,
+    'GET /api/requirements/8': () => ({ feature: s8.f, turns: TURNS }), 'GET /api/requirements/8/helper': () => s8.helper,
+    'POST /api/requirements/8/helper/messages': (b) => { posts.push(['8', b.text]); return (s8.helper = chat([...s8.helper.messages, po(2, b.text)], { answering: true })); } });
+  const real = globalThis.fetch;
+  const gate8 = { wait: null };
+  globalThis.fetch = async (url, opts = {}) => {
+    if ((opts.method || 'GET') === 'POST' && url === '/api/requirements/8/helper/messages' && gate8.wait) await gate8.wait;
+    if ((opts.method || 'GET') === 'POST' && url === '/api/requirements/7/helper/messages') {
+      posts.push(['7', JSON.parse(opts.body).text]);
+      await held;
+      return { ok: true, status: 200, json: async () => chat([po(1, 'A secret')], { answering: true }), text: async () => '' };
+    }
+    return real(url, opts);
+  };
+  const m = make();
+  await m.view.show('feature/7');
+  return { ...m, calls, posts, release, s7, s8, gate8 };
+}
+
+test('Fix 1a: a send for feature A that lands after switching to feature B changes nothing on B', async () => {
+  const m = await twoFeatures();
+  let p = await openPanel(m);
+  type(p.querySelector('[data-ui="helper-in"]'), 'About A');
+  p.querySelector('[data-ui="helper-send"]').click();
+  await settle();
+  await m.view.show('feature/8');
+  p = await openPanel(m);
+  assert.ok(p.textContent.includes('B asked'));
+  m.release();
+  await settle();
+  p = m.host.querySelector('.req-help');
+  assert.ok(!p.textContent.includes('A secret'), "A's messages never show on B");
+  assert.ok(p.textContent.includes('B asked'));
+  assert.equal(p.querySelector('.req-help-refusal'), null, "B's error line is untouched");
+});
+
+test('Fix 1b: after switching while A is in flight, B can send, and a double press on B posts once', async () => {
+  const m = await twoFeatures();
+  let p = await openPanel(m);
+  type(p.querySelector('[data-ui="helper-in"]'), 'About A');
+  p.querySelector('[data-ui="helper-send"]').click();
+  await settle();
+  await m.view.show('feature/8');
+  p = await openPanel(m);
+  let release8;
+  m.gate8.wait = new Promise((r) => { release8 = r; });
+  type(p.querySelector('[data-ui="helper-in"]'), 'About B');
+  p.querySelector('[data-ui="helper-send"]').click();
+  await settle();
+  m.release();   // A's late reply lands while B's send is still in flight: it must not free B's guard
+  await settle();
+  m.host.querySelector('[data-ui="helper-send"]').click();
+  await settle();
+  release8();
+  await settle();
+  assert.deepEqual(m.posts.filter((x) => x[0] === '8'), [['8', 'About B']]);
+  p = m.host.querySelector('.req-help');
+  assert.ok(!p.textContent.includes('A secret'));
+});
+
+test('Fix 2: a typed answer removes the "drafted by Worca" mark', async () => {
+  const m = await openFeature(withChat(draftChat([{ question: 'when', n: 1, option: 'Until the parcel is picked up', why: 'Why.', dropped: false }])));
+  const [b1] = blocks(m.host);
+  assert.equal(b1.querySelector('.req-help-drafted-row').hidden, false);
+  type(b1.querySelector('.qfree'), 'Two days after the order');
+  assert.equal(b1.querySelector('.req-help-drafted-row').hidden, true, 'the mark is gone');
+});
+
+test('Fix 3: each Help me answer button is described by its own question', async () => {
+  const m = await openFeature();
+  const helps = [...m.host.querySelectorAll('.qpanel .req-help-ask')];
+  assert.equal(helps.length, 2);
+  const ids = helps.map((b) => b.getAttribute('aria-describedby'));
+  assert.equal(new Set(ids).size, 2);
+  helps.forEach((b, i) => {
+    const el = m.host.querySelector(`#${b.getAttribute('aria-describedby')}`);
+    assert.ok(el && el.classList.contains('qtext'));
+    assert.ok(el.textContent.includes(QS[i].question));
+  });
+});

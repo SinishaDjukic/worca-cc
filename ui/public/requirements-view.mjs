@@ -312,6 +312,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   let helperWaitEl = null;
   let helperNewest = null;
   let helperBusy = false;
+  let helperGen = 0;   // who owns the helperBusy guard: show() on another feature bumps it, so a late call cannot release a guard it no longer holds
   let helperReloads = 0;
   function freshHelperUi() { return { text: '', focus: null, opener: null, error: null, budget: false }; }
   // Unsaved input of the feature page, kept across repaints (read from the DOM before a rebuild, put back after).
@@ -354,7 +355,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       for (const map of [fileUi, fileMsgs, fileMsgList, fileNodes, refusalEls, fileWas, droppedKeys]) map.clear();
       filesLive = null;
       helperData = null; helperUi = freshHelperUi(); helperApplied.clear(); helperNodes.clear(); helperTails.clear(); helperLog = null; helperWaitEl = null; helperNewest = null;
-      helperBusy = false;   // another feature: a chat POST still in flight for the last one never blocks this one's controls
+      helperBusy = false; helperGen += 1;   // another feature: a chat POST still in flight for the last one never blocks this one's controls
       closeDialog(false);
     }
     seqShown = next;
@@ -1229,10 +1230,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         buttons.forEach((b, k) => b.addEventListener('click', () => { d.picks[q.id] = q.options[k]; delete d.texts[q.id]; delete d.drafted[q.id]; free.value = ''; sync(); }));
         free.addEventListener('input', () => { const v = free.value.trim(); if (v) { d.texts[q.id] = v; delete d.picks[q.id]; } else delete d.texts[q.id]; delete d.drafted[q.id]; sync(); });
         queueMicrotask(sync);
-        const qtext = h('div', { class: 'qtext' }, h('span', { class: 'qn', text: String(i + 1) }), q.question);
+        const qtext = h('div', { class: 'qtext', id: `qtext-${round.turnId}-${i}` }, h('span', { class: 'qn', text: String(i + 1) }), q.question);
         return h('div', { class: 'qblock' },
           // A3 D1: Help me answer, on the pending round's questions only (not on an earlier round being changed)
-          revise ? qtext : h('div', { class: 'req-qhead' }, qtext, h('button', { type: 'button', class: 'link-btn req-help-ask', 'data-ui': `help-${round.turnId}-${i}`,
+          revise ? qtext : h('div', { class: 'req-qhead' }, qtext, h('button', { type: 'button', class: 'link-btn req-help-ask', 'data-ui': `help-${round.turnId}-${i}`, 'aria-describedby': `qtext-${round.turnId}-${i}`,
             onclick: () => helpMeAnswer(f, round, q, i) }, 'Help me answer')),
           // A8 (board 16): a question that came from a file names it before its why
           q.why || q.source ? h('div', { class: 'hint req-why' }, q.source ? h('span', { class: 'req-why-src', text: `From ${q.source}: ` }) : null, q.why || '') : null,
@@ -2561,35 +2562,49 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   async function sendHelper(f, text = helperUi.text, focus = helperUi.focus) {
     if (helperBusy) return;   // a second press while the first is in flight (each send is a paid call)
     helperBusy = true;
+    const seq = f.seq;
+    const gen = ++helperGen;
     helperUi.error = null;
+    let late = false;
     try {
-      helperData = await api('POST', `/api/requirements/${f.seq}/helper/messages`, { text, ...(focus ? { focus } : {}) });
+      const data = await api('POST', `/api/requirements/${seq}/helper/messages`, { text, ...(focus ? { focus } : {}) });
+      if (seqShown !== seq) { late = true; return; }   // another feature is shown now: this reply is not for it
+      helperData = data;
       helperUi.budget = false;
       if (text === helperUi.text) { setComposer(''); helperUi.focus = null; }
     } catch (err) {
+      if (seqShown !== seq) { late = true; return; }
       helpRefused(err);
     } finally {
-      helperBusy = false;
+      if (gen === helperGen) helperBusy = false;
     }
+    if (late) return;
     focusNext = 'helper-in';
     redraw();
   }
   /** Stop, Try again, Clear chat, and Tasks 8's Accept / Reject / Ask again: the server's chat comes back, then the feature is
    *  fetched again (an accepted change is in the spec). A spent budget shows in the chat, any other refusal under the composer.
    *  A press while another chat POST is in flight is ignored; the follow-up refetch does not hold the guard (a Stop pressed while
-   *  it runs is sent). */
+   *  it runs is sent). A reply that lands after another feature was opened is dropped. */
   async function helperPost(f, method, path, focusUi = null) {
     if (helperBusy) return;
     helperBusy = true;
+    const seq = f.seq;
+    const gen = ++helperGen;
     helperUi.error = null;
+    let late = false;
     try {
-      helperData = await api(method, `/api/requirements/${f.seq}/helper${path}`, method === 'DELETE' ? undefined : {});
+      const data = await api(method, `/api/requirements/${seq}/helper${path}`, method === 'DELETE' ? undefined : {});
+      if (seqShown !== seq) { late = true; return; }
+      helperData = data;
       helperUi.budget = false;
     } catch (err) {
+      if (seqShown !== seq) { late = true; return; }
       helpRefused(err);
     } finally {
-      helperBusy = false;
+      if (gen === helperGen) helperBusy = false;
     }
+    if (late) return;
     if (focusUi) focusNext = focusUi;
     await paint();
   }
