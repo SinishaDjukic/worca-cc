@@ -12,6 +12,7 @@ import {
 } from '../src/core/engines/codex.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { fakeCodex } from './helpers/fake-codex.mjs';
+import { buildRelayRoute } from '../src/core/exec-env/relay-route.mjs';
 
 const POSIX = process.platform === 'win32' ? { skip: 'POSIX fake bin' } : {};
 const dirs = [];
@@ -237,6 +238,18 @@ test('runCodexProcess: no model names CODEX_DEFAULT_MODEL, so the turn is priced
   const args = fake.args();
   assert.equal(args[args.indexOf('-m') + 1], CODEX_DEFAULT_MODEL);
   assert.ok(events.find((e) => e.type === 'result').costUsd > 0);
+});
+
+test('runCodexProcess in a sandbox: a step with no model opens a relay route pinned to CODEX_DEFAULT_MODEL (audit 2.8)', async () => {
+  // The relay refuses a call whose body names any model but the route's (model-relay.mjs, modelCheck 'body'): with an
+  // empty `models` it would check nothing, and a sandbox could spend on any model the key reaches, priced or not.
+  let route = null;
+  const execEnv = { remote: true, label: 'test sandbox', env: { OPENAI_API_KEY: 'sk-test' },
+    openRoute(decision, o) { route = buildRelayRoute(decision, { ...o, serverEnv: this.env, label: this.label }); throw new Error('stop at the route'); } };
+  await assert.rejects(runCodexProcess({ cwd: tmp(), prompt: 'P', execEnv }), /stop at the route/);
+  assert.deepEqual(route.models, [CODEX_DEFAULT_MODEL]);
+  assert.equal(route.modelCheck, 'body');
+  assert.equal(route.stepModel, CODEX_DEFAULT_MODEL);
 });
 
 test('runCodexProcess: maxTurns caps the main agent\'s tool calls with a turnCap error', POSIX, async () => {
