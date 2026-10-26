@@ -196,7 +196,7 @@ html,body{height:auto;overflow:visible;margin:0;}
   .rc-zone > .rc-detail{grid-row:2;}
 }
 /* Explanations: each menu item carries one help line; the action's menu opens with what the main button does. */
-.rc-pop > .menu{min-width:260px;max-width:300px;}
+.rc-pop > .menu{min-width:200px;max-width:280px;}
 .menu-item.has-help{flex-direction:column;align-items:flex-start;gap:0;padding:6px 9px;text-align:left;}
 .menu-help{font-size:var(--fs-meta);color:var(--ink-2);line-height:var(--lh-body);white-space:normal;}
 .menu-lead{margin:0;padding:6px 9px 4px;font-size:var(--fs-meta);color:var(--ink-2);line-height:var(--lh-body);}
@@ -256,7 +256,7 @@ html,body{height:auto;overflow:visible;margin:0;}
    the card's text edge. */
 .rtab-panel{margin-inline:calc(var(--pad-card) + 1px);}
 .rc-tabs{margin-left:calc(var(--pad-card) + 1px + var(--rail) + var(--gap));margin-right:calc(var(--pad-card) + 1px);}
-.rtab,.rtab-bar,.rtab-panel > .rtab-dec:not(.is-runs){padding-left:calc(var(--rail) + var(--gap));}
+.rtab,.rtab-bar,.ch-tools,.rtab-panel > .rtab-dec:not(.is-runs){padding-left:calc(var(--rail) + var(--gap));}
 .rtab-stage .sc-subs{margin-left:calc(-1 * (var(--rail) + var(--gap)));}   /* rows put their circle back on the rail */
 
 /* ---- Review round: bar, figures, evidence, radio, narrow widths ---- */
@@ -281,11 +281,11 @@ html,body{height:auto;overflow:visible;margin:0;}
   .rc-crumbs{flex:1 1 auto;}
 }
 @container (max-width: 520px){
-  .rc-bar [data-key="bar:pause"]{display:none;}   /* Pause moves into ⋯; Stop and ⋯ stay */
+  .rc-bar .rc-pause{display:none;}   /* Pause moves into ⋯; Stop and ⋯ stay */
   /* below the card nothing frames an indent, so tabs and panels take the page's edge */
   .rc-tabs{margin-inline:0;}
   .rtab-panel{margin-inline:0;}
-  .rtab,.rtab-bar,.rtab-panel > .rtab-dec:not(.is-runs){padding-left:0;}
+  .rtab,.rtab-bar,.ch-tools,.rtab-panel > .rtab-dec:not(.is-runs){padding-left:0;}
   .rtab-stage .sc-subs{margin-left:0;}
 }
 .menu{max-width:calc(100vw - 32px);}
@@ -468,7 +468,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 
 /* The bar: Pause, Run after, Stop, ⋯ (the app's order); under 520px Pause and Run after fold into ⋯. */
 @container (max-width: 520px){ .rc-bar .rc-after{display:none;} }
-.menu-item.is-checked > span:first-child::after{content:'✓';margin-left:8px;color:var(--ink-2);}
+.menu-check{display:inline-flex;margin-left:8px;color:var(--ink-2);vertical-align:-1px;}
 .menu-kbd{margin-left:8px;font:400 var(--fs-caption)/1 var(--mono);color:var(--ink-2);}
 .menu-sep[data-narrow]{display:none;}
 @container (max-width: 520px){ .menu-sep[data-narrow]{display:block;} }
@@ -490,3 +490,15 @@ html,body{height:auto;overflow:visible;margin:0;}
 /* Changes: the code's actions above its files. */
 .ch-tools{display:flex;flex-wrap:wrap;gap:8px;}
 .ov-after-t{font-size:var(--fs-body);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+/* Menus, as the app's View menu (style.css › One menu): one line per item; a choice has a leading check column and a
+   hint sits at the right in tabular figures. */
+.rc .menu-item{white-space:nowrap;}
+.rc .menu-item > .mi-l{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.rc .mi-hint{flex:none;margin-left:auto;color:var(--ink-2);font:400 11px/1 var(--mono);font-variant-numeric:tabular-nums;}
+.rc .menu-item[role="menuitemradio"]{display:grid;grid-template-columns:12px minmax(0,1fr) auto;column-gap:10px;}
+.rc .menu-item[role="menuitemradio"]::before{content:"";grid-column:1;width:12px;height:12px;background:transparent;
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center/12px no-repeat;}
+.rc .menu-item[role="menuitemradio"][aria-checked="true"]::before{background:currentColor;}
+.rc .menu-item[role="menuitemradio"] > .mi-l{grid-column:2;}
+.rc .menu-item[role="menuitemradio"] > .mi-hint{grid-column:3;}

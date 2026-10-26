@@ -63,12 +63,12 @@
 
     // States the app has today: a run waiting to start after another, a review gate, a cost cap, kept work, archived
     { id: 'scheduled', group: 'Run', label: 'Waiting (run after)', word: 'Waiting', dot: 'is-grey-ring', detail: 'Starts when “Unified page navigation” finishes', action: A('Start now', 'play', false, ['Cancel']), figs: [['Time', '0m'], ['Cost', '$0.00']],
-      title: 'Breadcrumb tests for saved runs', stages: run({ plan: allNext(PLAN), build: allNext(BUILD), review: allNext(REVIEW) }) },
+      title: 'Breadcrumb tests for saved runs', tabs: [['summary', 'Overview'], ['activity', 'Activity'], ['decisions', 'Decisions']], stages: run({ plan: allNext(PLAN), build: allNext(BUILD), review: allNext(REVIEW) }) },
     { id: 'gate', group: 'Run', label: 'Review gate', word: 'Needs you', sym: 'q', detail: 'Review sent it back 3 times; the limit is 3', action: A('Accept as is', 'check', true, ['Run another cycle', 'Stop']), figs: LIVE_FIGS,
       stages: run({ review: [s('Review implementation', 'ask', '37m 21s', { loops: 3, live: 'Still 1 minor issue after 3 rounds: accept, or run another cycle?', when: '6m' }), next('Manual tests checklist'), next('Manual web UI testing')] }) },
     { id: 'capped', group: 'Run', label: 'Paused at cost cap', word: 'Paused', dot: 'is-grey', detail: 'Reached the $120 cap for this run', action: A('Continue without cap', 'play', false, ['Raise the cap', 'Open budget settings']), figs: LIVE_FIGS,
       stages: run({ review: [REVIEW[0], s('Manual tests checklist', 'paused', '1m 18s', { live: 'Paused at $120.00' }), next('Manual web UI testing')] }) },
-    { id: 'kept', group: 'Run', label: 'Work kept', word: 'Needs you', dot: 'is-amber', detail: 'The last commit failed; the work is kept in a copy', action: A('Apply to branch', 'check', true, ['Download patch', 'Commit it yourself', 'Discard']), figs: DONE_FIGS,
+    { id: 'kept', group: 'Run', label: 'Work kept', word: 'Needs you', dot: 'is-amber', detail: 'The last commit failed; the work is kept in a copy', over: true, action: A('Apply to branch', 'check', true, ['Download patch', 'Commit it yourself', 'Discard']), figs: DONE_FIGS,
       stages: run({ review: [REVIEW[0], REVIEW[1], s('Manual web UI testing', 'problem', '21m 10s', { live: 'Commit failed: pre-commit hook exited 1' })] }) },
     { id: 'archived', group: 'Run', label: 'Archived', word: 'Archived', dot: 'is-grey', detail: 'Branch, worktree and logs removed; the remote branch and PR stay', figs: DONE_FIGS, archived: true,
       stages: run({ pr: PR_OPEN(ok('Checks'), ok('Approval')), merged: LAND('merged', 'Merged 25 Oct, 16:02') }) },
@@ -177,6 +177,8 @@
     asks: {
       question: { q: 'Keep the breadcrumb on phones under 600px, or show only Back there?', why: 'Review implementation found the trail wraps to two lines at 375px.',
         options: ['Keep the full breadcrumb, truncate the middle crumbs', 'Show only ‹ Parent under 600px', 'Hide the breadcrumb on phones'], pick: 1 },
+      gate: { q: 'Review still finds 1 minor issue after 3 rounds. Accept it, or run another cycle?', why: 'The minor issue: the ‹ Parent link has no visible focus ring at 375px.',
+        options: ['Accept as is and go on to the manual tests', 'Run another Build and Review cycle'], pick: 0 },
       clarify: { q: 'Which pages get the breadcrumb?', why: 'The task names the run page; group and saved run pages share its head.', n: '1 of 3',
         options: ['Run pages only', 'Run and group pages', 'Every page with a parent'], pick: 1 } },
     budget: 120,
@@ -187,10 +189,12 @@
       lines: ['\u2716 breadcrumb hides under 600px (12ms)', '  AssertionError: expected [ \'Back\' ] to equal [ \'Back\', \'Runs\' ]', '\u2716 group page Back goes to Runs (4ms)', '\u2716 bar keeps one primary (3ms)'] },
     'pr/Checks': { title: '2 checks failed: unit, e2e', log: 'Open the failing check',
       lines: ['unit \u2716 test/ui-run-head.test.mjs \u203a bar keeps one primary', 'e2e  \u2716 run page at 375px: breadcrumb overflows by 18px'] },
+    'review/Manual web UI testing': { title: 'The end-of-run commit failed', log: 'Open the hook output',
+      lines: ['pre-commit: eslint ui/public/run-head.mjs', '  41:7  error  \'crumbs\' is assigned but never used', 'hook exited 1 · nothing committed; the work is kept in a copy'] },
     'pr/Up to date with dev': { title: 'Conflicts in 2 files', log: 'Open the conflicts',
       lines: ['ui/public/app.js  lines 36,380\u201336,412', 'ui/public/style.css  lines 5,210\u20135,214'] },
   };
-  const NO_DIFF = { starting: 1, clarify: 1, plan: 1, outline: 1, noproject: 1 };
+  const NO_DIFF = { scheduled: 1, starting: 1, clarify: 1, plan: 1, outline: 1, noproject: 1 };
   const money = (v) => parseFloat(String(v).replace(/[^0-9.]/g, '')) || 0;
 
   // One line on what each action does: the main button's tooltip and the head of its ▾ menu, and each menu item's help.
@@ -219,6 +223,9 @@
     'Merge #959': 'Merges #959 into dev; #960 then points at dev',
     'Fix checks on #961': 'Starts a short run that fixes #961’s failing unit and e2e checks',
     'Resume now': 'Goes on now instead of waiting for the limit to reset',
+    'Pause': 'Stops at once; Resume starts the current step again',
+    'Pause after this step': 'Lets the current step finish, then pauses',
+    'Stop the run': 'Ends it; the branch and changes stay',
     'Open the folder': 'Opens ~/src/marketing-site in your file manager',
     'Don’t resume at 14:00': 'Cancels the scheduled resume; Resume stays here',
     'Resume on Codex': 'Goes on now on another engine, from the same step',
@@ -330,7 +337,7 @@
     const built = c.stages.some((x) => x.key === 'build' && x.subs.some(isDone));
     const planDone = c.stages.some((x) => x.key === 'plan' && x.subs.every(isDone));
     const buildLive = c.stages.some((x) => x.key === 'build' && x.subs.some((y) => LIVE[y.state]));
-    const ev = c.id === 'failed' ? EVIDENCE['build/Implementation'] : c.id === 'failing' ? EVIDENCE['pr/Checks'] : /^(conflicts|workspace)$/.test(c.id) ? EVIDENCE['pr/Up to date with dev'] : null;
+    const ev = c.id === 'kept' ? EVIDENCE['review/Manual web UI testing'] : c.id === 'failed' ? EVIDENCE['build/Implementation'] : c.id === 'failing' ? EVIDENCE['pr/Checks'] : /^(conflicts|workspace)$/.test(c.id) ? EVIDENCE['pr/Up to date with dev'] : null;
     let focus = null;
     if (DETAIL.asks[c.id]) focus = Object.assign({ kind: 'ask' }, DETAIL.asks[c.id]);
     else if (c.id === 'plan') focus = { kind: 'plan', items: DETAIL.plan.map((t) => ({ t, state: 'next' })), issues: DETAIL.planIssues };
@@ -338,7 +345,7 @@
     else if (planDone && !c.runCases && (buildLive || c.stages.some((x) => x.key === 'review' && x.subs.some((y) => LIVE[y.state])))) {
       const doneN = buildLive ? 3 : DETAIL.plan.length;
       focus = { kind: 'progress', items: DETAIL.plan.map((t, i) => ({ t, state: i < doneN ? 'done' : i === doneN ? 'now' : 'next' })) };
-    } else if (built && !c.runCases && c.word !== 'Failed') focus = { kind: 'check', items: DETAIL.check };
+    } else if (built && !c.runCases && !/^(Failed|Merged|Archived|Discarded|Applied|Stopped|Finished)$/.test(c.word)) focus = { kind: 'check', items: DETAIL.check, title: prOpen(c) ? 'Before you merge' : 'Before you ship' };
     const areas = {};
     if (built && !NO_DIFF[c.id]) DETAIL.files.forEach(([f, a, d]) => { const k = f.slice(0, f.lastIndexOf('/') + 1); const x = areas[k] || (areas[k] = { dir: k, n: 0, add: 0, del: 0 }); x.n++; x.add += a; x.del += d; });
     const max = Math.max(1, ...Object.values(areas).map((x) => x.add + x.del));
@@ -346,7 +353,7 @@
       areas: Object.values(areas).map((x) => Object.assign(x, { pct: Math.round(((x.add + x.del) / max) * 100) })),
       artifacts: planDone || built ? DETAIL.artifacts : DETAIL.artifacts.slice(0, 0) };
   }
-  const prOpen = (c) => c.stages.some((x) => x.key === 'pr' && x.subs[0] && x.subs[0].name === 'Create PR' && isDone(x.subs[0]));
+  function prOpen(c) { return c.stages.some((x) => x.key === 'pr' && x.subs[0] && x.subs[0].name === 'Create PR' && isDone(x.subs[0])); }
 
   // ui: { open: stage key | null, chips: [{kind, text}], ship: 'stack' | 'one', parent: { caseId, index } }
   function view(caseId, ui) {
@@ -354,7 +361,7 @@
     const c0 = CASES.find((x) => x.id === caseId) || CASES[1];
     const par = ui.parent || c0.parent || null;
     const g = par ? CASES.find((x) => x.id === par.caseId) : null;
-    const c = resolve(g ? asMember(c0, g, par.index) : c0);
+    let c = resolve(g ? asMember(c0, g, par.index) : c0);
     const now = defaultStage(c);
     const open = ui.open && c.stages.some((st) => st.key === ui.open) ? ui.open : now;
     const st = c.stages.find((x) => x.key === open);
@@ -380,15 +387,18 @@
       stack = { title: src.title, note: src.note || '', choice, rows };
     }
     let action = null;
+    const liveNow = c.word !== 'Failed' && c.word !== 'Waiting' && !c.over && !c.stages.filter((x) => !SHIP.test(x.key)).every((x) => x.subs.every(isDone));
+    if (!c.action && liveNow && c.word !== 'Paused') c = Object.assign({}, c, { action: A('Pause', 'pause', false, ['Pause after this step']) });
     if (c.action) {
       const label = c.stack && c.stack.mode === 'create' ? (c0.__pick === 'one' || c.__pick === 'one' ? 'Create PR' : 'Create ' + c.stack.runs.length + ' PRs') : c.action.label;
-      action = Object.assign({}, c.action, { label, help: HELP[label] || '', items: c.action.items.map((t) => ({ text: t, help: HELP[t] || '' })) });
+      const items = c.action.items.concat(liveNow && !c.action.items.includes('Stop') ? ['Stop the run'] : []);
+      action = Object.assign({}, c.action, { label, help: HELP[label] || '', items: items.map((t) => ({ text: t, help: HELP[t] || '' })) });
     }
     // The run is live while any work stage (everything before shipping) is unfinished and it has not failed;
     // waiting on CI, reviewers or a merge is the PR's business, not the run's, so Pause and Stop go. A run waiting on
     // your answer has nothing to pause.
     const work = c.stages.filter((x) => !SHIP.test(x.key));
-    const live = c.word !== 'Failed' && !work.every((x) => x.subs.every(isDone));
+    const live = c.word !== 'Failed' && c.word !== 'Waiting' && !c.over && !work.every((x) => x.subs.every(isDone));
     const t = totals(c);
     const runStages = c.stages.filter((x) => x.run);
     const budget = DETAIL.budget * Math.max(1, runStages.length);
@@ -471,7 +481,7 @@
     question: { Answer: { to: 'working', say: 'Answer sent; Review goes on' }, 'Use the default answer': { to: 'working', say: 'Worca’s pick sent; Review goes on' } },
     paused: { 'Resume now': { to: 'working', say: 'Resumed from Implementation' }, 'Don’t resume at 14:00': { say: 'The 14:00 resume is cancelled' }, 'Resume on Codex': { to: 'working', say: 'Resumed on Codex' }, 'Switch model…': { say: 'Model picker: Opus 5.5, Sonnet 5.5, Haiku 5.5' }, 'Resume at…': { say: 'Time picker: resume at a time you choose' } },
     scheduled: { 'Start now': { to: 'starting', say: 'Started now; it no longer waits' }, Cancel: { to: 'discarded', confirm: 'Delete this scheduled run?' } },
-    gate: { 'Accept as is': { to: 'working', say: 'Review accepted; manual tests start' }, 'Run another cycle': { to: 'working', say: 'One more Build and Review round' }, Stop: { to: 'stopped', confirm: 'Stop the run? The branch and changes stay.' } },
+    gate: { Answer: { to: 'working', say: 'Sent; Review goes on' }, 'Accept as is': { to: 'working', say: 'Review accepted; manual tests start' }, 'Run another cycle': { to: 'working', say: 'One more Build and Review round' }, Stop: { to: 'stopped', confirm: 'Stop the run? The branch and changes stay.' } },
     capped: { 'Continue without cap': { to: 'working', confirm: 'Go on with no cost cap for this run?' }, 'Raise the cap': { say: 'Cap raised to $180; the run goes on' }, 'Open budget settings': { say: 'Opens Settings › Runs › Budget' } },
     kept: { 'Apply to branch': { to: 'ready', say: 'Committed to the branch' }, 'Download patch': { say: 'Downloading run.patch' }, 'Commit it yourself': { say: 'Commands: cd the worktree, git add -A, git commit --no-verify' }, Discard: { to: 'discarded', confirm: 'Discard the kept work? A patch is saved first.' } },
     archived: {},

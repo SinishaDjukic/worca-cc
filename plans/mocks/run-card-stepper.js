@@ -34,15 +34,20 @@ function statusDot(v) {
   return `<span class="status-dot ${v.dot}" aria-hidden="true"></span>`;
 }
 // A menu: an optional line on what the main action does, then each item with its one-line help.
-function menu(id, items, lead) {
+// One compact menu everywhere, as the app's View menu: one line per item, a leading check for a choice, a hint on the
+// right (a count or a shortcut), the help in the tooltip; danger items come last, after a rule.
+function menu(id, items) {
   if (ui.menu !== id) return '';
-  const head = lead ? `<p class="menu-lead">${esc(lead)}</p><div class="menu-sep"></div>` : '';
-  const danger = /^(Discard|Stop|Stop the run|Archive|Cancel)$/;
-  return `<div class="menu" role="menu">${head}${items.map((it) => {
-    if (it.sep) return `<div class="menu-sep"${it.narrow ? ' data-narrow' : ''}></div>`;
+  const danger = /^(Discard|Stop|Stop the run|Archive|Cancel|Cancel the rest)$/;
+  let ruled = false;
+  return `<div class="menu" role="menu">${items.map((it, i) => {
+    if (it.sep) return '<div class="menu-sep" role="separator"></div>';
     if (it.header) return `<p class="menu-h">${esc(it.header)}</p>`;
+    const bad = danger.test(it.text);
+    const rule = bad && !ruled && i > 0 && !(items[i - 1] && items[i - 1].sep) ? '<div class="menu-sep" role="separator"></div>' : '';
+    if (bad) ruled = true;
     const role = it.checked === undefined ? 'menuitem' : 'menuitemradio';
-    return `<button type="button" class="menu-item has-help${danger.test(it.text) ? ' is-danger' : ''}${it.checked ? ' is-checked' : ''}" role="${role}"${it.checked === undefined ? '' : ` aria-checked="${!!it.checked}"`} data-menu-pick="${esc(it.id || it.text)}"${it.narrow ? ' data-narrow' : ''}><span>${esc(it.text)}${it.hint ? `<kbd class="menu-kbd">${esc(it.hint)}</kbd>` : ''}</span>${it.help ? `<span class="menu-help">${esc(it.help)}</span>` : ''}</button>`;
+    return `${rule}<button type="button" class="menu-item${bad ? ' is-danger' : ''}" role="${role}"${it.checked === undefined ? '' : ` aria-checked="${!!it.checked}"`} data-menu-pick="${esc(it.id || it.text)}"${it.help ? ` title="${esc(it.help)}"` : ''}><span class="mi-l">${esc(it.text)}</span>${it.hint ? `<span class="mi-hint">${esc(it.hint)}</span>` : ''}</button>`;
   }).join('')}</div>`;
 }
 function chip(c, i) {
@@ -129,7 +134,7 @@ function focusHtml(v) {
   }).join('');
   if (f.kind === 'check') {
     const n = f.items.length - ui.ticks.length;
-    return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">Before you ship <span class="n">${n ? n + ' to check' : 'all checked'}</span></h2><ul class="ov-checks">${rows}</ul></section>`;
+    return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">${esc(f.title)} <span class="n">${n ? n + ' to check' : 'all checked'}</span></h2><ul class="ov-checks">${rows}</ul></section>`;
   }
   const done = f.items.filter((x) => x.state === 'done').length;
   return `<section class="rtab ov-focus is-progress" id="ov-focus"><h2 class="rtab-h">The plan <span class="n">${done} of ${f.items.length} done</span></h2><ol class="rd-route-list ov-progress">${rows}</ol></section>`;
@@ -213,7 +218,7 @@ function render() {
   pendingFocus = '';
   const v = M.view(ui.caseId, ui);
   const a = v.action;
-  const action = a ? `<div class="rc-side"><div class="btn-split rc-action rc-pop is-right"><button type="button" class="btn btn-sm ${a.primary ? 'btn-primary' : ''}" title="${esc(a.help)}" data-key="act-main">${svg(a.icon, 14)}${esc(a.label)}</button>${a.items.length ? `<button type="button" class="btn btn-sm btn-icon ${a.primary ? 'btn-primary' : ''}" aria-label="More actions" aria-haspopup="menu" aria-expanded="${ui.menu === 'act'}" data-menu="act" data-key="menu:act">${svg('chevron', 14)}</button>${menu('act', a.items, a.help)}` : ''}</div></div>` : '';
+  const action = a ? `<div class="rc-side"><div class="btn-split rc-action rc-pop is-right"><button type="button" class="btn btn-sm ${a.primary ? 'btn-primary' : ''}" title="${esc(a.help)}" data-key="act-main">${svg(a.icon, 14)}${esc(a.label)}</button>${a.items.length ? `<button type="button" class="btn btn-sm btn-icon ${a.primary ? 'btn-primary' : ''}" aria-label="More actions" aria-haspopup="menu" aria-expanded="${ui.menu === 'act'}" data-menu="act" data-key="menu:act">${svg('chevron', 14)}</button>${menu('act', a.items)}` : ''}</div></div>` : '';
   // Many labels and tags, one group: a run already in a feature or chain, or a group page, joins none; a run you
   // grouped can leave it again from the same menu.
   const addable = M.add.filter((x) => x.kind !== 'group' || (!v.inGroup && !v.addedGroup))
@@ -255,7 +260,7 @@ function render() {
 
   document.getElementById('card').innerHTML = `
   <div class="rc">
-    <div class="rc-bar">${crumbs}${pager}<span class="rc-bar-end">${v.bar.pause ? `<span class="rc-pop is-right"><button type="button" class="btn btn-sm" data-menu="pause" data-key="menu:pause" aria-haspopup="menu" aria-expanded="${ui.menu === 'pause'}"${scope}>${svg('pause', 14)}Pause</button>${menu('pause', PAUSE)}</span>` : ''}${v.runAfter ? `<button type="button" class="btn btn-sm rc-after" data-run="after" data-key="bar:after" title="${esc(v.runAfter.help)}">${svg('after', 14)}${esc(v.runAfter.short)}</button>` : ''}${v.bar.stop ? `<button type="button" class="btn btn-sm btn-danger" data-run="stop" data-key="bar:stop"${scope}>Stop</button>` : ''}<span class="rc-pop is-right"><button type="button" class="btn btn-sm btn-icon" aria-label="More for this run" aria-haspopup="menu" aria-expanded="${ui.menu === 'more'}" data-menu="more" data-key="menu:more"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg></button>${menu('more', moreItems(v))}</span></span></div>
+    <div class="rc-bar">${crumbs}${pager}<span class="rc-bar-end"><span class="rc-pop is-right"><button type="button" class="btn btn-sm btn-icon" aria-label="More for this run" aria-haspopup="menu" aria-expanded="${ui.menu === 'more'}" data-menu="more" data-key="menu:more"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg></button>${menu('more', moreItems(v))}</span></span></div>
     ${stripHtml(v)}
     <div class="rc-head"><div class="rc-title-row"><h1 class="rc-heading${ui.titleOpen ? ' is-open' : ''}" title="${esc(v.title)}" data-title>${esc(v.title)}</h1></div>${facts ? `<div class="rc-facts">${facts}</div>` : ''}${chipRow}</div>
     <section class="rc-card" aria-label="Run status">
@@ -296,24 +301,21 @@ pick.innerHTML = groups.map((g) => `<optgroup label="${g}">${M.cases.filter((c) 
 pick.addEventListener('change', () => { ui = Object.assign(ui, { caseId: pick.value, open: null, ship: '', menu: '', tab: '', focus: '', chips: (M.cases.find((c) => c.id === pick.value) || {}).chips || [], toast: '', confirm: null, dialog: '', after: [], away: '', askEach: false, parent: null, back: null, titleOpen: false, answer: null, file: null, rounds: [], ticks: [], actFilter: 'all' }); render(); });
 // The prototype's flow (RunCardModel.flow): an action moves the run to its next case or does its job in place and
 // says so in the toast; a destructive or outward one (Stop, Discard, Merge, Apply) asks first in a confirm strip.
-const PAUSE = [{ id: 'pause:now', text: 'Pause now', help: 'Stops at once; Resume starts the current step again' }, { id: 'pause:after', text: 'Pause after this step', help: 'Lets the current step finish, then pauses' }];
-const AWAY = [{ id: 'away:auto', text: 'As set up', help: 'Follows Settings and whether you marked this run' }, { id: 'away:on', text: 'Answer for me now', help: 'Worca answers this run’s questions from now on, at any hour' }, { id: 'away:off', text: 'Never on this run', help: 'Worca never answers on this run, whatever the settings' }];
+const AWAY = [{ id: 'away:auto', text: 'As set up', help: 'Follows Settings and whether you marked this run' }, { id: 'away:on', text: 'Answer for me', help: 'Worca answers this run’s questions from now on, at any hour' }, { id: 'away:off', text: 'Never', help: 'Worca never answers on this run, whatever the settings' }];
 function moreItems(v) {
   const group = !!v.kind; const live = v.bar.stop;
   const items = [];
-  if (live && !group) items.push({ header: 'Away mode on this run' }, ...AWAY.map((x) => Object.assign({ checked: (ui.away || 'away:auto') === x.id }, x)), { sep: true });
-  if (group) items.push({ id: 'group:replan', text: 'Re-plan the rest', help: 'The planner re-cuts the runs that have not started' }, { id: 'group:cancel', text: 'Cancel the rest', help: 'Runs that have not started are dropped' },
-    { id: 'group:ask', text: 'Ask before each run', checked: !!ui.askEach, help: 'Stops for your OK before the next run starts' }, { id: 'group:plan', text: 'Open the plan', help: 'The plan and how it was cut into runs' }, { sep: true });
-  // On phones the bar's Pause and Run after fold in here (the bar keeps Stop and ⋯).
-  if (v.bar.pause) items.push(...PAUSE.map((x) => Object.assign({ narrow: true }, x)));
-  if (v.runAfter) items.push({ id: 'more:after', text: v.runAfter.label, help: v.runAfter.help, narrow: true });
-  if (v.bar.pause || v.runAfter) items.push({ sep: true, narrow: true });
+  if (live && !group) items.push({ header: 'Away mode' }, ...AWAY.map((x) => Object.assign({ checked: (ui.away || 'away:auto') === x.id }, x)), { sep: true });
+  if (group) items.push({ header: 'Next run' }, { id: 'group:go', text: 'Starts by itself', checked: !ui.askEach, help: 'Each run starts when the one before it is ready' },
+    { id: 'group:ask', text: 'Asks me first', checked: !!ui.askEach, help: 'Stops for your OK before the next run starts' }, { sep: true },
+    { id: 'group:replan', text: 'Re-plan the rest', help: 'The planner re-cuts the runs that have not started' }, { id: 'group:plan', text: 'Open the plan', help: 'The plan and how it was cut into runs' }, { sep: true });
+  if (v.runAfter) items.push({ id: 'more:after', text: v.runAfter.label, help: v.runAfter.help });
   if (!group) items.push({ id: 'more:preset', text: 'Save as preset', help: 'Starts the next run with this task’s setup' });
-  items.push({ id: 'more:terminal', text: 'Terminal', hint: 'Ctrl+`', help: 'A shell in this run’s worktree' }, { id: 'more:link', text: 'Copy link to this run', help: 'Paste it in Chat or an issue' });
-  const scope = [];
-  if (v.finished && !v.archived) scope.push({ id: 'more:report', text: 'Report this run', help: 'Sends the logs and a note to the Worca team' }, { id: 'more:archive', text: 'Archive', help: 'Removes the branch, worktree and logs; the remote branch and PR stay' });
-  if (v.archived) scope.push({ id: 'more:restore', text: 'Restore', help: 'Brings the run back to Runs' });
-  return scope.length ? items.concat({ sep: true }, scope) : items;
+  items.push({ id: 'more:terminal', text: 'Terminal', hint: 'Ctrl+`', help: 'A shell in this run’s worktree' }, { id: 'more:link', text: 'Copy link', help: 'Paste it in Chat or an issue' });
+  if (v.finished && !v.archived) items.push({ id: 'more:report', text: 'Report this run', help: 'Sends the logs and a note to the Worca team' }, { id: 'more:archive', text: 'Archive', help: 'Removes the branch, worktree and logs; the remote branch and PR stay' });
+  if (v.archived) items.push({ id: 'more:restore', text: 'Restore', help: 'Brings the run back to Runs' });
+  if (group) items.push({ id: 'group:cancel', text: 'Cancel the rest', help: 'Runs that have not started are dropped' });
+  return items;
 }
 const MORE_SAY = { 'more:link': 'Copied the link to this run', 'more:preset': 'Saved as preset “Unified page navigation”', 'more:terminal': 'Terminal opened in the worktree', 'more:report': 'Report sent with the logs',
   'group:replan': 'The planner is re-cutting runs 3 and on', 'group:plan': 'Opens plan.md' };
@@ -333,6 +335,8 @@ function follow(f, label) {
   if (f.to) { goCase(f.to); toast(f.say || 'Now: ' + M.view(f.to, {}).word); } else { toast(f.say); pendingFocus = pendingFocus || 'act-main'; }
 }
 function act(label) {
+  const run = { Pause: 'pauseNow', 'Pause after this step': 'pauseAfter', 'Stop the run': 'stop' }[label];
+  if (run) { follow(M.runFlow[run], label === 'Stop the run' ? 'Stop the run' : 'Pause'); return; }
   if (label === 'Try it') { toast(M.view(ui.caseId, ui).tryIt); ui.menu = ''; pendingFocus = 'act-main'; return; }
   const f = (M.flow[ui.caseId] || {})[label];
   if (f) follow(f, label); else toast(label + ': done');
@@ -388,22 +392,20 @@ document.addEventListener('click', (e) => {
   if (d.confirm && ui.dialog === 'after') {
     if (d.confirm === 'yes') { const task = (document.getElementById('after-task')?.value || '').trim() || 'Follow-up to ' + M.view(ui.caseId, ui).title; const when = document.getElementById('after-when')?.value || document.getElementById('after-when-t')?.textContent || '';
       ui.after = ui.after.concat({ task, when }); toast((when.startsWith('Now') ? 'Started: ' : 'Scheduled: ') + task + (when.startsWith('Now') ? '' : ' · ' + when.toLowerCase())); }
-    ui.dialog = ''; ui.afterDraft = ''; pendingFocus = 'bar:after';
+    ui.dialog = ''; ui.afterDraft = ''; pendingFocus = 'menu:more';
   }
   else if (d.confirm && ui.dialog === 'pr') { if (d.confirm === 'yes') { const f = ui.dialogF; follow(Object.assign({}, f, { dialog: '' }), ui.dialogLabel); } else { ui.dialog = ''; pendingFocus = 'act-main'; } }
   else if (d.confirm) { if (d.confirm === 'yes') { ui.confirm.ok = true; follow(ui.confirm.f, ui.confirm.label); } else { ui.confirm = null; pendingFocus = 'act-main'; } }
-  else if (d.run === 'after') { ui.dialog = 'after'; ui.confirm = null; ui.menu = ''; pendingFocus = 'after-task'; }
   else if (d.run === 'stop') follow(M.runFlow.stop, 'Stop the run');
   else if (d.act) act(d.act);
   else if (d.menu) { const opening = ui.menu !== d.menu; ui.menu = opening ? d.menu : ''; if (opening) pendingFocus = 'menu-first'; }
   else if (d.menuPick) {
-    const runCtl = { 'pause:now': 'pauseNow', 'pause:after': 'pauseAfter' }[d.menuPick];
-    if (runCtl) follow(M.runFlow[runCtl], 'Pause');
-    else if (d.menuPick.startsWith('away:')) { ui.away = d.menuPick; ui.menu = ''; pendingFocus = 'menu:more'; toast('Away mode on this run: ' + AWAY.find((x) => x.id === d.menuPick).text); }
+    if (d.menuPick.startsWith('away:')) { ui.away = d.menuPick; ui.menu = ''; pendingFocus = 'menu:more'; toast('Away mode on this run: ' + AWAY.find((x) => x.id === d.menuPick).text); }
     else if (d.menuPick === 'more:after') { ui.dialog = 'after'; ui.menu = ''; pendingFocus = 'after-task'; }
     else if (d.menuPick === 'more:archive') follow({ to: 'archived', confirm: 'Archive this run? The local branch, worktree and logs are removed; the remote branch and any PR stay.' }, 'Archive');
     else if (d.menuPick === 'more:restore') { goCase('merged'); toast('Restored to Runs'); }
-    else if (d.menuPick === 'group:ask') { ui.askEach = !ui.askEach; ui.menu = ''; pendingFocus = 'menu:more'; toast(ui.askEach ? 'Worca asks before each run starts' : 'Runs start one after another'); }
+    else if (d.menuPick === 'group:ask' || d.menuPick === 'group:go') { const ask = d.menuPick === 'group:ask'; ui.menu = ''; pendingFocus = 'menu:more';
+      toast(ask === ui.askEach ? (ask ? 'Already asks first' : 'Already starts by itself') : ask ? 'Worca asks before each run starts' : 'Each run starts by itself'); ui.askEach = ask; }
     else if (d.menuPick === 'group:cancel') follow({ say: 'Run 3 is dropped; runs 1 and 2 stay', confirm: 'Cancel the runs that have not started?' }, 'Cancel the rest');
     else if (MORE_SAY[d.menuPick]) { toast(MORE_SAY[d.menuPick]); pendingFocus = 'menu:more'; ui.menu = ''; }
     else if (ui.menu === 'act') act(d.menuPick);
@@ -425,7 +427,7 @@ document.addEventListener('click', (e) => {
   else if (d.tab) { ui.tab = d.tab; ui.focus = ''; if (t.classList.contains('rc-fig-link')) pendingFocus = 'tab:' + d.tab; }
   else if (d.ref) { ui.tab = 'activity'; ui.view = 'steps'; ui.focus = d.ref; pendingFocus = 'act:' + d.ref; render(); document.querySelector('.is-focus')?.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' }); return; }
   else if (d.view) ui.view = d.view;
-  else if (d.unafter !== undefined) { ui.after = ui.after.filter((_, i) => i !== +d.unafter); toast('Scheduled run cancelled'); pendingFocus = 'bar:after'; }
+  else if (d.unafter !== undefined) { ui.after = ui.after.filter((_, i) => i !== +d.unafter); toast('Scheduled run cancelled'); pendingFocus = 'menu:more'; }
   else if (d.answer !== undefined) { ui.answer = +d.answer; pendingFocus = 'answer:' + d.answer; }
   else if (d.file !== undefined) { ui.file = ui.file === +d.file ? null : +d.file; pendingFocus = 'file:' + d.file; }
   else if (d.filter) { ui.actFilter = d.filter; pendingFocus = 'filter:' + d.filter; }
