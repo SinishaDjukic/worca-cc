@@ -1943,7 +1943,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   /** Remove (design §6): asked first; the focus then goes to the next file, else the previous one, else Add files. */
   function removeFile(a, ctx) {
     return act(async () => {
-      if (!window.confirm(`Remove ${a.name}? The file and what Worca took from it are deleted.`)) { focusMore(a); return; }
+      if (!window.confirm(`Remove ${a.name}? The file and what Worca took from it are deleted from Worca.`)) { focusMore(a); return; }
       const list = ctx.list || [];
       const i = list.findIndex((x) => x.id === a.id);
       const near = list[i + 1] || list[i - 1] || null;

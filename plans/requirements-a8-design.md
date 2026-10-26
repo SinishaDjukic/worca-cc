@@ -263,7 +263,7 @@ dark theme of board 16 and needs nothing but the tokens.
 **Not on the boards** (smallest behaviour, said here rather than invented in code):
 - A Files card without files: its head and "No files yet. Add emails, a spec, screenshots or a mockup."; a Documents card without documents: "No documents yet.". **Add
   files** and the file actions are disabled while the feature is busy, archived or starting (the A1 lock).
-- **Remove** asks "Remove <name>? The file and what Worca took from it are deleted." A brief's **Delete the brief**
+- **Remove** asks "Remove <name>? The file and what Worca took from it are deleted from Worca." A brief's **Delete the brief**
   confirmation adds "Its N documents are deleted too." when it has some.
 - The history (D4, D11), when a file has one: a folded "Earlier text (N)" under the summary, each entry with its
   date, the file name it was about and the text.

@@ -800,7 +800,7 @@ test('board 21: Read again asks first on an edited summary; Remove asks before d
   assert.equal(document.activeElement.getAttribute('data-ui'), 'file-more-ratt_00000000000a', 'after Read again the focus is on the ⋯');
   item(host, 'Remove').click();
   await settle();
-  assert.deepEqual(asked, ["Read again? Your text goes to the file's history.", 'Remove support-tickets.pdf? The file and what Worca took from it are deleted.']);
+  assert.deepEqual(asked, ["Read again? Your text goes to the file's history.", 'Remove support-tickets.pdf? The file and what Worca took from it are deleted from Worca.']);
   assert.deepEqual(calls.filter((c) => c.method !== 'GET').map((c) => `${c.method} ${c.url}`), [`POST ${HREF}/read-again`, `DELETE ${HREF}`]);
   answer = false;
   item(host, 'Remove').click();
@@ -1395,7 +1395,7 @@ test('board 19: Remove asks first, deletes the document, and hands the focus to 
   host.querySelector('[data-ui="file-more-ratt_0000000000d1"]').click();
   host.querySelector('[data-ui="fmi-remove-ratt_0000000000d1"]').click();
   await settle();
-  assert.equal(asked[0], 'Remove glossary.pdf? The file and what Worca took from it are deleted.');
+  assert.equal(asked[0], 'Remove glossary.pdf? The file and what Worca took from it are deleted from Worca.');
   assert.ok(calls.some((c) => c.method === 'DELETE' && c.url === DOC_HREF));
   assert.equal(host.querySelector('.req-docs .req-files-empty').textContent, 'No documents yet.');
   assert.equal(document.activeElement.getAttribute('data-ui'), 'docs-add');
