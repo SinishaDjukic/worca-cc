@@ -10,9 +10,11 @@ import { asData, roundPromptParts, threadText, specBlocks, RoundError, pendingRo
 import { diffList } from './ready.mjs';
 import {
   requireFeature, listTurns, getContext, insertHelperMessage, listHelperMessages, recentHelperCosts,
+  getHelperMessage, updateHelperMessage, deleteHelperMessages,
 } from './store.mjs';
 import { isBusy, holdSlot, assertBudget, scratchDir, chargeHelper, callModel, interviewModel, briefFor } from './interview.mjs';
 import { promptFiles } from './attachment-job.mjs';
+import { editable, setSection, addCriterion, editCriterion, removeCriterion, setAssumption } from './edits.mjs';
 import { isStarting, STARTING_MESSAGE } from './starting.mjs';
 
 export const HELPER_TIMEOUT_MS = 180_000;
@@ -438,4 +440,77 @@ export function helperEstimate() {
   if (!c.length) return null;
   const r = (n) => Math.round(n * 1e4) / 1e4;
   return { low: r(Math.min(...c)), high: r(Math.max(...c)) };
+}
+
+// ---------------------------------------------------------------- the proposals (D7–D10, D14)
+
+const DECIDED = 'This change was already decided.';
+const STALE_MESSAGE = 'The spec changed since Worca proposed this.';
+
+function notArchived(seq) {
+  const f = requireFeature(seq);
+  if (f.status === 'archived') throw new RequirementsError('CONFLICT', 'this feature is archived; restore it first');
+  return f;
+}
+/** §5: `msgId` must be a Worca row of this feature, `n` one of its proposals; else NOT_FOUND. */
+function ownProposal(seq, msgId, n) {
+  const m = getHelperMessage(msgId);
+  if (!m || m.featureSeq !== Number(seq) || m.role !== 'worca') throw new RequirementsError('NOT_FOUND', 'This message is no longer in the chat.');
+  const p = (m.proposals || []).find((x) => x.n === Number(n));
+  if (!p) throw new RequirementsError('NOT_FOUND', 'This change is no longer in the chat.');
+  return { m, p };
+}
+const decided = (m, p, state, by, extra = {}) => (m.proposals || []).map((x) => (x.n === p.n
+  ? { ...x, ...extra, state, decidedBy: by || null, decidedAt: new Date().toISOString() } : x));
+
+/**
+ * D10 Accept: the change applied through the product owner's own edit functions (their turn, `edited` mark and ids), with the
+ * proposal marked `accepted` in the same transaction (alsoInTx). Refused while a round or look runs and on an archived feature
+ * (editable(), the A1 lock), while this feature's helper call runs (D11), and when the target changed since the proposal (D9).
+ */
+export function acceptProposal(seq, msgId, n, { by = null } = {}) {
+  const f = editable(seq);
+  if (isAnswering(f.seq)) throw new RequirementsError('BUSY', ANSWERING);
+  const { m, p } = ownProposal(f.seq, msgId, n);
+  if (p.state !== 'proposed') throw new RequirementsError('CONFLICT', DECIDED);
+  if (isStale(f.spec, p)) throw new RequirementsError('CONFLICT', STALE_MESSAGE);
+  const mark = (extra = () => ({})) => (written) => {
+    const cur = getHelperMessage(m.id);   // inside the transaction: the row as it is now
+    updateHelperMessage(m.id, { proposals: decided(cur, p, 'accepted', by, extra(written)) }, { by });
+  };
+  if (SECTIONS.includes(p.target)) setSection(f.seq, p.target, p.value, { by, alsoInTx: mark() });
+  else if (p.target === 'criterion' && p.change === 'add') {
+    addCriterion(f.seq, p.value, { by, alsoInTx: mark((w) => ({ appliedId: w.spec.criteria.at(-1).id })) });
+  } else if (p.target === 'criterion' && p.change === 'reword') editCriterion(f.seq, p.id, p.value, { by, alsoInTx: mark() });
+  else if (p.target === 'criterion' && p.change === 'remove') removeCriterion(f.seq, p.id, { by, alsoInTx: mark() });
+  else if (p.target === 'assumption') setAssumption(f.seq, p.id, p.change === 'confirm' ? 'confirmed' : 'rejected', { by, alsoInTx: mark() });
+  else throw new RequirementsError('CONFLICT', STALE_MESSAGE);   // a stored proposal no check would have kept
+  return getHelperMessage(m.id);
+}
+
+/** D10 Reject: allowed whenever the feature is not archived (also while the helper answers). */
+export function rejectProposal(seq, msgId, n, { by = null } = {}) {
+  const f = notArchived(seq);
+  const { m, p } = ownProposal(f.seq, msgId, n);
+  if (p.state !== 'proposed') throw new RequirementsError('CONFLICT', DECIDED);
+  return updateHelperMessage(m.id, { proposals: decided(m, p, 'rejected', by) }, { by });
+}
+
+/** D10 Ask again: a stale, undecided proposal, once; a new message with Send's refusals, whose prompt carries the proposal. */
+export function askAgain(seq, msgId, n, { by = null } = {}, deps = {}) {
+  const f = notArchived(seq);
+  const { m, p } = ownProposal(f.seq, msgId, n);
+  if (p.state !== 'proposed' || !isStale(f.spec, p)) throw new RequirementsError('CONFLICT', 'This change is not out of date.');
+  const asked = listHelperMessages(f.seq).some((x) => x.role === 'po' && x.focus && x.focus.askAgain
+    && x.focus.askAgain.msgId === m.id && x.focus.askAgain.n === p.n);
+  if (asked) throw new RequirementsError('CONFLICT', 'Worca was already asked again about this change.');
+  return ask(f.seq, ASK_AGAIN_TEXT, () => ({ askAgain: { msgId: m.id, n: p.n } }), by, deps);
+}
+
+/** D14 Clear chat: the feature's rows go; accepted changes stay in the spec and their edit turns in the thread; the ledger
+ *  keeps what the chat cost. Refused while answering and on an archived feature. */
+export function clearChat(seq) {
+  const f = notArchived(seq);
+  if (isAnswering(f.seq)) throw new RequirementsError('BUSY', ANSWERING);
+  return deleteHelperMessages(f.seq);
 }

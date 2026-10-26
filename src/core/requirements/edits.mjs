@@ -23,6 +23,10 @@ const itemText = (v) => {
   return s;
 };
 
+/** A3 D10: `alsoInTx(feature)` runs inside the edit's own transaction with the feature just written (tx() cannot nest), so a
+ *  caller's write (an accepted proposal's mark) commits or rolls back with the edit. */
+const withAlso = (written, alsoInTx) => { if (typeof alsoInTx === 'function') alsoInTx(written); return written; };
+
 export function updateHeader(seq, { title, description, scopeType, scopeKey } = {}, { by = null } = {}) {
   editable(seq);
   const patch = {};
@@ -61,13 +65,13 @@ export function updateHeader(seq, { title, description, scopeType, scopeKey } = 
   });
 }
 
-export function setSection(seq, section, value, { by = null } = {}) {
+export function setSection(seq, section, value, { by = null, alsoInTx = null } = {}) {
   const f = editable(seq);
   if (!SECTIONS.includes(section)) throw new RequirementsError('BAD_REQUEST', `unknown section "${String(section).slice(0, 40)}"`);
   const spec = { ...f.spec, [section]: normalizeSection(section, value), edited: { ...f.spec.edited, [section]: true } };
   return tx(() => {
     appendTurn(seq, { kind: 'edit', payload: { section } }, { by });
-    return updateFeature(seq, { spec }, { by });
+    return withAlso(updateFeature(seq, { spec }, { by }), alsoInTx);
   });
 }
 
@@ -82,45 +86,45 @@ export function releaseSection(seq, section, { by = null } = {}) {
   });
 }
 
-export function addCriterion(seq, text, { by = null } = {}) {
+export function addCriterion(seq, text, { by = null, alsoInTx = null } = {}) {
   const f = editable(seq);
   const t = itemText(text);
   const n = nextIdNumber(f.criteriaSeq, f.spec.criteria, 'R-po-');
   const id = `R-po-${n}`;
   return tx(() => {
     appendTurn(seq, { kind: 'edit', payload: { criterion: id, action: 'added' } }, { by });
-    return updateFeature(seq, { criteriaSeq: n, spec: { ...f.spec, criteria: [...f.spec.criteria, { id, text: t, edited: true }] } }, { by });
+    return withAlso(updateFeature(seq, { criteriaSeq: n, spec: { ...f.spec, criteria: [...f.spec.criteria, { id, text: t, edited: true }] } }, { by }), alsoInTx);
   });
 }
 
-export function editCriterion(seq, id, text, { by = null } = {}) {
+export function editCriterion(seq, id, text, { by = null, alsoInTx = null } = {}) {
   const f = editable(seq);
   const t = itemText(text);
   if (!f.spec.criteria.some((c) => c.id === id)) throw new RequirementsError('NOT_FOUND', `no criterion ${String(id).slice(0, 20)}`);
   return tx(() => {
     appendTurn(seq, { kind: 'edit', payload: { criterion: id, action: 'edited' } }, { by });
-    return updateFeature(seq, { spec: { ...f.spec, criteria: f.spec.criteria.map((c) => (c.id === id ? { id, text: t, edited: true, ...(c.source ? { source: c.source } : {}) } : c)) } }, { by });
+    return withAlso(updateFeature(seq, { spec: { ...f.spec, criteria: f.spec.criteria.map((c) => (c.id === id ? { id, text: t, edited: true, ...(c.source ? { source: c.source } : {}) } : c)) } }, { by }), alsoInTx);
   });
 }
 
-export function removeCriterion(seq, id, { by = null } = {}) {
+export function removeCriterion(seq, id, { by = null, alsoInTx = null } = {}) {
   const f = editable(seq);
   const gone = f.spec.criteria.find((c) => c.id === id);
   if (!gone) throw new RequirementsError('NOT_FOUND', `no criterion ${String(id).slice(0, 20)}`);
   return tx(() => {
     // The text rides on the turn: the next rounds see what was removed and Worca never re-adds it (D6).
     appendTurn(seq, { kind: 'edit', payload: { criterion: id, action: 'removed', text: gone.text } }, { by });
-    return updateFeature(seq, { spec: { ...f.spec, criteria: f.spec.criteria.filter((c) => c.id !== id) } }, { by });
+    return withAlso(updateFeature(seq, { spec: { ...f.spec, criteria: f.spec.criteria.filter((c) => c.id !== id) } }, { by }), alsoInTx);
   });
 }
 
-export function setAssumption(seq, id, status, { by = null } = {}) {
+export function setAssumption(seq, id, status, { by = null, alsoInTx = null } = {}) {
   const f = editable(seq);
   if (!ASSUMPTION_STATUSES.includes(status)) throw new RequirementsError('BAD_REQUEST', 'status must be open, confirmed or rejected');
   if (!f.spec.assumptions.some((a) => a.id === id)) throw new RequirementsError('NOT_FOUND', `no assumption ${String(id).slice(0, 20)}`);
   return tx(() => {
     appendTurn(seq, { kind: 'assumption', payload: { id, status } }, { by });
-    return updateFeature(seq, { spec: { ...f.spec, assumptions: f.spec.assumptions.map((a) => (a.id === id ? { ...a, status } : a)) } }, { by });
+    return withAlso(updateFeature(seq, { spec: { ...f.spec, assumptions: f.spec.assumptions.map((a) => (a.id === id ? { ...a, status } : a)) } }, { by }), alsoInTx);
   });
 }
 
