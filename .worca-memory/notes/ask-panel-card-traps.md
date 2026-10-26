@@ -1,8 +1,8 @@
 ---
 name: ask-panel-card-traps
-description: Traps when adding a new Ask chat card, chip or other transcript element, or Ask CSS (ask-panel.mjs buildCard, style.css ask section)
+description: Read before adding an Ask chat card, chip, composer element or Ask CSS — cache shape, repaint signature, real CSS tokens, hidden-page checks, pinned rows.
 paths: ui/public/ask-panel.mjs, ui/public/style.css, ui/public/ask-*.mjs, ui/public/chat/*.mjs
-updated: 2026-10-18T06:03:40.301Z
+updated: 2026-10-26T17:17:08.384Z
 author: Bulibas
 ---
 
@@ -49,8 +49,17 @@ author: Bulibas
   `style.css` for every class a new card builds (flagged in the run-plan review, 2026-10-08).
 - A new composer-row element after the MCP chip shifts the sibling pin in `test/ask-panel-scope.test.mjs`
   ("row is attach → scope → …"); update that pin with it.
+- `.ask-chip` / `renderChips()` in `ask-panel.mjs` already belong to the composer's attachment chips. Pick another
+  class prefix for new chips.
 - A mid-turn chat's REST snapshot already holds the assistant row (`status: 'streaming'`). When a test pushes only an
   adopting `ask-delta` (no `ask-start`) for that id, `ensureStreamingRow` finds the row and calls no `upsertRow`, and
   `dirty.label` stays false. The row's tail (the `.ask-thinking` orb row) is then not rebuilt, so no orb appears. A
   snapshot WITHOUT that row (most older stream tests) hides this. Replay from seq 1 with `ask-start`, as the server's
   ring replay does (seen 2026-10-18, thread-switch resubscribe fix).
+
+**A reconnect does not re-apply the thread's model pick.** `loadThread` calls `applyThreadPick` only when a DIFFERENT
+chat opens (`if (switched)`); a resync or reconnect (`onHello` → `resync` → `loadThread` of the same id) keeps the
+picker so a pick whose PATCH has not landed is not undone. So any server-side change to `thread.model`/`engine` made
+elsewhere (another tab, an engine switch, #943) is lost by a tab that was offline: its next send posts the old model.
+Handle the reconnect path explicitly and test it with `ctx.panel.onHello([])` against a handler whose GET answers the
+changed thread (cycle 3 of the #943 refine: two replay-green cycles missed it; an audit lane found it with a probe).
