@@ -17,7 +17,7 @@
   "src/core/orchestrator.mjs": 3222,
   "src/core/phases.mjs": 1398,
   "src/core/run-context.mjs": 1743,
-  "src/core/run-harness.mjs": 9913,
+  "src/core/run-harness.mjs": 9915,
   "src/core/scheduler.mjs": 1356,
   "src/core/session-host.mjs": 1038,
   "src/core/settings.mjs": 3247,

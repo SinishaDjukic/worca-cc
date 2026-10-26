@@ -5,6 +5,7 @@
 // own `usage` per route (one spawn), and the harness books that instead of the sandbox's figure.
 import { gunzipSync } from 'node:zlib';
 import { estimateCost, liveCostRates, modelCostConfig } from '../config.mjs';
+import { UNPRICED_RATES } from '../../broker/usage.mjs';
 
 const MAX_JSON = 4 << 20;    // a non-streamed reply bigger than this is not metered (the CLI streams)
 const MAX_LINE = 1 << 20;    // an SSE line longer than this is skipped (usage frames are small)
@@ -216,8 +217,9 @@ export function relayUsageTotal(relay) {
  * Price what the relay measured for a spawn of `dispatched` (the node's model id, or null for the CLI default):
  * `{ costUsd, unpriced: string[] }`. The dispatched model's own cost override ({free}, {perMtok}) prices every call
  * of the spawn, as it prices the CLI's figure (config.mjs resolveModelCost); else each reply's model at its list
- * price (or its own override), else the dispatched model's rates. A model with none of those is `unpriced`, and
- * `costUsd` covers the rest only.
+ * price (or its own override), else the dispatched model's rates. A model with none of those is named in `unpriced`
+ * and priced at the broker's fallback, the highest list rate (audit 2.8): the sandbox picks the model a call names,
+ * so an unpriced one must never book $0 or the sandbox's own claim.
  */
 export function priceRelayUsage(relay, dispatched = null) {
   const byModel = relay?.byModel || {};
@@ -227,7 +229,8 @@ export function priceRelayUsage(relay, dispatched = null) {
   let costUsd = 0; const unpriced = [];
   for (const [model, usage] of Object.entries(byModel)) {
     const rates = (model && liveCostRates(model)) || (dispatched && liveCostRates(dispatched)) || null;
-    if (rates) costUsd += estimateCost(usage, rates); else unpriced.push(model || '(unnamed)');
+    if (!rates) unpriced.push(model || '(unnamed)');
+    costUsd += estimateCost(usage, rates || UNPRICED_RATES);
   }
   return { costUsd, unpriced };
 }
