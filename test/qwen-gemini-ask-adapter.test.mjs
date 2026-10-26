@@ -3,7 +3,7 @@
 // support check and what an Ask spawn leaves to the turn (a session the CLI no longer knows).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, chmodSync, existsSync, mkdirSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, chmodSync, existsSync, mkdirSync, statSync, realpathSync } from 'node:fs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -106,7 +106,7 @@ test('Gemini chat spawn: the chat folder\'s settings (no built-in, no hook, no d
     envScrub: true, envAllowlist: [], spawnEnv: { ASK_COMMAND_TOKEN: 'tok-1' } });
   assert.equal(out.text, 'hi');
   const rec = fake.record();
-  assert.equal(rec.cwd, cwd);
+  assert.equal(realpathSync(rec.cwd), realpathSync(cwd), 'macOS reports /var as /private/var');
   const settings = JSON.parse(rec.gemini);
   assert.deepEqual(settings.tools.core, [GEMINI_NO_CORE_TOOL]);
   assert.equal(settings.hooksConfig.enabled, false);

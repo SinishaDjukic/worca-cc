@@ -170,9 +170,9 @@ test('the account menu: its order and roles (spend card · Signed in as · Inter
       assert.deepEqual([...menu.children].map((el) => el.id || el.className),
         ['acct-spend', 'acct-id', 'msect', 'msect sw-sect', 'msect theme-sect']);
       assert.deepEqual([...menu.querySelectorAll('.msect')].map((s) => [s.getAttribute('role'), [...s.children].map((b) => b.id)]),
-        [['group', ['acct-lvl', 'acct-settings']], ['group', ['acct-away', 'acct-keepawake']], ['group', ['acct-theme-k', 'acct-theme']]], 'each run of rows is its own section; the two switches share one');
+        [['group', ['acct-team-setup', 'acct-lvl', 'acct-settings']], ['group', ['acct-away', 'acct-keepawake']], ['group', ['acct-theme-k', 'acct-theme']]], 'each run of rows is its own section; the two switches share one');
       assert.deepEqual([...menu.querySelectorAll('[role^="menuitem"]')].map((b) => b.id || b.dataset.themeMode || b.className),
-        ['btn btn-sm mc-btn', 'mi menu-item mc-free', 'acct-lvl', 'acct-settings', 'acct-away', 'acct-keepawake', 'system', 'light', 'dark'], 'Details, the free row, the four rows, then the three icons');
+        ['btn btn-sm mc-btn', 'mi menu-item mc-free', 'acct-team-setup', 'acct-lvl', 'acct-settings', 'acct-away', 'acct-keepawake', 'system', 'light', 'dark'], 'Details, the free row, the team-setup row (hidden until the team updates its setup), the four rows, then the three icons');
       assert.equal($('acct-away').closest('.msect').getAttribute('aria-label'), 'Switches');
       assert.deepEqual([...$('acct-theme').querySelectorAll('button')].map((b) => [b.getAttribute('role'), b.getAttribute('aria-label'), b.textContent.trim()]),
         [['menuitemradio', 'System', ''], ['menuitemradio', 'Light', ''], ['menuitemradio', 'Dark', '']], 'icons only: the name is the aria-label');
