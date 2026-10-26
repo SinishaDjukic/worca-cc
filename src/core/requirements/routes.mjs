@@ -706,7 +706,7 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
       const f = requireFeature(seq);
       if (typeof d.startRun !== 'function') throw new Error('starting runs is not available');
       const b = req.body || {};
-      const r = await startFeature(seq, { reason: b.reason, workflowId: b.workflowId, sourceBranch: b.sourceBranch },
+      const r = await startFeature(seq, { reason: b.reason, workflowId: b.workflowId, sourceBranch: b.sourceBranch, reportBack: b.reportBack },
         { by: by(req) }, { startRun: d.startRun, target: await targetFor(f) });
       onChange(seq);
       res.status(201).json({ runId: r.runId, version: r.version, ...await featureView(seq, d) });

@@ -170,3 +170,30 @@ test('every error data field reaches the client unchanged: linked on a stale fin
   const c = await call('POST', `${P}/${f.seq}/export/preview`, { mode: 'comment' });
   assert.deepEqual([c.status, c.json.error], [409, 'Update OPS-9 once to give Worca a starting point for comments.']);
 });
+
+test('an Update raced by an edit in Jira is 409 with edited and its sentence; nothing written; an op Jira no longer has is 502 with its kind', async () => {
+  await saveSetup();
+  const f = readyFeature();
+  const p = await call('POST', `${P}/${f.seq}/export/preview`, { mode: 'create' });
+  const x = await call('POST', `${P}/${f.seq}/export`, { mode: 'create', previewHash: p.json.previewHash });
+  assert.equal(x.status, 200, JSON.stringify(x.json));
+  const key = x.json.key;
+  updateFeature(f.seq, { spec: { ...readySpec(), rules: ['New rule'] } });
+  const u = await call('POST', `${P}/${f.seq}/export/preview`, { mode: 'update' });
+  assert.equal(u.status, 200, JSON.stringify(u.json));
+  const before = (await call('GET', `${P}/${f.seq}`)).json;
+  // the ticket changes in Jira between the preview and the Update: its fingerprint is no longer the stored one
+  setMockSourceResponses({ ticketState: (a) => ({ exists: true, url: `https://mock.test/browse/${a.key}`, fingerprint: 'edited-in-jira' }) });
+  try {
+    const e = await call('POST', `${P}/${f.seq}/export`, { mode: 'update', previewHash: u.json.previewHash });
+    assert.deepEqual([e.status, e.json.edited, e.json.error],
+      [409, true, `${key} was edited in Jira since your last export. Updating replaces its description.`]);
+  } finally { setMockSourceResponses(null); }
+  const after = (await call('GET', `${P}/${f.seq}`)).json;
+  assert.deepEqual([after.turns.length, after.feature.export.link], [before.turns.length, before.feature.export.link], 'nothing written');
+  setMockSourceResponses({ exportOptions: () => { throw new PluginOpError('unimplemented', 'connector does not implement op "exportOptions"'); } });
+  try {
+    const bad = await call('POST', `${setupPath()}/options`, CONN);
+    assert.deepEqual([bad.status, bad.json], [502, { kind: 'unimplemented', error: 'Jira cannot export any more.' }]);
+  } finally { setMockSourceResponses(null); }
+});

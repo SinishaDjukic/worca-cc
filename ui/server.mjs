@@ -2860,6 +2860,9 @@ const startRunHandler = async (req, res) => {
     // Shaper s5 (D4): a round of an earlier run (Ask for changes → Start round n, or a Watch PR fix run). Set in-process
     // by startRunAs / invokeStartRun only, never from HTTP.
     const roundOf = req._roundOf && typeof req._roundOf === 'object' && typeof req._roundOf.pipelineId === 'string' ? req._roundOf : null;
+    // A6 D15: a requirements start's ticket (Report back). Set in-process by invokeStartRun only, never from HTTP, like _roundOf.
+    const reportTo = req._reportTo && typeof req._reportTo === 'object' && typeof req._reportTo.plugin === 'string'
+      && typeof req._reportTo.taskId === 'string' ? req._reportTo : null;
     // Run on the source branch (explicit flag — never inferred from feature === source): the run
     // auto-names its hidden branch, so a typed feature name is ignored (and never date-suffixed).
     // A Workspace scan or a memory defragment lands no work: the flag does not apply there.
@@ -3060,6 +3063,7 @@ const startRunHandler = async (req, res) => {
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
         startedBy,
         ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),
+        ...(reportTo ? { reportTo } : {}),   // A6 D15: the pipeline row names the ticket, so write-back reports to it
         branch,
         ...(titleLocked ? { titleLocked: true } : {}),
         sync,
@@ -3227,6 +3231,7 @@ const startRunHandler = async (req, res) => {
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
         startedBy,
         ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),
+        ...(reportTo ? { reportTo } : {}),   // A6 D15: the pipeline row names the ticket, so write-back reports to it
         branch,
         ...(titleLocked ? { titleLocked: true } : {}),
         sync,
@@ -3735,8 +3740,9 @@ function dropStagedOnceCopied(runId, drop) {
 
 /** Call startRunHandler without HTTP. Resolves { status, body }. A8 D14: `extrasFiles` ([{ id?, name, path, sha256? }],
  *  a requirements start) are staged into the run's extras folder first and handed over as req._extrasPaths; a refused
- *  start removes them again (withStagedRunFiles), a started one once its pipeline has its own copy. */
-async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null } = {}) {
+ *  start removes them again (withStagedRunFiles), a started one once its pipeline has its own copy.
+ *  A6 D15: `reportTo` (a requirements start's ticket) is handed over as req._reportTo. */
+async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null, reportTo = null } = {}) {
   const files = Array.isArray(extrasFiles) && extrasFiles.length ? extrasFiles : null;
   const id = files ? (runId || randomUUID()) : runId;   // the extras folder is named by the run id
   const run = async (extrasPaths, staged = null) => {
@@ -3747,7 +3753,8 @@ async function invokeStartRun(body, internal, { startedBy = null, runId = null, 
       json(payload) { out = { status: this.statusCode, body: payload }; return this; },
     };
     await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: id,
-      _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}), ...(extrasPaths ? { _extrasPaths: extrasPaths } : {}) }, res);
+      _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}), ...(extrasPaths ? { _extrasPaths: extrasPaths } : {}),
+      ...(reportTo ? { _reportTo: reportTo } : {}) }, res);
     if (staged && out.status >= 200 && out.status <= 299) dropStagedOnceCopied(id, staged.drop);
     return out;
   };
