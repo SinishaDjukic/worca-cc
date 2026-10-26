@@ -4,11 +4,11 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
-import { existsSync, readFileSync, statSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve as pathResolve, join } from 'node:path';
 import { projectKey } from '../src/core/store.mjs';
-import { addProject, displayPath } from '../src/core/projects.mjs';
+import { addProject, displayPath, worcaHome } from '../src/core/projects.mjs';
 
 import { useTempHome } from './helpers/temp-home.mjs';
 import { getDb } from '../src/core/db.mjs';
@@ -111,6 +111,33 @@ test('happy path: frames ordered, session stored immediately, row + totals persi
   const done = frames.at(-1);
   assert.equal(done.status, 'done');
   assert.deepEqual(done.threadTotals, totals);
+});
+
+test('audit 3.2b: a chat in the shared scratch dir never starts, nor its title call, while CLAUDE.md there is not worca\'s', async () => {
+  const scratch = join(worcaHome(), 'tmp', 'ask');
+  mkdirSync(scratch, { recursive: true });
+  const elsewhere = mkdtempSync(join(tmpdir(), 'worca-planted-'));
+  writeFileSync(join(elsewhere, 'CLAUDE.md'), 'planted instructions');
+  rmSync(join(scratch, 'CLAUDE.md'), { force: true });
+  symlinkSync(join(elsewhere, 'CLAUDE.md'), join(scratch, 'CLAUDE.md'));
+  try {
+    let spawned = 0; let titled = 0;
+    const { turn } = makeTurn(seed(), { firstTurn: true }, {
+      runClaudeImpl: async () => { spawned++; return { text: '', exitCode: 0 }; },
+      generateTitle: async () => { titled++; return 't'; },
+    });
+    const out = await turn.run();
+    await turn.titlePromise;
+    assert.equal(out.status, 'error');
+    assert.equal(spawned, 0, 'no chat spawn');
+    assert.equal(titled, 0, 'no title call in the scratch dir either');
+  } finally {
+    rmSync(join(scratch, 'CLAUDE.md'), { force: true });
+    rmSync(elsewhere, { recursive: true, force: true });
+  }
+  const { turn } = makeTurn(seed(), {}, { runClaudeImpl: async (opts) => { push(opts.onEvent, RESULT()); return { text: 'ok', exitCode: 0 }; } });
+  assert.equal((await turn.run()).status, 'done', 'worca makes its own CLAUDE.md again and the next chat runs');
+  assert.equal(lstatSync(join(scratch, 'CLAUDE.md')).isFile(), true);
 });
 
 test('session: the init frame\'s session event does not store the id a second time', async () => {

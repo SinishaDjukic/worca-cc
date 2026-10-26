@@ -48,7 +48,7 @@ import { validateProxyChange, validateProxyFlagOn } from './proxy-deps.mjs';
 import { scriptApprovalCard } from './script-approval.mjs';
 import { defaultScriptDeps } from './script-deps.mjs';
 import { claimFileForAgent } from '../agent-user.mjs';
-import { chatFolder } from './chat-folder.mjs';
+import { chatFolder, holdScratchEntries } from './chat-folder.mjs';
 import { agentIdentityFor } from '../agent-pool.mjs';
 import { currentOwner } from '../billing.mjs';
 import { createWebValidator } from './web-proposal.mjs';
@@ -268,6 +268,8 @@ class AskTurn extends EventEmitter {
       claimThreadDir: deps.claimThreadDir ?? ((threadId) => claimThreadDir(threadId)),
       // A chat's own folder (chat descriptor `ownFolder`), checked to be worca's; a relayed chat's goes to its agent user.
       chatFolder: deps.chatFolder ?? ((scratch, engine, name, { relayed = false } = {}) => chatFolder(scratch, engine, name, { agent: relayed ? agentIdentityFor(currentOwner()) : null })),
+      // The scratch dir's held `.claude/` and `CLAUDE.md` (chat-folder.mjs, audit 3.2b), before a chat or helper runs in it.
+      holdScratch: deps.holdScratch ?? holdScratchEntries,
       readScript: deps.readScript ?? ((key) => defaultScriptDeps({ threadId: this.threadId }).scripts.read(key)),
       validateWebProposal: deps.validateWebProposal ?? ((input) => createWebValidator({
         allowed: () => (this.web ? this.web.allowedDomains : []), teamCap: () => (this.web ? this.web.teamCap ?? null : null) })(input)),
@@ -1408,6 +1410,9 @@ class AskTurn extends EventEmitter {
       await d.fs.mkdir(scratchDir, { recursive: true });
       // 1.4: before anything is mounted in the thread's folder (skills, the chat's worktree) or read from it.
       d.claimThreadDir(this.threadId);
+      // A chat that runs in the scratch dir itself (no folder of its own) never starts while an entry Claude Code loads
+      // from its cwd there is not worca's own (chat-folder.mjs holdScratchEntries).
+      if (!this.chat?.ownFolder) d.holdScratch(scratchDir);
       // D13 title runs CONCURRENTLY with the turn from here — the haiku call
       // cwd's into scratchDir, so not a line earlier. Idempotent: the call after
       // _attempts below is the backstop for a mkdir/write failure, so "fires
@@ -1688,7 +1693,13 @@ class AskTurn extends EventEmitter {
   _auxCwd() {
     const d = this.deps;
     const base = this.scratchDir || join(d.worcaHome(), 'tmp', 'ask');
-    if (!this.chat || !this.chat.ownFolder) return { cwd: base, ready: Promise.resolve(true), done: () => {} };
+    if (!this.chat || !this.chat.ownFolder) {
+      const ready = Promise.resolve().then(() => d.holdScratch(base)).then(() => true, (err) => {
+        console.warn(`[worca-ask] thread ${this.threadId}: ${err?.message || err} — the helper call is skipped`);
+        return false;
+      });
+      return { cwd: base, ready, done: () => {} };
+    }
     const name = `aux-${this.threadId}-${Math.random().toString(36).slice(2, 10)}`;
     const cwd = join(base, this.engine, name);
     const ready = Promise.resolve().then(() => d.chatFolder(base, this.engine, name)).then(() => true, (err) => {

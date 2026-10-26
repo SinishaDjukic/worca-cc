@@ -514,6 +514,7 @@ import { REASON } from '../src/core/failure-policy.mjs';
 import { callSource, PluginOpError, withheldProxyNotice } from '../src/core/plugin-shim.mjs';
 import { resolveAutoModel, AUTO_MODEL_ENV } from '../src/core/auto/model.mjs';
 import { sweepRepoLooks } from '../src/core/auto/repo-look.mjs';
+import { holdScratchEntries } from '../src/core/ask/chat-folder.mjs';
 import {
   buildRunReport, buildIssueUrl, reportFilename, renderIssueBodyFull, issueTitle,
   repoSlugFromBugsUrl, BUGS_URL,
@@ -19193,6 +19194,16 @@ export async function bootMaintenance({ log } = {}) {
     if (r.failed.length) console.error(`[worca-ui] repo-look sweep: ${r.failed.length} dir(s) could not be removed`);
   } catch (err) {
     console.error(`[worca-ui] repo-look sweep failed: ${err && err.message ? err.message : err}`);
+  }
+
+  // The shared chat scratch dir's held `.claude/` and `CLAUDE.md` (chat-folder.mjs, audit 3.2b): made worca's own before
+  // any agent user can plant one; every chat checks them again and refuses to start without them.
+  try {
+    const dir = path.join(worcaHome(), 'tmp', 'ask');
+    fs.mkdirSync(dir, { recursive: true });
+    holdScratchEntries(dir);
+  } catch (err) {
+    console.error(`[worca-ui] chat scratch dir: ${err && err.message ? err.message : err}`);
   }
 
   // Requirements code looks (plans/requirements-design.md D7) a restart cut short, under <worcaHome>/tmp/requirements.

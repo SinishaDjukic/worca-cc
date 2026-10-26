@@ -3,10 +3,10 @@
 // cwd, and no level of their folder may be one another user made first.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { chatFolder } from '../src/core/ask/chat-folder.mjs';
+import { chatFolder, holdScratchEntries } from '../src/core/ask/chat-folder.mjs';
 import { chatDescriptor } from '../src/core/engines/chat.mjs';
 import { buildAskSpawnOptions } from '../src/core/ask/spawn.mjs';
 
@@ -59,4 +59,44 @@ test('chatFolder refuses names that are not one path level', () => {
   for (const [engine, name] of [['goose', '../x'], ['goose', ''], ['../goose', 'ask_1'], ['goose', 'a/b']]) {
     assert.throws(() => chatFolder('/s', engine, name), /not a chat folder name/, `${engine}/${name}`);
   }
+});
+
+// ── the shared scratch dir's held entries (audit 3.2b): Claude chats still run in tmp/ask itself ───────────────────
+
+test('holdScratchEntries makes .claude/ and an empty CLAUDE.md, worca\'s and closed to others, the same every time', POSIX, () => {
+  const scratch = tmp();
+  holdScratchEntries(scratch);
+  holdScratchEntries(scratch);
+  assert.ok(lstatSync(join(scratch, '.claude')).isDirectory());
+  assert.equal(mode(join(scratch, '.claude')), 0o755);
+  assert.equal(lstatSync(join(scratch, 'CLAUDE.md')).size, 0);
+  assert.equal(mode(join(scratch, 'CLAUDE.md')), 0o444);
+});
+
+test('holdScratchEntries closes a held entry an older worca left group-writable', POSIX, () => {
+  const scratch = tmp();
+  mkdirSync(join(scratch, '.claude'), { mode: 0o777 });
+  holdScratchEntries(scratch);
+  assert.equal(mode(join(scratch, '.claude')), 0o755);
+});
+
+test('holdScratchEntries refuses a planted link, a wrong type, a hard link, content, or another user\'s entry', POSIX, () => {
+  const elsewhere = tmp();
+  writeFileSync(join(elsewhere, 'settings.json'), '{"hooks":{}}');
+  const cases = [
+    ['a linked .claude', (d) => symlinkSync(elsewhere, join(d, '.claude')), /\.claude is not worca's own folder \(a link\)/],
+    ['a linked CLAUDE.md', (d) => symlinkSync(join(elsewhere, 'settings.json'), join(d, 'CLAUDE.md')), /CLAUDE\.md is not worca's own empty file \(a link\)/],
+    ['.claude as a file', (d) => writeFileSync(join(d, '.claude'), ''), /not a folder/],
+    ['CLAUDE.md as a folder', (d) => mkdirSync(join(d, 'CLAUDE.md')), /not a file/],
+    ['CLAUDE.md with content', (d) => writeFileSync(join(d, 'CLAUDE.md'), 'run this'), /not empty/],
+    ['CLAUDE.md as a hard link', (d) => linkSync(join(elsewhere, 'settings.json'), join(d, 'CLAUDE.md')), /a hard link/],
+  ];
+  for (const [name, plant, re] of cases) {
+    const scratch = tmp();
+    plant(scratch);
+    assert.throws(() => holdScratchEntries(scratch), re, name);
+  }
+  const scratch = tmp();
+  holdScratchEntries(scratch);
+  assert.throws(() => holdScratchEntries(scratch, { uid: process.getuid() + 1 }), /another user's/, 'an entry another uid owns');
 });

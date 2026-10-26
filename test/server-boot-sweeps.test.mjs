@@ -14,7 +14,7 @@
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { rm, mkdir } from 'node:fs/promises';
-import { existsSync, realpathSync, rmSync, utimesSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync, rmSync, utimesSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 
@@ -275,4 +275,15 @@ test('boot: a file left reading fails INTERRUPTED; old read folders and temp bod
   assert.deepEqual([res.attachmentReadFolders.removed, res.attachmentTempBodies.removed], [[oldRead], [oldTemp]]);
   assert.deepEqual([existsSync(oldRead), existsSync(freshRead), existsSync(oldTemp), existsSync(freshTemp)], [false, true, false, true]);
   assert.equal((await bootMaintenance({ log: () => {} })).recoveredAttachmentReads, 0, 'idempotent');
+});
+
+test('boot: the chat scratch dir holds worca\'s own .claude/ and empty CLAUDE.md (audit 3.2b)', { skip: process.platform === 'win32' ? 'uids and modes' : false }, async () => {
+  const scratch = join(worcaHome(), 'tmp', 'ask');
+  rmSync(join(scratch, '.claude'), { recursive: true, force: true });
+  rmSync(join(scratch, 'CLAUDE.md'), { force: true });
+  await bootMaintenance();
+  assert.ok(lstatSync(join(scratch, '.claude')).isDirectory());
+  assert.equal(lstatSync(join(scratch, '.claude')).mode & 0o777, 0o755);
+  assert.equal(lstatSync(join(scratch, 'CLAUDE.md')).size, 0);
+  assert.equal(lstatSync(join(scratch, 'CLAUDE.md')).mode & 0o777, 0o444);
 });
