@@ -15,8 +15,8 @@ import { createDotOrbs, turnPhase } from './dot-orb.mjs';
 import { workflowPickerLabel } from './results-view.mjs';
 import { renderAutoProposal, AUTO_PROPOSAL_ORDER_CARD } from './auto-proposal.mjs';
 import { createRunProgressCard, snapshotFromState, PROGRESS_CARD_TYPE } from './ask-run-card.mjs';
-import { createCommandCard, COMMAND_CARD_TYPE } from './ask-command-card.mjs';
-import { commandRuns, groupHead } from './ask-command-group.mjs';
+import { createCommandCard, createCommandGroup, COMMAND_CARD_TYPE } from './ask-command-card.mjs';
+import { commandRuns } from './ask-command-group.mjs';
 import { buildTrace, scheduleTrace, playAssembly } from './auto-build.mjs';
 import { buildNodeConfigRows, pruneNodeSelection, modifiedFieldsOf, healForEngine } from './node-tunables.mjs';
 import { ENGINE_EFFORTS } from './engine-settings-view.mjs';
@@ -234,7 +234,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     commandFrames: new Map(), // blockId → the last ask-command view that arrived before its card was built
     commandsOpen: new Set(),  // blockIds whose output the user unfolded (the card's toggle; outlives a rebuild of the card)
     commandsRowOpen: new Map(),  // blockId → the person's open choice on a summary row (#911); absent = none
-    commandGroupOf: new Map(),   // blockId → the blockIds of its group (#911), for the head's live total
+    commandsGroupOpen: new Map(),  // a group's first blockId → its recorded fold: a click or a failure's auto-open (#911)
+    commandGroupOf: new Map(),   // blockId → its group { ids, box, live } (#911), for the head's live total
     pinned: true,
     leftAt: null,          // #958: { threadId, top, pinned } recorded when the page hides; read on the next show
     restoreTop: null,      // #958: a scrollTop the next applyPin() writes back (a same-chat return, unpinned)
@@ -262,7 +263,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     voiceSwallowClick: false, // the click that ends a long-press must not also start dictation
     lastAnswerRender: 0,
     rowEls: null,
-    seenRows: new Set(),      // message ids the transcript has already shown — see renderTranscript
+    seenRows: new Set(),      // #959: message ids this page has shown, in ANY chat (ids are unique): only a row never shown rises — see renderTranscript
     cardEls: null,
     cardOptions: null,
     catalogLoading: null,
@@ -2975,7 +2976,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.model = null;
     st.hist = { idx: -1, draft: '' };
     st.suggestDismissed = null;
-    st.seenRows = new Set();            // a different chat: its rows have never been shown
     st.subscribedFor = null;
     stopElapsed();
     storeThread(null);
@@ -3178,7 +3178,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
   function rpSelect(className, ariaLabel) {
     const s = doc.createElement('select');
-    s.className = className;
+    s.className = `select ${className}`;           // #959: the shared field (design-system › Field)
     s.setAttribute('aria-label', ariaLabel);
     return s;
   }
@@ -4765,9 +4765,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // ONE feature-branch input for both targets; renderTarget moves it into the current grid.
     const feature = doc.createElement('input');
     feature.type = 'text';
-    feature.className = 'ask-card-feature';
+    feature.className = 'input ask-card-feature';
     feature.value = card.featureBranch || '';
     feature.setAttribute('aria-label', 'Feature branch');
+    // #959: a long branch ellipsizes (style.css); its whole name is the tooltip.
+    feature.title = feature.value;
+    feature.addEventListener('input', () => { feature.title = feature.value; });
 
     // Run on the source branch (branch.sameAsSource): ONE checkbox for both targets, like `feature`.
     const sameSw = makeSwitch(doc, { ariaLabel: 'Run on the source branch', checked: card.sameAsSource === true, inputClass: 'ask-card-same-source' });
@@ -5691,7 +5694,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     },
     rowOpen: st.commandsRowOpen.has(blockId) ? st.commandsRowOpen.get(blockId) : undefined,
     onRowToggle: (open) => { st.commandsRowOpen.set(blockId, open); },
-    onTick: () => { const ids = st.commandGroupOf.get(blockId); if (ids) paintGroupHead(ids); } });
+    onTick: () => { const g = st.commandGroupOf.get(blockId); if (g) paintGroupHead(g); } });
     st.commands.set(blockId, handle);
     const early = st.commandFrames.get(blockId);
     if (early) { st.commandFrames.delete(blockId); handle.update(early); }
@@ -5705,6 +5708,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           // A `running` reply may be older than a frame that already landed (even the final one): it only fills an empty card.
           if (view && typeof view.status === 'string') { if (!handle.view || view.status !== 'running') handle.update(view); }
           else if (!handle.view) handle.update({ status: 'done', exitCode: null, tail: '' });   // 404/403: the command, an `ended` pill
+          // #911: a reloaded group's words, total and fold (a failure opens it) come from these views too.
+          const g = st.commandGroupOf.get(blockId);
+          if (g) paintGroupHead(g);
         });
     }
     // No `handle` here: relayoutCards() measures a graph on cached handles, and this card has none.
@@ -5716,19 +5722,17 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const handle = st.commands.get(view.blockId);
     if (handle) {
       handle.update(view);
-      const ids = st.commandGroupOf.get(view.blockId);
-      if (ids) paintGroupHead(ids);
+      const g = st.commandGroupOf.get(view.blockId);
+      if (g) paintGroupHead(g);
       return;
     }
     st.commandFrames.set(view.blockId, view);                  // the turn's card block and the first frames race
     if (st.commandFrames.size > 50) st.commandFrames.delete(st.commandFrames.keys().next().value);
   }
 
-  /** #911: the group head's live total, on the group's first row. */
-  function paintGroupHead(ids) {
-    const first = st.commands.get(ids[0]);
-    if (!first || !first.setGroup) return;
-    first.setGroup({ role: 'first', head: groupHead(ids.map((id) => (st.commands.get(id) || {}).view || null)) });
+  /** #911: the group head's words, live total and fold. */
+  function paintGroupHead(g) {
+    g.box.update(g.ids.map((id) => (st.commands.get(id) || {}).view || null), { live: g.live() });
   }
   /** #911: the flag or the person's switch changed: rebuild the command cards in the other mode. */
   function refreshCommandCards() { if (st.model) { renderTranscript(); scheduleFlush(); } }
@@ -6228,25 +6232,48 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // Inline cards (a command card) sit between answer pieces, in the order they happened: [card, piece] per card.
       let inline = [];
       const answerDivs = () => [answer, ...inline.map((x) => x.piece)];
-      /** #911: consecutive command cards with only blank text between them share one card (summary mode only). */
+      const groups = new Map();   // #911: a group's first blockId → its box in this message
+      /** #911: consecutive command cards with only blank text between them sit in one group box (summary mode only). */
       const paintGroups = () => {
         const cards = inlineCards(cur);
         // Most streamed tokens land in a message with no command card: stop before any work (renderAnswer runs per token).
         if (!cards.some((b) => b.card && b.card.type === COMMAND_CARD_TYPE)) return;
         const handles = cards.map((b) => (b.card && b.card.type === COMMAND_CARD_TYPE ? st.commands.get(String(b.card.blockId || '')) : null));
-        for (const handle of handles) if (handle && handle.setGroup) handle.setGroup(null);
         for (const b of cards) if (b.card && b.card.blockId) st.commandGroupOf.delete(String(b.card.blockId));
-        if (!summariesOn()) return;
-        const isLive = !!(st.model && st.model.live() && st.model.live().messageId === cur.id);
-        const pieces = answerPieces(isLive ? st.model.live().text : cur.text || '', cards);
-        for (const [a, z] of commandRuns(handles.map(Boolean), pieces)) {
+        const live = () => !!(st.model && st.model.live() && st.model.live().messageId === cur.id);
+        const runs = summariesOn() ? commandRuns(handles.map(Boolean), answerPieces(live() ? st.model.live().text : cur.text || '', cards)) : [];
+        // The first renderAnswer runs before renderTail builds `inline`, and a patch can run while `inline` still holds
+        // the previous card list: move elements only when `inline` is exactly these cards.
+        const placed = inline.length === cards.length && cards.every((b, i) => inline[i].id === b.id);
+        const grouped = new Set();
+        const kept = new Set();
+        for (const [a, z] of runs) {
           const ids = cards.slice(a, z + 1).map((b) => String(b.card.blockId));
-          for (let i = a; i <= z; i += 1) {
-            st.commandGroupOf.set(ids[i - a], ids);
-            handles[i].setGroup({ role: i === a ? 'first' : i === z ? 'last' : 'mid' });
+          let box = groups.get(ids[0]);
+          if (!box) {
+            box = createCommandGroup({ doc, keepInPlace, choice: st.commandsGroupOpen.get(ids[0]),
+              onToggle: (open) => { st.commandsGroupOpen.set(ids[0], open); } });
+            groups.set(ids[0], box);
           }
-          paintGroupHead(ids);
+          kept.add(ids[0]);
+          const g = { ids, box, live };
+          for (const id of ids) st.commandGroupOf.set(id, g);
+          if (placed) {
+            // The box stands where the first card stood; only an out-of-place element moves (keeps scroll, no re-animation).
+            if (box.el.nextSibling !== inline[a].piece) inline[a].piece.before(box.el);
+            let prev = null;
+            for (let i = a; i <= z; i += 1) {
+              const want = prev ? prev.nextSibling : box.body.firstChild;
+              if (inline[i].card !== want) box.body.insertBefore(inline[i].card, want);
+              prev = inline[i].card;
+              grouped.add(i);
+            }
+          }
+          paintGroupHead(g);
         }
+        // A card in no group goes back before its answer piece; a box with no group goes away.
+        if (placed) cards.forEach((b, i) => { if (!grouped.has(i) && inline[i].card.parentNode !== wrap) inline[i].piece.before(inline[i].card); });
+        for (const [id, box] of groups) if (!kept.has(id)) { box.el.remove(); groups.delete(id); }
       };
       renderAnswer = () => { answerKey = answerKeyOf(cur); renderAnswerInto(answerDivs(), cur); paintGroups(); };
       renderAnswer();
@@ -6429,12 +6456,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     let snap = null;
     try { snap = await res.json(); } catch { if (gen === loadGen) abandonWant(id); return null; }
     if (gen !== loadGen || st.destroyed) return null;
-    // A SWITCH starts a fresh ledger, so the new chat rises in. A resync or a
-    // reconnect re-loads the SAME thread and must keep it: those repaint rows the
-    // user is already reading, mid-turn.
+    // #959: a switch keeps the rise ledger: message ids are unique across chats, so a chat shown before rises in only
+    // its new rows, and one never shown rises in whole. A resync or a reconnect re-loads the SAME thread and keeps it
+    // too: those repaint rows the user is already reading, mid-turn.
     const switched = st.threadId !== id;
     if (switched) stopVoice();
-    if (switched) st.seenRows = new Set();
     st.threadId = id;
     if (st.open && st.unread && st.unreadThread === id) setUnread(false);   // the dot's chat is on screen now
     st.model = createThreadModel({ threadId: id });

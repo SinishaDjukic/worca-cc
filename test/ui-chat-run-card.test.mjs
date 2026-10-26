@@ -119,7 +119,7 @@ test('chat run card: head, sub-line, stats, agent chips with model + cycle, Auto
       assert.equal($('.ask-rc-kicker'), null);
       assert.equal($('.ask-rc-pill'), null);
       assert.equal($('.ask-rc-head > .status-dot').dataset.state, 'working');
-      assert.equal($('.ask-rc-head > .kind-chip').textContent, 'Run');
+      assert.equal($('.ask-rc-head > .kind-chip').hidden, true, 'a single run has no chip (#959)');
       assert.equal($('.chat-rc-status.run-status').dataset.state, 'working');
       assert.equal($('.ask-rc-title').textContent, 'Fix login');
       assert.equal($('.ask-rc-sub').textContent, 'proj');
@@ -1112,14 +1112,14 @@ test('chat run card while shaping (Shape it first): "Clarify ✓ · Plan ✓ · 
   const SHAPING = (over = {}) => ({ perspectives: ['ux'], rounds: [{ round: 1 }], approved: { round: 1, file: 'docs/plans/2026-10-14-login.md' }, savedTo: null, ...over });
   try {
     await checkRows([
-      { name: 'an approved plan with the gate on shows the line and the plan file name, between the sub-line and the stats', run: () => {
+      { name: 'an approved plan with the gate on shows the line and the plan file name, between the labels and the stats', run: () => {
         setShapeFirst(true);
         const { card, $ } = mk();
         card.update(live({ shaping: SHAPING() }));
         const line = $('.chat-rc-shaped');
         assert.equal(line.hidden, false);
         assert.equal(line.previousElementSibling, $('.chat-rc-fix'), 'only the PR fix-run line (hidden on any other card) sits between');
-        assert.deepEqual([$('.chat-rc-fix').hidden, $('.chat-rc-fix').previousElementSibling], [true, $('.ask-rc-sub')]);
+        assert.deepEqual([$('.chat-rc-fix').hidden, $('.chat-rc-fix').previousElementSibling], [true, $('.chat-rc-labels')]);
         assert.equal(line.nextElementSibling, $('.chat-rc-members'), 'a group card\'s member rows sit between (slice 4)');
         assert.equal($('.chat-rc-members').hidden, true, 'a single run has none');
         assert.equal($('.chat-rc-members').nextElementSibling, $('.ask-rc-stats'));
@@ -1195,6 +1195,22 @@ const featureRow = (members, over = {}) => {
     members: model.members.map((m, i) => ({ position: i + 1, title: `Part ${i + 1}`, href: '#runs', model: m })), ...over };
 };
 
+test('#959 head: dot · title · Open on one line, the meta line right under it, then the status block; the run card well is a .gv-well', () => {
+  const { card } = mk();
+  assert.deepEqual([...card.el.children].slice(0, 3).map((n) => n.className.split(' ')[0]), ['ask-rc-head', 'ask-rc-sub', 'chat-rc-status']);
+  assert.deepEqual([...card.el.querySelector('.ask-rc-head').children].map((n) => n.className.split(' ')[0]), ['status-dot', 'ask-rc-title', 'kind-chip', 'ask-rc-spacer', 'ask-rc-open']);
+  assert.ok(card.el.querySelector('.run-flow-wrap.chat-rc-well.gv-well'));
+});
+
+test('#959 kind chip: a group row that kindLabel calls a plain run (not a chain) paints no chip', () => {
+  // A real row with a model (update() reads curRow.model), but not a chain: kindLabel returns 'Run' for it.
+  const row = featureRow([WAITING], { kind: 'single' });
+  const { card, $ } = mk({ controls: { memoFor: () => ({}), groupOf: () => row } });
+  card.update(live());
+  assert.equal($('.kind-chip').hidden, true);
+  assert.equal($('.kind-chip').textContent, '');
+});
+
 test('feature card: Shaping, then the group row\'s chip, one status line and its member rows Planning, 1, 2, 3', () => {
   try {
     setShapeFirst(true);
@@ -1202,6 +1218,7 @@ test('feature card: Shaping, then the group row\'s chip, one status line and its
     const { card, $, $$ } = mk({ controls: { memoFor: () => ({}), groupOf: () => row } });
     card.update(shaped({ pipelineId: 'abcd1234', feature: null, log: [] }));
     assert.equal($('.kind-chip').textContent, 'Shaping');
+    assert.equal($('.kind-chip').hidden, false);
     assert.ok($('.ask-rc-head > .status-dot'), 'the head dot is the model\'s status dot');
     assert.equal($$('.run-status-word').length, 1);
     assert.equal($('.chat-rc-members').hidden, true);
@@ -1210,6 +1227,7 @@ test('feature card: Shaping, then the group row\'s chip, one status line and its
     card.update(shaped({ pipelineId: 'abcd1234', feature: VIEW3([SL(1, 'approval', { pipelineId: 'abcd1234', runId: 'run-uuid-1' }), SL(2, 'planned'), SL(3, 'planned')]), log: [] },
       {}, { pendingQuestion: PQ_PLAN }));
     assert.equal($('.kind-chip').textContent, 'Feature · 3 runs');
+    assert.equal($('.kind-chip').hidden, false);
     assert.deepEqual($$('.run-member-title').map((n) => n.textContent), ['Planning', 'Part 1', 'Part 2', 'Part 3']);
     assert.equal($$('.run-status-word').length, 1, 'one status line');
     assert.equal($$('ol.run-members').length, 1, 'one member list');
@@ -1704,7 +1722,8 @@ test('re-plan from the card: Re-planning runs 2–3 in the log, and the re-plan 
 test('a PR fix-run card: its kicker, what triggered it, the PR, and the outcome once the watcher is done', () => {
   const fix = { prUrl: 'https://github.com/o/r/pull/7', memberKey: null, trigger: ['checks'], triggerLabel: 'Failing checks', once: false };
   const { $, card } = mk({ ident: { fix } });
-  assert.equal($('.kind-chip').textContent, 'PR fix run');
+  assert.equal($('.kind-chip').hidden, true, 'a fix run is a single run: no chip (#959)');
+  assert.deepEqual([...$('.chat-rc-fix').children].slice(0, 3).map((n) => n.textContent), ['PR fix run', '·', 'Failing checks']);
   assert.equal($('.chat-rc-fix').hidden, false);
   assert.equal($('.chat-rc-fix-why').textContent, 'Failing checks');
   const pr = $('.chat-rc-fix-pr');
@@ -1715,7 +1734,7 @@ test('a PR fix-run card: its kicker, what triggered it, the PR, and the outcome 
   assert.ok($('.chat-rc-fix-out').classList.contains('is-ok'));
   // A plain track_run card: no fix line, the usual kind chip.
   const plain = mk();
-  assert.equal(plain.$('.kind-chip').textContent, 'Run');
+  assert.equal(plain.$('.kind-chip').hidden, true);
   assert.equal(plain.$('.chat-rc-fix').hidden, true);
 });
 
@@ -1731,7 +1750,7 @@ test('slice 4: the card head, status block and footer come from the one model fo
     card.update(live({ status: run.status || '', pendingQuestion: run.pendingQuestion || null, run }));
     const m = runModel(run, { now: NOW, timeZone: 'UTC' });
     assert.equal($('.chat-rc .run-status').dataset.state, state);
-    assert.equal($('.chat-rc .kind-chip').textContent, 'Run');
+    assert.equal($('.chat-rc .kind-chip').hidden, true);
     const dot = $('.chat-rc .ask-rc-head > .status-dot');
     if (symbol) assert.equal(dot.getAttribute('aria-label'), m.word);
     assert.deepEqual($$('.chat-rc [data-model-action]').filter((b) => !b.hidden && !b.closest('[hidden]')).map((b) => b.dataset.modelAction), m.actions);
@@ -1748,6 +1767,7 @@ test('slice 4: a feature card shows the kind chip, the group bar, the current ru
   const { card, $, $$ } = mk({ controls: { memoFor: () => ({}), groupOf: () => row } });
   card.update(live({ status: 'running', run: asking, shaping: { feature: { id: 'feat_1' } } }));
   assert.equal($('.chat-rc .kind-chip').textContent, 'Feature · 3 runs');
+  assert.equal($('.chat-rc .kind-chip').hidden, false);
   assert.equal($('.chat-rc .ask-rc-title').textContent, 'Run tags');
   assert.equal($('.chat-rc .run-status-group').hidden, false);
   assert.equal($('.chat-rc .run-status-group .run-chain-label').textContent, '1 done');
@@ -2060,6 +2080,7 @@ test('merge: a feature card after the split shows one status line, one member li
     assert.equal($$('.chat-rc ol.run-members').length, 1);
     assert.equal($$('.chat-rc .chat-rc-fstatus, .chat-rc .chat-rc-chain, .chat-rc ol.chat-rc-members, .chat-rc .ask-rc-pill').length, 0);
     assert.equal($('.chat-rc .kind-chip').textContent, 'Feature · 3 runs');
+    assert.equal($('.chat-rc .kind-chip').hidden, false);
     assert.equal($('.chat-rc .chat-rc-log-text').textContent, 'Split into 3 runs');
   } finally { setShapeFirst(false); }
 });
@@ -2089,11 +2110,12 @@ test('merge: a stopped watch with Shape it first off keeps Ask for changes disab
   assert.equal(ask.title, 'Turn on Shaper to ask for changes');
 });
 
-test('merge: a Watch PR fix-run card keeps its kind chip with the Shaper flag off', () => {
+test('merge: a Watch PR fix-run card keeps its kind word (its fix line, #959) with the Shaper flag off', () => {
   setShapeFirst(false);
   const { card, $ } = mk({ ident: { fix: { prUrl: 'https://x/pull/7', triggerLabel: 'Failing checks' } } });
   card.update(live({ status: 'running' }));
-  assert.equal($('.kind-chip').textContent, 'PR fix run');
+  assert.equal($('.kind-chip').hidden, true, 'a fix run is a single run: no chip (#959)');
+  assert.deepEqual([...$('.chat-rc-fix').children].slice(0, 3).map((n) => n.textContent), ['PR fix run', '·', 'Failing checks']);
 });
 
 test('merge: a live Watch PR round feeds runModel, so the one status line names the round', () => {
