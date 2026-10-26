@@ -262,7 +262,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     voiceSwallowClick: false, // the click that ends a long-press must not also start dictation
     lastAnswerRender: 0,
     rowEls: null,
-    seenRows: new Set(),      // message ids the transcript has already shown — see renderTranscript
+    seenRows: new Set(),      // #959: message ids this page has shown, in ANY chat (ids are unique): only a row never shown rises — see renderTranscript
     cardEls: null,
     cardOptions: null,
     catalogLoading: null,
@@ -2975,7 +2975,6 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     st.model = null;
     st.hist = { idx: -1, draft: '' };
     st.suggestDismissed = null;
-    st.seenRows = new Set();            // a different chat: its rows have never been shown
     st.subscribedFor = null;
     stopElapsed();
     storeThread(null);
@@ -3178,7 +3177,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   }
   function rpSelect(className, ariaLabel) {
     const s = doc.createElement('select');
-    s.className = className;
+    s.className = `select ${className}`;           // #959: the shared field (design-system › Field)
     s.setAttribute('aria-label', ariaLabel);
     return s;
   }
@@ -4765,9 +4764,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // ONE feature-branch input for both targets; renderTarget moves it into the current grid.
     const feature = doc.createElement('input');
     feature.type = 'text';
-    feature.className = 'ask-card-feature';
+    feature.className = 'input ask-card-feature';
     feature.value = card.featureBranch || '';
     feature.setAttribute('aria-label', 'Feature branch');
+    // #959: a long branch ellipsizes (style.css); its whole name is the tooltip.
+    feature.title = feature.value;
+    feature.addEventListener('input', () => { feature.title = feature.value; });
 
     // Run on the source branch (branch.sameAsSource): ONE checkbox for both targets, like `feature`.
     const sameSw = makeSwitch(doc, { ariaLabel: 'Run on the source branch', checked: card.sameAsSource === true, inputClass: 'ask-card-same-source' });
@@ -6429,12 +6431,11 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     let snap = null;
     try { snap = await res.json(); } catch { if (gen === loadGen) abandonWant(id); return null; }
     if (gen !== loadGen || st.destroyed) return null;
-    // A SWITCH starts a fresh ledger, so the new chat rises in. A resync or a
-    // reconnect re-loads the SAME thread and must keep it: those repaint rows the
-    // user is already reading, mid-turn.
+    // #959: a switch keeps the rise ledger: message ids are unique across chats, so a chat shown before rises in only
+    // its new rows, and one never shown rises in whole. A resync or a reconnect re-loads the SAME thread and keeps it
+    // too: those repaint rows the user is already reading, mid-turn.
     const switched = st.threadId !== id;
     if (switched) stopVoice();
-    if (switched) st.seenRows = new Set();
     st.threadId = id;
     if (st.open && st.unread && st.unreadThread === id) setUnread(false);   // the dot's chat is on screen now
     st.model = createThreadModel({ threadId: id });

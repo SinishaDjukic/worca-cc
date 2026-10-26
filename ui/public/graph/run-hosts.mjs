@@ -39,11 +39,11 @@ export const FOCUS_PAD = 24;
  *  its radius, so a fit never parks a running step in the mist at the edges. */
 export const FOCUS_CLEAR = 0.6;
 /** Chat P3 `card` host (the chat run card's graph well, U9): the Workflows rendering at a chat zoom. The well width
- *  picks the zoom between CARD_ZOOM_MIN and CARD_ZOOM (CARD_ZOOM_NARROW under CARD_NARROW_W px); a graph wider than
- *  that pans instead of shrinking further. The zoom picks the well height, clamped CARD_MIN_H..CARD_MAX_H on the
- *  wrap's --run-host-h. The camera follows the running nodes unless the user panned or zoomed less than
- *  CARD_FOLLOW_IDLE_MS ago. */
-export const CARD_ZOOM = 0.74, CARD_ZOOM_NARROW = 0.6, CARD_ZOOM_MIN = 0.5, CARD_NARROW_W = 640;
+ *  picks the zoom between CARD_ZOOM_MIN and CARD_ZOOM (CARD_ZOOM_NARROW under CARD_NARROW_W px). #959: the floor is
+ *  the 0.3 every host shares, so the graph is fitted into the well; only a graph wider than that at 0.3× pans. The
+ *  zoom picks the well height, clamped CARD_MIN_H..CARD_MAX_H on the wrap's --run-host-h. The camera follows the
+ *  running nodes unless the user panned or zoomed less than CARD_FOLLOW_IDLE_MS ago. */
+export const CARD_ZOOM = 0.74, CARD_ZOOM_NARROW = 0.6, CARD_ZOOM_MIN = 0.3, CARD_NARROW_W = 640;
 export const CARD_MIN_H = 200, CARD_MAX_H = 480, CARD_PAD = 16, CARD_FOLLOW_IDLE_MS = 5000;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 

@@ -5,8 +5,9 @@
 // scale 1, every wire routed into orthogonal lanes (lanes.mjs), loops under the cards with their ≤N pill, the
 // description footer. It behaves like the chat run card's well (run-hosts.mjs `card`): drag pans, shift+wheel or a
 // mostly horizontal wheel pans, ⌘/ctrl+wheel zooms, a plain vertical wheel stays the chat's scroll, and a pan or zoom
-// never leaves the graph. Unlike it there is no run decor and no follow camera, and the well OPENS AT ZOOM 1: a graph
-// wider than the well pans; it never shrinks to fit or re-flows into rows. The nav cluster is the run monitor's (same
+// never leaves the graph. Unlike it there is no run decor and no follow camera, and the well OPENS FITTED (#959): a graph
+// that fits is drawn at zoom 1, centred; a wider one is shrunk to fit, down to WELL_ZOOM_MIN, and only past that it
+// pans. It never re-flows into rows. The nav cluster is the run monitor's (same
 // glyphs, .gv-nav / .gv-nav-btn) plus Expand, which hands the workflow to the host (the Workflows composer).
 //
 // Measurement: `viewport` (a function, or null) is handed VERBATIM to createGraphView; the width is view.readRect()'s.
@@ -86,7 +87,7 @@ export function mountProposalGraph(hostEl, template, {
 
   const listeners = [];
   const on = (target, type, fn, o) => { target.addEventListener(type, fn, o); listeners.push([target, type, fn, o]); };
-  let wellH = WELL_MIN_H, last = null, lastW = 0, placed = 'open', nav = null, ro = null, expanding = false, dead = false;
+  let wellH = WELL_MIN_H, last = null, lastW = 0, nav = null, ro = null, expanding = false, dead = false;
 
   /** The well's height: the padded graph at zoom 1, clamped. Set once — no width, band or description changes it. */
   function sizeWell() {
@@ -112,17 +113,15 @@ export function mountProposalGraph(hostEl, template, {
     const sx = spanX();
     return { x: sx ? axis(t.x, sx, b.x, b.w, t.z) : t.x, y: axis(t.y, wellH, b.y, b.h, t.z), z: t.z };
   }
-  /** `open`: zoom 1, an axis that fits centred, a longer one at its start edge. `fit` (the Center button): the whole
-   *  graph, ≤ 1×, down to WELL_ZOOM_MIN. Unmeasured, both are the start edge at zoom 1 — the first relayout() that
-   *  sees a width places it for real. */
-  function place(kind = placed) {
+  /** #959: the well opens with its whole graph in view, the Center button's fit: ≤ 1× (a graph that fits stays at
+   *  zoom 1, centred), down to WELL_ZOOM_MIN, clamped. Unmeasured, the start edge at zoom 1; the first relayout()
+   *  that sees a width places it for real. */
+  function place() {
     const b = view.bounds(WELL_PAD);
     if (!b) return;
-    placed = kind;
     const sx = spanX();
-    const t = !sx ? { x: -b.x, y: axis(-b.y, wellH, b.y, b.h, 1), z: 1 }
-      : kind === 'fit' ? clampWell(fitInto(b, sx, wellH, { zoomMin: WELL_ZOOM_MIN }))
-        : clampWell({ x: -b.x, y: -b.y, z: 1 });
+    const t = sx ? clampWell(fitInto(b, sx, wellH, { zoomMin: WELL_ZOOM_MIN }))
+      : { x: -b.x, y: axis(-b.y, wellH, b.y, b.h, 1), z: 1 };
     view.setTransform(t);
     last = view.getTransform();
     lastW = sx;
@@ -135,7 +134,7 @@ export function mountProposalGraph(hostEl, template, {
     return Math.abs(t.x - last.x) < 0.5 && Math.abs(t.y - last.y) < 0.5 && Math.abs(t.z - last.z) < 1e-6;
   }
   /** The well changed width (the chat column resized, the card attached). NEVER moves a node: an untouched view is
-   *  placed again (as it was last placed), one the user panned or zoomed only stays inside the well. */
+   *  fitted again, one the user panned or zoomed only stays inside the well. */
   function relayout() {
     if (dead) return;
     const sx = spanX();
@@ -189,7 +188,7 @@ export function mountProposalGraph(hostEl, template, {
       if (!btn || btn.disabled) return;
       if (btn.dataset.nav === 'in') zoomStep(ZOOM_STEP);
       else if (btn.dataset.nav === 'out') zoomStep(1 / ZOOM_STEP);
-      else if (btn.dataset.nav === 'center') place('fit');
+      else if (btn.dataset.nav === 'center') place();
       else if (btn.dataset.nav === 'expand') expand(btn);
     });
   }
@@ -213,7 +212,7 @@ export function mountProposalGraph(hostEl, template, {
     const t = view.getTransform();
     view.setTransform(clampWell({ x: t.x - dx * unit, y: t.y, z: t.z }));
   }, { passive: false });
-  place('open');
+  place();
   // jsdom has no ResizeObserver — guard through the document's window (run-hosts' idiom).
   if (typeof win.ResizeObserver === 'function') {
     ro = new win.ResizeObserver(() => relayout());
@@ -242,5 +241,5 @@ export function mountProposalGraph(hostEl, template, {
     hostEl.style.removeProperty('height');
   }
 
-  return { view, order: readingOrder(tpl), template: () => tpl, height: () => wellH, relayout, fit: () => place('fit'), setDescriptions, destroy };
+  return { view, order: readingOrder(tpl), template: () => tpl, height: () => wellH, relayout, fit: () => place(), setDescriptions, destroy };
 }
