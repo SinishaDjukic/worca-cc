@@ -170,3 +170,11 @@ Pull requests (add each number when it opens):
 - Runs redesign: the Runs list
 - Runs redesign: cards and pages
 - Runs redesign: upgrade safety, states, alerts, What's new
+
+## Plugin updates work on Windows
+
+`worca plugin update` no longer fails on Windows with `Path is a directory: true`. The installed version's link is replaced cleanly, and the previous version's files stay untouched until cleanup.
+
+Pull requests (add each number when it opens):
+
+- Plugins: update works on Windows when the current version is a junction
