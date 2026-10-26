@@ -4,7 +4,8 @@
 import { paintStatusDot } from './status-dot.mjs';
 import { RUN_STATES } from '../../src/shared/run-model.mjs';
 import { iconSvg } from './icons.mjs';
-import { fmtCmdDur, elapsedMs } from './ask-command-group.mjs';
+import { fmtCmdDur, elapsedMs, isFailed, groupHeadParts, groupOpen } from './ask-command-group.mjs';
+export { isFailed };
 
 export const COMMAND_CARD_TYPE = 'command';
 
@@ -32,9 +33,6 @@ function outputLabel(v) {
 const DONE_DOT = Object.freeze({ state: 'done', word: 'Done', dot: 'green', pulse: false, symbol: null });
 const ENDED_DOT = Object.freeze({ ...RUN_STATES.stopped, state: 'ended', word: 'Ended' });
 
-/** A command that ended with a non-zero exit code. */
-export function isFailed(v) { return !!v && v.status === 'done' && v.exitCode != null && v.exitCode !== 0; }
-
 /** The runs status dot for a command view (#911): the same states and colours the Runs list draws. */
 export function dotOf(v) {
   if (!v || v.status === 'running') return { ...RUN_STATES.working, state: 'working' };
@@ -50,16 +48,61 @@ export function metaOf(v, now = Date.now()) {
   return `${pillOf(v).text} · ${dur}`;
 }
 
-/** The quiet mono copy button (as branch names copy, app.js copyBranchToClipboard): `.copied` for 1200 ms. */
-function copyButton(doc, text) {
-  const btn = h(doc, 'button', 'btn btn-sm btn-quiet mono ask-cmd-copy');
+const OPS = ['&&', '||', '|', ';'];
+
+/** #911: the command cut for light colour (D10). `cmd`: each segment's first word; `op`: |, &&, || and ;; `flag`: -x, --x;
+ *  `str`: a word opening with a quote; `text`: the rest, spaces included. Joined, the tokens are the command again. */
+export function commandTokens(cmd) {
+  const s = String(cmd || '');
+  const out = [];
+  const push = (t, text) => {
+    const last = out[out.length - 1];
+    if (t === 'text' && last && last.t === 'text') last.s += text; else out.push({ t, s: text });
+  };
+  let i = 0;
+  let head = true;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === ' ' || c === '\t' || c === '\n') {
+      if (c === '\n' && s[i - 1] !== '\\') head = true;          // a new line is a new command, unless continued
+      push('text', c); i += 1; continue;
+    }
+    const op = OPS.find((o) => s.startsWith(o, i));
+    if (op) { push('op', op); i += op.length; head = true; continue; }
+    let j = i;
+    while (j < s.length && !/[\s|;]/.test(s[j]) && !s.startsWith('&&', j)) {
+      if (s[j] === '"' || s[j] === "'") {                          // a quoted span stays in its word
+        const q = s[j];
+        j += 1;
+        while (j < s.length && s[j] !== q) j += s[j] === '\\' && q === '"' ? 2 : 1;
+      }
+      j += 1;
+    }
+    j = Math.min(j, s.length);
+    const word = s.slice(i, j);
+    const t = word[0] === '"' || word[0] === "'" ? 'str' : head ? 'cmd' : /^--?[^-\s]/.test(word) ? 'flag' : 'text';
+    push(t, word);
+    head = false;
+    i = j;
+  }
+  return out;
+}
+
+/** The tokens as DOM: text nodes and `span.ask-cmd-tk-*`, always via textContent (never HTML). */
+export function commandSpans(doc, cmd) {
+  return commandTokens(cmd).map((k) => (k.t === 'text' ? doc.createTextNode(k.s) : h(doc, 'span', `ask-cmd-tk-${k.t}`, k.s)));
+}
+
+/** A quiet copy button (as branch names copy, app.js copyBranchToClipboard): `.copied` for 1200 ms. `read()` gives the
+ *  text at click time; `label` adds words after the icon (none: a square icon button). */
+function copyButton(doc, read, { title, label = '' }) {
+  const btn = h(doc, 'button', `btn btn-sm btn-quiet ask-cmd-copy${label ? '' : ' btn-icon'}`);
   btn.type = 'button';
-  btn.title = 'Copy command';
-  btn.setAttribute('aria-label', 'Copy command');
-  const label = h(doc, 'span', 'ask-cmd-copy-text', text);
-  btn.append(label);
+  btn.title = title;
+  btn.setAttribute('aria-label', title);
   btn.insertAdjacentHTML('beforeend', iconSvg('copy', 14).replace('<svg', '<svg class="ico-copy"')
     + iconSvg('check', 14).replace('<svg', '<svg class="ico-check"'));
+  if (label) btn.append(h(doc, 'span', 'ask-cmd-copy-text', label));
   let timer = null;
   btn.addEventListener('click', () => {
     const win = doc.defaultView;
@@ -67,11 +110,11 @@ function copyButton(doc, text) {
       btn.classList.toggle('copied', ok);
       btn.title = ok ? 'Copied' : 'Copy failed';
       clearTimeout(timer);
-      timer = setTimeout(() => { btn.classList.remove('copied'); btn.title = 'Copy command'; }, 1200);
+      timer = setTimeout(() => { btn.classList.remove('copied'); btn.title = title; }, 1200);
     };
     const clip = win && win.navigator && win.navigator.clipboard;
     if (!clip) { done(false); return; }
-    clip.writeText(text).then(() => done(true), () => done(false));
+    clip.writeText(read()).then(() => done(true), () => done(false));
   });
   return btn;
 }
@@ -82,7 +125,8 @@ export function longCommand(cmd) {
   return s.split('\n').length > 3 || s.length > 180;
 }
 
-/** `expanded` / `onToggle`: the output's fold, held by the panel per blockId so it outlives a rebuild of the card.
+/** `expanded` / `onToggle`: the full card's output fold, held by the panel per blockId so it outlives a rebuild of the
+ *  card. The summary row ignores them: its open state is its output's (one fold).
  *  `keepInPlace(control, change)`: a click folds or unfolds inside it, so the host can keep the toggle where it was
  *  on screen (a transcript pinned to its end would otherwise follow the opened output).
  *  `summarise` (#911): the one-line row. `rowOpen`: the person's open choice (undefined = none: a failure opens
@@ -90,7 +134,7 @@ export function longCommand(cmd) {
  *  `now`: the clock (tests pass a fake). */
 export function createCommandCard({ doc, card, onStop, onShow = () => {}, expanded = false, onToggle = () => {},
   keepInPlace = (control, change) => change(), summarise = false, rowOpen, onRowToggle = () => {}, now = () => Date.now(), onTick = () => {} }) {
-  if (summarise) return createCommandRow({ doc, card, onStop, onShow, expanded, onToggle, keepInPlace, rowOpen, onRowToggle, now, onTick });
+  if (summarise) return createCommandRow({ doc, card, onStop, onShow, keepInPlace, rowOpen, onRowToggle, now, onTick });
   const el = h(doc, 'div', 'ask-card ask-cmd');
   el.dataset.blockId = card.blockId;
   const head = h(doc, 'div', 'ask-cmd-head');
@@ -157,18 +201,14 @@ export function createCommandCard({ doc, card, onStop, onShow = () => {}, expand
       paintOutput();
       el.classList.toggle('is-live', live);
     },
-    /** The full card never joins a group (#911): a no-op, so the panel calls it in either mode. */
-    setGroup() {},
     get view() { return view; },
     destroy() { el.remove(); },
   };
 }
 
-function createCommandRow({ doc, card, onStop, onShow, expanded, onToggle, keepInPlace, rowOpen, onRowToggle, now, onTick }) {
+function createCommandRow({ doc, card, onStop, onShow, keepInPlace, rowOpen, onRowToggle, now, onTick }) {
   const el = h(doc, 'div', 'ask-card ask-cmd is-sum');
   el.dataset.blockId = card.blockId;
-  const ghead = h(doc, 'div', 'ask-cmd-ghead');
-  ghead.hidden = true;
   const row = h(doc, 'div', 'ask-cmd-row');
   const btn = h(doc, 'button', 'ask-cmd-row-btn');
   btn.type = 'button';
@@ -184,33 +224,39 @@ function createCommandRow({ doc, card, onStop, onShow, expanded, onToggle, keepI
   const chev = h(doc, 'span', 'ask-cmd-chev', '›');
   chev.setAttribute('aria-hidden', 'true');
   row.append(btn, stop, chev);
-  // The detail: the exact command (copy), the folder, the output fold — today's toggle and <pre>.
+  // The detail (#911): the whole command (light colour, copy), its folder and Show in terminal, then the output.
+  // Opening the row shows the output: one fold.
   const detail = h(doc, 'div', 'ask-cmd-detail');
-  const line = h(doc, 'div', 'ask-cmd-line');
-  line.append(h(doc, 'span', 'ask-cmd-dollar', '$ '), copyButton(doc, card.command));
-  const folder = h(doc, 'button', 'ask-cmd-folder', card.folder || '');
-  folder.type = 'button';
-  folder.title = 'Show in the terminal';
-  folder.addEventListener('click', () => onShow(card.sessionId));
-  const toggle = h(doc, 'button', 'ask-cmd-toggle');
-  toggle.type = 'button';
-  toggle.hidden = true;
-  const tchev = h(doc, 'span', 'ask-cmd-chev', '›');
-  tchev.setAttribute('aria-hidden', 'true');
-  const toggleLabel = h(doc, 'span', 'ask-cmd-toggle-label', '');
-  toggle.append(tchev, toggleLabel);
+  const cmdBox = h(doc, 'div', 'ask-cmd-cmd');
+  const code = h(doc, 'code', 'ask-cmd-code');
+  code.append(h(doc, 'span', 'ask-cmd-dollar', '$ '), ...commandSpans(doc, card.command));
+  cmdBox.append(code, copyButton(doc, () => card.command, { title: 'Copy command' }));
+  const where = h(doc, 'div', 'ask-cmd-ctx');
+  const dir = h(doc, 'span', 'ask-cmd-dir', card.folder || '');
+  dir.hidden = !card.folder;
+  const show = h(doc, 'button', 'btn btn-sm btn-quiet ask-cmd-show');
+  show.type = 'button';
+  show.insertAdjacentHTML('beforeend', iconSvg('terminal', 14));
+  show.append(h(doc, 'span', null, 'Show in terminal'));
+  show.addEventListener('click', () => onShow(card.sessionId));
+  where.append(dir, h(doc, 'span', 'ask-rc-spacer'), show);
   const out = h(doc, 'pre', 'ask-cmd-out');
-  out.hidden = true;
-  detail.append(line, folder, toggle, out);
+  const outBox = h(doc, 'div', 'ask-cmd-outbox');
+  outBox.hidden = true;
+  const outHead = h(doc, 'div', 'ask-cmd-outhead');
+  const outLabel = h(doc, 'span', 'ask-cmd-outlabel', '');
+  outHead.append(outLabel, h(doc, 'span', 'ask-rc-spacer'), copyButton(doc, () => out.textContent, { title: 'Copy output', label: 'Copy' }));
+  outBox.append(outHead, out);
+  detail.append(cmdBox, where, outBox);
   const warning = h(doc, 'div', 'ask-cmd-warning', card.warning || '');
   warning.hidden = !card.warning;
-  el.append(ghead, row, detail, warning);
+  el.append(row, detail, warning);
 
   let view = null;
-  let open = !!expanded;          // the output fold
   let rowIsOpen = rowOpen === true;
   // A choice already made (a click, or an earlier auto-open the panel recorded): a failure no longer opens itself.
   let chosen = rowOpen === true || rowOpen === false;
+  let stick = true;               // the output follows its newest line until the person scrolls up
   const win = doc.defaultView;
   let ticker = null;              // one 1 s interval while the command runs (D17)
   const given = !!card.summary;                    // #911 slice 2: a chat-given summary is never replaced
@@ -236,20 +282,14 @@ function createCommandRow({ doc, card, onStop, onShow, expanded, onToggle, keepI
     detail.hidden = !rowIsOpen;
     btn.setAttribute('aria-expanded', String(rowIsOpen));
     el.classList.toggle('is-open', rowIsOpen);
-    const has = !!out.textContent;
-    toggle.hidden = !has;
-    toggle.setAttribute('aria-expanded', String(open));
-    out.hidden = !has || !open;
-    if (!out.hidden) out.scrollTop = out.scrollHeight;
+    outBox.hidden = !out.textContent;
+    if (rowIsOpen && stick) out.scrollTop = out.scrollHeight;
   }
+  out.addEventListener('scroll', () => { stick = out.scrollHeight - out.scrollTop - out.clientHeight < 8; });
   row.addEventListener('click', (e) => {
     if (e.target.closest('.ask-cmd-stop')) return;
     keepInPlace(row, () => { rowIsOpen = !rowIsOpen; chosen = true; paint(); });
     onRowToggle(rowIsOpen);
-  });
-  toggle.addEventListener('click', () => {
-    keepInPlace(toggle, () => { open = !open; paint(); });
-    onToggle(open);
   });
   paintDot(null);
   paintMeta();
@@ -264,14 +304,17 @@ function createCommandRow({ doc, card, onStop, onShow, expanded, onToggle, keepI
       setTicker(!!v && live);
       stop.hidden = !live;
       if (!live) stop.disabled = false;
+      const top = out.scrollTop;
       out.textContent = v && v.tail ? v.tail : '';
-      toggleLabel.textContent = out.textContent ? outputLabel(v) : '';
+      outLabel.textContent = out.textContent ? outputLabel(v) : '';
+      if (!stick) out.scrollTop = top;               // scrolled up: the new tail does not pull the person down
       if (!chosen && isFailed(v)) {
-        // A failure opens itself, with its output, ONCE (D12); reported so later frames and rebuilds keep the person's folds.
-        chosen = true; rowIsOpen = true; open = true;
-        onRowToggle(true); onToggle(true);
+        // A failure opens itself, its output with it, ONCE (D12); reported so later frames and rebuilds keep the person's fold.
+        chosen = true; rowIsOpen = true;
+        onRowToggle(true);
       }
       el.classList.toggle('is-live', live);
+      el.classList.toggle('is-failed', isFailed(v));
       paint();
     },
     /** #911 slice 2: the Command summaries helper job's line, for a row the chat gave no summary. In place. */
@@ -283,15 +326,59 @@ function createCommandRow({ doc, card, onStop, onShow, expanded, onToggle, keepI
       sum.classList.remove('is-raw');
       paintMeta();
     },
-    /** `{ role: 'first'|'mid'|'last', head? }` or null: this row's place in a group of consecutive commands. */
-    setGroup(g) {
-      el.classList.toggle('in-group', !!g);
-      el.classList.toggle('is-g-first', !!g && g.role === 'first');
-      el.classList.toggle('is-g-last', !!g && g.role === 'last');
-      ghead.hidden = !(g && g.role === 'first' && g.head);
-      ghead.textContent = g && g.role === 'first' && g.head ? g.head : '';
-    },
     get view() { return view; },
     destroy() { setTicker(false); el.remove(); },
+  };
+}
+
+let groupSeq = 0;
+
+/** #911: a group of 2+ consecutive commands: one quiet disclosure head over ONE card (`body`); the panel moves the rows'
+ *  elements into `body`. `choice`: the recorded fold (a click, or a failure's one auto-open; undefined = none);
+ *  `onToggle(open)` reports either, so the panel keeps it across a rebuild (D3, D4). */
+export function createCommandGroup({ doc, choice, onToggle = () => {}, keepInPlace = (control, change) => change() }) {
+  const el = h(doc, 'div', 'ask-cmd-group');
+  const head = h(doc, 'button', 'ask-cmd-ghead');
+  head.type = 'button';
+  const words = h(doc, 'span', 'ask-cmd-gwords');
+  const chev = h(doc, 'span', 'ask-cmd-chev', '›');
+  chev.setAttribute('aria-hidden', 'true');
+  head.append(words, chev);
+  const body = h(doc, 'div', 'ask-cmd-gbody');
+  groupSeq += 1;
+  body.id = `ask-cmd-g${groupSeq}`;
+  head.setAttribute('aria-controls', body.id);
+  el.append(head, body);
+  let views = [];
+  let live = false;
+  let chosen = choice === true || choice === false ? choice : undefined;
+  let open = false;
+  function paint() {
+    open = groupOpen(views, chosen, live);
+    head.setAttribute('aria-expanded', String(open));
+    // An auto-fold must not drop the keyboard focus on <body> (e.g. Stop or a row button was focused): it moves to the head.
+    if (!open && !body.hidden && body.contains(doc.activeElement)) head.focus();
+    body.hidden = !open;
+  }
+  head.addEventListener('click', () => {
+    keepInPlace(head, () => { chosen = !open; paint(); });
+    onToggle(chosen);
+  });
+  return {
+    el,
+    body,
+    /** The member views (null: not loaded yet); `live`: this message is the live turn (D5). */
+    update(vs, { now = Date.now(), live: isLive = false } = {}) {
+      views = vs;
+      live = isLive;
+      const p = groupHeadParts(vs, now, live);
+      const parts = [doc.createTextNode(p.lead)];
+      if (p.failed) parts.push(doc.createTextNode(' · '), h(doc, 'span', 'ask-cmd-gfail', `${p.failed} failed`));
+      parts.push(doc.createTextNode(` · ${p.dur}`));
+      words.replaceChildren(...parts);
+      if (chosen === undefined && p.failed) { chosen = true; onToggle(true); }   // a failure opens its group ONCE (D12)
+      paint();
+    },
+    get open() { return open; },
   };
 }

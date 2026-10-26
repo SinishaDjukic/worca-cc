@@ -137,9 +137,16 @@ test('command cards take the 760px text column, like the run proposal (#911)', (
   assert.doesNotMatch(width, /chat-card-max/);
 });
 
-test('summary rows: one line, joined in a group, the raw command in mono (#911)', () => {
+test('summary rows: one line, a group is one card under a quiet head, the raw command in mono (#911)', () => {
   assert.match(ruleBody('.ask-cmd-sum'), /white-space:nowrap;/);
   assert.match(ruleBody('.ask-cmd-sum.is-raw'), /font-family:var\(--mono\)/);
-  assert.match(ruleBody('.ask-cmd.in-group:not(.is-g-first)'), /margin-top:-7px;/);
   assert.match(ruleBody('.ask-cmd-row:hover'), /background:var\(--hover\)/);
+  assert.match(ruleBody('.ask-cmd-ghead'), /color:var\(--ink-2\)/);
+  assert.match(ruleBody('.ask-cmd-ghead:hover'), /background:var\(--hover\)/);
+  assert.match(ruleBody('.ask-cmd-gfail'), /color:var\(--red-ink\)/);
+  assert.match(ruleBody('.ask-cmd-gbody > .ask-card.ask-cmd.is-sum + .ask-card.ask-cmd.is-sum'), /border-top:1px solid var\(--line\)/);
+  assert.doesNotMatch(bare, /\.ask-cmd\.in-group/, 'no more stacked cards');
+  assert.match(ruleBody('.ask-cmd-outbox .ask-cmd-out'), /max-height:min\(400px,50vh\);/);
+  assert.match(ruleBody('.ask-cmd-code'), /font-size:12px;line-height:1\.6;/);
+  assert.match(ruleBody('.chat-convo .ask-msg > .ask-cmd-group'), /^width:min\(var\(--chat-text-max\),100cqi\);/);
 });
