@@ -5,7 +5,7 @@
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
 import { budgetStatus } from '../cost-budget.mjs';
 import { safeParseJson } from '../protocol.mjs';
-import { RequirementsError, SECTIONS, LIMITS, MAX_QUESTIONS, clip, normalizeSection } from './spec.mjs';
+import { RequirementsError, SECTIONS, LIST_SECTIONS, LIMITS, MAX_QUESTIONS, clip, normalizeSection } from './spec.mjs';
 import { asData, roundPromptParts, threadText, specBlocks, RoundError, pendingRound, removedCriteria } from './round.mjs';
 import { diffList } from './ready.mjs';
 import {
@@ -513,4 +513,29 @@ export function clearChat(seq) {
   const f = notArchived(seq);
   if (isAnswering(f.seq)) throw new RequirementsError('BUSY', ANSWERING);
   return deleteHelperMessages(f.seq);
+}
+
+// ---------------------------------------------------------------- the view (§5)
+
+/** A message as the page shows it: drafts with `dropped` (their round is no longer pending, D6), proposals with `stale` (D9),
+ *  a list section's `added` / `removed` lines (D8) and `askedAgain` (a later message asked again about it, D10). */
+export function helperView(seq) {
+  const f = requireFeature(seq);
+  const pending = pendingOf(f, listTurns(f.seq));
+  const rows = listHelperMessages(f.seq);
+  const asked = new Set(rows.filter((m) => m.role === 'po' && m.focus && m.focus.askAgain).map((m) => `${m.focus.askAgain.msgId}:${m.focus.askAgain.n}`));
+  return {
+    messages: rows.map((m) => ({
+      id: m.id, role: m.role, text: m.text, focus: m.focus, roundTurnId: m.roundTurnId,
+      drafts: (m.drafts || []).map((x) => ({ ...x, dropped: !pending || pending.turnId !== m.roundTurnId })),
+      proposals: (m.proposals || []).map((p) => ({
+        ...p, stale: p.state === 'proposed' && isStale(f.spec, p),
+        ...(LIST_SECTIONS.includes(p.target) ? diffList(p.before || [], p.value || []) : {}),
+        askedAgain: asked.has(`${m.id}:${p.n}`),
+      })),
+      error: m.error, costUsd: m.costUsd, model: m.model, createdAt: m.createdAt, createdBy: m.createdBy,
+    })),
+    answering: isAnswering(f.seq),
+    estimate: helperEstimate(),
+  };
 }
