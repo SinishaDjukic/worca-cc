@@ -21,10 +21,12 @@ export async function startFakeJira(o = {}) {
   // refusePropertyPut: a role that may create issues but not edit them (403 on the property PUT); failReadBack: a description
   // read fails (500); refuseIssuetypeEdit: an edit naming issuetype is refused; fail: one request answers that status and body.
   // version: what serverInfo says (Data Center 8.4 added create metadata per project); hangPropertyPut / hangReadBack: that
-  // request never gets an answer; staleSearch: a search answers a description that differs from the issue's own.
+  // request never gets an answer; staleSearch: a search answers a description that differs from the issue's own;
+  // brokenReadBack: a description read answers 200 with a body that is not JSON; noVersionNumbers: serverInfo names only `version`.
   const opt = { deployment: 'cloud', token: 'tok', email: 'ann@acme.test', refuseToken: false, refuseProperties: false, refusePropertyPut: false,
     failReadBack: false, refuseIssuetypeEdit: false, fail: null, oldCreatemeta: false, requiredField: null, refuseOnUpdate: null, storeCrlf: false,
-    version: o.deployment === 'datacenter' ? '9.12.0' : '1001.0.0-SNAPSHOT', hangPropertyPut: false, hangReadBack: false, staleSearch: false, ...o };
+    version: o.deployment === 'datacenter' ? '9.12.0' : '1001.0.0-SNAPSHOT', hangPropertyPut: false, hangReadBack: false, staleSearch: false,
+    brokenReadBack: false, noVersionNumbers: false, ...o };
   const cloud = opt.deployment === 'cloud';
   const auth = cloud ? `Basic ${Buffer.from(`${opt.email}:${opt.token}`).toString('base64')}` : `Bearer ${opt.token}`;
   const fields = [...BASE_FIELDS, ...(opt.requiredField ? [{ fieldId: opt.requiredField.id, name: opt.requiredField.name, required: true,
@@ -47,7 +49,7 @@ export async function startFakeJira(o = {}) {
     requests.push({ method: req.method, path: p, query: Object.fromEntries(url.searchParams), body, auth: req.headers.authorization || null });
     if (p === '/rest/api/2/serverInfo') {
       return send(res, 200, { deploymentType: cloud ? 'Cloud' : 'DataCenter', version: opt.version,
-        versionNumbers: String(opt.version).split('-')[0].split('.').map(Number) });
+        ...(opt.noVersionNumbers ? {} : { versionNumbers: String(opt.version).split('-')[0].split('.').map(Number) }) });
     }
     if (opt.refuseToken || req.headers.authorization !== auth) return send(res, 401, { errorMessages: ['You are not authenticated.'] });
     if (opt.fail && req.method === opt.fail.method && p === opt.fail.path) return send(res, opt.fail.status, opt.fail.body);
@@ -107,6 +109,10 @@ export async function startFakeJira(o = {}) {
         return send(res, 204);
       }
       if (opt.hangReadBack && /description/.test(url.searchParams.get('fields') || '')) return undefined;
+      if (opt.brokenReadBack && /description/.test(url.searchParams.get('fields') || '')) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        return res.end('{"key": "SHOP-1');   // cut off: not JSON
+      }
       if (opt.failReadBack && /description/.test(url.searchParams.get('fields') || '')) return send(res, 500, { errorMessages: [], errors: {} });
       return send(res, 200, { key: i.key, fields: { description: i.fields.description, labels: i.fields.labels, summary: i.fields.summary,
         issuetype: i.fields.issuetype } });

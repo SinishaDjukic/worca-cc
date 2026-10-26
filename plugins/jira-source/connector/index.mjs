@@ -141,7 +141,11 @@ export default function createTaskSource(ctx, deps = {}) {
   // it never throws, or the host would think nothing was made (D10)
   async function readBack(key) {
     try {
-      const text = (await jiraFetch(jira, `/rest/api/2/issue/${enc(key)}?fields=description`, { timeoutMs: afterKey }))?.fields?.description;
+      const got = await jiraFetch(jira, `/rest/api/2/issue/${enc(key)}?fields=description`, { timeoutMs: afterKey });
+      // jiraFetch answers null for a 200 whose body stalled or does not parse: that read says nothing, and the fingerprint
+      // of nothing would make the next Update warn "edited in Jira". An empty description (fields present) is real.
+      if (!got || typeof got.fields !== 'object' || got.fields === null) throw new Error('the answer had no fields');
+      const text = got.fields.description;
       return { text: text ?? '', fingerprint: fingerprintOf(text) };
     } catch (e) { log('warn', `${key}: could not read the description back: ${e?.message || e}`); return { text: null, fingerprint: null }; }
   }

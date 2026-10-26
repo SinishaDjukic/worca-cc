@@ -52,6 +52,13 @@ test('exportOptions: a Data Center older than 8.4 (serverInfo says so; create me
   assert.deepEqual([r.tooOld, r.issueTypes, r.projects.length], [true, [], 2]);
 });
 
+test('exportOptions: without versionNumbers the version string decides tooOld (8.3.x is too old, 9.x is not)', async () => {
+  const old = await site({ deployment: 'datacenter', oldCreatemeta: true, version: '8.3.2', noVersionNumbers: true });
+  assert.equal((await old.src.exportOptions({ project: 'SHOP' })).tooOld, true);
+  const newer = await site({ deployment: 'datacenter', oldCreatemeta: true, version: '9.4.1', noVersionNumbers: true });
+  await assert.rejects(newer.src.exportOptions({ project: 'SHOP' }), (e) => e.kind === 'plugin' && !('tooOld' in e));
+});
+
 test('exportOptions: a create-metadata 404 on a Data Center 8.4 or later is a missing project, not tooOld', async () => {
   for (const version of ['8.4.0', '9.12.0']) {
     const { src } = await site({ deployment: 'datacenter', oldCreatemeta: true, version });
@@ -237,6 +244,19 @@ test('after the key is known a request that never answers times out: the key sti
   const upd = await slow.src.updateTicket({ key: 'SHOP-101', ticket: { ...TICKET, title: 'Cancel an order' } });
   assert.deepEqual([upd.key, upd.fingerprint, slow.jira.issues.get('SHOP-101').fields.summary], ['SHOP-101', null, 'Cancel an order']);
   assert.ok(Date.now() - t0 < 10_000, 'well inside the host 60 s limit');
+});
+
+test('a read-back answering 200 with a body that is not JSON is no fingerprint, never the fingerprint of nothing', async () => {
+  for (const deployment of BOTH) {
+    const { jira, logs, src } = await site({ deployment, brokenReadBack: true });
+    const made = await src.createTicket({ ticket: { ...TICKET, marker: 'rexp_0123456789ab' } });
+    assert.deepEqual([made.key, made.fingerprint, jira.issues.size], ['SHOP-101', null, 1], deployment);
+    const upd = await src.updateTicket({ key: 'SHOP-101', ticket: { ...TICKET, title: 'Cancel an order' } });
+    assert.deepEqual([upd.key, upd.fingerprint], ['SHOP-101', null], deployment);
+    const hit = await src.findTicket({ project: 'SHOP', label: 'worca-FEAT-7', marker: 'rexp_0123456789ab' });
+    assert.deepEqual([hit.key, hit.fingerprint, hit.lastLine], ['SHOP-101', null, 'From Worca FEAT-7 · exported 26 Oct 2026'], deployment);
+    assert.ok(logs.some((l) => /^warn SHOP-101: could not read the description back/.test(l)), deployment);
+  }
 });
 
 test('no token and no Authorization value in a log, a thrown message or an answer, on success and failure paths', async () => {
