@@ -63,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 77;
+export const SCHEMA_VERSION = 78;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -856,7 +856,8 @@ const INCREMENTAL_COLUMNS = {
                             release_target: 'TEXT',   // v66: the branch the tag points at (the PR's base)
                             release_at: 'TEXT',       // v66: when the draft release was claimed (set once; never cleared)
                             release_url: 'TEXT',      // v66: the draft release's URL
-                            release_error: 'TEXT' },  // v66: why creating it failed (not retried)
+                            release_error: 'TEXT',    // v66: why creating it failed (not retried)
+                            is_test: 'INTEGER' },     // v78 (workflow tests D21/D22): 1 = a test try, hidden from lists, Statistics, metrics; NULL = a normal run
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
@@ -1360,6 +1361,86 @@ CREATE TABLE IF NOT EXISTS workflow_revisions (
 CREATE INDEX IF NOT EXISTS idx_workflow_revisions_wf ON workflow_revisions (workflow_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_workflow_revisions_version ON workflow_revisions (workflow_id, version_no) WHERE version_no IS NOT NULL;`;
 
+// v78 (plans/workflow-tests-part2-plan.md D31): workflow tests. Examples (+ their files as BLOBs), test runs, tries and
+// the tries a run shows (its own and the ones it reused). FK-free like workflow_revisions: a deleted workflow keeps its
+// examples, and they come back with a workflow saved again under the same id.
+const WORKFLOW_TESTS_DDL = `
+CREATE TABLE IF NOT EXISTS wf_test_examples (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  workflow_id   TEXT NOT NULL,
+  name          TEXT NOT NULL,
+  request       TEXT NOT NULL DEFAULT '',
+  answers       TEXT NOT NULL DEFAULT '[]',
+  otherwise     TEXT NOT NULL DEFAULT 'pick',
+  basics        TEXT NOT NULL DEFAULT '{}',
+  checks        TEXT NOT NULL DEFAULT '[]',
+  tries         INTEGER NOT NULL DEFAULT 3,
+  note          TEXT,
+  from_pipeline TEXT,
+  from_use      TEXT,
+  from_verdict  TEXT,
+  created_by    TEXT,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_wf_test_examples_wf ON wf_test_examples (workflow_id, id);
+CREATE TABLE IF NOT EXISTS wf_test_example_files (
+  example_id INTEGER NOT NULL,
+  name       TEXT NOT NULL,
+  data       BLOB NOT NULL,
+  sha256     TEXT NOT NULL,
+  size       INTEGER NOT NULL,
+  PRIMARY KEY (example_id, name)
+);
+CREATE TABLE IF NOT EXISTS wf_test_runs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  workflow_id TEXT NOT NULL,
+  kind        TEXT NOT NULL DEFAULT 'compare',
+  a_use       TEXT,
+  b_use       TEXT NOT NULL,
+  a_fp        TEXT,
+  b_fp        TEXT NOT NULL,
+  example_ids TEXT NOT NULL DEFAULT '[]',
+  tries       INTEGER NOT NULL,
+  quick       TEXT,
+  cap_usd     REAL,
+  connectors  TEXT NOT NULL DEFAULT 'pretend',
+  status      TEXT NOT NULL,
+  stop_reason TEXT,
+  stop_detail TEXT,
+  started_by  TEXT,
+  created_at  TEXT NOT NULL,
+  finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_wf_test_runs_wf ON wf_test_runs (workflow_id, id);
+CREATE TABLE IF NOT EXISTS wf_test_tries (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id      INTEGER NOT NULL,
+  workflow_id TEXT NOT NULL,
+  example_id  INTEGER NOT NULL,
+  use_ref     TEXT NOT NULL,
+  fp          TEXT NOT NULL,
+  example_fp  TEXT NOT NULL,
+  try_no      INTEGER NOT NULL,
+  mock        INTEGER NOT NULL DEFAULT 0,
+  connectors  TEXT NOT NULL DEFAULT 'pretend',
+  status      TEXT NOT NULL,
+  run_key     TEXT,
+  pipeline_id TEXT,
+  verdict     TEXT,
+  cost_usd    REAL NOT NULL DEFAULT 0,
+  started_at  TEXT,
+  finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_wf_test_tries_reuse ON wf_test_tries (workflow_id, example_id, use_ref, fp, example_fp);
+CREATE INDEX IF NOT EXISTS idx_wf_test_tries_run ON wf_test_tries (run_id);
+CREATE TABLE IF NOT EXISTS wf_test_run_tries (
+  run_id INTEGER NOT NULL,
+  try_id INTEGER NOT NULL,
+  side   TEXT NOT NULL,
+  PRIMARY KEY (run_id, try_id)
+);`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1396,6 +1477,11 @@ const INCREMENTAL_TABLES = {
   run_group_members: RUN_GROUPS_DDL,
   ask_chat_groups:   ASK_CHAT_GROUPS_DDL,      // v76 (#948 s3)
   workflow_revisions: WORKFLOW_REVISIONS_DDL,  // v77 (workflow tests Part 1, #721)
+  wf_test_examples:      WORKFLOW_TESTS_DDL,   // v78 (workflow tests Part 2)
+  wf_test_example_files: WORKFLOW_TESTS_DDL,
+  wf_test_runs:          WORKFLOW_TESTS_DDL,
+  wf_test_tries:         WORKFLOW_TESTS_DDL,
+  wf_test_run_tries:     WORKFLOW_TESTS_DDL,
   night_decisions:   NIGHT_DECISIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
@@ -2547,6 +2633,7 @@ export function migrate(db) {
     // v75 (#948 s2): ask_threads.archived_at / pinned_at — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     if (current < 76) db.exec(ASK_CHAT_GROUPS_DDL);   // v76 (#948 s3) topic groups; ask_threads.group_id comes from INCREMENTAL_COLUMNS
     if (current < 77) db.exec(WORKFLOW_REVISIONS_DDL);   // v77 workflow history + versions; workflows.live_version_no comes from INCREMENTAL_COLUMNS
+    if (current < 78) db.exec(WORKFLOW_TESTS_DDL);   // v78 workflow tests; pipelines.is_test comes from INCREMENTAL_COLUMNS
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
