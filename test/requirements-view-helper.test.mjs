@@ -336,6 +336,125 @@ test('D18: a live repaint keeps the log and an unchanged message\'s node (only w
   assert.equal(m.host.querySelector('[data-ui="helper-in"]').value, 'Typed, not sent');
 });
 
+test('D18: a Worca reply keeps its node across a send (answering false → true → false) and a round starting and ending', async () => {
+  const s = { f: feature({ helper: { answering: false, messages: 2 } }), helper: chat([po(1, 'A'), worca(2, 'B')]) };
+  const m = await openFeature(s, { 'POST /api/requirements/7/helper/messages': (b) => (s.helper = chat([po(1, 'A'), worca(2, 'B'), po(3, b.text)], { answering: true })) });
+  const p = await openPanel(m);
+  const log = p.querySelector('.req-help-log');
+  const reply = log.querySelector('[data-msg="2"]');
+  const removed = [];
+  const watch = new window.MutationObserver((recs) => recs.forEach((r) => removed.push(...r.removedNodes)));
+  watch.observe(log, { childList: true });
+  type(p.querySelector('[data-ui="helper-in"]'), 'C');
+  p.querySelector('[data-ui="helper-send"]').click();
+  await settle();
+  assert.ok(m.host.querySelector('.req-help-waiting'), 'answering');
+  assert.equal(log.querySelector('[data-msg="2"]'), reply, 'a send keeps the reply');
+  s.helper = chat([po(1, 'A'), worca(2, 'B'), po(3, 'C'), worca(4, 'D')]);
+  s.f = feature({ helper: { answering: false, messages: 4 } });
+  await m.view.changed(7);
+  await settle();
+  assert.equal(log.querySelector('[data-msg="2"]'), reply, 'the answer keeps it');
+  const newest = log.querySelector('[data-msg="4"]');
+  s.f = feature({ busy: true, status: 'thinking', state: 'thinking', pending: null, helper: { answering: false, messages: 4 } });
+  await m.view.changed(7);
+  await settle();
+  s.f = feature({ helper: { answering: false, messages: 4 } });
+  await m.view.changed(7);
+  await settle();
+  watch.takeRecords().forEach((r) => removed.push(...r.removedNodes));
+  watch.disconnect();
+  assert.equal(log.querySelector('[data-msg="2"]'), reply, 'a round starting and ending keeps it');
+  assert.equal(log.querySelector('[data-msg="4"]'), newest, 'and the newest reply');
+  assert.ok(!removed.includes(reply) && !removed.includes(newest), 'never taken out of the live region and put back');
+});
+
+test('a chat that could not be loaded: no first-open text or starters over its messages; the line and Try again, which loads it', async () => {
+  const s = { f: feature({ helper: { answering: false, messages: 3 } }), helper: { __status: 502, body: {} } };
+  const m = await openFeature(s);
+  const p = await openPanel(m);
+  assert.equal(p.querySelector('.req-help-empty'), null);
+  assert.equal(p.querySelector('.req-help-starter'), null);
+  const line = p.querySelector('.req-help-unloaded');
+  assert.deepEqual([line.getAttribute('role'), text(line)], ['alert', 'Worca could not load the chat. Try again. Try again']);
+  const gets = () => m.calls.filter((c) => c.method === 'GET' && c.url === '/api/requirements/7/helper').length;
+  const before = gets();
+  s.helper = chat([po(1, 'A'), worca(2, 'B'), po(3, 'C')]);
+  line.querySelector('[data-ui="helper-reload"]').click();
+  await settle();
+  assert.equal(gets(), before + 1, 'Try again fetches the chat');
+  assert.equal(m.host.querySelector('.req-help-unloaded'), null);
+  assert.equal(m.host.querySelector('[data-msg="2"] .req-help-text').textContent, 'B');
+});
+
+test('a press while a send, a starter or a Try again is in flight is ignored: a double click posts once', async () => {
+  const failed = { code: 'BAD_REPLY', message: 'Worca could not answer. Try again.' };
+  const posts = [];
+  const s = { f: feature({ helper: { answering: false, messages: 2 } }), helper: chat([po(1, 'A'), worca(2, '', { error: failed, costUsd: null })]) };
+  let m = await openFeature(s, { 'POST /api/requirements/7/helper/retry': () => { posts.push('retry'); return (s.helper = chat([...s.helper.messages], { answering: true })); } });
+  let p = await openPanel(m);
+  const retry = p.querySelector('[data-ui="helper-retry"]');
+  retry.click(); retry.click();
+  await settle();
+  assert.deepEqual(posts, ['retry']);
+  posts.length = 0;
+  const s2 = {};
+  m = await openFeature(s2, { 'POST /api/requirements/7/helper/messages': (b) => { posts.push(b.text); return (s2.helper = chat([po(1, b.text)], { answering: true })); } });
+  p = await openPanel(m);
+  const starter = p.querySelector('[data-ui="helper-starter-0"]');
+  starter.click(); starter.click();
+  await settle();
+  assert.deepEqual(posts, ['Is anything missing from this spec?']);
+  posts.length = 0;
+  const s3 = {};
+  m = await openFeature(s3, { 'POST /api/requirements/7/helper/messages': (b) => { posts.push(b.text); return (s3.helper = chat([po(1, b.text)], { answering: true })); } });
+  p = await openPanel(m);
+  const ta = p.querySelector('[data-ui="helper-in"]');
+  type(ta, 'Once');
+  p.querySelector('[data-ui="helper-send"]').click();
+  p.querySelector('[data-ui="helper-send"]').click();
+  key(ta, 'Enter');
+  await settle();
+  assert.deepEqual(posts, ['Once']);
+});
+
+test('§6: a spent budget from Try again shows the in-chat spending-limit line; it goes once a reply starts, and on Clear chat', async () => {
+  const failed = { code: 'BAD_REPLY', message: 'Worca could not answer. Try again.' };
+  const BUDGET = { __status: 409, body: { code: 'BUDGET', error: 'The spending limit of $5 is reached for this period. The interview continues when the limit resets or is raised.' } };
+  const rows = [po(1, 'A'), worca(2, '', { error: failed, costUsd: null })];
+  const s = { f: feature({ helper: { answering: false, messages: 2 } }), helper: chat(rows) };
+  const m = await openFeature(s, { 'POST /api/requirements/7/helper/retry': () => BUDGET, 'DELETE /api/requirements/7/helper': () => (s.helper = chat()) });
+  const p = await openPanel(m);
+  p.querySelector('[data-ui="helper-retry"]').click();
+  await settle();
+  assert.equal(m.host.querySelector('.req-help-refusal'), null, 'not the server text under the composer');
+  assert.equal(m.host.querySelector('.req-help-log .req-help-budget').textContent,
+    'You have reached the Requirements spending limit for this month. Worca can answer again when it resets, or raise the limit in Settings › Budget.');
+  s.helper = chat([...rows, po(3, 'From another tab')], { answering: true });
+  await m.view.changed(7);
+  await settle();
+  assert.equal(m.host.querySelector('.req-help-budget'), null, 'a reply started: the limit is no longer the news');
+  s.helper = chat(rows);
+  await m.view.changed(7);
+  await settle();
+  m.host.querySelector('[data-ui="helper-retry"]').click();
+  await settle();
+  assert.ok(m.host.querySelector('.req-help-log .req-help-budget'));
+  m.host.querySelector('[data-ui="helper-more"]').click();
+  m.host.querySelector('[data-ui="helper-clear"]').click();
+  await settle();
+  assert.ok(m.host.querySelector('.req-help-empty'));
+  assert.equal(m.host.querySelector('.req-help-budget'), null, 'Clear chat clears the line');
+});
+
+test('D18: Escape while an input method is composing leaves the panel open', async () => {
+  const m = await openFeature();
+  const p = await openPanel(m);
+  key(p.querySelector('[data-ui="helper-in"]'), 'Escape', { isComposing: true });
+  await settle();
+  assert.ok(m.host.querySelector('.req-help'));
+});
+
 test('style.css: the panel rules sit inside the Requirements block, tokens only; the pressed toggle has an ink border; the sheet at 900 px', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');

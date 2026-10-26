@@ -300,7 +300,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   // card this visit ('<msgId>:<questionId>', so a repaint never applies one again, D6); the log and its message nodes, kept
   // across paints so the live region announces only what is new (D18); the Answering… line and the log's other lines (card 7,
   // D20's line, the spending limit), kept likewise; the newest message the log was scrolled to (a repaint without a new
-  // message leaves the reader where they are).
+  // message leaves the reader where they are); a chat POST (or a reload) in flight, so a second press is ignored (each send is
+  // a paid call); how many times Try again reloaded a chat that could not be read (its line is announced again each time).
   const helperOpen = new Map();
   let helperData = null;
   let helperUi = freshHelperUi();
@@ -310,6 +311,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   let helperLog = null;
   let helperWaitEl = null;
   let helperNewest = null;
+  let helperBusy = false;
+  let helperReloads = 0;
   function freshHelperUi() { return { text: '', focus: null, opener: null, error: null, budget: false }; }
   // Unsaved input of the feature page, kept across repaints (read from the DOM before a rebuild, put back after).
   let ui = freshUi();
@@ -427,7 +430,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         const wantChat = helperOpen.get(seqShown) || (f0.helper && f0.helper.messages > 0);
         let chatFailed = false;
         const chatBody = wantChat ? await api('GET', `/api/requirements/${seqShown}/helper`).catch(() => { chatFailed = true; return null; }) : null;
-        if (mine === paintNo) { if (!chatFailed) helperData = chatBody; paintFeature(data.feature, data.turns || []); paintedKey = key; }
+        if (mine === paintNo) { if (!chatFailed) takeChat(chatBody); paintFeature(data.feature, data.turns || []); paintedKey = key; }
         return;
       }
       const data = await api('GET', `/api/requirements${filter === 'archived' ? '?archived=1' : ''}`);
@@ -2443,6 +2446,21 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     return lo === hi ? `$${lo}` : `$${lo}–${hi}`;
   }
   const helpChat = (f) => helperData || { messages: [], answering: !!(f.helper && f.helper.answering), estimate: null };
+  /** A chat read from the server. A reply that started, or rows that are new since the last one, mean the cause of a spent
+   *  budget or a refusal is gone: their lines go (§6). */
+  function takeChat(body) {
+    const lastId = (d) => { const rows = (d && d.messages) || []; return rows.length ? rows.at(-1).id : null; };
+    if (body && ((body.answering && !(helperData && helperData.answering)) || lastId(body) !== lastId(helperData))) {
+      helperUi.budget = false;
+      helperUi.error = null;
+    }
+    helperData = body;
+  }
+  /** A refused chat POST: a spent budget says so in the chat, one way for every control (§6); anything else under the composer. */
+  function helpRefused(err) {
+    if (err && err.data && err.data.code === 'BUDGET') helperUi.budget = true;
+    else helperUi.error = helpErr(err);
+  }
   /** The composer's text, in the state and on screen (capture() reads the screen before every repaint). */
   function setComposer(value) {
     helperUi.text = value;
@@ -2484,29 +2502,49 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   /** Send (the composer's text or a starter's): a refusal keeps the typed text and says why under the composer; a spent budget
    *  says so in the chat instead (§6). */
   async function sendHelper(f, text = helperUi.text, focus = helperUi.focus) {
+    if (helperBusy) return;   // a second press while the first is in flight (each send is a paid call)
+    helperBusy = true;
     helperUi.error = null;
-    helperUi.budget = false;
     try {
       helperData = await api('POST', `/api/requirements/${f.seq}/helper/messages`, { text, ...(focus ? { focus } : {}) });
+      helperUi.budget = false;
       if (text === helperUi.text) { setComposer(''); helperUi.focus = null; }
     } catch (err) {
-      if (err && err.data && err.data.code === 'BUDGET') helperUi.budget = true;
-      else helperUi.error = errText(err);
+      helpRefused(err);
+    } finally {
+      helperBusy = false;
     }
     focusNext = 'helper-in';
     redraw();
   }
   /** Stop, Try again, Clear chat, and Tasks 8's Accept / Reject / Ask again: the server's chat comes back, then the feature is
-   *  fetched again (an accepted change is in the spec). A refusal shows under the composer. */
+   *  fetched again (an accepted change is in the spec). A spent budget shows in the chat, any other refusal under the composer.
+   *  A press while another chat POST is in flight is ignored. */
   async function helperPost(f, method, path, focusUi = null) {
+    if (helperBusy) return;
+    helperBusy = true;
     helperUi.error = null;
-    try { helperData = await api(method, `/api/requirements/${f.seq}/helper${path}`, method === 'DELETE' ? undefined : {}); }
-    catch (err) { helperUi.error = helpErr(err); }
-    if (focusUi) focusNext = focusUi;
-    await paint();
+    try {
+      try {
+        helperData = await api(method, `/api/requirements/${f.seq}/helper${path}`, method === 'DELETE' ? undefined : {});
+        helperUi.budget = false;
+      } catch (err) { helpRefused(err); }
+      if (focusUi) focusNext = focusUi;
+      await paint();
+    } finally {
+      helperBusy = false;
+    }
+  }
+  /** Try again on a chat that could not be read: the feature and its chat are fetched again. */
+  async function reloadHelper() {
+    if (helperBusy) return;
+    helperBusy = true;
+    helperReloads += 1;
+    focusNext = 'helper-in';
+    try { await paint(); } finally { helperBusy = false; }
   }
   function clearHelper(f) {
-    if (!window.confirm('Clear the chat? Changes you accepted stay in the spec.')) return;
+    if (helperBusy || !window.confirm('Clear the chat? Changes you accepted stay in the spec.')) return;
     void helperPost(f, 'DELETE', '', 'helper-in');
   }
 
@@ -2535,13 +2573,27 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       ...helperExtras(f, m, ctx),
       m.costUsd > 0 ? h('p', { class: 'hint req-help-cost', text: usd(m.costUsd) }) : null);
   }
+  /** D18: a message's node is rebuilt only when this key changes, so the key holds the message and ONLY the parts of `ctx` (and of
+   *  `f`) that change that message's DOM: a rebuilt node in the role=log live region is read out again, so a key with the whole
+   *  ctx would re-read the history on every Send, reply and round. This is the one place a row's dependencies are listed: Task 7
+   *  (the dropped-draft line) and Task 8 (the proposal cards: their state, stale mark, Ask again, and the ctx their Accept /
+   *  Reject / Ask again read) add theirs here. */
+  function helperRowKey(f, m, ctx) {
+    if (m.role === 'po') return JSON.stringify([m, helpCap(m)]);
+    const code = m.error ? m.error.code : null;
+    // helperLine: the spending limit names the period; any other failed row shows Try again on the newest row only, off while a
+    // round or look runs
+    const again = !!code && code !== 'BUDGET' && ctx.newest && !ctx.answering && !ctx.archived;
+    const line = !code ? null : code === 'BUDGET' ? f.resetPeriod : [again, again && ctx.working];
+    return JSON.stringify([m, line]);
+  }
   /** The log's message nodes; an unchanged message keeps its node across paints (D18: a live region announces only what is new). */
   function helperLogNodes(f, msgs, ctx) {
     const out = [];
     const keep = new Map();
     msgs.forEach((m, i) => {
       const c = { ...ctx, newest: i === msgs.length - 1 };
-      const sig = JSON.stringify(m.role === 'po' ? [m, helpCap(m)] : [m, c, f.resetPeriod]);
+      const sig = helperRowKey(f, m, c);
       let node = helperNodes.get(m.id);
       if (!node || node.sig !== sig) node = { sig, el: helperMessage(f, m, c) };
       keep.set(m.id, node);
@@ -2624,11 +2676,18 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     if (!helperLog) helperLog = h('div', { class: 'req-help-log', role: 'log', 'aria-live': 'polite', 'aria-label': 'Ask Worca chat' });
     const lastRow = msgs.at(-1);
     const unanswered = !ctx.answering && lastRow && lastRow.role === 'po';   // D20
+    // a chat with messages that could not be read: never card 7's text and its starters (each a paid call) over it
+    const unloaded = !helperData && !!(f.helper && f.helper.messages > 0);
+    // the tails' keys hold only the ctx their DOM reads (D18, as helperRowKey)
     reconcileLog(helperLog, [
       ...helperLogNodes(f, msgs, ctx),
-      !msgs.length && !ctx.answering ? helperTail('empty', JSON.stringify(ctx), () => helperEmpty(f, ctx)) : null,
+      unloaded ? helperTail('unloaded', String(helperReloads), () => h('p', { class: 'req-help-fail req-help-unloaded', role: 'alert' },
+        'Worca could not load the chat. Try again. ',
+        h('button', { type: 'button', class: 'btn btn-sm req-help-retry', 'data-ui': 'helper-reload', onclick: () => reloadHelper() }, 'Try again'))) : null,
+      !msgs.length && !ctx.answering && !unloaded
+        ? helperTail('empty', JSON.stringify([ctx.archived, ctx.working]), () => helperEmpty(f, ctx)) : null,
       ctx.answering ? waitingLine(f) : null,
-      unanswered ? helperTail('d20', JSON.stringify([lastRow.id, ctx]), () => helperLine(f, null, { ...ctx, newest: true })) : null,
+      unanswered ? helperTail('d20', JSON.stringify([lastRow.id, ctx.archived, ctx.working]), () => helperLine(f, null, { ...ctx, newest: true })) : null,
       helperUi.budget ? helperTail('budget', String(f.resetPeriod), () => budgetLine(f)) : null,
     ].filter(Boolean));
     if (!ctx.answering) helperWaitEl = null;
@@ -2637,7 +2696,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       menuItem('Clear chat', () => clearHelper(f), { ui: 'helper-clear', disabled: ctx.answering || ctx.archived || !msgs.length }),
     ]);
     return h('aside', { class: 'req-help', 'aria-label': 'Ask Worca', onkeydown: (e) => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return;   // an open menu closes itself first (menu())
+      // an open menu closes itself first (menu()); an input method's Escape cancels its composition, not the panel
+      if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return;
       e.preventDefault();
       closeHelper(f);
     } },
