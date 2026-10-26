@@ -13,6 +13,18 @@ set -euo pipefail
 
 log() { printf 'worca-entrypoint: %s\n' "$*" >&2; }
 
+# An agent user's ~/.gitconfig: the agent works in repositories worca owns and writes objects both
+# users share. Root never writes through a path the agent controls (audit 1.2): `>` and `chown` as
+# root would follow a link the agent left at ~/.gitconfig to any file on the image (say /usr/bin/id,
+# which the next boot runs as root) and hand it to the agent. The old name goes (rm removes a link,
+# never its target; a folder there goes too, or the boot would stop), and the agent user itself
+# writes the new file.
+agent_gitconfig() { # <user> <home>
+  rm -rf -- "$2/.gitconfig"
+  setpriv --reuid="$1" --regid=worca-share --clear-groups -- \
+    sh -c 'umask 022; printf "[safe]\n\tdirectory = *\n[core]\n\tsharedRepository = group\n" > "$1/.gitconfig"' sh "$2"
+}
+
 # The credential broker (`worca broker`, docs/credential-broker.md) is its own container
 # from this same image. It needs none of the worca preparation below: only, on a host
 # that gives it one root-owned volume (Railway), that volume made writable by `worca`
@@ -83,9 +95,7 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
         chmod -R g-w,g+rX "${p}versions" && chgrp -R worca-share "${p}versions"
         if [ -d "${p}data" ] && [ ! -L "${p}data" ]; then chmod -R go-rwx "${p}data"; fi
       done
-      # The agent works in repositories worca owns, and writes objects both users share.
-      printf '[safe]\n\tdirectory = *\n[core]\n\tsharedRepository = group\n' > "$ah/.gitconfig"
-      chown worca-agent:worca-share "$ah/.gitconfig"
+      agent_gitconfig worca-agent "$ah"
       export WORCA_AGENT_USER=worca-agent WORCA_AGENT_HOME="$ah"
       # Plugin connectors and chat workers run as worca-plugin (plugin-shim.mjs pluginChildSpawn):
       # plugin code through the shared group, its own HOME, and never plugins/<p>/data or worca's home.
@@ -110,8 +120,7 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
           mkdir -p "$homes/$u"
           chown "$u:worca-share" "$homes/$u"
           chmod 0700 "$homes/$u"
-          printf '[safe]\n\tdirectory = *\n[core]\n\tsharedRepository = group\n' > "$homes/$u/.gitconfig"
-          chown "$u:worca-share" "$homes/$u/.gitconfig"
+          agent_gitconfig "$u" "$homes/$u"
           pool="$pool${pool:+,}$u"
           # The user's own group (Dockerfile): a run's folders get it, worca and $u only.
           g="$(getent group "$u" | cut -d: -f3 || true)"

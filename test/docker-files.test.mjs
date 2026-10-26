@@ -108,11 +108,45 @@ test('agent isolation: a worca-agent user, sudo only to it, set up on single-vol
   assert.match(block, /export WORCA_AGENT_POOL="\$pool" WORCA_AGENT_HOMES="\$homes" WORCA_AGENT_RUN_GIDS="\$rungids"/);
   assert.match(block, /chmod 0711 "\$data" "\$data\/worca" "\$wh"/, 'the worca home is traverse-only');
   assert.match(block, /chmod 0700 "\$ah"/);
-  assert.match(block, /sharedRepository = group/);
+  assert.match(e, /sharedRepository = group/);
   assert.match(block, /export WORCA_AGENT_USER=worca-agent WORCA_AGENT_HOME="\$ah"/);
   assert.ok(block.indexOf('umask 0007') < block.indexOf('exec setpriv'), 'the server inherits the umask');
   assert.match(block, /WORCA_ALLOWED_HOSTS[\s\S]*exit 78/, 'a hosted worca refuses to run agents as the server when sudo fails');
   assert.doesNotMatch(e, /gh auth setup-git >/, 'no global credential helper');
+});
+
+// 1.2: an agent user owns its HOME, so ~/.gitconfig may be a link it left (to /usr/bin/id, say). The root entrypoint
+// must never write or chown through it: the old name goes, and the agent user writes the new file. Run for real in
+// sh, with a stand-in setpriv that drops the identity switch (the test is not root).
+test('1.2: the agent gitconfig is never written through a link the agent left, as root or otherwise', { skip: process.platform === 'win32' ? 'sh' : false }, async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, lstatSync, chmodSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { spawnSync } = await import('node:child_process');
+  const e = read('docker/entrypoint.sh');
+  const fn = e.match(/^agent_gitconfig\(\) \{[\s\S]*?^\}$/m)?.[0];
+  assert.ok(fn, 'agent_gitconfig is defined');
+  const block = e.slice(e.indexOf('if [ -n "${WORCA_DATA_DIR:-}" ]'), e.indexOf('# 1. Volume ownership.'));
+  assert.match(block, /agent_gitconfig worca-agent "\$ah"/);
+  assert.match(block, /agent_gitconfig "\$u" "\$homes\/\$u"/);
+  assert.doesNotMatch(e, />\s*"[^"]*\/\.gitconfig"\s*$/m, 'no root redirect into a .gitconfig');
+  assert.doesNotMatch(e, /chown [^\n]*\.gitconfig/, 'no chown of a .gitconfig');
+
+  const root = mkdtempSync(join(tmpdir(), 'worca-gitconfig-'));
+  try {
+    const bin = join(root, 'bin'); mkdirSync(bin);
+    writeFileSync(join(bin, 'setpriv'), '#!/bin/sh\nwhile [ "$1" != "--" ]; do shift; done; shift; exec "$@"\n');
+    chmodSync(join(bin, 'setpriv'), 0o755);
+    const victim = join(root, 'victim'); writeFileSync(victim, 'ORIGINAL');
+    for (const plant of ['link', 'folder']) {
+      const home = join(root, `home-${plant}`); mkdirSync(home);
+      if (plant === 'link') symlinkSync(victim, join(home, '.gitconfig')); else mkdirSync(join(home, '.gitconfig'));
+      const r = spawnSync('sh', ['-c', `set -eu\n${fn}\nagent_gitconfig worca-agent-01 "$1"`, 'sh', home], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, encoding: 'utf8' });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(readFileSync(victim, 'utf8'), 'ORIGINAL', `${plant}: the link target is untouched`);
+      assert.ok(lstatSync(join(home, '.gitconfig')).isFile(), `${plant}: a regular file now`);
+      assert.match(readFileSync(join(home, '.gitconfig'), 'utf8'), /\[safe\]\n\tdirectory = \*\n\[core\]\n\tsharedRepository = group\n/);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 // G12: connector and chat-channel children run as worca-plugin, which shares the code group but
