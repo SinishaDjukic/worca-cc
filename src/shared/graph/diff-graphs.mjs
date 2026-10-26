@@ -69,7 +69,11 @@ export function diffGraphs(before, after, { labelOf = plainLabel } = {}) {
     if (!prev || ends(prev) !== ends(w)) { rewired = true; continue; }
     const pa = wireConfig(prev) || {};
     const pb = wireConfig(w) || {};
-    const target = b.get(w.to?.node) || { key: w.to?.node };
+    // A loop is named after the step that redoes the work; into a join node (or, …) it is named after the sender.
+    const isStep = (n) => n && (n.kind === 'agent' || n.kind === 'script');
+    const to = b.get(w.to?.node);
+    const from = b.get(w.from?.node);
+    const target = isStep(to) || !isStep(from) ? to || { key: w.to?.node } : from;
     if ((pa.maxCycles ?? null) !== (pb.maxCycles ?? null)) {
       out.push({ kind: 'loop', text: `${label(target)} loop: at most ${shown(pa.maxCycles)} rounds → ${shown(pb.maxCycles)}` });
     }

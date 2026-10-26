@@ -57,6 +57,14 @@ test('C1: a loop budget is read from the stored wire.config (and from a top-leve
   assert.deepEqual(diffGraphs(g(), both, { labelOf }), []);
 });
 
+test('a loop into a join node (or) is named after the step that sends the work back', () => {
+  const join = (cycles) => g({
+    nodes: [...g().nodes, { id: 'n_or', kind: 'or', x: 300, y: 0, config: { arity: 2 } }],
+    wires: [g().wires[0], { id: 'w_or', from: { node: 'n_rev', port: 'findings' }, to: { node: 'n_or', port: 'in1' }, config: { maxCycles: cycles } }],
+  });
+  assert.deepEqual(diffGraphs(join(3), join(5), { labelOf }).map((c) => c.text), ['Review loop: at most 3 rounds → 5']);
+});
+
 test('C1: another loop setting (onExhausted) is listed; config {} and missing are the same', () => {
   const after = g();
   after.wires[1] = { ...after.wires[1], config: { maxCycles: 3, onExhausted: 'clean' } };
