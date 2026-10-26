@@ -480,3 +480,176 @@ test('style.css: the panel rules sit inside the Requirements block, tokens only;
   assert.match(sheet, /\.req-help \.btn-sm::after\{content:"";position:absolute;inset:-9px 0\}/);
   assert.match(sheet, /\.req-help-toggle,\.req-help \.menu-item\{min-height:44px\}/, 'D18: the header toggle and Clear chat too');
 });
+
+test('a Stop press while the follow-up refetch of an earlier chat POST is still pending is sent (the POST alone holds the guard)', async () => {
+  const failed = { code: 'BAD_REPLY', message: 'Worca could not answer. Try again.' };
+  const posts = [];
+  let holdNext = false;
+  let release = null;
+  const s = { f: feature({ helper: { answering: false, messages: 2 } }), helper: chat([po(1, 'A'), worca(2, '', { error: failed, costUsd: null })]) };
+  const m = await openFeature(s, {
+    // the first feature fetch after Try again hangs until released (a slow refetch)
+    'GET /api/requirements/7': () => {
+      if (!holdNext) return { feature: s.f, turns: TURNS };
+      holdNext = false;
+      return new Promise((r) => { release = () => r({ feature: s.f, turns: TURNS }); });
+    },
+    'POST /api/requirements/7/helper/retry': () => { posts.push('retry'); holdNext = true; return (s.helper = chat([po(1, 'A')], { answering: true })); },
+    'POST /api/requirements/7/helper/stop': () => { posts.push('stop');
+      return (s.helper = chat([po(1, 'A'), worca(3, '', { error: { code: 'STOPPED', message: 'You stopped this reply.' }, costUsd: null })])); },
+  });
+  await openPanel(m);
+  m.host.querySelector('[data-ui="helper-retry"]').click();
+  await settle();
+  assert.equal(typeof release, 'function', 'the refetch after Try again is still pending');
+  await m.view.changed(7);   // a live frame paints the answering chat meanwhile
+  await settle();
+  m.host.querySelector('[data-ui="helper-stop"]').click();
+  await settle();
+  assert.deepEqual(posts, ['retry', 'stop'], 'Stop is not ignored while the earlier refetch runs');
+  release();
+  await settle();
+  assert.equal(text(m.host.querySelector('.req-help-stopped')), 'You stopped this reply. Try again');
+});
+
+// ── Task 7: Help me answer and drafts (D1, D2, D6) ─────────────────
+
+const draftChat = (drafts, over = {}) => chat([po(1, 'Until when?', { roundTurnId: 11, questionId: 'when', n: 1 }),
+  worca(2, 'I picked Until the parcel is picked up in question 1.', { drafts, ...over })]);
+const withChat = (helper) => ({ f: feature({ helper: { answering: false, messages: helper.messages.length } }), helper });
+const blocks = (host) => [...host.querySelectorAll('.qpanel:not(.req-revise) .qblock')];
+const pressed = (block) => [...block.querySelectorAll('.qopt')].map((o) => o.getAttribute('aria-pressed'));
+
+test('D1: Help me answer on each pending question opens the panel with the question and its cap in the composer; nothing is sent', async () => {
+  const m = await openFeature();
+  const helps = [...m.host.querySelectorAll('.qpanel .req-help-ask')];
+  assert.deepEqual(helps.map((b) => b.textContent), ['Help me answer', 'Help me answer']);
+  assert.ok(helps[0].closest('.req-qhead').querySelector('.qtext'), 'beside its question');
+  helps[1].click();
+  await settle();
+  const p = m.host.querySelector('.req-help');
+  assert.ok(p, 'the panel opens');
+  assert.equal(p.querySelector('.req-help-composer .req-help-cap').textContent, 'Help me answer · question 2');
+  assert.equal(p.querySelector('[data-ui="helper-in"]').value, 'Who pays the return shipping?');
+  assert.equal(document.activeElement, p.querySelector('[data-ui="helper-in"]'));
+  assert.ok(!m.calls.some((c) => c.method === 'POST'), 'every message costs money: nothing is sent by itself');
+  key(p.querySelector('[data-ui="helper-in"]'), 'Escape');
+  await settle();
+  assert.equal(document.activeElement, m.host.querySelector('[data-ui="help-11-1"]'), 'Escape gives the focus back to its opener');
+  toggle(m.host).click();
+  await settle();
+  assert.equal(m.host.querySelector('.req-help-composer .req-help-cap'), null, 'the header toggle opens a general chat: no cap carried over');
+  m.host.querySelector('[data-ui="help-11-0"]').click();
+  await settle();
+  assert.equal(m.host.querySelector('.req-help-composer .req-help-cap').textContent, 'Help me answer · question 1');
+  type(m.host.querySelector('[data-ui="helper-in"]'), '');
+  assert.equal(m.host.querySelector('.req-help-composer .req-help-cap'), null, 'an emptied composer drops the cap');
+});
+
+test('D1: the message goes with its focus; its bubble carries the cap; the composer is empty again', async () => {
+  const sent = [];
+  const s = {};
+  const m = await openFeature(s, { 'POST /api/requirements/7/helper/messages': (b) => { sent.push(b);
+    return (s.helper = chat([po(1, b.text, { ...b.focus, n: 1 })], { answering: true })); } });
+  m.host.querySelector('[data-ui="help-11-0"]').click();
+  await settle();
+  m.host.querySelector('[data-ui="helper-send"]').click();
+  await settle();
+  assert.deepEqual(sent, [{ text: 'Until when can a customer cancel?', focus: { roundTurnId: 11, questionId: 'when', n: 1 } }]);
+  assert.equal(m.host.querySelector('[data-msg="1"] .req-help-cap').textContent, 'Help me answer · question 1');
+  assert.equal(m.host.querySelector('.req-help-composer .req-help-cap'), null);
+  assert.equal(m.host.querySelector('[data-ui="helper-in"]').value, '');
+});
+
+test('D1: an earlier round being changed has no Help me answer', async () => {
+  const m = await openFeature();
+  m.host.querySelector('[data-ui="change-9"]').click();
+  await settle();
+  assert.ok(m.host.querySelector('.req-revise'));
+  assert.equal(m.host.querySelector('.req-revise .req-help-ask'), null);
+});
+
+test('D6 board 22: a draft fills the question card, marked drafted by Worca with its why after the options; the panel stays closed', async () => {
+  const m = await openFeature(withChat(draftChat([{ question: 'when', n: 1, option: 'Until the parcel is picked up', why: 'Most requests come after the label is printed.', dropped: false }])));
+  const [b1, b2] = blocks(m.host);
+  assert.deepEqual(pressed(b1), ['false', 'true'], 'the draft replaces the recommended pick');
+  const chip = b1.querySelector('.req-help-drafted-row');
+  assert.equal(chip.hidden, false);
+  // the board's × is the remove icon (a glyph as an icon fails test/ui-design-language.test.mjs)
+  assert.equal(text(chip.querySelector('.req-help-drafted')), 'drafted by Worca');
+  assert.equal(chip.querySelector('.req-help-drafted-x svg').getAttribute('aria-hidden'), 'true');
+  assert.equal(chip.querySelector('.req-help-drafted-x').getAttribute('aria-label'), "Clear Worca's draft for question 1");
+  assert.equal(text(chip.querySelector('.req-help-draft-why')), "Worca's draft: Most requests come after the label is printed.");
+  assert.ok(b1.querySelector('.qopts').compareDocumentPosition(chip) & Node.DOCUMENT_POSITION_FOLLOWING, 'after the options row, not inside an option');
+  assert.equal(b2.querySelector('.req-help-drafted-row').hidden, true);
+  assert.equal(m.host.querySelector('.req-help'), null, 'the chat was fetched for its drafts; the panel stays closed');
+  assert.ok(!m.calls.some((c) => c.method === 'POST'), 'a draft is never sent by itself');
+});
+
+test('D6: × puts the question back to the recommended pick; a hand pick or a typed answer removes the mark; a repaint never applies it again', async () => {
+  const s = withChat(draftChat([{ question: 'when', n: 1, option: 'Until the parcel is picked up', why: '', dropped: false },
+    { question: 'who', n: 2, text: 'The shop, below 50 €', why: '', dropped: false }]));
+  const m = await openFeature(s);
+  let [b1, b2] = blocks(m.host);
+  assert.equal(b2.querySelector('.qfree').value, 'The shop, below 50 €', 'a text draft is the own answer');
+  b1.querySelector('.req-help-drafted-x').click();
+  assert.deepEqual(pressed(b1), ['true', 'false']);
+  assert.equal(b1.querySelector('.req-help-drafted-row').hidden, true);
+  assert.equal(document.activeElement, b1.querySelectorAll('.qopt')[0], 'the focus moves to the recommended option');
+  b2.querySelectorAll('.qopt')[1].click();
+  assert.equal(b2.querySelector('.req-help-drafted-row').hidden, true, 'a hand pick removes the mark');
+  await m.view.changed(7);
+  await settle();
+  [b1, b2] = blocks(m.host);
+  assert.deepEqual([pressed(b1), pressed(b2)], [['true', 'false'], ['false', 'true']]);
+  assert.ok([b1, b2].every((b) => b.querySelector('.req-help-drafted-row').hidden), 'not applied again');
+});
+
+test('D6: Submit sends the drafted answers as any answer', async () => {
+  const posted = [];
+  const s = withChat(draftChat([{ question: 'when', n: 1, option: 'Until the parcel is picked up', why: '', dropped: false },
+    { question: 'who', n: 2, text: 'The shop', why: '', dropped: false }]));
+  const m = await openFeature(s, { 'POST /api/requirements/7/answers': (b) => { posted.push(b); return { feature: s.f, turns: TURNS }; } });
+  [...m.host.querySelectorAll('.qpanel .btn-primary')].find((b) => b.textContent === 'Submit').click();
+  await settle();
+  assert.deepEqual(posted, [{ roundTurnId: 11, answers: [{ id: 'when', option: 'Until the parcel is picked up' }, { id: 'who', text: 'The shop' }] }]);
+});
+
+test('D6: a draft whose round is no longer pending is not applied; its reply says it was dropped', async () => {
+  const m = await openFeature(withChat(chat([po(1, 'x'), worca(2, 'Reply', { roundTurnId: 9, drafts: [{ question: 'who-may', n: 1, option: 'Support', why: '', dropped: true }] })])));
+  assert.ok(blocks(m.host).every((b) => b.querySelector('.req-help-drafted-row').hidden));
+  const p = await openPanel(m);
+  assert.equal(text(p.querySelector('[data-msg="2"] .req-help-dropped')), "The question you asked about has been answered, so Worca's draft for it was dropped.");
+});
+
+test('D2/D6 board 25: Back keeps the drafts in the question card; a reload applies the stored draft again', async () => {
+  const s = withChat(draftChat([{ question: 'when', n: 1, option: 'Until the parcel is picked up', why: '', dropped: false }]));
+  const m = await openFeature(s);
+  await openPanel(m);
+  m.host.querySelector('[data-ui="helper-back"]').click();
+  await settle();
+  const [b1] = blocks(m.host);
+  assert.deepEqual(pressed(b1), ['false', 'true']);
+  assert.equal(b1.querySelector('.req-help-drafted-row').hidden, false);
+  b1.querySelector('.req-help-drafted-x').click();
+  const again = await openFeature(s);
+  assert.equal(blocks(again.host)[0].querySelector('.req-help-drafted-row').hidden, false, 'a new page applies it again');
+});
+
+test('style.css: the draft chip is dashed blue (blue means active); Help me answer is a 44 px line on a phone', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
+  const end = css.indexOf('/* ── marketplace P3 ── */');
+  for (const sel of ['.req-qhead{', '.req-help-ask{', '.req-help-drafted-row{', '.req-help-drafted{', '.req-help-drafted-x{', '.req-help-draft-why']) {
+    const at = css.indexOf(sel);
+    assert.ok(at > start && at < end, `${sel} inside the Requirements block`);
+  }
+  const block = css.slice(start, end);
+  assert.match(block, /\.req-help-drafted\{[^}]*border:1px dashed var\(--blue-ink-strong\)[^}]*color:var\(--blue-ink-strong\)/);
+  assert.match(block, /\.req-help-drafted-row\[hidden\]\{display:none\}/);
+  const phone = block.slice(block.indexOf('@media (max-width:900px){', block.indexOf('.req-help-drafted{')));
+  assert.match(phone, /\.req-help-ask\{[^}]*min-height:44px/);
+  // the × keeps its size inside the chip; its hit area grows to 44 x 44 (the ::after pattern of .req-fpick and .req-help .btn-sm)
+  assert.match(phone, /\.req-help-drafted-x\{position:relative\}/);
+  assert.match(phone, /\.req-help-drafted-x::after\{content:"";position:absolute;[^}]*width:44px;height:44px/);
+});

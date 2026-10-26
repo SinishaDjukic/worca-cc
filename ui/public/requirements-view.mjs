@@ -240,7 +240,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   let param = '';
   let seqShown = null;
   let paintNo = 0;
-  let draft = null;          // { roundTurnId, picks: {id: option}, texts: {id: text} } — the open card's unsent answers
+  let draft = null;          // { roundTurnId, picks: {id: option}, texts: {id: text}, drafted: {id: msgId} } — the open card's unsent answers (drafted: Worca's, A3 D6)
   let revising = null;       // the earlier round being changed (its round turn id), shown as a card (D12)
   let revDraft = null;       // that card's unsent answers, as `draft`
   let editing = null;        // the section open in its editor
@@ -354,6 +354,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       for (const map of [fileUi, fileMsgs, fileMsgList, fileNodes, refusalEls, fileWas, droppedKeys]) map.clear();
       filesLive = null;
       helperData = null; helperUi = freshHelperUi(); helperApplied.clear(); helperNodes.clear(); helperTails.clear(); helperLog = null; helperWaitEl = null; helperNewest = null;
+      helperBusy = false;   // another feature: a chat POST still in flight for the last one never blocks this one's controls
       closeDialog(false);
     }
     seqShown = next;
@@ -1164,7 +1165,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function questionCard(f, round, { revise = false } = {}) {
     let d = revise ? revDraft : draft;
     if (!d || d.roundTurnId !== round.turnId) {
-      d = { roundTurnId: round.turnId, picks: {}, texts: {} };
+      d = { roundTurnId: round.turnId, picks: {}, texts: {}, drafted: {} };
       for (const q of round.questions) {
         const a = revise && round.given ? round.given.get(q.id) : null;
         if (a && a.answer) { if (q.options.includes(a.answer)) d.picks[q.id] = a.answer; else d.texts[q.id] = a.answer; }
@@ -1172,6 +1173,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       }
       if (revise) revDraft = d; else draft = d;
     }
+    if (!d.drafted) d.drafted = {};
+    if (!revise) applyHelperDrafts(round, d);   // A3 D6: Worca's drafts, on the pending card only
     const count = h('span', { class: 'qanswered' });
     const recount = () => {
       const n = round.questions.filter((q) => d.picks[q.id] || d.texts[q.id]).length;
@@ -1201,19 +1204,39 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           'aria-pressed': d.picks[q.id] === o && !d.texts[q.id] ? 'true' : 'false' },
           h('span', { class: 'qopt-txt', text: o }), o === q.recommended ? h('span', { class: 'qrec', text: 'Recommended' }) : null));
         const free = h('input', { class: 'qfree', type: 'text', value: d.texts[q.id] || '', placeholder: 'Or type your own answer…', 'aria-label': `Your own answer to: ${q.question}` });
+        // A3 D6: Worca's draft: the chip after the options row (the options are buttons: no button inside one), its × and its why
+        const why = !revise && d.drafted[q.id] != null ? draftWhy(d.drafted[q.id], q.id) : '';
+        const chip = revise ? null : h('div', { class: 'req-help-drafted-row', hidden: d.drafted[q.id] == null },
+          // the × is the remove icon (no glyph as an icon, ui-design-language)
+          h('span', { class: 'req-help-drafted' }, 'drafted by Worca',
+            h('button', { type: 'button', class: 'req-help-drafted-x', 'aria-label': `Clear Worca's draft for question ${i + 1}`, 'data-ui': `undraft-${round.turnId}-${i}`,
+              onclick: () => {   // back to the recommended pick, not to "nothing picked"
+                delete d.drafted[q.id];
+                delete d.texts[q.id];
+                if (q.recommended) d.picks[q.id] = q.recommended; else delete d.picks[q.id];
+                free.value = '';
+                sync();
+                (buttons[Math.max(0, q.options.indexOf(q.recommended))] || buttons[0]).focus();
+              } }, icon(ICONS.remove, { size: 12 }))),
+          why ? h('p', { class: 'hint req-help-draft-why', text: `Worca's draft: ${why}` }) : null);
         const sync = () => {
           buttons.forEach((b, k) => { const on = !d.texts[q.id] && d.picks[q.id] === q.options[k]; b.setAttribute('aria-pressed', on ? 'true' : 'false'); b.classList.toggle('sel', on); });
           free.classList.toggle('has', !!d.texts[q.id]);
+          if (chip) chip.hidden = d.drafted[q.id] == null;
           recount();
         };
-        buttons.forEach((b, k) => b.addEventListener('click', () => { d.picks[q.id] = q.options[k]; delete d.texts[q.id]; free.value = ''; sync(); }));
-        free.addEventListener('input', () => { const v = free.value.trim(); if (v) { d.texts[q.id] = v; delete d.picks[q.id]; } else delete d.texts[q.id]; sync(); });
+        // picking or typing by hand removes the mark (D6)
+        buttons.forEach((b, k) => b.addEventListener('click', () => { d.picks[q.id] = q.options[k]; delete d.texts[q.id]; delete d.drafted[q.id]; free.value = ''; sync(); }));
+        free.addEventListener('input', () => { const v = free.value.trim(); if (v) { d.texts[q.id] = v; delete d.picks[q.id]; } else delete d.texts[q.id]; delete d.drafted[q.id]; sync(); });
         queueMicrotask(sync);
+        const qtext = h('div', { class: 'qtext' }, h('span', { class: 'qn', text: String(i + 1) }), q.question);
         return h('div', { class: 'qblock' },
-          h('div', { class: 'qtext' }, h('span', { class: 'qn', text: String(i + 1) }), q.question),
+          // A3 D1: Help me answer, on the pending round's questions only (not on an earlier round being changed)
+          revise ? qtext : h('div', { class: 'req-qhead' }, qtext, h('button', { type: 'button', class: 'link-btn req-help-ask', 'data-ui': `help-${round.turnId}-${i}`,
+            onclick: () => helpMeAnswer(f, round, q, i) }, 'Help me answer')),
           // A8 (board 16): a question that came from a file names it before its why
           q.why || q.source ? h('div', { class: 'hint req-why' }, q.source ? h('span', { class: 'req-why-src', text: `From ${q.source}: ` }) : null, q.why || '') : null,
-          h('div', { class: 'qopts' }, ...buttons), free);
+          h('div', { class: 'qopts' }, ...buttons), chip, free);
       }),
       h('div', { class: 'qpanel-foot' }, count, ...foot));
     recount();
@@ -2498,6 +2521,40 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     helperUi.focus = null;   // D1: the header toggle is for general talk; no Help me answer cap is carried over
     openHelper(f, 'helper-toggle');
   }
+  /** D1: Help me answer opens the panel with the question in focus: the composer holds its text and the cap; it never sends. */
+  function helpMeAnswer(f, round, q, i) {
+    helperOpen.set(f.seq, true);
+    helperUi.focus = { roundTurnId: round.turnId, questionId: q.id, n: i + 1 };
+    setComposer(q.question);
+    helperUi.opener = `help-${round.turnId}-${i}`;
+    helperUi.error = null;
+    helperUi.budget = false;
+    focusNext = 'helper-in';
+    redraw();
+    void paint();
+  }
+  /** D6: the drafts of the newest reply whose round is this pending one fill the card, each once per visit (a cleared or
+   *  hand-changed draft stays so until the page is loaded again). */
+  function applyHelperDrafts(round, d) {
+    const msgs = (helperData && helperData.messages) || [];
+    const m = [...msgs].reverse().find((x) => x.role === 'worca' && x.roundTurnId === round.turnId && (x.drafts || []).some((y) => !y.dropped));
+    if (!m) return;
+    for (const dr of m.drafts) {
+      const k = `${m.id}:${dr.question}`;
+      const q = round.questions.find((x) => x.id === dr.question);
+      if (dr.dropped || !q || helperApplied.has(k)) continue;
+      helperApplied.add(k);
+      if (typeof dr.option === 'string' && q.options.includes(dr.option)) { d.picks[q.id] = dr.option; delete d.texts[q.id]; }
+      else if (typeof dr.text === 'string' && dr.text) { d.texts[q.id] = dr.text; delete d.picks[q.id]; }
+      else continue;
+      d.drafted[q.id] = m.id;
+    }
+  }
+  const draftWhy = (msgId, qid) => {
+    const m = ((helperData && helperData.messages) || []).find((x) => x.id === msgId);
+    const dr = m && (m.drafts || []).find((x) => x.question === qid);
+    return dr && dr.why ? dr.why : '';
+  };
 
   /** Send (the composer's text or a starter's): a refusal keeps the typed text and says why under the composer; a spent budget
    *  says so in the chat instead (§6). */
@@ -2519,21 +2576,22 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
   /** Stop, Try again, Clear chat, and Tasks 8's Accept / Reject / Ask again: the server's chat comes back, then the feature is
    *  fetched again (an accepted change is in the spec). A spent budget shows in the chat, any other refusal under the composer.
-   *  A press while another chat POST is in flight is ignored. */
+   *  A press while another chat POST is in flight is ignored; the follow-up refetch does not hold the guard (a Stop pressed while
+   *  it runs is sent). */
   async function helperPost(f, method, path, focusUi = null) {
     if (helperBusy) return;
     helperBusy = true;
     helperUi.error = null;
     try {
-      try {
-        helperData = await api(method, `/api/requirements/${f.seq}/helper${path}`, method === 'DELETE' ? undefined : {});
-        helperUi.budget = false;
-      } catch (err) { helpRefused(err); }
-      if (focusUi) focusNext = focusUi;
-      await paint();
+      helperData = await api(method, `/api/requirements/${f.seq}/helper${path}`, method === 'DELETE' ? undefined : {});
+      helperUi.budget = false;
+    } catch (err) {
+      helpRefused(err);
     } finally {
       helperBusy = false;
     }
+    if (focusUi) focusNext = focusUi;
+    await paint();
   }
   /** Try again on a chat that could not be read: the feature and its chat are fetched again. */
   async function reloadHelper() {
@@ -2561,8 +2619,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     if (code === 'STOPPED') return h('p', { class: 'hint req-help-stopped' }, 'You stopped this reply.', again ? ' ' : null, again);
     return h('p', { class: 'req-help-fail', role: 'alert' }, HELP_FAILED, again ? ' ' : null, again);
   }
-  /** What a reply carries besides its text: Task 7 adds the dropped-draft line, Task 8 the proposal cards. */
-  function helperExtras() { return []; }
+  /** What a reply carries besides its text: the dropped-draft line (D6); Task 8 adds the proposal cards. */
+  function helperExtras(f, m) {
+    return [
+      (m.drafts || []).some((x) => x.dropped)
+        ? h('p', { class: 'hint req-help-dropped', text: "The question you asked about has been answered, so Worca's draft for it was dropped." }) : null,
+    ];
+  }
   function helperMessage(f, m, ctx) {
     if (m.role === 'po') {
       const cap = helpCap(m);
@@ -2575,9 +2638,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
   /** D18: a message's node is rebuilt only when this key changes, so the key holds the message and ONLY the parts of `ctx` (and of
    *  `f`) that change that message's DOM: a rebuilt node in the role=log live region is read out again, so a key with the whole
-   *  ctx would re-read the history on every Send, reply and round. This is the one place a row's dependencies are listed: Task 7
-   *  (the dropped-draft line) and Task 8 (the proposal cards: their state, stale mark, Ask again, and the ctx their Accept /
-   *  Reject / Ask again read) add theirs here. */
+   *  ctx would re-read the history on every Send, reply and round. This is the one place a row's dependencies are listed: the
+   *  dropped-draft line (D6) reads only `m.drafts`, already in the key; Task 8 (the proposal cards: their state, stale mark, Ask
+   *  again, and the ctx their Accept / Reject / Ask again read) adds its parts here. */
   function helperRowKey(f, m, ctx) {
     if (m.role === 'po') return JSON.stringify([m, helpCap(m)]);
     const code = m.error ? m.error.code : null;

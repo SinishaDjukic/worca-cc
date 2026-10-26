@@ -10641,6 +10641,26 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
   .req-help-starters{gap:18px}
   .req-help-toggle,.req-help .menu-item{min-height:44px}
 }
+/* A3 D1/D6 (boards 22, 25): Help me answer beside each pending question (its own 44 px line on a phone), and Worca's draft: a
+   dashed blue chip after the options (blue means active), its × and its why. On the type scale and the radius tokens (the
+   board's 11.5px and pill corners are off them); on a phone the × keeps its size and its hit area grows to 44 × 44 (the
+   ::after pattern above), the row's margins keeping that area off the options and the answer field. */
+.req-qhead{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.req-qhead > .qtext{flex:1;min-width:0}
+.req-help-ask{flex:none;white-space:nowrap;font-size:var(--fs-meta)}
+.req-help-drafted-row{display:flex;flex-direction:column;gap:4px;margin:6px 0 0 24px}
+.req-help-drafted-row[hidden]{display:none}
+.req-help-drafted{display:inline-flex;align-self:flex-start;align-items:center;gap:4px;padding:1px 7px;border:1px dashed var(--blue-ink-strong);border-radius:var(--r-md);color:var(--blue-ink-strong);font-size:var(--fs-meta);white-space:nowrap}
+.req-help-drafted-x{display:inline-flex;align-items:center;padding:0 0 0 2px;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer}
+.req-help-drafted-x:focus-visible{outline:2px solid var(--ink);outline-offset:1px;border-radius:var(--r-sm)}
+.req-help-draft-why,.req-help-dropped{margin:0}
+@media (max-width:900px){
+  .req-qhead{flex-wrap:wrap}
+  .req-help-ask{flex-basis:100%;display:inline-flex;align-items:center;min-height:44px;text-align:left}
+  .req-help-drafted-row{margin:12px 0 12px 24px}
+  .req-help-drafted-x{position:relative}
+  .req-help-drafted-x::after{content:"";position:absolute;left:50%;top:50%;width:44px;height:44px;transform:translate(-50%,-50%)}
+}
 
 /* ── marketplace P3 ── */
 /* Plugin icons (U7, board 0.1): the kind colour lives only in this tile; hue families carry the dark arms. */
