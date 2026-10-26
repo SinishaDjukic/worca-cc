@@ -827,10 +827,11 @@ test('D14: a copy that fails on the temp side while the stored body is intact an
   const [a] = job.addAttachments(fo, [textFile('a.md', 'aaaa')]);
   await job.readsSettled(fo);
   const entry = { id: a.id, name: 'a.md', path: job.attachmentFile(a), sha256: a.sha256 };
-  // a file where the run's folder should be: the folder is fine, the copy into it fails (the destination's fault)
+  // The run folder is fine, but every name the copy could take is held by a folder: copyFile fails (EEXIST on POSIX,
+  // past the retries; a refusal to write onto a folder on Windows), the source is intact.
   const dir = join(base, 'orchestrator-extras-r-dest');
   mkdirSync(dir, { recursive: true });
-  mkdirSync(join(dir, 'a.md'));   // a folder takes the copy's name: copyFile fails, the source is intact
+  for (let k = 1; k <= 25; k += 1) mkdirSync(join(dir, k === 1 ? 'a.md' : `a (${k}).md`));
   let ran = false;
   const out = await job.withStagedRunFiles('r-dest', [entry], async () => { ran = true; return { status: 201 }; }, { base });
   assert.deepEqual([out.status, out.body.error, ran], [500, 'Worca could not finish that. Try again.', false]);
