@@ -41,6 +41,13 @@ export function usageFields(u) {
   return f;
 }
 
+/** A result's usage; an engine whose input already holds the cache (Goose) gets ctx = input. */
+function resultUsage(e) {
+  const f = usageFields(e.usage);
+  if (e.inputIncludesCache) { f.ctx = f.in; f.inc = true; }
+  return f;
+}
+
 /**
  * @param {{writer?:{bind:Function,push:Function,close:Function}, now?:()=>number, windowMs?:number,
  *   lag?:boolean}} [o]  lag: false skips the event-loop monitor (tests)
@@ -102,9 +109,11 @@ export function createTelemetryRecorder({ writer = createRunLogWriter({ fileName
     }
   }
 
+  // The open call stays open: the CLI can run a tool and send its result before the next content block
+  // of the SAME message (seen on Claude Code 2.1.310), whose tools belong to that call too. The next
+  // message id, the result or the step's end closes it.
   function onToolResult(e, step, ts) {
     const s = stream(step, e.parentId);
-    flushCall(s);
     s.boundary = ts;
     for (const r of Array.isArray(e.results) ? e.results : []) {
       const t = r && r.toolUseId ? openTools.get(r.toolUseId) : null;
@@ -143,7 +152,7 @@ export function createTelemetryRecorder({ writer = createRunLogWriter({ fileName
         return;
       case 'result':
         flushStep(step);
-        push({ t: 'result', ts, step, session: sessions.get(step) ?? e.sessionId ?? null, ...usageFields(e.usage),
+        push({ t: 'result', ts, step, session: sessions.get(step) ?? e.sessionId ?? null, ...resultUsage(e),
           costUsd: Number.isFinite(e.costUsd) ? e.costUsd : null, cumulative: !!e.cumulativeCost,
           turns: e.numTurns ?? null, durationMs: e.durationMs ?? null });
         return;

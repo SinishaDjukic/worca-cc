@@ -11,7 +11,8 @@ const MISSING_TTL_MS = 30_000;   // a live run that recorded nothing (flag off w
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const W = 320, H = 48, PAD = 2;
 
-const cache = new Map();   // runId -> { at (last settled fetch), data, inflight }
+const CACHE_MAX = 20;   // runs kept; the least recently painted one goes first
+const cache = new Map();   // runId -> { at (last settled fetch), data, inflight }, oldest use first
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -46,10 +47,11 @@ export function stepFigures(st) {
   const win = fmtWindow(st.window);
   if (st.peak != null) {
     const pct = st.window ? ` (${Math.round((st.peak / st.window) * 100)}%)` : '';
-    const where = st.perCall ? 'peak' : 'at end';
-    out.push({ text: `context ${where} ${kTok(st.peak)}${win ? ` / ${win}` : ''}${pct}`, level: ctxLevel(st.peak, st.window),
-      title: st.perCall ? `Largest prompt one call sent. Final call: ${kTok(st.final ?? 0)}.${st.windowFrom === 'default' ? ' Window assumed (the model lists none).' : ''}`
-        : 'This engine reports usage only at the end of a session: one figure, which can include earlier turns.' });
+    out.push({ text: `context peak ${kTok(st.peak)}${win ? ` / ${win}` : ''}${pct}`, level: ctxLevel(st.peak, st.window),
+      title: `Largest prompt one call sent. Final call: ${kTok(st.final ?? 0)}.${st.windowFrom === 'default' ? ' Window assumed (the model lists none).' : ''}` });
+  } else if (st.sessionInput != null) {
+    out.push({ text: `session input ${kTok(st.sessionInput)}`,
+      title: 'This engine reports usage only at the end of a session: the input of every call added up, not a context size.' });
   }
   if (st.perCall) out.push({ text: plural(st.calls, 'call') });
   if (st.sessions > 1) out.push({ text: plural(st.sessions, 'session'), title: 'Retries, resumes and question rounds each run a session.' });
@@ -82,7 +84,7 @@ function el(doc, tag, attrs = {}, ns = null) {
 /** The context-over-time chart: the series, the window (dashed), where compaction starts (dotted). */
 export function contextChart(doc, st) {
   const pts = Array.isArray(st?.series) ? st.series : [];
-  if (pts.length < 2) return null;
+  if (!st?.perCall || pts.length < 2) return null;     // end-of-session sums are no context over time
   const xMax = Math.max(1, pts[pts.length - 1][0]);
   const trigger = ctxTrigger(st.window);
   const yMax = Math.max(st.window || 0, ...pts.map((p) => p[1])) || 1;
@@ -158,7 +160,9 @@ function fill(sec, data) {
 export function paintTelemetry(sec, runId, { live = false, fetchImpl = globalThis.fetch } = {}) {
   if (!sec || !runId || !telemetryOn(sec.ownerDocument)) return Promise.resolve(null);
   const c = cache.get(runId) || { at: 0, data: null, inflight: null, live: false };
+  cache.delete(runId);   // re-insert: Map order is the use order
   cache.set(runId, c);
+  if (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
   if (c.data) fill(sec, c.data);
   // Never fetched; live and older than its TTL; or a finished run's first paint after a live copy (the
   // last lines and the end record came later). A 404 or a failed fetch counts as fetched.
