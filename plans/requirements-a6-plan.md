@@ -27,27 +27,27 @@
 - Timeouts (D14): every export op `EXPORT_TIMEOUT_MS = 60_000`. A timeout (or any thrown failure) on create or new keeps the pending marker (D10).
 - Concurrency (D13): `exporting` is a Set taken before the first await; it lives in the leaf module `starting.mjs` beside `starting` (so `start.mjs` can read it without an import cycle; `export.mjs` re-exports `isExporting`). An export is refused while a round or look runs (`isBusy`), while a start is in flight (`isStarting`), on an archived feature, and while another export of the feature runs; Start is refused while exporting. Setup and preview calls hold no lock.
 - `ui/public/style.css`: tokens only (no hex, no `rgba(`); font sizes from the type scale (`var(--fs-caption)` 11, `var(--fs-meta)` 12, `var(--fs-body)` 13, `var(--fs-section)` 15, 18px for a dialog title, never 11.5/12.5/14px); radii `var(--r-xs|sm|md)` or 0, never 12px/999px; no `min-height:44px` (44 is off the control scale) — phone tap areas are a `::after` hit area, as `.req-fpick::after`; shared icons (`icon(ICONS.remove)`, `icon(ICONS.check)`, `sharedIcon(document, 'external', 12)`) never a text glyph such as × or ✓ or ↗; on/off controls never green-filled (the Report back switch is upstream's ink `.switch`). Every new rule is a `req-export-*`, `req-history*` or `req-report*` rule inside the Requirements block, which ends right before `/* ── marketplace P3 ── */`.
-- Dialogs (D20): `role="dialog"` `aria-modal="true"`, labelled by their title, through the page's `openModal` (focus trapped, Escape closes when allowed, focus back to the trigger); while an export dialog is open every other child of `<body>` is inert, released on close and when the user leaves the Requirements view (`leave()`, called by `app.js`). Every async answer checks the dialog's generation (`dlgGen`) and is dropped when its dialog is gone. Live regions (`role="status"`, `role="alert"`) are persistent nodes whose text changes; they are never rebuilt by an unrelated repaint.
-- Phone (D20): at 600 px and narrower (the page's phone rule) an export dialog is a full-screen sheet: `position:fixed; inset:0` (the viewport's size, never the content's), scrolling inside, **← FEAT-7** first, the description folded behind **Show all**, full-width buttons with 44 px hit areas.
+- Dialogs (D20): `role="dialog"` `aria-modal="true"`, labelled by their title, through the page's `openModal` (focus trapped, Escape closes when allowed, focus back to the trigger); the focus moves into the dialog the moment it opens: Connect a tracker on **Close**, Not Ready on the reason, every other export dialog (Setup, Preview, Again, Comment) on its `h2`, which is `tabindex="-1"` (a later move — Setup's Connection, Again's default choice — happens only after a successful load); while an export dialog is open every other child of `<body>` is inert, released on close and when the user leaves the Requirements view (`leave()`, called by `app.js`). Every async answer checks the dialog's generation (`dlgGen`) and is dropped when its dialog is gone. Live regions (`role="status"`, `role="alert"`) are persistent nodes whose text changes; they are never rebuilt by an unrelated repaint.
+- Phone (D20): at 600 px and narrower (the page's phone rule) an export dialog is a full-screen sheet: `position:fixed; inset:0` (the viewport's size, never the content's), scrolling inside, **← FEAT-7** first, the description folded behind **Show all**, full-width buttons with 44 px hit areas. Board 31's title (user decision 2026-10-26): at 900 px and narrower the preview's heading reads "Export to Jira" with "FEAT-7 · <title>" on a second line (CSS hides the `FEAT-7 ` part of the one `h2`, which still labels the dialog); wider, it stays "Export FEAT-7 to Jira".
 - Product copy never shows a raw error, a stack, a path or an HTTP status: a refusal shows the server's product message (`errText`), anything else "Worca could not finish that. Try again.". A tracker failure answers 502 `{ error, kind }` with D11's sentence.
 - User-facing copy, verbatim (design §2, §7; `Jira` is the tracker's `displayName`, `SHOP` the tracker project, `SHOP-123` the ticket, `FEAT-7` the feature, `shop` the project or workspace name, `26 Oct` server-local dates):
   - Menu: "Save to specs/" · "Copy Markdown" · "Download .md" · a separator · "Export to Jira…" ("Export to a tracker…" with several trackers and none bound) · "Export setup…" · or "Connect a tracker…"; archived: "Export to Jira…" disabled with "Restore the feature to export it.".
   - Connect a tracker: title "Connect a tracker" · "Trackers are connected on the Marketplace page (Advanced mode), or by whoever set up Worca." · "Close" · at the Advanced level "Open the Marketplace page".
-  - Setup (board 26): "Set up export for shop" · "Worca uses these for every export from shop. You can change them for one export in the preview, or for good in Export ▾ › Export setup…" · "Connection" (option: the profile's label, led by "Jira · " when several trackers can export) · "Connections are added on the Marketplace page: Installed › Jira (Advanced mode)." · "Jira project" · "Issue type" · "Labels" · "Add a label" · "Remove label <label>" · "Priority" "optional" · "None" · "Acceptance criteria go to" · "A section of the description" · "A Jira field" · select name "Jira field for acceptance criteria" · "The list shows the text fields of SHOP that can hold the criteria." · "Cancel" · "Save and continue" (from Export setup…: "Save") · "This Jira is too old for export setup.".
+  - Setup (board 26): "Set up export for shop" · "Worca uses these for every export from shop. You can change them for one export in the preview, or for good in Export ▾ › Export setup…" · "Connection" (option: the profile's label, led by "Jira · " when several trackers can export) · "Connections are added on the Marketplace page: Installed › Jira (Advanced mode)." · "Jira project" · "Issue type" · "Labels" · "Add a label" · "Remove label <label>" · "Priority" "optional" · "None" · "Acceptance criteria go to" · "A section of the description" · "A Jira field" · select name "Jira field for acceptance criteria", its options "<field> (custom field)" ("Acceptance Criteria (custom field)", board 26; the saved name is the bare field name) · "The list shows the text fields of SHOP that can hold the criteria." · "Cancel" · "Save and continue" (from Export setup…: "Save") · "This Jira is too old for export setup.".
   - Not Ready (board 27): "Export FEAT-7 before it’s Ready?" · "One check does not pass yet:" / "<n> checks do not pass yet:" · "**<n> open question(s).** <the first one>" · "**A-4 is not decided.** The ticket lists confirmed assumptions only." ("A-4 and A-5 are not decided." for several) · other checks as the Start dialog lists them ("**<label>**: <hint>") · "Why export before it is Ready?" with "required, kept on the feature with your name" · "0 / 500" · "Your reason is recorded on the feature. The preview then adds it at the top of the description: “Exported before Ready: <your reason>”." · "Keep deciding" · "Export anyway".
-  - Preview (board 27): "Export FEAT-7 to Jira" · "This is the ticket Worca will create in SHOP. Change the issue type, labels or priority for this export." (Update: "This is the ticket Worca will update in SHOP. Change the issue type, labels or priority for this export.") · "Fields" · "Project" · "Saved in the export setup · <connection>" · "Issue type" · "Summary" · "The feature's title" · "Labels" · "worca-FEAT-7 stays: Worca uses this label to find the ticket again." · "Priority" · "Acceptance criteria" · "→ Description" · "A section of the description, as in the export setup" · "→ <field name>" · "Description, as Jira will show it" · name "Description preview" · "Show all" · "Only what you see here is sent to Jira." · "Cancel" · "Create in Jira" (Update: "Update SHOP-123"; a new ticket: "Create in Jira") · phone "← FEAT-7" named "Back to FEAT-7".
+  - Preview (board 27): "Export FEAT-7 to Jira" (at 900 px and narrower, board 31: "Export to Jira" over "FEAT-7 · Cancel an order before it ships") · "This is the ticket Worca will create in SHOP. Change the issue type, labels or priority for this export." (Update: "This is the ticket Worca will update in SHOP. Change the issue type, labels or priority for this export.") · "Fields" · "Project" · "Saved in the export setup · <connection>" · "Issue type" · "Summary" · "The feature's title" · "Labels" · "worca-FEAT-7 stays: Worca uses this label to find the ticket again." · "Priority" · "Acceptance criteria" · "→ Description" · "A section of the description, as in the export setup" · "→ <field name>" · "Description, as Jira will show it" · name "Description preview" · "Show all" · "Only what you see here is sent to Jira." · "Cancel" · "Create in Jira" (Update: "Update SHOP-123"; a new ticket: "Create in Jira") · phone "← FEAT-7" named "Back to FEAT-7".
   - States (board 29): "Worca could not reach Jira: <reason>." with `<reason>` "the API token was refused" (`auth`), "it did not answer within a minute" (`timeout`), else the plugin's message without a final period · "Try again" · "Nothing was recorded. The preview stays open, so you can try again once the connection is fixed on the Marketplace page (Installed › Jira)." · "Jira needs a value for “Team” in SHOP." / "Jira refused “<field>”: <Jira's message>" · "Change the export setup" · "SHOP-123 no longer exists in Jira." · "It was deleted or moved where this connection cannot see it. Forget the link removes the SHOP-123 chip; the history keeps the export." · "Forget the link" · "New ticket" · "Exporting to Jira…" (blue badge) · "Created SHOP-123" (after an update "Updated SHOP-123", after a comment "Commented on SHOP-123") · "The spec changed since the preview. Look at the preview again.".
   - Again (board 28): "Export FEAT-7 again" · "SHOP-123 was made on 26 Oct. The spec has changed since. What should happen?" · nothing changed: "SHOP-123 was made on 26 Oct. The spec has not changed since the last export (26 Oct)." · radio group "What should happen": "Update SHOP-123" "Rewrites its summary, description and fields." · "Add a comment to SHOP-123" "Lists what changed since the last export. The description stays." · "Create a new ticket" "For example when the feature was split." · "What changed since the last export (26 Oct)" · lines "Added R-po-6 <text>", "Changed R-po-2 <new text>", "Removed R-po-3 <text>", "Business rules: 1 line changed", "Edge cases: 1 line added", "Main flow: 2 lines removed", "Goal: 1 line changed", "Measure: 1 line added", "Confirmed A-4 <text>", "A-2 is no longer confirmed" · "The preview shows the result before anything is sent." · alert "**SHOP-123 was edited in Jira since your last export.** Updating replaces its description." with "Update anyway" · "Add a comment instead" · "Cancel" · "Cancel" · "Continue".
   - Comment (board 28): "Comment on SHOP-123" · "This comment is added to SHOP-123. Its description and fields stay as they are." · name "Comment preview" · "Only what you see here is sent to Jira." · "Back" · "Add comment". The comment (design §4, board 28's punctuation): "Updated in Worca since the last export (26 Oct)", then "Exported before Ready: <reason>" when given, one paragraph per change ("Added R-po-6 <text>", "Changed R-po-2: “<new>” was “<old>”", "Removed R-po-3 <text>", "Business rules: “<new>” was “<old>”", "Edge cases: added “<line>”", "Main flow: removed “<line>”", "Goal: “<new>” was “<old>”", "Measure: added “<new>”", "Confirmed A-4 <text>", "A-2 is no longer confirmed"), then "From Worca FEAT-7".
   - Header and History (board 28): chip "SHOP-123" with the external icon, named "SHOP-123, opens the ticket in Jira in a new tab", `target="_blank" rel="noopener"` · card "History" · lines "Exported to Jira as SHOP-123 · 26 Oct, 10:42" (and a new ticket), "Updated SHOP-123 in Jira · …", "Commented on SHOP-123 in Jira · …", "Linked SHOP-123, which an earlier export made · …", "Forgot the link to SHOP-123 · …", an Export anyway line adding " · before Ready: <reason>", each with the person's name.
   - Report back (board 29): switch "Report back to SHOP-123" · with a status "When the run ends, Worca comments with the result and the pull request link, and moves the ticket to Done (the status named in the Jira connection; without one, it only comments)." · without "When the run ends, Worca comments with the result and the pull request link. The Jira connection names no status to move the ticket to, so it only comments.".
-  - Server refusals (design and this plan): "Worca is already exporting this feature." · "Worca is still working on this feature. Try again in a moment." · "this feature is starting a run. Try again in a moment." (`STARTING_MESSAGE`) · "Worca is exporting this feature. Try again in a moment." (Start while exporting) · "this feature is archived; restore it first" · "The spec changed since the preview. Look at the preview again." · "This feature is not Ready. Give a reason to export it anyway." · "the reason must be at most 500 characters" · copy this plan adds where the design names none, said once: "Set up the export first." · "This feature has a ticket already. Export it again instead." · "This feature has no ticket yet." · "Nothing changed since the last export." · "mode must be create, update, comment or new" · "Choose a connection from the list." · "project is required" · "issueType is required" · "criteria.field is required" · "reportBack must be true or false" · "SHOP-123 was edited in Jira since your last export. Updating replaces its description." (the 409 of an update raced by an edit) · "The tracker refused the ticket." (a refusal without a message).
+  - Server refusals (design and this plan): "Worca is already exporting this feature." · "Worca is still working on this feature. Try again in a moment." · "this feature is starting a run. Try again in a moment." (`STARTING_MESSAGE`) · "Worca is exporting this feature. Try again in a moment." (Start while exporting) · "this feature is archived; restore it first" · "The spec changed since the preview. Look at the preview again." · "This feature is not Ready. Give a reason to export it anyway." · "the reason must be at most 500 characters" · copy this plan adds where the design names none, said once: "Set up the export first." · "This feature has a ticket already. Export it again instead." · "This feature has no ticket yet." · "Nothing changed since the last export." · "mode must be create, update, comment or new" · "Choose a connection from the list." · "project is required" · "issueType is required" · "criteria.field is required" · "reportBack must be true or false" · "SHOP-123 was edited in Jira since your last export. Updating replaces its description." (the 409 of an update raced by an edit) · "The tracker refused the ticket." (a refusal without a message) · "Jira cannot export any more." (an export op answers `unimplemented` after a cached "yes", e.g. a downgraded connector) · jira-source's message for a request Jira refused without naming a field: "Jira refused the request: <Jira's errorMessages, or "no reason given">" (never the HTTP status or the REST path).
 
 ## Review Focus
 
 0. **No tracker call from the browser, no secret out.** Every op goes through `export.mjs` → `callSource`; `/api/sources/call`'s allowlist is unchanged; no response carries a config value (Tasks 3, 5, 6, 7).
 1. **Only what the preview shows is sent.** The preview hash covers the exact ticket or comment; the export rebuilds and compares it; labels are normalised in Worca (Tasks 2, 5).
-2. **Nothing recorded on a failure; no duplicate on a lost answer.** A failed call writes no link or turn; a create keeps its pending marker until a definite answer; the next export finds the ticket only when label, marker and footer all match (Tasks 4, 5).
+2. **Nothing recorded on a failure; no duplicate on a lost answer.** A failed call writes no link or turn; a create keeps its pending marker until a definite answer; the next export finds the ticket only when label, marker and footer all match; once Jira made the ticket the plugin answers its key even when the marker property or the read-back fails, so Try again never makes a second one (Tasks 4, 5).
 3. **Edited in the tracker.** The fingerprint is the plugin's, stored after every create and update, untouched by a comment; Update is refused while it differs unless forced (Tasks 4, 5, 9).
 4. **Report back rides the existing write-back.** A start with a linked ticket makes a `plugin` pipeline row (`source_ref` with the link's own connection and `inputs.writeBack: 'yes'`); `_reportTo` is in-process only (Task 7).
 5. **The round is unchanged.** An `export` turn writes no thread line, never hides the error line, never changes what Try again re-runs (Tasks 1, 6).
@@ -885,7 +885,8 @@ git commit -m "Requirements: the tool-neutral ticket and what changed since the 
 - Produces (`export.mjs`):
   - `EXPORT_TIMEOUT_MS = 60_000`
   - `Tracker = { plugin, sourceId, name, multiProfile: boolean, profiles: Array<{ id: string|null, label: string }> }` (a single-profile source has one entry `{ id: null, label: <displayName> }`)
-  - `exportTrackers(d = {}) → Promise<Tracker[]>` (never throws; `d.callSource` replaces the shim in tests)
+  - `PROBE_TIMEOUT_MS = 10_000`, `PROBE_RETRY_MS = 60_000` (D3, user decision 2026-10-26)
+  - `exportTrackers(d = {}) → Promise<Tracker[]>` (never throws; every source probed at once, each within `PROBE_TIMEOUT_MS`; a "yes" or an `unimplemented` is cached per plugin, source id and installed version; a failed probe is remembered for `PROBE_RETRY_MS` per plugin, source id and profile, and the source counts as unable to export meanwhile; `d.callSource` replaces the shim in tests, `d.now()` the clock)
   - `defaultConnection({ scopeType, scopeKey }, trackers, { memberKeys = [] } = {}) → Conn|null`
   - `reachReason(err) → string`, `reachSentence(name, err) → 'Worca could not reach <name>: <reason>.'`
   - `_resetExportCaches()` (tests)
@@ -972,7 +973,8 @@ test('WORCA_MOCK=1: the export ops answer (A6 design §4): options, tickets numb
 ```js
 // test/requirements-export-trackers.test.mjs — which task sources can export (plans/requirements-a6-design.md D1–D3, D11):
 // enabled plugin sources with a connection whose capabilities() say export; the answer cached per plugin, source and
-// installed version; a failed probe not cached; the default connection; the reach sentences.
+// installed version; every source probed at once within 10 s; a failed probe remembered for a minute (user decision
+// 2026-10-26); the default connection; the reach sentences.
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
@@ -983,7 +985,7 @@ import { readPluginsLock, writePluginsLock } from '../src/core/plugins-lock.mjs'
 import { setBinding } from '../src/core/source-bindings.mjs';
 import { PluginOpError } from '../src/core/plugin-shim.mjs';
 import {
-  EXPORT_TIMEOUT_MS, exportTrackers, defaultConnection, reachReason, reachSentence, _resetExportCaches,
+  EXPORT_TIMEOUT_MS, PROBE_TIMEOUT_MS, PROBE_RETRY_MS, exportTrackers, defaultConnection, reachReason, reachSentence, _resetExportCaches,
 } from '../src/core/requirements/export.mjs';
 
 useTempHome(after, 'worca-req-export-trackers-');
@@ -1025,9 +1027,23 @@ test('a source is a tracker when capabilities say export; probed with its first 
   const t = await exportTrackers({ callSource });
   assert.deepEqual(t, [{ plugin: 'jira-source', sourceId: 'jira', name: 'Jira', multiProfile: true,
     profiles: [{ id: 'acme', label: 'acme.atlassian.net (Cloud)' }, { id: 'beta', label: 'jira.beta.test (Data Center)' }] }]);
-  assert.deepEqual(callSource.calls.map((c) => [c.plugin, c.op, c.profile]), [['jira-source', 'capabilities', 'acme'], ['mock-source', 'capabilities', undefined]]);
+  assert.deepEqual(callSource.calls.map((c) => [c.plugin, c.op, c.profile, c.timeoutMs]),
+    [['jira-source', 'capabilities', 'acme', PROBE_TIMEOUT_MS], ['mock-source', 'capabilities', undefined, PROBE_TIMEOUT_MS]]);
   await exportTrackers({ callSource });
   assert.equal(callSource.calls.length, 2, 'cached for the process');
+});
+
+test('every source is probed at once, each within 10 s: a slow connector does not hold the others up (D3)', async () => {
+  _resetExportCaches();
+  assert.deepEqual([PROBE_TIMEOUT_MS, PROBE_RETRY_MS], [10_000, 60_000]);
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const callSource = fakeCall({ 'jira-source': async () => { await gate; return { export: true }; }, 'mock-source': { writeBack: true } });
+  const pending = exportTrackers({ callSource });
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(callSource.calls.map((c) => c.plugin), ['jira-source', 'mock-source'], 'both asked before the first answered');
+  release();
+  assert.deepEqual((await pending).map((x) => x.plugin), ['jira-source'], "listTaskSources' order is kept");
 });
 
 test('the cache is per installed version: a new version is asked again', async () => {
@@ -1041,18 +1057,28 @@ test('the cache is per installed version: a new version is asked again', async (
   writePluginsLock(lock);
 });
 
-test('a missing op means no export (cached); a failed probe is not cached; any other answer is no', async () => {
+test('a missing op means no export (cached); a failed probe is remembered for a minute, then asked again; any other answer is no', async () => {
   _resetExportCaches();
+  let clock = 1_000_000;
   let jira = new PluginOpError('network', 'Jira unreachable: fetch failed');
   const callSource = fakeCall({ 'jira-source': () => { if (jira instanceof Error) throw jira; return jira; },
     'mock-source': new PluginOpError('unimplemented', 'connector does not implement op "capabilities"') });
-  assert.deepEqual(await exportTrackers({ callSource }), []);
-  jira = { writeBack: true, export: 'yes' };
-  assert.deepEqual(await exportTrackers({ callSource }), [], 'export must be true, not truthy');
+  const d = { callSource, now: () => clock };
+  const asked = () => callSource.calls.filter((c) => c.plugin === 'jira-source').length;
+  assert.deepEqual(await exportTrackers(d), []);
   jira = { export: true };
-  assert.deepEqual(await exportTrackers({ callSource }), [], 'the "no" above was cached');
+  clock += 30_000;
+  assert.deepEqual(await exportTrackers(d), [], 'within the minute the failure stands: no export for that connection');
+  assert.equal(asked(), 1, 'and the source is not asked again');
+  jira = { writeBack: true, export: 'yes' };
+  clock += 31_000;
+  assert.deepEqual(await exportTrackers(d), [], 'export must be true, not truthy');
+  assert.equal(asked(), 2, 'asked again once the minute is over');
+  jira = { export: true };
+  clock += 61_000;
+  assert.deepEqual(await exportTrackers(d), [], 'the "no" above was cached');
   _resetExportCaches();
-  assert.deepEqual((await exportTrackers({ callSource })).map((x) => x.plugin), ['jira-source']);
+  assert.deepEqual((await exportTrackers(d)).map((x) => x.plugin), ['jira-source']);
   assert.equal(callSource.calls.filter((c) => c.plugin === 'mock-source').length, 2, 'unimplemented was cached until the reset');
 });
 
@@ -1209,17 +1235,26 @@ import { resolveProfile, listBindingsForScope } from '../source-bindings.mjs';
 /** Every export op's time limit (D14): a create makes up to three tracker calls; exportOptions pages through projects. */
 export const EXPORT_TIMEOUT_MS = 60_000;
 
+/** A capability probe's time limit (D3): it runs inside every feature view, so a slow connector must not hold the page. */
+export const PROBE_TIMEOUT_MS = 10_000;
+/** How long a failed probe stands (D3, user decision 2026-10-26): meanwhile that connection cannot export. */
+export const PROBE_RETRY_MS = 60_000;
+
 /** The shim, or a test's stand-in (d.callSource). */
 const callOf = (d) => (d && typeof d.callSource === 'function' ? d.callSource : shimCallSource);
+/** Milliseconds now, or a test's clock (d.now() → a Date or a number). */
+const msOf = (d) => (d && typeof d.now === 'function' ? Number(d.now()) : Date.now());
 
-// D3: capabilities() answers per plugin, source id and installed version, for the process's life ("yes" and "no" alike;
-// a failed probe is not kept). In-flight probes are shared, so several views at once ask once.
+// D3: capabilities() answers per plugin, source id and installed version, for the process's life ("yes" and "no" alike).
+// A failed probe is remembered for PROBE_RETRY_MS per plugin, source id and profile (the source cannot export meanwhile),
+// then asked again (user decision 2026-10-26). In-flight probes are shared, so several views at once ask once.
 const capCache = new Map();
+const capFailed = new Map();   // `${plugin}/${sourceId}/${profile}` → when the probe failed
 const capInflight = new Map();
 // exportOptions' last doneStatus per connection (Task 5's saveSetup stores it on the setup).
 const lastDone = new Map();
-/** Tests: forget every probe answer and done status. */
-export function _resetExportCaches() { capCache.clear(); capInflight.clear(); lastDone.clear(); }
+/** Tests: forget every probe answer, failure and done status. */
+export function _resetExportCaches() { capCache.clear(); capFailed.clear(); capInflight.clear(); lastDone.clear(); }
 
 const versionOf = (plugin) => { try { return String((readPluginsLock()[plugin] || {}).version || ''); } catch { return ''; } };
 /** A source's connections: a multi-profile source's profiles; a single-profile source is its one configuration. */
@@ -1228,10 +1263,10 @@ const connectionsOf = (s) => (s.multiProfile === true ? (s.profiles || []) : [{ 
 async function probe(s, first, d) {
   try {
     const caps = await callOf(d)({ plugin: s.plugin, sourceId: s.sourceId, op: 'capabilities', args: { inputs: {} },
-      profile: first.id || undefined });
+      profile: first.id || undefined, timeoutMs: PROBE_TIMEOUT_MS });
     return { keep: true, ok: !!(caps && caps.export === true) };
   } catch (err) {
-    // A connector without the op cannot export (kept); any other failure is asked again next time (D3)
+    // A connector without the op cannot export (kept); any other failure stands for PROBE_RETRY_MS (D3)
     return { keep: (err && err.kind) === 'unimplemented', ok: false };
   }
 }
@@ -1239,28 +1274,31 @@ async function probe(s, first, d) {
 async function canExport(s, first, d) {
   const key = `${s.plugin}/${s.sourceId}@${versionOf(s.plugin)}`;
   if (capCache.has(key)) return capCache.get(key);
+  const failKey = `${s.plugin}/${s.sourceId}/${first.id || ''}`;
+  if (capFailed.has(failKey) && msOf(d) - capFailed.get(failKey) < PROBE_RETRY_MS) return false;
   if (!capInflight.has(key)) {
-    capInflight.set(key, probe(s, first, d).then((r) => { if (r.keep) capCache.set(key, r.ok); return r.ok; })
-      .finally(() => capInflight.delete(key)));
+    capInflight.set(key, probe(s, first, d).then((r) => {
+      if (r.keep) { capCache.set(key, r.ok); capFailed.delete(failKey); } else capFailed.set(failKey, msOf(d));
+      return r.ok;
+    }).finally(() => capInflight.delete(key)));
   }
   return capInflight.get(key);
 }
 
 /** The sources that can export (D1, D3): enabled plugin task sources with a connection (a multi-profile source needs a
  *  profile; it is probed with its first, since it refuses a call without one) whose capabilities() say export: true, in
- *  listTaskSources' order. Never throws. */
+ *  listTaskSources' order. All sources are probed at once, so one slow connector costs a view at most PROBE_TIMEOUT_MS.
+ *  Never throws. */
 export async function exportTrackers(d = {}) {
   let sources = [];
   try { sources = listTaskSources().filter((s) => s.type === 'plugin'); } catch { return []; }
-  const out = [];
-  for (const s of sources) {
+  const found = await Promise.all(sources.map(async (s) => {
     const conns = connectionsOf(s);
-    if (!conns.length) continue;
-    if (!(await canExport(s, conns[0], d))) continue;
-    out.push({ plugin: s.plugin, sourceId: s.sourceId, name: s.displayName, multiProfile: s.multiProfile === true,
-      profiles: conns.map((p) => ({ id: p.id || null, label: String(p.label || p.id || s.displayName) })) });
-  }
-  return out;
+    if (!conns.length || !(await canExport(s, conns[0], d))) return null;
+    return { plugin: s.plugin, sourceId: s.sourceId, name: s.displayName, multiProfile: s.multiProfile === true,
+      profiles: conns.map((p) => ({ id: p.id || null, label: String(p.label || p.id || s.displayName) })) };
+  }));
+  return found.filter(Boolean);
 }
 
 const bindingsOf = (scope) => { try { return listBindingsForScope(scope.scopeType, scope.scopeKey); } catch { return []; } };
@@ -1319,7 +1357,11 @@ git commit -m "Requirements: optional export ops in the task-source contract, th
   - the connector's `exportOptions`, `createTicket`, `updateTicket`, `commentTicket`, `ticketState`, `findTicket` (design §5) and `capabilities({ inputs })` → `{ writeBack: yes(inputs.writeBack), incrementalSync: false, export: true }`
   - the issue property `worca.export` = `{ marker }`
   - refusal sentences: `Jira needs a value for “<field name>” in <project>.` (Jira's message says "required") or `Jira refused “<field name>”: <Jira's message>`
-- Produces (`test/helpers/fake-jira.mjs`): `startFakeJira({ deployment = 'cloud'|'datacenter', token = 'tok', email = 'ann@acme.test', refuseToken, refuseProperties, oldCreatemeta, requiredField: { id, name } | null, refuseOnUpdate: { id, message } | null, storeCrlf }) → Promise<{ base, issues: Map, requests: Array<{ method, path, query, body, auth }>, close() }>`
+  - any other `plugin`-kind failure of an export op is rethrown as `{ kind: 'plugin', message: 'Jira refused the request: <Jira's errorMessages, or "no reason given">' }`: never the HTTP status or the `(METHOD path)` part, which the host would show (D11, Global Constraints)
+  - once Jira has made the issue (`createTicket`) or taken the edit (`updateTicket`), the op never throws: a refused property PUT is logged (`log('warn', …)`), a failed read-back answers `fingerprint: null` (D10: a throw would keep the host's pending marker and Try again would make a second ticket)
+  - `updateTicket` reads the issue's `issuetype` first (the same GET answers 404 → gone) and sends `issuetype` only when it changes: many sites refuse it in an edit
+  - `exportOptions` answers `tooOld` only on Data Center; on Cloud a create-metadata 404 (the project is gone or hidden) throws
+- Produces (`test/helpers/fake-jira.mjs`): `startFakeJira({ deployment = 'cloud'|'datacenter', token = 'tok', email = 'ann@acme.test', refuseToken, refuseProperties, refusePropertyPut, failReadBack, refuseIssuetypeEdit, fail: { method, path, status, body } | null, oldCreatemeta, requiredField: { id, name } | null, refuseOnUpdate: { id, message } | null, storeCrlf }) → Promise<{ base, issues: Map, requests: Array<{ method, path, query, body, auth }>, close() }>`
 
 - [ ] **Step 1: The fake Jira.** Create `test/helpers/fake-jira.mjs`:
 
@@ -1334,6 +1376,7 @@ const TYPES = [{ id: '10001', name: 'Story', subtask: false }, { id: '10002', na
   { id: '10004', name: 'Sub-task', subtask: true }];
 const BASE_FIELDS = [
   { fieldId: 'summary', name: 'Summary', required: true, schema: { type: 'string', system: 'summary' } },
+  { fieldId: 'issuetype', name: 'Issue Type', required: true, schema: { type: 'issuetype', system: 'issuetype' } },
   { fieldId: 'priority', name: 'Priority', required: false, schema: { type: 'priority', system: 'priority' },
     allowedValues: [{ id: '1', name: 'Highest' }, { id: '3', name: 'Medium' }] },
   { fieldId: 'customfield_10070', name: 'Acceptance Criteria', required: false,
@@ -1343,8 +1386,10 @@ const BASE_FIELDS = [
 ];
 
 export async function startFakeJira(o = {}) {
-  const opt = { deployment: 'cloud', token: 'tok', email: 'ann@acme.test', refuseToken: false, refuseProperties: false, oldCreatemeta: false,
-    requiredField: null, refuseOnUpdate: null, storeCrlf: false, ...o };
+  // refusePropertyPut: a role that may create issues but not edit them (403 on the property PUT); failReadBack: a description
+  // read fails (500); refuseIssuetypeEdit: an edit naming issuetype is refused; fail: one request answers that status and body.
+  const opt = { deployment: 'cloud', token: 'tok', email: 'ann@acme.test', refuseToken: false, refuseProperties: false, refusePropertyPut: false,
+    failReadBack: false, refuseIssuetypeEdit: false, fail: null, oldCreatemeta: false, requiredField: null, refuseOnUpdate: null, storeCrlf: false, ...o };
   const cloud = opt.deployment === 'cloud';
   const auth = cloud ? `Basic ${Buffer.from(`${opt.email}:${opt.token}`).toString('base64')}` : `Bearer ${opt.token}`;
   const fields = [...BASE_FIELDS, ...(opt.requiredField ? [{ fieldId: opt.requiredField.id, name: opt.requiredField.name, required: true,
@@ -1367,6 +1412,7 @@ export async function startFakeJira(o = {}) {
     requests.push({ method: req.method, path: p, query: Object.fromEntries(url.searchParams), body, auth: req.headers.authorization || null });
     if (p === '/rest/api/2/serverInfo') return send(res, 200, { deploymentType: cloud ? 'Cloud' : 'DataCenter' });
     if (opt.refuseToken || req.headers.authorization !== auth) return send(res, 401, { errorMessages: ['You are not authenticated.'] });
+    if (opt.fail && req.method === opt.fail.method && p === opt.fail.path) return send(res, opt.fail.status, opt.fail.body);
     if (cloud && p === '/rest/api/2/project/search') return send(res, 200, { values: PROJECTS, isLast: true });
     if (!cloud && p === '/rest/api/2/project') return send(res, 200, PROJECTS);
     let m = /^\/rest\/api\/2\/issue\/createmeta\/([^/]+)\/issuetypes(?:\/([^/]+))?$/.exec(p);
@@ -1392,7 +1438,11 @@ export async function startFakeJira(o = {}) {
     if (m) {
       const i = issues.get(m[1]);
       if (!i) return gone(res);
-      if (req.method === 'PUT') { i.properties[m[2]] = body; return send(res, 200, {}); }
+      if (req.method === 'PUT') {
+        if (opt.refusePropertyPut) return send(res, 403, { errorMessages: ['You do not have permission to edit issues in this project.'], errors: {} });
+        i.properties[m[2]] = body;
+        return send(res, 200, {});
+      }
       return m[2] in i.properties ? send(res, 200, { key: m[2], value: i.properties[m[2]] }) : send(res, 404, { errorMessages: ['The property was not found.'] });
     }
     m = /^\/rest\/api\/2\/issue\/([^/]+)\/comment$/.exec(p);
@@ -1407,6 +1457,9 @@ export async function startFakeJira(o = {}) {
       const i = issues.get(m[1]);
       if (!i) return gone(res);
       if (req.method === 'PUT') {
+        if (opt.refuseIssuetypeEdit && body.fields && 'issuetype' in body.fields) {
+          return send(res, 400, { errorMessages: [], errors: { issuetype: "Field 'issuetype' cannot be set. It is not on the appropriate screen, or unknown." } });
+        }
         if (opt.refuseOnUpdate && body.fields && opt.refuseOnUpdate.id in body.fields) {
           return send(res, 400, { errorMessages: [], errors: { [opt.refuseOnUpdate.id]: opt.refuseOnUpdate.message } });
         }
@@ -1414,7 +1467,9 @@ export async function startFakeJira(o = {}) {
         for (const op of (body.update && body.update.labels) || []) if (op.add && !i.fields.labels.includes(op.add)) i.fields.labels.push(op.add);
         return send(res, 204);
       }
-      return send(res, 200, { key: i.key, fields: { description: i.fields.description, labels: i.fields.labels, summary: i.fields.summary } });
+      if (opt.failReadBack && /description/.test(url.searchParams.get('fields') || '')) return send(res, 500, { errorMessages: [], errors: {} });
+      return send(res, 200, { key: i.key, fields: { description: i.fields.description, labels: i.fields.labels, summary: i.fields.summary,
+        issuetype: i.fields.issuetype } });
     }
     if ((cloud && p === '/rest/api/2/search/jql') || (!cloud && p === '/rest/api/2/search')) {
       const jql = url.searchParams.get('jql') || '';
@@ -1488,6 +1543,11 @@ test('exportOptions: a Data Center older than 8.4 (create metadata 404) answers 
   assert.deepEqual([r.tooOld, r.issueTypes, r.projects.length], [true, [], 2]);
 });
 
+test('exportOptions: on Cloud a create-metadata 404 means the project is gone or hidden, not "too old": it throws', async () => {
+  const { src } = await site({ deployment: 'cloud', oldCreatemeta: true });
+  await assert.rejects(src.exportOptions({ project: 'SHOP' }), (e) => e.kind === 'plugin' && !('tooOld' in e) && !/404|\/rest\//.test(e.message));
+});
+
 test('createTicket: wiki markup, labels, priority, the marker as the worca.export property, the URL and the fingerprint of what Jira stores', async () => {
   for (const deployment of BOTH) {
     const { jira, src } = await site({ deployment, storeCrlf: deployment === 'cloud' });
@@ -1524,6 +1584,20 @@ test('createTicket: a site that refuses properties in the create gets the proper
   assert.equal(jira.issues.size, 1, 'one ticket');
 });
 
+test('once Jira made the issue or took the edit nothing throws (D10): a refused property PUT and a failed read-back still answer the key', async () => {
+  const { jira, src } = await site({ deployment: 'datacenter', refuseProperties: true, refusePropertyPut: true });
+  const r = await src.createTicket({ ticket: { ...TICKET, marker: 'rexp_0123456789ab' } });
+  assert.deepEqual([r.key, r.url, jira.issues.size], ['SHOP-101', `${jira.base}/browse/SHOP-101`, 1], 'one issue and its key');
+  assert.match(r.fingerprint, /^[0-9a-f]{64}$/);
+  assert.equal('worca.export' in jira.issues.get('SHOP-101').properties, false, 'the marker could not be stored; the host links the key anyway');
+  const other = await site({ failReadBack: true });
+  const made = await other.src.createTicket({ ticket: { ...TICKET, marker: 'rexp_0123456789ab' } });
+  assert.deepEqual([made.key, made.fingerprint, other.jira.issues.size], ['SHOP-101', null, 1]);
+  const upd = await other.src.updateTicket({ key: 'SHOP-101', ticket: { ...TICKET, title: 'Cancel an order' } });
+  assert.deepEqual([upd.key, upd.fingerprint, other.jira.issues.get('SHOP-101').fields.summary], ['SHOP-101', null, 'Cancel an order'],
+    'a completed edit is not reported as a failure');
+});
+
 test('createTicket: a required custom field is a refusal naming it from create metadata; nothing is created', async () => {
   for (const deployment of BOTH) {
     const { jira, src } = await site({ deployment, requiredField: { id: 'customfield_10050', name: 'Team' } });
@@ -1537,6 +1611,17 @@ test('a refused token throws kind auth (the host says "the API token was refused
   const { src } = await site({ refuseToken: true });
   await assert.rejects(src.createTicket({ ticket: { ...TICKET, marker: 'rexp_0123456789ab' } }), (e) => e.kind === 'auth');
   await assert.rejects(src.exportOptions({}), (e) => e.kind === 'auth');
+});
+
+test('a request Jira refuses without naming a field: "Jira refused the request: <its words>", never the HTTP status or the REST path (D11)', async () => {
+  const { src } = await site({ fail: { method: 'POST', path: '/rest/api/2/issue/SHOP-101/comment', status: 403,
+    body: { errorMessages: ['You do not have permission to comment on this issue.'], errors: {} } } });
+  await src.createTicket({ ticket: TICKET });
+  await assert.rejects(src.commentTicket({ key: 'SHOP-101', body: 'x' }),
+    (e) => e.kind === 'plugin' && e.message === 'Jira refused the request: You do not have permission to comment on this issue.');
+  const other = await site({ fail: { method: 'GET', path: '/rest/api/2/issue/createmeta/SHOP/issuetypes', status: 500, body: {} } });
+  await assert.rejects(other.src.exportOptions({ project: 'SHOP' }),
+    (e) => e.kind === 'plugin' && e.message === 'Jira refused the request: no reason given');
 });
 
 test('updateTicket: summary, description and fields rewritten, labels only added; a refused field; a deleted ticket is gone', async () => {
@@ -1558,6 +1643,19 @@ test('updateTicket: summary, description and fields rewritten, labels only added
   await src.createTicket({ ticket: TICKET });
   assert.deepEqual(await src.updateTicket({ key: 'SHOP-101', ticket: { ...TICKET, criteria: { target: 'field', field: 'customfield_10080', items: ['x'] } } }),
     { refused: { field: 'Sprint goal', message: 'Jira refused “Sprint goal”: Sprint goal is too long.' } });
+});
+
+test('updateTicket sends issuetype only when it changes: a site that refuses it in an edit still takes the update', async () => {
+  for (const deployment of BOTH) {
+    const { jira, src } = await site({ deployment, refuseIssuetypeEdit: true });
+    await src.createTicket({ ticket: TICKET });
+    const r = await src.updateTicket({ key: 'SHOP-101', ticket: { ...TICKET, title: 'Cancel an order' } });
+    assert.deepEqual([r.key, jira.issues.get('SHOP-101').fields.summary], ['SHOP-101', 'Cancel an order'], deployment);
+    const put = jira.requests.find((q) => q.method === 'PUT' && q.path === '/rest/api/2/issue/SHOP-101');
+    assert.equal('issuetype' in put.body.fields, false, `${deployment}: the type did not change, so it is not sent`);
+    assert.deepEqual((await src.updateTicket({ key: 'SHOP-101', ticket: { ...TICKET, issueType: '10002' } })).refused.field, 'Issue Type',
+      `${deployment}: a real change is still sent (and refused here)`);
+  }
 });
 
 test('commentTicket: the comment as wiki markup; a deleted ticket is gone', async () => {
@@ -1677,7 +1775,20 @@ const PROPERTY = 'worca.export';
   const createFields = (project, issueType) => createmeta(`/rest/api/2/issue/createmeta/${enc(project)}/issuetypes/${enc(issueType)}`, 'fields');
   const fieldId = (f) => f.fieldId || f.key || f.id;
   const browse = (key) => `${base}/browse/${key}`;
-  const readFingerprint = async (key) => fingerprintOf((await issue(key, ['description']))?.fields?.description);
+  // After a create or an update has happened: a failed read-back answers null (the host then skips the edited check once);
+  // it never throws, or the host would think nothing was made (D10)
+  const readFingerprint = async (key) => {
+    try { return fingerprintOf((await issue(key, ['description']))?.fields?.description); }
+    catch (e) { log('warn', `${key}: could not read the description back: ${e?.message || e}`); return null; }
+  };
+  // D11: jira-api's message names the HTTP status and the REST path, which the host would show. An export op's `plugin`
+  // failure that is not a refusal or gone says Jira's own words only; auth, network and rate-limit pass unchanged.
+  function plainFailure(e) {
+    if (!e || e.kind !== 'plugin') return e;
+    const said = (e.body?.errorMessages || []).map((m) => String(m).trim()).filter(Boolean).join('; ');
+    return Object.assign(new Error(`Jira refused the request: ${said || 'no reason given'}`), { kind: 'plugin', status: e.status });
+  }
+  const exportOp = (fn) => async (args = {}) => { try { return await fn(args); } catch (e) { throw plainFailure(e); } };
   // The ticket's fields (design §5). Labels arrive normalised (no spaces); the criteria field gets the items as a wiki list.
   function ticketFields(t) {
     const f = { project: { key: t.project }, issuetype: { id: String(t.issueType) }, summary: t.title, description: markdownToWiki(t.description),
@@ -1714,14 +1825,18 @@ const PROPERTY = 'worca.export';
 
 ```js
     capabilities({ inputs } = {}) { return { writeBack: yes(inputs?.writeBack), incrementalSync: false, export: true }; },
-    // ---- A6: export (plans/requirements-a6-design.md §4, §5) ----
-    async exportOptions({ project, issueType } = {}) {
+    // ---- A6: export (plans/requirements-a6-design.md §4, §5); each op through exportOp (Jira's words, never a status or path) ----
+    exportOptions: exportOp(async ({ project, issueType } = {}) => {
       const projects = (await projectList()).map((p) => ({ value: p.key, label: `${p.key} — ${p.name}` }));
       const doneStatus = String(ctx.config?.transitionOnComplete || '').trim() || null;
       if (!project) return { projects, doneStatus };
       let types;
       try { types = await createmeta(`/rest/api/2/issue/createmeta/${enc(project)}/issuetypes`, 'issueTypes'); }
-      catch (e) { if (e.status === 404) return { projects, issueTypes: [], tooOld: true, doneStatus }; throw e; }
+      catch (e) {
+        // only a Data Center before 8.4 lacks this endpoint; on Cloud a 404 means the project is gone or not visible (D16)
+        if (e.status === 404 && (await deployment()) === 'datacenter') return { projects, issueTypes: [], tooOld: true, doneStatus };
+        throw e;
+      }
       const issueTypes = types.filter((t) => !t.subtask).map((t) => ({ value: String(t.id), label: t.name }));
       if (!issueType) return { projects, issueTypes, doneStatus };
       const fields = await createFields(project, issueType);
@@ -1732,11 +1847,12 @@ const PROPERTY = 'worca.export';
         // a list needs lines: only multi-line text fields can hold the criteria (D16)
         criteriaFields: fields.filter((f) => /:textarea$/.test(String(f.schema?.custom || ''))).map((f) => ({ value: fieldId(f), label: f.name })),
       };
-    },
-    async createTicket({ ticket } = {}) {
+    }),
+    createTicket: exportOp(async ({ ticket } = {}) => {
       const fields = ticketFields(ticket);
       const props = ticket.marker ? [{ key: PROPERTY, value: { marker: ticket.marker } }] : null;
       let made;
+      let propertyLater = false;
       try {
         made = await jiraFetch(jira, '/rest/api/2/issue', { method: 'POST', body: { fields, ...(props ? { properties: props } : {}) } });
       } catch (e) {
@@ -1744,13 +1860,25 @@ const PROPERTY = 'worca.export';
         // a site that will not take properties in the create body: create, then set the property
         try { made = await jiraFetch(jira, '/rest/api/2/issue', { method: 'POST', body: { fields } }); }
         catch (e2) { const r = await refusal(e2, ticket.project, ticket.issueType); if (r) return r; throw e2; }
-        await jiraFetch(jira, `/rest/api/2/issue/${enc(made.key)}/properties/${PROPERTY}`, { method: 'PUT', body: { marker: ticket.marker } });
+        propertyLater = true;
+      }
+      // Jira has made the issue: from here nothing throws (D10). A throw would keep the host's pending marker, and since the
+      // issue then lacks the property findTicket would not match it, so Try again would make a second ticket.
+      if (propertyLater) {
+        try { await jiraFetch(jira, `/rest/api/2/issue/${enc(made.key)}/properties/${PROPERTY}`, { method: 'PUT', body: { marker: ticket.marker } }); }
+        catch (e) { log('warn', `${made.key}: could not store Worca's marker: ${e?.message || e}`); }
       }
       return { key: made.key, url: browse(made.key), fingerprint: await readFingerprint(made.key) };
-    },
-    async updateTicket({ key, ticket } = {}) {
+    }),
+    updateTicket: exportOp(async ({ key, ticket } = {}) => {
       const k = requireKey(key);
       const { project, labels, ...fields } = ticketFields(ticket);
+      // Many sites refuse issuetype in an edit (Data Center: a type change is a Move; Cloud: often not on the edit screen), so it
+      // is sent only when it changes. The same read finds a ticket that is gone.
+      let now;
+      try { now = await issue(k, ['issuetype']); }
+      catch (e) { if (e.status === 404) return { gone: true }; throw e; }
+      if (String(now?.fields?.issuetype?.id ?? '') === fields.issuetype.id) delete fields.issuetype;
       try {
         await jiraFetch(jira, `/rest/api/2/issue/${enc(k)}`, { method: 'PUT',
           body: { fields, update: { labels: labels.map((add) => ({ add })) } } });   // labels are added, never removed (D7)
@@ -1760,20 +1888,21 @@ const PROPERTY = 'worca.export';
         if (r) return r;
         throw e;
       }
+      // the edit is made: a failed read-back answers fingerprint null, never a failure (D10)
       return { key: k, url: browse(k), fingerprint: await readFingerprint(k) };
-    },
-    async commentTicket({ key, body } = {}) {
+    }),
+    commentTicket: exportOp(async ({ key, body } = {}) => {
       const k = requireKey(key);
       try { await jiraFetch(jira, `/rest/api/2/issue/${enc(k)}/comment`, { method: 'POST', body: { body: markdownToWiki(body) } }); }
       catch (e) { if (e.status === 404) return { gone: true }; throw e; }
       return { ok: true };
-    },
-    async ticketState({ key } = {}) {
+    }),
+    ticketState: exportOp(async ({ key } = {}) => {
       const k = requireKey(key);
       try { return { exists: true, url: browse(k), fingerprint: fingerprintOf((await issue(k, ['description']))?.fields?.description) }; }
       catch (e) { if (e.status === 404) return { exists: false }; throw e; }
-    },
-    async findTicket({ project, label, marker } = {}) {
+    }),
+    findTicket: exportOp(async ({ project, label, marker } = {}) => {
       const jql = buildJql({ project, jql: `labels = ${jqlString(label)} ORDER BY created DESC` });
       const q = `jql=${enc(jql)}&fields=description,labels&maxResults=10`;
       const j = (await deployment()) === 'cloud'
@@ -1788,8 +1917,10 @@ const PROPERTY = 'worca.export';
           labels: Array.isArray(i.fields?.labels) ? i.fields.labels : [] };
       }
       return null;
-    },
+    }),
 ```
+
+  The export ops are arrow functions wrapped by `exportOp`; none uses `this`. `ticketState`'s description read stays a throw (it changes nothing in Jira, so a failure there is an honest "could not reach").
 
 - [ ] **Step 6: Run and see it pass.** `node tools/test.mjs test/jira-source-export.test.mjs` → pass. Then `node tools/test.mjs test/jira-source-connector.test.mjs` → pass (listProjects keeps its labels and calls).
 
@@ -1853,7 +1984,9 @@ git commit -m "Requirements: jira-source export ops (create, update, comment, op
   - `forgetLink(seq, { by } = {}) → void`
   - `ExportView = { tracker: { name: string|null }|null, canExport, hasSetup, link: { key, url, createdAt, exportedAt, madeOn, lastOn, tracker }|null, exporting, doneStatus, history: Array<{ action, tracker, key, url, reason, when, by }> }`
   - `exportView(f, turns, d) → Promise<ExportView>` (never throws)
-  - Errors (`RequirementsError`): `TRACKER` (502 in Task 6) `{ kind }`; `CONFLICT` with `{ stale: true }`, `{ refused: true, field }`, `{ gone: true }`, `{ edited: true }`; `NOT_READY { failing }`; `BUSY`; `BAD_REQUEST`.
+  - `history[].by` is `actorLabel(turn.by) || null` (identity.mjs): a single-user install's `'local'` names nobody, as board 28 shows a person's name or nothing
+  - An `update` takes its criteria, issue type and priority from the current setup when the setup has the link's connection and tracker project (so **Change the export setup** can fix a refused update), else from the fields last sent
+  - Errors (`RequirementsError`): `TRACKER` (502 in Task 6) `{ kind }` (an `unimplemented` op answers "<tracker> cannot export any more."); `CONFLICT` with `{ stale: true }`, `{ refused: true, field }`, `{ gone: true }`, `{ edited: true }`; `NOT_READY { failing }`; `BUSY`; `BAD_REQUEST`.
 
 - [ ] **Step 1: Write the failing test** `test/requirements-export.test.mjs`:
 
@@ -1873,7 +2006,7 @@ import { emptySpec } from '../src/core/requirements/spec.mjs';
 import {
   createFeature, getFeature, updateFeature, appendTurn, listTurns, getExportLink, getExportSetup, upsertExportSetup, setPendingExport,
 } from '../src/core/requirements/store.mjs';
-import { startOrientation, settled } from '../src/core/requirements/interview.mjs';
+import { startOrientation, settled, isBusy } from '../src/core/requirements/interview.mjs';
 import { markStarting, unmarkStarting } from '../src/core/requirements/starting.mjs';
 import {
   saveSetup, exportOptions, exportSetupView, previewExport, runExport, forgetLink, exportView, isExporting, _resetExportCaches,
@@ -2015,6 +2148,13 @@ test("update (D7, D9): the link's own connection, no marker; edited is refused u
   await assert.rejects(runExport(f.seq, { mode: 'update', previewHash: g.previewHash, force: true }, { by: 'po', target: TARGET }, d),
     (e) => e.data.gone === true && e.message === 'SHOP-123 no longer exists in Jira.');
   assert.deepEqual(getExportLink(f.seq), was);
+  // the plugin made the edit but could not read the description back: no fingerprint, never the old one (it changed)
+  setMockSourceResponses({ updateTicket: { key: 'SHOP-123', url: 'https://mock.test/browse/SHOP-123', fingerprint: null } });
+  updateFeature(f.seq, { spec: { ...readySpec(), rules: ['Rule four'] } });
+  const nf = await previewExport(f.seq, { mode: 'update' }, { target: TARGET }, d);
+  assert.equal(nf.edited, false);
+  assert.equal((await runExport(f.seq, { mode: 'update', previewHash: nf.previewHash }, { by: 'po', target: TARGET }, d)).action, 'updated');
+  assert.equal(getExportLink(f.seq).fingerprint, null);
 });
 
 test('comment (D7, D8): what changed since the last export; nothing changed is refused; the spec moves on, the fingerprint stays', async () => {
@@ -2063,10 +2203,35 @@ test("refused (D11): the plugin's sentence, nothing created, the pending marker 
   assert.equal(exportTurns(f.seq).length, 0);
 });
 
+test('a refused update is fixed by Change the export setup: a setup on the link\'s connection and project gives the criteria, issue type and priority', async () => {
+  reset();
+  const was = getExportSetup('project', 'shop-1');
+  try {
+    upsertExportSetup({ ...SCOPE, ...was, criteria: { target: 'field', field: 'customfield_10070', name: 'Acceptance Criteria' } });
+    const f = readyFeature();
+    await exportNow(f.seq);
+    updateFeature(f.seq, { spec: { ...readySpec(), rules: ['A new rule'] } });
+    setMockSourceResponses({ updateTicket: { refused: { field: 'Acceptance Criteria',
+      message: 'Jira refused “Acceptance Criteria”: Field cannot be set. It is not on the appropriate screen, or unknown.' } } });
+    const p = await previewExport(f.seq, { mode: 'update' }, { target: TARGET }, d);
+    assert.equal(p.ticket.criteria.target, 'field');
+    await assert.rejects(runExport(f.seq, { mode: 'update', previewHash: p.previewHash }, { by: 'po', target: TARGET }, d), (e) => e.data.refused === true);
+    setMockSourceResponses(null);
+    await saveSetup(SCOPE, { plugin: 'jira-source', sourceId: 'jira', profile: 'acme', project: 'SHOP', projectName: 'SHOP — Shop web', issueType: '10002',
+      issueTypeName: 'Task', labels: ['worca'], priority: '3', priorityName: 'Medium', criteria: { target: 'description' } }, { by: 'po' }, d);
+    const q = await previewExport(f.seq, { mode: 'update' }, { target: TARGET }, d);
+    assert.deepEqual([q.ticket.criteria, q.fields.criteria, q.ticket.issueType, q.ticket.priority], [{ target: 'description' }, { target: 'description' }, '10002', '3'],
+      'the fresh preview has no criteria field');
+    assert.match(q.ticket.description, /## Acceptance criteria/);
+    assert.equal((await runExport(f.seq, { mode: 'update', previewHash: q.previewHash }, { by: 'po', target: TARGET }, d)).action, 'updated');
+  } finally { upsertExportSetup({ ...SCOPE, ...was }); }
+});
+
 test('reach failures (D11): the sentence by kind, nothing recorded but the pending marker (D10, D14), no chip', async () => {
   for (const [kind, msg, want] of [['auth', 'Jira token invalid', 'Worca could not reach Jira: the API token was refused.'],
     ['timeout', 'op exceeded', 'Worca could not reach Jira: it did not answer within a minute.'],
-    ['network', 'Jira unreachable: fetch failed.', 'Worca could not reach Jira: Jira unreachable: fetch failed.']]) {
+    ['network', 'Jira unreachable: fetch failed.', 'Worca could not reach Jira: Jira unreachable: fetch failed.'],
+    ['unimplemented', 'connector does not implement op "createTicket"', 'Jira cannot export any more.']]) {   // a downgraded connector
     reset();
     setMockSourceResponses({ createTicket: () => { throw new PluginOpError(kind, msg); } });
     const f = readyFeature();
@@ -2135,10 +2300,24 @@ test('one export at a time (D13); a start in flight, a round running and an arch
   markStarting(g.seq);
   try { await assert.rejects(exportNow(g.seq), (e) => e.code === 'BUSY' && e.message === 'this feature is starting a run. Try again in a moment.'); }
   finally { unmarkStarting(g.seq); }
+  // a look that cannot finish until the gate opens (the pattern of requirements-start.test.mjs), so BUSY never races it
   const h = readyFeature();
-  startOrientation(h.seq, { thenRound: false }, {});
-  await assert.rejects(exportNow(h.seq), (e) => e.code === 'BUSY' && e.message === 'Worca is still working on this feature. Try again in a moment.');
-  await settled(h.seq);
+  const ph = await previewExport(h.seq, { mode: 'create' }, { target: TARGET }, d);
+  let open;
+  const gate = new Promise((r) => { open = r; });
+  const look = { runClaudeImpl: async () => { await gate; return { text: '{"spec":{},"questions":[],"done":true}' }; },
+    listModels: async () => [], listProjects: async () => [], workspaceTarget: async () => null,
+    openLook: async () => null, openWorkspaceLook: async () => null, onChange: () => {} };
+  const job = startOrientation(h.seq, { thenRound: false }, look);
+  try {
+    assert.equal(isBusy(h.seq), true);
+    await assert.rejects(runExport(h.seq, { mode: 'create', previewHash: ph.previewHash }, { by: 'po', target: TARGET }, d),
+      (e) => e.code === 'BUSY' && e.message === 'Worca is still working on this feature. Try again in a moment.');
+  } finally {
+    open();
+    await job;
+    await settled(h.seq);
+  }
   const a = readyFeature();
   const pa = await previewExport(a.seq, { mode: 'create' }, { target: TARGET }, d);
   updateFeature(a.seq, { status: 'archived' });
@@ -2175,6 +2354,8 @@ test("exportView: the tracker's name, hasSetup, the link and its dates, doneStat
   assert.match(v.link.madeOn, /^\d{1,2} [A-Z][a-z]{2}$/);
   assert.match(v.history[0].when, /^\d{1,2} [A-Z][a-z]{2}, \d{2}:\d{2}$/);
   assert.deepEqual([v.history[0].action, v.history[0].by, v.history[0].tracker], ['created', 'po', 'Jira']);
+  appendTurn(f.seq, { kind: 'export', payload: { action: 'updated', tracker: 'Jira', key: 'SHOP-123', url: null, at: new Date().toISOString() } }, { by: 'local' });
+  assert.equal((await exportView(getFeature(f.seq), listTurns(f.seq), d)).history[0].by, null, "a single-user install's 'local' names nobody");
   const archived = await exportView({ ...getFeature(f.seq), status: 'archived' }, [], d);
   assert.deepEqual([archived.tracker, archived.canExport], [{ name: 'Jira' }, false]);
   const other = await exportView({ ...f, scopeKey: 'no-setup' }, [], d);
@@ -2230,6 +2411,7 @@ import { listTaskSources } from '../sources.mjs';
 import { readPluginsLock } from '../plugins-lock.mjs';
 import { listProfiles } from '../plugin-config.mjs';
 import { resolveProfile, listBindingsForScope } from '../source-bindings.mjs';
+import { actorLabel } from '../identity.mjs';
 import { tx } from '../db.mjs';
 import { RequirementsError } from './spec.mjs';
 import {
@@ -2277,11 +2459,13 @@ function connectionLabel(conn) {
   try { return (listProfiles(conn.plugin).find((p) => p.id === conn.profile) || {}).label || conn.profile; } catch { return conn.profile; }
 }
 
-/** One op through the connection, in EXPORT_TIMEOUT_MS; any failure is D11's sentence (TRACKER, 502). */
+/** One op through the connection, in EXPORT_TIMEOUT_MS; any failure is D11's sentence (TRACKER, 502). An op the connector
+ *  no longer has (a cached "yes", then a downgrade) says so instead of "connector does not implement op …". */
 async function trackerCall(d, name, conn, op, args) {
   try {
     return await callOf(d)({ plugin: conn.plugin, sourceId: conn.sourceId, profile: conn.profile || undefined, op, args, timeoutMs: EXPORT_TIMEOUT_MS });
   } catch (err) {
+    if (err && err.kind === 'unimplemented') throw new RequirementsError('TRACKER', `${name || 'The tracker'} cannot export any more.`, { kind: 'unimplemented' });
     throw new RequirementsError('TRACKER', reachSentence(name, err), { kind: (err && err.kind) || 'plugin' });
   }
 }
@@ -2386,11 +2570,16 @@ function planExport(f, body = {}, { target = { ok: false }, now = new Date() } =
     return { mode, link, setup, conn, name, reason, changes, comment, ticket: null, sent: null, fields: null,
       previewHash: ticketHash({ mode, key: link.key, comment }) };
   }
-  // update: the fields last sent (D7); create and new: the setup's. The preview may change issue type, labels, priority (D6).
+  // update: the fields last sent (D7), except that a setup on the link's connection and tracker project gives the criteria,
+  // the issue type and the priority, so Change the export setup can fix a refused update; create and new: the setup's. The
+  // preview may change issue type, labels, priority (D6).
   const fromSetup = setup ? { projectName: setup.trackerProjectName, issueType: setup.issueType, issueTypeName: setup.issueTypeName, labels: setup.labels,
     priority: setup.priority, priorityName: setup.priorityName, criteria: setup.criteria } : {};
+  const setupRules = mode === 'update' && setup && sameConn(setup, link) && setup.trackerProject === link.trackerProject;
   const base = mode === 'update'
-    ? { ...fromSetup, ...(link.fields || {}), project: link.trackerProject }
+    ? { ...fromSetup, ...(link.fields || {}), project: link.trackerProject,
+      ...(setupRules ? { issueType: setup.issueType, issueTypeName: setup.issueTypeName, priority: setup.priority, priorityName: setup.priorityName,
+        criteria: setup.criteria } : {}) }
     : { ...fromSetup, project: setup.trackerProject };
   const issueType = text(body.issueType, 100) || base.issueType;
   const issueTypeName = text(body.issueType, 100) ? (text(body.issueTypeName, 200) || issueType) : (base.issueTypeName || issueType);
@@ -2460,7 +2649,9 @@ export async function runExport(seq, body = {}, { by = null, target } = {}, d = 
     let found = false;
     const row = getExportLink(f.seq);
     if (row && row.pendingMarker) {
-      // D10: a first export's row holds its own connection; a pending new ticket was made through the setup's
+      // D10: a first export's row holds its own connection; a pending new ticket was made through the setup's. (Accepted gap:
+      // a New ticket whose answer was lost, then a setup changed to another connection, is looked for through the new one;
+      // no match there means the marker goes and a ticket is made.)
       const where = row.key && plan.setup ? { conn: connOf(plan.setup), project: plan.setup.trackerProject } : { conn: connOf(row), project: row.trackerProject };
       const hit = await trackerCall(d, plan.name, where.conn, 'findTicket', { project: where.project, label, marker: row.pendingMarker });
       if (hit && typeof hit.key === 'string' && hit.key && hit.marker === row.pendingMarker && Array.isArray(hit.labels) && hit.labels.includes(label)
@@ -2505,7 +2696,8 @@ export async function runExport(seq, body = {}, { by = null, target } = {}, d = 
       if (r && r.refused) throw refusedError(r.refused);
       const url = (r && r.url) || link.url;
       tx(() => {
-        saveExportLink(f.seq, { ...link, url, exportedAt: at, spec: f.spec, fields: plan.sent, fingerprint: (r && r.fingerprint) || link.fingerprint }, { by });
+        // the description changed: a missing read-back (null) skips the edited check once, never compares with the old text
+        saveExportLink(f.seq, { ...link, url, exportedAt: at, spec: f.spec, fields: plan.sent, fingerprint: (r && r.fingerprint) || null }, { by });
         turn('updated', link.key, url);
       });
       return { action: 'updated', key: link.key, url };
@@ -2563,7 +2755,8 @@ export async function exportView(f, turns = [], d = {}) {
       // Report back moves the ticket only to the status its own connection names (D15)
       doneStatus: link && setup && sameConn(setup, link) ? setup.doneStatus || null : null,
       history: (turns || []).filter((t) => t && t.kind === 'export' && t.payload).map((t) => ({ action: t.payload.action, tracker: t.payload.tracker || null,
-        key: t.payload.key || null, url: t.payload.url || null, reason: t.payload.reason || null, when: exportTime(t.payload.at || t.at), by: t.by || null }))
+        key: t.payload.key || null, url: t.payload.url || null, reason: t.payload.reason || null, when: exportTime(t.payload.at || t.at),
+        by: actorLabel(t.by) || null }))   // 'local' (a single-user install) names nobody, as board 28
         .reverse(),
     };
   } catch (err) {
@@ -2597,7 +2790,7 @@ git commit -m "Requirements: the export service (setup, preview, create, update,
 - Produces (HTTP, all behind `requireFlag('requirements')`, design §6):
   - `GET /api/requirements/export-setup/:scopeType/:scopeKey` → `{ setup, trackers, defaultProfile }`
   - `POST /api/requirements/export-setup/:scopeType/:scopeKey/options` `{ plugin, sourceId, profile, project?, issueType? }` → `exportOptions`' answer
-  - `PUT /api/requirements/export-setup/:scopeType/:scopeKey` → `{ setup }`
+  - `PUT /api/requirements/export-setup/:scopeType/:scopeKey` → `{ setup }` and a `requirements-changed` frame for each open feature of the scope (`listFeatures`, already imported)
   - `POST /api/requirements/:seq/export/preview` → `Preview`
   - `POST /api/requirements/:seq/export` → `{ action, key, url, feature, turns }` and a `requirements-changed` frame
   - `DELETE /api/requirements/:seq/export/link` → the feature view and a frame
@@ -2707,6 +2900,9 @@ test("POST options: the tracker's answer; an unknown connection is 400; a reach 
 test('PUT setup, preview, export: 200 with the feature (chip data), a frame, the export turn; Forget the link', async () => {
   assert.equal((await saveSetup()).status, 200);
   const f = readyFeature();
+  frames.length = 0;
+  assert.equal((await saveSetup()).status, 200);
+  assert.ok(frames.some((x) => x.type === 'requirements-changed' && x.seq === f.seq), "a saved setup tells the scope's open features");
   let v = (await call('GET', `${P}/${f.seq}`)).json.feature.export;
   assert.deepEqual([v.tracker, v.canExport, v.hasSetup, v.link], [{ name: 'Jira' }, true, true, null]);
   const p = await call('POST', `${P}/${f.seq}/export/preview`, { mode: 'create' });
@@ -2815,7 +3011,10 @@ const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, CONF
     },
     [`PUT ${P}/export-setup/:scopeType/:scopeKey`]: async (req, res) => {
       await checkTarget(...scope(req));
-      res.json({ setup: await saveSetup({ scopeType: req.params.scopeType, scopeKey: req.params.scopeKey }, req.body || {}, { by: by(req) }, d) });
+      const s = { scopeType: req.params.scopeType, scopeKey: req.params.scopeKey };
+      const setup = await saveSetup(s, req.body || {}, { by: by(req) }, d);
+      for (const x of listFeatures(s)) onChange(x.seq);   // the scope's open pages learn hasSetup and the tracker's name
+      res.json({ setup });
     },
     [`POST ${P}/export-setup/:scopeType/:scopeKey/options`]: async (req, res) => {
       await checkTarget(...scope(req));
@@ -3096,10 +3295,10 @@ git commit -m "Requirements: Start with Report back links the run to the exporte
 - Consumes: `feature.export` (Task 6: `{ tracker: { name }|null, canExport, hasSetup, link, exporting, doneStatus, history }`); `GET/PUT /api/requirements/export-setup/:scopeType/:scopeKey`, `POST …/options` (Task 6); the page's `h`, `icon`, `ICONS`, `api`, `errText`, `menu`, `menuItem`, `openModal`, `closeDialog`, `targetName`, `paint`, `host`, `dialog`.
 - Produces (inside `createRequirementsView`, used by Tasks 9 and 10):
   - `dlgGen` (bumped by every `openModal` and `closeDialog`) and `live(g) → boolean`
-  - `openModal(card, { trigger, first, canClose, page = false })`: with `page` the wrap gets `req-dlg-sheet` and every other child of `<body>` is inert until `closeDialog`; `dialog.canClose` is kept
+  - `openModal(card, { trigger, first, canClose, page = false })`: with `page` the wrap gets `req-dlg-sheet` and every other child of `<body>` is inert until `closeDialog`; `dialog.canClose` is kept; the Tab trap skips controls hidden by CSS and wraps Shift+Tab from the dialog's title (an export dialog's `first`, `tabindex="-1"`)
   - `xOf(f)`, `linkOf(f)`, `trackerName(f) → 'Jira' | 'a tracker' | null`, `exportUrl(f, path)`, `setupUrl(f, path)`, `exportTrigger()`
   - `exportSelect({ id, ui, list, value, onchange, label, disabled, describedBy })`, `exportField(labelFor, labelKids, control, hint, hintId)`, `labelsField({ id, ui, labels, fixed, onChange(next, focusUi) })`, `backButton(f)`
-  - `exportItems(f)` (the menu's items), `openConnect(trigger)`, `openSetup(f, { trigger, then })`, `startExport(f, trigger)`, `continueExport(f, trigger)` (Task 9 replaces its body)
+  - `exportItems(f)` (the menu's items), `exportArchNote(f)` (the archived item's description, an `sr-only` node outside `role="menu"`), `openConnect(trigger)`, `openSetup(f, { trigger, then })`, `startExport(f, trigger)`, `continueExport(f, trigger)` (Task 9 replaces its body)
   - `data-ui`: `mi-export`, `mi-export-setup`, `mi-connect`, `connect-close`, `connect-market`, `setup-conn`, `setup-project`, `setup-type`, `setup-lab-in`, `setup-lab-x-<i>`, `setup-prio`, `setup-crit-desc`, `setup-crit-field`, `setup-crit-select`, `setup-save`, `setup-cancel`, `export-back`
 
 - [ ] **Step 1: Write the failing test** `test/requirements-view-export.test.mjs`:
@@ -3206,7 +3405,11 @@ test('board 29 (7): an archived feature: Export to Jira… is disabled and says 
   const { host } = await openFeature(feature({ status: 'archived', state: 'archived', export: XV({ canExport: false }) }));
   const item = q('mi-export', host);
   assert.equal(item.disabled, true);
-  assert.equal(text(host.querySelector(`#${item.getAttribute('aria-describedby')}`)), 'Restore the feature to export it.');
+  const why = host.querySelector(`#${item.getAttribute('aria-describedby')}`);
+  assert.deepEqual([text(why), item.title], ['Restore the feature to export it.', 'Restore the feature to export it.']);
+  assert.equal(why.closest('[role="menu"]'), null, 'outside the menu: a menu holds only items and separators');
+  assert.deepEqual([...host.querySelectorAll('[data-menu="export"] [role="menu"] > *')].map((x) => x.getAttribute('role')),
+    ['menuitem', 'menuitem', 'menuitem', 'separator', 'menuitem', 'menuitem']);
   assert.equal(q('mi-export-setup', host).disabled, false);
 });
 
@@ -3232,9 +3435,12 @@ test('board 26: the first Export to Jira… opens Set up export for shop, each s
   const { host, calls } = await openFeature(feature({ export: XV({ hasSetup: false }) }), SETUP_ROUTES());
   q('menu-export', host).click();
   q('mi-export', host).click();
+  assert.deepEqual([document.activeElement, dlg().querySelector('h2').getAttribute('tabindex')], [dlg().querySelector('h2'), '-1'],
+    'the focus starts in the dialog, on its title');
   await settle();
   const d = dlg();
   assert.equal(text(d.querySelector('h2')), 'Set up export for shop');
+  assert.equal(document.activeElement, q('setup-conn'), 'then on the Connection once it loaded');
   assert.equal(text(d.querySelector('.req-dlg-lead')),
     'Worca uses these for every export from shop. You can change them for one export in the preview, or for good in Export ▾ › Export setup…');
   const conn = q('setup-conn');
@@ -3252,6 +3458,7 @@ test('board 26: the first Export to Jira… opens Set up export for shop, each s
   assert.deepEqual([q('setup-crit-desc').checked, q('setup-crit-select').disabled, q('setup-crit-select').getAttribute('aria-label')],
     [true, true, 'Jira field for acceptance criteria']);
   assert.deepEqual([...group.querySelectorAll('.req-export-rad')].map(text), ['A section of the description', 'A Jira field']);
+  assert.deepEqual(optionTexts(q('setup-crit-select')), ['Acceptance Criteria (custom field)', 'Definition of Done (custom field)'], 'board 26');
   assert.equal(text(group.querySelector('p.hint')), 'The list shows the text fields of SHOP that can hold the criteria.');
   assert.deepEqual(calls.filter((c) => c.url === `${SETUP_URL}/options`).map((c) => c.body),
     [CONN, { ...CONN, project: 'SHOP' }, { ...CONN, project: 'SHOP', issueType: '10001' }]);
@@ -3352,13 +3559,17 @@ test('CSS: the A6 rules sit inside the Requirements block and use tokens only', 
     const onKey = (e) => {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (canClose()) closeDialog(true); return; }
       if (e.key !== 'Tab') return;
-      // a radio group is one stop: its checked radio
+      // a radio group is one stop: its checked radio. A control hidden by CSS (the sheet's ← FEAT-7 on a desktop) is no stop;
+      // checkVisibility is Chrome's (jsdom has none, so there every control counts).
+      const shown = (el) => typeof el.checkVisibility !== 'function' || el.checkVisibility();
       const all = [...card.querySelectorAll('button, textarea, input, select, a[href], [tabindex="0"]')]
-        .filter((el) => !el.disabled && !el.hidden && !(el.type === 'radio' && !el.checked));
+        .filter((el) => !el.disabled && !el.hidden && !(el.type === 'radio' && !el.checked) && shown(el));
       if (!all.length) return;
       const head = all[0], last = all[all.length - 1];
       const at = document.activeElement;
-      if (e.shiftKey && (at === head || !card.contains(at))) { e.preventDefault(); last.focus(); }
+      // the title (tabindex=-1, where an export dialog starts) is before every stop: Shift+Tab from it wraps to the last one
+      const atTitle = !!at && at.tagName === 'H2' && card.contains(at);
+      if (e.shiftKey && (at === head || atTitle || !card.contains(at))) { e.preventDefault(); last.focus(); }
       else if (!e.shiftKey && (at === last || !card.contains(at))) { e.preventDefault(); head.focus(); }
     };
     document.addEventListener('keydown', onKey, true);
@@ -3405,7 +3616,10 @@ test('CSS: the A6 rules sit inside the Requirements block and use tokens only', 
           h('a', { role: 'menuitem', class: 'menu-item req-menu-item', 'data-ui': 'mi-download', href: `/api/requirements/${f.seq}/markdown?download=1`, download: '' }, 'Download .md'),
           ...exportItems(f),   // A6 D1: Export to <tracker>… and Export setup…, or Connect a tracker…
         ]),
+        exportArchNote(f),   // A6: why an archived feature cannot export, outside role="menu" (a menu holds only items)
 ```
+
+  (The `menu('more', …)` call follows unchanged; `exportArchNote` sits between the two menus inside `.req-head-tools`.)
 
 - [ ] **Step 5: The A6 section.** Insert right before the line `  // A repaint from the feature on screen, without a fetch (a fold, an editor opened, Change, Cancel).`:
 
@@ -3424,7 +3638,9 @@ test('CSS: the A6 rules sit inside the Requirements block and use tokens only', 
   const live = (g) => g === dlgGen && !!dialog;
   const exportTrigger = () => host.querySelector('[data-ui="menu-export"]');
 
-  /** D1: a separator, then Export to <tracker>… and Export setup…, or Connect a tracker…; archived: disabled, with why. */
+  const ARCHIVED_NOTE = 'Restore the feature to export it.';
+  /** D1: a separator, then Export to <tracker>… and Export setup…, or Connect a tracker…; archived: disabled, with why (its
+   *  title, and a description node outside the menu: exportArchNote). */
   function exportItems(f) {
     const x = xOf(f);
     if (!x) return [];
@@ -3432,10 +3648,12 @@ test('CSS: the A6 rules sit inside the Requirements block and use tokens only', 
     if (!x.tracker) return [sep, menuItem('Connect a tracker…', () => openConnect(exportTrigger()), { ui: 'mi-connect' })];
     const archived = f.status === 'archived';
     const go = menuItem(`Export to ${trackerName(f)}…`, () => startExport(f, exportTrigger()), { disabled: archived || x.exporting, ui: 'mi-export' });
-    if (archived) go.setAttribute('aria-describedby', 'req-export-arch');
-    return [sep, go, menuItem('Export setup…', () => { void openSetup(f, { trigger: exportTrigger() }); }, { ui: 'mi-export-setup' }),
-      archived ? h('p', { class: 'hint req-export-arch', id: 'req-export-arch', text: 'Restore the feature to export it.' }) : null];
+    if (archived) { go.setAttribute('aria-describedby', 'req-export-arch'); go.title = ARCHIVED_NOTE; }
+    return [sep, go, menuItem('Export setup…', () => { void openSetup(f, { trigger: exportTrigger() }); }, { ui: 'mi-export-setup' })];
   }
+  /** The archived item's description, beside the menu (a role="menu" holds only items and separators). */
+  const exportArchNote = (f) => (f.status === 'archived' && xOf(f) && xOf(f).tracker
+    ? h('span', { class: 'sr-only', id: 'req-export-arch', text: ARCHIVED_NOTE }) : null);
 
   /** D2: where trackers are connected. The Marketplace button only at the Advanced level (docs/ui-levels.md). */
   function openConnect(trigger) {
@@ -3493,16 +3711,18 @@ test('CSS: the A6 rules sit inside the Requirements block and use tokens only', 
     const body = h('div', { class: 'req-export-body' });
     const alertEl = h('p', { class: 'form-msg err req-export-alert', role: 'alert' });
     const save = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'setup-save', disabled: true }, then ? 'Save and continue' : 'Save');
+    // the focus starts on the title (D20), so it is inside the dialog even when the load below fails
+    const title = h('h2', { id: 'req-setup-title', tabindex: '-1', text: `Set up export for ${scopeName}` });
     const card = h('section', { class: 'card req-dialog req-export req-export-setup', role: 'dialog', 'aria-modal': 'true',
       'aria-labelledby': 'req-setup-title', 'aria-describedby': 'req-setup-desc' },
       backButton(f),
-      h('h2', { id: 'req-setup-title', text: `Set up export for ${scopeName}` }),
+      title,
       h('p', { class: 'req-dlg-lead', id: 'req-setup-desc',
         text: `Worca uses these for every export from ${scopeName}. You can change them for one export in the preview, or for good in Export ▾ › Export setup…` }),
       body, alertEl,
       h('div', { class: 'req-dlg-btns' },
         h('button', { type: 'button', class: 'btn', 'data-ui': 'setup-cancel', onclick: () => { if (!st.busy) closeDialog(true); } }, 'Cancel'), save));
-    openModal(card, { trigger, canClose: () => !st.busy, page: true });
+    openModal(card, { trigger, first: title, canClose: () => !st.busy, page: true });
     const g = dlgGen;
     const nameIn = (list, v) => (list.find((x) => x.value === v) || {}).label || v;
     const trackerNow = () => st.trackers.find((t) => st.conn && t.plugin === st.conn.plugin && t.sourceId === st.conn.sourceId) || null;
@@ -3540,7 +3760,9 @@ test('CSS: the A6 rules sit inside the Requirements block and use tokens only', 
             h('label', { class: 'req-export-rad' }, radio('setup-crit-field', toField, () => {
               if (firstField) { st.crit = { target: 'field', field: firstField.value, name: firstField.label }; draw(); }
             }, !firstField), `A ${tn} field`),
-            exportSelect({ ui: 'setup-crit-select', list: st.fields, value: toField ? st.crit.field : (firstField || {}).value,
+            // board 26 names them "Acceptance Criteria (custom field)"; the saved name stays the field's own
+            exportSelect({ ui: 'setup-crit-select', list: st.fields.map((x) => ({ value: x.value, label: `${x.label} (custom field)` })),
+              value: toField ? st.crit.field : (firstField || {}).value,
               label: `${tn} field for acceptance criteria`, disabled: !toField,
               onchange: (e) => { st.crit = { target: 'field', field: e.currentTarget.value, name: nameIn(st.fields, e.currentTarget.value) }; } })),
           h('p', { class: 'hint', text: `The list shows the text fields of ${st.project || tn} that can hold the criteria.` })));
@@ -3638,7 +3860,6 @@ test('CSS: the A6 rules sit inside the Requirements block and use tokens only', 
 /* A6 (plans/requirements-a6-design.md §7): Export to a tracker. The dialogs are .req-dialog cards on the page's modal (the
    setup 560 px, board 26); a field is its label over its control, two short fields share a row. The label chips' remove
    button is the shared remove icon. */
-.req-menu-list .req-export-arch{margin:2px 10px 6px;font-size:var(--fs-meta)}
 .req-dialog.req-export .req-export-body{display:flex;flex-direction:column;gap:14px;min-width:0}
 .req-export-fld{display:flex;flex-direction:column;gap:6px;margin:0;min-width:0}
 .req-export-fld > label,.req-export-fl{margin:0;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2)}
@@ -3721,6 +3942,11 @@ test('board 27: with a setup a Ready feature goes straight to the preview: the f
   const { calls } = await openExport(feature(), { [`POST ${PREVIEW_URL}`]: () => preview() });
   const d = dlg();
   assert.equal(text(document.getElementById(d.getAttribute('aria-labelledby'))), 'Export FEAT-7 to Jira');
+  const title = d.querySelector('h2');
+  assert.deepEqual([document.activeElement, title.getAttribute('tabindex')], [title, '-1'], 'the focus is in the dialog, on its title');
+  // board 31's phone title: CSS hides this part at 900 px and narrower and shows the line under the title
+  assert.deepEqual([text(title.querySelector('.req-export-tid')), text(d.querySelector('.req-export-sub'))],
+    ['FEAT-7', 'FEAT-7 · Cancel an order before it ships']);
   assert.equal(text(d.querySelector('.req-dlg-lead')), 'This is the ticket Worca will create in SHOP. Change the issue type, labels or priority for this export.');
   assert.deepEqual(calls.find((c) => c.url === PREVIEW_URL).body, { mode: 'create' });
   assert.deepEqual([...d.querySelectorAll('.req-export-fields > .req-export-fld')].map((x) => text(x.firstChild)),
@@ -3814,8 +4040,13 @@ test('board 27: not Ready, its dialog comes first; the checks as the board write
 });
 
 test('board 28: with a ticket: Export FEAT-7 again, the three choices, what changed; Continue previews Update SHOP-123', async () => {
-  const { calls } = await openExport(feature({ export: XV({ link: LINK }) }), { [`POST ${PREVIEW_URL}`]: (b) => AGAIN({ mode: b.mode }) });
+  const { host, calls } = await openFeature(feature({ export: XV({ link: LINK }) }), { ...SETUP_ROUTES(), [`POST ${PREVIEW_URL}`]: (b) => AGAIN({ mode: b.mode }) });
+  q('menu-export', host).click();
+  q('mi-export', host).click();
+  assert.equal(document.activeElement, dlg().querySelector('h2'), 'the focus starts in the dialog, on its title');
+  await settle();
   const d = dlg();
+  assert.equal(document.activeElement, q('again-update'), 'then on the default choice once the choices loaded');
   assert.equal(text(d.querySelector('h2')), 'Export FEAT-7 again');
   assert.equal(text(d.querySelector('#req-again-desc')), 'SHOP-123 was made on 26 Oct. The spec has changed since. What should happen?');
   const group = d.querySelector('[role="radiogroup"]');
@@ -3881,6 +4112,7 @@ test('board 28: Add a comment: the comment itself, Back to the choices, Add comm
   await settle();
   const d = dlg();
   assert.equal(text(d.querySelector('h2')), 'Comment on SHOP-123');
+  assert.equal(document.activeElement, d.querySelector('h2'), 'the focus is in the dialog, on its title');
   assert.equal(text(d.querySelector('.req-dlg-lead')), 'This comment is added to SHOP-123. Its description and fields stay as they are.');
   const box = d.querySelector('[aria-label="Comment preview"]');
   assert.deepEqual([box.getAttribute('tabindex'), [...box.querySelectorAll('p')].map(text)], ['0', ['Updated in Worca since the last export (26 Oct)',
@@ -3999,7 +4231,7 @@ test('D17: the History card right under the header, newest first, as board 28 wr
 
   /** Send what the dialog previewed (D6, D13): "Exporting to <tracker>…" on its status line and its buttons wait; on success
    *  the dialog closes and the page says what happened. A late answer for a dialog that is gone only repaints the feature
-   *  when it is still on screen (the frame does that too). */
+   *  when the host still shows it (paintedKey; the frame does that too). */
   async function sendExport(f, g, { name, body, statusEl, buttons, setBusy, onFail }) {
     setBusy(true);
     for (const b of buttons) b.disabled = true;
@@ -4008,7 +4240,7 @@ test('D17: the History card right under the header, newest first, as board 28 wr
       const res = await api('POST', exportUrl(f), body);
       setBusy(false);
       statusEl.replaceChildren();
-      if (!live(g)) { if (seqShown === f.seq) void paint(); return; }
+      if (!live(g)) { if (paintedKey === `feature/${f.seq}`) void paint(); return; }
       closeDialog(false);
       exported(f, res);
     } catch (err) {
@@ -4081,9 +4313,14 @@ test('D17: the History card right under the header, newest first, as board 28 wr
     const statusEl = h('p', { class: 'req-export-status', role: 'status' });
     const cancel = h('button', { type: 'button', class: 'btn', 'data-ui': 'export-cancel', onclick: () => { if (!busy) closeDialog(true); } }, 'Cancel');
     const go = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'export-go', disabled: true });
+    // Board 31 (user decision 2026-10-26): at 900 px and narrower CSS hides the title's "FEAT-7 " ("Export to Jira") and shows
+    // "FEAT-7 · <title>" under it; one h2 still labels the dialog, and takes the focus on open (D20).
+    const title = h('h2', { id: 'req-exp-title', class: 'req-export-title', tabindex: '-1' },
+      'Export ', h('span', { class: 'req-export-tid', text: `${f.id} ` }), `to ${name}`);
     const card = h('section', { class: 'card req-dialog req-export req-export-preview', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'req-exp-title' },
       backButton(f),
-      h('h2', { id: 'req-exp-title', text: `Export ${f.id} to ${name}` }),
+      title,
+      h('p', { class: 'hint req-export-sub', text: `${f.id} · ${f.title}` }),
       lead,
       h('div', { class: 'req-export-grid' },
         h('div', { class: 'req-export-col', role: 'group', 'aria-labelledby': 'req-exp-fields-h' }, h('h3', { id: 'req-exp-fields-h', text: 'Fields' }), fieldsEl),
@@ -4092,7 +4329,7 @@ test('D17: the History card right under the header, newest first, as board 28 wr
       ...box.els,
       h('div', { class: 'req-export-foot' }, h('span', { class: 'hint', text: `Only what you see here is sent to ${name}.` }), statusEl,
         h('div', { class: 'req-dlg-btns' }, cancel, go)));
-    openModal(card, { trigger, canClose: () => !busy, page: true });
+    openModal(card, { trigger, first: title, canClose: () => !busy, page: true });
     const g = dlgGen;
     const key = () => (data && data.key) || (linkOf(f) || {}).key || '';
     const goLabel = () => (mode === 'update' ? `Update ${key()}` : `Create in ${name}`);
@@ -4189,12 +4426,13 @@ test('D17: the History card right under the header, newest first, as board 28 wr
     const note = h('p', { class: 'hint', hidden: true, text: 'The preview shows the result before anything is sent.' });
     const cont = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'again-continue', disabled: true,
       onclick: () => (mode === 'comment' ? openComment(f, { reason, trigger }) : openPreview(f, { mode, reason, trigger })) }, 'Continue');
+    const title = h('h2', { id: 'req-again-title', tabindex: '-1', text: `Export ${f.id} again` });
     const card = h('section', { class: 'card req-dialog req-export req-export-again', role: 'dialog', 'aria-modal': 'true',
       'aria-labelledby': 'req-again-title', 'aria-describedby': 'req-again-desc' },
-      backButton(f), h('h2', { id: 'req-again-title', text: `Export ${f.id} again` }), desc, ...box.els, modes, changes, note,
+      backButton(f), title, desc, ...box.els, modes, changes, note,
       h('div', { class: 'req-dlg-btns' },
         h('button', { type: 'button', class: 'btn', 'data-ui': 'again-cancel', onclick: () => { if (!busy) closeDialog(true); } }, 'Cancel'), cont));
-    openModal(card, { trigger, canClose: () => !busy, page: true });
+    openModal(card, { trigger, first: title, canClose: () => !busy, page: true });   // the title until the choices load (D20)
     const g = dlgGen;
     const key = () => (data && data.link && data.link.key) || (linkOf(f) || {}).key || '';
     const ctx = { f, name, key, reason, trigger, setBusy: (b) => { busy = b; }, hideGo: (b) => { cont.hidden = b; },
@@ -4240,7 +4478,8 @@ test('D17: the History card right under the header, newest first, as board 28 wr
       if (!live(g)) return;
       data = d;
       fill();
-      const first = card.querySelector('[data-ui="again-update"], [data-ui="export-new"]');
+      // the default choice once the choices exist; a gone ticket keeps the focus on the title (its alert is announced)
+      const first = card.querySelector('[data-ui="again-update"], [data-ui="again-new"]');
       if (first) first.focus();
     }, (err) => { if (live(g)) showFailure(box, err, ctx); });
   }
@@ -4256,14 +4495,15 @@ test('D17: the History card right under the header, newest first, as board 28 wr
     const body = h('div', { class: 'req-export-desc req-export-comment', tabindex: '0', 'aria-label': 'Comment preview' });
     const back = h('button', { type: 'button', class: 'btn', 'data-ui': 'comment-back', onclick: () => { if (!busy) openAgain(f, { reason, trigger }); } }, 'Back');
     const add = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'comment-add', disabled: true }, 'Add comment');
+    const title = h('h2', { id: 'req-cm-title', tabindex: '-1', text: `Comment on ${linkKey}` });
     const card = h('section', { class: 'card req-dialog req-export req-export-commentdlg', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'req-cm-title' },
       backButton(f),
-      h('h2', { id: 'req-cm-title', text: `Comment on ${linkKey}` }),
+      title,
       h('p', { class: 'req-dlg-lead', text: `This comment is added to ${linkKey}. Its description and fields stay as they are.` }),
       body, ...box.els,
       h('div', { class: 'req-export-foot' }, h('span', { class: 'hint', text: `Only what you see here is sent to ${name}.` }), statusEl,
         h('div', { class: 'req-dlg-btns' }, back, add)));
-    openModal(card, { trigger, canClose: () => !busy, page: true });
+    openModal(card, { trigger, first: title, canClose: () => !busy, page: true });
     const g = dlgGen;
     const ctx = { f, name, key: () => linkKey, reason, trigger, setBusy: (b) => { busy = b; }, hideGo: (b) => { add.hidden = b; },
       retryLabel: (t) => { add.textContent = t; add.disabled = false; }, reload: () => load({ keep: true }), reopen: () => openComment(f, { reason, trigger }) };
@@ -4364,6 +4604,13 @@ test('D17: the History card right under the header, newest first, as board 28 wr
 .req-export-foot .req-dlg-btns{margin:0 0 0 auto}
 .req-export-status{margin:0}
 .req-export-status:empty{display:none}
+.req-export-status .badge.blue{color:var(--blue-ink-strong)}   /* AA on --blue-bg (5.0:1; --blue-ink is 3.6:1), as .req-reading's */
+/* Board 31 (user decision 2026-10-26): at 900 px and narrower the preview's title is "Export to Jira" over "FEAT-7 · <title>". */
+.req-export-sub{display:none;margin:-4px 0 0}
+@media (max-width:900px){
+  .req-export-title .req-export-tid{display:none}
+  .req-export-sub{display:block}
+}
 .req-export-alert.is-warn{padding:10px 12px;border:1px solid var(--amber-bg);border-radius:var(--r-md);background:var(--amber-wash);color:var(--ink)}
 .req-export-alert.is-warn b{font-weight:600}
 .req-export-alert-hint{margin:0}
@@ -4416,7 +4663,7 @@ git commit -m "Requirements: export preview, Export anyway, Export again with th
 - Modify: `test/requirements-view-export.test.mjs` (append)
 
 **Interfaces:**
-- Consumes: Tasks 8–9 (`stateBox`, `showFailure`'s `ctx`, `openSetup`, `openPreview`, `exportUrl`, `linkOf`, `xOf`, `reportBack`); `DELETE /api/requirements/:seq/export/link`; `POST /api/requirements/:seq/start` `{ reportBack }` (Task 7).
+- Consumes: Tasks 8–9 (`stateBox`, `showFailure`'s `ctx`, `openSetup`, `openPreview`, `exportUrl`, `linkOf`, `xOf`, `reportBack`); `makeSwitch` (`ui/public/switch.mjs`, the one switch, already imported by the page); `DELETE /api/requirements/:seq/export/link`; `POST /api/requirements/:seq/start` `{ reportBack }` (Task 7).
 - Produces:
   - `showFailure(box, err, ctx)`: 502 → the sentence, "Nothing was recorded…", the main button "Try again"; `refused` → the sentence and **Change the export setup** (the setup, then back to this dialog); `gone` → the sentence, its hint, **Forget the link** and **New ticket**; `stale` → the sentence and a fresh preview; else the sentence
   - `forgotten(f, data)`, `reportRow(f, where)` (`where`: `card` | `dialog` | `runs`; `data-ui="report-<where>"`)
@@ -4471,6 +4718,7 @@ test('board 29 (3): the ticket is gone: the again dialog says so first; Forget t
     [`DELETE ${EXPORT_URL}/link`]: () => forgot };
   let m = await openExport(feature({ export: XV({ link: LINK }) }), gone);
   const d = dlg();
+  assert.equal(document.activeElement, d.querySelector('h2'), 'the focus stays in the dialog, on its title (no choices to focus)');
   assert.equal(text(d.querySelector('[role="alert"]')), 'SHOP-123 no longer exists in Jira.');
   assert.equal(text(d.querySelector('.req-export-alert-hint')),
     'It was deleted or moved where this connection cannot see it. Forget the link removes the SHOP-123 chip; the history keeps the export.');
@@ -4589,6 +4837,10 @@ test('CSS (board 31): at 600 px an export dialog is a fixed full-viewport sheet;
   assert.ok(phone > 0 && css.slice(phone, at).split('}').length < 3, 'inside the 600 px media block');
   assert.match(css, /\.req-export \.req-dlg-btns \.btn::after,[^{]*\{content:"";position:absolute;inset:-6px 0\}/);
   assert.match(css, /\.req-export-back\{display:none\}/);
+  assert.match(css, /\.req-export-back::after\{content:"";position:absolute;inset:-14px -8px\}/);
+  // board 31's title (user decision 2026-10-26): at 900 px and narrower "Export to Jira" over "FEAT-7 · <title>"
+  assert.match(css, /\.req-export-sub\{display:none[;}]/);
+  assert.match(css, /@media \(max-width:900px\)\{\s*\.req-export-title \.req-export-tid\{display:none\}\s*\.req-export-sub\{display:block\}\s*\}/);
 });
 ```
 
@@ -4650,22 +4902,21 @@ test('CSS (board 31): at 600 px an export dialog is a fixed full-viewport sheet;
   }
 
   /** D15, board 29 (6): Report back to SHOP-123, on by default once the feature has a ticket; the ticket moves only to the status
-   *  its connection names. Upstream's switch (ink when on). `where` keeps the ids apart: card, dialog, runs. */
+   *  its connection names. The shared switch (switch.mjs, ink when on). `where` keeps the ids apart: card, dialog, runs. */
   function reportRow(f, where) {
     const l = linkOf(f);
     if (!l) return null;
     const hintId = `req-report-hint-${where}`;
     const done = xOf(f).doneStatus;
     const name = l.tracker || 'the tracker';
-    const cb = h('input', { type: 'checkbox', class: 'sw-input', role: 'switch', 'data-ui': `report-${where}`, 'aria-describedby': hintId,
-      onchange: (e) => {
-        reportBack.set(f.seq, e.currentTarget.checked);
-        for (const o of document.querySelectorAll('[data-ui^="report-"]')) if (o !== e.currentTarget) o.checked = e.currentTarget.checked;
-      } });
-    cb.checked = reportBack.get(f.seq) !== false;
-    return h('div', { class: 'req-report' },
-      h('label', { class: 'switch-row req-report-row' }, cb, h('span', { class: 'switch', 'aria-hidden': 'true' }),
-        h('span', { class: 'switch-label', text: `Report back to ${l.key}` })),
+    const { row, input } = makeSwitch(document, { label: `Report back to ${l.key}`, checked: reportBack.get(f.seq) !== false,
+      rowClass: 'req-report-row', data: { ui: `report-${where}` } });
+    input.setAttribute('aria-describedby', hintId);
+    input.addEventListener('change', () => {
+      reportBack.set(f.seq, input.checked);
+      for (const o of document.querySelectorAll('[data-ui^="report-"]')) if (o !== input) o.checked = input.checked;
+    });
+    return h('div', { class: 'req-report' }, row,
       h('p', { class: 'hint req-report-hint', id: hintId, text: done
         ? `When the run ends, Worca comments with the result and the pull request link, and moves the ticket to ${done} (the status named in the ${name} connection; without one, it only comments).`
         : `When the run ends, Worca comments with the result and the pull request link. The ${name} connection names no status to move the ticket to, so it only comments.` }));
@@ -4733,7 +4984,7 @@ test('CSS (board 31): at 600 px an export dialog is a fixed full-viewport sheet;
   .req-dlg-wrap.req-dlg-sheet .card.req-dialog.req-export{position:fixed;inset:0;width:auto;max-width:none;height:auto;max-height:none;border:0;border-radius:0;
     box-shadow:none;overflow-y:auto;overscroll-behavior:contain;padding:12px 16px 24px}
   .req-export-back{display:inline-flex;align-self:flex-start;position:relative;font-size:var(--fs-body)}
-  .req-export-back::after{content:"";position:absolute;inset:-12px -8px}
+  .req-export-back::after{content:"";position:absolute;inset:-14px -8px}   /* an 18 px line box + 28 = 46 px */
   .req-export-grid,.req-export-pair{grid-template-columns:minmax(0,1fr)}
   .req-export-desc.folded{max-height:180px;overflow:hidden}
   .req-export-more{display:block;width:100%;position:relative}
@@ -4762,7 +5013,7 @@ git commit -m "Requirements: export failure states, Report back, the phone sheet
 ### Task 11: The browser proof (light, dark, 390 px, runnable alone) and the docs
 
 **Files:**
-- Modify: `tools/verify-requirements-cdp.mjs` (an import; the header comment; `ONLY_A6`; `HIT_FN`; the A6 section right after the check `'flag on: the row appears without a reload'`)
+- Modify: `tools/verify-requirements-cdp.mjs` (an import; the header comment; `ONLY_A6`; the original flow after the check `'flag on: the row appears without a reload'` wrapped in `if (!ONLY_A6) { … }`; `HIT_FN` and the A6 section at the end, after the earlier runs are stopped and before the page-error gate)
 - Modify: `docs/requirements.md` (a new `## Export to a tracker` section at the end, after `## After starting`)
 - Modify: `docs/storage.md` (under `worca-cc.db` in the layout)
 - Modify: `docs/ui-levels.md` (the Requirements table)
@@ -4770,11 +5021,11 @@ git commit -m "Requirements: export failure states, Report back, the phone sheet
 
 **Interfaces:**
 - Consumes: everything of Tasks 1–10 in a real browser, in mock mode (`WORCA_MOCK=1`, the proof's own server in this process, so the proof may call the store, `linkPlugin`, `createProfile`, `readPluginState` and `retryWriteback` directly); `A.evalJs`, `A.send`, `until`, `check`, `sleep`, `runs`, `base` (the proof's own).
-- Produces: `npm run verify:requirements` checks for boards 26–31; `node --disable-warning=ExperimentalWarning tools/verify-requirements-cdp.mjs --only=a6` runs the boot, the flag and the A6 section alone; the user docs.
+- Produces: `npm run verify:requirements` checks for boards 26–31 (the A6 section last, before the page-error gate); `node --disable-warning=ExperimentalWarning tools/verify-requirements-cdp.mjs --only=a6` runs the boot, the flag and the A6 section alone, then the gate; the user docs.
 
 - [ ] **Step 1: The A6 section of the proof.** In `tools/verify-requirements-cdp.mjs`:
   - add `import { fileURLToPath } from 'node:url';` after `import path from 'node:path';`
-  - in the header comment, after "…at 390 px the Files card fits, its ⋯ menu holds the pencil's entry, 44 px targets);" add " export to a tracker (A6: jira-source linked in mock mode; the Export menu's items, the setup, the preview and its dark theme, Create with the chip, the History card and Created SHOP-123, Export again with the comment preview, Export anyway, the 390 px sheet with Back, Show all, 44 px targets and the page inert until the view is left, Start with Report back writing back to the ticket; `--only=a6` runs it alone);"
+  - in the header comment, after "…at 390 px the Files card fits, its ⋯ menu holds the pencil's entry, 44 px targets);" add " export to a tracker (A6: jira-source linked in mock mode; the Export menu's items, the setup, the preview and its dark theme, Create with the chip, the History card and Created SHOP-123, Export again with the comment preview, Export anyway, the 390 px sheet with its phone title, Back, Show all, 44 px targets and the page inert until the view is left, Start with Report back writing back to the ticket; `--only=a6` runs it alone);"
   - after `const SANDBOX = …;` add:
 
 ```js
@@ -4782,7 +5033,8 @@ git commit -m "Requirements: export failure states, Report back, the phone sheet
 const ONLY_A6 = process.argv.includes('--only=a6');
 ```
 
-  - right after the line `check('flag on: the row appears without a reload', await until(navShown, 2000));` add:
+  - right after the line `check('flag on: the row appears without a reload', await until(navShown, 2000));` add `if (!ONLY_A6) {   // --only=a6 skips to the A6 section`, and close that block with `}` right after the line `await until(async () => [...runs.values()].every((r) => settled.has(String(r.status || ''))), 30000);` (the earlier runs are stopped by then). Re-indent the lines between by two spaces (a whitespace-only change: `git diff -w` shows just the two lines); nothing after the block uses a name declared inside it.
+  - right after that closing `}` and before `await sleep(1000);` and `check('no page errors', …)` (the page-error gate), add the A6 section. It runs last, so the original flow is exactly as before (its Export menu shows "Connect a tracker…", which none of its checks reads), and it makes its features and its run in `shop` only after the earlier runs are stopped:
 
 ```js
 // A target is its hit area (board 20, style.css): the control's own box, grown by an absolutely placed ::after whose negative
@@ -4835,7 +5087,9 @@ const HIT_FN = `const hit = (b) => { const r = b.getBoundingClientRect(); const 
   await A.evalJs(`document.querySelector('[data-ui="setup-save"]').click()`);
   check('A6 board 27: Save and continue opens the preview: its title, the labels with the fixed one, the description and its footer',
     await until(() => A.evalJs(`(() => { const d = ${DLG}; const desc = d && d.querySelector('.req-export-desc'); if (!desc) return false;
-      return d.querySelector('h2').textContent === 'Export FEAT-${f6.seq} to Jira' && desc.querySelector('h4')?.textContent === 'Goal'
+      // 1400 px wide: the desktop title, no phone line under it (board 31's title is for 900 px and narrower)
+      return d.querySelector('h2').innerText.trim() === 'Export FEAT-${f6.seq} to Jira'
+        && getComputedStyle(d.querySelector('.req-export-sub')).display === 'none' && desc.querySelector('h4')?.textContent === 'Goal'
         && (desc.querySelector('.req-export-sig')?.textContent || '').startsWith('From Worca FEAT-${f6.seq} · exported ')
         && [...d.querySelectorAll('.req-export-lab')].map((x) => x.textContent).join('|') === 'worca|worca-FEAT-${f6.seq}'
         && d.querySelector('[data-ui="export-go"]').textContent === 'Create in Jira' && !d.querySelector('[data-ui="export-go"]').disabled; })()`), 15000));
@@ -4894,15 +5148,19 @@ const HIT_FN = `const hit = (b) => { const r = b.getBoundingClientRect(); const 
   await sleep(300);
   const sheet = await A.evalJs(`(() => { const d = ${DLG}; const r = d.getBoundingClientRect();
     const back = d.querySelector('[data-ui="export-back"]'); const more = d.querySelector('[data-ui="export-more"]');
+    const sub = d.querySelector('.req-export-sub');
     const others = [...document.body.children].filter((el) => !el.classList.contains('req-dlg-wrap'));
     return { fixed: getComputedStyle(d).position === 'fixed', left: Math.round(r.left), top: Math.round(r.top), width: Math.round(r.width),
       vw: document.documentElement.clientWidth, height: Math.round(r.height), vh: window.innerHeight,
       back: back && getComputedStyle(back).display !== 'none' ? back.getAttribute('aria-label') : null,
+      title: d.querySelector('h2').innerText.trim(), sub: sub && getComputedStyle(sub).display !== 'none' ? sub.innerText.trim() : null,
       more: !!more && getComputedStyle(more).display !== 'none', folded: d.querySelector('.req-export-desc').getBoundingClientRect().height <= 182,
       inert: others.every((el) => el.hasAttribute('inert')), noScroll: document.documentElement.scrollWidth === document.documentElement.clientWidth }; })()`);
   check('A6 board 31: at 390 px a full-screen sheet (the viewport, not its content) with ← FEAT-n and Show all; the page behind is inert',
     sheet.fixed && sheet.left === 0 && sheet.top === 0 && sheet.width === sheet.vw && sheet.height === sheet.vh && sheet.back === `Back to FEAT-${half.seq}`
       && sheet.more && sheet.folded && sheet.inert && sheet.noScroll, JSON.stringify(sheet));
+  check('A6 board 31 (user decision 2026-10-26): the phone title reads "Export to Jira" over "FEAT-n · <title>"',
+    sheet.title === 'Export to Jira' && sheet.sub === `FEAT-${half.seq} · Cancel part of an order`, JSON.stringify({ title: sheet.title, sub: sheet.sub }));
   const small = await A.evalJs(`(() => { const d = ${DLG}; ${HIT_FN}
     return [...d.querySelectorAll('.btn, .req-export-x, .req-export-back')].filter((b) => b.offsetParent !== null)
       .map((b) => [b, hit(b)]).filter(([, s]) => s.hh < 44).map(([b, s]) => (b.getAttribute('data-ui') || b.className) + ':' + Math.round(s.hh)); })()`);
@@ -4940,17 +5198,13 @@ const HIT_FN = `const hit = (b) => { const r = b.getBoundingClientRect(); const 
     const last = JSON.parse(readPluginState('jira-source', 'acme').lastReport || '{}');
     check('A6 D15: the run reports back to SHOP-123 through the existing write-back', wb.ok === true && last.id === 'SHOP-123', JSON.stringify({ wb, last }));
   }
-}
-if (ONLY_A6) {
   for (const r of runs.values()) { try { r.orch?.stop?.(); } catch {} }
-  await sleep(1000);
-  check('no page errors', A.pageErrors.length === 0, A.pageErrors.join(' | '));
-  log(failed ? `${failed} check(s) failed` : 'all checks passed');
-  await shutdown(failed ? 1 : 0);
 }
 ```
 
-- [ ] **Step 2: Run the proof.** `node --disable-warning=ExperimentalWarning tools/verify-requirements-cdp.mjs --only=a6` (Chrome found automatically, or `CHROME_BIN` set) → every A6 check `ok`, ending `all checks passed`. Then the whole proof: `npm run verify:requirements` → `all checks passed` (the A6 section runs first; the later sections see a linked tracker in the Export menu and are unchanged otherwise). A failure is fixed in the task it belongs to (the view, the CSS, the service) and the proof run again; a check never passes without having seen its state.
+  The existing `await sleep(1000); check('no page errors', …); log(…); await shutdown(…);` lines follow unchanged: with `--only=a6` the run goes boot → flag → A6 → the gate.
+
+- [ ] **Step 2: Run the proof.** `node --disable-warning=ExperimentalWarning tools/verify-requirements-cdp.mjs --only=a6` (Chrome found automatically, or `CHROME_BIN` set) → every A6 check `ok`, ending `all checks passed`. Then the whole proof: `npm run verify:requirements` → `all checks passed` (the A6 section runs last, after the earlier sections, whose checks are unchanged). A failure is fixed in the task it belongs to (the view, the CSS, the service) and the proof run again; a check never passes without having seen its state.
 
 - [ ] **Step 3: `docs/requirements.md`.** At the end of the file, after the `## After starting` section, add:
 
@@ -5048,7 +5302,7 @@ git commit -m "Requirements: the export browser proof and docs" -m "Co-Authored-
 |---|---|
 | D1 one Export entry; menu items; the tracker's name (setup's, bound, only one, "a tracker"); Connect a tracker… | 3 (trackers), 5 (`viewTracker`), 6 (`feature.export`), 8 (menu, Connect), 11 |
 | D2 connections on the Marketplace page; setup per project or workspace; default connection from `resolveProfile`; no token | 1, 3 (`defaultConnection`), 5 (`saveSetup`, `exportSetupView`), 6, 8, 11 |
-| D3 optional connector ops in API 5; discovery via `capabilities().export`, cached per plugin, source, version; probed with the first profile | 3, 4 |
+| D3 optional connector ops in API 5; discovery via `capabilities().export`, cached per plugin, source, version; probed with the first profile, all at once within 10 s; a failed probe stands about 60 s per plugin, source and profile | 3, 4 |
 | D4 the neutral ticket; description order; names only for files; empty sections out; `(from <name>)` | 2, 5 (`mentionedFiles`) |
 | D5 Ready, or Export anyway with a reason (≤ 500), recorded, at the top of the description; every check overridable | 5, 6, 9, 11 |
 | D6 only what the preview shows; `previewHash`; 409 stale; labels normalised in Worca; fixed label; per-export overrides; text-only rendering | 2, 5, 6, 9, 10, 11 |
@@ -5065,7 +5319,7 @@ git commit -m "Requirements: the export browser proof and docs" -m "Co-Authored-
 | D17 the History card | 5 (`history`), 9, 11 |
 | D18 server-side calls only; allowlist unchanged; no config in tables or views; names only for files | 3, 5, 6, 7 |
 | D19 flag, `REQUIREMENTS_ROUTES`, frames, no cost; mock answers | 3, 6, 11 |
-| D20 dialog roles and names; radiogroup; alerts and statuses; chip name; label × names; description preview name; phone sheets; 44 px | 8, 9, 10, 11 |
+| D20 dialog roles and names; focus inside on open; radiogroup; alerts and statuses; chip name; label × names; description preview name; phone sheets; board 31's phone title at 900 px and narrower; 44 px | 8, 9, 10, 11 |
 | §3 data, the `export` turn, the two filters | 1, 6 |
 | §4 the contract, the comment, the mock answers | 2, 3, 4 |
 | §5 the Jira connector | 4 |
@@ -5080,5 +5334,7 @@ git commit -m "Requirements: the export browser proof and docs" -m "Co-Authored-
 
 - Code-forced placements this plan adds, each the smallest the code needs: the `exporting` set lives in `starting.mjs` (D13 names `export.mjs`; there `start.mjs` would have to import `export.mjs`, which imports `start.mjs`'s `REASON_MAX`), and `export.mjs` re-exports `isExporting`; `jira-api.mjs`'s error carries Jira's JSON body (`body`), which a refusal needs and the shim's `{ kind, message }` cannot carry; `exportOptions` may answer `tooOld: true` (D16's "This Jira is too old for export setup." needs the setup to know); `findTicket` also returns the candidate's `marker` and `labels`, so Worca checks all three of D10's conditions itself; an update raced by an edit in the tracker answers 409 `{ edited: true }` (the again dialog's check can be stale by the time Update is pressed); the feature's `export` carries `history` with server-formatted times (D8's server-local dates); `export.link` carries `madeOn` / `lastOn` for the same reason; the preview's `fields.conn` names the connection so the page can load the selects' choices.
 - Copy this plan adds where the design names none is listed once in Global Constraints (the server refusals, "Updated SHOP-123", "Commented on SHOP-123", the update lead "This is the ticket Worca will update in SHOP. …", the change-summary lines for the goal, the measure, removals and assumptions).
-- The comment lines follow board 28's punctuation (no final period); design §4 writes a period after some of them. Board 31's phone title ("Export to Jira" over "FEAT-7 · <title>") is not built: the sheet keeps the dialog's own title, which says the same; everything else of board 31 is.
+- The comment lines follow board 28's punctuation (no final period); design §4 now says the same (user decision 2026-10-26). Board 31's phone title is built as approved (user decision 2026-10-26, design D20): at 900 px and narrower the preview's `h2` reads "Export to Jira" (CSS hides its `FEAT-7 ` span) with "FEAT-7 · <title>" on a second line; wider it stays "Export FEAT-7 to Jira" (Tasks 9, 10, 11).
+- Plan review fixes (2026-10-26): every export dialog moves the focus inside on open (its title, `tabindex="-1"`); once Jira made the issue or took the edit, `createTicket` / `updateTicket` never throw (a refused property PUT is logged, a failed read-back is `fingerprint: null`, and the host then stores null, never the old fingerprint); jira-source's other refusals say "Jira refused the request: …" without a status or path; an update sends `issuetype` only when it changes; `tooOld` only on Data Center; an update takes criteria, issue type and priority from a setup on the link's connection and project; the capability probes run at once within 10 s and a failed one stands for a minute (design D3); History never names `'local'`; Report back uses the shared `makeSwitch`; the archived note sits outside `role="menu"`; a saved setup sends a frame to the scope's open features; the proof's A6 section runs last.
+- Accepted, not changed: a preview made before midnight and sent after it answers "The spec changed since the preview. Look at the preview again." (its footer date moved); the sentence is D6's and a fresh preview fixes it. A New ticket whose answer was lost, followed by a setup moved to another connection, is looked for through the new connection (`runExport`'s comment); no match there makes a ticket.
 - The suggested split's twelve tasks are kept; the Report back switch (board 29's state 6) is in Task 10 with the other states, the server side of it in Task 7.
