@@ -1,17 +1,10 @@
-// ui/public/run-page-head.mjs — the aligned run and group page head (runs navigation, run 3): the kind chip's words,
+// ui/public/run-page-head.mjs — the aligned run and group page head (runs navigation, run 3): the group chip's word,
 // the status model without a second PR mention, the breadcrumb and the facts block. Pure DOM over the host's
 // ownerDocument; app.js and group-page.mjs own the data.
 import { icon } from './icons.mjs';
 
-export const RUN_FACTS = Object.freeze([['group', 'Group'], ['project', 'Project'], ['branch', 'Branch'], ['labels', 'Labels'], ['tags', 'Cost tags']]);
+export const RUN_FACTS = Object.freeze([['project', 'Project'], ['branch', 'Branch'], ['labels', 'Labels'], ['tags', 'Cost tags'], ['group', 'Group']]);
 export const GROUP_FACTS = Object.freeze([['project', 'Project'], ['runs', 'Runs'], ['cost', 'Total cost'], ['labels', 'Labels']]);
-
-/** The run page's kind chip. `home` is app.js groupHomeOf's answer ({ row, planning, position, total }) or null. */
-export function runPositionLabel(home) {
-  if (!home) return 'Run';
-  if (home.planning) return 'Planning';
-  return home.position != null && home.total ? `Run ${home.position} of ${home.total}` : 'Run';
-}
 
 /** The group page's kind chip (clarify answer): the group's kind. */
 export function groupKindWord(row) {

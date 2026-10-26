@@ -858,10 +858,10 @@
 
               <section class="rd-glance" aria-label="Run status">
                 <div class="rd-now">
-                  <!-- The run's name is the page title; the bar shows it only once this scrolls away. Its kind
-                       chip says where the run sits ("Run 2 of 3", run 3 D7); every other fact is in the card. -->
+                  <!-- The run's name is the page title, one line cut with "…" (its title attribute holds it whole);
+                       the bar shows it only once this scrolls away. Every other fact is in the card. -->
                   <header class="rd-page-head">
-                    <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1><span class="kind-chip">Run</span></div>
+                    <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1></div>
                   </header>
                 </div>
                 <div class="rd-sheet">
@@ -887,10 +887,10 @@
                   <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
                        old meta line (paintPageHead owns its first text node). -->
                   <dl class="rd-kv" aria-label="Run facts">
-                    <div class="rd-kv-row" data-fact="group" hidden><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line"></dd></div>
                     <div class="rd-kv-row" data-fact="project" hidden><dt class="rd-kv-k">Project</dt><dd class="rd-kv-v rd-page-meta"></dd></div>
                     <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
+                    <div class="rd-kv-row" data-fact="group" hidden><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line"></dd></div>
                   </dl>
                   <div class="rd-banners"></div>
                   <!-- Time · Cost · Changes, in every state (the time ticks while live). -->
@@ -1034,7 +1034,7 @@
               <section class="rd-glance hd-glance" aria-label="Run status">
                 <div class="rd-now">
                   <header class="rd-page-head">
-                    <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1><span class="kind-chip">Run</span></div>
+                    <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1></div>
                   </header>
                 </div>
                 <div class="rd-sheet">
@@ -1050,10 +1050,10 @@
                   <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
                        old meta line (paintPageHead owns its first text node). -->
                   <dl class="rd-kv" aria-label="Run facts">
-                    <div class="rd-kv-row" data-fact="group" hidden><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line"></dd></div>
                     <div class="rd-kv-row" data-fact="project" hidden><dt class="rd-kv-k">Project</dt><dd class="rd-kv-v rd-page-meta"></dd></div>
                     <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
+                    <div class="rd-kv-row" data-fact="group" hidden><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line"></dd></div>
                   </dl>
                   <div class="hd-limit-notice rd-ov-state" hidden><span class="rd-ov-copy"></span></div>
                   <div class="hd-banners"></div>
