@@ -32,7 +32,7 @@ test('mock mode is refused; the dry run lists the five messages, calls nothing a
   assert.equal(sandboxNames().length, before, 'a dry run makes no sandbox folder');
   assert.equal(MESSAGES.length, 5);
   assert.equal(out.filter((l) => l.startsWith('message: ')).length, 5);
-  assert.match(out.at(-1), /^Dry run: nothing was sent\. Add --yes .*hard cap \$1\.00/);
+  assert.match(out.at(-1), /^Dry run: nothing was sent\. Add --yes .*stops before a call once \$1\.00 is spent/);
   assert.equal(await main(['--max-usd', '0'], { log: () => {}, env: {}, runner: none, ...quiet }), 2);
 });
 
@@ -61,4 +61,19 @@ test('the hard cap: every call gets the budget left as maxBudgetUsd; the tool st
   assert.deepEqual(rows.map((r) => r.skipped || r.parsed), [true, true, true, 'max-usd', 'max-usd']);
   assert.deepEqual([rows[0].cacheReadTokens, rows[0].cacheWriteTokens, rows[0].costUsd], [900, 100, 0.4]);
   assert.match(out.at(-1), /^spent \$1\.2000 of \$1\.00/);
+});
+
+test('a call that fails without a result event still counts: its booked cost shrinks the next budget and the run stops at the cap', async () => {
+  const budgets = [];
+  const runner = async (opts) => {
+    budgets.push(opts.maxBudgetUsd);
+    throw Object.assign(new Error('killed'), { costUsd: 0.5 });
+  };
+  const out = [];
+  assert.equal(await main(['--yes', '--max-usd', '1.00'], { log: (l) => out.push(l), env: {}, runner, ...quiet }), 1);
+  assert.deepEqual(budgets.slice(0, 2), [1, 0.5]);
+  assert.ok(budgets.every((b) => b > 0), 'no call starts with nothing left');
+  const rows = out.filter((l) => l.startsWith('{')).map((l) => JSON.parse(l));
+  assert.ok(rows.some((r) => r.skipped === 'max-usd'), 'the cap stopped it');
+  assert.match(out.at(-1), /^spent \$1\.0000 of \$1\.00/);
 });

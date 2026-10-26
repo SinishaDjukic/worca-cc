@@ -11,8 +11,8 @@
 //   node tools/requirements-real-helper.mjs [--max-usd <n>] [--sandbox <dir>] [--out <file.json>] [--allow-routed] [--yes]
 //
 // Without --yes it is a dry run: it sends nothing and makes no folder. With --yes it calls the model and THIS COSTS MONEY.
-// The cap (--max-usd, default 1.00) is hard: every call gets the budget left as --max-budget-usd, and no call starts once
-// nothing is left. It refuses to run with WORCA_MOCK / ORCH_MOCK set. Exit: 0 every reply parsed; 1 a reply failed or the cap
+// The cap (--max-usd, default 1.00): every call gets the budget left (the larger of the CLI's reported and Worca's booked spend
+// is taken off) as --max-budget-usd, and no call starts once nothing is left; one call can still overshoot a little. It refuses to run with WORCA_MOCK / ORCH_MOCK set. Exit: 0 every reply parsed; 1 a reply failed or the cap
 // stopped it; 2 usage, mock mode or refused routing.
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -72,7 +72,7 @@ export async function main(argv = process.argv.slice(2), { log = console.log, en
   const maxUsd = Number(o['max-usd']);
   if (!(maxUsd > 0)) { log('--max-usd must be a positive number'); return 2; }
   for (const m of MESSAGES) log(`message: ${m.text}${m.focus ? ' (Help me answer · question 1)' : ''}`);
-  if (!o.yes) { log(`Dry run: nothing was sent. Add --yes to send ${MESSAGES.length} real messages (this costs money; hard cap $${maxUsd.toFixed(2)}).`); return 0; }
+  if (!o.yes) { log(`Dry run: nothing was sent. Add --yes to send ${MESSAGES.length} real messages (this costs money; it stops before a call once $${maxUsd.toFixed(2)} is spent).`); return 0; }
   const outside = [["this shell's environment", routingKeys(env)], ["Claude Code's user settings", userSettingsRoutingKeys({ env, home })],
     ...managedPaths.map((p) => [`Claude Code's managed settings (${p})`, settingsFileRoutingKeys(p)])].filter(([, keys]) => keys.length);
   for (const [where, keys] of outside) log(`Claude Code is routed by ${where} (${keys.join(', ')}): its calls are billed to that endpoint, not to this sign-in`);
@@ -98,8 +98,9 @@ export async function main(argv = process.argv.slice(2), { log = console.log, en
     if (!o['allow-routed']) { log('Nothing was sent. Add --allow-routed to send through that endpoint anyway.'); return 2; }
   }
   const fx = makeFixture(store);
-  let cliSpent = 0;
-  const left = () => cents(maxUsd - cliSpent);
+  let cliSpent = 0;   // what the CLI's result events reported
+  let booked = 0;     // what Worca booked on the feature (a call killed or timed out has no result event but its cost is booked)
+  const left = () => cents(maxUsd - Math.max(cliSpent, booked));
   const report = { calls: [] };
   let bad = false;
   for (const msg of MESSAGES) {
@@ -110,17 +111,27 @@ export async function main(argv = process.argv.slice(2), { log = console.log, en
       const budget = left();
       rec.budgets.push(budget);
       if (budget <= 0) throw new Error('the --max-usd cap is reached');
+      let sawResult = false;
       const tee = normalizingOnEvent((n) => {
         if (n.type !== 'result') return;
-        if (Number.isFinite(Number(n.costUsd))) { rec.costUsd += Number(n.costUsd); cliSpent += Number(n.costUsd); }
+        if (Number.isFinite(Number(n.costUsd))) { sawResult = true; rec.costUsd += Number(n.costUsd); cliSpent += Number(n.costUsd); }
         if (n.usage) rec.usage = n.usage;
       });
-      return base({ ...opts, maxBudgetUsd: budget, onEvent: (e) => { tee(e); opts.onEvent?.(e); } });
+      try {
+        return await base({ ...opts, maxBudgetUsd: budget, onEvent: (e) => { tee(e); opts.onEvent?.(e); } });
+      } catch (err) {
+        // A call that timed out or was killed may carry its cost without any result event: count it (callModel drops it on rethrow).
+        const c = Number(err && err.costUsd);
+        if (!sawResult && Number.isFinite(c) && c > 0) { rec.costUsd += c; cliSpent += c; }
+        throw err;
+      }
     };
     const t0 = Date.now();
     const focus = msg.focus ? { roundTurnId: fx.turnId, questionId: fx.questions[0].id } : undefined;
     await sendMessage(fx.seq, { text: msg.text, focus }, { by: 'real-helper' }, { runClaudeImpl: wrap });
-    const w = store.listHelperMessages(fx.seq).at(-1);
+    const all = store.listHelperMessages(fx.seq);
+    booked = all.reduce((n, m) => n + (m.costUsd || 0), 0);
+    const w = all.at(-1);
     const u = rec.usage || {};
     const row = { text: msg.text, seconds: Math.round((Date.now() - t0) / 1000), costUsd: w.costUsd, cliCostUsd: four(rec.costUsd), maxBudgetUsd: rec.budgets,
       parsed: !w.error, error: w.error ? w.error.code : null, inputTokens: Number(u.input_tokens) || 0, cacheReadTokens: Number(u.cache_read_input_tokens) || 0,
@@ -129,7 +140,6 @@ export async function main(argv = process.argv.slice(2), { log = console.log, en
     report.calls.push(row);
     log(JSON.stringify({ ...row, maxBudgetUsd: row.maxBudgetUsd[0] }));
   }
-  const booked = store.listHelperMessages(fx.seq).reduce((n, m) => n + (m.costUsd || 0), 0);
   if (o.out) writeFileSync(o.out, `${JSON.stringify({ version: 1, at: new Date().toISOString(), model: model || null, effort: im.effort || null, maxUsd,
     booked: four(booked), cliSpent: four(cliSpent), ...report }, null, 2)}\n`);
   log(`spent $${Math.max(booked, cliSpent).toFixed(4)} of $${maxUsd.toFixed(2)} (booked $${booked.toFixed(4)}, CLI $${cliSpent.toFixed(4)})`);
