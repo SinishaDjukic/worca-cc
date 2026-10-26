@@ -11,6 +11,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { createFakeE2b } from '../src/core/exec-env/e2b-fake.mjs';
 import { E2bExecEnv } from '../src/core/exec-env/e2b-env.mjs';
 import { createRouteMeter, priceRelayUsage } from '../src/core/exec-env/relay-usage.mjs';
+import { UNPRICED_RATES } from '../src/broker/usage.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { createClaudeNormalizer } from '../src/core/engines/claude-events.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
@@ -80,8 +81,9 @@ test('pricing: list price per reply model; the dispatched model\'s own override 
   assert.deepEqual(listed.unpriced, []);
   await addGlobalModel({ id: 'free-gw', label: 'Free gateway', cost: { free: true } });
   assert.deepEqual(priceRelayUsage(relay, 'free-gw'), { costUsd: 0, unpriced: [] });
-  const odd = priceRelayUsage({ messages: 1, byModel: { 'gw-odd': { input_tokens: 5, output_tokens: 5 } } }, null);
-  assert.deepEqual(odd, { costUsd: 0, unpriced: ['gw-odd'] });
+  const odd = priceRelayUsage({ messages: 1, byModel: { 'gw-odd': { input_tokens: 1e6, output_tokens: 1e6 } } }, null);
+  assert.deepEqual(odd.unpriced, ['gw-odd']);
+  assert.equal(odd.costUsd, UNPRICED_RATES.input + UNPRICED_RATES.output, 'an unpriced model books at the fallback rate, never $0 (audit 2.8)');
 });
 
 /** An E2B env on the loopback fake whose `claude` makes `calls` streamed model calls through the relay, then prints
@@ -158,14 +160,22 @@ test('a sandbox figure close to the relay\'s is booked as measured, with no warn
   assert.equal(logs.some((l) => /model relay measured/.test(l.text)), false);
 });
 
-test('a model the relay cannot price keeps the sandbox figure, never below what it could price', () => {
-  const { orch, attr } = unitHarness('x:n_impl:1', 'gw-odd');
-  const relay = { messages: 2, byModel: { ...RELAY.byModel, 'gw-odd': { input_tokens: 9, output_tokens: 9 } } };
-  orch._onAgentEvent('implementer', { type: 'result', costUsd: 0.5, cumulativeCost: true, sessionId: 's1', relay }, attr);
-  assert.equal(orch.state.steps[0].costUsd, 0.5);
-  const low = unitHarness('x:n_impl:1', 'gw-odd');
-  low.orch._onAgentEvent('implementer', { type: 'result', costUsd: 0, cumulativeCost: true, sessionId: 's1', relay }, low.attr);
-  assert.equal(low.orch.state.steps[0].costUsd, 0.0141, 'a forged $0 cannot hide what the relay priced');
+test('a model the relay cannot price books at the fallback rate, never at the sandbox\'s figure (audit 2.8)', () => {
+  // A step with no model of its own (Codex's default): the sandbox calls a model with no list price and claims ~$0.
+  const unpriced = { messages: 1, byModel: { 'o9-pro-unlisted': { input_tokens: 1e6, output_tokens: 1e6 } } };
+  const fallback = UNPRICED_RATES.input + UNPRICED_RATES.output;
+  for (const claim of [0.000001, 999]) {
+    const { orch, logs, attr } = unitHarness('x:n_impl:1', null);
+    orch._onAgentEvent('implementer', { type: 'result', costUsd: claim, relay: unpriced }, attr);
+    assert.equal(orch.state.steps[0].costUsd, fallback, `claim ${claim}`);
+    assert.ok(logs.some((l) => l.level === 'warn' && /o9-pro-unlisted.*highest list rate/.test(l.text)), JSON.stringify(logs));
+  }
+  const rest = unitHarness('x:n_impl:1', null);
+  rest.orch._onAgentEvent('implementer', { type: 'relayCost', ...unpriced }, rest.attr);
+  assert.equal(rest.orch.state.steps[0].costUsd, fallback, 'also for calls no result covered');
+  const mixed = unitHarness('x:n_impl:1', 'gw-odd');
+  mixed.orch._onAgentEvent('implementer', { type: 'result', costUsd: 0, relay: { messages: 2, byModel: { ...RELAY.byModel, 'gw-odd': { input_tokens: 0, output_tokens: 0 } } } }, mixed.attr);
+  assert.equal(mixed.orch.state.steps[0].costUsd, 0.0141, 'the priced part as measured');
 });
 
 test('calls no result covered are booked from the relay when the spawn ends; their open turns are not counted again', () => {
