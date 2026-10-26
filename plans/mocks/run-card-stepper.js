@@ -55,7 +55,8 @@ function menu(id, items) {
 // first, then cost tags, which read as key: value), what does not fit folded into +N. The group is one button; it
 // opens one editor (also L). No colour, no ×: removing is in the editor.
 const TAG_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"></path><circle cx="8" cy="8" r="1.4" fill="currentColor"></circle></svg>';
-const KNOWN = { label: [['ui', 12], ['needs demo', 4], ['hotfix', 7], ['release', 9], ['docs', 2]], tag: [['team: web', 31], ['team: api', 18], ['client: acme', 6]] };
+const KNOWN = { label: [['ui', 12], ['needs demo', 4], ['hotfix', 7], ['release', 9], ['docs', 2]], tag: [['team: web', 31], ['team: api', 18], ['client: acme', 6]],
+  group: [['Navigation', 4], ['Billing export', 2], ['Onboarding', 3]] };
 const tagsOf = () => ui.chips.filter((c) => c.kind === 'label').concat(ui.chips.filter((c) => c.kind === 'tag'));
 function tagGroupHtml() {
   const all = tagsOf(); const list = all.map((c) => c.text).join(', ');
@@ -64,15 +65,21 @@ function tagGroupHtml() {
   const XS = '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"></path></svg>';
   return `<span class="rc-pop rc-tagpop"><span class="rc-tags${ui.menu === 'tags' ? ' is-open' : ''}" data-tagzone title="${all.length ? esc(list) + ' · L to edit' : 'Add a label or cost tag · L'}"><button type="button" class="rc-tags-mark" data-menu="tags" data-key="menu:tags" aria-haspopup="dialog" aria-expanded="${ui.menu === 'tags'}" aria-label="${all.length ? 'Edit labels and cost tags: ' + esc(list) : 'Add a label or cost tag'}">${TAG_ICON}</button>${all.map((c) => `<span class="rc-tag is-${c.kind}">${esc(c.text)}<button type="button" class="rc-tag-x" data-untag="${c.kind}|${esc(c.text)}" data-key="untag:${c.kind}:${esc(c.text)}" aria-label="Remove ${esc(c.text)}">${XS}</button></span>`).join('')}<span class="rc-tag-more" hidden></span></span>${ui.menu === 'tags' ? tagEditorHtml() : ''}</span>`;
 }
-function tagEditorHtml() {
+// One list editor, shared by labels and cost tags and by groups: a field (type to find or create), then checked
+// lists with how many runs use each; many choices for tags, one for a group.
+function listEditorHtml({ label, inputId, placeholder, sections, hint }) {
   const on = (k, t) => ui.chips.some((c) => c.kind === k && c.text === t);
-  const rows = (k) => { const known = KNOWN[k].concat(ui.chips.filter((c) => c.kind === k && !KNOWN[k].some(([t]) => t === c.text)).map((c) => [c.text, 1]));
-    return known.map(([t, n]) => `<button type="button" class="menu-item" role="menuitemcheckbox" aria-checked="${on(k, t)}" data-tagtoggle="${k}|${esc(t)}" data-key="tagt:${k}:${esc(t)}"><span class="mi-l">${esc(t)}</span><span class="mi-hint">${n}</span></button>`).join(''); };
-  return `<div class="menu rc-tag-ed" role="dialog" aria-label="Labels and cost tags">
-    <input class="input input-sm" id="tag-input" type="text" placeholder="A label, or key: value for a cost tag" aria-label="Add a label or cost tag" data-key="tag-input">
-    <p class="menu-h">Labels</p>${rows('label')}<div class="menu-sep" role="separator"></div><p class="menu-h">Cost tags</p>${rows('tag')}
-    <p class="menu-help">Cost tags split this run’s cost in Statistics</p></div>`;
+  const rows = ({ kind, many }) => KNOWN[kind].concat(ui.chips.filter((c) => c.kind === kind && !KNOWN[kind].some(([t]) => t === c.text)).map((c) => [c.text, 1]))
+    .map(([t, n]) => `<button type="button" class="menu-item" role="${many ? 'menuitemcheckbox' : 'menuitemradio'}" aria-checked="${on(kind, t)}" data-listtoggle="${kind}|${esc(t)}" data-key="lst:${kind}:${esc(t)}"><span class="mi-l">${esc(t)}</span><span class="mi-hint">${n}</span></button>`).join('');
+  return `<div class="menu rc-list-ed" role="dialog" aria-label="${esc(label)}">
+    <input class="input input-sm" id="${inputId}" type="text" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}" data-key="${inputId}">
+    ${sections.map((sec, i) => (i ? '<div class="menu-sep" role="separator"></div>' : '') + `<p class="menu-h">${esc(sec.title)}</p>` + rows(sec)).join('')}
+    <p class="menu-help">${esc(hint)}</p></div>`;
 }
+const tagEditorHtml = () => listEditorHtml({ label: 'Labels and cost tags', inputId: 'tag-input', placeholder: 'A label, or key: value for a cost tag',
+  sections: [{ title: 'Labels', kind: 'label', many: true }, { title: 'Cost tags', kind: 'tag', many: true }], hint: 'Cost tags split this run’s cost in Statistics' });
+const groupEditorHtml = () => listEditorHtml({ label: 'Move to group', inputId: 'group-input', placeholder: 'Find or create a group',
+  sections: [{ title: 'Groups', kind: 'group', many: false }], hint: 'A group tracks related runs on one page; a run is in one at a time' });
 // The group never wraps: show what fits, fold the rest into +N (measured after each render, never on hover).
 function fitTags() {
   const g = document.querySelector('.rc-tags'); if (!g) return;
@@ -86,15 +93,6 @@ function fitTags() {
   const over = () => lastRight() > line.getBoundingClientRect().right + 1 || (br && br.scrollWidth > br.clientWidth + 1 && br.clientWidth < keep);
   let hide = 0;
   while (over() && hide < tags.length) { hide++; tags[tags.length - hide].hidden = true; more.hidden = false; more.textContent = '+' + hide; }
-}
-// The + picker: after choosing Label, Cost tag or group, a small field to type one, with existing values to pick.
-function pickerHtml(kind) {
-  const k = M.add.find((x) => x.kind === kind);
-  const taken = ui.chips.filter((c) => c.kind === kind).map((c) => c.text);
-  return `<div class="menu rc-picker" role="dialog" aria-label="Add ${esc(k.menu.toLowerCase())}"><p class="menu-h">${esc(k.menu)}</p>
-    <input class="input input-sm" type="text" placeholder="${esc(k.placeholder)}" aria-label="${esc(k.menu)}" data-key="pick-input">
-    <div class="rc-suggest">${k.suggest.filter((x) => !taken.includes(x)).map((x) => `<button type="button" class="btn btn-sm" data-suggest="${esc(x)}" data-key="suggest:${esc(x)}">${esc(x)}</button>`).join('')}</div>
-    <p class="menu-help">Enter adds it · Esc closes</p></div>`;
 }
 // Every focusable control carries data-key, so a render keeps keyboard focus on it (or moves it on purpose via
 // pendingFocus) instead of dropping it to the page.
@@ -238,7 +236,7 @@ function render() {
   const a = v.action;
   // The run's controls sit together on the status line: its one action (with ▾), then ⋯ for everything else.
   const split = a ? `<div class="btn-split rc-action rc-pop is-right"><button type="button" class="btn btn-sm ${a.primary ? 'btn-primary' : ''}" title="${esc(a.help)}" data-key="act-main" data-label="${esc(a.label)}">${svg(a.icon, 14)}${esc(a.label)}</button>${a.items.length ? `<button type="button" class="btn btn-sm btn-icon ${a.primary ? 'btn-primary' : ''}" aria-label="More actions" aria-haspopup="menu" aria-expanded="${ui.menu === 'act'}" data-menu="act" data-key="menu:act">${svg('chevron', 14)}</button>${menu('act', a.items)}` : ''}</div>` : '';
-  const action = `<div class="rc-side">${split}<span class="rc-pop is-right rc-more"><button type="button" class="btn btn-sm btn-icon" aria-label="More for this run" aria-haspopup="menu" aria-expanded="${ui.menu === 'more'}" data-menu="more" data-key="menu:more"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg></button>${ui.menu === 'pick-group' ? pickerHtml('group') : menu('more', moreItems(v))}</span></div>`;
+  const action = `<div class="rc-side">${split}<span class="rc-pop is-right rc-more"><button type="button" class="btn btn-sm btn-icon" aria-label="More for this run" aria-haspopup="menu" aria-expanded="${ui.menu === 'more'}" data-menu="more" data-key="menu:more"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg></button>${ui.menu === 'groups' ? groupEditorHtml() : menu('more', moreItems(v))}</span></div>`;
   // Many labels and tags, one group: a run already in a feature or chain, or a group page, joins none; a run you
   // grouped can leave it again from the same menu.
   // Where the code lives, said as a phrase that follows the run: "branch into dev", "#959 merges branch into dev",
@@ -303,7 +301,7 @@ function render() {
   const selTab = document.querySelector('.rc-tabs .tab[aria-selected="true"]'); const strip = selTab?.parentElement;
   if (strip) { const l = selTab.offsetLeft - strip.offsetLeft, r = l + selTab.offsetWidth; if (l < strip.scrollLeft) strip.scrollLeft = l; else if (r > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = r - strip.clientWidth; }
   if (keep) {
-    const el = keep === 'menu-first' ? document.querySelector('.menu .menu-item') : document.querySelector(`[data-key="${CSS.escape(keep)}"]`) || (keep.startsWith('tagt:') ? document.getElementById('tag-input') : null);   // a removed custom label has no row left
+    const el = keep === 'menu-first' ? document.querySelector('.menu .menu-item') : document.querySelector(`[data-key="${CSS.escape(keep)}"]`) || (keep.startsWith('lst:') ? document.getElementById('tag-input') : null);   // a removed custom label has no row left
     el?.focus({ preventScroll: true });
   }
 }
@@ -472,10 +470,9 @@ function goMember(group, i) {
   Object.assign(ui, { caseId: M.view(group, {}).runCases[i], parent: { caseId: group, index: i }, open: null, tab: '', focus: '', menu: '', titleOpen: false });
   pick.value = ui.caseId; pendingFocus = 'crumb:' + (M.view(ui.caseId, ui).crumbs.length - 1);
 }
-function addChip(text, kindArg) {
-  const kind = kindArg || ui.menu.slice(5); const t = String(text).trim();
+function addChip(text, kind) {
+  const t = String(text).trim();
   if (t && !ui.chips.some((c) => c.kind === kind && c.text === t)) ui.chips = ui.chips.concat({ kind, text: t });
-  if (kind === 'group') { ui.menu = ''; pendingFocus = 'menu:more'; toast('Moved to ' + t); }
 }
 // Typing a word adds a label; typing key: value adds a cost tag. The editor stays open for the next one.
 function addTag(text) { const t = String(text).trim(); if (!t) return; addChip(t, /^[^:]+:\s*\S/.test(t) ? 'tag' : 'label'); pendingFocus = 'tag-input'; }
@@ -534,11 +531,15 @@ document.addEventListener('click', (e) => {
     else if (MORE_SAY[d.menuPick]) { toast(MORE_SAY[d.menuPick]); pendingFocus = 'menu:more'; ui.menu = ''; }
     else if (ui.menu === 'act') act(d.menuPick);
     else if (d.menuPick === 'ungroup') { const g = (ui.chips.find((c) => c.kind === 'group') || {}).text; ui.chips = ui.chips.filter((c) => c.kind !== 'group'); ui.menu = ''; pendingFocus = 'menu:more'; toast('Left ' + g); }
-    else if (d.menuPick === 'more:group') { ui.menu = 'pick-group'; pendingFocus = 'pick-input'; }
+    else if (d.menuPick === 'more:group') { ui.menu = 'groups'; pendingFocus = 'group-input'; }
     else { pendingFocus = 'menu:' + ui.menu; ui.menu = ''; }
-  } else if (d.suggest !== undefined) { addChip(d.suggest); }
+  }
   else if (d.untag) { const [k, tx] = d.untag.split('|'); ui.chips = ui.chips.filter((c) => !(c.kind === k && c.text === tx)); pendingFocus = 'menu:tags'; toast('Removed ' + tx); }
-  else if (d.tagtoggle) { const [k, tx] = d.tagtoggle.split('|'); ui.chips = ui.chips.some((c) => c.kind === k && c.text === tx) ? ui.chips.filter((c) => !(c.kind === k && c.text === tx)) : ui.chips.concat({ kind: k, text: tx }); pendingFocus = t.dataset.key; }
+  else if (d.listtoggle) {
+    const [k, tx] = d.listtoggle.split('|'); const has = ui.chips.some((c) => c.kind === k && c.text === tx);
+    if (k === 'group') { ui.chips = ui.chips.filter((c) => c.kind !== 'group').concat(has ? [] : [{ kind: 'group', text: tx }]); ui.menu = ''; pendingFocus = 'menu:more'; toast(has ? 'Left ' + tx : 'Moved to ' + tx); }
+    else { ui.chips = has ? ui.chips.filter((c) => !(c.kind === k && c.text === tx)) : ui.chips.concat({ kind: k, text: tx }); pendingFocus = t.dataset.key; }
+  }
   else if (d.openRun !== undefined) { ui.back = { caseId: ui.caseId, open: ui.open, tab: ui.tab }; goMember(ui.caseId, +d.openRun); }
   else if (d.sib !== undefined && d.sib !== '') { const v = M.view(ui.caseId, ui); goMember(v.parent.caseId, +d.sib); pendingFocus = t.dataset.key; }
   else if (d.crumb !== undefined) {
@@ -567,14 +568,14 @@ document.addEventListener('click', (e) => {
 // menus take ↑ ↓ Home End, and Escape or Tab close them with focus back on their trigger.
 document.addEventListener('keydown', (e) => {
   const t = e.target;
-  if (t.dataset && t.dataset.key === 'pick-input' && e.key === 'Enter') { e.preventDefault(); addChip(t.value); render(); return; }
+  if (t.id === 'group-input' && e.key === 'Enter') { e.preventDefault(); const g = t.value.trim(); if (g) { ui.chips = ui.chips.filter((c) => c.kind !== 'group').concat({ kind: 'group', text: g }); ui.menu = ''; pendingFocus = 'menu:more'; toast((KNOWN.group.some(([x]) => x === g) ? 'Moved to ' : 'Created and moved to ') + g); } render(); return; }
   if (t.id === 'tag-input' && e.key === 'Enter') { e.preventDefault(); addTag(t.value); render(); return; }
   if ((e.key === 'l' || e.key === 'L') && !e.metaKey && !e.ctrlKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '') && document.querySelector('.rc-tags')) { e.preventDefault(); ui.menu = 'tags'; pendingFocus = 'tag-input'; render(); return; }
   if ((ui.confirm || ui.dialog) && e.key === 'Escape' && !ui.menu) { if (ui.pr) { ui.pr.gen = false; ui.pr.genTitle = false; } ui.confirm = null; ui.dialog = ''; pendingFocus = 'act-main'; render(); return; }
   if (e.key === '`' && e.ctrlKey) { e.preventDefault(); toast('Terminal opened in the worktree'); render(); return; }
   if (e.key === 'Enter' && e.target.id === 'after-task') { e.preventDefault(); document.querySelector('[data-confirm="yes"]')?.click(); return; }
   if (ui.menu && (e.key === 'Escape' || (e.key === 'Tab' && t.closest && t.closest('.menu')))) {
-    pendingFocus = ui.menu === 'pick-group' ? 'menu:more' : 'menu:' + ui.menu; ui.menu = ''; render(); if (e.key === 'Escape') e.preventDefault(); return;
+    pendingFocus = ui.menu === 'groups' ? 'menu:more' : 'menu:' + ui.menu; ui.menu = ''; render(); if (e.key === 'Escape') e.preventDefault(); return;
   }
   const keys = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1, Home: 'first', End: 'last' };
   if (!(e.key in keys) || !t.closest) return;

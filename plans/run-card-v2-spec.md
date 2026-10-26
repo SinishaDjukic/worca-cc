@@ -43,7 +43,7 @@ Every screen reads down one rail, and everything has one place on it.
 | A form | The app's dialog. Create PR: (for a group, the PRs and stacked or one), Title, Description, the phrase `branch into dev ▾`, then Draft and Watch with the issue it closes. Title and description are suggested as on the New run form: a sparkle inside the field, a Suggested chip, the shimmer while it writes; an eye shows the description rendered |
 | Checking out the code | Check out, in the Changes head (a group: Check out the whole feature, in its action's ▾); nowhere else |
 | Labels and cost tags | The tag group is one button: it (or `L`) opens one editor with a field (a word adds a label, `key: value` a cost tag) and two checked lists, Labels and Cost tags; removing also works there, and on touch screens only there |
-| Group membership | ⋯: Move to group…, or Leave it |
+| Group membership | ⋯: Move to group…, which opens the same list editor as labels and cost tags (find or create; one group, so a single choice), or Leave it |
 
 ## Type roles
 
@@ -57,6 +57,9 @@ Every screen reads down one rail, and everything has one place on it.
 | Caption | 11 | Chips, hints; faint grey only for marks and separators |
 
 ## Rules
+
+- One component per kind of interaction, reused everywhere: the list editor (labels, cost tags, groups), the compact menu,
+  the strip, the dialog, the suggestion pattern (sparkle, Suggested chip, shimmer).
 
 - The violet shimmer means Worca is writing text for you, in a field you will review (run title and branch, PR title
   and description, a drafted answer, a change request). It never means loading or a run state.
