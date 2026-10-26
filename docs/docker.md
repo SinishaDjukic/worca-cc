@@ -208,7 +208,9 @@ worca container up --no-project              # back to the whole folder
   prints nothing, and writing or deleting it fails. The list is `.env*`, `*.pem`, `*.key`, `.npmrc`, `.netrc`,
   `id_*`, plus the project's `secretPaths` setting. `up` prints what it masked.
 - **Committed** files that look like secrets are not masked (git would see them as changed, and a commit could
-  empty them); they are in the git history the box has anyway. `up` names them: remove them from the repository.
+  empty them); they are in the git history the box has anyway. `up` names them, and also any that a commit deleted but
+  older commits still hold, which the box can read through `.git`. Deleting a file in a new commit does not take it
+  out: rewrite the history (for example with `git filter-repo`) and rotate the secret.
 - Installed packages are never masked: `node_modules`, and any `site-packages`, `dist-packages`, `vendor` or
   `.pixi` folder. Their CA bundles and test keys are public, and an empty CA bundle would break TLS in the box.
   For another tool's CA bundle, leave it unmasked with `secretPathsUnmask` (e.g. `["cacert.pem"]`).

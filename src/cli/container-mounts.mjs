@@ -11,7 +11,7 @@ import { homedir } from 'node:os';
 import { basename, isAbsolute, join, parse, posix, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 
-import { maskPlan, secretPathsFor, isSecretPath, isSecretPathList } from '../core/secret-paths.mjs';
+import { maskPlan, secretPathsFor, isSecretPath, isSecretPathList, HISTORY_ADDED_ARGS, HISTORY_REMEDY } from '../core/secret-paths.mjs';
 import { resolveSetting } from '../core/settings-cascade.mjs';
 import { guardedGitEnv } from '../core/git-guard.mjs';
 import { gitState } from '../core/git-available.mjs';
@@ -66,17 +66,21 @@ export function maskSettingsFor(projectDir) {
 }
 
 /** The files git tracks under `projectDir` (submodules included), relative to it; `tracked: null` + why when that
- *  cannot be known. A folder that is not a git work tree has nothing committed. */
+ *  cannot be known. A folder that is not a git work tree has nothing committed. `everAdded`: every path any commit of
+ *  the repository added (all refs), which the box can read through `.git` (audit 2.9); empty when unknown. */
 async function trackedFiles(projectDir) {
-  if (!(await gitState()).available) return { tracked: null, why: 'git is not installed here' };
+  if (!(await gitState()).available) return { tracked: null, everAdded: [], why: 'git is not installed here' };
   let env;
-  try { env = await guardedGitEnv(projectDir); } catch { return { tracked: null, why: 'its git config was refused' }; }
-  const git = (args) => execFileP('git', args, { cwd: projectDir, env, windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
-  try { await git(['rev-parse', '--is-inside-work-tree']); } catch { return { tracked: new Set(), why: null }; }
+  try { env = await guardedGitEnv(projectDir); } catch { return { tracked: null, everAdded: [], why: 'its git config was refused' }; }
+  const git = (args) => execFileP('git', args, { cwd: projectDir, env, windowsHide: true, maxBuffer: 256 * 1024 * 1024 });
+  try { await git(['rev-parse', '--is-inside-work-tree']); } catch { return { tracked: new Set(), everAdded: [], why: null }; }
+  const list = (stdout) => stdout.split('\0').map((f) => f.replace(/^\n+/, '')).filter(Boolean);
+  let everAdded = [];
+  try { everAdded = list((await git([...HISTORY_ADDED_ARGS, '--all'])).stdout); } catch { /* no commit yet */ }
   try {
     const { stdout } = await git(['ls-files', '-z', '--recurse-submodules']);
-    return { tracked: new Set(stdout.split('\0').filter(Boolean)), why: null };
-  } catch { return { tracked: null, why: 'git ls-files failed' }; }
+    return { tracked: new Set(list(stdout)), everAdded, why: null };
+  } catch { return { tracked: null, everAdded, why: 'git ls-files failed' }; }
 }
 
 /**
@@ -85,11 +89,12 @@ async function trackedFiles(projectDir) {
  * returned in `committed` to warn about: a mask would show them as modified, and an agent's `git add -A` could commit
  * them empty. Docker resolves a mount target through links, so a link is masked at its target when that is a file
  * inside the project; a link that leads out of the project or nowhere is returned in `skippedLinks`. When git cannot
- * say what is committed, every match is masked and `trackedUnknown` says why.
- * @returns {Promise<{ masks: string[], committed: string[], skippedLinks: string[], trackedUnknown: string|null }>}
+ * say what is committed, every match is masked and `trackedUnknown` says why. `history`: secret paths only older commits
+ * hold (deleted since), readable in the box through `.git`, to warn about.
+ * @returns {Promise<{ masks: string[], committed: string[], history: string[], skippedLinks: string[], trackedUnknown: string|null }>}
  */
 export async function planProjectMasks(projectDir, { patterns, unmask = [] } = {}) {
-  const [found, { tracked, why }] = await Promise.all([maskPlan(projectDir, patterns), trackedFiles(projectDir)]);
+  const [found, { tracked, everAdded, why }] = await Promise.all([maskPlan(projectDir, patterns), trackedFiles(projectDir)]);
   const masks = new Set();
   const committed = new Set();
   const skippedLinks = [];
@@ -108,7 +113,10 @@ export async function planProjectMasks(projectDir, { patterns, unmask = [] } = {
     } else if (!st.isFile()) continue;                                      // a socket or a fifo: nothing to read
     if (tracked?.has(target)) committed.add(target); else masks.add(target);
   }
-  return { masks: [...masks].sort(), committed: [...committed].sort(), skippedLinks: skippedLinks.sort(), trackedUnknown: tracked ? null : why };
+  // In the history but not in the work tree: nothing to mask, but `.git` in the box holds it.
+  const history = [...new Set(everAdded.filter((f) => !tracked?.has(f) && !notTheProjects(f) && isSecretPath(f, patterns)
+    && !(unmask.length && isSecretPath(f, unmask))))].sort();
+  return { masks: [...masks].sort(), committed: [...committed].sort(), history, skippedLinks: skippedLinks.sort(), trackedUnknown: tracked ? null : why };
 }
 
 // compose interpolates `$` in every string, so a literal one is written `$$`.
@@ -157,13 +165,18 @@ export function removeProjectMount(dir) {
 const names = (list, max = 10) => (list.length > max ? `${list.slice(0, max).join(', ')} and ${list.length - max} more` : list.join(', '));
 const plural = (n, one, many) => (n === 1 ? one : many);
 /** The lines `up` prints for a project-scoped box: what is mounted and masked, and each secret it cannot mask. */
-export function maskLines({ projectDir, masks, committed, skippedLinks, trackedUnknown }) {
+export function maskLines({ projectDir, masks, committed, history = [], skippedLinks, trackedUnknown }) {
   const lines = [{ level: 'info', text: `project  ${projectDir}   only this folder is mounted; ${masks.length} secret ${plural(masks.length, 'file', 'files')} masked${masks.length ? `: ${names(masks)}` : ''}` }];
   if (trackedUnknown) lines.push({ level: 'warn', text: `container mount: ${trackedUnknown}, so committed files could not be told apart; every matching file is masked` });
   if (committed.length) {
     const one = committed.length === 1;
     lines.push({ level: 'warn', text: `container mount: ${committed.length} committed ${one ? 'file looks' : 'files look'} like ${one ? 'a secret' : 'secrets'} and ${one ? 'is' : 'are'} `
-      + `readable in the box with the git history: ${names(committed)}. Remove ${one ? 'it' : 'them'} from the repository to keep ${one ? 'it' : 'them'} out.` });
+      + `readable in the box with the git history: ${names(committed)}. ${HISTORY_REMEDY}` });
+  }
+  if (history.length) {
+    const one = history.length === 1;
+    lines.push({ level: 'warn', text: `container mount: ${history.length} ${one ? 'file that looks like a secret was' : 'files that look like secrets were'} deleted `
+      + `but ${one ? 'is' : 'are'} still in older commits, readable in the box through .git: ${names(history)}. ${HISTORY_REMEDY}` });
   }
   if (skippedLinks.length) {
     const one = skippedLinks.length === 1;

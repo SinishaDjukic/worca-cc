@@ -273,8 +273,10 @@ project's own `secretPaths`. The same list is the floor of the Normal guardrails
 
 - An untracked or changed file that matches is not uploaded. The run log names each one once:
   `sandbox upload: 1 secret file kept on this machine: .env`.
-- A committed file that matches is already in the git history the sandbox gets, so it cannot be held back. The run
-  log warns about it and names it; remove it from the repository to keep it out.
+- A committed file that matches is already in the git history the sandbox gets, so it cannot be held back. That
+  includes one a later commit deleted: the bundle carries the branch's older commits too. The run log names each one.
+  Deleting a file in a new commit does not take it out: rewrite the history (for example with `git filter-repo`) and
+  rotate the secret.
 
 To add patterns for a project, set `secretPaths` in its project settings. There is no field on the project page yet;
 use the API, for example:

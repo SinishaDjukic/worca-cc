@@ -10,6 +10,13 @@ import { join } from 'node:path';
 /** File patterns every surface treats as secret. Slash-less patterns match the basename at any depth. */
 export const DEFAULT_SECRET_PATHS = Object.freeze(['.env*', '*.pem', '*.key', '.npmrc', '.netrc', 'id_*']);
 
+/** `git log` arguments (then a ref, or --all) listing every path ever added in that history, one per NUL: a secret
+ *  committed once and deleted later is still in every older commit a clone or bundle carries (audit 2.9). No renames,
+ *  so a renamed file shows under its new name too. */
+export const HISTORY_ADDED_ARGS = Object.freeze(['log', '--format=', '--name-only', '-z', '--no-renames', '--diff-filter=A']);
+/** What a run log says to do about a secret in git history: deleting it in a new commit keeps it in the older ones. */
+export const HISTORY_REMEDY = 'Deleting a file in a new commit keeps it in the older ones: rewrite the history (for example with git filter-repo) and rotate the secret.';
+
 const MAX_ENTRIES = 200;
 const MAX_LEN = 256;
 /** A pattern isSecretPath can never match: absolute (`~/`, `/`), `./` (paths come without it), a folder (`dir/`: use

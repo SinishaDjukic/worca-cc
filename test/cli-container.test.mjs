@@ -18,7 +18,7 @@ import {
   cmdContainer, detectRuntime, commonParent, seedEnv, composeFileArgs, initDir, OVERLAYS, COMPOSE_SRC_DIR,
 } from '../src/cli/container.mjs';
 import {
-  resolveProjectDir, planProjectMasks, renderMaskOverlay, maskSettingsFor, boxName, MOUNT_FILE, EMPTY_FILE, MAX_MASKS,
+  resolveProjectDir, planProjectMasks, renderMaskOverlay, maskSettingsFor, boxName, maskLines, MOUNT_FILE, EMPTY_FILE, MAX_MASKS,
 } from '../src/cli/container-mounts.mjs';
 import { secretPathsFor } from '../src/core/secret-paths.mjs';
 import { settingEntry, writeProjectSettings } from '../src/core/settings-cascade.mjs';
@@ -252,6 +252,24 @@ test('planProjectMasks: untracked and ignored secrets, project additions and in-
     assert.equal(plan.trackedUnknown, null);
     const plain = await planProjectMasks(repo, { patterns: secretPathsFor({}) });
     assert.ok(plain.masks.includes('.env.example') && !plain.masks.includes('prod.tfvars'), 'the defaults alone');
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+});
+
+test('planProjectMasks names a secret a commit deleted but older commits hold, on any branch (audit 2.9)', { skip: POSIX_ONLY }, async () => {
+  const repo = secretProject();
+  try {
+    const git = (...args) => { const r = spawnSync('git', args, { cwd: repo, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
+    git('checkout', '-qb', 'side'); writeFileSync(join(repo, 'deploy.pem'), 'PEM\n'); git('add', 'deploy.pem'); git('commit', '-qm', 'key');
+    git('rm', '-q', 'deploy.pem'); git('commit', '-qm', 'remove the key'); git('checkout', '-q', 'main');
+    git('add', '-f', '.env.local'); git('commit', '-qm', 'oops'); git('rm', '-q', '--cached', '.env.local'); git('commit', '-qm', 'untrack');
+    const plan = await planProjectMasks(repo, { patterns: secretPathsFor({}) });
+    assert.deepEqual(plan.history, ['.env.local', 'deploy.pem'], 'the work tree copy of .env.local is masked, its committed one is not');
+    assert.ok(plan.masks.includes('.env.local'));
+    assert.ok(!plan.history.includes('config/.env'), 'a committed file is named as committed, not twice');
+    const lines = maskLines({ projectDir: repo, ...plan }).map((l) => l.text);
+    const hist = lines.find((l) => l.includes('deploy.pem'));
+    assert.match(hist || '', /2 files that look like secrets were deleted but are still in older commits, readable in the box through \.git: \.env\.local, deploy\.pem\. Deleting a file in a new commit keeps it in the older ones: rewrite the history/);
+    assert.ok(lines.some((l) => /config\/\.env\. Deleting a file in a new commit keeps it/.test(l)), 'the committed-file remedy names history too');
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
 
