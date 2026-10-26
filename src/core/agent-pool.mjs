@@ -86,7 +86,8 @@ export function agentIdentityFor(person, env = process.env, { file = null } = {}
 }
 
 /** Give one run's own folder (its store pipelines/<run> dir, runs/<id>) to the agent user of the
- *  work it belongs to: `currentOwner()` inside a run (agent-user.mjs claimForAgent). */
+ *  work it belongs to: `currentOwner()` inside a run (agent-user.mjs claimForAgent). Throws when `dir` is a link or a
+ *  folder another user made first (1.1): the run must not go on in it. */
 export function claimRunDir(dir, { owner = currentOwner(), env = process.env, file = null } = {}) {
   claimForAgent(dir, agentIdentityFor(owner, env, { file }));
 }

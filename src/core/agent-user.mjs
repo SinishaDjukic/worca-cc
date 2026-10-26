@@ -13,7 +13,7 @@
 // lets the server switch to that one user and nothing else). Unset = agents run
 // as the server, as on every local install.
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, chownSync, lstatSync, readdirSync, statSync } from 'node:fs';
+import { chmodSync, chownSync, closeSync, constants, fchmodSync, fchownSync, fstatSync, lstatSync, openSync, readdirSync, statSync } from 'node:fs';
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 const USER_RE = /^[a-z_][a-z0-9_-]{0,31}$/;
@@ -135,28 +135,47 @@ export function assertOwnFolders(dir, base, { uid = process.getuid?.() ?? null, 
   }
 }
 
-/** Hand one run's own folder to its owner's agent (G19): the pool user's own group (`id.runGid`,
- *  which only worca and that user are in) with setgid 2770, so what either writes inside keeps the
- *  group and no other person's agent can open it; the parent becomes sticky, so an agent can
- *  neither rename nor delete a run folder it does not own. A no-op without a run group (no pool,
- *  the shared agent user, a local install). Best effort, like shareWithAgent. */
-/** Give one FILE to an agent user's own group (`id.runGid`, agent-pool.mjs: worca and that user only), mode 0640:
- *  the relayed Ask turn's MCP config, which holds its relay token (V10). Without a pool group the file keeps the
- *  shared group. Never throws. */
-export function claimFileForAgent(file, id, fsOps = { chownSync, chmodSync }) {
-  if (!id || !Number.isInteger(id.runGid)) return;
+/** Open `p` itself, never what a link standing there points at (O_NOFOLLOW), and refuse it unless this process owns
+ *  it. Returns the fd; the caller closes it. A pre-planted name in a folder every agent may write into (`runs/`, the
+ *  store, `tmp/ask`, `ask/`) is then never claimed: a link to worca's home would hand that home to an agent, and
+ *  a folder or file an agent made first stays that agent's, with another person's run or token inside (1.1, 1.3). */
+function openOwn(p, flags, uid) {
+  const fd = openSync(p, flags | constants.O_NOFOLLOW);
   try {
-    fsOps.chownSync(file, -1, id.runGid);
-    fsOps.chmodSync(file, 0o640);
-  } catch { /* the file keeps the shared group: as before */ }
+    const st = fstatSync(fd);
+    if (uid != null && st.uid !== uid) throw new Error(`${p} belongs to uid ${st.uid}, not worca: another user made it first`);
+    return fd;
+  } catch (err) { closeSync(fd); throw err; }
 }
 
-export function claimForAgent(dir, id, fsOps = { chownSync, chmodSync, statSync }) {
+/** Give one FILE worca just made to an agent user's own group (`id.runGid`, agent-pool.mjs: worca and that user only),
+ *  mode 0640: the relayed Ask turn's MCP config, which holds its relay token (V10). Without a pool group the file keeps
+ *  the shared group. Throws when `file` is a link or another user's (1.3): the token must not land there. */
+export function claimFileForAgent(file, id, { uid = process.getuid?.() ?? null } = {}) {
   if (!id || !Number.isInteger(id.runGid)) return;
+  const fd = openOwn(file, constants.O_RDONLY, uid);
   try {
-    fsOps.chownSync(dir, -1, id.runGid);
-    fsOps.chmodSync(dir, 0o2770);
-    const parent = dirname(dir);
-    fsOps.chmodSync(parent, (fsOps.statSync(parent).mode & 0o7777) | 0o1000);
-  } catch { /* the folder keeps the shared group: as before */ }
+    if (!fstatSync(fd).isFile()) throw new Error(`${file} is not a regular file`);
+    fchownSync(fd, -1, id.runGid);
+    fchmodSync(fd, 0o640);
+  } finally { closeSync(fd); }
+}
+
+/** Hand one run's own folder to its owner's agent (G19): the pool user's own group (`id.runGid`, which only worca and
+ *  that user are in) with setgid 2770, so what either writes inside keeps the group and no other person's agent can
+ *  open it; the parent becomes sticky, so an agent can neither rename nor delete a run folder it does not own.
+ *  Under agent isolation (`id` set) the folder must be a real folder worca owns, never a link or a folder an agent made
+ *  first under the name (1.1): the change goes through an fd opened with O_DIRECTORY|O_NOFOLLOW, and a refusal THROWS,
+ *  so the run stops rather than living in someone else's folder. Without a run group (no pool, the shared agent user)
+ *  only that check runs; without isolation (a local install) nothing does. */
+export function claimForAgent(dir, id, { uid = process.getuid?.() ?? null } = {}) {
+  if (!id) return;
+  const fd = openOwn(dir, constants.O_RDONLY | constants.O_DIRECTORY, uid);
+  try {
+    if (!Number.isInteger(id.runGid)) return;
+    fchownSync(fd, -1, id.runGid);
+    fchmodSync(fd, 0o2770);
+  } finally { closeSync(fd); }
+  const pfd = openOwn(dirname(resolve(dir)), constants.O_RDONLY | constants.O_DIRECTORY, uid);
+  try { fchmodSync(pfd, (fstatSync(pfd).mode & 0o7777) | 0o1000); } finally { closeSync(pfd); }
 }

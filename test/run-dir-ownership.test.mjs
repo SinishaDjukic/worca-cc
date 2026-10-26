@@ -4,7 +4,7 @@
 // outputs. Their parents are sticky: an agent cannot rename or delete a run folder it does not own.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { agentPool, agentIdentityFor, claimRunDir } from '../src/core/agent-pool.mjs';
@@ -34,37 +34,61 @@ test('pool: each pool user carries its own run group; the shared user and a pool
   assert.equal(agentPool({ ...ENV, WORCA_AGENT_RUN_GIDS: 'worca-agent-01:x,bad name:7' }).runGids?.['worca-agent-01'], undefined);
 });
 
-test('claimForAgent: run group, setgid 2770 on the run dir, sticky parent; a no-op without a run group', () => {
-  const calls = [];
-  const fsOps = {
-    chownSync: (p, u, g) => calls.push(['chown', p, u, g]),
-    chmodSync: (p, m) => calls.push(['chmod', p, m.toString(8)]),
-    statSync: () => ({ mode: 0o42770 }),
-  };
-  claimForAgent('/h/runs/r1', { user: 'worca-agent-01', gid: 1001, runGid: 1101 }, fsOps);
-  assert.deepEqual(calls, [
-    ['chown', '/h/runs/r1', -1, 1101],
-    ['chmod', '/h/runs/r1', '2770'],
-    ['chmod', '/h/runs', '3770'],
-  ]);
-  calls.length = 0;
-  claimForAgent('/h/runs/r1', { user: 'worca-agent', gid: 1001 }, fsOps);
-  claimForAgent('/h/runs/r1', null, fsOps);
-  assert.deepEqual(calls, []);
-  // Best effort: a failing chown never throws into the run.
-  assert.doesNotThrow(() => claimForAgent('/x', { runGid: 1 }, { ...fsOps, chownSync: () => { throw new Error('EPERM'); } }));
+test('claimForAgent: run group, setgid 2770 on the run dir, sticky parent; a no-op without a run group (real fs, own gid)', POSIX, () => {
+  const own = process.getgid();
+  const parent = mkdtempSync(join(dir, 'runs-'));
+  chmodSync(parent, 0o770);
+  const run = join(parent, 'r1');
+  mkdirSync(run, { mode: 0o755 });
+  claimForAgent(run, { user: 'worca-agent', gid: own }, {});
+  claimForAgent(run, null);
+  assert.equal(statSync(run).mode & 0o7777, 0o755, 'no run group: untouched');
+  claimForAgent(run, { user: 'worca-agent-01', gid: own, runGid: own });
+  assert.equal(statSync(run).mode & 0o7777, 0o2770);
+  assert.equal(statSync(run).gid, own);
+  assert.equal(statSync(parent).mode & 0o7777, 0o1770, 'the parent is sticky');
 });
 
-test('V10: claimFileForAgent gives a relayed turn\'s MCP config to the agent user\'s own group, 0640; a no-op without one', () => {
-  const calls = [];
-  const fsOps = { chownSync: (p, u, g) => calls.push(['chown', p, u, g]), chmodSync: (p, m) => calls.push(['chmod', p, m.toString(8)]) };
-  claimFileForAgent('/h/tmp/ask/mcp-m1.json', { user: 'worca-agent-01', gid: 1001, runGid: 1101 }, fsOps);
-  assert.deepEqual(calls, [['chown', '/h/tmp/ask/mcp-m1.json', -1, 1101], ['chmod', '/h/tmp/ask/mcp-m1.json', '640']]);
-  calls.length = 0;
-  claimFileForAgent('/x', { user: 'worca-agent', gid: 1001 }, fsOps);
-  claimFileForAgent('/x', null, fsOps);
-  assert.deepEqual(calls, []);
-  assert.doesNotThrow(() => claimFileForAgent('/x', { runGid: 1 }, { ...fsOps, chownSync: () => { throw new Error('EPERM'); } }));
+// 1.1: runs/ and the store are sticky and group-writable for every pool user, and a run's id shows in the store before
+// runs/<id> exists, so an agent can make the name first. A link there would hand worca's home to the run's agent, a
+// folder the agent made would keep another person's run in it. Both are refused, and the refusal throws.
+test('1.1: claimForAgent refuses a link or a folder worca does not own, and changes nothing behind it', POSIX, () => {
+  const own = process.getgid();
+  const id = { user: 'worca-agent-01', gid: own, runGid: own };
+  const home = mkdtempSync(join(dir, 'worca-home-'));
+  chmodSync(home, 0o700);
+  const runs = mkdtempSync(join(dir, 'runs-'));
+  const planted = join(runs, 'r1');
+  symlinkSync(home, planted);
+  assert.throws(() => claimForAgent(planted, id), /ELOOP|ENOTDIR|link/);
+  assert.equal(statSync(home).mode & 0o7777, 0o700, 'worca\'s home keeps its mode');
+  assert.throws(() => claimForAgent(planted, { user: 'worca-agent', gid: own }), /ELOOP|ENOTDIR|link/, 'the shared agent user too');
+  const theirs = join(runs, 'r2');
+  mkdirSync(theirs, { mode: 0o755 });
+  assert.throws(() => claimForAgent(theirs, id, { uid: process.getuid() + 1 }), /not worca/);
+  assert.equal(statSync(theirs).mode & 0o7777, 0o755);
+  // claimRunDir passes the refusal on: the run stops.
+  withBillTo('ada@acme.dev', () => assert.throws(() => claimRunDir(planted, { env: { ...ENV, WORCA_AGENT_RUN_GIDS: `worca-agent-01:${own}` }, file: join(dir, 'pool3.json') })));
+});
+
+test('V10: claimFileForAgent gives a relayed turn\'s MCP config to the agent user\'s own group, 0640; refuses a link or another user\'s file', POSIX, () => {
+  const own = process.getgid();
+  const id = { user: 'worca-agent-01', gid: own, runGid: own };
+  const scratch = mkdtempSync(join(dir, 'tmp-ask-'));
+  const file = join(scratch, 'mcp-m1.json');
+  writeFileSync(file, '{}', { mode: 0o600 });
+  claimFileForAgent(file, { user: 'worca-agent', gid: own });
+  claimFileForAgent(file, null);
+  assert.equal(statSync(file).mode & 0o777, 0o600, 'no run group: untouched');
+  claimFileForAgent(file, id);
+  assert.equal(statSync(file).mode & 0o777, 0o640);
+  const aimed = join(scratch, 'aimed');
+  writeFileSync(aimed, 'x', { mode: 0o600 });
+  const link = join(scratch, 'mcp-m2.json');
+  symlinkSync(aimed, link);
+  assert.throws(() => claimFileForAgent(link, id), /ELOOP|link/);
+  assert.equal(statSync(aimed).mode & 0o777, 0o600);
+  assert.throws(() => claimFileForAgent(file, id, { uid: process.getuid() + 1 }), /not worca/);
 });
 
 test('claimRunDir: the owner of the current run decides the group (real fs, own gid)', POSIX, () => {
@@ -106,6 +130,20 @@ test('G19 call sites: createPipeline and the no-project run root are claimed for
   orch._persist = async () => {};
   await withPool(() => orch._setupNoProjectRoot());
   assert.equal(statSync(orch.runRoot).mode & 0o7777, 0o2770, 'runs/<id> of a no-project run');
+});
+
+test('1.1 call site: a no-project run whose runs/<id> an agent planted as a link stops, and the link target is untouched', POSIX, async () => {
+  const { createOrchestrator } = await import('../src/core/orchestrator.mjs');
+  const { worcaHome } = await import('../src/core/projects.mjs');
+  const target = mkdtempSync(join(dir, 'aimed-'));
+  chmodSync(target, 0o700);
+  mkdirSync(join(worcaHome(), 'runs'), { recursive: true });
+  symlinkSync(target, join(worcaHome(), 'runs', 'planted1'));
+  const orch = createOrchestrator({ projectDir: mkdtempSync(join(dir, 'proj-')) });
+  orch.pipeline = { id: 'planted1', dir: mkdtempSync(join(dir, 'pipe-')) };
+  orch._persist = async () => {};
+  await assert.rejects(withPool(() => orch._setupNoProjectRoot()));
+  assert.equal(statSync(target).mode & 0o7777, 0o700);
 });
 
 test('G19 call sites: a detached git run root and a folder run root are claimed for the run owner', POSIX, async () => {
