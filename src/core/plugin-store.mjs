@@ -6,7 +6,7 @@
 // no .git. Any failure before the swap+lock lands removes versions/<sha7> and
 // leaves prior state untouched (§6.1 step 4).
 
-import { execFileAsync } from './spawn.mjs';
+import { execFileAsync, childEnv } from './spawn.mjs';
 import { createHash } from 'node:crypto';
 import {
   existsSync, readdirSync, readFileSync, readlinkSync,
@@ -280,9 +280,21 @@ export function ignoredContributions(name, dir, opts = {}) {
   return out.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
 }
 
-// Without git, setup runs with worca's git stub first on PATH on macOS (SEAMS S6): a lockfile with a git dependency
-// makes npm run `git`, and the /usr/bin/git shim opens the install-developer-tools dialog. With git: unchanged.
-const setupEnv = () => (gitAvailable() ? {} : { env: withNoGitPath(process.env) });
+// Setup runs the plugin's own tooling: npm reads the plugin's .npmrc and expands `${VAR}` in it (a registry token line
+// sends that var to any host the lockfile names, --ignore-scripts or not), and `uv sync` builds the project with its own
+// build backend. So it gets the plugin child env (childEnv kind 'plugin', audit 3.5: PATH, HOME, the proxy and CA
+// names), plus the names npm and uv read for their temp, cache and package index; one whose value carries credentials
+// ('@', as in https://user:token@host/) stays out. Without git, worca's git stub goes first on PATH on macOS (SEAMS S6):
+// a lockfile with a git dependency makes npm run `git`, and the /usr/bin/git shim opens the install-developer-tools
+// dialog.
+const SETUP_NAMES = Object.freeze(['TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME',
+  'npm_config_cache', 'NPM_CONFIG_CACHE', 'npm_config_registry', 'NPM_CONFIG_REGISTRY',
+  'UV_CACHE_DIR', 'UV_PYTHON_INSTALL_DIR', 'UV_INDEX_URL', 'UV_DEFAULT_INDEX', 'UV_EXTRA_INDEX_URL', 'UV_INDEX']);
+function setupEnv(base = process.env) {
+  const keep = SETUP_NAMES.filter((k) => typeof base[k] === 'string' && !base[k].includes('@'));
+  const { env } = childEnv({ kind: 'plugin', base, keep });
+  return { env: gitAvailable() ? env : withNoGitPath(env) };
+}
 
 /** Declared setup FACTS only (spec §4.1): setup.node -> npm ci (lockfile
  *  required, scripts ignored); setup.python 'pyproject' -> uv sync. */
