@@ -625,12 +625,12 @@ export function uniqueStagedName(name, taken = []) {
   }
 }
 
-/** Whether the row a staged copy came from still stands as the start chose it (same id, same sha256): then a copy that
- *  failed or does not match is the stored body's fault, not a change made during the start. */
 /** Whether the stored body at `path` is still the version `sha256` names (a failed copy whose source is fine is the
  *  staging's fault, not the stored file's). */
 const sourceIntact = async (path, sha256) => { try { return (await sha256OfFile(path)) === sha256; } catch { return false; } };
 
+/** Whether the row a staged copy came from still stands as the start chose it (same id, same sha256): then a copy that
+ *  failed or does not match is the stored body's fault, not a change made during the start. */
 function rowAsChosen(f) {
   if (!f.id || !f.sha256) return false;
   try { const row = getAttachment(f.id); return !!row && row.sha256 === f.sha256; } catch { return false; }

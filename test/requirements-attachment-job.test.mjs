@@ -786,9 +786,6 @@ test('D14: staged names are Windows-safe and unique after the mapping; a success
   assert.equal(existsSync(join(base, 'orchestrator-extras-r-names')), false, 'the caller removes the folder once the run has its own copy');
 });
 
-test('D14: bodyUsable decides fileView.sendable and unsendableRunFile alike: a missing body or a version not stored cannot go; a failed read with its body can', async () => {
-  process.env.WORCA_MOCK = '1';
-  const f = createFeature({ scopeType: 'project', scopeKey: 'shop-sendable', title: 'Sendable', description: 'd' });
 test('D14: staged names follow downloadFilename: every reserved device name, at most 255 UTF-8 bytes with the extension, unique repeats within the cap', async () => {
   assert.deepEqual(['CON .txt', 'COM¹.md', 'lpt³', 'CONIN$', 'conout$.log', 'AUX.tar.gz', 'console.md'].map(job.stagedName),
     ['_CON .txt', '_COM¹.md', '_lpt³', '_CONIN$', '_conout$.log', '_AUX.tar.gz', 'console.md']);
@@ -834,6 +831,9 @@ test('D14: a copy that fails on the temp side while the stored body is intact an
   assert.deepEqual([out.status, out.body.error, ran], [500, 'Worca could not finish that. Try again.', false]);
 });
 
+test('D14: bodyUsable decides fileView.sendable and unsendableRunFile alike: a missing body or a version not stored cannot go; a failed read with its body can', async () => {
+  process.env.WORCA_MOCK = '1';
+  const f = createFeature({ scopeType: 'project', scopeKey: 'shop-sendable', title: 'Sendable', description: 'd' });
   const fo = { type: 'feature', id: f.seq };
   const [a, b, c, e] = job.addAttachments(fo, [textFile('a.md', 'a'), textFile('b.md', 'b'), textFile('c.md', 'c'), textFile('e.md', 'e')]);
   await job.readsSettled(fo);
