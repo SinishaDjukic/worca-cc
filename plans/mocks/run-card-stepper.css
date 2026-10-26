@@ -377,7 +377,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .ov-check input{margin:3px 0 0;justify-self:center;accent-color:var(--ink);}
 .ov-check:has(input:checked) span{color:var(--ink-2);text-decoration:line-through;text-decoration-color:var(--ink-3);}
 .ov-progress .rd-route-row{padding-bottom:6px;}
-.ov-progress .rd-route-name{font-size:var(--fs-body);font-weight:400;white-space:normal;}
+.ov-progress .rd-route-name{font-family:var(--sans);font-size:var(--fs-body);font-weight:400;white-space:normal;}
 .ov-progress .is-next .rd-route-name{color:var(--ink-2);}
 .ov-did{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:var(--fs-body);color:var(--ink);}
 .ov-task{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
@@ -465,3 +465,28 @@ html,body{height:auto;overflow:visible;margin:0;}
 .ov-focus.is-flash{animation:ov-flash 1.2s ease-out;}
 @keyframes ov-flash{from{box-shadow:0 0 0 6px var(--row-selected);background:var(--row-selected);}to{box-shadow:0 0 0 6px transparent;background:transparent;}}
 @media (prefers-reduced-motion: reduce){.ov-focus.is-flash{animation:none;outline:2px solid var(--line-2);outline-offset:6px;}}
+
+/* The bar: Pause, Run after, Stop, ⋯ (the app's order); under 520px Pause and Run after fold into ⋯. */
+@container (max-width: 520px){ .rc-bar .rc-after{display:none;} }
+.menu-item.is-checked > span:first-child::after{content:'✓';margin-left:8px;color:var(--ink-2);}
+.menu-kbd{margin-left:8px;font:400 var(--fs-caption)/1 var(--mono);color:var(--ink-2);}
+.menu-sep[data-narrow]{display:none;}
+@container (max-width: 520px){ .menu-sep[data-narrow]{display:block;} }
+/* The strip as a form: the label, the fields, then the buttons, wrapping on phones. */
+.rc-confirm.is-form{justify-content:flex-start;}
+.rc-confirm.is-form .rc-confirm-t{flex:1 0 100%;}
+.rc-confirm.is-form .input{flex:1 1 220px;min-width:0;}
+.rc-confirm.is-form .select{flex:0 0 auto;width:auto;}
+.rc-confirm.is-form .rc-confirm-acts{margin-left:auto;}
+.rc-check{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink);}
+.rc-check input{margin:0;accent-color:var(--ink);}
+/* The cost breakdown under its figure. */
+.rc-figs .rc-pop{display:inline-flex;align-items:baseline;}
+.rc-cost{min-width:240px;padding:8px 12px;}
+.rc-cost ul{list-style:none;margin:4px 0 8px;padding:0;}
+.rc-cost li{display:flex;justify-content:space-between;gap:16px;padding:4px 0;font-size:var(--fs-meta);color:var(--ink);border-top:1px solid var(--line);}
+.rc-cost li:first-child{border-top:0;}
+.rc-cost li.is-total{font-weight:600;}
+/* Changes: the code's actions above its files. */
+.ch-tools{display:flex;flex-wrap:wrap;gap:8px;}
+.ov-after-t{font-size:var(--fs-body);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}

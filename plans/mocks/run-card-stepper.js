@@ -18,12 +18,13 @@ const ICON = {
   pr: '<circle cx="6" cy="6" r="2.2"></circle><circle cx="6" cy="18" r="2.2"></circle><circle cx="18" cy="18" r="2.2"></circle>' + P('M6 8.2v7.6') + P('M18 15.8V9a3 3 0 0 0-3-3h-4') + P('M13 3.5 10.5 6 13 8.5'),
   up: P('M12 19V5M6 11l6-6 6 6'),
   play: P('M8 5.5v13l10.5-6.5z'),
+  after: P('M5 12h11M12 7l5 5-5 5M20 5v14'),
   folder: P('M3 7.5A1.5 1.5 0 0 1 4.5 6h4l2 2.2H19.5A1.5 1.5 0 0 1 21 9.7v8.3A1.5 1.5 0 0 1 19.5 19.5h-15A1.5 1.5 0 0 1 3 18z'),
 };
 const svg = (name, size) => (ICON[name] ? `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>` : '');
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-let ui = { caseId: 'working', open: null, chips: [], ship: '', menu: '', tab: '', focus: '', view: 'steps', parent: null, back: null, answer: null, file: null, actFilter: 'all', rounds: [], ticks: [], taskOpen: false };
+let ui = { caseId: 'working', open: null, chips: [], ship: '', menu: '', tab: '', focus: '', view: 'steps', parent: null, back: null, dialog: '', after: [], away: '', askEach: false, answer: null, file: null, actFilter: 'all', rounds: [], ticks: [], taskOpen: false };
 
 function statusDot(v) {
   if (v.sym) {
@@ -36,8 +37,13 @@ function statusDot(v) {
 function menu(id, items, lead) {
   if (ui.menu !== id) return '';
   const head = lead ? `<p class="menu-lead">${esc(lead)}</p><div class="menu-sep"></div>` : '';
-  const danger = /^(Discard|Stop|Stop the run)$/;
-  return `<div class="menu" role="menu">${head}${items.map((it) => `<button type="button" class="menu-item has-help${danger.test(it.text) ? ' is-danger' : ''}" role="menuitem" data-menu-pick="${esc(it.id || it.text)}"${it.narrow ? ' data-narrow' : ''}><span>${esc(it.text)}</span>${it.help ? `<span class="menu-help">${esc(it.help)}</span>` : ''}</button>`).join('')}</div>`;
+  const danger = /^(Discard|Stop|Stop the run|Archive|Cancel)$/;
+  return `<div class="menu" role="menu">${head}${items.map((it) => {
+    if (it.sep) return `<div class="menu-sep"${it.narrow ? ' data-narrow' : ''}></div>`;
+    if (it.header) return `<p class="menu-h">${esc(it.header)}</p>`;
+    const role = it.checked === undefined ? 'menuitem' : 'menuitemradio';
+    return `<button type="button" class="menu-item has-help${danger.test(it.text) ? ' is-danger' : ''}${it.checked ? ' is-checked' : ''}" role="${role}"${it.checked === undefined ? '' : ` aria-checked="${!!it.checked}"`} data-menu-pick="${esc(it.id || it.text)}"${it.narrow ? ' data-narrow' : ''}><span>${esc(it.text)}${it.hint ? `<kbd class="menu-kbd">${esc(it.hint)}</kbd>` : ''}</span>${it.help ? `<span class="menu-help">${esc(it.help)}</span>` : ''}</button>`;
+  }).join('')}</div>`;
 }
 function chip(c, i) {
   const x = `<button type="button" class="tag-x" aria-label="Remove ${esc(c.text)}" data-unchip="${i}">${svg('x', 10)}</button>`;
@@ -135,7 +141,8 @@ function summaryPanel(v) {
   const where = o.areas.length ? `<section class="rtab"><h2 class="rtab-h">Where it changed <button type="button" class="btn btn-sm btn-quiet ov-more" data-tab="changes" data-key="ov-changes">All ${v.tabData.files.length} files</button></h2>
     <ul class="ov-areas">${o.areas.map((x) => `<li><code>${esc(x.dir)}</code><span class="rtab-dim">${x.n} ${x.n === 1 ? 'file' : 'files'}</span><span class="ov-bar" aria-hidden="true"><i class="add" style="width:${Math.round(x.pct * x.add / (x.add + x.del))}%"></i><i class="del" style="width:${Math.round(x.pct * x.del / (x.add + x.del))}%"></i></span><span class="ct"><span class="add">+${x.add}</span><span class="del">−${x.del}</span></span></li>`).join('')}</ul></section>` : '';
   const arts = o.artifacts.length ? `<section class="rtab"><h2 class="rtab-h">Artifacts <span class="n">${o.artifacts.length}</span></h2><ul class="ov-arts">${o.artifacts.map(([f, step], i) => `<li><code title="${esc(f)}">${esc(f)}</code><span class="rtab-dim">${esc(step)}</span><button type="button" class="btn btn-sm btn-quiet" data-key="art:${i}" data-say="Opens ${esc(f)}" aria-label="Open ${esc(f)}">Open</button></li>`).join('')}</ul></section>` : '';
-  return focusHtml(v) + did + asked + where + arts;
+  const after = ui.after.length ? `<section class="rtab"><h2 class="rtab-h">Runs after this <span class="n">${ui.after.length}</span></h2><ul class="ov-arts">${ui.after.map((x, i) => `<li><span class="ov-after-t" title="${esc(x.task)}">${esc(x.task)}</span><span class="rtab-dim">${esc(x.when)}</span><button type="button" class="btn btn-sm btn-quiet" data-unafter="${i}" data-key="unafter:${i}">Cancel</button></li>`).join('')}</ul></section>` : '';
+  return focusHtml(v) + after + did + asked + where + arts;
 }
 function changesPanel(v) {
   const d = v.tabData; const f = d.files;
@@ -150,7 +157,8 @@ function changesPanel(v) {
     return `<li class="ch-file${open === r.i ? ' is-open' : ''}"><button type="button" class="ch-row" aria-expanded="${open === r.i}" data-file="${r.i}" data-key="file:${r.i}"><span class="ch-st is-${m.st}" title="${m.st === 'A' ? 'Added' : 'Modified'}">${m.st}</span><span class="ch-name" title="${esc(r.p)}">${esc(r.name)}</span>${m.notes ? `<span class="ch-notes" title="${m.notes} review comments">${m.notes}</span>` : '<span class="ch-notes"></span>'}<span class="ct"><span class="add">+${r.a}</span><span class="del">−${r.dl}</span></span><span class="ch-blocks" aria-hidden="true">${blocks(r.a, r.dl)}</span></button>${diff}</li>`;
   }).join('')).join('');
   const where = v.place.folder ? `In a copy of ${v.place.folder}; Apply writes them into the folder.` : v.place.branch ? `${v.place.branch} into ${v.place.base || 'dev'}` : '';
-  return `<section class="rtab"><div class="ch-head"><h2 class="rtab-h">${f.length} files <span class="ct"><span class="add">+${add}</span><span class="del">−${del}</span></span></h2><span class="rtab-dim" title="${esc(where)}">${esc(where)}</span></div>
+  const tools = v.place.folder ? '' : `<div class="ch-tools">${v.bar.stop ? '<button type="button" class="btn btn-sm btn-quiet" data-key="ch:refresh" data-say="Diff refreshed from the worktree">Refresh</button>' : ''}<button type="button" class="btn btn-sm" data-key="ch:checkout" data-say="Checked out the branch on this machine">Check out</button><button type="button" class="btn btn-sm btn-quiet" data-key="ch:patch" data-say="Downloading run.patch">Download patch</button><button type="button" class="btn btn-sm btn-quiet" data-key="ch:copy" data-say="Copied: git fetch && git switch ${esc(v.place.branch || '')}">Copy git commands</button></div>`;
+  return tools + `<section class="rtab"><div class="ch-head"><h2 class="rtab-h">${f.length} files <span class="ct"><span class="add">+${add}</span><span class="del">−${del}</span></span></h2><span class="rtab-dim" title="${esc(where)}">${esc(where)}</span></div>
     <ul class="ch-list">${rows}</ul></section>`;
 }
 function activityPanel(v) {
@@ -191,7 +199,11 @@ function panelHtml(v) {
   const id = (v.tabs.find((t) => t.sel) || v.tabs[0]).id;
   return ({ summary: summaryPanel, changes: changesPanel, activity: activityPanel, decisions: decisionsPanel, runs: runsPanel })[id](v);
 }
-function figHtml(f) {
+function figHtml(f, v) {
+  if (f.k === 'Cost' && v) {
+    const rows = v.activity.filter((st) => st.meta).map((st) => `<li><span>${esc(st.label)}</span><span class="ct">${esc(st.meta)}</span></li>`).join('');
+    return `<span class="rc-pop"><button type="button" class="rc-fig-link" data-menu="cost" data-key="menu:cost" aria-haspopup="dialog" aria-expanded="${ui.menu === 'cost'}" title="${esc(f.title || '')}">${esc(f.k)} <b>${esc(f.v)}</b></button>${f.of ? `<span class="rc-of${f.warn ? ' is-warn' : ''}">${esc(f.of)}</span>` : ''}${ui.menu === 'cost' ? `<div class="menu rc-cost" role="dialog" aria-label="Cost by stage"><p class="menu-h">Cost by stage</p><ul>${rows}<li class="is-total"><span>Total</span><span class="ct">${esc(f.v)}</span></li></ul><p class="menu-help">${esc(f.title || '')}. Each step’s cost and model are in Activity.</p></div>` : ''}</span>`;
+  }
   if (f.tab) return `<button type="button" class="rc-fig-link" data-tab="${f.tab}" data-key="fig:${f.tab}" title="Open Changes"${ui.tab === f.tab ? ' aria-current="true"' : ''}>${esc(f.k)}<b>${esc(f.v)}</b></button>`;
   return `<span${f.title ? ` title="${esc(f.title)}"` : ''}>${esc(f.k)} <b>${esc(f.v)}</b>${f.of ? `<span class="rc-of${f.warn ? ' is-warn' : ''}">${esc(f.of)}</span>` : ''}</span>`;
 }
@@ -243,14 +255,14 @@ function render() {
 
   document.getElementById('card').innerHTML = `
   <div class="rc">
-    <div class="rc-bar">${crumbs}${pager}<span class="rc-bar-end">${v.bar.pause ? `<span class="rc-pop is-right"><button type="button" class="btn btn-sm" data-menu="pause" data-key="menu:pause" aria-haspopup="menu" aria-expanded="${ui.menu === 'pause'}"${scope}>${svg('pause', 14)}Pause</button>${menu('pause', PAUSE)}</span>` : ''}${v.bar.stop ? `<button type="button" class="btn btn-sm btn-danger" data-run="stop" data-key="bar:stop"${scope}>Stop</button>` : ''}<span class="rc-pop is-right"><button type="button" class="btn btn-sm btn-icon" aria-label="More for this run" aria-haspopup="menu" aria-expanded="${ui.menu === 'more'}" data-menu="more" data-key="menu:more"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg></button>${menu('more', moreItems(v))}</span></span></div>
-    ${ui.confirm ? `<div class="rc-confirm" role="alertdialog" aria-labelledby="rc-confirm-t"><span class="rc-confirm-t" id="rc-confirm-t">${esc(ui.confirm.text)}</span><span class="rc-confirm-acts"><button type="button" class="btn btn-sm ${ui.confirm.danger ? 'btn-danger' : 'btn-primary'}" data-confirm="yes" data-key="confirm:yes">${esc(ui.confirm.yes)}</button><button type="button" class="btn btn-sm btn-quiet" data-confirm="no" data-key="confirm:no">Cancel</button></span></div>` : ''}
+    <div class="rc-bar">${crumbs}${pager}<span class="rc-bar-end">${v.bar.pause ? `<span class="rc-pop is-right"><button type="button" class="btn btn-sm" data-menu="pause" data-key="menu:pause" aria-haspopup="menu" aria-expanded="${ui.menu === 'pause'}"${scope}>${svg('pause', 14)}Pause</button>${menu('pause', PAUSE)}</span>` : ''}${v.runAfter ? `<button type="button" class="btn btn-sm rc-after" data-run="after" data-key="bar:after" title="${esc(v.runAfter.help)}">${svg('after', 14)}${esc(v.runAfter.short)}</button>` : ''}${v.bar.stop ? `<button type="button" class="btn btn-sm btn-danger" data-run="stop" data-key="bar:stop"${scope}>Stop</button>` : ''}<span class="rc-pop is-right"><button type="button" class="btn btn-sm btn-icon" aria-label="More for this run" aria-haspopup="menu" aria-expanded="${ui.menu === 'more'}" data-menu="more" data-key="menu:more"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg></button>${menu('more', moreItems(v))}</span></span></div>
+    ${stripHtml(v)}
     <div class="rc-head"><div class="rc-title-row"><h1 class="rc-heading${ui.titleOpen ? ' is-open' : ''}" title="${esc(v.title)}" data-title>${esc(v.title)}</h1></div>${facts ? `<div class="rc-facts">${facts}</div>` : ''}${chipRow}</div>
     <section class="rc-card" aria-label="Run status">
       <div class="rc-zone"><span class="rc-rail">${statusDot(v)}</span><span class="rc-main rc-word">${esc(v.word)}</span>${action}${v.detail ? `<span class="rc-detail" title="${esc(v.detail)}">${esc(v.detail)}</span>` : ''}</div>
       <div class="rc-zone"><div class="rc-span"><div class="sc-track" style="grid-template-columns:repeat(${v.stages.length},minmax(0,1fr))" aria-hidden="true">${track}</div><div class="sc-stages" style="grid-template-columns:repeat(${v.stages.length},minmax(0,1fr))" role="tablist" aria-label="Stages">${stages}</div></div></div>
       <div class="rc-zone is-ruled" role="tabpanel" id="stage-panel" aria-labelledby="st-${o.key}">${head}${panel}</div>
-      <div class="rc-zone is-ruled"><div class="rc-figs">${v.figs.map(figHtml).join('')}</div></div>
+      <div class="rc-zone is-ruled"><div class="rc-figs">${v.figs.map((f) => figHtml(f, v)).join('')}</div></div>
     </section>
     <div class="tabs rc-tabs" role="tablist" aria-label="Run detail">${v.tabs.map((t) => `<button type="button" class="tab" role="tab" id="tab-${t.id}" aria-controls="rtab-panel" aria-selected="${t.sel}" tabindex="${t.sel ? 0 : -1}" data-tab="${t.id}" data-key="tab:${t.id}">${esc(t.l)}${t.n ? `<span class="n">${esc(t.n)}</span>` : ''}</button>`).join('')}</div>
     <div class="rc-toast${ui.toast ? ' is-on' : ''}" role="status" aria-live="polite">${esc(ui.toast || '')}</div>
@@ -276,29 +288,44 @@ function fitMenus() {
     if (dx) m.style.transform = `translateX(${dx}px)`;
   });
 }
+document.addEventListener('submit', (e) => e.preventDefault());
+document.addEventListener('input', (e) => { if (e.target.id === 'after-task') ui.afterDraft = e.target.value; });
 const pick = document.getElementById('case');
 const groups = [...new Set(M.cases.map((c) => c.group))];
 pick.innerHTML = groups.map((g) => `<optgroup label="${g}">${M.cases.filter((c) => c.group === g).map((c) => `<option value="${c.id}"${c.id === ui.caseId ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</optgroup>`).join('');
-pick.addEventListener('change', () => { ui = Object.assign(ui, { caseId: pick.value, open: null, ship: '', menu: '', tab: '', focus: '', chips: (M.cases.find((c) => c.id === pick.value) || {}).chips || [], toast: '', confirm: null, parent: null, back: null, titleOpen: false, answer: null, file: null, rounds: [], ticks: [], actFilter: 'all' }); render(); });
+pick.addEventListener('change', () => { ui = Object.assign(ui, { caseId: pick.value, open: null, ship: '', menu: '', tab: '', focus: '', chips: (M.cases.find((c) => c.id === pick.value) || {}).chips || [], toast: '', confirm: null, dialog: '', after: [], away: '', askEach: false, parent: null, back: null, titleOpen: false, answer: null, file: null, rounds: [], ticks: [], actFilter: 'all' }); render(); });
 // The prototype's flow (RunCardModel.flow): an action moves the run to its next case or does its job in place and
 // says so in the toast; a destructive or outward one (Stop, Discard, Merge, Apply) asks first in a confirm strip.
 const PAUSE = [{ id: 'pause:now', text: 'Pause now', help: 'Stops at once; Resume starts the current step again' }, { id: 'pause:after', text: 'Pause after this step', help: 'Lets the current step finish, then pauses' }];
+const AWAY = [{ id: 'away:auto', text: 'As set up', help: 'Follows Settings and whether you marked this run' }, { id: 'away:on', text: 'Answer for me now', help: 'Worca answers this run’s questions from now on, at any hour' }, { id: 'away:off', text: 'Never on this run', help: 'Worca never answers on this run, whatever the settings' }];
 function moreItems(v) {
-  return (v.bar.pause ? PAUSE.map((x) => Object.assign({ narrow: true }, x)) : []).concat([
-    { id: 'more:link', text: 'Copy link to this run', help: 'Paste it in Chat or an issue' },
-    { id: 'more:again', text: 'Start a new run with this task', help: 'Same task and settings, a fresh branch' },
-    { id: 'more:logs', text: 'Download logs', help: 'Every step’s log as one .zip' },
-    { id: 'more:chat', text: 'Ask about this run in Chat', help: 'Chat opens with this run attached' }],
-    v.bar.stop ? [{ id: 'more:stop', text: 'Stop the run', help: 'Ends it; the branch and changes stay' }] : []);
+  const group = !!v.kind; const live = v.bar.stop;
+  const items = [];
+  if (live && !group) items.push({ header: 'Away mode on this run' }, ...AWAY.map((x) => Object.assign({ checked: (ui.away || 'away:auto') === x.id }, x)), { sep: true });
+  if (group) items.push({ id: 'group:replan', text: 'Re-plan the rest', help: 'The planner re-cuts the runs that have not started' }, { id: 'group:cancel', text: 'Cancel the rest', help: 'Runs that have not started are dropped' },
+    { id: 'group:ask', text: 'Ask before each run', checked: !!ui.askEach, help: 'Stops for your OK before the next run starts' }, { id: 'group:plan', text: 'Open the plan', help: 'The plan and how it was cut into runs' }, { sep: true });
+  // On phones the bar's Pause and Run after fold in here (the bar keeps Stop and ⋯).
+  if (v.bar.pause) items.push(...PAUSE.map((x) => Object.assign({ narrow: true }, x)));
+  if (v.runAfter) items.push({ id: 'more:after', text: v.runAfter.label, help: v.runAfter.help, narrow: true });
+  if (v.bar.pause || v.runAfter) items.push({ sep: true, narrow: true });
+  if (!group) items.push({ id: 'more:preset', text: 'Save as preset', help: 'Starts the next run with this task’s setup' });
+  items.push({ id: 'more:terminal', text: 'Terminal', hint: 'Ctrl+`', help: 'A shell in this run’s worktree' }, { id: 'more:link', text: 'Copy link to this run', help: 'Paste it in Chat or an issue' });
+  const scope = [];
+  if (v.finished && !v.archived) scope.push({ id: 'more:report', text: 'Report this run', help: 'Sends the logs and a note to the Worca team' }, { id: 'more:archive', text: 'Archive', help: 'Removes the branch, worktree and logs; the remote branch and PR stay' });
+  if (v.archived) scope.push({ id: 'more:restore', text: 'Restore', help: 'Brings the run back to Runs' });
+  return scope.length ? items.concat({ sep: true }, scope) : items;
 }
-const MORE_SAY = { 'more:link': 'Copied the link to this run', 'more:logs': 'Downloading logs.zip', 'more:chat': 'Opens Chat with this run attached' };
+const MORE_SAY = { 'more:link': 'Copied the link to this run', 'more:preset': 'Saved as preset “Unified page navigation”', 'more:terminal': 'Terminal opened in the worktree', 'more:report': 'Report sent with the logs',
+  'group:replan': 'The planner is re-cutting runs 3 and on', 'group:plan': 'Opens plan.md' };
 let toastTimer = 0;
 function toast(text) { ui.toast = text; clearTimeout(toastTimer); toastTimer = setTimeout(() => { ui.toast = ''; const el = document.querySelector('.rc-toast'); if (el) { el.classList.remove('is-on'); el.textContent = ''; } }, 4000); }
 function goCase(id) {
-  Object.assign(ui, { caseId: id, open: null, ship: '', menu: '', tab: '', focus: '', parent: null, back: null, titleOpen: false, answer: null, file: null, rounds: [], ticks: [], actFilter: 'all', confirm: null });
+  Object.assign(ui, { caseId: id, open: null, ship: '', menu: '', tab: '', focus: '', parent: null, back: null, titleOpen: false, answer: null, file: null, rounds: [], ticks: [], actFilter: 'all', confirm: null, dialog: '' });
   pick.value = id; pendingFocus = 'act-main';
 }
 function follow(f, label) {
+  if (f.dialog && ui.dialog !== f.dialog) { ui.dialog = f.dialog; ui.dialogLabel = label; ui.dialogF = f; ui.menu = ''; pendingFocus = f.dialog + '-title'; return; }
+  ui.dialog = '';
   if (f.confirm && !(ui.confirm && ui.confirm.ok)) {
     ui.confirm = { text: f.confirm, yes: label.replace(/ the run$/, '') || 'Confirm', danger: /^(Stop|Discard)/.test(label), f, label }; ui.menu = ''; pendingFocus = 'confirm:yes'; return;
   }
@@ -312,6 +339,25 @@ function act(label) {
 }
 const EVENT = { starting: 'Plan is under way', working: 'Review passed', checks: '2 checks failed', failing: 'dev moved on: 2 files conflict', conflicts: 'Checks green, a reviewer approved', feature: 'Runs 2 and 3 finished' };
 function nextEvent() { const to = (M.flow[ui.caseId] || {}).next; if (!to) return; const say = EVENT[ui.caseId]; goCase(to); toast('Event: ' + say); render(); }
+// The page asks you something in one place, under the bar: confirm a step that cannot be taken back, schedule a run
+// after this one, or set up the PR before it opens.
+function stripHtml(v) {
+  const acts = (yes, cls) => `<span class="rc-confirm-acts"><button type="button" class="btn btn-sm ${cls}" data-confirm="yes" data-key="confirm:yes">${esc(yes)}</button><button type="button" class="btn btn-sm btn-quiet" data-confirm="no" data-key="confirm:no">Cancel</button></span>`;
+  if (ui.dialog === 'after') {
+    const opts = v.finished ? ['Now, as a follow-up'] : ['When this run finishes'].concat(v.place.pr ? ['When its PR merges'] : []);
+    return `<form class="rc-confirm is-form" role="dialog" aria-labelledby="rc-strip-t" data-form="after"><span class="rc-confirm-t" id="rc-strip-t">${esc(v.runAfter.label)}</span>
+      <input class="input input-sm" id="after-task" type="text" placeholder="What should the next run do?" aria-label="Task for the next run" data-key="after-task" value="${esc(ui.afterDraft || '')}">
+      ${opts.length > 1 ? `<select class="select input-sm" id="after-when" aria-label="When it starts" data-key="after-when">${opts.map((o) => `<option>${esc(o)}</option>`).join('')}</select>` : `<span class="rtab-dim" id="after-when-t">${esc(opts[0])}</span>`}${acts(v.finished ? 'Start run' : 'Schedule', 'btn-primary')}</form>`;
+  }
+  if (ui.dialog === 'pr') {
+    return `<form class="rc-confirm is-form" role="dialog" aria-labelledby="rc-strip-t" data-form="pr"><span class="rc-confirm-t" id="rc-strip-t">${esc(ui.dialogLabel)}</span>
+      <input class="input input-sm" id="pr-title" type="text" aria-label="PR title" value="${esc(v.title)}" data-key="pr-title">
+      <label class="rc-check"><input type="checkbox" id="pr-draft" data-key="pr-draft"> Draft</label><label class="rc-check"><input type="checkbox" id="pr-watch" checked data-key="pr-watch"> Watch: fix failing checks</label>
+      <span class="rtab-dim">Into ${esc(v.place.base || 'dev')}</span>${acts(ui.dialogLabel, 'btn-primary')}</form>`;
+  }
+  if (ui.confirm) return `<div class="rc-confirm" role="alertdialog" aria-labelledby="rc-strip-t"><span class="rc-confirm-t" id="rc-strip-t">${esc(ui.confirm.text)}</span>${acts(ui.confirm.yes, ui.confirm.danger ? 'btn-danger' : 'btn-primary')}</div>`;
+  return '';
+}
 function goMember(group, i) {
   Object.assign(ui, { caseId: M.view(group, {}).runCases[i], parent: { caseId: group, index: i }, open: null, tab: '', focus: '', menu: '', titleOpen: false });
   pick.value = ui.caseId; pendingFocus = 'crumb:' + (M.view(ui.caseId, ui).crumbs.length - 1);
@@ -339,14 +385,26 @@ document.addEventListener('click', (e) => {
   if (!t && e.target.closest('[data-title]')) { ui.titleOpen = !ui.titleOpen; render(); return; }
   if (!t || !t.closest('#card')) { if (ui.menu && !e.target.closest('.menu')) { ui.menu = ''; render(); } return; }
   const d = t.dataset;
-  if (d.confirm) { if (d.confirm === 'yes') { ui.confirm.ok = true; follow(ui.confirm.f, ui.confirm.label); } else { ui.confirm = null; pendingFocus = 'act-main'; } }
+  if (d.confirm && ui.dialog === 'after') {
+    if (d.confirm === 'yes') { const task = (document.getElementById('after-task')?.value || '').trim() || 'Follow-up to ' + M.view(ui.caseId, ui).title; const when = document.getElementById('after-when')?.value || document.getElementById('after-when-t')?.textContent || '';
+      ui.after = ui.after.concat({ task, when }); toast((when.startsWith('Now') ? 'Started: ' : 'Scheduled: ') + task + (when.startsWith('Now') ? '' : ' · ' + when.toLowerCase())); }
+    ui.dialog = ''; ui.afterDraft = ''; pendingFocus = 'bar:after';
+  }
+  else if (d.confirm && ui.dialog === 'pr') { if (d.confirm === 'yes') { const f = ui.dialogF; follow(Object.assign({}, f, { dialog: '' }), ui.dialogLabel); } else { ui.dialog = ''; pendingFocus = 'act-main'; } }
+  else if (d.confirm) { if (d.confirm === 'yes') { ui.confirm.ok = true; follow(ui.confirm.f, ui.confirm.label); } else { ui.confirm = null; pendingFocus = 'act-main'; } }
+  else if (d.run === 'after') { ui.dialog = 'after'; ui.confirm = null; ui.menu = ''; pendingFocus = 'after-task'; }
   else if (d.run === 'stop') follow(M.runFlow.stop, 'Stop the run');
   else if (d.act) act(d.act);
   else if (d.menu) { const opening = ui.menu !== d.menu; ui.menu = opening ? d.menu : ''; if (opening) pendingFocus = 'menu-first'; }
   else if (d.menuPick) {
-    const runCtl = { 'pause:now': 'pauseNow', 'pause:after': 'pauseAfter', 'more:stop': 'stop' }[d.menuPick];
-    if (runCtl) follow(M.runFlow[runCtl], runCtl === 'stop' ? 'Stop the run' : 'Pause');
-    else if (d.menuPick === 'more:again') { goCase('starting'); toast('A new run with the same task'); }
+    const runCtl = { 'pause:now': 'pauseNow', 'pause:after': 'pauseAfter' }[d.menuPick];
+    if (runCtl) follow(M.runFlow[runCtl], 'Pause');
+    else if (d.menuPick.startsWith('away:')) { ui.away = d.menuPick; ui.menu = ''; pendingFocus = 'menu:more'; toast('Away mode on this run: ' + AWAY.find((x) => x.id === d.menuPick).text); }
+    else if (d.menuPick === 'more:after') { ui.dialog = 'after'; ui.menu = ''; pendingFocus = 'after-task'; }
+    else if (d.menuPick === 'more:archive') follow({ to: 'archived', confirm: 'Archive this run? The local branch, worktree and logs are removed; the remote branch and any PR stay.' }, 'Archive');
+    else if (d.menuPick === 'more:restore') { goCase('merged'); toast('Restored to Runs'); }
+    else if (d.menuPick === 'group:ask') { ui.askEach = !ui.askEach; ui.menu = ''; pendingFocus = 'menu:more'; toast(ui.askEach ? 'Worca asks before each run starts' : 'Runs start one after another'); }
+    else if (d.menuPick === 'group:cancel') follow({ say: 'Run 3 is dropped; runs 1 and 2 stay', confirm: 'Cancel the runs that have not started?' }, 'Cancel the rest');
     else if (MORE_SAY[d.menuPick]) { toast(MORE_SAY[d.menuPick]); pendingFocus = 'menu:more'; ui.menu = ''; }
     else if (ui.menu === 'act') act(d.menuPick);
     else if (d.menuPick === 'ungroup') { ui.chips = ui.chips.filter((c) => c.kind !== 'group'); ui.menu = ''; pendingFocus = 'menu:add'; }
@@ -367,6 +425,7 @@ document.addEventListener('click', (e) => {
   else if (d.tab) { ui.tab = d.tab; ui.focus = ''; if (t.classList.contains('rc-fig-link')) pendingFocus = 'tab:' + d.tab; }
   else if (d.ref) { ui.tab = 'activity'; ui.view = 'steps'; ui.focus = d.ref; pendingFocus = 'act:' + d.ref; render(); document.querySelector('.is-focus')?.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' }); return; }
   else if (d.view) ui.view = d.view;
+  else if (d.unafter !== undefined) { ui.after = ui.after.filter((_, i) => i !== +d.unafter); toast('Scheduled run cancelled'); pendingFocus = 'bar:after'; }
   else if (d.answer !== undefined) { ui.answer = +d.answer; pendingFocus = 'answer:' + d.answer; }
   else if (d.file !== undefined) { ui.file = ui.file === +d.file ? null : +d.file; pendingFocus = 'file:' + d.file; }
   else if (d.filter) { ui.actFilter = d.filter; pendingFocus = 'filter:' + d.filter; }
@@ -385,7 +444,9 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   const t = e.target;
   if (t.dataset && t.dataset.key === 'pick-input' && e.key === 'Enter') { e.preventDefault(); addChip(t.value); render(); return; }
-  if (ui.confirm && e.key === 'Escape') { ui.confirm = null; pendingFocus = 'act-main'; render(); return; }
+  if ((ui.confirm || ui.dialog) && e.key === 'Escape') { ui.confirm = null; ui.dialog = ''; pendingFocus = 'act-main'; render(); return; }
+  if (e.key === '`' && e.ctrlKey) { e.preventDefault(); toast('Terminal opened in the worktree'); render(); return; }
+  if (e.key === 'Enter' && e.target.id === 'after-task') { e.preventDefault(); document.querySelector('[data-confirm="yes"]')?.click(); return; }
   if (ui.menu && (e.key === 'Escape' || (e.key === 'Tab' && t.closest && t.closest('.menu')))) {
     pendingFocus = ui.menu.startsWith('pick-') ? 'menu:add' : 'menu:' + ui.menu; ui.menu = ''; render(); if (e.key === 'Escape') e.preventDefault(); return;
   }

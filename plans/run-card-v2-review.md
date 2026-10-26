@@ -159,3 +159,20 @@ Several items round 1 marked done were still broken (numbers agree, worst state 
 ellipsis at every width (today it wraps in full at 640px and below); a member run's position is the pager, not a
 `Run 2 of 3 ›` chip; the project is a crumb and the start time lives in the Time figure, so the place line holds branch
 → base and the PR.
+
+## Where each action lives (parity with today's run page)
+
+An audit of today's live run, saved run and group pages found actions the prototype had dropped. They are back, each
+in the place its kind already has, so nothing new sits beside the structure:
+
+| Kind of action | Its place | What went there |
+|---|---|---|
+| Run-wide controls | The top bar, in today's order: Pause, Run after, Stop, ⋯ (Pause and Run after fold into ⋯ on phones) | Run after ("Schedule a run after this" while it runs, "Start a follow-up run" once it ends) |
+| The run's next step | The one action slot; alternatives in its ▾, each with a help line | Paused: Don't resume at 14:00, Resume on another engine, Switch model…, Resume at…. Ready: Publish branch, How to merge. Conflicts: Update branch, Resolve in a terminal, Re-check. Waiting: Start now, Cancel. Review gate: Accept as is, Run another cycle. Cost cap: Continue without cap, Raise the cap. Kept work: Apply to branch, Download patch, Commit it yourself |
+| The run's setup | ⋯, in today's order: Away mode (As set up, Answer for me now, Never on this run), Save as preset, Terminal (Ctrl+`), Copy link; then run-scope items after a rule | Report this run and Archive (finished), Restore (archived). Groups: Re-plan the rest, Cancel the rest, Ask before each run, Open the plan |
+| A fact's detail | Its figure in the card | Cost opens its breakdown by stage, as Changes opens its tab |
+| The code's own actions | The Changes tab, above the files | Check out, Download patch, Copy git commands, Refresh while live |
+| Anything that asks you something | One strip under the bar | Confirms (Stop, Discard, Archive, Merge, Apply), the Run after form, the Create PR form (title, Draft, Watch) |
+
+Today's Logs tab filters, Agents tab and the Actions tab's services (setup, stack) are Expert-level views; they map to
+Activity and the Changes tools at build time and are not drawn in the prototype.
