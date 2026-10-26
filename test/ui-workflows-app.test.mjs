@@ -1960,8 +1960,8 @@ const VERSIONS_OVERVIEW = {
   draft: { changed: true, changes: ['Renamed since v1'], partsChanged: [], sinceLatest: { versionNo: 2, changes: ['New step Fact check'] } },
   sinceLatest: { versionNo: 2, changes: ['New step Fact check'] },
   versions: [{ id: 2, versionNo: 2, note: null, by: null, createdAt: '2026-10-25', inUse: false, runs: 0, changes: [],
-    changesFromInUse: ['New step Fact check', 'Plan: changed in the Library'] },
-    { id: 1, versionNo: 1, note: null, by: null, createdAt: '2026-10-24', inUse: true, runs: 0, changes: ['First version'], changesFromInUse: [] }],
+    changesFromInUse: ['New step Fact check'], libraryEdited: true },
+    { id: 1, versionNo: 1, note: null, by: null, createdAt: '2026-10-24', inUse: true, runs: 0, changes: ['First version'], changesFromInUse: [], libraryEdited: true }],
   history: [],
 };
 async function bootVersions({ versions = () => Promise.resolve({ ok: true, status: 200, json: async () => VERSIONS_OVERVIEW }), workflows, extra = null } = {}) {
@@ -2110,7 +2110,10 @@ test('Versions page: the version table, and Use for new runs asks first, then sw
   await tick(2);
   assert.equal(doc.querySelector('#mk-dialog-title').textContent, 'Use v2 for new runs?');
   assert.deepEqual([...doc.querySelectorAll('#mk-dialog .wfv-changes li')].map((li) => li.textContent),
-    ['New step Fact check', 'Plan: changed in the Library'], 'what changes for new runs: the version in use → v2');
+    ['New step Fact check'], 'what changes for new runs: the version in use → v2');
+  // I4 / D6: a Library edit is no difference between versions; the dialog says once that every version uses it.
+  assert.equal(doc.querySelector('#mk-dialog .wfv-use-library').textContent, 'Agents and scripts edited in the Library since are used by every version.');
+  assert.doesNotMatch(doc.getElementById('mk-dialog').textContent, /changed in the Library/);
   assert.doesNotMatch(doc.getElementById('mk-dialog').textContent, /From v1/);
   assert.equal(calls.filter((c) => c.method === 'POST').length, 0, 'nothing switches before the confirm');
   clickEl(w, [...doc.querySelectorAll('#mk-dialog button')].find((b) => b.textContent === 'Use v2'));
@@ -2118,6 +2121,26 @@ test('Versions page: the version table, and Use for new runs asks first, then sw
   assert.equal(calls.filter((c) => c.method === 'POST' && c.url.endsWith('/versions/2/use')).length, 1);
   const after = [...doc.querySelectorAll('#wfv-versions .wfv-vt-row')];
   assert.match(after[0].textContent, /New runs use this/, 'the page shows the switch');
+});
+
+test('M1: no version in use (a workflow deleted and saved again): the draft row and the Use dialog say so, never "vnull"', async () => {
+  const none = { ...VERSIONS_OVERVIEW, liveVersionNo: null, draft: null,
+    versions: [{ ...VERSIONS_OVERVIEW.versions[1], inUse: false, changesFromInUse: null, libraryEdited: false }] };
+  const { window: w } = await bootVersions({ versions: () => okJson(none) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  const page = doc.getElementById('wfv-versions');
+  assert.match(page.querySelector('.wfv-vt-draft').textContent, /No version in use yet/);
+  assert.doesNotMatch(page.textContent, /vnull|null/);
+  clickEl(w, [...page.querySelectorAll('.wfv-vt-row button')].find((b) => b.textContent === 'Use for new runs'));
+  await tick(2);
+  const dlg = doc.getElementById('mk-dialog');
+  assert.match(dlg.textContent, /No version is in use yet/);
+  assert.doesNotMatch(dlg.textContent, /Nothing differs/);
+  assert.equal(dlg.querySelector('.wfv-use-library'), null);
 });
 
 test('Versions page: Restore into draft on an edited canvas asks once, then loads the restored draft', async () => {

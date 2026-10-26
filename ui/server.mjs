@@ -13005,7 +13005,11 @@ app.get('/api/workflows/:id', async (req, res) => {
     // this is a READ (the Composer's Open): a template stranded by an agent-port
     // edit must still load, or the user could never repair it. The RUN path keeps
     // the graph check.
-    const wf = await assertRunnableWorkflow(req.params.id, { checkGraph: false });
+    // ?use=live (flag workflowTests; plans/workflow-tests-plan.md D2): what a RUN uses — the version in use — for
+    // the screens before a run (New run, the Ask run card), so they show the graph that will run. The default stays
+    // the draft (the Composer's Open); with the flag off, 'live' is the row anyway.
+    const use = req.query.use === 'live' && flagEnabled('workflowTests') ? 'live' : 'draft';
+    const wf = await assertRunnableWorkflow(req.params.id, { checkGraph: false, use });
     // Settings › Memory: the built-in reads with the pair every defragment run will use, so New
     // pipeline's agent rows and an Ask card's lane show — and lock — it (memory-defrag-model.mjs).
     if (wf && wf.id === MEMORY_DEFRAG_WORKFLOW_ID) {

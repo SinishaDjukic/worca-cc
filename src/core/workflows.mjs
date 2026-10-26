@@ -407,9 +407,19 @@ export async function readWorkflow(id, opts = {}) {
  * @param {{use?: 'live'|'draft'|number}} [opts]
  */
 export async function readRunnableWorkflow(id, { use = 'live' } = {}) {
-  const row = await readWorkflow(id);
+  return runnableOf(await readWorkflow(id), { use });
+}
+
+/** readRunnableWorkflow over a template already read (readWorkflow / listWorkflows output). Synchronous.
+ *  @throws code 'BAD_REQUEST' on a `use` that is none of 'live', 'draft' or a positive integer (M8);
+ *  code 'NOT_FOUND' when the version asked for does not exist */
+export function runnableOf(row, { use = 'live' } = {}) {
+  if (use !== 'live' && use !== 'draft' && !(Number.isInteger(use) && use > 0)) {
+    throw Object.assign(new Error(`use must be 'live', 'draft' or a version number, not ${JSON.stringify(use)}`), { code: 'BAD_REQUEST' });
+  }
   if (!row || row.version !== 2 || isReservedWorkflowId(row.id)
     || (typeof row.origin === 'string' && row.origin.startsWith('plugin:'))) return row;
+  const id = row.id;
   let no = null;
   if (Number.isInteger(use) && use > 0) no = use;
   else if (use === 'live' && flagEnabled('workflowTests')) no = liveVersionNo(row.id);
@@ -491,14 +501,16 @@ function assertValidGraph(tpl, registry, scripts) {
  *  `checkGraph:false` is the READ escape hatch (GET /api/workflows/:id): a
  *  stale template must still open in the Composer, or it can never be repaired.
  *  @param {string} id
- *  @param {{registry?:Record<string,object>, scripts?:Record<string,object>, checkGraph?:boolean}} [opts]
+ *  `use` (readRunnableWorkflow): default 'live' for a run's check, 'draft' with checkGraph:false.
+ *  @param {{registry?:Record<string,object>, scripts?:Record<string,object>, checkGraph?:boolean, use?:'live'|'draft'|number}} [opts]
  */
-export async function assertRunnableWorkflow(id, { registry, scripts, checkGraph = true, use = 'live' } = {}) {
+export async function assertRunnableWorkflow(id, { registry, scripts, checkGraph = true, use } = {}) {
   const wanted = typeof id === 'string' && id.trim() ? id.trim() : GRAPH_DEFAULT_WORKFLOW.id;
   // The Auto entry has no graph to check: the run decides one (spec §5.1).
   if (wanted === AUTO_WORKFLOW_ID) return AUTO_WORKFLOW_STUB;
-  // D2: a run is checked against what it will run; the Composer's read (checkGraph:false) opens the draft.
-  const live = await readRunnableWorkflow(wanted, { use: checkGraph ? use : 'draft' });
+  // D2: a run is checked against what it will run; the Composer's read (checkGraph:false) opens the draft unless the
+  // caller asks for another (GET /api/workflows/:id?use=live: the screens before a run).
+  const live = await readRunnableWorkflow(wanted, { use: use !== undefined ? use : checkGraph ? 'live' : 'draft' });
   if (live) {
     // A disabled plugin's template is neither runnable nor openable: its agents
     // are withdrawn with the plugin. Same posture as ARCHIVED — a coded refusal

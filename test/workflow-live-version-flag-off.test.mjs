@@ -19,3 +19,9 @@ test('flag off: the row runs even with a version in use', async () => {
   await writeGraphWorkflow({ id: 'wf_off', name: 'Off draft', nodes: [{ id: 'n_task', kind: 'task', config: {} }], wires: [] });
   assert.equal((await readRunnableWorkflow('wf_off')).name, 'Off draft');
 });
+
+test('flag off: Auto and Ask match a twin on the row (the draft), as before', async () => {
+  const { autoCandidates } = await import('../src/core/auto/match.mjs');
+  const c = (await autoCandidates()).find((t) => t.id === 'wf_off');
+  assert.deepEqual([c.name, c.versionNo ?? null], ['Off draft', null]);
+});

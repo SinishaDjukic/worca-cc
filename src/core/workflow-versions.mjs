@@ -66,17 +66,18 @@ export function useVersion(workflowId, versionNo) {
   return { liveVersionNo: n };
 }
 
-/** What differs from saved version `ver` to the draft: the graph diff plus "<label>: changed in the Library" per part. */
-function changesSince(ver, row, graph, parts, labelOf) {
-  return changesBetween(ver, { name: row.name, graph, parts }, labelOf);
-}
-/** From `a` to `b` (each {name, graph, parts}): the graph diff plus "<label>: changed in the Library" for every agent or
- *  script both use whose content hash differs. */
-function changesBetween(a, b, labelOf) {
-  const changes = diffGraphs({ name: a.name, ...a.graph }, { name: b.name, ...b.graph }, { labelOf }).map((c) => c.text);
-  const before = new Map((a.parts || []).map((p) => [`${p.kind}:${p.key}`, p.hash]));
-  const partsChanged = (b.parts || []).filter((p) => before.has(`${p.kind}:${p.key}`) && before.get(`${p.kind}:${p.key}`) !== p.hash)
+const graphChanges = (a, b, labelOf) => diffGraphs({ name: a.name, ...a.graph }, { name: b.name, ...b.graph }, { labelOf }).map((c) => c.text);
+/** The agents and scripts both lists hold whose content hash differs. */
+function partsDiffering(before, after) {
+  const was = new Map((before || []).map((p) => [`${p.kind}:${p.key}`, p.hash]));
+  return (after || []).filter((p) => was.has(`${p.kind}:${p.key}`) && was.get(`${p.kind}:${p.key}`) !== p.hash)
     .map((p) => ({ kind: p.kind, key: p.key }));
+}
+/** What differs from saved version `ver` to the draft: the graph diff plus "<label>: changed in the Library" per part.
+ *  True here (and only here): a Library edit changes what the next Save version records. */
+function changesSince(ver, row, graph, parts, labelOf) {
+  const changes = graphChanges(ver, { name: row.name, graph }, labelOf);
+  const partsChanged = partsDiffering(ver.parts, parts);
   for (const p of partsChanged) changes.push(`${labelOf(p)}: changed in the Library`);
   return { changes, partsChanged };
 }
@@ -86,7 +87,10 @@ function changesBetween(a, b, labelOf) {
  * latest version (`sinceLatest`, what Save version compares against; null when the workflow has no version yet).
  */
 export async function versionStatus(workflowId, { deps = {} } = {}) {
-  const row = versionableRow(workflowId);
+  return statusOf(versionableRow(workflowId), deps);
+}
+async function statusOf(row, deps) {
+  const workflowId = row.id;
   const latest = latestVersion(workflowId);
   const live = row.live_version_no ? readVersion(workflowId, row.live_version_no) : null;
   const latestVersionNo = latest ? latest.versionNo : null;
@@ -118,30 +122,38 @@ export async function restoreRevision(workflowId, revisionId, { by = null, agent
 
 function runCounts(workflowId) {
   getDb();
-  const rows = prepare(`SELECT json_extract(stepper, '$.workflowVersion.no') AS no, COUNT(*) AS n FROM pipelines
-    WHERE json_extract(stepper, '$.template.id') = ? GROUP BY no`).all(workflowId);
+  // I6: json_valid first (stats.mjs, ask/workspace-deps.mjs): one malformed stepper must not fail the whole page.
+  const rows = prepare(`SELECT json_extract(s, '$.workflowVersion.no') AS no, COUNT(*) AS n
+    FROM (SELECT CASE WHEN json_valid(stepper) THEN stepper END AS s FROM pipelines)
+    WHERE json_extract(s, '$.template.id') = ? GROUP BY no`).all(workflowId);
   return new Map(rows.filter((r) => r.no !== null).map((r) => [Number(r.no), Number(r.n)]));
 }
 
 /** Everything the Versions page shows, in one read. */
 export async function versionsOverview(workflowId, { deps = {} } = {}) {
   const row = versionableRow(workflowId);
-  const status = await versionStatus(workflowId, { deps });
-  const labelOf = labeler(registries(deps));
+  // M6: the registries are loaded once and each named version is read once per overview.
+  const regs = registries(deps);
+  const status = await statusOf(row, { ...deps, ...regs });
+  const labelOf = labeler(regs);
   const all = listRevisions(workflowId);
-  const named = all.filter((r) => r.versionNo !== null).sort((a, b) => b.versionNo - a.versionNo);
+  const named = all.filter((r) => r.versionNo !== null).sort((a, b) => b.versionNo - a.versionNo)
+    .map((r) => readVersion(workflowId, r.versionNo)).filter(Boolean);
   const counts = runCounts(workflowId);
-  const inUse = status.liveVersionNo ? readVersion(workflowId, status.liveVersionNo) : null;
-  const versions = named.map((v, i) => {
-    const prev = named[i + 1] ? readVersion(workflowId, named[i + 1].versionNo) : null;
-    const cur = readVersion(workflowId, v.versionNo);
-    const changes = prev
-      ? diffGraphs({ name: prev.name, ...prev.graph }, { name: cur.name, ...cur.graph }, { labelOf }).map((c) => c.text)
-      : ['First version'];
+  const inUse = status.liveVersionNo ? named.find((v) => v.versionNo === status.liveVersionNo) || null : null;
+  // Today's hash of every agent and script any version uses (one read per part, not per version).
+  const union = { nodes: named.flatMap((v) => (Array.isArray(v.graph && v.graph.nodes) ? v.graph.nodes : [])) };
+  const today = await workflowParts(union, { ...deps, ...regs });
+  const versions = named.map((cur, i) => {
+    const prev = named[i + 1] || null;
+    const changes = prev ? graphChanges(prev, cur, labelOf) : ['First version'];
     // What changes for new runs if this version is put in use (the Use dialog); `changes` is against the previous one.
-    const changesFromInUse = !inUse ? null : v.versionNo === inUse.versionNo ? [] : changesBetween(inUse, cur, labelOf).changes;
-    return { id: v.id, versionNo: v.versionNo, note: v.note, by: v.by, createdAt: v.createdAt,
-      inUse: v.versionNo === status.liveVersionNo, runs: counts.get(v.versionNo) || 0, changes, changesFromInUse };
+    // I4 / D6: graph changes only. Every version runs today's agent and script text, so a Library edit is no
+    // difference between two versions; `libraryEdited` lets the dialog say that once.
+    const changesFromInUse = !inUse ? null : cur.versionNo === inUse.versionNo ? [] : graphChanges(inUse, cur, labelOf);
+    const libraryEdited = partsDiffering(cur.parts, today).length > 0;
+    return { id: cur.id, versionNo: cur.versionNo, note: cur.note, by: cur.by, createdAt: cur.createdAt,
+      inUse: cur.versionNo === status.liveVersionNo, runs: counts.get(cur.versionNo) || 0, changes, changesFromInUse, libraryEdited };
   });
   const history = all.filter((r) => r.versionNo === null).map((r) => ({ id: r.id, source: r.source, by: r.by, createdAt: r.createdAt, name: r.name }));
   return { workflowId, name: row.name, liveVersionNo: status.liveVersionNo, draft: status.draft, sinceLatest: status.sinceLatest, versions, history };

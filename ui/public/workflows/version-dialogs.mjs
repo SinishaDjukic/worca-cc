@@ -56,14 +56,20 @@ export function openSaveVersionDialog({ doc, win, nextNo, sinceNo = null, change
   });
 }
 
-/** Use vN for new runs? (board 8, D2/D12: no gate — the person decides). */
-export function openUseVersionDialog({ doc, win, versionNo, changes, onConfirm }) {
+/** Use vN for new runs? (board 8, D2/D12: no gate — the person decides). `changes`: what differs for new runs, the
+ *  version in use → vN (null: no version is in use yet, so new runs use the draft). `libraryEdited`: an agent or script
+ *  either version uses was edited in the Library since it was saved — every version runs today's text (D6), so that is
+ *  said once in plain words, never listed as a difference. */
+export function openUseVersionDialog({ doc, win, versionNo, changes, libraryEdited = false, onConfirm }) {
+  const compared = Array.isArray(changes)
+    ? [el(doc, 'p', 'hint', 'Compared with the version in use now:'), changesList(doc, changes, 'Nothing differs from the version in use.')]
+    : [el(doc, 'p', 'hint wfv-use-none', 'No version is in use yet: new runs use your draft as it was last saved.')];
   return frame({
     doc, win, title: `Use v${versionNo} for new runs?`, confirmLabel: `Use v${versionNo}`,
     body: [
       el(doc, 'p', '', `Runs you start from now on use v${versionNo}: from the Runs page, schedules and chats. Runs already going keep their version. You can switch back at any time.`),
-      el(doc, 'p', 'hint', `Compared with the version in use now:`),
-      changesList(doc, changes, 'Nothing differs from the version in use.'),
+      ...compared,
+      ...(libraryEdited ? [el(doc, 'p', 'hint wfv-use-library', 'Agents and scripts edited in the Library since are used by every version.')] : []),
     ],
     onConfirm,
   });

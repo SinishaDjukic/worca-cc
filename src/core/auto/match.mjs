@@ -1,7 +1,7 @@
 // "Reuse an exact twin, else create" (spec D8/D9): every runnable workflow —
 // the built-in Default, the seeds, plugin rows, user rows and earlier
 // Auto-created rows — is a candidate; the classifier never sees the list.
-import { listWorkflows, GRAPH_DEFAULT_WORKFLOW } from '../workflows.mjs';
+import { listWorkflows, runnableOf, GRAPH_DEFAULT_WORKFLOW } from '../workflows.mjs';
 import { isomorphic } from '../../shared/graph/isomorphic.mjs';
 
 const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
@@ -9,9 +9,13 @@ const byCodeUnit = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 /** The built-in Default first, then every LIVE v2 row OLDEST first (spec §4.3: a
  *  seed beats a later twin, the first Auto-created row beats a duplicate).
  *  listWorkflows() hides archived and disabled-plugin rows and orders newest-first,
- *  hence the explicit sort. v1 rows (no `nodes`) are never candidates. */
+ *  hence the explicit sort. v1 rows (no `nodes`) are never candidates.
+ *  Each row is offered as what it RUNS (runnableOf, use 'live'): a workflow with a version in use is matched on that
+ *  version, never on its draft, so the twin that matched is the graph the run resolves (plans/workflow-tests-plan.md
+ *  D2; the candidate carries `versionNo`). A row whose version cannot be read is no candidate. */
 export async function autoCandidates() {
-  const rows = (await listWorkflows()).filter((t) => t && t.version === 2 && Array.isArray(t.nodes) && Array.isArray(t.wires));
+  const rows = (await listWorkflows()).map((t) => { try { return runnableOf(t); } catch { return null; } })
+    .filter((t) => t && t.version === 2 && Array.isArray(t.nodes) && Array.isArray(t.wires));
   rows.sort((a, b) => byCodeUnit(String(a.createdAt ?? ''), String(b.createdAt ?? '')) || byCodeUnit(String(a.id), String(b.id)));
   return [GRAPH_DEFAULT_WORKFLOW, ...rows];
 }

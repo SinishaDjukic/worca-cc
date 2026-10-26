@@ -80,3 +80,10 @@ test('a run records the version it used in its manifest', async () => {
   assert.deepEqual(stepper.workflowVersion, { no: 1 });
   assert.equal(stepper.template.name, 'Live test');
 });
+
+test('M8: a `use` that is none of live, draft or a version number is refused, never read as the draft', async () => {
+  await withVersion1ThenDraftEdit();
+  for (const bad of ['3', 0, -1, 1.5, 'drafts', null]) {
+    await assert.rejects(readRunnableWorkflow('wf_live', { use: bad }), { code: 'BAD_REQUEST' }, `use ${JSON.stringify(bad)}`);
+  }
+});

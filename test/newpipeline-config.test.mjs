@@ -677,8 +677,9 @@ const graphOf = (id, name) => ({
 const SAVED_V2 = graphOf('wf_g', 'Graph');
 const DEFAULT_V2 = graphOf('wf_default', 'Default');
 
-function v2Fetch(extraConfig = {}) {
+function v2Fetch(extraConfig = {}, seen = []) {
   return (url) => {
+    if (url.includes('/api/workflows/')) seen.push(url);
     if (url.includes('/api/projects')) {
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [{ name: 'proj', path: PROJECT, exists: true }] }) });
     }
@@ -705,7 +706,8 @@ function v2Fetch(extraConfig = {}) {
 // so every saved graph — which carries nodes/wires and no steps — resolved to
 // null and painted "Could not load this workflow."
 test('selecting a saved v2 graph renders one row per agent node, not the could-not-load hint', async () => {
-  const { window } = await boot({ fetchHandler: v2Fetch() });
+  const seen = [];
+  const { window } = await boot({ fetchHandler: v2Fetch({}, seen) });
   selectProjectAnd(window);
   await new Promise((r) => setTimeout(r, 0));
   pickWorkflow(window, 'wf_g');
@@ -714,6 +716,9 @@ test('selecting a saved v2 graph renders one row per agent node, not the could-n
   assert.doesNotMatch(host.textContent, /Could not load this workflow/, 'no hint');
   const ids = [...host.querySelectorAll('.agent-row')].map((r) => r.dataset.nodeId);
   assert.deepEqual(ids, ['n_plan', 'n_impl', 'n_review'], 'agent nodes only, in launch order');
+  // I3: New run reads what the run will use (the version in use), never the Composer's draft.
+  const reads = seen.filter((u) => u.includes('/api/workflows/wf_g'));
+  assert.ok(reads.length && reads.every((u) => new URL(u, 'http://x').searchParams.get('use') === 'live'), reads.join(', '));
 });
 
 // The cycle inputs are driven by classifyLoops, which needs the agents' PORTS.

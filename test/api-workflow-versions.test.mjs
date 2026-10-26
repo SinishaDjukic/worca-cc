@@ -70,3 +70,43 @@ test('save version, edit, save again, use, restore — over HTTP', async () => {
 test('unknown workflow → 404', async () => {
   assert.equal((await fetch(`${base}/api/workflows/wf_none/versions`)).status, 404);
 });
+
+test('I3: GET /api/workflows/:id is the draft; ?use=live is what new runs use (the version in use)', async () => {
+  const body = { ...graphBody('Live read'), id: 'wf_api_live' };
+  assert.equal((await post('/api/workflows', body)).status, 201);
+  assert.equal((await post('/api/workflows/wf_api_live/versions', {})).status, 201);
+  assert.equal((await post('/api/workflows', { ...body, name: 'Live read (draft)' })).status, 201);
+  const draft = await (await fetch(`${base}/api/workflows/wf_api_live`)).json();
+  assert.deepEqual([draft.name, draft.versionNo], ['Live read (draft)', null], 'the Composer opens the draft');
+  const live = await (await fetch(`${base}/api/workflows/wf_api_live?use=live`)).json();
+  assert.deepEqual([live.name, live.versionNo], ['Live read', 1], 'New run and the Ask lane read what runs');
+  assert.equal((await fetch(`${base}/api/workflows/wf_api_live?use=draft`).then((r) => r.json())).name, 'Live read (draft)');
+  assert.equal((await fetch(`${base}/api/workflows/wf_none?use=live`)).status, 404);
+});
+
+test('I5 / scenario 4 over HTTP: restoring a state that no longer validates → 422; the draft and the version in use stay', async () => {
+  const { getDb } = await import('../src/core/db.mjs');
+  const body = { ...graphBody('Restore check'), id: 'wf_api_bad' };
+  assert.equal((await post('/api/workflows', body)).status, 201);
+  assert.equal((await post('/api/workflows/wf_api_bad/versions', {})).status, 201);
+  const info = getDb().prepare(`INSERT INTO workflow_revisions (workflow_id, version_no, name, graph, fingerprint, source, created_at)
+    VALUES ('wf_api_bad', NULL, 'Restore check', ?, 'f', 'save', '2026-10-25T00:00:00Z')`)
+    .run(JSON.stringify({ nodes: [{ id: 'n_x', kind: 'agent', key: 'no-such-agent', config: {} }], wires: [] }));
+  const before = await (await fetch(`${base}/api/workflows/wf_api_bad`)).json();
+  const r = await post(`/api/workflows/wf_api_bad/history/${Number(info.lastInsertRowid)}/restore`);
+  assert.equal(r.status, 422);
+  const err = await r.json();
+  assert.ok(typeof err.error === 'string' && Array.isArray(err.errors) && err.errors.length > 0, JSON.stringify(err));
+  const after = await (await fetch(`${base}/api/workflows/wf_api_bad`)).json();
+  assert.deepEqual([after.name, after.nodes.length, after.updatedAt], [before.name, before.nodes.length, before.updatedAt]);
+  assert.equal((await (await fetch(`${base}/api/workflows/wf_api_bad/versions`)).json()).liveVersionNo, 1);
+});
+
+test('I5 / scenario 6 over HTTP: a plugin row cannot have versions → 400', async () => {
+  const { writeGraphWorkflow } = await import('../src/core/workflows.mjs');
+  await writeGraphWorkflow({ ...graphBody('Plugin flow'), id: 'wfp_p_api', origin: 'plugin:p' });
+  const r = await post('/api/workflows/wfp_p_api/versions', {});
+  assert.equal(r.status, 400);
+  assert.match((await r.json()).error, /cannot have versions/);
+  assert.equal((await fetch(`${base}/api/workflows/wfp_p_api/versions`)).status, 400);
+});

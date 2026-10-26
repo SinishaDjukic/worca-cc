@@ -48,6 +48,24 @@ test('Save version 1: "This is the first version." and no comparison', () => {
   assert.doesNotMatch(doc.querySelector('.mk-dialog-body').textContent, /What changed since|No changes since/);
 });
 
+test('Use dialog: no version in use yet (changes null) says so, never "Nothing differs"', () => {
+  const { doc, win } = dom();
+  openUseVersionDialog({ doc, win, versionNo: 1, changes: null, onConfirm: async () => ({ ok: true }) });
+  const body = doc.querySelector('.mk-dialog-body').textContent;
+  assert.match(body, /No version is in use yet: new runs use your draft as it was last saved./);
+  assert.doesNotMatch(body, /Nothing differs|Compared with the version in use/);
+});
+
+test('Use dialog: the Library note shows once when asked, and never as a listed change (I4)', () => {
+  const { doc, win } = dom();
+  openUseVersionDialog({ doc, win, versionNo: 2, changes: [], libraryEdited: true, onConfirm: async () => ({ ok: true }) });
+  assert.equal(doc.querySelectorAll('.wfv-use-library').length, 1);
+  assert.equal(doc.querySelector('.wfv-changes-none').textContent, 'Nothing differs from the version in use.');
+  const plain = dom();
+  openUseVersionDialog({ doc: plain.doc, win: plain.win, versionNo: 2, changes: ['x'], onConfirm: async () => ({ ok: true }) });
+  assert.equal(plain.doc.querySelector('.wfv-use-library'), null);
+});
+
 test('Use dialog: plain words and one confirming button', async () => {
   const { doc, win } = dom();
   let used = 0;

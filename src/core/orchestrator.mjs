@@ -607,8 +607,11 @@ export class GraphOrchestrator extends RunHarness {
     const overlayNodes = {};
     for (const [nodeId, sel] of Object.entries(tunables || {})) overlayNodes[nodeId] = { ...sel };
     for (const [nodeId, sel] of Object.entries(answer.nodes || {})) overlayNodes[nodeId] = { ...(overlayNodes[nodeId] || {}), ...sel };
+    // I2: run exactly the graph the twin was matched on. autoCandidates offers a versioned row as its version in use
+    // (runnableOf); pinning that number keeps the node ids the tunables were remapped onto, even if Use moved meanwhile.
+    const use = match && Number.isInteger(match.candidate.versionNo) ? match.candidate.versionNo : 'live';
     const resolved = await resolveGraph(this.projectDir, workflowId, registry, this.agentsDir, {
-      engine: this.claude.engine || 'claude', isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
+      use, engine: this.claude.engine || 'claude', isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
     });
     if (!this.humanInLoop) {
       // spec D3: no agent may stop the run to ask (generic — every agent node).
@@ -623,6 +626,8 @@ export class GraphOrchestrator extends RunHarness {
     manifest.auto = fallback
       ? { status: 'decided', via: 'fallback', saved: via, reason: fallback, rounds: round, humanInLoop: this.humanInLoop, workflowId }
       : { status: 'decided', via, rounds: round, humanInLoop: this.humanInLoop, workflowId };
+    // D8: the named version this run used, as the non-Auto path records it (_buildManifest).
+    if (Number.isInteger(resolved.versionNo)) manifest.workflowVersion = { no: resolved.versionNo };
     this._preflightAgentKeys(this.resolved.agentKeys);
     this._preflightScriptKeys(this.resolved.scriptKeys);
     await this._preflightScriptRuntimes();

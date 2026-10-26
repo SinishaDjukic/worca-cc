@@ -24,6 +24,8 @@ const INSERT = `INSERT INTO workflow_revisions
 export function snapshotRowTx(prev, { source = 'save', by = null, now = new Date().toISOString() } = {}) {
   if (!isVersionableRow(prev)) return null;
   const graph = graphOf(prev);
+  // An automatic snapshot records the graph shape only: workflowFingerprint(graph, []) with no parts. Never compare it
+  // with a named version's fingerprint (graph + parts); compare graphShape() when that is needed (Part 2).
   const info = prepare(INSERT).run(prev.id, null, null, prev.name, prev.domain || null, JSON.stringify(graph),
     workflowFingerprint(graph, []), '[]', source, by, now);
   prepare(`DELETE FROM workflow_revisions WHERE workflow_id = ? AND version_no IS NULL AND id NOT IN (

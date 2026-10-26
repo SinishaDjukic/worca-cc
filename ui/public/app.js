@@ -3444,7 +3444,8 @@ async function wfvRefreshVersions() {
   wfvVersionsOverview = r.ok ? r.overview : null;
   wfvVersionsError = r.ok ? null : { status: r.status, error: r.error, workflowId: t.id };
   const text = statusText(wfvVersionsOverview);
-  if (els.vstatus) { els.vstatus.textContent = text; els.vstatus.hidden = !text; }
+  // M5: #wfv-vstatus is aria-live: a repeat of the same text after every save is not news, so only a change is written.
+  if (els.vstatus) { if (els.vstatus.textContent !== text) els.vstatus.textContent = text; els.vstatus.hidden = !text; }
   paintPage();
   return wfvVersionsOverview;
 }
@@ -3519,9 +3520,13 @@ function wfvPaintVersions(els, id, o) {
     useVersion: (no) => {
       if (!o) return;
       const target = o.versions.find((v) => v.versionNo === no);
+      const inUse = o.versions.find((v) => v.inUse);
       openUseVersionDialog({ doc: document, win: window, versionNo: no,
         // What changes for new runs: the version in use → this one (server changesFromInUse), not this version's own changes.
-        changes: target && Array.isArray(target.changesFromInUse) ? target.changesFromInUse : [],
+        // null: no version is in use yet (a workflow deleted and saved again), never "Nothing differs".
+        changes: target && Array.isArray(target.changesFromInUse) ? target.changesFromInUse : null,
+        // D6: every version runs today's Library text; say so once when either version recorded older text.
+        libraryEdited: Boolean((target && target.libraryEdited) || (inUse && inUse.libraryEdited)),
         onConfirm: async () => {
           const r = await gvApi.useVersion(id, no);
           // Another workflow opened meanwhile: its overview is not this answer.
@@ -4402,8 +4407,11 @@ async function listWorkflowsApi() {
 async function getWorkflowApi(id) {
   if (state.workflowCache[id]) return state.workflowCache[id];
   try {
-    const q = id === MEMORY_DEFRAG_WORKFLOW_ID ? `?engine=${state.engine}${state.projectDir ? `&projectDir=${encodeURIComponent(state.projectDir)}` : ''}` : '';
-    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}${q}`);
+    // use=live: what a run of this workflow will use — the version in use once it has versions (plans/workflow-tests-plan.md
+    // D2), never the Composer's draft, so the step rows describe the graph that runs. Without the workflowTests flag the
+    // server answers the row, as before.
+    const q = id === MEMORY_DEFRAG_WORKFLOW_ID ? `&engine=${state.engine}${state.projectDir ? `&projectDir=${encodeURIComponent(state.projectDir)}` : ''}` : '';
+    const res = await fetch(`/api/workflows/${encodeURIComponent(id)}?use=live${q}`);
     const data = await safeJson(res);
     // Shape gate, both engines: a v2 graph carries `nodes`, a v1 template
     // `steps`. Demanding `steps` (the pre-P8 guard) rejected every stored row

@@ -15,6 +15,8 @@ const btn = (doc, label, onClick, cls = 'btn btn-sm') => { const b = el(doc, 'bu
 const named = (b, label) => { b.setAttribute('aria-label', label); return b; };
 /** A data-focus-key per button: app.js puts the focus back on it after a repaint, and a closing dialog finds it (layers.mjs). */
 const keyed = (b, key) => { b.dataset.focusKey = key; return b; };
+/** Who did it, or null: 'local' (a local install, identity.mjs actorLabel) is nobody in particular. */
+const who = (by) => (typeof by === 'string' && by.trim() && by.trim() !== 'local' ? by.trim() : null);
 const when = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); };
 
 /**
@@ -48,7 +50,9 @@ export function renderVersionsPage(root, o, actions, { doc, error = null, loadin
     const table = el(doc, 'div', 'card wfv-vt');
     const draft = el(doc, 'div', 'wfv-vt-draft');
     const d = o.draft;
-    const what = d && d.changed ? d.changes.join(' · ') : `Same as v${o.liveVersionNo}`;
+    // M1: a workflow deleted and saved again keeps its old versions with none in use: new runs use the draft.
+    const what = !Number.isInteger(o.liveVersionNo) ? 'No version in use yet: new runs use your draft'
+      : d && d.changed ? d.changes.join(' · ') : `Same as v${o.liveVersionNo}`;
     draft.append(el(doc, 'span', 'wfv-vt-no', 'Draft'),
       (() => { const c = el(doc, 'span', 'wfv-vt-main'); c.append(el(doc, 'b', '', 'Your draft'), el(doc, 'span', 'hint', what)); return c; })(),
       keyed(btn(doc, 'Save version', () => actions.saveVersion(), 'btn btn-sm btn-primary'), 'vp:save'));
@@ -59,7 +63,7 @@ export function renderVersionsPage(root, o, actions, { doc, error = null, loadin
       const head = el(doc, 'span', 'wfv-vt-head');
       head.append(el(doc, 'b', '', v.note || `Version ${v.versionNo}`));
       if (v.inUse) head.append(el(doc, 'span', 'badge wfv-inuse', 'New runs use this'));
-      main.append(head, el(doc, 'span', 'hint', [when(v.createdAt), v.by].filter(Boolean).join(' · ')),
+      main.append(head, el(doc, 'span', 'hint', [when(v.createdAt), who(v.by)].filter(Boolean).join(' · ')),
         el(doc, 'span', 'hint', v.changes.join(' · ')));
       const used = el(doc, 'span', 'wfv-vt-used', v.runs === 1 ? 'Used once' : `Used ${v.runs} times`);
       const acts = el(doc, 'span', 'wfv-vt-acts');
@@ -81,7 +85,7 @@ export function renderVersionsPage(root, o, actions, { doc, error = null, loadin
       const at = when(h.createdAt);
       const text = (BEFORE_TEXT[h.source] || BEFORE_TEXT.save)(at);
       const label = `the state from before ${at}`;
-      row.append(el(doc, 'span', 'wfv-vh-what', text), el(doc, 'span', 'hint wfv-vh-by', h.by ? `by ${h.by}` : ''),
+      row.append(el(doc, 'span', 'wfv-vh-what', text), ...(who(h.by) ? [el(doc, 'span', 'hint wfv-vh-by', `by ${who(h.by)}`)] : []),
         keyed(named(btn(doc, 'Restore', () => actions.restore(h.id, label), 'btn btn-sm btn-quiet'), `Restore ${label} into draft`), `vp:history:${h.id}`));
       hist.append(row);
     }

@@ -72,6 +72,29 @@ test('no versions yet: an explanation and Save version, no table', () => {
   assert.equal(root.querySelectorAll('.wfv-vt-row').length, 0);
 });
 
+test('M1: versions but none in use (deleted, then saved again): the draft row says so, never "vnull"', () => {
+  const { root } = boot({ ...overview(), liveVersionNo: null, draft: null,
+    versions: overview().versions.map((v) => ({ ...v, inUse: false })) });
+  assert.match(root.querySelector('.wfv-vt-draft').textContent, /No version in use yet: new runs use your draft/);
+  assert.doesNotMatch(root.textContent, /vnull|Same as v/);
+});
+
+test('M4 / (w): a history entry without an actor has no empty "by" span', () => {
+  const { root } = boot();
+  const rows = [...root.querySelectorAll('.wfv-vh-row')];
+  assert.equal(rows[0].querySelector('.wfv-vh-by'), null);
+  assert.equal(rows[1].querySelector('.wfv-vh-by').textContent, 'by Tomica Brkovic');
+});
+
+test('the actor "local" (a local install, identity.mjs) is nobody in particular: never shown as "by local"', () => {
+  const o = overview();
+  o.versions[0].by = 'local';
+  o.history[1].by = 'local';
+  const { root } = boot(o);
+  assert.doesNotMatch(root.textContent, /\blocal\b/);
+  assert.equal(root.querySelectorAll('.wfv-vh-by').length, 0);
+});
+
 test('no overview with a reason: "Versions are not available" and the reason, nothing else', () => {
   const { window } = new JSDOM('<!doctype html><body><section id="root"></section></body>');
   const root = window.document.getElementById('root');
