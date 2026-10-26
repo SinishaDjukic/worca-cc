@@ -1578,7 +1578,7 @@ test('A8 D8: a brief document starts no follow-up round for the scope\'s finishe
   } finally { deleteAttachmentRow(doc.id); }   // the later tests read this brief without documents
 });
 
-// ── A8 D8 review fixes: a start on its way, carried files only, a job's end ─────────────────
+// ── D8: a start on its way, carried files only, a job's end ─────────────────
 test('A8 D8: no follow-up round while a start is on its way: a read ending inside it starts nothing, and followUp waits', async () => {
   let openRead;
   let openStart;

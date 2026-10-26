@@ -10145,9 +10145,8 @@ a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
 .req-ico:hover:not(:disabled),.req-ico[aria-expanded="true"]{background:var(--hover);color:var(--ink)}
 .req-ico:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-ico:disabled{opacity:.45;cursor:not-allowed}
-/* The menus are upstream's one menu (.menu box, .menu-item rows). The list keeps the .hd-more-wrap / .hd-menu class
-   names, but upstream f92a7148d removed those rules, so Requirements owns the placement here through .req-menu: the open
-   list floats under its trigger, right-aligned. */
+/* The menus are upstream's one menu (.menu box, .menu-item rows), placed by .req-menu: the open list floats under its
+   trigger, right-aligned. */
 .req-menu{position:relative;display:inline-flex}
 .req-menu .hd-menu{position:absolute;top:calc(100% + 6px);right:0;z-index:5;min-width:200px}
 .req-menu-item{box-sizing:border-box;text-decoration:none}   /* Download .md is a link row */
@@ -10548,8 +10547,8 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
   .req-spec a.req-src-tag{position:relative}
   .req-spec a.req-src-tag::after{content:"";position:absolute;inset:-13px -4px}
 }
-/* Board 18: Files for the run on Ready to build (D14). A chip is the file's Send switch. Attached (the user's decision,
-   A2's .req-confirm pattern): a --green-ink-strong outline and check on --panel, no fill (5.7:1 light), the name in --ink.
+/* Board 18: Files for the run on Ready to build (D14). A chip is the file's Send switch. Attached (A2's .req-confirm
+   pattern): a --green-ink-strong outline and check on --panel, no fill (5.7:1 light), the name in --ink.
    Left out: a dashed outline (an --ink-2 / --ink-3 mix, 3.7:1 on --panel), a + and the name in --ink-2 (6.6:1). One
    weight either way, so a press never shifts the row. No strikethrough and no red: those say rejected and error. */
 .req-build-files{display:flex;flex-direction:column;gap:8px;margin-top:10px;padding-top:12px;border-top:1px solid var(--line)}

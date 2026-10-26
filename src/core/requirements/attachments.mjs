@@ -21,7 +21,7 @@ export const REQ_ATT_ID_RE = /^ratt_[0-9a-f]{12}$/;
 export function displayName(raw) {
   // toWellFormed: a lone surrogate (JSON can carry one) becomes U+FFFD; bidi controls go, so a name cannot spoof its end
   const last = String(raw ?? '').toWellFormed().split(/[\\/]/).pop();
-  const s = last.replace(/[\u0000-\u001f\u007f؜‎‏‪-‮⁦-⁩]/g, '').trim().slice(0, REQ_ATTACH_LIMITS.name).trim();
+  const s = last.replace(/[\u0000-\u001f\u007f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '').trim().slice(0, REQ_ATTACH_LIMITS.name).trim();
   return s && s !== '.' && s !== '..' ? s : 'file';
 }
 
@@ -169,7 +169,7 @@ export function checkNewFiles(ownerType, existing = [], files = []) {
 }
 
 // The allow rule of a read: its folder and copy in Ask's proven `//**/` pattern form (deny-rules.mjs), never a drive or a
-// home path (Claude Code matches Windows paths in POSIX form). Intent only: the file-read guard (Task 3) enforces it.
+// home path (Claude Code matches Windows paths in POSIX form). Intent only: the file-read guard enforces it.
 export function readRule(path) {
   const parts = String(path).replaceAll('\\', '/').split('/').filter(Boolean);
   return `Read(//**/${parts.at(-2)}/${parts.at(-1)})`;

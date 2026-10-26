@@ -1,4 +1,4 @@
-// test/requirements-real-read-tool.test.mjs — the real-read tool without spending (plans/requirements-a8-plan.md Task 17):
+// test/requirements-real-read-tool.test.mjs — the real-read tool without spending (design §8 "Real reads"):
 // it refuses mock mode, its dry run sends nothing and makes no folder, its fixtures are what they claim, every call gets
 // the budget that is left and the tool stops at the cap, and the probe's verdict is strict.
 import { test, after } from 'node:test';

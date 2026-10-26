@@ -660,7 +660,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         const [scopeType, ...rest] = select.value.split(':');
         const attachments = picked.length ? await Promise.all(picked.map(encodeFile)) : undefined;
         const data = await api('POST', '/api/requirements', { scopeType, scopeKey: rest.join(':'), title: title.value, description: desc.value, ...(attachments ? { attachments } : {}) });
-        // A file the server could not store is named on the feature page (the feature stays; Task 9's filesNotStored).
+        // A file the server could not store is named on the feature page (the feature stays; the create's filesNotStored).
         const lost = Array.isArray(data.filesNotStored) ? data.filesNotStored : [];
         if (lost.length) carry = { param: `feature/${data.feature.seq}`, text: lost.map((n) => `${n} was not added: Worca could not store it. Add it on the feature page.`).join(' ') };
         route(`feature/${data.feature.seq}`);
@@ -1403,7 +1403,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   // being read has no switch (D1): its chip waits. Names are text only.
   const unsendable = (a) => a.sendable === false;
   const cannotGo = (name) => `${name} cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.`;
-  // a brief document's switch is "Send with every run": it speaks of runs and of interviews (Task 15 review, user-approved)
+  // a brief document's switch is "Send with every run": it speaks of runs and of interviews
   const cannotGoDoc = (name) => `${name} cannot go with runs: Worca could not open the stored file. Replace it, or leave it out.`;
   function filesForRun(f) {
     const files = Array.isArray(f.attachments) ? f.attachments : [];

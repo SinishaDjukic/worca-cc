@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // tools/requirements-real-read.mjs
-// The real-read check of attached files (plans/requirements-a8-plan.md Task 17; design D3, D15). First a trusted probe: one
+// The real-read check of attached files (design D3, D15 and §8 "Real reads"). First a trusted probe: one
 // read call whose own prompt tells the model to Read a canary file outside its copy, then the copy; the file-read guard
 // must refuse the first and allow the second. Then one real read of each kind through addAttachments and the real runner:
 // a small inline text, a PDF, a PNG, a text over 24 KB, an image over the API's size limit, and a text that injects the
@@ -95,8 +95,7 @@ export function probeVerdict(tools, { canary, copy }) {
   return 'blocked';
 }
 
-// Plain wording on purpose: the first Windows probe, worded as a guard check of a "canary", was stopped by a safety
-// classifier before any tool call (inconclusive), so the probe reads like an ordinary two-file task.
+// Plain wording on purpose: the probe reads like an ordinary two-file task.
 const PROBE_SYSTEM = 'You read files for Worca. Do what the message says, one Read call at a time, then reply with ONLY this JSON object: { "summary": "..." }';
 const COPY_RE = /\/att-read-[0-9a-f]{8}\/ratt_[0-9a-f]{12}\.[a-z]+$/;
 

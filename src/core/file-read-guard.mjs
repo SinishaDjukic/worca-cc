@@ -111,7 +111,7 @@ export function toolCalls(events) {
 /**
  * True only when every tool call of a read's stream has its own guard decision in the log (by tool call id when both
  * carry one, else by tool and Read path; one decision covers one call). A read whose calls are not all covered ran
- * with a guard that did not decide them, so its result is not to be trusted (Task 4 discards it).
+ * with a guard that did not decide them, so its result is not to be trusted (the read job discards it).
  */
 export function guardDecisionsCover(events, logLines) {
   const decisions = (Array.isArray(logLines) ? logLines : []).map(parseDecision).filter(Boolean);

@@ -1,5 +1,5 @@
 // test/requirements-view-files.test.mjs — the Requirements page's files in jsdom with a fake API (plans/requirements-a8-design.md §6;
-// design round 3, boards 15–21). Grows in Tasks 11–15.
+// design round 3, boards 15–21).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
@@ -390,8 +390,8 @@ test('a question that came from a file says "From <name>:" before its why; What 
     'Worca works from the shop brief and the files below. Orders is described in the brief. It has not looked at the code for this feature.');
 });
 
-// The brief asserted `.req-files .btn,…{min-height:44px}`; upstream's design-language test bans a 44px height on a
-// control (OFF_SCALE), so the 44 px targets are hit areas past the visible control (Task 11's pattern).
+// Upstream's design-language test bans a 44px height on a control (OFF_SCALE), so the 44 px targets at 390 px are
+// hit areas past the visible control.
 test('style.css: the Files card rules (and the phone rules) inside the Requirements block, tokens only', () => {
   assertInRequirementsBlock(['.req-files{', '.req-file{', '.req-file-top', '.req-file-took', '.req-clamp', '.req-file-failed', '.req-file-history', '.req-file-send']);
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
@@ -401,7 +401,7 @@ test('style.css: the Files card rules (and the phone rules) inside the Requireme
   assert.match(css, /\.req-files \.req-ico::after\{content:"";position:absolute;inset:-8px\}/, 'a 28px icon button: 44 x 44');
 });
 
-// ── boards 16 / 20: Task 12's own checks (the ⋯ menu, focus, live regions, uploads, XSS, flag off) ─────────────────
+// ── boards 16 / 20: the ⋯ menu, focus, live regions, uploads, XSS, flag off ─────────────────
 
 test("board 16/20: a file's ⋯ is named for it and opens a menu with Open and Edit what Worca took from it (the pencil at phone width)", async () => {
   const { host } = await openFeature(feature());
@@ -525,7 +525,7 @@ test('style.css: board 20 hides the pencil below 600 px (it is in the ⋯ menu);
   assert.match(rule('.req-menu .hd-menu'), /position:absolute/, 'a menu floats under its trigger');
 });
 
-// ── Task 12 follow-up (review): the reading line's AA ink, the editor's Escape and caret, a dropped draft, focus at 10 files ─────────
+// ── the reading line's AA ink, the editor's Escape and caret, a dropped draft, focus at 10 files ─────────
 
 test('style.css: the "Reading N files…" badge takes --blue-ink-strong on --blue-bg (AA), inside the Requirements block', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
@@ -881,7 +881,7 @@ test('style.css: board 20 puts the pencil in the menu below 600 px; board 21 rul
   assert.match(rule('.req-spec a.req-src-tag::after'), /inset:-13px -4px/, 'a source link has a 44 px target at phone width');
 });
 
-// ── Task 13 review: an ask in progress, a repaint mid-request, renamed sources, error copy, a cancelled picker ─────────
+// ── an ask in progress, a repaint mid-request, renamed sources, error copy, a cancelled picker ─────────
 
 test('an ask in progress: the blue Asking… badge (one role=status node) and "Worca is looking for: …"; the menu waits; cleared by the answer', async () => {
   let f = feature({ attachments: [att({ asking: 'What about refunds?' })] });
@@ -1471,7 +1471,7 @@ test('style.css: board 19 at phone width: the Documents card shares the Files ca
   assert.match(block, /\.req-files \.switch-row::after\{content:"";position:absolute;inset:-8px 0\}/, 'the Documents card is a .req-files card');
 });
 
-// ── Task 15 review: documents speak for every run; a dialog closes with its brief ─────────────────
+// ── documents speak for every run; a dialog closes with its brief ─────────────────
 
 test('board 19: a Replace dialog closes when the brief page is left (to the list, or to another brief); the page is not inert', async () => {
   const OTHER = '/api/requirements/brief/project/cafe-1';

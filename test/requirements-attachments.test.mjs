@@ -1,5 +1,5 @@
 // test/requirements-attachments.test.mjs — the pure attachment rules (plans/requirements-a8-design.md D4, D7, D9, §4)
-// and their rows in the store. Grows in Tasks 2–9.
+// and their rows in the store.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';

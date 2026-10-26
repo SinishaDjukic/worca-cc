@@ -1,6 +1,6 @@
 // test/db-migrate-v77.test.mjs — req_attachments, req_cost_ledger.attachment_id and req_starts.files_json
 // (plans/requirements-a8-design.md §3). Upstream took v75 (ask_threads.archived_at / pinned_at) and v76
-// (ask_chat_groups + ask_threads.group_id) while A8 was in review, so A8's rung is v77; an early A8 checkout
+// (ask_chat_groups + ask_threads.group_id) before A8 landed, so A8's rung is v77; an early A8 checkout
 // stamped its DB 75 without upstream's v75/v76 additions, and those reach 77 complete too.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
