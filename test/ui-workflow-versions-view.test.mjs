@@ -140,3 +140,10 @@ test('while the versions are read: a plain "Reading the versions…", no stale r
   assert.equal(root.querySelectorAll('button').length, 0);
   assert.doesNotMatch(root.textContent, /No versions yet/);
 });
+
+test('a version never used says "Not used yet", one used once says "Used once"', () => {
+  const o = overview(); o.versions[0].runs = 0; o.versions[1].runs = 1;
+  const { root } = boot(o);
+  const used = [...root.querySelectorAll('.wfv-vt-used')].map((e) => e.textContent);
+  assert.deepEqual(used, ['Not used yet', 'Used once']);
+});

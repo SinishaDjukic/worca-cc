@@ -8525,7 +8525,7 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 /* The Versions page (Task 8, canvas board 7): the draft row, one row per version, then every save with Restore. */
 .wfv-vpage{max-width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:20px;}
 .wfv-vt{padding:0;overflow-x:auto;}
-.wfv-vt-draft,.wfv-vt-row{display:grid;grid-template-columns:64px minmax(0,1fr) 120px auto;gap:16px;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);}
+.wfv-vt-draft,.wfv-vt-row{display:grid;grid-template-columns:64px minmax(0,1fr) 120px 320px;gap:16px;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);}
 .wfv-vt-draft{background:var(--canvas-2);}
 .wfv-vt-row:last-child{border-bottom:0;}
 .wfv-vt-no{font-family:var(--mono);font-weight:600;}
@@ -8536,7 +8536,7 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wfv-vh{display:flex;flex-direction:column;gap:6px;}
 .wfv-vh-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);}
 .wfv-vh-by{margin-top:0;}
-@media (max-width:700px){.wfv-vt-draft,.wfv-vt-row{grid-template-columns:48px minmax(0,1fr);}.wfv-vt-used,.wfv-vt-acts{grid-column:2;justify-content:flex-start;}}
+@media (max-width:700px){.wfv-vt-draft,.wfv-vt-row{grid-template-columns:48px minmax(0,1fr);}.wfv-vt-used,.wfv-vt-acts,.wfv-vt-draft > .btn{grid-column:2;justify-content:flex-start;}.wfv-vt-draft > .btn{justify-self:start;}}
 .wfv-bar .btn:not(.btn-icon) svg{width:15px;height:15px;}
 .wfv-bar .wfv-chev{width:12px;height:12px;color:var(--ink-2);}
 .wfv-savewrap{display:inline-flex;margin-left:4px;}
@@ -8578,6 +8578,8 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfv-sheet-title{margin:0;font-size:13px;font-weight:600;}
 .wfv-sheet-head .btn-icon{margin-left:auto;}
 .wfv-sheet-body{overflow:auto;padding:16px;}
+/* Narrow: the top-left bar may shrink (the name gives way first) and never outgrows the stage; the status line stays for screen readers. */
+@media (max-width:760px){.wfv-tl{max-width:calc(100% - 24px);}.wfv-tl .wfv-bar{max-width:100%;}.wfv-tl .wfv-name{min-width:0;flex:0 1 auto;}.wfv-tl .wfv-menu-btn{flex:0 0 auto;}.wfv-tl .wfv-menu-btn > span{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;}.wfv-tl .wfv-pages .flag-chip{display:none;}.wfv-tl .wfv-pages{flex:0 0 auto;}.wfv-vstatus{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;}
 @media (max-width:760px){.wfv-tr{top:58px;}#wfv-autolayout span{display:none;}#wfv-autolayout{width:30px;padding:0;justify-content:center;}.wfv-sheet{padding:8px;}}
 @media (prefers-reduced-motion:reduce){}
 

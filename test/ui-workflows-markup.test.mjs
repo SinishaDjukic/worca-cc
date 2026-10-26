@@ -92,3 +92,19 @@ test('versions (flag workflowTests): Canvas / Versions switch, the status line, 
   assert.equal(doc.getElementById('wfv-page-versions').getAttribute('aria-controls'), 'wfv-versions');
   assert.equal(doc.getElementById('wfv-page-canvas').getAttribute('aria-controls'), 'wfv-canvas');
 });
+
+test('narrow screens: the top-left bar shrinks inside the stage instead of pushing Canvas · Versions off-screen', () => {
+  const m = css.match(/@media \(max-width:760px\)\{\.wfv-tl\{.*\}/);
+  assert.ok(m, 'a <=760px rule for .wfv-tl');
+  assert.match(m[0], /\.wfv-tl\{[^}]*max-width:calc\(100% - 24px\)/);
+  assert.match(m[0], /\.wfv-tl \.wfv-bar\{[^}]*max-width:100%/);
+  assert.match(m[0], /\.wfv-name\{[^}]*min-width:0/);
+  assert.match(m[0], /\.wfv-vstatus\{[^}]*clip/, 'the status stays for screen readers (visually hidden, not display:none)');
+  assert.doesNotMatch(m[0], /\.wfv-vstatus\{[^}]*display:none/);
+  assert.match(m[0], /\.wfv-menu-btn > span\{[^}]*clip/, 'Workflows goes icon-only but keeps its name for screen readers');
+  assert.match(css, /\.wfv-stage\{[^}]*overflow:hidden/);
+});
+
+test('versions table: the fourth (actions) column has a fixed width so Used lines up across rows', () => {
+  assert.match(css, /\.wfv-vt-draft,\.wfv-vt-row\{display:grid;grid-template-columns:64px minmax\(0,1fr\) 120px 320px;/);
+});

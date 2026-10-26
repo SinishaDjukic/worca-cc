@@ -65,7 +65,7 @@ export function renderVersionsPage(root, o, actions, { doc, error = null, loadin
       if (v.inUse) head.append(el(doc, 'span', 'badge wfv-inuse', 'New runs use this'));
       main.append(head, el(doc, 'span', 'hint', [when(v.createdAt), who(v.by)].filter(Boolean).join(' · ')),
         el(doc, 'span', 'hint', v.changes.join(' · ')));
-      const used = el(doc, 'span', 'wfv-vt-used', v.runs === 1 ? 'Used once' : `Used ${v.runs} times`);
+      const used = el(doc, 'span', 'wfv-vt-used', v.runs === 0 ? 'Not used yet' : v.runs === 1 ? 'Used once' : `Used ${v.runs} times`);
       const acts = el(doc, 'span', 'wfv-vt-acts');
       if (!v.inUse) acts.append(keyed(named(btn(doc, 'Use for new runs', () => actions.useVersion(v.versionNo)), `Use v${v.versionNo} for new runs`), `vp:use:${v.versionNo}`));
       acts.append(keyed(named(btn(doc, 'Restore into draft', () => actions.restore(v.id, `v${v.versionNo}`), 'btn btn-sm btn-quiet'), `Restore v${v.versionNo} into draft`), `vp:restore:${v.id}`));
