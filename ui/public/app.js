@@ -5559,9 +5559,19 @@ if (el.agentsPromote) {
         appendLog({ source: 'ui', level: 'error', text: `workflow defaults: ${data.error || res.status}`, ts: Date.now() });
         return;
       }
+      // A version in use (flag workflowTests; GET ?use=live carries its versionNo): the defaults went into the draft,
+      // and new runs keep using the version in use, which does not have them. The project's picks are therefore kept,
+      // so new runs keep running them; the hint says where the defaults went (user decision, final review).
+      const shown = state.workflowCache[workflowId];
+      const versionInUse = Boolean(shown && Number.isInteger(shown.versionNo));
       // The cached template still carries the OLD defaults; drop it so the
       // reset below repaints against what was just persisted.
       delete state.workflowCache[workflowId];
+      if (versionInUse) {
+        notify({ tone: 'ok', title: 'Saved to your draft. New runs keep these picks until you use a new version.' });
+        await renderWorkflowConfig(workflowId);
+        return;
+      }
       el.agentsReset.click(); // clearing the now-redundant overrides is the second half
     } catch (err) {
       appendLog({ source: 'ui', level: 'error', text: `workflow defaults error: ${err.message}`, ts: Date.now() });
