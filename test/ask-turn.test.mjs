@@ -1612,6 +1612,34 @@ test('relay: the turn hands its web access to the relay, marks the spawn relayed
   ]);
 });
 
+// 1.3: tmp/ask is sticky but group-writable for every pool user, and the message id shows under ask/<thread>/skills/
+// first, so another person's agent can make mcp-<id>.json before worca does. Worca then refuses: it never writes the
+// relay token into a file someone else made, nor through a link they left.
+test('1.3: a pre-made relay MCP config (a file or a link) is never written into, and the turn never spawns', { skip: process.platform === 'win32' ? 'POSIX links' : false }, async () => {
+  const { worcaHome } = await import('../src/core/projects.mjs');
+  const { mkdirSync, writeFileSync, symlinkSync } = await import('node:fs');
+  const scratch = join(worcaHome(), 'tmp', 'ask');
+  mkdirSync(scratch, { recursive: true });
+  for (const plant of ['file', 'link']) {
+    const s = seed();
+    const target = join(scratch, `mcp-${s.asst.id}.json`);
+    const aimed = join(scratch, `aimed-${s.asst.id}.json`);
+    writeFileSync(aimed, 'PLANTED');
+    if (plant === 'file') writeFileSync(target, 'PLANTED'); else symlinkSync(aimed, target);
+    let spawned = false; const claimed = [];
+    const { turn } = makeTurn(s, {}, {
+      claimAgentFile: (p) => claimed.push(p),
+      agentRelay: () => ({ url: 'http://127.0.0.1:1/api/ask/relay', token: 'RELAY-TOKEN', dispose: () => {} }),
+      runClaudeImpl: async () => { spawned = true; throw new Error('never'); },
+    });
+    await turn.run();
+    assert.equal(readFileSync(aimed, 'utf8'), 'PLANTED', `${plant}: the token never lands in it`);
+    assert.equal(spawned, false, `${plant}: no spawn`);
+    assert.deepEqual(claimed, [], `${plant}: nothing claimed`);
+    assert.equal(getMessage(s.asst.id).status, 'error');
+  }
+});
+
 // set_away_now / set_run_away_mode: the child validated; the parent applies and the chat shows the line.
 const awayCall = (onEvent, n, name, input, content, isError = false) => {
   push(onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: `msg_${n}`, content: [{ type: 'tool_use', id: `toolu_${n}`, name, input }] } });

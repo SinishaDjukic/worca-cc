@@ -14,6 +14,7 @@
 import { EventEmitter } from 'node:events';
 import { join, dirname, resolve as pathResolve } from 'node:path';
 import { mkdir, writeFile, unlink, rm, readdir, lstat } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
 
 import { runClaude } from '../claude-runner.mjs';
 import { CLAUDE_SIGNED_OUT_CODE } from '../preflight.mjs';
@@ -1434,8 +1435,10 @@ class AskTurn extends EventEmitter {
         // the person's agent user (agent-pool.mjs), which reads this file through its group. It
         // carries this turn's relay token: with a pool the file goes to that user's own group (worca
         // and that user only), so another person's agent or plugin code in worca-share cannot read
-        // it (V10); the scratch dir is sticky (docker/entrypoint.sh), so nobody else replaces it.
-        { encoding: 'utf8', mode: this.relay ? 0o640 : 0o600 },
+        // it (V10); the scratch dir is sticky (docker/entrypoint.sh), so nobody else replaces it. Sticky does not stop
+        // another agent making the name FIRST (the message id shows under ask/<thread>/skills/): created here or
+        // refused, never written through a link or into a file someone else made (1.3).
+        { encoding: 'utf8', mode: this.relay ? 0o640 : 0o600, flag: fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW },
       );
       if (this.relay) d.claimAgentFile(mcpConfigPath);
       // One 30-minute budget for the whole turn, retry included. The timedOut
