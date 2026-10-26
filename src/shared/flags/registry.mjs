@@ -136,7 +136,7 @@ export const FLAGS = Object.freeze([
     stage: 'experimental',
     default: false,
     owner: 'TomicaB',
-    since: '1.14.0',
+    since: '1.15.0',
     added: '2026-10-25',
     reviewBy: '2027-01-22',
     docs: 'docs/feature-flags.md',
