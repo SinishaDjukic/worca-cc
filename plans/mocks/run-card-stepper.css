@@ -592,3 +592,25 @@ html,body{height:auto;overflow:visible;margin:0;}
 /* Decisions' "Answer it in the card" lands here: the block marks itself once. */
 .sc-answer.is-flash{animation:ov-flash 1.2s ease-out;border-radius:var(--r-sm);}
 @media (prefers-reduced-motion: reduce){.sc-answer.is-flash{animation:none;outline:2px solid var(--line-2);outline-offset:4px;}}
+/* The tag group: a mark, then labels and cost tags in quiet outlines; one line, the rest folds into +N. */
+.rc-facts{flex-wrap:nowrap !important;}
+.rc-tagpop{flex:none;display:inline-flex;}
+.rc-tags{display:inline-flex;align-items:center;gap:6px;padding:2px 4px;margin:-2px -4px;border:0;background:none;border-radius:var(--r-sm);
+  cursor:pointer;font:inherit;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
+.rc-tags > svg{flex:none;color:var(--ink-3);}
+.rc-tags:hover,.rc-tags[aria-expanded="true"]{background:var(--hover);}
+.rc-tags:hover > svg{color:var(--ink-2);}
+.rc-tags:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.rc-tag{display:inline-flex;align-items:center;height:20px;padding:0 6px;border-radius:var(--r-xs);box-shadow:inset 0 0 0 1px var(--line-2);
+  font-size:var(--fs-caption);font-weight:500;color:var(--ink-2);}
+.rc-tags:hover .rc-tag{color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink-3);}
+.rc-tag[hidden],.rc-tag-more[hidden]{display:none;}
+.rc-tag-more{font-size:var(--fs-caption);color:var(--ink-2);}   /* it is read: never the faint grey */
+.rc-tag-ed{width:290px;padding:8px;display:flex;flex-direction:column;gap:2px;}
+.rc-tag-ed .input{margin-bottom:4px;}
+.rc .menu-item[role="menuitemcheckbox"]{display:grid;grid-template-columns:12px minmax(0,1fr) auto;column-gap:10px;}
+.rc .menu-item[role="menuitemcheckbox"]::before{content:"";grid-column:1;width:12px;height:12px;background:transparent;
+  mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center/12px no-repeat;}
+.rc .menu-item[role="menuitemcheckbox"][aria-checked="true"]::before{background:currentColor;}
+.rc .menu-item[role="menuitemcheckbox"] > .mi-l{grid-column:2;}
+.rc .menu-item[role="menuitemcheckbox"] > .mi-hint{grid-column:3;}

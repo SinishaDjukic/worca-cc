@@ -24,7 +24,7 @@ Every screen reads down one rail, and everything has one place on it.
 |---|---|---|
 | Top bar | The trail `Runs › place › group` (the page is never a crumb; `‹ Parent` at 760px and below) and, on a run inside a group, the pager `‹ 2 of 3 ›` at the right | Buttons for the run |
 | Title | The title, one line with an ellipsis; a tap shows it whole | Chips, buttons |
-| Metadata line | In this order: the kind (group pages only: `Feature`, `Chain`), where the code lives (branch → base with copy, or the folder, or the repositories), the PR number, labels and cost tags, then `+`. It wraps only between those groups; the branch loses its middle first | The project (it is in the trail), the start time (it is in the Time figure), counts the card already shows |
+| Metadata line | In this order: the kind (group pages only), where the code lives as a phrase (`#959 merges branch into dev`, `branch into dev`, `merged into`, `main to origin/main`, `into ~/folder`; the branch copies itself), then the tag group: a tag mark, labels, then cost tags (`key: value`), each in a quiet outline with no colour; one line, the rest folds into `+N`, the full list in its tooltip. With nothing set, the mark alone | The project (in the trail), the start time (in the Time figure), counts the card already shows, colour |
 | Status line | The state word with one detail line; at its right the run's controls together: the action (main + ▾), then ⋯ | — |
 | Stepper | One segment per stage (per run on a group page); cells are steps; the label under a segment is its time | — |
 | Open stage | The selected stage's steps (circle · name · time · loops), the live line; a question is answered here, under its step; on a group, the selected run with its cost and Open run; the PR stage holds the PRs | — |
@@ -41,7 +41,8 @@ Every screen reads down one rail, and everything has one place on it.
 | The code's own actions | The Changes head: Check out ▾ (Download patch, Copy git commands, Refresh) |
 | A yes or no, or a one-line answer | The strip under the top bar: confirms, Run after |
 | A form | The app's dialog: Create PR (into, PRs, title, description with Generate, Draft, Watch) |
-| Labels, cost tags, group | `+` at the end of the metadata line |
+| Labels and cost tags | The tag group is one button: it (or `L`) opens one editor with a field (a word adds a label, `key: value` a cost tag) and two checked lists, Labels and Cost tags; removing happens there, so the group has no `×` |
+| Group membership | ⋯: Move to group…, or Leave it |
 
 ## Rules
 

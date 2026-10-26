@@ -51,10 +51,38 @@ function menu(id, items) {
     return `${rule}<button type="button" class="menu-item${bad ? ' is-danger' : ''}" role="${role}"${it.off ? ' aria-disabled="true"' : ''}${it.checked === undefined ? '' : ` aria-checked="${!!it.checked}"`} data-menu-pick="${esc(it.id || it.text)}"${it.help ? ` title="${esc(it.help)}"` : ''}><span class="mi-l">${esc(it.text)}</span>${it.hint ? `<span class="mi-hint">${esc(it.hint)}</span>` : it.isNew || M.isNew(it.text) ? '<span class="mi-hint new-tag">New</span>' : ''}</button>`;
   }).join('')}</div>`;
 }
-function chip(c, i) {
-  const x = `<button type="button" class="tag-x" aria-label="Remove ${esc(c.text)}" data-unchip="${i}">${svg('x', 10)}</button>`;
-  if (c.kind === 'label') return `<span class="label-chip"><span class="label-dot hue-blue"></span><span class="label-chip-t" title="${esc(c.text)}">${esc(c.text)}</span>${x}</span>`;
-  return `<span class="badge tag-chip" title="${esc(c.text)}">${esc(c.text)}${x}</span>`;
+// Labels and cost tags are one group on the metadata line: a tag mark, then each name in a quiet outline (labels
+// first, then cost tags, which read as key: value), what does not fit folded into +N. The group is one button; it
+// opens one editor (also L). No colour, no ×: removing is in the editor.
+const TAG_ICON = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"></path><circle cx="8" cy="8" r="1.4" fill="currentColor"></circle></svg>';
+const KNOWN = { label: [['ui', 12], ['needs demo', 4], ['hotfix', 7], ['release', 9], ['docs', 2]], tag: [['team: web', 31], ['team: api', 18], ['client: acme', 6]] };
+const tagsOf = () => ui.chips.filter((c) => c.kind === 'label').concat(ui.chips.filter((c) => c.kind === 'tag'));
+function tagGroupHtml() {
+  const all = tagsOf(); const list = all.map((c) => c.text).join(', ');
+  return `<span class="rc-pop rc-tagpop"><button type="button" class="rc-tags" data-menu="tags" data-key="menu:tags" aria-haspopup="dialog" aria-expanded="${ui.menu === 'tags'}" title="${all.length ? esc(list) + ' · L to edit' : 'Add a label or cost tag · L'}" aria-label="${all.length ? 'Labels and cost tags: ' + esc(list) : 'Add a label or cost tag'}">${TAG_ICON}${all.map((c) => `<span class="rc-tag" data-tag-kind="${c.kind}">${esc(c.text)}</span>`).join('')}<span class="rc-tag-more" hidden></span></button>${ui.menu === 'tags' ? tagEditorHtml() : ''}</span>`;
+}
+function tagEditorHtml() {
+  const on = (k, t) => ui.chips.some((c) => c.kind === k && c.text === t);
+  const rows = (k) => { const known = KNOWN[k].concat(ui.chips.filter((c) => c.kind === k && !KNOWN[k].some(([t]) => t === c.text)).map((c) => [c.text, 1]));
+    return known.map(([t, n]) => `<button type="button" class="menu-item" role="menuitemcheckbox" aria-checked="${on(k, t)}" data-tagtoggle="${k}|${esc(t)}" data-key="tagt:${k}:${esc(t)}"><span class="mi-l">${esc(t)}</span><span class="mi-hint">${n}</span></button>`).join(''); };
+  return `<div class="menu rc-tag-ed" role="dialog" aria-label="Labels and cost tags">
+    <input class="input input-sm" id="tag-input" type="text" placeholder="A label, or key: value for a cost tag" aria-label="Add a label or cost tag" data-key="tag-input">
+    <p class="menu-h">Labels</p>${rows('label')}<div class="menu-sep" role="separator"></div><p class="menu-h">Cost tags</p>${rows('tag')}
+    <p class="menu-help">Cost tags split this run’s cost in Statistics</p></div>`;
+}
+// The group never wraps: show what fits, fold the rest into +N (measured after each render, never on hover).
+function fitTags() {
+  const g = document.querySelector('.rc-tags'); if (!g) return;
+  const tags = [...g.querySelectorAll('.rc-tag')]; const more = g.querySelector('.rc-tag-more');
+  tags.forEach((t) => { t.hidden = false; }); more.hidden = true;
+  const line = g.closest('.rc-facts'); const br = line.querySelector('.rc-mid-a');
+  // Over when the last tag runs past the line, or when the branch would lose more than its middle (it keeps about a
+  // third of the line, at most 240px). The open editor is not part of the line.
+  const keep = Math.min(240, line.clientWidth * 0.34);
+  const lastRight = () => { const vis = [...g.children].filter((x) => !x.hidden && x.getBoundingClientRect().width); return vis.length ? vis[vis.length - 1].getBoundingClientRect().right : 0; };
+  const over = () => lastRight() > line.getBoundingClientRect().right + 1 || (br && br.scrollWidth > br.clientWidth + 1 && br.clientWidth < keep);
+  let hide = 0;
+  while (over() && hide < tags.length) { hide++; tags[tags.length - hide].hidden = true; more.hidden = false; more.textContent = '+' + hide; }
 }
 // The + picker: after choosing Label, Cost tag or group, a small field to type one, with existing values to pick.
 function pickerHtml(kind) {
@@ -207,12 +235,9 @@ function render() {
   const a = v.action;
   // The run's controls sit together on the status line: its one action (with ▾), then ⋯ for everything else.
   const split = a ? `<div class="btn-split rc-action rc-pop is-right"><button type="button" class="btn btn-sm ${a.primary ? 'btn-primary' : ''}" title="${esc(a.help)}" data-key="act-main" data-label="${esc(a.label)}">${svg(a.icon, 14)}${esc(a.label)}${a.isNew ? '<span class="new-tag" title="Not in today’s app: proposed">New</span>' : ''}</button>${a.items.length ? `<button type="button" class="btn btn-sm btn-icon ${a.primary ? 'btn-primary' : ''}" aria-label="More actions" aria-haspopup="menu" aria-expanded="${ui.menu === 'act'}" data-menu="act" data-key="menu:act">${svg('chevron', 14)}</button>${menu('act', a.items)}` : ''}</div>` : '';
-  const action = `<div class="rc-side">${split}<span class="rc-pop is-right rc-more"><button type="button" class="btn btn-sm btn-icon" aria-label="More for this run" aria-haspopup="menu" aria-expanded="${ui.menu === 'more'}" data-menu="more" data-key="menu:more"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg></button>${menu('more', moreItems(v))}</span></div>`;
+  const action = `<div class="rc-side">${split}<span class="rc-pop is-right rc-more"><button type="button" class="btn btn-sm btn-icon" aria-label="More for this run" aria-haspopup="menu" aria-expanded="${ui.menu === 'more'}" data-menu="more" data-key="menu:more"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg></button>${ui.menu === 'pick-group' ? pickerHtml('group') : menu('more', moreItems(v))}</span></div>`;
   // Many labels and tags, one group: a run already in a feature or chain, or a group page, joins none; a run you
   // grouped can leave it again from the same menu.
-  const addable = M.add.filter((x) => x.kind !== 'group' || (!v.inGroup && !v.addedGroup))
-    .map((x) => ({ id: x.kind, text: x.menu, help: x.help }))
-    .concat(v.addedGroup ? [{ id: 'ungroup', text: 'Leave ' + v.addedGroup, help: 'The run leaves the group; its labels and tags stay' }] : []);
   // Where the code lives, said as a phrase that follows the run: "branch into dev", "#959 merges branch into dev",
   // "branch merged into dev", "main to origin/main", "into ~/folder". The branch name copies itself on click and loses
   // its middle, never its end, so sibling runs (-2, -3) stay apart.
@@ -227,13 +252,10 @@ function render() {
     : `<span class="rc-place">${pl.pr && !pl.merged ? pr + word('merges') : ''}${branchBtn(pl.branch)}${word(pl.merged ? 'merged into' : 'into')}<code class="rc-base">${esc(pl.base)}</code>${pl.pr && pl.merged ? word('by') + pr : ''}</span>`;
   const repos = pl.repos.length ? `<span>${pl.repos.length} repositories</span>` : '';
   // + stays at the end of the place line; labels and tags, once added, get their own wrapping row under it.
-  const chipsInline = v.chips.length ? `<span class="rc-chipset">${ui.chips.map((c, i) => (c.kind === 'group' ? '' : chip(c, i))).join('')}</span>` : '';
   const kind = v.kind ? `<span class="kind-chip">${esc(v.kind)}</span>` : '';
   const placeLine = [kind, where, repos, pl.branch || pl.folder ? '' : pr].filter(Boolean).join('<span class="rc-sep" aria-hidden="true">·</span>');
-  const add = (addable.length ? `<span class="rc-pop"><button type="button" class="btn btn-sm btn-quiet rc-add${v.chips.length ? ' btn-icon' : ' has-text'}" aria-label="Add a label, cost tag or group" aria-haspopup="menu" aria-expanded="${ui.menu === 'add' || ui.menu.startsWith('pick-')}" data-menu="add" data-key="menu:add">${svg('plus', 14)}${v.chips.length ? '' : 'Label'}</button>${ui.menu.startsWith('pick-') ? pickerHtml(ui.menu.slice(5)) : menu('add', addable)}</span>` : '');
-  // One metadata line: what it is, where the code lives, then labels and tags with + at their end (wrapping only
-  // between those groups, so + never sits alone).
-  const facts = `<span class="rc-placeset">${placeLine}</span>` + (v.chips.length ? chipsInline.replace(/<\/span>$/, add + '</span>') : add ? (placeLine ? '<span class="rc-sep" aria-hidden="true">·</span>' : '') + add : '');
+  // One metadata line: what it is, where the code lives, then the tag group (mark, labels, cost tags).
+  const facts = `<span class="rc-placeset">${placeLine}</span>${placeLine ? '<span class="rc-sep" aria-hidden="true">·</span>' : ''}${tagGroupHtml()}`;
   // Where you are: Runs › place › group, the page itself never a crumb; on a narrow card only the parent, as ‹ Parent.
   const crumbs = `<nav class="rc-crumbs" aria-label="Breadcrumb"><ol>${v.crumbs.map((c, i) => `<li${i === v.crumbs.length - 1 ? ' class="is-parent"' : ''}>${c.go ? `<button type="button" class="rc-crumb" data-crumb="${i}" data-key="crumb:${i}" title="${esc(c.t)}">${esc(c.t)}</button>` : `<a class="rc-crumb" href="#" data-key="crumb:${i}" data-say="Goes to ${esc(i ? (c.group ? 'the ' + c.t + ' group' : c.t + ' runs') : 'the Runs list')}" title="${esc(c.t)}">${esc(c.t)}</a>`}</li>`).join('')}</ol></nav>`;
   // A run in a group steps to its siblings; a run that has not started has no page yet.
@@ -272,12 +294,13 @@ function render() {
     <div class="rtab-panel" role="tabpanel" id="rtab-panel" aria-labelledby="tab-${sel}" tabindex="0">${panelHtml(v)}</div>
   </div>`;
 
+  fitTags();
   fitMenus();
   const nx = document.getElementById('next-event'); if (nx) { const to = (M.flow[ui.caseId] || {}).next; nx.disabled = !to; nx.title = to ? 'Event: ' + EVENT[ui.caseId] : 'Nothing outside the run happens next here; use the card'; }
   const selTab = document.querySelector('.rc-tabs .tab[aria-selected="true"]'); const strip = selTab?.parentElement;
   if (strip) { const l = selTab.offsetLeft - strip.offsetLeft, r = l + selTab.offsetWidth; if (l < strip.scrollLeft) strip.scrollLeft = l; else if (r > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = r - strip.clientWidth; }
   if (keep) {
-    const el = keep === 'menu-first' ? document.querySelector('.menu .menu-item') : document.querySelector(`[data-key="${CSS.escape(keep)}"]`);
+    const el = keep === 'menu-first' ? document.querySelector('.menu .menu-item') : document.querySelector(`[data-key="${CSS.escape(keep)}"]`) || (keep.startsWith('tagt:') ? document.getElementById('tag-input') : null);   // a removed custom label has no row left
     el?.focus({ preventScroll: true });
   }
 }
@@ -320,6 +343,7 @@ function moreItems(v) {
     { id: 'group:ask', text: 'Asks me first', checked: !!ui.askEach, help: 'Stops for your OK before the next run starts' }, { sep: true },
     { id: 'group:replan', text: 'Re-plan the rest', help: 'The planner re-cuts the runs that have not started' }, { id: 'group:plan', text: 'Open the plan', help: 'The plan and how it was cut into runs' }, { sep: true });
   if (v.runAfter) items.push({ id: 'more:after', text: v.runAfter.label, help: v.runAfter.help });
+  if (!group && !v.inGroup) items.push(v.addedGroup ? { id: 'ungroup', text: 'Leave ' + v.addedGroup, help: 'The run leaves the group; its labels and tags stay' } : { id: 'more:group', text: 'Move to group…', help: 'Tracks it with related runs on one page' });
   if (!group) items.push({ id: 'more:preset', text: 'Save as preset', help: 'Starts the next run with this task’s setup' });
   items.push({ id: 'more:terminal', text: 'Terminal', hint: 'Ctrl+`', help: 'A shell in this run’s worktree' }, { id: 'more:link', text: 'Copy link', help: 'Paste it in Chat or an issue' });
   if (v.finished && !v.archived) items.push({ id: 'more:report', text: 'Report this run', help: 'Sends the logs and a note to the Worca team' }, { id: 'more:archive', text: 'Archive', help: 'Removes the branch, worktree and logs; the remote branch and PR stay' });
@@ -425,11 +449,13 @@ function goMember(group, i) {
   Object.assign(ui, { caseId: M.view(group, {}).runCases[i], parent: { caseId: group, index: i }, open: null, tab: '', focus: '', menu: '', titleOpen: false });
   pick.value = ui.caseId; pendingFocus = 'crumb:' + (M.view(ui.caseId, ui).crumbs.length - 1);
 }
-function addChip(text) {
-  const kind = ui.menu.slice(5); const t = String(text).trim();
+function addChip(text, kindArg) {
+  const kind = kindArg || ui.menu.slice(5); const t = String(text).trim();
   if (t && !ui.chips.some((c) => c.kind === kind && c.text === t)) ui.chips = ui.chips.concat({ kind, text: t });
-  ui.menu = ''; pendingFocus = 'menu:add';
+  if (kind === 'group') { ui.menu = ''; pendingFocus = 'menu:more'; toast('Moved to ' + t); }
 }
+// Typing a word adds a label; typing key: value adds a cost tag. The editor stays open for the next one.
+function addTag(text) { const t = String(text).trim(); if (!t) return; addChip(t, /^[^:]+:\s*\S/.test(t) ? 'tag' : 'label'); pendingFocus = 'tag-input'; }
 
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 document.addEventListener('click', (e) => {
@@ -465,7 +491,7 @@ document.addEventListener('click', (e) => {
   else if (d.confirm) { if (d.confirm === 'yes') { ui.confirm.ok = true; follow(ui.confirm.f, ui.confirm.label); } else { ui.confirm = null; pendingFocus = 'act-main'; } }
   else if (d.run === 'stop') follow(M.runFlow.stop, 'Stop the run');
   else if (d.act) act(d.act);
-  else if (d.menu) { const opening = ui.menu !== d.menu; ui.menu = opening ? d.menu : ''; if (opening) pendingFocus = 'menu-first'; }
+  else if (d.menu) { const opening = ui.menu !== d.menu; ui.menu = opening ? d.menu : ''; if (opening) pendingFocus = d.menu === 'tags' ? 'tag-input' : 'menu-first'; }
   else if (d.menuPick) {
     if (d.menuPick.startsWith('away:')) { ui.away = d.menuPick; ui.menu = ''; pendingFocus = 'menu:more'; toast('Away mode on this run: ' + AWAY.find((x) => x.id === d.menuPick).text); }
     else if (d.menuPick === 'more:after') { ui.dialog = 'after'; ui.menu = ''; pendingFocus = 'after-task'; }
@@ -477,10 +503,11 @@ document.addEventListener('click', (e) => {
     else if (CH_SAY[d.menuPick]) { toast(CH_SAY[d.menuPick](M.view(ui.caseId, ui))); pendingFocus = 'menu:ch'; ui.menu = ''; }
     else if (MORE_SAY[d.menuPick]) { toast(MORE_SAY[d.menuPick]); pendingFocus = 'menu:more'; ui.menu = ''; }
     else if (ui.menu === 'act') act(d.menuPick);
-    else if (d.menuPick === 'ungroup') { ui.chips = ui.chips.filter((c) => c.kind !== 'group'); ui.menu = ''; pendingFocus = 'menu:add'; }
-    else if (ui.menu === 'add' && M.add.some((x) => x.kind === d.menuPick)) { ui.menu = 'pick-' + d.menuPick; pendingFocus = 'pick-input'; }
+    else if (d.menuPick === 'ungroup') { const g = (ui.chips.find((c) => c.kind === 'group') || {}).text; ui.chips = ui.chips.filter((c) => c.kind !== 'group'); ui.menu = ''; pendingFocus = 'menu:more'; toast('Left ' + g); }
+    else if (d.menuPick === 'more:group') { ui.menu = 'pick-group'; pendingFocus = 'pick-input'; }
     else { pendingFocus = 'menu:' + ui.menu; ui.menu = ''; }
   } else if (d.suggest !== undefined) { addChip(d.suggest); }
+  else if (d.tagtoggle) { const [k, tx] = d.tagtoggle.split('|'); ui.chips = ui.chips.some((c) => c.kind === k && c.text === tx) ? ui.chips.filter((c) => !(c.kind === k && c.text === tx)) : ui.chips.concat({ kind: k, text: tx }); pendingFocus = t.dataset.key; }
   else if (d.openRun !== undefined) { ui.back = { caseId: ui.caseId, open: ui.open, tab: ui.tab }; goMember(ui.caseId, +d.openRun); }
   else if (d.sib !== undefined && d.sib !== '') { const v = M.view(ui.caseId, ui); goMember(v.parent.caseId, +d.sib); pendingFocus = t.dataset.key; }
   else if (d.crumb !== undefined) {
@@ -489,7 +516,7 @@ document.addEventListener('click', (e) => {
     const back = ui.back && ui.back.caseId === go.caseId ? ui.back : { caseId: go.caseId, open: go.open, tab: '' };
     Object.assign(ui, { caseId: back.caseId, open: back.open, tab: back.tab, parent: null, back: null, menu: '' });
     pick.value = ui.caseId; pendingFocus = 'open-run';
-  } else if (d.unchip !== undefined) { ui.chips = ui.chips.filter((_, i) => i !== +d.unchip); ui.menu = ''; pendingFocus = 'menu:add'; }
+  }
   else if (d.stage) { ui.open = d.stage; ui.menu = ''; }
   else if (d.tab) { ui.tab = d.tab; ui.focus = ''; if (t.classList.contains('rc-fig-link')) pendingFocus = 'tab:' + d.tab; }
   else if (d.ref) { ui.tab = 'activity'; ui.view = 'steps'; ui.focus = d.ref; pendingFocus = 'act:' + d.ref; render(); document.querySelector('.is-focus')?.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' }); return; }
@@ -510,11 +537,13 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   const t = e.target;
   if (t.dataset && t.dataset.key === 'pick-input' && e.key === 'Enter') { e.preventDefault(); addChip(t.value); render(); return; }
+  if (t.id === 'tag-input' && e.key === 'Enter') { e.preventDefault(); addTag(t.value); render(); return; }
+  if ((e.key === 'l' || e.key === 'L') && !e.metaKey && !e.ctrlKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '') && document.querySelector('.rc-tags')) { e.preventDefault(); ui.menu = 'tags'; pendingFocus = 'tag-input'; render(); return; }
   if ((ui.confirm || ui.dialog) && e.key === 'Escape') { if (ui.pr) ui.pr.gen = false; ui.confirm = null; ui.dialog = ''; pendingFocus = 'act-main'; render(); return; }
   if (e.key === '`' && e.ctrlKey) { e.preventDefault(); toast('Terminal opened in the worktree'); render(); return; }
   if (e.key === 'Enter' && e.target.id === 'after-task') { e.preventDefault(); document.querySelector('[data-confirm="yes"]')?.click(); return; }
   if (ui.menu && (e.key === 'Escape' || (e.key === 'Tab' && t.closest && t.closest('.menu')))) {
-    pendingFocus = ui.menu.startsWith('pick-') ? 'menu:add' : 'menu:' + ui.menu; ui.menu = ''; render(); if (e.key === 'Escape') e.preventDefault(); return;
+    pendingFocus = ui.menu === 'pick-group' ? 'menu:more' : 'menu:' + ui.menu; ui.menu = ''; render(); if (e.key === 'Escape') e.preventDefault(); return;
   }
   const keys = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1, Home: 'first', End: 'last' };
   if (!(e.key in keys) || !t.closest) return;
