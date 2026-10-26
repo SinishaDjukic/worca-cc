@@ -9,6 +9,8 @@
 //   WORCA_BROKER_SYSTEM_BILL_TO who pays for work no signed-in person caused
 import { readFileSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { builtinSlots } from '../broker/slots.mjs';
+import { engineEntry } from '../shared/engine-switch.mjs';
 
 /** This server process's identity towards the broker: tokens issued under an older one are revoked at boot. */
 export const BOOT_ID = `srv-${randomUUID()}`;
@@ -20,12 +22,26 @@ export function brokerEnabled(env = process.env) {
   return typeof env.WORCA_BROKER_URL === 'string' && env.WORCA_BROKER_URL.trim() !== '';
 }
 
-/** Why `engine` cannot run while the broker is on, else null. Only Claude Code spends through the broker; another
- *  engine signs in with its own credentials (a ChatGPT or Cursor sign-in, an API key in its env), which the broker can
- *  neither bill per person nor keep from the agent. Runs, Ask chats and GET /api/engines all refuse with this. */
-export function brokerEngineRefusal(engine, env = process.env) {
-  if (!brokerEnabled(env) || !engine || engine === 'claude' || engine === 'mock') return null;
-  return `the credential broker is on, and ${engine} signs in with its own credentials, which the broker cannot bill or revoke`;
+/** The broker's slot ids: what it last told this server (/internal/info: built-in, operator and plugin slots), else
+ *  its built-in slots (pure, so a gate that runs before the first broker contact neither refuses Claude nor
+ *  un-refuses an engine with no slot; mergeSlots never removes a built-in, so the fallback gives the same answer for
+ *  every catalog brokerSlot). */
+export function brokerSlotIds() {
+  const info = cachedBrokerInfo();
+  return Array.isArray(info?.slots) ? info.slots.map((s) => s.id) : builtinSlots({}).map((s) => s.id);
+}
+
+/** The refusal for an engine whose every sign-in is its own login (one copy; credentials.mjs re-exports it). */
+export const brokerRefusalText = (engine) => `the credential broker is on, and ${engine} signs in with its own credentials, which the broker cannot bill or revoke`;
+
+/** Why `engine` cannot run while the broker is on, else null (decision 5): refused only when none of its sign-in modes
+ *  can sit in one of the broker's slots — its own login (a ChatGPT, keychain or Cursor sign-in) never can. An engine
+ *  the catalog does not know (mock) is never refused here. Runs, Ask chats, readiness and GET /api/engines read it. */
+export function brokerEngineRefusal(engine, env = process.env, slots = brokerSlotIds()) {
+  const entry = engine ? engineEntry(engine) : null;
+  if (!brokerEnabled(env) || !entry) return null;
+  if (entry.signIn.modes.some((m) => m.kind !== 'own' && m.brokerSlot && slots.includes(m.brokerSlot))) return null;
+  return brokerRefusalText(engine);
 }
 
 /** {url, secret, error}: the broker's address without a trailing slash, and the secret. */
@@ -100,6 +116,8 @@ export function currentBrokerConfig() {
 const cfg = currentBrokerConfig;
 /** Test seam: forget cached config and info (not the sealed secret). */
 export function resetBrokerClient() { _cfg = null; _info = null; }
+/** Test seam: what cachedBrokerInfo() answers until resetBrokerClient() (null clears it). */
+export const setBrokerInfoForTest = (v) => { _info = v ? { at: Date.now(), value: v } : null; };
 
 async function call(method, path, body, { timeoutMs = CALL_TIMEOUT_MS, fetchImpl = fetch } = {}) {
   const c = cfg();

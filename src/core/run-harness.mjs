@@ -75,6 +75,7 @@ import {
   probeClaudeCapabilities, explainUnspawnableClaude,
 } from './preflight.mjs';
 import { fanoutCap, mapWithCap } from './fanout.mjs';
+import { modelPricedOn, costCapRefusal } from './pricing.mjs';
 import { resolveStepModels, observeModelCost, resolveModelCost, modelCostConfig, readTeamMetricsPrefs, modelHasBaseUrlRouting, bridgedModelInfo, catalogHasModel, engineOfModel, enginesOfModel, modelRunsOn, modelConnection, foreignRunModel, modelForEngine, listModels, liveCostRates, estimateCost } from './config.mjs';
 import { getEngine, selectRunEngine, CAPABILITY_FALLBACKS, describeUnattachableMcp, ruleSupport, subagentPolicy } from './engines/index.mjs';
 import { bridgeCallsFor, bridgeCostFor, forgetBridgeTag } from './bridge/telemetry.mjs';
@@ -102,6 +103,7 @@ import { CODEX_DEFAULT_MODEL, CODEX_COMMAND_RULE_REACH } from './engines/codex.m
 import { ENGINE_PROJECT_FILES, ALL_PROJECT_FILES, worcaOwnsProjectFile, excludeLine } from './engines/project-files.mjs';
 import { helperEngineFor } from './model-env.mjs';
 import { hasCodexEndpoint } from './engines/codex-endpoint.mjs';
+import { resolveModelRoute } from './exec-env/credentials.mjs';
 import { hostGuardEnabled } from './host-guard.mjs';
 import { isNormalized } from './engines/events.mjs';
 import { createClaudeNormalizer } from './engines/claude-events.mjs';
@@ -1526,6 +1528,8 @@ export class RunHarness extends EventEmitter {
       this._engineProjectRules = await this._engineChecks((m) => this.guardrailHonorByKey?.get(m.projectKey) !== false, { guardrails: this.guardrails });
       await this._engineMcpGate();
       this._pendingAudits.push(...this._engineGate());
+      // Who serves the run's model calls (resolveModelRoute's provider): recorded once; a resume keeps the row's.
+      this.state.provider = this._stepFacts(this._engineModel(this.claude.model) ?? null).provider ?? null;
       // The remote preflight: before any worktree exists, so a refusal is a launch error.
       { const r = this.execEnvStartRefusal(); if (r) throw markTerminal(new Error(r)); }
       // A saved remote default this run cannot take (resolveRunExecEnv's fallback, from the server or the CLI): it
@@ -3250,13 +3254,12 @@ export class RunHarness extends EventEmitter {
     const caps = getEngine(name).capabilities;
     const lines = Object.entries(caps).filter(([, v]) => v === false)
       .map(([k]) => `engine ${name}: no ${k} — ${CAPABILITY_FALLBACKS[k] || 'not available'}`);
-    if (caps.cost === false) {
-      // The caps _checkCostLimits enforces, read the same way: neither can see this engine's spend.
-      const teamFields = this.policyRun?.fields || {};
-      const pipe = effectiveCap({ local: pipelineCostLimitUsd(this._settingsScope()), team: teamFields['cost.pipelineLimitUsd'] || null });
-      if (pipe.cap != null) lines.push(`engine ${name}: the pipeline cost limit cannot count ${name}'s spend (cost unknown)`);
-      const tot = effectiveCap({ local: totalCostLimitUsd(), team: teamFields['cost.totalLimitUsd'] || null });
-      if (tot.cap != null) lines.push(`engine ${name}: the total cost limit cannot count ${name}'s spend (cost unknown)`);
+    // With a cost cap a run worca cannot price was refused above (_costCapRefusal); without one, a node model with no
+    // price is named once (its spend is booked as cost unknown, never $0).
+    if (caps.cost !== false) {
+      for (const m of new Set(nodes.filter((n) => !n?.kind || n.kind === 'agent').map((nc) => this._nodeModelPair(nc).model).filter(Boolean))) {
+        if (!modelPricedOn(name, m)) lines.push(`engine ${name}: model "${m}" has no price — its spend is booked as cost unknown`);
+      }
     }
     if (caps.permissionRules === false && hasPermissionRules(this.guardrailPermissionRules)) {
       lines.push(`engine ${name}: guardrail set "${this.guardrailsId}": permission rules NOT enforced on ${name} (--allow-unguarded-engine)`);
@@ -3288,9 +3291,14 @@ export class RunHarness extends EventEmitter {
     } else if (subagentPolicy(name) === 'refuse') {
       lines.push(`engine ${name}: its sub-agents (${engineEntry(name)?.subagents?.tool}) may not keep this run's rules and cannot be switched off (--allow-unguarded-engine)`);
     }
+    // How a local run signs its model calls (credentials.mjs resolveModelRoute): a credential from worca's own env is
+    // named once per run (a resume gate does not repeat it). A remote run's decision has no warning (the relay signs).
+    const signIn = !this._execBackend && !this.claude.mock
+      ? resolveModelRoute({ engine: name, serverEnv: process.env, broker: { on: brokerEnabled() }, checkModel: false }) : null;
+    if (signIn?.warning && !this._signInWarned) { this._signInWarned = true; this._log('orchestrator', 'warn', signIn.warning); }
     // Decision 3: what the allowlist keeps from this engine, named once (never a value).
     if (!this.claude.mock) {
-      const dropped = formatDropped(name, childEnv({ engine: name, allowlist: this.guardrails?.envAllowlist || [] }).dropped);
+      const dropped = formatDropped(name, childEnv({ engine: name, signInMode: signIn?.signInMode ?? null, allowlist: this.guardrails?.envAllowlist || [] }).dropped);
       if (dropped) lines.push(dropped);
     }
     // Decision 4: a local run on this machine is no sandbox, and says so.
@@ -3307,8 +3315,25 @@ export class RunHarness extends EventEmitter {
           ? `engine ${name}: ${what} — the nodes that name it run on ${name}'s default model, so their cost stays unknown`
           : `engine ${name}: ${what} — the nodes that name it run on ${name}'s default model`);
     }
+    // A remote run's model relay checks each call's model only where the catalog says it can (relay.modelCheck 'body').
+    const relay = engineEntry(name)?.relay;
+    if (this._execBackend && relay && relay.modelCheck !== 'body') {
+      lines.push(`engine ${name}: the model relay does not check which model each call names (${relay.protocol === 'connect' ? 'the model is inside protobuf' : 'its side calls are not pinned yet'})`);
+    }
     for (const l of lines) this._log('orchestrator', 'warn', l);
     return lines;
+  }
+
+  /** With a pipeline or total cost cap set (local settings, or the team policy once resolved), refuse a run whose cost
+   *  worca cannot count: its engine reports none, or a model it will run has no price. Without a cap, null (the gate
+   *  warns). `models`: the run's effective model and every agent node's effective spawn model (null: the CLI's default). */
+  _costCapRefusal(name, models) {
+    const teamFields = this.policyRun?.fields || {};
+    const pipe = effectiveCap({ local: pipelineCostLimitUsd(this._settingsScope()), team: teamFields['cost.pipelineLimitUsd'] || null });
+    const tot = effectiveCap({ local: totalCostLimitUsd(), team: teamFields['cost.totalLimitUsd'] || null });
+    if (pipe.cap == null && tot.cap == null) return null;
+    // The one rule and wording a chat's per-turn cap uses too (pricing.mjs).
+    return costCapRefusal(name, models, pipe.cap != null ? 'pipeline' : 'total');
   }
 
   /**
@@ -3324,6 +3349,20 @@ export class RunHarness extends EventEmitter {
     // signs in with its own, which the broker can neither bill nor revoke.
     const brokerRefusal = brokerEngineRefusal(name);
     if (brokerRefusal) return brokerRefusal;
+    // A step with no model (decision: plans/core-protection-layer-design.md §4.2): an engine that needs one is refused
+    // at start, before anything spawns. Not overridable (allowUnguardedEngine has no say over a missing model).
+    const entry = engineEntry(name);
+    const remoteRun = !!this._execBackend;
+    const agentNodes = (nodes || []).filter((n) => !n?.kind || n.kind === 'agent');
+    for (const nc of agentNodes) {
+      if (this._nodeModelPair(nc).model || entry?.defaultModel) continue;
+      if (entry?.requiresExplicitModel) return `${entry.label} needs a model; pick one for this step.`;
+      if (entry?.relay?.needsModel && remoteRun) return `${entry.label} in a sandbox needs a model; pick one for this step.`;
+      if (entry?.relay?.needsModel && brokerEnabled() && !brokerEngineRefusal(name)) return `${entry.label} under the credential broker needs a model; pick one for this step.`;
+    }
+    // A cost cap that cannot count what this run spends (plans/core-protection-layer-design.md §4.3): refused at start.
+    const capWhy = this._costCapRefusal(name, [this._engineModel(this.claude.model) ?? null, ...agentNodes.map((nc) => this._nodeModelPair(nc).model ?? null)]);
+    if (capWhy) return capWhy;
     // The CLI's wording, like "pass --allow-unguarded-engine" (engineRefusalFor rewords both for the UI and chat). A resume
     // keeps the set its run pinned (`worca resume` takes no --guardrails), so only a new run can pick Permissive.
     const permissive = this.resumeOpts ? 'start a new run with --guardrails permissive' : 'run it with --guardrails permissive';
@@ -3690,6 +3729,32 @@ export class RunHarness extends EventEmitter {
     let model = null;
     try { model = nc ? this._nodeModelPair(nc).model : this._engineModel(this.claude.model); } catch { model = null; }
     return (model && modelConnection(model, { projectDir: this.projectDir })) || { kind: 'signin', engine };
+  }
+
+  /** Facts for a new agent step row: who serves its model calls (resolveModelRoute's provider) and whether its cost
+   *  can be counted at all (a cost:false engine with no operator price on the model: never, D13). `model`: the step's
+   *  effective spawn model (ctx.claudeOpts.model; null: the engine's own default). Never throws. */
+  _stepFacts(model) {
+    const out = {};
+    try {
+      const name = this._engineName();
+      const entry = engineEntry(name);
+      const m = model || entry?.defaultModel || null;
+      const d = resolveModelRoute({ engine: name, remote: !!this._execBackend, serverEnv: process.env, model: m,
+        endpoint: !!(m && hasCodexEndpoint(m)), broker: { on: brokerEnabled() }, checkModel: false });
+      const conn = m ? modelConnection(m, { projectDir: this.projectDir }) : null;
+      // A codex endpoint entry always has a provider connection too: the endpoint is named first.
+      const provider = d.source === 'endpoint' ? 'endpoint'
+        : d.source === 'broker' ? d.provider
+          : conn?.kind === 'provider' ? conn.provider
+            : (d.provider ?? entry?.relay?.upstream ?? null);   // a refused remote decision (mock e2b runs) has none
+      if (provider) out.provider = provider;
+      if (entry?.cost === false && !this.claude.mock) {
+        const cfg = m ? modelCostConfig(m) : null;
+        if (!(cfg?.free || cfg?.perMtok)) out.costKnown = false;
+      }
+    } catch { /* settings unreadable: the row goes without them */ }
+    return out;
   }
 
   _nodeModelPair(nc) {
@@ -5881,6 +5946,22 @@ export class RunHarness extends EventEmitter {
         }
       }
     }
+    // A step whose cost could not be counted (design §4.3): the caps cannot see it. Once per transition (in memory: a
+    // resumed run is not paused again for the same step).
+    const unknown = this._costUnknownPending;
+    if (unknown) {
+      this._costUnknownPending = null;
+      const detail = `this run's cost can no longer be counted (${unknown.why}, step ${unknown.stepKey})`;
+      if (ownCap != null && !readCostCapOverride(this.pipeline.id)) {
+        this._capReached(REASON.COST_PIPELINE, `${detail}; the pipeline cost limit cannot see it`);
+      } else if (teamPipe && teamPipe.kind === 'soft' && !hasPipelineOverride(this.pipeline.id)) {
+        this._teamCapBreach('pipeline', teamPipe, `${detail}; the team cost cap cannot see it (${home})`, REASON.COST_PIPELINE_POLICY);
+      } else if (tot.cap != null && tot.binding !== 'team') {
+        this._capReached(REASON.COST_TOTAL, `${detail}; the total cost limit cannot see it`);
+      } else if (tot.cap != null) {
+        this._teamCapBreach('total', tot.team, `${detail}; the team total cap cannot see it (${home})`, REASON.COST_TOTAL_POLICY);
+      }
+    }
   }
 
   /** The reset period: the developer's when stored, else a team default, else monthly. */
@@ -6796,7 +6877,7 @@ export class RunHarness extends EventEmitter {
       this._subAgentTransition('spawn', rec);
       this._subAgentTransition('finish', rec);
     }
-    this._recordCost(res.costUsd, stepKey, { aux: 'away' });
+    this._bookUsage({ source: 'engine', costUsd: res.costUsd, aux: 'away' }, { stepKey });
   }
 
   /** The step an Away mode review books on: the asking execution, else a running step, else the last row. */
@@ -7676,7 +7757,8 @@ export class RunHarness extends EventEmitter {
       case 'toolResult': this._onToolResultEvent(role, e, attr); return;
       case 'retry': this._onRetryEvent(role, e, attr); return;
       case 'usage': this._onUsageEvent(e, attr); return;
-      case 'relayCost': this._onRelayCostEvent(e, attr); return;
+      // Spend outside a result (a route's close, an engine's figure on a way out): the usage ledger books it.
+      case 'spend': this._bookUsage(e, attr); return;
       default: return;
     }
   }
@@ -7778,31 +7860,28 @@ export class RunHarness extends EventEmitter {
     // Read before _recordBridgeCalls forgets the tag.
     const upstreamCost = attr?.executionId ? bridgeCostFor(attr.executionId) : null;
     const cliCost = costCfg ? resolveModelCost(attr.model, rawCost, e.usage, costCfg) : rawCost;
-    const cost = upstreamCost
-      ? upstreamCost.costUsd
-      : e.relay ? this._relayedCost(e.relay, cliCost, attr) : cliCost;
+    // The usage ledger (_bookUsage): the bridge's upstream figure, else what the relay measured (a remote result: the
+    // sandbox's figure is a claim, compared and never booked), else the engine's own figure.
+    const booked = upstreamCost
+      ? this._bookUsage({ source: 'bridge', costUsd: upstreamCost.costUsd, usage: e.usage, costCfg }, attr)
+      : e.relay
+        ? this._bookUsage({ source: 'relay', ...e.relay, claimedCostUsd: cliCost, costCfg }, attr)
+        : this._bookUsage({ source: 'engine', result: true, costUsd: cliCost, usage: e.usage, costCfg }, attr);
     this._openTurns?.delete(attr?.stepKey);        // the result prices every turn it closes
     this._recordBridgeCalls(attr?.stepKey, attr?.executionId);
     // Booked here, so never again at _closeOpenTurns' flush: _recordBridgeCalls keeps a tag under which
     // no call was counted, and the call and cost maps evict apart (bridge/telemetry.mjs MAX_TAGS).
     if (upstreamCost) forgetBridgeTag(attr.executionId);
-    if (Number.isFinite(cost)) this._recordCost(cost, attr?.stepKey);
-    // An engine that reports no cost (Copilot, Cursor) would warn on every step; the run start says it once (_engineGate).
-    // A per-Mtok model still warns on any engine: the user priced it, and a result with no usage goes unaccounted.
-    else if (!this.claude.mock && (costCfg?.perMtok || getEngine(this.claude.engine || 'claude').capabilities.cost !== false)) {
-      // A {perMtok} model prices from tokens alone, so a result with no usage is
-      // unpriceable (NaN) — say so plainly rather than blaming a missing cost field.
-      this._log('orchestrator', 'warn', costCfg?.perMtok
-        ? `model "${attr.model}" is priced per-Mtok but the result carried no token usage — this step's spend is unaccounted`
-        : 'result event carried no cost estimate (total_cost_usd absent)', attr);
-    }
     if (!this.claude.mock && attr?.model) {
       try {
-        const verdict = observeModelCost(attr.model, Number.isFinite(cost) ? cost : null, e.relay ? relayUsageTotal(e.relay) : e.usage, costCfg);
-        if (verdict === 'flagged' && !(this._costUnreliableWarned ||= new Set()).has(attr.model)) {
-          this._costUnreliableWarned.add(attr.model);
-          this._log('orchestrator', 'warn',
-            `model "${attr.model}" reported no cost despite token usage (custom endpoint) — USD budget enforcement cannot see this spend`, attr);
+        const verdict = observeModelCost(attr.model, booked, e.relay ? relayUsageTotal(e.relay) : e.usage, costCfg);
+        if (verdict === 'flagged') {
+          if (!(this._costUnreliableWarned ||= new Set()).has(attr.model)) {
+            this._costUnreliableWarned.add(attr.model);
+            this._log('orchestrator', 'warn',
+              `model "${attr.model}" reported no cost despite token usage (custom endpoint) — USD budget enforcement cannot see this spend`, attr);
+          }
+          this._noteCostUnknown(attr?.stepKey ? this._costStep(attr.stepKey) : null, 'the model reported no cost despite token usage (custom endpoint)', attr, true);
         }
       } catch { /* derived state — never fail the run over it */ }
     }
@@ -7819,36 +7898,6 @@ export class RunHarness extends EventEmitter {
         this._mcpChain(() => this._recordRunWarning(`${MCP_NAME_WARNING} — Test the servers in ${sets} (${untested.map((c) => c.name).join(', ')})`));
       }
     }
-  }
-
-  /** The cost a REMOTE result books (security evaluation 2026-10-21, E4): the sandbox writes the CLI's result frames,
-   *  so its figure is a claim, and `relay` is what worca's own relay measured upstream since the previous result. The
-   *  measure is booked, and a sandbox figure far from it is named in the run log. A model worca has no price for is
-   *  booked at the fallback rate (relay-usage.mjs priceRelayUsage, audit 2.8), never at the sandbox's figure. */
-  _relayedCost(relay, cliCost, attr) {
-    let measured;
-    try { measured = priceRelayUsage(relay, attr?.model || null); } catch { return cliCost; }
-    if (measured.unpriced.length) { this._warnUnpriced(relay.messages, measured.unpriced, attr); return measured.costUsd; }
-    const gap = Number.isFinite(cliCost) ? Math.abs(cliCost - measured.costUsd) : 0;
-    if (gap > Math.max(0.01, 0.25 * Math.max(cliCost, measured.costUsd))) {
-      this._log('orchestrator', 'warn', `the sandbox reported $${cliCost.toFixed(4)} for this call, the model relay measured $${measured.costUsd.toFixed(4)}` +
-        ` (${relay.messages} model ${relay.messages === 1 ? 'reply' : 'replies'}); worca books the relay's figure`, attr);
-    }
-    return measured.costUsd;
-  }
-
-  /** A remote spawn ended with model calls no result covered (stopped mid-turn, or its sandbox printed no result):
-   *  the relay measured them, so they are booked like a result's, and the step's open turns are not counted apart. */
-  _onRelayCostEvent(e, attr) {
-    let measured;
-    try { measured = priceRelayUsage(e, attr?.model || null); } catch { return; }
-    if (attr?.stepKey) this._openTurns?.delete(attr.stepKey);
-    if (measured.unpriced.length) this._warnUnpriced(e.messages, measured.unpriced, attr);
-    if (measured.costUsd > 0) this._recordCost(measured.costUsd, attr?.stepKey);
-  }
-
-  _warnUnpriced(messages, models, attr) {
-    this._log('orchestrator', 'warn', `model relay: ${messages} model ${messages === 1 ? 'reply' : 'replies'} include a model worca has no price for (${models.join(', ')}); booked at the highest list rate. Give the model a price to book it exactly`, attr);
   }
 
   /** What a result's CLI cost adds to the step. A `cumulativeCost` figure (Claude Code) is the
@@ -8249,6 +8298,96 @@ export class RunHarness extends EventEmitter {
     this._persist().catch(() => {});
   }
 
+  /**
+   * The one place a step's spend changes (plans/core-protection-layer-design.md §4.3); every _recordCost goes through
+   * here. `e`: { source:'relay', messages, byModel, claimedCostUsd? } — what the relay measured (on a result frame, or
+   * at the route's close); { source:'engine', costUsd?, usage?, result?, aux? } — a figure the engine reported (already
+   * session-delta'd and override-resolved; `result` marks a result frame, the only kind that warns about a missing
+   * cost); { source:'bridge', costUsd, usage? } — the in-process bridge's upstream figure. `e.costCfg` passes the
+   * caller's modelCostConfig lookup (it re-reads settings.json). Tokens are always counted; a cost worca cannot price
+   * leaves `costKnown` false (sticky), never a known $0. Returns the booked cost, or null.
+   */
+  _bookUsage(e, attr = null) {
+    const key = attr?.stepKey ?? null;
+    const model = attr?.model || null;
+    const costCfg = e.costCfg !== undefined ? e.costCfg : (model ? modelCostConfig(model) : null);
+    const engine = this.claude.engine || DEFAULT_ENGINE;
+    const entry = engineEntry(engine);
+    // A cost:false engine is priced only by an operator price on the model (free / perMtok): else tokens only.
+    const billable = !!e.aux || entry?.cost !== false || !!(costCfg?.free || costCfg?.perMtok);
+    let cost = NaN; let known = true; let usage = e.usage || null; let why = null; let quiet = false;
+    if (e.source === 'relay') {
+      if (key) this._openTurns?.delete(key);
+      if (!e.messages) {
+        // Nothing measured: a claim is never booked, but a sandbox claiming real spend is named (as _relayedCost did).
+        const cli = e.claimedCostUsd;
+        if (Number.isFinite(cli) && cli > 0.01) {
+          this._log('orchestrator', 'warn', `the sandbox reported $${cli.toFixed(4)} for this call, the model relay measured $0.0000 (0 model replies); worca books the relay's figure`, attr);
+        }
+        return null;
+      }
+      usage = relayUsageTotal(e);
+      if (!billable) { known = false; quiet = true; why = `${entry?.label ?? engine} reports no cost`; }
+      else {
+        const cli = Number.isFinite(e.claimedCostUsd) ? e.claimedCostUsd : NaN;
+        let m = null; try { m = priceRelayUsage(e, model); } catch { m = null; }
+        if (!m) { known = false; why = 'the model relay could not price this call'; }
+        else if (m.unpriced.length) {
+          // Source plan Task 10: with an unpriced model the step holds max(cli, measured) — a forged $0 cannot hide the
+          // priced part — and is marked unknown instead of reading as a full figure. `measured` already prices the
+          // unpriced model at the highest list rate (priceRelayUsage, audit 2.8), so the sandbox's claim never lowers it.
+          known = false; why = `no price for ${m.unpriced.join(', ')}`;
+          cost = Number.isFinite(cli) ? Math.max(cli, m.costUsd) : m.costUsd;
+        } else {
+          if (Number.isFinite(cli)) {
+            const gap = Math.abs(cli - m.costUsd);
+            if (gap > Math.max(0.01, 0.25 * Math.max(cli, m.costUsd))) {
+              this._log('orchestrator', 'warn', `the sandbox reported $${cli.toFixed(4)} for this call, the model relay measured $${m.costUsd.toFixed(4)}`
+                + ` (${e.messages} model ${e.messages === 1 ? 'reply' : 'replies'}); worca books the relay's figure`, attr);
+            }
+          }
+          cost = m.costUsd;
+        }
+      }
+    } else {
+      cost = Number.isFinite(e.costUsd) ? e.costUsd : NaN;
+      if (!billable) { known = false; quiet = true; why = `${entry?.label ?? engine} reports no cost`; }
+      else if (!Number.isFinite(cost) && e.result && !this.claude.mock) {
+        // The texts the old _onResultEvent logged (test/engine-gate.test.mjs:760-776, model-cost-override-surfaces:117).
+        known = false;
+        why = costCfg?.perMtok
+          ? `model "${model}" is priced per-Mtok but the result carried no token usage — this step's spend is unaccounted`
+          : 'result event carried no cost estimate (total_cost_usd absent)';
+      }
+    }
+    const opts = e.aux ? { aux: e.aux } : undefined;
+    // A row handed off to a resumed run (_recordCost's own guard): never touch its step, log or persist from here.
+    if (this._rowHandedOff()) { if (Number.isFinite(cost)) this._recordCost(cost, key, opts); return Number.isFinite(cost) ? cost : null; }
+    const step = key || this.state.phase ? this._costStep(key || (this.state.cycle ? `${this.state.phase}#${this.state.cycle}` : this.state.phase)) : null;
+    if (step && usage) {
+      const t = (step.usage ||= { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+      t.input += Number(usage.input_tokens) || 0; t.output += Number(usage.output_tokens) || 0;
+      t.cacheRead += Number(usage.cache_read_input_tokens) || 0; t.cacheWrite += Number(usage.cache_creation_input_tokens) || 0;
+    }
+    if (!known) this._noteCostUnknown(step, why, attr, quiet);
+    if (Number.isFinite(cost)) this._recordCost(cost, key, opts);
+    else if (step && (usage || !known)) { this.state.updatedAt = new Date().toISOString(); this._emit('state', this.getState()); this._persist().catch(() => {}); }
+    return Number.isFinite(cost) ? cost : null;
+  }
+
+  /** Mark `step`'s cost unknown (sticky) and, the first time, remember it for the cap check at the next spawn
+   *  (_checkCostLimits). Logs `why` once per step (and once with no step row, as the old result warning did), unless
+   *  `quiet` (a cost:false engine: the run start already says so, `_engineGate`). */
+  _noteCostUnknown(step, why, attr = null, quiet = false) {
+    if (!quiet) {
+      const tag = `${step?.key ?? attr?.stepKey ?? ''}|${why}`;
+      if (!(this._costUnknownLogged ||= new Set()).has(tag)) { this._costUnknownLogged.add(tag); this._log('orchestrator', 'warn', why, attr); }
+    }
+    if (!step || step.costKnown === false) return;
+    step.costKnown = false;
+    this._costUnknownPending ||= { stepKey: step.key, why };
+  }
+
   /** Book `costUsd` on step `stepKey` (and the run total + spend ledger). `aux` names a worca-owned
    *  AI call (Away mode review, Auto workflow, run title): its share is ALSO tallied in
    *  step.auxCosts[aux] — at the SAME roundUsd grain as step.costUsd, so Σ aux never exceeds the
@@ -8356,7 +8495,7 @@ export class RunHarness extends EventEmitter {
     const up = bridgeCostFor(stepKey);
     this._recordBridgeCalls(stepKey, stepKey);
     forgetBridgeTag(stepKey);
-    if (up && Number.isFinite(up.costUsd)) { this._recordCost(up.costUsd, stepKey); return; }
+    if (up && Number.isFinite(up.costUsd)) { this._bookUsage({ source: 'bridge', costUsd: up.costUsd }, { stepKey }); return; }
     if (!t || !t.perMsg.size) return;
     const u = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
     for (const m of t.perMsg.values()) for (const k of Object.keys(u)) u[k] += Number(m?.[k]) || 0;
@@ -8367,6 +8506,9 @@ export class RunHarness extends EventEmitter {
     b.turns += t.perMsg.size;
     b.tokens += u.input_tokens + u.output_tokens;
     if (Number.isFinite(floor)) b.floorUsd = (b.floorUsd || 0) + floor;
+    // The floor stays display-only (its output count is a placeholder below the real one), so the step's real cost is
+    // not known: never a known figure.
+    this._noteCostUnknown(step, 'a stopped turn reported no cost', { stepKey });
   }
 
   _emit(event, payload) {
@@ -8432,7 +8574,7 @@ export class RunHarness extends EventEmitter {
       this._subAgentTransition('spawn', rec);
       this._subAgentTransition('finish', rec);
     }
-    this._recordCost(costUsd, 'x:preflight:1', { aux: 'title' });
+    this._bookUsage({ source: 'engine', costUsd, aux: 'title' }, { stepKey: 'x:preflight:1' });
   }
 
   /**

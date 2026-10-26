@@ -62,7 +62,8 @@ import { engineLabel } from '../../shared/engine-switch.mjs';
 import { revalidateWorkflowProposal } from './workflow-deps.mjs';
 import { composerCardFrom } from './composer-payload.mjs';
 import { askLimits, ASK_LIMITS } from './limits.mjs';
-import { chatDescriptor, chatCostCapRefusal } from '../engines/chat.mjs';
+import { chatDescriptor } from '../engines/chat.mjs';
+import { costCapRefusal } from '../pricing.mjs';
 import { chatModelRates } from './chat-price.mjs';
 import { codexMemoryLine } from './prompt.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
@@ -1176,18 +1177,22 @@ class AskTurn extends EventEmitter {
     // the SAME figure the four sinks read. No `result` frame (stopped early) still books it: the classifier ran.
     const extra = Math.round((Number(this.extraCostUsd) || 0) * 1e6) / 1e6;
     const costUsd = summary.costUsd == null ? (extra > 0 ? extra : null) : Math.round((summary.costUsd + extra) * 1e6) / 1e6;
+    const tokens = ['input', 'output', 'cacheRead', 'cacheCreation'].reduce((a, k) => a + (Number(summary.usage?.[k]) || 0), 0);
+    // Tokens with no price (a model worca cannot price, a turn stopped before its result): cost unknown, never $0 — the
+    // same rule a run step books (pricing.mjs, pipeline_steps.cost_known).
+    const costKnown = !(summary.costUsd == null && tokens > 0);
     // Persist BEFORE broadcasting: a client re-fetch on the terminal frame must
     // never see a still-streaming row. finishMessage gets the FULL patch (B-5).
     try {
       d.store.finishMessage(this.assistantMessageId, {
         text: summary.text, blocks: summary.blocks, status: finalStatus, reason,
-        usage: summary.usage, costUsd, durationMs: summary.durationMs,
+        usage: summary.usage, costUsd, durationMs: summary.durationMs, costKnown,
       });
     } catch { /* deleted thread — the frames still settle the UI */ }
     let threadTotals = null;
     try {
       threadTotals = d.store.addThreadTotals(this.threadId, {
-        costUsd, usage: summary.usage, agents: summary.agents,
+        costUsd, usage: summary.usage, agents: summary.agents, costKnown,
       });
     } catch { /* deleted thread */ }
     // D10: the spend is a financial fact even when the thread was deleted
@@ -1200,8 +1205,7 @@ class AskTurn extends EventEmitter {
       d.recordAskCost({
         threadId: this.threadId, messageId: this.assistantMessageId,
         amountUsd: costUsd,                    // null → the writer no-ops (D2)
-        tokens: ['input', 'output', 'cacheRead', 'cacheCreation']
-          .reduce((a, k) => a + (Number(summary.usage?.[k]) || 0), 0),
+        tokens,
         model: this.model, tsMs: d.now(),
       });
     } catch { /* ledger append is best-effort */ }
@@ -1229,6 +1233,7 @@ class AskTurn extends EventEmitter {
       this._frame({
         type: 'ask-done', text: summary.text, blocks: summary.blocks, usage: summary.usage,
         costUsd, durationMs: summary.durationMs, model: this.model, status: finalStatus,
+        ...(costKnown ? {} : { costKnown: false }),
         ...(reason ? { reason } : {}), threadTotals, ...(contexts ? { contexts } : {}),
       });
       this._emit('done', { status: finalStatus, reason });
@@ -1343,7 +1348,8 @@ class AskTurn extends EventEmitter {
     const modelProblem = c.modelProblem(this.model);
     if (modelProblem) return this._complete({ kind: 'error', message: `${this.model} cannot run a chat on ${c.label}: ${modelProblem}. Pick another model for this chat.` });
     if (limitsNow.maxBudgetUsd != null) {
-      const capped = chatCostCapRefusal(c, this.model, own('ModelPriced') ?? ((m) => !!this._ratesFor(m)));
+      // The one cap rule and wording a run uses too (pricing.mjs).
+      const capped = costCapRefusal(this.engine, [this.model], 'turn', { priced: own('ModelPriced') ?? ((m) => !!this._ratesFor(m)) });
       if (capped) return this._complete({ kind: 'error', message: capped });
     }
     if (this.mock) return null;

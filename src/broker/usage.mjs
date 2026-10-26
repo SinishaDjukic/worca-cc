@@ -8,6 +8,7 @@
 // rate unless the operator sets WORCA_BROKER_UNPRICED_USD_PER_MTOK. Never $0, or a
 // model missing from the table would spend past every budget. Pure.
 import { PREDEFINED_LIST_PRICES, CODEX_PRICES, codexCachedRate, listPriceFor } from '../core/list-prices.mjs';
+import { connectUsageReader } from './cursor.mjs';
 
 const MAX_LINE = 1 << 20;   // an SSE line longer than this is skipped, never buffered further
 const MAX_JSON = 4 << 20;   // a non-streamed JSON body larger than this is not parsed whole for usage
@@ -62,26 +63,37 @@ function applyAnthropic(u, obj) {
 
 function applyOpenAI(u, obj) {
   if (!obj || typeof obj !== 'object') return;
-  if (obj.model) u.model = obj.model;
+  // A streamed Responses reply names its model only on the response object (response.created, response.completed).
+  if (obj.model) u.model = obj.model; else if (obj.response?.model) u.model = obj.response.model;
   const us = obj.usage || (obj.response && obj.response.usage);
   if (!us || typeof us !== 'object') return;
   const input = us.prompt_tokens ?? us.input_tokens;
   const output = us.completion_tokens ?? us.output_tokens;
-  if (Number.isFinite(input)) u.inputTokens = input;
-  if (Number.isFinite(output)) u.outputTokens = output;
+  // The input count includes the cached reads: they are booked at their own rate, so they are taken out of it.
   const cached = us.prompt_tokens_details?.cached_tokens ?? us.input_tokens_details?.cached_tokens;
+  if (Number.isFinite(input)) u.inputTokens = Number.isFinite(cached) ? Math.max(0, input - cached) : input;
+  if (Number.isFinite(output)) u.outputTokens = output;
   if (Number.isFinite(cached)) u.cacheReadTokens = cached;
   if (Number.isFinite(us.cost)) u.reportedUsd = us.cost;
 }
 
 /**
  * A usage tap for one response.
- * @param {'anthropic'|'openai'} protocol
+ * @param {'anthropic'|'openai'|'connect'|'none'} protocol  'connect': Cursor's RunSSE envelopes (every turn's usage
+ *   summed, no model named); 'none': a reply that reports no usage (Cursor's unary calls)
  * @param {string|null} contentType  the response's content-type
  * @returns {{write:(chunk:Buffer|string)=>void, end:()=>ReturnType<typeof emptyUsage>}}
  */
 export function createUsageTap(protocol, contentType) {
   const u = emptyUsage();
+  if (protocol === 'none') return { write() {}, end: () => u };
+  if (protocol === 'connect') {
+    const reader = connectUsageReader((t) => {
+      u.inputTokens += t.input_tokens || 0; u.outputTokens += t.output_tokens || 0;
+      u.cacheReadTokens += t.cache_read_input_tokens || 0; u.cacheWriteTokens += t.cache_creation_input_tokens || 0;
+    }, { maxMessage: MAX_JSON });
+    return { write: (chunk) => reader.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk), end: () => { reader.end(); return u; } };
+  }
   const apply = protocol === 'openai' ? applyOpenAI : applyAnthropic;
   const sse = /text\/event-stream/i.test(String(contentType || ''));
   let buf = '';

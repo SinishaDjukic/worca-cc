@@ -5,7 +5,6 @@
 // the sandbox's env, argv or replies; worca books the usage its own relay measured.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
 import { execFile } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -16,82 +15,22 @@ import { RELAY_DUMMY } from '../src/core/exec-env/relay-route.mjs';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { scratchDirs, fixture, makeEnvOpts } from './helpers/e2b-fixture.mjs';
 import { cursorReplyLines } from './helpers/fake-cursor.mjs';
+import { startEngineUpstream, CODEX_KEY, PAT, CURSOR_KEY, ACCESS, ALL_SECRETS } from './helpers/engine-upstream.mjs';
 
 const POSIX = { skip: process.platform === 'win32' ? 'e2b mode is POSIX-only' : false, timeout: 60_000 };
 const { tmp, cleanup } = scratchDirs();
 useTempHome(after);
 
-const CODEX_KEY = 'sk-codex-server-0123456789abcdef';
-const PAT = `github_pat_${'R2d2'.repeat(10)}`;
-const CURSOR_KEY = 'crsr-server-key-0123456789abcdef';
-const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
-const ACCESS = `${b64({ alg: 'HS256' })}.${b64({ sub: 'user', exp: Math.floor(Date.now() / 1000) + 3600 })}.c2ln`;
-const REFRESH = `${b64({ alg: 'HS256' })}.${b64({ sub: 'user', typ: 'refresh' })}.cmVm`;
-const ALL_SECRETS = [CODEX_KEY, PAT, CURSOR_KEY, ACCESS, REFRESH];
 // The host CLI overrides name nothing: a test that goes red never starts this machine's real CLIs.
 const HOST = { WORCA_MOCK: undefined, ORCH_MOCK: undefined, WORCA_CODEX_BIN: '/nonexistent/worca-test/codex',
   WORCA_COPILOT_BIN: '/nonexistent/worca-test/copilot', WORCA_CURSOR_BIN: '/nonexistent/worca-test/cursor-agent',
   CODEX_API_KEY: undefined, OPENAI_API_KEY: undefined, COPILOT_GITHUB_TOKEN: undefined, CURSOR_API_KEY: undefined };
 
-// ── the vendors' stand-in: records every call, answers each API's streaming shape, echoes secrets to test scrubbing ──
-const sse = (events) => events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join('');
-const envelope = (flag, b) => { const h = Buffer.alloc(5); h[0] = flag; h.writeUInt32BE(b.length, 1); return Buffer.concat([h, b]); };
-const varint = (n) => { const o = []; do { let b = n & 0x7f; n >>>= 7; if (n) b |= 0x80; o.push(b); } while (n); return Buffer.from(o); };
-const pbLen = (no, b) => Buffer.concat([Buffer.from([(no << 3) | 2]), varint(b.length), b]);
-const pbInt = (no, n) => Buffer.concat([Buffer.from([(no << 3) | 0]), varint(n)]);
-let up; const calls = [];
-function startUpstream() {
-  const srv = http.createServer((req, res) => {
-    const parts = []; req.on('data', (c) => parts.push(c));
-    req.on('end', () => {
-      const body = Buffer.concat(parts).toString('utf8');
-      calls.push({ method: req.method, url: req.url, headers: req.headers, body });
-      const auth = req.headers.authorization || '';
-      const deny = (want) => { if (auth === `Bearer ${want}`) return false; res.writeHead(401, { 'content-type': 'application/json' }); res.end('{"error":"bad key"}'); return true; };
-      if (req.url === '/v1/responses') {
-        if (deny(CODEX_KEY)) return;
-        res.writeHead(200, { 'content-type': 'text/event-stream' });
-        return res.end(sse([{ type: 'response.output_text.delta', delta: `echo ${CODEX_KEY}` },
-          { type: 'response.completed', response: { model: 'gpt-5.5', usage: { input_tokens: 120, input_tokens_details: { cached_tokens: 20 }, output_tokens: 7 } } }]));
-      }
-      if (req.url.startsWith('/copilot/')) {
-        if (deny(PAT)) return;
-        if (req.url === '/copilot/v1/messages') {
-          res.writeHead(200, { 'content-type': 'text/event-stream' });
-          return res.end(sse([{ type: 'message_start', message: { model: 'claude-sonnet-4.5', usage: { input_tokens: 30, output_tokens: 1 } } },
-            { type: 'content_block_delta', delta: { type: 'text_delta', text: `echo ${PAT}` } },
-            { type: 'message_delta', usage: { output_tokens: 4 } }, { type: 'message_stop' }]));
-        }
-        res.writeHead(200, { 'content-type': 'text/event-stream' });
-        if (req.url === '/copilot/responses') {
-          return res.end(sse([{ type: 'response.completed', response: { model: 'gpt-5-mini', usage: { input_tokens: 40, output_tokens: 5 } } }]));
-        }
-        return res.end(`${sse([{ model: 'gpt-4.1', choices: [{ delta: { content: 'hi' } }] }, { model: 'gpt-4.1', choices: [], usage: { prompt_tokens: 50, completion_tokens: 6 } }])}data: [DONE]\n\n`);
-      }
-      if (req.url === '/cursor/auth/exchange_user_api_key') {
-        if (deny(CURSOR_KEY)) return;
-        res.writeHead(200, { 'content-type': 'application/json' });
-        return res.end(JSON.stringify({ accessToken: ACCESS, refreshToken: REFRESH }));
-      }
-      if (req.url.startsWith('/cursor/')) {
-        if (deny(ACCESS)) return;
-        if (req.url === '/cursor/agent.v1.AgentService/RunSSE') {
-          res.writeHead(200, { 'content-type': 'application/connect+proto' });
-          const text = pbLen(1, pbLen(1, pbLen(1, Buffer.from(`echo ${REFRESH}`))));
-          const ended = pbLen(1, pbLen(14, Buffer.concat([pbInt(1, 60), pbInt(2, 8), pbInt(3, 5)])));
-          return res.end(Buffer.concat([envelope(0, text), envelope(0, ended), envelope(2, Buffer.from('{}'))]));
-        }
-        res.writeHead(200, { 'content-type': 'application/proto', 'content-length': 0 });
-        return res.end();
-      }
-      res.writeHead(404); res.end();
-    });
-  });
-  return new Promise((r) => srv.listen(0, '127.0.0.1', () => r({ srv, url: `http://127.0.0.1:${srv.address().port}` })));
-}
-
-before(async () => { up = await startUpstream(); });
-after(async () => { up.srv.closeAllConnections(); up.srv.close(); cleanup(); });
+// The vendors' stand-in (test/helpers/engine-upstream.mjs): records every call, answers each API's streaming shape,
+// echoes secrets to test scrubbing.
+let up; let calls;
+before(async () => { up = await startEngineUpstream(); calls = up.calls; });
+after(async () => { await up.close(); cleanup(); });
 
 function withEnv(vars, fn) {
   const prev = {};
@@ -131,7 +70,7 @@ async function sandboxFor({ cli, stub, lines, serverEnv }) {
     return { lines: lines.map((l) => (typeof l === 'string' ? l : JSON.stringify(l))), exitCode: 0 };
   } });
   const env = new E2bExecEnv(makeEnvOpts(tmp, sdk, f, { env: serverEnv,
-    relayUpstreams: { openai: `${up.url}/v1`, copilotApi: `${up.url}/copilot`, cursor: `${up.url}/cursor` } }));
+    relayUpstreams: up.relayUpstreams }));
   await env.start();
   return { f, env, seen, report: () => JSON.parse(readFileSync(seen.report, 'utf8')) };
 }
@@ -188,7 +127,7 @@ for (const [model, type, path, wire] of [['claude-sonnet-4.5', 'anthropic', '/v1
         const path = env.COPILOT_PROVIDER_TYPE === 'anthropic' ? '/v1/messages' : env.COPILOT_PROVIDER_WIRE_API === 'responses' ? '/responses' : '/chat/completions';
         const h = { 'content-type': 'application/json', 'x-initiator': 'user', 'x-interaction-type': 'conversation-user', 'x-client-machine-id': 'm1',
           ...(env.COPILOT_PROVIDER_TYPE === 'anthropic' ? { 'x-api-key': env.COPILOT_PROVIDER_API_KEY } : { authorization: 'Bearer ' + env.COPILOT_PROVIDER_API_KEY }) };
-        return [{ url: base + path, headers: h, body: '{"stream":true}' }, { url: base + '/models', method: 'GET', headers: h }];
+        return [{ url: base + path, headers: h, body: ${JSON.stringify(JSON.stringify({ stream: true, model }))} }, { url: base + '/models', method: 'GET', headers: h }];
       }`);
       const lines = readFileSync(new URL('./fixtures/copilot/tools.jsonl', import.meta.url), 'utf8').split('\n').filter(Boolean);
       const { f, env, seen, report } = await sandboxFor({ cli: 'copilot', stub, lines, serverEnv: { COPILOT_GITHUB_TOKEN: PAT } });
@@ -216,8 +155,12 @@ for (const [model, type, path, wire] of [['claude-sonnet-4.5', 'anthropic', '/v1
         assert.equal(h['x-initiator'], 'user', 'premium-request accounting headers are forwarded');
         assert.equal(h['x-interaction-type'], 'conversation-user');
         assert.equal(h['x-client-machine-id'], undefined, 'other CLI headers are not');
+        // copilot's result comes after its spawn ended: the route's close carried the relay's measure, as `spend`.
+        const spend = events.filter((e) => e.type === 'spend' && e.source === 'relay');
+        assert.equal(spend.length, 1, JSON.stringify(events.map((e) => e.type)));
+        assert.ok(Object.values(spend[0].byModel).some((u) => u.output_tokens > 0), JSON.stringify(spend[0]));
         const result = events.find((e) => e.type === 'result');
-        assert.ok(result.usage.output_tokens > 0, JSON.stringify(result.usage));
+        assert.equal(result.relay.messages, 0, 'the post-spawn result carries an empty take: nothing is booked twice');
         assert.equal(result.costUsd, undefined);
         assert.equal(env.relay.routes.size, 0);
       } finally { await env.close('test'); }

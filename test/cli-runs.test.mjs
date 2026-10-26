@@ -235,6 +235,14 @@ test('a Cursor run: the detail reads "cost unknown", never $0.00, and the list e
   assert.match((await run(['runs'])).stdout, /ccc30001\s+done\s+Cursor\s/, 'the list names the engine');
 });
 
+test('a step whose cost could not be counted: the detail reads "≥ $x (part unknown)"', async () => {
+  insertPipeline({ id: 'hhh70001', projectKey: 'proj-h', title: 'unpriced run', status: 'done', minutesAgo: 1, costUsd: 1.5 });
+  getDb().prepare("INSERT INTO pipeline_steps (pipeline_id, key, node_id, status, cost_known) VALUES (?, 'x:impl:1', 'impl', 'done', 0)").run('hhh70001');
+  const r = await run(['runs', 'hhh70001']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /cost\s+≥ \$1\.50 \(part unknown\)/);
+});
+
 test('a paused run: the detail says how to resume; after a usage limit its engine hit, on each other engine too', async () => {
   insertPipeline({ id: 'ddd40001', projectKey: 'proj-d', title: 'limited run', status: 'paused', minutesAgo: 1,
     resumePoint: JSON.stringify({ claude: { engine: 'codex' }, pauseReason: 'usage_limit', pauseDetail: 'try again at 3pm', limitEngine: 'codex' }) });

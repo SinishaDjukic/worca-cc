@@ -99,6 +99,12 @@ test('error-then-done and a lone done{error}: one failed message at most (from t
 
 test('done{done|stopped}: one finish message with status, and duration/cost only when present', async () => {
   await checkRows([
+    { name: 'done{done} with an unknown step cost: a lower bound, never a known figure', run: () => {
+      const { orch, posts } = harness();
+      orch.state = { title: 'Fix login', totalActiveMs: 192000, totalCostUsd: 0.42, steps: [{ key: 'x:n_impl:1', costKnown: false }] };
+      orch.emit('done', { status: 'done', pipelineDir: '/x' });
+      assert.equal(posts.find((p) => p.kind === 'done').text, 'Run finished — "Fix login" · done · 3m12s · ≥ $0.42 (part unknown)');
+    } },
     { name: 'done{done}: one finish message with status, duration and cost from getState()', run: () => {
       const { orch, posts, patches } = harness();
       orch.state = { title: 'Fix login', totalActiveMs: 192000, totalCostUsd: 0.42 };

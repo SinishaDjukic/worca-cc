@@ -30,9 +30,14 @@
  *             them in a sandbox), `hostOnly` the ones naming a path on this machine (a sandbox sets its own), `home` its
  *             dir in a sandbox HOME ({env, dir}) or null
  *   signIn    its sign-in modes: `id`, `kind` ('own' its own login, 'key' an API key or token, 'oauth' a subscription
- *             token), the exact `env` names the mode needs, the sign-in `files` it keeps, and the broker slot that can
- *             hold its credential
- *   relay     how the model relay carries its calls ({protocol, upstream, modelCheck, auxModels}), or null
+ *             token), the exact `env` names the mode needs, the sign-in `files` it keeps, the broker slot that can
+ *             hold its credential, and `requires`: config names that must be set too for the mode to apply. Modes are
+ *             listed in the order its CLI prefers them (the route resolver picks the first one whose credential is set
+ *             and whose `requires` names are set too), its own login last. A mode's credential is its one secret-named
+ *             name (`*_TOKEN`, `*_KEY`, `*_SECRET`); its other names are config.
+ *   relay     how the model relay carries its calls ({protocol, upstream, modelCheck, auxModels, needsModel}), or null.
+ *             `needsModel`: its CLI has no model of its own once pointed at a relay or broker slot (a step with none is
+ *             refused)
  *   shell     it runs an unrestricted shell, so its path rules bind its own tools only (decision 10)
  *   rules     per permission-rule kind (Read, Grep, Glob, Edit, Write, Bash, WebFetch, WebSearch, mcp): 'held' (a
  *             translation fixture AND a recorded denial under test/fixtures/engine-rules/<engine>/), 'partial',
@@ -73,12 +78,16 @@ export const ENGINES = deepFreeze({
       home: null },
     // The macOS keychain lookup also needs HOME, USER and PATH (/usr/bin/security): base names every child keeps.
     signIn: { modes: [
-      { id: 'keychain', kind: 'own', env: ['HOME', 'USER', 'LOGNAME', 'CLAUDE_CONFIG_DIR'], files: ['.credentials.json'] },
-      { id: 'oauth-env', kind: 'oauth', env: ['CLAUDE_CODE_OAUTH_TOKEN'], brokerSlot: 'anthropic' },
-      { id: 'api-key', kind: 'key', env: ['ANTHROPIC_API_KEY'], brokerSlot: 'anthropic' },
+      // Claude Code's own precedence (docs, Authentication precedence): ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY,
+      // CLAUDE_CODE_OAUTH_TOKEN, then its /login (keychain). The resolver picks the first that is set.
       { id: 'gateway', kind: 'key', env: ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS'] },
+      { id: 'api-key', kind: 'key', env: ['ANTHROPIC_API_KEY'], brokerSlot: 'anthropic' },
+      { id: 'oauth-env', kind: 'oauth', env: ['CLAUDE_CODE_OAUTH_TOKEN'], brokerSlot: 'anthropic' },
+      { id: 'keychain', kind: 'own', env: ['HOME', 'USER', 'LOGNAME', 'CLAUDE_CONFIG_DIR'], files: ['.credentials.json'] },
     ] },
-    relay: { protocol: 'anthropic', upstream: 'anthropic', modelCheck: 'body', auxModels: [] },
+    // Claude Code's own side calls (Haiku, sub-agent aliases) are not pinned yet (design §9; R15 fills auxModels): the
+    // relay does not check its model.
+    relay: { protocol: 'anthropic', upstream: 'anthropic', modelCheck: 'partial', auxModels: [] },
     shell: true,
     // Captured on 2.1.308 (test/fixtures/engine-rules/claude/); an MCP rule takes the tool out of the session, and the
     // call is refused as a tool that is not there. It has no Grep or Glob tool; a Write(…) rule is never consulted (Edit
@@ -93,8 +102,9 @@ export const ENGINES = deepFreeze({
     env: { names: ['OPENAI_ORG_ID', 'OPENAI_PROJECT_ID'], hostOnly: ['CODEX_HOME'],
       relayOwned: ['CODEX_API_KEY', 'OPENAI_API_KEY', 'OPENAI_BASE_URL'], home: { env: 'CODEX_HOME', dir: '.codex' } },
     signIn: { modes: [
+      { id: 'api-key', kind: 'key', env: ['CODEX_API_KEY'], brokerSlot: 'openai' },
+      { id: 'openai-key', kind: 'key', env: ['OPENAI_API_KEY'], brokerSlot: 'openai' },
       { id: 'chatgpt', kind: 'own', env: ['CODEX_HOME'], files: ['auth.json'] },
-      { id: 'api-key', kind: 'key', env: ['CODEX_API_KEY', 'OPENAI_API_KEY'], brokerSlot: 'openai' },
     ] },
     relay: { protocol: 'openai', upstream: 'openai', modelCheck: 'body', auxModels: [] },
     shell: true,
@@ -109,12 +119,18 @@ export const ENGINES = deepFreeze({
     // COPILOT_ALLOW_ALL and COPILOT_ASSISTED_APPROVAL are never listed: either widens copilot's tool allow list.
     env: { names: ['COPILOT_AUTO_UPDATE'], hostOnly: ['COPILOT_HOME'],
       relayOwned: ['COPILOT_GITHUB_TOKEN', 'COPILOT_PROVIDER_BASE_URL', 'COPILOT_PROVIDER_API_KEY', 'COPILOT_PROVIDER_TYPE',
-        'COPILOT_PROVIDER_WIRE_API', 'COPILOT_OFFLINE', 'COPILOT_API_URL', 'COPILOT_DEBUG_GITHUB_API_URL'], home: null },
+        'COPILOT_PROVIDER_WIRE_API', 'COPILOT_PROVIDER_BEARER_TOKEN', 'COPILOT_PROVIDER_API_KEY_COMMAND', 'COPILOT_OFFLINE',
+        'COPILOT_API_URL', 'COPILOT_DEBUG_GITHUB_API_URL'], home: null },
     signIn: { modes: [
+      // copilot's own bring-your-own-key mode (COPILOT_PROVIDER_* in this machine's env): when its base URL is set,
+      // copilot's model calls go to that provider, so its key wins over the GitHub token. Local only, no broker slot.
+      { id: 'provider-key', kind: 'key', env: ['COPILOT_PROVIDER_API_KEY'], requires: ['COPILOT_PROVIDER_BASE_URL'] },
+      // A fine-grained PAT (github_pat_…, Copilot Requests only) is what the broker's copilot-pat slot and the relay
+      // take; locally copilot accepts any token it accepts today.
+      { id: 'token', kind: 'key', env: ['COPILOT_GITHUB_TOKEN'], brokerSlot: 'copilot-pat' },
       { id: 'keychain', kind: 'own', env: ['COPILOT_HOME'] },
-      { id: 'token', kind: 'key', env: ['COPILOT_GITHUB_TOKEN'], brokerSlot: 'copilot' },
     ] },
-    relay: { protocol: 'openai', upstream: 'copilot', modelCheck: 'body', auxModels: [] },
+    relay: { protocol: 'openai', upstream: 'copilot', modelCheck: 'body', auxModels: [], needsModel: true },
     shell: true,
     rules: { Bash: 'partial', Edit: 'partial', Write: 'partial', mcp: 'unverified', WebFetch: 'unverified', WebSearch: 'unverified',
       Read: 'unenforced', Grep: 'unenforced', Glob: 'unenforced' },
@@ -127,8 +143,8 @@ export const ENGINES = deepFreeze({
       relayOwned: ['CURSOR_API_KEY', 'CURSOR_AUTH_TOKEN', 'CURSOR_API_ENDPOINT', 'CURSOR_AGENT_CLI_AUTHLESS_MODE'],
       home: { env: 'CURSOR_CONFIG_DIR', dir: '.cursor' } },
     signIn: { modes: [
-      { id: 'keychain', kind: 'own', env: ['CURSOR_CONFIG_DIR'] },
       { id: 'api-key', kind: 'key', env: ['CURSOR_API_KEY'], brokerSlot: 'cursor' },
+      { id: 'keychain', kind: 'own', env: ['CURSOR_CONFIG_DIR'] },
     ] },
     relay: { protocol: 'connect', upstream: 'cursor', modelCheck: 'partial', auxModels: [] },
     shell: true,
@@ -148,7 +164,7 @@ export const ENGINES = deepFreeze({
         'GOOGLE_APPLICATION_CREDENTIALS', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION', 'GCE_METADATA_HOST'], home: null },
     signIn: { modes: [
       { id: 'api-key', kind: 'key', env: ['GEMINI_API_KEY'] },
-      { id: 'vertex-key', kind: 'key', env: ['GOOGLE_API_KEY'] },
+      { id: 'vertex-key', kind: 'key', env: ['GOOGLE_API_KEY'], requires: ['GOOGLE_GENAI_USE_VERTEXAI'] },
       { id: 'access-token', kind: 'key', env: ['GOOGLE_CLOUD_ACCESS_TOKEN'] },
       { id: 'adc', kind: 'own', env: ['GOOGLE_APPLICATION_CREDENTIALS'] },
       { id: 'google-login', kind: 'own', env: ['GEMINI_CLI_HOME'], files: ['oauth_creds.json', 'google_accounts.json'] },
@@ -200,8 +216,8 @@ export const ENGINES = deepFreeze({
       { id: 'google', kind: 'key', env: ['GOOGLE_GENERATIVE_AI_API_KEY'] },
       { id: 'openrouter', kind: 'key', env: ['OPENROUTER_API_KEY'] },
       { id: 'zen', kind: 'key', env: ['OPENCODE_API_KEY'] },
-      { id: 'auth-content', kind: 'key', env: ['OPENCODE_AUTH_CONTENT'] },
-      { id: 'auth-file', kind: 'own', env: [], files: ['auth.json'] },
+      // `opencode auth login` (auth.json), or the same content in OPENCODE_AUTH_CONTENT.
+      { id: 'auth-file', kind: 'own', env: ['OPENCODE_AUTH_CONTENT'], files: ['auth.json'] },
     ] },
     relay: null,
     shell: true,
@@ -321,12 +337,19 @@ export function engineLabel(engine) {
 /** Whether runs on `engine` report a cost. Where not, a cost shows as unknown, never $0.00. An unknown engine does. */
 export function engineReportsCost(engine) { const e = engine || 'claude'; return !Object.hasOwn(ENGINES, e) || ENGINES[e].cost; }
 
-/** A run's cost as text for the CLI and chat: `fmt(costUsd)`, or "cost unknown" on an engine that reports none. A
- *  total above 0 on such a run is worca's own calls alone (helper jobs on Claude), named as that. */
-export function runCostLabel(engine, costUsd, fmt) {
+/** A run's cost as text for the CLI and chat: `fmt(costUsd)`; "cost unknown" on an engine that reports none (a total
+ *  above 0 there is worca's own calls); "≥ $x (part unknown)" when a step's cost could not be priced (`known` false). */
+export function runCostLabel(engine, costUsd, fmt, known = true) {
   const n = Number(costUsd) || 0;
-  if (engineReportsCost(engine)) return fmt(n);
-  return n > 0 ? `cost unknown (worca's own calls: ${fmt(n)})` : 'cost unknown';
+  if (!engineReportsCost(engine)) return n > 0 ? `cost unknown (worca's own calls: ${fmt(n)})` : 'cost unknown';
+  if (known === false) return n > 0 ? `≥ ${fmt(n)} (part unknown)` : 'cost unknown';
+  return fmt(n);
+}
+/** Whether every step of a run (state or history row) has a known cost: false when one step's could not be priced. */
+export function costKnownOf(run) {
+  if (!run) return true;
+  if (run.costKnown === false || run.cost_known === 0) return false;
+  return !(Array.isArray(run.steps) && run.steps.some((s) => s && s.costKnown === false));
 }
 
 /** Every engine a run on `engine` can switch to, in list order, limited to `ready` (default: all). [] for an unknown engine. */

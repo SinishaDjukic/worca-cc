@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { delimiter } from 'node:path';
 import { childEnv, formatDropped } from '../src/core/spawn.mjs';
 import { ENGINES } from '../src/shared/engine-switch.mjs';
+import { resolveModelRoute } from '../src/core/exec-env/credentials.mjs';
 
 const BASE = { PATH: 'p', HOME: 'h', COPILOT_ALLOW_ALL: '1', COPILOT_HOME: '/c', OPENAI_API_KEY: 'k' };
 
@@ -87,6 +88,80 @@ test('subscription token survives only for its mode', () => {
   const relayed = childEnv({ engine: 'claude', signInMode: 'relayed', base }).env;
   assert.equal(relayed.CLAUDE_CODE_OAUTH_TOKEN, undefined);
   assert.equal(childEnv({ engine: 'claude', base }).env.CLAUDE_CODE_OAUTH_TOKEN, 't', 'no mode named yet: every mode\'s names');
+});
+
+test('a key mode keeps the engine\'s session dir', () => {
+  const codex = childEnv({ engine: 'codex', signInMode: 'api-key', base: { PATH: 'p', CODEX_HOME: '/c', CODEX_API_KEY: 'a', OPENAI_API_KEY: 'b' } }).env;
+  assert.equal(codex.CODEX_HOME, '/c');
+  assert.equal(codex.CODEX_API_KEY, 'a');
+  assert.equal(codex.OPENAI_API_KEY, undefined, 'the other mode\'s credential');
+  for (const [engine, mode, dir, key] of [['claude', 'oauth-env', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_OAUTH_TOKEN'],
+    ['copilot', 'token', 'COPILOT_HOME', 'COPILOT_GITHUB_TOKEN'], ['cursor', 'api-key', 'CURSOR_CONFIG_DIR', 'CURSOR_API_KEY']]) {
+    const env = childEnv({ engine, signInMode: mode, base: { PATH: 'p', [dir]: '/d', [key]: 'k' } }).env;
+    assert.equal(env[dir], '/d', `${engine}/${mode}: ${dir}`);
+    assert.equal(env[key], 'k', `${engine}/${mode}: ${key}`);
+  }
+});
+
+test('undeclared credentials are dropped in every named mode', () => {
+  const ids = (e) => [...ENGINES[e].signIn.modes.map((m) => m.id), 'relayed', 'brokered'];
+  const copilotBase = { PATH: 'p', COPILOT_PROVIDER_API_KEY: 'pk', COPILOT_PROVIDER_BASE_URL: 'http://127.0.0.1:1' };
+  for (const id of ids('copilot')) {
+    const env = childEnv({ engine: 'copilot', signInMode: id, base: copilotBase }).env;
+    assert.equal('COPILOT_PROVIDER_API_KEY' in env, id === 'provider-key', `copilot/${id}: COPILOT_PROVIDER_API_KEY`);
+    assert.equal(env.COPILOT_PROVIDER_BASE_URL, 'http://127.0.0.1:1', `copilot/${id}: config stays`);
+    const bearer = childEnv({ engine: 'copilot', signInMode: id, allowlist: ['COPILOT_PROVIDER_BEARER_TOKEN'], base: { ...copilotBase, COPILOT_PROVIDER_BEARER_TOKEN: 'bt' } }).env;
+    assert.equal(bearer.COPILOT_PROVIDER_BEARER_TOKEN, undefined, `copilot/${id}: COPILOT_PROVIDER_BEARER_TOKEN, even allowlisted`);
+  }
+  for (const id of ids('cursor')) {
+    const env = childEnv({ engine: 'cursor', signInMode: id, base: { PATH: 'p', CURSOR_AUTH_TOKEN: 'at' } }).env;
+    assert.equal(env.CURSOR_AUTH_TOKEN, undefined, `cursor/${id}: CURSOR_AUTH_TOKEN`);
+  }
+});
+
+test('a run-env credential of another mode is dropped', () => {
+  const { env, dropped } = childEnv({ engine: 'codex', signInMode: 'api-key', runEnv: { OPENAI_API_KEY: 'r' }, allowlist: ['OPENAI_API_KEY'],
+    base: { PATH: 'p', CODEX_API_KEY: 'a', OPENAI_API_KEY: 'b' } });
+  assert.equal(env.CODEX_API_KEY, 'a');
+  assert.equal(env.OPENAI_API_KEY, undefined);
+  assert.ok(dropped.includes('OPENAI_API_KEY'), 'named in the run log');
+});
+
+test('a brokered mode keeps only the overlay\'s token', () => {
+  const { env, dropped } = childEnv({ engine: 'claude', signInMode: 'brokered', runEnv: { ANTHROPIC_API_KEY: 'run', OPENAI_API_KEY: 'o' },
+    allowlist: ['AWS_ACCESS_KEY_ID'], overlay: { ANTHROPIC_AUTH_TOKEN: 'wbt_x' },
+    base: { PATH: 'p', CLAUDE_CODE_OAUTH_TOKEN: 't', AWS_ACCESS_KEY_ID: 'aws' } });
+  assert.equal(env.ANTHROPIC_AUTH_TOKEN, 'wbt_x');
+  for (const k of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'AWS_ACCESS_KEY_ID']) assert.equal(env[k], undefined, k);
+  assert.ok(dropped.includes('CLAUDE_CODE_OAUTH_TOKEN'));
+  assert.ok(dropped.includes('AWS_ACCESS_KEY_ID'));
+  // Every engine's credentials, not only the spawn's own (D10): a Copilot PAT or a Cursor key that a project allowlists
+  // for its Copilot or Cursor runs never reaches a brokered Claude or Codex agent, from the allowlist or the run env.
+  const others = ['COPILOT_GITHUB_TOKEN', 'COPILOT_PROVIDER_API_KEY', 'CURSOR_API_KEY', 'CURSOR_AUTH_TOKEN', 'CODEX_API_KEY'];
+  for (const [engine, overlay] of [['claude', { ANTHROPIC_AUTH_TOKEN: 'wbt_c' }], ['codex', { OPENAI_API_KEY: 'wbt_o' }]]) {
+    const viaAllowlist = childEnv({ engine, signInMode: 'brokered', allowlist: others, overlay,
+      base: { PATH: 'p', ...Object.fromEntries(others.map((k) => [k, `w-${k}`])) } });
+    const viaRunEnv = childEnv({ engine, signInMode: 'brokered', overlay, base: { PATH: 'p' },
+      runEnv: Object.fromEntries(others.map((k) => [k, `r-${k}`])) });
+    for (const k of others) {
+      if (Object.hasOwn(overlay, k)) continue;
+      assert.equal(viaAllowlist.env[k], undefined, `${engine}: ${k} from the allowlist`);
+      assert.equal(viaRunEnv.env[k], undefined, `${engine}: ${k} from the run env`);
+      assert.ok(viaRunEnv.dropped.includes(k), `${engine}: ${k} from the run env is named in the run log`);
+    }
+    for (const [k, v] of Object.entries(overlay)) assert.equal(viaRunEnv.env[k], v, `${engine}: the broker token`);
+  }
+});
+
+test('copilot with a token and a configured provider keeps the provider key', () => {
+  const base = { PATH: 'p', COPILOT_GITHUB_TOKEN: 'g', COPILOT_PROVIDER_BASE_URL: 'http://127.0.0.1:1', COPILOT_PROVIDER_API_KEY: 'pk', COPILOT_PROVIDER_TYPE: 'openai' };
+  const d = resolveModelRoute({ engine: 'copilot', serverEnv: base, broker: { on: false } });
+  assert.equal(d.signInMode, 'provider-key');
+  const env = childEnv({ engine: 'copilot', signInMode: d.signInMode, base }).env;
+  for (const k of ['COPILOT_PROVIDER_BASE_URL', 'COPILOT_PROVIDER_API_KEY', 'COPILOT_PROVIDER_TYPE']) assert.equal(env[k], base[k], k);
+  assert.equal(env.COPILOT_GITHUB_TOKEN, undefined);
+  const { COPILOT_PROVIDER_BASE_URL: _url, ...noBase } = base;
+  assert.equal(resolveModelRoute({ engine: 'copilot', serverEnv: noBase, broker: { on: false } }).signInMode, 'token');
 });
 
 test('drops cloud vars with a named run-log line', () => {

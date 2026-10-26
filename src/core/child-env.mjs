@@ -6,6 +6,8 @@ import { dirname, resolve, delimiter } from 'node:path';
 import { stripHostCredentials, isBackendSecret } from './host-credentials.mjs';
 import { ENGINES, engineEntry } from '../shared/engine-switch.mjs';
 import { withoutProxyLogin } from './env-proxy.mjs';
+import { credentialNamesOf, modeCredential } from './exec-env/credentials.mjs';
+import { MODEL_CREDENTIAL_ENV_KEYS } from './broker-guard.mjs';
 
 // Grace between the abort SIGTERM and the SIGKILL escalation. Claude Code shuts
 // down synchronously (fsync'd ~/.claude.json saves); a SIGKILL that lands inside
@@ -59,8 +61,9 @@ const HOST_ONLY = new Set(['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'USER', 'LOG
 const BROKER_NAME = /^WORCA_BROKER/;
 
 const names = (list) => (Array.isArray(list) ? list : []);
-/** Every credential name an engine declares: its sign-in modes' env names (the own-login modes' names are dirs). */
-const credentialNames = (entry) => entry.signIn.modes.filter((m) => m.kind !== 'own').flatMap((m) => m.env);
+/** Every credential name an engine declares (credentials.mjs credentialNamesOf: the one secret-named name of each
+ *  non-own mode, and its secret-named relay-owned names — COPILOT_PROVIDER_API_KEY, CURSOR_AUTH_TOKEN). */
+const credentialNames = (engine) => credentialNamesOf(engine);
 /** The names the sign-in mode `id` needs (null: every mode's, the default until the route resolver names one; a mode
  *  the engine does not declare, such as 'relayed': none). */
 function signInNames(entry, id) {
@@ -119,8 +122,11 @@ export function composeChildEnv({ kind = 'engine', engine = null, signInMode = n
     for (const k of COMMON_NAMES) keep.add(k);
     for (const k of LOCAL_PLATFORM_NAMES) keep.add(k);
     if (entry) {
-      const creds = new Set(credentialNames(entry));
+      const creds = new Set(credentialNames(engine));
       for (const k of entry.env.names) keep.add(k);
+      // Its session and config dirs (CLAUDE_CONFIG_DIR, CODEX_HOME, COPILOT_HOME, CURSOR_CONFIG_DIR): kept in every
+      // sign-in mode, or a key mode would move resume, rollouts and archives to ~ (they are not credentials).
+      for (const k of entry.env.hostOnly) keep.add(k);
       for (const k of entry.env.relayOwned) if (!creds.has(k)) keep.add(k);
       for (const k of signInNames(entry, signInMode)) keep.add(k);
     }
@@ -135,6 +141,26 @@ export function composeChildEnv({ kind = 'engine', engine = null, signInMode = n
   }
   if (runEnv) Object.assign(env, runEnv);
   if (overlay) Object.assign(env, overlay);
+  // A named sign-in mode (the route resolver's decision): the child holds exactly one credential of this engine — the
+  // mode's own — whichever tier carried the others (worca's env, the project allowlist, the run env); the overlay (a
+  // broker token, a model entry's own key) is the only exception. An undeclared mode (relayed, brokered, model,
+  // endpoint) keeps none; `brokered` keeps no model credential of any engine or provider either (D10, what claude.mjs
+  // did for Claude: the spawn's broker token is the only one it holds). A name removed here, whatever tier carried it,
+  // is reported in `dropped`.
+  if (entry && !remote && signInMode != null) {
+    const mode = entry.signIn.modes.find((m) => m.id === signInMode) || null;
+    const own = mode ? modeCredential(mode) : null;
+    const strip = new Set(credentialNames(engine));
+    if (signInMode === 'brokered') {
+      for (const e of Object.keys(ENGINES)) for (const k of credentialNames(e)) strip.add(k);
+      for (const k of MODEL_CREDENTIAL_ENV_KEYS) strip.add(k);
+    }
+    for (const k of strip) {
+      if (k === own || (overlay && Object.hasOwn(overlay, k)) || !(k in env)) continue;
+      if (!dropped.includes(k)) dropped.push(k);
+      delete env[k];
+    }
+  }
   if (hostPid != null && !remote) env.WORCA_HOST_PID = String(hostPid);
   // No proxy URL that carries a login (env-proxy.mjs withoutProxyLogin): the corporate proxy is off then, so the
   // child goes direct rather than get the password.

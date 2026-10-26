@@ -4,10 +4,14 @@
 // (engineModelRoute). The relay (model-relay.mjs) applies the result; the sandbox never holds the credential.
 // Refuses (errorClass 'config') what a relay cannot carry.
 import { createHash } from 'node:crypto';
-import { modelCredential, engineCredential, ENGINE_SANDBOX } from './policy.mjs';
+import { isResolved, engineCredential, modelCredential } from './credentials.mjs';
+import { engineEntry } from '../../shared/engine-switch.mjs';
 import { OAUTH_BETA, mergeBetas } from '../../broker/service.mjs';
 import { isCopilotHost } from '../../broker/copilot.mjs';
 import { pinnedEngineClis } from './backends/e2b-template.mjs';
+import { cursorAccessToken, invalidateCursorToken, CURSOR_PATHS, CURSOR_FORWARD } from '../../broker/cursor.mjs';
+import { COPILOT_CLI_API_VERSION } from '../../broker/copilot-token.mjs';
+export { resolveModelRoute, isResolved } from './credentials.mjs';
 
 const ANTHROPIC = 'https://api.anthropic.com';
 const SIGNING_FLAGS = ['BEDROCK', 'VERTEX', 'FOUNDRY'];
@@ -101,22 +105,12 @@ export const ENGINE_UPSTREAMS = Object.freeze({
 export const RELAY_DUMMY = 'worca-relay-no-credential';
 /** The env var codex's relay provider reads its (dummy) key from. */
 export const CODEX_RELAY_KEY_ENV = 'WORCA_RELAY_KEY';
-const COPILOT_CLI_API_VERSION = '2026-08-01';   // what copilot 1.0.100 sends (x-github-api-version)
-const CURSOR_TOKEN_MARGIN_MS = 5 * 60_000;      // a Cursor access token is exchanged again this long before it expires
-const CURSOR_TOKEN_FALLBACK_MS = 30 * 60_000;   // …or after this long when it names no expiry
 const HOST_LOOKUP_MS = 15_000;
-// The Connect calls one headless cursor-agent turn makes over HTTP/1.1 (useHttp1ForAgent), exact: each is signed with
-// the person's access token and only RunSSE is metered, so no other method of these services passes. Not /auth/* (the
-// key exchange is worca's), not AgentService/Run (HTTP/2 bidi, which the relay cannot carry).
-const CURSOR_PATHS = Object.freeze([['POST', '/agent.v1.AgentService/RunSSE'], ['POST', '/aiserver.v1.AiService/GetUsableModels'],
-  ['POST', '/aiserver.v1.BidiService/BidiAppend'], ['POST', '/aiserver.v1.DashboardService/GetMe']]);
-// Not x-ghost-mode: privacy mode is the person's own Cursor setting, never the sandbox's to pick.
-const CURSOR_FORWARD = Object.freeze(['connect-protocol-version', 'connect-timeout-ms', 'connect-content-encoding', 'content-encoding',
-  'x-cursor-client-type', 'x-cursor-client-version', 'x-request-id', 'traceparent']);
+// Cursor's key exchange and its Connect call shapes (CURSOR_PATHS, CURSOR_FORWARD) live in src/broker/cursor.mjs: the
+// broker's cursor slot does the same exchange, one copy.
 
 const tomlStr = (s) => JSON.stringify(String(s));
 const sha = (s) => createHash('sha256').update(String(s)).digest('hex').slice(0, 16);
-const addAll = (list, values) => { for (const v of values || []) if (!list.includes(v)) list.push(v); };
 
 /** A base URL a relay can extend: http(s), no user name or password, no query or fragment. */
 function checkBase(raw, what) {
@@ -160,7 +154,7 @@ function codexRoute({ serverEnv, endpoint, upstreams, label }) {
     allow: [['POST', '/responses'], ['GET', '/models']],
     authHeaders: () => (key ? { authorization: `Bearer ${key}` } : {}),
     extraHeaders: headers, forwardHeaders: [], secrets: [key, ...Object.values(headers)].filter(Boolean),
-    spawn: (baseUrl) => ({ env: { [CODEX_RELAY_KEY_ENV]: RELAY_DUMMY }, args: codexRelayArgs(baseUrl) }),
+    spawn: (baseUrl) => CLI_POINTING.openai.spawn(baseUrl, RELAY_DUMMY),
   };
 }
 
@@ -172,6 +166,34 @@ export function copilotWire(model) {
   if (/^(gpt-5|o\d|codex)/.test(m)) return { type: 'openai', api: 'responses', path: '/responses' };
   return { type: 'openai', api: 'completions', path: '/chat/completions' };
 }
+
+/** How a CLI is pointed at a relay route or a broker slot, per catalog relay.upstream: the env (and codex's args) with
+ *  `credential` (RELAY_DUMMY for the relay, the spawn's wbt_ token for the broker) in its key slot. `suffix`: what the
+ *  CLI's base needs after a broker slot URL (the openai slot's paths start with /v1). Claude is pointed by its model
+ *  env (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN), as runViaBroker and RemoteExecEnv do today. */
+export const CLI_POINTING = Object.freeze({
+  openai: { suffix: '/v1', spawn: (baseUrl, credential) => ({ env: { [CODEX_RELAY_KEY_ENV]: credential }, args: codexRelayArgs(baseUrl) }) },
+  copilot: { suffix: '', spawn: (baseUrl, credential, model) => {
+    const wire = copilotWire(model);
+    return { env: { COPILOT_OFFLINE: 'true', COPILOT_PROVIDER_BASE_URL: baseUrl, COPILOT_PROVIDER_API_KEY: credential,
+      COPILOT_PROVIDER_TYPE: wire.type, ...(wire.api ? { COPILOT_PROVIDER_WIRE_API: wire.api } : {}) }, args: [] };
+  } },
+  // No HTTPS_PROXY (cursor-agent ignores NO_PROXY); authless mode skips its DNS prewarm of api2.cursor.sh. The HTTP/1.1
+  // agent stream is set in its cli-config.json (CURSOR_CLI_CONFIG, written by the adapter).
+  cursor: { suffix: '', spawn: (baseUrl, credential) => ({ env: { CURSOR_API_ENDPOINT: baseUrl, CURSOR_AUTH_TOKEN: credential,
+    CURSOR_AGENT_CLI_AUTHLESS_MODE: 'true' }, args: [] }) },
+});
+/** Every name CLI_POINTING may set for `upstream`, and every other provider credential source the CLI would read in
+ *  their place: an adapter deletes them from the child env before it points the CLI, so an ambient value
+ *  (COPILOT_PROVIDER_WIRE_API for an anthropic-type model, a COPILOT_PROVIDER_API_KEY_COMMAND, say) never survives. */
+export const POINTING_NAMES = Object.freeze({
+  openai: [CODEX_RELAY_KEY_ENV], copilot: ['COPILOT_OFFLINE', 'COPILOT_PROVIDER_BASE_URL', 'COPILOT_PROVIDER_API_KEY', 'COPILOT_PROVIDER_TYPE', 'COPILOT_PROVIDER_WIRE_API',
+    'COPILOT_PROVIDER_BEARER_TOKEN', 'COPILOT_PROVIDER_API_KEY_COMMAND'],
+  cursor: ['CURSOR_API_ENDPOINT', 'CURSOR_AUTH_TOKEN', 'CURSOR_AGENT_CLI_AUTHLESS_MODE'],
+});
+// copilot's own provider names (catalog relayOwned): a run env that sets one is refused in a sandbox.
+const PROVIDER_NAMES = new Set(['COPILOT_PROVIDER_BASE_URL', 'COPILOT_PROVIDER_API_KEY', 'COPILOT_PROVIDER_TYPE', 'COPILOT_PROVIDER_WIRE_API',
+  'COPILOT_PROVIDER_BEARER_TOKEN', 'COPILOT_PROVIDER_API_KEY_COMMAND']);
 
 /** The Copilot API host for a fine-grained PAT, as the CLI finds it: `endpoints.api` of GET copilot_internal/user,
  *  GitHub's own host only (isCopilotHost). Cached per token in `cache`; a failed lookup is not cached. */
@@ -195,7 +217,7 @@ function copilotHost({ pat, upstreams, fetchImpl, cache }) {
 }
 
 function copilotRoute({ serverEnv, spawnEnv, model, upstreams, fetchImpl, cache, label }) {
-  const own = Object.keys(spawnEnv || {}).find((k) => /^COPILOT_PROVIDER_/.test(k));
+  const own = Object.keys(spawnEnv || {}).find((k) => PROVIDER_NAMES.has(k));
   if (own) throw refuse(`This run's environment sets ${own}. In an ${label} worca points copilot at its model relay itself and takes no provider of your own. Remove ${own}, or pick Local.`);
   const cred = engineCredential('copilot', serverEnv);
   if (cred.problem) throw refuse(cred.problem);
@@ -213,41 +235,8 @@ function copilotRoute({ serverEnv, spawnEnv, model, upstreams, fetchImpl, cache,
     forwardHeaders: ['x-initiator', 'x-interaction-type'],
     secrets: [pat],
     onStatus: (status) => { if (status === 401 || status === 404) cache.delete(`copilot-host:${sha(pat)}`); },
-    spawn: (baseUrl) => ({ env: { COPILOT_OFFLINE: 'true', COPILOT_PROVIDER_BASE_URL: baseUrl, COPILOT_PROVIDER_API_KEY: RELAY_DUMMY,
-      COPILOT_PROVIDER_TYPE: wire.type, ...(wire.api ? { COPILOT_PROVIDER_WIRE_API: wire.api } : {}) } }),
+    spawn: (baseUrl) => CLI_POINTING.copilot.spawn(baseUrl, RELAY_DUMMY, model),
   };
-}
-
-/** The `exp` of a JWT, in ms, or null. */
-function jwtExpiry(token) {
-  try { const exp = JSON.parse(Buffer.from(String(token).split('.')[1], 'base64url').toString('utf8'))?.exp; return Number.isFinite(exp) ? exp * 1000 : null; }
-  catch { return null; }
-}
-
-/** Cursor's API key exchanged for an access token (POST /auth/exchange_user_api_key, as cursor-agent does with
- *  CURSOR_API_KEY), cached per key in `cache` until CURSOR_TOKEN_MARGIN_MS before its `exp`. Both tokens it returns go
- *  into `secrets`, so no reply can carry them into the sandbox. One exchange at a time per key. */
-function cursorToken({ apiKey, origin, fetchImpl, now, cache, secrets }) {
-  const key = `cursor-token:${sha(apiKey)}`;
-  const hit = cache.get(key);
-  if (hit?.token && hit.renewAt > now()) { addAll(secrets, hit.secrets); return Promise.resolve(hit.token); }
-  if (hit?.pending) return hit.pending.then((t) => { addAll(secrets, cache.get(key)?.secrets); return t; });
-  const pending = (async () => {
-    const r = await fetchImpl(`${origin}/auth/exchange_user_api_key`, {
-      method: 'POST', headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json', accept: 'application/json' },
-      body: '{}', redirect: 'manual', signal: AbortSignal.timeout(HOST_LOOKUP_MS) });
-    if (!r.ok) throw new Error(`Cursor answered ${r.status} to the API key exchange${r.status === 401 || r.status === 403 ? ': check CURSOR_API_KEY' : ''}`);
-    const j = await r.json();
-    if (typeof j?.accessToken !== 'string' || !j.accessToken) throw new Error('Cursor returned no access token for the API key');
-    const exp = jwtExpiry(j.accessToken);
-    const got = [j.accessToken, ...(typeof j.refreshToken === 'string' ? [j.refreshToken] : [])];
-    cache.set(key, { token: j.accessToken, secrets: got, renewAt: exp ? exp - CURSOR_TOKEN_MARGIN_MS : now() + CURSOR_TOKEN_FALLBACK_MS });
-    return j.accessToken;
-  })();
-  cache.set(key, { pending });
-  const out = pending.then((t) => { addAll(secrets, cache.get(key)?.secrets); return t; });
-  out.catch(() => { if (cache.get(key)?.pending === pending) cache.delete(key); });
-  return out;
 }
 
 function cursorRoute({ serverEnv, upstreams, fetchImpl, now, cache, label }) {
@@ -258,13 +247,11 @@ function cursorRoute({ serverEnv, upstreams, fetchImpl, now, cache, label }) {
   return {
     engine: 'cursor', upstream: origin, origin, protocol: 'connect', call: `a Connect call cursor-agent makes over HTTP/1.1 in an ${label}`,
     allow: CURSOR_PATHS,
-    authHeaders: async () => ({ authorization: `Bearer ${await cursorToken({ apiKey: cred.value, origin, fetchImpl, now, cache, secrets })}` }),
+    authHeaders: async () => ({ authorization: `Bearer ${await cursorAccessToken({ apiKey: cred.value, origin, fetchImpl, now, cache, secrets })}` }),
     extraHeaders: {}, forwardHeaders: CURSOR_FORWARD, responseHeaders: ['connect-content-encoding'], secrets,
     // A rejected access token: exchange the key again on the next call.
-    onStatus: (status) => { if (status === 401) cache.delete(`cursor-token:${sha(cred.value)}`); },
-    // No HTTPS_PROXY (cursor-agent ignores NO_PROXY); authless mode skips its DNS prewarm of api2.cursor.sh. The
-    // HTTP/1.1 agent stream is set in its cli-config.json (CURSOR_CLI_CONFIG, written by the adapter).
-    spawn: (baseUrl) => ({ env: { CURSOR_API_ENDPOINT: baseUrl, CURSOR_AUTH_TOKEN: RELAY_DUMMY, CURSOR_AGENT_CLI_AUTHLESS_MODE: 'true' } }),
+    onStatus: (status) => { if (status === 401) invalidateCursorToken(cache, cred.value); },
+    spawn: (baseUrl) => CLI_POINTING.cursor.spawn(baseUrl, RELAY_DUMMY),
   };
 }
 
@@ -280,10 +267,46 @@ export const CURSOR_CLI_CONFIG = `${JSON.stringify({ network: { useHttp1ForAgent
  */
 export function engineModelRoute({ engine, serverEnv = {}, spawnEnv = {}, model = null, endpoint = null, label, upstreams = null,
   fetchImpl = globalThis.fetch, now = Date.now, cache = new Map() }) {
-  // By the upstream its sandbox row names (policy.mjs ENGINE_SANDBOX relay), never by engine name.
-  const upstream = Object.hasOwn(ENGINE_SANDBOX, engine) ? ENGINE_SANDBOX[engine].relay?.upstream : null;
+  const upstream = engineEntry(engine)?.relay?.upstream;
   if (upstream === 'openai') return codexRoute({ serverEnv, endpoint, upstreams, label });
   if (upstream === 'copilot') return copilotRoute({ serverEnv, spawnEnv, model, upstreams, fetchImpl, cache, label });
   if (upstream === 'cursor') return cursorRoute({ serverEnv, upstreams, fetchImpl, now, cache, label });
   throw refuse(`the ${engine} engine has no model route`);
+}
+
+/**
+ * The relay route for a resolved decision (resolveModelRoute, kind 'relayed'): Claude's (remoteModelRoute, from the
+ * composed spawn env and model env, as today) or an engine route. With a broker `lease`, the route's upstream is the
+ * broker slot and worca signs with the spawn token: the broker adds the person's key (and does Cursor's exchange).
+ * `route.models` carries the decision's models plus the catalog's auxModels (Task 9 checks them).
+ */
+export function buildRelayRoute(decision, { spawnEnv = {}, modelEnv = null, serverEnv = {}, endpoint = null, lease = null,
+  label, upstreams = null, fetchImpl = globalThis.fetch, now = Date.now, cache = new Map() } = {}) {
+  if (!isResolved(decision)) throw refuse('a model route opens only from resolveModelRoute\'s decision');
+  if (decision.refusal) throw refuse(decision.refusal);
+  if (decision.kind !== 'relayed') throw refuse(`a ${decision.kind} spawn has no relay route`);
+  const entry = engineEntry(decision.engine);
+  // The model the CLI puts in its request body: the adapter passes it as `model` (copilot: copilotWireModel(id)); a
+  // codex endpoint model sends its upstream id instead of the catalog id.
+  const models = [...new Set([...(endpoint?.model ? [endpoint.model] : decision.models), ...(entry.relay.auxModels || [])])];
+  let route;
+  if (entry.relay.upstream === 'anthropic') route = remoteModelRoute({ spawnEnv, modelEnv, serverEnv, label });
+  else if (lease) route = slotRoute(entry, decision, { lease, label });
+  else route = engineModelRoute({ engine: decision.engine, serverEnv, spawnEnv, model: decision.models[0] ?? null, endpoint, label, upstreams, fetchImpl, now, cache });
+  return { ...route, models, modelCheck: entry.relay.modelCheck };
+}
+
+/** An engine route whose upstream is a broker slot (`lease`): the spawn token signs, nothing else is added. */
+function slotRoute(entry, decision, { lease, label }) {
+  const base = String(lease.baseUrl).replace(/\/+$/, '') + (CLI_POINTING[entry.relay.upstream]?.suffix || '');
+  const model = decision.models[0] ?? null;
+  const per = {
+    openai: { protocol: 'openai', allow: [['POST', '/responses'], ['GET', '/models']], forwardHeaders: [] },
+    copilot: { protocol: copilotWire(model).type === 'anthropic' ? 'anthropic' : 'openai', allow: [['POST', copilotWire(model).path]], forwardHeaders: ['x-initiator', 'x-interaction-type'] },
+    cursor: { protocol: 'connect', allow: CURSOR_PATHS, forwardHeaders: CURSOR_FORWARD, responseHeaders: ['connect-content-encoding'] },
+  }[entry.relay.upstream];
+  if (!per) throw refuse(`the ${decision.engine} engine has no broker route`);
+  return { engine: decision.engine, upstream: base, origin: new URL(base).origin, call: `a ${per.protocol} call from ${decision.engine} through the credential broker in an ${label}`,
+    ...per, authHeaders: () => ({ authorization: `Bearer ${lease.token}` }), extraHeaders: {}, secrets: [...lease.secrets],
+    spawn: (baseUrl) => CLI_POINTING[entry.relay.upstream].spawn(baseUrl, RELAY_DUMMY, model) };
 }

@@ -196,7 +196,7 @@ import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, FLOW_LABEL, KEYED_KINDS, SY
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES, costKnownOf } from '../../src/shared/engine-switch.mjs';
 import { remoteRefusesDefault } from '../../src/shared/exec-env.mjs';
 import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS } from '../../src/shared/connections.mjs';
 import {
@@ -27073,6 +27073,12 @@ function placeCostPop(header, btn, pop) {
 function runCostText(r, total, fallback = null) {
   if (!engineReportsCost(r?.runEngine)) return { text: 'cost unknown', title: `${engineLabel(r.runEngine)} reports no cost${Number(total) > 0 ? ` (worca's own calls so far: ${fmtUsd(total)})` : ''}` };
   if (fallback !== null && typeof total !== 'number') return { text: fallback, title: '' };
+  // A step whose cost worca could not price (an unpriced model, a stopped turn): the total is a lower bound, never a
+  // known figure.
+  if (!costKnownOf(r)) {
+    const n = Number(total) || 0;
+    return { text: n > 0 ? `≥ ${fmtUsd(n)}` : 'cost unknown', title: 'Part of this run\'s cost could not be counted' };
+  }
   return { text: fmtUsd(Number(total) || 0), title: '' };
 }
 

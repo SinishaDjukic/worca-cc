@@ -274,6 +274,36 @@ test('a run on an engine that reports no cost: Agents reads "cost unknown", the 
   window.close();
 });
 
+test('a step whose cost could not be counted: the run page and History read "≥ $x", never a known figure', async () => {
+  const UNKNOWN = () => OLD_STEPS().map((st, i) => (i === 0 ? { ...st, costKnown: false } : st));
+  await checkRows([
+    { name: 'run page: the header and the Cost so far card', run: async () => {
+      const ctx = await boot({ fetchHandler: (url) => (url.endsWith('/api/history') ? Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines: [], ghAvailable: false }) }) : null) });
+      const ws = ctx.wsBox.ws;
+      ws.dispatch('open', {});
+      const frame = (msg) => ws.dispatch('message', { data: JSON.stringify(msg) });
+      frame({ type: 'hello', runs: [] });
+      await settle(ctx.window, 4);
+      frame({ type: 'run-created', runId: 'r1', title: 'T', projectDir: PROJECT, status: 'running', startedAt: '2026-08-19T10:00:00Z', kind: 'run' });
+      frame({ type: 'state', runId: 'r1', id: 'p1', status: 'running', steps: UNKNOWN(), subAgents: [], totalCostUsd: TOTAL, runEngine: 'claude' });
+      go(ctx.window, 'running/r1/details/overview');
+      await settle(ctx.window, 6);
+      const rd = ctx.window.document.querySelector('#run-detail .rd');
+      assert.equal(rd.querySelector('.rd-meta .rd-cost').textContent, '≥ $3.33');
+      const card = rd.querySelector('.hd-ov-card-cost .hd-ov-value');
+      assert.equal(card.textContent, '≥ $3.33');
+      assert.equal(card.title, "Part of this run's cost could not be counted");
+    } },
+    { name: 'History: the header and the COST card', run: async () => {
+      const ctx = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, steps: UNKNOWN(), totalCostUsd: TOTAL, runEngine: 'claude' } } });
+      await openDetail(ctx, 'details/overview');
+      const doc = ctx.window.document;
+      assert.equal(doc.querySelector('#hist-detail .hd-meta .hd-cost').textContent, '≥ $3.33');
+      assert.equal(secOf(doc, 'overview').querySelector('.hd-ov-card-cost .hd-ov-value').textContent, '≥ $3.33');
+    } },
+  ]);
+});
+
 test('cost unknown, never $0.00: a Cursor run on the run page and in History; a Codex run with 0 still reads $0.00', async () => {
   const runPage = async (runEngine) => {
     const ctx = await boot({ fetchHandler: (url) => (url.endsWith('/api/history') ? Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines: [], ghAvailable: false }) }) : null) });

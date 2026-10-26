@@ -1,0 +1,7 @@
+{"type":"thread.started","thread_id":"00000000-0000-4000-8000-0000000000aa"}
+{"type":"turn.started"}
+{"type":"turn.completed","usage":{"input_tokens":1000,"cached_input_tokens":0,"output_tokens":20}}
+{"type":"item.started","item":{"id":"i1","type":"command_execution","command":"ls","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"i1","type":"command_execution","command":"ls","aggregated_output":"","exit_code":0,"status":"completed"}}
+{"type":"item.started","item":{"id":"i2","type":"command_execution","command":"ls","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"i2","type":"command_execution","command":"ls","aggregated_output":"","exit_code":0,"status":"completed"}}

@@ -14,7 +14,7 @@
 // worca registers the whole set with the broker (PUT /internal/plugin-slots) at boot,
 // before a spawn when it changed, and after a plugin changes.
 import { createHash } from 'node:crypto';
-import { upstreamIssue, PLUGIN_SLOT_PREFIX } from '../broker/slots.mjs';
+import { upstreamIssue, PLUGIN_SLOT_PREFIX, engineOnlyAuth } from '../broker/slots.mjs';
 import { brokerEnabled, brokerInfo, putPluginSlots } from './broker-client.mjs';
 import { isLocalBaseUrl } from './model-env.mjs';
 import { listPluginModels, pluginModelSecretStatus } from './plugin-models.mjs';
@@ -122,7 +122,7 @@ export function derivePluginSlots(models, { takenOrigins = [], secretLabel = () 
 
 /** Origins the broker's own (built-in and operator) slots pin, from its info. */
 function takenOrigins(info) {
-  return (info?.slots || []).filter((s) => !s.plugin && s.auth !== 'copilot' && s.auth !== 'github-user').map((s) => s.upstream);
+  return (info?.slots || []).filter((s) => !s.plugin && !engineOnlyAuth(s)).map((s) => s.upstream);
 }
 
 function secretLabel(plugin, key) {

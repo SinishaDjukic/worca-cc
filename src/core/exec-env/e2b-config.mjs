@@ -2,7 +2,8 @@
 // Pure policy for the e2b execution environment: connection, preflight, request timeouts. No SDK
 // import here (./e2b-sdk.mjs loads it lazily). The backend-neutral policy lives in ./policy.mjs;
 // its names are re-exported here so existing imports keep working.
-import { engineCredential, redactKey, remotePreflight } from './policy.mjs';
+import { redactKey, remotePreflight } from './policy.mjs';
+import { resolveModelRoute } from './credentials.mjs';
 import { REMOTE_ENGINES } from '../../shared/exec-env.mjs';
 import { goesDirect, parseNoProxy } from '../upstream-proxy.mjs';
 export { SANDBOX_TIMEOUT_MS, HEARTBEAT_MS, AGENT_COMMAND_TIMEOUT_MS, SHELL_COMMAND_TIMEOUT_MS, redactKey,
@@ -63,11 +64,13 @@ export function e2bPreflight({ engine, isWorkspace, workMode = 'git', mock = fal
   if (!mock) {
     if (!env.E2B_API_KEY) errors.push("E2B_API_KEY is not set in the worca server's environment.");
     if (String(env.E2B_DEBUG || '').toLowerCase() === 'true') errors.push('E2B_DEBUG=true makes the e2b SDK fake every sandbox; unset it.');
-    // The credential never enters the sandbox: the model relay adds it on the server. With the broker on, the broker
-    // holds Claude's keys (and the run start refuses the other engines).
-    if (needsSignIn && REMOTE_ENGINES.includes(name) && !(name === 'claude' && brokerOn)) {
-      const cred = engineCredential(name, env);
-      if (cred.problem) errors.push(cred.problem);
+    // The credential never enters the sandbox: the model relay adds it on the server, or, with the broker on, signs with
+    // the spawn's broker token (the broker holds the person's key). The route resolver's remote refusal says which
+    // (credentials.mjs resolveModelRoute; the step's model is not known here: the harness gate checks it).
+    // An engine no sandbox runs is refused once, above (remotePreflight), with no credential noise.
+    if (needsSignIn && REMOTE_ENGINES.includes(name)) {
+      const d = resolveModelRoute({ engine: name, remote: true, serverEnv: env, broker: { on: brokerOn }, checkModel: false });
+      if (d.refusal) errors.push(d.refusal);
     }
     if (!verAtLeast(nodeVersion, MIN_NODE_FOR_E2B)) errors.push(`The e2b SDK needs Node 22.19 or newer (this server runs ${nodeVersion}).`);
     else if (!sdkInstalled()) errors.push(`The optional "e2b" package is not installed. Run: npm install e2b@${E2B_SDK_VERSION} (in the worca install directory).`);

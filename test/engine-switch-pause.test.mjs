@@ -12,7 +12,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { readPipelineForResume, readPipelineStateById, listPipelines } from '../src/core/artifacts.mjs';
 import { getDb } from '../src/core/db.mjs';
-import { SWITCH_ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES, otherEngines, usageLimitSwitches, engineLabel, engineList, engineReportsCost, engineSwitchNote, runCostLabel, SIGN_IN_ENGINE_NAMES } from '../src/shared/engine-switch.mjs';
+import { SWITCH_ENGINES, ENGINE_NAMES, MODEL_ENGINE_NAMES, otherEngines, usageLimitSwitches, engineLabel, engineList, engineReportsCost, engineSwitchNote, runCostLabel, SIGN_IN_ENGINE_NAMES, costKnownOf } from '../src/shared/engine-switch.mjs';
 import { ENGINES } from '../src/shared/engine-switch.mjs';
 import { MODEL_ENGINES, RUN_ENGINES, HELPER_ENGINES, ASK_ENGINES, helperEngineFor, CURSOR_EFFORTS, effortsForEngine, OWN_SIGNIN_ENGINES } from '../src/core/model-env.mjs';
 import { listEngines } from '../src/core/engines/index.mjs';
@@ -78,6 +78,19 @@ test('runCostLabel: a priced engine formats its total; Cursor reads "cost unknow
   assert.equal(runCostLabel('codex', null, fmt), '$0.00');
   assert.equal(runCostLabel('cursor', 0, fmt), 'cost unknown');
   assert.equal(runCostLabel('cursor', 0.42, fmt), "cost unknown (worca's own calls: $0.42)");
+  // A step whose cost could not be priced (known false): a lower bound, never a known figure.
+  assert.equal(runCostLabel('claude', 1.5, fmt, false), '≥ $1.50 (part unknown)');
+  assert.equal(runCostLabel('claude', 0, fmt, false), 'cost unknown');
+  assert.equal(runCostLabel('cursor', 0.42, fmt, false), "cost unknown (worca's own calls: $0.42)", 'an engine with no cost says so first');
+  assert.equal(runCostLabel('claude', 1.5, fmt, true), '$1.50');
+});
+
+test('costKnownOf: false once a step (or a History row) has an unknown cost', () => {
+  assert.equal(costKnownOf(null), true);
+  assert.equal(costKnownOf({ steps: [{ costKnown: true }, {}] }), true);
+  assert.equal(costKnownOf({ steps: [{}, { costKnown: false }] }), false);
+  assert.equal(costKnownOf({ costKnown: false }), false, 'a History entry');
+  assert.equal(costKnownOf({ cost_known: 0 }), false, 'a raw row');
 });
 
 test('helper jobs run on the run engine when it runs them, else on Claude', () => {

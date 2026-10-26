@@ -17,6 +17,8 @@ import { gitAvailable } from './git-available.mjs';
 import { gitOutputSync } from './git-guard.mjs';
 import { execCheck, runCapture } from './spawn.mjs';
 import { withNoGitPath } from './nogit-stub.mjs';
+import { resolveModelRoute } from './exec-env/credentials.mjs';
+import { brokerEnabled } from './broker-client.mjs';
 
 const _probeChildren = new Set();
 /** Test seam: kill the probes still running (each resolves null), so a stopped run's preflight cannot hold a test process open. */
@@ -514,10 +516,16 @@ export function parseClaudeAuthStatus(text) {
   return 'unknown';
 }
 
+/** The childEnv spec the Claude sign-in probe spawns with: Claude's catalog allowlist under the route resolver's
+ *  sign-in mode (credentials.mjs resolveModelRoute), as a run spawn gets it. */
+export function claudeProbeSpec({ signInMode = resolveModelRoute({ engine: 'claude', broker: { on: brokerEnabled() }, checkModel: false }).signInMode } = {}) {
+  return { engine: 'claude', signInMode };
+}
+
 /** Run a command with any exit code: resolves {code, out} (stdout+stderr), or
  *  null on a spawn failure / timeout. `auth status` exits non-zero when signed out. */
 async function execAnyExit(cmd, args, { timeout = 8000 } = {}) {
-  const r = await execCheck(cmd, args, { spec: { engine: 'claude' }, timeoutMs: timeout });
+  const r = await execCheck(cmd, args, { spec: claudeProbeSpec(), timeoutMs: timeout });
   return r.error ? null : { code: r.code, out: r.stdout + r.stderr };
 }
 

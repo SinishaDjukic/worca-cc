@@ -312,6 +312,7 @@ test('compose.broker.yml: worca gets the broker address and no key; the broker p
   assert.match(b, /CLAUDE_CODE_OAUTH_TOKEN: ""/);
   assert.match(b, /command: \["worca", "broker"\]/);
   assert.match(b, /WORCA_BROKER_KEY_ANTHROPIC/, 'the key goes to the broker under its own name');
+  for (const slot of ['OPENAI', 'COPILOT_PAT', 'CURSOR']) assert.match(b, new RegExp(`WORCA_BROKER_KEY_${slot}: \\$\\{WORCA_BROKER_KEY_${slot}:-\\}`), `the ${slot} engine slot's key reaches the broker`);
   const broker = b.slice(b.indexOf('\n  broker:'));
   assert.doesNotMatch(broker, /^\s+ports:/m, 'no published ports: worca reaches it on the compose network');
   assert.match(broker, /cap_drop:\s*\n\s*- ALL/);

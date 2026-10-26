@@ -8,6 +8,7 @@ import { findLocalCredentials, credentialFiles, guardMessage } from './broker-gu
 import { listGlobalModels, readSettings } from './settings.mjs';
 import { listPluginModels, pluginModelSecretStatus } from './plugin-models.mjs';
 import { syncPluginSlots, currentPluginSlots } from './plugin-broker-slots.mjs';
+import { engineOnlyAuth } from '../broker/slots.mjs';
 
 /**
  * @param {{env?:object, shared?:boolean, log?:Function, waitMs?:number}} o
@@ -76,7 +77,7 @@ export async function checkBrokerAtBoot({ env = process.env, shared = false, log
     models,
     providers,
     brokerUrl: c.url,
-    slotOrigins: (info.slots || []).filter((s) => s.auth !== 'copilot' && s.auth !== 'github-user').map((s) => s.upstream),
+    slotOrigins: (info.slots || []).filter((s) => !engineOnlyAuth(s)).map((s) => s.upstream),
     brokeredModels: [...plugin.routes].filter(([, r]) => r.slot).map(([id]) => id),
     pluginSecrets,
   });

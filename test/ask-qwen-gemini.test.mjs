@@ -262,6 +262,23 @@ for (const E of ENGINES_UNDER_TEST) {
     assert.equal(done.reason, 'max_budget');
   });
 
+  test(`a ${E.label} turn worca cannot price is stored cost unknown, never $0 (the rule a run step follows)`, async () => {
+    const s = seed();
+    const { turn, frames } = makeTurn(E, s, {}, { chatModelRates: () => null, runClaudeImpl: async (o) => reply(E, o) });
+    await turn.run();
+    const done = frames.find((f) => f.type === 'ask-done');
+    assert.equal(done.costUsd, null);
+    assert.equal(done.costKnown, false);
+    assert.equal(getMessage(s.asst.id).costKnown, false);
+    assert.equal(done.threadTotals.costKnown, false, 'the thread total is a floor from now on');
+    // A priced turn carries no such flag.
+    const p = seed();
+    const priced = makeTurn(E, p, {}, { chatModelRates: () => ({ input: 1, output: 1 }), runClaudeImpl: async (o) => reply(E, o) });
+    await priced.turn.run();
+    assert.equal('costKnown' in priced.frames.find((f) => f.type === 'ask-done'), false);
+    assert.equal('costKnown' in getMessage(p.asst.id), false);
+  });
+
   test(`the mock: no ${E.label} binary is asked`, async () => {
     const s = seed();
     const { turn, order, calls } = makeTurn(E, s, { mock: { card: null } }, { runClaudeImpl: async (o) => reply(E, o) });

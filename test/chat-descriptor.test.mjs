@@ -3,7 +3,7 @@
 // descriptors existed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CHAT_ENGINES, chatDescriptor, chatDescriptors, chatCostCapRefusal } from '../src/core/engines/chat.mjs';
+import { CHAT_ENGINES, chatDescriptor, chatDescriptors } from '../src/core/engines/chat.mjs';
 import { listEngines } from '../src/core/engines/index.mjs';
 import { ASK_ENGINES, lockedChatEngine } from '../src/core/model-env.mjs';
 import { ENGINES, CHAT_ENGINE_NAMES, chatAttachRefusal } from '../src/shared/engine-switch.mjs';
@@ -59,9 +59,6 @@ test('Codex and Copilot keep their words', () => {
   assert.equal(copilot.noLockdownMessage, 'Chat on Copilot is unavailable: this copilot cannot be locked down for a chat. Use a Claude chat.');
   assert.equal(copilot.shellTrippedMessage, 'Copilot tried to run a shell command although it was given none — worca stopped the turn.');
   assert.equal(copilot.suggestionModel, 'gpt-5-mini');
-  assert.equal(chatCostCapRefusal(codex, 'nope', () => false), "A per-turn cost cap is set, and worca has no price for nope, so it cannot keep this turn under it. Set the model's price on the Models page, pick a priced model, or turn the cap off (Settings › Chat).");
-  assert.equal(chatCostCapRefusal(codex, 'gpt-5.5', () => true), null);
-  assert.equal(chatCostCapRefusal(copilot, 'copilot/gpt-5.4', () => true), null, 'the same rule on every engine: a priced model runs');
 });
 
 test('what a chat takes, by engine', () => {

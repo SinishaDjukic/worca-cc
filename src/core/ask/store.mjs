@@ -100,6 +100,7 @@ function rowToMessage(r) {
     blocks: parse(r.blocks, null), status: r.status ?? null, reason: r.reason ?? null,
     model: r.model ?? null, effort: r.effort ?? null, usage: parse(r.usage, null),
     costUsd: r.cost_usd ?? null, durationMs: r.duration_ms ?? null, createdAt: r.created_at,
+    ...(r.cost_known === 0 ? { costKnown: false } : {}),   // v82: a turn worca could not price (pricing.mjs), never $0
   };
 }
 function rowToAttachment(r) {
@@ -513,7 +514,7 @@ export function setThreadTitle(id, title, { onlyIf } = {}) {
 }
 
 /** Every turn — done, stopped or error — adds to the thread totals; a null cost adds 0 but counts the turn. */
-export function addThreadTotals(id, { costUsd = null, usage = null, agents = 0 } = {}) {
+export function addThreadTotals(id, { costUsd = null, usage = null, agents = 0, costKnown = true } = {}) {
   return tx(() => {
     const row = prepare('SELECT totals FROM ask_threads WHERE id = ?').get(id);
     if (!row) return null;
@@ -524,6 +525,7 @@ export function addThreadTotals(id, { costUsd = null, usage = null, agents = 0 }
     if (Number.isInteger(usage?.ctxWindow) && usage.ctxWindow > 0) t.ctxWindow = usage.ctxWindow;   // the model's window: REPLACES; a turn without one keeps the last
     t.turns += 1;
     t.agents += Number.isInteger(agents) && agents > 0 ? agents : 0;
+    if (costKnown === false) t.costKnown = false;   // sticky: one turn worca could not price leaves the total a floor
     prepare('UPDATE ask_threads SET totals = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(t), now(), id);
     return t;
   });
@@ -615,11 +617,11 @@ export function listMessages(threadId) {
   return prepare('SELECT * FROM ask_messages WHERE thread_id = ? ORDER BY seq').all(threadId).map(rowToMessage);
 }
 
-export function finishMessage(id, { text, blocks, status, reason = null, usage = null, costUsd = null, durationMs = null } = {}) {
+export function finishMessage(id, { text, blocks, status, reason = null, usage = null, costUsd = null, durationMs = null, costKnown = true } = {}) {
   getDb();
-  const info = prepare(`UPDATE ask_messages SET text = ?, blocks = ?, status = ?, reason = ?, usage = ?, cost_usd = ?, duration_ms = ?
+  const info = prepare(`UPDATE ask_messages SET text = ?, blocks = ?, status = ?, reason = ?, usage = ?, cost_usd = ?, duration_ms = ?, cost_known = ?
                         WHERE id = ?`)
-    .run(String(text ?? ''), str(blocks), status ?? null, reason, str(usage), costUsd, durationMs, id);
+    .run(String(text ?? ''), str(blocks), status ?? null, reason, str(usage), costUsd, durationMs, costKnown === false ? 0 : 1, id);
   if (!info.changes) return null;
   const m = getMessage(id);
   prepare('UPDATE ask_threads SET updated_at = ? WHERE id = ?').run(now(), m.threadId);

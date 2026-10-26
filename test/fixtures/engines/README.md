@@ -8,3 +8,10 @@ successful turn. Taken from the adapter tests' streams: Claude's is the stream-j
 and OpenCode's are their captured resumed turns (`test/fixtures/gemini/resume.jsonl`, `test/fixtures/qwen/resume.jsonl`,
 `test/fixtures/goose/resumed.jsonl`, `test/fixtures/opencode/resumed.jsonl`). The rule fixtures
 are under `test/fixtures/engine-rules/<engine>/`. A new engine adds both folders.
+
+The ledger row (C-LEDGER) also reads `turncap.jsonl` (a turn that hits a one-tool-call cap: Claude's own
+`error_max_turns` result, two codex `command_execution` pairs after its `turn.completed`, Copilot's capture up to its
+second tool call, two Cursor `tool_call` pairs) and `spend-error.jsonl` (a failed turn that still spent: Claude's and
+Cursor's `is_error` result with usage, codex's `turn.completed` then an error, a Copilot `session.error`). Cursor's
+`stream.jsonl` result carries `usage` (10 in / 2 out) so its tokens can be booked. `fake-engine.mjs` knobs for these
+rows: `FAKE_FILES`, `FAKE_CALL` (+ `FAKE_CALL_MODEL`) and `FAKE_HOLD_AFTER` (see its header).

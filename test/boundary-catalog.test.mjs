@@ -12,10 +12,14 @@ import { ENGINES, ENGINE_NAMES, RULE_KINDS, RULE_SUPPORT, ruleKind } from '../sr
 import { REMOTE_ENGINES } from '../src/shared/exec-env.mjs';
 import { ENGINE_SANDBOX } from '../src/core/exec-env/policy.mjs';
 import { listEngines, getEngine } from '../src/core/engines/index.mjs';
+import { builtinSlots } from '../src/broker/slots.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const RULES_DIR = join(ROOT, 'test', 'fixtures', 'engine-rules');
 const NAME = /^[A-Z][A-Za-z0-9_]*$/;
+const SECRET = /_(TOKEN|SECRET|KEY)$/;
+// The broker slots the catalog's key modes sit in (src/broker/slots.mjs builtinSlots).
+const BROKER_SLOTS = ['anthropic', 'openai', 'copilot-pat', 'cursor'];
 
 test('catalog keys equal the adapter registry minus mock', () => {
   assert.deepEqual([...ENGINE_NAMES], listEngines().map((e) => e.name).filter((n) => n !== 'mock'));
@@ -37,6 +41,18 @@ test('env names are exact', () => {
     for (const n of all) assert.match(n, NAME, `${e}: ${n}`);
     for (const v of Object.values(env)) assert.ok(!(v instanceof RegExp), `${e}: no RegExp in env`);
     assert.ok(env.home === null || (NAME.test(env.home.env) && typeof env.home.dir === 'string'), `${e}: home`);
+    for (const m of signIn.modes) {
+      if (m.kind === 'own') continue;
+      // A mode's credential is its one secret-named name (credentials.mjs modeCredential); its other names are config.
+      assert.equal(m.env.filter((n) => SECRET.test(n)).length, 1, `${e}/${m.id}: exactly one secret-named name`);
+      for (const r of m.requires || []) {
+        assert.ok(!SECRET.test(r) && (env.relayOwned.includes(r) || m.env.includes(r)), `${e}/${m.id}: requires ${r} is config the entry lists`);
+      }
+      if (m.brokerSlot) {
+        assert.ok(BROKER_SLOTS.includes(m.brokerSlot), `${e}/${m.id}: slot ${m.brokerSlot}`);
+        assert.ok(builtinSlots().some((s) => s.id === m.brokerSlot), `${e}/${m.id}: the broker has a built-in ${m.brokerSlot} slot`);
+      }
+    }
   }
 });
 

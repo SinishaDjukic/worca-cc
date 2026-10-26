@@ -356,7 +356,8 @@ refused, and every reply is scrubbed of the keys and tokens Worca signs with.
   and refresh tokens never reach the sandbox. `cursor-agent` runs its agent stream over HTTP/1.1
   (`network.useHttp1ForAgent` in its config dir in the sandbox), because the relay cannot carry the HTTP/2 stream.
   Only Cursor's dashboard, server-config, model and agent calls pass. Its key exchange and the HTTP/2 agent call
-  are refused.
+  are refused. Worca asks for uncompressed replies, reads a gzip message before it scrubs it, and refuses a reply it
+  cannot read.
 - Worca books the token usage its relay measured, not the CLI's own report: the cost of a Codex step, and the
   tokens of a Copilot or Cursor step (those engines report no cost).
 
@@ -379,8 +380,11 @@ so `worca run --exec-env e2b`, `worca e2b sweep` and `npm run e2b:build` work th
   calls ChatGPT's own hosts, so it is never copied into a sandbox nor relayed. Copilot takes a fine-grained
   personal access token only. A Copilot provider of your own (`COPILOT_PROVIDER_*` in the environment) is refused:
   Worca sets those itself.
-- Copilot in offline mode has no GitHub MCP server, web tools or updater, and no default model: a step without a
-  model runs `gpt-5-mini`, and the run log says so.
+- Copilot in offline mode has no GitHub MCP server, web tools or updater, and no default model: a Copilot step in a
+  sandbox needs a model. A run with a model-less Copilot step is refused at start, and a Copilot helper job (title,
+  overview, PR description) fails there for the same reason.
+- The relay checks each Codex and Copilot call against the step's model and refuses another one
+  (`403 worca-relay: model …`). Claude's and Cursor's calls are not checked (the run log says so once).
 - If Cursor's servers ever force its agent stream onto HTTP/2, Cursor steps in a sandbox fail; the relay cannot
   carry that stream.
 - An agent's own `.cursor/cli.json` or `.cursor/mcp.json` written in a sandbox does not come back to the run branch.

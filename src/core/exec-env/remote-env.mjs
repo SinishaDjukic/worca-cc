@@ -18,7 +18,9 @@ import { SANDBOX_TIMEOUT_MS, HEARTBEAT_MS, SHELL_COMMAND_TIMEOUT_MS, sandboxEnv,
 import { ModelRelay, leakedSecret } from './model-relay.mjs';
 import { withStreamTimeouts } from '../model-env.mjs';
 import { MODEL_CREDENTIAL_ENV_KEYS } from '../broker-guard.mjs';
-import { remoteModelRoute, engineModelRoute } from './relay-route.mjs';
+import { buildRelayRoute } from './relay-route.mjs';
+import { resolveModelRoute, credentialNamesOf } from './credentials.mjs';
+import { ENGINE_NAMES } from '../../shared/engine-switch.mjs';
 import { createRouteMeter, relayUsageTotal } from './relay-usage.mjs';
 import { DEFAULT_SECRET_PATHS, isSecretPath } from '../secret-paths.mjs';
 import { createSourceBundle, overlayFiles, overlaySecretLines, makeTarGz, walkFiles, applyPatch, patchAlreadyApplied, patchPaths, hostRunChanges, injectedPaths, cloneScript, treeScript,
@@ -58,7 +60,8 @@ const RELAY_RETRY_MS = 1000;
 const RELAY_STICK_MS = 10_000;
 // Model credentials a spawn env must never carry into the sandbox under any name (envFor); not the file path in
 // GOOGLE_APPLICATION_CREDENTIALS.
-const LEAK_KEYS = [...MODEL_CREDENTIAL_ENV_KEYS.filter((k) => k !== 'GOOGLE_APPLICATION_CREDENTIALS'), 'COPILOT_GITHUB_TOKEN', 'CURSOR_AUTH_TOKEN'];
+const LEAK_KEYS = [...new Set([...MODEL_CREDENTIAL_ENV_KEYS.filter((k) => k !== 'GOOGLE_APPLICATION_CREDENTIALS'),
+  ...ENGINE_NAMES.flatMap(credentialNamesOf)])];
 const credentialValues = (env) => LEAK_KEYS.map((k) => env?.[k]).filter((v) => typeof v === 'string' && v.trim()).map((v) => v.trim());
 
 export class RemoteExecEnv {
@@ -333,20 +336,29 @@ export class RemoteExecEnv {
   _relayGiveUp(why) {
     this.log('error', `model relay: ${RELAY_MAX_FAILS} restarts in a row failed (${String(why).slice(0, 300)}); the next step's start tries again`);
   }
-  /** A route for one spawn's model calls (relay-route.mjs decides where they go and how they are signed, in worca).
-   *  The sandbox gets only the relay URL and the route id. Throws the route's refusals (errorClass 'config'). */
-  openModelRoute({ spawnEnv = {}, modelEnv = null } = {}) {
-    const route = remoteModelRoute({ spawnEnv, modelEnv, serverEnv: this.env, label: this.label });
+  /** A route for one spawn's model calls, from the route resolver's decision (credentials.mjs resolveModelRoute; an
+   *  untagged object is refused). The sandbox gets only the relay URL and a dummy credential (or the route id, for
+   *  Claude). `lease`: the spawn's broker token when the broker is on. Throws the route's refusals (errorClass 'config'). */
+  openRoute(decision, { spawnEnv = {}, modelEnv = null, endpoint = null, lease = null } = {}) {
+    const route = buildRelayRoute(decision, { spawnEnv, modelEnv, serverEnv: this.env, endpoint, lease, label: this.label,
+      upstreams: this.relayUpstreams, cache: this._authCache });
     const meter = createRouteMeter();
     route.meter = meter.reply;
     const { id, baseUrl } = this.relay.addRoute(route);
     this._meters.set(id, meter);
     // A keyless gateway: say so once per origin, so a 401 from it is explainable (the origin only, never a header).
-    if (!route.signed && !this._keylessLogged.has(route.origin)) {
+    if (route.signed === false && !this._keylessLogged.has(route.origin)) {
       this._keylessLogged.add(route.origin);
       this.log('info', `model relay: calls to ${route.origin} get no credential from worca (this model sets no key for it); a 401 comes from that endpoint`);
     }
-    return { id, env: { ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_AUTH_TOKEN: id }, secrets: route.secrets, firstParty: route.firstParty };
+    const pointed = route.spawn ? route.spawn(baseUrl) : { env: { ANTHROPIC_BASE_URL: baseUrl, ANTHROPIC_AUTH_TOKEN: id }, args: [] };
+    return { id, env: pointed.env, args: pointed.args || [], secrets: route.secrets, firstParty: route.firstParty };
+  }
+  /** Back-compat for callers outside the adapters (exec-env-sync, exec-env-pipeline, exec-env-remote-child tests):
+   *  resolve Claude's route, then open it. Each caller has a server OAuth token or a model-env key, so it never refuses. */
+  openModelRoute({ spawnEnv = {}, modelEnv = null } = {}) {
+    return this.openRoute(resolveModelRoute({ engine: 'claude', remote: true, serverEnv: this.env, modelEnv,
+      broker: { on: false }, checkModel: false }), { spawnEnv, modelEnv });
   }
   /** What the relay measured on route `id` since the last take (relay-usage.mjs `take`), or null for no such route:
    *  the cost a remote spawn books, because the sandbox writes the CLI's own `result` frames. */
@@ -366,39 +378,27 @@ export class RemoteExecEnv {
     return rest;
   }
 
-  /** A route for one spawn of `engine` (codex, copilot, cursor): relay-route.mjs engineModelRoute decides where its calls
-   *  go and how worca signs them (the server's key, a token worca derives from it, or a codex endpoint model's own key).
-   *  The sandbox gets only the relay URL and a dummy credential: `env`, and for codex the `-c` overrides in `args`.
-   *  Throws the route's refusals (errorClass 'config'). */
-  openEngineRoute(engine, { spawnEnv = {}, model = null, endpoint = null } = {}) {
-    const route = engineModelRoute({ engine, serverEnv: this.env, spawnEnv, model, endpoint, label: this.label, upstreams: this.relayUpstreams, cache: this._authCache });
-    const meter = createRouteMeter();
-    route.meter = meter.reply;
-    const { id, baseUrl } = this.relay.addRoute(route);
-    this._meters.set(id, meter);
-    const spawn = route.spawn(baseUrl);
-    return { id, env: spawn.env, args: spawn.args || [], secrets: route.secrets };
-  }
-  /** A remote engine spawn's onEvent, metered by route `id` (security evaluation E4: the sandbox writes the CLI's
-   *  stream, so its usage and cost are a claim). Each `result` carries what the relay measured since the previous one:
-   *  with `cost` (codex, which books list prices) as `relay`, which the harness books in place of the CLI's figure;
-   *  without (copilot, cursor: subscription-billed, no cost of their own) the relay's token counts replace the result's
-   *  `usage`, and a cost the sandbox claimed is dropped. */
-  meteredEvents(id, onEvent, { cost = false } = {}) {
+  /** A remote spawn's onEvent, metered by route `id` (security evaluation E4: the sandbox writes the CLI's stream, so
+   *  its usage and cost are a claim). Every `result` carries what the relay measured since the previous one as `relay`
+   *  (possibly empty, never absent on a routed spawn), and its `usage` becomes the relay's token totals. The harness
+   *  books only `relay`. The result's own `costUsd` is left as it is: Claude's cost is cumulative per session and
+   *  `_sessionCostDelta` must keep seeing it; it is compared with the relay's figure, never booked. */
+  meteredEvents(id, onEvent) {
     return (e) => {
       if (e?.type !== 'result') return onEvent(e);
-      const relay = this.routeUsage(id);
-      if (cost) return onEvent(relay ? { ...e, relay } : e);
-      const { costUsd, ...rest } = e;
-      return onEvent({ ...rest, ...(relay ? { usage: relayUsageTotal(relay) } : {}) });
+      const relay = this.routeUsage(id) || { messages: 0, byModel: {} };
+      return onEvent({ ...e, relay, usage: relayUsageTotal(relay) });
     };
   }
-  /** End an engine route at its spawn's end. With `cost`, the calls no result covered go out as `relayCost` (booked
-   *  like a result's, as a claude spawn's are), also those that end after the spawn did. */
-  closeEngineRoute(id, onEvent, { cost = false } = {}) {
-    const book = (t) => { try { onEvent({ type: 'relayCost', messages: t.messages, byModel: t.byModel }); } catch { /* listener */ } };
-    const rest = this.closeModelRoute(id, cost ? book : null);
-    if (cost && rest?.messages) book(rest);
+  /** End route `id` at its spawn's end, once its in-flight replies have ended (their usage is committed): what no
+   *  result covered goes out as one `spend` event (source relay), an empty one too (it clears the step's open turns,
+   *  so usage frames the relay never saw are not floored). A call still running after the drain's wait runs on to its
+   *  end (model-relay.mjs: the sandbox cannot cut a reply short of its usage), and what it used goes out as one more
+   *  `spend` when it has ended (audit 2.4). Never rejects. */
+  async closeRoute(id, onEvent) {
+    try { await this.relay?.drainRoute(id); } catch { /* the relay stopped: nothing is in flight */ }
+    const spend = (t) => { try { onEvent({ type: 'spend', source: 'relay', messages: t.messages, byModel: t.byModel }); } catch { /* listener */ } };
+    spend(this.closeModelRoute(id, spend) || { messages: 0, byModel: {} });
   }
 
   async _cloneIn() {
@@ -655,7 +655,7 @@ export class RemoteExecEnv {
   // ── spawning ──
   /** The env a sandbox command of `engine` gets: that engine's allowlist + `keep`, never any engine's model credential,
    *  endpoint or custom headers (sandboxEnv drops them, even when kept), plus a model route's env when given
-   *  (openModelRoute for claude, openEngineRoute for the others: the relay URL and a route id or dummy). Scripts pass no
+   *  (openRoute: the relay URL and a route id for claude, a dummy credential for the others). Scripts pass no
    *  route: they call no model. A claude route's spawn sees a custom endpoint (the relay URL), so it gets the stream
    *  ceilings one gets locally, and on a first-party route tool search, which the CLI turns off for a custom endpoint.
    *  Refused (errorClass 'config'), never stripped: an env holding a route secret or any engine's credential value

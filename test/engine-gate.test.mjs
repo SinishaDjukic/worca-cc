@@ -12,7 +12,8 @@ import { createOrchestrator } from '../src/core/orchestrator.mjs';
 import { runOpts } from '../src/core/phases.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { addGlobalModel, setUtilityModels } from '../src/core/settings.mjs';
-import { readPipelineForResume } from '../src/core/artifacts.mjs';
+import { readPipelineForResume, writeState } from '../src/core/artifacts.mjs';
+import { getDb } from '../src/core/db.mjs';
 import { ENGINES } from './helpers/engines.mjs';
 import { fakeCodex } from './helpers/fake-codex.mjs';
 import { mockSpawnLog } from '../src/core/claude-runner.mjs';
@@ -25,6 +26,7 @@ import { fakeCursor } from './helpers/fake-cursor.mjs';
 import { removeInjectedPaths, writeRunManifest, readRunManifest } from '../src/core/run-manifest.mjs';
 import { readGuardrailSet, writeGuardrailSet } from '../src/core/guardrail-store.mjs';
 import { guardrailsToPermissionRules } from '../src/core/guardrails.mjs';
+import { ENGINES as CATALOG, setCatalogForTest, NATIVE_NOTICE } from '../src/shared/engine-switch.mjs';
 
 useTempHome(after);
 const POSIX = process.platform === 'win32' ? { skip: 'POSIX shell fixtures' } : {};
@@ -128,14 +130,19 @@ test('codex runs a node that needs MCP tools: it attaches the run\'s servers', (
   assert.doesNotThrow(() => o._engineGate());
 });
 
-test('codex refuses a run while the credential broker is on (it signs in with its own credentials)', () => {
+/** The catalog with codex's key modes removed: its ChatGPT sign-in is all it has, which no broker slot can hold. */
+const codexOwnOnly = () => ({ ...CATALOG, codex: { ...CATALOG.codex, signIn: { modes: CATALOG.codex.signIn.modes.filter((m) => m.kind === 'own') } } });
+
+test('an engine with only its own sign-in is refused while the credential broker is on', () => {
   const prev = process.env.WORCA_BROKER_URL;
   process.env.WORCA_BROKER_URL = 'http://127.0.0.1:9';
+  setCatalogForTest(codexOwnOnly());
   try {
     assert.throws(() => withNodes(orch({ engine: 'codex' }), {})._engineGate(),
       /engine codex: the credential broker is on, and codex signs in with its own credentials, which the broker cannot bill or revoke/);
     assert.deepEqual(withNodes(orch(), {})._engineGate(), [], 'claude runs through the broker');
   } finally {
+    setCatalogForTest(null);
     if (prev === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = prev;
   }
 });
@@ -215,7 +222,9 @@ test('a Codex model on its own OpenAI-compatible endpoint runs on codex: not ref
     await addGlobalModel({ id: 'gate-cx-local', engine: 'codex', upstream: ENDPOINT });
     const o = withNodes(orch({ engine: 'codex', model: 'gate-cx-local' }), { n1: { key: 'planner', tools: [], model: 'gate-cx-local' } });
     const lines = o._engineGate();
-    assert.ok(!lines.some((l) => /gate-cx-local/.test(l)), lines.join('\n'));
+    assert.ok(!lines.some((l) => /gate-cx-local/.test(l) && !/has no price/.test(l)), lines.join('\n'));
+    // Its endpoint names no price: the spend is booked as cost unknown, and the run start says so once.
+    assert.ok(lines.includes('engine codex: model "gate-cx-local" has no price — its spend is booked as cost unknown'), lines.join('\n'));
     assert.equal(o._engineModel('gate-cx-local'), 'gate-cx-local');
   });
 });
@@ -568,11 +577,13 @@ test('engineStartRefusal answers before a run exists, and says when the consent 
 
   const prev = process.env.WORCA_BROKER_URL;
   process.env.WORCA_BROKER_URL = 'http://127.0.0.1:9';
+  setCatalogForTest(codexOwnOnly());
   try {
     const r = await strict.engineStartRefusal();
     assert.equal(r.overridable, false, 'the consent cannot lift the broker refusal');
     assert.match(r.error, /^engine codex: the credential broker is on/);
   } finally {
+    setCatalogForTest(null);
     if (prev === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = prev;
   }
 });
@@ -767,20 +778,19 @@ test('engineStartRefusal: a cursor refusal is liftable by the consent', async ()
   assert.match(r.error, /holds only in part|cannot enforce/);
 });
 
-test('cursor: a pipeline or total cost limit says it cannot count Cursor\'s spend; codex says nothing new', async () => {
+test('cursor: a pipeline or total cost limit refuses the run (it cannot count Cursor\'s spend); codex starts', async () => {
   await withCatalogHome(async (home) => {
     mkdirSync(join(home, '.worca-cc'), { recursive: true });
     writeFileSync(join(home, '.worca-cc', 'settings.json'), JSON.stringify({ pipelineCostLimitUsd: 5, totalCostLimitUsd: 50 }));
-    const lines = withNodes(orch({ engine: 'cursor' }), {})._engineGate();
-    assert.ok(lines.includes("engine cursor: the pipeline cost limit cannot count cursor's spend (cost unknown)"), lines.join('\n'));
-    assert.ok(lines.includes("engine cursor: the total cost limit cannot count cursor's spend (cost unknown)"), lines.join('\n'));
-    assert.equal(withNodes(orch({ engine: 'codex' }), {})._engineGate().some((l) => /cost limit/.test(l)), false);
+    assert.throws(() => withNodes(orch({ engine: 'cursor' }), {})._engineGate(),
+      { message: 'engine cursor: Cursor reports no cost, and the pipeline cost limit cannot count what this run spends. Remove the limit, set a price on the model, or pick another engine.' });
+    assert.equal(withNodes(orch({ engine: 'codex' }), {})._engineGate().some((l) => /cost limit|no price/.test(l)), false, 'codex prices its default');
+    writeFileSync(join(home, '.worca-cc', 'settings.json'), JSON.stringify({ totalCostLimitUsd: 50 }));
+    assert.throws(() => withNodes(orch({ engine: 'cursor' }), {})._engineGate(), /Cursor reports no cost, and the total cost limit cannot count/);
     writeFileSync(join(home, '.worca-cc', 'settings.json'), '{}');
     const team = withNodes(orch({ engine: 'cursor' }), {});
     team.policyRun = { fields: { 'cost.pipelineLimitUsd': { kind: 'soft', value: 3 }, 'cost.totalLimitUsd': { kind: 'soft', value: 30 } } };
-    const t = team._engineGate();
-    assert.ok(t.includes("engine cursor: the pipeline cost limit cannot count cursor's spend (cost unknown)"), t.join('\n'));
-    assert.ok(t.includes("engine cursor: the total cost limit cannot count cursor's spend (cost unknown)"), t.join('\n'));
+    assert.throws(() => team._engineGate(), /Cursor reports no cost, and the pipeline cost limit cannot count/, 'a team cap too');
     assert.equal(withNodes(orch({ engine: 'cursor' }), {})._engineGate().some((l) => /cost limit/.test(l)), false, 'no cap, no line');
   });
 });
@@ -1190,7 +1200,6 @@ test('a resume that switched a Gemini CLI run to Claude still registers the earl
 });
 
 // ── the gate reads the catalog (plans/core-protection-layer-design.md §4.4, decisions 4, 9, 10) ─────────────────
-import { ENGINES as CATALOG, setCatalogForTest, NATIVE_NOTICE } from '../src/shared/engine-switch.mjs';
 
 test('claude passes the gate on its declaration', () => {
   try {
@@ -1232,6 +1241,21 @@ test('shell baseline line, never a block', () => {
   assert.deepEqual(base, ["engine claude: path rules (Read(./secrets/**), Edit(./secrets/**)) bind claude's own tools; its shell can still reach those paths"]);
 });
 
+test('the sign-in warning is logged once per run, not on every gate', () => {
+  const keys = ['CLAUDE_CODE_OAUTH_TOKEN', 'WORCA_BROKER_URL'];
+  const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  delete process.env.WORCA_BROKER_URL;
+  process.env.CLAUDE_CODE_OAUTH_TOKEN = 't';
+  try {
+    const o = withNodes(orch({ mock: false }), {});
+    const warns = [];
+    o.on('log', (l) => { if (l.level === 'warn' && /signs in with \S+ from worca's environment/.test(l.text)) warns.push(l.text); });
+    o._engineGate();
+    o._engineGate();   // a resume gate on the same harness
+    assert.equal(warns.length, 1, warns.join('\n'));
+  } finally { for (const k of keys) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; } }
+});
+
 test('native line', () => {
   const native = withNodes(orch({ mock: false }), {});
   assert.ok(native._engineGate().includes(NATIVE_NOTICE), 'a local native run says it is not a sandbox');
@@ -1259,6 +1283,79 @@ test('the run log names what the allowlist withheld, once', () => {
     assert.ok(env[0].split(': ').at(-1).split(', ').includes('WORCA_GATE_TEST_DROPPED'));
     assert.equal(env[0].includes('=v'), false, 'names, never values');
   } finally { if (prev === undefined) delete process.env.WORCA_GATE_TEST_DROPPED; else process.env.WORCA_GATE_TEST_DROPPED = prev; }
+});
+
+// ── the step's model and its provider (core protection layer, Task 9) ──
+const remoteOrch = (claude = {}) => createOrchestrator({ projectDir: '/tmp/gate-proj', guardrailsId: 'permissive', execEnv: 'e2b', claude: { mock: true, ...claude } });
+
+test('remote copilot without a model is refused at start; remote claude and cursor are not', () => {
+  const copilot = withNodes(remoteOrch({ engine: 'copilot' }), { a: { nodeId: 'a', kind: 'agent', model: null } });
+  assert.equal(copilot._engineRefusal({ nodes: Object.values(copilot.resolved.nodeCtx) }), 'Copilot in a sandbox needs a model; pick one for this step.');
+  assert.throws(() => copilot._engineGate(), { message: 'engine copilot: Copilot in a sandbox needs a model; pick one for this step.' });
+  const named = withNodes(remoteOrch({ engine: 'copilot' }), { a: { nodeId: 'a', kind: 'agent', model: 'gpt-5-mini' } });
+  assert.equal(named._engineRefusal({ nodes: Object.values(named.resolved.nodeCtx) }), null, 'a step with a model starts');
+  const script = withNodes(remoteOrch({ engine: 'copilot' }), { s: { nodeId: 's', kind: 'script' } });
+  assert.equal(script._engineRefusal({ nodes: Object.values(script.resolved.nodeCtx) }), null, 'a script node calls no model');
+  for (const engine of ['claude', 'cursor']) {
+    const o = withNodes(remoteOrch({ engine }), { a: { nodeId: 'a', kind: 'agent', model: null } });
+    assert.equal(o._engineRefusal({ nodes: Object.values(o.resolved.nodeCtx) }), null, `${engine}: its CLI picks its own default behind the relay`);
+  }
+  const local = withNodes(orch({ engine: 'copilot' }), { a: { nodeId: 'a', kind: 'agent', model: null } });
+  assert.equal(local._engineRefusal({ nodes: Object.values(local.resolved.nodeCtx) }), null, 'locally copilot has its own default');
+});
+
+test('copilot under the credential broker without a model is refused at start', () => {
+  const prev = process.env.WORCA_BROKER_URL;
+  process.env.WORCA_BROKER_URL = 'http://127.0.0.1:9';
+  try {
+    const o = withNodes(orch({ engine: 'copilot' }), { a: { nodeId: 'a', kind: 'agent', model: null } });
+    assert.equal(o._engineRefusal({ nodes: Object.values(o.resolved.nodeCtx) }), 'Copilot under the credential broker needs a model; pick one for this step.');
+  } finally {
+    if (prev === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = prev;
+  }
+});
+
+test('requiresExplicitModel refuses locally', () => {
+  setCatalogForTest({ ...CATALOG, cursor: { ...CATALOG.cursor, requiresExplicitModel: true } });
+  try {
+    const bare = withNodes(orch({ engine: 'cursor' }), { a: { nodeId: 'a', kind: 'agent', model: null } });
+    assert.equal(bare._engineRefusal({ nodes: Object.values(bare.resolved.nodeCtx), allowed: true }), 'Cursor needs a model; pick one for this step.', 'not overridable');
+    const named = withNodes(orch({ engine: 'cursor' }), { a: { nodeId: 'a', kind: 'agent', model: 'composer-1' } });
+    assert.equal(named._engineRefusal({ nodes: Object.values(named.resolved.nodeCtx) }), null);
+  } finally { setCatalogForTest(null); }
+});
+
+test('the gate names a partial relay check on a remote run', () => {
+  const remote = withNodes(remoteOrch({ engine: 'claude' }), {})._engineGate();
+  assert.ok(remote.includes('engine claude: the model relay does not check which model each call names (its side calls are not pinned yet)'), remote.join('\n'));
+  const cursor = withNodes(remoteOrch({ engine: 'cursor' }), {})._engineGate();
+  assert.ok(cursor.includes('engine cursor: the model relay does not check which model each call names (the model is inside protobuf)'), cursor.join('\n'));
+  const codex = withNodes(remoteOrch({ engine: 'codex' }), {})._engineGate();
+  assert.ok(!codex.some((l) => /does not check which model/.test(l)), 'codex is checked');
+  const local = withNodes(orch(), {})._engineGate();
+  assert.ok(!local.some((l) => /does not check which model/.test(l)), 'a local run has no relay');
+});
+
+test('provider is recorded', async () => {
+  const ctx = (model) => ({ executionId: 'x:a:1', nodeId: 'a', ordinal: 1, uiPhase: 'implement', node: { kind: 'agent', key: 'implementer' }, claudeOpts: { model } });
+  const o = orch({ engine: 'copilot' });
+  o.state.id = 'eeee5555';
+  o._execStep(ctx(null), 'start');
+  assert.equal(o.state.steps[0].provider, 'copilot');
+  await writeState('/d-eeee5555', { ...o.getState(), id: 'eeee5555', projectKey: 'proj-gate' });
+  assert.equal(getDb().prepare('SELECT provider FROM pipeline_steps WHERE pipeline_id = ? AND key = ?').get('eeee5555', 'x:a:1').provider, 'copilot');
+  const script = orch({ engine: 'copilot' });
+  script._execStep({ ...ctx(null), node: { kind: 'script', key: 's' } }, 'start');
+  assert.equal('provider' in script.state.steps[0], false, 'a script step calls no model');
+  await withCatalogHome(async () => {
+    await addGlobalModel({ id: 'gate-bridged', upstream: { provider: 'openai', api: 'openai-chat', model: 'x-model', baseUrl: 'http://127.0.0.1:8000/v1' } });
+    const c = orch();
+    c._execStep(ctx('gate-bridged'), 'start');
+    assert.equal(c.state.steps[0].provider, 'openai', 'the node\'s own model sits on a provider connection');
+    const plain = orch();
+    plain._execStep(ctx('claude-sonnet-5'), 'start');
+    assert.equal(plain.state.steps[0].provider, 'anthropic');
+  });
 });
 
 // ── Claude meets the same gate (no exemption): its catalog leaves Grep/Glob unverified and Write unenforced ─────────

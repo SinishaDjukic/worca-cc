@@ -149,6 +149,8 @@ A slot is one kind of credential with one fixed destination.
 | `openai` | `https://api.openai.com` | `Authorization: Bearer` |
 | `openrouter` | `https://openrouter.ai` | `Authorization: Bearer` |
 | `copilot` | `*.githubcopilot.com` | Copilot's short-lived token, exchanged from the person's GitHub sign-in |
+| `copilot-pat` | `*.githubcopilot.com` (the host GitHub names for the token) | A fine-grained personal access token (`github_pat_…`; give it only the Copilot Requests permission) as a Bearer, with the Copilot CLI's headers. The broker checks the token's shape, not its permissions: a classic or OAuth token is refused. The Copilot engine signs in here |
+| `cursor` | `https://api2.cursor.sh` | An access token the broker exchanges for the person's Cursor API key (and exchanges again on a 401). Replies are scrubbed of both, message by message: the broker asks for uncompressed replies, reads a gzip message before it scrubs it, and refuses a reply it cannot read (502, or a cut stream). The Cursor engine signs in here |
 | `local` | `WORCA_BROKER_LOCAL_URL` | none (keyless), or an operator-held key |
 | `github` | `https://api.github.com` | Only with `WORCA_BROKER_GITHUB_CLIENT_ID`. Never proxied: its token goes to worca for one push ([Push as me](#push-as-me)) |
 
@@ -414,15 +416,16 @@ hook. With agents under their own users, worca does not start while that file is
 its group or by others: make it `0600`, owned by the user worca runs as (a compose secret keeps
 the host file's mode).
 
-### Only Claude runs
+### Which engines run
 
-Only Claude Code spends through the broker. Codex, Cursor and Copilot sign in with their own
-credentials (a ChatGPT, Cursor or GitHub sign-in, or a key in their environment), which the broker
-can neither charge to a person nor keep from the agent. So with the broker on:
-
-- a pipeline run on any other engine is refused before it starts;
-- Chat offers no Codex chats, and a Codex chat started before the broker was turned on is refused;
-- every engine picker shows the other engines greyed out, and the Models page says why.
+Every engine runs through the broker with a key a slot can hold: Claude Code (`anthropic`), Codex
+with an OpenAI API key (`openai`), Copilot with a fine-grained token (`copilot-pat`) and Cursor
+with a Cursor API key (`cursor`), locally and in an E2B sandbox. Each spawn gets its own token and
+the CLI calls the slot with it; no engine sees the person's key. An engine's own login (a ChatGPT
+sign-in, Copilot's or Cursor's keychain sign-in) never goes through the broker. An engine that has
+only such a login is refused before a run starts, Chat offers no chats on it, and every engine
+picker shows it greyed out. Copilot and Cursor are billed per seat: their usage rows record tokens
+and book $0, so a person's dollar budget does not cover them.
 
 ### People
 
@@ -576,7 +579,7 @@ otherwise pick what it costs:
   (`no list price for model … booked at the fallback rate`), so an operator can see which
   models to price, or set a fallback that suits their gateways.
 - **No dollars** for a Claude subscription, for Copilot (billed per seat and premium request,
-  not per token; Copilot's own limits apply) and for a keyless slot such as `local`. These
+  not per token; Copilot's own limits apply), for Cursor (billed per seat) and for a keyless slot such as `local`. These
   calls record tokens only, and dollar budgets don't apply to them.
 - **A hang-up doesn't end the bill.** When an agent drops a streaming call, the broker keeps
   reading the response to its end and books every token, so aborting mid-stream can't hide

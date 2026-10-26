@@ -168,8 +168,8 @@ async function remoteEnv(t, { serverEnv = {}, call = true } = {}) {
   await env.start();
   t.after(() => env.close('test'));
   const opened = []; const closed = [];
-  const open = env.openModelRoute.bind(env); const close = env.closeModelRoute.bind(env);
-  env.openModelRoute = (a) => { const r = open(a); opened.push({ args: a, route: r }); return r; };
+  const open = env.openRoute.bind(env); const close = env.closeModelRoute.bind(env);
+  env.openRoute = (d, o) => { const r = open(d, o); opened.push({ args: o, route: r }); return r; };
   env.closeModelRoute = (id) => { closed.push(id); close(id); };
   return { env, f, seen, opened, closed };
 }

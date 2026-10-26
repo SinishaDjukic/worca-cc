@@ -18,7 +18,7 @@ import { AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { loadAgentRegistry, registryToSteps } from './agent-registry.mjs';
 import { EFFORTS, CODEX_EFFORTS, ALL_EFFORTS, MODEL_ENGINES, COPILOT_MODEL_PREFIX, prepareModelEnv, withTierModelEnv, withProviderModesOff, PROVIDER_MODE_ENV_KEYS, isSubagentModelValue, subagentModelIssue, BRIDGE_ROUTING_KEYS, bridgeExcludedTools, isTranslatedApi } from './model-env.mjs';
 import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
-import { engineLabel } from '../shared/engine-switch.mjs';
+import { engineLabel, engineEntry } from '../shared/engine-switch.mjs';
 import { normaliseTags } from '../shared/run-tags.mjs';
 import { connectionOf, harnessesOf, runsOn, harnessesLabel, effortsOn } from '../shared/connections.mjs';
 import { bridgeBaseUrl, bridgeSecret } from './bridge/server.mjs';
@@ -27,6 +27,7 @@ import { listGlobalModels, addGlobalModel, removeGlobalModel, hideBuiltinModels,
 const readSettingsHideStored = () => { const s = readSettings(); return typeof s.hideBuiltinModels === 'boolean' || s.hideBuiltinModelsChosen === true; };
 import { listPluginModels, allPluginModels, flattenPluginModelEnv } from './plugin-models.mjs';
 import { brokerEnabled } from './broker-client.mjs';
+import { setModelEngineReader } from './broker-routing.mjs';
 // Team policy defaults (team-policy design §6, §8): read from the discovery CACHE only (a leaf module).
 import { policyCatalogModels, teamDefault, cachedFieldsFor } from './policy/cache.mjs';
 import { PREDEFINED_LIST_PRICES, CODEX_PRICES, codexCachedRate } from './list-prices.mjs';
@@ -790,6 +791,8 @@ export function engineOfModel(modelId, { projectDir = null } = {}) {
 setCascadeModelOwnerReader((id, { projectDir = null } = {}) => enginesOfModel(id, { projectDir }));
 // Roles check their model with the same reader (a role on a model a failed import never created falls back, D3).
 setRoleModelOwnerReader((id) => enginesOfModel(id));
+// The broker's slot for a model another engine runs (broker-routing.mjs modelSlot): it reads the model's engine.
+setModelEngineReader((id) => engineOfModel(id));
 
 /** Why a run-level model cannot run on `engine` (no harness of its connection is that engine), else null. */
 export function foreignRunModel(model, engine, projectDir = null) {

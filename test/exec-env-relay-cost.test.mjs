@@ -121,13 +121,14 @@ test('a remote result carries what the relay measured, whatever the sandbox prin
   assert.equal(result.relay.messages, 2);
   const u = result.relay.byModel['claude-sonnet-5'];
   assert.equal(u.input_tokens, 2000); assert.equal(u.output_tokens, 1000); assert.equal(u.cache_read_input_tokens, 400);
-  assert.equal(events.some((e) => e.type === 'relayCost'), false, 'nothing left to book after the result');
+  const close = events.filter((e) => e.type === 'spend');
+  assert.deepEqual(close, [{ type: 'spend', source: 'relay', messages: 0, byModel: {} }], 'the close books nothing more: the result took it all');
 });
 
 test('a remote spawn that printed no result still hands over what the relay measured', POSIX, async (t) => {
   const { events, env } = await sandboxClaude(t, { calls: 1, lines: [INIT] });
   assert.equal(events.some((e) => e.type === 'result'), false);
-  const rest = events.find((e) => e.type === 'relayCost');
+  const rest = events.find((e) => e.type === 'spend' && e.source === 'relay');
   assert.ok(rest, JSON.stringify(events));
   assert.equal(rest.messages, 1);
   assert.equal(rest.byModel['claude-sonnet-5'].output_tokens, 500);
@@ -167,11 +168,12 @@ test('a model the relay cannot price books at the fallback rate, never at the sa
   for (const claim of [0.000001, 999]) {
     const { orch, logs, attr } = unitHarness('x:n_impl:1', null);
     orch._onAgentEvent('implementer', { type: 'result', costUsd: claim, relay: unpriced }, attr);
-    assert.equal(orch.state.steps[0].costUsd, fallback, `claim ${claim}`);
-    assert.ok(logs.some((l) => l.level === 'warn' && /o9-pro-unlisted.*highest list rate/.test(l.text)), JSON.stringify(logs));
+    // The ledger holds max(claim, measured) for an unpriced model: a forged ~$0 claim books the fallback.
+    assert.equal(orch.state.steps[0].costUsd, Math.max(claim, fallback), `claim ${claim}`);
+    assert.ok(logs.some((l) => l.level === 'warn' && /no price for o9-pro-unlisted/.test(l.text)), JSON.stringify(logs));
   }
   const rest = unitHarness('x:n_impl:1', null);
-  rest.orch._onAgentEvent('implementer', { type: 'relayCost', ...unpriced }, rest.attr);
+  rest.orch._onAgentEvent('implementer', { type: 'spend', source: 'relay', ...unpriced }, rest.attr);
   assert.equal(rest.orch.state.steps[0].costUsd, fallback, 'also for calls no result covered');
   const mixed = unitHarness('x:n_impl:1', 'gw-odd');
   mixed.orch._onAgentEvent('implementer', { type: 'result', costUsd: 0, relay: { messages: 2, byModel: { ...RELAY.byModel, 'gw-odd': { input_tokens: 0, output_tokens: 0 } } } }, mixed.attr);
@@ -181,7 +183,7 @@ test('a model the relay cannot price books at the fallback rate, never at the sa
 test('calls no result covered are booked from the relay when the spawn ends; their open turns are not counted again', () => {
   const { orch, attr } = unitHarness('x:n_impl:1');
   orch._onAgentEvent('implementer', { type: 'usage', phase: 'message', parentId: null, messageId: 'm1', usage: { input_tokens: 2000, output_tokens: 1000 } }, attr);
-  orch._onAgentEvent('implementer', { type: 'relayCost', ...RELAY }, attr);
+  orch._onAgentEvent('implementer', { type: 'spend', source: 'relay', ...RELAY }, attr);
   assert.equal(orch.state.steps[0].costUsd, 0.0141);
   orch._closeOpenTurns('x:n_impl:1');
   assert.equal(orch.state.steps[0].stoppedTurns, undefined, 'the relay priced those turns');
@@ -211,14 +213,15 @@ async function sandboxLetsGo(t, how) {
     modelEnv: { ANTHROPIC_BASE_URL: up.url, ANTHROPIC_API_KEY: KEY }, onEvent: (e) => events.push(...normalize(e)) });
   return { env, events };
 }
-const bookedOutput = (events) => events.filter((e) => e.type === 'relayCost' || e.relay)
+const relaySpend = (e) => e.type === 'spend' && e.source === 'relay';
+const bookedOutput = (events) => events.filter((e) => relaySpend(e) || e.relay)
   .reduce((n, e) => n + (((e.relay || e).byModel || {})['claude-sonnet-5']?.output_tokens || 0), 0);
 
 for (const how of ['hangup', 'leave']) {
   test(`a sandbox that ${how === 'hangup' ? 'hangs up on a reply' : 'exits with a reply still streaming'} cannot keep its output tokens off the books (audit 2.3, 2.4)`, POSIX, async (t) => {
     const { events, env } = await sandboxLetsGo(t, how);
     for (let i = 0; bookedOutput(events) < 500 && i < 300; i++) await new Promise((r) => setTimeout(r, 10));
-    assert.equal(bookedOutput(events), 500, JSON.stringify(events.filter((e) => e.type === 'relayCost')));
+    assert.equal(bookedOutput(events), 500, JSON.stringify(events.filter(relaySpend)));
     assert.equal(env.relay.routes.size, 0, 'the route closed with the spawn');
   });
 }

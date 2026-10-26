@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-0000000000ca","model":"Auto"}
+{"type":"result","subtype":"error","is_error":true,"result":"cursor run failed","session_id":"00000000-0000-4000-8000-0000000000ca","usage":{"input_tokens":10,"output_tokens":2}}

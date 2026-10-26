@@ -17,6 +17,14 @@ import { findBridgedEntry } from './bridge/registry.mjs';
 import { providerConfig, listGlobalModels } from './settings.mjs';
 import { listPluginModels } from './plugin-models.mjs';
 import { pluginModelRoute } from './plugin-broker-slots.mjs';
+import { engineEntry } from '../shared/engine-switch.mjs';
+import { engineOnlyAuth } from '../broker/slots.mjs';
+
+// Which engine runs a catalog model (config.mjs engineOfModel). config.mjs registers it: importing config.mjs here would
+// close an import cycle (config.mjs → bridge/registry.mjs → this module) that breaks module evaluation.
+let engineOfModel = () => null;
+/** config.mjs hands in its engineOfModel (the model catalog's owner) once it has loaded. */
+export function setModelEngineReader(fn) { engineOfModel = typeof fn === 'function' ? fn : () => null; }
 
 const DEFAULT_BASE = Object.freeze({ openai: 'https://api.openai.com/v1', anthropic: 'https://api.anthropic.com' });
 
@@ -27,7 +35,7 @@ const DEFAULT_BASE = Object.freeze({ openai: 'https://api.openai.com/v1', anthro
 export function slotForBaseUrl(baseUrl, slots = [], protocol = null) {
   let u;
   try { u = new URL(String(baseUrl || '').trim()); } catch { return null; }
-  const same = slots.filter((x) => x.auth !== 'copilot' && x.auth !== 'github-user' && x.upstream === u.origin);
+  const same = slots.filter((x) => !engineOnlyAuth(x) && x.upstream === u.origin);
   const s = (protocol && same.find((x) => x.protocol === protocol)) || same[0];
   if (!s) return null;
   return { slot: s.id, prefix: u.pathname.replace(/\/+$/, '') };
@@ -155,6 +163,14 @@ export function modelSlot(modelId) {
   // An env-style plugin model with a plugin secret: its own plugin slot (plugin-broker-slots.mjs).
   const pr = pluginModelRoute(id);
   if (pr) return pr.slot ? { slot: pr.slot } : pr;
+  // A model another engine runs with its own sign-in (a codex model): the broker slot of that engine's key mode, read
+  // off the catalog (Codex's API key sits in the openai slot), never the anthropic slot.
+  let owner = null;
+  try { owner = engineEntry(engineOfModel(id)); } catch { owner = null; }
+  if (owner && owner.relay?.upstream !== 'anthropic') {
+    const slot = owner.signIn.modes.find((m) => m.kind !== 'own' && m.brokerSlot)?.brokerSlot;
+    if (slot) return { slot };
+  }
   const lc = id.toLowerCase();
   let entry = null;
   try { entry = listGlobalModels().find((m) => m.id.toLowerCase() === lc) || listPluginModels().find((m) => m.id.toLowerCase() === lc) || null; } catch { entry = null; }

@@ -23,9 +23,9 @@ import { join, resolve, dirname, relative } from 'node:path';
 import { worcaHome } from '../projects.mjs';
 import { hostGuardEnabled, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { CAPABILITY_KEYS, describeUnattachableMcp } from './capabilities.mjs';
-import { ENGINES } from '../../shared/engine-switch.mjs';
+import { ENGINES, engineEntry } from '../../shared/engine-switch.mjs';
 import { removeSessionEntries } from './sessions.mjs';
-import { superviseSpawn, childEnv, execCheck, argValue, cleanRunEnv, safeEmit, writableRootsInWorcaHome } from '../spawn.mjs';
+import { superviseSpawn, childEnv, execCheck, argValue, cleanRunEnv, safeEmit, writableRootsInWorcaHome, abandonRoute } from '../spawn.mjs';
 import { createRedactor } from '../redact.mjs';
 import { strongestClass } from '../recoverable-error.mjs';
 import { ARGV_INLINE_LIMIT } from './claude.mjs';
@@ -33,6 +33,10 @@ import { CODEX_PRICES, codexCachedRate } from '../list-prices.mjs';
 import { codexEndpointSpawn, findCodexEndpointEntry, hasCodexEndpoint } from './codex-endpoint.mjs';
 import { makeChatDescriptor, openaiListRates } from './chat-descriptor.mjs';
 import { chatEnginesTaking } from '../../shared/engine-switch.mjs';
+import { brokerEnabled } from '../broker-client.mjs';
+import { brokerLease } from '../broker-lease.mjs';
+import { resolveModelRoute, localServerEnv } from '../exec-env/credentials.mjs';
+import { CLI_POINTING, POINTING_NAMES } from '../exec-env/relay-route.mjs';
 import { scopeLauncherEnv } from '../mcp/launch.mjs';
 
 export const CODEX_DEFAULT_BIN = process.env.WORCA_CODEX_BIN || 'codex';
@@ -711,7 +715,13 @@ export function parseLoginStatus({ code, stdout = '', stderr = '' } = {}) {
  * `{}` when it can. `signIn: false` (every model the run uses is on its own endpoint)
  * checks only that the binary runs.
  */
-export async function codexPreflight({ bin = CODEX_DEFAULT_BIN, timeoutMs = 10000, signIn = true, envAllowlist = [], spec = codexSpawnSpec({ envAllowlist }) } = {}) {
+export async function codexPreflight({ bin = CODEX_DEFAULT_BIN, timeoutMs = 10000, signIn = true, envAllowlist = [], spec = null } = {}) {
+  // Brokered (its API key in the broker's openai slot): `codex login status` has nothing to say about that sign-in, and
+  // under the broker the K1 boot guard refuses a stored ChatGPT login anyway. One guard for the harness, Ask and
+  // readiness.
+  const d = resolveModelRoute({ engine: 'codex', broker: { on: brokerEnabled() }, checkModel: false });
+  const check = signIn && d.kind !== 'brokered';
+  spec ??= codexSpawnSpec({ envAllowlist, signInMode: d.signInMode });
   const { code, stdout, stderr, error } = await execCheck(bin, ['login', 'status'], { spec, timeoutMs });
   if (error) {
     return /^(ENOENT|EACCES|EINVAL)$/.test(String(error.code))
@@ -719,16 +729,16 @@ export async function codexPreflight({ bin = CODEX_DEFAULT_BIN, timeoutMs = 1000
       : { warning: `could not check the codex sign-in (${error.message})` };
   }
   const signedIn = parseLoginStatus({ code, stdout, stderr });
-  if (!signIn) return {};
+  if (!check) return {};
   if (signedIn === false) return { refusal: `${bin} is not signed in — run \`codex login\`` };
   if (signedIn === null) return { warning: `could not tell whether ${bin} is signed in (\`codex login status\` said nothing recognizable)` };
   return {};
 }
 
-/** The childEnv spec a codex run spawns with (engine, the run's allowlist, cwd and work root, the host pid): run and
- *  preflight build their env from it, so the check sees the run's env. */
-export function codexSpawnSpec({ envAllowlist = [], cwd = null, workRoot = null, hostPid = null } = {}) {
-  return { engine: 'codex', allowlist: envAllowlist, cwd, root: workRoot, hostPid };
+/** The childEnv spec a codex run spawns with (engine, the route resolver's sign-in mode, the run's allowlist, cwd and
+ *  work root, the host pid): run and preflight build their env from it, so the check sees the run's env. */
+export function codexSpawnSpec({ envAllowlist = [], cwd = null, workRoot = null, hostPid = null, signInMode = null } = {}) {
+  return { engine: 'codex', signInMode, allowlist: envAllowlist, cwd, root: workRoot, hostPid };
 }
 
 /** The feature names `codex features list` prints (its first column). */
@@ -780,20 +790,27 @@ export async function runCodexProcess({
   bin = CODEX_DEFAULT_BIN, resumeSessionId, addDirs, writableDirs, sandbox, envScrub, envAllowlist, asAgent, usageDir = defaultUsageDir(),
   mcpConfigPath, spawnEnv: runSpawnEnv, redactValues, maxTurns, images, askLockdown,
   permissionRules, allowedTools, agents, appendSubagentSystemPrompt, execEnv, workRoot = null, subagentsOff = false,
+  billTo, spawnKind, runId, threadId, maxBudgetUsd, permissionMode,
 } = {}) {
   if (signal?.aborted) { const e = new Error('aborted'); e.name = 'AbortError'; throw e; }
   // A remote run (exec-env, e2b): the sandbox template's pinned codex, its model calls through worca's model relay
   // (no key in the sandbox); no host guard (no worca server runs there), no host MCP server, no host CODEX_HOME.
   const remote = execEnv?.remote ? execEnv : null;
   const model = namedModel || CODEX_DEFAULT_MODEL;
+  // How this spawn's model calls are signed (credentials.mjs resolveModelRoute), before anything is staged and before
+  // the endpoint is read: under the broker an endpoint model gets the broker's refusal, not its missing-key error.
+  const signEnv = remote ? remote.env : localServerEnv(cleanRunEnv(runSpawnEnv));
+  const decision = resolveModelRoute({ engine: 'codex', remote: !!remote, serverEnv: signEnv, model, endpoint: hasCodexEndpoint(model), broker: { on: brokerEnabled() } });
+  if (decision.refusal) throw Object.assign(new Error(decision.refusal), { errorClass: 'config' });
+  const upstream = engineEntry('codex').relay.upstream;
   // A model on its own OpenAI-compatible endpoint (codex-endpoint.mjs): codex connects to it directly; in a sandbox the
   // relay does, from this machine. Throws (auth class) before any spawn when the endpoint has no usable key.
   const endpoint = codexEndpointSpawn(model);
   // MCP registry §5.5.3: with registry secrets in this spawn's env, every emit, the result text and the error leave
-  // redacted. The endpoint's key and header values are redacted the same way.
+  // redacted. The endpoint's key and header values are redacted the same way, and so is a broker token once taken.
   const secrets = [...(Array.isArray(redactValues) ? redactValues : []), ...(endpoint ? endpoint.secrets : [])];
-  const redactor = secrets.length ? createRedactor(secrets) : null;
-  if (redactor) { const emit = onEvent; onEvent = (e) => emit(redactor.deep(e)); }
+  let redactor = secrets.length ? createRedactor(secrets) : null;
+  { const emit = onEvent; onEvent = (e) => emit(redactor ? redactor.deep(e) : e); }
   const redacted = (err) => {
     if (redactor && err && typeof err.message === 'string') err.message = redactor.text(err.message);
     if (redactor && err && typeof err.stack === 'string') err.stack = redactor.text(err.stack);
@@ -833,7 +850,7 @@ export async function runCodexProcess({
   // D11) gets no project allowlist on top: codex's read-only sandbox still lets its shell read the environment.
   // A chat (askLockdown) is read-only too but has no shell: it keeps its allowlist (its sign-in and the names its MCP
   // child needs, ask/spawn.mjs).
-  const spec = codexSpawnSpec({ envAllowlist: sandbox === 'read-only' && !askLockdown ? [] : envAllowlist, cwd, workRoot, hostPid: guardOn ? process.pid : null });
+  const spec = codexSpawnSpec({ envAllowlist: sandbox === 'read-only' && !askLockdown ? [] : envAllowlist, cwd, workRoot, hostPid: guardOn ? process.pid : null, signInMode: decision.signInMode });
   // Guardrails: the deny rules codex can hold (codexRulePlan). A denied MCP server is never attached.
   const plan = codexRulePlan(permissionRules);
   let mcpServers = null;
@@ -899,34 +916,45 @@ export async function runCodexProcess({
   // worca server gets what a Claude chat's child inherits (proxy, CA bundle, WORCA_CODEX_BIN, codex's own keys…).
   const mcp = codexMcpOverrides(mcpServers, { passEnv: Object.keys(env), disabledTools: plan.mcpToolsOff });
   // Remote: codex calls the relay as its model provider with a dummy key (relay-route.mjs codexRelayArgs); the server's
-  // key, or the endpoint's key and headers, stay in worca. Opened before the args, closed on every way out.
-  let relayRoute = null;
-  if (remote) {
-    try { relayRoute = remote.openEngineRoute('codex', { endpoint, spawnEnv: env }); }
-    catch (err) { if (roleDir) rmSync(roleDir, { recursive: true, force: true }); throw redacted(err); }
-    extra.push(...relayRoute.args);
-    onEvent = remote.meteredEvents(relayRoute.id, onEvent, { cost: true });
-  } else if (endpoint) {
-    // The endpoint's key and headers join codex's env only now, so no MCP server is handed them.
-    Object.assign(env, endpoint.env); extra.push(...endpoint.args);
-  }
-  const args = buildCodexArgs({ systemPrompt: sys, model: endpoint ? endpoint.model : model, effort, resumeThreadId: thread, addDirs: dirs, sandbox, mcp: [...mcp.args, ...extra],
-    ...(askLockdown ? { lockdown, images } : {}) });
-  // The sandbox env: codex's own allowlist, the relay route's dummy key, and CODEX_HOME in the sandbox HOME holding the
-  // rules. The template's codex is looked up before anything goes into that HOME.
+  // key, the endpoint's key and headers, or this spawn's broker token stay in worca. Local brokered: codex calls the
+  // broker's openai slot with this spawn's token (WORCA_RELAY_KEY), set only now so no MCP server is handed it. The
+  // broker token is taken here, late, so a refusal above leaves none behind; the route, the token and the role files
+  // go on every way out.
+  let relayRoute = null; let lease = null; let args;
   let spawnEnv = env;
-  if (remote) {
-    try {
+  try {
+    lease = decision.slot && (decision.kind === 'brokered' || remote)
+      ? await brokerLease({ billTo, spawnKind, permissionMode, askLockdown, runId, threadId, maxBudgetUsd, asAgent, execEnv }, decision.slot)
+      : null;
+    if (lease) redactor = createRedactor([...secrets, ...lease.secrets]);
+    if (remote) {
+      relayRoute = remote.openRoute(decision, { spawnEnv: env, endpoint, lease });
+      extra.push(...relayRoute.args);
+    } else if (lease) {
+      const pointed = CLI_POINTING[upstream].spawn(lease.baseUrl + CLI_POINTING[upstream].suffix, lease.token, model);
+      for (const k of POINTING_NAMES[upstream]) delete env[k];
+      Object.assign(env, pointed.env); extra.push(...pointed.args);
+    } else if (endpoint) {
+      // The endpoint's key and headers join codex's env only now, so no MCP server is handed them.
+      Object.assign(env, endpoint.env); extra.push(...endpoint.args);
+    }
+    args = buildCodexArgs({ systemPrompt: sys, model: endpoint ? endpoint.model : model, effort, resumeThreadId: thread, addDirs: dirs, sandbox, mcp: [...mcp.args, ...extra],
+      ...(askLockdown ? { lockdown, images } : {}) });
+    // The sandbox env: codex's own allowlist, the relay route's dummy key, and CODEX_HOME in the sandbox HOME holding the
+    // rules. The template's codex is looked up before anything goes into that HOME.
+    if (remote) {
       const rules = plan.prefixes.length ? [{ rel: 'rules/worca.rules', data: codexRulesFile(plan.prefixes) }] : [];
       const routed = remote.envFor(env, { engine: 'codex', route: relayRoute });
       await remote.ensureCli(exe);
       spawnEnv = { ...routed, ...(await remote.engineHome('codex', { files: rules, remove: rules.length ? [] : ['rules/worca.rules'] })) };
-    } catch (err) {
-      remote.closeModelRoute(relayRoute.id);
-      if (roleDir) rmSync(roleDir, { recursive: true, force: true }); else if (roleFile) rmSync(roleFile, { force: true });
-      throw redacted(err);
     }
+  } catch (err) {
+    await abandonRoute(remote, relayRoute, onEvent);
+    lease?.release();
+    if (roleDir) rmSync(roleDir, { recursive: true, force: true }); else if (roleFile) rmSync(roleFile, { force: true });
+    throw redacted(err);
   }
+  if (relayRoute) onEvent = remote.meteredEvents(relayRoute.id, onEvent);
   let sawThread = thread;
   // The thread's usage once the spawn ends, stored for the next resume. `exec --json` reports usage only on
   // `turn.completed`: a turn that ended without it (the turn cap, an abort, a failed turn) still ran, and codex recorded
@@ -956,45 +984,52 @@ export async function runCodexProcess({
   const capCtrl = new AbortController();
   let toolCalls = 0; let capped = false;
   const spawnSignal = cap ? (signal ? AbortSignal.any([signal, capCtrl.signal]) : capCtrl.signal) : signal;
-  const res = await superviseSpawn({
-    file: exe, args, displayBin: bin, cwd, env: spawnEnv, stdin, signal: spawnSignal, asAgent: remote ? false : asAgent,
-    stagedDir: roleDir, onEvent, execEnv: remote,
-    // Remote: the role dir went up as stagedDir; its sandbox copy goes too (removeUploaded never throws).
-    cleanup: () => {
-      if (relayRoute) remote.closeEngineRoute(relayRoute.id, onEvent, { cost: true });
-      if (roleDir) { rmSync(roleDir, { recursive: true, force: true }); remote?.removeUploaded(roleDir); } else if (roleFile) rmSync(roleFile, { force: true });
-    },
-    stdoutErrorDetail: () => normalizer.finish().error || '',
-    classify: (m) => classifyCodexError(m),
-    spawnError: (err, pfx) => Object.assign(new Error(`${pfx}: ${err.message}`), { errorClass: /ENOENT|EINVAL/.test(String(err.code || err.message)) ? 'network' : null }),
-    onDone: (code) => ({ code }),
-    onStdoutLine: (line) => {
-      for (const e of normalizer.push(line)) {
-        safeEmit(onEvent, e);
-        if (cap && !capped && e.type === 'tool' && (e.parentId ?? null) === null && (toolCalls += Array.isArray(e.calls) ? e.calls.length : 1) > cap) {
-          capped = true; capCtrl.abort();
+  // The broker token (when taken) lives as long as the spawn: revoked once it settles, whatever way it ended.
+  let res;
+  try {
+    res = await superviseSpawn({
+      file: exe, args, displayBin: bin, cwd, env: spawnEnv, stdin, signal: spawnSignal, asAgent: remote ? false : asAgent,
+      stagedDir: roleDir, onEvent, execEnv: remote,
+      // The relay route closes with the spawn on every way out (superviseSpawn), booking what no result covered.
+      route: relayRoute,
+      // Remote: the role dir went up as stagedDir; its sandbox copy goes too (removeUploaded never throws).
+      cleanup: () => {
+        if (roleDir) { rmSync(roleDir, { recursive: true, force: true }); remote?.removeUploaded(roleDir); } else if (roleFile) rmSync(roleFile, { force: true });
+      },
+      stdoutErrorDetail: () => normalizer.finish().error || '',
+      classify: (m) => classifyCodexError(m),
+      spawnError: (err, pfx) => Object.assign(new Error(`${pfx}: ${err.message}`), { errorClass: /ENOENT|EINVAL/.test(String(err.code || err.message)) ? 'network' : null }),
+      onDone: (code) => ({ code }),
+      onStdoutLine: (line) => {
+        for (const e of normalizer.push(line)) {
+          safeEmit(onEvent, e);
+          if (cap && !capped && e.type === 'tool' && (e.parentId ?? null) === null && (toolCalls += Array.isArray(e.calls) ? e.calls.length : 1) > cap) {
+            capped = true; capCtrl.abort();
+          }
+          if (e.type === 'session') {
+            sawThread = codexThreadOf(e.sessionId);
+            // Pause/Resume: the runner's own session event (no `init`) is the one the
+            // harness stamps on the step, as the Claude adapter does.
+            safeEmit(onEvent, { type: 'session', sessionId: e.sessionId });
+          }
         }
-        if (e.type === 'session') {
-          sawThread = codexThreadOf(e.sessionId);
-          // Pause/Resume: the runner's own session event (no `init`) is the one the
-          // harness stamps on the step, as the Claude adapter does.
-          safeEmit(onEvent, { type: 'session', sessionId: e.sessionId });
-        }
+      },
+    }).catch((err) => {
+      const f = settleUsage();
+      if (capped && !signal?.aborted) throw redacted(Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true }));
+      // codex writes tracing lines to stderr for recoverable tool errors (a rejected
+      // patch), so a non-zero exit's stderr detail and class can miss the failure the
+      // turn reported on stdout (a usage limit, a 429): that one leads, and its class
+      // counts too.
+      if (f.error && err?.name !== 'AbortError' && err?.stream === 'err') {
+        err.message = `${bin}: ${f.error} — ${err.message}`;
+        err.errorClass = strongestClass(err.errorClass ?? null, classifyCodexError(f.error));
       }
-    },
-  }).catch((err) => {
-    const f = settleUsage();
-    if (capped && !signal?.aborted) throw redacted(Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true }));
-    // codex writes tracing lines to stderr for recoverable tool errors (a rejected
-    // patch), so a non-zero exit's stderr detail and class can miss the failure the
-    // turn reported on stdout (a usage limit, a 429): that one leads, and its class
-    // counts too.
-    if (f.error && err?.name !== 'AbortError' && err?.stream === 'err') {
-      err.message = `${bin}: ${f.error} — ${err.message}`;
-      err.errorClass = strongestClass(err.errorClass ?? null, classifyCodexError(f.error));
-    }
-    throw redacted(err);
-  });
+      throw redacted(err);
+    });
+  } finally {
+    lease?.release();
+  }
   const final = settleUsage();
   // The cap tripped while codex was already finishing: the turn still went past it.
   if (capped && !signal?.aborted) throw redacted(Object.assign(new Error(`${bin}: stopped after ${cap} tool calls (the turn cap)`), { turnCap: true }));
@@ -1022,7 +1057,6 @@ export const codexChat = makeChatDescriptor({
   titles: true,
   suggestionModel: 'gpt-5.6-luna',
   turnImages: true,
-  signInMode: () => null,
   // codex's MCP resource tools (plans/ask-on-codex-spike.md (h)): they read what the chat's own MCP servers publish.
   metaTools: ['mcp__codex__list_mcp_resources', 'mcp__codex__list_mcp_resource_templates', 'mcp__codex__read_mcp_resource'],
   prompt: {

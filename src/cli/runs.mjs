@@ -17,7 +17,7 @@ import { readRunTags } from '../core/run-tags-store.mjs';
 import { readUiInstance } from '../core/ui-instance.mjs';
 import { fmtDur, executionCount, loopDeliveries, formatResumeHints } from './render.mjs';
 import { formatInstant } from '../shared/schedule/recurrence.mjs';
-import { runCostLabel, engineLabel } from '../shared/engine-switch.mjs';
+import { runCostLabel, engineLabel, costKnownOf } from '../shared/engine-switch.mjs';
 import { parseTag, hasTag } from '../shared/run-tags.mjs';
 import { runStatusLine } from '../core/run-status.mjs';
 
@@ -285,7 +285,7 @@ async function runsShow(argv, { out, c, fail, unknownVerb = false }) {
   out(`  duration ${fmtDur(row.total_active_ms)}${counts.length ? ` · ${counts.join(' · ')}` : ''}`);
   // COST's sub-line, the web UI's wording (app.js: `across ${steps.length} steps`).
   const steps = Array.isArray(st.steps) ? st.steps : [];
-  out(`  cost     ${runCostLabel(st.runEngine, row.total_cost_usd, usd)}${steps.length ? ` · across ${steps.length} step${steps.length === 1 ? '' : 's'}` : ''}`);
+  out(`  cost     ${runCostLabel(st.runEngine, row.total_cost_usd, usd, costKnownOf(st))}${steps.length ? ` · across ${steps.length} step${steps.length === 1 ? '' : 's'}` : ''}`);
   if (branch && (branch.feature || branch.source)) {
     // The web UI's order (hd-base: `dev → worca-cc/…`), for one mental model.
     const b = branch.source && branch.feature

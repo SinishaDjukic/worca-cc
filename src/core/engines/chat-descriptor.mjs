@@ -5,6 +5,7 @@
 // purpose: the adapters import it.
 import { ENGINES, engineLabel, chatEnginesTaking } from '../../shared/engine-switch.mjs';
 import { CODEX_PRICES, codexCachedRate, listPriceFor } from '../list-prices.mjs';
+import { resolveModelRoute } from '../exec-env/credentials.mjs';
 
 const DOCS = 'https://github.com/SinishaDjukic/worca-cc/blob/dev/docs/models.md';
 /** A descriptor's `suggestionModel` that means "the chat's own model". */
@@ -41,13 +42,14 @@ const ready = async () => ({});
  *                       refuses a request without the shell), or null; the picker leaves such a model out
  *   ownFolder           a chat runs in a folder of its own under the scratch dir (the engine keeps sessions per folder)
  *   signInMode(model, env)  the catalog sign-in mode (engine-switch.mjs `signIn.modes[].id`) a chat on `model` signs in
- *                       with, or null for every mode's: its exact names, and the engine's endpoint names, are handed on
+ *                       with (default: the route resolver's pick, as for a pipeline spawn), or null for every
+ *                       mode's: its exact names, and the engine's endpoint names, are handed on
  *                       to worca's own MCP child too (chatSignInEnv), whose Auto classifier runs on the chat's engine
  */
 export function makeChatDescriptor({
   engine, lockdown, askSupport = ready, selfTest = null, preflight = ready, listRates = null, resumeNotFound = never,
   docsAnchor, setupLabel, noLockdownMessage, shellTrippedMessage, titles = true, suggestionModel = CHAT_MODEL, prompt = {},
-  notReadyFlag, metaTools = [], modelProblem = null, ownFolder = false, turnImages = false, signInMode = () => null,
+  notReadyFlag, metaTools = [], modelProblem = null, ownFolder = false, turnImages = false, signInMode = null,
 }) {
   const label = engineLabel(engine);
   const chat = ENGINES[engine]?.chat || { images: false, pdfs: false };
@@ -67,7 +69,7 @@ export function makeChatDescriptor({
     metaTools: Object.freeze([...metaTools]),
     modelProblem: typeof modelProblem === 'function' ? modelProblem : () => null,
     ownFolder: ownFolder === true,
-    signInMode: typeof signInMode === 'function' ? signInMode : () => null,
+    signInMode: typeof signInMode === 'function' ? signInMode : (model, env) => routeSignInMode(engine, model, env),
     suggestionModel: typeof suggestionModel === 'string' && suggestionModel ? suggestionModel : null,
     prompt: Object.freeze({
       cli: prompt.cli || `${label} with its own sign-in`,
@@ -93,6 +95,15 @@ export function composerBinaryWords(label, { images = false, pdfs = false } = {}
   return `A ${label} chat cannot view images or PDFs: read_attachment returns only their kind and size.`;
 }
 
+/** The sign-in mode the route resolver picks for a spawn of `engine` on `model` (credentials.mjs resolveModelRoute, the
+ *  rule every spawn's childEnv follows); '' (no names) when the route is refused, as the spawn itself is. */
+function routeSignInMode(engine, model, env = process.env) {
+  try {
+    const d = resolveModelRoute({ engine, serverEnv: env, model: model || null, checkModel: false });
+    return d.refusal ? '' : d.signInMode;
+  } catch { return ''; }
+}
+
 /** The names in `env` that a chat on `d` signs in with for `model`, exact names only (decision 3): the catalog sign-in
  *  mode its descriptor's `signInMode` names (null: every mode's), plus the engine's endpoint names (its `env.relayOwned`
  *  that no mode holds as a credential). Never a WORCA_ name. */
@@ -105,13 +116,6 @@ export function chatSignInEnv(d, model, env = process.env) {
   const want = new Set([...(id == null ? modes : modes.filter((m) => m.id === id)).flatMap((m) => m.env),
     ...entry.env.relayOwned.filter((k) => !creds.has(k))]);
   return Object.keys(env).filter((k) => want.has(k) && !/^WORCA_/.test(k) && typeof env[k] === 'string' && env[k] !== '').sort();
-}
-
-/** The error a per-turn cost cap gives a chat on `d` for `model`, or null when worca can keep the turn under it:
- *  `modelPriced(model)` says worca has a price for it (ask/chat-price.mjs chatModelRates), the same rule on every engine. */
-export function chatCostCapRefusal(d, model, modelPriced) {
-  if (!modelPriced(model)) return `A per-turn cost cap is set, and worca has no price for ${model || `${d.label}'s default model`}, so it cannot keep this turn under it. Set the model's price on the Models page, pick a priced model, or turn the cap off (Settings › Chat).`;
-  return null;
 }
 
 /** OpenAI's list price of a model id as per-million-token rates (list-prices.mjs CODEX_PRICES), or null. */

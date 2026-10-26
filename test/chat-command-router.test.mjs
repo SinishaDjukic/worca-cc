@@ -121,6 +121,17 @@ test('a Cursor run reads "cost unknown" on /cost, /last and /status, never $0.00
   assert.match(text(await send('/cost')), /cost so far: cost unknown/);
 });
 
+test('a run with an unknown step cost reads "≥ $x (part unknown)" on /cost, /last and /status, from history and live', async () => {
+  const f = makeRouter({ history: async () => [{ id: 'p-9abc', title: 'U', status: 'done', totalCostUsd: 2.5, costKnown: false }] });
+  assert.match((await handle(f, '/cost *9abc')).body[0].value, /cost: ≥ \$2\.50 \(part unknown\)$/);
+  assert.match((await handle(f, '/last')).body[0].value, /\*\*Cost:\*\* ≥ \$2\.50 \(part unknown\)/);
+  assert.match((await handle(f, '/status *9abc')).body[0].value, /\*\*Cost:\*\* ≥ \$2\.50 \(part unknown\)/);
+  const { send, state } = fixture();
+  state.states['run-aaaa1111'].steps[1].costKnown = false;
+  assert.match(text(await send('/status')), /\*\*Cost:\*\* ≥ \$0\.42 \(part unknown\)/);
+  assert.match(text(await send('/cost')), /cost so far: ≥ \$0\.42 \(part unknown\)$/);
+});
+
 test('/status: no-arg single-active default, wildcard suffix, history fallback, pending hint', async () => {
   const { send, state } = fixture();
   const noArg = text(await send('/status'));

@@ -7,7 +7,10 @@
 import { randomBytes } from 'node:crypto';
 import { shq } from './shell.mjs';
 import { upstreamRequestHeaders, agentResponseHeaders, MAX_REQUEST_BYTES, UPSTREAM_IDLE_MS, CLIENT_DRAIN_MS } from '../../broker/service.mjs';
-import { scrubText, REMOVED } from '../../broker/scrub.mjs';
+import { scrubText, createByteScrubber, createConnectScrubber, connectReplyProblem, isConnectStream, CONNECT_IDENTITY } from '../../broker/scrub.mjs';
+import { CONNECT_CODES } from '../../broker/cursor.mjs';
+/** The byte-stream scrubber lives in src/broker/scrub.mjs (the broker scrubs Cursor replies the same way). */
+export { createByteScrubber } from '../../broker/scrub.mjs';
 
 const READY_TIMEOUT_MS = 15_000;
 const MAX_ERROR_BODY = 64 << 10;
@@ -22,10 +25,7 @@ const MAX_TOTAL_INFLIGHT_BYTES = 8 * MAX_REQUEST_BYTES;
 // A route without its own `allow` (a Claude route): the Messages API only.
 const CLAUDE_ALLOW = Object.freeze([['POST', '/v1/messages'], ['POST', '/v1/messages/count_tokens']]);
 const NO_BODY = new Set(['GET', 'HEAD']);
-// The error code a Connect client (Cursor) reads for each refusal status.
-const CONNECT_CODES = { 403: 'permission_denied', 413: 'resource_exhausted', 429: 'resource_exhausted', 502: 'unavailable', 504: 'deadline_exceeded', 529: 'unavailable' };
 const SAFE_QUERY = /^[A-Za-z0-9_=&.-]*$/;
-const REMOVED_BYTES = Buffer.from(REMOVED);
 const SEND_BATCH = 1 << 20;            // one sendStdin carries at most this many chars (a longer frame goes alone)
 const SEND_HIGH_WATER = 16 << 20;      // past this many queued chars, an upstream read waits for the queue to drain
 const MIN_SECRET = 8;                  // as scrubText: a shorter value is no secret worth matching
@@ -43,42 +43,6 @@ const cleanHeaders = (headers, secrets) => {
   const values = secretValues(secrets);
   return Object.fromEntries(Object.entries(headers).filter(([, v]) => !values.some((s) => String(v).includes(s))));
 };
-
-/** Exact-value scrub of `secrets` over a byte stream: a value split across chunks is still caught; only bytes
- *  that could begin a value (at most longest − 1) are held back. Never decodes, so UTF-8 split across chunks
- *  passes intact. Values under 8 characters are skipped, as scrubText does. Any chunking gives the same bytes
- *  as one whole-body pass (earliest match first, the longest on a tie). */
-export function createByteScrubber(secrets = []) {
-  const keys = secretValues(secrets).map((s) => Buffer.from(s));
-  const hold = keys.reduce((m, k) => Math.max(m, k.length - 1), 0);
-  let carry = Buffer.alloc(0);
-  // The earliest position from `from` whose tail is a proper prefix of some value: it may finish in the next chunk.
-  const pendingFrom = (buf, from) => {
-    for (let i = Math.max(from, buf.length - hold); i < buf.length; i++) {
-      const tail = buf.subarray(i);
-      if (keys.some((k) => k.length > tail.length && k.subarray(0, tail.length).equals(tail))) return i;
-    }
-    return buf.length;
-  };
-  const scan = (buf, final) => {
-    const out = []; let pos = 0; let cut;
-    for (;;) {
-      const wait = final ? buf.length : pendingFrom(buf, pos);
-      let at = -1; let len = 0;
-      for (const k of keys) { const i = buf.indexOf(k, pos); if (i !== -1 && (at === -1 || i < at || (i === at && k.length > len))) { at = i; len = k.length; } }
-      // A match at or after `wait` could lose to a longer or earlier value still arriving: decide it next chunk.
-      if (at === -1 || at >= wait) { cut = wait; break; }
-      out.push(buf.subarray(pos, at), REMOVED_BYTES); pos = at + len;
-    }
-    out.push(buf.subarray(pos, cut));
-    carry = Buffer.from(buf.subarray(cut));
-    return Buffer.concat(out);
-  };
-  return {
-    push: (chunk) => (keys.length ? scan(carry.length ? Buffer.concat([carry, chunk]) : Buffer.from(chunk), false) : Buffer.from(chunk)),
-    flush: () => (keys.length ? scan(carry, true) : Buffer.alloc(0)),
-  };
-}
 
 /** Bytes in flight against `limit`, shared by the relays that hold it. */
 export const createByteBudget = (limit) => ({ limit, used: 0 });
@@ -177,6 +141,19 @@ export class ModelRelay {
     const entry = this.routes.get(id);
     this.routes.delete(id);
     return entry?.active ? new Promise((r) => entry.idle.push(r)) : Promise.resolve();
+  }
+  /** Stop new calls on route `id` and resolve once its in-flight calls have ended (each has committed its usage to the
+   *  route's meter), or after `ms`. A drained route refuses new calls as ended; removeRoute still deletes it. */
+  drainRoute(id, ms = 5000) {
+    const entry = this.routes.get(id);
+    if (!entry) return Promise.resolve();
+    entry.closed = true;
+    if (!entry.active) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => { clearTimeout(t); resolve(); };
+      const t = setTimeout(done, ms); t.unref?.();
+      (entry.drained ||= []).push(done);
+    });
   }
 
   /** End the relay and every route. Calls still running keep reading their upstream until it ends (see _request). */
@@ -296,7 +273,7 @@ export class ModelRelay {
     const pathname = q < 0 ? rest : rest.slice(0, q); const query = q < 0 ? '' : rest.slice(q + 1);
     if (f.method === 'HEAD' && pathname === '/api/hello' && !query) return this._reply(f, 200, {}, Buffer.alloc(0));
     const entry = this.routes.get(id);
-    if (!id || !entry) return this._refuse(f, where, relayError(403, 'permission_error', 'unknown or ended route'));
+    if (!id || !entry || entry.closed) return this._refuse(f, where, relayError(403, 'permission_error', 'unknown or ended route'));
     const proto = entry.route.protocol;
     if (!allows(entry.route, f.method, pathname) || !SAFE_QUERY.test(query) || query.includes('..')) {
       return this._refuse(f, where, relayError(403, 'permission_error', `${String(f.method).slice(0, 10)} ${pathname.slice(0, 100)} is not ${entry.route.call || 'a Messages API call'}`), proto);
@@ -307,7 +284,27 @@ export class ModelRelay {
     if (entry.active >= this.maxConcurrent) return this._refuse(f, where, relayError(429, 'rate_limit_error', `more than ${this.maxConcurrent} calls at once on one route`), proto);
     if (this._bytes + size > this.maxBytes) return this._refuse(f, where, relayError(429, 'rate_limit_error', `more than ${mib(this.maxBytes)} MiB of request bodies in flight from this sandbox`), proto);
     if (this.budget.used + size > this.budget.limit) return this._refuse(f, where, relayError(529, 'overloaded_error', `worca is relaying more than ${mib(this.budget.limit)} MiB of request bodies at once`), proto);
-    const body = Buffer.from(b64, 'base64');
+    let body = Buffer.from(b64, 'base64');
+    // The step's model (plans/core-protection-layer-design.md §4.2): a body-checked route (catalog relay.modelCheck
+    // 'body') carries `models`; a call naming any other model is refused. The body is forwarded re-serialised, so the
+    // upstream reads the same `model` worca checked (JSON.parse keeps the last of duplicate keys; an upstream may keep
+    // the first). A second, differently cased model key is refused: a Go upstream (encoding/json) matches field names
+    // case-insensitively. Routes without `models` (partial checks: Claude, Cursor) pass untouched.
+    if (entry.route.modelCheck === 'body' && Array.isArray(entry.route.models) && entry.route.models.length && !NO_BODY.has(f.method)) {
+      let parsed;
+      try { parsed = JSON.parse(body.toString('utf8')); } catch { parsed = undefined; }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return this._refuse(f, where, relayError(400, 'invalid_request_error', 'the request body is not JSON'), proto);
+      }
+      if (Object.keys(parsed).some((k) => k !== 'model' && k.toLowerCase() === 'model')) {
+        return this._refuse(f, where, relayError(400, 'invalid_request_error', 'the request body names its model more than once'), proto);
+      }
+      const m = parsed.model;
+      if (typeof m !== 'string' || !entry.route.models.includes(m)) {
+        return this._refuse(f, where, relayError(403, 'permission_error', `model ${JSON.stringify(String(m ?? '').slice(0, 100))} is not this step's model`), proto);
+      }
+      body = Buffer.from(JSON.stringify(parsed));
+    }
     // Only upstream silence ends a call early. A client that goes (a 'close' frame, a relay exit or stop(), a sandbox
     // that stops taking frames) detaches it: nothing more is forwarded, and the upstream is read to its end, so the
     // meter books what the provider bills. Its usage comes last in a stream (Anthropic's message_delta), so an
@@ -321,7 +318,12 @@ export class ModelRelay {
     finally {
       clearTimeout(idle); ac.abort(); if (this.inflight.get(f.id) === call) this.inflight.delete(f.id);
       this._bytes -= size; this.budget.used -= size;
-      if (--entry.active === 0) for (const r of entry.idle.splice(0)) r();
+      if (--entry.active === 0) {
+        for (const r of entry.idle.splice(0)) r();
+        // A drain waiting on this route (closeRoute): its last in-flight call has committed its usage. The captured
+        // entry keeps the waiters even when removeRoute or stop() dropped it from the map.
+        if (entry.drained) { const w = entry.drained; entry.drained = null; for (const fn of w) fn(); }
+      }
     }
   }
 
@@ -351,7 +353,8 @@ export class ModelRelay {
         if (auth[k] !== undefined) { const s = String(auth[k]); this.secrets.add(s); this.secrets.add(s.replace(/^(Bearer|token)\s+/i, '')); }
       }
       for (const s of route.secrets || []) this.secrets.add(s);
-      out = { ...upstreamRequestHeaders(headers, route.forwardHeaders), ...lowerKeys(route.extraHeaders), ...auth };
+      // A Connect route asks for uncompressed messages (the reply scrub reads gzip too: a server may mirror the request's).
+      out = { ...upstreamRequestHeaders(headers, route.forwardHeaders), ...lowerKeys(route.extraHeaders), ...(proto === 'connect' ? CONNECT_IDENTITY : {}), ...auth };
     } catch (err) {
       if (call.why) return;
       return this._refuse(f, where, relayError(502, 'api_error', scrubText(`worca could not sign the call: ${err?.message || err}`, [...this.secrets]).slice(0, 300)), proto);
@@ -382,18 +385,32 @@ export class ModelRelay {
       this.log('info', `model relay: ${where} → ${r.status}`);
       return this._reply(f, r.status, { ...rh, 'content-length': String(text.length) }, text);
     }
+    // A Connect reply worca cannot read is refused before its head (fetch decoded any content-encoding already); a
+    // streamed one is scrubbed message by message, a gzip message inflated first.
+    const unreadable = proto === 'connect' ? connectReplyProblem(upHeaders, { decoded: true }) : null;
+    if (unreadable) {
+      try { await r.body?.cancel(); } catch { /* ignore */ }
+      return this._refuse(f, where, relayError(502, 'api_error', `the upstream sent ${unreadable}, which worca cannot check for credentials`), proto);
+    }
+    const scrub = proto === 'connect' && isConnectStream(upHeaders['content-type'])
+      ? createConnectScrubber(secrets, { maxMessage: MAX_REQUEST_BYTES }) : createByteScrubber(secrets);
     // The route's meter (relay-usage.mjs): worca's own count of what the reply used, never the sandbox's. It is fed
     // every upstream byte, also after the client is gone.
     const meter = route.meter?.(pathname) || null;
     try {
       await this._pass(f, call, { t: 'head', id: f.id, status: r.status, headers: rh });
-      const scrub = createByteScrubber(secrets);
       try {
         for await (const c of r.body || []) {
           call.touch();
           meter?.push(c);
           if (call.gone) continue;
           const b = scrub.push(c);
+          if (b === null) {   // a message the scrub cannot read: the client's stream is cut, the upstream still metered
+            this.log('warn', `model relay: ${where} → ${r.status}, cut a reply with a message worca cannot check for credentials`);
+            await this._pass(f, call, { t: 'end', id: f.id, error: true });
+            call.detach();
+            continue;
+          }
           if (b.length) await this._pass(f, call, { t: 'data', id: f.id, b64: b.toString('base64') });
         }
       } catch {

@@ -9,7 +9,8 @@ import { cachedReadiness, storeReadiness } from './ready-cache.mjs';
 import { probeClaudeAuth } from '../preflight.mjs';
 import { brokerEngineRefusal } from '../broker-client.mjs';
 import { listExecBackends } from '../exec-env/registry.mjs';
-import { engineCredential } from '../exec-env/policy.mjs';
+import { resolveModelRoute } from '../exec-env/credentials.mjs';
+import { brokerEnabled } from '../broker-client.mjs';
 import { REMOTE_ENGINES } from '../../shared/exec-env.mjs';
 
 /** Claude's readiness: its sign-in (claude auth status, cached; env keys and the broker count as signed in). Only a
@@ -19,14 +20,15 @@ async function claudeSignIn() {
   return a.state === 'signed-out' ? { refusal: 'Claude Code is not signed in — run claude, then /login' } : {};
 }
 
-/** Whether worca's model relay can sign `name`'s calls in a remote sandbox (the credential in the server env: no spawn),
- *  for each configured backend; null when no backend is configured or the engine runs locally only. */
+/** Whether worca's model relay can sign `name`'s calls in a remote sandbox (the credential in the server env, or the
+ *  broker's slot: no spawn), for each configured backend; null when no backend is configured or the engine runs
+ *  locally only. The route resolver's remote decision says it (credentials.mjs resolveModelRoute). */
 function sandboxSignIn(name, { backends, env }) {
   if (!REMOTE_ENGINES.includes(name)) return null;
   const titles = backends().filter((b) => { try { return b.configured(env); } catch { return false; } }).map((b) => b.title);
   if (!titles.length) return null;
-  const cred = engineCredential(name, env);
-  return { titles, ready: !cred.problem, reason: cred.problem || null };
+  const d = resolveModelRoute({ engine: name, remote: true, serverEnv: env, broker: { on: brokerEnabled() }, checkModel: false });
+  return { titles, ready: !d.refusal, reason: d.refusal || null };
 }
 
 /**

@@ -14,20 +14,16 @@ import { readGuardHookEntry, readGuardDecisions } from '../file-read-guard.mjs';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
-import { agentIdentity } from '../agent-user.mjs';
-import { agentIdentityFor } from '../agent-pool.mjs';
-import { brokerEnabled, brokerInfo, mintSpawnToken, revokeSpawnToken, slotBaseUrl, slotOfBaseUrl } from '../broker-client.mjs';
-import { resolveBillTo, normalizeBillTo, currentOwner } from '../billing.mjs';
+import { brokerEnabled, brokerInfo, slotBaseUrl, slotOfBaseUrl } from '../broker-client.mjs';
+import { brokerLease, brokerSpawnError } from '../broker-lease.mjs';
 import { redactSecrets, redactDeep, createRedactor } from '../redact.mjs';
-import { MODEL_CREDENTIAL_ENV_KEYS } from '../broker-guard.mjs';
+import { resolveModelRoute, localServerEnv } from '../exec-env/credentials.mjs';
+import { engineEntry } from '../../shared/engine-switch.mjs';
 import { modelSlot } from '../broker-routing.mjs';
 import { pluginModelRoute, syncPluginSlots } from '../plugin-broker-slots.mjs';
-import { superviseSpawn, childEnv, cleanRunEnv, safeEmit, argValue } from '../spawn.mjs';
+import { superviseSpawn, childEnv, cleanRunEnv, safeEmit, argValue, abandonRoute } from '../spawn.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
 import { removeSessionEntries } from './sessions.mjs';
-
-// What a remote spawn's model route carries on worca's side; never kept into the sandbox env.
-const RELAY_OWNED_ENV_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS'];
 
 export const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
 
@@ -566,6 +562,15 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     // ARGV_INLINE_LIMIT). The staging dir, when any, is removed on every
     // terminal path below (finish) and on a failed spawn.
     const limit = Number.isFinite(argvInlineLimit) && argvInlineLimit > 0 ? argvInlineLimit : ARGV_INLINE_LIMIT;
+    // How this spawn's model calls are signed (credentials.mjs resolveModelRoute), before anything is staged. The server
+    // env is the sandbox env's for a remote spawn (never this adapter's `remote` flag, a boolean), else worca's plus the
+    // run env; the broker is a property of the worca server. Under the broker runViaBroker already put the slot URL and
+    // token (or a keyless bridge URL) in the model env, so a Claude decision never names a slot of its own here.
+    const serverEnv = execEnv?.remote ? execEnv.env : localServerEnv(cleanRunEnv(runSpawnEnv));
+    const decision = resolveModelRoute({ engine: 'claude', remote: !!execEnv?.remote, serverEnv, modelEnv: safeModelEnv,
+      model: wireModel ?? null, broker: { on: brokerEnabled() } });
+    if (decision.refusal) { rejectP(Object.assign(new Error(decision.refusal), { errorClass: 'config' })); return; }
+    if (decision.slot) { rejectP(new Error('worca: a Claude spawn under the credential broker reached runClaudeProcess without its broker token')); return; }
     // Host guard (host-guard.mjs, 2026-08-31 incident): every REAL spawn — any
     // role, custom agent, plugin agent, ask chat — carries the protection
     // preamble, the PreToolUse hook (hostGuard -> the --settings payload), and
@@ -610,17 +615,14 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     // operator config outranks ambient-env hygiene, and a catalog entry that sets the cap wins too), then
     // WORCA_HOST_PID on every guarded spawn, then no GitHub or Azure DevOps credential in any tier
     // (src/core/host-credentials.mjs): pushes and PRs are worca's own calls, and no broker secret.
+    // The resolver's sign-in mode: exactly one credential of Claude's in direct/own mode; with the broker on, no ambient
+    // model credential at all (the boot guard refuses them; this is the second line): the spawn's broker token is the
+    // only one it holds.
     const { env: composedEnv } = childEnv({
-      engine: 'claude', allowlist: envAllowlist, cwd, root: workRoot,
+      engine: 'claude', signInMode: decision.signInMode, allowlist: envAllowlist, cwd, root: workRoot,
       runEnv: cleanRunEnv(runSpawnEnv), overlay: safeModelEnv, hostPid: guardOn ? process.pid : null,
     });
     let spawnEnv = composedEnv;
-    // With the broker on, no ambient model credential reaches the agent either (the
-    // boot guard refuses them; this is the second line): the spawn's broker token
-    // is the only one it holds, and it wins over nothing.
-    if (brokerEnabled()) {
-      for (const k of MODEL_CREDENTIAL_ENV_KEYS) if (k !== 'ANTHROPIC_AUTH_TOKEN' || !safeModelEnv?.ANTHROPIC_AUTH_TOKEN) delete spawnEnv[k];
-    }
     // Routed off first party, a long turn behind a stream-buffering gateway must
     // not hit Bun's ~5-min fetch timeout or the CLI's first-byte watchdog
     // (model-env.mjs#withStreamTimeouts).
@@ -679,29 +681,27 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
     let modelRoute = null;
     if (remote) {
       try {
-        modelRoute = execEnv.openModelRoute({ spawnEnv, modelEnv: safeModelEnv });
-        const keep = Object.keys(safeModelEnv || {}).filter((k) => !RELAY_OWNED_ENV_KEYS.includes(k));
+        modelRoute = execEnv.openRoute(decision, { spawnEnv, modelEnv: safeModelEnv });
+        const relayOwned = engineEntry('claude').env.relayOwned;
+        const keep = Object.keys(safeModelEnv || {}).filter((k) => !relayOwned.includes(k));
         finalEnv = execEnv.envFor(spawnEnv, { keep: [...keep, ...execEnv.mcpEnvRefs], route: modelRoute });
       } catch (err) {
-        if (modelRoute) execEnv.closeModelRoute(modelRoute.id);
-        if (bridgeKey) bridgeEvents.off('failure', onBridgeFailure);
-        cleanupStaged();
-        rejectP(err);
+        // A route opened but never spawned with: closed (and what it measured booked) before the step fails.
+        abandonRoute(execEnv, modelRoute, onEvent).finally(() => { if (bridgeKey) bridgeEvents.off('failure', onBridgeFailure); cleanupStaged(); rejectP(err); });
         return;
       }
       if (modelRoute.secrets?.length) redactor = createRedactor([...baseRedactValues, ...modelRoute.secrets]);
+      // A remote result frame is the sandbox's word (security evaluation E4): every one carries what the relay itself
+      // measured since the previous one, and the harness books that.
+      onEvent = execEnv.meteredEvents(modelRoute.id, onEvent);
     }
     superviseSpawn({
       file: exe, args, displayBin: bin, cwd, env: finalEnv, stdin: plan.stdin ?? null,
       signal, asAgent: remote ? false : asAgent, stagedDir: plan.dir || null, onEvent, execEnv: remote ? execEnv : null,
+      // The model route closes with the spawn on every way out (superviseSpawn): the calls no `result` frame covered
+      // (a spawn stopped mid-turn, or one whose sandbox printed none) are booked from the relay all the same.
+      route: modelRoute,
       cleanup: () => {
-        if (modelRoute) {
-          // Calls no `result` frame covered (a spawn stopped mid-turn, or one whose sandbox printed none): worca saw
-          // them at its relay, so they are booked all the same, also those still running when the spawn ended.
-          const book = (t) => safeEmit(onEvent, { type: 'relayCost', messages: t.messages, byModel: t.byModel });
-          const rest = execEnv.closeModelRoute(modelRoute.id, book);
-          if (rest?.messages) book(rest);
-        }
         if (bridgeKey) bridgeEvents.off('failure', onBridgeFailure);
         cleanupStaged();
       },
@@ -749,15 +749,11 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
           return;
         }
         const cost = extractResultCost(evt);
-        // A remote result frame is the sandbox's word (security evaluation E4): it carries what the relay itself
-        // measured since the previous one, and the harness books that.
-        const relay = modelRoute && evt?.type === 'result' ? execEnv.routeUsage(modelRoute.id) : null;
         safeEmit(onEvent, {
           type: evt?.type || 'event',
           raw: evt,
           text: text || undefined,
           ...(cost != null ? { costUsd: cost } : {}),
-          ...(relay ? { relay } : {}),
         });
         // Claude Code can announce a spent subscription allowance as a
         // synthetic assistant frame while an async Bash/tool process keeps the
@@ -822,12 +818,6 @@ export function extractResultCost(evt) {
 // out. The token is revoked when the process exits, and never survives in anything
 // worca stores: events and error text pass through redactSecrets.
 
-/** Error in the recovery classes the orchestrator already knows (auth pauses, never retries blindly). */
-function brokerSpawnError(message, errorClass = 'auth') {
-  const err = new Error(`worca-broker: ${message}`);
-  err.errorClass = errorClass;
-  return err;
-}
 
 function isLoopbackUrl(v) {
   try {
@@ -850,8 +840,6 @@ export function brokerRouteFor(modelEnv, env = process.env) {
   return { error: `this model routes to ${host} directly; with the credential broker on, a model must use a broker slot (set its credential on the Models page)` };
 }
 
-const SPAWN_TTL_SEC = { aux: 600, test: 600, ask: 7200, phase: 86400 };
-
 async function runViaBroker(opts) {
   // An env-style plugin model spends from its plugin's own slot, at the plugin's base path;
   // the plugin's secrets were never resolved into its env (config.mjs).
@@ -865,8 +853,8 @@ async function runViaBroker(opts) {
   const onEvent = opts.onEvent;
   const redactingOnEvent = (e) => onEvent(redactDeep(e));
 
-  let info;
-  try { info = await brokerInfo(); }
+  // The broker must be reachable even for a keyless bridge (which takes no token).
+  try { await brokerInfo(); }
   catch (err) { throw brokerSpawnError(err.message, 'network'); }
 
   // A bridged model (OpenAI, OpenRouter, Copilot, a gateway): the CLI still talks to worca's
@@ -884,45 +872,17 @@ async function runViaBroker(opts) {
     }
     bridgeSlot = ms.slot;
   }
-  let billTo = resolveBillTo(opts.billTo);
-  if (info.mode === 'multi' && (!billTo || billTo === 'local')) {
-    billTo = normalizeBillTo(process.env.WORCA_BROKER_SYSTEM_BILL_TO);
-    if (!billTo) throw brokerSpawnError('this action has no signed-in person to bill it to. Start it from the web UI, or set WORCA_BROKER_SYSTEM_BILL_TO for work nobody in particular starts');
-  }
-  const kind = ['aux', 'test', 'ask', 'phase'].includes(opts.spawnKind) ? opts.spawnKind
-    : (opts.permissionMode === 'dontAsk' ? 'ask' : 'phase');
-  // Whether this spawn runs where no other person's agent can read it: an agent spawn under
-  // the paying person's own pool user (not a resumed run's starter's), or a server-side spawn
-  // when agents run under their own users (they can't read the server's processes). The
-  // broker uses a personal Claude subscription only for such spawns.
-  const owner = normalizeBillTo(currentOwner()) || billTo;
-  // A remote spawn runs in its run's own sandbox, which holds no token (the relay keeps it in worca): isolated
-  // when the paying person owns the run, not when a teammate resumes or answers it (model-relay-design §7).
-  const isolated = opts.execEnv?.remote ? owner === billTo
-    : opts.asAgent
-      ? owner === billTo && !!agentIdentityFor(owner)?.dedicated
-      : !!agentIdentity();
-  // A spawn with its own cost cap (an Ask turn's) gets the same cap as its token's budget: the
-  // CLI's --max-budget-usd is the agent's own bookkeeping, the broker's holds whatever it does.
-  const budgetUsd = typeof opts.maxBudgetUsd === 'number' && Number.isFinite(opts.maxBudgetUsd) && opts.maxBudgetUsd > 0 ? opts.maxBudgetUsd : undefined;
-  let minted;
-  try {
-    minted = await mintSpawnToken({
-      billTo: billTo || 'local', slots: [bridgeSlot || route.slot], kind, ttlSec: SPAWN_TTL_SEC[kind],
-      runId: opts.runId || null, threadId: opts.threadId || null, isolated, budgetUsd,
-    });
-  } catch (err) {
-    throw brokerSpawnError(`cannot get a token for this spawn: ${err.message}`, err.status === 401 ? 'auth' : 'network');
-  }
+  // Who pays, which slot, how long, isolated or not: broker-lease.mjs (every brokered adapter takes its token there).
+  const lease = await brokerLease(opts, bridgeSlot || route.slot);
   const modelEnv = bridgeSlot
     // Bridged: keep the bridge URL (and the rest of the resolved env); swap the bridge's own
     // secret for the spawn token.
-    ? { ...opts.modelEnv, ANTHROPIC_AUTH_TOKEN: minted.token }
+    ? { ...opts.modelEnv, ANTHROPIC_AUTH_TOKEN: lease.token }
     : withProviderModesOff({
       ENABLE_TOOL_SEARCH: 'true',
       ...(opts.modelEnv || {}),
       ANTHROPIC_BASE_URL: `${slotBaseUrl(route.slot)}${route.prefix || ''}`,
-      ANTHROPIC_AUTH_TOKEN: minted.token,
+      ANTHROPIC_AUTH_TOKEN: lease.token,
     });
   try {
     const r = await runClaudeProcess({ ...opts, modelEnv, onEvent: redactingOnEvent });
@@ -931,7 +891,7 @@ async function runViaBroker(opts) {
     if (err && typeof err.message === 'string') err.message = redactSecrets(err.message);
     throw err;
   } finally {
-    revokeSpawnToken(minted.spawnId);
+    lease.release();
   }
 }
 

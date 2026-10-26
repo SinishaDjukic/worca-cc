@@ -18,7 +18,7 @@ import { runRef, fmtRunCost, fmtMs } from './renderers.mjs';
 import { promptFields, parseAnswerLine } from '../../shared/forms/project.mjs';
 import { giveUpOption, describePauseReason, pauseConsequences } from '../failure-policy.mjs';
 import { chatActor } from '../identity.mjs';
-import { SWITCH_ENGINES, engineLabel, engineList, engineRefusalFor } from '../../shared/engine-switch.mjs';
+import { SWITCH_ENGINES, engineLabel, engineList, engineRefusalFor, costKnownOf } from '../../shared/engine-switch.mjs';
 
 const md = (value) => ({ kind: 'markdown', value });
 const reply = (text, severity = 'info') => ({ title: null, body: [md(text)], severity });
@@ -236,7 +236,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
       if (!rows.length) return reply('No pipelines yet.');
       const r = rows[0];
       const bits = [runLine({ ...r, runId: r.id })];
-      const cost = fmtRunCost(r.runEngine, r.totalCostUsd);
+      const cost = fmtRunCost(r.runEngine, r.totalCostUsd, costKnownOf(r));
       if (cost) bits.push(`   **Cost:** ${cost}`);
       const dur = fmtMs(r.totalActiveMs);
       if (dur) bits.push(`   **Active:** ${dur}`);
@@ -249,7 +249,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
       if (t.row) {
         const r = t.row;
         return reply([runLine({ ...r, runId: r.id }),
-          ...(fmtRunCost(r.runEngine, r.totalCostUsd) ? [`   **Cost:** ${fmtRunCost(r.runEngine, r.totalCostUsd)}`] : []),
+          ...(fmtRunCost(r.runEngine, r.totalCostUsd, costKnownOf(r)) ? [`   **Cost:** ${fmtRunCost(r.runEngine, r.totalCostUsd, costKnownOf(r))}`] : []),
           ...(r.pauseReason ? [`   **Pause reason:** ${describePauseReason(r.pauseReason) || r.pauseReason}`] : []),
           ...(r.pauseDetail ? [`   **${pauseConsequences(r.pauseReason).severity === 'error' ? 'Error' : 'Cause'}:** ${r.pauseDetail}`] : []),
         ].join('\n'));
@@ -268,7 +268,7 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
         const activeLabel = active.length === 0 ? '—'
           : (active.length === 1 ? active[0] : `${active.length} agents running`);
         lines.push(`   **Executions:** ${doneSteps}/${ledger.length} done · **Active:** ${activeLabel}`);
-        const cost = fmtRunCost(state.runEngine, state.totalCostUsd);
+        const cost = fmtRunCost(state.runEngine, state.totalCostUsd, costKnownOf(state));
         if (cost) lines.push(`   **Cost:** ${cost}`);
       }
       const pq = actions.pendingQuestion(r.runId);
@@ -286,9 +286,9 @@ export function createCommandRouter({ actions, chatContext, logger = () => {}, o
     cost: async ({ chatKey, args }) => {
       const t = resolveTarget(args[0], scopedRuns(chatKey), await actions.history({ limit: 50 }));
       if (t.error) return t.error;
-      if (t.row) return reply(`\`${runRef(t.row.id)}\` cost: ${fmtRunCost(t.row.runEngine, t.row.totalCostUsd) || '$0.00'}`);
+      if (t.row) return reply(`\`${runRef(t.row.id)}\` cost: ${fmtRunCost(t.row.runEngine, t.row.totalCostUsd, costKnownOf(t.row)) || '$0.00'}`);
       const state = actions.runState(t.run.runId);
-      return reply(`\`${runRef(t.run.runId)}\` cost so far: ${fmtRunCost(state?.runEngine, state?.totalCostUsd) || '$0.00'}`);
+      return reply(`\`${runRef(t.run.runId)}\` cost so far: ${fmtRunCost(state?.runEngine, state?.totalCostUsd, costKnownOf(state)) || '$0.00'}`);
     },
 
     pause: async ({ chatKey, args, actor }) => {

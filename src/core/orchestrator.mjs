@@ -745,7 +745,7 @@ export class GraphOrchestrator extends RunHarness {
     // attributes a cost whose stepKey names a ledger row (state.steps + totalCostUsd —
     // no else branch; the DB spend ledger is written regardless), and
     // _checkCostLimits reads that total: without the row the pipeline cap could never trip.
-    this._recordCost(costUsd, 'x:preflight:1', { aux: 'auto' });
+    this._bookUsage({ source: 'engine', costUsd, aux: 'auto' }, { stepKey: 'x:preflight:1' });
     if (checkCaps) this._checkCostLimits();   // a cost cap pauses here (_capReached → pauseErr()); the resume re-enters the decision
   }
 
@@ -2080,6 +2080,9 @@ export class GraphOrchestrator extends RunHarness {
         // row does not exist yet when the event lands. History labels a loop
         // re-fire `cycle 2 · fix` off this.
         trigger: ctx.trigger || { wireIds: [], freshPorts: [] },
+        // Who serves an agent step's model calls and whether its cost can be counted (run-harness _stepFacts): only set
+        // keys, so an in-memory step and a reloaded one have the same shape.
+        ...(ctx.node?.kind === 'agent' ? this._stepFacts(ctx.claudeOpts?.model ?? null) : {}),
         ...(ctx.slice
           ? { taskId: ctx.slice.id, parentExecutionId: ctx.parentExecutionId ?? null, title: ctx.slice.title ?? null,
               phaseOrdinal: ctx.slice.phase ?? null, taskIndex: ctx.taskIndex ?? null, taskTotal: ctx.taskTotal ?? null }

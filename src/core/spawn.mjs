@@ -150,6 +150,15 @@ process.on('exit', () => { for (const pid of liveGroups) { try { process.kill(-p
 // line as stderr streams (see rlErr) and stamped on the error as `errorClass`.
 const STDERR_DETAIL_MAX = 2000;
 
+/** End `route` (an opened relay route: {id}) on `execEnv` once its in-flight replies have ended, and book what it
+ *  measured since the last take (a `spend` event). The one way a route is closed: superviseSpawn on every terminal
+ *  path, an adapter for a route it opened but never spawned with (the guard test bans closing routes in engines/).
+ *  Resolves when done; never rejects. */
+export async function abandonRoute(execEnv, route, onEvent) {
+  if (!execEnv?.closeRoute || !route) return;
+  try { await execEnv.closeRoute(route.id, onEvent); } catch { /* the route is gone either way */ }
+}
+
 /**
  * Spawn one harness process and supervise it to the end. Resolves with
  * `onDone(code)` on exit 0; rejects with an AbortError after an abort, with
@@ -185,10 +194,13 @@ const STDERR_DETAIL_MAX = 2000;
  * @param {(code:number) => any} o.onDone
  * @param {object|null} [o.execEnv]               a remote execution environment (src/core/exec-env/): when set,
  *   the command runs in its sandbox through a child-like handle (no host pid, stdin as a file); null on local runs
+ * @param {{id:string}|null} [o.route]            the spawn's model route on `execEnv`'s relay: closed on every terminal
+ *   path (abandonRoute), before `cleanup` and before the promise settles
  */
 export function superviseSpawn(o) {
   const { file, args, displayBin, cwd, env, stdin, signal, asAgent, stagedDir, agentHome = null, cleanup, onEvent,
-    onStdoutLine, onStderrLine = null, stdoutErrorDetail, classify, isBenignStderr = () => false, redactText = null, spawnError, onDone, execEnv = null } = o;
+    onStdoutLine, onStderrLine = null, stdoutErrorDetail, classify, isBenignStderr = () => false, redactText = null, spawnError, onDone, execEnv = null,
+    route = null } = o;
   const remote = execEnv?.remote ? execEnv : null;
   return new Promise((resolveP, rejectP) => {
     let childEnv = env;
@@ -215,8 +227,7 @@ export function superviseSpawn(o) {
           ...(agentId || GROUP_KILL ? { detached: true } : {}),
         });
     } catch (err) {
-      cleanup();
-      rejectP(spawnError(err, `Failed to spawn ${displayBin}`));
+      abandonRoute(execEnv, route, onEvent).finally(() => { try { cleanup(); } finally { rejectP(spawnError(err, `Failed to spawn ${displayBin}`)); } });
       return;
     }
     if (stdin != null && child.stdin) {   // a remote child takes stdin as a file
@@ -268,8 +279,10 @@ export function superviseSpawn(o) {
       if (signal) signal.removeEventListener?.('abort', onAbort);
       // A group's escalation outlives its leader's exit (above); a lone child's ends with it.
       if (killTimer && !group) clearTimeout(killTimer);
-      cleanup();
-      fn(arg);
+      // The spawn's model route (relay): closed on every terminal path, before the adapter's cleanup and before the
+      // promise settles, so what the relay measured after the last result is booked whatever way the spawn ended
+      // (plans/core-protection-layer-design.md §4.3), and before the adapter emits anything after the spawn.
+      abandonRoute(execEnv, route, onEvent).finally(() => { try { cleanup(); } finally { fn(arg); } });
     };
 
     const rl = createInterface({ input: child.stdout });

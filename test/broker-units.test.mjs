@@ -11,7 +11,7 @@ import { seal, open, keyId, suffixOf } from '../src/broker/vault.mjs';
 import { openStore } from '../src/broker/store.mjs';
 import { mintToken, resolveToken, parseMintRequest, tokenFromHeaders, hashToken, TOKEN_RE } from '../src/broker/tokens.mjs';
 import { createUsageTap, priceUsage, listRatesFor, UNPRICED_RATES, unpricedRates, requestWithUsage } from '../src/broker/usage.mjs';
-import { scrubText, REMOVED } from '../src/broker/scrub.mjs';
+import { scrubText, REMOVED, createConnectScrubber, connectReplyProblem } from '../src/broker/scrub.mjs';
 import { findLocalCredentials, guardMessage } from '../src/core/broker-guard.mjs';
 import { withBillTo, currentBillTo, resolveBillTo, normalizeBillTo } from '../src/core/billing.mjs';
 import { redactSecrets, redactDeep } from '../src/core/redact.mjs';
@@ -78,7 +78,7 @@ test('config: durations and vault keys', () => {
 
 test('slots: built-ins pin their upstreams; local exists only when named', () => {
   const ids = builtinSlots().map((s) => s.id);
-  assert.deepEqual(ids, ['anthropic', 'openai', 'openrouter', 'copilot']);
+  assert.deepEqual(ids, ['anthropic', 'openai', 'openrouter', 'copilot', 'copilot-pat', 'cursor']);
   const cp = builtinSlots().find((s) => s.id === 'copilot');
   assert.equal(cp.auth, 'copilot');
   assert.ok(cp.headers.includes('copilot-integration-id'));
@@ -203,7 +203,7 @@ test('usage: JSON bodies, OpenAI shapes, and an upstream-reported cost winning o
   const o = createUsageTap('openai', 'application/json');
   o.write(JSON.stringify({ model: 'x/y', usage: { prompt_tokens: 7, completion_tokens: 3, cost: 0.0123, prompt_tokens_details: { cached_tokens: 2 } } }));
   const u = o.end();
-  assert.deepEqual([u.inputTokens, u.outputTokens, u.cacheReadTokens], [7, 3, 2]);
+  assert.deepEqual([u.inputTokens, u.outputTokens, u.cacheReadTokens], [5, 3, 2], 'the cached reads come out of the input count');
   assert.equal(priceUsage(u), 0.0123);
 });
 
@@ -268,6 +268,23 @@ test('scrub: exact secrets, 12-character windows of them, and every known key sh
   for (const leak of [secret, secret.slice(3, 20), 'sk-ab****wxyz', 'sk-ant-api03', 'ghp_', 'AKIAABCD', 'wbt_b']) assert.ok(!out.includes(leak), `leaked ${leak}: ${out}`);
   assert.ok(out.includes(REMOVED));
   assert.equal(scrubText('nothing secret here, 12345'), 'nothing secret here, 12345');
+});
+
+test('connect scrub: message by message across any chunking; refuses an oversized message; drops an unfinished one', () => {
+  const env = (flag, b) => { const h = Buffer.alloc(5); h[0] = flag; h.writeUInt32BE(b.length, 1); return Buffer.concat([h, b]); };
+  const secret = 'derived-access-token-0123456789';
+  const whole = Buffer.concat([env(0, Buffer.from(`a ${secret} b`)), env(2, Buffer.from('{}'))]);
+  const s = createConnectScrubber([secret]);
+  const out = Buffer.concat([...whole].map((byte) => s.push(Buffer.from([byte]))));   // one byte at a time: heads split too
+  assert.deepEqual(out, Buffer.concat([env(0, Buffer.from(`a ${REMOVED} b`)), env(2, Buffer.from('{}'))]));
+  const small = createConnectScrubber([secret], { maxMessage: 4 });
+  assert.equal(small.push(env(0, Buffer.from('12345'))), null, 'a message over maxMessage is refused, unread');
+  assert.equal(small.push(env(0, Buffer.from('1'))), null, 'and the stream stays refused');
+  const cut = createConnectScrubber([secret]);
+  assert.equal(cut.push(env(0, Buffer.from(`x ${secret}`)).subarray(0, 12)).length, 0, 'an unfinished message is held');
+  assert.equal(cut.flush().length, 0, 'and dropped at the end');
+  assert.equal(connectReplyProblem({ 'content-type': 'application/proto', 'content-encoding': 'gzip' }, { decoded: true }), null, 'fetch decoded it');
+  assert.equal(connectReplyProblem({ 'content-type': 'application/proto', 'connect-content-encoding': 'br' }), null, 'a unary reply has no messages');
 });
 
 // ── worca side: guard, billing, redaction, error classes ─────────────────────

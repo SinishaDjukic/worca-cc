@@ -1,50 +1,74 @@
-// test/broker-engines.test.mjs — with the credential broker on, only Claude Code runs: another engine signs in with its
-// own credentials, which the broker can neither bill per person nor keep from the agent. One refusal
+// test/broker-engines.test.mjs — with the credential broker on, an engine runs only when one of its sign-in modes can sit
+// in a broker slot (decision 5): Claude, Codex (openai slot), Copilot (copilot-pat) and Cursor (cursor) sign in through
+// the broker, an own login (a ChatGPT, keychain or Cursor sign-in) never does. One refusal
 // (broker-client.mjs brokerEngineRefusal) serves runs, GET /api/engines, Ask chats and the pickers (engine-locks.mjs);
 // the boot guard also finds Codex/Cursor keys in the env and Codex's stored sign-in.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { brokerEngineRefusal } from '../src/core/broker-client.mjs';
+import { brokerEngineRefusal, setBrokerInfoForTest, resetBrokerClient } from '../src/core/broker-client.mjs';
 import { engineReadiness, engineLocks } from '../src/core/engines/readiness.mjs';
 import { resetEngineReadiness } from '../src/core/engines/ready-cache.mjs';
 import { findLocalCredentials, credentialFiles, MODEL_CREDENTIAL_ENV_KEYS } from '../src/core/broker-guard.mjs';
 import { createAskModels } from '../src/core/ask/models.mjs';
 import { setEngineLocks, engineLock, lockEngineOptions } from '../ui/public/engine-locks.mjs';
+import { ENGINES, setCatalogForTest } from '../src/shared/engine-switch.mjs';
 
 const BROKER = { WORCA_BROKER_URL: 'http://broker.internal:8080' };
 const prevUrl = process.env.WORCA_BROKER_URL;
-afterEach(() => { if (prevUrl === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = prevUrl; setEngineLocks(null); });
+afterEach(() => {
+  if (prevUrl === undefined) delete process.env.WORCA_BROKER_URL; else process.env.WORCA_BROKER_URL = prevUrl;
+  setEngineLocks(null); setCatalogForTest(null); resetBrokerClient();
+});
+const refusalOf = (e) => `the credential broker is on, and ${e} signs in with its own credentials, which the broker cannot bill or revoke`;
+/** The catalog with `engine`'s key modes removed: its own login is all it has. */
+const ownOnly = (engine) => ({ ...ENGINES, [engine]: { ...ENGINES[engine], signIn: { modes: ENGINES[engine].signIn.modes.filter((m) => m.kind === 'own') } } });
 
-test('brokerEngineRefusal: only with the broker on, and never for Claude or mock', () => {
+test('brokerEngineRefusal: only with the broker on, never for Claude or mock, and only when no sign-in mode has a slot', () => {
   assert.equal(brokerEngineRefusal('codex', {}), null);
   assert.equal(brokerEngineRefusal('claude', BROKER), null);
   assert.equal(brokerEngineRefusal('mock', BROKER), null);
   assert.equal(brokerEngineRefusal(null, BROKER), null);
-  for (const e of ['codex', 'cursor', 'copilot']) {
-    assert.equal(brokerEngineRefusal(e, BROKER), `the credential broker is on, and ${e} signs in with its own credentials, which the broker cannot bill or revoke`);
-  }
+  assert.equal(brokerEngineRefusal('codex', BROKER, ['openai']), null, 'its API key sits in the openai slot');
+  assert.equal(brokerEngineRefusal('codex', BROKER, []), refusalOf('codex'), 'no openai slot: only its ChatGPT sign-in is left');
+  for (const e of ['codex', 'copilot', 'cursor']) assert.equal(brokerEngineRefusal(e, BROKER), null, `${e}: its key mode has a built-in slot`);
+  assert.equal(brokerEngineRefusal('cursor', BROKER, ['anthropic', 'openai']), refusalOf('cursor'), 'a broker without a cursor slot');
+  setCatalogForTest(ownOnly('codex'));
+  assert.equal(brokerEngineRefusal('codex', BROKER), refusalOf('codex'), 'an own-only engine is refused');
 });
 
-test('readiness: with the broker on, every engine but Claude is not ready (broker: true), even in mock, and no preflight runs', async () => {
+test('readiness: with the broker on, every engine with a slot is ready (mock: no preflight); an own-only one is not (broker: true)', async () => {
   process.env.WORCA_BROKER_URL = BROKER.WORCA_BROKER_URL;
   resetEngineReadiness();
   const boom = async () => { throw new Error('spawned'); };
   const list = await engineReadiness({ preflights: { claude: async () => ({}), codex: boom, copilot: boom, cursor: boom, gemini: boom, goose: boom, opencode: boom, qwen: boom }, mock: true, force: true });
   assert.deepEqual(list.find((e) => e.name === 'claude'), { name: 'claude', label: 'Claude', ready: true, reason: null });
-  for (const name of ['codex', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen']) {
+  for (const name of ['codex', 'copilot', 'cursor']) {
+    assert.deepEqual(list.find((e) => e.name === name), { name, label: ENGINES[name].label, ready: true, reason: null }, name);
+  }
+  // No broker slot holds their keys yet: under the broker only their own sign-ins are left, which it refuses.
+  for (const name of ['gemini', 'goose', 'opencode', 'qwen']) {
     const e = list.find((x) => x.name === name);
     assert.equal(e.ready, false, name);
     assert.equal(e.broker, true, name);
     assert.match(e.reason, /credential broker is on/);
   }
+  setCatalogForTest(ownOnly('cursor'));
+  resetEngineReadiness();
+  const own = (await engineReadiness({ preflights: { claude: async () => ({}), codex: boom, copilot: boom, cursor: boom }, mock: true, force: true })).find((e) => e.name === 'cursor');
+  assert.equal(own.ready, false);
+  assert.equal(own.broker, true);
+  assert.match(own.reason, /credential broker is on/);
   resetEngineReadiness();
 });
 
-test('engineLocks (GET /api/engine-locks): empty without the broker; every engine but Claude with it, no preflight', () => {
+test('engineLocks (GET /api/engine-locks): empty without the broker; with it, only the engines without a slot', () => {
   assert.deepEqual(engineLocks({}), []);
+  // Gemini CLI, Goose, OpenCode and Qwen Code have no broker slot yet (a later follow-up).
+  assert.deepEqual(engineLocks(BROKER).map((e) => e.name), ['gemini', 'goose', 'opencode', 'qwen']);
+  setCatalogForTest(ownOnly('copilot'));
   const locks = engineLocks(BROKER);
-  assert.deepEqual(locks.map((e) => e.name), ['codex', 'copilot', 'cursor', 'gemini', 'goose', 'opencode', 'qwen']);
+  assert.deepEqual(locks.map((e) => e.name), ['copilot', 'gemini', 'goose', 'opencode', 'qwen']);
   assert.ok(locks.every((e) => e.broker === true && /credential broker is on/.test(e.reason)));
 });
 
@@ -63,7 +87,7 @@ test("guard: a stored Codex sign-in under an agent or server HOME is found", () 
   assert.deepEqual(findLocalCredentials({ files }), [`${login}: a stored Codex sign-in`]);
 });
 
-test('Ask catalog: no Codex rows while the broker is on, so new chats start on Claude', async () => {
+test('Ask catalog: Codex rows are offered under the broker while it has an openai slot', async () => {
   const deps = {
     listModels: async () => [
       { id: 'claude-opus-5-5', label: 'Opus 5.5', custom: false, hasEnv: false },
@@ -77,8 +101,12 @@ test('Ask catalog: no Codex rows while the broker is on, so new chats start on C
   assert.equal(open.askEngine, 'codex');
   process.env.WORCA_BROKER_URL = BROKER.WORCA_BROKER_URL;
   const brokered = await createAskModels(deps).askCatalog();
-  assert.ok(!brokered.models.some((m) => m.id === 'gpt-5.5'));
-  assert.equal(brokered.askEngine, 'claude');
+  assert.ok(brokered.models.some((m) => m.id === 'gpt-5.5'), 'the built-in openai slot carries its key');
+  assert.equal(brokered.askEngine, 'codex');
+  setBrokerInfoForTest({ slots: [{ id: 'anthropic' }] });
+  const noSlot = await createAskModels(deps).askCatalog();
+  assert.ok(!noSlot.models.some((m) => m.id === 'gpt-5.5'), 'a broker without an openai slot');
+  assert.equal(noSlot.askEngine, 'claude');
 });
 
 test('engine-locks: locked options are disabled with the reason; the caller learns when the selection is locked', () => {
@@ -97,4 +125,12 @@ test('engine-locks: locked options are disabled with the reason; the caller lear
   assert.equal(lockEngineOptions(select), false);
   setEngineLocks(null);
   assert.equal(engineLock('codex'), null);
+});
+
+test('the broker preflight maps a codex model to the openai slot, never the anthropic one', async () => {
+  await import('../src/core/config.mjs');   // registers the model catalog's reader (broker-routing.mjs setModelEngineReader)
+  const { modelSlot } = await import('../src/core/broker-routing.mjs');
+  process.env.WORCA_BROKER_URL = BROKER.WORCA_BROKER_URL;
+  assert.deepEqual(modelSlot('gpt-6.1-sol'), { slot: 'openai' }, "a codex catalog model: Codex's key mode slot");
+  assert.deepEqual(modelSlot('claude-sonnet-5'), { slot: 'anthropic' });
 });

@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { mkdtempSync, rmSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createFakeE2b } from '../src/core/exec-env/e2b-fake.mjs';
@@ -673,6 +674,36 @@ test('a reply on one route is scrubbed of every route\'s credential: body split 
   await relay.stop();
 });
 
+test('a Connect route asks for uncompressed replies, scrubs inside a gzip message and cuts a stream it cannot read', async () => {
+  const env = (flag, b) => { const h = Buffer.alloc(5); h[0] = flag; h.writeUInt32BE(b.length, 1); return Buffer.concat([h, b]); };
+  const seen = []; let enc = 'gzip'; let parts = null;
+  const fetchImpl = async (_url, init) => {
+    seen.push(init.headers);
+    const chunks = parts ?? (() => { const gz = env(1, gzipSync(Buffer.from(`echo ${SECRET}`))); return [env(0, Buffer.from('ok')), gz.subarray(0, 3), gz.subarray(3)]; })();
+    return new Response(new ReadableStream({ start(c) { for (const x of chunks) c.enqueue(x); c.close(); } }),
+      { status: 200, headers: { 'content-type': 'application/connect+proto', 'connect-content-encoding': enc } });
+  };
+  const { relay, sent, req } = await fakeRelay({ fetchImpl });
+  const { id } = relay.addRoute(route('http://cursor.invalid', { protocol: 'connect', allow: [['POST', '/v1/messages']], responseHeaders: ['connect-content-encoding'] }));
+  req(1, id); for (let i = 0; !ended(sent, 1) && i < 200; i++) await pause(5);
+  assert.equal(seen[0]['connect-accept-encoding'], 'identity');
+  let frames = framesOf(sent);
+  const data = Buffer.concat(frames.filter((f) => f.id === 1 && f.t === 'data').map((f) => Buffer.from(f.b64, 'base64')));
+  assert.ok(data.equals(Buffer.concat([env(0, Buffer.from('ok')), env(0, Buffer.from(`echo ${REMOVED}`))])), 'inflated, scrubbed, re-framed');
+  assert.equal(frames.find((f) => f.id === 1 && f.t === 'end').error, undefined);
+  parts = [env(0, Buffer.from('ok')), env(1, Buffer.from(`not gzip ${SECRET}`))];
+  req(2, id); for (let i = 0; !ended(sent, 2) && i < 200; i++) await pause(5);
+  frames = framesOf(sent);
+  assert.equal(frames.find((f) => f.id === 2 && f.t === 'end').error, true, 'the stream is cut');
+  assert.ok(!sent.join('').includes(SECRET));
+  parts = null; enc = 'br';
+  req(3, id); for (let i = 0; !ended(sent, 3) && i < 200; i++) await pause(5);
+  frames = framesOf(sent);
+  assert.equal(frames.find((f) => f.id === 3 && f.t === 'head').status, 502);
+  assert.match(JSON.parse(bodyOf(frames, 3)).message, /^worca-relay: the upstream sent .*br.* worca cannot check for credentials/);
+  await relay.stop();
+});
+
 test('stop() ends the relay: alive turns false', POSIX, async (t) => {
   const { relay } = await startRelay(t);
   assert.equal(relay.alive, true);
@@ -863,4 +894,93 @@ test('async auth and upstream: a token worca derives is scrubbed from replies; a
   const noHost = relay.addRoute(route(async () => { throw new Error('no Copilot host'); }, { allow: [['POST', '/x']] }));
   assert.match((await relayError(await post(`${noHost.baseUrl}/x`), 502)).error.message, /no Copilot host/);
   assert.equal(up.seen.length, 1, 'a failed sign-in never reaches the upstream');
+});
+
+// ── the step's model (core protection layer, Task 9: catalog relay.modelCheck 'body') ──
+const OPENAI_ALLOW = [['POST', '/responses'], ['GET', '/models']];
+const openaiRefusal = async (r, status, re) => {
+  assert.equal(r.status, status);
+  const j = await r.json();
+  assert.match(j.error.message, re);
+  return j;
+};
+
+test('relay refuses another model', POSIX, async (t) => {
+  const up = await stubUpstream(t);
+  const { relay } = await startRelay(t);
+  const { baseUrl } = relay.addRoute(route(up.url, { protocol: 'anthropic', modelCheck: 'body', models: ['claude-haiku-4-5'] }));
+  const j = await relayError(await post(`${baseUrl}/v1/messages`, { body: '{"model":"claude-opus-4"}' }), 403);
+  assert.match(j.error.message, /^worca-relay: model "claude-opus-4" is not this step's model/);
+  assert.equal(up.seen.length, 0, 'the upstream saw no request');
+  const ok = await post(`${baseUrl}/v1/messages`, { body: '{"model":"claude-haiku-4-5"}' });
+  assert.equal(ok.status, 200);
+});
+
+test('relay passes aux models', POSIX, async (t) => {
+  const up = await stubUpstream(t);
+  const { relay } = await startRelay(t);
+  const { baseUrl } = relay.addRoute(route(up.url, { protocol: 'openai', allow: OPENAI_ALLOW, modelCheck: 'body', models: ['gpt-6.1-sol', 'gpt-aux'] }));
+  const r = await post(`${baseUrl}/responses`, { body: '{"model":"gpt-aux"}' });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { ok: true });
+});
+
+test('relay forwards the body it checked', POSIX, async (t) => {
+  const up = await stubUpstream(t);
+  const { relay } = await startRelay(t);
+  const { baseUrl } = relay.addRoute(route(up.url, { protocol: 'openai', allow: OPENAI_ALLOW, modelCheck: 'body', models: ['gpt-6.1-sol'] }));
+  const r = await post(`${baseUrl}/responses`, { body: '{"model":"evil","model":"gpt-6.1-sol"}' });
+  assert.equal(r.status, 200);
+  assert.equal(up.seen[0].body.toString(), '{"model":"gpt-6.1-sol"}', 're-serialised: the upstream reads the model worca checked');
+  // A Go upstream (encoding/json) matches field names case-insensitively, the last one winning: a second, differently
+  // cased model key would run another model than the one worca checked.
+  for (const extra of ['"MODEL":"evil"', '"Model":"evil"']) {
+    await openaiRefusal(await post(`${baseUrl}/responses`, { body: `{"model":"gpt-6.1-sol",${extra}}` }), 400,
+      /^worca-relay: the request body names its model more than once/);
+  }
+  assert.equal(up.seen.length, 1, 'a case-variant model key never reaches the upstream');
+});
+
+test('relay checks only body routes', POSIX, async (t) => {
+  const up = await stubUpstream(t);
+  const { relay } = await startRelay(t);
+  const proto = Buffer.from([0x0a, 0x03, 0x61, 0x62, 0x63]);
+  const connect = relay.addRoute(route(up.url, { protocol: 'connect', allow: [['POST', /^\/x\.v1\.S\/M$/]], modelCheck: 'partial' }));
+  const c = await post(`${connect.baseUrl}/x.v1.S/M`, { body: proto, headers: { 'content-type': 'application/proto' } });
+  assert.equal(c.status, 200);
+  assert.deepEqual(up.seen[0].body, proto, 'a partial route forwards a protobuf body untouched');
+  const body = relay.addRoute(route(up.url, { protocol: 'openai', allow: OPENAI_ALLOW, modelCheck: 'body', models: ['gpt-6.1-sol'] }));
+  await openaiRefusal(await post(`${body.baseUrl}/responses`, { body: 'not json' }), 400, /^worca-relay: the request body is not JSON/);
+  const g = await fetch(`${body.baseUrl}/models`);
+  assert.equal(g.status, 200, 'GET /models has no body to check');
+});
+
+// ── closing a route (core protection layer, Task 10: the usage ledger) ──
+test('drainRoute waits for the route\'s in-flight reply and refuses new calls meanwhile', POSIX, async (t) => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const up = await stubUpstream(t, (req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write('event: message_start\ndata: {"type":"message_start","message":{"model":"m","usage":{"input_tokens":5,"output_tokens":1}}}\n\n');
+    held.then(() => res.end('event: message_stop\ndata: {"type":"message_stop"}\n\n'));
+  });
+  const { relay } = await startRelay(t);
+  const { id, baseUrl } = relay.addRoute(route(up.url));
+  const first = post(`${baseUrl}/v1/messages`);
+  for (let i = 0; !up.seen.length && i < 400; i++) await pause(10);
+  assert.equal(up.seen.length, 1, 'the first call is streaming');
+  let settled = false;
+  relay.drainRoute(id, 60_000).then(() => { settled = true; });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(settled, false, 'the drain waits while a reply is in flight');
+  const second = await post(`${baseUrl}/v1/messages`);
+  assert.equal(second.status, 403, 'a drained route takes no new call');
+  assert.match((await second.json()).error.message, /unknown or ended route/);
+  assert.equal(up.seen.length, 1, 'the second call never reached the upstream');
+  release();
+  const r = await first;
+  await r.text();
+  // The reply's end wakes the drain, not its 60 s timer (never `await` the drain: without the wake-up it would hang).
+  for (let i = 0; !settled && i < 200; i++) await pause(10);
+  assert.equal(settled, true, 'the drain ends once the reply did');
 });

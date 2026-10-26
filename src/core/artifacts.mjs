@@ -1437,11 +1437,11 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
       INSERT INTO pipelines (id, project_key, workspace_key, target, title, base_name,
         date_prefix, status, phase, cycle, started_at, updated_at, total_cost_usd,
         total_active_ms, prompt, branch, workspace_meta, stepper, tools, resume_point,
-        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup)
+        source_type, source_ref, guardrails_id, outcome, human_hours, started_by, shape_stats, run_size, run_setup, provider)
       VALUES (@id,@project_key,@workspace_key,@target,@title,@base_name,@date_prefix,
         @status,@phase,@cycle,@started_at,@updated_at,@total_cost_usd,@total_active_ms,
         @prompt,@branch,@workspace_meta,@stepper,@tools,@resume_point,
-        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup)
+        @source_type,@source_ref,@guardrails_id,@outcome,@human_hours,@started_by,@shape_stats,@run_size,@run_setup,@provider)
       ON CONFLICT(id) DO UPDATE SET
         status=excluded.status, phase=excluded.phase, cycle=excluded.cycle,
         updated_at=excluded.updated_at, total_cost_usd=excluded.total_cost_usd,
@@ -1453,6 +1453,7 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
         outcome=excluded.outcome,
         shape_stats=COALESCE(excluded.shape_stats, shape_stats),
         run_size=COALESCE(excluded.run_size, run_size),
+        provider=COALESCE(excluded.provider, provider),
         base_name=COALESCE(excluded.base_name, base_name),
         date_prefix=COALESCE(excluded.date_prefix, date_prefix)
     `).run({ ...toPipelineRow(obj), run_setup: typeof runSetup === 'string' ? runSetup : null });
@@ -1466,14 +1467,15 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
         status, started_at, updated_at, active_ms, running_since, cost_usd, session_id,
         skills, graphify_count,
         execution_id, exec_kind, agent_key, ended_at, exec_trigger, exec_result, exec_meta,
-        human_hours, human_signals)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        human_hours, human_signals, provider, cost_known)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `);
     for (const st of Array.isArray(obj.steps) ? obj.steps : []) {
       // v2 rows: execution_id === key. v1 rows leave every exec_* column NULL, so
       // the readers below reproduce today's exact shape for a v1 pipeline.
       const hasMeta = st.taskId != null || st.parentExecutionId != null || st.title != null || st.phaseOrdinal != null
-        || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null || st.auxCosts != null || st.stoppedTurns != null || st.sessionCosts != null;
+        || st.nodeKey != null || st.runtime != null || st.exitCode != null || st.bridgeCalls != null || st.auxCosts != null || st.stoppedTurns != null || st.sessionCosts != null
+        || st.usage != null;
       const meta = hasMeta
         ? s({ taskId: st.taskId ?? null, parentExecutionId: st.parentExecutionId ?? null,
               title: st.title ?? null, phaseOrdinal: st.phaseOrdinal ?? null,
@@ -1488,7 +1490,9 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
               // Agent turns cut before their `result`: a count and a lower bound, never in the cost.
               ...(st.stoppedTurns ? { stoppedTurns: st.stoppedTurns } : {}),
               // The CLI's last session total per session id: a resumed spawn books only what it adds.
-              ...(st.sessionCosts ? { sessionCosts: st.sessionCosts } : {}) })
+              ...(st.sessionCosts ? { sessionCosts: st.sessionCosts } : {}),
+              // The step's booked token tally (run-harness _bookUsage), priced or not.
+              ...(st.usage ? { usage: st.usage } : {}) })
         : null;
       ins.run(
         id, st.key, st.nodeId ?? null, st.phase ?? null,
@@ -1509,6 +1513,8 @@ export async function writeState(pipelineDir, stateObj, { prWatchRunId = null, r
         meta,
         Number.isFinite(st.humanHours) ? st.humanHours : null,
         st.humanSignals && typeof st.humanSignals === 'object' ? s(st.humanSignals) : null,
+        st.provider ?? null,
+        st.costKnown === false ? 0 : 1,
       );
     }
   });
@@ -1985,6 +1991,8 @@ function toPipelineRow(o) {
     // Shaper D28: a writer without them (an unshaped run, a pre-results persist) keeps the column (COALESCE)
     shape_stats: o.shapeStats ? s(o.shapeStats) : null,
     run_size: o.runSize ?? null,
+    // v72: who serves the run's model calls; a writer without it keeps the column (COALESCE)
+    provider: o.provider ?? null,
     // §5.9 outcome: the derived run-level v2 facts, so a rehydrated state matches
     // a live one. NULL for a v1 run (nothing to say), so v1 rows are unchanged.
     outcome: (o.engine === 2 || o.endReached !== undefined || (typeof o.runEngine === 'string' && o.runEngine !== 'claude'))
@@ -2347,6 +2355,9 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     limitEngine: row.limit_engine ?? null,
     limitResetAt: row.limit_reset_at ?? null,
     runEngine: row.run_engine || 'claude',
+    provider: row.provider ?? null,
+    // A step whose cost could not be counted (v72 cost_known = 0): the run's total is a lower bound.
+    ...(row.cost_known === 0 ? { costKnown: false } : {}),
     retainedWork: retainedWorkFor(row),
     checkout: checkoutRecordsFor(row),
     baseCheck: baseCheckSummaryFor(row),
@@ -2454,7 +2465,8 @@ export async function listPipelines(projectDir, opts = {}, workspaceKey) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            resume_point IS NOT NULL AS has_resume_point,
-           ${RUN_ENGINE_SQL} AS run_engine
+           ${RUN_ENGINE_SQL} AS run_engine, provider,
+           (SELECT MIN(s.cost_known) FROM pipeline_steps s WHERE s.pipeline_id = pipelines.id) AS cost_known
     FROM pipelines
     WHERE ${workspaceKey ? 'workspace_key = ?' : 'project_key = ?'} AND archived_at IS NULL
     ORDER BY started_at DESC
@@ -2498,7 +2510,8 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            resume_point IS NOT NULL AS has_resume_point,
-           ${RUN_ENGINE_SQL} AS run_engine
+           ${RUN_ENGINE_SQL} AS run_engine, provider,
+           (SELECT MIN(s.cost_known) FROM pipeline_steps s WHERE s.pipeline_id = pipelines.id) AS cost_known
     FROM pipelines
     WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'} AND deleted_at IS NULL
     ORDER BY COALESCE(updated_at, started_at) DESC, project_key, id
@@ -2698,7 +2711,10 @@ function stepRowToStep(r) {
     if (em.auxCosts && typeof em.auxCosts === 'object') step.auxCosts = em.auxCosts;
     if (em.stoppedTurns && typeof em.stoppedTurns === 'object') step.stoppedTurns = em.stoppedTurns;
     if (em.sessionCosts && typeof em.sessionCosts === 'object') step.sessionCosts = em.sessionCosts;
+    if (em.usage && typeof em.usage === 'object') step.usage = em.usage;
   }
+  if (r.provider != null) step.provider = r.provider;
+  if (r.cost_known === 0) step.costKnown = false;
   return step;
 }
 
@@ -2746,7 +2762,7 @@ function rowToState(row) {
       SELECT key, node_id, phase, step_index, cycle, status, started_at, updated_at,
              active_ms, running_since, cost_usd, session_id, skills, graphify_count,
              execution_id, exec_kind, agent_key, ended_at, exec_trigger, exec_result, exec_meta,
-             human_hours, human_signals
+             human_hours, human_signals, provider, cost_known
       FROM pipeline_steps WHERE pipeline_id = ? ORDER BY rowid
     `).all(row.id).map(stepRowToStep),
     subAgents: listSubAgents(row.id),
@@ -2763,6 +2779,7 @@ function rowToState(row) {
   state.limitEngine = typeof rp?.limitEngine === 'string' ? rp.limitEngine : null;
   state.limitResetAt = typeof rp?.limitResetAt === 'string' ? rp.limitResetAt : null;
   state.runEngine = runEngineOfRow(row);
+  state.provider = row.provider ?? null;
   // Shaper D28: only a shaped run carries shapeStats (run_size is write-only: Statistics reads the column)
   if (row.shape_stats) state.shapeStats = j(row.shape_stats, null);
   const execEnv = execEnvOfRow(row);

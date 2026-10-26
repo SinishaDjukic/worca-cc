@@ -28,6 +28,15 @@ const base = (over = {}) => ({
   onDone: (code) => ({ code }), ...over,
 });
 
+test('a spawn that throws at once still closes its model route, before cleanup and the rejection', async () => {
+  const order = [];
+  const execEnv = { remote: true, spawn: () => { throw new Error('no sandbox'); }, closeRoute: async (id) => { order.push(`close ${id}`); } };
+  const err = await superviseSpawn(base({ file: 'claude', args: [], execEnv, route: { id: 'r1' }, cleanup: () => order.push('cleanup') }))
+    .then(() => null, (e) => { order.push('rejected'); return e; });
+  assert.equal(err.message, 'Failed to spawn fake: no sandbox');
+  assert.deepEqual(order, ['close r1', 'cleanup', 'rejected']);
+});
+
 test('stdout lines reach onStdoutLine, stderr lines become stderr events', POSIX, async () => {
   const seen = []; const events = [];
   const file = script("echo one; echo two; echo warn 1>&2");

@@ -21,43 +21,22 @@ export function redactKey(key) {
   return s.length <= 8 ? '…' : `${s.slice(0, 4)}…${s.slice(-4)}`;
 }
 
-/** The model credential the sandbox signs Claude Code in with — only from the server's env
- *  (clarify: model-credential-source). OAuth wins (the user's chosen method). */
-export function modelCredential(env = process.env) {
-  if (typeof env.CLAUDE_CODE_OAUTH_TOKEN === 'string' && env.CLAUDE_CODE_OAUTH_TOKEN.trim()) return { CLAUDE_CODE_OAUTH_TOKEN: env.CLAUDE_CODE_OAUTH_TOKEN };
-  if (typeof env.ANTHROPIC_API_KEY === 'string' && env.ANTHROPIC_API_KEY.trim()) return { ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY };
-  return null;
-}
+/** The model-credential owner moved to credentials.mjs (resolveModelRoute); re-exported here for one release. */
+export { modelCredential, engineCredential } from './credentials.mjs';
 
 /** The keys that sign Claude Code in. */
 export const MODEL_CREDENTIAL_KEYS = Object.freeze(['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN']);
 /** Where a Claude model call goes and how it is signed: worca's model relay owns them (plans/model-relay-design.md §4).
  *  None enters a sandbox, not even as a declared key; a spawn gets the relay's URL and route id instead. */
 export const RELAY_OWNED_KEYS = ENGINES.claude.env.relayOwned;
-/** How worca's model relay signs each sandbox engine's calls: the upstream it reaches, the server env vars it signs
- *  with in order, and the problem when none is set (engineCredential, relay-route.mjs engineModelRoute read it: no
- *  engine-name branch). `pat`: only a fine-grained token signs its calls; `needsModel`: the engine has no default
- *  model of its own behind the relay (copilot's offline mode). */
-const ENGINE_RELAY = Object.freeze({
-  claude: Object.freeze({ upstream: 'anthropic', order: Object.freeze(['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY']),
-    problem: "Neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set in the worca server's environment; it stays on the server and signs the sandbox's model calls." }),
-  // A ChatGPT sign-in (codex login, ~/.codex/auth.json) holds a refresh token and calls ChatGPT's own hosts: worca
-  // neither copies it into a sandbox nor relays it.
-  codex: Object.freeze({ upstream: 'openai', order: Object.freeze(['CODEX_API_KEY', 'OPENAI_API_KEY']),
-    problem: "Codex in a sandbox needs CODEX_API_KEY or OPENAI_API_KEY in the worca server's environment: worca signs its calls on the server. A ChatGPT sign-in (codex login) cannot be used in a sandbox." }),
-  copilot: Object.freeze({ upstream: 'copilot', order: Object.freeze(['COPILOT_GITHUB_TOKEN']), pat: true, needsModel: true,
-    problem: "COPILOT_GITHUB_TOKEN is not set in the worca server's environment; worca signs a sandbox's Copilot calls with it on the server (copilot login stays in this machine's keychain). Use a fine-grained personal access token (github_pat_…) with only the Copilot Requests permission." }),
-  cursor: Object.freeze({ upstream: 'cursor', order: Object.freeze(['CURSOR_API_KEY']),
-    problem: "CURSOR_API_KEY is not set in the worca server's environment; worca signs a sandbox's Cursor calls with it on the server (cursor-agent login stays in this machine's keychain)." }),
-});
 /** Per engine (REMOTE_ENGINES), built from its catalog `env` (src/shared/engine-switch.mjs), exact names only:
  *  `allow(k)` its own non-secret config vars; `relayOwned(k)` the vars that say where its model calls go and how they
  *  are signed, which the model relay owns (none enters a sandbox, not even as a declared key, for any engine);
  *  `hostOnly` vars naming a path on this machine (the sandbox sets its own); `home` the engine's own dir in the
- *  sandbox HOME, where worca puts its rules and config (RemoteExecEnv.engineHome); `relay` its ENGINE_RELAY row. */
+ *  sandbox HOME, where worca puts its rules and config (RemoteExecEnv.engineHome). */
 export const ENGINE_SANDBOX = Object.freeze(Object.fromEntries(REMOTE_ENGINES.map((e) => {
   const { names, relayOwned, hostOnly, home } = ENGINES[e].env;
-  return [e, Object.freeze({ allow: (k) => names.includes(k), relayOwned: (k) => relayOwned.includes(k), hostOnly, home, relay: ENGINE_RELAY[e] ?? null })];
+  return [e, Object.freeze({ allow: (k) => names.includes(k), relayOwned: (k) => relayOwned.includes(k), hostOnly, home })];
 })));
 
 /** The sandbox rules of `engine` (default claude); throws for an engine no sandbox runs. */
@@ -77,27 +56,8 @@ export function sandboxEnv(env, { keep = [], engine = 'claude' } = {}) {
 }
 
 /** A fine-grained personal access token: the only GitHub token worca relays Copilot's calls with (clarify:
- *  copilot-github-token). It never enters a sandbox. */
-export const FINE_GRAINED_PAT_RE = /^github_pat_[A-Za-z0-9_]{20,}$/;
-const filled = (v) => typeof v === 'string' && !!v.trim();
-const tokenKind = (t) => (/^ghp_/.test(t) ? 'a classic token (ghp_)' : /^gho_/.test(t) ? 'an OAuth token (gho_)'
-  : /^gh[usr]_/.test(t) ? `a ${t.slice(0, 4)} token` : 'not a fine-grained token');
-
-/**
- * The credential worca's model relay signs `engine`'s calls with, from the SERVER's env only (never a spawn's inherited
- * env, never a file): `{ value, source }` (source: the env var it came from), or `{ problem }`, a message that never
- * contains a credential value. The value stays in worca: the sandbox gets the relay URL and a dummy. Sync (the server's
- * 409 path calls it through e2bPreflight).
- */
-export function engineCredential(engine, env = process.env) {
-  const r = Object.hasOwn(ENGINE_SANDBOX, engine || 'claude') ? ENGINE_SANDBOX[engine || 'claude'].relay : null;
-  if (!r) return { problem: `the ${engine} engine cannot run in a remote sandbox` };
-  const source = r.order.find((k) => filled(env[k]));
-  if (!source) return { problem: r.problem };
-  const value = env[source].trim();
-  if (r.pat && !FINE_GRAINED_PAT_RE.test(value)) return { problem: `${source} is ${tokenKind(value)}: worca signs a sandbox's Copilot calls only with a fine-grained personal access token (github_pat_…), never a classic or OAuth token, which reaches every repository your account can. Create a fine-grained token with only the Copilot Requests permission.` };
-  return { value, source };
-}
+ *  copilot-github-token). It never enters a sandbox. One copy: src/broker/copilot-token.mjs. */
+export { FINE_GRAINED_PAT_RE } from '../../broker/copilot-token.mjs';
 
 const LOOPBACK = /^(localhost|.*\.localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[?::1\]?|host\.docker\.internal)$/i;
 export const isLoopbackHost = (h) => LOOPBACK.test(String(h || ''));

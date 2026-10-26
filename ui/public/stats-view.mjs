@@ -593,7 +593,7 @@ export function renderRunsChart(spec, { doc = globalThis.document, fmt = DEFAULT
 }
 
 /** Full Statistics body: KPI row + the two chart cards (or empty notes). */
-const SLOT_NAMES = { anthropic: 'Anthropic', openai: 'OpenAI', openrouter: 'OpenRouter', copilot: 'Copilot', local: 'Local' };
+const SLOT_NAMES = { anthropic: 'Anthropic', openai: 'OpenAI', openrouter: 'OpenRouter', copilot: 'Copilot', 'copilot-pat': 'Copilot (token)', cursor: 'Cursor', local: 'Local' };
 /** Stacked on phones the thead is clipped: the first cell leads the row, every other cell names its column. */
 const labelCells = (tr, heads) => { tr.cells[0].classList.add('table-main'); for (let i = 1; i < tr.cells.length; i++) tr.cells[i].dataset.label = heads[i]; };
 

@@ -524,7 +524,7 @@ test('a resumed run gets a fresh relay: the old one is killed, a route on the ne
 
 // A remote spawn's model calls go through the relay (plans/model-relay-design.md §4): an E2B env on the
 // loopback fake whose `claude` calls the model the way the CLI does, with whatever the sandbox env holds.
-async function relayedClaudeEnv(t, extra = {}) {
+async function relayedClaudeEnv(t, extra = {}, serverEnv = {}) {
   const seen = [];
   const init = JSON.stringify({ type: 'system', subtype: 'init', session_id: 's1' });
   const sdk = createFakeE2b({ root: tmp('worca-e2b-relayed-root-'), onCommand: async (cmd, o) => {
@@ -535,7 +535,7 @@ async function relayedClaudeEnv(t, extra = {}) {
     return { lines: [init, JSON.stringify({ type: 'result', result: `status ${r.status}`, total_cost_usd: 0 })], exitCode: 0 };
   } });
   const f = fixture(tmp);
-  const env = new E2bExecEnv(makeEnvOpts(tmp, sdk, f, { env: {}, ...extra }));
+  const env = new E2bExecEnv(makeEnvOpts(tmp, sdk, f, { env: serverEnv, ...extra }));
   await env.start();
   t.after(() => env.close('test'));
   return { env, f, sdk, seen };
@@ -588,7 +588,9 @@ test('a Claude step reaches its model through the relay with the sandbox egress 
 }));
 
 test('a Bedrock model is refused for a remote run', POSIX, (t) => withRealClaude(async () => {
-  const { env, f, sdk } = await relayedClaudeEnv(t);
+  // The server can sign Claude's calls (the route resolver lets the spawn through): the relay still cannot carry a
+  // model that signs its own requests.
+  const { env, f, sdk } = await relayedClaudeEnv(t, {}, { CLAUDE_CODE_OAUTH_TOKEN: 'server-oauth-0123456789' });
   const err = await runClaude({ cwd: f.repo, prompt: 'hi', model: 'bedrock-sonnet', execEnv: env,
     modelEnv: { CLAUDE_CODE_USE_BEDROCK: '1' } }).catch((e) => e);
   assert.ok(err instanceof Error);

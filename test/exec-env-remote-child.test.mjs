@@ -381,12 +381,14 @@ test('copilot runs in the sandbox: offline mode at the relay, no GitHub token, u
     } });
     const mcpConfigPath = join(f.runRoot, 'mcp.json'); writeFileSync(mcpConfigPath, JSON.stringify(MCP_MIX));
     const events = [];
-    await runClaude({ engine: 'copilot', cwd: f.repo, prompt: 'hello', systemPrompt: 'sys', execEnv: env, mcpConfigPath, bin: '/opt/host/copilot', model: 'copilot/gpt-5-mini', onEvent: (e) => events.push(e) });
+    await runClaude({ engine: 'copilot', cwd: f.repo, prompt: 'hello', systemPrompt: 'sys', execEnv: env, mcpConfigPath, bin: '/opt/host/copilot',
+      model: 'copilot/gpt-5-mini', onEvent: (e) => events.push(e) });
     assert.equal(seen.envs.COPILOT_GITHUB_TOKEN, undefined, 'neither the server token nor the inherited classic one');
     assert.equal(seen.envs.COPILOT_OFFLINE, 'true');
     assert.match(seen.envs.COPILOT_PROVIDER_BASE_URL, /^http:\/\/127\.0\.0\.1:\d+\/r\/[A-Za-z0-9_-]{43}$/);
     assert.equal(seen.envs.COPILOT_PROVIDER_API_KEY, 'worca-relay-no-credential');
-    assert.match(seen.cmd, /'--model' 'gpt-5-mini'/, 'the step\'s model');
+    assert.match(seen.cmd, /'--model' 'gpt-5-mini'/, 'the step\'s model, as copilot names it');
+    assert.equal(events.some((e) => e.type === 'stderr' && /no model named/.test(e.text)), false, 'no hidden default');
     assert.equal(seen.envs.COPILOT_HOME, undefined);
     assert.equal(seen.envs.CURSOR_API_KEY, undefined);
     for (const k of NOT_IN_SANDBOX) assert.equal(k in seen.envs, false, k);
@@ -415,15 +417,18 @@ test('copilot with a classic or OAuth token in the server env is refused before 
     await env.close('test');
   }));
 
-test('remote copilot with no model is refused before anything is staged: no hidden default model', POSIX, () =>
+test('remote copilot with no model is refused before anything is staged', POSIX, () =>
   withEnv({ ...HOSTILE }, async () => {
-    let ran = false;
-    const { f, env } = await started({ env: { COPILOT_GITHUB_TOKEN: PAT } }, { onCommand: (cmd) => { if (cmd.startsWith("'copilot'")) ran = true; return null; } });
+    const commands = [];
+    const { f, env } = await started({ env: { COPILOT_GITHUB_TOKEN: PAT } }, { onCommand: (cmd) => { commands.push(cmd); return null; } });
+    const before = commands.length;
     const events = [];
-    await assert.rejects(runClaude({ engine: 'copilot', cwd: f.repo, prompt: 'x', execEnv: env, bin: '/nonexistent/copilot', onEvent: (e) => events.push(e) }),
-      (err) => err.errorClass === 'config' && /Copilot in a sandbox needs a model/.test(err.message));
-    assert.equal(ran, false);
-    assert.equal(events.some((e) => e.type === 'session'), false, 'refused before the session is named');
+    const err = await runClaude({ engine: 'copilot', cwd: f.repo, prompt: 'x', execEnv: env, bin: '/nonexistent/copilot', onEvent: (e) => events.push(e) }).then(() => null, (e) => e);
+    assert.equal(err?.message, 'Copilot in a sandbox needs a model; pick one for this step.');
+    assert.equal(err.errorClass, 'config');
+    assert.deepEqual(commands.slice(before), [], 'the sandbox ran nothing: no probe, no upload');
+    assert.equal(events.some((e) => e.type === 'session'), false);
+    assert.equal((await import('../src/core/engines/copilot.mjs')).COPILOT_REMOTE_DEFAULT_MODEL, undefined, 'no hidden default left');
     await env.close('test');
   }));
 
@@ -491,7 +496,8 @@ test('a template without the engine`s CLI (built before that engine) fails the s
       const { f, env, probes } = await started({ env: SIGNED_IN[engine] }, { missing: [cli],
         onCommand: (cmd) => (cmd.startsWith(`'${cli}'`) ? (ran += 1, { lines: [], stderr: `${cli}: command not found`, exitCode: 127 }) : null) });
       const events = [];
-      const step = () => runClaude({ engine, cwd: f.repo, prompt: 'x', execEnv: env, bin: `/nonexistent/${cli}`, ...(engine === 'copilot' ? { model: 'copilot/gpt-5-mini' } : {}),
+      const step = () => runClaude({ engine, cwd: f.repo, prompt: 'x', execEnv: env, bin: `/nonexistent/${cli}`,
+        model: engine === 'copilot' ? 'copilot/gpt-5-mini' : undefined,
         permissionRules: { deny: ['Bash(rm:*)'] }, onEvent: (e) => events.push(e) });
       const stale = { message: new RegExp(`^the E2B template has no ${cli}: rebuild it \\(npm run e2b:build\\)$`) };
       await assert.rejects(step(), stale, engine);
