@@ -650,7 +650,7 @@ test('a ticket an earlier export made was found and linked (nothing sent): the p
   await settle();
   const d = dlg();
   assert.equal(text(d.querySelector('h2')), 'Export FEAT-7 again');
-  assert.equal(text(d.querySelector('[role="alert"]')), STALE_MSG);
+  assert.equal(text(d.querySelector('[role="alert"]')), 'Linked SHOP-123, which an earlier export made. Nothing was sent.', 'the dedicated line, as History says it');
   assert.deepEqual(calls.filter((c) => c.url === PREVIEW_URL).map((c) => c.body.mode), ['create', 'update'], 'never the create again');
   assert.equal(calls.filter((c) => c.url === EXPORT_URL).length, 1);
   assert.equal(text(q('export-chip', host)), 'SHOP-123', 'the page shows the linked ticket');
@@ -790,4 +790,91 @@ test('CSS: the Task 9 rules sit in the Requirements block (tokens only) and the 
   const rule = (sel) => { const at = css.indexOf(`${sel}{`); return at < 0 ? '' : css.slice(at, css.indexOf('}', at)); };
   assert.match(rule('.req-export-mode:has(input:checked)'), /border-color:var\(--ink\)/);
   assert.doesNotMatch(rule('.req-export-mode:has(input:checked)'), /background/);
+});
+
+// ── Task 9 fix round 1 ──
+const NOT_READY_MSG = 'This feature is not Ready. Give a reason to export it anyway.';
+
+test('board 28: the edited alert sits under the choices, what changed and the note, so picking a choice moves no card', async () => {
+  await openExport(feature({ export: XV({ link: LINK }) }), { [`POST ${PREVIEW_URL}`]: (b) => AGAIN({ mode: b.mode, edited: true }) });
+  const d = dlg();
+  const alert = d.querySelector('[role="alert"]');
+  const note = [...d.querySelectorAll('.hint')].find((x) => text(x) === 'The preview shows the result before anything is sent.');
+  const before = (a, b) => !!(a.compareDocumentPosition(b) & window.Node.DOCUMENT_POSITION_FOLLOWING);
+  assert.deepEqual([before(d.querySelector('[role="radiogroup"]'), alert), before(d.querySelector('.req-export-changes'), alert), before(note, alert)],
+    [true, true, true]);
+  assert.ok(before(alert, q('again-continue')), 'and above the buttons');
+});
+
+test('NOT_READY while the preview is open (the feature stopped being Ready): the Not Ready dialog, then the preview of the same mode with the reason', async () => {
+  const { calls } = await openExport(feature(), { [`POST ${PREVIEW_URL}`]: (b) => (b.reason ? preview()
+    : { __status: 409, body: { error: NOT_READY_MSG, failing: ['interview'] } }) });
+  const d = dlg();
+  assert.equal(text(d.querySelector('h2')), 'Export FEAT-7 before it’s Ready?');
+  assert.equal(text(d.querySelector('.req-dlg-lead')), 'One check does not pass yet:');
+  assert.equal(document.activeElement, q('export-reason'));
+  typeReason('Estimating tomorrow.');
+  q('export-anyway').click();
+  await settle();
+  assert.deepEqual(calls.filter((c) => c.url === PREVIEW_URL).map((c) => c.body), [{ mode: 'create' }, { mode: 'create', reason: 'Estimating tomorrow.' }]);
+  assert.equal(text(q('export-go')), 'Create in Jira');
+});
+
+test('NOT_READY for Export again: the Not Ready dialog, then Export again with the reason', async () => {
+  const { calls } = await openExport(feature({ export: XV({ link: LINK }) }), { [`POST ${PREVIEW_URL}`]: (b) => (b.reason ? AGAIN({ mode: b.mode })
+    : { __status: 409, body: { error: NOT_READY_MSG, failing: ['interview'] } }) });
+  assert.equal(text(dlg().querySelector('h2')), 'Export FEAT-7 before it’s Ready?');
+  typeReason('Estimating tomorrow.');
+  q('export-anyway').click();
+  await settle();
+  assert.equal(text(dlg().querySelector('h2')), 'Export FEAT-7 again');
+  q('again-continue').click();
+  await settle();
+  assert.deepEqual(calls.filter((c) => c.url === PREVIEW_URL).map((c) => c.body),
+    [{ mode: 'update' }, { mode: 'update', reason: 'Estimating tomorrow.' }, { mode: 'update', reason: 'Estimating tomorrow.' }]);
+});
+
+test('Export again: a first preview that fails says why with Try again; Continue waits until the choices load', async () => {
+  const REACH = 'Worca could not reach Jira: the API token was refused.';
+  let fail = true;
+  const { calls } = await openExport(feature({ export: XV({ link: LINK }) }), { [`POST ${PREVIEW_URL}`]: (b) => (fail
+    ? { __status: 502, body: { error: REACH, kind: 'auth' } } : AGAIN({ mode: b.mode })) });
+  const d = dlg();
+  assert.equal(text(d.querySelector('[role="alert"]')), REACH);
+  assert.deepEqual([text(q('again-retry')), q('again-continue').disabled, d.querySelector('[role="radiogroup"]').hidden], ['Try again', true, true]);
+  fail = false;
+  q('again-retry').focus();
+  q('again-retry').click();
+  await settle();
+  assert.equal(calls.filter((c) => c.url === PREVIEW_URL).length, 2);
+  assert.deepEqual([text(d.querySelector('[role="alert"]')), q('again-retry'), q('again-continue').disabled], ['', null, false]);
+  assert.equal(document.activeElement, q('again-update'), 'the focus, left on the gone Try again, goes to the default choice');
+});
+
+test('a11y: the description and comment previews are named regions', async () => {
+  const COMMENT = 'Updated in Worca since the last export (26 Oct)\n\nFrom Worca FEAT-7\n';
+  await openExport(feature({ export: XV({ link: LINK }) }), { [`POST ${PREVIEW_URL}`]: (b) => (b.mode === 'comment'
+    ? AGAIN({ mode: 'comment', ticket: null, fields: null, comment: COMMENT, previewHash: 'c1' }) : AGAIN({ mode: b.mode })) });
+  q('again-continue').click();
+  await settle();
+  const desc = dlg().querySelector('.req-export-desc');
+  assert.deepEqual([desc.getAttribute('role'), desc.getAttribute('aria-label')], ['region', 'Description preview']);
+  q('export-cancel').click();
+  q('menu-export').click();
+  q('mi-export').click();
+  await settle();
+  q('again-comment').click();
+  q('again-continue').click();
+  await settle();
+  const box = dlg().querySelector('.req-export-comment');
+  assert.deepEqual([box.getAttribute('role'), box.getAttribute('aria-label')], ['region', 'Comment preview']);
+});
+
+test('CSS (boards 28, 29): the edited alert borders with --amber-line; the chip reads as a link; "Created SHOP-123" is green ink, never a fill', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const rule = (sel) => { const at = css.indexOf(`${sel}{`); return at < 0 ? '' : css.slice(at, css.indexOf('}', at)); };
+  assert.match(rule('.req-export-alert.is-warn'), /border:1px solid var\(--amber-line\)/);
+  assert.match(rule('a.chip.req-export-chip'), /color:var\(--blue-ink-strong\)/);
+  assert.match(rule('.req-export-done'), /color:var\(--green-ink-strong\)/);
+  assert.doesNotMatch(rule('.req-export-done'), /background/);
 });

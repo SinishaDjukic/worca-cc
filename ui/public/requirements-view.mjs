@@ -2850,10 +2850,17 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const dd = (err && err.data) || {};
     if (dd.linked) void relinked(box, err, ctx, g);
     else if (dd.edited && onEdited) onEdited();
+    else failed(box, err, ctx);
+  }
+  /** A preview or send refused NOT_READY { failing } (the feature stopped being Ready while the dialog was open, D5): the Not
+   *  Ready dialog for those checks, then `ctx.notReady(reason)` goes on in the same mode. Anything else: showFailure. */
+  function failed(box, err, ctx) {
+    const failing = err && err.data && Array.isArray(err.data.failing) ? err.data.failing : null;
+    if (failing && ctx.notReady) openExportNotReady(ctx.f, ctx.trigger, ctx.notReady, failing);
     else showFailure(box, err, ctx);
   }
   /** CONFLICT { stale, linked } (D10): a ticket an earlier export made was found and linked; nothing was sent. The page shows
-   *  the link, and Export again opens for that ticket with the server's sentence (never a second create preview). */
+   *  the link, and Export again opens for that ticket saying so, as the History line does (never a second create preview). */
   async function relinked(box, err, ctx, g) {
     const { f } = ctx;
     ctx.setBusy(true);
@@ -2864,7 +2871,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const now = data && data.feature;
     if (!now || !linkOf(now)) { box.show(errText(err)); return; }
     if (seqShown === now.seq) { paintNo += 1; paintFeature(now, data.turns || []); paintedKey = `feature/${seqShown}`; }
-    openAgain(now, { reason: ctx.reason, trigger: ctx.trigger, notice: errText(err) });
+    openAgain(now, { reason: ctx.reason, trigger: ctx.trigger, notice: `Linked ${err.data.linked}, which an earlier export made. Nothing was sent.` });
   }
   /** Board 28: the description was edited in the tracker since the last export (D9). */
   function editedState(box, key, name, { onUpdate, onComment }) {
@@ -2910,9 +2917,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   /** Board 27's first dialog (D5): the failing checks as the Start dialog lists them, with the board's words for open questions
    *  and undecided assumptions; a required reason (1–500) that the preview puts at the top of the description. */
-  function openExportNotReady(f, trigger, then) {
+  function openExportNotReady(f, trigger, then, keys = null) {
     closeDialog(false);
-    const failing = failingChecks(f);
+    const failing = failingChecks(f, keys);   // `keys`: the server's NOT_READY failing checks
     const spec = f.spec || {};
     const openQ = spec.openQuestions || [];
     const openA = (spec.assumptions || []).filter((a) => a.status === 'open').map((a) => a.id);
@@ -2955,7 +2962,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     let data = null; let busy = false; let n = 0; let choicesN = 0; let forceNow = force;
     const lead = h('p', { class: 'req-dlg-lead' });
     const fieldsEl = h('div', { class: 'req-export-fields' });
-    const desc = h('div', { class: 'req-export-desc folded', id: 'req-exp-desc', tabindex: '0', 'aria-label': 'Description preview' });
+    const desc = h('div', { class: 'req-export-desc folded', id: 'req-exp-desc', tabindex: '0', role: 'region', 'aria-label': 'Description preview' });
     const more = h('button', { type: 'button', class: 'btn req-export-more', 'data-ui': 'export-more', 'aria-expanded': 'false', 'aria-controls': 'req-exp-desc',
       onclick: () => { desc.classList.remove('folded'); more.setAttribute('aria-expanded', 'true'); more.hidden = true; desc.focus(); } }, 'Show all');
     const box = stateBox();
@@ -2990,7 +2997,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       ...(st.priority !== undefined ? { priority: st.priority, priorityName: st.priorityName } : {}) });
     const ctx = { f, name, key, reason, trigger, setBusy: (b) => { busy = b; },
       hideGo: (b) => { go.hidden = b; }, retryLabel: (t) => { go.textContent = t; go.disabled = false; },
-      reload: () => load({ keep: true }), reopen: () => openPreview(f, { mode, reason, force: forceNow, trigger }) };
+      reload: () => load({ keep: true }), reopen: () => openPreview(f, { mode, reason, force: forceNow, trigger }),
+      notReady: (why) => openPreview(f, { mode, reason: why, trigger }) };
     const showEdited = () => {
       go.hidden = true;
       editedState(box, key(), name, { onUpdate: () => { if (busy) return; forceNow = true; go.hidden = false; void run(); },
@@ -3015,7 +3023,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       } catch (err) {
         if (!live(g) || k !== n) return;
         data = null;
-        showFailure(box, err, ctx);
+        failed(box, err, ctx);
+        if (!live(g)) return;   // the Not Ready dialog took over
         if (!go.hidden) { go.textContent = 'Try again'; go.disabled = false; }
       }
     }
@@ -3120,14 +3129,18 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const title = h('h2', { id: 'req-again-title', tabindex: '-1', text: `Export ${f.id} again` });
     const card = h('section', { class: 'card req-dialog req-export req-export-again', role: 'dialog', 'aria-modal': 'true',
       'aria-labelledby': 'req-again-title', 'aria-describedby': 'req-again-desc' },
-      backButton(f), title, desc, ...box.els, modes, changes, note,
+      // board 28: the alert (edited in Jira) under the choices, what changed and the note, so picking a choice moves no card
+      backButton(f), title, desc, modes, changes, note, ...box.els,
       h('div', { class: 'req-dlg-btns' },
         h('button', { type: 'button', class: 'btn', 'data-ui': 'again-cancel', onclick: () => { if (!busy) closeDialog(true); } }, 'Cancel'), cont));
     openModal(card, { trigger, first: title, canClose: () => !busy, page: true });   // the title until the choices load (D20)
     const g = dlgGen;
     const key = () => (data && data.link && data.link.key) || (linkOf(f) || {}).key || '';
     const ctx = { f, name, key, reason, trigger, setBusy: (b) => { busy = b; }, hideGo: (b) => { cont.hidden = b; },
-      retryLabel: () => {}, reload: () => {}, reopen: () => openAgain(f, { reason, trigger }) };
+      retryLabel: () => {}, reload: () => {}, reopen: () => openAgain(f, { reason, trigger }),
+      notReady: (why) => openAgain(f, { reason: why, trigger }) };
+    let loading = false;
+    const retry = h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'again-retry', onclick: () => { void load(); } }, 'Try again');
     const radios = {};
     const option = (value, label, hint, disabled = false) => {
       const r = h('input', { type: 'radio', name: 'req-again-mode', value, 'data-ui': `again-${value}`, disabled,
@@ -3172,14 +3185,27 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       } else box.clear();
       cont.hidden = warn;
     }
-    api('POST', exportUrl(f, '/preview'), { mode: 'update', ...(reason ? { reason } : {}) }).then((d) => {
-      if (!live(g)) return;
-      data = d;
-      render();
-      // the default choice once the choices exist, while the focus is still where the dialog put it (never taken from the
-      // user); a gone ticket keeps it on the title (its alert is announced)
-      if (radios.update && document.activeElement === title) radios.update.focus();
-    }, (err) => { if (live(g)) showFailure(box, err, ctx); });
+    /** The tracker's answer on the ticket. A failure says why with Try again (Continue waits); NOT_READY opens Not Ready. */
+    async function load() {
+      if (loading) return;
+      loading = true;
+      try {
+        const d = await api('POST', exportUrl(f, '/preview'), { mode: 'update', ...(reason ? { reason } : {}) });
+        if (!live(g)) return;
+        // the default choice once the choices exist, while the focus is still where the dialog put it (the title, or the Try
+        // again this answer removes); never taken from the user. A gone ticket keeps it on the title (its alert is announced).
+        const moveFocus = document.activeElement === title || document.activeElement === retry;
+        data = d;
+        render();
+        if (radios.update && moveFocus) radios.update.focus();
+      } catch (err) {
+        if (!live(g)) return;
+        const failing = err && err.data && Array.isArray(err.data.failing) ? err.data.failing : null;
+        if (failing) failed(box, err, ctx);
+        else box.show(errText(err), { buttons: [retry] });
+      } finally { loading = false; }
+    }
+    void load();
   }
 
   /** Board 28: the comment itself before it is sent (D7); the description and fields stay. Back returns to the choices. */
@@ -3190,7 +3216,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     let data = null; let busy = false;
     const box = stateBox();
     const statusEl = h('p', { class: 'req-export-status', role: 'status' });
-    const body = h('div', { class: 'req-export-desc req-export-comment', tabindex: '0', 'aria-label': 'Comment preview' });
+    const body = h('div', { class: 'req-export-desc req-export-comment', tabindex: '0', role: 'region', 'aria-label': 'Comment preview' });
     const back = h('button', { type: 'button', class: 'btn', 'data-ui': 'comment-back', onclick: () => { if (!busy) openAgain(f, { reason, trigger }); } }, 'Back');
     const add = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'comment-add', disabled: true }, 'Add comment');
     const title = h('h2', { id: 'req-cm-title', tabindex: '-1', text: `Comment on ${linkKey}` });
@@ -3204,7 +3230,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     openModal(card, { trigger, first: title, canClose: () => !busy, page: true });
     const g = dlgGen;
     const ctx = { f, name, key: () => linkKey, reason, trigger, setBusy: (b) => { busy = b; }, hideGo: (b) => { add.hidden = b; },
-      retryLabel: (t) => { add.textContent = t; add.disabled = false; }, reload: () => load({ keep: true }), reopen: () => openComment(f, { reason, trigger }) };
+      retryLabel: (t) => { add.textContent = t; add.disabled = false; }, reload: () => load({ keep: true }), reopen: () => openComment(f, { reason, trigger }),
+      notReady: (why) => openComment(f, { reason: why, trigger }) };
     async function load({ keep = false } = {}) {
       add.disabled = true;
       try {
@@ -3220,7 +3247,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       } catch (err) {
         if (!live(g)) return;
         data = null;
-        showFailure(box, err, ctx);
+        failed(box, err, ctx);
+        if (!live(g)) return;   // the Not Ready dialog took over
         // a refusal (no starting point for comments yet, nothing changed) answers the same again: Back is the way on
         if (err && err.status === 409) add.hidden = true;
         else if (!add.hidden) { add.textContent = 'Try again'; add.disabled = false; }

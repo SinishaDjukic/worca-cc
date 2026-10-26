@@ -10658,7 +10658,7 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 /* Board 27: the preview (1000 px): Fields beside the description as the tracker will show it, then the footer. The description
    box scrolls inside; on a phone it folds behind Show all (Task 10). */
 .req-dlg-wrap .card.req-dialog.req-export-preview{width:min(1000px,100%)}
-.viewer-modal.req-dlg-wrap.req-dlg-sheet{padding-top:min(8vh,48px)}
+.viewer-modal.req-dlg-wrap.req-dlg-sheet{padding-top:min(8vh,48px)}   /* openModal's page mode: the six export dialogs only */
 .req-export-grid{display:grid;grid-template-columns:320px minmax(0,1fr);gap:24px;align-items:start}
 .req-export-col{display:flex;flex-direction:column;gap:8px;min-width:0}
 .req-export-col h3,.req-export-changes h3{margin:0;font-size:var(--fs-body);font-weight:700}
@@ -10688,7 +10688,7 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
   .req-export-title .req-export-tid{display:none}
   .req-export-sub{display:block}
 }
-.req-export-alert.is-warn{padding:10px 12px;border:1px solid var(--amber-bg);border-radius:var(--r-md);background:var(--amber-wash);color:var(--ink)}
+.req-export-alert.is-warn{padding:10px 12px;border:1px solid var(--amber-line);border-radius:var(--r-md);background:var(--amber-wash);color:var(--ink)}
 .req-export-alert.is-warn b{font-weight:600}
 .req-export-alert-hint{margin:0}
 .req-export-alert-btns{display:flex;flex-wrap:wrap;gap:8px}
@@ -10706,13 +10706,14 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-export-changes{display:flex;flex-direction:column;gap:4px;padding:12px 14px;border-radius:var(--r-md);background:var(--field)}
 .req-export-change{margin:0;font-size:var(--fs-body)}
 .req-export-change code{font-size:var(--fs-meta)}
-/* Board 28: the ticket chip after the header chips (the shared external icon), the History card; board 29: Created SHOP-123. */
-a.chip.req-export-chip{display:inline-flex;align-items:center;gap:4px;text-decoration:none;color:var(--ink-2)}
-a.chip.req-export-chip:hover{color:var(--ink)}
+/* Board 28: the ticket chip after the header chips (the shared external icon), in link ink (--blue-ink-strong: AA on --field);
+   the History card; board 29 (5): "Created SHOP-123", icon and text in green ink, never a fill. */
+a.chip.req-export-chip{display:inline-flex;align-items:center;gap:4px;text-decoration:none;color:var(--blue-ink-strong)}
+a.chip.req-export-chip:hover{text-decoration:underline}
 a.chip.req-export-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
-.req-export-done{display:flex;align-items:center;gap:6px;margin:6px 0 0;font-size:var(--fs-body);color:var(--ink)}
+.req-export-done{display:flex;align-items:center;gap:6px;margin:6px 0 0;font-size:var(--fs-body);color:var(--green-ink-strong)}
 .req-export-done:empty{display:none}
-.req-export-done > svg{flex:none;color:var(--green-ink-strong)}
+.req-export-done > svg{flex:none}
 .req-history{display:flex;flex-direction:column;gap:8px}
 .req-history h3{margin:0;font-size:var(--fs-section);font-weight:600}
 .req-history-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
