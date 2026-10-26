@@ -504,7 +504,8 @@ async function buildExportSet({ workflowId, destination, projectDir, slug, inclu
   // ── Stamp lineage identity shared by every emitted file ──
   const ident = { workflow: tpl.id, version: tpl.version || 1, updatedAt: tpl.updatedAt || '' };
 
-  return { tpl, template: graph.template, dest, slug: finalSlug, resolved, nodes, loops, agents, depSkills, ident, warnings, includeAgents, agentSrcCache: new Map() };
+  // title: the skill's description and heading name the workflow itself, like its slug (D17).
+  return { tpl, title: row.name, template: graph.template, dest, slug: finalSlug, resolved, nodes, loops, agents, depSkills, ident, warnings, includeAgents, agentSrcCache: new Map() };
 }
 
 // ── Step 3: SKILL.md generation ──────────────────────────────────────────────
@@ -516,18 +517,18 @@ function instanceKey(resolved, instanceId) {
 }
 
 function makeSkillMd(set, nameFor) {
-  const { tpl, slug, resolved, nodes, loops } = set;
+  const { title, slug, resolved, nodes, loops } = set;
   const desc = (
-    `Run the "${tpl.name}" workflow (exported from Worca) end-to-end in this repo: ` +
+    `Run the "${title}" workflow (exported from Worca) end-to-end in this repo: ` +
     `${resolved.steps.map((g) => g.map((n) => n.uiPhase).join('+')).join(' → ')}. ` +
     `Clarify asks you real questions; feedback loops iterate on critical/major issues.`
-  ).replace(/\n+/g, ' ');   // collapse any newline (e.g. from tpl.name) so the quoted scalar stays one line
+  ).replace(/\n+/g, ' ');   // collapse any newline (e.g. from the title) so the quoted scalar stays one line
 
   const L = [];
-  // description is YAML-quoted: tpl.name may contain ':', '#', or quotes that would otherwise
+  // description is YAML-quoted: the title may contain ':', '#', or quotes that would otherwise
   // break the frontmatter fence. slug is already validated to [A-Za-z0-9._-], so it needs none.
   L.push('---', `name: ${slug}`, `description: ${yamlScalar(desc)}`, '---', '');
-  L.push(`# ${tpl.name} — exported pipeline`, '');
+  L.push(`# ${title} — exported pipeline`, '');
   L.push('Run this pipeline yourself (you are the runner). Recommended: launch Claude Code with',
          '`--permission-mode acceptEdits` so subagent edits do not block on prompts.', '');
 

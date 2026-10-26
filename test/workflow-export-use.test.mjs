@@ -13,7 +13,7 @@ import { createV2Agent } from './helpers/export-fixtures.mjs';
 import { writeGraphWorkflow } from '../src/core/workflows.mjs';
 import { createVersion } from '../src/core/workflow-versions.mjs';
 import { exportGraphJson, isExportUse } from '../src/core/workflow-share.mjs';
-import { planExport, exportWorkflowPlugin } from '../src/core/workflow-export.mjs';
+import { planExport, applyExport, exportWorkflowPlugin } from '../src/core/workflow-export.mjs';
 
 useTempHome(after);
 const dirs = [];
@@ -112,4 +112,12 @@ test('Worca plugin: use 1 bundles version 1 (its agent, its graph); the slug sta
   for (const use of ['abc', 'live']) {
     await assert.rejects(exportWorkflowPlugin({ workflowId: ID, targetDir: join(await tmp(), 'x'), dryRun: true, use }), { code: 'BAD_REQUEST' });
   }
+});
+
+test('Claude Code skill: its description and heading name the workflow, not the version exported', async () => {
+  const projectDir = await tmp();
+  await applyExport({ workflowId: ID, destination: 'project', projectDir, use: 1 });
+  const md = await readFile(join(projectDir, '.claude', 'skills', 'export-use-draft', 'SKILL.md'), 'utf8');
+  assert.match(md, /description: '[^']*Run the "Export Use Draft" workflow/);
+  assert.match(md, /^# Export Use Draft — exported pipeline$/m);
 });
