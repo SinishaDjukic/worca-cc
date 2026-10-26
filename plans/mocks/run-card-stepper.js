@@ -321,8 +321,8 @@ document.addEventListener('input', (e) => {
   if (e.target.id === 'after-task') ui.afterDraft = e.target.value;
   if (e.target.id === 'changes-text') ui.changesText = e.target.value;
   if (e.target.id === 'answer-own') { ui.answerOwn = e.target.value; if (e.target.value && ui.answer !== -1) { ui.answer = -1; document.querySelectorAll('.sc-ans-opt').forEach((x) => { x.setAttribute('aria-checked', 'false'); x.tabIndex = -1; }); } }
-  if (ui.pr && e.target.id === 'pd-title') ui.pr.title = e.target.value;
-  if (ui.pr && e.target.id === 'pd-desc') ui.pr.desc = e.target.value;
+  const m = ui.pr && e.target.id.match(/^pd-(title|desc)(?:-(\d+))?$/);
+  if (m) (m[2] === undefined ? ui.pr : ui.pr.prs[+m[2]])[m[1]] = e.target.value;
 });
 document.addEventListener('change', (e) => {
   if (!ui.pr) return;
@@ -366,7 +366,7 @@ function goCase(id) {
 function follow(f, label) {
   if (f.dialog && ui.dialog !== f.dialog) {
     ui.dialog = f.dialog; ui.dialogLabel = label; ui.dialogF = f; ui.menu = '';
-    if (f.dialog === 'pr') { const v = M.view(ui.caseId, ui); ui.pr = { title: v.title, desc: '', mode: 'write', gen: false, genTitle: false, titleN: 0, titleSuggested: false, draft: false, watch: true, base: 'dev' }; if (!v.runs.length || !/^Create \d/.test(label)) { generateTitle(); generate(); } pendingFocus = v.runs.length ? 'pd-ok' : 'pd-close'; }
+    if (f.dialog === 'pr') { const v = M.view(ui.caseId, ui); ui.pr = { title: v.title, desc: '', mode: 'write', gen: false, genTitle: false, titleN: 0, titleSuggested: false, draft: false, watch: true, base: 'dev' }; if (!v.runs.length || !/^Create \d/.test(label)) { generateTitle(); generate(); } else startStack(v); pendingFocus = v.runs.length ? 'pd-ok' : 'pd-close'; }
     return;
   }
   ui.dialog = '';
@@ -429,33 +429,44 @@ function prDialogHtml(v) {
   const sug = '<span class="pd-sug">Suggested</span>';
   // the PRs of a group: the choice and the list; each PR's text is drafted from its own run
   const sw = v.ship ? `<div class="seg" role="group" aria-label="Pull requests"><button type="button" aria-pressed="${v.ship.pick !== 'one'}" data-pdship="stack" data-key="pd-stack">${v.ship.n} stacked</button><button type="button" aria-pressed="${v.ship.pick === 'one'}" data-pdship="one" data-key="pd-one"${v.ship.oneBlocked ? ` disabled title="${esc(v.ship.oneBlocked)}"` : ''}>One PR</button></div>` : '';
-  const prs = !v.ship ? '' : `<div class="pd-f"><span class="pd-lab">Pull requests</span>${sw}${stacked ? `<ol class="pd-prs">${v.runs.map((r, i) => `<li><span class="sk-num">PR ${i + 1}</span><span class="pd-pr-t" title="${esc(r.title)}">${esc(r.title)}</span><span class="rtab-dim">${i ? 'into PR ' + i : 'into ' + esc(pr.base)}</span></li>`).join('')}</ol><span class="pd-hint">Each PR’s title and description are written from its own run.</span>` : ''}</div>`;
-  const title = stacked ? '' : `<div class="pd-f"><span class="pd-lab"><label for="pd-title">Title</label>${pr.titleSuggested && !pr.genTitle ? sug : ''}</span>
-    <div class="pd-adorn${pr.genTitle ? ' is-writing' : ''}"><input class="input" id="pd-title" type="text" maxlength="256" value="${pr.genTitle ? '' : esc(pr.title)}" placeholder="${pr.genTitle ? 'Suggesting a title…' : 'Title'}" data-key="pd-title"${pr.genTitle ? ' readonly' : ''}><span class="pd-act"><button type="button" class="pd-ai" data-pd="gentitle" data-key="pd-gentitle" title="Suggest a title" aria-label="Suggest a title">${SPARK}</button></span></div></div>`;
-  const desc = stacked ? '' : `<div class="pd-f"><span class="pd-lab"><label for="pd-desc">Description</label>${pr.desc && !pr.gen ? sug : ''}${pr.gen ? `<button type="button" class="pd-stop" data-pd="stop" data-key="pd-stop" title="Stop" aria-label="Stop writing">×</button>` : `<button type="button" class="pd-ai" data-pd="gen" data-key="pd-gen" title="Write it from the run" aria-label="Write the description from the run">${SPARK}</button>`}<button type="button" class="pd-eye${pr.mode === 'preview' ? ' is-on' : ''}" data-pdmode="${pr.mode === 'preview' ? 'write' : 'preview'}" data-key="pd-eye" aria-pressed="${pr.mode === 'preview'}" title="Preview" aria-label="Preview">${EYE}</button></span>
-    <div class="pd-adorn${pr.gen ? ' is-writing' : ''}">${pr.mode === 'preview' ? `<div class="pd-preview">${pr.desc ? md(pr.desc) : '<p class="rtab-dim">Nothing to preview yet.</p>'}</div>` : `<textarea class="textarea" id="pd-desc" rows="7" placeholder="${pr.gen ? 'Writing from the run: what it did, its changes, how it was checked…' : 'Optional: empty uses the title'}" data-key="pd-desc"${pr.gen ? ' readonly' : ''}>${pr.gen ? '' : esc(pr.desc)}</textarea>`}
-</div></div>`;
+  const prs = !v.ship ? '' : `<div class="pd-f"><span class="pd-lab">Pull requests</span>${sw}<span class="pd-hint">${esc((v.ship.pick === v.ship.rec ? 'Worca suggests this: ' : 'Worca suggests ' + (v.ship.rec === 'one' ? 'one PR' : v.ship.n + ' stacked') + ': ') + v.ship.reason)}</span></div>`;
+  // The title and description fields, shared by one PR and by each PR of a stack (i is its row, -1 for one PR).
+  const fields = (f, i) => {
+    const sfx = i < 0 ? '' : '-' + i; const pi = ` data-pi="${i}"`;
+    return `<div class="pd-f"><span class="pd-lab"><label for="pd-title${sfx}">Title</label>${f.titleSuggested && !f.genTitle ? sug : ''}</span>
+      <div class="pd-adorn${f.genTitle ? ' is-writing' : ''}"><input class="input" id="pd-title${sfx}" type="text" maxlength="256" value="${f.genTitle ? '' : esc(f.title)}" placeholder="${f.genTitle ? 'Suggesting a title…' : 'Title'}" data-key="pd-title${sfx}"${f.genTitle ? ' readonly' : ''}><span class="pd-act"><button type="button" class="pd-ai" data-pd="gentitle"${pi} data-key="pd-gentitle${sfx}" title="Suggest a title" aria-label="Suggest a title">${SPARK}</button></span></div></div>
+    <div class="pd-f"><span class="pd-lab"><label for="pd-desc${sfx}">Description</label>${f.desc && !f.gen ? sug : ''}${f.gen ? `<button type="button" class="pd-stop" data-pd="stop"${pi} data-key="pd-stop${sfx}" title="Stop" aria-label="Stop writing">×</button>` : `<button type="button" class="pd-ai" data-pd="gen"${pi} data-key="pd-gen${sfx}" title="Write it from the run" aria-label="Write the description from the run">${SPARK}</button>`}<button type="button" class="pd-eye${f.mode === 'preview' ? ' is-on' : ''}" data-pdmode="${f.mode === 'preview' ? 'write' : 'preview'}"${pi} data-key="pd-eye${sfx}" aria-pressed="${f.mode === 'preview'}" title="Preview" aria-label="Preview">${EYE}</button></span>
+      <div class="pd-adorn${f.gen ? ' is-writing' : ''}">${f.mode === 'preview' ? `<div class="pd-preview">${f.desc ? md(f.desc) : '<p class="rtab-dim">Nothing to preview yet.</p>'}</div>` : `<textarea class="textarea" id="pd-desc${sfx}" rows="7" placeholder="${f.gen ? 'Writing from the run: what it did, its changes, how it was checked…' : 'Optional: empty uses the title'}" data-key="pd-desc${sfx}"${f.gen ? ' readonly' : ''}>${f.gen ? '' : esc(f.desc)}</textarea>`}</div></div>`;
+  };
+  // a stack: one row per PR, each opening to the same fields
+  const rowsHtml = stacked && pr.prs ? `<ol class="st-list">${pr.prs.map((f, i) => `<li class="st-row"><button type="button" class="st-head" data-prrow="${i}" data-key="prrow:${i}" aria-expanded="${!!f.open}">${svg('chevron', 14).replace('M6 9.5l6 6 6-6', f.open ? 'M6 9.5l6 6 6-6' : 'M9.5 6l6 6-6 6')}<span class="st-num">PR ${i + 1}</span><span class="st-t" title="${esc(f.title)}">${esc(f.title)}</span>${f.gen || f.genTitle ? '<span class="st-writing">Writing…</span>' : '<span class="pd-sug">Suggested</span>'}<span class="st-into">${i ? 'into PR ' + i : 'into ' + esc(pr.base)}</span></button>${f.open ? `<div class="st-body">${fields(f, i)}</div>` : ''}</li>`).join('')}</ol>` : '';
+  const title = stacked ? '' : fields(pr, -1);
+  const desc = '';
   const branch = v.place.branch || 'feat/unified-page-navigation';
   const into = `<div class="pd-f"><div class="pd-into"><code class="pd-br" title="${esc(branch)}">${esc(branch)}</code><span>into</span><span class="rc-pop pd-basepop"><button type="button" class="pd-base" data-menu="pdbase" data-key="menu:pdbase" aria-haspopup="menu" aria-expanded="${ui.menu === 'pdbase'}" title="Base branch · pushes to origin">${esc(pr.base)}${svg('chevron', 12)}</button>${menu('pdbase', ['dev', 'main'].map((x) => ({ id: 'base:' + x, text: x, checked: pr.base === x })))}</span></div>
     <span class="pd-hint${pr.base === 'main' ? ' is-warn' : ''}">${pr.base === 'main' ? 'main is 41 commits behind dev; the PR would carry them too' : 'dev has 2 new commits since the run started; they merge cleanly'}</span></div>`;
-  const opts = `<div class="pd-opts"><label class="pd-check"><input type="checkbox" id="pd-draft" data-key="pd-draft"${pr.draft ? ' checked' : ''}> Draft</label><label class="pd-check"><input type="checkbox" id="pd-watch" data-key="pd-watch"${pr.watch ? ' checked' : ''}> Watch: fix failing checks</label>${stacked ? '' : `<span class="pd-hint pd-closes">Closes ${esc(v.tabData.issue)}</span>`}</div>`;
+  const opts = `<div class="pd-opts"><label class="pd-check"><input type="checkbox" id="pd-draft" data-key="pd-draft"${pr.draft ? ' checked' : ''}> Draft</label><label class="pd-check"><input type="checkbox" id="pd-watch" data-key="pd-watch"${pr.watch ? ' checked' : ''}> Watch: fix failing checks</label><span class="pd-hint pd-closes">${stacked ? 'The last PR closes ' : 'Closes '}${esc(v.tabData.issue)}</span></div>`;
   return `<div class="viewer-modal pd-modal" role="dialog" aria-modal="true" aria-labelledby="pd-h"><div class="pd2">
     <div class="pd2-head"><h2 class="pd-h" id="pd-h">${esc(ui.dialogLabel)}</h2><button type="button" class="btn btn-sm btn-quiet btn-icon" data-pd="cancel" data-key="pd-close" aria-label="Close">${svg('x', 14)}</button></div>
-    <div class="pd2-body">${prs}${title}${desc}${into}${opts}</div>
+    <div class="pd2-body">${prs}${rowsHtml}${title}${desc}${into}${opts}</div>
     <div class="pd2-foot"><button type="button" class="btn btn-sm" data-pd="cancel" data-key="pd-cancel">Cancel</button><button type="button" class="btn btn-sm btn-primary" data-pd="ok" data-key="pd-ok">${esc(ui.dialogLabel)}</button></div>
   </div></div>`;
 }
 // Writing for you (the violet shimmer): the title quickly, the description from the run; Stop ends it.
-let genTimer = 0, genTitleTimer = 0;
-function generate() {
+const live = (f) => ui.pr && (f === ui.pr || (ui.pr.prs || []).includes(f));
+function generate(f = ui.pr, i = -1, delay = 1400) {
   const v = M.view(ui.caseId, ui);
-  ui.pr.gen = true; ui.pr.mode = 'write'; clearTimeout(genTimer);
-  genTimer = setTimeout(() => { if (!ui.pr || !ui.pr.gen) return; ui.pr.gen = false; ui.pr.desc = v.tabData.prBody(v.title, v.tabData.files); render(); }, 1400);
+  f.gen = true; f.mode = 'write';
+  setTimeout(() => { if (!live(f) || !f.gen) return; f.gen = false; f.desc = i < 0 ? v.tabData.prBody(v.title, v.tabData.files) : v.tabData.prBodyStack(i, ui.pr.prs.map((x) => x.title), v.title); render(); }, delay);
 }
-function generateTitle() {
+function generateTitle(f = ui.pr, i = -1, delay = 700) {
   const v = M.view(ui.caseId, ui);
-  ui.pr.genTitle = true; clearTimeout(genTitleTimer);
-  genTitleTimer = setTimeout(() => { if (!ui.pr || !ui.pr.genTitle) return; ui.pr.genTitle = false; ui.pr.title = ui.pr.titleN++ % 2 ? 'One head for run and group pages, breadcrumb in the top bar' : v.title; ui.pr.titleSuggested = true; render(); }, 700);
+  f.genTitle = true;
+  setTimeout(() => { if (!live(f) || !f.genTitle) return; f.genTitle = false; f.title = i < 0 ? (ui.pr.titleN++ % 2 ? 'One head for run and group pages, breadcrumb in the top bar' : v.title) : v.runs[i].title; f.titleSuggested = true; render(); }, delay);
+}
+function startStack(v) {
+  ui.pr.prs = v.runs.map((r, i) => ({ title: r.title, desc: '', gen: false, genTitle: false, titleSuggested: true, mode: 'write', open: i === 0 }));
+  ui.pr.prs.forEach((f, i) => generate(f, i, 900 + i * 600));
 }
 // A question is answered where it is asked: under its step, Worca's pick checked, the other options and your own
 // words; the card's Send answer sends it. A multi-question Clarify shows the one it is on.
@@ -506,13 +517,15 @@ document.addEventListener('click', (e) => {
   else if (d.confirm && ui.dialog === 'changes') { if (d.confirm === 'yes') { const txt = (document.getElementById('changes-text')?.value || '').trim(); toast(txt ? 'Sent to the planner; it plans again' : 'Write what to change first'); if (!txt) return; } ui.dialog = ''; ui.changesDraft = false; pendingFocus = 'act-main'; }
   else if (d.pd === 'ok') { const f = ui.dialogF; const pr = ui.pr; ui.pr.gen = false; follow(Object.assign({}, f, { dialog: '', say: f.say + (pr.draft ? ' as a draft' : '') + (pr.watch ? '; Worca watches it' : '') }), ui.dialogLabel); }
   else if (d.pd === 'cancel') { ui.dialog = ''; ui.pr.gen = false; pendingFocus = 'act-main'; }
-  else if (d.pd === 'gen') { generate(); pendingFocus = 'pd-stop'; }
-  else if (d.pd === 'gentitle') { generateTitle(); pendingFocus = 'pd-gentitle'; }
-  else if (d.pd === 'stop') { ui.pr.gen = false; clearTimeout(genTimer); pendingFocus = 'pd-gen'; toast('Stopped drafting'); }
-  else if (d.pdmode) { ui.pr.mode = d.pdmode; pendingFocus = 'pd-eye'; }
+  else if (d.pd === 'gen') { const i = +(d.pi ?? -1); generate(i < 0 ? ui.pr : ui.pr.prs[i], i); pendingFocus = 'pd-stop' + (i < 0 ? '' : '-' + i); }
+  else if (d.pd === 'gentitle') { const i = +(d.pi ?? -1); generateTitle(i < 0 ? ui.pr : ui.pr.prs[i], i); pendingFocus = t.dataset.key; }
+  else if (d.prrow !== undefined) { const f = ui.pr.prs[+d.prrow]; f.open = !f.open; pendingFocus = t.dataset.key; }
+  else if (d.pd === 'stop') { const i = +(d.pi ?? -1); (i < 0 ? ui.pr : ui.pr.prs[i]).gen = false; pendingFocus = 'pd-gen' + (i < 0 ? '' : '-' + i); toast('Stopped writing'); }
+  else if (d.pdmode) { const i = +(d.pi ?? -1); (i < 0 ? ui.pr : ui.pr.prs[i]).mode = d.pdmode; pendingFocus = t.dataset.key; }
   else if (d.pdship) {
     ui.ship = d.pdship; const nv = M.view(ui.caseId, ui); ui.dialogLabel = nv.action.label; ui.dialogF = M.flow[ui.caseId][nv.action.label]; pendingFocus = 'pd-' + d.pdship;
     if (d.pdship === 'one' && !ui.pr.desc && !ui.pr.gen) { generateTitle(); generate(); }
+    if (d.pdship === 'stack' && !ui.pr.prs) startStack(M.view(ui.caseId, ui));
   }
   else if (d.confirm) { if (d.confirm === 'yes') { ui.confirm.ok = true; follow(ui.confirm.f, ui.confirm.label); } else { ui.confirm = null; pendingFocus = 'act-main'; } }
   else if (d.run === 'stop') follow(M.runFlow.stop, 'Stop the run');
@@ -571,7 +584,7 @@ document.addEventListener('keydown', (e) => {
   if (t.id === 'group-input' && e.key === 'Enter') { e.preventDefault(); const g = t.value.trim(); if (g) { ui.chips = ui.chips.filter((c) => c.kind !== 'group').concat({ kind: 'group', text: g }); ui.menu = ''; pendingFocus = 'menu:more'; toast((KNOWN.group.some(([x]) => x === g) ? 'Moved to ' : 'Created and moved to ') + g); } render(); return; }
   if (t.id === 'tag-input' && e.key === 'Enter') { e.preventDefault(); addTag(t.value); render(); return; }
   if ((e.key === 'l' || e.key === 'L') && !e.metaKey && !e.ctrlKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '') && document.querySelector('.rc-tags')) { e.preventDefault(); ui.menu = 'tags'; pendingFocus = 'tag-input'; render(); return; }
-  if ((ui.confirm || ui.dialog) && e.key === 'Escape' && !ui.menu) { if (ui.pr) { ui.pr.gen = false; ui.pr.genTitle = false; } ui.confirm = null; ui.dialog = ''; pendingFocus = 'act-main'; render(); return; }
+  if ((ui.confirm || ui.dialog) && e.key === 'Escape' && !ui.menu) { if (ui.pr) { ui.pr.gen = false; ui.pr.genTitle = false; (ui.pr.prs || []).forEach((f) => { f.gen = false; f.genTitle = false; }); } ui.confirm = null; ui.dialog = ''; pendingFocus = 'act-main'; render(); return; }
   if (e.key === '`' && e.ctrlKey) { e.preventDefault(); toast('Terminal opened in the worktree'); render(); return; }
   if (e.key === 'Enter' && e.target.id === 'after-task') { e.preventDefault(); document.querySelector('[data-confirm="yes"]')?.click(); return; }
   if (ui.menu && (e.key === 'Escape' || (e.key === 'Tab' && t.closest && t.closest('.menu')))) {

@@ -694,3 +694,15 @@ html,body{height:auto;overflow:visible;margin:0;}
 .mk-proposed summary:hover{color:var(--ink);}
 .mk-proposed ul{margin:8px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:4px;}
 .mk-proposed b{font-weight:600;color:var(--ink);margin-right:4px;}
+
+/* A stack's PRs: one row each, opening to the same title and description fields as one PR. */
+.st-list{list-style:none;margin:0;padding:0;border-top:1px solid var(--line);}
+.st-row{border-bottom:1px solid var(--line);}
+.st-head{display:grid;grid-template-columns:16px 40px minmax(0,1fr) auto auto;align-items:center;column-gap:10px;min-height:40px;width:100%;padding:0;border:0;background:none;color:var(--ink);font:inherit;font-size:var(--fs-body);text-align:left;cursor:pointer;}
+.st-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;border-radius:var(--r-xs);}
+.st-head svg{color:var(--ink-2);}
+.st-num{font-weight:600;font-size:var(--fs-meta);}
+.st-t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.st-into{font-size:var(--fs-meta);color:var(--ink-2);}
+.st-writing{font-size:var(--fs-caption);color:var(--violet-ink);}
+.st-body{display:flex;flex-direction:column;gap:14px;padding:4px 0 16px 26px;}

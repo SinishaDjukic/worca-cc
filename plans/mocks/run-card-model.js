@@ -178,6 +178,12 @@
     // What Generate drafts: the run's own summary, its changes and how it was checked (the AI draft, as today).
     prBody: (title, files) => ['## Summary', ...DETAIL.outcome.map((x) => '- ' + x), '', '## Changes', ...files.map(([f, a, d]) => '- `' + f + '` +' + a + ' \u2212' + d), '',
       '## How it was checked', '- 96 new tests in test/ui-run-head.test.mjs', '- Review implementation: 3 rounds, no open issues', '- Manual web UI testing at 375px and 900px', '', 'Closes #942'].join('\n'),
+    // A stacked PR's description: its run's summary, the Stack in merge order (this PR marked), how it was checked; only
+    // the last PR closes the issue, so the first merge does not close it while the rest are open.
+    prBodyStack: (i, titles, feature) => ['## Summary', '- ' + ['Run and group pages share one head: the breadcrumb, the title and the actions in one row', 'The breadcrumb takes its parent from the route, a slice from its feature', 'Under 760px the bar shows one link, ‹ Parent name'][i % 3], '',
+      '## Stack', ...titles.map((t, j) => (j + 1) + '. ' + (j === i ? '**This PR**: ' : '') + t + ' → ' + (j === 0 ? 'dev' : j === i + 1 ? 'this PR' : 'PR ' + j)), '',
+      '## How it was checked', '- ' + [41, 33, 22][i % 3] + ' new tests in test/ui-run-head.test.mjs', '',
+      'Part ' + (i + 1) + ' of ' + titles.length + ' of “' + feature + '”' + (i === titles.length - 1 ? '\n\nCloses #942' : '')].join('\n'),
     // The question a run is waiting on: the options Worca offers, the one it would pick, and why.
     asks: {
       question: { q: 'Keep the breadcrumb on phones under 600px, or show only Back there?', why: 'Review implementation found the trail wraps to two lines at 375px.',

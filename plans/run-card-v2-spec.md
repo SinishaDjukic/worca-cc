@@ -40,7 +40,7 @@ Every screen reads down one rail, and everything has one place on it.
 | A fact's detail | Its figure (Cost opens the breakdown, Changes its tab) |
 | The code's own actions | The Changes head: Check out ▾ (Download patch, Copy git commands, Refresh) |
 | A yes or no, or a one-line answer | The strip under the top bar: confirms, Run after |
-| A form | The app's dialog. Create PR: (for a group, the PRs and stacked or one), Title, Description, the phrase `branch into dev ▾`, then Draft and Watch with the issue it closes. Title and description are suggested as on the New run form: a sparkle inside the field, a Suggested chip, the shimmer while it writes; an eye shows the description rendered |
+| A form | The app's dialog. Create PR: (for a group, stacked or one, then one row per PR that opens to the same Title and Description fields; each description has a Stack section in merge order and only the last PR closes the issue), Title, Description, the phrase `branch into dev ▾`, then Draft and Watch with the issue it closes. Title and description are suggested as on the New run form: a sparkle inside the field, a Suggested chip, the shimmer while it writes; an eye shows the description rendered |
 | Checking out the code | Check out, in the Changes head (a group: Check out the whole feature, in its action's ▾); nowhere else |
 | Labels and cost tags | The tag group is one button: it (or `L`) opens one editor with a field (a word adds a label, `key: value` a cost tag) and two checked lists, Labels and Cost tags; removing also works there, and on touch screens only there |
 | Group membership | ⋯: Move to group…, which opens the same list editor as labels and cost tags (find or create; one group, so a single choice), or Leave it |
