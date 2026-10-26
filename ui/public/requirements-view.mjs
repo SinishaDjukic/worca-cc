@@ -2461,7 +2461,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           h('span', { class: 'chip', text: done ? `Interview done · ${plural(rounds, 'round')}` : `Round ${Math.min(rounds || 1, MAX_ROUNDS)} of ${MAX_ROUNDS}` }),
           h('span', { class: 'chip', text: `${usd(f.costUsd)} so far` }),
           (f.attachments || []).length ? h('span', { class: 'chip', text: plural(f.attachments.length, 'file') }) : null,   // A8 (board 16)
-          f.savedPath ? h('span', { class: 'chip', text: `Saved as ${f.savedPath}` }) : null)),
+          f.savedPath ? h('span', { class: 'chip', text: `Saved as ${f.savedPath}` }) : null,
+          exportChip(f)),   // A6 board 28: the ticket, after the header chips
+        exportDoneLine(f)),   // A6 board 29: "Created SHOP-123"
       h('div', { class: 'req-head-tools' },
         menu('export', h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'menu-export' }, 'Export', sharedIcon(document, 'chevron-down', 14)), [
           f.scopeType === 'project' ? menuItem('Save to specs/', save, { ui: 'mi-save' }) : null,
@@ -2789,8 +2791,489 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     if (!x.hasSetup) { void openSetup(f, { trigger, then: () => continueExport(f, trigger) }); return; }
     continueExport(f, trigger);
   }
-  // Task 9 gives this its body (Not Ready, Export again, the preview); until then the setup is where an export stops.
-  function continueExport(_f, _trigger) { closeDialog(true); }
+  /** After the setup (or with one): Not Ready asks for a reason first (D5); a feature with a ticket chooses what happens (D7);
+   *  else the preview of a create (D6). */
+  function continueExport(f, trigger) {
+    const next = (reason) => (linkOf(f) ? openAgain(f, { reason, trigger }) : openPreview(f, { mode: 'create', reason, trigger }));
+    if (f.readiness && f.readiness.ok) next(null);
+    else openExportNotReady(f, trigger, next);
+  }
+
+  /** Markdown as the tracker will show it (D6): headings, lists and paragraphs as text nodes, never HTML. */
+  function mdBlocks(md) {
+    const out = [];
+    let list = null;
+    for (const line of String(md || '').split('\n')) {
+      const hd = /^#{1,6}\s+(.*)$/.exec(line);
+      const li = /^(?:(-)|\d+\.)\s+(.*)$/.exec(line);
+      if (hd) { list = null; out.push(h('h4', { text: hd[1] })); }
+      else if (li) {
+        const tag = li[1] ? 'ul' : 'ol';
+        if (!list || list.tagName.toLowerCase() !== tag) { list = h(tag); out.push(list); }
+        list.append(h('li', { text: li[2] }));
+      } else if (line.trim()) { list = null; out.push(h('p', { class: /^From Worca /.test(line) ? 'req-export-sig' : null, text: line })); }
+      else list = null;
+    }
+    return out;
+  }
+
+  /** A dialog's state area (boards 28, 29): one persistent role=alert line (its text changes, the node stays), an optional
+   *  hint and the state's own buttons. `warn`: the amber caution of board 28's edited alert, not an error. */
+  function stateBox() {
+    const alert = h('p', { class: 'form-msg err req-export-alert', role: 'alert' });
+    const hint = h('p', { class: 'hint req-export-alert-hint', hidden: true });
+    const btns = h('div', { class: 'req-export-alert-btns', hidden: true });
+    return {
+      els: [alert, hint, btns],
+      clear() { alert.replaceChildren(); alert.classList.remove('is-warn'); hint.hidden = true; hint.textContent = ''; btns.hidden = true; btns.replaceChildren(); },
+      show(kids, { note = null, buttons = [], warn = false } = {}) {
+        alert.replaceChildren(...[].concat(kids));
+        alert.classList.toggle('is-warn', warn);
+        hint.textContent = note || '';
+        hint.hidden = !note;
+        btns.replaceChildren(...buttons);
+        btns.hidden = !buttons.length;
+      },
+    };
+  }
+  /** A ticket gone from the tracker, as the server says it (D11). */
+  const goneError = (key, name) => ({ status: 409, data: { gone: true, error: `${key} no longer exists in ${name}.` } });
+  /** A failure in an export dialog. Task 10 gives board 29's states (Try again, Change the export setup, Forget the link / New
+   *  ticket); here, the server's sentence, and a spec that changed under the preview asks for a fresh one (ctx.reload). */
+  function showFailure(box, err, ctx) {
+    box.show(errText(err));
+    if (err && err.data && err.data.stale && ctx && ctx.reload) ctx.reload();
+  }
+  /** A send that failed (D9–D13): the edited race (`onEdited`, the preview's), a ticket an earlier export made that was found
+   *  and linked (relinked), else showFailure. */
+  function sendFailed(box, err, ctx, g, onEdited = null) {
+    const dd = (err && err.data) || {};
+    if (dd.linked) void relinked(box, err, ctx, g);
+    else if (dd.edited && onEdited) onEdited();
+    else showFailure(box, err, ctx);
+  }
+  /** CONFLICT { stale, linked } (D10): a ticket an earlier export made was found and linked; nothing was sent. The page shows
+   *  the link, and Export again opens for that ticket with the server's sentence (never a second create preview). */
+  async function relinked(box, err, ctx, g) {
+    const { f } = ctx;
+    ctx.setBusy(true);
+    let data = null;
+    try { data = await api('GET', `/api/requirements/${f.seq}`); } catch { /* the sentence below */ }
+    ctx.setBusy(false);
+    if (!live(g)) return;
+    const now = data && data.feature;
+    if (!now || !linkOf(now)) { box.show(errText(err)); return; }
+    if (seqShown === now.seq) { paintNo += 1; paintFeature(now, data.turns || []); paintedKey = `feature/${seqShown}`; }
+    openAgain(now, { reason: ctx.reason, trigger: ctx.trigger, notice: errText(err) });
+  }
+  /** Board 28: the description was edited in the tracker since the last export (D9). */
+  function editedState(box, key, name, { onUpdate, onComment }) {
+    box.show([h('b', { text: `${key} was edited in ${name} since your last export.` }), ' Updating replaces its description.'], { warn: true, buttons: [
+      h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'export-update-anyway', onclick: onUpdate }, 'Update anyway'),
+      h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'export-comment-instead', onclick: onComment }, 'Add a comment instead'),
+      h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'export-edited-cancel', onclick: () => closeDialog(true) }, 'Cancel'),
+    ] });
+  }
+
+  /** Send what the dialog previewed (D6, D13): "Exporting to <tracker>…" on its status line and its buttons wait; on success
+   *  the dialog closes and the page says what happened. A late answer for a dialog that is gone only repaints the feature
+   *  when the host still shows it (paintedKey; the frame does that too). */
+  async function sendExport(f, g, { name, body, statusEl, buttons, setBusy, onFail }) {
+    setBusy(true);
+    for (const b of buttons) b.disabled = true;
+    statusEl.replaceChildren(h('span', { class: 'badge blue', text: `Exporting to ${name}…` }));
+    try {
+      const res = await api('POST', exportUrl(f), body);
+      setBusy(false);
+      statusEl.replaceChildren();
+      if (!live(g)) { if (paintedKey === `feature/${f.seq}`) void paint(); return; }
+      closeDialog(false);
+      exported(f, res);
+    } catch (err) {
+      setBusy(false);
+      statusEl.replaceChildren();
+      for (const b of buttons) b.disabled = false;
+      if (live(g)) onFail(err);
+    }
+  }
+  /** After an export: "Created SHOP-123" (or Updated, Commented on) on the header's status line, the page from the answer,
+   *  the focus on the chip (else on Export ▾). Another feature on screen keeps its paint. */
+  function exported(f, res) {
+    const verb = { created: 'Created', new: 'Created', updated: 'Updated', commented: 'Commented on' }[res.action] || 'Exported';
+    exportDone = { seq: f.seq, text: `${verb} ${res.key}` };
+    if (seqShown !== f.seq) return;
+    paintNo += 1;   // a fetch already under way would paint the feature as it was before the export
+    if (res.feature) { paintFeature(res.feature, res.turns || []); paintedKey = `feature/${seqShown}`; }
+    const to = host.querySelector('[data-ui="export-chip"]') || exportTrigger();
+    if (to) to.focus();
+  }
+
+  /** Board 27's first dialog (D5): the failing checks as the Start dialog lists them, with the board's words for open questions
+   *  and undecided assumptions; a required reason (1–500) that the preview puts at the top of the description. */
+  function openExportNotReady(f, trigger, then) {
+    closeDialog(false);
+    const failing = failingChecks(f);
+    const spec = f.spec || {};
+    const openQ = spec.openQuestions || [];
+    const openA = (spec.assumptions || []).filter((a) => a.status === 'open').map((a) => a.id);
+    const line = (c) => {
+      if (c.key === 'openQuestions' && openQ.length) return [h('b', { text: `${openQ.length} open question${openQ.length === 1 ? '' : 's'}.` }), ` ${openQ[0]}`];
+      if (c.key === 'assumptions' && openA.length) {
+        return [h('b', { text: `${joinAnd(openA)} ${openA.length === 1 ? 'is' : 'are'} not decided.` }), ' The ticket lists confirmed assumptions only.'];
+      }
+      return [h('b', { text: c.label || sentence(c.key) }), c.hint ? `: ${c.hint}` : ''];
+    };
+    const area = h('textarea', { id: 'req-exp-reason', rows: '3', maxlength: String(REASON_MAX), 'aria-required': 'true',
+      'aria-describedby': 'req-exp-count req-exp-reason-h', 'data-ui': 'export-reason' });
+    const count = h('span', { class: 'hint req-dlg-count', id: 'req-exp-count', text: `0 / ${REASON_MAX}` });
+    const go = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'export-anyway', disabled: true }, 'Export anyway');
+    area.addEventListener('input', () => { count.textContent = `${area.value.length} / ${REASON_MAX}`; go.disabled = !area.value.trim(); });
+    go.addEventListener('click', () => { const why = area.value.trim(); if (why) then(why); });
+    const card = h('section', { class: 'card req-dialog req-export req-export-notready', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'req-exp-nr-title' },
+      backButton(f),
+      h('h2', { id: 'req-exp-nr-title', text: `Export ${f.id} before it’s Ready?` }),
+      h('p', { class: 'req-dlg-lead', text: failing.length === 1 ? 'One check does not pass yet:' : `${failing.length} checks do not pass yet:` }),
+      h('div', { class: 'req-dlg-fail' }, h('ul', {}, ...failing.map((c) => h('li', {}, icon(ICONS.circle, { label: 'Not passed' }), h('span', {}, ...line(c)))))),
+      h('div', { class: 'field req-dlg-field' },
+        h('label', { for: 'req-exp-reason' }, 'Why export before it is Ready? ', h('span', { class: 'opt', text: 'required, kept on the feature with your name' })),
+        area, count),
+      h('p', { class: 'hint', id: 'req-exp-reason-h',
+        text: 'Your reason is recorded on the feature. The preview then adds it at the top of the description: “Exported before Ready: <your reason>”.' }),
+      h('div', { class: 'req-dlg-btns' }, h('button', { type: 'button', class: 'btn', 'data-ui': 'export-keep', onclick: () => closeDialog(true) }, 'Keep deciding'), go));
+    openModal(card, { trigger, first: area, page: true });
+  }
+
+  /** Board 27 (D6): the ticket as the tracker will show it; only this is sent. Issue type, labels and priority change for this
+   *  export only, and each change asks for a fresh preview (and hash). `mode`: create, update or new. The fields are built
+   *  with the first preview and updated in place after (an open dropdown, the focus and a label being typed stay). */
+  function openPreview(f, { mode, reason = null, force = false, trigger = null } = {}) {
+    closeDialog(false);
+    const name = trackerName(f) || 'the tracker';
+    // this export's own choices (undefined / null: the preview's base); the issue types and priorities as …/options answered
+    const st = { issueType: undefined, issueTypeName: null, labels: null, priority: undefined, priorityName: null,
+      types: null, prios: null, choicesFor: null, labDraft: labelDraft() };
+    let data = null; let busy = false; let n = 0; let choicesN = 0; let forceNow = force;
+    const lead = h('p', { class: 'req-dlg-lead' });
+    const fieldsEl = h('div', { class: 'req-export-fields' });
+    const desc = h('div', { class: 'req-export-desc folded', id: 'req-exp-desc', tabindex: '0', 'aria-label': 'Description preview' });
+    const more = h('button', { type: 'button', class: 'btn req-export-more', 'data-ui': 'export-more', 'aria-expanded': 'false', 'aria-controls': 'req-exp-desc',
+      onclick: () => { desc.classList.remove('folded'); more.setAttribute('aria-expanded', 'true'); more.hidden = true; desc.focus(); } }, 'Show all');
+    const box = stateBox();
+    const statusEl = h('p', { class: 'req-export-status', role: 'status' });
+    const cancel = h('button', { type: 'button', class: 'btn', 'data-ui': 'export-cancel', onclick: () => { if (!busy) closeDialog(true); } }, 'Cancel');
+    const go = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'export-go', disabled: true });
+    // Board 31 (user decision 2026-10-26): at 900 px and narrower CSS hides the title's "FEAT-7 " ("Export to Jira") and shows
+    // "FEAT-7 · <title>" under it; one h2 still labels the dialog, and takes the focus on open (D20).
+    const title = h('h2', { id: 'req-exp-title', class: 'req-export-title', tabindex: '-1' },
+      'Export ', h('span', { class: 'req-export-tid', text: `${f.id} ` }), `to ${name}`);
+    const card = h('section', { class: 'card req-dialog req-export req-export-preview', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'req-exp-title' },
+      backButton(f),
+      title,
+      h('p', { class: 'hint req-export-sub', text: `${f.id} · ${f.title}` }),
+      lead,
+      h('div', { class: 'req-export-grid' },
+        h('div', { class: 'req-export-col', role: 'group', 'aria-labelledby': 'req-exp-fields-h' }, h('h3', { id: 'req-exp-fields-h', text: 'Fields' }), fieldsEl),
+        h('div', { class: 'req-export-col', role: 'group', 'aria-labelledby': 'req-exp-desc-h' },
+          h('h3', { id: 'req-exp-desc-h', text: `Description, as ${name} will show it` }), desc, more)),
+      ...box.els,
+      h('div', { class: 'req-export-foot' }, h('span', { class: 'hint', text: `Only what you see here is sent to ${name}.` }), statusEl,
+        h('div', { class: 'req-dlg-btns' }, cancel, go)));
+    openModal(card, { trigger, first: title, canClose: () => !busy, page: true });
+    const g = dlgGen;
+    const key = () => (data && data.key) || (linkOf(f) || {}).key || '';
+    const goLabel = () => (mode === 'update' ? `Update ${key()}` : `Create in ${name}`);
+    go.textContent = goLabel();
+    go.addEventListener('click', () => { if (busy) return; if (data) void run(); else void load(); });
+    const bodyOf = () => ({ mode, ...(reason ? { reason } : {}),
+      ...(st.issueType !== undefined ? { issueType: st.issueType, issueTypeName: st.issueTypeName } : {}),
+      ...(st.labels ? { labels: st.labels } : {}),
+      ...(st.priority !== undefined ? { priority: st.priority, priorityName: st.priorityName } : {}) });
+    const ctx = { f, name, key, reason, trigger, setBusy: (b) => { busy = b; },
+      hideGo: (b) => { go.hidden = b; }, retryLabel: (t) => { go.textContent = t; go.disabled = false; },
+      reload: () => load({ keep: true }), reopen: () => openPreview(f, { mode, reason, force: forceNow, trigger }) };
+    const showEdited = () => {
+      go.hidden = true;
+      editedState(box, key(), name, { onUpdate: () => { if (busy) return; forceNow = true; go.hidden = false; void run(); },
+        onComment: () => { if (!busy) openComment(f, { reason, trigger }); } });
+    };
+
+    async function load({ keep = false } = {}) {
+      const k = ++n;
+      go.disabled = true;
+      try {
+        const d = await api('POST', exportUrl(f, '/preview'), bodyOf());
+        if (!live(g) || k !== n) return;
+        data = d;
+        if (!keep) box.clear();
+        go.hidden = false;
+        go.textContent = goLabel();
+        go.disabled = busy;
+        fill();
+        if (d.gone) { go.hidden = true; showFailure(box, goneError(key(), name), ctx); }
+        else if (d.edited && mode === 'update' && !forceNow) showEdited();
+        void loadChoices();
+      } catch (err) {
+        if (!live(g) || k !== n) return;
+        data = null;
+        showFailure(box, err, ctx);
+        if (!go.hidden) { go.textContent = 'Try again'; go.disabled = false; }
+      }
+    }
+    /** The issue types of the project and the priorities of the issue type, once per issue type the preview shows. */
+    async function loadChoices() {
+      const fl = data && data.fields;
+      if (!fl || st.choicesFor === fl.issueType.value) return;
+      st.choicesFor = fl.issueType.value;
+      const k = ++choicesN;
+      try {
+        const r = await api('POST', setupUrl(f, '/options'), { ...fl.conn, project: fl.project.value, issueType: fl.issueType.value });
+        if (!live(g) || k !== choicesN || !data) return;
+        st.types = r.issueTypes || [];
+        st.prios = r.priorities || [];
+        fill();
+      } catch {
+        if (k === choicesN) st.choicesFor = null;   // the selects keep the current value alone; the next preview asks again
+      }
+    }
+
+    let c = null;        // the field controls, built with the first preview
+    let labSig = null;   // the labels the Labels field was last built from (the server's, normalised)
+    let descMd = null;
+    const selOf = (wrap) => wrap.querySelector('select');
+    const val = (t = '') => h('p', { class: 'req-export-val', text: t });
+    // a list that lacks the current value (choices not loaded yet, or failed) still shows it
+    const withNow = (list, now) => (now && !list.some((x) => x.value === now.value) ? [now, ...list] : list);
+    function build() {
+      c = { proj: val(), summary: val(), types: [], prios: [], lab: h('div'), crit: h('div'),
+        type: exportSelect({ id: 'req-exp-type', ui: 'export-type', list: [], value: null, onchange: (e) => {
+          const o = c.types.find((x) => x.value === e.currentTarget.value);
+          if (!o) return;
+          st.issueType = o.value; st.issueTypeName = o.label;
+          void load();
+        } }),
+        prio: exportSelect({ id: 'req-exp-prio', ui: 'export-prio', list: [], value: '', onchange: (e) => {
+          const o = c.prios.find((x) => x.value === e.currentTarget.value);
+          if (!o) return;
+          st.priority = o.value || null; st.priorityName = o.value ? o.label : null;
+          void load();
+        } }) };
+      c.projFld = exportField(null, 'Project', c.proj, ' ');
+      fieldsEl.replaceChildren(c.projFld, exportField('req-exp-type', 'Issue type', c.type), exportField(null, 'Summary', c.summary, "The feature's title"),
+        c.lab, exportField('req-exp-prio', 'Priority', c.prio), c.crit);
+    }
+    /** Brings the fields and the description up to date with the preview, in place. */
+    function fill() {
+      const fl = data.fields;
+      if (!c) build();
+      const active = card.contains(document.activeElement) ? document.activeElement : null;
+      lead.textContent = `This is the ticket Worca will ${mode === 'update' ? 'update' : 'create'} in ${fl.project.value}. Change the issue type, labels or priority for this export.`;
+      c.proj.textContent = fl.project.label;
+      c.projFld.querySelector('.hint').textContent = `Saved in the export setup · ${fl.connection}`;
+      c.summary.textContent = fl.summary;
+      c.types = withNow(st.types || [], fl.issueType);
+      c.prios = [{ value: '', label: 'None' }, ...withNow(st.prios || [], fl.priority)];
+      syncSelect(selOf(c.type), c.types, fl.issueType.value);
+      syncSelect(selOf(c.prio), c.prios, fl.priority ? fl.priority.value : '');
+      // the Labels field is rebuilt only when the server's labels change; a label being typed survives it (labDraft)
+      const sig = JSON.stringify(fl.labels);
+      if (sig !== labSig) {
+        labSig = sig;
+        const lab = labelsField({ id: 'req-exp-lab', ui: 'export-lab', labels: fl.labels.filter((l) => l !== fl.fixedLabel), fixed: fl.fixedLabel,
+          draft: st.labDraft, onChange: (next) => { st.labels = next; void load(); } });
+        c.lab.replaceWith(lab);
+        c.lab = lab;
+      }
+      const crit = fl.criteria.target === 'field'
+        ? exportField(null, 'Acceptance criteria', [val(`→ ${fl.criteria.name}`), h('ul', { class: 'req-export-items' }, ...(fl.criteria.items || []).map((i) => h('li', { text: i })))])
+        : exportField(null, 'Acceptance criteria', val('→ Description'), 'A section of the description, as in the export setup');
+      c.crit.replaceWith(crit);
+      c.crit = crit;
+      if (data.ticket.description !== descMd) { descMd = data.ticket.description; desc.replaceChildren(...mdBlocks(descMd)); }
+      // a control that was rebuilt under the focus hands it to its successor
+      const ui = active && !active.isConnected ? active.getAttribute('data-ui') : null;
+      if (ui) { const el = card.querySelector(`[data-ui="${ui}"]`); if (el && !el.disabled) el.focus(); }
+    }
+    function run() {
+      if (busy || !data) return undefined;
+      box.clear();
+      return sendExport(f, g, { name, statusEl, buttons: [go, cancel], setBusy: ctx.setBusy,
+        body: { ...bodyOf(), previewHash: data.previewHash, ...(forceNow ? { force: true } : {}) },
+        onFail: (err) => sendFailed(box, err, ctx, g, showEdited) });
+    }
+    void load();
+  }
+
+  /** Board 28 (D7): Export FEAT-7 again. The tracker is asked first (gone, edited: D9, D11); then Update (the default), a
+   *  comment (only when something changed) or a new ticket, and Continue shows that result's preview. The choices are built
+   *  once; picking one updates the dialog in place. `notice`: a sentence to say first (a ticket found and linked). */
+  function openAgain(f, { reason = null, trigger = null, notice = null } = {}) {
+    closeDialog(false);
+    const name = trackerName(f) || 'the tracker';
+    let data = null; let mode = 'update'; let busy = false;
+    const desc = h('p', { class: 'req-dlg-lead', id: 'req-again-desc' });
+    const box = stateBox();
+    const modes = h('div', { class: 'req-export-modes', role: 'radiogroup', 'aria-label': 'What should happen', hidden: true });
+    const changes = h('div', { class: 'req-export-changes', role: 'group', 'aria-labelledby': 'req-again-chg', hidden: true });
+    const note = h('p', { class: 'hint', hidden: true, text: 'The preview shows the result before anything is sent.' });
+    const cont = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'again-continue', disabled: true,
+      onclick: () => { if (busy || !data) return; if (mode === 'comment') openComment(f, { reason, trigger }); else openPreview(f, { mode, reason, trigger }); } }, 'Continue');
+    const title = h('h2', { id: 'req-again-title', tabindex: '-1', text: `Export ${f.id} again` });
+    const card = h('section', { class: 'card req-dialog req-export req-export-again', role: 'dialog', 'aria-modal': 'true',
+      'aria-labelledby': 'req-again-title', 'aria-describedby': 'req-again-desc' },
+      backButton(f), title, desc, ...box.els, modes, changes, note,
+      h('div', { class: 'req-dlg-btns' },
+        h('button', { type: 'button', class: 'btn', 'data-ui': 'again-cancel', onclick: () => { if (!busy) closeDialog(true); } }, 'Cancel'), cont));
+    openModal(card, { trigger, first: title, canClose: () => !busy, page: true });   // the title until the choices load (D20)
+    const g = dlgGen;
+    const key = () => (data && data.link && data.link.key) || (linkOf(f) || {}).key || '';
+    const ctx = { f, name, key, reason, trigger, setBusy: (b) => { busy = b; }, hideGo: (b) => { cont.hidden = b; },
+      retryLabel: () => {}, reload: () => {}, reopen: () => openAgain(f, { reason, trigger }) };
+    const radios = {};
+    const option = (value, label, hint, disabled = false) => {
+      const r = h('input', { type: 'radio', name: 'req-again-mode', value, 'data-ui': `again-${value}`, disabled,
+        onchange: () => { if (r.checked) { mode = value; update(); } } });
+      radios[value] = r;
+      return h('label', { class: `req-export-mode${disabled ? ' off' : ''}` }, r,
+        h('span', { class: 'req-export-mode-txt' }, h('b', { text: label }), h('span', { class: 'hint', text: hint })));
+    };
+    const changeNode = (x) => {
+      const i = x.id ? x.line.indexOf(x.id) : -1;
+      return h('p', { class: 'req-export-change' }, ...(i >= 0 ? [x.line.slice(0, i), h('code', { text: x.id }), x.line.slice(i + x.id.length)] : [x.line]));
+    };
+    /** Once, with the tracker's answer. */
+    function render() {
+      const L = data.link;
+      const changed = data.changes.length > 0;
+      desc.textContent = changed ? `${L.key} was made on ${L.madeOn}. The spec has changed since. What should happen?`
+        : `${L.key} was made on ${L.madeOn}. The spec has not changed since the last export (${L.lastOn}).`;
+      if (data.gone) {
+        modes.hidden = true; changes.hidden = true; note.hidden = true; cont.hidden = true;
+        showFailure(box, goneError(L.key, name), ctx);
+        return;
+      }
+      modes.replaceChildren(option('update', `Update ${L.key}`, 'Rewrites its summary, description and fields.'),
+        option('comment', `Add a comment to ${L.key}`, 'Lists what changed since the last export. The description stays.', !changed),
+        option('new', 'Create a new ticket', 'For example when the feature was split.'));
+      modes.hidden = false;
+      changes.replaceChildren(h('h3', { id: 'req-again-chg', text: `What changed since the last export (${L.lastOn})` }), ...data.changes.map(changeNode));
+      changes.hidden = !changed;
+      note.hidden = false;
+      cont.disabled = false;
+      update();
+      if (notice && !(data.edited && mode === 'update')) box.show(notice);
+    }
+    /** The picked choice: its radio, board 28's edited alert for Update, Continue. */
+    function update() {
+      for (const [v, r] of Object.entries(radios)) r.checked = v === mode;
+      const warn = data.edited && mode === 'update';
+      if (warn) {
+        editedState(box, data.link.key, name, { onUpdate: () => openPreview(f, { mode: 'update', reason, force: true, trigger }),
+          onComment: () => openComment(f, { reason, trigger }) });
+      } else box.clear();
+      cont.hidden = warn;
+    }
+    api('POST', exportUrl(f, '/preview'), { mode: 'update', ...(reason ? { reason } : {}) }).then((d) => {
+      if (!live(g)) return;
+      data = d;
+      render();
+      // the default choice once the choices exist, while the focus is still where the dialog put it (never taken from the
+      // user); a gone ticket keeps it on the title (its alert is announced)
+      if (radios.update && document.activeElement === title) radios.update.focus();
+    }, (err) => { if (live(g)) showFailure(box, err, ctx); });
+  }
+
+  /** Board 28: the comment itself before it is sent (D7); the description and fields stay. Back returns to the choices. */
+  function openComment(f, { reason = null, trigger = null } = {}) {
+    closeDialog(false);
+    const name = trackerName(f) || 'the tracker';
+    const linkKey = (linkOf(f) || {}).key || '';
+    let data = null; let busy = false;
+    const box = stateBox();
+    const statusEl = h('p', { class: 'req-export-status', role: 'status' });
+    const body = h('div', { class: 'req-export-desc req-export-comment', tabindex: '0', 'aria-label': 'Comment preview' });
+    const back = h('button', { type: 'button', class: 'btn', 'data-ui': 'comment-back', onclick: () => { if (!busy) openAgain(f, { reason, trigger }); } }, 'Back');
+    const add = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'comment-add', disabled: true }, 'Add comment');
+    const title = h('h2', { id: 'req-cm-title', tabindex: '-1', text: `Comment on ${linkKey}` });
+    const card = h('section', { class: 'card req-dialog req-export req-export-commentdlg', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'req-cm-title' },
+      backButton(f),
+      title,
+      h('p', { class: 'req-dlg-lead', text: `This comment is added to ${linkKey}. Its description and fields stay as they are.` }),
+      body, ...box.els,
+      h('div', { class: 'req-export-foot' }, h('span', { class: 'hint', text: `Only what you see here is sent to ${name}.` }), statusEl,
+        h('div', { class: 'req-dlg-btns' }, back, add)));
+    openModal(card, { trigger, first: title, canClose: () => !busy, page: true });
+    const g = dlgGen;
+    const ctx = { f, name, key: () => linkKey, reason, trigger, setBusy: (b) => { busy = b; }, hideGo: (b) => { add.hidden = b; },
+      retryLabel: (t) => { add.textContent = t; add.disabled = false; }, reload: () => load({ keep: true }), reopen: () => openComment(f, { reason, trigger }) };
+    async function load({ keep = false } = {}) {
+      add.disabled = true;
+      try {
+        const d = await api('POST', exportUrl(f, '/preview'), { mode: 'comment', ...(reason ? { reason } : {}) });
+        if (!live(g)) return;
+        data = d;
+        if (!keep) box.clear();
+        add.hidden = false;
+        add.textContent = 'Add comment';
+        add.disabled = false;
+        body.replaceChildren(...mdBlocks(d.comment));
+        if (d.gone) { add.hidden = true; showFailure(box, goneError(linkKey, name), ctx); }
+      } catch (err) {
+        if (!live(g)) return;
+        data = null;
+        showFailure(box, err, ctx);
+        // a refusal (no starting point for comments yet, nothing changed) answers the same again: Back is the way on
+        if (err && err.status === 409) add.hidden = true;
+        else if (!add.hidden) { add.textContent = 'Try again'; add.disabled = false; }
+      }
+    }
+    add.addEventListener('click', () => {
+      if (busy) return;
+      if (!data) { void load(); return; }
+      box.clear();
+      void sendExport(f, g, { name, statusEl, buttons: [add, back], setBusy: ctx.setBusy,
+        body: { mode: 'comment', ...(reason ? { reason } : {}), previewHash: data.previewHash }, onFail: (err) => sendFailed(box, err, ctx, g) });
+    });
+    void load();
+  }
+
+  /** Board 28: the ticket chip after the header chips: a link to the ticket, opened in a new tab (the shared external icon). */
+  function exportChip(f) {
+    const l = linkOf(f);
+    if (!l) return null;
+    const label = `${l.key}, opens the ticket in ${l.tracker || 'the tracker'} in a new tab`;
+    return l.url
+      ? h('a', { class: 'chip req-export-chip', 'data-ui': 'export-chip', href: l.url, target: '_blank', rel: 'noopener', 'aria-label': label },
+        h('span', { text: l.key }), sharedIcon(document, 'external', 12))
+      : h('span', { class: 'chip req-export-chip', text: l.key });
+  }
+  /** Board 29: "Created SHOP-123", one role=status node kept across paints (only its text changes are announced). */
+  function exportDoneLine(f) {
+    if (!xOf(f) || (!xOf(f).tracker && !linkOf(f))) return null;
+    if (!exportDoneEl) exportDoneEl = h('p', { class: 'req-export-done', role: 'status' });
+    const want = exportDone && exportDone.seq === f.seq ? exportDone.text : '';
+    if (exportDoneEl.dataset.text !== want) {
+      exportDoneEl.dataset.text = want;
+      exportDoneEl.replaceChildren(...(want ? [icon(ICONS.check, { size: 14, width: 2.4 }), want] : []));
+    }
+    return exportDoneEl;
+  }
+  /** D17: the History card, its export lines only, newest first; shown once the feature has one. */
+  function historyCard(f) {
+    const list = (xOf(f) && xOf(f).history) || [];
+    if (!list.length) return null;
+    const keyLink = (x) => (x.url ? h('a', { href: x.url, target: '_blank', rel: 'noopener', text: x.key }) : x.key);
+    const tracker = (x) => x.tracker || 'the tracker';
+    const LINE = {
+      created: (x) => [`Exported to ${tracker(x)} as `, keyLink(x)], new: (x) => [`Exported to ${tracker(x)} as `, keyLink(x)],
+      updated: (x) => ['Updated ', keyLink(x), ` in ${tracker(x)}`], commented: (x) => ['Commented on ', keyLink(x), ` in ${tracker(x)}`],
+      linked: (x) => ['Linked ', keyLink(x), ', which an earlier export made'], forgot: (x) => ['Forgot the link to ', keyLink(x)],
+    };
+    return h('section', { class: 'card req-history', 'aria-labelledby': 'req-history-h' },
+      h('h3', { id: 'req-history-h', text: 'History' }),
+      h('ul', { class: 'req-history-list' }, ...list.filter((x) => LINE[x.action]).map((x) => h('li', {},
+        h('span', {}, ...LINE[x.action](x), x.when ? ` · ${x.when}` : '', x.reason ? ` · before Ready: ${x.reason}` : ''),
+        x.by ? h('span', { class: 'hint', text: x.by }) : null))));
+  }
 
   // A repaint from the feature on screen, without a fetch (a fold, an editor opened, Change, Cancel).
   function redraw() { if (current) paintFeature(current.f, current.turns); }
@@ -2803,6 +3286,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     paintHost(h('div', { class: 'req-page' },
       h('a', { href: '#requirements', class: 'hint req-back', onclick: (e) => { e.preventDefault(); route(''); } }, '← All features'),
       header(f),
+      historyCard(f),   // A6 D17: right under the header, once the feature has an export
       h('div', { class: 'req-cols' },
         conversation(f, turns, rounds),
         // A2's Ready panel stays first; boards 16 and 18 draw the Files card above the spec

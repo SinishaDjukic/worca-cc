@@ -10655,6 +10655,70 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-export-menupop[hidden]{display:none}
 .req-menu .req-export-menupop > .hd-menu{position:static;min-width:200px}
 .req-export-menupop > .req-export-archnote{margin:0;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-menu)}
+/* Board 27: the preview (1000 px): Fields beside the description as the tracker will show it, then the footer. The description
+   box scrolls inside; on a phone it folds behind Show all (Task 10). */
+.req-dlg-wrap .card.req-dialog.req-export-preview{width:min(1000px,100%)}
+.viewer-modal.req-dlg-wrap.req-dlg-sheet{padding-top:min(8vh,48px)}
+.req-export-grid{display:grid;grid-template-columns:320px minmax(0,1fr);gap:24px;align-items:start}
+.req-export-col{display:flex;flex-direction:column;gap:8px;min-width:0}
+.req-export-col h3,.req-export-changes h3{margin:0;font-size:var(--fs-body);font-weight:700}
+.req-export-fields{display:flex;flex-direction:column;gap:14px}
+.req-export-val{margin:0;font-size:var(--fs-body);color:var(--ink);overflow-wrap:anywhere}
+.req-export-items{margin:0;padding-left:18px;font-size:var(--fs-meta);color:var(--ink-2)}
+.req-export-desc{max-height:548px;overflow:auto;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg);
+  font-size:var(--fs-body);line-height:1.5;color:var(--ink);overflow-wrap:anywhere}
+.req-export-desc:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-export-desc h4{margin:12px 0 4px;font-size:var(--fs-body);font-weight:700}
+.req-export-desc h4:first-child{margin-top:0}
+.req-export-desc p,.req-export-desc ul,.req-export-desc ol{margin:0 0 6px}
+.req-export-desc ul,.req-export-desc ol{padding-left:20px}
+.req-export-desc .req-export-sig{margin-top:10px;padding-top:8px;border-top:1px solid var(--line);color:var(--ink-2)}
+.req-export-comment{max-height:360px}
+.req-export-more{display:none}
+.req-export-more[hidden]{display:none}
+.req-export-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 12px;padding-top:14px;border-top:1px solid var(--line)}
+.req-export-foot > .hint{margin:0}
+.req-export-foot .req-dlg-btns{margin:0 0 0 auto}
+.req-export-status{margin:0}
+.req-export-status:empty{display:none}
+.req-export-status .badge.blue{color:var(--blue-ink-strong)}   /* AA on --blue-bg (5.0:1; --blue-ink is 3.6:1), as .req-reading's */
+/* Board 31 (user decision 2026-10-26): at 900 px and narrower the preview's title is "Export to Jira" over "FEAT-7 · <title>". */
+.req-export-sub{display:none;margin:-4px 0 0}
+@media (max-width:900px){
+  .req-export-title .req-export-tid{display:none}
+  .req-export-sub{display:block}
+}
+.req-export-alert.is-warn{padding:10px 12px;border:1px solid var(--amber-bg);border-radius:var(--r-md);background:var(--amber-wash);color:var(--ink)}
+.req-export-alert.is-warn b{font-weight:600}
+.req-export-alert-hint{margin:0}
+.req-export-alert-btns{display:flex;flex-wrap:wrap;gap:8px}
+.req-export-alert-btns[hidden]{display:none}
+/* Board 28: Export again — the choices as radio cards (the picked one has an ink border, never a fill), what changed. */
+.req-export-modes{display:flex;flex-direction:column;gap:8px}
+.req-export-modes[hidden],.req-export-changes[hidden]{display:none}
+.req-export-mode{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-md);cursor:pointer}
+.req-export-mode:has(input:checked){border-color:var(--ink)}
+.req-export-mode.off{cursor:not-allowed;color:var(--ink-3)}
+.req-export-mode input{margin:3px 0 0}
+.req-export-mode-txt{display:flex;flex-direction:column;gap:2px;font-size:var(--fs-body)}
+.req-export-mode-txt b{font-weight:600}
+.req-export-mode-txt .hint{margin:0}
+.req-export-changes{display:flex;flex-direction:column;gap:4px;padding:12px 14px;border-radius:var(--r-md);background:var(--field)}
+.req-export-change{margin:0;font-size:var(--fs-body)}
+.req-export-change code{font-size:var(--fs-meta)}
+/* Board 28: the ticket chip after the header chips (the shared external icon), the History card; board 29: Created SHOP-123. */
+a.chip.req-export-chip{display:inline-flex;align-items:center;gap:4px;text-decoration:none;color:var(--ink-2)}
+a.chip.req-export-chip:hover{color:var(--ink)}
+a.chip.req-export-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.req-export-done{display:flex;align-items:center;gap:6px;margin:6px 0 0;font-size:var(--fs-body);color:var(--ink)}
+.req-export-done:empty{display:none}
+.req-export-done > svg{flex:none;color:var(--green-ink-strong)}
+.req-history{display:flex;flex-direction:column;gap:8px}
+.req-history h3{margin:0;font-size:var(--fs-section);font-weight:600}
+.req-history-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
+.req-history-list li{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;padding:8px 0;border-top:1px solid var(--line);font-size:var(--fs-body)}
+.req-history-list li:first-child{border-top:0}
+.req-history-list .hint{margin:0}
 
 /* ── marketplace P3 ── */
 /* Plugin icons (U7, board 0.1): the kind colour lives only in this tile; hue families carry the dark arms. */

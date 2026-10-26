@@ -370,3 +370,424 @@ test('CSS (board 26): the label field shares the chips row, the buttons sit unde
   assert.match(rule('.req-menu .req-export-menupop'), /position:absolute/);
   assert.match(css, /\.req-export-menupop\[hidden\]\{display:none\}/);
 });
+
+// ── Task 9: the preview, Export anyway, Export again, the comment, the chip, History (boards 27, 28) ──
+const DESC = ['## Goal', '', 'Customers cancel an order themselves until it leaves the warehouse.', '', 'Measure: a third fewer support calls.', '',
+  '## Main flow', '', '1. Open the order.', '2. Cancel it.', '',
+  '## Acceptance criteria', '', '- R-po-1 A customer can cancel a paid order.', '- R-po-2 <img src=x onerror=alert(1)> stays text', '',
+  'From Worca FEAT-7 · exported 26 Oct 2026', ''].join('\n');
+const FIELDS = { conn: CONN, connection: 'acme.atlassian.net (Cloud)', project: { value: 'SHOP', label: 'SHOP — Shop web' },
+  issueType: { value: '10001', label: 'Story' }, labels: ['worca', 'worca-FEAT-7'], fixedLabel: 'worca-FEAT-7', priority: null,
+  criteria: { target: 'description' }, summary: 'Cancel an order before it ships' };
+const preview = (over = {}) => ({ mode: 'create', tracker: 'Jira', key: null, comment: null, previewHash: 'h1', changes: [], fields: FIELDS, link: null,
+  edited: false, gone: false, ticket: { project: 'SHOP', issueType: '10001', title: 'Cancel an order before it ships', description: DESC,
+    labels: ['worca', 'worca-FEAT-7'], priority: null, criteria: { target: 'description' } }, ...over });
+const AGAIN = (over = {}) => preview({ mode: 'update', key: 'SHOP-123', link: { key: 'SHOP-123', madeOn: '26 Oct', lastOn: '26 Oct' },
+  changes: [{ line: 'Added R-po-6 An order with some items shipped can cancel only the items not yet picked up.', id: 'R-po-6' },
+    { line: 'Business rules: 1 line changed', id: null }, { line: 'Edge cases: 1 line added', id: null }], ...over });
+const exportAnswer = (action, key) => ({ action, key, url: `https://acme.test/browse/${key}`, turns: [],
+  feature: feature({ export: XV({ link: { ...LINK, key, url: `https://acme.test/browse/${key}` },
+    history: [{ action, tracker: 'Jira', key, url: `https://acme.test/browse/${key}`, reason: null, when: '26 Oct, 10:42', by: 'Tomica Brkovic' }] }) }) });
+const PREVIEW_URL = `${F}/export/preview`;
+const EXPORT_URL = `${F}/export`;
+const openExport = async (f, routes) => {
+  const m = await openFeature(f, { ...SETUP_ROUTES(), ...routes });
+  q('menu-export', m.host).click();
+  q('mi-export', m.host).click();
+  await settle();
+  return m;
+};
+const typeReason = (why) => { q('export-reason').value = why; q('export-reason').dispatchEvent(new window.Event('input')); };
+
+test('board 27: with a setup a Ready feature goes straight to the preview: the fields, the description as text, Create in Jira', async () => {
+  const { calls } = await openExport(feature(), { [`POST ${PREVIEW_URL}`]: () => preview() });
+  const d = dlg();
+  assert.equal(text(document.getElementById(d.getAttribute('aria-labelledby'))), 'Export FEAT-7 to Jira');
+  const title = d.querySelector('h2');
+  assert.deepEqual([document.activeElement, title.getAttribute('tabindex')], [title, '-1'], 'the focus is in the dialog, on its title');
+  // board 31's phone title: CSS hides this part at 900 px and narrower and shows the line under the title
+  assert.deepEqual([text(title.querySelector('.req-export-tid')), text(d.querySelector('.req-export-sub'))],
+    ['FEAT-7', 'FEAT-7 · Cancel an order before it ships']);
+  assert.equal(text(d.querySelector('.req-dlg-lead')), 'This is the ticket Worca will create in SHOP. Change the issue type, labels or priority for this export.');
+  assert.deepEqual(calls.find((c) => c.url === PREVIEW_URL).body, { mode: 'create' });
+  assert.deepEqual([...d.querySelectorAll('.req-export-fields > .req-export-fld')].map((x) => text(x.firstChild)),
+    ['Project', 'Issue type', 'Summary', 'Labels', 'Priority', 'Acceptance criteria']);
+  const fld = (i) => d.querySelectorAll('.req-export-fields > .req-export-fld')[i];
+  const valHint = (i) => [text(fld(i).querySelector('.req-export-val')), text(fld(i).querySelector('.hint'))];
+  assert.deepEqual(valHint(0), ['SHOP — Shop web', 'Saved in the export setup · acme.atlassian.net (Cloud)']);
+  assert.deepEqual(valHint(2), ['Cancel an order before it ships', "The feature's title"]);
+  assert.deepEqual(valHint(5), ['→ Description', 'A section of the description, as in the export setup']);
+  assert.deepEqual([...d.querySelectorAll('.req-export-lab')].map(text), ['worca', 'worca-FEAT-7']);
+  assert.equal(d.querySelectorAll('.req-export-lab .req-export-x').length, 1, 'the fixed label cannot be removed');
+  assert.equal(text(document.getElementById(d.querySelector('.req-export-fixed').getAttribute('aria-describedby'))),
+    'worca-FEAT-7 stays: Worca uses this label to find the ticket again.');
+  assert.deepEqual(optionTexts(q('export-type')), ['Story', 'Task', 'Bug'], 'the choices loaded through options');
+  assert.deepEqual(optionTexts(q('export-prio')), ['None', 'Highest', 'High', 'Medium', 'Low']);
+  const desc = d.querySelector('.req-export-desc');
+  assert.deepEqual([desc.getAttribute('tabindex'), desc.getAttribute('aria-label')], ['0', 'Description preview']);
+  assert.equal(text(d.querySelector('#req-exp-desc-h')), 'Description, as Jira will show it');
+  assert.deepEqual([...desc.querySelectorAll('h4')].map(text), ['Goal', 'Main flow', 'Acceptance criteria']);
+  assert.deepEqual([...desc.querySelectorAll('ol li')].map(text), ['Open the order.', 'Cancel it.']);
+  assert.equal(desc.querySelector('img'), null, 'never HTML');
+  assert.ok(text(desc).includes('<img src=x onerror=alert(1)> stays text'));
+  assert.equal(text(desc.querySelector('.req-export-sig')), 'From Worca FEAT-7 · exported 26 Oct 2026');
+  assert.equal(text(d.querySelector('.req-export-foot > .hint')), 'Only what you see here is sent to Jira.');
+  assert.deepEqual([text(q('export-go')), q('export-go').disabled], ['Create in Jira', false]);
+});
+
+test('D6: changing the issue type, a label or the priority asks for a fresh preview with it; the focus stays in the labels field', async () => {
+  let n = 0;
+  const { calls } = await openExport(feature(), { [`POST ${PREVIEW_URL}`]: (b) => { n += 1; return preview({ previewHash: `h${n}`,
+    fields: { ...FIELDS, labels: [...(b.labels || ['worca']).map((l) => l.replace(/\s+/g, '-')), 'worca-FEAT-7'] } }); } });
+  pick(q('export-type'), '10002');
+  await settle();
+  q('export-lab-in').value = 'needs review';
+  q('export-lab-in').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  await settle();
+  assert.equal(document.activeElement, q('export-lab-in'));
+  pick(q('export-prio'), '3');
+  await settle();
+  assert.deepEqual(calls.filter((c) => c.url === PREVIEW_URL).map((c) => c.body), [{ mode: 'create' },
+    { mode: 'create', issueType: '10002', issueTypeName: 'Task' },
+    { mode: 'create', issueType: '10002', issueTypeName: 'Task', labels: ['worca', 'needs review'] },
+    { mode: 'create', issueType: '10002', issueTypeName: 'Task', labels: ['worca', 'needs review'], priority: '3', priorityName: 'Medium' }]);
+  assert.deepEqual([...dlg().querySelectorAll('.req-export-lab')].map(text), ['worca', 'needs-review', 'worca-FEAT-7'], 'as the server normalised it');
+});
+
+test('board 29 (4, 5): Create in Jira: Exporting to Jira… and the buttons wait; then the chip, "Created SHOP-123", the focus on the chip', async () => {
+  let release;
+  const { host, calls } = await openExport(feature(), { [`POST ${PREVIEW_URL}`]: () => preview(),
+    [`POST ${EXPORT_URL}`]: () => new Promise((r) => { release = () => r(exportAnswer('created', 'SHOP-123')); }) });
+  q('export-go').click();
+  await settle();
+  const status = dlg().querySelector('.req-export-status');
+  assert.deepEqual([status.getAttribute('role'), text(status), !!status.querySelector('.badge.blue'), q('export-go').disabled, q('export-cancel').disabled],
+    ['status', 'Exporting to Jira…', true, true, true]);
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.ok(dlg(), 'Escape waits while exporting');
+  release();
+  await settle();
+  assert.deepEqual(calls.find((c) => c.url === EXPORT_URL).body, { mode: 'create', previewHash: 'h1' });
+  assert.equal(dlg(), null);
+  const chip = q('export-chip', host);
+  assert.deepEqual([text(chip), chip.getAttribute('href'), chip.getAttribute('target'), chip.getAttribute('rel'), chip.getAttribute('aria-label')],
+    ['SHOP-123', 'https://acme.test/browse/SHOP-123', '_blank', 'noopener', 'SHOP-123, opens the ticket in Jira in a new tab']);
+  assert.ok(chip.querySelector('svg') && !/↗/.test(chip.textContent), 'the external icon, not a glyph');
+  assert.equal(document.activeElement, chip);
+  const done = host.querySelector('.req-export-done');
+  assert.deepEqual([done.getAttribute('role'), text(done), !!done.querySelector('svg')], ['status', 'Created SHOP-123', true]);
+});
+
+test('board 27: not Ready, its dialog comes first; the checks as the board writes them; Export anyway needs a reason, the preview gets it', async () => {
+  const f = feature({ readiness: readiness(['openQuestions', 'assumptions']), state: 'decide',
+    spec: { ...SPEC, openQuestions: ['Do business customers need approval before cancelling?'], assumptions: [{ id: 'A-4', text: 'x', status: 'open' }] } });
+  const { calls } = await openExport(f, { [`POST ${PREVIEW_URL}`]: (b) => preview({ ticket: { ...preview().ticket, description: `Exported before Ready: ${b.reason}\n\n${DESC}` } }) });
+  const d = dlg();
+  assert.equal(text(document.getElementById(d.getAttribute('aria-labelledby'))), 'Export FEAT-7 before it’s Ready?');
+  assert.equal(text(d.querySelector('.req-dlg-lead')), '2 checks do not pass yet:');
+  assert.deepEqual([...d.querySelectorAll('.req-dlg-fail li')].map(text), ['1 open question. Do business customers need approval before cancelling?',
+    'A-4 is not decided. The ticket lists confirmed assumptions only.']);
+  assert.equal(text(d.querySelector('label[for="req-exp-reason"]')), 'Why export before it is Ready? required, kept on the feature with your name');
+  assert.ok([...d.querySelectorAll('.hint')].some((x) => text(x)
+    === 'Your reason is recorded on the feature. The preview then adds it at the top of the description: “Exported before Ready: <your reason>”.'));
+  assert.equal(document.activeElement, q('export-reason'));
+  assert.equal(q('export-anyway').disabled, true);
+  typeReason('The team estimates in Jira tomorrow.');
+  assert.equal(text(d.querySelector('.req-dlg-count')), '36 / 500');
+  q('export-anyway').click();
+  await settle();
+  assert.deepEqual(calls.find((c) => c.url === PREVIEW_URL).body, { mode: 'create', reason: 'The team estimates in Jira tomorrow.' });
+  assert.equal(text(dlg().querySelector('.req-export-desc p')), 'Exported before Ready: The team estimates in Jira tomorrow.');
+});
+
+test('board 28: with a ticket: Export FEAT-7 again, the three choices, what changed; Continue previews Update SHOP-123', async () => {
+  const { host, calls } = await openFeature(feature({ export: XV({ link: LINK }) }), { ...SETUP_ROUTES(), [`POST ${PREVIEW_URL}`]: (b) => AGAIN({ mode: b.mode }) });
+  q('menu-export', host).click();
+  q('mi-export', host).click();
+  assert.equal(document.activeElement, dlg().querySelector('h2'), 'the focus starts in the dialog, on its title');
+  await settle();
+  const d = dlg();
+  assert.equal(document.activeElement, q('again-update'), 'then on the default choice once the choices loaded');
+  assert.equal(text(d.querySelector('h2')), 'Export FEAT-7 again');
+  assert.equal(text(d.querySelector('#req-again-desc')), 'SHOP-123 was made on 26 Oct. The spec has changed since. What should happen?');
+  const group = d.querySelector('[role="radiogroup"]');
+  assert.equal(group.getAttribute('aria-label'), 'What should happen');
+  assert.deepEqual([...group.querySelectorAll('.req-export-mode')].map((m) => [text(m.querySelector('b')), text(m.querySelector('.hint'))]), [
+    ['Update SHOP-123', 'Rewrites its summary, description and fields.'],
+    ['Add a comment to SHOP-123', 'Lists what changed since the last export. The description stays.'],
+    ['Create a new ticket', 'For example when the feature was split.']]);
+  assert.equal(q('again-update').checked, true);
+  assert.equal(text(d.querySelector('#req-again-chg')), 'What changed since the last export (26 Oct)');
+  assert.deepEqual([...d.querySelectorAll('.req-export-change')].map(text), ['Added R-po-6 An order with some items shipped can cancel only the items not yet picked up.',
+    'Business rules: 1 line changed', 'Edge cases: 1 line added']);
+  assert.equal(text(d.querySelector('.req-export-change code')), 'R-po-6');
+  assert.ok([...d.querySelectorAll('.hint')].some((x) => text(x) === 'The preview shows the result before anything is sent.'));
+  assert.deepEqual(calls.find((c) => c.url === PREVIEW_URL).body, { mode: 'update' }, 'the tracker is asked first (gone, edited)');
+  q('again-continue').click();
+  await settle();
+  assert.deepEqual(calls.filter((c) => c.url === PREVIEW_URL).at(-1).body, { mode: 'update' });
+  assert.equal(text(q('export-go')), 'Update SHOP-123');
+  assert.equal(text(dlg().querySelector('.req-dlg-lead')), 'This is the ticket Worca will update in SHOP. Change the issue type, labels or priority for this export.');
+});
+
+test('again: with nothing changed it says so and Add a comment is disabled; Create a new ticket previews mode new', async () => {
+  const { calls } = await openExport(feature({ export: XV({ link: LINK }) }), { [`POST ${PREVIEW_URL}`]: (b) => AGAIN({ mode: b.mode, changes: [] }) });
+  const d = dlg();
+  assert.equal(text(d.querySelector('#req-again-desc')), 'SHOP-123 was made on 26 Oct. The spec has not changed since the last export (26 Oct).');
+  assert.equal(q('again-comment').disabled, true);
+  assert.equal(d.querySelector('.req-export-changes').hidden, true);
+  q('again-new').click();
+  q('again-continue').click();
+  await settle();
+  assert.deepEqual(calls.filter((c) => c.url === PREVIEW_URL).at(-1).body, { mode: 'new' });
+  assert.equal(text(q('export-go')), 'Create in Jira');
+});
+
+test('board 28: edited in Jira since the last export: the alert, Update anyway (a forced update) and Add a comment instead', async () => {
+  const { calls } = await openExport(feature({ export: XV({ link: LINK }) }), { [`POST ${PREVIEW_URL}`]: (b) => AGAIN({ mode: b.mode, edited: true }),
+    [`POST ${EXPORT_URL}`]: () => exportAnswer('updated', 'SHOP-123') });
+  const alert = dlg().querySelector('[role="alert"]');
+  assert.equal(text(alert), 'SHOP-123 was edited in Jira since your last export. Updating replaces its description.');
+  assert.equal(text(alert.querySelector('b')), 'SHOP-123 was edited in Jira since your last export.');
+  assert.equal(q('again-continue').hidden, true);
+  assert.deepEqual(['export-update-anyway', 'export-comment-instead', 'export-edited-cancel'].map((u) => text(q(u))), ['Update anyway', 'Add a comment instead', 'Cancel']);
+  q('again-comment').click();
+  assert.deepEqual([q('again-continue').hidden, text(dlg().querySelector('[role="alert"]'))], [false, ''], 'another choice: no alert');
+  q('again-update').click();
+  q('export-update-anyway').click();
+  await settle();
+  assert.equal(text(q('export-go')), 'Update SHOP-123');
+  q('export-go').click();
+  await settle();
+  assert.deepEqual(calls.find((c) => c.url === EXPORT_URL).body, { mode: 'update', previewHash: 'h1', force: true });
+});
+
+test('board 28: Add a comment: the comment itself, Back to the choices, Add comment sends it with its hash', async () => {
+  const COMMENT = 'Updated in Worca since the last export (26 Oct)\n\nAdded R-po-6 An order with some items shipped can cancel only the items not yet picked up.\n\n'
+    + 'Business rules: “Packed but not picked up still counts as not shipped.” was “Packed orders count as shipped.”\n\nFrom Worca FEAT-7\n';
+  const { host, calls } = await openExport(feature({ export: XV({ link: LINK }) }), { [`POST ${PREVIEW_URL}`]: (b) => (b.mode === 'comment'
+    ? AGAIN({ mode: 'comment', ticket: null, fields: null, comment: COMMENT, previewHash: 'c1' }) : AGAIN({ mode: b.mode })),
+    [`POST ${EXPORT_URL}`]: () => exportAnswer('commented', 'SHOP-123') });
+  q('again-comment').click();
+  q('again-continue').click();
+  await settle();
+  const d = dlg();
+  assert.equal(text(d.querySelector('h2')), 'Comment on SHOP-123');
+  assert.equal(document.activeElement, d.querySelector('h2'), 'the focus is in the dialog, on its title');
+  assert.equal(text(d.querySelector('.req-dlg-lead')), 'This comment is added to SHOP-123. Its description and fields stay as they are.');
+  const box = d.querySelector('[aria-label="Comment preview"]');
+  assert.deepEqual([box.getAttribute('tabindex'), [...box.querySelectorAll('p')].map(text)], ['0', ['Updated in Worca since the last export (26 Oct)',
+    'Added R-po-6 An order with some items shipped can cancel only the items not yet picked up.',
+    'Business rules: “Packed but not picked up still counts as not shipped.” was “Packed orders count as shipped.”', 'From Worca FEAT-7']]);
+  q('comment-back').click();
+  await settle();
+  assert.equal(text(dlg().querySelector('h2')), 'Export FEAT-7 again');
+  q('again-comment').click();
+  q('again-continue').click();
+  await settle();
+  q('comment-add').click();
+  await settle();
+  assert.deepEqual(calls.find((c) => c.url === EXPORT_URL).body, { mode: 'comment', previewHash: 'c1' });
+  assert.equal(text(host.querySelector('.req-export-done')), 'Commented on SHOP-123');
+});
+
+test('D17: the History card right under the header, newest first, as board 28 writes it; none without an export', async () => {
+  const at = (action, when, extra = {}) => ({ action, tracker: 'Jira', key: 'SHOP-123', url: 'https://acme.test/browse/SHOP-123', reason: null, when,
+    by: 'Tomica Brkovic', ...extra });
+  const history = [at('forgot', '28 Oct, 08:00'), at('commented', '27 Oct, 09:15'), at('updated', '27 Oct, 09:00'), at('linked', '26 Oct, 11:00', { by: null }),
+    at('new', '26 Oct, 10:50', { key: 'SHOP-124', url: 'https://acme.test/browse/SHOP-124' }), at('created', '26 Oct, 10:42', { reason: 'Estimating tomorrow.' })];
+  const { host } = await openFeature(feature({ export: XV({ history }) }));
+  const card = host.querySelector('.req-history');
+  assert.equal(host.querySelector('.req-head').nextElementSibling, card);
+  assert.equal(text(document.getElementById(card.getAttribute('aria-labelledby'))), 'History');
+  assert.deepEqual([...card.querySelectorAll('li')].map((li) => [text(li.firstChild), text(li.querySelector('.hint'))]), [
+    ['Forgot the link to SHOP-123 · 28 Oct, 08:00', 'Tomica Brkovic'],
+    ['Commented on SHOP-123 in Jira · 27 Oct, 09:15', 'Tomica Brkovic'],
+    ['Updated SHOP-123 in Jira · 27 Oct, 09:00', 'Tomica Brkovic'],
+    ['Linked SHOP-123, which an earlier export made · 26 Oct, 11:00', null],
+    ['Exported to Jira as SHOP-124 · 26 Oct, 10:50', 'Tomica Brkovic'],
+    ['Exported to Jira as SHOP-123 · 26 Oct, 10:42 · before Ready: Estimating tomorrow.', 'Tomica Brkovic']]);
+  const a = card.querySelector('li:last-child a');
+  assert.deepEqual([text(a), a.getAttribute('href'), a.getAttribute('target'), a.getAttribute('rel')], ['SHOP-123', 'https://acme.test/browse/SHOP-123', '_blank', 'noopener']);
+  assert.equal((await openFeature(feature())).host.querySelector('.req-history'), null);
+});
+
+// ── Task 9: the server's answers (Task 5's review fixes) and the dialogs' rules ──
+const STALE_MSG = 'The spec changed since the preview. Look at the preview again.';
+
+test('a stale preview: the sentence, then a fresh preview (its hash) on screen; Create in Jira sends that one', async () => {
+  let n = 0;
+  let first = true;
+  const { calls } = await openExport(feature(), { [`POST ${PREVIEW_URL}`]: () => { n += 1; return preview({ previewHash: `h${n}` }); },
+    [`POST ${EXPORT_URL}`]: () => {
+      if (!first) return exportAnswer('created', 'SHOP-123');
+      first = false;
+      return { __status: 409, body: { error: STALE_MSG, stale: true } };
+    } });
+  const alert = dlg().querySelector('[role="alert"]');
+  q('export-go').click();
+  await settle();
+  assert.equal(dlg().querySelector('[role="alert"]'), alert, 'the same live node');
+  assert.equal(text(alert), STALE_MSG);
+  assert.equal(calls.filter((c) => c.url === PREVIEW_URL).length, 2, 'a fresh preview');
+  assert.deepEqual([text(q('export-go')), q('export-go').disabled, q('export-cancel').disabled], ['Create in Jira', false, false]);
+  q('export-go').click();
+  await settle();
+  assert.deepEqual(calls.filter((c) => c.url === EXPORT_URL).map((c) => c.body.previewHash), ['h1', 'h2']);
+  assert.equal(dlg(), null);
+});
+
+test('a ticket an earlier export made was found and linked (nothing sent): the page reloads, Export again opens for it, no create preview', async () => {
+  let f = feature();
+  const routes = { [`GET ${F}`]: () => ({ feature: f, turns: [] }),
+    [`POST ${PREVIEW_URL}`]: (b) => (b.mode === 'create' ? preview() : AGAIN({ mode: b.mode })),
+    [`POST ${EXPORT_URL}`]: () => {
+      f = feature({ export: XV({ link: LINK }) });
+      return { __status: 409, body: { error: STALE_MSG, stale: true, linked: 'SHOP-123' } };
+    } };
+  const { host, calls, nav } = await openExport(feature(), routes);
+  q('export-go').click();
+  await settle();
+  const d = dlg();
+  assert.equal(text(d.querySelector('h2')), 'Export FEAT-7 again');
+  assert.equal(text(d.querySelector('[role="alert"]')), STALE_MSG);
+  assert.deepEqual(calls.filter((c) => c.url === PREVIEW_URL).map((c) => c.body.mode), ['create', 'update'], 'never the create again');
+  assert.equal(calls.filter((c) => c.url === EXPORT_URL).length, 1);
+  assert.equal(text(q('export-chip', host)), 'SHOP-123', 'the page shows the linked ticket');
+  assert.equal(nav.getAttribute('inert'), '', 'still a modal');
+  q('again-cancel').click();
+  assert.deepEqual([dlg(), nav.getAttribute('inert'), document.activeElement], [null, null, q('menu-export', host)]);
+});
+
+test('a comment on a ticket Worca has no starting point for: the sentence, Add comment gone, Back to the choices works', async () => {
+  const START = 'Update SHOP-123 once to give Worca a starting point for comments.';
+  await openExport(feature({ export: XV({ link: LINK }) }), { [`POST ${PREVIEW_URL}`]: (b) => (b.mode === 'comment'
+    ? { __status: 409, body: { error: START } } : AGAIN({ mode: b.mode })) });
+  q('again-comment').click();
+  q('again-continue').click();
+  await settle();
+  assert.equal(text(dlg().querySelector('[role="alert"]')), START);
+  assert.equal(q('comment-add').hidden, true, 'trying again gives the same answer');
+  assert.equal(q('comment-back').disabled, false);
+  q('comment-back').click();
+  await settle();
+  assert.equal(text(dlg().querySelector('h2')), 'Export FEAT-7 again');
+  assert.deepEqual(['again-update', 'again-comment', 'again-new'].map((u) => q(u).disabled), [false, false, false]);
+  assert.equal(q('again-continue').disabled, false);
+});
+
+test('busy, a tracker that cannot be reached, the edited race on send: the sentence; the preview stays and can send again', async () => {
+  const STILL = 'Worca is still checking whether Jira made the ticket. Try again in a moment.';
+  const REACH = 'Worca could not reach Jira: it did not answer within a minute.';
+  const EDITED = 'SHOP-123 was edited in Jira since your last export. Updating replaces its description.';
+  const answers = [{ __status: 409, body: { error: STILL } }, { __status: 502, body: { error: REACH, kind: 'timeout' } },
+    { __status: 409, body: { error: EDITED, edited: true } }, exportAnswer('updated', 'SHOP-123')];
+  const { calls } = await openExport(feature({ export: XV({ link: LINK }) }), { [`POST ${PREVIEW_URL}`]: (b) => AGAIN({ mode: b.mode }),
+    [`POST ${EXPORT_URL}`]: () => answers.shift() });
+  q('again-continue').click();
+  await settle();
+  const alert = () => text(dlg().querySelector('[role="alert"]'));
+  q('export-go').click();
+  await settle();
+  assert.deepEqual([alert(), q('export-go').disabled, q('export-cancel').disabled], [STILL, false, false]);
+  q('export-go').click();
+  await settle();
+  assert.equal(alert(), REACH);
+  q('export-go').click();
+  await settle();
+  assert.equal(alert(), EDITED);
+  assert.deepEqual([q('export-go').hidden, text(q('export-update-anyway'))], [true, 'Update anyway']);
+  q('export-update-anyway').click();
+  await settle();
+  assert.deepEqual(calls.filter((c) => c.url === EXPORT_URL).map((c) => c.body.force || false), [false, false, false, true]);
+  assert.equal(dlg(), null);
+});
+
+test('no double post: Create in Jira pressed again while it sends posts once', async () => {
+  const slow = held(() => exportAnswer('created', 'SHOP-123'));
+  const { calls } = await openExport(feature(), { [`POST ${PREVIEW_URL}`]: () => preview(), [`POST ${EXPORT_URL}`]: slow.route });
+  q('export-go').click();
+  q('export-go').click();
+  q('export-go').dispatchEvent(new window.Event('click'));
+  q('export-cancel').click();
+  assert.ok(dlg(), 'Cancel waits while exporting');
+  slow.release();
+  await settle();
+  assert.equal(calls.filter((c) => c.url === EXPORT_URL).length, 1);
+});
+
+test('a preview answer that comes after Cancel is dropped; the page is released and the focus is back on Export', async () => {
+  const slow = held(() => preview());
+  const { host, nav } = await openFeature(feature(), { ...SETUP_ROUTES(), [`POST ${PREVIEW_URL}`]: slow.route });
+  q('menu-export', host).click();
+  q('mi-export', host).click();
+  assert.equal(document.activeElement, dlg().querySelector('h2'));
+  q('export-cancel').click();
+  assert.deepEqual([dlg(), nav.getAttribute('inert'), host.getAttribute('inert'), document.activeElement], [null, null, null, q('menu-export', host)]);
+  slow.release();
+  await settle();
+  assert.deepEqual([dlg(), document.activeElement], [null, q('menu-export', host)]);
+});
+
+test('Not Ready: Escape closes it (not while composing), the page is released, the focus back on Export', async () => {
+  const { host, nav } = await openExport(feature({ readiness: readiness(['interview']), state: 'decide' }), {});
+  assert.equal(text(dlg().querySelector('.req-dlg-lead')), 'One check does not pass yet:');
+  assert.equal(text(dlg().querySelector('.req-dlg-fail li')), 'Interview finished: not yet');
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true }));
+  assert.ok(dlg());
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.deepEqual([dlg(), nav.getAttribute('inert'), document.activeElement], [null, null, q('menu-export', host)]);
+});
+
+test('preview: a label being typed keeps its text, caret and field while the choices and a fresh preview land; the selects stay in place', async () => {
+  const opts = held((b) => optionsAnswer(b));
+  const routes = { ...SETUP_ROUTES(), [`POST ${SETUP_URL}/options`]: opts.route, [`POST ${PREVIEW_URL}`]: () => preview() };
+  const m = await openFeature(feature(), routes);
+  q('menu-export', m.host).click();
+  q('mi-export', m.host).click();
+  await settle();
+  const input = q('export-lab-in');
+  const type = q('export-type');
+  input.focus();
+  input.value = 'needs';
+  input.setSelectionRange(2, 2);
+  input.dispatchEvent(new window.Event('input'));
+  opts.release();
+  await settle();
+  assert.deepEqual(optionTexts(q('export-type')), ['Story', 'Task', 'Bug'], 'the choices landed');
+  assert.deepEqual([q('export-lab-in') === input, input.value, document.activeElement === input, input.selectionStart, q('export-type') === type],
+    [true, 'needs', true, 2, true]);
+  const prio = q('export-prio');
+  const kept = [...prio.options];
+  pick(prio, '2');
+  await settle();
+  assert.deepEqual([q('export-prio') === prio, [...prio.options].every((o, i) => o === kept[i]), input.value], [true, true, 'needs']);
+});
+
+test('live regions: the status and alert lines of the preview stay the same nodes; "Created SHOP-123" survives a repaint without being redrawn', async () => {
+  let f = feature();
+  const { host, view } = await openExport(f, { [`GET ${F}`]: () => ({ feature: f, turns: [] }), [`POST ${PREVIEW_URL}`]: () => preview(),
+    [`POST ${EXPORT_URL}`]: () => { const r = exportAnswer('created', 'SHOP-123'); f = r.feature; return r; } });
+  q('export-go').click();
+  await settle();
+  const done = host.querySelector('.req-export-done');
+  const kids = [...done.childNodes];
+  await view.changed(7);
+  await settle();
+  assert.equal(host.querySelector('.req-export-done'), done, 'the same node after a repaint');
+  assert.deepEqual([[...done.childNodes].every((k, i) => k === kids[i]), text(done)], [true, 'Created SHOP-123']);
+  assert.equal(done.getAttribute('role'), 'status');
+});
+
+test('CSS: the Task 9 rules sit in the Requirements block (tokens only) and the picked choice is an ink border, not a fill', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
+  const end = css.indexOf('/* ── marketplace P3 ── */');
+  for (const sel of ['.req-export-grid', '.req-export-desc', '.req-export-mode', '.req-export-changes', 'a.chip.req-export-chip', '.req-export-done', '.req-history-list']) {
+    const at = css.indexOf(sel);
+    assert.ok(at > start && at < end, `${sel} inside the Requirements block`);
+  }
+  const rule = (sel) => { const at = css.indexOf(`${sel}{`); return at < 0 ? '' : css.slice(at, css.indexOf('}', at)); };
+  assert.match(rule('.req-export-mode:has(input:checked)'), /border-color:var\(--ink\)/);
+  assert.doesNotMatch(rule('.req-export-mode:has(input:checked)'), /background/);
+});
