@@ -5898,6 +5898,9 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
    attribute from its ledger of rows the transcript has shown before, and on
    nothing else. */
 .ask-msg[data-ask-enter]{animation:wr-rise .2s cubic-bezier(.2,.7,.3,1) both;}
+/* #959: in the conversation the ROW rises (data-ask-enter, ask-panel.mjs's ledger), never the card in it: a card's
+   own rise replayed on every rebuild, a switch back included. */
+.chat-convo .ask-msg .ask-card{animation:none;}
 .ask-user-bubble{align-self:flex-end;max-width:78%;padding:10px 14px;border-radius:var(--r-card) var(--r-card) var(--r-sm) var(--r-card);
   background:var(--field);color:var(--ink);font-size:13px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;}
 /* Shaper (D21): the intent chip above the person's bubble — the lead itself went to the model only. */
@@ -6052,14 +6055,15 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-rp-mini{height:22px;padding:0 9px;border:0;border-radius:var(--r-sm);background:transparent;color:var(--ink-2);font-family:inherit;font-size:11px;font-weight:600;cursor:pointer;}
 .ask-rp-mini:hover{background:var(--hover);color:var(--ink);}
 .ask-rp .ask-card-seg{margin-left:auto;}
-.ask-rp-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 12px;}
-.ask-rp-grid.two{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:10px;}
-/* Workflow, Engine, Guardrails: the workflow takes half the row. */
-.ask-rp-grid.wf-row{grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);margin-top:10px;}
+.ask-rp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:10px 12px;}
+/* #959: ONE form grid for the card's fields: as many 200px+ columns as fit, stacked when narrow. A switch field takes
+   a whole row; labels stay on one line. The fields are the shared .input / .select (design-system › Field). */
+.ask-rp-grid.two,.ask-rp-grid.wf-row{margin-top:10px;}
 .ask-rp-field{display:flex;flex-direction:column;gap:4px;min-width:0;}
-.ask-rp-label{font-weight:600;font-size:12px;color:var(--ink-2);}
+.ask-rp-field:has(> .switch-row){grid-column:1 / -1;}
+.ask-rp-label{font-weight:600;font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ask-rp-hint{font-weight:400;text-transform:none;letter-spacing:0;}
-.ask-rp :is(select,input[type="text"]){height:36px;padding:0 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);font-size:12px;}
+.ask-rp :is(.input,.select){text-overflow:ellipsis;}
 .ask-rp .ask-rp-title input{flex:1 1 auto;min-width:0;height:auto;border:0;background:transparent;padding:2px 0;font-size:18px;font-weight:600;letter-spacing:-.01em;line-height:1.3;border-bottom:1.5px dashed transparent;border-radius:0;color:var(--ink);}
 .ask-rp .ask-rp-title input:hover{border-bottom-color:var(--line-2);}
 .ask-rp .ask-rp-title input:focus-visible{box-shadow:none;outline:none;border-bottom-color:var(--ink);background:transparent;}
@@ -6087,7 +6091,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-rp-eff.unset button{visibility:hidden;}
 .ask-rp-eff.unset::after{content:"workflow’s setting";position:absolute;inset:0;display:grid;place-items:center;font-family:var(--sans);font-size:11px;color:var(--ink-3);}
 .ask-rp-ctl{display:inline-flex;align-items:center;gap:8px;}
-.ask-rp-ctl > span:first-child{font:500 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink);}
+.ask-rp-ctl > span:first-child{font:500 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink);white-space:nowrap;}
 .ask-rp-agents-foot{display:flex;align-items:center;gap:8px;padding:8px 14px;border-top:1px solid var(--line);font-size:11px;color:var(--ink-3);}
 .ask-rp-lane-msg{padding:12px 14px;font-size:12px;color:var(--ink-3);}
 .ask-rp-prop{display:inline-block;padding:0 6px;border-radius:var(--r-sm);background:var(--slate-bg);color:var(--slate-ink);font-weight:700;cursor:help;}
@@ -6125,7 +6129,6 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-rp-foot .ask-card-open-np.link-btn{margin-right:auto;}
 .ask-rp .ask-card-err{padding:0 18px 10px;}
 .ask-pop-at{width:288px;max-height:min(320px,60%);overflow-y:auto;}
-@media (max-width:640px){.ask-rp-grid,.ask-rp-grid.two,.ask-rp-grid.wf-row{grid-template-columns:1fr;}}
 @media (prefers-reduced-motion: reduce){.ask-card.ask-rp{animation:none;} .ask-rp *{transition:none!important;}}
 
 /* ---------- workflow card chrome (ui/public/ask-panel.mjs buildWorkflowCard; mockup 2026-09-05 §A-§C) ---------- */
@@ -6259,9 +6262,11 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .gv-well .gv-stage,.gv-well .gv-world .node{cursor:grab;}
 .gv-well .gv-stage.panning,.gv-well .gv-stage.panning *{cursor:grabbing !important;}
 .gv-well > .gv-nav{right:12px;bottom:12px;}
-/* Only the well outgrows a build card's 760px text column (.ask-ccard): up to the chat card width, centred on the column.
-   An Auto card (.ask-card) is that wide already (.chat-convo .ask-msg > .ask-card). */
-.chat-convo .ask-ccard .ask-wfcard-graph.gv-well{width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}
+/* #959: a chat card sits on the text column; only its graph well (.gv-well: the build card's, the Auto card's, the
+   run card's) widens, up to --chat-card-max and centred on the column (100cqi = the transcript's content box; 100% =
+   the card's content box, itself centred on the column). Its host fits the graph into it (run-hosts `card`,
+   proposal-host). */
+.chat-convo .ask-msg .gv-well{width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}
 
 /* ---------- workflow card build (ui/public/auto-build.mjs; mockup §B/§F motion) ---------- */
 .ask-wfcard-graph .gv-world .node{transition:opacity .28s cubic-bezier(.2,.7,.3,1),translate .28s cubic-bezier(.2,.7,.3,1);}
@@ -6529,6 +6534,9 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-rc-open:hover{box-shadow:inset 0 0 0 999px var(--solid-hover);}
 .ask-rc-open:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .ask-rc-title{margin-top:12px;font-weight:600;font-size:15px;line-height:1.35;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* #959 card-head anatomy (design-system › Card head): a head that carries its title is one row centred on the title's
+   line box. The title takes no margin there, so the dot, the chip and Open centre on its line: no nudge. */
+.ask-rc-head > .ask-rc-title{margin-top:0;min-width:0;}
 .ask-rc-sub{margin-top:4px;font-family:var(--mono);font-size:11px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ask-rc-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:14px;}
 .ask-rc-stat{display:flex;flex-direction:column;gap:3px;padding:9px 11px;border:0;border-radius:var(--r-ctrl);background:var(--field);}   /* tinted, not boxed, inside the card (B2) */
@@ -6555,7 +6563,8 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd-pill.st-amber{background:var(--amber-bg);color:var(--amber-ink);}
 .ask-cmd.is-live .ask-cmd-pill{animation:dotpulse 1.3s ease-in-out infinite;}
 .ask-cmd-folder{min-width:0;padding:0;border:0;background:none;color:var(--ink-2);font:inherit;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;}
-.ask-cmd-folder:hover{color:var(--ink);text-decoration:underline;}
+.ask-cmd-folder:hover:not(:disabled){color:var(--ink);text-decoration:underline;}
+.ask-cmd-folder:disabled{color:var(--ink-3);cursor:default;}   /* its shell closed: the reason is the tooltip */
 .ask-cmd-folder:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .ask-cmd-stop{white-space:nowrap;}
 .ask-cmd-stop[hidden]{display:none;}
@@ -6576,10 +6585,8 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd-toggle[aria-expanded="true"] .ask-cmd-chev{transform:rotate(90deg);}
 .ask-cmd-out{margin:0;max-height:16em;overflow:auto;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--field);color:var(--ink);font-family:var(--mono);font-size:11px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;}
 .ask-cmd-out[hidden]{display:none;}
-/* Command summaries (#911): one row per command with the runs status dot; a group joins rows into one card. */
+/* Command summaries (#911): one row per command with the runs status dot; a group holds its rows in one card. */
 .ask-card.ask-cmd.is-sum{gap:0;padding:0;}
-.ask-cmd-ghead{padding:8px 14px 0;color:var(--ink-2);font-size:12px;}
-.ask-cmd-ghead[hidden]{display:none;}
 .ask-cmd-row{display:flex;align-items:center;gap:8px;min-height:38px;padding:0 14px;cursor:pointer;}
 .ask-cmd-row:hover{background:var(--hover);}
 .ask-cmd-row-btn{display:flex;align-items:center;gap:10px;flex:1 1 auto;min-width:0;padding:0;border:0;background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
@@ -6589,19 +6596,47 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd-meta{flex:none;color:var(--ink-2);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;}
 .ask-cmd.is-sum .ask-cmd-chev{flex:none;color:var(--ink-2);transition:transform .15s;}
 .ask-cmd.is-sum.is-open > .ask-cmd-row .ask-cmd-chev{transform:rotate(90deg);}
-.ask-cmd-detail{display:flex;flex-direction:column;gap:8px;padding:10px 14px 12px;border-top:1px solid var(--line);}
+.ask-cmd.is-failed .ask-cmd-meta{color:var(--red-ink);}
+/* The opened row (#911): the whole command, its folder and Show in terminal, the output panel. One fold. */
+.ask-cmd-detail{display:flex;flex-direction:column;gap:10px;padding:2px 14px 14px 32px;}
 .ask-cmd-detail[hidden]{display:none;}
-.ask-cmd.is-sum .ask-cmd-line{display:flex;align-items:center;gap:2px;}
-.ask-cmd-copy{display:inline-flex;min-width:0;max-width:100%;font-family:var(--mono);}
-.ask-cmd-copy-text{min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;text-align:left;}
+.ask-cmd-cmd{position:relative;padding:9px 40px 9px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);}
+.ask-cmd-code{display:block;font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;}
+.ask-cmd-dollar{color:var(--ink-3);user-select:none;}
+.ask-cmd-tk-cmd{color:var(--hd-syntax-title);}
+.ask-cmd-tk-op{color:var(--hd-syntax-keyword);}
+.ask-cmd-tk-flag{color:var(--ink-2);}
+.ask-cmd-tk-str{color:var(--hd-syntax-string);}
+.ask-cmd-cmd > .ask-cmd-copy{position:absolute;top:5px;right:5px;}
 .ask-cmd-copy .ico-check{display:none;}
 .ask-cmd-copy.copied .ico-copy{display:none;}
 .ask-cmd-copy.copied .ico-check{display:inline;color:var(--green-ink);}
-.ask-cmd.is-sum .ask-cmd-folder{align-self:flex-start;}
+.ask-cmd-ctx{display:flex;align-items:center;gap:8px;min-width:0;}
+.ask-cmd-dir{min-width:0;padding:1px 6px;border:1px solid var(--line);border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);
+  font-family:var(--mono);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ask-cmd-dir[hidden]{display:none;}
+.ask-cmd-show{flex:none;gap:6px;color:var(--ink-2);}
+.ask-cmd-outbox{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);overflow:hidden;}
+.ask-cmd-outbox[hidden]{display:none;}
+.ask-cmd-outhead{display:flex;align-items:center;gap:8px;min-height:36px;padding:0 4px 0 12px;border-bottom:1px solid var(--line);color:var(--ink-2);font-size:12px;}
+.ask-cmd-outhead .ask-cmd-copy{gap:6px;}
+/* min(400px, half the chat pane): no block-size container here (the transcript is inline-size), so 50vh (D7). */
+.ask-cmd-outbox .ask-cmd-out{max-height:min(400px,50vh);padding:10px 12px;border:0;border-radius:0;font-size:12px;line-height:1.6;}
 .ask-cmd.is-sum > .ask-cmd-warning{margin:0 14px 12px;}
-/* A group: rows share one border with dividers (the message's 6px gap and the card's 2px top margin cancelled). */
-.ask-cmd.in-group:not(.is-g-last){border-bottom-left-radius:0;border-bottom-right-radius:0;}
-.ask-cmd.in-group:not(.is-g-first){margin-top:-7px;border-top-left-radius:0;border-top-right-radius:0;}
+/* A group (#911): one quiet disclosure head over ONE card; the panel moves the rows in; --line between them. */
+.ask-cmd-group{display:flex;flex-direction:column;gap:6px;min-width:0;margin-top:2px;}
+.ask-cmd-ghead{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;max-width:100%;min-height:28px;padding:0 8px;margin-left:-8px;
+  border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:inherit;font-size:13px;cursor:pointer;}
+.ask-cmd-ghead:hover{background:var(--hover);}
+.ask-cmd-ghead:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-cmd-gwords{min-width:0;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ask-cmd-gfail{color:var(--red-ink);}
+.ask-cmd-ghead .ask-cmd-chev{flex:none;transition:transform .15s;}
+.ask-cmd-ghead[aria-expanded="true"] .ask-cmd-chev{transform:rotate(90deg);}
+.ask-cmd-gbody{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);overflow:hidden;}
+.ask-cmd-gbody[hidden]{display:none;}
+.ask-cmd-gbody > .ask-card.ask-cmd.is-sum{margin:0;border:0;border-radius:0;background:none;animation:none;}
+.ask-cmd-gbody > .ask-card.ask-cmd.is-sum + .ask-card.ask-cmd.is-sum{border-top:1px solid var(--line);}
 .ask-rc-graph{position:relative;margin-top:14px;min-height:120px;overflow:hidden;border:1px solid var(--line);border-radius:var(--r-sm);cursor:pointer;
   background:var(--canvas-2) radial-gradient(circle,var(--line-2) 1.1px,transparent 1.1px);background-size:22px 22px;transition:height .24s cubic-bezier(.2,.7,.3,1);}
 .ask-rc-graph[hidden]{display:none;}
@@ -8173,7 +8208,6 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .tag-value-chips{display:flex;flex-wrap:wrap;gap:4px;align-items:center;}
 .tag-value-chips .tag-value-input{flex:1;min-width:80px;}
 .tag-rule-pickers{display:inline-flex;gap:6px;align-items:center;flex:none;}
-.ask-rp-tags{display:flex;flex-wrap:nowrap;gap:6px;overflow-x:auto;align-items:center;}
 .hd-tags{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;}
 .hd-tags-editor{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;}
 .hd-tags .tag-input{flex:1 1 280px;}
@@ -8813,7 +8847,7 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-page{position:absolute;inset:0;display:flex;min-width:0;min-height:0;overflow:hidden;background:var(--panel);--chat-text-max:760px;--chat-card-max:1040px;}
 .chat-page[data-history="closed"] .chat-history{display:none;}
 /* The conversation column: the cap tokens the transcript column, the composer box and the jump pill read. */
-.chat-convo{position:relative;flex:1 1 auto;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;--ask-col-max:var(--chat-text-max);--ask-col-inset:max(16px,calc(50% - var(--ask-col-max) / 2));--ask-box-top:103px;}
+.chat-convo{position:relative;flex:1 1 auto;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;--ask-col-max:var(--chat-text-max);--ask-col-inset:max(16px,calc(50% - var(--ask-col-max) / 2));--ask-box-top:103px;--chat-dock-fade:32px;}
 .chat-head{flex:none;display:flex;align-items:center;gap:8px;height:52px;padding:0 14px;box-sizing:border-box;border-bottom:1px solid var(--line);}
 .chat-head .ask-title{font-size:var(--fs-body);}
 .chat-head-spacer{flex:1 1 auto;}
@@ -8828,32 +8862,32 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-hero-slot .ask-composer{padding:0;--ask-col-inset:0px;}
 .chat-page[data-view="thread"] .chat-home{display:none;}
 .chat-page[data-view="home"] .ask-transcript,.chat-page[data-view="home"] .chat-dock{display:none;}
-/* The dock floats over the transcript (worca Chat mockup 2026-10-10): the transcript scrolls under the glass composer
-   to the page's bottom edge and keeps the dock's height as bottom clearance (ask-panel.mjs mirrors it into
-   --chat-dock-h). Only the composer's own parts take the pointer, so the transcript beside the box stays usable; a
-   short fade under the box keeps text from running into the page edge. No z-index: a stacking context here would
+/* The dock floats over the transcript (worca Chat mockup 2026-10-10): the transcript keeps the dock's height
+   (ask-panel.mjs mirrors it into --chat-dock-h) plus the dock's fade band as bottom clearance. Only the composer's own
+   parts take the pointer, so the transcript beside the box stays usable. No z-index: a stacking context here would
    trap a Getting started ring (.guide-target) under the guide scrim. */
 .chat-dock{position:absolute;left:0;right:0;bottom:0;pointer-events:none;}
-.chat-dock::before{content:"";position:absolute;left:0;right:0;bottom:0;height:56px;background:linear-gradient(to bottom,color-mix(in srgb,var(--panel) 0%,transparent),var(--panel) 72%);pointer-events:none;}
+/* #959: the dock is opaque from its top edge down, after a --chat-dock-fade band in which the transcript fades out:
+   nothing reads under the composer. Jump to latest rides that band, right above the dock, never over a line you
+   read (the transcript's bottom clearance includes the band). No z-index (a Getting started ring must escape). */
+.chat-dock::before{content:"";position:absolute;left:0;right:0;bottom:0;top:calc(-1 * var(--chat-dock-fade));background:linear-gradient(to bottom,color-mix(in srgb,var(--panel) 0%,transparent),var(--panel) var(--chat-dock-fade));pointer-events:none;}
 .chat-dock > .ask-composer{pointer-events:none;}
 .chat-dock > .ask-jump,.chat-dock > .ask-composer > *{pointer-events:auto;}
 /* The jump pill rides the dock's top edge (ask-panel.mjs puts it in the dock): it never covers a draft that grew. */
-.chat-dock > .ask-jump{bottom:calc(100% - 1px);}
-/* Cards may be wider than the 760px text column: up to 1040px, centred on it (the transcript's container width).
-   The transcript is its own stacking context, so a card's raised parts (the graph's expand button) scroll under the
-   dock, not over it. */
-.chat-convo .ask-transcript{container-type:inline-size;isolation:isolate;padding-bottom:calc(var(--chat-dock-h,120px) + 8px);}
+.chat-dock > .ask-jump{bottom:100%;}
+/* #959: ONE width rule for every chat card: the text column. .ask-transcript-col caps the column at --ask-col-max
+   (= --chat-text-max) and every card, stub and build card fills it, so text and cards share one left edge; no card
+   kind sets a width. Only a graph well widens (.chat-convo .ask-msg .gv-well). The transcript is its own stacking
+   context, so a card's raised parts scroll under the dock, not over it. It reserves its scrollbar gutter on both
+   edges, so the column, the composer and Jump to latest share one centre with classic and overlay scrollbars alike;
+   its bottom clearance is the dock's height plus the dock's fade band. */
+.chat-convo .ask-transcript{container-type:inline-size;isolation:isolate;scrollbar-gutter:stable both-edges;padding-bottom:calc(var(--chat-dock-h,120px) + var(--chat-dock-fade));}
 /* The composer is frosted glass (mockup .cp-pill): a translucent fill that blurs what scrolls under it, a hairline and
    a soft float. A Getting started step that rings a control in it drops the blur: a backdrop filter makes a stacking
    context, and the ring (.guide-target, z 45) must reach above the guide scrim (z 44). */
 .chat-page .ask-composer-box{border-color:var(--glass-line);border-radius:var(--r-lg);background:var(--glass);-webkit-backdrop-filter:blur(18px) saturate(1.5);backdrop-filter:blur(18px) saturate(1.5);}
 .chat-hero-slot .ask-composer-box{border-radius:var(--r-lg);}
 .chat-page .ask-composer-box:has(.guide-target){-webkit-backdrop-filter:none;backdrop-filter:none;}
-.chat-convo .ask-msg > :is(.ask-card,.ask-card-stub){width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}
-/* The run proposal is a form: it keeps the 760px text column, not the wide card column. */
-.chat-convo .ask-msg > .ask-card.ask-rp{width:min(var(--chat-text-max),100cqi);margin-left:calc((100% - min(var(--chat-text-max),100cqi)) / 2);}
-/* Command cards (#911): the 760px text column too, summary rows and full cards alike. */
-.chat-convo .ask-msg > .ask-card.ask-cmd{width:min(var(--chat-text-max),100cqi);margin-left:calc((100% - min(var(--chat-text-max),100cqi)) / 2);}
 /* The composer's popovers ride the composer (ask-panel.mjs openPopover): above the box in the dock, under it on
    home, and never sized against the composer's own height. On home the cap is 100vh less .chat-home's 10vh top padding. */
 .chat-page .ask-composer{--ask-box-top:calc(100% - 10px);}
@@ -8944,6 +8978,7 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .release-row-err:empty{display:none;}
 /* Watch PR in the chat: a PR fix-run card's trigger and outcome line (the pull-request card's watch is its link's tooltip). */
 .chat-rc-fix{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 6px;margin-top:6px;font-size:12px;color:var(--ink-2);min-width:0;}
+.chat-rc-fix-kind{font-weight:600;color:var(--ink);}
 .chat-rc-fix[hidden]{display:none;}
 .chat-rc-fix-pr{color:var(--blue-ink-strong);}
 .chat-rc-fix-pr:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm);}
@@ -9016,6 +9051,8 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 /* A white card lifted off the white page by a soft shadow (worca Chat mockup 2026-10-10: .cd). */
 .ask-card.chat-rc{gap:0;border-radius:var(--r-card);}
 .chat-rc .ask-rc-sub{display:flex;align-items:center;gap:8px;min-width:0;}
+/* #959: the meta line sits right under the head; the status block keeps a 4px-grid step below it. */
+.chat-rc .ask-rc-sub + .chat-rc-status{margin-top:8px;}
 .chat-rc-where{min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .chat-rc-auto{flex:0 0 auto;display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:var(--r-xs);background:var(--slate-bg);color:var(--slate-ink);font-family:var(--sans);font-size:11px;font-weight:600;}
 .chat-rc-auto[hidden]{display:none;}
@@ -9026,7 +9063,7 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .chat-rc-agent-name{white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .chat-rc-agent-model{min-width:0;flex:0 100000 auto;overflow:hidden;text-overflow:ellipsis;color:var(--ink-2);font-family:var(--mono);font-size:11px;font-weight:500;}
 .chat-rc-agent-cycle{flex:none;padding:0 6px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font-family:var(--mono);font-size:11px;font-weight:600;}
-.run-flow-wrap.chat-rc-well{margin:14px 0 0;overflow:hidden;height:var(--run-host-h,240px);}
+.run-flow-wrap.chat-rc-well{margin:12px 0 0;overflow:hidden;height:var(--run-host-h,240px);border-radius:var(--r-sm);}
 .chat-rc-well[hidden]{display:none;}
 .run-flow-wrap.chat-rc-well.is-deciding{height:auto;}
 .chat-rc-deciding{padding:28px 16px;text-align:center;color:var(--ink-2);font-size:12px;}
@@ -11062,9 +11099,8 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 /* Run 4 (D21): the Chat run card is one box of divided sections (docs/design-system.md › Cards versus divided rows):
    stats, the graph, the question, the result and the footer each sit under one --line, with no fill, border or corner
    of their own. At (0,3,0) and up these beat the in-card override below, which stays last. */
-.ask-card.chat-rc > :is(.ask-rc-stats,.chat-rc-well,.chat-rc-q,.chat-rc-result,.chat-rc-foot){margin-top:12px;padding-top:12px;border-top:1px solid var(--line);}
+.ask-card.chat-rc > :is(.ask-rc-stats,.chat-rc-q,.chat-rc-result,.chat-rc-foot){margin-top:12px;padding-top:12px;border-top:1px solid var(--line);}
 .ask-card.chat-rc .ask-rc-stats > .ask-rc-stat{padding:0;border-radius:0;background:none;}
-.ask-card.chat-rc > .run-flow-wrap.chat-rc-well{border:0;border-top:1px solid var(--line);border-radius:0;background-color:transparent;}
 .ask-card.chat-rc > .chat-rc-result{padding:12px 0 0;border:0;border-top:1px solid var(--line);border-radius:0;background:none;}
 .ask-card.chat-rc > .chat-rc-q :is(.qpanel,.qblock){padding-left:0;padding-right:0;border-radius:0;background:none;}
 .ask-card.chat-rc .chat-rc-art-rows{border:0;border-radius:0;}

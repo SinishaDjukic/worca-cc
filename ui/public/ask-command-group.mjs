@@ -31,8 +31,28 @@ export function elapsedMs(v, now = Date.now()) {
   return Number.isFinite(t0) ? Math.max(0, now - t0) : 0;
 }
 
-/** The group head: "3 commands · 6.1s". */
-export function groupHead(views, now = Date.now()) {
+/** A command that ended with a non-zero exit code. */
+export function isFailed(v) { return !!v && v.status === 'done' && v.exitCode != null && v.exitCode !== 0; }
+
+/** Still running. A view not loaded yet (null) counts only in the live turn (D5): on a reload it is a finished one. */
+const isRunning = (v, live) => (v ? v.status === 'running' : !!live);
+
+/** The group head's parts: `{ lead: 'Ran 3 commands' | 'Running 3 commands', failed, dur }`. */
+export function groupHeadParts(views, now = Date.now(), live = false) {
   const total = views.reduce((s, v) => s + elapsedMs(v, now), 0);
-  return `${views.length} commands · ${fmtCmdDur(total)}`;
+  const running = views.some((v) => isRunning(v, live));
+  return { lead: `${running ? 'Running' : 'Ran'} ${views.length} commands`, failed: views.filter(isFailed).length, dur: fmtCmdDur(total) };
+}
+
+/** The group head: "Ran 3 commands · 1 failed · 6.1s" (no failed part at 0). */
+export function groupHead(views, now = Date.now(), live = false) {
+  const p = groupHeadParts(views, now, live);
+  return [p.lead, p.failed ? `${p.failed} failed` : '', p.dur].filter(Boolean).join(' · ');
+}
+
+/** Whether a group shows its rows. `choice`: the person's recorded fold, or a failure's one auto-open (undefined = none).
+ *  No choice: open while a command runs or failed, else folded to the head line. */
+export function groupOpen(views, choice, live = false) {
+  if (choice === true || choice === false) return choice;
+  return views.some((v) => isRunning(v, live) || isFailed(v));
 }

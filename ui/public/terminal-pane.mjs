@@ -343,17 +343,19 @@ export function createTerminalPane({ doc, win, fetch, sendWs, getPageContext, co
   }
   /**
    * Shows one terminal (an Ask session) because the user asked to (a click on a command card's folder): attaches
-   * it, opens the pane and focuses it, even after the user closed the pane.
+   * it, opens the pane and focuses it, even after the user closed the pane. Resolves false when there is no shell
+   * to show (it closed: idle, or Worca restarted), so the card can say so instead of doing nothing.
    */
   async function showSession(id) {
-    if (st.destroyed) return;
-    if (!st.sessions.get(id)) await refreshInfo();
+    if (st.destroyed) return false;
+    if (st.sessions.get(id)?.status !== 'running') await refreshInfo();
     const s = st.sessions.get(id);
-    if (!st.enabled || !s || s.status !== 'running') return;
+    if (!st.enabled || !s || s.status !== 'running') return false;
     st.focusNext = true;
     if (st.current !== id) await attach(id);
     if (!st.open) await open({ focus: true });
     else { st.focusNext = false; focusTerm(); }
+    return true;
   }
   /**
    * A tab's ×: closes that terminal (an ended one just leaves). One that has run a command asks first. The
