@@ -2,7 +2,7 @@
 // The lazy e2b loader and the loopback fake SDK (src/core/exec-env/e2b-sdk.mjs, e2b-fake.mjs).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -180,6 +180,24 @@ test('a stdin: true handle keeps no stdout/stderr accumulator across many frames
   const plain = await client.run(box, 'echo', { background: true, onStdout: () => {} });
   await plain.emit('x\n');
   assert.equal(plain._stdout, 'early\nx\n');
+});
+
+test('e2bClient.readFile with maxBytes streams the file and stops past it (audit 2.7)', POSIX, async () => {
+  const sdk = createFakeE2b({ root: tmp('worca-fake-read-') });
+  const client = e2bClient(sdk, { opts: {} }, { mock: true });
+  const box = await client.create({ environment: 'worca-agent', tags: {}, timeoutMs: 60_000 });
+  const p = join(box.pathPrefix, 'big.bin');
+  writeFileSync(p, Buffer.alloc(300_000, 7));
+  assert.equal((await client.readFile(box.box, p, { maxBytes: 300_000 })).length, 300_000);
+  await assert.rejects(client.readFile(box.box, p, { maxBytes: 100_000 }), (e) => e.code === 'E_TOO_LARGE');
+  assert.equal((await client.readFile(box.box, p)).length, 300_000, 'no cap without maxBytes');
+  await sdk.Sandbox.kill(box.id);
+});
+
+test('the pinned e2b SDK reads a file as a stream (readFile maxBytes, audit 2.7)', (t) => {
+  let file;
+  try { file = fileURLToPath(import.meta.resolve('e2b')); } catch { t.skip('the e2b package is not installed'); return; }
+  assert.match(readFileSync(file, 'utf8'), /format === "stream"|case "stream"/, `${file}: files.read lost format 'stream'; e2bClient.readFile's capped read needs revisiting`);
 });
 
 test('the pinned e2b SDK still keeps its stdout accumulator in CommandHandle._stdout (C1 guard)', (t) => {

@@ -65,7 +65,8 @@
  *   `background: true`: resolves a CommandHandle whose wait() rejects the same way. `stdin: true` (only with `background: true`, for
  *   long-lived helpers) keeps stdin open and the handle gains sendStdin(data); an agent's own stdin is never passed:
  *   RemoteExecEnv writes it to a scratch file and redirects.
- * @property {(box: unknown, path: string) => Promise<Buffer>} readFile
+ * @property {(box: unknown, path: string, o?: {maxBytes?: number}) => Promise<Buffer>} readFile   past maxBytes the read
+ *   stops and throws `code` E_TOO_LARGE
  * @property {(box: unknown, path: string, data: Buffer) => Promise<unknown>} writeFile   creates parent dirs
  * @property {(box: unknown, ms: number) => Promise<void>} setTimeout   the provider ends the sandbox after ms
  * @property {(box: unknown) => Promise<void>} [pause]
