@@ -23,7 +23,7 @@ const ICON = {
 const svg = (name, size) => (ICON[name] ? `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>` : '');
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-let ui = { caseId: 'working', open: null, chips: [], ship: '', menu: '', tab: '', focus: '', view: 'steps', parent: null, back: null };
+let ui = { caseId: 'working', open: null, chips: [], ship: '', menu: '', tab: '', focus: '', view: 'steps', parent: null, back: null, answer: null, file: null, actFilter: 'all', rounds: [], ticks: [], taskOpen: false };
 
 function statusDot(v) {
   if (v.sym) {
@@ -63,7 +63,8 @@ function rowHtml(r, full) {
   // Rows are subgrids, so every column lines up down the list; on narrow cards the details drop under the name.
   const name = r.ref ? `<button type="button" class="sc-step rd-route-name sc-name" data-ref="${esc(r.ref)}" data-key="ref:${esc(r.ref)}" title="Open ${esc(r.name)} in Activity">${esc(r.name)}</button>`
     : `<span class="rd-route-name sc-name" title="${esc(r.name)}"${r.akey ? ` tabindex="-1" data-key="act:${esc(r.akey)}"` : ''}>${esc(r.name)}</span>`;
-  const loops = r.loops ? `<span class="sc-loop" title="Ran ${r.loops} times">${svg('refresh', 11)}${r.loops}</span>` : '';
+  const loops = !r.loops ? '' : r.roundsKey ? `<button type="button" class="sc-loop is-btn" aria-expanded="${!!r.roundsOpen}" data-rounds="${esc(r.roundsKey)}" data-key="rounds:${esc(r.roundsKey)}" title="${r.roundsOpen ? 'Hide' : 'Show'} the ${r.loops} rounds">${svg('refresh', 11)}${r.loops}</button>`
+    : `<span class="sc-loop" title="Ran ${r.loops} times">${svg('refresh', 11)}${r.loops}</span>`;
   const log = full && !/is-next/.test(r.rowCls) && !r.evidence ? `<button type="button" class="btn btn-sm btn-quiet rtab-log" data-key="log:${esc(r.akey)}">Log</button>` : '';
   const rest = `<span class="sc-rest"><span class="sc-loops">${loops}</span>${full ? `<span class="sc-model">${esc(r.model || '')}</span><span class="sc-cost">${esc(r.cost || '')}</span><span class="sc-act">${log}</span>` : ''}</span>`;
   // A failed or blocked step shows what broke, its last lines and a way into the log, in Activity only.
@@ -87,32 +88,101 @@ function stackHtml(k) {
   return `<div class="sk${k.enter ? ' is-enter' : ''}"><div class="sk-head"><span class="rc-label">${esc(k.title)}</span>${seg}</div>${choice}<ol class="rd-route-list sk-list" aria-label="${esc(k.title)}">${rows}</ol>${k.note ? `<p class="sk-note" style="margin:0">${esc(k.note)}</p>` : ''}</div>`;
 }
 
-// The tabs under the card: one question each, each fact in one place. Time, cost against the budget and the diff
-// size are the card's figures; cost per step lives in Activity; the Away-mode cost in Decisions.
+// The tabs under the card: one question each, each fact in one place. Overview leads with what this state needs from
+// you; Changes is the diff by folder; Activity is every step with its rounds, model, cost and log; Decisions is who
+// decided what. Time, cost against the budget and the diff size stay the card's figures.
+const ICON_WHO = { you: P('M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z') + P('M4.5 20a7.5 7.5 0 0 1 15 0'), away: P('M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z'), default: P('M12 3v4M12 17v4M3 12h4M17 12h4') };
+const WHO = { you: 'You', away: 'Answered for you · Away mode', default: 'Worca’s default' };
+function focusHtml(v) {
+  const f = v.over.focus;
+  if (!f) return '';
+  if (f.kind === 'ask') {
+    const pick = ui.answer === undefined || ui.answer === null ? f.pick : ui.answer;
+    return `<section class="rtab ov-focus is-ask" id="ov-focus"><h2 class="rtab-h">Worca asks${f.n ? ` <span class="n">${esc(f.n)}</span>` : ''}</h2>
+      <p class="ov-q">${esc(f.q)}</p><p class="rtab-dim rtab-p">${esc(f.why)}</p>
+      <div class="qopts" role="radiogroup" aria-label="${esc(f.q)}">${f.options.map((o, i) => `<button type="button" class="qopt${i === pick ? ' sel' : ''}" role="radio" aria-checked="${i === pick}" tabindex="${i === pick ? 0 : -1}" data-answer="${i}" data-key="answer:${i}"><span class="sk-opt"><span class="sk-opt-l">${esc(o)}${i === f.pick ? '<span class="qrec">Worca’s pick</span>' : ''}</span></span></button>`).join('')}</div>
+      <input class="input input-sm" type="text" placeholder="Or write your own answer" aria-label="Your own answer" data-key="answer-own">
+      <div class="ov-acts"><button type="button" class="btn btn-sm btn-primary" data-key="answer-send">Send answer</button><span class="rtab-dim">The run goes on from ${esc(v.open.label)} as soon as you send</span></div></section>`;
+  }
+  if (f.kind === 'plan') {
+    return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">The plan <span class="n">${f.items.length} steps</span></h2>
+      <ol class="ov-plan">${f.items.map((x, i) => `<li><span class="ov-n">${i + 1}</span><span>${esc(x.t)}</span></li>`).join('')}</ol>
+      <h3 class="ov-sub is-warn">${f.issues.length} open issues</h3><ul class="rtab-list">${f.issues.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+      <div class="ov-acts"><button type="button" class="btn btn-sm btn-primary" data-key="plan-approve">Approve and build</button><button type="button" class="btn btn-sm" data-key="plan-change">Ask for changes</button><button type="button" class="btn btn-sm btn-quiet" data-key="plan-full">Full plan</button></div></section>`;
+  }
+  if (f.kind === 'broke') {
+    return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">What broke</h2>
+      <div class="rtab-ev"><p class="rtab-ev-t">${esc(f.ev.title)}</p><pre class="rtab-ev-l">${f.ev.lines.map(esc).join('\n')}</pre><button type="button" class="btn btn-sm rtab-ev-btn" data-key="ov-log">${esc(f.ev.log)}</button></div>
+      ${f.next ? `<p class="rtab-dim rtab-p">${esc(f.next)} is the card’s action: ${esc((v.action || {}).help || '')}.</p>` : ''}</section>`;
+  }
+  const rows = f.items.map((x, i) => {
+    const st = typeof x === 'string' ? (ui.ticks.includes(i) ? 'done' : 'next') : x.state;
+    const t = typeof x === 'string' ? x : x.t;
+    if (f.kind === 'check') return `<li><label class="ov-check"><input type="checkbox" data-tick="${i}" data-key="tick:${i}"${st === 'done' ? ' checked' : ''}><span>${esc(t)}</span></label></li>`;
+    return `<li class="rd-route-row is-${st}"><span class="rd-route-dot ${st === 'done' ? 'is-done' : st === 'now' ? 'is-working is-pulse' : 'is-future'}" role="img" aria-label="${st === 'done' ? 'Done' : st === 'now' ? 'In progress' : 'Not yet'}">${svg(st === 'done' ? 'check' : st === 'now' ? 'now' : '', 10)}</span><span class="rd-route-name">${esc(t)}</span></li>`;
+  }).join('');
+  if (f.kind === 'check') {
+    const n = f.items.length - ui.ticks.length;
+    return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">Before you ship <span class="n">${n ? n + ' to check' : 'all checked'}</span></h2><ul class="ov-checks">${rows}</ul></section>`;
+  }
+  const done = f.items.filter((x) => x.state === 'done').length;
+  return `<section class="rtab ov-focus is-progress" id="ov-focus"><h2 class="rtab-h">The plan <span class="n">${done} of ${f.items.length} done</span></h2><ol class="rd-route-list ov-progress">${rows}</ol></section>`;
+}
 function summaryPanel(v) {
-  const d = v.tabData;
-  return `<section class="rtab"><h2 class="rtab-h">What you asked</h2><p class="rtab-p">${esc(d.task)}</p></section>
-  <section class="rtab"><h2 class="rtab-h">To check <span class="n">${d.check.length}</span></h2><ul class="rtab-list">${d.check.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></section>
-  <section class="rtab"><h2 class="rtab-h">Artifacts <span class="n">${d.artifacts.length}</span></h2><ul class="rtab-list is-plain">${d.artifacts.map(([f, step]) => `<li><code>${esc(f)}</code><span class="rtab-dim">from ${esc(step)}</span></li>`).join('')}</ul></section>`;
+  const o = v.over;
+  const did = o.outcome.length ? `<section class="rtab"><h2 class="rtab-h">What it did</h2><ul class="ov-did">${o.outcome.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></section>` : '';
+  const asked = `<section class="rtab"><h2 class="rtab-h">What you asked</h2><p class="rtab-p ov-task${ui.taskOpen ? ' is-open' : ''}">${esc(o.task)}</p></section>`;
+  const where = o.areas.length ? `<section class="rtab"><h2 class="rtab-h">Where it changed <button type="button" class="btn btn-sm btn-quiet ov-more" data-tab="changes" data-key="ov-changes">All ${v.tabData.files.length} files</button></h2>
+    <ul class="ov-areas">${o.areas.map((x) => `<li><code>${esc(x.dir)}</code><span class="rtab-dim">${x.n} ${x.n === 1 ? 'file' : 'files'}</span><span class="ov-bar" aria-hidden="true"><i class="add" style="width:${Math.round(x.pct * x.add / (x.add + x.del))}%"></i><i class="del" style="width:${Math.round(x.pct * x.del / (x.add + x.del))}%"></i></span><span class="ct"><span class="add">+${x.add}</span><span class="del">−${x.del}</span></span></li>`).join('')}</ul></section>` : '';
+  const arts = o.artifacts.length ? `<section class="rtab"><h2 class="rtab-h">Artifacts <span class="n">${o.artifacts.length}</span></h2><ul class="ov-arts">${o.artifacts.map(([f, step], i) => `<li><code title="${esc(f)}">${esc(f)}</code><span class="rtab-dim">${esc(step)}</span><button type="button" class="btn btn-sm btn-quiet" data-key="art:${i}" aria-label="Open ${esc(f)}">Open</button></li>`).join('')}</ul></section>` : '';
+  return focusHtml(v) + did + asked + where + arts;
 }
 function changesPanel(v) {
-  const f = v.tabData.files;
-  return `<section class="rtab"><h2 class="rtab-h">${f.length} files</h2>
-  <ul class="rtab-files">${f.map(([p, a, d], i) => `<li><button type="button" class="rtab-file" data-key="file:${i}"><code title="${esc(p)}">${esc(p)}</code><span class="ct"><span class="add">+${a}</span><span class="del">−${d}</span></span></button></li>`).join('')}</ul>
-  <p class="rtab-dim rtab-p">A file opens its diff here; review comments sit on its lines.</p></section>`;
+  const d = v.tabData; const f = d.files;
+  const add = f.reduce((a, x) => a + x[1], 0); const del = f.reduce((a, x) => a + x[2], 0);
+  const groups = [];
+  f.forEach(([p, a, dl], i) => { const dir = p.slice(0, p.lastIndexOf('/') + 1); let g = groups.find((x) => x.dir === dir); if (!g) groups.push(g = { dir, rows: [] }); g.rows.push({ p, name: p.slice(dir.length), a, dl, i }); });
+  const blocks = (a, dl) => { const n = Math.min(5, Math.max(1, Math.round((a + dl) / 40))); const ga = Math.round(n * a / (a + dl || 1)); return Array.from({ length: 5 }, (_, k) => `<i class="${k < ga ? 'add' : k < n ? 'del' : ''}"></i>`).join(''); };
+  const open = ui.file === undefined || ui.file === null ? -1 : ui.file;
+  const rows = groups.map((g) => `<li class="ch-dir"><code>${esc(g.dir)}</code><span class="rtab-dim">${g.rows.length}</span></li>` + g.rows.map((r) => {
+    const m = d.fileMeta[r.p] || { st: 'M' };
+    const diff = open === r.i ? `<div class="ch-diff"><p class="ch-at">${esc(d.hunk.at)}</p><pre>${d.hunk.lines.map(([k, t]) => `<span class="${k === '+' ? 'add' : k === '-' ? 'del' : ''}">${esc(k + ' ' + t)}</span>`).join('\n')}</pre><button type="button" class="btn btn-sm" data-key="file-full">Open the whole diff</button></div>` : '';
+    return `<li class="ch-file${open === r.i ? ' is-open' : ''}"><button type="button" class="ch-row" aria-expanded="${open === r.i}" data-file="${r.i}" data-key="file:${r.i}"><span class="ch-st is-${m.st}" title="${m.st === 'A' ? 'Added' : 'Modified'}">${m.st}</span><span class="ch-name" title="${esc(r.p)}">${esc(r.name)}</span>${m.notes ? `<span class="ch-notes" title="${m.notes} review comments">${m.notes}</span>` : '<span class="ch-notes"></span>'}<span class="ct"><span class="add">+${r.a}</span><span class="del">−${r.dl}</span></span><span class="ch-blocks" aria-hidden="true">${blocks(r.a, r.dl)}</span></button>${diff}</li>`;
+  }).join('')).join('');
+  const where = v.place.folder ? `In a copy of ${v.place.folder}; Apply writes them into the folder.` : v.place.branch ? `${v.place.branch} into ${v.place.base || 'dev'}` : '';
+  return `<section class="rtab"><div class="ch-head"><h2 class="rtab-h">${f.length} files <span class="ct"><span class="add">+${add}</span><span class="del">−${del}</span></span></h2><span class="rtab-dim" title="${esc(where)}">${esc(where)}</span></div>
+    <ul class="ch-list">${rows}</ul></section>`;
 }
 function activityPanel(v) {
-  const view = ui.view || 'steps';
-  const seg = `<div class="seg" role="group" aria-label="Show"><button type="button" data-view="steps" data-key="view:steps" aria-pressed="${view === 'steps'}">Steps</button><button type="button" data-view="graph" data-key="view:graph" aria-pressed="${view === 'graph'}">Graph</button></div>`;
-  if (view === 'graph') return `<div class="rtab-bar">${seg}</div><p class="rtab-dim rtab-p">The run graph, as today, centred on the live step; a step opens the same log drawer.</p>`;
+  const only = ui.actFilter === 'problems';
+  const seg = `<div class="seg" role="group" aria-label="Show"><button type="button" data-filter="all" data-key="filter:all" aria-pressed="${!only}">All steps</button><button type="button" data-filter="problems" data-key="filter:problems" aria-pressed="${only}">Problems and questions</button></div>`;
+  const total = v.activity.reduce((a, st) => a + (parseFloat(String(st.meta).replace(/[^0-9.]/g, '')) || 0), 0) || 1;
   // One list for the whole tab, stage headings as full-width rows, so every step on the tab shares the same columns.
-  const rows = v.activity.map((st) => `<li class="sc-stage-row"><h2 class="rtab-h">${esc(st.label)}${st.title ? ' · ' + esc(st.title) : ''}${st.meta ? ` <span class="rtab-dim">${esc(st.meta)}</span>` : ''}</h2></li>`
-    + st.rows.map((r) => rowHtml(Object.assign({}, r, { ref: '', akey: r.ref }), true)).join('')).join('');
-  const stages = `<section class="rtab rtab-stage"><ol class="rd-route-list sc-subs is-full" aria-label="Steps">${rows}</ol></section>`;
-  return `<div class="rtab-bar">${seg}</div>${stages}`;
+  // A step that ran more than once opens its rounds: how long each took and why it went round again.
+  const rows = v.activity.map((st) => {
+    const steps = st.rows.filter((r) => !only || /is-(ask|problem|failed)/.test(r.rowCls));
+    if (only && !steps.length) return '';
+    const cost = parseFloat(String(st.meta).replace(/[^0-9.]/g, '')) || 0;
+    const head = `<li class="sc-stage-row"><h2 class="rtab-h">${esc(st.label)}${st.title ? ' · ' + esc(st.title) : ''}${st.meta ? ` <span class="rtab-dim">${esc(st.meta)}</span>` : ''}${cost ? `<span class="ac-share" title="${Math.round(cost / total * 100)}% of the cost" aria-hidden="true"><i style="width:${Math.round(cost / total * 100)}%"></i></span>` : ''}</h2></li>`;
+    return head + steps.map((r) => {
+      const rd = v.rounds[r.name];
+      const key = st.key + '/' + r.name;
+      const isOpen = rd && ui.rounds.includes(key);
+      const row = rowHtml(Object.assign({}, r, { ref: '', akey: r.ref, roundsKey: rd && r.loops ? key : '', roundsOpen: isOpen }), true);
+      const sub = isOpen ? rd.map(([t, why], i) => `<li class="rd-route-row sc-row is-round"><span class="ac-round-n" aria-hidden="true">${i + 1}</span><span class="sc-name ac-why">${esc(why)}</span><span class="sc-time">${esc(t)}</span><span class="sc-rest"></span></li>`).join('') : '';
+      return row + sub;
+    }).join('');
+  }).join('');
+  return `<div class="rtab-bar">${seg}<button type="button" class="btn btn-sm btn-quiet" data-key="graph">Open the graph</button></div><section class="rtab rtab-stage"><ol class="rd-route-list sc-subs is-full" aria-label="Steps">${rows || '<li class="sc-stage-row"><p class="rtab-dim rtab-p">No problems or questions in this run.</p></li>'}</ol></section>`;
 }
 function decisionsPanel(v) {
-  return `<ul class="rtab-dec">${v.tabData.decisions.map((x) => `<li><span class="rtab-dim">${esc(x.step)}</span><span class="rtab-q">${esc(x.q)}</span><span>${esc(x.a)}</span><span class="rtab-dim">${esc(x.by)}</span></li>`).join('')}</ul>`;
+  const ds = v.tabData.decisions;
+  const by = (w) => ds.filter((x) => x.who === w).length;
+  const ask = v.over.focus && v.over.focus.kind === 'ask' ? v.over.focus : null;
+  const sum = [by('you') ? by('you') + ' by you' : '', by('away') ? by('away') + ' by Away mode' : '', by('default') ? by('default') + ' by default' : ''].filter(Boolean).join(' · ');
+  const waiting = ask ? `<li class="rd-route-row is-ask"><span class="rd-route-dot is-problem" role="img" aria-label="Waiting for you">${svg('question', 10)}</span><div class="dc-body"><p class="rtab-q">${esc(ask.q)}</p><p class="rtab-dim">Waiting for you · <button type="button" class="dc-link" data-tab="summary" data-key="dc-answer">Answer in Overview</button></p></div></li>` : '';
+  return `<section class="rtab"><div class="ch-head"><h2 class="rtab-h">${ds.length} decisions</h2><span class="rtab-dim">${esc(sum)}</span></div>
+    <ol class="rd-route-list dc-list">${waiting}${ds.map((x) => `<li class="rd-route-row is-done"><span class="rd-route-dot dc-who is-${x.who}" role="img" aria-label="${esc(WHO[x.who])}"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_WHO[x.who]}</svg></span><div class="dc-body"><p class="rtab-q">${esc(x.q)}</p><p class="dc-a">${esc(x.a)}</p><p class="rtab-dim">${esc([x.step, WHO[x.who], x.note, x.when].filter(Boolean).join(' · '))}</p></div></li>`).join('')}</ol></section>`;
 }
 function runsPanel(v) {
   return `<ul class="rtab-dec is-runs">${v.runs.map((r) => `<li><span class="status-dot ${r.dot}${/peach/.test(r.dot) ? ' is-pulse' : ''}" aria-hidden="true"></span><span class="rtab-q" title="${esc(r.title)}">${esc(r.title)}</span><span class="rtab-dim">${esc([r.word, r.time, r.cost, r.pr].filter(Boolean).join(' · '))}</span>${r.canOpen ? `<button type="button" class="btn btn-sm btn-quiet" data-open-run="${r.n - 1}" data-key="run:${r.n - 1}" aria-label="Open run ${r.n}: ${esc(r.title)}">Open</button>` : ''}</li>`).join('')}</ul>`;
@@ -131,8 +201,12 @@ function render() {
   pendingFocus = '';
   const v = M.view(ui.caseId, ui);
   const a = v.action;
-  const action = a ? `<div class="rc-side"><div class="btn-split rc-action rc-pop is-right"><button type="button" class="btn ${a.primary ? 'btn-primary' : ''}" title="${esc(a.help)}" data-key="act-main">${svg(a.icon, 16)}${esc(a.label)}</button>${a.items.length ? `<button type="button" class="btn btn-icon ${a.primary ? 'btn-primary' : ''}" aria-label="More actions" aria-haspopup="menu" aria-expanded="${ui.menu === 'act'}" data-menu="act" data-key="menu:act">${svg('chevron', 16)}</button>${menu('act', a.items, a.help)}` : ''}</div></div>` : '';
-  const addable = M.add.filter((x) => x.kind !== 'group' || !ui.chips.some((c) => c.kind === 'group'));   // many labels and tags, one group
+  const action = a ? `<div class="rc-side"><div class="btn-split rc-action rc-pop is-right"><button type="button" class="btn btn-sm ${a.primary ? 'btn-primary' : ''}" title="${esc(a.help)}" data-key="act-main">${svg(a.icon, 14)}${esc(a.label)}</button>${a.items.length ? `<button type="button" class="btn btn-sm btn-icon ${a.primary ? 'btn-primary' : ''}" aria-label="More actions" aria-haspopup="menu" aria-expanded="${ui.menu === 'act'}" data-menu="act" data-key="menu:act">${svg('chevron', 14)}</button>${menu('act', a.items, a.help)}` : ''}</div></div>` : '';
+  // Many labels and tags, one group: a run already in a feature or chain, or a group page, joins none; a run you
+  // grouped can leave it again from the same menu.
+  const addable = M.add.filter((x) => x.kind !== 'group' || (!v.inGroup && !v.addedGroup))
+    .map((x) => ({ id: x.kind, text: x.menu, help: x.help }))
+    .concat(v.addedGroup ? [{ id: 'ungroup', text: 'Leave ' + v.addedGroup, help: 'The run leaves the group; its labels and tags stay' }] : []);
   // The place line: branch → base with copy, or the folder, or the repositories; the PR once it exists. The branch
   // loses its middle, never its end, so sibling runs (-2, -3) stay apart.
   const pl = v.place;
@@ -142,10 +216,11 @@ function render() {
   const repos = pl.repos.length ? `<span>${pl.repos.length} repositories</span>` : '';
   const pr = pl.pr ? `<a class="rc-pr" href="#" data-key="pr" title="Open ${esc(pl.pr)} on GitHub">${esc(pl.pr)}</a>` : '';
   // + stays at the end of the place line; labels and tags, once added, get their own wrapping row under it.
-  const chipRow = ui.chips.length ? `<div class="rc-chips">${ui.chips.map(chip).join('')}</div>` : '';
-  const placeLine = [where, repos, pr].filter(Boolean).join('<span class="rc-sep" aria-hidden="true">·</span>');
-  const add = (addable.length ? `<span class="rc-pop"><button type="button" class="btn btn-sm btn-quiet btn-icon rc-add" aria-label="Add a label, cost tag or group" aria-haspopup="menu" aria-expanded="${ui.menu === 'add' || ui.menu.startsWith('pick-')}" data-menu="add" data-key="menu:add">${svg('plus', 14)}</button>${ui.menu.startsWith('pick-') ? pickerHtml(ui.menu.slice(5)) : menu('add', addable.map((x) => ({ id: x.kind, text: x.menu, help: x.help })))}</span>` : '');
-  const facts = placeLine ? placeLine + add : '';   // a group page has no place line: + sits after its kind
+  const chipRow = v.chips.length ? `<div class="rc-chips">${ui.chips.map((c, i) => (c.kind === 'group' ? '' : chip(c, i))).join('')}</div>` : '';
+  const kind = v.kind ? `<span class="kind-chip">${esc(v.kind)}</span>` : '';
+  const placeLine = [kind, where, repos, pr].filter(Boolean).join('<span class="rc-sep" aria-hidden="true">·</span>');
+  const add = (addable.length ? `<span class="rc-pop"><button type="button" class="btn btn-sm btn-quiet btn-icon rc-add" aria-label="Add a label, cost tag or group" aria-haspopup="menu" aria-expanded="${ui.menu === 'add' || ui.menu.startsWith('pick-')}" data-menu="add" data-key="menu:add">${svg('plus', 14)}</button>${ui.menu.startsWith('pick-') ? pickerHtml(ui.menu.slice(5)) : menu('add', addable)}</span>` : '');
+  const facts = placeLine + add;
   // Where you are: Runs › place › group, the page itself never a crumb; on a narrow card only the parent, as ‹ Parent.
   const crumbs = `<nav class="rc-crumbs" aria-label="Breadcrumb"><ol>${v.crumbs.map((c, i) => `<li${i === v.crumbs.length - 1 ? ' class="is-parent"' : ''}>${c.go ? `<button type="button" class="rc-crumb" data-crumb="${i}" data-key="crumb:${i}" title="${esc(c.t)}">${esc(c.t)}</button>` : `<a class="rc-crumb" href="#" data-key="crumb:${i}" title="${esc(c.t)}">${esc(c.t)}</a>`}</li>`).join('')}</ol></nav>`;
   // A run in a group steps to its siblings; a run that has not started has no page yet.
@@ -169,7 +244,7 @@ function render() {
   document.getElementById('card').innerHTML = `
   <div class="rc">
     <div class="rc-bar">${crumbs}${pager}<span class="rc-bar-end">${v.bar.pause ? `<button type="button" class="btn btn-sm" data-key="bar:pause"${scope}>${svg('pause', 14)}Pause</button>` : ''}${v.bar.stop ? `<button type="button" class="btn btn-sm btn-danger" data-key="bar:stop"${scope}>Stop</button>` : ''}<button type="button" class="btn btn-sm btn-icon" aria-label="More for this run" data-key="bar:more"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg></button></span></div>
-    <div class="rc-head"><div class="rc-title-row"><h1 class="rc-heading${ui.titleOpen ? ' is-open' : ''}" title="${esc(v.title)}" data-title>${esc(v.title)}</h1>${v.kind ? `<span class="kind-chip">${esc(v.kind)}</span>` : ''}${placeLine ? '' : add}</div>${facts ? `<div class="rc-facts">${facts}</div>` : ''}${chipRow}</div>
+    <div class="rc-head"><div class="rc-title-row"><h1 class="rc-heading${ui.titleOpen ? ' is-open' : ''}" title="${esc(v.title)}" data-title>${esc(v.title)}</h1></div>${facts ? `<div class="rc-facts">${facts}</div>` : ''}${chipRow}</div>
     <section class="rc-card" aria-label="Run status">
       <div class="rc-zone"><span class="rc-rail">${statusDot(v)}</span><span class="rc-main rc-word">${esc(v.word)}</span>${action}${v.detail ? `<span class="rc-detail" title="${esc(v.detail)}">${esc(v.detail)}</span>` : ''}</div>
       <div class="rc-zone"><div class="rc-span"><div class="sc-track" style="grid-template-columns:repeat(${v.stages.length},minmax(0,1fr))" aria-hidden="true">${track}</div><div class="sc-stages" style="grid-template-columns:repeat(${v.stages.length},minmax(0,1fr))" role="tablist" aria-label="Stages">${stages}</div></div></div>
@@ -201,7 +276,7 @@ function fitMenus() {
 const pick = document.getElementById('case');
 const groups = [...new Set(M.cases.map((c) => c.group))];
 pick.innerHTML = groups.map((g) => `<optgroup label="${g}">${M.cases.filter((c) => c.group === g).map((c) => `<option value="${c.id}"${c.id === ui.caseId ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</optgroup>`).join('');
-pick.addEventListener('change', () => { ui = Object.assign(ui, { caseId: pick.value, open: null, ship: '', menu: '', tab: '', focus: '', chips: [], parent: null, back: null, titleOpen: false }); render(); });
+pick.addEventListener('change', () => { ui = Object.assign(ui, { caseId: pick.value, open: null, ship: '', menu: '', tab: '', focus: '', chips: (M.cases.find((c) => c.id === pick.value) || {}).chips || [], parent: null, back: null, titleOpen: false, answer: null, file: null, rounds: [], ticks: [], actFilter: 'all' }); render(); });
 function goMember(group, i) {
   Object.assign(ui, { caseId: M.view(group, {}).runCases[i], parent: { caseId: group, index: i }, open: null, tab: '', focus: '', menu: '', titleOpen: false });
   pick.value = ui.caseId; pendingFocus = 'crumb:' + (M.view(ui.caseId, ui).crumbs.length - 1);
@@ -220,12 +295,15 @@ document.addEventListener('click', (e) => {
     document.querySelectorAll('[data-theme-pick]').forEach((b) => b.setAttribute('aria-pressed', String(b === t)));
     return;
   }
+  const tick = e.target.closest('[data-tick]');
+  if (tick) { const i = +tick.dataset.tick; ui.ticks = tick.checked ? ui.ticks.concat(i) : ui.ticks.filter((x) => x !== i); pendingFocus = 'tick:' + i; render(); return; }
   if (!t && e.target.closest('[data-title]')) { ui.titleOpen = !ui.titleOpen; render(); return; }
   if (!t || !t.closest('#card')) { if (ui.menu && !e.target.closest('.menu')) { ui.menu = ''; render(); } return; }
   const d = t.dataset;
   if (d.menu) { const opening = ui.menu !== d.menu; ui.menu = opening ? d.menu : ''; if (opening) pendingFocus = 'menu-first'; }
   else if (d.menuPick) {
-    if (ui.menu === 'add' && M.add.some((x) => x.kind === d.menuPick)) { ui.menu = 'pick-' + d.menuPick; pendingFocus = 'pick-input'; }
+    if (d.menuPick === 'ungroup') { ui.chips = ui.chips.filter((c) => c.kind !== 'group'); ui.menu = ''; pendingFocus = 'menu:add'; }
+    else if (ui.menu === 'add' && M.add.some((x) => x.kind === d.menuPick)) { ui.menu = 'pick-' + d.menuPick; pendingFocus = 'pick-input'; }
     else { pendingFocus = 'menu:' + ui.menu; ui.menu = ''; }
   } else if (d.suggest !== undefined) { addChip(d.suggest); }
   else if (d.openRun !== undefined) { ui.back = { caseId: ui.caseId, open: ui.open, tab: ui.tab }; goMember(ui.caseId, +d.openRun); }
@@ -242,6 +320,14 @@ document.addEventListener('click', (e) => {
   else if (d.tab) { ui.tab = d.tab; ui.focus = ''; if (t.classList.contains('rc-fig-link')) pendingFocus = 'tab:' + d.tab; }
   else if (d.ref) { ui.tab = 'activity'; ui.view = 'steps'; ui.focus = d.ref; pendingFocus = 'act:' + d.ref; render(); document.querySelector('.is-focus')?.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' }); return; }
   else if (d.view) ui.view = d.view;
+  else if (d.answer !== undefined) { ui.answer = +d.answer; pendingFocus = 'answer:' + d.answer; }
+  else if (d.file !== undefined) { ui.file = ui.file === +d.file ? null : +d.file; pendingFocus = 'file:' + d.file; }
+  else if (d.filter) { ui.actFilter = d.filter; pendingFocus = 'filter:' + d.filter; }
+  else if (d.rounds) { ui.rounds = ui.rounds.includes(d.rounds) ? ui.rounds.filter((x) => x !== d.rounds) : ui.rounds.concat(d.rounds); pendingFocus = 'rounds:' + d.rounds; }
+  else if (d.key === 'act-main' && /^(Answer|Approve and build)$/.test(t.textContent.trim())) {
+    // The card's Answer opens the question in Overview, focused on Worca's pick: the answer happens there, in place.
+    ui.tab = 'summary'; render(); const el = document.querySelector('#ov-focus [aria-checked="true"], #ov-focus .btn-primary'); el?.focus({ preventScroll: true }); document.getElementById('ov-focus')?.scrollIntoView({ block: 'nearest' }); return;
+  }
   else { if (ui.menu) { ui.menu = ''; render(); } return; }
   render();
 });

@@ -192,7 +192,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 /* Under 420px of card the action leaves the state's line and sits under it, on the text edge (Card head rule). */
 .rc-card{container-type:inline-size;}
 @container (max-width: 420px){
-  .rc-zone > .rc-side{grid-column:2 / 4;grid-row:3;justify-self:start;margin-top:10px;}
+  .rc-zone > .rc-side{grid-column:2 / 4;grid-row:3;justify-self:start;margin-top:12px;}
   .rc-zone > .rc-detail{grid-row:2;}
 }
 /* Explanations: each menu item carries one help line; the action's menu opens with what the main button does. */
@@ -352,3 +352,100 @@ html,body{height:auto;overflow:visible;margin:0;}
 /* An open group run: its title, its cost, then Open run. */
 .sc-head .sc-run{flex:0 1 auto;}
 .sc-head .sc-run-cost{flex:none;margin-right:auto;font-size:var(--fs-meta);font-variant-numeric:tabular-nums;}
+
+/* Buttons: 28px in the card and its tabs (the bar's size), never the 32px page size; the pointer:coarse rule still
+   gives touch its 40px. Air: 8px between buttons, 16px between a button row and the text above it. */
+.rc-zone:first-child{min-height:28px;}
+.ov-acts{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:8px;}
+
+/* Overview: the lead block is what this state needs from you; then what it did, what you asked, where, artifacts. */
+.ov-focus{display:flex;flex-direction:column;gap:12px;}
+.ov-focus .rtab-h{margin-bottom:-4px;}
+.ov-q{margin:0;font:500 var(--fs-body)/var(--lh-body) var(--sans);color:var(--ink);}
+.ov-focus .qopts{display:flex;flex-direction:column;gap:4px;}
+.ov-focus .input{max-width:420px;}
+.ov-plan{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;}
+.ov-plan li{display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:12px;padding:6px 0;border-top:1px solid var(--line);font-size:var(--fs-body);}
+.ov-plan li:first-child{border-top:0;}
+.ov-n{font:500 var(--fs-meta)/inherit var(--sans);color:var(--ink-2);font-variant-numeric:tabular-nums;text-align:right;}
+.ov-sub{margin:4px 0 -4px;font:600 var(--fs-meta)/var(--lh-title) var(--sans);color:var(--ink-2);}
+.ov-sub.is-warn{color:var(--amber-ink-strong);}
+.ov-checks{list-style:none;margin:0;padding:0;}
+.ov-checks li{border-top:1px solid var(--line);}
+.ov-checks li:first-child{border-top:0;}
+.ov-check{display:grid;grid-template-columns:20px minmax(0,1fr);column-gap:12px;align-items:start;padding:8px 0;font-size:var(--fs-body);cursor:pointer;}
+.ov-check input{margin:3px 0 0;justify-self:center;accent-color:var(--ink);}
+.ov-check:has(input:checked) span{color:var(--ink-2);text-decoration:line-through;text-decoration-color:var(--ink-3);}
+.ov-progress .rd-route-row{padding-bottom:6px;}
+.ov-progress .rd-route-name{font-size:var(--fs-body);font-weight:400;white-space:normal;}
+.ov-progress .is-next .rd-route-name{color:var(--ink-2);}
+.ov-did{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-size:var(--fs-body);color:var(--ink);}
+.ov-task{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;}
+.ov-more{margin-left:auto;margin-block:-6px;}
+.rtab-h .ov-more{font-weight:500;}
+.ov-areas,.ov-arts{list-style:none;margin:0;padding:0;}
+/* One grid per list, rows as subgrids, so folders, counts, bars and numbers each line up down the list. */
+.ov-areas,.ov-arts{display:grid;column-gap:12px;}
+.ov-areas{grid-template-columns:minmax(0,max-content) max-content minmax(48px,1fr) max-content;}
+.ov-arts{grid-template-columns:minmax(0,max-content) minmax(0,1fr) max-content;}
+.ov-areas li,.ov-arts li{grid-column:1 / -1;display:grid;grid-template-columns:subgrid;align-items:center;min-height:36px;border-top:1px solid var(--line);font-size:var(--fs-meta);}
+.ov-areas li:first-child,.ov-arts li:first-child{border-top:0;}
+.ov-areas .ct{justify-content:flex-end;}
+.ov-areas code,.ov-arts code{font-family:var(--mono);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ov-bar{display:flex;height:4px;border-radius:var(--r-xs);overflow:hidden;background:var(--line);}
+.ov-bar i{display:block;height:100%;}
+.ov-bar .add,.ch-blocks .add{background:var(--green);}
+.ov-bar .del,.ch-blocks .del{background:var(--red);}
+.ct{display:inline-flex;gap:8px;font:400 var(--fs-meta)/1 var(--mono);font-variant-numeric:tabular-nums;}
+.ct .add{color:var(--green-ink-strong,var(--green));}
+.ct .del{color:var(--red-ink-strong,var(--red));}
+
+/* Changes: by folder; a file opens its first hunk in place. Columns: status · name · comments · counts · blocks. */
+.ch-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;min-width:0;margin-bottom:8px;}
+.ch-head > .rtab-dim{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
+.ch-list{list-style:none;margin:0;padding:0;}
+.ch-dir{display:flex;align-items:baseline;gap:8px;padding:12px 0 4px;}
+.ch-dir:first-child{padding-top:0;}
+.ch-dir code{font:500 var(--fs-meta)/var(--lh-title) var(--mono);color:var(--ink-2);}
+.ch-file{border-top:1px solid var(--line);}
+.ch-dir + .ch-file{border-top:0;}
+.ch-row{display:grid;grid-template-columns:20px minmax(0,1fr) 24px max-content max-content;align-items:center;column-gap:12px;width:100%;min-height:36px;
+  padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer;}
+.ch-row:hover .ch-name{text-decoration:underline;text-underline-offset:3px;}
+.ch-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+.ch-st{justify-self:center;font:600 var(--fs-caption)/1 var(--mono);color:var(--ink-2);}
+.ch-st.is-A{color:var(--green-ink-strong,var(--green));}
+.ch-name{font:400 var(--fs-meta)/var(--lh-title) var(--mono);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ch-notes{justify-self:end;font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;}
+.ch-notes:not(:empty)::before{content:'';display:inline-block;width:6px;height:6px;margin-right:4px;border-radius:50%;background:var(--blue);vertical-align:1px;}
+.ch-row .ct{justify-content:flex-end;min-width:88px;}
+.ch-blocks{display:inline-flex;gap:2px;}
+.ch-blocks i{width:7px;height:7px;border-radius:1px;background:var(--line-2);}
+.ch-diff{margin:0 0 12px 32px;padding:8px 12px;background:var(--field);border-radius:var(--r-sm);display:flex;flex-direction:column;align-items:flex-start;gap:8px;min-width:0;}
+.ch-at{margin:0;font:500 var(--fs-caption)/1.4 var(--mono);color:var(--ink-2);}
+.ch-diff pre{margin:0;max-width:100%;overflow-x:auto;font:400 var(--fs-meta)/1.6 var(--mono);color:var(--ink-2);}
+.ch-diff pre .add{color:var(--green-ink-strong,var(--green));}
+.ch-diff pre .del{color:var(--red-ink-strong,var(--red));}
+
+/* Activity: a filter and the graph link on one bar; each stage's share of the cost; rounds open under a step. */
+.rtab-bar{align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+.ac-share{flex:0 0 64px;height:4px;margin-left:auto;align-self:center;border-radius:var(--r-xs);background:var(--line);overflow:hidden;}
+.ac-share i{display:block;height:100%;background:var(--ink-3);}
+.sc-loop.is-btn{display:inline-flex;align-items:center;gap:3px;padding:2px 4px;margin:-2px -4px;border:0;border-radius:var(--r-xs);background:none;color:inherit;font:inherit;cursor:pointer;}
+.sc-loop.is-btn:hover{background:var(--hover);color:var(--ink);}
+.sc-loop.is-btn[aria-expanded="true"]{background:var(--field);color:var(--ink);}
+.sc-loop.is-btn:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.sc-row.is-round{padding-bottom:2px;}
+.sc-row.is-round::before{display:none;}
+.ac-round-n{justify-self:center;font:500 var(--fs-caption)/1 var(--sans);color:var(--ink-2);font-variant-numeric:tabular-nums;}
+.ac-why{font-size:var(--fs-meta);font-weight:400;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+/* Decisions: who decided, on the rail: you, Away mode, or Worca's default; a question still open leads. */
+.dc-list .rd-route-row{padding-bottom:12px;}
+.dc-list .rd-route-row::before{background:var(--line);}
+.dc-who{color:var(--ink-2);background:var(--panel);box-shadow:inset 0 0 0 1px var(--line-2);}
+.dc-who.is-away{color:var(--blue-ink-strong);}
+.dc-body{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.dc-body p{margin:0;}
+.dc-a{font-size:var(--fs-body);color:var(--ink);}
+.dc-link{padding:0;border:0;background:none;font:inherit;color:var(--ink);text-decoration:underline;text-underline-offset:3px;cursor:pointer;}
