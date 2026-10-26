@@ -1212,7 +1212,7 @@ test('style.css: board 18 on the type scale and the 6px corner; AA inks; 44px hi
   assert.match(chip, /border-radius:var\(--r-sm\)/);
   assert.match(chip, /font-size:var\(--fs-meta\)/);
   assert.match(chip, /color:var\(--ink-2\)/, 'the name and the + on --panel: 6.6:1');
-  // attached (user decision): a green outline and a green check, no fill (A2's .req-confirm[aria-pressed="true"] pattern);
+  // attached: a green outline and a green check, no fill (A2's .req-confirm[aria-pressed="true"] pattern);
   // on .on, so ui-shared-controls' "no on control is filled green" watches it
   assert.equal(rule('.req-fpick.on'), 'border:1px solid var(--green-ink-strong);background:var(--panel);color:var(--green-ink-strong)', 'the check and outline 5.7:1 on --panel');
   assert.equal(rule('.req-fpick.on .req-fpick-name'), 'color:var(--ink)', 'one weight on and off: no shift when pressed');

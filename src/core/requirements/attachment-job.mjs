@@ -4,7 +4,7 @@
 // recovery after a restart, the boot sweep and the estimates. A read never throws out: a failure is the file's `failed`
 // status, and a read the spending limit stops leaves it `unread-budget`. And what a start sends to its run (D14).
 // interview.mjs and this module import each other: neither uses the other's bindings at module top level.
-import { chmodSync, copyFileSync, createReadStream, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, constants as fsConstants, copyFileSync, createReadStream, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { copyFile, mkdir, rm } from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -609,12 +609,16 @@ const STAGED_MAX_NAME = 200;     // code points, as downloadFilename
 const STAGED_MAX_BYTES = 255;    // UTF-8 bytes: the name limit of ext4 and APFS
 const utf8Size = (s) => Buffer.byteLength(s, 'utf8');
 
-/** D14: `name` (a stagedName), else "<stem> (2)<ext>", "<stem> (3)<ext>" …: the first not in `taken` (ignoring case, as
- *  Windows and macOS do). The stem is shortened so the name with its suffix stays within 200 code points and 255 UTF-8
- *  bytes; the suffix and the extension are never cut. */
+/** How a file system may compare two names: case-insensitively (Windows, macOS) and with Unicode normalised (macOS
+ *  stores "café" composed or decomposed as one name). */
+const nameKey = (s) => String(s).normalize('NFC').toLowerCase();
+
+/** D14: `name` (a stagedName), else "<stem> (2)<ext>", "<stem> (3)<ext>" …: the first not in `taken` (ignoring case and
+ *  Unicode normalisation, as Windows and macOS do). The stem is shortened so the name with its suffix stays within 200
+ *  code points and 255 UTF-8 bytes; the suffix and the extension are never cut. */
 export function uniqueStagedName(name, taken = []) {
-  const used = new Set(taken.map((t) => String(t).toLowerCase()));
-  if (!used.has(name.toLowerCase())) return name;
+  const used = new Set(taken.map(nameKey));
+  if (!used.has(nameKey(name))) return name;
   const dot = name.lastIndexOf('.');
   const ext = dot > 0 && name.length - dot <= 16 ? name.slice(dot) : '';   // downloadFilename's extension rule
   const stem = Array.from(ext ? name.slice(0, -ext.length) : name);
@@ -623,7 +627,7 @@ export function uniqueStagedName(name, taken = []) {
     const cut = stem.slice(0, Math.max(1, STAGED_MAX_NAME - Array.from(tail).length));
     while (cut.length > 1 && utf8Size(cut.join('') + tail) > STAGED_MAX_BYTES) cut.pop();
     const cand = `${cut.join('')}${tail}`;
-    if (!used.has(cand.toLowerCase())) return cand;
+    if (!used.has(nameKey(cand))) return cand;
   }
 }
 
@@ -659,11 +663,19 @@ export async function withStagedRunFiles(runId, list, start, { base = tmpdir() }
   const taken = [];
   const paths = [];
   for (const f of list) {
-    const name = uniqueStagedName(stagedName(f.name), taken);   // unique after the mapping: "notes.md." and "notes.md" differ
-    taken.push(name);
-    const dest = join(dir, name);
+    let dest;
     try {
-      await copyFile(f.path, dest);   // async: up to 10 × 25 MB plus documents, off the request's thread
+      // Unique after the mapping ("notes.md." and "notes.md" differ); COPYFILE_EXCL never overwrites a name the file
+      // system holds as the same one: on EEXIST the next unique name is taken.
+      for (let tries = 0; ; tries += 1) {
+        const name = uniqueStagedName(stagedName(f.name), taken);
+        taken.push(name);
+        dest = join(dir, name);
+        try {
+          await copyFile(f.path, dest, fsConstants.COPYFILE_EXCL);   // async: up to 10 × 25 MB plus documents, off the request's thread
+          break;
+        } catch (err) { if (!(err && err.code === 'EEXIST') || tries >= 20) throw err; }
+      }
       if (f.sha256 && (await sha256OfFile(dest)) !== f.sha256) throw new Error('the copy is not the version the start chose');
     } catch (err) {
       console.error(`requirements: a file of run ${runId} could not be staged:`, message(err));

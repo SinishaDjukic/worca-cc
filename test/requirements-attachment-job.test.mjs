@@ -801,8 +801,10 @@ test('D14: staged names follow downloadFilename: every reserved device name, at 
   assert.equal(new Set(names.map((n) => n.toLowerCase())).size, 4, 'four repeats, four names');
   for (const n of names) assert.ok(bytes(n) <= 255 && Array.from(n).length <= 200 && n.endsWith('.pdf'), `${n}: ${bytes(n)} bytes`);
   assert.deepEqual(names.slice(1).map((n) => n.slice(-8)), [' (2).pdf', ' (3).pdf', ' (4).pdf']);
-  const long = `${'a'.repeat(198)}.md`;   // 200 code points: the suffix shortens the stem
-  assert.equal(Array.from(job.uniqueStagedName(job.stagedName(long), [long])).length, 200);
+  const long = `${'a'.repeat(197)}.md`;   // 200 code points (displayName's cap): the suffix shortens the stem
+  const second = job.uniqueStagedName(job.stagedName(long), [job.stagedName(long)]);
+  assert.ok(second.endsWith(' (2).md'), second);
+  assert.equal(Array.from(second).length, 200);
   assert.equal(job.uniqueStagedName('Notes.md', ['notes.md', 'NOTES (2).md']), 'Notes (3).md', 'case-insensitive');
   // the names stage on this file system, with their repeats
   const base = join(worcaHome(), 'tmp', 'stage-test-long');
@@ -832,6 +834,37 @@ test('D14: a copy that fails on the temp side while the stored body is intact an
   let ran = false;
   const out = await job.withStagedRunFiles('r-dest', [entry], async () => { ran = true; return { status: 201 }; }, { base });
   assert.deepEqual([out.status, out.body.error, ran], [500, 'Worca could not finish that. Try again.', false]);
+});
+
+test('D14: a composed and a decomposed name are one name to the staging (macOS): two copies, neither overwrites the other', async () => {
+  const nfc = 'café.md';
+  const nfd = 'café.md';
+  assert.notEqual(nfc, nfd);
+  assert.equal(job.uniqueStagedName(nfd, [nfc]), 'café (2).md', 'compared after NFC');
+  const base = join(worcaHome(), 'tmp', 'stage-test-nfc');
+  mkdirSync(base, { recursive: true });
+  const one = join(base, 'one.bin');
+  const two = join(base, 'two.bin');
+  writeFileSync(one, 'one');
+  writeFileSync(two, 'two');
+  const out = await job.withStagedRunFiles('r-nfc', [{ name: nfc, path: one }, { name: nfd, path: two }], async (paths) => ({ status: 201, body: { paths } }), { base });
+  assert.equal(out.status, 201, JSON.stringify(out.body));
+  assert.deepEqual(out.body.paths.map((p) => readFileSync(p, 'utf8')), ['one', 'two'], 'each copy holds its own file');
+  assert.equal(new Set(out.body.paths).size, 2);
+});
+
+test('D14: a staged copy never overwrites a file already in the run folder: on EEXIST it takes the next name', async () => {
+  const base = join(worcaHome(), 'tmp', 'stage-test-excl');
+  const dir = join(base, 'orchestrator-extras-r-excl');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'a.md'), 'already there');
+  const src = join(base, 'a.bin');
+  writeFileSync(src, 'new');
+  const out = await job.withStagedRunFiles('r-excl', [{ name: 'a.md', path: src }], async (paths) => ({ status: 201, body: { paths } }), { base });
+  assert.equal(out.status, 201, JSON.stringify(out.body));
+  assert.equal(out.body.paths[0].split(/[\\/]/).pop(), 'a (2).md');
+  assert.equal(readFileSync(join(dir, 'a.md'), 'utf8'), 'already there', 'not overwritten');
+  assert.equal(readFileSync(out.body.paths[0], 'utf8'), 'new');
 });
 
 test('D14: bodyUsable decides fileView.sendable and unsendableRunFile alike: a missing body or a version not stored cannot go; a failed read with its body can', async () => {
