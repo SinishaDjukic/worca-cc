@@ -14,13 +14,31 @@ html,body{height:auto;overflow:visible;margin:0;}
 
 .rc{--rail:20px;--gap:12px;display:flex;flex-direction:column;gap:16px;min-width:0;}
 
-/* Title block: title (two lines, then an ellipsis), one meta line that truncates its longest part. */
+/* Title block: the title on one line with an ellipsis (its tooltip, a tap and the Summary task give the full text),
+   the group's kind after it, then the place line: where the code lives and goes, the PR, labels and tags, and +. */
 .rc-head{display:flex;flex-direction:column;gap:6px;min-width:0;}
 .rc-heading{margin:0;font:700 var(--fs-page)/var(--lh-title) var(--sans);letter-spacing:-.02em;
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.rc-heading.is-open{white-space:normal;}
+.rc-title-row{display:flex;align-items:center;gap:12px;min-width:0;}
+.rc-title-row > .rc-heading{flex:0 1 auto;min-width:0;cursor:default;}
+.rc-title-row > .kind-chip{flex:none;}
 .rc-facts{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
-.rc-facts > *{flex:none;}
-.rc-facts > .rc-trunc{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.rc-facts > *{flex:none;max-width:100%;}
+.rc-facts > .rc-place{flex:0 1 auto;min-width:0;display:inline-flex;align-items:center;gap:4px;}
+.rc-place .btn{margin-block:-6px;flex:none;}
+.rc-mid{display:inline-flex;min-width:0;font-family:var(--mono);}   /* loses its middle, keeps its end */
+.rc-mid-a{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.rc-mid-b{flex:none;}
+.rc-to{color:var(--ink-3);}
+.rc-base{flex:none;font-family:var(--mono);}
+.rc-pr{color:var(--ink);text-decoration:none;font-weight:500;font-variant-numeric:tabular-nums;}
+.rc-pr:hover{text-decoration:underline;text-underline-offset:3px;}
+.rc-chips{display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;}
+.rc-chips .label-chip,.rc-chips .tag-chip{max-width:24ch;flex:none;}
+.rc-chips .label-chip{height:18px;font-size:var(--fs-caption);font-weight:500;border-radius:var(--r-xs);}
+.rc-chips .label-chip-t{overflow:hidden;text-overflow:ellipsis;}
+.rc-chips .tag-chip{overflow:hidden;text-overflow:ellipsis;}
 .rc-sep{color:var(--ink-3);}
 
 /* The card: zones on the shared grid, split by one --line. */
@@ -141,8 +159,8 @@ html,body{height:auto;overflow:visible;margin:0;}
 .sc-head.is-end{justify-content:flex-end;}
 
 /* The facts line: project · branch · start, then chips that exist, then + to add one. */
-.rc-facts .label-chip,.rc-facts .tag-chip,.rc-facts .kind-chip{flex:none;}
-.rc-facts .tag-chip{height:18px;font-size:var(--fs-caption);font-weight:500;border-radius:var(--r-xs);}
+.rc-chips .label-chip,.rc-chips .tag-chip,.rc-facts .kind-chip{flex:none;}
+.rc-chips .tag-chip{height:18px;font-size:var(--fs-caption);font-weight:500;border-radius:var(--r-xs);}
 .rc-facts .rc-add{margin-block:-6px;flex:none;}
 .rc-pop{position:relative;display:inline-flex;}
 .rc-pop > .menu{position:absolute;z-index:5;top:calc(100% + 6px);left:0;min-width:180px;}
@@ -167,15 +185,15 @@ html,body{height:auto;overflow:visible;margin:0;}
 .sk-word.is-done{color:var(--green-ink);}
 .sk-word.is-problem{color:var(--amber-ink);}
 .sk-list .rd-route-second{font-size:var(--fs-meta);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;overflow-wrap:normal;}
-.sk-list .is-next-up{background:var(--row-selected);box-shadow:0 0 0 8px var(--row-selected);border-radius:var(--r-xs);margin-bottom:12px;}
-.sk-list .is-next-up::before{display:none;}
+.sk-list .is-next-up .sk-word{font-weight:600;}
 .sk-note{padding-left:32px;font-size:var(--fs-meta);color:var(--ink-2);}
 .sc-cell.is-review{background:none;box-shadow:inset 0 0 0 1px var(--ink-3);}   /* waiting on people: hollow, not a colour */
 .sk-word.is-review{color:var(--blue-ink-strong);}
 /* Under 420px of card the action leaves the state's line and sits under it, on the text edge (Card head rule). */
 .rc-card{container-type:inline-size;}
 @container (max-width: 420px){
-  .rc-zone > .rc-side{grid-column:2 / 4;grid-row:auto;justify-self:start;margin-top:10px;}
+  .rc-zone > .rc-side{grid-column:2 / 4;grid-row:3;justify-self:start;margin-top:10px;}
+  .rc-zone > .rc-detail{grid-row:2;}
 }
 /* Explanations: each menu item carries one help line; the action's menu opens with what the main button does. */
 .rc-pop > .menu{min-width:260px;max-width:300px;}
@@ -242,7 +260,35 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rtab-stage .sc-subs{margin-left:calc(-1 * (var(--rail) + var(--gap)));}   /* rows put their circle back on the rail */
 
 /* ---- Review round: bar, figures, evidence, radio, narrow widths ---- */
-.rc-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:-4px;}
+.rc{container-type:inline-size;}
+.rc-bar{display:flex;align-items:center;gap:8px;margin-bottom:-4px;min-height:28px;}
+.rc-bar-end{margin-left:auto;}
+/* The trail: Runs › place › group. The page is never a crumb; on a narrow page only the parent stays, as ‹ Parent. */
+.rc-crumbs{flex:0 1 auto;min-width:0;}
+.rc-crumbs ol{display:flex;align-items:center;gap:6px;margin:0;padding:0;list-style:none;min-width:0;}
+.rc-crumbs li{display:flex;align-items:center;gap:6px;min-width:0;flex:0 1 auto;}
+.rc-crumbs li:not(:last-child){flex:none;}
+.rc-crumbs li + li::before{content:'›';color:var(--ink-3);}
+.rc-crumb{padding:0;border:0;background:none;font:inherit;font-size:var(--fs-meta);color:var(--ink-2);text-decoration:none;cursor:pointer;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:32ch;}
+.rc-crumb:hover{color:var(--ink);text-decoration:underline;text-underline-offset:3px;}
+.rc-crumb:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+.rc-pager{display:inline-flex;align-items:center;gap:2px;flex:none;padding-left:8px;border-left:1px solid var(--line);}
+.rc-pager-n{font-size:var(--fs-meta);color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;padding-inline:2px;}
+@container (max-width: 728px){   /* Navigation R2: at 760px of window and below, one link, ‹ Parent name */
+  .rc-crumbs li:not(.is-parent){display:none;}
+  .rc-crumbs li.is-parent::before{content:'‹';color:var(--ink-2);font-size:var(--fs-body);}
+  .rc-crumbs{flex:1 1 auto;}
+}
+@container (max-width: 520px){
+  .rc-bar [data-key="bar:pause"]{display:none;}   /* Pause moves into ⋯; Stop and ⋯ stay */
+  /* below the card nothing frames an indent, so tabs and panels take the page's edge */
+  .rc-tabs{margin-inline:0;}
+  .rtab-panel{margin-inline:0;}
+  .rtab,.rtab-bar,.rtab-panel > .rtab-dec:not(.is-runs){padding-left:0;}
+  .rtab-stage .sc-subs{margin-left:0;}
+}
+.menu{max-width:calc(100vw - 32px);}
 .rc-bar-end{display:flex;align-items:center;gap:8px;}
 .rc-bar .btn svg{flex:none;}
 .rc-figs .rc-of{margin-left:4px;color:var(--ink-2);font-size:var(--fs-meta);}
@@ -300,3 +346,9 @@ html,body{height:auto;overflow:visible;margin:0;}
 .sc-subs > .sc-stage-row:first-child{padding-top:0;}
 .sc-subs > .sc-row:has(+ .sc-stage-row){padding-bottom:0;}
 .sc-subs > .sc-row:has(+ .sc-stage-row)::before{display:none;}
+
+/* A step that asks or failed keeps two lines of what it says; live progress stays one line. */
+.sc-row:is(.is-ask,.is-failed,.is-problem) > .sc-line{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+/* An open group run: its title, its cost, then Open run. */
+.sc-head .sc-run{flex:0 1 auto;}
+.sc-head .sc-run-cost{flex:none;margin-right:auto;font-size:var(--fs-meta);font-variant-numeric:tabular-nums;}

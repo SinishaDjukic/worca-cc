@@ -23,12 +23,12 @@ const ICON = {
 const svg = (name, size) => (ICON[name] ? `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>` : '');
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-let ui = { caseId: 'working', open: null, chips: [], ship: '', menu: '', tab: '', focus: '', view: 'steps', kind: '', title: '', back: null };
+let ui = { caseId: 'working', open: null, chips: [], ship: '', menu: '', tab: '', focus: '', view: 'steps', parent: null, back: null };
 
 function statusDot(v) {
   if (v.sym) {
     const g = v.sym === 'q' ? ICON.question : ICON.alert;
-    return `<span class="status-dot ${v.sym === 'q' ? 'is-amber' : 'is-red'} has-sym" role="img" aria-label="${v.word}"><svg class="status-sym" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="currentColor" stroke="none"></circle><g fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${g}</g></svg></span>`;
+    return `<span class="status-dot ${v.sym === 'q' ? 'is-amber' : 'is-red'} has-sym" aria-hidden="true"><svg class="status-sym" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="currentColor" stroke="none"></circle><g fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${g}</g></svg></span>`;
   }
   return `<span class="status-dot ${v.dot}" aria-hidden="true"></span>`;
 }
@@ -41,9 +41,8 @@ function menu(id, items, lead) {
 }
 function chip(c, i) {
   const x = `<button type="button" class="tag-x" aria-label="Remove ${esc(c.text)}" data-unchip="${i}">${svg('x', 10)}</button>`;
-  if (c.kind === 'label') return `<span class="label-chip"><span class="label-dot hue-blue"></span><span class="label-chip-t">${esc(c.text)}</span>${x}</span>`;
-  if (c.kind === 'tag') return `<span class="badge tag-chip">${esc(c.text)}${x}</span>`;
-  return `<span class="kind-chip">${esc(c.text)} ›</span>`;
+  if (c.kind === 'label') return `<span class="label-chip"><span class="label-dot hue-blue"></span><span class="label-chip-t" title="${esc(c.text)}">${esc(c.text)}</span>${x}</span>`;
+  return `<span class="badge tag-chip" title="${esc(c.text)}">${esc(c.text)}${x}</span>`;
 }
 // The + picker: after choosing Label, Cost tag or group, a small field to type one, with existing values to pick.
 function pickerHtml(kind) {
@@ -116,10 +115,7 @@ function decisionsPanel(v) {
   return `<ul class="rtab-dec">${v.tabData.decisions.map((x) => `<li><span class="rtab-dim">${esc(x.step)}</span><span class="rtab-q">${esc(x.q)}</span><span>${esc(x.a)}</span><span class="rtab-dim">${esc(x.by)}</span></li>`).join('')}</ul>`;
 }
 function runsPanel(v) {
-  const runs = v.activity.filter((st) => /^run/.test(st.key));
-  return `<ul class="rtab-dec is-runs">${runs.map((st, i) => { const live = st.rows.find((r) => /is-(now|ask|problem|failed)/.test(r.rowCls)); const done = st.rows.every((r) => /is-done/.test(r.rowCls));
-    const line = [done ? 'Done' : live ? live.name : 'Waiting', st.meta, v.runPRs[i]].filter(Boolean).join(' · ');
-    return `<li><span class="status-dot ${done ? 'is-green' : live ? 'is-peach is-pulse' : 'is-grey-ring'}" aria-hidden="true"></span><span class="rtab-q">${esc(st.label)} · ${esc(st.title)}</span><span class="rtab-dim">${esc(line)}</span>${v.runCases[i] ? `<button type="button" class="btn btn-sm btn-quiet" data-open-run="${i}" data-key="run:${i}">Open</button>` : ''}</li>`; }).join('')}</ul>`;
+  return `<ul class="rtab-dec is-runs">${v.runs.map((r) => `<li><span class="status-dot ${r.dot}${/peach/.test(r.dot) ? ' is-pulse' : ''}" aria-hidden="true"></span><span class="rtab-q" title="${esc(r.title)}">${esc(r.title)}</span><span class="rtab-dim">${esc([r.word, r.time, r.cost, r.pr].filter(Boolean).join(' · '))}</span>${r.canOpen ? `<button type="button" class="btn btn-sm btn-quiet" data-open-run="${r.n - 1}" data-key="run:${r.n - 1}" aria-label="Open run ${r.n}: ${esc(r.title)}">Open</button>` : ''}</li>`).join('')}</ul>`;
 }
 function panelHtml(v) {
   const id = (v.tabs.find((t) => t.sel) || v.tabs[0]).id;
@@ -127,7 +123,7 @@ function panelHtml(v) {
 }
 function figHtml(f) {
   if (f.tab) return `<button type="button" class="rc-fig-link" data-tab="${f.tab}" data-key="fig:${f.tab}" title="Open Changes">${esc(f.k)}<b>${esc(f.v)}</b></button>`;
-  return `<span${f.title ? ` title="${esc(f.title)}"` : ''}>${esc(f.k)}<b>${esc(f.v)}</b>${f.of ? `<span class="rc-of${f.warn ? ' is-warn' : ''}">${esc(f.of)}</span>` : ''}</span>`;
+  return `<span${f.title ? ` title="${esc(f.title)}"` : ''}>${esc(f.k)} <b>${esc(f.v)}</b>${f.of ? `<span class="rc-of${f.warn ? ' is-warn' : ''}">${esc(f.of)}</span>` : ''}</span>`;
 }
 
 function render() {
@@ -137,27 +133,43 @@ function render() {
   const a = v.action;
   const action = a ? `<div class="rc-side"><div class="btn-split rc-action rc-pop is-right"><button type="button" class="btn ${a.primary ? 'btn-primary' : ''}" title="${esc(a.help)}" data-key="act-main">${svg(a.icon, 16)}${esc(a.label)}</button>${a.items.length ? `<button type="button" class="btn btn-icon ${a.primary ? 'btn-primary' : ''}" aria-label="More actions" aria-haspopup="menu" aria-expanded="${ui.menu === 'act'}" data-menu="act" data-key="menu:act">${svg('chevron', 16)}</button>${menu('act', a.items, a.help)}` : ''}</div></div>` : '';
   const addable = M.add.filter((x) => x.kind !== 'group' || !ui.chips.some((c) => c.kind === 'group'));   // many labels and tags, one group
-  const place = v.branch ? `<span class="sc-branch" title="${esc(v.branch)}"><code>${esc(v.branch)}</code><button type="button" class="btn btn-sm btn-quiet btn-icon" aria-label="Copy branch name" data-key="copy">${svg('copy', 12)}</button></span>`
-    : v.folder ? `<span class="sc-branch" title="${esc(v.folder)}"><code>${esc(v.folder)}</code></span>` : '';
-  const kindChip = !v.kind ? '' : ui.back ? `<button type="button" class="kind-chip rc-kind-link" data-back-group data-key="back-group" title="Back to the ${esc(ui.back.word)}">${esc(v.kind)}</button>` : `<span class="kind-chip">${esc(v.kind)}</span>`;
-  const facts = [kindChip, `<span class="rc-trunc">${esc(v.project)}</span>`, place, `<span>${esc(v.started)}</span>`].filter(Boolean)
-    .join('<span class="rc-sep">·</span>') + ui.chips.map(chip).join('')
-    + (addable.length ? `<span class="rc-pop"><button type="button" class="btn btn-sm btn-quiet btn-icon rc-add" aria-label="Add a label, cost tag or group" aria-haspopup="menu" aria-expanded="${ui.menu === 'add' || ui.menu.startsWith('pick-')}" data-menu="add" data-key="menu:add">${svg('plus', 14)}</button>${ui.menu.startsWith('pick-') ? pickerHtml(ui.menu.slice(5)) : menu('add', addable.map((x) => ({ id: x.kind, text: x.menu, help: x.help })))}</span>` : '');
+  // The place line: branch → base with copy, or the folder, or the repositories; the PR once it exists. The branch
+  // loses its middle, never its end, so sibling runs (-2, -3) stay apart.
+  const pl = v.place;
+  const mid = (t) => { const k = Math.max(t.lastIndexOf('-'), t.lastIndexOf('/')); const cut = k > 0 && t.length - k <= 16 ? k : Math.max(0, t.length - 12); return `<code class="rc-mid" title="${esc(t)}"><span class="rc-mid-a">${esc(t.slice(0, cut))}</span><span class="rc-mid-b">${esc(t.slice(cut))}</span></code>`; };
+  const where = pl.folder ? `<span class="rc-place">${mid(pl.folder)}</span>`
+    : pl.branch ? `<span class="rc-place">${mid(pl.branch)}${pl.copy ? `<button type="button" class="btn btn-sm btn-quiet btn-icon" aria-label="Copy branch name" data-key="copy">${svg('copy', 12)}</button>` : ''}${pl.base ? `<span class="rc-to" aria-label="into">→</span><code class="rc-base">${esc(pl.base)}</code>` : ''}</span>` : '';
+  const repos = pl.repos.length ? `<span>${pl.repos.length} repositories</span>` : '';
+  const pr = pl.pr ? `<a class="rc-pr" href="#" data-key="pr" title="Open ${esc(pl.pr)} on GitHub">${esc(pl.pr)}</a>` : '';
+  // + stays at the end of the place line; labels and tags, once added, get their own wrapping row under it.
+  const chipRow = ui.chips.length ? `<div class="rc-chips">${ui.chips.map(chip).join('')}</div>` : '';
+  const placeLine = [where, repos, pr].filter(Boolean).join('<span class="rc-sep" aria-hidden="true">·</span>');
+  const add = (addable.length ? `<span class="rc-pop"><button type="button" class="btn btn-sm btn-quiet btn-icon rc-add" aria-label="Add a label, cost tag or group" aria-haspopup="menu" aria-expanded="${ui.menu === 'add' || ui.menu.startsWith('pick-')}" data-menu="add" data-key="menu:add">${svg('plus', 14)}</button>${ui.menu.startsWith('pick-') ? pickerHtml(ui.menu.slice(5)) : menu('add', addable.map((x) => ({ id: x.kind, text: x.menu, help: x.help })))}</span>` : '');
+  const facts = placeLine ? placeLine + add : '';   // a group page has no place line: + sits after its kind
+  // Where you are: Runs › place › group, the page itself never a crumb; on a narrow card only the parent, as ‹ Parent.
+  const crumbs = `<nav class="rc-crumbs" aria-label="Breadcrumb"><ol>${v.crumbs.map((c, i) => `<li${i === v.crumbs.length - 1 ? ' class="is-parent"' : ''}>${c.go ? `<button type="button" class="rc-crumb" data-crumb="${i}" data-key="crumb:${i}" title="${esc(c.t)}">${esc(c.t)}</button>` : `<a class="rc-crumb" href="#" data-key="crumb:${i}" title="${esc(c.t)}">${esc(c.t)}</a>`}</li>`).join('')}</ol></nav>`;
+  // A run in a group steps to its siblings; a run that has not started has no page yet.
+  const pg = v.pager;
+  const left = svg('chevron', 14).replace('M6 9.5l6 6 6-6', 'M14.5 6l-6 6 6 6');
+  const right = svg('chevron', 14).replace('M6 9.5l6 6 6-6', 'M9.5 6l6 6-6 6');
+  const sib = (x, dir, icon) => `<button type="button" class="btn btn-sm btn-quiet btn-icon" data-sib="${x ? x.index : ''}" data-key="sib:${dir}" aria-label="${dir === 'prev' ? 'Previous' : 'Next'} run"${x && x.ok ? '' : ` disabled${x ? ` title="Run ${x.index + 1} hasn’t started"` : ''}`}>${icon}</button>`;
+  const pager = pg ? `<span class="rc-pager" role="group" aria-label="Runs in this group">${sib(pg.prev, 'prev', left)}<span class="rc-pager-n">${pg.index + 1} of ${pg.n}</span>${sib(pg.next, 'next', right)}</span>` : '';
+  const scope = v.bar.scope ? ` title="Applies to the whole ${esc(v.bar.scope)}: the running run and the ones after it"` : '';
 
   const track = v.stages.map((st) => `<div class="sc-seg">${st.cells.map((c) => `<span class="sc-cell ${c}"></span>`).join('')}</div>`).join('');
   // The stage row is a real tablist: one Tab stop (the selected stage), arrows move, each tab names the panel it controls.
-  const stages = v.stages.map((st) => `<button type="button" class="sc-stage" role="tab" id="st-${st.key}" aria-controls="stage-panel" aria-selected="${st.selected}" tabindex="${st.selected ? 0 : -1}" data-stage="${st.key}" data-key="stage:${st.key}" aria-label="${esc(st.aria)}"><span class="l">${esc(st.label)}</span><span class="m">${esc(st.meta)}</span></button>`).join('');
+  const stages = v.stages.map((st) => `<button type="button" class="sc-stage" role="tab" id="st-${st.key}" aria-controls="stage-panel" aria-selected="${st.selected}" tabindex="${st.selected ? 0 : -1}" data-stage="${st.key}" data-key="stage:${st.key}" aria-label="${esc(st.aria)}" title="${esc(st.aria)}"><span class="l">${esc(st.label)}</span><span class="m">${esc(st.meta)}</span></button>`).join('');
   const o = v.open;
   const enter = o.key !== lastOpen; lastOpen = o.key;   // the steps fade in only when another stage opens, never on a repaint
-  const head = o.isRun ? `<div class="sc-head"><span class="sc-run" title="${esc(o.title)}">${esc(o.label)} · ${esc(o.title)}${o.meta ? `<span class="rtab-dim"> · ${esc(o.meta)}</span>` : ''}</span>${o.canOpen ? `<button type="button" class="btn btn-sm" data-open-run="${o.runIndex}" data-key="open-run">Open run</button>` : ''}</div>`
-    : o.browsing ? '<div class="sc-head is-end"><button type="button" class="btn btn-sm btn-quiet" data-back data-key="back">Back to now</button></div>' : '';
+  const head = o.isRun ? `<div class="sc-head"><span class="sc-run" title="${esc(o.title)}">${esc(o.title)}</span>${o.meta ? `<span class="rtab-dim sc-run-cost">${esc(o.meta)}</span>` : ''}${o.canOpen ? `<button type="button" class="btn btn-sm" data-open-run="${o.runIndex}" data-key="open-run">Open run</button>` : ''}</div>`
+    : '';
   const panel = o.stack ? stackHtml(Object.assign({}, o.stack, { enter })) : `<ol class="rd-route-list sc-subs${enter ? ' is-enter' : ''}" aria-label="${esc(o.label)} steps" style="grid-column:1 / -1">${o.rows.map((r) => rowHtml(r)).join('')}</ol>`;
   const sel = (v.tabs.find((t) => t.sel) || v.tabs[0]).id;
 
   document.getElementById('card').innerHTML = `
   <div class="rc">
-    <div class="rc-bar"><button type="button" class="btn btn-sm btn-quiet btn-icon" aria-label="Back to Runs" data-key="bar:back">${svg('chevron', 14).replace('M6 9.5l6 6 6-6', 'M14.5 6l-6 6 6 6')}</button><span class="rc-bar-end">${v.bar.pause ? `<button type="button" class="btn btn-sm" data-key="bar:pause">${svg('pause', 14)}Pause</button>` : ''}${v.bar.stop ? '<button type="button" class="btn btn-sm btn-danger" data-key="bar:stop">Stop</button>' : ''}<button type="button" class="btn btn-sm btn-icon" aria-label="More for this run" data-key="bar:more"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg></button></span></div>
-    <div class="rc-head"><h1 class="rc-heading" title="${esc(v.title)}">${esc(v.title)}</h1><div class="rc-facts">${facts}</div></div>
+    <div class="rc-bar">${crumbs}${pager}<span class="rc-bar-end">${v.bar.pause ? `<button type="button" class="btn btn-sm" data-key="bar:pause"${scope}>${svg('pause', 14)}Pause</button>` : ''}${v.bar.stop ? `<button type="button" class="btn btn-sm btn-danger" data-key="bar:stop"${scope}>Stop</button>` : ''}<button type="button" class="btn btn-sm btn-icon" aria-label="More for this run" data-key="bar:more"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg></button></span></div>
+    <div class="rc-head"><div class="rc-title-row"><h1 class="rc-heading${ui.titleOpen ? ' is-open' : ''}" title="${esc(v.title)}" data-title>${esc(v.title)}</h1>${v.kind ? `<span class="kind-chip">${esc(v.kind)}</span>` : ''}${placeLine ? '' : add}</div>${facts ? `<div class="rc-facts">${facts}</div>` : ''}${chipRow}</div>
     <section class="rc-card" aria-label="Run status">
       <div class="rc-zone"><span class="rc-rail">${statusDot(v)}</span><span class="rc-main rc-word">${esc(v.word)}</span>${action}${v.detail ? `<span class="rc-detail" title="${esc(v.detail)}">${esc(v.detail)}</span>` : ''}</div>
       <div class="rc-zone"><div class="rc-span"><div class="sc-track" style="grid-template-columns:repeat(${v.stages.length},minmax(0,1fr))" aria-hidden="true">${track}</div><div class="sc-stages" style="grid-template-columns:repeat(${v.stages.length},minmax(0,1fr))" role="tablist" aria-label="Stages">${stages}</div></div></div>
@@ -168,16 +180,32 @@ function render() {
     <div class="rtab-panel" role="tabpanel" id="rtab-panel" aria-labelledby="tab-${sel}" tabindex="0">${panelHtml(v)}</div>
   </div>`;
 
+  fitMenus();
+  document.querySelector('.rc-tabs .tab[aria-selected="true"]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   if (keep) {
     const el = keep === 'menu-first' ? document.querySelector('.menu .menu-item') : document.querySelector(`[data-key="${CSS.escape(keep)}"]`);
     el?.focus({ preventScroll: keep !== 'menu-first' && !keep.startsWith('act:') });
   }
 }
 
+// An open menu or picker stays inside the window: shifted back from whichever edge it would cross, 16px gutter.
+function fitMenus() {
+  const vw = document.documentElement.clientWidth;
+  document.querySelectorAll('#card .menu').forEach((m) => {
+    const r = m.getBoundingClientRect();
+    let dx = r.right > vw - 16 ? vw - 16 - r.right : 0;
+    if (r.left + dx < 16) dx = 16 - r.left;
+    if (dx) m.style.transform = `translateX(${dx}px)`;
+  });
+}
 const pick = document.getElementById('case');
 const groups = [...new Set(M.cases.map((c) => c.group))];
 pick.innerHTML = groups.map((g) => `<optgroup label="${g}">${M.cases.filter((c) => c.group === g).map((c) => `<option value="${c.id}"${c.id === ui.caseId ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</optgroup>`).join('');
-pick.addEventListener('change', () => { ui = Object.assign(ui, { caseId: pick.value, open: null, ship: '', menu: '', tab: '', focus: '', chips: [], kind: '', title: '', back: null }); render(); });
+pick.addEventListener('change', () => { ui = Object.assign(ui, { caseId: pick.value, open: null, ship: '', menu: '', tab: '', focus: '', chips: [], parent: null, back: null, titleOpen: false }); render(); });
+function goMember(group, i) {
+  Object.assign(ui, { caseId: M.view(group, {}).runCases[i], parent: { caseId: group, index: i }, open: null, tab: '', focus: '', menu: '', titleOpen: false });
+  pick.value = ui.caseId; pendingFocus = 'crumb:' + (M.view(ui.caseId, ui).crumbs.length - 1);
+}
 function addChip(text) {
   const kind = ui.menu.slice(5); const t = String(text).trim();
   if (t && !ui.chips.some((c) => c.kind === kind && c.text === t)) ui.chips = ui.chips.concat({ kind, text: t });
@@ -192,6 +220,7 @@ document.addEventListener('click', (e) => {
     document.querySelectorAll('[data-theme-pick]').forEach((b) => b.setAttribute('aria-pressed', String(b === t)));
     return;
   }
+  if (!t && e.target.closest('[data-title]')) { ui.titleOpen = !ui.titleOpen; render(); return; }
   if (!t || !t.closest('#card')) { if (ui.menu && !e.target.closest('.menu')) { ui.menu = ''; render(); } return; }
   const d = t.dataset;
   if (d.menu) { const opening = ui.menu !== d.menu; ui.menu = opening ? d.menu : ''; if (opening) pendingFocus = 'menu-first'; }
@@ -199,17 +228,16 @@ document.addEventListener('click', (e) => {
     if (ui.menu === 'add' && M.add.some((x) => x.kind === d.menuPick)) { ui.menu = 'pick-' + d.menuPick; pendingFocus = 'pick-input'; }
     else { pendingFocus = 'menu:' + ui.menu; ui.menu = ''; }
   } else if (d.suggest !== undefined) { addChip(d.suggest); }
-  else if (d.openRun !== undefined) {
-    const v = M.view(ui.caseId, ui); const i = +d.openRun;
-    ui.back = { caseId: ui.caseId, open: ui.open, tab: ui.tab, word: v.kind.toLowerCase() };
-    Object.assign(ui, { caseId: v.runCases[i], kind: `Run ${i + 1} of ${v.runCases.length} \u203a`, title: v.runTitles[i], open: null, tab: '', focus: '', menu: '' });
-    pick.value = ui.caseId; pendingFocus = 'back-group';
-  } else if ('backGroup' in d && ui.back) {
-    Object.assign(ui, { caseId: ui.back.caseId, open: ui.back.open, tab: ui.back.tab, kind: '', title: '', back: null, menu: '' });
+  else if (d.openRun !== undefined) { ui.back = { caseId: ui.caseId, open: ui.open, tab: ui.tab }; goMember(ui.caseId, +d.openRun); }
+  else if (d.sib !== undefined && d.sib !== '') { const v = M.view(ui.caseId, ui); goMember(v.parent.caseId, +d.sib); pendingFocus = t.dataset.key; }
+  else if (d.crumb !== undefined) {
+    // Up to the group: back where you left it if you came from there, else with this run's segment open.
+    const go = M.view(ui.caseId, ui).crumbs[+d.crumb].go;
+    const back = ui.back && ui.back.caseId === go.caseId ? ui.back : { caseId: go.caseId, open: go.open, tab: '' };
+    Object.assign(ui, { caseId: back.caseId, open: back.open, tab: back.tab, parent: null, back: null, menu: '' });
     pick.value = ui.caseId; pendingFocus = 'open-run';
   } else if (d.unchip !== undefined) { ui.chips = ui.chips.filter((_, i) => i !== +d.unchip); ui.menu = ''; pendingFocus = 'menu:add'; }
   else if (d.stage) { ui.open = d.stage; ui.menu = ''; }
-  else if ('back' in d) { ui.open = null; pendingFocus = 'stage:' + (M.view(ui.caseId, Object.assign({}, ui, { open: null })).open.key); }
   else if (d.ship) ui.ship = d.ship;
   else if (d.tab) { ui.tab = d.tab; ui.focus = ''; if (t.classList.contains('rc-fig-link')) pendingFocus = 'tab:' + d.tab; }
   else if (d.ref) { ui.tab = 'activity'; ui.view = 'steps'; ui.focus = d.ref; pendingFocus = 'act:' + d.ref; render(); document.querySelector('.is-focus')?.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' }); return; }

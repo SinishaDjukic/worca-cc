@@ -114,3 +114,48 @@ Cost per step with the model used (others show tokens or credits), advice on One
 counts on each step, "To check" for the person, and Decisions as an audit trail. The 20px rail does align every row,
 the state word never truncates, the menu help lines read plainly, and the chain's "Merge in order" list is the clearest
 stacked-PR view of the iterations so far.
+
+## Round 2: a harder challenge (26 Oct)
+
+Four reviewers re-read the mock with instructions to find what round 1 missed: visual craft, navigation and
+aggregation, a power user with 8–12 parallel runs, and a minimalist plus QA who broke it with long and edge data.
+Several items round 1 marked done were still broken (numbers agree, worst state wins, no sideways scroll).
+
+**Fixed in the mock**
+
+| Finding | What changed |
+|---|---|
+| No breadcrumb; three "back" controls with different targets; the chip linked up only if you came via Open | One trail in the top bar, `Runs › place › group`, the page never a crumb; `‹ Parent` at 760px and below. Bare chevron, chip-as-link and Back to now are gone (the live stage returns) |
+| A member run never named its group; groups had no name | Groups have names; a member's trail ends at its group, wherever you arrive from |
+| No way to a sibling run | Pager `‹ 2 of 3 ›` in the bar; a run that has not started is off, with why |
+| Project, start time and kind competing in one meta line ("wo…", "feat/h…") | Project is a crumb, start time is the Time figure's tooltip, the kind sits after a group's title (`Feature · 3 runs`); the place line is branch → base, the PR number once, with the branch losing its middle, not its `-2` |
+| Titles on two lines | One line with an ellipsis; tooltip, tap to show it whole, and the Summary task |
+| Same run, three costs (group row, Runs tab $14.65, own page) | One record: a group's run segment, Runs row and the run's own page read the same stages, time and cost; a group's total is its runs plus its own Plan; budget is per run × runs |
+| Member pages offered Create PR / Merge, bypassing the group's ship choice | A feature member ends in Ship · with the feature; only fix actions (Answer, Resume, Fix checks…) stay on a member |
+| Chain and workspace green while a PR fails or conflicts | The worst member sets the word, dot and action (Fix checks on #961, Fix conflicts) |
+| One PR, four names (`worca/worka-cc#959`, PR 1, Merge PR 1 of 3) | The number, once: in the place line (`#961 → #960`), Merge #959 |
+| Menus off the left or right edge on phones | Menus shift inside a 16px gutter |
+| Added chips scroll the page sideways at every width | Labels and tags get their own wrapping row, each chip max 24ch with a tooltip; + stays at the end of the place line |
+| Tabs and panels indented with no card around them; Decisions cut to "De" | Below 520px they take the page edge; the selected tab scrolls into view |
+| Question and failure text cut to one line | Asking and failed steps keep two lines |
+| Action wedged between the state word and its detail under 420px | Detail stays under the word, the action below |
+| Smaller: hard-coded tab counts, unnamed Open buttons, dot and word both read aloud, "No project" as a value, folder path three times and 14 vs 5 files, Resume contradiction, Pause on runs waiting for you, chain next-up as a heavy box | All fixed |
+
+**Open, for a decision**
+
+1. **The run list on group pages appears up to three times** (stage labels, Merge in order, the Runs tab). Proposal: one
+   list, sorted in merge order on a chain; the Runs tab goes.
+2. **"Needs you" names five jobs** (question, plan approval, slice approval, checks failing, conflicts). Proposal: the
+   word says the job ("Checks failing", "Approve plan"), amber stays the colour.
+3. **Buttons that start paid work show no estimate** (Approve and build, Resume from Build, Fix checks).
+4. **The default tab ignores the state**: a failed run should open where the failure is, a plan waiting for approval on
+   the plan.
+5. **Ship as is still long on phones** (765px card): drop "What it opens" before creation, one line for an option that
+   cannot work.
+6. Smaller: PR-stage runs show work time instead of how long they have waited; Steps | Graph switch while Graph is a
+   placeholder; the + picker loses typed text on Tab; label normalisation (`ui` vs `UI`) and the `key: value` check.
+
+**Design-system changes at implementation** (`docs/design-system.md`, with the flag): the title is one line with an
+ellipsis at every width (today it wraps in full at 640px and below); a member run's position is the pager, not a
+`Run 2 of 3 ›` chip; the project is a crumb and the start time lives in the Time figure, so the place line holds branch
+→ base and the PR.
