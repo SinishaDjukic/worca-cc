@@ -1,7 +1,7 @@
 ---
 name: review-baseline-and-suite-noise
 description: Read before reviewing a worca run's diff or proving new tests catch their fixes — the checkpoint may not be the base, and many guard removals stay green.
-updated: 2026-10-26T18:22:16.823Z
+updated: 2026-10-26T18:53:09.600Z
 author: Bulibas
 ---
 
@@ -46,6 +46,8 @@ route's `if (!check) return`), even when the tests are copied verbatim from a re
 - A preview/dry-run payload's computed LISTS (what a confirm warns about: lost MCP servers, unviewable attachments,
   changed facts) are often pinned only as `[]` on an empty fixture. Mutate each list to `.filter(() => false)`: on #943
   (2026-10-26) both `askEngineSwitchPlan` lists survived four refine cycles' mutation sweeps, which listed only guards.
+  Mutate to `.filter(() => true)` too: the fix's fixture held only items that are lost, so "everything lost" stayed green.
+  The fixture needs one item on each side (one dropped, one kept).
 - A test of a deadline or timeout fix must assert a `settled` flag one `setImmediate` after the fake-clock tick, not
   `await` the promise: reverted, an `await` hangs to the per-file timeout instead of failing (2026-10-18).
 
