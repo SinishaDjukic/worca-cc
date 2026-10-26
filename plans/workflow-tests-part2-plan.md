@@ -23,6 +23,8 @@
 
 Each item is a place where the code or the Part 2 scope forces a deviation from the approved boards. The proposed resolution is what this plan builds. Copy risks are C1…, design gaps are G1….
 
+**Approved by the user 2026-10-26: every item as proposed.** C1 uses the new text (not the approved board text). G14: Statistics leaves tests out until Part 5. G3: dropped. The UI that no board draws (G1 dialog, G7 picker, G13 card, C7/C9/G8 stopped and done progress page, C8/C15/C16/C18 empty and refused states) is mocked on the evals canvas and approved before Tasks 9–12 start; Tasks 1–8 can start at once.
+
 ### Copy risks
 
 | # | Where | Approved board text | Proposed Part 2 text |
