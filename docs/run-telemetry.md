@@ -42,7 +42,7 @@ Prompts, answers, tool inputs and tool output are never recorded: only names, co
 |---|---|
 | Claude Code, Qwen Code | Yes, main agent and sub-agents |
 | OpenCode | Yes, main agent; sub-agents only as a total after the run |
-| Codex, Copilot, Cursor, Gemini CLI, Goose | No. One `result` per session (Goose's end-of-session usage is a session total and is not counted as a call). For Codex and Copilot it can include earlier turns of the same thread, so it can be larger than the real context. |
+| Codex, Copilot, Cursor, Gemini CLI, Goose | No. One `result` per session, which adds up the input of every call in that session: it is not a context size, so the page shows it as **session input**, never as a peak. Goose's input already holds the cache tokens (checked on Gemini and through Claude Code, goose 1.55), so its cache is not added again. |
 
 Calls through Worca's model bridge are recorded like any other Claude Code call. The bridge
 always reports zero cache-write tokens, and nothing here records the bridge's own timings.
@@ -53,7 +53,8 @@ With the flag on, each card on the run page's **Agents** tab shows:
 
 - **Context peak**: the largest prompt one call sent, against the model's context window and as a
   share of it. Amber from 75% of the point where Claude Code compacts, red from 90%. An engine
-  without per-call usage shows **context at end** instead.
+  without per-call usage shows **session input** instead: the input of every call of the session added up,
+  with no window or level, and no chart.
 - Calls, sessions (when more than one), how the step's time split (start-up, model, tools), the
   share of prompt tokens read from cache, tool errors, retries, compactions and sub-agent calls.
 - A chart of context over time: the context of each call, the model's window (dashed), where

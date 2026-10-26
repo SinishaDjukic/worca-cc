@@ -5325,7 +5325,13 @@ export class RunHarness extends EventEmitter {
     // retention stamp must not ride on it (F2's crash window). _persist() also
     // swallows internally, so call the writer directly to observe a real failure.
     try {
-      await writeState(this.pipeline?.dir ?? null, this.state);
+      if (this.telemetry) {
+        const t0 = performance.now();
+        await writeState(this.pipeline?.dir ?? null, this.state);
+        this.telemetry.persisted(performance.now() - t0, this.state.steps?.length || 0);
+      } else {
+        await writeState(this.pipeline?.dir ?? null, this.state);
+      }
     } catch (e) {
       this._log('git', 'error',
         `retention stamp could not be persisted (${e?.message || e}); ` +
