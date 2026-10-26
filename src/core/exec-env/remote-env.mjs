@@ -82,6 +82,9 @@ export class RemoteExecEnv {
     this.activeSpawns = 0;
     this._known = new Map();     // sandbox path -> "size:mtimeMs" when last synced (either direction)
     this._uploaded = new Map();  // host path -> "size:mtimeMs" of the host copy when last synced
+    // Files in the project-wide store roots (plans, reviews) this run wrote: its own, sent up as new since it started,
+    // or new on the host when the sandbox wrote them. Only these may a download overwrite (audit 2.6).
+    this._storeOwn = new Set();
     this._inputs = new Set();    // bound inputs outside this run's own files (an older plan), uploaded when changed
     this._dirs = new Set();      // sandbox dirs already created
     this._trees = new Set();     // host dirs uploaded whole once (script program roots)
@@ -108,6 +111,7 @@ export class RemoteExecEnv {
   _host(p) { return this.prefix && p.startsWith(this.prefix) ? p.slice(this.prefix.length) : p; }
   _serial(fn) { const run = this._chain.then(fn, fn); this._chain = run.catch(() => {}); return run; }
   _underRoots(abs) { return this.roots.some((r) => abs.startsWith(resolve(r) + sep)); }
+  _inStore(abs) { return this.storeRoots.some((r) => abs.startsWith(resolve(r) + sep)); }
   /** An upload left the symbolic link `p` out: a synced folder's links are never followed (a step or a patch may have
    *  left one, and its target would go up with the next step), nor a mount's links out of the mount. Logged once. */
   _refuseLink(p) {
@@ -467,6 +471,7 @@ export class RemoteExecEnv {
         this._uploaded.delete(host);           // the merged copy goes back up on the next beforeSpawn
         continue;
       }
+      if (this._inStore(host) && !existsSync(host)) this._storeOwn.add(host);
       const tmp = `${host}${TEMP_MARK}${process.pid}`;
       await writeFile(tmp, data); await rename(tmp, host);
       this._uploaded.set(host, sigOf(await stat(host)));
@@ -536,14 +541,25 @@ export class RemoteExecEnv {
     return mcpjsonApproval(this.mcpjsonProjectDir || this.worktreeDir, this.homeDir, () => {});
   }
 
-  /** Only regular files strictly inside a synced root; never through a host symlink. */
+  /** Only regular files strictly inside a synced root; never through a host symlink. In the project-wide store roots
+   *  a download may add a file but overwrites only this run's own (audit 2.6): another run's plan or review (an
+   *  older plan a later Local run binds) never takes what the sandbox wrote. */
   async _acceptDownload(host) {
     const abs = resolve(host);
     if (abs !== host || host.includes('\n')) return false;
     const base = abs.split(sep).pop();
     if (SKIP_NAMES.has(base) || base.startsWith(SKIP_PREFIX) || base.includes(TEMP_MARK)) return false;
     if (!this._underRoots(abs)) return false;
-    try { if ((await lstat(abs)).isSymbolicLink()) return false; } catch { /* new file */ }
+    let st = null;
+    try { st = await lstat(abs); } catch { /* new file */ }
+    if (st?.isSymbolicLink()) return false;
+    if (st && this._inStore(abs) && !this._storeOwn.has(abs)) {
+      if (!this._refused.has(abs)) {
+        this._refused.add(abs);
+        this.log('warn', `not bringing back ${abs} from the ${this.label}: it belongs to the project's earlier work, not this run, so worca keeps the copy on this machine`);
+      }
+      return false;
+    }
     return true;
   }
 
@@ -567,6 +583,7 @@ export class RemoteExecEnv {
       if (this._secretKept(abs, root)) return;
       if (st.size > MAX_FILE_BYTES) { this.log('warn', `not uploading ${abs}: larger than ${MAX_LABEL}; the sandbox cannot read it`); return; }
       if (onlyNew && st.mtimeMs < this.startedAt && !this._inputs.has(abs)) return;
+      if (onlyNew && !this._inputs.has(abs)) this._storeOwn.add(abs);
       const sig = sigOf(st);
       if (this._uploaded.get(abs) !== sig) changed.set(abs, sig);
     };
