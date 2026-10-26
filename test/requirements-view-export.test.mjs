@@ -95,16 +95,29 @@ test('D1: several trackers and none bound: "Export to a tracker…"; none at all
   assert.deepEqual(menuItems(m.host), ['Copy Markdown', 'Download .md', '—', 'Export to Jira…', 'Export setup…']);
 });
 
-test('board 29 (7): an archived feature: Export to Jira… is disabled and says why; Export setup… stays', async () => {
-  const { host } = await openFeature(feature({ status: 'archived', state: 'archived', export: XV({ canExport: false }) }));
+test('board 29 (7): an archived feature: Export to Jira… is aria-disabled and says why under the open menu; Export setup… stays', async () => {
+  const { host, calls } = await openFeature(feature({ status: 'archived', state: 'archived', export: XV({ canExport: false }) }), SETUP_ROUTES());
   const item = q('mi-export', host);
-  assert.equal(item.disabled, true);
+  assert.deepEqual([item.disabled, item.getAttribute('aria-disabled')], [false, 'true'], 'focusable and announced, not native disabled');
   const why = host.querySelector(`#${item.getAttribute('aria-describedby')}`);
   assert.deepEqual([text(why), item.title], ['Restore the feature to export it.', 'Restore the feature to export it.']);
   assert.equal(why.closest('[role="menu"]'), null, 'outside the menu: a menu holds only items and separators');
+  assert.deepEqual([why.classList.contains('hint'), why.classList.contains('sr-only')], [true, false], 'a visible hint (board 29, 7)');
+  assert.equal(why.closest('[hidden]') !== null, true, 'hidden while the menu is closed');
+  q('menu-export', host).click();
+  assert.equal(why.closest('[hidden]'), null, 'shown under the open menu');
+  assert.ok(why.closest('[data-menu="export"]'), 'beside the Export menu');
   assert.deepEqual([...host.querySelectorAll('[data-menu="export"] [role="menu"] > *')].map((x) => x.getAttribute('role')),
     ['menuitem', 'menuitem', 'menuitem', 'separator', 'menuitem', 'menuitem']);
+  item.focus();
+  assert.equal(document.activeElement, item, 'focusable');
+  item.click();
+  await settle();
+  assert.deepEqual([dlg(), calls.filter((c) => c.url.includes('export')).length], [null, 0], 'activating it does nothing');
+  assert.equal(host.querySelector('[data-menu="export"] [role="menu"]').hidden, false, 'the menu stays open');
   assert.equal(q('mi-export-setup', host).disabled, false);
+  q('menu-export', host).click();
+  assert.equal(why.closest('[hidden]') !== null, true, 'hidden again with the menu');
 });
 
 test('Connect a tracker…: a modal dialog with the line, Close focused, the Marketplace button for Advanced; Escape closes, focus returns', async () => {
@@ -225,4 +238,135 @@ test('CSS: the A6 rules sit inside the Requirements block and use tokens only', 
   const mine = block.split('\n').filter((l) => /req-export|req-history|req-report|req-dlg-sheet/.test(l));
   const bad = /#[0-9a-fA-F]{3,8}\b|rgba?\(|font(?:-size)?:[^;}]*\b(?:11\.5|12\.5|14)px|border-radius:(?:12|999)px|min-height:44px/;
   assert.ok(mine.every((l) => !bad.test(l)), mine.filter((l) => bad.test(l)).join('\n'));
+});
+
+// ── fix round 1 (review of Task 8) ──
+
+/** A route that answers only when the test lets it: `hold.route` for the fake API, `hold.release()` answers. */
+const held = (answer) => {
+  const hold = { release: null };
+  hold.route = (b) => new Promise((r) => { hold.release = () => r(typeof answer === 'function' ? answer(b) : answer); });
+  return hold;
+};
+const SAVED = { ...CONN, trackerProject: 'SHOP', issueType: '10001', priority: null, labels: ['worca'], criteria: { target: 'description' } };
+const openSetupFrom = async (routes, over = {}) => {
+  const m = await openFeature(feature(over), routes);
+  q('menu-export', m.host).click();
+  q('mi-export-setup', m.host).click();
+  return m;
+};
+
+test('setup: a label being typed keeps its text and caret while a slow options answer lands; removing a chip keeps it too', async () => {
+  let options = (b) => optionsAnswer(b);
+  const routes = { ...SETUP_ROUTES(SAVED), [`POST ${SETUP_URL}/options`]: (b) => options(b) };
+  await openSetupFrom(routes);
+  await settle();
+  const slow = held((b) => optionsAnswer(b));
+  options = slow.route;
+  pick(q('setup-type'), '10002');
+  await settle();
+  const input = q('setup-lab-in');
+  input.focus();
+  input.value = 'needs';
+  input.setSelectionRange(2, 2);
+  input.dispatchEvent(new window.Event('input'));
+  slow.release();
+  await settle();
+  assert.equal(q('setup-save').disabled, false, 'the answer landed');
+  assert.deepEqual([q('setup-lab-in') === input, input.value, document.activeElement === input, input.selectionStart], [true, 'needs', true, 2]);
+  q('setup-lab-x-0').click();
+  assert.deepEqual([[...dlg().querySelectorAll('.req-export-lab')].map(text), q('setup-lab-in').value, document.activeElement === q('setup-lab-in')],
+    [[], 'needs', true], 'a chip removed: the typed text stays and the focus goes back to the field');
+  assert.equal(q('setup-lab-in').parentElement.classList.contains('req-export-chips'), true, 'board 26: the field ends the chips row');
+});
+
+test('setup: an options answer that changes nothing leaves the selects alone (an open dropdown stays open)', async () => {
+  const { calls } = await openSetupFrom(SETUP_ROUTES(SAVED));
+  await settle();
+  const sel = q('setup-project');
+  const opts = [...sel.options];
+  const prio = [...q('setup-prio').options];
+  pick(q('setup-type'), '10002');
+  await settle();
+  assert.equal(calls.filter((c) => c.url === `${SETUP_URL}/options`).length, 4, 'the fields were asked for again');
+  assert.equal(q('setup-project'), sel);
+  assert.deepEqual([[...sel.options].every((o, i) => o === opts[i]), [...q('setup-prio').options].every((o, i) => o === prio[i])], [true, true]);
+});
+
+test('setup: a saved connection that is gone leads with "Choose a connection"; picking the one there is loads', async () => {
+  const one = [{ ...TRACKERS[0], profiles: [TRACKERS[0].profiles[0]] }];
+  const routes = { ...SETUP_ROUTES(), [`GET ${SETUP_URL}`]: { setup: { ...SAVED, profile: 'gone' }, trackers: one, defaultProfile: CONN } };
+  const { calls } = await openSetupFrom(routes);
+  await settle();
+  const conn = q('setup-conn');
+  assert.deepEqual([conn.value, optionTexts(conn)], ['', ['Choose a connection', 'acme.atlassian.net (Cloud)']]);
+  assert.deepEqual([calls.filter((c) => c.url === `${SETUP_URL}/options`).length, q('setup-save').disabled], [0, true]);
+  pick(conn, 'jira-source|jira|acme');
+  await settle();
+  assert.deepEqual([optionTexts(conn), q('setup-project').value, q('setup-save').disabled], [['acme.atlassian.net (Cloud)'], 'SHOP', false]);
+});
+
+test('setup: the focus moves on to the Connection only while it is still on the title', async () => {
+  const slow = held({ setup: SAVED, trackers: TRACKERS, defaultProfile: CONN });
+  await openSetupFrom({ ...SETUP_ROUTES(), [`GET ${SETUP_URL}`]: slow.route });
+  assert.equal(document.activeElement, dlg().querySelector('h2'));
+  q('setup-cancel').focus();
+  slow.release();
+  await settle();
+  assert.equal(document.activeElement, q('setup-cancel'), 'not taken from where the user put it');
+});
+
+test('setup: an answer that comes after the dialog closed is dropped', async () => {
+  const slow = held({ setup: SAVED, trackers: TRACKERS, defaultProfile: CONN });
+  const { host, nav, calls } = await openSetupFrom({ ...SETUP_ROUTES(), [`GET ${SETUP_URL}`]: slow.route });
+  q('setup-cancel').click();
+  assert.deepEqual([dlg(), nav.getAttribute('inert'), document.activeElement], [null, null, q('menu-export', host)]);
+  slow.release();
+  await settle();
+  assert.deepEqual([dlg(), calls.filter((c) => c.url === `${SETUP_URL}/options`).length, document.activeElement], [null, 0, q('menu-export', host)]);
+});
+
+test('setup: while saving, Escape and Cancel do not close and a second Save does not post; Save releases the page', async () => {
+  const slow = held((b) => ({ setup: b }));
+  const { host, nav, calls } = await openSetupFrom({ ...SETUP_ROUTES(SAVED), [`PUT ${SETUP_URL}`]: slow.route });
+  await settle();
+  assert.equal(nav.getAttribute('inert'), '', 'the page behind is inert');
+  q('setup-save').click();
+  q('setup-save').click();
+  q('setup-save').dispatchEvent(new window.Event('click'));
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  q('setup-cancel').click();
+  assert.ok(dlg(), 'still open while saving');
+  slow.release();
+  await settle();
+  assert.equal(calls.filter((c) => c.method === 'PUT').length, 1, 'one save');
+  assert.deepEqual([dlg(), nav.getAttribute('inert'), host.getAttribute('inert')], [null, null, null], 'closed and released');
+});
+
+test('setup: Shift+Tab from the title wraps to the last control; Escape while composing text does not close; Enter while composing adds no label', async () => {
+  await openSetupFrom(SETUP_ROUTES(SAVED));
+  await settle();
+  const title = dlg().querySelector('h2');
+  title.focus();
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }));
+  assert.equal(document.activeElement, q('setup-save'));
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true }));
+  assert.ok(dlg(), 'an IME composition ends, the dialog stays');
+  const input = q('setup-lab-in');
+  input.focus();
+  input.value = 'にほん';
+  input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true }));
+  assert.deepEqual([[...dlg().querySelectorAll('.req-export-lab')].map(text), input.value], [['worca'], 'にほん']);
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(dlg(), null);
+});
+
+test('CSS (board 26): the label field shares the chips row, the buttons sit under a rule, a radio row is 28 px', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const rule = (sel) => { const at = css.indexOf(`${sel}{`); return at < 0 ? '' : css.slice(at, css.indexOf('}', at)); };
+  assert.match(rule('.req-export-labin'), /flex:1 1 120px/);
+  assert.match(rule('.req-dialog.req-export .req-dlg-btns'), /padding-top:14px;border-top:1px solid var\(--line\)/);
+  assert.match(rule('.req-export-rad'), /min-height:28px/);
+  assert.match(rule('.req-menu .req-export-menupop'), /position:absolute/);
+  assert.match(css, /\.req-export-menupop\[hidden\]\{display:none\}/);
 });

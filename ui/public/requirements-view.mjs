@@ -2397,15 +2397,20 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   // A menu button (the ⋯ header menu's pattern, .hd-more-wrap / .hd-menu, in upstream's one .menu box): the trigger toggles a role=menu
   // list; a choice, Escape (focus back on the trigger) or a press outside closes it. The open one is kept
-  // in `ui.menu`, so a live repaint does not shut it.
-  function menu(key, trigger, items) {
+  // in `ui.menu`, so a live repaint does not shut it. A6: `note` (a visible line under the open list, outside role="menu",
+  // which holds only items) floats with the list in one box, shown and hidden with it; an aria-disabled item does nothing.
+  function menu(key, trigger, items, note = null) {
     const on = ui.menu === key;
     const list = h('div', { class: 'menu hd-menu req-menu-list', role: 'menu', hidden: !on }, ...items);
     trigger.setAttribute('aria-haspopup', 'menu');
     trigger.setAttribute('aria-expanded', on ? 'true' : 'false');
     trigger.addEventListener('click', () => setMenu(ui.menu === key ? null : key));
-    list.addEventListener('click', (e) => { if (e.target.closest('[role="menuitem"]')) setMenu(null); }, true);
-    const wrap = h('div', { class: 'hd-more-wrap req-menu', 'data-menu': key }, trigger, list);
+    list.addEventListener('click', (e) => {
+      const item = e.target.closest('[role="menuitem"]');
+      if (item && item.getAttribute('aria-disabled') !== 'true') setMenu(null);
+    }, true);
+    const pop = note ? h('div', { class: 'req-export-menupop', 'data-menu-pop': '', hidden: !on }, list, note) : list;
+    const wrap = h('div', { class: 'hd-more-wrap req-menu', 'data-menu': key }, trigger, pop);
     wrap.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape' || ui.menu !== key) return;
       e.preventDefault(); e.stopPropagation();
@@ -2419,6 +2424,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     for (const w of host.querySelectorAll('[data-menu]')) {
       const on = w.getAttribute('data-menu') === key;
       w.querySelector('[role="menu"]').hidden = !on;
+      const pop = w.querySelector('[data-menu-pop]');
+      if (pop) pop.hidden = !on;
       w.querySelector('[aria-haspopup]').setAttribute('aria-expanded', on ? 'true' : 'false');
     }
   }
@@ -2461,8 +2468,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           menuItem('Copy Markdown', copy, { ui: 'mi-copy' }),
           h('a', { role: 'menuitem', class: 'menu-item req-menu-item', 'data-ui': 'mi-download', href: `/api/requirements/${f.seq}/markdown?download=1`, download: '' }, 'Download .md'),
           ...exportItems(f),   // A6 D1: Export to <tracker>… and Export setup…, or Connect a tracker…
-        ]),
-        exportArchNote(f),   // A6: why an archived feature cannot export, outside role="menu" (a menu holds only items)
+        ], exportArchNote(f)),   // A6 (board 29, 7): why an archived feature cannot export, under the open list
         menu('more', h('button', { type: 'button', class: 'req-ico', 'aria-label': 'More actions', title: 'More actions', 'data-ui': 'menu-more' },
           icon(ICONS.dots, { size: 18, fill: 'currentColor', stroke: 'none' })), [
           // the notes moved to the brief page (A7 D12)
@@ -2493,21 +2499,23 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   const exportTrigger = () => host.querySelector('[data-ui="menu-export"]');
 
   const ARCHIVED_NOTE = 'Restore the feature to export it.';
-  /** D1: a separator, then Export to <tracker>… and Export setup…, or Connect a tracker…; archived: disabled, with why (its
-   *  title, and a description node outside the menu: exportArchNote). */
+  /** D1: a separator, then Export to <tracker>… and Export setup…, or Connect a tracker…; archived: aria-disabled (still
+   *  focusable and announced; activating it does nothing), with why (its title, and the visible line under the open menu:
+   *  exportArchNote). */
   function exportItems(f) {
     const x = xOf(f);
     if (!x) return [];
     const sep = h('div', { class: 'menu-sep', role: 'separator' });
     if (!x.tracker) return [sep, menuItem('Connect a tracker…', () => openConnect(exportTrigger()), { ui: 'mi-connect' })];
     const archived = f.status === 'archived';
-    const go = menuItem(`Export to ${trackerName(f)}…`, () => startExport(f, exportTrigger()), { disabled: archived || x.exporting, ui: 'mi-export' });
-    if (archived) { go.setAttribute('aria-describedby', 'req-export-arch'); go.title = ARCHIVED_NOTE; }
+    const go = menuItem(`Export to ${trackerName(f)}…`, () => { if (!archived) startExport(f, exportTrigger()); }, { disabled: x.exporting, ui: 'mi-export' });
+    if (archived) { go.setAttribute('aria-disabled', 'true'); go.setAttribute('aria-describedby', 'req-export-arch'); go.title = ARCHIVED_NOTE; }
     return [sep, go, menuItem('Export setup…', () => { void openSetup(f, { trigger: exportTrigger() }); }, { ui: 'mi-export-setup' })];
   }
-  /** The archived item's description, beside the menu (a role="menu" holds only items and separators). */
+  /** The archived item's description: a visible line under the open menu (board 29, 7), outside role="menu" (which holds
+   *  only items and separators). */
   const exportArchNote = (f) => (f.status === 'archived' && xOf(f) && xOf(f).tracker
-    ? h('span', { class: 'sr-only', id: 'req-export-arch', text: ARCHIVED_NOTE }) : null);
+    ? h('p', { class: 'hint req-export-archnote', id: 'req-export-arch', text: ARCHIVED_NOTE }) : null);
 
   /** D2: where trackers are connected. The Marketplace button only at the Advanced level (docs/ui-levels.md). */
   function openConnect(trigger) {
@@ -2523,10 +2531,24 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     openModal(card, { trigger, first: close, page: true });
   }
 
-  /** A select in upstream's .select-wrap; `list` of { value, label }. */
+  /** A select's options as they were last drawn (syncSelect compares against it). */
+  const selectSig = new WeakMap();
+  /** Puts `list` ({ value, label }) in `sel` and selects `value`. Options that did not change are left alone, so a dropdown
+   *  the user has open stays open and an answer that changes nothing redraws nothing; a value not in the list is left as is. */
+  function syncSelect(sel, list, value) {
+    const items = list || [];
+    const sig = JSON.stringify(items.map((o) => [o.value, o.label]));
+    if (selectSig.get(sel) !== sig) {
+      sel.replaceChildren(...items.map((o) => h('option', { value: o.value, text: o.label })));
+      selectSig.set(sel, sig);
+    }
+    const v = value == null ? '' : String(value);
+    if (items.some((o) => String(o.value) === v) && sel.value !== v) sel.value = v;
+  }
+  /** A select in upstream's .select-wrap; `list` of { value, label }. Redraw its options with syncSelect. */
   function exportSelect({ id = null, ui, list, value, onchange, label = null, disabled = false, describedBy = null }) {
     const s = h('select', { id, 'data-ui': ui, 'aria-label': label, 'aria-describedby': describedBy, disabled, onchange });
-    for (const o of list || []) { const op = h('option', { value: o.value, text: o.label }); op.selected = o.value === value; s.append(op); }
+    syncSelect(s, list, value);
     return h('div', { class: 'select-wrap' }, s);
   }
   /** A field: its label (a <label for> when it names a control, else a caption), the control, an optional hint. */
@@ -2535,36 +2557,61 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       labelFor ? h('label', { for: labelFor }, ...[].concat(labelKids)) : h('span', { class: 'req-export-fl' }, ...[].concat(labelKids)),
       ...[].concat(control), hint ? h('p', { class: 'hint', id: hintId, text: hint }) : null);
   }
-  /** Labels as chips, each with a remove button, and a field that adds one (Enter or a comma); `fixed` (worca-FEAT-7) last and
-   *  for good (D6). onChange(next, focusUi): the caller repaints and puts the focus back in the field. */
-  function labelsField({ id, ui, labels, fixed = null, onChange }) {
+  /** The Labels field's typed text and caret, for a caller that rebuilds the field (labelsField's `draft`). */
+  const labelDraft = () => ({ value: '', sel: null });
+  /** Labels as chips, each with a remove button, and a field at the end of the chips' row that adds one (Enter or a comma);
+   *  `fixed` (worca-FEAT-7) last and for good (D6). The field is built once: adding or removing a label redraws only the
+   *  chips, so what is typed, its caret and an IME composition stay. A caller that rebuilds the whole field passes `draft`
+   *  (labelDraft()), which the new field starts from (its caret comes back when it takes the focus). onChange(next, focusUi). */
+  function labelsField({ id, ui, labels, fixed = null, onChange, draft = null }) {
+    let list = [...labels];
     const input = h('input', { type: 'text', id, class: 'req-export-labin', placeholder: 'Add a label', 'data-ui': `${ui}-in`,
       'aria-describedby': fixed ? `${id}-fixed` : null });
-    const add = () => { const v = input.value.trim(); if (!v) return; input.value = ''; onChange([...labels, v], `${ui}-in`); };
+    const keep = () => {
+      if (!draft) return;
+      draft.value = input.value;
+      draft.sel = [input.selectionStart, input.selectionEnd, input.selectionDirection || 'none'];
+    };
+    if (draft) {
+      input.value = draft.value || '';
+      for (const ev of ['input', 'keyup', 'mouseup', 'select', 'blur']) input.addEventListener(ev, keep);
+      input.addEventListener('focus', () => {
+        if (draft.sel && input.value === draft.value) { try { input.setSelectionRange(...draft.sel); } catch { /* not a text field */ } }
+      });
+    }
+    const fixedChip = fixed ? h('span', { class: 'chip req-export-lab req-export-fixed', 'aria-describedby': `${id}-fixed`, text: fixed }) : null;
+    const chips = h('div', { class: 'req-export-chips' }, fixedChip, input);
+    const set = (next) => {
+      list = next;
+      for (const el of [...chips.querySelectorAll('.req-export-lab:not(.req-export-fixed)')]) el.remove();
+      list.forEach((l, i) => chips.insertBefore(h('span', { class: 'chip req-export-lab' }, h('span', { text: l }),
+        h('button', { type: 'button', class: 'req-export-x', 'aria-label': `Remove label ${l}`, 'data-ui': `${ui}-x-${i}`,
+          onclick: () => { set(list.filter((_, j) => j !== i)); input.focus(); onChange(list, `${ui}-in`); } },
+        icon(ICONS.remove, { size: 12 }))), fixedChip || input));
+    };
+    set(list);
+    const add = () => { const v = input.value.trim(); if (!v) return; input.value = ''; keep(); set([...list, v]); input.focus(); onChange(list, `${ui}-in`); };
     input.addEventListener('keydown', (e) => {
       if (e.isComposing) return;   // Enter that commits an IME composition adds nothing
       if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add(); }
     });
-    return h('div', { class: 'field req-export-fld' }, h('label', { for: id }, 'Labels'),
-      h('div', { class: 'req-export-chips' },
-        ...labels.map((l, i) => h('span', { class: 'chip req-export-lab' }, h('span', { text: l }),
-          h('button', { type: 'button', class: 'req-export-x', 'aria-label': `Remove label ${l}`, 'data-ui': `${ui}-x-${i}`,
-            onclick: () => onChange(labels.filter((_, j) => j !== i), `${ui}-in`) }, icon(ICONS.remove, { size: 12 })))),
-        fixed ? h('span', { class: 'chip req-export-lab req-export-fixed', 'aria-describedby': `${id}-fixed`, text: fixed }) : null),
-      input,
+    return h('div', { class: 'field req-export-fld' }, h('label', { for: id }, 'Labels'), chips,
       fixed ? h('p', { class: 'hint', id: `${id}-fixed`, text: `${fixed} stays: Worca uses this label to find the ticket again.` }) : null);
   }
   /** Board 31: a sheet's way back to the feature (shown at phone width only, by CSS). */
   const backButton = (f) => h('button', { type: 'button', class: 'link-btn req-export-back', 'data-ui': 'export-back', 'aria-label': `Back to ${f.id}`,
     onclick: () => { if (dialog && dialog.canClose()) closeDialog(true); } }, `← ${f.id}`);
 
+  const CHOOSE_CONNECTION = 'Choose a connection';
   /** Set up export for <name> (board 26, D2, D16), per project or workspace. Each select loads through …/options as the one
-   *  before it changes; a later change supersedes an answer still on its way. `then` goes on with the export after Save. */
+   *  before it changes; a later change supersedes an answer still on its way. The controls are built once, after the setup
+   *  loaded, and every answer updates them in place (an open dropdown, the focus and typed labels stay). `then` goes on with
+   *  the export after Save. */
   async function openSetup(f, { trigger = null, then = null } = {}) {
     closeDialog(false);
     const scopeName = targetName(f);
     const st = { trackers: [], conn: null, projects: [], project: null, types: [], type: null, prios: [], prio: null, fields: [],
-      crit: { target: 'description' }, labels: ['worca'], ready: false, tooOld: false, busy: false, loads: 0 };
+      crit: { target: 'description' }, labels: ['worca'], labDraft: labelDraft(), ready: false, tooOld: false, busy: false, loads: 0 };
     const body = h('div', { class: 'req-export-body' });
     const alertEl = h('p', { class: 'form-msg err req-export-alert', role: 'alert' });
     const save = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'setup-save', disabled: true }, then ? 'Save and continue' : 'Save');
@@ -2583,55 +2630,88 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const g = dlgGen;
     const nameIn = (list, v) => (list.find((x) => x.value === v) || {}).label || v;
     const trackerNow = () => st.trackers.find((t) => st.conn && t.plugin === st.conn.plugin && t.sourceId === st.conn.sourceId) || null;
-
-    function draw(focusUi = null) {
-      const focus = focusUi || (card.contains(document.activeElement) ? document.activeElement.getAttribute('data-ui') : null);
-      const tn = (trackerNow() || {}).name || 'the tracker';
+    const conns = () => {
       const several = st.trackers.length > 1;
-      const conns = st.trackers.flatMap((t) => t.profiles.map((p) => ({ value: connValue({ plugin: t.plugin, sourceId: t.sourceId, profile: p.id }),
+      return st.trackers.flatMap((t) => (t.profiles || []).map((p) => ({ value: connValue({ plugin: t.plugin, sourceId: t.sourceId, profile: p.id }),
         label: `${several ? `${t.name} · ` : ''}${p.label}` })));
-      const toField = st.crit.target === 'field';
-      const firstField = st.fields[0] || null;
-      const radio = (ui, on, onpick, disabled = false) => {
-        const r = h('input', { type: 'radio', name: 'req-setup-crit', 'data-ui': ui, disabled, onchange: onpick });
-        r.checked = on;
-        return r;
+    };
+    // a saved connection that is gone (or none at all): the list leads with "Choose a connection", so picking any one loads
+    const connKnown = () => !!st.conn && conns().some((x) => x.value === connValue(st.conn));
+    const selOf = (wrap) => wrap.querySelector('select');
+
+    let c = null;   // the controls, once built
+    function build() {
+      const radio = (ui, onpick) => h('input', { type: 'radio', name: 'req-setup-crit', 'data-ui': ui, onchange: onpick });
+      c = {
+        conn: exportSelect({ id: 'req-setup-conn', ui: 'setup-conn', list: [], value: '', describedBy: 'req-setup-conn-h', onchange: (e) => {
+          const v = e.currentTarget.value;
+          st.conn = v ? connFrom(v) : null;
+          if (st.conn) { void load('projects'); return; }
+          st.loads += 1; st.ready = false; sync();   // back on "Choose a connection": an answer on its way is dropped
+        } }),
+        proj: exportSelect({ id: 'req-setup-proj', ui: 'setup-project', list: [], value: null,
+          onchange: (e) => { st.project = e.currentTarget.value; void load('types'); } }),
+        type: exportSelect({ id: 'req-setup-type', ui: 'setup-type', list: [], value: null,
+          onchange: (e) => { st.type = e.currentTarget.value; void load('fields'); } }),
+        prio: exportSelect({ id: 'req-setup-prio', ui: 'setup-prio', list: [], value: '', onchange: (e) => { st.prio = e.currentTarget.value || null; } }),
+        critDesc: radio('setup-crit-desc', () => { st.crit = { target: 'description' }; sync(); }),
+        critField: radio('setup-crit-field', () => {
+          const ff = st.fields[0];
+          if (ff) { st.crit = { target: 'field', field: ff.value, name: ff.label }; sync(); }
+        }),
+        critFieldText: h('span'),
+        crit: exportSelect({ ui: 'setup-crit-select', list: [], value: null, disabled: true,
+          onchange: (e) => { st.crit = { target: 'field', field: e.currentTarget.value, name: nameIn(st.fields, e.currentTarget.value) }; } }),
+        critHint: h('p', { class: 'hint' }),
       };
+      c.connFld = exportField('req-setup-conn', 'Connection', c.conn, ' ', 'req-setup-conn-h');
+      c.projFld = exportField('req-setup-proj', 'Project', c.proj);
       body.replaceChildren(
-        exportField('req-setup-conn', 'Connection', exportSelect({ id: 'req-setup-conn', ui: 'setup-conn', list: conns, value: st.conn ? connValue(st.conn) : '',
-          describedBy: 'req-setup-conn-h', onchange: (e) => { st.conn = connFrom(e.currentTarget.value); void load('projects'); } }),
-        `Connections are added on the Marketplace page: Installed › ${tn} (Advanced mode).`, 'req-setup-conn-h'),
+        c.connFld,
+        h('div', { class: 'req-export-pair' }, c.projFld, exportField('req-setup-type', 'Issue type', c.type)),
         h('div', { class: 'req-export-pair' },
-          exportField('req-setup-proj', `${tn} project`, exportSelect({ id: 'req-setup-proj', ui: 'setup-project', list: st.projects, value: st.project,
-            onchange: (e) => { st.project = e.currentTarget.value; void load('types'); } })),
-          exportField('req-setup-type', 'Issue type', exportSelect({ id: 'req-setup-type', ui: 'setup-type', list: st.types, value: st.type,
-            onchange: (e) => { st.type = e.currentTarget.value; void load('fields'); } }))),
-        h('div', { class: 'req-export-pair' },
-          labelsField({ id: 'req-setup-lab', ui: 'setup-lab', labels: st.labels, onChange: (next, ui) => { st.labels = next; draw(ui); } }),
-          exportField('req-setup-prio', ['Priority ', h('span', { class: 'opt', text: 'optional' })], exportSelect({ id: 'req-setup-prio', ui: 'setup-prio',
-            list: [{ value: '', label: 'None' }, ...st.prios], value: st.prio || '', onchange: (e) => { st.prio = e.currentTarget.value || null; } }))),
+          labelsField({ id: 'req-setup-lab', ui: 'setup-lab', labels: st.labels, draft: st.labDraft, onChange: (next) => { st.labels = next; } }),
+          exportField('req-setup-prio', ['Priority ', h('span', { class: 'opt', text: 'optional' })], c.prio)),
         h('div', { class: 'field req-export-fld req-export-crit', role: 'radiogroup', 'aria-labelledby': 'req-setup-crit-l' },
           h('span', { class: 'req-export-fl', id: 'req-setup-crit-l', text: 'Acceptance criteria go to' }),
-          h('label', { class: 'req-export-rad' }, radio('setup-crit-desc', !toField, () => { st.crit = { target: 'description' }; draw(); }), 'A section of the description'),
-          h('div', { class: 'req-export-radrow' },
-            h('label', { class: 'req-export-rad' }, radio('setup-crit-field', toField, () => {
-              if (firstField) { st.crit = { target: 'field', field: firstField.value, name: firstField.label }; draw(); }
-            }, !firstField), `A ${tn} field`),
-            // board 26 names them "Acceptance Criteria (custom field)"; the saved name stays the field's own
-            exportSelect({ ui: 'setup-crit-select', list: st.fields.map((x) => ({ value: x.value, label: `${x.label} (custom field)` })),
-              value: toField ? st.crit.field : (firstField || {}).value,
-              label: `${tn} field for acceptance criteria`, disabled: !toField,
-              onchange: (e) => { st.crit = { target: 'field', field: e.currentTarget.value, name: nameIn(st.fields, e.currentTarget.value) }; } })),
-          h('p', { class: 'hint', text: `The list shows the text fields of ${st.project || tn} that can hold the criteria.` })));
+          h('label', { class: 'req-export-rad' }, c.critDesc, 'A section of the description'),
+          h('div', { class: 'req-export-radrow' }, h('label', { class: 'req-export-rad' }, c.critField, c.critFieldText), c.crit),
+          c.critHint));
+    }
+
+    /** Brings the built controls up to date with `st`, in place. */
+    function sync(focusUi = null) {
+      if (c) {
+        const tn = (trackerNow() || {}).name || 'the tracker';
+        const known = connKnown();
+        syncSelect(selOf(c.conn), known ? conns() : [{ value: '', label: CHOOSE_CONNECTION }, ...conns()], known ? connValue(st.conn) : '');
+        c.connFld.querySelector('.hint').textContent = `Connections are added on the Marketplace page: Installed › ${tn} (Advanced mode).`;
+        c.projFld.querySelector('label').textContent = `${tn} project`;
+        syncSelect(selOf(c.proj), st.projects, st.project);
+        syncSelect(selOf(c.type), st.types, st.type);
+        syncSelect(selOf(c.prio), [{ value: '', label: 'None' }, ...st.prios], st.prio || '');
+        const toField = st.crit.target === 'field';
+        const firstField = st.fields[0] || null;
+        c.critDesc.checked = !toField;
+        c.critField.checked = toField;
+        c.critField.disabled = !firstField;
+        c.critFieldText.textContent = `A ${tn} field`;
+        // board 26 names them "Acceptance Criteria (custom field)"; the saved name stays the field's own
+        const critSel = selOf(c.crit);
+        syncSelect(critSel, st.fields.map((x) => ({ value: x.value, label: `${x.label} (custom field)` })), toField ? st.crit.field : (firstField || {}).value);
+        critSel.disabled = !toField;
+        critSel.setAttribute('aria-label', `${tn} field for acceptance criteria`);
+        c.critHint.textContent = `The list shows the text fields of ${st.project || tn} that can hold the criteria.`;
+      }
       save.disabled = st.busy || !st.ready;
-      if (focus) { const el = card.querySelector(`[data-ui="${focus}"]`); if (el && !el.disabled) el.focus(); }
+      if (focusUi) { const el = card.querySelector(`[data-ui="${focusUi}"]`); if (el && !el.disabled) el.focus(); }
     }
 
     async function load(from) {
       const n = ++st.loads;
       st.ready = false;
       alertEl.textContent = '';
-      draw();
+      sync();
       const ask = (args) => api('POST', setupUrl(f, '/options'), { ...st.conn, ...args });
       try {
         if (from === 'projects') {
@@ -2657,18 +2737,18 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         }
         if (st.tooOld) alertEl.textContent = `This ${(trackerNow() || {}).name || 'tracker'} is too old for export setup.`;
         st.ready = !!(st.project && st.type) && !st.tooOld;
-        draw();
+        sync();
       } catch (err) {
         if (!live(g) || n !== st.loads) return;
         alertEl.textContent = errText(err);
-        draw();
+        sync();
       }
     }
 
     save.addEventListener('click', async () => {
       if (st.busy || !st.ready) return;
       st.busy = true;
-      draw();
+      sync();
       try {
         await api('PUT', setupUrl(f), { ...st.conn, project: st.project, projectName: nameIn(st.projects, st.project), issueType: st.type,
           issueTypeName: nameIn(st.types, st.type), labels: st.labels, priority: st.prio, priorityName: st.prio ? nameIn(st.prios, st.prio) : null,
@@ -2682,7 +2762,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         if (!live(g)) return;
         st.busy = false;
         alertEl.textContent = errText(err);
-        draw();
+        sync();
       }
     });
 
@@ -2691,12 +2771,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       if (!live(g)) return;
       st.trackers = r.trackers || [];
       const s = r.setup;
-      st.conn = s ? { plugin: s.plugin, sourceId: s.sourceId, profile: s.profile } : r.defaultProfile;
+      st.conn = s ? { plugin: s.plugin, sourceId: s.sourceId, profile: s.profile } : (r.defaultProfile || null);
       if (s) Object.assign(st, { project: s.trackerProject, type: s.issueType, prio: s.priority, labels: s.labels || [], crit: s.criteria || { target: 'description' } });
-      draw('setup-conn');
-      if (st.conn) await load('projects');
+      build();
+      // the focus goes on to the Connection only while it is still where the dialog put it (never taken from the user)
+      sync(document.activeElement === title ? 'setup-conn' : null);
+      if (connKnown()) await load('projects');
     } catch (err) {
-      if (live(g)) { alertEl.textContent = errText(err); draw(); }
+      if (live(g)) { alertEl.textContent = errText(err); sync(); }
     }
   }
 

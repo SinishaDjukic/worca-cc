@@ -10637,16 +10637,24 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-export-fld > .hint{margin:0}
 .req-export-pair{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:14px}
 .req-export-chips{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.req-export-labin{flex:1 1 120px;min-width:0;box-sizing:border-box}   /* board 26: "Add a label" ends the chips row */
 .req-export-lab{display:inline-flex;align-items:center;gap:4px;max-width:100%;overflow-wrap:anywhere}
 .req-export-x{display:inline-flex;align-items:center;justify-content:center;padding:2px;border:0;border-radius:var(--r-xs);background:transparent;color:var(--ink-2);cursor:pointer}
 .req-export-x:hover{color:var(--ink)}
 .req-export-x:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
-.req-export-rad{display:flex;align-items:center;gap:10px;font-size:var(--fs-body);color:var(--ink);cursor:pointer}
+.req-export-rad{display:flex;align-items:center;gap:10px;min-height:28px;font-size:var(--fs-body);color:var(--ink);cursor:pointer}
 .req-export-rad input{margin:0}
 .req-export-radrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
 .req-export-radrow .select-wrap{flex:1 1 220px;min-width:0}
 .req-export-alert{margin:0}
 .req-export-alert:empty{display:none}
+.req-dialog.req-export .req-dlg-btns{padding-top:14px;border-top:1px solid var(--line)}   /* board 26: the buttons under a rule */
+/* Board 29 (7): an archived feature's "Restore the feature to export it." under the open Export menu, in a box of its own
+   (the menu holds only items); the pair floats where the list alone would. */
+.req-menu .req-export-menupop{position:absolute;top:calc(100% + 6px);right:0;z-index:5;display:flex;flex-direction:column;align-items:stretch;gap:6px;width:max-content;max-width:min(280px,calc(100vw - 32px))}
+.req-export-menupop[hidden]{display:none}
+.req-menu .req-export-menupop > .hd-menu{position:static;min-width:200px}
+.req-export-menupop > .req-export-archnote{margin:0;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-menu)}
 
 /* ── marketplace P3 ── */
 /* Plugin icons (U7, board 0.1): the kind colour lives only in this tile; hue families carry the dark arms. */
