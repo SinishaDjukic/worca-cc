@@ -108,7 +108,7 @@ import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.m
 import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
 import { setShipDialogOpener, shipReason } from './shape/ship-card.mjs';
-import { runPositionLabel, groupKindWord, pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
+import { pageModel, runCrumbs, paintCrumbs, syncFacts } from './run-page-head.mjs';
 import { headModel, routeModel, routeGroupOf, renderHeadButtons, renderRoute, prMenuItems, canResolvePr, showsFixConflicts, HD_PR_WATCH_ACTIVE,
   hdPrWatchLabel, WATCH_HELP, pushLabel, pushTip } from './run-head.mjs';
 import { delegateQuestion } from './question-delegate.mjs';
@@ -31313,7 +31313,6 @@ function groupHomeOf(pipelineId, featureId = '') {
   const planning = !member && !!(pipelineId && row.planning && row.planning.pipelineId === pipelineId);
   return { row, planning, member, position: member ? member.position : null, total: row.model.count.total };
 }
-const groupHref = (row) => (row.groupKind === 'feature' ? `#feature/${encodeURIComponent(row.groupId)}` : `#group/${encodeURIComponent(row.groupId)}`);
 /** D5: a thin ref (a group member, a card) completed from the run's History row. chatRunControls.stop stops a paused
  *  run it holds no live copy of only when ref.status is 'paused'; resume's fallback needs the project dir and key. */
 function fullRef(ref) {
@@ -35572,8 +35571,9 @@ function paintRdActions(screen, r, m = rdModel(r)) {
   });
   if (split) split.hidden = !!pause && pause.hidden;      // the split wrapper follows its button
 }
-/** D18, run 3 D8: the facts block's group row. A run in a group has none: its kind chip names its place and links the
- *  group page (paintRunPlace). A run in no group offers "Add to group…" at Advanced; the row hides below it. */
+/** D18, run 3 D8: the facts block's group row (its last row). A run in a group has none: the split view's breadcrumb
+ *  names its place and links the group page (paintRunPlace). A run in no group offers "Add to group…" at Advanced; the
+ *  row hides below it. */
 function paintGroupLine(el, pipelineId, title, home) {
   if (!el) return;
   const row = el.closest('.rd-kv-row') || el;
@@ -35589,26 +35589,9 @@ function paintGroupLine(el, pipelineId, title, home) {
   b.addEventListener('click', () => openAddToGroup(b, { pipelineId, title }));
   el.replaceChildren(b);
 }
-/** Run 3 (D6, D7): the kind chip ("Run 2 of 3") and the breadcrumb, from the run's group. In a group the chip links
- *  the group page ("›" is CSS). The breadcrumb is the split layout's alone: the Chat run panel keeps none (its "Runs"
- *  crumb would leave Chat). */
+/** Run 3 (D6): the breadcrumb, from the run's group, and the facts rows' hidden state. The breadcrumb is the split
+ *  layout's alone: the Chat run panel keeps none (its "Runs" crumb would leave Chat). The run head has no kind chip. */
 function paintRunPlace(screen, home) {
-  const old = screen.querySelector('.rd-glance .rd-title-row .kind-chip');
-  const word = runPositionLabel(home);
-  const href = home ? groupHref(home.row) : '';
-  let chip = old;
-  if (chip && (chip.tagName === 'A') !== !!href) {
-    chip = document.createElement(href ? 'a' : 'span');
-    chip.className = 'kind-chip';
-    old.replaceWith(chip);
-  }
-  if (chip) {
-    if (chip.textContent !== word) chip.textContent = word;
-    if (href) {
-      if (chip.getAttribute('href') !== href) chip.setAttribute('href', href);
-      chip.setAttribute('aria-label', `${word}, open ${groupKindWord(home.row).toLowerCase()} ${home.row.title}`);
-    }
-  }
   paintCrumbs(screen.querySelector(':is(.rd-bar,.hd-bar) .rd-crumbs'), screen.dataset.presentation === 'panel' ? [] : runCrumbs(home));
   syncFacts(screen.querySelector('.rd-glance .rd-kv'));
 }
@@ -35833,7 +35816,7 @@ function paintPageHead(glance, title, meta) {
   const h = glance.querySelector('.rd-page-title');
   const m = glance.querySelector('.rd-page-meta');
   if (h && h.textContent !== title) h.textContent = title;
-  if (h && h.title !== title) h.title = title;   // D13: the heading clamps at 2 lines; the full title is the tooltip
+  if (h && h.title !== title) h.title = title;   // D13: the heading is one line cut with "…"; the full title is the tooltip
   if (m) {
     const text = meta.filter(Boolean).join(' · ');
     const node = m.firstChild && m.firstChild.nodeType === 3 ? m.firstChild : null;
