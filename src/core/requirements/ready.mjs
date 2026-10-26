@@ -105,7 +105,8 @@ export function displayState(feature, { ready, starts = [] } = {}) {
   return ready && ready.ok ? 'ready' : 'decide';
 }
 
-const diffList = (b, a) => ({ added: a.filter((x) => !b.includes(x)), removed: b.filter((x) => !a.includes(x)) });
+/** The lines a whole list gains and loses (A2 D11's changes since a start; A3 D8's proposal cards). */
+export const diffList = (b, a) => ({ added: a.filter((x) => !b.includes(x)), removed: b.filter((x) => !a.includes(x)) });
 
 /** The changes since a start (A2 D11), and with the files lists (A8 D14) the files the start sent against the ones it
  *  would send now: one line for a file added to the list, one left out of it (its switch off, or removed), one replaced
