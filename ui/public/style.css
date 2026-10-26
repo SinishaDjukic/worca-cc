@@ -10590,6 +10590,58 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-docs .req-docs-foot{margin:0;padding-top:10px;border-top:1px solid var(--line)}
 .req-brief-src{display:inline;margin:0;font-size:var(--fs-meta)}
 
+/* A3 (boards 22, 23, 25; plans/requirements-a3-design.md §6): Ask Worca beside the feature spec. Wider than 900 px the panel takes
+   the right column (420 px) and the Ready, Files and Spec cards move under the current card; at 900 px and narrower it is a
+   full-screen sheet with Back and 44 px targets. The pressed toggle has an ink border, never a green fill; board 23 (dark) is
+   these tokens and nothing else. */
+.req-help-toggle[aria-pressed="true"]{border-color:var(--ink)}
+.req-cols.with-helper{grid-template-columns:minmax(0,1fr) 420px}
+.req-moved{display:flex;flex-direction:column;gap:14px;min-width:0}
+.req-help{position:sticky;top:12px;align-self:start;display:flex;flex-direction:column;min-height:420px;max-height:calc(100vh - 96px);border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);color:var(--ink);overflow:hidden}
+.req-help-head{display:flex;align-items:center;gap:4px;padding:12px 12px 12px 18px;border-bottom:1px solid var(--line)}
+.req-help-title{flex:1;min-width:0}
+.req-help-title h3{margin:0;font-size:15px;font-weight:700}
+.req-help-title .hint{margin:2px 0 0}
+.req-help-back{display:none}
+.req-help-log{flex:1 1 auto;min-height:0;overflow:auto;padding:16px 18px;display:flex;flex-direction:column;gap:14px}
+.req-help-msg-po{align-self:flex-end;max-width:85%;padding:10px 12px;border-radius:var(--r-md);background:var(--field);font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}
+.req-help-cap{display:block;margin:0 0 2px;font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-help-msg-w{align-self:stretch;display:flex;flex-direction:column;gap:6px;font-size:13px}
+.req-help-msg-w .hint,.req-help-text{margin:0}
+.req-help-text{white-space:pre-wrap;overflow-wrap:anywhere}
+.req-help-fail{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;color:var(--red-ink-strong)}
+.req-help-stopped{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.req-help-budget{margin:0;padding:8px 10px;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:12px}
+.req-help-waiting{display:flex;flex-direction:column;gap:6px}
+.req-help-waiting p{margin:0}
+.req-help-waiting-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px;color:var(--ink-2)}
+.req-help-empty{display:flex;flex-direction:column;gap:10px;font-size:13px}
+.req-help-empty p{margin:0}
+.req-help-starters{display:flex;flex-direction:column;gap:6px}
+.req-help-starters .btn{justify-content:flex-start;text-align:left}
+.req-help-composer{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-top:1px solid var(--line)}
+.req-help-label{font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-help-in{width:100%;box-sizing:border-box;resize:vertical;font:inherit;font-size:13px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);color:var(--ink)}
+.req-help-in:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
+.req-help-foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.req-help-foot .hint,.req-help-count,.req-help-refusal{margin:0}
+.req-help-refusal{font-size:12px;color:var(--red-ink-strong)}
+.req-help-archived{margin:0;padding:12px 14px;border-top:1px solid var(--line)}
+@media (max-width:900px){
+  .req-cols.with-helper{grid-template-columns:1fr}
+  .req-help{position:fixed;inset:0;z-index:45;min-height:0;max-height:none;border:0;border-radius:0}
+  .req-help-head{padding:4px 4px 4px 8px}
+  .req-help-back{display:inline-grid}
+  .req-help-close,.req-help-wide{display:none}
+  /* 44px targets: the icon buttons grow; a 28px .btn-sm grows its hit area past its 1px border (26 + 2 × 9), board 20's
+     pattern (a 44px .btn is off the control scale); the starters' gap keeps neighbouring areas apart */
+  .req-help .req-ico{min-width:44px;min-height:44px}
+  .req-help .btn-sm{position:relative}
+  .req-help .btn-sm::after{content:"";position:absolute;inset:-9px 0}
+  .req-help-starters{gap:18px}
+  .req-help-toggle,.req-help .menu-item{min-height:44px}
+}
+
 /* ── marketplace P3 ── */
 /* Plugin icons (U7, board 0.1): the kind colour lives only in this tile; hue families carry the dark arms. */
 .mk-mt{display:inline-flex;align-items:center;justify-content:center;flex:none;width:40px;height:40px;border-radius:var(--r-md);}
