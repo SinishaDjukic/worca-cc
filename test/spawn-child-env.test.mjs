@@ -225,6 +225,32 @@ test('git: the whole env minus credentials and git\'s location variables, never 
   assert.throws(() => childEnv({ kind: 'git', remote: true, base: HOSTY }), /no sandbox env/, 'only an allowlist kind runs in a sandbox');
 });
 
+test('terminal, actions and git: no secret-shaped name and none of worca\'s config; ssh, gpg and the proxy stay (audit 3.4)', () => {
+  const secrets = { WORCA_HEARTBEAT_TOKEN: 'hb', WORCA_RELAY_KEY: 'rk', WORCA_CODEX_PROVIDER_KEY: 'pk', WORCA_SOME_SETTING: '1',
+    ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o', CLAUDE_CODE_OAUTH_TOKEN: 'c', COPILOT_GITHUB_TOKEN: 'g', CURSOR_API_KEY: 'cu',
+    AWS_ACCESS_KEY_ID: 'id', AWS_SECRET_ACCESS_KEY: 's', AWS_SESSION_TOKEN: 't', NPM_TOKEN: 'n', DB_PASSWORD: 'pw',
+    GOOGLE_APPLICATION_CREDENTIALS: '/g.json', gh_token: 'lower', worca_heartbeat_token: 'lower' };
+  const machine = { SSH_AUTH_SOCK: '/s.sock', GIT_ASKPASS: '/askpass', GNUPGHOME: '/gpg', HTTPS_PROXY: 'http://p:3128',
+    WORCA_CORPORATE_PROXY_URL: 'http://p:3128', MAX_OUTPUT_TOKENS: '9', GOPATH: '/go' };
+  const base = { ...HOSTY, ...secrets, ...machine };
+  for (const [name, env] of [
+    ['git', childEnv({ kind: 'git', base }).env],
+    ['terminal', childEnv({ kind: 'terminal', base }).env],
+    ['terminal pane', terminalEnv({ base, sessionId: 's', mode: 'pty', cwd: '/w' })],
+    ['action', actionBaseEnv(base)],
+  ]) {
+    for (const k of Object.keys(secrets)) assert.equal(env[k], undefined, `${name}: ${k}`);
+    for (const [k, v] of Object.entries(machine)) assert.equal(env[k], v, `${name}: ${k}`);
+  }
+  const pane = terminalEnv({ base, sessionId: 's', mode: 'pty', cwd: '/w' });
+  assert.equal(pane.E2B_API_KEY, 'e2b_x', 'the person\'s pane keeps the backend keys it names');
+  assert.equal(pane.WORCA_TERMINAL_SESSION, 's', 'worca\'s own facts for the terminal still come through');
+  const kept = childEnv({ kind: 'terminal', base, keep: ['NPM_TOKEN'], overlay: { WORCA_RUN_ID: 'r1' } }).env;
+  assert.equal(kept.NPM_TOKEN, 'n', 'a kept name comes back');
+  assert.equal(kept.WORCA_RUN_ID, 'r1', 'an overlay name is worca\'s own decision');
+  assert.equal(childEnv({ kind: 'script', inherit: true, base }).env.ANTHROPIC_API_KEY, 'a', 'envScrub off: the script inherits as asked');
+});
+
 test('plugin: PATH, HOME, the proxy and CA names (no proxy URL that carries credentials), the Windows baseline', () => {
   assert.deepEqual(childEnv({ kind: 'plugin', base: { ...HOSTY, HTTPS_PROXY: 'http://p:3128', NO_PROXY: 'l' } }).env,
     { PATH: '/bin', HOME: '/h', HTTPS_PROXY: 'http://p:3128', NO_PROXY: 'l' });

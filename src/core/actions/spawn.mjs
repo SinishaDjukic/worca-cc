@@ -1,14 +1,15 @@
 // src/core/actions/spawn.mjs — spawn a stored action command through the OS shell and stop
-// its whole process tree. Mirrors graph/script-runner.mjs (#runtime shell form + killTree).
-import { spawn } from 'node:child_process';
+// its whole process tree. Mirrors graph/script-runner.mjs (#runtime shell form + killTree). Started through the
+// child-process owner (spawnChild: an env is required), never from node:child_process here.
 import { killTree } from '../graph/script-runner.mjs';
-import { childEnv, signalProcessGroup } from '../spawn.mjs';
+import { childEnv, signalProcessGroup, spawnChild } from '../spawn.mjs';
 
 const STRIPPED = ['WORCA_HOME', 'WORCA_RUN_ROOT', 'WORCA_HOST_PID'];
 const MAX_LINE = 8000;
 
 /** The env an action starts from: the server's env (an action is the person's command, like their terminal) through
- *  the child-process owner (childEnv kind 'terminal'): no host credential, no broker secret, no STRIPPED name. */
+ *  the child-process owner (childEnv kind 'terminal'): no host credential, no broker secret, no STRIPPED name, and none
+ *  of worca's own config or a secret-shaped name (an action runs the project's scripts, which an agent may have written). */
 export function actionBaseEnv(base = process.env) {
   return childEnv({ kind: 'terminal', base, strip: STRIPPED }).env;
 }
@@ -22,7 +23,7 @@ export function shellArgv(command, platform = process.platform, env = process.en
 const live = new Map();
 process.on('exit', () => { for (const [child, platform] of live) killTree(child, platform); });
 
-export function spawnActionProcess({ command, cwd, env, platform = process.platform, onLine = () => {}, spawnImpl = spawn }) {
+export function spawnActionProcess({ command, cwd, env, platform = process.platform, onLine = () => {}, spawnImpl = spawnChild }) {
   const { file, args, verbatim } = shellArgv(command, platform, env);
   const child = spawnImpl(file, args, {
     cwd, env,

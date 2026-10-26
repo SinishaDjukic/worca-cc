@@ -7,7 +7,7 @@ import { stripHostCredentials, isBackendSecret } from './host-credentials.mjs';
 import { ENGINES, engineEntry } from '../shared/engine-switch.mjs';
 import { withoutProxyLogin } from './env-proxy.mjs';
 import { credentialNamesOf, modeCredential } from './exec-env/credentials.mjs';
-import { MODEL_CREDENTIAL_ENV_KEYS } from './broker-guard.mjs';
+import { MODEL_CREDENTIAL_ENV_KEYS, SECRET_ENV_RE } from './broker-guard.mjs';
 
 // Grace between the abort SIGTERM and the SIGKILL escalation. Claude Code shuts
 // down synchronously (fsync'd ~/.claude.json saves); a SIGKILL that lands inside
@@ -101,6 +101,23 @@ const GIT_LOCATION_NAMES = Object.freeze(['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX
 const KIND_BASE = Object.freeze({ engine: 'allowlist', preflight: 'allowlist', script: 'allowlist', terminal: 'inherit', git: 'inherit', plugin: 'plugin' });
 const MAY_INHERIT = new Set(['script']);
 
+// The inherit kinds run code worca did not write, with worca's env: a repository's commit hook on the end-of-run commit
+// or Apply to branch, the project's own scripts an action starts, whatever the person types into an agent-written
+// worktree (audit 3.4). What they need is the person's machine (PATH, HOME, the locale, the proxy, git's and ssh's own
+// names: SSH_AUTH_SOCK, GIT_ASKPASS, GNUPGHOME, …), never worca's config or a secret: so no WORCA_* name but the proxy
+// marker, no secret-shaped name (*_TOKEN, *_KEY, *_SECRET, *_PASSWORD, *_CREDENTIALS, and with a suffix:
+// AWS_ACCESS_KEY_ID), no model credential and no engine's credential. A name the overlay sets, or the caller `keep`s
+// (the person's own pane keeps the backend keys), still comes through.
+const INHERIT_WORCA_KEEP = new Set(['WORCA_CORPORATE_PROXY_URL']);
+let engineCredentialSet = null;
+const anyEngineCredential = (k) => (engineCredentialSet ??= new Set([...MODEL_CREDENTIAL_ENV_KEYS,
+  ...Object.keys(ENGINES).flatMap((e) => credentialNames(e))])).has(k);
+/** Whether an inherit kind withholds `k` from worca's env (Windows names are case-insensitive: compared upper-cased). */
+export function inheritWithheld(k) {
+  const u = k.toUpperCase();
+  return (u.startsWith('WORCA_') && !INHERIT_WORCA_KEEP.has(u)) || SECRET_ENV_RE.test(k) || anyEngineCredential(u);
+}
+
 const names = (list) => (Array.isArray(list) ? list : []);
 /** Every credential name an engine declares (credentials.mjs credentialNamesOf: the one secret-named name of each
  *  non-own mode, and its secret-named relay-owned names — COPILOT_PROVIDER_API_KEY, CURSOR_AUTH_TOKEN). */
@@ -143,7 +160,7 @@ function ceilingFor(root, existing) {
  * analysis, forces a strict sandbox). Do not reinstate it without re-verifying against the installed CLI.
  *
  * Inherit (terminal, git, a script with `inherit`): worca's env minus the caller's `strip` names (and, for git, git's
- * location variables). Plugin: PATH, HOME, the proxy and CA names, and the Windows baseline on `platform` 'win32'.
+ * location variables); the terminal and git never get worca's own config or a secret-shaped name (inheritWithheld). Plugin: PATH, HOME, the proxy and CA names, and the Windows baseline on `platform` 'win32'.
  * Every local kind then loses the host credentials and the broker's secret; `keep` names come back from `base` after
  * that strip, and `strip` names stay out even when the overlay set them.
  *
@@ -166,7 +183,9 @@ export function composeChildEnv({ kind = 'engine', engine = null, signInMode = n
   if (remote && start !== 'allowlist') throw new Error(`childEnv: a ${kind} child has no sandbox env`);
   if (start === 'inherit') {
     const out = new Set(kind === 'git' ? GIT_LOCATION_NAMES : []);
-    allowed = (k) => !out.has(k);
+    // A script inherits only when the run turned envScrub off: then it gets worca's env as it asked.
+    const own = KIND_BASE[kind] === 'inherit';
+    allowed = (k) => !out.has(k) && !(own && inheritWithheld(k));
   } else if (start === 'plugin') {
     const list = pluginNames(base || {}, platform);
     allowed = (k) => list.has(k);

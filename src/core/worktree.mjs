@@ -29,7 +29,7 @@ import {
 } from './run-manifest.mjs';
 import { gitAvailable, gitMissingResult } from './git-available.mjs';
 import { guardedGitEnv, guardedWorktreeAdd } from './git-guard.mjs';
-import { stripHostCredentials } from './host-credentials.mjs';
+import { childEnv } from './spawn.mjs';
 import { ownWorkDir } from './no-project-work.mjs';
 
 const WORKTREES_DIRNAME = join('.worca-cc', 'worktrees');
@@ -65,13 +65,14 @@ export function worktreeAdd(projectDir, dir, commitish, { branch, detach = false
  *  `env` is MERGED OVER process.env (never a replacement): the git binary and the
  *  credential helper need PATH/HOME. Only the Ask Worca callers pass it.
  *  Repository-local hooks and config commands never run (git-guard.mjs, security G2); `hooks: true`
- *  (Apply to branch's commit) keeps the project's hooks, with every host credential stripped. */
+ *  (Apply to branch's commit) keeps the project's hooks, so that call starts from the child-process owner's git env
+ *  (childEnv kind 'git': no host credential, no secret-shaped name, none of worca's own config; audit 3.4). */
 async function git(cwd, args, { signal, timeout = 30_000, env, maxBytes = 0, hooks = false } = {}) {
   if (!gitAvailable()) return gitMissingResult();
   let fullEnv;
   // `timeout` bounds the guard's config listing too, so a slow git gives up within the caller's budget.
   try {
-    fullEnv = await guardedGitEnv(cwd, { hooks, timeout, env: { ...(hooks ? stripHostCredentials(process.env) : process.env), ...env } });
+    fullEnv = await guardedGitEnv(cwd, { hooks, timeout, env: { ...(hooks ? childEnv({ kind: 'git' }).env : process.env), ...env } });
   } catch (err) { return { ok: false, stdout: '', stderr: err.message, code: -1 }; }
   return new Promise((res) => {
     let child;

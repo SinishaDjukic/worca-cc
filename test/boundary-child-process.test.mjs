@@ -41,8 +41,6 @@ const RATCHET = Object.freeze([
   'src/core/exec-env/git-transfer.mjs',          // git-guard
   'src/core/exec-env/e2b-fake.mjs',              // spawn (a test stand-in for E2B)
   'src/core/agent-user.mjs',                     // spawn
-  'src/core/actions/spawn.mjs',                  // spawn
-  'src/core/actions/registry.mjs',               // spawn
   'src/core/mcp/launch.mjs',                     // spawn
   'src/core/mcp/test.mjs',                       // spawn
   'src/core/keep-awake.mjs',                     // spawn
