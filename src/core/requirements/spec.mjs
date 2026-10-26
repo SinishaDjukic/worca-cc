@@ -3,7 +3,8 @@
 // Pure: no I/O, no imports — the store, the round validator, the edits and the Markdown renderer use it.
 
 export class RequirementsError extends Error {
-  /** @param {'BAD_REQUEST'|'NOT_FOUND'|'BUSY'|'CONFLICT'|'BUDGET'|'NOT_READY'|'TOO_LARGE'} code
+  /** @param {'BAD_REQUEST'|'NOT_FOUND'|'BUSY'|'CONFLICT'|'BUDGET'|'NOT_READY'|'TOO_LARGE'|'TRACKER'} code
+   *  (TRACKER: a tracker could not be reached, A6 D11)
    *  @param {object} [data] extra detail for the caller (e.g. { failing: [keys] }), kept on err.data */
   constructor(code, message, data) {
     super(message); this.name = 'RequirementsError'; this.code = code;
