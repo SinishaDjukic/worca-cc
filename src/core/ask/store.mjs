@@ -12,6 +12,9 @@ import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node
 import { basename, join } from 'node:path';
 import { getDb, prepare, tx } from '../db.mjs';
 import { worcaHome } from '../projects.mjs';
+import { agentIdentityFor } from '../agent-pool.mjs';
+import { claimForAgent } from '../agent-user.mjs';
+import { currentOwner } from '../billing.mjs';
 import { extensionForAttachment } from './attachment-kind.mjs';
 import { mergeContexts } from './contexts.mjs';
 
@@ -39,6 +42,20 @@ export function attachmentsDir(threadId) {
 export function askOutDir(threadId) {
   if (typeof threadId !== 'string' || !ASK_ID_RE.test(threadId)) throw new Error('askOutDir: refusing a thread id the store never minted');
   return join(askRoot(), threadId, 'out');
+}
+
+/** 1.4: a chat's folder (its attachments, worktrees, skill mounts, output) belongs to the agent user of the person
+ *  whose turns run in it (agent-pool.mjs): with a pool, `ask/<thread>` gets that user's own group, setgid 2770, and
+ *  `ask/` is sticky, so no other person's agent can read, edit or swap what this chat's agent loads. Made here when it
+ *  is not there yet; refused (throws) when it is a link or another user's folder. A no-op without a pool group. */
+export function claimThreadDir(threadId, owner = currentOwner()) {
+  const id = agentIdentityFor(owner);
+  if (!Number.isInteger(id?.runGid)) return;
+  if (typeof threadId !== 'string' || !ASK_ID_RE.test(threadId)) throw new Error('claimThreadDir: refusing a thread id the store never minted');
+  const dir = join(askRoot(), threadId);
+  mkdirSync(askRoot(), { recursive: true });
+  try { mkdirSync(dir); } catch (err) { if (err?.code !== 'EEXIST') throw err; }
+  claimForAgent(dir, id);
 }
 
 const now = () => new Date().toISOString();
@@ -109,6 +126,7 @@ function rowToRunLink(r) {
 export function createThread({ title = null, model = null, effort = null, createdBy = null, mode = null } = {}) {
   getDb();
   const id = newAskId('ask');
+  claimThreadDir(id);   // 1.4: before an attachment lands in it
   const t = now();
   prepare('INSERT INTO ask_threads (id, title, created_at, updated_at, model, effort, totals, created_by, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(id, title, t, t, model, effort, JSON.stringify(emptyTotals()), createdBy || null, mode === 'composer' ? 'composer' : null);

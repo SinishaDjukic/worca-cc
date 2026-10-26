@@ -179,3 +179,25 @@ export function claimForAgent(dir, id, { uid = process.getuid?.() ?? null } = {}
   const pfd = openOwn(dirname(resolve(dir)), constants.O_RDONLY | constants.O_DIRECTORY, uid);
   try { fchmodSync(pfd, (fstatSync(pfd).mode & 0o7777) | 0o1000); } finally { closeSync(pfd); }
 }
+
+/** Take group and other write off `root` and everything under it (1.4): a folder worca fills for every pool user's
+ *  agents to READ (the Ask memory mount), so no person's agent edits what another person's chat loads. A folder loses
+ *  write before it is listed, so nothing in it can be swapped meanwhile; a link is never followed (O_NOFOLLOW), a FIFO
+ *  never blocks (O_NONBLOCK). Best effort: what cannot be opened or changed keeps its mode. */
+export function readOnlyForAgents(root) {
+  const walk = (p) => {
+    let fd;
+    try { fd = openSync(p, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch { return; }
+    let isDir = false;
+    try {
+      const st = fstatSync(fd);
+      isDir = st.isDirectory();
+      if (st.mode & 0o022) fchmodSync(fd, st.mode & 0o7777 & ~0o022);
+    } catch { /* keeps its mode */ } finally { closeSync(fd); }
+    if (!isDir) return;
+    let names = [];
+    try { names = readdirSync(p); } catch { /* nothing to walk */ }
+    for (const n of names) walk(join(p, n));
+  };
+  walk(root);
+}

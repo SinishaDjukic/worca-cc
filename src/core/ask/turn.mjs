@@ -69,7 +69,7 @@ import { resolveSetting } from '../settings-cascade.mjs';
 import { withRole } from '../model-roles.mjs';
 import { mentionedRefs } from './contexts.mjs';
 import {
-  newAskId, finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, getAttachment, listMessages, ASK_ID_RE,
+  newAskId, finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, getAttachment, listMessages, ASK_ID_RE, claimThreadDir,
 } from './store.mjs';
 import { budgetStatus, recordAskCostDelta } from '../cost-budget.mjs';
 import { generateSuggestion, suggestionModel, claimSuggestion, releaseSuggestion, cancelSuggestion, SUGGESTION_TIMEOUT_MS } from './suggest.mjs';
@@ -262,6 +262,8 @@ class AskTurn extends EventEmitter {
       validateActionsChange: deps.validateActionsChange ?? validateActionsChange,
       // The web card's authoritative check runs against THIS turn's resolved access (allowlist + team cap).
       claimAgentFile: deps.claimAgentFile ?? ((file) => claimFileForAgent(file, agentIdentityFor(currentOwner()))),
+      // 1.4: the thread's folder goes to this turn's agent user's own group (store.mjs); throws on a planted one.
+      claimThreadDir: deps.claimThreadDir ?? ((threadId) => claimThreadDir(threadId)),
       readScript: deps.readScript ?? ((key) => defaultScriptDeps({ threadId: this.threadId }).scripts.read(key)),
       validateWebProposal: deps.validateWebProposal ?? ((input) => createWebValidator({
         allowed: () => (this.web ? this.web.allowedDomains : []), teamCap: () => (this.web ? this.web.teamCap ?? null : null) })(input)),
@@ -1034,9 +1036,10 @@ class AskTurn extends EventEmitter {
       if (!ASK_ID_RE.test(String(this.threadId)) || !ASK_ID_RE.test(String(this.assistantMessageId))) throw new Error('not a store id');
       const threadDir = join(d.worcaHome(), 'ask', this.threadId);
       const parent = join(threadDir, 'skills');
-      // Hosted mode: ask/ is group-writable for every pool user (docker/entrypoint.sh: setgid 2770, no sticky bit), so
-      // another person's agent could put a symlink where ask/<thread>/ or its skills/ folder stands — the sweep and the
-      // mount below would then delete and write wherever it points, as the server. Each is a real folder or not there yet.
+      // Hosted mode: ask/ is group-writable for every pool user (docker/entrypoint.sh: setgid + sticky 3770), so another
+      // person's agent could make ask/<thread>/ first, as a symlink — the sweep and the mount below would then delete and
+      // write wherever it points, as the server. The turn's claim (claimThreadDir) already refuses that; kept as a second
+      // check here, and for skills/. Each is a real folder or not there yet.
       for (const p of [threadDir, parent]) {
         const st = await lstat(p).catch((err) => { if (err?.code === 'ENOENT') return null; throw err; });
         if (st && !st.isDirectory()) throw new Error(`${p} is not a real folder`);
@@ -1394,6 +1397,8 @@ class AskTurn extends EventEmitter {
       const scratchDir = join(d.worcaHome(), 'tmp', 'ask');
       this.scratchDir = scratchDir;
       await d.fs.mkdir(scratchDir, { recursive: true });
+      // 1.4: before anything is mounted in the thread's folder (skills, the chat's worktree) or read from it.
+      d.claimThreadDir(this.threadId);
       // D13 title runs CONCURRENTLY with the turn from here — the haiku call
       // cwd's into scratchDir, so not a line earlier. Idempotent: the call after
       // _attempts below is the backstop for a mkdir/write failure, so "fires

@@ -1640,6 +1640,26 @@ test('1.3: a pre-made relay MCP config (a file or a link) is never written into,
   }
 });
 
+// 1.4: the turn claims its thread's folder for its agent user before it mounts or spawns anything; a refused claim
+// (a planted folder) ends the turn without a spawn.
+test('1.4: the turn claims its thread folder first; a refused claim never spawns', async () => {
+  const s = seed();
+  const order = [];
+  await makeTurn(s, {}, {
+    claimThreadDir: (id) => order.push(`claim:${id}`),
+    runClaudeImpl: async () => { order.push('spawn'); throw Object.assign(new Error('claude exited with code 1: boom'), { errorClass: 'api' }); },
+  }).turn.run();
+  assert.deepEqual(order.slice(0, 2), [`claim:${s.thread.id}`, 'spawn']);
+  const s2 = seed();
+  let spawned = false;
+  await makeTurn(s2, {}, {
+    claimThreadDir: () => { throw new Error('ask/x belongs to uid 1, not worca'); },
+    runClaudeImpl: async () => { spawned = true; throw new Error('never'); },
+  }).turn.run();
+  assert.equal(spawned, false);
+  assert.equal(getMessage(s2.asst.id).status, 'error');
+});
+
 // set_away_now / set_run_away_mode: the child validated; the parent applies and the chat shows the line.
 const awayCall = (onEvent, n, name, input, content, isError = false) => {
   push(onEvent, { type: 'assistant', parent_tool_use_id: null, message: { id: `msg_${n}`, content: [{ type: 'tool_use', id: `toolu_${n}`, name, input }] } });

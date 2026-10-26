@@ -127,10 +127,11 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
           if [ -n "$g" ]; then rungids="$rungids${rungids:+,}$u:$g"; fi
         done
         chown worca:worca-share "$wh/ask" "$wh/tmp" "$wh/tmp/ask"
-        chmod 2770 "$wh/ask"
         # Sticky: an agent user (or worca-plugin) in worca-share may add files here but never
-        # remove or replace one it does not own, such as another turn's relay MCP config (V10).
-        chmod 3770 "$wh/tmp/ask"
+        # remove or replace one it does not own, such as another turn's relay MCP config (V10)
+        # or another person's chat folder (1.4: each ask/<thread> gets its owner's pool group,
+        # ask/store.mjs claimThreadDir; ask/memory is never group-writable, ask/memory-deps.mjs).
+        chmod 3770 "$wh/ask" "$wh/tmp/ask"
         chmod 0751 "$wh/tmp"
         if [ ! -e "$wh/.agent-pool" ]; then
           chgrp -R worca-share "$wh/ask" "$wh/tmp/ask"

@@ -103,7 +103,7 @@ test('agent isolation: a worca-agent user, sudo only to it, set up on single-vol
   assert.match(block, /chmod 3770 "\$wh\/store" "\$wh\/runs"/, 'store/ and runs/ are setgid + sticky');
   // V10: the Ask scratch dir holds each relayed turn's MCP config (its relay token): sticky, so no agent user
   // or plugin code replaces another turn's file.
-  assert.match(e, /chmod 3770 "\$wh\/tmp\/ask"/, 'tmp/ask is setgid + sticky');
+  assert.match(e, /chmod 3770 "\$wh\/ask" "\$wh\/tmp\/ask"/, "ask/ and tmp/ask are setgid + sticky (1.4)");
   assert.match(block, /getent group "\$u"/, 'each pool user\'s own group is looked up');
   assert.match(block, /export WORCA_AGENT_POOL="\$pool" WORCA_AGENT_HOMES="\$homes" WORCA_AGENT_RUN_GIDS="\$rungids"/);
   assert.match(block, /chmod 0711 "\$data" "\$data\/worca" "\$wh"/, 'the worca home is traverse-only');
