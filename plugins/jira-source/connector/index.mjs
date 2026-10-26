@@ -59,11 +59,15 @@ export function fingerprintOf(text) {
   return createHash('sha256').update(norm).digest('hex');
 }
 const PROPERTY = 'worca.export';
+/** D10: once Jira has made the issue, each further request (the marker property, the read-back) gets this long, so a
+ *  hung one cannot run the op into the host's 60 s limit, which would read as "nothing made" and make a second ticket. */
+export const AFTER_KEY_TIMEOUT_MS = 15_000;
 
 export default function createTaskSource(ctx, deps = {}) {
   const base = String(ctx.config?.baseUrl || '').trim().replace(/\/+$/, '');
   const jira = { fetch: deps.fetch || globalThis.fetch, base, email: String(ctx.config?.email || '').trim(), token: ctx.config?.token || '' };
   const log = (level, msg) => { try { ctx.log?.(level, msg); } catch { /* logging never fails an op */ } };
+  const afterKey = Number(deps.afterKeyTimeoutMs) > 0 ? Number(deps.afterKeyTimeoutMs) : AFTER_KEY_TIMEOUT_MS;
 
   const summary = (i) => {
     const f = i.fields || {};
@@ -132,12 +136,28 @@ export default function createTaskSource(ctx, deps = {}) {
   const createFields = (project, issueType) => createmeta(`/rest/api/2/issue/createmeta/${enc(project)}/issuetypes/${enc(issueType)}`, 'fields');
   const fieldId = (f) => f.fieldId || f.key || f.id;
   const browse = (key) => `${base}/browse/${key}`;
-  // After a create or an update has happened: a failed read-back answers null (the host then skips the edited check once);
+  // The issue's own description, read back after a create or an update (and for a ticket findTicket matched), with the
+  // after-key timeout: a failure or a hang answers text and fingerprint null (the host then skips the edited check once);
   // it never throws, or the host would think nothing was made (D10)
-  const readFingerprint = async (key) => {
-    try { return fingerprintOf((await issue(key, ['description']))?.fields?.description); }
-    catch (e) { log('warn', `${key}: could not read the description back: ${e?.message || e}`); return null; }
-  };
+  async function readBack(key) {
+    try {
+      const text = (await jiraFetch(jira, `/rest/api/2/issue/${enc(key)}?fields=description`, { timeoutMs: afterKey }))?.fields?.description;
+      return { text: text ?? '', fingerprint: fingerprintOf(text) };
+    } catch (e) { log('warn', `${key}: could not read the description back: ${e?.message || e}`); return { text: null, fingerprint: null }; }
+  }
+  const readFingerprint = async (key) => (await readBack(key)).fingerprint;
+  // serverInfo's [major, minor] (Data Center 8.4 added create metadata per project, D16); null when the site does not say
+  async function serverVersion() {
+    for (const anonymous of [true, false]) {
+      try {
+        const info = await jiraFetch(jira, '/rest/api/2/serverInfo', { anonymous });
+        const v = Array.isArray(info?.versionNumbers) ? info.versionNumbers.map(Number)
+          : /^\d+\.\d+/.test(String(info?.version || '')) ? String(info.version).split('.').map((n) => parseInt(n, 10)) : [];
+        if (Number.isFinite(v[0]) && Number.isFinite(v[1])) return v;
+      } catch { /* try the next way */ }
+    }
+    return null;
+  }
   // D11: jira-api's message names the HTTP status and the REST path, which the host would show. An export op's `plugin`
   // failure that is not a refusal or gone says Jira's own words only; auth, network and rate-limit pass unchanged.
   function plainFailure(e) {
@@ -273,8 +293,12 @@ export default function createTaskSource(ctx, deps = {}) {
       let types;
       try { types = await createmeta(`/rest/api/2/issue/createmeta/${enc(project)}/issuetypes`, 'issueTypes'); }
       catch (e) {
-        // only a Data Center before 8.4 lacks this endpoint; on Cloud a 404 means the project is gone or not visible (D16)
-        if (e.status === 404 && (await deployment()) === 'datacenter') return { projects, issueTypes: [], tooOld: true, doneStatus };
+        // only a Data Center before 8.4 lacks this endpoint, as its serverInfo says; on Cloud, on a newer Data Center and when
+        // the version is unknown, a 404 means the project is gone or not visible (D16) and goes the normal way
+        if (e.status === 404 && (await deployment()) === 'datacenter') {
+          const v = await serverVersion();
+          if (v && (v[0] < 8 || (v[0] === 8 && v[1] < 4))) return { projects, issueTypes: [], tooOld: true, doneStatus };
+        }
         throw e;
       }
       const issueTypes = types.filter((t) => !t.subtask).map((t) => ({ value: String(t.id), label: t.name }));
@@ -305,7 +329,8 @@ export default function createTaskSource(ctx, deps = {}) {
       // Jira has made the issue: from here nothing throws (D10). A throw would keep the host's pending marker, and since the
       // issue then lacks the property findTicket would not match it, so Try again would make a second ticket.
       if (propertyLater) {
-        try { await jiraFetch(jira, `/rest/api/2/issue/${enc(made.key)}/properties/${PROPERTY}`, { method: 'PUT', body: { marker: ticket.marker } }); }
+        try { await jiraFetch(jira, `/rest/api/2/issue/${enc(made.key)}/properties/${PROPERTY}`, { method: 'PUT', body: { marker: ticket.marker },
+          timeoutMs: afterKey }); }
         catch (e) { log('warn', `${made.key}: could not store Worca's marker: ${e?.message || e}`); }
       }
       return { key: made.key, url: browse(made.key), fingerprint: await readFingerprint(made.key) };
@@ -352,8 +377,11 @@ export default function createTaskSource(ctx, deps = {}) {
         try { prop = await jiraFetch(jira, `/rest/api/2/issue/${enc(i.key)}/properties/${PROPERTY}`); }
         catch (e) { if (e.status !== 404) throw e; }
         if (!prop || prop.value?.marker !== marker) continue;
-        const description = i.fields?.description;
-        return { key: i.key, url: browse(i.key), fingerprint: fingerprintOf(description), lastLine: lastLine(description), marker: prop.value.marker,
+        // the fingerprint of the issue itself, as createTicket and ticketState read it: a search may answer the description
+        // otherwise (Cloud), and a mismatch would show a false "edited in Jira" on the next Update
+        const back = await readBack(i.key);
+        return { key: i.key, url: browse(i.key), fingerprint: back.fingerprint, lastLine: lastLine(back.text ?? i.fields?.description),
+          marker: prop.value.marker,
           labels: Array.isArray(i.fields?.labels) ? i.fields.labels : [] };
       }
       return null;

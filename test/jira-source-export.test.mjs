@@ -3,7 +3,7 @@
 // refused token, 404 as gone, the property in the create body and its fallback, add-only labels, the fingerprint.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import createTaskSource, { fingerprintOf } from '../plugins/jira-source/connector/index.mjs';
+import createTaskSource, { fingerprintOf, AFTER_KEY_TIMEOUT_MS } from '../plugins/jira-source/connector/index.mjs';
 import { markdownToWiki } from '../plugins/jira-source/connector/markup.mjs';
 import { startFakeJira } from './helpers/fake-jira.mjs';
 
@@ -14,10 +14,11 @@ async function site(o = {}) {
   open.push(jira);
   const cloud = (o.deployment || 'cloud') === 'cloud';
   const map = new Map();
-  const ctx = { apiVersion: 5, profile: 'acme', log: () => {},
-    config: { baseUrl: jira.base, email: cloud ? 'ann@acme.test' : '', token: 'tok', transitionOnComplete: o.done ?? 'Done' },
+  const logs = [];
+  const ctx = { apiVersion: 5, profile: 'acme', log: (level, msg) => { logs.push(`${level} ${msg}`); },
+    config: { baseUrl: jira.base, email: cloud ? 'ann@acme.test' : '', token: o.token || 'tok', transitionOnComplete: o.done ?? 'Done' },
     state: { map, get: async (k) => map.get(k) ?? null, set: async (k, v) => { map.set(k, v); } } };
-  return { jira, src: createTaskSource(ctx) };
+  return { jira, logs, src: createTaskSource(ctx, o.afterKeyTimeoutMs ? { afterKeyTimeoutMs: o.afterKeyTimeoutMs } : {}) };
 }
 const DESC = '## Goal\n\nCancel before it ships.\n\nMeasure: fewer calls\n\n## Acceptance criteria\n\n- R-po-1 Cancel while unpaid\n\nFrom Worca FEAT-7 · exported 26 Oct 2026\n';
 const TICKET = { project: 'SHOP', issueType: '10001', title: 'Cancel an order before it ships', description: DESC, labels: ['worca', 'worca-FEAT-7'],
@@ -45,10 +46,17 @@ test('exportOptions: projects as "SHOP — Shop web"; issue types without sub-ta
   assert.equal((await src.exportOptions({})).doneStatus, null, 'no transition named: null');
 });
 
-test('exportOptions: a Data Center older than 8.4 (create metadata 404) answers tooOld', async () => {
-  const { src } = await site({ deployment: 'datacenter', oldCreatemeta: true });
+test('exportOptions: a Data Center older than 8.4 (serverInfo says so; create metadata 404) answers tooOld', async () => {
+  const { src } = await site({ deployment: 'datacenter', oldCreatemeta: true, version: '8.3.4' });
   const r = await src.exportOptions({ project: 'SHOP' });
   assert.deepEqual([r.tooOld, r.issueTypes, r.projects.length], [true, [], 2]);
+});
+
+test('exportOptions: a create-metadata 404 on a Data Center 8.4 or later is a missing project, not tooOld', async () => {
+  for (const version of ['8.4.0', '9.12.0']) {
+    const { src } = await site({ deployment: 'datacenter', oldCreatemeta: true, version });
+    await assert.rejects(src.exportOptions({ project: 'GONE' }), (e) => e.kind === 'plugin' && !('tooOld' in e) && !/404|\/rest\//.test(e.message), version);
+  }
 });
 
 test('exportOptions: on Cloud a create-metadata 404 means the project is gone or hidden, not "too old": it throws', async () => {
@@ -201,6 +209,78 @@ test('findTicket: by project and label, then the property; another install\'s ma
     assert.equal(search.query.jql, 'project = "SHOP" AND (labels = "worca-FEAT-7") ORDER BY created DESC');
     assert.equal(search.query.maxResults, '10');
   }
+});
+
+test('findTicket: the fingerprint and last line come from the issue itself, not from the search answer', async () => {
+  for (const deployment of BOTH) {
+    const { jira, src } = await site({ deployment, staleSearch: true, storeCrlf: deployment === 'cloud' });
+    const made = await src.createTicket({ ticket: { ...TICKET, marker: 'rexp_bbbbbbbbbbbb' } });
+    const hit = await src.findTicket({ project: 'SHOP', label: 'worca-FEAT-7', marker: 'rexp_bbbbbbbbbbbb' });
+    assert.equal(hit.fingerprint, made.fingerprint, `${deployment}: no false "edited in Jira" on the next Update`);
+    assert.equal(hit.lastLine, 'From Worca FEAT-7 · exported 26 Oct 2026');
+    const read = jira.requests.at(-1);
+    assert.deepEqual([read.method, read.path, read.query.fields], ['GET', '/rest/api/2/issue/SHOP-101', 'description'], deployment);
+  }
+});
+
+test('after the key is known a request that never answers times out: the key still comes back, the hang is logged (D10)', async () => {
+  assert.equal(AFTER_KEY_TIMEOUT_MS, 15_000);
+  const t0 = Date.now();
+  const { jira, logs, src } = await site({ deployment: 'datacenter', refuseProperties: true, hangPropertyPut: true, afterKeyTimeoutMs: 150 });
+  const r = await src.createTicket({ ticket: { ...TICKET, marker: 'rexp_0123456789ab' } });
+  assert.deepEqual([r.key, r.url, jira.issues.size], ['SHOP-101', `${jira.base}/browse/SHOP-101`, 1], 'the host can save the link');
+  assert.match(r.fingerprint, /^[0-9a-f]{64}$/);
+  assert.ok(logs.some((l) => /^warn SHOP-101: could not store Worca's marker/.test(l)), logs.join('\n'));
+  const slow = await site({ hangReadBack: true, afterKeyTimeoutMs: 150 });
+  const made = await slow.src.createTicket({ ticket: { ...TICKET, marker: 'rexp_0123456789ab' } });
+  assert.deepEqual([made.key, made.fingerprint], ['SHOP-101', null]);
+  const upd = await slow.src.updateTicket({ key: 'SHOP-101', ticket: { ...TICKET, title: 'Cancel an order' } });
+  assert.deepEqual([upd.key, upd.fingerprint, slow.jira.issues.get('SHOP-101').fields.summary], ['SHOP-101', null, 'Cancel an order']);
+  assert.ok(Date.now() - t0 < 10_000, 'well inside the host 60 s limit');
+});
+
+test('no token and no Authorization value in a log, a thrown message or an answer, on success and failure paths', async () => {
+  const token = 'S3cr3t-T0ken-9f8e7d6c';
+  const seen = [];
+  const keep = async (p) => { try { seen.push(JSON.stringify(await p) ?? 'undefined'); } catch (e) { seen.push(`${e?.kind} ${e?.message} ${e?.stack}`); } };
+  for (const deployment of BOTH) {
+    const runs = [
+      await site({ deployment, token }),
+      await site({ deployment, token, refuseProperties: true, refusePropertyPut: true, failReadBack: true }),
+      await site({ deployment, token, refuseToken: true }),
+      await site({ deployment, token, requiredField: { id: 'customfield_10050', name: 'Team' } }),
+      await site({ deployment, token, refuseOnUpdate: { id: 'summary', message: 'Summary is too long.' } }),
+      await site({ deployment, token, fail: { method: 'POST', path: '/rest/api/2/issue/SHOP-101/comment', status: 403, body: { errorMessages: ['No.'] } } }),
+      await site({ deployment, token, fail: { method: 'GET', path: '/rest/api/2/issue/createmeta/SHOP/issuetypes', status: 500, body: {} } }),
+      await site({ deployment, token, refuseProperties: true, hangPropertyPut: true, afterKeyTimeoutMs: 100 }),
+    ];
+    for (const { src } of runs) {
+      await keep(src.exportOptions({}));
+      await keep(src.exportOptions({ project: 'SHOP', issueType: '10001' }));
+      await keep(src.createTicket({ ticket: { ...TICKET, marker: 'rexp_0123456789ab' } }));
+      await keep(src.updateTicket({ key: 'SHOP-101', ticket: { ...TICKET, title: 'Cancel an order' } }));
+      await keep(src.updateTicket({ key: 'SHOP-999', ticket: TICKET }));
+      await keep(src.commentTicket({ key: 'SHOP-101', body: 'x' }));
+      await keep(src.ticketState({ key: 'SHOP-101' }));
+      await keep(src.findTicket({ project: 'SHOP', label: 'worca-FEAT-7', marker: 'rexp_0123456789ab' }));
+    }
+    for (const { logs } of runs) seen.push(...logs);
+    const header = runs[0].jira.requests.find((q) => q.path !== '/rest/api/2/serverInfo').auth;
+    assert.ok(header && header.length > 12, `${deployment}: the requests did carry the token`);
+    const text = seen.join('\n');
+    for (const secret of [token, header, header.split(' ')[1]]) assert.equal(text.includes(secret), false, `${deployment}: a secret leaked`);
+  }
+  assert.ok(seen.some((x) => /^warn /.test(x)) && seen.some((x) => /^auth /.test(x)) && seen.some((x) => /Jira refused the request/.test(x)), 'the failure paths ran');
+});
+
+test('a rate limit and an unreachable site keep their kind through the export ops', async () => {
+  const { src } = await site({ fail: { method: 'POST', path: '/rest/api/2/issue', status: 429, body: { errorMessages: ['Rate limit exceeded.'] } } });
+  await assert.rejects(src.createTicket({ ticket: TICKET }), (e) => e.kind === 'rate-limit');
+  const down = await site({ deployment: 'datacenter' });
+  await down.jira.close();   // nothing listens there any more
+  await assert.rejects(down.src.exportOptions({}), (e) => e.kind === 'network');
+  await assert.rejects(down.src.createTicket({ ticket: TICKET }), (e) => e.kind === 'network');
+  await assert.rejects(down.src.findTicket({ project: 'SHOP', label: 'worca-FEAT-7', marker: 'rexp_0123456789ab' }), (e) => e.kind === 'network');
 });
 
 test('fingerprintOf: CRLF, trailing spaces and outer blank lines never count; any other change does', () => {
