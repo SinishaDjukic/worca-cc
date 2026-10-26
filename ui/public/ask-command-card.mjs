@@ -119,6 +119,18 @@ function copyButton(doc, read, { title, label = '' }) {
   return btn;
 }
 
+/** A click that shows the command's terminal tab. `show()` resolving false means its shell has closed (idle, or Worca
+ *  restarted): the control says so and stops offering it, instead of a click that does nothing. */
+const SHELL_CLOSED = 'This command\'s shell has closed (it was idle, or Worca restarted). Its output stays here.';
+function showOrSayClosed(control, show, relabel = () => {}) {
+  Promise.resolve(show()).then((shown) => {
+    if (shown !== false) return;
+    control.disabled = true;
+    control.title = SHELL_CLOSED;
+    relabel();
+  }, () => {});
+}
+
 /** A command long enough that the 3-line clamp may cut it (jsdom cannot measure, so this is a length test). */
 export function longCommand(cmd) {
   const s = String(cmd || '');
@@ -147,7 +159,7 @@ export function createCommandCard({ doc, card, onStop, onShow = () => {}, expand
   const folder = h(doc, 'button', 'ask-cmd-folder', card.folder || '');
   folder.type = 'button';
   folder.title = 'Show in the terminal';
-  folder.addEventListener('click', () => onShow(card.sessionId));
+  folder.addEventListener('click', () => showOrSayClosed(folder, () => onShow(card.sessionId)));
   head.append(h(doc, 'span', 'ask-cmd-kicker', 'Command'), pill, folder, h(doc, 'span', 'ask-rc-spacer'), stop);
   const line = h(doc, 'div', 'ask-cmd-line', `$ ${card.command}`);
   // A long command is clamped to 3 lines (style.css); Show all opens it in place.
@@ -237,8 +249,9 @@ function createCommandRow({ doc, card, onStop, onShow, keepInPlace, rowOpen, onR
   const show = h(doc, 'button', 'btn btn-sm btn-quiet ask-cmd-show');
   show.type = 'button';
   show.insertAdjacentHTML('beforeend', iconSvg('terminal', 14));
-  show.append(h(doc, 'span', null, 'Show in terminal'));
-  show.addEventListener('click', () => onShow(card.sessionId));
+  const showLabel = h(doc, 'span', null, 'Show in terminal');
+  show.append(showLabel);
+  show.addEventListener('click', () => showOrSayClosed(show, () => onShow(card.sessionId), () => { showLabel.textContent = 'Shell closed'; }));
   where.append(dir, h(doc, 'span', 'ask-rc-spacer'), show);
   const out = h(doc, 'pre', 'ask-cmd-out');
   const outBox = h(doc, 'div', 'ask-cmd-outbox');

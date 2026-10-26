@@ -6555,7 +6555,8 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd-pill.st-amber{background:var(--amber-bg);color:var(--amber-ink);}
 .ask-cmd.is-live .ask-cmd-pill{animation:dotpulse 1.3s ease-in-out infinite;}
 .ask-cmd-folder{min-width:0;padding:0;border:0;background:none;color:var(--ink-2);font:inherit;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;}
-.ask-cmd-folder:hover{color:var(--ink);text-decoration:underline;}
+.ask-cmd-folder:hover:not(:disabled){color:var(--ink);text-decoration:underline;}
+.ask-cmd-folder:disabled{color:var(--ink-3);cursor:default;}   /* its shell closed: the reason is the tooltip */
 .ask-cmd-folder:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .ask-cmd-stop{white-space:nowrap;}
 .ask-cmd-stop[hidden]{display:none;}

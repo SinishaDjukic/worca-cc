@@ -171,6 +171,36 @@ test('summary mode: Show in terminal is the one action that shows the tab; the f
   assert.deepEqual(shown, ['t-0000000001']);
 });
 
+test('Show in terminal on a closed shell says so and stops offering it; a shown tab leaves it as it was', async () => {
+  const doc = dom();
+  const live = createCommandCard({ doc, card: SUM, onStop: () => {}, onShow: async () => true, summarise: true });
+  const liveBtn = live.el.querySelector('.ask-cmd-show');
+  liveBtn.click();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(liveBtn.disabled, false);
+  assert.equal(liveBtn.textContent, 'Show in terminal');
+  const shown = [];
+  const gone = createCommandCard({ doc, card: SUM, onStop: () => {}, onShow: async (sid) => { shown.push(sid); return false; }, summarise: true });
+  const show = gone.el.querySelector('.ask-cmd-show');
+  show.click();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(shown, ['t-0000000001']);
+  assert.equal(show.disabled, true);
+  assert.equal(show.textContent, 'Shell closed');
+  assert.match(show.title, /shell has closed/);
+});
+
+test('the full card\'s folder on a closed shell is disabled, with the reason as its tooltip', async () => {
+  const doc = dom();
+  const c = createCommandCard({ doc, card: CARD, onStop: () => {}, onShow: async () => false });
+  const folder = c.el.querySelector('.ask-cmd-folder');
+  folder.click();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(folder.disabled, true);
+  assert.equal(folder.textContent, 'demo · main', 'the folder still names where it ran');
+  assert.match(folder.title, /shell has closed/);
+});
+
 test('summary mode: no summary shows the raw command in mono', () => {
   const doc = dom();
   const c = createCommandCard({ doc, card: { ...CARD, summary: null }, onStop: () => {}, summarise: true });
