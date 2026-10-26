@@ -3,6 +3,16 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Workflow versions (Labs)
+
+**Save a workflow as a version, choose which one new runs use, and go back.**
+
+Workflow versions (Labs, flag `workflowTests`): Save version on a workflow, choose which version new runs use, see what changed, and restore any of the last 50 saves. Every save keeps the workflow as it was just before; a version records its agents and scripts by content hash, so it runs today's agent text and the Versions page says when one changed in the Library.
+
+Chips: Save version · Versions · Use for new runs · Restore · experimental: turn it on in Settings › Labs
+
+Read it: [Where Worca keeps its state](../storage.md)
+
 ## Requirements (experimental)
 
 **Define a feature with Worca before anything is built.**

@@ -150,6 +150,22 @@ Everything that used to be a per-run `.json`/`.md` control file —
 plan/review **markdown**, `prompt.md`, and `extras/` remain on disk (their
 existence is indexed in the database).
 
+### Workflow history and versions (v77)
+
+Behind the experimental flag `workflowTests`; the data is kept either way.
+
+- `workflow_revisions` holds two kinds of rows for a user workflow. Every save, step-defaults change, restore and
+  delete keeps the workflow **as it was just before** the change (`version_no` NULL; the last 50 per workflow, older
+  ones pruned). **Save version** keeps a numbered state (`version_no` 1, 2, …); numbered versions are never pruned.
+  The table is append-only and has no foreign keys, so a deleted workflow's history stays.
+- `workflows.live_version_no` is the version new runs use; NULL means the workflow row itself (the draft).
+  `GET /api/workflows/:id` also returns `versionNo` (null = the draft row). Plugin workflows have neither.
+- Save version compares with the latest saved version (the overview carries `sinceLatest`); the Use dialog compares
+  with the version in use (each version carries `changesFromInUse`).
+- A version stores the workflow graph and, for each agent and script it uses, a **content hash**, not their text.
+  A live version therefore runs today's agent and script text from the Library, and the Versions page says
+  "changed in the Library" when a hash differs. A version does not freeze agent text.
+
 ### Run groups (v65)
 
 The Runs list's groups (runs redesign §3.3) are the one new named state of the runs redesign:
