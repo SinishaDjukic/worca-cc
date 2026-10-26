@@ -39,7 +39,13 @@ export function downsampleMax(pts, max = MAX_POINTS) {
 function stepSummary(key, recs, windowOf) {
   const steps = recs.filter((r) => r.t === 'step');
   const startTs = steps.find((r) => r.status === 'start')?.ts ?? recs[0]?.ts ?? null;
-  const endTs = [...steps].reverse().find((r) => r.status !== 'start')?.ts ?? null;
+  // Running time only: each 'start' up to the next record that ends it (done, failed, paused…), so
+  // a paused step's parked time between its stretches is left out. A stretch still open adds nothing.
+  let wallMs = null;
+  for (let i = 0, from = null; i < steps.length; i++) {
+    if (steps[i].status === 'start') { if (from == null) from = steps[i].ts; continue; }
+    if (from != null) { wallMs = (wallMs ?? 0) + Math.max(0, steps[i].ts - from); from = null; }
+  }
   const calls = recs.filter((r) => r.t === 'call' && r.sub == null);
   const subCalls = recs.filter((r) => r.t === 'call' && r.sub != null);
   const results = recs.filter((r) => r.t === 'result');
@@ -82,8 +88,11 @@ function stepSummary(key, recs, windowOf) {
     perCall,
     calls: calls.length,
     sessions: sessions.length,
-    peak: ctxs.length ? Math.max(...ctxs) : null,
-    final: ctxs.length ? ctxs[ctxs.length - 1] : null,
+    // A context size exists only per call. An end-of-session figure is a sum over every call of the
+    // session (Codex, Copilot, Cursor, Gemini, Goose), so it is reported apart, never as a peak.
+    peak: perCall && ctxs.length ? Math.max(...ctxs) : null,
+    final: perCall && ctxs.length ? ctxs[ctxs.length - 1] : null,
+    sessionInput: !perCall && usedResults.length ? sum(usedResults, (r) => r.ctx) : null,
     // A call's output count is a placeholder (Claude stream-json: the message_start value, 2–16 for
     // messages of 142–877); the result's is the real one. Without a result (a killed run) the sum of
     // the calls is only a floor.
@@ -91,7 +100,7 @@ function stepSummary(key, recs, windowOf) {
     // 'calls': no result arrived (a killed spawn), so `output` is a lower bound of placeholders.
     outputFrom: usedResults.some((r) => r.out > 0) ? 'result' : calls.length ? 'calls' : null,
     cacheShare: ctxSum > 0 ? sum(calls, (r) => r.cr) / ctxSum : null,
-    wallMs: startTs != null && endTs != null ? endTs - startTs : null,
+    wallMs,
     startupMs: startTs != null && firstSeen != null ? Math.max(0, firstSeen - startTs) : null,
     modelMs: sum(calls, (r) => r.gapMs),
     toolMs: sum(tools, (r) => r.ms),

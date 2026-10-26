@@ -6518,6 +6518,7 @@ app.get('/api/counts', (req, res) => {
   try {
     res.json({
       pipelines: countPipelines(),
+      archivedPipelines: countPipelines({ archived: true }),
       projects: countProjects(),
       workspaces: countWorkspaces(),
       schedules: { ...scheduleCounts(), unread: unreadCount('schedule', { reader: notifReader(req) }) },

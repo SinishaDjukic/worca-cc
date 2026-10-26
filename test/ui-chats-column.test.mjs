@@ -454,3 +454,65 @@ test('a group opened because a chat needed you stays open after the chat stops n
   await ticks(ctx);
   assert.ok(col.querySelector(`.runs-item[data-row-key="cgroup:${GID}"] .runs-members`));
 });
+
+const mclick = (doc, node, init = {}) => node.dispatchEvent(new doc.defaultView.MouseEvent('click', { bubbles: true, cancelable: true, button: 0, ...init }));
+const checkedKeys = (col) => [...col.querySelectorAll('.runs-item.is-checked')].map((n) => n.dataset.rowKey);
+const opened = (rec, from) => rec.calls.slice(from).some((c) => /^GET \/api\/ask\/threads\/ask_/.test(c));
+
+test('A11 in Chats: ⌘-click selects without opening; Shift-click adds the range; Ctrl-click toggles; Cancel drops the anchor', async () => {
+  const { col, doc, rec, ctx } = await bootOn();
+  const from = rec.calls.length;
+  assert.equal(mclick(doc, rowLink(col, 'ask_10000000'), { metaKey: true }), false, 'the browser never follows the link');
+  await ticks(ctx);
+  assert.deepEqual(checkedKeys(col), ['chat:ask_10000000']);
+  assert.ok(col.querySelector('#chats-list').classList.contains('is-selecting'));
+  assert.equal(col.querySelector('#chats-bulk').hidden, false);
+  mclick(doc, rowLink(col, 'ask_10000002'), { shiftKey: true });
+  await ticks(ctx);
+  assert.deepEqual(checkedKeys(col), ['chat:ask_10000000', 'chat:ask_10000001', 'chat:ask_10000002']);
+  mclick(doc, rowLink(col, 'ask_10000001'), { ctrlKey: true });
+  await ticks(ctx);
+  assert.deepEqual(checkedKeys(col), ['chat:ask_10000000', 'chat:ask_10000002']);
+  assert.equal(mclick(doc, rowLink(col, 'ask_10000005'), { metaKey: true, button: 1 }), true, 'a middle click is left to the browser');
+  assert.equal(opened(rec, from), false, 'no chat opened');
+  col.querySelector('#chats-bulk [data-bulk="cancel"]').click();
+  await ticks(ctx);
+  assert.deepEqual(checkedKeys(col), []);
+  mclick(doc, rowLink(col, 'ask_10000003'), { shiftKey: true });
+  await ticks(ctx);
+  assert.deepEqual(checkedKeys(col), ['chat:ask_10000003'], 'Cancel dropped the anchor: a Shift-click toggles one chat');
+});
+
+test('A11 in Chats: a touch long-press starts selecting and its click opens nothing', async () => {
+  const { col, doc, rec, ctx } = await bootOn();
+  rowLink(col, 'ask_00000002').dispatchEvent(new doc.defaultView.PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch' }));
+  await new Promise((r) => setTimeout(r, 550));
+  await ticks(ctx);
+  assert.deepEqual(checkedKeys(col), ['chat:ask_00000002']);
+  const from = rec.calls.length;
+  assert.equal(mclick(doc, rowLink(col, 'ask_00000002')), false, 'the click after the press is swallowed');
+  await ticks(ctx);
+  assert.deepEqual(checkedKeys(col), ['chat:ask_00000002'], 'and does not toggle it back');
+  assert.equal(opened(rec, from), false);
+});
+
+test('A11 in Chats: ⌘-click on a topic group row selects it; the bar counts its chats', async () => {
+  const { col, doc, ctx } = await bootOn({ list: GROUPED, groups: [{ id: GID, name: 'Release prep', count: 2 }] });
+  const g = col.querySelector(`a.runs-row[data-row-key="cgroup:${GID}"]`);
+  assert.equal(mclick(doc, g, { metaKey: true }), false);
+  await ticks(ctx);
+  assert.deepEqual(checkedKeys(col), [`cgroup:${GID}`]);
+  assert.equal(col.querySelector('#chats-bulk [data-bulk="group"] .runs-bulk-c').textContent, '2');
+});
+
+test('View: Sort by and Group by are segmented rows; a segment pick repaints and keeps the menu open', async () => {
+  const { col, doc, ctx } = await bootOn({ list: GROUPED, groups: [{ id: GID, name: 'Release prep', count: 2 }] });
+  col.querySelector('#chats-view-btn').click();
+  assert.ok(doc.querySelector('.wfv-menu').classList.contains('wfv-view-menu'));
+  [...doc.querySelectorAll('.wfv-menu .wfv-seg [role="menuitemradio"]')].find((b) => b.textContent === 'Topic').click();
+  await ticks(ctx);
+  assert.ok(doc.querySelector('.wfv-menu'), 'the segment pick kept the menu open');
+  assert.deepEqual([...col.querySelectorAll('.runs-sec-head .runs-sec-title')].map((n) => n.textContent), ['Release prep', 'Ungrouped']);
+  assert.equal([...doc.querySelectorAll('.wfv-menu .wfv-menu-item')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Select')
+    .querySelector('.wfv-menu-hint').textContent, '⌘ click');
+});

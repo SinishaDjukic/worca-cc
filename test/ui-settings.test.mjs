@@ -49,11 +49,11 @@ test('Settings sits in the account menu (not the page list), loads root, and sav
   });
   const { window } = ctx;
 
-  // (1) Settings left the page list for the account menu: after Interface mode, before the away row.
+  // (1) Settings left the page list for the account menu: after Interface mode (and the hidden team-setup row), before the away row.
   const doc = window.document;
   assert.equal(doc.querySelector('.nav [data-nav="settings"]'), null, 'not a sidebar page any more');
   const rows = [...doc.querySelectorAll('#acct-menu > .msect > button')].map((el) => el.id);
-  assert.deepEqual(rows, ['acct-lvl', 'acct-settings', 'acct-away', 'acct-keepawake'], 'Interface mode, Settings, then the two switches');
+  assert.deepEqual(rows, ['acct-team-setup', 'acct-lvl', 'acct-settings', 'acct-away', 'acct-keepawake'], 'the team-setup row, Interface mode, Settings, then the two switches');
   assert.equal(doc.getElementById('acct-settings').dataset.nav, 'settings');
 
   // (2) navigating to it loads the current root (default shown as placeholder).

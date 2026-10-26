@@ -205,12 +205,12 @@ test('GET /api/app/version: unknown with no fetch under tests; a fake fetcher dr
     } },
     { name: 'POST updateCheck false clears the cached answer: back on = a fresh fetch', run: async () => {
       let calls = 0;
-      testing.setUpdateFetcher(async () => { calls++; return calls === 1 ? '99.0.0' : pkgVersion; });
+      testing.setUpdateFetcher(async () => { calls++; return calls === 1 ? '99.0.0' : '0.0.1'; });   // not pkgVersion: an RC is never an npm latest, so it reads unknown
       try {
         assert.equal((await get()).status, 'outdated');
         await postJson({ updateCheck: false });
         await postJson({ updateCheck: true });
-        assert.equal((await get()).status, 'up-to-date');
+        assert.equal((await get()).status, 'ahead', 'the second answer, not the cached one');
         assert.equal(calls, 2);
       } finally { await postJson({ updateCheck: true }); testing.setUpdateFetcher(null); }
     } },

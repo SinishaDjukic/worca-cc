@@ -38,7 +38,7 @@ One scale, no half sizes. Use the tokens; never type a px size that is not a ste
 | `--fs-body` | 13px | 1.5 | body, rows, fields, buttons, tabs, the page intro |
 | `--fs-section` | 15px | 1.25 | section titles (`.section-title`, `.card h2`), 600 |
 | `--fs-subpage` | 18px | 1.25 | sub-page titles (`.subpage-title`), 600 |
-| `--fs-page` | 22px | 1.25 | page titles (`.page-title`, the run and group page title), 700, -0.02em, at most 2 lines |
+| `--fs-page` | 22px | 1.25 | page titles (`.page-title`, the run and group page title), 700, -0.02em; the run and group page title is one line, cut with "…" |
 | `--fs-stat` | 22px | 1.25 | stat tile values |
 | `--fs-hero` | 32px | 1.25 | the Chat home hero only (22px under 760px) |
 `--lh-body` is 1.5 and `--lh-title` is 1.25. A subsection or field label is 13px / 600. Relative sizes are allowed
@@ -216,7 +216,12 @@ One menu skin. The box is `.menu`: 4px padding, `--panel`, 1px `--line`, `--r-md
 (red ink, `--red-bg` on hover) and nothing else in a menu is red or amber. `openMenu({ doc, anchor, items, align, side,
 label, host, className })` (`ui/public/workflows/menu.mjs`) emits it, and its items take `danger`. With `host` the menu
 is appended inside it (a `.btn-split.mini`) and placed by its CSS; a `{ switch: true }` item is a `menuitemcheckbox`
-switch row (help line, `.switch`) whose toggle keeps the menu open. The run page's View PR ▾ is built with it. The sidebar flyouts (`.nav-fly`), the
+switch row (help line, `.switch`) whose toggle keeps the menu open. A radio row (`menuitemradio`) is one grid: a 12px ✓
+slot first (painted only when picked), the label, then the count or kind chip at the right edge in tabular figures, so
+every label starts and every number ends at one x; a count of 0 is `--ink-3`. A `{ segmented: true, label, options,
+value, onSelect }` item is a `.menu-h` head over one full-width `.seg` (role group of `menuitemradio`): ←/→ move inside
+it, ↑/↓ move on, and a pick keeps the menu open. The View menus (Runs, Chats; `viewMenuItems`, 256px) use it for Sort by
+and Group by. The run page's View PR ▾ is built with it. The sidebar flyouts (`.nav-fly`), the
 composer pickers (`.ask-pop`) and the split-button menus (`.btn-split-menu`) keep their
 own builders and positions and add `.menu` / `.menu-item`; they carry no box or row skin of their own. No hand-built
 dropdowns. An item that has a key shows it as its `hint` (the 11px `--ink-2` count slot): the Runs row ⋯ reads `S`, `E`, `⌫`.
@@ -288,11 +293,12 @@ and hand the focus back to the opener.
   the Cost tags row in the run page's facts block, never stacked inside a tile. The value is sans with tabular figures.
 - Run and group pages share one head: the bar (Back, a 28px chevron `Back to Runs`, in every layout; the breadcrumb
   `Runs › Run tags › Run 2` beside it when the list stands beside the page; Run after; on the right the one primary
-  action, Stop, ⋯), the title with its kind chip (`Run 2 of 3`, `Run`, or
-  `Feature` / `Chain` / `Group`; a run in a group's chip links its group page and ends in a CSS `›` (`Run 2 of 3 ›`), so
-  its facts block has no group row), then the card: the status block (the state word as the card's headline with its detail under it, the head buttons at its right,
+  action, Stop, ⋯), the title (one line, cut with "…" where the column ends; the cut is CSS only, the stored name is
+  whole, its tooltip holds it, and the bar repeats it once the title scrolls away). A run page's title has no kind chip:
+  a run in a group has no group row in its facts block, and the breadcrumb names and links its group. A group page's
+  title keeps its kind chip (`Feature` / `Chain` / `Group`). Then the card: the status block (the state word as the card's headline with its detail under it, the head buttons at its right,
   centred on the word's line, with the PR control among them; see Card head and PR controls. Beside the stage bar the
-  detail names only the step (`Working` / `Refine Plan`); the stage is on the bar), the route ("Where the work is") under a `--line` divider, the facts block (`.rd-kv`: Group, Project, Labels and Cost tags; 12px
+  detail names only the step (`Working` / `Refine Plan`); the stage is on the bar), the route ("Where the work is") under a `--line` divider, the facts block (`.rd-kv`: Project, Labels, Cost tags and Group, in that order; 12px
   `--ink-2` labels, 13px values, one row per fact and one place to edit it; a quiet button that leads a value pulls back
   by its padding so its text sits on the value column), then the tiles (`--fs-stat` sans values with tabular figures,
   `--pad-tile` padding). No PR bar, no kept-work, merge-back or Apply box: their actions are head buttons.

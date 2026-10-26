@@ -2585,11 +2585,12 @@ export async function listAllPipelines(opts = {}, { batchSize = 16 } = {}) {
  * (all statuses). Backs the History sidebar count, so it must agree with what the
  * list reads show — archived rows are hidden there too. Cheap COUNT(*) — never
  * lists or loads rows. Sync (getDb().prepare(...).get()), matching this module's
- * idiom (it imports only getDb + tx, not a bare `prepare`).
+ * idiom (it imports only getDb + tx, not a bare `prepare`). `{ archived: true }` counts the
+ * archived rows instead (the Runs View menu's Show › Archived count).
  * @returns {number}
  */
-export function countPipelines() {
-  const row = getDb().prepare('SELECT COUNT(*) AS n FROM pipelines WHERE archived_at IS NULL').get();
+export function countPipelines({ archived = false } = {}) {
+  const row = getDb().prepare(`SELECT COUNT(*) AS n FROM pipelines WHERE archived_at IS ${archived ? 'NOT ' : ''}NULL`).get();
   return row ? Number(row.n) : 0;
 }
 

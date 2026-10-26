@@ -134,7 +134,7 @@ export function paintGroupPage(root, view, deps) {
   root.__onMore = deps.onMore || null;
   const title = root.querySelector('.gpage-title');
   title.textContent = row.title;
-  title.title = row.title;   // D13: the heading clamps at 2 lines
+  title.title = row.title;   // D13: the heading is one line cut with "…"; the full title is the tooltip
   root.querySelector('.gpage-head .kind-chip').textContent = groupKindWord(row);   // run 3 (D7): the group's kind
   paintCrumbs(root.querySelector('.gpage-bar .rd-crumbs'), [{ label: 'Runs', href: '#runs' }, { label: row.title }]);
   const pm = pageModel(m);

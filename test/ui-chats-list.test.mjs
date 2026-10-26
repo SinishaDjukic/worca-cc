@@ -78,6 +78,8 @@ test('Show = Archived and Group by None are flat (bare); the chip names the view
   assert.equal(buildChatsModel({ threads: [thread('a')], view: { groupBy: 'none' }, now: NOW }).sections[0].bare, true);
   assert.equal(chatsViewChip({ show: 'archived', sort: 'activity', groupBy: 'date' }, { shown: 8 }), 'Archived · 8 chats');
   assert.equal(chatsViewChip({ show: 'all', sort: 'activity', groupBy: 'date' }, { shown: 8 }), '');
+  assert.equal(chatsViewChip({ show: 'all', sort: 'title', groupBy: 'date' }, { shown: 4 }), 'Title A–Z · 4 chats', 'the chip keeps the full name');
+  assert.equal(chatsViewChip({ show: 'all', sort: 'activity', groupBy: 'date' }, { shown: 4 }), '');
   const mem = { m: new Map([[CHATS_VIEW_KEY, '{"show":"bogus","sort":"cost"}']]), getItem(k) { return this.m.get(k) ?? null; } };
   assert.deepEqual(loadChatsView(mem), { show: 'all', sort: 'cost', groupBy: 'date' });
 });

@@ -34,9 +34,10 @@ test('stepFigures: the peak against the window with its level, then calls, time,
   assert.deepEqual(texts.slice(1), ['12 calls', '2 sessions', 'start 3.0s · model 1m 1s · tools 4.2s', 'cache 90%', '1 tool error', '2 retries', '1 compaction', 'sub-agents 3 calls · peak 40.0k']);
 });
 
-test('stepFigures: an engine without per-call usage reads "context at end"', () => {
-  const f = stepFigures({ perCall: false, peak: 5000, window: null, calls: 0, sessions: 1, compactions: [] });
-  assert.deepEqual(f.map((x) => x.text), ['context at end 5.0k']);
+test('stepFigures: an engine without per-call usage reads "session input", never a context peak', () => {
+  const f = stepFigures({ perCall: false, peak: null, sessionInput: 5000, window: 200_000, calls: 0, sessions: 1, compactions: [] });
+  assert.deepEqual(f.map((x) => x.text), ['session input 5.0k']);
+  assert.equal(f[0].level, undefined);
 });
 
 test('harnessFigures', () => {
@@ -53,6 +54,24 @@ test('contextChart: a line, the window, the compaction trigger and a compaction 
   assert.ok(svg.querySelector('line.tel-trig'));
   assert.ok(svg.querySelector('line.tel-compact'));
   assert.equal(contextChart(doc, { series: [[0, 1]] }), null);
+});
+
+test('paintTelemetry keeps the 20 most recently painted runs', async () => {
+  const doc = dom('runTelemetry');
+  const sec = doc.getElementById('s');
+  const urls = [];
+  const fetchImpl = async (url) => { urls.push(url); return { ok: true, json: async () => ({ steps: {}, harness: { windows: 0 } }) }; };
+  for (let i = 0; i < 20; i++) await paintTelemetry(sec, `r${i}`, { fetchImpl });
+  await paintTelemetry(sec, 'r0', { fetchImpl });            // a cached hit makes r0 the newest
+  await paintTelemetry(sec, 'r20', { fetchImpl });           // the 21st run drops the oldest, r1
+  assert.equal(urls.length, 21);
+  await paintTelemetry(sec, 'r0', { fetchImpl });
+  assert.equal(urls.length, 21, 'r0 stayed cached');
+  await paintTelemetry(sec, 'r1', { fetchImpl });
+  assert.equal(urls.at(-1), '/api/runs/r1/telemetry', 'r1 was dropped and is fetched again');
+  _resetTelemetryCache();
+  await paintTelemetry(sec, 'r0', { fetchImpl });
+  assert.equal(urls.at(-1), '/api/runs/r0/telemetry', 'a reset empties the cache');
 });
 
 test('the slot is empty markup while the flag is off', () => {
