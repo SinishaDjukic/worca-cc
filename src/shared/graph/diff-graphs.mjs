@@ -12,6 +12,20 @@ export function canon(v) {
   return JSON.stringify(v === undefined ? null : v);
 }
 
+/** A config as both sides compare it: keys holding null/undefined dropped; nothing left (or not an object) → null.
+ *  So `config: {}`, a missing config and `{ model: null }` are the same (graphShape and diffGraphs agree). */
+export function cleanConfig(c) {
+  if (!c || typeof c !== 'object' || Array.isArray(c)) return null;
+  const kept = Object.entries(c).filter(([, v]) => v !== undefined && v !== null);
+  return kept.length ? Object.fromEntries(kept) : null;
+}
+/** A wire's settings. The stored graph keeps them in `wire.config` (maxCycles, onExhausted: composer.mjs, canvas-ops.mjs);
+ *  a manifest-shaped wire carries `maxCycles` at the top level. config wins; the top level is the fallback. */
+export function wireConfig(w) {
+  const top = w && w.maxCycles !== undefined && w.maxCycles !== null ? { maxCycles: w.maxCycles } : {};
+  return cleanConfig({ ...top, ...(cleanConfig(w && w.config) || {}) });
+}
+
 const list = (a) => (Array.isArray(a) ? a.filter((x) => x && typeof x === 'object' && typeof x.id === 'string') : []);
 const byId = (a) => new Map(list(a).map((x) => [x.id, x]));
 const plainLabel = (n) => (n && (n.key || n.kind)) || 'step';
@@ -40,8 +54,8 @@ export function diffGraphs(before, after, { labelOf = plainLabel } = {}) {
     if ((na.key ?? null) !== (nb.key ?? null) || na.kind !== nb.kind) {
       out.push({ kind: 'replaced', nodeId: id, text: `${label(nb)} replaces ${label(na)}` });
     }
-    const ca = na.config && typeof na.config === 'object' ? na.config : {};
-    const cb = nb.config && typeof nb.config === 'object' ? nb.config : {};
+    const ca = cleanConfig(na.config) || {};
+    const cb = cleanConfig(nb.config) || {};
     if ((ca.model ?? null) !== (cb.model ?? null)) out.push({ kind: 'model', nodeId: id, text: `${label(nb)}: AI model ${shown(ca.model)} → ${shown(cb.model)}` });
     if ((ca.effort ?? null) !== (cb.effort ?? null)) out.push({ kind: 'effort', nodeId: id, text: `${label(nb)}: effort ${shown(ca.effort)} → ${shown(cb.effort)}` });
     const rest = (c) => canon(Object.fromEntries(Object.entries(c).filter(([k]) => k !== 'model' && k !== 'effort')));
@@ -53,10 +67,14 @@ export function diffGraphs(before, after, { labelOf = plainLabel } = {}) {
   for (const [id, w] of wb) {
     const prev = wa.get(id);
     if (!prev || ends(prev) !== ends(w)) { rewired = true; continue; }
-    if ((prev.maxCycles ?? null) !== (w.maxCycles ?? null)) {
-      const target = b.get(w.to?.node) || { key: w.to?.node };
-      out.push({ kind: 'loop', text: `${label(target)} loop: at most ${shown(prev.maxCycles)} rounds → ${shown(w.maxCycles)}` });
+    const pa = wireConfig(prev) || {};
+    const pb = wireConfig(w) || {};
+    const target = b.get(w.to?.node) || { key: w.to?.node };
+    if ((pa.maxCycles ?? null) !== (pb.maxCycles ?? null)) {
+      out.push({ kind: 'loop', text: `${label(target)} loop: at most ${shown(pa.maxCycles)} rounds → ${shown(pb.maxCycles)}` });
     }
+    const others = (c) => canon(Object.fromEntries(Object.entries(c).filter(([k]) => k !== 'maxCycles')));
+    if (others(pa) !== others(pb)) out.push({ kind: 'wire-config', text: `${label(target)} loop: settings changed` });
   }
   for (const id of wa.keys()) if (!wb.has(id)) rewired = true;
   if (rewired) out.push({ kind: 'wires', text: 'Connections between steps changed' });

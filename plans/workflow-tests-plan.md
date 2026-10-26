@@ -26,7 +26,7 @@
 | D3 | **Every save keeps the state it replaced** (#721): writes of the row via `writeGraphWorkflow`, `setWorkflowNodeDefaults` and `deleteWorkflow` snapshot the previous row first, in the same transaction. A save that changes nothing takes no snapshot. A failed snapshot fails the write. The last **50** automatic snapshots per workflow are kept. Named versions are never pruned. The table is FK-free, so history outlives a deleted row. |
 | D4 | **Restore** puts a saved state back into the **draft** through `saveGraphWorkflow`, the validating save. A state that no longer fits today's agents is refused with the validator's reason (422). Restore never changes the live version. The restore itself is snapshotted, so it can be undone. |
 | D5 | Plugin-owned rows (`origin = 'plugin:*'`) and built-ins (never rows) have no history and no versions. Rows with `origin = 'auto'` do. |
-| D6 | **Version identity** = `workflowFingerprint(graph, parts)`. It covers the nodes (id, kind, key, config) and wires (id, ends, maxCycles), but not layout. `parts` hashes the content of every agent and script the graph uses, so an edit in the Library shows as "changed since vN". Part 1 records the hashes only: a live version runs today's agent text. Freezing agent text per version is out of scope. |
+| D6 | **Version identity** = `workflowFingerprint(graph, parts)`. It covers the nodes (id, kind, key, config) and wires (id, ends, config: the loop limit `config.maxCycles` and `config.onExhausted`, where a stored graph keeps them), but not layout. A part hash covers only behaviour (key, origin, the markdown text or script source, behaviour fields), never a path or a display field, so it is the same on every install. `parts` hashes the content of every agent and script the graph uses, so an edit in the Library shows as "changed since vN". Part 1 records the hashes only: a live version runs today's agent text. Freezing agent text per version is out of scope. |
 | D7 | The column `workflows.version` is the **format** version (1 or 2). The new identifiers are therefore `version_no`, `live_version_no` and `versionNo`, never `version`. |
 | D8 | Runs record the version they used: `manifest.workflowVersion = { no }` (`pipelines.stepper` JSON), only when a named version ran. Statistics and team metrics are unchanged. |
 | D9 | Everything visible and every new route is behind the experimental flag `workflowTests`. Snapshots (D3) are always taken; they are data only. While the flag is off, runs ignore `live_version_no` and use the row. |
@@ -34,6 +34,8 @@
 | D11 | UI level: Simple, as #721 argues: the way back must be at every level that can edit. |
 | D12 | Examples travel with an export (Part 4). Tests count in the normal spending limit, with an optional test share and their own Statistics tile (Part 5). Colleague reviews use a review file until Worca has login (Part 4). Real use is measured only where Worca sees the kept result, per version, team setting off by default (Part 5). The checking model is chosen per example (Part 3). There is no sharing gate (Part 2 shows the latest test; the person decides). |
 | D13 | A workflow's **Tests** page (Part 2) runs versions with `workflowUse: 'draft' \| <versionNo>` through the same run path. Part 1 adds that option so Part 2 needs no engine change. |
+| D15 | Every screen that shows or matches what a workflow will run reads what the run uses, `readRunnableWorkflow(id, { use: 'live' })`: the New run form and the Ask run card (`GET /api/workflows/:id?use=live`), and Auto and Ask twin matching (`autoCandidates`). The Composer opens the draft. An Auto run records `manifest.workflowVersion` like any run (D8). |
+| D16 | The Use dialog lists only graph changes (`changesFromInUse`): every version runs today's Library text (D6), so a Library edit is no difference between versions. When a version recorded older agent or script text, the dialog says once: "Agents and scripts edited in the Library since are used by every version." The draft status and Save version keep "changed in the Library", where it is true. |
 | D14 | Unreliable criteria (Part 3) still run and show, but do not decide better or worse. A criterion becomes unreliable only after ≥ 10 answers. |
 
 ## Global Constraints
@@ -227,6 +229,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Task 2: What changed, and a version's identity (pure helpers)
 
+> **Correction (final review C1, I1).** A stored workflow keeps a loop's limit in `wire.config.maxCycles` (and
+> `config.onExhausted`); only the run manifest has `maxCycles` at the top level. `graphShape` and `diffGraphs` read
+> `wireConfig(w)` (config first, then the top level) and `cleanConfig` (`{}`, missing and null-valued keys are the
+> same). `workflowParts` hashes `AGENT_HASH_FIELDS` / `SCRIPT_HASH_FIELDS`, never `canon(meta)`. The code below is
+> corrected to the stored shape.
+
 **Files:**
 - Create: `src/shared/graph/diff-graphs.mjs`, a pure and browser-safe plain-language diff, plus `canon`.
 - Create: `src/core/workflow-fingerprint.mjs` with `graphShape` and `workflowFingerprint` (`node:crypto` only).
@@ -239,7 +247,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `diffGraphs(before, after, { labelOf? }) → Array<{ kind: 'name'|'removed'|'added'|'replaced'|'model'|'effort'|'config'|'loop'|'wires', nodeId?: string, text: string }>`
     - `before` and `after` are `{ name?, nodes, wires }`.
     - `labelOf(node) → string` defaults to `node.key || node.kind`.
-  - `graphShape(graph) → { nodes: Array<{id,kind,key,config}>, wires: Array<{id,from,to,maxCycles}> }`, sorted by id.
+  - `graphShape(graph) → { nodes: Array<{id,kind,key,config}>, wires: Array<{id,from,to,config}> }`, sorted by id (`config` = `cleanConfig` / `wireConfig`, null when empty).
   - `workflowFingerprint(graph, parts = []) → string`: 16 hex characters.
   - `workflowParts(graph, { registry?, scripts?, readText?, scriptSource? }) → Promise<Array<{ kind: 'agent'|'script', key, origin, hash }>>`, sorted by `kind`, then `key`.
 
@@ -260,7 +268,7 @@ const g = (over = {}) => ({
     { id: 'n_rev', kind: 'agent', key: 'reviewer', x: 200, y: 0, config: {} },
   ],
   wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_draft', port: 'task' } },
-    { id: 'w_loop', from: { node: 'n_rev', port: 'issues' }, to: { node: 'n_draft', port: 'feedback' }, maxCycles: 3 }],
+    { id: 'w_loop', from: { node: 'n_rev', port: 'issues' }, to: { node: 'n_draft', port: 'feedback' }, config: { maxCycles: 3 } }],
   ...over,
 });
 const labelOf = (n) => ({ drafter: 'Draft brief', reviewer: 'Review', checker: 'Fact check' }[n.key] || n.key || n.kind);
@@ -275,7 +283,7 @@ test('model, a new step, a loop budget and a rename read as plain sentences', ()
   const after = g({ name: 'Product brief writer' });
   after.nodes[1] = { ...after.nodes[1], config: { model: 'sonnet' } };
   after.nodes.push({ id: 'n_fact', kind: 'agent', key: 'checker', x: 300, y: 0, config: {} });
-  after.wires[1] = { ...after.wires[1], maxCycles: 2 };
+  after.wires[1] = { ...after.wires[1], config: { maxCycles: 2 } };
   assert.deepEqual(diffGraphs(g(), after, { labelOf }).map((c) => c.text), [
     'Renamed from "Brief writer" to "Product brief writer"',
     'New step Fact check',
@@ -313,7 +321,7 @@ after(() => Promise.all(dirs.map((d) => rm(d, { recursive: true, force: true }))
 const graph = () => ({
   nodes: [{ id: 'b', kind: 'agent', key: 'drafter', x: 5, y: 5, config: { model: 'opus' } },
     { id: 'a', kind: 'script', key: 'word-count', x: 0, y: 0, config: {} }],
-  wires: [{ id: 'w', from: { node: 'a', port: 'out' }, to: { node: 'b', port: 'in' }, maxCycles: 2 }],
+  wires: [{ id: 'w', from: { node: 'a', port: 'out' }, to: { node: 'b', port: 'in' }, config: { maxCycles: 2 } }],
   canvas: { zoom: 1 },
 });
 
@@ -413,10 +421,14 @@ export function diffGraphs(before, after, { labelOf = plainLabel } = {}) {
   for (const [id, w] of wb) {
     const prev = wa.get(id);
     if (!prev || ends(prev) !== ends(w)) { rewired = true; continue; }
-    if ((prev.maxCycles ?? null) !== (w.maxCycles ?? null)) {
-      const target = b.get(w.to?.node) || { key: w.to?.node };
-      out.push({ kind: 'loop', text: `${label(target)} loop: at most ${shown(prev.maxCycles)} rounds → ${shown(w.maxCycles)}` });
+    const pa = wireConfig(prev) || {};
+    const pb = wireConfig(w) || {};
+    const target = b.get(w.to?.node) || { key: w.to?.node };
+    if ((pa.maxCycles ?? null) !== (pb.maxCycles ?? null)) {
+      out.push({ kind: 'loop', text: `${label(target)} loop: at most ${shown(pa.maxCycles)} rounds → ${shown(pb.maxCycles)}` });
     }
+    const others = (c) => canon(Object.fromEntries(Object.entries(c).filter(([k]) => k !== 'maxCycles')));
+    if (others(pa) !== others(pb)) out.push({ kind: 'wire-config', text: `${label(target)} loop: settings changed` });
   }
   for (const id of wa.keys()) if (!wb.has(id)) rewired = true;
   if (rewired) out.push({ kind: 'wires', text: 'Connections between steps changed' });
@@ -429,7 +441,7 @@ export function diffGraphs(before, after, { labelOf = plainLabel } = {}) {
 ```js
 // src/core/workflow-fingerprint.mjs
 // A workflow version's identity (plans/workflow-tests-plan.md D6): the graph's shape — nodes {id, kind, key, config}
-// and wires {id, from, to, maxCycles}, layout excluded — plus the hash of every agent/script it uses
+// and wires {id, from, to, config} (the loop settings, read by wireConfig), layout excluded — plus the hash of every agent/script it uses
 // (workflow-parts.mjs). Leaf module: node:crypto + the shared canon only.
 import { createHash } from 'node:crypto';
 import { canon } from '../shared/graph/diff-graphs.mjs';
@@ -440,8 +452,8 @@ const items = (a) => (Array.isArray(a) ? a.filter((x) => x && typeof x === 'obje
 /** @param {{nodes?: Array, wires?: Array}} graph */
 export function graphShape(graph) {
   return {
-    nodes: items(graph?.nodes).map((n) => ({ id: n.id, kind: n.kind ?? null, key: n.key ?? null, config: n.config ?? null })).sort(byId),
-    wires: items(graph?.wires).map((w) => ({ id: w.id, from: w.from ?? null, to: w.to ?? null, maxCycles: w.maxCycles ?? null })).sort(byId),
+    nodes: items(graph?.nodes).map((n) => ({ id: n.id, kind: n.kind ?? null, key: n.key ?? null, config: cleanConfig(n.config) })).sort(byId),
+    wires: items(graph?.wires).map((w) => ({ id: w.id, from: w.from ?? null, to: w.to ?? null, config: wireConfig(w) })).sort(byId),
   };
 }
 
@@ -489,7 +501,7 @@ export async function workflowParts(graph, { registry, scripts, readText = (p) =
     try {
       body = n.kind === 'agent' ? (meta && meta.agentPath ? await readText(meta.agentPath) : '') : await scriptSource(n.key);
     } catch { body = ''; }
-    const hash = createHash('sha256').update(canon(meta ?? null)).update('\u0000').update(String(body ?? '')).digest('hex').slice(0, 16);
+    const hash = createHash('sha256').update(canon(pick(meta, n.kind === 'agent' ? AGENT_HASH_FIELDS : SCRIPT_HASH_FIELDS))).update('\u0000').update(String(body ?? '')).digest('hex').slice(0, 16);
     seen.set(id, { kind: n.kind, key: n.key, origin: (meta && meta.origin) || null, hash });
   }
   return [...seen.values()].sort((a, b) => (a.kind + a.key < b.kind + b.key ? -1 : a.kind + a.key > b.kind + b.key ? 1 : 0));

@@ -1,9 +1,9 @@
 // src/core/workflow-fingerprint.mjs
 // A workflow version's identity (plans/workflow-tests-plan.md D6): the graph's shape — nodes {id, kind, key, config}
-// and wires {id, from, to, maxCycles}, layout excluded — plus the hash of every agent/script it uses
+// and wires {id, from, to, config} (config = the loop settings, maxCycles and onExhausted, read by wireConfig), layout excluded — plus the hash of every agent/script it uses
 // (workflow-parts.mjs). Leaf module: node:crypto + the shared canon only.
 import { createHash } from 'node:crypto';
-import { canon } from '../shared/graph/diff-graphs.mjs';
+import { canon, cleanConfig, wireConfig } from '../shared/graph/diff-graphs.mjs';
 
 const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const items = (a) => (Array.isArray(a) ? a.filter((x) => x && typeof x === 'object' && typeof x.id === 'string') : []);
@@ -11,8 +11,8 @@ const items = (a) => (Array.isArray(a) ? a.filter((x) => x && typeof x === 'obje
 /** @param {{nodes?: Array, wires?: Array}} graph */
 export function graphShape(graph) {
   return {
-    nodes: items(graph?.nodes).map((n) => ({ id: n.id, kind: n.kind ?? null, key: n.key ?? null, config: n.config ?? null })).sort(byId),
-    wires: items(graph?.wires).map((w) => ({ id: w.id, from: w.from ?? null, to: w.to ?? null, maxCycles: w.maxCycles ?? null })).sort(byId),
+    nodes: items(graph?.nodes).map((n) => ({ id: n.id, kind: n.kind ?? null, key: n.key ?? null, config: cleanConfig(n.config) })).sort(byId),
+    wires: items(graph?.wires).map((w) => ({ id: w.id, from: w.from ?? null, to: w.to ?? null, config: wireConfig(w) })).sort(byId),
   };
 }
 
