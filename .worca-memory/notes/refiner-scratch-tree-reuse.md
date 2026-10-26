@@ -1,7 +1,7 @@
 ---
 name: refiner-scratch-tree-reuse
 description: Implementing a big prose-heavy plan: reuse the refiner's replayed scratch tree, but audit every prose bullet, because the tree lags the final plan version
-updated: 2026-10-25T19:40:56.752Z
+updated: 2026-10-26T16:29:08.919Z
 author: Bulibas
 ---
 
@@ -30,3 +30,10 @@ was an older wording, and three T12 files (README, docs/models.md, the changelog
 v(N-1)→vN diff is not the full list: check each quoted bullet against the files. A python helper that takes the span
 between the first and last backtick of a plan line and searches the whitespace-normalised file finds most misses in
 seconds. Also list `comm` of the tree's changed files against the plan's Files lists, since whole files can be absent.
+
+**Trap: sub-agents share YOUR session scratchpad.** A refiner's audit lane told to stay read-only still built its own
+replay there, and something it ran put the run worktree's files back over the refiner's `scratchpad/tree`
+(2026-10-26, #943: tracked files back at the checkpoint text with the worktree's OLD mtimes, untracked files and later
+edits kept). Nothing errored. The next test run failed on a missing export. Keep your replay in a uniquely named
+subfolder (`scratchpad/rf<issue>/tree`). Tell lanes to use their own named subfolder. Check `git -C <tree> status --short`
+before trusting a green run.

@@ -2,7 +2,7 @@
 name: ask-session-reset-no-history
 description: Read before changing an Ask chat's provider session (clearing sessionId, switching engine, forking): a null session starts the next turn with NO history.
 paths: src/core/ask/turn.mjs, src/core/ask/prompt.mjs, ui/server.mjs
-updated: 2026-10-26T16:05:23.723Z
+updated: 2026-10-26T16:29:08.919Z
 author: Bulibas
 ---
 
@@ -23,3 +23,9 @@ the FIRST attempt's prompt, chosen in `startAskTurn`. The #943 plan does this wi
 
 `ask_messages` had no `engine` column before v77 (#943). Below v77 a reply's engine can only be guessed from its model,
 and a model on two harnesses makes that guess ambiguous.
+
+Anything put IN FRONT of an Ask turn's prompt breaks the mock: `src/core/engines/mock.mjs` `mockAsk` matches
+`^\s*\[worca event\] …` at the prompt's start (after stripping only the context and canvas blocks). The #943 handoff
+transcript turned `test/ask-api-workflow-cards.test.mjs` "Ask graph card with thenRun" red, because its seeded assistant
+row has no session, so the event turn hydrates. The fix is a leading-block strip in `mockAsk` (`ASK_HANDOFF_BLOCK_RE`).
+Tests that seed assistant rows by hand never set a session, so a no-session trigger fires in them.
