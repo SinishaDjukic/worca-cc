@@ -6,7 +6,7 @@
 // so the CLI and the server can never disagree about what a legal graph is.
 //
 // Public surface:
-//   exportGraphJson(id)                -> { version:2, name, domain, nodes, wires, canvas? }
+//   exportGraphJson(id, {use})         -> { version:2, name, domain, nodes, wires, canvas? }
 //   saveGraphWorkflow(body, opts)      -> composer semantics: keeps a legal `id`, 409 on a minted collision (opts.origin; opts.confirmScripts = Ask's graph card, D18's rule over the list it showed)
 //   importGraphWorkflow(body, opts)    -> import semantics: id/origin ignored, name suffixed on collision
 //   listScriptNodes(graph, scripts)    -> the command/code values an import must show first (D18)
@@ -25,7 +25,7 @@ import { loadScriptRegistry } from './script-registry.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { validateGraph, AGENT_TUNABLES } from '../shared/graph/validate.mjs';
 import { effectiveScriptParams, CONFIRM_PARAM_TYPES } from '../shared/graph/script-meta.mjs';
-import { readWorkflow, writeGraphWorkflow } from './workflows.mjs';
+import { readRunnableWorkflow, writeGraphWorkflow } from './workflows.mjs';
 
 /** How many `Name (n)` retries an import makes before giving up. */
 export const SUFFIX_CAP = 20;
@@ -113,10 +113,12 @@ export function nodeDefaultsError(raw, models, where) {
  * graph the Claude Code exporter snapshots — that one applies workspace-variant
  * substitution and drops `canvas`). No id, origin or timestamps: the importer
  * mints an id. Per-node `config` stays; project-layer overrides never ride along.
+ * `use` (D17): 'draft' (the default, the stored row) or a version number (that saved version).
  * @param {string} id
+ * @param {{use?: 'draft'|number}} [opts]
  */
-export async function exportGraphJson(id) {
-  const tpl = await readWorkflow(id);
+export async function exportGraphJson(id, { use = 'draft' } = {}) {
+  const tpl = await readRunnableWorkflow(id, { use });
   if (!tpl) throw err(`workflow not found: ${id}`, 'NOT_FOUND');
   if (tpl.auto) throw err('the Auto entry has no graph to export — it is decided per run', 'UNSUPPORTED');
   if (tpl.version !== 2) {

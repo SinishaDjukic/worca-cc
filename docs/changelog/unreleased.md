@@ -9,6 +9,8 @@ them into the next page and empties this file.
 
 Workflow versions (Labs, flag `workflowTests`): Save version on a workflow, choose which version new runs use, see what changed, and restore any of the last 50 saves. Every save keeps the workflow as it was just before; a version records its agents and scripts by content hash, so it runs today's agent text and the Versions page says when one changed in the Library.
 
+Export can export the version in use or your draft: the Export dialog's Version field picks which, and starts on the version new runs use.
+
 Chips: Save version · Versions · Use for new runs · Restore · experimental: turn it on in Settings › Labs
 
 Read it: [Where Worca keeps its state](../storage.md)

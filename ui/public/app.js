@@ -213,6 +213,7 @@ import { createLibrary } from './workflows/library.mjs';
 import { createChatDock } from './workflows/chat-dock.mjs';
 import { openSaveVersionDialog, openUseVersionDialog, statusText } from './workflows/version-dialogs.mjs';
 import { renderVersionsPage } from './workflows/versions-view.mjs';
+import { exportUseChoices, exportUseValue, paintExportUse } from './workflows/export-use.mjs';
 import { mintId } from '../../src/shared/graph/template.mjs';
 // mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
 // bare <select> with no preview host on this branch (the v1 read-only mini-graph
@@ -3178,6 +3179,10 @@ const gvNewIds = new Set(); // workflows imported this page session (a NEW pill 
 // length cap), a plugin's `wfp_<plugin>_<slug>`, or any safe id a POST /api/workflows body kept (`myflow`).
 const WF_ID_RE = /^[A-Za-z0-9_-]+$/;
 
+/** Plugin rows and the built-ins never have versions (D5); a format-1 row is not a graph (isVersionableRow). */
+function workflowCanHaveVersions(w) {
+  return !!w && Number(w.version) === 2 && !isReservedWorkflowId(w.id) && !String(w.origin || '').startsWith('plugin:');
+}
 const gvApi = {
   agents: async () => { const r = await fetchAgents(); return Array.isArray(r) ? r : (r && r.agents) || []; },
   agentsAll: async () => {
@@ -3609,7 +3614,7 @@ function wfvShellActions() {
     // first and the export follows; a blank canvas has nothing to export — open the saved list instead.
     exportCurrent: () => {
       const t = gvComposer.template();
-      const exportRow = (wf) => openExportModal({ id: wf.id, name: wf.name || wf.id });
+      const exportRow = (wf) => openExportModal({ id: wf.id, name: wf.name || wf.id, versionable: workflowCanHaveVersions(wf) });
       if (t.id && !gvComposer.isDirty()) { exportRow(t); return; }
       if (gvComposer.isPristine()) {
         wfvSetLibraryOpen(true); wfvLibrary?.open('workflows');
@@ -3922,8 +3927,7 @@ function wfvLibraryActions() {
     },
     // Plugin rows and the built-ins never have versions (D5); their ⋯ menu has no Versions….
     // A format-1 row is not a graph and cannot have versions either (isVersionableRow).
-    versionsEnabled: (w) => flagOn('workflowTests') && Number(w.version) === 2 && !isReservedWorkflowId(w.id)
-      && !String(w.origin || '').startsWith('plugin:'),
+    versionsEnabled: (w) => flagOn('workflowTests') && workflowCanHaveVersions(w),
     deleteWorkflow: async (wf) => {
       const schedNote = await scheduleDependentsNote(`workflowId=${encodeURIComponent(wf.id)}`, 'They will fail to start until you point them at another pipeline.');
       const ok = await confirmModal({ title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',
@@ -3943,7 +3947,7 @@ function wfvLibraryActions() {
       if (!r.ok) { notify({ tone: 'err', title: 'Not deleted', detail: r.error }); return; }
       await wfvRefreshWorkflows();
     },
-    exportWorkflow: (wf) => openExportModal({ id: wf.id, name: wf.name || wf.id }),
+    exportWorkflow: (wf) => openExportModal({ id: wf.id, name: wf.name || wf.id, versionable: workflowCanHaveVersions(wf) }),
     newAgent: () => { location.hash = 'workflows/agents/new'; },
     newScript: () => { location.hash = 'workflows/scripts/new'; },
     viewAgent: (key) => { location.hash = `workflows/agents/${key}`; },
@@ -40512,7 +40516,10 @@ async function exportApply(id, opts) { return exportCall(id, opts); }
 // read in flight, shared by every caller while it runs and reset per open (a reopen reads afresh;
 // the older read's late answer is dropped). `busy`: a Preview or an Export is in flight. `seq`: bumped by every
 // plan invalidation, close and open; a Preview answer that lands after a bump is for a dialog that no longer exists.
-const exportModalState = { item: null, format: 'json', destination: 'global', pluginDest: 'folder', targets: null, skipped: [], targetsLoad: null, busy: false, conflicts: [], planned: false, seq: 0 };
+// `exportUse` (D17): the Version field's choices (export-use.mjs), null while it is hidden (flag off, no version, the
+// versions not read yet) — then no `use` is sent and the export is of the draft, as before. `useSeq`: bumped by every
+// open and close only (not by a plan invalidation): a versions read that lands after a bump is for another open.
+const exportModalState = { item: null, format: 'json', destination: 'global', pluginDest: 'folder', targets: null, skipped: [], targetsLoad: null, busy: false, conflicts: [], planned: false, seq: 0, exportUse: null, useSeq: 0 };
 const exportModalHidden = () => { const m = document.getElementById('export-modal'); return !m || m.classList.contains('hidden'); };
 // Set by bindExportModal. A form: a backdrop click never closes it; Escape asks once a choice changed; while
 // a Preview or an Export is out, Cancel and Escape wait for its answer.
@@ -40531,6 +40538,9 @@ function openExportModal(item) {
   exportModalState.skipped = [];
   exportModalState.conflicts = [];
   exportModalState.planned = false;
+  exportModalState.exportUse = null;                     // read afresh below: a version may have been saved since
+  exportModalState.useSeq++;
+  paintExportUse(exportUseEls(), null, { doc: document });
   document.getElementById('export-draft').checked = false;   // draft is opt-in per export, never remembered
   exportSetBusy(false);
   document.getElementById('export-slug').value = '';
@@ -40546,13 +40556,34 @@ function openExportModal(item) {
   exportSyncSlugPreview();
   modal.classList.remove('hidden');
   exportGuard?.opened();
+  if (flagOn('workflowTests') && item.versionable) void exportLoadUse(item.id);   // D17: the Version field
 }
 function closeExportModal() {
   const modal = document.getElementById('export-modal');
   if (modal) modal.classList.add('hidden');
   exportModalState.seq++;                                 // a Preview still in flight has no dialog to land in
+  exportModalState.useSeq++;                              // so has a versions read
   exportSetDone(false);
 }
+const exportUseEls = () => ({ field: document.getElementById('export-use-field'), select: document.getElementById('export-use'),
+  hint: document.getElementById('export-use-hint') });
+/** The Version field (D17): read the workflow's versions (the Versions page's call) and show the field when it has
+ *  one, defaulting to the version new runs use. A failed read or no version keeps it hidden: the export is of the
+ *  draft, as before. An answer for an earlier open is dropped. */
+async function exportLoadUse(workflowId) {
+  const ticket = exportModalState.useSeq;
+  const r = await gvApi.versionsRead(workflowId);
+  if (ticket !== exportModalState.useSeq || exportModalHidden()) return;
+  const choices = r.ok ? exportUseChoices(r.overview) : null;
+  if (!choices) return;
+  exportModalState.exportUse = choices;
+  paintExportUse(exportUseEls(), choices, { doc: document });
+  // A Preview shown or still out was asked for the draft: it no longer matches what Export would send.
+  if (exportModalState.planned || exportModalState.busy) exportInvalidatePlan();
+  if (exportGuard && !exportGuard.touched) exportGuard.markClean();   // a filled-in default is no change of the user's
+}
+/** The request's `use`: the Version field's pick, or undefined while the field is hidden (send nothing). */
+const exportUseNow = () => (exportModalState.exportUse ? exportUseValue(document.getElementById('export-use').value) : undefined);
 /** Swap the form for the result view (or back). The dialog stays open so the
  *  user reads where the export went and what to do next, then clicks Done. */
 function exportSetDone(done) {
@@ -40698,7 +40729,7 @@ function exportSyncMarketplaceButtons(n = (exportModalState.targets || []).lengt
 function exportSetBusy(busy) {
   exportModalState.busy = busy;
   document.getElementById('export-cancel').disabled = busy;
-  for (const id of ['export-plugin-name', 'export-marketplace', 'export-draft']) document.getElementById(id).disabled = busy;
+  for (const id of ['export-plugin-name', 'export-marketplace', 'export-draft', 'export-use']) document.getElementById(id).disabled = busy;
   if (busy) {
     if (!exportIsMarketplace()) return;
     document.getElementById('export-plan-btn').disabled = true;
@@ -40735,7 +40766,13 @@ function exportSyncSlugPreview() {
   const el = document.getElementById('export-slug-preview');
   el.textContent = valid ? `Command: ${preview}` : 'Invalid slug (letters, digits, . _ - only)';
 }
+/** The export request body: the format's own fields plus `use` when the Version field is shown (D17). */
 function exportBuildOpts() {
+  const opts = exportBuildFormatOpts();
+  const use = exportUseNow();
+  return use === undefined ? opts : { ...opts, use };
+}
+function exportBuildFormatOpts() {
   const dest = exportModalState.destination;
   if (exportModalState.format === 'plugin') {
     if (exportModalState.pluginDest === 'marketplace') {
@@ -40859,6 +40896,10 @@ function bindExportModal() {
   document.getElementById('export-plugin-name').addEventListener('input', () => { exportSyncPluginNamePreview(); exportInvalidatePlan(); });
   document.getElementById('export-folder').addEventListener('input', () => { if (exportModalState.format === 'plugin') exportSyncPluginNamePreview(); });
   document.getElementById('export-keep-version').addEventListener('change', exportInvalidatePlan);
+  document.getElementById('export-use').addEventListener('change', () => {
+    paintExportUse(exportUseEls(), exportModalState.exportUse, { doc: document, keep: true });   // the draft's hint
+    exportInvalidatePlan();
+  });
   // Browse…: the native OS folder dialog (the server opens it — a web page never
   // learns an absolute path from its own file picker), exactly like Add Project;
   // the in-app browser is the fallback when the native one is unsupported.
@@ -40910,9 +40951,10 @@ function bindExportModal() {
   // shown for per-file resolution — nothing is ever written past an unresolved one.
   document.getElementById('export-apply-btn').addEventListener('click', async () => {
     if (exportModalState.format === 'json') {
-      // A plain download of the stored graph — the server sets Content-Disposition.
+      // A plain download of the stored graph, or of the version picked (D17) — the server sets Content-Disposition.
       const a = document.createElement('a');
-      a.href = `/api/workflows/${encodeURIComponent(exportModalState.item.id)}/json`;
+      const use = exportUseNow();
+      a.href = `/api/workflows/${encodeURIComponent(exportModalState.item.id)}/json${use === undefined ? '' : `?use=${encodeURIComponent(use)}`}`;
       a.setAttribute('download', '');
       document.body.appendChild(a);
       a.click();

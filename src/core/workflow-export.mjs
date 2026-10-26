@@ -9,14 +9,15 @@
 //   applyExport(opts)    -> resolve + classify + apply resolutions + write
 //   exportWorkflow(opts) -> dispatcher: dryRun -> planExport else applyExport
 // opts = { workflowId, destination:'global'|'project', projectDir?, slug?,
-//          includeAgents=true, dryRun?, onConflict?, resolutions?, repoRoot? }
+//          includeAgents=true, dryRun?, onConflict?, resolutions?, repoRoot?,
+//          use='draft' (D17: 'draft' or a version number — what is exported) }
 
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile, writeFile, mkdir, cp, readdir, rename } from 'node:fs/promises';
 import { join, resolve, dirname, sep, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readWorkflow, resolveGraph } from './workflows.mjs';
+import { readRunnableWorkflow, resolveGraph } from './workflows.mjs';
 import { exportGraphJson, workflowFileSlug, summarizeUnknownAgents } from './workflow-share.mjs';
 import { validatePluginDir, PLUGIN_NAME_RE } from './plugin-manifest.mjs';
 import { registryPortsFn } from './graph/registry-ports.mjs';
@@ -379,8 +380,8 @@ function deriveNodeIo(graph, tnode, nodeKey, { cycle = 1, channelDefs } = {}) {
 
 // ── Step 2: buildExportSet (shared deterministic core) ───────────────────────
 
-async function buildExportSet({ workflowId, destination, projectDir, slug, includeAgents = true, repoRoot }) {
-  const tpl = await readWorkflow(workflowId);
+async function buildExportSet({ workflowId, destination, projectDir, slug, includeAgents = true, repoRoot, use = 'draft' }) {
+  const tpl = await readRunnableWorkflow(workflowId, { use });
   if (!tpl) throw err(`workflow not found: ${workflowId}`, 'NOT_FOUND');
   if (tpl.auto) throw err('the Auto entry has no graph to export — it is decided per run', 'UNSUPPORTED');
 
@@ -397,7 +398,7 @@ async function buildExportSet({ workflowId, destination, projectDir, slug, inclu
   //    with resolveGraph's full node (tools/fanOut/askQuestions/model/effort/meta) and
   //    its consumes/produces (derived from ports + wires, §2). Flow cards (task/end/
   //    and/or/combine) are NOT dispatched — only agent nodes become steps.
-  const graph = await resolveGraph(destination === 'project' ? projectDir : null, workflowId, registry, undefined, { use: 'draft' });
+  const graph = await resolveGraph(destination === 'project' ? projectDir : null, workflowId, registry, undefined, { use });
   // D19: the exported skill tree simulates the graph in Claude Code; a child-process
   // card has no rendering there yet. Refuse loudly rather than export a skill that
   // silently skips the gate.
@@ -1038,20 +1039,21 @@ async function readTextOrNull(path) {
 /**
  * Plan (dryRun) or write a plugin folder for one saved v2 workflow.
  * @param {{workflowId:string, targetDir:string, pluginName?:string, keepVersion?:boolean,
- *          dryRun?:boolean, repoRoot?:string}} opts
+ *          dryRun?:boolean, repoRoot?:string, use?:'draft'|number}} opts  `use` (D17): what is exported, the draft
+ *          (default) or that saved version; the slug stays the workflow id's either way
  * @returns {Promise<{dir, name, slug, version, created:string[], updated:string[], noop:string[],
  *   skipped:Array<{path:string, reason:string}>, conflicts:[], warnings:string[], orphans:[],
  *   written:string[], validation:{ok:boolean, problems:Array}|null,
  *   builtins:{agents:string[], scripts:string[]}}>}
  * Error codes: BAD_REQUEST | NOT_FOUND | UNSUPPORTED | INVALID_GRAPH | CONFLICT | MISSING_SKILL
  */
-export async function exportWorkflowPlugin({ workflowId, targetDir, pluginName, keepVersion = false, dryRun = false, repoRoot } = {}) {
+export async function exportWorkflowPlugin({ workflowId, targetDir, pluginName, keepVersion = false, dryRun = false, repoRoot, use = 'draft' } = {}) {
   if (!workflowId || typeof workflowId !== 'string') throw err('workflowId is required', 'BAD_REQUEST');
   if (!targetDir || typeof targetDir !== 'string' || !targetDir.trim()) throw err('a target plugin folder is required', 'BAD_REQUEST');
   const dir = resolve(targetDir);
-  const tpl = await readWorkflow(workflowId);
+  const tpl = await readRunnableWorkflow(workflowId, { use });
   if (!tpl) throw err(`workflow not found: ${workflowId}`, 'NOT_FOUND');
-  const payload = await exportGraphJson(workflowId);            // UNSUPPORTED for a v1 row
+  const payload = await exportGraphJson(workflowId, { use });   // UNSUPPORTED for a v1 row
   const slug = workflowFileSlug(tpl.id);
   const warnings = [];
 

@@ -13082,9 +13082,22 @@ app.post('/api/workflows/import-json', async (req, res) => {
   }
 });
 
+// D17 (plans/workflow-tests-plan.md): what an export exports — 'draft' (missing: today's behaviour) or a saved
+// version number. The query form is the digits of a positive integer; the body form a positive integer. Anything
+// else, 'live' included, is a caller error. No flag gate: an explicit version number needs none (runnableOf).
+const EXPORT_USE_ERROR = "use must be 'draft' or a version number (1, 2, …)";
+function exportUseOf(raw, { query = false } = {}) {
+  if (raw === undefined || raw === 'draft') return { use: 'draft' };
+  if (query && typeof raw === 'string' && /^[1-9]\d*$/.test(raw)) return { use: Number(raw) };
+  if (!query && Number.isInteger(raw) && raw > 0) return { use: raw };
+  return { error: EXPORT_USE_ERROR };
+}
+
 app.get('/api/workflows/:id/json', async (req, res) => {
+  const exportUse = exportUseOf(req.query.use, { query: true });
+  if (exportUse.error) return badRequest(res, exportUse.error);
   try {
-    const payload = await exportGraphJson(req.params.id);
+    const payload = await exportGraphJson(req.params.id, { use: exportUse.use });
     res.setHeader('Content-Disposition', `attachment; filename="${workflowFileSlug(req.params.id)}.json"`);
     res.type('application/json').send(JSON.stringify(payload, null, 2) + '\n');
   } catch (err) {
@@ -13155,6 +13168,9 @@ app.post('/api/workflows/:id/export', async (req, res) => {
   if (destination !== 'global' && destination !== 'project' && destination !== 'plugin' && destination !== 'marketplace') {
     return badRequest(res, "destination must be 'global', 'project', 'plugin' or 'marketplace'");
   }
+  const exportUse = exportUseOf(body.use);                 // D17: every destination, before anything runs
+  if (exportUse.error) return badRequest(res, exportUse.error);
+  const { use } = exportUse;
   // ── destination 'marketplace' (#717): the plugin goes to a registered marketplace as ONE pull
   //    request on worca/plugin/<name>. dryRun = Preview (clone, build, validate; push nothing).
   if (destination === 'marketplace') {
@@ -13172,7 +13188,7 @@ app.post('/api/workflows/:id/export', async (req, res) => {
       const result = await exportWorkflowToMarketplace({
         workflowId: req.params.id, marketplaceId: body.marketplaceId,
         pluginName: typeof body.pluginName === 'string' ? body.pluginName : undefined,
-        draft: body.draft === true, dryRun: !!body.dryRun, startedBy: startedByOf(req),
+        draft: body.draft === true, dryRun: !!body.dryRun, startedBy: startedByOf(req), use,
       });
       return res.json(result);
     } catch (err) {
@@ -13193,7 +13209,7 @@ app.post('/api/workflows/:id/export', async (req, res) => {
       const result = await exportWorkflowPlugin({
         workflowId: req.params.id, targetDir: pluginDir,
         pluginName: typeof body.pluginName === 'string' ? body.pluginName : undefined,
-        keepVersion: !!body.keepVersion, dryRun: !!body.dryRun,
+        keepVersion: !!body.keepVersion, dryRun: !!body.dryRun, use,
       });
       return res.json(result);
     } catch (err) {
@@ -13228,7 +13244,7 @@ app.post('/api/workflows/:id/export', async (req, res) => {
     const result = await exportWorkflow({
       workflowId: req.params.id, destination, projectDir,
       slug: body.slug, includeAgents: body.includeAgents !== false,
-      dryRun: !!body.dryRun, onConflict: body.onConflict, resolutions: body.resolutions,
+      dryRun: !!body.dryRun, onConflict: body.onConflict, resolutions: body.resolutions, use,
     });
     res.json(result); // Plan {created,noop,updated,conflicts,warnings,orphans} OR Apply {written,skipped,...}
   } catch (err) {

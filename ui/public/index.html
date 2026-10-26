@@ -2916,6 +2916,13 @@
             </div>
             <span id="export-format-hint" class="hint"></span>
           </div>
+          <!-- D17 (canvas board 21): which saved version, or the draft, every format exports. Shown only with
+               the flag on and at least one version; it defaults to the version new runs use. -->
+          <div id="export-use-field" class="export-field hidden" data-flag="workflowTests">
+            <label class="export-label" for="export-use">Version</label>
+            <span class="select-wrap"><select id="export-use" class="select"></select></span>
+            <span id="export-use-hint" class="hint hidden" aria-live="polite"></span>
+          </div>
           <div id="export-dest-field" class="export-field hidden">
             <span class="export-label">Location</span>
             <div id="export-dest" class="seg" role="group" aria-label="Skill location">

@@ -2338,3 +2338,145 @@ test('the Versions page\'s undo guard holds only in the Workflows view: elsewher
   w.document.body.dispatchEvent(away);
   assert.equal(away.defaultPrevented, false, 'another view keeps its own ⌘Z');
 });
+
+// ------------------------------------------------- Export picks what it exports (D17, canvas board 21 "Version")
+const EXPORT_OVERVIEW = {
+  workflowId: 'wf_g', name: 'Graph one', liveVersionNo: 1, latestVersionNo: 2,
+  draft: { changed: true, changes: ['New step Fact check'], partsChanged: [], sinceLatest: null },
+  versions: [{ id: 2, versionNo: 2, note: 'More audit rounds', by: null, createdAt: '2026-10-25', inUse: false, runs: 0, changes: [] },
+    { id: 1, versionNo: 1, note: 'First version for the team', by: null, createdAt: '2026-10-24', inUse: true, runs: 0, changes: ['First version'] }],
+  history: [],
+};
+/** Export… on wf_g with the flag on (or off); `versions` answers GET /versions; every export POST body and every
+ *  JSON download href is recorded. */
+async function openExportUse({ flag = true, versions = () => okJson(EXPORT_OVERVIEW) } = {}) {
+  const posts = [];
+  const downloads = [];
+  const versionReads = [];
+  const booted = await boot({ fetchHandler: (url, init) => {
+    if (/\/api\/workflows\/wf_g\/versions$/.test(url) && (init.method || 'GET') === 'GET') { versionReads.push(url); return versions(versionReads.length); }
+    if (url.endsWith('/export')) { posts.push(JSON.parse(init.body)); return exportReply(); }
+    return null;
+  } });
+  const win = booted.window;
+  if (flag) win.document.documentElement.dataset.flags = 'workflowTests';
+  win.HTMLAnchorElement.prototype.click = function () { if (this.hasAttribute('download')) downloads.push(this.getAttribute('href')); };
+  await go(win, 'workflows');
+  win.__wfv.library().open('workflows');
+  const doc = win.document;
+  const open = async () => { doc.querySelector('.wfl-wf[data-id="wf_g"] .wfl-export').click(); await tick(4); };
+  await open();
+  const g = (id) => doc.getElementById(id);
+  return { win, doc, g, open, posts, downloads, versionReads,
+    field: g('export-use-field'), select: g('export-use'), hint: g('export-use-hint') };
+}
+const pickUse = (win, select, value) => { select.value = value; select.dispatchEvent(new win.Event('change', { bubbles: true })); };
+
+test('Export… Version field: hidden with the flag off (no versions read, no use sent); with the flag on and no versions, hidden too', async () => {
+  await checkRows([
+    { name: 'flag off', run: async () => {
+      const { win, g, field, posts, downloads, versionReads, open } = await openExportUse({ flag: false });
+      assert.equal(field.classList.contains('hidden'), true);
+      assert.equal(field.dataset.flag, 'workflowTests', 'the shell gate hides it too');
+      assert.equal(versionReads.length, 0);
+      g('export-apply-btn').dispatchEvent(new win.Event('click'));
+      assert.deepEqual(downloads, ['/api/workflows/wf_g/json'], 'the download of before, no ?use');
+      g('export-done-close').dispatchEvent(new win.Event('click'));
+      await open();
+      pickFormat(win, win.document, 'skill');
+      g('export-plan-btn').dispatchEvent(new win.Event('click'));
+      await tick(3);
+      assert.equal('use' in posts.at(-1), false);
+    } },
+    { name: 'flag on, no versions yet', run: async () => {
+      const { win, g, field, posts, downloads, versionReads, open } = await openExportUse({ versions: () => okJson({ ...EXPORT_OVERVIEW, liveVersionNo: null, draft: null, versions: [] }) });
+      assert.equal(versionReads.length, 1);
+      assert.equal(field.classList.contains('hidden'), true);
+      g('export-apply-btn').dispatchEvent(new win.Event('click'));
+      assert.deepEqual(downloads, ['/api/workflows/wf_g/json']);
+      g('export-done-close').dispatchEvent(new win.Event('click'));
+      await open();
+      pickFormat(win, win.document, 'skill');
+      g('export-plan-btn').dispatchEvent(new win.Event('click'));
+      await tick(3);
+      assert.equal('use' in posts.at(-1), false);
+    } },
+    { name: 'flag on, the versions read fails: hidden', run: async () => {
+      const { field } = await openExportUse({ versions: () => Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) }) });
+      assert.equal(field.classList.contains('hidden'), true);
+    } },
+  ]);
+});
+
+test('Export… Version field: shown under Format, newest first, the version in use selected; the draft hint only for a changed draft', async () => {
+  const { win, doc, field, select, hint } = await openExportUse();
+  assert.equal(field.classList.contains('hidden'), false);
+  assert.equal(field.querySelector('.export-label').textContent, 'Version');
+  assert.ok(field.previousElementSibling.querySelector('#export-format'), 'right after the Format field');
+  assert.ok(select.closest('.select-wrap'));
+  assert.deepEqual([...select.options].map((o) => o.textContent),
+    ['v2 · More audit rounds', 'v1 · First version for the team · new runs use this', 'Your draft (not saved as a version)']);
+  assert.equal(select.value, '1');
+  assert.equal(hint.classList.contains('hidden'), true);
+  pickUse(win, select, 'draft');
+  assert.equal(hint.textContent, 'Your draft differs from v1, which new runs use.');
+  assert.equal(hint.classList.contains('hidden'), false);
+  pickUse(win, select, '2');
+  assert.equal(hint.classList.contains('hidden'), true);
+  assert.equal(doc.getElementById('export-modal').classList.contains('hidden'), false);
+});
+
+test('Export… sends the chosen use: the JSON download URL, and the Preview and the Export of every other format', async () => {
+  await checkRows([
+    { name: 'JSON: the version in use by default; Your draft → ?use=draft', run: async () => {
+      const { win, g, select, downloads, open } = await openExportUse();
+      g('export-apply-btn').dispatchEvent(new win.Event('click'));
+      assert.equal(downloads.at(-1), '/api/workflows/wf_g/json?use=1');
+      g('export-done-close').dispatchEvent(new win.Event('click'));
+      await open();
+      pickUse(win, select, 'draft');
+      g('export-apply-btn').dispatchEvent(new win.Event('click'));
+      assert.equal(downloads.at(-1), '/api/workflows/wf_g/json?use=draft');
+    } },
+    { name: 'skill: Preview and Export (its own dry run + the write) carry use', run: async () => {
+      const { win, doc, g, select, posts } = await openExportUse();
+      pickFormat(win, doc, 'skill');
+      pickUse(win, select, '2');
+      g('export-plan-btn').dispatchEvent(new win.Event('click'));
+      await tick(3);
+      assert.deepEqual([posts.at(-1).use, posts.at(-1).dryRun], [2, true]);
+      pickUse(win, select, 'draft');
+      assert.equal(g('export-plan').classList.contains('hidden'), true, 'another pick drops the shown preview');
+      g('export-apply-btn').dispatchEvent(new win.Event('click'));
+      await tick(4);
+      assert.deepEqual(posts.slice(-2).map((p) => [p.use, !!p.dryRun]), [['draft', true], ['draft', false]]);
+    } },
+    { name: 'plugin to a folder: Export carries use', run: async () => {
+      const { win, doc, g, posts } = await openExportUse();
+      pickFormat(win, doc, 'plugin');
+      const folder = g('export-folder');
+      folder.value = '/tmp/my-plugin';
+      folder.dispatchEvent(new win.Event('input', { bubbles: true }));
+      g('export-apply-btn').dispatchEvent(new win.Event('click'));
+      await tick(4);
+      assert.ok(posts.length >= 1);
+      assert.ok(posts.every((p) => p.destination === 'plugin' && p.use === 1), JSON.stringify(posts));
+    } },
+  ]);
+});
+
+test('Export… a late versions read never lands in a re-opened dialog', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const { win, g, field, open, select } = await openExportUse({ versions: (n) => (n === 1
+    ? held.then(() => okJson(EXPORT_OVERVIEW))
+    : okJson({ ...EXPORT_OVERVIEW, liveVersionNo: null, draft: null, versions: [] })) });
+  assert.equal(field.classList.contains('hidden'), true, 'nothing until the read answers');
+  g('export-cancel').dispatchEvent(new win.Event('click'));
+  await tick();
+  await open();                                            // the second read answers at once: no versions
+  release();
+  await tick(4);
+  assert.equal(field.classList.contains('hidden'), true, 'the first open\'s answer is dropped');
+  assert.equal(select.options.length, 0);
+});

@@ -37,6 +37,7 @@
 | D15 | Every screen that shows or matches what a workflow will run reads what the run uses, `readRunnableWorkflow(id, { use: 'live' })`: the New run form and the Ask run card (`GET /api/workflows/:id?use=live`), and Auto and Ask twin matching (`autoCandidates`). The Composer opens the draft. An Auto run records `manifest.workflowVersion` like any run (D8). |
 | D16 | The Use dialog lists only graph changes (`changesFromInUse`): every version runs today's Library text (D6), so a Library edit is no difference between versions. When a version recorded older agent or script text, the dialog says once: "Agents and scripts edited in the Library since are used by every version." The draft status and Save version keep "changed in the Library", where it is true. |
 | D14 | Unreliable criteria (Part 3) still run and show, but do not decide better or worse. A criterion becomes unreliable only after ≥ 10 answers. |
+| D17 | Export picks what it exports (decided 2026-10-26, canvas board 21 "Version" field). Every export path (JSON file, Claude Code skill, Worca plugin to a folder or a marketplace) takes `use`: 'draft' or a version number; omitted = 'draft' (today's behaviour, API and CLI unchanged). The Export dialog shows a Version field only with the flag on and at least one version; it defaults to the version new runs use. |
 
 ## Global Constraints
 

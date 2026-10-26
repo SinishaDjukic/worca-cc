@@ -16,7 +16,7 @@ import { basename, dirname, join, relative, sep } from 'node:path';
 import { listMarketplaces } from './marketplaces.mjs';
 import { discoverAtCommit, parseMarketplaceManifest } from './plugin-repo.mjs';
 import { exportWorkflowPlugin } from './workflow-export.mjs';
-import { readWorkflow } from './workflows.mjs';
+import { readRunnableWorkflow } from './workflows.mjs';
 import { PLUGIN_NAME_RE } from './plugin-manifest.mjs';
 import { runPluginScriptCases } from './plugin-script-cases.mjs';
 import { parseRemoteUrl, forgeOf, remoteRepoSlug, FORGE_LABEL } from './forge.mjs';
@@ -426,8 +426,9 @@ async function pushOnce(d, repo, push, branch, sha, scrub) {
  * Errors (err.code): BAD_REQUEST | NOT_FOUND | UNSUPPORTED | CONFLICT | MARKETPLACE_INVALID |
  * VALIDATION_FAILED (+ .problems) | DISCOVERY_FAILED | GIT_FAILED | FORK_FAILED | PUSH_FAILED |
  * PR_FAILED, plus every exportWorkflowPlugin code. Nothing is pushed before every check passed.
+ * `use` (D17): what is exported, 'draft' (the default) or a saved version number.
  */
-export async function exportWorkflowToMarketplace({ workflowId, marketplaceId, pluginName, draft = false, dryRun = false, startedBy = null, repoRoot } = {}) {
+export async function exportWorkflowToMarketplace({ workflowId, marketplaceId, pluginName, draft = false, dryRun = false, startedBy = null, repoRoot, use = 'draft' } = {}) {
   const d = _deps;
   if (!workflowId || typeof workflowId !== 'string') throw err('workflowId is required', 'BAD_REQUEST');
   if (!marketplaceId || typeof marketplaceId !== 'string') throw err('marketplaceId is required', 'BAD_REQUEST');
@@ -436,7 +437,7 @@ export async function exportWorkflowToMarketplace({ workflowId, marketplaceId, p
   const refusal = publishRefusal(entry);
   if (refusal) throw err(`marketplace "${entry.name || entry.id}" cannot take a pull request from this Worca: ${refusal}`, 'UNSUPPORTED');
   const target = publishTargetOf(entry);
-  const tpl = await readWorkflow(workflowId);
+  const tpl = await readRunnableWorkflow(workflowId, { use });
   if (!tpl) throw err(`workflow not found: ${workflowId}`, 'NOT_FOUND');
   const asked = typeof pluginName === 'string' ? pluginName.trim() : '';
   const name = asked || derivePluginName(tpl.name);
@@ -486,7 +487,7 @@ export async function exportWorkflowToMarketplace({ workflowId, marketplaceId, p
 
     // 3. Branch + the export itself (the clone is scratch: even a dry run applies here).
     await mustGit(d, repo, ['checkout', '-q', '-b', branch], scrub);
-    const plan = await scrubbed(scrub, () => exportWorkflowPlugin({ workflowId, targetDir: pluginDir, pluginName: name, repoRoot }));
+    const plan = await scrubbed(scrub, () => exportWorkflowPlugin({ workflowId, targetDir: pluginDir, pluginName: name, repoRoot, use }));
     const manifestPath = join(pluginDir, 'worca-cc-plugin.json');
     const rel = (p) => relative(repo, p).split(sep).join('/');
     const contentChanged = [...plan.created, ...plan.updated].some((p) => p !== manifestPath);
