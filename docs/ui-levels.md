@@ -291,7 +291,7 @@ gated: the view shows the same controls at every level.
 | The script sheet: the runtime step, the workspace and the bench under its editor; the Import dialog's command list | all |
 | The composer chat in the dock | all |
 | The save dialog's Domain | all |
-| Behind the flag `workflowTests`, Simple (#721: the way back must be at every level that can edit): the Canvas · Versions switch; the status line next to the name ("v1 in use", "Draft · new runs use v1"); Save version and its dialog; the Versions page (Use for new runs and its dialog, Restore into draft, Every save with Restore); Versions… in the Library's ⋯ menu | all |
+| Behind the flag `workflowTests`, Simple (#721: the way back must be at every level that can edit): the Canvas · Versions switch; the status line next to the name ("v1 in use", "Draft · new runs use v1"); Save version and its dialog; the Versions page (Use for new runs and its dialog, Restore into draft, Every save with Restore); Versions… in the Library's ⋯ menu; the Export dialog's Version field (wherever Export opens; the skill and plugin formats stay Expert) | all |
 | Export as a Claude Code skill or a Worca plugin (the shared Export dialog) | E |
 
 The old addresses `#composer`, `#agents`, `#scripts` and `#agent-create` land
