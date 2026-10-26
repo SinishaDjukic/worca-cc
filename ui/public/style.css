@@ -6563,7 +6563,8 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd-pill.st-amber{background:var(--amber-bg);color:var(--amber-ink);}
 .ask-cmd.is-live .ask-cmd-pill{animation:dotpulse 1.3s ease-in-out infinite;}
 .ask-cmd-folder{min-width:0;padding:0;border:0;background:none;color:var(--ink-2);font:inherit;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;}
-.ask-cmd-folder:hover{color:var(--ink);text-decoration:underline;}
+.ask-cmd-folder:hover:not(:disabled){color:var(--ink);text-decoration:underline;}
+.ask-cmd-folder:disabled{color:var(--ink-3);cursor:default;}   /* its shell closed: the reason is the tooltip */
 .ask-cmd-folder:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .ask-cmd-stop{white-space:nowrap;}
 .ask-cmd-stop[hidden]{display:none;}
@@ -6584,10 +6585,8 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd-toggle[aria-expanded="true"] .ask-cmd-chev{transform:rotate(90deg);}
 .ask-cmd-out{margin:0;max-height:16em;overflow:auto;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-ctrl);background:var(--field);color:var(--ink);font-family:var(--mono);font-size:11px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;}
 .ask-cmd-out[hidden]{display:none;}
-/* Command summaries (#911): one row per command with the runs status dot; a group joins rows into one card. */
+/* Command summaries (#911): one row per command with the runs status dot; a group holds its rows in one card. */
 .ask-card.ask-cmd.is-sum{gap:0;padding:0;}
-.ask-cmd-ghead{padding:8px 14px 0;color:var(--ink-2);font-size:12px;}
-.ask-cmd-ghead[hidden]{display:none;}
 .ask-cmd-row{display:flex;align-items:center;gap:8px;min-height:38px;padding:0 14px;cursor:pointer;}
 .ask-cmd-row:hover{background:var(--hover);}
 .ask-cmd-row-btn{display:flex;align-items:center;gap:10px;flex:1 1 auto;min-width:0;padding:0;border:0;background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
@@ -6597,19 +6596,47 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd-meta{flex:none;color:var(--ink-2);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;}
 .ask-cmd.is-sum .ask-cmd-chev{flex:none;color:var(--ink-2);transition:transform .15s;}
 .ask-cmd.is-sum.is-open > .ask-cmd-row .ask-cmd-chev{transform:rotate(90deg);}
-.ask-cmd-detail{display:flex;flex-direction:column;gap:8px;padding:10px 14px 12px;border-top:1px solid var(--line);}
+.ask-cmd.is-failed .ask-cmd-meta{color:var(--red-ink);}
+/* The opened row (#911): the whole command, its folder and Show in terminal, the output panel. One fold. */
+.ask-cmd-detail{display:flex;flex-direction:column;gap:10px;padding:2px 14px 14px 32px;}
 .ask-cmd-detail[hidden]{display:none;}
-.ask-cmd.is-sum .ask-cmd-line{display:flex;align-items:center;gap:2px;}
-.ask-cmd-copy{display:inline-flex;min-width:0;max-width:100%;font-family:var(--mono);}
-.ask-cmd-copy-text{min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;text-align:left;}
+.ask-cmd-cmd{position:relative;padding:9px 40px 9px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);}
+.ask-cmd-code{display:block;font-family:var(--mono);font-size:12px;line-height:1.6;color:var(--ink);white-space:pre-wrap;overflow-wrap:anywhere;}
+.ask-cmd-dollar{color:var(--ink-3);user-select:none;}
+.ask-cmd-tk-cmd{color:var(--hd-syntax-title);}
+.ask-cmd-tk-op{color:var(--hd-syntax-keyword);}
+.ask-cmd-tk-flag{color:var(--ink-2);}
+.ask-cmd-tk-str{color:var(--hd-syntax-string);}
+.ask-cmd-cmd > .ask-cmd-copy{position:absolute;top:5px;right:5px;}
 .ask-cmd-copy .ico-check{display:none;}
 .ask-cmd-copy.copied .ico-copy{display:none;}
 .ask-cmd-copy.copied .ico-check{display:inline;color:var(--green-ink);}
-.ask-cmd.is-sum .ask-cmd-folder{align-self:flex-start;}
+.ask-cmd-ctx{display:flex;align-items:center;gap:8px;min-width:0;}
+.ask-cmd-dir{min-width:0;padding:1px 6px;border:1px solid var(--line);border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);
+  font-family:var(--mono);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ask-cmd-dir[hidden]{display:none;}
+.ask-cmd-show{flex:none;gap:6px;color:var(--ink-2);}
+.ask-cmd-outbox{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);overflow:hidden;}
+.ask-cmd-outbox[hidden]{display:none;}
+.ask-cmd-outhead{display:flex;align-items:center;gap:8px;min-height:36px;padding:0 4px 0 12px;border-bottom:1px solid var(--line);color:var(--ink-2);font-size:12px;}
+.ask-cmd-outhead .ask-cmd-copy{gap:6px;}
+/* min(400px, half the chat pane): no block-size container here (the transcript is inline-size), so 50vh (D7). */
+.ask-cmd-outbox .ask-cmd-out{max-height:min(400px,50vh);padding:10px 12px;border:0;border-radius:0;font-size:12px;line-height:1.6;}
 .ask-cmd.is-sum > .ask-cmd-warning{margin:0 14px 12px;}
-/* A group: rows share one border with dividers (the message's 6px gap and the card's 2px top margin cancelled). */
-.ask-cmd.in-group:not(.is-g-last){border-bottom-left-radius:0;border-bottom-right-radius:0;}
-.ask-cmd.in-group:not(.is-g-first){margin-top:-7px;border-top-left-radius:0;border-top-right-radius:0;}
+/* A group (#911): one quiet disclosure head over ONE card; the panel moves the rows in; --line between them. */
+.ask-cmd-group{display:flex;flex-direction:column;gap:6px;min-width:0;margin-top:2px;}
+.ask-cmd-ghead{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;max-width:100%;min-height:28px;padding:0 8px;margin-left:-8px;
+  border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:inherit;font-size:13px;cursor:pointer;}
+.ask-cmd-ghead:hover{background:var(--hover);}
+.ask-cmd-ghead:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.ask-cmd-gwords{min-width:0;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ask-cmd-gfail{color:var(--red-ink);}
+.ask-cmd-ghead .ask-cmd-chev{flex:none;transition:transform .15s;}
+.ask-cmd-ghead[aria-expanded="true"] .ask-cmd-chev{transform:rotate(90deg);}
+.ask-cmd-gbody{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);overflow:hidden;}
+.ask-cmd-gbody[hidden]{display:none;}
+.ask-cmd-gbody > .ask-card.ask-cmd.is-sum{margin:0;border:0;border-radius:0;background:none;animation:none;}
+.ask-cmd-gbody > .ask-card.ask-cmd.is-sum + .ask-card.ask-cmd.is-sum{border-top:1px solid var(--line);}
 .ask-rc-graph{position:relative;margin-top:14px;min-height:120px;overflow:hidden;border:1px solid var(--line);border-radius:var(--r-sm);cursor:pointer;
   background:var(--canvas-2) radial-gradient(circle,var(--line-2) 1.1px,transparent 1.1px);background-size:22px 22px;transition:height .24s cubic-bezier(.2,.7,.3,1);}
 .ask-rc-graph[hidden]{display:none;}

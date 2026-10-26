@@ -166,7 +166,7 @@ border, ink text. Never a solid ink fill. A count sits in `.n`. It is the only f
 One chip: 18px, 11px / 500 sans, 4px corner, filled, no border (checked). The Labs (violet) and Beta (blue) flag chips are
 the reference size. Colour carries meaning only. The "Suggested" chip on the New run form's title and branch (`.sn-chip`, Smart run naming) is a permitted Labs-violet use: the whole feature is a Labs feature. Cost-tag chips (`.tag-chip`), the Projects sync pill (`.ps-pill`), the
 Chat command card's state (`.ask-cmd-pill`) and the Team policy tab count (`.tp-tab-badge`) are the same chip; on the
-active tab the count turns neutral (`--line-2` fill, ink text). A chat command in summary mode (flag `commandSummaries`) shows the runs status dot and no state chip; the full card keeps `.ask-cmd-pill`. The missing-key slot is the one outlined chip: a 1px dashed
+active tab the count turns neutral (`--line-2` fill, ink text). A chat command in summary mode (flag `commandSummaries`) shows the runs status dot and no state chip; consecutive commands share one card under a quiet disclosure head (`--ink-2`, `--hover`, › turning down), with the rows split by one `--line`; an opened command uses `--field` boxes (command, folder chip, output panel); the full card keeps `.ask-cmd-pill`. The missing-key slot is the one outlined chip: a 1px dashed
 `--amber` outline on a transparent fill. A removable chip's × is a 14px quiet button inside the chip. A source, "Official"
 or a policy origin is `.badge.slate`; "not installed" and "built-in" are grey.
 ### Status dot and symbols
