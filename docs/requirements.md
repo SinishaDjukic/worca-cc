@@ -159,6 +159,40 @@ replaced file, and not the documents' switches.
 uses its documents from its next round. **Send with every run** adds a document to every run started from a feature
 there. The brief's own sections change only when you refresh it.
 
+## Ask Worca
+
+**Ask Worca** in a feature's header opens a chat about that feature beside the spec. On a wide screen it takes the right
+column, and **Ready to start?**, **Files** and **Spec** move under the question card until you close it; on a narrower screen it
+is a full-screen sheet with **Back**. **Help me answer** on a question of the round waiting for you opens it with that question
+in the composer. You send it yourself: every message costs money.
+
+**What it knows.** What the interview already has: the spec, the interview so far, the product brief, your files (what Worca
+took from them, and small text files in full) and what Worca found in the code. It has no tools: it reads no code and opens no
+file. When that is not enough it says so and suggests **Look closer** or **Ask about this file**.
+
+**Drafts.** Worca can draft answers to the open questions. A draft fills the question card, marked **drafted by Worca**, with
+Worca's reason under the options. **×** puts the question back to the recommended answer, and picking or typing an answer
+yourself removes the mark. A draft is never sent by itself: **Submit** sends it like any answer. A draft for a round that was
+answered meanwhile is dropped, and the reply says so.
+
+**Proposed changes.** Worca can propose spec changes as cards: set a section to a new value (the card shows the lines that
+change), add, reword or remove an acceptance criterion, or confirm or reject an assumption (it never rewrites an assumption's
+text). Nothing changes until you press **Accept**: the change is then your own edit, so later rounds never overwrite it, after
+a start it shows under **Changed since the run started**, and **Undo my changes** undoes it like any edit. **Reject** dismisses
+a card. When the spec changed since Worca proposed something, the card says so and offers **Ask again**.
+
+**Costs.** Each message is one call to the interview model, booked as Requirements spend: the header's "$X so far" includes
+it, it counts toward the spending limit, and each reply shows what it cost. The composer shows the range of the last messages
+("about $L–H a message"). **Stop** cancels a reply and keeps your message; a stopped reply may be booked low, or at $0, because
+a call's cost is known only once the model reports it.
+
+**The chat and the interview.** The chat never feeds the interview rounds, and it never holds the interview up: while Worca
+answers you can submit answers, edit the spec, add files or start a round. Only what you accept or submit reaches the
+interview. **Send**, **Accept** and **Clear chat** wait while Worca answers.
+
+**Clear chat** (⋯) deletes the feature's chat; changes you accepted stay in the spec. An archived feature's chat can be read,
+not used. Everything here is behind the `requirements` flag.
+
 ## Which model interviews
 
 The newest Opus at medium effort, unless **Requirements interview** on Models › Engines › Claude › Helper
