@@ -5,7 +5,9 @@
 // Run:  node ui/server.mjs   (or `npm start`)
 // Env:  PORT (default 4317), WORCA_MOCK / ORCH_MOCK (truthy = every run and Claude job is a
 //       mock, whatever body.mock says; the UI shows a MOCK pill and locks its Mock switch on)
+// Flag: --scratch (`npm start --scratch`) = a temp WORCA_HOME and a free port; see scratch-start.mjs
 
+import '../src/core/scratch-start.mjs'; // first: sets env before any module reads it
 import express from 'express';
 import { WebSocketServer } from 'ws';
 import http from 'node:http';
@@ -66,6 +68,9 @@ import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR } from '../src/c
 import { gitState, gitAvailable, currentGitState, onGitChange, GIT_MISSING } from '../src/core/git-available.mjs';
 import { teamOverHttps, teamRepoState, setTypedTeamRepo } from '../src/core/git-free/team-repo.mjs';
 import { allFlags, listFlags, setFlags, checkFlags, flagEvents, flagEnabled, FlagError, requireFlag } from '../src/core/flags.mjs';
+import { TELEMETRY_FILE } from '../src/core/telemetry/recorder.mjs';
+import { summarizeTelemetry } from '../src/core/telemetry/summary.mjs';
+import { modelFacts } from '../src/core/model-tiers.mjs';
 import { createKeepAwake, countWorking } from '../src/core/keep-awake.mjs';
 import {
   getWorcaRoot, setWorcaRoot, setProjectsRoot, defaultRoot,
@@ -99,9 +104,10 @@ import {
   actionsSettings, setActionsSettings, assertActionsInput,
   syncDefaults, setSyncDefaults, assertSyncSettingsInput, DEFAULT_SYNC_SETTINGS,
   networkWaitSettings, assertNetworkWaitInput, setNetworkWait, effectiveNetworkWait,
-  networkProxySettings,
+  networkProxySettings, networkProxyEnabled, migrateCorporateProxyFlag,
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
   stepModelsSetting, assertStepModelsInput, setStepModels,
+  modelRolesSetting, assertModelRolesInput, setModelRoles,
   utilityModelsSetting, assertUtilityModelsInput, setUtilityModels,
   requirementsInterviewSetting, assertRequirementsInterviewInput, setRequirementsInterview,
   askEngineSetting, assertAskEngineInput, setAskEngineSetting, askModelsSetting, assertAskModelsInput, setAskModels,
@@ -113,6 +119,7 @@ import { effectiveNightConfig, nightLayers } from '../src/core/night/effective.m
 import { readNightDecisions, nightAnsweredSince } from '../src/core/night/store.mjs';
 import { createAwayHoursWatch } from '../src/core/night/hours-watch.mjs';
 import { resolveDefragModel, defragDefaultModel, defragWorkflowView, checkStartPair } from '../src/core/memory-defrag-model.mjs';
+import { withRole, withScanRole } from '../src/core/model-roles.mjs';
 import { parseRunOverlay, checkRunOverlay, overlayWorkflowRefusal, OVERLAY_ERRORS } from '../src/core/run-overlay.mjs';
 import { listPresets, readPreset, createPreset, updatePreset, duplicatePreset, deletePreset, readRunSetup, createPresetFromRun } from '../src/core/run-presets-store.mjs';
 import { presetRefusals, completeSnapshot } from '../src/core/run-presets-check.mjs';
@@ -204,7 +211,7 @@ import { skillDeviations as policySkillDeviations } from '../src/core/policy/eff
 import { resolveSkillRegistry as policySkillRegistry } from '../src/core/skills-registry/resolve.mjs';
 import { skillSkipReasonText as policySkillWhy } from '../src/core/skills-registry/texts.mjs';
 import { policyForScope, policyPayload } from '../src/core/policy/scope.mjs';
-import { policyCatalogModels } from '../src/core/policy/cache.mjs';
+import { policyCatalogModels, cachedPolicyHomes } from '../src/core/policy/cache.mjs';
 import { pickFolderNative, pickAppNative, nativeDialogAvailable } from '../src/core/folder-dialog.mjs';
 import {
   readRemoteAccessConfig, checkRemoteAccessConfig, isRemoteMode, createHostGuard, createIdentityCheck, isInContainer,
@@ -264,7 +271,7 @@ import {
   readNightModePrefs, writeNightModePrefs, readProjectDefaultTags, writeProjectDefaultTags,
   readProjectActions, writeProjectActions, readActionsMeta, writeActionsMeta, writeTeamRepo,
 } from '../src/core/config.mjs';
-import { listGlobalModels, addGlobalModel, updateGlobalModel } from '../src/core/settings.mjs';
+import { listGlobalModels, addGlobalModel, updateGlobalModel, readSettings } from '../src/core/settings.mjs';
 import { modelEnvRef, maskModelEnvValue, SUBAGENT_MODEL_VALUES, subagentModelIssue, UPSTREAM_PROVIDERS, CODEX_EFFORTS, MODEL_ENGINES, HELPER_ENGINES, CURSOR_EFFORTS, COPILOT_EFFORTS, GOOSE_EFFORTS, OPENCODE_EFFORTS, helperEngineFor, ASK_ENGINES, lockedChatEngine } from '../src/core/model-env.mjs';
 import { engineLabel, ENGINE_NAMES, engineRefusalFor, ENGINES, chatAttachRefusal } from '../src/shared/engine-switch.mjs';
 import { engineReadiness, engineLocks } from '../src/core/engines/readiness.mjs';
@@ -279,6 +286,9 @@ import { speechState, transcribe, synthesize, testSpeech } from '../src/core/spe
 import { speechAssetStore } from '../src/core/speech-assets.mjs';
 import { listPluginModels, modelSecretsSchema, pluginModelSecretStatus } from '../src/core/plugin-models.mjs';
 import { testModel } from '../src/core/model-test.mjs';
+import { detectSetup, defaultProbes } from '../src/core/setup/detect.mjs';
+import { teamSetupState, buildTeamSetup, SHARE_SETTING_KEYS } from '../src/core/setup/team-file.mjs';
+import { planSetupApply, commitSetupPlan, runSetupSteps, SetupFieldError, SetupConflictError } from '../src/core/setup/apply.mjs';
 import {
   DEFAULT_UI_PORT, UI_HEALTH_NAME, newUiToken, writeUiInstance, removeUiInstance, uiUrl,
 } from '../src/core/ui-instance.mjs';
@@ -514,10 +524,10 @@ import * as skStore from '../src/core/mcp/store.mjs';
 import * as skViews from '../src/core/mcp/views.mjs';
 import * as skClone from '../src/core/clone-project.mjs';
 import { HLJS_GRAMMAR_IDS } from './public/hljs-loader.mjs';
-import { useEnvProxy, proxyNotice } from '../src/core/env-proxy.mjs';
-import { startEgressPolicy, egressNotice, egressSummary } from '../src/core/egress-policy.mjs';
-import { saveProxyLogin, clearProxyLogin, parseAccount, ProxyLoginError } from '../src/core/proxy-credentials.mjs';
-import { PASSWORD_MODES } from '../src/core/upstream-proxy.mjs';
+import { useEnvProxy, reinstallEnvProxy, proxyNotice } from '../src/core/env-proxy.mjs';
+import { startLiveEgress, egressNotice, egressSummary } from '../src/core/egress-policy.mjs';
+import { detectSystemProxy } from '../src/core/system-proxy.mjs';
+import { saveProxyLogin, clearProxyLogin, parseAccount, ProxyLoginError, upstreamEnv, savedLoginRefusal } from '../src/core/proxy-credentials.mjs';
 import { createProxyHost, PROXY_AGENT_TEXT } from '../src/core/proxy-host.mjs';
 import { applyProxyChange, validateProxyChange, validateProxyFlagOn } from '../src/core/ask/proxy-deps.mjs';
 import { proxyEventPrompt, proxyNoticeText } from '../src/core/ask/proxy-proposal.mjs';
@@ -660,7 +670,8 @@ const VOICE_VENDOR = [
   } },
 ];
 
-const PORT = Number(process.env.PORT) || DEFAULT_UI_PORT;
+// PORT=0 is a real value (the OS picks a free port; `--scratch` uses it), not "unset".
+const PORT = process.env.PORT === '0' ? 0 : Number(process.env.PORT) || DEFAULT_UI_PORT;
 // Bind to loopback by default (S1). Power users who knowingly want LAN exposure
 // can set WORCA_HOST=0.0.0.0, but the localhost-only Host/Origin guard still
 // applies unless they also front it with auth.
@@ -1971,13 +1982,15 @@ app.use('/src/shared', (_req, res) => {
 // Interface mode (docs/ui-levels.md): the stored choice, else the install's default. "Fresh" =
 // the welcome dialog was never dismissed and the store holds no project and no run; anything
 // else is an install that predates the mode (or has outgrown it) and keeps the full UI.
+/** A fresh install: welcome not seen, no project, no run (D18). Derived on every call, never stored. */
+function isFreshInstall() {
+  try { return !onboardingPrefs().welcomeSeen && countProjects() === 0 && countPipelines() === 0; }
+  catch { return false; }
+}
 function effectiveUiLevel() {
   const stored = storedUiLevel();
   if (stored) return stored;
-  let fresh = false;
-  try { fresh = !onboardingPrefs().welcomeSeen && countProjects() === 0 && countPipelines() === 0; }
-  catch { fresh = false; }
-  return defaultUiLevel({ fresh });
+  return defaultUiLevel({ fresh: isFreshInstall() });
 }
 // "Fresh" is derived from state the user changes (welcomeSeen, the first project), so a new user's
 // mode would jump from simple to expert the moment they act. Each of those writes pins the derived
@@ -6048,6 +6061,28 @@ app.get('/api/runs/:id/artifact', async (req, res) => {
   }
 });
 
+// GET /api/runs/:id/telemetry -> Run telemetry (Labs): telemetry.ndjson summarised per step
+// (src/core/telemetry/summary.mjs), by the pipeline id alone like /artifact above. 404 while the
+// flag is off, and when the run recorded none (it ran with the flag off).
+app.get('/api/runs/:id/telemetry', requireFlag('runTelemetry'), async (req, res) => {
+  try {
+    const row = findPipelineRowById(req.params.id);
+    if (!row) return res.status(404).json({ error: 'pipeline not found' });
+    let text;
+    try { text = await fsp.readFile(path.join(await runDirForRow(row), TELEMETRY_FILE), 'utf8'); } catch { return res.status(404).json({ error: 'no telemetry' }); }
+    let facts = [];
+    try { facts = modelFacts(await listModels(''), { costOf: modelCostConfig }); } catch { facts = []; }
+    const windowOf = (model) => {
+      if (!model) return null;
+      const f = facts.find((x) => x.id === model) || modelFacts([{ id: model }])[0];
+      return f ? { tokens: f.context, from: f.contextFrom } : null;
+    };
+    res.json(summarizeTelemetry(text, { windowOf }));
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 app.get('/api/runs/:id/artifacts', async (req, res) => {
   try {
     const row = findPipelineRowById(req.params.id);
@@ -6434,7 +6469,7 @@ app.get('/api/history', async (req, res) => {
 // ---------------------------------------------------------------------------
 // ?recheck=1 skips the remembered Claude sign-in answer (the dialog's Check again).
 app.get('/api/onboarding', async (req, res) => {
-  try { res.json(await onboardingStatus({ recheck: isTruthy(req.query.recheck) })); }
+  try { res.json({ ...(await onboardingStatus({ recheck: isTruthy(req.query.recheck) })), fresh: isFreshInstall() }); }
   catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 app.post('/api/onboarding', async (req, res) => {
@@ -6444,7 +6479,7 @@ app.post('/api/onboarding', async (req, res) => {
   }
   catch (err) { return badRequest(res, err && err.message ? err.message : String(err)); }
   emitChanged('onboarding-changed');
-  try { res.json(await onboardingStatus()); }
+  try { res.json({ ...(await onboardingStatus()), fresh: isFreshInstall() }); }
   catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err), ...onboardingPrefs() }); }
 });
 
@@ -6452,6 +6487,7 @@ app.get('/api/counts', (req, res) => {
   try {
     res.json({
       pipelines: countPipelines(),
+      archivedPipelines: countPipelines({ archived: true }),
       projects: countProjects(),
       workspaces: countWorkspaces(),
       schedules: { ...scheduleCounts(), unread: unreadCount('schedule', { reader: notifReader(req) }) },
@@ -11104,7 +11140,8 @@ async function scanModelsFor(body, projectPaths, workspace = null) {
   }
   return resolveScanModels({
     explicit: body && body.models,
-    stored: workspaceScanModels(),
+    // Model roles (D3): with no stored pick, the quick role is the scan model.
+    stored: withScanRole(workspaceScanModels(), WORKSPACE_SCAN_DEFAULT_MODELS),
     workspacePick: workspace && workspace.scanModels ? workspace.scanModels : null,
     models,
   });
@@ -11408,6 +11445,7 @@ const settingsState = () => ({
   workspaceScanDefault: WORKSPACE_SCAN_DEFAULT_MODELS,    // what null means: Sonnet 5 · medium, project agents sonnet · medium
   runEngine: runEngineSetting() ?? null,
   stepModels: stepModelsSetting(),
+  modelRoles: modelRolesSetting(),                         // Models › Roles (D1): { <engine>: { deep|everyday|quick: { model, effort } } }
   utilityModels: utilityModelsSetting(),
   askEngine: askEngineSetting() ?? null,                  // Chat: the engine new chats start on (D17)
   // Models › Engines › Claude: the STORED { model?, effort? } (null = the default); only while the requirements flag is on
@@ -11451,19 +11489,19 @@ async function prDescriptionModelState() {
  *  (the stored catalog model, else the CLI default). Async because the catalog is. */
 async function agentGenModelState() {
   const stored = storedAgentGenModel();
-  return { agentGenModel: stored, agentGenModelEffective: resolveAgentGenModel(stored, await listModels('')) };
+  return { agentGenModel: stored, agentGenModelEffective: resolveAgentGenModel(withRole(stored, 'claude', 'agentGenModel'), await listModels('')) };
 }
 
 /** Models › Helper jobs › Run naming: the stored pair + what a suggestion will actually run on. */
 async function namingModelState() {
   const stored = storedNamingModel();
-  return { namingModel: stored, namingModelEffective: resolveNamingModel(stored, await listModels(''), modelCostConfig) };
+  return { namingModel: stored, namingModelEffective: resolveNamingModel(withRole(stored, 'claude', 'namingModel'), await listModels(''), modelCostConfig) };
 }
 
 /** Models › Helper jobs › Command summaries: the stored pair + what a summary will actually run on. */
 async function commandSummaryModelState() {
   const stored = storedCommandSummaryModel();
-  return { commandSummaryModel: stored, commandSummaryModelEffective: resolveNamingModel(stored, await listModels(''), modelCostConfig) };
+  return { commandSummaryModel: stored, commandSummaryModelEffective: resolveNamingModel(withRole(stored, 'claude', 'commandSummaryModel'), await listModels(''), modelCostConfig) };
 }
 
 // ---------------------------------------------------------------------------
@@ -11988,6 +12026,28 @@ app.post('/api/settings', async (req, res) => {
   }
 });
 
+/** The catalog checks on an asserted modelRoles patch, shared by POST /api/settings and setup apply (A18).
+ *  Returns the patch with each model rewritten to the catalog's canonical id. `pending`: the catalog rows
+ *  this setup apply's own imports will create (pendingImportIds); POST /api/settings passes none. */
+async function checkModelRolesPatch(patch, { pending = [] } = {}) {
+  const items = [];
+  // Model and harness only: the role effort is mapped when used (effortOn), never refused here (A7).
+  for (const [engine, roles] of Object.entries(patch)) for (const [role, value] of Object.entries(roles)) if (value) items.push({ id: `modelRoles.${engine}.${role}`, engine, value: { model: value.model } });
+  await assertSlotModels(items, { pending });
+  // Store the catalog's canonical id (A8), so every consumer matches the same spelling; a pending id keeps the
+  // spelling its import will write.
+  if (items.length) {
+    const models = await listModels('');
+    for (const roles of Object.values(patch)) for (const value of Object.values(roles)) {
+      if (!value) continue;
+      const lc = value.model.toLowerCase();
+      const hit = models.find((m) => m?.id?.toLowerCase() === lc) || pending.find((p) => p.id.toLowerCase() === lc);
+      if (hit) value.model = hit.id;
+    }
+  }
+  return patch;
+}
+
 /**
  * POST /api/settings' body without the request: validate every present key before any write, write them (root
  * first), then the broadcasts. Shared with Ask's change_setting and its Revert (worca Chat P2), which send ONE known
@@ -12032,6 +12092,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasWorkspaceScanKey = has('workspaceScan');
   const hasRunEngineKey = has('runEngine');
   const hasStepModelsKey = has('stepModels');
+  const hasModelRolesKey = has('modelRoles');
   const hasUtilityModelsKey = has('utilityModels');
   const hasAskEngineKey = has('askEngine');
   const hasAskModelsKey = has('askModels');
@@ -12119,6 +12180,10 @@ async function applySettingsPatch(body, { person = null } = {}) {
       for (const [engine, roles] of Object.entries(patch)) for (const [role, value] of Object.entries(roles)) if (value) items.push({ id: `stepModels.${engine}.${role}`, engine, value });
       await assertSlotModels(items);
     });
+    let modelRolesPatch = null;
+    if (hasModelRolesKey) await asSettingsField('modelRoles', async () => {
+      modelRolesPatch = await checkModelRolesPatch(assertModelRolesInput(body.modelRoles));
+    });
     if (hasUtilityModelsKey) await asSettingsField('utilityModels', async () => {
       const patch = assertUtilityModelsInput(body.utilityModels); const items = [];
       for (const [engine, jobs] of Object.entries(patch)) for (const [job, value] of Object.entries(jobs)) if (value) items.push({ id: `utilityModels.${engine}.${job}`, engine, value });
@@ -12183,6 +12248,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasWorkspaceScanKey) await setWorkspaceScanModels(body.workspaceScan, { models: wsScanModels });
     if (hasRunEngineKey) await asSettingsField('runEngine', () => setRunEngineSetting(body.runEngine));
     if (hasStepModelsKey) await asSettingsField('stepModels', () => setStepModels(body.stepModels));
+    if (hasModelRolesKey) await asSettingsField('modelRoles', () => setModelRoles(modelRolesPatch));
     if (hasUtilityModelsKey) await asSettingsField('utilityModels', () => setUtilityModels(body.utilityModels));
     if (hasAskEngineKey) await asSettingsField('askEngine', () => setAskEngineSetting(body.askEngine));
     if (hasAskModelsKey) await asSettingsField('askModels', () => setAskModels(body.askModels));
@@ -12201,7 +12267,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasUtilityModelsKey || hasUpdateCheckKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -13331,10 +13397,13 @@ app.put('/api/chat-home/pins', async (req, res) => {
 });
 
 // No worcaHome() call here: the login file path resolves per call (project rule server-import-time-worcahome).
-/** startEgressPolicy()'s result once the boot block ran (null in tests that import the app). */
+/** A startEgressPolicy() result set by tests (_testing.setEgress). */
 let EGRESS = null;
+/** startLiveEgress() once the boot block ran (null in tests that import the app). */
+let EGRESS_LIVE = null;
+const egressNow = () => (EGRESS_LIVE ? EGRESS_LIVE.current() : EGRESS);
 /** The proxy's shared logic (src/core/proxy-host.mjs): the routes, the chat bridge and the proxy card all use it. */
-const proxyHost = createProxyHost({ egress: () => EGRESS });
+const proxyHost = createProxyHost({ egress: egressNow, apply: (np) => (EGRESS_LIVE ? EGRESS_LIVE.apply(np) : null) });
 const proxyStatusPayload = () => proxyHost.status();
 
 /** D9: login, logout, test and settings act as the user; an agent under isolation must not. */
@@ -13348,7 +13417,7 @@ function refuseProxyAgent(req, res) {
 // passes in-process deps (askAgentRelay) and refuses Test. One token per turn, dropped when the turn ends.
 const askProxyBridges = new Map();   // token -> threadId
 function askProxyBridge({ threadId }) {
-  if (agentIdentity() || !flagEnabled('corporateProxy')) return null;
+  if (agentIdentity()) return null;
   const token = randomBytes(24).toString('base64url');
   askProxyBridges.set(token, threadId);
   const port = server.address()?.port || PORT;
@@ -13358,7 +13427,6 @@ app.post('/api/ask/proxy', async (req, res) => {
   if (!isInContainer(req)) return res.status(403).json({ error: 'proxy: loopback callers only' });
   if (!askProxyBridges.has(String(req.headers['x-worca-ask-proxy'] || ''))) return res.status(403).json({ error: 'proxy: unknown or finished turn' });
   if (agentMayBeCaller(req)) return res.status(403).json({ error: PROXY_AGENT_TEXT, code: 'PROXY_AGENT_BLOCKED' });
-  if (!flagEnabled('corporateProxy')) return res.json({ result: { flag: false } });
   const op = req.body && req.body.op;
   if (op === 'status') return res.json({ result: proxyHost.chatStatus() });
   if (op === 'test') {
@@ -13376,7 +13444,6 @@ app.post('/api/ask/proxy', async (req, res) => {
 
 /** Relay mode (agent isolation): the proxy tools run here; reading is allowed (GET /api/proxy/status is not agent-refused), Test is not. */
 const relayProxyDeps = () => ({
-  flagOn: () => flagEnabled('corporateProxy'),
   status: async () => proxyHost.chatStatus(),
   test: null,
   testOff: PROXY_AGENT_TEXT,
@@ -13384,22 +13451,140 @@ const relayProxyDeps = () => ({
   validateFlagOn: validateProxyFlagOn,
 });
 
-// Settings › Network proxy (docs/network-proxy.md). A disabled flag looks absent (404) and no
-// handler below runs, so the login file is never read with the flag off.
-app.use('/api/proxy', requireFlag('corporateProxy'));
+// Settings › Network proxy (docs/network-proxy.md). The routes always exist; agents are refused below.
+
+/** Decision 15a: JSON only, so a cross-site page needs a CORS preflight it cannot pass. */
+function refuseNonJson(req, res) {
+  if (req.is('application/json')) return false;
+  res.status(415).json({ error: 'proxy: send the body as application/json', code: 'JSON_REQUIRED' });
+  return true;
+}
+const owns = (o, k) => !!o && typeof o === 'object' && Object.prototype.hasOwnProperty.call(o, k);
+
+// Setup assistant (docs/setup-assistant.md): the machine check and the one-shot apply. The progress follows
+// the clone-job pattern: 202, one 'setup-apply' frame per step, a terminal frame, and a poll route.
+const SETUP_JOBS = new Map();            // id -> { id, state, results, ok, retry, startedAt, endedAt }
+const SETUP_JOB_TTL_MS = 60 * 60_000;
+let setupRunning = null;
+let setupDepsOverride = {};
+let setupProbesOverride = null;
+const SETUP_AGENT_TEXT = 'Setup cannot run from inside the container while agent isolation is on. Open Worca through its published address.';
+const publicSetupJob = (j) => ({ id: j.id, done: j.state !== 'running', ok: j.ok, retry: j.retry, results: j.results, startedAt: j.startedAt, endedAt: j.endedAt });
+
+function setupDeps() {
+  return {
+    checkProxy: (patch, login) => proxyHost.checkSave(patch, { login }),
+    fixedPortNow: () => proxyHost.fixedPortNow(),
+    applyProxy: (np, beforeFixed) => proxyHost.applyWritten(np, beforeFixed),
+    reloadLogin: () => egressNow()?.reloadLogin?.(),
+    checkModelRoles: (patch, o) => checkModelRolesPatch(patch, o),
+    testModel: async (id) => {
+      const key = String(id).toLowerCase();
+      if (modelTestsInFlight.has(key)) return { ok: false, message: 'test already running for this model' };
+      modelTestsInFlight.add(key);
+      try { return await testModel(id); } finally { modelTestsInFlight.delete(key); }
+    },
+    ...setupDepsOverride,
+  };
+}
+
+app.get('/api/setup/detect', async (req, res) => {
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: SETUP_AGENT_TEXT, code: 'SETUP_AGENT_BLOCKED' });
+  try {
+    const probes = setupProbesOverride || defaultProbes({ recheck: isTruthy(req.query.recheck),
+      sourceEnv: () => upstreamEnv(egressNow()?.sourceEnv ?? process.env) });
+    res.json(await detectSetup({ probes }));
+  } catch (err) { console.error('[setup] detect failed:', err); res.status(500).json({ error: 'Worca could not check this machine. Try again.' }); }
+});
+
+app.get('/api/setup/team', async (req, res) => {
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: SETUP_AGENT_TEXT, code: 'SETUP_AGENT_BLOCKED' });
+  try {
+    // The account notice polls nothing: it reads ?homes=1 on boot and on each menu open, which costs no catalog
+    // and no claude CLI probe (fit-1-4).
+    if (req.query.homes === '1') return res.json(teamSetupState({ homes: cachedPolicyHomes, homesOnly: true }));
+    const [catalog, auth] = await Promise.all([listModels(null), probeClaudeAuth().catch(() => ({ state: 'unknown' }))]);
+    // savedKeys: which shareable keys settings.json really holds, since GET /api/settings fills in defaults. A first
+    // start fills only keys missing here (webui-1); only key names leave, never values.
+    const all = readSettings();
+    res.json({ ...teamSetupState({ catalog, claudeAuth: auth.state, homes: cachedPolicyHomes }), savedKeys: SHARE_SETTING_KEYS.filter((k) => Object.hasOwn(all, k)) });
+  } catch (err) { console.error('[setup] team setup failed:', err); res.status(500).json({ error: 'Worca could not read the team setup. Try again.' }); }
+});
+app.post('/api/setup/team/draft', async (req, res) => {
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: SETUP_AGENT_TEXT, code: 'SETUP_AGENT_BLOCKED' });
+  try {
+    // Only the keys Share may carry leave settings.json (T14): networkProxy, providers and logins are never read.
+    const all = readSettings();
+    const settings = Object.fromEntries(SHARE_SETTING_KEYS.filter((k) => Object.hasOwn(all, k)).map((k) => [k, all[k]]));
+    const { doc, text, warnings } = buildTeamSetup({ settings, catalog: await listModels(null) });
+    res.json({ doc, text, warnings });
+  } catch (err) { console.error('[setup] team draft failed:', err); res.status(500).json({ error: 'Worca could not prepare the team setup. Try again.' }); }
+});
+
+app.post('/api/setup/apply', async (req, res) => {
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: SETUP_AGENT_TEXT, code: 'SETUP_AGENT_BLOCKED' });
+  if (!req.is('application/json')) return res.status(415).json({ error: 'Setup needs its answers sent as JSON.', code: 'JSON_REQUIRED' });
+  if (setupRunning) return res.status(409).json({ error: 'Setup is already applying. Wait for it to finish, then try again.', code: 'SETUP_RUNNING', id: setupRunning });
+  // Claim the lock synchronously, before the first await, so two POSTs can never both plan (security-1-1).
+  const id = `stp_${randomBytes(6).toString('hex')}`;
+  setupRunning = id;
+  const deps = setupDeps();
+  let plan;
+  try {
+    plan = await planSetupApply(req.body, deps);
+    await commitSetupPlan(plan, deps);
+  } catch (err) {
+    setupRunning = null;                                        // every early return releases the lock
+    if (err instanceof SetupFieldError) return res.status(400).json({ error: err.message, field: err.field, ...(err.code ? { code: err.code } : {}) });
+    if (err instanceof SetupConflictError) return res.status(409).json({ error: err.message, code: err.code });
+    console.error('[setup] apply failed before its steps:', err);
+    return res.status(500).json({ error: plan ? 'Settings were not saved. Try Apply again.' : 'Worca could not check this setup. Try Apply again.' });
+  }
+  if (plan.written.some((k) => ['pipelineCostLimitUsd', 'totalCostLimitUsd', 'costLimitResetPeriod'].includes(k))) emitChanged('budget-changed');
+  if (plan.written.length) emitChanged('settings-changed');
+  const job = { id, state: 'running', results: [], ok: null, retry: null, startedAt: Date.now(), endedAt: null };
+  SETUP_JOBS.set(job.id, job);
+  res.status(202).json({ id: job.id, written: plan.written, steps: [...plan.refused, ...plan.steps].map((s) => ({ id: s.id, label: s.label })) });
+  runSetupSteps(plan, { deps, onResult: (r) => { job.results.push(r); broadcast({ type: 'setup-apply', id: job.id, result: r }); } })
+    .then((out) => Object.assign(job, { ok: out.ok, retry: out.retry }))
+    .catch((err) => Object.assign(job, { ok: false, retry: null, error: err && err.message ? err.message : String(err) }))
+    .finally(() => {
+      Object.assign(job, { state: 'done', endedAt: Date.now() });
+      setupRunning = null;
+      broadcast({ type: 'setup-apply', id: job.id, done: true, ok: job.ok, retry: job.retry });
+      if (job.results.some((r) => r.state === 'ok' && /-import$|^copilot-signin$/.test(r.id))) emitChanged('settings-changed');
+      setTimeout(() => SETUP_JOBS.delete(job.id), SETUP_JOB_TTL_MS).unref?.();
+    });
+});
+
+app.get('/api/setup/apply/:id', (req, res) => {
+  if (agentMayBeCaller(req)) return res.status(403).json({ error: SETUP_AGENT_TEXT, code: 'SETUP_AGENT_BLOCKED' });
+  const job = SETUP_JOBS.get(req.params.id);
+  if (!job) return res.status(404).json({ error: 'No such setup apply. It may have finished more than an hour ago.' });
+  res.json(publicSetupJob(job));
+});
 
 app.get('/api/proxy/status', (req, res) => {
   res.set('Cache-Control', 'no-store').json(proxyStatusPayload());
+});
+
+// Auto-detect (setup assistant › Network, the Network proxy card): the proxy this machine's own settings pick for
+// api.anthropic.com — a PAC file, auto-discovery or a manual proxy (src/core/system-proxy.mjs). Read-only: the
+// caller fills its fields and still Tests before saving. Never a 500: an unreadable setting is a found:false line.
+let detectSystemProxyImpl = detectSystemProxy;
+app.get('/api/proxy/detect', async (req, res) => {
+  // Like the proxy routes that act: it fetches a PAC file and starts processes, so an agent run is refused.
+  if (refuseProxyAgent(req, res)) return;
+  res.set('Cache-Control', 'no-store').json(await detectSystemProxyImpl());
 });
 
 app.post('/api/proxy/login', (req, res) => {
   if (refuseProxyAgent(req, res)) return;
   const body = req.body || {};
   const { auth } = networkProxySettings();
-  if (PASSWORD_MODES.includes(auth)) {
-    // The code keeps its slice-2 name on purpose: it now covers Digest too (tests and the card pin it).
-    return res.status(409).json({ error: `networkProxy.auth is ${auth}, and a saved login keeps only the NT hash, which ${auth === 'digest' ? 'Digest' : 'Basic'} cannot use. Choose NTLMv2 and Save first.`, field: 'auth', code: 'BASIC_NO_SAVED_LOGIN' });
-  }
+  const refusal = savedLoginRefusal(auth);
+  // The code keeps its slice-2 name on purpose: it now covers Digest too (tests and the card pin it).
+  if (refusal) return res.status(409).json({ error: refusal, field: 'auth', code: 'BASIC_NO_SAVED_LOGIN' });
   const account = body.domain ? { domain: body.domain, user: body.user } : parseAccount(body.user);
   const password = typeof body.password === 'string' ? body.password : '';
   body.password = undefined;
@@ -13409,27 +13594,35 @@ app.post('/api/proxy/login', (req, res) => {
     if (err instanceof ProxyLoginError) return res.status(400).json({ error: err.message, field: err.field });
     return res.status(500).json({ error: `the login could not be saved (${err && err.code ? err.code : 'error'})` });
   }
-  EGRESS?.reloadLogin?.();
+  egressNow()?.reloadLogin?.();
   res.json(proxyStatusPayload());
 });
 
 app.post('/api/proxy/logout', (req, res) => {
   if (refuseProxyAgent(req, res)) return;
   clearProxyLogin();
-  EGRESS?.reloadLogin?.();
+  egressNow()?.reloadLogin?.();
   res.json(proxyStatusPayload());
 });
 
+// D9: the body's networkProxy is a candidate merged over the saved values; a pass is recorded for the UNTESTED gate.
+// `login` ({ domain, user, password }): the setup dialog's typed login, used for this test only, never written or logged.
 app.post('/api/proxy/test', async (req, res) => {
-  if (refuseProxyAgent(req, res)) return;
-  const r = await proxyHost.test();
+  if (refuseProxyAgent(req, res) || refuseNonJson(req, res)) return;
+  const body = req.body || {};
+  const r = await proxyHost.test(owns(body, 'networkProxy') ? body.networkProxy : undefined,
+    { record: true, ...(owns(body, 'login') ? { login: body.login } : {}) });
   res.status(r.status).json(r.body);
 });
 
 app.put('/api/proxy/settings', async (req, res) => {
-  if (refuseProxyAgent(req, res)) return;
+  if (refuseProxyAgent(req, res) || refuseNonJson(req, res)) return;
+  if (!owns(req.body, 'networkProxy')) return res.status(400).json({ error: 'networkProxy is required (null clears it)', field: 'networkProxy' });
   try {
-    res.json(await proxyHost.saveSettings((req.body || {}).networkProxy ?? null));
+    const r = await proxyHost.saveSettings(req.body.networkProxy);
+    if (r.refused) return res.status(r.refused.status).json(r.refused.body);
+    emitChanged('settings-changed');
+    res.json(r);
   } catch (err) {
     res.status(400).json({ error: err && err.message ? err.message : String(err), field: 'networkProxy' });
   }
@@ -14817,7 +15010,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
         // user and its worca tools run here, through the relay. null = the classic MCP child.
         agentRelay: agentIdentity() ? (o) => askAgentRelay({ ...o, engine }) : null,
         commandBridge: askCommandBridge,                     // #574: null unless agent mode can work here
-        proxyBridge: askProxyBridge,                         // the corporate proxy bridge: null unless the flag is on
+        proxyBridge: askProxyBridge,                         // the corporate proxy bridge: null for an agent caller
         onFrame: stampAskFrames(id, job),
         onOutOfTurn: (f) => broadcast({ ...f, threadId: id }),
         onCommentMutation: ({ runId }) => { emitDiffCommentsChanged(runId); },
@@ -15144,7 +15337,7 @@ app.get('/api/extension/status', (req, res) => {
 // the Models page's Command summaries helper job — the redacted command alone, cached per process.
 // ---------------------------------------------------------------------------
 const commandSummariser = createCommandSummariser({
-  pickModel: async () => resolveNamingModel(storedCommandSummaryModel(), await listModels(''), modelCostConfig),
+  pickModel: async () => resolveNamingModel(withRole(storedCommandSummaryModel(), 'claude', 'commandSummaryModel'), await listModels(''), modelCostConfig),
   onCost: (c) => { try { recordUtilityCost('commandSummary', c); } catch { /* a ledger write never fails a summary */ } },
 });
 /** Read before the call and after the answer: the Labs flag, the person's Settings › Chat switch, no mock, the cost limit not reached. */
@@ -15164,7 +15357,7 @@ const NAMING_PICK_TTL_MS = 60_000;
 const warnedStaleNaming = new Set();
 async function namingCatalog() {
   const rows = await listModels('');
-  const picked = resolveNamingModel(storedNamingModel(), rows, modelCostConfig);
+  const picked = resolveNamingModel(withRole(storedNamingModel(), 'claude', 'namingModel'), rows, modelCostConfig);
   if (picked.stale && !warnedStaleNaming.has(picked.stale)) {
     warnedStaleNaming.add(picked.stale);
     console.warn(`[worca] namingModel ${JSON.stringify(picked.stale)} is no longer in the catalog — run naming uses the cheapest ready Claude model`);
@@ -16142,8 +16335,8 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
     }
     if (found.block.card && found.block.card.type === 'proxy') {
       // Corporate proxy card (docs/network-proxy.md "From Chat"): proposed → applied | failed | declined. A settings
-      // card saves through proxyHost.saveSettings (the PUT /api/proxy/settings path, so D14's marker is set too); the
-      // flag card turns corporateProxy on through setFlags (the PATCH /api/flags call). Both re-validate first.
+      // card and the enable card both save through proxyHost.saveSettings (the PUT /api/proxy/settings path, with its
+      // UNTESTED gate): an untested upstream is tested first, a person's Apply records the pass. Both re-validate first.
       if (body.state !== 'applied' && body.state !== 'declined') return badRequest(res, 'state must be "applied" or "declined"');
       if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
       // D9: the proxy is changed as the user — an agent under isolation must not (refuseProxyAgent's rule).
@@ -16159,14 +16352,13 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       let block;
       try {
         let result;
-        try { result = await applyProxyChange(found.block.card, { saveSettings: (p) => proxyHost.saveSettings(p) }); }
+        try { result = await applyProxyChange(found.block.card, { saveSettings: (p) => proxyHost.saveSettings(p), test: (p) => proxyHost.test(p, { record: true }) }); }
         catch (err) { result = { ok: false, error: err && err.message ? err.message : String(err), code: (err && err.code) || 'ERROR' }; }
         block = flipCard(id, cardId, result.ok ? { state: 'applied', card: { result } } : { state: 'failed', error: result.error, card: { result } });
       } finally { askCardBusy.delete(cardId); }
       if (!block) return res.status(409).json({ error: 'card vanished' });
-      // A settings card: an open Settings › Runs tab repaints. The flag card needs nothing: setFlags fires
-      // flagEvents 'changed', which broadcasts {type:'flags'} to every tab.
-      if (block.state === 'applied' && found.block.card.kind === 'settings') emitChanged('settings-changed');
+      // An open Settings › Runs tab repaints.
+      if (block.state === 'applied') emitChanged('settings-changed');
       const turn = await startMetricsEventTurn(id, block);
       return res.json({ block, turn });
     }
@@ -16368,7 +16560,7 @@ function agentErrorBody(err) {
 async function startAgentGen(input) {
   // The Models page's Claude tab › Agent generation, read per Generate. Unset, or a model the
   // catalog no longer carries: no --model, the CLI's default (as before the setting existed).
-  const pick = resolveAgentGenModel(storedAgentGenModel(), await listModels(''));
+  const pick = resolveAgentGenModel(withRole(storedAgentGenModel(), 'claude', 'agentGenModel'), await listModels(''));
   if (pick.stale) console.warn(`[worca] agentGenModel ${JSON.stringify(pick.stale)} is no longer in the catalog — agent generation uses the CLI default`);
   const orch = createAgentGen({
     ...input,
@@ -18656,7 +18848,7 @@ if (isMain) {
   // archived, or by the boot sweep below, and the server would lose its own code.
   const hostingRun = runFolderHosting(PROJECT_ROOT, worcaHome());
   if (hostingRun) {
-    console.error(`[worca-ui] Worca is started from a run's folder (${hostingRun}), which Worca deletes when that run is discarded or archived. Start Worca from your own clone or another worktree. Not starting.`);
+    console.error(`[worca-ui] Worca is started from a run's folder (${hostingRun}), which Worca deletes when that run is discarded or archived. Start Worca from your own clone or another worktree, or run \`npm start --scratch\` for a throwaway home and port. Not starting.`);
     process.exit(1);
   }
 
@@ -18664,9 +18856,16 @@ if (isMain) {
   // the policy proxy starts on loopback and its address goes into process.env before anything
   // else runs, so every child and worca's own fetch() (useEnvProxy, next) go through it. It fails
   // closed: without the proxy, agents would have no restriction at all.
+  // D6: the old Labs flag becomes networkProxy.enabled, once, before the proxy reads it.
+  await migrateCorporateProxyFlag();
+  let fetchProxy = null;
   try {
-    EGRESS = await startEgressPolicy({ log: (l) => console.log(`[worca-ui] egress: ${l}`) });
-    const egressLine = egressNotice(EGRESS);
+    EGRESS_LIVE = await startLiveEgress({
+      log: (l) => console.log(`[worca-ui] egress: ${l}`),
+      // D8: a proxy turned on at runtime: Worca's own fetch follows the new HTTPS_PROXY.
+      onEnvChange: () => { fetchProxy = reinstallEnvProxy(fetchProxy); },
+    });
+    const egressLine = egressNotice(EGRESS_LIVE.current());
     if (egressLine) console[egressLine.level === 'warn' ? 'warn' : 'log'](`[worca-ui] ${egressLine.text}`);
   } catch (err) {
     console.error(`[worca-ui] outbound network policy: the policy proxy could not start (${err && err.message ? err.message : err}). Not starting.`);
@@ -18675,7 +18874,8 @@ if (isMain) {
 
   // Outbound calls honor HTTP(S)_PROXY / NO_PROXY (src/core/env-proxy.mjs). First: the
   // broker check below is already one.
-  const proxyLine = proxyNotice(useEnvProxy());
+  fetchProxy = useEnvProxy();
+  const proxyLine = proxyNotice(fetchProxy);
   if (proxyLine) console[proxyLine.level === 'warn' ? 'warn' : 'log'](`[worca-ui] ${proxyLine.text}`);
   // A proxy URL with credentials never reaches plugin code (scrubbedEnv). Said here, before
   // any plugin spawns, so the once-per-process warning is never spent unseen by a caller
@@ -18864,10 +19064,15 @@ if (isMain) {
 export { app, server, runs };
 export const _testing = {
   updateChecker,
-  // The startEgressPolicy() result the /api/proxy routes read. Also clears the since-boot marker,
-  // standing in for a restart.
-  setEgress: (e) => { EGRESS = e; proxyHost.restarted(); },
+  // The startEgressPolicy() result the /api/proxy routes read, or a startLiveEgress() that also applies saves.
+  setEgress: (e) => { EGRESS = e; },
+  setLiveEgress: (l) => { EGRESS_LIVE = l; },
+  setSystemProxyDetect: (fn) => { detectSystemProxyImpl = fn || detectSystemProxy; },
   proxyHost,
+  // Setup assistant: swap the apply side effects / detect probes; resetSetup drops overrides, the lock and the jobs.
+  setSetupDeps: (o) => { setupDepsOverride = o || {}; },
+  setSetupProbes: (p) => { setupProbesOverride = p || null; },
+  resetSetup: () => { setupDepsOverride = {}; setupProbesOverride = null; setupRunning = null; SETUP_JOBS.clear(); },
   setUpdateFetcher: (fn) => { updateFetcherOverride = typeof fn === 'function' ? fn : null; updateChecker.clear(); },
   setSourceBuild: (v) => { sourceBuildOverride = typeof v === 'boolean' ? v : null; updateChecker.clear(); },
   setVersionsFetcher: (fn) => { versionsFetcherOverride = typeof fn === 'function' ? fn : null; versionLister.clear(); },

@@ -8,6 +8,11 @@
 - Show 'done, unsuccessful' with its reason everywhere a run result appears: Clean cycle-2 implementation of slice 2.
 - Route swallowed step failures through _recover instead of ending done: Faithful, minimal implementation of plan v5.
 
+### Run telemetry (experimental, flag `runTelemetry`)
+
+- With the flag on, a run records every model call's context size, tokens, timing and tools, tool run times, retries, compactions and sub-agent calls, plus Worca's own state saves, live-update sizes and event loop delay, to `telemetry.ndjson` in the run folder. Recording only: runs behave the same, and with the flag off nothing is written.
+- The run page's Agents tab shows each agent's context peak against the model's window, calls, sessions, time split and a context-over-time chart, and a line of Worca's own figures. `GET /api/runs/:id/telemetry` answers the same as JSON. See [Run telemetry](docs/run-telemetry.md).
+
 ### Chat sidebar aligned with Runs + shared list keyboard
 
 - Shared list keyboard: Runs aligned + Keyboard shortcuts sheet: Cycle 2 fixes the web UI review's one major issue.

@@ -864,6 +864,7 @@ export function createTurnReducer({
   function handle(evt) {
     if (!evt || typeof evt !== 'object') return;
     if (!isNormalized(evt)) { for (const n of normalize(evt)) handle(n); return; }
+    if (evt.type === 'compact') return;                                   // Run telemetry's, never a chat's
     if (!labels.length) label('Thinking');
     const isMain = (evt.parentId ?? null) === null;
     switch (evt.type) {

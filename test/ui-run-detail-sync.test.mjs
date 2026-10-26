@@ -112,5 +112,5 @@ test('clicking .rd-sync narrows the Live log to x:sync:1', async () => {
   const r = window.__np.getRun(ID);
   assert.equal(r.logFilter.execution, 'x:sync:1');
   assert.equal(r.logFilter.node, 'sync');
-  assert.equal(window.location.hash, `#running/${ID}/logs`, 'the Logs tab is opened');
+  assert.equal(window.location.hash, `#running/${ID}/details/logs`, 'Details › Live log is opened');
 });

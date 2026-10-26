@@ -118,18 +118,6 @@ export const FLAGS = Object.freeze([
     docs: 'docs/feature-flags.md',
   }),
   entry({
-    key: 'corporateProxy',
-    title: 'Corporate proxy',
-    description: 'Send every outbound connection (agents, git, MCP servers, plugins, chat channels and Worca itself) through one corporate proxy that asks for a login (NTLMv2, also inside Negotiate, Digest or Basic). Worca runs a local proxy on 127.0.0.1 that logs in for them. Upstream from settings.json networkProxy or HTTP(S)_PROXY. Pin the local port with networkProxy.fixedPort for an IDE or shell. Restart Worca after turning it on or off.',
-    stage: 'experimental',
-    default: false,
-    owner: 'e-angelov',
-    since: '1.14.0',
-    added: '2026-10-23',
-    reviewBy: '2027-01-20',
-    docs: 'docs/feature-flags.md',
-  }),
-  entry({
     key: 'requirements',
     title: 'Requirements',
     description: 'A Requirements page where a product owner turns an idea into a testable feature spec through a short interview with Worca, before any run starts.',
@@ -140,6 +128,18 @@ export const FLAGS = Object.freeze([
     added: '2026-10-19',
     reviewBy: '2027-01-16',
     docs: 'docs/requirements.md',
+  }),
+  entry({
+    key: 'runTelemetry',
+    title: 'Run telemetry',
+    description: 'Runs record detailed statistics: context size, tokens and timing of every model call, tool time, retries and compactions per agent, plus how long Worca\'s own saves and live updates take. Shown on the run page\'s Agents tab. Recording only: runs behave the same.',
+    stage: 'experimental',
+    default: false,
+    owner: 'Bulibas',
+    since: '1.14.0',
+    added: '2026-10-25',
+    reviewBy: '2027-01-23',
+    docs: 'docs/run-telemetry.md',
   }),
 ]);
 

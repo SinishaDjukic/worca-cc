@@ -279,10 +279,13 @@ export function renderGettingStartedPill(host, status, onOpen) {
  */
 export function bindWelcome(modal, { onDoor, onSkip }) {
   if (!modal) return () => {};
+  // One signal for every listener, so an unbind removes the door listeners too: a second show binds each door once (A6).
+  // The modal's own window makes it: jsdom refuses a signal from another realm (Node's global AbortController).
+  const ac = new modal.ownerDocument.defaultView.AbortController(); const opts = { signal: ac.signal };
   for (const door of modal.querySelectorAll('[data-door]')) {
-    door.addEventListener('click', () => onDoor(door.dataset.door));
+    door.addEventListener('click', () => onDoor(door.dataset.door), opts);
   }
-  modal.querySelector('.ob-skip')?.addEventListener('click', () => onSkip());
+  modal.querySelector('.ob-skip')?.addEventListener('click', () => onSkip(), opts);
   const guard = guardModal(modal, { kind: 'decision', close: () => onSkip() }).opened();
-  return () => guard.release();
+  return () => { ac.abort(); guard.release(); };
 }

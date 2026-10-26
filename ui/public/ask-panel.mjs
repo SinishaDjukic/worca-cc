@@ -3904,29 +3904,34 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     return line;
   }
-  /** The corporate proxy card (propose_network_proxy_change / propose_corporate_proxy_on): before → after, the restart note. */
+  /** The corporate proxy card (propose_network_proxy_change / propose_corporate_proxy_on): before → after, the live note.
+   *  kind 'flag' is a card stored before the proxy left Labs: it applies as 'enable', so it renders as one. */
   function buildProxyCard(block) {
     const card = block.card || {};
+    const LIVE_NOTE = 'New connections use it now.';
+    const turnOn = card.kind === 'enable' || card.kind === 'flag';
+    const note = card.kind === 'flag' ? LIVE_NOTE : (card.restartNote || LIVE_NOTE);
+    const changes = card.kind === 'flag' ? [{ label: 'Network proxy', before: 'Off', after: 'On' }] : (Array.isArray(card.changes) ? card.changes : []);
     const summary = card.summary || '';
     if (block.state === 'declined') return { el: make('div', 'ask-card-stub', `Declined: ${summary}`) };
     const rootEl = make('div', `ask-card ask-mcard ask-pxcard is-${block.state}`);
     rootEl.setAttribute('data-ask-pxcard', block.state);
     const head = make('div', 'ask-mcard-head');
-    head.appendChild(make('span', 'ask-mcard-title', card.kind === 'flag' ? 'Turn on the corporate proxy?' : 'Change the network proxy?'));
+    head.appendChild(make('span', 'ask-mcard-title', turnOn ? 'Turn on the corporate proxy?' : 'Change the network proxy?'));
     rootEl.appendChild(head);
     const body = make('div', 'ask-mcard-body');
     if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
     const list = make('ul', 'ask-mcard-changes');
-    for (const c of Array.isArray(card.changes) ? card.changes : []) list.appendChild(make('li', '', `${c.label}: ${c.before} → ${c.after}`));
+    for (const c of changes) list.appendChild(make('li', '', `${c.label}: ${c.before} → ${c.after}`));
     body.appendChild(list);
     const result = card.result || null;
     if (block.state === 'failed') body.appendChild(make('div', 'ask-mcard-failed', `Could not apply: ${block.error || (result && result.error) || 'unknown error'}`));
     else if (block.state === 'applied') {
-      body.appendChild(make('div', 'ask-awcard-saved', result && result.detail ? result.detail : `Saved. ${card.restartNote || 'Restart Worca to apply.'}`));
-      const open = make('a', 'ask-card-sched-link', card.kind === 'flag' ? 'Open Settings › Labs' : 'Open Settings › Runs › Network proxy');
-      open.href = card.kind === 'flag' ? '#settings/experimental/corporateProxy' : '#settings/runs/network-proxy';
+      body.appendChild(make('div', 'ask-awcard-saved', result && result.detail ? result.detail : `Saved. ${note}`));
+      const open = make('a', 'ask-card-sched-link', 'Open Settings › Runs › Network proxy');
+      open.href = '#settings/runs/network-proxy';
       body.appendChild(open);
-    } else body.appendChild(make('div', 'ask-pxcard-restart', card.restartNote || 'Restart Worca to apply.'));
+    } else body.appendChild(make('div', 'ask-pxcard-restart', note));
     rootEl.appendChild(body);
     rootEl.appendChild(make('div', 'ask-card-err'));   // postCard writes a failed POST here (every card has one)
     if (block.state === 'proposed') {

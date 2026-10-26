@@ -295,18 +295,18 @@ test('a newer finished copy of a pipeline whose older copy the tab knew finished
 
 // #792 / Q4: a manual Resume moves the page to the new run (landOnResumedRun); a scheduled one must too, instead of
 // renderRunningView bouncing the dead id away from the run.
-test('a tab on the paused run\'s page follows its scheduled resume to the new run, on the same tab', async () => {
+test('a tab on the paused run\'s page follows its scheduled resume to the new run, in the same mode', async () => {
   const { window, np, recv, tick, go } = await boot();
   recv({ type: 'hello', bootId: 'b1', runs: [hrun('r1', 'p1', 'paused')] });
   await tick();
   go('running/r1/details');
   await settle(tick);
-  assert.equal(window.location.hash, '#running/r1', 'the old address is the page itself (Summary)');
+  assert.equal(window.location.hash, '#running/r1/details');
   recv({ type: 'run-created', runId: 'r2', title: 'T', projectDir: PROJECT, kind: 'run', status: 'starting' });
   np.onState(np.getRun('r2'), { status: 'running', id: 'p1' });   // the first state names the pipeline
   await settle(tick);
   assert.equal(np.getRun('r1'), undefined, 'the paused copy is superseded');
-  assert.equal(window.location.hash, '#running/r2', 'the page follows to the resumed run');
+  assert.equal(window.location.hash, '#running/r2/details', 'the page follows to the resumed run');
 });
 
 test('a scheduled resume never moves a tab that is not on the paused run\'s page', async () => {

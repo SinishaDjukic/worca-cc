@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import net from 'node:net';
+import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -452,7 +453,7 @@ test('supervisor: a proxy that stops listening comes back on the same port; stop
   }
 });
 
-// --- the corporate proxy (flag corporateProxy) -------------------------------------------------
+// --- the corporate proxy (settings networkProxy.enabled) ----------------------------------------
 
 import { execFile } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
@@ -463,28 +464,20 @@ const FLAG_ON = () => true;
 const CORP_SECRETS = ['Password', 'a4f49c406510bdcab6824ee7c30fd852', Buffer.from('Domain\\User:Password').toString('base64')];
 const assertNoCorpSecrets = (text) => { for (const s of CORP_SECRETS) assert.ok(!String(text).includes(s), `secret in: ${text}`); };
 
-/** Run `fn` with WORCA_FLAGS set to `value`, restored afterwards (the real flagEnabled reads it per call). */
-async function withFlagsEnv(value, fn) {
-  const had = Object.prototype.hasOwnProperty.call(process.env, 'WORCA_FLAGS');
-  const before = process.env.WORCA_FLAGS;
-  process.env.WORCA_FLAGS = value;
-  try { return await fn(); } finally { if (had) process.env.WORCA_FLAGS = before; else delete process.env.WORCA_FLAGS; }
-}
-
-test('corporate proxy: the default gate is the real corporateProxy flag (no injection)', async () => {
+test('corporate proxy: the default gate is settings networkProxy.enabled (no injection)', async () => {
   const o = await origin();
   const fake = await startFakeUpstream({ scheme: 'none', originPort: o.port });
   try {
-    // '-corporateProxy' locks it off even if the developer's own settings.json turned it on.
     const offEnv = { HTTPS_PROXY: fake.url() };
     let settingsRead = 0;
-    const counting = () => { settingsRead += 1; return {}; };
-    const off = await withFlagsEnv('-corporateProxy', () => startEgressPolicy({ env: offEnv, settings: counting }));
+    const counting = () => { settingsRead += 1; return { networkProxy: { enabled: false, upstream: fake.url(), fixedPort: 3128 } }; };
+    const off = await startEgressPolicy({ env: offEnv, settings: counting });
     assert.equal(off.status, 'off');
     assert.deepEqual(offEnv, { HTTPS_PROXY: fake.url() });
-    assert.equal(settingsRead, 0, 'the real flag off: settings are not read');
+    assert.equal(off.fixedPort, undefined, 'proxy off: no fixedPort is bound');
+    assert.equal(settingsRead, 1, 'proxy off: networkProxy is read once, for enabled');
     const onEnv = { HTTPS_PROXY: fake.url() };
-    const on = await withFlagsEnv('corporateProxy', () => startEgressPolicy({ env: onEnv, settings: () => ({}) }));
+    const on = await startEgressPolicy({ env: onEnv, settings: () => ({ networkProxy: { enabled: true } }) });
     try {
       assert.equal(on.status, 'on');
       assert.equal(onEnv.HTTPS_PROXY, on.url);
@@ -496,7 +489,7 @@ test('corporate proxy, flag off: env untouched whatever HTTP(S)_PROXY or setting
   const env = { HTTPS_PROXY: 'http://ACME%5Cjdoe:pw@corp.example:8080', NO_PROXY: 'intranet.example', PATH: '/bin' };
   const before = { ...env };
   let settingsRead = 0;
-  const r = await startEgressPolicy({ env, corporateProxy: FLAG_OFF, settings: () => { settingsRead += 1; return { networkProxy: { upstream: 'http://x:1' } }; } });
+  const r = await startEgressPolicy({ env, proxyOn: FLAG_OFF, settings: () => { settingsRead += 1; return { networkProxy: { upstream: 'http://x:1' } }; } });
   assert.equal(r.status, 'off');
   assert.deepEqual(env, before);
   assert.equal(settingsRead, 0, 'flag off: settings are not even read');
@@ -509,7 +502,7 @@ test('corporate proxy, flag on: HTTP(S)_PROXY becomes the upstream and children 
   const corpUrl = fake.url('Domain%5CUser:Password@');
   const env = { HTTPS_PROXY: corpUrl, NO_PROXY: 'intranet.example', ALL_PROXY: corpUrl, npm_config_https_proxy: corpUrl,
     npm_config_proxy: corpUrl.replace('%5C', '%5c'), PATH: '/bin' };   // a differently encoded copy is caught too
-  const r = await startEgressPolicy({ env, corporateProxy: FLAG_ON, settings: () => ({}) });
+  const r = await startEgressPolicy({ env, proxyOn: FLAG_ON, settings: () => ({}) });
   try {
     assert.equal(r.status, 'on');
     assert.equal(r.boundAddress, '127.0.0.1', 'loopback only, never 0.0.0.0');
@@ -532,7 +525,7 @@ test('corporate proxy, flag on: HTTP(S)_PROXY becomes the upstream and children 
     assert.equal(fake.stats.type3, 1);
 
     const child = { ...env };
-    const again = await startEgressPolicy({ env: child, corporateProxy: FLAG_ON, settings: () => ({}) });
+    const again = await startEgressPolicy({ env: child, proxyOn: FLAG_ON, settings: () => ({}) });
     assert.equal(again.status, 'inherited', 'a worca under this one reuses the proxy, never chains to it');
   } finally { await r.close(); await fake.close(); o.server.close(); }
 });
@@ -541,7 +534,7 @@ test('corporate proxy + allow mode: allowed hosts are forwarded to the upstream,
   const o = await origin();
   const fake = await startFakeUpstream({ scheme: 'none', originPort: o.port });
   const env = { WORCA_EGRESS_MODE: 'allow', WORCA_EGRESS_ALLOW: PLATFORM_ALLOW, WORCA_EGRESS_DENY: '.invalid', HTTPS_PROXY: fake.url() };
-  const r = await startEgressPolicy({ env, corporateProxy: FLAG_ON, settings: () => ({}) });
+  const r = await startEgressPolicy({ env, proxyOn: FLAG_ON, settings: () => ({}) });
   try {
     const port = Number(new URL(r.url).port);
     const ok = await rawRequest(port, 'CONNECT app.worca.dev:443 HTTP/1.1\r\nHost: app.worca.dev:443\r\n\r\nGET /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
@@ -561,7 +554,7 @@ test('corporate proxy end to end: a child process fetch with the child env reach
   const o = await origin();
   const fake = await startFakeUpstream({ scheme: 'ntlm', originPort: o.port });
   const env = { HTTPS_PROXY: fake.url('Domain%5CUser:Password@') };
-  const r = await startEgressPolicy({ env, corporateProxy: FLAG_ON, settings: () => ({}) });
+  const r = await startEgressPolicy({ env, proxyOn: FLAG_ON, settings: () => ({}) });
   try {
     const envProxy = pathToFileURL(fileURLToPath(new URL('../src/core/env-proxy.mjs', import.meta.url))).href;
     const script = `import { useEnvProxy } from ${JSON.stringify(envProxy)}; useEnvProxy();
@@ -583,10 +576,10 @@ test('corporate proxy end to end: a child process fetch with the child env reach
 
 test('corporate proxy, flag on: no upstream anywhere is off; a bad one is a warning without the URL', async () => {
   const env = { PATH: '/bin' };
-  const r = await startEgressPolicy({ env, corporateProxy: FLAG_ON, settings: () => ({}) });
+  const r = await startEgressPolicy({ env, proxyOn: FLAG_ON, settings: () => ({}) });
   assert.equal(r.status, 'off');
   assert.deepEqual(env, { PATH: '/bin' });
-  const bad = await startEgressPolicy({ env: { HTTPS_PROXY: 'http://u:s3cret@corp.example:1' }, corporateProxy: FLAG_ON,
+  const bad = await startEgressPolicy({ env: { HTTPS_PROXY: 'http://u:s3cret@corp.example:1' }, proxyOn: FLAG_ON,
     settings: () => ({ networkProxy: { upstream: 'https://corp.example:8443' } }) });
   assert.equal(bad.status, 'off');
   const n = egressNotice(bad);
@@ -624,7 +617,7 @@ async function savedLoginRig(t, { fakeOpts = {}, networkProxy = {}, password = '
   const logs = [];
   const env = {};
   const r = await startEgressPolicy({
-    env, corporateProxy: FLAG_ON, log: (l) => logs.push(l),
+    env, proxyOn: FLAG_ON, log: (l) => logs.push(l),
     settings: () => ({ networkProxy: { upstream: fake.url(), ...networkProxy } }),
     login: () => readProxyLogin({ home }),
     watchLogin: () => () => {},
@@ -687,7 +680,7 @@ test('saved login: the default watcher swaps a new login in without a restart', 
   process.env.WORCA_HOME = home;
   const o = await origin();
   const fake = await startFakeUpstream({ scheme: 'ntlm', domain: 'ACME', user: 'jdoe', password: 'S3cret!', originPort: o.port });
-  const r = await startEgressPolicy({ env: {}, corporateProxy: FLAG_ON, loginPollMs: 50, settings: () => ({ networkProxy: { upstream: fake.url() } }) });
+  const r = await startEgressPolicy({ env: {}, proxyOn: FLAG_ON, loginPollMs: 50, settings: () => ({ networkProxy: { upstream: fake.url() } }) });
   t.after(async () => {
     await r.close(); await fake.close(); o.server.close();
     if (prev === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prev;
@@ -712,13 +705,14 @@ test('saved login: a file that turns unreadable keeps a tripped connector trippe
   assert.equal(logs.length, n, 'the same error is not logged again');
 });
 
-test('saved login: an explicit auth none never sends it, and no watcher starts', async (t) => {
-  let watched = 0;
-  const { r, home, fake, port } = await savedLoginRig(t, { networkProxy: { auth: 'none' }, policyOpts: { watchLogin: () => { watched += 1; return () => {}; } } });
+test('saved login: an explicit auth none never sends it, and the watcher leaves it alone', async (t) => {
+  let watcher = null;
+  const { r, home, fake, port } = await savedLoginRig(t, { networkProxy: { auth: 'none' }, policyOpts: { watchLogin: (fn) => { watcher = fn; return () => {}; } } });
   assert.equal(r.connector.status().auth, 'none');
-  assert.equal(watched, 0);
+  assert.ok(watcher, 'the watcher runs whenever the proxy is on (a swap may bring a login-taking upstream)');
   await rawRequest(port, CONNECT_GH);
   saveProxyLogin(ACME, { home });
+  watcher();
   r.reloadLogin();
   assert.equal(r.connector.status().auth, 'none');
   await rawRequest(port, CONNECT_GH);
@@ -738,16 +732,16 @@ test('sourceEnv: the proxy variables before the swap, and never a parent\'s loca
   const o = await origin();
   const fake = await startFakeUpstream({ scheme: 'none', originPort: o.port });
   const env = { HTTPS_PROXY: fake.url(), PATH: '/bin' };
-  const r = await startEgressPolicy({ env, corporateProxy: FLAG_ON, settings: () => ({}), login: () => null });
+  const r = await startEgressPolicy({ env, proxyOn: FLAG_ON, settings: () => ({}), login: () => null });
   t.after(async () => { await r.close(); await fake.close(); o.server.close(); });
   assert.equal(r.sourceEnv.HTTPS_PROXY, fake.url());
   assert.equal(env.HTTPS_PROXY, r.url);
   const local = 'http://127.0.0.1:9';
   const child = { [EGRESS_PROXY_VAR]: local, HTTPS_PROXY: local, HTTP_PROXY: local, https_proxy: local, http_proxy: local, PATH: '/bin' };
-  const inh = await startEgressPolicy({ env: child, corporateProxy: FLAG_ON, settings: () => ({}) });
+  const inh = await startEgressPolicy({ env: child, proxyOn: FLAG_ON, settings: () => ({}) });
   assert.equal(inh.status, 'inherited');
   for (const k of [EGRESS_PROXY_VAR, 'HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy']) assert.equal(k in inh.sourceEnv, false, k);
-  const off = await startEgressPolicy({ env: { PATH: '/bin' }, corporateProxy: FLAG_OFF });
+  const off = await startEgressPolicy({ env: { PATH: '/bin' }, proxyOn: FLAG_OFF });
   assert.deepEqual(off.sourceEnv, { PATH: '/bin' });
 });
 
@@ -770,7 +764,7 @@ test('fixedPort: the local proxy listens on 127.0.0.1:fixedPort and `worca proxy
   const port = await closedPort();
   const settings = () => ({ networkProxy: { upstream: fake.url(), fixedPort: port } });
   const env = {};
-  const r = await startEgressPolicy({ env, corporateProxy: FLAG_ON, settings, login: () => null });
+  const r = await startEgressPolicy({ env, proxyOn: FLAG_ON, settings, login: () => null });
   t.after(() => r.close());
   assert.equal(r.status, 'on');
   assert.equal(r.url, `http://127.0.0.1:${port}`);
@@ -778,7 +772,7 @@ test('fixedPort: the local proxy listens on 127.0.0.1:fixedPort and `worca proxy
   assert.equal(env.WORCA_CORPORATE_PROXY_URL, `http://127.0.0.1:${port}`);
   const lines = [];
   const code = await cmdProxy(['status'], { out: (l) => lines.push(l), fail: () => {}, err: () => {}, env: {},
-    corporateProxy: FLAG_ON, settings, home: tempHome(t) });
+    settings: () => ({ networkProxy: { ...settings().networkProxy, enabled: true } }), home: tempHome(t) });
   assert.notEqual(code, 3, 'not needs-login');
   assert.ok(lines.includes(`Local proxy: http://127.0.0.1:${port}`), lines.join('\n'));
 });
@@ -797,21 +791,21 @@ test('fixedPort busy (another program): a clear EADDRINUSE error naming the port
   t.after(() => squatter.close());
   const port = squatter.address().port;
   const settings = () => ({ networkProxy: { upstream: 'http://127.0.0.1:9', fixedPort: port } });
-  const r = await startEgressPolicy({ env: {}, corporateProxy: FLAG_ON, settings, login: () => null });
+  const r = await startEgressPolicy({ env: {}, proxyOn: FLAG_ON, settings, login: () => null });
   assert.equal(r.status, 'off');
   assert.equal(r.upstreamError, `the local proxy cannot listen on 127.0.0.1:${port}: another program already uses that port (EADDRINUSE). Free the port or change networkProxy.fixedPort`);
   assert.match(egressNotice(r).text, /^Corporate proxy: the local proxy cannot listen on 127\.0\.0\.1:\d+/);
   assert.equal(egressNotice(r).level, 'warn');
-  await assert.rejects(startEgressPolicy({ env: { WORCA_EGRESS_MODE: 'block' }, corporateProxy: FLAG_ON, settings, login: () => null }),
+  await assert.rejects(startEgressPolicy({ env: { WORCA_EGRESS_MODE: 'block' }, proxyOn: FLAG_ON, settings, login: () => null }),
     /cannot listen on 127\.0\.0\.1:\d+: another program already uses that port \(EADDRINUSE\)/);
 });
 
 test('fixedPort held by another Worca: this one falls back to a free port and says so', async (t) => {
   const port = await closedPort();
   const settings = () => ({ networkProxy: { upstream: 'http://127.0.0.1:9', fixedPort: port } });
-  const first = await startEgressPolicy({ env: {}, corporateProxy: FLAG_ON, settings, login: () => null });
+  const first = await startEgressPolicy({ env: {}, proxyOn: FLAG_ON, settings, login: () => null });
   t.after(() => first.close());
-  const second = await startEgressPolicy({ env: {}, corporateProxy: FLAG_ON, settings, login: () => null });
+  const second = await startEgressPolicy({ env: {}, proxyOn: FLAG_ON, settings, login: () => null });
   t.after(() => second.close());
   assert.equal(second.status, 'on');
   assert.notEqual(second.url, `http://127.0.0.1:${port}`);
@@ -823,7 +817,7 @@ test('fixedPort, flag off with an enforced policy: the policy proxy starts on an
   const port = await closedPort();
   let reads = 0;
   // An enforced policy starts a local proxy even with the flag off: the case where fixedPort could leak in.
-  const r = await startEgressPolicy({ env: { WORCA_EGRESS_MODE: 'block', HTTPS_PROXY: 'http://corp.example:8080' }, corporateProxy: FLAG_OFF,
+  const r = await startEgressPolicy({ env: { WORCA_EGRESS_MODE: 'block', HTTPS_PROXY: 'http://corp.example:8080' }, proxyOn: FLAG_OFF,
     settings: () => { reads += 1; return { networkProxy: { fixedPort: port } }; } });
   t.after(() => r.close());
   assert.equal(r.status, 'on');
@@ -836,4 +830,232 @@ test('fixedPort, flag off with an enforced policy: the policy proxy starts on an
     s.on('error', () => resolve(true));
   });
   assert.equal(refused, true);
+});
+
+// ── Live changes (setup assistant slice 2, D7–D10): swap the upstream without a restart ──
+import { mock } from 'node:test';
+import { writeFileSync } from 'node:fs';
+import { createUpstreamConnector, resolveUpstream } from '../src/core/upstream-proxy.mjs';
+import { setNetworkProxy, settingsFile } from '../src/core/settings.mjs';
+
+/** Open a CONNECT tunnel and keep it; send() writes one keep-alive GET and resolves with the reply. */
+function openTunnel(port, target) {
+  return new Promise((resolve, reject) => {
+    const sock = net.connect(port, '127.0.0.1', () => sock.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n\r\n`));
+    let buf = ''; let waiter = null;
+    sock.on('data', (d) => {
+      buf += d;
+      if (!waiter && /^HTTP\/1\.1 200/.test(buf) && buf.includes('\r\n\r\n')) { buf = ''; resolve(tunnel); return; }
+      if (waiter && /origin saw \S+/.test(buf)) { const w = waiter; waiter = null; const out = buf; buf = ''; w(out); }
+    });
+    sock.on('error', reject);
+    const tunnel = { send: (path) => new Promise((r) => { waiter = r; sock.write(`GET ${path} HTTP/1.1\r\nHost: x\r\n\r\n`); }), close: () => sock.destroy(), sock };
+  });
+}
+
+async function freePort() {
+  const s = net.createServer();
+  await new Promise((r) => s.listen(0, '127.0.0.1', r));
+  const { port } = s.address();
+  await new Promise((r) => s.close(r));
+  return port;
+}
+
+test('useConnector: new tunnels take the new connector, an open tunnel finishes on the old one, which then closes', async () => {
+  const o = await origin();
+  const a = await startFakeUpstream({ scheme: 'none', originPort: o.port });
+  const b = await startFakeUpstream({ scheme: 'none', originPort: o.port });
+  const conn = (fake) => {
+    const c = createUpstreamConnector(resolveUpstream({ env: {}, settings: { upstream: fake.url() } }));
+    const close = c.close; c.closed = 0; c.close = () => { c.closed += 1; close(); };
+    return c;
+  };
+  const ca = conn(a); const cb = conn(b);
+  const server = createProxy({ policy: { mode: 'open', allow: [], deny: [] }, connector: ca });
+  await listen(server);
+  const port = server.address().port;
+  try {
+    const old = await openTunnel(port, 'github.com:443');
+    assert.equal(server.useConnector(cb, {}), ca, 'returns the connector it replaced');
+    assert.equal(server.connector(), cb);
+    assert.equal(ca.closed, 0, 'an open tunnel keeps the old connector alive');
+    assert.match(await old.send('/still-a'), /origin saw \/still-a/);
+    const aSockets = a.stats.sockets;
+    const fresh = await rawRequest(port, 'CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n');
+    assert.match(fresh, /origin saw \/b/);
+    assert.equal(a.stats.sockets, aSockets, 'the new tunnel never reached A');
+    assert.ok(b.stats.sockets >= 1, 'it went through B');
+    old.close();
+    const t0 = Date.now();
+    while (ca.closed === 0 && Date.now() - t0 < 2000) await new Promise((r) => setTimeout(r, 10));
+    assert.equal(ca.closed, 1, 'the old connector closed once its last tunnel ended');
+    server.useConnector(null);
+    const direct = await rawRequest(port, `CONNECT 127.0.0.1:${o.port} HTTP/1.1\r\nHost: x\r\n\r\nGET /d HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    assert.match(direct, /origin saw \/d/);
+  } finally { server.close(); await a.close(); await b.close(); o.server.close(); }
+});
+
+import { startLiveEgress, liveKeyOf, isWorcaProxy } from '../src/core/egress-policy.mjs';
+
+test('AC-2.2: a changed host applies to new connections; HTTPS_PROXY stays the same', async () => {
+  const o = await origin();
+  const a = await startFakeUpstream({ scheme: 'none', originPort: o.port });
+  const b = await startFakeUpstream({ scheme: 'none', originPort: o.port });
+  const env = { PATH: '/bin' };
+  let np = { enabled: true, upstream: a.url() };
+  const live = await startLiveEgress({ env, settings: () => ({ networkProxy: np }), login: () => null, watch: () => () => {} });
+  try {
+    const r = live.current();
+    assert.equal(r.status, 'on');
+    const url = env.HTTPS_PROXY;
+    const port = Number(new URL(url).port);
+    const old = await openTunnel(port, 'github.com:443');
+    np = { enabled: true, upstream: b.url() };
+    const out = await live.apply(np);
+    assert.equal(out.changed, true);
+    assert.equal(env.HTTPS_PROXY, url, 'children keep the same HTTPS_PROXY');
+    assert.equal(live.current().upstream.upstream, `127.0.0.1:${b.port}`);
+    const bBefore = b.stats.sockets;
+    assert.match(await rawRequest(port, 'CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\nGET /n HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'), /origin saw \/n/);
+    assert.ok(b.stats.sockets > bBefore);
+    assert.match(await old.send('/o'), /origin saw \/o/, 'the open tunnel finishes on A');
+    old.close();
+  } finally { await live.close(); await a.close(); await b.close(); o.server.close(); }
+});
+
+test('AC-2.3/AC-2.4: off at boot starts nothing; turning on starts the local proxy; turning off goes direct on the same address', async () => {
+  const o = await origin();
+  const fake = await startFakeUpstream({ scheme: 'none', originPort: o.port });
+  const env = { PATH: '/bin' };
+  const onEnvChange = mock.fn();
+  const live = await startLiveEgress({ env, settings: () => ({}), login: () => null, watch: () => () => {}, onEnvChange });
+  try {
+    assert.equal(live.current().status, 'off');
+    assert.deepEqual(env, { PATH: '/bin' }, 'never on: no local proxy, env untouched');
+    await live.apply({ enabled: true, upstream: fake.url() });
+    assert.equal(live.current().status, 'on');
+    const url = env.HTTPS_PROXY;
+    assert.match(url, /^http:\/\/127\.0\.0\.1:\d+$/);
+    assert.equal(onEnvChange.mock.callCount(), 1, 'Worca re-installs its fetch dispatcher (D8)');
+    const port = Number(new URL(url).port);
+    assert.match(await rawRequest(port, 'CONNECT github.com:443 HTTP/1.1\r\nHost: github.com:443\r\n\r\nGET /on HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n'), /origin saw \/on/);
+    await live.apply({ enabled: false, upstream: fake.url() });
+    assert.equal(env.HTTPS_PROXY, url);
+    assert.equal(env.WORCA_CORPORATE_PROXY_URL, undefined, 'off: no browser-launch marker');
+    assert.equal(live.current().connector, null);
+    const before = fake.stats.sockets;
+    assert.match(await rawRequest(port, `CONNECT 127.0.0.1:${o.port} HTTP/1.1\r\nHost: x\r\n\r\nGET /off HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`), /origin saw \/off/);
+    assert.equal(fake.stats.sockets, before, 'off: the upstream is never contacted');
+  } finally { await live.close(); await fake.close(); o.server.close(); }
+});
+
+test('AC-2.6: a second process watching settings.json swaps within 5 s', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'worca-live-'));
+  const prevHome = process.env.HOME; process.env.HOME = home;
+  t.after(() => { process.env.HOME = prevHome; rmSync(home, { recursive: true, force: true }); });
+  const o = await origin();
+  const a = await startFakeUpstream({ scheme: 'none', originPort: o.port });
+  const b = await startFakeUpstream({ scheme: 'none', originPort: o.port });
+  await setNetworkProxy({ enabled: true, upstream: a.url() });
+  const live = await startLiveEgress({ env: { PATH: '/bin' }, login: () => null, pollMs: 200 });
+  try {
+    assert.equal(live.current().upstream.upstream, `127.0.0.1:${a.port}`);
+    await setNetworkProxy({ upstream: b.url() });          // as the server's save, from another process
+    const t0 = Date.now();
+    while (live.current().upstream?.upstream !== `127.0.0.1:${b.port}` && Date.now() - t0 < 5000) await new Promise((r) => setTimeout(r, 50));
+    assert.equal(live.current().upstream.upstream, `127.0.0.1:${b.port}`);
+    assert.ok(Date.now() - t0 < 5000);
+  } finally { await live.close(); await a.close(); await b.close(); o.server.close(); }
+});
+
+test('AC-2.7 (core): a fixedPort change switches at once; the old port keeps answering for the children holding it', async () => {
+  const fake = await startFakeUpstream({ scheme: 'none', originPort: 1 });
+  const p1 = await freePort(); const p2 = await freePort();
+  const env = {}; let envChanges = 0;
+  const live = await startLiveEgress({ env, settings: () => ({ networkProxy: { enabled: true, upstream: fake.url(), fixedPort: p1 } }), login: () => null, watch: () => () => {}, onEnvChange: () => { envChanges += 1; } });
+  try {
+    assert.equal(env.HTTPS_PROXY, `http://127.0.0.1:${p1}`);
+    const out = await live.apply({ enabled: true, upstream: fake.url(), fixedPort: p2 });
+    assert.deepEqual(out.pending, []);
+    assert.equal(out.changed, true);
+    assert.equal(out.portSwitched, p2);
+    assert.equal(await isWorcaProxy(p1), true, 'the old port still answers');
+    assert.equal(await isWorcaProxy(p2), true, 'the new port answers now');
+    assert.equal(env.HTTPS_PROXY, `http://127.0.0.1:${p2}`, 'new children get the new port');
+    assert.equal(live.current().url, `http://127.0.0.1:${p2}`);
+    assert.equal(live.current().fixedPort, p2);
+    assert.equal(envChanges, 1);
+    assert.deepEqual((await live.apply({ enabled: true, upstream: fake.url(), fixedPort: p2 })).pending, [], 'applying it again changes nothing');
+  } finally { await live.close(); await fake.close(); }
+  assert.equal(await isWorcaProxy(p2), false, 'close() stops the extra listener too');
+});
+
+test('AC-2.7 (core): a new fixedPort that another program holds is said at once; the proxy stays where it was', async () => {
+  const fake = await startFakeUpstream({ scheme: 'none', originPort: 1 });
+  const p1 = await freePort();
+  const holder = net.createServer().listen(0, '127.0.0.1'); await once(holder, 'listening');
+  const taken = holder.address().port;
+  const env = {};
+  const live = await startLiveEgress({ env, settings: () => ({ networkProxy: { enabled: true, upstream: fake.url(), fixedPort: p1 } }), login: () => null, watch: () => () => {} });
+  try {
+    const out = await live.apply({ enabled: true, upstream: fake.url(), fixedPort: taken });
+    assert.match(out.upstreamError, /^saved, but the local proxy cannot listen on 127\.0\.0\.1:\d+: another program already uses that port/);
+    assert.equal(out.changed, false);
+    assert.equal(env.HTTPS_PROXY, `http://127.0.0.1:${p1}`);
+    assert.equal(await isWorcaProxy(p1), true);
+  } finally { await live.close(); await fake.close(); holder.close(); }
+});
+
+test('liveKeyOf: key order and fixedPort do not change the key', () => {
+  assert.equal(liveKeyOf({ upstream: 'http://p:1', enabled: true, fixedPort: 1 }), liveKeyOf({ enabled: true, upstream: 'http://p:1' }));
+  assert.notEqual(liveKeyOf({ enabled: true, upstream: 'http://p:1' }), liveKeyOf({ enabled: true, upstream: 'http://p:2' }));
+});
+
+test('R-sec-5: a settings.json that is not JSON, or is deleted, leaves the running connector alone (real watcher)', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'worca-live-'));
+  const prevHome = process.env.HOME; process.env.HOME = home;
+  t.after(() => { process.env.HOME = prevHome; rmSync(home, { recursive: true, force: true }); });
+  const o = await origin();
+  const a = await startFakeUpstream({ scheme: 'none', originPort: o.port });
+  await setNetworkProxy({ enabled: true, upstream: a.url() });
+  const live = await startLiveEgress({ env: { PATH: '/bin' }, login: () => null, pollMs: 50 });
+  try {
+    const conn = live.current().connector;
+    writeFileSync(settingsFile(), '{not json');
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(live.current().connector, conn, 'bad JSON: same connector');
+    rmSync(settingsFile());
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(live.current().connector, conn, 'deleted file: same connector');
+  } finally { await live.close(); await a.close(); o.server.close(); }
+});
+
+test('Decision 6a: a swap to an upstream that does not resolve keeps the running connector', async () => {
+  const o = await origin();
+  const a = await startFakeUpstream({ scheme: 'none', originPort: o.port });
+  const live = await startLiveEgress({ env: { PATH: '/bin' }, settings: () => ({ networkProxy: { enabled: true, upstream: a.url() } }), login: () => null, watch: () => () => {} });
+  try {
+    const conn = live.current().connector;
+    const out = await live.apply({ enabled: true, upstream: 'http://:0' });
+    assert.equal(out.changed, false);
+    assert.ok(out.upstreamError);
+    assert.equal(live.current().connector, conn);
+  } finally { await live.close(); await a.close(); o.server.close(); }
+});
+
+test('R-sec-6: after a swap to a credentialed upstream, only the local URL is in env', async () => {
+  const o = await origin();
+  const a = await startFakeUpstream({ scheme: 'none', originPort: o.port });
+  const b = await startFakeUpstream({ scheme: 'basic', originPort: o.port });
+  const env = { PATH: '/bin' };
+  const live = await startLiveEgress({ env, settings: () => ({ networkProxy: { enabled: true, upstream: a.url() } }), login: () => null, watch: () => () => {} });
+  try {
+    env.MY_TOOL_PROXY = `http://u:secret@127.0.0.1:${b.port}`;   // set after boot, under a non-proxy name
+    assert.match(env.MY_TOOL_PROXY, /secret/, 'precondition: the credentialed value is in env before the swap');
+    const out = await live.apply({ enabled: true, upstream: `http://u:secret@127.0.0.1:${b.port}`, auth: 'basic' });
+    assert.equal(out.changed, true, 'the swap really happened (security-2-1: never pass vacuously)');
+    assert.equal(live.current().upstream.upstream, `127.0.0.1:${b.port}`);
+    assert.equal(env.MY_TOOL_PROXY, env.HTTPS_PROXY, 'the scrubbed variable now names the local URL');
+    for (const [k, v] of Object.entries(env)) assert.doesNotMatch(String(v), /secret/, `${k} carries no userinfo`);
+  } finally { await live.close(); await a.close(); await b.close(); o.server.close(); }
 });

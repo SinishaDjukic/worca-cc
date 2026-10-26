@@ -10,7 +10,8 @@ import { chatBusyReason, CHAT_BUSY, chatGroupBusyText } from '../../src/shared/c
 export const CHATS_VIEW_KEY = 'worca-cc.chats.view';
 export const CHATS_LIST_W_KEY = 'worca-cc.chats.listWidth';
 export const CHATS_SHOW = Object.freeze([['all', 'All'], ['needs', 'Needs you'], ['archived', 'Archived']]);
-export const CHATS_SORT = Object.freeze([['activity', 'Last activity'], ['created', 'Created'], ['title', 'Title A–Z'], ['cost', 'Cost']]);
+export const CHATS_SORT = Object.freeze([['activity', 'Recent', 'Last activity'], ['created', 'Created'], ['title', 'A–Z', 'Title A–Z'], ['cost', 'Cost']]);
+// Date's third entry is its segment title in the View menu.
 export const CHATS_GROUP = Object.freeze([['date', 'Date', 'Today · Recent · Older'], ['project', 'Project'], ['topic', 'Topic'], ['none', 'None']]);
 export const DEFAULT_CHATS_VIEW = Object.freeze({ show: 'all', sort: 'activity', groupBy: 'date' });
 export const CHATS_RECENT = 10;
@@ -21,6 +22,8 @@ export const CHATS_OFFLINE = "The chats show here once Worca's server is reachab
 
 const pick = (list, v, d) => (list.some(([id]) => id === v) ? v : d);
 const labelOf = (list, id) => (list.find(([k]) => k === id) || [id, id])[1];
+/** A list entry's full name: its title when it has one ("Title A–Z"), else its label. */
+const fullName = (list, id) => { const e = list.find(([k]) => k === id); return e ? e[2] || e[1] : id; };
 export function cleanChatsView(v) {
   return { show: pick(CHATS_SHOW, v?.show, 'all'), sort: pick(CHATS_SORT, v?.sort, 'activity'), groupBy: pick(CHATS_GROUP, v?.groupBy, 'date') };
 }
@@ -38,14 +41,14 @@ export function chatsViewChip(v, { shown = 0 } = {}) {
   if (v.groupBy === 'project') parts.push('By project');
   else if (v.groupBy === 'topic') parts.push('By topic');
   else if (v.groupBy === 'none') parts.push('Not grouped');
-  if (v.sort !== 'activity') parts.push(labelOf(CHATS_SORT, v.sort));
+  if (v.sort !== 'activity') parts.push(fullName(CHATS_SORT, v.sort));
   if (!parts.length) return '';
   parts.push(`${shown} chat${shown === 1 ? '' : 's'}`);
   return parts.join(' · ');
 }
 
-export function chatsViewMenuItems(v, counts, { onPick }) {
-  return viewMenuItems(v, counts, { onPick, showOpts: CHATS_SHOW, sortOpts: CHATS_SORT, groupOpts: CHATS_GROUP });
+export function chatsViewMenuItems(v, counts, { onPick, mac = false }) {
+  return viewMenuItems(v, counts, { onPick, mac, showOpts: CHATS_SHOW, sortOpts: CHATS_SORT, groupOpts: CHATS_GROUP });
 }
 
 /** The state column and the state word on the sub line. Busy states pulse; idle draws the bubble (status-dot icon). */

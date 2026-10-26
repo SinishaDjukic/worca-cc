@@ -864,13 +864,13 @@ export function createAskTools(deps) {
     // Corporate proxy (docs/network-proxy.md "From Chat"): read, test, and two cards. Listed with the bundle (proxy-deps.mjs).
     ...(deps.proxy ? [
       { name: 'get_network_proxy',
-        description: 'Read the corporate proxy (Labs flag corporateProxy). With the flag off: {flag:false, text, howToTurnOn}. With it on: state and line (the sentence Settings shows), upstream {hostPort, source "settings" | "env" (HTTP(S)_PROXY at start), auth, authLabel}, the stored settings (upstream, auth, noProxy, timeouts, fixedPort), local {url, running, error}, login {present, account DOMAIN\\user, savedAt, rejected, tripped, error} — never a password or hash —, restart {needed, reasons}, connector (the running proxy\'s upstream, auth, state none | unverified | verified | tripped) and warnings. Read-only.',
+        description: 'Read the corporate proxy: enabled (true | false; networkProxy.enabled, off by default), state and line (the sentence Settings shows), upstream {hostPort, source "settings" | "env" (HTTP(S)_PROXY at start), auth, authLabel}, the stored settings (upstream, auth, noProxy, timeouts, fixedPort), local {url, running, error}, login {present, account DOMAIN\\user, savedAt, rejected, tripped, error} — never a password or hash —, connector (the running proxy\'s upstream, auth, state none | unverified | verified | tripped) and warnings. Read-only.',
         inputSchema: SCHEMA.obj({}) },
       { name: 'test_network_proxy',
-        description: 'Test the corporate proxy now, as the Test button does: connects through it to github.com and api.anthropic.com. Returns {ok, upstream, results:[{host, ok, via "upstream" | "direct", ms, status?, needsLogin?, error?}]} or {ok:false, code, error} with code FLAG_OFF, NOT_CONFIGURED, UPSTREAM_INVALID, RESTART_NEEDED (the saved proxy is not the running one: the user restarts Worca, then tests), TEST_RUNNING or PROXY_AGENT_BLOCKED. A rejected login (407 after the login) is marked "needs login" — the user logs in again themselves. The proxy is contacted.',
+        description: 'Test the saved corporate proxy values now (no arguments: never other values), as the Test button does for saved values: connects through it to github.com and api.anthropic.com. Returns {ok, upstream, results:[{host, ok, via "upstream" | "direct", ms, status?, needsLogin?, error?}]} or {ok:false, code, error} with code NOT_CONFIGURED, UPSTREAM_INVALID, TEST_RUNNING or PROXY_AGENT_BLOCKED. A rejected login (407 after the login) is marked "needs login" — the user logs in again themselves. The proxy is contacted.',
         inputSchema: SCHEMA.obj({}) },
       { name: 'propose_network_proxy_change',
-        description: 'Propose a change to the stored corporate proxy settings (Settings › Runs › Network proxy). Fields, each optional, null unsets: upstream ("host:port", http only, never a user name or password), auth (auto | ntlm — NTLMv2, also inside Negotiate — | digest | basic | none), noProxy (comma-separated hosts that go direct), timeouts {connectMs, authMs, idleMs} (500 to 3600000, null for the default), fixedPort (1024 to 65535; pins the local proxy port). Validated exactly as Settings saves it. It never changes anything itself: the user sees a card with each value before → after and "Restart Worca to apply", and applies or declines it. Returns {ok:true, card} or {ok:false, errors} to fix and retry. Refused while the flag is off. Never claim it was applied — the card says so. There is no login field: never ask for a password.',
+        description: 'Propose a change to the stored corporate proxy settings (Settings › Runs › Network proxy). Fields, each optional, null unsets: upstream ("host:port", http only, never a user name or password), auth (auto | ntlm — NTLMv2, also inside Negotiate — | digest | basic | none), noProxy (comma-separated hosts that go direct), timeouts {connectMs, authMs, idleMs} (500 to 3600000, null for the default), fixedPort (1024 to 65535; pins the local proxy port). Validated exactly as Settings saves it. It never changes anything itself: the user sees a card with each value before → after and applies or declines it; on Apply, Worca tests a new proxy first, and new connections use it at once; a new fixedPort is listened on at once (the old port keeps answering until Worca restarts). Returns {ok:true, card} or {ok:false, errors} to fix and retry. Never claim it was applied — the card says so. There is no login field: never ask for a password.',
         inputSchema: SCHEMA.obj({
           upstream: { type: ['string', 'null'], description: 'proxy host:port (null: none)' },
           auth: { type: ['string', 'null'], description: 'auto | ntlm | digest | basic | none (null: default)' },
@@ -880,7 +880,7 @@ export function createAskTools(deps) {
           fixedPort: { type: ['integer', 'null'], description: 'local proxy port 1024-65535 (null: any free port)' },
           note: SCHEMA.s('one line shown on the card: why (≤ 200 chars)') }) },
       { name: 'propose_corporate_proxy_on',
-        description: 'When get_network_proxy says the flag is off: propose turning the Labs flag "Corporate proxy" (corporateProxy) on. A card the user applies; Worca must then be restarted. Returns {ok:true, card} or {ok:false, errors} (already on, or locked by WORCA_FLAGS — then point to that).',
+        description: 'When get_network_proxy says enabled false: propose turning the corporate proxy on (networkProxy.enabled). A card the user applies; new connections use it at once. Returns {ok:true, card} or {ok:false, errors} (already on).',
         inputSchema: SCHEMA.obj({ note: SCHEMA.s('one line shown on the card: why (≤ 200 chars)') }) },
     ] : []),
     ...(deps.clones ? [
@@ -1590,10 +1590,6 @@ export function createAskTools(deps) {
     if (!deps.proxy) throw new AskToolError(`${tool}: the corporate proxy tools are unavailable`);
     return deps.proxy;
   };
-  const proxyFlagOff = () => ({ flag: false,
-    text: 'The corporate proxy is off: it is the Labs flag "Corporate proxy" (corporateProxy), off by default.',
-    howToTurnOn: 'Offer propose_corporate_proxy_on (a card the user applies), or point to Settings › Labs › Corporate proxy. Either way Worca must be restarted after it is turned on.',
-    docs: 'docs/network-proxy.md' });
   const schedulesOf = (tool) => {
     if (!deps.schedules) throw new AskToolError(`${tool}: scheduled runs are unavailable`);
     return deps.schedules;
@@ -2746,22 +2742,18 @@ export function createAskTools(deps) {
     async propose_model_change(input) { return modelsOf('propose_model_change').validateChange(input); },
     async get_network_proxy() {
       const p = proxyOf('get_network_proxy');
-      if (!p.flagOn()) return proxyFlagOff();
       if (typeof p.status !== 'function') {
-        return { flag: true, available: false, text: 'The proxy status cannot be read from this chat turn (the flag was turned on during it). Ask again in a new message, or open Settings › Runs › Network proxy.' };
+        return { available: false, text: 'The proxy status cannot be read from this chat turn. Ask again in a new message, or open Settings › Runs › Network proxy.' };
       }
-      const s = await p.status();
-      return s && s.flag === false ? proxyFlagOff() : s;
+      return p.status();
     },
     async test_network_proxy() {
       const p = proxyOf('test_network_proxy');
-      if (!p.flagOn()) return { ok: false, code: 'FLAG_OFF', error: proxyFlagOff().text };
       if (typeof p.test !== 'function') {
         return { ok: false, code: p.testOff ? 'PROXY_AGENT_BLOCKED' : 'UNAVAILABLE',
           error: p.testOff || 'The proxy cannot be tested from this chat turn. Ask again in a new message, or use Test on Settings › Runs › Network proxy.' };
       }
-      const r = await p.test();
-      return r && r.flag === false ? { ok: false, code: 'FLAG_OFF', error: proxyFlagOff().text } : r;
+      return p.test();
     },
     async propose_network_proxy_change(input) { return proxyOf('propose_network_proxy_change').validateChange(input); },
     async propose_corporate_proxy_on(input) { return proxyOf('propose_corporate_proxy_on').validateFlagOn(input); },

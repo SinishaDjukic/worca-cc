@@ -24,7 +24,7 @@ export const CHROME_SAFE_ARGS = ['--use-mock-keychain', '--password-store=basic'
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
 
 /** Worca's local corporate proxy for a browser launch, or null. WORCA_CORPORATE_PROXY_URL is set only while
- *  Worca's corporateProxy flag runs the proxy (a credential-free http://127.0.0.1 URL). Chrome ignores
+ *  Worca's corporate proxy (networkProxy.enabled) runs (a credential-free http://127.0.0.1 URL). Chrome ignores
  *  HTTPS_PROXY on macOS and Windows, so launches pass it explicitly. Loopback goes direct anyway (Chrome's
  *  implicit bypass); other NO_PROXY hosts are passed on as the bypass list. */
 export function chromeProxy(env = process.env) {

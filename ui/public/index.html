@@ -153,6 +153,9 @@
             <small class="id-via"></small>
           </div>
           <div class="msect" role="group">
+            <button type="button" class="mi menu-item" id="acct-team-setup" role="menuitem" data-min-level="simple" hidden>
+              <span class="mi-ic" aria-hidden="true">●</span><span class="mi-lbl">Your team updated the recommended setup</span><span class="mi-val">Review</span>
+            </button>
             <button type="button" class="mi menu-item" id="acct-lvl" role="menuitem" data-min-level="simple" aria-haspopup="menu" aria-expanded="false" aria-controls="lvl-menu">
               <svg class="mi-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5h9M17 7.5h3M4 16.5h3M11 16.5h9"></path><circle cx="15" cy="7.5" r="2"></circle><circle cx="9" cy="16.5" r="2"></circle></svg>
               <span class="mi-lbl">Interface mode</span><span class="mi-val">Expert</span>
@@ -230,7 +233,6 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4.5" width="19" height="15" rx="4.5"></rect><path class="side-toggle-line" d="M7.25 9v6"></path><rect class="side-toggle-fill" x="6" y="8.25" width="4" height="7.5" rx="1.5" fill="currentColor" stroke="none"></rect></svg>
             </button>
             <h1 class="topnav-title" id="topnav-title"></h1>
-            <nav class="topnav-crumbs" id="topnav-crumbs" aria-label="Breadcrumb" hidden></nav>
           </div>
           <div class="topnav-c">
             <!-- Search or ask (topnav-search.mjs over global-search.mjs): ⌘K / Ctrl K focuses the
@@ -778,10 +780,22 @@
 
           <!-- clone target for the live run in the pane (#running/<runId>) -->
           <template id="run-detail-tpl">
-            <!-- One page with tabs (docs/design-system.md Navigation). The Chat run panel presents the same
-                 screen in Details mode (slice 3 moves it). -->
-            <div class="rd">
+            <!-- Two modes on one screen (docs: Run page glance). `data-mode="glance"` shows the
+                 status line, the trail and the sheet; `data-mode="details"` shows the tabs.
+                 The route picks the mode: #running/<id> vs #running/<id>/details[/<tab>]. -->
+            <div class="rd" data-mode="glance">
               <div class="rd-bar">
+                <button type="button" class="rd-back btn btn-sm btn-quiet btn-icon" aria-label="Back to Runs" title="Back to Runs">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"></path></svg>
+                </button>
+                <button type="button" class="rd-to-run btn" hidden aria-label="Back to the run">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  <span class="rd-to-run-label">Run</span>
+                </button>
+                <!-- Run 3 (D6): Runs › the group › Run 2, beside the list only (the slide layout keeps Back). -->
+                <nav class="rd-crumbs" aria-label="Breadcrumb" hidden></nav>
+                <!-- The run's name: the glance's headline carries its state. -->
+                <span class="rd-bar-mid"><span class="rd-bar-title"></span></span>
                 <span class="rd-bar-end">
                   <!-- Away mode on this run (POST /api/run/night); hidden once the run is over. -->
                   <label class="rd-night-wrap" hidden><span class="txt">Away mode on this run</span>
@@ -844,10 +858,10 @@
 
               <section class="rd-glance" aria-label="Run status">
                 <div class="rd-now">
-                  <!-- The run's name is the page title (a page moves this row into its head, .ph). Its kind
-                       chip says where the run sits ("Run 2 of 3", run 3 D7); every other fact is in the card. -->
+                  <!-- The run's name is the page title, one line cut with "…" (its title attribute holds it whole);
+                       the bar shows it only once this scrolls away. Every other fact is in the card. -->
                   <header class="rd-page-head">
-                    <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1><span class="kind-chip">Run</span></div>
+                    <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1></div>
                   </header>
                 </div>
                 <div class="rd-sheet">
@@ -873,11 +887,11 @@
                   <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
                        old meta line (paintPageHead owns its first text node). -->
                   <dl class="rd-kv" aria-label="Run facts">
-                    <div class="rd-kv-row" data-fact="group" hidden><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line"></dd></div>
                     <div class="rd-kv-row" data-fact="project" hidden><dt class="rd-kv-k">Project</dt><dd class="rd-kv-v rd-page-meta"></dd></div>
                     <div class="rd-kv-row" data-fact="outcome" hidden><dt class="rd-kv-k">Outcome</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
+                    <div class="rd-kv-row" data-fact="group" hidden><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line"></dd></div>
                   </dl>
                   <div class="rd-banners"></div>
                   <!-- Time · Cost · Changes, in every state (the time ticks while live). -->
@@ -944,10 +958,19 @@
 
           <!-- clone target for a saved run in the pane (#history/<projectKey>/<id>) -->
           <template id="hist-detail-tpl">
-            <div class="hd">
-              <!-- One page with tabs, as on the Running page (docs/design-system.md Navigation). The Chat run
-                   panel presents the same screen in Details mode (slice 3 moves it). The bar is shared. -->
+            <div class="hd" data-mode="glance">
+              <!-- Two modes on one screen, as on the Running page: the glance (#history/<key>/<id>)
+                   and Details (#history/<key>/<id>/details[/<tab>]). The bar is shared. -->
               <div class="hd-bar">
+                <button type="button" class="hd-back btn btn-sm btn-quiet btn-icon" aria-label="Back to Runs" title="Back to Runs">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 6l-6 6 6 6"></path></svg>
+                </button>
+                <button type="button" class="hd-to-run btn" hidden aria-label="Back to the run">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M15 6l-6 6 6 6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                  Run
+                </button>
+                <nav class="rd-crumbs" aria-label="Breadcrumb" hidden></nav>
+                <span class="rd-bar-mid"><span class="rd-bar-title"></span></span>
                 <!-- The run page bar's controls, in its order and with its look (style.css shares their
                      rules): Run after, the Resume split, Pause, Stop. History's own class names, so
                      setupHdActions, paintHdAfter, paintHdLive and resumePipeline's busy label reach them. -->
@@ -1012,7 +1035,7 @@
               <section class="rd-glance hd-glance" aria-label="Run status">
                 <div class="rd-now">
                   <header class="rd-page-head">
-                    <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1><span class="kind-chip">Run</span></div>
+                    <div class="rd-title-row"><h1 class="rd-page-title" tabindex="-1"></h1></div>
                   </header>
                 </div>
                 <div class="rd-sheet">
@@ -1028,11 +1051,11 @@
                   <!-- Run 3 (D8): the facts block, one row per fact and one place to edit it. The Project row's value is the
                        old meta line (paintPageHead owns its first text node). -->
                   <dl class="rd-kv" aria-label="Run facts">
-                    <div class="rd-kv-row" data-fact="group" hidden><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line"></dd></div>
                     <div class="rd-kv-row" data-fact="project" hidden><dt class="rd-kv-k">Project</dt><dd class="rd-kv-v rd-page-meta"></dd></div>
                     <div class="rd-kv-row" data-fact="outcome" hidden><dt class="rd-kv-k">Outcome</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="labels" hidden><dt class="rd-kv-k">Labels</dt><dd class="rd-kv-v"></dd></div>
                     <div class="rd-kv-row" data-fact="tags" hidden><dt class="rd-kv-k">Cost tags</dt><dd class="rd-kv-v"></dd></div>
+                    <div class="rd-kv-row" data-fact="group" hidden><dt class="rd-kv-k">Group</dt><dd class="rd-kv-v rd-group-line"></dd></div>
                   </dl>
                   <div class="hd-limit-notice rd-ov-state" hidden><span class="rd-ov-copy"></span></div>
                   <div class="hd-banners"></div>
@@ -1665,6 +1688,16 @@
               </div>
             </div>
 
+            <!-- Setup assistant: Run setup reopens the seven-step dialog with the saved values
+                 (ui/public/setup-assistant.mjs). No info-tip and no static .hint (the row explains itself). -->
+            <section class="card settings-card" id="setup-assistant-card" data-min-level="simple">
+              <div class="label-row"><h2>Setup assistant</h2></div>
+              <div class="gs-settings-row">
+                <p class="gs-settings-text">Configure your Worca installation.</p>
+                <button type="button" id="setupRunAgain" class="btn btn-sm">Run setup</button>
+              </div>
+            </section>
+
             <section class="card settings-card" id="appearance-card" data-min-level="simple">
               <div class="card-head">
                 <div class="label-row">
@@ -2255,10 +2288,10 @@
               </div>
             </section>
 
-            <!-- Network proxy (docs/network-proxy.md, corporateProxy flag): the corporate proxy Worca's local
+            <!-- Network proxy (docs/network-proxy.md, networkProxy.enabled): the corporate proxy Worca's local
                  proxy logs in to, and the saved login (domain, user, NT hash). The body is built by
-                 settings-network-proxy.mjs only while the flag is on. -->
-            <section class="card settings-card" id="network-proxy-settings-card" data-min-level="advanced" data-flag="corporateProxy" data-flag-chip>
+                 settings-network-proxy.mjs; timeouts and the local port fold under "More". -->
+            <section class="card settings-card" id="network-proxy-settings-card" data-min-level="simple">
               <div class="card-head">
                 <div class="label-row">
                   <h2>Network proxy</h2>
@@ -2545,6 +2578,14 @@
                 </button>
               </div>
             </div>
+            <!-- Models › Roles (setup-assistant-design.md D1): the model each kind of work falls back to. -->
+            <section class="card" id="model-roles-card" data-min-level="simple">
+              <div class="card-head"><div class="label-row"><h2>Roles</h2></div></div>
+              <small class="hint">Every job without a model of its own uses its role's model.</small>
+              <small class="hint err" id="modelRolesCatalogMsg" hidden>Could not load the model list. Reload the page to try again.</small>
+              <div id="model-roles-root" class="drows"></div>
+              <div class="add-project-actions engine-save-row" style="margin-top:14px"><small class="hint" id="modelRolesMsg"></small><button type="button" id="modelRolesSave" class="btn btn-primary btn-sm">Save</button></div>
+            </section>
             <section class="card" id="engine-settings-card" data-min-level="expert">
               <div class="card-head"><div class="label-row"><h2>Engines</h2></div></div>
               <div id="engine-settings-root" class="drows"></div>

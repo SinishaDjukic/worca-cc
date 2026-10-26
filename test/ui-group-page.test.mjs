@@ -13,7 +13,7 @@ import { RUN_STATE_ROWS, NOW, REPLAY_FRAMES } from './helpers/run-states.mjs';
 const trackDom = useDomRelease(afterEach);
 const done = { status: 'done', endReached: true };
 const asking = RUN_STATE_ROWS.find((r) => r.state === 'needs-you').run;
-const NOOP = { onAction: () => {}, onTab: () => {}, mountQuestion: () => {}, mountOverview: () => {}, mountDecisions: () => {}, logsHref: (mb) => `${mb.href}/logs` };
+const NOOP = { onAction: () => {}, onTab: () => {}, mountQuestion: () => {}, mountOverview: () => {}, mountDecisions: () => {}, logsHref: (mb) => `${mb.href}/details/logs` };
 const row = () => {
   const model = groupModel({ kind: 'feature', title: 'Run tags', planning: done, members: [done, asking, { ticket: { status: 'scheduled', after: { index: 2 } } }] }, { now: NOW });
   return { kind: 'chain', groupKind: 'feature', groupId: 'feat_1', title: 'Run tags', model, costUsd: 4.2,
@@ -26,7 +26,7 @@ test('the group page: header, title + kind, meta, status card, tabs, Runs table,
   const root = buildGroupPage(doc);
   paintGroupPage(root, { row: row(), project: 'acme-app', tab: 'runs', overview: true }, NOOP);
   assert.equal(root.querySelector('.gpage-title').textContent, 'Run tags');
-  assert.equal(root.querySelector('.rd-title-row .kind-chip').textContent, 'Feature');   // run 3 (D7): the kind
+  assert.equal(root.querySelector('.gpage-head .kind-chip').textContent, 'Feature');   // run 3 (D7): the kind
   assert.equal(root.querySelector('.gpage-meta'), null, 'run 3 (D15): the facts block replaced the meta line');
   assert.equal(root.querySelector('.gpage-card .run-status').dataset.state, 'needs-you');
   assert.equal(root.querySelector('.gpage-card .run-status .status-dot').getAttribute('aria-label'), 'Needs you');
@@ -51,7 +51,7 @@ test('Overview is offered only when the host says so; Logs links each member', (
   assert.equal(root.querySelector('.rd-tab[data-tab="overview"]').hidden, true);
   assert.equal(root.querySelector('.rd-tab[aria-selected="true"]').dataset.tab, 'logs');
   assert.deepEqual([...root.querySelectorAll('.gpage-panel[data-tab="logs"] a')].map((a) => a.getAttribute('href')),
-    ['#running/r0/logs', '#running/r1/logs', '#running/r2/logs', '#running/r3/logs']);
+    ['#running/r0/details/logs', '#running/r1/details/logs', '#running/r2/details/logs', '#running/r3/details/logs']);
   assert.equal(root.querySelector('.gpage-ship').textContent, 'Create PR comes when all 3 runs are done.');
 });
 
@@ -131,15 +131,15 @@ test('said once: an ended group has no group bar, so the Runs fact keeps "{done}
   assert.equal(root.querySelector('.rd-kv [data-fact="runs"] .rd-kv-v').textContent, '3 runs · 3 done');
 });
 
-test('run 3: the group page shares the run page head — kind word, facts in the card, Stop and ⋯', () => {
+test('run 3: the group page shares the run page head — kind word, crumbs, facts in the card, Stop and ⋯', () => {
   const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
   const root = buildGroupPage(doc);
   doc.body.append(root);
   const more = [];
   paintGroupPage(root, { row: row(), project: 'acme-app', tab: 'runs', overview: false }, { ...NOOP, onMore: (b) => more.push(b) });
-  assert.equal(root.querySelector('.rd-title-row .kind-chip').textContent, 'Feature');
+  assert.equal(root.querySelector('.gpage-head .kind-chip').textContent, 'Feature');
   assert.equal(root.querySelector('.gpage-meta'), null);
-  assert.equal(root.querySelector('.rd-crumbs, .rd-crumb'), null, 'the breadcrumb is the top bar\'s (nav/crumbs.mjs)');
+  assert.deepEqual([...root.querySelectorAll('.gpage-bar .rd-crumb')].map((c) => c.textContent), ['Runs', 'Run tags']);
   assert.ok(root.querySelector('.gpage-bar.rd-bar'), 'the run page\'s bar look');
   const kv = root.querySelector('.gpage-card.rd-sheet > .rd-kv');
   assert.ok(kv.previousElementSibling.matches('.rd-sheet-head') && kv.previousElementSibling.querySelector(':scope > .run-status'),
@@ -179,12 +179,12 @@ test('run 3: the Labels fact is the members\' labels, read-only; a cost of 0 say
   assert.equal(root.querySelector('.gpage-stop').hidden, true, 'nothing runs: no Stop');
   assert.equal(kv.querySelector('[data-fact="labels"]').hidden, true, 'no member label: no row');
   paintGroupPage(root, { row: { ...finished, groupKind: 'chain' }, project: '', tab: 'runs' }, NOOP);
-  assert.equal(root.querySelector('.rd-title-row .kind-chip').textContent, 'Chain');
+  assert.equal(root.querySelector('.gpage-head .kind-chip').textContent, 'Chain');
   paintGroupPage(root, { row: { ...finished, groupKind: 'user' }, project: '', tab: 'runs' }, NOOP);
-  assert.equal(root.querySelector('.rd-title-row .kind-chip').textContent, 'Group');
+  assert.equal(root.querySelector('.gpage-head .kind-chip').textContent, 'Group');
 });
 
-test('the title row and the bar sit in .ph, with no Back and no in-page crumbs; D2: the made answer button names the question\'s primary', () => {
+test('run 4 D13: the Back link carries the run page\'s chevron; D2: the made answer button names the question\'s primary', () => {
   const doc = trackDom(new JSDOM('<!doctype html><body></body>')).window.document;
   const root = buildGroupPage(doc);
   const mountQuestion = (slot) => {
@@ -193,14 +193,12 @@ test('the title row and the bar sit in .ph, with no Back and no in-page crumbs; 
   };
   paintGroupPage(root, { row: row(), project: 'acme-app', tab: 'runs', overview: true }, {
     ...NOOP, mountQuestion, answerLabel: () => root.querySelector('.gpage-question .btn-primary').textContent });
-  const head = root.querySelector(':scope > .ph');
-  assert.equal(root.firstElementChild, head, 'the head is the page\'s first child');
-  assert.ok(head.querySelector('.ph-main > .rd-title-row > h1.gpage-title'));
-  assert.equal(head.querySelector('.gpage-title').tabIndex, -1, 'a focus landing after a navigation');
-  assert.ok(head.querySelector('.ph-actions > .gpage-bar'));
-  assert.ok(head.querySelector('.ph-tabs > .gpage-tabs'));
-  assert.equal(root.querySelectorAll('.gpage-back, .rd-crumbs, .gpage-head').length, 0);
-  assert.equal(root.dataset.tab, 'runs', 'the status card shows on the Runs tab (style.css)');
+  const back = root.querySelector('.gpage-back');
+  assert.ok(back.querySelector('.ic svg'), 'the chevron');
+  // Slice 2: the run page's 28px quiet icon Back, named for the list.
+  assert.equal(back.textContent.trim(), '');
+  assert.equal(back.getAttribute('aria-label'), 'Back to Runs');
+  for (const c of ['btn-sm', 'btn-quiet', 'btn-icon']) assert.ok(back.classList.contains(c), c);
   assert.equal(root.querySelector('.gpage-actions [data-model-action="answer"]').textContent, 'Approve 2 runs');
 });
 

@@ -339,21 +339,6 @@ body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;pa
 .topnav-r{display:flex;align-items:center;justify-content:flex-end;gap:8px;min-width:0;}
 .topnav-title{min-width:0;margin:0;font-size:var(--fs-body);font-weight:600;line-height:20px;letter-spacing:-.005em;color:var(--ink);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-/* Navigation (docs/design-system.md): the breadcrumb takes the top bar title's place on a page under a section. */
-.topnav-title[hidden]{display:none;}
-.topnav-crumbs{min-width:0;font-size:var(--fs-body);line-height:20px;}
-.topnav-crumbs[hidden]{display:none;}
-.nav-trail{display:flex;align-items:center;gap:4px;min-width:0;margin:0;padding:0;list-style:none;}
-.nav-crumb{display:flex;align-items:center;gap:4px;min-width:0;}
-.nav-crumb a{color:var(--ink-2);text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40ch;}
-.nav-crumb:first-child a{color:var(--ink);font-weight:600;}
-.nav-crumb a:hover{color:var(--ink);text-decoration:underline;}
-.nav-crumb-sep{display:inline-flex;color:var(--ink-2);}
-.nav-up{display:none;align-items:center;gap:4px;min-width:0;max-width:100%;color:var(--ink);font-weight:600;text-decoration:none;
-  white-space:nowrap;}
-.nav-up > .ic{flex:none;}
-.nav-up-label{min-width:0;overflow:hidden;text-overflow:ellipsis;}
-.topnav-crumbs a:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .side-toggle{flex:none;}
 .side-toggle svg{width:20px;height:20px;flex:none;}
 .side-toggle .side-toggle-fill,.side-toggle[aria-expanded="false"] .side-toggle-line{display:none;}
@@ -569,6 +554,8 @@ input[type="file"]{font-size:var(--fs-meta);color:var(--ink-3);background:transp
 /* A card's one Save, with the line that counts unsaved changes (or says Saved.) just left of it. */
 .engine-save-row{align-items:center;}
 .engine-save-row > .hint{margin:0;}
+/* Models › Roles sits above Engines: the house 18px gap between stacked panels. */
+#model-roles-card{margin-bottom:18px;}
 /* Settings → Chat history: a text-style destructive action so its label sits on
    the same left edge as the "Chat history" heading and the counts line under it
    (a pill's inner padding indented the text). Same shape as .hd-cmt-btn. */
@@ -730,6 +717,7 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .flag-row-docs{display:inline-block;margin-top:4px;font-size:12px;}
 .badge.flag-stage-experimental{background:var(--violet-bg);color:var(--violet-ink);}
 .badge.flag-stage-beta{background:var(--blue-bg);color:var(--blue-ink-strong);}
+.badge.team{background:var(--blue-bg);color:var(--blue-ink-strong);}
 
 /* ---------- Design system: shared components (docs/design-system.md) ---------- */
 /* Headings and the one-line page intro (docs/design-system.md › Type). */
@@ -2300,6 +2288,21 @@ button.wd-member:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;
 .run-flow .node.is-active .fan .fl{color:var(--blue-ink);}
 @keyframes sqPulse{0%,100%{opacity:1;}50%{opacity:.38;}}
 
+/* Run telemetry (Labs, docs/run-telemetry.md): one line of figures + a context chart per agent card. */
+.ag-tel{padding:6px 12px 8px;display:flex;flex-direction:column;gap:6px;}
+.ag-tel[hidden]{display:none;}
+.tel-figs{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:var(--fs-caption);color:var(--ink-2);}
+.tel-fig.is-warn{color:var(--amber-ink);}
+.tel-fig.is-high{color:var(--red-ink);}
+.tel-chart{display:block;width:100%;height:48px;}
+.tel-chart .tel-line{fill:none;stroke:var(--blue);stroke-width:1.5;vector-effect:non-scaling-stroke;}
+.tel-chart .tel-win{stroke:var(--ink-3);stroke-width:1;stroke-dasharray:4 3;vector-effect:non-scaling-stroke;}
+.tel-chart .tel-trig{stroke:var(--amber);stroke-width:1;stroke-dasharray:1 3;vector-effect:non-scaling-stroke;}
+.tel-chart .tel-compact{stroke:var(--amber);stroke-width:1;vector-effect:non-scaling-stroke;}
+.tel-harness{display:flex;align-items:baseline;gap:8px;font-size:var(--fs-caption);margin:0 0 8px;}
+.tel-harness .flag-chip{flex:none;}
+.tel-harness-tx{flex:1 1 0;min-width:0;}
+
 /* Selector lists that used to pair the retired run-card tree with the History
    detail's Agents tab. `.subs-stat` is only ever styled here, so a bare appended
    `.subs-stat.stop{…}` would tie on specificity and still lose to this rule's
@@ -3832,11 +3835,22 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 @media (prefers-reduced-motion: reduce){.mv-sec-caret,.advanced .adv-chev{transition:none;}}
 .mv-pv-row .input,.mv-pv-row .select{font-family:var(--mono);font-size:12px;padding:0 12px;}
 .mv-pv-row .mv-pv-conc{max-width:120px;}
-.mv-cp-signin-box{display:grid;gap:8px;padding:12px 14px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);}
-.mv-cp-code-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
-.mv-cp-code{font-family:var(--mono);font-size:22px;font-weight:700;padding:4px 10px;border-radius:var(--r-sm);background:var(--panel);border:1px solid var(--line);}
+.mv-cp-signin-box{display:grid;gap:12px;padding:14px 16px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);min-width:0;}
+/* The code and Copy are one group; Open follows. All three share the .btn height (32px) so the row lines up. */
+.mv-cp-code-row{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;min-width:0;}
+.mv-cp-code-group{display:flex;align-items:center;gap:8px;}
+.mv-cp-code{display:inline-flex;align-items:center;height:32px;box-sizing:border-box;padding:0 12px;font-family:var(--mono);font-size:var(--fs-subpage);font-weight:700;
+  border-radius:var(--r-sm);background:var(--panel);border:1px solid var(--line-2);user-select:all;}
+/* The wait (spinner + line) on the left, Cancel on the right of the same row. */
+.mv-cp-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;}
+.mv-cp-wait{display:flex;align-items:center;gap:8px;min-width:0;}
+.mv-cp-wait .mv-cp-status{min-width:0;overflow-wrap:anywhere;}
 .mv-cp-status.err{color:var(--red);}
-.mv-cp-signin-box .mv-cp-cancel{justify-self:start;}
+.mv-cp-signin-box .mv-cp-cancel{flex:none;}
+/* Copy code swaps its copy icon for a green tick once copied (the branch copy buttons' pattern). */
+.mv-cp-copy .ico-check{display:none;}
+.mv-cp-copy.copied .ico-copy{display:none;}
+.mv-cp-copy.copied .ico-check{display:inline;color:var(--green-ink);}
 .mv-needs-signin{display:inline-flex;align-items:center;gap:6px;}
 .mv-degradation{display:block;margin:4px 0 0;}
 .mv-conn{display:grid;gap:12px;}
@@ -4006,7 +4020,7 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hd-row2 .hd-sic{width:24px;height:24px;}
 .hd-meta .strong{font-weight:700;color:var(--ink);}   /* no global .strong rule exists */
 /* New text on this line meets 4.5:1 (--ink-2); the older --ink-3 parts sit in the light contrast baseline, which only shrinks. */
-.hd-meta .hd-engine,.hd-meta .hd-result{color:var(--ink-2);}
+.hd-meta .hd-engine{color:var(--ink-2);}
 .hd-diffcounts{display:inline-flex;align-items:center;gap:6px;}
 .hd-dot{font-weight:700;color:var(--ink);}
 .hd-status-word{font:600 var(--fs-body) var(--sans);}
@@ -4753,7 +4767,7 @@ button.hd-mem-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px
    page's Resume, no `.btn` either) — which matters most for `.hd-back`, the
    node openHistDetail focuses programmatically, and for the `.hd-tab` tablist.
    `.hd-diff-file` already has its own (inset) ring and is not repeated here. */
-.pd-back:focus-visible,.pd-new:focus-visible,.pd-history:focus-visible,.pd-sec:focus-visible,.proj-open:focus-visible,.pd-ov-link:focus-visible,
+.hd-back:focus-visible,.pd-back:focus-visible,.pd-new:focus-visible,.pd-history:focus-visible,.pd-sec:focus-visible,.proj-open:focus-visible,.pd-ov-link:focus-visible,
 .hd-report:focus-visible,.hd-archive:focus-visible,.hd-sec:focus-visible,.shipit-cancel:focus-visible{
   outline:2px solid var(--ink);outline-offset:2px;}
 
@@ -4875,12 +4889,16 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .runs-item:has(> a.runs-row.selected) .runs-pr.is-changes{color:var(--amber-ink-strong);}
 .runs-item:has(> a.runs-row.selected) .runs-pr.is-closed,.runs-item:has(> a.runs-row.selected) .runs-pr.is-conflicts,.runs-item:has(> a.runs-row.selected) .runs-pr.is-failing{color:var(--red-ink-strong);}
 .runs-indep{font-size:11px;font-weight:500;padding:0 4px;border-radius:var(--r-xs);background:var(--canvas-2);color:var(--ink-2);}
-/* openMenu marks the chosen Show / Group by item only with aria-checked; the check mark moves here from the removed
-   .runs-group-menu rule (same 12px mask), so every openMenu radio item shows it. Every radio item reserves the slot
-   (painted only when checked), so whatever sits before it lines up on every row. */
-.wfv-menu [role="menuitemradio"]::after{content:"";flex:none;width:12px;height:12px;margin-left:auto;background:transparent;
+/* An openMenu radio row is one grid (docs/design-system.md › Menu): the 12px ✓ slot first (painted only when picked),
+   the label, then the count or kind chip at the right edge in tabular figures. Every label starts and every number
+   ends at one x, picked or not. */
+.wfv-menu .wfv-menu-item[role="menuitemradio"]{display:grid;grid-template-columns:12px minmax(0,1fr) auto;column-gap:10px;}
+.wfv-menu .wfv-menu-item[role="menuitemradio"]::before{content:"";grid-column:1;width:12px;height:12px;background:transparent;
   mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center/12px no-repeat;}
-.wfv-menu [role="menuitemradio"][aria-checked="true"]::after{background:currentColor;}
+.wfv-menu .wfv-menu-item[role="menuitemradio"][aria-checked="true"]::before{background:currentColor;}
+.wfv-menu .wfv-menu-item[role="menuitemradio"] > .wfv-menu-l{grid-column:2;min-width:0;}
+.wfv-menu .wfv-menu-item[role="menuitemradio"] > :is(.wfv-menu-hint,.kind-chip){grid-column:3;justify-self:end;margin-left:0;}
+.wfv-menu .wfv-menu-item[role="menuitemradio"] > .wfv-menu-hint{min-width:3ch;text-align:right;font-variant-numeric:tabular-nums;}
 .runs-sec-head{display:flex;gap:8px;align-items:center;width:100%;padding:12px 0 6px;font-size:12px;font-weight:600;color:var(--ink-2);border:0;border-bottom:1px solid var(--line);background:none;text-align:left;}
 button.runs-sec-head{cursor:pointer;}
 button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
@@ -4919,6 +4937,8 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-page-title:focus{outline:none;}
 /* Side by side: only the open detail shows. */
 .runs-shell[data-layout="split"] .runs-pane > :is(.run-shell,.hist-shell,.group-shell):not(.detail-open){display:none;}
+/* Run 3 (D6): the slide layout keeps the one Back button; the breadcrumb is for the split layout. */
+.runs-shell[data-layout="slide"] .rd-crumbs{display:none;}
 /* Narrow: the slide the two old screens used (D7). */
 .runs-shell[data-layout="slide"]{display:block;}
 .runs-shell[data-layout="slide"] > :is(.runs-list-pane,.runs-pane){position:absolute;inset:0;transition:transform .46s cubic-bezier(.65,.02,.28,1);}
@@ -4985,6 +5005,9 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .hd-stop[hidden],.rd-stop[hidden]{display:none;}
 .rd-error{margin-top:24px;color:var(--red-ink);font-size:var(--fs-body);}
 .rd-error[hidden]{display:none;}
+/* .rd-back is focused programmatically by openRunDetail — same reasoning as the .hd-back arm. */
+.rd-back,.hd-back,.gpage-back{display:inline-flex;align-items:center;justify-content:center;}   /* slice 2: a 28px icon button (btn-sm btn-icon) */
+.rd-back:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 
 /* MUST sit after the rules above: @media contributes no specificity, so an
    earlier placement would lose the source-order tie (see the note at :1927-1932). */
@@ -5003,57 +5026,23 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
    switch's visible label first: the select keeps its aria-label and tooltip, the pill says what
    happens. */
 @container rd-bar (max-width:900px){ .rd-night-wrap > .txt{display:none;} }
-/* Navigation (docs/design-system.md): one head on a page screen (data-presentation="page", the host's). .ph is the
-   rd-bar container, so the bar's container queries still read the page width. */
-/* 28px on top, as the glance's and the group page's (.gpage) padding: the h1 sits at one height on all three pages. */
-.ph{display:flex;flex-direction:column;gap:12px;padding:28px 32px 0;container:rd-bar / inline-size;}
-.ph-row{display:flex;align-items:flex-start;gap:12px;min-width:0;}
-.ph-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:4px;}
-.ph-meta{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
-.ph-meta[hidden]{display:none;}
-/* The actions keep their width (the h1 wraps instead), so no control is clipped or wraps under the others. */
-.ph-actions{flex:none;max-width:100%;display:flex;justify-content:flex-end;}
-.ph :is(.rd-bar,.hd-bar){position:static;padding:0;border:0;background:none;container:none;}
-.ph-tabs[hidden],.ph-tabs:empty,.ph-tabs:not(:has([role="tab"])){display:none;}
-/* The strip inside the head: no sticky offset (it has no page to stick to here), and it scrolls sideways inside
-   itself at 375px (the .tabs class initDetailTabs adds already sets overflow-x; this states it for every strip). */
-.ph-tabs{min-width:0;}
-.ph-tabs > [role="tablist"]{position:static;padding-top:0;margin-bottom:0;overflow-x:auto;scrollbar-width:none;}
-/* The group page pads itself (.gpage 28px 32px; 16px at 640px): its head adds no second inset. */
-.gpage > .ph{padding:0;}
-.ph-tabs .rd-tab[data-sec="overview"] .rd-tab-badge{background:var(--amber-bg);color:var(--amber-ink-strong);}
-/* The Details header is the Chat run panel's head until slice 3. On a page mountRunHead moves it into Summary under
-   the facts row for the rows only it carries; the title, status and PR control the page head says are not drawn twice.
-   Never a card inside the card: a divider under the facts, no box of its own. Nothing the card already says is drawn
-   again either: the status word and step, project, start, time and cost (the status block, the Project row, the tiles; the
-   breakdown trigger and "cost unknown" stay), and the branch where Where the work is names it (with its copy). A
-   hidden segment takes its separator dot with it; the live meta keeps only the cost trigger, so it drops every dot. */
-.rd-sheet > :is(.rd-header,.hd-header){margin:0;padding:14px 0 0;border:0;border-top:1px solid var(--line);border-radius:0;background:none;}
-.rd-sheet > .rd-header .rd-meta > :not(.cost-bd-btn,.cost-unknown),
-.rd-sheet > .rd-header .rd-meta:not(:has(> :is(.cost-bd-btn,.cost-unknown))),
-.rd-sheet > .hd-header .hd-meta > :is(.hd-status-word,.hd-status-word + .hd-dot,.hd-day,.hd-clock,.hd-dur,.hd-cost:not(.cost-bd-btn,.cost-unknown)),
-.rd-sheet > .hd-header .hd-meta > .hd-dot:has(+ :is(.hd-day,.hd-clock,.hd-dur,.hd-cost:not(.cost-bd-btn,.cost-unknown))){display:none;}
-.rd-sheet > .rd-header .rd-meta{margin-top:0;}
-/* There the cost tile is the breakdown trigger (syncCostTile), so the meta line's own trigger goes, with its dot. */
-.rd-sheet:has(.rd-stat-cost-btn) > .rd-header .rd-meta:not(:has(> .cost-unknown)),
-.rd-sheet:has(.rd-stat-cost-btn) > .hd-header .hd-meta > :is(.hd-cost.cost-bd-btn,.hd-dot:has(+ .hd-cost.cost-bd-btn)){display:none;}
-:is(.rd,.hd):has(.rd-route:not([hidden]) .rd-route-copy) .rd-sheet > :is(.rd-header,.hd-header) :is(.rd-base,.hd-base,.rd-branch-copy,.hd-branch-copy,.rd-copied,.hd-copied){display:none;}
-.rd-sheet > :is(.rd-header,.hd-header) :is(.rd-title,.hd-title,.rd-status,.hd-sic,.auto-badge,.hd-pr,.hd-pr-link){display:none;}
-.rd-sheet > :is(.rd-header,.hd-header) :is(.rd-row1,.hd-row1):not(:has(> :not(.rd-title,.hd-title,.rd-status,.auto-badge,.hd-pr,.hd-pr-link,[hidden],:empty))){display:none;}
-/* .hd-graph only where it waits in the Details body: the Workflow tab moves it into its own section. */
-:is(.rd,.hd)[data-presentation="page"] .hd-body > .hd-graph{display:none;}
-:is(.rd,.hd)[data-presentation="page"] .rd-now > .rd-page-head:empty{display:none;}
-:is(.rd,.hd)[data-presentation="page"]:has(.ph-tabs [role="tab"][data-sec="overview"][aria-selected="false"]) :is(.rd-glance,.hd-glance){display:none;}
-.gpage:not([data-tab="runs"]) > .gpage-card{display:none;}
-/* Phone width: the h1 wraps in full (no clamp), the kind chip goes under it, and Run after folds into ⋯ (app.js). */
-@media (max-width:640px){ .ph{padding:16px 16px 0;} .gpage > .ph{padding:0;} .ph-row{flex-wrap:wrap;}
-  .ph .rd-title-row{flex-wrap:wrap;}
-  .ph .rd-title-row > .rd-page-title{flex:1 1 100%;display:block;-webkit-line-clamp:unset;overflow:visible;}
-  .ph :is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-after,.hd-after){display:none;} }
+.rd-bar-mid{flex:1 1 0;display:flex;justify-content:flex-start;align-items:center;gap:8px;min-width:0;}   /* basis 0: the name truncates before the controls wrap; flex-start: it sits at the bar's left, the controls at its right */
+/* The run's name. Details has it as its header's title, so the bar leaves it blank there. */
+/* The glance's page title owns the name; the bar repeats it only once that heading has
+   scrolled out of view (app.js watchPageTitle sets data-title-out), like a large title
+   collapsing into the navigation bar. Details has its own header, so never there. */
+.rd-bar-title{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font:600 var(--fs-body) var(--sans);color:var(--ink);
+  opacity:0;transition:opacity .2s;}
+.rd[data-title-out="1"][data-mode="glance"] .rd-bar-title,.hd[data-title-out="1"][data-mode="glance"] .rd-bar-title{opacity:1;}
+@media (prefers-reduced-motion:reduce){.rd-bar-title{transition:none;}}
 .rd-bar-end{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;min-width:0;}
 /* Every control in the bar keeps its words on one line: a squeezed bar wraps whole controls
    onto a second row, never the text inside one ("Run after" over two lines). */
 .rd-bar-end > *{flex:none;white-space:nowrap;}
+.rd-to-run,.hd-to-run{display:inline-flex;align-items:center;gap:8px;}
+.rd-to-run.ask{background:var(--panel);border-color:var(--amber);color:var(--amber-ink);}   /* a question waits on the glance */
+.rd-back[hidden],.hd-bar .hd-back[hidden],.hd-to-run[hidden],.rd-to-run[hidden]{display:none;}
+.rd-to-run:focus-visible,.hd-to-run:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* A page that focuses its way back (or a menu handing focus back to its trigger) would otherwise paint that as
    :focus-visible after a click. The ring shows only to keyboard users (app.js sets data-input from the last keydown /
    pointerdown). Fields are not listed: a clicked field keeps its ink border. */
@@ -5119,10 +5108,11 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .status-dot.is-pulse{animation:wr-pulse 1.6s ease-in-out infinite;}
 @media (prefers-reduced-motion: reduce){.status-dot.is-pulse{animation:none;}}
 .rd-now{display:flex;flex-direction:column;gap:18px;}
-/* The run's name is the page's subject: the largest type on it. */
+/* The run's name is the page's subject: the largest type on it. One line, cut with "…" at the column (D13): the full
+   name is the h1's text and its title (app.js paintPageHead), and the bar repeats it on scroll (watchPageTitle). */
 .rd-page-head{min-width:0;}
-.rd-page-title{margin:0;font:700 var(--fs-page)/var(--lh-title) var(--sans);letter-spacing:-.02em;overflow-wrap:anywhere;
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.rd-page-title{margin:0;font:700 var(--fs-page)/var(--lh-title) var(--sans);letter-spacing:-.02em;
+  min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 /* A row: the text (app.js paintPageHead), the branch chip, the person chip. A chip too long
    for the rest of the line wraps under the text and truncates there. */
 .rd-page-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;color:var(--ink-2);}
@@ -5786,8 +5776,6 @@ button.rd-prs-link:disabled{opacity:.6;cursor:default;text-decoration:none;}
 }
 @media (max-width:760px){
   .rd-ov-state .limit-resume{flex-basis:100%;width:100%}
-  .nav-trail{display:none;}
-  .nav-up{display:inline-flex;}
   .mbar-menu{position:relative;display:flex;flex:0 0 auto;}
   .mbar-menu svg{width:22px;height:22px;}
   .mbar-menu .nav-rollup{position:absolute;top:6px;right:6px;margin:0;border:2px solid var(--panel);}
@@ -8015,6 +8003,9 @@ body.view-workspaces .level-banner{margin:12px 32px 0;flex:0 0 auto;}
 .tp-edit-row .seg button:disabled{opacity:.4;cursor:not-allowed;}
 .tp-control{display:flex;flex-direction:column;gap:8px;min-width:0;}
 .tp-control .check-row{margin-top:2px;}
+/* The Setup tab's roles and record rows (slice 5): labels on --ink-2, a new surface. */
+.tp-role-row .tp-role-label,.tp-rec-row .tp-rec-label{min-width:170px;color:var(--ink-2);font-size:12px;}
+.tp-control .tp-role-row + .tp-role-row,.tp-control .tp-rec-row + .tp-rec-row{margin-top:6px;}
 .tp-list{display:flex;flex-wrap:wrap;gap:6px;}
 .tp-chip{display:inline-flex;align-items:center;gap:2px;padding-block:0;padding-right:0;}
 .tp-list-empty{color:var(--ink-3);font-size:12px;}
@@ -8416,6 +8407,9 @@ button.act-srow-name{cursor:pointer}
 .inherit-sub{display:flex;flex-direction:column;gap:4px;min-width:0;}
 .inherit-sub-cap{font-size:11px;font-weight:600;color:var(--ink-2);}
 .inherit-sub .select{width:100%;min-width:0;}
+/* inherit-field.mjs wraps each select in .select-wrap (the chevron): the wrap takes the space the bare select had. */
+.inherit-row > .select-wrap{flex:1 1 auto;min-width:0;}
+.inherit-row > .select-wrap > .select{width:100%;}
 @media (max-width:560px){ .inherit-row.inherit-pair{grid-template-columns:1fr;} }
 /* Engine & models (engine-settings-view.mjs): the card (level 1) → the engine switch (2) → sections divided by a
    rule, each a heading with its controls on the right (3) → one Model / Effort table (4) → grey notes (5). No card
@@ -8569,6 +8563,11 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfv-plus svg{width:17px;height:17px;stroke-width:2;}
 .wfv-menu{position:fixed;z-index:45;min-width:180px;max-height:min(60vh,420px);overflow:auto;}
 .wfv-menu-hint{margin-left:auto;color:var(--ink-2);font-size:11px;}
+.wfv-menu-hint.is-zero{color:var(--ink-3);}
+/* The View menus (Runs list, Chats column): 256px, and openMenu's segmented item spans it with the one .seg skin. */
+.wfv-view-menu{width:256px;}
+.wfv-menu .wfv-seg{display:flex;margin:0 0 4px;}
+.wfv-menu .wfv-seg > button{flex:1 1 auto;min-width:0;padding:0 6px;}
 .wfv-overlay{position:absolute;inset:0;pointer-events:none;z-index:10;}
 .wfv-tb{position:absolute;pointer-events:auto;display:flex;align-items:center;gap:1px;box-sizing:border-box;padding:2px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-sm);box-shadow:var(--shadow-pop);white-space:nowrap;max-width:calc(100% - 16px);overflow-x:auto;scrollbar-width:none;}
 .wfv-tb .btn-quiet:is([aria-expanded="true"],[aria-pressed="true"]){background:var(--hover);color:var(--ink);}
@@ -9185,8 +9184,6 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .ask-scope-sub{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:11px;color:var(--ink-2);}
 /* The Workflows composer's scope menu (workflows/menu.mjs) keeps the one kind chip on the right, as the Ask menu does (B8). */
 .wfv-menu-item > .kind-chip{margin-left:auto;}
-/* One auto margin per row: the ✓ slot follows the chip at the item's gap, so the chips line up picked or not. */
-.wfv-menu-item:has(> .kind-chip)::after{margin-left:0;}
 /* The run card's `Where it runs` sub-line (ask-panel.mjs updateTargetSub): the kind chip between the name and the branch words (B10). */
 .ask-rp-sec-sub > .kind-chip{margin:0 6px;}
 /* The `Switched to <name>` divider row (canvas Switched): a centered label between two hairlines, no accent. */
@@ -9232,15 +9229,16 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .crp-host:empty{display:none;}
 .crp-host > :is(.rd,.hd)[data-presentation="panel"]{height:100%;display:flex;flex-direction:column;}
 .crp :is(.rd-bar,.hd-bar){position:static;flex:none;gap:8px;padding:8px 8px 8px 16px;}
-/* One row at every panel width: the controls take the row, and the Away mode pill gives way (the select keeps its
-   value; the full page shows the pill). */
+/* One row at every panel width: the bar's empty middle goes (the name is the Details header's), the controls take
+   the row, and the Away mode pill gives way (the select keeps its value; the full page shows the pill). */
+.crp :is(.rd-bar,.hd-bar) > .rd-bar-mid{display:none;}
 .crp .rd-bar-end{flex:1 1 auto;flex-wrap:nowrap;margin-left:auto;}
 .crp .rd-bar .rd-night-pill{display:none;}
 /* A paused run's Resume split is wider than Pause: the Away select gives way first (down to 72px; its aria-label
    names it) rather than Open full page and Close dropping onto a second row. */
 .crp .rd-bar-end > .rd-night-wrap{flex:0 1 auto;min-width:72px;}
 .crp .rd-bar .rd-night{flex:1 1 auto;width:100%;min-width:0;}
-.crp .term-opener{display:none;}
+.crp :is(.rd-to-run,.hd-to-run,.term-opener){display:none;}
 .crp :is(.rd > .rd-error,.hd > .hd-error){flex:none;margin:8px 16px 0;}
 .crp :is(.rd-details,.hd-details){flex:1 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;}
 .crp :is(.rd-header,.hd-header){margin:12px 16px 0;padding:16px 18px 14px;}
@@ -9819,6 +9817,13 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 /* ⋯ is .btn-quiet in markup; on the bar it wears its neighbours' border and fill. */
 :is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-bar-more,.hd-bar-more){background:var(--panel);border-color:var(--line-2);color:var(--ink);}
 :is(.rd-bar,.hd-bar) .rd-bar-end > :is(.rd-bar-more,.hd-bar-more):hover:not(:disabled){background-color:var(--btn-hover);}
+/* Run 3 (D6): the breadcrumb at the bar's left (split layout only). */
+.rd-crumbs{display:flex;align-items:center;gap:4px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);}
+.rd-crumbs[hidden]{display:none;}
+.rd-crumb{min-width:0;max-width:24ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:inherit;text-decoration:none;}
+a.rd-crumb:hover{color:var(--ink);text-decoration:underline;}
+.rd-crumb[aria-current="page"]{color:var(--ink);}
+.rd-crumb-sep{display:inline-flex;flex:none;color:var(--ink-3);}
 /* Run 3 (D8): the facts block — 12px labels in one column, 13px values; label over value in a narrow card. */
 .rd-kv{container:rd-kv / inline-size;margin:0;display:flex;flex-direction:column;}
 .rd-kv-row{display:grid;grid-template-columns:96px minmax(0,1fr);gap:12px;align-items:baseline;padding:8px 0;}
@@ -9955,11 +9960,6 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
    corner come from the grouped chip rule above), the shared status block, member rows and the group page. */
 .kind-chip{display:inline-flex;align-items:center;height:18px;padding:0 6px;border:0;background:var(--field);color:var(--ink-2);white-space:nowrap;}
 .rd-title-row{display:flex;align-items:center;gap:8px;min-width:0;}
-/* A grouped run's kind chip links its group page ("Run 1 of 3 ›"); the chevron is not part of its name. */
-.rd-title-row a.kind-chip{text-decoration:none;cursor:pointer;}
-.rd-title-row a.kind-chip::after{content:"›"/"";margin-left:4px;}
-.rd-title-row a.kind-chip:hover{background:var(--hover);color:var(--ink);}
-.rd-title-row a.kind-chip:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* the shared status block */
 .run-status{display:grid;gap:8px;min-width:0;}
 /* The status block's head (design system, Card head): the state word is the card's headline (15px/600, never
@@ -10018,7 +10018,10 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
 .gpage{display:flex;flex-direction:column;gap:22px;margin:0 auto;padding:28px 32px var(--ask-dock-clearance);box-sizing:border-box;max-width:1216px;}
 .gpage > *{width:100%;box-sizing:border-box;}
 .gpage-bar{display:flex;align-items:center;gap:8px;}
-@media (max-width:640px){.gpage{padding:16px 16px var(--ask-dock-clearance);}}
+/* Run 3 (D15): the run page's spacing — the bar spans the pane like the run page's .rd-bar (its height and padding), and
+   the title sits as far under it as the run page's (the glance's 28px top padding, 20px on a phone; the page gap is 22px). */
+.gpage > .gpage-bar.rd-bar{width:auto;margin:-28px -32px 6px;}
+@media (max-width:640px){.gpage{padding:16px 16px var(--ask-dock-clearance);}.gpage > .gpage-bar.rd-bar{margin:-16px -16px -2px;}}
 .gpage-spacer{flex:1;}
 .gpage-actions{display:inline-flex;gap:6px;}
 .gpage-ship{margin:8px 0 0;font-size:13px;color:var(--ink-2);}
@@ -10069,10 +10072,9 @@ blockquote.ask-changescard-quote,blockquote.ask-routecard-quote{margin:0;padding
   .run-members.is-table .run-member-title{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere;}
   .run-members.is-table .run-member-pr{min-width:0;max-width:100%;justify-self:start;}
 }
-/* QA 8: the group heading keeps a sane width; the kind chip wraps under it when there is no room. */
+/* QA 8: the group heading keeps a sane width (one line, cut with "…"); the kind chip wraps under it when there is no room. */
 .gpage .rd-title-row{flex-wrap:wrap;}
-/* The chip sits beside the title, as on the run pages (0 1 auto); the min-width keeps a sane heading width. */
-.gpage .gpage-title{flex:0 1 auto;min-width:min(100%,160px);}
+.gpage .gpage-title{flex:1 1 160px;min-width:min(100%,160px);}
 
 /* Chat: answer ref chips (ui/public/ask-ref-chips.mjs). A neutral chip with the token corner; the
    status is a coloured word (the .runs-pr.is-* pattern), never a filled pill. */
@@ -10767,6 +10769,108 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 @media (prefers-reduced-motion:reduce){.mk-phase-spin{animation:none;}}
 /* Forced colours paint a transparent border in CanvasText: the spinner would close into the pending dot's full ring. */
 @media (forced-colors:active){.mk-phase-spin{border-right-color:Canvas;}}
+
+/* The setup assistant (ui/public/setup-assistant.mjs). Layout only; tokens only.
+   A new surface scopes its greys to --ink-2 (the .mv-* rule): --ink-3 fails verify:theme here. */
+.setup-modal .card.setup-card{width:min(640px,100%);}
+.setup-card .card-head{flex-direction:column;align-items:flex-start;gap:4px;}
+.setup-card .sa-step-of{font-size:var(--fs-meta);color:var(--ink-2);}
+/* Step titles read as the dialog's heading: one size up from a card section title. */
+.setup-card .card-head h2{font-size:var(--fs-subpage);margin:0;}   /* .card h2's 18px bottom margin would split title from subtitle */
+/* The segmented progress bar above "Step N of 7": done and current filled, the rest the quiet line colour. */
+.setup-card .sa-progress{display:flex;gap:4px;width:100%;margin-bottom:8px;}
+.setup-card .sa-progress-seg{flex:1 1 0;height:4px;border-radius:var(--r-xs);background:var(--line-2);}
+.setup-card .sa-progress-seg[data-state="done"],.setup-card .sa-progress-seg[data-state="current"]{background:var(--ink);}
+@media (forced-colors:active){.setup-card .sa-progress-seg{background:Canvas;border:1px solid CanvasText;}
+  .setup-card .sa-progress-seg[data-state="done"],.setup-card .sa-progress-seg[data-state="current"]{background:CanvasText;}}
+.setup-card .sa-sub{margin:0;color:var(--ink-2);}
+.setup-card .sa-step{display:flex;flex-direction:column;gap:16px;min-width:0;}
+/* The step's 16px gap spaces its children; .field's own 18px bottom margin on top of it doubled the space between fields. */
+.setup-card .sa-step > .field{margin-bottom:0;}
+/* A titled section inside a step (How you work): title, a one-line hint, its controls; a rule between sections.
+   Fields inside drop .field's own 18px margin: the section's gap spaces them. */
+.setup-card .sa-section{display:flex;flex-direction:column;gap:12px;min-width:0;}
+.setup-card .sa-section + .sa-section{border-top:1px solid var(--line);padding-top:16px;}
+.setup-card .sa-section-title{margin:0;font-size:var(--fs-section);font-weight:600;line-height:var(--lh-title);}
+.setup-card .sa-section-hint{margin:-8px 0 0;}
+.setup-card .sa-section .field{margin-bottom:0;}
+.setup-card .sa-section > .seg{align-self:flex-start;}
+/* Buttons in the step column keep their own width instead of stretching across it. */
+.setup-card .sa-step > .btn,.setup-card .sa-step > .link-btn{align-self:flex-start;}
+/* Review: group + value | badges | Change, top-aligned, a rule between groups. */
+.setup-card .sa-review{width:100%;border-collapse:collapse;}
+.setup-card .sa-review td{padding:10px 0;vertical-align:top;}
+.setup-card .sa-review tr + tr td{border-top:1px solid var(--line);}
+.setup-card .sa-review-what{min-width:0;overflow-wrap:anywhere;}
+.setup-card .sa-review-name{font-weight:500;}
+.setup-card .sa-review-value,.setup-card .sa-review-lines{color:var(--ink-2);font-size:var(--fs-meta);margin-top:2px;}
+.setup-card .sa-review-lines{list-style:none;padding:0;display:flex;flex-direction:column;gap:2px;}
+.setup-card .sa-review-role{color:var(--ink);}
+.setup-card .sa-review-role::after{content:"·";margin:0 6px 0 2px;color:var(--ink-2);}
+.setup-card .sa-review-marks{width:1%;white-space:nowrap;padding-left:12px;text-align:right;}
+.setup-card .sa-review-marks .badge{margin-left:6px;}
+.setup-card .sa-review-act{width:1%;white-space:nowrap;padding-left:8px;}
+.setup-card .sa-review-act .btn{margin-top:-4px;}   /* the 28px button centres on the 20px name line */
+.setup-card .sa-proxy-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}   /* Test, then Reset to defaults */
+/* Auto-detect under the proxy address, its result line beside it (wrapping below on a narrow card). */
+.setup-card .sa-detect-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;min-width:0;}
+.setup-card .sa-detect-line{min-width:0;flex:1 1 200px;overflow-wrap:anywhere;}
+.setup-card .sa-rows{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;}
+.setup-card .sa-row{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px;min-width:0;}
+/* Team setup (slice 5): the Team line above a step the team filled, and the chip on a row. */
+.setup-card .sa-team-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--ink-2);}
+.setup-card .sa-row .badge.team{margin-left:6px;}
+.setup-card .sa-row-main{flex:1 1 120px;min-width:0;overflow-wrap:anywhere;}
+.setup-card .sa-row-line{font-size:var(--fs-meta);color:var(--ink-2);}
+.setup-card .sa-row .badge{flex:none;white-space:nowrap;}
+/* The Check step's table: badge and name columns size to their content, the details column takes the rest
+   and wraps; engine sub-rows indent under Engines. Under 560px the details drop below the name. */
+.setup-card .sa-check{width:100%;border-collapse:collapse;table-layout:auto;}
+.setup-card .sa-check td{padding:6px 12px 6px 0;vertical-align:top;}
+.setup-card .sa-check td:last-child{padding-right:0;}
+.setup-card .sa-check-mark{width:1%;white-space:nowrap;}
+/* Keep .badge's inline-flex (it centres the text in its 18px); top-aligned, 1px down, it centres on the 19.5px first line. */
+.setup-card .sa-check-mark .badge{justify-content:center;min-width:44px;vertical-align:top;margin-top:1px;}
+.setup-card .sa-check-name{width:1%;white-space:nowrap;}
+.setup-card .sa-check-name .badge.team{margin-left:6px;}
+.setup-card .sa-check-line{min-width:0;color:var(--ink-2);overflow-wrap:anywhere;}
+.setup-card .sa-check tbody tr + tr:not(.sa-check-sub) td{border-top:1px solid var(--line);}
+.setup-card .sa-check-sub td{padding-top:2px;padding-bottom:2px;font-size:var(--fs-meta);}
+.setup-card .sa-check-sub .sa-check-mark .badge{margin-top:0;}   /* the smaller sub-row line is the badge's own 18px */
+.setup-card .sa-check-sub .sa-check-name{padding-left:4px;}
+/* The ↳ marks an engine as part of Engines; decorative, so the alt text after the slash is empty. */
+.setup-card .sa-check-sub .sa-check-name::before{content:"\21B3" / "";display:inline-block;width:16px;color:var(--ink-2);}
+@media (max-width:560px){
+  /* Each row is its own grid, so the badge column is a fixed width (the widest badge, Check) to keep names aligned;
+     the row border moves from the cells to the row, or it would split a name from its details. */
+  .setup-card .sa-check tr{display:grid;grid-template-columns:56px 1fr;column-gap:8px;}
+  .setup-card .sa-check td{padding-right:0;}
+  .setup-card .sa-check tbody tr + tr:not(.sa-check-sub) td{border-top:0;}
+  .setup-card .sa-check tbody tr + tr:not(.sa-check-sub){border-top:1px solid var(--line);}
+  .setup-card .sa-check-mark{grid-row:span 2;}
+  .setup-card .sa-check-mark,.setup-card .sa-check-name{width:auto;white-space:normal;padding-bottom:2px;}
+  .setup-card .sa-check-line{grid-column:2;padding-top:0;}
+  .setup-card .sa-check-sub .sa-check-line{padding-left:16px;}
+}
+.setup-card .sa-pair{display:flex;flex-wrap:wrap;gap:8px;}
+.setup-card .sa-pair > *{flex:1 1 100px;min-width:0;}
+.setup-card .sa-broker{margin:0;color:var(--ink-2);}
+/* The wizard always shows the head and foot rules (other dialogs show them only while content is under them). */
+.setup-card.dlg > .dlg-head::after,.setup-card.dlg > .dlg-foot::before{opacity:1;}
+/* With the rules always on, each needs its own 16px on both sides: the head and foot pad toward them, the body
+   pads away from them (its --dlg-gap-*), so the subtitle and the buttons never touch a rule. */
+.setup-card.dlg{--dlg-gap-head:16px;--dlg-gap-foot:16px;}
+.setup-card.dlg > .dlg-head{padding-bottom:16px;}
+.setup-card.dlg > .dlg-foot{padding-top:16px;}
+.setup-card .dlg-foot .confirm-actions{flex-wrap:wrap;}
+/* Wizard foot: the way back or out (Back, Cancel / Set up later, Close, Share) sits on the left; Skip and the
+   primary action stay on the right, the primary last. paintFoot always appends the left one first. */
+.setup-card .dlg-foot .confirm-actions > :first-child:not(:last-child){margin-right:auto;}
+.setup-card .sa-status{min-width:0;overflow-wrap:anywhere;}
+.setup-card .hint{color:var(--ink-2);}
+.setup-card .hint.err{color:var(--red-ink);}
+.setup-card .input::placeholder{color:var(--ink-2);}
+.setup-card .input[aria-invalid="true"].input::placeholder{color:var(--ink-2);}
 .mk-add-msg{align-items:flex-start;}
 .mk-add-msg-body{display:flex;flex-direction:column;gap:4px;min-width:0;overflow-wrap:anywhere;}
 .mk-add-msg-detail{font-size:var(--fs-meta);}
@@ -10812,8 +10916,11 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 @media (max-width:480px){.sn-branch-row{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){.sn-adorn.sn-loading .input{animation:none}}
 
-/* Settings › Network proxy (corporateProxy flag): a new surface, so placeholders use --ink-2. */
+/* Settings › Network proxy: a new surface (Simple level), so placeholders and hints use --ink-2. */
 #network-proxy-settings-card .input::placeholder{color:var(--ink-2);}
+#network-proxy-settings-card .hint{color:var(--ink-2);}
+/* The "More" fold reuses details.advanced; inside the card's rows it draws no extra rule (fit-2-1). */
+#network-proxy-settings-card .np-more{margin-top:0;border-top:0;padding-top:0;}
 #network-proxy-settings-card .np-results{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:var(--fs-meta);}
 #network-proxy-settings-card .np-results li[data-ok="false"]{color:var(--red-ink);}
 

@@ -60,6 +60,7 @@ import { chatDescriptor, chatCostCapRefusal } from '../engines/chat.mjs';
 import { chatModelRates } from './chat-price.mjs';
 import { codexMemoryLine } from './prompt.mjs';
 import { resolveSetting } from '../settings-cascade.mjs';
+import { withRole } from '../model-roles.mjs';
 import { mentionedRefs } from './contexts.mjs';
 import {
   newAskId, finishMessage, setMessageBlocks, addThreadTotals, addThreadContexts, updateThread, setThreadTitle, listAttachments, getAttachment, listMessages, ASK_ID_RE,
@@ -96,7 +97,8 @@ export const COPILOT_SHELL_TRIPPED_MESSAGE = chatDescriptor('copilot').shellTrip
  *  own function of that name. */
 const ENGINE_DEP_RE = /^[a-z]+(?:Preflight|AskSupport|Lockdown|ModelPriced|SelfTest)$/;
 const engineDeps = (deps) => Object.fromEntries(Object.entries(deps).filter(([k, v]) => ENGINE_DEP_RE.test(k) && typeof v === 'function'));
-const askSlotOf = (engine) => { try { return resolveSetting(`models.${engine}.ask`).value; } catch { return undefined; } };
+// Model roles (D3): an unset Chat slot takes the everyday role.
+const askSlotOf = (engine) => { try { return withRole(resolveSetting(`models.${engine}.ask`).value, engine, 'askModels'); } catch { return undefined; } };
 
 // MCP registry §10 (Ask column): what a registry copy's `system/init` status reads as (connected/pending: nothing).
 const MCP_UNAVAILABLE = Object.freeze({

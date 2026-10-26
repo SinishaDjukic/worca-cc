@@ -1743,25 +1743,25 @@ function sliceArm({ info = SLICE_INFO, hold = false } = {}) {
   return a;
 }
 
-// Runs redesign slice 4 (D18): the History glance's kind chip says where the run sits and links the group (it replaces the slice line).
+// Runs redesign slice 4 (D18): a slice's History glance has no group row and no kind chip; its breadcrumb links the group.
 const CHARTS = { groups: [{ id: 'feat_1', kind: 'feature', title: 'Charts', projectKey: null, planning: null, cost: { usd: 0, byPipeline: {} },
   members: [1, 2, 3].map((i) => ({ position: i, title: `Slice ${i}`, pipelineId: i === 1 ? ROW.id : null, ticketId: i === 1 ? null : `t${i}`,
     status: i === 1 ? 'done' : null, pr: null, ticket: i === 1 ? null : { id: `t${i}`, status: 'scheduled', runAt: null, after: true }, adhoc: false, after: i === 1 ? null : i - 1 })) }] };
 const groupsArm = (groups) => (url) => (url.startsWith('/api/run-groups') ? ok(groups) : null);
 
-test('a done slice\'s History page: its chip "Run 1 of 3" links the feature page, no group row; a repaint keeps one chip', async () => {
+test('a done slice\'s History page: the breadcrumb links the feature page, no group row, no chip; a repaint keeps it so', async () => {
   const ctx = await bootShip({ arms: groupsArm(CHARTS) });
   gateOn(ctx);
   await openDetail(ctx);
   await settle(ctx.window, 4);
-  const line = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="group"]');
-  assert.equal(line.hidden, true, 'no Feature row: the chip links the group');
-  const chip = ctx.window.document.querySelector('#hist-detail .rd-title-row .kind-chip');   // in the page head
-  assert.equal(chip.textContent, 'Run 1 of 3');
-  assert.equal(chip.getAttribute('href'), '#feature/feat_1');
-  assert.equal(ctx.window.document.querySelector('#hist-detail .rd-slice-line'), null, 'the chip replaces the slice line');
+  const doc = ctx.window.document;
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="group"]').hidden, true, 'no Feature row');
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-head .kind-chip'), null, 'no kind chip');
+  assert.equal(doc.querySelector('#hist-detail .hd-bar .rd-crumbs a.rd-crumb[href="#feature/feat_1"]').textContent, 'Charts');
+  assert.equal(doc.querySelector('#hist-detail .rd-slice-line'), null, 'no slice line either');
   await openDetail(ctx);                                 // the same detail again: painted in place
-  assert.equal(ctx.window.document.querySelectorAll('#hist-detail .rd-title-row .kind-chip').length, 1);
+  assert.equal(doc.querySelector('#hist-detail .hd-glance .rd-page-head .kind-chip'), null);
+  assert.equal(doc.querySelectorAll('#hist-detail .hd-bar .rd-crumbs .rd-crumb').length, 3);
 });
 
 test('a plain run (in no group) shows no group link; at Expert it offers "Add to group…"', async () => {

@@ -57,7 +57,7 @@ function tick(window, node) {
 // The View menu: open it and pick an item by its label.
 async function pickView(window, doc, label) {
   click(window, doc.getElementById('runs-view-btn'));
-  const item = [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => n.querySelector('.wfv-menu-l').textContent === label);
+  const item = [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((n) => (n.querySelector('.wfv-menu-l') || n).textContent === label);
   assert.ok(item, `the View menu lists ${label}`);
   click(window, item);
   await settle(window);
@@ -273,7 +273,7 @@ test('a Needs-you question row for the run already open lands the pane on its qu
   window.Element.prototype.scrollIntoView = function () { scrolled += 1; };
   click(window, doc.querySelector('#runs-list .runs-sec[data-section="needs"] a.runs-row[data-run-id="q1"]')); await settle(window);
   assert.equal(window.location.hash, '#running/q1');
-  assert.equal(screen.querySelector('.rd-tab[data-sec="overview"]').getAttribute('aria-selected'), 'true', 'Summary, where the question is');
+  assert.equal(screen.dataset.mode, 'glance');
   assert.ok(scrolled > 0, 'scrolled to the question without waiting for a panel rebuild');
 });
 
@@ -315,7 +315,7 @@ test('the View menu: Show and Group by narrow and regroup the list, the chip res
       const chip = doc.getElementById('runs-view-chip');
       assert.equal(chip.hidden, true, 'no chip for the default view');
       click(window, doc.getElementById('runs-view-btn'));
-      const items = [...doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')].map((n) => [n.querySelector('.wfv-menu-l').textContent, n.querySelector('.wfv-menu-hint')?.textContent || '']);
+      const items = [...doc.querySelectorAll('.wfv-menu .wfv-menu-item[role="menuitemradio"]')].map((n) => [n.querySelector('.wfv-menu-l').textContent, n.querySelector('.wfv-menu-hint')?.textContent || '']);
       assert.deepEqual(items.slice(0, 6), [['All', '3'], ['Needs you', '0'], ['Running', '1'], ['Waiting', '0'], ['Finished', '2'], ['Archived', '']]);
       click(window, doc.querySelector('.wfv-menu [role="menuitemradio"]'));   // All again: closes it
       await settle(window);
@@ -688,6 +688,44 @@ test('A11: no checkbox on hover; ⌘-click selects without navigating, Shift-cli
   modClick(keys[3], { shiftKey: true });
   await settle(window);
   assert.deepEqual(checked(), [keys[3]], 'Esc dropped the anchor: a Shift-click toggles one row');
+});
+
+test('A11: a touch long-press starts selecting that run and swallows the click that follows', async () => {
+  const { window, doc, recv } = await boot();
+  recv({ type: 'hello', runs: [live('r1'), live('r2')] });
+  go(window, 'runs'); await settle(window);
+  const k = doc.querySelector('#runs-list .runs-item[data-level="top"]').dataset.rowKey;
+  const rowOf = () => doc.querySelector(`#runs-list .runs-item[data-row-key="${k}"]`);
+  rowOf().querySelector('a.runs-row').dispatchEvent(new window.PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch' }));
+  await new Promise((r) => setTimeout(r, 550)); await settle(window);
+  assert.ok(rowOf().classList.contains('is-checked'));
+  assert.ok(doc.getElementById('runs-list').classList.contains('is-selecting'));
+  const notCancelled = rowOf().querySelector('a.runs-row').dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  assert.equal(notCancelled, false, 'the click after the press is swallowed');
+  await settle(window);
+  assert.equal(window.location.hash, '#runs');
+  assert.ok(rowOf().classList.contains('is-checked'), 'and does not toggle it back');
+});
+
+test('View › Show › Archived reads the server count before its feed loads; a 0 count is dimmed', async () => {
+  const { window, doc } = await boot();
+  let archivedFetches = 0;
+  const inner = window.fetch;
+  const wrapped = (u, init) => {
+    if (String(u).endsWith('/api/counts')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ pipelines: 2, projects: 1, workspaces: 0,
+      archivedPipelines: 12, schedules: { scheduled: 0, missed: 0, recurring: 0, unread: 0 } }) });
+    if (String(u).includes('/api/history?archived=1')) archivedFetches += 1;
+    return inner(u, init);
+  };
+  window.fetch = wrapped; globalThis.fetch = wrapped;
+  go(window, 'runs'); await settle(window);
+  click(window, doc.getElementById('runs-view-btn'));
+  const row = (label) => [...doc.querySelectorAll('.wfv-menu .wfv-menu-item[role="menuitemradio"]')].find((n) => n.querySelector('.wfv-menu-l').textContent === label);
+  assert.equal(row('Archived').querySelector('.wfv-menu-hint').textContent, '12');
+  assert.equal(archivedFetches, 0, 'the count needs no archived feed');
+  assert.ok(row('Needs you').querySelector('.wfv-menu-hint').classList.contains('is-zero'));
+  assert.ok(doc.querySelector('.wfv-menu').classList.contains('wfv-view-menu'));
+  assert.equal(doc.querySelector('.wfv-menu .wfv-seg').previousElementSibling.textContent, 'Group by');
 });
 
 test('A11: the row ⋯ menu offers Select, which enters selection with that row', async () => {
@@ -1309,7 +1347,7 @@ test('run 3: all four deep links render inside #runs-pane with Runs visible', as
   }
 });
 
-test('run 3: on a phone (slide layout) the group pane is full screen with the top bar\'s up link, in its page, gone and error states', async () => {
+test('run 3: on a phone (slide layout) the group pane is full screen with Back, in its page, gone and error states', async () => {
   const fail = (window) => {
     const f = window.fetch;
     window.fetch = globalThis.fetch = (u, init) => (String(u).endsWith('/api/run-groups')
@@ -1322,25 +1360,23 @@ test('run 3: on a phone (slide layout) the group pane is full screen with the to
     doc.getElementById('runs-shell').dataset.layout = 'slide';
     go(window, `feature/${id}`); await settle(window, 6);
     assert.equal(doc.getElementById('runs-list-pane').hasAttribute('inert'), true, `${id}: the list is inert`);
-    assert.equal(doc.querySelector('#group-detail .gpage-back'), null, `${id}: no Back in the pane`);
-    const up = doc.querySelector('#topnav-crumbs a.nav-up');
-    assert.ok(up, `${id}: the top bar carries the up link`);
-    assert.equal(up.textContent, 'Runs');
-    if (!text) assert.equal(doc.activeElement, doc.querySelector('#group-detail .gpage-title'), `${id}: focus lands on the h1`);
+    const back = doc.querySelector('#group-detail .gpage-back');
+    assert.ok(back, `${id}: the group pane carries Back`);
+    assert.equal(doc.activeElement, back, `${id}: focus lands on Back`);
     if (text) assert.match(doc.querySelector('#group-detail').textContent, text);
-    up.click(); await settle(window, 6);
-    assert.equal(window.location.hash, '#runs', `${id}: the up link returns to the list`);
+    back.click(); await settle(window, 6);
+    assert.equal(window.location.hash, '#runs', `${id}: Back returns to the list`);
     window.close();
   }
 });
-test('slice 2: side by side (split) the Runs crumb shows the list, with the group pane closed', async () => {
+test('slice 2: side by side (split) the group Back shows the list, with the group pane closed', async () => {
   const { window, doc } = await boot({ runGroups: [FEATURE_GROUP], history: [] });
   go(window, 'runs'); await settle(window);
   doc.getElementById('runs-shell').dataset.layout = 'split';
   go(window, `feature/${FEATURE_GROUP.id}`); await settle(window, 6);
   const shell = doc.getElementById('group-shell');
   assert.ok(shell.classList.contains('detail-open'));
-  doc.querySelector('#topnav-crumbs .nav-trail a[data-crumb="runs"]').click(); await settle(window, 6);
+  doc.querySelector('#group-detail .gpage-back').click(); await settle(window, 6);
   assert.equal(window.location.hash, '#runs');
   assert.equal(shell.classList.contains('detail-open'), false, 'the group page closed');
   window.dispatchEvent(new window.Event('hashchange')); await settle(window, 6);
