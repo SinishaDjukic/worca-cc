@@ -417,3 +417,79 @@ export function getBriefById(id) {
   getDb();
   return briefById(id);
 }
+
+// ---- the helper chat (plans/requirements-a3-design.md §3, D14): one Ask Worca chat per feature ----
+
+const HELPER_ROLES = Object.freeze(['po', 'worca']);
+
+function toHelperMessage(r) {
+  if (!r) return null;
+  return {
+    id: Number(r.id), featureSeq: Number(r.feature_seq), role: r.role, text: r.text || '', focus: json(r.focus_json, null),
+    roundTurnId: r.round_turn_id == null ? null : Number(r.round_turn_id), drafts: json(r.drafts_json, []), proposals: json(r.proposals_json, []),
+    error: json(r.error_json, null), costUsd: r.cost_usd == null ? null : Math.round(Number(r.cost_usd) * 1e4) / 1e4, model: r.model || null,
+    createdBy: r.created_by || null, createdAt: r.created_at, updatedBy: r.updated_by || null, updatedAt: r.updated_at,
+  };
+}
+
+export function insertHelperMessage({ featureSeq, role, text = '', focus = null, roundTurnId = null, drafts = [], proposals = [], error = null,
+  costUsd = null, model = null } = {}, { by = null } = {}) {
+  if (!HELPER_ROLES.includes(role)) throw new Error(`insertHelperMessage: unknown role "${role}"`);
+  getDb();
+  const ts = iso();
+  const r = prepare(`INSERT INTO req_helper_messages (feature_seq, role, text, focus_json, round_turn_id, drafts_json, proposals_json, error_json,
+      cost_usd, model, created_by, created_at, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(Number(featureSeq), role, String(text ?? ''), focus ? JSON.stringify(focus) : null, roundTurnId == null ? null : Number(roundTurnId),
+      JSON.stringify(drafts || []), JSON.stringify(proposals || []), error ? JSON.stringify(error) : null,
+      Number.isFinite(costUsd) ? costUsd : null, model || null, by, ts, by, ts);
+  return getHelperMessage(Number(r.lastInsertRowid));
+}
+
+export function getHelperMessage(id) {
+  getDb();
+  return toHelperMessage(prepare('SELECT * FROM req_helper_messages WHERE id = ?').get(Number(id)));
+}
+
+/** A feature's chat, oldest first. */
+export function listHelperMessages(seq) {
+  getDb();
+  return prepare('SELECT * FROM req_helper_messages WHERE feature_seq = ? ORDER BY id').all(Number(seq)).map(toHelperMessage);
+}
+
+/** How many messages a feature's chat holds (the feature view's `helper.messages`), without reading the rows. */
+export function countHelperMessages(seq) {
+  getDb();
+  return Number(prepare('SELECT count(*) AS n FROM req_helper_messages WHERE feature_seq = ?').get(Number(seq)).n);
+}
+
+const HELPER_COLUMNS = Object.freeze({ text: 'text', drafts: 'drafts_json', proposals: 'proposals_json', error: 'error_json', costUsd: 'cost_usd', model: 'model' });
+const HELPER_JSON = new Set(['drafts', 'proposals', 'error']);
+
+export function updateHelperMessage(id, patch = {}, { by = null } = {}) {
+  const sets = [];
+  const vals = [];
+  for (const [k, v] of Object.entries(patch)) {
+    const col = HELPER_COLUMNS[k];
+    if (!col) throw new Error(`updateHelperMessage: unknown field "${k}"`);
+    sets.push(`${col} = ?`);
+    vals.push(HELPER_JSON.has(k) ? (v == null ? (k === 'error' ? null : '[]') : JSON.stringify(v)) : k === 'costUsd' ? (Number.isFinite(v) ? v : null) : v);
+  }
+  sets.push('updated_by = ?', 'updated_at = ?');
+  vals.push(by, iso());
+  getDb();
+  prepare(`UPDATE req_helper_messages SET ${sets.join(', ')} WHERE id = ?`).run(...vals, Number(id));
+  return getHelperMessage(id);
+}
+
+/** Clear chat (D14): the feature's rows go; the ledger keeps what the chat cost, and accepted changes stay in the spec. */
+export function deleteHelperMessages(seq) {
+  getDb();
+  return Number(prepare('DELETE FROM req_helper_messages WHERE feature_seq = ?').run(Number(seq)).changes);
+}
+
+/** The amounts of the newest helper calls (ledger rows with a helper_message_id), newest first: the composer's estimate (D13). */
+export function recentHelperCosts(limit = 10) {
+  getDb();
+  return prepare('SELECT amount_usd FROM req_cost_ledger WHERE helper_message_id IS NOT NULL ORDER BY id DESC LIMIT ?')
+    .all(Number(limit)).map((r) => Number(r.amount_usd));
+}

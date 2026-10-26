@@ -93,11 +93,14 @@ export function askWindowedSpendUsd(fromMs, toMs = null) {
 
 /** Append one requirements cost event (plans/requirements-design.md D9): an orientation pass or an
  *  interview round (`featureSeq`, with its `turnId`), or a product brief look (A7: `featureSeq` 0 and the
- *  brief's `briefId`); A8 adds `attachmentId` for a file's read or ask, under its feature or its brief. Same no-op gate as the other ledgers ($0 mock calls leave no row). */
-export function recordRequirementsCostDelta({ featureSeq = 0, briefId = null, turnId = null, attachmentId = null, amountUsd, model = null, tsMs = Date.now() }) {
+ *  brief's `briefId`); A8 adds `attachmentId` for a file's read or ask, under its feature or its brief; A3 adds
+ *  `helperMessageId` for an Ask Worca call (no turn). Same no-op gate as the other ledgers ($0 mock calls leave no row). */
+export function recordRequirementsCostDelta({ featureSeq = 0, briefId = null, turnId = null, attachmentId = null, helperMessageId = null, amountUsd,
+  model = null, tsMs = Date.now() }) {
   if ((!featureSeq && !briefId) || !Number.isFinite(amountUsd) || amountUsd <= 0) return;
-  prepare('INSERT INTO req_cost_ledger (feature_seq, brief_id, turn_id, attachment_id, amount_usd, model, ts) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(featureSeq || 0, briefId || null, turnId, attachmentId || null, amountUsd, model, tsMs);
+  prepare(`INSERT INTO req_cost_ledger (feature_seq, brief_id, turn_id, attachment_id, helper_message_id, amount_usd, model, ts)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(featureSeq || 0, briefId || null, turnId, attachmentId || null, helperMessageId == null ? null : Number(helperMessageId), amountUsd, model, tsMs);
 }
 
 /** Windowed requirements spend; toMs null = open-ended (budget windows), else ts < toMs. */
