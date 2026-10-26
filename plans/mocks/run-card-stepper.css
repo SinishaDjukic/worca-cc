@@ -623,7 +623,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rc-tags-mark:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
 .rc-tag{gap:5px;padding:0 3px 0 7px;}
 .rc-tag.is-label::before{content:"";flex:none;width:5px;height:5px;margin-left:-1px;border-radius:50%;background:var(--ink-3);}
-.rc-tag.is-tag{box-shadow:none;background:var(--field);}
+.rc-tag.is-tag{box-shadow:none;background:color-mix(in srgb,var(--ink) 8%,transparent);}   /* a tint of the ink: darker than the page in light, lighter in dark */
 .rc-tags:hover .rc-tag.is-tag{box-shadow:none;}
 /* × on hover or keyboard focus; its room is always there, so nothing moves */
 .rc-tag-x{display:inline-grid;place-items:center;width:12px;height:12px;margin-left:-1px;padding:0;border:0;border-radius:2px;background:none;color:var(--ink-2);cursor:pointer;opacity:0;}
@@ -685,3 +685,8 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rtab-panel{gap:32px;}
 .rtab-h{margin-bottom:4px;}
 .sc-head .sc-run{font-size:var(--fs-body);}
+
+/* The description's AI and Stop sit in its label row, beside the eye: never over the textarea's scrollbar. */
+.pd-lab .pd-ai,.pd-lab .pd-stop{margin-left:auto;}
+.pd-lab .pd-ai + .pd-eye,.pd-lab .pd-stop + .pd-eye{margin-left:0;}
+.pd-adorn .textarea{padding-right:12px;}
