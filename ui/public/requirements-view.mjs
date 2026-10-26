@@ -312,6 +312,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   let helperWaitEl = null;
   let helperNewest = null;
   let helperBusy = false;
+  let viewGen = 0;   // bumped on each visit to another feature: a reply from an earlier visit (A, B, back to A) is dropped
   let helperGen = 0;   // who owns the helperBusy guard: show() on another feature bumps it, so a late call cannot release a guard it no longer holds
   let helperReloads = 0;
   function freshHelperUi() { return { text: '', focus: null, opener: null, error: null, budget: false }; }
@@ -355,7 +356,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       for (const map of [fileUi, fileMsgs, fileMsgList, fileNodes, refusalEls, fileWas, droppedKeys]) map.clear();
       filesLive = null;
       helperData = null; helperUi = freshHelperUi(); helperApplied.clear(); helperNodes.clear(); helperTails.clear(); helperLog = null; helperWaitEl = null; helperNewest = null;
-      helperBusy = false; helperGen += 1;   // another feature: a chat POST still in flight for the last one never blocks this one's controls
+      helperBusy = false; helperGen += 1; viewGen += 1;   // another feature: a chat POST still in flight for the last one never blocks this one's controls
       closeDialog(false);
     }
     seqShown = next;
@@ -2563,17 +2564,18 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     if (helperBusy) return;   // a second press while the first is in flight (each send is a paid call)
     helperBusy = true;
     const seq = f.seq;
+    const vg = viewGen;
     const gen = ++helperGen;
     helperUi.error = null;
     let late = false;
     try {
       const data = await api('POST', `/api/requirements/${seq}/helper/messages`, { text, ...(focus ? { focus } : {}) });
-      if (seqShown !== seq) { late = true; return; }   // another feature is shown now: this reply is not for it
+      if (seqShown !== seq || vg !== viewGen) { late = true; return; }   // another feature is shown now: this reply is not for it
       helperData = data;
       helperUi.budget = false;
       if (text === helperUi.text) { setComposer(''); helperUi.focus = null; }
     } catch (err) {
-      if (seqShown !== seq) { late = true; return; }
+      if (seqShown !== seq || vg !== viewGen) { late = true; return; }
       helpRefused(err);
     } finally {
       if (gen === helperGen) helperBusy = false;
@@ -2590,16 +2592,17 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     if (helperBusy) return;
     helperBusy = true;
     const seq = f.seq;
+    const vg = viewGen;
     const gen = ++helperGen;
     helperUi.error = null;
     let late = false;
     try {
       const data = await api(method, `/api/requirements/${seq}/helper${path}`, method === 'DELETE' ? undefined : {});
-      if (seqShown !== seq) { late = true; return; }
+      if (seqShown !== seq || vg !== viewGen) { late = true; return; }
       helperData = data;
       helperUi.budget = false;
     } catch (err) {
-      if (seqShown !== seq) { late = true; return; }
+      if (seqShown !== seq || vg !== viewGen) { late = true; return; }
       helpRefused(err);
     } finally {
       if (gen === helperGen) helperBusy = false;
@@ -2612,9 +2615,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   async function reloadHelper() {
     if (helperBusy) return;
     helperBusy = true;
+    const gen = ++helperGen;
     helperReloads += 1;
     focusNext = 'helper-in';
-    try { await paint(); } finally { helperBusy = false; }
+    try { await paint(); } finally { if (gen === helperGen) helperBusy = false; }
   }
   function clearHelper(f) {
     if (helperBusy || !window.confirm('Clear the chat? Changes you accepted stay in the spec.')) return;

@@ -668,8 +668,9 @@ async function twoFeatures() {
     'GET /api/requirements/8': () => ({ feature: s8.f, turns: TURNS }), 'GET /api/requirements/8/helper': () => s8.helper,
     'POST /api/requirements/8/helper/messages': (b) => { posts.push(['8', b.text]); return (s8.helper = chat([...s8.helper.messages, po(2, b.text)], { answering: true })); } });
   const real = globalThis.fetch;
-  const gate8 = { wait: null };
+  const gate8 = { wait: null, get7: null };
   globalThis.fetch = async (url, opts = {}) => {
+    if ((opts.method || 'GET') === 'GET' && url === '/api/requirements/7/helper' && gate8.get7) await gate8.get7;
     if ((opts.method || 'GET') === 'POST' && url === '/api/requirements/8/helper/messages' && gate8.wait) await gate8.wait;
     if ((opts.method || 'GET') === 'POST' && url === '/api/requirements/7/helper/messages') {
       posts.push(['7', JSON.parse(opts.body).text]);
@@ -713,8 +714,9 @@ test('Fix 1b: after switching while A is in flight, B can send, and a double pre
   type(p.querySelector('[data-ui="helper-in"]'), 'About B');
   p.querySelector('[data-ui="helper-send"]').click();
   await settle();
-  m.release();   // A's late reply lands while B's send is still in flight: it must not free B's guard
+  m.release();   // A's late reply lands while B's send is still in flight: its finally must not free B's guard
   await settle();
+  type(m.host.querySelector('[data-ui="helper-in"]'), 'About B');
   m.host.querySelector('[data-ui="helper-send"]').click();
   await settle();
   release8();
@@ -743,4 +745,46 @@ test('Fix 3: each Help me answer button is described by its own question', async
     assert.ok(el && el.classList.contains('qtext'));
     assert.ok(el.textContent.includes(QS[i].question));
   });
+});
+
+test('Fix 4: A, send, B, back to A: the old reply of the earlier visit is dropped', async () => {
+  const m = await twoFeatures();
+  let p = await openPanel(m);
+  type(p.querySelector('[data-ui="helper-in"]'), 'About A');
+  p.querySelector('[data-ui="helper-send"]').click();
+  await settle();
+  await m.view.show('feature/8');
+  await m.view.show('feature/7');
+  p = m.host.querySelector('.req-help') || await openPanel(m);
+  m.release();
+  await settle();
+  p = m.host.querySelector('.req-help');
+  assert.ok(!p.textContent.includes('A secret'), 'the reply belongs to the first visit');
+});
+
+test('Fix 5: a Try again (reload) of the chat that ends after a switch does not free the guard another feature took', async () => {
+  const m = await twoFeatures();
+  m.s7.helper = { __status: 502, body: {} };
+  m.s7.f = feature({ helper: { answering: false, messages: 3 } });
+  await m.view.show('feature/7');
+  let p = m.host.querySelector('.req-help') || await openPanel(m);
+  let rel7;
+  m.gate8.get7 = new Promise((r) => { rel7 = r; });
+  p.querySelector('[data-ui="helper-reload"]').click();
+  await settle();
+  await m.view.show('feature/8');
+  p = await openPanel(m);
+  let rel8;
+  m.gate8.wait = new Promise((r) => { rel8 = r; });
+  type(p.querySelector('[data-ui="helper-in"]'), 'About B');
+  p.querySelector('[data-ui="helper-send"]').click();
+  await settle();
+  rel7();
+  await settle();
+  type(m.host.querySelector('[data-ui="helper-in"]'), 'About B');
+  m.host.querySelector('[data-ui="helper-send"]').click();
+  await settle();
+  rel8();
+  await settle();
+  assert.deepEqual(m.posts.filter((x) => x[0] === '8'), [['8', 'About B']]);
 });
