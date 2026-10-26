@@ -67,7 +67,8 @@ Every screen reads down one rail, and everything has one place on it.
 - Buttons in the card and its tabs are 28px. Every row sits on the 20px rail + 12px gap; below the card everything
   starts on the tab text edge.
 - Nothing moves the page by itself: a click, a repaint or a menu never scrolls it.
-- An action today's app does not have carries a `New` mark in the prototype, so a review can tell proposal from parity.
+- Actions today's app does not have are listed, with why, in a note in the prototype's intro ("N actions are proposed, not in
+  today's app"); the buttons themselves carry no mark, here or in the build.
 - Every case passes the gate (`plans/mocks/run-card-sweep.mjs`): no sideways scroll, no clipped text without a
   tooltip, no overlaps, every section on the text edge, contrast 4.5:1, every menu and dialog inside the window, no
   page jump on any click.

@@ -562,9 +562,6 @@ html,body{height:auto;overflow:visible;margin:0;}
 .menu-item[aria-disabled="true"]{color:var(--ink-3);}
 
 /* Proposed, not in today's app: a quiet tag, never a colour of its own. */
-.new-tag{margin-left:6px;padding:0 4px;border-radius:var(--r-xs);box-shadow:inset 0 0 0 1px var(--line-2);font:500 10px/16px var(--sans);letter-spacing:.02em;color:var(--ink-2);}
-.rc .mi-hint.new-tag{font:500 10px/16px var(--sans);}
-.btn-primary .new-tag{color:inherit;box-shadow:inset 0 0 0 1px currentColor;opacity:.7;}
 /* A shorter tab never pulls the page up: the panel keeps at least a screen of height. */
 .rtab-panel{min-height:100vh;}
 .rc-chipset{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;}
@@ -690,3 +687,10 @@ html,body{height:auto;overflow:visible;margin:0;}
 .pd-lab .pd-ai,.pd-lab .pd-stop{margin-left:auto;}
 .pd-lab .pd-ai + .pd-eye,.pd-lab .pd-stop + .pd-eye{margin-left:0;}
 .pd-adorn .textarea{padding-right:12px;}
+
+/* The prototype's note on proposed actions: a quiet disclosure under the intro. */
+.mk-proposed{margin:-8px 0 16px;font-size:var(--fs-meta);color:var(--ink-2);max-width:72ch;}
+.mk-proposed summary{cursor:pointer;color:var(--ink-2);}
+.mk-proposed summary:hover{color:var(--ink);}
+.mk-proposed ul{margin:8px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:4px;}
+.mk-proposed b{font-weight:600;color:var(--ink);margin-right:4px;}

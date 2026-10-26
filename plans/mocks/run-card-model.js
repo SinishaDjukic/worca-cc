@@ -265,7 +265,18 @@
     'worca-api #212': 'Merged into main', 'worca-web #88': 'Checks running', 'worca-docs #31': 'Conflicts with main',
   };
 
-  const NEW = new Set(['Merge PR', 'Merge #959', 'Fix checks', 'Fix checks on #961', 'Restart Build', 'Raise the cap', 'Pause after this step', 'Start a new run', 'Send answer', 'Copy link']);
+  // Actions this design proposes that today's app does not have (parity audit, 26 Oct): listed with why in the
+  // prototype's intro, never marked on the buttons themselves.
+  const PROPOSED = [
+    ['Send answer', 'A question is answered under its step in the card; today the answer panel sits apart, above the steps.'],
+    ['Pause after this step', 'Lets the current step finish before pausing; today Pause stops at once.'],
+    ['Fix checks', 'Starts a short run that fixes failing checks, like Fix conflicts does today for conflicts.'],
+    ['Merge PR', 'Merges from Worca, in stack order for a chain; today you merge on GitHub (How to merge shows the commands).'],
+    ['Restart Build', 'Runs one stage again with what earlier stages made; today a failed run resumes or starts over.'],
+    ['Raise the cap', 'Sets a new cost cap and goes on; today the choices are Continue without cap or Settings.'],
+    ['Copy link', 'Copies a link to the run from ⋯, for Chat or an issue.'],
+  ];
+  const NEW = new Set(['Merge PR', 'Merge #959', 'Fix checks', 'Fix checks on #961', 'Restart Build', 'Raise the cap', 'Pause after this step', 'Send answer', 'Copy link']);
   const LIVE = { now: 1, ask: 1, problem: 1, failed: 1, paused: 1, review: 1 };
   const isDone = (x) => x.state === 'done' || x.state === 'merged';
   // Each sub-step state: the rail circle, its icon, the word a screen reader hears, the bar cell.
@@ -526,5 +537,5 @@
   const ADD = [{ kind: 'label', menu: 'Label', help: 'Find and filter runs by it in the Runs list', placeholder: 'Type or pick a label', suggest: ['ui', 'hotfix', 'needs demo'] },
     { kind: 'tag', menu: 'Cost tag', help: 'Splits this run’s cost in Statistics', placeholder: 'key: value', suggest: ['team: web', 'team: api', 'client: acme'] },
     { kind: 'group', menu: 'Add to group', help: 'Tracks it with related runs on one page', placeholder: 'New group name', suggest: ['Navigation', 'Billing export', 'Onboarding'] }];
-  window.RunCardModel = { isNew: (t) => NEW.has(t), flow: FLOW, runFlow: RUN_FLOW, cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group, chips: c.chips || [] })), view, add: ADD };
+  window.RunCardModel = { proposed: PROPOSED, isNew: (t) => NEW.has(t), flow: FLOW, runFlow: RUN_FLOW, cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group, chips: c.chips || [] })), view, add: ADD };
 })();

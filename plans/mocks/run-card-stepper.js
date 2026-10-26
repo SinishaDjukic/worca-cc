@@ -48,7 +48,7 @@ function menu(id, items) {
     const rule = bad && !ruled && i > 0 && !(items[i - 1] && items[i - 1].sep) ? '<div class="menu-sep" role="separator"></div>' : '';
     if (bad) ruled = true;
     const role = it.checked === undefined ? 'menuitem' : 'menuitemradio';
-    return `${rule}<button type="button" class="menu-item${bad ? ' is-danger' : ''}" role="${role}"${it.off ? ' aria-disabled="true"' : ''}${it.checked === undefined ? '' : ` aria-checked="${!!it.checked}"`} data-menu-pick="${esc(it.id || it.text)}"${it.help ? ` title="${esc(it.help)}"` : ''}><span class="mi-l">${esc(it.text)}</span>${it.hint ? `<span class="mi-hint">${esc(it.hint)}</span>` : it.isNew || M.isNew(it.text) ? '<span class="mi-hint new-tag">New</span>' : ''}</button>`;
+    return `${rule}<button type="button" class="menu-item${bad ? ' is-danger' : ''}" role="${role}"${it.off ? ' aria-disabled="true"' : ''}${it.checked === undefined ? '' : ` aria-checked="${!!it.checked}"`} data-menu-pick="${esc(it.id || it.text)}"${it.help ? ` title="${esc(it.help)}"` : ''}><span class="mi-l">${esc(it.text)}</span>${it.hint ? `<span class="mi-hint">${esc(it.hint)}</span>` : ''}</button>`;
   }).join('')}</div>`;
 }
 // Labels and cost tags are one group on the metadata line: a tag mark, then each name in a quiet outline (labels
@@ -237,7 +237,7 @@ function render() {
   const v = M.view(ui.caseId, ui);
   const a = v.action;
   // The run's controls sit together on the status line: its one action (with ▾), then ⋯ for everything else.
-  const split = a ? `<div class="btn-split rc-action rc-pop is-right"><button type="button" class="btn btn-sm ${a.primary ? 'btn-primary' : ''}" title="${esc(a.help)}" data-key="act-main" data-label="${esc(a.label)}">${svg(a.icon, 14)}${esc(a.label)}${a.isNew ? '<span class="new-tag" title="Not in today’s app: proposed">New</span>' : ''}</button>${a.items.length ? `<button type="button" class="btn btn-sm btn-icon ${a.primary ? 'btn-primary' : ''}" aria-label="More actions" aria-haspopup="menu" aria-expanded="${ui.menu === 'act'}" data-menu="act" data-key="menu:act">${svg('chevron', 14)}</button>${menu('act', a.items)}` : ''}</div>` : '';
+  const split = a ? `<div class="btn-split rc-action rc-pop is-right"><button type="button" class="btn btn-sm ${a.primary ? 'btn-primary' : ''}" title="${esc(a.help)}" data-key="act-main" data-label="${esc(a.label)}">${svg(a.icon, 14)}${esc(a.label)}</button>${a.items.length ? `<button type="button" class="btn btn-sm btn-icon ${a.primary ? 'btn-primary' : ''}" aria-label="More actions" aria-haspopup="menu" aria-expanded="${ui.menu === 'act'}" data-menu="act" data-key="menu:act">${svg('chevron', 14)}</button>${menu('act', a.items)}` : ''}</div>` : '';
   const action = `<div class="rc-side">${split}<span class="rc-pop is-right rc-more"><button type="button" class="btn btn-sm btn-icon" aria-label="More for this run" aria-haspopup="menu" aria-expanded="${ui.menu === 'more'}" data-menu="more" data-key="menu:more"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg></button>${ui.menu === 'pick-group' ? pickerHtml('group') : menu('more', moreItems(v))}</span></div>`;
   // Many labels and tags, one group: a run already in a feature or chain, or a group page, joins none; a run you
   // grouped can leave it again from the same menu.
@@ -331,6 +331,8 @@ document.addEventListener('change', (e) => {
   if (e.target.id === 'pd-draft') ui.pr.draft = e.target.checked;
   if (e.target.id === 'pd-watch') ui.pr.watch = e.target.checked;
 });
+// The intro's note lists what this design proposes beyond today's app, with why; the buttons carry no mark.
+{ const n = document.getElementById('proposed'); if (n) n.innerHTML = `<summary>${M.proposed.length} actions are proposed, not in today’s app</summary><ul>${M.proposed.map(([a, why]) => `<li><b>${esc(a)}</b> ${esc(why)}</li>`).join('')}</ul>`; }
 const pick = document.getElementById('case');
 const groups = [...new Set(M.cases.map((c) => c.group))];
 pick.innerHTML = groups.map((g) => `<optgroup label="${g}">${M.cases.filter((c) => c.group === g).map((c) => `<option value="${c.id}"${c.id === ui.caseId ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</optgroup>`).join('');
