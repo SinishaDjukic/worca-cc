@@ -417,3 +417,108 @@ export function getBriefById(id) {
   getDb();
   return briefById(id);
 }
+
+// ---- export to a tracker (plans/requirements-a6-design.md §3, D2, D7–D10, D12): the setup per project or workspace (a
+// connection and the ticket's defaults, never a config value) and the current ticket per feature ----
+
+function toSetup(r) {
+  if (!r) return null;
+  return {
+    scopeType: r.scope_type, scopeKey: r.scope_key, plugin: r.plugin, sourceId: r.source_id, profile: r.profile || null,
+    trackerProject: r.tracker_project, trackerProjectName: r.tracker_project_name, issueType: r.issue_type, issueTypeName: r.issue_type_name,
+    labels: json(r.labels_json, ['worca']), priority: r.priority || null, priorityName: r.priority_name || null,
+    criteria: json(r.criteria_json, { target: 'description' }), doneStatus: r.done_status || null,
+    createdBy: r.created_by || null, createdAt: r.created_at, updatedBy: r.updated_by || null, updatedAt: r.updated_at,
+  };
+}
+
+export function getExportSetup(scopeType, scopeKey) {
+  checkScope(scopeType, scopeKey);
+  getDb();
+  return toSetup(prepare('SELECT * FROM req_export_setups WHERE scope_type = ? AND scope_key = ?').get(scopeType, scopeKey));
+}
+
+export function upsertExportSetup({ scopeType, scopeKey, plugin, sourceId, profile = null, trackerProject, trackerProjectName, issueType, issueTypeName,
+  labels = ['worca'], priority = null, priorityName = null, criteria = { target: 'description' }, doneStatus = null } = {}, { by = null } = {}) {
+  checkScope(scopeType, scopeKey);
+  getDb();
+  const ts = iso();
+  prepare(`INSERT INTO req_export_setups (scope_type, scope_key, plugin, source_id, profile, tracker_project, tracker_project_name, issue_type,
+      issue_type_name, labels_json, priority, priority_name, criteria_json, done_status, created_by, created_at, updated_by, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (scope_type, scope_key) DO UPDATE SET plugin = excluded.plugin, source_id = excluded.source_id, profile = excluded.profile,
+        tracker_project = excluded.tracker_project, tracker_project_name = excluded.tracker_project_name, issue_type = excluded.issue_type,
+        issue_type_name = excluded.issue_type_name, labels_json = excluded.labels_json, priority = excluded.priority,
+        priority_name = excluded.priority_name, criteria_json = excluded.criteria_json, done_status = excluded.done_status,
+        updated_by = excluded.updated_by, updated_at = excluded.updated_at`)
+    .run(scopeType, scopeKey, plugin, sourceId, profile || null, trackerProject, trackerProjectName || trackerProject, issueType,
+      issueTypeName || issueType, JSON.stringify(labels || []), priority || null, priority ? (priorityName || priority) : null,
+      JSON.stringify(criteria || { target: 'description' }), doneStatus || null, by, ts, by, ts);
+  return getExportSetup(scopeType, scopeKey);
+}
+
+/** exportOptions' doneStatus, refreshed on every options call for the setup's own connection (D15). */
+export function setExportSetupDoneStatus(scopeType, scopeKey, doneStatus) {
+  checkScope(scopeType, scopeKey);
+  getDb();
+  prepare('UPDATE req_export_setups SET done_status = ? WHERE scope_type = ? AND scope_key = ?').run(doneStatus || null, scopeType, scopeKey);
+}
+
+function toLink(r) {
+  if (!r) return null;
+  return {
+    featureSeq: Number(r.feature_seq), plugin: r.plugin, sourceId: r.source_id, profile: r.profile || null, trackerProject: r.tracker_project,
+    key: r.ticket_key || null, url: r.ticket_url || null, createdAt: r.created_at || null, exportedAt: r.exported_at || null,
+    spec: json(r.spec_json, null), fields: json(r.fields_json, null), fingerprint: r.fingerprint || null,
+    pendingMarker: r.pending_marker || null, pendingAt: r.pending_at || null, updatedBy: r.updated_by || null, updatedAt: r.updated_at,
+  };
+}
+
+export function getExportLink(seq) {
+  getDb();
+  return toLink(prepare('SELECT * FROM req_export_links WHERE feature_seq = ?').get(Number(seq)));
+}
+
+/** D10: recorded before a create or new-ticket call. A first export makes a row without a key (its connection and project);
+ *  a feature with a ticket keeps its link and only gets the marker. */
+export function setPendingExport(seq, { plugin, sourceId, profile = null, trackerProject, marker } = {}, { by = null } = {}) {
+  getDb();
+  const ts = iso();
+  prepare(`INSERT INTO req_export_links (feature_seq, plugin, source_id, profile, tracker_project, pending_marker, pending_at, updated_by, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (feature_seq) DO UPDATE SET pending_marker = excluded.pending_marker, pending_at = excluded.pending_at,
+        updated_by = excluded.updated_by, updated_at = excluded.updated_at`)
+    .run(Number(seq), plugin, sourceId, profile || null, trackerProject, marker, ts, by, ts);
+  return getExportLink(seq);
+}
+
+/** The feature's current ticket, whole (D7, D8, D9): written after a create, an update, a comment, a new ticket or a
+ *  ticket found again; the pending marker goes. Keys of the argument this table has no column for are ignored. */
+export function saveExportLink(seq, { plugin, sourceId, profile = null, trackerProject, key, url = null, createdAt = null, exportedAt = null, spec = null,
+  fields = null, fingerprint = null } = {}, { by = null } = {}) {
+  getDb();
+  const ts = iso();
+  prepare(`INSERT INTO req_export_links (feature_seq, plugin, source_id, profile, tracker_project, ticket_key, ticket_url, created_at, exported_at,
+      spec_json, fields_json, fingerprint, pending_marker, pending_at, updated_by, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+      ON CONFLICT (feature_seq) DO UPDATE SET plugin = excluded.plugin, source_id = excluded.source_id, profile = excluded.profile,
+        tracker_project = excluded.tracker_project, ticket_key = excluded.ticket_key, ticket_url = excluded.ticket_url,
+        created_at = excluded.created_at, exported_at = excluded.exported_at, spec_json = excluded.spec_json, fields_json = excluded.fields_json,
+        fingerprint = excluded.fingerprint, pending_marker = NULL, pending_at = NULL, updated_by = excluded.updated_by, updated_at = excluded.updated_at`)
+    .run(Number(seq), plugin, sourceId, profile || null, trackerProject, key, url || null, createdAt || null, exportedAt || null,
+      spec ? JSON.stringify(spec) : null, fields ? JSON.stringify(fields) : null, fingerprint || null, by, ts);
+  return getExportLink(seq);
+}
+
+/** D10: a definite answer (a refusal, or no match found): a first export's row goes, a ticket's link loses only the marker. */
+export function clearPendingExport(seq) {
+  getDb();
+  prepare('DELETE FROM req_export_links WHERE feature_seq = ? AND ticket_key IS NULL').run(Number(seq));
+  prepare('UPDATE req_export_links SET pending_marker = NULL, pending_at = NULL WHERE feature_seq = ?').run(Number(seq));
+}
+
+/** Forget the link (D12): key, URL, the spec copy, the fingerprint and any pending marker. */
+export function deleteExportLink(seq) {
+  getDb();
+  return Number(prepare('DELETE FROM req_export_links WHERE feature_seq = ?').run(Number(seq)).changes);
+}

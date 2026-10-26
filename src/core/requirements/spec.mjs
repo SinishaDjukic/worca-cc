@@ -16,7 +16,8 @@ export const STATUSES = Object.freeze(['looking', 'thinking', 'your_turn', 'done
 export const LIST_SECTIONS = Object.freeze(['actors', 'flow', 'edgeCases', 'rules', 'outOfScope', 'openQuestions']);
 export const SECTIONS = Object.freeze(['goal', ...LIST_SECTIONS]);
 export const TURN_KINDS = Object.freeze(['orientation', 'round', 'answers', 'edit', 'assumption', 'finish', 'error', 'followup', 'start',
-  'file']);   // A8: a file was added, replaced, removed, edited, read or asked about
+  'file',     // A8: a file was added, replaced, removed, edited, read or asked about
+  'export']); // A6: a ticket was created, updated, commented on, made anew, linked or forgotten (no thread line)
 export const ASSUMPTION_STATUSES = Object.freeze(['open', 'confirmed', 'rejected']);
 export const LIMITS = Object.freeze({ title: 200, description: 20000, item: 500, items: 30, context: 10000 });
 export const MAX_ROUNDS = 6;      // D5
