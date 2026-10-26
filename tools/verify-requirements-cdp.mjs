@@ -616,25 +616,38 @@ check('A3 D18: every control of the sheet is a 44 px target (Back, ⋯, Reject, 
     && sheetTargets.some((t) => /^prop-accept-/.test(t.ui)) && sheetTargets.some((t) => /^prop-reject-/.test(t.ui)), JSON.stringify(smallHelp));
 await A.evalJs(`document.querySelector('#requirements-host .req-help-log').scrollTop = 1e6`);
 await shot('a3-board25-sheet');
-// Not a requirement (no focus trap in the design): where Tab goes from the sheet's last control, and Shift+Tab from its first.
+// The composer is on screen: Send (and the composer around it) sits inside the 390 x 844 viewport, not below it.
+const sendAt = await A.evalJs(`(() => { const b = document.querySelector('#requirements-host .req-help [data-ui="helper-send"]');
+  const c = document.querySelector('#requirements-host .req-help .req-help-composer'); if (!b || !c) return null;
+  const r = b.getBoundingClientRect(); const k = c.getBoundingClientRect();
+  return { send: [r.top, r.bottom, r.left, r.right].map(Math.round), composerBottom: Math.round(k.bottom), w: document.documentElement.clientWidth, hh: window.innerHeight }; })()`);
+check('A3 board 25: at 390 x 844 the composer and its Send are inside the screen (the log scrolls inside the sheet)',
+  !!sendAt && sendAt.send[0] >= 0 && sendAt.send[1] <= sendAt.hh && sendAt.send[2] >= 0 && sendAt.send[3] <= sendAt.w && sendAt.composerBottom <= sendAt.hh, JSON.stringify(sendAt));
+// Tab from the sheet's last control and Shift+Tab from its first never land on the page underneath (it is inert while the sheet is open).
 const tabKey = async (shift) => {
   const base = { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, modifiers: shift ? 8 : 0 };
   await A.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...base });
   await A.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
   await sleep(100);
   return A.evalJs(`(() => { const a = document.activeElement; const p = document.querySelector('#requirements-host .req-help');
-    return { inSheet: !!p && p.contains(a), el: a ? (a.getAttribute('data-ui') || a.className || a.tagName) : null }; })()`);
+    return { inSheet: !!p && p.contains(a), outside: !!a && a !== document.body && !!p && !p.contains(a), el: a ? (a.getAttribute('data-ui') || a.className || a.tagName) : null }; })()`);
 };
 await A.evalJs(`document.querySelector('[data-ui="helper-in"]').focus()`);
-const tabOut = [await tabKey(false), await tabKey(false)];
+const tabOut = [await tabKey(false), await tabKey(false), await tabKey(false)];
 await A.evalJs(`document.querySelector('[data-ui="helper-back"]').focus()`);
-const tabBack = await tabKey(true);
+const tabBack = [await tabKey(true), await tabKey(true)];
 log(`note A3 390 px: Tab from the composer ${JSON.stringify(tabOut)}; Shift+Tab from Back ${JSON.stringify(tabBack)}`);
+const inertNow = await A.evalJs(`(() => { const p = document.querySelector('#requirements-host .req-help');
+  return { sheetInert: !!p.closest('[inert]'), pageInert: !!document.querySelector('#requirements-host .req-head')?.closest('[inert]') }; })()`);
+check('A3 board 25 a11y: Tab and Shift+Tab from the ends of the open sheet never land on the page underneath, which is inert; the sheet is not',
+  [...tabOut, ...tabBack].every((t) => !t.outside) && inertNow.pageInert && !inertNow.sheetInert, JSON.stringify({ tabOut, tabBack, inertNow }));
 await A.evalJs(`document.querySelector('[data-ui="helper-back"]').click()`);
 check('A3 D2: Back returns to the feature; the drafted answer is still in the question card; Help me answer is a 44 px line',
   await until(() => A.evalJs(`(() => { const b = document.querySelector('#requirements-host .qpanel .qblock'); if (document.querySelector('.req-help') || !b) return false;
     const chip = b.querySelector('.req-help-drafted-row');
     return !!chip && !chip.hidden && Math.round(b.querySelector('.req-help-ask').getBoundingClientRect().height) >= 44; })()`)));
+check('A3 board 25 a11y: after Back the page is live again (the feature, the app bar) and the focus is back on the opener (not lost)',
+  await A.evalJs(`(() => { const live = (e) => !!e && !e.closest('[inert]'); return live(document.querySelector('#requirements-host .req-head')) && live(document.querySelector('.mbar-menu') || document.body) && document.activeElement !== document.body; })()`));
 // Where Help me answer sits at 390 px (board 25): its own line under the question text.
 const askAt = await A.evalJs(`(() => { const b = document.querySelector('#requirements-host .qpanel .qblock');
   const t = b.querySelector('.qtext').getBoundingClientRect(); const a = b.querySelector('.req-help-ask').getBoundingClientRect();

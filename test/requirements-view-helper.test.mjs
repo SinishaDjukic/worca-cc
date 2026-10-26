@@ -1067,3 +1067,82 @@ test("D18: after Accept or Reject the focus moves to the card's new status line;
   assert.equal(m.host.querySelector('.req-help-refusal').textContent, 'The spec changed since Worca proposed this.');
   assert.equal(ui(), 'prop-accept-3-2', 'a refusal leaves the focus on Accept');
 });
+
+// ── board 25: the phone sheet fits the screen and keeps the focus ─────────────────────
+
+test('style.css: the phone sheet stretches between its insets (align-self:stretch inside the 900 px query), so the composer stays on screen', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
+  const end = css.indexOf('/* ── marketplace P3 ── */');
+  const block = css.slice(start, end);
+  const baseAt = block.indexOf('.req-help{position:sticky;');
+  const mediaAt = block.indexOf('@media (max-width:900px){', baseAt);
+  assert.ok(baseAt >= 0 && block.slice(baseAt, block.indexOf('}', baseAt)).includes('align-self:start'), 'the base rule keeps align-self:start');
+  const sheetAt = block.indexOf('.req-help{position:fixed;', mediaAt);
+  const inside = block.slice(mediaAt, block.indexOf('\n}', mediaAt));
+  assert.ok(mediaAt > baseAt && sheetAt > mediaAt && sheetAt < mediaAt + inside.length, 'the sheet rule is inside the 900 px query');
+  assert.ok(block.slice(sheetAt, block.indexOf('}', sheetAt)).includes('align-self:stretch'), 'align-self:stretch is in the sheet rule');
+});
+
+/** A phone: window.matchMedia answers (max-width:900px) with `phone.on`; the view reads it when it paints. */
+function withPhone(on = true) {
+  const phone = { on, listeners: new Set() };
+  const before = window.matchMedia;
+  window.matchMedia = (q) => ({ media: q, get matches() { return /max-width:900px/.test(q) && phone.on; },
+    addEventListener: (_t, fn) => phone.listeners.add(fn), removeEventListener: (_t, fn) => phone.listeners.delete(fn) });
+  phone.restore = () => { window.matchMedia = before; };
+  phone.set = (v) => { phone.on = v; phone.listeners.forEach((fn) => fn()); };
+  return phone;
+}
+const inertIn = () => [...document.querySelectorAll('[inert]')];
+
+test('board 25 a11y: while the phone sheet is open the page behind it is inert; Back, Escape and leaving the feature put it back and the focus returns to the opener', async () => {
+  const phone = withPhone(true);
+  try {
+    const s = {};
+    const calls = fakeApi({ ...BASE, 'GET /api/requirements/7': () => ({ feature: s.f = s.f || feature(), turns: TURNS }), 'GET /api/requirements/7/helper': () => chat(), 'GET /api/requirements': { features: [] } });
+    assert.ok(calls);
+    const m = make();
+    const nav = document.createElement('button'); nav.className = 'mbar-menu'; document.body.append(nav);   // the app chrome outside the view
+    await m.view.show('feature/7');
+    assert.deepEqual(inertIn(), [], 'closed: nothing is inert');
+    let p = await openPanel(m);
+    assert.ok(p.getAttribute('inert') === null && !p.closest('[inert]'), 'the sheet itself is live');
+    assert.ok(nav.inert && nav.hasAttribute('inert'), 'the app chrome outside the view is inert');
+    assert.ok(m.host.querySelector('.req-back').inert, 'the page behind the sheet is inert');
+    assert.ok(m.host.querySelector('.req-head').inert);
+    assert.ok(!m.host.inert, 'the sheet is inside the host, which stays live');
+    assert.ok(p.querySelector('[data-ui="helper-back"]').closest('[inert]') === null);
+    p.querySelector('[data-ui="helper-back"]').click();
+    await settle();
+    assert.deepEqual(inertIn(), [], 'Back restores the page');
+    assert.equal(document.activeElement, toggle(m.host));
+    p = await openPanel(m);
+    assert.ok(nav.inert);
+    key(p.querySelector('[data-ui="helper-in"]'), 'Escape');
+    await settle();
+    assert.deepEqual(inertIn(), [], 'Escape restores the page');
+    assert.equal(document.activeElement, toggle(m.host));
+    await openPanel(m);
+    assert.ok(nav.inert);
+    await m.view.show('');   // the list: the sheet is gone, the page is back
+    await settle();
+    assert.deepEqual(inertIn(), [], 'leaving the feature restores the page');
+    m.view.destroy();
+    assert.deepEqual(inertIn(), []);
+  } finally { phone.restore(); }
+});
+
+test('board 25 a11y: on a desktop width nothing is inert while the panel is open; widening the window while the sheet is open frees the page', async () => {
+  const phone = withPhone(false);
+  try {
+    const m = await openFeature();
+    const nav = document.createElement('button'); document.body.append(nav);
+    await openPanel(m);
+    assert.deepEqual(inertIn(), [], 'beside the page, nothing is inert');
+    phone.set(true);
+    assert.ok(nav.inert, 'a window narrowed to a phone while it is open makes the sheet modal');
+    phone.set(false);
+    assert.deepEqual(inertIn(), [], 'widened again, the page is back');
+  } finally { phone.restore(); }
+});

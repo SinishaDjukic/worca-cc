@@ -474,7 +474,28 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   // Every paint goes through here: a null or false child never reaches the DOM
   // (replaceChildren would render it as the text "null").
-  const paintHost = (...kids) => host.replaceChildren(...kids.flat().filter((k) => k != null && k !== false));
+  // A3 (board 25): at 900 px and narrower Ask Worca is a full-screen sheet; while it is open the page behind it (every sibling along
+  // the sheet's ancestors, up to <body>) is inert, so Tab cannot leave it. Beside the page (desktop) nothing is inert. Re-synced on
+  // every paint, so closing, Back, and a change of feature or page put the page back; a dialog stays as it is.
+  const sheetQuery = () => (typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia('(max-width:900px)') : null);
+  let sheetInert = [];
+  function syncSheetInert() {
+    for (const el of sheetInert) { el.inert = false; el.removeAttribute('inert'); }
+    sheetInert = [];
+    const sheet = host.querySelector('.req-help');
+    const mq = sheetQuery();
+    if (!sheet || !mq || !mq.matches) return;
+    for (let node = sheet; node && node !== document.body && node.parentElement; node = node.parentElement) {
+      for (const sib of node.parentElement.children) {
+        if (sib === node || sib.inert || sib.classList.contains('req-dlg-wrap')) continue;
+        sib.inert = true; sib.setAttribute('inert', '');
+        sheetInert.push(sib);
+      }
+    }
+  }
+  const sheetMq = sheetQuery();
+  if (sheetMq && typeof sheetMq.addEventListener === 'function') sheetMq.addEventListener('change', syncSheetInert);
+  const paintHost = (...kids) => { host.replaceChildren(...kids.flat().filter((k) => k != null && k !== false)); syncSheetInert(); };
   const setFilter = (key) => { if (key === filter) return; filter = key; void paint(); };
 
   function filterTabs(all) {
@@ -3003,5 +3024,5 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     if (paintedKey === 'new') { if (relook) relook(); } else if (paintedKey && paintedKey.startsWith('brief/')) void paint();
   });
 
-  return { show, changed, destroy: () => { paintNo += 1; closeDialog(false); offGit(); document.removeEventListener('click', onDocClick, true); host.replaceChildren(); } };
+  return { show, changed, destroy: () => { paintNo += 1; closeDialog(false); offGit(); document.removeEventListener('click', onDocClick, true); if (sheetMq && typeof sheetMq.removeEventListener === 'function') sheetMq.removeEventListener('change', syncSheetInert); host.replaceChildren(); syncSheetInert(); } };
 }

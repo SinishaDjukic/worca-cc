@@ -10629,7 +10629,7 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-help-archived{margin:0;padding:12px 14px;border-top:1px solid var(--line)}
 @media (max-width:900px){
   .req-cols.with-helper{grid-template-columns:1fr}
-  .req-help{position:fixed;inset:0;z-index:45;min-height:0;max-height:none;border:0;border-radius:0}
+  .req-help{position:fixed;inset:0;align-self:stretch;z-index:45;min-height:0;max-height:none;border:0;border-radius:0}
   .req-help-head{padding:4px 4px 4px 8px}
   .req-help-back{display:inline-grid}
   .req-help-close,.req-help-wide{display:none}
