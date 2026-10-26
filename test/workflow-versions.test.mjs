@@ -120,3 +120,24 @@ test('overview: versions newest first with what changed, in use, runs; history o
   assert.deepEqual(o.versions[1].changes, ['First version']);
   assert.deepEqual(o.history.map((h) => h.source), ['save']);
 });
+
+test('overview: changesFromInUse is what changes for new runs (the version in use → this one), across versions too', async () => {
+  await writeGraphWorkflow(tpl());
+  await createVersion('wf_v', { deps });                       // v1, in use
+  const t = tpl(); t.nodes[1] = { ...t.nodes[1], config: { model: 'sonnet' } };
+  await writeGraphWorkflow(t);
+  await createVersion('wf_v', { deps });                       // v2
+  await writeFile(deps.mdPath, 'Plan it carefully.');
+  await writeGraphWorkflow({ ...t, name: 'Versioned 3' });
+  await createVersion('wf_v', { deps });                       // v3: not next to v1
+  const o = await versionsOverview('wf_v', { deps });
+  const by = Object.fromEntries(o.versions.map((v) => [v.versionNo, v]));
+  assert.deepEqual(by[1].changesFromInUse, [], 'the version in use differs from nothing');
+  assert.deepEqual(by[2].changesFromInUse, ['Planner: AI model default → sonnet']);
+  assert.deepEqual(by[3].changesFromInUse, ['Renamed from "Versioned" to "Versioned 3"', 'Planner: AI model default → sonnet', 'Planner: changed in the Library']);
+  assert.deepEqual(by[3].changes, ['Renamed from "Versioned" to "Versioned 3"'], 'changes still compares with the previous version');
+  useVersion('wf_v', 3);
+  const o3 = await versionsOverview('wf_v', { deps });
+  assert.deepEqual(o3.versions.find((v) => v.versionNo === 1).changesFromInUse,
+    ['Renamed from "Versioned 3" to "Versioned"', 'Planner: AI model sonnet → default', 'Planner: changed in the Library']);
+});

@@ -68,9 +68,14 @@ export function useVersion(workflowId, versionNo) {
 
 /** What differs from saved version `ver` to the draft: the graph diff plus "<label>: changed in the Library" per part. */
 function changesSince(ver, row, graph, parts, labelOf) {
-  const changes = diffGraphs({ name: ver.name, ...ver.graph }, { name: row.name, ...graph }, { labelOf }).map((c) => c.text);
-  const before = new Map((ver.parts || []).map((p) => [`${p.kind}:${p.key}`, p.hash]));
-  const partsChanged = parts.filter((p) => before.has(`${p.kind}:${p.key}`) && before.get(`${p.kind}:${p.key}`) !== p.hash)
+  return changesBetween(ver, { name: row.name, graph, parts }, labelOf);
+}
+/** From `a` to `b` (each {name, graph, parts}): the graph diff plus "<label>: changed in the Library" for every agent or
+ *  script both use whose content hash differs. */
+function changesBetween(a, b, labelOf) {
+  const changes = diffGraphs({ name: a.name, ...a.graph }, { name: b.name, ...b.graph }, { labelOf }).map((c) => c.text);
+  const before = new Map((a.parts || []).map((p) => [`${p.kind}:${p.key}`, p.hash]));
+  const partsChanged = (b.parts || []).filter((p) => before.has(`${p.kind}:${p.key}`) && before.get(`${p.kind}:${p.key}`) !== p.hash)
     .map((p) => ({ kind: p.kind, key: p.key }));
   for (const p of partsChanged) changes.push(`${labelOf(p)}: changed in the Library`);
   return { changes, partsChanged };
@@ -126,14 +131,17 @@ export async function versionsOverview(workflowId, { deps = {} } = {}) {
   const all = listRevisions(workflowId);
   const named = all.filter((r) => r.versionNo !== null).sort((a, b) => b.versionNo - a.versionNo);
   const counts = runCounts(workflowId);
+  const inUse = status.liveVersionNo ? readVersion(workflowId, status.liveVersionNo) : null;
   const versions = named.map((v, i) => {
     const prev = named[i + 1] ? readVersion(workflowId, named[i + 1].versionNo) : null;
     const cur = readVersion(workflowId, v.versionNo);
     const changes = prev
       ? diffGraphs({ name: prev.name, ...prev.graph }, { name: cur.name, ...cur.graph }, { labelOf }).map((c) => c.text)
       : ['First version'];
+    // What changes for new runs if this version is put in use (the Use dialog); `changes` is against the previous one.
+    const changesFromInUse = !inUse ? null : v.versionNo === inUse.versionNo ? [] : changesBetween(inUse, cur, labelOf).changes;
     return { id: v.id, versionNo: v.versionNo, note: v.note, by: v.by, createdAt: v.createdAt,
-      inUse: v.versionNo === status.liveVersionNo, runs: counts.get(v.versionNo) || 0, changes };
+      inUse: v.versionNo === status.liveVersionNo, runs: counts.get(v.versionNo) || 0, changes, changesFromInUse };
   });
   const history = all.filter((r) => r.versionNo === null).map((r) => ({ id: r.id, source: r.source, by: r.by, createdAt: r.createdAt, name: r.name }));
   return { workflowId, name: row.name, liveVersionNo: status.liveVersionNo, draft: status.draft, sinceLatest: status.sinceLatest, versions, history };
