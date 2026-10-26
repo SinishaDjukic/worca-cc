@@ -108,3 +108,18 @@ test('narrow screens: the top-left bar shrinks inside the stage instead of pushi
 test('versions table: the fourth (actions) column has a fixed width so Used lines up across rows', () => {
   assert.match(css, /\.wfv-vt-draft,\.wfv-vt-row\{display:grid;grid-template-columns:64px minmax\(0,1fr\) 120px 320px;/);
 });
+
+test('style.css closes every block (an unclosed @media turns every later rule into a narrow-screen-only rule)', () => {
+  let depth = 0;
+  for (const ch of css.replace(/\/\*[\s\S]*?\*\//g, '')) {
+    if (ch === '{') depth++;
+    else if (ch === '}') { depth--; assert.ok(depth >= 0, 'a } without its {'); }
+  }
+  assert.equal(depth, 0);
+});
+
+test('versions table: the draft row keeps Save version in the actions column; the narrow page clears the second-row Save bar', () => {
+  assert.match(css, /\.wfv-vt-draft > \.btn\{grid-column:4;justify-self:end;\}/);
+  // At <=760px .wfv-tr drops to top:58px (40px tall), so the page's first line starts below it, with a 16px gutter.
+  assert.match(css, /@media \(max-width:760px\)\{\.wfv-versions\{padding:112px 16px 32px;\}\}/);
+});
