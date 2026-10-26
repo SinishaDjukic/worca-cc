@@ -293,9 +293,12 @@ tag. `docs:publish` warns when the newest stable tag has no changelog entry.
   The publish job builds and checks the list (`tools/check-pack.mjs --require-extension`) before `npm publish`.
   `npm ci` must keep installing devDependencies there (esbuild).
 - **GitHub Release assets.** The `release` job runs `npm run ext:zip` and attaches `worca-chrome-<ver>.zip`,
-  `worca-edge-<ver>.zip` and `worca-firefox-<ver>.zip`, with the install note from
-  `.github/release-notes/browser-extension.md` above the generated notes. Firefox's zip is unsigned (no AMO
-  signing yet).
+  `worca-edge-<ver>.zip` and `worca-firefox-<ver>.zip`. Firefox's zip is unsigned (no AMO signing yet).
+- **Release notes** are GitHub's generated notes and nothing else, counted from the previous **stable**
+  release (`--notes-start-tag`), for an RC as well as a stable release: 1.14.0 and 1.14.0-rc.4 both list
+  every PR since 1.13.1. Left to itself GitHub starts at the newest release of any kind, so a stable release
+  cut from an RC listed nothing but the version bump. Install steps for the zips live in
+  `docs/browser-extension.md`, not in the release body.
 - **A failed upload** fails the `release` job. gh leaves the release as a draft when an upload fails. Re-attach
   from a checkout of the tag (`npm ci && npm run ext:zip`):
   `gh release upload worca-app-v<ver> extension/dist/worca-*-<ver>.zip --clobber`, then

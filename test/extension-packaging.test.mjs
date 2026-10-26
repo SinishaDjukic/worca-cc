@@ -69,6 +69,8 @@ test('the release workflow publishes with devDependencies (esbuild for prepack) 
   assert.match(yml, /node tools\/check-pack\.mjs --require-extension/);
   assert.match(yml, /npm run ext:zip/);
   for (const b of ['chrome', 'edge', 'firefox']) assert.match(yml, new RegExp(`worca-${b}-\\$VERSION\\.zip`));
+  assert.doesNotMatch(yml, /--notes-file/, 'the release body is the generated notes alone');
+  assert.match(yml, /--notes-start-tag "\$PREV"/, 'counted from the previous stable release, not the last RC');
 });
 
 test('the Playwright image tag in CI and in update-linux equals the pinned @playwright/test (v6)', () => {
