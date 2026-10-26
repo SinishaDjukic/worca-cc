@@ -1828,7 +1828,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   const fu = (id) => { if (!fileUi.has(id)) fileUi.set(id, { all: false, edit: null, ask: null, asked: null, history: false }); return fileUi.get(id); };
   const hasTextOf = (a) => !!a.summary && (a.summaryEdited || a.status === 'done');
   const READ_REASON = Object.freeze({ TIMEOUT: 'it ran out of time', BAD_REPLY: 'its reply could not be read', INTERRUPTED: 'Worca restarted' });
-  const reasonOf = (error) => READ_REASON[error && error.code] || String((error && error.message) || 'it could not be read').replace(/\.\s*$/, '');
+  const reasonOf = (error) => READ_REASON[error && error.code] || String((error && error.message) || '').replace(/\.\s*$/, '');
   const CLAMP_CHARS = 240;   // board 16: three lines of the card
   const isClamped = (s) => s.length > CLAMP_CHARS || (s.match(/\n/g) || []).length >= 3;
   // At phone width the pencil is in the ⋯ menu (board 20, style.css): the focus goes back to whichever is shown.
@@ -2042,9 +2042,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         msg.textContent = errText(err);
       } finally { busy = false; go.disabled = false; }
     });
-    const card = h('section', { class: 'card req-dialog req-replace', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'req-dlg-title' },
+    const card = h('section', { class: 'card req-dialog req-replace', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'req-dlg-title', 'aria-describedby': 'req-dlg-desc' },
       h('h2', { id: 'req-dlg-title', text: `Replace ${a.name}` }),
-      h('p', { class: 'req-dlg-lead req-replace-lead' }, 'New file: ', h('b', { text: file.name }),
+      h('p', { class: 'req-dlg-lead req-replace-lead', id: 'req-dlg-desc' }, 'New file: ', h('b', { text: file.name }),
         ` · ${KIND_TITLE[c.attKind]} · ${sizeText(file.size)}. Worca reads it again (about ${est}); ${ctx.doc ? '“Send with every run”' : '“Send with the run”'} stays ${on ? 'on' : 'off'}.`),
       choice,
       h('p', { class: 'hint req-replace-hint', text: ctx.doc ? "Interviews use the new version right away; the brief's sections change only when you Refresh it."
@@ -2092,7 +2092,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     // A version that could not be stored (D11): the server's words, and Replace, which mends it (Read again is refused).
     const stuck = storeFailedOf(a);
     const said = stuck ? String(a.error.message || '')
-      : `Worca could not read this file: ${reasonOf(a.error)}. ${ctx.doc ? 'Interviews list' : 'The interview lists'} it by name only.`;
+      : `Worca could not read this file${reasonOf(a.error) ? `: ${reasonOf(a.error)}` : ''}. ${ctx.doc ? 'Interviews list' : 'The interview lists'} it by name only.`;
     if (n.failed.words.textContent !== said) n.failed.words.textContent = said;
     const label = stuck ? 'Replace with a newer version…' : 'Try again';
     if (n.failed.btn.textContent !== label) n.failed.btn.textContent = label;
@@ -2107,7 +2107,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const n = fileNode(a.id);
     const e = a.error && a.error.job === 'ask' && a.status !== 'failed' ? a.error : null;
     if (!e) { n.askFailed = null; return null; }
-    const said = `Worca could not answer “${e.question || ''}”: ${reasonOf(e)}.`;
+    const said = `Worca could not answer “${e.question || ''}”${reasonOf(e) ? `: ${reasonOf(e)}` : ''}.`;
     const key = `${e.question}|${e.at || ''}`;
     if (!n.askFailed || n.askFailed.key !== key) n.askFailed = { key, p: h('p', { class: 'req-file-failed req-file-ask-failed', role: 'alert' }) };
     if (n.askFailed.p.textContent !== said) n.askFailed.p.textContent = said;

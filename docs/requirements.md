@@ -115,8 +115,8 @@ version cannot be stored, the file says "Worca could not store the new version. 
 the run until it is replaced. When New feature cannot store one of its files, the feature is still created and its page
 names the file: "<name> was not added: Worca could not store it. Add it on the feature page."
 
-**What it costs.** A read costs about as much as a look at the code (each file says what its reads cost), and counts
-toward your spending limit. When the limit is reached, a new file waits as **Not read yet**, at no cost, and is read
+**What it costs.** A read costs a few cents (about $0.05–0.20; each file says what its reads cost) and counts toward
+your spending limit. When the limit is reached, a new file waits as **Not read yet**, at no cost, and is read
 at the next round once the limit allows, or when you press **Read again**. Worca reads at most two files at a time;
 the others wait as **Reading…**.
 

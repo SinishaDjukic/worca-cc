@@ -10504,6 +10504,8 @@ a.req-run-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
   .req-files .req-ico::after{content:"";position:absolute;inset:-8px}
   .req-files .link-btn::after,.req-files .req-file-name::after{content:"";position:absolute;inset:-13px -4px}
   .req-file{gap:22px}
+  .req-file-history summary{position:relative}
+  .req-file-history summary::after{content:"";position:absolute;inset:-13px -4px}
   .req-file-failed .btn{display:flex;margin:10px 0 0}
 }
 /* Board 20: at phone width the pencil is in each file's ⋯ menu. */
@@ -10560,7 +10562,7 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-fpick:hover:not(:disabled):not(.on){border-style:solid;background:var(--hover)}
 .req-fpick.on{border:1px solid var(--green-ink-strong);background:var(--panel);color:var(--green-ink-strong)}
 .req-fpick.on .req-fpick-name{color:var(--ink)}
-.req-fpick:focus-visible{outline:2px solid var(--blue-ink-strong);outline-offset:2px}
+.req-fpick:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-fpick:disabled{cursor:not-allowed}
 .req-fpick:disabled:not(.bad){opacity:.6}
 .req-fpick.bad > svg{color:var(--amber-ink-strong)}

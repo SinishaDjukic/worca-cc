@@ -1520,3 +1520,37 @@ test("board 16: a feature file keeps its own lines (the run, the next round, the
   assert.equal(host.querySelector('.req-files .req-file-unsendable').textContent,
     'b.pdf cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.');
 });
+
+// ── the Replace dialog's description, a failure without a reason, the history's phone target, the chips' focus ring ──
+
+test('Replace: the dialog is described by its lead (the new file, its kind, size, cost and the switch line); the id is the only one', async () => {
+  const { host } = await openFeature(feature());
+  pick(host.querySelector('[data-menu="file-ratt_00000000000a"] input[type="file"]'), [mkFile('b.md', '# b')]);
+  const dlg = document.querySelector('.req-dialog');
+  assert.equal(dlg.getAttribute('aria-describedby'), 'req-dlg-desc');
+  assert.equal(document.querySelectorAll('#req-dlg-desc').length, 1);
+  assert.equal(document.getElementById('req-dlg-desc'), dlg.querySelector('.req-replace-lead'));
+  assert.match(text(document.getElementById('req-dlg-desc')), /^New file: b\.md · Text · .+\. Worca reads it again \(about .+\); “Send with the run” stays (on|off)\.$/);
+  dlg.querySelector('.req-dlg-btns .btn').click();
+});
+
+test('a failed read or ask without a code or a message says so in one sentence, never "it could not be read"', async () => {
+  const { host } = await openFeature(feature({ attachments: [
+    att({ id: 'ratt_00000000000b', name: 'n.pdf', status: 'failed', summary: '', error: { code: 'FAILED' } }),
+    att({ id: 'ratt_00000000000c', name: 'q.pdf', error: { job: 'ask', question: 'Refunds?', at: 't1' } }),
+  ] }));
+  const row = (id) => host.querySelector(`.req-file[data-file="${id}"]`);
+  assert.equal(row('ratt_00000000000b').querySelector('.req-file-failed-text').textContent,
+    'Worca could not read this file. The interview lists it by name only.');
+  assert.equal(row('ratt_00000000000c').querySelector('.req-file-ask-failed').textContent, 'Worca could not answer “Refunds?”.');
+  assert.doesNotMatch(host.textContent, /it could not be read/);
+});
+
+test('style.css: "Earlier text" has a 44 px target at phone width; the Ready chips focus with the design system ring', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  assertInRequirementsBlock(['.req-file-history summary::after', '.req-fpick:focus-visible']);
+  const phone = css.match(/@media \(max-width:600px\)\{\s*\.req-file-top\{flex-wrap:wrap\}[^]*?\n\}/)[0];
+  assert.match(phone, /\.req-file-history summary\{position:relative\}/);
+  assert.match(phone, /\.req-file-history summary::after\{content:"";position:absolute;inset:-13px -4px\}/, 'a 12px line: 18 + 2 × 13');
+  assert.match(css, /\.req-fpick:focus-visible\{outline:2px solid var\(--ink\);outline-offset:2px\}/);
+});
