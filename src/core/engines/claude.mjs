@@ -696,9 +696,10 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
       cleanup: () => {
         if (modelRoute) {
           // Calls no `result` frame covered (a spawn stopped mid-turn, or one whose sandbox printed none): worca saw
-          // them at its relay, so they are booked all the same.
-          const rest = execEnv.closeModelRoute(modelRoute.id);
-          if (rest?.messages) safeEmit(onEvent, { type: 'relayCost', messages: rest.messages, byModel: rest.byModel });
+          // them at its relay, so they are booked all the same, also those still running when the spawn ended.
+          const book = (t) => safeEmit(onEvent, { type: 'relayCost', messages: t.messages, byModel: t.byModel });
+          const rest = execEnv.closeModelRoute(modelRoute.id, book);
+          if (rest?.messages) book(rest);
         }
         if (bridgeKey) bridgeEvents.off('failure', onBridgeFailure);
         cleanupStaged();

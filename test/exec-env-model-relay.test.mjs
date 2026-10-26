@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { createFakeE2b } from '../src/core/exec-env/e2b-fake.mjs';
 import { e2bClient } from '../src/core/exec-env/backends/e2b.mjs';
 import { ModelRelay, createByteScrubber, createByteBudget, MAX_LINE } from '../src/core/exec-env/model-relay.mjs';
+import { createRouteMeter } from '../src/core/exec-env/relay-usage.mjs';
 import { MAX_REQUEST_BYTES } from '../src/broker/service.mjs';
 import { REMOVED } from '../src/broker/scrub.mjs';
 
@@ -287,26 +288,58 @@ test('the relay command runs with no command deadline (timeoutMs 0)', POSIX, asy
   assert.equal(runs[0].timeoutMs, 0); assert.equal(runs[0].background, true); assert.equal(runs[0].stdin, true);
 });
 
-test('a client hang-up mid-stream closes the upstream call and frees its slot', POSIX, async (t) => {
-  let closed = 0; let hold = true;
+const SSE = (type, o) => `event: ${type}\ndata: ${JSON.stringify({ type, ...o })}\n\n`;
+const START = SSE('message_start', { message: { id: 'm1', type: 'message', model: 'claude-opus-5', usage: { input_tokens: 100, output_tokens: 1 } } });
+const TAIL = SSE('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 32000 } }) + SSE('message_stop', {});
+
+test('a client hang-up mid-stream (audit 2.3): the upstream is read to its end and metered; the slot frees after it', POSIX, async (t) => {
+  let closedEarly = 0; let finishAll; const finished = new Promise((r) => { finishAll = r; });
   const up = await stubUpstream(t, (req, res) => {
-    if (!hold) { res.writeHead(200); res.end('{}'); return; }
-    res.on('close', () => { if (!res.writableEnded) closed++; });
-    res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write('data: first\n\n');   // then silence
+    res.on('close', () => { if (!res.writableEnded) closedEarly++; });
+    res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write(START);
+    finished.then(() => res.end(TAIL));             // the usage comes last, after the hang-up
   });
   const { relay } = await startRelay(t);
-  const { baseUrl } = relay.addRoute(route(up.url));
+  const meter = createRouteMeter();
+  const { baseUrl } = relay.addRoute(route(up.url, { meter: meter.reply }));
   const calls = Array.from({ length: 16 }, () => new AbortController());
   await Promise.all(calls.map(async (ac) => {
     const r = await post(`${baseUrl}/v1/messages`, { signal: ac.signal });
     const reader = r.body.getReader(); await reader.read();   // the first event arrived: mid-stream
     ac.abort();
   }));
-  for (let i = 0; closed < 16 && i < 500; i++) await pause(10);
-  assert.equal(closed, 16, 'every upstream call was closed');
-  hold = false;
+  await pause(200);
+  assert.equal(closedEarly, 0, 'no upstream call was cut');
+  const busy = await relayError(await post(`${baseUrl}/v1/messages`), 429);
+  assert.match(busy.error.message, /more than 16 calls/, 'a call the sandbox hung up on keeps its slot until it ends');
+  finishAll();
+  const took = { messages: 0, out: 0 };
+  for (let i = 0; took.messages < 16 && i < 500; i++) { await pause(10); const g = meter.take(); took.messages += g.messages; took.out += g.byModel['claude-opus-5']?.output_tokens || 0; }
+  assert.equal(took.messages, 16);
+  assert.equal(took.out, 16 * 32000, 'every reply booked with the output the upstream reported at its end');
+  assert.equal(closedEarly, 0);
   const next = await Promise.all(Array.from({ length: 16 }, () => post(`${baseUrl}/v1/messages`)));
-  assert.deepEqual(next.map((r) => r.status), Array(16).fill(200), 'all 16 slots are free again');
+  assert.equal(next.filter((r) => r.status === 200).length, 16, 'all 16 slots are free again');
+});
+
+test('removeRoute resolves once the route\'s calls in flight have ended, with their usage metered (audit 2.4)', POSIX, async (t) => {
+  let finish; const finished = new Promise((r) => { finish = r; });
+  const up = await stubUpstream(t, (req, res) => { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write(START); finished.then(() => res.end(TAIL)); });
+  const { relay } = await startRelay(t);
+  const meter = createRouteMeter();
+  const { id, baseUrl } = relay.addRoute(route(up.url, { meter: meter.reply }));
+  const r = await post(`${baseUrl}/v1/messages`);
+  await r.body.getReader().read();
+  let settled = false;
+  const done = relay.removeRoute(id).then(() => { settled = true; });
+  await relayError(await post(`${baseUrl}/v1/messages`), 403);   // no new call reaches a removed route
+  await pause(100);
+  assert.equal(settled, false, 'the call is still running');
+  assert.equal(meter.take().messages, 0);
+  finish();
+  await done;
+  assert.equal(meter.take().byModel['claude-opus-5'].output_tokens, 32000);
+  await relay.removeRoute('no-such-route');
 });
 
 test('an upstream silent past the idle timeout → 504', POSIX, async (t) => {
@@ -488,19 +521,49 @@ test('while more than sendHighWater chars wait to be written, the relay stops re
   await relay.stop();
 });
 
-test('a call waiting for the queue to drain ends when the relay stops: its upstream read is cancelled', async () => {
-  let cancelled = false;
-  const body = new ReadableStream({ pull(c) { c.enqueue(Buffer.alloc(500, 0x61)); }, cancel() { cancelled = true; } }, { highWaterMark: 0 });
-  const fetchImpl = async () => new Response(body, { status: 200, headers: { 'content-type': 'text/plain' } });
-  const { relay, req, hold } = await fakeRelay({ fetchImpl, sendHighWater: 3000 });
-  const { id } = relay.addRoute(route('http://upstream.invalid'));
+/** An SSE reply: message_start, `n` 500-byte content events read one at a time, then the usage. */
+const longReply = (n) => {
+  let pulled = 0;
+  const filler = SSE('content_block_delta', { delta: { type: 'text_delta', text: 'a'.repeat(450) } });
+  const body = new ReadableStream({ pull(c) {
+    if (pulled === 0) c.enqueue(Buffer.from(START)); else if (pulled <= n) c.enqueue(Buffer.from(filler)); else if (pulled === n + 1) c.enqueue(Buffer.from(TAIL)); else { c.close(); return; }
+    pulled++;
+  } }, { highWaterMark: 0 });
+  return { fetchImpl: async () => new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }), read: () => pulled };
+};
+
+test('a sandbox that stops taking frames is a hang-up after clientDrainMs: the upstream is read on and metered (audit 2.3)', async () => {
+  const up = longReply(100);
+  const { relay, req, hold, release } = await fakeRelay({ fetchImpl: up.fetchImpl, sendHighWater: 3000, clientDrainMs: 150 });
+  const meter = createRouteMeter();
+  const { id } = relay.addRoute(route('http://upstream.invalid', { meter: meter.reply }));
   hold();                                          // the sandbox never drains the queue
   req(1, id);
-  await pause(100);
-  assert.equal(cancelled, false);
+  await pause(60);
+  assert.ok(up.read() < 20, `it waits for the sandbox first (read ${up.read()})`);
+  for (let i = 0; up.read() < 102 && i < 400; i++) await pause(5);
+  assert.equal(up.read(), 102, 'then reads the whole reply');
+  let got = null;
+  for (let i = 0; !got && i < 200; i++) { await pause(5); const g = meter.take(); if (g.messages) got = g; }
+  assert.equal(got?.byModel['claude-opus-5']?.output_tokens, 32000);
+  release();
   await relay.stop();
-  for (let i = 0; !cancelled && i < 200; i++) await pause(5);
-  assert.equal(cancelled, true, 'the waiting call let go of its upstream');
+});
+
+test('a relay that exits or is stopped mid-reply leaves the upstream read to its end and metered (audit 2.3)', async () => {
+  for (const end of ['drop', 'stop']) {
+    const up = longReply(20);
+    const { relay, req, hold } = await fakeRelay({ fetchImpl: up.fetchImpl, sendHighWater: 3000 });
+    const meter = createRouteMeter();
+    const { id } = relay.addRoute(route('http://upstream.invalid', { meter: meter.reply }));
+    hold();
+    req(1, id);
+    await pause(60);
+    if (end === 'drop') await relay._lose(); else await relay.stop();
+    let got = null;
+    for (let i = 0; !got && i < 400; i++) { await pause(5); const g = meter.take(); if (g.messages) got = g; }
+    assert.equal(got?.byModel['claude-opus-5']?.output_tokens, 32000, end);
+  }
 });
 
 test('a write to the relay that fails stops it and reports the drop; the call gets nothing more', async () => {
@@ -657,7 +720,7 @@ test('over the per-relay byte budget → 429 worca-relay, nothing forwarded; roo
   await relay.stop();
 });
 
-test('over the process-wide byte budget → 529 worca-relay across relays; it frees on end and on stop', async () => {
+test('over the process-wide byte budget → 529 worca-relay across relays; it frees when its calls end, also those stop() left running', async () => {
   const budget = createByteBudget(1000);
   const up = heldUpstream();
   const one = await fakeRelay({ fetchImpl: up.fetchImpl, budget });
@@ -680,8 +743,11 @@ test('over the process-wide byte budget → 529 worca-relay across relays; it fr
   await waitFor(() => up.calls.length === 1);
   assert.equal(budget.used, 600);
   await two.relay.stop();
+  await pause(50);
+  assert.equal(budget.used, 600, 'a call stop() left running keeps its bytes until it ends');
+  up.finish();
   await waitFor(() => budget.used === 0);
-  assert.equal(budget.used, 0, 'a call ended by stop() gives its bytes back');
+  assert.equal(budget.used, 0, 'and gives them back then');
   await one.relay.stop();
 });
 

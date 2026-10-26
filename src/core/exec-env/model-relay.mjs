@@ -6,7 +6,7 @@
 // route's credential.
 import { randomBytes } from 'node:crypto';
 import { shq } from './shell.mjs';
-import { upstreamRequestHeaders, agentResponseHeaders, MAX_REQUEST_BYTES, UPSTREAM_IDLE_MS } from '../../broker/service.mjs';
+import { upstreamRequestHeaders, agentResponseHeaders, MAX_REQUEST_BYTES, UPSTREAM_IDLE_MS, CLIENT_DRAIN_MS } from '../../broker/service.mjs';
 import { scrubText, REMOVED } from '../../broker/scrub.mjs';
 
 const READY_TIMEOUT_MS = 15_000;
@@ -103,17 +103,20 @@ function refusalBody(protocol, { status, type, message }) {
 export class ModelRelay {
   /** `onDrop()`: a ready relay ended without stop() (it exited, its command stream dropped, a write to it failed or it
    *  sent a frame too long): the env restarts it at once, so a running step's model calls do not hang (remote-env.mjs).
-   *  `maxInflightBytes`: this relay's budget of request bodies held at once; `budget`: the one all relays share. */
+   *  `maxInflightBytes`: this relay's budget of request bodies held at once; `budget`: the one all relays share.
+   *  `clientDrainMs`: how long a reply may wait for the sandbox to take its frames before the call counts as hung up. */
   constructor({ log = () => {}, fetchImpl = globalThis.fetch, maxConcurrentPerRoute = 16, upstreamIdleMs = UPSTREAM_IDLE_MS, onDrop = null,
-    sendBatch = SEND_BATCH, sendHighWater = SEND_HIGH_WATER, maxInflightBytes = MAX_INFLIGHT_BYTES, budget = TOTAL_BUDGET } = {}) {
+    sendBatch = SEND_BATCH, sendHighWater = SEND_HIGH_WATER, maxInflightBytes = MAX_INFLIGHT_BYTES, budget = TOTAL_BUDGET,
+    clientDrainMs = CLIENT_DRAIN_MS } = {}) {
     this.log = log; this.fetchImpl = fetchImpl; this.maxConcurrent = maxConcurrentPerRoute; this.idleMs = upstreamIdleMs; this.onDrop = onDrop;
+    this.clientDrainMs = clientDrainMs;
     this.sendBatch = sendBatch; this.sendHighWater = sendHighWater;
     this.maxBytes = maxInflightBytes; this.budget = budget; this._bytes = 0;   // body bytes of this relay's calls in flight
-    this.routes = new Map();     // route id -> { route, active }; kept when the relay restarts
+    this.routes = new Map();     // route id -> { route, active, idle }; kept when the relay restarts
     // Every credential any route of this relay attaches, also of routes since removed or rotated away: a reply on one
     // route is scrubbed of all of them, so an upstream echoing another route's key never brings it into the sandbox.
     this.secrets = new Set();
-    this.inflight = new Map();   // frame id -> { abort(why) } for the current relay process
+    this.inflight = new Map();   // frame id -> { detach() } for the current relay process
     // _buf: the pieces of the stdout line not yet complete, _bufLen chars in all.
     this.handle = null; this.port = null; this._alive = false; this._stopped = false; this._buf = []; this._bufLen = 0; this._gen = 0;
     // Reply frames of the current relay process, written in order, one sendStdin at a time (_pump).
@@ -163,21 +166,28 @@ export class ModelRelay {
   addRoute(route) {
     if (!this._usable) throw new Error('the model relay is not running');
     const id = randomBytes(32).toString('base64url');
-    this.routes.set(id, { route, active: 0 });
+    this.routes.set(id, { route, active: 0, idle: [] });
     for (const s of route.secrets || []) this.secrets.add(s);
     return { id, baseUrl: this.baseUrlFor(id) };
   }
 
-  removeRoute(id) { this.routes.delete(id); }
+  /** Take route `id` out: no new call reaches it. Resolves once the calls it still has in flight have ended (each one's
+   *  usage is in its meter by then), at once when it has none. */
+  removeRoute(id) {
+    const entry = this.routes.get(id);
+    this.routes.delete(id);
+    return entry?.active ? new Promise((r) => entry.idle.push(r)) : Promise.resolve();
+  }
 
-  /** End the relay and every route. */
+  /** End the relay and every route. Calls still running keep reading their upstream until it ends (see _request). */
   async stop() { this.routes.clear(); this.secrets.clear(); this._stopped = true; await this._kill(); }
 
-  /** Forget the current relay process and fail its in-flight requests; routes stay for a restart. */
+  /** Forget the current relay process; routes stay for a restart. Its in-flight calls lose their client: they stop
+   *  forwarding and read on (a sandbox that ends its relay mid-reply must not end the metering with it). */
   _drop() {
     const h = this.handle;
     this._alive = false; this.handle = null; this._buf = []; this._bufLen = 0; this._gen++;
-    for (const r of this.inflight.values()) r.abort('stopped');
+    for (const r of this.inflight.values()) r.detach();
     this.inflight.clear();
     this._queue = []; this._queued = 0; this._writing = false;
     for (const w of this._waiters.splice(0)) w();   // they see the new generation: false
@@ -218,7 +228,7 @@ export class ModelRelay {
       // The relay numbers requests itself, so a reused id means it misbehaves: the call in flight keeps the id.
       if (!this._dupLogged) { this._dupLogged = true; this.log('warn', 'model relay: ignored a request frame whose id is already in flight'); }
     } else if (f?.t === 'req' && this._alive) this._request(f).catch((err) => this.log('warn', `model relay: ${err?.message || err}`));
-    else if (f?.t === 'close') this.inflight.get(f.id)?.abort('closed');
+    else if (f?.t === 'close') this.inflight.get(f.id)?.detach();
   }
 
   /** Queue one frame; false when its relay process is gone. `gen`: the relay process the request came from. After a
@@ -298,17 +308,32 @@ export class ModelRelay {
     if (this._bytes + size > this.maxBytes) return this._refuse(f, where, relayError(429, 'rate_limit_error', `more than ${mib(this.maxBytes)} MiB of request bodies in flight from this sandbox`), proto);
     if (this.budget.used + size > this.budget.limit) return this._refuse(f, where, relayError(529, 'overloaded_error', `worca is relaying more than ${mib(this.budget.limit)} MiB of request bodies at once`), proto);
     const body = Buffer.from(b64, 'base64');
-    // One controller per call: a client hang-up ('close' frame), stop(), a relay exit or upstream silence ends it.
+    // Only upstream silence ends a call early. A client that goes (a 'close' frame, a relay exit or stop(), a sandbox
+    // that stops taking frames) detaches it: nothing more is forwarded, and the upstream is read to its end, so the
+    // meter books what the provider bills. Its usage comes last in a stream (Anthropic's message_delta), so an
+    // aborted reply would book next to nothing (as the broker does, V7). A detached call keeps its slot until then.
     const ac = new AbortController();
-    const call = { why: null, abort: (why) => { if (!call.why) call.why = why; ac.abort(); } };
+    const call = { why: null, gone: false, abort: (why) => { if (!call.why) call.why = why; ac.abort(); }, detach: () => { call.gone = true; } };
     const idle = setTimeout(() => call.abort('idle'), this.idleMs); idle.unref?.();
     call.touch = () => idle.refresh();
     entry.active++; this.inflight.set(f.id, call); this._bytes += size; this.budget.used += size;
     try { await this._forward(f, entry.route, headers, rest, pathname, body, where, ac.signal, call); }
     finally {
-      clearTimeout(idle); ac.abort(); if (this.inflight.get(f.id) === call) this.inflight.delete(f.id); entry.active--;
+      clearTimeout(idle); ac.abort(); if (this.inflight.get(f.id) === call) this.inflight.delete(f.id);
       this._bytes -= size; this.budget.used -= size;
+      if (--entry.active === 0) for (const r of entry.idle.splice(0)) r();
     }
+  }
+
+  /** Forward one reply frame of `call`, unless its client is gone. A relay gone, or a sandbox that has not taken the
+   *  queued frames within clientDrainMs, detaches the call; it never waits longer than that. */
+  async _pass(f, call, frame) {
+    if (call.gone) return;
+    let timer;
+    const stalled = new Promise((r) => { timer = setTimeout(() => r(false), this.clientDrainMs); timer.unref?.(); });
+    const ok = await Promise.race([this._send(frame, f.gen), stalled]);
+    clearTimeout(timer);
+    if (!ok) call.detach();
   }
 
   async _forward(f, route, headers, rest, pathname, body, where, signal, call) {
@@ -335,7 +360,7 @@ export class ModelRelay {
     try { r = await this.fetchImpl(url, { method: f.method, headers: out, body: body.length && !NO_BODY.has(f.method) ? body : undefined, redirect: 'manual', signal }); }
     catch {
       if (call.why === 'idle') return stalled();
-      if (call.why) return;   // the caller hung up or the relay stopped: nobody to answer
+      if (call.why) return;
       return this._refuse(f, where, relayError(502, 'api_error', 'the model endpoint could not be reached'), proto);
     }
     call.touch();
@@ -357,24 +382,28 @@ export class ModelRelay {
       this.log('info', `model relay: ${where} → ${r.status}`);
       return this._reply(f, r.status, { ...rh, 'content-length': String(text.length) }, text);
     }
-    if (!await this._send({ t: 'head', id: f.id, status: r.status, headers: rh }, f.gen)) return;
-    const scrub = createByteScrubber(secrets);
-    // The route's meter (relay-usage.mjs): worca's own count of what the reply used, never the sandbox's.
+    // The route's meter (relay-usage.mjs): worca's own count of what the reply used, never the sandbox's. It is fed
+    // every upstream byte, also after the client is gone.
     const meter = route.meter?.(pathname) || null;
     try {
-      for await (const c of r.body || []) {
-        call.touch();
-        meter?.push(c);
-        const b = scrub.push(c);
-        if (b.length && !await this._send({ t: 'data', id: f.id, b64: b.toString('base64') }, f.gen)) return;
+      await this._pass(f, call, { t: 'head', id: f.id, status: r.status, headers: rh });
+      const scrub = createByteScrubber(secrets);
+      try {
+        for await (const c of r.body || []) {
+          call.touch();
+          meter?.push(c);
+          if (call.gone) continue;
+          const b = scrub.push(c);
+          if (b.length) await this._pass(f, call, { t: 'data', id: f.id, b64: b.toString('base64') });
+        }
+      } catch {
+        this.log('warn', `model relay: ${where} → ${r.status}, the reply ${call.why === 'idle' ? 'stalled' : 'broke off'}`);
+        await this._pass(f, call, { t: 'end', id: f.id, error: true });
+        return;
       }
-    } catch {
-      if (call.why !== 'closed' && call.why !== 'stopped') this.log('warn', `model relay: ${where} → ${r.status}, the reply ${call.why === 'idle' ? 'stalled' : 'broke off'}`);
-      await this._send({ t: 'end', id: f.id, error: true }, f.gen);
-      return;
+      const tail = scrub.flush();
+      if (tail.length) await this._pass(f, call, { t: 'data', id: f.id, b64: tail.toString('base64') });
+      await this._pass(f, call, { t: 'end', id: f.id });
     } finally { meter?.end(); }
-    const tail = scrub.flush();
-    if (tail.length && !await this._send({ t: 'data', id: f.id, b64: tail.toString('base64') }, f.gen)) return;
-    await this._send({ t: 'end', id: f.id }, f.gen);
   }
 }
