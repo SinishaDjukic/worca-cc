@@ -828,6 +828,19 @@ fieldset.source legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--
 .confirm-modal .btn-danger{background:var(--red-ink-strong);color:var(--panel);}
 .confirm-modal .btn-danger:hover:not(:disabled){background-color:var(--danger-solid-hover);color:var(--panel);}
 @media (pointer:coarse){.btn{min-height:40px;}.btn-icon{min-width:40px;}}
+/* The one copy button (copy-button.mjs, design-system.md › Copy button): for 1200 ms the copy glyph turns into a green
+   tick and a green "Copied" (.copied), or an × and the reason in red (.copy-miss: a failed write, nothing to copy).
+   An icon square widens to hold its caption. Feature classes set layout only. */
+.copy-btn .ico-check,.copy-btn .ico-x{display:none;}
+.copy-btn:is(.copied,.copy-miss) .ico-copy{display:none;}
+.copy-btn.copied .ico-check{display:inline-flex;color:var(--green-ink);}
+.copy-btn.copy-miss .ico-x{display:inline-flex;color:var(--red-ink-strong);}
+.copy-btn[hidden]{display:none;}
+.copy-btn-text{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.copy-btn-msg{display:none;flex:none;font:500 var(--fs-meta) var(--sans);}
+.copy-btn.copied .copy-btn-msg{display:inline;color:var(--green-ink);}
+.copy-btn.copy-miss .copy-btn-msg{display:inline;color:var(--red-ink-strong);}
+.copy-btn.btn-icon:is(.copied,.copy-miss){width:auto;padding:0 8px;}
 /* An icon from ui/public/icons.mjs (icon()): the span is sized inline, its svg fills it. */
 .ic{display:inline-flex;flex:none;align-items:center;justify-content:center;}
 .ic svg{display:block;}
@@ -3847,10 +3860,6 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .mv-cp-wait .mv-cp-status{min-width:0;overflow-wrap:anywhere;}
 .mv-cp-status.err{color:var(--red);}
 .mv-cp-signin-box .mv-cp-cancel{flex:none;}
-/* Copy code swaps its copy icon for a green tick once copied (the branch copy buttons' pattern). */
-.mv-cp-copy .ico-check{display:none;}
-.mv-cp-copy.copied .ico-copy{display:none;}
-.mv-cp-copy.copied .ico-check{display:inline;color:var(--green-ink);}
 .mv-needs-signin{display:inline-flex;align-items:center;gap:6px;}
 .mv-degradation{display:block;margin:4px 0 0;}
 .mv-conn{display:grid;gap:12px;}
@@ -4035,13 +4044,6 @@ button.tl-tile[aria-pressed="true"]{border-color:var(--ink);}
 .hd-branch-copy{display:flex;min-width:0;font-family:var(--mono);}
 .hd-branch-copy[hidden]{display:none;}
 .hd-branch-name{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.hd-branch-copy .ico-check{display:none;}
-.hd-branch-copy.copied .ico-copy{display:none;}
-.hd-branch-copy.copied .ico-check{display:inline;color:var(--green-ink);}
-/* the design's green "Copied" caption, driven off copyBranchToClipboard's own
-   1200ms .copied window — no extra JS */
-.hd-copied{display:none;font:500 var(--fs-meta) var(--sans);color:var(--green-ink);}
-.hd-branch-copy.copied + .hd-copied{display:inline;}
 .hd-spacer{flex:1 1 24px;}
 /* Same trap as the fallback issue link in the report modal: the author `display`
    above beats the UA's `[hidden]{display:none}`, and this button ships hidden. */
@@ -4989,11 +4991,6 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-branch-copy{display:flex;min-width:16ch;font-family:var(--mono);}
 .rd-branch-copy[hidden]{display:none;}
 .rd-branch-name{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.rd-branch-copy .ico-check{display:none;}
-.rd-branch-copy.copied .ico-copy{display:none;}
-.rd-branch-copy.copied .ico-check{display:inline;color:var(--green-ink);}
-.rd-copied{display:none;font:500 var(--fs-meta) var(--sans);color:var(--green-ink);}
-.rd-branch-copy.copied + .rd-copied{display:inline;}
 .rd-spacer{flex:1 1 24px;}
 /* Pause/Resume and Stop. The saved run's bar (.hd-resume, .hd-pause, .hd-stop) wears the same
    rules: its Resume and Pause are two buttons where this page toggles one. */
@@ -5176,10 +5173,6 @@ button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-
 .rd-route-name{min-width:0;font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .rd-route-place .rd-fact-tx.is-strong{font-weight:600;}
 .rd-route-copy{flex:none;margin-block:-4px;}   /* the 28px button keeps the 20px line, so the name centres on its circle */
-/* The copied tick, as .hd-branch-copy / .rd-branch-copy do it (copyBranchToClipboard toggles .copied). */
-.rd-route-copy .ico-check{display:none;}
-.rd-route-copy.copied .ico-copy{display:none;}
-.rd-route-copy.copied .ico-check{display:inline;color:var(--green-ink);}
 .rd-route-second{font-size:var(--fs-meta);color:var(--ink-2);min-width:0;overflow-wrap:anywhere;}   /* --ink-3 is 2.8:1 in light */
 .rd-route-second > .is-line{display:block;}
 .rd-route-fold{display:flex;align-items:center;gap:12px;margin:0;min-width:0;font-size:var(--fs-body);color:var(--ink);}
@@ -6608,9 +6601,6 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd-tk-flag{color:var(--ink-2);}
 .ask-cmd-tk-str{color:var(--hd-syntax-string);}
 .ask-cmd-cmd > .ask-cmd-copy{position:absolute;top:5px;right:5px;}
-.ask-cmd-copy .ico-check{display:none;}
-.ask-cmd-copy.copied .ico-copy{display:none;}
-.ask-cmd-copy.copied .ico-check{display:inline;color:var(--green-ink);}
 .ask-cmd-ctx{display:flex;align-items:center;gap:8px;min-width:0;}
 .ask-cmd-dir{min-width:0;padding:1px 6px;border:1px solid var(--line);border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);
   font-family:var(--mono);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}

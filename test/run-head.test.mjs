@@ -463,7 +463,7 @@ test('route DOM: an ordered list, aria-current on the current row, the full bran
   const copy = ol.querySelector('button.rd-route-copy');
   assert.equal(copy.getAttribute('aria-label'), 'Copy branch name fix/git-sync-fetch-timeout-kills-process-group');
   copy.click();
-  assert.deepEqual(copied, [['btn btn-sm btn-quiet rd-route-copy', 'fix/git-sync-fetch-timeout-kills-process-group']]);
+  assert.deepEqual(copied, [['btn btn-sm btn-quiet copy-btn btn-icon rd-route-copy', 'fix/git-sync-fetch-timeout-kills-process-group']]);
   assert.equal(ol.querySelectorAll('button.rd-route-copy').length, 1, 'copy only on the run\'s own branch');
   const pr = ol.children[1].querySelector('a.rd-fact-link');
   assert.equal(pr.getAttribute('href'), 'https://github.com/worca/worka-cc/pull/912');
@@ -597,8 +597,9 @@ test('route CSS: 20px circles, an ellipsis on mono names, sentence-case 12px --i
   assert.match(css, /\.rd-route\[hidden\]\{display:none;\}/);
   assert.match(css, /\.rd-route-label\{font-size:var\(--fs-meta\);color:var\(--ink-2\);\}/);
   assert.match(css, /\.rd-route-second\{[^}]*overflow-wrap:anywhere;/);
-  assert.match(css, /\.rd-route-copy\.copied \.ico-copy\{display:none;\}/);
-  assert.match(css, /\.rd-route-copy\.copied \.ico-check\{display:inline;/);
+  // the copied tick is the shared copy button's (copy-button.mjs, design-system.md › Copy button)
+  assert.match(css, /\.copy-btn:is\(\.copied,\.copy-miss\) \.ico-copy\{display:none;\}/);
+  assert.match(css, /\.copy-btn\.copied \.ico-check\{display:inline-flex;color:var\(--green-ink\);\}/);
   assert.doesNotMatch(css, /\.rd-route[^{]*\{[^}]*text-transform:uppercase/);
   // Split needles, so the removed-symbol grep (Testing) finds no line in this file either.
   assert.doesNotMatch(css, new RegExp(['\\.rd-' + 'track', '\\.rd-page-' + 'branch'].join('|')), 'the tracker and the Branch chip are gone');

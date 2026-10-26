@@ -8,6 +8,7 @@
 // (mv-cp-*, mv-pv-*, mvi-*, mv-conn-*) plus data-provider / data-id.
 
 import { icon } from './icons.mjs';
+import { copyButton, copyFromButton } from './copy-button.mjs';
 import { makeSwitch } from './switch.mjs';
 import { codexReaches, runsOnText } from '../../src/shared/connections.mjs';
 import { SIGN_IN_ENGINE_NAMES } from '../../src/shared/engine-switch.mjs';
@@ -538,35 +539,12 @@ export function collectSpeechRow(rootEl) {
   return body;
 }
 
-/** The device-flow block: the code in large type, copy, the link, a live status line, cancel (§8.1). */
-export const COPY_DONE_MS = 2000;
-/** The pre-Clipboard-API copy: browsers hide navigator.clipboard on plain http away from localhost (a LAN address). */
-function copyByCommand(doc, text) {
-  const ta = doc.createElement('textarea');
-  ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
-  doc.body.append(ta); ta.select();
-  let ok = false;
-  try { ok = doc.execCommand?.('copy') === true; } catch { ok = false; }
-  ta.remove();
-  return ok;
-}
-/** Copy code: the app's copy-button pattern (copy icon, a green tick and "Copied" once done, as the branch copy
- *  buttons). It copies by itself, so the box works wherever it is mounted (Providers, the setup assistant). */
+/** Copy code: the one copy button (copy-button.mjs: the copy icon, then a green tick and "Copied"). It copies by
+ *  itself, so the box works wherever it is mounted (Providers, the setup assistant). */
 function copyCodeButton(doc, code) {
-  const b = h(doc, 'button', 'btn mv-cp-copy');
-  b.type = 'button'; b.dataset.code = code;
-  const label = h(doc, 'span', 'mv-cp-copy-label', 'Copy code');
-  b.append(icon(doc, 'copy', 14, 'ic ico-copy'), icon(doc, 'check', 14, 'ic ico-check'), label);
-  let timer = null;
-  b.addEventListener('click', async () => {
-    const win = doc.defaultView;
-    let ok = false;
-    try { await win.navigator.clipboard.writeText(code); ok = true; } catch { ok = copyByCommand(doc, code); }   // no API: plain http on another host
-    b.classList.toggle('copied', ok);
-    label.textContent = ok ? 'Copied' : 'Copy failed: select the code';
-    win.clearTimeout(timer);
-    timer = win.setTimeout(() => { b.classList.remove('copied'); label.textContent = 'Copy code'; }, COPY_DONE_MS);
-  });
+  const b = copyButton(doc, { name: 'Copy code', cls: 'mv-cp-copy' });
+  b.dataset.code = code;
+  b.addEventListener('click', () => { void copyFromButton(b, code, { empty: 'No code yet', failed: 'Copy failed: select the code' }); });
   return b;
 }
 
