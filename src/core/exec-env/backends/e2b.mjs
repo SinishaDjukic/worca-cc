@@ -105,7 +105,18 @@ export function e2bClient(sdk, conn, { mock = false } = {}) {
       if (stdin) { handle = r; drain(r); }
       return r;
     },
-    readFile: async (box, path) => Buffer.from(await box.files.read(path, { format: 'bytes', requestTimeoutMs: FILE_REQUEST_TIMEOUT_MS })),
+    // With maxBytes the file streams in and the read stops past it (E_TOO_LARGE): the sandbox decides how big it is.
+    readFile: async (box, path, { maxBytes = null } = {}) => {
+      if (maxBytes == null) return Buffer.from(await box.files.read(path, { format: 'bytes', requestTimeoutMs: FILE_REQUEST_TIMEOUT_MS }));
+      const stream = await box.files.read(path, { format: 'stream', requestTimeoutMs: FILE_REQUEST_TIMEOUT_MS });
+      const parts = []; let n = 0;
+      for await (const c of stream) {
+        n += c.length;
+        if (n > maxBytes) { try { await stream.cancel?.(); } catch { /* already closed */ } throw Object.assign(new Error(`${path} is larger than ${maxBytes} bytes`), { code: 'E_TOO_LARGE' }); }
+        parts.push(Buffer.from(c));
+      }
+      return Buffer.concat(parts, n);
+    },
     writeFile: (box, path, data) => box.files.write(path, new Blob([data]), { requestTimeoutMs: FILE_REQUEST_TIMEOUT_MS }),
     setTimeout: (box, ms) => box.setTimeout(ms),
     classifyError: (err) => (isSandboxGone(err, sdk) ? 'gone' : isSandboxUnreachable(err, sdk) ? 'unreachable' : null),

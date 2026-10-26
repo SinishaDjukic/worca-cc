@@ -4,8 +4,9 @@
 // real E2B. `onCommand(cmd, opts)` may return { lines, stderr, exitCode } to fake a
 // command (e.g. a canned `claude` stream) instead of running it, or throw to fake an SDK error.
 import { spawn } from 'node:child_process';
-import { appendFileSync, mkdirSync, rmSync } from 'node:fs';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { appendFileSync, createReadStream, mkdirSync, rmSync } from 'node:fs';
+import { readFile, writeFile, mkdir, stat } from 'node:fs/promises';
+import { Readable } from 'node:stream';
 import { delimiter, dirname, join } from 'node:path';
 
 const named = (name) => class extends Error { constructor(m, extra = {}) { super(m); this.name = name; Object.assign(this, extra); } };
@@ -50,7 +51,11 @@ export function createFakeE2b({ root, onCommand = null, logFile = null } = {}) {
       const self = this;
       this.files = {
         async write(path, data) { self._alive(); await mkdir(dirname(path), { recursive: true }); await writeFile(path, await toBytes(data)); return { path }; },
-        async read(path, { format = 'text' } = {}) { self._alive(); const b = await readFile(path); return format === 'bytes' ? new Uint8Array(b) : b.toString('utf8'); },
+        async read(path, { format = 'text' } = {}) {
+          self._alive();
+          if (format === 'stream') { await stat(path); return Readable.toWeb(createReadStream(path)); }
+          const b = await readFile(path); return format === 'bytes' ? new Uint8Array(b) : b.toString('utf8');
+        },
         async makeDir(path) { self._alive(); await mkdir(path, { recursive: true }); return true; },
       };
       this.commands = { run: (cmd, opts = {}) => self._run(cmd, opts) };
