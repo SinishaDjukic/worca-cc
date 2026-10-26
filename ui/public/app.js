@@ -212,6 +212,7 @@ import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
 import { createLibrary } from './workflows/library.mjs';
 import { createChatDock } from './workflows/chat-dock.mjs';
 import { openSaveVersionDialog, openUseVersionDialog, statusText } from './workflows/version-dialogs.mjs';
+import { renderVersionsPage } from './workflows/versions-view.mjs';
 import { mintId } from '../../src/shared/graph/template.mjs';
 // mountStaticGraph is NOT imported here: the New-Pipeline workflow picker is a
 // bare <select> with no preview host on this branch (the v1 read-only mini-graph
@@ -3473,8 +3474,9 @@ async function wfvSaveVersion({ afterSave = false } = {}) {
   const o = await wfvRefreshVersions();
   if (gvComposer.template().id !== t.id) return;            // another workflow opened meanwhile
   if (!o && wfvVersionsError && wfvVersionsError.status === 400) {
-    // The server says this row cannot have versions: save it (a copy where the composer must) first.
-    if (afterSave) { stop(); return; }
+    // The server says this row cannot have versions: save it (a copy where the composer must) first. After that save
+    // a 400 again is the server's verdict on this row, not a save left undone: its reason is the useful text.
+    if (afterSave) { notify({ tone: 'err', title: 'Save version did not start', detail: wfvVersionsError.error }); return; }
     gvComposer.openSaveDialog({ then: () => void wfvSaveVersion({ afterSave: true }) });
     return;
   }
@@ -3488,10 +3490,70 @@ async function wfvSaveVersion({ afterSave = false } = {}) {
     sinceNo: since ? since.versionNo : null, changes: since ? since.changes : [],
     onSubmit: async (body) => { const r = await gvApi.saveVersion(t.id, body); if (r.ok) await wfvRefreshVersions(); return r; } });
 }
-function wfvRenderVersionsPage() {             // Task 8 replaces this body with renderVersionsPage(…)
+/** Paint the Versions page (versions-view.mjs) from the last overview; without one, wfvVersionsError says why. */
+function wfvRenderVersionsPage() {
   const els = wfvEls();
-  if (els.versions) els.versions.textContent = statusText(wfvVersionsOverview) || 'No versions yet.';
+  if (!els.versions || !gvComposer) return;
+  const t = gvComposer.template();
+  const id = t && t.id;
+  const o = id ? wfvVersionsOverview : null;
+  // A repaint replaces the page's buttons: the focus they held goes to the same button again (its data-focus-key),
+  // else to the page, never <body>, where the canvas keys would answer.
+  const focused = document.activeElement;
+  const hadKey = focused && focused !== els.versions && els.versions.contains(focused) ? (focused.dataset.focusKey || '') : null;
+  try { wfvPaintVersions(els, id, o); } finally {
+    if (hadKey !== null && !els.versions.contains(document.activeElement)) {
+      const again = hadKey ? [...els.versions.querySelectorAll('[data-focus-key]')].find((n) => n.dataset.focusKey === hadKey) : null;
+      (again || els.versions).focus();
+    }
+  }
 }
+function wfvPaintVersions(els, id, o) {
+  renderVersionsPage(els.versions, o, {
+    saveVersion: () => void wfvSaveVersion(),
+    useVersion: (no) => {
+      if (!o) return;
+      const live = o.versions.find((v) => v.inUse);
+      const target = o.versions.find((v) => v.versionNo === no);
+      openUseVersionDialog({ doc: document, win: window, versionNo: no,
+        changes: target && live ? [`From v${live.versionNo} to v${no}`, ...target.changes] : (target ? target.changes : []),
+        onConfirm: async () => {
+          const r = await gvApi.useVersion(id, no);
+          if (r.ok) { wfvVersionsOverview = r.overview; await wfvRefreshVersions(); }
+          return r;
+        } });
+    },
+    restore: async (rev, label) => {
+      // #721: restoring the workflow open on the canvas while it has unsaved changes asks first. That one question
+      // covers the canvas too: the restored draft loads with loadTemplate, not openTemplate, whose own
+      // "Discard changes?" would ask the same thing a second time.
+      if (gvComposer.isDirty()) {
+        const ok = await confirmModal({ title: 'Restore into your draft?', confirmLabel: 'Restore',
+          message: 'Your canvas has unsaved changes. Restoring replaces them with the saved state.' });
+        if (!ok) return;
+      }
+      const r = await gvApi.restoreRevision(id, rev);
+      if (!r.ok) { notify({ tone: 'err', title: 'Not restored', detail: r.error || 'The saved state no longer fits the agents it uses.' }); return; }
+      if (gvComposer.template().id !== id) return;           // another workflow opened meanwhile: the row is restored, the canvas is not this one
+      gvComposer.loadTemplate(r.workflow);
+      wfvVersionsOverview = r.overview || wfvVersionsOverview;
+      wfvRenderVersionsPage();
+      notify({ tone: 'ok', title: `Restored ${label} into your draft` });
+    },
+    openCanvas: () => wfvShowPage('canvas'),
+  }, { doc: document, error: id && !o && wfvVersionsError ? wfvVersionsError.error : null });
+}
+// ⌘Z / ⇧⌘Z reach the canvas even from a fenced button (composer.mjs onKeyDown, before its data-canvas-keys fence).
+// While the Versions page covers the canvas, an undo there would edit a graph nobody sees: it does nothing. Capture
+// phase, so the composer's document listener sees defaultPrevented and returns. Fields keep their own undo.
+document.addEventListener('keydown', (ev) => {
+  if (!(ev.metaKey || ev.ctrlKey) || (ev.key !== 'z' && ev.key !== 'Z')) return;
+  const page = document.getElementById('wfv-versions');
+  if (!page || page.hidden) return;
+  const t = ev.target;
+  if (t && ((t.matches && t.matches('input, textarea, select')) || t.isContentEditable)) return;
+  ev.preventDefault();
+}, true);
 // The flag flips live: off leaves the Versions page (its markup hides, the canvas tools come back); on paints the line.
 onFlagChange('workflowTests', (on) => { if (!on) wfvShowPage('canvas'); void wfvRefreshVersions(); });
 
@@ -3820,6 +3882,12 @@ function wfvLibraryActions() {
       const full = await gvApi.readWorkflow(id);
       if (full && await gvComposer.openTemplate(full)) gvComposer.fit();
     },
+    openVersions: async (id) => {
+      const full = await gvApi.readWorkflow(id);
+      if (full && await gvComposer.openTemplate(full)) { gvComposer.fit(); wfvShowPage('versions'); }
+    },
+    // Plugin rows and the built-ins never have versions (D5); their ⋯ menu has no Versions….
+    versionsEnabled: (w) => flagOn('workflowTests') && !isReservedWorkflowId(w.id) && !String(w.origin || '').startsWith('plugin:'),
     deleteWorkflow: async (wf) => {
       const schedNote = await scheduleDependentsNote(`workflowId=${encodeURIComponent(wf.id)}`, 'They will fail to start until you point them at another pipeline.');
       const ok = await confirmModal({ title: 'Delete pipeline', danger: true, confirmLabel: 'Delete',

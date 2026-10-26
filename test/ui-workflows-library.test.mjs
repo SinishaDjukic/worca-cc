@@ -568,3 +568,17 @@ test('workflow row ⋯: Pin to Chat home / Unpin from Chat home calls togglePin 
   click(more);   // reopen: the label follows the state at open time
   assert.deepEqual([...s.doc.querySelectorAll('.wfv-menu-item')].map((b) => b.textContent), ['Pin to Chat home']);
 });
+
+test('workflow row ⋯: Versions… when versionsEnabled says so (it opens that workflow\'s Versions page), absent otherwise', async () => {
+  const s = await boot({}, { isPinned: () => false, versionsEnabled: (w) => w.id === 'wf_mine' });
+  s.lib.openFolder(['workflows', 'general']);
+  click(s.host.querySelector('.wfl-wf[data-id="wf_mine"] .wfl-more'));
+  const items = [...s.doc.querySelectorAll('.wfv-menu-item')];
+  assert.deepEqual(items.map((b) => b.textContent), ['Pin to Chat home', 'Versions…']);
+  click(items[1]);
+  assert.deepEqual(s.calls.at(-1), ['openVersions', 'wf_mine']);
+  const off = await boot({}, { isPinned: () => false, versionsEnabled: () => false });
+  off.lib.openFolder(['workflows', 'general']);
+  click(off.host.querySelector('.wfl-wf[data-id="wf_mine"] .wfl-more'));
+  assert.deepEqual([...off.doc.querySelectorAll('.wfv-menu-item')].map((b) => b.textContent), ['Pin to Chat home']);
+});

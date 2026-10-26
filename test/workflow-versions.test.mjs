@@ -60,6 +60,8 @@ test('status: the draft differs from the version in use, in plain words, includi
   assert.equal(s.draft.changed, true);
   assert.deepEqual(s.draft.changes, ['Planner: AI model default → sonnet', 'Planner: changed in the Library']);
   assert.deepEqual(s.draft.partsChanged, [{ kind: 'agent', key: 'planner' }]);
+  // The latest version is the one in use: Save version's comparison lists the same changes as the status.
+  assert.deepEqual(s.sinceLatest.changes, s.draft.changes);
 });
 
 test('status without versions: draft is null, and so is sinceLatest (the next save is the first version)', async () => {

@@ -1963,11 +1963,12 @@ const VERSIONS_OVERVIEW = {
     { id: 1, versionNo: 1, note: null, by: null, createdAt: '2026-10-24', inUse: true, runs: 0, changes: ['First version'] }],
   history: [],
 };
-async function bootVersions({ versions = () => Promise.resolve({ ok: true, status: 200, json: async () => VERSIONS_OVERVIEW }), workflows } = {}) {
+async function bootVersions({ versions = () => Promise.resolve({ ok: true, status: 200, json: async () => VERSIONS_OVERVIEW }), workflows, extra = null } = {}) {
   const calls = [];
   const booted = await boot({
     ...(workflows ? { workflows } : {}),
     fetchHandler: (url, init) => {
+      if (extra) { const r = extra(url, init); if (r) { calls.push({ url, method: init.method || 'GET' }); return r; } }
       if (!/\/api\/workflows\/[^/?]+\/versions(?:\/|$|\?)/.test(url)) return null;
       calls.push({ url, method: init.method || 'GET' });
       return versions(url, init);
@@ -1998,7 +1999,7 @@ test('Versions page: focusable, takes the focus and clears the canvas selection,
   doc.activeElement.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
   await tick();
   assert.equal(doc.querySelectorAll('#wfv-canvas .gv-world .node').length, nodes);
-  assert.equal(page.textContent, 'Draft · new runs use v1', 'the page is painted once the overview arrives');
+  assert.equal(page.querySelectorAll('.wfv-vt-row').length, 2, 'the page is painted once the overview arrives');
   clickEl(w, doc.querySelector('#wfv-pages [data-page="canvas"]'));
   assert.equal(page.hidden, true);
 });
@@ -2062,4 +2063,171 @@ test('source: wfvSaveVersion saves a dirty or unsaved canvas through openSaveDia
   assert.match(body, /gvComposer\.isDirty\(\)/);
   assert.ok(save < body.indexOf('openSaveVersionDialog('), 'the save comes before the version dialog');
   assert.match(body, /afterSave/, 'a save that did not leave a versionable row does not reopen the dialog forever');
+});
+
+// ------------------------------------------------- The Versions page (plans/workflow-tests-plan.md Part 1, Task 8)
+const okJson = (v, status = 200) => Promise.resolve({ ok: status < 400, status, json: async () => v });
+const ctrlZ = (w, target, shiftKey = false) => target.dispatchEvent(new w.KeyboardEvent('keydown', { key: shiftKey ? 'Z' : 'z', ctrlKey: true, shiftKey, bubbles: true, cancelable: true }));
+
+test('Versions page: ⌘Z and ⇧⌘Z never reach the hidden canvas; back on Canvas they undo again', async () => {
+  const { window: w } = await bootVersions();
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  const gv = w.__gv().c;
+  gv.select({ kind: 'node', id: 'n_end' });
+  doc.body.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+  assert.equal(gv.template().nodes.length, 1, 'an edit to undo');
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  const page = doc.getElementById('wfv-versions');
+  ctrlZ(w, page);
+  ctrlZ(w, doc.body);
+  assert.equal(gv.template().nodes.length, 1, 'no undo while the Versions page is shown');
+  ctrlZ(w, page, true);
+  assert.equal(gv.template().nodes.length, 1, 'no redo either');
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="canvas"]'));
+  ctrlZ(w, doc.body);
+  assert.equal(gv.template().nodes.length, 2, 'the canvas undoes again');
+});
+
+test('Versions page: the version table, and Use for new runs asks first, then switches', async () => {
+  const used = { ...VERSIONS_OVERVIEW, liveVersionNo: 2, versions: VERSIONS_OVERVIEW.versions.map((v) => ({ ...v, inUse: v.versionNo === 2 })) };
+  let current = VERSIONS_OVERVIEW;                              // the server's state: Use switches it
+  const { window: w, calls } = await bootVersions({ versions: () => okJson(current),
+    extra: (url, init) => (/\/versions\/2\/use$/.test(url) && init.method === 'POST' ? ((current = used), okJson(used)) : null) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  const page = doc.getElementById('wfv-versions');
+  const rows = [...page.querySelectorAll('.wfv-vt-row')];
+  assert.deepEqual(rows.map((r) => r.querySelector('.wfv-vt-no').textContent), ['v2', 'v1']);
+  assert.match(page.querySelector('.wfv-vt-draft').textContent, /Renamed since v1/);
+  clickEl(w, [...rows[0].querySelectorAll('button')].find((b) => b.textContent === 'Use for new runs'));
+  await tick(2);
+  assert.equal(doc.querySelector('#mk-dialog-title').textContent, 'Use v2 for new runs?');
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 0, 'nothing switches before the confirm');
+  clickEl(w, [...doc.querySelectorAll('#mk-dialog button')].find((b) => b.textContent === 'Use v2'));
+  await tick(6);
+  assert.equal(calls.filter((c) => c.method === 'POST' && c.url.endsWith('/versions/2/use')).length, 1);
+  const after = [...doc.querySelectorAll('#wfv-versions .wfv-vt-row')];
+  assert.match(after[0].textContent, /New runs use this/, 'the page shows the switch');
+});
+
+test('Versions page: Restore into draft on an edited canvas asks once, then loads the restored draft', async () => {
+  const restored = { ...V2_ROW, name: 'Graph one (restored)' };
+  const { window: w, calls } = await bootVersions({
+    extra: (url, init) => (/\/history\/1\/restore$/.test(url) && init.method === 'POST' ? okJson({ workflow: restored, warnings: [], overview: VERSIONS_OVERVIEW }) : null) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  const gv = w.__gv().c;
+  gv.select({ kind: 'node', id: 'n_end' });
+  doc.body.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+  assert.equal(gv.isDirty(), true);
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  const v1 = [...doc.querySelectorAll('#wfv-versions .wfv-vt-row')][1];
+  clickEl(w, [...v1.querySelectorAll('button')].find((b) => b.textContent === 'Restore into draft'));
+  await tick(2);
+  const asking = () => !doc.getElementById('confirm-modal').classList.contains('hidden');
+  assert.equal(asking(), true, 'an edited canvas asks first');
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 0);
+  doc.getElementById('confirm-ok').click();
+  await tick(6);
+  assert.equal(asking(), false, 'asked once, not again by the canvas');
+  assert.equal(calls.filter((c) => c.method === 'POST' && c.url.endsWith('/history/1/restore')).length, 1);
+  assert.equal(gv.template().name, 'Graph one (restored)');
+  assert.equal(gv.template().nodes.length, 2);
+  assert.equal(gv.isDirty(), false);
+  assert.equal(doc.getElementById('wfv-versions').hidden, false, 'the Versions page stays open');
+  assert.equal(lastToast(doc).title, 'Restored v1 into your draft');
+});
+
+test('Versions page when the versions cannot be read: it says why (the server\'s reason, or no answer)', async () => {
+  const reason = '"Graph one" cannot have versions: it comes from a plugin or is not a graph';
+  const { window: w } = await bootVersions({ versions: () => okJson({ error: reason }, 400) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  clickEl(w, w.document.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  const page = w.document.getElementById('wfv-versions');
+  assert.match(page.textContent, /Versions are not available/);
+  assert.ok(page.textContent.includes(reason));
+  assert.equal(page.querySelectorAll('.wfv-vt-row').length, 0);
+  const { window: w2 } = await bootVersions({ versions: () => Promise.reject(new Error('down')) });
+  await go(w2, 'workflows/wf_g');
+  await tick(4);
+  clickEl(w2, w2.document.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  assert.match(w2.document.getElementById('wfv-versions').textContent, /Worca did not answer/);
+});
+
+test('Save version: when the versions still answer 400 after the save, the toast gives the server\'s reason', async () => {
+  const reason = '"Graph one" cannot have versions: it comes from a plugin or is not a graph';
+  const { window: w } = await bootVersions({
+    versions: () => okJson({ error: reason }, 400),
+    extra: (url, init) => (url.split('?')[0].endsWith('/api/workflows') && init.method === 'POST' ? okJson({ workflow: V2_ROW }, 201) : null) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  clickEl(w, doc.getElementById('wfv-saveversion'));
+  await tick(4);
+  const dlg = doc.querySelector('#wfv-dialog-host dialog[open]');
+  assert.ok(dlg, 'the canvas Save dialog');
+  dlg.querySelector('.sd-confirm').click();
+  await tick(8);
+  const t = lastToast(doc);
+  assert.equal(t.title, 'Save version did not start');
+  assert.equal(t.detail, reason);
+  assert.equal(doc.querySelector('#wfv-dialog-host dialog[open]'), null, 'no Save dialog again');
+});
+
+test('Library ⋯ Versions… opens that workflow on its Versions page; not for a built-in, a plugin\'s row, or with the flag off', async () => {
+  const PLUGIN_ROW = { ...DEFAULT_ROW, id: 'wfp_demo_quick', name: 'Quick', origin: 'plugin:demo' };
+  const { window: w } = await bootVersions({ workflows: [DEFAULT_ROW, V2_ROW, PLUGIN_ROW] });
+  await go(w, 'workflows');
+  await tick(4);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('.wfl-seg .wfl-tab[data-tab="workflows"]'));
+  await tick();
+  const menuOf = (id) => {
+    const more = doc.querySelector(`.wfl-wf[data-id="${id}"] .wfl-more`);
+    assert.ok(more, `${id}: a ⋯ button`);
+    clickEl(w, more);
+    const items = [...doc.querySelectorAll('.wfv-menu-item')];
+    clickEl(w, more);                       // close it again (toggle)
+    return items;
+  };
+  for (const id of ['wf_default', 'wfp_demo_quick']) assert.equal(menuOf(id).some((b) => b.textContent === 'Versions…'), false, id);
+  clickEl(w, doc.querySelector('.wfl-wf[data-id="wf_g"] .wfl-more'));
+  const pick = [...doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent === 'Versions…');
+  assert.ok(pick, 'Versions… for a saved workflow of yours');
+  clickEl(w, pick);
+  await tick(6);
+  assert.equal(w.__gv().c.template().id, 'wf_g');
+  assert.equal(doc.getElementById('wfv-versions').hidden, false);
+  assert.equal(doc.getElementById('wfv-page-versions').getAttribute('aria-selected'), 'true');
+  doc.documentElement.dataset.flags = '';
+  assert.equal(menuOf('wf_g').some((b) => b.textContent === 'Versions…'), false, 'flag off');
+});
+
+test('Versions page: a repaint keeps the focus on the same button (never <body>)', async () => {
+  const restored = { ...V2_ROW, name: 'Graph one (restored)' };
+  const { window: w } = await bootVersions({
+    extra: (url, init) => (/\/history\/1\/restore$/.test(url) && init.method === 'POST' ? okJson({ workflow: restored, warnings: [], overview: VERSIONS_OVERVIEW }) : null) });
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="versions"]'));
+  await tick(4);
+  const b = doc.querySelector('#wfv-versions [data-focus-key="vp:restore:1"]');
+  b.focus();
+  clickEl(w, b);
+  await tick(8);
+  assert.equal(w.__gv().c.template().name, 'Graph one (restored)');
+  assert.equal(b.isConnected, false, 'the page was repainted');
+  assert.equal(doc.activeElement.dataset.focusKey, 'vp:restore:1');
 });

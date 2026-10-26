@@ -8522,6 +8522,20 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wfv-changes li{margin:2px 0;}
 .wfv-check{display:flex;align-items:center;gap:8px;font-size:13px;}
 .wfv-stage:has(> .wfv-versions:not([hidden])) > :is(.wfv-dock,.wfv-br){display:none;}
+/* The Versions page (Task 8, canvas board 7): the draft row, one row per version, then every save with Restore. */
+.wfv-vpage{max-width:1080px;margin:0 auto;display:flex;flex-direction:column;gap:20px;}
+.wfv-vt{padding:0;overflow-x:auto;}
+.wfv-vt-draft,.wfv-vt-row{display:grid;grid-template-columns:64px minmax(0,1fr) 120px auto;gap:16px;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);}
+.wfv-vt-draft{background:var(--canvas-2);}
+.wfv-vt-row:last-child{border-bottom:0;}
+.wfv-vt-no{font-family:var(--mono);font-weight:600;}
+.wfv-vt-main{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.wfv-vt-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.wfv-vt-acts{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;}
+.badge.wfv-inuse{background:var(--blue-bg);color:var(--blue-ink-strong);}
+.wfv-vh{display:flex;flex-direction:column;gap:6px;}
+.wfv-vh-row{display:grid;grid-template-columns:160px minmax(0,1fr) auto;gap:12px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);}
+@media (max-width:700px){.wfv-vt-draft,.wfv-vt-row{grid-template-columns:48px minmax(0,1fr);}.wfv-vt-used,.wfv-vt-acts{grid-column:2;justify-content:flex-start;}}
 .wfv-bar .btn:not(.btn-icon) svg{width:15px;height:15px;}
 .wfv-bar .wfv-chev{width:12px;height:12px;color:var(--ink-2);}
 .wfv-savewrap{display:inline-flex;margin-left:4px;}
