@@ -350,6 +350,8 @@ test('one wording per state: no status line has a colon form; a paused-after-res
     assert.ok(!line.includes(': '), `colon form: ${line}`);
   }
   assert.equal(runModel(R({ stepper: noStage, status: 'interrupted', steps: [row('n_x', 'start')] }), OPTS).line, 'Paused · interrupted');
+  assert.equal(runModel(R({ stepper: noStage, status: 'paused', resumePending: true, steps: [row('n_x', 'paused')] }), OPTS).line, 'Resuming',
+    'a Resume in flight reads like a pause in flight ("Pausing")');
 });
 
 test('an interrupted run offers Archive, never Stop: with Resume while it can resume, alone once it never can', () => {
