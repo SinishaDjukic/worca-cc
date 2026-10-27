@@ -83,7 +83,8 @@ export function removedCriteria(turns) {
     .map((t) => t.payload.text);
 }
 
-function threadText(turns) {
+/** The thread as a round's prompt writes it; the helper's prompt carries the same block (A3 D4). */
+export function threadText(turns) {
   const lines = [];
   let n = 0;
   const roundNo = new Map();
@@ -143,6 +144,18 @@ function threadText(turns) {
   return lines.join('\n') || '(nothing yet: this is the first round)';
 }
 
+/** The spec as a round's changing part writes it (A3 D4: the helper's prompt carries the same two blocks): <current_spec>
+ *  without the `edited` marks, then <edited_by_product_owner> naming the sections the product owner edited. */
+export function specBlocks(feature) {
+  const spec = { ...feature.spec };
+  const edited = Object.keys(spec.edited || {}).filter((k) => spec.edited[k]);
+  delete spec.edited;
+  return [
+    `<current_spec>\n${asData(JSON.stringify(spec, null, 2))}\n</current_spec>`,
+    `<edited_by_product_owner>${edited.map(asData).join(', ') || '(none)'}</edited_by_product_owner>`,
+  ];
+}
+
 /**
  * A round's user prompt in its two parts (A1.1 D7): `stable`, the same for a feature in every round, and
  * `changing`, what each round brings (led by the thread, which only grows). A7: `brief`, the rendered
@@ -151,9 +164,6 @@ function threadText(turns) {
  * A8 D8: `followUpFiles`, the names of the files added or replaced after the interview finished that this follow-up asks about.
  */
 export function roundPromptParts({ feature, context = '', turns = [], final = false, round = 1, followUp = null, brief = null, attachments = null, followUpFiles = null }) {
-  const spec = { ...feature.spec };
-  const edited = Object.keys(spec.edited || {}).filter((k) => spec.edited[k]);
-  delete spec.edited;
   // Stable for a feature across rounds (cache-friendly: first). A7's <product_brief> goes after <project_context>, only with a brief.
   // A8's <attachments> goes last, only with files.
   const stable = [
@@ -166,8 +176,7 @@ export function roundPromptParts({ feature, context = '', turns = [], final = fa
   ];
   const changing = [
     `<thread>\n${threadText(turns)}\n</thread>`,
-    `<current_spec>\n${asData(JSON.stringify(spec, null, 2))}\n</current_spec>`,
-    `<edited_by_product_owner>${edited.map(asData).join(', ') || '(none)'}</edited_by_product_owner>`,
+    ...specBlocks(feature),
     final
       ? 'This is the final round: ask no questions, set "done" to true, and turn every open question into an assumption.'
       // A follow-up round is outside the cap (A2 D4): naming its number ("round 7 of at most 6") would tell

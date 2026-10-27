@@ -63,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 77;
+export const SCHEMA_VERSION = 78;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -836,7 +836,7 @@ ${STEP_QUESTIONS_DDL}
  * against the live schema so the gap can be healed regardless of the stamp.
  */
 const INCREMENTAL_COLUMNS = {
-  req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask
+  req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13)
   req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
@@ -1368,6 +1368,27 @@ CREATE INDEX IF NOT EXISTS req_attachments_owner ON req_attachments(owner_type, 
 CREATE UNIQUE INDEX IF NOT EXISTS req_attachments_sha ON req_attachments(owner_type, owner_id, sha256);
 `;
 
+// v78 Requirements A3 (plans/requirements-a3-design.md §3, D14): the Feature chat of a feature. A product owner's message
+// row is written before its call, Worca's row (text, drafts, proposals, cost, model, or an error) after it. Reconcile-safe:
+// IF NOT EXISTS + INCREMENTAL_TABLES; req_cost_ledger.helper_message_id lives in INCREMENTAL_COLUMNS.
+const REQUIREMENTS_HELPER_DDL = `
+CREATE TABLE IF NOT EXISTS req_helper_messages (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  feature_seq    INTEGER NOT NULL,
+  role           TEXT NOT NULL,
+  text           TEXT NOT NULL DEFAULT '',
+  focus_json     TEXT,
+  round_turn_id  INTEGER,
+  drafts_json    TEXT NOT NULL DEFAULT '[]',
+  proposals_json TEXT NOT NULL DEFAULT '[]',
+  error_json     TEXT,
+  cost_usd       REAL,
+  model          TEXT,
+  created_by TEXT, created_at TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS req_helper_messages_feature ON req_helper_messages(feature_seq, id);
+`;
+
 const INCREMENTAL_TABLES = {
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
@@ -1415,6 +1436,7 @@ const INCREMENTAL_TABLES = {
   req_starts:        REQUIREMENTS_STARTS_DDL,
   req_briefs:        REQUIREMENTS_BRIEFS_DDL,
   req_attachments:   REQUIREMENTS_ATTACHMENTS_DDL,
+  req_helper_messages: REQUIREMENTS_HELPER_DDL,
 };
 
 /**
@@ -2557,6 +2579,9 @@ export function migrate(db) {
     // v77 requirements A8: req_attachments + ledger.attachment_id + starts.files_json. The repair runs again here, as at
     // v74: a DB coming from below 72 / 73 creates the ledger and the starts table after the hoisted repair.
     if (current < 77) { db.exec(REQUIREMENTS_ATTACHMENTS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
+    // v78 requirements A3: req_helper_messages + ledger.helper_message_id. The repair runs again here, as at v74 and v77: a DB
+    // coming from below 72 creates the ledger after the hoisted repair.
+    if (current < 78) { db.exec(REQUIREMENTS_HELPER_DDL); repairSchemaGaps(db, schemaGaps(db)); }
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

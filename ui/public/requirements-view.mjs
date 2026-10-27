@@ -234,13 +234,15 @@ function rowMeta(f) {
 const isWorking = (f) => !!f.busy || f.status === 'looking' || f.status === 'thinking';
 // Worca is working, or the feature is archived: nothing on the page may be changed.
 const isLocked = (f) => isWorking(f) || f.status === 'archived';
+// The goal's success measure, as the spec card shows it (and Feature chat's goal card, A3 board 24).
+const measureText = (measure) => `Measure: ${measure}`;
 
 export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   const route = deps.route || ((p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; });
   let param = '';
   let seqShown = null;
   let paintNo = 0;
-  let draft = null;          // { roundTurnId, picks: {id: option}, texts: {id: text} } — the open card's unsent answers
+  let draft = null;          // { roundTurnId, picks: {id: option}, texts: {id: text}, drafted: {id: msgId} } — the open card's unsent answers (drafted: Worca's, A3 D6)
   let revising = null;       // the earlier round being changed (its round turn id), shown as a card (D12)
   let revDraft = null;       // that card's unsent answers, as `draft`
   let editing = null;        // the section open in its editor
@@ -294,6 +296,28 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   let workflowsFailed = false;     // GET /api/workflows failed: Auto only, and the card says so
   const assumePosting = new Set(); // assumption ids whose Confirm / Reject POST is in flight
   const pickPosting = new Set();   // file ids whose Files for the run chip PATCH is in flight (board 18)
+  // A3 (boards 22–25): Feature chat. Whether the panel is open, per feature for the page session (D2); the chat as last fetched
+  // (GET …/helper, or null); the composer's unsent text, its focus cap (Help me answer), the control that opened the panel
+  // (Escape, Close and Back give the focus back to it), the last refusal and a spent budget; the drafts applied to the question
+  // card this visit ('<msgId>:<questionId>', so a repaint never applies one again, D6); the log and its message nodes, kept
+  // across paints so the live region announces only what is new (D18); the Answering… line and the log's other lines (card 7,
+  // D20's line, the spending limit), kept likewise; the newest message the log was scrolled to (a repaint without a new
+  // message leaves the reader where they are); a chat POST (or a reload) in flight, so a second press is ignored (each send is
+  // a paid call); how many times Try again reloaded a chat that could not be read (its line is announced again each time).
+  const helperOpen = new Map();
+  let helperData = null;
+  let helperUi = freshHelperUi();
+  const helperApplied = new Set();
+  const helperNodes = new Map();
+  const helperTails = new Map();
+  let helperLog = null;
+  let helperWaitEl = null;
+  let helperNewest = null;
+  let helperBusy = false;
+  let viewGen = 0;   // bumped on each visit to another feature: a reply from an earlier visit (A, B, back to A) is dropped
+  let helperGen = 0;   // who owns the helperBusy guard: show() on another feature bumps it, so a late call cannot release a guard it no longer holds
+  let helperReloads = 0;
+  function freshHelperUi() { return { text: '', focus: null, opener: null, error: null, budget: false }; }
   // Unsaved input of the feature page, kept across repaints (read from the DOM before a rebuild, put back after).
   let ui = freshUi();
   function freshUi() {
@@ -333,6 +357,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       draft = null; revising = null; revDraft = null; editing = null; current = null; ui = freshUi(); focusLater = null; readingEl = null;
       for (const map of [fileUi, fileMsgs, fileMsgList, fileNodes, refusalEls, fileWas, droppedKeys]) map.clear();
       filesLive = null;
+      helperData = null; helperUi = freshHelperUi(); helperApplied.clear(); helperNodes.clear(); helperTails.clear(); helperLog = null; helperWaitEl = null; helperNewest = null;
+      helperBusy = false; helperGen += 1; viewGen += 1;   // another feature: a chat POST still in flight for the last one never blocks this one's controls
       closeDialog(false);
     }
     seqShown = next;
@@ -402,7 +428,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       }
       if (seqShown != null) {
         const data = await api('GET', `/api/requirements/${seqShown}`);
-        if (mine === paintNo) { paintFeature(data.feature, data.turns || []); paintedKey = key; }
+        // A3: the chat too while the panel is open, or when it has messages (their drafts fill the question card, D6). A chat that
+        // cannot be read keeps the one last shown (show() empties it on another feature): never the first-open text and its
+        // starters, each a paid call, over a chat that has messages, and the drafts stay in the question card.
+        const f0 = data.feature || {};
+        const wantChat = helperOpen.get(seqShown) || (f0.helper && f0.helper.messages > 0);
+        let chatFailed = false;
+        const chatBody = wantChat ? await api('GET', `/api/requirements/${seqShown}/helper`).catch(() => { chatFailed = true; return null; }) : null;
+        if (mine === paintNo) { if (!chatFailed) takeChat(chatBody); paintFeature(data.feature, data.turns || []); paintedKey = key; }
         return;
       }
       const data = await api('GET', `/api/requirements${filter === 'archived' ? '?archived=1' : ''}`);
@@ -435,12 +468,37 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     if (crit) ui.crit = crit.value;
     const orient = host.querySelector('.req-orient');
     if (orient) ui.orientOpen = orient.open;
+    const hin = q('helper-in'); if (hin) helperUi.text = hin.value;
     return focus;
   }
 
   // Every paint goes through here: a null or false child never reaches the DOM
   // (replaceChildren would render it as the text "null").
-  const paintHost = (...kids) => host.replaceChildren(...kids.flat().filter((k) => k != null && k !== false));
+  // A3 (board 25): at 900 px and narrower Feature chat is a full-screen sheet; while it is open the page behind it (every sibling along
+  // the sheet's ancestors, up to <body>) is inert, so Tab cannot leave it. Beside the page (desktop) nothing is inert. Re-synced on
+  // every paint, so closing, Back, and a change of feature or page put the page back; a dialog stays as it is.
+  const sheetQuery = () => (typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia('(max-width:900px)') : null);
+  let sheetInert = [];
+  function syncSheetInert() {
+    for (const el of sheetInert) { el.inert = false; el.removeAttribute('inert'); }
+    sheetInert = [];
+    const sheet = host.querySelector('.req-help');
+    const mq = sheetQuery();
+    // not while the page is hidden (another view is shown): nothing outside this view may stay inert
+    if (!sheet || !mq || !mq.matches || host.closest('.hidden, [hidden]')) return;
+    for (let node = sheet; node && node !== document.body && node.parentElement; node = node.parentElement) {
+      for (const sib of node.parentElement.children) {
+        if (sib === node || sib.inert || sib.classList.contains('req-dlg-wrap')) continue;
+        // the page's live regions (the message line, the subtitle) keep announcing
+        if ((msgEl && sib.contains(msgEl)) || (subEl && sib.contains(subEl))) continue;
+        sib.inert = true; sib.setAttribute('inert', '');
+        sheetInert.push(sib);
+      }
+    }
+  }
+  const sheetMq = sheetQuery();
+  if (sheetMq && typeof sheetMq.addEventListener === 'function') sheetMq.addEventListener('change', syncSheetInert);
+  const paintHost = (...kids) => { host.replaceChildren(...kids.flat().filter((k) => k != null && k !== false)); syncSheetInert(); };
   const setFilter = (key) => { if (key === filter) return; filter = key; void paint(); };
 
   function filterTabs(all) {
@@ -1135,7 +1193,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function questionCard(f, round, { revise = false } = {}) {
     let d = revise ? revDraft : draft;
     if (!d || d.roundTurnId !== round.turnId) {
-      d = { roundTurnId: round.turnId, picks: {}, texts: {} };
+      d = { roundTurnId: round.turnId, picks: {}, texts: {}, drafted: {} };
       for (const q of round.questions) {
         const a = revise && round.given ? round.given.get(q.id) : null;
         if (a && a.answer) { if (q.options.includes(a.answer)) d.picks[q.id] = a.answer; else d.texts[q.id] = a.answer; }
@@ -1143,6 +1201,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       }
       if (revise) revDraft = d; else draft = d;
     }
+    if (!d.drafted) d.drafted = {};
+    if (!revise) applyHelperDrafts(round, d);   // A3 D6: Worca's drafts, on the pending card only
     const count = h('span', { class: 'qanswered' });
     const recount = () => {
       const n = round.questions.filter((q) => d.picks[q.id] || d.texts[q.id]).length;
@@ -1172,19 +1232,39 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           'aria-pressed': d.picks[q.id] === o && !d.texts[q.id] ? 'true' : 'false' },
           h('span', { class: 'qopt-txt', text: o }), o === q.recommended ? h('span', { class: 'qrec', text: 'Recommended' }) : null));
         const free = h('input', { class: 'qfree', type: 'text', value: d.texts[q.id] || '', placeholder: 'Or type your own answer…', 'aria-label': `Your own answer to: ${q.question}` });
+        // A3 D6: Worca's draft: the chip after the options row (the options are buttons: no button inside one), its × and its why
+        const why = !revise && d.drafted[q.id] != null ? draftWhy(d.drafted[q.id], q.id) : '';
+        const chip = revise ? null : h('div', { class: 'req-help-drafted-row', hidden: d.drafted[q.id] == null },
+          // the × is the remove icon (no glyph as an icon, ui-design-language)
+          h('span', { class: 'req-help-drafted' }, 'drafted by Worca',
+            h('button', { type: 'button', class: 'req-help-drafted-x', 'aria-label': `Clear Worca's draft for question ${i + 1}`, 'data-ui': `undraft-${round.turnId}-${i}`,
+              onclick: () => {   // back to the recommended pick, not to "nothing picked"
+                delete d.drafted[q.id];
+                delete d.texts[q.id];
+                if (q.recommended) d.picks[q.id] = q.recommended; else delete d.picks[q.id];
+                free.value = '';
+                sync();
+                (buttons[Math.max(0, q.options.indexOf(q.recommended))] || buttons[0]).focus();
+              } }, icon(ICONS.remove, { size: 12 }))),
+          why ? h('p', { class: 'hint req-help-draft-why', text: `Worca's draft: ${why}` }) : null);
         const sync = () => {
           buttons.forEach((b, k) => { const on = !d.texts[q.id] && d.picks[q.id] === q.options[k]; b.setAttribute('aria-pressed', on ? 'true' : 'false'); b.classList.toggle('sel', on); });
           free.classList.toggle('has', !!d.texts[q.id]);
+          if (chip) chip.hidden = d.drafted[q.id] == null;
           recount();
         };
-        buttons.forEach((b, k) => b.addEventListener('click', () => { d.picks[q.id] = q.options[k]; delete d.texts[q.id]; free.value = ''; sync(); }));
-        free.addEventListener('input', () => { const v = free.value.trim(); if (v) { d.texts[q.id] = v; delete d.picks[q.id]; } else delete d.texts[q.id]; sync(); });
+        // picking or typing by hand removes the mark (D6)
+        buttons.forEach((b, k) => b.addEventListener('click', () => { d.picks[q.id] = q.options[k]; delete d.texts[q.id]; delete d.drafted[q.id]; free.value = ''; sync(); }));
+        free.addEventListener('input', () => { const v = free.value.trim(); if (v) { d.texts[q.id] = v; delete d.picks[q.id]; } else delete d.texts[q.id]; delete d.drafted[q.id]; sync(); });
         queueMicrotask(sync);
+        const qtext = h('div', { class: 'qtext', id: `qtext-${round.turnId}-${i}` }, h('span', { class: 'qn', text: String(i + 1) }), q.question);
         return h('div', { class: 'qblock' },
-          h('div', { class: 'qtext' }, h('span', { class: 'qn', text: String(i + 1) }), q.question),
+          // A3 D1: Help me answer, on the pending round's questions only (not on an earlier round being changed)
+          revise ? qtext : h('div', { class: 'req-qhead' }, qtext, h('button', { type: 'button', class: 'link-btn req-help-ask', 'data-ui': `help-${round.turnId}-${i}`, 'aria-describedby': `qtext-${round.turnId}-${i}`,
+            onclick: () => helpMeAnswer(f, round, q, i) }, 'Help me answer')),
           // A8 (board 16): a question that came from a file names it before its why
           q.why || q.source ? h('div', { class: 'hint req-why' }, q.source ? h('span', { class: 'req-why-src', text: `From ${q.source}: ` }) : null, q.why || '') : null,
-          h('div', { class: 'qopts' }, ...buttons), free);
+          h('div', { class: 'qopts' }, ...buttons), chip, free);
       }),
       h('div', { class: 'qpanel-foot' }, count, ...foot));
     recount();
@@ -1229,7 +1309,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     return readingEl;
   }
 
-  function conversation(f, turns, rounds) {
+  function conversation(f, turns, rounds, moved = null) {
     const working = isWorking(f);
     const open = !isLocked(f);
     let rev = null;
@@ -1253,6 +1333,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       open && f.lastError ? h('div', { class: 'req-error form-msg err' }, f.lastError, ' ',
         h('button', { type: 'button', class: 'btn btn-sm req-retry', onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/retry`, {}); await paint(); }) }, 'Try again')) : null,
       card,
+      moved,   // A3 D2: Ready to start?, Files and Spec, while Feature chat takes the right column
       earlierRounds(f, rounds),
       f.brief ? knowsCard(f, turns) : orientationBox(f, turns));
   }
@@ -1559,7 +1640,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
             editing = null; ui.editVals = null; await paint();
           }) }, 'Save')));
     } else if (key === 'goal') {
-      body = s.goal.text ? h('div', {}, h('p', { text: s.goal.text }), s.goal.measure ? h('p', { class: 'hint', text: `Measure: ${s.goal.measure}` }) : null) : h('p', { class: 'hint', text: 'Not yet.' });
+      body = s.goal.text ? h('div', {}, h('p', { text: s.goal.text }), s.goal.measure ? h('p', { class: 'hint', text: measureText(s.goal.measure) }) : null) : h('p', { class: 'hint', text: 'Not yet.' });
     } else {
       const list = s[key] || [];
       body = list.length ? h(key === 'flow' ? 'ol' : 'ul', {}, ...list.map((t) => h('li', { text: t }))) : h('p', { class: 'hint', text: 'Not yet.' });
@@ -2400,6 +2481,453 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   // Each item has a data-ui, so a live repaint keeps the focus on it inside the open menu.
   const menuItem = (label, onclick, { disabled = false, ui: key = null, needsGit = false } = {}) => h('button', { type: 'button', role: 'menuitem', class: 'menu-item req-menu-item', 'data-ui': key, 'data-needs-git': needsGit, disabled, onclick }, label);
 
+  // ---- A3: Feature chat (boards 22, 23, 25; plans/requirements-a3-design.md §6) ----
+  const HELP_STARTERS = ['Is anything missing from this spec?', "Which criteria can't be tested?", 'What edge cases am I missing?'];
+  const HELP_FAILED = 'Worca could not answer. Try again.';
+  /** A 404 that names a chat message or a change (another tab cleared the chat) says so; any other 404 is the page's own line. */
+  const HELP_GONE = new Set(['This message is no longer in the chat.', 'This change is no longer in the chat.']);
+  const helpErr = (err) => (err && err.status === 404 && err.data && HELP_GONE.has(err.data.error) ? err.data.error : errText(err));
+  /** The section a proposal changes, in the spec card's words (SECTIONS), plus the criteria and the assumptions. */
+  const helpLabel = (p) => (p.target === 'criterion' ? 'Acceptance criteria' : p.target === 'assumption' ? 'Assumptions' : sectionTitle(p.target));
+  /** D13: "$L–H" from the last helper calls (one value when they agree); "$0.05" before any. */
+  function helpRange(est) {
+    if (!est || typeof est.low !== 'number' || typeof est.high !== 'number') return '$0.05';
+    const lo = est.low.toFixed(2);
+    const hi = est.high.toFixed(2);
+    return lo === hi ? `$${lo}` : `$${lo}–${hi}`;
+  }
+  const helpChat = (f) => helperData || { messages: [], answering: !!(f.helper && f.helper.answering), estimate: null };
+  /** A chat read from the server. A reply that started, or rows that are new since the last one, mean the cause of a spent
+   *  budget or a refusal is gone: their lines go (§6). */
+  function takeChat(body) {
+    const lastId = (d) => { const rows = (d && d.messages) || []; return rows.length ? rows.at(-1).id : null; };
+    if (body && ((body.answering && !(helperData && helperData.answering)) || lastId(body) !== lastId(helperData))) {
+      helperUi.budget = false;
+      helperUi.error = null;
+    }
+    helperData = body;
+  }
+  /** A refused chat POST: a spent budget says so in the chat, one way for every control (§6); anything else under the composer. */
+  function helpRefused(err) {
+    if (err && err.data && err.data.code === 'BUDGET') helperUi.budget = true;
+    else helperUi.error = helpErr(err);
+  }
+  /** The composer's text, in the state and on screen (capture() reads the screen before every repaint). */
+  function setComposer(value) {
+    helperUi.text = value;
+    const el = host.querySelector('[data-ui="helper-in"]');
+    if (el) el.value = value;
+  }
+  /** The cap above a product owner's message (D1, D10): its question, or the proposal it asks again about. */
+  function helpCap(m) {
+    const fo = m.focus;
+    if (!fo) return null;
+    if (fo.questionId) return `Help me answer · question ${fo.n}`;
+    if (fo.askAgain) {
+      const src = ((helperData && helperData.messages) || []).find((x) => x.id === fo.askAgain.msgId);
+      const p = src && (src.proposals || []).find((x) => x.n === fo.askAgain.n);
+      return p ? `Ask again · ${helpLabel(p)}` : 'Ask again';
+    }
+    return null;
+  }
+  function openHelper(f, opener) {
+    helperOpen.set(f.seq, true);
+    helperUi.opener = opener;
+    helperUi.error = null;
+    focusNext = f.status === 'archived' ? 'helper-more' : 'helper-in';
+    redraw();
+    void paint();   // the chat and its estimate
+  }
+  function closeHelper(f, to = null) {
+    helperOpen.set(f.seq, false);
+    focusNext = to || helperUi.opener || 'helper-toggle';
+    helperUi.opener = null;
+    redraw();
+  }
+  function toggleHelper(f) {
+    if (helperOpen.get(f.seq)) { closeHelper(f, 'helper-toggle'); return; }
+    helperUi.focus = null;   // D1: the header toggle is for general talk; no Help me answer cap is carried over
+    openHelper(f, 'helper-toggle');
+  }
+  /** D1: Help me answer opens the panel with the question in focus: the composer holds its text and the cap; it never sends. */
+  function helpMeAnswer(f, round, q, i) {
+    helperOpen.set(f.seq, true);
+    helperUi.focus = { roundTurnId: round.turnId, questionId: q.id, n: i + 1 };
+    setComposer(q.question);
+    helperUi.opener = `help-${round.turnId}-${i}`;
+    helperUi.error = null;
+    helperUi.budget = false;
+    focusNext = 'helper-in';
+    redraw();
+    void paint();
+  }
+  /** D6: the drafts of the newest reply whose round is this pending one fill the card, each once per visit (a cleared or
+   *  hand-changed draft stays so until the page is loaded again). */
+  function applyHelperDrafts(round, d) {
+    const msgs = (helperData && helperData.messages) || [];
+    const m = [...msgs].reverse().find((x) => x.role === 'worca' && x.roundTurnId === round.turnId && (x.drafts || []).some((y) => !y.dropped));
+    if (!m) return;
+    for (const dr of m.drafts) {
+      const k = `${m.id}:${dr.question}`;
+      const q = round.questions.find((x) => x.id === dr.question);
+      if (dr.dropped || !q || helperApplied.has(k)) continue;
+      helperApplied.add(k);
+      if (typeof dr.option === 'string' && q.options.includes(dr.option)) { d.picks[q.id] = dr.option; delete d.texts[q.id]; }
+      else if (typeof dr.text === 'string' && dr.text) { d.texts[q.id] = dr.text; delete d.picks[q.id]; }
+      else continue;
+      d.drafted[q.id] = m.id;
+    }
+  }
+  const draftWhy = (msgId, qid) => {
+    const m = ((helperData && helperData.messages) || []).find((x) => x.id === msgId);
+    const dr = m && (m.drafts || []).find((x) => x.question === qid);
+    return dr && dr.why ? dr.why : '';
+  };
+
+  // Board 24: a proposed change as a card. The head names the section (and the id or the change for criteria and assumptions);
+  // a decided card says "Change"; "Why" only while it waits for a decision.
+  const proposalSuffix = (p) => (p.target === 'criterion' ? (p.change === 'add' ? ' · add' : p.change === 'remove' ? ` · remove ${p.id}` : ` · ${p.id}`)
+    : p.target === 'assumption' ? ` · ${p.change} ${p.id}` : '');
+  /** The rows: Before / After (a section, a reworded criterion; a list section shows only its changed lines, D8), New (an add: its
+   *  id once accepted), Remove, Confirm / Reject (an assumption's text). The old side is muted. */
+  function proposalRows(p) {
+    const row = (k, value, old = false) => [h('span', { class: 'req-help-k', text: k }), h('span', { class: old ? 'req-help-old' : null }, ...[].concat(value))];
+    if (p.target === 'goal') {
+      const b = p.before || { text: '', measure: '' };
+      const a = p.value || { text: '', measure: '' };
+      const measures = b.measure !== a.measure;
+      // a changed measure reads as the spec card shows it: its own line under the text
+      const show = (g) => (measures && g.measure ? [g.text, ' ', h('span', { class: 'hint req-help-measure', text: measureText(g.measure) })] : g.text);
+      return [...(b.text ? row('Before', show(b), true) : []), ...row('After', show(a))];
+    }
+    if (Array.isArray(p.added) || Array.isArray(p.removed)) {
+      return [...(p.removed || []).flatMap((x) => row('Before', x, true)), ...(p.added || []).flatMap((x) => row('After', x))];
+    }
+    if (p.target === 'criterion') {
+      if (p.change === 'add') return row('New', p.appliedId ? [h('code', { class: 'req-help-id', text: p.appliedId }), ' ', p.value] : p.value);
+      if (p.change === 'reword') return [...row('Before', p.before, true), ...row('After', p.value)];
+      return row('Remove', p.before, true);
+    }
+    const t = (p.before && p.before.text) || p.id;
+    return p.change === 'confirm' ? row('Confirm', t) : row('Reject', t, true);
+  }
+  /** A card's buttons and whether each is off (D10, D11, D16), or null when it has none (decided, or stale and asked again).
+   *  Reject is off only on an archived feature; Accept waits while Worca answers and while the feature is locked; Ask again (a
+   *  stale card) waits while Worca answers or works. The card draws them from this, and a kept row is patched from it
+   *  (helperRowCtl, patchProposalButtons): `disabled` changes in place, never by rebuilding the row (D18). */
+  function proposalOff(p, ctx) {
+    if (p.state !== 'proposed') return null;
+    if (p.stale) return p.askedAgain ? null : { reject: ctx.archived, other: ctx.answering || ctx.working || ctx.archived };
+    return { reject: ctx.archived, other: ctx.answering || ctx.locked };
+  }
+  /** A kept row's card buttons made what proposalOff says now (a `disabled` change is not announced; a rebuilt row would be). */
+  function patchProposalButtons(el, m, ctx) {
+    for (const p of m.proposals || []) {
+      const off = proposalOff(p, ctx);
+      if (!off) continue;
+      for (const [what, v] of [['reject', off.reject], ['accept', off.other], ['ask-again', off.other]]) {
+        const b = el.querySelector(`[data-ui="prop-${what}-${m.id}-${p.n}"]`);
+        if (b) b.disabled = !!v;
+      }
+    }
+  }
+  /** One card (D10, D18): Reject / Accept; stale: the amber alert, Reject / Ask again (only the alert once asked again); Accepted
+   *  (green check) and Rejected as role=status lines, which take the focus after Accept or Reject (Ask again: the composer, where
+   *  the new message goes; a refusal leaves the focus where it was). Its name says its state, as board 24. Nothing is decided
+   *  on an archived feature. */
+  function proposalCard(f, m, p, ctx) {
+    const label = helpLabel(p);
+    const decided = p.state === 'accepted' || p.state === 'rejected';
+    const stale = p.state === 'proposed' && !!p.stale;
+    const id = `${m.id}-${p.n}`;
+    const off = proposalOff(p, ctx);
+    const act = (what, words, primary, disabled) => h('button', { type: 'button', class: `btn btn-sm${primary ? ' btn-primary' : ''}`, 'data-ui': `prop-${what}-${id}`, disabled,
+      onclick: () => helperPost(f, 'POST', `/messages/${m.id}/proposals/${p.n}/${what}`, what === 'ask-again' ? 'helper-in' : `prop-state-${id}`, null) }, words);
+    const btns = (other) => h('div', { class: 'req-help-btns' }, act('reject', 'Reject', false, off.reject), other);
+    const stateLine = (cls, ...kids) => h('p', { class: cls, role: 'status', tabindex: '-1', 'data-ui': `prop-state-${id}` }, ...kids);
+    const what = p.id && p.change !== 'add' ? p.id : label;
+    const name = p.state === 'accepted' ? `Accepted change: ${p.appliedId || what}` : p.state === 'rejected' ? `Rejected change: ${what}`
+      : stale ? `Out-of-date change: ${what}` : `Proposed change: ${what}`;
+    let foot = null;
+    if (p.state === 'accepted') foot = stateLine('req-help-state ok', icon(ICONS.check, { size: 14, width: 2.4 }), 'Accepted · now in the spec as your edit');
+    else if (p.state === 'rejected') foot = stateLine('req-help-state', 'Rejected');
+    else if (stale) {
+      foot = [h('p', { class: 'req-help-stale', role: 'alert', text: 'The spec changed since Worca proposed this.' }),
+        off ? btns(act('ask-again', 'Ask again', false, off.other)) : null];
+    } else foot = btns(act('accept', 'Accept', true, off.other));
+    return h('div', { class: `req-help-card is-${stale ? 'stale' : p.state}`, role: 'group', 'data-proposal': id, 'aria-label': name },
+      h('p', { class: 'req-help-card-head', text: `${decided ? 'Change' : 'Proposed change'} · ${label}${proposalSuffix(p)}` }),
+      h('div', { class: 'req-help-ba' }, ...proposalRows(p)),
+      !decided && !stale ? h('p', { class: 'hint req-help-reason', text: `Why: ${p.reason}` }) : null,
+      ...[].concat(foot));
+  }
+
+  /** Send (the composer's text or a starter's): a refusal keeps the typed text and says why under the composer; a spent budget
+   *  says so in the chat instead (§6). */
+  async function sendHelper(f, text = helperUi.text, focus = helperUi.focus) {
+    if (helperBusy) return;   // a second press while the first is in flight (each send is a paid call)
+    helperBusy = true;
+    const seq = f.seq;
+    const vg = viewGen;
+    const gen = ++helperGen;
+    helperUi.error = null;
+    let late = false;
+    try {
+      const data = await api('POST', `/api/requirements/${seq}/helper/messages`, { text, ...(focus ? { focus } : {}) });
+      if (seqShown !== seq || vg !== viewGen) { late = true; return; }   // another feature is shown now: this reply is not for it
+      helperData = data;
+      helperUi.budget = false;
+      if (text === helperUi.text) { setComposer(''); helperUi.focus = null; }
+    } catch (err) {
+      if (seqShown !== seq || vg !== viewGen) { late = true; return; }
+      helpRefused(err);
+    } finally {
+      if (gen === helperGen) helperBusy = false;
+    }
+    if (late) return;
+    focusNext = 'helper-in';
+    redraw();
+  }
+  /** Stop, Try again, Clear chat, and the cards' Accept / Reject / Ask again: the server's chat comes back, then the feature is
+   *  fetched again (an accepted change is in the spec). A spent budget shows in the chat, any other refusal under the composer.
+   *  A press while another chat POST is in flight is ignored; the follow-up refetch does not hold the guard (a Stop pressed while
+   *  it runs is sent). A reply that lands after another feature was opened is dropped. `focusUi` is focused after the paint,
+   *  `refusedFocus` after a refusal (null: the focus stays where it was). */
+  async function helperPost(f, method, path, focusUi = null, refusedFocus = focusUi) {
+    if (helperBusy) return;
+    helperBusy = true;
+    const seq = f.seq;
+    const vg = viewGen;
+    const gen = ++helperGen;
+    helperUi.error = null;
+    let late = false;
+    let refused = false;
+    try {
+      const data = await api(method, `/api/requirements/${seq}/helper${path}`, method === 'DELETE' ? undefined : {});
+      if (seqShown !== seq || vg !== viewGen) { late = true; return; }
+      helperData = data;
+      helperUi.budget = false;
+    } catch (err) {
+      if (seqShown !== seq || vg !== viewGen) { late = true; return; }
+      helpRefused(err);
+      refused = true;
+    } finally {
+      if (gen === helperGen) helperBusy = false;
+    }
+    if (late) return;
+    const to = refused ? refusedFocus : focusUi;
+    if (to) focusNext = to;
+    await paint();
+  }
+  /** Try again on a chat that could not be read: the feature and its chat are fetched again. */
+  async function reloadHelper() {
+    if (helperBusy) return;
+    helperBusy = true;
+    const gen = ++helperGen;
+    helperReloads += 1;
+    focusNext = 'helper-in';
+    try { await paint(); } finally { if (gen === helperGen) helperBusy = false; }
+  }
+  function clearHelper(f) {
+    if (helperBusy || !window.confirm('Clear the chat? Changes you accepted stay in the spec.')) return;
+    void helperPost(f, 'DELETE', '', 'helper-in');
+  }
+
+  const budgetLine = (f) => h('p', { class: 'req-help-budget', role: 'alert',
+    text: `You have reached the Requirements spending limit for this ${f.resetPeriod === 'weekly' ? 'week' : 'month'}. Worca can answer again when it resets, or raise the limit in Settings › Budget.` });
+  /** A failed, stopped or refused reply (§6 Lines in the chat); `m` null: a message left without a reply (D20). Try again only on
+   *  the newest row, never while answering or on an archived feature. */
+  function helperLine(f, m, ctx) {
+    const code = m && m.error ? m.error.code : null;
+    if (code === 'BUDGET') return budgetLine(f);
+    const again = ctx.newest && !ctx.answering && !ctx.archived
+      ? h('button', { type: 'button', class: 'btn btn-sm req-help-retry', 'data-ui': 'helper-retry', disabled: ctx.working,
+        onclick: () => helperPost(f, 'POST', '/retry', 'helper-in') }, 'Try again') : null;
+    if (code === 'STOPPED') return h('p', { class: 'hint req-help-stopped' }, 'You stopped this reply.', again ? ' ' : null, again);
+    return h('p', { class: 'req-help-fail', role: 'alert' }, HELP_FAILED, again ? ' ' : null, again);
+  }
+  function helperMessage(f, m) {
+    const cap = helpCap(m);
+    return h('div', { class: 'req-help-msg-po', 'data-msg': m.id }, cap ? h('span', { class: 'req-help-cap', text: cap }) : null, m.text);
+  }
+  /** D18: a Worca row is a kept shell whose parts are each rebuilt only when their own signature changes, so the role=log live
+   *  region announces only the part that is new (an inserted node is read out in full): the text (or its §6 line), the
+   *  dropped-draft line (D6, fixed once the row is written), one part per card (board 24: its state, stale mark, Ask again and
+   *  applied id are all in the proposal) and the cost. Accept, Reject or a card going stale replaces only that card. Each
+   *  signature holds ONLY the parts of `ctx` (and of `f`) that change that part's DOM; whether a waiting card's buttons are off
+   *  is NOT in them: it is helperRowCtl, patched in place (a rebuilt card would fire a stale card's alert again and drop the
+   *  focus from its Reject). */
+  function helperParts(f, m, ctx) {
+    const code = m.error ? m.error.code : null;
+    // helperLine: the spending limit names the period; any other failed row shows Try again on the newest row only, off while a
+    // round or look runs
+    const again = !!code && code !== 'BUDGET' && ctx.newest && !ctx.answering && !ctx.archived;
+    const line = !code ? null : code === 'BUDGET' ? f.resetPeriod : [again, again && ctx.working];
+    return [
+      { k: 'text', sig: JSON.stringify([m.id, m.text, m.error, line]),
+        make: () => (m.error ? helperLine(f, m, ctx) : h('p', { class: 'req-help-text', text: m.text })) },
+      (m.drafts || []).some((x) => x.dropped) ? { k: 'dropped', sig: '',
+        make: () => h('p', { class: 'hint req-help-dropped', text: "The question you asked about has been answered, so Worca's draft for it was dropped." }) } : null,
+      ...(m.proposals || []).map((p) => ({ k: `card-${m.id}-${p.n}`, sig: JSON.stringify(p), make: () => proposalCard(f, m, p, ctx) })),
+      m.costUsd > 0 ? { k: 'cost', sig: String(m.costUsd), make: () => h('p', { class: 'hint req-help-cost', text: usd(m.costUsd) }) } : null,
+    ].filter(Boolean);
+  }
+  /** A Worca row's shell made what `parts` say: a part whose signature changed is replaced in place (`replaceWith`), the rest
+   *  keep their nodes. */
+  function patchWorcaRow(node, parts) {
+    const next = new Map();
+    for (const part of parts) {
+      let had = node.parts.get(part.k);
+      if (!had || had.sig !== part.sig) {
+        const el = part.make();
+        if (had && had.el.parentNode === node.el) had.el.replaceWith(el);
+        had = { sig: part.sig, el };
+      }
+      next.set(part.k, had);
+    }
+    node.parts = next;
+    reconcileLog(node.el, [...next.values()].map((x) => x.el));
+  }
+  /** D18: the product owner's row is rebuilt only when this key changes (the message and its cap). */
+  const helperRowKey = (m) => JSON.stringify([m, helpCap(m)]);
+  /** The second signature of a row: its waiting cards' buttons, off or on (proposalOff); "" for a row with none. */
+  const helperRowCtl = (m, ctx) => (m.role === 'worca' && (m.proposals || []).some((p) => proposalOff(p, ctx))
+    ? JSON.stringify((m.proposals || []).map((p) => proposalOff(p, ctx))) : '');
+  /** The log's message nodes; an unchanged message keeps its node across paints, and a Worca row keeps its shell and every part
+   *  that did not change (D18: a live region announces only what is new). */
+  function helperLogNodes(f, msgs, ctx) {
+    const out = [];
+    const keep = new Map();
+    msgs.forEach((m, i) => {
+      const c = { ...ctx, newest: i === msgs.length - 1 };
+      let node = helperNodes.get(m.id);
+      if (m.role === 'po') {
+        const sig = helperRowKey(m);
+        if (!node || node.sig !== sig) node = { sig, el: helperMessage(f, m) };
+      } else {
+        if (!node || !node.parts) node = { parts: new Map(), ctl: null, el: h('div', { class: 'req-help-msg-w', 'data-msg': m.id }) };
+        patchWorcaRow(node, helperParts(f, m, c));
+        const ctl = helperRowCtl(m, c);
+        if (node.ctl !== ctl) { patchProposalButtons(node.el, m, c); node.ctl = ctl; }
+      }
+      keep.set(m.id, node);
+      out.push(node.el);
+    });
+    helperNodes.clear();
+    for (const [id, node] of keep) helperNodes.set(id, node);
+    return out;
+  }
+  /** The log's other lines (card 7, D20's line, the spending limit), kept across paints while they read the same (`sig`). */
+  function helperTail(k, sig, make) {
+    const had = helperTails.get(k);
+    if (had && had.sig === sig) return had.el;
+    const el = make();
+    helperTails.set(k, { sig, el });
+    return el;
+  }
+  /** D18: the log's children made `wanted`, in order, without taking out a node that stays (a live region can announce a
+   *  re-inserted node as new): the gone ones are removed, the new ones inserted where they belong, the rest left in place. */
+  function reconcileLog(log, wanted) {
+    const keep = new Set(wanted);
+    for (const el of [...log.children]) if (!keep.has(el)) el.remove();
+    wanted.forEach((el, i) => { if (log.children[i] !== el) log.insertBefore(el, log.children[i] || null); });
+  }
+  /** Card 8, kept while Worca answers so its status is announced once. */
+  function waitingLine(f) {
+    if (!helperWaitEl) {
+      helperWaitEl = h('div', { class: 'req-help-waiting' },
+        h('p', { class: 'req-help-waiting-line', role: 'status' }, h('span', { class: 'badge blue', text: 'Answering…' }), ' Worca is answering. ',
+          h('button', { type: 'button', class: 'btn btn-sm req-help-stop', 'data-ui': 'helper-stop' }, 'Stop')),
+        h('p', { class: 'hint', text: 'Send and Accept wait while Worca answers. Stop cancels the reply; your message stays in the chat.' }));
+    }
+    helperWaitEl.querySelector('.req-help-stop').onclick = () => helperPost(f, 'POST', '/stop', 'helper-in');
+    return helperWaitEl;
+  }
+  /** Card 7: what Worca knows, and three questions that send at once (none on an archived feature). */
+  const helperEmpty = (f, ctx) => h('div', { class: 'req-help-empty' },
+    h('p', { text: 'Ask about this feature here. It knows the spec, the interview so far, the product brief, your files and what it found in the code. It can draft answers to open questions and suggest spec changes — nothing changes until you accept.' }),
+    ctx.archived ? null : h('div', { class: 'req-help-starters' }, ...HELP_STARTERS.map((q, i) => h('button', { type: 'button', class: 'btn btn-sm req-help-starter',
+      'data-ui': `helper-starter-${i}`, disabled: ctx.working, onclick: () => sendHelper(f, q, null) }, q))));
+  /** The composer (board 22): Enter sends, Shift+Enter adds a line; the count past 1,800; Send off when empty, past 2,000, while
+   *  Worca answers and while a round or look runs (D11). */
+  function helperComposer(f, data, ctx) {
+    const ta = h('textarea', { id: 'req-help-in', class: 'req-help-in', rows: '2', 'data-ui': 'helper-in' });
+    ta.value = helperUi.text;
+    const count = h('p', { class: 'hint req-help-count' });
+    const send = h('button', { type: 'button', class: 'btn btn-sm btn-primary req-help-send', 'data-ui': 'helper-send' }, 'Send');
+    const cap = helperUi.focus ? h('span', { class: 'req-help-cap', text: `Help me answer · question ${helperUi.focus.n}` }) : null;
+    const go = () => { if (!send.disabled) void sendHelper(f); };
+    const sync = () => {
+      helperUi.text = ta.value;
+      if (!ta.value.trim() && helperUi.focus) { helperUi.focus = null; if (cap) cap.remove(); }   // emptied: general talk again (D1)
+      const n = ta.value.length;
+      count.hidden = n <= 1800;
+      count.textContent = n > 1800 ? `${n.toLocaleString('en-US')} of 2,000 characters` : '';
+      const t = ta.value.trim();
+      send.disabled = !t || t.length > 2000 || ctx.answering || ctx.working;
+    };
+    ta.addEventListener('input', sync);
+    ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); go(); } });
+    send.addEventListener('click', go);
+    sync();
+    return h('form', { class: 'req-help-composer', onsubmit: (e) => { e.preventDefault(); go(); } },
+      h('label', { class: 'req-help-label', for: 'req-help-in', text: 'Ask about this feature' }),
+      helperUi.focus ? cap : null,
+      ta, count,
+      h('div', { class: 'req-help-foot' },
+        h('span', { class: 'hint req-help-costline' },
+          f.interview && f.interview.label ? h('span', { class: 'req-help-wide', text: `${f.interview.label} · ` }) : null,
+          `about ${helpRange(data.estimate)} a message`,
+          h('span', { class: 'req-help-wide', text: ' · Enter sends, Shift+Enter new line' })),
+        send),
+      helperUi.error ? h('p', { class: 'req-help-refusal', role: 'alert', text: helperUi.error }) : null);
+  }
+  /** The panel (board 22) and, at 900 px and narrower, the full-screen sheet (board 25): the same DOM, the CSS decides. */
+  function helperPanel(f) {
+    const data = helpChat(f);
+    const msgs = data.messages || [];
+    const ctx = { answering: !!data.answering, archived: f.status === 'archived', locked: isLocked(f), working: isWorking(f) };
+    if (!helperLog) helperLog = h('div', { class: 'req-help-log', role: 'log', 'aria-live': 'polite', 'aria-label': 'Feature chat messages' });
+    const lastRow = msgs.at(-1);
+    const unanswered = !ctx.answering && lastRow && lastRow.role === 'po';   // D20
+    // a chat with messages that could not be read: never card 7's text and its starters (each a paid call) over it
+    const unloaded = !helperData && !!(f.helper && f.helper.messages > 0);
+    // the tails' keys hold only the ctx their DOM reads (D18, as helperParts)
+    reconcileLog(helperLog, [
+      ...helperLogNodes(f, msgs, ctx),
+      unloaded ? helperTail('unloaded', String(helperReloads), () => h('p', { class: 'req-help-fail req-help-unloaded', role: 'alert' },
+        'Worca could not load the chat. Try again. ',
+        h('button', { type: 'button', class: 'btn btn-sm req-help-retry', 'data-ui': 'helper-reload', onclick: () => reloadHelper() }, 'Try again'))) : null,
+      !msgs.length && !ctx.answering && !unloaded
+        ? helperTail('empty', JSON.stringify([ctx.archived, ctx.working]), () => helperEmpty(f, ctx)) : null,
+      ctx.answering ? waitingLine(f) : null,
+      unanswered ? helperTail('d20', JSON.stringify([lastRow.id, ctx.archived, ctx.working]), () => helperLine(f, null, { ...ctx, newest: true })) : null,
+      helperUi.budget ? helperTail('budget', String(f.resetPeriod), () => budgetLine(f)) : null,
+    ].filter(Boolean));
+    if (!ctx.answering) helperWaitEl = null;
+    const more = menu('helper-more', h('button', { type: 'button', class: 'req-ico', 'aria-label': 'More for this chat', title: 'More for this chat', 'data-ui': 'helper-more' },
+      icon(ICONS.dots, { size: 16, fill: 'currentColor', stroke: 'none' })), [
+      menuItem('Clear chat', () => clearHelper(f), { ui: 'helper-clear', disabled: ctx.answering || ctx.archived || !msgs.length }),
+    ]);
+    return h('aside', { class: 'req-help', 'aria-label': 'Feature chat', onkeydown: (e) => {
+      // an open menu closes itself first (menu()); an input method's Escape cancels its composition, not the panel
+      if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return;
+      e.preventDefault();
+      closeHelper(f);
+    } },
+      h('div', { class: 'req-help-head' },
+        h('button', { type: 'button', class: 'req-ico req-help-back', 'aria-label': `Back to ${f.id}`, 'data-ui': 'helper-back', onclick: () => closeHelper(f) },
+          sharedIcon(document, 'chevron-left', 18)),
+        h('div', { class: 'req-help-title' }, h('h3', { text: 'Feature chat' }),
+          h('p', { class: 'hint' }, `About ${f.id}`, h('span', { class: 'req-help-wide', text: ' · uses what Worca already knows' }))),
+        more,
+        h('button', { type: 'button', class: 'req-ico req-help-close', 'aria-label': 'Close feature chat', title: 'Close feature chat', 'data-ui': 'helper-close',
+          onclick: () => closeHelper(f) }, icon(ICONS.remove, { size: 15 }))),
+      helperLog,
+      ctx.archived ? h('p', { class: 'hint req-help-archived', text: 'This feature is archived: you can read the chat, not send. Restore the feature to ask again.' })
+        : helperComposer(f, data, ctx));
+  }
+
   function header(f) {
     const save = () => act(async () => {
       try {
@@ -2431,6 +2959,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           (f.attachments || []).length ? h('span', { class: 'chip', text: plural(f.attachments.length, 'file') }) : null,   // A8 (board 16)
           f.savedPath ? h('span', { class: 'chip', text: `Saved as ${f.savedPath}` }) : null)),
       h('div', { class: 'req-head-tools' },
+        // A3 D1: Feature chat opens and closes the chat beside the spec; pressed, an ink border (never a green fill)
+        h('button', { type: 'button', class: 'btn btn-sm req-help-toggle', 'aria-pressed': helperOpen.get(f.seq) ? 'true' : 'false', 'data-ui': 'helper-toggle',
+          onclick: () => toggleHelper(f) }, 'Feature chat'),
         menu('export', h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'menu-export' }, 'Export', sharedIcon(document, 'chevron-down', 14)), [
           f.scopeType === 'project' ? menuItem('Save to specs/', save, { ui: 'mi-save' }) : null,
           menuItem('Copy Markdown', copy, { ui: 'mi-copy' }),
@@ -2459,13 +2990,16 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     seqScope.set(Number(f.seq), scopeId(f));
     const focus = capture(f);
     const rounds = roundsOf(turns);
+    // A3 D2: while Feature chat is open it takes the right column, and Ready to start?, Files and Spec move under the current card
+    // (A2's Ready panel stays first; boards 16 and 18 draw the Files card above the spec)
+    const open = !!helperOpen.get(f.seq);
+    const left = conversation(f, turns, rounds, open ? h('div', { class: 'req-moved' }) : null);
+    const right = [readyPanel(f), filesCard(f), specCard(f)];
+    if (open) left.querySelector('.req-moved').append(...right.filter(Boolean));
     paintHost(h('div', { class: 'req-page' },
       h('a', { href: '#requirements', class: 'hint req-back', onclick: (e) => { e.preventDefault(); route(''); } }, '← All features'),
       header(f),
-      h('div', { class: 'req-cols' },
-        conversation(f, turns, rounds),
-        // A2's Ready panel stays first; boards 16 and 18 draw the Files card above the spec
-        h('div', { class: 'req-right' }, readyPanel(f), filesCard(f), specCard(f)))));
+      h('div', { class: `req-cols${open ? ' with-helper' : ''}` }, left, open ? helperPanel(f) : h('div', { class: 'req-right' }, ...right))));
     if (ui.editVals && ui.editVals.key !== editing) ui.editVals = null;
     const want = focusNext || focus;
     const sel = focusNext ? null : keptSel;   // a field just opened starts fresh; the focused one keeps its caret
@@ -2487,6 +3021,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       if (!lost) focusLater = null;
       else if (el && !el.disabled) { el.focus(); focusLater = null; }
     }
+    // A3: the newest message in view, only when a new one came: a repaint (another tab's edit, a file read) never pulls the
+    // product owner back down while they read older messages; opening the panel scrolls once
+    const log = helperOpen.get(f.seq) ? host.querySelector('.req-help-log') : null;
+    const rows = log && helperData ? helperData.messages || [] : [];
+    const newest = log ? String(rows.length ? rows.at(-1).id : '') : null;
+    if (log && newest !== helperNewest) log.scrollTop = log.scrollHeight;
+    helperNewest = newest;
   }
 
   const onDocClick = (e) => {
@@ -2502,5 +3043,5 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     if (paintedKey === 'new') { if (relook) relook(); } else if (paintedKey && paintedKey.startsWith('brief/')) void paint();
   });
 
-  return { show, changed, destroy: () => { paintNo += 1; closeDialog(false); offGit(); document.removeEventListener('click', onDocClick, true); host.replaceChildren(); } };
+  return { show, changed, leave: () => syncSheetInert(), destroy: () => { paintNo += 1; closeDialog(false); offGit(); document.removeEventListener('click', onDocClick, true); if (sheetMq && typeof sheetMq.removeEventListener === 'function') sheetMq.removeEventListener('change', syncSheetInert); host.replaceChildren(); syncSheetInert(); } };
 }

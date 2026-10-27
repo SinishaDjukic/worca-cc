@@ -12,6 +12,9 @@ project's working tree, so nothing is ever committed to your repo.
 <worcaHome>/                            default ~/.worca-cc
   settings.json                         { root } only — the bootstrap that locates the DB
   worca-cc.db  (+ -wal, -shm)           ALL structured state (SQLite, WAL mode)
+                                        (the Requirements Feature chat: req_helper_messages (v78), one row per
+                                        message, kept until Clear chat; its spend is in req_cost_ledger with
+                                        helper_message_id, which Clear chat keeps)
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
   store/no-project-00000000/            runs without a project: one store, the History group "No project";
                                         a run's work/ moves into its pipeline folder as work/ when it ends

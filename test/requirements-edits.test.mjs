@@ -392,3 +392,24 @@ test("A8 D13: the product owner's edit of a criterion keeps its source", () => {
   editCriterion(f.seq, 'R-po-3', 'From the tickets, reworded');
   assert.deepEqual(getFeature(f.seq).spec.criteria[0], { id: 'R-po-3', text: 'From the tickets, reworded', edited: true, source: 'support-tickets.pdf' });
 });
+
+test('A3 D10: alsoInTx runs inside the edit with the written feature; a throw rolls the edit and its turn back', () => {
+  const f = make();
+  const seen = [];
+  const g = addCriterion(f.seq, 'c9', { by: 'po', alsoInTx: (w) => seen.push(w.spec.criteria.at(-1).id) });
+  assert.deepEqual(seen, [g.spec.criteria.at(-1).id]);
+  for (const [name, run] of [
+    ['setSection', (o) => setSection(f.seq, 'rules', ['x'], o)],
+    ['addCriterion', (o) => addCriterion(f.seq, 'c10', o)],
+    ['editCriterion', (o) => editCriterion(f.seq, 'R-po-3', 'c3 new', o)],
+    ['removeCriterion', (o) => removeCriterion(f.seq, 'R-po-3', o)],
+    ['setAssumption', (o) => setAssumption(f.seq, 'A-1', 'rejected', o)],
+  ]) {
+    const before = getFeature(f.seq);
+    const turns = listTurns(f.seq).length;
+    assert.throws(() => run({ by: 'po', alsoInTx: () => { throw new Error('mark failed'); } }), /mark failed/, name);
+    assert.deepEqual(getFeature(f.seq).spec, before.spec, `${name}: the spec is unchanged`);
+    assert.equal(getFeature(f.seq).criteriaSeq, before.criteriaSeq, `${name}: the counter is unchanged`);
+    assert.equal(listTurns(f.seq).length, turns, `${name}: no turn`);
+  }
+});
