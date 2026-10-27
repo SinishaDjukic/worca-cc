@@ -332,6 +332,7 @@ body.view-workspaces .main{display:flex;flex-direction:column;overflow:hidden;pa
    took their presses; now the centre and the page name give way. Every tier keeps it 48px tall.
    HOUSE RULE: no comment inside a rule body and no closing brace in a comment. */
 .main-col{flex:1;min-width:0;height:100vh;display:flex;flex-direction:column;}
+.main-row{flex:1;min-width:0;min-height:0;display:flex;position:relative;}
 .topnav{flex:none;height:48px;display:grid;grid-template-columns:minmax(32px,1fr) minmax(240px,440px) minmax(max-content,1fr);
   align-items:center;gap:12px;padding:0 16px 0 12px;background:var(--panel);border-bottom:1px solid var(--line);}
 .topnav-l{display:flex;align-items:center;gap:6px;min-width:0;}
@@ -1587,8 +1588,8 @@ button.af-gal-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px
 :is(.rd-questions,.chat-rc-q) .af-label{font-size:var(--fs-body);}
 :is(.rd-questions,.chat-rc-q) .af-choice{min-height:52px;gap:14px;padding:12px 16px 12px 12px;border-radius:var(--r-sm);font-size:var(--fs-body);}
 :is(.rd-questions,.chat-rc-q) .af-inp{padding:13px 16px;border-radius:var(--r-sm);font-size:var(--fs-body);}
-/* the form is the run page's one ask card (the panel around it draws nothing); inside a chat card it is not boxed
-   (review B2: the in-card override tints it) */
+/* the form is the run page's one ask card (the panel around it draws nothing); inside a chat card it is neither boxed
+   (review B2) nor tinted (Run 4 D21): it sits on the card's white, as on the Runs page */
 .rd-questions .qpanel[data-kind="form"] .af-form{padding:28px 32px;background:var(--panel);
   border:1px solid var(--line);border-radius:var(--r-card);}
 :is(.rd-questions,.chat-rc-q) .af-gal-card img{height:148px;}
@@ -5872,6 +5873,54 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 @media (max-width:760px){ body.term-open .app{margin-right:0;} .term-pane{width:100vw;} body.term-open .toasts{right:12px;}
  }
 
+/* ── Ask worca beside the page: the header toggle (#topnav-ask) and the side column (aside#ask-side, ask-side.mjs)
+   that docks the ONE Chat page beside main.main. Above 1080px it pushes the page (the toasts move with it); 761-1080px
+   it covers the main column; up to 760px it is full width under the 48px bar. The button drops its label up to 1200px
+   and beside the terminal pane, where the label would squeeze the page's title in the bar. Tokens only; the tier
+   blocks stay below the base rules. HOUSE RULE: no comment inside a rule body and no closing brace in a comment. ── */
+.topnav-ask{flex:none;white-space:nowrap;position:relative;}
+.topnav-ask[hidden]{display:none;}
+.topnav-ask[aria-expanded="true"]{background:var(--hover);color:var(--ink);}
+.topnav-ask svg{width:14px;height:14px;flex:none;color:var(--ink-2);}
+.topnav-ask-dot{position:absolute;top:6px;right:6px;width:6px;height:6px;border-radius:50%;background:var(--slate);}
+.topnav-ask-dot[hidden]{display:none;}
+.ask-side{flex:none;position:relative;display:flex;flex-direction:column;width:var(--ask-side-w,440px);min-width:0;max-width:100%;height:100%;
+  overflow:hidden;background:var(--panel);border-left:1px solid var(--line);}
+.ask-side[hidden]{display:none;}
+.ask-side-in{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;}
+.ask-side-grip{position:absolute;z-index:7;top:0;bottom:0;left:0;width:6px;cursor:col-resize;touch-action:none;}
+.ask-side-grip:is(:hover,:focus-visible)::after{content:"";position:absolute;top:0;bottom:0;left:0;width:2px;background:var(--ink);}
+.ask-side-grip:focus-visible{outline:none;}
+.ask-side.is-resizing{user-select:none;}
+body.ask-side-rail .side-toggle{display:none;}
+@keyframes askSideIn{from{width:0;}}
+@keyframes askSideInner{from{opacity:0;transform:translateX(24px);}}
+.ask-side.is-entering{animation:askSideIn .32s cubic-bezier(.2,.8,.2,1);}
+.ask-side.is-entering .ask-side-in{animation:askSideInner .24s cubic-bezier(.2,.8,.2,1) .08s both;}
+.ask-side.is-leaving{animation:askSideIn .32s cubic-bezier(.2,.8,.2,1) reverse both;}
+.ask-side.is-leaving .ask-side-in{animation:askSideInner .24s cubic-bezier(.2,.8,.2,1) reverse both;}
+@media (prefers-reduced-motion:reduce){.ask-side,.ask-side-in{animation:none !important;}}
+@media (min-width:1081px){
+  body.ask-side-open .toasts{right:calc(var(--ask-side-w,440px) + 20px);}
+  body.ask-side-open.term-open .toasts{right:calc(var(--ask-side-w,440px) + var(--term-w,460px) + 20px);}
+}
+@media (max-width:1200px){
+  .topnav-ask{min-width:32px;padding:0 8px;justify-content:center;}
+  .topnav-ask-label{display:none;}
+  .topnav-ask-dot{top:4px;right:4px;}
+}
+body.term-open .topnav-ask{min-width:32px;padding:0 8px;justify-content:center;}
+body.term-open .topnav-ask-label{display:none;}
+body.term-open .topnav-ask-dot{top:4px;right:4px;}
+@media (max-width:1080px){
+  .ask-side{position:absolute;inset:0 0 0 auto;z-index:38;width:100%;border-left:0;}
+  .ask-side-grip{display:none;}
+  body.ask-side-open .toasts{bottom:calc(var(--ask-side-dock-h,240px) + 12px + env(safe-area-inset-bottom,0px));}
+}
+@media (max-width:760px){
+  .ask-side{position:fixed;top:48px;right:0;bottom:0;left:auto;height:auto;}
+}
+
 .ask-title{font-weight:600;font-size:13px;color:var(--ink);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .ask-composer-spacer,.ask-card-actions-spacer{flex:1 1 auto;}
 .ask-scope-btn{display:inline-flex;align-items:center;gap:5px;max-width:180px;flex:none;}
@@ -5906,6 +5955,7 @@ body.term-open .toasts{right:calc(var(--term-w,460px) + 20px);}
 /* Shaper (D21): the intent chip above the person's bubble — the lead itself went to the model only. */
 .ask-user-intent{align-self:flex-end;display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:var(--r-xs);background:var(--slate-bg);color:var(--slate-ink);font:500 11px/1 var(--sans);}
 .ask-user-pills{justify-content:flex-end;margin-top:0;}
+.ask-user-where{align-self:flex-end;display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-caption);color:var(--ink-3);}
 .ask-attachment-pill{padding-right:12px;}
 .ask-attachment-thumb-link{display:inline-block;line-height:0;}
 .ask-attachment-thumb{max-width:180px;max-height:130px;border-radius:var(--r-sm);border:1px solid var(--line);display:block;}
@@ -6320,6 +6370,19 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-composer-box{width:100%;max-width:var(--ask-col-max);margin-inline:auto;padding:8px 10px;
   border:1px solid var(--line-2);border-radius:var(--r-lg);background:var(--panel);
   display:flex;flex-direction:column;gap:4px;}
+/* Ask worca beside the page: the page on screen as chips above the attachments (ask-panel.mjs paintPageChips): an icon,
+   a caption, the name, and the × that leaves it out of the next messages. */
+.ask-page-chips{display:flex;flex-wrap:wrap;gap:6px;padding:2px 4px;}
+.ask-page-chips[hidden]{display:none;}
+.ask-page-chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-width:0;height:28px;padding:0 4px 0 8px;box-sizing:border-box;
+  border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);font-size:var(--fs-meta);}
+.ask-page-chip .ic{flex:none;color:var(--ink-3);}
+.ask-page-chip-cap{flex:none;}
+.ask-page-chip-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;color:var(--ink);}
+.ask-page-chip-x{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:0;
+  border-radius:var(--r-sm);background:transparent;color:var(--ink-3);cursor:pointer;}
+.ask-page-chip-x:hover{background:var(--hover-on-field);color:var(--ink);}
+.ask-page-chip-x:focus-visible{outline:2px solid var(--ink);outline-offset:0;}
 .ask-chips{display:flex;flex-wrap:wrap;gap:6px;padding:2px 4px 4px;}
 .ask-chips[hidden]{display:none;}
 .ask-chip{display:inline-flex;align-items:center;gap:7px;padding:5px 8px 5px 9px;border:1px solid var(--line);
@@ -8895,6 +8958,46 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-page[data-view="home"] .ask-composer > .ask-pop{bottom:auto;top:calc(100% + 6px);max-height:min(420px,calc(90vh - 230px));}
 .chat-panel{flex:none;min-width:0;min-height:0;display:flex;flex-direction:column;border-left:1px solid var(--line);background:var(--panel);}
 .chat-panel[hidden]{display:none;}
+/* Ask worca beside the page: the same chat page in the side column (app.js moves it, ask-panel.mjs setHost). The Chat
+   page keeps its head, home, History column and run panel; the column shows its own head, an empty state and the
+   History column as a dropdown under its head. */
+.chat-page:not([data-host="dock"]) :is(.ask-side-thread,.ask-side-btn,.chat-history-foot,.ask-side-empty){display:none;}
+.chat-page[data-host="dock"] :is(.chat-history-toggle,.chat-head > .ask-title,.chat-head-spacer,.chat-new-plus,.chat-head-meter,.chat-home,.chat-panel){display:none;}
+.chat-page[data-host="dock"] .chat-head{height:46px;gap:2px;padding:0 8px 0 6px;}
+.chat-page[data-host="dock"] .chat-convo{container:chat-convo / inline-size;}
+.ask-side-thread{display:inline-flex;align-items:center;gap:4px;min-width:0;max-width:100%;height:32px;margin-right:auto;padding:0 8px;border:0;
+  border-radius:var(--r-sm);background:transparent;color:var(--ink);font:inherit;font-size:var(--fs-body);font-weight:600;cursor:pointer;}
+.ask-side-thread:hover,.ask-side-thread[aria-expanded="true"]{background:var(--hover);}
+.ask-side-thread:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.ask-side-thread-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ask-side-thread svg{flex:none;color:var(--ink-3);}
+.chat-page[data-host="dock"][data-view="home"] .chat-dock{display:block;}
+.chat-page[data-host="dock"][data-view="thread"] .ask-side-empty{display:none;}
+.chat-page[data-host="dock"][data-view="home"] .ask-composer > .ask-pop{top:auto;bottom:calc(var(--ask-box-top) + 6px);max-height:min(420px,calc(100vh - 240px));}
+.ask-side-empty{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:14px;
+  padding:28px 18px calc(var(--chat-dock-h,120px) + 10px);box-sizing:border-box;}
+.ask-side-empty-h{margin:0;font-size:15px;font-weight:600;color:var(--ink);}
+.ask-side-suggest{display:flex;flex-direction:column;align-items:flex-start;gap:6px;}
+.ask-side-opt{display:inline-flex;align-items:center;max-width:100%;min-height:32px;box-sizing:border-box;padding:5px 12px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);color:var(--ink);
+  font:inherit;font-size:var(--fs-body);text-align:left;cursor:pointer;}
+.ask-side-opt:hover{background:var(--hover);}
+.ask-side-opt:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.ask-side-recent{display:flex;flex-direction:column;align-items:flex-start;gap:4px;}
+.ask-side-recent[hidden]{display:none;}
+.ask-side-recent-cap{font-size:var(--fs-caption);color:var(--ink-3);}
+.ask-side-recent-list{display:flex;flex-direction:column;align-self:stretch;}
+.ask-side-recent-row{display:flex;flex-direction:column;gap:2px;width:100%;padding:6px 8px;border:0;border-radius:var(--r-sm);background:transparent;
+  color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.ask-side-recent-row:hover{background:var(--hover);}
+.ask-side-recent-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-body);}
+.ask-side-recent-meter{font-family:var(--mono);font-size:11px;color:var(--ink-3);}
+.ask-side-recent-when{font-weight:700;color:var(--ink);white-space:nowrap;}
+.ask-side-recent-topics{color:var(--ink-2);}
+.ask-side-recent-fill.is-ctx-warn{color:var(--amber-ink);}
+.ask-side-recent-fill.is-ctx-high{color:var(--red-ink);font-weight:600;}
+.chat-page[data-host="dock"] .chat-scrim:not([hidden]){display:block;position:absolute;inset:0;z-index:5;background:transparent;}
+.chat-history-foot{flex:none;display:flex;padding:6px;border-top:1px solid var(--line);}
+.chat-history-in-chat{flex:1;justify-content:flex-start;}
 /* The Chat row's unread dot (a .nav-count, so the rail parks it in the square's corner) and the logo links. */
 .nav-count.nav-dot{width:8px;height:8px;padding:0;border-radius:50%;background:var(--slate);}
 .sidebar.collapsed .nav-count.nav-dot{top:6px;right:8px;}
@@ -8932,6 +9035,12 @@ body.view-chat .toasts{bottom:calc(136px + env(safe-area-inset-bottom,0px));}
 .chat-page[data-chats="on"] .chat-new-plus{flex:none;}
 .chat-page[data-chats="on"] [data-ask-meter]{display:none;}
 @media (max-width:1099px){.chat-page[data-chats="on"] .chat-history{position:absolute;width:min(340px,86vw);}.chat-page[data-chats="on"] .runs-resize{display:none;}}
+/* Ask worca beside the page: in the side column the Chats column is a dropdown under its head (after the rules above,
+   which it ties), with no resize handle; the composer's meter stands in for the head meter the column hides. */
+.chat-page[data-host="dock"] .chat-history{position:absolute;top:46px;right:8px;bottom:auto;left:8px;z-index:6;width:auto;
+  max-height:min(520px,calc(100% - 140px));border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-pop);}
+.chat-page[data-host="dock"] .runs-resize{display:none;}
+.chat-page[data-host="dock"] [data-ask-meter]{display:flex;}
 
 /* ===== Chat P2: Action cards ===== */
 /* Receipts (act, then undo), the stop warning and the pull-request offer (ui/public/chat/action-cards.mjs), on the Ask
@@ -11232,7 +11341,7 @@ button.mk-name:focus-visible{outline:2px solid var(--ink);outline-offset:2px;bor
 .ask-card.chat-rc > :is(.ask-rc-stats,.chat-rc-q,.chat-rc-result,.chat-rc-foot){margin-top:12px;padding-top:12px;border-top:1px solid var(--line);}
 .ask-card.chat-rc .ask-rc-stats > .ask-rc-stat{padding:0;border-radius:0;background:none;}
 .ask-card.chat-rc > .chat-rc-result{padding:12px 0 0;border:0;border-top:1px solid var(--line);border-radius:0;background:none;}
-.ask-card.chat-rc > .chat-rc-q :is(.qpanel,.qblock){padding-left:0;padding-right:0;border-radius:0;background:none;}
+.ask-card.chat-rc > .chat-rc-q :is(.qpanel,.qblock,.af-form){padding-left:0;padding-right:0;border-radius:0;background:none;}
 .ask-card.chat-rc .chat-rc-art-rows{border:0;border-radius:0;}
 
 /* Smart run naming (Labs, flag smartRunNaming): the Suggested chip, the ↻ / × buttons inside the title and branch

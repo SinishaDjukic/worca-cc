@@ -771,7 +771,7 @@ function askMounts(kind) {
   return { chat: card.el.querySelector('.chat-rc-q'), runs: runs.querySelector('.rd-questions') };
 }
 
-test('chat run card CSS: one border level (review B2): the question\'s boxes are bare, not boxed (the question no tint, the form --field), the pill footer keeps its 1px amber line, the Runs page keeps its grey line, and no amber wash anywhere in the chat question', async () => {
+test('chat run card CSS: one border level (review B2): the question\'s boxes are bare, not boxed (the question and the form no tint), the pill footer keeps its 1px amber line, the Runs page keeps its grey line, and no amber wash anywhere in the chat question', async () => {
   const look = (el) => ({ bg: cascaded(el, ['background', 'background-color']), line: cascaded(el, ['border', 'border-color']) });
   await checkRows(ASK_KINDS.map((kind) => ({ name: kind, run: () => {
     const { chat, runs } = askMounts(kind);
@@ -787,7 +787,7 @@ test('chat run card CSS: one border level (review B2): the question\'s boxes are
     assert.equal(cards(chat).length, kind === 'clarify' || kind === 'form' ? 2 : 1);
     for (const el of cards(chat)) {
       const want = el.matches('.qpanel-foot') ? { bg: 'var(--panel)', line: 'var(--amber-line)' }
-        : { bg: el.matches('.af-form') ? 'var(--field)' : 'none', line: '0px' };
+        : { bg: 'none', line: '0px' };
       assert.deepEqual(look(el), want, `chat ${el.className}`);
     }
     for (const el of cards(runs)) assert.deepEqual(look(el), { bg: 'var(--panel)', line: '1px solid var(--line)' }, `Runs page ${el.className}`);

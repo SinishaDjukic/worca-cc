@@ -6,8 +6,14 @@
 export const MAX_CONTEXTS = 20;
 const LABEL_MAX = 80;
 
-/** Named pages that earn a chip; every other view (lists, `new`, detail kinds) produces none. */
+/** Named pages that earn a chip, the five list pages included (Ask worca beside the page); every other view (`new`,
+ *  `history`, the detail kinds — their run, project or workspace is the chip) produces none. */
 export const PAGE_LABELS = Object.freeze({
+  runs: 'Runs',
+  schedules: 'Schedules',
+  stats: 'Statistics',
+  projects: 'Projects',
+  workspaces: 'Workspaces',
   settings: 'Settings',
   marketplace: 'Marketplace',
   connectors: 'Connectors',
@@ -38,12 +44,16 @@ export function contextEntries(ctx, header) {
     if (pinned && c.workspaceId === h.workspace.id) e.pinned = true;
     out.push(e);
   }
+  // The project / workspace page on screen (never the scope: resolveAskContext drops it then) is a topic, never pinned.
+  if (h.pageProject && nonEmpty(h.pageProject.key)) out.push({ kind: 'project', id: h.pageProject.key, label: clip(h.pageProject.name || h.pageProject.key) });
+  if (h.pageWorkspace && nonEmpty(h.pageWorkspace.id)) out.push({ kind: 'workspace', id: h.pageWorkspace.id, label: clip(h.pageWorkspace.name || h.pageWorkspace.id) });
   // A run without a home is a live run before its pipeline id: its header id is a run-id prefix,
   // not the id a later turn resolves, so a chip for it would duplicate. The home also makes it a link.
   if (h.run && nonEmpty(h.run.id) && nonEmpty(h.run.home)) {
     out.push({ kind: 'run', id: h.run.id, label: clip(h.run.title || h.run.id), home: h.run.home });
   }
-  if (nonEmpty(h.view) && Object.hasOwn(PAGE_LABELS, h.view)) {
+  // A workspace's own page keeps view 'workspaces' (app.js): its chip is the workspace, never the list page too.
+  if (nonEmpty(h.view) && Object.hasOwn(PAGE_LABELS, h.view) && !(h.view === 'workspaces' && nonEmpty(c.pageWorkspaceId))) {
     out.push({ kind: 'page', id: h.view, label: PAGE_LABELS[h.view] });
   }
   return out;

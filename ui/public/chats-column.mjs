@@ -24,7 +24,7 @@ const MAX_PAGE = 200;
 
 export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = () => Date.now(), level = () => 'simple',
   scopeName = () => '', currentId = () => null, onOpen, onRename, onDelete, onHelp = () => {},
-  flagOn = () => false, confirm = async () => false, onChatsGone = () => {}, requestRefresh = null }) {
+  flagOn = () => false, confirm = async () => false, onChatsGone = () => {}, requestRefresh = null, onThreads = () => {} }) {
   const doc = host.ownerDocument;
   const el = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   // focusKey uses list-dom.mjs's navKey form (`row:chat:ID`, `sec:older`), as runsUi does.
@@ -88,8 +88,8 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     label: 'Resize the chats list' });
 
   // ---- data ----
-  const query = (extra = {}) => new URLSearchParams({ show: st.view.show,
-    sort: st.view.groupBy === 'date' && st.view.show === 'all' ? 'activity' : st.view.sort,
+  const sortOf = () => (st.view.groupBy === 'date' && st.view.show === 'all' ? 'activity' : st.view.sort);
+  const query = (extra = {}) => new URLSearchParams({ show: st.view.show, sort: sortOf(),
     limit: String(extra.limit || CHATS_PAGE), ...(extra.cursor ? { cursor: extra.cursor } : {}) }).toString();
   async function load({ cursor = null } = {}) {
     const gen = ++st.gen;
@@ -150,6 +150,10 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     paintCurrent();
     paintChip();
     paintBar();
+    // The chats the list holds now, in its view (ask-panel.mjs: the side column's Recent chats). `loaded`: false while
+    // "Loading chats…" (a view change); `newest`: they hold the newest chats by activity — the All view in activity order
+    // (pinned chats lead its page), or every chat the view has.
+    onThreads(st.threads, st.view, { loaded: st.loaded, newest: st.view.show === 'all' && (!st.cursor || sortOf() === 'activity') });
     // A focused row the repaint dropped (E, a bulk archive) hands its stop to the nearest row still shown.
     if (st.near.length && !rove.find([st.focusKey])) { const n = rove.find(st.near); if (n) st.focusKey = navKey(n); }
     st.near = [];

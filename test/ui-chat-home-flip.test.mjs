@@ -160,3 +160,16 @@ test('an arm recorded after the view already changed (its observer not run yet) 
   await tick(s.window);
   assert.equal(s.calls.length, 0, 'the arm belongs to "thread", not to the home → thread change');
 });
+
+test('Ask worca beside the page: arm refuses while the chat page is in the side column (no hero there)', async () => {
+  const s = setup({ view: 'thread' });
+  s.page.dataset.host = 'dock';
+  assert.equal(s.flip.arm(), false);
+  assert.equal(s.flip.armed(), null);
+  s.doc.querySelector('[data-ask-new-btn]').click();              // the capture-phase New chat arm refuses too
+  s.page.dataset.view = 'home';
+  await tick(s.window);
+  assert.equal(s.calls.length, 0, 'nothing glides in the column');
+  s.page.dataset.host = 'page';
+  assert.equal(s.flip.arm(), true, 'the Chat page glides as before');
+});
