@@ -13,6 +13,7 @@ import { normalizingOnEvent } from './engines/claude-events.mjs';
 import { resolveModelEnv, resolveModelCost, listModels, modelForEngine } from './config.mjs';
 import { utilityModelFor, scopeForRunKey } from './settings-cascade.mjs';
 import { prDescriptionModel as storedPrDescriptionModel } from './settings.mjs';
+import { roleModelFor, jobSlot } from './model-roles.mjs';
 import { AUX_EFFORT, helperEngineFor } from './model-env.mjs';
 import { pickCatalogModel } from './auto/model.mjs';
 import {
@@ -70,7 +71,7 @@ export function prDescriptionSystemPrompt(forge = 'github') {
  * @param {{setting?:string}} [o] injectable for tests
  * @returns {{model:string, source:'settings'|'default', stale:string|null}}
  */
-export function resolvePrDescriptionModel(models, { setting = storedPrDescriptionModel() } = {}) {
+export function resolvePrDescriptionModel(models, { setting = storedPrDescriptionModel() || roleModelFor('claude', 'prDescriptionModel')?.model || '' } = {}) {
   const configured = typeof setting === 'string' ? setting.trim() : '';
   const model = pickCatalogModel(models, configured);
   const source = configured && model.toLowerCase() === configured.toLowerCase() ? 'settings' : 'default';
@@ -138,7 +139,8 @@ export async function generatePrDescription(key, id, {
 
   const slot = utilityModelFor(engine, 'prDescription', scopeForRunKey(key));
   let model = modelForEngine(typeof explicitModel === 'string' ? explicitModel.trim() : '', engine) || '';
-  if (!model && !onClaude) model = slot.model || '';
+  // Model roles (D3): an unset non-Claude slot takes the quick role (Claude's comes from resolvePrDescriptionModel).
+  if (!model && !onClaude) model = slot.model || roleModelFor(engine, jobSlot(engine, 'prDescription'))?.model || '';
   if (!model && onClaude) {
     const pick = setting !== undefined ? setting : (slot.source === 'project' ? slot.model : undefined);
     const r = resolvePrDescriptionModel(await listModels(''), pick === undefined ? undefined : { setting: pick });

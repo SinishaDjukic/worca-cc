@@ -32,7 +32,7 @@ export const validateModelChange = createModelChangeValidator({
   addModel: addGlobalModel, updateModel: updateGlobalModel, updateProvider,
   providerConfig, providerReadiness, modelRefs: globalModelRefs, envHas,
   copilotModels: () => copilotModelsForImport(),
-  endpointModels: (baseUrl) => endpointModelsForImport({ baseUrl }),
+  endpointModels: (baseUrl, apiKey = '') => endpointModelsForImport({ baseUrl, apiKey }),
 });
 
 /**
@@ -97,7 +97,7 @@ export async function applyModelChange(card, io = {}) {
       return { ok: true, detail: `${c.provider} provider saved` };
     }
     case 'import_endpoint': {
-      const r = await (io.importEndpoint ?? importEndpointModels)(c.ids || [], { baseUrl: c.baseUrl || '' });
+      const r = await (io.importEndpoint ?? importEndpointModels)(c.ids || [], { baseUrl: c.baseUrl || '', ...(c.apiKey ? { apiKey: c.apiKey } : {}) });
       const bits = [];
       if (r.created?.length) bits.push(`added ${r.created.join(', ')}`);
       if (r.updated?.length) bits.push(`refreshed ${r.updated.join(', ')}`);
@@ -128,7 +128,7 @@ export function defaultModelDeps({ threadId = null } = {}) {   // eslint-disable
       providers: () => providersState(),
       test: (name) => testProviderConnection(name),
       copilotModels: () => copilotModelsForImport(),
-      endpointModels: (baseUrl) => endpointModelsForImport({ baseUrl }),
+      endpointModels: (baseUrl, apiKey = '') => endpointModelsForImport({ baseUrl, apiKey }),
       validateChange: validateModelChange,
     },
   };

@@ -369,7 +369,7 @@ network has no route out, so nothing but the proxy reaches the internet.
 
 ### With a corporate proxy
 
-With the `corporateProxy` flag on, the policy still decides first, and the hosts it allows are
+With the corporate proxy on (`networkProxy.enabled`), the policy still decides first, and the hosts it allows are
 forwarded to the corporate proxy instead of going direct (the boot line says `then forwarded to the
 corporate proxy host:port`). The saved login (`worca proxy login`) lives in `proxy-login.json` in
 the `WORCA_HOME` volume, so it survives an image upgrade. Run `worca proxy test` from the

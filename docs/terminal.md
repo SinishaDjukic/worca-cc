@@ -144,8 +144,10 @@ scope, or a member of its workspace); another project's folder is refused until 
   live output, and you can type in them. Ask never types into a terminal you opened.
   - **Ask's tab waits for you.** A command Ask starts never opens the pane, never switches its tab and
     never takes the keyboard: it shows live in the chat, and its tab is in this pane when you open it.
-    Click the folder on a command card to show its tab and type there. Moving to another page brings
-    back that page's own terminal; Ask's tab stays a tab.
+    Click the folder on a command card (Show in terminal on a summarised one) to show its tab and type
+    there. Once that shell has closed (idle close, or a Worca restart) the click says so: the control
+    turns to a disabled **Shell closed** with the reason as its tooltip, and the output stays in the
+    card. Moving to another page brings back that page's own terminal; Ask's tab stays a tab.
   - **Your commands in Ask's tab.** They never wake the chat. Your next message carries a line in its
     context listing what you ran there since then (command, exit code, block id, redacted like other
     command text, the newest 3), so "I ran the migration, continue" works, and Ask can read the output.

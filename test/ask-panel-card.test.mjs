@@ -2510,3 +2510,41 @@ test('ask-panel-card: a derived branch is marked suggested on Start only while t
   await ctx2.tick(); await ctx2.tick();
   assert.equal('featureBranchSuggested' in plain.runBodies[0], false, 'a flag-off card (no marker) keeps its body');
 });
+
+test('#958: the run proposal card\'s title field keeps the focus, value and caret across ask-done and a new ask-message row', async () => {
+  const ctx = await openWithCard(PROJECT_CARD);
+  const title = ctx.doc.querySelector('.ask-card .ask-rp-title input');
+  assert.ok(title, 'the proposal card is on screen');
+  title.focus();
+  title.value = 'Fix the login flow';
+  title.setSelectionRange(4, 9);
+  // The reply finishes: a real ask-done carries the full block list.
+  const [done] = stampFrames([{ type: 'ask-done', text: 'Here is the plan.', blocks: [{ kind: 'card', id: CARD_ID, state: 'proposed', card: PROJECT_CARD }],
+    usage: null, costUsd: 0, durationMs: 5, model: 'm', status: 'done', threadTotals: {} }], { threadId: TID, messageId: MID, seqStart: 3 });
+  ctx.panel.pushServerFrame(done);
+  ctx.flush();
+  await ctx.tick();
+  assert.equal(ctx.doc.activeElement, title, 'ask-done kept the focus');
+  assert.deepEqual([title.selectionStart, title.selectionEnd], [4, 9]);
+  assert.equal(title.value, 'Fix the login flow');
+  // A command result / scope switch lands as a new row.
+  ctx.panel.pushServerFrame({ type: 'ask-message', threadId: TID,
+    message: { id: 'askm_s0000001', threadId: TID, seq: 9, role: 'system', text: 'note', blocks: [{ kind: 'notice', text: 'note' }], status: null, createdAt: 't' } });
+  ctx.flush();
+  await ctx.tick();
+  assert.equal(ctx.doc.activeElement, title, 'a new row kept the focus');
+  assert.deepEqual([title.selectionStart, title.selectionEnd], [4, 9]);
+  ctx.panel.destroy();
+});
+
+test('#959 run proposal: shared fields (.select/.input), the branch carries its value as its tooltip, the switch field is on its own row', async () => {
+  const ctx = await openWithCard({ ...PROJECT_CARD, featureBranch: 'worca/a-very-long-feature-branch-name' });
+  const cardEl = ctx.doc.querySelector('.ask-card.ask-rp');
+  for (const s of cardEl.querySelectorAll('.ask-rp-grid select')) assert.ok(s.classList.contains('select'), s.className);
+  const feat = cardEl.querySelector('.ask-card-feature');
+  assert.ok(feat.classList.contains('input'));
+  assert.equal(feat.title, 'worca/a-very-long-feature-branch-name');
+  feat.value = 'worca/x'; feat.dispatchEvent(new ctx.window.Event('input'));
+  assert.equal(feat.title, 'worca/x', 'the tooltip follows the typed value');
+  assert.ok(cardEl.querySelector('.ask-card-same-source').closest('.ask-rp-field').querySelector(':scope > .switch-row'), 'the switch field (style.css spans it)');
+});

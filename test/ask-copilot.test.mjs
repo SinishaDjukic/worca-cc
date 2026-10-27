@@ -31,7 +31,7 @@ after(() => {
 const spawnBase = (over = {}) => ({
   thread: { id: 'ask_00000001', sessionId: null },
   turn: { prompt: 'hello', systemPrompt: 'SYS', model: 'copilot/gpt-5.4', effort: 'medium', modelEnv: { X: '1' }, images: ['/att/a.png'] },
-  limits: { maxTurns: 40, maxBudgetUsd: null },
+  limits: { maxTurns: 40, maxBudgetUsd: null }, env: {},
   mcpConfigPath: '/h/.worca-cc/tmp/ask/mcp-askm_00000001.json',
   scratchDir: '/h/.worca-cc/tmp/ask',
   memoryDir: '/h/.worca-cc/ask/memory/global',
@@ -94,21 +94,23 @@ test('a Copilot chat takes only Copilot models', async () => {
   assert.equal(chatEngine({ model: 'x', engine: 'copilot' }), 'copilot');
 });
 
-test('the prompt: worca\'s file tools, no sub-agents, no images, the Copilot CLI named', () => {
+test('the prompt: worca\'s file tools, no sub-agents, images and PDFs as model-gated blocks, the Copilot CLI named', () => {
   for (const [from] of ASK_COPILOT_REWRITES) assert.equal(ASK_SYSTEM_RULES.split(from).length, 2, `once: ${from.slice(0, 50)}`);
   const rules = copilotSystemRules();
   assert.match(rules, /the worca file tools read_file, grep and glob/);
-  assert.match(rules, /a Copilot chat cannot view them/);
+  assert.match(rules, /Copilot hands it to your model right after the result only when the model can view that kind/);
+  assert.match(rules, /tell the user this Copilot model cannot view it/);
+  assert.doesNotMatch(rules, /a Copilot chat cannot view/);
   assert.match(rules, /this chat runs on the GitHub Copilot CLI with Copilot's own sign-in/);
   assert.doesNotMatch(rules, /Codex CLI|sub-agent/);
   assert.ok(buildSystemPrompt([], { engine: 'copilot' }).startsWith(rules));
   const web = buildSystemPrompt([], { engine: 'copilot', web: { enabled: true, allowedDomains: ['a.com'] } });
   assert.match(web, /Copilot's own web tools stay off\./);
-  assert.match(buildComposerSystemPrompt([], { engine: 'copilot' }), /plus the worca file tools read_file, grep and glob.*A Copilot chat cannot view images or PDFs/s);
+  assert.match(buildComposerSystemPrompt([], { engine: 'copilot' }), /plus the worca file tools read_file, grep and glob.*which Copilot hands on only to a model that can view that kind/s);
 });
 
-test('no next-prompt suggestion on Copilot', () => {
-  assert.equal(suggestionModel('copilot', { inCatalog: () => true, ready: () => true }), null);
+test("Copilot's next-prompt suggestion runs on an included model (no premium request on a paid plan)", () => {
+  assert.equal(suggestionModel('copilot', { chatModel: 'copilot/claude-sonnet-5.5' }), 'gpt-5-mini');
 });
 
 test('the panel: Copilot\'s own section, its lock, and what it refuses before upload', () => {
@@ -116,8 +118,8 @@ test('the panel: Copilot\'s own section, its lock, and what it refuses before up
   assert.deepEqual(groups.map((g) => g.engine), ['claude', 'codex', 'copilot']);
   assert.deepEqual(pickerGroups(ROWS, { lock: 'copilot' }).map((g) => g.models.map((m) => m.id)), [['copilot/gpt-5.4', 'copilot/claude-sonnet-5.5']]);
   assert.equal(chatEngineOf([{ role: 'assistant' }], 'gone', { models: [] }, 'copilot'), 'copilot');
-  assert.equal(attachRefusal({ ext: '.png', engine: 'copilot' }), 'images and PDFs need a Claude chat');
-  assert.equal(attachRefusal({ ext: '.pdf', engine: 'copilot' }), 'images and PDFs need a Claude chat');
+  assert.equal(attachRefusal({ ext: '.png', engine: 'copilot' }), null);
+  assert.equal(attachRefusal({ ext: '.pdf', engine: 'copilot' }), null);
   assert.equal(attachRefusal({ ext: '.md', engine: 'copilot' }), null);
   assert.equal(attachRefusal({ ext: '.png', engine: 'codex' }), null);
 });
@@ -174,12 +176,12 @@ test('a Copilot turn spawns copilot locked down with the worca MCP server; the r
   assert.equal(frames.at(-1).type, 'ask-done');
 });
 
-test('a per-turn cost cap refuses a Copilot turn (it reports no cost); nothing spawns', async () => {
+test('a per-turn cost cap refuses a Copilot model worca has no price for (set one on the Models page); nothing spawns', async () => {
   const s = seed();
   const { turn, frames, calls } = makeTurn(s, {}, { askLimits: () => ({ maxTurns: 40, maxBudgetUsd: 1 }), runClaudeImpl: async (o) => reply(o) });
   await turn.run();
   assert.equal(calls.length, 0);
-  assert.match(frames.find((f) => f.type === 'ask-error').message, /A per-turn cost cap is set, and Copilot reports no cost/);
+  assert.match(frames.find((f) => f.type === 'ask-error').message, /worca has no price for copilot\/gpt-5\.4, so it cannot keep this turn under it\. Set the model's price on the Models page/);
 });
 
 test('a copilot without the lockdown flags: copilot-not-ready, a notice with the setup link, no spawn', async () => {

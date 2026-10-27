@@ -428,3 +428,16 @@ test('a pause or stop during the second attempt keeps the first attempt\'s bille
   assert.equal(err.costUsd, 0.01, 'attempt 1 was billed: _autoRound books it before the run parks');
   assert.deepEqual(err.usage, { input_tokens: 10, output_tokens: 5 });
 });
+
+test('a locked-down chat\'s classifier (askLockdown) runs on its engine through the chat lockdown: no MCP server, no repo look', async () => {
+  const QWEN = [{ id: 'qwen3-coder-plus', label: 'Qwen3 Coder Plus', efforts: [], engine: 'qwen' }];
+  const shape = { name: 'Plan and build', taskKind: 'prompt', reasoning: 'r', stages: [{ agent: 'planner' }, { agent: 'implementer' }, { agent: 'reviewer' }] };
+  const { run, calls } = fakeRun([() => ({ text: reply(shape), exitCode: 0 })]);
+  await classifyTask(base({ models: QWEN, model: 'qwen3-coder-plus', engine: 'qwen', askLockdown: true }), { run });
+  const o = calls[0];
+  assert.equal(o.engine, 'qwen');
+  assert.equal(o.askLockdown, true);
+  assert.equal(o.envScrub, true);
+  assert.equal(o.mcpConfigPath, undefined);
+  assert.deepEqual(o.tools, []);
+});

@@ -68,19 +68,19 @@ test('Cursor: step models without effort; no helper slots', async () => {
   assert.throws(() => assertStepModelsInput({ cursor: { plan: { model: 'x', effort: 'high' } } }), /^Error: stepModels\.cursor\.plan: Cursor takes no effort$/);
 });
 
-test('Goose: step models with its efforts; no helper slots; no Ask', async () => {
+test('Goose: step models with its efforts; no helper slots; Ask', async () => {
   const { assertUtilityModelsInput, assertStepModelsInput, assertAskEngineInput, assertRunEngineInput } = await import('../src/core/settings.mjs');
   assert.equal(assertRunEngineInput('goose'), 'goose');
-  assert.throws(() => assertAskEngineInput('goose'), /askEngine must be one of claude \| codex/);
+  assert.equal(assertAskEngineInput('goose'), 'goose', 'Chat runs on it, locked down (plans/ask-on-qwen-gemini-spike.md)');
   assert.throws(() => assertUtilityModelsInput({ goose: { title: { model: 'x/y' } } }), /Goose runs no helper jobs/);
   assert.deepEqual(assertStepModelsInput({ goose: { plan: { model: 'x/y', effort: 'max' } } }), { goose: { plan: { model: 'x/y', effort: 'max' } } });
   assert.throws(() => assertStepModelsInput({ goose: { plan: { model: 'x/y', effort: 'xhigh' } } }), /effort must be one of low \| medium \| high \| max/);
 });
 
-test('OpenCode: step models with its variants; no helper slots; no Ask', async () => {
+test('OpenCode: step models with its variants; no helper slots; Ask', async () => {
   const { assertUtilityModelsInput, assertStepModelsInput, assertAskEngineInput, assertRunEngineInput } = await import('../src/core/settings.mjs');
   assert.equal(assertRunEngineInput('opencode'), 'opencode');
-  assert.throws(() => assertAskEngineInput('opencode'), /askEngine must be one of claude \| codex/);
+  assert.equal(assertAskEngineInput('opencode'), 'opencode', 'Chat runs on it, locked down (plans/ask-on-qwen-gemini-spike.md)');
   assert.throws(() => assertUtilityModelsInput({ opencode: { title: { model: 'x/y' } } }), /OpenCode runs no helper jobs/);
   assert.deepEqual(assertStepModelsInput({ opencode: { plan: { model: 'x/y', effort: 'max' } } }), { opencode: { plan: { model: 'x/y', effort: 'max' } } });
   assert.throws(() => assertStepModelsInput({ opencode: { plan: { model: 'x/y', effort: 'xhigh' } } }), /effort must be one of minimal \| low \| medium \| high \| max/);

@@ -2,7 +2,7 @@
 // chips, "Leave … out" and the "on <page>" caption (Task 4), then the side column host (Task 5).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makePanel, key, deleteFromList } from './helpers/ask-panel-harness.mjs';
+import { makePanel, key, deleteFromList, userScroll } from './helpers/ask-panel-harness.mjs';
 import { stampFrames } from './helpers/ask-frames.mjs';
 import { pageChips } from '../ui/public/ask-page-chips.mjs';
 
@@ -757,8 +757,7 @@ test('moving host keeps a reader who scrolled up where they were: no jump to the
   const t = ctx.doc.querySelector('.ask-transcript');
   Object.defineProperty(t, 'scrollHeight', { value: 1000, configurable: true });
   Object.defineProperty(t, 'clientHeight', { value: 400, configurable: true });
-  t.scrollTop = 100;
-  t.dispatchEvent(new ctx.window.Event('scroll'));
+  userScroll(ctx, t, 100);                           // #958: only a scroll the reader makes unpins
   ctx.flush();
   assert.equal(ctx.doc.querySelector('.ask-jump').hidden, false, 'precondition: scrolled up, Jump to latest shows');
   const section = ctx.doc.createElement('section');
@@ -768,6 +767,34 @@ test('moving host keeps a reader who scrolled up where they were: no jump to the
   assert.equal(t.scrollTop, 100, 'not pulled to the bottom');
   assert.equal(ctx.doc.querySelector('.ask-jump').hidden, false, 'still unpinned');
   ctx.panel.destroy();
+});
+
+test('#958 keeps a reader\'s place from the Chat page to the Chat page only: the side column shows the chat again at the bottom', async () => {
+  // The column slides in from 0px wide and a host move changes the width: a pixel place taken at another width lands on
+  // another message there. app.js's own order: hide, move, flip the host, show.
+  for (const [from, to, top] of [['page', 'page', 700], ['dock', 'dock', 2300], ['page', 'dock', 2300], ['dock', 'page', 2300]]) {
+    const state = { snap: snapOf([userRow('askm_u0000001', 1, 'hi')]) };
+    const ctx = makePanel({ fetchHandler: api(state) });
+    ctx.panel.setHost(from);
+    ctx.panel.open({ threadId: TID }, { focus: false });
+    await ticks(ctx, 4);
+    ctx.flush();
+    const t = ctx.doc.querySelector('.ask-transcript');
+    let sh = 2000;
+    Object.defineProperty(t, 'scrollHeight', { configurable: true, get: () => sh });
+    Object.defineProperty(t, 'clientHeight', { configurable: true, value: 400 });
+    userScroll(ctx, t, 700);
+    assert.equal(ctx.doc.querySelector('.ask-jump').hidden, false, `${from}: precondition: mid-thread`);
+    ctx.panel.close();
+    t.scrollTop = 0;                                          // display:none drops the offset in a browser
+    sh = 2300;                                                // a reply landed meanwhile
+    ctx.panel.setHost(to);
+    ctx.panel.open(undefined, { focus: false });
+    ctx.flush();
+    assert.equal(t.scrollTop, top, `${from} → ${to}`);
+    assert.equal(ctx.doc.querySelector('.ask-jump').hidden, top === 2300, `${from} → ${to}: Jump to latest`);
+    ctx.panel.destroy();
+  }
 });
 
 test('a project or a workspace picked in the pill stops the page scope from following too', async () => {

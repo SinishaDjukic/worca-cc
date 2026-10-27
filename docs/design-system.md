@@ -38,7 +38,7 @@ One scale, no half sizes. Use the tokens; never type a px size that is not a ste
 | `--fs-body` | 13px | 1.5 | body, rows, fields, buttons, tabs, the page intro |
 | `--fs-section` | 15px | 1.25 | section titles (`.section-title`, `.card h2`), 600 |
 | `--fs-subpage` | 18px | 1.25 | sub-page titles (`.subpage-title`), 600 |
-| `--fs-page` | 22px | 1.25 | page titles (`.page-title`, the run and group page title), 700, -0.02em, at most 2 lines |
+| `--fs-page` | 22px | 1.25 | page titles (`.page-title`, the run and group page title), 700, -0.02em; the run and group page title is one line, cut with "…" |
 | `--fs-stat` | 22px | 1.25 | stat tile values |
 | `--fs-hero` | 32px | 1.25 | the Chat home hero only (22px under 760px) |
 `--lh-body` is 1.5 and `--lh-title` is 1.25. A subsection or field label is 13px / 600. Relative sizes are allowed
@@ -131,6 +131,9 @@ chips (`.runs-pr`) are chips, not PR controls.
 `.input` / `.select` / text, number and select elements: 32px, 13px, `--field` fill, 6px corner, ink border on focus.
 `.input-sm` / `.select-sm`: 28px, 12px. A textarea grows; it keeps the same fill, corner and padding sides. Search, url, email,
 password and date inputs follow the same field; each joins the base rule when its screen moves.
+A chat card's form (the run proposal) uses the same `.input` / `.select`; its fields sit on one auto-fit grid
+(`.ask-rp-grid`), a switch field takes a whole row, labels stay on one line, and a long value ellipsizes with its whole
+text as the tooltip.
 ### Switch (checked)
 One switch, `.switch`: a 32×18 `--r-pill` track and a 14px round knob that is always visible. Off is `--switch-off` with
 the `--knob` knob; on is `--ink` with the `--on-ink` knob, never green. Disabled or locked: no opacity fade; the track
@@ -163,7 +166,7 @@ border, ink text. Never a solid ink fill. A count sits in `.n`. It is the only f
 One chip: 18px, 11px / 500 sans, 4px corner, filled, no border (checked). The Labs (violet) and Beta (blue) flag chips are
 the reference size. Colour carries meaning only. The "Suggested" chip on the New run form's title and branch (`.sn-chip`, Smart run naming) is a permitted Labs-violet use: the whole feature is a Labs feature. Cost-tag chips (`.tag-chip`), the Projects sync pill (`.ps-pill`), the
 Chat command card's state (`.ask-cmd-pill`) and the Team policy tab count (`.tp-tab-badge`) are the same chip; on the
-active tab the count turns neutral (`--line-2` fill, ink text). A chat command in summary mode (flag `commandSummaries`) shows the runs status dot and no state chip; the full card keeps `.ask-cmd-pill`. The missing-key slot is the one outlined chip: a 1px dashed
+active tab the count turns neutral (`--line-2` fill, ink text). A chat command in summary mode (flag `commandSummaries`) shows the runs status dot and no state chip; consecutive commands share one card under a quiet disclosure head (`--ink-2`, `--hover`, › turning down), with the rows split by one `--line`; an opened command uses `--field` boxes (command, folder chip, output panel); the full card keeps `.ask-cmd-pill`. The missing-key slot is the one outlined chip: a 1px dashed
 `--amber` outline on a transparent fill. A removable chip's × is a 14px quiet button inside the chip. A source, "Official"
 or a policy origin is `.badge.slate`; "not installed" and "built-in" are grey.
 ### Status dot and symbols
@@ -177,7 +180,10 @@ status dot centred on it and the head buttons and the Live switch centred on its
 `--rd-word-line`). Under it, `.run-status-detail`: 12px `--ink-2`, at most 2 lines (the whole text as its tooltip),
 and only what no row below says ("not in dev yet", "Failed · Build · Implementation" → "Build · Implementation",
 "14 files changed in a copy", "conflicts with dev", GitHub's verdict); absent otherwise. A card with its own title
-(the chat run card) keeps the state at 13px / 600 under it. Titles are static or short ("Change Away mode?"); dynamic
+(the chat run card) keeps the state at 13px / 600 under it. Its head is one row centred on the title's line box (no
+margin on the title, no nudge on the dot), the project is the meta line right under it, and a single run has no kind
+chip, as the run page title (a PR fix run's fix line leads with "PR fix run"); a group keeps its chip
+(`Feature · 3 runs`, `Shaping`), as the group page title. Titles are static or short ("Change Away mode?"); dynamic
 names go in the target or meta line (`.ask-mcard-target`); a title that can still grow (a run or feature name) gets
 an ellipsis and its text as a tooltip. Chips say the kind or state once; the line after a chip never repeats its word.
 ### Route
@@ -213,7 +219,12 @@ One menu skin. The box is `.menu`: 4px padding, `--panel`, 1px `--line`, `--r-md
 (red ink, `--red-bg` on hover) and nothing else in a menu is red or amber. `openMenu({ doc, anchor, items, align, side,
 label, host, className })` (`ui/public/workflows/menu.mjs`) emits it, and its items take `danger`. With `host` the menu
 is appended inside it (a `.btn-split.mini`) and placed by its CSS; a `{ switch: true }` item is a `menuitemcheckbox`
-switch row (help line, `.switch`) whose toggle keeps the menu open. The run page's View PR ▾ is built with it. The sidebar flyouts (`.nav-fly`), the
+switch row (help line, `.switch`) whose toggle keeps the menu open. A radio row (`menuitemradio`) is one grid: a 12px ✓
+slot first (painted only when picked), the label, then the count or kind chip at the right edge in tabular figures, so
+every label starts and every number ends at one x; a count of 0 is `--ink-3`. A `{ segmented: true, label, options,
+value, onSelect }` item is a `.menu-h` head over one full-width `.seg` (role group of `menuitemradio`): ←/→ move inside
+it, ↑/↓ move on, and a pick keeps the menu open. The View menus (Runs, Chats; `viewMenuItems`, 256px) use it for Sort by
+and Group by. The run page's View PR ▾ is built with it. The sidebar flyouts (`.nav-fly`), the
 composer pickers (`.ask-pop`) and the split-button menus (`.btn-split-menu`) keep their
 own builders and positions and add `.menu` / `.menu-item`; they carry no box or row skin of their own. No hand-built
 dropdowns. An item that has a key shows it as its `hint` (the 11px `--ink-2` count slot): the Runs row ⋯ reads `S`, `E`, `⌫`.
@@ -229,6 +240,19 @@ keep their divider, and an empty list draws no card. Each Settings section is on
 760px, centred), and so are the Guardrails and Memory lists. `.drow-wide` puts a wide control
 (a textarea, a table, a path row) under its label at full width; `.drow-stack` holds rich block content (a schedule,
 a preset, a guardrail) with the same divider and padding.
+### Chat cards
+In the Chat conversation every card (run, files, applied change, command, run proposal, workflow, stubs) sits on the
+text column: `.ask-transcript-col` caps it at `--chat-text-max` (760px) and no card kind sets its own width. Only a graph
+well (`.gv-well`: the workflow card's and the run card's graph) widens, through one rule (`.chat-convo .ask-msg
+.gv-well`), up to `--chat-card-max` (1040px) and centred on the column; it is 1px `--line`, a 6px corner and the canvas
+fill, and its host fits the graph into it (≤ 1×, down to 0.3×; only a wider graph pans, and it opens at its start edge
+with the first node in view, never centred with both ends cut). The well is as tall as the graph at that zoom (220–480px),
+set once, so it never jumps on a resize and a shrunk graph never sits in an empty box. The transcript reserves its
+scrollbar gutter on both edges (`scrollbar-gutter:stable both-edges`), so the column, the composer and Jump to latest
+share one centre. The dock is opaque from its top edge down after a 32px fade band (`--chat-dock-fade`); Jump to latest
+sits in that band, right above the dock, and the transcript's bottom clearance includes it, so nothing reads under
+the composer. A row rises in (`data-ask-enter`) only the first time the page shows it, in any chat; the card inside it
+never rises on its own. No part of a chat card is a pill; inner corners stay at or under the card's 8px.
 ### Table
 `.table-wrap` > `.table`: 12px / 600 `--ink-2` headers, 13px cells, 8px 12px 8px 0 cell padding, one `--line` under
 each row, no outer box. Under 560px it stacks one block per row using each cell's `data-label`; it never scrolls sideways.
@@ -282,11 +306,12 @@ and hand the focus back to the opener.
   the Cost tags row in the run page's facts block, never stacked inside a tile. The value is sans with tabular figures.
 - Run and group pages share one head: the bar (Back, a 28px chevron `Back to Runs`, in every layout; the breadcrumb
   `Runs › Run tags › Run 2` beside it when the list stands beside the page; Run after; on the right the one primary
-  action, Stop, ⋯), the title with its kind chip (`Run 2 of 3`, `Run`, or
-  `Feature` / `Chain` / `Group`; a run in a group's chip links its group page and ends in a CSS `›` (`Run 2 of 3 ›`), so
-  its facts block has no group row), then the card: the status block (the state word as the card's headline with its detail under it, the head buttons at its right,
+  action, Stop, ⋯), the title (one line, cut with "…" where the column ends; the cut is CSS only, the stored name is
+  whole, its tooltip holds it, and the bar repeats it once the title scrolls away). A run page's title has no kind chip:
+  a run in a group has no group row in its facts block, and the breadcrumb names and links its group. A group page's
+  title keeps its kind chip (`Feature` / `Chain` / `Group`). Then the card: the status block (the state word as the card's headline with its detail under it, the head buttons at its right,
   centred on the word's line, with the PR control among them; see Card head and PR controls. Beside the stage bar the
-  detail names only the step (`Working` / `Refine Plan`); the stage is on the bar), the route ("Where the work is") under a `--line` divider, the facts block (`.rd-kv`: Group, Project, Labels and Cost tags; 12px
+  detail names only the step (`Working` / `Refine Plan`); the stage is on the bar), the route ("Where the work is") under a `--line` divider, the facts block (`.rd-kv`: Project, Labels, Cost tags and Group, in that order; 12px
   `--ink-2` labels, 13px values, one row per fact and one place to edit it; a quiet button that leads a value pulls back
   by its padding so its text sits on the value column), then the tiles (`--fs-stat` sans values with tabular figures,
   `--pad-tile` padding). No PR bar, no kept-work, merge-back or Apply box: their actions are head buttons.
@@ -303,6 +328,11 @@ and hand the focus back to the opener.
   page; the ⌄ only expands. One row is highlighted at a time, the one whose page is open: a collapsed group whose run
   is open shows the lighter `--row-open` fill over its whole row; expanded, only the open run's row is highlighted.
   Rows inside a group draw no dividers; the group keeps its own divider before the next row.
+- Two row levels in the Runs list and the Chats column. A top-level row (a single run, Needs you, a group row) has a
+  13px / 500 title over a 12px status line; a group row's title is 600. A row inside a group is one line, 26px (40px on
+  touch screens): a 12px / 400 title, then its status at the right (it drops the Working / Starting word its dot says
+  and ellipsises first), then its PR chip; no label chips and no Independent tag. A live member's 3px line sits under
+  its title. Its ⋯ stays 28px, centred.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
   not from a filter button in the list's header. The Marketplace's Browse search is the one exception
   (Marketplace exceptions).

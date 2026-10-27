@@ -147,7 +147,7 @@ function entryRows(m) {
     if (m.upstream.capabilities) rows.push({ field: 'Limits', value: fmtCaps(m.upstream.capabilities) });
   }
   for (const [k, v] of Object.entries(m.env || {})) rows.push({ field: k, value: typeof v === 'string' ? maskEnvValue(k, v) : String(v) });
-  rows.push({ field: 'Efforts', value: effortsForEngine(m.engine).length ? fmtEfforts(m.efforts) : 'none' });   // Cursor, Gemini CLI, Qwen Code: no effort
+  rows.push({ field: 'Efforts', value: effortsForEngine(m.engine).length ? fmtEfforts(m.efforts) : 'none' });   // Cursor: no effort
   const c = fmtCost(m.cost);
   if (c) rows.push({ field: 'Pricing', value: c });
   return rows;
@@ -327,8 +327,11 @@ export function createModelChangeValidator(r) {
     if (!ids.length || ids.length > MAX_IMPORT) return { ok: false, errors: [MODEL_ERRORS.endpointIds] };
     if (typeof r.endpointModels !== 'function') return { ok: false, errors: ['endpoint discovery is unavailable'] };
     const baseUrl = str(input.baseUrl);
+    // An endpoint with a key of its own (Gemini, Qwen): a ${VAR} reference only, stored on each imported entry.
+    const apiKey = str(input.apiKey);
+    if (apiKey && !modelEnvRef(apiKey)) return { ok: false, errors: [MODEL_ERRORS.secretKey('apiKey')] };
     let out;
-    try { out = await r.endpointModels(baseUrl); } catch (err) { return { ok: false, errors: [err.message] }; }
+    try { out = await r.endpointModels(baseUrl, apiKey); } catch (err) { return { ok: false, errors: [err.message] }; }
     const byId = new Map((out.models || []).map((m) => [m.id, m]));
     const unknown = ids.filter((id) => !byId.has(id));
     if (unknown.length) return { ok: false, errors: [`${out.serverLabel || 'the endpoint'} at ${out.baseUrl} does not serve: ${unknown.join(', ')} — list_endpoint_models shows what it does`] };
@@ -348,7 +351,8 @@ export function createModelChangeValidator(r) {
     return { ok: true, card: {
       type: 'model', kind: 'import_endpoint', target: out.baseUrl,
       summary: `Import ${ids.length} model${ids.length === 1 ? '' : 's'} from ${out.serverLabel || 'the endpoint'}`,
-      note, rows, warnings, change: { ids, ...(baseUrl ? { baseUrl } : {}) },
+      note, rows: apiKey ? [...rows, { field: 'Key', before: null, after: `${apiKey} on each entry` }] : rows, warnings,
+      change: { ids, ...(baseUrl ? { baseUrl } : {}), ...(apiKey ? { apiKey } : {}) },
     } };
   }
 
