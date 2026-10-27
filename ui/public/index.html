@@ -257,6 +257,13 @@
             </div>
           </div>
           <div class="topnav-r">
+            <!-- Ask worca beside the page (ask-side.mjs, app.js syncAskSide): docks the Chat beside the page, on every
+                 page with this bar but Chat; hidden until a route shows it. The dot mirrors the Chat row's new-reply dot. -->
+            <button type="button" class="btn btn-quiet topnav-ask" id="topnav-ask" data-min-level="simple" aria-expanded="false" aria-controls="ask-side" aria-label="Ask worca" title="Ask worca" hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4H6.5A2.5 2.5 0 0 0 4 6.5V20l3.6-2.7h9.9a2.5 2.5 0 0 0 2.5-2.5V12"></path><path d="M18 3v6M15 6h6"></path></svg>
+              <span class="topnav-ask-label">Ask worca</span>
+              <span class="topnav-ask-dot" id="topnav-ask-dot" hidden></span>
+            </button>
             <!-- Activity (activity-menu.mjs): what needs you, what is running and what is scheduled,
                  a list with no actions. One badge: the amber Needs-you count (the Runs badge's own
                  number), else the running count. The dialog hangs under the button (side-flyout.mjs). -->
@@ -275,6 +282,9 @@
             </button>
           </div>
         </header>
+      <!-- Ask worca beside the page: the row lays main.main and the side column side by side under the bar; the column
+           pushes the page above 1080px and covers the main column below (style.css "Ask worca beside the page"). -->
+      <div class="main-row" id="main-row">
       <main class="main">
         <!-- Runs redesign §5a.2: the one "server unreachable" banner (connection-state.mjs) for every view. -->
         <div id="conn-banner" class="conn-banner" hidden></div>
@@ -2608,6 +2618,8 @@
         </section>
         <!-- /view providers -->
       </main>
+      <aside class="ask-side" id="ask-side" aria-label="Ask worca" hidden><div class="ask-side-in" data-ask-side-host></div></aside>
+      </div><!-- /.main-row -->
       </div><!-- /.main-col -->
     </div>
 

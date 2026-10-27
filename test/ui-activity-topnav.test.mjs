@@ -28,7 +28,7 @@ function phoneBlock() {
 
 test('Activity sits in the bar\'s right slot before New run: a quiet button with its icon, a hidden badge and a hidden dialog, at every level', () => {
   const doc = new JSDOM(html).window.document;
-  assert.deepEqual([...doc.querySelector('#topnav > .topnav-r').children].map((n) => n.id), ['topnav-activity', 'activity-pop', 'topnav-new']);
+  assert.deepEqual([...doc.querySelector('#topnav > .topnav-r').children].map((n) => n.id), ['topnav-ask', 'topnav-activity', 'activity-pop', 'topnav-new']);
   const b = doc.getElementById('topnav-activity');
   assert.deepEqual([b.tagName, b.type, b.className], ['BUTTON', 'button', 'btn btn-quiet topnav-act']);
   for (const [k, v] of [['aria-haspopup', 'dialog'], ['aria-expanded', 'false'], ['aria-controls', 'activity-pop'], ['aria-label', 'Activity'], ['data-min-level', 'simple']]) {
@@ -65,4 +65,25 @@ test('phones: Activity turns icon-only and keeps its badge; the popover spans th
   assert.match(block, /\n {2}\.activity-pop\{width:calc\(100vw - 16px\);\}/);
   assert.doesNotMatch(block, /\.topnav-badge[^{]*\{[^}]*display:none/, 'the badge stays');
   assert.ok(block.indexOf('.topnav-act-label{display:none;}') > block.indexOf('.topnav-new-label{display:none;}'), 'after the bar\'s own phone rules');
+});
+
+test('Ask worca sits left of Activity, hidden until a route shows it, and controls the side column beside main.main', () => {
+  const doc = new JSDOM(html).window.document;
+  const r = doc.querySelector('.topnav-r');
+  const b = doc.getElementById('topnav-ask');
+  assert.equal(r.firstElementChild, b);
+  assert.equal(b.nextElementSibling.id, 'topnav-activity');
+  assert.deepEqual([b.tagName, b.type, b.className, b.hidden], ['BUTTON', 'button', 'btn btn-quiet topnav-ask', true]);
+  for (const [k, v] of [['aria-expanded', 'false'], ['aria-controls', 'ask-side'], ['aria-label', 'Ask worca'], ['title', 'Ask worca'], ['data-min-level', 'simple']]) {
+    assert.equal(b.getAttribute(k), v, k);
+  }
+  assert.equal(b.querySelector('.topnav-ask-label').textContent, 'Ask worca');
+  assert.equal(b.querySelector('#topnav-ask-dot').hidden, true);
+  const row = doc.getElementById('main-row');
+  assert.deepEqual([...row.children].map((n) => n.tagName.toLowerCase() + (n.id ? `#${n.id}` : `.${n.className}`)), ['main.main', 'aside#ask-side']);
+  const aside = doc.getElementById('ask-side');
+  assert.deepEqual([aside.hidden, aside.getAttribute('aria-label')], [true, 'Ask worca']);
+  assert.ok(aside.querySelector(':scope > .ask-side-in[data-ask-side-host]'));
+  assert.equal(ruleBody('.topnav-ask[hidden]'), 'display:none;', '.btn is inline-flex: the twin hides it on Chat');
+  assert.match(ruleBody('.topnav-ask[aria-expanded="true"]'), /background:var\(--hover\);/, "Activity's open look");
 });

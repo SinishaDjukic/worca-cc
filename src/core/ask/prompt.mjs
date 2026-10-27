@@ -484,10 +484,12 @@ const VIEW_RE = /^[a-z][a-z0-9-]{0,31}$/i;
 const DIFF_PATH_MAX = 512;
 // A run page's parts (ui/public/app.js RD_TABS / HD_TABS): the glance, then each Details tab.
 // History calls its Q&A tab `clarify`; the Running page calls it `qa`.
-export const RUN_PAGE_PARTS = ['glance', 'overview', 'diff', 'artifacts', 'workflow', 'qa', 'clarify', 'logs', 'agents'];
+// Ask worca beside the page: Changes (a Folder run) and Actions are Details tabs too — a message sent from them was a 400.
+export const RUN_PAGE_PARTS = ['glance', 'overview', 'diff', 'changes', 'artifacts', 'actions', 'workflow', 'qa', 'clarify', 'logs', 'agents'];
 const RUN_PAGE_LABEL = {
   glance: 'the run summary (status, time, cost, changes, one row per tab)',
-  overview: 'Details › Overview tab', diff: 'Details › Diff tab', artifacts: 'Details › Artifacts tab',
+  overview: 'Details › Overview tab', diff: 'Details › Diff tab', changes: 'Details › Changes tab', artifacts: 'Details › Artifacts tab',
+  actions: 'Details › Actions tab',
   workflow: 'Details › Workflow tab', qa: 'Details › Q&A tab', clarify: 'Details › Q&A tab',
   logs: 'Details › Logs tab', agents: 'Details › Agents tab',
 };
@@ -508,6 +510,10 @@ const CONTEXT_KEYS = {
   pipelineId: (v) => typeof v === 'string' && PIPELINE_ID_RE.test(v),
   runId: (v) => typeof v === 'string' && UUID_RE.test(v),
   workspaceId: (v) => typeof v === 'string' && WORKSPACE_KEY_RE.test(v),
+  // Ask worca beside the page: the project / workspace PAGE on screen, which need not be the chat's scope. Not a
+  // target key (scope.mjs TARGET_KEYS): withChatScope keeps them and tools stay gated by the scope alone.
+  pageProjectKey: (v) => typeof v === 'string' && PROJECT_KEY_RE.test(v),
+  pageWorkspaceId: (v) => typeof v === 'string' && WORKSPACE_KEY_RE.test(v),
   diffPath: (v) => typeof v === 'string' && v.length > 0 && v.length <= DIFF_PATH_MAX,
   // Which part of an open run page the user is on: its glance (the summary) or one
   // Details tab. An enum, so nothing here is free text.
@@ -596,6 +602,9 @@ export function buildContextHeader(ctx = {}, { maxChars = ASK_LIMITS.contextHead
     push(ctx.workspace
       ? `workspace: ${clip(ctx.workspace.name, titleMax)} (${label(ctx.workspace.id)}) members: ${(ctx.workspace.members || []).map(label).join(', ') || '-'}${pin}`
       : 'workspace: -');
+    // The project / workspace page on screen when it is not the scope (resolveAskContext drops the scope's own). Never shed.
+    if (ctx.pageProject) push(`on screen: project ${clip(ctx.pageProject.name, titleMax)} (key ${label(ctx.pageProject.key)}), the page the user is looking at, not this chat's scope`);
+    if (ctx.pageWorkspace) push(`on screen: workspace ${clip(ctx.pageWorkspace.name, titleMax)} (${label(ctx.pageWorkspace.id)}), the page the user is looking at, not this chat's scope`);
     // The Team metrics page's selection (server-resolved name; range/groupBy/filter are validated slugs).
     if (ctx.teamMetrics) {
       const tm = ctx.teamMetrics;

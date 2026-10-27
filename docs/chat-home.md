@@ -47,3 +47,27 @@ grouped chat moves it). A group row shows its count and expands with ⌄; View �
 group, then Ungrouped. Archive group is blocked while a chat in it is busy. With Smart run naming on, the group dialog
 suggests a name from the chat titles and first messages on the Run naming model; off, it is a plain name field and
 `POST /api/ask/groups/suggest-name` answers 404.
+
+## Ask worca beside the page
+
+Every page with the top bar, except Chat, has an **Ask worca** button left of Activity. It opens the
+same Chat beside the page: the same chats, the same history and the same composer. On a wide window
+the page moves over to make room; on a narrower one the chat covers the page until you hide it. A run
+or a link you open from the chat there moves the chat aside, so the page shows; the button brings it
+back. Workflows has its own chat and no button.
+
+- **What the page gives the chat.** The composer shows the page as chips: a run (and the file open
+  in its Diff), a project, a workspace, or the page itself. The **×** on a chip leaves it out of the
+  messages you send from this page. It comes back the next time you open the page.
+- **Where a message was sent.** A message sent beside a page shows "on Run · Diff" (or the page's
+  name) under it, here and in Chat.
+- **New chats.** A new chat beside a project, workspace or run page starts in that project or
+  workspace. It follows the page until you pick a scope or send. A new chat on the Chat page starts
+  in No project.
+- **Size and layout.** Drag the column's left edge (or use the arrow keys on it) for 360–560px. Above
+  1080px the column pushes the page, and the menu folds to its rail when the page would get too
+  narrow. Between 761 and 1080px it covers the page. On a phone it fills the screen under the top bar.
+- **Head buttons.** The chat's title opens your chats. **New chat** starts one, **Open in Chat**
+  takes this chat to the Chat page, and **Hide chat** closes the column. Open or hidden is
+  remembered across pages and reloads. A dot on the **Ask worca** button means a new reply: the
+  button opens that chat, as the Chat row does.

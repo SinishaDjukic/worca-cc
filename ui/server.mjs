@@ -417,6 +417,7 @@ import { projectKey, PROJECT_KEY_RE } from '../src/core/store.mjs';
 import { runProjectDir, noProjectWorkDir, isNoProjectWorkDir, isNoProjectKey, NO_PROJECT_KEY } from '../src/core/store.mjs';   // P3 — its own line: test/api-memory.test.mjs pins the one above
 import { WORK_ARTIFACT_KIND } from '../src/core/no-project-work.mjs';
 import { NO_PROJECT_NAME, NO_PROJECT_ERRORS } from '../src/shared/no-project.mjs';
+import { whereOf } from '../src/shared/ask-where.mjs';
 import { ensureHouseBrief, writeHouseBriefPins } from '../src/core/house-brief.mjs';
 import { validateMemoryScope, withStoreLock } from '../src/core/memory-sync.mjs';
 import {
@@ -14721,6 +14722,20 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
       }
     }
   } catch { /* absent line */ }
+  // Ask worca beside the page: the project / workspace PAGE on screen ("on screen: …" + a topic chip) when it is not
+  // the scope. Names only, by key; never the scope, never a tool target.
+  try {
+    if (ctx.pageProjectKey && ctx.pageProjectKey !== scope?.projectKey) {
+      const p = (await listProjects()).find((x) => x.key === ctx.pageProjectKey);
+      if (p) out.pageProject = { name: p.name, key: p.key };
+    }
+  } catch { /* absent line */ }
+  try {
+    if (ctx.pageWorkspaceId && ctx.pageWorkspaceId !== scope?.workspaceId) {
+      const ws = await readWorkspace(ctx.pageWorkspaceId);
+      if (ws) out.pageWorkspace = { name: ws.name, id: ws.id };
+    }
+  } catch { /* absent line */ }
   // The Team metrics page's selection (validated slugs); only the scope NAME is resolved here.
   try {
     if (ctx.tmScope) {
@@ -14937,9 +14952,13 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const deterministicTitle = titleWasAuto && !synthetic ? (askSanitizeTitle(stripIntentLead(text).slice(0, 80)) || 'New chat') : thread.title;
     // P3: a synthetic row keeps the EVENT as its text (buildRestoredPrompt replays it truthfully) and carries the
     // human notice as a block the panel renders instead of a bubble.
+    // Ask worca beside the page: the page a message was sent from ("on Run · Diff") leads its blocks; none for a Chat-page
+    // message or an event turn. whereOf is pure, so the row is still written before the first await.
+    const where = synthetic ? null : whereOf(ctx);
+    const whereBlocks = where ? [{ kind: 'where', label: where.label, icon: where.icon }] : [];
     const userMsg = askAppendMessage(id, synthetic
       ? { role: 'user', text, blocks: [{ kind: 'notice', synthetic: true, ...(synthetic.quiet ? { quiet: true } : {}), text: synthetic.notice }] }
-      : { role: 'user', text });
+      : { role: 'user', text, ...(whereBlocks.length ? { blocks: whereBlocks } : {}) });
     job.userMessageId = userMsg.id;
     const attRows = files.map((f) => askAddAttachment(id, userMsg.id, { name: f.name, kind: f.kind, mime: f.mime, text: f.text, data: f.data }));
     // The decoded binary bodies are on disk now. `files` is captured by this
@@ -14955,6 +14974,7 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
       // an unconditional overwrite would silently drop the notice for a future caller).
       askSetMessageBlocks(userMsg.id, [
         ...(synthetic ? [{ kind: 'notice', synthetic: true, ...(synthetic.quiet ? { quiet: true } : {}), text: synthetic.notice }] : []),
+        ...whereBlocks,
         ...attRows.map((a) => ({ kind: 'attachment', id: a.id, name: a.name, bytes: a.bytes, attKind: a.kind, mime: a.mime })),
       ]);
     }
