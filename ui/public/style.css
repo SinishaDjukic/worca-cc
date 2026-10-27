@@ -6660,6 +6660,8 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd-row:hover{background:var(--hover);}
 .ask-cmd-row-btn{display:flex;align-items:center;gap:10px;flex:1 1 auto;min-width:0;padding:0;border:0;background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
 .ask-cmd-row-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* An 8px dot sits in the 12px slot of a symbol dot (failed "!"), so every row's text starts at one line. */
+.ask-cmd-row-btn > .status-dot:not(.has-sym){margin:0 2px;}
 .ask-cmd-sum{flex:1 1 auto;min-width:0;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ask-cmd-sum.is-raw{font-family:var(--mono);font-size:12px;font-weight:400;color:var(--ink-2);}
 .ask-cmd-meta{flex:none;color:var(--ink-2);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;}
