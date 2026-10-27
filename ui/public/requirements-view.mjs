@@ -1804,26 +1804,20 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     syncExportInert();
     if (first) first.focus();
   }
-  // A6 board 31 (D20): at 900 px and narrower an export dialog (openModal's `page`) is a full-screen sheet, and while it is
-  // open every other child of <body> is inert. Beside the page (wider) the view alone is inert, as for any dialog here.
-  // Re-synced on open, close, a resize across 900 px, show() and leave(): closing, Back, a change of feature, widening and
-  // leaving the view put the app back; a resize while the view is hidden (another view shown) re-applies nothing.
-  const exportSheetQuery = () => (typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia('(max-width:900px)') : null);
+  // A6 (D20): an export dialog (openModal's `page`; a full-screen sheet at 900 px and narrower, board 31) is modal at every
+  // width: while it is open every other child of <body> is inert. Re-synced on open, close, show() and leave(): closing, Back,
+  // a change of feature and leaving the view put the app back; nothing is applied while the view is hidden.
   let exportInert = [];
   function syncExportInert() {
     for (const el of exportInert) { el.inert = false; el.removeAttribute('inert'); }
     exportInert = [];
     if (!dialog || !dialog.page || host.closest('.hidden, [hidden]')) return;
-    const mq = exportSheetQuery();
-    if (mq && !mq.matches) return;   // no matchMedia (jsdom): the dialog counts as the sheet
     for (const el of document.body.children) {
       if (el === dialog.wrap || el.hasAttribute('inert')) continue;
       el.inert = true; el.setAttribute('inert', '');
       exportInert.push(el);
     }
   }
-  const exportSheetMq = exportSheetQuery();
-  if (exportSheetMq && typeof exportSheetMq.addEventListener === 'function') exportSheetMq.addEventListener('change', syncExportInert);
   /** Leaving the Requirements view (app.js shows another): a dialog of this view (on <body>, outside the view) closes, and with
    *  it the inert page; an answer still on its way is dropped (dlgGen). */
   function releaseExport() { closeDialog(false); syncExportInert(); }
@@ -2863,20 +2857,24 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   /** Board 29's states (D11, D12): a tracker that cannot be reached (nothing recorded; the main button tries again), a field it
    *  refuses (Change the export setup, then back here), a ticket that is gone (Forget the link, New ticket), a spec that
    *  changed under the preview (a fresh one). Anything else: the server's sentence. A state that hides the main button
-   *  while it has the focus hands the focus to the state's first button. */
-  function showFailure(box, err, ctx) {
+   *  while it has the focus hands the focus to the state's first button; a failed send (its buttons waited, disabled, so the
+   *  focus fell to <body>) hands it back to the main button. `focus: false`: the caller places the focus itself. */
+  function showFailure(box, err, ctx, { focus = true } = {}) {
     const dd = (err && err.data) || {};
     const { f, name, reason, trigger } = ctx;
+    const toMain = () => { const m = focus && ctx.main ? ctx.main() : null; if (m && !m.hidden && !m.disabled) focusLost(m); };
+    const lost = focus ? focusLost : () => {};
     if (err && err.status === 502) {
       box.show(errText(err), { note: `Nothing was recorded. The preview stays open, so you can try again once the connection is fixed on the Marketplace page (Installed › ${name}).` });
       ctx.retryLabel('Try again');
+      toMain();
     } else if (dd.refused) {
       // board 29 (2): Cancel and Change the export setup; sending the same ticket again would be refused again
       ctx.hideGo(true);
       const change = h('button', { type: 'button', class: 'btn', 'data-ui': 'export-change-setup',
         onclick: () => { void openSetup(f, { trigger, then: ctx.reopen }); } }, 'Change the export setup');
       box.show(errText(err), { buttons: [change] });
-      focusLost(change);
+      lost(change);
     } else if (dd.gone) {
       const key = ctx.key();
       ctx.hideGo(true);
@@ -2902,11 +2900,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         onclick: () => { if (!forgetting) openPreview(f, { mode: 'new', reason, trigger }); } }, 'New ticket');
       const buttons = [forget, fresh];
       box.show(dd.error || `${key} no longer exists in ${name}.`, { note, buttons });
-      focusLost(forget);
+      lost(forget);
     } else if (dd.stale) {
       box.show(errText(err));
       ctx.reload();
-    } else box.show(errText(err));
+    } else { box.show(errText(err)); toMain(); }
   }
   /** The focus was on a control a state just hid or removed (or nowhere): it goes to `to`. Left alone anywhere else. */
   function focusLost(to) {
@@ -2917,6 +2915,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
    *  the dialog was still open (`focus`). */
   function forgotten(f, data, focus = true) {
     exportDone = null;
+    reportBack.delete(f.seq);   // D15: the next ticket starts with Report back on
     if (seqShown !== f.seq) return;
     paintNo += 1;   // a fetch already under way would paint the chip back
     if (data && data.feature) { paintFeature(data.feature, data.turns || []); paintedKey = `feature/${seqShown}`; }
@@ -2961,6 +2960,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     if (!failing || !ctx.notReady) { showFailure(box, err, ctx); return false; }
     void (async () => {
       ctx.setBusy(true);
+      if (ctx.wait) ctx.wait(true);   // the buttons wait (a send re-enabled them) until Not Ready opens
       let now = null;
       try { const data = await api('GET', `/api/requirements/${ctx.f.seq}`); now = data && data.feature; } catch { /* the dialog's copy */ }
       ctx.setBusy(false);
@@ -3108,6 +3108,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       ...(st.priority !== undefined ? { priority: st.priority, priorityName: st.priorityName } : {}) });
     const ctx = { f, g, name, key, reason, trigger, setBusy: (b) => { busy = b; },
       hideGo: (b) => { go.hidden = b; }, retryLabel: (t) => { go.textContent = t; go.disabled = false; },
+      main: () => go, wait: (b) => { go.disabled = b; cancel.disabled = b; },
       reload: () => load({ keep: true }), reopen: () => openPreview(f, { mode, reason, force: forceNow, trigger }),
       notReady: (why, nf = f) => openPreview(nf, { mode, reason: why, trigger }) };
     const showEdited = () => {
@@ -3271,7 +3272,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         : `${L.key} was made on ${L.madeOn}. The spec has not changed since the last export (${L.lastOn}).`;
       if (data.gone) {
         modes.hidden = true; changes.hidden = true; note.hidden = true; cont.hidden = true;
-        showFailure(box, goneError(L.key, name), ctx);
+        showFailure(box, goneError(L.key, name), ctx, { focus: false });   // load() places the focus once
         return;
       }
       modes.replaceChildren(option('update', `Update ${L.key}`, 'Rewrites its summary, description and fields.'),
@@ -3309,6 +3310,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         render();
         if (moveFocus && !d.gone && radios.update) radios.update.focus();
         else if (moveFocus) title.focus();   // gone: no choices; the title, as on open (a Try again focused is gone too)
+        else if (d.gone) focusLost(title);   // gone with the focus lost: the title, never Forget the link first
       } catch (err) {
         if (!live(g)) return;
         const failing = err && err.data && Array.isArray(err.data.failing) ? err.data.failing : null;
@@ -3342,6 +3344,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const g = dlgGen;
     const ctx = { f, g, name, key: () => linkKey, reason, trigger, setBusy: (b) => { busy = b; }, hideGo: (b) => { add.hidden = b; },
       retryLabel: (t) => { add.textContent = t; add.disabled = false; }, reload: () => load({ keep: true }), reopen: () => openComment(f, { reason, trigger }),
+      main: () => add, wait: (b) => { add.disabled = b; back.disabled = b; },
       notReady: (why, nf = f) => openComment(nf, { reason: why, trigger }) };
     async function load({ keep = false } = {}) {
       add.disabled = true;
@@ -3467,10 +3470,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   // leave(): app.js calls it whenever another view is shown. One leave for the whole view: it calls each part's release
   // (the export dialogs here; a sibling part with a sheet of its own adds its release beside it).
-  const leave = () => { releaseExport(); };
+  const leave = () => {
+    // closes any dialog of the view, the start-before-Ready one too (its wrap sits on <body>): a half-typed reason is lost, by design
+    releaseExport();
+  };
   return { show, changed, leave, destroy: () => {
-    paintNo += 1; closeDialog(false); offGit(); document.removeEventListener('click', onDocClick, true);
-    if (exportSheetMq && typeof exportSheetMq.removeEventListener === 'function') exportSheetMq.removeEventListener('change', syncExportInert);
-    host.replaceChildren();
+    paintNo += 1; closeDialog(false); offGit(); document.removeEventListener('click', onDocClick, true); host.replaceChildren();
   } };
 }

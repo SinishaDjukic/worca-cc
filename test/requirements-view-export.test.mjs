@@ -1124,23 +1124,25 @@ test('D20 (phone): Tab and Shift+Tab stay inside the sheet, from its last contro
   assert.ok(dlg().contains(document.activeElement), 'a Tab from outside lands inside the sheet');
 });
 
-test('D20 (phone): the page is inert only while the dialog is a sheet; widening past 900 px frees it, narrowing makes it modal again', async () => {
-  const phone = withPhone(false);
-  try {
-    const { host, nav } = await openExport(feature(), { [`POST ${PREVIEW_URL}`]: () => preview() });
-    assert.ok(dlg());
-    assert.deepEqual([nav.getAttribute('inert'), host.getAttribute('inert')], [null, ''], 'beside the page: the view is inert, the app is not');
-    phone.set(true);
-    assert.equal(nav.getAttribute('inert'), '', 'narrowed to a phone: a sheet, every other child of <body> is inert');
-    assert.equal(dlg().closest('[inert]'), null, 'the sheet itself is live');
-    phone.set(false);
-    assert.deepEqual([nav.getAttribute('inert'), host.getAttribute('inert')], [null, ''], 'widened again: released');
-    phone.set(true);
-    q('export-cancel').click();
-    assert.deepEqual(inertIn(), [], 'closed: nothing is inert');
-    phone.set(false); phone.set(true);
-    assert.deepEqual(inertIn(), [], 'a resize with no dialog open re-applies nothing');
-  } finally { phone.restore(); }
+test('D20: an export dialog is modal at every width: the app is inert on a desktop and on a phone, across a resize; closing and leaving release all', async () => {
+  for (const wide of [true, false]) {
+    const phone = withPhone(!wide);
+    try {
+      const { host, nav, view } = await openExport(feature(), { [`POST ${PREVIEW_URL}`]: () => preview() });
+      assert.deepEqual([nav.getAttribute('inert'), host.getAttribute('inert')], ['', ''], `${wide ? 'desktop' : 'phone'}: every other child of <body> is inert`);
+      assert.equal(dlg().closest('[inert]'), null, 'the dialog itself is live');
+      phone.set(wide); phone.set(!wide);
+      assert.deepEqual([nav.getAttribute('inert'), host.getAttribute('inert')], ['', ''], 'a resize across 900 px keeps it modal');
+      q('export-cancel').click();
+      assert.deepEqual(inertIn(), [], 'closed: nothing is inert');
+      q('menu-export', host).click();
+      q('mi-export', host).click();
+      await settle();
+      assert.equal(nav.getAttribute('inert'), '');
+      view.leave();
+      assert.deepEqual([dlg(), inertIn()], [null, []], 'left: nothing is inert');
+    } finally { phone.restore(); }
+  }
 });
 
 test('D20 (phone): leaving the view with a sheet open leaves nothing inert; a resize while away re-applies nothing; coming back has no sheet', async () => {
@@ -1212,4 +1214,77 @@ test('CSS (board 31): at 900 px and narrower an export dialog is a sheet of the 
   assert.match(css, /\.req-export-sub\{display:none[;}]/);
   assert.match(css, /@media \(max-width:900px\)\{\s*\.req-export-title \.req-export-tid\{display:none\}\s*\.req-export-sub\{display:block\}/);
   assert.ok(!/min-height:44px/.test(phone), 'no 44 px min-height in the sheet');
+});
+
+// ── Task 10, part B fix round 1 ──
+
+test('Export again: a Try again answering gone puts the focus on the title once (never on Forget the link first)', async () => {
+  const REACH = 'Worca could not reach Jira: the API token was refused.';
+  const answers = [{ __status: 502, body: { error: REACH, kind: 'auth' } }, AGAIN({ gone: true })];
+  await openExport(feature({ export: XV({ link: LINK }) }), { [`POST ${PREVIEW_URL}`]: () => answers.shift() });
+  const retry = q('again-retry');
+  retry.focus();
+  const seen = [];
+  const onFocus = (e) => seen.push(e.target.getAttribute('data-ui') || e.target.tagName);
+  document.addEventListener('focus', onFocus, true);
+  try {
+    retry.click();
+    await settle();
+  } finally { document.removeEventListener('focus', onFocus, true); }
+  assert.equal(text(dlg().querySelector('[role="alert"]')), 'SHOP-123 no longer exists in Jira.');
+  assert.deepEqual(seen, ['H2'], 'one move, to the title');
+  assert.equal(document.activeElement, dlg().querySelector('h2'));
+});
+
+const dropFocus = () => { const t = document.createElement('input'); dlg().append(t); t.focus(); t.remove(); };
+test('a failed send (unreachable, or a plain refusal) hands the focus back to the main button once it waits no more', async () => {
+  const answers = [{ __status: 502, body: { error: 'Worca could not reach Jira: the API token was refused.', kind: 'auth' } },
+    { __status: 409, body: { error: 'Worca is already exporting this feature.' } }];
+  await openExport(feature(), { [`POST ${PREVIEW_URL}`]: () => preview(), [`POST ${EXPORT_URL}`]: () => answers.shift() });
+  const go = q('export-go');
+  go.focus();
+  go.click();
+  assert.equal(go.disabled, true);
+  dropFocus();   // a browser drops the focus of a button that turns disabled (jsdom keeps it: a focused node removed drops it)
+  await settle();
+  assert.deepEqual([text(go), go.disabled, document.activeElement], ['Try again', false, go], 'unreachable: on Try again');
+  go.click();
+  dropFocus();
+  await settle();
+  assert.equal(text(dlg().querySelector('[role="alert"]')), 'Worca is already exporting this feature.');
+  assert.deepEqual([go.disabled, document.activeElement], [false, go], 'a plain refusal: on the main button');
+});
+
+test('D15: Forget the link clears the Report back choice: the next ticket starts with Report back on', async () => {
+  let cur = feature({ export: XV({ link: LINK }) });
+  const m = await openFeature(cur, { ...SETUP_ROUTES(), [`GET ${F}`]: () => ({ feature: cur, turns: [] }),
+    [`POST ${PREVIEW_URL}`]: (b) => AGAIN({ mode: b.mode, gone: true }), [`DELETE ${EXPORT_URL}/link`]: () => ({ feature: feature(), turns: [] }) });
+  const sw = q('report-card', m.host);
+  sw.checked = false;
+  sw.dispatchEvent(new window.Event('change'));
+  q('menu-export', m.host).click();
+  q('mi-export', m.host).click();
+  await settle();
+  q('export-forget').click();
+  await settle();
+  assert.equal(q('report-card', m.host), null, 'no ticket, no switch');
+  cur = feature({ export: XV({ link: { ...LINK, key: 'SHOP-124', url: 'https://acme.test/browse/SHOP-124' } }) });
+  await m.view.changed(7);
+  await settle();
+  const again = q('report-card', m.host);
+  assert.deepEqual([text(again.closest('label')), again.checked], ['Report back to SHOP-124', true]);
+});
+
+test('NOT_READY on send: while the feature is fetched again the buttons keep waiting; then Not Ready opens', async () => {
+  const slow = held(() => ({ feature: feature({ readiness: readiness(['interview']), state: 'decide' }), turns: [] }));
+  let gets = 0;
+  await openExport(feature(), { [`GET ${F}`]: () => (gets++ === 0 ? { feature: feature(), turns: [] } : slow.route()),
+    [`POST ${PREVIEW_URL}`]: () => preview(), [`POST ${EXPORT_URL}`]: () => ({ __status: 409, body: { error: NOT_READY_MSG, failing: ['interview'] } }) });
+  q('export-go').click();
+  await settle();
+  assert.equal(typeof slow.release, 'function', 'the feature is being fetched again');
+  assert.deepEqual([q('export-go').disabled, q('export-cancel').disabled], [true, true], 'the buttons wait');
+  slow.release();
+  await settle();
+  assert.equal(text(dlg().querySelector('h2')), 'Export FEAT-7 before it’s Ready?');
 });
