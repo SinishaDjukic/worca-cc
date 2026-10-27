@@ -27,6 +27,15 @@ export const iconBtn = (doc, name, label, onClick, cls = 'btn btn-sm btn-quiet b
   return b;
 };
 
+/** A past run's badge, on the Tests page (board 19) and in the picker (board 25, C11): an exactly equal request says
+ *  so; else green finished, red failed, a plain stopped. One helper, so the two lists speak the same badge language. */
+export function runStatusBadge(doc, r) {
+  if (r.sameAs) return el(doc, 'span', 'badge', 'Same request as another');
+  if (r.status === 'done') return el(doc, 'span', 'badge green', 'Finished');
+  if (r.status === 'error') return el(doc, 'span', 'badge red', 'Failed');
+  return el(doc, 'span', 'badge', 'Stopped');
+}
+
 /** A server reason as a sentence: "the name must be …" → "The name must be ….". */
 export const sentence = (s) => {
   const t = String(s || '').trim();

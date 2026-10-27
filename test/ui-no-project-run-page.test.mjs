@@ -175,4 +175,7 @@ test('G6: no Use as test example with the flag off, or for a built-in workflow',
   assert.equal(off.items.some((b) => b.textContent.trim() === 'Use as test example'), false, 'flag off');
   const auto = await moreItems({ flags: 'workflowTests', detail: { ...WF_DETAIL, state: { ...WF_DETAIL.state, stepper: { template: { id: 'wf_default', name: 'Default' } } } } });
   assert.equal(auto.items.some((b) => b.textContent.trim() === 'Use as test example'), false, 'a built-in workflow has no tests');
+  // An Auto run that matched no saved workflow keeps template.id 'wf_auto' (auto/proposal.mjs): the server would only refuse it.
+  const auto2 = await moreItems({ flags: 'workflowTests', detail: { ...WF_DETAIL, state: { ...WF_DETAIL.state, stepper: { template: { id: 'wf_auto', name: 'Auto' } } } } });
+  assert.equal(auto2.items.some((b) => b.textContent.trim() === 'Use as test example'), false, 'an Auto run of no saved workflow');
 });

@@ -1,19 +1,17 @@
 // ui/public/workflows/test-dialogs.mjs — the workflow tests dialogs (plans/workflow-tests-part2-plan.md Tasks 12–13):
 // pick a past run (G7), use this run as a test example (board 3), and test a version (board 4, Task 13). Pure DOM.
-import { el, seg, field, testDialog } from './test-ui.mjs';
+import { el, seg, field, testDialog, runStatusBadge } from './test-ui.mjs';
+
+/** Auto's id (src/core/graph/builtin-workflows.mjs AUTO_WORKFLOW_ID; the browser cannot load /src/core, and the dialogs
+ *  test pins this to the server's constant). An Auto run that matched no saved workflow keeps it (auto/proposal.mjs). */
+const AUTO_WORKFLOW_ID = 'wf_auto';
 
 /** G6: the run page's More menu offers "Use as test example" for a finished no-project run of a saved user workflow. A
- *  plugin's workflow (`wfp_<plugin>_<slug>`, plugin-workflows.mjs) has no tests (review M7): the item would only be refused. */
+ *  plugin's workflow (`wfp_<plugin>_<slug>`, plugin-workflows.mjs) has no tests (review M7), nor has Auto when it matched no
+ *  saved workflow: the item would only be refused. */
 export function canUseAsExample({ flag, noProject, status, templateId, reserved }) {
   return !!flag && !!noProject && ['done', 'stopped', 'error'].includes(String(status || '')) && !!templateId && !reserved
-    && !/^wfp_/.test(String(templateId));
-}
-
-/** Board 25: a run's status as its badge (green finished, red failed, a plain stopped). */
-function statusBadge(doc, status) {
-  if (status === 'done') return el(doc, 'span', 'badge green', 'Finished');
-  if (status === 'error') return el(doc, 'span', 'badge red', 'Failed');
-  return el(doc, 'span', 'badge', 'Stopped');
+    && templateId !== AUTO_WORKFLOW_ID && !/^wfp_/.test(String(templateId));
 }
 
 /** G7: the Tests list's "Add from a past run" — which run, then board 3. */
@@ -31,7 +29,7 @@ export function openPickRunDialog({ doc, win, workflowName, runs = [], dateText,
       const radio = el(doc, 'input');
       radio.type = 'radio'; radio.name = 'wft-pick-run'; radio.value = r.pipelineId;
       const text = el(doc, 'span', 'wft-pick-text');
-      text.append(el(doc, 'b', '', r.title), el(doc, 'span', 'hint', ` · ${dateText(r.at)} · `), statusBadge(doc, r.status));
+      text.append(el(doc, 'b', '', r.title), el(doc, 'span', 'hint', ` · ${dateText(r.at)} · `), runStatusBadge(doc, r));   // C11: an exactly equal request says so, as on the Tests page
       row.append(radio, text);
       list.append(row);
     }
@@ -67,7 +65,11 @@ export function openFromRunDialog({ doc, win, past, onSubmit }) {
   const nf = past.files.length;
   const nq = past.qa.length;
   const keep = el(doc, 'div', 'wft-keep');
-  keep.append(el(doc, 'span', 'label', 'Keep from this run'));
+  const keepLabel = el(doc, 'span', 'label', 'Keep from this run');
+  keepLabel.id = 'wft-fr-keep-label';
+  keep.setAttribute('role', 'group');
+  keep.setAttribute('aria-labelledby', keepLabel.id);
+  keep.append(keepLabel);
   const req = keepRow(doc, 'wft-fr-request', nf ? `The request and its ${nf === 1 ? 'file' : `${nf} files`} ` : 'The request',
     nf ? `(${past.files.join(', ')})` : null);
   keep.append(req.row);
@@ -78,6 +80,7 @@ export function openFromRunDialog({ doc, win, past, onSubmit }) {
   let verdict = null;
   const hint = el(doc, 'p', 'hint wft-fr-hint');
   hint.hidden = true;
+  hint.setAttribute('aria-live', 'polite');   // what the picked verdict means is announced
   const paintHint = () => {
     const v = past.useLabel;
     hint.textContent = verdict === 'not-good'

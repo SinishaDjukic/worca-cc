@@ -4,6 +4,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { openFromRunDialog, openPickRunDialog, canUseAsExample } from '../ui/public/workflows/test-dialogs.mjs';
+import { runStatusBadge } from '../ui/public/workflows/test-ui.mjs';
+import { AUTO_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
 
 const dom = () => { const d = new JSDOM('<!doctype html><body></body>'); return { doc: d.window.document, win: d.window }; };
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -30,6 +32,10 @@ test('board 3: the heading, what is kept, the verdict and its hint, and what is 
   assert.ok([...doc.querySelectorAll('.wft-keep input')].every((b) => b.classList.contains('wft-keep-box')), 'the listed picker token (ui-shared-controls)');
   const hint = doc.querySelector('.wft-fr-hint');
   assert.equal(hint.hidden, true, 'no verdict, no hint');
+  assert.equal(hint.getAttribute('aria-live'), 'polite', 'what the verdict means is announced');
+  const keepBox = doc.querySelector('.wft-keep');
+  assert.equal(keepBox.getAttribute('role'), 'group');
+  assert.equal(doc.getElementById(keepBox.getAttribute('aria-labelledby')).textContent, 'Keep from this run');
   click([...doc.querySelectorAll('.seg button')].find((b) => b.textContent === 'Not good enough'));
   assert.deepEqual([hint.hidden, hint.textContent], [false, 'This result came from v4 and was not good enough, so v4 shows as not good on this example until it is tested.']);
   click([...doc.querySelectorAll('.seg button')].find((b) => b.textContent === 'Good: keep it like this'));
@@ -77,7 +83,7 @@ test('G6: only a finished no-project run of a saved user workflow, with the flag
   const ok = { flag: true, noProject: true, status: 'done', templateId: 'wf_b', reserved: false };
   assert.equal(canUseAsExample(ok), true);
   assert.equal(canUseAsExample({ ...ok, status: 'error' }), true);
-  for (const bad of [{ flag: false }, { noProject: false }, { status: 'running' }, { templateId: null }, { reserved: true }, { templateId: 'wfp_acme_brief' }]) {
+  for (const bad of [{ flag: false }, { noProject: false }, { status: 'running' }, { templateId: null }, { reserved: true }, { templateId: 'wfp_acme_brief' }, { templateId: AUTO_WORKFLOW_ID }]) {
     assert.equal(canUseAsExample({ ...ok, ...bad }), false, JSON.stringify(bad));
   }
 });
@@ -106,4 +112,18 @@ test('board 3: one post per Add (busy while it posts), and a throw or refusal gi
   await tick();
   assert.deepEqual([calls, ok.disabled, doc.querySelector('.wft-dlg-error').textContent], [2, false, 'Worca did not answer.']);
   assert.ok(doc.querySelector('#mk-dialog'), 'still open');
+});
+
+test('C11: an exactly equal request says so in the picker, with the badge of the Tests page (one helper for both)', () => {
+  const { doc, win } = dom();
+  openPickRunDialog({ doc, win, workflowName: 'Product brief writer', dateText: () => '14 Oct', onPick: () => {},
+    runs: [{ pipelineId: 'p1', title: 'Saved filters', at: 'x', status: 'done', files: 0, sameAs: null },
+      { pipelineId: 'p2', title: 'Saved filters again', at: 'x', status: 'done', files: 0, sameAs: 'Saved filters' },
+      { pipelineId: 'p3', title: 'Bulk export', at: 'x', status: 'stopped', files: 0, sameAs: null }] });
+  assert.deepEqual([...doc.querySelectorAll('.wft-pick-row')].map((r) => r.textContent),
+    ['Saved filters · 14 Oct · Finished', 'Saved filters again · 14 Oct · Same request as another', 'Bulk export · 14 Oct · Stopped']);
+  assert.deepEqual([...doc.querySelectorAll('.wft-pick-row .badge')].map((b) => b.className), ['badge green', 'badge', 'badge']);
+  const one = (r) => { const b = runStatusBadge(doc, r); return [b.className, b.textContent]; };
+  assert.deepEqual([one({ status: 'done' }), one({ status: 'error' }), one({ status: 'stopped' }), one({ status: 'done', sameAs: 'X' })],
+    [['badge green', 'Finished'], ['badge red', 'Failed'], ['badge', 'Stopped'], ['badge', 'Same request as another']]);
 });

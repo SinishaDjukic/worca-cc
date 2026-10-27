@@ -1,7 +1,7 @@
 // ui/public/workflows/tests-view.mjs — the Tests page of a workflow (plans/workflow-tests-part2-plan.md Task 10): the list
 // of examples (canvas board 1), first use (board 19) and the sentence for a workflow that needs a project (D20, C8).
 // Pure DOM: app.js owns data and actions.
-import { el, btn, iconBtn, BUSY_HINT } from './test-ui.mjs';
+import { el, btn, iconBtn, BUSY_HINT, runStatusBadge } from './test-ui.mjs';
 import { withButton } from '../feedback.mjs';
 import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { agoText, countsText } from '../../../src/shared/workflow-tests/compare.mjs';
@@ -150,13 +150,6 @@ function list(doc, page, o, actions, { root, storage, dateText, now }) {
   page.append(foot);
 }
 
-function statusBadge(doc, r) {
-  if (r.sameAs) return el(doc, 'span', 'badge', 'Same request as another');
-  if (r.status === 'done') return el(doc, 'span', 'badge green', 'Finished');
-  if (r.status === 'error') return el(doc, 'span', 'badge red', 'Failed');
-  return el(doc, 'span', 'badge', 'Stopped');
-}
-
 function firstUse(doc, page, o, actions, { dateText }) {
   const head = el(doc, 'div', 'wft-first-head');
   head.append(el(doc, 'h2', 'wft-title', 'Test this workflow before you change it'),
@@ -183,7 +176,7 @@ function firstUse(doc, page, o, actions, { dateText }) {
     const detail = [dateText(r.at), r.files ? (r.files === 1 ? '1 file' : `${r.files} files`) : null,
       r.sameAs ? `the same request as "${r.sameAs}"` : null].filter(Boolean).join(' · ');
     text.append(el(doc, 'b', '', r.title), el(doc, 'span', 'hint', ` · ${detail}`));
-    row.append(box, text, statusBadge(doc, r));
+    row.append(box, text, runStatusBadge(doc, r));
     pick.append(row);
     boxes.push(box);
   }
