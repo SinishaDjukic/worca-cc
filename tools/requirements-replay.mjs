@@ -19,6 +19,7 @@
 // --no-cache set DISABLE_PROMPT_CACHING for each call     --out         write the report as JSON
 // --variant system-stable  the measured variant of design D7, not shipped: each round's stable blocks go
 //            at the end of the system prompt and only the changing part is the prompt (the look is unchanged)
+// The replayed rounds carry no files or documents (A8): the fixture has none, so a feature with files is not what this replays.
 // --compare  offline: per-call and total differences between two reports; spawns nothing.
 // Like the interview, the calls keep the user's Claude settings when they carry sign-in (userClaudeSignIn);
 // the report records it as keptUserSettings.

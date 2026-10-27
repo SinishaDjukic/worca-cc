@@ -385,3 +385,10 @@ test('addToBrief refuses a closer look made for another scope, or before the bri
     (e) => e.code === 'CONFLICT' && e.message === 'This closer look was made before the product brief. Look again first.');
   unchanged(old);
 });
+
+test("A8 D13: the product owner's edit of a criterion keeps its source", () => {
+  const f = make();   // the file's helper
+  updateFeature(f.seq, { spec: { ...f.spec, criteria: [{ id: 'R-po-3', text: 'From the tickets', source: 'support-tickets.pdf' }] } });
+  editCriterion(f.seq, 'R-po-3', 'From the tickets, reworded');
+  assert.deepEqual(getFeature(f.seq).spec.criteria[0], { id: 'R-po-3', text: 'From the tickets, reworded', edited: true, source: 'support-tickets.pdf' });
+});
