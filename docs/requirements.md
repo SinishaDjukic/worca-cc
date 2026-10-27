@@ -277,10 +277,13 @@ Worca. Exporting costs nothing: no model is called.
 - **Report back.** Once a feature has a ticket, **Start in Worca** has **Report back to SHOP-123**, on by default: when the
   run ends, Worca comments on the ticket with the result and the pull request link, and moves it to the status named in
   the Jira connection (**Transition on completion**), if any.
-- If Jira cannot be reached or refuses a field, nothing is recorded and the preview stays open. If Worca stopped after
-  Jira made a ticket but before it saved the link, the next export finds that ticket instead of making a second one: it
-  says "Linked SHOP-123, which an earlier export made. Nothing was sent." Right after such a stop it may ask you to try
-  again in a moment while it checks whether Jira made the ticket.
+- If Jira cannot be reached or refuses a field, nothing is recorded and the preview stays open.
+- If the answer to a create was lost (Jira took too long, the network dropped, or Worca stopped) after Jira made the
+  ticket, the next export finds that ticket instead of making a second one. Usually it then updates the ticket with what
+  the preview shows, and the History card lists "Linked SHOP-123, which an earlier export made" and "Updated SHOP-123 in
+  Jira". If the export setup changed since, or the preview was for another ticket, Worca only links the ticket and says
+  "Linked SHOP-123, which an earlier export made. Nothing was sent." For up to two minutes after a lost answer, an export
+  may ask you to try again in a moment while Worca checks whether Jira made the ticket.
 - On a phone or a narrow window (900 px and narrower) the export dialogs open as full-screen sheets, with **← FEAT-7** to
   go back and the description folded behind **Show all**.
 - Not in this version: epics and "is blocked by" links, reading changes back from Jira, attachments in Jira.

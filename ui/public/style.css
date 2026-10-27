@@ -10660,6 +10660,7 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-dlg-wrap .card.req-dialog.req-export-preview{width:min(1000px,100%)}
 .viewer-modal.req-dlg-wrap.req-dlg-sheet{padding-top:min(8vh,48px)}   /* openModal's page mode: the six export dialogs only */
 .req-export-grid{display:grid;grid-template-columns:320px minmax(0,1fr);gap:24px;align-items:start}
+.req-export-grid[hidden],.req-export-desc[hidden]{display:none}   /* until the first preview arrives */
 .req-export-col{display:flex;flex-direction:column;gap:8px;min-width:0}
 .req-export-col h3,.req-export-changes h3{margin:0;font-size:var(--fs-body);font-weight:700}
 .req-export-fields{display:flex;flex-direction:column;gap:14px}

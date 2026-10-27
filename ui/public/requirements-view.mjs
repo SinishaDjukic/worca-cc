@@ -3083,6 +3083,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const desc = h('div', { class: 'req-export-desc folded', id: 'req-exp-desc', tabindex: '0', role: 'region', 'aria-label': 'Description preview' });
     const more = h('button', { type: 'button', class: 'btn req-export-more', 'data-ui': 'export-more', 'aria-expanded': 'false', 'aria-controls': 'req-exp-desc',
       onclick: () => { desc.classList.remove('folded'); more.setAttribute('aria-expanded', 'true'); more.hidden = true; desc.focus(); } }, 'Show all');
+    // Fields and the description: hidden until the first preview arrives (a first load that fails shows no empty boxes)
+    const grid = h('div', { class: 'req-export-grid', hidden: true },
+      h('div', { class: 'req-export-col', role: 'group', 'aria-labelledby': 'req-exp-fields-h' }, h('h3', { id: 'req-exp-fields-h', text: 'Fields' }), fieldsEl),
+      h('div', { class: 'req-export-col', role: 'group', 'aria-labelledby': 'req-exp-desc-h' },
+        h('h3', { id: 'req-exp-desc-h', text: `Description, as ${name} will show it` }), desc, more));
     const box = stateBox();
     const statusEl = h('p', { class: 'req-export-status', role: 'status' });
     const cancel = h('button', { type: 'button', class: 'btn', 'data-ui': 'export-cancel', onclick: () => { if (!busy) closeDialog(true); } }, 'Cancel');
@@ -3096,10 +3101,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       title,
       h('p', { class: 'hint req-export-sub', text: `${f.id} · ${f.title}` }),
       lead,
-      h('div', { class: 'req-export-grid' },
-        h('div', { class: 'req-export-col', role: 'group', 'aria-labelledby': 'req-exp-fields-h' }, h('h3', { id: 'req-exp-fields-h', text: 'Fields' }), fieldsEl),
-        h('div', { class: 'req-export-col', role: 'group', 'aria-labelledby': 'req-exp-desc-h' },
-          h('h3', { id: 'req-exp-desc-h', text: `Description, as ${name} will show it` }), desc, more)),
+      grid,
       ...box.top,
       h('div', { class: 'req-export-foot' }, h('span', { class: 'hint', text: `Only what you see here is sent to ${name}.` }), statusEl,
         h('div', { class: 'req-dlg-btns' }, cancel, go), box.hint));   // board 29 (1): the note under Cancel and Try again
@@ -3133,6 +3135,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         if (!live(g) || k !== n) return;
         data = d;
         if (!keep) box.clear();
+        grid.hidden = false;
         go.hidden = false;
         go.textContent = goLabel();
         go.disabled = busy;
@@ -3337,7 +3340,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     let data = null; let busy = false;
     const box = stateBox();
     const statusEl = h('p', { class: 'req-export-status', role: 'status' });
-    const body = h('div', { class: 'req-export-desc req-export-comment', tabindex: '0', role: 'region', 'aria-label': 'Comment preview' });
+    // hidden until the first comment arrives (a first load that fails shows no empty box)
+    const body = h('div', { class: 'req-export-desc req-export-comment', tabindex: '0', role: 'region', 'aria-label': 'Comment preview', hidden: true });
     const back = h('button', { type: 'button', class: 'btn', 'data-ui': 'comment-back', onclick: () => { if (!busy) openAgain(f, { reason, trigger }); } }, 'Back');
     const add = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'comment-add', disabled: true }, 'Add comment');
     const title = h('h2', { id: 'req-cm-title', tabindex: '-1', text: `Comment on ${linkKey}` });
@@ -3366,6 +3370,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         add.textContent = 'Add comment';
         add.disabled = false;
         body.replaceChildren(...mdBlocks(d.comment));
+        body.hidden = false;
         if (d.gone) { add.hidden = true; showFailure(box, goneError(linkKey, name), ctx); }
       } catch (err) {
         if (!live(g)) return;

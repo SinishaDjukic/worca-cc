@@ -242,10 +242,15 @@ Board 30 is board 27 in the dark theme and needs nothing but the tokens.
   connection**, and picking one loads its projects.
 - A comment on a ticket Worca has no spec copy for (linked from another connection or project): "Update SHOP-123 once
   to give Worca a starting point for comments."
-- An export while an earlier create's answer may still be on its way (D10): "Worca is still checking whether Jira made
-  the ticket. Try again in a moment."
-- An export that found and linked a ticket an earlier export made (D10): Export again opens for that ticket saying
-  "Linked SHOP-123, which an earlier export made. Nothing was sent."
+- An export within two minutes of a create whose answer was lost (a timeout, a network failure, a protocol failure, or
+  Worca stopped) that does not find the ticket yet (D10): "Worca is still checking whether Jira made the ticket. Try
+  again in a moment." A create the tracker refused (auth, rate limit) made no ticket and does not wait.
+- A ticket an earlier export made, found by the next export (D10): with the same connection and tracker project, and a
+  preview for that ticket (a create, or an update of it), it is linked and the export goes on as an update of it with
+  what the preview shows (History: "Linked SHOP-123, which an earlier export made", then "Updated SHOP-123 in Jira").
+  When the setup moved to another connection or project since, or a lost New ticket turns up while the preview was for
+  the old ticket, it is only linked: Export again opens for it saying "Linked SHOP-123, which an earlier export made.
+  Nothing was sent."
 - The Report back switch is upstream's ink `.switch` (switch.mjs), never green or blue.
 
 ## 8. Code changes

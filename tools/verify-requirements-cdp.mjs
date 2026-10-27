@@ -534,7 +534,8 @@ const HIT_FN = `const hit = (b) => { const r = b.getBoundingClientRect(); const 
     await until(() => A.evalJs(`document.getAnimations().length === 0`), 3000);
   };
   /** The text in `sels` below WCAG AA against what is drawn under it (4.5:1; 3:1 for large text): [text, ratio, ink, ground].
-   *  A colour is read back through a canvas, so any CSS colour syntax works; a disabled control and hidden text are skipped. */
+   *  A colour is read back through a canvas, so any CSS colour syntax works; a disabled control and hidden text are skipped.
+   *  Selectors that reach no visible text are a failure too (a renamed class never passes unseen). */
   const lowContrast = (sels) => A.evalJs(`(() => {
     const cv = document.createElement('canvas'); cv.width = 1; cv.height = 1; const cx = cv.getContext('2d', { willReadFrequently: true });
     const rgba = (c) => { cx.clearRect(0, 0, 1, 1); cx.fillStyle = '#000'; cx.fillStyle = c; cx.fillRect(0, 0, 1, 1);
@@ -546,17 +547,20 @@ const HIT_FN = `const hit = (b) => { const r = b.getBoundingClientRect(); const 
     const lum = (c) => { const v = c.slice(0, 3).map((x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; });
       return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
     const out = [];
+    let seen = 0;
     for (const root of document.querySelectorAll(${JSON.stringify(sels.join(', '))})) {
       for (const el of [root, ...root.querySelectorAll('*')]) {
         if (![...el.childNodes].some((t) => t.nodeType === 3 && t.textContent.trim())) continue;
         if (!el.getClientRects().length || el.closest('[hidden], [aria-hidden="true"], button:disabled')) continue;
         const cs = getComputedStyle(el); if (cs.visibility === 'hidden') continue;
+        seen += 1;
         const bg = ground(el); const ink = over(rgba(cs.color), bg);
         const [a, b] = [lum(ink), lum(bg)]; const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
         const px = parseFloat(cs.fontSize); const large = px >= 24 || (px >= 18.66 && Number(cs.fontWeight) >= 700);
         if (ratio < (large ? 3 : 4.5)) out.push([el.textContent.trim().slice(0, 40), Math.round(ratio * 100) / 100, cs.color, 'rgb(' + bg.slice(0, 3).map(Math.round).join(', ') + ')']);
       }
     }
+    if (!seen) out.push(['no visible text matched', ${JSON.stringify(sels.join(', '))}]);
     return out; })()`);
   /** lowContrast in the light and the dark theme; the page's theme is put back after. */
   const contrastBoth = async (sels, darkShot = null) => {
@@ -573,8 +577,7 @@ const HIT_FN = `const hit = (b) => { const r = b.getBoundingClientRect(); const 
   const tabKey = async (shift) => {
     const k = { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, modifiers: shift ? 8 : 0 };
     await A.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...k });
-    await A.send('Input.dispatchKeyEvent', { type: 'keyUp', ...k });
-    await sleep(60);
+    await A.send('Input.dispatchKeyEvent', { type: 'keyUp', ...k });   // answered once the page has handled the key
     return A.evalJs(`(() => { const a = document.activeElement; const d = document.querySelector('.req-dlg-wrap [role="dialog"]');
       return { inDlg: !!d && !!a && d.contains(a), el: a ? (a.getAttribute('data-ui') || a.id || a.tagName) : null }; })()`);
   };
@@ -700,7 +703,9 @@ const HIT_FN = `const hit = (b) => { const r = b.getBoundingClientRect(); const 
     await until(() => A.evalJs(`(${DLG}?.querySelector('.req-export-desc p')?.textContent || '') === 'Exported before Ready: The team estimates in Jira tomorrow.'`), 15000));
   await shot('a6-board27-export-anyway');
   await A.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
-  await sleep(300);
+  // the 900 px rule has taken over: the wrap is the sheet's and the dialog is fixed to the viewport
+  await until(() => A.evalJs(`(() => { const d = ${DLG}; return window.innerWidth === 390 && !!d && d.parentElement.classList.contains('req-dlg-sheet')
+    && getComputedStyle(d).position === 'fixed' && Math.round(d.getBoundingClientRect().width) === document.documentElement.clientWidth; })()`), 5000);
   const sheet = await A.evalJs(`(() => { const d = ${DLG}; const r = d.getBoundingClientRect();
     const back = d.querySelector('[data-ui="export-back"]'); const more = d.querySelector('[data-ui="export-more"]');
     const sub = d.querySelector('.req-export-sub');
@@ -759,7 +764,7 @@ const HIT_FN = `const hit = (b) => { const r = b.getBoundingClientRect(); const 
   await A.evalJs(`document.querySelector('[data-ui="again-cancel"]').click()`);
   await until(() => A.evalJs(`!${DLG}`), 5000);
   await A.send('Emulation.clearDeviceMetricsOverride');
-  await sleep(300);
+  await until(() => A.evalJs(`window.innerWidth > 900`), 5000);   // the desktop layout again
 
   // Board 29 (1): Jira cannot be reached when the ticket is sent: the sentence, the note, Try again; nothing recorded.
   await A.evalJs(`location.hash = ${JSON.stringify(halfHash)}`);
@@ -814,22 +819,22 @@ const HIT_FN = `const hit = (b) => { const r = b.getBoundingClientRect(); const 
   setMockSourceResponses({ ticketState: unreachable });
   await A.evalJs(`document.querySelector('[data-ui="again-continue"]').click()`);
   let loadFail = null;
-  check('A6 board 29 (1): a preview that cannot load (502) says why with Try again, and no note about a preview it does not show',
+  check('A6 board 29 (1): a preview that cannot load (502) says why with Try again: no note about a preview it does not show, no empty Fields or description',
     await until(async () => {
       loadFail = await A.evalJs(`(() => { const d = ${DLG}; if (!d || !d.querySelector('.req-export-preview') && !d.classList.contains('req-export-preview')) return null;
-        const go = d.querySelector('[data-ui="export-go"]'); const hint = d.querySelector('.req-export-alert-hint');
+        const go = d.querySelector('[data-ui="export-go"]'); const hint = d.querySelector('.req-export-alert-hint'); const grid = d.querySelector('.req-export-grid');
         return { alert: d.querySelector('.req-export-alert')?.textContent || '', note: hint && !hint.hidden ? hint.textContent : null,
-          go: go.textContent, goDisabled: go.disabled, descEmpty: !d.querySelector('.req-export-desc').childElementCount }; })()`);
+          go: go.textContent, goDisabled: go.disabled, gridShown: getComputedStyle(grid).display !== 'none' && grid.getBoundingClientRect().height > 0 }; })()`);
       return !!loadFail && loadFail.alert === 'Worca could not reach Jira: the API token was refused.' && loadFail.go === 'Try again' && !loadFail.goDisabled
-        && loadFail.note === null;
+        && loadFail.note === null && loadFail.gridShown === false;
     }, 15000), JSON.stringify(loadFail));
-  log(`note A6 board 29 (1): a preview LOAD that failed (502) shows the description box ${loadFail && loadFail.descEmpty ? 'empty' : 'filled'}`);
   await shot('a6-board29-preview-load-failed');
   setMockSourceResponses({});
   await A.evalJs(`document.querySelector('[data-ui="export-go"]').click()`);
-  check('A6 board 29 (1): Try again once Jira answers loads the preview (Update SHOP-123)',
+  check('A6 board 29 (1): Try again once Jira answers loads the preview (Update SHOP-123) with its Fields and description',
     await until(() => A.evalJs(`(() => { const d = ${DLG}; const go = d && d.querySelector('[data-ui="export-go"]');
-      return !!go && go.textContent === 'Update SHOP-123' && !go.disabled && !!d.querySelector('.req-export-desc h4') && !d.querySelector('.req-export-alert').textContent; })()`), 15000));
+      return !!go && go.textContent === 'Update SHOP-123' && !go.disabled && !!d.querySelector('.req-export-desc h4') && !d.querySelector('.req-export-alert').textContent
+        && getComputedStyle(d.querySelector('.req-export-grid')).display === 'grid'; })()`), 15000));
   await A.evalJs(`document.querySelector('[data-ui="export-cancel"]').click()`);
   await until(() => A.evalJs(`!${DLG}`), 5000);
 

@@ -576,6 +576,7 @@ test('board 28: Add a comment: the comment itself, Back to the choices, Add comm
   assert.equal(document.activeElement, d.querySelector('h2'), 'the focus is in the dialog, on its title');
   assert.equal(text(d.querySelector('.req-dlg-lead')), 'This comment is added to SHOP-123. Its description and fields stay as they are.');
   const box = d.querySelector('[aria-label="Comment preview"]');
+  assert.equal(box.hidden, false, 'shown once the comment arrives');
   assert.deepEqual([box.getAttribute('tabindex'), [...box.querySelectorAll('p')].map(text)], ['0', ['Updated in Worca since the last export (26 Oct)',
     'Added R-po-6 An order with some items shipped can cancel only the items not yet picked up.',
     'Business rules: “Packed but not picked up still counts as not shipped.” was “Packed orders count as shipped.”', 'From Worca FEAT-7']]);
@@ -667,6 +668,7 @@ test('a comment on a ticket Worca has no starting point for: the sentence, Add c
   q('again-continue').click();
   await settle();
   assert.equal(text(dlg().querySelector('[role="alert"]')), START);
+  assert.equal(dlg().querySelector('[aria-label="Comment preview"]').hidden, true, 'no empty comment box');
   assert.equal(q('comment-add').hidden, true, 'trying again gives the same answer');
   assert.equal(q('comment-back').disabled, false);
   q('comment-back').click();
@@ -912,6 +914,7 @@ test('board 29 (1): a preview that never loaded (502) says why with Try again, w
   const note = d.querySelector('.req-export-alert-hint');
   assert.equal(text(d.querySelector('[role="alert"]')), REACH);
   assert.deepEqual([note.hidden, text(note)], [true, ''], 'no preview on screen: no note about it');
+  assert.equal(d.querySelector('.req-export-grid').hidden, true, 'no empty Fields column or description box');
   assert.deepEqual([text(q('export-go')), q('export-go').disabled], ['Try again', false]);
   q('export-go').click();
   await settle();
@@ -921,6 +924,7 @@ test('board 29 (1): a preview that never loaded (502) says why with Try again, w
   await settle();
   assert.equal(calls.filter((c) => c.url === PREVIEW_URL).length, 3);
   assert.deepEqual([text(d.querySelector('[role="alert"]')), text(q('export-go'))], ['', 'Create in Jira'], 'the preview, once it loads');
+  assert.equal(d.querySelector('.req-export-grid').hidden, false, 'the fields and the description, once a preview arrives');
 });
 
 test('board 29 (1): a later preview that fails (502) keeps the one on screen and says so', async () => {
