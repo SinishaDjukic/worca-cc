@@ -155,6 +155,7 @@ const JS_CHECKBOX_OK = [
   ['marketplace/remove-view.mjs', 'mk-purge-box', 'opt-in consent in the Remove dialog'],
   ['marketplace/update-view.mjs', 'mk-reviewed', 'acknowledges the reviewed changes'], ['marketplace/update-view.mjs', 'mk-include', 'picks updates'],
   ['workflows/version-dialogs.mjs', 'wfv-sv-use', 'opt-in in the Save version dialog: also use the new version for new runs'],
+  ['workflows/tests-view.mjs', 'wft-pick-box', 'picks runs: the past runs to keep as test examples'],
 ].map(([file, token, reason]) => ({ file: `ui/public/${file}`, token, reason }));
 function checkboxEmitters(files) {
   const out = [];

@@ -213,6 +213,8 @@ import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
 import { createLibrary } from './workflows/library.mjs';
 import { createChatDock } from './workflows/chat-dock.mjs';
 import { openSaveVersionDialog, openUseVersionDialog, statusText } from './workflows/version-dialogs.mjs';
+import { renderTestsPage } from './workflows/tests-view.mjs';
+import { sentence as wftSentence } from './workflows/test-ui.mjs';
 import { renderVersionsPage } from './workflows/versions-view.mjs';
 import { exportUseChoices, exportUseValue, paintExportUse } from './workflows/export-use.mjs';
 import { mintId } from '../../src/shared/graph/template.mjs';
@@ -3293,6 +3295,7 @@ function wfvEls() {
     library: g('wfv-library'), sheet: g('wfv-sheet'), sheetTitle: g('wfv-sheet-title'), sheetClose: g('wfv-sheet-close'),
     dialogHost: g('wfv-dialog-host'), chat: g('wfc'),
     pages: g('wfv-pages'), vstatus: g('wfv-vstatus'), saveVersion: g('wfv-saveversion'), versions: g('wfv-versions'),
+    tests: g('wfv-tests'),
   };
 }
 
@@ -3456,6 +3459,7 @@ async function wfvRefreshVersions() {
   // M5: #wfv-vstatus is aria-live: a repeat of the same text after every save is not news, so only a change is written.
   if (els.vstatus) { if (els.vstatus.textContent !== text) els.vstatus.textContent = text; els.vstatus.hidden = !text; }
   paintPage();
+  if (els.tests && !els.tests.hidden) void wftRefresh();   // another workflow, or a save: the Tests page follows
   return wfvVersionsOverview;
 }
 function wfvShowPage(page) {
@@ -3465,6 +3469,14 @@ function wfvShowPage(page) {
     b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false');
   }
   if (els.versions) els.versions.hidden = page !== 'versions';
+  if (els.tests) els.tests.hidden = page !== 'tests';
+  if (page === 'tests') {
+    gvComposer?.select(null);
+    els.tests?.focus();
+    wft.view = 'list';
+    void wftRefresh();
+    return;
+  }
   if (page !== 'versions') return;
   // The canvas keys skip only targets inside [data-canvas-keys="off"]: nothing stays selected on the hidden canvas,
   // and the focus sits on the page (tabindex -1), so a click on its text never hands Delete or the arrows to <body>.
@@ -3586,13 +3598,102 @@ function wfvRestoreRefusal(r) {
   const list = names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', ');
   return `This saved state no longer fits the agents it uses: ${list}.`;
 }
+// Workflow tests (plans/workflow-tests-part2-plan.md): the Tests page. Task 10 is the list and first use; Task 11 adds the
+// example editor, Task 12 Add from a past run, Task 13 Test a version and the progress page, Task 14 Compare and side by side.
+const WFT_EMPTY = Object.freeze({ view: 'list', workflowId: null, overview: null, error: null, example: null, runId: null,
+  exampleId: null, tryIndex: 0, data: null, scripts: [], perTryUsd: null });
+let wft = { ...WFT_EMPTY };
+const wftBase = (id) => `/api/workflows/${encodeURIComponent(id)}/tests`;
+/** {ok, data} | {ok:false, status, error} (the server's reason as a sentence); never throws. */
+async function wftCall(method, path, body) {
+  try {
+    const res = await fetch(path, { method, ...(body !== undefined ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}) });
+    const d = await safeJson(res);
+    return res.ok ? { ok: true, data: d } : { ok: false, status: res.status, error: wftSentence((d && d.error) || `That did not work (${res.status})`) };
+  } catch (e) { return { ok: false, status: 0, error: `Worca did not answer (${e.message}).` }; }
+}
+const wftWorkflowId = () => { const t = gvComposer && gvComposer.template(); return t && t.id ? t.id : null; };
+const wftStorage = () => { try { return window.localStorage; } catch { return null; } };
+const wftDate = (iso) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); };
+
+/** Read what the current view shows and paint it; never repaints over the editor. Never rejects. */
+async function wftRefresh() {
+  const els = wfvEls();
+  if (!els.tests || els.tests.hidden) return;
+  const id = wftWorkflowId();
+  if (!flagOn('workflowTests') || !id) {
+    wft = { ...WFT_EMPTY };
+    renderTestsPage(els.tests, null, wftListActions(), { doc: document, error: 'Save the workflow first: tests belong to a saved workflow.' });   // C15
+    return;
+  }
+  if (wft.workflowId !== id) wft = { ...WFT_EMPTY, workflowId: id };
+  if (wft.view === 'editor') return;
+  const view = wft.view;
+  if (view === 'list' && !wft.overview) renderTestsPage(els.tests, null, wftListActions(), { doc: document, loading: true });
+  const r = view === 'list' ? await wftCall('GET', wftBase(id)) : await wftReadView(id);
+  if (wftWorkflowId() !== id || wft.view !== view) return;   // another workflow or view meanwhile
+  if (view === 'list') wft.overview = r.ok ? r.data : null; else wft.data = r.ok ? r.data : null;
+  wft.error = r.ok ? null : r.error;
+  wftRender();
+}
+function wftReadView() { return Promise.resolve({ ok: false, error: 'This page comes in a later step.' }); }   // Task 13 replaces this body
+function wftRenderView() {                                                                                 // Task 13 replaces this body
+  notify({ tone: 'info', title: 'Test results', detail: 'This page comes in a later step.' });
+  wft.view = 'list'; void wftRefresh();
+}
+function wftRender() {
+  const els = wfvEls();
+  if (!els.tests) return;
+  if (wft.view === 'editor') { wftRenderEditor(els.tests); return; }
+  if (wft.view !== 'list') { wftRenderView(els.tests); return; }
+  renderTestsPage(els.tests, wft.overview, wftListActions(), { doc: document, storage: wftStorage(), error: wft.error, dateText: wftDate });
+}
+function wftShow(view, extra = {}) { wft = { ...wft, view, data: null, ...extra }; void wftRefresh(); }
+
+function wftListActions() {
+  return {
+    newExample: () => void wftOpenExample(null),
+    addFromRun: () => wftPickRun(),
+    testVersion: () => void wftTestVersion(),
+    openExample: (exampleId) => void wftOpenExample(exampleId),
+    exampleMenu: (anchor, e) => toggleMenu({ doc: document, anchor, align: 'end', label: `More for ${e.name}`, items: [   // G18
+      { label: 'Edit', onSelect: () => void wftOpenExample(e.id) },
+      { label: 'Delete', danger: true, onSelect: () => void wftDeleteExample(e) },
+    ] }),
+    openRun: (runId) => wftShow('progress', { runId }),
+    openLatest: (runId) => wftShow('compare', { runId }),
+    addPastRuns: async (pipelineIds) => {
+      const r = await wftCall('POST', `${wftBase(wftWorkflowId())}/examples/from-runs`, { pipelineIds });
+      if (!r.ok) { notify({ tone: 'err', title: 'Examples not added', detail: r.error }); return; }
+      const n = r.data.examples.length;
+      notify({ tone: 'ok', title: n === 1 ? 'Added 1 example' : `Added ${n} examples`, detail: 'Open each to say what a good result needs.' });   // G4
+      if (r.data.skipped.length) notify({ tone: 'info', title: 'Some files were left out', detail: `${r.data.skipped.join(', ')}: larger than 5 MB, or more than 8 files.` });
+      wftShow('list', { overview: null });
+    },
+  };
+}
+function wftPickRun() { notify({ tone: 'info', title: 'Add from a past run', detail: 'Open a past run and pick Use as test example in its More menu.' }); }   // Task 12 replaces this body
+function wftTestVersion() { notify({ tone: 'info', title: 'Test a version', detail: 'This comes in a later step.' }); }                                    // Task 13 replaces this body
+
+// Task 11 replaces these two bodies with the example editor.
+async function wftOpenExample() { notify({ tone: 'info', title: 'Examples', detail: 'The example editor comes in the next step.' }); }
+function wftRenderEditor() { wft.view = 'list'; void wftRefresh(); }
+
+async function wftDeleteExample(e) {
+  const ok = await confirmModal({ title: `Delete "${e.name}"?`, confirmLabel: 'Delete', danger: true,
+    message: 'Its request, files, answers and checks are removed. The tries already made stay in the tests they belong to.' });
+  if (!ok) return;
+  const r = await wftCall('DELETE', `${wftBase(wftWorkflowId())}/examples/${e.id}`);
+  if (!r.ok) { notify({ tone: 'err', title: 'Not deleted', detail: r.error }); return; }
+  wftShow('list', { overview: null });
+}
 // ⌘Z / ⇧⌘Z reach the canvas even from a fenced button (composer.mjs onKeyDown, before its data-canvas-keys fence).
 // While the Versions page covers the canvas, an undo there would edit a graph nobody sees: it does nothing. Capture
 // phase, so the composer's document listener sees defaultPrevented and returns. Fields keep their own undo.
 document.addEventListener('keydown', (ev) => {
   if (!(ev.metaKey || ev.ctrlKey) || (ev.key !== 'z' && ev.key !== 'Z')) return;
-  const page = document.getElementById('wfv-versions');
-  if (!page || page.hidden || page.closest('.view.hidden')) return;      // the Workflows view, its Versions page shown
+  const page = ['wfv-versions', 'wfv-tests'].map((x) => document.getElementById(x)).find((p) => p && !p.hidden && !p.closest('.view.hidden'));
+  if (!page) return;                                                    // the Workflows view, its Versions or Tests page shown
   const t = ev.target;
   if (t && ((t.matches && t.matches('input, textarea, select')) || t.isContentEditable)) return;
   ev.preventDefault();
@@ -3757,7 +3858,16 @@ async function routeWorkflows(param = '') {
     notify({ tone: 'err', title: 'Could not open the workflow', detail: `"${head}" was deleted or renamed, or Worca did not answer.` });
     return;
   }
-  if (await gvComposer.openTemplate(full)) gvComposer.fit();
+  if (await gvComposer.openTemplate(full)) {
+    gvComposer.fit();
+    // Workflow tests: #workflows/<id>/tests[/<example>|/run/<test>] (Use as test example, the results-ready toast).
+    const m = /^tests(?:\/(\d+)|\/run\/(\d+))?$/.exec(sub);
+    if (m && flagOn('workflowTests')) {
+      wfvShowPage('tests');
+      if (m[1]) void wftOpenExample(Number(m[1]));
+      else if (m[2]) wftShow('progress', { runId: Number(m[2]) });
+    }
+  }
 }
 
 async function enterWorkflowsView(param = '', prevView = '') {

@@ -13,9 +13,9 @@ test('one workflows view; the composer, agents, scripts and agent-create views a
   for (const v of ['composer', 'agents', 'scripts', 'agent-create']) assert.equal(doc.querySelector(`[data-view="${v}"]`), null, v);
 });
 
-test('top bar: Back, Workflows ▾, name, Canvas · Versions, chip | Library toggle, Save version, Save — and nothing else', () => {
+test('top bar: Back, Workflows ▾, name, Canvas · Tests · Versions, chip | Library toggle, Save version, Save — and nothing else', () => {
   const tl = doc.querySelector('.wfv-tl .wfv-bar');
-  assert.deepEqual([...tl.querySelectorAll('button, input')].map((e) => e.id), ['wfv-back', 'wfv-wf-menu', 'wfv-name', 'wfv-page-canvas', 'wfv-page-versions', 'wfv-errors', 'wfv-import-file']);
+  assert.deepEqual([...tl.querySelectorAll('button, input')].map((e) => e.id), ['wfv-back', 'wfv-wf-menu', 'wfv-name', 'wfv-page-canvas', 'wfv-page-tests', 'wfv-page-versions', 'wfv-errors', 'wfv-import-file']);
   assert.equal(doc.getElementById('wfv-name').placeholder, 'Untitled pipeline');
   const tr = doc.querySelector('.wfv-tr .wfv-bar');
   assert.deepEqual([...tr.querySelectorAll('button')].map((e) => e.id), ['wfv-lib-toggle', 'wfv-saveversion', 'wfv-save']);
@@ -66,8 +66,8 @@ test('versions (flag workflowTests): Canvas / Versions switch, the status line, 
   assert.ok(pages, '#wfv-pages');
   assert.equal(pages.dataset.flag, 'workflowTests');
   assert.ok(pages.classList.contains('seg'));
-  assert.deepEqual([...pages.querySelectorAll('button')].map((b) => b.textContent.trim()), ['Canvas', 'Versions']);
-  assert.deepEqual([...pages.querySelectorAll('button')].map((b) => b.dataset.page), ['canvas', 'versions']);
+  assert.deepEqual([...pages.querySelectorAll('button')].map((b) => b.textContent.trim()), ['Canvas', 'Tests', 'Versions']);
+  assert.deepEqual([...pages.querySelectorAll('button')].map((b) => b.dataset.page), ['canvas', 'tests', 'versions']);
   // The Labs chip sits inside the Versions tab label (A4), never as a link in the strip.
   assert.equal(pages.querySelector('[data-page="versions"]').dataset.flagChip, 'workflowTests');
   assert.equal(pages.hasAttribute('data-flag-chip'), false);
@@ -91,6 +91,20 @@ test('versions (flag workflowTests): Canvas / Versions switch, the status line, 
   assert.equal(page.getAttribute('aria-labelledby'), 'wfv-page-versions');
   assert.equal(doc.getElementById('wfv-page-versions').getAttribute('aria-controls'), 'wfv-versions');
   assert.equal(doc.getElementById('wfv-page-canvas').getAttribute('aria-controls'), 'wfv-canvas');
+});
+
+test('tests (flag workflowTests, Part 2): the Tests page sits on the stage like the Versions page', () => {
+  const page = doc.getElementById('wfv-tests');
+  assert.ok(page, '#wfv-tests');
+  assert.ok(page.hidden);
+  assert.equal(page.dataset.flag, 'workflowTests');
+  assert.equal(page.parentElement.id, 'wfv-stage');
+  assert.equal(page.dataset.canvasKeys, 'off');
+  assert.equal(page.getAttribute('tabindex'), '-1');
+  assert.equal(page.getAttribute('role'), 'tabpanel');
+  assert.equal(page.getAttribute('aria-labelledby'), 'wfv-page-tests');
+  assert.ok(page.classList.contains('wfv-versions'), 'shares the page placement and the dock rule');
+  assert.equal(doc.getElementById('wfv-page-tests').getAttribute('aria-controls'), 'wfv-tests');
 });
 
 test('narrow screens: the top-left bar shrinks inside the stage instead of pushing Canvas · Versions off-screen', () => {

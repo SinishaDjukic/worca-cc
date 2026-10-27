@@ -2528,3 +2528,52 @@ test('Export… from the canvas (Workflows ▾ › Export…) shows the Version 
   g('export-apply-btn').dispatchEvent(new win.Event('click'));
   assert.equal(downloads.at(-1), '/api/workflows/wf_g/json?use=1');
 });
+
+// ------------------------------------------------- The Tests page (plans/workflow-tests-part2-plan.md Task 10)
+const TESTS_OVERVIEW = {
+  workflowId: 'wf_g', name: 'Graph one', testable: true, reason: null, ctx: { liveVersionNo: 1, latestVersionNo: 2 },
+  columns: [{ use: 1, label: 'v1 · the team uses it' }, { use: 'draft', label: 'Your draft' }],
+  examples: [{ id: 1, name: 'Bulk invoice export', hasRequest: true, files: [], fromAt: null, note: null, tries: 3, basics: 2, checks: 0,
+    cells: { 1: null, draft: null } }],
+  running: null, latest: null, pastRuns: [],
+};
+async function bootTests() {
+  const reads = [];
+  const booted = await bootVersions({ extra: (url, init) => {
+    if (!/\/api\/workflows\/wf_g\/tests$/.test(url)) return null;
+    reads.push(init.method || 'GET');
+    return okJson(TESTS_OVERVIEW);
+  } });
+  return { ...booted, reads };
+}
+
+test('Tests page (Task 10): the Tests tab shows #wfv-tests over the canvas, reads the overview and paints the list; Canvas hides it', async () => {
+  const { window: w, reads } = await bootTests();
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  const page = doc.getElementById('wfv-tests');
+  assert.equal(page.hidden, true);
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="tests"]'));
+  await tick(6);
+  assert.equal(page.hidden, false);
+  assert.equal(doc.getElementById('wfv-versions').hidden, true);
+  assert.equal(doc.getElementById('wfv-page-tests').getAttribute('aria-selected'), 'true');
+  assert.equal(doc.activeElement, page, 'the page holds the focus, inside the canvas-keys fence');
+  assert.ok(reads.length >= 1, 'GET /api/workflows/wf_g/tests');
+  assert.deepEqual([...page.querySelectorAll('.wft-ex-open')].map((b) => b.textContent), ['Bulk invoice export']);
+  const here = new w.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true });
+  doc.body.dispatchEvent(here);
+  assert.equal(here.defaultPrevented, true, '⌘Z never reaches the hidden canvas from the Tests page');
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="canvas"]'));
+  assert.equal(page.hidden, true);
+});
+
+test('Tests page (Task 10): #workflows/<id>/tests opens the workflow on its Tests page', async () => {
+  const { window: w } = await bootTests();
+  await go(w, 'workflows/wf_g/tests');
+  await tick(6);
+  const page = w.document.getElementById('wfv-tests');
+  assert.equal(page.hidden, false);
+  assert.equal(page.querySelectorAll('.wft-row:not(.wft-row-head)').length, 1);
+});
