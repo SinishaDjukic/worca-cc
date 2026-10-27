@@ -348,14 +348,18 @@ test('the View menu: Show and Group by narrow and regroup the list, the chip res
       assert.equal(second.doc.querySelector(`#runs-list .runs-sec[data-section="project:${KEY}"] .runs-item`), null);
       await pickView(second.window, second.doc, 'Date');
       assert.ok(second.doc.querySelector('#runs-list .runs-sec[data-section^="date:"]'), 'date sections');
-      assert.equal(second.doc.querySelector('#runs-view-chip .runs-view-chip-t').textContent, 'By date');
+      assert.equal(second.doc.getElementById('runs-view-chip').hidden, true, 'grouping alone draws no chip');
     } },
     { name: 'the old filter / group-by keys migrate once into the one view record', run: async () => {
       const { window, doc } = await boot({ storage: { 'worca-cc.runs.filter': 'live', 'worca-cc.runs.groupBy': 'project' } });
       go(window, 'runs'); await settle(window);
       assert.deepEqual(JSON.parse(window.localStorage.getItem('worca-cc.runs.view')), { show: 'running', groupBy: 'project', person: '', labels: [] });
       assert.equal(window.localStorage.getItem('worca-cc.runs.filter'), null);
-      assert.equal(doc.querySelector('#runs-view-chip .runs-view-chip-t').textContent, 'Running · By project · 0 of 2 runs');
+      assert.equal(doc.querySelector('#runs-view-chip .runs-view-chip-t').textContent, 'Running · 0 of 2 runs', 'the chip names the filter, not the grouping');
+      click(window, doc.querySelector('#runs-view-chip .runs-view-reset'));
+      await settle(window);
+      assert.equal(doc.getElementById('runs-view-chip').hidden, true);
+      assert.deepEqual(JSON.parse(window.localStorage.getItem('worca-cc.runs.view')), { show: 'all', groupBy: 'project', person: '', labels: [] }, 'the × keeps the grouping');
     } },
   ]);
 });

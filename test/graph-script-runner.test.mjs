@@ -509,8 +509,9 @@ test('P11: under the run`s env-scrub guardrail a script child starts from the ag
   }
 });
 
-test('a script base env never carries an Azure DevOps credential, scrub on or off', async () => {
-  const ADO_KEYS = ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'WORCA_ADO_GIT_TOKEN', 'WORCA_ADO_BOARDS_TOKEN'];
+test('a script base env never carries an Azure DevOps or Bitbucket credential, scrub on or off', async () => {
+  const ADO_KEYS = ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'WORCA_ADO_GIT_TOKEN', 'WORCA_ADO_BOARDS_TOKEN',
+    'WORCA_BB_TOKEN', 'WORCA_BB_READ_TOKEN', 'WORCA_BB_WRITE_TOKEN', 'WORCA_BB_EMAIL', 'WORCA_BB_GIT_TOKEN', 'WORCA_BB_GIT_USER'];
   await withEnv(Object.fromEntries(ADO_KEYS.map((k) => [k, 'x'])), () => {
     for (const env of [scriptBaseEnv({}), scriptBaseEnv({ envScrub: true, envAllowlist: ADO_KEYS })]) {
       for (const k of ADO_KEYS) assert.equal(k in env, false, k);

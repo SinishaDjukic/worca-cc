@@ -747,7 +747,13 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
     [`POST ${P}/:seq/export`]: async (req, res) => {
       const seq = seqOf(req);
       const target = await targetFor(requireFeature(seq));
-      const r = await runExport(seq, req.body || {}, { by: by(req), target }, d);   // the export lock is taken inside, before its first await
+      let r;
+      try {
+        r = await runExport(seq, req.body || {}, { by: by(req), target }, d);   // the export lock is taken inside, before its first await
+      } catch (err) {
+        if (err?.data?.linked) onChange(seq);   // a lost create found and linked, nothing sent: the link and its turn are written
+        throw err;
+      }
       onChange(seq);
       res.json({ ...r, ...(await featureView(seq, d)) });
     },

@@ -4561,9 +4561,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     sum.appendChild(make('span', null, summary));
     body.appendChild(sum);
     if (card.note) body.appendChild(make('div', 'ask-mcard-note', card.note));
-    const azureCard = /^https:\/\/dev\.azure\.com\//i.test(String(card.url || ''));
+    const cardUrl = String(card.url || '');
+    const hostLabel = /^https:\/\/dev\.azure\.com\//i.test(cardUrl) ? 'Azure DevOps' : /^https:\/\/bitbucket\.org\//i.test(cardUrl) ? 'Bitbucket' : 'GitHub';
     const rows = [['Repository', card.url], ['Branch', card.branch || 'default branch'], ['Folder', card.dir],
-      [azureCard ? 'Azure DevOps' : 'GitHub', card.github]];
+      [hostLabel, card.github]];
     const ul = make('ul', 'ask-mcard-changes');
     for (const [label, value] of rows) {
       if (!value) continue;

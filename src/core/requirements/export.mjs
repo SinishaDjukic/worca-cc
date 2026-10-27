@@ -116,14 +116,25 @@ export function defaultConnection(scope, trackers, { memberKeys = [] } = {}) {
   return { plugin: t.plugin, sourceId: t.sourceId, profile: t.profiles[0].id || null };
 }
 
-/** D11: why a tracker could not be reached, in product words. */
-export function reachReason(err) {
+/** Kinds whose message is the connector's own sentence ("Jira unreachable: fetch failed.", "Jira refused the request: …"). */
+const SENTENCE_KINDS = new Set(['network', 'rate-limit', 'plugin']);
+/** Not product copy: more than one line, a stack frame, a path or URL scheme of a file, the shim's own words, a JS error. */
+const NOT_COPY = /[\r\n]|\bat\s+\S+\s+\(|\b(?:file|node):|[A-Za-z]:\\|(?:^|[\s'"(=])\/[\w.-]+\/|^plugin "|^\w*Error\b|^Cannot read propert|is not (?:a function|defined)/;
+const isSentence = (m) => typeof m === 'string' && !!m.trim() && m.length <= 300 && !NOT_COPY.test(m);
+
+/** D11: why a tracker could not be reached, in product words. A message that is not product copy (a connector that crashed,
+ *  an answer the shim could not read, a kind the host does not know) becomes a fixed phrase; trackerCall logs the first line of the raw text. */
+export function reachReason(err, name) {
   const kind = err && err.kind;
+  const message = err && err.message;
+  const plugin = name ? `the ${name} plugin` : "the tracker's plugin";
   if (kind === 'auth') return 'the API token was refused';
   if (kind === 'timeout') return 'it did not answer within a minute';
-  return String((err && err.message) || 'it did not answer').trim().replace(/\.+$/, '');
+  if (kind === 'protocol') return `${plugin} gave an answer Worca could not read`;
+  if (kind && !(SENTENCE_KINDS.has(kind) && isSentence(message))) return `${plugin} stopped unexpectedly`;
+  return String(message || 'it did not answer').trim().replace(/\.+$/, '');
 }
-export const reachSentence = (name, err) => `Worca could not reach ${name || 'the tracker'}: ${reachReason(err)}.`;
+export const reachSentence = (name, err) => `Worca could not reach ${name || 'the tracker'}: ${reachReason(err, name)}.`;
 
 // ---- the service: setup, preview, export, Forget the link, the feature's view ----
 
@@ -147,6 +158,8 @@ const sameConn = (a, b) => !!a && !!b && a.plugin === b.plugin && a.sourceId ===
 const connKey = (c) => `${c.plugin}/${c.sourceId}/${c.profile || ''}`;
 const nowOf = (d) => (d && typeof d.now === 'function' ? d.now() : new Date());
 const mintMarker = () => `rexp_${randomBytes(6).toString('hex')}`;
+/** A ticket URL from the connector is a link only when it is http(s) (a javascript: or data: URL would be a live link). */
+const webUrl = (u) => (typeof u === 'string' && /^\s*https?:\/\//i.test(u) ? u.trim() : null);
 const options = (v) => (Array.isArray(v) ? v.filter((x) => x && x.value != null).map((x) => ({ value: String(x.value), label: String(x.label ?? x.value) })) : []);
 
 /** A source's display name ("Jira"), also for a link whose plugin can no longer export. */
@@ -168,8 +181,11 @@ async function trackerCall(d, name, conn, op, args) {
   try {
     return await callOf(d)({ plugin: conn.plugin, sourceId: conn.sourceId, profile: conn.profile || undefined, op, args, timeoutMs: EXPORT_TIMEOUT_MS });
   } catch (err) {
-    if (err && err.kind === 'unimplemented') throw new RequirementsError('TRACKER', `${name || 'The tracker'} cannot export any more.`, { kind: 'unimplemented' });
-    throw new RequirementsError('TRACKER', reachSentence(name, err), { kind: (err && err.kind) || 'plugin' });
+    const kind = (err && err.kind) || 'plugin';
+    const firstLine = String((err && err.message) || err).split(/\r?\n/)[0].slice(0, 200);   // never a plugin's whole stdout/stderr
+    console.error(`requirements: export op ${op} via ${conn.plugin}/${conn.sourceId} failed (${kind}):`, firstLine);
+    if (kind === 'unimplemented') throw new RequirementsError('TRACKER', `${name || 'The tracker'} cannot export any more.`, { kind: 'unimplemented' });
+    throw new RequirementsError('TRACKER', reachSentence(name, { kind, message: err && err.message }), { kind });
   }
 }
 const goneError = (key, name) => new RequirementsError('CONFLICT', `${key} no longer exists in ${name}.`, { gone: true });
@@ -384,9 +400,9 @@ export async function runExport(seq, body = {}, { by = null, target } = {}, d = 
         const elsewhere = !row.key && !(plan.setup && sameConn(plan.setup, row) && plan.setup.trackerProject === row.trackerProject);
         const notPreviewed = elsewhere || ((mode === 'update' || mode === 'comment') && hit.key !== plan.link.key);
         tx(() => {
-          saveExportLink(f.seq, { ...where.conn, trackerProject: where.project, key: hit.key, url: hit.url || null, createdAt: madeAt, exportedAt: madeAt,
+          saveExportLink(f.seq, { ...where.conn, trackerProject: where.project, key: hit.key, url: webUrl(hit.url), createdAt: madeAt, exportedAt: madeAt,
             spec: row.key ? row.spec : null, fields: row.key ? row.fields : (elsewhere ? null : plan.sent), fingerprint: hit.fingerprint || null }, { by });
-          turn('linked', hit.key, hit.url);
+          turn('linked', hit.key, webUrl(hit.url));
         });
         if (notPreviewed) throw new RequirementsError('CONFLICT', STALE, { stale: true, linked: hit.key });
         link = getExportLink(f.seq);
@@ -424,11 +440,11 @@ export async function runExport(seq, body = {}, { by = null, target } = {}, d = 
       }
       const action = mode === 'new' ? 'new' : 'created';
       tx(() => {
-        saveExportLink(f.seq, { ...conn, trackerProject: plan.setup.trackerProject, key: r.key, url: r.url || null, createdAt: at, exportedAt: at,
+        saveExportLink(f.seq, { ...conn, trackerProject: plan.setup.trackerProject, key: r.key, url: webUrl(r.url), createdAt: at, exportedAt: at,
           spec: f.spec, fields: plan.sent, fingerprint: r.fingerprint || null }, { by });
-        turn(action, r.key, r.url);
+        turn(action, r.key, webUrl(r.url));
       });
-      return { action, key: r.key, url: r.url || null };
+      return { action, key: r.key, url: webUrl(r.url) };
     }
     const conn = connOf(link);
     if (mode === 'update') {
@@ -440,7 +456,7 @@ export async function runExport(seq, body = {}, { by = null, target } = {}, d = 
       const r = await trackerCall(d, plan.name, conn, 'updateTicket', { key: link.key, ticket: plan.ticket });
       if (r && r.gone) throw goneError(link.key, plan.name);
       if (r && r.refused) throw refusedError(r.refused);
-      const url = (r && r.url) || link.url;
+      const url = webUrl(r && r.url) || webUrl(link.url);
       tx(() => {
         // the description changed: a missing read-back (null) skips the edited check once, never compares with the old text
         saveExportLink(f.seq, { ...link, url, exportedAt: at, spec: f.spec, fields: plan.sent, fingerprint: (r && r.fingerprint) || null }, { by });
@@ -498,12 +514,12 @@ export async function exportView(f, turns = [], d = {}) {
     return {
       tracker, canExport: !!tracker && f.status !== 'archived',
       hasSetup: !!setup && trackers.some((t) => t.plugin === setup.plugin && t.sourceId === setup.sourceId),
-      link: link ? { key: link.key, url: link.url, createdAt: link.createdAt, exportedAt: link.exportedAt, ...linkDates(link), tracker: sourceName(connOf(link)) } : null,
+      link: link ? { key: link.key, url: webUrl(link.url), createdAt: link.createdAt, exportedAt: link.exportedAt, ...linkDates(link), tracker: sourceName(connOf(link)) } : null,
       exporting: isExporting(f.seq),
       // Report back moves the ticket only to the status its own connection names (D15)
       doneStatus: link && setup && sameConn(setup, link) ? setup.doneStatus || null : null,
       history: (turns || []).filter((t) => t && t.kind === 'export' && t.payload).map((t) => ({ action: t.payload.action, tracker: t.payload.tracker || null,
-        key: t.payload.key || null, url: t.payload.url || null, reason: t.payload.reason || null, when: exportTime(t.payload.at || t.at),
+        key: t.payload.key || null, url: webUrl(t.payload.url), reason: t.payload.reason || null, when: exportTime(t.payload.at || t.at),
         by: actorLabel(t.by) || null }))   // 'local' (a single-user install) names nobody, as board 28
         .reverse(),
     };

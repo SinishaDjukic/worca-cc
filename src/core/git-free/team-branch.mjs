@@ -3,7 +3,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { GIT_MISSING } from '../git-available.mjs';
+import { gitMissingMessage } from '../git-available.mjs';
 import { createGithubClient, resolveBranch } from './github.mjs';
 import { extractTarGz, isSafeRelPath, ARCHIVE_LIMITS } from './archive.mjs';
 
@@ -28,7 +28,7 @@ const messageOf = (err) => (err && err.message) || String(err);
 /** `git ls-remote --heads <origin> <branch>`'s result shape; `timeoutMs` bounds each request (git's ls-remote timeout). */
 export async function lsRemoteHttps(slug, branch, { timeoutMs } = {}) {
   const c = clientOf(slug, timeoutMs);
-  if (!c) return { ok: false, stdout: '', stderr: GIT_MISSING.message };
+  if (!c) return { ok: false, stdout: '', stderr: gitMissingMessage(slug) };
   try {
     const sha = await resolveBranch(c, branch);
     if (sha) return { ok: true, stdout: `${sha}\trefs/heads/${branch}\n`, stderr: '' };
@@ -43,7 +43,7 @@ export async function lsRemoteHttps(slug, branch, { timeoutMs } = {}) {
  *  GitHub's contents API answers the FILE a link names when that file is in the repository (worca writes no links). */
 export async function readBranchFile(slug, sha, path, { timeoutMs } = {}) {
   const c = clientOf(slug, timeoutMs);
-  if (!c) return { ok: false, stderr: GIT_MISSING.message };
+  if (!c) return { ok: false, stderr: gitMissingMessage(slug) };
   try {
     const f = await c.contents(path, sha);
     if (!f) return { ok: true, text: null };
@@ -57,7 +57,7 @@ const treeEntries = (files) => Object.entries(files).map(([path, content]) => ({
 
 export async function createOrphanBranch(slug, branch, { files, message }) {
   const c = clientOf(slug);
-  if (!c) return { ok: false, stderr: GIT_MISSING.message };
+  if (!c) return { ok: false, stderr: gitMissingMessage(slug) };
   try {
     const tree = (await c.json('POST', '/git/trees', { tree: treeEntries(files) })).sha;
     const sha = (await c.json('POST', '/git/commits', { message, tree, parents: [], author: { ...TEAM_AUTHOR, date: new Date().toISOString() } })).sha;
@@ -75,7 +75,7 @@ export async function createOrphanBranch(slug, branch, { files, message }) {
 
 export async function commitFiles(slug, branch, { parent, files, message }) {
   const c = clientOf(slug);
-  if (!c) return { ok: false, stderr: GIT_MISSING.message };
+  if (!c) return { ok: false, stderr: gitMissingMessage(slug) };
   try {
     const baseTree = (await c.json('GET', `/git/commits/${parent}`)).tree.sha;
     const tree = (await c.json('POST', '/git/trees', { base_tree: baseTree, tree: treeEntries(files) })).sha;
@@ -129,7 +129,7 @@ async function incremental(c, dir, prev, head, keep) {
 /** `<dir>` mirrors the branch's kept files; `<dir>@sha` records the commit it mirrors. */
 export async function syncSnapshot(slug, branch, dir, { keep = () => true } = {}) {
   const c = clientOf(slug);
-  if (!c) return { ok: false, sha: null, changed: false, stderr: GIT_MISSING.message };
+  if (!c) return { ok: false, sha: null, changed: false, stderr: gitMissingMessage(slug) };
   const ls = await lsRemoteHttps(slug, branch);
   if (!ls.ok) return { ok: false, sha: null, changed: false, stderr: ls.stderr };
   const head = ls.stdout.split('\t')[0].trim();

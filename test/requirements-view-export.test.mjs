@@ -61,7 +61,7 @@ const make = () => {
   const host = document.createElement('div'); const msgEl = document.createElement('p'); const subEl = document.createElement('div');
   const nav = document.createElement('nav');
   document.body.replaceChildren(nav, host);
-  const view = createRequirementsView({ host, subEl, msgEl, deps: { route: () => {}, who: () => 'Tomica' } });
+  const view = createRequirementsView({ host, subEl, msgEl, deps: { route: () => {}, who: () => 'Ann' } });
   return { host, msgEl, nav, view };
 };
 const openFeature = async (f, extra = {}) => {
@@ -387,7 +387,7 @@ const AGAIN = (over = {}) => preview({ mode: 'update', key: 'SHOP-123', link: { 
     { line: 'Business rules: 1 line changed', id: null }, { line: 'Edge cases: 1 line added', id: null }], ...over });
 const exportAnswer = (action, key) => ({ action, key, url: `https://acme.test/browse/${key}`, turns: [],
   feature: feature({ export: XV({ link: { ...LINK, key, url: `https://acme.test/browse/${key}` },
-    history: [{ action, tracker: 'Jira', key, url: `https://acme.test/browse/${key}`, reason: null, when: '26 Oct, 10:42', by: 'Tomica Brkovic' }] }) }) });
+    history: [{ action, tracker: 'Jira', key, url: `https://acme.test/browse/${key}`, reason: null, when: '26 Oct, 10:42', by: 'Ann Example' }] }) }) });
 const PREVIEW_URL = `${F}/export/preview`;
 const EXPORT_URL = `${F}/export`;
 const openExport = async (f, routes) => {
@@ -592,9 +592,26 @@ test('board 28: Add a comment: the comment itself, Back to the choices, Add comm
   assert.equal(text(host.querySelector('.req-export-done')), 'Commented on SHOP-123');
 });
 
+test('several trackers and none bound: the preview names the tracker its answer carries, Again and Comment the one the link sits on', async () => {
+  await openExport(feature({ export: XV({ tracker: { name: null } }) }), { [`POST ${PREVIEW_URL}`]: () => preview() });
+  let d = dlg();
+  assert.deepEqual([text(d.querySelector('h2')), text(q('export-go')), text(d.querySelector('#req-exp-desc-h')), text(d.querySelector('.req-export-foot .hint'))],
+    ['Export FEAT-7 to Jira', 'Create in Jira', 'Description, as Jira will show it', 'Only what you see here is sent to Jira.']);
+  q('export-cancel').click();
+  const COMMENT = 'Updated in Worca since the last export (26 Oct)\n\nFrom Worca FEAT-7\n';
+  await openExport(feature({ export: XV({ tracker: { name: null }, link: LINK }) }), { [`POST ${PREVIEW_URL}`]: (b) => (b.mode === 'comment'
+    ? AGAIN({ mode: 'comment', ticket: null, fields: null, comment: COMMENT, previewHash: 'c1' }) : AGAIN({ mode: b.mode })) });
+  q('again-comment').click();
+  q('again-continue').click();
+  await settle();
+  d = dlg();
+  assert.ok([...d.querySelectorAll('.hint')].some((x) => text(x) === 'Only what you see here is sent to Jira.'), 'the Comment dialog names the link\'s tracker');
+  assert.ok(!/a tracker/.test(text(d)));
+});
+
 test('D17: the History card right under the header, newest first, as board 28 writes it; none without an export', async () => {
   const at = (action, when, extra = {}) => ({ action, tracker: 'Jira', key: 'SHOP-123', url: 'https://acme.test/browse/SHOP-123', reason: null, when,
-    by: 'Tomica Brkovic', ...extra });
+    by: 'Ann Example', ...extra });
   const history = [at('forgot', '28 Oct, 08:00'), at('commented', '27 Oct, 09:15'), at('updated', '27 Oct, 09:00'), at('linked', '26 Oct, 11:00', { by: null }),
     at('new', '26 Oct, 10:50', { key: 'SHOP-124', url: 'https://acme.test/browse/SHOP-124' }), at('created', '26 Oct, 10:42', { reason: 'Estimating tomorrow.' })];
   const { host } = await openFeature(feature({ export: XV({ history }) }));
@@ -602,15 +619,26 @@ test('D17: the History card right under the header, newest first, as board 28 wr
   assert.equal(host.querySelector('.req-head').nextElementSibling, card);
   assert.equal(text(document.getElementById(card.getAttribute('aria-labelledby'))), 'History');
   assert.deepEqual([...card.querySelectorAll('li')].map((li) => [text(li.firstChild), text(li.querySelector('.hint'))]), [
-    ['Forgot the link to SHOP-123 · 28 Oct, 08:00', 'Tomica Brkovic'],
-    ['Commented on SHOP-123 in Jira · 27 Oct, 09:15', 'Tomica Brkovic'],
-    ['Updated SHOP-123 in Jira · 27 Oct, 09:00', 'Tomica Brkovic'],
+    ['Forgot the link to SHOP-123 · 28 Oct, 08:00', 'Ann Example'],
+    ['Commented on SHOP-123 in Jira · 27 Oct, 09:15', 'Ann Example'],
+    ['Updated SHOP-123 in Jira · 27 Oct, 09:00', 'Ann Example'],
     ['Linked SHOP-123, which an earlier export made · 26 Oct, 11:00', null],
-    ['Exported to Jira as SHOP-124 · 26 Oct, 10:50', 'Tomica Brkovic'],
-    ['Exported to Jira as SHOP-123 · 26 Oct, 10:42 · before Ready: Estimating tomorrow.', 'Tomica Brkovic']]);
+    ['Exported to Jira as SHOP-124 · 26 Oct, 10:50', 'Ann Example'],
+    ['Exported to Jira as SHOP-123 · 26 Oct, 10:42 · before Ready: Estimating tomorrow.', 'Ann Example']]);
   const a = card.querySelector('li:last-child a');
   assert.deepEqual([text(a), a.getAttribute('href'), a.getAttribute('target'), a.getAttribute('rel')], ['SHOP-123', 'https://acme.test/browse/SHOP-123', '_blank', 'noopener']);
   assert.equal((await openFeature(feature())).host.querySelector('.req-history'), null);
+});
+
+test('a ticket URL that is not http(s) is no link: the chip and the History line show the key as text', async () => {
+  const bad = 'javascript:alert(1)';
+  const { host } = await openFeature(feature({ export: XV({ link: { ...LINK, url: bad },
+    history: [{ action: 'created', tracker: 'Jira', key: 'SHOP-123', url: ' data:text/html,x', reason: null, when: '26 Oct, 10:42', by: 'Ann Example' }] }) }));
+  const chip = host.querySelector('.req-export-chip');
+  assert.deepEqual([chip.tagName, text(chip)], ['SPAN', 'SHOP-123']);
+  assert.equal(host.querySelector('.req-history li a'), null);
+  assert.equal(text(host.querySelector('.req-history li').firstChild), 'Exported to Jira as SHOP-123 · 26 Oct, 10:42');
+  assert.equal(host.querySelector('a[href^="javascript"], a[href*="data:"]'), null);
 });
 
 // ── the server's answers and the dialogs' rules ──
@@ -960,7 +988,7 @@ test('board 29 (2): Jira refuses a field: its sentence and Change the export set
 
 test('board 29 (3): the ticket is gone: the again dialog says so first; Forget the link drops the chip; New ticket previews mode new', async () => {
   const forgot = { feature: feature({ export: XV({ history: [{ action: 'forgot', tracker: 'Jira', key: 'SHOP-123', url: LINK.url, reason: null,
-    when: '26 Oct, 11:00', by: 'Tomica Brkovic' }] }) }), turns: [] };
+    when: '26 Oct, 11:00', by: 'Ann Example' }] }) }), turns: [] };
   const gone = { [`POST ${PREVIEW_URL}`]: (b) => AGAIN({ mode: b.mode, gone: b.mode === 'update' || b.mode === 'comment' }),
     [`DELETE ${EXPORT_URL}/link`]: () => forgot };
   let m = await openExport(feature({ export: XV({ link: LINK }) }), gone);
@@ -1018,8 +1046,13 @@ test('D15, board 29 (6): Report back to SHOP-123 on the Ready to build card, on 
   assert.ok(sw.nextElementSibling.classList.contains('switch'), "upstream's switch (ink when on)");
   assert.equal(text(document.getElementById(sw.getAttribute('aria-describedby'))), 'When the run ends, Worca comments with the result and the pull request link, '
     + 'and moves the ticket to Done (the status named in the Jira connection; without one, it only comments).');
+  const stranger = document.createElement('input'); stranger.type = 'checkbox'; stranger.checked = true;
+  stranger.setAttribute('data-ui', 'report-other');   // another view's control with a like name is not this switch
+  document.body.append(stranger);
   sw.checked = false;
   sw.dispatchEvent(new window.Event('change'));
+  assert.equal(stranger.checked, true, 'only the Report back switches follow');
+  stranger.remove();
   q('start-go', m.host).click();
   await settle();
   assert.equal(m.calls.find((c) => c.url === `${F}/start`).body.reportBack, false);
@@ -1184,6 +1217,28 @@ test('D20: an export dialog is modal at every width: the app is inert on a deskt
       assert.deepEqual([dlg(), inertIn()], [null, []], 'left: nothing is inert');
     } finally { phone.restore(); }
   }
+});
+
+test('D20 with A3: an export dialog closed over an open Feature chat phone sheet leaves that sheet modal (the page behind it inert again)', async () => {
+  const phone = withPhone(false);
+  try {
+    const m = await openFeature(feature(), { ...SETUP_ROUTES(), [`POST ${PREVIEW_URL}`]: () => preview(),
+      [`GET ${F}/helper`]: () => ({ messages: [], answering: false, estimate: null }) });
+    q('helper-toggle', m.host).click();
+    await settle();
+    assert.ok(m.host.querySelector('.req-help'), 'Feature chat is open');
+    assert.deepEqual(inertIn(), [], 'a desktop: beside the page, nothing is inert');
+    q('menu-export', m.host).click();
+    q('mi-export', m.host).click();
+    await settle();
+    assert.ok(dlg());
+    phone.set(true);   // the window is narrowed to a phone while the export dialog is open
+    q('export-cancel').click();
+    assert.equal(dlg(), null);
+    assert.ok(m.nav.inert, 'the Feature chat sheet is modal again: the app chrome is inert');
+    assert.ok(m.host.querySelector('.req-head').inert, 'the page behind the sheet is inert');
+    assert.equal(m.host.querySelector('.req-help').closest('[inert]'), null, 'the sheet itself is live');
+  } finally { phone.restore(); }
 });
 
 test('D20 (phone): leaving the view with a sheet open leaves nothing inert; a resize while away re-applies nothing; coming back has no sheet', async () => {

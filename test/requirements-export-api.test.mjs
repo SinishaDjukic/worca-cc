@@ -163,8 +163,10 @@ test('every error data field reaches the client unchanged: linked on a stale fin
   setMockSourceResponses({ findTicket: (a) => ({ key: 'OPS-9', url: 'https://mock.test/browse/OPS-9', fingerprint: 'f9',
     lastLine: `From Worca ${f.id} · exported 26 Oct 2026`, marker: a.marker, labels: ['worca', a.label] }) });
   try {
+    frames.length = 0;
     const r = await call('POST', `${P}/${f.seq}/export`, { mode: 'create', previewHash: p.json.previewHash });
     assert.deepEqual([r.status, r.json.stale, r.json.linked, r.json.error], [409, true, 'OPS-9', 'The spec changed since the preview. Look at the preview again.']);
+    assert.deepEqual(frames, [{ type: 'requirements-changed', seq: f.seq }], 'the link was written: other open pages are told');
   } finally { setMockSourceResponses(null); }
   updateFeature(f.seq, { spec: { ...readySpec(), rules: ['A rule'] } });
   const c = await call('POST', `${P}/${f.seq}/export/preview`, { mode: 'comment' });

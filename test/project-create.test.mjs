@@ -293,11 +293,13 @@ test('checkRemoteUrl: https, ssh and scp forms pass; credentials, queries and op
       assert.equal(ok('ssh://git@github.com:22/me/notes.git'), 'ssh://git@github.com:22/me/notes.git');
       assert.equal(ok('git@github.com:me/notes.git'), 'git@github.com:me/notes.git');
       assert.equal(ok('https://org@dev.azure.com/org/p/_git/r'), 'https://org@dev.azure.com/org/p/_git/r');
+      assert.equal(checkRemoteUrl('https://jdoe@bitbucket.org/acme/api.git'), 'https://jdoe@bitbucket.org/acme/api.git');
     } },
     { name: 'refusals', run: () => {
       assert.equal(ok(''), 'INVALID: a remote URL is required');
       assert.match(ok('https://me:tok@github.com/me/notes'), /^INVALID: the URL contains credentials/);
       assert.match(ok('https://me@github.com/me/notes'), /^INVALID: the URL contains credentials/);
+      assert.throws(() => checkRemoteUrl('https://jdoe:pw@bitbucket.org/acme/api.git'));
       assert.equal(ok('https://github.com/me/notes?x=1'), 'INVALID: the URL must not have a query or fragment');
       assert.equal(ok('http://github.com/me/notes'), 'INVALID: only https:// and ssh remote URLs are supported');
       assert.equal(ok('file:///tmp/x'), 'INVALID: only https:// and ssh remote URLs are supported');
