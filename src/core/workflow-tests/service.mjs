@@ -152,10 +152,16 @@ export async function pastRunSummary(pipelineId, { registry = loadAgentRegistry(
 }
 
 /** Board 3 → an example; `skipped` names the files that did not fit (5 MB, 8 files). */
-export async function exampleFromRun(workflowId, { pipelineId, name, keepRequest = true, keepAnswers = true, verdict = null, note = null } = {}, { by = null, registry } = {}) {
+/** A past run that can become an example of `workflowId`, or the error why not. */
+async function usablePastRun(workflowId, pipelineId, registry) {
   const past = await pastRunSummary(pipelineId, registry ? { registry } : {});
   if (past.workflowId !== workflowId) throw err('this run is of another workflow', 'BAD_REQUEST');
   if (!past.testable) throw err(NOT_TESTABLE_REASONS[past.reason] || NOT_TESTABLE_TEXT, past.reason === 'needs-project' ? 'NOT_TESTABLE' : 'BAD_REQUEST');
+  return past;
+}
+
+export async function exampleFromRun(workflowId, { pipelineId, name, keepRequest = true, keepAnswers = true, verdict = null, note = null } = {}, { by = null, registry } = {}) {
+  const past = await usablePastRun(workflowId, pipelineId, registry);
   if (verdict !== null && verdict !== 'good' && verdict !== 'not-good') throw err('verdict must be "good" or "not-good"', 'BAD_REQUEST');
   const clean = (typeof name === 'string' && name.trim() ? name.trim() : past.title || 'Example').slice(0, 120);
   const example = store.createExample(workflowId, { name: clean, request: keepRequest ? past.request : '', answers: keepAnswers ? past.qa : [], note },
@@ -172,11 +178,14 @@ export async function exampleFromRun(workflowId, { pipelineId, name, keepRequest
   return { example: store.readExample(workflowId, example.id), skipped };
 }
 
-/** Board 19's "Add N examples": every picked run with its request, files and answers, no verdict (G4). */
+/** Board 19's "Add N examples": every picked run with its request, files and answers, no verdict (G4). Each run once;
+ *  all of them are checked first, so a run that cannot become an example adds none. */
 export async function examplesFromRuns(workflowId, pipelineIds, opts = {}) {
+  const ids = [...new Set(pipelineIds)];
+  for (const id of ids) await usablePastRun(workflowId, id, opts.registry);
   const examples = [];
   const skipped = [];
-  for (const id of pipelineIds) {
+  for (const id of ids) {
     const r = await exampleFromRun(workflowId, { pipelineId: id }, opts);
     examples.push(r.example);
     skipped.push(...r.skipped);
@@ -245,7 +254,8 @@ export async function testsOverview(workflowId, { registry = loadAgentRegistry()
  */
 async function connectorsOf(workflowId, uses, { connectorsPreview = null, runEngine = null } = {}) {
   let preview = {};
-  try { preview = connectorsPreview ? (await connectorsPreview()) || {} : {}; } catch { preview = {}; }
+  let previewError = false;   // the dialog says it could not read the connectors, never "none"
+  try { preview = connectorsPreview ? (await connectorsPreview()) || {} : {}; } catch { preview = {}; previewError = true; }
   const copies = Array.isArray(preview.copies) ? preview.copies : [];
   const fileServers = Array.isArray(preview.fileServers) ? preview.fileServers : [];
   let scripts = {};
@@ -257,7 +267,8 @@ async function connectorsOf(workflowId, uses, { connectorsPreview = null, runEng
     for (const n of g ? g.nodes : []) if (n && n.kind === 'script') names.push((scripts[n.key] && scripts[n.key].displayName) || n.key || 'script');
     if (g) engines.push(...stepEngines(g, { runEngine }));
   }
-  return connectorNotes({ copies, fileServers, userScope: userScopeServerNames(), claudeAi: seenClaudeAiServers(), scripts: names, engines });
+  const notes = connectorNotes({ copies, fileServers, userScope: userScopeServerNames(), claudeAi: seenClaudeAiServers(), scripts: names, engines });
+  return previewError ? { ...notes, previewError: true } : notes;
 }
 
 /** Board 4: per version, what would be tried, what can be reused, and what a try usually costs; board 30's notes. */

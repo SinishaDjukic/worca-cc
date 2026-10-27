@@ -185,6 +185,50 @@ test('the dialog notes (D35): the file servers a try without a project loads, an
   } finally { await rm(join(root, '.mcp.json'), { force: true }); }
 });
 
+test('the example routes: edit, delete a file, add from runs, stop a test, a try is no past run, bad ids, a deleted workflow', { timeout: 300000 }, async () => {
+  // A Windows-unsafe file name is refused at the route too (400, the store's plain-name text).
+  const ex = (await call('POST', `${WF}/examples`, { name: 'Edit me', request: 'Plan a CSV import.', tries: 1 })).body.example;
+  const nul = await call('POST', `${WF}/examples/${ex.id}/files`, { name: 'nul.txt', dataBase64: Buffer.from('x').toString('base64') });
+  assert.deepEqual([nul.status, nul.body.error], [400, 'give the file a plain name, such as notes.md']);
+  assert.equal((await call('POST', `${WF}/examples/${ex.id}/files`, { name: 'a.md', dataBase64: Buffer.from('# A').toString('base64') })).status, 200);
+  const put = await call('PUT', `${WF}/examples/${ex.id}`, { name: 'Edited', note: 'A note' });
+  assert.deepEqual([put.status, put.body.example.name, put.body.example.note, put.body.example.request], [200, 'Edited', 'A note', 'Plan a CSV import.']);
+  const delFile = await call('DELETE', `${WF}/examples/${ex.id}/files/a.md`);
+  assert.deepEqual([delFile.status, delFile.body.example.files], [200, []]);
+
+  // From runs: ids are de-duplicated, and one run that cannot become an example adds none of them.
+  const pastId = service.recentRuns('wf_api_t')[0].pipelineId;
+  const tryId = store.triesOfRun(store.listTestRuns('wf_api_t').at(-1).id)[0].pipelineId;
+  const pr = (await call('GET', `/api/workflow-tests/past-run/${tryId}`)).body;
+  assert.deepEqual([pr.testable, pr.reason, pr.reasonText], [false, 'test-try', 'A test try cannot become an example.']);
+  const count = () => store.listExamples('wf_api_t').length;
+  const before = count();
+  const mixed = await call('POST', `${WF}/examples/from-runs`, { pipelineIds: [pastId, tryId] });
+  assert.deepEqual([mixed.status, mixed.body.error, count()], [400, 'A test try cannot become an example.', before], 'nothing is added');
+  const twice = await call('POST', `${WF}/examples/from-runs`, { pipelineIds: [pastId, pastId] });
+  assert.deepEqual([twice.status, twice.body.examples.length, twice.body.skipped, count()], [201, 1, [], before + 1]);
+  assert.equal((await call('DELETE', `${WF}/examples/${twice.body.examples[0].id}`)).status, 200);
+  assert.equal(count(), before);
+
+  // exampleIds must be whole numbers: a 400, not "no example NaN".
+  const nan = await call('POST', `${WF}/runs`, { a: 1, b: 'draft', exampleIds: ['x'], tries: 1 });
+  assert.deepEqual([nan.status, nan.body.error], [400, 'example must be a whole number']);
+
+  // Stop a running test: its tries stop, the test says the person stopped it.
+  const run = (await call('POST', `${WF}/runs`, { a: 1, b: 'draft', exampleIds: [ex.id], tries: 3, reuseA: false })).body.run;
+  const stopped = await call('POST', `${WF}/runs/${run.id}/stop`);
+  assert.deepEqual([stopped.status, stopped.body.run.status, stopped.body.run.stopReason], [200, 'stopped', 'person']);
+
+  // A deleted workflow's examples cannot be edited, and its test cannot be finished; stopping stays allowed.
+  assert.equal((await call('DELETE', '/api/workflows/wf_api_t')).status, 200);
+  for (const [method, p, body] of [['PUT', `${WF}/examples/${ex.id}`, { name: 'x' }], ['DELETE', `${WF}/examples/${ex.id}`],
+    ['POST', `${WF}/examples/${ex.id}/files`, { name: 'b.md', dataBase64: 'eA==' }], ['DELETE', `${WF}/examples/${ex.id}/files/b.md`],
+    ['POST', `${WF}/runs/${run.id}/continue`, {}]]) {
+    assert.equal((await call(method, p, body)).status, 404, `${method} ${p}`);
+  }
+  assert.equal((await call('POST', `${WF}/runs/${run.id}/stop`)).status, 200);
+});
+
 test('a test try cannot be paused: POST /api/pause answers 409 and never pauses it', async () => {
   const key = 'wft-live-try';
   let paused = 0;

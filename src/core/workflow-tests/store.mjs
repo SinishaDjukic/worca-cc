@@ -21,6 +21,8 @@ const ANSWERS_MAX = 50;
 const CHECKS_MAX = 20;
 const NOTE_MAX = 2000;
 const FILE_NAME_RE = /^[^\\/:*?"<>|\u0000-\u001f]{1,120}$/;
+/** Device names Windows refuses as a file, with or without an extension (`nul.txt`): a try's extras could not be written. */
+const RESERVED_STEM_RE = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i;
 
 export function testError(message, code, extra = {}) { return Object.assign(new Error(message), { code, ...extra }); }
 const parse = (text, fallback) => { try { const v = JSON.parse(text); return v ?? fallback; } catch { return fallback; } };
@@ -165,7 +167,13 @@ export function deleteExample(workflowId, id) {
 export function putExampleFile(workflowId, id, { name, data } = {}) {
   const ex = requireExample(workflowId, id);
   const clean = typeof name === 'string' ? name.trim() : '';
-  if (!FILE_NAME_RE.test(clean) || clean === '.' || clean === '..') throw testError('give the file a plain name, such as notes.md', 'BAD_REQUEST');
+  // Also refused: a name a try's folder could not hold on Windows (server.mjs writeExtras would drop it silently): a
+  // device name, a name ending in a dot or a space, or a case-only twin of another file of this example. The exact
+  // same name replaces that file.
+  const plainName = FILE_NAME_RE.test(clean) && clean !== '.' && clean !== '..' && !/[. ]$/.test(String(name))
+    && !RESERVED_STEM_RE.test(clean.split('.')[0].trimEnd())
+    && !ex.files.some((f) => f.name !== clean && f.name.toLowerCase() === clean.toLowerCase());
+  if (!plainName) throw testError('give the file a plain name, such as notes.md', 'BAD_REQUEST');
   const buf = Buffer.isBuffer(data) ? data : Buffer.from(data || []);
   if (!buf.length) throw testError(`${clean} is empty`, 'BAD_REQUEST');
   if (buf.length > FILE_MAX_BYTES) throw testError(`${clean} is larger than 5 MB`, 'BAD_REQUEST');

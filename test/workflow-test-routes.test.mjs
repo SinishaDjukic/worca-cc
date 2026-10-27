@@ -14,15 +14,26 @@ const homes = [];
 beforeEach(async () => { const d = await mkdtemp(join(tmpdir(), 'worca-cc-wftroutes-')); homes.push(d); _resetForTests(); process.env.WORCA_HOME = d; });
 after(async () => { _resetForTests(); delete process.env.WORCA_HOME; delete process.env.WORCA_FLAGS; await Promise.all(homes.map((d) => rm(d, { recursive: true, force: true }))); });
 
-function boot() {
+function boot(extra = {}) {
   const seen = [];
-  const app = Object.fromEntries(['get', 'post', 'put', 'delete'].map((m) => [m, (path) => seen.push([m.toUpperCase(), path])]));
+  const handlers = new Map();
+  const app = Object.fromEntries(['get', 'post', 'put', 'delete'].map((m) => [m, (path, ...fns) => {
+    seen.push([m.toUpperCase(), path]);
+    handlers.set(`${m.toUpperCase()} ${path}`, fns.at(-1));   // the handler after the flag gate
+  }]));
   const frames = [];
   const { runner } = registerWorkflowTestRoutes(app, { broadcast: (f) => frames.push(f), deps: {
     startRun: async () => ({ status: 403, body: { error: 'total cost limit reached' } }),
-    liveRun: () => null, stopRun: async () => {}, answer: () => false, mockMode: () => true,
+    liveRun: () => null, stopRun: async () => {}, answer: () => false, mockMode: () => true, ...extra,
   } });
-  return { runner, frames, seen };
+  return { runner, frames, seen, handlers };
+}
+/** Call one registered handler with a fake request; resolves to { status, body }. */
+function invoke(handler, req) {
+  return new Promise((resolve) => {
+    const res = { code: 200, status(c) { this.code = c; return this; }, json(b) { resolve({ status: this.code, body: b }); } };
+    handler({ params: {}, query: {}, body: {}, headers: {}, ...req }, res);
+  });
 }
 async function workflowWithExample() {
   await writeGraphWorkflow({ id: 'wf_rt', name: 'Routes', domain: 'product',
@@ -50,4 +61,16 @@ test('no frame while the flag is off; with it on, testRunId (never runId) and th
   assert.ok(on.frames.length && on.frames.every((f) => f.testRunId === r2.id && !('runId' in f)));
   const last = on.frames.at(-1);
   assert.deepEqual([last.finished, last.status, last.title], [true, 'stopped', 'Routes: Tried once: Bulk']);
+});
+
+test('the dialog says when the connectors preview failed, instead of showing no connectors (previewError)', async () => {
+  await workflowWithExample();
+  const W = '/api/workflows/:id/tests/plan';
+  const failing = boot({ connectorsPreview: async () => { throw new Error('registry unreadable'); } });
+  const r = await invoke(failing.handlers.get(`GET ${W}`), { params: { id: 'wf_rt' }, query: { b: 'draft', tries: '1' } });
+  assert.equal(r.status, 200);
+  assert.deepEqual([r.body.connectors.previewError, r.body.connectors.pretend, r.body.connectors.off], [true, [], []]);
+  const ok = boot({ connectorsPreview: async () => ({ copies: [], fileServers: [] }) });
+  const r2 = await invoke(ok.handlers.get(`GET ${W}`), { params: { id: 'wf_rt' }, query: { b: 'draft', tries: '1' } });
+  assert.equal('previewError' in r2.body.connectors, false);
 });

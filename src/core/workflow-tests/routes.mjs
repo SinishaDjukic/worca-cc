@@ -93,15 +93,26 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
     res.status(201).json(await service.examplesFromRuns(wid(req), ids, { by: by(req) }));
   });
   route('GET', `${W}/examples/:ex`, async (req, res) => res.json({ example: example(req) }));
-  route('PUT', `${W}/examples/:ex`, async (req, res) => res.json({ example: store.updateExample(wid(req), num(req.params.ex, 'example'), req.body || {}) }));
-  route('DELETE', `${W}/examples/:ex`, async (req, res) => { store.deleteExample(wid(req), num(req.params.ex, 'example')); res.json({ ok: true }); });
+  // A deleted workflow's examples stay in the store (deleteWorkflow does not cascade): they are not edited.
+  route('PUT', `${W}/examples/:ex`, async (req, res) => {
+    service.workflowRowOf(wid(req));
+    res.json({ example: store.updateExample(wid(req), num(req.params.ex, 'example'), req.body || {}) });
+  });
+  route('DELETE', `${W}/examples/:ex`, async (req, res) => {
+    service.workflowRowOf(wid(req));
+    store.deleteExample(wid(req), num(req.params.ex, 'example'));
+    res.json({ ok: true });
+  });
   route('POST', `${W}/examples/:ex/files`, async (req, res) => {
+    service.workflowRowOf(wid(req));
     const b = req.body || {};
     if (typeof b.dataBase64 !== 'string' || !b.dataBase64) throw store.testError('the file is empty', 'BAD_REQUEST');
     res.json({ example: store.putExampleFile(wid(req), num(req.params.ex, 'example'), { name: b.name, data: Buffer.from(b.dataBase64, 'base64') }) });
   });
-  route('DELETE', `${W}/examples/:ex/files/:name`, async (req, res) =>
-    res.json({ example: store.deleteExampleFile(wid(req), num(req.params.ex, 'example'), String(req.params.name)) }));
+  route('DELETE', `${W}/examples/:ex/files/:name`, async (req, res) => {
+    service.workflowRowOf(wid(req));
+    res.json({ example: store.deleteExampleFile(wid(req), num(req.params.ex, 'example'), String(req.params.name)) });
+  });
   route('POST', `${W}/examples/:ex/try-once`, async (req, res) => {
     testable(req);
     const ex = example(req);
@@ -122,7 +133,7 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
     const bb = store.parseUse(b.b);
     if (!a || !bb) throw store.testError('pick the two versions to compare', 'BAD_REQUEST');
     res.status(201).json({ run: await runner.start({ workflowId: wid(req), kind: 'compare', a, b: bb,
-      exampleIds: Array.isArray(b.exampleIds) ? b.exampleIds : [], tries: Number(b.tries), reuseA: b.reuseA !== false, reuseB: b.reuseB === true,
+      exampleIds: Array.isArray(b.exampleIds) ? b.exampleIds.map((x) => num(x, 'example')) : [], tries: Number(b.tries), reuseA: b.reuseA !== false, reuseB: b.reuseB === true,
       quickCheck: b.quickCheck === true, capUsd: usdOf(b.capUsd), connectors: b.connectors === undefined ? 'pretend' : b.connectors, by: by(req) }) });
   });
   route('GET', `${W}/runs/:run`, async (req, res) => res.json(service.progressOf(wid(req), num(req.params.run, 'test'), { costOf: runner.costOf })));
@@ -131,6 +142,7 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
     res.json({ run: await runner.stop(run.id) });
   });
   route('POST', `${W}/runs/:run/continue`, async (req, res) => {
+    testable(req);   // D20, as the start routes: the workflow may have changed to need a project, or be gone
     const run = service.runOf(wid(req), num(req.params.run, 'test'));
     res.json({ run: await runner.continueRun(run.id, { capUsd: usdOf(req.body && req.body.capUsd) }) });
   });
