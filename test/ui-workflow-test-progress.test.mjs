@@ -36,7 +36,7 @@ test('board 20 while it runs: title, pill, Stop testing, the bar, the facts, the
   assert.equal(stop.textContent, 'Stop testing');
   const bar = root.querySelector('.wft-bar');
   assert.deepEqual([bar.getAttribute('role'), bar.getAttribute('aria-valuenow'), bar.getAttribute('aria-valuemax'), bar.firstElementChild.style.width], ['progressbar', '7', '18', '39%']);
-  assert.deepEqual(facts(root), [['Time left', 'about 15 min'], ['Cost so far', '$3.80', 'of about $10 · stops at $15'], ['Free quick check', 'Passed', 'every step is connected']]);
+  assert.deepEqual(facts(root), [['Time left', 'about 15 min'], ['Cost so far', '$3.80', 'of about $10 · stops at $15.00'], ['Free quick check', 'Passed', 'every step is connected']]);
   assert.equal(root.querySelector('.wft-prog > .hint').textContent, 'You can close this page or keep working. Worca tells you when the results are ready. Results so far are not final: wait for all 3 tries of an example.');
   assert.deepEqual([...root.querySelectorAll('.wft-prow.is-head > span')].map((s) => s.textContent), ['Example', 'Tries', 'So far']);
   const rows = [...root.querySelectorAll('.wft-prow:not(.is-head)')];
@@ -55,7 +55,7 @@ test('stopped by the cap: why, a higher cap and Finish the rest (C7); by a perso
   assert.equal(capped.root.querySelector('.wft-pill').textContent, 'Stopped · 7 of 18 tries done');
   assert.equal(capped.root.querySelector('.wft-pill').className, 'pill-run wft-pill is-stopped is-parked', 'D39: the status pill, not a badge');
   assert.ok(capped.root.querySelector('.wft-pill .pdot'));
-  assert.equal(capped.root.querySelector('.wft-stopped').textContent, 'Stopped: the cost went over $15.');
+  assert.equal(capped.root.querySelector('.wft-stopped').textContent, 'Stopped: the cost went over $15.00.');
   assert.equal(capped.root.querySelector('#wft-pg-cap').value, '$25');
   assert.equal(capped.root.querySelector('label[for="wft-pg-cap"]').textContent, 'Stop if the cost goes over');
   assert.deepEqual(facts(capped.root)[0], ['Time taken', '35 min'], 'board 27');
@@ -144,7 +144,7 @@ test('a repaint keeps the focus on the same control and announces the new state 
   b.root.querySelector('.wft-crumb').focus();
   b.again(progress({ done: 18 }, { status: 'stopped', stopReason: 'cap' }));
   assert.equal(doc.activeElement, b.root.querySelector('.wft-crumb'));
-  assert.equal(live.textContent, 'Stopped · 18 of 18 tries done. Stopped: the cost went over $15.');
+  assert.equal(live.textContent, 'Stopped · 18 of 18 tries done. Stopped: the cost went over $15.00.');
   b.root.querySelector('#wft-pg-cap').focus();
   b.root.querySelector('#wft-pg-cap').value = '$40';
   b.again(progress({ done: 18 }, { status: 'stopped', stopReason: 'cap' }));
@@ -161,4 +161,53 @@ test('app.js: the WS frame reaches wftChanged; Task 10\'s "comes in a later step
   assert.ok(!/detail: 'This page comes in a later step\.'/.test(app), 'Task 10\'s temporary toast is gone');
   assert.ok(!/title: 'Test a version', detail: 'This comes in a later step\.'/.test(app), 'Test a version opens the dialog');
   assert.ok(/title: msg\.status === 'done' \? 'Test results are ready' : 'Test stopped'/.test(app), 'C13: the results-ready toast');
+});
+
+test('the cost limit is exact (never rounded like an estimate); Try it once now shows a bare cost, as board 28\'s one-try panel', () => {
+  const capped = boot(progress({ costUsd: 12.9, capUsd: 12.5, estimateUsd: 9.4 }, { status: 'stopped', stopReason: 'cap' }));
+  assert.equal(capped.root.querySelector('.wft-stopped').textContent, 'Stopped: the cost went over $12.50.');
+  assert.deepEqual(facts(capped.root)[1], ['Cost so far', '$12.90', 'of about $9 · stops at $12.50'], 'the estimate keeps its "about"');
+  const once = boot(progress({ done: 1, total: 1, costUsd: 0.55, estimateUsd: 0.52, capUsd: null, quick: null, takenMs: 300000,
+    rows: [{ exampleId: 1, name: 'Bulk', label: null, dots: ['passed'], summary: 'Done · 1 of 1 passed' }] }, { kind: 'once', status: 'done', tries: 1 }));
+  assert.deepEqual(facts(once.root), [['Time taken', '5 min'], ['Cost so far', '$0.55'], ['Free quick check', 'Off']]);
+});
+
+test('Stop testing and Finish the rest stay busy across repaints until their action answers (one post per click)', async () => {
+  const { window } = new JSDOM('<!doctype html><body><section id="root" tabindex="-1"></section></body>');
+  const doc = window.document;
+  const root = doc.getElementById('root');
+  const pending = [];
+  let stops = 0;
+  const actions = { back() {}, open() {}, continue: () => new Promise((r) => pending.push(r)),
+    stop: () => { stops += 1; return new Promise((r) => pending.push(r)); } };
+  const paint = (p) => renderTestProgress(root, p, actions, { doc });
+  paint(progress());
+  click(root.querySelector('.wft-acts .btn-danger'));
+  paint(progress({ done: 8 }));                       // a try ended meanwhile: the frame repaints the page
+  const stop = root.querySelector('.wft-acts .btn-danger');
+  assert.equal(stop.disabled, true, 'the repainted Stop testing is still busy');
+  click(stop);
+  assert.equal(stops, 1, 'a click on the repainted button sends nothing');
+  pending.shift()();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(root.querySelector('.wft-acts .btn-danger').disabled, false, 'the answer gives the button back');
+  paint(progress({}, { status: 'stopped', stopReason: 'person' }));
+  const finish = () => [...root.querySelectorAll('.wft-acts button')].find((b) => b.textContent === 'Finish the rest');
+  click(finish());
+  paint(progress({}, { status: 'stopped', stopReason: 'person' }));
+  assert.equal(finish().disabled, true);
+  pending.shift()();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(finish().disabled, false);
+  paint(progress({}, { id: 10, status: 'stopped', stopReason: 'person' }));
+  assert.equal(finish().disabled, false, 'another test is never busy with this one\'s action');
+});
+
+test('app.js (Task 13 review): frames repaint only the shown Tests page, re-entry repaints it, a failed versions read is said', () => {
+  const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+  const body = (name) => { const i = app.indexOf(`function ${name}(`); return i < 0 ? '' : app.slice(i, app.indexOf('\n}\n', i)); };
+  assert.ok(/currentView\(\) !== 'workflows'/.test(body('wftChanged')), 'wftChanged repaints only inside the Workflows view');
+  assert.ok(/wftRefresh\(\)/.test(body('enterWorkflowsView')), 'entering the Workflows view again repaints a shown Tests page');
+  const tv = body('wftTestVersion');
+  assert.ok(/if \(!versions\) \{ notify\(\{ tone: 'err', title: 'Could not open Test a version'/.test(tv), 'no versions read: a toast, never "No saved version yet"');
 });

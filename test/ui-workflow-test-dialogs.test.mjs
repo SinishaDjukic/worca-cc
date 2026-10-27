@@ -323,3 +323,16 @@ test('Start posts once while busy; a refusal or a throw gives the button back wi
   await tick();
   assert.equal(d2.querySelector('.wft-dlg-ok').textContent, 'Start 6 tries');
 });
+
+test('board 30 (Task 13 review): an off reason Worca does not know reads generically; no count in the Real hint with nothing to try', async () => {
+  const { doc } = openTv({}, { connectors: { mode: 'pretend', pretend: [], scripts: [], engines: [],
+    off: [{ name: 'confluence_team', reason: 'no-tools' }, { name: 'odd_server', reason: 'something-new' }] } });
+  await tick();
+  assert.deepEqual(notesOf(doc), ['confluence_team is switched off: test it once in Connectors so Worca knows its tools.',
+    'odd_server is switched off for this test.']);
+  assert.equal(doc.querySelectorAll('.wft-conn-notes a').length, 1, 'only no-tools links to Connectors');
+  const all = openTv({}, { b: { use: 'draft', label: 'v5 draft · your changes', short: 'v5 draft', want: 18, reusable: 18, reusableAt: '2026-10-20T10:00:00Z', perTryUsd: 0.52, savesUsd: 9.36 } });
+  await tick();
+  assert.equal(all.doc.querySelectorAll('.wft-conn .radio-card-text')[1].textContent,
+    'RealTries use your real connectors. If the workflow posts or sends something, it does it in every try.');
+});

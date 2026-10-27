@@ -3688,6 +3688,8 @@ function wftChanged(msg) {
     notify({ tone: msg.status === 'done' ? 'ok' : 'info', title: msg.status === 'done' ? 'Test results are ready' : 'Test stopped', detail: msg.title,
       key: `wft-${msg.testRunId}`, action: { label: 'Open', run: () => wftOpenTest(msg.workflowId, msg.testRunId) } });
   }
+  // Only the Tests page on screen repaints; leaving it hidden behind another view, it repaints on re-entry (enterWorkflowsView).
+  if (currentView() !== 'workflows') return;
   const els = wfvEls();
   if (!els.tests || els.tests.hidden || wftWorkflowId() !== msg.workflowId) return;
   if (wft.view === 'list' || (wft.view === 'progress' && wft.runId === msg.testRunId)) void wftRefresh();
@@ -3783,10 +3785,13 @@ async function wftTestVersion({ a, b = 'draft', exampleIds = null } = {}) {
   const live = () => currentView() === 'workflows' && wftWorkflowId() === id && !wfvEls().tests?.hidden;
   const fresh = await wftCall('GET', wftBase(id));                 // fresh examples (another tab may have added one)
   const o = fresh.ok ? fresh.data : (wft.workflowId === id ? wft.overview : null);
-  const versions = o ? await gvApi.versions(id) : null;
+  const vr = o ? await gvApi.versionsRead(id) : null;              // {ok, overview} | {ok: false, error}
+  const versions = vr && vr.ok ? vr.overview : null;
   if (!live()) return;
   if (!o) { notify({ tone: 'err', title: 'Could not open Test a version', detail: fresh.error }); return; }
-  const nos = versions ? versions.versions.map((v) => v.versionNo).sort((x, y) => x - y) : [];
+  // A failed versions read is not "No saved version yet" (C16): say why instead.
+  if (!versions) { notify({ tone: 'err', title: 'Could not open Test a version', detail: wftSentence(vr && vr.error) }); return; }
+  const nos = versions.versions.map((v) => v.versionNo).sort((x, y) => x - y);
   const options = [...nos.map((no) => ({ use: no, label: wftUseLabel(no, o.ctx, 'select') })), { use: 'draft', label: wftUseLabel('draft', o.ctx, 'select') }];
   openTestVersionDialog({ doc: document, win: window, options, a: a !== undefined ? a : (o.ctx.liveVersionNo || nos.at(-1) || null), b,
     examples: o.examples.map((e) => ({ id: e.id, name: e.name, tries: e.tries })), exampleIds, dateText: wftDate,
@@ -4087,6 +4092,8 @@ async function enterWorkflowsView(param = '', prevView = '') {
   const first = await initWorkflows();
   if (!first) gvComposer.fit();
   await routeWorkflows(param);
+  // Frames skip the Tests page while another view shows (wftChanged): a shown Tests page catches up on re-entry.
+  if (wfvEls().tests && !wfvEls().tests.hidden) void wftRefresh();
 }
 
 // Where focus goes back when the sheet closes: the opener's id, or a Library control's focus key.

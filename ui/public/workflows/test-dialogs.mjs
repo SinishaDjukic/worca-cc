@@ -294,7 +294,7 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
   /** Board 30: the Real sentence names how often a post would go out; Pretend lists each connector; the script caution stays. */
   function paintConnectors(e) {
     const n = e ? e.total : null;
-    realOpt.hint.textContent = `Tries use your real connectors. If the workflow posts or sends something, it does it in every try${n === null ? '' : n === 1 ? ': once in this test' : `: ${n} times in this test`}.`;
+    realOpt.hint.textContent = `Tries use your real connectors. If the workflow posts or sends something, it does it in every try${!n ? '' : n === 1 ? ': once in this test' : `: ${n} times in this test`}.`;   // nothing to try: no count
     const c = plan && plan.connectors;
     notes.replaceChildren();
     const line = (name, parts) => {
@@ -311,11 +311,11 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
         if (o.reason === 'claude-ai') line('x', [`${o.name} is switched off: Worca can't pretend for claude.ai connectors.`]);
         else if (o.reason === 'own-settings') line('x', [`${o.name} is switched off: Worca can't pretend for servers in your own Claude Code settings.`]);
         else if (o.reason === 'file-server') line('x', [fileServerOffLine(o.name)]);
-        else {
+        else if (o.reason === 'no-tools') {
           const link = el(doc, 'a', '', 'test it once in Connectors');
           link.href = '#connectors';
           line('x', [`${o.name} is switched off: `, link, ' so Worca knows its tools.']);
-        }
+        } else line('x', [`${o.name} is switched off for this test.`]);   // a reason a newer server added (controller-approved copy)
       }
       for (const label of c.engines || []) line('alert', [engineNoteLine(label)]);
     }

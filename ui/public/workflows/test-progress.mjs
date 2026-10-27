@@ -10,7 +10,7 @@ const DOT = { passed: 'ok', failed: 'no', running: 'run' };
 const full = (s) => (/[.!?]$/.test(s) ? s : `${s}.`);
 /** C7: why a test stopped. Drain and budget store no detail: their sentences are fixed. */
 const STOPPED = {
-  cap: (p) => `Stopped: the cost went over ${aboutUsd(p.capUsd)}.`,
+  cap: (p) => `Stopped: the cost went over ${fmtUsd(p.capUsd)}.`,   // a limit is exact: only estimates say "about"
   person: () => 'You stopped the test.',
   budget: () => 'Stopped: the spending limit is reached.',
   'quick-check': (p) => `The free quick check did not pass: ${full(p.run.stopDetail || 'a step is not connected')}`,
@@ -40,6 +40,8 @@ function fact(doc, label, value, sub = null, cls = '') {
   if (sub) f.append(el(doc, 'span', '', sub));
   return f;
 }
+/** root → { runId, key } of the Stop testing / Finish the rest whose action is still out. */
+const BUSY = new WeakMap();
 const keyed = (root, key) => [...root.querySelectorAll('[data-focus-key]')].find((n) => n.dataset.focusKey === key) || null;
 
 /**
@@ -76,16 +78,26 @@ export function renderTestProgress(root, p, actions, { doc }) {
   crumb.dataset.focusKey = 'wft-pg-back';
   left.append(crumb, el(doc, 'h2', 'wft-title', p.title), pill);
   const acts = el(doc, 'div', 'wft-acts');
-  /** A button that is disabled while its action is out, so a second click sends nothing. */
+  /** A button that is disabled while its action is out, so a second click sends nothing. The busy state lives on the
+   *  root (BUSY), not the button: a frame that repaints the page meanwhile paints the new button busy too. */
   const act = (label, fn, cls, key) => {
     const b = btn(doc, label, null, cls);
     b.dataset.focusKey = key;
+    const held = BUSY.get(root);
+    if (held && held.runId === p.run.id && held.key === key) b.disabled = true;
     b.addEventListener('click', () => {
       if (b.disabled) return;
       b.disabled = true;
+      const mine = { runId: p.run.id, key };
+      BUSY.set(root, mine);
       let out;
       try { out = fn(); } catch { out = null; }
-      Promise.resolve(out).catch(() => {}).finally(() => { if (b.isConnected) b.disabled = false; });
+      Promise.resolve(out).catch(() => {}).finally(() => {
+        if (BUSY.get(root) !== mine) return;
+        BUSY.delete(root);
+        const now = keyed(root, key);   // this button, or the one a repaint put in its place
+        if (now) now.disabled = false;
+      });
     });
     return b;
   };
@@ -118,7 +130,9 @@ export function renderTestProgress(root, p, actions, { doc }) {
   const fill = el(doc, 'span');
   fill.style.width = `${p.total ? Math.round((p.done / p.total) * 100) : 0}%`;
   bar.append(fill);
-  const costSub = [p.estimateUsd != null ? `of about ${aboutUsd(p.estimateUsd)}` : null, p.capUsd != null ? `stops at ${aboutUsd(p.capUsd)}` : null].filter(Boolean).join(' · ');
+  const costSub = [p.estimateUsd != null ? `of about ${aboutUsd(p.estimateUsd)}` : null, p.capUsd != null ? `stops at ${fmtUsd(p.capUsd)}` : null].filter(Boolean).join(' · ');
+  // Board 28's one-try panel: Try it once now has no estimate or limit to weigh the cost against, only the cost.
+  const costLine = p.run.kind === 'once' ? null : costSub || null;
   const q = p.quick;
   const word = 'wft-fact-word';   // a word in the stat face's place: the sans face (board 20)
   const quickFact = !q ? fact(doc, 'Free quick check', 'Off', null, word)
@@ -131,7 +145,7 @@ export function renderTestProgress(root, p, actions, { doc }) {
     ? fact(doc, 'Time taken', Number.isFinite(p.takenMs) ? `${Math.max(1, Math.round(p.takenMs / 60000))} min` : 'not known')
     : fact(doc, 'Time left', p.minutesLeft ? `about ${p.minutesLeft} min` : 'not known yet');
   facts.append(timeFact,
-    fact(doc, 'Cost so far', fmtUsd(p.costUsd), costSub || null), quickFact);
+    fact(doc, 'Cost so far', fmtUsd(p.costUsd), costLine), quickFact);
   prog.append(bar, facts);
   let stopped = null;
   if (st === 'running') {
