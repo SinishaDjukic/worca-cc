@@ -9,6 +9,7 @@ import { tx } from '../db.mjs';
 import { attachAnswerer } from './answers.mjs';
 import { tryRunBody } from './try-body.mjs';
 import { fmtUsd } from '../../shared/workflow-tests/checks.mjs';
+import { REASON, REASON_CODES, describePauseReason } from '../failure-policy.mjs';
 
 export const MAX_PARALLEL = 3;   // D36. Library script checks stay one at a time (result.mjs), inside runBenchOnce's limit of 2.
 export const COST_POLL_MS = 2000;
@@ -17,17 +18,40 @@ export const BUSY_TEXT = 'A test of this workflow is running. Wait for it, or st
 /** C18: what changed since a test started (a refused "Finish the rest", or a test stopped as `changed`). */
 export const changedText = (use) => `${use === 'draft' ? 'Your draft' : `v${use}`} changed since this test started: start a new test.`;
 export const editedText = (name) => `"${name}" was edited since this test started: start a new test.`;
-/** A try that paused is never resumed (boot auto-resume skips it, resumeRun refuses it): it is stopped, the test with it. */
-export const PAUSED_TEXT = Object.freeze({
-  drain: 'Worca shut down during a try, so the test stopped.',
-  limit: 'A try paused on a cost limit or a usage limit, so the test stopped.',
-});
 const err = store.testError;
 const msgOf = (e) => (e && e.message ? e.message : String(e));
-/** A refused start: 403 is a spending limit, 503 a drain. */
-const refusalOf = (code) => (code === 403 ? 'budget' : code === 503 ? 'drain' : 'refused');
+/** The start handler's 403s are spending refusals (the total cost limit, the team total cap); any other 403 is a refusal. */
+const SPENDING_RE = /cost limit|cost cap|total cap|spending/i;
+/** Why a refused start stops the test: 503 is a drain, a spending 403 the budget, anything else 'refused'. */
+const refusalOf = (code, body = {}) => (code === 503 ? 'drain'
+  : code === 403 && (body.budget !== undefined || body.code === 'team_total' || SPENDING_RE.test(String(body.error || ''))) ? 'budget'
+    : 'refused');
+const COST_PAUSES = new Set([REASON.COST_PIPELINE, REASON.COST_TOTAL, REASON.COST_PIPELINE_POLICY, REASON.COST_TOTAL_POLICY]);
+/**
+ * What a paused try means (failure-policy.mjs REASON). Nobody resumes a try (boot auto-resume skips it, resumeRun
+ * refuses it), so its run is always stopped. A step error (or a code this table does not know) is a finished, failed
+ * try. A drain, a cost cap, a usage limit, a recoverable error or a stopped CLI leave it unfinished: the test stops
+ * ('drain', 'budget', 'refused' with the pause's label) and "Finish the rest" makes it again. The UI words drain and
+ * budget itself (C7), so their detail is null. A pause with no reason is a person's.
+ * @returns {{stop: string, detail: string|null} | {fail: true, detail: string}}
+ */
+export function pauseVerdict(reason, detail = null) {
+  if (reason === REASON.DRAIN) return { stop: 'drain', detail: null };
+  if (COST_PAUSES.has(reason)) return { stop: 'budget', detail: null };
+  if (reason == null || reason === 'manual') return { stop: 'person', detail: null };
+  if (reason !== REASON.ERROR && REASON_CODES.includes(reason)) return { stop: 'refused', detail: describePauseReason(reason) };
+  const why = typeof detail === 'string' && detail.trim() ? detail.trim().split(/\r?\n/)[0].slice(0, 300) : null;
+  const label = describePauseReason(REASON.ERROR) || 'a step failed';
+  return { fail: true, detail: why ? `${label}: ${why}` : label };
+}
+const capital = (t) => t.charAt(0).toUpperCase() + t.slice(1);
 const nowIso = () => new Date().toISOString();
-const sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); if (t && t.unref) t.unref(); });
+/** A poll tick that can be cleared, so a finished race leaves no timer behind. */
+const tick = (ms) => {
+  let t = null;
+  const p = new Promise((r) => { t = setTimeout(r, ms); if (t && t.unref) t.unref(); });
+  return { p, cancel: () => clearTimeout(t) };
+};
 const quiet = (p) => { Promise.resolve(p).catch(() => {}); };
 const capError = () => err('the cost limit must be more than $0 and at most $10,000', 'BAD_REQUEST');
 const validCap = (v) => Number.isFinite(v) && v > 0 && v <= 10000;
@@ -134,12 +158,18 @@ export function createTestRunner(deps) {
     st.done = loop(runId, st)
       .catch((e) => { st.stopping = st.stopping || 'error'; st.detail = st.detail || msgOf(e); })
       .finally(() => {
-        store.updateTestRun(runId, st.stopping
-          ? { status: 'stopped', stopReason: st.stopping, stopDetail: st.detail, finishedAt: nowIso() }
-          : { status: 'done', stopReason: null, stopDetail: null, finishedAt: nowIso() });
-        live.delete(runId);
-        const run = store.readTestRun(runId);
-        notify(run, { finished: true, status: run.status });
+        try {
+          store.updateTestRun(runId, st.stopping
+            ? { status: 'stopped', stopReason: st.stopping, stopDetail: st.detail, finishedAt: nowIso() }
+            : { status: 'done', stopReason: null, stopDetail: null, finishedAt: nowIso() });
+        } catch (e) {
+          console.error(`[workflow-tests] could not close test ${runId}: ${msgOf(e)}`);   // recover() stops it on the next boot
+        } finally {
+          live.delete(runId);   // always: a test that is not live never answers BUSY from memory
+        }
+        let run = null;
+        try { run = store.readTestRun(runId); } catch { /* the frame is only a hint */ }
+        if (run) notify(run, { finished: true, status: run.status });
       });
     return st.done;
   }
@@ -175,7 +205,8 @@ export function createTestRunner(deps) {
           inflight.add(p);
         }
         if (!inflight.size) continue;
-        await Promise.race([...inflight, sleep(pollMs)]);
+        const t = tick(pollMs);
+        try { await Promise.race([...inflight, t.p]); } finally { t.cancel(); }
         if (!st.stopping && run.capUsd !== null && costOf(runId) > run.capUsd) requestStop(st, 'cap');
       }
     } catch (e) {
@@ -185,11 +216,30 @@ export function createTestRunner(deps) {
     }
   }
 
-  /** A paused try is never resumed: stop its run, and the test with it ('drain', or 'budget' for a cost or usage limit). */
-  async function stopPaused(st, runKey, l) {
-    await Promise.resolve().then(() => deps.stopRun(runKey)).catch(() => {});
-    const drain = l.pauseReason === 'drain';
-    requestStop(st, drain ? 'drain' : 'budget', drain ? PAUSED_TEXT.drain : PAUSED_TEXT.limit);
+  /**
+   * After deps.startRun, for a try and the quick check alike: a refused start stops the test (refusalOf); a started
+   * run is stopped at once when the test is stopping, waited to its end, and, when it paused, stopped and mapped
+   * (pauseVerdict; a 'stop' verdict stops the test). `onStarted` records the run before the wait.
+   * @returns {Promise<{refused: true} | {refused: false, pipelineId: string|null, pause: null|object}>}
+   */
+  async function settleRun(st, rec, out, notStarted, onStarted = () => {}) {
+    if (!out || out.status !== 200 || !out.body || !out.body.runId) {
+      const body = (out && out.body) || {};
+      requestStop(st, refusalOf(out ? out.status : 0, body), body.error || notStarted);
+      return { refused: true };
+    }
+    rec.runKey = out.body.runId;
+    onStarted(rec.runKey, out.body.pipelineId || null);
+    if (st.stopping) stopQuietly(rec.runKey);
+    let l = deps.liveRun(rec.runKey);
+    if (l && l.launch) await Promise.resolve(l.launch).catch(() => {});
+    l = deps.liveRun(rec.runKey);
+    const pipelineId = out.body.pipelineId || (l && l.pipelineId) || null;
+    if (!(l && String(l.status) === 'paused')) return { refused: false, pipelineId, pause: null };
+    await Promise.resolve().then(() => deps.stopRun(rec.runKey)).catch(() => {});
+    const pause = pauseVerdict(l.pauseReason ?? null, l.pauseDetail ?? null);
+    if (pause.stop) requestStop(st, pause.stop, pause.detail);
+    return { refused: false, pipelineId, pause };
   }
 
   async function runTry(run, st, t) {
@@ -231,28 +281,21 @@ export function createTestRunner(deps) {
           },
         },
       });
-      if (!out || out.status !== 200 || !out.body || !out.body.runId) {
+      const s = await settleRun(st, rec, out, 'the try did not start',
+        (runKey, pipelineId) => store.updateTry(t.id, { runKey, pipelineId }));
+      if (s.refused) {
         detach();
         rec.runKey = null;
         store.updateTry(t.id, { status: 'waiting', startedAt: null });   // never tried: it stays for "Finish the rest"
-        requestStop(st, refusalOf(out ? out.status : 0), (out && out.body && out.body.error) || 'the try did not start');
         return;
       }
-      rec.runKey = out.body.runId;
-      store.updateTry(t.id, { runKey: rec.runKey, pipelineId: out.body.pipelineId || null });
-      if (st.stopping) stopQuietly(rec.runKey);
-      let l = deps.liveRun(rec.runKey);
-      if (l && l.launch) await Promise.resolve(l.launch).catch(() => {});
-      l = deps.liveRun(rec.runKey);
-      // A drain, a cost limit or a usage limit paused it. Nobody resumes a try (boot auto-resume skips it, resumeRun
-      // refuses it), so it is unfinished, not failed: stopped, and "Finish the rest" makes it again as a new try.
-      const paused = !!(l && String(l.status) === 'paused');
-      if (paused) await stopPaused(st, rec.runKey, l);
+      // A step error is a finished, failed try; any other pause leaves it unfinished (pauseVerdict).
+      if (s.pause && s.pause.fail && !rec.failReason) rec.failReason = capital(s.pause.detail);
+      const unfinished = !!(s.pause && s.pause.stop);
       detach();
-      rec.outcome = await deps.outcomeOf(out.body.pipelineId || (l && l.pipelineId) || null,
-        { help: rec.help, failReason: rec.failReason, durationMs: Date.now() - t0 });
+      rec.outcome = await deps.outcomeOf(s.pipelineId, { help: rec.help, failReason: rec.failReason, durationMs: Date.now() - t0 });
       const outcome = rec.outcome;
-      if ((paused || st.stopping) && !rec.failReason && outcome.facts.status !== 'done') {
+      if ((unfinished || st.stopping) && !rec.failReason && outcome.facts.status !== 'done') {
         store.updateTry(t.id, { status: 'stopped', costUsd: outcome.facts.costUsd, finishedAt: nowIso() });
         return;
       }
@@ -301,18 +344,12 @@ export function createTestRunner(deps) {
             },
           },
         });
-        // A refused start says nothing about the workflow: the test stops as budget/drain/refused, the check still waits.
-        if (!out || out.status !== 200 || !out.body || !out.body.runId) {
-          requestStop(st, refusalOf(out ? out.status : 0), (out && out.body && out.body.error) || 'the quick check did not start');
-          return { status: 'waiting' };
-        }
-        rec.runKey = out.body.runId;
-        let l = deps.liveRun(out.body.runId);
-        if (l && l.launch) await Promise.resolve(l.launch).catch(() => {});
-        l = deps.liveRun(out.body.runId);
-        if (l && String(l.status) === 'paused') { await stopPaused(st, out.body.runId, l); return { status: 'waiting' }; }
+        // A refused start or a pause that is not a step error says nothing about the workflow: the check still waits.
+        const s = await settleRun(st, rec, out, 'the quick check did not start');
+        if (s.refused || (s.pause && s.pause.stop)) return { status: 'waiting' };
+        if (s.pause && s.pause.fail) return { status: 'failed', detail: s.pause.detail };
         if (rec.detach) { rec.detach(); rec.detach = null; }
-        const o = await deps.outcomeOf(out.body.pipelineId || (l && l.pipelineId) || null, { failReason: rec.failReason });
+        const o = await deps.outcomeOf(s.pipelineId, { failReason: rec.failReason });
         if (st.stopping) return { status: 'waiting' };
         if (o.facts.status !== 'done' || o.facts.failReason) return { status: 'failed', detail: o.facts.failReason || `the quick check ended as ${o.facts.status}` };
       } catch (e) {

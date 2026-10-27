@@ -259,6 +259,16 @@ test('bad starts are refused before anything runs; a restart stops what was runn
   const guarded = createTestRunner({ ...harness().deps, targetOf: async (_wf, use) => (use === 1 ? { testable: false, reason: 'needs-project' } : { testable: true, reason: null }) });
   await assert.rejects(guarded.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 }),
     { code: 'NOT_TESTABLE', message: 'v1 works on a project, and tests work for workflows without a project for now.' }, 'review M9: side A is checked too');
+  await assert.rejects(runner.start({ workflowId: WF, kind: 'both', a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 }),
+    { code: 'BAD_REQUEST', message: 'kind must be "compare" or "once"' });
+  await assert.rejects(runner.start({ workflowId: WF, a: 0, b: 'draft', exampleIds: [ex.id], tries: 1 }),
+    { code: 'BAD_REQUEST', message: 'pick a saved version or your draft' });
+  await assert.rejects(runner.start({ workflowId: WF, kind: 'once', b: 'v2', exampleIds: [ex.id], tries: 1 }),
+    { code: 'BAD_REQUEST', message: 'pick a saved version or your draft' });
+  const parsed = await runner.start({ workflowId: WF, a: '3', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await runner.idle(parsed.id);
+  assert.equal(parsed.a, 3, 'a version number from a route ("3") is parsed');
+  assert.ok(store.triesOfRun(parsed.id).filter((t) => t.side === 'a').every((t) => t.use === 3));
   store.createTestRun({ workflowId: WF, a: 1, b: 'draft', aFp: 'x', bFp: 'y', exampleIds: [ex.id], tries: 1 });
   assert.equal(runner.recover(), 1);
 });
@@ -301,7 +311,7 @@ test('a try paused by a drain or a cost/usage limit is stopped, not judged; the 
   first.end('paused');
   await runner.idle(run.id);
   const st = store.readTestRun(run.id);
-  assert.deepEqual([st.status, st.stopReason], ['stopped', 'drain']);
+  assert.deepEqual([st.status, st.stopReason, st.stopDetail], ['stopped', 'drain', null], 'the UI words each reason (C7)');
   assert.ok(h.stopped.includes(h.started[0].runKey), 'the paused try was stopped, never left paused');
   assert.deepEqual(statuses(run.id).sort(), ['b1:stopped', 'b2:stopped'], 'a paused try is unfinished, not failed');
   assert.ok(store.triesOfRun(run.id).every((t) => t.verdict === null));
@@ -316,10 +326,11 @@ test('a try paused by a drain or a cost/usage limit is stopped, not judged; the 
   const r2 = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
   await until(() => h.started.length === 5);
   const limited = h.entries.get(h.started[4].runKey);
-  limited.pauseReason = 'cost-cap';
+  limited.pauseReason = 'cost_total';
   limited.end('paused');
   await runner.idle(r2.id);
-  assert.deepEqual([store.readTestRun(r2.id).stopReason, statuses(r2.id)], ['budget', ['b1:stopped']]);
+  const s2 = store.readTestRun(r2.id);
+  assert.deepEqual([s2.stopReason, s2.stopDetail, statuses(r2.id)], ['budget', null, ['b1:stopped']]);
 });
 
 test('every answerer is detached when its try ends, the quick check\'s too', async () => {
@@ -432,4 +443,87 @@ test('two "Finish the rest" at once: one runs, the other is BUSY', async () => {
   assert.equal(both.find((x) => x.status === 'rejected').reason.code, 'BUSY');
   await runner.idle(run.id);
   assert.equal(h.started.length, 1);
+});
+
+// ── Fix 1 (review of Task 7): a pause is mapped by its real code ────────────────────────────────────────────────
+
+/** Start a one-try test, pause its try with `reason` (and `detail`), and wait for the test to end. */
+async function pauseOne(h, runner, ex, reason, detail = null) {
+  const n = h.started.length;
+  const r = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await until(() => h.started.length > n);
+  const e = h.entries.get(h.started.at(-1).runKey);
+  Object.assign(e, { pauseReason: reason, pauseDetail: detail });
+  e.end('paused');
+  await runner.idle(r.id);
+  return { run: store.readTestRun(r.id), runKey: e.runKey ?? h.started.at(-1).runKey };
+}
+
+test('an error pause is a finished, failed try; other pauses stop the test as refused or budget (Fix 1)', async () => {
+  for (const k of Object.keys(fps)) delete fps[k];
+  const h = harness({ plan: () => ({ status: 'done', cost: 0.3, hold: true }) });
+  const runner = createTestRunner(h.deps);
+  const ex = example({ tries: 1 });
+  const broken = await pauseOne(h, runner, ex, 'error', 'Planner: the model answered nothing');
+  assert.deepEqual([broken.run.status, broken.run.stopReason], ['done', null], 'a broken workflow is a result, not a stopped test');
+  const [t] = store.triesOfRun(broken.run.id);
+  assert.deepEqual([t.status, t.costUsd, t.verdict.basics[0].detail], ['failed', 0.3, 'A step failed: Planner: the model answered nothing']);
+  assert.ok(h.stopped.includes(h.started.at(-1).runKey), 'the paused run is stopped, never left paused');
+  const odd = await pauseOne(h, runner, ex, 'something_new');
+  assert.equal(store.triesOfRun(odd.run.id)[0].status, 'failed', 'an unknown code is judged like an error');
+
+  for (const [code, label] of [['usage_limit', 'session/usage limit reached'], ['terminated', 'worca was stopped'],
+    ['recoverable', 'recoverable error — resume to retry'], ['night_guardrail', 'Away mode limit reached']]) {
+    const { run } = await pauseOne(h, runner, ex, code);
+    assert.deepEqual([run.status, run.stopReason, run.stopDetail, statuses(run.id)], ['stopped', 'refused', label, ['b1:stopped']], code);
+  }
+  for (const code of ['cost_pipeline', 'cost_total', 'cost_pipeline_policy', 'cost_total_policy']) {
+    const { run } = await pauseOne(h, runner, ex, code);
+    assert.deepEqual([run.stopReason, run.stopDetail, statuses(run.id)], ['budget', null, ['b1:stopped']], code);
+  }
+});
+
+test('an error pause in the quick check fails it with the reason; nothing real is tried (Fix 1)', async () => {
+  const h = harness({ plan: (body) => (body.mock ? { status: 'done', cost: 0, hold: true } : { status: 'done', cost: 0.5 }) });
+  const runner = createTestRunner(h.deps);
+  const ex = example({ tries: 1 });
+  const run = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1, quickCheck: true });
+  await until(() => h.started.length === 1);
+  const e = h.entries.get(h.started[0].runKey);
+  Object.assign(e, { pauseReason: 'error', pauseDetail: 'Planner: no output' });
+  e.end('paused');
+  await runner.idle(run.id);
+  const st = store.readTestRun(run.id);
+  assert.deepEqual([st.status, st.stopReason, st.quick], ['stopped', 'quick-check', { status: 'failed', detail: 'a step failed: Planner: no output' }]);
+  assert.equal(h.started.length, 1);
+  assert.ok(h.stopped.includes(h.started[0].runKey));
+});
+
+test('a 403 that is not about spending stops the test as refused, not budget (Fix 1)', async () => {
+  const ex = example({ tries: 1 });
+  const owner = createTestRunner(harness({ refuse: { status: 403, body: { error: 'Only the owner can start runs here.' } } }).deps);
+  const r1 = await owner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await owner.idle(r1.id);
+  const s1 = store.readTestRun(r1.id);
+  assert.deepEqual([s1.stopReason, s1.stopDetail], ['refused', 'Only the owner can start runs here.']);
+  const team = createTestRunner(harness({ refuse: { status: 403, body: { error: 'team total cap reached ($5.00 >= $5.00 this week, x)', code: 'team_total' } } }).deps);
+  const r2 = await team.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await team.idle(r2.id);
+  assert.equal(store.readTestRun(r2.id).stopReason, 'budget');
+});
+
+test('a test stopped while the quick check starts stops the quick check run too (Fix 1)', async () => {
+  const h = harness({ plan: () => ({ status: 'done', cost: 0, hold: true }) });
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const runner = createTestRunner({ ...h.deps, startRun: async (body, opts) => { await gate; return h.deps.startRun(body, opts); } });
+  const ex = example({ tries: 1 });
+  const run = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1, quickCheck: true });
+  const stopping = runner.stop(run.id);
+  release();
+  await stopping;
+  assert.equal(h.started.length, 1);
+  assert.ok(h.stopped.includes(h.started[0].runKey), 'the quick check run that started late is stopped');
+  const st = store.readTestRun(run.id);
+  assert.deepEqual([st.stopReason, st.quick], ['person', { status: 'waiting' }]);
 });
