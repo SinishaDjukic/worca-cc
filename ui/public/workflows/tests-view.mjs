@@ -117,6 +117,7 @@ function list(doc, page, o, actions, { root, storage, dateText, now }) {
   const head = el(doc, 'div', 'wft-head');
   const acts = el(doc, 'div', 'wft-acts');
   const testBtn = btn(doc, 'Test a version', () => actions.testVersion(), 'btn btn-primary');
+  testBtn.dataset.focusKey = 'wft-test-version';   // the Test a version dialog's focusBack finds it after a repaint
   const fromRun = btn(doc, 'Add from a past run', () => actions.addFromRun(), 'btn');
   fromRun.dataset.focusKey = 'wft-add-from-run';   // the G7 dialog's focusBack finds it after a repaint (layers.mjs refind)
   acts.append(fromRun, btn(doc, 'New example', () => actions.newExample(), 'btn'), testBtn);

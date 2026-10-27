@@ -1,6 +1,9 @@
 // ui/public/workflows/test-dialogs.mjs — the workflow tests dialogs (plans/workflow-tests-part2-plan.md Tasks 12–13):
-// pick a past run (G7), use this run as a test example (board 3), and test a version (board 4, Task 13). Pure DOM.
+// pick a past run (G7), use this run as a test example (board 3), and test a version with its connectors (boards 4, 30). Pure DOM.
 import { el, seg, field, testDialog, runStatusBadge } from './test-ui.mjs';
+import { icon } from '../icons.mjs';
+import { fmtUsd, andList } from '../../../src/shared/workflow-tests/checks.mjs';
+import { estimateOf, fmtUsdRange, aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
 
 /** Auto's id (src/core/graph/builtin-workflows.mjs AUTO_WORKFLOW_ID; the browser cannot load /src/core, and the dialogs
  *  test pins this to the server's constant). An Auto run that matched no saved workflow keeps it (auto/proposal.mjs). */
@@ -106,4 +109,248 @@ export function openFromRunDialog({ doc, win, past, onSubmit }) {
         note: note.value.trim() || null });
     },
   });
+}
+
+// ── Test a version (boards 4, 30) ──
+
+/** Board 30's sentences, copied from src/core/workflow-tests/connectors.mjs (the browser cannot load /src/core); the
+ *  dialogs test pins them to the server's. */
+export const engineNoteLine = (label) => `Steps on ${label} can still use connectors from ${label}'s own settings. Pretend can't stop those.`;
+export const fileServerOffLine = (name) => `${name} is switched off: Worca can't pretend for servers from a project file.`;
+const PREVIEW_ERROR_LINE = 'Worca could not list your connectors just now.';   // controller-approved copy (2026-10-27)
+
+/** C19: the script steps a try runs as in a normal run, in both modes. null when there is none. */
+export function scriptCaution(names) {
+  if (!names || !names.length) return null;
+  return names.length === 1
+    ? { lead: 'The script step ', name: names[0], rest: ' runs as in a normal run. If it posts or sends something, it does it in every try.' }
+    : { lead: 'The script steps ', name: andList(names), rest: ' run as in a normal run. If they post or send something, they do it in every try.' };
+}
+const useOfValue = (v) => (v === 'draft' ? 'draft' : Number(v));
+
+/** Board 4's reuse sentence (C6 for a partial reuse). */
+function reuseWords(s, other, dateText) {
+  const when = s.reusableAt ? dateText(s.reusableAt) : 'earlier';
+  const saves = typeof s.savesUsd === 'number' && s.savesUsd > 0 ? ` This saves about ${aboutUsd(s.savesUsd)}.` : '';
+  const otherShort = other ? other.short : 'the other version';
+  return s.reusable >= s.want
+    ? { lead: `Use ${s.short}'s results from ${when}. `, rest: `Nothing in ${s.short} or in the examples has changed since, so only ${otherShort} needs to be tried.${saves}` }
+    : { lead: `Use ${s.short}'s ${s.reusable} results from ${when}. `, rest: `Nothing in ${s.short} or in those examples has changed since, so only the other tries are made.${saves}` };
+}
+
+/** An opt-in row: the box, then one span of text that wraps beside it (the lead in ink, the rest as a hint). */
+function optInRow(doc, box, lead, rest) {
+  const row = el(doc, 'label', 'wft-chk wft-tv-chk');
+  const words = el(doc, 'span', 'wft-keep-text', lead);
+  words.append(el(doc, 'span', 'hint', rest));
+  row.append(box, words);
+  return row;
+}
+
+/**
+ * Boards 4 and 30: Test a version (G10, G12, G16, C6, C12, C16, C19). The plan comes from the server per pick (loadPlan);
+ * the estimate, the default cost cap, the connectors' notes and "Start N tries" follow it live.
+ */
+export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'draft', examples = [], exampleIds = null, connectors = 'pretend',
+  dateText, loadPlan, onStart }) {
+  const versions = options.filter((o) => o.use !== 'draft');
+  const selA = el(doc, 'select');
+  selA.id = 'wft-tv-a';
+  if (!versions.length) { const o = el(doc, 'option', '', 'No saved version yet'); o.value = ''; selA.append(o); selA.disabled = true; }
+  for (const o of versions) { const x = el(doc, 'option', '', o.label); x.value = String(o.use); selA.append(x); }
+  if (a != null && versions.some((o) => o.use === a)) selA.value = String(a);
+  const selB = el(doc, 'select');
+  selB.id = 'wft-tv-b';
+  selB.setAttribute('aria-label', 'Second version');   // its label is not shown (board 4)
+  for (const o of options) { const x = el(doc, 'option', '', o.label); x.value = String(o.use); selB.append(x); }
+  selB.value = String(b);
+  const pickEx = el(doc, 'select');
+  pickEx.id = 'wft-tv-examples';
+  const allOpt = el(doc, 'option', '', `All ${examples.length}`);
+  allOpt.value = 'all';
+  pickEx.append(allOpt);
+  for (const e of examples) { const x = el(doc, 'option', '', e.name); x.value = String(e.id); pickEx.append(x); }
+  if (Array.isArray(exampleIds) && exampleIds.length === 1) pickEx.value = String(exampleIds[0]);
+  const chosen = () => (pickEx.value === 'all' ? examples : examples.filter((e) => String(e.id) === pickEx.value));
+  const startTries = () => { const t = Math.max(1, ...chosen().map((e) => e.tries || 3)); return [1, 3, 5].includes(t) ? t : 3; };   // G10
+  let tries = startTries();
+  let triesTouched = false;
+  const triesSeg = seg(doc, 'Tries per example', [[1, '1 · quick look'], [3, '3'], [5, '5']], tries, (v) => { tries = Number(v); triesTouched = true; void refresh(); });
+  const setTries = (v) => { for (const x of triesSeg.children) { const on = x.dataset.value === String(v); x.classList.toggle('on', on); x.setAttribute('aria-checked', on ? 'true' : 'false'); } };
+  // Opt-ins next to the estimate: checkboxes, listed in test/ui-shared-controls.test.mjs JS_CHECKBOX_OK (token wft-tv-optin).
+  const boxA = el(doc, 'input', 'wft-tv-optin'); boxA.type = 'checkbox'; boxA.id = 'wft-tv-reuse-a'; boxA.checked = true;
+  const boxB = el(doc, 'input', 'wft-tv-optin'); boxB.type = 'checkbox'; boxB.id = 'wft-tv-reuse-b'; boxB.checked = true;
+  const reuse = el(doc, 'div', 'wft-reuse');
+  const quick = el(doc, 'input', 'wft-tv-optin'); quick.type = 'checkbox'; quick.id = 'wft-tv-quick'; quick.checked = true;
+  const quickRow = optInRow(doc, quick, 'Do a free quick check first.', ' Worca makes sure every step of the workflow is connected, without using AI.');
+  // D21 with D35: the promise holds only with Pretend connectors, so it shows only then.
+  const safe = el(doc, 'div', 'wft-safe');
+  safe.append(icon(doc, 'shield', 16), el(doc, 'b', '', 'Tests never touch real work through your connectors.'));
+  // ── Connectors (board 30, C19, D35) ──
+  let mode = connectors === 'real' ? 'real' : 'pretend';
+  const conn = el(doc, 'fieldset', 'wft-conn');
+  conn.append(el(doc, 'legend', '', 'Connectors'));
+  const option = (value, title) => {
+    const l = el(doc, 'label', 'radio-card');
+    const r = el(doc, 'input');
+    r.type = 'radio'; r.name = 'wft-tv-conn'; r.value = value; r.id = `wft-tv-conn-${value}`; r.checked = mode === value;
+    const words = el(doc, 'span', 'radio-card-text');
+    const hint = el(doc, 'span', 'hint');
+    words.append(el(doc, 'b', '', title), hint);
+    l.append(r, words);
+    r.addEventListener('change', () => { if (r.checked) { mode = value; void refresh(); } });
+    return { l, hint };
+  };
+  const pretendOpt = option('pretend', 'Pretend');
+  pretendOpt.hint.textContent = 'Your connectors are replaced by stand-ins. Nothing is posted or sent, and Worca shows what would have been sent. Anything the workflow reads from them comes back empty.';
+  const realOpt = option('real', 'Real');
+  const notes = el(doc, 'ul', 'wft-conn-notes');
+  notes.setAttribute('aria-label', 'Connectors in this workflow');
+  const caution = el(doc, 'p', 'wft-caution');
+  caution.setAttribute('role', 'note');
+  conn.append(pretendOpt.l, notes, realOpt.l, caution);
+  const est = el(doc, 'div', 'wft-est');
+  est.setAttribute('aria-live', 'polite');
+  const cap = el(doc, 'input');
+  cap.type = 'text'; cap.inputMode = 'decimal'; cap.id = 'wft-tv-cap'; cap.className = 'wft-cap';
+  let capTouched = false;
+  cap.addEventListener('input', () => { capTouched = true; });
+  const note = el(doc, 'p', 'hint wft-tv-note');
+  note.setAttribute('aria-live', 'polite');
+  let plan = null;
+  let estimate = null;
+  let seq = 0;
+  let posting = false;   // Start is busy: a repaint meanwhile (a box ticked) never gives the button back early
+  const vs = el(doc, 'div', 'wft-vs');
+  const second = field(doc, 'Second version', selB, { id: selB.id });
+  second.classList.add('wft-vs-second');   // board 4: the label keeps the row aligned but is not shown; "with" reads it
+  vs.append(field(doc, 'Compare', selA, { id: selA.id }), el(doc, 'span', 'wft-vs-with', 'with'), second);
+  const triesField = field(doc, 'Tries per example', triesSeg);
+  triesField.classList.add('wft-tv-tries');
+  const row2 = el(doc, 'div', 'wft-row2');
+  row2.append(field(doc, 'Examples', pickEx, { id: pickEx.id }), triesField);
+  const reused = (side) => !!(plan && plan[side] && plan[side].reusable) && (side === 'a' ? boxA : boxB).checked;
+
+  const dlg = testDialog({
+    doc, win, title: 'Test a version', confirmLabel: 'Start',
+    body: [vs, reuse, row2, conn, quickRow, safe, est,
+      field(doc, 'Stop if the cost goes over', cap, { id: cap.id, hint: 'Tests count in your spending limit. You can close this page: Worca tells you when the results are ready.' }), note],
+    onConfirm: async () => {
+      // testDialog gives the button back after a refusal: a pick made meanwhile may have nothing to start.
+      if (!estimate || !estimate.total || !versions.length || selA.value === selB.value) return { ok: false, error: note.textContent || 'Wait for the estimate, then start.' };
+      const capUsd = Number(String(cap.value).replace(/[^0-9.]/g, ''));
+      if (!(capUsd > 0)) return { ok: false, error: 'Give the cost limit in dollars, such as $15.' };
+      posting = true;
+      try {
+        return await onStart({ a: useOfValue(selA.value), b: useOfValue(selB.value), exampleIds: chosen().map((e) => e.id), tries,
+          reuseA: reused('a'), reuseB: reused('b'), quickCheck: quick.checked, capUsd, connectors: mode });
+      } finally { posting = false; }
+    },
+  });
+
+  function paint() {
+    const held = [boxA, boxB].find((x) => x === doc.activeElement) || null;   // the rows are rebuilt: a ticked box keeps the focus
+    reuse.replaceChildren();
+    est.replaceChildren();
+    const noA = !versions.length;
+    const same = !noA && selA.value === selB.value;
+    if (plan) {
+      for (const [side, box, other] of [['a', boxA, 'b'], ['b', boxB, 'a']]) {
+        const s = plan[side];
+        if (!s || !s.reusable) continue;
+        const words = reuseWords(s, plan[other], dateText);
+        reuse.append(optInRow(doc, box, words.lead, words.rest));
+      }
+    }
+    if (held && held.isConnected && doc.activeElement !== held) held.focus();
+    const e = plan && !same ? estimateOf(plan, { reuseA: reused('a'), reuseB: reused('b') }) : null;
+    estimate = e;
+    if (e) {
+      const line = (left, right, cls = '') => {
+        const r = el(doc, 'div', `wft-est-row${cls ? ` ${cls}` : ''}`);
+        r.append(el(doc, 'span', '', left), el(doc, 'span', 'wft-est-usd', right));
+        est.append(r);
+      };
+      const priced = (s, n) => (s && typeof s.perTryUsd === 'number' && Number.isFinite(s.perTryUsd) ? `about ${fmtUsd(n * s.perTryUsd)}` : 'cost not known yet');   // C12
+      const triesN = (n) => `${n} ${n === 1 ? 'try' : 'tries'}`;
+      if (e.toRun.b) line(`${triesN(e.toRun.b)} of ${plan.b.short}`, priced(plan.b, e.toRun.b));
+      if (plan.a && e.toRun.a) line(`${triesN(e.toRun.a)} of ${plan.a.short}`, priced(plan.a, e.toRun.a));
+      for (const side of ['a', 'b']) {
+        if (reused(side)) line(`${plan[side].short} results from ${plan[side].reusableAt ? dateText(plan[side].reusableAt) : 'earlier'}`, '$0.00');
+      }
+      line(e.minutes ? `Total · ready in about ${e.minutes} minutes` : 'Total', e.usd === null ? 'cost not known yet' : fmtUsdRange(e.low, e.high), 'is-total');
+      if (!capTouched) cap.value = `$${e.capUsd}`;
+    }
+    const total = e ? e.total : 0;
+    // C16: a disabled Start for no saved version or the same version twice reads just "Start"; "Start 0 tries" only when all is reused.
+    dlg.okButton.textContent = noA || same || !e ? 'Start' : `Start ${total} ${total === 1 ? 'try' : 'tries'}`;
+    dlg.okButton.disabled = posting || noA || same || !e || total === 0;
+    paintConnectors(e);
+    const text = noA ? 'Save a version first: a test compares two versions. Try it once now tries one example on your draft.'   // C16
+      : same ? 'Pick two different versions.' : e && total === 0 ? 'Nothing to try: both versions have results for these examples.' : '';
+    if (note.textContent !== text) note.textContent = text;   // aria-live: only a change is news
+  }
+
+  /** Board 30: the Real sentence names how often a post would go out; Pretend lists each connector; the script caution stays. */
+  function paintConnectors(e) {
+    const n = e ? e.total : null;
+    realOpt.hint.textContent = `Tries use your real connectors. If the workflow posts or sends something, it does it in every try${n === null ? '' : n === 1 ? ': once in this test' : `: ${n} times in this test`}.`;
+    const c = plan && plan.connectors;
+    notes.replaceChildren();
+    const line = (name, parts) => {
+      const li = el(doc, 'li');
+      const words = el(doc, 'span');
+      words.append(...parts.map((p) => (typeof p === 'string' ? doc.createTextNode(p) : p)));
+      li.append(icon(doc, name, 13), words);
+      notes.append(li);
+    };
+    if (c && mode === 'pretend') {
+      if (c.previewError) line('alert', [PREVIEW_ERROR_LINE]);
+      if (c.pretend && c.pretend.length) line('check', [`${c.pretend.join(', ')}: pretend`]);
+      for (const o of c.off || []) {
+        if (o.reason === 'claude-ai') line('x', [`${o.name} is switched off: Worca can't pretend for claude.ai connectors.`]);
+        else if (o.reason === 'own-settings') line('x', [`${o.name} is switched off: Worca can't pretend for servers in your own Claude Code settings.`]);
+        else if (o.reason === 'file-server') line('x', [fileServerOffLine(o.name)]);
+        else {
+          const link = el(doc, 'a', '', 'test it once in Connectors');
+          link.href = '#connectors';
+          line('x', [`${o.name} is switched off: `, link, ' so Worca knows its tools.']);
+        }
+      }
+      for (const label of c.engines || []) line('alert', [engineNoteLine(label)]);
+    }
+    notes.hidden = !notes.children.length;
+    const sc = scriptCaution(c ? c.scripts : []);
+    caution.replaceChildren();
+    caution.hidden = !sc;
+    if (sc) {
+      const words = el(doc, 'span');
+      words.append(doc.createTextNode(sc.lead), el(doc, 'b', '', sc.name), doc.createTextNode(sc.rest));
+      caution.append(icon(doc, 'alert', 14), words);
+    }
+    safe.hidden = mode !== 'pretend';
+  }
+
+  async function refresh() {
+    const my = (seq += 1);
+    plan = null;
+    paint();
+    if (!selA.value || selA.value === selB.value) return;
+    let p = null;
+    try {
+      p = await loadPlan({ a: selA.value, b: selB.value, examples: chosen().map((e) => e.id).join(','), tries: String(tries), connectors: mode });
+    } catch { p = null; }
+    if (my !== seq) return;   // a newer pick asked meanwhile: its answer paints
+    plan = p;
+    paint();
+    if (!p) note.textContent = 'Worca could not work out this test just now. Change a choice to try again.';
+  }
+
+  selA.addEventListener('change', () => void refresh());
+  selB.addEventListener('change', () => void refresh());
+  pickEx.addEventListener('change', () => { if (!triesTouched) { tries = startTries(); setTries(tries); } void refresh(); });
+  boxA.addEventListener('change', paint);
+  boxB.addEventListener('change', paint);
+  void refresh();
+  return dlg;
 }

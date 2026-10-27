@@ -216,7 +216,8 @@ import { openSaveVersionDialog, openUseVersionDialog, statusText } from './workf
 import { renderTestsPage } from './workflows/tests-view.mjs';
 import { sentence as wftSentence } from './workflows/test-ui.mjs';
 import { renderExampleEditor, BLANK_EXAMPLE } from './workflows/example-editor.mjs';
-import { openFromRunDialog, openPickRunDialog, canUseAsExample } from './workflows/test-dialogs.mjs';
+import { openFromRunDialog, openPickRunDialog, canUseAsExample, openTestVersionDialog } from './workflows/test-dialogs.mjs';
+import { renderTestProgress } from './workflows/test-progress.mjs';
 import { useLabel as wftUseLabel } from '../../src/shared/workflow-tests/compare.mjs';
 import { renderVersionsPage } from './workflows/versions-view.mjs';
 import { exportUseChoices, exportUseValue, paintExportUse } from './workflows/export-use.mjs';
@@ -1780,6 +1781,12 @@ function handleServerMessage(msg) {
   // '<scopeType>:<scopeKey>', A7 §5). Only the open page repaints, and only when the frame concerns it.
   if (msg.type === 'requirements-changed') {
     if (currentView() === 'requirements') void requirementsView.changed(msg.seq, msg.brief);
+    return;
+  }
+  // Workflow tests (plans/workflow-tests-part2-plan.md D33): sent only while the flag is on. It carries testRunId, never runId,
+  // so the run upsert below (`if (!msg.runId) return;`) never makes a phantom run of it.
+  if (msg.type === 'workflow-tests-changed') {
+    wftChanged(msg);
     return;
   }
   // Scheduled runs: a ticket or a repeating schedule changed (here, in another tab, from the
@@ -3640,10 +3647,60 @@ async function wftRefresh() {
   wft.error = r.ok ? null : r.error;
   wftRender();
 }
-function wftReadView() { return Promise.resolve({ ok: false, error: 'This page comes in a later step.' }); }   // Task 13 replaces this body
-function wftRenderView() {                                                                                 // Task 13 replaces this body
-  notify({ tone: 'info', title: 'Test results', detail: 'This page comes in a later step.' });
-  wft.view = 'list'; void wftRefresh();
+function wftReadView(id) {
+  if (wft.view === 'progress') return wftCall('GET', `${wftBase(id)}/runs/${wft.runId}`);
+  return Promise.resolve({ ok: false, error: 'This page comes in a later step.' });   // Task 14 adds compare and detail
+}
+function wftRenderView(root) {
+  if (!wft.data) { renderTestsPage(root, null, wftListActions(), { doc: document, error: wft.error }); return; }
+  if (wft.view === 'progress') { renderTestProgress(root, wft.data, wftProgressActions(), { doc: document }); return; }
+  wft.view = 'list';
+  void wftRefresh();
+}
+/** Board 20's actions. The workflow and the test are read when the page paints: an answer that lands after the page
+ *  moved on (another workflow, another view) repaints nothing. */
+function wftProgressActions() {
+  const id = wftWorkflowId();
+  const runId = wft.runId;
+  const run = wft.data && wft.data.run;
+  const still = () => wftWorkflowId() === id && wft.view === 'progress' && wft.runId === runId;
+  return {
+    back: () => wftShow('list', { overview: null }),
+    stop: async () => {
+      const r = await wftCall('POST', `${wftBase(id)}/runs/${runId}/stop`, {});
+      if (!r.ok) notify({ tone: 'err', title: 'Not stopped', detail: r.error });
+      if (still()) void wftRefresh();
+    },
+    continue: async (capUsd) => {
+      const r = await wftCall('POST', `${wftBase(id)}/runs/${runId}/continue`, capUsd != null ? { capUsd } : {});
+      if (!r.ok) { notify({ tone: 'err', title: 'The rest did not start', detail: r.error }); return; }   // boards 27, 29 (C18)
+      if (still()) void wftRefresh();
+    },
+    open: () => {
+      if (run && run.kind === 'once') wftShow('detail', { runId, exampleId: run.exampleIds[0], tryIndex: 0 });   // G2
+      else wftShow('compare', { runId });
+    },
+  };
+}
+/** D33: a test changed (a try ended, the test finished): the toast for a finished test (C13), and the open page. */
+function wftChanged(msg) {
+  if (msg.finished && msg.title) {
+    notify({ tone: msg.status === 'done' ? 'ok' : 'info', title: msg.status === 'done' ? 'Test results are ready' : 'Test stopped', detail: msg.title,
+      key: `wft-${msg.testRunId}`, action: { label: 'Open', run: () => wftOpenTest(msg.workflowId, msg.testRunId) } });
+  }
+  const els = wfvEls();
+  if (!els.tests || els.tests.hidden || wftWorkflowId() !== msg.workflowId) return;
+  if (wft.view === 'list' || (wft.view === 'progress' && wft.runId === msg.testRunId)) void wftRefresh();
+}
+/** The toast's Open: the test's page. Its workflow already open on the canvas: only the Tests page changes (no reload,
+ *  no discard question); anywhere else the address opens it (routeWorkflows). */
+function wftOpenTest(workflowId, testRunId) {
+  if (currentView() === 'workflows' && wftWorkflowId() === workflowId) {
+    if (wfvEls().tests?.hidden) wfvShowPage('tests');
+    wftShow('progress', { runId: testRunId });
+    return;
+  }
+  location.hash = `workflows/${workflowId}/tests/run/${testRunId}`;
 }
 function wftRender() {
   const els = wfvEls();
@@ -3718,7 +3775,29 @@ function wftRunMenuItems(record, data) {
   const pid = record.id;
   return [{ label: 'Use as test example', onSelect: () => void wftAddFromRun(pid, { live: () => !!histDetailState && histDetailState.id === pid }) }];
 }
-function wftTestVersion() { notify({ tone: 'info', title: 'Test a version', detail: 'This comes in a later step.' }); }                                    // Task 13 replaces this body
+/** Board 4. `a`/`b`/`exampleIds` prefill it (Compare's Test again). The workflow is read before any await: the dialog
+ *  opens, and Start shows the progress page, only while that workflow's Tests page still shows. */
+async function wftTestVersion({ a, b = 'draft', exampleIds = null } = {}) {
+  const id = wftWorkflowId();
+  if (!id) return;
+  const live = () => currentView() === 'workflows' && wftWorkflowId() === id && !wfvEls().tests?.hidden;
+  const fresh = await wftCall('GET', wftBase(id));                 // fresh examples (another tab may have added one)
+  const o = fresh.ok ? fresh.data : (wft.workflowId === id ? wft.overview : null);
+  const versions = o ? await gvApi.versions(id) : null;
+  if (!live()) return;
+  if (!o) { notify({ tone: 'err', title: 'Could not open Test a version', detail: fresh.error }); return; }
+  const nos = versions ? versions.versions.map((v) => v.versionNo).sort((x, y) => x - y) : [];
+  const options = [...nos.map((no) => ({ use: no, label: wftUseLabel(no, o.ctx, 'select') })), { use: 'draft', label: wftUseLabel('draft', o.ctx, 'select') }];
+  openTestVersionDialog({ doc: document, win: window, options, a: a !== undefined ? a : (o.ctx.liveVersionNo || nos.at(-1) || null), b,
+    examples: o.examples.map((e) => ({ id: e.id, name: e.name, tries: e.tries })), exampleIds, dateText: wftDate,
+    loadPlan: async (q) => { const r = await wftCall('GET', `${wftBase(id)}/plan?${new URLSearchParams(q).toString()}`); return r.ok ? r.data : null; },
+    onStart: async (body) => {
+      const r = await wftCall('POST', `${wftBase(id)}/runs`, body);
+      if (!r.ok) return r;                                         // the dialog stays open and says why
+      if (live()) wftShow('progress', { runId: r.data.run.id });   // elsewhere by now: the results-ready toast opens it (C13)
+      return { ok: true };
+    } });
+}
 
 // The example editor (Task 11). Each painted editor is a session {workflowId, exampleId, token}: its actions save to
 // session.exampleId (set by the G17 auto-save), and write wft / change the view only while that editor still shows. A

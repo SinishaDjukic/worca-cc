@@ -157,6 +157,7 @@ const JS_CHECKBOX_OK = [
   ['workflows/version-dialogs.mjs', 'wfv-sv-use', 'opt-in in the Save version dialog: also use the new version for new runs'],
   ['workflows/tests-view.mjs', 'wft-pick-box', 'picks runs: the past runs to keep as test examples'],
   ['workflows/test-dialogs.mjs', 'wft-keep-box', 'picks what to keep from the past run: its request and files, its answers'],
+  ['workflows/test-dialogs.mjs', 'wft-tv-optin', 'opt-ins next to the estimate: reuse earlier results, the free quick check'],
 ].map(([file, token, reason]) => ({ file: `ui/public/${file}`, token, reason }));
 function checkboxEmitters(files) {
   const out = [];
