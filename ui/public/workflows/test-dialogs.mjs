@@ -187,7 +187,15 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
   const setTries = (v) => { for (const x of triesSeg.children) { const on = x.dataset.value === String(v); x.classList.toggle('on', on); x.setAttribute('aria-checked', on ? 'true' : 'false'); } };
   // Opt-ins next to the estimate: checkboxes, listed in test/ui-shared-controls.test.mjs JS_CHECKBOX_OK (token wft-tv-optin).
   const boxA = el(doc, 'input', 'wft-tv-optin'); boxA.type = 'checkbox'; boxA.id = 'wft-tv-reuse-a'; boxA.checked = true;
-  const boxB = el(doc, 'input', 'wft-tv-optin'); boxB.type = 'checkbox'; boxB.id = 'wft-tv-reuse-b'; boxB.checked = true;
+  const boxB = el(doc, 'input', 'wft-tv-optin'); boxB.type = 'checkbox'; boxB.id = 'wft-tv-reuse-b'; boxB.checked = false;
+  /** M3 (board 4): the older version's results are reused by default, the newer one is tried again (the draft is the newest). */
+  const pickReuse = () => {
+    const [x, y] = [useOfValue(selA.value), useOfValue(selB.value)];
+    const older = x === 'draft' ? 'b' : y === 'draft' ? 'a' : x <= y ? 'a' : 'b';
+    boxA.checked = older === 'a';
+    boxB.checked = older === 'b';
+  };
+  pickReuse();
   const reuse = el(doc, 'div', 'wft-reuse');
   const quick = el(doc, 'input', 'wft-tv-optin'); quick.type = 'checkbox'; quick.id = 'wft-tv-quick'; quick.checked = true;
   quick.addEventListener('change', () => paintConnectors(estimate));   // the script caution counts the quick check (M2)
@@ -240,10 +248,10 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
   row2.append(field(doc, 'Examples', pickEx, { id: pickEx.id }), triesField);
   const reused = (side) => !!(plan && plan[side] && plan[side].reusable) && (side === 'a' ? boxA : boxB).checked;
 
+  const capField = field(doc, 'Stop if the cost goes over', cap, { id: cap.id, hint: 'Tests count in your spending limit. You can close this page: Worca tells you when the results are ready.' });
   const dlg = testDialog({
     doc, win, title: 'Test a version', confirmLabel: 'Start',
-    body: [vs, reuse, row2, conn, quickRow, safe, est,
-      field(doc, 'Stop if the cost goes over', cap, { id: cap.id, hint: 'Tests count in your spending limit. You can close this page: Worca tells you when the results are ready.' }), note],
+    body: [vs, reuse, row2, conn, quickRow, safe, est, capField, note],
     onConfirm: async () => {
       // testDialog gives the button back after a refusal: a pick made meanwhile may have nothing to start.
       if (!estimate || !estimate.total || !versions.length || selA.value === selB.value) return { ok: false, error: note.textContent || 'Wait for the estimate, then start.' };
@@ -295,6 +303,9 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
     dlg.okButton.textContent = noA || same || !e ? 'Start' : `Start ${total} ${total === 1 ? 'try' : 'tries'}`;
     dlg.okButton.disabled = posting || noA || same || !e || total === 0;
     paintConnectors(e);
+    // M6 (board 29): with no saved version only the two selects and the sentence are shown.
+    for (const n of [reuse, row2, conn, quickRow, est, capField]) n.hidden = noA;
+    if (noA) safe.hidden = true;
     const text = noA ? 'Save a version first: a test compares two versions. Try it once now tries one example on your draft.'   // C16
       : same ? 'Pick two different versions.' : e && total === 0 ? 'Nothing to try: both versions have results for these examples.' : '';
     if (note.textContent !== text) note.textContent = text;   // aria-live: only a change is news
@@ -357,8 +368,8 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
     if (!p) note.textContent = 'Worca could not work out this test just now. Change a choice to try again.';
   }
 
-  selA.addEventListener('change', () => void refresh());
-  selB.addEventListener('change', () => void refresh());
+  selA.addEventListener('change', () => { pickReuse(); void refresh(); });
+  selB.addEventListener('change', () => { pickReuse(); void refresh(); });
   pickEx.addEventListener('change', () => { if (!triesTouched) { tries = startTries(); setTries(tries); } void refresh(); });
   boxA.addEventListener('change', paint);
   boxB.addEventListener('change', paint);

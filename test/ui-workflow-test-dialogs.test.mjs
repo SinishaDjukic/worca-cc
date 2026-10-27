@@ -232,6 +232,24 @@ test('board 30: Connectors, Pretend by default with its notes; Real warns, hides
   assert.equal(words(scriptCaution(['Publish to wiki'], [])), 'The script step Publish to wiki runs as in a normal run. If it posts or sends something, it does it in every try.');
 });
 
+test('reuse is offered ticked for the older version only, whichever side it is on (M3, board 4)', async () => {
+  const both = (doc) => [doc.querySelector('#wft-tv-reuse-a').checked, doc.querySelector('#wft-tv-reuse-b').checked];
+  const reusable = { reusable: 18, reusableAt: '2026-10-19T10:00:00Z' };
+  const { doc, started } = openTv({}, { b: { use: 'draft', label: 'v5 draft · your changes', short: 'v5 draft', want: 18, perTryUsd: 0.52, savesUsd: 9.36, ...reusable } });
+  await tick();
+  assert.deepEqual(both(doc), [true, false]);
+  const a = doc.querySelector('#wft-tv-a'); const b = doc.querySelector('#wft-tv-b');
+  b.value = '3'; change(b);   // v4 with v3: v3 is the older one
+  await tick();
+  assert.deepEqual(both(doc), [false, true]);
+  a.value = '3'; b.value = '4'; change(b);
+  await tick();
+  assert.deepEqual(both(doc), [true, false]);
+  click(doc.querySelector('.wft-dlg-ok'));
+  await tick();
+  assert.deepEqual([started[0].reuseA, started[0].reuseB], [true, false]);
+});
+
 test('the script caution counts the free quick check only while it is ticked (final review M2)', async () => {
   const { doc } = openTv({}, { connectors: { mode: 'pretend', pretend: [], off: [], scripts: ['Publish to wiki'], quickScripts: ['Publish to wiki'], engines: [] } });
   await tick();
@@ -275,6 +293,13 @@ test('C16 with no saved version; two equal versions; one example starts at its o
   assert.equal(none.doc.querySelector('.wft-tv-note').textContent, 'Save a version first: a test compares two versions. Try it once now tries one example on your draft.');
   assert.deepEqual([none.doc.querySelector('.wft-dlg-ok').disabled, none.doc.querySelector('.wft-dlg-ok').textContent], [true, 'Start']);
   assert.equal(none.plans.length, 0);
+  // M6 (board 29): only the two selects, the sentence, Cancel and Start.
+  const shown = (doc) => [...doc.querySelector('#mk-dialog .wft-vs').parentElement.children]
+    .filter((n) => !n.hidden && !n.classList.contains('wft-dlg-error')).map((n) => n.className);   // the error line is empty
+  assert.deepEqual(shown(none.doc), ['wft-vs', 'hint wft-tv-note']);
+  assert.equal(none.doc.querySelector('#wft-tv-cap').closest('.field').hidden, true);
+  assert.deepEqual([...none.doc.querySelectorAll('#mk-dialog button')].filter((x) => !x.closest('[hidden]')).map((x) => x.textContent),
+    ['Cancel', 'Start']);
   const same = openTv();
   await tick();
   const b = same.doc.querySelector('#wft-tv-b');
@@ -312,9 +337,15 @@ test('C16 with no saved version; two equal versions; one example starts at its o
 test('C16 every result reused: Start 0 tries, disabled; C12 a cost not known yet', async () => {
   const all = openTv({}, { b: { use: 'draft', label: 'v5 draft · your changes', short: 'v5 draft', want: 18, reusable: 18, reusableAt: '2026-10-20T10:00:00Z', perTryUsd: 0.52, savesUsd: 9.36 } });
   await tick();
+  // M3 (board 4): only the older version's results are reused unless the person ticks the newer one too.
+  assert.deepEqual([all.doc.querySelector('#wft-tv-reuse-a').checked, all.doc.querySelector('#wft-tv-reuse-b').checked], [true, false]);
+  assert.equal(all.doc.querySelector('.wft-dlg-ok').textContent, 'Start 18 tries');
+  const boxB = all.doc.querySelector('#wft-tv-reuse-b');
+  boxB.checked = true; change(boxB);
   assert.deepEqual([all.doc.querySelector('.wft-dlg-ok').textContent, all.doc.querySelector('.wft-dlg-ok').disabled], ['Start 0 tries', true]);
   assert.equal(all.doc.querySelector('.wft-tv-note').textContent, 'Nothing to try: both versions have results for these examples.');
   assert.equal(all.doc.querySelectorAll('.wft-reuse .wft-chk').length, 2, 'one opt-in per version with results');
+  assert.deepEqual([all.doc.querySelector('#wft-tv-reuse-a').checked, all.doc.querySelector('#wft-tv-reuse-b').checked], [true, true], 'both ticked: nothing to try');
   const unknown = openTv({}, { perTryMs: null, b: { use: 'draft', label: 'v5 draft · your changes', short: 'v5 draft', want: 18, reusable: 0, reusableAt: null, perTryUsd: null, savesUsd: null } });
   await tick();
   assert.deepEqual(estRows(unknown.doc), [['18 tries of v5 draft', 'cost not known yet'], ['v4 results from 19 Oct', '$0.00'], ['Total', 'cost not known yet']]);
@@ -367,6 +398,8 @@ test('board 30 (Task 13 review): an off reason Worca does not know reads generic
   assert.equal(doc.querySelectorAll('.wft-conn-notes a').length, 1, 'only no-tools links to Connectors');
   const all = openTv({}, { b: { use: 'draft', label: 'v5 draft · your changes', short: 'v5 draft', want: 18, reusable: 18, reusableAt: '2026-10-20T10:00:00Z', perTryUsd: 0.52, savesUsd: 9.36 } });
   await tick();
+  const reuseB = all.doc.querySelector('#wft-tv-reuse-b');
+  reuseB.checked = true; change(reuseB);   // everything reused: nothing to try
   assert.equal(all.doc.querySelectorAll('.wft-conn .radio-card-text')[1].textContent,
     'RealTries use your real connectors. If the workflow posts or sends something, it does it in every try.');
 });
