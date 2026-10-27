@@ -125,9 +125,10 @@ images and PDFs go as they are. A read can open only its own copy of the file: a
 other tool, so a file that asks the reader to open something else gets nowhere. Worca keeps a record of what the guard
 allowed, and throws away a read it cannot confirm ("Worca stopped this read: it could not confirm the read stayed
 inside this file. Try again."). Every read, every question and the product brief's look also refuse private files
-(keys, credentials, Worca's own data, other chats and stored files), as Chat does. Reads, questions and the
-brief's look also ask Claude Code to keep no session transcript of the call (`--no-session-persistence`), so the file
-itself is not left in Claude Code's own session logs. Interview rounds and looks keep Claude Code's usual session logs
+(keys, credentials, Worca's own data, other chats and stored files), as Chat does. Reads, questions, the brief's
+look and Feature chat messages also ask Claude Code to keep no session transcript of the call (`--no-session-persistence`),
+so neither the file nor the chat's prompt is left in Claude Code's own session logs. Interview rounds and looks keep Claude
+Code's usual session logs
 (under its `projects` folder, until Claude Code's own cleanup), and those hold what a round's prompt carries: what
 Worca took from each file and the text of small text files. Remove deletes the file and what Worca took from it from
 Worca; it does not reach Claude Code's logs. Where the files are kept: [storage.md](storage.md).
@@ -181,8 +182,8 @@ text). Nothing changes until you press **Accept**: the change is then your own e
 a start it shows under **Changed since the run started**, and **Undo my changes** undoes it like any edit. **Reject** dismisses
 a card. When the spec changed since Worca proposed something, the card says so and offers **Ask again**.
 
-**Costs.** Each message is one call to the interview model, booked as Requirements spend: the header's "$X so far" includes
-it, it counts toward the spending limit, and each reply shows what it cost. The composer shows the range of the last messages
+**Costs.** Each message is one call to the interview model (asked once more if the reply cannot be read; both attempts
+are paid), booked as Requirements spend: the header's "$X so far" includes it, it counts toward the spending limit, and each reply shows what it cost. The composer shows the range of the last messages
 ("about $L–H a message"). **Stop** cancels a reply and keeps your message; a stopped reply may be booked low, or at $0, because
 a call's cost is known only once the model reports it.
 

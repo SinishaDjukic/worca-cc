@@ -131,7 +131,7 @@ test('D9: stale when the spec changed during the call: Accept is refused on the 
   assert.deepEqual(getFeature(f.seq).spec.rules, ['Refund in 3 days']);
 });
 
-test('D9 (user decision 2026-10-26): an add whose text is now a criterion is stale: Accept is refused and nothing is added twice; reworded away, it is acceptable again', () => {
+test('D9: an add whose text is now a criterion is stale: Accept is refused and nothing is added twice; reworded away, it is acceptable again', () => {
   const f = feature();
   const m = propose(f, [{ target: 'criterion', change: 'add', value: 'A partly shipped order cancels only what is left', reason: R }]);
   const g = addCriterion(f.seq, 'A PARTLY shipped order cancels only what is left', { by: 'po' });

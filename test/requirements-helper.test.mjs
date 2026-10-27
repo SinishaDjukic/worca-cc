@@ -231,7 +231,7 @@ test('D9: a fresh proposal is not stale; it is once its target changes, and is n
   assert.equal(snapshotOf(changed, reword), undefined, 'a removed criterion has no snapshot');
   assert.equal(isStale(changed, add), false);
   assert.equal(isStale({ ...SPEC, criteria: [...SPEC.criteria, { id: 'R-po-7', text: 'NEW CRITERION' }] }, add), true,
-    'user decision 2026-10-26: an add whose text now matches a criterion (case-insensitive) is stale');
+    'D9: an add whose text now matches a criterion (case-insensitive) is stale');
   assert.equal(isStale({ ...changed, ...SPEC }, rules), false, 'undone: acceptable again');
 });
 

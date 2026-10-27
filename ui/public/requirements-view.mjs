@@ -2688,7 +2688,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     focusNext = 'helper-in';
     redraw();
   }
-  /** Stop, Try again, Clear chat, and Tasks 8's Accept / Reject / Ask again: the server's chat comes back, then the feature is
+  /** Stop, Try again, Clear chat, and the cards' Accept / Reject / Ask again: the server's chat comes back, then the feature is
    *  fetched again (an accepted change is in the spec). A spent budget shows in the chat, any other refusal under the composer.
    *  A press while another chat POST is in flight is ignored; the follow-up refetch does not hold the guard (a Stop pressed while
    *  it runs is sent). A reply that lands after another feature was opened is dropped. `focusUi` is focused after the paint,
@@ -2746,54 +2746,70 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     if (code === 'STOPPED') return h('p', { class: 'hint req-help-stopped' }, 'You stopped this reply.', again ? ' ' : null, again);
     return h('p', { class: 'req-help-fail', role: 'alert' }, HELP_FAILED, again ? ' ' : null, again);
   }
-  /** What a reply carries besides its text: the dropped-draft line (D6) and its proposed changes (board 24). */
-  function helperExtras(f, m, ctx) {
-    return [
-      (m.drafts || []).some((x) => x.dropped)
-        ? h('p', { class: 'hint req-help-dropped', text: "The question you asked about has been answered, so Worca's draft for it was dropped." }) : null,
-      ...(m.proposals || []).map((p) => proposalCard(f, m, p, ctx)),
-    ];
+  function helperMessage(f, m) {
+    const cap = helpCap(m);
+    return h('div', { class: 'req-help-msg-po', 'data-msg': m.id }, cap ? h('span', { class: 'req-help-cap', text: cap }) : null, m.text);
   }
-  function helperMessage(f, m, ctx) {
-    if (m.role === 'po') {
-      const cap = helpCap(m);
-      return h('div', { class: 'req-help-msg-po', 'data-msg': m.id }, cap ? h('span', { class: 'req-help-cap', text: cap }) : null, m.text);
-    }
-    return h('div', { class: 'req-help-msg-w', 'data-msg': m.id },
-      m.error ? helperLine(f, m, ctx) : h('p', { class: 'req-help-text', text: m.text }),
-      ...helperExtras(f, m, ctx),
-      m.costUsd > 0 ? h('p', { class: 'hint req-help-cost', text: usd(m.costUsd) }) : null);
-  }
-  /** D18: a message's node is rebuilt only when this key changes, so the key holds the message and ONLY the parts of `ctx` (and of
-   *  `f`) that change that message's DOM: a rebuilt node in the role=log live region is read out again, so a key with the whole
-   *  ctx would re-read the history on every Send, reply and round. This is the one place a row's dependencies are listed: the
-   *  dropped-draft line (D6) reads only `m.drafts`, already in the key; the proposal cards (board 24) read their own state, stale
-   *  mark, Ask again and applied id (all in `m.proposals`). Whether a waiting card's buttons are off is NOT in this key: it is
-   *  helperRowCtl, patched in place on a kept node (a rebuilt row would re-read old replies, fire a stale card's alert again and
-   *  drop the focus from its Reject). */
-  function helperRowKey(f, m, ctx) {
-    if (m.role === 'po') return JSON.stringify([m, helpCap(m)]);
+  /** D18: a Worca row is a kept shell whose parts are each rebuilt only when their own signature changes, so the role=log live
+   *  region announces only the part that is new (an inserted node is read out in full): the text (or its §6 line), the
+   *  dropped-draft line (D6, fixed once the row is written), one part per card (board 24: its state, stale mark, Ask again and
+   *  applied id are all in the proposal) and the cost. Accept, Reject or a card going stale replaces only that card. Each
+   *  signature holds ONLY the parts of `ctx` (and of `f`) that change that part's DOM; whether a waiting card's buttons are off
+   *  is NOT in them: it is helperRowCtl, patched in place (a rebuilt card would fire a stale card's alert again and drop the
+   *  focus from its Reject). */
+  function helperParts(f, m, ctx) {
     const code = m.error ? m.error.code : null;
     // helperLine: the spending limit names the period; any other failed row shows Try again on the newest row only, off while a
     // round or look runs
     const again = !!code && code !== 'BUDGET' && ctx.newest && !ctx.answering && !ctx.archived;
     const line = !code ? null : code === 'BUDGET' ? f.resetPeriod : [again, again && ctx.working];
-    return JSON.stringify([m, line]);
+    return [
+      { k: 'text', sig: JSON.stringify([m.id, m.text, m.error, line]),
+        make: () => (m.error ? helperLine(f, m, ctx) : h('p', { class: 'req-help-text', text: m.text })) },
+      (m.drafts || []).some((x) => x.dropped) ? { k: 'dropped', sig: '',
+        make: () => h('p', { class: 'hint req-help-dropped', text: "The question you asked about has been answered, so Worca's draft for it was dropped." }) } : null,
+      ...(m.proposals || []).map((p) => ({ k: `card-${m.id}-${p.n}`, sig: JSON.stringify(p), make: () => proposalCard(f, m, p, ctx) })),
+      m.costUsd > 0 ? { k: 'cost', sig: String(m.costUsd), make: () => h('p', { class: 'hint req-help-cost', text: usd(m.costUsd) }) } : null,
+    ].filter(Boolean);
   }
+  /** A Worca row's shell made what `parts` say: a part whose signature changed is replaced in place (`replaceWith`), the rest
+   *  keep their nodes. */
+  function patchWorcaRow(node, parts) {
+    const next = new Map();
+    for (const part of parts) {
+      let had = node.parts.get(part.k);
+      if (!had || had.sig !== part.sig) {
+        const el = part.make();
+        if (had && had.el.parentNode === node.el) had.el.replaceWith(el);
+        had = { sig: part.sig, el };
+      }
+      next.set(part.k, had);
+    }
+    node.parts = next;
+    reconcileLog(node.el, [...next.values()].map((x) => x.el));
+  }
+  /** D18: the product owner's row is rebuilt only when this key changes (the message and its cap). */
+  const helperRowKey = (m) => JSON.stringify([m, helpCap(m)]);
   /** The second signature of a row: its waiting cards' buttons, off or on (proposalOff); "" for a row with none. */
   const helperRowCtl = (m, ctx) => (m.role === 'worca' && (m.proposals || []).some((p) => proposalOff(p, ctx))
     ? JSON.stringify((m.proposals || []).map((p) => proposalOff(p, ctx))) : '');
-  /** The log's message nodes; an unchanged message keeps its node across paints (D18: a live region announces only what is new). */
+  /** The log's message nodes; an unchanged message keeps its node across paints, and a Worca row keeps its shell and every part
+   *  that did not change (D18: a live region announces only what is new). */
   function helperLogNodes(f, msgs, ctx) {
     const out = [];
     const keep = new Map();
     msgs.forEach((m, i) => {
       const c = { ...ctx, newest: i === msgs.length - 1 };
-      const sig = helperRowKey(f, m, c);
-      const ctl = helperRowCtl(m, c);
       let node = helperNodes.get(m.id);
-      if (!node || node.sig !== sig) node = { sig, ctl, el: helperMessage(f, m, c) };
-      else if (node.ctl !== ctl) { patchProposalButtons(node.el, m, c); node.ctl = ctl; }
+      if (m.role === 'po') {
+        const sig = helperRowKey(m);
+        if (!node || node.sig !== sig) node = { sig, el: helperMessage(f, m) };
+      } else {
+        if (!node || !node.parts) node = { parts: new Map(), ctl: null, el: h('div', { class: 'req-help-msg-w', 'data-msg': m.id }) };
+        patchWorcaRow(node, helperParts(f, m, c));
+        const ctl = helperRowCtl(m, c);
+        if (node.ctl !== ctl) { patchProposalButtons(node.el, m, c); node.ctl = ctl; }
+      }
       keep.set(m.id, node);
       out.push(node.el);
     });
@@ -2876,7 +2892,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const unanswered = !ctx.answering && lastRow && lastRow.role === 'po';   // D20
     // a chat with messages that could not be read: never card 7's text and its starters (each a paid call) over it
     const unloaded = !helperData && !!(f.helper && f.helper.messages > 0);
-    // the tails' keys hold only the ctx their DOM reads (D18, as helperRowKey)
+    // the tails' keys hold only the ctx their DOM reads (D18, as helperParts)
     reconcileLog(helperLog, [
       ...helperLogNodes(f, msgs, ctx),
       unloaded ? helperTail('unloaded', String(helperReloads), () => h('p', { class: 'req-help-fail req-help-unloaded', role: 'alert' },

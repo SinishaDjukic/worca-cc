@@ -9,7 +9,7 @@ import { RequirementsError, SECTIONS, LIST_SECTIONS, LIMITS, MAX_QUESTIONS, clip
 import { asData, roundPromptParts, threadText, specBlocks, RoundError, pendingRound, removedCriteria } from './round.mjs';
 import { diffList } from './ready.mjs';
 import {
-  requireFeature, listTurns, getContext, insertHelperMessage, listHelperMessages, recentHelperCosts,
+  getFeature, requireFeature, listTurns, getContext, insertHelperMessage, listHelperMessages, recentHelperCosts,
   getHelperMessage, updateHelperMessage, deleteHelperMessages,
 } from './store.mjs';
 import { isBusy, holdSlot, assertBudget, scratchDir, chargeHelper, callModel, interviewModel, briefFor } from './interview.mjs';
@@ -225,8 +225,8 @@ export function snapshotOf(spec, p) {
 }
 
 /** D9: computed, never stored: undoing the change makes the proposal acceptable again. An add has no target: it is stale only
- *  when its text now matches a criterion of the spec, case-insensitive as D7's duplicate check (user decision 2026-10-26), so
- *  Accept never adds the same criterion twice. */
+ *  when its text now matches a criterion of the spec, case-insensitive as D7's duplicate check, so Accept never adds the same
+ *  criterion twice. */
 export function isStale(spec, p) {
   if (p.target === 'criterion' && p.change === 'add') {
     const text = String(p.value || '').toLowerCase();
@@ -429,8 +429,14 @@ async function answer(seq, po, d, signal) {
       else { error = { code: 'FAILED', message: COULD_NOT }; console.error('requirements: a Feature chat call failed:', message(err)); }
     }
   }
+  // D6: `dropped` is decided once, as the row is written: a draft is dropped only when its round was answered while Worca was
+  // still answering. A draft the product owner keeps and submits later was used, not dropped.
+  const cur = pending ? getFeature(seq) : null;
+  const now = cur ? pendingOf(cur, listTurns(seq)) : null;
+  const moved = !!pending && (!now || now.turnId !== pending.turnId);
+  const drafts = reply ? reply.drafts.map((x) => ({ ...x, dropped: moved })) : [];
   chargeHelper(seq, cost, model, () => insertHelperMessage({ featureSeq: seq, role: 'worca', text: reply ? reply.text : '',
-    roundTurnId: pending ? pending.turnId : null, drafts: reply ? reply.drafts : [], proposals: reply ? reply.proposals : [], error,
+    roundTurnId: pending ? pending.turnId : null, drafts, proposals: reply ? reply.proposals : [], error,
     costUsd: cost > 0 ? cost : null, model }));
 }
 
@@ -517,17 +523,17 @@ export function clearChat(seq) {
 
 // ---------------------------------------------------------------- the view (§5)
 
-/** A message as the page shows it: drafts with `dropped` (their round is no longer pending, D6), proposals with `stale` (D9),
- *  a list section's `added` / `removed` lines (D8) and `askedAgain` (a later message asked again about it, D10). */
+/** A message as the page shows it: drafts with `dropped` (stored with the row: its round was answered while Worca answered,
+ *  D6), proposals with `stale` (D9), a list section's `added` / `removed` lines (D8) and `askedAgain` (a later message asked
+ *  again about it, D10). */
 export function helperView(seq) {
   const f = requireFeature(seq);
-  const pending = pendingOf(f, listTurns(f.seq));
   const rows = listHelperMessages(f.seq);
   const asked = new Set(rows.filter((m) => m.role === 'po' && m.focus && m.focus.askAgain).map((m) => `${m.focus.askAgain.msgId}:${m.focus.askAgain.n}`));
   return {
     messages: rows.map((m) => ({
       id: m.id, role: m.role, text: m.text, focus: m.focus, roundTurnId: m.roundTurnId,
-      drafts: (m.drafts || []).map((x) => ({ ...x, dropped: !pending || pending.turnId !== m.roundTurnId })),
+      drafts: (m.drafts || []).map((x) => ({ ...x, dropped: !!x.dropped })),
       proposals: (m.proposals || []).map((p) => ({
         ...p, stale: p.state === 'proposed' && isStale(f.spec, p),
         ...(LIST_SECTIONS.includes(p.target) ? diffList(p.before || [], p.value || []) : {}),

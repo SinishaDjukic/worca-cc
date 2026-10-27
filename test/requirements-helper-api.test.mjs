@@ -49,7 +49,7 @@ async function pendingFeature(title = 'Cancel order') {
   return { seq, feature: (await call('GET', `/api/requirements/${seq}`)).json.feature };
 }
 
-test('the chat in mock mode: send, a draft and a proposal, Accept, a dropped draft after Submit, Clear chat; frames', async () => {
+test('the chat in mock mode: send, a draft and a proposal, Accept, a used draft after Submit is not dropped, Clear chat; frames', async () => {
   const ws = new WebSocket(`${base.replace('http', 'ws')}/ws`, { headers: { host: '127.0.0.1', origin: 'http://127.0.0.1' } });
   const frames = [];
   ws.on('message', (d) => { try { const m = JSON.parse(String(d)); if (m.type === 'requirements-changed') frames.push(m); } catch { /* other frames */ } });
@@ -86,13 +86,30 @@ test('the chat in mock mode: send, a draft and a proposal, Accept, a dropped dra
     await call('POST', `/api/requirements/${seq}/answers`, { roundTurnId: feature.pending.turnId, useRecommended: true });
     await waitFor(async () => (await call('GET', `/api/requirements/${seq}`)).json.feature.status === 'done');
     h = await helper(seq);
-    assert.equal(h.messages[1].drafts[0].dropped, true, 'its round is answered');
+    assert.equal(h.messages[1].drafts[0].dropped, false, 'D6: the draft was there before Submit: it was used, not dropped');
     frames.length = 0;
     const d = await call('DELETE', `/api/requirements/${seq}/helper`);
     assert.deepEqual([d.status, d.json.messages], [200, []]);
     assert.ok(frames.some((f) => f.seq === seq), 'Clear chat sends the feature frame');
     assert.ok((await call('GET', `/api/requirements/${seq}`)).json.feature.spec.criteria.some((x) => x.text === '[mock] A criterion Worca suggests.'));
   } finally { ws.close(); }
+});
+
+test('D6: a draft is dropped only when its round was answered while Worca was still answering; it stays so', async () => {
+  const { seq, feature } = await pendingFeature('Dropped draft');
+  process.env.WORCA_MOCK_HELPER_MS = '1500';
+  try {
+    const s = await call('POST', `/api/requirements/${seq}/helper/messages`, { text: 'Who may do this?', focus: { roundTurnId: feature.pending.turnId, questionId: 'who' } });
+    assert.equal(s.json.answering, true);
+    assert.equal((await call('POST', `/api/requirements/${seq}/answers`, { roundTurnId: feature.pending.turnId, useRecommended: true })).status < 300, true);
+    await waitFor(async () => (await call('GET', `/api/requirements/${seq}`)).json.feature.pending?.turnId !== feature.pending.turnId);
+  } finally { delete process.env.WORCA_MOCK_HELPER_MS; }
+  await idle(seq);
+  const w = (await helper(seq)).messages[1];
+  assert.equal(w.role, 'worca');
+  assert.deepEqual(w.drafts.map((x) => [x.question, x.dropped]), [['who', true]], 'its round moved on before the reply was written');
+  await waitFor(async () => (await call('GET', `/api/requirements/${seq}`)).json.feature.status !== 'thinking');
+  assert.equal((await helper(seq)).messages[1].drafts[0].dropped, true, 'decided once, when the row was written');
 });
 
 test('§5 refusals: the 2,000-character cap, unknown messages and proposals, Stop with nothing running, nothing to try again', async () => {
@@ -150,7 +167,7 @@ test('D10 Ask again over HTTP: a stale proposal only (202); the card says it was
   assert.equal((await helper(seq)).messages.find((x) => x.id === m.id).proposals[0].askedAgain, true);
 });
 
-test('D9 (user decision 2026-10-26): Worca\'s add is stale once the spec has its text; the card says so and Accept answers 409', async () => {
+test('D9: Worca\'s add is stale once the spec has its text; the card says so and Accept answers 409', async () => {
   const { seq } = await pendingFeature('Stale add');
   await call('POST', `/api/requirements/${seq}/helper/messages`, { text: 'Hi' });
   await idle(seq);

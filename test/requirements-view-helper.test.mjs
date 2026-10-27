@@ -1,5 +1,5 @@
 // test/requirements-view-helper.test.mjs — Feature chat on the feature page in jsdom with a fake API (plans/requirements-a3-design.md §6,
-// D1, D2, D6–D13, D16, D18, D20; design round 4, boards 22–25). Tasks 7 and 8 add to it.
+// D1, D2, D6–D13, D16, D18, D20; design round 4, boards 22–25).
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
@@ -512,7 +512,7 @@ test('a Stop press while the follow-up refetch of an earlier chat POST is still 
   assert.equal(text(m.host.querySelector('.req-help-stopped')), 'You stopped this reply. Try again');
 });
 
-// ── Task 7: Help me answer and drafts (D1, D2, D6) ─────────────────
+// ── Help me answer and drafts (D1, D2, D6) ─────────────────
 
 const draftChat = (drafts, over = {}) => chat([po(1, 'Until when?', { roundTurnId: 11, questionId: 'when', n: 1 }),
   worca(2, 'I picked Until the parcel is picked up in question 1.', { drafts, ...over })]);
@@ -789,7 +789,7 @@ test('Fix 5: a Try again (reload) of the chat that ends after a switch does not 
   assert.deepEqual(m.posts.filter((x) => x[0] === '8'), [['8', 'About B']]);
 });
 
-// ── Task 8: proposal cards (board 24, D7–D11, D16, D18) ─────────────────
+// ── proposal cards (board 24, D7–D11, D16, D18) ─────────────────
 
 const prop = (n, over) => ({ n, id: null, value: null, before: null, reason: 'r', state: 'proposed', stale: false, askedAgain: false, ...over });
 const cardsChat = (over = {}) => chat([po(1, 'What would you change?'), worca(2, 'I suggest these.', { proposals: [
@@ -1001,6 +1001,52 @@ test('D18: a row with cards waiting for a decision keeps its node while Worca an
   assert.equal(log.querySelector('[data-msg="2"]'), reply, 'the row is never rebuilt');
   assert.equal(reply.querySelector('.req-help-stale'), alert, 'so the stale alert does not fire again');
   assert.ok(!removed.includes(reply), 'never taken out of the live region and put back');
+});
+
+test('D18: Accept, Reject and a card going stale replace only that card; the row, its text and the other cards keep their nodes', async () => {
+  const s = { f: feature({ helper: { answering: false, messages: 3 } }), helper: cardsChat() };
+  const decide = (msg, n, state) => () => { s.helper = structuredClone(s.helper); s.helper.messages[msg].proposals[n - 1].state = state; return s.helper; };
+  const m = await openFeature(s, {
+    'POST /api/requirements/7/helper/messages/2/proposals/1/accept': decide(1, 1, 'accepted'),
+    'POST /api/requirements/7/helper/messages/2/proposals/2/reject': decide(1, 2, 'rejected'),
+  });
+  await openPanel(m);
+  const log = m.host.querySelector('.req-help-log');
+  const row = log.querySelector('[data-msg="2"]');
+  const replyText = row.querySelector('.req-help-text');
+  const cost = row.querySelector('.req-help-cost');
+  const cards = () => Object.fromEntries([...log.querySelectorAll('[data-proposal]')].map((c) => [c.getAttribute('data-proposal'), c]));
+  const changes = [];
+  const watch = new window.MutationObserver((recs) => recs.forEach((r) => {
+    for (const n of r.removedNodes) changes.push(['-', n]);
+    for (const n of r.addedNodes) changes.push(['+', n]);
+  }));
+  watch.observe(log, { childList: true, subtree: true });
+  const step = async (act) => {
+    const was = cards();
+    changes.length = 0;
+    await act();
+    await settle();
+    watch.takeRecords().forEach((r) => { for (const n of r.removedNodes) changes.push(['-', n]); for (const n of r.addedNodes) changes.push(['+', n]); });
+    const now = cards();
+    return { was, now, changed: Object.keys(now).filter((k) => now[k] !== was[k]) };
+  };
+  let r = await step(() => m.host.querySelector('[data-ui="prop-accept-2-1"]').click());
+  assert.deepEqual(r.changed, ['2-1'], 'Accept: only its card is new');
+  assert.deepEqual(changes.map(([op, n]) => [op, n.getAttribute && n.getAttribute('data-proposal')]), [['-', '2-1'], ['+', '2-1']], 'the one card swapped, nothing else in the log');
+  assert.equal(r.now['2-1'].querySelector('.req-help-state').textContent, 'Accepted · now in the spec as your edit');
+  assert.equal(document.activeElement, r.now['2-1'].querySelector('[data-ui="prop-state-2-1"]'), 'the focus still goes to its status line');
+  r = await step(() => m.host.querySelector('[data-ui="prop-reject-2-2"]').click());
+  assert.deepEqual(r.changed, ['2-2'], 'Reject: only its card is new');
+  s.helper = structuredClone(s.helper);
+  s.helper.messages[2].proposals[1].stale = true;   // a hand edit made 3-2 out of date
+  r = await step(async () => { await m.view.changed(7); });
+  assert.deepEqual(r.changed, ['3-2'], 'a card going stale: only its card is new');
+  assert.equal(r.now['3-2'].querySelector('.req-help-stale').getAttribute('role'), 'alert');
+  watch.disconnect();
+  assert.equal(log.querySelector('[data-msg="2"]'), row, 'the row stays');
+  assert.equal(row.querySelector('.req-help-text'), replyText, 'its text is not read out again');
+  assert.equal(row.querySelector('.req-help-cost'), cost);
 });
 
 test('D18: a focused Reject keeps the focus (the same button) when a reply lands', async () => {

@@ -104,7 +104,7 @@ test('D3: one message is one round-kind call: the helper prompt, no tools, no se
   const [po, w] = listHelperMessages(f.seq);
   assert.deepEqual([po.role, po.text, po.focus, po.createdBy], ['po', 'Who may cancel?', { roundTurnId: turnId, questionId: 'who', n: 1 }, 'po']);
   assert.deepEqual([w.role, w.text, w.roundTurnId, w.costUsd, w.model, w.error], ['worca', REPLY.text, turnId, 0.1, 'claude-opus-5-5', null]);
-  assert.deepEqual(w.drafts, [{ question: 'who', n: 1, option: 'Support', why: 'Tickets say so.' }]);
+  assert.deepEqual(w.drafts, [{ question: 'who', n: 1, option: 'Support', why: 'Tickets say so.', dropped: false }], 'D6: decided as the row is written; its round is still pending');
   assert.deepEqual(w.proposals, [{ n: 1, target: 'criterion', change: 'reword', id: 'R-po-3', value: 'The dialog names the order number.',
     before: 'The dialog is clear', reason: '“clear” cannot be tested.', state: 'proposed' }]);
   assert.ok(changes.filter((s) => s === f.seq).length >= 2, 'a frame when the call starts and when it ends');
@@ -195,7 +195,7 @@ test('D19: mock mode never spawns and costs nothing; the reply drafts and propos
   await sendMessage(f.seq, { text: 'Hi' }, {}, deps(none, { budget: () => ({ blocked: true }) }));
   const w = last(f.seq);
   assert.equal(w.text, "[mock] Worca's answer to: Hi");
-  assert.deepEqual(w.drafts, [{ question: 'who', n: 1, option: 'Support', why: "[mock] Worca's reason for this draft." }]);
+  assert.deepEqual(w.drafts, [{ question: 'who', n: 1, option: 'Support', why: "[mock] Worca's reason for this draft.", dropped: false }]);
   assert.deepEqual(w.proposals.map((p) => [p.target, p.change, p.value]), [['criterion', 'add', '[mock] A criterion Worca suggests.']]);
   assert.equal(w.costUsd, null);
   assert.equal(prepare('SELECT count(*) AS n FROM req_cost_ledger WHERE helper_message_id = ?').get(w.id).n, 0);
