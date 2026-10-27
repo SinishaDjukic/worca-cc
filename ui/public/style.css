@@ -6312,11 +6312,9 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .gv-well .gv-stage,.gv-well .gv-world .node{cursor:grab;}
 .gv-well .gv-stage.panning,.gv-well .gv-stage.panning *{cursor:grabbing !important;}
 .gv-well > .gv-nav{right:12px;bottom:12px;}
-/* #959: a chat card sits on the text column; only its graph well (.gv-well: the build card's, the Auto card's, the
-   run card's) widens, up to --chat-card-max and centred on the column (100cqi = the transcript's content box; 100% =
-   the card's content box, itself centred on the column). Its host fits the graph into it (run-hosts `card`,
-   proposal-host). */
-.chat-convo .ask-msg .gv-well{width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}
+/* A chat card sits on the text column and so does every part of it: a graph well (.gv-well: the build card's, the
+   Auto card's, the run card's) is as wide as its card, and its host fits the graph into it (run-hosts `card`,
+   proposal-host). No rule widens it. */
 
 /* ---------- workflow card build (ui/public/auto-build.mjs; mockup §B/§F motion) ---------- */
 .ask-wfcard-graph .gv-world .node{transition:opacity .28s cubic-bezier(.2,.7,.3,1),translate .28s cubic-bezier(.2,.7,.3,1);}
@@ -8907,7 +8905,7 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
    takes the rest, and the page is a row: history column · conversation · run panel slot (P4 sets its width). */
 body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
 .view[data-view="chat"]{flex:1 1 auto;min-height:0;position:relative;}
-.chat-page{position:absolute;inset:0;display:flex;min-width:0;min-height:0;overflow:hidden;background:var(--panel);--chat-text-max:760px;--chat-card-max:1040px;}
+.chat-page{position:absolute;inset:0;display:flex;min-width:0;min-height:0;overflow:hidden;background:var(--panel);--chat-text-max:760px;}
 .chat-page[data-history="closed"] .chat-history{display:none;}
 /* The conversation column: the cap tokens the transcript column, the composer box and the jump pill read. */
 .chat-convo{position:relative;flex:1 1 auto;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;--ask-col-max:var(--chat-text-max);--ask-col-inset:max(16px,calc(50% - var(--ask-col-max) / 2));--ask-box-top:103px;--chat-dock-fade:32px;}
@@ -8940,7 +8938,7 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-dock > .ask-jump{bottom:100%;}
 /* #959: ONE width rule for every chat card: the text column. .ask-transcript-col caps the column at --ask-col-max
    (= --chat-text-max) and every card, stub and build card fills it, so text and cards share one left edge; no card
-   kind sets a width. Only a graph well widens (.chat-convo .ask-msg .gv-well). The transcript is its own stacking
+   kind sets a width. No part of a card leaves the column, a graph well included. The transcript is its own stacking
    context, so a card's raised parts scroll under the dock, not over it. It reserves its scrollbar gutter on both
    edges, so the column, the composer and Jump to latest share one centre with classic and overlay scrollbars alike;
    its bottom clearance is the dock's height plus the dock's fade band. */

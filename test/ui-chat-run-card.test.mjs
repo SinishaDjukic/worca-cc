@@ -1266,6 +1266,30 @@ test('feature card: the step log shows Clarify · 2 answers, Plan approved, Spli
   }
 });
 
+test('feature card: an answered step shows once — its receipt gives way to the step log row that names it', () => {
+  const pq = { id: 'clarify-once-1', kind: 'clarify', nodeId: 'n_plan' };
+  try {
+    setShapeFirst(true);
+    const q = questionStub({ id: pq.id, kind: 'clarify', heading: 'Clarify', stepCard: false }, '<button class="btn btn-primary">Send</button>');
+    const { card, $, $$ } = mk({ controls: q });
+    const feature = VIEW3([SL(1, 'planned'), SL(2, 'planned'), SL(3, 'planned')]);
+    card.update(shaped({ pipelineId: 'abcd1234', feature, log: [] }, {}, { pendingQuestion: pq }));
+    assert.equal($('.chat-rc-q').hidden, false, 'the clarify is the open step');
+    noteAnswer('run-uuid-1', pq, { answers: [{ id: 'a', question: 'Where?', choice: 'Redis' }, { id: 'b', question: 'How?', choice: 'JSON' }] }, { shaping: true });
+    card.update(shaped({ pipelineId: 'abcd1234', feature, log: [] }));
+    assert.equal($('.chat-rc-receipt').hidden, false, 'until the log names it, the receipt says what was sent');
+    assert.equal($('.chat-rc-receipt summary').textContent, 'Clarify · 2 answers');
+    const log = [{ key: 'clarify', run: null, text: 'Clarify · 2 answers', detail: ['Where? → Redis', 'How? → JSON'] }];
+    card.update(shaped({ pipelineId: 'abcd1234', feature: { ...feature, log }, log }));
+    assert.deepEqual($$('.chat-rc-log-text').map((n) => n.textContent), ['Clarify · 2 answers']);
+    assert.equal($('.chat-rc-receipt').hidden, true, 'the log row names the step: no second "Clarify · 2 answers"');
+    assert.equal($('.chat-rc-q').hidden, true, 'and no empty question section');
+  } finally {
+    forgetAnswer('run-uuid-1', pq.id);
+    setShapeFirst(false);
+  }
+});
+
 test('feature card: run 2\'s plan ask is the open step, painted and answered with run 2\'s ref, status Run 2 of 3 · needs you', async () => {
   try {
     setShapeFirst(true);
