@@ -2,7 +2,7 @@
 name: graph-execution-guards
 description: Read before adding a per-node/ctx field or prompt block, editing agents/*.md or injected prompt text, spawning a child, or graph tests, fixtures, src/shared
 paths: src/core/workflows.mjs, src/core/orchestrator.mjs, src/core/phases.mjs, src/core/graph/**, src/core/workflow-share.mjs, src/shared/**/*.mjs, scripts/py-inline.py, agents/*.md, agents/*.meta.json, .claude/agents/*.md, test/graph-*.test.mjs, test/shared-graph-purity.test.mjs, test/helpers/graph-run.mjs, test/plugin-store.test.mjs
-updated: 2026-10-24T15:55:36.602Z
+updated: 2026-10-27T12:21:13.932Z
 author: Denislav Prinov
 ---
 
@@ -34,5 +34,6 @@ author: Denislav Prinov
 - Raw fixture metas never trigger V9 (`portsFnFor(AGENTS, {})` passes metas as-is; V9 needs a truthy `required`): put `required: true` on fixture inputs and assert the precondition; pin the `had` filter with a persisting real error (unknown-key V4). `incomplete` is set on V9, V20, V21, V22 and V4 ports-missing.
 - `test/graph-validate.test.mjs` `ok()` already wires `n_rev.review → n_impl.fix`; a blocking wire closing a cycle is a loop wire. A test's switch must not be a substring of its command. A "no `shell: true`" grep hits comments. Renaming a dir: grep quoted segments too.
 - `classifyLoops` needs the SOURCE port's registry (a ports function without scripts drops a loop's max-cycles row; `panelPortsFn` falls back to `gvPortsFn` on warm pages): a function gaining a registry parameter → grep every caller and wrapper (`ask-panel.mjs` `workflowDesc`, `ask/catalog.mjs`, `node-tunables.mjs`).
-- `graph-scheduler` test 15 pins an exec event's key set; `bandOf` is for `kind === 'agent'` only; `flow-layout.mjs`/`geometry.mjs`/`workflows.mjs` do not import `constants.mjs`; `PLUGIN_FILES` is shared across plugins in one `WORCA_HOME`; `ui/server.mjs`'s `fs` is sync.
+- `graph-scheduler` test 15 pins an exec event's key set; `bandOf` is for `kind === 'agent'` only; `geometry.mjs` does not import `constants.mjs` (`flow-layout.mjs`/`workflows.mjs` do, for `KEYED_KINDS`); `PLUGIN_FILES` is shared across plugins in one `WORCA_HOME`; `ui/server.mjs`'s `fs` is sync.
+- New node KIND that waits (a person): neither FLOW (`fireFlow` awaits inline, freezing the drain walk) nor KEYED (key + pool slot) — fire it like an agent with no slot. V9 skips non-keyed kinds; a non-`blocking` exit closing a cycle needs V10 + layout cuts (else End ranks column 0). `ask-composer-api.test.mjs:63` builds `n_${kind}${i}`: a hyphenated kind fails `NODE_ID_RE`.
 - `shared-graph-purity` scans RAW `src/shared/**`: import specifiers (even in comments/strings) stay relative inside `src/shared`; code may not hold `['"]node:`, `process.`, `require(`, `fetch(`, `import.meta`, top-level `let`/`var`, or the words `window|document|navigator|localStorage`. It stops at the first failing file: prove a new file with its regexes in `node -e`; add new `src/shared/graph/*.mjs` to `shared-graph-single-source`.
