@@ -319,3 +319,46 @@ test('app.js: Compare and side by side are wired; Task 10\'s "comes in a later s
   assert.ok(/wftCall\('GET', `\$\{base\}\/compare`\)/.test(app) && /wftCall\('GET', `\$\{base\}\/examples\/\$\{wft\.exampleId\}`\)/.test(app), 'the two reads');
   assert.ok(/connectors: run\.connectors/.test(app), 'Try 3 more keeps the test\'s connectors choice');
 });
+
+// Browser check M1: "What v1 wrote" is the board's rendered excerpt, through the app's sandboxed markdown renderer.
+async function realMarkdown(doc) {
+  const { createMarkdownRenderer } = await import('../ui/public/ask-markdown.mjs');
+  const r = createMarkdownRenderer({ doc, load: async () => ({ marked: (await import('marked')).marked, createDOMPurify: (await import('dompurify')).default }), hljsLoader: null });
+  assert.equal(await r.ensure(), true);
+  return (text, mount) => {
+    const out = r.render(text);
+    if (out.kind === 'md') { mount.classList.add('ask-md'); mount.replaceChildren(out.frag); } else mount.textContent = text;
+  };
+}
+
+test('board 6/31 (M1): what each version wrote is rendered markdown, sanitized; without a renderer it stays text', async () => {
+  const { window } = new JSDOM('<!doctype html><body><section id="root" tabindex="-1"></section></body>');
+  const doc = window.document;
+  const root = doc.getElementById('root');
+  const renderMarkdown = await realMarkdown(doc);
+  const evil = '## Success metric\n\nCut tickets by **60%**.\n\n<img src=x onerror="window.pwned=1"><script>window.pwned=2</script>\n\n[x](javascript:alert(1))';
+  const s = side({ tries: [{ n: 1, a: { ...tv(1, true), text: evil }, b: tv(11, true) }] });
+  renderSideBySide(root, s, { back() {}, readWhole() {}, pick() {} }, { doc, tryIndex: 0, renderMarkdown });
+  const [a, b] = [...root.querySelectorAll('.wft-out')];
+  assert.ok(a.classList.contains('ask-md'));
+  assert.equal(a.querySelector('h2').textContent, 'Success metric');
+  assert.equal(a.querySelector('p strong').textContent, '60%');
+  assert.equal(a.querySelector('script, img, [onerror]'), null, 'no raw HTML gets through');
+  assert.equal(a.querySelector('a') ? a.querySelector('a').getAttribute('href') : null, null, 'no javascript: link');
+  assert.equal(window.pwned, undefined);
+  assert.deepEqual([b.querySelector('h2').textContent, b.querySelector('p').textContent], ['Success metric', 'Try 11']);
+  const plain = boot(renderSideBySide, side(), { tryIndex: 0 });
+  assert.deepEqual(texts(plain.root, '.wft-out'), ['## Success metric\nTry 1', '## Success metric\nTry 11'], 'no renderer: the text as it is');
+  // Read the whole result renders it the same way.
+  openWholeResult({ doc, win: window, title: 'What v4 wrote', name: 'brief.md', text: evil, renderMarkdown });
+  const whole = doc.querySelector('.wft-whole');
+  assert.deepEqual([whole.tagName, whole.classList.contains('ask-md'), whole.querySelector('h2').textContent], ['DIV', true, 'Success metric']);
+  assert.equal(whole.querySelector('script, img'), null);
+});
+
+test('app.js hands the side by side and Read the whole result the sandboxed renderer (M1)', () => {
+  const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+  assert.ok(/renderSideBySide\(root, wft\.data, wftDetailActions\(\), \{ doc: document, tryIndex: wft\.tryIndex \|\| 0, renderMarkdown: wftMarkdown \}\)/.test(app));
+  assert.ok(/openWholeResult\(\{ doc: document, win: window, title, name: r\.data\.name, text: r\.data\.text, renderMarkdown: wftMarkdown \}\)/.test(app));
+  assert.ok(/function wftMarkdown\(text, mount\) \{\s*const out = hdMarkdown\.render\(text\);/.test(app), 'hdMarkdown: marked + DOMPurify (ask-markdown.mjs)');
+});

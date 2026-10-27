@@ -257,11 +257,19 @@ export function renderCompare(root, c, actions, { doc, now = Date.now() }) {
   giveFocusBack(root, doc, held);
 }
 
+/** A result's text into `box`: rendered (and sanitized) by `renderMarkdown` when the app gives one, else as text. */
+function resultInto(box, text, renderMarkdown) {
+  if (typeof renderMarkdown === 'function') renderMarkdown(text, box);
+  else box.textContent = text;
+  return box;
+}
+
 /**
  * Board 6 (G2: one column after Try it once now). `s` = GET …/runs/:run/examples/:ex.
  * @param {{back:Function, pick:(index:number)=>void, readWhole:(tryId:number, title:string)=>void|Promise}} actions
+ * @param {{renderMarkdown?: (text:string, mount:HTMLElement)=>void}} o the app's sandboxed markdown (ask-markdown.mjs), board 31's excerpt
  */
-export function renderSideBySide(root, s, actions, { doc, tryIndex = 0 }) {
+export function renderSideBySide(root, s, actions, { doc, tryIndex = 0, renderMarkdown = null }) {
   const held = heldFocus(root, doc);
   const live = root.querySelector('.wft-sbs-live') || el(doc, 'p', 'sr-only wft-sbs-live');
   live.setAttribute('aria-live', 'polite');
@@ -330,7 +338,7 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0 }) {
     if (!v) c.append(el(doc, 'p', 'hint', 'No try of this version here.'));
     else if (!v.text) c.append(el(doc, 'p', 'hint', 'This try left no result.'));
     else {
-      c.append(el(doc, 'div', 'wft-out', v.text));
+      c.append(resultInto(el(doc, 'div', 'wft-out'), v.text, renderMarkdown));
       if (v.truncated) c.append(el(doc, 'p', 'hint', 'Shortened here: read the whole result.'));
     }
     return c;
@@ -394,13 +402,14 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0 }) {
 }
 
 /** "Read the whole result" (C10): the main result in full, in a large dialog. */
-export function openWholeResult({ doc, win, title, name = null, text = null }) {
+export function openWholeResult({ doc, win, title, name = null, text = null, renderMarkdown = null }) {
   const dlg = createDialog({ doc, win, width: 'lg', kind: 'viewer' });
   const h = el(doc, 'h2', 'mk-dialog-title', title);
   h.id = 'mk-dialog-title';
   const body = [];
   if (name) body.push(el(doc, 'p', 'hint', name));
-  body.push(text ? el(doc, 'pre', 'wft-whole', text) : el(doc, 'p', 'hint', 'This try left no result.'));
+  if (!text) body.push(el(doc, 'p', 'hint', 'This try left no result.'));
+  else body.push(renderMarkdown ? resultInto(el(doc, 'div', 'wft-whole'), text, renderMarkdown) : el(doc, 'pre', 'wft-whole', text));
   dlg.replace({ head: [h], body, foot: [btn(doc, 'Close', () => dlg.close(), 'btn')] });
   dlg.open();
   return dlg;

@@ -8826,6 +8826,11 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wft-crow-grp{padding:10px 18px 6px;font-size:var(--fs-caption);font-weight:600;color:var(--ink-2);background:var(--canvas-2);border-bottom:1px solid var(--line);}
 .wft-detail-why{margin:0;}
 .wft-whole{white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-body);line-height:1.55;max-height:70vh;overflow:auto;margin:0;}
+/* A result rendered as markdown (board 31's excerpt): ask-md's blocks, the headings at body size as the board draws them */
+.wft-out.ask-md,.wft-whole.ask-md{white-space:normal;}
+.wft-out.ask-md>:first-child,.wft-whole.ask-md>:first-child{margin-top:0;}
+.wft-out.ask-md>:last-child,.wft-whole.ask-md>:last-child{margin-bottom:0;}
+.wft-out.ask-md :is(h1,h2,h3,h4,h5,h6){font-size:var(--fs-body);}
 /* What a try would have sent (board 31, C19) */
 .wft-mode{display:flex;gap:8px;align-items:flex-start;margin:0;font-size:var(--fs-meta);line-height:1.45;color:var(--ink-2);}
 .wft-mode .ic{flex:0 0 auto;margin-top:2px;}

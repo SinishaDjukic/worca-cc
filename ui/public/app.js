@@ -3660,7 +3660,7 @@ function wftRenderView(root) {
   if (!wft.data) { renderTestsPage(root, null, wftListActions(), { doc: document, error: wft.error }); return; }
   if (wft.view === 'progress') { renderTestProgress(root, wft.data, wftProgressActions(), { doc: document }); return; }
   if (wft.view === 'compare') { renderCompare(root, wft.data, wftCompareActions(), { doc: document }); return; }
-  if (wft.view === 'detail') { renderSideBySide(root, wft.data, wftDetailActions(), { doc: document, tryIndex: wft.tryIndex || 0 }); return; }
+  if (wft.view === 'detail') { renderSideBySide(root, wft.data, wftDetailActions(), { doc: document, tryIndex: wft.tryIndex || 0, renderMarkdown: wftMarkdown }); return; }
   wft.view = 'list';
   void wftRefresh();
 }
@@ -3682,6 +3682,14 @@ function wftCompareActions() {
     },
   };
 }
+/** Board 31's excerpt (M1): a try's result through hdMarkdown (marked + DOMPurify, ask-markdown.mjs); plain text until the
+ *  renderer has loaded, then the open side by side repaints once. */
+function wftMarkdown(text, mount) {
+  const out = hdMarkdown.render(text);
+  if (out && out.kind === 'md') { mount.classList.add('ask-md'); mount.replaceChildren(out.frag); return; }
+  mount.textContent = text;
+  if (!hdMarkdown.isReady() && !hdMarkdown.isFailed()) void hdMarkdown.ensure().then((ok) => { if (ok && wft.view === 'detail' && wft.data) wftRender(); });
+}
 /** Board 6's actions (G2: a Try it once now goes back to the Tests list). */
 function wftDetailActions() {
   const id = wftWorkflowId();
@@ -3696,7 +3704,7 @@ function wftDetailActions() {
       const r = await wftCall('GET', `${wftBase(id)}/runs/${s.run.id}/tries/${tryId}/result`);
       if (!still() || wft.tryIndex !== shown) return;                 // another try shows by now: not its dialog
       if (!r.ok) { notify({ tone: 'err', title: 'Could not read the result', detail: r.error }); return; }
-      openWholeResult({ doc: document, win: window, title, name: r.data.name, text: r.data.text });
+      openWholeResult({ doc: document, win: window, title, name: r.data.name, text: r.data.text, renderMarkdown: wftMarkdown });
     },
   };
 }
