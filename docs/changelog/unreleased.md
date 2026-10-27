@@ -17,7 +17,7 @@ Pull requests (add each number when it opens):
 
 - Requirements (#882)
 - Requirements: files (#975)
-- Requirements: Feature chat
+- Requirements: Feature chat (#989)
 
 ## See when a newer Worca is out
 
