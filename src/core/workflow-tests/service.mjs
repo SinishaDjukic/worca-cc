@@ -19,7 +19,7 @@ import * as store from './store.mjs';
 import { useGraph, useFingerprint } from './uses.mjs';
 import { testTargetOf } from './try-body.mjs';
 import { mainResult } from './result.mjs';
-import { connectorNotes, userScopeServerNames, seenClaudeAiServers, wouldHaveSent, stepEngines } from './connectors.mjs';
+import { connectorNotes, userScopeServerNames, seenClaudeAiServers, wouldHaveSent, stepEngines, scriptSteps } from './connectors.mjs';
 
 export const NOT_TESTABLE_TEXT = 'This workflow works on a project, and tests work for workflows without a project for now.';
 export const NOT_TESTABLE_REASONS = Object.freeze({
@@ -269,13 +269,17 @@ async function connectorsOf(workflowId, uses, { connectorsPreview = null, runEng
   let scripts = {};
   try { scripts = loadScriptRegistry() || {}; } catch { scripts = {}; }
   const names = [];
+  const quick = [];
   const engines = [];
   for (const use of uses) {
     const g = use == null ? null : await useGraph(workflowId, use);
-    for (const n of g ? g.nodes : []) if (n && n.kind === 'script') names.push((scripts[n.key] && scripts[n.key].displayName) || n.key || 'script');
+    const steps = scriptSteps(g, scripts);
+    names.push(...steps.names);
+    quick.push(...steps.quick);
     if (g) engines.push(...stepEngines(g, { runEngine }));
   }
-  const notes = connectorNotes({ copies, fileServers, userScope: userScopeServerNames(), claudeAi: seenClaudeAiServers(), scripts: names, engines, mode });
+  const notes = connectorNotes({ copies, fileServers, userScope: userScopeServerNames(), claudeAi: seenClaudeAiServers(), scripts: names,
+    quickScripts: quick, engines, mode });
   return previewError ? { ...notes, previewError: true } : notes;
 }
 

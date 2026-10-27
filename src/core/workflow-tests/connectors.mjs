@@ -114,13 +114,35 @@ export function stepEngines(graph, { runEngine = null } = {}) {
 }
 
 /**
+ * The workflow's script steps by name (the Library's display name, else the key), and the ones the free quick check
+ * runs for real: the quick check is a mock run, and a mock run mocks a script step only when it has a mock of its own
+ * (the card's `config.mock`, else the Library entry's; shared/graph/script-meta.mjs scriptNodeCtx, script-runner.mjs).
+ * @returns {{names: string[], quick: string[]}}
+ */
+export function scriptSteps(graph, registry = {}) {
+  const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+  const names = [];
+  const quick = [];
+  for (const n of graph && Array.isArray(graph.nodes) ? graph.nodes : []) {
+    if (!n || n.kind !== 'script') continue;
+    const meta = (registry && registry[n.key]) || {};
+    const name = meta.displayName || n.key || 'script';
+    names.push(name);
+    const cfg = isObj(n.config) ? n.config : {};
+    if (!isObj(cfg.mock) && !isObj(meta.mock)) quick.push(name);
+  }
+  return { names, quick };
+}
+
+/**
  * Board 30's notes. `copies` = the registry copies a run without a project would start (server.mjs mcpRunPreview), each
  * with `untested`; `fileServers` = the servers from a project file it would load (no Test exists for them);
  * `userScope` = the `~/.claude.json` servers; `claudeAi` = the names seen (N2); `scripts` = the names of the workflow's
  * script steps; `engines` = the engine ids its steps run on (stepEngines). `engines` out = the display names of the
  * engines other than Claude, one engineNoteLine each. `mode` 'real' = the test uses the real connectors, so `pretend` is [].
  */
-export function connectorNotes({ copies = [], fileServers = [], userScope = [], claudeAi = [], scripts = [], engines = [], mode = 'pretend' } = {}) {
+export function connectorNotes({ copies = [], fileServers = [], userScope = [], claudeAi = [], scripts = [], quickScripts = [], engines = [],
+  mode = 'pretend' } = {}) {
   const isCopy = (n) => copies.some((c) => c.name === n);
   const files = [...new Set(fileServers)].filter((n) => !isCopy(n)).sort();
   return {
@@ -134,6 +156,8 @@ export function connectorNotes({ copies = [], fileServers = [], userScope = [], 
       ...[...new Set(userScope)].filter((n) => !isCopy(n) && !files.includes(n)).map((name) => ({ name, reason: 'own-settings' })),
     ],
     scripts: [...new Set(scripts)],
+    // The script steps the free quick check runs for real too (scriptSteps `quick`): the dialog's caution counts it.
+    quickScripts: [...new Set(quickScripts)],
     engines: [...new Set(engines.filter((e) => typeof e === 'string' && e && e !== 'claude'))].map(engineLabel),
   };
 }

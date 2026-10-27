@@ -22,7 +22,7 @@ import { buildClaudeArgs } from '../src/core/engines/claude.mjs';
 import { envForShell } from '../src/core/graph/script-runner.mjs';
 import {
   pretendServers, connectorNotes, humanizeTool, nounOf, sentCall, wouldHaveSent, noteSeenServers, seenClaudeAiServers,
-  userScopeServerNames, CONNECTOR_CALLS_FILE, stepEngines, fileServerOffLine, engineNoteLine, pretendCopies,
+  userScopeServerNames, CONNECTOR_CALLS_FILE, stepEngines, scriptSteps, fileServerOffLine, engineNoteLine, pretendCopies,
 } from '../src/core/workflow-tests/connectors.mjs';
 
 useTempHome(after);
@@ -65,8 +65,23 @@ test('the dialog notes (board 30): pretend, switched off and why, script steps',
     pretend: ['jira_team', 'slack_team'],
     off: [{ name: 'Google Drive', reason: 'claude-ai' }, { name: 'confluence_team', reason: 'no-tools' }, { name: 'my-db', reason: 'own-settings' }],
     scripts: ['Publish to wiki'],
+    quickScripts: [],
     engines: [],
   });
+});
+
+test('script steps: their names, and the ones the free quick check runs for real (no mock of their own; final review M2)', () => {
+  const registry = { publish: { displayName: 'Publish to wiki' }, lint: { displayName: 'Markdown lint', mock: { summary: 'ok' } }, odd: { mock: 'yes' } };
+  const graph = { nodes: [{ id: 'n_task', kind: 'task' }, { id: 'n_1', kind: 'script', key: 'publish', config: {} },
+    { id: 'n_2', kind: 'script', key: 'lint' }, { id: 'n_3', kind: 'script', key: 'publish', config: { mock: { summary: 'card mock' } } },
+    { id: 'n_4', kind: 'script', key: 'gone' }, { id: 'n_5', kind: 'script', key: 'odd' }, { id: 'n_a', kind: 'agent', key: 'planner' }] };
+  assert.deepEqual(scriptSteps(graph, registry), {
+    names: ['Publish to wiki', 'Markdown lint', 'Publish to wiki', 'gone', 'odd'],
+    quick: ['Publish to wiki', 'gone', 'odd'],   // a mock that is not an object is not run as a mock (script-runner.mjs)
+  });
+  assert.deepEqual(scriptSteps(null, registry), { names: [], quick: [] });
+  assert.deepEqual(connectorNotes({ scripts: ['Publish to wiki', 'Markdown lint'], quickScripts: ['Publish to wiki', 'Publish to wiki'] }).quickScripts,
+    ['Publish to wiki']);
 });
 
 test('the dialog notes: a project-file server has its own reason; steps on another engine are named, Claude never', () => {

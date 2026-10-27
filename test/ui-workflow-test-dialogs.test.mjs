@@ -220,6 +220,29 @@ test('board 30: Connectors, Pretend by default with its notes; Real warns, hides
   assert.equal(scriptCaution([]), null);
   const two = scriptCaution(['Publish to wiki', 'Post to Slack']);
   assert.equal(two.lead + two.name + two.rest, 'The script steps Publish to wiki and Post to Slack run as in a normal run. If they post or send something, they do it in every try.');
+  // M2 (final review): the free quick check runs a script step with no mock of its own for real too.
+  const words = (c) => c.lead + c.name + c.rest + (c.more ? c.more.lead + c.more.name + c.more.rest : '');
+  assert.equal(words(scriptCaution(['Publish to wiki'], ['Publish to wiki'])),
+    'The script step Publish to wiki runs as in a normal run. If it posts or sends something, it does it in every try and in the free quick check.');
+  assert.equal(words(scriptCaution(['Publish to wiki', 'Post to Slack'], ['Post to Slack', 'Publish to wiki'])),
+    'The script steps Publish to wiki and Post to Slack run as in a normal run. If they post or send something, they do it in every try and in the free quick check.');
+  assert.equal(words(scriptCaution(['Publish to wiki', 'Post to Slack'], ['Post to Slack'])),
+    'The script steps Publish to wiki and Post to Slack run as in a normal run. If they post or send something, they do it in every try. The free quick check runs Post to Slack as in a normal run too.');
+  assert.equal(scriptCaution(['Publish to wiki', 'Post to Slack'], ['Post to Slack']).more.name, 'Post to Slack');
+  assert.equal(words(scriptCaution(['Publish to wiki'], [])), 'The script step Publish to wiki runs as in a normal run. If it posts or sends something, it does it in every try.');
+});
+
+test('the script caution counts the free quick check only while it is ticked (final review M2)', async () => {
+  const { doc } = openTv({}, { connectors: { mode: 'pretend', pretend: [], off: [], scripts: ['Publish to wiki'], quickScripts: ['Publish to wiki'], engines: [] } });
+  await tick();
+  const caution = () => doc.querySelector('.wft-caution').textContent;
+  assert.equal(caution(), 'The script step Publish to wiki runs as in a normal run. If it posts or sends something, it does it in every try and in the free quick check.');
+  const quick = doc.querySelector('#wft-tv-quick');
+  quick.checked = false; change(quick);
+  assert.equal(caution(), 'The script step Publish to wiki runs as in a normal run. If it posts or sends something, it does it in every try.');
+  quick.checked = true; change(quick);
+  assert.equal(doc.querySelectorAll('.wft-caution b').length, 1);
+  assert.match(caution(), /and in the free quick check.$/);
 });
 
 test('board 30: a file server, a server in your own settings, other engines, and a list Worca could not read', async () => {

@@ -120,12 +120,19 @@ export const engineNoteLine = (label) => `Steps on ${label} can still use connec
 export const fileServerOffLine = (name) => `${name} is switched off: Worca can't pretend for servers from a project file.`;
 const PREVIEW_ERROR_LINE = 'Worca could not list your connectors just now.';   // controller-approved copy (2026-10-27)
 
-/** C19: the script steps a try runs as in a normal run, in both modes. null when there is none. */
-export function scriptCaution(names) {
+/**
+ * C19: the script steps a try runs as in a normal run, in both modes. null when there is none. `quick` = the ones the
+ * free quick check runs for real too (no mock of their own; final review M2), counted only while it is ticked.
+ */
+export function scriptCaution(names, quick = []) {
   if (!names || !names.length) return null;
+  const inQuick = names.filter((n) => (quick || []).includes(n));
+  const all = inQuick.length === names.length;
+  const where = all ? 'every try and in the free quick check' : 'every try';
+  const more = inQuick.length && !all ? { lead: ' The free quick check runs ', name: andList(inQuick), rest: ' as in a normal run too.' } : null;
   return names.length === 1
-    ? { lead: 'The script step ', name: names[0], rest: ' runs as in a normal run. If it posts or sends something, it does it in every try.' }
-    : { lead: 'The script steps ', name: andList(names), rest: ' run as in a normal run. If they post or send something, they do it in every try.' };
+    ? { lead: 'The script step ', name: names[0], rest: ` runs as in a normal run. If it posts or sends something, it does it in ${where}.`, more }
+    : { lead: 'The script steps ', name: andList(names), rest: ` run as in a normal run. If they post or send something, they do it in ${where}.`, more };
 }
 const useOfValue = (v) => (v === 'draft' ? 'draft' : Number(v));
 
@@ -183,6 +190,7 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
   const boxB = el(doc, 'input', 'wft-tv-optin'); boxB.type = 'checkbox'; boxB.id = 'wft-tv-reuse-b'; boxB.checked = true;
   const reuse = el(doc, 'div', 'wft-reuse');
   const quick = el(doc, 'input', 'wft-tv-optin'); quick.type = 'checkbox'; quick.id = 'wft-tv-quick'; quick.checked = true;
+  quick.addEventListener('change', () => paintConnectors(estimate));   // the script caution counts the quick check (M2)
   const quickRow = optInRow(doc, quick, 'Do a free quick check first.', ' Worca makes sure every step of the workflow is connected, without using AI.');
   // D21 with D35: the promise holds only with Pretend connectors, so it shows only then.
   const safe = el(doc, 'div', 'wft-safe');
@@ -322,12 +330,13 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
       for (const label of c.engines || []) line('alert', [engineNoteLine(label)]);
     }
     notes.hidden = !notes.children.length;
-    const sc = scriptCaution(c ? c.scripts : []);
+    const sc = scriptCaution(c ? c.scripts : [], c && quick.checked ? c.quickScripts : []);
     caution.replaceChildren();
     caution.hidden = !sc;
     if (sc) {
       const words = el(doc, 'span');
       words.append(doc.createTextNode(sc.lead), el(doc, 'b', '', sc.name), doc.createTextNode(sc.rest));
+      if (sc.more) words.append(doc.createTextNode(sc.more.lead), el(doc, 'b', '', sc.more.name), doc.createTextNode(sc.more.rest));
       caution.append(icon(doc, 'alert', 14), words);
     }
     safe.hidden = mode !== 'pretend';
