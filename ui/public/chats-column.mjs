@@ -6,13 +6,14 @@
 import { renderRunsList } from './runs-list.mjs';
 import { createRunsSelection, rangeKeys } from './runs-selection.mjs';
 import { listKeyAction, LIST_FIELD, isMac } from './list-keys.mjs';
-import { createListRove, paintBulkBar, navKey, bindPointerSelect } from './list-dom.mjs';
+import { createListRove, paintBulkBar, navKey, bindPointerSelect, landOn, paintLanded, collapsedSectionOf } from './list-dom.mjs';
 import { mountRunsResize } from './runs-resize.mjs';
 import { openMenu } from './workflows/menu.mjs';
 import { notify } from './feedback.mjs';
 import { icon } from './icons.mjs';
 import { openGroupPicker } from './group-picker.mjs';
 import { openChatGroupDialog } from './chat-group-dialog.mjs';
+import { readRecentGroups, noteRecentGroup, addedNotice } from './group-add.mjs';
 import { CHAT_BUSY, chatGroupBusyText } from '../../src/shared/chat-busy.mjs';
 import { buildChatsModel, chatArchivePlan, chatRowMenuItems, chatGroupMenuItems, CHAT_STATES, chatsViewChip, chatsViewMenuItems, loadChatsView,
   saveChatsView, DEFAULT_CHATS_VIEW, CHATS_PAGE, CHATS_EMPTY, CHATS_LOADING, CHATS_OFFLINE, CHATS_LIST_W_KEY } from './chats-list.mjs';
@@ -160,6 +161,7 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     const target = rove.rove();
     // The focused rows went with the list (the last chat deleted, a Delete all): the column keeps the focus, never <body>.
     if (hadFocus) { if (target) target.focus(); else try { host.focus({ preventScroll: true }); } catch { /* detached */ } }
+    paintLanded(list, st);   // Add to group: the moved chat keeps its brief fill across repaints (list-dom.mjs)
   }
   function paintCurrent() {
     const id = currentId();
@@ -266,27 +268,59 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     else notify({ tone: 'err', title: fail, detail: (r && r.error) || '' }, { doc });
     return r;
   }
-  function openDialog({ mode, chats, group = null, opener = null }) {
+  function openDialog({ mode, chats, group = null, opener = null, onAdded = null }) {
     openChatGroupDialog({ doc, mode, group, chats, opener, fallback: () => rove.rove() || viewBtn, icon, api: call,
       suggestOn: flagOn('smartRunNaming'),
-      onDone: async (g) => {
+      onDone: mode === 'create' && onAdded ? (g, r) => onAdded(r) : async (g) => {
         st.sel.clear();
         st.selecting = false;
         await refresh();
         notify({ tone: 'ok', title: mode === 'rename' ? 'Group renamed' : 'Group created', detail: g.name }, { doc });
       } });
   }
-  /** Add to group… (⋯, G, the bar's Group N): the group picker; New group opens the dialog. */
+  /** Add to group… (⋯, G, the bar's Group N): the shared picker; New group opens the shared dialog. */
   function addToGroup(rows, anchor) {
     const chats = rows.filter((r) => r.kind === 'chat');
     if (!chats.length) return;
     const own = chats.length === 1 ? chats[0].groupId : '';
     const groups = st.groups.filter((g) => g.id !== own).map((g) => ({ id: g.id, title: g.name,
       model: { ...(st.byKey.get(`cgroup:${g.id}`)?.model || { state: 'idle', ...CHAT_STATES.idle }), count: { text: String(g.count || 0) } } }));
-    openGroupPicker({ doc, anchor, groups,
-      onPick: (g) => { void groupWrite(() => call('POST', `/api/ask/groups/${gid(g.id)}/threads`, { threadIds: chats.map((r) => r.id) }),
-        { ok: 'Added to group', detail: g.title, fail: 'Could not group the chats' }); },
-      onNew: () => openDialog({ mode: 'create', chats, opener: anchor }) });
+    const ids = chats.map((r) => r.id);
+    const before = { keys: [...st.sel.keys()], selecting: st.selecting, anchorKey: st.anchorKey, rowKey: chats[0].key };
+    const k = anchor && anchor.dataset ? anchor.dataset.rowKey : '';
+    const shown = (n) => (n && n.isConnected && !n.closest('[hidden]') ? n : null);   // the bar hides with the selection
+    const opener = () => shown(k ? list.querySelector(`.runs-more[data-row-key="${k}"]`) : null) || shown(anchor) || shown(groupBtn);
+    openGroupPicker({ doc, anchor: opener, groups, recent: readRecentGroups(storage, 'chats'),
+      onPick: async (g) => afterChatsAdd(await call('POST', `/api/ask/groups/${gid(g.id)}/threads`, { threadIds: ids }), chats, before, opener),
+      onCreate: async (name) => afterChatsAdd(await call('POST', '/api/ask/groups', { name, nameSource: 'user', threadIds: ids }), chats, before, opener),
+      onNew: () => openDialog({ mode: 'create', chats, opener: opener(), onAdded: (r) => afterChatsAdd(r, chats, before, opener) }) });
+  }
+  async function afterChatsAdd(r, chats, before, opener) {
+    if (!r || r.error || !r.group) { notify({ tone: 'err', title: 'Could not group the chats', detail: (r && r.error) || '' }, { doc }); return; }
+    noteRecentGroup(storage, 'chats', r.group.id);
+    st.sel.clear();
+    st.selecting = false;
+    st.anchorKey = null;
+    st.toggled.set(`cgroup:${r.group.id}`, true);   // a collapsed target group opens
+    await refresh();
+    const sec = collapsedSectionOf(st.model, `cgroup:${r.group.id}`);
+    if (sec === 'older') { st.olderOpen = true; paint(); } else if (sec) { st.collapsed.delete(sec); paint(); }
+    const want = new Set(chats.map((c) => c.key));   // a chat's key is `chat:ID` grouped or not (chats-list.mjs)
+    landOn({ host: list, rove, state: st, node: [...list.querySelectorAll('a.runs-row')].find((a) => want.has(a.dataset.rowKey)),
+      fallback: () => opener() || rove.rove() });
+    notify(addedNotice({ group: r.group.name, titles: chats.map((c) => c.title), noun: 'chat',
+      undo: r.undo ? () => undoChatsAdd(r.undo, before) : null }), { doc });
+  }
+  async function undoChatsAdd(token, before) {
+    const r = await call('POST', '/api/ask/groups/undo', { token });
+    if (!r || r.error) { notify({ tone: 'err', title: 'Could not undo', detail: (r && r.error) || '' }, { doc }); return; }
+    await refresh();
+    st.sel.clear();
+    if (before.keys.length) st.sel.selectAll(before.keys);
+    st.selecting = before.selecting;
+    st.anchorKey = before.anchorKey;
+    paint();
+    landOn({ host: list, rove, state: st, node: rove.find([`row:${before.rowKey}`]), fallback: () => rove.rove() });
   }
   const groupOf = (r) => st.groups.find((g) => g.id === r.groupId) || null;
   const on = {
@@ -410,6 +444,7 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
       default: break;
     }
     if (act === 'archive' && st.sel.size) { void archive(selectedRows(), { unarchive: st.view.show === 'archived' }); return; }
+    if (act === 'add-to-group' && st.sel.size) { addToGroup(selectedRows(), groupBtn); return; }
     if (!r) return;
     // A busy row's Archive is disabled in ⋯; from the keyboard the reason comes as a toast (no hover there).
     if (act === 'archive' && r.busy && !r.isArchived) {

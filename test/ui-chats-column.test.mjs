@@ -31,6 +31,9 @@ function api(rec, { list = LIST, failList = false, cursor = null, totals = null 
     if (url.startsWith('/api/ask/groups')) {
       const b = opts.body ? JSON.parse(opts.body) : undefined;
       rec.groupCalls.push(b === undefined ? [m, url] : [m, url, b]);
+      // Add to group: a test's onGroupCall moves the chats in its list (the next GET reads them); the answer carries Undo.
+      const out = rec.onGroupCall ? rec.onGroupCall(m, url, b) : undefined;
+      if (out) return { ok: true, status: 200, json: async () => out };
       return { ok: true, status: 200, json: async () => ({ group: { id: 'askg_00000009', name: b && b.name } }) };
     }
     if (url.startsWith('/api/ask/threads?')) {
@@ -50,7 +53,7 @@ function api(rec, { list = LIST, failList = false, cursor = null, totals = null 
   };
 }
 async function bootOn(opts = {}) {
-  const rec = { calls: [], patches: [], groupCalls: [], groups: opts.groups || [] };
+  const rec = { calls: [], patches: [], groupCalls: [], groups: opts.groups || [], onGroupCall: opts.onGroupCall || null };
   const ctx = makePanel({ innerWidth: 1600, now: () => NOW, platform: 'MacIntel', fetchHandler: api(rec, opts), deps: opts.deps,
     ...(opts.confirm ? { confirm: opts.confirm } : {}) });
   applyFlags({ ...(opts.flags || {}) }, ctx.doc);
@@ -517,4 +520,72 @@ test('View: Sort by and Group by are segmented rows; a segment pick repaints and
   assert.deepEqual([...col.querySelectorAll('.runs-sec-head .runs-sec-title')].map((n) => n.textContent), ['Release prep', 'Ungrouped']);
   assert.equal([...doc.querySelectorAll('.wfv-menu .wfv-menu-item')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Select')
     .querySelector('.wfv-menu-hint').textContent, '⌘ click');
+});
+
+// ── Add to group (the shared picker, group-add.mjs): focus on the moved chat, Undo, G with a selection ──
+const pickerKey = (doc, k) => key(doc, doc.querySelector('.group-picker input.gp-search'), { key: k });
+const pickerType = (doc, v) => { const q = doc.querySelector('.group-picker input.gp-search'); q.value = v; q.dispatchEvent(new doc.defaultView.Event('input', { bubbles: true })); };
+
+test('Add to group: a pick from ⋯ lands the focus on the moved chat, inside its opened group, never on the next row', async () => {
+  const list = [...GROUPED];
+  const groups = [{ id: GID, name: 'Release prep', nameSource: 'user', createdAt: iso(5 * DAY), count: 2 }];
+  const { col, doc, ctx } = await bootOn({ list, groups, onGroupCall: (m, url, b) => {
+    if (m !== 'POST' || !url.endsWith('/threads')) return undefined;
+    for (const id of b.threadIds) { const i = list.findIndex((t) => t.id === id); list[i] = { ...list[i], groupId: GID }; }
+    groups[0].count = 3;
+    return { group: { id: GID, name: 'Release prep' }, undo: 'undo_x' };
+  } });
+  assert.equal(col.querySelector(`.runs-item[data-row-key="cgroup:${GID}"] .runs-members`), null, 'the group starts folded');
+  const keys = [...col.querySelectorAll('a.runs-row')].map((a) => a.dataset.rowKey);
+  const next = keys[keys.indexOf('chat:ask_00000002') + 1];
+  col.querySelector('.runs-item[data-row-key="chat:ask_00000002"] .runs-more').click();
+  [...doc.querySelectorAll('.wfv-menu [role="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Add to group…').click();
+  pickerKey(doc, 'ArrowDown');   // New group…
+  pickerKey(doc, 'ArrowDown');   // Release prep
+  pickerKey(doc, 'Enter');
+  await ticks(ctx, 8);
+  const moved = col.querySelector(`.runs-item[data-row-key="cgroup:${GID}"] .runs-members a.runs-row[data-row-key="chat:ask_00000002"]`);
+  assert.ok(moved, 'the target group is open with the moved chat');
+  assert.equal(doc.activeElement, moved);
+  assert.ok(moved.classList.contains('is-landed'));
+  assert.notEqual(doc.activeElement, rowLink(col, next.slice('chat:'.length)), 'the row that slid up keeps no focus');
+  assert.ok(toastTitles(doc).includes('Added to Release prep'));
+});
+
+test('Add to group: ⌘-click two chats, G, Create; Undo on the toast calls the undo route and restores the selection', async () => {
+  const { col, doc, rec, ctx } = await bootOn({ onGroupCall: (m, url, b) => {
+    if (url === '/api/ask/groups/undo') return { ok: true };
+    if (m === 'POST' && url === '/api/ask/groups') return { group: { id: 'askg_00000009', name: b.name }, undo: 'undo_x' };
+    return undefined;
+  } });
+  doc.documentElement.dataset.level = 'advanced';
+  for (const id of ['ask_00000002', 'ask_10000000']) { mclick(doc, rowLink(col, id), { metaKey: true }); await ticks(ctx); }
+  assert.equal(col.querySelectorAll('.runs-item.is-checked').length, 2);
+  rowLink(col, 'ask_00000002').focus();
+  key(doc, rowLink(col, 'ask_00000002'), { key: 'g' });
+  assert.ok(doc.querySelector('.group-picker'), 'G with a selection opens the picker');
+  pickerType(doc, 'Login work');
+  pickerKey(doc, 'Enter');
+  await ticks(ctx, 8);
+  assert.deepEqual(rec.groupCalls.at(-1), ['POST', '/api/ask/groups', { name: 'Login work', nameSource: 'user', threadIds: ['ask_00000002', 'ask_10000000'] }]);
+  assert.equal(col.querySelectorAll('.runs-item.is-checked').length, 0);
+  assert.ok(toastTitles(doc).includes('Added to Login work'));
+  doc.querySelector('.toast .toast-act').click();
+  await ticks(ctx, 8);
+  assert.deepEqual(rec.groupCalls.at(-1), ['POST', '/api/ask/groups/undo', { token: 'undo_x' }]);
+  assert.equal(col.querySelectorAll('.runs-item.is-checked').length, 2, 'the selection is back');
+});
+
+test('G with a selection opens the picker for the selection, anchored at the bar\'s Group button', async () => {
+  const { col, doc, rec, ctx } = await bootOn();
+  doc.documentElement.dataset.level = 'advanced';
+  for (const id of ['ask_00000002', 'ask_10000000']) col.querySelector(`.runs-item[data-row-key="chat:${id}"] .runs-check`).click();
+  rowLink(col, 'ask_00000002').focus();
+  key(doc, rowLink(col, 'ask_00000002'), { key: 'g' });
+  assert.ok(doc.querySelector('.group-picker'));
+  assert.equal(doc.querySelector('.wfv-menu'), null);
+  pickerType(doc, 'Pair');
+  pickerKey(doc, 'Enter');
+  await ticks(ctx, 8);
+  assert.deepEqual(rec.groupCalls.at(-1)[2].threadIds, ['ask_00000002', 'ask_10000000']);
 });

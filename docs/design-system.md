@@ -275,7 +275,8 @@ under 300ms. Error: a plain sentence plus a "Details" quiet button, never the ra
 `notify({ tone, title, detail, action, key })` (`ui/public/feedback.mjs`): ok and info close after 5s, warn and err
 stay, never move focus.
 The title is at most 6 static words ("Could not open the workflow"). Names, ids and paths go in `detail`; a raw error
-goes in `detail` too, never in the title, and behind a Details action when it is long.
+goes in `detail` too, never in the title, and behind a Details action when it is long. The one named exception is Add
+to group's "Added to Auth rework": the group's name is the title, the item (or "3 runs") the detail (Group picker).
 ### Modals
 `confirmModal({ title, message, confirmLabel, danger })` (`ui/public/app.js`): a destructive confirm names what goes;
 only inside a confirm is `.btn-danger` solid red. Footer actions and the head Close are 32px `.btn`; inline field
@@ -333,7 +334,9 @@ and hand the focus back to the opener.
 - Runs navigation: every row opens its own page in the right pane and the list stays. A group row opens the group
   page; the ⌄ only expands. One row is highlighted at a time, the one whose page is open: a collapsed group whose run
   is open shows the lighter `--row-open` fill over its whole row; expanded, only the open run's row is highlighted.
-  Rows inside a group draw no dividers; the group keeps its own divider before the next row.
+  Rows inside a group draw no dividers; the group keeps its own divider before the next row. After Add to group the
+  moved row takes the focus and the same `--row-open` fill for 1.5 s (`.is-landed`, static, so nothing to reduce): the
+  one moment two rows are lit.
 - Two row levels in the Runs list and the Chats column. A top-level row (a single run, Needs you, a group row) has a
   13px / 500 title over a 12px status line; a group row's title is 600. A row inside a group is one line, 26px (40px on
   touch screens): a 12px / 400 title, then its status at the right (it drops the Working / Starting word its dot says
@@ -354,6 +357,14 @@ and hand the focus back to the opener.
   project or `N projects`; Group by Project files a group spanning projects under Several projects, never No project;
   Group by Topic shows one section per group, then Ungrouped; the group dialog's name field
   uses Smart run naming's Suggested chip only while that flag is on.
+- Group picker (Add to group…, the Runs list and the Chats column, `ui/public/group-picker.mjs`): a combobox over one
+  listbox. The focus stays in "Find or create a group"; ↑/↓ move the `.is-active` option and wrap, Enter takes it, Esc
+  closes and hands the focus back. The order is New group… (the `plus` icon), then Recent (up to 3, this person's last
+  used groups) and All groups (the rest, once), under sentence-case `.menu-h` heads. Typing drops the heads and New
+  group… and lists the matches, then Create “release notes” unless the text is an existing name. Nothing is highlighted
+  on open. The footer names the keys with `.kbd` chips. New group… opens the shared group dialog
+  (`ui/public/group-dialog.mjs`, Smart naming in both lists). An add answers "Added to …" with Undo; a run already in a
+  group moves, a Shaper slice is skipped and the toast says so.
 - Waiting says what it waits for: `Waiting · starts after Complete Design Language Rollout · run 3`,
   `Waiting · starts 14:00`. A group in Needs you leads with the reason: `Run 1 needs you · Checks failing`.
 - Question options are divided rows: one --line between rows, no box per option; the picked row takes the --field fill

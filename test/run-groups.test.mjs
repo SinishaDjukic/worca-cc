@@ -5,7 +5,7 @@ import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipelineRow } from './helpers/db-seed.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { createSliceFeature } from '../src/core/shape/features.mjs';
-import { listRunGroups, createRunGroup, addToGroup, removeFromGroup, RunGroupError } from '../src/core/run-groups.mjs';
+import { listRunGroups, createRunGroup, addToGroup, removeFromGroup, RunGroupError, addRunsToGroup, restoreRunGroups, runNameInputs } from '../src/core/run-groups.mjs';
 import { buildRunsModel } from '../ui/public/runs-list.mjs';
 import { groupModel } from '../src/shared/run-model.mjs';
 import { getStats } from '../src/core/stats.mjs';
@@ -154,4 +154,42 @@ test('a member\'s stored PR carries its stored verdict (D3): Checks failing surv
     checks: { state: 'failing', total: 12, failed: 3, pending: 0 } });
   const plain = listRunGroups().find((g) => g.id === f.id).members[1];
   assert.equal(plain.pr, null, 'no stored PR: still null');
+});
+
+test('Add to group moves a run out of another user group (deleting it when empty), skips slices; Undo restores it', () => {
+  const f = featureWithTwoDone();
+  seedPipelineRow({ id: 'p-m1', title: 'M1', status: 'done' });
+  seedPipelineRow({ id: 'p-m2', title: 'M2', status: 'done' });
+  const old = createRunGroup({ title: 'Old', pipelineId: 'p-m1' });
+  const target = createRunGroup({ title: 'Target', pipelineId: 'p-m2', nameSource: 'suggested' });
+  const r = addRunsToGroup({ groupId: target.id, pipelineIds: ['p-m1', f.s2, 'p-m2', 'nope'] });
+  assert.deepEqual(r.added, ['p-m1']);
+  assert.deepEqual(r.skipped.map((s) => [s.pipelineId, s.reason]), [[f.s2, 'feature'], ['p-m2', 'already'], ['nope', 'not-found']]);
+  assert.equal(listRunGroups().find((g) => g.id === old.id), undefined, 'the emptied group is gone');
+  assert.equal(getDb().prepare('SELECT 1 FROM run_groups WHERE id = ?').get(old.id), undefined);
+  assert.deepEqual(listRunGroups().find((g) => g.id === target.id).members.map((m) => m.pipelineId), ['p-m2', 'p-m1']);
+  assert.equal(listRunGroups().find((g) => g.id === target.id).nameSource, 'suggested');
+  restoreRunGroups(r.snap);
+  assert.deepEqual(listRunGroups().find((g) => g.id === old.id).members.map((m) => m.pipelineId), ['p-m1'], 'Old is back, same id');
+  assert.deepEqual(listRunGroups().find((g) => g.id === target.id).members.map((m) => m.pipelineId), ['p-m2']);
+});
+
+test('New group takes several runs and a name source; its Undo deletes the group it created', () => {
+  seedPipelineRow({ id: 'p-n1', title: 'N1', status: 'done' });
+  seedPipelineRow({ id: 'p-n2', title: 'N2', status: 'done' });
+  const g = createRunGroup({ title: 'Pair', pipelineIds: ['p-n1', 'p-n2'], nameSource: 'user' });
+  assert.deepEqual(g.added, ['p-n1', 'p-n2']);
+  assert.deepEqual(listRunGroups().find((x) => x.id === g.id).members.map((m) => m.pipelineId), ['p-n1', 'p-n2']);
+  assert.throws(() => createRunGroup({ title: 'X', pipelineIds: ['p-n1'], nameSource: 'ai' }), (e) => e.code === 'BAD_NAME_SOURCE');
+  restoreRunGroups(g.snap);
+  assert.equal(getDb().prepare('SELECT 1 FROM run_groups WHERE id = ?').get(g.id), undefined);
+});
+
+test('a new group of only feature slices is refused; runNameInputs reads title and prompt', () => {
+  const f = featureWithTwoDone();
+  assert.throws(() => createRunGroup({ title: 'Nope', pipelineIds: [f.s1, f.s2] }), (e) => e.code === 'IN_GROUP');
+  seedPipelineRow({ id: 'p-q', title: 'Fix login', status: 'done' });
+  getDb().prepare("UPDATE pipelines SET prompt = 'Safari loops after SSO' WHERE id = 'p-q'").run();
+  assert.deepEqual(runNameInputs(['p-q']), [{ title: 'Fix login', firstMessage: 'Safari loops after SSO' }]);
+  assert.equal(runNameInputs(['p-q', 'missing']), null);
 });
