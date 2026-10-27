@@ -316,7 +316,7 @@ test('the View menu: Show and Group by narrow and regroup the list, the chip res
       assert.equal(chip.hidden, true, 'no chip for the default view');
       click(window, doc.getElementById('runs-view-btn'));
       const items = [...doc.querySelectorAll('.wfv-menu .wfv-menu-item[role="menuitemradio"]')].map((n) => [n.querySelector('.wfv-menu-l').textContent, n.querySelector('.wfv-menu-hint')?.textContent || '']);
-      assert.deepEqual(items.slice(0, 6), [['All', '3'], ['Needs you', '0'], ['Running', '1'], ['Waiting', '0'], ['Finished', '2'], ['Archived', '']]);
+      assert.deepEqual(items.slice(0, 7), [['All', '3'], ['Needs you', '0'], ['Running', '1'], ['Waiting', '0'], ['Finished', '2'], ['Ready to ship', '0'], ['Archived', '']]);
       click(window, doc.querySelector('.wfv-menu [role="menuitemradio"]'));   // All again: closes it
       await settle(window);
       await pickView(window, doc, 'Finished');

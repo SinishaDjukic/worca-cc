@@ -114,8 +114,8 @@ level and has no **Diff**, **Changes** or **Actions**.
   dirty checkout of it, or a run that did not finish leaves the work on its own
   branch, with the commands to merge it by hand.
 - **Live cockpit** — **Runs** in the sidebar lists every run, live and
-  finished, with **All / Live / Finished / Needs you** tabs, search, and
-  grouping by project or date. A live run's page shows its state and current
+  finished; its **View** menu shows All, Needs you, Running, Waiting, Finished,
+  **Ready to ship** (finished, no PR yet) or Archived, and groups by project or date. A live run's page shows its state and current
   step, ticking time, cost and changed files, and a **Live view** of the running
   step inside its workflow graph; **Diff** shows the worktree's changes so far,
   and **Logs** streams every step with search (filters by source, level, step
