@@ -98,7 +98,7 @@ export const isBusy = (seq) => jobs.has(Number(seq));
 /** A8 D2: the longest round 1 waits for the reads of a new feature's files. */
 export const ROUND1_WAIT_MS = 360_000;
 const waitingReads = new Set();   // features whose create job waits for its reads: not counted against MAX_JOBS
-let heldSlots = 0;   // A3 D11: slots held by Ask Worca calls (helper.mjs), which never make their feature busy
+let heldSlots = 0;   // A3 D11: slots held by Feature chat calls (helper.mjs), which never make their feature busy
 const activeJobs = () => jobs.size - waitingReads.size + heldSlots;
 let slotWaiters = [];   // resolvers woken whenever a slot may have come free: a job ended or started waiting
 function slotFreed() { const w = slotWaiters; slotWaiters = []; for (const r of w) r(); }
@@ -115,7 +115,7 @@ const within = (p, ms) => { let t; return Promise.race([p, new Promise((r) => { 
 export function assertCapacity() {
   if (activeJobs() >= MAX_JOBS) throw new RequirementsError('BUSY', 'Worca is working on several features; try again in a moment.');
 }
-/** A3 D11: one of the MAX_JOBS slots for an Ask Worca call, which does not make its feature busy. Throws BUSY when every slot
+/** A3 D11: one of the MAX_JOBS slots for a Feature chat call, which does not make its feature busy. Throws BUSY when every slot
  *  is taken (assertCapacity's message). Returns the release: it frees the slot once (a second call does nothing) and wakes
  *  the creates waiting for a slot. */
 export function holdSlot() {

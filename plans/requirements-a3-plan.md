@@ -1,10 +1,10 @@
-# A3 Helper Chat (Ask Worca) Implementation Plan
+# A3 Helper Chat (Feature chat) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A product owner can talk with Worca about the feature they are specifying, beside the spec: Worca answers from what it already knows about the feature, drafts answers to the open interview questions (they fill the question card, marked **drafted by Worca**, and are sent only by **Submit**) and proposes spec changes as cards (**Accept** applies one as the product owner's own edit, **Reject** dismisses it, a card whose target changed says so and offers **Ask again**). One message is one model call, shown per message, booked as Requirements spend and stopped by the spending limit. The chat never blocks or feeds the interview.
 
-**Architecture:** One new module `src/core/requirements/helper.mjs` holds everything of the chat: the pure part (system prompt, limits, the prompt builder, the strict reply check, snapshots and staleness, the mock reply) and the job part (one call per feature in `helperCalls`, a slot of A1's `MAX_JOBS` held through `interview.mjs`'s new `holdSlot()`, Stop through the call's own `AbortController`, Try again, Accept / Reject / Ask again / Clear chat, the view and the cost estimate). Storage is one new table `req_helper_messages` (v78) plus `req_cost_ledger.helper_message_id`. A call is an ordinary A1.1 `callModel(d, { kind: 'round', … })` with overrides; the round's own prompt stays byte-identical (`round.mjs` exports `threadText` and `specBlocks`). Accept goes through the existing edit functions, which gain one option `alsoInTx(fn)` so the edit and the proposal's mark commit together. The page module `ui/public/requirements-view.mjs` gains the Ask Worca toggle, the panel (right column wider than 900 px, full-screen sheet at 900 px and narrower), Help me answer, the draft chip and the proposal cards; CSS goes into the Requirements block of `ui/public/style.css`.
+**Architecture:** One new module `src/core/requirements/helper.mjs` holds everything of the chat: the pure part (system prompt, limits, the prompt builder, the strict reply check, snapshots and staleness, the mock reply) and the job part (one call per feature in `helperCalls`, a slot of A1's `MAX_JOBS` held through `interview.mjs`'s new `holdSlot()`, Stop through the call's own `AbortController`, Try again, Accept / Reject / Ask again / Clear chat, the view and the cost estimate). Storage is one new table `req_helper_messages` (v78) plus `req_cost_ledger.helper_message_id`. A call is an ordinary A1.1 `callModel(d, { kind: 'round', … })` with overrides; the round's own prompt stays byte-identical (`round.mjs` exports `threadText` and `specBlocks`). Accept goes through the existing edit functions, which gain one option `alsoInTx(fn)` so the edit and the proposal's mark commit together. The page module `ui/public/requirements-view.mjs` gains the Feature chat toggle, the panel (right column wider than 900 px, full-screen sheet at 900 px and narrower), Help me answer, the draft chip and the proposal cards; CSS goes into the Requirements block of `ui/public/style.css`.
 
 **Tech Stack:** Node ESM, `node:sqlite`, `node:test`, jsdom, Express (`ui/server.mjs` → `src/core/requirements/routes.mjs`), vanilla DOM (`ui/public/*.mjs`), Claude Code CLI through A1.1's `callModel` (replace mode, hermetic flags, A1.1-D6's sign-in exception).
 
@@ -25,16 +25,16 @@
 - Concurrency (D11): one helper call per feature (`helperCalls` in `helper.mjs`), holding one of `MAX_JOBS` (4) through `interview.mjs`'s `holdSlot()`; the chat never makes a feature busy (`isBusy` stays the interview's `jobs` only).
 - The chat is not part of the interview (D15): no turn kind is added; helper messages never reach `req_turns`, rounds, looks or the brief.
 - Mock mode (D19, `WORCA_MOCK=1`): no spawn; the reply is `[mock] Worca's answer to: <message>` with, when a round is pending, a draft picking the first option of its first question that is not the recommended one, and one proposal adding the criterion `[mock] A criterion Worca suggests.`, costing nothing. `WORCA_MOCK_HELPER_MS` (read only in mock mode) delays a mock reply so the browser proof can see **Answering…** and press **Stop** (the same device as A8's `WORCA_MOCK_READ_MS`).
-- `ui/public/style.css`: tokens only (no hex, no `rgba(`); every new rule is a `req-help-*` rule inside the existing Requirements block, which ends right before `/* ── marketplace P3 ── */`, never at the end of the file. On/off controls are never green-filled: the pressed **Ask Worca** button has an ink border; Accepted is green ink, never a fill.
+- `ui/public/style.css`: tokens only (no hex, no `rgba(`); every new rule is a `req-help-*` rule inside the existing Requirements block, which ends right before `/* ── marketplace P3 ── */`, never at the end of the file. On/off controls are never green-filled: the pressed **Feature chat** button has an ink border; Accepted is green ink, never a fill.
 - Product copy never shows a raw error, a stack, a path or an HTTP status: a refusal shows the server's product message (`errText`), anything else "Worca could not finish that. Try again."; a failed call is stored with product copy only (the reason goes to the server log).
 - No local machine paths in shipped files (code, tests, docs). No import from Shaper code; core modules never import `ui/server.mjs`.
 - Tests: run one file at a time with `node tools/test.mjs test/<file>.test.mjs` (from the worktree root; `tools/test.mjs` gives the hermetic HOME and the guard that stops a real `claude` from starting). The full suite runs only in Task 11. This repo is developed on Windows, where about 170–200 upstream tests fail on clean `dev`: every failing test must be compared with the baseline worktree (a detached checkout of `dev`; its path is given in your task dispatch), written `<baseline>` in the steps below: run the same file there, `cd <baseline> && node tools/test.mjs test/<file>.test.mjs`, before it is called pre-existing.
 - User-facing copy, verbatim (design §2, §6):
-  - Header and openers: "Ask Worca" · "Help me answer" · composer cap "Help me answer · question <n>" · "Ask again · <section>" with the text "Propose this again for the current spec."
-  - Panel: "Ask Worca" · "About FEAT-<n> · uses what Worca already knows" (phone: "About FEAT-<n>") · "More for this chat" · "Close Ask Worca" · "Back to FEAT-<n>" · "Clear chat" · confirm "Clear the chat? Changes you accepted stay in the spec." · "Ask about this feature" · "Send" · "<model label> · about $L–H a message · Enter sends, Shift+Enter new line" (phone: "about $L–H a message"; "$0.01–0.05" while no helper call was booked) · "<n> of 2,000 characters" (past 1,800).
-  - First open (card 7): "Ask Worca about this feature. It knows the spec, the interview so far, the product brief, your files and what it found in the code. It can draft answers to open questions and suggest spec changes — nothing changes until you accept." and the buttons "Is anything missing from this spec?", "Which criteria can't be tested?", "What edge cases am I missing?".
+  - Header and openers: "Feature chat" · "Help me answer" · composer cap "Help me answer · question <n>" · "Ask again · <section>" with the text "Propose this again for the current spec."
+  - Panel: "Feature chat" · "About FEAT-<n> · uses what Worca already knows" (phone: "About FEAT-<n>") · "More for this chat" · "Close feature chat" · "Back to FEAT-<n>" · "Clear chat" · confirm "Clear the chat? Changes you accepted stay in the spec." · "Ask about this feature" · "Send" · "<model label> · about $L–H a message · Enter sends, Shift+Enter new line" (phone: "about $L–H a message"; "$0.01–0.05" while no helper call was booked) · "<n> of 2,000 characters" (past 1,800).
+  - First open (card 7): "Ask about this feature here. It knows the spec, the interview so far, the product brief, your files and what it found in the code. It can draft answers to open questions and suggest spec changes — nothing changes until you accept." and the buttons "Is anything missing from this spec?", "Which criteria can't be tested?", "What edge cases am I missing?".
   - Waiting (card 8): "Answering…" (blue badge) · "Worca is answering." · "Stop" · "Send and Accept wait while Worca answers. Stop cancels the reply; your message stays in the chat."
-  - Lines: "Worca could not answer. Try again." with "Try again" · "You stopped this reply." with "Try again" · "You have reached the Requirements spending limit for this <month | week>. Worca can answer again when it resets, or raise the limit in Settings › Budget." · "This feature is archived: you can read the chat, not send. Restore the feature to ask Worca again." · "The question you asked about has been answered, so Worca's draft for it was dropped."
+  - Lines: "Worca could not answer. Try again." with "Try again" · "You stopped this reply." with "Try again" · "You have reached the Requirements spending limit for this <month | week>. Worca can answer again when it resets, or raise the limit in Settings › Budget." · "This feature is archived: you can read the chat, not send. Restore the feature to ask again." · "The question you asked about has been answered, so Worca's draft for it was dropped."
   - Drafts: "drafted by Worca" · "Clear Worca's draft for question <n>" · "Worca's draft: <why>".
   - Cards (board 24): "Proposed change · <section>" with " · add", " · R-po-3", " · remove R-po-3", " · confirm A-2", " · reject A-2"; decided: "Change · …" · rows "Before", "After", "New", "Remove", "Confirm", "Reject" · "Why: <reason>" · "Reject" · "Accept" · "Ask again" · "Accepted · now in the spec as your edit" · "Rejected" · "The spec changed since Worca proposed this." · section labels Goal, Actors, Main flow, Edge cases, Business rules, Out of scope, Open questions, Acceptance criteria, Assumptions.
   - Server refusals: "a message is 1 to 2,000 characters" · "Worca is still answering. Try again in a moment." · "Worca is still working on this feature. Try again in a moment." · "this feature is starting a run. Try again in a moment." (`STARTING_MESSAGE`) · "this feature is archived; restore it first" · "Worca is working on several features; try again in a moment." · "The spec changed since Worca proposed this." · copy this plan adds where the design names none (said once, product language): "This change was already decided." · "This change is not out of date." · "Worca was already asked again about this change." · "Worca is not answering." · "There is nothing to try again." · "This message is no longer in the chat." · "This change is no longer in the chat.".
@@ -66,7 +66,7 @@
 | `ui/public/requirements-view.mjs` | Modify (Tasks 6, 7, 8) | boards 22, 24, 25: toggle, panel / sheet, composer, lines, Help me answer, drafts, cards |
 | `ui/public/style.css` | Modify (Tasks 6, 7, 8) | `req-help-*` rules inside the Requirements block |
 | `tools/verify-requirements-cdp.mjs` | Modify (Task 9) | the browser proof of the chat (light, dark, 390 px) |
-| `docs/requirements.md`, `docs/storage.md`, `docs/ui-levels.md`, `docs/changelog/unreleased.md` | Modify (Task 9) | the Ask Worca section, the table, the levels (S), the changelog entry |
+| `docs/requirements.md`, `docs/storage.md`, `docs/ui-levels.md`, `docs/changelog/unreleased.md` | Modify (Task 9) | the Feature chat section, the table, the levels (S), the changelog entry |
 | `tools/requirements-real-helper.mjs` | Create (Task 10) | the capped real-call check (dry run by default; money only with `--yes`, never in this plan) |
 | Tests (Create) | | `test/db-migrate-v78.test.mjs`, `test/requirements-helper-store.test.mjs`, `test/requirements-helper.test.mjs`, `test/requirements-helper-job.test.mjs`, `test/requirements-helper-proposals.test.mjs`, `test/requirements-helper-api.test.mjs`, `test/requirements-view-helper.test.mjs`, `test/requirements-real-helper-tool.test.mjs` |
 | Tests (Modify) | | `test/db-migrate-v72.test.mjs` (pinned ledger columns), `test/requirements-interview.test.mjs` (holdSlot), `test/requirements-edits.test.mjs` (alsoInTx), `test/requirements-api.test.mjs` (`fill()` for `:msgId` / `:n`) |
@@ -190,7 +190,7 @@ test("a row takes its defaults: drafts and proposals '[]', no focus, no error", 
   - Right after `REQUIREMENTS_ATTACHMENTS_DDL`:
 
 ```js
-// v78 Requirements A3 (plans/requirements-a3-design.md §3, D14): the Ask Worca chat of a feature. A product owner's message
+// v78 Requirements A3 (plans/requirements-a3-design.md §3, D14): the Feature chat of a feature. A product owner's message
 // row is written before its call, Worca's row (text, drafts, proposals, cost, model, or an error) after it. Reconcile-safe:
 // IF NOT EXISTS + INCREMENTAL_TABLES; req_cost_ledger.helper_message_id lives in INCREMENTAL_COLUMNS.
 const REQUIREMENTS_HELPER_DDL = `
@@ -313,7 +313,7 @@ test("clearing a feature's chat deletes its rows only and keeps the ledger rows"
   Append to `src/core/requirements/store.mjs`:
 
 ```js
-// ---- the helper chat (plans/requirements-a3-design.md §3, D14): one Ask Worca chat per feature ----
+// ---- the helper chat (plans/requirements-a3-design.md §3, D14): one Feature chat per feature ----
 
 const HELPER_ROLES = Object.freeze(['po', 'worca']);
 
@@ -396,7 +396,7 @@ export function recentHelperCosts(limit = 10) {
 /** Append one requirements cost event (plans/requirements-design.md D9): an orientation pass or an
  *  interview round (`featureSeq`, with its `turnId`), or a product brief look (A7: `featureSeq` 0 and the
  *  brief's `briefId`); A8 adds `attachmentId` for a file's read or ask, under its feature or its brief; A3 adds
- *  `helperMessageId` for an Ask Worca call (no turn). Same no-op gate as the other ledgers ($0 mock calls leave no row). */
+ *  `helperMessageId` for a Feature chat call (no turn). Same no-op gate as the other ledgers ($0 mock calls leave no row). */
 export function recordRequirementsCostDelta({ featureSeq = 0, briefId = null, turnId = null, attachmentId = null, helperMessageId = null, amountUsd,
   model = null, tsMs = Date.now() }) {
   if ((!featureSeq && !briefId) || !Number.isFinite(amountUsd) || amountUsd <= 0) return;
@@ -438,7 +438,7 @@ git commit -m "Requirements: helper chat rows and spend (schema v78)" -m "Co-Aut
 - [ ] **Step 1: Write the failing test** `test/requirements-helper.test.mjs`:
 
 ```js
-// test/requirements-helper.test.mjs — Ask Worca's prompt and reply check, without I/O (plans/requirements-a3-design.md D4–D9, D17, D19, §4).
+// test/requirements-helper.test.mjs — Feature chat's prompt and reply check, without I/O (plans/requirements-a3-design.md D4–D9, D17, D19, §4).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -464,7 +464,7 @@ const ARGS = { feature: FEATURE, context: 'Shop notes', turns: TURNS, brief: 'Th
 const R = 'a reason';
 const reply = (over) => normalizeHelperReply({ text: 'ok', ...over }, { spec: SPEC, pending: PENDING, removed: ['Orders can be paused'] });
 // Design §4's system prompt, pinned here as a literal: tests never read plans/ (the plan files are condensed before the PR).
-const EXPECTED_SYSTEM_PROMPT = String.raw`You are Worca's requirements helper. A product owner talks with you in the Ask Worca panel beside a feature they are
+const EXPECTED_SYSTEM_PROMPT = String.raw`You are Worca's requirements helper. A product owner talks with you in the Feature chat panel beside a feature they are
 specifying on Worca's Requirements page. You have no tools: everything you know is in the message. Never say you
 read code or files beyond what the message holds.
 The product owner is not a developer. Answer in plain product language, briefly, in at most 3000 characters.
@@ -727,7 +727,7 @@ export const diffList = (b, a) => ({ added: a.filter((x) => !b.includes(x)), rem
 
 ```js
 // src/core/requirements/helper.mjs
-// Ask Worca beside the feature spec (plans/requirements-a3-design.md). The pure part: the system prompt, the limits, the
+// Feature chat beside the feature spec (plans/requirements-a3-design.md). The pure part: the system prompt, the limits, the
 // prompt (a round's stable part verbatim, then the chat's own changing part), the strict reply check (nothing in a reply is
 // trusted for ids, old values or state), the snapshots that tell a stale proposal, and the mock reply.
 import { SECTIONS, LIMITS, MAX_QUESTIONS, clip, normalizeSection } from './spec.mjs';
@@ -741,7 +741,7 @@ export const ASK_AGAIN_TEXT = 'Propose this again for the current spec.';
 
 // Design §4, byte for byte (test/requirements-helper.test.mjs pins it as a literal). The same for every call: no date,
 // path or per-call value. String.raw keeps the JSON template's backslashes.
-export const HELPER_SYSTEM_PROMPT = String.raw`You are Worca's requirements helper. A product owner talks with you in the Ask Worca panel beside a feature they are
+export const HELPER_SYSTEM_PROMPT = String.raw`You are Worca's requirements helper. A product owner talks with you in the Feature chat panel beside a feature they are
 specifying on Worca's Requirements page. You have no tools: everything you know is in the message. Never say you
 read code or files beyond what the message holds.
 The product owner is not a developer. Answer in plain product language, briefly, in at most 3000 characters.
@@ -1000,7 +1000,7 @@ git commit -m "Requirements: the helper's prompt and reply check" -m "Co-Authore
 - [ ] **Step 1: Write the failing test** `test/requirements-helper-job.test.mjs`:
 
 ```js
-// test/requirements-helper-job.test.mjs — one Ask Worca call per message, with a fake runner; never a real claude
+// test/requirements-helper-job.test.mjs — one Feature chat call per message, with a fake runner; never a real claude
 // (plans/requirements-a3-design.md D3, D11–D13, D15, D19, D20).
 import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -1311,14 +1311,14 @@ test('A3 D11: a held helper slot counts toward MAX_JOBS; its release wakes a cre
   - Replace `const activeJobs = () => jobs.size - waitingReads.size;` with:
 
 ```js
-let heldSlots = 0;   // A3 D11: slots held by Ask Worca calls (helper.mjs), which never make their feature busy
+let heldSlots = 0;   // A3 D11: slots held by Feature chat calls (helper.mjs), which never make their feature busy
 const activeJobs = () => jobs.size - waitingReads.size + heldSlots;
 ```
 
   - After `assertCapacity`, add:
 
 ```js
-/** A3 D11: one of the MAX_JOBS slots for an Ask Worca call, which does not make its feature busy. Throws BUSY when every slot
+/** A3 D11: one of the MAX_JOBS slots for a Feature chat call, which does not make its feature busy. Throws BUSY when every slot
  *  is taken (assertCapacity's message). Returns the release: it frees the slot once (a second call does nothing) and wakes
  *  the creates waiting for a slot. */
 export function holdSlot() {
@@ -1472,7 +1472,7 @@ function startCall(seq, po, d, release) {
   helperCalls.set(seq, entry);
   entry.promise = (async () => {
     try { await answer(seq, po, d, ctrl.signal); } catch (err) {
-      console.error('requirements: an Ask Worca call failed:', message(err));
+      console.error('requirements: a Feature chat call failed:', message(err));
       // Worca's row could not be written as it should: an error row, else D20's line ("could not answer") shows anyway.
       try { insertHelperMessage({ featureSeq: seq, role: 'worca', error: { code: 'FAILED', message: COULD_NOT } }); } catch { /* D20 */ }
     } finally {
@@ -1546,14 +1546,14 @@ async function answer(seq, po, d, signal) {
       }
       if (!reply) {
         error = signal.aborted ? STOPPED : { code: 'BAD_REPLY', message: COULD_NOT };
-        if (lastErr) console.error('requirements: an Ask Worca reply could not be read:', lastErr.message);
+        if (lastErr) console.error('requirements: a Feature chat reply could not be read:', lastErr.message);
       }
     } catch (err) {
       cost += Number(err && err.costUsd) || 0;
       if (signal.aborted) error = STOPPED;
       else if (err && err.code === 'TIMEOUT') error = { code: 'TIMEOUT', message: COULD_NOT };
       else if (err && err.code === 'BUDGET') error = { code: 'BUDGET', message: err.message };
-      else { error = { code: 'FAILED', message: COULD_NOT }; console.error('requirements: an Ask Worca call failed:', message(err)); }
+      else { error = { code: 'FAILED', message: COULD_NOT }; console.error('requirements: a Feature chat call failed:', message(err)); }
     }
   }
   chargeHelper(seq, cost, model, () => insertHelperMessage({ featureSeq: seq, role: 'worca', text: reply ? reply.text : '',
@@ -2059,7 +2059,7 @@ const fill = (path) => path.replace(':scopeType/:scopeKey', `project/${projKey}`
 - [ ] **Step 2: Write the failing API test** `test/requirements-helper-api.test.mjs`:
 
 ```js
-// test/requirements-helper-api.test.mjs — Ask Worca over HTTP in mock mode, behind the flag (plans/requirements-a3-design.md §5, D10–D16, D19).
+// test/requirements-helper-api.test.mjs — Feature chat over HTTP in mock mode, behind the flag (plans/requirements-a3-design.md §5, D10–D16, D19).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -2293,7 +2293,7 @@ import {
   - `REQUIREMENTS_ROUTES`: after `['POST', `${P}/:seq/start`], ['POST', `${P}/:seq/revert`],` add
 
 ```js
-  // A3 §5: Ask Worca, one chat per feature
+  // A3 §5: Feature chat, one chat per feature
   ['GET', `${P}/:seq/helper`], ['DELETE', `${P}/:seq/helper`], ['POST', `${P}/:seq/helper/messages`], ['POST', `${P}/:seq/helper/stop`],
   ['POST', `${P}/:seq/helper/retry`], ['POST', `${P}/:seq/helper/messages/:msgId/proposals/:n/accept`],
   ['POST', `${P}/:seq/helper/messages/:msgId/proposals/:n/reject`], ['POST', `${P}/:seq/helper/messages/:msgId/proposals/:n/ask-again`],
@@ -2374,10 +2374,10 @@ git commit -m "Requirements: the Ask Worca routes behind the requirements flag" 
 ```
 
 ---
-### Task 6: The panel — Ask Worca toggle, right column and sheet, composer, lines (boards 22, 23, 25)
+### Task 6: The panel — Feature chat toggle, right column and sheet, composer, lines (boards 22, 23, 25)
 
 **Files:**
-- Modify: `ui/public/requirements-view.mjs` (the state block after `const pickPosting = new Set();` ~line 288; `show()` ~line 328; `paint()` feature branch ~line 405; `capture()` ~line 419; `conversation()` ~line 1232; a new "A3: Ask Worca" section right before `function header(f)` ~line 2403; `header()`'s `.req-head-tools`; `paintFeature()` ~line 2457)
+- Modify: `ui/public/requirements-view.mjs` (the state block after `const pickPosting = new Set();` ~line 288; `show()` ~line 328; `paint()` feature branch ~line 405; `capture()` ~line 419; `conversation()` ~line 1232; a new "A3: Feature chat" section right before `function header(f)` ~line 2403; `header()`'s `.req-head-tools`; `paintFeature()` ~line 2457)
 - Modify: `ui/public/style.css` (inside the Requirements block, right before `/* ── marketplace P3 ── */`)
 - Create: `test/requirements-view-helper.test.mjs`
 
@@ -2390,7 +2390,7 @@ git commit -m "Requirements: the Ask Worca routes behind the requirements flag" 
 - [ ] **Step 1: Write the failing test** `test/requirements-view-helper.test.mjs`:
 
 ```js
-// test/requirements-view-helper.test.mjs — Ask Worca on the feature page in jsdom with a fake API (plans/requirements-a3-design.md §6,
+// test/requirements-view-helper.test.mjs — Feature chat on the feature page in jsdom with a fake API (plans/requirements-a3-design.md §6,
 // D1, D2, D6–D13, D16, D18, D20; design round 4, boards 22–25). Tasks 7 and 8 add to it.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -2468,10 +2468,10 @@ async function openPanel(m) { toggle(m.host).click(); await settle(); return m.h
 
 // ── board 22: the toggle, the right column, the head, the first open ─────────────────
 
-test('board 22: Ask Worca sits before Export, closed by default; pressed it takes the right column and the cards move under the current card', async () => {
+test('board 22: Feature chat sits before Export, closed by default; pressed it takes the right column and the cards move under the current card', async () => {
   const m = await openFeature();
   const t = toggle(m.host);
-  assert.deepEqual([t.textContent, t.getAttribute('aria-pressed')], ['Ask Worca', 'false']);
+  assert.deepEqual([t.textContent, t.getAttribute('aria-pressed')], ['Feature chat', 'false']);
   assert.ok(t.compareDocumentPosition(m.host.querySelector('[data-ui="menu-export"]')) & Node.DOCUMENT_POSITION_FOLLOWING, 'before Export');
   assert.equal(m.host.querySelector('.req-help'), null);
   assert.ok(!m.calls.some((c) => c.url === '/api/requirements/7/helper'), 'a chat without messages is not fetched while closed');
@@ -2486,7 +2486,7 @@ test('board 22: Ask Worca sits before Export, closed by default; pressed it take
   assert.ok(kids[q + 1].classList.contains('req-moved'), 'right after the current card');
   assert.ok(kids[q + 2].classList.contains('req-rounds'), 'before the earlier rounds');
   assert.deepEqual([...kids[q + 1].children].map((c) => ['req-ready', 'req-files', 'req-spec'].find((x) => c.classList.contains(x))), ['req-ready', 'req-files', 'req-spec']);
-  assert.ok(cols.lastElementChild.matches('aside.req-help[aria-label="Ask Worca"]'));
+  assert.ok(cols.lastElementChild.matches('aside.req-help[aria-label="Feature chat"]'));
   toggle(m.host).click();
   await settle();
   assert.equal(m.host.querySelector('.req-help'), null);
@@ -2499,15 +2499,15 @@ test('board 22 / card 7: the head, the log, the first-open text and three questi
   const s = {};
   const m = await openFeature(s, { 'POST /api/requirements/7/helper/messages': (b) => { sent.push(b); return (s.helper = chat([po(1, b.text)], { answering: true })); } });
   const p = await openPanel(m);
-  assert.equal(text(p.querySelector('.req-help-head h3')), 'Ask Worca');
+  assert.equal(text(p.querySelector('.req-help-head h3')), 'Feature chat');
   assert.equal(text(p.querySelector('.req-help-head .hint')), 'About FEAT-7 · uses what Worca already knows');
   const more = p.querySelector('[data-ui="helper-more"]');
   assert.deepEqual([more.getAttribute('aria-label'), more.getAttribute('aria-haspopup')], ['More for this chat', 'menu']);
-  assert.equal(p.querySelector('[data-ui="helper-close"]').getAttribute('aria-label'), 'Close Ask Worca');
+  assert.equal(p.querySelector('[data-ui="helper-close"]').getAttribute('aria-label'), 'Close feature chat');
   assert.equal(p.querySelector('[data-ui="helper-back"]').getAttribute('aria-label'), 'Back to FEAT-7');
   const log = p.querySelector('.req-help-log');
   assert.deepEqual([log.getAttribute('role'), log.getAttribute('aria-live')], ['log', 'polite']);
-  assert.equal(text(p.querySelector('.req-help-empty p')), 'Ask Worca about this feature. It knows the spec, the interview so far, the product brief, your files and what it found in the code. It can draft answers to open questions and suggest spec changes — nothing changes until you accept.');
+  assert.equal(text(p.querySelector('.req-help-empty p')), 'Ask about this feature here. It knows the spec, the interview so far, the product brief, your files and what it found in the code. It can draft answers to open questions and suggest spec changes — nothing changes until you accept.');
   const starters = [...p.querySelectorAll('.req-help-starter')];
   assert.deepEqual(starters.map((b) => b.textContent), ['Is anything missing from this spec?', "Which criteria can't be tested?", 'What edge cases am I missing?']);
   starters[1].click();
@@ -2648,7 +2648,7 @@ test('D16: an archived feature\'s chat can be read: the archived line instead of
   const m = await openFeature({ f: feature({ status: 'archived', state: 'archived', pending: null, helper: { answering: false, messages: 2 } }), helper: chat([po(1, 'A'), worca(2, 'B')]) });
   const p = await openPanel(m);
   assert.equal(p.querySelector('[data-ui="helper-in"]'), null);
-  assert.equal(text(p.querySelector('.req-help-archived')), 'This feature is archived: you can read the chat, not send. Restore the feature to ask Worca again.');
+  assert.equal(text(p.querySelector('.req-help-archived')), 'This feature is archived: you can read the chat, not send. Restore the feature to ask again.');
   assert.equal(p.querySelector('[data-msg="2"] .req-help-text').textContent, 'B');
   p.querySelector('[data-ui="helper-more"]').click();
   assert.equal(p.querySelector('[data-ui="helper-clear"]').disabled, true);
@@ -2687,7 +2687,7 @@ test('a chat that cannot be read keeps the last one shown: no first-open text, n
   assert.equal(m.host.querySelector('[data-msg="2"] .req-help-text').textContent, 'B');
 });
 
-test('D18: Escape and Close shut the panel and give the focus back to Ask Worca; so does Back (the phone sheet)', async () => {
+test('D18: Escape and Close shut the panel and give the focus back to Feature chat; so does Back (the phone sheet)', async () => {
   const m = await openFeature();
   let p = await openPanel(m);
   key(p.querySelector('[data-ui="helper-in"]'), 'Escape');
@@ -2753,12 +2753,12 @@ test('style.css: the panel rules sit inside the Requirements block, tokens only;
 });
 ```
 
-- [ ] **Step 2: Run it and see it fail.** `node tools/test.mjs test/requirements-view-helper.test.mjs` → FAIL: `toggle(m.host)` is null (no Ask Worca button).
+- [ ] **Step 2: Run it and see it fail.** `node tools/test.mjs test/requirements-view-helper.test.mjs` → FAIL: `toggle(m.host)` is null (no Feature chat button).
 
 - [ ] **Step 3: The state.** In `createRequirementsView`, after `const pickPosting = new Set();`, add:
 
 ```js
-  // A3 (boards 22–25): Ask Worca. Whether the panel is open, per feature for the page session (D2); the chat as last fetched
+  // A3 (boards 22–25): Feature chat. Whether the panel is open, per feature for the page session (D2); the chat as last fetched
   // (GET …/helper, or null); the composer's unsent text, its focus cap (Help me answer), the control that opened the panel
   // (Escape, Close and Back give the focus back to it), the last refusal and a spent budget; the drafts applied to the question
   // card this visit ('<msgId>:<questionId>', so a repaint never applies one again, D6); the log and its message nodes, kept
@@ -2800,12 +2800,12 @@ test('style.css: the panel rules sit inside the Requirements block, tokens only;
 
   - In `capture(f)`, before `return focus;`, add `const hin = q('helper-in'); if (hin) helperUi.text = hin.value;`.
 
-- [ ] **Step 5: The conversation takes the moved cards.** `function conversation(f, turns, rounds) {` → `function conversation(f, turns, rounds, moved = null) {`, and in its returned `h('div', { class: 'req-left' }, …)` put `moved,` right after `card,` (before `earlierRounds(f, rounds),`), with the comment `// A3 D2: Ready to start?, Files and Spec, while Ask Worca takes the right column`.
+- [ ] **Step 5: The conversation takes the moved cards.** `function conversation(f, turns, rounds) {` → `function conversation(f, turns, rounds, moved = null) {`, and in its returned `h('div', { class: 'req-left' }, …)` put `moved,` right after `card,` (before `earlierRounds(f, rounds),`), with the comment `// A3 D2: Ready to start?, Files and Spec, while Feature chat takes the right column`.
 
-- [ ] **Step 6: The Ask Worca section.** Right before `function header(f) {`, add:
+- [ ] **Step 6: The Feature chat section.** Right before `function header(f) {`, add:
 
 ```js
-  // ---- A3: Ask Worca (boards 22, 23, 25; plans/requirements-a3-design.md §6) ----
+  // ---- A3: Feature chat (boards 22, 23, 25; plans/requirements-a3-design.md §6) ----
   const HELP_STARTERS = ['Is anything missing from this spec?', "Which criteria can't be tested?", 'What edge cases am I missing?'];
   const HELP_FAILED = 'Worca could not answer. Try again.';
   /** A 404 that names a chat message or a change (another tab cleared the chat) says so; any other 404 is the page's own line. */
@@ -2957,7 +2957,7 @@ test('style.css: the panel rules sit inside the Requirements block, tokens only;
   }
   /** Card 7: what Worca knows, and three questions that send at once (none on an archived feature). */
   const helperEmpty = (f, ctx) => h('div', { class: 'req-help-empty' },
-    h('p', { text: 'Ask Worca about this feature. It knows the spec, the interview so far, the product brief, your files and what it found in the code. It can draft answers to open questions and suggest spec changes — nothing changes until you accept.' }),
+    h('p', { text: 'Ask about this feature here. It knows the spec, the interview so far, the product brief, your files and what it found in the code. It can draft answers to open questions and suggest spec changes — nothing changes until you accept.' }),
     ctx.archived ? null : h('div', { class: 'req-help-starters' }, ...HELP_STARTERS.map((q, i) => h('button', { type: 'button', class: 'btn btn-sm req-help-starter',
       'data-ui': `helper-starter-${i}`, disabled: ctx.working, onclick: () => sendHelper(f, q, null) }, q))));
   /** The composer (board 22): Enter sends, Shift+Enter adds a line; the count past 1,800; Send off when empty, past 2,000, while
@@ -2999,7 +2999,7 @@ test('style.css: the panel rules sit inside the Requirements block, tokens only;
     const data = helpChat(f);
     const msgs = data.messages || [];
     const ctx = { answering: !!data.answering, archived: f.status === 'archived', locked: isLocked(f), working: isWorking(f) };
-    if (!helperLog) helperLog = h('div', { class: 'req-help-log', role: 'log', 'aria-live': 'polite', 'aria-label': 'Ask Worca chat' });
+    if (!helperLog) helperLog = h('div', { class: 'req-help-log', role: 'log', 'aria-live': 'polite', 'aria-label': 'Feature chat messages' });
     const lastRow = msgs.at(-1);
     const unanswered = !ctx.answering && lastRow && lastRow.role === 'po';   // D20
     reconcileLog(helperLog, [
@@ -3014,7 +3014,7 @@ test('style.css: the panel rules sit inside the Requirements block, tokens only;
       icon(ICONS.dots, { size: 16, fill: 'currentColor', stroke: 'none' })), [
       menuItem('Clear chat', () => clearHelper(f), { ui: 'helper-clear', disabled: ctx.answering || ctx.archived || !msgs.length }),
     ]);
-    return h('aside', { class: 'req-help', 'aria-label': 'Ask Worca', onkeydown: (e) => {
+    return h('aside', { class: 'req-help', 'aria-label': 'Feature chat', onkeydown: (e) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return;   // an open menu closes itself first (menu())
       e.preventDefault();
       closeHelper(f);
@@ -3022,13 +3022,13 @@ test('style.css: the panel rules sit inside the Requirements block, tokens only;
       h('div', { class: 'req-help-head' },
         h('button', { type: 'button', class: 'req-ico req-help-back', 'aria-label': `Back to ${f.id}`, 'data-ui': 'helper-back', onclick: () => closeHelper(f) },
           sharedIcon(document, 'chevron-left', 18)),
-        h('div', { class: 'req-help-title' }, h('h3', { text: 'Ask Worca' }),
+        h('div', { class: 'req-help-title' }, h('h3', { text: 'Feature chat' }),
           h('p', { class: 'hint' }, `About ${f.id}`, h('span', { class: 'req-help-wide', text: ' · uses what Worca already knows' }))),
         more,
-        h('button', { type: 'button', class: 'req-ico req-help-close', 'aria-label': 'Close Ask Worca', title: 'Close Ask Worca', 'data-ui': 'helper-close',
+        h('button', { type: 'button', class: 'req-ico req-help-close', 'aria-label': 'Close feature chat', title: 'Close feature chat', 'data-ui': 'helper-close',
           onclick: () => closeHelper(f) }, icon(ICONS.remove, { size: 15 }))),
       helperLog,
-      ctx.archived ? h('p', { class: 'hint req-help-archived', text: 'This feature is archived: you can read the chat, not send. Restore the feature to ask Worca again.' })
+      ctx.archived ? h('p', { class: 'hint req-help-archived', text: 'This feature is archived: you can read the chat, not send. Restore the feature to ask again.' })
         : helperComposer(f, data, ctx));
   }
 ```
@@ -3037,15 +3037,15 @@ test('style.css: the panel rules sit inside the Requirements block, tokens only;
   - In `header(f)`, `h('div', { class: 'req-head-tools' },` gets as its first child:
 
 ```js
-        // A3 D1: Ask Worca opens and closes the chat beside the spec; pressed, an ink border (never a green fill)
+        // A3 D1: Feature chat opens and closes the chat beside the spec; pressed, an ink border (never a green fill)
         h('button', { type: 'button', class: 'btn btn-sm req-help-toggle', 'aria-pressed': helperOpen.get(f.seq) ? 'true' : 'false', 'data-ui': 'helper-toggle',
-          onclick: () => toggleHelper(f) }, 'Ask Worca'),
+          onclick: () => toggleHelper(f) }, 'Feature chat'),
 ```
 
   - In `paintFeature(f, turns)`, replace the whole `paintHost(h('div', { class: 'req-page' }, …));` call with:
 
 ```js
-    // A3 D2: while Ask Worca is open it takes the right column, and Ready to start?, Files and Spec move under the current card
+    // A3 D2: while Feature chat is open it takes the right column, and Ready to start?, Files and Spec move under the current card
     // (A2's Ready panel stays first; boards 16 and 18 draw the Files card above the spec)
     const open = !!helperOpen.get(f.seq);
     const left = conversation(f, turns, rounds, open ? h('div', { class: 'req-moved' }) : null);
@@ -3075,7 +3075,7 @@ test('style.css: the panel rules sit inside the Requirements block, tokens only;
 - [ ] **Step 8: The CSS.** In `ui/public/style.css`, right before `/* ── marketplace P3 ── */`:
 
 ```css
-/* A3 (boards 22, 23, 25; plans/requirements-a3-design.md §6): Ask Worca beside the feature spec. Wider than 900 px the panel takes
+/* A3 (boards 22, 23, 25; plans/requirements-a3-design.md §6): Feature chat beside the feature spec. Wider than 900 px the panel takes
    the right column (420 px) and the Ready, Files and Spec cards move under the current card; at 900 px and narrower it is a
    full-screen sheet with Back and 44 px targets. The pressed toggle has an ink border, never a green fill; board 23 (dark) is
    these tokens and nothing else. */
@@ -3685,7 +3685,7 @@ git commit -m "Requirements: Worca's proposed changes as cards" -m "Co-Authored-
 
 **Files:**
 - Modify: `tools/verify-requirements-cdp.mjs` (the header comment; a new A3 section right before `// ---- The header menus have their panel`)
-- Modify: `docs/requirements.md` (a new `## Ask Worca` section after `## Files`, before `## Which model interviews`)
+- Modify: `docs/requirements.md` (a new `## Feature chat` section after `## Files`, before `## Which model interviews`)
 - Modify: `docs/storage.md` (under `worca-cc.db` in the layout)
 - Modify: `docs/ui-levels.md` (the Requirements table)
 - Modify: `docs/changelog/unreleased.md` (the Requirements entry)
@@ -3697,7 +3697,7 @@ git commit -m "Requirements: Worca's proposed changes as cards" -m "Co-Authored-
 - [ ] **Step 1: The A3 section of the proof.** In `tools/verify-requirements-cdp.mjs`, right before the line `// ---- The header menus have their panel (upstream's .menu box), and at phone width (390 px) every page fits and`, add:
 
 ```js
-// ---- A3: Ask Worca (boards 22–25), in mock mode. A mock reply drafts the first option of the first question that is not the
+// ---- A3: Feature chat (boards 22–25), in mock mode. A mock reply drafts the first option of the first question that is not the
 // recommended one ("Support agents") and proposes the criterion "[mock] A criterion Worca suggests."; WORCA_MOCK_HELPER_MS holds a
 // reply so Answering… and Stop can be seen. A mock proposal is always an add (stale only once its text is a criterion), so the stale card is made by
 // storing one reword proposal straight into the store (this process serves the page) and then editing that criterion by hand.
@@ -3707,11 +3707,11 @@ const helpSeq = await A.evalJs(`(async () => {
     body: JSON.stringify({ scopeType: 'project', scopeKey: key, title: 'Cancel with Worca', description: 'Customers cancel before it ships' }) });
   return (await r.json()).feature.seq; })()`);
 await A.evalJs(`location.hash = '#requirements/feature/${helpSeq}'`);
-check('A3: a new feature waits for round 1\'s answers; Ask Worca is closed and each question offers Help me answer',
+check('A3: a new feature waits for round 1\'s answers; Feature chat is closed and each question offers Help me answer',
   await until(() => A.evalJs(`document.querySelectorAll('#requirements-host .qpanel .req-help-ask').length === 2
     && document.querySelector('[data-ui="helper-toggle"]')?.getAttribute('aria-pressed') === 'false' && !document.querySelector('.req-help')`), 15000));
 await A.evalJs(`document.querySelector('[data-ui="helper-toggle"]').click()`);
-check('A3 board 22: Ask Worca takes the right column (420 px); the spec moves under the question card; the first-open text and its three questions',
+check('A3 board 22: Feature chat takes the right column (420 px); the spec moves under the question card; the first-open text and its three questions',
   await until(() => A.evalJs(`(() => { const p = document.querySelector('#requirements-host aside.req-help'); if (!p) return false;
     return Math.abs(p.getBoundingClientRect().width - 420) <= 1 && !document.querySelector('#requirements-host .req-right')
       && !!document.querySelector('#requirements-host .req-left > .req-moved .req-spec') && document.querySelectorAll('.req-help-starter').length === 3; })()`)));
@@ -3783,7 +3783,7 @@ check('A3 board 23: dark theme from the tokens: panel, ink and draft chip all ch
 // Board 25: at 390 px the panel is a full-screen sheet with Back; Back keeps the drafts in the question card.
 await A.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
 await sleep(300);
-check('A3 board 25: at 390 px Ask Worca is a full-screen sheet with "Back to FEAT-n" and no Close; no sideways scroll',
+check('A3 board 25: at 390 px Feature chat is a full-screen sheet with "Back to FEAT-n" and no Close; no sideways scroll',
   await until(() => A.evalJs(`(() => { const p = document.querySelector('#requirements-host .req-help'); if (!p) return false;
     const r = p.getBoundingClientRect(); const back = p.querySelector('[data-ui="helper-back"]'); const close = p.querySelector('[data-ui="helper-close"]');
     return getComputedStyle(p).position === 'fixed' && Math.round(r.left) === 0 && Math.round(r.top) === 0
@@ -3815,16 +3815,16 @@ check('A3 D6: Submit sends the drafted answer like any answer',
     return !!a && (a.payload.answers.find((x) => x.id === 'who') || {}).answer === 'Support agents'; }, 15000));
 ```
 
-  And extend the file's header comment: after "…at 390 px the Files card fits, its ⋯ menu holds the pencil's entry, 44 px targets);" add " Ask Worca (A3: the toggle and the right column, Help me answer, a draft in the question card, Accept, a stale card and Ask again, Answering… and Stop, the dark theme, the 390 px sheet with Back keeping the draft, Clear chat, Submit sending the draft);".
+  And extend the file's header comment: after "…at 390 px the Files card fits, its ⋯ menu holds the pencil's entry, 44 px targets);" add " Feature chat (A3: the toggle and the right column, Help me answer, a draft in the question card, Accept, a stale card and Ask again, Answering… and Stop, the dark theme, the 390 px sheet with Back keeping the draft, Clear chat, Submit sending the draft);".
 
 - [ ] **Step 2: Run the proof.** `npm run verify:requirements` (Chrome found automatically, or `CHROME_BIN` set) → every check `ok`, ending `all checks passed`. A failure is fixed in the task it belongs to (the view, the CSS) and the proof run again; a check never passes without having seen its state.
 
 - [ ] **Step 3: `docs/requirements.md`.** After the `## Files` section and before `## Which model interviews`, add:
 
 ```markdown
-## Ask Worca
+## Feature chat
 
-**Ask Worca** in a feature's header opens a chat about that feature beside the spec. On a wide screen it takes the right
+**Feature chat** in a feature's header opens a chat about that feature beside the spec. On a wide screen it takes the right
 column, and **Ready to start?**, **Files** and **Spec** move under the question card until you close it; on a narrower screen it
 is a full-screen sheet with **Back**. **Help me answer** on a question of the round waiting for you opens it with that question
 in the composer. You send it yourself: every message costs money.
@@ -3860,7 +3860,7 @@ not used. Everything here is behind the `requirements` flag.
 - [ ] **Step 4: `docs/storage.md`.** Right under the line `  worca-cc.db  (+ -wal, -shm)           ALL structured state (SQLite, WAL mode)`, add:
 
 ```
-                                        (the Requirements chat, Ask Worca: req_helper_messages (v78), one row per
+                                        (the Requirements Feature chat: req_helper_messages (v78), one row per
                                         message, kept until Clear chat; its spend is in req_cost_ledger with
                                         helper_message_id, which Clear chat keeps)
 ```
@@ -3868,11 +3868,11 @@ not used. Everything here is behind the `requirements` flag.
 - [ ] **Step 5: `docs/ui-levels.md`.** In `### Requirements (behind the \`requirements\` flag)`, after the row that starts `| A feature's interview: the question card`, add:
 
 ```markdown
-| Ask Worca: the header's Ask Worca, Help me answer on each open question, the panel beside the spec and the phone sheet (Back), the first-open text and its three questions, the composer and its cost line, Answering… and Stop, the failed, stopped and spending-limit lines, Try again, ⋯ Clear chat | S — product owners are its users |
-| Ask Worca's drafts in the question card (drafted by Worca, ×, "Worca's draft: …") and its proposal cards (Before / After, New, Remove, Confirm / Reject, Why, Reject / Accept / Ask again, Accepted, Rejected, "The spec changed since Worca proposed this.") | S |
+| Feature chat: the header's Feature chat, Help me answer on each open question, the panel beside the spec and the phone sheet (Back), the first-open text and its three questions, the composer and its cost line, Answering… and Stop, the failed, stopped and spending-limit lines, Try again, ⋯ Clear chat | S — product owners are its users |
+| Feature chat's drafts in the question card (drafted by Worca, ×, "Worca's draft: …") and its proposal cards (Before / After, New, Remove, Confirm / Reject, Why, Reject / Accept / Ask again, Accepted, Rejected, "The spec changed since Worca proposed this.") | S |
 ```
 
-- [ ] **Step 6: `docs/changelog/unreleased.md`.** In `## Requirements (experimental)`: append to the paragraph that ends "…and the files you switch on go to the run." the sentence " **Ask Worca** beside a feature answers from what Worca already knows about it, drafts answers to the open questions and proposes spec changes as cards; nothing changes until you submit or accept, and each message shows what it cost."; insert ` · Ask Worca` into the `Chips:` line right before ` · experimental: turn it on in Settings › Labs` (the Labs note stays last); and add `- Requirements: Ask Worca` under "Pull requests (add each number when it opens):".
+- [ ] **Step 6: `docs/changelog/unreleased.md`.** In `## Requirements (experimental)`: append to the paragraph that ends "…and the files you switch on go to the run." the sentence " **Feature chat** beside a feature answers from what Worca already knows about it, drafts answers to the open questions and proposes spec changes as cards; nothing changes until you submit or accept, and each message shows what it cost."; insert ` · Feature chat` into the `Chips:` line right before ` · experimental: turn it on in Settings › Labs` (the Labs note stays last); and add `- Requirements: Feature chat` under "Pull requests (add each number when it opens):".
 
 - [ ] **Step 7: Check the docs.** `node tools/test.mjs test/ui-levels.test.mjs` and `node tools/test.mjs test/docs-site-changelog.test.mjs` → pass; read the four files back: every Markdown table row has the table's column count, and no line names a local path.
 
@@ -3971,7 +3971,7 @@ test('the hard cap: every call gets the budget left as maxBudgetUsd; the tool st
 ```js
 #!/usr/bin/env node
 // tools/requirements-real-helper.mjs
-// Real Ask Worca calls on a fixture feature (plans/requirements-a3-design.md §8 "Real calls"): five messages on a feature with a
+// Real Feature chat calls on a fixture feature (plans/requirements-a3-design.md §8 "Real calls"): five messages on a feature with a
 // product brief, a file and a pending round, each one real helper call through sendMessage and the real runner. Per call: the cost,
 // the cache reads and writes (D4: whether helper calls of one feature share a prefix), and whether the reply parsed. The figures
 // go into the pull request. A sandbox WORCA_HOME (the store lands in <sandbox>/.worca-cc); the real HOME keeps Claude Code signed

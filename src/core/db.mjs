@@ -1368,7 +1368,7 @@ CREATE INDEX IF NOT EXISTS req_attachments_owner ON req_attachments(owner_type, 
 CREATE UNIQUE INDEX IF NOT EXISTS req_attachments_sha ON req_attachments(owner_type, owner_id, sha256);
 `;
 
-// v78 Requirements A3 (plans/requirements-a3-design.md §3, D14): the Ask Worca chat of a feature. A product owner's message
+// v78 Requirements A3 (plans/requirements-a3-design.md §3, D14): the Feature chat of a feature. A product owner's message
 // row is written before its call, Worca's row (text, drafts, proposals, cost, model, or an error) after it. Reconcile-safe:
 // IF NOT EXISTS + INCREMENTAL_TABLES; req_cost_ledger.helper_message_id lives in INCREMENTAL_COLUMNS.
 const REQUIREMENTS_HELPER_DDL = `

@@ -1,4 +1,4 @@
-// test/requirements-helper.test.mjs — Ask Worca's prompt and reply check, without I/O (plans/requirements-a3-design.md D4–D9, D17, D19, §4).
+// test/requirements-helper.test.mjs — Feature chat's prompt and reply check, without I/O (plans/requirements-a3-design.md D4–D9, D17, D19, §4).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -24,7 +24,7 @@ const ARGS = { feature: FEATURE, context: 'Shop notes', turns: TURNS, brief: 'Th
 const R = 'a reason';
 const reply = (over) => normalizeHelperReply({ text: 'ok', ...over }, { spec: SPEC, pending: PENDING, removed: ['Orders can be paused'] });
 // Design §4's system prompt, pinned here as a literal: tests never read plans/ (the plan files are condensed before the PR).
-const EXPECTED_SYSTEM_PROMPT = String.raw`You are Worca's requirements helper. A product owner talks with you in the Ask Worca panel beside a feature they are
+const EXPECTED_SYSTEM_PROMPT = String.raw`You are Worca's requirements helper. A product owner talks with you in the Feature chat panel beside a feature they are
 specifying on Worca's Requirements page. You have no tools: everything you know is in the message. Never say you
 read code or files beyond what the message holds.
 The product owner is not a developer. Answer in plain product language, briefly, in at most 3000 characters.

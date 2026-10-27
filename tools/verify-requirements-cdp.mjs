@@ -14,10 +14,10 @@
 // two files, Reading 2 files…, the Files card, an edit, the ⋯ menu, Ask (Asking…) and Replace, a source tag, a file
 // added after the interview offered as Decide's Ask about <file>, Remove, the Ready row's chips, Start sends the files,
 // the brief's Documents card; at 390 px the Files card fits, its ⋯ menu holds the pencil's entry, 44 px targets);
-// Ask Worca (A3: the toggle and the right column, Help me answer, a draft in the question card, Accept, a stale card
+// Feature chat (A3: the toggle and the right column, Help me answer, a draft in the question card, Accept, a stale card
 // and Ask again, Answering… and Stop, the dark theme, the 390 px sheet with Back keeping the draft, Clear chat, Submit
 // sending the draft); no page errors.
-// NOT part of `npm test`. REQ_SHOTS=<dir> also writes the Ask Worca screens there (a3-*.png) for a human look.
+// NOT part of `npm test`. REQ_SHOTS=<dir> also writes the Feature chat screens there (a3-*.png) for a human look.
 // Run: npm run verify:requirements   (set CHROME_BIN to a Chrome/Chromium binary if it is not auto-found,
 // e.g. CHROME_BIN="C:/Program Files/Google/Chrome/Application/chrome.exe" on Windows)
 //
@@ -434,7 +434,7 @@ check("the brief's Documents card lists the document, read, with Send with every
   await until(() => A.evalJs(`(() => { const r = document.querySelector('#requirements-host .req-docs .req-file');
     return !!r && /What Worca took from it/.test(r.textContent) && !!r.querySelector('[aria-label="Send tone.md with every run"]')
       && [...document.querySelectorAll('#requirements-host .chip')].some((c) => c.textContent === '1 document'); })()`), 10000));
-// ---- A3: Ask Worca (boards 22–25), in mock mode. A mock reply drafts the first option of the first question that is not the
+// ---- A3: Feature chat (boards 22–25), in mock mode. A mock reply drafts the first option of the first question that is not the
 // recommended one ("Support agents") and proposes the criterion "[mock] A criterion Worca suggests."; WORCA_MOCK_HELPER_MS holds a
 // reply so Answering… and Stop can be seen. A mock proposal is always an add (stale only once its text is a criterion), so the stale card is made by
 // storing one reword proposal straight into the store (this process serves the page) and then editing that criterion by hand.
@@ -481,11 +481,11 @@ const helpSeq = await A.evalJs(`(async () => {
 await A.evalJs(`fetch('/api/onboarding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ welcomeSeen: true }) })
   .then(() => { document.querySelector('#welcome-modal:not(.hidden) .ob-skip')?.click(); })`);
 await A.evalJs(`location.hash = '#requirements/feature/${helpSeq}'`);
-check('A3: a new feature waits for round 1\'s answers; Ask Worca is closed and each question offers Help me answer',
+check('A3: a new feature waits for round 1\'s answers; Feature chat is closed and each question offers Help me answer',
   await until(() => A.evalJs(`document.querySelectorAll('#requirements-host .qpanel .req-help-ask').length === 2
     && document.querySelector('[data-ui="helper-toggle"]')?.getAttribute('aria-pressed') === 'false' && !document.querySelector('.req-help')`), 15000));
 await A.evalJs(`document.querySelector('[data-ui="helper-toggle"]').click()`);
-check('A3 board 22: Ask Worca takes the right column (420 px); the spec moves under the question card; the first-open text and its three questions',
+check('A3 board 22: Feature chat takes the right column (420 px); the spec moves under the question card; the first-open text and its three questions',
   await until(() => A.evalJs(`(() => { const p = document.querySelector('#requirements-host aside.req-help'); if (!p) return false;
     return Math.abs(p.getBoundingClientRect().width - 420) <= 1 && !document.querySelector('#requirements-host .req-right')
       && !!document.querySelector('#requirements-host .req-left > .req-moved .req-spec') && document.querySelectorAll('.req-help-starter').length === 3; })()`)));
@@ -597,7 +597,7 @@ const sheetNow = () => A.evalJs(`(() => { const p = document.querySelector('#req
 const sheetOk = (s) => !!s && s.position === 'fixed' && s.box.join() === [0, 0, s.w, s.hh].join() && !s.notOn.length
   && s.back === `Back to FEAT-${helpSeq}` && s.close === 'none' && s.scrollW === s.w;
 let sheet = null;
-check('A3 board 25: at 390 px Ask Worca is a full-screen sheet over the page with "Back to FEAT-n" and no Close; no sideways scroll',
+check('A3 board 25: at 390 px Feature chat is a full-screen sheet over the page with "Back to FEAT-n" and no Close; no sideways scroll',
   await until(async () => sheetOk(sheet = await sheetNow())), JSON.stringify(sheet));
 // A target is its hit area (style.css: a .btn-sm grows by an absolutely placed ::after, inset -9px 0): 44 px tall; an icon
 // button 44 px wide too (the Files card's rule below).

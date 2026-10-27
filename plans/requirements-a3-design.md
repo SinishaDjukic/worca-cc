@@ -1,4 +1,4 @@
-# Requirements A3: helper chat (Ask Worca beside the feature spec)
+# Requirements A3: helper chat (Feature chat beside the feature spec)
 
 Date: 2026-10-26. Base: `feat/req-a8-attachments` (bba664958, PR #975 into `dev`). Branch: `feat/req-a3-helper`. Part A3
 of the requirements track. A1 is `plans/requirements-design.md` (A1-D<n>), A2 is `plans/requirements-a2-design.md`
@@ -15,7 +15,7 @@ it already knows about the feature, drafts answers to the open interview questio
 Nothing changes until the product owner presses Submit (for drafts) or Accept (for a change).
 
 **Success:**
-1. **Help me answer** on an open interview question and **Ask Worca** in the feature header open one chat per feature,
+1. **Help me answer** on an open interview question and **Feature chat** in the feature header open one chat per feature,
    kept with the feature until it is cleared.
 2. A drafted answer appears in the question card marked **drafted by Worca**, with Worca's reason; it is never sent
    by itself, and × clears it.
@@ -31,7 +31,7 @@ Nothing changes until the product owner presses Submit (for drafts) or Accept (f
 
 | # | Decision |
 |---|---|
-| D1 | **Two openers; closed by default.** **Ask Worca** in the feature header (`.req-head-tools`, before **Export**) is a toggle button (`aria-pressed`) that opens and closes the panel for general talk. **Help me answer** sits on each question of the pending round's question card (not the card of an earlier round being changed, A2-D12); it opens the panel with that question in focus: the composer shows the cap "Help me answer · question <n>" and is filled with the question's text, and the product owner sends it (Enter or **Send**). A message sent with a focus records it (`focus: { roundTurnId, questionId, n }`) and shows the same cap above its text (board 22). Help me answer never sends by itself, because every message costs money. |
+| D1 | **Two openers; closed by default.** **Feature chat** (user decision 2026-10-27: renamed from Ask Worca to match upstream's Chat rename) in the feature header (`.req-head-tools`, before **Export**) is a toggle button (`aria-pressed`) that opens and closes the panel for general talk. **Help me answer** sits on each question of the pending round's question card (not the card of an earlier round being changed, A2-D12); it opens the panel with that question in focus: the composer shows the cap "Help me answer · question <n>" and is filled with the question's text, and the product owner sends it (Enter or **Send**). A message sent with a focus records it (`focus: { roundTurnId, questionId, n }`) and shows the same cap above its text (board 22). Help me answer never sends by itself, because every message costs money. |
 | D2 | **One chat per feature, beside the page.** Wider than 900 px the panel (420 px) takes the right column (`.req-cols.with-helper`, `minmax(0,1fr) 420px`); the Ready to start?, Files and Spec cards move under the question card (after the current card, before the earlier rounds) and go back when the panel closes. At 900 px and narrower the panel is a full-screen sheet with **Back** ("Back to FEAT-7"); Back returns to the feature with the drafts kept in the question card (the view's `draft` state, which the sheet does not reset). (code-forced; confirmed): the boards split desktop and phone only; the page already drops to one column at 900 px (`.req-cols`, style.css), where a right-column panel has no column to take, so the sheet starts there, not at 600 px. Whether the panel was open is kept per feature for the page session only. |
 | D3 | **One message = one call, built like a round.** One `callModel(d, { kind: 'round', … })` per message (A1.1 §9), with `systemPrompt: HELPER_SYSTEM_PROMPT` (§4), `tools: []`, `noSessionPersistence: true`, `cwd: scratchDir()`, the interview model and effort (`interviewModel(d)`, effort passed explicitly as the round does), `timeoutMs: HELPER_TIMEOUT_MS = 180_000`, and the call's own `signal` (D12). Replace mode, the hermetic flags and A1.1-D6's sign-in exception apply as to every interview call. No new call kind: `CALL_KINDS` stays `look` / `round`, and every existing call's options stay byte for byte as they are. |
 | D4 | **The prompt.** The fixed part is `roundPromptParts(…).stable` verbatim, built with the same arguments a round of this feature would use (context, brief with documents, `<attachments>`). The changing part is `<thread>`, `<current_spec>`, `<edited_by_product_owner>` (the round's own blocks), `<open_questions>` (the pending round's questions, only when there is one), `<chat>` (the earlier messages, newest first until 12,000 characters, then in order), `<question_in_focus>` (only with a focus) and `<message>` (§4). (code-forced; confirmed): the approved section 2 put the spec in the cached part and promised that "asking the helper right after a round is cheap". In the code the spec is in the round's changing part (`<current_spec>`), and the helper's own system prompt comes before the message, so a round's cached prefix is never reused by a helper call; A1.1-D7 also found that `claude -p` sends the prompt as one block, so the order inside it saves little. A3 keeps the stable-first order (helper calls of one feature may share a prefix) and promises no saving; the real-call tool (§8) measures it. |
@@ -46,9 +46,9 @@ Nothing changes until the product owner presses Submit (for drafts) or Accept (f
 | D13 | **Spend.** The budget is checked before every call (`assertBudget`, exported from `interview.mjs`); a refused send answers 409 `BUDGET` and nothing is written. Each call's cost (attempts included) is booked in one transaction, together with Worca's row: `addFeatureCost(seq, usd)` (the header's "$X so far" includes the chat) and a `req_cost_ledger` row with the new `helper_message_id` (D14; `turn_id` NULL), so it counts toward the spending limit through `requirementsWindowedSpendUsd`. Each reply shows its cost ("$0.02") when it cost something. The composer line reads "<model label> · about $L–H a message · Enter sends, Shift+Enter new line" (phone: "about $L–H a message"): `L–H` is the lowest to highest cost of the last 10 ledger rows with a `helper_message_id` (one value when they agree), and "$0.01–0.05" (board 22) while there is none. Clearing a chat keeps its ledger rows. |
 | D14 | **Storage.** One new table, `req_helper_messages` (§3), at schema v78, `IF NOT EXISTS` and in `INCREMENTAL_TABLES`, with `req_cost_ledger.helper_message_id` in `INCREMENTAL_COLUMNS`. A product owner's message row is written before the call; Worca's row (text, drafts, proposals, cost, model, or an error) after it. **Clear chat** (⋯ menu, confirm "Clear the chat? Changes you accepted stay in the spec.") deletes the feature's rows; accepted changes stay in the spec and their edit turns in the thread. A feature is never deleted (A8 §10), so its chat stays until cleared. No cap on stored messages; only the prompt is bounded (D4). |
 | D15 | **The chat is not part of the interview.** (code-forced; confirmed): helper messages are not added to `req_turns` and are not fed to later rounds, looks or the brief; a round's `threadText` never sees them. What reaches the interview is only what the product owner accepts or submits: accepted proposals as ordinary `edit` / `assumption` turns through the edit functions (D10), drafts as ordinary `answers` turns when Submit sends them. |
-| D16 | **Archived, flag.** An archived feature's chat is readable: the composer is replaced by "This feature is archived: you can read the chat, not send. Restore the feature to ask Worca again."; Send, Accept, Ask again, Try again and Clear chat are refused (CONFLICT). Everything is behind the `requirements` flag: the routes join `REQUIREMENTS_ROUTES` (so the flag-off walk covers them), replies reach the page through the existing flag-checking `requirements-changed` frame, and with the flag off nothing shows or answers. |
+| D16 | **Archived, flag.** An archived feature's chat is readable: the composer is replaced by "This feature is archived: you can read the chat, not send. Restore the feature to ask again."; Send, Accept, Ask again, Try again and Clear chat are refused (CONFLICT). Everything is behind the `requirements` flag: the routes join `REQUIREMENTS_ROUTES` (so the flag-off walk covers them), replies reach the page through the existing flag-checking `requirements-changed` frame, and with the flag off nothing shows or answers. |
 | D17 | **Safety.** Every block of the prompt is `asData`-escaped and named in the system prompt's data rule; the product owner's request is only the text inside `<message>`. No tools, so no file, code or network access; what the helper knows is what the prompt holds: the spec, the thread, the brief and its document summaries, the files' summaries and small texts, and the code look's summary. When that is not enough, the reply suggests the page's own actions by name (**Look closer**, **Ask about this file**) in its text; they are not buttons in the chat. Nothing changes without the product owner's click. `noSessionPersistence` keeps no Claude Code transcript of the call. |
-| D18 | **Accessibility.** The log is `role="log"` `aria-live="polite"`; each proposal card is `role="group"` with `aria-label` "Proposed change: <section or id>"; the stale line is `role="alert"`, Accepted / Rejected and "Answering…" `role="status"`; the draft's × is "Clear Worca's draft for question <n>"; the panel's buttons "More for this chat" and "Close Ask Worca"; the sheet's Back "Back to FEAT-<n>". At 900 px and narrower every control keeps a 44 px target (board 25). Enter sends, Shift+Enter adds a line; Escape closes the panel and returns the focus to its opener. |
+| D18 | **Accessibility.** The log is `role="log"` `aria-live="polite"`; each proposal card is `role="group"` with `aria-label` "Proposed change: <section or id>"; the stale line is `role="alert"`, Accepted / Rejected and "Answering…" `role="status"`; the draft's × is "Clear Worca's draft for question <n>"; the panel's buttons "More for this chat" and "Close feature chat"; the sheet's Back "Back to FEAT-<n>". At 900 px and narrower every control keeps a 44 px target (board 25). Enter sends, Shift+Enter adds a line; Escape closes the panel and returns the focus to its opener. |
 | D19 | **Mock mode** (`WORCA_MOCK=1`, A1-D13): no spawn; the reply is "[mock] Worca's answer to: <message>" with, when a round is pending, a draft picking the first option of its first question that is not the recommended one, and one proposal adding the criterion "[mock] A criterion Worca suggests.", costing nothing, so the drafts and cards show in tests and the browser proof. |
 | D20 | **Restarts.** No boot sweep: a product owner's message with no Worca row after it and no running call shows "Worca could not answer. Try again." with **Try again**, which re-asks that message. Try again shows on the newest row only. |
 
@@ -91,7 +91,7 @@ remove, confirm or reject). `n` numbers the proposals within their message from 
 **`HELPER_SYSTEM_PROMPT`** (new, `helper.mjs`), the same for every call:
 
 ```
-You are Worca's requirements helper. A product owner talks with you in the Ask Worca panel beside a feature they are
+You are Worca's requirements helper. A product owner talks with you in the Feature chat panel beside a feature they are
 specifying on Worca's Requirements page. You have no tools: everything you know is in the message. Never say you
 read code or files beyond what the message holds.
 The product owner is not a developer. Answer in plain product language, briefly, in at most 3000 characters.
@@ -161,13 +161,13 @@ open panel refetches `GET …/helper` with the feature.
 Built with upstream's classes as the shipped Requirements pages are (`.card`, one `.btn` with `.btn-sm` /
 `.btn-primary`, `.badge`, `.menu` / `.menu-item` through the page's `menu()`); CSS as `req-help-*` rules inside the
 Requirements block of `ui/public/style.css`, before `/* ── marketplace P3 ── */`, tokens only. Board 23 is the dark
-theme of board 22 and needs nothing but the tokens. On/off controls are never green-filled; the pressed **Ask Worca**
+theme of board 22 and needs nothing but the tokens. On/off controls are never green-filled; the pressed **Feature chat**
 button has an ink border. The dashed blue "drafted by Worca" chip is blue because blue means active.
 
-- **Helper open** (board 22): the header gains **Ask Worca** (D1). Each pending question gains **Help me answer** at
+- **Helper open** (board 22): the header gains **Feature chat** (D1). Each pending question gains **Help me answer** at
   the right of its text. A drafted question shows the chip **drafted by Worca ×** and "Worca's draft: <why>" (D6). The
-  panel: head **Ask Worca**, "About FEAT-7 · uses what Worca already knows", ⋯ ("More for this chat": **Clear chat**)
-  and × ("Close Ask Worca"); the log; the composer labelled "Ask about this feature" with **Send** and the cost line
+  panel: head **Feature chat**, "About FEAT-7 · uses what Worca already knows", ⋯ ("More for this chat": **Clear chat**)
+  and × ("Close feature chat"); the log; the composer labelled "Ask about this feature" with **Send** and the cost line
   of D13. A product owner's message is a bubble on the right (with its cap, D1); Worca's reply is plain text with
   its cards and its cost.
 - **Proposal cards** (board 24, cards 1–6): head "Proposed change · <section>" (with "· add", "· R-po-3", "· confirm
@@ -177,7 +177,7 @@ button has an ink border. The dashed blue "drafted by Worca" chip is blue becaus
   questions) plus "Acceptance criteria" and "Assumptions"; board 24's "Rules" is "Business rules". Accepted: head
   "Change · …", the green check and "Accepted · now in the spec as your edit" (green ink, never a fill). Rejected:
   "Rejected". Stale: the amber alert "The spec changed since Worca proposed this." with **Reject** and **Ask again**.
-- **First open** (card 7): "Ask Worca about this feature. It knows the spec, the interview so far, the product brief,
+- **First open** (card 7): "Ask about this feature here. It knows the spec, the interview so far, the product brief,
   your files and what it found in the code. It can draft answers to open questions and suggest spec changes — nothing
   changes until you accept." and three buttons that send at once: "Is anything missing from this spec?", "Which
   criteria can't be tested?", "What edge cases am I missing?". It shows while the chat has no messages.
@@ -185,7 +185,7 @@ button has an ink border. The dashed blue "drafted by Worca" chip is blue becaus
   **Stop**, then "Send and Accept wait while Worca answers. Stop cancels the reply; your message stays in the chat."
   Send, Accept and Clear chat are disabled meanwhile.
 - **Phone** (board 25, at 900 px and narrower, D2): the question card's **Help me answer** on its own line, 44 px; the
-  sheet's head with Back ("Back to FEAT-7"), **Ask Worca**, "About FEAT-7" and ⋯; Reject / Accept side by side at 44 px;
+  sheet's head with Back ("Back to FEAT-7"), **Feature chat**, "About FEAT-7" and ⋯; Reject / Accept side by side at 44 px;
   the composer with "about $L–H a message" and **Send**.
 
 **Lines in the chat and errors (rebuilt from boards 22–25; confirmed):**
@@ -223,7 +223,7 @@ button has an ink border. The dashed blue "drafted by Worca" chip is blue becaus
 - `src/core/cost-budget.mjs`: `helperMessageId` in `recordRequirementsCostDelta`.
 - `src/core/db.mjs`: `req_helper_messages`, the column, v78.
 - `routes.mjs`: §5; `featureView`'s `helper`.
-- `ui/public/requirements-view.mjs`: the Ask Worca toggle, Help me answer, the panel and sheet, the draft chip and its
+- `ui/public/requirements-view.mjs`: the Feature chat toggle, Help me answer, the panel and sheet, the draft chip and its
   state (`draft.drafted: { [questionId]: msgId }`), the cards, the composer (kept across repaints by `capture`, `data-ui`
   "helper-in"); `ui/public/style.css`: §6.
 - `tools/requirements-real-helper.mjs` (new): real helper calls for a fixture feature, capped (`--max-usd 1.00`), a dry
@@ -260,11 +260,11 @@ button has an ink border. The dashed blue "drafted by Worca" chip is blue becaus
   brief and a file; cost per message (it sets the "$0.01–0.05" starting range of D13 or replaces it), cache reads, the
   reply parses. The figures go into the PR description.
 - **Linux:** the full `npm test` and `npm run smoke`.
-- **Docs:** `docs/requirements.md` (an **Ask Worca** section: what it knows, drafts, proposals, costs, Stop, Clear
+- **Docs:** `docs/requirements.md` (a **Feature chat** section: what it knows, drafts, proposals, costs, Stop, Clear
   chat), `docs/storage.md` (`req_helper_messages`), `docs/ui-levels.md` and the Requirements entry of
   `docs/changelog/unreleased.md`.
 
-**Levels** (`docs/ui-levels.md`, Requirements): Ask Worca, Help me answer, the panel and sheet, drafts and proposal
+**Levels** (`docs/ui-levels.md`, Requirements): Feature chat, Help me answer, the panel and sheet, drafts and proposal
 cards — **S** (product owners are its users).
 
 ## 9. Where A3 meets A8 and A2

@@ -1,4 +1,4 @@
-// test/requirements-view-helper.test.mjs — Ask Worca on the feature page in jsdom with a fake API (plans/requirements-a3-design.md §6,
+// test/requirements-view-helper.test.mjs — Feature chat on the feature page in jsdom with a fake API (plans/requirements-a3-design.md §6,
 // D1, D2, D6–D13, D16, D18, D20; design round 4, boards 22–25). Tasks 7 and 8 add to it.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -76,10 +76,10 @@ async function openPanel(m) { toggle(m.host).click(); await settle(); return m.h
 
 // ── board 22: the toggle, the right column, the head, the first open ─────────────────
 
-test('board 22: Ask Worca sits before Export, closed by default; pressed it takes the right column and the cards move under the current card', async () => {
+test('board 22: Feature chat sits before Export, closed by default; pressed it takes the right column and the cards move under the current card', async () => {
   const m = await openFeature();
   const t = toggle(m.host);
-  assert.deepEqual([t.textContent, t.getAttribute('aria-pressed')], ['Ask Worca', 'false']);
+  assert.deepEqual([t.textContent, t.getAttribute('aria-pressed')], ['Feature chat', 'false']);
   assert.ok(t.compareDocumentPosition(m.host.querySelector('[data-ui="menu-export"]')) & Node.DOCUMENT_POSITION_FOLLOWING, 'before Export');
   assert.equal(m.host.querySelector('.req-help'), null);
   assert.ok(!m.calls.some((c) => c.url === '/api/requirements/7/helper'), 'a chat without messages is not fetched while closed');
@@ -94,7 +94,7 @@ test('board 22: Ask Worca sits before Export, closed by default; pressed it take
   assert.ok(kids[q + 1].classList.contains('req-moved'), 'right after the current card');
   assert.ok(kids[q + 2].classList.contains('req-rounds'), 'before the earlier rounds');
   assert.deepEqual([...kids[q + 1].children].map((c) => ['req-ready', 'req-files', 'req-spec'].find((x) => c.classList.contains(x))), ['req-ready', 'req-files', 'req-spec']);
-  assert.ok(cols.lastElementChild.matches('aside.req-help[aria-label="Ask Worca"]'));
+  assert.ok(cols.lastElementChild.matches('aside.req-help[aria-label="Feature chat"]'));
   toggle(m.host).click();
   await settle();
   assert.equal(m.host.querySelector('.req-help'), null);
@@ -107,15 +107,15 @@ test('board 22 / card 7: the head, the log, the first-open text and three questi
   const s = {};
   const m = await openFeature(s, { 'POST /api/requirements/7/helper/messages': (b) => { sent.push(b); return (s.helper = chat([po(1, b.text)], { answering: true })); } });
   const p = await openPanel(m);
-  assert.equal(text(p.querySelector('.req-help-head h3')), 'Ask Worca');
+  assert.equal(text(p.querySelector('.req-help-head h3')), 'Feature chat');
   assert.equal(text(p.querySelector('.req-help-head .hint')), 'About FEAT-7 · uses what Worca already knows');
   const more = p.querySelector('[data-ui="helper-more"]');
   assert.deepEqual([more.getAttribute('aria-label'), more.getAttribute('aria-haspopup')], ['More for this chat', 'menu']);
-  assert.equal(p.querySelector('[data-ui="helper-close"]').getAttribute('aria-label'), 'Close Ask Worca');
+  assert.equal(p.querySelector('[data-ui="helper-close"]').getAttribute('aria-label'), 'Close feature chat');
   assert.equal(p.querySelector('[data-ui="helper-back"]').getAttribute('aria-label'), 'Back to FEAT-7');
   const log = p.querySelector('.req-help-log');
   assert.deepEqual([log.getAttribute('role'), log.getAttribute('aria-live')], ['log', 'polite']);
-  assert.equal(text(p.querySelector('.req-help-empty p')), 'Ask Worca about this feature. It knows the spec, the interview so far, the product brief, your files and what it found in the code. It can draft answers to open questions and suggest spec changes — nothing changes until you accept.');
+  assert.equal(text(p.querySelector('.req-help-empty p')), 'Ask about this feature here. It knows the spec, the interview so far, the product brief, your files and what it found in the code. It can draft answers to open questions and suggest spec changes — nothing changes until you accept.');
   const starters = [...p.querySelectorAll('.req-help-starter')];
   assert.deepEqual(starters.map((b) => b.textContent), ['Is anything missing from this spec?', "Which criteria can't be tested?", 'What edge cases am I missing?']);
   starters[1].click();
@@ -256,7 +256,7 @@ test('D16: an archived feature\'s chat can be read: the archived line instead of
   const m = await openFeature({ f: feature({ status: 'archived', state: 'archived', pending: null, helper: { answering: false, messages: 2 } }), helper: chat([po(1, 'A'), worca(2, 'B')]) });
   const p = await openPanel(m);
   assert.equal(p.querySelector('[data-ui="helper-in"]'), null);
-  assert.equal(text(p.querySelector('.req-help-archived')), 'This feature is archived: you can read the chat, not send. Restore the feature to ask Worca again.');
+  assert.equal(text(p.querySelector('.req-help-archived')), 'This feature is archived: you can read the chat, not send. Restore the feature to ask again.');
   assert.equal(p.querySelector('[data-msg="2"] .req-help-text').textContent, 'B');
   p.querySelector('[data-ui="helper-more"]').click();
   assert.equal(p.querySelector('[data-ui="helper-clear"]').disabled, true);
@@ -295,7 +295,7 @@ test('a chat that cannot be read keeps the last one shown: no first-open text, n
   assert.equal(m.host.querySelector('[data-msg="2"] .req-help-text').textContent, 'B');
 });
 
-test('D18: Escape and Close shut the panel and give the focus back to Ask Worca; so does Back (the phone sheet)', async () => {
+test('D18: Escape and Close shut the panel and give the focus back to Feature chat; so does Back (the phone sheet)', async () => {
   const m = await openFeature();
   let p = await openPanel(m);
   key(p.querySelector('[data-ui="helper-in"]'), 'Escape');

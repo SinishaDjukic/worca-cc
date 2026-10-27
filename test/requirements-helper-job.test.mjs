@@ -1,4 +1,4 @@
-// test/requirements-helper-job.test.mjs — one Ask Worca call per message, with a fake runner; never a real claude
+// test/requirements-helper-job.test.mjs — one Feature chat call per message, with a fake runner; never a real claude
 // (plans/requirements-a3-design.md D3, D11–D13, D15, D19, D20).
 import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';

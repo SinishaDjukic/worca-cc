@@ -94,7 +94,7 @@ export function askWindowedSpendUsd(fromMs, toMs = null) {
 /** Append one requirements cost event (plans/requirements-design.md D9): an orientation pass or an
  *  interview round (`featureSeq`, with its `turnId`), or a product brief look (A7: `featureSeq` 0 and the
  *  brief's `briefId`); A8 adds `attachmentId` for a file's read or ask, under its feature or its brief; A3 adds
- *  `helperMessageId` for an Ask Worca call (no turn). Same no-op gate as the other ledgers ($0 mock calls leave no row). */
+ *  `helperMessageId` for a Feature chat call (no turn). Same no-op gate as the other ledgers ($0 mock calls leave no row). */
 export function recordRequirementsCostDelta({ featureSeq = 0, briefId = null, turnId = null, attachmentId = null, helperMessageId = null, amountUsd,
   model = null, tsMs = Date.now() }) {
   if ((!featureSeq && !briefId) || !Number.isFinite(amountUsd) || amountUsd <= 0) return;

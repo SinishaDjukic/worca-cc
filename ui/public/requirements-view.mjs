@@ -234,7 +234,7 @@ function rowMeta(f) {
 const isWorking = (f) => !!f.busy || f.status === 'looking' || f.status === 'thinking';
 // Worca is working, or the feature is archived: nothing on the page may be changed.
 const isLocked = (f) => isWorking(f) || f.status === 'archived';
-// The goal's success measure, as the spec card shows it (and Ask Worca's goal card, A3 board 24).
+// The goal's success measure, as the spec card shows it (and Feature chat's goal card, A3 board 24).
 const measureText = (measure) => `Measure: ${measure}`;
 
 export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
@@ -296,7 +296,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   let workflowsFailed = false;     // GET /api/workflows failed: Auto only, and the card says so
   const assumePosting = new Set(); // assumption ids whose Confirm / Reject POST is in flight
   const pickPosting = new Set();   // file ids whose Files for the run chip PATCH is in flight (board 18)
-  // A3 (boards 22–25): Ask Worca. Whether the panel is open, per feature for the page session (D2); the chat as last fetched
+  // A3 (boards 22–25): Feature chat. Whether the panel is open, per feature for the page session (D2); the chat as last fetched
   // (GET …/helper, or null); the composer's unsent text, its focus cap (Help me answer), the control that opened the panel
   // (Escape, Close and Back give the focus back to it), the last refusal and a spent budget; the drafts applied to the question
   // card this visit ('<msgId>:<questionId>', so a repaint never applies one again, D6); the log and its message nodes, kept
@@ -474,7 +474,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   // Every paint goes through here: a null or false child never reaches the DOM
   // (replaceChildren would render it as the text "null").
-  // A3 (board 25): at 900 px and narrower Ask Worca is a full-screen sheet; while it is open the page behind it (every sibling along
+  // A3 (board 25): at 900 px and narrower Feature chat is a full-screen sheet; while it is open the page behind it (every sibling along
   // the sheet's ancestors, up to <body>) is inert, so Tab cannot leave it. Beside the page (desktop) nothing is inert. Re-synced on
   // every paint, so closing, Back, and a change of feature or page put the page back; a dialog stays as it is.
   const sheetQuery = () => (typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia('(max-width:900px)') : null);
@@ -1333,7 +1333,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       open && f.lastError ? h('div', { class: 'req-error form-msg err' }, f.lastError, ' ',
         h('button', { type: 'button', class: 'btn btn-sm req-retry', onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/retry`, {}); await paint(); }) }, 'Try again')) : null,
       card,
-      moved,   // A3 D2: Ready to start?, Files and Spec, while Ask Worca takes the right column
+      moved,   // A3 D2: Ready to start?, Files and Spec, while Feature chat takes the right column
       earlierRounds(f, rounds),
       f.brief ? knowsCard(f, turns) : orientationBox(f, turns));
   }
@@ -2481,7 +2481,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   // Each item has a data-ui, so a live repaint keeps the focus on it inside the open menu.
   const menuItem = (label, onclick, { disabled = false, ui: key = null, needsGit = false } = {}) => h('button', { type: 'button', role: 'menuitem', class: 'menu-item req-menu-item', 'data-ui': key, 'data-needs-git': needsGit, disabled, onclick }, label);
 
-  // ---- A3: Ask Worca (boards 22, 23, 25; plans/requirements-a3-design.md §6) ----
+  // ---- A3: Feature chat (boards 22, 23, 25; plans/requirements-a3-design.md §6) ----
   const HELP_STARTERS = ['Is anything missing from this spec?', "Which criteria can't be tested?", 'What edge cases am I missing?'];
   const HELP_FAILED = 'Worca could not answer. Try again.';
   /** A 404 that names a chat message or a change (another tab cleared the chat) says so; any other 404 is the page's own line. */
@@ -2829,7 +2829,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
   /** Card 7: what Worca knows, and three questions that send at once (none on an archived feature). */
   const helperEmpty = (f, ctx) => h('div', { class: 'req-help-empty' },
-    h('p', { text: 'Ask Worca about this feature. It knows the spec, the interview so far, the product brief, your files and what it found in the code. It can draft answers to open questions and suggest spec changes — nothing changes until you accept.' }),
+    h('p', { text: 'Ask about this feature here. It knows the spec, the interview so far, the product brief, your files and what it found in the code. It can draft answers to open questions and suggest spec changes — nothing changes until you accept.' }),
     ctx.archived ? null : h('div', { class: 'req-help-starters' }, ...HELP_STARTERS.map((q, i) => h('button', { type: 'button', class: 'btn btn-sm req-help-starter',
       'data-ui': `helper-starter-${i}`, disabled: ctx.working, onclick: () => sendHelper(f, q, null) }, q))));
   /** The composer (board 22): Enter sends, Shift+Enter adds a line; the count past 1,800; Send off when empty, past 2,000, while
@@ -2871,7 +2871,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const data = helpChat(f);
     const msgs = data.messages || [];
     const ctx = { answering: !!data.answering, archived: f.status === 'archived', locked: isLocked(f), working: isWorking(f) };
-    if (!helperLog) helperLog = h('div', { class: 'req-help-log', role: 'log', 'aria-live': 'polite', 'aria-label': 'Ask Worca chat' });
+    if (!helperLog) helperLog = h('div', { class: 'req-help-log', role: 'log', 'aria-live': 'polite', 'aria-label': 'Feature chat messages' });
     const lastRow = msgs.at(-1);
     const unanswered = !ctx.answering && lastRow && lastRow.role === 'po';   // D20
     // a chat with messages that could not be read: never card 7's text and its starters (each a paid call) over it
@@ -2893,7 +2893,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       icon(ICONS.dots, { size: 16, fill: 'currentColor', stroke: 'none' })), [
       menuItem('Clear chat', () => clearHelper(f), { ui: 'helper-clear', disabled: ctx.answering || ctx.archived || !msgs.length }),
     ]);
-    return h('aside', { class: 'req-help', 'aria-label': 'Ask Worca', onkeydown: (e) => {
+    return h('aside', { class: 'req-help', 'aria-label': 'Feature chat', onkeydown: (e) => {
       // an open menu closes itself first (menu()); an input method's Escape cancels its composition, not the panel
       if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return;
       e.preventDefault();
@@ -2902,13 +2902,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       h('div', { class: 'req-help-head' },
         h('button', { type: 'button', class: 'req-ico req-help-back', 'aria-label': `Back to ${f.id}`, 'data-ui': 'helper-back', onclick: () => closeHelper(f) },
           sharedIcon(document, 'chevron-left', 18)),
-        h('div', { class: 'req-help-title' }, h('h3', { text: 'Ask Worca' }),
+        h('div', { class: 'req-help-title' }, h('h3', { text: 'Feature chat' }),
           h('p', { class: 'hint' }, `About ${f.id}`, h('span', { class: 'req-help-wide', text: ' · uses what Worca already knows' }))),
         more,
-        h('button', { type: 'button', class: 'req-ico req-help-close', 'aria-label': 'Close Ask Worca', title: 'Close Ask Worca', 'data-ui': 'helper-close',
+        h('button', { type: 'button', class: 'req-ico req-help-close', 'aria-label': 'Close feature chat', title: 'Close feature chat', 'data-ui': 'helper-close',
           onclick: () => closeHelper(f) }, icon(ICONS.remove, { size: 15 }))),
       helperLog,
-      ctx.archived ? h('p', { class: 'hint req-help-archived', text: 'This feature is archived: you can read the chat, not send. Restore the feature to ask Worca again.' })
+      ctx.archived ? h('p', { class: 'hint req-help-archived', text: 'This feature is archived: you can read the chat, not send. Restore the feature to ask again.' })
         : helperComposer(f, data, ctx));
   }
 
@@ -2943,9 +2943,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           (f.attachments || []).length ? h('span', { class: 'chip', text: plural(f.attachments.length, 'file') }) : null,   // A8 (board 16)
           f.savedPath ? h('span', { class: 'chip', text: `Saved as ${f.savedPath}` }) : null)),
       h('div', { class: 'req-head-tools' },
-        // A3 D1: Ask Worca opens and closes the chat beside the spec; pressed, an ink border (never a green fill)
+        // A3 D1: Feature chat opens and closes the chat beside the spec; pressed, an ink border (never a green fill)
         h('button', { type: 'button', class: 'btn btn-sm req-help-toggle', 'aria-pressed': helperOpen.get(f.seq) ? 'true' : 'false', 'data-ui': 'helper-toggle',
-          onclick: () => toggleHelper(f) }, 'Ask Worca'),
+          onclick: () => toggleHelper(f) }, 'Feature chat'),
         menu('export', h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'menu-export' }, 'Export', sharedIcon(document, 'chevron-down', 14)), [
           f.scopeType === 'project' ? menuItem('Save to specs/', save, { ui: 'mi-save' }) : null,
           menuItem('Copy Markdown', copy, { ui: 'mi-copy' }),
@@ -2974,7 +2974,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     seqScope.set(Number(f.seq), scopeId(f));
     const focus = capture(f);
     const rounds = roundsOf(turns);
-    // A3 D2: while Ask Worca is open it takes the right column, and Ready to start?, Files and Spec move under the current card
+    // A3 D2: while Feature chat is open it takes the right column, and Ready to start?, Files and Spec move under the current card
     // (A2's Ready panel stays first; boards 16 and 18 draw the Files card above the spec)
     const open = !!helperOpen.get(f.seq);
     const left = conversation(f, turns, rounds, open ? h('div', { class: 'req-moved' }) : null);

@@ -418,7 +418,7 @@ export function getBriefById(id) {
   return briefById(id);
 }
 
-// ---- the helper chat (plans/requirements-a3-design.md §3, D14): one Ask Worca chat per feature ----
+// ---- the helper chat (plans/requirements-a3-design.md §3, D14): one Feature chat per feature ----
 
 const HELPER_ROLES = Object.freeze(['po', 'worca']);
 

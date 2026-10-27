@@ -66,7 +66,7 @@ export const REQUIREMENTS_ROUTES = Object.freeze([
   ['POST', `${P}/:seq/archive`],
   ['GET', `${P}/:seq/markdown`], ['POST', `${P}/:seq/save`],
   ['POST', `${P}/:seq/start`], ['POST', `${P}/:seq/revert`],
-  // A3 §5: Ask Worca, one chat per feature
+  // A3 §5: Feature chat, one chat per feature
   ['GET', `${P}/:seq/helper`], ['DELETE', `${P}/:seq/helper`], ['POST', `${P}/:seq/helper/messages`], ['POST', `${P}/:seq/helper/stop`],
   ['POST', `${P}/:seq/helper/retry`], ['POST', `${P}/:seq/helper/messages/:msgId/proposals/:n/accept`],
   ['POST', `${P}/:seq/helper/messages/:msgId/proposals/:n/reject`], ['POST', `${P}/:seq/helper/messages/:msgId/proposals/:n/ask-again`],

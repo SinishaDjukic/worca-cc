@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // tools/requirements-real-helper.mjs
-// Real Ask Worca calls on a fixture feature (plans/requirements-a3-design.md §8 "Real calls"): five messages on a feature with a
+// Real Feature chat calls on a fixture feature (plans/requirements-a3-design.md §8 "Real calls"): five messages on a feature with a
 // product brief, a file and a pending round, each one real helper call through sendMessage and the real runner. Per call: the cost,
 // the cache reads and writes (D4: whether helper calls of one feature share a prefix), and whether the reply parsed. The figures
 // go into the pull request. A sandbox WORCA_HOME (the store lands in <sandbox>/.worca-cc); the real HOME keeps Claude Code signed

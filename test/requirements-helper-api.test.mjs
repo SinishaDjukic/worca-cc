@@ -1,4 +1,4 @@
-// test/requirements-helper-api.test.mjs — Ask Worca over HTTP in mock mode, behind the flag (plans/requirements-a3-design.md §5, D10–D16, D19).
+// test/requirements-helper-api.test.mjs — Feature chat over HTTP in mock mode, behind the flag (plans/requirements-a3-design.md §5, D10–D16, D19).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';

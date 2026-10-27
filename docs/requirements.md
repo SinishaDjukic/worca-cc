@@ -125,7 +125,7 @@ images and PDFs go as they are. A read can open only its own copy of the file: a
 other tool, so a file that asks the reader to open something else gets nowhere. Worca keeps a record of what the guard
 allowed, and throws away a read it cannot confirm ("Worca stopped this read: it could not confirm the read stayed
 inside this file. Try again."). Every read, every question and the product brief's look also refuse private files
-(keys, credentials, Worca's own data, other chats and stored files), as Ask Worca does. Reads, questions and the
+(keys, credentials, Worca's own data, other chats and stored files), as Chat does. Reads, questions and the
 brief's look also ask Claude Code to keep no session transcript of the call (`--no-session-persistence`), so the file
 itself is not left in Claude Code's own session logs. Interview rounds and looks keep Claude Code's usual session logs
 (under its `projects` folder, until Claude Code's own cleanup), and those hold what a round's prompt carries: what
@@ -159,9 +159,9 @@ replaced file, and not the documents' switches.
 uses its documents from its next round. **Send with every run** adds a document to every run started from a feature
 there. The brief's own sections change only when you refresh it.
 
-## Ask Worca
+## Feature chat
 
-**Ask Worca** in a feature's header opens a chat about that feature beside the spec. On a wide screen it takes the right
+**Feature chat** in a feature's header opens a chat about that feature beside the spec. On a wide screen it takes the right
 column, and **Ready to start?**, **Files** and **Spec** move under the question card until you close it; on a narrower screen it
 is a full-screen sheet with **Back**. **Help me answer** on a question of the round waiting for you opens it with that question
 in the composer. You send it yourself: every message costs money.

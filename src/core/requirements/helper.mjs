@@ -1,5 +1,5 @@
 // src/core/requirements/helper.mjs
-// Ask Worca beside the feature spec (plans/requirements-a3-design.md). The pure part: the system prompt, the limits, the
+// Feature chat beside the feature spec (plans/requirements-a3-design.md). The pure part: the system prompt, the limits, the
 // prompt (a round's stable part verbatim, then the chat's own changing part), the strict reply check (nothing in a reply is
 // trusted for ids, old values or state), the snapshots that tell a stale proposal, and the mock reply.
 import { runClaude, mockEnabled } from '../claude-runner.mjs';
@@ -24,7 +24,7 @@ export const ASK_AGAIN_TEXT = 'Propose this again for the current spec.';
 
 // Design §4, byte for byte (test/requirements-helper.test.mjs pins it as a literal). The same for every call: no date,
 // path or per-call value. String.raw keeps the JSON template's backslashes.
-export const HELPER_SYSTEM_PROMPT = String.raw`You are Worca's requirements helper. A product owner talks with you in the Ask Worca panel beside a feature they are
+export const HELPER_SYSTEM_PROMPT = String.raw`You are Worca's requirements helper. A product owner talks with you in the Feature chat panel beside a feature they are
 specifying on Worca's Requirements page. You have no tools: everything you know is in the message. Never say you
 read code or files beyond what the message holds.
 The product owner is not a developer. Answer in plain product language, briefly, in at most 3000 characters.
@@ -345,7 +345,7 @@ function startCall(seq, po, d, release) {
   helperCalls.set(seq, entry);
   entry.promise = (async () => {
     try { await answer(seq, po, d, ctrl.signal); } catch (err) {
-      console.error('requirements: an Ask Worca call failed:', message(err));
+      console.error('requirements: a Feature chat call failed:', message(err));
       // Worca's row could not be written as it should: an error row, else D20's line ("could not answer") shows anyway.
       try { insertHelperMessage({ featureSeq: seq, role: 'worca', error: { code: 'FAILED', message: COULD_NOT } }); } catch { /* D20 */ }
     } finally {
@@ -419,14 +419,14 @@ async function answer(seq, po, d, signal) {
       }
       if (!reply) {
         error = signal.aborted ? STOPPED : { code: 'BAD_REPLY', message: COULD_NOT };
-        if (lastErr) console.error('requirements: an Ask Worca reply could not be read:', lastErr.message);
+        if (lastErr) console.error('requirements: a Feature chat reply could not be read:', lastErr.message);
       }
     } catch (err) {
       cost += Number(err && err.costUsd) || 0;
       if (signal.aborted) error = STOPPED;
       else if (err && err.code === 'TIMEOUT') error = { code: 'TIMEOUT', message: COULD_NOT };
       else if (err && err.code === 'BUDGET') error = { code: 'BUDGET', message: err.message };
-      else { error = { code: 'FAILED', message: COULD_NOT }; console.error('requirements: an Ask Worca call failed:', message(err)); }
+      else { error = { code: 'FAILED', message: COULD_NOT }; console.error('requirements: a Feature chat call failed:', message(err)); }
     }
   }
   chargeHelper(seq, cost, model, () => insertHelperMessage({ featureSeq: seq, role: 'worca', text: reply ? reply.text : '',

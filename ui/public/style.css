@@ -10627,7 +10627,7 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-docs .req-docs-foot{margin:0;padding-top:10px;border-top:1px solid var(--line)}
 .req-brief-src{display:inline;margin:0;font-size:var(--fs-meta)}
 
-/* A3 (boards 22, 23, 25; plans/requirements-a3-design.md §6): Ask Worca beside the feature spec. Wider than 900 px the panel takes
+/* A3 (boards 22, 23, 25; plans/requirements-a3-design.md §6): Feature chat beside the feature spec. Wider than 900 px the panel takes
    the right column (420 px) and the Ready, Files and Spec cards move under the current card; at 900 px and narrower it is a
    full-screen sheet with Back and 44 px targets. The pressed toggle has an ink border, never a green fill; board 23 (dark) is
    these tokens and nothing else. */
