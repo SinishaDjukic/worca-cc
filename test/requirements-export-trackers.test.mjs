@@ -1,7 +1,7 @@
 // test/requirements-export-trackers.test.mjs — which task sources can export (plans/requirements-a6-design.md D1–D3, D11):
 // enabled plugin sources with a connection whose capabilities() say export; the answer cached per plugin, source and
-// installed version; every source probed at once within 10 s; a failed probe remembered for a minute (user decision
-// 2026-10-26); the default connection; the reach sentences.
+// installed version; every source probed at once within 10 s; a failed probe remembered for a minute; the
+// default connection; the reach sentences.
 import { test, after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';

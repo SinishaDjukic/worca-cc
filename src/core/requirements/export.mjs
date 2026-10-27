@@ -31,7 +31,7 @@ export const EXPORT_TIMEOUT_MS = 60_000;
 
 /** A capability probe's time limit (D3): it runs inside every feature view, so a slow connector must not hold the page. */
 export const PROBE_TIMEOUT_MS = 10_000;
-/** How long a failed probe stands (D3, user decision 2026-10-26): meanwhile that connection cannot export. */
+/** How long a failed probe stands (D3): meanwhile that connection cannot export. */
 export const PROBE_RETRY_MS = 60_000;
 
 /** The shim, or a test's stand-in (d.callSource). */
@@ -41,14 +41,16 @@ const msOf = (d) => (d && typeof d.now === 'function' ? Number(d.now()) : Date.n
 
 // D3: capabilities() answers per plugin, source id and installed version, for the process's life ("yes" and "no" alike).
 // A failed probe is remembered for PROBE_RETRY_MS per plugin, source id and profile (the source cannot export meanwhile),
-// then asked again (user decision 2026-10-26). In-flight probes are shared, so several views at once ask once.
+// then asked again. In-flight probes are shared, so several views at once ask once.
 const capCache = new Map();
 const capFailed = new Map();   // `${plugin}/${sourceId}/${profile}` → when the probe failed
 const capInflight = new Map();
-// exportOptions' last doneStatus per connection (Task 5's saveSetup stores it on the setup).
+// exportOptions' last doneStatus per connection (saveSetup stores it on the setup).
 const lastDone = new Map();
-/** Tests: forget every probe answer, failure and done status. */
-export function _resetExportCaches() { capCache.clear(); capFailed.clear(); capInflight.clear(); lastDone.clear(); }
+/** The last failed create per feature, in memory: { marker, kind }. After a restart nothing is known (the search grace applies). */
+const createFailures = new Map();
+/** Tests: forget every probe answer, failure, done status and failed create. */
+export function _resetExportCaches() { capCache.clear(); capFailed.clear(); capInflight.clear(); lastDone.clear(); createFailures.clear(); }
 
 const versionOf = (plugin) => { try { return String((readPluginsLock()[plugin] || {}).version || ''); } catch { return ''; } };
 /** A source's connections: a multi-profile source's profiles; a single-profile source is its one configuration. */
@@ -123,7 +125,7 @@ export function reachReason(err) {
 }
 export const reachSentence = (name, err) => `Worca could not reach ${name || 'the tracker'}: ${reachReason(err)}.`;
 
-// ---- the service (Task 5): setup, preview, export, Forget the link, the feature's view ----
+// ---- the service: setup, preview, export, Forget the link, the feature's view ----
 
 const MODES = Object.freeze(['create', 'update', 'comment', 'new']);
 const ARCHIVED = 'this feature is archived; restore it first';
@@ -133,6 +135,10 @@ const STALE = 'The spec changed since the preview. Look at the preview again.';
 /** How long a lost create's marker that the tracker's search does not find yet is kept (Jira Cloud's search lags a create
  *  by a few seconds): meanwhile an export answers BUSY instead of making a second ticket. */
 export const PENDING_SEARCH_GRACE_MS = 120_000;
+/** Failure kinds after which the tracker certainly made no ticket (it refused the request: the token, the rate limit, an op
+ *  it does not have). After any other kind (a timeout, a protocol failure, a network failure that may have come after the
+ *  request was sent, an error the tracker answered with) the outcome is unknown and the search grace applies. */
+const CERTAIN_NO_TICKET = new Set(['auth', 'rate-limit', 'unimplemented']);
 const text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 /** A one-line field in the ticket (the Export anyway reason, a file name): its line breaks cannot make Markdown structure. */
 const oneLine = (v) => String(v).replace(/\s+/g, ' ').trim();
@@ -388,9 +394,12 @@ export async function runExport(seq, body = {}, { by = null, target } = {}, d = 
         if (mode === 'create' || mode === 'new') mode = 'update';
       } else {
         // Nothing found yet while the marker is young: the tracker's search may lag the create, so the marker stays and
-        // nothing is made; past the grace, or a ticket that fails the checks, is a definite no
+        // nothing is made; past the grace, a ticket that fails the checks, or a create this process saw the tracker refuse
+        // (a CERTAIN_NO_TICKET kind for this very marker) is a definite no
         const age = now.getTime() - Date.parse(row.pendingAt || '');
-        if (!(hit && hit.key) && age >= 0 && age < PENDING_SEARCH_GRACE_MS) {
+        const failure = createFailures.get(f.seq);
+        const certain = !!failure && failure.marker === row.pendingMarker && CERTAIN_NO_TICKET.has(failure.kind);
+        if (!(hit && hit.key) && !certain && age >= 0 && age < PENDING_SEARCH_GRACE_MS) {
           throw new RequirementsError('BUSY', `Worca is still checking whether ${plan.name} made the ticket. Try again in a moment.`);
         }
         clearPendingExport(f.seq);
@@ -400,9 +409,17 @@ export async function runExport(seq, body = {}, { by = null, target } = {}, d = 
       const conn = connOf(plan.setup);
       const marker = mintMarker();
       setPendingExport(f.seq, { ...conn, trackerProject: plan.setup.trackerProject, marker }, { by });
-      const r = await trackerCall(d, plan.name, conn, 'createTicket', { ticket: { ...plan.ticket, marker } });   // a throw keeps the marker
+      createFailures.delete(f.seq);
+      let r;
+      try {
+        r = await trackerCall(d, plan.name, conn, 'createTicket', { ticket: { ...plan.ticket, marker } });   // a throw keeps the marker
+      } catch (err) {
+        createFailures.set(f.seq, { marker, kind: (err && err.data && err.data.kind) || 'plugin' });
+        throw err;
+      }
       if (r && r.refused) { clearPendingExport(f.seq); throw refusedError(r.refused); }
       if (!r || typeof r.key !== 'string' || !r.key) {
+        createFailures.set(f.seq, { marker, kind: 'protocol' });
         throw new RequirementsError('TRACKER', reachSentence(plan.name, { message: 'it did not name the ticket it made' }), { kind: 'protocol' });
       }
       const action = mode === 'new' ? 'new' : 'created';

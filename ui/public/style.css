@@ -10656,7 +10656,7 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-menu .req-export-menupop > .hd-menu{position:static;min-width:200px}
 .req-export-menupop > .req-export-archnote{margin:0;padding:8px 10px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-menu)}
 /* Board 27: the preview (1000 px): Fields beside the description as the tracker will show it, then the footer. The description
-   box scrolls inside; on a phone it folds behind Show all (Task 10). */
+   box scrolls inside; on a phone it folds behind Show all (board 31). */
 .req-dlg-wrap .card.req-dialog.req-export-preview{width:min(1000px,100%)}
 .viewer-modal.req-dlg-wrap.req-dlg-sheet{padding-top:min(8vh,48px)}   /* openModal's page mode: the six export dialogs only */
 .req-export-grid{display:grid;grid-template-columns:320px minmax(0,1fr);gap:24px;align-items:start}
@@ -10679,10 +10679,11 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-export-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 12px;padding-top:14px;border-top:1px solid var(--line)}
 .req-export-foot > .hint{margin:0}
 .req-export-foot .req-dlg-btns{margin:0 0 0 auto}
+.req-export .req-export-foot .req-dlg-btns{padding-top:0;border-top:0}   /* one rule above a footer: its own, at every width */
 .req-export-status{margin:0}
 .req-export-status:empty{display:none}
 .req-export-status .badge.blue{color:var(--blue-ink-strong)}   /* AA on --blue-bg (5.0:1; --blue-ink is 3.6:1), as .req-reading's */
-/* Board 31 (user decision 2026-10-26): at 900 px and narrower the preview's title is "Export to Jira" over "FEAT-7 · <title>". */
+/* Board 31: at 900 px and narrower the preview's title is "Export to Jira" over "FEAT-7 · <title>". */
 .req-export-sub{display:none;margin:-4px 0 0}
 @media (max-width:900px){
   .req-export-title .req-export-tid{display:none}
@@ -10691,6 +10692,7 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .req-export-alert.is-warn{padding:10px 12px;border:1px solid var(--amber-line);border-radius:var(--r-md);background:var(--amber-wash);color:var(--ink)}
 .req-export-alert.is-warn b{font-weight:600}
 .req-export-alert-hint{margin:0}
+.req-export-foot > .req-export-alert-hint{flex:1 0 100%}   /* board 29 (1): a line of its own under the footer's buttons */
 .req-export-alert-btns{display:flex;flex-wrap:wrap;gap:8px}
 .req-export-alert-btns[hidden]{display:none}
 /* Board 28: Export again — the choices as radio cards (the picked one has an ink border, never a fill), what changed. */
@@ -10743,12 +10745,11 @@ a.chip.req-export-chip:focus-visible{outline:2px solid var(--ink);outline-offset
   .req-export-more{display:block;width:100%;position:relative}
   .req-export-more[hidden]{display:none}
   .req-export-foot{flex-direction:column;align-items:stretch}
-  .req-export .req-export-foot .req-dlg-btns{padding-top:0;border-top:0}
   .req-export .req-dlg-btns{flex-direction:column;align-items:stretch;gap:14px;margin:0}
   .req-export .req-dlg-btns .btn,.req-export .req-export-alert-btns .btn{width:100%;position:relative}
-  .req-export .req-dlg-btns .btn::after,.req-export .req-export-alert-btns .btn::after,.req-export-more::after{content:"";position:absolute;inset:-6px 0}
+  .req-export .req-dlg-btns .btn::after,.req-export .req-export-alert-btns .btn::after,.req-export-more::after{content:"";position:absolute;inset:-7px 0}   /* a 32 px button: 30 + 14 = 44 */
   .req-export .req-export-alert-btns{flex-direction:column;gap:18px}
-  .req-export .req-export-alert-btns .btn-sm::after{inset:-8px 0}
+  .req-export .req-export-alert-btns .btn-sm::after{inset:-9px 0}   /* a 28 px button: 26 + 18 = 44 */
   .req-export-x{position:relative}
   .req-export-x::after{content:"";position:absolute;inset:-14px}
   a.chip.req-export-chip{position:relative}

@@ -2831,14 +2831,18 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     return out;
   }
 
-  /** A dialog's state area (boards 28, 29): one persistent role=alert line (its text changes, the node stays), an optional
-   *  hint and the state's own buttons. `warn`: the amber caution of board 28's edited alert, not an error. */
+  /** A dialog's state area (boards 28, 29): one persistent role=alert line (its text changes, the node stays), the state's
+   *  own buttons and an optional hint under the buttons (board 29, cards 1 and 3). `els`: all three in that order; a dialog
+   *  with a footer puts `top` (the alert and the buttons) above it and `hint` at its end, under the footer's buttons.
+   *  `warn`: the amber caution of board 28's edited alert, not an error. */
   function stateBox() {
     const alert = h('p', { class: 'form-msg err req-export-alert', role: 'alert' });
     const hint = h('p', { class: 'hint req-export-alert-hint', hidden: true });
     const btns = h('div', { class: 'req-export-alert-btns', hidden: true });
     return {
-      els: [alert, hint, btns],
+      els: [alert, btns, hint],
+      top: [alert, btns],
+      hint,
       clear() { alert.replaceChildren(); alert.classList.remove('is-warn'); hint.hidden = true; hint.textContent = ''; btns.hidden = true; btns.replaceChildren(); },
       show(kids, { note = null, buttons = [], warn = false } = {}) {
         alert.replaceChildren(...[].concat(kids));
@@ -2865,7 +2869,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const toMain = () => { const m = focus && ctx.main ? ctx.main() : null; if (m && !m.hidden && !m.disabled) focusLost(m); };
     const lost = focus ? focusLost : () => {};
     if (err && err.status === 502) {
-      box.show(errText(err), { note: `Nothing was recorded. The preview stays open, so you can try again once the connection is fixed on the Marketplace page (Installed › ${name}).` });
+      // the note speaks of the preview on screen: a preview that never loaded shows the sentence and Try again alone
+      const shown = ctx.hasPreview ? ctx.hasPreview() : true;
+      box.show(errText(err), { note: shown
+        ? `Nothing was recorded. The preview stays open, so you can try again once the connection is fixed on the Marketplace page (Installed › ${name}).` : null });
       ctx.retryLabel('Try again');
       toMain();
     } else if (dd.refused) {
@@ -3080,7 +3087,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const statusEl = h('p', { class: 'req-export-status', role: 'status' });
     const cancel = h('button', { type: 'button', class: 'btn', 'data-ui': 'export-cancel', onclick: () => { if (!busy) closeDialog(true); } }, 'Cancel');
     const go = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'export-go', disabled: true });
-    // Board 31 (user decision 2026-10-26): at 900 px and narrower CSS hides the title's "FEAT-7 " ("Export to Jira") and shows
+    // Board 31: at 900 px and narrower CSS hides the title's "FEAT-7 " ("Export to Jira") and shows
     // "FEAT-7 · <title>" under it; one h2 still labels the dialog, and takes the focus on open (D20).
     const title = h('h2', { id: 'req-exp-title', class: 'req-export-title', tabindex: '-1' },
       'Export ', h('span', { class: 'req-export-tid', text: `${f.id} ` }), `to ${name}`);
@@ -3093,9 +3100,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('div', { class: 'req-export-col', role: 'group', 'aria-labelledby': 'req-exp-fields-h' }, h('h3', { id: 'req-exp-fields-h', text: 'Fields' }), fieldsEl),
         h('div', { class: 'req-export-col', role: 'group', 'aria-labelledby': 'req-exp-desc-h' },
           h('h3', { id: 'req-exp-desc-h', text: `Description, as ${name} will show it` }), desc, more)),
-      ...box.els,
+      ...box.top,
       h('div', { class: 'req-export-foot' }, h('span', { class: 'hint', text: `Only what you see here is sent to ${name}.` }), statusEl,
-        h('div', { class: 'req-dlg-btns' }, cancel, go)));
+        h('div', { class: 'req-dlg-btns' }, cancel, go), box.hint));   // board 29 (1): the note under Cancel and Try again
     openModal(card, { trigger, first: title, canClose: () => !busy, page: true });
     const g = dlgGen;
     const key = () => (data && data.key) || (linkOf(f) || {}).key || '';
@@ -3109,6 +3116,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const ctx = { f, g, name, key, reason, trigger, setBusy: (b) => { busy = b; },
       hideGo: (b) => { go.hidden = b; }, retryLabel: (t) => { go.textContent = t; go.disabled = false; },
       main: () => go, wait: (b) => { go.disabled = b; cancel.disabled = b; },
+      hasPreview: () => descMd !== null,   // a preview was drawn (it stays on screen when a later one fails)
       reload: () => load({ keep: true }), reopen: () => openPreview(f, { mode, reason, force: forceNow, trigger }),
       notReady: (why, nf = f) => openPreview(nf, { mode, reason: why, trigger }) };
     const showEdited = () => {
@@ -3337,14 +3345,15 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       backButton(f),
       title,
       h('p', { class: 'req-dlg-lead', text: `This comment is added to ${linkKey}. Its description and fields stay as they are.` }),
-      body, ...box.els,
+      body, ...box.top,
       h('div', { class: 'req-export-foot' }, h('span', { class: 'hint', text: `Only what you see here is sent to ${name}.` }), statusEl,
-        h('div', { class: 'req-dlg-btns' }, back, add)));
+        h('div', { class: 'req-dlg-btns' }, back, add), box.hint));   // board 29: the note under the buttons
     openModal(card, { trigger, first: title, canClose: () => !busy, page: true });
     const g = dlgGen;
     const ctx = { f, g, name, key: () => linkKey, reason, trigger, setBusy: (b) => { busy = b; }, hideGo: (b) => { add.hidden = b; },
       retryLabel: (t) => { add.textContent = t; add.disabled = false; }, reload: () => load({ keep: true }), reopen: () => openComment(f, { reason, trigger }),
       main: () => add, wait: (b) => { add.disabled = b; back.disabled = b; },
+      hasPreview: () => body.childElementCount > 0,   // a comment was drawn (it stays on screen when a later load fails)
       notReady: (why, nf = f) => openComment(nf, { reason: why, trigger }) };
     async function load({ keep = false } = {}) {
       add.disabled = true;

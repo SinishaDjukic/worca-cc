@@ -240,7 +240,7 @@ test('CSS: the A6 rules sit inside the Requirements block and use tokens only', 
   assert.ok(mine.every((l) => !bad.test(l)), mine.filter((l) => bad.test(l)).join('\n'));
 });
 
-// ── fix round 1 (review of Task 8) ──
+// ── the setup: typed labels, a gone connection, the focus, the selects ──
 
 /** A route that answers only when the test lets it: `hold.route` for the fake API, `hold.release()` answers. */
 const held = (answer) => {
@@ -371,7 +371,7 @@ test('CSS (board 26): the label field shares the chips row, the buttons sit unde
   assert.match(css, /\.req-export-menupop\[hidden\]\{display:none\}/);
 });
 
-// ── Task 9: the preview, Export anyway, Export again, the comment, the chip, History (boards 27, 28) ──
+// ── the preview, Export anyway, Export again, the comment, the chip, History (boards 27, 28) ──
 const DESC = ['## Goal', '', 'Customers cancel an order themselves until it leaves the warehouse.', '', 'Measure: a third fewer support calls.', '',
   '## Main flow', '', '1. Open the order.', '2. Cancel it.', '',
   '## Acceptance criteria', '', '- R-po-1 A customer can cancel a paid order.', '- R-po-2 <img src=x onerror=alert(1)> stays text', '',
@@ -612,7 +612,7 @@ test('D17: the History card right under the header, newest first, as board 28 wr
   assert.equal((await openFeature(feature())).host.querySelector('.req-history'), null);
 });
 
-// ── Task 9: the server's answers (Task 5's review fixes) and the dialogs' rules ──
+// ── the server's answers and the dialogs' rules ──
 const STALE_MSG = 'The spec changed since the preview. Look at the preview again.';
 
 test('a stale preview: the sentence, then a fresh preview (its hash) on screen; Create in Jira sends that one', async () => {
@@ -779,7 +779,7 @@ test('live regions: the status and alert lines of the preview stay the same node
   assert.equal(done.getAttribute('role'), 'status');
 });
 
-test('CSS: the Task 9 rules sit in the Requirements block (tokens only) and the picked choice is an ink border, not a fill', () => {
+test('CSS: the preview and again rules sit in the Requirements block (tokens only) and the picked choice is an ink border, not a fill', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
   const end = css.indexOf('/* ── marketplace P3 ── */');
@@ -792,7 +792,7 @@ test('CSS: the Task 9 rules sit in the Requirements block (tokens only) and the 
   assert.doesNotMatch(rule('.req-export-mode:has(input:checked)'), /background/);
 });
 
-// ── Task 9 fix round 1 ──
+// ── the edited alert, Not Ready on send, a linked ticket, the previews as regions ──
 const NOT_READY_MSG = 'This feature is not Ready. Give a reason to export it anyway.';
 
 test('board 28: the edited alert sits under the choices, what changed and the note, so picking a choice moves no card', async () => {
@@ -879,7 +879,7 @@ test('CSS (boards 28, 29): the edited alert borders with --amber-line; the chip 
   assert.doesNotMatch(rule('.req-export-done'), /background/);
 });
 
-// ── Task 10 (part A): board 29's states, Report back ──
+// ── board 29's states, Report back ──
 test('board 29 (1): Worca cannot reach Jira: the sentence (role=alert), "Nothing was recorded…", Try again sends again; the preview stays', async () => {
   let fail = true;
   const { calls } = await openExport(feature(), { [`POST ${PREVIEW_URL}`]: () => preview(),
@@ -893,11 +893,46 @@ test('board 29 (1): Worca cannot reach Jira: the sentence (role=alert), "Nothing
   assert.equal(text(d.querySelector('.req-export-alert-hint')),
     'Nothing was recorded. The preview stays open, so you can try again once the connection is fixed on the Marketplace page (Installed › Jira).');
   assert.deepEqual([text(q('export-go')), q('export-go').disabled, q('export-cancel').disabled], ['Try again', false, false]);
+  // board 29 (1): the alert, then Cancel and Try again, then the note
+  const [alertEl, btnRow, note] = [d.querySelector('[role="alert"]'), q('export-go').closest('.req-dlg-btns'), d.querySelector('.req-export-alert-hint')];
+  assert.ok(alertEl.compareDocumentPosition(btnRow) & window.Node.DOCUMENT_POSITION_FOLLOWING, 'the buttons under the alert');
+  assert.ok(btnRow.compareDocumentPosition(note) & window.Node.DOCUMENT_POSITION_FOLLOWING, 'the note under the buttons');
   fail = false;
   q('export-go').click();
   await settle();
   assert.equal(calls.filter((c) => c.url === EXPORT_URL).length, 2);
   assert.equal(dlg(), null);
+});
+
+test('board 29 (1): a preview that never loaded (502) says why with Try again, without "The preview stays open…"; a plain failure the same', async () => {
+  const REACH = 'Worca could not reach Jira: the API token was refused.';
+  const answers = [{ __status: 502, body: { error: REACH, kind: 'auth' } }, { __status: 500, body: {} }, preview()];
+  const { calls } = await openExport(feature(), { [`POST ${PREVIEW_URL}`]: () => answers.shift() });
+  const d = dlg();
+  const note = d.querySelector('.req-export-alert-hint');
+  assert.equal(text(d.querySelector('[role="alert"]')), REACH);
+  assert.deepEqual([note.hidden, text(note)], [true, ''], 'no preview on screen: no note about it');
+  assert.deepEqual([text(q('export-go')), q('export-go').disabled], ['Try again', false]);
+  q('export-go').click();
+  await settle();
+  assert.equal(text(d.querySelector('[role="alert"]')), 'Worca could not finish that. Try again.');
+  assert.deepEqual([note.hidden, text(q('export-go'))], [true, 'Try again']);
+  q('export-go').click();
+  await settle();
+  assert.equal(calls.filter((c) => c.url === PREVIEW_URL).length, 3);
+  assert.deepEqual([text(d.querySelector('[role="alert"]')), text(q('export-go'))], ['', 'Create in Jira'], 'the preview, once it loads');
+});
+
+test('board 29 (1): a later preview that fails (502) keeps the one on screen and says so', async () => {
+  let fail = false;
+  await openExport(feature(), { [`POST ${PREVIEW_URL}`]: () => (fail
+    ? { __status: 502, body: { error: 'Worca could not reach Jira: the API token was refused.', kind: 'auth' } } : preview()) });
+  fail = true;
+  pick(q('export-prio'), '3');
+  await settle();
+  const note = dlg().querySelector('.req-export-alert-hint');
+  assert.equal(note.hidden, false);
+  assert.match(text(note), /^Nothing was recorded\. The preview stays open/);
 });
 
 test('board 29 (2): Jira refuses a field: its sentence and Change the export setup, which comes back to the preview after Save', async () => {
@@ -930,6 +965,8 @@ test('board 29 (3): the ticket is gone: the again dialog says so first; Forget t
   assert.equal(text(d.querySelector('[role="alert"]')), 'SHOP-123 no longer exists in Jira.');
   assert.equal(text(d.querySelector('.req-export-alert-hint')),
     'It was deleted or moved where this connection cannot see it. Forget the link removes the SHOP-123 chip; the history keeps the export.');
+  assert.ok(d.querySelector('.req-export-alert-btns').compareDocumentPosition(d.querySelector('.req-export-alert-hint')) & window.Node.DOCUMENT_POSITION_FOLLOWING,
+    'board 29 (3): the note under Forget the link and New ticket');
   assert.deepEqual([d.querySelector('[role="radiogroup"]').hidden, q('again-continue').hidden], [true, true]);
   q('export-forget').click();
   q('export-forget').click();
@@ -1053,7 +1090,7 @@ test('NOT_READY mid-dialog: the Not Ready dialog lists the feature as it is now 
   assert.ok(calls.filter((c) => c.method === 'GET' && c.url === F).length >= 2, 'the feature was fetched again');
 });
 
-// ── Task 10, part B: board 31's phone sheet, leaving the view (D20) ──
+// ── board 31's phone sheet, leaving the view (D20) ──
 
 /** A phone: window.matchMedia answers (max-width:900px) with `phone.on`; `phone.set` fires a resize across 900 px. Install it
  *  before the view is made (it listens from then on). */
@@ -1199,15 +1236,18 @@ test('CSS (board 31): at 900 px and narrower an export dialog is a sheet of the 
   assert.match(phone, /\.viewer-modal\.req-dlg-wrap\.req-dlg-sheet\{padding:0;place-items:stretch\}/);
   // the button row (or the preview's footer) stays at the bottom of the sheet while the body scrolls
   assert.match(phone, /\.req-dlg-sheet \.req-export > \.req-dlg-btns,\s*\.req-dlg-sheet \.req-export > \.req-export-foot\{[^}]*position:sticky;bottom:0;[^}]*margin-top:auto[^}]*background:var\(--panel\)/);
-  // full-width buttons; 44 px hit areas as ::after (never min-height:44px)
+  // full-width buttons; 44 px hit areas as ::after (never min-height:44px): a 32 px .btn grows 7 px each way (30 + 14), a
+  // 28 px .btn-sm 9 px (26 + 18)
   assert.match(phone, /\.req-export \.req-dlg-btns \.btn,\.req-export \.req-export-alert-btns \.btn\{width:100%;position:relative\}/);
-  assert.match(phone, /\.req-export \.req-dlg-btns \.btn::after,[^{]*\{content:"";position:absolute;inset:-6px 0\}/);
-  assert.match(phone, /\.req-export \.req-export-alert-btns \.btn-sm::after\{inset:-8px 0\}/);
+  assert.match(phone, /\.req-export \.req-dlg-btns \.btn::after,[^{]*\{content:"";position:absolute;inset:-7px 0\}/);
+  assert.match(phone, /\.req-export \.req-export-alert-btns \.btn-sm::after\{inset:-9px 0\}/);
   assert.match(phone, /\.req-export-x::after\{content:"";position:absolute;inset:-14px\}/);
   assert.match(phone, /a\.chip\.req-export-chip::after\{content:"";position:absolute;inset:-8px 0\}/);
   assert.match(phone, /\.req-export-back::after\{content:"";position:absolute;inset:-14px -8px\}/);
   assert.match(phone, /\.req-export-desc\.folded\{max-height:180px;overflow:hidden\}/);
-  // ← FEAT-7 only on the phone; board 31's title at 900 px and narrower (user decision 2026-10-26)
+  // one rule above a footer at every width: the footer's own (the button row inside it drops board 26's rule)
+  assert.ok(css.slice(start, media).includes('\n.req-export .req-export-foot .req-dlg-btns{padding-top:0;border-top:0}'), 'outside the phone query');
+  // ← FEAT-7 only on the phone; board 31's title at 900 px and narrower
   const hide = css.indexOf('.req-export-back{display:none}');
   assert.ok(hide > start && hide < media, '← FEAT-7 is hidden above 900 px');
   assert.match(phone, /\.req-export-back\{display:inline-flex;/);
@@ -1216,7 +1256,7 @@ test('CSS (board 31): at 900 px and narrower an export dialog is a sheet of the 
   assert.ok(!/min-height:44px/.test(phone), 'no 44 px min-height in the sheet');
 });
 
-// ── Task 10, part B fix round 1 ──
+// ── the page inert at every width, focus after a failed send, Forget the link ──
 
 test('Export again: a Try again answering gone puts the focus on the title once (never on Forget the link first)', async () => {
   const REACH = 'Worca could not reach Jira: the API token was refused.';

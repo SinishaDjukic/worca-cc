@@ -742,6 +742,22 @@ const HIT_FN = `const hit = (b) => { const r = b.getBoundingClientRect(); const 
   await A.evalJs(`location.hash = '#runs'`);
   check('A6 D20: leaving the Requirements view closes the sheet and puts the page back (nothing left inert)',
     await until(async () => !(await A.evalJs(`!!${DLG}`)) && (await inertNow()) === inertBefore, 8000));
+  // 390 px, the other export controls: the header's ticket chip, and a state's own button in a sheet (Export again's Try
+  // again, a .btn-sm) beside the sheet's Back, Cancel and Continue
+  await A.evalJs(`location.hash = ${JSON.stringify(f6Hash)}`);
+  await until(() => A.evalJs(`!!document.querySelector('#requirements-host [data-ui="export-chip"]')`), 15000);
+  const chipHit = await A.evalJs(`(() => { ${HIT_FN} return Math.round(hit(document.querySelector('#requirements-host [data-ui="export-chip"]')).hh); })()`);
+  setMockSourceResponses({ ticketState: unreachable });
+  await openExportMenu();
+  await until(() => A.evalJs(`!!${DLG}?.querySelector('[data-ui="again-retry"]')`), 15000);
+  const stateHits = await A.evalJs(`(() => { const d = ${DLG}; ${HIT_FN}
+    return [...d.querySelectorAll('.btn, .req-export-back')].filter((b) => b.offsetParent !== null)
+      .map((b) => [b.getAttribute('data-ui') || b.className, Math.round(hit(b).hh)]); })()`);
+  setMockSourceResponses({});
+  check("A6 D20: at 390 px the ticket chip and a state's Try again (with Back, Cancel and Continue) are 44 px targets",
+    chipHit >= 44 && stateHits.every(([, hh]) => hh >= 44) && stateHits.some(([u]) => u === 'again-retry'), JSON.stringify({ chipHit, stateHits }));
+  await A.evalJs(`document.querySelector('[data-ui="again-cancel"]').click()`);
+  await until(() => A.evalJs(`!${DLG}`), 5000);
   await A.send('Emulation.clearDeviceMetricsOverride');
   await sleep(300);
 
@@ -762,31 +778,35 @@ const HIT_FN = `const hit = (b) => { const r = b.getBoundingClientRect(); const 
         && d.querySelector('.req-export-alert-hint')?.textContent === ${JSON.stringify(NOTE)} && !d.querySelector('.req-export-alert-hint').hidden
         && go.textContent === 'Try again' && !go.disabled && !!d.querySelector('.req-export-desc h4')
         && !document.querySelector('#requirements-host [data-ui="export-chip"]'); })()`), 15000));
-  // Observation (board 29 draws the buttons above the note): where the note sits against the dialog's buttons.
+  // Board 29 (1): the alert, then Cancel and Try again, then the note under them.
   const notePos = await A.evalJs(`(() => { const d = ${DLG}; const n = d.querySelector('.req-export-alert-hint').getBoundingClientRect();
     const b = d.querySelector('.req-export-foot .req-dlg-btns').getBoundingClientRect(); const a = d.querySelector('.req-export-alert').getBoundingClientRect();
-    return { alertTop: Math.round(a.top), noteTop: Math.round(n.top), noteBottom: Math.round(n.bottom), buttonsTop: Math.round(b.top),
-      note: n.bottom <= b.top ? 'above the buttons' : n.top >= b.bottom ? 'below the buttons' : 'beside the buttons' }; })()`);
-  log(`note A6 board 29 (1): the "Nothing was recorded" note sits ${notePos.note} (board 29 draws it under them) ${JSON.stringify(notePos)}`);
+    return { alertBottom: Math.round(a.bottom), buttonsTop: Math.round(b.top), buttonsBottom: Math.round(b.bottom), noteTop: Math.round(n.top) }; })()`);
+  check('A6 board 29 (1): the alert sits above Cancel and Try again, and "Nothing was recorded…" under them',
+    notePos.alertBottom <= notePos.buttonsTop && notePos.noteTop >= notePos.buttonsBottom, JSON.stringify(notePos));
+  const rules = await A.evalJs(`(() => { const d = ${DLG}; const foot = d.querySelector('.req-export-foot');
+    return { foot: getComputedStyle(foot).borderTopWidth, buttons: getComputedStyle(foot.querySelector('.req-dlg-btns')).borderTopWidth }; })()`);
+  check('A6: on a desktop one rule sits above the preview footer (its own), none above its buttons', rules.foot === '1px' && rules.buttons === '0px', JSON.stringify(rules));
   await A.evalJs(`document.querySelector('.req-dlg-wrap .req-export-alert').scrollIntoView({ block: 'center' })`);
   await shot('a6-board29-unreachable');
   const stateAA = await contrastBoth(['.req-dlg-wrap .req-export'], 'a6-board29-unreachable-dark');
   check('A6 board 29: the failure state is AA in light and dark', stateAA.light.length === 0 && stateAA.dark.length === 0, JSON.stringify(stateAA));
   setMockSourceResponses({});
-  // Observation: Try again right away, the connection fixed (a create that failed keeps its marker, D10)
+  // Try again right away, the connection fixed: a refused token means Jira made no ticket, so there is nothing to wait for
+  // (the search grace of D10 is for a create whose outcome is unknown) and the ticket is made.
   await A.evalJs(`document.querySelector('[data-ui="export-go"]').click()`);
   let retryState = null;
-  await until(async () => {
-    retryState = await A.evalJs(`(() => { const d = ${DLG}; return d ? { open: true, alert: d.querySelector('.req-export-alert')?.textContent || '', go: d.querySelector('[data-ui="export-go"]')?.textContent }
-      : { open: false, done: document.querySelector('#requirements-host .req-export-done')?.textContent || '' }; })()`);
-    return !retryState.open || !!retryState.alert;
-  }, 15000);
-  log(`note A6 board 29 (1): Try again once the connection works, right after the failure: ${JSON.stringify(retryState)}`);
+  check('A6 board 29 (1): Try again right after a refused token makes the ticket (no "still checking" wait): Created SHOP-124',
+    await until(async () => {
+      retryState = await A.evalJs(`(() => { const d = ${DLG}; return d ? { open: true, alert: d.querySelector('.req-export-alert')?.textContent || '' }
+        : { open: false, done: document.querySelector('#requirements-host .req-export-done')?.textContent || '' }; })()`);
+      return !retryState.open && retryState.done === 'Created SHOP-124';
+    }, 15000), JSON.stringify(retryState));
   if (await A.evalJs(`!!${DLG}`)) await A.evalJs(`document.querySelector('[data-ui="export-cancel"]').click()`);
   await until(() => A.evalJs(`!${DLG}`), 5000);
 
-  // Board 29 (1) on a preview that LOADS (Update asks Jira for the ticket's state first): the sentence and Try again; the note
-  // as it reads there is recorded (it says "The preview stays open" while no preview is shown yet).
+  // Board 29 (1) on a preview that LOADS (Update asks Jira for the ticket's state first): the sentence and Try again, without
+  // "The preview stays open…" (no preview is shown yet).
   await A.evalJs(`location.hash = ${JSON.stringify(f6Hash)}`);
   await until(() => A.evalJs(`document.querySelector('#requirements-host [data-req-feature]')?.getAttribute('data-req-feature') === '${f6.seq}'`), 15000);
   await openExportMenu();
@@ -794,15 +814,16 @@ const HIT_FN = `const hit = (b) => { const r = b.getBoundingClientRect(); const 
   setMockSourceResponses({ ticketState: unreachable });
   await A.evalJs(`document.querySelector('[data-ui="again-continue"]').click()`);
   let loadFail = null;
-  check('A6 board 29 (1): a preview that cannot load says why with Try again (502: Jira cannot be reached)',
+  check('A6 board 29 (1): a preview that cannot load (502) says why with Try again, and no note about a preview it does not show',
     await until(async () => {
       loadFail = await A.evalJs(`(() => { const d = ${DLG}; if (!d || !d.querySelector('.req-export-preview') && !d.classList.contains('req-export-preview')) return null;
         const go = d.querySelector('[data-ui="export-go"]'); const hint = d.querySelector('.req-export-alert-hint');
         return { alert: d.querySelector('.req-export-alert')?.textContent || '', note: hint && !hint.hidden ? hint.textContent : null,
           go: go.textContent, goDisabled: go.disabled, descEmpty: !d.querySelector('.req-export-desc').childElementCount }; })()`);
-      return !!loadFail && loadFail.alert === 'Worca could not reach Jira: the API token was refused.' && loadFail.go === 'Try again' && !loadFail.goDisabled;
+      return !!loadFail && loadFail.alert === 'Worca could not reach Jira: the API token was refused.' && loadFail.go === 'Try again' && !loadFail.goDisabled
+        && loadFail.note === null;
     }, 15000), JSON.stringify(loadFail));
-  log(`note A6 board 29 (1): a preview LOAD that failed (502) shows the note ${JSON.stringify(loadFail && loadFail.note)} with the description ${loadFail && loadFail.descEmpty ? 'empty' : 'shown'}`);
+  log(`note A6 board 29 (1): a preview LOAD that failed (502) shows the description box ${loadFail && loadFail.descEmpty ? 'empty' : 'filled'}`);
   await shot('a6-board29-preview-load-failed');
   setMockSourceResponses({});
   await A.evalJs(`document.querySelector('[data-ui="export-go"]').click()`);

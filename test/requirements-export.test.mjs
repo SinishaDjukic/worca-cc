@@ -457,7 +457,7 @@ test('a keyless pending row from another connection or project is looked for whe
   assert.deepEqual(ops(), [['findTicket', 'beta', 'OPS'], ['createTicket', 'acme', null]], 'not there: the setup makes the ticket');
 });
 
-// ---- fix round 1: never a ticket the preview did not name; the hash covers the connection; a link with no spec copy;
+// ---- never a ticket the preview did not name; the hash covers the connection; a link with no spec copy;
 // the tracker's search lag after a lost create ----
 
 test('a lost New ticket never takes over a later Update or Comment of the old ticket: linked, nothing sent, the preview is stale', async () => {
@@ -540,4 +540,44 @@ test("the tracker's search lag: a lost create's marker younger than two minutes 
   const r = await exportVia(f.seq, { mode: 'create' }, later());
   assert.deepEqual([r.action, r.key], ['created', 'SHOP-123']);
   assert.deepEqual(seen.filter((c) => c.op !== 'capabilities').map((c) => c.op), ['findTicket', 'createTicket']);
+});
+
+test('the search grace follows the failure: after a refused token or the rate limit Try again makes the ticket at once; after a timeout, a protocol failure or a network failure it waits', async () => {
+  const soon = (ms = 5_000) => ({ ...d, now: () => new Date(Date.now() + ms) });   // well inside the two minutes
+  for (const kind of ['auth', 'rate-limit']) {
+    reset();
+    const f = readyFeature(`Certain ${kind}`);
+    setMockSourceResponses({ createTicket: () => { throw new PluginOpError(kind, 'refused'); } });
+    await assert.rejects(exportNow(f.seq), (e) => e.code === 'TRACKER' && e.data.kind === kind);
+    assert.ok(getExportLink(f.seq).pendingMarker, 'the marker is kept, as after any thrown failure');
+    setMockSourceResponses(null);
+    seen.length = 0;
+    const r = await exportVia(f.seq, { mode: 'create' }, soon());
+    assert.equal(r.action, 'created', `${kind}: no ticket was made, so no wait`);
+    assert.deepEqual(seen.filter((c) => c.op !== 'capabilities').map((c) => c.op), ['findTicket', 'createTicket'], `${kind}: the marker is still looked for`);
+    assert.equal(getExportLink(f.seq).pendingMarker, null);
+  }
+  for (const [kind, fail] of [['timeout', () => { throw new PluginOpError('timeout', 'exceeded'); }],
+    ['network', () => { throw new PluginOpError('network', 'Jira unreachable: socket hang up'); }],
+    ['protocol', () => ({ url: 'https://mock.test/browse/SHOP-1' })]]) {   // an answer without the key it made
+    reset();
+    const f = readyFeature(`Unknown ${kind}`);
+    setMockSourceResponses({ createTicket: fail });
+    await assert.rejects(exportNow(f.seq), (e) => e.code === 'TRACKER' && e.data.kind === kind);
+    setMockSourceResponses(null);
+    await assert.rejects(exportVia(f.seq, { mode: 'create' }, soon()),
+      (e) => e.code === 'BUSY' && e.message === 'Worca is still checking whether Jira made the ticket. Try again in a moment.', `${kind}: the outcome is unknown`);
+    assert.equal((await exportVia(f.seq, { mode: 'create' }, later())).action, 'created', `${kind}: past the grace a ticket is made`);
+  }
+});
+
+test('the search grace after a restart: a refused create this process did not see is treated as unknown (the grace applies)', async () => {
+  reset();
+  const f = readyFeature('Certain, then a restart');
+  setMockSourceResponses({ createTicket: () => { throw new PluginOpError('auth', 'refused'); } });
+  await assert.rejects(exportNow(f.seq), (e) => e.data.kind === 'auth');
+  setMockSourceResponses(null);
+  _resetExportCaches();   // what a restart forgets
+  await assert.rejects(exportVia(f.seq, { mode: 'create' }, { ...d, now: () => new Date(Date.now() + 5_000) }), (e) => e.code === 'BUSY');
+  assert.equal((await exportVia(f.seq, { mode: 'create' }, later())).action, 'created');
 });
