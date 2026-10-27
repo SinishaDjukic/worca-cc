@@ -7,7 +7,7 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { readMcpStore } from './store.mjs';
+import { readMcpStore, toolNameOf } from './store.mjs';
 import { loadCatalog } from './catalog.mjs';
 import { teamRecordsFor, copyName } from './identity.mjs';
 import {
@@ -123,7 +123,7 @@ function memberViews(ctx, set) {
     if (tr && e) {
       const stale = tr.fingerprint !== materializeCopy({ entry: e, values: m.values, secrets: bag, copy, name: copy }, ctx).fingerprint;
       test = { at: tr.at, ok: tr.ok, tools: Array.isArray(tr.tools) ? tr.tools.length : 0, error: tr.error, stale };
-      const long = tr.ok && (tr.tools || []).find((t) => `mcp__${copy}__${cliName(t)}`.length > 64);
+      const long = tr.ok && (tr.tools || []).map(toolNameOf).find((t) => `mcp__${copy}__${cliName(t)}`.length > 64);
       if (long) tooLong = { limit: `mcp__${copy}__${cliName(long)}`.length > 128 ? 128 : 64, tool: long };
     }
     const reason = skip ? skip.reason : null;

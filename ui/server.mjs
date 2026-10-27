@@ -333,6 +333,7 @@ import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
 import { registerRequirementsRoutes, requirementsChangeNotifier } from '../src/core/requirements/routes.mjs';
 import { registerWorkflowVersionRoutes } from '../src/core/workflow-versions-routes.mjs';
+import { CONNECTOR_MODES } from '../src/core/workflow-tests/store.mjs';
 import { createRunEventHook } from '../src/core/requirements/start.mjs';
 import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
 import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
@@ -2526,11 +2527,14 @@ const startRunHandler = async (req, res) => {
     // that may not exist yet ({ id, name, projectPaths, description:'' }, D3). Never from HTTP.
     const scanTarget = req._workspaceScan && typeof req._workspaceScan === 'object' ? req._workspaceScan : null;
     // Workflow tests (plans/workflow-tests-part2-plan.md D20–D23): a test try, set in-process by the test runner through
-    // invokeStartRun only, never from HTTP. { use: 'draft' | n, onOrch?(orch, { runKey }) }.
+    // invokeStartRun only, never from HTTP. { use: 'draft' | n, connectors?: 'pretend' | 'real', onOrch?(orch, { runKey }) }.
     const workflowTest = req._workflowTest && typeof req._workflowTest === 'object' ? req._workflowTest : null;
     if (workflowTest && body.noProject !== true) return badRequest(res, 'a test try runs without a project');
     if (workflowTest && !(workflowTest.use === 'draft' || (Number.isInteger(workflowTest.use) && workflowTest.use > 0))) {
       return badRequest(res, 'a test try names the draft or a version number');
+    }
+    if (workflowTest && workflowTest.connectors !== undefined && !CONNECTOR_MODES.includes(workflowTest.connectors)) {
+      return badRequest(res, 'a test try names its connectors: pretend or real');
     }
     const stored = internal && body.internal && typeof body.internal === 'object' ? body.internal : {};
     // Who started it (identity.mjs): this request's resolved identity; a scheduled run keeps the
@@ -2922,7 +2926,8 @@ const startRunHandler = async (req, res) => {
         tags,
         ...(shape ? { shape } : {}),
         // D19/D21/D23: the version under test, the row's mark, no memory, and the fixed title (no smart naming spend).
-        ...(workflowTest ? { workflowUse: workflowTest.use, workflowTest: true, noMemory: true, titleLocked: true } : {}),
+        ...(workflowTest ? { workflowUse: workflowTest.use, workflowTest: true, noMemory: true, titleLocked: true,
+          testConnectors: workflowTest.connectors === 'real' ? 'real' : 'pretend' } : {}),   // D35: pretend unless real is named
       });
       entry = {
         id: runId, orch, projectDir, projectKey: NO_PROJECT_KEY, workMode: 'none', kind: 'run', pipelineId,

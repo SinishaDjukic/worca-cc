@@ -132,6 +132,7 @@ import { WORKSPACE_SCAN_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, AUTO_WORKFLOW_ID
 import { agentIdentity } from './agent-user.mjs';
 import { resolveRegistry, requiredOf, toolNameLimitFor, skipReasonText, cachedTeamFor } from './mcp/registry.mjs';
 import { loadCatalog } from './mcp/catalog.mjs';
+import { pretendServers, noteSeenServers } from './workflow-tests/connectors.mjs';
 import { MCP_STARTUP_MS } from './mcp/timeouts.mjs';
 import { keepListNames } from './mcp/keep-list.mjs';
 import { expandMcpDenyRules } from './mcp/deny.mjs';
@@ -3724,6 +3725,7 @@ export class RunHarness extends EventEmitter {
       engine: this.claude.engine || 'claude',
       setSkills: this._setSkillSources(skillPlan),
       registry: async (taken) => (reg = await this._resolveMcp(taken)),
+      ...(this._testConnectors() === 'pretend' ? { mcpStandIn: (layer) => pretendServers(layer, { pipelineDir: this.pipeline.dir }) } : {}),
     });
     this.runContext = rc;
     if (rc?.projectPermissions) {
@@ -3746,6 +3748,9 @@ export class RunHarness extends EventEmitter {
       copies: reg.result.copies,
       servers: reg.result.servers,
     };
+    // D35: a pretend try's stand-ins take no env, so no registry secret (MCPSECRET_*) reaches its spawn. They are stdio
+    // servers even where the real copy is http, so a scrubbed spawn keeps the launcher's keep-list (§5.5.1).
+    if (this.mcpLayer && this._testConnectors() === 'pretend') this.mcpLayer = { ...this.mcpLayer, env: {}, allowlist: keepListNames() };
     const mcpWhy = this._engineMcpRefusal(this.mcpLayer);
     if (mcpWhy) throw engineRefusal(this.claude.engine, mcpWhy);
     // §11.4: MCP deviations need the resolution, so they land here, after _resolvePolicy (which
@@ -3813,6 +3818,12 @@ export class RunHarness extends EventEmitter {
     await this._resolveSkills({ reported: alreadyReported, plan: skillPlan, mountedAs: rc.skillMountDir ? rc.setSkillNames : null });
     await appendAudit(this.pipeline.dir, renderContextAudit(rc, this.skillLayer)).catch(() => {});
     return rc;
+  }
+
+  /** Workflow tests (D35): 'pretend' | 'real' for a test try, null for every other run. */
+  _testConnectors() {
+    if (this.opts.workflowTest !== true) return null;
+    return this.opts.testConnectors === 'real' ? 'real' : 'pretend';
   }
 
   /**
@@ -7534,6 +7545,8 @@ export class RunHarness extends EventEmitter {
     }
     // §10: an init without an `mcpServers` list says nothing about the copies (never "absent").
     if (Array.isArray(e.mcpServers) && this.mcpLayer?.copies.length) this._recordMcpInit(e.mcpServers);
+    // N2: the claude.ai connectors this account loads, so the Test a version dialog can name them (a try loads none).
+    if (Array.isArray(e.mcpServers) && this.opts.workflowTest !== true) noteSeenServers(e.mcpServers);
   }
 
   // I1: a turn the CLI never closes with a `result` (pause, stop, a crash, a retried attempt) was

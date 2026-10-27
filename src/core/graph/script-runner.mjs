@@ -143,6 +143,8 @@ export function buildEnvelope(ctx) {
       // W12: true only on a test-bench execution, so a side-effect script ("post
       // a comment") can stay quiet under test. Additive — apiVersion stays 1.
       bench: Boolean(ctx.bench),
+      // Workflow tests (D35): set on a test try's script step only (additive — apiVersion stays 1).
+      ...(ctx.testConnectors === 'pretend' || ctx.testConnectors === 'real' ? { test: { connectors: ctx.testConnectors } } : {}),
     },
   };
 }
@@ -177,6 +179,11 @@ export function envForShell(envelope, baseEnv = process.env) {
   // W12: set on a bench run, ABSENT on a pipeline run (a shell's `${WORCA_BENCH+set}`
   // must not see it) — and never inherited from a worca that is itself under test.
   if (c.bench) env.WORCA_BENCH = '1'; else delete env.WORCA_BENCH;
+  // D35: a test try's script step knows it is one (and whether connectors are pretend); never inherited from a worca under test.
+  if (c.test && (c.test.connectors === 'pretend' || c.test.connectors === 'real')) {
+    env.WORCA_TEST = '1';
+    env.WORCA_TEST_CONNECTORS = c.test.connectors;
+  } else { delete env.WORCA_TEST; delete env.WORCA_TEST_CONNECTORS; }
   return env;
 }
 

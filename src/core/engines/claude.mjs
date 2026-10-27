@@ -305,7 +305,8 @@ export function buildHookArgs() {
  *   - mcpConfigPath   -> `--mcp-config <file>` (E5: config servers connect and their
  *                        tools are callable in headless -p; it MERGES with `.mcp.json`,
  *                        user scope, and plugin servers, so `--strict-mcp-config` is
- *                        deliberately never passed — E11).
+ *                        never passed — E11 — except on a pretend workflow-test try, which must load
+ *                        only its stand-ins (plans/workflow-tests-part2-plan.md D35)).
  *   - mcpServerGrants -> unioned into `--allowedTools`. The server-WILDCARD shape
  *                        (`mcp__<server>`) is what Phase-0 gate V1 verified as
  *                        callable under `--permission-mode acceptEdits`

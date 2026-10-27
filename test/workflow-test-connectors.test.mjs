@@ -1,0 +1,189 @@
+// test/workflow-test-connectors.test.mjs — D35: a pretend try's stand-ins, the dialog's notes, what a try would have
+// sent, the spawn flags and the script env; then a real pipeline run (mock engine, custom runners, the pattern of
+// test/mcp-pipeline-run.test.mjs) in pretend and in real mode.
+import { test, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { useTempHome } from './helpers/temp-home.mjs';
+import { gitDir } from './helpers/git-dir.mjs';
+import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { createPipeline } from '../src/core/artifacts.mjs';
+import { readRunManifest } from '../src/core/run-manifest.mjs';
+import { projectKey } from '../src/core/store.mjs';
+import { addManualServer, createSet, putMember, setProjectAssignment, recordTest } from '../src/core/mcp/store.mjs';
+import { materializeForTest } from '../src/core/mcp/test.mjs';
+import { viewContext } from '../src/core/mcp/views.mjs';
+import { MOCK_CONNECTOR_PATH } from '../src/core/mcp/mock-connector.mjs';
+import { runOpts, CLAUDE_AI_TOOLS } from '../src/core/phases.mjs';
+import { buildClaudeArgs } from '../src/core/engines/claude.mjs';
+import { envForShell } from '../src/core/graph/script-runner.mjs';
+import {
+  pretendServers, connectorNotes, humanizeTool, nounOf, sentCall, wouldHaveSent, noteSeenServers, seenClaudeAiServers,
+  userScopeServerNames, CONNECTOR_CALLS_FILE,
+} from '../src/core/workflow-tests/connectors.mjs';
+
+useTempHome(after);
+const scratch = [];
+after(async () => { await Promise.all(scratch.map((d) => rm(d, { recursive: true, force: true }))); });
+const tmp = async () => { const d = await mkdtemp(join(tmpdir(), 'worca-wftconn-')); scratch.push(d); return d; };
+
+test('pretendServers: a stand-in for each server with recorded tools, the rest switched off; no env, no secret', async () => {
+  const dir = await tmp();
+  const store = { tests: { 'set1|manual:slack': { ok: true, tools: [{ name: 'post_message' }], fingerprint: 'f' }, 'set1|manual:jira': { ok: true, tools: ['create_issue'] } } };
+  const out = await pretendServers({
+    servers: {
+      slack_team: { type: 'http', url: 'https://mcp.slack.example/', headers: { Authorization: '${MCPSECRET_ABCD1234}' } },
+      jira_team: { command: 'node', args: ['jira.js'], env: { TOKEN: '${MCPSECRET_0000AAAA}' } },
+      files_srv: { command: 'files-mcp' },
+    },
+    copies: [{ name: 'slack_team', setId: 'set1', serverId: 'manual:slack', untested: false },
+      { name: 'jira_team', setId: 'set1', serverId: 'manual:jira', untested: true }],
+  }, { pipelineDir: dir, store });
+  assert.deepEqual(out.pretend, ['slack_team']);
+  assert.deepEqual(out.off.map((o) => o.name), ['files_srv', 'jira_team'], 'a file server and a stale Test have no tools Worca trusts');
+  assert.deepEqual(Object.keys(out.servers), ['slack_team']);
+  const def = out.servers.slack_team;
+  assert.deepEqual([def.type, def.command, def.args[0], def.args[1], def.args[2], def.args[3], def.args[5], def.args[6]],
+    ['stdio', process.execPath, MOCK_CONNECTOR_PATH, '--server', 'slack_team', '--tools', '--log', join(dir, CONNECTOR_CALLS_FILE)]);
+  assert.equal(def.env, undefined);
+  assert.doesNotMatch(JSON.stringify(out.servers), /MCPSECRET_/);
+  assert.deepEqual(JSON.parse(await readFile(def.args[4], 'utf8')), [{ name: 'post_message' }]);
+});
+
+test('the dialog notes (board 30): pretend, switched off and why, script steps', () => {
+  assert.deepEqual(connectorNotes({
+    copies: [{ name: 'slack_team', untested: false }, { name: 'jira_team', untested: false }, { name: 'confluence_team', untested: true }],
+    userScope: ['my-db'], claudeAi: ['claude.ai Google Drive'], scripts: ['Publish to wiki', 'Publish to wiki'],
+  }), {
+    pretend: ['jira_team', 'slack_team'],
+    off: [{ name: 'Google Drive', reason: 'claude-ai' }, { name: 'confluence_team', reason: 'no-tools' }, { name: 'my-db', reason: 'own-settings' }],
+    scripts: ['Publish to wiki'],
+  });
+});
+
+test('what a try would have sent: plain words, where to, the first 80 characters, reads apart', async () => {
+  assert.deepEqual(['post_message', 'create_issue', 'list_channels', 'sendEmail', 'search', 'get_user_profile'].map(humanizeTool),
+    ['post a message', 'create an issue', 'list channels', 'send an email', 'search', 'get user profile']);
+  assert.deepEqual(['post_message', 'create_issue', 'search'].map(nounOf), ['message', 'issue', 'call']);
+  const long = `Brief ready: Bulk invoice export\n${'x'.repeat(100)}`;
+  const c = sentCall({ server: 'slack_team', tool: 'post_message', arguments: { channel: '#product', text: long } });
+  assert.deepEqual([c.server, c.tool, c.toolId, c.noun, c.to, c.preview.length, c.preview.endsWith('…'), c.full], ['slack_team', 'post a message', 'post_message', 'message', '#product', 81, true, long]);
+  const j = sentCall({ server: 'jira', tool: 'create_issue', arguments: { fields: { summary: 'x' } } });
+  assert.deepEqual([j.to, j.preview, j.full], [null, '{"fields":{"summary":"x"}}', '{\n  "fields": {\n    "summary": "x"\n  }\n}']);
+  const home = await tmp();
+  const { id, dir } = await createPipeline(join(home, 'proj'), { prompt: 'p', title: 't', isTest: true });
+  await writeFile(join(dir, CONNECTOR_CALLS_FILE), [
+    JSON.stringify({ ts: 't', server: 'slack_team', tool: 'post_message', arguments: { text: 'Hi' }, readOnly: false }),
+    JSON.stringify({ ts: 't', server: 'jira', tool: 'search_issues', arguments: { q: 'x' }, readOnly: true }),
+    '{"torn',
+  ].join('\n'));
+  const w = await wouldHaveSent(id);
+  assert.deepEqual(w.sent.map((s) => [s.server, s.tool, s.preview]), [['slack_team', 'post a message', 'Hi']]);
+  assert.deepEqual(w.reads, [{ server: 'jira', n: 1 }]);
+  assert.deepEqual(await wouldHaveSent('nope0000'), { sent: [], reads: [] });
+});
+
+test('claude.ai names seen at a run\'s start-up are remembered; ~/.claude.json servers are read', async () => {
+  noteSeenServers([{ name: 'claude.ai Gmail', status: 'connected' }, { name: 'pg_billing', status: 'connected' }]);
+  noteSeenServers([{ name: 'claude.ai Gmail' }]);
+  assert.deepEqual(seenClaudeAiServers(), ['claude.ai Gmail']);
+  const home = await tmp();
+  await writeFile(join(home, '.claude.json'), JSON.stringify({ mcpServers: { zeta: {}, alpha: {} } }));
+  assert.deepEqual(userScopeServerNames(home), ['alpha', 'zeta']);
+  assert.deepEqual(userScopeServerNames(join(home, 'none')), []);
+});
+
+test('spawn flags: a pretend try loads only its mcp.json and withholds claude.ai tools; others are unchanged', () => {
+  const base = { projectDir: '/p', claudeOpts: {} };
+  const pretend = runOpts({ ...base, mcpStrict: true }, { role: 'producer', prompt: 'p', systemPrompt: 's', allowedTools: [] });
+  assert.equal(pretend.strictMcpConfig, true);
+  assert.deepEqual(pretend.disallowedTools, [CLAUDE_AI_TOOLS]);
+  assert.equal(CLAUDE_AI_TOOLS, 'mcp__claude_ai_*');
+  const normal = runOpts(base, { role: 'producer', prompt: 'p', systemPrompt: 's', allowedTools: [] });
+  assert.equal(normal.strictMcpConfig, undefined);
+  assert.equal(normal.disallowedTools, undefined);
+  const args = buildClaudeArgs({ prompt: 'p', systemPrompt: 's', permissionMode: 'acceptEdits', strictMcpConfig: true, disallowedTools: pretend.disallowedTools });
+  assert.ok(args.includes('--strict-mcp-config'));
+  assert.equal(args[args.indexOf('--disallowedTools') + 1], 'mcp__claude_ai_*');
+});
+
+test('a script step learns it runs in a test, and never inherits that from the server', () => {
+  const env = envForShell({ ctx: { test: { connectors: 'pretend' } } }, { PATH: '/usr/bin' });
+  assert.deepEqual([env.WORCA_TEST, env.WORCA_TEST_CONNECTORS], ['1', 'pretend']);
+  const plain = envForShell({ ctx: {} }, { PATH: '/usr/bin', WORCA_TEST: '1', WORCA_TEST_CONNECTORS: 'real' });
+  assert.deepEqual([plain.WORCA_TEST, plain.WORCA_TEST_CONNECTORS], [undefined, undefined]);
+});
+
+// ── A real pipeline run (mock engine): the registry layer of test/mcp-pipeline-run.test.mjs ──
+const PG_SECRET = 'pg-secret-value-1';
+const SENTRY_SECRET = 'sntrys_token_value_2';
+const rand = () => Math.random().toString(36).slice(2, 7);
+let defs = null;
+async function fixture() {
+  defs ||= {
+    pg: await addManualServer('pg', {
+      type: 'stdio', command: 'node', args: ['/srv/pg.js'], env: { PGPASSWORD: { field: 'password' } },
+      fields: [{ key: 'password', label: 'Password', secret: true, required: true }], description: 'Read-only replica',
+    }),
+    sentry: await addManualServer('sentry', {
+      type: 'http', url: 'https://mcp.sentry.dev/mcp', headers: { Authorization: { field: 'token', prefix: 'Bearer ' } },
+      fields: [{ key: 'token', label: 'Sentry token', secret: true, required: true }], description: 'Sentry issues',
+    }),
+  };
+  const dir = gitDir('wft-conn');
+  const set = await createSet(`Billing ${rand()}`);
+  await putMember(set.id, 'manual:pg', { enabled: true, values: {}, secrets: { password: PG_SECRET } }, { def: defs.pg });
+  await putMember(set.id, 'manual:sentry', { enabled: true, values: {}, secrets: { token: SENTRY_SECRET } }, { def: defs.sentry });
+  await setProjectAssignment(projectKey(dir), { sets: [set.id], includeGeneral: false });
+  // pg passed a Test (its tools are recorded); sentry never did.
+  const m = materializeForTest(await viewContext(), set.id, 'manual:pg');
+  await recordTest(set.id, 'manual:pg', { at: new Date().toISOString(), ok: true, error: null, fingerprint: m.fingerprint,
+    tools: [{ name: 'query', description: 'Run a read-only query', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } }] });
+  return { dir, set };
+}
+const runners = (seen) => {
+  const record = (ctx) => seen.push({ ctx, file: ctx.mcpConfigPath ? readFileSync(ctx.mcpConfigPath, 'utf8') : null });
+  return {
+    producer: async (ctx) => { record(ctx); return { status: 'ok', summary: 'ok' }; },
+    verifier: async (ctx) => { record(ctx); return { status: 'ok', issues: [], review: { issues: [] }, summary: '' }; },
+  };
+};
+
+test('a pretend try: only stand-ins in mcp.json, no secret anywhere in the spawn, strict config, the switched-off copy named', async () => {
+  const { dir, set } = await fixture();
+  const seen = [];
+  const orch = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: runners(seen),
+    workflowTest: true, testConnectors: 'pretend' });
+  assert.equal((await orch.run()).status, 'done');
+  const pipelineDir = orch.getState().pipelineDir;
+  const servers = JSON.parse(seen[0].file).mcpServers;
+  const pg = `pg_${set.slug}`;
+  assert.deepEqual(Object.keys(servers), [pg], 'sentry has no recorded tools: switched off');
+  assert.deepEqual([servers[pg].command, servers[pg].args[0], servers[pg].args[2], servers[pg].args[6]],
+    [process.execPath, MOCK_CONNECTOR_PATH, pg, join(pipelineDir, CONNECTOR_CALLS_FILE)]);
+  assert.equal('env' in servers[pg], false);
+  assert.deepEqual(JSON.parse(readFileSync(servers[pg].args[4], 'utf8')).map((t) => t.name), ['query']);
+  for (const s of [PG_SECRET, SENTRY_SECRET]) assert.ok(!seen[0].file.includes(s), 'no secret in mcp.json');
+  assert.doesNotMatch(seen[0].file, /MCPSECRET_/);
+  assert.deepEqual(seen[0].ctx.mcpEnv, {}, 'no secret env reaches the spawn');
+  assert.deepEqual([seen[0].ctx.testConnectors, seen[0].ctx.mcpStrict], ['pretend', true]);
+  const o = runOpts(seen[0].ctx, { role: 'producer', prompt: 'p', systemPrompt: 's', allowedTools: [] });
+  assert.equal(o.strictMcpConfig, true);
+  assert.ok(o.disallowedTools.includes('mcp__claude_ai_*'));
+  assert.ok(!JSON.stringify(o.spawnEnv || {}).includes(PG_SECRET));
+  assert.ok((await readRunManifest(pipelineDir)).warnings.some((w) => w.includes(`sentry_${set.slug}`) && w.includes('switched off')));
+});
+
+test('a real try is a normal run: the real servers, no strict config', async () => {
+  const { dir, set } = await fixture();
+  const seen = [];
+  const orch = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: runners(seen),
+    workflowTest: true, testConnectors: 'real' });
+  assert.equal((await orch.run()).status, 'done');
+  assert.deepEqual(Object.keys(JSON.parse(seen[0].file).mcpServers).sort(), [`pg_${set.slug}`, `sentry_${set.slug}`]);
+  assert.deepEqual([seen[0].ctx.testConnectors, seen[0].ctx.mcpStrict], ['real', false]);
+  assert.equal(runOpts(seen[0].ctx, { role: 'producer', prompt: 'p', systemPrompt: 's', allowedTools: [] }).strictMcpConfig, undefined);
+});

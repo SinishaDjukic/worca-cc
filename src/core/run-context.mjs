@@ -1280,6 +1280,8 @@ export function generateClaudeMd({
  *        already uses; null (or a null answer) adds nothing
  * @param {object[]} [a.setSkills]  another engine's set skills (assembleSkills `setSkills`); the record's
  *        `setSkillNames` maps each mounted one's key to the name it got
+ * @param {((layer:{servers:object, copies:object[]}) => Promise<{servers:object, off:Array<{name:string, why:string}>}>)|null} [a.mcpStandIn]
+ *        workflow tests (D35): a pretend try's swap of every server it would load for a stand-in; null for every other run
  * @returns {Promise<object>} the run-context record (also persisted into run.json)
  */
 export async function assembleRunContext({
@@ -1287,6 +1289,7 @@ export async function assembleRunContext({
   requiredSkillResolutions, graphInstructions, homeDir, honorByKey = null,
   platform = process.platform, agentIsolated = false, registry = null, settingsScope = null, engine = 'claude',
   setSkills = [],
+  mcpStandIn = null,
 }) {
   const warnings = [];
   // ENOENT/ENOTDIR stay silent (absence is normal, §8.20); every OTHER fs error on a
@@ -1476,6 +1479,13 @@ export async function assembleRunContext({
       mcp.roster.push({ name: c.name, text: `${text}${c.renamedFrom ? ` (renamed from \`${c.renamedFrom}\`)` : ''}` });
     }
     for (const w of registryWarnings(layer, reg.catalog, mcp.userScopeNames)) warnings.push(w);
+  }
+  // Workflow tests (plans/workflow-tests-part2-plan.md D35): a pretend try swaps every server it would load, the registry
+  // copies and the file servers, for a local stand-in under the same name; one it cannot pretend for is left out.
+  if (typeof mcpStandIn === 'function') {
+    const swap = await mcpStandIn({ servers: mcp.servers, copies: reg ? reg.result.copies : [] });
+    mcp.servers = swap.servers;
+    for (const o of swap.off) warnings.push(`MCP server \`${o.name}\` is switched off in this test try: ${o.why}`);
   }
   const written = Object.keys(mcp.servers).sort();
   let mcpConfigPath = null;

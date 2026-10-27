@@ -165,3 +165,14 @@ test('enforced run tags neither refuse nor tag a try (review I2)', async () => {
     assert.deepEqual(runs.get(out.body.runId).tags, [], 'no enforced tag lands on a hidden try');
   } finally { await post('/api/settings', { tagDimensions: [], enforceTags: false }); }
 });
+
+test('a try names its connectors: pretend (the default) or real', async () => {
+  const bad = await _testing.invokeStartRun({ noProject: true, prompt: 'x' }, null, { workflowTest: { use: 'draft', connectors: 'maybe' } });
+  assert.deepEqual([bad.status, bad.body.error], [400, 'a test try names its connectors: pretend or real']);
+  const out = await _testing.invokeStartRun({ noProject: true, workflowId: 'wf_try', prompt: 'Plan it', title: 'Test: Bulk · try 3' }, null,
+    { workflowTest: { use: 'draft' } });
+  assert.equal(out.status, 200, JSON.stringify(out.body));
+  const entry = runs.get(out.body.runId);
+  assert.equal(entry.orch._testConnectors(), 'pretend');
+  await settled(out.body.runId);
+});

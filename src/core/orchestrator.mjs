@@ -1884,6 +1884,8 @@ export class GraphOrchestrator extends RunHarness {
       mcpEnv: this.mcpLayer?.env,
       mcpRedact: this.mcpLayer?.redact,
       mcpDisallowed: this.mcpLayer?.disallowed,
+      // Workflow tests (D35): a pretend try loads only its mcp.json; a script step learns it runs in a test.
+      ...(this._testConnectors() ? { testConnectors: this._testConnectors(), mcpStrict: this._testConnectors() === 'pretend' } : {}),
       // Skills registry (design §4.3): one --plugin-dir per set plugin of the run; undefined without
       // set skills, [] once the layer is blocked — runOpts emits nothing for either.
       skillPluginDirs: this.skillLayer?.pluginDirs,

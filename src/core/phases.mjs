@@ -816,6 +816,10 @@ function nodeWritableDirs(ctx) {
   return [...new Set(dirs)];
 }
 
+/** Workflow tests (D35): the belt beside --strict-mcp-config on a pretend try. Whether strict config alone already drops
+ *  claude.ai connectors is checked against the real CLI in Task 15. */
+export const CLAUDE_AI_TOOLS = 'mcp__claude_ai_*';
+
 export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
   const c = ctx.claudeOpts || {};
   // MCP registry (design §6.1): the copies' secret env joins the fan-out env, and the tools
@@ -845,6 +849,9 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // intact (a grant is not a declared tool).
     mcpConfigPath: ctx.mcpConfigPath,
     mcpServerGrants: ctx.mcpServerGrants,
+    // Workflow tests (D35): a pretend try loads ONLY its mcp.json (the stand-ins): no claude.ai connector, no
+    // ~/.claude.json server, no plugin server. Absent on every other spawn, so its argv stays byte-identical.
+    ...(ctx.mcpStrict === true ? { strictMcpConfig: true } : {}),
     // Whose approvals decide the checkout's committed `.mcp.json` servers on Claude (claude-runner.mjs).
     mcpjsonProjectDir: ctx.mcpjsonProjectDir,
     // P1 (S31): a non-git run's spawn asks no git (approvals, Cursor's info/exclude). Absent on git runs.
@@ -885,7 +892,8 @@ export function runOpts(ctx, { role, prompt, systemPrompt, allowedTools }) {
     // Model bridge (model-bridge-design.md §5.3): a translated model has no
     // server-side web tools, so the runner withholds them. undefined for every
     // non-bridged model ⇒ nothing emitted ⇒ argv byte-identical.
-    disallowedTools: ctx.mcpDisallowed?.length ? [...(excluded || []), ...ctx.mcpDisallowed] : excluded,
+    disallowedTools: ctx.mcpStrict === true ? [...(excluded || []), ...(ctx.mcpDisallowed || []), CLAUDE_AI_TOOLS]
+      : ctx.mcpDisallowed?.length ? [...(excluded || []), ...ctx.mcpDisallowed] : excluded,
     // Agent memory (§4.3): Task-tool sub-agents inherit the rules natively but not
     // --append-system-prompt, so the pointer block rides the sub-agent flag. undefined when the
     // run has no mount ⇒ buildClaudeArgs emits nothing and legacy argv stays byte-identical.
