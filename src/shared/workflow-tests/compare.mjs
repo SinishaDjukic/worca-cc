@@ -98,16 +98,18 @@ export function compareModel({ examples = [], a = null, b, tries = [] }) {
       const d = rate(rb) - rate(ra);
       result = Math.abs(d) < 1e-9 ? 'same' : d > 0 ? 'better' : 'worse';
       if (result !== 'same') {
-        luck = Math.abs(d) * Math.max(ra.total, rb.total) <= LUCK_MAX_DIFF + 1e-9;
+        luck = Math.abs(d) * Math.min(ra.total, rb.total) <= LUCK_MAX_DIFF + 1e-9;   // the smaller side decides: one try can't prove it
         const loser = result === 'worse' ? { label: b.label, list: bT } : { label: a.label, list: aT };
         const m = missedMost(loser.list);
         if (m) missed = { label: m.label, k: m.k, n: loser.list.length };
-        if (!luck && missed) why = `${loser.label} missed "${missed.label}" in ${missed.k} of ${missed.n} tries`;
+        if (!luck && missed) why = `${loser.label} missed "${missed.label}" in ${missed.k} of ${missed.n} ${missed.n === 1 ? 'try' : 'tries'}`;
       }
     }
     return { id: ex.id, name: ex.name, a: ra, b: rb, result, luck, why, missed, steadyA: steady(aT), steadyB: steady(bT),
       drop: both ? rate(ra) - rate(rb) : 0 };
   });
+  // Steadiness is compared only over examples with a result on both versions (a stopped test must not skew it).
+  const counted = rows.filter((r) => (a ? r.result !== null : r.b.total > 0));
   const side = (s) => {
     const list = of(s);
     return {
@@ -115,23 +117,26 @@ export function compareModel({ examples = [], a = null, b, tries = [] }) {
       costPerTry: avg(list, (t) => Number(t.costUsd)),
       timePerTry: avg(list, (t) => (t.verdict && t.verdict.facts ? t.verdict.facts.durationMs : null)),
       sentBack: avg(list, (t) => (t.verdict && t.verdict.facts ? Number(t.verdict.facts.sentBack || 0) : null)),
-      steady: { n: rows.filter((r) => (s === 'a' ? r.steadyA : r.steadyB)).length, of: rows.filter((r) => (s === 'a' ? r.a.total : r.b.total) > 0).length },
+      steady: { n: counted.filter((r) => (s === 'a' ? r.steadyA : r.steadyB)).length, of: counted.length },
     };
   };
   const tiles = { a: a ? side('a') : null, b: side('b') };
   const counts = { better: rows.filter((r) => r.result === 'better').length, worse: rows.filter((r) => r.result === 'worse').length,
     same: rows.filter((r) => r.result === 'same').length };
-  const worst = rows.filter((r) => r.result === 'worse').sort((x, y) => y.drop - x.drop || (x.name < y.name ? -1 : 1))[0] || null;
+  const byDrop = (x, y) => y.drop - x.drop || (x.name < y.name ? -1 : 1);
+  const worst = rows.filter((r) => r.result === 'worse').sort(byDrop)[0] || null;
+  const clearWorst = rows.filter((r) => r.result === 'worse' && !r.luck).sort(byDrop)[0] || null;
+  const allCompared = rows.length > 0 && rows.every((r) => r.result !== null);
   return {
     examples: rows, tiles, counts,
     // D38: with no example tried on both sides there is nothing to say ("gives the same results" would be untrue).
-    inShort: a && counts.better + counts.worse + counts.same > 0 ? inShortSentences({ a, b, tiles, counts, worst }) : [],
-    look: a && worst ? { exampleId: worst.id, name: worst.name, before: 'Look at ', after: ` before you share ${b.label}.` } : null,
+    inShort: a && counts.better + counts.worse + counts.same > 0 ? inShortSentences({ a, b, tiles, counts, worst, allCompared }) : [],
+    look: a && clearWorst ? { exampleId: clearWorst.id, name: clearWorst.name, before: 'Look at ', after: ` before you share ${b.label}.` } : null,
   };
 }
 
 /** C2 (approved 2026-10-26, its three extra sentences included): the fixed sentences, each only when it applies. Cheaper or faster = at least 10% less. */
-function inShortSentences({ a, b, tiles, counts, worst }) {
+function inShortSentences({ a, b, tiles, counts, worst, allCompared }) {
   const out = [];
   const adj = [];
   const ca = tiles.a.costPerTry; const cb = tiles.b.costPerTry;
@@ -140,14 +145,19 @@ function inShortSentences({ a, b, tiles, counts, worst }) {
   if (ta > 0 && tb !== null) { if (tb <= ta * 0.9) adj.push('faster'); else if (tb >= ta * 1.1) adj.push('slower'); }
   const exs = (n) => (n === 1 ? '1 example' : `${n} examples`);
   const is = adj.length ? `is ${adj.join(' and ')}` : '';
+  let first = true;   // sentence 1 present: later sentences say "It", otherwise the version label
   if (counts.better) out.push(is ? `${b.label} ${is}, and better on ${exs(counts.better)}.` : `${b.label} is better on ${exs(counts.better)}.`);
-  else if (!counts.worse) out.push(is ? `${b.label} ${is}, and gives the same results as ${a.label}.` : `${b.label} gives the same results as ${a.label} on every example.`);
-  else if (is) out.push(`${b.label} ${is}.`);
+  else if (!counts.worse) {
+    const same = allCompared ? 'on every example' : 'on the examples both versions finished';
+    out.push(is ? `${b.label} ${is}, and gives the same results as ${a.label}.` : `${b.label} gives the same results as ${a.label} ${same}.`);
+  } else if (is) out.push(`${b.label} ${is}.`);
+  else first = false;
+  const subject = first ? 'It' : b.label;
   if (counts.worse === 1 && worst) {
     out.push(worst.missed && !worst.luck
-      ? `It is worse on 1 example, ${worst.name}: it missed "${worst.missed.label}" in ${worst.missed.k} of ${worst.missed.n} tries.`
-      : `It is worse on 1 example, ${worst.name}.`);
-  } else if (counts.worse > 1) out.push(`It is worse on ${counts.worse} examples.`);
+      ? `${subject} is worse on 1 example, ${worst.name}: it missed "${worst.missed.label}" in ${worst.missed.k} of ${worst.missed.n} ${worst.missed.n === 1 ? 'try' : 'tries'}.`
+      : `${subject} is worse on 1 example, ${worst.name}.`);
+  } else if (counts.worse > 1) out.push(`${subject} is worse on ${counts.worse} examples.`);
   if (tiles.b.steady.n < tiles.a.steady.n) out.push('Its results also vary more from try to try.');
   else if (tiles.b.steady.n > tiles.a.steady.n) out.push('Its results are also steadier from try to try.');
   return out;

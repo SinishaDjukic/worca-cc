@@ -83,7 +83,7 @@ test('In short: the three approved extra sentences, and nothing at all when no e
     tries: [...tries('a', 1, aMarks, { cost: 1, ms: 1000 }), ...tries('b', 1, bMarks, { cost: bCost, ms: 1000 })] });
   assert.deepEqual(one('PPP', 'PPP', 0.5).inShort, ['v5 draft is cheaper, and gives the same results as v4.']);
   assert.deepEqual(one('PPP', 'FFF', 0.5).inShort, ['v5 draft is cheaper.', `It is worse on 1 example, X: it missed "${SECTIONS}" in 3 of 3 tries.`]);
-  assert.deepEqual(one('PPP', 'PPF', 1).inShort, ['It is worse on 1 example, X.', 'Its results also vary more from try to try.'], 'a one-try difference names no reason');
+  assert.deepEqual(one('PPP', 'PPF', 1).inShort, ['v5 draft is worse on 1 example, X.', 'Its results also vary more from try to try.'], 'a one-try difference names no reason');
   const onlyA = compareModel({ examples: [{ id: 1, name: 'X' }], a: { label: 'v4' }, b: { label: 'v5 draft' }, tries: tries('a', 1, 'PPP', { cost: 1, ms: 1000 }) });
   assert.deepEqual([onlyA.counts, onlyA.inShort, onlyA.look], [{ better: 0, worse: 0, same: 0 }, [], null]);
 });
@@ -103,3 +103,49 @@ test('formats of the tiles and the estimate', () => {
   assert.deepEqual([unknown.total, unknown.usd, unknown.minutes, unknown.capUsd], [6, null, null, 10]);
   assert.equal(TRIES_AT_ONCE, MAX_PARALLEL, 'the estimate uses the runner\'s parallelism');
 });
+
+// Fix 1: the approved rule for sentence 1, partial coverage, luck with uneven tries, and "Look at".
+const X = [{ id: 1, name: 'X' }];
+const L4 = { label: 'v4' };
+const L5 = { label: 'v5 draft' };
+const cmp = (aM, bM, { ac = 1, bc = 1, am = 1000, bm = 1000, examples = X } = {}) => compareModel({ examples, a: L4, b: L5,
+  tries: [...tries('a', 1, aM, { cost: ac, ms: am }), ...tries('b', 1, bM, { cost: bc, ms: bm })] });
+
+test('Fix 1: sentence 1 for every reachable form and adjective combination', () => {
+  const steadier = 'Its results are also steadier from try to try.';
+  assert.deepEqual(cmp('PFF', 'PPP', { bc: 0.5, bm: 500 }).inShort, ['v5 draft is cheaper and faster, and better on 1 example.', steadier]);
+  assert.deepEqual(cmp('PFF', 'PPP', { bc: 2, bm: 2000 }).inShort, ['v5 draft is more expensive and slower, and better on 1 example.', steadier]);
+  assert.deepEqual(cmp('PFF', 'PPP', { bc: 0.5, bm: 2000 }).inShort, ['v5 draft is cheaper and slower, and better on 1 example.', steadier]);
+  assert.deepEqual(cmp('PFF', 'PPP', { bc: 2, bm: 500 }).inShort, ['v5 draft is more expensive and faster, and better on 1 example.', steadier]);
+  assert.deepEqual(cmp('PFF', 'PPP', { bm: 500 }).inShort, ['v5 draft is faster, and better on 1 example.', steadier]);
+  assert.deepEqual(cmp('PFF', 'PPP').inShort, ['v5 draft is better on 1 example.', steadier]);
+  assert.deepEqual(cmp('PPP', 'PPP', { bc: 2, bm: 2000 }).inShort, ['v5 draft is more expensive and slower, and gives the same results as v4.']);
+  assert.deepEqual(cmp('PPP', 'PPP', { bm: 500 }).inShort, ['v5 draft is faster, and gives the same results as v4.']);
+  assert.deepEqual(cmp('PPP', 'PPP', { bc: 0.5, bm: 2000 }).inShort, ['v5 draft is cheaper and slower, and gives the same results as v4.']);
+  assert.deepEqual(cmp('PPP', 'PPP').inShort, ['v5 draft gives the same results as v4 on every example.']);
+  // only one of two examples was finished on both versions: not "every example"
+  const partial = compareModel({ examples: [{ id: 1, name: 'X' }, { id: 2, name: 'Y' }], a: L4, b: L5,
+    tries: [...tries('a', 1, 'PPP', { cost: 1, ms: 1000 }), ...tries('b', 1, 'PPP', { cost: 1, ms: 1000 }), ...tries('a', 2, 'PPP', { cost: 1, ms: 1000 })] });
+  assert.deepEqual(partial.inShort, ['v5 draft gives the same results as v4 on the examples both versions finished.']);
+  assert.deepEqual(cmp('PPP', 'FFF', { bc: 2 }).inShort.slice(0, 2),
+    ['v5 draft is more expensive.', `It is worse on 1 example, X: it missed "${SECTIONS}" in 3 of 3 tries.`]);
+  assert.deepEqual(cmp('PPP', 'FFF').inShort, [`v5 draft is worse on 1 example, X: it missed "${SECTIONS}" in 3 of 3 tries.`]);
+  const two = compareModel({ examples: [{ id: 1, name: 'X' }, { id: 2, name: 'Y' }], a: L4, b: L5,
+    tries: [1, 2].flatMap((id) => [...tries('a', id, 'PPP', { cost: 1, ms: 1000 }), ...tries('b', id, 'FFF', { cost: 1, ms: 1000 })]) });
+  assert.deepEqual(two.inShort, ['v5 draft is worse on 2 examples.']);
+});
+
+test('Fix 1: steadiness counts only examples compared on both versions', () => {
+  const m = compareModel({ examples: [{ id: 1, name: 'X' }, { id: 2, name: 'Y' }], a: L4, b: L5,
+    tries: [...tries('a', 1, 'PPP', { cost: 1, ms: 1000 }), ...tries('b', 1, 'PPP', { cost: 1, ms: 1000 }), ...tries('b', 2, 'PPP', { cost: 1, ms: 1000 })] });
+  assert.deepEqual([m.tiles.a.steady, m.tiles.b.steady], [{ n: 1, of: 1 }, { n: 1, of: 1 }]);
+  assert.ok(!m.inShort.some((t) => /vary more|steadier/.test(t)));
+});
+
+test('Fix 1: a difference resting on one try is chance, whichever side has more tries; Look at is only for clear drops', () => {
+  const m = compareModel({ examples: X, a: L4, b: L5, tries: [...tries('a', 1, 'PPP', { cost: 1, ms: 1000 }), ...tries('b', 1, 'F', { cost: 1, ms: 1000 })] });
+  assert.deepEqual([m.examples[0].result, m.examples[0].luck, m.examples[0].why, m.look], ['worse', true, null, null]);
+  assert.deepEqual(cmp('PPP', 'PPF').look, null);
+  assert.equal(cmp('PPP', 'FFF').look.exampleId, 1);
+});
+
