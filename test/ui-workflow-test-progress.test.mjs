@@ -50,7 +50,7 @@ test('board 20 while it runs: title, pill, Stop testing, the bar, the facts, the
   assert.deepEqual(calls, [['stop'], ['back']]);
 });
 
-test('stopped by the cap: why, a higher cap and Finish the rest (C7); by a person: no cap field', () => {
+test('stopped by the cap: why, a higher cap and Finish the rest (C7); by a person: its own cap beside it (board 27)', () => {
   const capped = boot(progress({ costUsd: 15.4, minutesLeft: null, takenMs: 35 * 60000 + 12000 }, { status: 'stopped', stopReason: 'cap' }));
   assert.equal(capped.root.querySelector('.wft-pill').textContent, 'Stopped · 7 of 18 tries done');
   assert.equal(capped.root.querySelector('.wft-pill').className, 'pill-run wft-pill is-stopped is-parked', 'D39: the status pill, not a badge');
@@ -62,10 +62,25 @@ test('stopped by the cap: why, a higher cap and Finish the rest (C7); by a perso
   click([...capped.root.querySelectorAll('.wft-acts button')].find((b) => b.textContent === 'Finish the rest'));
   assert.deepEqual(capped.calls, [['continue', 25]]);
   const person = boot(progress({}, { status: 'stopped', stopReason: 'person' }));
-  assert.equal(person.root.querySelector('#wft-pg-cap'), null);
+  assert.equal(person.root.querySelector('#wft-pg-cap').value, '$15', 'M2: the cap the test started with');
+  assert.equal(person.root.querySelector('label[for="wft-pg-cap"]').textContent, 'Stop if the cost goes over');
   assert.equal(person.root.querySelector('.wft-stopped').textContent, 'You stopped the test.');
-  click([...person.root.querySelectorAll('.wft-acts button')].find((b) => b.textContent === 'Finish the rest'));
-  assert.deepEqual(person.calls, [['continue', null]]);
+  const finish = (b) => click([...b.root.querySelectorAll('.wft-acts button')].find((x) => x.textContent === 'Finish the rest'));
+  finish(person);
+  assert.deepEqual(person.calls, [['continue', 15]]);
+  const odd = boot(progress({ capUsd: 15.5 }, { status: 'stopped', stopReason: 'person' }));
+  assert.equal(odd.root.querySelector('#wft-pg-cap').value, '$15.50');
+  // I2: a decimal comma is a point, never a thousands mark; what is not a cost goes to the action as NaN (app.js refuses it).
+  for (const [typed, sent] of [['15,50', 15.5], ['$1.234,50', 1234.5], ['-2', Number.NaN], ['2e3', Number.NaN], ['', Number.NaN]]) {
+    const b = boot(progress({}, { status: 'stopped', stopReason: 'person' }));
+    b.root.querySelector('#wft-pg-cap').value = typed;
+    finish(b);
+    assert.deepEqual(b.calls, [['continue', sent]], JSON.stringify(typed));
+  }
+  const once = boot(progress({ capUsd: null }, { kind: 'once', status: 'stopped', stopReason: 'person' }));
+  assert.equal(once.root.querySelector('#wft-pg-cap'), null, 'Try it once now has no cost limit to change');
+  finish(once);
+  assert.deepEqual(once.calls, [['continue', null]]);
   const quick = boot(progress({ quick: { status: 'failed', detail: 'the quick check ended as error' } }, { status: 'stopped', stopReason: 'quick-check', stopDetail: 'the quick check ended as error' }));
   assert.deepEqual(facts(quick.root)[2], ['Free quick check', 'Not passed', 'the quick check ended as error']);
   assert.equal(quick.root.querySelector('.wft-stopped').textContent, 'The free quick check did not pass: the quick check ended as error.');
@@ -161,6 +176,8 @@ test('app.js: the WS frame reaches wftChanged; Task 10\'s "comes in a later step
   assert.ok(!/detail: 'This page comes in a later step\.'/.test(app), 'Task 10\'s temporary toast is gone');
   assert.ok(!/title: 'Test a version', detail: 'This comes in a later step\.'/.test(app), 'Test a version opens the dialog');
   assert.ok(/title: msg\.status === 'done' \? 'Test results are ready' : 'Test stopped'/.test(app), 'C13: the results-ready toast');
+  assert.ok(/continue: async \(capUsd\) => \{\s*if \(Number\.isNaN\(capUsd\)\) \{ notify\(\{ tone: 'err', title: 'The rest did not start', detail: 'Give the cost limit in dollars, such as \$15\.' \}\); return; \}/.test(app),
+    'I2: a cost limit that is not a number is refused with the start dialog\'s sentence, before anything is sent');
 });
 
 test('the cost limit is exact (never rounded like an estimate); Try it once now shows a bare cost, as board 28\'s one-try panel', () => {

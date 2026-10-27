@@ -2,7 +2,7 @@
 // plans/workflow-tests-part2-plan.md Task 13, C7, C9, G8, D39). Pure DOM: app.js reads GET …/runs/:run and repaints on
 // every workflow-tests-changed frame, so a repaint keeps the focus (data-focus-key) and one live line says what changed.
 import { el, btn } from './test-ui.mjs';
-import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
+import { fmtUsd, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
 
 const DOT = { passed: 'ok', failed: 'no', running: 'run' };
@@ -105,19 +105,27 @@ export function renderTestProgress(root, p, actions, { doc }) {
   else if (st === 'done') acts.append(act(p.run.kind === 'once' ? 'See the result' : 'See what changed', () => actions.open(), 'btn btn-primary', 'wft-pg-open'));
   else if (p.run.stopReason !== 'changed') {   // N5: after a change, Finish the rest would only be refused
     let capInput = null;
-    if (p.run.stopReason === 'cap') {
+    // Board 27: the start dialog's cost limit beside Finish the rest, raised when the cap stopped it. Try it once now
+    // has no limit to change.
+    if (p.run.stopReason === 'cap' || p.run.kind !== 'once') {
       capInput = el(doc, 'input', 'wft-cap');
       capInput.type = 'text'; capInput.inputMode = 'decimal'; capInput.id = 'wft-pg-cap';
       capInput.dataset.focusKey = 'wft-pg-cap';
-      const suggested = `$${Math.ceil(Math.max((p.capUsd || 0) * 1.5, p.costUsd + 5) / 5) * 5}`;
+      const suggested = p.run.stopReason === 'cap' ? `$${Math.ceil(Math.max((p.capUsd || 0) * 1.5, p.costUsd + 5) / 5) * 5}`
+        : p.capUsd == null ? '' : Number.isInteger(p.capUsd) ? `$${p.capUsd}` : fmtUsd(p.capUsd);
       capInput.defaultValue = suggested;
       capInput.value = keepCap ?? suggested;
       const lab = el(doc, 'label', 'wft-cap-label', 'Stop if the cost goes over');
       lab.htmlFor = capInput.id;
       acts.append(lab, capInput);
     }
-    acts.append(act('Finish the rest', () => actions.continue(capInput ? Number(capInput.value.replace(/[^0-9.]/g, '')) || null : null),
-      'btn btn-primary', 'wft-pg-finish'));
+    /** I2: "15,50" is $15.50. Not a cost → NaN, which the action refuses; an empty box keeps a test that had no limit. */
+    const capOf = () => {
+      const v = parseUsd(capInput.value);
+      if (v === null && p.capUsd == null) return null;
+      return v > 0 ? v : Number.NaN;
+    };
+    acts.append(act('Finish the rest', () => actions.continue(capInput ? capOf() : null), 'btn btn-primary', 'wft-pg-finish'));
   }
   head.append(left, acts);
   page.append(head);

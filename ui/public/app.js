@@ -3715,6 +3715,7 @@ function wftProgressActions() {
       if (still()) void wftRefresh();
     },
     continue: async (capUsd) => {
+      if (Number.isNaN(capUsd)) { notify({ tone: 'err', title: 'The rest did not start', detail: 'Give the cost limit in dollars, such as $15.' }); return; }
       const r = await wftCall('POST', `${wftBase(id)}/runs/${runId}/continue`, capUsd != null ? { capUsd } : {});
       if (!r.ok) { notify({ tone: 'err', title: 'The rest did not start', detail: r.error }); return; }   // boards 27, 29 (C18)
       if (still()) void wftRefresh();
