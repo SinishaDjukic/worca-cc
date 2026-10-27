@@ -177,6 +177,48 @@ Behind the experimental flag `workflowTests`; the data is kept either way.
   Never a path, a display name, a colour, an icon or the order.
 - A loop's limit is part of the graph: the stored wire keeps it in `config.maxCycles` (with `config.onExhausted`).
 
+### Workflow tests (v78)
+
+Behind the experimental flag `workflowTests`; the data is kept either way. No foreign keys, like `workflow_revisions`:
+a deleted workflow keeps its examples, and they come back with a workflow saved again under the same id.
+
+- `wf_test_examples`: one row per example of a user workflow:
+  - the request, the answers to Worca's questions, and what happens when Worca asks something else (`pick` | `fail`);
+  - the Basics and the automatic checks (JSON), and the number of tries (1, 3 or 5);
+  - a note, and the past run it came from with the person's verdict (`from_pipeline`, `from_use`, `from_verdict`).
+- `wf_test_example_files`: an example's files as BLOBs (at most 5 MB each, 8 per example), with their sha256.
+- `wf_test_runs`: one row per test:
+  - what it compares: `a_use`, `b_use` (`draft` or a version number) and their fingerprints;
+  - which examples, how many tries, the quick check, the cost cap, and its connectors mode (`pretend` | `real`);
+  - its status (`running` | `done` | `stopped`) and why it stopped (`changed` when the draft, the Library or an example
+    changed while it ran).
+- `wf_test_tries`: one row per try. It records:
+  - the version it ran, with the workflow fingerprint (graph + today's agent and script hashes) and the example
+    fingerprint (request, files, answers, rule, Basics, checks);
+  - whether it was a mock, and its connectors mode;
+  - its status, its pipeline, its verdict (JSON) and its cost.
+
+  A finished try is reused by a later test when both fingerprints, the mock setting and the connectors mode are equal.
+- `wf_test_run_tries`: the tries a test shows, its own and the ones it reused, each on side `a` or `b`. A stopped try
+  that "Finish the rest" made again leaves this table but keeps its `run_id`, so its cost stays in the test's cost.
+- `pipelines.is_test` = 1 marks a try's run. It is written once, when the row is created. These leave a try out:
+  - the Runs list, `/api/counts` and the hello;
+  - Statistics;
+  - team metrics records;
+  - chat notifications;
+  - auto-resume, and resuming it by hand (409);
+  - the Versions page's run counts, the onboarding ticks and Ask's people.
+
+  Its spend stays in `cost_ledger`, so it counts toward the spending limit. A try never mounts memory.
+- A pretend try (connectors `pretend`) writes, in its pipeline folder:
+  - `connectors/<nn>-<server>.json`: the tools each stand-in offers, from the connector's last passing Test;
+  - `connector-calls.ndjson`: one line per call a stand-in answered (`{ ts, server, tool, arguments, readOnly }`), what
+    the try would have sent.
+- `mcp/tests.json` (MCP registry): a Test now keeps each tool as `{ name, description?, inputSchema?, annotations? }`;
+  results written before keep their names and still load.
+- `workflow-tests/seen-connectors.json` (worcaHome): the claude.ai connector names Worca saw when a run started, so
+  Test a version can name the ones a pretend try switches off.
+
 ### Run groups (v65)
 
 The Runs list's groups (runs redesign §3.3) are the one new named state of the runs redesign:

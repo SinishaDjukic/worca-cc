@@ -132,7 +132,7 @@ export const FLAGS = Object.freeze([
   entry({
     key: 'workflowTests',
     title: 'Workflow versions and tests',
-    description: 'Save named versions of a workflow, choose which version new runs use, and restore any earlier save. Later: test a version on your own examples and compare it with another before runs use it.',
+    description: 'Save named versions of a workflow, choose which version new runs use, and restore any earlier save. Test a version on your own examples and compare it with another before runs use it.',
     stage: 'experimental',
     default: false,
     owner: 'TomicaB',

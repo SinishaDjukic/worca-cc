@@ -19,6 +19,27 @@ Pull requests (add each number when it opens):
 
 - Workflow versions (#979)
 
+## Workflow tests (Labs)
+
+**Try a new version of a workflow on real examples, and see what got better or worse.**
+
+Workflow tests (Labs, flag `workflowTests`) add a Tests page to a workflow.
+- Keep real requests as examples, with their files and the answers to Worca's questions. Add one from a past run, or write one.
+- Say what a good result needs: the Basics (no error, no help needed, a cost limit, how often it is sent back for fixes) and automatic checks counted exactly, without AI (length, sections, must or must not mention, a file, a Library script).
+- Test a version: Worca tries every example 3 times on it and on the version you compare with, reuses earlier results when nothing changed, and stops at the cost limit you set.
+- Compare shows the tries passed, the cost and time per try, what got better or worse per example, and each example side by side.
+- Connectors: by default a test's tries use stand-ins for your connectors, so nothing is posted or sent, and one example's page shows what would have been sent. Choose Real to use your real connectors.
+- A test of a workflow runs one at a time; while it runs, Test a version and Try it once now wait.
+- Tests work for workflows without a project for now. Their runs stay out of the Runs list, Statistics and team metrics, but count in the spending limit.
+
+Chips: Tests · Test a version · Compare · experimental: turn it on in Settings › Labs
+
+Read it: [Where Worca keeps its state](../storage.md)
+
+Pull requests (add each number when it opens):
+
+- Workflow tests (#<PR>)
+
 ## Requirements (experimental)
 
 **Define a feature with Worca before anything is built.**

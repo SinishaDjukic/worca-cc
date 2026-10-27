@@ -292,6 +292,7 @@ gated: the view shows the same controls at every level.
 | The composer chat in the dock | all |
 | The save dialog's Domain | all |
 | Behind the flag `workflowTests`, Simple (#721: the way back must be at every level that can edit): the Canvas · Versions switch; the status line next to the name ("v1 in use", "Draft · new runs use v1"); Save version and its dialog; the Versions page (Use for new runs and its dialog, Restore into draft, Every save with Restore); Versions… in the Library's ⋯ menu; the Export dialog's Version field (wherever Export opens; the skill and plugin formats stay Expert) | all |
+| Behind the flag `workflowTests`, Simple (the people who build workflows test them): the Tests page in the Canvas · Tests · Versions switch (the list of examples, How testing works, first use from past runs), the example editor with the Add a check and question dialogs, Test a version with its Connectors choice (Pretend or Real), the page while a test runs, Compare and one example side by side with what it would have sent, and "Use as test example" in a finished run's More menu | all |
 | Export as a Claude Code skill or a Worca plugin (the shared Export dialog) | E |
 
 The old addresses `#composer`, `#agents`, `#scripts` and `#agent-create` land
