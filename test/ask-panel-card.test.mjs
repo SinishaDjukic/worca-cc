@@ -1026,6 +1026,20 @@ test('typed cards (model, clone, web, workspace, actions): fields render as text
       assert.deepEqual([...el.querySelectorAll('.ask-mcard-change-label')].map((x) => x.textContent), ['Repository', 'Branch', 'Folder', 'Azure DevOps']);
       assert.equal([...el.querySelectorAll('.ask-mcard-after')].at(-1).textContent, 'the Azure DevOps token (WORCA_ADO_TOKEN)');
     } },
+    { name: 'clone card: a Bitbucket URL labels the credential row "Bitbucket"', run: async () => {
+      const rec = { cardPosts: [] };
+      const ctx = await openWithCard(PROJECT_CARD, rec);
+      const url = 'https://bitbucket.org/acme/api.git';
+      const card = { type: 'clone', kind: 'clone', summary: 'Clone acme/api as project api', url, branch: null,
+        name: 'api', dir: '/data/projects/api', github: 'the Bitbucket token (WORCA_BB_TOKEN)', note: 'why',
+        change: { url, branch: null, name: 'api' } };
+      ctx.panel.pushServerFrame({ type: 'ask-card', block: { kind: 'card', id: 'card_00000014', state: 'proposed', card }, threadId: TID, messageId: MID, seq: 3 });
+      ctx.flush();
+      const el = ctx.doc.querySelector('[data-ask-clonecard="proposed"]');
+      assert.ok(el);
+      assert.deepEqual([...el.querySelectorAll('.ask-mcard-change-label')].map((x) => x.textContent), ['Repository', 'Branch', 'Folder', 'Bitbucket']);
+      assert.equal([...el.querySelectorAll('.ask-mcard-after')].at(-1).textContent, 'the Bitbucket token (WORCA_BB_TOKEN)');
+    } },
     { name: 'web card: host, reason and exact URL as text; Deny / Always allow / Allow in chat post the verbs; applied and failed read as such', run: async () => {
       const rec = { cardPosts: [] };
       const base = apiHandler(rec);

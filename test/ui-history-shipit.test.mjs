@@ -1408,6 +1408,8 @@ test('base warning: shown when baseStatus.movedSinceRun > 0 on the chosen base r
 
 const AZ_BASE = { name: 'origin', slug: 'dev.azure.com/acme/Shop/api', owner: 'acme/Shop', forge: 'azure', prHost: 'Azure DevOps', prSupported: true };
 const AZ_FORK = { name: 'fork', slug: 'dev.azure.com/acme/Shop/api-fork', owner: 'acme/Shop', forge: 'azure', prHost: 'Azure DevOps', prSupported: true };
+const BB_BASE = { name: 'origin', slug: 'bitbucket.org/acme/api', owner: 'acme', forge: 'bitbucket', prHost: 'Bitbucket', prSupported: true };
+const BB_FORK = { name: 'fork', slug: 'bitbucket.org/me/api', owner: 'me', forge: 'bitbucket', prHost: 'Bitbucket', prSupported: true };
 const azRemotes = (list, defaults = { pushRemote: 'origin', baseRemote: 'origin' }) => ({ ...REMOTES, remotes: list, defaults });
 const baseLabelOf = (modal) => modal.querySelector('#shipit-into-label').textContent;
 const hintOf = (modal) => modal.querySelector('.shipit-remotes-hint').textContent;
@@ -1416,6 +1418,12 @@ test('(e) Create PR eligibility reads any PR host: an Azure DevOps token alone o
   await checkRows([
     { name: 'gh missing, Azure configured', run: async () => {
       const ctx = await bootShip({ gh: false, prHosts: { github: false, azure: true } });
+      await openDetail(ctx);
+      assert.equal(hdPr(ctx.window).hidden, false);
+      assert.equal(ctx.window.__np.histPrEligible(ROW), true);
+    } },
+    { name: 'gh missing, Bitbucket configured', run: async () => {
+      const ctx = await bootShip({ gh: false, prHosts: { github: false, azure: false, bitbucket: true } });
       await openDetail(ctx);
       assert.equal(hdPr(ctx.window).hidden, false);
       assert.equal(ctx.window.__np.histPrEligible(ROW), true);
@@ -1439,6 +1447,11 @@ test('(a)(b)(c)(g) the Ship-it modal names the base remote\'s PR host and says w
     { name: '(b) a fork push into an Azure base says forks are not supported, not Cross-repo', run: async () => {
       const modal = await openModal(await bootShip({ remotes: azRemotes([AZ_BASE, AZ_FORK], { pushRemote: 'fork', baseRemote: 'origin' }) }));
       assert.equal(hintOf(modal), 'Azure DevOps pull requests between repositories (forks) are not supported yet. Push to origin.');
+    } },
+    { name: '(b) a fork push into a Bitbucket base says forks are not supported; the label names Bitbucket', run: async () => {
+      const modal = await openModal(await bootShip({ remotes: azRemotes([BB_BASE, BB_FORK], { pushRemote: 'fork', baseRemote: 'origin' }) }));
+      assert.equal(baseLabelOf(modal), 'Into (Bitbucket)');
+      assert.equal(hintOf(modal), 'Bitbucket pull requests between repositories (forks) are not supported yet. Push to origin.');
     } },
     { name: '(c) a missing credential shows the server\'s reason', run: async () => {
       const prReason = 'Azure DevOps is not configured: set WORCA_ADO_TOKEN (a PAT with Code: Read & Write) where worca runs';
@@ -1469,6 +1482,7 @@ test('(d) Generate with AI sends forge:azure for an Azure base remote, and no fo
   };
   await checkRows([
     { name: 'Azure base remote', run: async () => assert.equal((await describeBody(azRemotes([AZ_BASE]))).forge, 'azure') },
+    { name: 'Bitbucket base remote', run: async () => assert.equal((await describeBody(azRemotes([BB_BASE]))).forge, 'bitbucket') },
     { name: 'GitHub base remote', run: async () => assert.equal('forge' in (await describeBody(REMOTES)), false) },
   ]);
 });

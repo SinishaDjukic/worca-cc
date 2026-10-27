@@ -3,7 +3,7 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkRows } from './helpers/rows.mjs';
-import { probeGit, gitState, gitAvailable, currentGitState, onGitChange, GIT_MISSING, gitMissingResult, gitMissingError,
+import { probeGit, gitState, gitAvailable, currentGitState, onGitChange, GIT_MISSING, gitMissingResult, gitMissingError, gitMissingMessage, BITBUCKET_NEEDS_GIT,
   _testing } from '../src/core/git-available.mjs';
 import { withNoGit, gitArrives } from './helpers/git-off.mjs';
 
@@ -165,6 +165,14 @@ test('gitAvailable, gitState, onGitChange, GIT_MISSING, the git-off helper', asy
     { name: 'GIT_MISSING and its two shapes', run: () => {
       assert.deepEqual(GIT_MISSING, { code: 'GIT_MISSING', message: 'git is not installed on this machine' });
       assert.deepEqual(gitMissingResult(), { ok: false, stdout: '', stderr: 'git is not installed on this machine', code: -1 });
+      assert.equal(gitMissingMessage('bitbucket.org/acme/api'), BITBUCKET_NEEDS_GIT);
+      assert.equal(gitMissingMessage('git@bitbucket.org:acme/api.git'), BITBUCKET_NEEDS_GIT);
+      assert.equal(gitMissingMessage('gitlab.com/acme/api'), GIT_MISSING.message);
+      assert.equal(gitMissingMessage('acme/bitbucket.org-mirror'), GIT_MISSING.message);
+      assert.equal(gitMissingMessage('https://github.com/acme/bitbucket.org'), GIT_MISSING.message, 'a path segment is not the host');
+      assert.equal(gitMissingMessage('https://evilbitbucket.org/a/b'), GIT_MISSING.message);
+      assert.equal(gitMissingMessage('ssh://git@altssh.bitbucket.org:443/acme/api.git'), BITBUCKET_NEEDS_GIT);
+      assert.equal(gitMissingError().message, GIT_MISSING.message);
       const e = gitMissingError();
       assert.deepEqual([e.message, e.code], ['git is not installed on this machine', 'GIT_MISSING']);
     } },

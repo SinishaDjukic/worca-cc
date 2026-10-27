@@ -190,6 +190,11 @@ if [ -n "${WORCA_ADO_READ_TOKEN:-}${WORCA_ADO_WRITE_TOKEN:-}" ]; then
 elif [ -n "${WORCA_ADO_TOKEN:-}${AZURE_DEVOPS_EXT_PAT:-}" ]; then
   log "Azure DevOps: one token for clone, push and PRs, per call"
 fi
+if [ -n "${WORCA_BB_READ_TOKEN:-}${WORCA_BB_WRITE_TOKEN:-}" ]; then
+  log "Bitbucket: split read/write tokens, per call"
+elif [ -n "${WORCA_BB_TOKEN:-}" ]; then
+  log "Bitbucket: one token for clone, push and PRs, per call"
+fi
 if [ -z "${GIT_AUTHOR_NAME:-}" ] && ! git config --global user.name >/dev/null 2>&1; then
   log "no git identity: set GIT_AUTHOR_NAME/GIT_AUTHOR_EMAIL in .env or agents cannot commit"
 fi

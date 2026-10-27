@@ -369,6 +369,9 @@ import { hasGh, pushBranch, createPr, createIssue, prMergeable, listRemotes, lis
 import { prNumberFromUrl, watchablePrUrl, forgeOfPrUrl, FORGE_LABEL } from '../src/core/forge.mjs';
 import { getWatch, setWatch, createPrWatcher, watchActive, FIX_WORKFLOW_ID, stoppedWatchFact } from '../src/core/pr-watch.mjs';
 import { forkRefusal, workItemIdFromSourceRef, prSummary, workItemSummaries } from '../src/core/pr/azure.mjs';
+import { forkRefusal as bitbucketForkRefusal } from '../src/core/pr/bitbucket.mjs';
+// Forges whose PRs worca opens over REST (pr/azure.mjs, pr/bitbucket.mjs): gh body edits and GitHub "Closes" lines skip them.
+const REST_PR_FORGES = new Set(['azure', 'bitbucket']);
 import { workspaceMembers as prStateMembers, memberPrTarget, relatedPrsBlock, withRelatedPrsBlock } from '../src/core/workspace-prs.mjs';
 import { isSyntacticRef } from '../src/core/ask/proposal.mjs';
 import { createRefResolver } from '../src/core/ask/refs.mjs';
@@ -5031,10 +5034,10 @@ function shipCtxOf(view) {
   if (!base) return { error: 'the feature has no base branch' };
   return { state, target, base };
 }
-/** Stacked: a gh slice PR's "Part of …" preamble gets the other slices' current PR links (best effort; Azure keeps its
- *  body). Any other body is left alone. */
+/** Stacked: a gh slice PR's "Part of …" preamble gets the other slices' current PR links (best effort; Azure and Bitbucket keep
+ *  their body). Any other body is left alone. */
 async function refreshSliceBody(prUrl, pid, repoDir) {
-  if (forgeOfPrUrl(prUrl) === 'azure') return null;
+  if (REST_PR_FORGES.has(forgeOfPrUrl(prUrl))) return null;
   const cur = await readPrBody({ projectDir: repoDir, prUrl });
   if (!cur.ok || !cur.body.startsWith('Part of ')) return null;
   // The preamble: the "Part of" line, a blank line, the "- Slice" list; it ends at the first blank line after the list.
@@ -5110,7 +5113,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
       adoptOnePr: async ({ url, body }) => {
         const r = await markPrReady({ prUrl: url });
         if (!r.ok) return r;
-        if (forgeOfPrUrl(url) !== 'azure') await editPrBody({ projectDir: ctx.target.repoDir, prUrl: url, body }).catch(() => null);
+        if (!REST_PR_FORGES.has(forgeOfPrUrl(url))) await editPrBody({ projectDir: ctx.target.repoDir, prUrl: url, body }).catch(() => null);
         return { ok: true };
       },
       markReady: async (prUrl) => {
@@ -5166,7 +5169,7 @@ app.post('/api/shape/features/:id/ship', async (req, res) => {
 
 // ── One ship flow (slice 2): a Run-after chain ships through Create PR ───────────────────────────────────────────
 const CHAIN_SHIPPING = new Set();   // chain ids with a ship in flight
-const NO_PR_HOST = 'No pull request host is available: install the GitHub CLI (gh), or set WORCA_ADO_TOKEN for Azure DevOps';
+const NO_PR_HOST = 'No pull request host is available: install the GitHub CLI (gh), set WORCA_ADO_TOKEN for Azure DevOps, or WORCA_BB_TOKEN for Bitbucket';
 const livePr = (pid) => { const pr = readPrState(pid); return !!(pr && pr.url && pr.state !== 'CLOSED'); };
 /** After a chain or group ship, done or stopped part-way: Watch PR on each PR it made (when asked), then repaint. */
 function settleShipped(opened, watch, actor) {
@@ -8924,10 +8927,12 @@ async function pickPrRemotes(body, repoDir) {
   return { remotes, pushRemote, baseRemote, pushR: byName.get(pushRemote) || null, baseR: byName.get(baseRemote) || null };
 }
 
-// Azure DevOps cannot open a PR between forks: the refusal text when the branch would be
-// pushed to another repo than an Azure base remote, else null. Checked BEFORE anything is pushed.
-function azureForkRefusal(pushR, baseR) {
-  return prProviderFor(baseR).forge === 'azure' && pushR && !sameRepo(pushR, baseR) ? forkRefusal(baseR) : null;
+// Azure DevOps and Bitbucket (for now) cannot open a PR between forks: the refusal text when the branch would be
+// pushed to another repo than such a base remote, else null. Checked BEFORE anything is pushed.
+const FORK_REFUSALS = { azure: forkRefusal, bitbucket: bitbucketForkRefusal };
+function forkPrRefusal(pushR, baseR) {
+  const refuse = FORK_REFUSALS[prProviderFor(baseR).forge];
+  return refuse && pushR && !sameRepo(pushR, baseR) ? refuse(baseR) : null;
 }
 
 // A PR route's store key: a project key (PROJECT_KEY_RE, already imported from
@@ -8997,14 +9002,14 @@ function runSourceUrl(pipelineId) {
 
 /**
  * The GitHub issue a run's PR closes on merge ({ slug, number }), else null: the run came from a
- * GitHub issue and the base remote is not Azure DevOps (a Closes line means nothing there). In a
+ * GitHub issue and the base remote is not Azure DevOps or Bitbucket (a Closes line means nothing there). In a
  * workspace run only the member whose base repo IS the issue's repo closes it — every member's PR
  * carrying the line would close the issue at the first merge. Also the dialog's "Will close" line.
  */
 function runSourceIssue(pipelineId, { baseRemote = null, memberKey = null } = {}) {
   const i = parseGithubIssueUrl(runSourceUrl(pipelineId));
   if (!i) return null;
-  if (baseRemote && prProviderFor(baseRemote).forge === 'azure') return null;
+  if (baseRemote && REST_PR_FORGES.has(prProviderFor(baseRemote).forge)) return null;
   const slug = `${i.owner}/${i.repo}`;
   if (memberKey && String(baseRemote?.slug || '').toLowerCase() !== slug.toLowerCase()) return null;
   return { slug, number: i.number };
@@ -9021,7 +9026,7 @@ function runSourceIssue(pipelineId, { baseRemote = null, memberKey = null } = {}
 // the run's own feature branch. The base remote is fetched first (45 s TTL, 8 s bound,
 // negative-cached) so `baseStatus` can warn when the base moved since the run started
 // (warn only, #527). A git remote failure still carries the chain so the dialog can offer it.
-// Each remote carries its PR host (`prHost`: GitHub | Azure DevOps | null for other hosts,
+// Each remote carries its PR host (`prHost`: GitHub | Azure DevOps | Bitbucket | null for other hosts,
 // which still use gh) and whether PRs can be opened there now (`prSupported`, else `prReason`).
 // -> { ok, remotes:[{name,fetchUrl,pushUrl,host,owner,repo,slug,forge,org,project,prHost,prSupported,prReason?}],
 // `issue` is the run's GitHub issue the PR would close (the dialog's "Will close" line), on failure too.
@@ -9080,8 +9085,7 @@ app.get('/api/pr/remotes', async (req, res) => {
   const remotes = await Promise.all(rl.remotes.map(async (r) => {
     const p = prProviderFor(r);
     const a = await p.available();
-    // Name the host only where it is that host: gitlab/bitbucket/local remotes still go through
-    // gh (D4), but the modal must not label them "GitHub".
+    // Name the host only where it is that host: gitlab/local remotes still go through gh (D4), but the modal must not label them "GitHub".
     return { ...r, prHost: r.forge ? p.label : null, prSupported: a.ok, ...(a.ok ? {} : { prReason: a.reason }) };
   }));
   res.json({ ok: true, remotes, defaults, remembered,
@@ -9145,7 +9149,7 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   const provider = prProviderFor(baseR);
   const avail = await provider.available();
   if (!avail.ok) return { ok: false, status: 409, error: avail.reason, forge: provider.forge };
-  const refusal = azureForkRefusal(pushR, baseR);
+  const refusal = forkPrRefusal(pushR, baseR);
   if (refusal) return { ok: false, status: 422, error: refusal, kind: 'unsupported' };
   // A base the base remote does not have (a run started from a branch that was never pushed) would
   // push the head, then fail on GitHub's "Base sha can't be blank". Refuse first, naming the fix.
@@ -9214,7 +9218,7 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
 // ---------------------------------------------------------------------------
 // POST /api/pr  -> push the pipeline's feature branch (if needed) and open a PR
 // against its source branch (or the dialog's `baseBranch`) on the base remote's
-// forge: Azure DevOps over REST (no forks: 422 before the push), every other host
+// forge: Azure DevOps and Bitbucket over REST (no forks: 422 before the push), every other host
 // via the GitHub CLI. 409 { error, forge } when that forge is not usable here.
 // Mergeability is read back only here (never during list rendering).
 // body: { id, projectDir?, projectKey?, memberKey?, pushRemote?, baseRemote?, baseBranch?, title?, body?, draft? } —
@@ -9364,7 +9368,7 @@ async function prWatchTarget(src, res) {
   const pr = target.memberKey
     ? readMemberPrStates(state.id || id)[target.memberKey]
     : readPrState(state.id || id);
-  if (!pr?.url || pr.state !== 'OPEN' || !watchablePrUrl(pr.url)) { badRequest(res, 'an open GitHub or Azure DevOps pull request is required'); return null; }
+  if (!pr?.url || pr.state !== 'OPEN' || !watchablePrUrl(pr.url)) { badRequest(res, 'an open GitHub, Azure DevOps or Bitbucket pull request is required'); return null; }
   return { state, id: state.id || id, target, pr };
 }
 app.get('/api/pr/watch', async (req, res) => {
@@ -9372,7 +9376,7 @@ app.get('/api/pr/watch', async (req, res) => {
   catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
 });
 // GET /api/pr/checks -> { checks: { state: passing|pending|failing|none, total, failed, pending, skipped, inherited }, mergeable,
-// base, status, watch } for a run's open github.com PR: the run page's PR card in one request (checks null when gh cannot
+// base, status, watch } for a run's open GitHub, Azure DevOps or Bitbucket PR: the run page's PR card in one request (checks null when gh cannot
 // answer). `inherited` counts failures that also fail on the base branch head; they are not in `failed`.
 app.get('/api/pr/checks', async (req, res) => {
   try {
@@ -9397,7 +9401,7 @@ app.post('/api/pr/watch', async (req, res) => {
 });
 // POST /api/pr/resolve { id, projectKey, memberKey? } -> watchView: Resolve on a PR card with merge
 // conflicts. One fix run merges the base into the PR branch and pushes, Watch on or off.
-/** Resolve's refusals, naming the PR's host (GitHub or Azure DevOps). */
+/** Resolve's refusals, naming the PR's host (GitHub, Azure DevOps or Bitbucket). */
 const resolveRefusals = (host) => ({
   BUSY: [409, 'A fix run is already working on this pull request.'],
   RATE_LIMITED: [429, `${host} is rate limiting Worca; try again in a minute.`],
@@ -9429,7 +9433,7 @@ app.post('/api/pr/resolve', async (req, res) => {
 // ---------------------------------------------------------------------------
 // Publish branch (#618): put a finished run's feature branch on a remote WITHOUT opening a
 // PR, so a teammate, CI or another machine can test it first. Same pipeline resolution
-// and remote checks as POST /api/pr (pickPrRemotes, azureForkRefusal); no PR host needed.
+// and remote checks as POST /api/pr (pickPrRemotes, forkPrRefusal); no PR host needed.
 // The push is recorded on the run's branch record (`published: { remote, sha, at, by }`,
 // beside `checkout`) plus an audit line; Ship it afterwards opens a PR for that branch.
 // ---------------------------------------------------------------------------
@@ -9503,7 +9507,7 @@ app.post('/api/runs/:id/publish', async (req, res) => {
   const picked = await pickPrRemotes(body, repoDir);
   if (picked.error) return res.status(picked.status).json({ error: picked.error });
   const { remotes, pushRemote, baseRemote, pushR, baseR } = picked;
-  const refusal = azureForkRefusal(pushR, baseR);
+  const refusal = forkPrRefusal(pushR, baseR);
   if (refusal) return res.status(422).json({ error: refusal, kind: 'unsupported' });
 
   const tips = await branchTips(repoDir, feature, pushRemote);
@@ -9765,7 +9769,7 @@ app.post('/api/runs/:id/resolve-terminal', async (req, res) => {
 // drafts a PR description from the run's persisted artifacts (pr-description.mjs).
 // Never cached and never submitted — the text only fills the modal's textarea.
 // No gh needed. A request the client abandons (Cancel, the modal closing) aborts
-// the call. `forge` ('azure', else GitHub) picks the host's system prompt.
+// the call. `forge` ('azure' | 'bitbucket', else GitHub) picks the host's system prompt.
 // body: { id, projectKey | projectDir, baseBranch?, forge? } -> 200 { ok, body }
 // | 400 | 404 | 500, or 409 code 'claude-signed-out' (mapped like the overview route).
 // ---------------------------------------------------------------------------
@@ -9784,7 +9788,7 @@ app.post('/api/pr/describe', async (req, res) => {
   const life = new AbortController();
   res.on('close', () => { if (!res.writableEnded) life.abort(); });
   try {
-    const forge = body.forge === 'azure' ? 'azure' : 'github';
+    const forge = body.forge === 'azure' || body.forge === 'bitbucket' ? body.forge : 'github';
     const text = await generatePrDescription(key, state.id || id, { baseBranch, signal: life.signal, forge });
     res.json({ ok: true, body: text });
   } catch (err) {
