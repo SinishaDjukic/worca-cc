@@ -1,6 +1,6 @@
-# Run card v2: five-way design review
+# Worca Rail: run page review
 
-Reviewed on 2026-10-25 against the mock in `plans/mocks/run-card-stepper.html` (model `run-card-model.js`) and the
+Reviewed on 2026-10-25 against the mock in `plans/rail/prototype/index.html` (model `run-page-model.js`) and the
 "Run card redesign" canvas. Five independent reviewers, each given the screenshots, the mock's code and
 `docs/design-system.md`, not each other's views: a UX/UI designer, a customer (a tech lead running 5–15 runs a day),
 the developer who would build it, a competitive analyst (with sources) and a QA engineer (with Playwright scripts
@@ -31,7 +31,7 @@ the phone Runs tab wrapped one word per line, and two highlights used a 2px radi
 
 P1 done: failure evidence in Activity, cost against the budget and the diff size as card figures, Away-mode cost in
 Decisions, cost per step only in Activity, the One PR reason corrected. Open: answer in place, Away mark on the card,
-"Merge all in order when green". Verified by Playwright on every case and tab (`plans/mocks/run-card-stepper.html`).
+"Merge all in order when green". Verified by Playwright on every case and tab (`plans/rail/prototype/index.html`).
 
 ## P0: before anything is built
 
@@ -179,7 +179,7 @@ Activity and the Changes tools at build time and are not drawn in the prototype.
 
 ## Round 3: the batch after self-review (26 Oct)
 
-The structure is now fixed in `plans/run-card-v2-spec.md` (One Rail): change the spec first, then the prototype.
+The structure is now fixed in `plans/rail/spec.md` (One Rail): change the spec first, then the prototype.
 
 - A question is answered under its step in the card (one choice, your own words, the card's Send answer); Overview no
   longer repeats it.
@@ -192,5 +192,5 @@ The structure is now fixed in `plans/run-card-v2-spec.md` (One Rail): change the
   origin/main", "into ~/folder"), labels and tags, then "+ Label" (a bare + once chips exist). The branch copies itself.
 - A run inside a group is a slice of the work, with its own time and cost; actions today's app lacks carry a New mark.
 - Artifacts: the name opens it, one download icon at the row's end.
-- The gate (`plans/mocks/run-card-sweep.mjs`) now opens every menu and dialog and fails on any page jump; a shorter tab
+- The gate (`plans/rail/prototype/sweep.mjs`) now opens every menu and dialog and fails on any page jump; a shorter tab
   no longer pulls the page up.

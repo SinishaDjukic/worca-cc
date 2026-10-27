@@ -1,8 +1,8 @@
-# Run card v2: enrollment plan
+# Worca Rail: run page enrollment
 
 From design to the only design, in five phases, on Worca's flag lifecycle (`docs/feature-flags.md`): one flag,
 `runCardV2`, moves `experimental` → `beta` (on by default) → `retiring` → graduated. Design: the "Run card redesign"
-canvas and `plans/mocks/run-card-stepper.html`. Review and its P0 / P1 lists: `plans/run-card-v2-review.md`.
+canvas and `plans/rail/prototype/index.html`. Review and its P0 / P1 lists: `plans/rail/review.md`.
 
 | Phase | Flag | Who sees v2 | Length | Done when |
 |---|---|---|---|---|

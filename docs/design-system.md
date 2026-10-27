@@ -4,6 +4,73 @@ The one reference for how Worca looks. Every screen follows it; `test/ui-design-
 `tools/button-audit.mjs` enforce the rules marked (checked). When the guide and the code disagree, fix one of them in
 the same commit.
 
+## Worca Rail
+
+Worca Rail is the redesign of every Worca page, one page at a time, on the rules below. A Rail page is specified in
+`plans/rail/` (one spec per page) and built first in the prototype (`plans/rail/prototype/`); until it ships, the app's
+current pages keep the rules further down. Where a Rail page and a current rule differ, the Rail page's spec says so.
+
+### One Rail: the philosophy
+Every screen reads down one rail, and everything has one place on it.
+1. **One rail.** Everything aligns to a single 20px rail and one text edge (rail + 12px gap); a dot, a step, a member
+   run or a PR is a row on it. Nothing floats.
+2. **State is the headline.** The first thing read is what is happening (a word and a colour that only ever mean a
+   state), the second is what you can do about it.
+3. **One place per fact.** A count, time, cost, PR number or question appears once; everything else links to it.
+4. **One action, the rest behind ⋯.** Each state offers the one critical control; alternatives sit in its ▾, supporting
+   actions in ⋯ next to it, danger last after a rule.
+5. **Quiet until needed.** Labels, tags, banners and help appear when there is something to say; help lives in
+   tooltips, not lines.
+6. **Nothing moves by itself.** No jumps, no reflow on hover, no animation that is not a state change; a click, a
+   repaint or a menu never scrolls the page.
+
+### Type roles
+The type scale below, named by what it does on a Rail page.
+| Role | Token | Weight | For |
+|---|---|---|---|
+| Page | `--fs-page` 22 | 700 | the page title, one line with an ellipsis (a tap shows it whole) |
+| Headline | `--fs-subpage` 18 | 600 | the state word |
+| Value | `--fs-section` 15 | 600 | figures: time, cost, changes |
+| Body | `--fs-body` 13 | 400 (the live or asking row 600) | rows, questions, text |
+| Meta | `--fs-meta` 12 | 400, `--ink-2` | the metadata line, times, figure labels, details |
+| Caption | `--fs-caption` 11 | 400 | chips, hints; `--ink-3` only for marks and separators |
+
+### One component per kind of interaction
+| Kind | Component | Used for |
+|---|---|---|
+| A choice or a list of actions | the compact menu (Menu): one line per item, a leading check for a choice, hints at the right, help in the tooltip, danger last | ▾, ⋯, pickers in a sentence (`dev ▾`, `3 stacked PRs ▾`, `starts by itself ▾`) |
+| A yes or no, or a one-line answer | the strip under the top bar | confirms, Run after, a change request |
+| A form | the dialog (Modals) | Create PR |
+| Picking and adding names | the list editor: one field (find or create) over checked lists | labels and cost tags, groups |
+| Worca writing text for you | the suggestion: a sparkle inside the field, a Suggested chip, the violet shimmer while it writes, Stop | run title and branch, PR title and description, a drafted answer, a change request |
+A choice is never a full-width toggle or radio cards: it is a picker in the sentence it changes.
+A yes or no never covers the page: it is the strip, in place; the dialog is only for a form.
+
+### Violet, kept apart
+Violet has two meanings that never meet: the merged status dot (a state), and Worca writing for you inside a field
+(the sparkle, the Suggested chip, the shimmer). A dot never means AI, and a suggestion is never a dot or a badge.
+
+### Suggestions
+- The violet shimmer means Worca is writing text you will review. It never means loading or a run state.
+- Every suggestion runs on a helper job's model (Models › Helper jobs) and its sparkle's tooltip names it: PR titles
+  and descriptions (stacked ones too) on PR description; run title and branch on Run naming; drafted answers and
+  change requests on Drafts.
+- If Worca cannot write it (an error, or no answer in 20s), nothing changes: the field keeps the text it had, says so
+  in grey (`Couldn't write it … The text is as it was.`) with Try again, and the form still submits.
+
+### Steps that change state
+A step that reaches outside the page or cannot be taken back (Create PR, Merge, Stop, Cancel the rest, Re-plan,
+Archive, Discard) confirms first, in the dialog or the strip. Its button then says what is happening (`Creating…`,
+`Merging…`) and is disabled. On success the page moves on and a toast says what happened. On failure nothing changes:
+the place you acted says what failed and why (`Could not merge #959`, the reason, `Nothing changed.`) with Try again,
+and what already succeeded stays (a stack that fails part-way keeps the PRs it opened; a retry opens the rest).
+Pause, Resume, Copy link and Terminal do not confirm.
+
+### The gate
+Every Rail page passes `plans/rail/prototype/sweep.mjs` in every case, at 900 and 375px, in both themes: no sideways
+scroll, no clipped text without a tooltip, no overlaps, every section on the text edge, contrast 4.5:1, every menu and
+dialog inside the window, no page jump on any click; and every control does something.
+
 ## Foundations
 
 ### Colour (checked)

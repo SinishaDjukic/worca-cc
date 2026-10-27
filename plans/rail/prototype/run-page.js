@@ -1,4 +1,4 @@
-// Run card v2 mock: renders RunCardModel.view() (run-card-model.js) with Worca's own classes, and keeps the
+// Run card v2 mock: renders RunCardModel.view() (run-page-model.js) with Worca's own classes, and keeps the
 // viewer's choices (case, open stage, added chips, ship mode, open menu) in `ui`.
 const M = window.RunCardModel;
 const P = (d) => `<path d="${d}"></path>`;

@@ -1,22 +1,9 @@
-# Run card v2: the spec
+# Worca Rail: the run page
 
-One page that fixes the run page's structure. A change to it is made here first, on purpose, then in the prototype
-(`plans/mocks/run-card-stepper.*`). Rationale and review history live in `plans/run-card-v2-review.md`.
-
-## The philosophy: One Rail
-
-Every screen reads down one rail, and everything has one place on it.
-
-1. **One rail.** Everything aligns to a single 20px rail and one text edge; a dot, a step, a member run or a PR is a
-   row on it. Nothing floats.
-2. **State is the headline.** The first thing read is what is happening (a word and a colour that only ever mean a
-   state), the second is what you can do about it.
-3. **One place per fact.** A count, time, cost, PR number or question appears once; everything else links to it.
-4. **One action, the rest behind ⋯.** Each state offers the one critical control; alternatives sit in its ▾, supporting
-   actions in ⋯, danger last.
-5. **Quiet until needed.** Labels, tags, banners and help appear when there is something to say; help lives in
-   tooltips, not lines.
-6. **Nothing moves by itself.** No jumps, no reflow on hover, no animation that is not a state change.
+The run and group page on Worca Rail. The rules every Rail page follows (One Rail, type roles, the shared components,
+suggestions, steps that change state, the gate) are in `docs/design-system.md` › Worca Rail; this spec is only what
+is particular to this page. A change is made here first, then in the prototype (`plans/rail/prototype/`). The review
+history is `plans/rail/review.md`; the way to ship it is `plans/rail/enrollment.md`.
 
 ## Anatomy, top to bottom
 
@@ -46,43 +33,8 @@ Every screen reads down one rail, and everything has one place on it.
 | Merging a stack | One PR at a time, in order: the action is `Merge #959` once it is ready (it confirms first); when it merges, Worca moves the next PR onto dev, where its checks run again; failing checks come first (`Fix checks on #961`) |
 | Group membership | ⋯: Move to group…, which opens the same list editor as labels and cost tags (find or create; one group, so a single choice), or Leave it |
 
-## Type roles
+## Page rules
 
-| Role | Size and weight | For |
-|---|---|---|
-| Page | 22, bold, ink | The title |
-| Headline | 18, semibold, ink | The state word |
-| Value | 15, semibold, ink | Time, cost, changes |
-| Body | 13, regular, ink (the live or asking step semibold) | Step and stage names, questions, Overview text |
-| Meta | 12, regular, grey | The metadata line, times, labels of figures, details |
-| Caption | 11 | Chips, hints; faint grey only for marks and separators |
-
-## Rules
-
-- One component per kind of interaction, reused everywhere: the list editor (labels, cost tags, groups), the compact menu,
-  the strip, the dialog, the suggestion pattern (sparkle, Suggested chip, shimmer).
-
-- The violet shimmer means Worca is writing text for you, in a field you will review (run title and branch, PR title
-  and description, a drafted answer, a change request). It never means loading or a run state.
-- Every suggestion runs on a helper job's model (Models › Helper jobs), named in the sparkle's tooltip: PR titles and
-  descriptions, stacked ones included, on PR description; run title and branch on Run naming; drafted answers and
-  change requests on Drafts (a new job).
-- If Worca cannot write it (an error, or no answer in 20s), nothing changes: the field keeps the text it had (for a
-  stacked PR, today's template), says so in grey, and offers Try again; the form still submits.
-- A step that changes state outside the page, or cannot be taken back (Create PR, Merge, Stop, Cancel the rest,
-  Re-plan, Archive, Discard), confirms first: the dialog, or the strip. Its button then says what is happening
-  (`Merging…`). On success the run moves on; on failure nothing changes, and the place you acted says what failed and
-  why, with Try again; what already succeeded stays (a stack that fails part-way keeps the PRs it opened, and a retry
-  opens only the rest). Pause, Resume, Copy link and Terminal do not confirm.
-
-- Each fact once. A count, time, cost, PR number or question appears in one place on the page.
-- Menus are the app's compact menu: one line per item, a leading check for a choice, hints at the right, help in the
-  tooltip, danger last after a rule.
-- Buttons in the card and its tabs are 28px. Every row sits on the 20px rail + 12px gap; below the card everything
-  starts on the tab text edge.
-- Nothing moves the page by itself: a click, a repaint or a menu never scrolls it.
-- Actions today's app does not have are listed, with why, in a note in the prototype's intro ("N actions are proposed, not in
-  today's app"); the buttons themselves carry no mark, here or in the build.
-- Every case passes the gate (`plans/mocks/run-card-sweep.mjs`): no sideways scroll, no clipped text without a
-  tooltip, no overlaps, every section on the text edge, contrast 4.5:1, every menu and dialog inside the window, no
-  page jump on any click.
+- Buttons in the card and its tabs are 28px. Below the card everything starts on the tab text edge.
+- Actions today's app does not have are listed, with why, in a note in the prototype's intro ("N actions are proposed,
+  not in today's app"); the buttons themselves carry no mark, here or in the build.
