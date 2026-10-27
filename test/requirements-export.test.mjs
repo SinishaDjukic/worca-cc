@@ -250,6 +250,66 @@ test('reach failures (D11): the sentence by kind, nothing recorded but the pendi
   }
 });
 
+test("reach failures that are not product copy (a crash, garbage, the shim's own words): a fixed phrase in the 502, the raw text in the server log", async () => {
+  const STOPPED = 'Worca could not reach Jira: the Jira plugin stopped unexpectedly.';
+  const UNREADABLE = 'Worca could not reach Jira: the Jira plugin gave an answer Worca could not read.';
+  const cases = [
+    ['protocol', 'plugin "jira-source" op "createTicket": child exited 1 — Error: boom\n    at file:///x/index.mjs:1:7', UNREADABLE],
+    ['protocol', 'plugin "jira-source" op "createTicket": non-JSON on stdout (stdout is protocol-reserved; use ctx.log) — got: {"token":"s3"}', UNREADABLE],
+    ['plugin', "Cannot read properties of undefined (reading 'fields')", STOPPED],
+    ['plugin', 'plugin "jira-source": cannot read manifest — ENOENT: no such file, open \'C:\\x\\worca-cc-plugin.json\'', STOPPED],
+    ['plugin', 'boom\n    at createTicket (/home/x/index.mjs:9:3)', STOPPED],
+    ['plugin', 'EACCES: permission denied, open C:\\x\\jira.json', STOPPED],
+    ['network', 'connect ECONNREFUSED via /x/proxy/sock', STOPPED],
+    ['weird', 'Error: odd at file:///x/y.mjs', STOPPED],   // a kind the host does not know (an injected callSource)
+  ];
+  const logged = [];
+  const prevError = console.error;
+  console.error = (...a) => { logged.push(a.join(' ')); };
+  try {
+    for (const [kind, msg, want] of cases) {
+      reset();
+      const f = readyFeature(`Garbage ${kind}`);
+      const p = await previewExport(f.seq, { mode: 'create' }, { target: TARGET }, d);
+      const dd = { callSource: (o) => (o.op === 'createTicket' ? Promise.reject(Object.assign(new Error(msg), { kind })) : d.callSource(o)) };
+      await assert.rejects(runExport(f.seq, { mode: 'create', previewHash: p.previewHash }, { by: 'po', target: TARGET }, dd), (e) => {
+        assert.equal(e.code, 'TRACKER');
+        assert.equal(e.message, want, msg);
+        assert.doesNotMatch(e.message, /file:|exited|stdout|manifest|\bat\s|[\\/]x[\\/]|Cannot read|odd/);
+        return true;
+      });
+      assert.ok(logged.some((l) => l.includes(msg)), `the raw text is logged: ${msg}`);
+    }
+  } finally { console.error = prevError; }
+  reset();
+  setMockSourceResponses({ createTicket: () => { throw new PluginOpError('plugin', 'Jira refused the request: Project SHOP is archived'); } });
+  await assert.rejects(exportNow(readyFeature('Plain plugin').seq),
+    (e) => e.message === 'Worca could not reach Jira: Jira refused the request: Project SHOP is archived.', "a connector's plain sentence stays");
+});
+
+test("a ticket URL is a link only when it is http(s): a connector's javascript: or data: URL is stored, answered and shown as none", async () => {
+  reset();
+  const f = readyFeature('Odd URL');
+  setMockSourceResponses({ createTicket: () => ({ key: 'SHOP-50', url: 'javascript:alert(1)', fingerprint: 'f50' }),
+    ticketState: () => ({ exists: true, url: 'data:text/html,x', fingerprint: 'f50' }),
+    updateTicket: () => ({ key: 'SHOP-50', url: ' JavaScript:alert(2)', fingerprint: 'f51' }) });
+  const c = await exportNow(f.seq);
+  assert.deepEqual([c.action, c.key, c.url], ['created', 'SHOP-50', null]);
+  assert.equal(getExportLink(f.seq).url, null);
+  assert.equal(exportTurns(f.seq).at(-1).payload.url, null);
+  updateFeature(f.seq, { spec: { ...readySpec(), rules: ['A rule'] } });
+  const u = await exportNow(f.seq, { mode: 'update' });
+  assert.deepEqual([u.action, u.url, getExportLink(f.seq).url], ['updated', null, null]);
+  setMockSourceResponses({ updateTicket: () => ({ key: 'SHOP-50', url: 'HTTPS://acme.test/browse/SHOP-50', fingerprint: 'f52' }),
+    ticketState: () => ({ exists: true, fingerprint: 'f51' }) });
+  updateFeature(f.seq, { spec: { ...readySpec(), rules: ['Another rule'] } });
+  assert.equal((await exportNow(f.seq, { mode: 'update' })).url, 'HTTPS://acme.test/browse/SHOP-50', 'an http(s) URL in any case stays');
+  const v = await exportView(getFeature(f.seq), listTurns(f.seq), d);
+  assert.equal(v.link.url, 'HTTPS://acme.test/browse/SHOP-50');
+  assert.deepEqual(v.history.map((h) => h.url), ['HTTPS://acme.test/browse/SHOP-50', null, null]);
+  reset();
+});
+
 test('a lost answer (D10): the next export finds the ticket by label, marker and footer, links it and updates it; no duplicate', async () => {
   reset();
   const f = readyFeature();

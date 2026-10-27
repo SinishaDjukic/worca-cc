@@ -1915,6 +1915,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     host.inert = false; host.removeAttribute('inert');
     syncExportInert();
     wrap.remove();
+    // A3: a Feature chat phone sheet still open is modal again (while the dialog was open its page was already inert, so skipped)
+    syncSheetInert();
     if (restore) restoreFocus(trigger, triggerUi);
   }
 
@@ -3474,7 +3476,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     input.setAttribute('aria-describedby', hintId);
     input.addEventListener('change', () => {
       reportBack.set(f.seq, input.checked);
-      for (const o of document.querySelectorAll('[data-ui^="report-"]')) if (o !== input) o.checked = input.checked;
+      for (const o of document.querySelectorAll('[data-ui="report-card"],[data-ui="report-dialog"],[data-ui="report-runs"]')) if (o !== input) o.checked = input.checked;
     });
     return h('div', { class: 'req-report' }, row,
       h('p', { class: 'hint req-report-hint', id: hintId, text: done
@@ -3604,7 +3606,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
    *  with the first preview and updated in place after (an open dropdown, the focus and a label being typed stay). */
   function openPreview(f, { mode, reason = null, force = false, trigger = null } = {}) {
     closeDialog(false);
-    const name = trackerName(f) || 'the tracker';
+    // the tracker's name: the feature's view until the preview answers with the one it exports to (several trackers, none bound)
+    let name = (mode === 'update' && (linkOf(f) || {}).tracker) || trackerName(f) || 'the tracker';
     // this export's own choices (undefined / null: the preview's base); the issue types and priorities as …/options answered
     const st = { issueType: undefined, issueTypeName: null, labels: null, priority: undefined, priorityName: null,
       types: null, prios: null, choicesFor: null, labDraft: labelDraft() };
@@ -3615,10 +3618,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const more = h('button', { type: 'button', class: 'btn req-export-more', 'data-ui': 'export-more', 'aria-expanded': 'false', 'aria-controls': 'req-exp-desc',
       onclick: () => { desc.classList.remove('folded'); more.setAttribute('aria-expanded', 'true'); more.hidden = true; desc.focus(); } }, 'Show all');
     // Fields and the description: hidden until the first preview arrives (a first load that fails shows no empty boxes)
+    const descHead = h('h3', { id: 'req-exp-desc-h', text: `Description, as ${name} will show it` });
+    const titleTo = document.createTextNode(`to ${name}`);
+    const onlyHint = h('span', { class: 'hint', text: `Only what you see here is sent to ${name}.` });
     const grid = h('div', { class: 'req-export-grid', hidden: true },
       h('div', { class: 'req-export-col', role: 'group', 'aria-labelledby': 'req-exp-fields-h' }, h('h3', { id: 'req-exp-fields-h', text: 'Fields' }), fieldsEl),
       h('div', { class: 'req-export-col', role: 'group', 'aria-labelledby': 'req-exp-desc-h' },
-        h('h3', { id: 'req-exp-desc-h', text: `Description, as ${name} will show it` }), desc, more));
+        descHead, desc, more));
     const box = stateBox();
     const statusEl = h('p', { class: 'req-export-status', role: 'status' });
     const cancel = h('button', { type: 'button', class: 'btn', 'data-ui': 'export-cancel', onclick: () => { if (!busy) closeDialog(true); } }, 'Cancel');
@@ -3626,7 +3632,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     // Board 31: at 900 px and narrower CSS hides the title's "FEAT-7 " ("Export to Jira") and shows
     // "FEAT-7 · <title>" under it; one h2 still labels the dialog, and takes the focus on open (D20).
     const title = h('h2', { id: 'req-exp-title', class: 'req-export-title', tabindex: '-1' },
-      'Export ', h('span', { class: 'req-export-tid', text: `${f.id} ` }), `to ${name}`);
+      'Export ', h('span', { class: 'req-export-tid', text: `${f.id} ` }), titleTo);
     const card = h('section', { class: 'card req-dialog req-export req-export-preview', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'req-exp-title' },
       backButton(f),
       title,
@@ -3634,7 +3640,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       lead,
       grid,
       ...box.top,
-      h('div', { class: 'req-export-foot' }, h('span', { class: 'hint', text: `Only what you see here is sent to ${name}.` }), statusEl,
+      h('div', { class: 'req-export-foot' }, onlyHint, statusEl,
         h('div', { class: 'req-dlg-btns' }, cancel, go), box.hint));   // board 29 (1): the note under Cancel and Try again
     openModal(card, { trigger, first: title, canClose: () => !busy, page: true });
     const g = dlgGen;
@@ -3652,6 +3658,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       hasPreview: () => descMd !== null,   // a preview was drawn (it stays on screen when a later one fails)
       reload: () => load({ keep: true }), reopen: () => openPreview(f, { mode, reason, force: forceNow, trigger }),
       notReady: (why, nf = f) => openPreview(nf, { mode, reason: why, trigger }) };
+    const setName = (next) => {
+      if (typeof next !== 'string' || !next || next === name) return;
+      name = next; ctx.name = next;
+      titleTo.textContent = `to ${name}`;
+      descHead.textContent = `Description, as ${name} will show it`;
+      onlyHint.textContent = `Only what you see here is sent to ${name}.`;
+    };
     const showEdited = () => {
       go.hidden = true;
       editedState(box, key(), name, { onUpdate: () => { if (busy) return; forceNow = true; go.hidden = false; void run(); },
@@ -3665,6 +3678,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         const d = await api('POST', exportUrl(f, '/preview'), bodyOf());
         if (!live(g) || k !== n) return;
         data = d;
+        setName(d.tracker);
         if (!keep) box.clear();
         grid.hidden = false;
         go.hidden = false;
@@ -3770,7 +3784,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
    *  once; picking one updates the dialog in place. `notice`: a sentence to say first (a ticket found and linked). */
   function openAgain(f, { reason = null, trigger = null, notice = null } = {}) {
     closeDialog(false);
-    const name = trackerName(f) || 'the tracker';
+    const name = (linkOf(f) || {}).tracker || trackerName(f) || 'the tracker';   // the tracker the ticket sits on
     let data = null; let mode = 'update'; let busy = false;
     const desc = h('p', { class: 'req-dlg-lead', id: 'req-again-desc' });
     const box = stateBox();
@@ -3866,7 +3880,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   /** Board 28: the comment itself before it is sent (D7); the description and fields stay. Back returns to the choices. */
   function openComment(f, { reason = null, trigger = null } = {}) {
     closeDialog(false);
-    const name = trackerName(f) || 'the tracker';
+    const name = (linkOf(f) || {}).tracker || trackerName(f) || 'the tracker';   // the tracker the ticket sits on
     const linkKey = (linkOf(f) || {}).key || '';
     let data = null; let busy = false;
     const box = stateBox();
@@ -3922,13 +3936,16 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     void load();
   }
 
+  /** A ticket URL is a link only when it is http(s) (the server keeps only those; this guards the page as well). */
+  const webHref = (u) => (typeof u === 'string' && /^https?:\/\//i.test(u.trim()) ? u.trim() : null);
   /** Board 28: the ticket chip after the header chips: a link to the ticket, opened in a new tab (the shared external icon). */
   function exportChip(f) {
     const l = linkOf(f);
     if (!l) return null;
     const label = `${l.key}, opens the ticket in ${l.tracker || 'the tracker'} in a new tab`;
-    return l.url
-      ? h('a', { class: 'chip req-export-chip', 'data-ui': 'export-chip', href: l.url, target: '_blank', rel: 'noopener', 'aria-label': label },
+    const href = webHref(l.url);
+    return href
+      ? h('a', { class: 'chip req-export-chip', 'data-ui': 'export-chip', href, target: '_blank', rel: 'noopener', 'aria-label': label },
         h('span', { text: l.key }), sharedIcon(document, 'external', 12))
       : h('span', { class: 'chip req-export-chip', text: l.key });
   }
@@ -3947,7 +3964,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function historyCard(f) {
     const list = (xOf(f) && xOf(f).history) || [];
     if (!list.length) return null;
-    const keyLink = (x) => (x.url ? h('a', { href: x.url, target: '_blank', rel: 'noopener', text: x.key }) : x.key);
+    const keyLink = (x) => (webHref(x.url) ? h('a', { href: webHref(x.url), target: '_blank', rel: 'noopener', text: x.key }) : x.key);
     const tracker = (x) => x.tracker || 'the tracker';
     const LINE = {
       created: (x) => [`Exported to ${tracker(x)} as `, keyLink(x)], new: (x) => [`Exported to ${tracker(x)} as `, keyLink(x)],
