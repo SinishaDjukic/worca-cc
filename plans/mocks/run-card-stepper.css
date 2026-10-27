@@ -631,9 +631,9 @@ html,body{height:auto;overflow:visible;margin:0;}
 
 /* Create PR, simplified: title, description, where it merges, two switches. Suggestions as on the New run form:
    a sparkle inside the field, a "Suggested" chip, the violet shimmer while Worca writes. */
-.pd2{position:relative;width:min(560px,100%);max-height:min(86vh,760px);overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-menu);display:flex;flex-direction:column;}
+.pd2{position:relative;width:min(560px,100%);max-height:min(86vh,760px);overflow:hidden;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-menu);display:flex;flex-direction:column;}
 .pd2-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 0;}
-.pd2-body{display:flex;flex-direction:column;gap:16px;padding:16px 20px 20px;}
+.pd2-body{display:flex;flex-direction:column;gap:16px;padding:16px 20px 20px;min-height:0;overflow:auto;}   /* the body scrolls; title and buttons stay */
 .pd2-foot{display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--line);}
 .pd-f{display:flex;flex-direction:column;gap:6px;min-width:0;}
 .pd-lab{display:flex;align-items:center;gap:6px;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);}
@@ -698,7 +698,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 /* A stack's PRs: one row each, opening to the same title and description fields as one PR. */
 .st-list{list-style:none;margin:0;padding:0;border-top:1px solid var(--line);}
 .st-row{border-bottom:1px solid var(--line);}
-.st-head{display:grid;grid-template-columns:16px 40px minmax(0,1fr) auto auto;align-items:center;column-gap:10px;min-height:40px;width:100%;padding:0;border:0;background:none;color:var(--ink);font:inherit;font-size:var(--fs-body);text-align:left;cursor:pointer;}
+.st-head{display:grid;grid-template-columns:16px 40px minmax(0,1fr) auto;align-items:start;column-gap:10px;min-height:40px;width:100%;padding:10px 0;border:0;background:none;color:var(--ink);font:inherit;font-size:var(--fs-body);text-align:left;cursor:pointer;}
 .st-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;border-radius:var(--r-xs);}
 .st-head svg{color:var(--ink-2);}
 .st-num{font-weight:600;font-size:var(--fs-meta);}
@@ -706,3 +706,32 @@ html,body{height:auto;overflow:visible;margin:0;}
 .st-into{font-size:var(--fs-meta);color:var(--ink-2);}
 .st-writing{font-size:var(--fs-caption);color:var(--violet-ink);}
 .st-body{display:flex;flex-direction:column;gap:14px;padding:4px 0 16px 26px;}
+
+/* A stacked PR's row: title and one line (summary, Writing…, worth a look, opened), then size and base at the right. */
+.st-head svg{margin-top:3px;}
+.st-head:disabled{cursor:default;}
+.st-num{line-height:20px;}
+.st-mid{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.st-t{line-height:20px;}
+.st-sum{font-size:var(--fs-meta);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.st-flag{font-size:var(--fs-meta);color:var(--amber-ink-strong);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.st-writing{font-size:var(--fs-meta);}
+.st-meta{display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;line-height:20px;}
+/* The sentence: how many PRs (a picker), from the branch, into the base (a picker); it wraps on a phone. */
+.pd-into{flex-wrap:wrap;row-gap:4px;}
+.pd-br{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;}
+.pd-ship{font-family:var(--sans);font-weight:500;}
+/* Worca could not write it: grey, the text stays, Try again. A step that failed: the dialog's alert, the strip's text. */
+.pd-fail{font-size:var(--fs-meta);color:var(--ink-2);}
+.pd-retry{padding:0;border:0;background:none;color:var(--ink);font:inherit;text-decoration:underline;text-underline-offset:2px;cursor:pointer;}
+.pd-retry:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.pd-alert{display:flex;flex-direction:column;gap:2px;padding:8px 12px;border:1px solid color-mix(in srgb,var(--red-ink) 35%,transparent);border-radius:var(--r-sm);background:var(--red-bg);font-size:var(--fs-meta);color:var(--ink);}
+.pd-alert b{color:var(--red-ink-strong);font-weight:600;}
+.rc-confirm-t.is-err{display:flex;flex-direction:column;gap:2px;color:var(--red-ink);}
+.rc-confirm-why{color:var(--ink-2);font-weight:400;font-size:var(--fs-meta);}
+/* A group's next run, under the run it follows, on the step text edge. */
+.sc-then{grid-column:1 / -1;display:flex;align-items:center;gap:6px;min-width:0;padding:10px 0 0 32px;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
+.sc-then b{min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--ink);font-weight:500;}
+.sc-then .rc-pop{flex:none;}
+.sc-then .menu{min-width:180px;}
+.pd-into .rc-pop .menu:has([data-menu-pick^="ship:"]){min-width:220px;}

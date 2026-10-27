@@ -26,7 +26,7 @@ const svg = (name, size) => (ICON[name] ? `<svg width="${size}" height="${size}"
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 // a case starts fresh: nothing from the case before it carries over
-const fresh = (caseId) => ({ caseId, open: null, chips: [], ship: '', menu: '', tab: '', focus: '', view: 'steps', parent: null, back: null, dialog: '', after: [], away: '', askEach: false, answer: null, file: null, actFilter: 'all', rounds: [], ticks: [], taskOpen: false });
+const fresh = (caseId) => ({ caseId, open: null, chips: [], ship: '', menu: '', tab: '', focus: '', view: 'steps', parent: null, back: null, dialog: '', after: [], away: '', askEach: false, answer: null, file: null, actFilter: 'all', rounds: [], ticks: [], taskOpen: false, stackSt: null, busy: null });
 let ui = fresh('working');
 
 function statusDot(v) {
@@ -274,8 +274,10 @@ function render() {
   const stages = v.stages.map((st) => `<button type="button" class="sc-stage" role="tab" id="st-${st.key}" aria-controls="stage-panel" aria-selected="${st.selected}" tabindex="${st.selected ? 0 : -1}" data-stage="${st.key}" data-key="stage:${st.key}" aria-label="${esc(st.aria)}" title="${esc(st.aria)}"><span class="l">${esc(st.label)}</span><span class="m">${esc(st.meta)}</span></button>`).join('');
   const o = v.open;
   const enter = o.key !== lastOpen; lastOpen = o.key;   // the steps fade in only when another stage opens, never on a repaint
-  const head = o.isRun ? `<div class="sc-head"><span class="sc-run" title="${esc(o.title)}">${esc(o.title)}</span>${o.meta ? `<span class="rtab-dim sc-run-cost">${esc(o.meta)}</span>` : ''}${o.canOpen ? `<button type="button" class="btn btn-sm" data-open-run="${o.runIndex}" data-key="open-run">Open run</button>` : ''}</div>`
-    : '';
+  const head = o.isRun ? `<div class="sc-head"><span class="sc-run" title="${esc(o.title)}">${esc(o.title)}</span>${o.meta ? `<span class="rtab-dim sc-run-cost">${esc(o.meta)}</span>` : ''}${o.canOpen ? `<button type="button" class="btn btn-sm" data-open-run="${o.runIndex}" data-key="open-run">Open run</button>` : v.bar.stop ? `<button type="button" class="btn btn-sm" data-replan="${o.runIndex}" data-key="replan" title="The planner re-cuts this run and the ones after it">Re-plan from here</button>` : ''}</div>`
+    : v.planHead ? `<div class="sc-head"><span class="sc-run">How the work was cut into runs</span><button type="button" class="btn btn-sm" data-key="open-plan" data-say="Opens plan.md">Open the plan</button></div>` : '';
+  // the next run of a group, under the run it follows: starts by itself, or asks first
+  const then = v.then ? `<div class="sc-then">Then <b title="${esc(v.then.title)}">Run ${v.then.n} · ${esc(v.then.title)}</b><span class="rc-pop pd-basepop"><button type="button" class="pd-base pd-ship" data-menu="then" data-key="menu:then" aria-haspopup="menu" aria-expanded="${ui.menu === 'then'}" title="When run ${v.then.n} starts">${ui.askEach ? 'asks me first' : 'starts by itself'}${svg('chevron', 12)}</button>${menu('then', [{ id: 'group:go', text: 'Starts by itself', checked: !ui.askEach, help: 'Each run starts when the one before it is ready' }, { id: 'group:ask', text: 'Asks me first', checked: !!ui.askEach, help: 'Stops for your OK before the next run starts' }])}</span></div>` : '';
   const ask = v.ask && o.rows.some((r) => /is-ask/.test(r.rowCls)) ? answerHtml(v.ask) : '';
   const panel = o.stack ? stackHtml(Object.assign({}, o.stack, { enter })) : `<ol class="rd-route-list sc-subs${enter ? ' is-enter' : ''}" aria-label="${esc(o.label)} steps" style="grid-column:1 / -1">${o.rows.map((r) => rowHtml(r) + (/is-ask/.test(r.rowCls) ? ask : '')).join('')}</ol>`;
   const sel = (v.tabs.find((t) => t.sel) || v.tabs[0]).id;
@@ -288,7 +290,7 @@ function render() {
     <section class="rc-card" aria-label="Run status">
       <div class="rc-zone"><span class="rc-rail">${statusDot(v)}</span><span class="rc-main rc-word">${esc(v.word)}</span>${action}${v.detail ? `<span class="rc-detail" title="${esc(v.detail)}">${esc(v.detail)}</span>` : ''}</div>
       <div class="rc-zone"><div class="rc-span"><div class="sc-track" style="grid-template-columns:repeat(${v.stages.length},minmax(0,1fr))" aria-hidden="true">${track}</div><div class="sc-stages" style="grid-template-columns:repeat(${v.stages.length},minmax(0,1fr))" role="tablist" aria-label="Stages">${stages}</div></div></div>
-      <div class="rc-zone is-ruled" role="tabpanel" id="stage-panel" aria-labelledby="st-${o.key}">${head}${panel}</div>
+      <div class="rc-zone is-ruled" role="tabpanel" id="stage-panel" aria-labelledby="st-${o.key}">${head}${panel}${then}</div>
       <div class="rc-zone is-ruled"><div class="rc-figs">${v.figs.map((f) => figHtml(f, v)).join('')}</div></div>
     </section>
     <div class="tabs rc-tabs" role="tablist" aria-label="Run detail">${v.tabs.map((t) => `<button type="button" class="tab" role="tab" id="tab-${t.id}" aria-controls="rtab-panel" aria-selected="${t.sel}" tabindex="${t.sel ? 0 : -1}" data-tab="${t.id}" data-key="tab:${t.id}">${esc(t.l)}${t.n ? `<span class="n">${esc(t.n)}</span>` : ''}</button>`).join('')}</div>
@@ -299,7 +301,7 @@ function render() {
 
   fitTags();
   fitMenus();
-  const nx = document.getElementById('next-event'); if (nx) { const to = (M.flow[ui.caseId] || {}).next; nx.disabled = !to; nx.title = to ? 'Event: ' + EVENT[ui.caseId] : 'Nothing outside the run happens next here; use the card'; }
+  const nx = document.getElementById('next-event'); if (nx) { const to = ui.caseId === 'chain' ? (chainNext() >= 0 ? 'chain' : '') : (M.flow[ui.caseId] || {}).next; nx.disabled = !to; nx.title = to ? 'Event: ' + EVENT[ui.caseId] : 'Nothing outside the run happens next here; use the card'; }
   const selTab = document.querySelector('.rc-tabs .tab[aria-selected="true"]'); const strip = selTab?.parentElement;
   if (strip) { const l = selTab.offsetLeft - strip.offsetLeft, r = l + selTab.offsetWidth; if (l < strip.scrollLeft) strip.scrollLeft = l; else if (r > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = r - strip.clientWidth; }
   if (keep) {
@@ -344,21 +346,17 @@ function moreItems(v) {
   const group = !!v.kind; const live = v.bar.stop;
   const items = [];
   if (live && !group) items.push({ header: 'Away mode' }, ...AWAY.map((x) => Object.assign({ checked: (ui.away || 'away:auto') === x.id }, x)), { sep: true });
-  if (group) items.push({ header: 'Next run' }, { id: 'group:go', text: 'Starts by itself', checked: !ui.askEach, help: 'Each run starts when the one before it is ready' },
-    { id: 'group:ask', text: 'Asks me first', checked: !!ui.askEach, help: 'Stops for your OK before the next run starts' }, { sep: true },
-    { id: 'group:replan', text: 'Re-plan the rest', help: 'The planner re-cuts the runs that have not started' }, { id: 'group:plan', text: 'Open the plan', help: 'The plan and how it was cut into runs' }, { sep: true });
   if (v.runAfter) items.push({ id: 'more:after', text: v.runAfter.label, help: v.runAfter.help });
   if (!group && !v.inGroup) items.push(v.addedGroup ? { id: 'ungroup', text: 'Leave ' + v.addedGroup, help: 'The run leaves the group; its labels and tags stay' } : { id: 'more:group', text: 'Move to group…', help: 'Tracks it with related runs on one page' });
   if (!group) items.push({ id: 'more:preset', text: 'Save as preset', help: 'Starts the next run with this task’s setup' });
   items.push({ id: 'more:terminal', text: 'Terminal', hint: 'Ctrl+`', help: 'A shell in this run’s worktree' }, { id: 'more:link', text: 'Copy link', help: 'Paste it in Chat or an issue' });
   if (v.finished && !v.archived) items.push({ id: 'more:report', text: 'Report this run', help: 'Sends the logs and a note to the Worca team' }, { id: 'more:archive', text: 'Archive', help: 'Removes the branch, worktree and logs; the remote branch and PR stay' });
   if (v.archived) items.push({ id: 'more:restore', text: 'Restore', help: 'Brings the run back to Runs' });
-  if (group) items.push({ id: 'group:cancel', text: 'Cancel the rest', help: 'Runs that have not started are dropped' });
   return items;
 }
 const CH_SAY = { 'ch:refresh': () => 'Diff refreshed from the worktree', 'ch:patch': () => 'Downloading run.patch', 'ch:copy': (v) => 'Copied: git fetch && git switch ' + v.place.branch };
 const MORE_SAY = { 'more:link': 'Copied the link to this run', 'more:preset': 'Saved as preset “Unified page navigation”', 'more:terminal': 'Terminal opened in the worktree', 'more:report': 'Report sent with the logs',
-  'group:replan': 'The planner is re-cutting runs 3 and on', 'group:plan': 'Opens plan.md' };
+};
 let toastTimer = 0;
 function toast(text) { ui.toast = text; clearTimeout(toastTimer); toastTimer = setTimeout(() => { ui.toast = ''; const el = document.querySelector('.rc-toast'); if (el) { el.classList.remove('is-on'); el.textContent = ''; } }, 4000); }
 function goCase(id) {
@@ -371,19 +369,56 @@ function follow(f, label) {
     if (f.dialog === 'pr') { const v = M.view(ui.caseId, ui); ui.pr = { title: v.title, desc: '', mode: 'write', gen: false, genTitle: false, titleN: 0, titleSuggested: false, draft: false, watch: true, base: 'dev' }; if (!v.runs.length || !/^Create \d/.test(label)) { generateTitle(); generate(); } else startStack(v); pendingFocus = v.runs.length ? 'pd-ok' : 'pd-close'; }
     return;
   }
-  ui.dialog = '';
   if (f.confirm && !(ui.confirm && ui.confirm.ok)) {
-    ui.confirm = { text: f.confirm, yes: label.replace(/ the run$/, '') || 'Confirm', danger: /^(Stop|Discard)/.test(label), f, label }; ui.menu = ''; pendingFocus = 'confirm:yes'; return;
+    ui.dialog = '';
+    ui.confirm = { text: f.confirm, yes: label.replace(/ the run$/, '') || 'Confirm', danger: /^(Stop|Discard|Cancel)/.test(label), f, label }; ui.menu = ''; pendingFocus = 'confirm:yes'; return;
   }
-  ui.confirm = null; ui.menu = '';
-  if (f.to) { goCase(f.to); toast(f.say || 'Now: ' + M.view(f.to, {}).word); } else { toast(f.say); pendingFocus = pendingFocus || 'act-main'; }
+  // A step you confirmed, in the strip or the dialog: its button says what is happening; then the run moves on, or
+  // nothing changes and the place you acted says what failed and why, with Try again (as Create PR does today).
+  if (f.confirm || f.fromDialog) {
+    const busy = { label }; ui.busy = busy; ui.menu = ''; if (ui.confirm) ui.confirm.err = null; if (ui.pr) ui.pr.err = null;
+    pendingFocus = ui.dialog ? 'pd-ok' : 'confirm:yes';
+    setTimeout(() => {
+      if (ui.busy !== busy) return;
+      ui.busy = null;
+      if (takeFail()) { failed(label); render(); document.querySelector('.pd-alert')?.scrollIntoView({ block: 'nearest' }); return; }
+      done(f, label); render();
+    }, 900);
+    return;
+  }
+  done(f, label);
 }
+function done(f, label) {
+  ui.dialog = ''; ui.confirm = null; ui.menu = '';
+  if (f.run) { f.run(); toast(f.say); pendingFocus = 'act-main'; }
+  else if (f.to) { goCase(f.to); toast(f.say || 'Now: ' + M.view(f.to, {}).word); } else { toast(f.say); pendingFocus = pendingFocus || 'act-main'; }
+}
+// What a step's button says while it works, and why it can fail; a failure keeps the state as it was.
+const WORKING = { Merge: 'Merging…', Create: 'Creating…', Stop: 'Stopping…', Discard: 'Discarding…', Archive: 'Archiving…', Cancel: 'Cancelling…', 'Re-plan': 'Re-planning…', Continue: 'Continuing…', Delete: 'Deleting…' };
+const working = (label) => WORKING[label.split(' ')[0]] || 'Working…';
+const REASON = { Merge: 'GitHub says the branch is behind dev; update it and try again', Create: 'git push was rejected: the remote branch moved', Stop: 'the run did not answer; it may have just finished',
+  Archive: 'a terminal still has the worktree open', Discard: 'a terminal still has the worktree open', Cancel: 'run 3 had just started', 'Re-plan': 'the planner did not answer in time', Continue: 'the budget settings could not be saved' };
+function failed(label) {
+  const why = REASON[label.split(' ')[0]] || 'GitHub did not answer';
+  const err = { title: 'Could not ' + label.charAt(0).toLowerCase() + label.slice(1), detail: why[0].toUpperCase() + why.slice(1) + '. Nothing changed.' };
+  if (ui.dialog === 'pr') {
+    // a stack fails part-way: the PRs already opened stay opened, and a retry opens only the rest
+    const left = (ui.pr.prs || []).filter((x) => !x.made);
+    if (ui.pr.prs && left.length > 1) { left[0].made = '#' + (959 + ui.pr.prs.indexOf(left[0])); left[0].open = false; ui.dialogLabel = 'Create ' + (left.length - 1) + ' PRs';
+      err.title = 'Could not create ' + (left.length - 1) + ' of ' + ui.pr.prs.length + ' PRs'; err.detail = 'Opened ' + left[0].made + '; the next one failed: ' + why + '. A retry opens only the rest.'; }
+    ui.pr.err = err; pendingFocus = 'pd-ok';
+  } else { ui.confirm.err = err; ui.confirm.ok = false; pendingFocus = 'confirm:yes'; }
+}
+// The prototype's "Next one fails" switch: the next confirmed step or suggestion fails, to show how a failure reads.
+function takeFail() { const box = document.getElementById('fail-next'); if (!box || !box.checked) return false; box.checked = false; return true; }
 // Worca writes for you (the violet shimmer), in a field you then edit: a drafted answer, a change request.
 const DRAFT = { answer: 'Show only ‹ Parent under 600px; keep the full trail from 600px up', changes: 'Slices: take the parent from the feature, not the project.\nSaved runs: fall back to Runs when there is no live parent.' };
 let draftTimer = 0;
+const draftTip = (what) => { const h = M.view(ui.caseId, ui).tabData.helper.draft; return `${what} · writes with ${h.model} (Models › Helper jobs › ${h.job})`; };
+const draftFail = (kind) => `<span class="pd-fail" role="status" style="flex:1 0 100%">Couldn’t write it: no answer in 20s. The text is as it was. <button type="button" class="pd-retry" data-draft="${kind}" data-key="draft-retry-${kind}">Try again</button></span>`;
 function draft(kind) {
-  const flag = kind === 'answer' ? 'answerDraft' : 'changesDraft'; ui[flag] = true; clearTimeout(draftTimer);
-  draftTimer = setTimeout(() => { if (!ui[flag]) return; ui[flag] = false; if (kind === 'answer') { ui.answerOwn = DRAFT.answer; ui.answer = -1; pendingFocus = 'answer-own'; } else { ui.changesText = DRAFT.changes; pendingFocus = 'changes-text'; } render(); }, 1100);
+  const flag = kind === 'answer' ? 'answerDraft' : 'changesDraft'; ui[flag] = true; clearTimeout(draftTimer); const fails = takeFail(); ui[kind + 'Err'] = false;
+  draftTimer = setTimeout(() => { if (!ui[flag]) return; ui[flag] = false; if (fails) { ui[kind + 'Err'] = true; render(); return; } if (kind === 'answer') { ui.answerOwn = DRAFT.answer; ui.answer = -1; pendingFocus = 'answer-own'; } else { ui.changesText = DRAFT.changes; pendingFocus = 'changes-text'; } render(); }, 1100);
 }
 function act(label) {
   if (label === 'Ask for changes') { ui.dialog = 'changes'; ui.changesText = ''; ui.menu = ''; draft('changes'); pendingFocus = 'draft-stop'; return; }
@@ -393,18 +428,32 @@ function act(label) {
     ui.ship = /one PR/.test(label) ? 'one' : 'stack'; ui.menu = '';
     const nv = M.view(ui.caseId, ui); return act(nv.action.label);
   }
+  if (label === 'Cancel the rest') { follow({ say: 'The runs that had not started are dropped; the others stay', confirm: 'Cancel the runs that have not started? Runs already done or running stay.' }, label); return; }
+  // A stack in review merges one PR at a time; merging one moves the next onto dev, where its checks run again.
+  const pm = ui.caseId === 'chain' && /^(Merge|Fix checks on) (#\d+)$/.exec(label);
+  if (pm) {
+    const nums = M.chainPrs; const i = nums.indexOf(pm[2]); const nx = nums[i + 1];
+    const set = (fn) => () => { const st = (ui.stackSt || M.chainStart).slice(); fn(st); ui.stackSt = st; };
+    if (pm[1] === 'Merge') follow({ confirm: 'Merge ' + pm[2] + ' into dev?' + (nx ? ' Worca then moves ' + nx + ' onto dev.' : ''), say: 'Merged ' + pm[2] + ' into dev' + (nx ? '; ' + nx + ' now goes into dev' : '; the whole stack is in dev'),
+      run: set((st) => { st[i] = 'merged'; if (nx && st[i + 1] !== 'failing') st[i + 1] = 'checks'; }) }, label);
+    else follow({ say: 'A short run fixed ' + pm[2] + '’s checks; they run again', run: set((st) => { st[i] = 'checks'; }) }, label);
+    return;
+  }
   const run = { Pause: 'pauseNow', 'Pause after this step': 'pauseAfter', 'Stop the run': 'stop' }[label];
   if (run) { follow(M.runFlow[run], label === 'Stop the run' ? 'Stop the run' : 'Pause'); return; }
   if (label === 'Try it' || label === 'Check out the whole feature') { toast(M.view(ui.caseId, ui).tryIt); ui.menu = ''; pendingFocus = 'act-main'; return; }
   const f = (M.flow[ui.caseId] || {})[label];
   if (f) follow(f, label); else toast(label + ': done');
 }
-const EVENT = { starting: 'Plan is under way', working: 'Review passed', checks: '2 checks failed', failing: 'dev moved on: 2 files conflict', conflicts: 'Checks green, a reviewer approved', feature: 'Runs 2 and 3 finished' };
-function nextEvent() { const to = (M.flow[ui.caseId] || {}).next; if (!to) return; const say = EVENT[ui.caseId]; goCase(to); toast('Event: ' + say); render(); }
+const EVENT = { starting: 'Plan is under way', working: 'Review passed', checks: '2 checks failed', failing: 'dev moved on: 2 files conflict', conflicts: 'Checks green, a reviewer approved', feature: 'Runs 2 and 3 finished', chain: 'The next PR’s checks pass and a reviewer approves' };
+const chainNext = () => (ui.stackSt || M.chainStart).findIndex((x) => x === 'checks' || x === 'review');
+function nextEvent() {
+  if (ui.caseId === 'chain') { const i = chainNext(); if (i < 0) return; const st = (ui.stackSt || M.chainStart).slice(); st[i] = 'ready'; ui.stackSt = st; toast('Event: ' + M.chainPrs[i] + ' checks passed and a reviewer approved'); render(); return; }
+  const to = (M.flow[ui.caseId] || {}).next; if (!to) return; const say = EVENT[ui.caseId]; goCase(to); toast('Event: ' + say); render(); }
 // The page asks you something in one place, under the bar: confirm a step that cannot be taken back, schedule a run
 // after this one, or set up the PR before it opens.
 function stripHtml(v) {
-  const acts = (yes, cls) => `<span class="rc-confirm-acts"><button type="button" class="btn btn-sm ${cls}" data-confirm="yes" data-key="confirm:yes">${esc(yes)}</button><button type="button" class="btn btn-sm btn-quiet" data-confirm="no" data-key="confirm:no">Cancel</button></span>`;
+  const acts = (yes, cls, busy) => `<span class="rc-confirm-acts"><button type="button" class="btn btn-sm ${cls}" data-confirm="yes" data-key="confirm:yes"${busy ? ' disabled' : ''}>${esc(yes)}</button><button type="button" class="btn btn-sm btn-quiet" data-confirm="no" data-key="confirm:no">Cancel</button></span>`;
   if (ui.dialog === 'after') {
     const opts = v.finished ? ['Now, as a follow-up'] : ['When this run finishes'].concat(v.place.pr ? ['When its PR merges'] : []);
     return `<form class="rc-confirm is-form" role="dialog" aria-labelledby="rc-strip-t" data-form="after"><span class="rc-confirm-t" id="rc-strip-t">${esc(v.runAfter.label)}</span>
@@ -413,10 +462,14 @@ function stripHtml(v) {
   }
   if (ui.dialog === 'changes') {
     return `<form class="rc-confirm is-form" role="dialog" aria-labelledby="rc-strip-t" data-form="changes"><span class="rc-confirm-t" id="rc-strip-t">Tell the planner what to change</span>
-      <div class="pd-adorn${ui.changesDraft ? ' is-writing' : ''}" style="flex:1 0 100%"><textarea class="textarea" id="changes-text" rows="3" placeholder="${ui.changesDraft ? 'Drafting from the 2 open issues…' : 'What should the plan do differently?'}" data-key="changes-text"${ui.changesDraft ? ' readonly' : ''} style="width:100%;font-size:var(--fs-body)">${ui.changesDraft ? '' : esc(ui.changesText || '')}</textarea><span class="pd-act">${ui.changesDraft ? '<button type="button" class="pd-stop" data-stopdraft="changes" data-key="draft-stop" aria-label="Stop writing">×</button>' : '<button type="button" class="pd-ai" data-draft="changes" data-key="draft-changes" title="Draft it from the open issues" aria-label="Draft it from the open issues"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"></path></svg></button>'}</span></div>
-      ${acts('Send to the planner', 'btn-primary')}</form>`;
+      <div class="pd-adorn${ui.changesDraft ? ' is-writing' : ''}" style="flex:1 0 100%"><textarea class="textarea" id="changes-text" rows="3" placeholder="${ui.changesDraft ? 'Drafting from the 2 open issues…' : 'What should the plan do differently?'}" data-key="changes-text"${ui.changesDraft ? ' readonly' : ''} style="width:100%;font-size:var(--fs-body)">${ui.changesDraft ? '' : esc(ui.changesText || '')}</textarea><span class="pd-act">${ui.changesDraft ? '<button type="button" class="pd-stop" data-stopdraft="changes" data-key="draft-stop" aria-label="Stop writing">×</button>' : `<button type="button" class="pd-ai" data-draft="changes" data-key="draft-changes" title="${esc(draftTip('Draft it from the open issues'))}" aria-label="Draft it from the open issues"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"></path></svg></button>`}</span></div>
+      ${ui.changesErr ? draftFail('changes') : ''}${acts('Send to the planner', 'btn-primary')}</form>`;
   }
-  if (ui.confirm) return `<div class="rc-confirm" role="alertdialog" aria-labelledby="rc-strip-t"><span class="rc-confirm-t" id="rc-strip-t">${esc(ui.confirm.text)}</span>${acts(ui.confirm.yes, ui.confirm.danger ? 'btn-danger' : 'btn-primary')}</div>`;
+  if (ui.confirm) {
+    const c = ui.confirm; const busy = !!ui.busy && !ui.dialog;
+    const text = c.err ? `<span class="rc-confirm-t is-err" id="rc-strip-t" role="alert">${esc(c.err.title)}<span class="rc-confirm-why">${esc(c.err.detail)}</span></span>` : `<span class="rc-confirm-t" id="rc-strip-t">${esc(c.text)}</span>`;
+    return `<div class="rc-confirm" role="alertdialog" aria-labelledby="rc-strip-t">${text}${acts(busy ? working(c.label) : c.err ? 'Try again' : c.yes, c.danger ? 'btn-danger' : 'btn-primary', busy)}</div>`;
+  }
   return '';
 }
 // Create PR, as today's dialog: Into (base branch), the PRs for a group, the title and a description you write or
@@ -429,45 +482,63 @@ function prDialogHtml(v) {
   const SPARK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"></path></svg>';
   const EYE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"></path><circle cx="12" cy="12" r="2.5"></circle></svg>';
   const sug = '<span class="pd-sug">Suggested</span>';
-  // the PRs of a group: the choice and the list; each PR's text is drafted from its own run
-  const sw = v.ship ? `<div class="seg" role="group" aria-label="Pull requests"><button type="button" aria-pressed="${v.ship.pick !== 'one'}" data-pdship="stack" data-key="pd-stack">${v.ship.n} stacked</button><button type="button" aria-pressed="${v.ship.pick === 'one'}" data-pdship="one" data-key="pd-one"${v.ship.oneBlocked ? ` disabled title="${esc(v.ship.oneBlocked)}"` : ''}>One PR</button></div>` : '';
-  const prs = !v.ship ? '' : `<div class="pd-f"><span class="pd-lab">Pull requests</span>${sw}<span class="pd-hint">${esc((v.ship.pick === v.ship.rec ? 'Worca suggests this: ' : 'Worca suggests ' + (v.ship.rec === 'one' ? 'one PR' : v.ship.n + ' stacked') + ': ') + v.ship.reason)}</span></div>`;
+  const H = v.tabData.helper.pr; const tip = (what) => `${what} · writes with ${H.model} (Models › Helper jobs › ${H.job})`;
+  // Worca could not write it: the field keeps the text it had, says so, and offers Try again.
+  const fail = (f, pi, sfx, gen) => `<span class="pd-fail" role="status">Couldn’t write it: no answer from ${esc(H.model)} in 20s. The text is as it was. <button type="button" class="pd-retry" data-pd="${gen}"${pi} data-key="pd-retry-${gen}${sfx}">Try again</button></span>`;
   // The title and description fields, shared by one PR and by each PR of a stack (i is its row, -1 for one PR).
   const fields = (f, i) => {
     const sfx = i < 0 ? '' : '-' + i; const pi = ` data-pi="${i}"`;
     return `<div class="pd-f"><span class="pd-lab"><label for="pd-title${sfx}">Title</label>${f.titleSuggested && !f.genTitle ? sug : ''}</span>
-      <div class="pd-adorn${f.genTitle ? ' is-writing' : ''}"><input class="input" id="pd-title${sfx}" type="text" maxlength="256" value="${f.genTitle ? '' : esc(f.title)}" placeholder="${f.genTitle ? 'Suggesting a title…' : 'Title'}" data-key="pd-title${sfx}"${f.genTitle ? ' readonly' : ''}><span class="pd-act"><button type="button" class="pd-ai" data-pd="gentitle"${pi} data-key="pd-gentitle${sfx}" title="Suggest a title" aria-label="Suggest a title">${SPARK}</button></span></div></div>
-    <div class="pd-f"><span class="pd-lab"><label for="pd-desc${sfx}">Description</label>${f.desc && !f.gen ? sug : ''}${f.gen ? `<button type="button" class="pd-stop" data-pd="stop"${pi} data-key="pd-stop${sfx}" title="Stop" aria-label="Stop writing">×</button>` : `<button type="button" class="pd-ai" data-pd="gen"${pi} data-key="pd-gen${sfx}" title="Write it from the run" aria-label="Write the description from the run">${SPARK}</button>`}<button type="button" class="pd-eye${f.mode === 'preview' ? ' is-on' : ''}" data-pdmode="${f.mode === 'preview' ? 'write' : 'preview'}"${pi} data-key="pd-eye${sfx}" aria-pressed="${f.mode === 'preview'}" title="Preview" aria-label="Preview">${EYE}</button></span>
-      <div class="pd-adorn${f.gen ? ' is-writing' : ''}">${f.mode === 'preview' ? `<div class="pd-preview">${f.desc ? md(f.desc) : '<p class="rtab-dim">Nothing to preview yet.</p>'}</div>` : `<textarea class="textarea" id="pd-desc${sfx}" rows="7" placeholder="${f.gen ? 'Writing from the run: what it did, its changes, how it was checked…' : 'Optional: empty uses the title'}" data-key="pd-desc${sfx}"${f.gen ? ' readonly' : ''}>${f.gen ? '' : esc(f.desc)}</textarea>`}</div></div>`;
+      <div class="pd-adorn${f.genTitle ? ' is-writing' : ''}"><input class="input" id="pd-title${sfx}" type="text" maxlength="256" value="${f.genTitle ? '' : esc(f.title)}" placeholder="${f.genTitle ? 'Suggesting a title…' : 'Title'}" data-key="pd-title${sfx}"${f.genTitle ? ' readonly' : ''}><span class="pd-act"><button type="button" class="pd-ai" data-pd="gentitle"${pi} data-key="pd-gentitle${sfx}" title="${esc(tip('Suggest a title'))}" aria-label="Suggest a title">${SPARK}</button></span></div>${f.errTitle ? fail(f, pi, sfx, 'gentitle') : ''}</div>
+    <div class="pd-f"><span class="pd-lab"><label for="pd-desc${sfx}">Description</label>${f.descSuggested && !f.gen ? sug : ''}${f.gen ? `<button type="button" class="pd-stop" data-pd="stop"${pi} data-key="pd-stop${sfx}" title="Stop" aria-label="Stop writing">×</button>` : `<button type="button" class="pd-ai" data-pd="gen"${pi} data-key="pd-gen${sfx}" title="${esc(tip('Write it from the run'))}" aria-label="Write the description from the run">${SPARK}</button>`}<button type="button" class="pd-eye${f.mode === 'preview' ? ' is-on' : ''}" data-pdmode="${f.mode === 'preview' ? 'write' : 'preview'}"${pi} data-key="pd-eye${sfx}" aria-pressed="${f.mode === 'preview'}" title="Preview" aria-label="Preview">${EYE}</button></span>
+      <div class="pd-adorn${f.gen ? ' is-writing' : ''}">${f.mode === 'preview' ? `<div class="pd-preview">${f.desc ? md(f.desc) : '<p class="rtab-dim">Nothing to preview yet.</p>'}</div>` : `<textarea class="textarea" id="pd-desc${sfx}" rows="7" placeholder="${f.gen ? 'Writing from the run: what it did, its changes, how it was checked…' : 'Optional: empty uses the title'}" data-key="pd-desc${sfx}"${f.gen ? ' readonly' : ''}>${f.gen ? '' : esc(f.desc)}</textarea>`}</div>${f.errDesc ? fail(f, pi, sfx, 'gen') : ''}</div>`;
   };
-  // a stack: one row per PR, each opening to the same fields
-  const rowsHtml = stacked && pr.prs ? `<ol class="st-list">${pr.prs.map((f, i) => `<li class="st-row"><button type="button" class="st-head" data-prrow="${i}" data-key="prrow:${i}" aria-expanded="${!!f.open}">${svg('chevron', 14).replace('M6 9.5l6 6 6-6', f.open ? 'M6 9.5l6 6 6-6' : 'M9.5 6l6 6-6 6')}<span class="st-num">PR ${i + 1}</span><span class="st-t" title="${esc(f.title)}">${esc(f.title)}</span>${f.gen || f.genTitle ? '<span class="st-writing">Writing…</span>' : '<span class="pd-sug">Suggested</span>'}<span class="st-into">${i ? 'into PR ' + i : 'into ' + esc(pr.base)}</span></button>${f.open ? `<div class="st-body">${fields(f, i)}</div>` : ''}</li>`).join('')}</ol>` : '';
+  // A stack, reviewed by exception: the rows are the stack shown once (order, size, base); Worca writes every title
+  // and description, and you open a row only to change it. A row Worca thinks is worth a look says why.
+  const sh = v.ship;
+  const rowLine = (f, i) => f.made ? `<span class="st-sum">Opened ${esc(f.made)}</span>` : f.gen || f.genTitle ? '<span class="st-writing">Writing…</span>'
+    : (f.errDesc || f.errTitle) && !f.open ? '<span class="st-sum">Couldn’t write it; today’s text stays</span>'
+    : v.tabData.prFlag[i] ? `<span class="st-flag">${esc(v.tabData.prFlag[i])}</span>` : `<span class="st-sum" title="${esc(v.tabData.prSum[i] || '')}">${esc(v.tabData.prSum[i] || '')}</span>`;
+  const rowsHtml = stacked && pr.prs ? `<div class="pd-f"><span class="pd-hint">Worca writes each title and description from its run. Open a row only to change it.</span><ol class="st-list">${pr.prs.map((f, i) => `<li class="st-row"><button type="button" class="st-head" data-prrow="${i}" data-key="prrow:${i}" aria-expanded="${!!f.open}"${f.made ? ' disabled' : ''}>${svg('chevron', 14).replace('M6 9.5l6 6 6-6', f.open ? 'M6 9.5l6 6 6-6' : 'M9.5 6l6 6-6 6')}<span class="st-num">PR ${i + 1}</span><span class="st-mid"><span class="st-t" title="${esc(f.title)}">${esc(f.title)}</span>${rowLine(f, i)}</span><span class="st-meta"><span>${esc((sh.sizes || [])[i] || '')} · ${v.tabData.prFiles[i] || 1} files</span><span>${i ? 'into PR ' + i : 'into ' + esc(pr.base)}</span></span></button>${f.open && !f.made ? `<div class="st-body">${fields(f, i)}</div>` : ''}</li>`).join('')}</ol></div>` : '';
   const title = stacked ? '' : fields(pr, -1);
-  const desc = '';
   const branch = v.place.branch || 'feat/unified-page-navigation';
-  const into = `<div class="pd-f"><div class="pd-into"><code class="pd-br" title="${esc(branch)}">${esc(branch)}</code><span>into</span><span class="rc-pop pd-basepop"><button type="button" class="pd-base" data-menu="pdbase" data-key="menu:pdbase" aria-haspopup="menu" aria-expanded="${ui.menu === 'pdbase'}" title="Base branch · pushes to origin">${esc(pr.base)}${svg('chevron', 12)}</button>${menu('pdbase', ['dev', 'main'].map((x) => ({ id: 'base:' + x, text: x, checked: pr.base === x })))}</span></div>
-    <span class="pd-hint${pr.base === 'main' ? ' is-warn' : ''}">${pr.base === 'main' ? 'main is 41 commits behind dev; the PR would carry them too' : 'dev has 2 new commits since the run started; they merge cleanly'}</span></div>`;
+  // The sentence says what opens, from where, into what; how many PRs is a picker in it, like the base.
+  const shipPick = sh ? `<span class="rc-pop pd-basepop"><button type="button" class="pd-base pd-ship" data-menu="pdship" data-key="menu:pdship" aria-haspopup="menu" aria-expanded="${ui.menu === 'pdship'}" title="How many PRs">${sh.pick === 'one' ? 'One PR' : sh.n + ' stacked PRs'}${svg('chevron', 12)}</button>${menu('pdship', [
+    { id: 'ship:stack', text: sh.n + ' stacked PRs', checked: sh.pick !== 'one', hint: sh.rec !== 'one' ? 'Suggested' : '', help: 'One PR per run, each into the one before' },
+    { id: 'ship:one', text: 'One PR', checked: sh.pick === 'one', hint: sh.rec === 'one' ? 'Suggested' : '', off: !!sh.oneBlocked, help: sh.oneBlocked || 'Every run in one review' }])}</span><span>from</span>` : '';
+  const shipHint = sh ? `<span class="pd-hint">${esc((sh.pick === sh.rec ? 'Worca suggests this: ' : 'Worca suggests ' + (sh.rec === 'one' ? 'one PR' : sh.n + ' stacked PRs') + ': ') + sh.reason)}</span>` : '';
+  const into = `<div class="pd-f"><div class="pd-into">${shipPick}<code class="pd-br" title="${esc(branch)}">${esc(branch)}</code><span>into</span><span class="rc-pop pd-basepop"><button type="button" class="pd-base" data-menu="pdbase" data-key="menu:pdbase" aria-haspopup="menu" aria-expanded="${ui.menu === 'pdbase'}" title="Base branch · pushes to origin">${esc(pr.base)}${svg('chevron', 12)}</button>${menu('pdbase', ['dev', 'main'].map((x) => ({ id: 'base:' + x, text: x, checked: pr.base === x })))}</span></div>
+    ${shipHint}<span class="pd-hint${pr.base === 'main' ? ' is-warn' : ''}">${pr.base === 'main' ? 'main is 41 commits behind dev; the PR would carry them too' : 'dev has 2 new commits since the run started; they merge cleanly'}</span></div>`;
   const opts = `<div class="pd-opts"><label class="pd-check"><input type="checkbox" id="pd-draft" data-key="pd-draft"${pr.draft ? ' checked' : ''}> Draft</label><label class="pd-check"><input type="checkbox" id="pd-watch" data-key="pd-watch"${pr.watch ? ' checked' : ''}> Watch: fix failing checks</label><span class="pd-hint pd-closes">${stacked ? 'The last PR closes ' : 'Closes '}${esc(v.tabData.issue)}</span></div>`;
+  const alert = pr.err ? `<div class="pd-alert" role="alert"><b>${esc(pr.err.title)}</b><span>${esc(pr.err.detail)}</span></div>` : '';
+  const busy = !!ui.busy;
   return `<div class="viewer-modal pd-modal" role="dialog" aria-modal="true" aria-labelledby="pd-h"><div class="pd2">
     <div class="pd2-head"><h2 class="pd-h" id="pd-h">${esc(ui.dialogLabel)}</h2><button type="button" class="btn btn-sm btn-quiet btn-icon" data-pd="cancel" data-key="pd-close" aria-label="Close">${svg('x', 14)}</button></div>
-    <div class="pd2-body">${prs}${rowsHtml}${title}${desc}${into}${opts}</div>
-    <div class="pd2-foot"><button type="button" class="btn btn-sm" data-pd="cancel" data-key="pd-cancel">Cancel</button><button type="button" class="btn btn-sm btn-primary" data-pd="ok" data-key="pd-ok">${esc(ui.dialogLabel)}</button></div>
+    <div class="pd2-body">${into}${rowsHtml}${title}${opts}${alert}</div>
+    <div class="pd2-foot"><button type="button" class="btn btn-sm" data-pd="cancel" data-key="pd-cancel">Cancel</button><button type="button" class="btn btn-sm btn-primary" data-pd="ok" data-key="pd-ok"${busy ? ' disabled' : ''}>${esc(busy ? working(ui.dialogLabel) : ui.dialogLabel)}</button></div>
   </div></div>`;
 }
 // Writing for you (the violet shimmer): the title quickly, the description from the run; Stop ends it.
 const live = (f) => ui.pr && (f === ui.pr || (ui.pr.prs || []).includes(f));
+// If Worca cannot write it (an error, or no answer in 20s), nothing changes: the field keeps the text it had.
 function generate(f = ui.pr, i = -1, delay = 1400) {
-  const v = M.view(ui.caseId, ui);
-  f.gen = true; f.mode = 'write';
-  setTimeout(() => { if (!live(f) || !f.gen) return; f.gen = false; f.desc = i < 0 ? v.tabData.prBody(v.title, v.tabData.files) : v.tabData.prBodyStack(i, ui.pr.prs.map((x) => x.title), v.title); render(); }, delay);
+  const v = M.view(ui.caseId, ui); const fails = takeFail();
+  f.gen = true; f.mode = 'write'; f.errDesc = false;
+  setTimeout(() => { if (!live(f) || !f.gen) return; f.gen = false;
+    if (fails) { f.errDesc = true; render(); return; }
+    f.desc = i < 0 ? v.tabData.prBody(v.title, v.tabData.files) : v.tabData.prBodyStack(i, ui.pr.prs.map((x) => x.title), v.title); f.descSuggested = true; render(); }, delay);
 }
 function generateTitle(f = ui.pr, i = -1, delay = 700) {
-  const v = M.view(ui.caseId, ui);
-  f.genTitle = true;
-  setTimeout(() => { if (!live(f) || !f.genTitle) return; f.genTitle = false; f.title = i < 0 ? (ui.pr.titleN++ % 2 ? 'One head for run and group pages, breadcrumb in the top bar' : v.title) : v.runs[i].title; f.titleSuggested = true; render(); }, delay);
+  const v = M.view(ui.caseId, ui); const fails = takeFail();
+  f.genTitle = true; f.errTitle = false;
+  setTimeout(() => { if (!live(f) || !f.genTitle) return; f.genTitle = false;
+    if (fails) { f.errTitle = true; render(); return; }
+    f.title = i < 0 ? (ui.pr.titleN++ % 2 ? 'One head for run and group pages, breadcrumb in the top bar' : v.title) : v.runs[i].title; f.titleSuggested = true; render(); }, delay);
 }
+// Each stacked PR starts from today's text (the server's template) and Worca writes over it; all rows start closed.
 function startStack(v) {
-  ui.pr.prs = v.runs.map((r, i) => ({ title: r.title, desc: '', gen: false, genTitle: false, titleSuggested: true, mode: 'write', open: i === 0 }));
+  const titles = v.runs.map((r) => r.title);
+  ui.pr.prs = v.runs.map((r, i) => ({ title: r.title, desc: v.tabData.prTemplate(i, titles, v.title), gen: false, genTitle: false, titleSuggested: true, descSuggested: false, mode: 'write', open: false }));
   ui.pr.prs.forEach((f, i) => generate(f, i, 900 + i * 600));
 }
 // A question is answered where it is asked: under its step, Worca's pick checked, the other options and your own
@@ -476,7 +547,7 @@ function answerHtml(q) {
   const pick = ui.answer === null || ui.answer === undefined ? q.pick : ui.answer;
   return `<li class="sc-answer${ui.flashAnswer ? ' is-flash' : ''}">${q.n ? `<p class="sc-ans-q">${esc(q.q)} <span class="rtab-dim">${esc(q.n)}</span></p>` : ''}<p class="sc-ans-why">${esc(q.why)}</p>
     <div class="sc-ans-opts" role="radiogroup" aria-label="${esc(q.q)}">${q.options.map((o, i) => `<button type="button" class="sc-ans-opt" role="radio" aria-checked="${i === pick}" tabindex="${i === pick ? 0 : -1}" data-answer="${i}" data-key="answer:${i}"><span class="sc-ans-dot" aria-hidden="true"></span><span class="sc-ans-l">${esc(o)}</span>${i === q.pick ? '<span class="sc-ans-hint">Worca’s pick</span>' : ''}</button>`).join('')}</div>
-    <div class="pd-adorn${ui.answerDraft ? ' is-writing' : ''}"><input class="input input-sm" id="answer-own" type="text" placeholder="${ui.answerDraft ? 'Writing an answer from the review…' : 'Or write your own answer'}" aria-label="Your own answer" data-key="answer-own" value="${ui.answerDraft ? '' : esc(ui.answerOwn || '')}"${ui.answerDraft ? ' readonly' : ''}><span class="pd-act">${ui.answerDraft ? '<button type="button" class="pd-stop" data-stopdraft="answer" data-key="draft-stop" aria-label="Stop writing">×</button>' : '<button type="button" class="pd-ai" data-draft="answer" data-key="draft-answer" title="Draft an answer from the review" aria-label="Draft an answer"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"></path></svg></button>'}</span></div></li>`;
+    <div class="pd-adorn${ui.answerDraft ? ' is-writing' : ''}"><input class="input input-sm" id="answer-own" type="text" placeholder="${ui.answerDraft ? 'Writing an answer from the review…' : 'Or write your own answer'}" aria-label="Your own answer" data-key="answer-own" value="${ui.answerDraft ? '' : esc(ui.answerOwn || '')}"${ui.answerDraft ? ' readonly' : ''}><span class="pd-act">${ui.answerDraft ? '<button type="button" class="pd-stop" data-stopdraft="answer" data-key="draft-stop" aria-label="Stop writing">×</button>' : `<button type="button" class="pd-ai" data-draft="answer" data-key="draft-answer" title="${esc(draftTip('Draft an answer from the review'))}" aria-label="Draft an answer"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"></path></svg></button>`}</span></div>${ui.answerErr ? draftFail('answer') : ''}</li>`;
 }
 const v0 = () => M.view(ui.caseId, ui);
 function goMember(group, i) {
@@ -517,31 +588,32 @@ document.addEventListener('click', (e) => {
   else if (d.draft) { draft(d.draft); pendingFocus = 'draft-stop'; }
   else if (d.stopdraft) { ui[d.stopdraft === 'answer' ? 'answerDraft' : 'changesDraft'] = false; clearTimeout(draftTimer); pendingFocus = d.stopdraft === 'answer' ? 'answer-own' : 'changes-text'; }
   else if (d.confirm && ui.dialog === 'changes') { if (d.confirm === 'yes') { const txt = (document.getElementById('changes-text')?.value || '').trim(); toast(txt ? 'Sent to the planner; it plans again' : 'Write what to change first'); if (!txt) return; } ui.dialog = ''; ui.changesDraft = false; pendingFocus = 'act-main'; }
-  else if (d.pd === 'ok') { const f = ui.dialogF; const pr = ui.pr; ui.pr.gen = false; follow(Object.assign({}, f, { dialog: '', say: f.say + (pr.draft ? ' as a draft' : '') + (pr.watch ? '; Worca watches it' : '') }), ui.dialogLabel); }
-  else if (d.pd === 'cancel') { ui.dialog = ''; ui.pr.gen = false; pendingFocus = 'act-main'; }
+  else if (d.pd === 'ok') { const f = ui.dialogF; const pr = ui.pr; ui.pr.gen = false; follow(Object.assign({}, f, { dialog: '', fromDialog: true, say: f.say + (pr.draft ? ' as a draft' : '') + (pr.watch ? '; Worca watches it' : '') }), ui.dialogLabel); }
+  else if (d.pd === 'cancel') { ui.dialog = ''; ui.busy = null; ui.pr.gen = false; pendingFocus = 'act-main'; }
   else if (d.pd === 'gen') { const i = +(d.pi ?? -1); generate(i < 0 ? ui.pr : ui.pr.prs[i], i); pendingFocus = 'pd-stop' + (i < 0 ? '' : '-' + i); }
-  else if (d.pd === 'gentitle') { const i = +(d.pi ?? -1); generateTitle(i < 0 ? ui.pr : ui.pr.prs[i], i); pendingFocus = t.dataset.key; }
+  else if (d.pd === 'gentitle') { const i = +(d.pi ?? -1); generateTitle(i < 0 ? ui.pr : ui.pr.prs[i], i); pendingFocus = 'pd-gentitle' + (i < 0 ? '' : '-' + i); }
   else if (d.prrow !== undefined) { const f = ui.pr.prs[+d.prrow]; f.open = !f.open; pendingFocus = t.dataset.key; }
   else if (d.pd === 'stop') { const i = +(d.pi ?? -1); (i < 0 ? ui.pr : ui.pr.prs[i]).gen = false; pendingFocus = 'pd-gen' + (i < 0 ? '' : '-' + i); toast('Stopped writing'); }
   else if (d.pdmode) { const i = +(d.pi ?? -1); (i < 0 ? ui.pr : ui.pr.prs[i]).mode = d.pdmode; pendingFocus = t.dataset.key; }
-  else if (d.pdship) {
-    ui.ship = d.pdship; const nv = M.view(ui.caseId, ui); ui.dialogLabel = nv.action.label; ui.dialogF = M.flow[ui.caseId][nv.action.label]; pendingFocus = 'pd-' + d.pdship;
-    if (d.pdship === 'one' && !ui.pr.desc && !ui.pr.gen) { generateTitle(); generate(); }
-    if (d.pdship === 'stack' && !ui.pr.prs) startStack(M.view(ui.caseId, ui));
-  }
   else if (d.confirm) { if (d.confirm === 'yes') { ui.confirm.ok = true; follow(ui.confirm.f, ui.confirm.label); } else { ui.confirm = null; pendingFocus = 'act-main'; } }
   else if (d.run === 'stop') follow(M.runFlow.stop, 'Stop the run');
   else if (d.act) act(d.act);
   else if (d.menu) { const opening = ui.menu !== d.menu; ui.menu = opening ? d.menu : ''; if (opening) pendingFocus = d.menu === 'tags' ? 'tag-input' : 'menu-first'; }
   else if (d.menuPick) {
     if (d.menuPick.startsWith('base:')) { ui.pr.base = d.menuPick.slice(5); ui.menu = ''; pendingFocus = 'menu:pdbase'; }
+    else if (d.menuPick.startsWith('ship:')) {
+      const want = d.menuPick.slice(5); const sh = M.view(ui.caseId, ui).ship; ui.menu = ''; pendingFocus = 'menu:pdship';
+      if (want === 'one' && sh.oneBlocked) toast(sh.oneBlocked);
+      else { ui.ship = want; const nv = M.view(ui.caseId, ui); ui.dialogLabel = nv.action.label; ui.dialogF = M.flow[ui.caseId][nv.action.label]; ui.pr.err = null;
+        if (want === 'one' && !ui.pr.desc && !ui.pr.gen) { generateTitle(); generate(); }
+        if (want === 'stack' && !ui.pr.prs) startStack(nv); }
+    }
     else if (d.menuPick.startsWith('away:')) { ui.away = d.menuPick; ui.menu = ''; pendingFocus = 'menu:more'; toast('Away mode on this run: ' + AWAY.find((x) => x.id === d.menuPick).text); }
     else if (d.menuPick === 'more:after') { ui.dialog = 'after'; ui.menu = ''; pendingFocus = 'after-task'; }
     else if (d.menuPick === 'more:archive') follow({ to: 'archived', confirm: 'Archive this run? The local branch, worktree and logs are removed; the remote branch and any PR stay.' }, 'Archive');
     else if (d.menuPick === 'more:restore') { goCase('merged'); toast('Restored to Runs'); }
-    else if (d.menuPick === 'group:ask' || d.menuPick === 'group:go') { const ask = d.menuPick === 'group:ask'; ui.menu = ''; pendingFocus = 'menu:more';
+    else if (d.menuPick === 'group:ask' || d.menuPick === 'group:go') { const ask = d.menuPick === 'group:ask'; ui.menu = ''; pendingFocus = 'menu:then';
       toast(ask === ui.askEach ? (ask ? 'Already asks first' : 'Already starts by itself') : ask ? 'Worca asks before each run starts' : 'Each run starts by itself'); ui.askEach = ask; }
-    else if (d.menuPick === 'group:cancel') follow({ say: 'Run 3 is dropped; runs 1 and 2 stay', confirm: 'Cancel the runs that have not started?' }, 'Cancel the rest');
     else if (CH_SAY[d.menuPick]) { toast(CH_SAY[d.menuPick](M.view(ui.caseId, ui))); pendingFocus = 'menu:ch'; ui.menu = ''; }
     else if (MORE_SAY[d.menuPick]) { toast(MORE_SAY[d.menuPick]); pendingFocus = 'menu:more'; ui.menu = ''; }
     else if (ui.menu === 'act') act(d.menuPick);
@@ -555,6 +627,7 @@ document.addEventListener('click', (e) => {
     if (k === 'group') { ui.chips = ui.chips.filter((c) => c.kind !== 'group').concat(has ? [] : [{ kind: 'group', text: tx }]); ui.menu = ''; pendingFocus = 'menu:more'; toast(has ? 'Left ' + tx : 'Moved to ' + tx); }
     else { ui.chips = has ? ui.chips.filter((c) => !(c.kind === k && c.text === tx)) : ui.chips.concat({ kind: k, text: tx }); pendingFocus = t.dataset.key; }
   }
+  else if (d.replan !== undefined) { const n = +d.replan + 1; follow({ say: 'The planner re-cut runs ' + n + ' and on; runs before it stay', confirm: 'Re-plan from run ' + n + '? The planner re-cuts runs ' + n + ' and on; runs 1' + (n > 2 ? '–' + (n - 1) : '') + ' stay as they are.' }, 'Re-plan from here'); }
   else if (d.openRun !== undefined) { ui.back = { caseId: ui.caseId, open: ui.open, tab: ui.tab }; goMember(ui.caseId, +d.openRun); }
   else if (d.sib !== undefined && d.sib !== '') { const v = M.view(ui.caseId, ui); goMember(v.parent.caseId, +d.sib); pendingFocus = t.dataset.key; }
   else if (d.crumb !== undefined) {
@@ -586,7 +659,7 @@ document.addEventListener('keydown', (e) => {
   if (t.id === 'group-input' && e.key === 'Enter') { e.preventDefault(); const g = t.value.trim(); if (g) { ui.chips = ui.chips.filter((c) => c.kind !== 'group').concat({ kind: 'group', text: g }); ui.menu = ''; pendingFocus = 'menu:more'; toast((KNOWN.group.some(([x]) => x === g) ? 'Moved to ' : 'Created and moved to ') + g); } render(); return; }
   if (t.id === 'tag-input' && e.key === 'Enter') { e.preventDefault(); addTag(t.value); render(); return; }
   if ((e.key === 'l' || e.key === 'L') && !e.metaKey && !e.ctrlKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || '') && document.querySelector('.rc-tags')) { e.preventDefault(); ui.menu = 'tags'; pendingFocus = 'tag-input'; render(); return; }
-  if ((ui.confirm || ui.dialog) && e.key === 'Escape' && !ui.menu) { if (ui.pr) { ui.pr.gen = false; ui.pr.genTitle = false; (ui.pr.prs || []).forEach((f) => { f.gen = false; f.genTitle = false; }); } ui.confirm = null; ui.dialog = ''; pendingFocus = 'act-main'; render(); return; }
+  if ((ui.confirm || ui.dialog) && e.key === 'Escape' && !ui.menu) { if (ui.pr) { ui.pr.gen = false; ui.pr.genTitle = false; (ui.pr.prs || []).forEach((f) => { f.gen = false; f.genTitle = false; }); } ui.confirm = null; ui.dialog = ''; ui.busy = null; pendingFocus = 'act-main'; render(); return; }
   if (e.key === '`' && e.ctrlKey) { e.preventDefault(); toast('Terminal opened in the worktree'); render(); return; }
   if (e.key === 'Enter' && e.target.id === 'after-task') { e.preventDefault(); document.querySelector('[data-confirm="yes"]')?.click(); return; }
   if (ui.menu && (e.key === 'Escape' || (e.key === 'Tab' && t.closest && t.closest('.menu')))) {

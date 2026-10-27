@@ -140,11 +140,34 @@
   const STACKS = {
     outline: { title: '3 runs, one PR each', note: 'Each run builds on the one before', rows: RUNS.map((t, i) => ({ num: String(i + 1), title: t, state: 'next', word: ['Small', 'Medium', 'Small'][i], sub: i ? 'Builds on run ' + i : 'Starts from dev' })) },
     create: { title: 'Ship as', choice: true },
-    review: { title: 'Merge in order', rows: [
-      { num: '#959', title: RUNS[0], state: 'done', word: 'Ready to merge', sub: 'Into dev · +278 \u221264 · 7 of 7 checks · approved by you', isNext: true },
-      { num: '#960', title: RUNS[1], state: 'review', word: 'In review', sub: 'Into #959 · +41 \u221258 · 5 of 7 checks' },
-      { num: '#961', title: RUNS[2], state: 'problem', word: 'Checks failing', sub: 'Into #960 · +39 \u221222 · 2 failed' }] },
   };
+  // A stack in review merges one PR at a time, in order. Each PR's state: ready, review, checks (moved onto dev, checks
+  // running again), failing, merged. Merging one makes Worca move the next onto dev (today nothing does: it keeps
+  // pointing at the merged branch unless GitHub deletes that branch).
+  const CHAIN_PRS = [['#959', '+278 \u221264'], ['#960', '+41 \u221258'], ['#961', '+39 \u221222']];
+  const CHAIN_START = ['ready', 'review', 'failing'];
+  const PR_LOOK = { ready: ['done', 'Ready to merge', '7 of 7 checks · approved'], review: ['review', 'In review', '5 of 7 checks'],
+    checks: ['review', 'Checks running', 'moved onto dev · checks run again'], failing: ['problem', 'Checks failing', '2 failed'], merged: ['merged', 'Merged', 'merged'] };
+  const chainBase = (st, i) => (i === 0 || st[i - 1] === 'merged' ? 'dev' : CHAIN_PRS[i - 1][0]);
+  function reviewOf(st) {
+    const k = st.indexOf(st.find((x) => x !== 'merged'));
+    return { title: 'Merge in order', rows: CHAIN_PRS.map(([num, size], i) => { const [state, word, sub] = PR_LOOK[st[i]];
+      const base = chainBase(st, i); const moved = st[i] === 'checks' && i > 0 && base === 'dev';
+      return { num, title: RUNS[i], state, word, sub: st[i] === 'merged' ? 'Into dev' : 'Into ' + base + ' · ' + size + ' · ' + (st[i] === 'checks' && !moved ? 'checks run again' : sub), isNext: i === k }; }) };
+  }
+  // The chain page follows its PRs: fix what fails first, else merge the next ready one, else wait for review.
+  function chainLive(c, st) {
+    const k = st.findIndex((x) => x !== 'merged');
+    const pr = { key: 'pr', label: 'PRs', subs: CHAIN_PRS.map(([num], i) => s(num, PR_LOOK[st[i]][0] === 'done' ? 'done' : PR_LOOK[st[i]][0])) };
+    const stages = c.stages.slice(0, -1).concat(pr);
+    if (k < 0) return Object.assign({}, c, { stages, word: 'Merged', dot: 'is-violet', detail: 'All 3 merged into dev, in order', action: A('View PRs', 'merge', false, ['Copy PR links']) });
+    const f = st.indexOf('failing'); const ready = st[k] === 'ready';
+    const tools = ['View PRs', 'Watch PRs', 'Copy PR links'];
+    const action = f >= 0 ? A('Fix checks on ' + CHAIN_PRS[f][0], 'refresh', true, (ready ? ['Merge ' + CHAIN_PRS[k][0]] : []).concat(tools))
+      : ready ? A('Merge ' + CHAIN_PRS[k][0], 'merge', true, tools) : A('View PRs', 'pr', false, tools.slice(1));
+    const detail = [f >= 0 ? CHAIN_PRS[f][0] + ' checks failing' : '', ready ? CHAIN_PRS[k][0] + ' ready to merge' : '', !ready && f < 0 ? CHAIN_PRS[k][0] + ' ' + PR_LOOK[st[k]][1].toLowerCase() : ''].filter(Boolean).join(' · ');
+    return Object.assign({}, c, { stages, word: f >= 0 || ready ? 'Needs you' : 'In review', dot: f >= 0 || ready ? 'is-amber' : 'is-peach is-pulse', detail, action });
+  }
 
 
 
@@ -180,6 +203,14 @@
       '## How it was checked', '- 96 new tests in test/ui-run-head.test.mjs', '- Review implementation: 3 rounds, no open issues', '- Manual web UI testing at 375px and 900px', '', 'Closes #942'].join('\n'),
     // A stacked PR's description: its run's summary, the Stack in merge order (this PR marked), how it was checked; only
     // the last PR closes the issue, so the first merge does not close it while the rest are open.
+    // A stacked PR's row: a one-line summary, its size, and why it is worth a look when Worca thinks so.
+    prSum: ['One head shared by run and group pages; Back goes', 'The trail moves into the top bar; the page is never a crumb', 'The head on phones: ‹ Parent, one-line title'],
+    prFiles: [6, 4, 3],
+    prFlag: { 1: 'Worth a look: changes 2 files PR 1 also changes' },
+    // Today's text for a stacked PR (the server's template), kept when Worca cannot write one.
+    prTemplate: (i, titles, feature) => ['Part of ' + feature + ': slice ' + (i + 1) + ' of ' + titles.length, ...titles.map((t, j) => j === i ? null : '- Slice ' + (j + 1) + ', ' + t + ': not opened yet').filter(Boolean), '', titles[i]].concat(i === titles.length - 1 ? ['', 'Closes #942'] : []).join('\n'),
+    // Every suggestion runs on a helper job's model (Models › Helper jobs), named in the sparkle's tooltip.
+    helper: { pr: { job: 'PR description', model: 'Haiku 5.5' }, draft: { job: 'Drafts', model: 'Haiku 5.5' } },
     prBodyStack: (i, titles, feature) => ['## Summary', '- ' + ['Run and group pages share one head: the breadcrumb, the title and the actions in one row', 'The breadcrumb takes its parent from the route, a slice from its feature', 'Under 760px the bar shows one link, ‹ Parent name'][i % 3], '',
       '## Stack', ...titles.map((t, j) => (j + 1) + '. ' + (j === i ? '**This PR**: ' : '') + t + ' → ' + (j === 0 ? 'dev' : j === i + 1 ? 'this PR' : 'PR ' + j)), '',
       '## How it was checked', '- ' + [41, 33, 22][i % 3] + ' new tests in test/ui-run-head.test.mjs', '',
@@ -277,7 +308,7 @@
     ['Send answer', 'A question is answered under its step in the card; today the answer panel sits apart, above the steps.'],
     ['Pause after this step', 'Lets the current step finish before pausing; today Pause stops at once.'],
     ['Fix checks', 'Starts a short run that fixes failing checks, like Fix conflicts does today for conflicts.'],
-    ['Merge PR', 'Merges from Worca, in stack order for a chain; today you merge on GitHub (How to merge shows the commands).'],
+    ['Merge PR', 'Merges from Worca, one PR at a time in stack order, and moves the next PR onto dev; today you merge on GitHub and nothing moves the next PR.'],
     ['Restart Build', 'Runs one stage again with what earlier stages made; today a failed run resumes or starts over.'],
     ['Raise the cap', 'Sets a new cost cap and goes on; today the choices are Continue without cap or Settings.'],
     ['Copy link', 'Copies a link to the run from ⋯, for Chat or an issue.'],
@@ -387,6 +418,8 @@
     const par = ui.parent || c0.parent || null;
     const g = par ? CASES.find((x) => x.id === par.caseId) : null;
     let c = resolve(g ? asMember(c0, g, par.index) : c0);
+    const chainSt = ui.stackSt || CHAIN_START;
+    if (c.id === 'chain') c = chainLive(c, chainSt);
     const now = defaultStage(c);
     const open = ui.open && c.stages.some((st) => st.key === ui.open) ? ui.open : now;
     const st = c.stages.find((x) => x.key === open);
@@ -397,7 +430,7 @@
     const pick = sh ? (ui.ship && !(ui.ship === 'one' && sh.oneBlocked) ? ui.ship : sh.rec) : '';
     const shipWord = (id) => (id === 'one' ? 'one PR' : sh.runs.length + ' stacked PRs');
     if (c.stack && (open === 'pr' || (c.stack.mode === 'outline' && open === 'plan'))) {
-      const src = STACKS[c.stack.mode];
+      const src = c.stack.mode === 'review' ? reviewOf(chainSt) : STACKS[c.stack.mode];
       let rows = src.rows || [];
       let choice = null;
       if (src.choice) {
@@ -416,8 +449,9 @@
     if (c.action) {
       const label = sh ? (pick === 'one' ? 'Create PR' : 'Create ' + sh.runs.length + ' PRs') : c.action.label;
       const alt = sh ? [pick === 'one' ? 'Create ' + sh.runs.length + ' stacked PRs instead' : 'Create one PR instead'] : [];
-      const items = alt.concat(c.action.items.filter((t) => !/^Create (PR|\d+ PRs)$/.test(t))).concat(liveNow && !c.action.items.includes('Stop') ? ['Stop the run'] : []);
-      action = Object.assign({}, c.action, { label, isNew: NEW.has(label), help: HELP[label] || '', items: items.map((t) => ({ text: t, isNew: NEW.has(t), help: sh && / instead$/.test(t) ? (/one PR/.test(t) && sh.oneBlocked ? 'Not possible: ' + sh.oneBlocked.replace(/^Not possible: /, '') : sh.reason) : HELP[t] || '', off: /one PR instead/.test(t) && sh && !!sh.oneBlocked })) });
+      const items = alt.concat(c.action.items.filter((t) => !/^Create (PR|\d+ PRs)$/.test(t))).concat(liveNow && !c.action.items.includes('Stop') ? ['Stop the run'] : []).concat(liveNow && c.stages.some((x) => x.run) && c.stages.some((x) => x.run && x.subs.every((y) => y.state === 'next')) ? ['Cancel the rest'] : []);
+      const helpOf = (t) => HELP[t] || (/^Merge #(\d+)$/.test(t) ? 'Merges ' + t.slice(6) + ' into dev; Worca then moves the next PR onto dev' : /^Fix checks on #/.test(t) ? 'Starts a short run that fixes ' + t.slice(14) + '’s failing checks' : '');
+      action = Object.assign({}, c.action, { label, isNew: NEW.has(label), help: helpOf(label), items: items.map((t) => ({ text: t, isNew: NEW.has(t), help: sh && / instead$/.test(t) ? (/one PR/.test(t) && sh.oneBlocked ? 'Not possible: ' + sh.oneBlocked.replace(/^Not possible: /, '') : sh.reason) : helpOf(t), off: /one PR instead/.test(t) && sh && !!sh.oneBlocked })) });
     }
     // The run is live while any work stage (everything before shipping) is unfinished and it has not failed;
     // waiting on CI, reviewers or a merge is the PR's business, not the run's, so Pause and Stop go. A run waiting on
@@ -459,7 +493,7 @@
         // A run inside a group: its stages, its PR once it has one, its cost, and a way in.
         const i = +st.key.slice(3) - 1;
         if (c.stack && c.stack.mode === 'review') {
-          const pr = STACKS.review.rows[i];
+          const pr = reviewOf(chainSt).rows[i];
           rows.push(Object.assign(rowOf({ state: pr.state }), { name: pr.num, live: [pr.word, pr.sub].filter(Boolean).join(' · ') }));
         }
         return { key: open, label: st.label, title: st.title || '', isRun: true, rows, stack,
@@ -494,7 +528,10 @@
           : 'Copied: git switch ' + BRANCH + '-' + runStages.length + ' · the top of the stack holds all ' + runStages.length + ' runs';
         return branch ? 'Copied: git switch ' + branch : 'Opened the copy in a terminal';
       })(),
-      ship: sh ? { pick, rec: sh.rec, n: sh.runs.length, reason: sh.reason, oneBlocked: sh.oneBlocked || '' } : null,
+      ship: sh ? { pick, rec: sh.rec, n: sh.runs.length, reason: sh.reason, oneBlocked: sh.oneBlocked || '', sizes: sh.sizes || [] } : null,
+      // A group's next run, under the run it follows: whether it starts by itself or asks first is set right there.
+      then: (() => { const k = runStages.findIndex((x) => stageState(x.subs) === 'live'); const nx = k >= 0 && runStages[k + 1]; return nx && nx.subs.every((y) => y.state === 'next') && open === runStages[k].key ? { n: k + 2, title: nx.title } : null; })(),
+      planHead: runStages.length > 0 && open === 'plan',
       runCases: c.runCases || [], parent: par, over: overview(c, live), ask: DETAIL.asks[c.id] || null, rounds: DETAIL.rounds,
       tabData: DETAIL,
     };
@@ -543,5 +580,5 @@
   const ADD = [{ kind: 'label', menu: 'Label', help: 'Find and filter runs by it in the Runs list', placeholder: 'Type or pick a label', suggest: ['ui', 'hotfix', 'needs demo'] },
     { kind: 'tag', menu: 'Cost tag', help: 'Splits this run’s cost in Statistics', placeholder: 'key: value', suggest: ['team: web', 'team: api', 'client: acme'] },
     { kind: 'group', menu: 'Add to group', help: 'Tracks it with related runs on one page', placeholder: 'New group name', suggest: ['Navigation', 'Billing export', 'Onboarding'] }];
-  window.RunCardModel = { proposed: PROPOSED, isNew: (t) => NEW.has(t), flow: FLOW, runFlow: RUN_FLOW, cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group, chips: c.chips || [] })), view, add: ADD };
+  window.RunCardModel = { chainStart: CHAIN_START, chainPrs: CHAIN_PRS.map((x) => x[0]), proposed: PROPOSED, isNew: (t) => NEW.has(t), flow: FLOW, runFlow: RUN_FLOW, cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group, chips: c.chips || [] })), view, add: ADD };
 })();
