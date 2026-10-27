@@ -124,7 +124,7 @@ function runCounts(workflowId) {
   getDb();
   // I6: json_valid first (stats.mjs, ask/workspace-deps.mjs): one malformed stepper must not fail the whole page.
   const rows = prepare(`SELECT json_extract(s, '$.workflowVersion.no') AS no, COUNT(*) AS n
-    FROM (SELECT CASE WHEN json_valid(stepper) THEN stepper END AS s FROM pipelines)
+    FROM (SELECT CASE WHEN json_valid(stepper) THEN stepper END AS s FROM pipelines WHERE is_test IS NULL)
     WHERE json_extract(s, '$.template.id') = ? GROUP BY no`).all(workflowId);
   return new Map(rows.filter((r) => r.no !== null).map((r) => [Number(r.no), Number(r.n)]));
 }

@@ -27,7 +27,7 @@ import {
   createPipeline, updatePipelineTitle, appendAudit, writeState, artifactPaths, slugify, today,
   recordArtifact, writeClarify, readPipelineExtras, claimPipelineOwnership, touchHeartbeat,
   clearPipelineOwnership, HEARTBEAT_INTERVAL_MS, upsertSubAgent, listRunArtifacts, pipelineRowStamp,
-  claimPausedForStop, claimForResume, findPipelineRowById, readPipelineForResume,
+  claimPausedForStop, claimForResume, findPipelineRowById, readPipelineForResume, isTestPipeline,
 } from './artifacts.mjs';
 import { diffNameStatus, diffNumstat, diffPatch, untrackedFiles, untrackedPatch } from './git-info.mjs';
 import { clearStaleGitLocks, staleGitLockNote } from './git-lock.mjs';
@@ -1133,7 +1133,8 @@ export class RunHarness extends EventEmitter {
     this._night = {
       // A resume with --night opts in a run that was not; it never drops a saved opt-in.
       optIn: savedNight?.optIn === true || this.opts.nightMode === true,
-      override: NIGHT_TOGGLES.includes(savedNight?.override) ? savedNight.override : 'auto',
+      // Workflow tests (review M5): Away mode never answers a try's question; the example's answers do (D24).
+      override: this.opts.workflowTest === true ? 'off' : NIGHT_TOGGLES.includes(savedNight?.override) ? savedNight.override : 'auto',
       q: null, timer: null, openedAt: null, deciding: false,
       since: Number.isFinite(savedNight?.since) ? savedNight.since : null,   // start of the unattended stretch (spend-cap anchor); a human answer ends it
       decisions: new Map(),                // question id -> decision record (for the answer writers)
@@ -1551,6 +1552,7 @@ export class RunHarness extends EventEmitter {
         tags: this.opts.tags || [],
         labels: this.opts.labels || [],
         runSetup: typeof this.opts.runSetup === 'string' ? this.opts.runSetup : null,
+        ...(this.opts.workflowTest === true ? { isTest: true } : {}),   // D21/D22: a test try, marked once
         ...(this.workMode === 'none' ? { id: this.opts.pipelineId } : {}),
         ...(this.isWorkspace ? {} : { projectKey: this.members[0].projectKey, ...(this.workMode !== 'git' ? { workMode: this.workMode } : {}) }),
         ...(this.isWorkspace ? {
@@ -4122,6 +4124,9 @@ export class RunHarness extends EventEmitter {
    *  paused/error with setupIncomplete, so a retryable mount failure can resume. */
   async _mountMemory({ resume = false } = {}) {
     if (!this.pipeline?.dir) return;
+    // D19: a test try uses no memory. Nothing is mounted, so this.memory stays null and _syncMemory never writes back.
+    // The row check covers a resumed try (its opts no longer carry noMemory).
+    if (this.opts.noMemory === true || isTestPipeline(this.pipeline.id)) return;
     try { await this._mountMemoryUnguarded({ resume }); }
     catch (err) {
       this.memory = null; this.memoryBlock = ''; this.state.memoryMount = null; this.state.memoryRules = null;

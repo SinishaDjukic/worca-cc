@@ -31,7 +31,7 @@ import { flagEnabled } from '../flags.mjs';
  *  projectKey or a workspaceKey, else everything. Archived and pre-attribution (NULL) runs are
  *  left out. Read-only. */
 export function listPeople({ projectKey = null, workspaceKey = null } = {}) {
-  const where = ['started_by IS NOT NULL', "started_by != ''", 'archived_at IS NULL'];
+  const where = ['started_by IS NOT NULL', "started_by != ''", 'archived_at IS NULL', 'is_test IS NULL'];
   const args = [];
   if (workspaceKey) { where.push('workspace_key = ?'); args.push(workspaceKey); }
   else if (projectKey) { where.push('project_key = ?'); args.push(projectKey); }

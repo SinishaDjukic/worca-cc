@@ -38,7 +38,7 @@ import { stopPausedRun, StopPausedError } from '../src/core/stop-paused.mjs';
 import {
   listPipelines, readPipeline, listAllPipelines, readPipelineByKey,
   enrichPipelinesPr, reconcileStaleRunning, foreignActiveWorkspaceRuns, readPipelineForResume, persistPrState, readPrState,
-  readRunLogText, readRunArtifactText, countPipelines, runRootSweepLookups, legacySweepLookups, slugify, newPipelineId,
+  readRunLogText, readRunArtifactText, countPipelines, isTestPipeline, runRootSweepLookups, legacySweepLookups, slugify, newPipelineId,
   listArtifacts, listRunArtifacts, lookupPipelineRow, findPipelineRowById, readPipelineStateById, resolveIndexedArtifact, resolveIndexedArtifactForRow,
   folderApplyRetainFor,
   resolveIndexedArtifactFileForRow, readPromptFile, runDirForRow, recordArtifact, appendAudit,
@@ -1226,7 +1226,8 @@ function resolvePending(entry, { id = null, reason = 'resolved' } = {}) {
   const pq = entry && entry.pendingQuestion;
   if (!pq || (id && pq.id !== id)) return false;
   entry.pendingQuestion = null;
-  broadcast(bufferEvent(entry, { type: 'question-resolved', id: pq.id, reason }));
+  const resolved = bufferEvent(entry, { type: 'question-resolved', id: pq.id, reason });
+  if (!entry.isTest) broadcast(resolved);   // D21: the runner answers a try's questions; no tab hears of them
   syncKeepAwake();
   return true;
 }
@@ -1274,7 +1275,7 @@ function summarizeRuns() {
   // plumbing only — leaving it here puts "bench: <key>" in every hello and the
   // client's liveRuns() (which does NOT filter by kind) raises the rail's
   // Running badge over an empty Running list.
-  return [...runs.values()].filter((r) => r.kind !== 'scriptbench' && r.kind !== 'action').map((r) => ({
+  return [...runs.values()].filter((r) => r.kind !== 'scriptbench' && r.kind !== 'action' && !r.isTest).map((r) => ({
     runId: r.id,
     stepper: r.orch?.state?.stepper ?? null,
     pipelineId: r.pipelineId || null,
@@ -1370,7 +1371,7 @@ function wireRun(entry) {
   // Chat notifications ride the same per-run subscription (design §4.5): every
   // creation site that wires a run gets chat fan-out for free. Scans/agent-gens
   // use their own wire* helpers and are deliberately not notified.
-  if ((entry.kind || 'run') === 'run' || entry.kind === 'workspace-run') {
+  if (((entry.kind || 'run') === 'run' || entry.kind === 'workspace-run') && !entry.isTest) {   // D21: no chat notifications for a test try
     try { chatNotifier.attach(orch, { runId: id, entry }); }
     catch (err) { console.error(`[worca-ui] chat notifier attach failed: ${err && err.message ? err.message : err}`); }
   }
@@ -1381,7 +1382,7 @@ function wireRun(entry) {
     // (state.id = pipeline SHORT id, NOT this UUID); tagging the UUID last stops
     // the client spawning a phantom run.
     const tagged = bufferEvent(entry, event);
-    broadcast(tagged);
+    if (!entry.isTest) broadcast(tagged);   // D21: a tab upserts a run for any frame with a runId (app.js:1995); a try sends none
     return tagged;
   };
 
@@ -1501,7 +1502,7 @@ function wireRun(entry) {
           reason: 'the run was resumed or stopped by hand',
         });
       }
-      if (name === 'done' && entry.status === 'paused' && payload && payload.limitResetAt) {
+      if (name === 'done' && entry.status === 'paused' && payload && payload.limitResetAt && !entry.isTest) {   // no resume ticket for a try
         entry._limitResumeP = maybeScheduleLimitResume(entry, payload);   // never rejects
       }
       if (name === 'title' && payload && typeof payload.title === 'string') {
@@ -2524,6 +2525,13 @@ const startRunHandler = async (req, res) => {
     // Workspace scan (wf_workspace_scan): scanRequest hands the target in-process — a workspace
     // that may not exist yet ({ id, name, projectPaths, description:'' }, D3). Never from HTTP.
     const scanTarget = req._workspaceScan && typeof req._workspaceScan === 'object' ? req._workspaceScan : null;
+    // Workflow tests (plans/workflow-tests-part2-plan.md D20–D23): a test try, set in-process by the test runner through
+    // invokeStartRun only, never from HTTP. { use: 'draft' | n, onOrch?(orch, { runKey }) }.
+    const workflowTest = req._workflowTest && typeof req._workflowTest === 'object' ? req._workflowTest : null;
+    if (workflowTest && body.noProject !== true) return badRequest(res, 'a test try runs without a project');
+    if (workflowTest && !(workflowTest.use === 'draft' || (Number.isInteger(workflowTest.use) && workflowTest.use > 0))) {
+      return badRequest(res, 'a test try names the draft or a version number');
+    }
     const stored = internal && body.internal && typeof body.internal === 'object' ? body.internal : {};
     // Who started it (identity.mjs): this request's resolved identity; a scheduled run keeps the
     // identity of whoever scheduled it (stored with the request, never taken from an HTTP body).
@@ -2702,7 +2710,7 @@ const startRunHandler = async (req, res) => {
     // routes it off the row's version.
     let workflowRow;
     try {
-      workflowRow = await assertRunnableWorkflow(workflowId);
+      workflowRow = await assertRunnableWorkflow(workflowId, workflowTest ? { use: workflowTest.use } : {});   // D23: check what runs
     } catch (err) {
       return badRequest(res, err && err.message ? err.message : String(err));
     }
@@ -2753,7 +2761,7 @@ const startRunHandler = async (req, res) => {
     // Enforced tags (D10): fired tickets were checked by fireTicket; system and follow-up starts keep today's behaviour.
     // Their tags are stored data (a ticket's request, a predecessor's or parent's tags, a changes/route card's origin
     // run's tags), so the key:value rule skips them too.
-    const tagExempt = !!internal?.ticket || !!scanTarget || !!req._resolveOf || !!req._prWatchRunId
+    const tagExempt = !!internal?.ticket || !!scanTarget || !!req._resolveOf || !!req._prWatchRunId || !!req._workflowTest   // review I2: a hidden try carries no run tags
       || req._startedBy === 'pr-watch' || body.workflowId === MEMORY_DEFRAG_WORKFLOW_ID
       || req._cardStart === true;   // Shaper s5 (D19): a run started from a changes/route card; its tags are the origin's stored tags
     let tags = [];
@@ -2913,10 +2921,13 @@ const startRunHandler = async (req, res) => {
         ...(nightMode ? { nightMode: true } : {}),
         tags,
         ...(shape ? { shape } : {}),
+        // D19/D21/D23: the version under test, the row's mark, no memory, and the fixed title (no smart naming spend).
+        ...(workflowTest ? { workflowUse: workflowTest.use, workflowTest: true, noMemory: true, titleLocked: true } : {}),
       });
       entry = {
         id: runId, orch, projectDir, projectKey: NO_PROJECT_KEY, workMode: 'none', kind: 'run', pipelineId,
         title, status: 'starting', startedAt: new Date().toISOString(), startedBy, tags, events: [], pendingQuestion: null,
+        ...(workflowTest ? { isTest: true } : {}),
       };
     } else if (hasWorkspace) {
       // ── Workspace target (§2.6) ────────────────────────────────────────────
@@ -3267,6 +3278,8 @@ const startRunHandler = async (req, res) => {
     }
     runs.set(runId, entry);
     wireRun(entry);
+    // The runner holds the orchestrator before orch.run() can ask anything (correction 7).
+    if (workflowTest && typeof workflowTest.onOrch === 'function') workflowTest.onOrch(orch, { runKey: runId });
     if (askLink) {
       // Card-state TOCTOU: awaits (source-ref check, budget) sit between Hunk
       // B's `proposed` check and here — a concurrent Start may have flipped
@@ -3312,7 +3325,7 @@ const startRunHandler = async (req, res) => {
         console.error(`[worca-ui] ask run link failed: ${err && err.message ? err.message : err}`);
       }
     }
-    announceRun(entry);
+    if (!entry.isTest) announceRun(entry);   // D21: never in a tab's run list
 
     // Fire-and-forget; all progress is surfaced through events. Kept on the entry: a Stop of the
     // run once it paused waits for its pause to finish unwinding (stopPausedPipelineOnce).
@@ -3322,7 +3335,7 @@ const startRunHandler = async (req, res) => {
         const event = { runId, type: 'error', message: err && err.message ? err.message : String(err) };
         entry.status = 'error';
         entry.events.push(event);
-        broadcast(event);
+        if (!entry.isTest) broadcast(event);   // review I7: a tab would upsert a phantom run from this runId (app.js:1973)
         syncKeepAwake();
       })
       // #620: the harness's post-run base check landed after the run's last frame; History re-reads it.
@@ -3701,7 +3714,7 @@ function requirementsRunSummary({ runId, pipelineId }) {
 }
 
 /** Call startRunHandler without HTTP. Resolves { status, body }. */
-async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null } = {}) {
+async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, workflowTest = null } = {}) {
   let out = { status: 200, body: null };
   const res = {
     statusCode: 200,
@@ -3709,7 +3722,7 @@ async function invokeStartRun(body, internal, { startedBy = null, runId = null, 
     json(payload) { out = { status: this.statusCode, body: payload }; return this; },
   };
   await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: runId,
-    _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}) }, res);
+    _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}), ...(workflowTest ? { _workflowTest: workflowTest } : {}) }, res);
   return out;
 }
 
@@ -4781,7 +4794,7 @@ async function stopPausedPipelineOnce(pipelineId, by = 'local') {
           entry._outcomeRecorded = false;
           entry._chainNudged = false;
           wireRun(entry);                     // tab frames + chat notifier, on the same runId
-        } else {
+        } else if (!isTestPipeline(pipelineId)) {   // D21: no chat notifier for a test try
           try { chatNotifier.attach(orch, { runId: pipelineId }); }
           catch (err) { console.error(`[worca-ui] chat notifier attach failed: ${err && err.message ? err.message : err}`); }
         }
@@ -5723,6 +5736,9 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   const engineOpts = resumeEngineOpts(engine, allowUnguardedEngine);
   const saved = readPipelineForResume(pipelineId);
   if (!saved) throw new ResumeError(404, { error: 'pipeline not found' });
+  // Workflow tests (D22, review I7): a try is driven by its test. "Finish the rest" makes it again; nothing resumes it
+  // (POST /api/resume, chat /resume, a stale tab), which would also give it a new entry without isTest.
+  if (saved.row.is_test) throw new ResumeError(409, { error: 'A test try cannot be resumed: finish the rest from its test.' });
   if (workModeOfRow(saved.row) === 'git' && !(await gitState()).available) throw new ResumeError(409, { error: GIT_MISSING.message, code: GIT_MISSING.code });
   // Resume with another model (a usage limit spent on one provider): every remaining step runs on it. It must be a
   // catalog model the run's harness — the one it resumes on — can run (src/shared/connections.mjs).
@@ -6001,7 +6017,7 @@ app.get('/api/runs', async (req, res) => {
     // Also expose any live (in-memory) runs for this project that may not yet
     // be on disk, so the UI history reflects an active run too.
     const live = [...runs.values()]
-      .filter((r) => r.projectDir === projectDir)
+      .filter((r) => r.projectDir === projectDir && !r.isTest)   // D21: a try's work folder lists no live try
       .map((r) => ({
         // Surface the on-disk pipeline id as `id` once createPipeline has run, so
         // renderHistory's dedup-by-id merges this entry with its disk twin. The
@@ -11855,7 +11871,7 @@ async function autoResumeOnBoot({ interruptedIds = [], env = process.env, mock =
   const mode = autoResumeMode(env);
   if (mode === 'off') return { enabled: false, resumed: [], failed: [] };
   const rows = getDb().prepare(`SELECT id, status, started_by, archived_at, resume_point FROM pipelines
-    WHERE status IN ('paused', 'interrupted') AND archived_at IS NULL ORDER BY started_at ASC`).all()
+    WHERE status IN ('paused', 'interrupted') AND archived_at IS NULL AND is_test IS NULL ORDER BY started_at ASC`).all()
     .map((r) => { let rp = null; try { rp = r.resume_point ? JSON.parse(r.resume_point) : null; } catch { /* unreadable point */ } return { ...r, resumePoint: rp }; });
   const picks = autoResumeCandidates(rows, {
     interruptedNow: new Set(interruptedIds),
@@ -19098,7 +19114,7 @@ export const _testing = {
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
   startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES, MARKET_JOBS, pruneMarketJobs, marketJobFailure,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
-  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,
+  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, memoryScopeKey, startRunHandler, invokeStartRun, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,
   uiControl, bearerMatches,
   broadcast, sockets, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
