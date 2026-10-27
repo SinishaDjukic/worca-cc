@@ -63,7 +63,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 77;
+export const SCHEMA_VERSION = 78;
 
 /** Absolute path to the database file: <worcaHome>/worca-cc.db. */
 export function dbPath() {
@@ -836,7 +836,8 @@ ${STEP_QUESTIONS_DDL}
  * against the live schema so the gap can be healed regardless of the stamp.
  */
 const INCREMENTAL_COLUMNS = {
-  req_cost_ledger:        { brief_id: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then)
+  req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask
+  req_starts:             { files_json: "TEXT NOT NULL DEFAULT '[]'" },   // v77: the files a start sent (A8 D14)
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
@@ -864,7 +865,7 @@ const INCREMENTAL_COLUMNS = {
   sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER',
                             run_model: 'TEXT' },   // v25: the model the child actually ran on
   workflows:              { domain: 'TEXT', origin: 'TEXT', graph: 'TEXT', archived_at: 'TEXT',
-                            live_version_no: 'INTEGER' },   // v77: the named version new runs use (NULL = the row itself)
+                            live_version_no: 'INTEGER' },   // v78: the named version new runs use (NULL = the row itself)
   config_workflow_nodes:  { ask_questions: 'INTEGER', subagent_model: 'TEXT' },  // v25: sub-agent model policy
   ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
   artifacts:              { step_key: 'TEXT', node_id: 'TEXT', cycle: 'INTEGER', created_at: 'TEXT' }, // per-step attribution
@@ -1339,7 +1340,36 @@ CREATE TABLE IF NOT EXISTS ask_chat_groups (
   updated_at  TEXT NOT NULL
 );`;
 
-// v77 (plans/workflow-tests-plan.md, #721 workflow part): every save keeps the state it replaced (version_no NULL,
+// v77 Requirements A8 (plans/requirements-a8-design.md §3): a feature's files and a made brief's documents. Bodies live
+// on disk (<worcaHome>/requirements/att/<id><ext>); the row holds what Worca took from each. Reconcile-safe: IF NOT
+// EXISTS + INCREMENTAL_TABLES; req_cost_ledger.attachment_id and req_starts.files_json live in INCREMENTAL_COLUMNS.
+const REQUIREMENTS_ATTACHMENTS_DDL = `
+CREATE TABLE IF NOT EXISTS req_attachments (
+  id             TEXT PRIMARY KEY,
+  owner_type     TEXT NOT NULL,
+  owner_id       INTEGER NOT NULL,
+  name           TEXT NOT NULL,
+  kind           TEXT NOT NULL,
+  mime           TEXT NOT NULL,
+  bytes          INTEGER NOT NULL,
+  sha256         TEXT NOT NULL,
+  status         TEXT NOT NULL,
+  error_json     TEXT,
+  summary        TEXT NOT NULL DEFAULT '',
+  summary_edited INTEGER NOT NULL DEFAULT 0,
+  asks_json      TEXT NOT NULL DEFAULT '[]',
+  history_json   TEXT NOT NULL DEFAULT '[]',
+  send_with_run  INTEGER NOT NULL DEFAULT 0,
+  cost_usd       REAL NOT NULL DEFAULT 0,
+  read_cost_usd  REAL,
+  read_model     TEXT, read_at TEXT,
+  created_by TEXT, created_at TEXT NOT NULL, updated_by TEXT, updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS req_attachments_owner ON req_attachments(owner_type, owner_id);
+CREATE UNIQUE INDEX IF NOT EXISTS req_attachments_sha ON req_attachments(owner_type, owner_id, sha256);
+`;
+
+// v78 (plans/workflow-tests-plan.md, #721 workflow part): every save keeps the state it replaced (version_no NULL,
 // the last 50 per workflow) and Save version keeps a numbered state (never pruned). Append-only and FK-free like
 // ask_cost_ledger, so history outlives a deleted workflows row. `graph` = {nodes, wires, canvas?, codeGraph?}.
 const WORKFLOW_REVISIONS_DDL = `
@@ -1395,7 +1425,7 @@ const INCREMENTAL_TABLES = {
   run_groups:        RUN_GROUPS_DDL,
   run_group_members: RUN_GROUPS_DDL,
   ask_chat_groups:   ASK_CHAT_GROUPS_DDL,      // v76 (#948 s3)
-  workflow_revisions: WORKFLOW_REVISIONS_DDL,  // v77 (workflow tests Part 1, #721)
+  workflow_revisions: WORKFLOW_REVISIONS_DDL,  // v78 (workflow tests Part 1, #721)
   night_decisions:   NIGHT_DECISIONS_DDL,
   terminal_sessions:  TERMINAL_DDL,
   terminal_blocks:    TERMINAL_DDL,
@@ -1407,6 +1437,7 @@ const INCREMENTAL_TABLES = {
   req_cost_ledger:   REQUIREMENTS_DDL,
   req_starts:        REQUIREMENTS_STARTS_DDL,
   req_briefs:        REQUIREMENTS_BRIEFS_DDL,
+  req_attachments:   REQUIREMENTS_ATTACHMENTS_DDL,
 };
 
 /**
@@ -2546,7 +2577,10 @@ export function migrate(db) {
     if (current < 74) { db.exec(REQUIREMENTS_BRIEFS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
     // v75 (#948 s2): ask_threads.archived_at / pinned_at — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
     if (current < 76) db.exec(ASK_CHAT_GROUPS_DDL);   // v76 (#948 s3) topic groups; ask_threads.group_id comes from INCREMENTAL_COLUMNS
-    if (current < 77) db.exec(WORKFLOW_REVISIONS_DDL);   // v77 workflow history + versions; workflows.live_version_no comes from INCREMENTAL_COLUMNS
+    // v77 requirements A8: req_attachments + ledger.attachment_id + starts.files_json. The repair runs again here, as at
+    // v74: a DB coming from below 72 / 73 creates the ledger and the starts table after the hoisted repair.
+    if (current < 77) { db.exec(REQUIREMENTS_ATTACHMENTS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
+    if (current < 78) db.exec(WORKFLOW_REVISIONS_DDL);   // v78 workflow history + versions; workflows.live_version_no comes from INCREMENTAL_COLUMNS
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

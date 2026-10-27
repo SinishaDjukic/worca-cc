@@ -13,6 +13,9 @@
 import { gitOn, onGitChange, GIT_MISSING_TEXT } from './git-gate.mjs';
 import { makeSwitch } from './switch.mjs';
 import { icon as sharedIcon } from './icons.mjs';
+import {
+  ATTACH_BINARY, extOf, checkAttachment, bytesToBase64, carriesFiles, pastedFiles, createPasteNamer, REQ_ATTACH, reqLimits, reqTypeMessage,
+} from './attach-files.mjs';
 
 // The displayed state (A2 §4), always the server's `f.state`: the page never derives it. `started` is
 // drawn as the latest run's pill (runPill), not as a badge.
@@ -84,6 +87,11 @@ const ICONS = Object.freeze({
     ['path', { d: 'M9.9 9.1a2.2 2.2 0 1 1 3.2 2c-.7.4-1.1.9-1.1 1.6' }], ['path', { d: 'M12 15v.01' }]],
   play: [['path', { d: 'M6 4l14 8-14 8V4Z' }]],
   warn: [['path', { d: 'M12 3l9.5 17h-19L12 3z' }], ['path', { d: 'M12 10v4.5M12 17.5v.01' }]],
+  // A8 (board 15): the drop zone's clip, a file chip's page and picture, the privacy note's i
+  clip: [['path', { d: 'M21 12.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l9.2-9.2a3.7 3.7 0 0 1 5.2 5.2l-9.2 9.2a1.8 1.8 0 0 1-2.6-2.6l8.5-8.5' }]],
+  file: [['path', { d: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z' }], ['path', { d: 'M14 3v5h5' }]],
+  image: [['rect', { x: 3.5, y: 4.5, width: 17, height: 15, rx: 2 }], ['circle', { cx: 9, cy: 10, r: 1.6 }], ['path', { d: 'M20.5 16l-5-5-8.5 8.5' }]],
+  info: [['circle', { cx: 12, cy: 12, r: 9 }], ['path', { d: 'M12 8h.01M11 12h1v5h1' }]],
 });
 const AUTO_WORKFLOW = 'wf_auto';
 // Workflows a feature never starts with: the memory defragment is a maintenance run, not a build.
@@ -126,6 +134,48 @@ export function age(iso, now = Date.now()) {
 function ageOld(iso) {
   const a = age(iso);
   return a === 'today' || a === 'yesterday' ? `made ${a}` : a ? `${a} old` : 'made';
+}
+
+// ---- A8: files (plans/requirements-a8-design.md §6; design round 3, boards 15–21) ----
+const KIND_TITLE = Object.freeze({ text: 'Text', image: 'Image', binary: 'PDF' });
+const READ_RANGE = '$0.05–0.20';   // a read's cost before any read has been made
+/** 640 B, 9 KB, 2.1 MB (the server's sizeLabel). */
+export function sizeText(bytes) {
+  const v = Number(bytes) || 0;
+  if (v < 1024) return `${v} B`;
+  if (v < 1024 * 1024) return `${Math.round(v / 1024)} KB`;
+  return `${(v / (1024 * 1024)).toFixed(1)} MB`;
+}
+const kindOfName = (name) => { const m = ATTACH_BINARY[extOf(name)]; return m ? (m.startsWith('image/') ? 'image' : 'binary') : 'text'; };
+/** The picks of the feature and brief pages, in requests of at most 100 MB each (D7). */
+export function uploadBatches(files) {
+  const out = [];
+  let cur = [];
+  let n = 0;
+  for (const f of files) {
+    if (cur.length && n + f.size > REQ_ATTACH.maxRequestBytes) { out.push(cur); cur = []; n = 0; }
+    cur.push(f);
+    n += f.size;
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+const encodeFile = async (file) => ({ name: file.name, dataBase64: bytesToBase64(new Uint8Array(await file.arrayBuffer())) });
+/** "$0.05", "$0.05–0.12", or READ_RANGE while none of the kinds has an estimate (board 15). */
+function readRange(kinds, estimates) {
+  const known = [...new Set(kinds)].map((k) => estimates && estimates[k]).filter((x) => typeof x === 'number');
+  if (!known.length) return READ_RANGE;
+  const lo = Math.min(...known);
+  const hi = Math.max(...known);
+  return lo === hi ? usd(lo) : `${usd(lo)}–${usd(hi).slice(1)}`;
+}
+/** D15: the privacy note, naming the interview model. */
+const privacyNote = (interview, id = null) => h('p', { class: 'hint req-files-privacy', id }, icon(ICONS.info, { size: 14 }),
+  h('span', { text: `Worca sends each file to ${(interview && (interview.label || interview.model)) || 'the interview model'} to read it. Text is checked for keys and passwords first; images and PDFs go as they are.` }));
+/** A refusal line of the files' amber alert, the file's name in bold (board 15). */
+function refusalLine(message) {
+  const m = /^(.+?) (was not added: .*)$/.exec(message);
+  return h('span', { class: 'req-file-refusal' }, ...(m ? [h('b', { text: m[1] }), ` ${m[2]}`] : [message]));
 }
 /** "a", "a and b", "a, b and c". */
 const joinAnd = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`);
@@ -218,6 +268,21 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   const seqScope = new Map();
   let focusLater = null;     // a data-ui to focus once it is on screen, while the focus is lost (a round sent)
   let relook = null;         // New feature's look line, said again when git appears or goes missing
+  let carry = null;          // { param, text }: a create's message that the page it routes to says (A8 filesNotStored)
+  let readingEl = null;      // the feature page's "Reading N files…" role=status line, kept across paints (A8 D2)
+  // A8 (board 16): the Files card. Per file id its open editor text, ask text, Show all and history fold; per owner key
+  // ('feature:<seq>') the last pick's refusals. The live nodes are kept across paints so they speak once (role=alert /
+  // role=status): each file's Reading… badge and failed line, each owner's refusal line, and the card's status line.
+  const fileUi = new Map();
+  const fileMsgs = new Map();
+  const fileMsgList = new Map();    // the same refusals, one per file, for the bold names
+  const fileNodes = new Map();      // a file id → { badge, failed }
+  const refusalEls = new Map();     // an owner key → its role=alert line
+  const fileWas = new Map();        // a file id → its status at the last paint (what the status line says changed)
+  const droppedKeys = new Set();    // owner keys whose refusal line says a dropped draft's file is being read
+  const DROPPED_DRAFT = 'Worca is reading this file.';
+  let filesLive = null;             // the Files card's sr-only role=status line
+  let keptSel = null;               // the focused text field's selection, read by capture() before a feature repaint
   // Start in Worca: the workflow / branch choices per feature seq ({ workflowId, sourceBranch, open }),
   // the workflow list and each project's branches (loaded once, when Change opens), a start in flight,
   // and the start-before-Ready dialog ({ wrap, trigger, triggerUi }).
@@ -228,6 +293,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   let dialog = null;
   let workflowsFailed = false;     // GET /api/workflows failed: Auto only, and the card says so
   const assumePosting = new Set(); // assumption ids whose Confirm / Reject POST is in flight
+  const pickPosting = new Set();   // file ids whose Files for the run chip PATCH is in flight (board 18)
   // Unsaved input of the feature page, kept across repaints (read from the DOM before a rebuild, put back after).
   let ui = freshUi();
   function freshUi() {
@@ -236,9 +302,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   if (subEl) subEl.textContent = 'Define a feature with Worca before anything is built. Nothing runs until you start it.';
   const say = (text, kind = '') => { if (msgEl) { msgEl.textContent = text || ''; msgEl.className = `form-msg${kind ? ` ${kind}` : ''}`; } };
-  const fail = (err) => say(err && err.status === 404
-    ? 'Requirements are turned off, or this feature no longer exists.'
-    : (err && err.message) || String(err), 'err');
+  const GONE = 'Requirements are turned off, or this feature no longer exists.';
+  const fail = (err) => say(err && err.status === 404 ? GONE : (err && err.message) || String(err), 'err');
+  /** A refusal for a dialog's or a panel's own line: the server's words, the 404 as `fail` says it, and product copy for
+   *  anything else (an HTTP failure without a JSON error, a network failure): never a raw "HTTP 502". */
+  const errText = (err) => (err && err.status === 404 ? GONE
+    : err && err.data && typeof err.data.error === 'string' && err.data.error ? err.data.error : 'Worca could not finish that. Try again.');
   const act = async (fn) => { say(''); try { await fn(); } catch (err) { fail(err); } };
   // "Started build v<n>." with a link to the run (the page stays on the feature, D10).
   const sayStarted = (version, runId) => {
@@ -261,19 +330,30 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const m = /^feature\/(?:FEAT-)?(\d+)$/.exec(param);
     const next = m ? Number(m[1]) : null;
     if (next !== seqShown) {
-      draft = null; revising = null; revDraft = null; editing = null; current = null; ui = freshUi(); focusLater = null;
+      draft = null; revising = null; revDraft = null; editing = null; current = null; ui = freshUi(); focusLater = null; readingEl = null;
+      for (const map of [fileUi, fileMsgs, fileMsgList, fileNodes, refusalEls, fileWas, droppedKeys]) map.clear();
+      filesLive = null;
       closeDialog(false);
     }
     seqShown = next;
     const b = /^brief\/(project|workspace)\/([^/]+)$/.exec(param);
     const nextBrief = b ? { scopeType: b[1], scopeKey: decodeKey(b[2]) } : null;
+    // leaving a shown brief (to the list, a feature, another brief): a dialog opened on it closes with it
+    if (briefShown && (!nextBrief || scopeId(nextBrief) !== scopeId(briefShown))) closeDialog(false);
+    if (nextBrief && (!briefShown || scopeId(nextBrief) !== scopeId(briefShown))) {
+      // another brief's Documents card (board 19): its files' ui state and live nodes start afresh, as a feature's do
+      for (const map of [fileUi, fileMsgs, fileMsgList, fileNodes, refusalEls, fileWas, droppedKeys]) map.clear();
+      filesLive = null;
+    }
     if (!nextBrief || !briefShown || scopeId(nextBrief) !== scopeId(briefShown)) {
       briefData = null; notesBase = null; notesDraft = null;
       briefEditing = null; briefEditVal = null; notesEditing = false; briefFolds = { notes: true, read: false }; briefFocusNext = null;
       if (ui.menu && ui.menu.startsWith('brief-')) ui.menu = null;
     }
     briefShown = nextBrief;
-    say('');
+    // .req-msg-warn: --amber-ink-strong on --amber-bg (AA); the shared .form-msg.warn is under 4.5:1 on --bg
+    if (carry && carry.param === param) say(carry.text, 'req-msg-warn'); else say('');
+    carry = null;
     await paint();
   }
   // A live frame never touches the new-feature form. The list repaints on every frame; a feature page on its own
@@ -316,7 +396,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         const look = list && list.lookCostUsd;
         const interview = list && list.interview && typeof list.interview === 'object' ? list.interview : null;
         const briefs = list && Array.isArray(list.briefs) ? list.briefs : [];
-        if (mine === paintNo) { paintNew(typeof look === 'number' ? look : null, interview, briefs); paintedKey = key; }
+        const estimates = list && list.readEstimates && typeof list.readEstimates === 'object' ? list.readEstimates : {};
+        if (mine === paintNo) { paintNew(typeof look === 'number' ? look : null, interview, briefs, estimates); paintedKey = key; }
         return;
       }
       if (seqShown != null) {
@@ -336,10 +417,15 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   // Read the unsaved input from the current feature page into `ui`, and which field has focus.
   function capture(f) {
+    keptSel = null;
     if (!host.querySelector(`[data-req-feature="${f.seq}"]`)) return null;
     const q = (k) => host.querySelector(`[data-ui="${k}"]`);
     const active = document.activeElement;
     const focus = active && host.contains(active) ? active.getAttribute('data-ui') : null;
+    // a typed field keeps its caret and selection across the rebuild (as the brief page's captureBrief)
+    if (focus && (active.tagName === 'TEXTAREA' || (active.tagName === 'INPUT' && active.type === 'text'))) {
+      keptSel = [active.selectionStart, active.selectionEnd, active.selectionDirection];
+    }
     const ea = q('edit-a');
     if (ea) {
       const eb = q('edit-b');
@@ -442,23 +528,37 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   }
   const briefLink = (to) => h('a', { class: 'req-brief-link', href: `#requirements/${to}`, onclick: (e) => { e.preventDefault(); route(to); } }, 'product brief');
 
-  // The line under the form: who interviews (A1.1), then what it costs. With a usable brief for the chosen
-  // target there is no code look (A7 D10), so only the cost words after the dot change, to "cents per round"
-  // (board 13); the model part never does. Without interview info: A2's hint, hidden with a brief.
-  function costHint(lookCost, interview) {
+  // The line under the form: who interviews (A1.1), then what it costs. With a usable brief for the chosen target (or
+  // without git) there is no code look (A7 D10), so only the cost words after the dot change; the model part never does.
+  // A8 (board 15): with files picked, the words say each file is read once before round 1. Without interview info:
+  // A2's sentence; with nothing to say (no look estimate, no files) there is no line at all, as in A2.
+  function costHint(lookCost, interview, estimates = {}) {
+    let noLook = false;
+    let kinds = [];
+    const lookPart = () => (lookCost != null && !noLook ? `about ${usd(lookCost)} for the code look, ` : '');
+    const words = () => (kinds.length
+      ? `${lookPart()}reads each file once before round 1, about ${readRange(kinds, estimates)} a file, then cents per round`
+      : lookPart() ? `${lookPart()}then cents per round` : 'cents per round');
     if (!interview) {
-      const el = lookCost != null ? h('span', { class: 'hint req-new-cost', text: `About ${usd(lookCost)} for the code look, then cents per round.` }) : null;
-      return { el, brief: (on) => { if (el) el.hidden = on; } };
+      let el = lookCost != null ? h('span', { class: 'hint req-new-cost' }) : null;
+      const sync = () => {
+        if (!el && kinds.length) el = h('span', { class: 'hint req-new-cost' });
+        if (!el) return;
+        const w = words();
+        el.textContent = `${w[0].toUpperCase()}${w.slice(1)}.`;
+        el.hidden = !lookPart() && !kinds.length;
+      };
+      sync();
+      return { get el() { return el; }, brief: (on) => { noLook = on; sync(); }, files: (k) => { kinds = k; sync(); } };
     }
     const name = interview.label || interview.model;
     const who = `Worca interviews with ${name}${interview.effort ? ` at ${interview.effort} effort` : ''}`;
-    const words = (on) => (lookCost != null && !on ? ` · about ${usd(lookCost)} for the code look, then cents per round` : ' · cents per round');
-    const tail = document.createTextNode(words(false));
-    return { el: h('span', { class: 'hint req-new-cost' }, h('span', { class: 'req-new-model', text: who }), tail),
-      brief: (on) => { tail.data = words(on); } };
+    const tail = document.createTextNode(` · ${words()}`);
+    const el = h('span', { class: 'hint req-new-cost' }, h('span', { class: 'req-new-model', text: who }), tail);
+    return { el, brief: (on) => { noLook = on; tail.data = ` · ${words()}`; }, files: (k) => { kinds = k; tail.data = ` · ${words()}`; } };
   }
 
-  function paintNew(lookCost, interview = null, briefs = []) {
+  function paintNew(lookCost, interview = null, briefs = [], estimates = {}) {
     const select = h('select', { id: 'req-new-target' },
       targets.projects.length ? h('optgroup', { label: 'Projects' }, targets.projects.map((p) => h('option', { value: `project:${p.key}`, text: p.name }))) : null,
       targets.workspaces.length ? h('optgroup', { label: 'Workspaces' }, targets.workspaces.map((w) => h('option', { value: `workspace:${w.id}`, text: w.name }))) : null);
@@ -466,7 +566,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const desc = h('textarea', { id: 'req-new-desc', rows: '5', placeholder: 'A few sentences, the way you would tell a colleague.' });
     // A brief is usable once made (D10), also while it is being refreshed.
     const usable = new Map(briefs.filter((b) => b && b.scopeType && b.scopeKey && b.madeAt).map((b) => [scopeId(b), b]));
-    const cost = costHint(lookCost, interview);
+    const cost = costHint(lookCost, interview, estimates);
     let lookHint = h('span', { class: 'hint req-new-look' });
     const sayLook = () => {
       const [scopeType, ...rest] = select.value.split(':');
@@ -488,11 +588,87 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     select.addEventListener('change', sayLook);
     sayLook();
     relook = sayLook;
-    const create = () => act(async () => {
-      const [scopeType, ...rest] = select.value.split(':');
-      const data = await api('POST', '/api/requirements', { scopeType, scopeKey: rest.join(':'), title: title.value, description: desc.value });
-      route(`feature/${data.feature.seq}`);
+    // A8 (board 15): the Files field. Picks are checked here (D7: 10 files, 25 MB each, 100 MB in all on this form);
+    // a refused one is named in the amber alert and not added; a chip per accepted file.
+    let picked = [];
+    const chips = h('div', { class: 'req-new-chips' });
+    const refused = h('p', { class: 'req-file-refused', role: 'alert', hidden: true });
+    const note = h('p', { class: 'hint req-new-files-note', hidden: true, text: 'Files stay on the feature. Which files go with a run is chosen later, on the feature page.' });
+    const actions = h('div', { class: 'actions req-new-actions' });
+    const input = h('input', { type: 'file', id: 'req-new-files-input', multiple: true, accept: REQ_ATTACH.accept, hidden: true });
+    const choose = h('button', { type: 'button', class: 'link-btn', onclick: () => input.click() }, 'Choose files');
+    const sync = () => {
+      chips.replaceChildren(...picked.map((file) => {
+        const kind = kindOfName(file.name);
+        return h('span', { class: 'req-new-chip' },
+          icon(kind === 'image' ? ICONS.image : ICONS.file, { size: 16 }),
+          h('span', { class: 'req-new-chip-name', text: file.name }),
+          h('span', { class: 'hint', text: `${KIND_TITLE[kind]} · ${sizeText(file.size)}` }),
+          icoBtn('remove', `Remove ${file.name}`, () => removePicked(file), { cls: 'req-new-chip-x' }));
+      }));
+      note.hidden = !picked.length;
+      cost.files(picked.map((p) => kindOfName(p.name)));
+      if (cost.el && cost.el.parentNode !== actions) actions.prepend(cost.el);   // A2's line appears with the first file
+    };
+    // A removed chip hands the focus to the next chip's ×, else the previous one's, else Choose files.
+    const removePicked = (file) => {
+      const at = picked.indexOf(file);
+      picked = picked.filter((p) => p !== file);
+      sync();
+      const xs = chips.querySelectorAll('.req-new-chip-x');
+      (xs[Math.min(at, xs.length - 1)] || choose).focus();
+    };
+    const addPicked = (files) => {
+      const errors = [];
+      for (const file of files) {
+        const c = checkAttachment(file, { pending: picked.map((p) => ({ name: p.name, bytes: p.size })), limits: reqLimits({ create: true }), typeMessage: reqTypeMessage });
+        if (!c.ok) { errors.push(c.error); continue; }
+        picked = [...picked.filter((p) => p.name !== file.name), file];
+      }
+      refused.replaceChildren(...errors.flatMap((e, i) => (i ? [' ', refusalLine(e)] : [refusalLine(e)])));
+      refused.hidden = !errors.length;
+      sync();
+    };
+    input.addEventListener('change', () => { const files = [...(input.files || [])]; input.value = ''; addPicked(files); });
+    const namer = createPasteNamer((parts, n, o) => new File(parts, n, o));
+    const zone = h('div', { class: 'req-drop', tabindex: '0', role: 'group', 'aria-label': 'Drop files here, paste them, or choose files',
+      'aria-describedby': 'req-new-files-opt req-new-files-limits req-new-files-privacy' },
+      'Drop files here, paste them, or ',
+      choose,
+      h('span', { class: 'hint', id: 'req-new-files-limits', text: 'Text, images and PDF · up to 10 files, 25 MB each' }),
+      h('span', { class: 'req-drop-ico' }, icon(ICONS.clip, { size: 22, width: 1.8 })));
+    // Enter or Space on the focused zone opens the picker, as Choose files does (the button keeps its own keys).
+    zone.addEventListener('keydown', (e) => {
+      if (e.target !== zone || (e.key !== 'Enter' && e.key !== ' ')) return;
+      e.preventDefault();
+      input.click();
     });
+    zone.addEventListener('dragover', (e) => { if (!carriesFiles(e.dataTransfer)) return; e.preventDefault(); zone.classList.add('over'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+    zone.addEventListener('drop', (e) => {
+      if (!carriesFiles(e.dataTransfer)) return;
+      e.preventDefault();
+      zone.classList.remove('over');
+      addPicked([...e.dataTransfer.files]);
+    });
+    zone.addEventListener('paste', (e) => { const files = pastedFiles(e.clipboardData); if (!files) return; e.preventDefault(); addPicked(namer(files)); });
+    // One create at a time: reading the files slows the press down, so a second press while it runs does nothing.
+    let sending = false;
+    const create = () => (sending ? undefined : act(async () => {
+      sending = true;
+      try {
+        const [scopeType, ...rest] = select.value.split(':');
+        const attachments = picked.length ? await Promise.all(picked.map(encodeFile)) : undefined;
+        const data = await api('POST', '/api/requirements', { scopeType, scopeKey: rest.join(':'), title: title.value, description: desc.value, ...(attachments ? { attachments } : {}) });
+        // A file the server could not store is named on the feature page (the feature stays; the create's filesNotStored).
+        const lost = Array.isArray(data.filesNotStored) ? data.filesNotStored : [];
+        if (lost.length) carry = { param: `feature/${data.feature.seq}`, text: lost.map((n) => `${n} was not added: Worca could not store it. Add it on the feature page.`).join(' ') };
+        route(`feature/${data.feature.seq}`);
+      } finally { sending = false; }
+    }));
+    actions.append(...[cost.el, h('div', { class: 'req-new-btns' },
+      h('button', { type: 'button', class: 'btn', onclick: () => route('') }, 'Cancel'),
+      h('button', { type: 'button', class: 'btn btn-primary', onclick: create }, 'Start the interview'))].filter(Boolean));
     const field = (id, label, control, ...after) => h('div', { class: 'field' }, h('label', { for: id }, ...label), control, ...after);
     paintHost(h('div', { class: 'req-new-page' },
       h('a', { href: '#requirements', class: 'hint req-back', onclick: (e) => { e.preventDefault(); route(''); } }, '← All features'),
@@ -502,12 +678,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       h('div', { class: 'card req-new' },
         field('req-new-title', ['Title'], title),
         field('req-new-desc', ['Describe it ', h('span', { class: 'opt', text: 'who needs it, what they want to do, and why' })], desc),
+        h('div', { class: 'field req-new-files' },
+          h('label', { for: 'req-new-files-input' }, 'Files ', h('span', { class: 'opt', id: 'req-new-files-opt', text: 'optional: emails, a spec, screenshots, a mockup' })),
+          input, zone, privacyNote(interview, 'req-new-files-privacy'), chips, refused),
         field('req-new-target', ['For'], h('div', { class: 'select-wrap' }, select), lookHint),
-        h('div', { class: 'actions req-new-actions' },
-          cost.el,
-          h('div', { class: 'req-new-btns' },
-            h('button', { type: 'button', class: 'btn', onclick: () => route('') }, 'Cancel'),
-            h('button', { type: 'button', class: 'btn btn-primary', onclick: create }, 'Start the interview'))))));
+        actions),
+      note));
   }
 
   // ---- the Product brief page (A7 §6; board BriefEmpty.dc.html): the header, Give Worca a head start while
@@ -721,11 +897,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     else if (srcs.length) from = ['Made from ', h('code', { text: `${srcs[0].branch ? `${srcs[0].branch} @ ` : ''}${srcs[0].sha.slice(0, 7)}` })];
     else from = ['Made'];
     const used = (data.usedBy || []).length;
+    const docs = docsOf(data).length;
     const seed = b.seed && b.seed.kind === 'workspace-map' ? b.seed : null;
     return [
       h('span', { class: 'chip' }, ...from, when ? (srcs.length ? ` · ${when}` : ` ${when}`) : ''),
       h('span', { class: 'chip', text: usd(b.costUsd) }),
       h('span', { class: 'chip', text: `Used by ${plural(used, 'feature')}` }),
+      docs ? h('span', { class: 'chip', text: plural(docs, 'document') }) : null,   // A8 board 19
       seed ? h('span', { class: 'chip', text: `Built from the workspace map${seed.scannedAt ? `, scanned ${String(seed.scannedAt).slice(0, 10)}` : ''}` }) : null,
     ];
   }
@@ -764,7 +942,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const who = !ids.length ? 'No feature uses this brief yet.'
         : ids.length === 1 ? `${ids[0]} uses this brief; it goes back to looking at the code when asked.`
           : `${joinAnd(ids)} use this brief; they go back to looking at the code when asked.`;
-      if (!window.confirm(`Delete the brief? ${who}`)) return;
+      // A8 (design §6): the brief's documents go with it
+      const nDocs = docsOf(briefData).length;
+      const docsWord = nDocs === 1 ? ' Its 1 document is deleted too.' : nDocs ? ` Its ${nDocs} documents are deleted too.` : '';
+      if (!window.confirm(`Delete the brief? ${who}${docsWord}`)) return;
       briefEditing = null; briefEditVal = null; notesEditing = false;
       const data = await api('DELETE', briefApi(s));
       briefFocusNext = 'brief-create';
@@ -846,18 +1027,23 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('div', { class: 'req-actions' }, refreshButton(data, `Refresh${estimateText(data)}`, 'brief-refresh'))));
   }
 
+  // A8 (board 19): a made brief's documents (a page from before A8 has none), and a brief item's source (D13) as
+  // "(from <name>)" after its text.
+  const docsOf = (data) => (data && Array.isArray(data.documents) ? data.documents : []);
+  const fromHint = (x) => (x && typeof x.source === 'string' && x.source ? h('span', { class: 'hint req-brief-src', text: ` (from ${x.source})` }) : null);
+
   /** One section's body as read (D2, §6): the product text, users with the name bold, terms as a grid, areas as rows. */
   function briefSectionBody(key, value) {
     const none = () => h('p', { class: 'hint', text: 'Not yet.' });
     if (key === 'product') return typeof value === 'string' && value.trim() ? h('p', { class: 'req-brief-product', text: value }) : none();
     const list = Array.isArray(value) ? value.filter((x) => x && typeof x === 'object') : [];
     if (!list.length) return none();
-    if (key === 'users') return h('ul', { class: 'req-brief-users' }, ...list.map((u) => h('li', {}, h('b', { text: u.name || '' }), u.can ? `: ${u.can}` : '')));
-    if (key === 'terms') return h('div', { class: 'req-brief-terms' }, ...list.flatMap((t) => [h('b', { text: t.term || '' }), h('span', { text: t.meaning || '' })]));
+    if (key === 'users') return h('ul', { class: 'req-brief-users' }, ...list.map((u) => h('li', {}, h('b', { text: u.name || '' }), u.can ? `: ${u.can}` : '', fromHint(u))));
+    if (key === 'terms') return h('div', { class: 'req-brief-terms' }, ...list.flatMap((t) => [h('b', { text: t.term || '' }), h('span', {}, t.meaning || '', fromHint(t))]));
     return h('div', { class: 'req-brief-areas' }, ...list.map((a) => {
       const st = AREA_STATUS[a.status];
       return h('div', { class: 'req-brief-area' },
-        h('span', {}, h('b', { text: areaLabel(a) || '' }), a.text ? ` · ${a.text}` : ''),
+        h('span', {}, h('b', { text: areaLabel(a) || '' }), a.text ? ` · ${a.text}` : '', fromHint(a)),
         st ? ' ' : null, st ? h('span', { class: `badge ${st.cls}`, text: st.label }) : null);
     }));
   }
@@ -917,10 +1103,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'notes-edit',
           onclick: () => { notesEditing = true; notesDraft = null; briefFocusNext = 'notes-body'; redrawBrief(); } }, 'Edit notes'));
     const files = Array.isArray(b.files) ? b.files.filter((p) => typeof p === 'string') : [];
+    const reads = docsOf(data).length ? `Every interview round for ${name} reads the brief and these documents. ` : `Every interview round for ${name} reads it. `;
     return h('aside', { class: 'req-brief-side' },
+      docsCard(data, name),
       h('section', { class: 'card req-brief-how', 'aria-label': 'How Worca uses it' },
         h('h3', { text: 'How Worca uses it' }),
-        h('p', {}, `Every interview round for ${name} reads it. New features no longer need their own look at the code; `,
+        h('p', {}, `${reads}New features no longer need their own look at the code; `,
           h('b', { text: 'Look closer' }), ' on a feature adds one when the brief is not enough.'),
         used.length ? h('p', { class: 'req-brief-used' }, 'Used by ', ...used.flatMap((u, i) => [i ? ', ' : null, featureLink(u)])) : null),
       notes,
@@ -994,7 +1182,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         queueMicrotask(sync);
         return h('div', { class: 'qblock' },
           h('div', { class: 'qtext' }, h('span', { class: 'qn', text: String(i + 1) }), q.question),
-          q.why ? h('div', { class: 'hint req-why', text: q.why }) : null,
+          // A8 (board 16): a question that came from a file names it before its why
+          q.why || q.source ? h('div', { class: 'hint req-why' }, q.source ? h('span', { class: 'req-why-src', text: `From ${q.source}: ` }) : null, q.why || '') : null,
           h('div', { class: 'qopts' }, ...buttons), free);
       }),
       h('div', { class: 'qpanel-foot' }, count, ...foot));
@@ -1025,6 +1214,21 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         }))));
   }
 
+  // A8 D2: a feature created with files reads them before round 1. One role=status node for the page, moved into
+  // each paint and updated in place, so a screen reader announces the count as it drops (2 → 1).
+  function readingLine(f) {
+    const n = (f.attachments || []).filter((a) => a && a.status === 'reading').length;
+    if (!n || (Number(f.rounds) || 0) > 0 || f.pending) { readingEl = null; return null; }
+    if (!readingEl) {
+      readingEl = h('p', { class: 'req-reading', role: 'status' }, h('span', { class: 'badge blue' }), ' ',
+        h('span', { class: 'hint', text: 'Worca reads the files first, then shows round 1.' }));
+    }
+    const badgeEl = readingEl.querySelector('.badge');
+    const words = `Reading ${plural(n, 'file')}…`;
+    if (badgeEl.textContent !== words) badgeEl.textContent = words;
+    return readingEl;
+  }
+
   function conversation(f, turns, rounds) {
     const working = isWorking(f);
     const open = !isLocked(f);
@@ -1045,7 +1249,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       hasStarts ? runsCard(f) : null,
       hasStarts && (f.changedSinceStart || []).length ? changedNotice(f) : null,
       f.status === 'archived' ? h('p', { class: 'hint req-note', text: 'This feature is archived. Restore it to continue.' }) : null,
-      working ? h('p', { class: 'hint req-working', text: f.status === 'looking' ? 'Worca is looking at the code…' : 'Worca is thinking…' }) : null,
+      readingLine(f) || (working ? h('p', { class: 'hint req-working', text: f.status === 'looking' ? 'Worca is looking at the code…' : 'Worca is thinking…' }) : null),
       open && f.lastError ? h('div', { class: 'req-error form-msg err' }, f.lastError, ' ',
         h('button', { type: 'button', class: 'btn btn-sm req-retry', onclick: () => act(async () => { await api('POST', `/api/requirements/${f.seq}/retry`, {}); await paint(); }) }, 'Try again')) : null,
       card,
@@ -1079,10 +1283,30 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       btn('Confirm', 'confirmed', 'req-yes req-confirm', 'confirm'), btn('Reject', 'rejected', 'req-no req-reject', 'reject'));
   }
 
+  // A8 D8: the files to ask about, in upload order, once none of them is still being read: Worca starts the follow-up
+  // itself when the read is done, and it takes them all then (the server asks only about files whose text the prompt
+  // carries). While one is read the Decide panel offers no file button.
+  const askableFiles = (f) => {
+    const files = (f.attachments || []).filter((a) => a && (f.unaskedFiles || []).includes(a.id));
+    return files.some((a) => a.status === 'reading') ? [] : files.filter((a) => a.status === 'done');
+  };
+
   function decideCard(f) {
     const all = (f.spec && f.spec.assumptions) || [];
-    if (!all.length) return h('p', { class: 'hint req-note', text: 'The interview is done. Edit the spec on the right; every change is kept.' });
     const waitingIds = f.unaskedRejections || [];
+    const fileNames = askableFiles(f).map((a) => a.name);
+    const post = (path, body) => act(async () => { await api('POST', `/api/requirements/${f.seq}/${path}`, body); await paint(); });
+    // One follow-up covers both (POST …/follow-up): "Ask about A-4 and b.pdf"; without files, A2's "Done, ask about A-4".
+    const askItems = [...waitingIds, ...fileNames];
+    const askLabel = fileNames.length
+      ? `Ask about ${askItems.length <= 2 ? joinAnd(askItems) : `${askItems[0]} and ${askItems.length - 1} more`}`
+      : `Done, ask about ${waitingIds[0]}${waitingIds.length > 1 ? ` and ${waitingIds.length - 1} more` : ''}`;
+    const askBtn = askItems.length ? h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'follow-up', onclick: () => post('follow-up', {}) }, askLabel) : null;
+    if (!all.length) {
+      const done = h('p', { class: 'hint req-note', text: 'The interview is done. Edit the spec on the right; every change is kept.' });
+      return askBtn ? h('section', { class: 'qpanel req-decide', 'aria-label': fileNames.length === 1 ? 'Ask about the new file' : 'Ask about the new files' },
+        done, h('div', { class: 'qpanel-foot' }, askBtn)) : done;
+    }
     const open = all.filter((a) => a.status === 'open');
     const waiting = all.filter((a) => a.status === 'rejected' && waitingIds.includes(a.id));
     const rest = all.filter((a) => !open.includes(a) && !waiting.includes(a));
@@ -1091,7 +1315,6 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       h('code', { class: 'req-id', text: a.id }),
       h('span', { class: 'req-arow-text', text: a.text }),
       assumeToggle(f, a, { prefix: 'decide-' }));
-    const post = (path, body) => act(async () => { await api('POST', `/api/requirements/${f.seq}/${path}`, body); await paint(); });
     return h('section', { class: 'qpanel req-decide', 'aria-label': 'Decide the assumptions' },
       h('div', { class: 'qpanel-head' }, icon(ICONS.ask, { size: 17, width: 1.8 }), h('b', { text: 'Decide the assumptions' }),
         h('span', { class: 'qcount', text: `${open.length} of ${all.length} left` })),
@@ -1103,14 +1326,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('span', { class: 'qanswered', text: `${all.length - open.length} decided · ${rejected} rejected` }),
         open.length ? h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'confirm-all', onclick: () => post('assumptions', { confirmOpen: true }) },
           `Confirm the ${open.length} left`) : null,
-        waitingIds.length ? h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'follow-up', onclick: () => post('follow-up', {}) },
-          `Done, ask about ${waitingIds[0]}${waitingIds.length > 1 ? ` and ${waitingIds.length - 1} more` : ''}`) : null));
+        askBtn));
   }
 
   // Something to decide, from the data rather than the state (A2 D11): a started feature still decides its
   // assumptions and asks about the rejected ones (the state there is `started`, never `decide`).
   const decideNeeded = (f) => !f.pending && f.status === 'done'
-    && (((f.spec && f.spec.assumptions) || []).some((a) => a.status === 'open') || (f.unaskedRejections || []).length > 0);
+    && (((f.spec && f.spec.assumptions) || []).some((a) => a.status === 'open') || (f.unaskedRejections || []).length > 0
+      || askableFiles(f).length > 0);
 
   // The Ready to build card is the current card: Ready, nothing to answer or change, not locked.
   const buildCardShown = (f) => f.state === 'ready' && !isLocked(f) && !f.pending && revising == null;
@@ -1173,6 +1396,53 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       h('div', { class: 'req-build-field' }, h('label', { for: 'req-build-branch', text: 'Branch from' }),
         f.scopeType === 'workspace' ? branch : h('div', { class: 'select-wrap' }, branch)));
   }
+  // ---- Files for the run (board 18, D14): a chip per feature file, then the brief's documents. A chip is the same setting
+  // as the file's switch on the Files card (a document's: Send with every run); the row is hidden with no files and no
+  // documents. A file Start would refuse (the server's `sendable: false`: a version Worca could not store, a body missing
+  // or not its size) cannot be switched on and says why in Start's words; switched on, it can still be left out. A file
+  // being read has no switch (D1): its chip waits. Names are text only.
+  const unsendable = (a) => a.sendable === false;
+  const cannotGo = (name) => `${name} cannot go with the run: Worca could not open the stored file. Replace it, or leave it out of the run.`;
+  // a brief document's switch is "Send with every run": it speaks of runs and of interviews
+  const cannotGoDoc = (name) => `${name} cannot go with runs: Worca could not open the stored file. Replace it, or leave it out.`;
+  function filesForRun(f) {
+    const files = Array.isArray(f.attachments) ? f.attachments : [];
+    const docs = Array.isArray(f.briefDocuments) ? f.briefDocuments : [];
+    if (!files.length && !docs.length) return null;
+    const on = files.filter((a) => a.sendWithRun).length + docs.filter((a) => a.sendWithEveryRun).length;
+    const bad = [];
+    const chip = (a, doc) => {
+      const key = doc ? 'sendWithEveryRun' : 'sendWithRun';
+      const sel = !!a[key];
+      const reading = a.status === 'reading';
+      const stuck = !reading && unsendable(a);
+      const why = stuck || reading ? `req-fpick-why-${a.id}` : null;
+      if (stuck) bad.push(h('p', { class: 'hint req-build-files-bad', id: why, text: cannotGo(a.name) }));
+      return h('button', { type: 'button', class: `req-fpick${sel ? ' on' : ''}${stuck ? ' bad' : ''}`, 'aria-pressed': sel ? 'true' : 'false',
+        'aria-label': doc ? `Send ${a.name} with every run` : `Send ${a.name} with the run`, 'aria-describedby': why, 'data-ui': `fpick-${a.id}`,
+        disabled: starting || reading || (stuck && !sel),
+        onclick: () => {
+          if (pickPosting.has(a.id)) return;   // the first press is on its way: a second would send the same value again
+          pickPosting.add(a.id);
+          void act(async () => {
+            try { await api('PATCH', a.href, { [key]: !sel }); } finally { pickPosting.delete(a.id); }
+            await paint();   // the chip keeps the focus (its data-ui), and the Files card's switch shows the change
+          });
+        } },
+      icon(stuck ? ICONS.warn : sel ? ICONS.check : ICONS.plus, { size: 13, width: sel && !stuck ? 2.6 : 2.2 }),
+      h('span', { class: 'req-fpick-name', text: a.name }),
+      reading ? [' ', h('span', { class: 'req-fpick-state', id: why, text: 'Reading…' })] : null);
+    };
+    const told = [...files, ...docs].filter((a) => (a.mentions || []).length).map((a) => `${a.name} (${a.mentions.join(', ')})`);
+    return h('div', { class: 'req-build-files', role: 'group', 'aria-labelledby': 'req-build-files-h' },
+      h('div', { class: 'req-build-files-head' }, h('h4', { id: 'req-build-files-h', text: 'Files for the run' }),
+        h('span', { class: 'hint', text: `${on} of ${files.length + docs.length} go with it · click a file to add or leave it out` })),
+      files.length ? h('div', { class: 'req-fpicks' }, ...files.map((a) => chip(a, false))) : null,
+      docs.length ? h('div', { class: 'req-fpicks' }, h('span', { class: 'req-fpick-group', text: 'From the brief' }), ...docs.map((a) => chip(a, true))) : null,
+      ...bad,
+      h('p', { class: 'hint req-build-files-note' }, 'Left out, a file still shaped the spec through what Worca took from it.',
+        told.length ? ` The spec mentions ${joinAnd(told)}.` : null));
+  }
   function buildCard(f) {
     const c = choiceOf(f);
     if (c.open) loadBuildOptions(f);
@@ -1189,7 +1459,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           h('button', { type: 'button', class: 'hint req-link', 'data-ui': 'build-change', 'aria-expanded': c.open ? 'true' : 'false',
             'aria-label': 'Change the workflow and branch', 'data-min-level': 'advanced',   // docs/ui-levels.md: the chips show the values at every level
             onclick: () => { c.open = !c.open; focusNext = c.open ? 'build-workflow' : 'build-change'; redraw(); } }, 'Change')),
-        c.open ? buildChoices(f, c, chipBranch) : null),
+        c.open ? buildChoices(f, c, chipBranch) : null,
+        filesForRun(f)),
       h('button', { type: 'button', class: 'btn btn-primary req-build-go', 'data-ui': 'start-go', 'data-start': '', disabled: starting,
         onclick: (e) => startFlow(f, { trigger: e.currentTarget }) }, icon(ICONS.play, { size: 14, fill: 'currentColor', stroke: 'none' }), 'Start in Worca'));
   }
@@ -1230,7 +1501,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     const ins = (t) => h('ins', { class: 'req-ins', text: t });
     const both = (a, b) => [a ? del(a) : null, a && b ? ' ' : null, b ? ins(b) : null];
     let kids;
-    if (c.kind === 'goal') kids = [`${c.field === 'measure' ? 'Success measure' : 'Goal'}: `, ...both(c.before, c.after)];
+    if (c.kind === 'file') {   // A8 D14: a feature file the run got, or would get now
+      kids = ['File: ', c.change === 'removed' ? del(c.name) : h('b', { text: c.name }),
+        c.change === 'added' ? ' goes with the run now.' : c.change === 'removed' ? ' no longer goes with the run.' : ' was replaced with a newer version.'];
+    } else if (c.kind === 'goal') kids = [`${c.field === 'measure' ? 'Success measure' : 'Goal'}: `, ...both(c.before, c.after)];
     else if (c.kind === 'section') {
       const items = [...(c.removed || []).map(del), ...(c.added || []).map(ins)];
       kids = [`${sectionTitle(c.section)}: `, ...items.flatMap((x, i) => (i ? [' ', x] : [x]))];
@@ -1255,6 +1529,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('b', { text: 'Changed since the run started' }),
         ...f.changedSinceStart.map(changeLine),
         h('p', { text: `The running build still works from v${v}; it does not see this change.` }),
+        // D14: Undo turns the feature files' switches back, never a removed or replaced body, never a document's switch
+        f.changedSinceStart.some((c) => c.kind === 'file') ? h('p', { class: 'req-changed-files',
+          text: "Undo puts the spec and the files' Send switches back. A removed or replaced file stays as it is now, and so do the documents' switches." }) : null,
         h('div', { class: 'req-actions' },
           h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'revert', disabled: isLocked(f), onclick: undo }, 'Undo my changes'))));
   }
@@ -1323,7 +1600,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         ro ? null : icoBtn('plus', 'Add a criterion', () => { ui.critOpen = true; focusNext = 'new-criterion'; redraw(); },
           { disabled: working, 'aria-expanded': adding ? 'true' : 'false', 'data-ui': 'add-criterion' })),
       list.length ? h('ul', { class: 'req-items' }, ...list.map((c) => h('li', { class: 'req-item', 'data-criterion': c.id },
-        h('code', { text: c.id }), h('span', { class: 'req-item-text', text: c.text }),
+        h('code', { text: c.id }), h('span', { class: 'req-item-text' }, c.text, srcTag(f, c.source)),
         changedIds.has(c.id) ? h('span', { class: 'hint req-changed-mark', text: changedIds.get(c.id) === 'added' ? 'new' : 'changed' }) : null,
         ro ? null : icoBtn('remove', `Remove ${c.id}`, () => act(async () => { await api('DELETE', `/api/requirements/${f.seq}/criteria/${c.id}`); await paint(); }),
           { disabled: working })))) : adding ? null : h('p', { class: 'hint', text: 'None yet.' }),
@@ -1337,7 +1614,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       h('div', { class: 'req-sect-head' }, h('h4', { text: 'Assumptions' })),
       list.length ? null : h('p', { class: 'hint', text: 'None yet.' }),
       ...list.map((a) => h('div', { class: `req-item req-assume ${a.status}`, 'data-assumption': a.id },
-        h('code', { text: a.id }), h('span', { class: 'req-item-text', text: a.text }),
+        h('code', { text: a.id }), h('span', { class: 'req-item-text' }, a.text, srcTag(f, a.source)),
         // the frozen version shows the status as a badge; the draft's toggle carries it (aria-pressed)
         ro ? h('span', { class: `badge ${a.status === 'confirmed' ? 'green' : a.status === 'rejected' ? 'red' : 'amber'}`, text: a.status })
           : assumeToggle(f, a, { disabled: working, extraCls: 'req-sect-edit' }))));
@@ -1463,7 +1740,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         started(f, data);
       } catch (err) {
         starting = false;
-        msg.textContent = (err && err.message) || String(err);
+        msg.textContent = errText(err);
       } finally { busy = false; sync(); }
     });
     const card = h('section', { class: 'card req-dialog', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'req-dlg-title' },
@@ -1480,26 +1757,32 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       msg,
       h('div', { class: 'req-dlg-btns' },
         h('button', { type: 'button', class: 'btn', onclick: () => { if (!busy) closeDialog(true); } }, 'Keep deciding'), go));
+    openModal(card, { trigger, first: area, canClose: () => !busy });
+  }
+  /** A modal on the page (the start dialog's pattern): Escape closes it when `canClose()`, Tab stays inside, the page
+   *  behind is inert; `first` takes the focus, and `closeDialog(true)` hands it back to `trigger`. */
+  function openModal(card, { trigger = null, first = null, canClose = () => true } = {}) {
     const wrap = h('div', { class: 'viewer-modal req-dlg-wrap' }, card);
     const triggerUi = trigger && trigger.getAttribute ? trigger.getAttribute('data-ui') : null;
     // On the document, in the capture phase: Escape and Tab work wherever the focus is, even after a click
     // on the scrim left it on <body>. Removed on close.
     const onKey = (e) => {
-      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (!busy) closeDialog(true); return; }
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (canClose()) closeDialog(true); return; }
       if (e.key !== 'Tab') return;
-      const all = [...card.querySelectorAll('button, textarea, input, select, a[href]')].filter((el) => !el.disabled);
+      // a radio group is one stop: its checked radio
+      const all = [...card.querySelectorAll('button, textarea, input, select, a[href]')].filter((el) => !el.disabled && !(el.type === 'radio' && !el.checked));
       if (!all.length) return;
-      const first = all[0], last = all[all.length - 1];
+      const head = all[0], last = all[all.length - 1];
       const at = document.activeElement;
-      if (e.shiftKey && (at === first || !card.contains(at))) { e.preventDefault(); last.focus(); }
-      else if (!e.shiftKey && (at === last || !card.contains(at))) { e.preventDefault(); first.focus(); }
+      if (e.shiftKey && (at === head || !card.contains(at))) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && (at === last || !card.contains(at))) { e.preventDefault(); head.focus(); }
     };
     document.addEventListener('keydown', onKey, true);
     document.body.append(wrap);
     // the page behind cannot be reached while the dialog is open
     host.inert = true; host.setAttribute('inert', '');
     dialog = { wrap, trigger, triggerUi, onKey };
-    area.focus();
+    if (first) first.focus();
   }
   function restoreFocus(trigger, triggerUi) {
     const el = trigger && trigger.isConnected ? trigger : triggerUi ? host.querySelector(`[data-ui="${triggerUi}"]`) : null;
@@ -1539,6 +1822,466 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
             onclick: (e) => startFlow(f, { override: true, trigger: e.currentTarget }) }, "Start before it's Ready…") : null,
           cardStarts ? null : h('button', { type: 'button', class: r.ok ? 'btn btn-primary btn-sm req-start' : 'btn btn-sm req-start', 'data-ui': 'start', 'data-start': '', disabled: !r.ok || locked,
             onclick: (e) => startFlow(f, { override: false, trigger: e.currentTarget }) }, 'Start in Worca'))));
+  }
+
+  // ---- A8: the Files card (board 16; 17 is its dark theme; 20 its phone width) ----
+  const fu = (id) => { if (!fileUi.has(id)) fileUi.set(id, { all: false, edit: null, ask: null, asked: null, history: false }); return fileUi.get(id); };
+  const hasTextOf = (a) => !!a.summary && (a.summaryEdited || a.status === 'done');
+  const READ_REASON = Object.freeze({ TIMEOUT: 'it ran out of time', BAD_REPLY: 'its reply could not be read', INTERRUPTED: 'Worca restarted' });
+  const reasonOf = (error) => READ_REASON[error && error.code] || String((error && error.message) || '').replace(/\.\s*$/, '');
+  const CLAMP_CHARS = 240;   // board 16: three lines of the card
+  const isClamped = (s) => s.length > CLAMP_CHARS || (s.match(/\n/g) || []).length >= 3;
+  // At phone width the pencil is in the ⋯ menu (board 20, style.css): the focus goes back to whichever is shown.
+  const narrow = () => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(max-width:600px)').matches;
+  const editReturn = (a) => (narrow() ? `file-more-${a.id}` : `file-edit-${a.id}`);
+  const fileNode = (id) => { if (!fileNodes.has(id)) fileNodes.set(id, { badge: null, failed: null }); return fileNodes.get(id); };
+
+  /** A hidden file input; `onFiles` gets the picked files. */
+  function filePicker(onFiles, { multiple = true } = {}) {
+    const input = h('input', { type: 'file', accept: REQ_ATTACH.accept, hidden: true, multiple: multiple || null, tabindex: '-1', 'aria-hidden': 'true' });
+    input.addEventListener('change', () => { const files = [...(input.files || [])]; input.value = ''; if (files.length) onFiles(files); });
+    return input;
+  }
+
+  /** D7: the page's early checks, the accepted files in requests of at most 100 MB, the refusals in the card's alert line.
+   *  The focus goes back to Add files (`focusUi`) once the card is painted again; when the upload filled the card and
+   *  Add files is disabled, to the card's heading (`fallbackUi`, tabindex=-1). `setFocus` names the field the owner's next
+   *  paint focuses (the feature page's by default; the brief page passes its own). */
+  async function uploadFiles({ url, key, existing, owner, rerender, focusUi = 'files-add', fallbackUi = 'files-head',
+    setFocus = (k) => { focusNext = k; } }, files) {
+    const errors = [];
+    const ok = [];
+    const pending = existing.map((x) => ({ name: x.name, bytes: x.bytes }));
+    for (const file of files) {
+      const c = checkAttachment(file, { pending, limits: reqLimits({ owner }), typeMessage: reqTypeMessage });
+      if (!c.ok) { errors.push(c.error); continue; }
+      ok.push(file);
+      pending.push({ name: file.name, bytes: file.size });
+    }
+    fileMsgs.set(key, errors.join(' '));
+    fileMsgList.set(key, errors);
+    setFocus(focusUi);
+    if (!ok.length) { rerender(); return; }
+    await act(async () => {
+      try {
+        for (const batch of uploadBatches(ok)) await api('POST', url, { attachments: await Promise.all(batch.map(encodeFile)) });
+      } finally {
+        setFocus(focusUi);
+        await paint();   // the batches already sent show, also when a later one is refused (the message comes after)
+        const add = host.querySelector(`[data-ui="${focusUi}"]`);
+        if (add && add.disabled) host.querySelector(`[data-ui="${fallbackUi}"]`)?.focus();
+      }
+    });
+  }
+
+  /** An owner's refusal line (role=alert), one node across paints: it speaks when a pick is refused, not on every repaint. */
+  function refusalAlert(key) {
+    let el = refusalEls.get(key);
+    if (!el) { el = h('p', { class: 'req-file-refused', role: 'alert', hidden: true }); el.said = ''; refusalEls.set(key, el); }
+    const msg = fileMsgs.get(key) || '';
+    if (el.said !== msg) {
+      el.said = msg;
+      const list = fileMsgList.get(key) || (msg ? [msg] : []);
+      el.replaceChildren(...list.flatMap((e, i) => (i ? [' ', refusalLine(e)] : [refusalLine(e)])));
+      el.hidden = !msg;
+    }
+    return el;
+  }
+
+  function editBox(a, ctx) {
+    const s = fu(a.id);
+    const ta = h('textarea', { rows: '5', maxlength: '1500', 'aria-label': `What Worca took from ${a.name}`, 'data-ui': `file-edit-text-${a.id}` });
+    ta.value = s.edit;
+    ta.addEventListener('input', () => { s.edit = ta.value; });
+    const cancel = () => { s.edit = null; ctx.focus(editReturn(a)); ctx.redraw(); };
+    // Escape cancels, as Cancel does (the new-criterion field's grammar)
+    ta.addEventListener('keydown', (e) => { if (e.key !== 'Escape') return; e.preventDefault(); e.stopPropagation(); cancel(); });
+    return h('div', { class: 'req-edit req-file-edit' }, ta,
+      h('div', { class: 'req-actions' },
+        h('button', { type: 'button', class: 'btn btn-sm', onclick: cancel }, 'Cancel'),
+        h('button', { type: 'button', class: 'btn btn-sm btn-primary', 'data-ui': `file-save-${a.id}`, disabled: ctx.locked,
+          onclick: () => act(async () => { await api('PATCH', a.href, { summary: ta.value }); s.edit = null; ctx.focus(editReturn(a)); await paint(); }) }, 'Save')));
+  }
+  const openEdit = (a, ctx) => { fu(a.id).edit = a.summary; ctx.focus(`file-edit-text-${a.id}`); ctx.redraw(); };
+
+  // A replace whose new body could not be stored (D11): only Replace mends it, so the server refuses Ask and Read again.
+  const storeFailedOf = (a) => a.status === 'failed' && !!a.error && a.error.code === 'STORE_FAILED';
+  const ASK_RANGE = '$0.05–0.15';   // an ask's cost before any read of that kind has been made (D12)
+  const moreUi = (a) => `file-more-${a.id}`;
+  const focusMore = (a) => { const el = host.querySelector(`[data-ui="${moreUi(a)}"]`); if (el) el.focus(); };
+
+  /** The ⋯ of a file (boards 16, 20, 21): Open · Edit what Worca took from it (the pencil at phone width) · Ask about this
+   *  file… · Replace with a newer version… · Read again · Remove. Each state offers only what applies: nothing but Open
+   *  and Remove while the file is read; Ask once it is read; Read again not on a version that could not be stored. The
+   *  A1 lock disables all but Open. `replace` is the row's file picker (also behind a stored-version failure's button). */
+  function fileMenu(a, ctx, replace) {
+    const reading = a.status === 'reading' || !!a.asking;   // an ask in progress waits like a read (one job per file)
+    const stuck = storeFailedOf(a);
+    const off = ctx.locked;
+    const remove = menuItem('Remove', () => removeFile(a, ctx), { disabled: off, ui: `fmi-remove-${a.id}` });
+    remove.classList.add('is-danger');
+    const items = [
+      h('a', { role: 'menuitem', class: 'menu-item req-menu-item', 'data-ui': `fmi-open-${a.id}`, href: a.href, target: '_blank', rel: 'noopener' }, 'Open'),
+      hasTextOf(a) && !reading ? menuItem('Edit what Worca took from it', () => openEdit(a, ctx), { disabled: off, ui: `fmi-edit-${a.id}` }) : null,
+      a.status === 'done' && !reading ? menuItem('Ask about this file…', () => openAsk(a, ctx), { disabled: off, ui: `fmi-ask-${a.id}` }) : null,
+      reading ? null : menuItem('Replace with a newer version…', () => { focusMore(a); replace.click(); }, { disabled: off, ui: `fmi-replace-${a.id}` }),
+      reading || stuck ? null : menuItem('Read again', () => act(async () => {
+        if (a.summaryEdited && !window.confirm("Read again? Your text goes to the file's history.")) { focusMore(a); return; }
+        await api('POST', `${a.href}/read-again`, {});
+        ctx.focus(moreUi(a));
+        await paint();
+      }), { disabled: off, ui: `fmi-again-${a.id}` }),
+      h('div', { class: 'menu-sep', role: 'separator' }),
+      remove,
+    ];
+    const wrap = menu(`file-${a.id}`, h('button', { type: 'button', class: 'req-ico req-file-more', 'aria-label': `More for ${a.name}`, title: `More for ${a.name}`, 'data-ui': moreUi(a) },
+      icon(ICONS.dots, { size: 16, fill: 'currentColor', stroke: 'none' })), items);
+    wrap.append(replace);
+    return wrap;
+  }
+
+  /** Remove (design §6): asked first; the focus then goes to the next file, else the previous one, else Add files. */
+  function removeFile(a, ctx) {
+    return act(async () => {
+      if (!window.confirm(`Remove ${a.name}? The file and what Worca took from it are deleted from Worca.`)) { focusMore(a); return; }
+      const list = ctx.list || [];
+      const i = list.findIndex((x) => x.id === a.id);
+      const near = list[i + 1] || list[i - 1] || null;
+      await api('DELETE', a.href);
+      const to = near ? `file-name-${near.id}` : ctx.addUi || 'files-add';
+      ctx.focus(to);
+      await paint();
+      const el = host.querySelector(`[data-ui="${to}"]`);
+      if (!el || el.disabled) host.querySelector(`[data-ui="${ctx.headUi || 'files-head'}"]`)?.focus();
+    });
+  }
+
+  const openAsk = (a, ctx) => {
+    const s = fu(a.id);
+    s.ask = s.ask ?? '';
+    const n = fileNode(a.id);
+    if (n.askMsg) n.askMsg.textContent = '';
+    ctx.focus(`file-ask-text-${a.id}`);
+    ctx.redraw();
+  };
+  /** Ask about this file… (D12, board 21): a panel under the file; the question is 1–200 characters. A refusal (the
+   *  budget, one question at a time) shows in the panel's own alert line, which is one node across paints. */
+  function askPanel(a, ctx) {
+    const s = fu(a.id);
+    const n = fileNode(a.id);
+    if (!n.askMsg) n.askMsg = h('p', { class: 'req-file-failed req-file-askmsg', role: 'alert' });
+    const id = `req-ask-${a.id}`;
+    const input = h('input', { type: 'text', id, maxlength: '200', autocomplete: 'off', 'data-ui': `file-ask-text-${a.id}` });
+    input.value = s.ask || '';
+    // in flight: on the file's ui state (not this paint's panel), so a live repaint mid-request does not re-enable Ask
+    const go = h('button', { type: 'button', class: 'btn btn-primary btn-sm', 'data-ui': `file-ask-go-${a.id}` }, 'Ask');
+    const sync = () => { go.disabled = ctx.locked || !!s.askBusy || !input.value.trim(); };
+    const close = () => { s.ask = null; n.askMsg.textContent = ''; ctx.focus(moreUi(a)); ctx.redraw(); };
+    const send = async () => {
+      const q = input.value.trim();
+      if (s.askBusy || !q || ctx.locked) return;
+      s.askBusy = true; sync(); n.askMsg.textContent = '';
+      try {
+        await api('POST', `${a.href}/ask`, { question: q });
+        s.ask = null;
+        s.asked = q;
+        ctx.focus(moreUi(a));
+        await paint();
+      } catch (err) {
+        n.askMsg.textContent = errText(err);
+      } finally {
+        s.askBusy = false;
+        // the panel on screen now (a repaint may have replaced this one)
+        const now = host.querySelector(`[data-ui="file-ask-go-${a.id}"]`);
+        const field = host.querySelector(`[data-ui="file-ask-text-${a.id}"]`);
+        if (now && field) now.disabled = ctx.locked || !field.value.trim();
+      }
+    };
+    input.addEventListener('input', () => { s.ask = input.value; sync(); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); void send(); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
+    });
+    go.addEventListener('click', () => { void send(); });
+    sync();
+    return h('div', { class: 'req-file-askpanel' },
+      h('label', { for: id, text: 'What should Worca look for?' }), input,
+      h('div', { class: 'req-file-askfoot' },
+        h('span', { class: 'hint', text: `One more read of this file · about ${typeof a.estimateUsd === 'number' ? usd(a.estimateUsd) : ASK_RANGE}` }),
+        h('button', { type: 'button', class: 'btn btn-sm', onclick: close }, 'Cancel'), go),
+      n.askMsg);
+  }
+
+  /** Replace with a newer version… (D11, board 21): the page's early checks of the new file (a refusal goes to the card's
+   *  alert line), then the dialog; the choice of D11 only when the summary was edited; the server's refusals in it. */
+  function openReplace(a, ctx, file) {
+    const c = checkAttachment(file, { pending: [], limits: reqLimits({ owner: ctx.doc ? 'brief' : 'feature' }), typeMessage: reqTypeMessage });
+    if (!c.ok) { if (ctx.refuse) ctx.refuse(c.error); else say(c.error, 'err'); focusMore(a); return; }
+    if (ctx.refuse) ctx.refuse('');
+    closeDialog(false);
+    const est = typeof a.estimateUsd === 'number' && a.kind === c.attKind ? usd(a.estimateUsd) : READ_RANGE;
+    const on = ctx.doc ? !!a.sendWithEveryRun : !!a.sendWithRun;
+    let keep = false;
+    let busy = false;
+    const radio = (value, label, checked, more = null) => {
+      const r = h('input', { type: 'radio', name: 'req-replace-keep', value, checked: checked || null, 'data-ui': `replace-${value}` });
+      r.addEventListener('change', () => { keep = value === 'keep'; });
+      return h('label', { class: 'req-replace-opt' }, r, h('span', {}, label, more ? h('span', { class: 'hint', text: ` ${more}` }) : null));
+    };
+    const choice = a.summaryEdited ? h('fieldset', { class: 'req-replace-choice' }, h('legend', { text: 'You edited what Worca took from the old file' }),
+      radio('rewrite', 'Let Worca write it again from the new file', true, "(your text is kept in the file's history)"), radio('keep', 'Keep my text', false)) : null;
+    const msg = h('p', { class: 'form-msg err req-dlg-msg', role: 'alert' });
+    const go = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'replace-go' }, 'Replace');
+    go.addEventListener('click', async () => {
+      if (busy) return;
+      busy = true; go.disabled = true; msg.textContent = '';
+      try {
+        await api('POST', `${a.href}/replace`, { attachments: [await encodeFile(file)], keepSummary: keep });
+        closeDialog(true);
+        await paint();
+      } catch (err) {
+        msg.textContent = errText(err);
+      } finally { busy = false; go.disabled = false; }
+    });
+    const card = h('section', { class: 'card req-dialog req-replace', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'req-dlg-title', 'aria-describedby': 'req-dlg-desc' },
+      h('h2', { id: 'req-dlg-title', text: `Replace ${a.name}` }),
+      h('p', { class: 'req-dlg-lead req-replace-lead', id: 'req-dlg-desc' }, 'New file: ', h('b', { text: file.name }),
+        ` · ${KIND_TITLE[c.attKind]} · ${sizeText(file.size)}. Worca reads it again (about ${est}); ${ctx.doc ? '“Send with every run”' : '“Send with the run”'} stays ${on ? 'on' : 'off'}.`),
+      choice,
+      h('p', { class: 'hint req-replace-hint', text: ctx.doc ? "Interviews use the new version right away; the brief's sections change only when you Refresh it."
+        : 'The next round uses the new version. A Ready feature gets one short follow-up round; after the start it counts as a change since the start.' }),
+      msg,
+      h('div', { class: 'req-dlg-btns' }, h('button', { type: 'button', class: 'btn', onclick: () => { if (!busy) closeDialog(true); } }, 'Cancel'), go));
+    openModal(card, { trigger: host.querySelector(`[data-ui="${moreUi(a)}"]`), first: choice ? choice.querySelector('input:checked') : go, canClose: () => !busy });
+  }
+
+  /** D13: an item's source as a tag after its text: a link to the file while a feature file or brief document of that name
+   *  exists (case-insensitive), plain text once none does. */
+  function srcTag(f, source) {
+    if (!source) return null;
+    const k = String(source).toLowerCase();
+    const all = [...(f.attachments || []), ...(f.briefDocuments || [])].filter(Boolean);
+    const same = (name) => String(name || '').toLowerCase() === k;
+    // a file replaced by a newer version under another name still counts: its history keeps the earlier name
+    const file = all.find((x) => same(x.name)) || all.find((x) => (x.history || []).some((e) => e && e.reason === 'replaced' && same(e.name)));
+    const kids = [icon(ICONS.clip, { size: 11 }), h('span', { class: 'sr-only', text: 'from ' }), String(source)];
+    return file && file.href ? h('a', { class: 'req-src-tag', href: file.href, target: '_blank', rel: 'noopener' }, ...kids)
+      : h('span', { class: 'req-src-tag' }, ...kids);
+  }
+
+  /** The Reading… badge (role=status), one node per file while it is read. */
+  function readingBadge(a) {
+    const n = fileNode(a.id);
+    if (!n.badge) n.badge = h('span', { class: 'badge blue', role: 'status', text: 'Reading…' });
+    return n.badge;
+  }
+  /** The Asking… badge (role=status), the same pattern: one node per file while a question about it is answered. */
+  function askingBadge(a) {
+    const n = fileNode(a.id);
+    if (!n.asking) n.asking = h('span', { class: 'badge blue', role: 'status', text: 'Asking…' });
+    return n.asking;
+  }
+  /** The failed line (role=alert) with Try again, one node per failure: a repaint updates it in place and says nothing. */
+  function failedLine(a, ctx, replace) {
+    const n = fileNode(a.id);
+    if (!n.failed) {
+      const words = h('span', { class: 'req-file-failed-text' });
+      const btn = h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': `file-retry-${a.id}` }, 'Try again');
+      btn.addEventListener('click', () => n.failed.run());
+      n.failed = { p: h('p', { class: 'req-file-failed', role: 'alert' }, words, ' ', btn), words, btn, run: () => {} };
+    }
+    // A version that could not be stored (D11): the server's words, and Replace, which mends it (Read again is refused).
+    const stuck = storeFailedOf(a);
+    const said = stuck ? String(a.error.message || '')
+      : `Worca could not read this file${reasonOf(a.error) ? `: ${reasonOf(a.error)}` : ''}. ${ctx.doc ? 'Interviews list' : 'The interview lists'} it by name only.`;
+    if (n.failed.words.textContent !== said) n.failed.words.textContent = said;
+    const label = stuck ? 'Replace with a newer version…' : 'Try again';
+    if (n.failed.btn.textContent !== label) n.failed.btn.textContent = label;
+    n.failed.btn.setAttribute('data-ui', `${stuck ? 'file-replace' : 'file-retry'}-${a.id}`);
+    n.failed.btn.disabled = ctx.locked;
+    n.failed.run = stuck ? () => replace.click()
+      : () => act(async () => { await api('POST', `${a.href}/read-again`, {}); ctx.focus(`file-name-${a.id}`); await paint(); });
+    return n.failed.p;
+  }
+  /** A failed ask (D12): one role=alert node per failure, so a repaint does not say it again. */
+  function askFailedLine(a) {
+    const n = fileNode(a.id);
+    const e = a.error && a.error.job === 'ask' && a.status !== 'failed' ? a.error : null;
+    if (!e) { n.askFailed = null; return null; }
+    const said = `Worca could not answer “${e.question || ''}”${reasonOf(e) ? `: ${reasonOf(e)}` : ''}.`;
+    const key = `${e.question}|${e.at || ''}`;
+    if (!n.askFailed || n.askFailed.key !== key) n.askFailed = { key, p: h('p', { class: 'req-file-failed req-file-ask-failed', role: 'alert' }) };
+    if (n.askFailed.p.textContent !== said) n.askFailed.p.textContent = said;
+    return n.askFailed.p;
+  }
+
+  /** One file of the Files card or of the Documents card (boards 16, 19, 20). The switch shows in every state but Reading (D1):
+   *  a file Worca could not read, or that the budget stopped, may still go to the run. Names and summaries are text only. */
+  function fileRow(a, ctx) {
+    const s = fu(a.id);
+    const reading = a.status === 'reading';
+    const hasText = hasTextOf(a);
+    const n = fileNode(a.id);
+    if (!reading) n.badge = null;
+    const asking = !reading && !!a.asking;   // an ask in progress (D12): the answer's frame clears it
+    if (!asking) n.asking = null;
+    if (a.status !== 'failed') n.failed = null;   // a later failure is a new alert
+    if (s.ask != null && (a.status !== 'done' || asking)) {   // Ask is for a read file (board 21); the lock only disables it
+      if (document.activeElement && document.activeElement.getAttribute('data-ui') === `file-ask-text-${a.id}`) ctx.focus(moreUi(a));
+      s.ask = null;
+    }
+    const replace = filePicker((files) => openReplace(a, ctx, files[0]), { multiple: false });
+    const sendKey = ctx.doc ? 'sendWithEveryRun' : 'sendWithRun';
+    const usesIt = ctx.doc ? 'Interviews use it once it is read.' : 'The next round uses it.';
+    const meta = [`${KIND_TITLE[a.kind] || 'Text'} · ${sizeText(a.bytes)}`, a.costUsd > 0 ? `read for ${usd(a.costUsd)}` : null].filter(Boolean).join(' · ');
+    const top = h('div', { class: 'req-file-top' },
+      h('a', { class: 'req-file-name', href: a.href, target: '_blank', rel: 'noopener', 'data-ui': `file-name-${a.id}`, text: a.name }),
+      h('span', { class: 'hint req-file-meta', text: meta }),
+      h('span', { class: 'req-file-gap' }),
+      reading ? readingBadge(a) : null,
+      asking ? askingBadge(a) : null,
+      a.status === 'unread-budget' ? h('span', { class: 'badge amber', text: 'Not read yet' }) : null,
+      hasText && !reading && !asking ? icoBtn('pencil', `Edit what Worca took from ${a.name}`, () => openEdit(a, ctx),
+        { cls: 'req-file-pencil', disabled: ctx.locked, 'data-ui': `file-edit-${a.id}` }) : null,
+      fileMenu(a, ctx, replace));
+    const state = reading
+      ? h('p', { class: 'hint req-file-state', text: typeof a.estimateUsd === 'number'
+        ? `Worca is reading it (about ${usd(a.estimateUsd)}). ${usesIt}` : `Worca is reading it. ${usesIt}` })
+      : a.status === 'failed' ? failedLine(a, ctx, replace)
+        : a.status === 'unread-budget'
+          ? h('p', { class: 'hint req-file-state', text: `The Requirements budget is used up for this ${ctx.period === 'weekly' ? 'week' : 'month'}. Worca reads it when the budget allows; until then ${ctx.doc ? 'interviews list' : 'the interview lists'} it by name only.` })
+          : asking ? h('p', { class: 'hint req-file-state req-file-asking', text: `Worca is looking for: “${a.asking}”…` }) : null;
+    if (s.edit != null && (!hasText || reading)) {
+      // The text went away under the open editor (read again, replaced): the draft cannot be saved, and the card says why.
+      // The editor had the focus: it goes to the file's ⋯, which every state has.
+      const typing = document.activeElement && document.activeElement.getAttribute('data-ui') === `file-edit-text-${a.id}`;
+      s.edit = null;
+      // only a file that is being read says so; one that went straight to failed has its own alert
+      if (reading && ctx.dropped) ctx.dropped();
+      if (typing) ctx.focus(`file-more-${a.id}`);
+    }
+    const clamp = hasText && !s.all && isClamped(a.summary);
+    const took = s.edit != null ? editBox(a, ctx) : hasText ? [
+      h('p', { class: 'req-file-cap' }, 'What Worca took from it', a.summaryEdited ? h('span', { class: 'req-edited', text: ' · edited by you' }) : null),
+      h('p', { class: `req-file-took${clamp ? ' req-clamp' : ''}`, 'data-ui': `file-took-${a.id}`, tabindex: '-1', text: a.summary }),
+      clamp ? h('button', { type: 'button', class: 'link-btn req-file-all', 'data-ui': `file-all-${a.id}`,
+        onclick: () => { s.all = true; ctx.focus(`file-took-${a.id}`); ctx.redraw(); } }, 'Show all') : null,
+    ] : null;
+    // The answers under the summary, newest first, each labelled with its question; the one just asked on this page says
+    // it was added (board 21; the card's status line says it once).
+    const newest = [...(a.asks || [])].reverse();
+    const asks = newest.length ? h('div', { class: 'req-file-asks' }, ...newest.map((q, i) => {
+      const added = i === 0 && s.asked != null && q.question === s.asked;
+      return h('div', { class: 'req-file-ask' },
+        h('p', { class: `req-file-q${added ? ' req-file-added' : ''}`, text: added ? `Added to what Worca took from it · Q: ${q.question}` : `Q: ${q.question}` }),
+        ' ', h('p', { class: 'req-file-a', text: q.answer }));
+    })) : null;
+    let history = null;
+    if ((a.history || []).length) {
+      history = h('details', { class: 'req-file-history', 'data-min-level': 'advanced', open: s.history },   // as a look's files (docs/ui-levels.md)
+        h('summary', {}, `Earlier text (${a.history.length})`),
+        h('ol', {}, ...a.history.map((x) => h('li', {}, h('span', { class: 'hint', text: `${String(x.at || '').slice(0, 10)} · ${x.name}` }), ' ', h('p', { text: x.summary })))));
+      history.addEventListener('toggle', () => { s.history = history.open; });
+    }
+    let send = null;
+    if (!reading) {
+      const sw = makeSwitch(document, { label: ctx.doc ? 'Send with every run' : 'Send with the run',
+        ariaLabel: ctx.doc ? `Send ${a.name} with every run` : `Send ${a.name} with the run`, checked: !!a[sendKey], data: { ui: `file-send-${a.id}` } });
+      // D14: a file Start would refuse (sendable: false) can be switched off, not on, as its Files for the run chip
+      const stuck = unsendable(a);
+      sw.input.disabled = ctx.locked || (stuck && !a[sendKey]);
+      if (stuck) sw.input.setAttribute('aria-describedby', `req-file-why-${a.id}`);
+      // the focused switch keeps the focus across the repaint (capture() reads its data-ui)
+      sw.input.addEventListener('change', () => act(async () => { await api('PATCH', a.href, { [sendKey]: sw.input.checked }); await paint(); }));
+      send = h('div', { class: 'req-file-send' }, sw.row,
+        ...((a.mentions || []).length ? [' ', h('span', { class: 'hint', text: `The spec mentions this file (${a.mentions.join(', ')}).` })] : []),
+        stuck ? h('p', { class: 'hint req-file-unsendable', id: `req-file-why-${a.id}`, text: ctx.doc ? cannotGoDoc(a.name) : cannotGo(a.name) }) : null);
+    }
+    const ask = s.ask != null ? askPanel(a, ctx) : null;
+    return h('div', { class: 'req-file', 'data-file': a.id }, top, state, took, ask, askFailedLine(a), asks, history, send);
+  }
+
+  /** What changed since the last paint, said once in the card's status line: a read that finished or that the budget stopped
+   *  (a failed read has its own alert). */
+  function filesStatus(list) {
+    if (!filesLive) filesLive = h('p', { class: 'sr-only req-files-live', role: 'status' });
+    const said = [];
+    for (const a of list) {
+      const was = fileWas.get(a.id);
+      if (was === 'reading' && a.status === 'done') said.push(`Worca read ${a.name}.`);
+      else if (was === 'reading' && a.status === 'unread-budget') said.push(`${a.name}: Not read yet.`);
+      // an answer to a question asked on this page has come (board 21)
+      const s = fileUi.get(a.id);
+      if (s && s.asked != null && s.saidAsked !== s.asked && (a.asks || []).some((q) => q.question === s.asked)) {
+        s.saidAsked = s.asked;
+        said.push(`Added to what Worca took from it · Q: ${s.asked}`);
+      }
+    }
+    fileWas.clear();
+    for (const a of list) fileWas.set(a.id, a.status);
+    if (said.length) filesLive.textContent = said.join(' ');
+    return filesLive;
+  }
+
+  /** The setup the Files card and the Documents card share (boards 16, 19): the rows' context, the card's message line
+   *  (`dropped`, a draft the page had to drop while its file is read, said until no file is read any more; `refuse`, a
+   *  Replace pick the early checks refused, said now), the picker that uploads, and the rows. */
+  function fileCardCtx({ key, list, doc, locked, period, redraw: rerender, setFocus, url, owner, addUi, headUi }) {
+    const say1 = (text) => { fileMsgs.set(key, text); fileMsgList.set(key, text ? [text] : []); };
+    const ctx = { doc, locked, period, list, redraw: rerender, focus: setFocus, addUi, headUi,
+      dropped: () => { say1(DROPPED_DRAFT); droppedKeys.add(key); },
+      refuse: (text) => { droppedKeys.delete(key); say1(text); const el = refusalAlert(key); if (!el.isConnected) rerender(); } };
+    for (const id of fileNodes.keys()) if (!list.some((a) => a.id === id)) fileNodes.delete(id);
+    const input = filePicker((files) => {
+      droppedKeys.delete(key);
+      uploadFiles({ url, key, existing: list, owner, rerender, focusUi: addUi, fallbackUi: headUi, setFocus }, files);
+    });
+    const rows = list.map((a) => fileRow(a, ctx));   // before the message line: a row may put a line there
+    if (droppedKeys.has(key) && !list.some((a) => a.status === 'reading')) { droppedKeys.delete(key); say1(''); }
+    return { input, rows };
+  }
+
+  function filesCard(f) {
+    if (!Array.isArray(f.attachments)) return null;   // a feature view from before A8
+    const list = f.attachments;
+    const locked = isLocked(f) || starting;
+    const key = `feature:${f.seq}`;
+    const { input, rows } = fileCardCtx({ key, list, doc: false, locked, period: f.resetPeriod, redraw,
+      setFocus: (k) => { focusNext = k; }, url: `/api/requirements/${f.seq}/attachments`, owner: 'feature', addUi: 'files-add', headUi: 'files-head' });
+    return h('section', { class: 'card req-files', 'aria-label': 'Files', 'data-ui': 'files-card' },
+      h('div', { class: 'req-card-head req-files-head' },
+        h('div', {}, h('h3', { text: `Files · ${list.length}`, tabindex: '-1', 'data-ui': 'files-head' }),
+          h('p', { class: 'hint', text: 'Worca reads each one once and uses what it took from it in every round.' })),
+        h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'files-add', disabled: locked || list.length >= REQ_ATTACH.maxFiles, onclick: () => input.click() }, 'Add files'),
+        input),
+      privacyNote(f.interview),
+      refusalAlert(key),
+      filesStatus(list),
+      list.length ? h('div', { class: 'req-files-list' }, ...rows)
+        : h('p', { class: 'hint req-files-empty', text: 'No files yet. Add emails, a spec, screenshots or a mockup.' }));
+  }
+
+  /** The Documents card (board 19, D2 (c)): a made brief's documents, used by every feature of its scope. The rows, ⋯ menu,
+   *  editor, Ask, Replace and Remove are the Files card's (`ctx.doc` names the switch "Send with every run" and the replace
+   *  hint); the routes are the documents' (each row's `href`). Allowed while a refresh runs (A7-D6), so never locked. A
+   *  page from before A8 (no `documents`) has no card. */
+  function docsCard(data, name) {
+    if (!Array.isArray(data.documents)) return null;
+    const s = briefShown;
+    const list = data.documents;
+    const key = `brief:${scopeId(s)}`;
+    const { input, rows } = fileCardCtx({ key, list, doc: true, locked: false, period: data.resetPeriod, redraw: redrawBrief,
+      setFocus: (k) => { briefFocusNext = k; }, url: `${briefApi(s)}/documents`, owner: 'brief', addUi: 'docs-add', headUi: 'docs-head' });
+    return h('section', { class: 'card req-files req-docs', 'aria-label': 'Documents', 'data-ui': 'docs-card' },
+      h('div', { class: 'req-card-head req-files-head' },
+        h('div', {}, h('h3', { text: `Documents · ${list.length}`, tabindex: '-1', 'data-ui': 'docs-head' }),
+          h('p', { class: 'hint', text: `Worca uses these for every feature in ${name}.` })),
+        h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'docs-add', disabled: list.length >= REQ_ATTACH.maxFiles, onclick: () => input.click() }, 'Add documents'),
+        input),
+      privacyNote(data.interview),
+      refusalAlert(key),
+      filesStatus(list),
+      list.length ? h('div', { class: 'req-files-list' }, ...rows) : h('p', { class: 'hint req-files-empty', text: 'No documents yet.' }),
+      h('p', { class: 'hint req-docs-foot', text: `Interviews use a new document right away. The brief's sections change only when you Refresh it. “Send with every run” adds the document to every run started from a ${name} feature; each start card lists it.` }));
   }
 
   // The looks at the code this feature made (A2: the orientation turns not skipped), and what they cost.
@@ -1588,9 +2331,14 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       // the brief's own names (areas first, then terms), at most 3, and how many more matched (A7 §5)
       const names = (Array.isArray(b.matches) ? b.matches : []).filter((m) => typeof m === 'string' && m);
       const more = names.length && Number.isInteger(b.matchesMore) && b.matchesMore > 0 ? b.matchesMore : 0;
-      const what = names.length ? `: ${more ? `${names.join(', ')} and ${more} more` : joinAnd(names)} ${names.length + more === 1 ? 'is' : 'are'} described there.` : '.';
+      const subject = names.length ? (more ? `${names.join(', ')} and ${more} more` : joinAnd(names)) : '';
+      const isAre = names.length + more === 1 ? 'is' : 'are';
+      const said = (f.attachments || []).length
+        // A8 (board 16): the feature's files are part of what Worca works from
+        ? `Worca works from the ${targetName(f)} brief and the files below.${subject ? ` ${subject[0].toUpperCase()}${subject.slice(1)} ${isAre} described in the brief.` : ''} It has not looked at the code for this feature.`
+        : `Worca works from the ${targetName(f)} brief${names.length ? `: ${subject} ${isAre} described there.` : '.'} It has not looked at the code for this feature.`;
       meta = ['from the ', briefLink(to), ` · ${ageOld(b.madeAt)}`];
-      body = [h('p', { class: 'req-knows-text', text: `Worca works from the ${targetName(f)} brief${what} It has not looked at the code for this feature.` }),
+      body = [h('p', { class: 'req-knows-text', text: said }),
         o && o.skipped === 'failed' ? h('p', { class: 'hint req-knows-failed', text: 'Worca could not look at the code this time.' }) : null];
       if (lookOn) {
         // a look checks out the code: the hint and Look closer hide while git is missing (git-gate.mjs)
@@ -1680,6 +2428,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           h('span', { class: 'chip', text: targetLabel(f) }),
           h('span', { class: 'chip', text: done ? `Interview done · ${plural(rounds, 'round')}` : `Round ${Math.min(rounds || 1, MAX_ROUNDS)} of ${MAX_ROUNDS}` }),
           h('span', { class: 'chip', text: `${usd(f.costUsd)} so far` }),
+          (f.attachments || []).length ? h('span', { class: 'chip', text: plural(f.attachments.length, 'file') }) : null,   // A8 (board 16)
           f.savedPath ? h('span', { class: 'chip', text: `Saved as ${f.savedPath}` }) : null)),
       h('div', { class: 'req-head-tools' },
         menu('export', h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'menu-export' }, 'Export', sharedIcon(document, 'chevron-down', 14)), [
@@ -1715,13 +2464,19 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       header(f),
       h('div', { class: 'req-cols' },
         conversation(f, turns, rounds),
-        h('div', { class: 'req-right' }, readyPanel(f), specCard(f)))));
+        // A2's Ready panel stays first; boards 16 and 18 draw the Files card above the spec
+        h('div', { class: 'req-right' }, readyPanel(f), filesCard(f), specCard(f)))));
     if (ui.editVals && ui.editVals.key !== editing) ui.editVals = null;
     const want = focusNext || focus;
+    const sel = focusNext ? null : keptSel;   // a field just opened starts fresh; the focused one keeps its caret
     focusNext = null;
+    keptSel = null;
     if (want) {
       const el = host.querySelector(`[data-ui="${want}"]`);
-      if (el && !el.disabled) el.focus();
+      if (el && !el.disabled) {
+        el.focus();
+        if (sel && typeof el.setSelectionRange === 'function') { try { el.setSelectionRange(sel[0], sel[1], sel[2] || 'none'); } catch { /* not a text field */ } }
+      }
     }
     // A focus kept for later (a revision sent: that round's Change): taken once the control is back and the
     // focus is still nowhere; dropped as soon as the focus is somewhere else.

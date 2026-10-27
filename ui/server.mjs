@@ -166,9 +166,7 @@ import {
 import { askScriptPromptInput, scriptToolsEnabled } from '../src/core/ask/script-deps.mjs';
 import { validateComposerPayload, isComposerCard, composerCardPatch, composerHeaderCard } from '../src/core/ask/composer-payload.mjs';
 import { composerPromptBlock } from '../src/core/ask/composer-deps.mjs';
-import {
-  classifyExtension as askClassifyExtension, sniffMime as askSniffMime,
-} from '../src/core/ask/attachment-kind.mjs';
+import { validateAttachmentUploads } from '../src/core/attachment-upload.mjs';
 import {
   listAskWorktrees as askListWorktrees,
   removeAskWorktree as askRemoveWorktree,
@@ -331,11 +329,14 @@ import { chatScopeOf, withChatScope, sameScope, scopeBody, targetInScope, scopeR
 import { hostAllowed as askHostAllowed } from '../src/core/web-allowlist.mjs';
 import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
-import { registerRequirementsRoutes, requirementsChangeNotifier } from '../src/core/requirements/routes.mjs';
+import {
+  registerRequirementsRoutes, requirementsChangeNotifier, REQUIREMENTS_UPLOAD_ROUTES, REQUIREMENTS_UPLOAD_JSON_LIMIT, requirementsUploadSlots,
+} from '../src/core/requirements/routes.mjs';
 import { registerWorkflowVersionRoutes } from '../src/core/workflow-versions-routes.mjs';
 import { createRunEventHook } from '../src/core/requirements/start.mjs';
 import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
 import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
+import { recoverAttachmentReads, sweepReadFolders, sweepTempBodies, withStagedRunFiles } from '../src/core/requirements/attachment-job.mjs';
 import { drainTimeoutMs, autoResumeMode, autoResumeCandidates, DRAIN_ACTIVE_STATUSES } from '../src/core/drain.mjs';
 import { exportWorkflow, exportWorkflowPlugin, ON_CONFLICT_MODES, RESOLUTION_CHOICES } from '../src/core/workflow-export.mjs';
 import { exportWorkflowToMarketplace, listPublishTargets } from '../src/core/marketplace-publish.mjs';
@@ -1800,6 +1801,14 @@ app.post('/api/run', express.json({ limit: ASK_UPLOAD_JSON_LIMIT }));
 // A script's saved cases are inline text: 32 cases x 256 KiB PER PORT is legal (workbench
 // spec §3.2) and does not fit the global 8 MB, so the one route that saves them all gets room.
 app.put('/api/scripts/:key/cases', express.json({ limit: '64mb' }));
+// Requirements files (plans/requirements-a8-design.md D10) ride base64 in these bodies, up to 100 MB per request: Ask's
+// window, registered BEFORE the global parser and BEHIND the flag's gate (with the flag off the gate answers 404 first,
+// so nothing is parsed). One set of slots spans the five routes: at most two such requests at once, a third answers 409
+// before its body is read.
+const requirementsUploadSlot = requirementsUploadSlots();
+for (const p of REQUIREMENTS_UPLOAD_ROUTES) {
+  app.post(p, requireFlag('requirements'), requirementsUploadSlot, express.json({ limit: REQUIREMENTS_UPLOAD_JSON_LIMIT }));
+}
 app.use(express.json({ limit: '8mb' }));
 
 // Credential broker billing (src/core/billing.mjs): every claude spawn a request causes —
@@ -2839,9 +2848,13 @@ const startRunHandler = async (req, res) => {
     // createPipeline copies them into <pipeline>/extras/.
     // A ticket's extras were staged durably when it was scheduled (the OS temp dir
     // does not survive a reboot); a schedule stages them below, once it is validated.
+    // A8 D14: a requirements start hands its files' staged copies in-process (req._extrasPaths, set by invokeStartRun
+    // only, never from HTTP, like _roundOf); they replace body.extras.
+    // `sched` would drop them, but never meets them: a requirements start's body carries no schedule fields.
+    const handed = Array.isArray(req._extrasPaths) ? req._extrasPaths.filter((x) => typeof x === 'string' && fs.existsSync(x)) : null;
     const extras = internal
       ? (Array.isArray(stored.extrasPaths) ? stored.extrasPaths.filter((x) => typeof x === 'string' && fs.existsSync(x)) : [])
-      : (sched ? [] : await writeExtras(runId, body.extras));
+      : (sched ? [] : handed || await writeExtras(runId, body.extras));
 
     // #620 Resolve in a pipeline: the run it resolves. Set in-process by /resolve-pipeline only, never from HTTP.
     const resolveOf = req._resolveOf && typeof req._resolveOf === 'object' && typeof req._resolveOf.runId === 'string' ? req._resolveOf : null;
@@ -3700,17 +3713,46 @@ function requirementsRunSummary({ runId, pipelineId }) {
   };
 }
 
-/** Call startRunHandler without HTTP. Resolves { status, body }. */
-async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null } = {}) {
-  let out = { status: 200, body: null };
-  const res = {
-    statusCode: 200,
-    status(code) { this.statusCode = code; return this; },
-    json(payload) { out = { status: this.statusCode, body: payload }; return this; },
+/** A8 D14: a requirements start's staged copies go once createPipeline has copied them into <pipeline>/extras: the run
+ *  and its agents read only that copy (run-harness _collectExtras; createPipeline is the one reader of opts.extras, and
+ *  `orch.pipeline` is set only when it returned), or when the run ends before it got that far. Best effort: `drop`
+ *  logs a failure. */
+function dropStagedOnceCopied(runId, drop) {
+  const entry = runs.get(runId);
+  const orch = entry && entry.orch;
+  if (!orch) { void drop(); return; }
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    if (typeof orch.off === 'function') orch.off('state', check); else if (typeof orch.removeListener === 'function') orch.removeListener('state', check);
+    void drop();
   };
-  await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: runId,
-    _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}) }, res);
-  return out;
+  const check = () => { if (orch.pipeline && orch.pipeline.dir) finish(); };
+  subscribe(orch, 'state', check);
+  if (entry.launch && typeof entry.launch.finally === 'function') entry.launch.finally(finish);
+  check();
+}
+
+/** Call startRunHandler without HTTP. Resolves { status, body }. A8 D14: `extrasFiles` ([{ id?, name, path, sha256? }],
+ *  a requirements start) are staged into the run's extras folder first and handed over as req._extrasPaths; a refused
+ *  start removes them again (withStagedRunFiles), a started one once its pipeline has its own copy. */
+async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null } = {}) {
+  const files = Array.isArray(extrasFiles) && extrasFiles.length ? extrasFiles : null;
+  const id = files ? (runId || randomUUID()) : runId;   // the extras folder is named by the run id
+  const run = async (extrasPaths, staged = null) => {
+    let out = { status: 200, body: null };
+    const res = {
+      statusCode: 200,
+      status(code) { this.statusCode = code; return this; },
+      json(payload) { out = { status: this.statusCode, body: payload }; return this; },
+    };
+    await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: id,
+      _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}), ...(extrasPaths ? { _extrasPaths: extrasPaths } : {}) }, res);
+    if (staged && out.status >= 200 && out.status <= 299) dropStagedOnceCopied(id, staged.drop);
+    return out;
+  };
+  return files ? withStagedRunFiles(id, files, run) : run(null);
 }
 
 /** Shaper s5 (D20): a Watch PR fix run is round n+1 of the run that opened the PR. Null on bad input or a read error,
@@ -5605,7 +5647,8 @@ app.post('/api/pause', (req, res) => {
     pauseRun(runId, actorOf(req));
     res.json({ ok: true });
   } catch (err) {
-    if (err?.code === 'CANNOT_PAUSE') return badRequest(res, err.message);
+    // `status`: what the run is instead, so a tab whose click lost to another pause keeps its Pausing… quietly.
+    if (err?.code === 'CANNOT_PAUSE') return res.status(400).json({ error: err.message, code: 'CANNOT_PAUSE', status: runs.get(runId)?.status || null });
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
@@ -15140,51 +15183,28 @@ app.post('/api/ask/threads/:id/messages', async (req, res) => {
     const scope = cv.context.pinned === undefined ? (chatScopeOf(thread.context) || chatScopeOf(cv.context)) : chatScopeOf(cv.context);
     const ctx = withChatScope(cv.context, scope);
 
-    // §7.3 — validate EVERY attachment before ANY write (all-or-nothing).
+    // §7.3 — validate EVERY attachment before ANY write (all-or-nothing), through the validation the Requirements page
+    // shares (src/core/attachment-upload.mjs): Ask's caps, its engine refusals and its messages. The engine is read per
+    // file, as before; the objects handed on are Ask's own shapes (no hash is made, no raw bytes for a text kind).
     const files = [];
     if (body.attachments !== undefined) {
-      if (!Array.isArray(body.attachments)) return badRequest(res, 'attachments must be an array');
-      if (body.attachments.length > ASK_LIMITS.attachment.maxFiles) {
-        return badRequest(res, `at most ${ASK_LIMITS.attachment.maxFiles} attachments per message`);
-      }
-      const dec = new TextDecoder('utf-8', { fatal: true });
-      for (const a of body.attachments) {
-        const name = a && typeof a.name === 'string' ? a.name : '';
-        const dot = name.lastIndexOf('.');
-        const ext = dot === -1 ? '' : name.slice(dot).toLowerCase();
-        // #398: the extension CLAIMS a type; text kinds are then proven by UTF-8
-        // decoding (as before), binary kinds by their magic number — a body that
-        // does not match its claim is refused here, before any write.
-        const cls = askClassifyExtension(ext);
-        if (!cls) return badRequest(res, `attachment type not allowed: ${name || '(unnamed)'}`);
-        // D16: what the chat's engine cannot take (a Codex chat no PDF; Copilot, Gemini CLI and Qwen Code no image or
-        // PDF) is refused at attach time, before any write. (askClassifyExtension gives kind text|image|binary; a PDF is
-        // kind 'binary', mime 'application/pdf'.)
-        const attachRefused = chatAttachRefusal({ engine: askTurnEngine(id, thread, mv.model), kind: cls.kind, pdf: cls.mime === 'application/pdf' });
-        if (attachRefused) return badRequest(res, `${attachRefused}: ${name}`);
-        const raw = typeof a.dataBase64 === 'string' ? a.dataBase64 : '';
-        const buf = raw ? Buffer.from(raw, 'base64') : Buffer.alloc(0);
-        if (!buf.length) return badRequest(res, `attachment is empty or not valid base64: ${name}`);
-        const cap = cls.kind === 'text' ? ASK_LIMITS.attachment.maxBytesPerFile : ASK_LIMITS.attachment.maxBytesPerBinaryFile;
-        if (buf.length > cap) {
-          return res.status(413).json({ error: `attachment over ${cap} bytes: ${name}` });
-        }
-        if (cls.kind !== 'text') {
-          const sniffed = askSniffMime(buf);
-          if (sniffed !== cls.mime) {
-            return badRequest(res, `attachment content does not match its extension: ${name}`);
-          }
-          files.push({ name, kind: cls.kind, mime: cls.mime, data: buf, bytes: buf.length });
-          continue;
-        }
-        let bodyText;
-        try { bodyText = dec.decode(buf); } catch { return badRequest(res, `attachment is not valid UTF-8: ${name}`); }
-        if (bodyText.includes('\u0000')) return badRequest(res, `attachment contains NUL bytes: ${name}`);
-        files.push({ name, kind: 'text', mime: cls.mime, text: bodyText, bytes: buf.length });
-      }
-      const cap = ASK_LIMITS.attachment.maxBytesPerMessage;
-      if (files.reduce((s, f) => s + f.bytes, 0) > cap) {
-        return res.status(413).json({ error: `attachments over ${cap} bytes per message` });
+      const v = validateAttachmentUploads(body.attachments, {
+        maxFiles: ASK_LIMITS.attachment.maxFiles, maxBytesPerFile: ASK_LIMITS.attachment.maxBytesPerFile,
+        maxBytesPerBinaryFile: ASK_LIMITS.attachment.maxBytesPerBinaryFile, maxBytesTotal: ASK_LIMITS.attachment.maxBytesPerMessage,
+        hash: false,
+        refuse: (cls, name) => {
+          // D16: what the chat's engine cannot take (a Codex chat no PDF; Copilot, Gemini CLI and Qwen Code no image or
+          // PDF) is refused at attach time, before any write. (classifyExtension gives kind text|image|binary; a PDF is
+          // kind 'binary', mime 'application/pdf'.)
+          const attachRefused = chatAttachRefusal({ engine: askTurnEngine(id, thread, mv.model), kind: cls.kind, pdf: cls.mime === 'application/pdf' });
+          return attachRefused ? `${attachRefused}: ${name}` : null;
+        },
+      });
+      if (!v.ok) return res.status(v.status).json({ error: v.error });
+      for (const f of v.files) {
+        files.push(f.kind === 'text'
+          ? { name: f.name, kind: 'text', mime: f.mime, text: f.text, bytes: f.bytes }
+          : { name: f.name, kind: f.kind, mime: f.mime, data: f.data, bytes: f.bytes });
       }
     }
 
@@ -18610,7 +18630,7 @@ app.use((err, _req, res, next) => {
  *        sweep keeps its own console default.
  */
 export async function bootMaintenance({ log } = {}) {
-  const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null };
+  const summary = { reconciled: 0, sweptV1: 0, recoveredBriefs: 0, recoveredAttachmentReads: 0, attachmentReadFolders: null, attachmentTempBodies: null, runRoots: null, legacy: null, ask: null, askWorktrees: null, repoLooks: null, requirementsRepoLooks: null, bench: null };
   const sink = (scope) => (typeof log === 'function' ? (level, msg) => log(scope, level, msg) : undefined);
 
   // Runs left 'running' by a previous process that died before writing a terminal
@@ -18648,6 +18668,13 @@ export async function bootMaintenance({ log } = {}) {
     if (summary.recoveredBriefs) console.log(`[worca-ui] requirements: ${summary.recoveredBriefs} interrupted product brief(s) marked`);
   } catch (err) {
     console.error(`[worca-ui] product brief sweep failed: ${err && err.message ? err.message : err}`);
+  }
+  // Requirements A8 (D5): a file left `reading` by this restart fails with INTERRUPTED; Try again reads it again.
+  try {
+    summary.recoveredAttachmentReads = recoverAttachmentReads();
+    if (summary.recoveredAttachmentReads) console.log(`[worca-ui] requirements: ${summary.recoveredAttachmentReads} interrupted file read(s) marked`);
+  } catch (err) {
+    console.error(`[worca-ui] requirements file-read sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   try {
@@ -18778,6 +18805,24 @@ export async function bootMaintenance({ log } = {}) {
     if (r.failed.length) console.error(`[worca-ui] requirements repo-look sweep: ${r.failed.length} dir(s) could not be removed`);
   } catch (err) {
     console.error(`[worca-ui] requirements repo-look sweep failed: ${err && err.message ? err.message : err}`);
+  }
+  // Requirements A8 (D5, D9): read folders (att-read-*) a restart left under <worcaHome>/tmp/requirements, and temp bodies
+  // a crash left between a replace's write and its rename, each older than an hour.
+  try {
+    const r = sweepReadFolders(path.join(worcaHome(), 'tmp', 'requirements'));
+    summary.attachmentReadFolders = r;
+    if (r.removed.length) console.log(`[worca-ui] requirements read-folder sweep: removed ${r.removed.length} folder(s)`);
+    if (r.failed.length) console.error(`[worca-ui] requirements read-folder sweep: ${r.failed.length} folder(s) could not be removed`);
+  } catch (err) {
+    console.error(`[worca-ui] requirements read-folder sweep failed: ${err && err.message ? err.message : err}`);
+  }
+  try {
+    const r = sweepTempBodies();
+    summary.attachmentTempBodies = r;
+    if (r.removed.length) console.log(`[worca-ui] requirements temp-body sweep: removed ${r.removed.length} file(s)`);
+    if (r.failed.length) console.error(`[worca-ui] requirements temp-body sweep: ${r.failed.length} file(s) could not be removed`);
+  } catch (err) {
+    console.error(`[worca-ui] requirements temp-body sweep failed: ${err && err.message ? err.message : err}`);
   }
 
   // Script bench folders (workbench W11): the newest folder per script key
@@ -19098,7 +19143,7 @@ export const _testing = {
   chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
   startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES, MARKET_JOBS, pruneMarketJobs, marketJobFailure,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
-  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,
+  askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, invokeStartRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,
   uiControl, bearerMatches,
   broadcast, sockets, askFilesRunDir,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,

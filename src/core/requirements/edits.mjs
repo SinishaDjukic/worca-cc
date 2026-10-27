@@ -2,15 +2,16 @@
 // The product owner's edits (plans/requirements-design.md D6): ground truth the model may ask about but
 // never undo. Every edit is a turn, so the next round sees it in the thread.
 import { RequirementsError, SECTIONS, SCOPE_TYPES, ASSUMPTION_STATUSES, LIMITS, clip, normalizeSection, nextIdNumber } from './spec.mjs';
-import { requireFeature, updateFeature, appendTurn, listTurns, listStarts, latestStart, usableBrief, setBriefSections } from './store.mjs';
+import {
+  requireFeature, updateFeature, appendTurn, listTurns, listStarts, latestStart, usableBrief, setBriefSections, listAttachments, updateAttachment,
+} from './store.mjs';
 import { BRIEF_LIMITS, relPath } from './brief.mjs';
 import { tx } from '../db.mjs';
 import { isBusy } from './interview.mjs';
-import { isStarting } from './start.mjs';   // no cycle: start.mjs never imports this module
+import { isStarting, STARTING_MESSAGE as STARTING } from './starting.mjs';
 
-const STARTING = 'this feature is starting a run. Try again in a moment.';
-
-function editable(seq) {
+/** A feature the product owner may edit: not busy (the A1 lock), not archived. The file routes use it too (A8 D10). */
+export function editable(seq) {
   const f = requireFeature(seq);
   if (isBusy(seq)) throw new RequirementsError('BUSY', 'Worca is still working on this feature. Try again in a moment.');
   if (f.status === 'archived') throw new RequirementsError('CONFLICT', 'this feature is archived; restore it first');
@@ -98,7 +99,7 @@ export function editCriterion(seq, id, text, { by = null } = {}) {
   if (!f.spec.criteria.some((c) => c.id === id)) throw new RequirementsError('NOT_FOUND', `no criterion ${String(id).slice(0, 20)}`);
   return tx(() => {
     appendTurn(seq, { kind: 'edit', payload: { criterion: id, action: 'edited' } }, { by });
-    return updateFeature(seq, { spec: { ...f.spec, criteria: f.spec.criteria.map((c) => (c.id === id ? { id, text: t, edited: true } : c)) } }, { by });
+    return updateFeature(seq, { spec: { ...f.spec, criteria: f.spec.criteria.map((c) => (c.id === id ? { id, text: t, edited: true, ...(c.source ? { source: c.source } : {}) } : c)) } }, { by });
   });
 }
 
@@ -134,13 +135,19 @@ export function confirmOpenAssumptions(seq, { by = null } = {}) {
 }
 
 /** Undo the changes made since a start (A2 D11): the spec goes back to that start's frozen copy. The id
- *  counters stay where they are (A1-D3), so an id given out after the start is never reused. */
+ *  counters stay where they are (A1-D3), so an id given out after the start is never reused. A8 D14: the feature files'
+ *  Send with the run switches go back to the start's choice; a removed or replaced body stays as it is now, and the
+ *  documents' switches (a setting of the whole scope) are left alone. */
 export function revertToStart(seq, version, { by = null } = {}) {
   editable(seq);
   const start = listStarts(seq).find((s) => s.version === Number(version));
   if (!start) throw new RequirementsError('NOT_FOUND', `no build v${String(version).slice(0, 12)} of this feature`);
+  const sent = new Set((start.files || []).filter((x) => x.from === 'feature').map((x) => x.id));
   return tx(() => {
     appendTurn(seq, { kind: 'edit', payload: { reverted: start.version } }, { by });
+    for (const r of listAttachments('feature', seq)) {
+      if (r.sendWithRun !== sent.has(r.id)) updateAttachment(r.id, { sendWithRun: sent.has(r.id) }, { by });
+    }
     return updateFeature(seq, { spec: start.spec }, { by });
   });
 }

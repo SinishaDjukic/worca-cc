@@ -105,6 +105,7 @@ export function runPill(snap) {
   if (!snap) return { family: 'peach', text: 'Starting' };
   const s = snap.status;
   if (s === 'pausing') return { family: 'amber', text: 'Pausing…' };
+  if (snap.resumePending) return { family: 'amber', text: 'Resuming…' };
   if (s === 'paused') { const why = PAUSE_WHY[snap.pauseReason]; return { family: 'amber', text: why ? `Paused · ${why}` : 'Paused' }; }
   if (s === 'interrupted') return { family: 'amber', text: 'Interrupted' };
   if (snap.pendingQuestion) return { family: 'amber', text: snap.pendingQuestion.kind === 'workflow' ? 'Waiting · your decision' : 'Waiting for your answer' };
