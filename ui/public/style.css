@@ -10724,6 +10724,36 @@ a.chip.req-export-chip:focus-visible{outline:2px solid var(--ink);outline-offset
 .req-report{display:flex;flex-direction:column;gap:4px;margin-top:10px}
 .req-report .req-report-hint{margin:0 0 0 40px;font-size:var(--fs-meta)}
 .req-dialog .req-report{margin-top:0}
+/* Board 31 (D20): at 900 px and narrower an export dialog is a full-screen sheet: fixed to the viewport (its size, never the
+   content's), its body scrolls inside while the button row stays at the bottom, ← FEAT-7 first, the description folded behind
+   Show all, full-width buttons whose hit areas reach 44 px (::after, as .req-fpick), rows 14–18 px apart so no two overlap. */
+.req-export-back{display:none}
+@media (max-width:900px){
+  .viewer-modal.req-dlg-wrap.req-dlg-sheet{padding:0;place-items:stretch}
+  .req-dlg-wrap.req-dlg-sheet .card.req-dialog.req-export{position:fixed;inset:0;width:auto;max-width:none;height:auto;max-height:none;border:0;border-radius:0;
+    box-shadow:none;overflow-y:auto;overscroll-behavior:contain;padding:12px 16px 0}
+  .req-dlg-sheet .req-export > *{flex-shrink:0}
+  .req-dlg-sheet .req-export > .req-dlg-btns,
+  .req-dlg-sheet .req-export > .req-export-foot{position:sticky;bottom:0;z-index:1;margin-top:auto;padding:12px 0 16px;background:var(--panel)}
+  .req-export-back{display:inline-flex;align-self:flex-start;position:relative;font-size:var(--fs-body)}
+  .req-export-back::after{content:"";position:absolute;inset:-14px -8px}   /* an 18 px line box + 28 = 46 px */
+  .req-export-grid,.req-export-pair{grid-template-columns:minmax(0,1fr)}
+  .req-dlg-sheet .req-export-desc{max-height:none}
+  .req-export-desc.folded{max-height:180px;overflow:hidden}
+  .req-export-more{display:block;width:100%;position:relative}
+  .req-export-more[hidden]{display:none}
+  .req-export-foot{flex-direction:column;align-items:stretch}
+  .req-export .req-export-foot .req-dlg-btns{padding-top:0;border-top:0}
+  .req-export .req-dlg-btns{flex-direction:column;align-items:stretch;gap:14px;margin:0}
+  .req-export .req-dlg-btns .btn,.req-export .req-export-alert-btns .btn{width:100%;position:relative}
+  .req-export .req-dlg-btns .btn::after,.req-export .req-export-alert-btns .btn::after,.req-export-more::after{content:"";position:absolute;inset:-6px 0}
+  .req-export .req-export-alert-btns{flex-direction:column;gap:18px}
+  .req-export .req-export-alert-btns .btn-sm::after{inset:-8px 0}
+  .req-export-x{position:relative}
+  .req-export-x::after{content:"";position:absolute;inset:-14px}
+  a.chip.req-export-chip{position:relative}
+  a.chip.req-export-chip::after{content:"";position:absolute;inset:-8px 0}
+}
 
 /* ── marketplace P3 ── */
 /* Plugin icons (U7, board 0.1): the kind colour lives only in this tile; hue families carry the dark arms. */

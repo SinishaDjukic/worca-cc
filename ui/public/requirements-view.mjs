@@ -331,6 +331,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
 
   async function show(p = '') {
     param = String(p || '');
+    syncExportInert();   // back from another view: the page is inert again only while a sheet is still open
     const m = /^feature\/(?:FEAT-)?(\d+)$/.exec(param);
     const next = m ? Number(m[1]) : null;
     if (next !== seqShown) {
@@ -1798,30 +1799,46 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     document.body.append(wrap);
     // the page behind cannot be reached while the dialog is open
     host.inert = true; host.setAttribute('inert', '');
-    const inerted = [];
-    if (page) {
-      for (const el of document.body.children) {
-        if (el === wrap || el.hasAttribute('inert')) continue;
-        el.inert = true; el.setAttribute('inert', '');
-        inerted.push(el);
-      }
-    }
     dlgGen += 1;
-    dialog = { wrap, trigger, triggerUi, onKey, canClose, inerted };
+    dialog = { wrap, trigger, triggerUi, onKey, canClose, page };
+    syncExportInert();
     if (first) first.focus();
   }
+  // A6 board 31 (D20): at 900 px and narrower an export dialog (openModal's `page`) is a full-screen sheet, and while it is
+  // open every other child of <body> is inert. Beside the page (wider) the view alone is inert, as for any dialog here.
+  // Re-synced on open, close, a resize across 900 px, show() and leave(): closing, Back, a change of feature, widening and
+  // leaving the view put the app back; a resize while the view is hidden (another view shown) re-applies nothing.
+  const exportSheetQuery = () => (typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia('(max-width:900px)') : null);
+  let exportInert = [];
+  function syncExportInert() {
+    for (const el of exportInert) { el.inert = false; el.removeAttribute('inert'); }
+    exportInert = [];
+    if (!dialog || !dialog.page || host.closest('.hidden, [hidden]')) return;
+    const mq = exportSheetQuery();
+    if (mq && !mq.matches) return;   // no matchMedia (jsdom): the dialog counts as the sheet
+    for (const el of document.body.children) {
+      if (el === dialog.wrap || el.hasAttribute('inert')) continue;
+      el.inert = true; el.setAttribute('inert', '');
+      exportInert.push(el);
+    }
+  }
+  const exportSheetMq = exportSheetQuery();
+  if (exportSheetMq && typeof exportSheetMq.addEventListener === 'function') exportSheetMq.addEventListener('change', syncExportInert);
+  /** Leaving the Requirements view (app.js shows another): a dialog of this view (on <body>, outside the view) closes, and with
+   *  it the inert page; an answer still on its way is dropped (dlgGen). */
+  function releaseExport() { closeDialog(false); syncExportInert(); }
   function restoreFocus(trigger, triggerUi) {
     const el = trigger && trigger.isConnected ? trigger : triggerUi ? host.querySelector(`[data-ui="${triggerUi}"]`) : null;
     if (el && !el.disabled) el.focus();
   }
   function closeDialog(restore = true) {
     if (!dialog) return;
-    const { wrap, trigger, triggerUi, onKey, inerted = [] } = dialog;
+    const { wrap, trigger, triggerUi, onKey } = dialog;
     dialog = null;
     dlgGen += 1;
     document.removeEventListener('keydown', onKey, true);
     host.inert = false; host.removeAttribute('inert');
-    for (const el of inerted) { el.inert = false; el.removeAttribute('inert'); }
+    syncExportInert();
     wrap.remove();
     if (restore) restoreFocus(trigger, triggerUi);
   }
@@ -3448,5 +3465,12 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     if (paintedKey === 'new') { if (relook) relook(); } else if (paintedKey && paintedKey.startsWith('brief/')) void paint();
   });
 
-  return { show, changed, destroy: () => { paintNo += 1; closeDialog(false); offGit(); document.removeEventListener('click', onDocClick, true); host.replaceChildren(); } };
+  // leave(): app.js calls it whenever another view is shown. One leave for the whole view: it calls each part's release
+  // (the export dialogs here; a sibling part with a sheet of its own adds its release beside it).
+  const leave = () => { releaseExport(); };
+  return { show, changed, leave, destroy: () => {
+    paintNo += 1; closeDialog(false); offGit(); document.removeEventListener('click', onDocClick, true);
+    if (exportSheetMq && typeof exportSheetMq.removeEventListener === 'function') exportSheetMq.removeEventListener('change', syncExportInert);
+    host.replaceChildren();
+  } };
 }

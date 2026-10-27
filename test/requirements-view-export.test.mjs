@@ -1052,3 +1052,164 @@ test('NOT_READY mid-dialog: the Not Ready dialog lists the feature as it is now 
   assert.equal(text(dlg().querySelector('.req-dlg-fail li')), 'Interview finished: not yet');
   assert.ok(calls.filter((c) => c.method === 'GET' && c.url === F).length >= 2, 'the feature was fetched again');
 });
+
+// ── Task 10, part B: board 31's phone sheet, leaving the view (D20) ──
+
+/** A phone: window.matchMedia answers (max-width:900px) with `phone.on`; `phone.set` fires a resize across 900 px. Install it
+ *  before the view is made (it listens from then on). */
+function withPhone(on = true) {
+  const phone = { on, listeners: new Set() };
+  const before = window.matchMedia;
+  window.matchMedia = (mq) => ({ media: mq, get matches() { return /max-width:900px/.test(mq) && phone.on; },
+    addEventListener: (_t, fn) => phone.listeners.add(fn), removeEventListener: (_t, fn) => phone.listeners.delete(fn) });
+  phone.restore = () => { window.matchMedia = before; };
+  phone.set = (v) => { phone.on = v; phone.listeners.forEach((fn) => fn()); };
+  return phone;
+}
+const inertIn = () => [...document.querySelectorAll('[inert]')];
+const tab = (shiftKey = false) => document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Tab', shiftKey, bubbles: true }));
+
+test('D20: an export dialog makes every other child of <body> inert; Back closes it and releases; leave() closes it and releases', async () => {
+  const { host, nav, view } = await openExport(feature(), { [`POST ${PREVIEW_URL}`]: () => preview() });
+  const d = dlg();
+  assert.deepEqual([d.getAttribute('role'), d.getAttribute('aria-modal'), d.closest('.req-dlg-wrap').classList.contains('req-dlg-sheet')], ['dialog', 'true', true]);
+  assert.deepEqual([nav.getAttribute('inert'), host.getAttribute('inert')], ['', '']);
+  const back = q('export-back');
+  assert.deepEqual([back.getAttribute('aria-label'), text(back)], ['Back to FEAT-7', '← FEAT-7']);
+  back.click();
+  assert.equal(dlg(), null);
+  assert.deepEqual([nav.getAttribute('inert'), host.getAttribute('inert')], [null, null]);
+  assert.equal(document.activeElement, q('menu-export', host), 'Back hands the focus to Export');
+  q('menu-export', host).click();
+  q('mi-export', host).click();
+  await settle();
+  assert.ok(dlg());
+  assert.equal(typeof view.leave, 'function');
+  view.leave();
+  assert.equal(dlg(), null, 'leaving the Requirements view closes the sheet');
+  assert.deepEqual(inertIn(), [], 'nothing is left inert');
+});
+
+test('board 31: every export dialog of a feature leads with ← FEAT-7 (Connect a tracker belongs to no feature)', async () => {
+  const m = await openFeature(feature(), SETUP_ROUTES());
+  q('menu-export', m.host).click();
+  q('mi-export-setup', m.host).click();
+  await settle();
+  assert.equal(dlg().firstElementChild, q('export-back'), 'Setup');
+  q('export-back').click();
+  await openExport(feature({ readiness: readiness(['interview']), state: 'decide' }), {});
+  assert.equal(dlg().firstElementChild, q('export-back'), 'Not Ready');
+});
+
+test('board 31: Show all unfolds the description and names what it controls', async () => {
+  await openExport(feature(), { [`POST ${PREVIEW_URL}`]: () => preview() });
+  const more = q('export-more');
+  const desc = document.getElementById(more.getAttribute('aria-controls'));
+  assert.deepEqual([text(more), more.getAttribute('aria-expanded'), desc.classList.contains('folded')], ['Show all', 'false', true]);
+  more.click();
+  assert.deepEqual([more.getAttribute('aria-expanded'), more.hidden, desc.classList.contains('folded'), document.activeElement], ['true', true, false, desc]);
+});
+
+test('D20 (phone): Tab and Shift+Tab stay inside the sheet, from its last control back to ← FEAT-7 and round', async () => {
+  await openExport(feature(), { [`POST ${PREVIEW_URL}`]: () => preview() });
+  const back = q('export-back');
+  const go = q('export-go');
+  go.focus();
+  tab();
+  assert.equal(document.activeElement, back, 'Tab from the last control wraps to ← FEAT-7');
+  tab(true);
+  assert.equal(document.activeElement, go, 'Shift+Tab from ← FEAT-7 wraps to the last control');
+  document.body.focus();
+  tab();
+  assert.ok(dlg().contains(document.activeElement), 'a Tab from outside lands inside the sheet');
+});
+
+test('D20 (phone): the page is inert only while the dialog is a sheet; widening past 900 px frees it, narrowing makes it modal again', async () => {
+  const phone = withPhone(false);
+  try {
+    const { host, nav } = await openExport(feature(), { [`POST ${PREVIEW_URL}`]: () => preview() });
+    assert.ok(dlg());
+    assert.deepEqual([nav.getAttribute('inert'), host.getAttribute('inert')], [null, ''], 'beside the page: the view is inert, the app is not');
+    phone.set(true);
+    assert.equal(nav.getAttribute('inert'), '', 'narrowed to a phone: a sheet, every other child of <body> is inert');
+    assert.equal(dlg().closest('[inert]'), null, 'the sheet itself is live');
+    phone.set(false);
+    assert.deepEqual([nav.getAttribute('inert'), host.getAttribute('inert')], [null, ''], 'widened again: released');
+    phone.set(true);
+    q('export-cancel').click();
+    assert.deepEqual(inertIn(), [], 'closed: nothing is inert');
+    phone.set(false); phone.set(true);
+    assert.deepEqual(inertIn(), [], 'a resize with no dialog open re-applies nothing');
+  } finally { phone.restore(); }
+});
+
+test('D20 (phone): leaving the view with a sheet open leaves nothing inert; a resize while away re-applies nothing; coming back has no sheet', async () => {
+  const phone = withPhone(true);
+  try {
+    const m = await openFeature(feature(), { ...SETUP_ROUTES(), [`POST ${PREVIEW_URL}`]: () => preview() });
+    const section = document.createElement('section'); section.className = 'view';
+    const other = document.createElement('section'); other.className = 'view hidden';   // another view of the app
+    document.body.prepend(section, other);
+    section.append(m.host);
+    q('menu-export', m.host).click();
+    q('mi-export', m.host).click();
+    await settle();
+    assert.ok(dlg() && other.inert && m.nav.inert, 'the sheet is open: the rest of the app is inert');
+    section.classList.add('hidden'); other.classList.remove('hidden');   // the app shows another view ...
+    m.view.leave();                                                       // ... and tells this one
+    assert.equal(dlg(), null, 'the sheet is closed');
+    assert.deepEqual(inertIn(), [], 'leaving releases the page');
+    phone.set(false); phone.set(true);
+    assert.deepEqual(inertIn(), [], 'a resize while away re-applies nothing');
+    section.classList.remove('hidden'); other.classList.add('hidden');
+    await m.view.show('feature/7');
+    await settle();
+    assert.deepEqual([dlg(), inertIn()], [null, []], 'back on the page: no sheet, nothing inert');
+  } finally { phone.restore(); }
+});
+
+test('D20 (phone): a change of feature, or the list, closes the sheet and frees the page', async () => {
+  const phone = withPhone(true);
+  try {
+    const m = await openExport(feature(), { [`POST ${PREVIEW_URL}`]: () => preview(), 'GET /api/requirements': { features: [] } });
+    assert.equal(m.nav.getAttribute('inert'), '');
+    await m.view.show('');
+    await settle();
+    assert.deepEqual([dlg(), inertIn()], [null, []]);
+  } finally { phone.restore(); }
+});
+
+test('CSS (board 31): at 900 px and narrower an export dialog is a sheet of the viewport size; its body scrolls, its buttons stay at the bottom; 44 px hit areas; Back only there', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
+  const end = css.indexOf('/* ── marketplace P3 ── */');
+  const at = css.indexOf('.req-dlg-wrap.req-dlg-sheet .card.req-dialog.req-export{');
+  assert.ok(at > start && at < end, 'the sheet rule is in the Requirements block');
+  const media = css.lastIndexOf('@media (max-width:900px){', at);
+  const close = css.indexOf('\n}', media);
+  assert.ok(media > start && at < close, 'the sheet rule is inside the 900 px query');
+  const phone = css.slice(media, close);
+  const rule = css.slice(at, css.indexOf('}', at));
+  // 390×844: fixed to the viewport (inset:0), never the content's size; no cap, no rounded box; it scrolls inside
+  for (const decl of ['position:fixed', 'inset:0', 'width:auto', 'height:auto', 'max-width:none', 'max-height:none', 'overflow-y:auto', 'border-radius:0']) {
+    assert.ok(rule.includes(decl), decl);
+  }
+  assert.match(phone, /\.viewer-modal\.req-dlg-wrap\.req-dlg-sheet\{padding:0;place-items:stretch\}/);
+  // the button row (or the preview's footer) stays at the bottom of the sheet while the body scrolls
+  assert.match(phone, /\.req-dlg-sheet \.req-export > \.req-dlg-btns,\s*\.req-dlg-sheet \.req-export > \.req-export-foot\{[^}]*position:sticky;bottom:0;[^}]*margin-top:auto[^}]*background:var\(--panel\)/);
+  // full-width buttons; 44 px hit areas as ::after (never min-height:44px)
+  assert.match(phone, /\.req-export \.req-dlg-btns \.btn,\.req-export \.req-export-alert-btns \.btn\{width:100%;position:relative\}/);
+  assert.match(phone, /\.req-export \.req-dlg-btns \.btn::after,[^{]*\{content:"";position:absolute;inset:-6px 0\}/);
+  assert.match(phone, /\.req-export \.req-export-alert-btns \.btn-sm::after\{inset:-8px 0\}/);
+  assert.match(phone, /\.req-export-x::after\{content:"";position:absolute;inset:-14px\}/);
+  assert.match(phone, /a\.chip\.req-export-chip::after\{content:"";position:absolute;inset:-8px 0\}/);
+  assert.match(phone, /\.req-export-back::after\{content:"";position:absolute;inset:-14px -8px\}/);
+  assert.match(phone, /\.req-export-desc\.folded\{max-height:180px;overflow:hidden\}/);
+  // ← FEAT-7 only on the phone; board 31's title at 900 px and narrower (user decision 2026-10-26)
+  const hide = css.indexOf('.req-export-back{display:none}');
+  assert.ok(hide > start && hide < media, '← FEAT-7 is hidden above 900 px');
+  assert.match(phone, /\.req-export-back\{display:inline-flex;/);
+  assert.match(css, /\.req-export-sub\{display:none[;}]/);
+  assert.match(css, /@media \(max-width:900px\)\{\s*\.req-export-title \.req-export-tid\{display:none\}\s*\.req-export-sub\{display:block\}/);
+  assert.ok(!/min-height:44px/.test(phone), 'no 44 px min-height in the sheet');
+});
