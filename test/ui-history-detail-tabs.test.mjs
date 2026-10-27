@@ -1136,8 +1136,11 @@ test('History bar of a live pipeline: Pause and Stop act on its live run', async
   assert.equal(stop.hidden, false, 'a live run can be stopped');
   assert.equal(end.querySelector('.hd-resume-split').hidden, true, 'nothing to resume while it runs');
   assert.equal(end.querySelector('.hd-after').title, 'Schedule a run after this');
+  const sic = doc.querySelector('#hist-detail .hd-sic');
+  assert.equal(sic.title, 'Running', 'the header pip reads the live run');
   click(ctx.window, pause);
   await settle(ctx.window);
+  assert.equal(sic.title, 'Pausing…', 'the header pip says Pausing… at the click, before the server status');
   const pauses = ctx.calls.filter((c) => c.url.endsWith('/api/pause'));
   assert.equal(pauses.length, 1);
   assert.deepEqual(JSON.parse(pauses[0].opts.body), { runId: 'r-live' });
@@ -1145,6 +1148,7 @@ test('History bar of a live pipeline: Pause and Stop act on its live run', async
   frame({ type: 'state', runId: 'r-live', id: ROW.id, status: 'running', ...STEPPING });
   await settle(ctx.window, 4);
   assert.equal(pause.disabled, true, 'the pause request still owns the button');
+  assert.equal(sic.title, 'Pausing…', 'a running frame sent before the pause keeps it');
   click(ctx.window, pause);
   await settle(ctx.window);
   assert.equal(ctx.calls.filter((c) => c.url.endsWith('/api/pause')).length, 1, 'no second POST');
@@ -1168,6 +1172,7 @@ test('History bar of a live pipeline: Pause and Stop act on its live run', async
   assert.equal(end.querySelector('.hd-resume-split').hidden, false, 'a paused run can be resumed');
   assert.equal(end.querySelector('.hd-resume').hidden, false);
   assert.equal(stop.hidden, false);
+  assert.equal(sic.title, 'Paused');
   // It ends: neither control is left.
   frame({ type: 'state', runId: 'r-live', id: ROW.id, status: 'stopped' });
   await settle(ctx.window, 6);
@@ -1266,6 +1271,35 @@ test('History bar of a resumed pipeline: Pause/Stop and the Resume split follow 
       assert.equal(ctx.window.location.hash.replace(/^#/, ''), 'running/r-9');
     } },
   ]);
+});
+
+// The header pip follows the parked copy's Resume as it follows Pause (paintHdLive reads hdPipelineRun).
+test('History detail header: Resume shows Resuming… on the pip until the server answers, and a failure puts Paused back', async () => {
+  let release;
+  const held = new Promise((r) => { release = r; });
+  const ctx = await bootDetail({
+    detail: { ...DETAIL, state: { ...DETAIL.state, status: 'running' } }, rows: [{ ...ROW, status: 'running' }],
+    arms: (url) => (url === '/api/resume' ? held : null),
+  });
+  const frame = (msg) => ctx.wsBox.ws.dispatch('message', { data: JSON.stringify(msg) });
+  frame({ type: 'hello', runs: [{ runId: 'r-live', title: ROW.title, projectDir: PROJECT, status: 'running', startedAt: '00:00:00', pipelineId: ROW.id }] });
+  frame({ type: 'state', runId: 'r-live', id: ROW.id, status: 'running', ...STEPPING });
+  await settle(ctx.window, 4);
+  await openDetail(ctx, '');
+  await settle(ctx.window, 6);
+  frame({ type: 'done', runId: 'r-live', status: 'paused' });
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  const sic = doc.querySelector('#hist-detail .hd-sic');
+  assert.equal(sic.title, 'Paused');
+  click(ctx.window, doc.querySelector('#hist-detail .hd-resume'));
+  await settle(ctx.window, 3);
+  assert.equal(sic.title, 'Resuming…', 'the header pip says Resuming… at the click');
+  assert.equal(sic.getAttribute('aria-label'), 'Resuming…');
+  release(fail(500, { error: 'boom' }));
+  await settle(ctx.window, 6);
+  assert.equal(sic.title, 'Paused', 'the failure puts Paused back');
+  assert.equal(sic.getAttribute('aria-label'), 'Paused');
 });
 
 // The run page logs a failed pause into the run's log, which this page does not show: the
