@@ -177,4 +177,4 @@ Pull requests (add each number when it opens):
 
 Pull requests (add each number when it opens):
 
-- Plugins: update works on Windows when the current version is a junction
+- Plugins: update works on Windows when the current version is a junction (#987)
