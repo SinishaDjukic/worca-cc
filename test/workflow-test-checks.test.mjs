@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  normaliseCheck, checkLabel, runCheck, wordCount, headingsOf, normaliseBasics, basicsList, judgeTry, fmtUsd,
+  normaliseCheck, checkLabel, runCheck, wordCount, headingsOf, normaliseBasics, basicsList, judgeTry, fmtUsd, normText,
 } from '../src/shared/workflow-tests/checks.mjs';
 
 const BRIEF = ['# Bulk invoice export', '', '## Problem', 'Customers with more than 200 invoices wait.', '', '## Users',
@@ -103,4 +103,50 @@ test('a try passes only when every Basic switched on and every check is met', ()
   assert.deepEqual(sent.basics.map((b) => [b.label, b.met, b.value]), [['Never sent back for fixes', false, '1 time']]);
   assert.equal(fmtUsd(10.26), '$10.26');
   assert.equal(fmtUsd(0.5), '$0.50');
+});
+
+// I1 (final review): the old heading regexes backtracked cubically on long whitespace runs and froze the server.
+const OLD_ATX = /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/;
+const OLD_BOLD = /^\s*\*\*(.+?)\*\*\s*:?\s*$/;
+function oldHeadingsOf(text) {
+  const out = [];
+  for (const line of String(text ?? '').split(/\r?\n/)) {
+    const atx = OLD_ATX.exec(line);
+    const bold = atx ? null : OLD_BOLD.exec(line);
+    const t = atx ? atx[1] : bold ? bold[1] : null;
+    if (t) out.push(t);
+  }
+  return out;
+}
+
+test('sections: a heading line with 20,000 spaces is read in well under 100 ms', () => {
+  for (const line of [`# a${' '.repeat(20000)}b`, `# a${'\t'.repeat(20000)}b #`, `**a**${' '.repeat(20000)}x`,
+    `**${' '.repeat(20000)}`, `${'# '.repeat(10000)}x`, `${'** '.repeat(7000)}x`, `# a${': '.repeat(10000)}b`,
+    `**a${'.-'.repeat(10000)}b**`]) {
+    const t0 = performance.now();
+    headingsOf(`${line}\n${line}`);
+    const ms = performance.now() - t0;
+    assert.ok(ms < 100, `took ${ms.toFixed(1)} ms for a ${line.length}-char line`);
+  }
+  assert.deepEqual(headingsOf(`# a${' '.repeat(20000)}b`), [normText(`a${' '.repeat(20000)}b`)]);
+});
+
+test('sections: the linear heading reader gives what the old regexes gave', () => {
+  const cases = ['# Title', '## Title ##', '# C#', '# ###', '#   ', '# ', '#\t\tx', '####### seven', '    # four', '   # three',
+    '#x', '# a\rb', '# Title\r', '**Bold**', '**Bold**:', '  **Bold** : ', '***a**', '****', '**a** b', '** **', '**a **',
+    '# 1. Problem', '**Success metric:**', '# a # b #', '# Title', '#  ', '#   '];
+  let seed = 7;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const ALPHA = [' ', '\t', '#', '*', ':', 'a', 'B', '\r', ' ', ' ', '1', '.'];
+  for (let n = 0; n < 20000; n++) {
+    const len = Math.floor(rnd() * 12);
+    let s = '';
+    for (let i = 0; i < len; i++) s += ALPHA[Math.floor(rnd() * ALPHA.length)];
+    cases.push(s);
+  }
+  for (const c of cases) {
+    const want = oldHeadingsOf(c).map((t) => normText(t).replace(/^\d+[.)]\s*/, '').replace(/[\s:.\-–—]+$/u, '').trim());
+    assert.deepEqual(headingsOf(c), want, JSON.stringify(c));
+  }
+  assert.deepEqual(headingsOf(BRIEF), ['bulk invoice export', 'problem', 'users', 'success metric']);
 });

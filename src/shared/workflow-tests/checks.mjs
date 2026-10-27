@@ -36,15 +36,72 @@ export function wordCount(text) {
   return String(text ?? '').split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
 }
 
-const sectionKey = (s) => normText(s).replace(/^\d+[.)]\s*/, '').replace(/[\s:.\-–—]+$/u, '').trim();
+/** Drops trailing spaces, colons, dots and dashes in one pass (the regex [\s:.\-–—]+$ is quadratic on long runs). */
+function trimEndMarks(s) {
+  let end = s.length;
+  while (end > 0 && (/\s/.test(s[end - 1]) || ':.-–—'.includes(s[end - 1]))) end--;
+  return s.slice(0, end);
+}
+const sectionKey = (s) => trimEndMarks(normText(s).replace(/^\d+[.)]\s*/, '')).trim();
+
+// The heading readers below walk each line once. They give exactly what /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/ and
+// /^\s*\*\*(.+?)\*\*\s*:?\s*$/ gave, but those regexes backtracked cubically on a long run of spaces, and a try's
+// own output could freeze the server with one such line (final review I1).
+const isWs = (ch) => /\s/.test(ch);
+/** What `.` does not match (a line split on \r?\n can still hold these). */
+const isTerm = (ch) => ch === '\r' || ch === '\n' || ch === ' ' || ch === ' ';
+const hasTerm = (s, from, to) => {
+  for (let i = from; i < to; i++) if (isTerm(s[i])) return true;
+  return false;
+};
+
+/** `# Title ##` → "Title"; null when the line is not an ATX heading. */
+function atxTitle(line) {
+  const n = line.length;
+  let i = 0;
+  while (i < 3 && i < n && isWs(line[i])) i++;
+  let hashes = 0;
+  while (i < n && line[i] === '#') { i++; hashes++; }
+  if (hashes < 1 || hashes > 6 || i >= n || !isWs(line[i])) return null;
+  const wsStart = i;
+  while (i < n && isWs(line[i])) i++;
+  if (i === n) {
+    // Only spaces after the marks: the title is one of them (never the first), and it reads as an empty key.
+    for (let k = n - 1; k > wsStart; k--) if (!isTerm(line[k])) return line[k];
+    return null;
+  }
+  // The trailing "  ##  " that is not part of the title: spaces, then closing marks, then spaces, read from the end.
+  let end = n;
+  while (end > i && isWs(line[end - 1])) end--;
+  while (end > i && line[end - 1] === '#') end--;
+  while (end > i && isWs(line[end - 1])) end--;
+  if (end === i) end = i + 1;
+  return hasTerm(line, i, end) ? null : line.slice(i, end);
+}
+
+/** `**Title**:` → "Title"; null when the line is not only bold. */
+function boldTitle(line) {
+  const n = line.length;
+  let i = 0;
+  while (i < n && isWs(line[i])) i++;
+  if (line[i] !== '*' || line[i + 1] !== '*') return null;
+  const start = i + 2;
+  // The closing ** may be followed only by spaces, one optional colon and spaces.
+  let tail = n;
+  while (tail > start && isWs(line[tail - 1])) tail--;
+  if (tail > start && line[tail - 1] === ':') tail--;
+  while (tail > start && isWs(line[tail - 1])) tail--;
+  for (let p = Math.max(start + 1, tail - 2); p + 2 <= n; p++) {
+    if (line[p] === '*' && line[p + 1] === '*') return hasTerm(line, start, p) ? null : line.slice(start, p);
+  }
+  return null;
+}
 
 /** The section keys of a markdown text: ATX headings (# …) and lines that are only bold (**…**). */
 export function headingsOf(text) {
   const out = [];
   for (const line of String(text ?? '').split(/\r?\n/)) {
-    const atx = /^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/.exec(line);
-    const bold = atx ? null : /^\s*\*\*(.+?)\*\*\s*:?\s*$/.exec(line);
-    const t = atx ? atx[1] : bold ? bold[1] : null;
+    const t = atxTitle(line) ?? boldTitle(line);
     if (t) out.push(sectionKey(t));
   }
   return out;
