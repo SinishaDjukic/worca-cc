@@ -8,15 +8,17 @@ import { join, basename, extname } from 'node:path';
 import { findPipelineRowById, readPipelineStateById, listRunArtifacts, resolveIndexedArtifactForRow, runDirForRow } from '../artifacts.mjs';
 import { WORK_ARTIFACT_KIND } from '../no-project-work.mjs';
 import { runBenchOnce } from '../script-bench.mjs';
+import { readScript } from '../script-store.mjs';
+import { DEFAULT_TIMEOUT_MS } from '../../shared/graph/script-meta.mjs';
 import { runCheck, judgeTry, wordCount, checkLabel } from '../../shared/workflow-tests/checks.mjs';
 
 export const TEXT_EXTS = Object.freeze(new Set(['.md', '.markdown', '.txt', '.html', '.htm', '.csv', '.json', '.yaml', '.yml', '.xml']));
 export const RESULT_TEXT_MAX = 2 * 1024 * 1024;
 const BUSY_RETRIES = 5;
 const BUSY_WAIT_MS = 3000;
-// One script check's overall budget (queue slot included). script-bench's own cap is 24h (MAX_TIMEOUT_MS), far too
-// long for a test's check: a stuck bench would stall every later try. A fixed 10 minutes covers a slow script.
-export const SCRIPT_CHECK_DEADLINE_MS = 10 * 60 * 1000;
+// The race against the deadline is only a backstop: the bench is handed the script's own timeout and kills the child
+// itself (freeing its slot and per-key lock). The backstop waits that long plus this margin.
+export const SCRIPT_CHECK_MARGIN_MS = 60 * 1000;
 const NONE = Object.freeze({ name: null, text: null, source: null });
 const isText = (p) => TEXT_EXTS.has(extname(String(p || '')).toLowerCase());
 const clip = (t) => (typeof t === 'string' && t.length > RESULT_TEXT_MAX ? t.slice(0, RESULT_TEXT_MAX) : t);
@@ -66,6 +68,9 @@ export async function readTryOutcome(pipelineId, { help = [], failReason = null,
 }
 
 let benchTail = Promise.resolve();
+const declaredTimeout = async (key) => {
+  try { const t = (await readScript(key))?.meta?.timeoutMs; return Number.isInteger(t) && t > 0 ? t : DEFAULT_TIMEOUT_MS; } catch { return DEFAULT_TIMEOUT_MS; }
+};
 const copyable = async (src) => { try { return !(await lstat(src)).isSymbolicLink(); } catch { return false; } };
 
 /**
@@ -74,10 +79,10 @@ const copyable = async (src) => { try { return !(await lstat(src)).isSymbolicLin
  * at a time), so the bench's limits (2 at once, one per key: script-bench.mjs:335) only meet a person's own bench runs,
  * which are waited out. Met when the bench says `clean`.
  */
-export function runScriptCheck(check, { pipelineId, runBench = runBenchOnce, waitMs = BUSY_WAIT_MS, deadlineMs = SCRIPT_CHECK_DEADLINE_MS } = {}) {
+export function runScriptCheck(check, { pipelineId, runBench = runBenchOnce, waitMs = BUSY_WAIT_MS, deadlineMs = null, timeoutOf = declaredTimeout } = {}) {
   const notMet = (error) => ({ met: false, value: 'Not met', error });
   // Does the whole job, setup included, and always removes its copy once it settles (even after a timeout).
-  const work = async () => {
+  const work = async (state, timeoutMs) => {
     let scratch = null;
     try {
       const row = pipelineId ? findPipelineRowById(pipelineId) : null;
@@ -89,11 +94,11 @@ export function runScriptCheck(check, { pipelineId, runBench = runBenchOnce, wai
       }
       for (let attempt = 0; ; attempt += 1) {
         try {
-          const r = await runBench({ key: check.key, params: check.params || {}, inputs: {}, cwd: { kind: 'dir', dir: scratch } }, { allowDirCwd: true });
+          const r = await runBench({ key: check.key, params: check.params || {}, inputs: {}, timeoutMs, cwd: { kind: 'dir', dir: scratch } }, { allowDirCwd: true });
           const met = !!r && r.status === 'clean';
           return { met, value: met ? 'Met' : String((r && (r.summary || r.status)) || 'Not met').split('\n')[0].slice(0, 120) };
         } catch (err) {
-          if (err && err.code === 'BUSY' && attempt < BUSY_RETRIES) { await wait(waitMs); continue; }
+          if (err && err.code === 'BUSY' && attempt < BUSY_RETRIES && !state.timedOut) { await wait(waitMs); continue; }
           return notMet(err && err.message ? err.message : String(err));
         }
       }
@@ -101,10 +106,14 @@ export function runScriptCheck(check, { pipelineId, runBench = runBenchOnce, wai
       return notMet(err && err.message ? err.message : String(err));
     } finally { if (scratch) await rm(scratch, { recursive: true, force: true }).catch(() => {}); }
   };
-  const job = () => {
+  const job = async () => {
+    const state = { timedOut: false };
+    const timeoutMs = await timeoutOf(check.key);
     let timer;
-    const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve(notMet('timed out')), deadlineMs); });
-    return Promise.race([work(), deadline]).finally(() => clearTimeout(timer));
+    const deadline = new Promise((resolve) => {
+      timer = setTimeout(() => { state.timedOut = true; resolve(notMet('timed out')); }, deadlineMs ?? timeoutMs + SCRIPT_CHECK_MARGIN_MS);
+    });
+    return Promise.race([work(state, timeoutMs), deadline]).finally(() => clearTimeout(timer));
   };
   const p = benchTail.then(job, job);
   benchTail = p.catch(() => {});

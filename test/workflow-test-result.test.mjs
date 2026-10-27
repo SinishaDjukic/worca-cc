@@ -8,7 +8,7 @@ import { join, dirname } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
 import { createPipeline, writeState, recordArtifact } from '../src/core/artifacts.mjs';
 import { projectKey } from '../src/core/store.mjs';
-import { mainResult, readTryOutcome, checkTry, runScriptCheck } from '../src/core/workflow-tests/result.mjs';
+import { mainResult, readTryOutcome, checkTry, runScriptCheck, SCRIPT_CHECK_MARGIN_MS } from '../src/core/workflow-tests/result.mjs';
 import { normaliseCheck } from '../src/shared/workflow-tests/checks.mjs';
 
 const homes = [];
@@ -118,7 +118,7 @@ test('a setup error becomes a not-met check and checkTry keeps the other results
   const r = await runScriptCheck({ kind: 'script', key: 'a' }, { pipelineId: 'no-such-pipeline', runBench: async () => ({ status: 'clean' }) });
   assert.equal(r.met, false);
   assert.equal(r.value, 'Not met');
-  assert.ok(r.error);
+  assert.equal(r.error, 'The try was not found.');
   const t = await seedTry({ work: { 'brief.md': BRIEF } });
   const example = { basics: {}, checks: [
     { id: 's1', ...normaliseCheck({ kind: 'script', key: 'a' }).check },
@@ -129,4 +129,25 @@ test('a setup error becomes a not-met check and checkTry keeps the other results
   assert.equal(v.checks.length, 2);
   assert.deepEqual(v.checks.map((c) => c.met), [false, true]);
   assert.ok(v.checks[0].error);
+});
+
+test('the bench gets the script own timeout, the backstop deadline follows it, and a timed-out job stops retrying BUSY', async () => {
+  const t = await seedTry({ work: { 'brief.md': BRIEF } });
+  const reqs = [];
+  const ok = await runScriptCheck({ kind: 'script', key: 'long' }, { pipelineId: t.id, timeoutOf: async () => 7200000,
+    runBench: async (req) => { reqs.push(req); return { status: 'clean' }; } });
+  assert.equal(ok.met, true, JSON.stringify(ok));
+  assert.equal(reqs[0].timeoutMs, 7200000);
+  // the backstop is the declared timeout plus a margin, so a 2 h script is not cut at 10 minutes
+  const real = global.setTimeout; const delays = [];
+  global.setTimeout = (fn, ms, ...a) => { delays.push(ms); return real(fn, ms, ...a); };
+  try { await runScriptCheck({ kind: 'script', key: 'long' }, { pipelineId: t.id, timeoutOf: async () => 7200000, runBench: async () => ({ status: 'clean' }) }); } finally { global.setTimeout = real; }
+  assert.ok(delays.includes(7200000 + SCRIPT_CHECK_MARGIN_MS));
+  // BUSY retries stop once the deadline fired
+  let calls = 0;
+  const r = await runScriptCheck({ kind: 'script', key: 'busy' }, { pipelineId: t.id, timeoutOf: async () => 1000, deadlineMs: 30, waitMs: 20,
+    runBench: async () => { calls += 1; throw Object.assign(new Error('busy'), { code: 'BUSY' }); } });
+  assert.equal(r.error, 'timed out');
+  await new Promise((res) => setTimeout(res, 200));
+  assert.ok(calls <= 3, `retried ${calls} times after the deadline`);
 });
