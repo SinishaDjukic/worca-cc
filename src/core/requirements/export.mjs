@@ -123,7 +123,7 @@ const NOT_COPY = /[\r\n]|\bat\s+\S+\s+\(|\b(?:file|node):|[A-Za-z]:\\|(?:^|[\s'"
 const isSentence = (m) => typeof m === 'string' && !!m.trim() && m.length <= 300 && !NOT_COPY.test(m);
 
 /** D11: why a tracker could not be reached, in product words. A message that is not product copy (a connector that crashed,
- *  an answer the shim could not read, a kind the host does not know) becomes a fixed phrase; trackerCall logs the raw text. */
+ *  an answer the shim could not read, a kind the host does not know) becomes a fixed phrase; trackerCall logs the first line of the raw text. */
 export function reachReason(err, name) {
   const kind = err && err.kind;
   const message = err && err.message;
@@ -182,7 +182,8 @@ async function trackerCall(d, name, conn, op, args) {
     return await callOf(d)({ plugin: conn.plugin, sourceId: conn.sourceId, profile: conn.profile || undefined, op, args, timeoutMs: EXPORT_TIMEOUT_MS });
   } catch (err) {
     const kind = (err && err.kind) || 'plugin';
-    console.error(`requirements: export op ${op} via ${conn.plugin}/${conn.sourceId} failed (${kind}):`, String((err && err.message) || err));
+    const firstLine = String((err && err.message) || err).split(/\r?\n/)[0].slice(0, 200);   // never a plugin's whole stdout/stderr
+    console.error(`requirements: export op ${op} via ${conn.plugin}/${conn.sourceId} failed (${kind}):`, firstLine);
     if (kind === 'unimplemented') throw new RequirementsError('TRACKER', `${name || 'The tracker'} cannot export any more.`, { kind: 'unimplemented' });
     throw new RequirementsError('TRACKER', reachSentence(name, { kind, message: err && err.message }), { kind });
   }

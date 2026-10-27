@@ -250,7 +250,7 @@ test('reach failures (D11): the sentence by kind, nothing recorded but the pendi
   }
 });
 
-test("reach failures that are not product copy (a crash, garbage, the shim's own words): a fixed phrase in the 502, the raw text in the server log", async () => {
+test("reach failures that are not product copy (a crash, garbage, the shim's own words): a fixed phrase in the 502, the raw first line in the server log", async () => {
   const STOPPED = 'Worca could not reach Jira: the Jira plugin stopped unexpectedly.';
   const UNREADABLE = 'Worca could not reach Jira: the Jira plugin gave an answer Worca could not read.';
   const cases = [
@@ -262,6 +262,7 @@ test("reach failures that are not product copy (a crash, garbage, the shim's own
     ['plugin', 'EACCES: permission denied, open C:\\x\\jira.json', STOPPED],
     ['network', 'connect ECONNREFUSED via /x/proxy/sock', STOPPED],
     ['weird', 'Error: odd at file:///x/y.mjs', STOPPED],   // a kind the host does not know (an injected callSource)
+    ['plugin', `stderr: ${'x'.repeat(400)}`, STOPPED],       // a long dump: only its first 200 characters reach the log
   ];
   const logged = [];
   const prevError = console.error;
@@ -278,7 +279,12 @@ test("reach failures that are not product copy (a crash, garbage, the shim's own
         assert.doesNotMatch(e.message, /file:|exited|stdout|manifest|\bat\s|[\\/]x[\\/]|Cannot read|odd/);
         return true;
       });
-      assert.ok(logged.some((l) => l.includes(msg)), `the raw text is logged: ${msg}`);
+      const [head, ...rest] = msg.split(/\r?\n/);
+      const line = logged.at(-1);
+      assert.ok(line.includes(`(${kind})`) && line.includes(head.slice(0, 200)), `the kind and the raw first line are logged: ${msg}`);
+      assert.doesNotMatch(line, /[\r\n]/, 'one log line');
+      assert.ok(!line.includes(head.slice(0, 201)) || head.length <= 200, 'capped at 200 characters');
+      for (const r of rest) assert.ok(!line.includes(r.trim()), 'the rest of the dump is not logged');
     }
   } finally { console.error = prevError; }
   reset();
