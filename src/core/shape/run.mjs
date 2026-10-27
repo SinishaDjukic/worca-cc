@@ -25,16 +25,13 @@ export const isShapeWorkflowId = (id) => id === SHAPE_WORKFLOW_ID || id === SHAP
 
 /**
  * The `shape` field and workflow of a run request. A shaped run always runs wf_shape — wf_shape_ux when UX is a
- * perspective. Gate off: both `shape` and the shape workflows are refused.
+ * perspective.
  * `internal` (a fired ticket) also admits the `slice` and `replaces` fields.
  * @returns {{ok:true, shape:null|{perspectives:string[], slices?:string, size?:string, slice?:object, replaces?:string}, workflowId:string|null}|{ok:false, error:string}}
  */
-export function resolveShapeRequest({ shape, workflowId }, { enabled, internal = false }) {
+export function resolveShapeRequest({ shape, workflowId }, { internal = false } = {}) {
   const named = typeof workflowId === 'string' && workflowId.trim() ? workflowId.trim() : null;
   if (shape === undefined && !isShapeWorkflowId(named)) return { ok: true, shape: null, workflowId: named };
-  if (!enabled) {
-    return { ok: false, error: shape !== undefined ? 'shape is not available on this server' : `workflow "${named}" is not available on this server` };
-  }
   if (shape !== undefined && (shape === null || typeof shape !== 'object' || Array.isArray(shape))) {
     return { ok: false, error: 'shape must be an object' };
   }

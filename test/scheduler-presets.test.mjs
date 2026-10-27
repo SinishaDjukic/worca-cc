@@ -23,12 +23,11 @@ const DAY = () => new Date(Date.now() + 86400000).toISOString();
 before(async () => {
   sandboxHome = await mkdtemp(join(tmpdir(), 'worca-cc-presets-home-'));
   projectsRoot = await mkdtemp(join(tmpdir(), 'worca-cc-presets-proot-'));
-  for (const k of ['HOME', 'USERPROFILE', 'WORCA_TEST_ALLOW_HOME_FALLBACK', 'WORCA_PROJECTS_ROOT', 'WORCA_MOCK', 'WORCA_FLAGS', 'WORCA_IDENTITY_HEADER']) prevEnv[k] = process.env[k];
+  for (const k of ['HOME', 'USERPROFILE', 'WORCA_TEST_ALLOW_HOME_FALLBACK', 'WORCA_PROJECTS_ROOT', 'WORCA_MOCK', 'WORCA_IDENTITY_HEADER']) prevEnv[k] = process.env[k];
   process.env.HOME = sandboxHome; process.env.USERPROFILE = sandboxHome;
   process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
   process.env.WORCA_PROJECTS_ROOT = projectsRoot;
   process.env.WORCA_MOCK = '1';
-  process.env.WORCA_FLAGS = 'runPresets';
   process.env.WORCA_IDENTITY_HEADER = H;   // a request without the header is the local install (sees every preset)
   const mod = await import('../ui/server.mjs');
   srv = mod.server;
@@ -128,17 +127,6 @@ test('a deleted preset fails the ticket naming the preset; a repeating series fa
   const row = list.schedules.find((s) => s.id === made.scheduleId);
   assert.equal(row.presetName, null);
   assert.equal(row.presetGoneName, 'Gone soon');
-});
-
-test('with the flag off a ticket that follows a preset fails and says so', async () => {
-  const preset = await savePreset('Flagged', { guardrailsId: 'normal' });
-  const made = await scheduleFrom(preset);
-  process.env.WORCA_FLAGS = '-runPresets';
-  try {
-    const now = await runNow(made.runId);
-    assert.equal(now.status, 'failed');
-    assert.match(now.failReason, /follows the run preset "Flagged", and run presets are turned off/);
-  } finally { process.env.WORCA_FLAGS = 'runPresets'; }
 });
 
 // PR #769 review: the keys a start set apart from the preset are kept at fire time; the rest follow the preset.

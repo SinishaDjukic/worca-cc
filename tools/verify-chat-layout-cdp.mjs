@@ -57,7 +57,7 @@ try {
   const REAL_ENV = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };   // Chrome keeps the real HOME, as verify-ask-forms does
   Object.assign(process.env, { HOME: home, USERPROFILE: home, WORCA_HOME: WH, WORCA_TEST_ALLOW_HOME_FALLBACK: '1' });
   const port = await freePort();   // never the inherited PORT (the host app's 4317)
-  const childEnv = { ...process.env, WORCA_FLAGS: 'runTags' };
+  const childEnv = { ...process.env };
   delete childEnv.FORCE_COLOR; delete childEnv.PORT;
   cli = spawn(process.execPath, [path.join(ROOT, 'src/cli/worca-cc.mjs'), 'ui', 'start', '--mock', '--port', String(port)],
     { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });

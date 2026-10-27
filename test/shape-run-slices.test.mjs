@@ -12,7 +12,7 @@ const sl = (id, over = {}) => ({
 const OUTLINE = { why: 'three independent behaviours', slices: [sl('a'), sl('b'), sl('c')] };
 const REF = { feature: 'f1', index: 2, total: 3, outline: OUTLINE };
 
-const req = (shape, opts = {}) => resolveShapeRequest({ shape }, { enabled: true, ...opts });
+const req = (shape, opts = {}) => resolveShapeRequest({ shape }, opts);
 
 test('resolveShapeRequest: slices accepts auto and off, refuses anything else', () => {
   assert.equal(req({ slices: 'auto' }).shape.slices, 'auto');
@@ -63,11 +63,6 @@ test('resolveShapeRequest: the shape key set is pinned', () => {
   assert.deepEqual(req({ perspectives: ['qa'] }).shape, { perspectives: ['product', 'qa'] });
   assert.deepEqual(Object.keys(req({}).shape), ['perspectives']);
   assert.deepEqual(Object.keys(req({ slices: 'off', size: 'large' }).shape), ['perspectives', 'slices', 'size']);
-});
-
-test('resolveShapeRequest: the gate is checked before any field', () => {
-  const r = resolveShapeRequest({ shape: { slice: REF } }, { enabled: false, internal: true });
-  assert.equal(r.error, 'shape is not available on this server');
 });
 
 test('validateOutlineAnswer: approve with no edits', () => {

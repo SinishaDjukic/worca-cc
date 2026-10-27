@@ -383,7 +383,7 @@ export function renderCodexSkillsSection(s) {
   return L.join('\n');
 }
 
-/** Shape it first (spec D9): propose_run's shape and assess fields, only while the gate is on. */
+/** Shape it first (spec D9): propose_run's shape and assess fields. */
 export function renderShapeSection() {
   return [
     '## Shaper',

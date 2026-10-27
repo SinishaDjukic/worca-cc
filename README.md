@@ -638,7 +638,7 @@ level and has no **Diff**, **Changes** or **Actions**.
   or month (runs split into finished, stopped and failed). With a total limit, a ring around your
   avatar in the sidebar fills toward it (amber from 80%, red once new runs are blocked); the account
   menu's spend card has the figures. Filter or split spend by person (or by tag, see
-  [Labs features](#labs-features)) and export the split as CSV; see
+  [Shaper, cost tags and keep awake](#shaper-cost-tags-and-keep-awake)) and export the split as CSV; see
   [`docs/statistics.md`](docs/statistics.md).
 - **Hard limits** — set in Settings › Runs › Budget & cost limits, or with `worca config`. A
   per-pipeline cost limit pauses a runaway run before its next step; *Continue without cap (this
@@ -774,22 +774,24 @@ level and has no **Diff**, **Changes** or **Actions**.
 
 ![Runs page — runs from nimbus-crm, lumen-docs and nimbus-web grouped by project, one scheduled and one stopped, with the finished run Paginate the search endpoint open: Ready to ship, 17m 2s, $3.65, +29 −2 across 4 files](docs/screenshots/history.png)
 
+### Shaper, cost tags and keep awake
+
+- **Shaper** — Worca shapes a thin or large task first: at most 3
+  questions, a plan for the perspectives you pick, rule checks on the plan, and
+  your approval before anything is built; a large task can be cut into slices.
+  See [`docs/shape-it-first.md`](docs/shape-it-first.md).
+- **Cost tags** — `key:value` tags such as `client:acme` on New
+  pipeline, run pages and Ask run cards (`--tag` on the CLI), optional
+  mandatory tags under Settings › Tags, and spend **By tag** on Statistics and
+  Team metrics.
+- **Keep awake** — stops the computer sleeping while a run has agents working;
+  a switch in the account menu. See [`docs/keep-awake.md`](docs/keep-awake.md).
+
 ### Labs features
 
 - **Off until you turn them on** — unfinished features ship behind machine-wide
   flags: **Settings › Labs**, `worca flags on|off <key>`, or
   `WORCA_FLAGS=<key>` at start. See [`docs/feature-flags.md`](docs/feature-flags.md).
-- **Shaper** (`shapeFirst`, beta, on by default) — Worca shapes a thin or large task first: at most 3
-  questions, a plan for the perspectives you pick, rule checks on the plan, and
-  your approval before anything is built; a large task can be cut into slices.
-  Turn it off in **Settings › Labs** or with `worca flags off shapeFirst`.
-  See [`docs/shape-it-first.md`](docs/shape-it-first.md).
-- **Run tags** (`runTags`) — `key:value` tags such as `client:acme` on New
-  pipeline, run pages and Ask run cards (`--tag` on the CLI), optional
-  mandatory tags under Settings › Tags, and spend **By tag** on Statistics and
-  Team metrics.
-- **Keep awake** (`keepAwake`) — stops the computer sleeping while a run has
-  agents working.
 
 ### Getting started & UI levels
 
@@ -991,7 +993,7 @@ worca extension --open          # the packaged browser extension folder
 
 # feature flags
 worca flags                     # list them
-worca flags off shapeFirst      # Shaper is beta and on by default
+worca flags on smartRunNaming   # a Labs feature, off by default
 ```
 
 Run `worca --help` for every subcommand — projects (`add`, `list`,

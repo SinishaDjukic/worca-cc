@@ -105,6 +105,7 @@ import {
   syncDefaults, setSyncDefaults, assertSyncSettingsInput, DEFAULT_SYNC_SETTINGS,
   networkWaitSettings, assertNetworkWaitInput, setNetworkWait, effectiveNetworkWait,
   networkProxySettings, networkProxyEnabled, migrateCorporateProxyFlag,
+  keepAwakeEnabled, setKeepAwake, assertKeepAwakeInput, migrateKeepAwakeFlag,
   runEngineSetting, assertRunEngineInput, setRunEngineSetting,
   stepModelsSetting, assertStepModelsInput, setStepModels,
   modelRolesSetting, assertModelRolesInput, setModelRoles,
@@ -387,7 +388,6 @@ import {
 } from '../src/core/workspaces.mjs';
 import { effectiveEdges } from '../src/shared/workspace-map/overrides.mjs';
 import { WORKSPACE_SCAN_WORKFLOW_ID, WORKSPACE_SCAN_DEFAULT_MODELS, PR_FIX_WORKFLOW_ID, GRAPH_SHAPE_WORKFLOW, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from '../src/core/graph/builtin-workflows.mjs';
-import { shapeFirstEnabled, requireShapeFirst } from '../src/core/shape/gate.mjs';
 import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/shared/shape/review-checklist.mjs';
 import { currentPass } from '../src/shared/shape/role-review.mjs';
 import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
@@ -690,13 +690,13 @@ const isLocalRequest = createHostGuard(REMOTE_ACCESS.allowedHosts);
 const identityCheck = REMOTE_ACCESS_CHECK.errors.length ? null : createIdentityCheck(REMOTE_ACCESS);
 // local | container | hosted (src/core/deployment.mjs): what Ask Worca is told about where it runs.
 const DEPLOYMENT = detectDeployment(process.env, { remoteMode: REMOTE_MODE });
-// Beta keepAwake flag, default on locally (docs/feature-flags.md): one OS child holds off idle system sleep while
-// any pipeline run has agents working. syncKeepAwake() is cheap and idempotent: call it wherever a
-// run's status or pendingQuestion changes, and when the flag flips.
+// Keep awake, the account menu's switch (keepAwake setting, default on locally): one OS child holds off idle
+// system sleep while any pipeline run has agents working. syncKeepAwake() is cheap and idempotent: call it
+// wherever a run's status or pendingQuestion changes, and when the setting changes.
 const keepAwake = createKeepAwake({ deployment: DEPLOYMENT, log: (line) => console.warn(line) });
 const KEEP_AWAKE_EVENTS = new Set(['question', 'night-decision', 'done', 'error', 'exec', 'state']);
 function syncKeepAwake() {
-  try { keepAwake.update(flagEnabled('keepAwake') ? countWorking(runs.values()) : 0); }
+  try { keepAwake.update(keepAwakeEnabled() ? countWorking(runs.values()) : 0); }
   catch (err) { console.error(`[worca-ui] keep-awake update failed: ${err && err.message ? err.message : err}`); }
 }
 const SEEN_SIGN_INS = new Set();
@@ -1173,7 +1173,7 @@ metricsEvents.on('changed', (e) => emitChanged('team-metrics-changed', e && e.ac
 policyEvents.on('changed', (e) => emitChanged('team-policy-changed', e && e.action ? e.action : null));
 projectSyncEvents.on('changed', (e) => emitChanged('project-sync-changed', e && e.projectKey ? e.projectKey : null));
 // D6: every open tab rewrites <html data-flags> and #flag-gates, without a reload.
-flagEvents.on('changed', (flags) => { broadcast({ type: 'flags', flags }); syncKeepAwake(); });
+flagEvents.on('changed', (flags) => broadcast({ type: 'flags', flags }));
 
 // Every comment mutation in THIS process (the REST routes below) pokes the open
 // Diff tabs. A poke carries ids only — no payload, so it is idempotent and has no
@@ -2270,7 +2270,7 @@ function attachAskFollower(orch, { threadId, runId, cardId, quiet = false }) {
     threadId,
     runId,
     cardId,
-    // Quiet (a PR fix-run card, askPostPrFixCards): the link and the ask-run-status frames, never a notice — the card
+    // Quiet (a PR fix-run card): the link and the ask-run-status frames, never a notice — the card
     // shows the run, and the watcher's outcome lands on it.
     post: quiet ? () => {} : ({ text, href }) => {
       try {
@@ -2393,7 +2393,7 @@ function askTrackRun(threadId, input, pin) {
   return { ok: true, card: { type: 'progress', pipelineId, runId: liveRunId, projectKey: projKey, workspaceId, title, label, status } };
 }
 
-/** A run link that belongs to a PR fix-run card (askPostPrFixCards) follows its run quietly: no Run resumed / finished
+/** A run link that belongs to a PR fix-run card follows its run quietly: no Run resumed / finished
  *  rows — the card shows the run, and its outcome. */
 function askLinkIsPrFix(link) {
   if (!link || !link.cardId) return false;
@@ -2411,11 +2411,9 @@ function askPrFixRun(event) {
     try { if (event.pipelineId) setRoundOutcome(event.pipelineId, event.outcome); }
     catch (err) { console.error(`[worca-ui] fix round outcome for ${event.runId} failed: ${err && err.message ? err.message : err}`); }
   }
-  // Shaper s5 (D22): with the gate on, a fix run is a round of the PR's run: it reports into that run's card.
-  if (shapeFirstEnabled()) { askPrFixRound(event); return event.phase === 'ended' ? askSettlePrFixCards(event) : []; }
-  if (event.phase === 'started') return askPostPrFixCards(event);
-  if (event.phase === 'ended') return askSettlePrFixCards(event);
-  return [];
+  // Shaper s5 (D22): a fix run is a round of the PR's run: it reports into that run's card.
+  askPrFixRound(event);
+  return event.phase === 'ended' ? askSettlePrFixCards(event) : [];
 }
 
 /** Shaper s5 (D22): a fix run reports into the run card already in each chat holding the PR — no card, row or link. */
@@ -2427,44 +2425,6 @@ function askPrFixRound({ watch }) {
     const at = featureOfPipeline(origin);                  // { featureId, … } | null
     if (at && at.featureId) broadcastFeature(currentFeatureId(at.featureId));
   } catch (err) { console.error(`[worca-ui] fix round for ${watch.prUrl} failed: ${err && err.message ? err.message : err}`); }
-}
-
-function askPostPrFixCards({ watch, runId, trigger, once }) {
-  const posted = [];
-  const seen = new Set(askFindFixRunCards(runId).map((c) => c.threadId));   // one card per fix run per chat
-  const entry = runs.get(runId) || null;                                    // startRunHandler set it before answering 200
-  let origin = null;
-  if (!entry || !entry.projectDir) { try { origin = prWatchOrigin(watch); } catch { origin = null; } }
-  const dir = (entry && entry.projectDir) || (origin && origin.projectDir) || '';
-  const why = trigger && typeof trigger === 'object' && typeof trigger.label === 'string' ? trigger : { kinds: [], label: 'Pull request feedback' };
-  for (const link of askFindPullRequestCards(watch.prUrl)) {
-    if (seen.has(link.threadId)) continue;
-    seen.add(link.threadId);
-    try {
-      const cardId = askNewId('card');
-      const status = (entry && entry.status) || 'starting';
-      const card = {
-        type: 'progress', pipelineId: null, runId,
-        projectKey: dir ? projectKey(dir) : ((origin && origin.projectKey) || null), workspaceId: null,
-        title: (entry && entry.title) || 'PR fix run',
-        label: String(dir).split(/[\\/]/).filter(Boolean).pop() || '',
-        status,
-        fix: { prUrl: watch.prUrl, memberKey: link.memberKey, originPipelineId: link.pipelineId,
-          trigger: Array.isArray(why.kinds) ? why.kinds : [], triggerLabel: why.label, once: once === true },
-      };
-      const text = `PR watch started a fix run on ${watch.prUrl}: ${why.label}`;
-      const m = askAppendMessage(link.threadId, { role: 'system', text, blocks: [{ kind: 'card', id: cardId, state: 'tracked', card }] });
-      try { askLinkRun(link.threadId, { runId, cardId, status }); } catch { /* a link for this run exists already: the card finds it by run id */ }
-      if (entry && entry.orch && !SETTLED_RUN.has(String(entry.status || '')) && !askFollowerAttached(link.threadId, runId)) {
-        attachAskFollower(entry.orch, { threadId: link.threadId, runId, cardId, quiet: true });
-      }
-      broadcast({ type: 'ask-message', threadId: link.threadId, message: m, unread: true });
-      posted.push({ threadId: link.threadId, cardId });
-    } catch (err) {
-      console.error(`[worca-ui] PR fix-run card for ${watch.prUrl} failed: ${err && err.message ? err.message : err}`);
-    }
-  }
-  return posted;
 }
 
 function askSettlePrFixCards({ runId, pipelineId, outcome }) {
@@ -2570,7 +2530,6 @@ const startRunHandler = async (req, res) => {
     const presetOwner = internal ? (typeof stored.presetOwner === 'string' && stored.presetOwner ? stored.presetOwner : null) : askViewer(req);
     let presetRow = null;
     if (body.presetId !== undefined) {
-      if (!flagEnabled('runPresets')) return badRequest(res, 'presetId needs the Run presets feature (Settings › Labs features)');
       presetRow = readPreset(body.presetId, { owner: presetOwner });
       // 404 like the preset routes: a missing and another person's preset answer the same (R-sec-3).
       if (!presetRow) return res.status(404).json({ error: `preset ${JSON.stringify(String(body.presetId).slice(0, 40))} not found` });
@@ -2695,8 +2654,8 @@ const startRunHandler = async (req, res) => {
     // orchestrator resolves topology + per-project run-config into an executable
     // plan at run start; here we only normalize + reject an unknown id up front
     // so the client gets a clean 400 instead of a mid-run error event.
-    // Shape it first (spec D9/D12): `shape` and the shape workflows only while the gate is on.
-    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { enabled: shapeFirstEnabled(), internal: !!internal });
+    // Shape it first (spec D9/D12): `shape` and the shape workflows.
+    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { internal: !!internal });
     if (!shapeReq.ok) return badRequest(res, shapeReq.error);
     const { shape: askedShape } = shapeReq;
     // L7: a sliced Shape-it-first run chains tickets per slice, and a run without a project cannot be scheduled. So with
@@ -3857,11 +3816,10 @@ async function fireTicket(ticket) {
   if (resumePipelineId) return fireResumeTicket(ticket, resumePipelineId);
   let body = { ...(ticket.request || {}) };
   // A ticket that follows a preset gets the preset's CURRENT setup before anything else reads the body (D4).
-  // A missing preset or a disabled flag is a permanent failure that names the preset; a broken one is the handler's 409.
+  // A missing preset is a permanent failure that names the preset; a broken one is the handler's 409.
   if (ticket.presetId) {
     const stored = body.internal && typeof body.internal === 'object' ? body.internal : {};
     const name = typeof stored.presetName === 'string' && stored.presetName ? stored.presetName : ticket.presetId;
-    if (!flagEnabled('runPresets')) return { ok: false, error: `it follows the run preset "${name}", and run presets are turned off (Settings › Labs)`, transient: false };
     const preset = readPreset(ticket.presetId, { owner: typeof stored.presetOwner === 'string' && stored.presetOwner ? stored.presetOwner : null });
     if (!preset) return { ok: false, error: `Preset "${name}" no longer exists`, transient: false };
     const keep = Array.isArray(stored.presetOverrides) ? stored.presetOverrides.filter((k) => typeof k === 'string') : [];
@@ -3956,7 +3914,6 @@ function liveProbe({ id, pipelineId }) {
 
 /** D17: a chain whose first run is a slice carries its feature (gated; a lookup error keeps the plain chain). */
 function withChainFeatures(chains) {
-  if (!shapeFirstEnabled()) return chains;
   return chains.map((c) => {
     try { const feature = chainFeature(c.members); return feature ? { ...c, feature } : c; } catch { return c; }
   });
@@ -3972,7 +3929,7 @@ function afterRunSettled(orch) {
   let card;
   try {
     const st = orch.getState?.();
-    // The Ship card is offered once the last slice is done (offerShipCard checks, and is gated on shapeFirst).
+    // The Ship card is offered once the last slice is done (offerShipCard checks).
     if (orch.runShape?.slice && st?.status === 'done' && st.id) {
       card = Promise.resolve().then(() => offerShipCard(st.id))
         .catch((err) => console.error(`[worca-ui] ship card failed: ${err?.message || err}`));
@@ -4914,10 +4871,8 @@ app.post('/api/answer', (req, res) => {
 });
 
 // POST /api/runs/:id/answer  -> answer the run's plan approval stop (shape-it-first D2/D10)
-// body: { id, decision: 'approve'|'revise'|'stop', feedback?, source? }. 404 while the shapeFirst gate is off — a run
-// already held then is still answered through POST /api/answer (never stranded, D12).
+// body: { id, decision: 'approve'|'revise'|'stop', feedback?, source? }.
 app.post('/api/runs/:id/answer', (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   const runId = req.params.id;
   const entry = runs.get(runId);
   if (!entry) return res.status(404).json({ error: 'unknown run' });
@@ -4950,11 +4905,10 @@ function liveSliceOf(id) {
   if (SETTLED_RUN.has(status) && status !== 'paused') return null;
   return liveSliceFrom({ runId: e.id, status, pendingQuestion: e.pendingQuestion, approved: e.orch.state?.shaping?.approved });
 }
-function broadcastFeature(id) { if (id && shapeFirstEnabled()) broadcast({ type: 'shape-feature', id }); }
+function broadcastFeature(id) { if (id) broadcast({ type: 'shape-feature', id }); }
 /** F42: the run-event and tick hooks. Gate first (no query while it is off), and never let a throw escape: in wireRun
  *  it would drop the run's own done/state frame (record() comes after the hook), in schedulerTick the rest of the tick. */
 function broadcastFeaturesOf(lookup) {
-  if (!shapeFirstEnabled()) return;
   try { for (const id of lookup()) broadcastFeature(id); }
   catch (err) { console.error(`[worca-ui] shape-feature broadcast failed: ${err?.message || err}`); }
 }
@@ -4974,7 +4928,6 @@ function shapeRefused(res, out) {
 }
 
 app.get('/api/shape/features/:id', async (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     // F47: a re-planned feature answers with the feature that carries on; `replanOf` names the one asked for.
     const cur = currentFeatureId(req.params.id);
@@ -4993,7 +4946,6 @@ app.get('/api/shape/features/:id', async (req, res) => {
 
 // D16, D22: where a run sits in its feature, for the run page line, the Chat home card and Ship it (P11).
 app.get('/api/shape/pipelines/:pid/slice', (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     const out = sliceOfPipeline(req.params.pid, { live: liveSliceOf });
     if (!out) return res.status(404).json({ error: 'not a slice' });
@@ -5004,7 +4956,6 @@ app.get('/api/shape/pipelines/:pid/slice', (req, res) => {
 // Shaper s2 (D10): the Chat feature card — the planning run's decision log, and once split the feature view with its
 // open ask. Synchronous: Express 4 catches a sync throw, and shapeRouteError answers it.
 app.get('/api/shape/pipelines/:pid/card', (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     // shaped: the entry's in-memory shaping (state.shaping is never persisted). A settled entry still carries it.
     const out = shaperCard(req.params.pid, { live: liveSliceOf, shaped: (pid) => !!liveRunEntry(pid)?.orch?.state?.shaping });
@@ -5014,7 +4965,6 @@ app.get('/api/shape/pipelines/:pid/card', (req, res) => {
 });
 
 app.post('/api/shape/features/:id/cancel', (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     const out = cancelRest(req.params.id, { by: actorOf(req) });
     if (shapeRefused(res, out)) return;
@@ -5025,7 +4975,6 @@ app.post('/api/shape/features/:id/cancel', (req, res) => {
 });
 
 app.post('/api/shape/features/:id/resume', async (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     const by = actorOf(req);
     const out = resumeFeature(req.params.id, { live: liveSliceOf, by });
@@ -5047,7 +4996,6 @@ app.post('/api/shape/features/:id/resume', async (req, res) => {
 });
 
 app.post('/api/shape/features/:id/replan', async (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     const out = replanRest(req.params.id, { live: liveSliceOf, by: actorOf(req) });
     if (shapeRefused(res, out)) return;
@@ -5061,7 +5009,6 @@ app.post('/api/shape/features/:id/replan', async (req, res) => {
 });
 
 app.post('/api/shape/features/:id/approve-each', (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     const on = req.body && req.body.on;
     if (typeof on !== 'boolean') return badRequest(res, 'on must be true or false');
@@ -5207,7 +5154,6 @@ async function watchShipped(pairs, repoDir, actor) {
   }
 }
 app.post('/api/shape/features/:id/ship', async (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     const b = req.body || {};
     if (!(b.watch === undefined || typeof b.watch === 'boolean')) return badRequest(res, 'watch must be a boolean');
@@ -5429,7 +5375,6 @@ function findShipCardIn(threadId, featureId) {
 }
 /** Shaper s4: when the last run settles done, the feature's thread gets its Ship card (once). Best effort. */
 async function offerShipCard(pipelineId) {
-  if (!shapeFirstEnabled()) return null;
   const at = featureOfPipeline(pipelineId);
   if (!at) return null;
   const fid = currentFeatureId(at.featureId);
@@ -5473,7 +5418,6 @@ function syncShipCard(featureId) {
 const PLAN_STATE = { done: 'done', stopped: 'stopped', error: 'stopped', interrupted: 'stopped', paused: 'paused', starting: 'running', running: 'running' };
 
 app.get('/api/shape/plans', (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     const rows = listShapePlans({ limit: 30 }).map((p) => {
       // Before the run's first `state` event the link has no pipeline id yet: fall back to its run id.
@@ -5491,7 +5435,6 @@ const PLAN_TEXT_MAX = 512 * 1024;   // characters (UTF-16 units), not bytes
 
 // The plan card's text (S4/S6): the open plan ask's file, the approved one, or ?round=N's. The path is the server's own.
 app.get('/api/runs/:id/plan', async (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   const entry = runs.get(req.params.id);
   if (!entry) return res.status(404).json({ error: 'unknown run' });
   const file = planFileOf({ pendingQuestion: entry.pendingQuestion, shaping: entry.orch?.state?.shaping }, req.query.round);
@@ -5507,7 +5450,6 @@ app.get('/api/runs/:id/plan', async (req, res) => {
 
 // Save to plans/ (D10, S7): into the registered checkout, never over a file without {overwrite:true}, never a commit.
 app.post('/api/runs/:id/plan/save', async (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   const entry = runs.get(req.params.id);
   if (!entry) return res.status(404).json({ error: 'unknown run' });
   if (entry.workspaceId || !entry.projectDir) return res.status(409).json({ error: 'Save to plans/ needs a single-project run' });
@@ -5944,7 +5886,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   for (const link of askFindRunLinksByPipeline(pipelineId)) {
     try {
       if (!askUpdateRunLink(link.threadId, link.runId, { runId, status: 'running' })) continue;
-      // A PR fix-run card follows quietly (askPostPrFixCards): it shows the resumed run itself — no "Run resumed" row.
+      // A PR fix-run card follows quietly: it shows the resumed run itself — no "Run resumed" row.
       const quiet = askLinkIsPrFix(link);
       if (!quiet) {
         const text = `Run resumed: "${saved.row.title || 'run'}"`;
@@ -6555,8 +6497,8 @@ app.get('/api/stats', async (req, res) => {
   // Credential broker: model spend per person in the same window, as the broker metered it
   // (the authoritative figure: it saw every request). Absent with the broker off.
   if (brokerEnabled() && !stats.filtered) stats.byPerson = await statsByPerson(stats.windowStartMs, stats.windowEndMs);
-  // Shaper (D28): shaped vs unshaped runs of the same size. Absent with the flag off.
-  if (shapeFirstEnabled()) stats.shaping = shapingGroups(stats.range === 'all' ? 0 : stats.windowStartMs, stats.windowEndMs);
+  // Shaper (D28): shaped vs unshaped runs of the same size.
+  stats.shaping = shapingGroups(stats.range === 'all' ? 0 : stats.windowStartMs, stats.windowEndMs);
   res.json(stats);
 });
 
@@ -7144,7 +7086,7 @@ app.get('/api/tag-dimensions', async (req, res) => {
       // s2 (D7, D8): the New run / Ask card fill, sent ONLY for a project target (a workspace has no single project).
       // #923: the project's defaults plus the slots; the last run's tags only fill mandatory dimensions.
       const autofill = projectDir ? autoFillTags({ dims: info.dims, lastUsed: src.lastUsed, projectDefaults: src.projectDefaults }) : undefined;
-      return res.json({ ...info, enforce: flagEnabled('runTags') && info.enforce === true, prefill, ...(autofill ? { autofill } : {}) });
+      return res.json({ ...info, enforce: info.enforce === true, prefill, ...(autofill ? { autofill } : {}) });
     }
     res.json({ ...(await allTagDimensions()), team: await teamTagPolicy() });
   } catch (err) { res.status(500).json({ error: err?.message || String(err) }); }
@@ -9234,13 +9176,13 @@ async function createRunPr({ id, state, target, base, memberKey = null, remotes:
   // attribution footer; skipped when the description already carries it. Guarded like runSourceUrl: the branch is
   // already pushed, so a DB error must not become a failed PR.
   let cl = null;
-  if (shapeFirstEnabled() && !description.includes(CHECKLIST_PR_MARKER)) {
+  if (!description.includes(CHECKLIST_PR_MARKER)) {
     try { cl = latestChecklist(readPipelineExtras(pipelineIdForPr).reviews); } catch { cl = null; }
   }
   const checklistMd = cl ? checklistMarkdown(cl.checklist).trimEnd() : '';
   // D22: a slice's PR starts with its place in the feature and links the other slices' PRs.
   let lead0 = '';
-  if (preamble && shapeFirstEnabled() && !memberKey) { try { lead0 = slicePrPreamble(pipelineIdForPr); } catch { lead0 = ''; } }
+  if (preamble && !memberKey) { try { lead0 = slicePrPreamble(pipelineIdForPr); } catch { lead0 = ''; } }
   const lead = description || title || state.title || feature;
   const prBody = lead0 || description || closing || checklistMd || footer
     ? `${lead0 ? `${lead0}\n\n` : ''}${lead}${closing ? `\n\n${closing}` : ''}${checklistMd ? `\n\n${checklistMd}` : ''}${footer}` : '';
@@ -11487,6 +11429,7 @@ const settingsState = () => ({
   nightMode: nightModeSettings(),                         // night mode: the user layer (only the fields set)
   nightModeEffective: resolveNightConfig({ user: nightModeSettings() }).config,   // no project: the global view
   nightModeToggle: nightModeToggle(),                     // auto | on | off (live switch)
+  keepAwake: keepAwakeEnabled(),                          // the account menu's Keep awake switch
   actions: actionsSettings(),                             // Settings › Runs › Actions (issue #529)
   actionsDetected: autoDetectedBuiltins(),                // what Editor / Terminal fall back to when left blank (null = none found)
   actionsGate: { remote: REMOTE_MODE, enabled: actionsEnabledHere() },
@@ -12098,6 +12041,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasAskWeb = has('askWeb');                // null clears back to unset (a team default applies)
   const hasSmartNaming = has('smartNaming');      // null clears the stored block
   const hasDebugSpawnKey = has('debugSpawnEnabled');
+  const hasKeepAwakeKey = has('keepAwake');
   const hasLimitResumeKey = has('resumeAfterUsageLimit');
   const hasAutoPrDescKey = has('autoGeneratePrDescription');
   const hasUpdateCheckKey = has('updateCheck');
@@ -12230,6 +12174,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     });
     if (has('nightModeToggle')) asSettingsField('nightModeToggle', () => assertNightModeToggleInput(body.nightModeToggle));
     if (hasActionsKey) asSettingsField('actions', () => assertActionsInput(body.actions));
+    if (hasKeepAwakeKey) asSettingsField('keepAwake', () => assertKeepAwakeInput(body.keepAwake));
     if (has('sync')) asSettingsField('sync', () => assertSyncSettingsInput(body.sync));
     if (hasNetworkWaitKey) asSettingsField('networkWait', () => assertNetworkWaitInput(body.networkWait));
     if (hasFlagsKey) asSettingsField('flags', () => checkFlags(body.flags));   // validate + cascade dry run, before anything is written
@@ -12261,6 +12206,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     if (hasAskWeb) await setAskWeb(body.askWeb);
     if (hasSmartNaming) await setSmartNaming(body.smartNaming);
     if (hasDebugSpawnKey) await setDebugSpawnEnabled(body.debugSpawnEnabled);
+    if (hasKeepAwakeKey) { await setKeepAwake(body.keepAwake); syncKeepAwake(); }
     if (hasLimitResumeKey) await setResumeAfterUsageLimit(body.resumeAfterUsageLimit);
     if (hasAutoPrDescKey) await setAutoGeneratePrDescription(body.autoGeneratePrDescription);
     if (hasUpdateCheckKey) {
@@ -12300,7 +12246,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -13069,13 +13015,13 @@ app.get('/api/workflows', async (req, res) => {
       const all = await listWorkflows({ includeArchived: true });
       return res.json({ workflows: all.filter((w) => w.archivedAt) });
     }
-    // CONTRACT: [ GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, then the Shape it first built-in while
-    // the shapeFirst gate is on, then the saved rows ]. The built-ins are never persisted rows (listWorkflows
+    // CONTRACT: [ GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, then the Shape it first built-in,
+    // then the saved rows ]. The built-ins are never persisted rows (listWorkflows
     // filters their ids), so none appears twice.
     // P3 (U13): each row says whether one of its agents expects a code repository (the No-project note).
     const registry = loadAgentRegistry(AGENTS_DIR);
     res.json({ workflows: [GRAPH_DEFAULT_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW,
-      ...(shapeFirstEnabled() ? [GRAPH_SHAPE_WORKFLOW] : []), ...(await listWorkflows())]
+      GRAPH_SHAPE_WORKFLOW, ...(await listWorkflows())]
       .map((wf) => ({ ...wf, needsRepo: graphNeedsRepo(wf, registry) })) });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
@@ -13314,9 +13260,8 @@ app.post('/api/workflows/:id/export', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Run presets (docs/run-presets.md, #712): named New run setups in SQLite (run_presets), behind the
-// experimental `runPresets` flag (404 when off). Per person on a shared deployment (askViewer): another
-// owner's preset answers 404, as Ask threads do. A saved setup is full picks — snapshotFor resolves the
+// Run presets (docs/run-presets.md, #712): named New run setups in SQLite (run_presets). Per person on a
+// shared deployment (askViewer): another owner's preset answers 404, as Ask threads do. A saved setup is full picks — snapshotFor resolves the
 // graph for the basis target and fills every agent node and loop — so a later project change never
 // changes what a preset runs. presetRefusals is the ONE check (pick time here, start time in startRunHandler).
 // ---------------------------------------------------------------------------
@@ -13661,7 +13606,6 @@ app.put('/api/proxy/settings', async (req, res) => {
   }
 });
 
-app.use('/api/presets', requireFlag('runPresets'));
 
 app.get('/api/presets', (req, res) => {
   res.json({ presets: listPresets({ owner: askViewer(req) }) });
@@ -13722,13 +13666,13 @@ async function runPresetScope(kind, target) {
 }
 
 // Save setup as preset (slice 2): the setup a run kept at start (pipelines.run_setup, v62), saved into the viewer's own presets.
-app.get('/api/pipelines/:id/setup', requireFlag('runPresets'), (req, res) => {
+app.get('/api/pipelines/:id/setup', (req, res) => {
   const run = readRunSetup(req.params.id);
   if (run === undefined) return res.status(404).json({ error: 'run not found' });
   res.json({ setup: run.setup, target: run.target });
 });
 
-app.post('/api/pipelines/:id/preset', requireFlag('runPresets'), async (req, res) => {
+app.post('/api/pipelines/:id/preset', async (req, res) => {
   try {
     const body = req.body || {};
     const run = readRunSetup(req.params.id);
@@ -14240,8 +14184,8 @@ app.get('/api/ask/runs/:id', async (req, res) => {
     if (!row || row.deleted_at) return res.status(404).json({ error: 'run not found' });
     const state = readPipelineStateById(row.id);
     // Shape it first, plan in slices: state.shaping is in memory only (F46), so a finished or unloaded slice 1 would
-    // lose its feature strip. The feature row is durable. Best effort, and only while the gate is on.
-    if (!state.shaping && shapeFirstEnabled()) {
+    // lose its feature strip. The feature row is durable. Best effort.
+    if (!state.shaping) {
       try {
         const at = featureOfPipeline(state.id);
         if (at && at.idx === 1) state.shaping = { feature: { id: at.featureId, index: 1 } };
@@ -14607,7 +14551,7 @@ function askWebAccessFor(threadId, ctx) {
 async function askSystemPromptFor(catalog, { web = null, mcp = null, commands = false, engine = 'claude' } = {}) {
   const scripts = { ...(await askScriptPromptInput({ enabled: true })), edits: scriptToolsEnabled() };
   return askBuildSystemPrompt(catalog, { scripts, deployment: DEPLOYMENT, web, mcp, commands, git: gitAvailable(),
-    ...(engine !== 'claude' ? { engine } : {}), ...(shapeFirstEnabled() ? { shape: true } : {}) });
+    ...(engine !== 'claude' ? { engine } : {}), shape: true });
 }
 
 /** The Workflows chat's system prompt (D10): composer rules + catalog + scripts/web — no MCP, no commands, no hosting rule. */
@@ -14786,11 +14730,9 @@ async function resolveAskContext(threadId, ctx = {}, listedAttachments = [], cur
       };
     });
     if (links.length) out.linkedRuns = links;
-    // Shaper (D9): what this thread follows, read-only, for propose_changes / route_message. Gate off: no line.
-    if (shapeFirstEnabled()) {
-      try { const s = shapeThreadFacts(threadWork(askListRunLinks(threadId), shapeToolFactDeps)); if (s) out.shape = s; }
-      catch { /* absent line */ }
-    }
+    // Shaper (D9): what this thread follows, read-only, for propose_changes / route_message.
+    try { const s = shapeThreadFacts(threadWork(askListRunLinks(threadId), shapeToolFactDeps)); if (s) out.shape = s; }
+    catch { /* absent line */ }
     const cards = [];
     for (const m of askListMessages(threadId)) {
       if (!Array.isArray(m.blocks)) continue;
@@ -15688,7 +15630,6 @@ function postThreadExchange(threadId, text, card) {
  *  live runs overlay (an open step the classic MCP child cannot see, D7); a refusal is a notice in the reply. */
 const shapeToolFactDeps = { live: (id) => liveSliceOf(id), readPrState, findPipelineRowById, readRunTags, readRunLabels };
 function askShapeAction(req, threadId) {
-  if (!shapeFirstEnabled()) return { ok: false, notice: 'Not applied: Shaper is off' };
   if (!threadId) return { ok: false, notice: 'Not applied: no chat to post to' };
   let r;
   try { r = shapeToolCheck(req.kind, req, askListRunLinks(threadId), shapeToolFactDeps); }
@@ -15698,7 +15639,6 @@ function askShapeAction(req, threadId) {
 
 // Shaper s5 (D5): Ask for changes from a finished card. body { pipelineId? | featureId?, text } → 201 { message }
 app.post('/api/ask/threads/:id/changes', async (req, res) => {
-  if (!requireShapeFirst(req, res)) return;
   try {
     const id = askIdParam(res, req.params.id, 'thread');
     if (!id) return;
@@ -16162,7 +16102,6 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
       if (found.block.state !== 'proposed') return res.status(409).json({ error: `card is ${found.block.state}` });
       if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
       if (v.verb === 'not-now') { const block = flipCard(id, cardId, { state: 'declined' }); return block ? res.json({ block }) : res.status(409).json({ error: 'card vanished' }); }
-      if (!shapeFirstEnabled()) return res.status(404).json({ error: 'not found' });
       askCardBusy.add(cardId);
       let r;
       try {
@@ -16190,7 +16129,6 @@ app.post('/api/ask/threads/:id/cards/:cardId', async (req, res) => {
         const block = flipCard(id, cardId, { state: 'declined' });
         return block ? res.json({ block }) : res.status(409).json({ error: 'card vanished' });
       }
-      if (!shapeFirstEnabled()) return res.status(404).json({ error: 'not found' });   // requireShapeFirst's answer
       askCardBusy.add(cardId);
       try {
         const r = await shipFeatureNow(currentFeatureId(found.block.card.featureId), v.mode, { actor: actorOf(req), release: v.release });
@@ -18912,6 +18850,7 @@ if (isMain) {
   // closed: without the proxy, agents would have no restriction at all.
   // D6: the old Labs flag becomes networkProxy.enabled, once, before the proxy reads it.
   await migrateCorporateProxyFlag();
+  await migrateKeepAwakeFlag();   // the graduated flag becomes the keepAwake setting
   let fetchProxy = null;
   try {
     EGRESS_LIVE = await startLiveEgress({

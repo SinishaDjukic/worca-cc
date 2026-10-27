@@ -12,7 +12,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
-import { applyFlags } from '../ui/public/flags.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
 const trackDom = useDomRelease(afterEach);
@@ -184,14 +183,13 @@ test('while Statistics is open, pipelines-changed, ask-done and ask-error refetc
   ]);
 });
 
-test('Last month, Group by and Custom drive the /api/stats query', async () => {
+test('Last month, By person and Custom drive the /api/stats query', async () => {
   const ctx = await boot();                    // calls[] records every /api/stats URL
   await ctx.showStats();
   const doc = ctx.window.document;
   doc.querySelector('#stats-range [data-range="lastMonth"]').click(); await ctx.tick();
   assert.ok(ctx.calls.some((u) => u.includes('range=lastMonth')));
-  const group = doc.getElementById('stats-group');
-  group.value = 'person'; group.dispatchEvent(new ctx.window.Event('change')); await ctx.tick(); await ctx.tick();
+  doc.querySelector('#stats-view [data-stats-view="person"]').click(); await ctx.tick(); await ctx.tick();
   assert.ok(ctx.calls.some((u) => u.includes('groupBy=person')));
   doc.querySelector('#stats-range [data-range="custom"]').click(); await ctx.tick(); await ctx.tick();
   assert.equal(doc.getElementById('stats-custom').hidden, false);
@@ -245,7 +243,7 @@ test('a fresh load at #stats shows Statistics, not Chat; a late /api/flags at si
   ]);
 });
 
-// View chips (#718 slice 4; Cost: labels-cost-tags s3): Overview · By person · Cost replace the Group by while runTags is on.
+// View chips (#718 slice 4; Cost: labels-cost-tags s3): Overview · By person · Cost.
 const json = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
 const VOCAB = [{ key: 'client', count: 2, plain: false, valued: true }];
 const fact = (id, usd, tags) => ({ id, usd, hours: 1, inCohort: true, status: 'finished', pr: null, person: 'Developer A',
@@ -273,16 +271,13 @@ test('view chips: Overview, By person and Cost, with or without tags and dimensi
     { name: 'a dimension only', dims: CC, keys: [] },
   ].map((row) => ({ name: row.name, run: async () => {
     const ctx = await boot({ fetchHandler: tagHandler(row.dims, { keys: row.keys }) });
-    applyFlags({ runTags: true }, ctx.window.document);
     await ctx.showStats(); await ctx.tick(); await ctx.tick();
     assert.deepEqual(chipTexts(ctx.window.document), ['Overview', 'By person', 'Cost']);
-    assert.equal(ctx.window.document.getElementById('stats-group-wrap').hidden, true);
   } })));
 });
 
 test('Cost: report=1 without byTag or tag filters, the Cost report renders, the tag field and Person hide, remembered', async () => {
   const ctx = await boot({ fetchHandler: tagHandler(CC) });
-  applyFlags({ runTags: true }, ctx.window.document);
   await ctx.showStats(); await ctx.tick(); await ctx.tick();
   const doc = ctx.window.document;
   doc.querySelector('#stats-view [data-stats-view="cost"]').click(); await ctx.tick(); await ctx.tick(); await ctx.tick();
@@ -303,7 +298,6 @@ test('Cost: report=1 without byTag or tag filters, the Cost report renders, the 
 
 test('Cost: Download CSV saves the report under statistics-month-cost-cc.csv with the hours columns', async () => {
   const ctx = await boot({ fetchHandler: tagHandler(CC), storage: { 'worca-cc.stats.view': 'cost' } });
-  applyFlags({ runTags: true }, ctx.window.document);
   // app.js calls the bare URL and Blob, which are Node's globals (boot copies only window, document, location,
   // localStorage, WebSocket, fetch and navigator), so stub Node's URL, not ctx.window.URL. The <a> is jsdom's.
   const blobs = [];
@@ -326,7 +320,6 @@ test('Cost: Download CSV saves the report under statistics-month-cost-cc.csv wit
 
 test('remembered chip: a stored "tag" opens Cost; By person sends groupBy=person and renders only its table', async () => {
   const ctx = await boot({ fetchHandler: tagHandler(CC), storage: { 'worca-cc.stats.view': 'tag' } });
-  applyFlags({ runTags: true }, ctx.window.document);
   await ctx.showStats(); await ctx.tick(); await ctx.tick();
   assert.ok(ctx.calls.some((u) => u.includes('report=1')));
   const doc = ctx.window.document;
@@ -335,17 +328,6 @@ test('remembered chip: a stored "tag" opens Cost; By person sends groupBy=person
   assert.ok(ctx.calls.at(-1).includes('groupBy=person'));
   assert.equal(ctx.window.localStorage.getItem('worca-cc.stats.view'), 'person');
   assert.equal(doc.querySelectorAll('#stats-body .chart-card').length, doc.querySelectorAll('#stats-body .groups-card').length);
-});
-
-test('flag off: #stats-group is shown, no chips, no byTag even with a stored "tag"', async () => {
-  const ctx = await boot({ fetchHandler: tagHandler(CC), storage: { 'worca-cc.stats.view': 'tag' } });
-  await ctx.showStats(); await ctx.tick(); await ctx.tick();
-  const doc = ctx.window.document;
-  assert.equal(doc.getElementById('stats-group-wrap').hidden, false);
-  assert.equal(doc.getElementById('stats-view').dataset.flag, 'runTags');
-  assert.ok(ctx.calls.length > 0, 'a stats request was made');
-  assert.ok(ctx.calls.every((u) => !u.includes('byTag') && !u.includes('report=1')));
-  assert.equal(doc.querySelector('#stats-body .alloc-card'), null);
 });
 
 test('Team metrics › Cost CSS: tokens only (light and dark); hidden parts hide through the global [hidden] rule', () => {

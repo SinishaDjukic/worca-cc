@@ -11,7 +11,6 @@
 // the send), which is where the home arms its hero → dock glide (onSend).
 import { registerComposerAddon } from './extensions.mjs';
 import { homeIcon } from './home-icons.mjs';
-import { shapeFirstOn } from './shape-gate.mjs';
 import { INTENT_LEADS } from '../../../src/shared/intent-leads.mjs';
 
 export const INTENT_ADDON_ID = 'intent';
@@ -19,12 +18,12 @@ export const EXAMPLE_MS = 3500;
 
 /** Each intent: chip label + icon, the placeholder while it is set, the sentence the sent text starts with, and —
  *  where the composer could not be sent empty otherwise — the text a quick action leaves in it (`prefill`). A tile's
- *  `badge` shows under its label on the home. Shaper (`shape`) is Shape it first's, gated.
+ *  `badge` shows under its label on the home. Shaper (`shape`) is Shape it first's.
  *  Every one is a real Ask Worca capability (src/core/ask/tools.mjs — the map is in home-actions.mjs). */
 export const INTENTS = Object.freeze({
   run: Object.freeze({ label: 'New run', icon: 'run', placeholder: 'Describe the task…', lead: INTENT_LEADS.run }),
   shape: Object.freeze({ label: 'Shaper', icon: 'shape', placeholder: 'Describe the problem…',
-    lead: INTENT_LEADS.shape, badge: 'Beta' }),
+    lead: INTENT_LEADS.shape }),
   workflow: Object.freeze({ label: 'Build workflow', icon: 'workflow', placeholder: 'Describe the workflow…', lead: INTENT_LEADS.workflow }),
   schedule: Object.freeze({ label: 'Schedule a run', icon: 'schedule', placeholder: 'What should run, and when?', lead: INTENT_LEADS.schedule }),
   track: Object.freeze({ label: 'Track a run', icon: 'track', placeholder: 'Which run? Pick one or type its name', lead: INTENT_LEADS.track }),
@@ -69,8 +68,7 @@ const asWorkflow = (w) => (w && typeof w.id === 'string' && w.id
   ? Object.freeze({ id: w.id, name: String(w.name || w.id) }) : null);
 
 /** The person's sent text split for their bubble (D21): the Shaper lead is for the model only, so a message
- *  that opens with it — alone, or then a blank line — shows the intent chip and the rest. Exact match, ungated: only a
- *  send made with the gate on can carry it, and a reload renders before the flags arrive. */
+ *  that opens with it — alone, or then a blank line — shows the intent chip and the rest. Exact match. */
 export function splitIntentLead(text) {
   const s = String(text ?? '');
   const lead = INTENTS.shape.lead;
@@ -92,7 +90,6 @@ export function createIntentAddon({ win = globalThis, onSend = null, examples = 
 
   function set(id, { focus = true, workflow: wf = null } = {}) {
     if (!known(id)) return false;
-    if (id === 'shape' && !shapeFirstOn()) return false;
     current = id;
     workflow = id === 'run' ? asWorkflow(wf) : null;
     pending = null;

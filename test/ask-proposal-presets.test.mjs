@@ -37,7 +37,7 @@ const QUICK = { id: 'rp_aaaaaaaaaaaa', name: 'Quick fix', scope: { kind: 'projec
     overlay: { nodes: { n_plan: { model: 'claude-haiku-4-5', effort: 'medium', fanOut: false } }, wires: { w_review: { maxCycles: 2 } } } } };
 const OPEN = { id: 'rp_bbbbbbbbbbbb', name: 'Wide open', scope: { kind: 'global', ref: null }, setup: { workflowId: 'wf_review' } };
 const PRESETS = { [QUICK.id]: QUICK, [OPEN.id]: OPEN };
-const make = (extra = {}) => createProposalValidator({ ...FAKE_DEPS, presetsOn: () => true,
+const make = (extra = {}) => createProposalValidator({ ...FAKE_DEPS,
   readPreset: async (id, { owner }) => (owner === 'eve' ? null : PRESETS[id] || null), ...extra }).validateProposal;
 
 test('propose_run with presetId returns the preset\'s picks on the card', async () => {
@@ -72,7 +72,7 @@ test('fields the model passes win; another workflow drops the preset\'s agent pi
   assert.equal(r.card.preset.setup.overlay, undefined);
 });
 
-test('unknown, another person\'s, pinned elsewhere, broken, and flag off', async () => {
+test('unknown, another person\'s, pinned elsewhere, broken, and no preset reader', async () => {
   const v = make();
   assert.match((await v({ presetId: 'rp_cccccccccccc', brief: 'x', projectKey: PK }, { owner: null })).errors[0], /preset rp_cccccccccccc not found — list_presets shows the ids/);
   assert.match((await v({ presetId: QUICK.id, brief: 'x', projectKey: PK }, { owner: 'eve' })).errors[0], /not found/);
@@ -82,7 +82,7 @@ test('unknown, another person\'s, pinned elsewhere, broken, and flag off', async
   const broken = await make({ readPreset: async () => gone })({ presetId: QUICK.id, brief: 'x', projectKey: PK }, { owner: null });
   assert.equal(broken.ok, false);
   assert.match(broken.errors.join('; '), /gr_gone/);
-  const off = await make({ presetsOn: () => false })({ presetId: QUICK.id, brief: 'x', projectKey: PK }, { owner: null });
+  const off = await make({ readPreset: null })({ presetId: QUICK.id, brief: 'x', projectKey: PK }, { owner: null });
   assert.deepEqual(off.errors, [PRESET_PROPOSAL_ERRORS.off]);
 });
 
@@ -106,8 +106,7 @@ test('list_presets: the viewer\'s presets for the pinned scope, plus any-project
   assert.equal(out.presets[0].engine, 'claude');
   assert.equal(out.presets[1].engine, null, 'a preset naming no engine runs on the default engine, shown as null');
   assert.equal(out.presets[1].guardrailsId, 'permissive', 'a preset naming none is shown as what it runs');
-  const off = createAskTools({ ...TOOL_DEPS, listPresets: () => null });
-  assert.deepEqual(await off.call('list_presets', {}), { presets: [], note: 'Run presets are turned off.' });
   const without = createAskTools(TOOL_DEPS);
   assert.equal(without.list().some((d) => d.name === 'list_presets'), false, 'not listed without the dep');
+  assert.deepEqual(await without.call('list_presets', {}), { presets: [] });
 });

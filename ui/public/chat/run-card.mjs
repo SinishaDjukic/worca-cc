@@ -14,7 +14,6 @@ import { fmtDur, fmtUsd, isGraphManifest, manifestNodes } from '../graph/run-dec
 import { askKindOf } from '../ask/registry.mjs';
 import { CREATE_PR_LABEL, VIEW_PR_LABEL } from '../ship-words.mjs';
 import { icon as uiIcon } from '../icons.mjs';
-import { shapeFirstOn } from './shape-gate.mjs';
 import { checklistScore } from '../../../src/shared/shape/review-checklist.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME } from '../../../src/shared/no-project.mjs';
 import { changesCounts, folderDoneWords } from '../folder-changes.mjs';
@@ -362,7 +361,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   // the run page title (#967).
   const kindOf = (row, s) => {
     if (id.fix) return '';
-    if (!row) return shapeFirstOn() && s && s.shaping && !s.shaping.approved ? 'Shaping' : '';
+    if (!row) return s && s.shaping && !s.shaping.approved ? 'Shaping' : '';
     const word = kindLabel(row);
     return word === 'Run' ? '' : word;
   };
@@ -607,7 +606,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     const total = (changesCounts(s.changes) || {}).total || 0; const canApply = word.key === 'folder' && !ws && !s.archived && !!s.changes && s.changes.state === 'pending' && total > 0 && typeof controls.openApply === 'function';
     const np = isNoProjectRun(s);
     const lines = resultLines(word, statusText(m || lastM || {}));
-    const sig = JSON.stringify([word, lines, r, arts.map((a) => [a.relPath, a.bytes]), !!s.moreArtifacts, s.artifactsTotal, np, prUrl, canCreate, canApply, shapeFirstOn()]);
+    const sig = JSON.stringify([word, lines, r, arts.map((a) => [a.relPath, a.bytes]), !!s.moreArtifacts, s.artifactsTotal, np, prUrl, canCreate, canApply]);
     if (sig === resultSig) return;
     resultSig = sig;
     createPrBtn = null;
@@ -627,7 +626,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       resultSec.appendChild(rhead);
     }
     // Spec D7 / s3: the shaped run's checklist score; pressing it unfolds the run page's Perspective checklists in place.
-    const tally = r && r.checklist && r.checklist.total && shapeFirstOn() ? r.checklist : null;
+    const tally = r && r.checklist && r.checklist.total ? r.checklist : null;
     if (tally) {
       const row = h('div', `chat-rc-checklist${tally.unmet || tally.missing ? ' is-open' : ''}`);
       const b = button('chat-rc-checklist-btn');
@@ -762,7 +761,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     // ready), so the field waits for curRow.
     const finished = feature ? !!curRow && ['ready', 'in-review', 'merged'].includes(m.state)
       : RESULT_STATUS.has(String((s && s.status) || ''));
-    const show = !!s && !roundLive && finished && s.kind !== 'workspace-run' && shapeFirstOn() && typeof ctx.postChanges === 'function'
+    const show = !!s && !roundLive && finished && s.kind !== 'workspace-run' && typeof ctx.postChanges === 'function'
       && (feature ? !(feature.controls && feature.controls.halted) : !!s.pipelineId);
     changesSlot.hidden = !show;
     if (!show) { changesSlot.replaceChildren(); changesView = null; return; }
@@ -847,8 +846,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     // The same for View PR while the model offers it (an open PR): one View PR on the card, not a second in the footer.
     if (!curRow && viewPrLink && resultSec.contains(viewPrLink) && levelAtLeast('advanced', doc) && ((m && m.actions) || []).includes('open-pr')) own['open-pr'] = viewPrLink;
     else if (viewPrLink) delete viewPrLink.dataset.modelAction;
-    const changesWhy = changesView && !changesSlot.hidden ? ''
-      : !shapeFirstOn() ? 'Turn on Shaper to ask for changes' : 'Ask for changes from the chat that started this run';
+    const changesWhy = changesView && !changesSlot.hidden ? '' : 'Ask for changes from the chat that started this run';
     // A group row goes along, so app.js hands the action to groupAction (D6, D11).
     syncActions(footActions, m, {
       own,
@@ -873,13 +871,12 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     el.classList.toggle('is-question', !!(s && s.pendingQuestion));
     el.dataset.runStatus = status;
     const pid = (s && s.pipelineId) || id.pipelineId || '';
-    // Shaper's slots (feature model, rounds) only with Shape it first on (Ordinary stays ordinary).
-    const on = shapeFirstOn();
-    fm = s && s.shaper && on ? featureCardModel({ own: s, card: s.shaper.card, snapOf: (p) => (s.shaper.snaps && s.shaper.snaps[p]) || null }) : null;
+    // Shaper's slots (feature model, rounds).
+    fm = s && s.shaper ? featureCardModel({ own: s, card: s.shaper.card, snapOf: (p) => (s.shaper.snaps && s.shaper.snaps[p]) || null }) : null;
     const roundSnap = (p) => (s && s.roundSnaps && s.roundSnaps[p]) || null;
     // s5 (D16): a plain run's rounds (the controller fills s.roundSnaps) fill the log; the live one feeds the model (D6).
-    const rm = on ? roundsModel(s) : { log: [], watch: null };
-    const lr = !fm && on && s ? liveRound(s, roundSnap) : null;
+    const rm = roundsModel(s);
+    const lr = !fm && s ? liveRound(s, roundSnap) : null;
     roundRef = lr ? { runId: (lr.m && lr.m.runId) || null, pipelineId: lr.r.pipelineId || null, ticketId: null,
       title: (s && s.title) || '', status: String((lr.m && lr.m.status) || lr.r.status || '') } : null;
     curRow = typeof controls.groupOf === 'function' ? controls.groupOf(ref(), s) || null : null;
@@ -910,7 +907,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     timeEl.textContent = fmtDur(s ? s.elapsedMs : 0);
     costEl.textContent = s && s.costUsd == null ? 'cost unknown' : fmtUsd(s ? s.costUsd : 0);
     const sh = s && s.shaping;
-    if (!fm && sh && sh.approved && on) {           // D15: a feature card's step log says it
+    if (!fm && sh && sh.approved) {           // D15: a feature card's step log says it
       const name = String(sh.approved.file || '').split(/[\\/]/).pop();
       shapedEl.replaceChildren(h('span', 'chat-rc-shaped-stages', 'Clarify ✓ · Plan ✓ · Refine ✓ while planning'),
         h('span', 'chat-rc-shaped-plan', `Plan: ${name}`));
@@ -1050,7 +1047,7 @@ export function createRunCardController({ controls = {}, runStore = null, now = 
   function withShaper(entry, snap) {
     const fn = entry.ctx && entry.ctx.shaperCard;
     const pid = (snap && snap.pipelineId) || entry.ident.pipelineId;
-    if (!snap || !pid || typeof fn !== 'function' || !shapeFirstOn()) return snap;
+    if (!snap || !pid || typeof fn !== 'function') return snap;
     if (!snap.shaping && snap.source === 'live' && !snap.terminal) return snap;   // live and running: shaping would be on it
     const card = fn(pid, entry.onShaper);
     if (!card) return snap;

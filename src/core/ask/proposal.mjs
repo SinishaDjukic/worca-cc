@@ -40,7 +40,6 @@ import { listPriceFor } from '../list-prices.mjs';
 // What a premium-tier pick is priced against on the card: Opus 5.5, the top tier's flagship (output USD per Mtok).
 const OPUS_LIST_OUTPUT = (listPriceFor('claude-opus-5-5') || {}).output || 20;
 import { resolveShapeRequest, isShapeWorkflowId } from '../shape/run.mjs';
-import { shapeFirstEnabled } from '../shape/gate.mjs';
 import { nudgeFor } from '../shape/nudge.mjs';
 import { estimateChoices } from '../shape/estimate.mjs';
 import { DEFAULT_PERSPECTIVES, withProjectFit } from '../../shared/shape/perspectives.mjs';
@@ -166,7 +165,7 @@ function safeIds(plugin) { try { return realListProfileIds(plugin); } catch { re
 const given = (v) => v !== undefined && v !== null && v !== '';
 
 /**
- * @param {{listProjects?:Function, readWorkspace?:Function, readWorkflow?:Function, assertRunnableWorkflow?:Function, readGuardrailSet?:Function, isGitRepo?:Function, pathExists?:Function, shapeFirst?:Function, estimate?:Function|null}} [deps]
+ * @param {{listProjects?:Function, readWorkspace?:Function, readWorkflow?:Function, assertRunnableWorkflow?:Function, readGuardrailSet?:Function, isGitRepo?:Function, pathExists?:Function, estimate?:Function|null}} [deps]
  */
 export function createProposalValidator({
   listProjects = realListProjects,
@@ -192,7 +191,6 @@ export function createProposalValidator({
   remoteName = () => 'origin',
   // Shape it first: the gate (spec D12), and the nudge's as-is / shaped estimates — null by default, so a
   // validator built on fake readers never reads run history; the module singleton below binds the real one.
-  shapeFirst = shapeFirstEnabled,
   estimate = null,
   // Project fit (slice 3): ({projectKey, projectDir}) → true when the project has a house brief. False by default, so a
   // validator built on fake readers never scans a repo; the module singleton below binds the real one.
@@ -214,10 +212,9 @@ export function createProposalValidator({
     try { const p = cachedPolicyFor(projectDir || policyProject); return p ? fieldsForRun(p.doc, { workspaceRun: !projectDir }) : {}; } catch { return {}; }
   },
   costOf = modelCostConfig,
-  // Run presets (#712 slice 3): propose_run's presetId. Null / off by default, so a validator built on fake readers
-  // never reads presets; the module singleton below binds the real ones.
+  // Run presets (#712 slice 3): propose_run's presetId. Null by default, so a validator built on fake readers
+  // never reads presets; the module singleton below binds the real one.
   readPreset = null,
-  presetsOn = () => false,
 } = {}) {
   /** propose_run `nodes` → { nodes, errors, warnings }: the run API's check (run-overlay.mjs) on the catalog the run's
    *  engine runs, plus Ask's own: signed out, every agent node needs a model the install can run (auto/runnable.mjs,
@@ -288,7 +285,7 @@ export function createProposalValidator({
     // `owner`: the thread's reader on a shared deployment (null = the local install, which sees every preset).
     let cardPreset = null;
     if (given(inp.presetId)) {
-      if (!presetsOn() || !readPreset) return { ok: false, errors: [PRESET_PROPOSAL_ERRORS.off] };
+      if (!readPreset) return { ok: false, errors: [PRESET_PROPOSAL_ERRORS.off] };
       if (typeof inp.presetId !== 'string') return { ok: false, errors: [PRESET_PROPOSAL_ERRORS.type] };
       const preset = await readPreset(inp.presetId.trim(), { owner });
       if (!preset) return { ok: false, errors: [PRESET_PROPOSAL_ERRORS.unknown(inp.presetId)] };
@@ -367,7 +364,7 @@ export function createProposalValidator({
         && (shapeIn === undefined || (shapeIn && typeof shapeIn === 'object' && !Array.isArray(shapeIn) && !('perspectives' in shapeIn)))) {
         shapeIn = { ...(shapeIn || {}), perspectives: [...DEFAULT_PERSPECTIVES, 'ux'] };
       }
-      const r = resolveShapeRequest({ shape: shapeIn, workflowId: inp.workflowId }, { enabled: shapeFirst() });
+      const r = resolveShapeRequest({ shape: shapeIn, workflowId: inp.workflowId });
       if (!r.ok) errors.push(r.error);
       else { shape = { ...r.shape, perspectives: withProjectFit(r.shape.perspectives, await briefOn()) }; shapedWorkflowId = r.workflowId; }
       // L7: a run without a project is never planned in slices (POST /api/run refuses 'auto' the same); its shaped run
@@ -541,13 +538,12 @@ export function createProposalValidator({
     for (const e of tagCheck.errors) errors.push(`tags: ${e}`);
     if (shape && spec.schedule) errors.push(PROPOSAL_ERRORS.shapeScheduled);
     // No nudge on a card without a project: Shape it first offers a plan in slices, which it cannot have yet (L7, P3-D17).
-    const nudgeBase = !none && !shape && !spec.schedule && shapeFirst() ? nudgeFor(inp.assess) : null;
+    const nudgeBase = !none && !shape && !spec.schedule ? nudgeFor(inp.assess) : null;
     let nudge = null;
     if (nudgeBase && !errors.length) {
       let estimates = { asIs: null, shaped: null };
       // The shaped run would be wf_shape_ux when the nudge picks UX (resolveShapeRequest); it has the manual-test agents.
-      // The gate call sits on the line itself: the call-site scan reads the shape graph's lines one by one (§13).
-      const shapedWf = shapeFirst() && nudgeBase.perspectives.includes('ux') ? GRAPH_SHAPE_UX_WORKFLOW : GRAPH_SHAPE_WORKFLOW;
+      const shapedWf = nudgeBase.perspectives.includes('ux') ? GRAPH_SHAPE_UX_WORKFLOW : GRAPH_SHAPE_WORKFLOW;
       if (typeof estimate === 'function') {
         try { estimates = (await estimate({ asIs: wf, shaped: shapedWf })) || estimates; } catch { /* no history here (MCP child): no numbers */ }
       }
@@ -603,6 +599,5 @@ export const validateProposal = createProposalValidator({
   remoteName: (projectKey) => effectiveSyncSettings(projectKey).remote,
   estimate: (wfs) => estimateChoices(wfs),
   readPreset: async (id, opts) => readPresetRow(id, opts),
-  presetsOn: () => flagEnabled('runPresets'),
   hasHouseBrief: async ({ projectKey, projectDir }) => (await ensureHouseBrief({ projectKey, projectDir })).words > 0,
 }).validateProposal;
