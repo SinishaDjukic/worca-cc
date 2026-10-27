@@ -271,6 +271,8 @@ test('implementer with every pipeline option set', POSIX, async () => {
     },
     extra: {
       resumeSessionId: 'sess-resume-1',
+      // A detached run whose mcp.json holds every granted server: --strict-mcp-config (phases.mjs strictMcpFor).
+      runRoot: '/abs/run', mcpConfigServers: ['github', 'worca'],
       mcpConfigPath: '/abs/run/mcp.json', mcpServerGrants: ['mcp__worca', 'mcp__github'],
       memoryMount, memoryBlock: '## Worca memory\n\nRules live in .claude/rules/worca.',
     },

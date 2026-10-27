@@ -304,8 +304,9 @@ export function buildHookArgs() {
  *  argv stays byte-identical):
  *   - mcpConfigPath   -> `--mcp-config <file>` (E5: config servers connect and their
  *                        tools are callable in headless -p; it MERGES with `.mcp.json`,
- *                        user scope, and plugin servers, so `--strict-mcp-config` is
- *                        deliberately never passed — E11).
+ *                        user scope, and plugin servers — E11). A pipeline node adds
+ *                        `--strict-mcp-config` only when mcp.json holds every server it
+ *                        needs (phases.mjs strictMcpFor).
  *   - mcpServerGrants -> unioned into `--allowedTools`. The server-WILDCARD shape
  *                        (`mcp__<server>`) is what Phase-0 gate V1 verified as
  *                        callable under `--permission-mode acceptEdits`

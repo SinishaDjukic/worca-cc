@@ -1666,6 +1666,9 @@ export async function assembleRunContext({
   const rc = {
     claudeMdPath,
     mcpConfigPath,
+    // The servers mcp.json itself holds (mcpServerNames adds the ones Claude Code loads from the committed .mcp.json):
+    // a node may run under --strict-mcp-config only when these cover every server it needs (phases.mjs strictMcpFor).
+    mcpConfigServers: written,
     mcpServerNames,
     skillMountDir,
     injectedSkillNames: skillsOut.names,
