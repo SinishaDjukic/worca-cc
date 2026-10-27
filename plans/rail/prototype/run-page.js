@@ -282,6 +282,7 @@ function render() {
   const panel = o.stack ? stackHtml(Object.assign({}, o.stack, { enter })) : `<ol class="rd-route-list sc-subs${enter ? ' is-enter' : ''}" aria-label="${esc(o.label)} steps" style="grid-column:1 / -1">${o.rows.map((r) => rowHtml(r) + (/is-ask/.test(r.rowCls) ? ask : '')).join('')}</ol>`;
   const sel = (v.tabs.find((t) => t.sel) || v.tabs[0]).id;
 
+  const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
   document.getElementById('card').innerHTML = `
   <div class="rc">
     <div class="rc-bar">${crumbs}${pager}</div>
@@ -299,6 +300,7 @@ function render() {
     <div class="rtab-panel" role="tabpanel" id="rtab-panel" aria-labelledby="tab-${sel}" tabindex="0">${panelHtml(v)}</div>
   </div>`;
 
+  if (scroller.scrollTop !== keepY) scroller.scrollTop = keepY;   // nothing moves by itself: a repaint never scrolls the page
   fitTags();
   fitMenus();
   const nx = document.getElementById('next-event'); if (nx) { const to = ui.caseId === 'chain' ? (chainNext() >= 0 ? 'chain' : '') : (M.flow[ui.caseId] || {}).next; nx.disabled = !to; nx.title = to ? 'Event: ' + EVENT[ui.caseId] : 'Nothing outside the run happens next here; use the card'; }
@@ -576,7 +578,13 @@ document.addEventListener('click', (e) => {
   const zone = e.target.closest('[data-tagzone]');
   if (zone && !e.target.closest('[data-untag], [data-menu]')) { const opening = ui.menu !== 'tags'; ui.menu = opening ? 'tags' : ''; pendingFocus = opening ? 'tag-input' : 'menu:tags'; render(); return; }
   const tick = e.target.closest('[data-tick]');
-  if (tick) { const i = +tick.dataset.tick; ui.ticks = tick.checked ? ui.ticks.concat(i) : ui.ticks.filter((x) => x !== i); pendingFocus = 'tick:' + i; render(); return; }
+  if (tick) {
+    // a tick changes only the box (the browser already did) and its section's count: nothing else repaints
+    const i = +tick.dataset.tick; ui.ticks = tick.checked ? ui.ticks.concat(i) : ui.ticks.filter((x) => x !== i);
+    const n = tick.closest('.ov-checks').querySelectorAll('[data-tick]').length - ui.ticks.length;
+    const c = tick.closest('.ov-focus')?.querySelector('.rtab-h .n'); if (c) c.textContent = n ? n + ' to check' : 'all checked';
+    return;
+  }
   if (!t && e.target.closest('[data-title]')) { ui.titleOpen = !ui.titleOpen; render(); return; }
   if (!t || !t.closest('#card')) { if (ui.menu && !e.target.closest('.menu')) { ui.menu = ''; render(); } return; }
   const d = t.dataset;
