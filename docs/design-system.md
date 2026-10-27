@@ -253,7 +253,9 @@ a chat card leaves the text column (checked): a graph well (`.gv-well`: the work
 run card's graph) is exactly as wide as its card and lines up with the card's other content; it is 1px `--line`, a 6px
 corner and the canvas fill, and its host fits the graph into it (≤ 1×, down to 0.3×; only a wider graph pans, and it opens at its start edge
 with the first node in view, never centred with both ends cut). The well is as tall as the graph at that zoom (220–480px),
-set once, so it never jumps on a resize and a shrunk graph never sits in an empty box. The transcript reserves its
+set once, so it never jumps on a resize and a shrunk graph never sits in an empty box. The run card's Expand opens the
+same live graph in the shared `.wf-pop` overlay (a run-hosts `monitor` host fitted to the box) and never navigates; the
+overlay's Open run is the way to the run's Workflow tab. The transcript reserves its
 scrollbar gutter on both edges (`scrollbar-gutter:stable both-edges`), so the column, the composer and Jump to latest
 share one centre. The dock is opaque from its top edge down after a 32px fade band (`--chat-dock-fade`); Jump to latest
 sits in that band, right above the dock, and the transcript's bottom clearance includes it, so nothing reads under

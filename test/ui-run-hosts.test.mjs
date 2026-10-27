@@ -1474,3 +1474,24 @@ test('card host: a finished run\'s End result link is no tab stop either; a moni
   card.m.destroy();
   mon.m.destroy();
 });
+
+test('a `fill` monitor host (the chat run card\'s Expand overlay) fits into its own box, past DETAIL_MAX_H, and never writes --run-host-h', async () => {
+  const { NAV_INSET, DETAIL_MAX_H, fitInto } = await import('../ui/public/graph/run-hosts.mjs');
+  const TALLER = { ...MANIFEST, graph: { nodes: [MANIFEST.graph.nodes[0], { ...MANIFEST.graph.nodes[1], x: 0, y: 900 }], wires: MANIFEST.graph.wires } };
+  const H = DETAIL_MAX_H + 300;
+  const { m, host, wrap } = mountHost('monitor', 1000, { fill: true, viewport: () => ({ left: 0, top: 0, width: 1000, height: H }) });
+  m.update('run1', TALLER, decorFromState(RUN({ stepper: TALLER })));
+  const want = fitInto(m.view.bounds(24), 1000 - NAV_INSET, H, { zoomMin: 0.3 });
+  const t = xform(host.querySelector('.gv-world'));
+  near(t.z, want.z, 'z: fitted to the whole box height');
+  near(t.y, want.y, 'y: centred in the whole box');
+  assert.equal(wrap.style.getPropertyValue('--run-host-h'), '', 'the overlay owns its height');
+  assert.ok(wrap.querySelector(':scope > .gv-nav'), 'the zoom cluster is the run monitor\'s');
+  // The plain monitor host clamps the same box at DETAIL_MAX_H: a different, smaller fit.
+  const mon = mountHost('monitor', 1000, { viewport: () => ({ left: 0, top: 0, width: 1000, height: H }) });
+  mon.m.update('run1', TALLER, decorFromState(RUN({ stepper: TALLER })));
+  assert.equal(mon.wrap.style.getPropertyValue('--run-host-h'), `${DETAIL_MAX_H}px`);
+  assert.ok(zoomOf(mon.host.querySelector('.gv-world')) < t.z, 'precondition: the clamp would shrink it');
+  m.destroy();
+  mon.m.destroy();
+});
