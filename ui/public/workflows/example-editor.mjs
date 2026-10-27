@@ -308,13 +308,13 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   const lines = el(doc, 'div', 'wft-lines');
   const scriptName = (k) => (lib.find((s) => s.key === k) || {}).displayName || k;
   let addCk = null;
-  const paintChecks = () => {
+  const repaintCheckRows = () => {
     lines.replaceChildren();
     draft.checks.forEach((c, i) => {
       const line = el(doc, 'div', 'wft-line');
       const label = checkLabel(c, { scriptName: c.kind === 'script' ? scriptName(c.key) : null });
       const edit = btn(doc, 'Edit', () => openCheckDialog({ doc, win, check: c, scripts: listed,
-        onSave: (nc) => { draft.checks[i] = nc; paintChecks(); }, onRemove: () => { draft.checks.splice(i, 1); paintChecks(); return addCk; } }));
+        onSave: (nc) => { draft.checks[i] = nc; repaintCheckRows(); }, onRemove: () => { draft.checks.splice(i, 1); repaintCheckRows(); return addCk; } }));
       edit.setAttribute('aria-label', `Edit ${label}`);
       edit.dataset.focusKey = `ck-${c.id || i}`;
       const main = el(doc, 'div', 'wft-line-main');
@@ -323,11 +323,11 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
       line.append(main, edit);
       lines.append(line);
     });
-    addCk = btn(doc, 'Add an automatic check', () => openCheckDialog({ doc, win, scripts: listed, onSave: (nc) => { draft.checks.push(nc); paintChecks(); } }));
+    addCk = btn(doc, 'Add an automatic check', () => openCheckDialog({ doc, win, scripts: listed, onSave: (nc) => { draft.checks.push(nc); repaintCheckRows(); } }));
     addCk.dataset.focusKey = 'ck-add';
     lines.append(addCk);
   };
-  paintChecks();
+  repaintCheckRows();
   const sect = el(doc, 'div', 'wft-sect');
   sect.append(el(doc, 'p', 'wft-grp', 'Automatic checks'), el(doc, 'p', 'wft-grp-hint', 'Counted exactly, without AI. Pick a ready check, or a script from the Library.'), lines);   // C3
   c3.append(sect);

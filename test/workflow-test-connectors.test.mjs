@@ -261,3 +261,10 @@ test('the early engine gates judge a pretend try by its stand-ins: codex is not 
   await make('pretend')._engineMcpGate();
   assert.equal(await make('pretend').engineStartRefusal(), null);
 });
+
+test('connectorNotes: a Real test lists no pretend names; a pretend test still does', () => {
+  const copies = [{ name: 'slack_team', untested: false }, { name: 'jira_team', untested: false }];
+  assert.deepEqual(connectorNotes({ copies, mode: 'pretend' }).pretend, ['jira_team', 'slack_team']);
+  assert.deepEqual(connectorNotes({ copies }).pretend, ['jira_team', 'slack_team']);
+  assert.deepEqual(connectorNotes({ copies, mode: 'real' }).pretend, []);
+});

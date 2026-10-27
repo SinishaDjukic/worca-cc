@@ -118,13 +118,14 @@ export function stepEngines(graph, { runEngine = null } = {}) {
  * with `untested`; `fileServers` = the servers from a project file it would load (no Test exists for them);
  * `userScope` = the `~/.claude.json` servers; `claudeAi` = the names seen (N2); `scripts` = the names of the workflow's
  * script steps; `engines` = the engine ids its steps run on (stepEngines). `engines` out = the display names of the
- * engines other than Claude, one engineNoteLine each.
+ * engines other than Claude, one engineNoteLine each. `mode` 'real' = the test uses the real connectors, so `pretend` is [].
  */
-export function connectorNotes({ copies = [], fileServers = [], userScope = [], claudeAi = [], scripts = [], engines = [] } = {}) {
+export function connectorNotes({ copies = [], fileServers = [], userScope = [], claudeAi = [], scripts = [], engines = [], mode = 'pretend' } = {}) {
   const isCopy = (n) => copies.some((c) => c.name === n);
   const files = [...new Set(fileServers)].filter((n) => !isCopy(n)).sort();
   return {
-    pretend: copies.filter((c) => !c.untested).map((c) => c.name).sort(),
+    // A Real test loads the real connectors: nothing is pretended.
+    pretend: mode === 'real' ? [] : copies.filter((c) => !c.untested).map((c) => c.name).sort(),
     off: [
       ...claudeAi.map((name) => ({ name: plainClaudeAiName(name), reason: 'claude-ai' })),
       ...copies.filter((c) => c.untested).map((c) => ({ name: c.name, reason: 'no-tools' })),

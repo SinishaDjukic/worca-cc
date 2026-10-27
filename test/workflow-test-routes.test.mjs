@@ -111,3 +111,14 @@ test('the dialog says when the connectors preview failed, instead of showing no 
   const r2 = await invoke(ok.handlers.get(`GET ${W}`), { params: { id: 'wf_rt' }, query: { b: 'draft', tries: '1' } });
   assert.equal('previewError' in r2.body.connectors, false);
 });
+
+test('the plan lists pretend connectors only for a pretend test; a Real test gets pretend: []', async () => {
+  await workflowWithExample();
+  const W = '/api/workflows/:id/tests/plan';
+  const { handlers } = boot({ connectorsPreview: async () => ({ copies: [{ name: 'slack_team', untested: false }], fileServers: [] }) });
+  const ask = (connectors) => invoke(handlers.get(`GET ${W}`), { params: { id: 'wf_rt' }, query: { b: 'draft', tries: '1', connectors } });
+  assert.deepEqual((await ask('pretend')).body.connectors.pretend, ['slack_team']);
+  const real = await ask('real');
+  assert.equal(real.body.connectors.mode, 'real');
+  assert.deepEqual(real.body.connectors.pretend, []);
+});

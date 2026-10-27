@@ -260,7 +260,7 @@ export async function testsOverview(workflowId, { registry = loadAgentRegistry()
  * script steps on either side, and the engines other than Claude its agent steps run on. Read when the dialog asks, so
  * the engine is today's `run.engine` (`runEngine` overrides it, a test seam).
  */
-async function connectorsOf(workflowId, uses, { connectorsPreview = null, runEngine = null } = {}) {
+async function connectorsOf(workflowId, uses, { connectorsPreview = null, runEngine = null, mode = 'pretend' } = {}) {
   let preview = {};
   let previewError = false;   // the dialog says it could not read the connectors, never "none"
   try { preview = connectorsPreview ? (await connectorsPreview()) || {} : {}; } catch { preview = {}; previewError = true; }
@@ -275,7 +275,7 @@ async function connectorsOf(workflowId, uses, { connectorsPreview = null, runEng
     for (const n of g ? g.nodes : []) if (n && n.kind === 'script') names.push((scripts[n.key] && scripts[n.key].displayName) || n.key || 'script');
     if (g) engines.push(...stepEngines(g, { runEngine }));
   }
-  const notes = connectorNotes({ copies, fileServers, userScope: userScopeServerNames(), claudeAi: seenClaudeAiServers(), scripts: names, engines });
+  const notes = connectorNotes({ copies, fileServers, userScope: userScopeServerNames(), claudeAi: seenClaudeAiServers(), scripts: names, engines, mode });
   return previewError ? { ...notes, previewError: true } : notes;
 }
 
@@ -304,7 +304,7 @@ export async function testPlan(workflowId, { a = null, b = 'draft', exampleIds =
       reusableAt: at, perTryUsd, savesUsd: perTryUsd === null ? null : reusable * perTryUsd };
   };
   return { a: await side(a), b: await side(b), examples: examples.length, tries, perTryMs: perTryMs(workflowId),
-    connectors: { mode: connectors, ...(await connectorsOf(workflowId, [a, b], { connectorsPreview, runEngine })) } };
+    connectors: { mode: connectors, ...(await connectorsOf(workflowId, [a, b], { connectorsPreview, runEngine, mode: connectors })) } };
 }
 
 /** C9 and board 20's "So far" column. */

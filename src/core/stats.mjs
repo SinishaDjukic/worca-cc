@@ -445,6 +445,8 @@ function requirementsTotals(fromMs, toMs) {
  *  hours × rate − spent over the budget's own reset window. The same cohort (runs STARTED in
  *  [windowStartMs, windowEndMs), archived included), the same rate and the same spend as the
  *  Statistics "Saved" tile for the matching range, so the spend card and the tile never disagree.
+ *  Test tries (is_test) are left out of the hours AND of the spend subtracted here, like the tile: their spend
+ *  still counts in `budget.windowSpendUsd` and the spending limit, but a test must not make "Saved" go negative.
  *  A lean SUM rather than cohortTotals(): /api/budget is refetched on every tick while runs
  *  are live, and the pipeline_steps join TOTALS_SELECT carries is dead weight for one column.
  *  @param {{windowStartMs:number, windowEndMs:number, windowSpendUsd:number}} budget  budgetStatus()
@@ -458,9 +460,13 @@ export function budgetWindowSavings(budget) {
       AND p.is_test IS NULL`)
     .get(new Date(budget.windowStartMs).toISOString(), new Date(budget.windowEndMs).toISOString());
   const windowHumanHours = Math.round(Number(row?.humanHours || 0) * 100) / 100;
+  // Same window as cost-budget's windowedSpendUsd (ts >= windowStart), test tries only.
+  const testRow = prepare(`SELECT SUM(l.amount_usd) AS s FROM cost_ledger l JOIN pipelines p ON p.id = l.pipeline_id
+    WHERE l.ts >= ? AND p.is_test IS NOT NULL`).get(budget.windowStartMs);
+  const spendUsd = roundUsd(budget.windowSpendUsd - (testRow?.s || 0));
   return {
     windowHumanHours,
-    windowSavedUsd: savedUsd(windowHumanHours, effectiveHumanRateUsd(), budget.windowSpendUsd),
+    windowSavedUsd: savedUsd(windowHumanHours, effectiveHumanRateUsd(), spendUsd),
   };
 }
 
