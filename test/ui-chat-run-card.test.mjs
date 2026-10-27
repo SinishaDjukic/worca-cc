@@ -1378,7 +1378,6 @@ test('feature card: the step log shows Clarify · 2 answers, Plan approved, Spli
 test('feature card: an answered step shows once — its receipt gives way to the step log row that names it', () => {
   const pq = { id: 'clarify-once-1', kind: 'clarify', nodeId: 'n_plan' };
   try {
-    setShapeFirst(true);
     const q = questionStub({ id: pq.id, kind: 'clarify', heading: 'Clarify', stepCard: false }, '<button class="btn btn-primary">Send</button>');
     const { card, $, $$ } = mk({ controls: q });
     const feature = VIEW3([SL(1, 'planned'), SL(2, 'planned'), SL(3, 'planned')]);
@@ -1395,7 +1394,6 @@ test('feature card: an answered step shows once — its receipt gives way to the
     assert.equal($('.chat-rc-q').hidden, true, 'and no empty question section');
   } finally {
     forgetAnswer('run-uuid-1', pq.id);
-    setShapeFirst(false);
   }
 });
 
