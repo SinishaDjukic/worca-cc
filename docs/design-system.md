@@ -66,6 +66,12 @@ the place you acted says what failed and why (`Could not merge #959`, the reason
 and what already succeeded stays (a stack that fails part-way keeps the PRs it opened; a retry opens the rest).
 Pause, Resume, Copy link and Terminal do not confirm.
 
+### Small rules that hold everywhere
+- Hover is a tint, never a lift.
+- A disabled control says why in its tooltip.
+- Progress cells stay neutral; colour sits only on the dot and the state word.
+- No emoji and no exclamation marks in the interface.
+
 ### The gate
 Every Rail page passes `plans/rail/prototype/sweep.mjs` in every case, at 900 and 375px, in both themes: no sideways
 scroll, no clipped text without a tooltip, no overlaps, every section on the text edge, contrast 4.5:1, every menu and
