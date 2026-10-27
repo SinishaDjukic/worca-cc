@@ -565,10 +565,14 @@ test('corporate proxy end to end: a child process fetch with the child env reach
         { env: { ...process.env, ...env, WORCA_HOST_PID: '' }, timeout: 20_000 },
         (err, stdout, stderr) => (err ? reject(new Error(`${err.message}\n${stderr}`)) : resolve(stdout.trim())));
     });
-    // undici's EnvHttpProxyAgent tunnels http:// targets with CONNECT too, so the fake relays the
-    // GET to the origin instead of answering it itself.
-    assert.equal(out, '200 origin saw /x');
-    assert.ok(fake.stats.heads.some((h) => h.line === 'CONNECT example.test:80 HTTP/1.1'), JSON.stringify(fake.stats.heads));
+    // undici's EnvHttpProxyAgent tunnels http:// targets with CONNECT up to Node 25 (the fake relays the GET to the
+    // origin); Node 26's undici sends the absolute-form GET to the proxy instead (the fake answers it). Both reach it.
+    const lines = fake.stats.heads.map((h) => h.line);
+    if (lines.includes('CONNECT example.test:80 HTTP/1.1')) assert.equal(out, '200 origin saw /x');
+    else {
+      assert.equal(out, '200 upstream relayed GET http://example.test/x');
+      assert.ok(lines.includes('GET http://example.test/x HTTP/1.1'), JSON.stringify(lines));
+    }
     assert.equal(fake.stats.type3, 1);
     assert.ok(!JSON.stringify(env).includes('@'), 'the child env carries no credentials');
   } finally { await r.close(); await fake.close(); o.server.close(); }
