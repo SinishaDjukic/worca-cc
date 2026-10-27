@@ -22,7 +22,7 @@ import { buildClaudeArgs } from '../src/core/engines/claude.mjs';
 import { envForShell } from '../src/core/graph/script-runner.mjs';
 import {
   pretendServers, connectorNotes, humanizeTool, nounOf, sentCall, wouldHaveSent, noteSeenServers, seenClaudeAiServers,
-  userScopeServerNames, CONNECTOR_CALLS_FILE,
+  userScopeServerNames, CONNECTOR_CALLS_FILE, stepEngines, fileServerOffLine, engineNoteLine,
 } from '../src/core/workflow-tests/connectors.mjs';
 
 useTempHome(after);
@@ -44,6 +44,10 @@ test('pretendServers: a stand-in for each server with recorded tools, the rest s
   }, { pipelineDir: dir, store });
   assert.deepEqual(out.pretend, ['slack_team']);
   assert.deepEqual(out.off.map((o) => o.name), ['files_srv', 'jira_team'], 'a file server and a stale Test have no tools Worca trusts');
+  assert.deepEqual(out.off.map((o) => [o.name, o.reason, o.why]), [
+    ['files_srv', 'file-server', "Worca can't pretend for servers from a project file."],
+    ['jira_team', 'no-tools', 'Worca has no list of its tools; test it once in Connectors.'],
+  ], 'a file server cannot be tested in Connectors, so it is not told to be');
   assert.deepEqual(Object.keys(out.servers), ['slack_team']);
   const def = out.servers.slack_team;
   assert.deepEqual([def.type, def.command, def.args[0], def.args[1], def.args[2], def.args[3], def.args[5], def.args[6]],
@@ -61,7 +65,25 @@ test('the dialog notes (board 30): pretend, switched off and why, script steps',
     pretend: ['jira_team', 'slack_team'],
     off: [{ name: 'Google Drive', reason: 'claude-ai' }, { name: 'confluence_team', reason: 'no-tools' }, { name: 'my-db', reason: 'own-settings' }],
     scripts: ['Publish to wiki'],
+    engines: [],
   });
+});
+
+test('the dialog notes: a project-file server has its own reason; steps on another engine are named, Claude never', () => {
+  const n = connectorNotes({ copies: [{ name: 'slack_team', untested: false }], fileServers: ['files_srv', 'slack_team'],
+    engines: ['codex', 'claude', 'codex', 'goose'] });
+  assert.deepEqual(n.off, [{ name: 'files_srv', reason: 'file-server' }], 'a registry copy of the same name is not a file server');
+  assert.deepEqual(n.engines, ['Codex', 'Goose']);
+  assert.equal(fileServerOffLine('files_srv'), "files_srv is switched off: Worca can't pretend for servers from a project file.");
+  assert.equal(engineNoteLine('Codex'), "Steps on Codex can still use connectors from Codex's own settings. Pretend can't stop those.");
+  // One engine per run (workflows.mjs resolveGraph `engine`): the agent steps run on the run's engine; scripts and flow
+  // cards on none.
+  const agentic = { nodes: [{ id: 'n_task', kind: 'task' }, { id: 'n_a', kind: 'agent' }, { id: 'n_s', kind: 'script' }] };
+  assert.deepEqual(stepEngines(agentic, { runEngine: 'codex' }), ['codex']);
+  assert.deepEqual(stepEngines(agentic, { runEngine: 'claude' }), ['claude']);
+  assert.deepEqual(stepEngines({ nodes: [{ id: 'n_s', kind: 'script' }] }, { runEngine: 'codex' }), []);
+  assert.deepEqual(stepEngines(agentic), ['claude'], 'no run.engine setting: Claude');
+  assert.deepEqual(connectorNotes({ engines: stepEngines(agentic, { runEngine: 'claude' }) }).engines, []);
 });
 
 test('what a try would have sent: plain words, where to, the first 80 characters, reads apart', async () => {
@@ -155,12 +177,22 @@ const runners = (seen) => {
 test('a pretend try: only stand-ins in mcp.json, no secret anywhere in the spawn, strict config, the switched-off copy named', async () => {
   const { dir, set } = await fixture();
   const seen = [];
-  const orch = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: runners(seen),
+  const pg = `pg_${set.slug}`;
+  const r = runners(seen);
+  const producer = r.producer;
+  let orch = null;
+  // The CLI's init lists only the stand-in. The mock engine sends no mcpServers, so the event is built here, while the
+  // run is live (the run's MCP chain closes when it ends).
+  r.producer = async (ctx) => {
+    orch._onSessionEvent('producer', { init: true, mcpServers: [{ name: pg, status: 'connected' }] }, {});
+    await orch._mcpTail;
+    return producer(ctx);
+  };
+  orch = createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true }, runners: r,
     workflowTest: true, testConnectors: 'pretend' });
   assert.equal((await orch.run()).status, 'done');
   const pipelineDir = orch.getState().pipelineDir;
   const servers = JSON.parse(seen[0].file).mcpServers;
-  const pg = `pg_${set.slug}`;
   assert.deepEqual(Object.keys(servers), [pg], 'sentry has no recorded tools: switched off');
   assert.deepEqual([servers[pg].command, servers[pg].args[0], servers[pg].args[2], servers[pg].args[6]],
     [process.execPath, MOCK_CONNECTOR_PATH, pg, join(pipelineDir, CONNECTOR_CALLS_FILE)]);
@@ -175,6 +207,18 @@ test('a pretend try: only stand-ins in mcp.json, no secret anywhere in the spawn
   assert.ok(o.disallowedTools.includes('mcp__claude_ai_*'));
   assert.ok(!JSON.stringify(o.spawnEnv || {}).includes(PG_SECRET));
   assert.ok((await readRunManifest(pipelineDir)).warnings.some((w) => w.includes(`sentry_${set.slug}`) && w.includes('switched off')));
+  // The layer the run watches is what it loaded: the stand-in, not the switched-off copy or the real server.
+  assert.deepEqual(orch.mcpLayer.copies.map((c) => c.name), [pg]);
+  assert.deepEqual(Object.keys(orch.mcpLayer.servers), [pg]);
+  assert.equal(orch.mcpLayer.servers[pg].command, process.execPath);
+  // An engine that attaches stdio servers only judges the stand-in, never sentry's http server it never starts.
+  const engine = orch.claude.engine;
+  orch.claude.engine = 'codex';
+  try { assert.equal(orch._engineMcpRefusal(orch.mcpLayer), null); } finally { orch.claude.engine = engine; }
+  // After that init, the switched-off copy is not "blocked by managed MCP policy"; only the stand-in has a status.
+  const m = await readRunManifest(pipelineDir);
+  assert.deepEqual((m.warnings || []).filter((w) => w.includes('blocked by managed MCP policy')), []);
+  assert.deepEqual(m.mcpStatus, { [pg]: 'connected' });
 });
 
 test('a real try is a normal run: the real servers, no strict config', async () => {

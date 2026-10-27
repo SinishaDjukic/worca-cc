@@ -1280,7 +1280,7 @@ export function generateClaudeMd({
  *        already uses; null (or a null answer) adds nothing
  * @param {object[]} [a.setSkills]  another engine's set skills (assembleSkills `setSkills`); the record's
  *        `setSkillNames` maps each mounted one's key to the name it got
- * @param {((layer:{servers:object, copies:object[]}) => Promise<{servers:object, off:Array<{name:string, why:string}>}>)|null} [a.mcpStandIn]
+ * @param {((layer:{servers:object, copies:object[]}) => Promise<{servers:object, off:Array<{name:string, reason:string, why:string}>}>)|null} [a.mcpStandIn]
  *        workflow tests (D35): a pretend try's swap of every server it would load for a stand-in; null for every other run
  * @returns {Promise<object>} the run-context record (also persisted into run.json)
  */

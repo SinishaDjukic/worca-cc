@@ -11,6 +11,8 @@ import { readMcpStore } from '../mcp/store.mjs';
 import { MOCK_CONNECTOR_PATH } from '../mcp/mock-connector.mjs';
 import { findPipelineRowById, runDirForRow } from '../artifacts.mjs';
 import { worcaHome } from '../projects.mjs';
+import { resolveRunEngine } from '../settings-cascade.mjs';
+import { engineLabel } from '../../shared/engine-switch.mjs';
 
 export { CONNECTOR_MODES } from './store.mjs';
 export const CONNECTOR_CALLS_FILE = 'connector-calls.ndjson';
@@ -18,6 +20,14 @@ export const PREVIEW_CHARS = 80;
 const CALLS_MAX = 200;
 const CLAUDE_AI_RE = /^claude[ ._]ai[ _]/i;
 const seenFile = () => join(worcaHome(), 'workflow-tests', 'seen-connectors.json');
+const NO_TOOLS_WHY = 'Worca has no list of its tools; test it once in Connectors.';
+const FILE_SERVER_WHY = "Worca can't pretend for servers from a project file.";
+
+/** Board 30's line for a server from a project file (`.mcp.json` / worca's root config): Connectors cannot Test it. */
+export const fileServerOffLine = (name) => `${name} is switched off: ${FILE_SERVER_WHY}`;
+/** Board 30's line for steps on another engine (user decision 2026-10-27: pretend stays allowed, the dialog warns):
+ *  `--strict-mcp-config` and the claude.ai belt are Claude Code's, so that engine's own MCP settings still load. */
+export const engineNoteLine = (label) => `Steps on ${label} can still use connectors from ${label}'s own settings. Pretend can't stop those.`;
 
 export function standInDef(name, toolsFile, logFile) {
   return { type: 'stdio', command: process.execPath, args: [MOCK_CONNECTOR_PATH, '--server', name, '--tools', toolsFile, '--log', logFile] };
@@ -41,7 +51,10 @@ export async function pretendServers({ servers = {}, copies = [] } = {}, { pipel
     const copy = copies.find((c) => c.name === name) || null;
     const test = copy && !copy.untested ? tests[`${copy.setId}|${copy.serverId}`] : null;
     const tools = test && test.ok === true && Array.isArray(test.tools) && test.tools.length ? test.tools : null;
-    if (!tools) { off.push({ name, why: 'Worca has no list of its tools; test it once in Connectors.' }); continue; }
+    if (!tools) {
+      off.push(copy ? { name, reason: 'no-tools', why: NO_TOOLS_WHY } : { name, reason: 'file-server', why: FILE_SERVER_WHY });
+      continue;
+    }
     await mkdir(dir, { recursive: true });
     n += 1;
     const toolsFile = join(dir, `${String(n).padStart(2, '0')}-${name.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
@@ -56,19 +69,39 @@ export async function pretendServers({ servers = {}, copies = [] } = {}, { pipel
 export const plainClaudeAiName = (name) => String(name).replace(CLAUDE_AI_RE, '').replace(/_/g, ' ').trim() || String(name);
 
 /**
- * Board 30's notes. `copies` = the registry copies a run without a project would start (server.mjs mcpRunPreview), each
- * with `untested`; `userScope` = the `~/.claude.json` servers; `claudeAi` = the names seen (N2); `scripts` = the names of
- * the workflow's script steps.
+ * The engines a workflow's agent steps run on, as engine ids. A run has ONE engine for every step (workflows.mjs
+ * resolveGraph `engine`, the run's `claude.engine`), so this is `runEngine` — by default what a run without a project
+ * resolves (settings `run.engine`) — when the graph has an agent step, and [] for scripts and flow cards only.
+ * @param {{nodes?: Array<{kind?: string}>}} graph
+ * @param {{runEngine?: string|null}} [o]
  */
-export function connectorNotes({ copies = [], userScope = [], claudeAi = [], scripts = [] } = {}) {
+export function stepEngines(graph, { runEngine = null } = {}) {
+  const nodes = graph && Array.isArray(graph.nodes) ? graph.nodes : [];
+  if (!nodes.some((n) => n && n.kind === 'agent')) return [];
+  let engine = typeof runEngine === 'string' && runEngine ? runEngine : null;
+  if (!engine) { try { engine = resolveRunEngine({}).engine || 'claude'; } catch { engine = 'claude'; } }
+  return [engine];
+}
+
+/**
+ * Board 30's notes. `copies` = the registry copies a run without a project would start (server.mjs mcpRunPreview), each
+ * with `untested`; `fileServers` = the servers from a project file it would load (no Test exists for them);
+ * `userScope` = the `~/.claude.json` servers; `claudeAi` = the names seen (N2); `scripts` = the names of the workflow's
+ * script steps; `engines` = the engine ids its steps run on (stepEngines). `engines` out = the display names of the
+ * engines other than Claude, one engineNoteLine each.
+ */
+export function connectorNotes({ copies = [], fileServers = [], userScope = [], claudeAi = [], scripts = [], engines = [] } = {}) {
+  const isCopy = (n) => copies.some((c) => c.name === n);
   return {
     pretend: copies.filter((c) => !c.untested).map((c) => c.name).sort(),
     off: [
       ...claudeAi.map((name) => ({ name: plainClaudeAiName(name), reason: 'claude-ai' })),
       ...copies.filter((c) => c.untested).map((c) => ({ name: c.name, reason: 'no-tools' })),
-      ...userScope.filter((n) => !copies.some((c) => c.name === n)).map((name) => ({ name, reason: 'own-settings' })),
+      ...[...new Set(fileServers)].filter((n) => !isCopy(n)).sort().map((name) => ({ name, reason: 'file-server' })),
+      ...userScope.filter((n) => !isCopy(n)).map((name) => ({ name, reason: 'own-settings' })),
     ],
     scripts: [...new Set(scripts)],
+    engines: [...new Set(engines.filter((e) => typeof e === 'string' && e && e !== 'claude'))].map(engineLabel),
   };
 }
 

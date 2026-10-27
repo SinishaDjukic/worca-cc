@@ -3691,6 +3691,7 @@ export class RunHarness extends EventEmitter {
     const prior = this.runRoot ? await readRunManifest(this.runRoot) : null;
     const alreadyReported = new Set(prior?.warnings ?? []);
     let reg = null;                                        // the MCP registry layer's { result, catalog }
+    let standIn = null;                                    // D35: a pretend try's swap ({ servers, off, pretend })
     // Skills registry: another engine reads set skills from `.agents/skills`, so they are planned BEFORE the
     // assembly and mounted by it with every other skill (one owner: renames, records, orphan pruning, teardown).
     // On Claude they load through --plugin-dir and are planned after it, in _resolveSkills.
@@ -3725,7 +3726,7 @@ export class RunHarness extends EventEmitter {
       engine: this.claude.engine || 'claude',
       setSkills: this._setSkillSources(skillPlan),
       registry: async (taken) => (reg = await this._resolveMcp(taken)),
-      ...(this._testConnectors() === 'pretend' ? { mcpStandIn: (layer) => pretendServers(layer, { pipelineDir: this.pipeline.dir }) } : {}),
+      ...(this._testConnectors() === 'pretend' ? { mcpStandIn: async (layer) => (standIn = await pretendServers(layer, { pipelineDir: this.pipeline.dir })) } : {}),
     });
     this.runContext = rc;
     if (rc?.projectPermissions) {
@@ -3749,8 +3750,18 @@ export class RunHarness extends EventEmitter {
       servers: reg.result.servers,
     };
     // D35: a pretend try's stand-ins take no env, so no registry secret (MCPSECRET_*) reaches its spawn. They are stdio
-    // servers even where the real copy is http, so a scrubbed spawn keeps the launcher's keep-list (§5.5.1).
-    if (this.mcpLayer && this._testConnectors() === 'pretend') this.mcpLayer = { ...this.mcpLayer, env: {}, allowlist: keepListNames() };
+    // servers even where the real copy is http, so a scrubbed spawn keeps the launcher's keep-list (§5.5.1). The layer
+    // is narrowed to what was loaded — the copies that got a stand-in, with the stand-in's definition — so the init
+    // check (_recordMcpInit) never calls a switched-off copy "blocked by managed MCP policy", the tool-name 400 warning
+    // never names one, and another engine's attach check (_engineMcpRefusal) judges the stand-ins, not the real servers.
+    if (this.mcpLayer && this._testConnectors() === 'pretend') {
+      const loaded = (standIn && standIn.servers) || {};
+      const copies = this.mcpLayer.copies.filter((c) => Object.hasOwn(loaded, c.name));
+      this.mcpLayer = {
+        ...this.mcpLayer, env: {}, allowlist: keepListNames(), copies,
+        servers: Object.fromEntries(copies.map((c) => [c.name, loaded[c.name]])),
+      };
+    }
     const mcpWhy = this._engineMcpRefusal(this.mcpLayer);
     if (mcpWhy) throw engineRefusal(this.claude.engine, mcpWhy);
     // §11.4: MCP deviations need the resolution, so they land here, after _resolvePolicy (which
