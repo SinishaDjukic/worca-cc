@@ -18,6 +18,8 @@ export const BUSY_TEXT = 'A test of this workflow is running. Wait for it, or st
 /** C18: what changed since a test started (a refused "Finish the rest", or a test stopped as `changed`). */
 export const changedText = (use) => `${use === 'draft' ? 'Your draft' : `v${use}`} changed since this test started: start a new test.`;
 export const editedText = (name) => `"${name}" was edited since this test started: start a new test.`;
+/** A stored detail (no full stop): the UI says "Stopped: Worca could not save how this test ended." */
+export const CLOSE_FAILED_TEXT = 'Worca could not save how this test ended';
 const err = store.testError;
 const msgOf = (e) => (e && e.message ? e.message : String(e));
 /** The start handler's 403s are spending refusals (the total cost limit, the team total cap); any other 403 is a refusal. */
@@ -94,6 +96,11 @@ export function createTestRunner(deps) {
     st.stopping = reason;
     st.detail = detail;
     for (const rec of st.running.values()) if (rec.runKey) stopQuietly(rec.runKey);
+  }
+
+  /** A test whose end could not be saved: stopped as an error, so the workflow is free again. */
+  function closeAsError(runId) {
+    return store.updateTestRun(runId, { status: 'stopped', stopReason: 'error', stopDetail: CLOSE_FAILED_TEXT, finishedAt: nowIso() });
   }
 
   /** Stop a try's run and never throw: the run may already have ended. */
@@ -178,7 +185,10 @@ export function createTestRunner(deps) {
             ? { status: 'stopped', stopReason: st.stopping, stopDetail: st.detail, finishedAt: nowIso() }
             : { status: 'done', stopReason: null, stopDetail: null, finishedAt: nowIso() });
         } catch (e) {
-          console.error(`[workflow-tests] could not close test ${runId}: ${msgOf(e)}`);   // recover() stops it on the next boot
+          console.error(`[workflow-tests] could not close test ${runId}: ${msgOf(e)}`);
+          // M4: a row left running holds the workflow BUSY. Try the smallest close; if that fails too, Stop testing
+          // ends it (stop() on a test nothing drives), and recover() does on the next boot.
+          try { closeAsError(runId); } catch { /* the store is not writable: stop() or recover() */ }
         } finally {
           live.delete(runId);   // always: a test that is not live never answers BUSY from memory
         }
@@ -384,7 +394,13 @@ export function createTestRunner(deps) {
     const run = store.readTestRun(runId);
     if (!run) throw err(`no test ${runId}`, 'NOT_FOUND');
     const st = live.get(run.id);
-    if (!st) return run;
+    if (!st) {
+      // M4: still running in the store but nothing drives it (its close failed): end it now, or the workflow stays BUSY.
+      if (run.status !== 'running') return run;
+      const closed = closeAsError(run.id);
+      notify(closed, { finished: true, status: closed.status });
+      return closed;
+    }
     requestStop(st, reason);
     await st.done;
     return store.readTestRun(run.id);

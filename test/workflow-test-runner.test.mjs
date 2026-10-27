@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { _resetForTests } from '../src/core/db.mjs';
+import { _resetForTests, getDb } from '../src/core/db.mjs';
 import * as store from '../src/core/workflow-tests/store.mjs';
 import { createTestRunner, MAX_PARALLEL, PAUSE_REFUSED_TEXT, PAUSE_REFUSED_OTHER, pauseVerdict } from '../src/core/workflow-tests/runner.mjs';
 import { checkTry } from '../src/core/workflow-tests/result.mjs';
@@ -563,4 +563,58 @@ test('a test stopped while the quick check starts stops the quick check run too 
   assert.ok(h.stopped.includes(h.started[0].runKey), 'the quick check run that started late is stopped');
   const st = store.readTestRun(run.id);
   assert.deepEqual([st.stopReason, st.quick], ['person', { status: 'waiting' }]);
+});
+
+// Final review M4: a test whose close failed stayed running in the store, so the workflow was BUSY until a restart.
+const CLOSE_TRIGGER = 'wft_test_close_fails';
+const failCloses = (when) => getDb().exec(`CREATE TEMP TRIGGER ${CLOSE_TRIGGER} BEFORE UPDATE OF status ON wf_test_runs
+  WHEN ${when} BEGIN SELECT RAISE(ABORT, 'disk I/O error'); END`);
+const closesWork = () => getDb().exec(`DROP TRIGGER IF EXISTS ${CLOSE_TRIGGER}`);
+const quietly = async (fn) => { const e = console.error; console.error = () => {}; try { return await fn(); } finally { console.error = e; } };
+
+test('a close that fails is recorded as an error stop, so the workflow is not left BUSY (M4)', async () => {
+  const h = harness();
+  const runner = createTestRunner(h.deps);
+  const ex = example({ tries: 1 });
+  failCloses("NEW.status = 'done'");
+  try {
+    const run = await quietly(async () => {
+      const r = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 });
+      await runner.idle(r.id);
+      return r;
+    });
+    const st = store.readTestRun(run.id);
+    assert.deepEqual([st.status, st.stopReason, st.stopDetail], ['stopped', 'error', 'Worca could not save how this test ended']);
+    assert.ok(st.finishedAt);
+    assert.equal(store.runningTestRun(WF), null, 'the workflow is free');
+  } finally { closesWork(); }
+  const next = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await runner.idle(next.id);
+  assert.equal(store.readTestRun(next.id).status, 'done');
+});
+
+test('a test left running with nothing driving it: Stop testing ends it at once and frees the workflow (M4)', async () => {
+  const h = harness();
+  const frames = [];
+  const runner = createTestRunner({ ...h.deps, notify: (f) => frames.push(f) });
+  const ex = example({ tries: 1 });
+  failCloses("NEW.status IN ('done', 'stopped')");
+  let run;
+  try {
+    run = await quietly(async () => {
+      const r = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 });
+      await runner.idle(r.id);
+      return r;
+    });
+    assert.equal(store.readTestRun(run.id).status, 'running', 'the store could not be written');
+    await assert.rejects(runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 }), (e) => e.code === 'BUSY');
+  } finally { closesWork(); }
+  frames.length = 0;
+  const stopped = await runner.stop(run.id);
+  assert.deepEqual([stopped.status, stopped.stopReason, stopped.stopDetail], ['stopped', 'error', 'Worca could not save how this test ended']);
+  assert.ok(stopped.finishedAt);
+  assert.deepEqual(frames.map((f) => [f.testRunId, f.finished, f.status]), [[run.id, true, 'stopped']], 'the open pages hear it ended');
+  const next = await runner.start({ workflowId: WF, a: 1, b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await runner.idle(next.id);
+  assert.equal(store.readTestRun(next.id).status, 'done');
 });
