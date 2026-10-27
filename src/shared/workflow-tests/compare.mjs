@@ -112,11 +112,14 @@ export function compareModel({ examples = [], a = null, b, tries = [] }) {
   const counted = rows.filter((r) => (a ? r.result !== null : r.b.total > 0));
   const side = (s) => {
     const list = of(s);
+    // With two versions the averages cover only the compared examples, so tries on an example the other side never finished can't skew them.
+    const ids = new Set(counted.map((r) => r.id));
+    const avgList = a ? list.filter((t) => ids.has(t.exampleId)) : list;
     return {
       passed: tally(list),
-      costPerTry: avg(list, (t) => Number(t.costUsd)),
-      timePerTry: avg(list, (t) => (t.verdict && t.verdict.facts ? t.verdict.facts.durationMs : null)),
-      sentBack: avg(list, (t) => (t.verdict && t.verdict.facts ? Number(t.verdict.facts.sentBack || 0) : null)),
+      costPerTry: avg(avgList, (t) => Number(t.costUsd)),
+      timePerTry: avg(avgList, (t) => (t.verdict && t.verdict.facts ? t.verdict.facts.durationMs : null)),
+      sentBack: avg(avgList, (t) => (t.verdict && t.verdict.facts ? Number(t.verdict.facts.sentBack || 0) : null)),
       steady: { n: counted.filter((r) => (s === 'a' ? r.steadyA : r.steadyB)).length, of: counted.length },
     };
   };

@@ -149,3 +149,17 @@ test('Fix 1: a difference resting on one try is chance, whichever side has more 
   assert.equal(cmp('PPP', 'FFF').look.exampleId, 1);
 });
 
+test('Fix 2: cost and time per try only over the compared examples; Look at picks the clear one when the larger drop could be chance', () => {
+  const m = compareModel({ examples: [{ id: 1, name: 'X' }, { id: 2, name: 'Y' }], a: L4, b: L5,
+    tries: [...tries('a', 1, 'PPP', { cost: 1, ms: 1000 }), ...tries('b', 1, 'PPP', { cost: 1, ms: 1000 }), ...tries('b', 2, 'PPP', { cost: 0.1, ms: 100 })] });
+  assert.deepEqual([m.tiles.a.costPerTry, m.tiles.b.costPerTry, m.tiles.b.timePerTry], [1, 1, 1000]);
+  assert.deepEqual(m.inShort, ['v5 draft gives the same results as v4 on the examples both versions finished.']);
+  const solo = compareModel({ examples: [{ id: 2, name: 'Y' }], a: null, b: L5, tries: tries('b', 2, 'PPP', { cost: 0.1, ms: 100 }) });
+  assert.equal(Math.round(solo.tiles.b.costPerTry * 100) / 100, 0.1, 'a single-version test averages all its tries');
+  const t = compareModel({ examples: [{ id: 1, name: 'Luck' }, { id: 2, name: 'Clear' }], a: L4, b: L5, tries: [
+    ...tries('a', 1, 'PPP', { cost: 1, ms: 1000 }), ...tries('b', 1, 'F', { cost: 1, ms: 1000 }),
+    ...tries('a', 2, 'PPP', { cost: 1, ms: 1000 }), ...tries('b', 2, 'PFF', { cost: 1, ms: 1000 })] });
+  assert.deepEqual(t.examples.map((r) => [r.result, r.luck]), [['worse', true], ['worse', false]]);
+  assert.equal(t.look.name, 'Clear');
+});
+
