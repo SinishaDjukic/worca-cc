@@ -14,6 +14,9 @@ export const TEXT_EXTS = Object.freeze(new Set(['.md', '.markdown', '.txt', '.ht
 export const RESULT_TEXT_MAX = 2 * 1024 * 1024;
 const BUSY_RETRIES = 5;
 const BUSY_WAIT_MS = 3000;
+// One script check's overall budget (queue slot included). script-bench's own cap is 24h (MAX_TIMEOUT_MS), far too
+// long for a test's check: a stuck bench would stall every later try. A fixed 10 minutes covers a slow script.
+export const SCRIPT_CHECK_DEADLINE_MS = 10 * 60 * 1000;
 const NONE = Object.freeze({ name: null, text: null, source: null });
 const isText = (p) => TEXT_EXTS.has(extname(String(p || '')).toLowerCase());
 const clip = (t) => (typeof t === 'string' && t.length > RESULT_TEXT_MAX ? t.slice(0, RESULT_TEXT_MAX) : t);
@@ -71,14 +74,18 @@ const copyable = async (src) => { try { return !(await lstat(src)).isSymbolicLin
  * at a time), so the bench's limits (2 at once, one per key: script-bench.mjs:335) only meet a person's own bench runs,
  * which are waited out. Met when the bench says `clean`.
  */
-export function runScriptCheck(check, { pipelineId, runBench = runBenchOnce, waitMs = BUSY_WAIT_MS } = {}) {
-  const job = async () => {
-    const row = pipelineId ? findPipelineRowById(pipelineId) : null;
-    const scratch = await mkdtemp(join(tmpdir(), 'worca-wft-'));
+export function runScriptCheck(check, { pipelineId, runBench = runBenchOnce, waitMs = BUSY_WAIT_MS, deadlineMs = SCRIPT_CHECK_DEADLINE_MS } = {}) {
+  const notMet = (error) => ({ met: false, value: 'Not met', error });
+  // Does the whole job, setup included, and always removes its copy once it settles (even after a timeout).
+  const work = async () => {
+    let scratch = null;
     try {
+      const row = pipelineId ? findPipelineRowById(pipelineId) : null;
+      if (pipelineId && !row) return notMet('The try was not found.');
+      scratch = await mkdtemp(join(tmpdir(), 'worca-wft-'));
       if (row) {
-        const work = join(await runDirForRow(row), 'work');
-        try { if ((await stat(work)).isDirectory()) await cp(work, scratch, { recursive: true, force: true, filter: copyable }); } catch { /* no result folder: an empty one */ }
+        const src = join(await runDirForRow(row), 'work');
+        try { if ((await stat(src)).isDirectory()) await cp(src, scratch, { recursive: true, force: true, filter: copyable }); } catch { /* no result folder: an empty one */ }
       }
       for (let attempt = 0; ; attempt += 1) {
         try {
@@ -87,10 +94,17 @@ export function runScriptCheck(check, { pipelineId, runBench = runBenchOnce, wai
           return { met, value: met ? 'Met' : String((r && (r.summary || r.status)) || 'Not met').split('\n')[0].slice(0, 120) };
         } catch (err) {
           if (err && err.code === 'BUSY' && attempt < BUSY_RETRIES) { await wait(waitMs); continue; }
-          return { met: false, value: 'Not met', error: err && err.message ? err.message : String(err) };
+          return notMet(err && err.message ? err.message : String(err));
         }
       }
-    } finally { await rm(scratch, { recursive: true, force: true }).catch(() => {}); }
+    } catch (err) {
+      return notMet(err && err.message ? err.message : String(err));
+    } finally { if (scratch) await rm(scratch, { recursive: true, force: true }).catch(() => {}); }
+  };
+  const job = () => {
+    let timer;
+    const deadline = new Promise((resolve) => { timer = setTimeout(() => resolve(notMet('timed out')), deadlineMs); });
+    return Promise.race([work(), deadline]).finally(() => clearTimeout(timer));
   };
   const p = benchTail.then(job, job);
   benchTail = p.catch(() => {});

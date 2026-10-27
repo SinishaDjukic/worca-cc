@@ -99,3 +99,34 @@ test('a script check runs on a copy of the result folder, waits while the bench 
   const gone = await runScriptCheck({ kind: 'script', key: 'nope' }, { pipelineId: t.id, runBench: async () => { throw Object.assign(new Error('script "nope" not found'), { code: 'NOT_FOUND' }); } });
   assert.deepEqual(gone, { met: false, value: 'Not met', error: 'script "nope" not found' });
 });
+
+test('a stuck script check times out, frees the queue, and still removes its copy once it settles', async () => {
+  const t = await seedTry({ work: { 'brief.md': BRIEF } });
+  let release; let stuckDir = null;
+  const stuck = (req) => { stuckDir = req.cwd.dir; return new Promise((r) => { release = r; }); };
+  const first = runScriptCheck({ kind: 'script', key: 'a' }, { pipelineId: t.id, runBench: stuck, deadlineMs: 50 });
+  const second = runScriptCheck({ kind: 'script', key: 'b' }, { pipelineId: t.id, runBench: async () => ({ status: 'clean', summary: '' }), deadlineMs: 50 });
+  assert.deepEqual(await first, { met: false, value: 'Not met', error: 'timed out' });
+  assert.deepEqual(await second, { met: true, value: 'Met' });
+  assert.equal(existsSync(stuckDir), true, 'still there while the job is stuck');
+  release({ status: 'clean' });
+  for (let i = 0; i < 50 && existsSync(stuckDir); i += 1) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(existsSync(stuckDir), false, 'removed once the stuck job settles');
+});
+
+test('a setup error becomes a not-met check and checkTry keeps the other results', async () => {
+  const r = await runScriptCheck({ kind: 'script', key: 'a' }, { pipelineId: 'no-such-pipeline', runBench: async () => ({ status: 'clean' }) });
+  assert.equal(r.met, false);
+  assert.equal(r.value, 'Not met');
+  assert.ok(r.error);
+  const t = await seedTry({ work: { 'brief.md': BRIEF } });
+  const example = { basics: {}, checks: [
+    { id: 's1', ...normaliseCheck({ kind: 'script', key: 'a' }).check },
+    { id: 'f1', ...normaliseCheck({ kind: 'file', name: 'brief.md' }).check },
+  ] };
+  const outcome = await readTryOutcome(t.id);
+  const v = await checkTry(example, outcome, { runScript: (c) => runScriptCheck(c, { pipelineId: 'no-such-pipeline', runBench: async () => ({ status: 'clean' }) }) });
+  assert.equal(v.checks.length, 2);
+  assert.deepEqual(v.checks.map((c) => c.met), [false, true]);
+  assert.ok(v.checks[0].error);
+});
