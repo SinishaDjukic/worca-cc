@@ -319,6 +319,31 @@ function rowSummary(list, run) {
   return tried ? `Tried ${tried} of ${n}` : 'Waiting';
 }
 
+/**
+ * Boards 27/28's "Time taken" of a stopped or done test, in ms (null while it runs, or when nothing has times): how long
+ * its own tries ran (startedAt → finishedAt), counted once where tries ran at the same time, so the stopped time before
+ * a "Finish the rest" is left out and a try reused from an earlier test adds nothing. A test none of whose tries ran
+ * (the quick check stopped it) takes its own createdAt → finishedAt. Not counted: the free quick check (a mock run of
+ * seconds, with no times of its own) and a stopped try made again by Finish the rest (unlinked from the run).
+ */
+export function takenMs(run, tries) {
+  if (!run || run.status === 'running') return null;
+  const spans = (tries || []).filter((t) => t.runId === run.id)
+    .map((t) => [Date.parse(t.startedAt), Date.parse(t.finishedAt)]).filter(([s, e]) => Number.isFinite(s) && Number.isFinite(e) && e >= s)
+    .sort((x, y) => x[0] - y[0]);
+  if (!spans.length) {
+    const s = Date.parse(run.createdAt);
+    const e = Date.parse(run.finishedAt);
+    return Number.isFinite(s) && Number.isFinite(e) && e >= s ? e - s : null;
+  }
+  let total = 0;
+  let [from, to] = spans[0];
+  for (const [s, e] of spans.slice(1)) {
+    if (s > to) { total += to - from; [from, to] = [s, e]; } else if (e > to) to = e;
+  }
+  return total + (to - from);
+}
+
 /** Board 20 (G8: two rows per example when both versions need tries). `costOf` = the runner's live cost. */
 export function progressOf(workflowId, runId, { costOf = null } = {}) {
   const run = runOf(workflowId, runId);
@@ -346,6 +371,7 @@ export function progressOf(workflowId, runId, { costOf = null } = {}) {
     done: own.filter((t) => FIN.has(t.status)).length, total: own.length,
     costUsd: costOf ? costOf(run.id) : store.spentOfRun(run.id), estimateUsd, capUsd: run.capUsd,
     minutesLeft: ms !== null && remaining ? Math.max(1, Math.ceil((Math.ceil(remaining / TRIES_AT_ONCE) * ms) / 60000)) : null,
+    takenMs: takenMs(run, own),
     quick: run.quick,
   };
 }

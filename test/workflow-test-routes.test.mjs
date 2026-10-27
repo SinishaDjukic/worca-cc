@@ -9,6 +9,7 @@ import { _resetForTests } from '../src/core/db.mjs';
 import { writeGraphWorkflow } from '../src/core/workflows.mjs';
 import { registerWorkflowTestRoutes, WORKFLOW_TEST_ROUTES } from '../src/core/workflow-tests/routes.mjs';
 import * as store from '../src/core/workflow-tests/store.mjs';
+import * as service from '../src/core/workflow-tests/service.mjs';
 
 const homes = [];
 beforeEach(async () => { const d = await mkdtemp(join(tmpdir(), 'worca-cc-wftroutes-')); homes.push(d); _resetForTests(); process.env.WORCA_HOME = d; });
@@ -81,6 +82,22 @@ test('POST …/runs/:run/stop stops a running test: its try is stopped, the test
   const r = await invoke(handlers.get('POST /api/workflows/:id/tests/runs/:run/stop'), { params: { id: 'wf_rt', run: String(run.id) } });
   assert.deepEqual([r.status, r.body.run.status, r.body.run.stopReason], [200, 'stopped', 'person']);
   assert.deepEqual(store.triesOfRun(run.id).map((t) => t.status), ['stopped']);
+  const p = await invoke(handlers.get('GET /api/workflows/:id/tests/runs/:run'), { params: { id: 'wf_rt', run: String(run.id) } });
+  assert.ok(Number.isFinite(p.body.takenMs) && p.body.takenMs >= 0, `boards 27/28: a stopped test says how long it took (${p.body.takenMs})`);
+});
+
+test('takenMs (boards 27/28): the time its own tries ran, overlaps once, the stopped gap before Finish the rest left out', () => {
+  const at = (min) => new Date(Date.UTC(2026, 9, 27, 10, min)).toISOString();
+  const tri = (from, to, runId = 7) => ({ runId, startedAt: from == null ? null : at(from), finishedAt: to == null ? null : at(to) });
+  const run = (over = {}) => ({ id: 7, status: 'done', createdAt: at(0), finishedAt: at(90), ...over });
+  const min = (ms) => ms / 60000;
+  // Three at a time from 0 to 20, then a stop; Finish the rest from 60 to 75.
+  assert.equal(min(service.takenMs(run(), [tri(0, 10), tri(5, 20), tri(2, 12), tri(60, 75)])), 35);
+  assert.equal(service.takenMs(run({ status: 'running' }), [tri(0, 10)]), null, 'while it runs: the time left says it');
+  assert.equal(min(service.takenMs(run(), [tri(0, 10), tri(null, null), tri(3, null)])), 10, 'a try never started or never ended adds nothing');
+  assert.equal(min(service.takenMs(run(), [tri(0, 10), tri(1, 30, 6)])), 10, 'a try reused from an earlier test is not this test\'s time');
+  assert.equal(min(service.takenMs(run({ finishedAt: at(4) }), [])), 4, 'no try ran (the quick check stopped it): the test\'s own start and end');
+  assert.equal(service.takenMs(run({ finishedAt: null }), []), null, 'no times at all');
 });
 
 test('the dialog says when the connectors preview failed, instead of showing no connectors (previewError)', async () => {

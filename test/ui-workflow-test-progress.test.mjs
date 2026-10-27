@@ -51,14 +51,14 @@ test('board 20 while it runs: title, pill, Stop testing, the bar, the facts, the
 });
 
 test('stopped by the cap: why, a higher cap and Finish the rest (C7); by a person: no cap field', () => {
-  const capped = boot(progress({ costUsd: 15.4 }, { status: 'stopped', stopReason: 'cap' }));
+  const capped = boot(progress({ costUsd: 15.4, minutesLeft: null, takenMs: 35 * 60000 + 12000 }, { status: 'stopped', stopReason: 'cap' }));
   assert.equal(capped.root.querySelector('.wft-pill').textContent, 'Stopped · 7 of 18 tries done');
   assert.equal(capped.root.querySelector('.wft-pill').className, 'pill-run wft-pill is-stopped is-parked', 'D39: the status pill, not a badge');
   assert.ok(capped.root.querySelector('.wft-pill .pdot'));
   assert.equal(capped.root.querySelector('.wft-stopped').textContent, 'Stopped: the cost went over $15.');
   assert.equal(capped.root.querySelector('#wft-pg-cap').value, '$25');
   assert.equal(capped.root.querySelector('label[for="wft-pg-cap"]').textContent, 'Stop if the cost goes over');
-  assert.deepEqual(facts(capped.root)[0], ['Time left', 'none']);
+  assert.deepEqual(facts(capped.root)[0], ['Time taken', '35 min'], 'board 27');
   click([...capped.root.querySelectorAll('.wft-acts button')].find((b) => b.textContent === 'Finish the rest'));
   assert.deepEqual(capped.calls, [['continue', 25]]);
   const person = boot(progress({}, { status: 'stopped', stopReason: 'person' }));
@@ -94,9 +94,12 @@ test('C7: every stop line is one sentence; a stored detail gets its full stop on
 });
 
 test('done: See what changed (or See the result after Try it once now); two rows per example when both versions are tried (G8)', () => {
-  const done = boot(progress({ done: 18, minutesLeft: null, quick: null }, { status: 'done' }));
+  const done = boot(progress({ done: 18, minutesLeft: null, quick: null, takenMs: 26 * 60000 - 20000 }, { status: 'done' }));
   assert.deepEqual([done.root.querySelector('.wft-pill').textContent, done.root.querySelector('.wft-pill').className], ['Done · 18 of 18 tries done', 'pill-run green wft-pill is-parked']);
-  assert.deepEqual(facts(done.root)[0], ['Time left', 'none']);
+  assert.deepEqual(facts(done.root)[0], ['Time taken', '26 min'], 'board 28');
+  const short = (takenMs) => facts(boot(progress({ takenMs }, { status: 'done' })).root)[0];
+  assert.deepEqual([short(20000), short(null)], [['Time taken', '1 min'], ['Time taken', 'not known']], 'under a minute is 1 min; no times at all');
+  assert.deepEqual(facts(boot(progress({ takenMs: 9 * 60000 })).root)[0], ['Time left', 'about 15 min'], 'while it runs, the time left');
   assert.deepEqual(facts(done.root)[2], ['Free quick check', 'Off']);
   assert.deepEqual([...done.root.querySelectorAll('.wft-prow.is-head > span')].map((s) => s.textContent), ['Example', 'Tries', 'Result'], 'board 28');
   assert.equal(done.root.querySelector('.wft-page > .hint'), null, 'nothing left to stop or finish');

@@ -126,7 +126,11 @@ export function renderTestProgress(root, p, actions, { doc }) {
       : q.status === 'failed' ? fact(doc, 'Free quick check', 'Not passed', q.detail || null, `${word} is-bad`)
         : fact(doc, 'Free quick check', over ? 'Not done' : 'Checking…', null, word);
   const facts = el(doc, 'div', 'wft-facts');
-  facts.append(fact(doc, 'Time left', over ? 'none' : p.minutesLeft ? `about ${p.minutesLeft} min` : 'not known yet'),
+  // Boards 27/28: once it is over, how long it took (service.takenMs), in the time left's minutes ("35 min").
+  const timeFact = over
+    ? fact(doc, 'Time taken', Number.isFinite(p.takenMs) ? `${Math.max(1, Math.round(p.takenMs / 60000))} min` : 'not known')
+    : fact(doc, 'Time left', p.minutesLeft ? `about ${p.minutesLeft} min` : 'not known yet');
+  facts.append(timeFact,
     fact(doc, 'Cost so far', fmtUsd(p.costUsd), costSub || null), quickFact);
   prog.append(bar, facts);
   let stopped = null;
