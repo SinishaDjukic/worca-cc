@@ -12,6 +12,12 @@ project's working tree, so nothing is ever committed to your repo.
 <worcaHome>/                            default ~/.worca-cc
   settings.json                         { root } only — the bootstrap that locates the DB
   worca-cc.db  (+ -wal, -shm)           ALL structured state (SQLite, WAL mode)
+                                        Requirements export (v79): req_export_setups (one row per project or
+                                        workspace: the connection — plugin, source, profile, never a token —, the
+                                        tracker project, issue type, labels, priority, where criteria go, the done
+                                        status) and req_export_links (one row per feature: its current ticket, the
+                                        spec and fields as last sent, the tracker's fingerprint of the description,
+                                        a pending create's marker). Every export is also an `export` turn.
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
   store/no-project-00000000/            runs without a project: one store, the History group "No project";
                                         a run's work/ moves into its pipeline folder as work/ when it ends

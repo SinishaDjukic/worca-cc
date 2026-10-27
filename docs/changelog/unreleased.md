@@ -7,9 +7,9 @@ them into the next page and empties this file.
 
 **Define a feature with Worca before anything is built.**
 
-A product owner describes a feature in a few sentences and Worca interviews them, a few questions at a time, into a testable spec: goal, actors, flow, edge cases, rules, acceptance criteria and assumptions. Six checks say when it is Ready, and **Start in Worca** starts a normal run with the spec as its task. A product brief, made once per project or workspace from its default branch, lets every interview there start from what the product already does; edits to the spec or the brief are kept. A feature can come with files (emails, tickets, a spec, screenshots): Worca reads each once, the interview uses what it took from them, and the files you switch on go to the run.
+A product owner describes a feature in a few sentences and Worca interviews them, a few questions at a time, into a testable spec: goal, actors, flow, edge cases, rules, acceptance criteria and assumptions. Six checks say when it is Ready, and **Start in Worca** starts a normal run with the spec as its task. A product brief, made once per project or workspace from its default branch, lets every interview there start from what the product already does; edits to the spec or the brief are kept. A feature can come with files (emails, tickets, a spec, screenshots): Worca reads each once, the interview uses what it took from them, and the files you switch on go to the run. A feature can be exported to the team's tracker (Jira first) as a ticket: a preview shows exactly what is sent, **Export again** updates the ticket or comments on it, and a run started from the feature reports back to the ticket.
 
-Chips: Requirements · interview · Ready · Start in Worca · product brief · Requirements interview model · files · experimental: turn it on in Settings › Labs
+Chips: Requirements · interview · Ready · Start in Worca · product brief · Requirements interview model · files · export to Jira · experimental: turn it on in Settings › Labs
 
 Read it: [Requirements](../requirements.md)
 
@@ -17,6 +17,7 @@ Pull requests (add each number when it opens):
 
 - Requirements (#882)
 - Requirements: files (#975)
+- Requirements: export to a tracker
 
 ## See when a newer Worca is out
 

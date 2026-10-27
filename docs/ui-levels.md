@@ -353,6 +353,9 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | The list's group header: "Product brief: none yet · Create", "Product brief: being made…", "Product brief · <age> old" | S |
 | New feature: Title, Describe it, For, the code-look hint or the green "Worca knows <name> from its product brief" line, "Worca interviews with <model> at <effort> effort" and the cost words, Cancel, Start the interview | S — the interview model is shown here, changed only on Models (E) |
 | A feature's header: id, title, state, the target, round and cost chips, "Saved as specs/…"; Export ▾ (Save to specs/, Copy Markdown, Download .md); ⋯ (Your notes for Worca, Look closer / Look again, Archive / Restore) | S |
+| Export to a tracker: Export ▾'s Export to Jira… and Export setup…, the setup dialog, the preview (fields, labels, the description, Export anyway), Export again and the comment preview, the failure states, the header's ticket chip, "Created SHOP-123", the History card, Report back on Ready to build, the start dialog and the runs card; on a phone (900 px and narrower) the dialogs as full-screen sheets | S — product owners are its users |
+| Connect a tracker… (the menu item and its dialog) | S |
+| Connect a tracker's Open the Marketplace page | A — the Marketplace page is Advanced |
 | A feature's interview: the question card (options, Recommended, your own answer, Finish now, Skip, use recommended, Submit), Earlier rounds and Change, the working line, the error line and Try again | S |
 | A feature's spec card: the sections and their edits, Let Worca rewrite this, criteria add / remove, assumptions Confirm / Reject, the folded flow, edge cases, rules and out of scope | S |
 | Ready to start?: the six checks and what each misses, Start in Worca, "Start before it's Ready…" and its dialog (the failing checks, the required reason, "Recorded as") | S |
