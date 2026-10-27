@@ -4904,7 +4904,7 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
    weight keeps them under the page title. Their count sits at the line's right end at body size (the row-level count
    stays a caption), and a gap above each later section keeps one section's last row from running into the next head.
    The text sits 12px in from both ends; the line under it still spans the list. */
-.runs-sec + .runs-sec{margin-top:16px;}
+.runs-sec + .runs-sec{margin-top:8px;}
 .runs-sec-head{display:flex;gap:8px;align-items:center;width:100%;padding:12px 12px 8px;font-size:var(--fs-section);font-weight:300;color:var(--ink);border:0;border-bottom:1px solid var(--line);background:none;text-align:left;}
 .runs-sec-head .runs-count{margin-left:auto;font-size:var(--fs-body);font-weight:400;}
 button.runs-sec-head{cursor:pointer;}
