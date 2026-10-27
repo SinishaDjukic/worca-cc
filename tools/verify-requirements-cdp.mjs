@@ -219,7 +219,7 @@ if (!ONLY_A6) {   // --only=a6 skips to the A6 section
       t.click(); const opened = !m.hidden && getComputedStyle(m).display !== 'none';
       m.querySelector('[role="menuitem"]').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       return opened && m.hidden && getComputedStyle(m).display === 'none' && document.activeElement === t; })()`));
-  // Task 8: the mock leaves an assumption open, so the feature is in Decide: the Decide card, the start-before-Ready
+  // The mock leaves an assumption open, so the feature is in Decide: the Decide card, the start-before-Ready
   // dialog (real focus handling), then Confirm the N left turns it Ready and the Ready to build card shows.
   check('Decide: the card lists the open assumptions, each with a Confirm / Reject group',
     await until(() => A.evalJs(`(() => { const c = document.querySelector('#requirements-host .req-left .req-decide');

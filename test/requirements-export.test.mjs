@@ -390,7 +390,7 @@ test('saveSetup and exportOptions: the connection must be a listed tracker; a re
   assert.doesNotMatch(JSON.stringify(v), /token|baseUrl|email/);
 });
 
-// ---- review notes on the brief (task 5): the export date, a one-line reason, a keyless pending row from elsewhere ----
+// ---- the export date, a one-line reason, a keyless pending row from elsewhere ----
 
 const STALE = 'The spec changed since the preview. Look at the preview again.';
 /** Deps whose clock runs `ms` ahead (default: past the two minutes a lost create's marker waits for the tracker's search). */
