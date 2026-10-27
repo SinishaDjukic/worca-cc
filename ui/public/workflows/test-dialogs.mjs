@@ -2,7 +2,7 @@
 // pick a past run (G7), use this run as a test example (board 3), and test a version with its connectors (boards 4, 30). Pure DOM.
 import { el, seg, field, testDialog, runStatusBadge } from './test-ui.mjs';
 import { icon } from '../icons.mjs';
-import { fmtUsd, andList } from '../../../src/shared/workflow-tests/checks.mjs';
+import { fmtUsd, andList, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { estimateOf, fmtUsdRange, aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
 import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
 
@@ -239,7 +239,7 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
     onConfirm: async () => {
       // testDialog gives the button back after a refusal: a pick made meanwhile may have nothing to start.
       if (!estimate || !estimate.total || !versions.length || selA.value === selB.value) return { ok: false, error: note.textContent || 'Wait for the estimate, then start.' };
-      const capUsd = Number(String(cap.value).replace(/[^0-9.]/g, ''));
+      const capUsd = parseUsd(cap.value);   // I2: "15,50" is $15.50, not $1,550
       if (!(capUsd > 0)) return { ok: false, error: 'Give the cost limit in dollars, such as $15.' };
       posting = true;
       try {

@@ -69,6 +69,14 @@ test('Basics, tries and the estimate read back into the value', () => {
   assert.deepEqual([v.tries, v.otherwise, v.basics], [5, 'fail', { noError: true, noHelp: false, maxCostUsd: 2, maxSentBack: 1 }]);
   root.querySelector('#wft-b-cost-usd').value = '1,50';
   assert.equal(ed.value().basics.maxCostUsd, 1.5, 'a decimal comma is a point');
+  root.querySelector('#wft-b-cost-usd').value = '1.234,50';
+  assert.equal(ed.value().basics.maxCostUsd, 1234.5, 'I2: thousands with a point, a decimal comma');
+  root.querySelector('#wft-b-cost-usd').value = '1,234.50';
+  assert.equal(ed.value().basics.maxCostUsd, 1234.5);
+  for (const bad of ['-2', '2e3', '1,000']) {
+    root.querySelector('#wft-b-cost-usd').value = bad;
+    assert.equal(ed.value().basics.maxCostUsd, null, `${bad} is not read as a cost`);
+  }
   root.querySelector('#wft-b-cost').checked = false;
   assert.equal(ed.value().basics.maxCostUsd, null);
 });

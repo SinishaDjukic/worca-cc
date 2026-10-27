@@ -150,3 +150,19 @@ test('sections: the linear heading reader gives what the old regexes gave', () =
   }
   assert.deepEqual(headingsOf(BRIEF), ['bulk invoice export', 'problem', 'users', 'success metric']);
 });
+
+// I2 (final review): one money reader for the editor's cost Basic and both cost limits of a test.
+test('parseUsd: a decimal comma or point, thousands either way; negatives, exponents and junk are refused', async () => {
+  const { parseUsd } = await import('../src/shared/workflow-tests/checks.mjs');
+  for (const [raw, want] of [['15,50', 15.5], ['15.50', 15.5], ['$1,5', 1.5], ['1.234,50', 1234.5], ['1,234.50', 1234.5],
+    ['$15', 15], [' 15 ', 15], ['$ 15', 15], ['15$', 15], ['0,5', 0.5], ['.5', 0.5], ['15.', 15], ['1,234,567', 1234567],
+    ['1.234.567', 1234567], ['1.000', 1], ['2', 2], ['1.234.567,8', 1234567.8], ['0,500', 0.5]]) {
+    assert.equal(parseUsd(raw), want, JSON.stringify(raw));
+  }
+  for (const raw of ['', '  ', null, undefined]) assert.equal(parseUsd(raw), null, JSON.stringify(raw));
+  // "1,000" could be one dollar or a thousand: refused rather than guessed (a limit 1000 times too high is the risk).
+  for (const raw of ['-2', '-$2', '$-2', '2e3', '2E3', 'abc', '$', '15 dollars', '1,2.5', '1.2.3', '1,,5', '15,50,1',
+    '1,000', '12,345', '1.23,4', '+2', '0x10', 'Infinity', '1,234.5,6', ',', '.']) {
+    assert.ok(Number.isNaN(parseUsd(raw)), JSON.stringify(raw));
+  }
+});

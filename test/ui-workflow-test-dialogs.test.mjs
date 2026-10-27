@@ -273,6 +273,17 @@ test('C16 with no saved version; two equal versions; one example starts at its o
   await tick();
   assert.equal(one.doc.querySelector('.wft-dlg-error').textContent, 'Give the cost limit in dollars, such as $15.');
   assert.equal(one.started.length, 0);
+  for (const bad of ['-2', '2e3', '1,000']) {
+    cap.value = bad; cap.dispatchEvent(new one.doc.defaultView.Event('input'));
+    click(one.doc.querySelector('.wft-dlg-ok'));
+    await tick();
+    assert.equal(one.started.length, 0, `${bad} is refused`);
+  }
+  cap.value = '15,50'; cap.dispatchEvent(new one.doc.defaultView.Event('input'));
+  click(one.doc.querySelector('.wft-dlg-ok'));
+  await tick();
+  assert.equal(one.started.length, 1);
+  assert.equal(one.started[0].capUsd, 15.5, 'I2: a decimal comma, not $1,550');
 });
 
 test('C16 every result reused: Start 0 tries, disabled; C12 a cost not known yet', async () => {

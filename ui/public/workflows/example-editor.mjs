@@ -4,7 +4,7 @@
 // Pure DOM; app.js saves.
 import { el, btn, iconBtn, seg, field, card, testDialog, sentence, BUSY_HINT } from './test-ui.mjs';
 import { makeSwitch } from '../switch.mjs';
-import { CHECK_KINDS, CHECK_KIND_LABELS, DEFAULT_BASICS, checkLabel, normaliseCheck, normaliseBasics, fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
+import { CHECK_KINDS, CHECK_KIND_LABELS, DEFAULT_BASICS, checkLabel, normaliseCheck, normaliseBasics, fmtUsd, parseUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 
 export const BLANK_EXAMPLE = Object.freeze({
   id: null, name: '', request: '', answers: [], otherwise: 'pick', basics: { ...DEFAULT_BASICS }, checks: [], tries: 3, files: [], note: null,
@@ -340,13 +340,8 @@ export function renderExampleEditor(root, ex, actions, { doc, win, scripts = [],
   root.append(page);
   paintFiles();
 
-  /** The cost box in dollars: "$1.50", "1,50" (a decimal comma) → 1.5; empty → null; not a number → NaN. */
-  function readMoney() {
-    let t = String(cost.value).trim().replace(/[^0-9.,]/g, '');
-    if (t === '') return null;
-    t = t.includes('.') ? t.replace(/,/g, '') : t.replace(',', '.');
-    return Number(t);
-  }
+  /** The cost box in dollars (parseUsd): "$1.50", "1,50" → 1.5; empty → null; not a number → NaN. */
+  const readMoney = () => parseUsd(cost.value);
   function readFix() {
     const t = String(fix.value).trim();
     return t === '' ? null : Number(t);

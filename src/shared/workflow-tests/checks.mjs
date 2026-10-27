@@ -25,6 +25,39 @@ const CHECK_ID_RE = /^c_[a-z0-9]{1,24}$/;
 
 export const fmtUsd = (n) => `$${(Math.round(Number(n || 0) * 100) / 100).toFixed(2)}`;
 
+/**
+ * Dollars a person typed: "$15", "15,50" or "15.50" (a decimal comma or point), "1.234,50" or "1,234.50" (thousands
+ * either way). Empty → null. A negative, an exponent, letters or an ambiguous "1,000" (one dollar or a thousand?) → NaN.
+ */
+export function parseUsd(raw) {
+  let t = String(raw ?? '').trim();
+  if (t === '') return null;
+  t = t.replace(/^\$\s*/, '').replace(/\s*\$$/, '');
+  if (!/^[0-9.,]*[0-9][0-9.,]*$/.test(t)) return Number.NaN;
+  const dots = t.split('.').length - 1;
+  const commas = t.split(',').length - 1;
+  const grouped = (s, sep) => new RegExp(`^[0-9]{1,3}(\\${sep}[0-9]{3})+$`).test(s);
+  let whole = t;
+  let frac = '';
+  if (dots && commas) {
+    const dec = t.lastIndexOf('.') > t.lastIndexOf(',') ? '.' : ',';
+    const sep = dec === '.' ? ',' : '.';
+    if ((dec === '.' ? dots : commas) !== 1) return Number.NaN;
+    [whole, frac] = t.split(dec);
+    if (!grouped(whole, sep)) return Number.NaN;
+    whole = whole.split(sep).join('');
+  } else if (dots > 1 || commas > 1) {
+    const sep = dots ? '.' : ',';
+    if (!grouped(t, sep)) return Number.NaN;
+    whole = t.split(sep).join('');
+  } else if (dots || commas) {
+    [whole, frac] = t.split(dots ? '.' : ',');
+    if (commas && /^[1-9][0-9]{0,2}$/.test(whole) && frac.length === 3) return Number.NaN;   // "1,000"
+  }
+  if (!/^[0-9]*$/.test(whole) || !/^[0-9]*$/.test(frac) || (whole === '' && frac === '')) return Number.NaN;
+  return Number(`${whole || '0'}.${frac || '0'}`);
+}
+
 /** Lower case, NFKC, straight quotes, single spaces: how "must mention" texts and section names compare. */
 export function normText(s) {
   return String(s ?? '').normalize('NFKC').replace(/[‘’]/g, "'").replace(/[“”]/g, '"')
