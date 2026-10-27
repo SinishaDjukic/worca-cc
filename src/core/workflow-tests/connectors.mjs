@@ -13,6 +13,7 @@ import { findPipelineRowById, runDirForRow } from '../artifacts.mjs';
 import { worcaHome } from '../projects.mjs';
 import { resolveRunEngine } from '../settings-cascade.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
+import { selectRunEngine } from '../engines/index.mjs';
 
 export { CONNECTOR_MODES } from './store.mjs';
 export const CONNECTOR_CALLS_FILE = 'connector-calls.ndjson';
@@ -33,6 +34,31 @@ export function standInDef(name, toolsFile, logFile) {
   return { type: 'stdio', command: process.execPath, args: [MOCK_CONNECTOR_PATH, '--server', name, '--tools', toolsFile, '--log', logFile] };
 }
 
+/** The tools a registry copy's stand-in offers: its current, passing Test's list; null when it gets no stand-in. */
+function standInTools(copy, tests) {
+  const test = copy && !copy.untested ? tests[`${copy.setId}|${copy.serverId}`] : null;
+  return test && test.ok === true && Array.isArray(test.tools) && test.tools.length ? test.tools : null;
+}
+
+/** The registry copies that get a stand-in on a pretend try (the rule pretendServers applies), in their order. */
+export function pretendCopies(copies, tests) {
+  return (Array.isArray(copies) ? copies : []).filter((c) => standInTools(c, tests || {}));
+}
+
+/**
+ * A registry layer ({copies, servers, …}: a resolveRegistry result) as a pretend try would load it, for a check that
+ * runs before the try's mcp.json exists (run-harness.mjs `_engineMcpGate` / `_engineEarlyRefusal`): only the copies
+ * that get a stand-in, each with a stand-in's (stdio) definition. Writes nothing.
+ * @param {{copies?: object[], servers?: object}|null} layer
+ * @param {{store?: object}} [o] `store` = readMcpStore()'s snapshot (a test seam)
+ */
+export async function pretendLayer(layer, { store = null } = {}) {
+  if (!layer) return layer;
+  const snapshot = store || await readMcpStore();
+  const copies = pretendCopies(layer.copies, (snapshot && snapshot.tests) || {});
+  return { ...layer, copies, servers: Object.fromEntries(copies.map((c) => [c.name, standInDef(c.name, '', '')])) };
+}
+
 /**
  * A pretend try's servers (run-context.mjs `mcpStandIn`): each one a stand-in under its own name, or switched off.
  * @param {{servers: Record<string, object>, copies: Array<{name: string, setId: string, serverId: string, untested: boolean}>}} layer
@@ -49,8 +75,7 @@ export async function pretendServers({ servers = {}, copies = [] } = {}, { pipel
   let n = 0;
   for (const name of Object.keys(servers).sort()) {
     const copy = copies.find((c) => c.name === name) || null;
-    const test = copy && !copy.untested ? tests[`${copy.setId}|${copy.serverId}`] : null;
-    const tools = test && test.ok === true && Array.isArray(test.tools) && test.tools.length ? test.tools : null;
+    const tools = standInTools(copy, tests);
     if (!tools) {
       off.push(copy ? { name, reason: 'no-tools', why: NO_TOOLS_WHY } : { name, reason: 'file-server', why: FILE_SERVER_WHY });
       continue;
@@ -78,8 +103,12 @@ export const plainClaudeAiName = (name) => String(name).replace(CLAUDE_AI_RE, ''
 export function stepEngines(graph, { runEngine = null } = {}) {
   const nodes = graph && Array.isArray(graph.nodes) ? graph.nodes : [];
   if (!nodes.some((n) => n && n.kind === 'agent')) return [];
-  let engine = typeof runEngine === 'string' && runEngine ? runEngine : null;
-  if (!engine) { try { engine = resolveRunEngine({}).engine || 'claude'; } catch { engine = 'claude'; } }
+  // Checked as a run checks it (server.mjs runEngineOpts → selectRunEngine), so the note names the engine the try runs
+  // on; one a try could not start on ('mock', an unknown name) names none.
+  let engine;
+  try {
+    engine = selectRunEngine(typeof runEngine === 'string' && runEngine ? runEngine : (resolveRunEngine({}).engine || 'claude'));
+  } catch { engine = 'claude'; }
   return [engine];
 }
 
@@ -92,13 +121,15 @@ export function stepEngines(graph, { runEngine = null } = {}) {
  */
 export function connectorNotes({ copies = [], fileServers = [], userScope = [], claudeAi = [], scripts = [], engines = [] } = {}) {
   const isCopy = (n) => copies.some((c) => c.name === n);
+  const files = [...new Set(fileServers)].filter((n) => !isCopy(n)).sort();
   return {
     pretend: copies.filter((c) => !c.untested).map((c) => c.name).sort(),
     off: [
       ...claudeAi.map((name) => ({ name: plainClaudeAiName(name), reason: 'claude-ai' })),
       ...copies.filter((c) => c.untested).map((c) => ({ name: c.name, reason: 'no-tools' })),
-      ...[...new Set(fileServers)].filter((n) => !isCopy(n)).sort().map((name) => ({ name, reason: 'file-server' })),
-      ...userScope.filter((n) => !isCopy(n)).map((name) => ({ name, reason: 'own-settings' })),
+      ...files.map((name) => ({ name, reason: 'file-server' })),
+      // One name, one line: a ~/.claude.json server a copy or a project file also names is listed there.
+      ...[...new Set(userScope)].filter((n) => !isCopy(n) && !files.includes(n)).map((name) => ({ name, reason: 'own-settings' })),
     ],
     scripts: [...new Set(scripts)],
     engines: [...new Set(engines.filter((e) => typeof e === 'string' && e && e !== 'claude'))].map(engineLabel),

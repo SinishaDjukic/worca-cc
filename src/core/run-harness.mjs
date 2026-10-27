@@ -132,7 +132,7 @@ import { WORKSPACE_SCAN_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, AUTO_WORKFLOW_ID
 import { agentIdentity } from './agent-user.mjs';
 import { resolveRegistry, requiredOf, toolNameLimitFor, skipReasonText, cachedTeamFor } from './mcp/registry.mjs';
 import { loadCatalog } from './mcp/catalog.mjs';
-import { pretendServers, noteSeenServers } from './workflow-tests/connectors.mjs';
+import { pretendServers, pretendLayer, noteSeenServers } from './workflow-tests/connectors.mjs';
 import { MCP_STARTUP_MS } from './mcp/timeouts.mjs';
 import { keepListNames } from './mcp/keep-list.mjs';
 import { expandMcpDenyRules } from './mcp/deny.mjs';
@@ -3410,7 +3410,7 @@ export class RunHarness extends EventEmitter {
       // The run's team policy is resolved only once it runs: before that, the copies its Team set
       // attaches come from the policy cache, as the previews read them.
       const team = this.policyRun ? undefined : await this._cachedTeam();
-      mcp = this._engineMcpRefusal((await this._resolveMcp(new Set(), { team }))?.result);
+      mcp = this._engineMcpRefusal(await this._mcpLayerToJudge((await this._resolveMcp(new Set(), { team }))?.result));
     } catch (err) {
       // The preflight's refusal (codex missing or signed out): the consent cannot lift it.
       if (err?.engineRefused) return { error: err.message, overridable: false };
@@ -3432,8 +3432,15 @@ export class RunHarness extends EventEmitter {
    * copy (a resume, whose team policy is resolved later).
    */
   async _engineMcpGate() {
-    const why = this._engineMcpRefusal((await this._resolveMcp(new Set()))?.result);
+    const why = this._engineMcpRefusal(await this._mcpLayerToJudge((await this._resolveMcp(new Set()))?.result));
     if (why) throw engineRefusal(this.claude.engine, why);
+  }
+
+  /** The registry layer an early engine check judges (before mcp.json exists): the resolved one, or on a pretend
+   *  workflow-test try (D35) the stand-ins it will load instead — the copies with a recorded tool list, each a stdio
+   *  server (workflow-tests/connectors.mjs pretendLayer, the rule pretendServers applies; no file written). */
+  async _mcpLayerToJudge(layer) {
+    return layer && this._testConnectors() === 'pretend' ? pretendLayer(layer) : layer;
   }
 
   /** What a non-Claude run's agents will not get of the merged MCP servers: a granted server that is not in mcp.json

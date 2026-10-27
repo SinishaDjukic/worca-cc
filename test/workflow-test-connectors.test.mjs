@@ -22,7 +22,7 @@ import { buildClaudeArgs } from '../src/core/engines/claude.mjs';
 import { envForShell } from '../src/core/graph/script-runner.mjs';
 import {
   pretendServers, connectorNotes, humanizeTool, nounOf, sentCall, wouldHaveSent, noteSeenServers, seenClaudeAiServers,
-  userScopeServerNames, CONNECTOR_CALLS_FILE, stepEngines, fileServerOffLine, engineNoteLine,
+  userScopeServerNames, CONNECTOR_CALLS_FILE, stepEngines, fileServerOffLine, engineNoteLine, pretendCopies,
 } from '../src/core/workflow-tests/connectors.mjs';
 
 useTempHome(after);
@@ -84,6 +84,22 @@ test('the dialog notes: a project-file server has its own reason; steps on anoth
   assert.deepEqual(stepEngines({ nodes: [{ id: 'n_s', kind: 'script' }] }, { runEngine: 'codex' }), []);
   assert.deepEqual(stepEngines(agentic), ['claude'], 'no run.engine setting: Claude');
   assert.deepEqual(connectorNotes({ engines: stepEngines(agentic, { runEngine: 'claude' }) }).engines, []);
+  // The engine is checked as a run checks it (selectRunEngine): one a try could not start on names no engine.
+  assert.deepEqual(stepEngines(agentic, { runEngine: 'mock' }), ['claude']);
+  assert.deepEqual(stepEngines(agentic, { runEngine: 'no-such-engine' }), ['claude']);
+  // A project-file server of the same name as a ~/.claude.json one is listed once, as the file server.
+  assert.deepEqual(connectorNotes({ fileServers: ['shared_db'], userScope: ['shared_db', 'my-db'] }).off,
+    [{ name: 'shared_db', reason: 'file-server' }, { name: 'my-db', reason: 'own-settings' }]);
+});
+
+test('pretendCopies: the copies that get a stand-in, by the rule pretendServers uses, with no file written', () => {
+  const tests = { 'set1|manual:slack': { ok: true, tools: [{ name: 'post_message' }] }, 'set1|manual:jira': { ok: true, tools: ['create_issue'] },
+    'set1|manual:empty': { ok: true, tools: [] }, 'set1|manual:bad': { ok: false, tools: ['x'] } };
+  const copies = [{ name: 'slack_team', setId: 'set1', serverId: 'manual:slack', untested: false },
+    { name: 'jira_team', setId: 'set1', serverId: 'manual:jira', untested: true },
+    { name: 'empty_team', setId: 'set1', serverId: 'manual:empty', untested: false },
+    { name: 'bad_team', setId: 'set1', serverId: 'manual:bad', untested: false }];
+  assert.deepEqual(pretendCopies(copies, tests).map((c) => c.name), ['slack_team']);
 });
 
 test('what a try would have sent: plain words, where to, the first 80 characters, reads apart', async () => {
@@ -230,4 +246,18 @@ test('a real try is a normal run: the real servers, no strict config', async () 
   assert.deepEqual(Object.keys(JSON.parse(seen[0].file).mcpServers).sort(), [`pg_${set.slug}`, `sentry_${set.slug}`]);
   assert.deepEqual([seen[0].ctx.testConnectors, seen[0].ctx.mcpStrict], ['real', false]);
   assert.equal(runOpts(seen[0].ctx, { role: 'producer', prompt: 'p', systemPrompt: 's', allowedTools: [] }).strictMcpConfig, undefined);
+});
+
+test('the early engine gates judge a pretend try by its stand-ins: codex is not refused for an http copy it never starts; a real try still is', async () => {
+  const { dir, set } = await fixture();
+  const sentry = `sentry_${set.slug}`;
+  const make = (testConnectors) => createOrchestrator({ projectDir: dir, prompt: 'x', auto: true, claude: { mock: true, engine: 'codex' },
+    workflowTest: true, testConnectors });
+  // Real: sentry's http copy is attached, and codex attaches stdio servers only.
+  await assert.rejects(() => make('real')._engineMcpGate(), new RegExp(`codex attaches stdio servers only: ${sentry}$`));
+  const refused = await make('real').engineStartRefusal();
+  assert.ok(refused && refused.error.includes(sentry), JSON.stringify(refused));
+  // Pretend: sentry has no recorded tools, so it gets no stand-in; pg's stand-in is stdio.
+  await make('pretend')._engineMcpGate();
+  assert.equal(await make('pretend').engineStartRefusal(), null);
 });
