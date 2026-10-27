@@ -152,13 +152,13 @@ test('D13: the composer: its label, the model and the range of the last calls, E
   assert.equal(m.host.querySelector('[data-ui="helper-in"]').value, '', 'a sent message leaves the composer');
 });
 
-test('D13: one cost when the last calls agree; "$0.01–0.05" before any; no model name without one', async () => {
+test('D13: one cost when the last calls agree; "$0.05" before any; no model name without one', async () => {
   let m = await openFeature({ helper: chat([], { estimate: { low: 0.031, high: 0.034 } }) });
   await openPanel(m);
   assert.equal(text(m.host.querySelector('.req-help-costline')), 'Opus 5.5 · about $0.03 a message · Enter sends, Shift+Enter new line');
   m = await openFeature({ f: feature({ interview: null }) });
   await openPanel(m);
-  assert.equal(text(m.host.querySelector('.req-help-costline')), 'about $0.01–0.05 a message · Enter sends, Shift+Enter new line');
+  assert.equal(text(m.host.querySelector('.req-help-costline')), 'about $0.05 a message · Enter sends, Shift+Enter new line');
 });
 
 // ── messages, card 8 and the lines of §6 ─────────────────

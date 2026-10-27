@@ -2489,9 +2489,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   const helpErr = (err) => (err && err.status === 404 && err.data && HELP_GONE.has(err.data.error) ? err.data.error : errText(err));
   /** The section a proposal changes, in the spec card's words (SECTIONS), plus the criteria and the assumptions. */
   const helpLabel = (p) => (p.target === 'criterion' ? 'Acceptance criteria' : p.target === 'assumption' ? 'Assumptions' : sectionTitle(p.target));
-  /** D13: "$L–H" from the last helper calls (one value when they agree); "$0.01–0.05" before any. */
+  /** D13: "$L–H" from the last helper calls (one value when they agree); "$0.05" before any. */
   function helpRange(est) {
-    if (!est || typeof est.low !== 'number' || typeof est.high !== 'number') return '$0.01–0.05';
+    if (!est || typeof est.low !== 'number' || typeof est.high !== 'number') return '$0.05';
     const lo = est.low.toFixed(2);
     const hi = est.high.toFixed(2);
     return lo === hi ? `$${lo}` : `$${lo}–${hi}`;

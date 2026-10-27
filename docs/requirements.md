@@ -184,7 +184,7 @@ a card. When the spec changed since Worca proposed something, the card says so a
 
 **Costs.** Each message is one call to the interview model (asked once more if the reply cannot be read; both attempts
 are paid), booked as Requirements spend: the header's "$X so far" includes it, it counts toward the spending limit, and each reply shows what it cost. The composer shows the range of the last messages
-("about $L–H a message"). **Stop** cancels a reply and keeps your message; a stopped reply may be booked low, or at $0, because
+("about $L–H a message"); before the project has any, it shows "about $0.05 a message", the measured cost of a typical message. **Stop** cancels a reply and keeps your message; a stopped reply may be booked low, or at $0, because
 a call's cost is known only once the model reports it.
 
 **The chat and the interview.** The chat never feeds the interview rounds, and it never holds the interview up: while Worca
