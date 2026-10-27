@@ -172,6 +172,7 @@ function singleLine(state, run, prog, pr, opts) {
     case 'paused': {
       const s = String(run.status);
       if (s === 'pausing') return join(where, 'pausing');
+      if (run.resumePending) return join(where, 'resuming');   // a Resume request in flight (the browser's flag)
       return join(where, 'paused', s === 'interrupted' ? 'interrupted' : PAUSE_WORD[run.pauseReason] || '');
     }
     case 'waiting': {

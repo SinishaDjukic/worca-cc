@@ -2192,7 +2192,7 @@ function onHello(msg) {
   if (rebooted) {
     for (const r of runs.values()) {
       if (!r.staleBoot || !['starting', 'running', 'pausing'].includes(r.status)) continue;
-      r.status = 'interrupted';
+      applyServerStatus(r, 'interrupted');
       r.pendingQuestion = null;
     }
   }
@@ -2374,7 +2374,8 @@ function upsertRun(partial) {
     runs.set(partial.runId, r);
   } else {
     for (const k of Object.keys(partial)) {
-      if (partial[k] !== undefined) r[k] = partial[k];
+      if (k === 'status') applyServerStatus(r, partial.status);
+      else if (partial[k] !== undefined) r[k] = partial[k];
     }
     r.staleBoot = false;   // every caller relays the current server: it knows this runId
   }
@@ -2872,8 +2873,17 @@ function addNightDecisions(r, list) {
   r.nightDecisions = cur;
 }
 
+// Every status the server reports lands here (state frames, the hello, upserts, the end of a run). While this tab's
+// Pause is in flight, a 'running' sent before the server took it keeps the 'pausing' shown at the click; any other
+// status ends the wait.
+function applyServerStatus(r, status) {
+  if (!status || (r.pausePending && status === 'running')) return;
+  r.status = status;
+  r.pausePending = false;
+}
+
 function onState(r, msg) {
-  if (msg.status) r.status = msg.status;
+  applyServerStatus(r, msg.status);
   if (msg.shaping && typeof msg.shaping === 'object') r.shaping = msg.shaping;
   if (msg.startedAt) { r.startedAt = msg.startedAt; runStartedAts.set(r.runId, msg.startedAt); }
   // The harness mirrors startedBy onto its state (creation-immutable), so a live card
@@ -4044,6 +4054,7 @@ if (typeof window !== 'undefined') {
     // Test seam: the live list-model row (the object the detail screen re-resolves to).
     historyRow: (projectKey, id) => (state.historyAll || []).find((r) => r && r.id === id && r.projectKey === projectKey) || null,
     pauseRun,
+    hdShownStatus,
     upsertRun,
     onHello,
     isPaused,
@@ -6856,7 +6867,7 @@ function finishRun(r, status) {
   r._finishedAs = status;   // onDone re-arms a run that finished as paused (it is stopped later)
   scheduleOnboardingRefresh();
   r._decorSeq = (r._decorSeq || 0) + 1;   // isLive(r) reads _finished/status/pendingQuestion
-  r.status = status;
+  applyServerStatus(r, status);
   r.pendingQuestion = null;
   r._answering = false;
   // No `done` frame carries a timestamp (the orchestrator emits {status,
@@ -20350,6 +20361,7 @@ async function stopRun(runId, btn, { pipelineId = '' } = {}) {
 // Resolves to the failure's reason (a page that does not show the log says it), or null.
 async function pauseRun(runId, btn) {
   if (btn) btn.disabled = true;
+  showPausePending(runId, true);
   try {
     const res = await fetch('/api/pause', {
       method: 'POST',
@@ -20358,17 +20370,66 @@ async function pauseRun(runId, btn) {
     });
     if (!res.ok) {
       const err = await safeJson(res);
+      // CANNOT_PAUSE because the run is pausing or paused already (another tab, the CLI, chat): not a failure. The
+      // refusal carries the server's status: show it now (no flash of Running, and a run that is paused already says
+      // so even when its frame never reaches this tab). Any other status reverts.
+      // awaitStatus tells the painters nothing is in flight any more, so the next status past pausing re-enables
+      // Pause (C16 would otherwise keep it disabled if that status is 'running' again).
+      if (err && err.code === 'CANNOT_PAUSE' && (err.status === 'pausing' || err.status === 'paused')) {
+        const r0 = runs.get(runId);
+        if (r0) { r0.pausePending = true; applyServerStatus(r0, err.status); repaintPending(r0); }
+        if (btn) btn.dataset.awaitStatus = '1';
+        return null;
+      }
+      showPausePending(runId, false);
       if (btn) btn.disabled = false;
       const r = runs.get(runId);
       if (r) onLog(r, { source: 'ui', level: 'error', text: `pause failed: ${err.error || res.status}`, ts: Date.now() });
       return String(err.error || `HTTP ${res.status}`);
     }
+    // Taken. While the run reads Pausing… nothing is in flight, so the next status past pausing re-arms Pause. The
+    // server's pausing frame follows any stale running one on the socket; should it never arrive, stop holding a later
+    // running back after a while.
+    if (btn && runs.get(runId)?.pausePending) btn.dataset.awaitStatus = '1';
+    endPauseHold(runId);
     return null;
   } catch (e) {
+    showPausePending(runId, false);
     if (btn) btn.disabled = false;
     const r = runs.get(runId);
     if (r) onLog(r, { source: 'ui', level: 'error', text: `pause error: ${e.message}`, ts: Date.now() });
     return e.message;
+  }
+}
+
+// A Pause or Resume click shows at once (Pausing… / Resuming…). Under load the request and the server's state frame can
+// take seconds, and until then the run still read Running / Paused. The server's next state frame takes over.
+function repaintPending(r) {
+  r._decorSeq = (r._decorSeq || 0) + 1;   // the memoised decor and progress line re-read the status
+  renderRunningView();
+  pokeAskRuns(r.runId, 'state');
+}
+function showPausePending(runId, on) {
+  const r = runs.get(runId);
+  if (!r) return;
+  if (on && r.status === 'running') { r.pausePending = true; r._pauseSeq = (r._pauseSeq || 0) + 1; r.status = 'pausing'; repaintPending(r); }
+  else if (!on && r.pausePending) { r.pausePending = false; if (r.status === 'pausing') r.status = 'running'; repaintPending(r); }
+}
+// How long after a taken Pause a 'running' status is still read as sent before the server took it.
+const PAUSE_HOLD_MS = 30000;
+function endPauseHold(runId) {
+  const r = runs.get(runId);
+  if (!r || !r.pausePending) return;
+  const seq = r._pauseSeq;
+  setTimeout(() => { if (r.pausePending && r._pauseSeq === seq) r.pausePending = false; }, PAUSE_HOLD_MS);
+}
+/** Every parked copy of the pipeline (a run page and a History resume address it by pipeline id). */
+function showResumePending(pipelineId, on) {
+  for (const r of runs.values()) {
+    if (r.pipelineId !== pipelineId || !!r.resumePending === on) continue;
+    if (on && !isPaused(r) && r.status !== 'interrupted') continue;
+    r.resumePending = on;
+    repaintPending(r);
   }
 }
 
@@ -20457,6 +20518,7 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
   const prevLines = Array.isArray(r.logLines) ? r.logLines.slice() : [];
   const prevBtnHtml = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.textContent = ' Resuming…'; }
+  showResumePending(pipelineId, true);
   try {
     const res = await fetch('/api/resume', {
       method: 'POST',
@@ -20465,6 +20527,7 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
     });
     const data = await safeJson(res);
     if (!res.ok) {
+      showResumePending(pipelineId, false);   // on success the paused copy is dropped below; the new run reads Starting
       // A team cap (team-policy design §7): soft — ask, then resume again with the choice recorded.
       const again = await policyRefusalRetry(data, res.status);
       if (again) { if (btn) { btn.disabled = false; btn.innerHTML = prevBtnHtml; } return resumeRunFromCard(runId, btn, { ...opts, pastTeamCap: true, policyReason: again.reason }); }
@@ -20523,12 +20586,14 @@ async function resumeRunFromCard(runId, btn, opts = {}) {
     // shows only the new card (same pipelineId would otherwise render twice).
     alerts.onResolved(alertRun(r));
     runs.delete(runId);
+    showResumePending(pipelineId, false);   // any other parked copy of it
     if (state.selectedRunId === runId) state.selectedRunId = '';
     updateNavCounts();
     // The continuous live card: the Runs page when `navigate` (P3), and in Chat the run panel follows (P4).
     landOnResumedRun(data.runId, { fromRunId: runId, pipelineId, navigate });
     renderRunningView();
   } catch (err) {
+    showResumePending(pipelineId, false);
     if (btn) { btn.disabled = false; btn.innerHTML = prevBtnHtml; }
     const rr = runs.get(runId);
     if (rr) onLog(rr, { source: 'ui', level: 'error', text: `resume failed: ${err.message}`, ts: Date.now() });
@@ -23680,6 +23745,7 @@ function histStatusMeta(p) {
   const family = HIST_STATUS_FAMILY[s]
     || ((p && p.live) || s === 'running' || s === 'starting' ? 'paused' : '');
   const word = s === 'pausing' ? 'Pausing…'
+    : p && p.resumePending ? 'Resuming…'   // a Resume in flight (the browser's flag)
     : s ? s.charAt(0).toUpperCase() + s.slice(1) : 'Unknown';
   return { family: family || 'paused', word };
 }
@@ -25292,6 +25358,14 @@ function paintHdActions(screen, record, data) {
   // .hd-resume starts hidden in the template; the split follows it (as .rd-resume-split follows .rd-pause).
   if (split && resumeBtn) split.hidden = resumeBtn.hidden;
 }
+// A live run in this tab has the last word (its frames are newer than any row). A parked one only ends, and a stop from
+// another tab or the CLI reaches only the row, so an ended row wins over it. (A resume mints a new, live run.)
+function hdShownStatus(tabRun, savedStatus) {
+  if (!tabRun) return { status: savedStatus };
+  if (tabRun.resumePending) return { status: tabRun.status, resumePending: true };
+  const ended = RD_TERMINAL.includes(savedStatus) && HD_RESUMABLE.has(tabRun.status);
+  return { status: ended ? savedStatus : tabRun.status };
+}
 function paintHdLive(screen, record, data) {
   // Three exits (the busy return, the not-resumable return, the end): the model has the last word after each.
   try {
@@ -25306,6 +25380,9 @@ function paintHdLive(screen, record, data) {
     // (refreshHdFromRow), so a stop or resume from another tab, the CLI or chat lands here — else
     // the detail loaded with the page (a deep link's minimal record carries no status).
     const savedStatus = String((record && record.status) || (data.state && data.state.status) || '').toLowerCase();
+    // The header's status pip: Pausing… / Resuming… at the click, as the bar does, else whichever of the run in this
+    // tab and the saved row is further along (a stop from another tab or the CLI reaches only the row).
+    paintHistStatusIcon(screen.querySelector('.hd-sic'), hdShownStatus(hdPipelineRun(record), savedStatus));
     // An archived run is a read-only record: no resume, and the stop refuses it (stopPausedRun).
     const archived = !!(data.state && data.state.archivedAt);
     // A paused saved run no run in this tab stands for is stopped through its row (POST /api/stop
@@ -25323,6 +25400,8 @@ function paintHdLive(screen, record, data) {
     const runId = live ? live.runId : '';
     if (pauseBtn.dataset.runId !== runId) { pauseBtn.dataset.runId = runId; pauseBtn.disabled = false; }
     if (live && live.status === 'pausing') pauseBtn.disabled = true;
+    // A refused Pause (pauseRun's CANNOT_PAUSE) has no request in flight: the first status past pausing re-arms it.
+    else if (pauseBtn.dataset.awaitStatus) { delete pauseBtn.dataset.awaitStatus; pauseBtn.disabled = false; }
 
     const split = screen.querySelector('.hd-resume-split');
     const resumeBtn = screen.querySelector('.hd-resume');
@@ -25950,6 +26029,7 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
   btn.dataset.resumeState = 'busy';
   const label = labelEl.textContent;
   labelEl.textContent = 'Resuming…';
+  showResumePending(p.id, true);
   try {
     const res = await fetch('/api/resume', {
       method: 'POST',
@@ -25958,6 +26038,7 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
     });
     const data = await safeJson(res);
     if (!res.ok) {
+      showResumePending(p.id, false);
       // A team cap (team-policy design §7): soft — ask, then resume again with the choice recorded.
       const again = await policyRefusalRetry(data, res.status);
       if (again) {
@@ -26016,12 +26097,14 @@ async function resumePipeline(p, projectDir, btn, opts = {}) {
       if (feat) nr.branchFeature = feat;
     }
     if (prior) { alerts.onResolved(alertRun(prior)); runs.delete(prior.runId); }   // drop the superseded paused run (no split/dup)
+    showResumePending(p.id, false);   // any other parked copy of it
     hideViewer();
     updateNavCounts();
     // The continuous live card: the Runs page when `navigate` (P3), and in Chat the run panel follows (P4).
     landOnResumedRun(data.runId, { fromRunId: prior ? prior.runId : '', pipelineId: p.id, navigate });
     renderRunningView();
   } catch (err) {
+    showResumePending(p.id, false);
     // Survives later repaints ON THE DETAIL SCREEN (it is never rebuilt). A LIST
     // card is rebuilt wholesale by renderHistory(), which drops flag, label and
     // title together — status quo, unchanged here.
@@ -31196,6 +31279,7 @@ function askRunSnapshot(r) {
     title: r.title || '', projectKey: null, workspaceId: r.workspaceId || null, projectDir: r.projectDir || '',
     projectNames: Array.isArray(r.projectNames) ? r.projectNames : null,
     status: r.status, pauseReason: r.pauseReason || null, pendingQuestion: r.pendingQuestion || null,
+    ...(r.resumePending ? { resumePending: true } : {}),
     labels: Array.isArray(r.labels) ? r.labels : [],
     ...(r.shaping ? { shaping: r.shaping } : {}),
     ...(isGitRun(r) ? {} : { workMode: workModeOf(r), changes: null }),
@@ -31488,7 +31572,7 @@ function gateWireCopy(r, wireId) {
 // awaiting-input state is surfaced separately by the pulsing '?' end marker, so
 // it no longer hijacks the dot color.
 function runDotClass(r) {
-  if (r.status === 'starting' || r.status === 'pausing') return 'grey-pulse';
+  if (r.status === 'starting' || r.status === 'pausing' || r.resumePending) return 'grey-pulse';
   // Paused: parked + resumable. Static amber (NOT the red "did-not-complete" dot,
   // and NOT a pulse — nothing is running). Checked before the terminal branch
   // because a paused run is _finished.
@@ -31537,6 +31621,7 @@ function paintAutoBadge(el, stepper) {
 // pause is never mislabeled "awaiting answers".
 function statusPill(r) {
   if (r.status === 'pausing') return { family: 'amber', text: 'Pausing…' };
+  if (r.resumePending) return { family: 'amber', text: 'Resuming…' };
   if (r.status === 'paused') {
     // A cost pause names its cause so the pill alone explains why the run parked.
     if (r.pauseReason === 'cost_pipeline') return { family: 'amber', text: 'Paused · cost limit' };
@@ -37343,10 +37428,12 @@ function paintRdHeader(screen, r) {
   // Rule: widen freely, narrow only when the control's ACTION flipped (the run
   // really did park or resume, at which point pauseRun's disable is meaningless),
   // when the button is already enabled (nothing is in flight), or when the disable
-  // is this painter's own budget gate (a gated button cannot have been clicked).
+  // is this painter's own budget gate (a gated button cannot have been clicked), or when pauseRun's refusal left it
+  // waiting on the server's status (awaitStatus: nothing in flight).
   const gated = pauseBtn.dataset.gated === '1';
-  if (!busy && (actionChanged || !pauseBtn.disabled || gated)) {
+  if (!busy && (actionChanged || !pauseBtn.disabled || gated || pauseBtn.dataset.awaitStatus)) {
     pauseBtn.disabled = !!totalBlocked || r.status === 'pausing';
+    if (r.status !== 'pausing') delete pauseBtn.dataset.awaitStatus;
   }
   pauseBtn.dataset.gated = totalBlocked ? '1' : '';
   pauseBtn.title = totalBlocked
