@@ -622,7 +622,7 @@ function resolutionEntries(resolutions) {
 // ── §5.5 MCP merge ──────────────────────────────────────────────────────────
 
 /** Collapse `__` runs so `mcp__<server>__<tool>` can never mis-split (§5.5, §7.1). */
-function normalizeServerName(raw) {
+export function normalizeServerName(raw) {
   const n = String(raw ?? '').replace(/__+/g, '_').replace(/^_+|_+$/g, '');
   return n || 'mcp-server';
 }

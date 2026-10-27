@@ -8406,6 +8406,11 @@ export class RunHarness extends EventEmitter {
       return;
     }
     if (cmd.action === 'pause') {
+      // Workflow tests: a paused try is a failed try (runner.mjs pauseVerdict); `worca pause` refuses one, this is the backstop.
+      if (this.opts?.workflowTest === true) {
+        this._log('orchestrator', 'info', `control: pause requested by ${by} ignored: a test try cannot be paused (stop its test instead)`);
+        return;
+      }
       this._log('orchestrator', 'info', `control: pause requested by ${by} (via the run-control mailbox)`);
       this.pause(by);
       return;

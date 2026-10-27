@@ -333,7 +333,10 @@ import { registryPortsFn } from '../src/core/graph/registry-ports.mjs';
 import { sweepV1Runs, V1_RUN_RETIRED, getDb } from '../src/core/db.mjs';
 import { registerRequirementsRoutes, requirementsChangeNotifier } from '../src/core/requirements/routes.mjs';
 import { registerWorkflowVersionRoutes } from '../src/core/workflow-versions-routes.mjs';
-import { CONNECTOR_MODES } from '../src/core/workflow-tests/store.mjs';
+import { CONNECTOR_MODES, recoverInterruptedTestRuns } from '../src/core/workflow-tests/store.mjs';
+import { registerWorkflowTestRoutes } from '../src/core/workflow-tests/routes.mjs';
+import { TRY_ANSWERED_BY } from '../src/core/workflow-tests/answers.mjs';
+import { pretendCopies } from '../src/core/workflow-tests/connectors.mjs';
 import { createRunEventHook } from '../src/core/requirements/start.mjs';
 import { recoverInterrupted as recoverRequirements, requirementsModel, DEFAULT_INTERVIEW_EFFORT } from '../src/core/requirements/interview.mjs';
 import { recoverBriefs } from '../src/core/requirements/brief-job.mjs';
@@ -3368,7 +3371,7 @@ app.post('/api/run', startRunHandler);
 // a target's set skills. Namespaced imports (ES imports are hoisted), kept beside their only users so no
 // other region's imports can collide with these names.
 import * as runSkillResolve from '../src/core/skills-registry/resolve.mjs';
-import { previewSetSkillNames } from '../src/core/run-context.mjs';
+import { previewSetSkillNames, readMcpFile, normalizeServerName } from '../src/core/run-context.mjs';
 import * as runSkillHost from '../src/core/skills-registry/host.mjs';
 import * as runSkillTexts from '../src/core/skills-registry/texts.mjs';
 import * as runSkillPolicy from '../src/core/policy/effective.mjs';
@@ -4726,9 +4729,12 @@ async function stopRun(runId, by = 'local') {
   syncKeepAwake();
   return { ok: true };
 }
+/** A test try is never paused (a paused try is a failed try, runner.mjs pauseVerdict): its test is stopped instead. */
+const TEST_TRY_PAUSE_TEXT = 'A test try cannot be paused: stop its test instead.';
 function pauseRun(runId, by = 'local') {
   const entry = runs.get(runId);
   if (!entry) throw new Error('unknown runId');
+  if (entry.isTest) throw Object.assign(new Error(TEST_TRY_PAUSE_TEXT), { code: 'TEST_TRY' });
   const ok = typeof entry.orch?.pause === 'function' && entry.orch.pause(by || 'local');
   if (!ok) throw Object.assign(new Error('cannot pause in the current state'), { code: 'CANNOT_PAUSE' });
   entry.lastAction = { kind: 'pause', by: by || 'local', at: new Date().toISOString() };
@@ -5629,6 +5635,7 @@ app.post('/api/pause', (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     if (err?.code === 'CANNOT_PAUSE') return badRequest(res, err.message);
+    if (err?.code === 'TEST_TRY') return res.status(409).json({ error: err.message });
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
@@ -13122,6 +13129,42 @@ app.post('/api/workflows', async (req, res) => {
 // Workflow versions + history (plans/workflow-tests-plan.md Part 1; #721 workflow part). Flag workflowTests.
 registerWorkflowVersionRoutes(app, { agentsDir: AGENTS_DIR });
 
+// Workflow tests (plans/workflow-tests-part2-plan.md). Flag workflowTests. A try is a no-project run started through the
+// run handler (invokeStartRun's workflowTest), hidden from every list (D21); the runner answers its questions itself.
+const workflowTestDeps = {
+  startRun: (body, opts) => invokeStartRun(body, null, opts),
+  // pauseReason/pauseDetail (set on 'done', wireRun): the runner tells a drain, a cost cap or a step error apart by them.
+  liveRun: (runKey) => {
+    const e = runs.get(runKey);
+    return e ? { orch: e.orch, status: String(e.status || ''), launch: e.launch || null, pipelineId: e.pipelineId || null,
+      pauseReason: e.pauseReason ?? null, pauseDetail: e.pauseDetail ?? null } : null;
+  },
+  stopRun: (runKey) => Promise.resolve().then(() => stopRun(runKey, TRY_ANSWERED_BY)).catch(() => {}),
+  answer: (runKey, id, payload) => {
+    const e = runs.get(runKey);
+    if (!e || !e.orch) return false;
+    const ok = e.orch.answer(id, payload, TRY_ANSWERED_BY);   // answerRun cannot say whether it was taken
+    if (ok) resolvePending(e, { id, reason: 'answered' });
+    return ok;
+  },
+  mockMode: serverMockMode,
+  // D35, board 30: what a run without a project would load, for the Test a version dialog's notes. A registry copy is
+  // `untested` when a pretend try gives it no stand-in (pretendCopies: a current, passing Test with tools); the servers of
+  // the projects root's `.mcp.json` (the root layer a run without a project merges) are the file servers.
+  connectorsPreview: async () => {
+    const [{ result }, mcpStore] = await Promise.all([
+      mcpRunPreview({ kind: 'project', key: NO_PROJECT_KEY, name: NO_PROJECT_NAME, rank: 0 }), readMcpStore()]);
+    const standIns = new Set(pretendCopies(result.copies, (mcpStore && mcpStore.tests) || {}).map((c) => c.name));
+    const root = getProjectsRoot();
+    const file = root ? (await readMcpFile(path.join(root, '.mcp.json'))).servers : null;
+    return {
+      copies: result.copies.map((c) => ({ name: c.name, untested: !standIns.has(c.name) })),
+      fileServers: [...new Set(Object.keys(file || {}).map(normalizeServerName))].sort(),
+    };
+  },
+};
+registerWorkflowTestRoutes(app, { broadcast, deps: workflowTestDeps });
+
 // ---------------------------------------------------------------------------
 // Share a workflow as JSON (issue #421). GET .../json is the unstamped v2 graph
 // of the STORED row (no id/origin/timestamps; `canvas` kept), served as a
@@ -18667,6 +18710,14 @@ export async function bootMaintenance({ log } = {}) {
   } catch (err) {
     console.error(`[worca-ui] requirements sweep failed: ${err && err.message ? err.message : err}`);
   }
+  // Workflow tests (D27, review M4): a test this restart cut short is stopped; its tries keep their cost and their runs
+  // lose their resume points. Synchronous, like the requirements sweep: boot maintenance is not awaited before listen.
+  try {
+    const t = recoverInterruptedTestRuns();
+    if (t.runs) console.log(`[worca-ui] workflow tests: ${t.runs} interrupted test(s) stopped`);
+  } catch (err) {
+    console.error(`[worca-ui] workflow tests sweep failed: ${err && err.message ? err.message : err}`);
+  }
   // Requirements A7 (D15): a product brief left `making` by this restart gets INTERRUPTED. This runs before the
   // first await, but boot maintenance is not awaited before listen, so recoverBriefs skips a brief whose job runs.
   try {
@@ -19128,6 +19179,7 @@ export const _testing = {
   askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, memoryScopeKey, startRunHandler, invokeStartRun, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,
   uiControl, bearerMatches,
   broadcast, sockets, askFilesRunDir,
+  workflowTestDeps,
   validateResumeTarget, resumeTargetDirs, maybeScheduleLimitResume, resumeTargetOf, fireResumeTicket, cancelScheduledResumes, stopPausedPipeline,
   trackHeartbeat, heartbeatTick, BOOT_ID, drainServer, autoResumeOnBoot, DRAIN, collectPlatformHeartbeat, closeAtTokenExpiry, settleShutdownSteps,
   askCommandBridge, askProxyBridge, askCommands, askCommandsEnabled, askCommandTarget, drainAskDeferred, startScopeEventTurn, startTerminalEventTurn, terminals, prWatcher, liveRunOnBranch, terminalResolveOnBranch, prWatchMergeBase, prWatchOrigin, prWatchFrame,
