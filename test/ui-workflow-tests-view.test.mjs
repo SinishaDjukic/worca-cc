@@ -152,3 +152,62 @@ test('a workflow that needs a project, loading and errors (D20, C8)', () => {
   assert.match(boot(null, { error: 'Save the workflow first: tests belong to a saved workflow.' }).root.textContent, /Save the workflow first: tests belong to a saved workflow\./);
   assert.equal(exampleHint({ hasRequest: true, files: [], fromAt: null, note: null }), 'Request only');
 });
+
+test('first use with no past run (board 29): the sentence, and Add 0 examples is disabled', () => {
+  const { root } = boot(overview({ examples: [], latest: null, pastRuns: [] }));
+  assert.equal(root.querySelector('.wft-pick > .hint').textContent, 'Worca found no runs of Product brief writer without a project yet. Write an example yourself, or run the workflow once and come back.');
+  assert.equal(root.querySelectorAll('.wft-pick-row').length, 0);
+  const add = root.querySelector('.wft-first-foot .btn-primary');
+  assert.deepEqual([add.textContent, add.disabled], ['Add 0 examples', true]);
+});
+
+test('a past "Good" verdict, a test stopped early, and one column when no version is in use', () => {
+  const ex = overview().examples[0];
+  const { root } = boot(overview({
+    columns: [{ use: 'draft', label: 'Your draft' }],
+    examples: [{ ...ex, cells: { draft: { passed: null, total: null, stale: false, past: 'good' } } }],
+    latest: { ...overview().latest, status: 'stopped', stopReason: 'cap' },
+  }));
+  const cell = root.querySelector('.wft-row:not(.wft-row-head) .wft-res');
+  assert.deepEqual([cell.textContent, cell.querySelector('.wft-dot').className, cell.classList.contains('is-bad')], ['Good · a past run', 'wft-dot ok', false]);
+  assert.deepEqual(texts(root, '.wft-latest .badge'), ['2 better', '1 worse', '3 same', 'Stopped early']);
+  assert.ok(root.querySelector('.wft-grid').classList.contains('is-one'));
+  assert.deepEqual(texts(root, '.wft-row-head > span'), ['Example', 'What is checked', 'Your draft', '']);
+});
+
+test('Add N examples: one post at a time (a double click adds once), and the button comes back after a refusal', async () => {
+  const runs = [{ pipelineId: 'p1', title: 'Bulk invoice export', at: '2026-10-14T10:00:00Z', status: 'done', files: 0, sameAs: null }];
+  const { window } = new JSDOM('<!doctype html><body><section id="root" tabindex="-1"></section></body>');
+  let posts = 0;
+  let answer;
+  const actions = { addPastRuns: () => { posts += 1; return new Promise((r) => { answer = r; }); }, newExample() {} };
+  const root = window.document.getElementById('root');
+  renderTestsPage(root, overview({ examples: [], latest: null, pastRuns: runs }), actions, { doc: window.document, dateText, now: NOW });
+  const add = root.querySelector('.wft-first-foot .btn-primary');
+  click(add);
+  click(add);
+  assert.equal(posts, 1, 'the second click waits for the first post');
+  assert.equal(add.disabled, true);
+  answer({ ok: false, error: 'no' });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual([add.disabled, add.textContent], [false, 'Add 1 example']);
+});
+
+test('the focus stays on the page (inside the canvas-keys fence): after Hide, and after a repaint that took the focused control', () => {
+  const { window } = new JSDOM('<!doctype html><body><section id="root" tabindex="-1"></section><button id="out">x</button></body>');
+  const doc = window.document;
+  const root = doc.getElementById('root');
+  const actions = new Proxy({}, { get: () => () => {} });
+  const opts = { doc, storage: null, dateText, now: NOW };
+  renderTestsPage(root, overview(), actions, opts);
+  const hide = [...root.querySelectorAll('.wft-how button')].find((b) => b.textContent === 'Hide');
+  hide.focus();
+  click(hide);
+  assert.equal(doc.activeElement, root, 'Hide took the focused button away: the page holds the focus');
+  root.querySelector('.wft-ex-open').focus();
+  renderTestsPage(root, overview(), actions, opts);
+  assert.equal(doc.activeElement, root, 'a repaint keeps the focus inside the page');
+  doc.getElementById('out').focus();
+  renderTestsPage(root, overview(), actions, opts);
+  assert.equal(doc.activeElement.id, 'out', 'a repaint never takes the focus from outside the page');
+});

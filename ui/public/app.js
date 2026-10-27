@@ -3445,6 +3445,7 @@ async function wfvRefreshVersions() {
     wfvVersionsOverview = null; wfvVersionsError = null;
     if (els.vstatus) els.vstatus.hidden = true;
     paintPage();
+    if (els.tests && !els.tests.hidden) void wftRefresh();   // a new, unsaved canvas: the Tests page says so (C15)
     return null;
   }
   // Another workflow is open now: the page drops the rows of the one that left at once ("Reading the versions…").
@@ -3662,13 +3663,17 @@ function wftListActions() {
     ] }),
     openRun: (runId) => wftShow('progress', { runId }),
     openLatest: (runId) => wftShow('compare', { runId }),
+    // → {ok}: the view's Add button stays busy until the post answers (one post per click, withButton).
     addPastRuns: async (pipelineIds) => {
-      const r = await wftCall('POST', `${wftBase(wftWorkflowId())}/examples/from-runs`, { pipelineIds });
-      if (!r.ok) { notify({ tone: 'err', title: 'Examples not added', detail: r.error }); return; }
+      const id = wftWorkflowId();                                  // the workflow the picks belong to, before any await
+      if (!id) return { ok: false };
+      const r = await wftCall('POST', `${wftBase(id)}/examples/from-runs`, { pipelineIds });
+      if (!r.ok) { notify({ tone: 'err', title: 'Examples not added', detail: r.error }); return { ok: false }; }
       const n = r.data.examples.length;
       notify({ tone: 'ok', title: n === 1 ? 'Added 1 example' : `Added ${n} examples`, detail: 'Open each to say what a good result needs.' });   // G4
       if (r.data.skipped.length) notify({ tone: 'info', title: 'Some files were left out', detail: `${r.data.skipped.join(', ')}: larger than 5 MB, or more than 8 files.` });
-      wftShow('list', { overview: null });
+      if (wftWorkflowId() === id) wftShow('list', { overview: null });   // another workflow opened meanwhile: its page stays
+      return { ok: true };
     },
   };
 }
@@ -3680,12 +3685,14 @@ async function wftOpenExample() { notify({ tone: 'info', title: 'Examples', deta
 function wftRenderEditor() { wft.view = 'list'; void wftRefresh(); }
 
 async function wftDeleteExample(e) {
+  const id = wftWorkflowId();                                      // the example's workflow, before any await
+  if (!id) return;
   const ok = await confirmModal({ title: `Delete "${e.name}"?`, confirmLabel: 'Delete', danger: true,
     message: 'Its request, files, answers and checks are removed. The tries already made stay in the tests they belong to.' });
   if (!ok) return;
-  const r = await wftCall('DELETE', `${wftBase(wftWorkflowId())}/examples/${e.id}`);
+  const r = await wftCall('DELETE', `${wftBase(id)}/examples/${e.id}`);
   if (!r.ok) { notify({ tone: 'err', title: 'Not deleted', detail: r.error }); return; }
-  wftShow('list', { overview: null });
+  if (wftWorkflowId() === id) wftShow('list', { overview: null });
 }
 // ⌘Z / ⇧⌘Z reach the canvas even from a fenced button (composer.mjs onKeyDown, before its data-canvas-keys fence).
 // While the Versions page covers the canvas, an undo there would edit a graph nobody sees: it does nothing. Capture

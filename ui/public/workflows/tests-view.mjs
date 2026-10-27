@@ -2,6 +2,7 @@
 // of examples (canvas board 1), first use (board 19) and the sentence for a workflow that needs a project (D20, C8).
 // Pure DOM: app.js owns data and actions.
 import { el, btn, iconBtn, BUSY_HINT } from './test-ui.mjs';
+import { withButton } from '../feedback.mjs';
 import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { agoText, countsText } from '../../../src/shared/workflow-tests/compare.mjs';
 
@@ -17,6 +18,8 @@ const defaultDate = (iso) => {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 };
 const howHidden = (storage) => { try { return !!storage && storage.getItem(HOW_HIDDEN_KEY) === '1'; } catch { return false; } };
+/** Keep the focus inside the page (#wfv-tests, tabindex -1, the canvas-keys fence) when what held it went away. */
+const holdFocus = (root, doc) => { if (!root.contains(doc.activeElement)) root.focus({ preventScroll: true }); };
 const hideHow = (storage) => { try { if (storage) storage.setItem(HOW_HIDDEN_KEY, '1'); } catch { /* blocked storage: it shows again next time */ } };
 
 function howCard(doc, { first, onHide }) {
@@ -110,7 +113,7 @@ function table(doc, o, actions, dateText) {
   return sec;
 }
 
-function list(doc, page, o, actions, { storage, dateText, now }) {
+function list(doc, page, o, actions, { root, storage, dateText, now }) {
   const head = el(doc, 'div', 'wft-head');
   const acts = el(doc, 'div', 'wft-acts');
   const testBtn = btn(doc, 'Test a version', () => actions.testVersion(), 'btn btn-primary');
@@ -125,7 +128,7 @@ function list(doc, page, o, actions, { storage, dateText, now }) {
   }
   page.append(head);
   if (!howHidden(storage)) {
-    const how = howCard(doc, { first: false, onHide: () => { hideHow(storage); how.remove(); } });
+    const how = howCard(doc, { first: false, onHide: () => { hideHow(storage); how.remove(); holdFocus(root, doc); } });
     page.append(how);
   }
   if (o.running) {
@@ -187,8 +190,14 @@ function firstUse(doc, page, o, actions, { dateText }) {
   const hint = el(doc, 'span', 'hint');
   hint.append(doc.createTextNode('3 to 10 examples are a good start. You add what a good result needs in the next step. '),
     btn(doc, 'Or write an example yourself', () => actions.newExample(), 'wft-linkbtn'));
-  const add = btn(doc, '', () => actions.addPastRuns(boxes.filter((b) => b.checked).map((b) => b.value)), 'btn btn-primary');
+  const picked = () => boxes.filter((b) => b.checked).map((b) => b.value);
+  // One post at a time: busy (disabled) until the action answers {ok}; a refusal gives the button back (feedback.mjs).
+  const add = btn(doc, '', async () => {
+    await withButton(add, () => actions.addPastRuns(picked()), { busy: 'Adding…', done: 'Added', idleDisabled: () => !picked().length });
+    paint();
+  }, 'btn btn-primary');
   const paint = () => {
+    if (add.dataset.fbState) return;   // busy or done: withButton owns the label, and paint() runs again after
     const n = boxes.filter((b) => b.checked).length;
     add.textContent = n === 1 ? 'Add 1 example' : `Add ${n} examples`;
     add.disabled = n === 0;
@@ -205,6 +214,7 @@ function firstUse(doc, page, o, actions, { dateText }) {
  * @param {object} actions see the Interfaces of Task 10
  */
 export function renderTestsPage(root, o, actions, { doc, storage = null, loading = false, error = null, dateText = defaultDate, now = Date.now() } = {}) {
+  const hadFocus = root.contains(doc.activeElement) && doc.activeElement !== root;
   root.replaceChildren();
   const page = el(doc, 'div', 'wft-page');
   if (!o && loading) {
@@ -221,7 +231,8 @@ export function renderTestsPage(root, o, actions, { doc, storage = null, loading
   } else if (!o.examples.length) {
     firstUse(doc, page, o, actions, { dateText });
   } else {
-    list(doc, page, o, actions, { storage, dateText, now });
+    list(doc, page, o, actions, { root, storage, dateText, now });
   }
   root.append(page);
+  if (hadFocus) holdFocus(root, doc);   // the repaint took the focused control: the page holds the focus
 }

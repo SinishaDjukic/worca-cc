@@ -2577,3 +2577,22 @@ test('Tests page (Task 10): #workflows/<id>/tests opens the workflow on its Test
   assert.equal(page.hidden, false);
   assert.equal(page.querySelectorAll('.wft-row:not(.wft-row-head)').length, 1);
 });
+
+test('Tests page (Task 10 fix 1): Workflows ▾ › New canvas while it shows: the page follows to C15, never the last workflow\'s examples', async () => {
+  const { window: w, reads } = await bootTests();
+  await go(w, 'workflows/wf_g');
+  await tick(4);
+  const doc = w.document;
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="tests"]'));
+  await tick(6);
+  const page = doc.getElementById('wfv-tests');
+  assert.equal(page.querySelectorAll('.wft-ex-open').length, 1);
+  const before = reads.length;
+  clickEl(w, doc.getElementById('wfv-wf-menu'));
+  clickEl(w, [...doc.querySelectorAll('.wfv-menu-item')].find((b) => b.textContent.trim() === 'New canvas'));
+  await tick(8);
+  assert.equal(page.hidden, false);
+  assert.equal(page.querySelectorAll('.wft-ex-open').length, 0, 'the last workflow\'s examples are gone');
+  assert.match(page.textContent, /Save the workflow first: tests belong to a saved workflow\./);
+  assert.equal(reads.length, before, 'no read for a canvas that is not saved');
+});
