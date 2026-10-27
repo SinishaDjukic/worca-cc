@@ -1,7 +1,5 @@
-// test/ui-plan-panel.test.mjs — Shape it first (spec §3.4, D10, D12, S4): the `plan` ask on the run page. The plan
-// renderer is registered ungated, so a run held at its plan is answerable with the gate on or off. The answer route
-// is chosen when it is POSTED: the gated plan route while the gate is on, /api/answer otherwise — so a hello that
-// turns the gate off after the panel was drawn never strands the run.
+// test/ui-plan-panel.test.mjs — Shape it first (spec §3.4, D10, S4): the `plan` ask on the run page. The approve
+// posts the run's own plan route (/api/runs/:id/answer).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -39,11 +37,11 @@ function runRow(extra = {}) {
     pendingQuestion: PLAN_Q, ...extra };
 }
 
-async function openPlan({ gate = true, row = {}, ...rec } = {}) {
+async function openPlan({ row = {}, ...rec } = {}) {
   const r = recorder(rec);
   const ctx = await bootApp({ fetchHandler: r.fetchHandler });
   ctx.wsBox.ws.dispatch('open', {});
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: !!gate }, runs: [runRow(row)] });
+  ctx.dispatch({ type: 'hello', runs: [runRow(row)] });
   ctx.go(`running/${RUN_ID}`);
   await ctx.settle();
   return { ctx, panel: runPanel(ctx), ...r };
@@ -62,13 +60,11 @@ const doc = (ctx) => ctx.window.document;
 const glance = (ctx) => doc(ctx).querySelector('#run-detail .rd-glance');
 const menuLabels = (ctx) => [...doc(ctx).querySelectorAll('.wfv-menu .wfv-menu-item')].map((b) => b.querySelector('.wfv-menu-l').textContent);
 
-test('the step card\'s head says whose turn it is, once, with the gate on and off (the run page heading stays empty)', async () => {
-  for (const gate of [true, false]) {
-    const { ctx, panel } = await openPlan({ gate });
-    assert.equal(doc(ctx).querySelector('#run-detail .rd-ask-head').textContent, '', `gate ${gate}`);
-    assert.equal(panel.querySelector('.ask-mcard-title').textContent, 'Your turn: approve the plan');
-    assert.equal(panel.querySelector('.ask-mcard-kind').textContent, 'Plan');
-  }
+test('the step card\'s head says whose turn it is, once (the run page heading stays empty)', async () => {
+  const { ctx, panel } = await openPlan();
+  assert.equal(doc(ctx).querySelector('#run-detail .rd-ask-head').textContent, '');
+  assert.equal(panel.querySelector('.ask-mcard-title').textContent, 'Your turn: approve the plan');
+  assert.equal(panel.querySelector('.ask-mcard-kind').textContent, 'Plan');
 });
 
 test('shaped run waiting on its plan: card first, status card hidden whole, Pause hidden, top bar ⋯', async () => {
@@ -102,7 +98,7 @@ async function working(ctx) {
 
 test('once answered the run page is back to today\'s order, nothing folded', async () => {
   const { ctx } = await openPlan();
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: true }, runs: [runRow({ pendingQuestion: null })] });
+  ctx.dispatch({ type: 'hello', runs: [runRow({ pendingQuestion: null })] });
   await ctx.settle();
   await working(ctx);
   const g = glance(ctx);
@@ -112,21 +108,19 @@ test('once answered the run page is back to today\'s order, nothing folded', asy
   assert.equal(doc(ctx).querySelector('#run-detail .rd-pause').hidden, false);
 });
 
-for (const [name, opts] of [['an unshaped run (gate on)', { row: { shaping: undefined } }], ['the gate off', { gate: false }]]) {
-  test(`${name}: today's top bar and layout`, async () => {
-    const { ctx } = await openPlan(opts);
-    const g = glance(ctx);
-    assert.equal(g.dataset.shaperWait, undefined);
-    assert.equal(g.querySelector('.rd-questions').nextElementSibling, g.querySelector('.rd-night-sec'));
-    const bar = doc(ctx).querySelector('#run-detail .rd-bar');
-    assert.equal(bar.hasAttribute('data-shaped'), false);
-    // Run 3 (D13): every run page's bar folds its secondary controls into ⋯, shaped or not.
-    assert.equal(bar.querySelector('.rd-bar-more').hidden, false);
-    // The plan still waits: the one run model's Needs you actions (slice 4), Answer then Stop, and no Pause.
-    assert.deepEqual([...bar.querySelectorAll('[data-model-action]')].filter((b) => !b.hidden).map((b) => b.dataset.modelAction), ['answer', 'stop']);
-    assert.equal(bar.querySelector('.rd-pause').hidden, true);
-  });
-}
+test('an unshaped run: today\'s top bar and layout', async () => {
+  const { ctx } = await openPlan({ row: { shaping: undefined } });
+  const g = glance(ctx);
+  assert.equal(g.dataset.shaperWait, undefined);
+  assert.equal(g.querySelector('.rd-questions').nextElementSibling, g.querySelector('.rd-night-sec'));
+  const bar = doc(ctx).querySelector('#run-detail .rd-bar');
+  assert.equal(bar.hasAttribute('data-shaped'), false);
+  // Run 3 (D13): every run page's bar folds its secondary controls into ⋯, shaped or not.
+  assert.equal(bar.querySelector('.rd-bar-more').hidden, false);
+  // The plan still waits: the one run model's Needs you actions (slice 4), Answer then Stop, and no Pause.
+  assert.deepEqual([...bar.querySelectorAll('[data-model-action]')].filter((b) => !b.hidden).map((b) => b.dataset.modelAction), ['answer', 'stop']);
+  assert.equal(bar.querySelector('.rd-pause').hidden, true);
+});
 
 test('wide Live view: the graph sits beside the card, but a shaped run waiting on the person stays one column (D30)', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
@@ -147,42 +141,22 @@ test('the Away mode select is not repainted while a change posts (a ⋯ pick lea
   const { ctx } = await openPlan();
   const ns = doc(ctx).querySelector('#run-detail .rd-night');
   ns.disabled = true; ns.value = 'off';               // as the change handler leaves it mid-POST
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: true }, runs: [runRow()] });   // night.override still unset
+  ctx.dispatch({ type: 'hello', runs: [runRow()] });   // night.override still unset
   await ctx.settle();
   assert.equal(ns.value, 'off');
   ns.disabled = false;
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: true }, runs: [runRow()] });
+  ctx.dispatch({ type: 'hello', runs: [runRow()] });
   await ctx.settle();
   assert.equal(ns.value, 'auto', 'repainted again once the POST is done');
 });
 
-test('gate on: approve posts the gated plan route', async () => {
+test('approve posts the run\'s plan route', async () => {
   const { ctx, panel, posts } = await openPlan();
   click(ctx, panel.querySelector('.plan-approve'));
   await ctx.settle();
   assert.equal(posts.length, 1);
   assert.equal(posts[0].url, `/api/runs/${RUN_ID}/answer`);
   assert.deepEqual(posts[0].body, { id: 'plan-q-1', decision: 'approve' });
-});
-
-test('gate off: approve posts /api/answer', async () => {
-  const { ctx, panel, posts } = await openPlan({ gate: false });
-  click(ctx, panel.querySelector('.plan-approve'));
-  await ctx.settle();
-  assert.equal(posts.length, 1);
-  assert.equal(posts[0].url, '/api/answer');
-  assert.deepEqual(posts[0].body, { runId: RUN_ID, id: 'plan-q-1', payload: { decision: 'approve' } });
-});
-
-test('gate on at render, then a hello turns it off: approve posts /api/answer (D12)', async () => {
-  const { ctx, panel, posts } = await openPlan();
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: false }, runs: [runRow()] });
-  await ctx.settle();
-  assert.equal(runPanel(ctx), panel, 'the panel is not rebuilt on the same question');
-  click(ctx, panel.querySelector('.plan-approve'));
-  await ctx.settle();
-  assert.equal(posts.length, 1);
-  assert.equal(posts[0].url, '/api/answer');
 });
 
 test('a 422 shows its errors on the plan panel', async () => {
@@ -194,7 +168,7 @@ test('a 422 shows its errors on the plan panel', async () => {
   assert.match(err.textContent, /Too short/);
 });
 
-test('a 409 from the gated route says why it was not sent', async () => {
+test('a 409 from the plan route says why it was not sent', async () => {
   const { ctx, panel } = await openPlan({ gated: () => fail(409, { error: 'not waiting' }) });
   click(ctx, panel.querySelector('.plan-approve'));
   await ctx.settle(5);
@@ -210,7 +184,7 @@ for (const [title, want] of [['(untitled)', ''], ['Real title', 'Real title']]) 
     titleInput.value = 'stale';
     click(ctx, panel.querySelector('.plan-more'));
     const open = [...doc(ctx).querySelectorAll('.wfv-menu .wfv-menu-item')].find((b) => b.textContent === 'Open in New run');
-    assert.ok(open, 'Open in New run is offered with the gate on');
+    assert.ok(open, 'Open in New run is offered');
     click(ctx, open);
     await ctx.settle(10);
     assert.equal(ctx.window.location.hash, '#new');
@@ -236,7 +210,7 @@ test('run 4 D1: the waiting state is set while waiting and gone once the run wor
   const { ctx } = await openPlan();
   const g = glance(ctx);
   assert.equal(g.dataset.shaperWait, 'plan');
-  ctx.dispatch({ type: 'hello', flags: { shapeFirst: true }, runs: [runRow({ pendingQuestion: null })] });
+  ctx.dispatch({ type: 'hello', runs: [runRow({ pendingQuestion: null })] });
   await ctx.settle();
   assert.equal(g.dataset.shaperWait, undefined);
 });

@@ -13,8 +13,11 @@ import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, parseFeatureSeq, SCOPE_TYPES } from './spec.mjs';
 import {
   createFeature, requireFeature, listFeatures, listTurns, getContext, setContext, updateFeature, listStarts, latestStart, recentLookCosts,
-  getBrief, usableBrief, listBriefs, setBriefSections, deleteBrief, briefUsers, listAttachments,
+  getBrief, usableBrief, listBriefs, setBriefSections, deleteBrief, briefUsers, listAttachments, countHelperMessages,
 } from './store.mjs';
+import {
+  sendMessage, retryMessage, stopHelper, acceptProposal, rejectProposal, askAgain, clearChat, isAnswering, helperView,
+} from './helper.mjs';
 import { REQ_ATTACH_LIMITS, REQ_ATT_ID_RE, reqUploadOptions, checkNewFiles } from './attachments.mjs';
 import {
   addAttachments, removeAttachment, editSummary, setSend, readAgain, askAttachment, replaceAttachment, ownAttachment, fileView, readEstimates,
@@ -68,6 +71,10 @@ export const REQUIREMENTS_ROUTES = Object.freeze([
   ['GET', `${P}/:seq/markdown`], ['POST', `${P}/:seq/save`],
   ['POST', `${P}/:seq/start`], ['POST', `${P}/:seq/revert`],
   ['POST', `${P}/:seq/export/preview`], ['POST', `${P}/:seq/export`], ['DELETE', `${P}/:seq/export/link`],
+  // A3 §5: Feature chat, one chat per feature
+  ['GET', `${P}/:seq/helper`], ['DELETE', `${P}/:seq/helper`], ['POST', `${P}/:seq/helper/messages`], ['POST', `${P}/:seq/helper/stop`],
+  ['POST', `${P}/:seq/helper/retry`], ['POST', `${P}/:seq/helper/messages/:msgId/proposals/:n/accept`],
+  ['POST', `${P}/:seq/helper/messages/:msgId/proposals/:n/reject`], ['POST', `${P}/:seq/helper/messages/:msgId/proposals/:n/ask-again`],
 ].map(([method, path]) => Object.freeze({ method, path })));
 
 /** The routes whose whole purpose is git (making or refreshing a product brief, Look closer / Look again check out
@@ -230,7 +237,8 @@ export async function featureView(seq, d = {}) {
       unaskedFiles: unaskedFiles(files, turns),
       interview: await interviewInfo(async () => im, d.listModels || listModels),
       resetPeriod: resetPeriod(),
-      export: await exportView(f, turns, d) },   // A6 §6: the menu, the chip, the History card, Report back (never throws)
+      export: await exportView(f, turns, d),   // A6 §6: the menu, the chip, the History card, Report back (never throws)
+      helper: { answering: isAnswering(seq), messages: countHelperMessages(seq) } },
     turns,
   };
 }
@@ -396,6 +404,20 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
     if (!file) throw new RequirementsError('BAD_REQUEST', 'send one file in "attachments"');
     return file;
   };
+
+  // A3 §5: a message id and a proposal number, else NOT_FOUND (a body like the other refusals).
+  const msgIdOf = (req) => {
+    const v = String(req.params.msgId || '');
+    if (!/^[1-9]\d{0,9}$/.test(v)) throw new RequirementsError('NOT_FOUND', 'This message is no longer in the chat.');
+    return Number(v);
+  };
+  const proposalNOf = (req) => {
+    const v = String(req.params.n || '');
+    if (!/^[1-9]\d{0,2}$/.test(v)) throw new RequirementsError('NOT_FOUND', 'This change is no longer in the chat.');
+    return Number(v);
+  };
+  // The helper's body; the call's start and end send their own frames (helper.mjs notify), a decision sends one here.
+  const helperBody = (res, seq, code = 200) => res.status(code).json(helperView(seq));
 
   const handlers = {
     [`GET ${P}/context/:scopeType/:scopeKey`]: async (req, res) => {
@@ -733,6 +755,47 @@ export function registerRequirementsRoutes(app, { broadcast, deps = {} } = {}) {
       const seq = seqOf(req);
       forgetLink(seq, { by: by(req) });
       await changed(res, seq);
+    },
+    [`GET ${P}/:seq/helper`]: async (req, res) => helperBody(res, seqOf(req)),   // a read: no lock, also archived
+    [`DELETE ${P}/:seq/helper`]: async (req, res) => {
+      const seq = seqOf(req);
+      clearChat(seq);
+      onChange(seq);
+      helperBody(res, seq);
+    },
+    [`POST ${P}/:seq/helper/messages`]: async (req, res) => {
+      const seq = seqOf(req);
+      const b = req.body || {};
+      sendMessage(seq, { text: b.text, focus: b.focus }, { by: by(req) }, d);   // refusals throw here; the call is not awaited
+      helperBody(res, seq, 202);
+    },
+    [`POST ${P}/:seq/helper/stop`]: async (req, res) => {
+      const seq = seqOf(req);
+      requireFeature(seq);
+      await stopHelper(seq);
+      helperBody(res, seq);
+    },
+    [`POST ${P}/:seq/helper/retry`]: async (req, res) => {
+      const seq = seqOf(req);
+      retryMessage(seq, { by: by(req) }, d);
+      helperBody(res, seq, 202);
+    },
+    [`POST ${P}/:seq/helper/messages/:msgId/proposals/:n/accept`]: async (req, res) => {
+      const seq = seqOf(req);
+      acceptProposal(seq, msgIdOf(req), proposalNOf(req), { by: by(req) });
+      onChange(seq);
+      helperBody(res, seq);
+    },
+    [`POST ${P}/:seq/helper/messages/:msgId/proposals/:n/reject`]: async (req, res) => {
+      const seq = seqOf(req);
+      rejectProposal(seq, msgIdOf(req), proposalNOf(req), { by: by(req) });
+      onChange(seq);
+      helperBody(res, seq);
+    },
+    [`POST ${P}/:seq/helper/messages/:msgId/proposals/:n/ask-again`]: async (req, res) => {
+      const seq = seqOf(req);
+      askAgain(seq, msgIdOf(req), proposalNOf(req), { by: by(req) }, d);
+      helperBody(res, seq, 202);
     },
   };
 

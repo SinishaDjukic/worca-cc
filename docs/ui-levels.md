@@ -193,7 +193,7 @@ The **Auto** workflow option is available for both targets — a project and a w
 | Runs list: Delete (the action bar and the row ⋯ menu); Add to group… and Remove from group (the row ⋯ menu); their keys ⌫, G and ⇧G | A |
 | Run page: "Add to group…" on the Group row of a run in no group, the same as in the list's row menu | A |
 | Resume menu: Resume at HH:MM (when the limit resets) | A |
-| Run page glance: the run's name as the page title, the status line (state, then the step), time · cost (with its Away mode share) · changes; the Cost tags row under them (with `runTags`), the Live view switch and its fogged graph of the running step(s), parallel steps (Now), one row per tab, a waiting question below its own heading, the result actions | S |
+| Run page glance: the run's name as the page title, the status line (state, then the step), time · cost (with its Away mode share) · changes; the Cost tags row under them, the Live view switch and its fogged graph of the running step(s), parallel steps (Now), one row per tab, a waiting question below its own heading, the result actions | S |
 | Run progress: the bar under the status line (Plan · Build · Review · Ready, blue / amber / green), its text ("Build · task 2 of 4") in place of "Step: …", the chain's overall bar ("Run 2 of 3"), the Runs list's group bar and group row with its ⌄ | S |
 | Run progress hover breakdown: stages with their agents and states, review pass count | A |
 | Workflow graph with status colours, gate pip, End result; Workflow, Overview and Q&A tabs | S |
@@ -357,6 +357,8 @@ Settings tabs once, pages of their own now. The old addresses (`#settings/plugin
 | Connect a tracker… (the menu item and its dialog) | S |
 | Connect a tracker's Open the Marketplace page | A — the Marketplace page is Advanced |
 | A feature's interview: the question card (options, Recommended, your own answer, Finish now, Skip, use recommended, Submit), Earlier rounds and Change, the working line, the error line and Try again | S |
+| Feature chat: the header's Feature chat, Help me answer on each open question, the panel beside the spec and the phone sheet (Back), the first-open text and its three questions, the composer and its cost line, Answering… and Stop, the failed, stopped and spending-limit lines, Try again, ⋯ Clear chat | S — product owners are its users |
+| Feature chat's drafts in the question card (drafted by Worca, ×, "Worca's draft: …") and its proposal cards (Before / After, New, Remove, Confirm / Reject, Why, Reject / Accept / Ask again, Accepted, Rejected, "The spec changed since Worca proposed this.") | S |
 | A feature's spec card: the sections and their edits, Let Worca rewrite this, criteria add / remove, assumptions Confirm / Reject, the folded flow, edge cases, rules and out of scope | S |
 | Ready to start?: the six checks and what each misses, Start in Worca, "Start before it's Ready…" and its dialog (the failing checks, the required reason, "Recorded as") | S |
 | Decide the assumptions: Confirm / Reject, Show the other N, Confirm the N left, "Done, ask about A-n" | S |

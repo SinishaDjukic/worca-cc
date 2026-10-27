@@ -3,7 +3,6 @@
 import { CREATE_PR_LABEL, VIEW_PR_LABEL } from '../ship-words.mjs';
 import { icon } from '../icons.mjs';
 import { renderAskChanges } from '../chat/ask-changes.mjs';
-import { shapeFirstOn } from '../chat/shape-gate.mjs';
 
 const MINUS = '\u2212';
 const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -124,7 +123,7 @@ export function buildShipChatCard(block, ctx) {
   const el = renderShipCard(ctx.doc, { phase, featureId: c.featureId, title: c.title, runs: c.runs, files: c.files, added: c.added,
     deleted: c.deleted, suggested: c.suggested, result: c.result || null }, {
     onNotNow: async () => { await ctx.postCard(block, { verb: 'not-now' }); say('Ship card dismissed'); },
-    ...(shapeFirstOn(ctx.doc) && typeof ctx.postChanges === 'function' ? { onAskChanges: (t) => ctx.postChanges({ featureId: c.featureId }, t) } : {}),
+    ...(typeof ctx.postChanges === 'function' ? { onAskChanges: (t) => ctx.postChanges({ featureId: c.featureId }, t) } : {}),
   });
   return { el };
 }

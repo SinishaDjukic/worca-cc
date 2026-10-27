@@ -6312,11 +6312,9 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .gv-well .gv-stage,.gv-well .gv-world .node{cursor:grab;}
 .gv-well .gv-stage.panning,.gv-well .gv-stage.panning *{cursor:grabbing !important;}
 .gv-well > .gv-nav{right:12px;bottom:12px;}
-/* #959: a chat card sits on the text column; only its graph well (.gv-well: the build card's, the Auto card's, the
-   run card's) widens, up to --chat-card-max and centred on the column (100cqi = the transcript's content box; 100% =
-   the card's content box, itself centred on the column). Its host fits the graph into it (run-hosts `card`,
-   proposal-host). */
-.chat-convo .ask-msg .gv-well{width:min(var(--chat-card-max),100cqi);margin-left:calc((100% - min(var(--chat-card-max),100cqi)) / 2);}
+/* A chat card sits on the text column and so does every part of it: a graph well (.gv-well: the build card's, the
+   Auto card's, the run card's) is as wide as its card, and its host fits the graph into it (run-hosts `card`,
+   proposal-host). No rule widens it. */
 
 /* ---------- workflow card build (ui/public/auto-build.mjs; mockup §B/§F motion) ---------- */
 .ask-wfcard-graph .gv-world .node{transition:opacity .28s cubic-bezier(.2,.7,.3,1),translate .28s cubic-bezier(.2,.7,.3,1);}
@@ -8907,7 +8905,7 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
    takes the rest, and the page is a row: history column · conversation · run panel slot (P4 sets its width). */
 body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
 .view[data-view="chat"]{flex:1 1 auto;min-height:0;position:relative;}
-.chat-page{position:absolute;inset:0;display:flex;min-width:0;min-height:0;overflow:hidden;background:var(--panel);--chat-text-max:760px;--chat-card-max:1040px;}
+.chat-page{position:absolute;inset:0;display:flex;min-width:0;min-height:0;overflow:hidden;background:var(--panel);--chat-text-max:760px;}
 .chat-page[data-history="closed"] .chat-history{display:none;}
 /* The conversation column: the cap tokens the transcript column, the composer box and the jump pill read. */
 .chat-convo{position:relative;flex:1 1 auto;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;--ask-col-max:var(--chat-text-max);--ask-col-inset:max(16px,calc(50% - var(--ask-col-max) / 2));--ask-box-top:103px;--chat-dock-fade:32px;}
@@ -8940,7 +8938,7 @@ body.view-chat .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .chat-dock > .ask-jump{bottom:100%;}
 /* #959: ONE width rule for every chat card: the text column. .ask-transcript-col caps the column at --ask-col-max
    (= --chat-text-max) and every card, stub and build card fills it, so text and cards share one left edge; no card
-   kind sets a width. Only a graph well widens (.chat-convo .ask-msg .gv-well). The transcript is its own stacking
+   kind sets a width. No part of a card leaves the column, a graph well included. The transcript is its own stacking
    context, so a card's raised parts scroll under the dock, not over it. It reserves its scrollbar gutter on both
    edges, so the column, the composer and Jump to latest share one centre with classic and overlay scrollbars alike;
    its bottom clearance is the dock's height plus the dock's fade band. */
@@ -10735,6 +10733,99 @@ a.req-src-tag:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
    --ink-2 (AA), one step down the type scale. */
 .req-docs .req-docs-foot{margin:0;padding-top:10px;border-top:1px solid var(--line)}
 .req-brief-src{display:inline;margin:0;font-size:var(--fs-meta)}
+
+/* A3 (boards 22, 23, 25; plans/requirements-a3-design.md §6): Feature chat beside the feature spec. Wider than 900 px the panel takes
+   the right column (420 px) and the Ready, Files and Spec cards move under the current card; at 900 px and narrower it is a
+   full-screen sheet with Back and 44 px targets. The pressed toggle has an ink border, never a green fill; board 23 (dark) is
+   these tokens and nothing else. */
+.req-help-toggle[aria-pressed="true"]{border-color:var(--ink)}
+.req-cols.with-helper{grid-template-columns:minmax(0,1fr) 420px}
+.req-moved{display:flex;flex-direction:column;gap:14px;min-width:0}
+.req-help{position:sticky;top:12px;align-self:start;display:flex;flex-direction:column;min-height:420px;max-height:calc(100vh - 96px);border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);color:var(--ink);overflow:hidden}
+.req-help-head{display:flex;align-items:center;gap:4px;padding:12px 12px 12px 18px;border-bottom:1px solid var(--line)}
+.req-help-title{flex:1;min-width:0}
+.req-help-title h3{margin:0;font-size:15px;font-weight:700}
+.req-help-title .hint{margin:2px 0 0}
+.req-help-back{display:none}
+.req-help-log{flex:1 1 auto;min-height:0;overflow:auto;padding:16px 18px;display:flex;flex-direction:column;gap:14px}
+.req-help-msg-po{align-self:flex-end;max-width:85%;padding:10px 12px;border-radius:var(--r-md);background:var(--field);font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}
+.req-help-cap{display:block;margin:0 0 2px;font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-help-msg-w{align-self:stretch;display:flex;flex-direction:column;gap:6px;font-size:13px}
+.req-help-msg-w .hint,.req-help-text{margin:0}
+.req-help-text{white-space:pre-wrap;overflow-wrap:anywhere}
+.req-help-fail{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;color:var(--red-ink-strong)}
+.req-help-stopped{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.req-help-budget{margin:0;padding:8px 10px;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:12px}
+.req-help-waiting{display:flex;flex-direction:column;gap:6px}
+.req-help-waiting p{margin:0}
+.req-help-waiting-line{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px;color:var(--ink-2)}
+.req-help-empty{display:flex;flex-direction:column;gap:10px;font-size:13px}
+.req-help-empty p{margin:0}
+.req-help-starters{display:flex;flex-direction:column;gap:6px}
+.req-help-starters .btn{justify-content:flex-start;text-align:left}
+.req-help-composer{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-top:1px solid var(--line)}
+.req-help-label{font-size:12px;font-weight:600;color:var(--ink-2)}
+.req-help-in{width:100%;box-sizing:border-box;resize:vertical;font:inherit;font-size:13px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);color:var(--ink)}
+.req-help-in:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
+.req-help-foot{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.req-help-foot .hint,.req-help-count,.req-help-refusal{margin:0}
+.req-help-refusal{font-size:12px;color:var(--red-ink-strong)}
+.req-help-archived{margin:0;padding:12px 14px;border-top:1px solid var(--line)}
+@media (max-width:900px){
+  .req-cols.with-helper{grid-template-columns:1fr}
+  .req-help{position:fixed;inset:0;align-self:stretch;z-index:45;min-height:0;max-height:none;border:0;border-radius:0}
+  .req-help-head{padding:4px 4px 4px 8px}
+  .req-help-back{display:inline-grid}
+  .req-help-close,.req-help-wide{display:none}
+  /* 44px targets: the icon buttons grow; a 28px .btn-sm grows its hit area past its 1px border (26 + 2 × 9), board 20's
+     pattern (a 44px .btn is off the control scale); the starters' gap keeps neighbouring areas apart */
+  .req-help .req-ico{min-width:44px;min-height:44px}
+  .req-help .btn-sm{position:relative}
+  .req-help .btn-sm::after{content:"";position:absolute;inset:-9px 0}
+  .req-help-starters{gap:18px}
+  .req-help-toggle,.req-help .menu-item{min-height:44px}
+}
+/* A3 D1/D6 (boards 22, 25): Help me answer beside each pending question (its own 44 px line on a phone), and Worca's draft: a
+   dashed blue chip after the options (blue means active), its × and its why. On the type scale and the radius tokens (the
+   board's 11.5px and pill corners are off them); on a phone the × keeps its size and its hit area grows to 44 × 44 (the
+   ::after pattern above), the row's margins keeping that area off the options and the answer field. */
+.req-qhead{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.req-qhead > .qtext{flex:1;min-width:0}
+.req-help-ask{flex:none;white-space:nowrap;font-size:var(--fs-meta)}
+.req-help-drafted-row{display:flex;flex-direction:column;gap:4px;margin:6px 0 0 24px}
+.req-help-drafted-row[hidden]{display:none}
+.req-help-drafted{display:inline-flex;align-self:flex-start;align-items:center;gap:4px;padding:1px 7px;border:1px dashed var(--blue-ink-strong);border-radius:var(--r-md);color:var(--blue-ink-strong);font-size:var(--fs-meta);white-space:nowrap}
+.req-help-drafted-x{display:inline-flex;align-items:center;padding:0 0 0 2px;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer}
+.req-help-drafted-x:focus-visible{outline:2px solid var(--ink);outline-offset:1px;border-radius:var(--r-sm)}
+.req-help-draft-why,.req-help-dropped{margin:0}
+@media (max-width:900px){
+  .req-qhead{flex-wrap:wrap}
+  .req-help-ask{flex-basis:100%;display:inline-flex;align-items:center;min-height:44px;text-align:left}
+  .req-help-drafted-row{margin:12px 0 12px 24px}
+  .req-help-drafted-x{position:relative}
+  .req-help-drafted-x::after{content:"";position:absolute;left:50%;top:50%;width:44px;height:44px;transform:translate(-50%,-50%)}
+}
+/* A3 (board 24): a proposed change as a card: Before / After / New / Remove / Confirm / Reject rows, the old side muted. Accepted is
+   green ink with a check, never a fill; the stale line is the amber alert. On the type scale (the board's 11.5 / 12.5px are off
+   it); on a phone Reject and Accept share the row and reach 44 px through the panel's .btn-sm ::after hit area above (a 44px
+   .btn is off the control scale). */
+.req-help-card{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel)}
+.req-help-card-head{margin:0;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2)}
+.req-help-ba{display:grid;grid-template-columns:56px minmax(0,1fr);gap:4px 10px;font-size:var(--fs-body)}
+.req-help-ba > span{overflow-wrap:anywhere}
+.req-help-k{padding-top:1px;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2)}
+.req-help-old,.req-help-id{color:var(--ink-2)}
+.req-help-card .req-help-reason{margin:0}
+.req-help-btns{display:flex;justify-content:flex-end;gap:8px}
+.req-help-state{margin:0;display:flex;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink-2)}
+.req-help-state.ok{color:var(--green-ink-strong)}
+.req-help-state:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-sm)}
+.req-help-measure{display:block}
+.req-help-stale{margin:0;padding:8px 10px;border-radius:var(--r-sm);background:var(--amber-bg);color:var(--amber-ink-strong);font-size:var(--fs-meta)}
+@media (max-width:900px){
+  .req-help-ba{grid-template-columns:52px minmax(0,1fr);gap:4px 8px}
+  .req-help-btns .btn{flex:1}
+}
 
 /* A6 (plans/requirements-a6-design.md §7): Export to a tracker. The dialogs are .req-dialog cards on the page's modal (the
    setup 560 px, board 26); a field is its label over its control, two short fields share a row. The label chips' remove

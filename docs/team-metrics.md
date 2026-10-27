@@ -90,7 +90,7 @@ workspace runs follow that switch).
 
 ## Cost
 
-While the `runTags` feature flag is on, the Overview tab opens with three chips: **Overview** (the
+The Overview tab opens with three chips: **Overview** (the
 page as before), **By person** (the By actor table on its own) and **Cost**. Cost is the same Cost and
 value report as Statistics › Cost (see [statistics.md](./statistics.md)): KPIs, a filter bar,
 Allocate by → then by, a stacked area chart, one expandable table, saved views and Download CSV, over

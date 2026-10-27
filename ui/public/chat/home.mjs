@@ -100,7 +100,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
   const section = host.closest('section[data-view="chat"]');
   const h = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   const st = {
-    visiting: false, visit: 0, tab: null, chosen: false, runs: EMPTY_RUNS, threads: null, workflows: null, portsFn: null, plans: null, plansOn: false, plansOpen: new Set(), presetsOn: false, presets: null,
+    visiting: false, visit: 0, tab: null, chosen: false, runs: EMPTY_RUNS, threads: null, workflows: null, portsFn: null, plans: null, plansOpen: new Set(), presets: null,
     tiles: new Map(), tilesTab: null, panelSig: '', tick: null, pending: null, routing: false, runsWait: null, runsWaited: false,
   };
 
@@ -179,7 +179,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
   function readTab() {
     try {
       const v = win.sessionStorage.getItem(HOME_TAB_KEY);
-      return HOME_TABS.includes(v) && (v !== 'plans' || st.plansOn) ? v : null;
+      return HOME_TABS.includes(v) ? v : null;
     } catch { return null; }
   }
   function writeTab(t) { try { win.sessionStorage.setItem(HOME_TAB_KEY, t); } catch { /* storage off: the pick lasts this visit */ } }
@@ -384,8 +384,8 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
     st.plans = Array.isArray(list) ? list.slice(0, 30) : [];
     if (st.tab === 'plans') renderPanel();
   }
-  // Run presets (#712 slice 2): the viewer's presets as chips, fresh per visit, while the runPresets flag is on.
-  function paintPresets() { presetsUi.render({ on: st.presetsOn, presets: st.presets?.presets || [], target: st.presets?.target || null, workflowNames: st.presets?.workflowNames ?? null }); }
+  // Run presets (#712 slice 2): the viewer's presets as chips, fresh per visit.
+  function paintPresets() { presetsUi.render({ presets: st.presets?.presets || [], target: st.presets?.target || null, workflowNames: st.presets?.workflowNames ?? null }); }
   async function loadPresets(token) {
     let got = null;
     try { got = typeof deps.presets === 'function' ? await deps.presets() : null; } catch { got = null; }
@@ -393,28 +393,11 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
     st.presets = got && Array.isArray(got.presets) ? got : { presets: [], target: null };
     paintPresets();
   }
-  /** The switches, the preset chips, and the Plans tab while the Shape it first gate is on. */
-  function applyFlags(flags) {
-    actions.setFlags(flags);
-    const presetsOn = flags.runPresets === true;
-    if (presetsOn !== st.presetsOn) { st.presetsOn = presetsOn; if (presetsOn && st.visiting) void loadPresets(st.visit); paintPresets(); }
-    const on = flags['shapeFirst'] === true;          // the key form: the gate scan bans the dotted read outside shape-gate.mjs
-    if (on === st.plansOn) return;
-    st.plansOn = on;
-    tabs.setVisible('plans', on);
-    if (on && st.visiting && st.plans == null) void loadPlans(st.visit);
-    if (!on && st.tab === 'plans') {
-      st.chosen = false; st.tab = null; st.panelSig = null;
-      maybeChoose();
-      // maybeChoose may not be able to choose yet (runs not known): never leave the hidden tab selected or its list up.
-      if (st.chosen) renderPanel(); else { tabs.select(null); busy(); }
-    }
-  }
   async function loadFlags(token) {
     let got = null;
     try { got = typeof deps.flags === 'function' ? await deps.flags() : null; } catch { got = null; }
     if (token !== st.visit || !got) return;
-    applyFlags(got);
+    actions.setFlags(got);
   }
 
   // ---- visits ----------------------------------------------------------------------------------------------------
@@ -449,7 +432,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
     void loadPins(token);
     void loadPresets(token);
     void loadFlags(token);
-    if (st.plansOn) void loadPlans(token);
+    void loadPlans(token);
     st.tick = clock.setInterval(() => { if (!visible()) { leave(); return; } pullRuns(); }, RUNS_TICK_MS);
   }
   function leave() {
@@ -476,7 +459,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
   /** update(): something about the runs changed (a run frame) — re-read them, coalesced. update(data): apply now. */
   function update(data) {
     if (data && typeof data === 'object') {
-      if (data.flags) applyFlags(data.flags);
+      if (data.flags) actions.setFlags(data.flags);
       if (!st.visiting) return;                 // a hidden home mounts nothing; the next visit re-reads everything
       if (Array.isArray(data.threads)) st.threads = validThreads(data.threads).slice(0, RECENT_CHATS_MAX);
       if (data.workflows && Array.isArray(data.workflows.list)) {
@@ -495,7 +478,7 @@ export function createChatHome({ doc, host, heroSlot = null, deps, runsWaitMs = 
   return {
     update,
     /** A shape-feature / schedules-changed frame: re-read the Plans tab's rows. */
-    refreshPlans() { if (st.visiting && st.plansOn) void loadPlans(st.visit); },
+    refreshPlans() { if (st.visiting) void loadPlans(st.visit); },
     /** The intent add-on's transformSend (every Ask send): a send from the home arms the hero → dock glide. */
     armFlip() { return !!page && page.dataset.view === 'home' && flip.arm(); },
     destroy() {

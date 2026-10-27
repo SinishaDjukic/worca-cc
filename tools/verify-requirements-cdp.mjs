@@ -13,13 +13,16 @@
 // (Create, the code moved on, New feature knows the brief, Look closer, Add this to the brief); files (New feature with
 // two files, Reading 2 files…, the Files card, an edit, the ⋯ menu, Ask (Asking…) and Replace, a source tag, a file
 // added after the interview offered as Decide's Ask about <file>, Remove, the Ready row's chips, Start sends the files,
-// the brief's Documents card; at 390 px the Files card fits, its ⋯ menu holds the pencil's entry, 44 px targets); export to
-// a tracker (A6: jira-source linked in mock mode; the Export menu's items, the setup, the preview and its dark theme, Create
-// with the chip, the History card and Created SHOP-123, Export again with the comment preview, Export anyway, the 390 px
-// sheet with its phone title, Back, Show all, 44 px targets and the page inert until the view is left, Tab kept inside a
-// dialog, AA text in light and dark, the states of a tracker that cannot be reached, Start with Report back writing back to
-// the ticket; `--only=a6` runs it alone); no page errors.
-// NOT part of `npm test`. REQ_SHOTS=<dir> also writes the export screens there (a6-*.png) for a human look.
+// the brief's Documents card; at 390 px the Files card fits, its ⋯ menu holds the pencil's entry, 44 px targets);
+// Feature chat (A3: the toggle and the right column, Help me answer, a draft in the question card, Accept, a stale card
+// and Ask again, Answering… and Stop, the dark theme, the 390 px sheet with Back keeping the draft, Clear chat, Submit
+// sending the draft); export to a tracker (A6: jira-source linked in mock mode; the Export menu's items, the setup, the
+// preview and its dark theme, Create with the chip, the History card and Created SHOP-123, Export again with the comment
+// preview, Export anyway, the 390 px sheet with its phone title, Back, Show all, 44 px targets and the page inert until the
+// view is left, Tab kept inside a dialog, AA text in light and dark, the states of a tracker that cannot be reached, Start
+// with Report back writing back to the ticket; `--only=a6` runs it alone); no page errors.
+// NOT part of `npm test`. REQ_SHOTS=<dir> also writes the Feature chat and export screens there (a3-*.png, a6-*.png) for a
+// human look.
 // Run: npm run verify:requirements   (set CHROME_BIN to a Chrome/Chromium binary if it is not auto-found,
 // e.g. CHROME_BIN="C:/Program Files/Google/Chrome/Application/chrome.exe" on Windows)
 //
@@ -440,6 +443,247 @@ if (!ONLY_A6) {   // --only=a6 skips to the A6 section
     await until(() => A.evalJs(`(() => { const r = document.querySelector('#requirements-host .req-docs .req-file');
       return !!r && /What Worca took from it/.test(r.textContent) && !!r.querySelector('[aria-label="Send tone.md with every run"]')
         && [...document.querySelectorAll('#requirements-host .chip')].some((c) => c.textContent === '1 document'); })()`), 10000));
+  // ---- A3: Feature chat (boards 22–25), in mock mode. A mock reply drafts the first option of the first question that is not the
+  // recommended one ("Support agents") and proposes the criterion "[mock] A criterion Worca suggests."; WORCA_MOCK_HELPER_MS holds a
+  // reply so Answering… and Stop can be seen. A mock proposal is always an add (stale only once its text is a criterion), so the stale card is made by
+  // storing one reword proposal straight into the store (this process serves the page) and then editing that criterion by hand.
+  /** REQ_SHOTS=<dir>: a screenshot of the viewport for a human look (nothing is written without it). */
+  const shot = async (name) => {
+    if (!SHOTS) return;
+    await mkdir(SHOTS, { recursive: true });
+    const { data } = await A.send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(path.join(SHOTS, `${name}.png`), Buffer.from(data, 'base64'));
+  };
+  /** The text in `sels` below WCAG AA against what is drawn under it (4.5:1; 3:1 for large text): [text, ratio, ink, ground].
+   *  A colour is read back through a canvas, so any CSS colour syntax works; a disabled control and hidden text are skipped. */
+  const lowContrast = (sels) => A.evalJs(`(() => {
+    const cv = document.createElement('canvas'); cv.width = 1; cv.height = 1; const cx = cv.getContext('2d', { willReadFrequently: true });
+    const rgba = (c) => { cx.clearRect(0, 0, 1, 1); cx.fillStyle = '#000'; cx.fillStyle = c; cx.fillRect(0, 0, 1, 1);
+      const d = cx.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
+    const over = (top, under) => [0, 1, 2].map((i) => top[i] * top[3] + under[i] * (1 - top[3])).concat(1);
+    const ground = (el) => { const layers = [];
+      for (let n = el; n; n = n.parentElement) { const c = rgba(getComputedStyle(n).backgroundColor); if (c[3] > 0) layers.push(c); if (c[3] >= 1) break; }
+      let g = [255, 255, 255, 1]; for (const l of layers.reverse()) g = over(l, g); return g; };
+    const lum = (c) => { const v = c.slice(0, 3).map((x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; });
+      return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
+    const out = [];
+    for (const root of document.querySelectorAll(${JSON.stringify(sels.join(', '))})) {
+      for (const el of [root, ...root.querySelectorAll('*')]) {
+        if (![...el.childNodes].some((t) => t.nodeType === 3 && t.textContent.trim())) continue;
+        if (!el.getClientRects().length || el.closest('[hidden], [aria-hidden="true"], button:disabled')) continue;
+        const cs = getComputedStyle(el); if (cs.visibility === 'hidden') continue;
+        const bg = ground(el); const ink = over(rgba(cs.color), bg);
+        const [a, b] = [lum(ink), lum(bg)]; const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+        const px = parseFloat(cs.fontSize); const large = px >= 24 || (px >= 18.66 && Number(cs.fontWeight) >= 700);
+        if (ratio < (large ? 3 : 4.5)) out.push([el.textContent.trim().slice(0, 40), Math.round(ratio * 100) / 100, cs.color, 'rgb(' + bg.slice(0, 3).map(Math.round).join(', ') + ')']);
+      }
+    }
+    return out; })()`);
+  const A3_TEXT = ['#requirements-host .req-help', '#requirements-host .req-help-drafted-row', '#requirements-host .req-help-ask', '#requirements-host .req-help-toggle'];
+  const helpSeq = await A.evalJs(`(async () => {
+    const key = ((await (await fetch('/api/projects')).json()).projects || []).find((p) => p.name === 'shop').key;
+    const r = await fetch('/api/requirements', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scopeType: 'project', scopeKey: key, title: 'Cancel with Worca', description: 'Customers cancel before it ships' }) });
+    return (await r.json()).feature.seq; })()`);
+  // The first-visit Welcome dialog (upstream onboarding) still sits over the page: Skip it, so the screens and the sheet's checks
+  // see the page itself.
+  await A.evalJs(`fetch('/api/onboarding', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ welcomeSeen: true }) })
+    .then(() => { document.querySelector('#welcome-modal:not(.hidden) .ob-skip')?.click(); })`);
+  await A.evalJs(`location.hash = '#requirements/feature/${helpSeq}'`);
+  check('A3: a new feature waits for round 1\'s answers; Feature chat is closed and each question offers Help me answer',
+    await until(() => A.evalJs(`document.querySelectorAll('#requirements-host .qpanel .req-help-ask').length === 2
+      && document.querySelector('[data-ui="helper-toggle"]')?.getAttribute('aria-pressed') === 'false' && !document.querySelector('.req-help')`), 15000));
+  await A.evalJs(`document.querySelector('[data-ui="helper-toggle"]').click()`);
+  check('A3 board 22: Feature chat takes the right column (420 px); the spec moves under the question card; the first-open text and its three questions',
+    await until(() => A.evalJs(`(() => { const p = document.querySelector('#requirements-host aside.req-help'); if (!p) return false;
+      return Math.abs(p.getBoundingClientRect().width - 420) <= 1 && !document.querySelector('#requirements-host .req-right')
+        && !!document.querySelector('#requirements-host .req-left > .req-moved .req-spec') && document.querySelectorAll('.req-help-starter').length === 3; })()`)));
+  await shot('a3-board22-first-open');
+  await A.evalJs(`document.querySelector('#requirements-host .qpanel .req-help-ask').click()`);
+  check('A3 D1: Help me answer puts the question and its cap in the composer and sends nothing',
+    await until(() => A.evalJs(`(() => { const ta = document.querySelector('[data-ui="helper-in"]');
+      return !!ta && ta.value === 'Who may do this?' && document.activeElement === ta
+        && document.querySelector('.req-help-composer .req-help-cap')?.textContent === 'Help me answer · question 1'
+        && !document.querySelector('.req-help-msg-po'); })()`)));
+  await A.evalJs(`document.querySelector('[data-ui="helper-send"]').click()`);
+  check('A3 D6: the reply drafts an answer into the question card, marked drafted by Worca with its why; the bubble keeps the cap',
+    await until(() => A.evalJs(`(() => { const b = document.querySelector('#requirements-host .qpanel .qblock');
+      const on = [...b.querySelectorAll('.qopt')].find((o) => o.getAttribute('aria-pressed') === 'true');
+      const chip = b.querySelector('.req-help-drafted-row');
+      return on?.querySelector('.qopt-txt')?.textContent === 'Support agents' && !!chip && !chip.hidden
+        && (chip.querySelector('.req-help-draft-why')?.textContent || '').startsWith("Worca's draft: [mock]")
+        && document.querySelector('.req-help-msg-po .req-help-cap')?.textContent === 'Help me answer · question 1'; })()`), 10000));
+  // Where the drafted chip sits on a desktop (board 22): under the options row of its question, not beside it.
+  const chipAt = await A.evalJs(`(() => { const b = document.querySelector('#requirements-host .qpanel .qblock');
+    const o = b.querySelector('.qopts').getBoundingClientRect(); const c = b.querySelector('.req-help-drafted').getBoundingClientRect();
+    const q = b.getBoundingClientRect();
+    return { underOptions: Math.round(c.top) >= Math.round(o.bottom), indent: Math.round(c.left - q.left), optionsLeft: Math.round(o.left - q.left),
+      w: Math.round(c.width), h: Math.round(c.height) }; })()`);
+  log(`note A3 desktop: the drafted chip ${JSON.stringify(chipAt)}`);
+  check('A3 desktop: the drafted chip sits under its options row', chipAt.underOptions, JSON.stringify(chipAt));
+  await shot('a3-board22-draft-and-proposal');
+  await A.evalJs(`document.querySelector('.req-help [data-ui^="prop-accept-"]').click()`);
+  check("A3 D10: Accept puts the proposed criterion in the spec as the product owner's edit; the card says so with the id it got",
+    await until(() => A.evalJs(`(() => { const c = document.querySelector('.req-help-card.is-accepted'); const id = c?.querySelector('.req-help-id')?.textContent;
+      return !!id && /Accepted · now in the spec as your edit/.test(c.textContent)
+        && (document.querySelector('#requirements-host .req-spec [data-criterion="' + id + '"]')?.textContent || '').includes('[mock] A criterion Worca suggests.'); })()`), 10000));
+  {
+    const store = await import(new URL('../src/core/requirements/store.mjs', import.meta.url).href);
+    const { normalizeHelperReply } = await import(new URL('../src/core/requirements/helper.mjs', import.meta.url).href);
+    // and an add that stays open: the 390 px sheet then has an Accept and a Reject to measure
+    const { proposals } = normalizeHelperReply({ text: 'I suggest rewording R-po-1.', proposals: [{ target: 'criterion', change: 'reword', id: 'R-po-1',
+      value: 'A customer can cancel until the parcel is picked up.', reason: 'The tickets ask for it.' },
+    { target: 'criterion', change: 'add', id: null, value: 'A customer sees why a cancel was refused.', reason: 'Support gets these questions.' }] },
+    { spec: store.getFeature(helpSeq).spec });
+    store.insertHelperMessage({ featureSeq: helpSeq, role: 'worca', text: 'I suggest rewording R-po-1.', proposals });
+  }
+  await A.evalJs(`fetch('/api/requirements/${helpSeq}/criteria/R-po-1', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: 'A customer can cancel an unpaid order.' }) })`);
+  check('A3 D9: after a hand edit the card says the spec changed (role=alert) and offers Reject and Ask again, no Accept',
+    await until(() => A.evalJs(`(() => { const c = document.querySelector('.req-help-card.is-stale'); if (!c) return false;
+      return c.querySelector('[role="alert"]')?.textContent === 'The spec changed since Worca proposed this.'
+        && [...c.querySelectorAll('.btn')].map((b) => b.textContent).join('|') === 'Reject|Ask again'; })()`), 10000));
+  await A.evalJs(`document.querySelector('.req-help-card.is-accepted').scrollIntoView({ block: 'start' })`);
+  await shot('a3-board24-accepted-and-stale');
+  await A.evalJs(`document.querySelector('.req-help-card.is-stale [data-ui^="prop-ask-again-"]').click()`);
+  check('A3 D10: Ask again sends "Propose this again for the current spec." with its cap; the stale card keeps only its alert',
+    await until(() => A.evalJs(`(() => { const c = document.querySelector('.req-help-card.is-stale');
+      return [...document.querySelectorAll('.req-help-msg-po .req-help-cap')].some((x) => x.textContent === 'Ask again · Acceptance criteria')
+        && [...document.querySelectorAll('.req-help-msg-po')].some((m) => m.textContent.endsWith('Propose this again for the current spec.'))
+        && !!c && !c.querySelector('.btn'); })()`), 10000));
+  await until(() => A.evalJs(`!document.querySelector('.req-help-waiting')`), 10000);
+  process.env.WORCA_MOCK_HELPER_MS = String(AFTER_HOLD_MS);   // held longer than the check below waits, so Stop always finds it answering
+  await A.evalJs(`(() => { const ta = document.querySelector('[data-ui="helper-in"]'); ta.value = 'What edge cases am I missing?';
+    ta.dispatchEvent(new Event('input')); document.querySelector('[data-ui="helper-send"]').click(); })()`);
+  check('A3 card 8: Answering… with Stop while Worca answers; Send waits',
+    await until(() => A.evalJs(`(() => { const s = document.querySelector('.req-help-waiting [role="status"]');
+      return !!s && s.querySelector('.badge.blue')?.textContent === 'Answering…' && document.querySelector('[data-ui="helper-send"]').disabled; })()`), HOLD_MS));
+  await shot('a3-card8-answering');
+  await A.evalJs(`document.querySelector('[data-ui="helper-stop"]').click()`);
+  delete process.env.WORCA_MOCK_HELPER_MS;
+  check('A3 D12: Stop: the message stays; "You stopped this reply." with Try again',
+    await until(() => A.evalJs(`(() => { const s = document.querySelector('.req-help-stopped');
+      return !!s && s.textContent.startsWith('You stopped this reply.') && !!s.querySelector('[data-ui="helper-retry"]')
+        && [...document.querySelectorAll('.req-help-msg-po')].some((m) => m.textContent === 'What edge cases am I missing?'); })()`), 10000));
+  // Board 23: the dark theme is the tokens alone: the panel, its ink and the draft chip change; nothing turns transparent; the text of
+  // the new elements (the panel with a proposed, an accepted and a stale card, the stopped line; the draft chip; Help me answer) is AA.
+  const helpColors = () => A.evalJs(`(() => { const p = document.querySelector('#requirements-host .req-help'); const chip = document.querySelector('#requirements-host .req-help-drafted');
+    return { panel: getComputedStyle(p).backgroundColor, ink: getComputedStyle(p).color, chip: chip ? getComputedStyle(chip).borderTopColor : null }; })()`);
+  const themeWas = await A.evalJs(`document.documentElement.dataset.theme || ''`);
+  await A.evalJs(`document.documentElement.dataset.theme = 'light'`);
+  const panelColor = () => A.evalJs(`getComputedStyle(document.querySelector('#requirements-host .req-help')).backgroundColor`);
+  await until(async () => (await panelColor()) !== 'rgba(0, 0, 0, 0)');
+  await until(() => A.evalJs(`document.getAnimations().length === 0`));
+  const lightC = await helpColors();
+  const lightLow = await lowContrast(A3_TEXT);
+  const lightPanel = await panelColor();
+  await A.evalJs(`document.documentElement.dataset.theme = 'dark'`);
+  await until(async () => (await panelColor()) !== lightPanel);
+  await until(() => A.evalJs(`document.getAnimations().length === 0`));   // the colours have finished changing
+  const darkC = await helpColors();
+  const darkLow = await lowContrast(A3_TEXT);
+  await A.evalJs(`document.querySelector('.req-help-card.is-accepted').scrollIntoView({ block: 'start' })`);
+  await shot('a3-board23-dark-cards');
+  await A.evalJs(`document.querySelector('#requirements-host .req-help-log').scrollTop = 1e6`);
+  await shot('a3-board23-dark-stopped');
+  await A.evalJs(`document.documentElement.dataset.theme = ${JSON.stringify(themeWas)}`);
+  check('A3 board 23: dark theme from the tokens: panel, ink and draft chip all change, none transparent',
+    !!lightC.chip && lightC.panel !== darkC.panel && lightC.ink !== darkC.ink && lightC.chip !== darkC.chip
+      && ![lightC.panel, darkC.panel].includes('rgba(0, 0, 0, 0)'), JSON.stringify({ lightC, darkC }));
+  check('A3: the text of the chat, the draft chip and Help me answer is AA in light and dark', lightLow.length === 0 && darkLow.length === 0,
+    JSON.stringify({ light: lightLow, dark: darkLow }));
+  // Board 25: at 390 px the panel is a full-screen sheet with Back; Back keeps the drafts in the question card.
+  await A.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+  await until(() => A.evalJs(`window.innerWidth === 390 && getComputedStyle(document.querySelector('#requirements-host .req-help')).position === 'fixed'`));
+  const sheetNow = () => A.evalJs(`(() => { const p = document.querySelector('#requirements-host .req-help'); if (!p) return null;
+    const r = p.getBoundingClientRect(); const back = p.querySelector('[data-ui="helper-back"]'); const close = p.querySelector('[data-ui="helper-close"]');
+    const w = document.documentElement.clientWidth; const hh = window.innerHeight;
+    const notOn = [[2, 2], [w - 2, 2], [w / 2, hh / 2], [2, hh - 2], [w - 2, hh - 2]].filter(([x, y]) => !p.contains(document.elementFromPoint(x, y)))
+      .map(([x, y]) => { const e = document.elementFromPoint(x, y); return [Math.round(x), Math.round(y), e ? e.className || e.tagName : null]; });
+    return { position: getComputedStyle(p).position, box: [r.left, r.top, r.width, r.height].map(Math.round), w, hh, notOn,
+      back: getComputedStyle(back).display !== 'none' ? back.getAttribute('aria-label') : null, close: getComputedStyle(close).display,
+      scrollW: document.documentElement.scrollWidth }; })()`);
+  const sheetOk = (s) => !!s && s.position === 'fixed' && s.box.join() === [0, 0, s.w, s.hh].join() && !s.notOn.length
+    && s.back === `Back to FEAT-${helpSeq}` && s.close === 'none' && s.scrollW === s.w;
+  let sheet = null;
+  check('A3 board 25: at 390 px Feature chat is a full-screen sheet over the page with "Back to FEAT-n" and no Close; no sideways scroll',
+    await until(async () => sheetOk(sheet = await sheetNow())), JSON.stringify(sheet));
+  // A target is its hit area (style.css: a .btn-sm grows by an absolutely placed ::after, inset -9px 0): 44 px tall; an icon
+  // button 44 px wide too (the Files card's rule below).
+  const helpTargets = () => A.evalJs(`(() => {
+    const hit = (b) => { const r = b.getBoundingClientRect(); const cs = getComputedStyle(b); const a = getComputedStyle(b, '::after');
+      let hh = r.height; let ww = r.width;
+      if (a.content !== 'none' && a.position === 'absolute' && cs.position !== 'static') {
+        const px = (v) => parseFloat(v) || 0;
+        hh = Math.max(hh, r.height - px(cs.borderTopWidth) - px(cs.borderBottomWidth) - px(a.top) - px(a.bottom));
+        ww = Math.max(ww, r.width - px(cs.borderLeftWidth) - px(cs.borderRightWidth) - px(a.left) - px(a.right));
+      }
+      return { hh: Math.round(hh), ww: Math.round(ww) }; };
+    return [...document.querySelectorAll('#requirements-host .req-help .btn, #requirements-host .req-help .req-ico')].filter((b) => b.offsetParent !== null)
+      .map((b) => ({ ui: b.getAttribute('data-ui') || b.textContent, ico: b.classList.contains('req-ico'), ...hit(b) })); })()`);
+  const sheetTargets = await helpTargets();
+  log(`note A3 390 px: the sheet's targets (hit height x width) ${sheetTargets.map((t) => `${t.ui}:${t.hh}x${t.ww}`).join(' ')}`);
+  const smallHelp = sheetTargets.filter((t) => t.hh < 44 || (t.ico && t.ww < 44));
+  check('A3 D18: every control of the sheet is a 44 px target (Back, ⋯, Reject, Accept, Try again, Send)',
+    smallHelp.length === 0 && ['helper-back', 'helper-more', 'helper-send', 'helper-retry'].every((u) => sheetTargets.some((t) => t.ui === u))
+      && sheetTargets.some((t) => /^prop-accept-/.test(t.ui)) && sheetTargets.some((t) => /^prop-reject-/.test(t.ui)), JSON.stringify(smallHelp));
+  await A.evalJs(`document.querySelector('#requirements-host .req-help-log').scrollTop = 1e6`);
+  await shot('a3-board25-sheet');
+  // The composer is on screen: Send (and the composer around it) sits inside the 390 x 844 viewport, not below it.
+  const sendAt = await A.evalJs(`(() => { const b = document.querySelector('#requirements-host .req-help [data-ui="helper-send"]');
+    const c = document.querySelector('#requirements-host .req-help .req-help-composer'); if (!b || !c) return null;
+    const r = b.getBoundingClientRect(); const k = c.getBoundingClientRect();
+    return { send: [r.top, r.bottom, r.left, r.right].map(Math.round), composerBottom: Math.round(k.bottom), w: document.documentElement.clientWidth, hh: window.innerHeight }; })()`);
+  check('A3 board 25: at 390 x 844 the composer and its Send are inside the screen (the log scrolls inside the sheet)',
+    !!sendAt && sendAt.send[0] >= 0 && sendAt.send[1] <= sendAt.hh && sendAt.send[2] >= 0 && sendAt.send[3] <= sendAt.w && sendAt.composerBottom <= sendAt.hh, JSON.stringify(sendAt));
+  // Tab from the sheet's last control and Shift+Tab from its first never land on the page underneath (it is inert while the sheet is open).
+  const tabKey = async (shift) => {
+    const base = { key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9, modifiers: shift ? 8 : 0 };
+    await A.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...base });
+    await A.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+    await sleep(100);
+    return A.evalJs(`(() => { const a = document.activeElement; const p = document.querySelector('#requirements-host .req-help');
+      return { inSheet: !!p && p.contains(a), outside: !!a && a !== document.body && !!p && !p.contains(a), el: a ? (a.getAttribute('data-ui') || a.className || a.tagName) : null }; })()`);
+  };
+  await A.evalJs(`document.querySelector('[data-ui="helper-in"]').focus()`);
+  const tabOut = [await tabKey(false), await tabKey(false), await tabKey(false)];
+  await A.evalJs(`document.querySelector('[data-ui="helper-back"]').focus()`);
+  const tabBack = [await tabKey(true), await tabKey(true)];
+  log(`note A3 390 px: Tab from the composer ${JSON.stringify(tabOut)}; Shift+Tab from Back ${JSON.stringify(tabBack)}`);
+  const inertNow = await A.evalJs(`(() => { const p = document.querySelector('#requirements-host .req-help');
+    return { sheetInert: !!p.closest('[inert]'), pageInert: !!document.querySelector('#requirements-host .req-head')?.closest('[inert]') }; })()`);
+  check('A3 board 25 a11y: Tab and Shift+Tab from the ends of the open sheet never land on the page underneath, which is inert; the sheet is not',
+    [...tabOut, ...tabBack].every((t) => !t.outside) && tabOut.at(-1).inSheet && tabBack.at(-1).inSheet && inertNow.pageInert && !inertNow.sheetInert, JSON.stringify({ tabOut, tabBack, inertNow }));
+  await A.evalJs(`document.querySelector('[data-ui="helper-back"]').click()`);
+  check('A3 D2: Back returns to the feature; the drafted answer is still in the question card; Help me answer is a 44 px line',
+    await until(() => A.evalJs(`(() => { const b = document.querySelector('#requirements-host .qpanel .qblock'); if (document.querySelector('.req-help') || !b) return false;
+      const chip = b.querySelector('.req-help-drafted-row');
+      return !!chip && !chip.hidden && Math.round(b.querySelector('.req-help-ask').getBoundingClientRect().height) >= 44; })()`)));
+  check('A3 board 25 a11y: after Back the page is live again (the feature, the app bar) and the focus is back on the opener (not lost)',
+    await A.evalJs(`(() => { const live = (e) => !!e && !e.closest('[inert]'); return live(document.querySelector('#requirements-host .req-head')) && live(document.querySelector('.mbar-menu') || document.body) && document.activeElement !== document.body; })()`));
+  // Where Help me answer sits at 390 px (board 25): its own line under the question text.
+  const askAt = await A.evalJs(`(() => { const b = document.querySelector('#requirements-host .qpanel .qblock');
+    const t = b.querySelector('.qtext').getBoundingClientRect(); const a = b.querySelector('.req-help-ask').getBoundingClientRect();
+    return { underQuestion: Math.round(a.top) >= Math.round(t.bottom), left: Math.round(a.left - b.getBoundingClientRect().left),
+      h: Math.round(a.height), w: Math.round(a.width) }; })()`);
+  log(`note A3 390 px: Help me answer ${JSON.stringify(askAt)}`);
+  check('A3 390 px: Help me answer is its own line under the question', askAt.underQuestion, JSON.stringify(askAt));
+  await A.evalJs(`document.querySelector('#requirements-host .qpanel .qblock').scrollIntoView({ block: 'start' })`);
+  await shot('a3-board25-question-card');
+  await A.send('Emulation.clearDeviceMetricsOverride');
+  await A.evalJs(`document.querySelector('[data-ui="helper-toggle"]').click()`);
+  await until(() => A.evalJs(`!!document.querySelector('[data-ui="helper-more"]')`));
+  await A.evalJs(`(() => { window.__confirmA3 = window.confirm; window.confirm = () => true;
+    document.querySelector('[data-ui="helper-more"]').click(); document.querySelector('[data-ui="helper-clear"]').click(); })()`);
+  check('A3 D14: Clear chat empties the chat (the first-open text again); the accepted criterion stays in the spec',
+    await until(() => A.evalJs(`!!document.querySelector('.req-help-empty')
+      && [...document.querySelectorAll('#requirements-host .req-spec [data-criterion]')].some((c) => c.textContent.includes('[mock] A criterion Worca suggests.'))`), 10000));
+  await A.evalJs(`window.confirm = window.__confirmA3`);
+  await A.evalJs(`[...document.querySelectorAll('#requirements-host .qpanel .btn-primary')].find((b) => b.textContent === 'Submit').click()`);
+  check('A3 D6: Submit sends the drafted answer like any answer',
+    await until(async () => { const d = await A.evalJs(`fetch('/api/requirements/${helpSeq}').then((r) => r.json())`);
+      const a = (d.turns || []).filter((t) => t.kind === 'answers').at(-1);
+      return !!a && (a.payload.answers.find((x) => x.id === 'who') || {}).answer === 'Support agents'; }, 15000));
   // ---- The header menus have their panel (upstream's .menu box), and at phone width (390 px) every page fits and
   // every menu opens inside the screen.
   const featureHash = `#requirements/feature/${seqNo}`;

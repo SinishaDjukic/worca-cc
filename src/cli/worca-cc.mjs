@@ -2559,8 +2559,7 @@ async function cmdWorkflow(argv) {
       case 'list': {
         // The built-ins (Default, Memory defragment) are not in the user store, so
         // prepend them — mirrors the server/UI, which always show them first.
-        const { shapeFirstEnabled } = await import('../core/shape/gate.mjs');
-        const items = [wf.GRAPH_DEFAULT_WORKFLOW, wf.GRAPH_MEMORY_DEFRAG_WORKFLOW, ...(shapeFirstEnabled() ? [wf.GRAPH_SHAPE_WORKFLOW] : []), ...(await wf.listWorkflows())];
+        const items = [wf.GRAPH_DEFAULT_WORKFLOW, wf.GRAPH_MEMORY_DEFRAG_WORKFLOW, wf.GRAPH_SHAPE_WORKFLOW, ...(await wf.listWorkflows())];
         for (const w of items) out(`${w.id}\t${w.name}\t${(w.domain || 'general')}`);
         return 0;
       }

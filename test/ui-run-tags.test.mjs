@@ -1,6 +1,6 @@
-// test/ui-run-tags.test.mjs — run tags in the web UI (#718), behind the experimental `runTags` flag:
+// test/ui-run-tags.test.mjs — run tags in the web UI (#718):
 // the New run form (project defaults, payload, reset after a start, an Ask handoff), the live run page's
-// chips, the finished run page's chips and editor, and nothing at all while the flag is off.
+// chips, and the finished run page's chips and editor.
 // The New run boot is test/ui-engine-default-prefill.test.mjs's; the run pages use the shared helpers.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,7 +11,6 @@ import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { bootApp, helloRun } from './helpers/run-page-boot.mjs';
 import { bootDetail, openDetail, deliverRows, settle, click, ok as okRes, fail, ROW, DETAIL } from './helpers/history-detail-boot.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
-import { renderIndexHtml } from '../src/core/index-html.mjs';
 
 const trackDom = useDomRelease(afterEach);
 const htmlPath = fileURLToPath(new URL('../ui/public/index.html', import.meta.url));
@@ -19,7 +18,7 @@ const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const PROJECTS = [{ name: 'web', path: '/a/web', exists: true }, { name: 'api', path: '/a/api', exists: true }];
 const ok = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
 const tick = () => new Promise((r) => setTimeout(r, 0));
-const flagsOn = (window) => applyFlags({ runTags: true, runLabels: true }, window.document);
+const flagsOn = (window) => applyFlags({ runLabels: true }, window.document);
 
 async function bootForm({ tagsFor = () => [], dims = null, runResponse = null } = {}) {
   const dom = trackDom(new JSDOM(readFileSync(htmlPath, 'utf8'), { url: 'http://localhost:4317/' }));
@@ -105,15 +104,7 @@ test('New run: an Ask handoff\'s tags survive the project defaults that load aft
   assert.deepEqual(formChips(ctx.doc), ['client:acme']);
 });
 
-test('New run with the flag off: no tags key in the body; the CSS gate hides every tag control', async () => {
-  const ctx = await bootForm({ tagsFor: () => ['client:acme'] });
-  assert.equal(Object.hasOwn(await submit(ctx), 'tags'), false);
-  const html = renderIndexHtml(readFileSync(htmlPath, 'utf8'), 'system', 'expert', { runTags: false });
-  const gates = /<style id="flag-gates">([^<]*)<\/style>/.exec(html);
-  assert.ok(gates && gates[1].includes('[data-flag~="runTags"]'), gates ? gates[1] : html.slice(0, 400));
-});
-
-test('live run page: one set of cost tag chips (in the facts row) after repeated paints, none with the flag off', async () => {
+test('live run page: one set of cost tag chips (in the facts row) after repeated paints', async () => {
   const ctx = await bootApp();
   flagsOn(ctx.window);
   helloRun(ctx, { runId: 'run-t1', pipelineId: 'aaaa0001', tags: ['client:acme'] });
@@ -124,11 +115,6 @@ test('live run page: one set of cost tag chips (in the facts row) after repeated
   const doc = ctx.window.document;
   assert.deepEqual([...doc.querySelectorAll('#run-detail .rd-kv [data-fact="tags"] .tag-chip')].map((c) => c.textContent), ['client:acme']);
   assert.equal(doc.querySelectorAll('#run-detail .rd-page-meta .tag-chip, #run-detail .rd-facts .tag-chip').length, 0);
-  applyFlags({ runTags: false }, doc);
-  helloRun(ctx, { runId: 'run-t1', pipelineId: 'aaaa0001', tags: ['client:acme'] });
-  await ctx.settle();
-  assert.equal(doc.querySelectorAll('#run-detail .rd-kv .tag-chip, #run-detail .rd-facts .tag-chip').length, 0);
-  assert.equal(doc.querySelector('#run-detail .rd-kv [data-fact="tags"]').hidden, true, 'the empty row hides');
 });
 
 test('finished run page: chips in the Cost tags row + Edit cost tags, an editor that survives a repaint, a PUT, and the server\'s list after Save', async () => {
@@ -191,12 +177,10 @@ test('finished run page: chips in the Cost tags row + Edit cost tags, an editor 
   assert.deepEqual([...doc.querySelectorAll('#hist-detail .hd-row2 .hd-tags .tag-chip')].map((c) => c.textContent), ['client:globex']);
 });
 
-test('finished run page: "Add cost tags" when the run has none; no tag UI with the flag off', async () => {
+test('finished run page: "Add cost tags" when the run has none', async () => {
   const ctx = await bootDetail({ detail: { ...DETAIL, state: { ...DETAIL.state, tags: [] } } });
   await openDetail(ctx, null);
   const doc = ctx.window.document;
-  assert.equal(doc.querySelector('#hist-detail .hd-tags'), null, 'flag off: nothing');
-  assert.equal(doc.querySelector('#hist-detail .rd-cost-row'), null, 'flag off: no Cost tags row');
   flagsOn(ctx.window);
   await deliverRows(ctx, [ROW]);
   // D16: with no tags the row still shows, so "Add cost tags" stays reachable.
@@ -289,14 +273,6 @@ test('a 422 with fields.tags shows the reason under the tag field, not a card al
   assert.equal(warn.hidden, false);
   assert.equal([...ctx.doc.querySelectorAll('.card-alert')].some((n) => n.textContent.includes(reason)), false, 'no card alert carries it');
   assert.equal(ctx.doc.getElementById('start-btn').disabled, false, 'the button is usable again');
-});
-
-test('runTags off: no slots shown, Start enabled, no tags posted (unchanged)', async () => {
-  const ctx = await bootForm({ dims: () => ({ source: 'settings', home: null, enforce: false, prefill: ['cc:4410'],
-    dims: [{ key: 'cc', label: 'Cost centre', values: ['4410'], required: true }] }) });
-  assert.equal(ctx.doc.getElementById('start-btn').disabled, false);
-  const body = await submit(ctx);
-  assert.equal(body.tags, undefined);
 });
 
 test('A filled slot rides the body with the free-form tags; a default cc:4410 lands in the slot', async () => {
