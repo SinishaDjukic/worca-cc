@@ -122,3 +122,17 @@ test('the plan lists pretend connectors only for a pretend test; a Real test get
   assert.equal(real.body.connectors.mode, 'real');
   assert.deepEqual(real.body.connectors.pretend, []);
 });
+
+test('the plan refuses more tries than a test can run, as the start does (final review M8)', async () => {
+  await workflowWithExample();
+  const W = '/api/workflows/:id/tests/plan';
+  const { handlers } = boot();
+  const ask = (tries) => invoke(handlers.get(`GET ${W}`), { params: { id: 'wf_rt' }, query: { b: 'draft', tries } });
+  assert.equal(store.MAX_TRIES, 10);
+  const ten = await ask('10');
+  assert.deepEqual([ten.status, ten.body.tries], [200, 10]);
+  for (const tries of ['11', '1000000']) {
+    const r = await ask(tries);
+    assert.deepEqual([r.status, r.body.error], [400, 'tries must be 1 to 10'], tries);
+  }
+});

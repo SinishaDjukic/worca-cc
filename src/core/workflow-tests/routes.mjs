@@ -122,8 +122,11 @@ export function registerWorkflowTestRoutes(app, { broadcast = () => {}, deps = {
   route('GET', `${W}/plan`, async (req, res) => {
     const q = req.query || {};
     const ids = String(q.examples || '').split(',').filter(Boolean).map((x) => num(x, 'example'));
+    const tries = q.tries ? num(q.tries, 'tries') : 3;
+    // M8: no estimate for a test the start would refuse (runner.start's own limit and sentence).
+    if (tries > store.MAX_TRIES) throw store.testError(`tries must be 1 to ${store.MAX_TRIES}`, 'BAD_REQUEST');
     res.json(await service.testPlan(wid(req), { a: q.a ? store.parseUse(String(q.a)) : null, b: store.parseUse(String(q.b || 'draft')) || 'draft',
-      exampleIds: ids, tries: q.tries ? num(q.tries, 'tries') : 3, connectors: q.connectors === 'real' ? 'real' : 'pretend' },
+      exampleIds: ids, tries, connectors: q.connectors === 'real' ? 'real' : 'pretend' },
     { mock: !!(deps.mockMode && deps.mockMode()), connectorsPreview: deps.connectorsPreview || null }));
   });
   route('POST', `${W}/runs`, async (req, res) => {
