@@ -3,6 +3,10 @@
 The redesign of Worca, one page at a time. The rules every Rail page follows live in `docs/design-system.md`
 › Worca Rail (the single source); this folder holds each page's spec, its review and the prototype.
 
+Online: the [Design System](https://claude.ai/artifact/P38jGMS7jA9XQu2U2uP3HP) (a readable view built from
+`docs/design-system.md`, `ui/public/style.css` and the prototype) and the
+[Prototype](https://claude.ai/artifact/3S1E6PBSDpnK9R2G7fVhfz).
+
 | Page | Spec | Status |
 |---|---|---|
 | Run and group page | `spec.md` (review `review.md`, shipping plan `enrollment.md`) | In the prototype |
