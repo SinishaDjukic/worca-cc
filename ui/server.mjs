@@ -3279,7 +3279,9 @@ const startRunHandler = async (req, res) => {
     runs.set(runId, entry);
     wireRun(entry);
     // The runner holds the orchestrator before orch.run() can ask anything (correction 7).
-    if (workflowTest && typeof workflowTest.onOrch === 'function') workflowTest.onOrch(orch, { runKey: runId });
+    if (workflowTest && typeof workflowTest.onOrch === 'function') {
+      try { workflowTest.onOrch(orch, { runKey: runId }); } catch (err) { runs.delete(runId); syncKeepAwake(); throw err; }
+    }
     if (askLink) {
       // Card-state TOCTOU: awaits (source-ref check, budget) sit between Hunk
       // B's `proposed` check and here — a concurrent Start may have flipped
@@ -4838,8 +4840,11 @@ function settleStaleParked(pipelineId) {
     e.pauseDetail = null;
     // A later subscribe snapshots the entry's orchestrator (sendStateSnapshot): it must read the same.
     if (e.orch && e.orch.state) e.orch.state.status = status;
-    broadcast(bufferEvent(e, { type: 'state', status, id: pipelineId }));
-    broadcast(bufferEvent(e, { type: 'done', status, pipelineDir: null }));
+    // A test try is hidden from every tab (D21): its status settles, nothing is sent.
+    if (!e.isTest) {
+      broadcast(bufferEvent(e, { type: 'state', status, id: pipelineId }));
+      broadcast(bufferEvent(e, { type: 'done', status, pipelineDir: null }));
+    }
   }
   syncKeepAwake();
 }
@@ -19091,6 +19096,7 @@ if (isMain) {
 
 export { app, server, runs };
 export const _testing = {
+  settleStaleParkedEntries,
   updateChecker,
   // The startEgressPolicy() result the /api/proxy routes read, or a startLiveEgress() that also applies saves.
   setEgress: (e) => { EGRESS = e; },

@@ -101,20 +101,48 @@ test('a try of v1 runs v1, is hidden everywhere, sends nothing to tabs or chat, 
   } finally { _testing.chatNotifier.attach = attach; }
 });
 
-test('auto-resume on boot skips a paused test try', async () => {
+async function seedPausedTry() {
   const { getDb } = await import('../src/core/db.mjs');
-  getDb().prepare(`INSERT INTO pipelines (id, project_key, status, is_test, resume_point) VALUES ('feed0001', 'no-project-00000000', 'paused', 1, '{"version":2,"pauseReason":"drain"}')`).run();   // version 2: autoResumeCandidates skips any other point
+  getDb().prepare(`INSERT OR REPLACE INTO pipelines (id, project_key, status, is_test, resume_point) VALUES ('feed0001', 'no-project-00000000', 'paused', 1, '{"version":2,"pauseReason":"drain"}')`).run();   // version 2: autoResumeCandidates skips any other point
+}
+
+test('auto-resume on boot skips a paused test try', async () => {
+  await seedPausedTry();
   const out = await _testing.autoResumeOnBoot({ env: { WORCA_AUTO_RESUME: '1' }, mock: true });   // drain.mjs autoResumeMode: truthy = 'all'
   assert.ok(!out.resumed.some((r) => r.pipelineId === 'feed0001'));
   assert.ok(!out.failed.some((r) => r.pipelineId === 'feed0001'));
 });
 
 test('a test try is never resumed by hand either (review I7)', async () => {
+  await seedPausedTry();
   await assert.rejects(_testing.resumeRun('feed0001', { mock: true }),
     (e) => e.status === 409 && e.body.error === 'A test try cannot be resumed: finish the rest from its test.');
 });
 
+test('a paused try settled elsewhere sends no frame to a tab', async () => {
+  await seedPausedTry();
+  const { getDb } = await import('../src/core/db.mjs');
+  const entry = { id: 'try-settle-1', kind: 'run', isTest: true, pipelineId: 'feed0001', status: 'paused', events: [], pendingQuestion: null };
+  runs.set('try-settle-1', entry);
+  try {
+    getDb().prepare(`UPDATE pipelines SET status = 'stopped' WHERE id = 'feed0001'`).run();
+    _testing.settleStaleParkedEntries();
+    assert.equal(entry.status, 'stopped', 'the entry still settles');
+    assert.ok(!frames.some((f) => f.runId === 'try-settle-1'), 'but no frame left for a tab');
+  } finally { runs.delete('try-settle-1'); getDb().prepare(`UPDATE pipelines SET status = 'paused' WHERE id = 'feed0001'`).run(); }
+});
+
+test('an onOrch that throws leaves no entry behind', async () => {
+  await post('/api/workflows', graph('Try me'));
+  const before = new Set(runs.keys());
+  const out = await _testing.invokeStartRun({ noProject: true, workflowId: 'wf_try', prompt: 'x', title: 'Test: throw' }, null,
+    { workflowTest: { use: 'draft', onOrch: () => { throw new Error('boom'); } } });
+  assert.equal(out.status, 500, JSON.stringify(out.body));
+  assert.deepEqual([...runs.keys()].filter((k) => !before.has(k)), [], 'no dead starting entry');
+});
+
 test('a try that pauses on a usage limit books no resume ticket (Review Focus 10)', async () => {
+  await seedPausedTry();
   const { EventEmitter } = await import('node:events');
   const orch = new EventEmitter();
   const entry = { id: 'try-limit-1', orch, kind: 'run', isTest: true, pipelineId: 'feed0001', status: 'paused', events: [], pendingQuestion: null };
