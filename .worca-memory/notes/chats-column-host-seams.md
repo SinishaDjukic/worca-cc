@@ -2,7 +2,7 @@
 name: chats-column-host-seams
 description: Read before adding anything to the Chat page's History aside or head, or merging dev past #953 into a branch built on the old History column — what the Chats co
 paths: ui/public/ask-panel.mjs, ui/public/chats-column.mjs, ui/public/style.css, test/ask-panel*.test.mjs, test/ui-chat-style.test.mjs, test/ui-chats-column.test.mjs
-updated: 2026-10-25T08:33:11.602Z
+updated: 2026-10-27T12:10:13.491Z
 author: Denislav Prinov
 ---
 Dev's Chats column (#948 s2/s3, #953 retired the `chatsColumn` flag and the old History column) broke a side-chat branch in five silent ways while merging cleanly in app.js/style.css (PR 954 merge, 2026-10-25). See also [[ask-ui-hidden-pins]].
@@ -18,3 +18,14 @@ Dev's Chats column (#948 s2/s3, #953 retired the `chatsColumn` flag and the old 
 - Same root cause for Escape: the `#ask-side` exemptions in app.js's capture-phase Escape arms miss the column's body-level `.wfv-menu`/`.group-picker`. History/Running arms stand down (`runsListOwnsEscape()` checks those selectors), the Runs selection arm too; the PROJECT page arm (`leaveProjDetail`) and the `#workspace-create` arm (`wizClose.click()`) did not. Since cycle 2 they carry their own `if (document.querySelector('.wfv-menu, .group-picker, .label-picker')) return;` line. A new capture-phase page arm needs that line too (`.keys-modal` is a `.viewer-modal`, so `dialogOpen` already covers it). Escape in a chat row's ⋯ menu opened from the side column on `#projects/<key>` closes the menu AND goes to `#projects` (bootChat probe: `go('projects/<key>')`, open the column, click the title, click `.runs-more`, dispatch Escape on the menu item, read `location.hash`).
 - Dev paths that remove chats bypass `deleteThread`: `onChatsGone` (Delete group) and `chatsCol.onFrame` (history clear). Per-chat state kept elsewhere (unread dot, recent rows) needs its own cleanup there.
 - Old-column tests: the trash is now ⋯ › Delete… (`deleteFromList(ctx, id)` in `test/helpers/ask-panel-harness.mjs`); views via `#chats-view-btn` → `.wfv-menu [role="menuitemradio"]`.
+
+## Dev #958 (keep the view across replies) vs the side column (PR 954 merge 2, 2026-10-27)
+- A bare `t.scrollTop = x; t.dispatchEvent(new Event('scroll'))` no longer unpins: with no wheel/key/press before it, the scroll counts as a layout clamp. Old-branch tests then fail their "Jump to latest shows" precondition. Use the harness's `userScroll(ctx, t, x)`, which is how dev's own tests were adapted.
+- `closePage` saves `st.leftAt = {threadId, top, pinned, host}`, and `openPage` writes `top` back as raw pixels. Settled: restore only from the Chat page back to the Chat page (`back.host === 'page' && st.host === 'page'`). Every other case shows the chat at the bottom, as the side column always did, because:
+  - the column slides in from 0px wide (`.is-entering`), and `applyPin` restores on the first frame with `clientHeight > 0`;
+  - a host move changes the width, so the same pixel offset lands on another message.
+  - Pinned by `test/ask-panel-side.test.mjs` "#958 keeps a reader's place from the Chat page to the Chat page only"; jsdom alone cannot show the wrong landing.
+- Seams found in the merge audit and left open:
+  - dev's `.chat-dock::before` fade (`--chat-dock-fade`, 32px) covers the bottom of `.ask-side-empty`;
+  - `graph/proposal-host.mjs` sizes a proposal's well height once (`sized`), from the first width it sees (mid-slide or the other host);
+  - `onScrollKey` treats a key pressed with the focus on `<body>` as the reader scrolling, even in the column, where that key belongs to the page.
