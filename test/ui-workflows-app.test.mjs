@@ -2777,3 +2777,101 @@ test('Add from a past run (Task 12): the run is read after the page went back to
   await tick(6);
   assert.equal(doc.querySelector('#mk-dialog'), null, 'the canvas shows: board 3 does not open over it');
 });
+
+// ------------------------------- Compare and one example side by side (plans/workflow-tests-part2-plan.md Task 14)
+const CMP_RUN = { id: 7, kind: 'compare', a: 1, b: 'draft', tries: 3, status: 'done', finishedAt: '2026-10-26T10:00:00Z', capUsd: 15,
+  connectors: 'real', exampleIds: [1] };
+const cmpTile = (passed) => ({ passed: { passed, total: 3 }, costPerTry: 0.5, timePerTry: 60000, sentBack: 1, steady: { n: 1, of: 1 } });
+const CMP = { run: CMP_RUN, title: 'Your v3 draft compared with v1', labels: { a: 'v1', b: 'v3 draft' }, examples: 1, costUsd: 3, changes: [], fair: [],
+  model: { inShort: ['v3 draft is better on 1 example.'], look: null, counts: { better: 1, worse: 0, same: 0 }, tiles: { a: cmpTile(2), b: cmpTile(3) },
+    examples: [{ id: 1, name: 'Bulk invoice export', a: { passed: 2, total: 3 }, b: { passed: 3, total: 3 }, result: 'better', luck: true, why: null }] } };
+const SBS_TRY = (id) => ({ tryId: id, status: 'passed', name: 'brief.md', text: `Try ${id}`, truncated: false, connectors: 'real', wouldHaveSent: null, answeredReads: [],
+  verdict: { basics: [{ key: 'noError', label: 'Finishes without an error', met: true, value: 'Met' }], checks: [] } });
+const SBS = { run: CMP_RUN, compareTitle: CMP.title, example: { id: 1, name: 'Bulk invoice export' }, labels: CMP.labels, connectors: 'real',
+  row: CMP.model.examples[0], tries: [{ n: 1, a: SBS_TRY(1), b: SBS_TRY(4) }, { n: 2, a: SBS_TRY(2), b: SBS_TRY(5) }] };
+const PROGRESS_DONE = { run: { ...CMP_RUN }, title: CMP.title, done: 6, total: 6, costUsd: 3, estimateUsd: 3, capUsd: 15, quick: null, takenMs: 60000,
+  minutesLeft: null, rows: [{ exampleId: 1, name: 'Bulk invoice export', label: null, dots: ['passed', 'passed', 'passed'], summary: 'Done · 3 of 3 passed' }] };
+/** The progress page of test 7 (done), its Compare, example 1 side by side, a try's whole result; `holdPost` holds POST /runs. */
+async function bootCompare({ holdPost = false } = {}) {
+  const log = [];
+  const held = [];
+  const booted = await bootVersions({ extra: (url, init) => {
+    const m = /\/api\/workflows\/wf_g\/tests(\/[^?]*)?(?:\?.*)?$/.exec(url);
+    if (!m) return null;
+    const method = init.method || 'GET';
+    const rest = m[1] || '';
+    log.push({ method, path: rest, body: init.body ? JSON.parse(init.body) : undefined });
+    if (rest === '') return okJson(TESTS_OVERVIEW);
+    if (rest === '/runs/7') return okJson(PROGRESS_DONE);
+    if (rest === '/runs/8') return okJson({ ...PROGRESS_DONE, run: { ...CMP_RUN, id: 8, status: 'running', exampleIds: [1], tries: 6 }, done: 3 });
+    if (rest === '/runs/7/compare') return okJson(CMP);
+    if (rest === '/runs/7/examples/1') return okJson(SBS);
+    if (rest === '/runs/7/tries/5/result') return okJson({ name: 'brief.md', text: 'All of try 5.' });
+    if (rest === '/runs' && method === 'POST') {
+      const reply = () => ({ ok: true, status: 201, json: async () => ({ run: { id: 8, status: 'running' } }) });
+      return holdPost ? new Promise((r) => held.push(() => r(reply()))) : Promise.resolve(reply());
+    }
+    return null;
+  } });
+  await go(booted.window, 'workflows/wf_g/tests/run/7');
+  await tick(8);
+  const page = booted.window.document.getElementById('wfv-tests');
+  clickEl(booted.window, [...page.querySelectorAll('.wft-acts button')].find((b) => b.textContent === 'See what changed'));
+  await tick(6);
+  return { ...booted, log, held, page };
+}
+const gets = (log) => log.filter((e) => e.method === 'GET').map((e) => e.path);
+
+test('Compare (Task 14): See what changed reads and paints board 5; Try 3 more posts once, with the test\'s cap and connectors, then shows its progress', async () => {
+  const { window: w, page, log, held } = await bootCompare({ holdPost: true });
+  assert.ok(gets(log).includes('/runs/7/compare'));
+  assert.equal(page.querySelector('.wft-compare .wft-title').textContent, 'Your v3 draft compared with v1');
+  assert.ok(!page.textContent.includes('This page comes in a later step.'));
+  const more = () => page.querySelector('.wft-why button');
+  clickEl(w, more());
+  clickEl(w, more());
+  await tick(2);
+  const posts = log.filter((e) => e.method === 'POST');
+  assert.deepEqual(posts.map((e) => [e.path, e.body]), [['/runs', { a: 1, b: 'draft', exampleIds: [1], tries: 6, reuseA: true, reuseB: true, quickCheck: false,
+    capUsd: 15, connectors: 'real' }]], 'one post, G15');
+  assert.equal(more().disabled, true, 'busy while the post is out');
+  held[0]();
+  await tick(8);
+  assert.ok(gets(log).includes('/runs/8'));
+  assert.ok(page.querySelector('.wft-progress'), 'the new test\'s progress page');
+});
+
+test('Compare (Task 14): a Try 3 more answer that lands after Tests was opened leaves the list on screen', async () => {
+  const { window: w, page, held } = await bootCompare({ holdPost: true });
+  clickEl(w, page.querySelector('.wft-why button'));
+  await tick(2);
+  clickEl(w, page.querySelector('.wft-compare .wft-crumb'));
+  await tick(6);
+  assert.ok(page.querySelector('.wft-ex-open') && !page.querySelector('.wft-compare'), 'the Tests list');
+  held[0]();
+  await tick(8);
+  assert.equal(page.querySelector('.wft-progress'), null, 'no jump to the progress page');
+});
+
+test('Side by side (Task 14): an example opens board 6; Try 2 repaints with the focus on its tab; Read the whole result opens the dialog; back to Compare', async () => {
+  const { window: w, page, log } = await bootCompare();
+  const doc = w.document;
+  clickEl(w, page.querySelector('.wft-crow2:not(.is-head) .wft-ex-open'));
+  await tick(6);
+  assert.ok(gets(log).includes('/runs/7/examples/1'));
+  assert.equal(page.querySelector('.wft-detail .wft-title').textContent, 'Bulk invoice export');
+  const tab = (n) => [...page.querySelectorAll('[role="tab"]')][n];
+  tab(1).focus();
+  clickEl(w, tab(1));
+  assert.equal(tab(1).getAttribute('aria-selected'), 'true');
+  assert.equal(doc.activeElement, tab(1));
+  assert.deepEqual([...page.querySelectorAll('.wft-out')].map((n) => n.textContent), ['Try 2', 'Try 5']);
+  clickEl(w, [...page.querySelectorAll('.wft-outs button')][1]);
+  await tick(6);
+  assert.ok(gets(log).includes('/runs/7/tries/5/result'));
+  assert.equal(doc.querySelector('#mk-dialog .wft-whole').textContent, 'All of try 5.');
+  clickEl(w, [...doc.querySelectorAll('.mk-dialog-foot button')].find((b) => b.textContent === 'Close'));
+  clickEl(w, page.querySelector('.wft-detail .wft-crumb'));
+  await tick(6);
+  assert.ok(page.querySelector('.wft-compare'), 'back on Compare');
+});

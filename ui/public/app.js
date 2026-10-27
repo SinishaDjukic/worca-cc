@@ -218,6 +218,7 @@ import { sentence as wftSentence } from './workflows/test-ui.mjs';
 import { renderExampleEditor, BLANK_EXAMPLE } from './workflows/example-editor.mjs';
 import { openFromRunDialog, openPickRunDialog, canUseAsExample, openTestVersionDialog } from './workflows/test-dialogs.mjs';
 import { renderTestProgress } from './workflows/test-progress.mjs';
+import { renderCompare, renderSideBySide, openWholeResult } from './workflows/test-compare.mjs';
 import { useLabel as wftUseLabel } from '../../src/shared/workflow-tests/compare.mjs';
 import { renderVersionsPage } from './workflows/versions-view.mjs';
 import { exportUseChoices, exportUseValue, paintExportUse } from './workflows/export-use.mjs';
@@ -3640,22 +3641,63 @@ async function wftRefresh() {
   if (wft.workflowId !== id) wft = { ...WFT_EMPTY, workflowId: id };
   if (wft.view === 'editor') return;
   const view = wft.view;
+  const page = `${wft.runId}|${wft.exampleId}`;                    // which test and example the view shows
   if (view === 'list' && !wft.overview) renderTestsPage(els.tests, null, wftListActions(), { doc: document, loading: true });
   const r = view === 'list' ? await wftCall('GET', wftBase(id)) : await wftReadView(id);
-  if (wftWorkflowId() !== id || wft.view !== view) return;   // another workflow or view meanwhile
+  if (wftWorkflowId() !== id || wft.view !== view || `${wft.runId}|${wft.exampleId}` !== page) return;   // another workflow, view or test meanwhile
   if (view === 'list') wft.overview = r.ok ? r.data : null; else wft.data = r.ok ? r.data : null;
   wft.error = r.ok ? null : r.error;
   wftRender();
 }
 function wftReadView(id) {
-  if (wft.view === 'progress') return wftCall('GET', `${wftBase(id)}/runs/${wft.runId}`);
-  return Promise.resolve({ ok: false, error: 'This page comes in a later step.' });   // Task 14 adds compare and detail
+  const base = `${wftBase(id)}/runs/${wft.runId}`;
+  if (wft.view === 'progress') return wftCall('GET', base);
+  if (wft.view === 'compare') return wftCall('GET', `${base}/compare`);
+  if (wft.view === 'detail') return wftCall('GET', `${base}/examples/${wft.exampleId}`);
+  return Promise.resolve({ ok: false, error: 'This page does not exist.' });
 }
 function wftRenderView(root) {
   if (!wft.data) { renderTestsPage(root, null, wftListActions(), { doc: document, error: wft.error }); return; }
   if (wft.view === 'progress') { renderTestProgress(root, wft.data, wftProgressActions(), { doc: document }); return; }
+  if (wft.view === 'compare') { renderCompare(root, wft.data, wftCompareActions(), { doc: document }); return; }
+  if (wft.view === 'detail') { renderSideBySide(root, wft.data, wftDetailActions(), { doc: document, tryIndex: wft.tryIndex || 0 }); return; }
   wft.view = 'list';
   void wftRefresh();
+}
+/** Board 5's actions. The workflow and the test are read when the page paints: an answer that lands after the page moved
+ *  on (another workflow, another view or test) changes nothing. Each returns its promise, so its button stays busy. */
+function wftCompareActions() {
+  const id = wftWorkflowId();
+  const run = wft.data.run;
+  const still = () => currentView() === 'workflows' && wftWorkflowId() === id && wft.view === 'compare' && wft.runId === run.id && !wfvEls().tests?.hidden;
+  return {
+    back: () => wftShow('list', { overview: null }),
+    testAgain: () => wftTestVersion({ a: run.a, b: run.b, exampleIds: run.exampleIds }),
+    open: (exampleId) => wftShow('detail', { runId: run.id, exampleId, tryIndex: 0 }),
+    tryMore: async (exampleId) => {   // G15: at once, reusing the tries made, with the same cap and connectors choice
+      const r = await wftCall('POST', `${wftBase(id)}/runs`, { a: run.a, b: run.b, exampleIds: [exampleId], tries: Math.min(10, run.tries + 3),
+        reuseA: true, reuseB: true, quickCheck: false, capUsd: run.capUsd, connectors: run.connectors });
+      if (!r.ok) { notify({ tone: 'err', title: 'More tries did not start', detail: r.error }); return; }
+      if (still()) wftShow('progress', { runId: r.data.run.id });   // elsewhere by now: the results-ready toast opens it (C13)
+    },
+  };
+}
+/** Board 6's actions (G2: a Try it once now goes back to the Tests list). */
+function wftDetailActions() {
+  const id = wftWorkflowId();
+  const s = wft.data;
+  const still = () => currentView() === 'workflows' && wftWorkflowId() === id && wft.view === 'detail' && wft.runId === s.run.id
+    && wft.exampleId === s.example.id && !wfvEls().tests?.hidden;
+  return {
+    back: () => (s.run.kind === 'once' ? wftShow('list', { overview: null }) : wftShow('compare', { runId: s.run.id })),
+    pick: (k) => { if (!still()) return; wft.tryIndex = k; wftRender(); },
+    readWhole: async (tryId, title) => {
+      const r = await wftCall('GET', `${wftBase(id)}/runs/${s.run.id}/tries/${tryId}/result`);
+      if (!still()) return;
+      if (!r.ok) { notify({ tone: 'err', title: 'Could not read the result', detail: r.error }); return; }
+      openWholeResult({ doc: document, win: window, title, name: r.data.name, text: r.data.text });
+    },
+  };
 }
 /** Board 20's actions. The workflow and the test are read when the page paints: an answer that lands after the page
  *  moved on (another workflow, another view) repaints nothing. */
@@ -3692,7 +3734,8 @@ function wftChanged(msg) {
   if (currentView() !== 'workflows') return;
   const els = wfvEls();
   if (!els.tests || els.tests.hidden || wftWorkflowId() !== msg.workflowId) return;
-  if (wft.view === 'list' || (wft.view === 'progress' && wft.runId === msg.testRunId)) void wftRefresh();
+  // The list, or the open page of the test that changed (progress, its Compare or one example of it).
+  if (wft.view === 'list' || (['progress', 'compare', 'detail'].includes(wft.view) && wft.runId === msg.testRunId)) void wftRefresh();
 }
 /** The toast's Open: the test's page. Its workflow already open on the canvas: only the Tests page changes (no reload,
  *  no discard question); anywhere else the address opens it (routeWorkflows). */
