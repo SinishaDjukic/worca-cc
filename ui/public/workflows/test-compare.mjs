@@ -8,19 +8,15 @@ import { icon } from '../icons.mjs';
 import { createDialog } from '../marketplace/layers.mjs';
 import { fmtUsd } from '../../../src/shared/workflow-tests/checks.mjs';
 import { agoText, countsText, fmtDuration, pctDelta, durationDelta, countDelta, fmtTimes } from '../../../src/shared/workflow-tests/compare.mjs';
+import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
 
 const RESULT = { better: ['badge green', 'Better'], worse: ['badge red', 'Worse'], same: ['badge', 'Same'] };
 const usdOr = (n) => (typeof n === 'number' && Number.isFinite(n) ? fmtUsd(n) : '—');
 const timeOr = (ms) => (typeof ms === 'number' && Number.isFinite(ms) ? fmtDuration(ms) : '—');
 const wrote = (label) => `What ${/^Your\b/.test(label) ? `y${label.slice(1)}` : label} wrote`;
 const plural = (w) => (/(?:s|sh|ch|x)$/.test(w) ? `${w}es` : `${w}s`);
-const CLAUDE_AI_RE = /^claude[ ._]ai[ _]/i;   // as src/core/workflow-tests/connectors.mjs plainClaudeAiName (the browser cannot load /src/core)
-
-/** A connector by its plain name: "jira" → "Jira", "slack_team" → "Slack team", "claude_ai_Google_Drive" → "Google Drive". */
-export function serverName(name) {
-  const plain = String(name || '').replace(CLAUDE_AI_RE, '').replace(/_/g, ' ').trim();
-  return plain ? `${plain.charAt(0).toUpperCase()}${plain.slice(1)}` : 'a connector';
-}
+/** A test tries an example at most this often (src/core/workflow-tests/store.mjs MAX_TRIES): Try 3 more has no room above. */
+const MAX_TRIES = 10;
 
 /** N3: the count beside "Would have sent": "1 message, 1 issue", by what each call makes. */
 export function sentCount(calls) {
@@ -29,7 +25,7 @@ export function sentCount(calls) {
   return [...by].map(([noun, n]) => `${n} ${n === 1 ? noun : plural(noun)}`).join(', ');
 }
 
-/** root → Map(key → { runId }) of the buttons whose action is still out (Try 3 more on two examples at once, say). */
+/** root → Map(busy key → { runId }) of the buttons whose action is still out (Try 3 more on two examples at once, say). */
 const BUSY = new WeakMap();
 const busyOf = (root) => { let m = BUSY.get(root); if (!m) { m = new Map(); BUSY.set(root, m); } return m; };
 const keyed = (root, key) => [...root.querySelectorAll('[data-focus-key]')].find((n) => n.dataset.focusKey === key) || null;
@@ -44,26 +40,28 @@ function giveFocusBack(root, doc, held) {
   const again = held.key ? keyed(root, held.key) : null;
   (again && !again.disabled ? again : root).focus({ preventScroll: true });   // never <body>, where the canvas keys answer
 }
-/** A button with a focus key; with `busy`, disabled while its action is out, also on a page a frame repainted meanwhile. */
-function act(doc, root, runId, label, fn, cls, key, { busy = false } = {}) {
+/** A button with a focus key; with `busy`, disabled while its action is out, also on a page a frame repainted meanwhile.
+ *  `busyKey` (default: the focus key) names the action: Read the whole result is busy per try, its focus per column. */
+function act(doc, root, runId, label, fn, cls, key, { busy = false, busyKey = key } = {}) {
   const b = btn(doc, label, null, cls);
   b.dataset.focusKey = key;
-  const out0 = busyOf(root).get(key);
+  if (busy) b.dataset.busyKey = busyKey;
+  const out0 = busyOf(root).get(busyKey);
   if (busy && out0 && out0.runId === runId) b.disabled = true;
   b.addEventListener('click', () => {
     if (b.disabled) return;
     if (!busy) { fn(); return; }
     b.disabled = true;
     const mine = { runId };
-    busyOf(root).set(key, mine);
+    busyOf(root).set(busyKey, mine);
     let out;
     try { out = fn(); } catch { out = null; }   // a throw gives the button back too
     Promise.resolve(out).catch(() => {}).finally(() => {
       const map = busyOf(root);
-      if (map.get(key) !== mine) return;
-      map.delete(key);
-      const now = keyed(root, key);   // this button, or the one a repaint put in its place
-      if (now) now.disabled = false;
+      if (map.get(busyKey) !== mine) return;
+      map.delete(busyKey);
+      // This button, or the one a repaint put in its place (none while another try shows).
+      for (const n of root.querySelectorAll('[data-busy-key]')) if (n.dataset.busyKey === busyKey) n.disabled = false;
     });
   });
   return b;
@@ -211,8 +209,12 @@ export function renderCompare(root, c, actions, { doc, now = Date.now() }) {
     row.append(act(doc, root, runId, r.name, () => actions.open(r.id), 'wft-ex-open', `wft-cmp-ex-${r.id}`), passed(doc, r.a), passed(doc, r.b), cell);
     if (r.luck) {
       const why = el(doc, 'span', 'wft-why');
-      why.append(doc.createTextNode(`Might be luck: only ${Math.max(r.a.total, r.b.total)} tries. `),
-        act(doc, root, runId, 'Try 3 more', () => actions.tryMore(r.id), 'wft-linkbtn', `wft-cmp-more-${r.id}`, { busy: true }));
+      const luck = `Might be luck: only ${Math.max(r.a.total, r.b.total)} tries.`;
+      if (c.run.tries >= MAX_TRIES) why.textContent = luck;   // the most a test tries: the note stays, the button goes
+      else {
+        why.append(doc.createTextNode(`${luck} `),
+          act(doc, root, runId, 'Try 3 more', () => actions.tryMore(r.id), 'wft-linkbtn', `wft-cmp-more-${r.id}`, { busy: true }));
+      }
       row.append(why);
     } else if (r.why) {
       row.append(el(doc, 'span', 'wft-why', r.why));
@@ -294,6 +296,9 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0 }) {
         if (to === null) return;
         e.preventDefault();
         actions.pick(to);
+        // The repaint gave the focus back to the key it had (this tab, now out of the tab order): move it to the picked one.
+        const next = keyed(root, `wft-sbs-try-${to}`);
+        if (next) next.focus({ preventScroll: true });
       });
       tabs.append(b);
     });
@@ -318,7 +323,8 @@ export function renderSideBySide(root, s, actions, { doc, tryIndex = 0 }) {
     const ch = el(doc, 'div', 'wft-card-head');
     ch.append(h);
     if (v && v.text) {   // C10
-      ch.append(act(doc, root, runId, 'Read the whole result', () => actions.readWhole(v.tryId, wrote(label)), 'wft-linkbtn', `wft-sbs-read-${sideKey}`, { busy: true }));
+      ch.append(act(doc, root, runId, 'Read the whole result', () => actions.readWhole(v.tryId, wrote(label)), 'wft-linkbtn', `wft-sbs-read-${sideKey}`,
+        { busy: true, busyKey: `wft-sbs-read-${sideKey}-${v.tryId}` }));
     }
     c.append(ch);
     if (!v) c.append(el(doc, 'p', 'hint', 'No try of this version here.'));

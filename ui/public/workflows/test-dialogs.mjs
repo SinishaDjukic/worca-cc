@@ -4,6 +4,7 @@ import { el, seg, field, testDialog, runStatusBadge } from './test-ui.mjs';
 import { icon } from '../icons.mjs';
 import { fmtUsd, andList } from '../../../src/shared/workflow-tests/checks.mjs';
 import { estimateOf, fmtUsdRange, aboutUsd } from '../../../src/shared/workflow-tests/compare.mjs';
+import { serverName } from '../../../src/shared/workflow-tests/connector-name.mjs';
 
 /** Auto's id (src/core/graph/builtin-workflows.mjs AUTO_WORKFLOW_ID; the browser cannot load /src/core, and the dialogs
  *  test pins this to the server's constant). An Auto run that matched no saved workflow keeps it (auto/proposal.mjs). */
@@ -306,8 +307,9 @@ export function openTestVersionDialog({ doc, win, options = [], a = null, b = 'd
     };
     if (c && mode === 'pretend') {
       if (c.previewError) line('alert', [PREVIEW_ERROR_LINE]);
-      if (c.pretend && c.pretend.length) line('check', [`${c.pretend.join(', ')}: pretend`]);
-      for (const o of c.off || []) {
+      if (c.pretend && c.pretend.length) line('check', [`${c.pretend.map(serverName).join(', ')}: pretend`]);
+      for (const off of c.off || []) {
+        const o = { ...off, name: serverName(off.name) };   // as board 31 names them (connector-name.mjs)
         if (o.reason === 'claude-ai') line('x', [`${o.name} is switched off: Worca can't pretend for claude.ai connectors.`]);
         else if (o.reason === 'own-settings') line('x', [`${o.name} is switched off: Worca can't pretend for servers in your own Claude Code settings.`]);
         else if (o.reason === 'file-server') line('x', [fileServerOffLine(o.name)]);

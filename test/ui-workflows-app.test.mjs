@@ -2791,8 +2791,9 @@ const SBS = { run: CMP_RUN, compareTitle: CMP.title, example: { id: 1, name: 'Bu
   row: CMP.model.examples[0], tries: [{ n: 1, a: SBS_TRY(1), b: SBS_TRY(4) }, { n: 2, a: SBS_TRY(2), b: SBS_TRY(5) }] };
 const PROGRESS_DONE = { run: { ...CMP_RUN }, title: CMP.title, done: 6, total: 6, costUsd: 3, estimateUsd: 3, capUsd: 15, quick: null, takenMs: 60000,
   minutesLeft: null, rows: [{ exampleId: 1, name: 'Bulk invoice export', label: null, dots: ['passed', 'passed', 'passed'], summary: 'Done · 3 of 3 passed' }] };
-/** The progress page of test 7 (done), its Compare, example 1 side by side, a try's whole result; `holdPost` holds POST /runs. */
-async function bootCompare({ holdPost = false } = {}) {
+/** The progress page of test 7 (done), its Compare, example 1 side by side, a try's whole result; `holdPost` holds POST /runs,
+ *  `holdResult` the whole-result reads. */
+async function bootCompare({ holdPost = false, holdResult = false } = {}) {
   const log = [];
   const held = [];
   const booted = await bootVersions({ extra: (url, init) => {
@@ -2800,13 +2801,17 @@ async function bootCompare({ holdPost = false } = {}) {
     if (!m) return null;
     const method = init.method || 'GET';
     const rest = m[1] || '';
+    let x;
     log.push({ method, path: rest, body: init.body ? JSON.parse(init.body) : undefined });
     if (rest === '') return okJson(TESTS_OVERVIEW);
     if (rest === '/runs/7') return okJson(PROGRESS_DONE);
     if (rest === '/runs/8') return okJson({ ...PROGRESS_DONE, run: { ...CMP_RUN, id: 8, status: 'running', exampleIds: [1], tries: 6 }, done: 3 });
     if (rest === '/runs/7/compare') return okJson(CMP);
     if (rest === '/runs/7/examples/1') return okJson(SBS);
-    if (rest === '/runs/7/tries/5/result') return okJson({ name: 'brief.md', text: 'All of try 5.' });
+    if ((x = /^\/runs\/7\/tries\/(\d+)\/result$/.exec(rest))) {
+      const reply = { ok: true, status: 200, json: async () => ({ name: 'brief.md', text: `All of try ${x[1]}.` }) };
+      return holdResult ? new Promise((r) => held.push(() => r(reply))) : Promise.resolve(reply);
+    }
     if (rest === '/runs' && method === 'POST') {
       const reply = () => ({ ok: true, status: 201, json: async () => ({ run: { id: 8, status: 'running' } }) });
       return holdPost ? new Promise((r) => held.push(() => r(reply()))) : Promise.resolve(reply());
@@ -2874,4 +2879,16 @@ test('Side by side (Task 14): an example opens board 6; Try 2 repaints with the 
   clickEl(w, page.querySelector('.wft-detail .wft-crumb'));
   await tick(6);
   assert.ok(page.querySelector('.wft-compare'), 'back on Compare');
+});
+
+test('Side by side (Task 14 fix 4): a whole result that lands after another try was picked opens no dialog', async () => {
+  const { window: w, page, held } = await bootCompare({ holdResult: true });
+  clickEl(w, page.querySelector('.wft-crow2:not(.is-head) .wft-ex-open'));
+  await tick(6);
+  clickEl(w, [...page.querySelectorAll('.wft-outs button')][1]);   // try 1's v3 draft result: GET …/tries/4/result, held
+  await tick(2);
+  clickEl(w, [...page.querySelectorAll('[role="tab"]')][1]);
+  held[0]();
+  await tick(6);
+  assert.equal(w.document.querySelector('#mk-dialog'), null, 'try 2 shows now: no dialog of try 1');
 });

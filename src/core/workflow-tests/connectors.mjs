@@ -13,13 +13,13 @@ import { findPipelineRowById, runDirForRow } from '../artifacts.mjs';
 import { worcaHome } from '../projects.mjs';
 import { resolveRunEngine } from '../settings-cascade.mjs';
 import { engineLabel } from '../../shared/engine-switch.mjs';
+import { CLAUDE_AI_RE, plainName, serverName } from '../../shared/workflow-tests/connector-name.mjs';
 import { selectRunEngine } from '../engines/index.mjs';
 
 export { CONNECTOR_MODES } from './store.mjs';
 export const CONNECTOR_CALLS_FILE = 'connector-calls.ndjson';
 export const PREVIEW_CHARS = 80;
 const CALLS_MAX = 200;
-const CLAUDE_AI_RE = /^claude[ ._]ai[ _]/i;
 const seenFile = () => join(worcaHome(), 'workflow-tests', 'seen-connectors.json');
 const NO_TOOLS_WHY = 'Worca has no list of its tools; test it once in Connectors.';
 const FILE_SERVER_WHY = "Worca can't pretend for servers from a project file.";
@@ -90,8 +90,9 @@ export async function pretendServers({ servers = {}, copies = [] } = {}, { pipel
   return { servers: out, off, pretend };
 }
 
-/** "claude.ai Google Drive" / "claude_ai_Google_Drive" → "Google Drive". */
-export const plainClaudeAiName = (name) => String(name).replace(CLAUDE_AI_RE, '').replace(/_/g, ' ').trim() || String(name);
+/** "claude.ai Google Drive" / "claude_ai_Google_Drive" → "Google Drive": the shared plain name (connector-name.mjs), so
+ *  every page names a connector the same way; the raw name when nothing is left. */
+export const plainClaudeAiName = (name) => (plainName(name) ? serverName(name) : String(name));
 
 /**
  * The engines a workflow's agent steps run on, as engine ids. A run has ONE engine for every step (workflows.mjs

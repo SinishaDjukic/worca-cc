@@ -4,7 +4,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { renderCompare, renderSideBySide, openWholeResult, sentCount, serverName } from '../ui/public/workflows/test-compare.mjs';
+import { renderCompare, renderSideBySide, openWholeResult, sentCount } from '../ui/public/workflows/test-compare.mjs';
+import { serverName } from '../src/shared/workflow-tests/connector-name.mjs';
+import { plainClaudeAiName } from '../src/core/workflow-tests/connectors.mjs';
 import { compareModel } from '../src/shared/workflow-tests/compare.mjs';
 
 const click = (el) => el.dispatchEvent(new el.ownerDocument.defaultView.MouseEvent('click', { bubbles: true }));
@@ -79,6 +81,10 @@ test('board 5: by example (G9), why, might be luck with Try 3 more (G15), what y
   assert.equal(why.textContent, 'Might be luck: only 3 tries. Try 3 more');
   click(why.querySelector('button'));
   assert.deepEqual([calls, luck.calls], [[['open', 3]], [['tryMore', 1]]]);
+  const full = boot(renderCompare, compare({ examples: 1, run: { ...compare().run, tries: 10 },
+    model: compareModel({ examples: [{ id: 1, name: 'X' }], a: { label: 'v4' }, b: { label: 'v5 draft' }, tries: luckList }) }));
+  assert.deepEqual([full.root.querySelector('.wft-why').textContent, full.root.querySelectorAll('.wft-why button').length],
+    ['Might be luck: only 3 tries.', 0], 'at 10 tries a test can try no more: the note stays, the button goes');
   const none = boot(renderCompare, compare({ changes: [] }));
   assert.equal(none.root.querySelector('.wft-nochange').textContent, 'No steps or settings changed.', 'board 29');
 });
@@ -189,6 +195,42 @@ test('board 6: the arrow keys move between the tries; a repaint keeps the focus 
   assert.deepEqual([live.getAttribute('aria-live'), live.textContent], ['polite', 'Try 3 of 3']);
 });
 
+test('board 6 (Task 14 fix 1): the arrow keys keep going when every pick repaints; the focus follows the picked tab', () => {
+  const four = side({ tries: [1, 2, 3, 4].map((n) => ({ n, a: tv(n, true), b: tv(n + 10, true) })) });
+  const { window } = new JSDOM('<!doctype html><body><section id="root" tabindex="-1"></section></body>');
+  const doc = window.document;
+  const root = doc.getElementById('root');
+  const picked = [];
+  const actions = { back() {}, readWhole() {}, pick(k) { picked.push(k); renderSideBySide(root, four, actions, { doc, tryIndex: k }); } };
+  renderSideBySide(root, four, actions, { doc, tryIndex: 0 });
+  const tabs = () => [...root.querySelectorAll('[role="tab"]')];
+  tabs()[0].focus();
+  const press = (k) => doc.activeElement.dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true }));
+  press('ArrowRight');
+  press('ArrowRight');
+  assert.deepEqual(picked, [1, 2]);
+  assert.equal(doc.activeElement, tabs()[2]);
+  assert.deepEqual([doc.activeElement.tabIndex, doc.activeElement.getAttribute('aria-selected')], [0, 'true']);
+  press('End');
+  press('ArrowRight');
+  assert.deepEqual([picked, tabs().indexOf(doc.activeElement)], [[1, 2, 3, 0], 0], 'End, then round to the first');
+});
+
+test('board 6 (Task 14 fix 4): Read the whole result is busy per try, so another try\'s button is free meanwhile', async () => {
+  const pending = [];
+  const b = boot(renderSideBySide, side(), { tryIndex: 0 }, { readWhole: () => new Promise((r) => pending.push(r)) });
+  const readB = () => [...b.root.querySelectorAll('.wft-outs button')][1];
+  click(readB());
+  assert.equal(readB().disabled, true);
+  b.again(side(), { tryIndex: 1 });
+  assert.equal(readB().disabled, false, 'try 2\'s button is not the one out');
+  b.again(side(), { tryIndex: 0 });
+  assert.equal(readB().disabled, true, 'back on try 1: still busy');
+  pending.shift()();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(readB().disabled, false);
+});
+
 test('the reason a try failed shows as it comes (a sentence), under what was checked', () => {
   const s = side();
   s.tries[1].b = { ...s.tries[1].b, verdict: { ...s.tries[1].b.verdict, basics: [{ key: 'noError', label: 'Finishes without an error', met: false, value: 'Not met',
@@ -260,9 +302,13 @@ test('board 31: pretend at the top, what each try would have sent, nothing, the 
   assert.deepEqual(texts(real.root, '.wft-sent-real'), ['Connectors: real. This try used your real connectors.', 'Connectors: real. This try used your real connectors.']);
 });
 
-test('a connector by its plain name: no claude.ai prefix, no underscores, a capital first letter', () => {
+test('a connector by its plain name (one shared helper): no claude.ai prefix, no underscores, a capital first letter', () => {
   assert.deepEqual(['jira', 'slack_team', 'claude_ai_Google_Drive', 'claude.ai Gmail', 'GitHub', ''].map(serverName),
     ['Jira', 'Slack team', 'Google Drive', 'Gmail', 'GitHub', 'a connector']);
+  assert.deepEqual(['claude.ai Google Drive', 'claude_ai_gmail', 'claude.ai '].map(plainClaudeAiName), ['Google Drive', 'Gmail', 'claude.ai '],
+    'the server\'s claude.ai names build on it, and keep the raw name when nothing is left');
+  const ui = readFileSync(new URL('../ui/public/workflows/test-compare.mjs', import.meta.url), 'utf8');
+  assert.ok(!/CLAUDE_AI_RE\s*=/.test(ui), 'no copy of the rule in the page');
 });
 
 test('app.js: Compare and side by side are wired; Task 10\'s "comes in a later step" page is gone', () => {

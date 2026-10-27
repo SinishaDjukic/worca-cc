@@ -3692,8 +3692,9 @@ function wftDetailActions() {
     back: () => (s.run.kind === 'once' ? wftShow('list', { overview: null }) : wftShow('compare', { runId: s.run.id })),
     pick: (k) => { if (!still()) return; wft.tryIndex = k; wftRender(); },
     readWhole: async (tryId, title) => {
+      const shown = wft.tryIndex;                                     // the try on screen when Read was clicked
       const r = await wftCall('GET', `${wftBase(id)}/runs/${s.run.id}/tries/${tryId}/result`);
-      if (!still()) return;
+      if (!still() || wft.tryIndex !== shown) return;                 // another try shows by now: not its dialog
       if (!r.ok) { notify({ tone: 'err', title: 'Could not read the result', detail: r.error }); return; }
       openWholeResult({ doc: document, win: window, title, name: r.data.name, text: r.data.text });
     },

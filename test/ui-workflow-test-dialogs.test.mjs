@@ -203,9 +203,9 @@ test('board 30: Connectors, Pretend by default with its notes; Real warns, hides
     'RealTries use your real connectors. If the workflow posts or sends something, it does it in every try: 18 times in this test.',
   ]);
   assert.deepEqual(notesOf(doc), [
-    'jira_team, slack_team: pretend',
+    'Jira team, Slack team: pretend',   // one shared name helper (Task 14 fix 2)
     "Google Drive is switched off: Worca can't pretend for claude.ai connectors.",
-    'confluence_team is switched off: test it once in Connectors so Worca knows its tools.',
+    'Confluence team is switched off: test it once in Connectors so Worca knows its tools.',
   ]);
   assert.equal(doc.querySelector('.wft-conn-notes a').getAttribute('href'), '#connectors');
   assert.equal(doc.querySelector('.wft-caution').textContent, 'The script step Publish to wiki runs as in a normal run. If it posts or sends something, it does it in every try.');
@@ -228,8 +228,8 @@ test('board 30: a file server, a server in your own settings, other engines, and
   await tick();
   assert.deepEqual(notesOf(doc), [
     'Worca could not list your connectors just now.',
-    "wiki_files is switched off: Worca can't pretend for servers from a project file.",
-    "my_github is switched off: Worca can't pretend for servers in your own Claude Code settings.",
+    "Wiki files is switched off: Worca can't pretend for servers from a project file.",
+    "My github is switched off: Worca can't pretend for servers in your own Claude Code settings.",
     "Steps on Codex can still use connectors from Codex's own settings. Pretend can't stop those.",
     "Steps on Gemini can still use connectors from Gemini's own settings. Pretend can't stop those.",
   ]);
@@ -328,8 +328,8 @@ test('board 30 (Task 13 review): an off reason Worca does not know reads generic
   const { doc } = openTv({}, { connectors: { mode: 'pretend', pretend: [], scripts: [], engines: [],
     off: [{ name: 'confluence_team', reason: 'no-tools' }, { name: 'odd_server', reason: 'something-new' }] } });
   await tick();
-  assert.deepEqual(notesOf(doc), ['confluence_team is switched off: test it once in Connectors so Worca knows its tools.',
-    'odd_server is switched off for this test.']);
+  assert.deepEqual(notesOf(doc), ['Confluence team is switched off: test it once in Connectors so Worca knows its tools.',
+    'Odd server is switched off for this test.']);
   assert.equal(doc.querySelectorAll('.wft-conn-notes a').length, 1, 'only no-tools links to Connectors');
   const all = openTv({}, { b: { use: 'draft', label: 'v5 draft · your changes', short: 'v5 draft', want: 18, reusable: 18, reusableAt: '2026-10-20T10:00:00Z', perTryUsd: 0.52, savesUsd: 9.36 } });
   await tick();
