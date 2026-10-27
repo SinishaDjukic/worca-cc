@@ -160,7 +160,8 @@ approved, then `Feature · n/N`. Below the stats:
 - the group bar, one part for planning and one per run, and the current run's bar;
 - the step log: each answered step as a named decision (`Clarify · 2 answers`,
   `Split into 3 runs`, `Run 1 · Plan approved`), each with **Show**, which unfolds
-  what was answered in place;
+  what was answered in place. Once its row is in the log, the step's answer receipt
+  is not shown as well, so the card names each answered step once;
 - the open step, whichever run asks it: run 2's plan approval is answered in this
   card too;
 - a row per run (`Planning · Done`, then `n · title · state`, or its pull request's

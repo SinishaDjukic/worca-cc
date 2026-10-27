@@ -238,7 +238,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
   agentsBox.setAttribute('role', 'group');
   agentsBox.setAttribute('aria-label', 'Active agents');
   // ---- the graph well (U9): a run-hosts `card` host inside a .run-flow-wrap, so the run monitor's status CSS applies.
-  // #959: a .gv-well, like the workflow card's: the one shared rule widens it past the text column (style.css).
+  // #959: a .gv-well, like the workflow card's: as wide as the card, inside the text column (style.css).
   const well = h('div', 'run-flow-wrap chat-rc-well gv-well');
   well.hidden = true;
   well.setAttribute('role', 'group');
@@ -513,7 +513,15 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
     }
     receiptList.hidden = !answers.length;
     receiptSum.tabIndex = answers.length ? 0 : -1;
-    receipt.hidden = false;
+    receipt.hidden = logged();
+    qSec.hidden = receipt.hidden;
+  }
+
+  /** Each fact once per card: a receipt whose line the step log already shows (a feature card's "Clarify · 2 answers")
+   *  gives way to that row. */
+  function logged() {
+    const line = receiptSum.textContent;
+    return [...logEl.querySelectorAll('.chat-rc-log-text')].some((t) => t.textContent === line);
   }
 
   function paintQuestion(s) {
@@ -570,6 +578,7 @@ export function createChatRunCard({ doc, win = null, snapshot = null, ctx = {}, 
       if (mine || ANSWERING_STATUS.has(status)) { showReceipt(mine, was); shownFor = mine ? null : was; }
       else receipt.hidden = true;
     }
+    if (!receipt.hidden && logged()) receipt.hidden = true;   // the log row arrives after the answer (question-resolved)
     qSec.hidden = receipt.hidden;
   }
 
