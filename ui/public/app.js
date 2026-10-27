@@ -137,7 +137,7 @@ import { renderRunPill, renderOverviewStrip, renderShipItStrip, shipItTryState, 
 import { editorFieldEl, renderProjectActionsEditor, renderStackEditor } from './actions-config-view.mjs';
 import { createMcpView, mountProjectMcp, paintMcpResolution, paintAskMcpBlock, setMcpStripRenderer } from './mcp-view.mjs';
 import { createAskPanel } from './ask-panel.mjs';
-import { ATTACH_MAX_MESSAGE_BYTES } from './attach-files.mjs';
+import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 } from './attach-files.mjs';
 // worca Chat P2: the receipt, stop and pull-request cards (registered below, before the chat mounts).
 import { registerChatActionCards, refreshChatPrWatch } from './chat/action-cards.mjs';
 import { registerScopeSwitchCard } from './chat/scope-switch-card.mjs';
@@ -215,6 +215,8 @@ import { createChatDock } from './workflows/chat-dock.mjs';
 import { openSaveVersionDialog, openUseVersionDialog, statusText } from './workflows/version-dialogs.mjs';
 import { renderTestsPage } from './workflows/tests-view.mjs';
 import { sentence as wftSentence } from './workflows/test-ui.mjs';
+import { renderExampleEditor, BLANK_EXAMPLE } from './workflows/example-editor.mjs';
+import { useLabel as wftUseLabel } from '../../src/shared/workflow-tests/compare.mjs';
 import { renderVersionsPage } from './workflows/versions-view.mjs';
 import { exportUseChoices, exportUseValue, paintExportUse } from './workflows/export-use.mjs';
 import { mintId } from '../../src/shared/graph/template.mjs';
@@ -3680,9 +3682,70 @@ function wftListActions() {
 function wftPickRun() { notify({ tone: 'info', title: 'Add from a past run', detail: 'Open a past run and pick Use as test example in its More menu.' }); }   // Task 12 replaces this body
 function wftTestVersion() { notify({ tone: 'info', title: 'Test a version', detail: 'This comes in a later step.' }); }                                    // Task 13 replaces this body
 
-// Task 11 replaces these two bodies with the example editor.
-async function wftOpenExample() { notify({ tone: 'info', title: 'Examples', detail: 'The example editor comes in the next step.' }); }
-function wftRenderEditor() { wft.view = 'list'; void wftRefresh(); }
+// The example editor (Task 11).
+function wftRenderEditor(root) {
+  renderExampleEditor(root, wft.example, wftEditorActions(), { doc: document, win: window, scripts: wft.scripts, perTryUsd: wft.perTryUsd,
+    draftLabel: wft.overview ? wftUseLabel('draft', wft.overview.ctx) : 'your draft',
+    testRunning: !!(wft.overview && wft.overview.running) });   // G19
+}
+async function wftOpenExample(exampleId) {
+  const id = wftWorkflowId();
+  if (!id) return;
+  let example = { ...BLANK_EXAMPLE, basics: { ...BLANK_EXAMPLE.basics } };
+  if (exampleId != null) {
+    const r = await wftCall('GET', `${wftBase(id)}/examples/${exampleId}`);
+    if (!r.ok) { notify({ tone: 'err', title: 'Could not open the example', detail: r.error }); return; }
+    example = r.data.example;
+  }
+  let scripts = [];
+  try { scripts = (await gvApi.scripts()).filter((s) => s && s.placeable !== false); } catch { scripts = []; }
+  const plan = await wftCall('GET', `${wftBase(id)}/plan?b=draft&tries=1`);
+  if (wftWorkflowId() !== id) return;
+  { const o = await wftCall('GET', wftBase(id)); if (o.ok) wft.overview = o.data; }   // fresh: G19 reads whether a test runs
+  wft = { ...wft, workflowId: id, view: 'editor', example, scripts, perTryUsd: plan.ok && plan.data.b ? plan.data.b.perTryUsd : null };
+  wftRender();
+}
+async function wftSaveExample(value) {
+  const id = wftWorkflowId();
+  const ex = wft.example;
+  const r = ex && ex.id ? await wftCall('PUT', `${wftBase(id)}/examples/${ex.id}`, value) : await wftCall('POST', `${wftBase(id)}/examples`, value);
+  if (r.ok) wft.example = r.data.example;
+  return r.ok ? { ok: true, example: r.data.example } : r;
+}
+function wftEditorActions() {
+  const id = wftWorkflowId();
+  return {
+    back: () => wftShow('list', { overview: null }),
+    save: async (value) => {
+      const r = await wftSaveExample(value);
+      if (r.ok) { notify({ tone: 'ok', title: 'Example saved' }); wftShow('list', { overview: null }); }
+      return r;
+    },
+    tryOnce: async (value) => {
+      const s = await wftSaveExample(value);
+      if (!s.ok) return s;
+      const r = await wftCall('POST', `${wftBase(id)}/examples/${s.example.id}/try-once`, {});
+      if (!r.ok) return r;
+      wftShow('progress', { runId: r.data.run.id });   // G2
+      return { ok: true };
+    },
+    addFiles: async (files, value) => {
+      if (!wft.example || !wft.example.id) { const s = await wftSaveExample(value); if (!s.ok) return s; }   // G17
+      for (const f of files) {
+        const dataBase64 = bytesToBase64(new Uint8Array(await f.arrayBuffer()));
+        const r = await wftCall('POST', `${wftBase(id)}/examples/${wft.example.id}/files`, { name: f.name, dataBase64 });
+        if (!r.ok) return r;
+        wft.example = r.data.example;
+      }
+      return { ok: true, example: wft.example };
+    },
+    removeFile: async (name) => {
+      const r = await wftCall('DELETE', `${wftBase(id)}/examples/${wft.example.id}/files/${encodeURIComponent(name)}`);
+      if (r.ok) wft.example = r.data.example;
+      return r.ok ? { ok: true, example: r.data.example } : r;
+    },
+  };
+}
 
 async function wftDeleteExample(e) {
   const id = wftWorkflowId();                                      // the example's workflow, before any await

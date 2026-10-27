@@ -8657,7 +8657,29 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wft-linkbtn{border:0;background:transparent;padding:0;font:inherit;color:var(--blue-ink-strong);cursor:pointer;text-decoration:underline;}
 .wft-empty{display:flex;flex-direction:column;gap:6px;}
 .wft-dlg-error:empty{display:none;}
-@media (max-width:900px){.wft-steps{grid-template-columns:minmax(0,1fr);}}
+/* Edit an example (boards 2, 24) */
+.wft-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;align-items:start;}
+.wft-col{display:flex;flex-direction:column;gap:20px;min-width:0;}
+.wft-card{display:flex;flex-direction:column;gap:10px;min-width:0;}
+.wft-card > h2{margin:0;font-size:var(--fs-section);}
+.wft-card > .hint{margin:0;}
+.wft-grp{font-size:var(--fs-body);font-weight:600;color:var(--ink);margin:0;}
+.wft-grp-hint{font-size:var(--fs-meta);color:var(--ink-2);margin:0;line-height:1.45;}
+.wft-chk{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;font-size:var(--fs-body);padding:4px 0;}
+.wft-chk input[type="checkbox"]:not(.sw-input){width:16px;height:16px;accent-color:var(--ink);margin:0;}
+.wft-num{width:84px;}
+.wft-lines{display:flex;flex-direction:column;gap:8px;align-items:flex-start;}
+.wft-line{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);align-self:stretch;}
+.wft-line-text{display:flex;flex-direction:column;gap:2px;min-width:0;font-size:var(--fs-body);}
+.wft-sect{border-top:1px solid var(--line);padding-top:16px;margin-top:6px;display:flex;flex-direction:column;gap:8px;}
+.wft-files{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}
+.wft-file{display:inline-flex;align-items:center;gap:6px;background:var(--field);border-radius:var(--r-xs);padding:4px 6px 4px 12px;font-family:var(--mono);font-size:var(--fs-meta);color:var(--ink-2);}
+.wft-file-x{display:inline-flex;align-items:center;border:0;background:transparent;color:var(--ink-2);cursor:pointer;padding:2px;}
+.wft-file-x:hover{color:var(--ink);}
+.wft-error:empty{display:none;}
+.wft-ck-preview{margin:0;padding:10px 12px;border:1px dashed var(--line-2);border-radius:var(--r-sm);background:var(--canvas-2);font-size:var(--fs-body);font-weight:500;color:var(--ink);}
+.wft-ck-preview:empty{display:none;}
+@media (max-width:900px){.wft-steps,.wft-cols{grid-template-columns:minmax(0,1fr);}}
 @media (prefers-reduced-motion:reduce){.wft-run-dot{animation:none;}}
 .wfv-bar .btn:not(.btn-icon) svg{width:15px;height:15px;}
 .wfv-bar .wfv-chev{width:12px;height:12px;color:var(--ink-2);}
