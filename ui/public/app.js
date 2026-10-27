@@ -33744,7 +33744,8 @@ function paintRunsChip(model) {
   chip.querySelector('.runs-view-chip-t').textContent = text;
   paintRunsLabelFilter();
 }
-document.querySelector('#runs-view-chip .runs-view-reset')?.addEventListener('click', () => setRunsView({ show: 'all', groupBy: 'none', person: '', labels: [] }));
+// The × clears what the chip names (the filter); the grouping is not on the chip, so it stays.
+document.querySelector('#runs-view-chip .runs-view-reset')?.addEventListener('click', () => setRunsView({ show: 'all', person: '', labels: [] }));
 
 // ── Run labels (slice 1): the Label filter, the selection bar's Label action ──
 async function sendJson(method, url, body) {

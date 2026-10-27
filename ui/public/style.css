@@ -4834,8 +4834,10 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 /* Runs list (runs redesign §3.1, §3.3a alignment): every row is the same 3-column grid, so the right column and the bars
    end at one x (Known bug 5); members indent inside their cells, never by changing the grid. */
 .runs-item{display:grid;grid-template-columns:28px minmax(0,1fr) 56px;align-items:start;border-bottom:1px solid var(--line);}
-/* The sidebar nav item's corner (decided); the row's own divider would bend at it, so it turns transparent. */
-.runs-item.is-needs{background:color-mix(in srgb,var(--amber) 8%,transparent);border-radius:var(--r-sm);border-bottom-color:transparent;}
+/* The sidebar nav item's corner (decided); the row's own divider would bend at it, so it turns transparent.
+   Each Needs-you run is its own card: an inset amber ring (a box-shadow, so the grid keeps its widths) and a gap above,
+   so two of them never read as one block. The ring stays when the row is selected (only the fill changes). */
+.runs-item.is-needs{background:color-mix(in srgb,var(--amber) 8%,transparent);border-radius:var(--r-sm);border-bottom-color:transparent;box-shadow:inset 0 0 0 1px var(--amber-ring);margin-top:6px;}
 .runs-item:has(> a.runs-row.selected){background:var(--row-selected);border-radius:var(--r-sm);border-bottom-color:transparent;}
 /* One highlight at a time: a group whose run is open takes the lighter fill as one block over its whole row only while
    collapsed (no .runs-members); expanded, the open member row is the highlight (it is .selected) and the group keeps
@@ -4898,7 +4900,13 @@ body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:
 .wfv-menu .wfv-menu-item[role="menuitemradio"] > .wfv-menu-l{grid-column:2;min-width:0;}
 .wfv-menu .wfv-menu-item[role="menuitemradio"] > :is(.wfv-menu-hint,.kind-chip){grid-column:3;justify-self:end;margin-left:0;}
 .wfv-menu .wfv-menu-item[role="menuitemradio"] > .wfv-menu-hint{min-width:3ch;text-align:right;font-variant-numeric:tabular-nums;}
-.runs-sec-head{display:flex;gap:8px;align-items:center;width:100%;padding:12px 0 6px;font-size:12px;font-weight:600;color:var(--ink-2);border:0;border-bottom:1px solid var(--line);background:none;text-align:left;}
+/* Section heads (Needs you, Running, a project, a day) are large, light ink type that stands above the rows; the light
+   weight keeps them under the page title. Their count sits at the line's right end at body size (the row-level count
+   stays a caption), and a gap above each later section keeps one section's last row from running into the next head.
+   The text sits 12px in from both ends; the line under it still spans the list. */
+.runs-sec + .runs-sec{margin-top:16px;}
+.runs-sec-head{display:flex;gap:8px;align-items:center;width:100%;padding:12px 12px 8px;font-size:var(--fs-section);font-weight:300;color:var(--ink);border:0;border-bottom:1px solid var(--line);background:none;text-align:left;}
+.runs-sec-head .runs-count{margin-left:auto;font-size:var(--fs-body);font-weight:400;}
 button.runs-sec-head{cursor:pointer;}
 button.runs-sec-head:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .runs-older{margin:8px 0;}
