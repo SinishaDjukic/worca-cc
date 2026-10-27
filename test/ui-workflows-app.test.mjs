@@ -2706,3 +2706,74 @@ test('Example editor (Task 11 fix 1): Try it once now saves, starts the try and 
   assert.deepEqual(writes(log), ['PUT /examples/4', 'POST /examples/4/try-once']);
   assert.equal(page.querySelector('#wft-ex-name'), null, 'the editor is gone');
 });
+
+// ------------------------------------------- Use a past run as a test example (plans/workflow-tests-part2-plan.md Task 12)
+const PAST_RUN = { pipelineId: 'p2', workflowId: 'wf_g', workflowName: 'Graph one', title: 'Saved filters', request: 'Write the brief.',
+  files: ['usage.csv'], qa: [], use: 1, useLabel: 'v1', testable: true, reason: null, reasonText: null };
+/** The Tests list with one past run; `holdPast` keeps GET past-run waiting until released. */
+async function bootFromRun({ holdPast = false } = {}) {
+  const log = [];
+  const held = [];
+  const booted = await bootVersions({ extra: (url, init) => {
+    const method = init.method || 'GET';
+    if (/\/api\/workflow-tests\/past-run\/p2$/.test(url)) {
+      log.push(`${method} past-run`);
+      return holdPast ? new Promise((r) => held.push(() => r({ ok: true, status: 200, json: async () => PAST_RUN }))) : okJson(PAST_RUN);
+    }
+    const m = /\/api\/workflows\/wf_g\/tests(\/[^?]*)?(?:\?.*)?$/.exec(url);
+    if (!m) return null;
+    const rest = m[1] || '';
+    if (method !== 'GET') log.push({ method, path: rest, body: init.body ? JSON.parse(init.body) : undefined });
+    if (rest === '') return okJson({ ...TESTS_OVERVIEW, pastRuns: [{ pipelineId: 'p2', title: 'Saved filters', at: '2026-10-14T10:00:00.000Z', status: 'done', files: 1, sameAs: null }] });
+    if (rest === '/plan') return okJson({ a: null, b: { use: 'draft', perTryUsd: 0.5 }, examples: 0, tries: 1 });
+    if (rest === '/examples/from-run' && method === 'POST') return okJson({ example: fullExample(9, 'Saved filters'), skipped: ['big.bin'] }, 201);
+    if (rest === '/examples/9') return okJson({ example: fullExample(9, 'Saved filters') });
+    return null;
+  } });
+  return { ...booted, log, held };
+}
+const dlgBtn = (doc, text) => [...doc.querySelectorAll('#mk-dialog button')].find((b) => b.textContent === text);
+
+test('Add from a past run (Task 12): pick the run, Next, say how it was, Add example: one POST, then the editor opens on it', async () => {
+  const { window: w, log } = await bootFromRun();
+  await go(w, 'workflows/wf_g/tests');
+  await tick(6);
+  const doc = w.document;
+  const page = doc.getElementById('wfv-tests');
+  const opener = [...page.querySelectorAll('button')].find((b) => b.textContent === 'Add from a past run');
+  assert.equal(opener.dataset.focusKey, 'wft-add-from-run', 'focus can come back after a repaint');
+  clickEl(w, opener);
+  assert.equal(doc.querySelector('#mk-dialog-title').textContent, 'Add from a past run');
+  doc.querySelector('#mk-dialog input[name="wft-pick-run"]').checked = true;
+  clickEl(w, dlgBtn(doc, 'Next'));
+  await tick(6);
+  assert.equal(doc.querySelector('#mk-dialog-title').textContent, 'Use this run as a test example');
+  assert.equal(doc.querySelector('#wft-fr-name').value, 'Saved filters');
+  clickEl(w, [...doc.querySelectorAll('#mk-dialog .seg button')].find((b) => b.textContent === 'Not good enough'));
+  const add = dlgBtn(doc, 'Add example');
+  clickEl(w, add);
+  assert.equal(add.disabled, true, 'busy while it posts: no second POST');
+  clickEl(w, add);
+  await tick(10);
+  assert.deepEqual(log.filter((c) => typeof c === 'object'), [{ method: 'POST', path: '/examples/from-run',
+    body: { pipelineId: 'p2', name: 'Saved filters', keepRequest: true, keepAnswers: false, verdict: 'not-good', note: null } }]);
+  assert.equal(doc.querySelector('#mk-dialog'), null);
+  assert.equal(page.querySelector('.wft-title').textContent, 'Example: Saved filters');
+  assert.equal(lastToast(doc).title, 'Some files were left out');
+});
+
+test('Add from a past run (Task 12): the run is read after the page went back to the canvas: no dialog over it', async () => {
+  const { window: w, log, held } = await bootFromRun({ holdPast: true });
+  await go(w, 'workflows/wf_g/tests');
+  await tick(6);
+  const doc = w.document;
+  clickEl(w, [...doc.getElementById('wfv-tests').querySelectorAll('button')].find((b) => b.textContent === 'Add from a past run'));
+  doc.querySelector('#mk-dialog input[name="wft-pick-run"]').checked = true;
+  clickEl(w, dlgBtn(doc, 'Next'));
+  await tick(2);
+  assert.deepEqual(log, ['GET past-run']);
+  clickEl(w, doc.querySelector('#wfv-pages [data-page="canvas"]'));
+  held[0]();
+  await tick(6);
+  assert.equal(doc.querySelector('#mk-dialog'), null, 'the canvas shows: board 3 does not open over it');
+});

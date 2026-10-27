@@ -216,6 +216,7 @@ import { openSaveVersionDialog, openUseVersionDialog, statusText } from './workf
 import { renderTestsPage } from './workflows/tests-view.mjs';
 import { sentence as wftSentence } from './workflows/test-ui.mjs';
 import { renderExampleEditor, BLANK_EXAMPLE } from './workflows/example-editor.mjs';
+import { openFromRunDialog, openPickRunDialog, canUseAsExample } from './workflows/test-dialogs.mjs';
 import { useLabel as wftUseLabel } from '../../src/shared/workflow-tests/compare.mjs';
 import { renderVersionsPage } from './workflows/versions-view.mjs';
 import { exportUseChoices, exportUseValue, paintExportUse } from './workflows/export-use.mjs';
@@ -3679,7 +3680,44 @@ function wftListActions() {
     },
   };
 }
-function wftPickRun() { notify({ tone: 'info', title: 'Add from a past run', detail: 'Open a past run and pick Use as test example in its More menu.' }); }   // Task 12 replaces this body
+/** G7: which past run (the overview's pastRuns), then board 3 while the same workflow's list still shows. */
+function wftPickRun() {
+  const o = wft.overview;
+  const id = wftWorkflowId();
+  if (!o || !id) return;
+  const live = () => currentView() === 'workflows' && wftWorkflowId() === id && wft.view === 'list' && !wfvEls().tests?.hidden;
+  openPickRunDialog({ doc: document, win: window, workflowName: o.name, runs: o.pastRuns || [], dateText: wftDate,
+    onPick: (pid) => void wftAddFromRun(pid, { live }) });
+}
+/** Board 3 from a run page or the picker: read what the run keeps, ask, create, then open the example in the editor.
+ *  `live()`: the opener still shows once the run is read (else no dialog over another page). */
+async function wftAddFromRun(pipelineId, { live = () => true } = {}) {
+  const r = await wftCall('GET', `/api/workflow-tests/past-run/${encodeURIComponent(pipelineId)}`);
+  if (!live()) return;
+  if (!r.ok) { notify({ tone: 'err', title: 'Could not read the run', detail: r.error }); return; }
+  const past = r.data;
+  if (!past.testable) { notify({ tone: 'err', title: 'This run cannot become a test example', detail: past.reasonText || '' }); return; }
+  openFromRunDialog({ doc: document, win: window, past, onSubmit: async (body) => {
+    const s = await wftCall('POST', `${wftBase(past.workflowId)}/examples/from-run`, { pipelineId: past.pipelineId, ...body });
+    if (!s.ok) return s;
+    if (s.data.skipped.length) notify({ tone: 'info', title: 'Some files were left out', detail: `${s.data.skipped.join(', ')}: larger than 5 MB, or more than 8 files.` });
+    if (currentView() === 'workflows' && wftWorkflowId() === past.workflowId) {
+      if (wfvEls().tests?.hidden) wfvShowPage('tests');
+      void wftOpenExample(s.data.example.id);
+    } else location.hash = `workflows/${past.workflowId}/tests/${s.data.example.id}`;   // routeWorkflows opens the editor
+    return { ok: true };
+  } });
+}
+/** G6: the saved run page's ⋯ item. `data.state.stepper` is the run's manifest (artifacts.mjs rowToState). */
+function wftRunMenuItems(record, data) {
+  const st = data && data.state;
+  const tpl = st && st.stepper && st.stepper.template;
+  const ok = !!record && canUseAsExample({ flag: flagOn('workflowTests'), noProject: !!st && isNoProjectRun({ ...record, state: st }),
+    status: st && st.status, templateId: tpl && tpl.id, reserved: !!(tpl && tpl.id && isReservedWorkflowId(tpl.id)) });
+  if (!ok) return [];
+  const pid = record.id;
+  return [{ label: 'Use as test example', onSelect: () => void wftAddFromRun(pid, { live: () => !!histDetailState && histDetailState.id === pid }) }];
+}
 function wftTestVersion() { notify({ tone: 'info', title: 'Test a version', detail: 'This comes in a later step.' }); }                                    // Task 13 replaces this body
 
 // The example editor (Task 11). Each painted editor is a session {workflowId, exampleId, token}: its actions save to
@@ -23890,7 +23928,8 @@ function openHistDetail(parsed, { instant = false, host: where = 'page' } = {}) 
   screen.querySelector('.hd-to-run').addEventListener('click', toRun);
   // Run 3 (D13): the saved bar is the primary action, Run after, Stop and ⋯; ⋯ drives the controls CSS hides there.
   screen.querySelector('.hd-bar-more')?.addEventListener('click', (e) => {
-    toggleMenu({ doc: document, anchor: e.currentTarget, items: runMoreItems(screen), align: 'end', label: 'More for this run' });
+    const extra = histDetailState ? wftRunMenuItems(histDetailState.record, histDetailState.data) : [];   // G6: Use as test example
+    toggleMenu({ doc: document, anchor: e.currentTarget, items: runMoreItems(screen, { extra }), align: 'end', label: 'More for this run' });
   });
   screen.querySelector('.hd-glance .rd-sheet').addEventListener('click', (e) => {
     const row = e.target.closest && e.target.closest('[data-rd-tab]');

@@ -117,7 +117,9 @@ function list(doc, page, o, actions, { root, storage, dateText, now }) {
   const head = el(doc, 'div', 'wft-head');
   const acts = el(doc, 'div', 'wft-acts');
   const testBtn = btn(doc, 'Test a version', () => actions.testVersion(), 'btn btn-primary');
-  acts.append(btn(doc, 'Add from a past run', () => actions.addFromRun(), 'btn'), btn(doc, 'New example', () => actions.newExample(), 'btn'), testBtn);
+  const fromRun = btn(doc, 'Add from a past run', () => actions.addFromRun(), 'btn');
+  fromRun.dataset.focusKey = 'wft-add-from-run';   // the G7 dialog's focusBack finds it after a repaint (layers.mjs refind)
+  acts.append(fromRun, btn(doc, 'New example', () => actions.newExample(), 'btn'), testBtn);
   head.append(el(doc, 'p', 'subtitle', 'Test examples show what this workflow must do well. Before you share a change, try it on the examples and see what got better or worse.'), acts);
   if (o.running) {   // G19, D37: one test per workflow at a time
     testBtn.disabled = true;

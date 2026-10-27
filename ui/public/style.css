@@ -8685,6 +8685,19 @@ body.view-workflows .main{padding:0;overflow:hidden;display:flex;flex-direction:
 .wft-error:empty{display:none;}
 .wft-ck-preview{margin:0;padding:10px 12px;border:1px dashed var(--line-2);border-radius:var(--r-sm);background:var(--canvas-2);font-size:var(--fs-body);font-weight:500;color:var(--ink);}
 .wft-ck-preview:empty{display:none;}
+/* Use a past run as a test example (boards 3, 25) */
+.wft-pick-list{border:1px solid var(--line-2);border-radius:var(--r-sm);overflow:auto;max-height:420px;}
+.wft-pick-list .wft-pick-row{padding:9px 12px;border-top:0;border-bottom:1px solid var(--line);cursor:pointer;}
+.wft-pick-list .wft-pick-row:last-child{border-bottom:0;}
+.wft-pick-list .wft-pick-row:has(input:checked){background:var(--field);}
+.wft-pick-list .wft-pick-text b{font-weight:600;}
+.wft-fr-intro{margin:0 0 4px;}
+.wft-keep{display:flex;flex-direction:column;gap:2px;margin-bottom:12px;}
+.wft-keep .wft-chk{flex-wrap:nowrap;align-items:flex-start;}
+.wft-keep .wft-chk input[type="checkbox"]{margin-top:2px;flex:0 0 auto;}
+.wft-keep-text{min-width:0;}
+.wft-keep .wft-chk .hint{display:inline;margin:0;}
+.wft-fr-hint{margin:0;}
 @media (max-width:900px){.wft-steps,.wft-cols{grid-template-columns:minmax(0,1fr);}}
 @media (prefers-reduced-motion:reduce){.wft-run-dot{animation:none;}}
 .wfv-bar .btn:not(.btn-icon) svg{width:15px;height:15px;}

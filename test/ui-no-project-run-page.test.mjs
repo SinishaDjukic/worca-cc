@@ -135,3 +135,44 @@ test('a resume ticket of a run without a project says No project in Schedules, n
   assert.match(text, /No project · Default/);
   assert.doesNotMatch(text, /Project · work/);
 });
+
+// Workflow tests Task 12 (G6, board 25): the saved run page's ⋯ keeps a finished no-project run of a saved workflow as a test example.
+const WF_DETAIL = { ...NP_DETAIL, state: { ...NP_DETAIL.state, status: 'done', stepper: { template: { id: 'wf_b', name: 'Product brief writer' } } } };
+const PAST = { pipelineId: 'abcd1234', workflowId: 'wf_b', workflowName: 'Product brief writer', title: 'Q3 Hiring Deck', request: 'Make the deck.',
+  files: [], qa: [], use: 4, useLabel: 'v4', testable: true, reason: null, reasonText: null };
+async function moreItems({ flags, detail = WF_DETAIL }) {
+  const reads = [];
+  const ctx = await boot({ fetchHandler: (u) => {
+    if (u.endsWith(`/api/history/${NP_KEY}/abcd1234`)) return ok(detail);
+    if (u.includes('/api/workflow-tests/past-run/abcd1234')) { reads.push(u); return ok(PAST); }
+    return arms(u) || ok({});
+  } });
+  ctx.window.document.documentElement.dataset.flags = flags;
+  go(ctx.window, `history/${NP_KEY}/abcd1234/details`);
+  await settle(ctx.window, 6);
+  const doc = ctx.window.document;
+  click(ctx.window, doc.querySelector('#hist-detail .hd-bar-more'));
+  await settle(ctx.window);
+  return { ctx, doc, reads, items: [...doc.querySelectorAll('body > .wfv-menu .menu-item')] };
+}
+
+test('G6: More › Use as test example, before Terminal, opens "Use this run as a test example" for this run', async () => {
+  const { ctx, doc, reads, items } = await moreItems({ flags: 'workflowTests' });
+  const texts = items.map((b) => b.textContent.trim());
+  assert.equal(texts[0], 'Use as test example');
+  assert.match(texts[1], /^Terminal/, 'board 25: the real items stay, Terminal next');
+  click(ctx.window, items[0]);
+  await settle(ctx.window, 6);
+  assert.equal(reads.length, 1, 'GET /api/workflow-tests/past-run/abcd1234');
+  assert.equal(doc.querySelector('#mk-dialog-title').textContent, 'Use this run as a test example');
+  assert.equal(doc.querySelector('#wft-fr-name').value, 'Q3 Hiring Deck');
+  [...doc.querySelectorAll('#mk-dialog button')].find((b) => b.textContent === 'Cancel').click();
+  await settle(ctx.window);
+});
+
+test('G6: no Use as test example with the flag off, or for a built-in workflow', async () => {
+  const off = await moreItems({ flags: '' });
+  assert.equal(off.items.some((b) => b.textContent.trim() === 'Use as test example'), false, 'flag off');
+  const auto = await moreItems({ flags: 'workflowTests', detail: { ...WF_DETAIL, state: { ...WF_DETAIL.state, stepper: { template: { id: 'wf_default', name: 'Default' } } } } });
+  assert.equal(auto.items.some((b) => b.textContent.trim() === 'Use as test example'), false, 'a built-in workflow has no tests');
+});

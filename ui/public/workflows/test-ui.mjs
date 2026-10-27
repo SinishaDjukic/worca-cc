@@ -93,6 +93,7 @@ export function testDialog({ doc, win, title, body, confirmLabel, onConfirm, onR
   if (onRemove) foot.push(btn(doc, 'Remove', () => { const next = onRemove(); dlg.close(); if (next && typeof next.focus === 'function') next.focus(); }, 'btn btn-danger wft-dlg-remove'));
   foot.push(btn(doc, 'Cancel', () => dlg.close(), 'btn'));
   const ok = btn(doc, confirmLabel, async () => {
+    if (ok.disabled) return;   // busy, or nothing to confirm (a dispatched click still reaches a disabled button's listener)
     error.textContent = '';
     ok.disabled = true;
     dlg.setBusy(true);
