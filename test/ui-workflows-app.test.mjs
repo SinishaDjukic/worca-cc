@@ -2596,3 +2596,113 @@ test('Tests page (Task 10 fix 1): Workflows ▾ › New canvas while it shows: t
   assert.match(page.textContent, /Save the workflow first: tests belong to a saved workflow\./);
   assert.equal(reads.length, before, 'no read for a canvas that is not saved');
 });
+
+// ------------------------------------------------- The example editor (plans/workflow-tests-part2-plan.md Task 11)
+const exampleRow = (e) => ({ id: e.id, name: e.name, hasRequest: true, files: e.files, fromAt: null, note: null, tries: 3, basics: 2, checks: 0,
+  cells: { 1: null, draft: null } });
+const fullExample = (id, name) => ({ id, name, request: `The request of ${name}.`, answers: [], otherwise: 'pick',
+  basics: { noError: true, noHelp: true, maxCostUsd: null, maxSentBack: null }, checks: [], tries: 3, files: [], note: null });
+/** A small examples store behind /api/workflows/wf_g/tests; `holdFiles` keeps every file upload waiting until released. */
+async function bootEditor({ holdFiles = false } = {}) {
+  const store = { 4: fullExample(4, 'Bulk invoice export'), 7: fullExample(7, 'Weekly report') };
+  let nextId = 8;
+  const log = [];
+  const held = [];
+  const booted = await bootVersions({ extra: (url, init) => {
+    const m = /\/api\/workflows\/wf_g\/tests(\/[^?]*)?(?:\?.*)?$/.exec(url);
+    if (!m) return null;
+    const method = init.method || 'GET';
+    const rest = m[1] || '';
+    const body = init.body ? JSON.parse(init.body) : undefined;
+    log.push({ method, path: rest, body });
+    let x;
+    if (rest === '') return okJson({ ...TESTS_OVERVIEW, examples: Object.values(store).map(exampleRow) });
+    if (rest === '/plan') return okJson({ a: null, b: { use: 'draft', perTryUsd: 0.5 }, examples: 0, tries: 1 });
+    if (rest === '/examples' && method === 'POST') {
+      const e = { ...fullExample(nextId, body.name), ...body, id: nextId, files: [] };
+      nextId += 1;
+      store[e.id] = e;
+      return okJson({ example: { ...e } }, 201);
+    }
+    if ((x = /^\/examples\/(\d+)$/.exec(rest))) {
+      const e = store[x[1]];
+      if (method === 'PUT') Object.assign(e, body);
+      return okJson({ example: { ...e } });
+    }
+    if ((x = /^\/examples\/(\d+)\/files$/.exec(rest)) && method === 'POST') {
+      const e = store[x[1]];
+      const reply = () => { e.files = [...e.files, { name: body.name, size: 2, sha256: 'z' }]; return { ok: true, status: 200, json: async () => ({ example: { ...e } }) }; };
+      return holdFiles ? new Promise((r) => held.push(() => r(reply()))) : Promise.resolve(reply());
+    }
+    if ((x = /^\/examples\/(\d+)\/try-once$/.exec(rest))) return okJson({ run: { id: 31, status: 'running' } }, 201);
+    return null;
+  } });
+  return { ...booted, log, held, store };
+}
+const pickFiles = (w, page, files) => {
+  const picker = page.querySelector('#wft-ex-file');
+  Object.defineProperty(picker, 'files', { configurable: true, value: files });
+  picker.dispatchEvent(new w.Event('change'));
+};
+const fileOf = (name, text) => ({ name, arrayBuffer: async () => new TextEncoder().encode(text).buffer });
+const editorBtn = (page, text) => [...page.querySelectorAll('.wft-acts button')].find((b) => b.textContent === text);
+const writes = (log) => log.filter((c) => c.method !== 'GET').map((c) => `${c.method} ${c.path}`);
+
+test('Example editor (Task 11 fix 1): an upload that lands after Cancel never retargets the next editor: Save in example 7 saves example 7', async () => {
+  const { window: w, log, held } = await bootEditor({ holdFiles: true });
+  await go(w, 'workflows/wf_g/tests/4');
+  await tick(6);
+  const page = w.document.getElementById('wfv-tests');
+  assert.equal(page.querySelector('.wft-title').textContent, 'Example: Bulk invoice export');
+  pickFiles(w, page, [fileOf('notes.md', 'hi')]);
+  await tick(4);
+  assert.equal(held.length, 1, 'the upload is out');
+  assert.equal(editorBtn(page, 'Save example').disabled, true, 'Save waits while the upload runs');
+  clickEl(w, editorBtn(page, 'Cancel'));
+  await tick(6);
+  clickEl(w, [...page.querySelectorAll('.wft-ex-open')].find((b) => b.textContent === 'Weekly report'));
+  await tick(6);
+  assert.equal(page.querySelector('.wft-title').textContent, 'Example: Weekly report');
+  held[0]();
+  await tick(6);
+  assert.equal(page.querySelector('.wft-title').textContent, 'Example: Weekly report', 'the late upload does not repaint another editor');
+  clickEl(w, editorBtn(page, 'Save example'));
+  await tick(6);
+  assert.deepEqual(writes(log), ['POST /examples/4/files', 'PUT /examples/7']);
+  assert.equal(log.find((c) => c.method === 'PUT').body.name, 'Weekly report');
+});
+
+test('Example editor (Task 11 fix 1): a new example is saved first for its file (G17, POST once), then PUT; files go up as base64', async () => {
+  const { window: w, log, store } = await bootEditor();
+  await go(w, 'workflows/wf_g/tests');
+  await tick(6);
+  const page = w.document.getElementById('wfv-tests');
+  clickEl(w, [...page.querySelectorAll('button')].find((b) => b.textContent === 'New example'));
+  await tick(6);
+  assert.equal(page.querySelector('.wft-title').textContent, 'New example');
+  const name = page.querySelector('#wft-ex-name');
+  name.value = 'Fresh one'; name.dispatchEvent(new w.Event('input'));
+  pickFiles(w, page, [fileOf('notes.md', 'hi'), fileOf('data.csv', 'a,b')]);
+  await tick(8);
+  assert.deepEqual(writes(log), ['POST /examples', 'POST /examples/8/files', 'POST /examples/8/files']);
+  assert.equal(log.find((c) => c.path === '/examples').body.name, 'Fresh one');
+  assert.deepEqual(log.filter((c) => c.path === '/examples/8/files').map((c) => c.body), [{ name: 'notes.md', dataBase64: 'aGk=' }, { name: 'data.csv', dataBase64: 'YSxi' }]);
+  assert.deepEqual([...page.querySelectorAll('.wft-file > span')].map((s) => s.textContent), ['notes.md', 'data.csv']);
+  clickEl(w, editorBtn(page, 'Save example'));
+  await tick(6);
+  assert.deepEqual(writes(log).slice(3), ['PUT /examples/8'], 'the saved example is updated, never posted again');
+  assert.equal(store[8].name, 'Fresh one');
+  assert.equal(lastToast(w.document).title, 'Example saved');
+  assert.equal(page.querySelector('#wft-ex-name'), null, 'back on the list');
+});
+
+test('Example editor (Task 11 fix 1): Try it once now saves, starts the try and leaves the editor for the progress page', async () => {
+  const { window: w, log } = await bootEditor();
+  await go(w, 'workflows/wf_g/tests/4');
+  await tick(6);
+  const page = w.document.getElementById('wfv-tests');
+  clickEl(w, editorBtn(page, 'Try it once now'));
+  await tick(8);
+  assert.deepEqual(writes(log), ['PUT /examples/4', 'POST /examples/4/try-once']);
+  assert.equal(page.querySelector('#wft-ex-name'), null, 'the editor is gone');
+});

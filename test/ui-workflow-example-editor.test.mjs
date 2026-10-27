@@ -14,7 +14,7 @@ const example = () => ({
   checks: [{ id: 'c_1', kind: 'words', min: 400, max: 900 }, { id: 'c_2', kind: 'sections', names: ['Problem', 'Users', 'Success metric', 'Risks'] }],
   tries: 3, files: [{ name: 'interviews-q3.md', size: 10, sha256: 'x' }], note: null,
 });
-function boot(ex = example(), { perTryUsd = 0.55, result = { ok: true }, testRunning = false } = {}) {
+function boot(ex = example(), { perTryUsd = 0.55, result = { ok: true }, testRunning = false, over = {}, scripts = [{ key: 'lint-md', displayName: 'Markdown lint' }] } = {}) {
   const { window } = new JSDOM('<!doctype html><body><section id="root"></section></body>');
   const calls = [];
   const actions = {
@@ -23,9 +23,10 @@ function boot(ex = example(), { perTryUsd = 0.55, result = { ok: true }, testRun
     tryOnce: async (v) => { calls.push(['tryOnce', v]); return { ok: true }; },
     addFiles: async (files, v) => { calls.push(['addFiles', files.map((f) => f.name), v.name]); return { ok: true, example: { id: 4, files: [...ex.files, { name: files[0].name, size: 1, sha256: 'y' }] } }; },
     removeFile: async (name) => { calls.push(['removeFile', name]); return { ok: true, example: { id: 4, files: [] } }; },
+    ...over,
   };
   const root = window.document.getElementById('root');
-  const ed = renderExampleEditor(root, ex, actions, { doc: window.document, win: window, scripts: [{ key: 'lint-md', displayName: 'Markdown lint' }], perTryUsd, draftLabel: 'v5 draft', testRunning });
+  const ed = renderExampleEditor(root, ex, actions, { doc: window.document, win: window, scripts, perTryUsd, draftLabel: 'v5 draft', testRunning });
   return { root, doc: window.document, win: window, calls, ed };
 }
 
@@ -50,8 +51,9 @@ test('the board-2 layout: title, actions, cards 1, 2, 4 on the left and 3 on the
 
 test('Basics, tries and the estimate read back into the value', () => {
   const { root, ed } = boot();
-  assert.deepEqual([...root.querySelectorAll('.wft-chk')].map((l) => [...l.querySelectorAll('.switch-label')].map((s) => s.textContent).join(' ')),
+  assert.deepEqual([...root.querySelectorAll('.wft-basic')].map((r) => [...r.querySelectorAll('.switch-label, .wft-basic-after')].map((s) => s.textContent).join(' ')),
     ['Finishes without an error', 'Finishes without needing help from someone', 'Costs at most', 'Sent back for fixes at most times']);
+  assert.deepEqual(['#wft-b-cost-usd', '#wft-b-fix-n'].map((s) => root.querySelector(s).closest('label')), [null, null], 'the boxes sit beside the switch, not in its label');
   assert.ok([...root.querySelectorAll('.wft-chk')].every((l) => l.matches('label.switch-row') && l.querySelector('input.sw-input[role="switch"]')), 'on/off is a switch (design system)');
   assert.equal(root.querySelector('#wft-b-cost-usd').value, '$1.50');
   assert.equal(root.querySelector('#wft-b-fix').checked, false);
@@ -65,8 +67,26 @@ test('Basics, tries and the estimate read back into the value', () => {
   click(byText(root, '.wft-c2 .seg button', 'The try counts as failed'));
   const v = ed.value();
   assert.deepEqual([v.tries, v.otherwise, v.basics], [5, 'fail', { noError: true, noHelp: false, maxCostUsd: 2, maxSentBack: 1 }]);
+  root.querySelector('#wft-b-cost-usd').value = '1,50';
+  assert.equal(ed.value().basics.maxCostUsd, 1.5, 'a decimal comma is a point');
   root.querySelector('#wft-b-cost').checked = false;
   assert.equal(ed.value().basics.maxCostUsd, null);
+});
+
+test('a limit switched on with its box empty is refused in plain words before anything is sent', async () => {
+  const { root, calls, ed } = boot();
+  root.querySelector('#wft-b-cost-usd').value = '';
+  assert.equal(ed.value().basics.maxCostUsd, null);
+  click(byText(root, '.wft-acts button', 'Save example'));
+  await tick();
+  assert.equal(root.querySelector('.wft-error').textContent, 'The cost limit must be more than $0 and at most $10,000.');
+  root.querySelector('#wft-b-cost-usd').value = '$2';
+  root.querySelector('#wft-b-fix').checked = true;
+  root.querySelector('#wft-b-fix-n').value = '';
+  click(byText(root, '.wft-acts button', 'Try it once now'));
+  await tick();
+  assert.equal(root.querySelector('.wft-error').textContent, 'The fix limit must be a whole number from 0 to 50.');
+  assert.equal(calls.length, 0, 'nothing was sent');
 });
 
 test('a new example: no cost limit unless set, the limit pre-filled from the usual cost, the C12 text when unknown', () => {
@@ -80,12 +100,16 @@ test('a new example: no cost limit unless set, the limit pre-filled from the usu
 
 test('questions and answers: edit, remove and add in a small dialog', async () => {
   const { root, doc, ed } = boot();
-  click(byText(root, '.wft-c2 .wft-line button', 'Edit'));
+  const edit0 = byText(root, '.wft-c2 .wft-line button', 'Edit');
+  edit0.focus();
+  click(edit0);
   assert.equal(doc.querySelector('#mk-dialog-title').textContent, 'Edit the question and answer');
   doc.querySelector('#wft-qa-answer').value = 'CSV only.';
   click(doc.querySelector('.wft-dlg-ok'));
   await tick();
   assert.deepEqual(ed.value().answers, [{ question: 'Which file formats should the export have?', answer: 'CSV only.' }]);
+  assert.equal(doc.activeElement.dataset.focusKey, 'qa-0', 'the focus is back on the repainted Edit');
+  assert.ok(doc.activeElement.isConnected && doc.activeElement !== edit0);
   click(byText(root, '.wft-c2 button', 'Add a question and answer'));
   doc.querySelector('#wft-qa-question').value = 'Who may export?';
   click(doc.querySelector('.wft-dlg-ok'));
@@ -95,9 +119,12 @@ test('questions and answers: edit, remove and add in a small dialog', async () =
   click(doc.querySelector('.wft-dlg-ok'));
   await tick();
   assert.equal(ed.value().answers.length, 2);
-  click(byText(root, '.wft-c2 .wft-line button', 'Edit'));
+  const again = byText(root, '.wft-c2 .wft-line button', 'Edit');
+  again.focus();
+  click(again);
   click(doc.querySelector('.wft-dlg-remove'));
   assert.deepEqual(ed.value().answers.map((a) => a.question), ['Who may export?']);
+  assert.equal(doc.activeElement, byText(root, '.wft-c2 button', 'Add a question and answer'), 'after a Remove the focus is on Add');
 });
 
 test('automatic checks: the G1 dialog with a live label, refusals in plain words, scripts by name', async () => {
@@ -122,10 +149,14 @@ test('automatic checks: the G1 dialog with a live label, refusals in plain words
   click(doc.querySelector('.wft-dlg-ok'));
   await tick();
   assert.deepEqual([...root.querySelectorAll('.wft-sect .wft-line-text')].map((n) => n.textContent).slice(-2), ['Mentions "200 invoices"', 'The Library script "Markdown lint" passes']);
-  click(byText(root, '.wft-sect .wft-line button', 'Edit'));
+  const e0 = byText(root, '.wft-sect .wft-line button', 'Edit');
+  assert.equal(e0.dataset.focusKey, 'ck-c_1');
+  e0.focus();
+  click(e0);
   assert.equal(doc.querySelector('#wft-ck-min').value, '400');
   click(doc.querySelector('.wft-dlg-remove'));
   assert.equal(ed.value().checks.length, 3);
+  assert.equal(doc.activeElement, byText(root, '.wft-sect button', 'Add an automatic check'));
 });
 
 test('save, try once, the error line, files', async () => {
@@ -143,6 +174,7 @@ test('save, try once, the error line, files', async () => {
   await tick();
   assert.deepEqual(calls[2], ['removeFile', 'interviews-q3.md']);
   assert.equal(root.querySelectorAll('.wft-file').length, 0);
+  assert.equal(root.ownerDocument.activeElement, byText(root, '.wft-files button', 'Add file'), 'the focus goes to Add file');
   const picker = root.querySelector('#wft-ex-file');
   Object.defineProperty(picker, 'files', { configurable: true, value: [{ name: 'usage.csv' }] });
   picker.dispatchEvent(new picker.ownerDocument.defaultView.Event('change'));
@@ -181,4 +213,45 @@ test('a file that differs from one already here only in case is refused before t
   await tick();
   assert.deepEqual(calls[0], ['addFiles', ['interviews-q3.md'], 'Bulk invoice export']);
   assert.equal(root.querySelector('.wft-error').textContent, '');
+});
+
+test('while an editor action runs, Save, Try it once now and the file controls wait (no second post)', async () => {
+  let done;
+  const { root, calls } = boot(example(), { over: {
+    addFiles: (files) => { calls.push(['addFiles', files.map((f) => f.name)]); return new Promise((r) => { done = r; }); },
+  } });
+  const picker = root.querySelector('#wft-ex-file');
+  Object.defineProperty(picker, 'files', { configurable: true, value: [{ name: 'a.md' }, { name: 'b.md' }] });
+  picker.dispatchEvent(new picker.ownerDocument.defaultView.Event('change'));
+  await tick();
+  const state = () => [byText(root, '.wft-acts button', 'Save example').disabled, byText(root, '.wft-acts button', 'Try it once now').disabled,
+    byText(root, '.wft-files button', 'Add file').disabled, root.querySelector('.wft-file-x').disabled, picker.disabled];
+  assert.deepEqual(state(), [true, true, true, true, true]);
+  click(byText(root, '.wft-acts button', 'Save example'));
+  await tick();
+  assert.equal(calls.filter((c) => c[0] === 'save').length, 0, 'a disabled Save posts nothing');
+  // a.md went up, b.md was refused: the files that did go up are shown with the error
+  done({ ok: false, error: 'B.md is larger than 5 MB.', example: { id: 4, files: [{ name: 'interviews-q3.md', size: 10, sha256: 'x' }, { name: 'a.md', size: 1, sha256: 'y' }] } });
+  await tick();
+  assert.deepEqual(state(), [false, false, false, false, false]);
+  assert.deepEqual([...root.querySelectorAll('.wft-file > span')].map((s) => s.textContent), ['interviews-q3.md', 'a.md']);
+  assert.equal(root.querySelector('.wft-error').textContent, 'B.md is larger than 5 MB.');
+});
+
+test('a script check whose script left the Library says so, on its line and in its dialog; an unknown Library says nothing', () => {
+  const ex = { ...example(), checks: [{ id: 'c_9', kind: 'script', key: 'old-lint', params: {} }] };
+  const { root, doc } = boot(ex);
+  assert.equal(root.querySelector('.wft-sect .wft-line-text').textContent, 'The Library script "old-lint" passes');
+  assert.equal(root.querySelector('.wft-sect .wft-line .wft-gone').textContent, 'This script is no longer in the Library.');
+  click(byText(root, '.wft-sect .wft-line button', 'Edit'));
+  assert.equal(doc.querySelector('#wft-ck-kind').value, 'script');
+  assert.equal(doc.querySelector('#wft-ck-script').value, 'old-lint');
+  const hint = doc.querySelector('.mk-dialog .wft-gone');
+  assert.equal(hint.textContent, 'This script is no longer in the Library.');
+  assert.equal(hint.hidden, false);
+  const sel = doc.querySelector('#wft-ck-script');
+  sel.value = 'lint-md'; sel.dispatchEvent(new doc.defaultView.Event('change'));
+  assert.equal(hint.hidden, true, 'a listed script needs no hint');
+  const unknown = boot(ex, { scripts: null });
+  assert.equal(unknown.root.querySelector('.wft-sect .wft-gone'), null, 'the Library did not load: no claim either way');
 });

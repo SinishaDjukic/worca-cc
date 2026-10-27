@@ -80,6 +80,7 @@ export function card(doc, title, id, hint = null, cls = '') {
 /**
  * A dialog on the shared layout: title, body, an error line, [Remove], Cancel and the confirming button.
  * onConfirm() → {ok, error?} (or a promise of it); the dialog closes on ok and shows the error otherwise.
+ * onRemove() may return the element to focus once the dialog closes.
  */
 export function testDialog({ doc, win, title, body, confirmLabel, onConfirm, onRemove = null, width = 'md' }) {
   const dlg = createDialog({ doc, win, width });
@@ -88,7 +89,8 @@ export function testDialog({ doc, win, title, body, confirmLabel, onConfirm, onR
   const error = el(doc, 'p', 'hint err wft-dlg-error');
   error.setAttribute('aria-live', 'polite');
   const foot = [];
-  if (onRemove) foot.push(btn(doc, 'Remove', () => { onRemove(); dlg.close(); }, 'btn btn-danger wft-dlg-remove'));
+  // onRemove may return where the focus goes next (the opener left with the removed line).
+  if (onRemove) foot.push(btn(doc, 'Remove', () => { const next = onRemove(); dlg.close(); if (next && typeof next.focus === 'function') next.focus(); }, 'btn btn-danger wft-dlg-remove'));
   foot.push(btn(doc, 'Cancel', () => dlg.close(), 'btn'));
   const ok = btn(doc, confirmLabel, async () => {
     error.textContent = '';

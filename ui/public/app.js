@@ -3604,7 +3604,7 @@ function wfvRestoreRefusal(r) {
 // Workflow tests (plans/workflow-tests-part2-plan.md): the Tests page. Task 10 is the list and first use; Task 11 adds the
 // example editor, Task 12 Add from a past run, Task 13 Test a version and the progress page, Task 14 Compare and side by side.
 const WFT_EMPTY = Object.freeze({ view: 'list', workflowId: null, overview: null, error: null, example: null, runId: null,
-  exampleId: null, tryIndex: 0, data: null, scripts: [], perTryUsd: null });
+  exampleId: null, tryIndex: 0, data: null, scripts: [], perTryUsd: null, editorToken: 0 });
 let wft = { ...WFT_EMPTY };
 const wftBase = (id) => `/api/workflows/${encodeURIComponent(id)}/tests`;
 /** {ok, data} | {ok:false, status, error} (the server's reason as a sentence); never throws. */
@@ -3682,67 +3682,89 @@ function wftListActions() {
 function wftPickRun() { notify({ tone: 'info', title: 'Add from a past run', detail: 'Open a past run and pick Use as test example in its More menu.' }); }   // Task 12 replaces this body
 function wftTestVersion() { notify({ tone: 'info', title: 'Test a version', detail: 'This comes in a later step.' }); }                                    // Task 13 replaces this body
 
-// The example editor (Task 11).
+// The example editor (Task 11). Each painted editor is a session {workflowId, exampleId, token}: its actions save to
+// session.exampleId (set by the G17 auto-save), and write wft / change the view only while that editor still shows. A
+// slow upload that lands after Cancel and another Open never retargets the next editor.
+let wftEditorSeq = 0;
+let wftOpenSeq = 0;
+const wftEditorLive = (s) => wft.view === 'editor' && wft.editorToken === s.token && wftWorkflowId() === s.workflowId;
 function wftRenderEditor(root) {
-  renderExampleEditor(root, wft.example, wftEditorActions(), { doc: document, win: window, scripts: wft.scripts, perTryUsd: wft.perTryUsd,
+  const session = { workflowId: wftWorkflowId(), exampleId: wft.example && wft.example.id ? wft.example.id : null, token: ++wftEditorSeq };
+  wft.editorToken = session.token;
+  renderExampleEditor(root, wft.example, wftEditorActions(session), { doc: document, win: window, scripts: wft.scripts, perTryUsd: wft.perTryUsd,
     draftLabel: wft.overview ? wftUseLabel('draft', wft.overview.ctx) : 'your draft',
     testRunning: !!(wft.overview && wft.overview.running) });   // G19
 }
 async function wftOpenExample(exampleId) {
   const id = wftWorkflowId();
   if (!id) return;
+  const seq = ++wftOpenSeq;                                         // a later Open wins over this one
+  const stale = () => seq !== wftOpenSeq || wftWorkflowId() !== id;
   let example = { ...BLANK_EXAMPLE, basics: { ...BLANK_EXAMPLE.basics } };
   if (exampleId != null) {
     const r = await wftCall('GET', `${wftBase(id)}/examples/${exampleId}`);
+    if (stale()) return;
     if (!r.ok) { notify({ tone: 'err', title: 'Could not open the example', detail: r.error }); return; }
     example = r.data.example;
   }
-  let scripts = [];
-  try { scripts = (await gvApi.scripts()).filter((s) => s && s.placeable !== false); } catch { scripts = []; }
+  let scripts = null;                                               // null: the Library did not load (no "left the Library" claims)
+  try { scripts = (await gvApi.scripts()).filter((s) => s && s.placeable !== false); } catch { scripts = null; }
   const plan = await wftCall('GET', `${wftBase(id)}/plan?b=draft&tries=1`);
-  if (wftWorkflowId() !== id) return;
-  { const o = await wftCall('GET', wftBase(id)); if (o.ok) wft.overview = o.data; }   // fresh: G19 reads whether a test runs
-  wft = { ...wft, workflowId: id, view: 'editor', example, scripts, perTryUsd: plan.ok && plan.data.b ? plan.data.b.perTryUsd : null };
+  const o = await wftCall('GET', wftBase(id));                      // fresh: G19 reads whether a test runs
+  if (stale()) return;
+  wft = { ...wft, workflowId: id, view: 'editor', example, scripts, ...(o.ok ? { overview: o.data } : {}),
+    perTryUsd: plan.ok && plan.data.b ? plan.data.b.perTryUsd : null };
   wftRender();
 }
-async function wftSaveExample(value) {
-  const id = wftWorkflowId();
-  const ex = wft.example;
-  const r = ex && ex.id ? await wftCall('PUT', `${wftBase(id)}/examples/${ex.id}`, value) : await wftCall('POST', `${wftBase(id)}/examples`, value);
-  if (r.ok) wft.example = r.data.example;
-  return r.ok ? { ok: true, example: r.data.example } : r;
+/** Save the session's example: PUT when it has an id, else POST (and remember the new id). */
+async function wftSaveExample(session, value) {
+  const base = wftBase(session.workflowId);
+  const r = session.exampleId ? await wftCall('PUT', `${base}/examples/${session.exampleId}`, value) : await wftCall('POST', `${base}/examples`, value);
+  if (!r.ok) return r;
+  session.exampleId = r.data.example.id;
+  if (wftEditorLive(session)) wft.example = r.data.example;
+  return { ok: true, example: r.data.example };
 }
-function wftEditorActions() {
-  const id = wftWorkflowId();
+function wftEditorActions(session) {
+  const base = wftBase(session.workflowId);
+  const keep = (example) => { if (wftEditorLive(session)) wft.example = example; };
   return {
-    back: () => wftShow('list', { overview: null }),
+    back: () => { if (wftEditorLive(session)) wftShow('list', { overview: null }); },
     save: async (value) => {
-      const r = await wftSaveExample(value);
-      if (r.ok) { notify({ tone: 'ok', title: 'Example saved' }); wftShow('list', { overview: null }); }
+      const r = await wftSaveExample(session, value);
+      if (r.ok) { notify({ tone: 'ok', title: 'Example saved' }); if (wftEditorLive(session)) wftShow('list', { overview: null }); }
       return r;
     },
     tryOnce: async (value) => {
-      const s = await wftSaveExample(value);
+      const s = await wftSaveExample(session, value);
       if (!s.ok) return s;
-      const r = await wftCall('POST', `${wftBase(id)}/examples/${s.example.id}/try-once`, {});
+      const r = await wftCall('POST', `${base}/examples/${session.exampleId}/try-once`, {});
       if (!r.ok) return r;
-      wftShow('progress', { runId: r.data.run.id });   // G2
+      if (wftEditorLive(session)) wftShow('progress', { runId: r.data.run.id });   // G2
       return { ok: true };
     },
+    // → the example as the store has it after the last file that went up, also with the error of the one that did not.
     addFiles: async (files, value) => {
-      if (!wft.example || !wft.example.id) { const s = await wftSaveExample(value); if (!s.ok) return s; }   // G17
+      let example = null;
+      if (!session.exampleId) {                                     // G17: an example never saved is saved first
+        const s = await wftSaveExample(session, value);
+        if (!s.ok) return s;
+        example = s.example;
+      }
       for (const f of files) {
         const dataBase64 = bytesToBase64(new Uint8Array(await f.arrayBuffer()));
-        const r = await wftCall('POST', `${wftBase(id)}/examples/${wft.example.id}/files`, { name: f.name, dataBase64 });
-        if (!r.ok) return r;
-        wft.example = r.data.example;
+        const r = await wftCall('POST', `${base}/examples/${session.exampleId}/files`, { name: f.name, dataBase64 });
+        if (!r.ok) return { ...r, ...(example ? { example } : {}) };
+        example = r.data.example;
+        keep(example);
       }
-      return { ok: true, example: wft.example };
+      return { ok: true, example };
     },
     removeFile: async (name) => {
-      const r = await wftCall('DELETE', `${wftBase(id)}/examples/${wft.example.id}/files/${encodeURIComponent(name)}`);
-      if (r.ok) wft.example = r.data.example;
-      return r.ok ? { ok: true, example: r.data.example } : r;
+      const r = await wftCall('DELETE', `${base}/examples/${session.exampleId}/files/${encodeURIComponent(name)}`);
+      if (!r.ok) return r;
+      keep(r.data.example);
+      return { ok: true, example: r.data.example };
     },
   };
 }
