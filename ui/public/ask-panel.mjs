@@ -43,7 +43,6 @@ import { openKeysSheet } from './keys-sheet.mjs';
 import { gitOn } from './git-gate.mjs';
 import { NO_PROJECT_KEY, NO_PROJECT_NAME, NEEDS_REPO_NOTE } from '../../src/shared/no-project.mjs';
 import { createTagInput, fetchTagVocabulary, createTagRulesLine } from './tag-input.mjs';
-import { shapeFirstOn } from './chat/shape-gate.mjs';
 import { INTENTS, splitIntentLead } from './chat/intent.mjs';
 import { homeIcon } from './chat/home-icons.mjs';
 import { NO_PROJECT_LABEL, scopeFromContext, scopeKind, scopeIcon, kindChip, projectKind } from './chat/scope-ui.mjs';
@@ -4947,20 +4946,16 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     // Run presets (#712 slice 3): a card proposed from a preset names it; Start adds what the card has no control for.
     const presetLine = card.preset ? make('div', 'ask-card-preset muted', `From preset ${card.preset.name}`) : null;
     if (presetLine) head.appendChild(presetLine);
-    // Run tags (#718), behind the experimental flag: prefilled from the proposal, sent on Start.
+    // Run tags (#718): prefilled from the proposal, sent on Start.
     // s2: suggestions follow the card's project and its target's policy dimensions (getters: both exist only later).
-    const tagInput = flagOn('runTags', doc) ? createTagInput(doc, { value: card.tags || [],
-      suggest: () => fetchTagVocabulary(local.projectDir() || null), dims: () => rootEl.__rp?.tagRules?.dims() || [] }) : null;
-    const tagRow = tagInput ? make('div', 'ask-rp-tags') : null;
-    if (tagInput) {
-      tagRow.appendChild(tagInput.el);
-      head.appendChild(tagRow);
-    }
+    const tagInput = createTagInput(doc, { value: card.tags || [],
+      suggest: () => fetchTagVocabulary(local.projectDir() || null), dims: () => rootEl.__rp?.tagRules?.dims() || [] });
+    const tagRow = make('div', 'ask-rp-tags');
+    tagRow.appendChild(tagInput.el);
+    head.appendChild(tagRow);
     if (typeof card.note === 'string' && card.note) head.appendChild(make('p', 'ask-rp-why', card.note));
-    // A shaped card follows card.shape: the server puts it there only while the gate is on, and a card built before the
-    // first hello (a boot on Chat) must still start its shaped run. The nudge is advisory and needs the client gate.
-    const shapeUi = card.shape ? shapeCardExtras(doc, card)
-      : card.nudge && shapeFirstOn() ? shapeCardExtras(doc, card) : null;
+    // A shaped card follows card.shape; the nudge is advisory.
+    const shapeUi = card.shape || card.nudge ? shapeCardExtras(doc, card) : null;
     local.shapeUi = shapeUi;
     rootEl.appendChild(head);
 
@@ -5513,7 +5508,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       const line = createTagRulesLine(doc, tagInput);
       tagRow.appendChild(line.el);
       rootEl.__rp.tagRules = line;
-      const sync = () => { const why = line.blocked(); startBtn.disabled = !!why; startBtn.title = why || ''; };
+      const sync = () => { const why = line.blocked(); startBtn.disabled = !!why || !!local.workflowUnavailable; startBtn.title = why || ''; };   // a missing workflow keeps Start off
       line.onChange(sync);
       let gen = 0;
       let lastQ = null;
@@ -5941,7 +5936,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       try { made = custom(block, cardCtx); } catch (err) { console.warn('[worca] a chat card builder failed', err); }
       if (made && made.el) {
         if (cached) disposeCardEntry(cached);
-        st.cardEls.set(block.id, { el: made.el, state: block.state, rev, custom, handle: made.handle || null, dispose: made.dispose || null, animate: !!made.animate, cancelAnim: null, lastW: -1, shapeOn: shapeFirstOn() });
+        st.cardEls.set(block.id, { el: made.el, state: block.state, rev, custom, handle: made.handle || null, dispose: made.dispose || null, animate: !!made.animate, cancelAnim: null, lastW: -1 });
         return made.el;
       }
     }
@@ -5960,15 +5955,12 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const isCommand = !!(block.card && block.card.type === COMMAND_CARD_TYPE);
     const isComposer = !!(block.card && ASK_COMPOSER_CARD_TYPES.includes(block.card.type));
     const isProgress = isProgressBlock(block);
-    // Proposed cards only: `card.nudge` stays on the block after it flips to 'started', and a live run card must never
-    // be disposed and remounted because the gate changed.
-    const nudgeStale = block.state === 'proposed' && !!(block.card && block.card.nudge) && cached && cached.shapeOn !== shapeFirstOn();
     // #911: a command card is built in the mode the gate gives; a changed mode rebuilds it (the dispose below clears its ticker).
     const sumStale = isCommand && cached && cached.sum !== summariesOn();
     // Ask's draft cards also change with the cards AROUND them (a newer draft of the key replaces one): rebuilt when
     // what they show changes, not only their state.
     const view = isComposer ? composerCards().view(block) : '';
-    if (cached && !nudgeStale && !sumStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isAway || isProxy || isCommand || isComposer || isProgress || block.state === 'proposed')) return cached.el;
+    if (cached && !sumStale && cached.state === block.state && (cached.view || '') === view && (isWorkflow || isMetrics || isSchedule || isModel || isClone || isProject || isWeb || isWorkspace || isActions || isAway || isProxy || isCommand || isComposer || isProgress || block.state === 'proposed')) return cached.el;
     if (cached) disposeCardEntry(cached);
     const built = isWorkflow ? buildWorkflowCard(block, cached)
       : isMetrics ? buildMetricsCard(block)
@@ -5986,7 +5978,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isProgress ? buildProgressCard(block)
         : custom ? { el: make('div', 'ask-card-stub', (block.card && (block.card.summary || block.card.title)) || 'Card unavailable') }
         : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
-    st.cardEls.set(block.id, { el: built.el, state: block.state, view, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1, shapeOn: shapeFirstOn(), sum: summariesOn() });
+    st.cardEls.set(block.id, { el: built.el, state: block.state, view, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1, sum: summariesOn() });
     return built.el;
   }
   function disposeCardEntry(c) {

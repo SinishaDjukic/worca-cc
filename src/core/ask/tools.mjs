@@ -466,9 +466,8 @@ export function createAskTools(deps) {
     return deps.composer;
   };
 
-  // No dep means no shape fields. Both deps or neither: an empty enum would accept no perspective at all.
-  const shapeOn = typeof deps.shapeFirstOn === 'function' && deps.shapeFirstOn() === true
-    && Array.isArray(deps.perspectiveKeys) && deps.perspectiveKeys.length > 0;
+  // No perspective keys means no shape fields: an empty enum would accept no perspective at all.
+  const shapeOn = Array.isArray(deps.perspectiveKeys) && deps.perspectiveKeys.length > 0;
   const PERSPECTIVE_LIST = { type: 'array', items: { type: 'string', enum: [...(deps.perspectiveKeys || [])] } };
   const SHAPE_PROPS = shapeOn ? {
     shape: { type: 'object', additionalProperties: false,
@@ -2658,9 +2657,8 @@ export function createAskTools(deps) {
       return { plugin: ref.plugin, sourceId: ref.sourceId, ...(ref.profile ? { profile: ref.profile } : {}), tasks, ...(r && r.cursor ? { more: true } : {}) };
     },
     async list_presets() {
-      // call() dispatches on handlers, not defs: without the dep the tool is unlisted AND answers off.
-      const all = typeof deps.listPresets === 'function' ? deps.listPresets() : null;
-      if (!all) return { presets: [], note: 'Run presets are turned off.' };
+      // call() dispatches on handlers, not defs: without the dep the tool is unlisted AND answers empty.
+      const all = typeof deps.listPresets === 'function' ? deps.listPresets() : [];
       const pin = pinnedScope();
       const fits = (p) => p.scope.kind === 'global' || (pin && (pin.projectKey ? p.scope.kind === 'project' && p.scope.ref === pin.projectKey
         : p.scope.kind === 'workspace' && p.scope.ref === pin.workspaceId));

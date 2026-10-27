@@ -21,7 +21,7 @@ equally long period for Custom.
 
 ## Filters
 
-- **Cost tags** (behind the `runTags` feature flag): only runs that carry every tag in the field. A
+- **Cost tags**: only runs that carry every tag in the field. A
   `client:acme` tag matches exactly; a bare `client` matches any client value.
 - **Person**: only runs started by that person.
 
@@ -34,15 +34,14 @@ select are hidden.
 
 ## View
 
-While the `runTags` feature flag is on, three chips replace the Group by select:
+Three chips choose the view:
 
 - **Overview** (default): the tiles and charts.
 - **By person**: the person table on its own (one row per starter, `(unknown person)` for runs with
   no named starter, a `Chat` row, a `Total` footer equal to the Spent tile), with Export CSV.
 - **Cost**: the Cost and value report (below).
 
-The chosen chip is remembered in this browser (a stored By tag choice opens Cost). With `runTags` off,
-the **Group by** select stays: **Group by person** adds the person table under the charts.
+The chosen chip is remembered in this browser (a stored By tag choice opens Cost).
 
 ## Cost
 

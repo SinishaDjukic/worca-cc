@@ -4,9 +4,6 @@ Plan a task with Worca before it builds, in Chat, and cut a large one into slice
 Nothing here changes a run that does not ask for it: a run without `shape` in its
 request behaves exactly as before.
 
-> **Beta.** Shaper is on by default. You can turn it off in Settings › Labs.
-> See [Turning it off](#turning-it-off).
-
 ## What it is
 
 Worca shapes a thin or large task first. It asks at most 3 questions, writes a plan
@@ -17,24 +14,6 @@ nothing left to guess.
 The plan is checked by rules, not by a model: the shape check reads the plan text
 and tells you what is missing. The approved plan is what the build follows, and the
 review later checks the code against the checklists the plan ended with.
-
-## Turning it off
-
-Shaper is in beta and on by default. To turn it off, switch off **Shaper** in
-Settings › Labs (the `shapeFirst` feature flag, see [Feature flags](feature-flags.md)),
-run `worca flags off shapeFirst`, or start Worca with `WORCA_FLAGS=-shapeFirst`. It takes
-effect at once, without a restart, and the choice is kept until you turn it back on.
-While it is off, everything below is hidden or refused: the **Plan it
-with me** tile, the nudge on a run card, the **Plans** tab, the `shape` field on
-`POST /api/run` (it answers "shape is not available on this server") and every
-`/api/shape/…` route (404).
-
-A run that is already held at a plan or outline question is never stranded by the
-switch. The plan card and the outline card are the same cards with the same buttons
-(**Approve and build**, **Ask for changes**, **Full plan**, and on the outline
-**Approve N runs**; **Fix all**, **Don't split** and **Stop** in ⋯). Only the extras
-that read the plan text need the switch on: the summary, the inline plan, perspective
-chips, **Save to plans/** and **Open in New run**.
 
 ## Three ways in
 

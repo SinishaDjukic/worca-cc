@@ -18,6 +18,20 @@ Pull requests (add each number when it opens):
 - Requirements (#882)
 - Requirements: files (#975)
 
+## Shaper, Run presets and Cost tags leave Labs
+
+**Three Labs features are now simply part of Worca.**
+
+Shaper, Run presets and Cost tags are always on, with no switch in Settings › Labs. Keep awake leaves Labs too: it stays on by default, and its switch in the account menu is now an ordinary setting. If you had turned Keep awake off, it stays off.
+
+Chips: Shaper · Run presets · Cost tags · Keep awake · out of Labs
+
+Read it: [Keep awake](../keep-awake.md)
+
+Pull requests (add each number when it opens):
+
+- Graduate Shaper, Run presets, Cost tags and Keep awake
+
 ## See when a newer Worca is out
 
 **Settings › About says whether you run the latest stable Worca.**
@@ -73,15 +87,13 @@ Pull requests (add each number when it opens):
 
 - Re-scans run on the model you chose
 
-## Shape it first (beta)
+## Shape it first
 
 **Plan it before it builds.**
 
 Worca now shapes a thin or large task first: at most 3 questions, a plan written for the perspectives you pick, your approval, and then the run only builds. A task too big for one change is cut into slices, each with its own run, branch and pull request, stacked one on the next.
 
-Shaper is now in beta and on by default; turn it off in Settings › Labs or with `worca flags off shapeFirst`.
-
-Chips: Shaper · the plan card · checklists in review · plan in slices · beta: on by default, turn it off in Settings › Labs
+Chips: Shaper · the plan card · checklists in review · plan in slices
 
 Read it: [Shape it first](../shape-it-first.md)
 

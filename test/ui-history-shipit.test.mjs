@@ -1730,7 +1730,7 @@ test('Overview: pr-watch-changed rereads only the exact PR', async () => {
 const SLICE_URL = `/api/shape/pipelines/${ROW.id}/slice`;
 const SLICE_INFO = { featureId: 'feat_1', title: 'Charts', index: 1, total: 3, sliceTitle: 'Store tags', state: 'done',
   next: { index: 2, title: 'Slice 2', state: 'planned' } };
-const gateOn = (ctx) => ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', flags: { shapeFirst: true }, runs: [] }) });
+const hello = (ctx) => ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', runs: [] }) });
 /** A slice endpoint stub; `hold` keeps the answer until `release()`. */
 function sliceArm({ info = SLICE_INFO, hold = false } = {}) {
   const a = { calls: 0, release: null };
@@ -1751,7 +1751,7 @@ const groupsArm = (groups) => (url) => (url.startsWith('/api/run-groups') ? ok(g
 
 test('a done slice\'s History page: the breadcrumb links the feature page, no group row, no chip; a repaint keeps it so', async () => {
   const ctx = await bootShip({ arms: groupsArm(CHARTS) });
-  gateOn(ctx);
+  hello(ctx);
   await openDetail(ctx);
   await settle(ctx.window, 4);
   const doc = ctx.window.document;
@@ -1766,7 +1766,7 @@ test('a done slice\'s History page: the breadcrumb links the feature page, no gr
 
 test('a plain run (in no group) shows no group link; at Expert it offers "Add to group…"', async () => {
   const ctx = await bootShip({ arms: groupsArm({ groups: [] }) });
-  gateOn(ctx);
+  hello(ctx);
   await openDetail(ctx);
   await settle(ctx.window, 4);
   const line = ctx.window.document.querySelector('#hist-detail .hd-glance .rd-kv [data-fact="group"]');
@@ -1777,7 +1777,7 @@ test('a plain run (in no group) shows no group link; at Expert it offers "Add to
 test('Ship it for a slice with a next slice says to merge this PR first, on the first open; a plain run has no note', async () => {
   const s = sliceArm({ hold: true });
   const ctx = await bootShip({ arms: (url, opts) => s.arm(url, opts) });
-  gateOn(ctx);
+  hello(ctx);
   const modal = await openModal(ctx);
   const note = modal.querySelector('.shipit-slice-note');
   s.release?.();
@@ -1786,7 +1786,7 @@ test('Ship it for a slice with a next slice says to merge this PR first, on the 
   assert.equal(note.textContent, 'Slice 2 builds on this branch: merge this PR first.');
 
   const plain = await bootShip({ arms: sliceArm({ info: null }).arm });
-  gateOn(plain);
+  hello(plain);
   const m2 = await openModal(plain);
   await settle(plain.window, 4);
   assert.equal(m2.querySelector('.shipit-slice-note').hidden, true);
@@ -1795,7 +1795,7 @@ test('Ship it for a slice with a next slice says to merge this PR first, on the 
 test('the Ship it note waits for its own run: an answer that lands after the dialog moved on paints nothing', async () => {
   const s = sliceArm({ hold: true });
   const ctx = await bootShip({ arms: (url, opts) => s.arm(url, opts) });
-  gateOn(ctx);
+  hello(ctx);
   const modal = await openModal(ctx);
   modal.dataset.pipelineId = 'someone-else';            // what another run's open sets
   s.release?.();

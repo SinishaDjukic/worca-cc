@@ -51,11 +51,10 @@ test('teamTagPolicy: first existing project whose policy sets either field; null
   assert.equal(await teamTagPolicy({ projects, resolveProject: async () => ({ ok: false }) }), null);
 });
 
-test('applyTagRules: no-op when the flag or enforcement is off; pre-fills then reports the problem', async () => {
+test('applyTagRules: no-op when enforcement is off; pre-fills then reports the problem', async () => {
   const rules = async () => ({ dims: [CC], enforce: true });
   const sources = () => ({ projectDefaults: [], lastUsed: ['cc:4410'] });
-  assert.deepEqual(await applyTagRules({ tags: [] }, { flagOn: () => false, rules, sources }), { tags: [], error: null, enforced: false });
-  assert.deepEqual(await applyTagRules({ tags: [] }, { flagOn: () => true, rules: async () => ({ dims: [CC], enforce: false }), sources }), { tags: [], error: null, enforced: false });
-  assert.deepEqual(await applyTagRules({ tags: [] }, { flagOn: () => true, rules, sources }), { tags: ['cc:4410'], error: null, enforced: true });
-  assert.deepEqual(await applyTagRules({ tags: [] }, { flagOn: () => true, rules, sources: () => ({}) }), { tags: [], error: 'Add Cost centre to start', enforced: true });
+  assert.deepEqual(await applyTagRules({ tags: [] }, { rules: async () => ({ dims: [CC], enforce: false }), sources }), { tags: [], error: null, enforced: false });
+  assert.deepEqual(await applyTagRules({ tags: [] }, { rules, sources }), { tags: ['cc:4410'], error: null, enforced: true });
+  assert.deepEqual(await applyTagRules({ tags: [] }, { rules, sources: () => ({}) }), { tags: [], error: 'Add Cost centre to start', enforced: true });
 });

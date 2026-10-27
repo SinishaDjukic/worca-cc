@@ -543,7 +543,7 @@ export function buildRunsModel({
     }
   }
   // D29: a group is open while it is not finished (any section, any flag), closed once it has ended; the person's
-  // ⌄ toggle for this session wins. No shapeFirst check: a plain Run-after chain behaves like a feature.
+  // ⌄ toggle for this session wins. A plain Run-after chain behaves like a feature.
   for (const s of sections) for (const r of s.rows) {
     if (r.kind === 'chain') r.open = toggled.has(r.key) ? !!toggled.get(r.key) : !ENDED_STATES.has(r.model.state);
   }

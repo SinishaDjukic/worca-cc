@@ -10,7 +10,6 @@ import {
 } from './helpers/history-detail-boot.mjs';
 import { lastToast } from './helpers/feedback.mjs';
 import { checkRows } from './helpers/rows.mjs';
-import { setShapeFirst } from './helpers/shape-gate.mjs';
 import { useAppTimers } from './helpers/app-timers.mjs';
 import { ICONS } from '../ui/public/icons.mjs';
 
@@ -2233,22 +2232,13 @@ test('Running actions: a row whose run loses its saved row keeps keyboard focus 
   assert.ok(doc.activeElement.classList.contains('act-stop'), 'on its Stop, so Enter cannot open another run');
 });
 
-test('History › Overview: the Perspective checklists group follows the Shape it first gate (spec D7)', async () => {
+test('History › Overview: the Perspective checklists group is on the saved run\'s Overview (spec D7)', async () => {
   const reviews = [{ kind: 'impl', cycle: 1, issues: [], summary: '',
     checklist: [{ id: 'R-qa-1', perspective: 'qa', text: 'Rejects empty input.', status: 'met', evidence: 'test passes' }] }];
-  const groupOf = async (features) => {
-    const ctx = await bootDetail({ detail: { ...DETAIL, reviews } });
-    ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', ...(features ? { flags: features } : {}), runs: [] }) });
-    await openDetail(ctx, 'details/overview');
-    return secOf(ctx.window.document, 'overview').querySelector('.shape-checklists');
-  };
-  try {
-    setShapeFirst(false);
-    assert.equal(await groupOf(null), null, 'gate off: no group');
-    const on = await groupOf({ shapeFirst: true });
-    assert.ok(on, 'gate on: the group is on the saved run\'s Overview');
-    assert.match(on.textContent, /Review cycle 1 · 1 met · 0 unmet · 0 n\/a/);
-  } finally {
-    setShapeFirst(false);
-  }
+  const ctx = await bootDetail({ detail: { ...DETAIL, reviews } });
+  ctx.wsBox.ws.dispatch('message', { data: JSON.stringify({ type: 'hello', runs: [] }) });
+  await openDetail(ctx, 'details/overview');
+  const group = secOf(ctx.window.document, 'overview').querySelector('.shape-checklists');
+  assert.ok(group, 'the group is on the saved run\'s Overview');
+  assert.match(group.textContent, /Review cycle 1 · 1 met · 0 unmet · 0 n\/a/);
 });
