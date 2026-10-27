@@ -9,7 +9,7 @@ import { tx } from '../db.mjs';
 import { attachAnswerer } from './answers.mjs';
 import { tryRunBody } from './try-body.mjs';
 import { fmtUsd } from '../../shared/workflow-tests/checks.mjs';
-import { REASON, REASON_CODES, describePauseReason } from '../failure-policy.mjs';
+import { REASON, REASON_CODES } from '../failure-policy.mjs';
 
 export const MAX_PARALLEL = 3;   // D36. Library script checks stay one at a time (result.mjs), inside runBenchOnce's limit of 2.
 export const COST_POLL_MS = 2000;
@@ -26,25 +26,40 @@ const SPENDING_RE = /cost limit|cost cap|total cap|spending/i;
 const refusalOf = (code, body = {}) => (code === 503 ? 'drain'
   : code === 403 && (body.budget !== undefined || body.code === 'team_total' || SPENDING_RE.test(String(body.error || ''))) ? 'budget'
     : 'refused');
+/**
+ * The `<reason>` of "Stopped: <reason>." (C7) for a try that paused on something that is neither a step error, a
+ * drain nor a cost cap. The runner's own words: failure-policy's labels speak of resuming, and a try is never resumed.
+ * No full stop: the UI composes the sentence.
+ */
+export const PAUSE_REFUSED_TEXT = Object.freeze({
+  [REASON.USAGE_LIMIT]: 'the AI account reached its usage limit',
+  [REASON.RECOVERABLE]: 'a step hit an error that Worca could retry',
+  [REASON.TERMINATED]: 'the run was ended',
+  [REASON.NIGHT_GUARDRAIL]: "Away mode's safety limit paused it",
+});
+/** Any other such code (one failure-policy adds later). */
+export const PAUSE_REFUSED_OTHER = 'the try could not go on';
 const COST_PAUSES = new Set([REASON.COST_PIPELINE, REASON.COST_TOTAL, REASON.COST_PIPELINE_POLICY, REASON.COST_TOTAL_POLICY]);
 /**
  * What a paused try means (failure-policy.mjs REASON). Nobody resumes a try (boot auto-resume skips it, resumeRun
  * refuses it), so its run is always stopped. A step error (or a code this table does not know) is a finished, failed
  * try. A drain, a cost cap, a usage limit, a recoverable error or a stopped CLI leave it unfinished: the test stops
- * ('drain', 'budget', 'refused' with the pause's label) and "Finish the rest" makes it again. The UI words drain and
- * budget itself (C7), so their detail is null. A pause with no reason is a person's.
+ * ('drain', 'budget', or 'refused' with PAUSE_REFUSED_TEXT) and "Finish the rest" makes it again. The UI words drain
+ * and budget itself (C7), so their detail is null. Nobody can pause a hidden try, so a pause with no reason (or
+ * 'manual') is judged like an unknown code. A detail is one line with no full stop: the UI composes the sentence.
  * @returns {{stop: string, detail: string|null} | {fail: true, detail: string}}
  */
 export function pauseVerdict(reason, detail = null) {
   if (reason === REASON.DRAIN) return { stop: 'drain', detail: null };
   if (COST_PAUSES.has(reason)) return { stop: 'budget', detail: null };
-  if (reason == null || reason === 'manual') return { stop: 'person', detail: null };
-  if (reason !== REASON.ERROR && REASON_CODES.includes(reason)) return { stop: 'refused', detail: describePauseReason(reason) };
-  const why = typeof detail === 'string' && detail.trim() ? detail.trim().split(/\r?\n/)[0].slice(0, 300) : null;
-  const label = describePauseReason(REASON.ERROR) || 'a step failed';
-  return { fail: true, detail: why ? `${label}: ${why}` : label };
+  if (reason != null && reason !== REASON.ERROR && REASON_CODES.includes(reason)) {
+    return { stop: 'refused', detail: PAUSE_REFUSED_TEXT[reason] || PAUSE_REFUSED_OTHER };
+  }
+  const line = typeof detail === 'string' ? detail.trim().split(/\r?\n/)[0].slice(0, 300).replace(/[\s.]+$/, '') : '';
+  return { fail: true, detail: `a step failed: ${line || 'the try paused'}` };
 }
-const capital = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+/** A verdict detail as a try's fail reason: a sentence, like answers.mjs's. */
+const sentence = (t) => `${t.charAt(0).toUpperCase()}${t.slice(1)}${/[.!?]$/.test(t) ? '' : '.'}`;
 const nowIso = () => new Date().toISOString();
 /** A poll tick that can be cleared, so a finished race leaves no timer behind. */
 const tick = (ms) => {
@@ -290,7 +305,7 @@ export function createTestRunner(deps) {
         return;
       }
       // A step error is a finished, failed try; any other pause leaves it unfinished (pauseVerdict).
-      if (s.pause && s.pause.fail && !rec.failReason) rec.failReason = capital(s.pause.detail);
+      if (s.pause && s.pause.fail && !rec.failReason) rec.failReason = sentence(s.pause.detail);
       const unfinished = !!(s.pause && s.pause.stop);
       detach();
       rec.outcome = await deps.outcomeOf(s.pipelineId, { help: rec.help, failReason: rec.failReason, durationMs: Date.now() - t0 });

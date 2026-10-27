@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
 import * as store from '../src/core/workflow-tests/store.mjs';
-import { createTestRunner, MAX_PARALLEL } from '../src/core/workflow-tests/runner.mjs';
+import { createTestRunner, MAX_PARALLEL, PAUSE_REFUSED_TEXT, PAUSE_REFUSED_OTHER, pauseVerdict } from '../src/core/workflow-tests/runner.mjs';
 import { checkTry } from '../src/core/workflow-tests/result.mjs';
 
 const homes = [];
@@ -467,13 +467,14 @@ test('an error pause is a finished, failed try; other pauses stop the test as re
   const broken = await pauseOne(h, runner, ex, 'error', 'Planner: the model answered nothing');
   assert.deepEqual([broken.run.status, broken.run.stopReason], ['done', null], 'a broken workflow is a result, not a stopped test');
   const [t] = store.triesOfRun(broken.run.id);
-  assert.deepEqual([t.status, t.costUsd, t.verdict.basics[0].detail], ['failed', 0.3, 'A step failed: Planner: the model answered nothing']);
+  assert.deepEqual([t.status, t.costUsd, t.verdict.basics[0].detail], ['failed', 0.3, 'A step failed: Planner: the model answered nothing.']);
   assert.ok(h.stopped.includes(h.started.at(-1).runKey), 'the paused run is stopped, never left paused');
   const odd = await pauseOne(h, runner, ex, 'something_new');
-  assert.equal(store.triesOfRun(odd.run.id)[0].status, 'failed', 'an unknown code is judged like an error');
+  const [o] = store.triesOfRun(odd.run.id);
+  assert.deepEqual([o.status, o.verdict.basics[0].detail], ['failed', 'A step failed: the try paused.'], 'an unknown code is judged like an error');
 
-  for (const [code, label] of [['usage_limit', 'session/usage limit reached'], ['terminated', 'worca was stopped'],
-    ['recoverable', 'recoverable error — resume to retry'], ['night_guardrail', 'Away mode limit reached']]) {
+  for (const [code, label] of [['usage_limit', 'the AI account reached its usage limit'], ['terminated', 'the run was ended'],
+    ['recoverable', 'a step hit an error that Worca could retry'], ['night_guardrail', "Away mode's safety limit paused it"]]) {
     const { run } = await pauseOne(h, runner, ex, code);
     assert.deepEqual([run.status, run.stopReason, run.stopDetail, statuses(run.id)], ['stopped', 'refused', label, ['b1:stopped']], code);
   }
@@ -497,6 +498,42 @@ test('an error pause in the quick check fails it with the reason; nothing real i
   assert.deepEqual([st.status, st.stopReason, st.quick], ['stopped', 'quick-check', { status: 'failed', detail: 'a step failed: Planner: no output' }]);
   assert.equal(h.started.length, 1);
   assert.ok(h.stopped.includes(h.started[0].runKey));
+});
+
+// ── Fix 2: nobody pauses a hidden try; the refused details are the runner's own words ────────────────────────────
+
+test('a pause with no reason is a failed try, never a person\'s stop; in the quick check it fails the check (Fix 2)', async () => {
+  for (const k of Object.keys(fps)) delete fps[k];
+  const h = harness({ plan: () => ({ status: 'done', cost: 0.1, hold: true }) });
+  const runner = createTestRunner(h.deps);
+  const ex = example({ tries: 1 });
+  for (const reason of [null, undefined, 'manual']) {
+    const { run } = await pauseOne(h, runner, ex, reason);
+    assert.deepEqual([run.status, run.stopReason], ['done', null], String(reason));
+    const [t] = store.triesOfRun(run.id);
+    assert.deepEqual([t.status, t.verdict.basics[0].detail], ['failed', 'A step failed: the try paused.'], String(reason));
+  }
+  const n = h.started.length;
+  const quick = await runner.start({ workflowId: WF, kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1, quickCheck: true });
+  await until(() => h.started.length > n);
+  h.entries.get(h.started.at(-1).runKey).end('paused');
+  await runner.idle(quick.id);
+  const st = store.readTestRun(quick.id);
+  assert.deepEqual([st.stopReason, st.quick], ['quick-check', { status: 'failed', detail: 'a step failed: the try paused' }]);
+});
+
+test('the refused details are pinned, with no full stop: the UI says "Stopped: <reason>." (Fix 2)', () => {
+  assert.deepEqual({ ...PAUSE_REFUSED_TEXT }, {
+    usage_limit: 'the AI account reached its usage limit',
+    recoverable: 'a step hit an error that Worca could retry',
+    terminated: 'the run was ended',
+    night_guardrail: "Away mode's safety limit paused it",
+  });
+  assert.equal(PAUSE_REFUSED_OTHER, 'the try could not go on');
+  for (const text of [...Object.values(PAUSE_REFUSED_TEXT), PAUSE_REFUSED_OTHER]) assert.doesNotMatch(text, /[.!?]$/);
+  assert.deepEqual(pauseVerdict('usage_limit'), { stop: 'refused', detail: 'the AI account reached its usage limit' });
+  assert.deepEqual(pauseVerdict(null), { fail: true, detail: 'a step failed: the try paused' });
+  assert.deepEqual(pauseVerdict('error', 'Planner: no output.\nstack…'), { fail: true, detail: 'a step failed: Planner: no output' }, 'one line, no full stop');
 });
 
 test('a 403 that is not about spending stops the test as refused, not budget (Fix 1)', async () => {
