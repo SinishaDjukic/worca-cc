@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 
 useTempHome(after);
-let homeDir, prevHome, srv, base, runs, store, service, routesMod, _testing, settingsMod;
+let homeDir, prevHome, srv, base, runs, store, service, routesMod, _testing, settingsMod, getDb;
 const JSONH = { 'Content-Type': 'application/json' };
 const WF = '/api/workflows/wf_api_t/tests';
 const call = async (method, p, body) => {
@@ -54,6 +54,7 @@ before(async () => {
   service = await import('../src/core/workflow-tests/service.mjs');
   routesMod = await import('../src/core/workflow-tests/routes.mjs');
   settingsMod = await import('../src/core/settings.mjs');
+  ({ getDb } = await import('../src/core/db.mjs'));
   srv = http.createServer(mod.app);
   await new Promise((r) => srv.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${srv.address().port}`;
@@ -205,6 +206,16 @@ test('the example routes: edit, delete a file, add from runs, stop a test, a try
   const before = count();
   const mixed = await call('POST', `${WF}/examples/from-runs`, { pipelineIds: [pastId, tryId] });
   assert.deepEqual([mixed.status, mixed.body.error, count()], [400, 'A test try cannot become an example.', before], 'nothing is added');
+  // A run whose request is too long for an example: checked with the others before anything is added.
+  const longId = 'f00dfeed';
+  const db = getDb();
+  db.prepare('CREATE TEMP TABLE IF NOT EXISTS p_copy AS SELECT * FROM pipelines WHERE 0').run();
+  db.prepare('INSERT INTO p_copy SELECT * FROM pipelines WHERE id = ?').run(pastId);
+  db.prepare('UPDATE p_copy SET id = ?, prompt = ?').run(longId, 'x'.repeat(100_001));
+  db.prepare('INSERT INTO pipelines SELECT * FROM p_copy').run();
+  db.prepare('DROP TABLE p_copy').run();
+  const long = await call('POST', `${WF}/examples/from-runs`, { pipelineIds: [pastId, longId] });
+  assert.deepEqual([long.status, long.body.error, count()], [400, 'the request is longer than 100000 characters', before], 'nothing is added');
   const twice = await call('POST', `${WF}/examples/from-runs`, { pipelineIds: [pastId, pastId] });
   assert.deepEqual([twice.status, twice.body.examples.length, twice.body.skipped, count()], [201, 1, [], before + 1]);
   assert.equal((await call('DELETE', `${WF}/examples/${twice.body.examples[0].id}`)).status, 200);
@@ -216,6 +227,7 @@ test('the example routes: edit, delete a file, add from runs, stop a test, a try
 
   // Stop a running test: its tries stop, the test says the person stopped it.
   const run = (await call('POST', `${WF}/runs`, { a: 1, b: 'draft', exampleIds: [ex.id], tries: 3, reuseA: false })).body.run;
+  assert.equal((await call('GET', `${WF}/runs/${run.id}`)).body.run.status, 'running', 'still running when the stop is sent (else this row proves nothing)');
   const stopped = await call('POST', `${WF}/runs/${run.id}/stop`);
   assert.deepEqual([stopped.status, stopped.body.run.status, stopped.body.run.stopReason], [200, 'stopped', 'person']);
 
@@ -224,7 +236,8 @@ test('the example routes: edit, delete a file, add from runs, stop a test, a try
   for (const [method, p, body] of [['PUT', `${WF}/examples/${ex.id}`, { name: 'x' }], ['DELETE', `${WF}/examples/${ex.id}`],
     ['POST', `${WF}/examples/${ex.id}/files`, { name: 'b.md', dataBase64: 'eA==' }], ['DELETE', `${WF}/examples/${ex.id}/files/b.md`],
     ['POST', `${WF}/runs/${run.id}/continue`, {}]]) {
-    assert.equal((await call(method, p, body)).status, 404, `${method} ${p}`);
+    const r = await call(method, p, body);
+    assert.deepEqual([r.status, r.body.error], [404, 'unknown workflow "wf_api_t"'], `${method} ${p}: the workflow gate answered`);
   }
   assert.equal((await call('POST', `${WF}/runs/${run.id}/stop`)).status, 200);
 });

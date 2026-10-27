@@ -65,16 +65,17 @@ test('files: stored as bytes, replaced by name, refused when too large, too many
   assert.equal(store.deleteExampleFile(WF, ex.id, 'f1.txt').files.length, store.FILES_MAX - 1);
 });
 
-test('files: a name Windows cannot write is refused (reserved names, a trailing dot or space, a case-only twin)', () => {
+test('files: a name Windows cannot write is refused (reserved names, a trailing dot, a case-only twin); spaces around it are trimmed', () => {
   const ex = store.createExample(WF, input());
   store.putExampleFile(WF, ex.id, { name: 'Notes.md', data: Buffer.from('a') });
   const plain = { code: 'BAD_REQUEST', message: 'give the file a plain name, such as notes.md' };
-  for (const name of ['con', 'NUL', 'nul.txt', 'Aux.md', 'prn', 'com1', 'COM9.log', 'lpt3', 'lpt0.txt', 'notes.', 'notes.md.', 'notes.md ', 'notes ', 'notes.MD', 'NOTES.md']) {
+  for (const name of ['con', 'NUL', 'nul.txt', 'Aux.md', 'prn', 'com1', 'COM9.log', 'lpt3', 'lpt0.txt', 'notes.', 'notes.md.', 'notes.md. ', ' notes. ', 'notes.MD', 'NOTES.md', ' notes.md ']) {
     assert.throws(() => store.putExampleFile(WF, ex.id, { name, data: Buffer.from('x') }), plain, JSON.stringify(name));
   }
   assert.equal(store.putExampleFile(WF, ex.id, { name: 'Notes.md', data: Buffer.from('again') }).files[0].size, 5, 'the exact same name replaces');
-  for (const name of ['console.md', 'nullable.txt', 'com10.txt', 'my.con.md']) store.putExampleFile(WF, ex.id, { name, data: Buffer.from('x') });
-  assert.deepEqual(store.readExample(WF, ex.id).files.map((f) => f.name), ['Notes.md', 'com10.txt', 'console.md', 'my.con.md', 'nullable.txt']);
+  for (const name of ['console.md', 'nullable.txt', 'com10.txt', 'my.con.md', 'draft.txt ', 'brief ']) store.putExampleFile(WF, ex.id, { name, data: Buffer.from('x') });
+  assert.deepEqual(store.readExample(WF, ex.id).files.map((f) => f.name), ['Notes.md', 'brief', 'com10.txt', 'console.md', 'draft.txt', 'my.con.md', 'nullable.txt'],
+    'a trailing space is trimmed, as the run handler (writeExtras) trims it');
 });
 
 test('uses are stored as text: draft or a version number', () => {

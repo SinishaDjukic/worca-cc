@@ -63,6 +63,26 @@ test('no frame while the flag is off; with it on, testRunId (never runId) and th
   assert.deepEqual([last.finished, last.status, last.title], [true, 'stopped', 'Routes: Tried once: Bulk']);
 });
 
+test('POST …/runs/:run/stop stops a running test: its try is stopped, the test says the person stopped it', async () => {
+  const ex = await workflowWithExample();
+  let release;
+  const latch = new Promise((r) => { release = r; });
+  let started;
+  const tryStarted = new Promise((r) => { started = r; });
+  let ended = false;
+  const { runner, handlers } = boot({
+    startRun: async () => { started(); return { status: 200, body: { runId: 'k_try', pipelineId: null } }; },
+    liveRun: () => ({ orch: { state: { totalCostUsd: 0 } }, status: ended ? 'stopped' : 'running', launch: latch, pipelineId: null }),
+    stopRun: async () => { ended = true; release(); },
+  });
+  const run = await runner.start({ workflowId: 'wf_rt', kind: 'once', b: 'draft', exampleIds: [ex.id], tries: 1 });
+  await tryStarted;
+  assert.equal(store.readTestRun(run.id).status, 'running');
+  const r = await invoke(handlers.get('POST /api/workflows/:id/tests/runs/:run/stop'), { params: { id: 'wf_rt', run: String(run.id) } });
+  assert.deepEqual([r.status, r.body.run.status, r.body.run.stopReason], [200, 'stopped', 'person']);
+  assert.deepEqual(store.triesOfRun(run.id).map((t) => t.status), ['stopped']);
+});
+
 test('the dialog says when the connectors preview failed, instead of showing no connectors (previewError)', async () => {
   await workflowWithExample();
   const W = '/api/workflows/:id/tests/plan';

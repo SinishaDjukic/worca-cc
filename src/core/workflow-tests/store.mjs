@@ -17,7 +17,7 @@ export const CONNECTOR_MODES = Object.freeze(['pretend', 'real']);
 const modeOf = (v) => (v === 'real' ? 'real' : 'pretend');
 const NAME_MAX = 120;
 const REQUEST_MAX = 100_000;
-const ANSWERS_MAX = 50;
+export const ANSWERS_MAX = 50;
 const CHECKS_MAX = 20;
 const NOTE_MAX = 2000;
 const FILE_NAME_RE = /^[^\\/:*?"<>|\u0000-\u001f]{1,120}$/;
@@ -168,9 +168,9 @@ export function putExampleFile(workflowId, id, { name, data } = {}) {
   const ex = requireExample(workflowId, id);
   const clean = typeof name === 'string' ? name.trim() : '';
   // Also refused: a name a try's folder could not hold on Windows (server.mjs writeExtras would drop it silently): a
-  // device name, a name ending in a dot or a space, or a case-only twin of another file of this example. The exact
-  // same name replaces that file.
-  const plainName = FILE_NAME_RE.test(clean) && clean !== '.' && clean !== '..' && !/[. ]$/.test(String(name))
+  // device name, a name ending in a dot, or a case-only twin of another file of this example. Spaces around the name
+  // are trimmed (as writeExtras trims them); the exact same name replaces that file.
+  const plainName = FILE_NAME_RE.test(clean) && clean !== '.' && clean !== '..' && !/\.$/.test(clean)
     && !RESERVED_STEM_RE.test(clean.split('.')[0].trimEnd())
     && !ex.files.some((f) => f.name !== clean && f.name.toLowerCase() === clean.toLowerCase());
   if (!plainName) throw testError('give the file a plain name, such as notes.md', 'BAD_REQUEST');

@@ -112,6 +112,7 @@ function pastAnswers(pipelineId) {
   const add = (question, answer) => {
     const q = String(question || '').trim();
     const a = String(answer || '').trim();
+    if (out.length >= store.ANSWERS_MAX) return;   // an example keeps at most this many (normaliseExample)
     if (q && a && !out.some((x) => x.question === q)) out.push({ question: q.slice(0, 500), answer: a.slice(0, 2000) });
   };
   const c = readClarifyRow(pipelineId);
@@ -152,6 +153,8 @@ export async function pastRunSummary(pipelineId, { registry = loadAgentRegistry(
 }
 
 /** Board 3 → an example; `skipped` names the files that did not fit (5 MB, 8 files). */
+const exampleName = (name, past) => (typeof name === 'string' && name.trim() ? name.trim() : past.title || 'Example').slice(0, 120);
+
 /** A past run that can become an example of `workflowId`, or the error why not. */
 async function usablePastRun(workflowId, pipelineId, registry) {
   const past = await pastRunSummary(pipelineId, registry ? { registry } : {});
@@ -163,7 +166,7 @@ async function usablePastRun(workflowId, pipelineId, registry) {
 export async function exampleFromRun(workflowId, { pipelineId, name, keepRequest = true, keepAnswers = true, verdict = null, note = null } = {}, { by = null, registry } = {}) {
   const past = await usablePastRun(workflowId, pipelineId, registry);
   if (verdict !== null && verdict !== 'good' && verdict !== 'not-good') throw err('verdict must be "good" or "not-good"', 'BAD_REQUEST');
-  const clean = (typeof name === 'string' && name.trim() ? name.trim() : past.title || 'Example').slice(0, 120);
+  const clean = exampleName(name, past);
   const example = store.createExample(workflowId, { name: clean, request: keepRequest ? past.request : '', answers: keepAnswers ? past.qa : [], note },
     { by, from: { pipelineId: past.pipelineId, use: past.use, verdict } });
   const skipped = [];
@@ -182,7 +185,12 @@ export async function exampleFromRun(workflowId, { pipelineId, name, keepRequest
  *  all of them are checked first, so a run that cannot become an example adds none. */
 export async function examplesFromRuns(workflowId, pipelineIds, opts = {}) {
   const ids = [...new Set(pipelineIds)];
-  for (const id of ids) await usablePastRun(workflowId, id, opts.registry);
+  for (const id of ids) {
+    const past = await usablePastRun(workflowId, id, opts.registry);
+    // The example as exampleFromRun would write it (a request too long, …): its first error, before anything is added.
+    const { errors } = store.normaliseExample({ name: exampleName(undefined, past), request: past.request, answers: past.qa });
+    if (errors.length) throw err(errors[0], 'BAD_REQUEST', { errors });
+  }
   const examples = [];
   const skipped = [];
   for (const id of ids) {
