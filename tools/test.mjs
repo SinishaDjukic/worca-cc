@@ -112,10 +112,10 @@ function main() {
   env.WORCA_GIT ??= '1'; // P0 (S1): git forced on (no probe) unless the caller set it; rows that need "missing" use test/helpers/git-off.mjs
   delete env.CLAUDE_CONFIG_DIR; // skillHostFacts reads it (skills registry §4.1): a test never sees the developer's Claude config
   delete env.NODE_TEST_CONTEXT; // set inside a node:test file; run() would then skip every file
-  // A developer's own Azure DevOps / push-as-person settings must not open host-lookup gates in tests
+  // A developer's own Azure DevOps / Bitbucket / push-as-person settings must not open host-lookup gates in tests
   // (D6/D7/D20): tests that need them set them with withEnv.
   for (const k of ['WORCA_ADO_TOKEN', 'WORCA_ADO_READ_TOKEN', 'WORCA_ADO_WRITE_TOKEN', 'AZURE_DEVOPS_EXT_PAT', 'WORCA_ADO_GIT_TOKEN',
-    'WORCA_ADO_BOARDS_TOKEN', 'WORCA_GH_AS_PERSON', 'WORCA_BROKER_URL']) delete env[k];
+    'WORCA_ADO_BOARDS_TOKEN', 'WORCA_BB_TOKEN', 'WORCA_BB_READ_TOKEN', 'WORCA_BB_WRITE_TOKEN', 'WORCA_BB_EMAIL', 'WORCA_BB_GIT_TOKEN', 'WORCA_BB_GIT_USER', 'WORCA_GH_AS_PERSON', 'WORCA_BROKER_URL']) delete env[k];
   const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') || 'PATH';
   env[pathKey] = join(ROOT, 'test', 'helpers', 'no-real-claude') + delimiter + (env[pathKey] || '');
 

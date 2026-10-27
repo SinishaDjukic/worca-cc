@@ -1,7 +1,7 @@
 // Add a project by cloning a repository into the projects folder (docs/deploy-railway.md).
 // On a hosted worca this replaces a `railway ssh` session: the clone runs in the server,
 // as the server's user, with the read credential for that one command
-// (host-credentials.mjs#gitEnvFor: GitHub's token or App, or the Azure DevOps PAT), and lands in a NEW folder directly under the
+// (host-credentials.mjs#gitEnvFor: GitHub's token or App, the Azure DevOps PAT, or the Bitbucket token), and lands in a NEW folder directly under the
 // projects root. Registration is the ordinary add-project step.
 //
 //   URLs     https only; no credentials inside the URL (use the token variables); Azure DevOps
@@ -18,6 +18,7 @@ import { join, resolve, sep } from 'node:path';
 import { githubEnv } from './github-credentials.mjs';
 import { gitEnvFor } from './host-credentials.mjs';
 import { isAzureHost, parseAzurePath } from '../shared/azure-remote.mjs';
+import { isBitbucketHost } from '../shared/bitbucket-remote.mjs';
 import { gitAvailable, GIT_MISSING } from './git-available.mjs';
 
 export const CLONE_TIMEOUT_MS = 10 * 60_000;
@@ -57,9 +58,12 @@ export function planClone({ url, branch = null, name = null } = {}, { projectsRo
   try { u = new URL(url.trim()); } catch { throw new CloneError('invalid', 'not a valid URL'); }
   if (u.protocol !== 'https:') throw new CloneError('invalid', 'only https:// repository URLs are supported');
   const azure = isAzureHost(u.hostname);
-  // Azure's "Clone" button puts the org as a user ("https://acme@dev.azure.com/…"): a user alone is dropped.
-  if (u.password || (u.username && !azure)) {
-    throw new CloneError('invalid', `the URL contains credentials; remove them and set ${azure ? 'WORCA_ADO_TOKEN' : 'the GitHub token or App variables'} where worca is deployed`);
+  const bitbucket = isBitbucketHost(u.hostname);
+  // Azure's and Bitbucket's "Clone" buttons put a user in the URL ("https://acme@dev.azure.com/…",
+  // "https://jdoe@bitbucket.org/…"): a user alone is dropped (the canonical URL below carries none).
+  if (u.password || (u.username && !azure && !bitbucket)) {
+    const vars = azure ? 'WORCA_ADO_TOKEN' : bitbucket ? 'WORCA_BB_TOKEN' : 'the GitHub token or App variables';
+    throw new CloneError('invalid', `the URL contains credentials; remove them and set ${vars} where worca is deployed`);
   }
   if (u.search || u.hash) throw new CloneError('invalid', 'the URL must not have a query or fragment');
   if (u.port) throw new CloneError('invalid', 'the URL must not name a port');
@@ -75,7 +79,7 @@ export function planClone({ url, branch = null, name = null } = {}, { projectsRo
     const e = encodeURIComponent;
     canonical = `https://dev.azure.com/${e(az.org)}/${e(az.project)}/_git/${e(az.repo)}`;
   } else {
-    host = u.hostname.toLowerCase();
+    host = bitbucket ? 'bitbucket.org' : u.hostname.toLowerCase();
     if (segs.length !== 2 || !segs.every((s) => SEG_RE.test(s))) {
       throw new CloneError('invalid', 'the URL must name one repository, like https://github.com/owner/repo');
     }
@@ -108,7 +112,9 @@ function classify(stderr, host = 'github.com') {
   if (/Authentication failed|could not read Username|terminal prompts disabled|403/i.test(s)) {
     return new CloneError('auth-failed', isAzureHost(host)
       ? 'Azure DevOps refused the credential: check WORCA_ADO_TOKEN (Code: Read) and that it can see this repository'
-      : 'GitHub refused the credential: check the token or that the App is installed on this repository');
+      : isBitbucketHost(host)
+        ? 'Bitbucket refused the credential: check WORCA_BB_TOKEN (Repositories: Read) and that it can see this repository'
+        : 'GitHub refused the credential: check the token or that the App is installed on this repository');
   }
   if (/Remote branch .* not found/i.test(s)) return new CloneError('not-found', 'that branch does not exist');
   if (/Repository not found|not found|404/i.test(s)) {

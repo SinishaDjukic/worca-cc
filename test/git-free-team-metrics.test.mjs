@@ -20,6 +20,7 @@ import { withNoGit, gitArrives } from './helpers/git-off.mjs';
 import { withEnv } from './helpers/with-env.mjs';
 import { createWorkspace } from '../src/core/workspaces.mjs';
 import { fakeHarness } from './helpers/metrics-git.mjs';
+import { BITBUCKET_NEEDS_GIT } from '../src/core/git-available.mjs';
 
 useTempHome(after);
 const gh = await fakeGithub();
@@ -87,6 +88,13 @@ test('enable: another host → GIT_MISSING; nothing known → REPO_REQUIRED; sta
   const flags = (s) => [s.hasOrigin, s.needsGit, s.repoInput, s.noGit];
   assert.deepEqual(flags(byKey.get(projectKey(gl))), [true, true, undefined, undefined]);
   assert.deepEqual(flags(byKey.get(projectKey(plain))), [null, undefined, true, undefined]);
+});
+
+test('enable: a Bitbucket origin → GIT_MISSING that names Bitbucket', async (t) => {
+  const bb = folder(ORIGIN('https://bitbucket.org/acme/api.git'));
+  await addProject({ name: 'bb', path: bb });
+  withNoGit(t);
+  await assert.rejects(enableTeamMetrics(bb, { mode: 'here' }), { code: 'GIT_MISSING', message: BITBUCKET_NEEDS_GIT });
 });
 
 test('delegate over HTTPS writes a marker; Change… rewrites it past a teammate\'s commit', async (t) => {

@@ -2,8 +2,9 @@
 // Which code host a remote / PR URL belongs to, and the one remote-URL parser every caller shares
 // (Ship-it, sync, clone, metrics; the workspace map shares the Azure fold via src/shared/azure-remote.mjs).
 import { isAzureHost, parseAzurePath, parseAzurePrUrl } from '../shared/azure-remote.mjs';
+import { parseBitbucketPrUrl } from '../shared/bitbucket-remote.mjs';
 
-export const FORGE_LABEL = Object.freeze({ github: 'GitHub', azure: 'Azure DevOps' });
+export const FORGE_LABEL = Object.freeze({ github: 'GitHub', azure: 'Azure DevOps', bitbucket: 'Bitbucket' });
 
 export function parseGithubPrUrl(value) {
   if (typeof value !== 'string') return null;
@@ -16,9 +17,9 @@ export function parseGithubPrUrl(value) {
   return { owner, repo, number, url: `https://github.com/${owner}/${repo}/pull/${number}` };
 }
 
-/** A PR Watch PR can follow (#619): a canonical github.com PR, or an Azure DevOps one. */
+/** A PR Watch PR can follow (#619): a canonical github.com PR, an Azure DevOps one, or a Bitbucket Cloud one. */
 export function watchablePrUrl(value) {
-  return !!(parseGithubPrUrl(value) || parseAzurePrUrl(value));
+  return !!(parseGithubPrUrl(value) || parseAzurePrUrl(value) || parseBitbucketPrUrl(value));
 }
 
 /**
@@ -31,12 +32,13 @@ export function watchablePrUrl(value) {
  *   git://host/owner/repo.git
  * Trailing `.git` / `/` are dropped; owner/repo are the LAST two path segments.
  * GitHub's SSH-over-443 alias host (`ssh.github.com`) is folded into `github.com`:
- * it names the same repository, and gh's --repo form only knows the real host.
+ * it names the same repository, and gh's --repo form only knows the real host. Bitbucket's `altssh.bitbucket.org`
+ * folds into `bitbucket.org` the same way.
  * Azure DevOps remotes (every spelling) fold to { host:'dev.azure.com', org, project,
  * owner:'org/project', repo } via src/shared/azure-remote.mjs.
  * Pure; never throws.
  */
-const HOST_ALIASES = { 'ssh.github.com': 'github.com' };
+const HOST_ALIASES = { 'ssh.github.com': 'github.com', 'altssh.bitbucket.org': 'bitbucket.org' };
 
 export function parseRemoteUrl(url) {
   const s = String(url || '').trim();
@@ -80,23 +82,27 @@ export function sameRepo(a, b) {
     && a.repo.toLowerCase() === b.repo.toLowerCase();
 }
 
-/** 'github' | 'azure' | null for a parsed remote (or a listRemotes entry). null = plain git. */
+/** 'github' | 'azure' | 'bitbucket' | null for a parsed remote (or a listRemotes entry). null = plain git. */
 export function forgeOf(parsed) {
   if (!parsed) return null;
   if (parsed.host === 'github.com') return 'github';
   if (parsed.host === 'dev.azure.com' && parsed.org) return 'azure';
+  if (parsed.host === 'bitbucket.org') return 'bitbucket';
   return null;
 }
 
 /** The forge of a persisted pr_url. */
 export function forgeOfPrUrl(url) {
   if (/^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/i.test(String(url || ''))) return 'github';
-  return parseAzurePrUrl(url) ? 'azure' : null;
+  if (parseAzurePrUrl(url)) return 'azure';
+  return parseBitbucketPrUrl(url) ? 'bitbucket' : null;
 }
 
-/** PR number from a GitHub (/pull/N) or Azure DevOps (/pullrequest/N) URL, else null. */
+/** PR number from a GitHub (/pull/N), Azure DevOps (/pullrequest/N) or Bitbucket (/pull-requests/N) URL, else null. */
 export function prNumberFromUrl(url) {
   const az = parseAzurePrUrl(url);
   if (az) return az.number;
+  const bb = parseBitbucketPrUrl(url);
+  if (bb) return bb.number;
   return Number((/\/pull\/(\d+)/.exec(String(url || '')) || [])[1]) || null;
 }
