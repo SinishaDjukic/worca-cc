@@ -2,7 +2,7 @@
 name: chats-column-host-seams
 description: Read before adding anything to the Chat page's History aside or head, or merging dev past #953 into a branch built on the old History column — what the Chats co
 paths: ui/public/ask-panel.mjs, ui/public/chats-column.mjs, ui/public/style.css, test/ask-panel*.test.mjs, test/ui-chat-style.test.mjs, test/ui-chats-column.test.mjs
-updated: 2026-10-27T12:10:13.491Z
+updated: 2026-10-27T12:47:42.122Z
 author: Denislav Prinov
 ---
 Dev's Chats column (#948 s2/s3, #953 retired the `chatsColumn` flag and the old History column) broke a side-chat branch in five silent ways while merging cleanly in app.js/style.css (PR 954 merge, 2026-10-25). See also [[ask-ui-hidden-pins]].
@@ -29,3 +29,5 @@ Dev's Chats column (#948 s2/s3, #953 retired the `chatsColumn` flag and the old 
   - dev's `.chat-dock::before` fade (`--chat-dock-fade`, 32px) covers the bottom of `.ask-side-empty`;
   - `graph/proposal-host.mjs` sizes a proposal's well height once (`sized`), from the first width it sees (mid-slide or the other host);
   - `onScrollKey` treats a key pressed with the focus on `<body>` as the reader scrolling, even in the column, where that key belongs to the page.
+- Contract: a transcript focus keeper (#958 `keepFocus(el.transcriptCol)`, ended only by a document pointerdown or a focusout WITH a relatedTarget) must also end in `closePage` (`focusKeep.stop()`). Hidden, its restore is a no-op in Chrome; after a route that fires no document event (browser Back, Alt+←) the column shows the panel VISIBLE with the focus on `<body>`, and the next in-place move of the kept control pulls the focus into the column. jsdom proof (~0.1 s): `applyFlags({commandSummaries:true})`, one command row, focus `.ask-cmd-row-btn`, `close()` → move root → `setHost('dock')` → `open(undefined,{focus:false})`, then push an `ask-message` with a second command: the first row MOVES into `.ask-cmd-gbody`.
+- Dev #970 pointer selection (`list-dom.mjs` `bindPointerSelect`, capture on the list) is clean in the column (jsdom, 1400/900px: selects there only, no route, no `uncover`). Probe trap: the long-press toggle repaints and REPLACES the row; a jsdom click on the held, detached `a.runs-row` follows its href to `#chat/<id>` (false "navigates"). Re-query the row first.
