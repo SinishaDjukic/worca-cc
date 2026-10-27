@@ -878,3 +878,177 @@ test('CSS (boards 28, 29): the edited alert borders with --amber-line; the chip 
   assert.match(rule('.req-export-done'), /color:var\(--green-ink-strong\)/);
   assert.doesNotMatch(rule('.req-export-done'), /background/);
 });
+
+// ── Task 10 (part A): board 29's states, Report back ──
+test('board 29 (1): Worca cannot reach Jira: the sentence (role=alert), "Nothing was recorded…", Try again sends again; the preview stays', async () => {
+  let fail = true;
+  const { calls } = await openExport(feature(), { [`POST ${PREVIEW_URL}`]: () => preview(),
+    [`POST ${EXPORT_URL}`]: () => (fail ? { __status: 502, body: { error: 'Worca could not reach Jira: the API token was refused.', kind: 'auth' } }
+      : exportAnswer('created', 'SHOP-123')) });
+  q('export-go').click();
+  await settle();
+  const d = dlg();
+  assert.ok(d, 'the preview stays open');
+  assert.equal(text(d.querySelector('[role="alert"]')), 'Worca could not reach Jira: the API token was refused.');
+  assert.equal(text(d.querySelector('.req-export-alert-hint')),
+    'Nothing was recorded. The preview stays open, so you can try again once the connection is fixed on the Marketplace page (Installed › Jira).');
+  assert.deepEqual([text(q('export-go')), q('export-go').disabled, q('export-cancel').disabled], ['Try again', false, false]);
+  fail = false;
+  q('export-go').click();
+  await settle();
+  assert.equal(calls.filter((c) => c.url === EXPORT_URL).length, 2);
+  assert.equal(dlg(), null);
+});
+
+test('board 29 (2): Jira refuses a field: its sentence and Change the export setup, which comes back to the preview after Save', async () => {
+  const { calls } = await openExport(feature(), { [`POST ${PREVIEW_URL}`]: () => preview(),
+    [`POST ${EXPORT_URL}`]: () => ({ __status: 409, body: { error: 'Jira needs a value for “Team” in SHOP.', refused: true, field: 'Team' } }),
+    [`GET ${SETUP_URL}`]: { setup: { ...CONN, trackerProject: 'SHOP', issueType: '10001', priority: null, labels: ['worca'], criteria: { target: 'description' } },
+      trackers: TRACKERS, defaultProfile: CONN } });
+  q('export-go').focus();
+  q('export-go').click();
+  await settle();
+  assert.equal(text(dlg().querySelector('[role="alert"]')), 'Jira needs a value for “Team” in SHOP.');
+  assert.equal(document.activeElement, q('export-change-setup'), 'the focus, on the hidden Create in Jira, moves to the state button');
+  q('export-change-setup').click();
+  await settle();
+  assert.deepEqual([text(dlg().querySelector('h2')), text(q('setup-save'))], ['Set up export for shop', 'Save and continue']);
+  q('setup-save').click();
+  await settle();
+  assert.equal(text(dlg().querySelector('h2')), 'Export FEAT-7 to Jira');
+  assert.equal(calls.filter((c) => c.url === PREVIEW_URL).length, 2, 'a fresh preview');
+});
+
+test('board 29 (3): the ticket is gone: the again dialog says so first; Forget the link drops the chip; New ticket previews mode new', async () => {
+  const forgot = { feature: feature({ export: XV({ history: [{ action: 'forgot', tracker: 'Jira', key: 'SHOP-123', url: LINK.url, reason: null,
+    when: '26 Oct, 11:00', by: 'Tomica Brkovic' }] }) }), turns: [] };
+  const gone = { [`POST ${PREVIEW_URL}`]: (b) => AGAIN({ mode: b.mode, gone: b.mode === 'update' || b.mode === 'comment' }),
+    [`DELETE ${EXPORT_URL}/link`]: () => forgot };
+  let m = await openExport(feature({ export: XV({ link: LINK }) }), gone);
+  const d = dlg();
+  assert.equal(document.activeElement, d.querySelector('h2'), 'the focus stays in the dialog, on its title (no choices to focus)');
+  assert.equal(text(d.querySelector('[role="alert"]')), 'SHOP-123 no longer exists in Jira.');
+  assert.equal(text(d.querySelector('.req-export-alert-hint')),
+    'It was deleted or moved where this connection cannot see it. Forget the link removes the SHOP-123 chip; the history keeps the export.');
+  assert.deepEqual([d.querySelector('[role="radiogroup"]').hidden, q('again-continue').hidden], [true, true]);
+  q('export-forget').click();
+  q('export-forget').click();
+  await settle();
+  assert.equal(dlg(), null);
+  assert.equal(q('export-chip', m.host), null);
+  assert.equal(document.activeElement, q('menu-export', m.host));
+  assert.equal(m.calls.filter((c) => c.method === 'DELETE' && c.url === `${EXPORT_URL}/link`).length, 1, 'one DELETE, however often it is pressed');
+  m = await openExport(feature({ export: XV({ link: LINK }) }), gone);
+  q('export-new').click();
+  await settle();
+  assert.deepEqual(m.calls.filter((c) => c.url === PREVIEW_URL).at(-1).body, { mode: 'new' });
+  assert.equal(text(q('export-go')), 'Create in Jira');
+});
+
+test('board 29 (3): a ticket gone on send: the sentence, Forget the link and New ticket; Create in Jira is gone', async () => {
+  await openExport(feature({ export: XV({ link: LINK }) }), { [`POST ${PREVIEW_URL}`]: (b) => AGAIN({ mode: b.mode }),
+    [`POST ${EXPORT_URL}`]: () => ({ __status: 409, body: { error: 'SHOP-123 no longer exists in Jira.', gone: true } }) });
+  q('again-continue').click();
+  await settle();
+  q('export-go').focus();
+  q('export-go').click();
+  await settle();
+  assert.equal(text(dlg().querySelector('[role="alert"]')), 'SHOP-123 no longer exists in Jira.');
+  assert.deepEqual([q('export-go').hidden, text(q('export-forget')), text(q('export-new'))], [true, 'Forget the link', 'New ticket']);
+  assert.equal(document.activeElement, q('export-forget'));
+});
+
+test('the spec changed since the preview: the sentence stays and a fresh preview comes', async () => {
+  let n = 0;
+  const { calls } = await openExport(feature(), { [`POST ${PREVIEW_URL}`]: () => { n += 1; return preview({ previewHash: `h${n}` }); },
+    [`POST ${EXPORT_URL}`]: () => ({ __status: 409, body: { error: 'The spec changed since the preview. Look at the preview again.', stale: true } }) });
+  q('export-go').click();
+  await settle();
+  assert.equal(text(dlg().querySelector('[role="alert"]')), 'The spec changed since the preview. Look at the preview again.');
+  assert.equal(calls.filter((c) => c.url === PREVIEW_URL).length, 2);
+  assert.equal(q('export-go').disabled, false);
+});
+
+test('D15, board 29 (6): Report back to SHOP-123 on the Ready to build card, on by default; the hint names the status or says it only comments', async () => {
+  let m = await openFeature(feature({ export: XV({ link: LINK, doneStatus: 'Done' }) }),
+    { [`POST ${F}/start`]: () => ({ runId: 'r1', version: 1, feature: feature(), turns: [] }) });
+  const sw = q('report-card', m.host);
+  assert.deepEqual([sw.getAttribute('role'), sw.type, sw.checked, text(sw.closest('label'))], ['switch', 'checkbox', true, 'Report back to SHOP-123']);
+  assert.ok(sw.nextElementSibling.classList.contains('switch'), "upstream's switch (ink when on)");
+  assert.equal(text(document.getElementById(sw.getAttribute('aria-describedby'))), 'When the run ends, Worca comments with the result and the pull request link, '
+    + 'and moves the ticket to Done (the status named in the Jira connection; without one, it only comments).');
+  sw.checked = false;
+  sw.dispatchEvent(new window.Event('change'));
+  q('start-go', m.host).click();
+  await settle();
+  assert.equal(m.calls.find((c) => c.url === `${F}/start`).body.reportBack, false);
+  m = await openFeature(feature({ export: XV({ link: LINK }) }));
+  assert.equal(text(document.getElementById(q('report-card', m.host).getAttribute('aria-describedby'))),
+    'When the run ends, Worca comments with the result and the pull request link. The Jira connection names no status to move the ticket to, so it only comments.');
+  m = await openFeature(feature());
+  assert.equal(q('report-card', m.host), null, 'no ticket, no row');
+});
+
+test('D15: the start-before-Ready dialog and the runs card carry the same switch; the start sends reportBack', async () => {
+  const f = feature({ readiness: readiness(['openQuestions']), state: 'decide', export: XV({ link: LINK }) });
+  const { host, calls } = await openFeature(f, { [`POST ${F}/start`]: () => ({ runId: 'r1', version: 1, feature: f, turns: [] }) });
+  q('start-anyway', host).click();
+  await settle();
+  const sw = q('report-dialog');
+  assert.deepEqual([sw.checked, text(sw.closest('label'))], [true, 'Report back to SHOP-123']);
+  const area = document.getElementById('req-dlg-reason');
+  area.value = 'Now.';
+  area.dispatchEvent(new window.Event('input'));
+  [...dlg().querySelectorAll('.btn-primary')].at(-1).click();
+  await settle();
+  assert.equal(calls.find((c) => c.url === `${F}/start`).body.reportBack, true);
+  const started = await openFeature(feature({ state: 'started', export: XV({ link: LINK }), changedSinceStart: [{ kind: 'goal', field: 'text', before: 'a', after: 'b' }],
+    starts: [{ version: 1, runId: 'r1', run: { status: 'running', phase: 'build', costUsd: 0.1, href: '#running/r1' }, failing: [], files: [] }] }));
+  assert.ok(q('report-runs', started.host), 'the runs card has it too');
+});
+
+test('D15: without a ticket the start sends no reportBack', async () => {
+  const { host, calls } = await openFeature(feature(), { [`POST ${F}/start`]: () => ({ runId: 'r1', version: 1, feature: feature(), turns: [] }) });
+  q('start-go', host).click();
+  await settle();
+  assert.equal('reportBack' in calls.find((c) => c.url === `${F}/start`).body, false);
+});
+
+test('CSS (board 29 (6)): the Report back rows sit in the Requirements block, tokens only', () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const end = css.indexOf('/* ── marketplace P3 ── */');
+  const at = css.indexOf('.req-report{');
+  assert.ok(at > 0 && at < end);
+  assert.match(css, /\.req-report \.req-report-hint\{[^}]*font-size:var\(--fs-meta\)/);
+});
+
+test('Export again: a Try again that fails again keeps the focus on Try again; one that answers gone puts it on the title', async () => {
+  const REACH = 'Worca could not reach Jira: the API token was refused.';
+  const answers = [{ __status: 502, body: { error: REACH, kind: 'auth' } }, { __status: 502, body: { error: REACH, kind: 'auth' } }, AGAIN({ gone: true })];
+  await openExport(feature({ export: XV({ link: LINK }) }), { [`POST ${PREVIEW_URL}`]: () => answers.shift() });
+  const retry = q('again-retry');
+  retry.focus();
+  retry.click();
+  await settle();
+  assert.deepEqual([text(dlg().querySelector('[role="alert"]')), q('again-retry'), document.activeElement], [REACH, retry, retry]);
+  retry.click();
+  await settle();
+  assert.equal(text(dlg().querySelector('[role="alert"]')), 'SHOP-123 no longer exists in Jira.');
+  assert.equal(document.activeElement, dlg().querySelector('h2'));
+});
+
+test('NOT_READY mid-dialog: the Not Ready dialog lists the feature as it is now (fetched again), not as the dialog opened it', async () => {
+  let n = 0;
+  const now = feature({ readiness: readiness(['interview']), state: 'decide' });
+  const calls = fakeApi({ ...BASE, ...SETUP_ROUTES(), [`GET ${F}`]: () => { n += 1; return { feature: n === 1 ? feature() : now, turns: [] }; },
+    [`POST ${PREVIEW_URL}`]: (b) => (b.reason ? preview() : { __status: 409, body: { error: NOT_READY_MSG, failing: ['interview'] } }) });
+  const m = make();
+  await m.view.show('feature/7');
+  await settle();
+  q('menu-export', m.host).click();
+  q('mi-export', m.host).click();
+  await settle();
+  assert.equal(text(dlg().querySelector('h2')), 'Export FEAT-7 before it’s Ready?');
+  assert.equal(text(dlg().querySelector('.req-dlg-fail li')), 'Interview finished: not yet');
+  assert.ok(calls.filter((c) => c.method === 'GET' && c.url === F).length >= 2, 'the feature was fetched again');
+});

@@ -10720,6 +10720,10 @@ a.chip.req-export-chip:focus-visible{outline:2px solid var(--ink);outline-offset
 .req-history-list li{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;padding:8px 0;border-top:1px solid var(--line);font-size:var(--fs-body)}
 .req-history-list li:first-child{border-top:0}
 .req-history-list .hint{margin:0}
+/* Board 29 (6), D15: Report back on Ready to build, the start dialog and the runs card (upstream's switch row, ink when on). */
+.req-report{display:flex;flex-direction:column;gap:4px;margin-top:10px}
+.req-report .req-report-hint{margin:0 0 0 40px;font-size:var(--fs-meta)}
+.req-dialog .req-report{margin-top:0}
 
 /* ── marketplace P3 ── */
 /* Plugin icons (U7, board 0.1): the kind colour lives only in this tile; hue families carry the dark arms. */

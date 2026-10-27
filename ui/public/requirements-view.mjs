@@ -1465,7 +1465,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
             'aria-label': 'Change the workflow and branch', 'data-min-level': 'advanced',   // docs/ui-levels.md: the chips show the values at every level
             onclick: () => { c.open = !c.open; focusNext = c.open ? 'build-workflow' : 'build-change'; redraw(); } }, 'Change')),
         c.open ? buildChoices(f, c, chipBranch) : null,
-        filesForRun(f)),
+        filesForRun(f), reportRow(f, 'card')),   // A6 D15, board 29 (6)
       h('button', { type: 'button', class: 'btn btn-primary req-build-go', 'data-ui': 'start-go', 'data-start': '', disabled: starting,
         onclick: (e) => startFlow(f, { trigger: e.currentTarget }) }, icon(ICONS.play, { size: 14, fill: 'currentColor', stroke: 'none' }), 'Start in Worca'));
   }
@@ -1495,6 +1495,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
           title: changed ? null : 'Nothing changed since the last start',
           onclick: (e) => startFlow(f, { trigger: e.currentTarget }) }, `Start again with v${nextVersion(f)}`)),
       h('div', { class: 'req-run-rows' }, ...starts.map(row)),
+      reportRow(f, 'runs'),   // A6 D15: Start again reports back too
       h('p', { class: 'hint req-run-total' }, `Total for ${f.id} so far: `, h('code', { text: usd(req + build) }),
         ` (requirements ${usd(req)} + build ${usd(build)})`));
   }
@@ -1686,7 +1687,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
   function postStart(f, extra = {}) {
     const c = choiceOf(f);
     const branch = String(c.sourceBranch || '').trim();
-    return api('POST', `/api/requirements/${f.seq}/start`, { ...extra, workflowId: c.workflowId || AUTO_WORKFLOW, ...(branch ? { sourceBranch: branch } : {}) });
+    return api('POST', `/api/requirements/${f.seq}/start`, { ...extra, workflowId: c.workflowId || AUTO_WORKFLOW, ...(branch ? { sourceBranch: branch } : {}),
+      ...(linkOf(f) ? { reportBack: reportBack.get(f.seq) !== false } : {}) });   // A6 D15: only with a ticket
   }
   // A start went through: the answer carries the feature, now started; repaint from it and say so.
   function started(f, data) {
@@ -1759,6 +1761,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('label', { for: 'req-dlg-reason' }, 'Why start now? ', h('span', { class: 'opt', text: 'required, kept on the feature with your name' })),
         area, count),
       h('p', { class: 'hint req-dlg-who', text: `Recorded as: ${who} · started before Ready` }),
+      reportRow(f, 'dialog'),   // A6 D15: the same switch as Ready to build's
       msg,
       h('div', { class: 'req-dlg-btns' },
         h('button', { type: 'button', class: 'btn', onclick: () => { if (!busy) closeDialog(true); } }, 'Keep deciding'), go));
@@ -2831,18 +2834,98 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         alert.classList.toggle('is-warn', warn);
         hint.textContent = note || '';
         hint.hidden = !note;
-        btns.replaceChildren(...buttons);
+        // the same buttons again (a Try again that failed again) stay where they are: re-inserting them would drop the focus
+        const same = buttons.length === btns.children.length && buttons.every((b, i) => btns.children[i] === b);
+        if (!same) btns.replaceChildren(...buttons);
         btns.hidden = !buttons.length;
       },
     };
   }
   /** A ticket gone from the tracker, as the server says it (D11). */
   const goneError = (key, name) => ({ status: 409, data: { gone: true, error: `${key} no longer exists in ${name}.` } });
-  /** A failure in an export dialog. Task 10 gives board 29's states (Try again, Change the export setup, Forget the link / New
-   *  ticket); here, the server's sentence, and a spec that changed under the preview asks for a fresh one (ctx.reload). */
+  /** Board 29's states (D11, D12): a tracker that cannot be reached (nothing recorded; the main button tries again), a field it
+   *  refuses (Change the export setup, then back here), a ticket that is gone (Forget the link, New ticket), a spec that
+   *  changed under the preview (a fresh one). Anything else: the server's sentence. A state that hides the main button
+   *  while it has the focus hands the focus to the state's first button. */
   function showFailure(box, err, ctx) {
-    box.show(errText(err));
-    if (err && err.data && err.data.stale && ctx && ctx.reload) ctx.reload();
+    const dd = (err && err.data) || {};
+    const { f, name, reason, trigger } = ctx;
+    if (err && err.status === 502) {
+      box.show(errText(err), { note: `Nothing was recorded. The preview stays open, so you can try again once the connection is fixed on the Marketplace page (Installed › ${name}).` });
+      ctx.retryLabel('Try again');
+    } else if (dd.refused) {
+      // board 29 (2): Cancel and Change the export setup; sending the same ticket again would be refused again
+      ctx.hideGo(true);
+      const change = h('button', { type: 'button', class: 'btn', 'data-ui': 'export-change-setup',
+        onclick: () => { void openSetup(f, { trigger, then: ctx.reopen }); } }, 'Change the export setup');
+      box.show(errText(err), { buttons: [change] });
+      focusLost(change);
+    } else if (dd.gone) {
+      const key = ctx.key();
+      ctx.hideGo(true);
+      let forgetting = false;
+      const note = `It was deleted or moved where this connection cannot see it. Forget the link removes the ${key} chip; the history keeps the export.`;
+      const forget = h('button', { type: 'button', class: 'btn', 'data-ui': 'export-forget', onclick: async () => {
+        if (forgetting) return;   // no double DELETE
+        forgetting = true;
+        ctx.setBusy(true);
+        try {
+          const data = await api('DELETE', exportUrl(f, '/link'));
+          ctx.setBusy(false);
+          const here = live(ctx.g);
+          if (here) closeDialog(false);
+          forgotten(f, data, here);
+        } catch (e) {
+          ctx.setBusy(false);
+          forgetting = false;
+          if (live(ctx.g)) box.show(errText(e), { note, buttons });
+        }
+      } }, 'Forget the link');
+      const fresh = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'export-new',
+        onclick: () => { if (!forgetting) openPreview(f, { mode: 'new', reason, trigger }); } }, 'New ticket');
+      const buttons = [forget, fresh];
+      box.show(dd.error || `${key} no longer exists in ${name}.`, { note, buttons });
+      focusLost(forget);
+    } else if (dd.stale) {
+      box.show(errText(err));
+      ctx.reload();
+    } else box.show(errText(err));
+  }
+  /** The focus was on a control a state just hid or removed (or nowhere): it goes to `to`. Left alone anywhere else. */
+  function focusLost(to) {
+    const a = document.activeElement;
+    if (!a || a === document.body || !a.isConnected || a.hidden) to.focus();
+  }
+  /** After Forget the link (D12): the page without the chip (the History card keeps the export); the focus on Export ▾ when
+   *  the dialog was still open (`focus`). */
+  function forgotten(f, data, focus = true) {
+    exportDone = null;
+    if (seqShown !== f.seq) return;
+    paintNo += 1;   // a fetch already under way would paint the chip back
+    if (data && data.feature) { paintFeature(data.feature, data.turns || []); paintedKey = `feature/${seqShown}`; }
+    const t = exportTrigger();
+    if (focus && t) t.focus();
+  }
+
+  /** D15, board 29 (6): Report back to SHOP-123, on by default once the feature has a ticket; the ticket moves only to the status
+   *  its connection names. The shared switch (switch.mjs). `where` keeps the ids apart: card, dialog, runs. */
+  function reportRow(f, where) {
+    const l = linkOf(f);
+    if (!l) return null;
+    const hintId = `req-report-hint-${where}`;
+    const done = xOf(f).doneStatus;
+    const name = l.tracker || trackerName(f) || 'the tracker';
+    const { row, input } = makeSwitch(document, { label: `Report back to ${l.key}`, checked: reportBack.get(f.seq) !== false,
+      rowClass: 'req-report-row', data: { ui: `report-${where}` } });
+    input.setAttribute('aria-describedby', hintId);
+    input.addEventListener('change', () => {
+      reportBack.set(f.seq, input.checked);
+      for (const o of document.querySelectorAll('[data-ui^="report-"]')) if (o !== input) o.checked = input.checked;
+    });
+    return h('div', { class: 'req-report' }, row,
+      h('p', { class: 'hint req-report-hint', id: hintId, text: done
+        ? `When the run ends, Worca comments with the result and the pull request link, and moves the ticket to ${done} (the status named in the ${name} connection; without one, it only comments).`
+        : `When the run ends, Worca comments with the result and the pull request link. The ${name} connection names no status to move the ticket to, so it only comments.` }));
   }
   /** A send that failed (D9–D13): the edited race (`onEdited`, the preview's), a ticket an earlier export made that was found
    *  and linked (relinked), else showFailure. */
@@ -2852,12 +2935,23 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     else if (dd.edited && onEdited) onEdited();
     else failed(box, err, ctx);
   }
-  /** A preview or send refused NOT_READY { failing } (the feature stopped being Ready while the dialog was open, D5): the Not
-   *  Ready dialog for those checks, then `ctx.notReady(reason)` goes on in the same mode. Anything else: showFailure. */
+  /** A preview or send refused NOT_READY { failing } (the feature stopped being Ready while the dialog was open, D5): the
+   *  feature is fetched again (the dialog's copy is from before the change), then the Not Ready dialog for those checks, and
+   *  `ctx.notReady(reason, now)` goes on in the same mode. Anything else: showFailure. Answers true when Not Ready takes over
+   *  (the caller leaves its dialog alone). */
   function failed(box, err, ctx) {
     const failing = err && err.data && Array.isArray(err.data.failing) ? err.data.failing : null;
-    if (failing && ctx.notReady) openExportNotReady(ctx.f, ctx.trigger, ctx.notReady, failing);
-    else showFailure(box, err, ctx);
+    if (!failing || !ctx.notReady) { showFailure(box, err, ctx); return false; }
+    void (async () => {
+      ctx.setBusy(true);
+      let now = null;
+      try { const data = await api('GET', `/api/requirements/${ctx.f.seq}`); now = data && data.feature; } catch { /* the dialog's copy */ }
+      ctx.setBusy(false);
+      if (!live(ctx.g)) return;
+      const nf = now && now.seq === ctx.f.seq ? now : ctx.f;
+      openExportNotReady(nf, ctx.trigger, (why) => ctx.notReady(why, nf), failing);
+    })();
+    return true;
   }
   /** CONFLICT { stale, linked } (D10): a ticket an earlier export made was found and linked; nothing was sent. The page shows
    *  the link, and Export again opens for that ticket saying so, as the History line does (never a second create preview). */
@@ -2995,10 +3089,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       ...(st.issueType !== undefined ? { issueType: st.issueType, issueTypeName: st.issueTypeName } : {}),
       ...(st.labels ? { labels: st.labels } : {}),
       ...(st.priority !== undefined ? { priority: st.priority, priorityName: st.priorityName } : {}) });
-    const ctx = { f, name, key, reason, trigger, setBusy: (b) => { busy = b; },
+    const ctx = { f, g, name, key, reason, trigger, setBusy: (b) => { busy = b; },
       hideGo: (b) => { go.hidden = b; }, retryLabel: (t) => { go.textContent = t; go.disabled = false; },
       reload: () => load({ keep: true }), reopen: () => openPreview(f, { mode, reason, force: forceNow, trigger }),
-      notReady: (why) => openPreview(f, { mode, reason: why, trigger }) };
+      notReady: (why, nf = f) => openPreview(nf, { mode, reason: why, trigger }) };
     const showEdited = () => {
       go.hidden = true;
       editedState(box, key(), name, { onUpdate: () => { if (busy) return; forceNow = true; go.hidden = false; void run(); },
@@ -3023,8 +3117,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       } catch (err) {
         if (!live(g) || k !== n) return;
         data = null;
-        failed(box, err, ctx);
-        if (!live(g)) return;   // the Not Ready dialog took over
+        if (failed(box, err, ctx) || !live(g)) return;   // the Not Ready dialog takes over
         if (!go.hidden) { go.textContent = 'Try again'; go.disabled = false; }
       }
     }
@@ -3136,9 +3229,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     openModal(card, { trigger, first: title, canClose: () => !busy, page: true });   // the title until the choices load (D20)
     const g = dlgGen;
     const key = () => (data && data.link && data.link.key) || (linkOf(f) || {}).key || '';
-    const ctx = { f, name, key, reason, trigger, setBusy: (b) => { busy = b; }, hideGo: (b) => { cont.hidden = b; },
+    const ctx = { f, g, name, key, reason, trigger, setBusy: (b) => { busy = b; }, hideGo: (b) => { cont.hidden = b; },
       retryLabel: () => {}, reload: () => {}, reopen: () => openAgain(f, { reason, trigger }),
-      notReady: (why) => openAgain(f, { reason: why, trigger }) };
+      notReady: (why, nf = f) => openAgain(nf, { reason: why, trigger }) };
     let loading = false;
     const retry = h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'again-retry', onclick: () => { void load(); } }, 'Try again');
     const radios = {};
@@ -3197,7 +3290,8 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         const moveFocus = document.activeElement === title || document.activeElement === retry;
         data = d;
         render();
-        if (radios.update && moveFocus) radios.update.focus();
+        if (moveFocus && !d.gone && radios.update) radios.update.focus();
+        else if (moveFocus) title.focus();   // gone: no choices; the title, as on open (a Try again focused is gone too)
       } catch (err) {
         if (!live(g)) return;
         const failing = err && err.data && Array.isArray(err.data.failing) ? err.data.failing : null;
@@ -3229,9 +3323,9 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         h('div', { class: 'req-dlg-btns' }, back, add)));
     openModal(card, { trigger, first: title, canClose: () => !busy, page: true });
     const g = dlgGen;
-    const ctx = { f, name, key: () => linkKey, reason, trigger, setBusy: (b) => { busy = b; }, hideGo: (b) => { add.hidden = b; },
+    const ctx = { f, g, name, key: () => linkKey, reason, trigger, setBusy: (b) => { busy = b; }, hideGo: (b) => { add.hidden = b; },
       retryLabel: (t) => { add.textContent = t; add.disabled = false; }, reload: () => load({ keep: true }), reopen: () => openComment(f, { reason, trigger }),
-      notReady: (why) => openComment(f, { reason: why, trigger }) };
+      notReady: (why, nf = f) => openComment(nf, { reason: why, trigger }) };
     async function load({ keep = false } = {}) {
       add.disabled = true;
       try {
@@ -3247,8 +3341,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       } catch (err) {
         if (!live(g)) return;
         data = null;
-        failed(box, err, ctx);
-        if (!live(g)) return;   // the Not Ready dialog took over
+        if (failed(box, err, ctx) || !live(g)) return;   // the Not Ready dialog takes over
         // a refusal (no starting point for comments yet, nothing changed) answers the same again: Back is the way on
         if (err && err.status === 409) add.hidden = true;
         else if (!add.hidden) { add.textContent = 'Try again'; add.disabled = false; }
