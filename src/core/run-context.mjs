@@ -1028,9 +1028,12 @@ export async function mcpjsonApproval(projectDir, homeDir, onError, { managed = 
  * transformed against the worktree the CLI would load them from, and reach the engine like any other server of the
  * run, through the same engine checks (run-harness.mjs _engineMcpWarnings). A server the real dir
  * already defines (the generated definition wins on Claude too, V3(d)) or a root layer took is left as it is. The
- * rest leave the grant list, and the unapproved ones are named once. On Claude (`native`) nothing is attached: the
- * CLI loads the committed file itself, and the runner names the unapproved servers in disabledMcpjsonServers at
- * every spawn (claude-runner.mjs), so here they only leave the grant list and are named. Mutates `mcp`.
+ * rest leave the grant list, and the unapproved ones are named once. On Claude (`native`) the approved ones join
+ * mcp.json too, so mcp.json covers every granted server and a node can run under --strict-mcp-config, which loads
+ * no `.mcp.json` (phases.mjs strictMcpFor); a node without it loads both and the mcp.json definition wins, with no
+ * second process (V3(d), probed again on CC 2.1.311). The unapproved ones the runner names in
+ * disabledMcpjsonServers at every spawn (claude-runner.mjs), so here they only leave the grant list and are named.
+ * Mutates `mcp`.
  */
 async function attachCommittedMcp(mcp, { engine, homeDir, platform, onError, warnings, native = false, noGitDirs = new Set() }) {
   const approvals = new Map();
@@ -1044,7 +1047,6 @@ async function attachCommittedMcp(mcp, { engine, homeDir, platform, onError, war
       if (verdict === 'unapproved') unapproved.push(c.rawName);
       continue;
     }
-    if (native) continue;
     const { def, warnings: tw } = await transformServer(c.name, c.def, c.dir, platform);
     for (const w of tw) warnings.push(w);
     mcp.servers[c.name] = def;

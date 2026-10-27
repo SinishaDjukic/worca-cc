@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { buildClaudeArgs, runClaude, debugSpawnEnabled, redactArgvForLog, cleanRunEnv } from '../src/core/claude-runner.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { runOpts, builtinToolsFor, strictMcpFor, READ_WRITE_TOOLS, MEMORY_TOOLS } from '../src/core/phases.mjs';
+import { assembleRunContext } from '../src/core/run-context.mjs';
 
 const POSIX_SHIM = { skip: process.platform === 'win32' ? 'fake claude shim is a POSIX shell script (no .exe stand-in on Windows)' : false };
 
@@ -952,13 +953,37 @@ test('#943 strictMcpFor: only a detached run whose mcp.json holds every granted 
     { name: 'mcp.json holds every grant', run: () => assert.equal(strictMcpFor(run), true) },
     { name: 'no MCP at all on a detached run', run: () => assert.equal(strictMcpFor({ runRoot: '/r' }), true) },
     { name: 'a legacy run (no run root): its servers load natively', run: () => assert.equal(strictMcpFor({ ...run, runRoot: null }), false) },
-    { name: 'a granted server loads from the committed .mcp.json', run: () =>
+    { name: 'a granted committed .mcp.json server a drop kept out of mcp.json', run: () =>
       assert.equal(strictMcpFor({ ...run, mcpServerGrants: [...run.mcpServerGrants, 'mcp__native'] }), false) },
     { name: 'frontmatter names a plugin server', run: () =>
       assert.equal(strictMcpFor({ ...run, node: { tools: ['Read', 'mcp__plugin_playwright_playwright__browser_click'] } }), false) },
     { name: 'frontmatter names a server of mcp.json', run: () =>
       assert.equal(strictMcpFor({ ...run, node: { tools: ['mcp__db__query', 'mcp__worca'] } }), true) },
   ]);
+});
+
+test('#943 a run whose checkout commits an approved .mcp.json server spawns under --strict-mcp-config, the server in mcp.json', async () => {
+  const wt = await tmp();
+  await writeFile(join(wt, '.mcp.json'), JSON.stringify({ mcpServers: { db: { command: 'node', args: ['/abs/db.js'] } } }), 'utf8');
+  const real = await tmp();
+  await writeFile(join(real, '.mcp.json'), JSON.stringify({ mcpServers: { db: { command: 'node', args: ['/abs/db.js'] } } }), 'utf8');
+  const home = await tmp();
+  await mkdir(join(home, '.claude'), { recursive: true });
+  await writeFile(join(home, '.claude', 'settings.json'), JSON.stringify({ enabledMcpjsonServers: ['db'] }), 'utf8');
+  const runRoot = await tmp();
+  const rc = await assembleRunContext({
+    runRoot, members: [{ projectKey: 'k1', projectName: 'P', projectDir: real, worktreeDir: wt }], projectsRoot: await tmp(),
+    isWorkspace: false, requiredSkillResolutions: new Map(), graphInstructions: new Map(), homeDir: home, platform: 'darwin',
+  });
+  const ctx = {
+    projectDir: wt, claudeOpts: {}, runRoot, mcpConfigPath: rc.mcpConfigPath,
+    mcpConfigServers: rc.mcpConfigServers, mcpServerGrants: rc.mcpServerNames.map((n) => `mcp__${n}`), node: { key: 'implementer' },
+  };
+  const args = buildClaudeArgs(runOpts(ctx, { role: 'implementer', prompt: 'p', allowedTools: READ_WRITE_TOOLS }));
+  assert.ok(args.includes('--strict-mcp-config'), 'the committed server no longer keeps every user-scope, plugin and claude.ai server loading');
+  assert.equal(args[args.indexOf('--mcp-config') + 1], rc.mcpConfigPath);
+  assert.deepEqual(Object.keys(JSON.parse(await readFile(rc.mcpConfigPath, 'utf8')).mcpServers), ['db'], 'the strict spawn still has it');
+  assert.ok(args[args.indexOf('--allowedTools') + 1].split(',').includes('mcp__db'));
 });
 
 test('#943 runOpts: --tools, --strict-mcp-config and autoMemoryEnabled:false reach the spawn argv', () => {

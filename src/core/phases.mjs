@@ -95,8 +95,9 @@ export function builtinToolsFor(allowed) {
 /**
  * Whether a node runs under `--strict-mcp-config` (only the run's mcp.json loads, no user-scope, plugin or claude.ai
  * connector server). Only on a detached run (a legacy run has no mcp.json: its servers all load natively), and only
- * when mcp.json holds every server the run grants (none loads from the checkout's committed .mcp.json instead) and
- * every server the agent's frontmatter names (e.g. a plugin's Playwright). Pure + exported for testing.
+ * when mcp.json holds every server the run grants (the approved servers of the checkout's committed .mcp.json are in
+ * it too, run-context.mjs attachCommittedMcp; one a drop kept out of it loads from the checkout only) and every
+ * server the agent's frontmatter names (e.g. a plugin's Playwright). Pure + exported for testing.
  */
 export function strictMcpFor(ctx) {
   if (!isDetachedRun(ctx)) return false;
