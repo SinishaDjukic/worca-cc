@@ -141,8 +141,8 @@ export function longCommand(cmd) {
  *  card. The summary row ignores them: its open state is its output's (one fold).
  *  `keepInPlace(control, change)`: a click folds or unfolds inside it, so the host can keep the toggle where it was
  *  on screen (a transcript pinned to its end would otherwise follow the opened output).
- *  `summarise` (#911): the one-line row. `rowOpen`: the person's open choice (undefined = none: a failure opens
- *  itself once); `onRowToggle(open)` reports a click or that auto-open so the panel keeps it across a rebuild.
+ *  `summarise` (#911): the one-line row, folded until the person opens it (a failure too). `rowOpen`: the person's
+ *  open choice; `onRowToggle(open)` reports a click so the panel keeps it across a rebuild.
  *  `now`: the clock (tests pass a fake). */
 export function createCommandCard({ doc, card, onStop, onShow = () => {}, expanded = false, onToggle = () => {},
   keepInPlace = (control, change) => change(), summarise = false, rowOpen, onRowToggle = () => {}, now = () => Date.now(), onTick = () => {} }) {
@@ -267,8 +267,6 @@ function createCommandRow({ doc, card, onStop, onShow, keepInPlace, rowOpen, onR
 
   let view = null;
   let rowIsOpen = rowOpen === true;
-  // A choice already made (a click, or an earlier auto-open the panel recorded): a failure no longer opens itself.
-  let chosen = rowOpen === true || rowOpen === false;
   let stick = true;               // the output follows its newest line until the person scrolls up
   const win = doc.defaultView;
   let ticker = null;              // one 1 s interval while the command runs (D17)
@@ -301,7 +299,7 @@ function createCommandRow({ doc, card, onStop, onShow, keepInPlace, rowOpen, onR
   out.addEventListener('scroll', () => { stick = out.scrollHeight - out.scrollTop - out.clientHeight < 8; });
   row.addEventListener('click', (e) => {
     if (e.target.closest('.ask-cmd-stop')) return;
-    keepInPlace(row, () => { rowIsOpen = !rowIsOpen; chosen = true; paint(); });
+    keepInPlace(row, () => { rowIsOpen = !rowIsOpen; paint(); });
     onRowToggle(rowIsOpen);
   });
   paintDot(null);
@@ -321,11 +319,6 @@ function createCommandRow({ doc, card, onStop, onShow, keepInPlace, rowOpen, onR
       out.textContent = v && v.tail ? v.tail : '';
       outLabel.textContent = out.textContent ? outputLabel(v) : '';
       if (!stick) out.scrollTop = top;               // scrolled up: the new tail does not pull the person down
-      if (!chosen && isFailed(v)) {
-        // A failure opens itself, its output with it, ONCE (D12); reported so later frames and rebuilds keep the person's fold.
-        chosen = true; rowIsOpen = true;
-        onRowToggle(true);
-      }
       el.classList.toggle('is-live', live);
       el.classList.toggle('is-failed', isFailed(v));
       paint();
@@ -340,6 +333,8 @@ function createCommandRow({ doc, card, onStop, onShow, keepInPlace, rowOpen, onR
       paintMeta();
     },
     get view() { return view; },
+    /** The row's line (the summary, else the command): a running group's head leads with it. */
+    get text() { return text; },
     destroy() { setTicker(false); el.remove(); },
   };
 }
@@ -347,31 +342,38 @@ function createCommandRow({ doc, card, onStop, onShow, keepInPlace, rowOpen, onR
 let groupSeq = 0;
 
 /** #911: a group of 2+ consecutive commands: one quiet disclosure head over ONE card (`body`); the panel moves the rows'
- *  elements into `body`. `choice`: the recorded fold (a click, or a failure's one auto-open; undefined = none);
- *  `onToggle(open)` reports either, so the panel keeps it across a rebuild (D3, D4). */
-export function createCommandGroup({ doc, choice, onToggle = () => {}, keepInPlace = (control, change) => change() }) {
+ *  elements into `body`. Folded until the person opens it. `choice`: the recorded fold (a click; undefined = none);
+ *  `onToggle(open)` reports it, so the panel keeps it across a rebuild (D3, D4). `onStop`: the head's Stop while a
+ *  member runs, so a folded group can still stop its command. */
+export function createCommandGroup({ doc, choice, onToggle = () => {}, onStop = () => {}, keepInPlace = (control, change) => change() }) {
   const el = h(doc, 'div', 'ask-cmd-group');
+  const top = h(doc, 'div', 'ask-cmd-gtop');
   const head = h(doc, 'button', 'ask-cmd-ghead');
   head.type = 'button';
   const words = h(doc, 'span', 'ask-cmd-gwords');
   const chev = h(doc, 'span', 'ask-cmd-chev', '›');
   chev.setAttribute('aria-hidden', 'true');
   head.append(words, chev);
+  const stop = h(doc, 'button', 'btn btn-sm btn-danger ask-cmd-stop', 'Stop');
+  stop.type = 'button';
+  stop.hidden = true;
+  stop.setAttribute('aria-label', 'Stop the running command');
+  stop.addEventListener('click', () => { stop.disabled = true; onStop(); });
+  top.append(head, stop);
   const body = h(doc, 'div', 'ask-cmd-gbody');
   groupSeq += 1;
   body.id = `ask-cmd-g${groupSeq}`;
   head.setAttribute('aria-controls', body.id);
-  el.append(head, body);
-  let views = [];
-  let live = false;
+  el.append(top, body);
   let chosen = choice === true || choice === false ? choice : undefined;
   let open = false;
+  let running = false;
   function paint() {
-    open = groupOpen(views, chosen, live);
+    open = groupOpen(chosen);
     head.setAttribute('aria-expanded', String(open));
-    // An auto-fold must not drop the keyboard focus on <body> (e.g. Stop or a row button was focused): it moves to the head.
-    if (!open && !body.hidden && body.contains(doc.activeElement)) head.focus();
     body.hidden = !open;
+    // Stop stands in for the running row's Stop while the group is folded; open, the row's own Stop is on screen.
+    stop.hidden = !running || open;
   }
   head.addEventListener('click', () => {
     keepInPlace(head, () => { chosen = !open; paint(); });
@@ -380,16 +382,17 @@ export function createCommandGroup({ doc, choice, onToggle = () => {}, keepInPla
   return {
     el,
     body,
-    /** The member views (null: not loaded yet); `live`: this message is the live turn (D5). */
-    update(vs, { now = Date.now(), live: isLive = false } = {}) {
-      views = vs;
-      live = isLive;
-      const p = groupHeadParts(vs, now, live);
+    /** The member views (null: not loaded yet); `live`: this message is the live turn (D5); `current`: the running
+     *  member's line. */
+    update(vs, { now = Date.now(), live = false, current = '' } = {}) {
+      const p = groupHeadParts(vs, now, live, current);
       const parts = [doc.createTextNode(p.lead)];
+      if (p.count) parts.push(doc.createTextNode(` · ${p.count}`));
       if (p.failed) parts.push(doc.createTextNode(' · '), h(doc, 'span', 'ask-cmd-gfail', `${p.failed} failed`));
       parts.push(doc.createTextNode(` · ${p.dur}`));
       words.replaceChildren(...parts);
-      if (chosen === undefined && p.failed) { chosen = true; onToggle(true); }   // a failure opens its group ONCE (D12)
+      running = vs.some((v) => v && v.status === 'running');
+      if (!running) stop.disabled = false;
       paint();
     },
     get open() { return open; },

@@ -6666,10 +6666,12 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd-out[hidden]{display:none;}
 /* Command summaries (#911): one row per command with the runs status dot; a group holds its rows in one card. */
 .ask-card.ask-cmd.is-sum{gap:0;padding:0;}
-.ask-cmd-row{display:flex;align-items:center;gap:8px;min-height:38px;padding:0 14px;cursor:pointer;}
+.ask-cmd-row{display:flex;align-items:center;gap:8px;min-height:28px;padding:0 14px;cursor:pointer;}
 .ask-cmd-row:hover{background:var(--hover);}
 .ask-cmd-row-btn{display:flex;align-items:center;gap:10px;flex:1 1 auto;min-width:0;padding:0;border:0;background:none;color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
 .ask-cmd-row-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* An 8px dot sits in the 12px slot of a symbol dot (failed "!"), so every row's text starts at one line. */
+.ask-cmd-row-btn > .status-dot:not(.has-sym){margin:0 2px;}
 .ask-cmd-sum{flex:1 1 auto;min-width:0;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ask-cmd-sum.is-raw{font-family:var(--mono);font-size:12px;font-weight:400;color:var(--ink-2);}
 .ask-cmd-meta{flex:none;color:var(--ink-2);font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;}
@@ -6704,6 +6706,7 @@ button.ask-activity-head:hover .ask-activity-label,button.ask-activity-head:hove
 .ask-cmd.is-sum > .ask-cmd-warning{margin:0 14px 12px;}
 /* A group (#911): one quiet disclosure head over ONE card; the panel moves the rows in; --line between them. */
 .ask-cmd-group{display:flex;flex-direction:column;gap:6px;min-width:0;margin-top:2px;}
+.ask-cmd-gtop{display:flex;align-items:center;gap:8px;min-width:0;}
 .ask-cmd-ghead{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;max-width:100%;min-height:28px;padding:0 8px;margin-left:-8px;
   border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:inherit;font-size:13px;cursor:pointer;}
 .ask-cmd-ghead:hover{background:var(--hover);}
