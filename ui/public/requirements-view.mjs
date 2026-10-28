@@ -4465,7 +4465,7 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
       const found = L.criteria.from === 'field' ? `found in the ${name} field “${L.criteria.name}”`
         : L.criteria.from === 'section' ? `found under “${L.criteria.name}” in the description` : null;
       ui.critHead = h('h3', { class: 'req-import-h' });
-      ui.critHint = h('p', { class: 'hint' });
+      ui.critHint = h('p', { class: 'hint', 'data-ui': 'ipv-hint-crit' });
       return h('section', { class: 'req-import-sec' }, ui.critHead, found ? h('p', { class: 'hint', text: found }) : null,
         items.length ? h('ul', { class: 'req-import-list' }, ...ui.crit.map((c) => h('li', {}, h('label', { class: 'req-import-check' }, c.cb, c.code, h('span', { text: c.text })))))
           : null,
@@ -4550,10 +4550,10 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
         else { c.code.textContent = ''; c.cb.setAttribute('aria-label', `Use this criterion: ${c.text}`); }
       }
       const items = L.criteria.items || [];
-      const k = n || items.length;
       ui.critHead.textContent = items.length ? `Acceptance criteria · ${items.length}` : 'Acceptance criteria · none';
       ui.critHint.textContent = !items.length ? `None found in ${L.key}. Round 1 asks for them.`
-        : `Ticked criteria start the spec as ${k === 1 ? 'R-po-1' : `R-po-1 to R-po-${k}`}, kept as your own edits and marked “from ${L.key}”. Unticked ones are left out; they stay in ${name}.`;
+        : `Ticked criteria start the spec as ${n === 1 ? 'R-po-1' : `R-po-1 to R-po-${n}`}, kept as your own edits and marked “from ${L.key}”. Unticked ones are left out; they stay in ${name}.`;
+      ui.critHint.hidden = items.length > 0 && n === 0;   // none ticked: the R-po line would be false, so it hides (copy Q1, the user's call)
       const coms = L.comments.filter((c) => ui.comments.get(c.id).checked);
       ui.comHead.textContent = L.comments.length ? `Comments · ${coms.length} of ${L.comments.length}` : 'Comments · none';
       const atts = [...ui.atts.values()].filter((x) => x.cb.checked);

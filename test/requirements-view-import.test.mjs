@@ -331,6 +331,18 @@ test('board 34: Continue opens Start from SHOP-124: its title focused; the descr
   q('ipv-crit-0').click();
   assert.deepEqual([...dl.querySelectorAll('.req-import-code')].map((c) => c.textContent), ['', 'R-po-1', 'R-po-2']);
   assert.ok(text(dl).includes('Ticked criteria start the spec as R-po-1 to R-po-2, kept as your own edits and marked “from SHOP-124”. Unticked ones are left out; they stay in Jira.'));
+  // Copy Q1 (user, 2026-10-28): with none ticked the hint would be false, so it hides; one tick shows it again
+  const hint = q('ipv-hint-crit');
+  assert.equal(hint.hidden, false);
+  q('ipv-crit-1').click();
+  q('ipv-crit-2').click();
+  assert.equal(hint.hidden, true, 'no criterion ticked: no R-po hint');
+  assert.deepEqual([...dl.querySelectorAll('[data-ui^="ipv-crit-"]')].map((b) => b.getAttribute('aria-label')), ['Use this criterion: A customer can cancel the items not picked up.',
+    'Use this criterion: Shipped items stay on the order.', 'Use this criterion: The refund covers only the cancelled items.']);
+  q('ipv-crit-2').click();
+  assert.equal(hint.hidden, false, 'one ticked: the hint is back');
+  assert.equal(text(hint), 'Ticked criteria start the spec as R-po-1, kept as your own edits and marked “from SHOP-124”. Unticked ones are left out; they stay in Jira.');
+  q('ipv-crit-1').click();
   assert.deepEqual([q('ipv-com-10231').checked, q('ipv-com-10234').checked, q('ipv-com-10236').checked], [true, false, true]);
   assert.equal(q('ipv-com-10231').getAttribute('aria-label'), 'Use the comment by Ann Example, 21 Oct');
   assert.ok(text(dl).includes('Comments · 2 of 3'));
