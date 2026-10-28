@@ -655,7 +655,9 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   if (level === 'member') line = dropLead(memberLine(r.model, line), r.kind === 'chat' ? parentWhere : '');
   // #1012: a staged member draws the four-section block, whose marks name its stage, so its line drops that word.
   // A working one names no step either ("Refine Plan"): only a state its dot does not say (needs you, paused) stays.
-  const staged = level === 'member' && r.kind !== 'chain' && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed'
+  // A member dispatched but not started yet (Starting) has no progress to show: no block, no line.
+  const unstarted = level === 'member' && r.model.state === 'starting';
+  const staged = level === 'member' && !unstarted && r.kind !== 'chain' && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed'
     && !r.model.prNeeds && r.model.progress && r.model.progress.mode === 'stages';
   if (staged) line = DOT_SAYS.has(r.model.state) ? '' : dropLead(line, r.model.progress.label);
   const title = textEl(doc, 'span', 'runs-row-title', position ? `${position} · ${r.title}` : r.title);
@@ -663,7 +665,7 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   a.append(...[title, lab, right, textEl(doc, 'span', 'runs-row-sub', line)].filter(Boolean));
   if (r.kind === 'chain' && !ENDED_STATES.has(r.model.state) && r.model.progress) {
     a.append(renderRowLine(doc, { fraction: r.model.progress.fraction }, (lineFrom && lineFrom.get(r.key)) || ''));
-  } else if (r.kind !== 'chain' && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed' && !r.model.prNeeds && r.model.progress) {
+  } else if (r.kind !== 'chain' && !unstarted && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed' && !r.model.prNeeds && r.model.progress) {
     // A run in Needs you only through its PR (conflicts, failing checks) has finished: no progress bar to draw.
     if (level === 'member' && !staged) {
       // #955: a one-line member without stages keeps the list's 3px line; paintRunsProgress (app.js) moves it in place.

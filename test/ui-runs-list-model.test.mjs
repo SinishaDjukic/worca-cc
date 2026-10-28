@@ -717,6 +717,19 @@ test('#1012 a staged live member draws the four-section block; a working one nam
   assert.match(sub2, /^needs you/, 'a state the dot does not say stays, without the stage word');
 });
 
+test('#1012 a member dispatched but not started yet draws no progress at all', () => {
+  const run = { status: 'running', stepper: { auto: { status: 'deciding' } } };   // no step yet: Starting, with stages
+  const chain = { id: 'p:c1012s', groupKind: 'chain', title: 'Chain', members: [
+    { position: 1, pipelineId: 'p1', runId: 'r1', kind: 'live', run }] };
+  const m = buildRunsModel({ live: [liveIt('r1', { pipelineId: 'p1', run })], groups: [chain], now: NOW });
+  assert.equal(m.sections.flatMap((s) => s.rows)[0].members[0].model.state, 'starting');
+  const host = doc.createElement('div');
+  host.append(...renderRunsList(doc, m));
+  const row = host.querySelector('.runs-members .runs-item[data-level="member"] > a.runs-row');
+  assert.equal(row.querySelector(':scope > .runs-stage'), null, 'no four-section block');
+  assert.equal(row.querySelector(':scope > .runs-row-prog'), null, 'no 3px line');
+});
+
 test('#955 a chat inside a one-project topic group does not repeat the project; a "2 projects" group keeps it', () => {
   const chat = (id, line) => ({ key: `chat:${id}`, id, kind: 'chat', title: id, href: `#chat/${id}`, labels: [],
     model: { state: 'idle', word: 'Idle', line, dot: 'grey', pulse: false, symbol: null, icon: 'chat' } });

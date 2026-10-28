@@ -345,7 +345,7 @@ and hand the focus back to the opener.
   and ellipsises first), then its PR chip; no label chips and no Independent tag. A live member's 3px line sits under
   its title; a live member with stages draws the four-section block instead (a 2px bar, one step below the group
   row's 3px line, then the 11px Plan / Build / Review / Ready with its stage bold); its status names no step, only a
-  state its dot does not say (needs you, paused). Its ⋯ stays 28px, centred.
+  state its dot does not say (needs you, paused). A member dispatched but not started yet (Starting) draws no progress. Its ⋯ stays 28px, centred.
 - Search is the top bar's "Search or ask" only. A list filter is chosen there ("Runs labelled hotfix", `label:hotfix`),
   not from a filter button in the list's header. The Marketplace's Browse search is the one exception
   (Marketplace exceptions).
