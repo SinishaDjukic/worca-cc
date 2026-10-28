@@ -12,6 +12,7 @@ import { summarize, strip, runTurn, requestFacts, bigPrompt, toolResult, hostAge
 import { main as s1 } from '../tools/spikes/session-host/s1-agents-per-resume.mjs';
 import { main as s2, definitionFacts as s2Facts } from '../tools/spikes/session-host/s2-definition-fields.mjs';
 import { main as s3 } from '../tools/spikes/session-host/s3-child-permissions.mjs';
+import { main as s4 } from '../tools/spikes/session-host/s4-cost.mjs';
 
 const F = [
   { type: 'system', subtype: 'init', session_id: 'S', model: 'claude-haiku-4-5', tools: ['Agent', 'Bash'] },
@@ -226,4 +227,15 @@ test('S3 --dry: five turns per CLI; c carries worca\'s deny settings, d the guar
   for (const l of turn('c')) { assert.ok(l.includes('"deny":["Bash(echo s3-denied*)"]'), l); assert.match(l, /host-guard\.mjs/); }
   for (const l of turn('d')) { assert.match(l, /WORCA_HOST_GUARD=1 WORCA_HOST_PID=\d+ /); assert.ok(l.includes('"deny":["Bash(echo s3-denied*)"]')); }
   for (const l of turn('e')) assert.match(l, /S3E_KEYS=\S+s3e\.keys .*--settings .*"matcher":"\*"/);
+});
+
+test('S4 --dry: six turns; the third and fourth carry --max-budget-usd', async () => {
+  const { argv } = await dryRun(s4);
+  assert.equal(argv.length, 6, argv.join('\n'));
+  assert.deepEqual(argv.map((l) => l.includes('--max-budget-usd')), [false, false, true, true, false, false]);
+  assert.match(argv[1], /--resume <session-1> /);
+  assert.match(argv[2], /--resume <session-1> .*--max-budget-usd <C2\/2>/);
+  assert.match(argv[3], /--max-budget-usd 0\.02/);
+  assert.doesNotMatch(argv[3], /--resume/);
+  assert.match(argv[5], /--resume <session-5> /);
 });
