@@ -13,6 +13,7 @@ import { main as s1 } from '../tools/spikes/session-host/s1-agents-per-resume.mj
 import { main as s2, definitionFacts as s2Facts } from '../tools/spikes/session-host/s2-definition-fields.mjs';
 import { main as s3 } from '../tools/spikes/session-host/s3-child-permissions.mjs';
 import { main as s4 } from '../tools/spikes/session-host/s4-cost.mjs';
+import { main as s6, scanCli } from '../tools/spikes/session-host/s6-depth-and-cap.mjs';
 
 const F = [
   { type: 'system', subtype: 'init', session_id: 'S', model: 'claude-haiku-4-5', tools: ['Agent', 'Bash'] },
@@ -238,4 +239,23 @@ test('S4 --dry: six turns; the third and fourth carry --max-budget-usd', async (
   assert.match(argv[3], /--max-budget-usd 0\.02/);
   assert.doesNotMatch(argv[3], /--resume/);
   assert.match(argv[5], /--resume <session-5> /);
+});
+
+test('S6 --dry: five turns; (b0) and the three (b) turns carry the per-session cap env; (c) is a note', async () => {
+  const { argv, notes } = await dryRun(s6);
+  assert.equal(argv.length, 5, argv.join('\n'));
+  assert.deepEqual(argv.map((l) => l.includes('CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION=2 ')), [false, true, true, true, true]);
+  assert.doesNotMatch(argv[2], /--resume/);
+  for (const i of [3, 4]) assert.match(argv[i], /--resume <session-b1> /);
+  assert.ok(notes.some((n) => n.includes('(c)')));
+});
+
+test('S6 scanCli: the cap default and the concurrent-cap literal from a CLI file, no spawn', () => {
+  const dir = mkdtempSync(join(tmpdir(), 's6-scan-'));
+  try {
+    const f = join(dir, 'cli.js');
+    writeFileSync(f, 'x=a.CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION ?? 200;y="Concurrent subagent limit reached. You can run "+n+" subagents at once."');
+    assert.deepEqual(scanCli(f), { capDefault: 200, concurrentCapText: 'Concurrent subagent limit reached. You can run ' });
+    assert.deepEqual(scanCli(null), { capDefault: null, concurrentCapText: null });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
