@@ -300,3 +300,16 @@ test('entrypoint.sh: plugin code is shared read-only with the agent users, plugi
   assert.doesNotMatch(block, /g\+w|g\+s|2770|worca-share "\$\{p\}data"/, 'never group-writable, never setgid, data never shared');
   assert.doesNotMatch(block, /\.agent-isolation/, 'every boot, not once per volume: plugins installed since then join too');
 });
+
+test('compose.ca.yml mounts the CA read-only and the entrypoint builds the bundle git, curl and Python read', () => {
+  const ca = read('docker/compose.ca.yml');
+  assert.match(ca, /- \$\{WORCA_CA_CERT:\?[^}]*\}:\/etc\/worca\/corporate-ca\.pem:ro/, 'required, read-only');
+  assert.match(ca, /NODE_EXTRA_CA_CERTS: \/etc\/worca\/corporate-ca\.pem/);
+  assert.match(ca, /WORCA_CA_CERT_FILE: \/etc\/worca\/corporate-ca\.pem/);
+  const e = read('docker/entrypoint.sh');
+  const block = e.slice(e.indexOf('# 1b.'), e.indexOf('# 2. GitHub'));
+  assert.match(block, /mktemp -d \/tmp\/worca-ca\.XXXXXX/, 'a fresh dir an agent uid cannot pre-create or write');
+  assert.match(block, /cat \/etc\/ssl\/certs\/ca-certificates\.crt "\$WORCA_CA_CERT_FILE"/, 'system trust plus the CA, not the CA alone');
+  for (const v of ['SSL_CERT_FILE', 'GIT_SSL_CAINFO', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE']) assert.match(block, new RegExp(`${v}="\\$cadir/bundle\\.pem"`), v);
+  assert.ok(e.indexOf('# 1b.') < e.lastIndexOf('exec "$@"'), 'exported before the command runs');
+});

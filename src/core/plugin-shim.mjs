@@ -143,8 +143,8 @@ export function scrubbedEnv(platform = process.platform, env = process.env) {
 const PROXY_URL_NAMES = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy'];
 const NO_PROXY_NAMES = ['NO_PROXY', 'no_proxy'];
 /** The CA names engines/spawn.mjs SPAWN_ENV_BASE passes too: node reads the first,
- *  the tools a connector may run (gh, curl, git) the other two. */
-const CA_NAMES = ['NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR'];
+ *  the tools a connector may run (gh, curl, git, Python) the rest. */
+const CA_NAMES = ['NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'GIT_SSL_CAINFO', 'CURL_CA_BUNDLE', 'REQUESTS_CA_BUNDLE'];
 
 /** URL credentials always need an '@' (user:password@, token@, the scheme-less
  *  user:password@host form) and a host never has one, so any '@' counts, even
