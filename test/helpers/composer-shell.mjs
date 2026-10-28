@@ -63,6 +63,7 @@ export async function open(overrides = {}) {
     doc: s.doc, api: { ...API, ...(overrides.api || {}) }, raf: s.raf,
     viewport: () => ({ ...RECT }), storage: overrides.storage || null, portsFn,
     ...(overrides.notify ? { notify: overrides.notify } : {}),
+    ...(overrides.sessionVerified ? { sessionVerified: overrides.sessionVerified } : {}),
   });
   c.mount();
   c.loadTemplate(overrides.template === undefined ? fixture() : overrides.template);

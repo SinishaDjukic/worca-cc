@@ -33,6 +33,7 @@ import { sessionsOf, sessionHeads, sessionRects } from '../../../src/shared/grap
 import { engineLabel, sessionSupport, SESSION_SUBAGENTS_VERIFIED } from '../../../src/shared/engine-switch.mjs';
 import { AWAY_GLYPH } from '../away-glyph.mjs';
 import { createSessionLayer, sessionWords } from './session-layer.mjs';
+import { flagOn } from '../flags.mjs';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -164,6 +165,7 @@ export function createGraphView(host, {
   let portMap = null;             // wireId -> the OR / AND input it is DRAWN into (lanes.mjs), null = solve
   let sessSpecs = [];             // sessionsOf(current) — [] for an ungrouped template (then nothing below runs)
   let sessLayer = null;           // the .gv-sessions layer, created by the first render that has a session
+  let sessLive = false;           // sessionsLive() at the last render: a drag frame keeps the words and chips in step
   const stats = { wireDUpdates: 0, ghostUpdates: 0, rectReads: 0 };
 
   const h = (tag, cls, text) => {
@@ -240,15 +242,16 @@ export function createGraphView(host, {
     paintSessions(false);
   }
 
-  /** Sub-agents are not promised while the Labs flag is off (C14). */
-  const sessionsLive = () => sessionsOn === true;
+  /** Sub-agents are not promised while the Labs flag is off (C14). Read per render, so a Labs flip shows on the next one. */
+  const sessionsLive = () => (sessionsOn === null ? flagOn('sessionGroups', doc) : sessionsOn === true);
 
   /** The trays (Task 22), after the routes: a tray holds its internal wires' routes. `chips`: also re-seat the member
    *  chips (a render; a drag frame moves no chip). */
   function paintSessions(chips = true) {
     if (!ctx || (!sessSpecs.length && !sessLayer)) return;          // ungrouped: no layer, no work
     if (!sessLayer) { sessLayer = createSessionLayer(doc, { mode }); world.insertBefore(sessLayer.el, wiresEl); }
-    const live = sessionsLive();
+    if (chips) sessLive = sessionsLive();            // a render (or repaintMeta) reads the flag; a drag frame keeps it
+    const live = sessLive;
     const sub = sessionSupport(engine, { verified: sessionVerified }).subagents;
     const engineText = engineLabel(engine);
     // Separate sessions (C14): the Labs flag off, a lone step (V26: it runs on its own), or sub-agents the engine lacks.

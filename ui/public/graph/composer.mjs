@@ -29,6 +29,8 @@ import { mintId, normalizeSessions } from '../../../src/shared/graph/template.mj
 import { sessionsOf, sessionCandidates, sessionLegal, sessionIdOf, pruneSessions, SESSION_DEFAULT_LABEL }
   from '../../../src/shared/graph/sessions.mjs';
 import { LABEL_H } from '../../../src/shared/graph/geometry.mjs';
+import { flagOn } from '../flags.mjs';
+import { SESSION_SUBAGENTS_VERIFIED } from '../../../src/shared/engine-switch.mjs';
 
 export const UNDO_LIMIT = 50;
 /** The ONE reserved workflow id: the server prepends this built-in to
@@ -49,7 +51,8 @@ export const pluginOriginName = (origin) => (typeof origin === 'string' && origi
   ? origin.slice('plugin:'.length) : '');
 const isTyping = (t) => !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
 
-export function createComposer(hostEls, { doc = globalThis.document, api, raf = null, viewport = null, storage = null, portsFn, highlight = null, notify = null, allLevels = false, insetRight: insetRightOpt = null } = {}) {
+export function createComposer(hostEls, { doc = globalThis.document, api, raf = null, viewport = null, storage = null, portsFn, highlight = null, notify = null, allLevels = false, insetRight: insetRightOpt = null,
+  sessionVerified = SESSION_SUBAGENTS_VERIFIED } = {}) {
   const win = doc.defaultView || globalThis;
   const schedule = raf || ((fn) => win.requestAnimationFrame(fn));
   const stats = { rectReads: 0, frames: 0, pointerMoves: 0, validations: 0 };
@@ -75,7 +78,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
 
   let modelById = new Map();                        // id -> label, from /api/config (applyModels)
   const view = createGraphView(hostEls.canvas, {
-    doc, mode: 'edit', portsFn, agents, viewport,
+    doc, mode: 'edit', portsFn, agents, viewport, sessionVerified,
     zoomMin: ZOOM_MIN, zoomMax: ZOOM_MAX,
     modelLabel: (id) => modelById.get(id) || id,
     onTransform: (t) => { paintGrid(t); if (hooks.onTransform) hooks.onTransform(t); },
@@ -192,6 +195,7 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       stats.validations += 1;
       view.render(tpl, { selection: sel, report: shownReport() });
       paintChrome();
+      hooks.onValidate?.();                               // the session toolbar's Split follows V27
     }, 0);
   }
   function render() {
@@ -599,6 +603,9 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
       const map = { ...(tpl.sessions || {}) };
       const entry = { ...(map[sid] || {}) };
       if (next === '') delete entry[key]; else entry[key] = next;
+      // A main agent model that lacks the saved effort drops it in the same commit, as a step's model pick does.
+      const hm = key === 'hostModel' && next && entry.hostEffort ? models.find((m) => m && m.id === next) : null;
+      if (hm && Array.isArray(hm.efforts) && hm.efforts.length && !hm.efforts.includes(entry.hostEffort)) delete entry.hostEffort;
       if (Object.keys(entry).length) map[sid] = entry; else delete map[sid];
       setSessionsMap(map);
     });
@@ -687,8 +694,10 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     if ((ev.metaKey || ev.ctrlKey) && (ev.key === 'z' || ev.key === 'Z')) { ev.preventDefault(); if (ev.shiftKey) redo(); else undo(); return; }
     if (ev.target && ev.target.closest && ev.target.closest('[data-canvas-keys="off"]')) return;   // top bars, dock, Library, chat, sheet, menus
     // ⌘G / ⇧⌘G (05 §3.1): only while the canvas has the keyboard; it overrides the browser's Find-next there.
+    // The Labs flag off: ⌘G and ⇧⌘G stay the browser's (Find next / previous), exactly as before (C14). Delete on a
+    // selected session still ungroups: removing is not creating.
     // A held key repeats: one press joins one step (else the member's next step joins on the first repeat).
-    if ((ev.metaKey || ev.ctrlKey) && (ev.key === 'g' || ev.key === 'G')) { ev.preventDefault(); if (!ev.repeat) { if (ev.shiftKey) ungroupSelected(); else joinNext(); } return; }
+    if ((ev.metaKey || ev.ctrlKey) && (ev.key === 'g' || ev.key === 'G') && flagOn('sessionGroups', doc)) { ev.preventDefault(); if (!ev.repeat) { if (ev.shiftKey) ungroupSelected(); else joinNext(); } return; }
     // A focused header strip is a button (05 §3.6): Enter or Space selects its session (Space is not the pan key there).
     // Space on a strip whose session is already selected (after a press) is the hand-pan key again, as on a focused card.
     const strip = (ev.key === 'Enter' || ev.key === ' ') && ev.target && ev.target.closest ? ev.target.closest('.gv-sess-head[data-session-id]') : null;
@@ -1255,6 +1264,8 @@ export function createComposer(hostEls, { doc = globalThis.document, api, raf = 
     sessions: { join: joinSession, leave: leaveSession, ungroup: ungroupSession, split: splitSession, setSetting: setSessionSetting, byId: sessionById },
     docToken: () => token,
     models: () => ({ models, efforts, subagentModels }),
+    /** The sub-agents gate the Composer draws with (the app passes none: SESSION_SUBAGENTS_VERIFIED; tests open it). */
+    sessionVerified: () => sessionVerified,
     metaOf: (node) => (node && node.kind === 'agent' ? (agents[node.key] || null) : node && node.kind === 'script' ? (scripts[node.key] || null) : null),
     placedKinds: () => tpl.nodes.map((n) => n.kind),
     isPristine: () => isPristine(),

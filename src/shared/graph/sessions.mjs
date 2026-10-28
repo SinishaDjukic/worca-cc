@@ -10,6 +10,9 @@ import { LABEL_H } from './geometry.mjs';
 import { ENGINES, engineLabel, sessionSupport, SESSION_SUBAGENTS_VERIFIED } from '../engine-switch.mjs';
 
 export const SESSION_DEFAULT_LABEL = 'One session';
+/** "One conversation" (mode `shared`) is offered but not selectable until its runtime exists (Task 65). Task 66 flips
+ *  this one switch, which the toolbar's How menu and the inspector's segment both read. */
+export const SESSION_SHARED_SELECTABLE = false;
 const FLOW_IN_CLOSURE = new Set(['and', 'or', 'combine']);   // task and end never ride inside a session
 const isObj = (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 const text = (v) => (typeof v === 'string' && v.trim() ? v : null);
