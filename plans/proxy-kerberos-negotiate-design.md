@@ -59,7 +59,7 @@ extension, or SSSD on a domain-joined Linux box. The cache type differs: `FILE:`
 Costs of `kerberos`, to accept knowingly:
 
 - **Install.** `prebuild-install` downloads the binary from `github.com/mongodb-js/kerberos/releases` at `npm install`. It uses npm's proxy settings. A company that installs from an internal registry mirror and cannot reach GitHub falls back to `node-gyp rebuild`, which needs a compiler and the Node headers from `nodejs.org`. `npm install --ignore-scripts` (which some companies require) leaves no binary at all, and loading then fails with `MODULE_NOT_FOUND`. So the module must be optional and its absence a clear state, never a crash. The docs name `npm rebuild kerberos` and prebuild-install's binary-host mirror setting. (Spike, §8.)
-- **Runtime libraries.** On macOS the universal prebuild links the system `Kerberos.framework` (Heimdal), so `API:` caches and Ticket Viewer work with nothing extra installed. On Linux it needs `libgssapi_krb5.so.2` (MIT krb5); not yet checked (§8).
+- **Runtime libraries.** On macOS the universal prebuild links the system `Kerberos.framework` (Heimdal), so `API:` caches and Ticket Viewer work with nothing extra installed. On Linux the prebuild does not link GSSAPI: it opens `libgssapi_krb5.so.2` (MIT krb5) with `dlopen` at load. Without that library the raw error is clear ("Opening library libgssapi_krb5.so.2 failed: … No such file or directory"). But the package's loader then also tries `build/Debug` and throws `MODULE_NOT_FOUND … ../build/Debug/kerberos.node`, which hides it. Worca loads `build/Release/kerberos.node`'s error first, or checks for the library itself, and says "install libgssapi-krb5-2 (Debian/Ubuntu) or krb5-libs (RHEL)". Alpine (musl) has no prebuild, and the source build needs Python and a compiler; there the install fails.
 - **Supply chain.** One more native binary, plus **36 transitive packages** (`npm ls` after a clean install), nearly all of them `prebuild-install`'s download stack (`tar-fs`, `simple-get`, `tunnel-agent` and others), installed always, at about 2.5 MB. `prebuild-install` 7.1.3 is marked deprecated ("No longer maintained") on npm. Pinned exactly, like the rest of `dependencies`.
 - **Error strings.** On macOS the addon's error text for a Kerberos failure once carried stray bytes after the message (`not found ;��\u0001`), which looks like a read past the end of a buffer. Worca never shows or logs the addon's raw text. It maps failures to its own texts (5.2) and logs only a cleaned cause.
 
@@ -115,9 +115,10 @@ kerberosStep(ctx, socket, buildHead, deadline, opts):
 ```
 
 - `negotiator` is a small module, `src/core/negotiate.mjs`. It wraps `kerberos.initializeClient(`HTTP@${host}`, { mechOID: SPNEGO, flags: 0 })` and is injected into `createUpstreamConnector`, so tests pass a fake. One client object per connection (an SSPI context is per connection), with a cap of three legs.
-- Flags: `0`. Never `GSS_C_DELEG_FLAG`. The spike shows that this flag really forwards the TGT: the token grows from 1104 to 2140 bytes, and the KDC logs a second TGS-REQ for the forwarded TGT. No mutual-auth requirement: a missing or bad mutual token in the final `Proxy-Authenticate` does not fail the login.
+- Flags: `0`. Never `GSS_C_DELEG_FLAG`. The spike shows that this flag really forwards the TGT: on macOS the token grows from 1104 to 2140 bytes, and the KDC logs a second TGS-REQ for the forwarded TGT. On Linux the same happens with a forwardable TGT (`kinit -f`, or `forwardable = true` in a company `krb5.conf`): 996 to 2008 bytes. With a non-forwardable TGT the flag does nothing. No mutual-auth requirement: a missing or bad mutual token in the final `Proxy-Authenticate` does not fail the login.
 - SPN: `HTTP@<upstream host>`, the host as configured. A proxy configured by IP or by a CNAME the SPN does not match will fail. The 407 text says to enter the proxy's real host name. No `spn` setting until someone needs one.
-- `ProxyCredentials` gets no secret in this mode. `ctx.creds` is a label only: the principal, for `worca proxy status` and the card. `client.username` is `null` until the client has stepped the proxy's mutual-auth token from the `200` (spike, §8). So the connector does step that token when there is one, for the name only, and does not require it.
+- `ProxyCredentials` gets no secret in this mode. `ctx.creds` is a label only: the principal, for `worca proxy status` and the card. With SPNEGO, `client.username` stays `null` until the client has stepped the proxy's mutual-auth token. Squid 5.7 sends none on a CONNECT `200` (spike, §8). The plain krb5 mech completes in one step and gives the principal at once. So the negotiator learns the name from one local krb5-mech `initializeClient` + `step('')`, whose token it never sends: the same call that sorts failure causes in 5.2.
+- On the wire stays SPNEGO. Squid also took a raw krb5 token, but IIS, ISA/Forefront and Blue Coat expect SPNEGO, and SPNEGO is what browsers send.
 - Pooling, the plain-HTTP `HEAD` probe and the per-request fallback work unchanged: Negotiate logs in a connection, like NTLM.
 
 ### 5.2 Lockout breaker
@@ -129,7 +130,7 @@ and KDC in a loop", still does.
 
 - A new gate state, `needs-ticket`, next to `tripped`. It is entered on a 407 to a Negotiate token, or when the token cannot be built locally (no TGT, TGT expired, KDC unreachable, unknown SPN). A local failure never contacts the proxy.
 - In `needs-ticket` the gate refuses at once with a 407 and `x-worca-proxy: needs-ticket`, and a text by cause: "no Kerberos ticket: run `kinit` or log in to the domain", "the KDC does not know HTTP/<host>: enter the proxy's host name", "the KDC cannot be reached", "the proxy refused the ticket".
-- Telling the causes apart needs one extra local call. On macOS the SPNEGO mech answers every local failure (no cache, expired TGT, unknown SPN, KDC down) with the same text, "An unsupported mechanism was requested: unknown mech-code 0" (spike, §8). The plain Kerberos mech (`GSS_MECH_OID_KRB5`) names the real cause: `UNKNOWN_SERVER`, `unable to reach any KDC`, `Matching credential … not found`, or `get-principal open(...)`. So after a SPNEGO failure the negotiator retries once with the krb5 mech, only to sort the cause, and never sends that token.
+- Telling the causes apart needs one extra local call on macOS. On Linux (MIT) the SPNEGO error already names the cause ("No Kerberos credentials available", "Ticket expired", "Server HTTP/… not found in Kerberos database", "Cannot contact any KDC for realm …"). On macOS the SPNEGO mech answers every local failure (no cache, expired TGT, unknown SPN, KDC down) with the same text, "An unsupported mechanism was requested: unknown mech-code 0" (spike, §8). The plain Kerberos mech (`GSS_MECH_OID_KRB5`) names the real cause: `UNKNOWN_SERVER`, `unable to reach any KDC`, `Matching credential … not found`, or `get-principal open(...)`. So after a SPNEGO failure the negotiator retries once with the krb5 mech, only to sort the cause, and never sends that token.
 - Heimdal caches a failed service lookup for 20 minutes ("cached result, timeout in 1188 sec"). After IT adds the SPN, a probe can still fail until that cache runs out. The `needs-ticket` text says so for the unknown-SPN cause.
 - It recovers by itself, unlike `tripped`: one probe handshake after 30 s, doubling to 5 min. A **Test** press, `worca proxy test`, or a cache change (5.3) probes at once. A success returns the gate to `verified`.
 - `unconfirmed()` strikes and the `MAX_PARALLEL_HANDSHAKES` limit apply as for NTLM.
@@ -190,8 +191,11 @@ Setup: Homebrew MIT `krb5kdc` 1.x as a user process on `127.0.0.1:18088`, realm 
 `kerberos.initializeServer` against the keytab, so the acceptor is real Kerberos, not a fake. Everything lived in
 the session scratchpad and was stopped afterwards. Nothing is in the repo.
 
-The Lima VM that has Docker was in an error state, so the Linux and Squid parts did not run. Windows was not run
-either (no Windows machine).
+Linux part (same day, after a restart of the Lima VM): Docker on aarch64. One Debian 12 container ran the MIT KDC,
+Squid 5.7 with `negotiate_kerberos_auth` and the service keytab (Negotiate only, `proxy_auth REQUIRED`), and a `socat`
+echo origin. The clients were `node:22-bookworm`, `node:22-bookworm-slim` and `node:22-alpine` (Node 22.23.4) on the
+same network. Everything was removed afterwards. x64 Linux was not run: the VM has no x86 emulation. Windows was not
+run (no Windows machine).
 
 | Check | Result |
 |---|---|
@@ -210,11 +214,27 @@ either (no Windows machine).
 | `kinit` again | Replaces the cache file (new inode, new mtime), so the stat poll in 5.3 sees it. The next token works at once |
 | SPNEGO mech list (macOS) | Kerberos plus a Heimdal-private mech (`1.2.752.43.14.3`). No NTLM, as 3 assumes for macOS |
 
-Still open, for a second spike once Docker is back:
+Linux (arm64, glibc 2.36):
 
-1. Linux x64 and arm64 (glibc and slim): whether the prebuild loads without `libgssapi_krb5.so.2` and with what error, and the same flow against the compose KDC with Squid's `negotiate_kerberos_auth` (7.2).
-2. Windows x64 on a domain-joined machine: SSPI Negotiate with Kerberos, and with NTLM fallback.
-3. Whether Squid takes the token as is (it should take a SPNEGO-wrapped AP-REQ).
+| Check | Result |
+|---|---|
+| Install, bookworm and bookworm-slim | Prebuild downloaded, 37 packages. `NEEDED`: libc, libstdc++, libdl, libm, libgcc_s, libpthread; no GSSAPI |
+| Load on slim (no `libgssapi_krb5.so.2`) | `MODULE_NOT_FOUND … ../build/Debug/kerberos.node`. The real cause shows only when `build/Release/kerberos.node` is loaded directly (2.3) |
+| Load on slim after `apt-get install libgssapi-krb5-2` | Loads |
+| Full bookworm (library already there), no ticket | Loads. `step` says "No credentials were supplied … SPNEGO cannot find mechanisms to negotiate" |
+| Alpine (musl) | No prebuild ("No prebuilt binaries found … libc=musl"). `node-gyp` fails without Python, so the install fails |
+| CONNECT through Squid, SPNEGO, `kinit alice` | 407, then one leg with a 996-byte token (1–3 ms), then `200`, and the tunnel echoes. Squid's access log: `TCP_TUNNEL/200 … alice@WORCA.TEST` |
+| Mutual token from Squid | None on the CONNECT `200`. SPNEGO client: `complete: false`, `username: null` |
+| Raw krb5 token (not SPNEGO) | Squid accepts it. Client: `complete: true`, `username: 'alice@WORCA.TEST'` with no reply needed |
+| Delegation | Non-forwardable TGT: 996 bytes either way. `kinit -f`: 996 bytes with flags `0`, 2008 bytes with the delegation flag |
+| No ticket / expired TGT / unknown SPN / SPN by IP / KDC down with TGT only | Clear MIT texts on both mechs: "No Kerberos credentials available (default cache: FILE:/tmp/cc)", "Ticket expired", "Server HTTP/other.worca.test@WORCA.TEST not found in Kerberos database", "Server HTTP/172.19.0.2@WORCA.TEST not found …", "Cannot contact any KDC for realm 'WORCA.TEST'" |
+| A local failure reaches the proxy? | No. Squid logged only the unauthenticated 407 for those runs, never a request with a token |
+
+Still open:
+
+1. Linux x64 (expected the same: x64 has a Tier 1 prebuild).
+2. RHEL/Fedora with SSSD and a `KCM:` cache, the default there. GSSAPI should read it, since the library does.
+3. Windows x64 on a domain-joined machine: SSPI Negotiate with Kerberos, and with NTLM fallback.
 
 ## 9. Open questions for Sinisha
 
