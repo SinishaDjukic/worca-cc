@@ -21,6 +21,10 @@ project's working tree, so nothing is ever committed to your repo.
                                         status) and req_export_links (one row per feature: its current ticket, the
                                         spec and fields as last sent, the tracker's fingerprint of the description,
                                         a pending create's marker). Every export is also an `export` turn.
+                                        Requirements import (v80): req_export_links.origin ('export' | 'import'; a link
+                                        an import made keeps the ticket's issue type and priority) and
+                                        req_attachments.fetch_json (a tracker file still to be downloaded: the
+                                        connection, the ticket key and the attachment id; NULL for an upload).
   backup-<ts>/                          legacy JSON archived on first upgrade (see below)
   store/no-project-00000000/            runs without a project: one store, the History group "No project";
                                         a run's work/ moves into its pipeline folder as work/ when it ends
@@ -86,6 +90,9 @@ project's working tree, so nothing is ever committed to your repo.
   tmp/requirements/att-read-<8 hex>/    one file read's folder: a copy of that one file (a text file's copy is its
                                         redacted text), mode 0700 / 0600, removed when the read ends (a restart's
                                         leftovers older than an hour are swept at boot)
+  tmp/requirements/att-get-<8 hex>/     one tracker download's folder, mode 0700: the connector writes the body to
+                                        body.part, Worca checks it and writes it into requirements/att/; removed when the
+                                        download ends (a restart's leftovers older than an hour are swept at boot)
   tmp/ask/                              the Chat assistant's scratch cwd + per-turn
                                         mcp-<messageId>.json, mode 0600 (never a project folder)
   logs/ask-web.jsonl                    Chat web access: one line per web_fetch/web_search

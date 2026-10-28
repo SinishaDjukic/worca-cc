@@ -158,7 +158,8 @@ with `import: true` and implements the optional import ops:
 
 - **importOptions** — the projects, for the picker's project select.
 - **searchTickets** — the project's most recently updated issues, or a text search (`text ~ "…"`), 20 a page; a pasted key
-  or issue link finds that issue in any project. Never your saved JQL filter.
+  or issue link finds that issue in any project. Never your saved JQL filter. On Jira Cloud an empty search in all projects
+  lists the issues updated in the last year (`updated >= -365d`).
 - **importTicket** — the summary, the rendered description as Markdown (an image becomes "(image: <name>)", a table row
   "| a | b |", a person's link their name), the criteria from a multi-line text field (the export setup's criteria field, else
   one named "Acceptance Criteria"), the newest 50 comments with the author's display name only (comments restricted to a
