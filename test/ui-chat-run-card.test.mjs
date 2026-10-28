@@ -133,11 +133,9 @@ test('chat run card: head, sub-line, stats, agent chips with model + cycle, Auto
       assert.ok($('.chat-rc-graph .node[data-node-id="n_impl"]').classList.contains('is-active'));
       assert.equal(well.getAttribute('aria-label'), 'Workflow graph: Planner → Implementer');
       $('a.ask-rc-open').click();
-      $('.chat-rc-expand').click();
       assert.equal(calls[0][0], 'panel');
       assert.deepEqual({ runId: calls[0][1].runId, pipelineId: calls[0][1].pipelineId, projectKey: calls[0][1].projectKey }, { runId: 'run-uuid-1', pipelineId: 'abcd1234', projectKey: 'proj-00000001' });
       assert.deepEqual(calls[0][2], {});
-      assert.deepEqual(calls[1][2], { tab: 'workflow' });
       assert.equal($('.chat-rc-expand').getAttribute('aria-label'), 'Expand');
       assert.equal($('a.ask-rc-open').textContent, 'Open ›');
     } },
@@ -185,6 +183,142 @@ test('chat run card: head, sub-line, stats, agent chips with model + cycle, Auto
       assert.equal($('.ask-rc-cost').textContent, 'cost unknown');
       card.update(null);
       assert.equal($('.ask-rc-title').textContent, 'Fix login', 'D24: never regress to Starting');
+    } },
+  ]);
+});
+
+test('chat run card Expand: the same live graph, large, in an overlay over the chat — nothing navigates, Esc / Close / the backdrop close it', async () => {
+  const overlay = (doc) => doc.querySelector('body > .viewer-modal.chat-rc-zoom');
+  const esc = (doc, win) => (doc.activeElement || doc.body).dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await checkRows([
+    { name: 'a click opens a body-level dialog holding the same run\'s graph in a monitor host with the zoom cluster; openRunPanel is not called', run: async () => {
+      const { card, $, doc, calls, win } = mk();
+      card.update(live());
+      const href = win.location.href;
+      const expand = $('.chat-rc-expand');
+      assert.equal(expand.getAttribute('aria-haspopup'), 'dialog');
+      expand.focus();
+      expand.click();
+      const ov = overlay(doc);
+      assert.ok(ov, 'the overlay is open, outside the card');
+      assert.equal(ov.getAttribute('role'), 'dialog');
+      assert.equal(ov.getAttribute('aria-modal'), 'true');
+      assert.equal(doc.getElementById(ov.getAttribute('aria-labelledby')).textContent, 'Fix login');
+      const wrap = ov.querySelector('.run-flow-wrap');
+      assert.ok(wrap.classList.contains('gv-wrap-monitor'), 'the run monitor host: its status styling, pan and zoom');
+      assert.ok(wrap.querySelector(':scope > .gv-nav'), 'the .gv-nav cluster');
+      assert.ok(ov.querySelector('.run-flow .node[data-node-id="n_impl"]').classList.contains('is-active'), 'the same run, live state');
+      assert.equal(calls.filter((c) => c[0] === 'panel').length, 0, 'Expand never opens the run');
+      assert.equal(win.location.href, href, 'the hash is unchanged');
+      assert.equal(doc.activeElement, ov.querySelector('.chat-rc-zoom-close'), 'the focus moves into the dialog');
+      assert.equal(ov.querySelector('.chat-rc-zoom-close').textContent, 'Close');
+      expand.click();
+      assert.equal(doc.querySelectorAll('.chat-rc-zoom').length, 1, 'one overlay at a time');
+    } },
+    { name: 'it stays live: a card update repaints the overlay\'s graph', run: async () => {
+      const { card, doc, $ } = mk();
+      card.update(live());
+      $('.chat-rc-expand').click();
+      card.update(done());
+      const node = overlay(doc).querySelector('.run-flow .node[data-node-id="n_impl"]');
+      assert.ok(node.classList.contains('is-done') && !node.classList.contains('is-active'), 'the step settled in the overlay too');
+    } },
+    { name: 'Escape closes it and the focus goes back to Expand', run: async () => {
+      const { card, doc, $, win } = mk();
+      card.update(live());
+      $('.chat-rc-expand').focus();
+      $('.chat-rc-expand').click();
+      esc(doc, win);
+      await settle();
+      assert.equal(overlay(doc), null);
+      assert.equal(doc.activeElement, $('.chat-rc-expand'));
+    } },
+    { name: 'Close and a backdrop click close it; a click inside the card does not', run: async () => {
+      const { card, doc, $, win } = mk();
+      card.update(live());
+      $('.chat-rc-expand').click();
+      overlay(doc).querySelector('.chat-rc-zoom-close').click();
+      assert.equal(overlay(doc), null);
+      assert.equal(doc.activeElement, $('.chat-rc-expand'));
+      $('.chat-rc-expand').click();
+      const ov = overlay(doc);
+      const press = (el) => { el.dispatchEvent(new win.MouseEvent('mousedown', { bubbles: true })); el.dispatchEvent(new win.MouseEvent('click', { bubbles: true })); };
+      press(ov.querySelector('.wf-pop-card'));
+      await settle();
+      assert.ok(overlay(doc), 'a press on the dialog card is not an outside click');
+      press(ov);
+      await settle();
+      assert.equal(overlay(doc), null);
+      assert.equal(doc.activeElement, $('.chat-rc-expand'));
+    } },
+    { name: 'Tab and shift+Tab wrap around the dialog\'s controls; the focus never walks out into the chat', run: async () => {
+      const { card, doc, $, win } = mk();
+      card.update(live());
+      $('.chat-rc-expand').click();
+      const ov = overlay(doc);
+      const stops = [...ov.querySelectorAll('button:not([disabled]), a[href], [tabindex="0"]')].filter((n) => !n.closest('[hidden]'));
+      const first = stops[0], last = stops[stops.length - 1];
+      assert.equal(first, ov.querySelector('.chat-rc-zoom-open'), 'the first stop is Open run');
+      assert.ok(last.closest('.gv-nav'), 'the last stop is in the zoom cluster');
+      const tab = (shiftKey) => {
+        const e = new win.KeyboardEvent('keydown', { key: 'Tab', shiftKey, bubbles: true, cancelable: true });
+        doc.activeElement.dispatchEvent(e);
+        return e.defaultPrevented;
+      };
+      last.focus();
+      assert.equal(tab(false), true);
+      assert.equal(doc.activeElement, first, 'Tab on the last stop wraps to the first');
+      assert.equal(tab(true), true);
+      assert.equal(doc.activeElement, last, 'shift+Tab on the first stop wraps to the last');
+      ov.querySelector('.chat-rc-zoom-close').focus();
+      assert.equal(tab(false), false, 'a Tab between stops is left to the browser');
+      assert.equal(doc.activeElement, ov.querySelector('.chat-rc-zoom-close'));
+    } },
+    { name: 'a close while Expand is hidden or gone does not refocus it, and never scrolls the chat', run: async () => {
+      const { card, doc, $ } = mk();
+      card.update(live());
+      const expand = $('.chat-rc-expand');
+      const seen = [];
+      expand.focus = (opts) => seen.push(opts);
+      expand.click();
+      overlay(doc).querySelector('.chat-rc-zoom-close').click();
+      assert.deepEqual(seen, [{ preventScroll: true }], 'Close refocuses Expand without scrolling');
+      expand.click();
+      card.update(live({ auto: { status: 'deciding' }, stepper: null, decor: null, progress: null, active: [] }));
+      assert.equal(overlay(doc), null);
+      assert.equal(seen.length, 1, 'a hidden Expand is not refocused');
+      card.update(live());
+      expand.click();
+      card.destroy();
+      assert.equal(overlay(doc), null);
+      assert.equal(seen.length, 1, 'a card torn down does not refocus its Expand');
+    } },
+    { name: 'Open run is the one way on: it closes the overlay and opens the run\'s Workflow tab', run: async () => {
+      const { card, doc, $, calls } = mk();
+      card.update(live());
+      $('.chat-rc-expand').click();
+      overlay(doc).querySelector('.chat-rc-zoom-open').click();
+      assert.equal(overlay(doc), null);
+      const panel = calls.filter((c) => c[0] === 'panel');
+      assert.equal(panel.length, 1);
+      assert.equal(panel[0][1].pipelineId, 'abcd1234');
+      assert.deepEqual(panel[0][2], { tab: 'workflow' });
+    } },
+    { name: 'Expand stays hidden while nothing is drawable; a graph that goes away or a card torn down takes the overlay with it', run: async () => {
+      const { card, doc, $ } = mk();
+      const deciding = { auto: { status: 'deciding' }, stepper: null, decor: null, progress: null, active: [] };
+      card.update(live(deciding));
+      assert.equal($('.chat-rc-expand').hidden, true);
+      card.update(live());
+      assert.equal($('.chat-rc-expand').hidden, false);
+      $('.chat-rc-expand').click();
+      card.update(live(deciding));
+      assert.equal($('.chat-rc-expand').hidden, true);
+      assert.equal(overlay(doc), null, 'no overlay of a graph the card no longer draws');
+      card.update(live());
+      $('.chat-rc-expand').click();
+      card.destroy();
+      assert.equal(overlay(doc), null);
     } },
   ]);
 });
