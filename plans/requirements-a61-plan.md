@@ -4,7 +4,7 @@
 
 **Goal:** A product owner starts a feature from a ticket the team already wrote: **New feature › From a ticket…** finds the ticket in a connected tracker, shows exactly what will be taken (title, description, acceptance criteria, comments, attachments, each with a checkbox), and **Use this ticket** fills the form. **Start the interview** creates the feature at once with the ticked criteria as the product owner's own `R-po-<n>` (marked "from SHOP-124"), the picked comments as one file Worca reads, the picked attachments downloaded server-side and read like A8 files, and the feature linked to its ticket, so Export updates it and a run reports back to it. No model call for the import, nothing written to the tracker; behind the `requirements` flag.
 
-**Architecture:** The Requirements code knows only "a task source that can import": four optional connector ops (`importOptions`, `searchTickets`, `importTicket`, `downloadAttachment`) plus `capabilities().import`, called server-side through the existing `callSource` (plugin API stays 5). A pure module `src/core/requirements/ticket-import.mjs` turns a tracker's answer into what the preview shows and the create stores (criteria section, clip, redaction, the comments file, the reasons, the default ticks). `src/core/requirements/import.mjs` is the service (sources, defaults, options, search, preview, the second read and the create); `src/core/requirements/attachment-fetch.mjs` downloads a picked attachment into a fresh private folder, checks it, moves it into A8's store and hands it to A8's read queue. Storage is two columns (schema v80): `req_export_links.origin` and `req_attachments.fetch_json`. Jira's part lives only in `plugins/jira-source/connector/` (REST v2, Cloud and Data Center). The page module `ui/public/requirements-view.mjs` gains the button, two dialogs, the filled form, the Files card's download states and the imported link's export copy; CSS goes into the Requirements block of `ui/public/style.css`.
+**Architecture:** The Requirements code knows only "a task source that can import": four optional connector ops (`importOptions`, `searchTickets`, `importTicket`, `downloadAttachment`) plus `capabilities().import`, called server-side through the existing `callSource` (plugin API stays 5). A pure module `src/core/requirements/ticket-import.mjs` turns a tracker's answer into what the preview shows and the create stores (criteria section, clip, redaction, the comments file, the reasons, the default ticks). `src/core/requirements/import.mjs` is the service (sources, defaults, options, search, preview, the second read and the create); `src/core/requirements/attachment-fetch.mjs` downloads a picked attachment into a fresh private folder, checks it, writes the checked bytes into A8's store and hands it to A8's read queue. Storage is two columns (schema v80): `req_export_links.origin` and `req_attachments.fetch_json`. Jira's part lives only in `plugins/jira-source/connector/` (REST v2, Cloud and Data Center). The page module `ui/public/requirements-view.mjs` gains the button, two dialogs, the filled form, the Files card's download states and the imported link's export copy; CSS goes into the Requirements block of `ui/public/style.css`.
 
 **Tech Stack:** Node ESM, `node:sqlite`, `node:test`, jsdom, Express (`ui/server.mjs` → `src/core/requirements/routes.mjs`), the plugin shim (`src/core/plugin-shim.mjs`, one child per op, `WORCA_MOCK=1` canned answers), vanilla DOM (`ui/public/*.mjs`), `node:http` fake Jira servers for the connector, headless Chrome over CDP for the browser proof.
 
@@ -25,29 +25,29 @@
 - The plugin contract (D2): the four ops are optional and additive; `WORCA_PLUGIN_API` stays 5, `WORCA_PLUGIN_APIS` unchanged, jira-source keeps `"worca-cc-api": ">=5 <6"`. A source can import only when `capabilities()` answers `import: true`; the probe is A6's (one call per plugin, source id and installed version answers both `export` and `import`). None of the four is added to `POST /api/sources/call`'s allowlist.
 - Safety (D15): every tracker call is `callSource` from `import.mjs` or `attachment-fetch.mjs` (server-side), with the connection's profile; no response carries a config value. Ticket text is data: the description in `<description>`, the criteria in `<current_spec>`, the comments in `<attachments>`, the import line in `<thread>`, all through the prompts' existing `asData`; the page renders ticket text with `textContent` only, never `innerHTML`. The description, criteria and comment bodies are redacted with `redactAskText` at the import (before the preview and before storage); downloaded attachments are stored as given and redacted on the way to the model (A8). A download writes only to `dest`, the fixed name `body.part` inside a fresh 0700 folder `<worcaHome>/tmp/requirements/att-get-<8 hex>/`; the host trusts nothing there until its checks pass (inside the folder, `lstat` a regular file and no link, size equal to the answer's `bytes` and at most 25 MB, A8's type, sniff and text rules, A8's duplicate rule). People are display names only.
 - Timeouts (D17): `IMPORT_TIMEOUT_MS = 60_000` for `importOptions`, `searchTickets`, `importTicket`; `DOWNLOAD_TIMEOUT_MS = 120_000` per `downloadAttachment`; `MAX_DOWNLOAD_JOBS = 2` across all features, separate from A8's `MAX_READ_JOBS` and A1's `MAX_JOBS`; a create waiting for its files' downloads and reads does not hold a `MAX_JOBS` slot (A8-D2); round 1 waits at most `ROUND1_WAIT_MS` (6 minutes) for downloads and reads together.
-- **Product copy never shows raw plugin or error text.** A tracker failure is mapped by its `kind` to a fixed phrase; the raw message goes to the server log (`console.error`) with the op's name. Import (search, preview, create): "Worca could not reach Jira: <reason>." with `<reason>` "the API token was refused" (`auth`), "it did not answer within a minute" (`timeout`), "the network connection failed" (`network`), "it asked Worca to slow down" (`rate-limit`), else "it answered with an error". Download (per file): "Worca could not get this file from Jira: <reason>." with "it did not answer within 2 minutes" (`timeout`), "the API token was refused" (`auth`), "the network connection failed" (`network`), "it asked Worca to slow down" (`rate-limit`), "this connection may not see it" (403), "it is no longer on SHOP-124" (gone), "Jira did not send it" (nothing usable at `dest`), else "it answered with an error". (This replaces D16's "else the plugin's message", which would put raw plugin text in product copy.) `Jira` is always the source's `displayName`; the Requirements code never names Jira.
+- **Product copy never shows raw plugin or error text.** The server log gets only the first line of a failure's raw message, at most 200 characters (`firstLine(err)`, exported from `export.mjs` in Task 3, as A6's `trackerCall` logs it: "never a plugin's whole stdout/stderr"), with the op's name. Import (search, preview, create) uses A6's own wording, unchanged (design U1): "Worca could not reach Jira: <reason>." built by `export.mjs`'s `reachSentence(name, err)` / `reachReason(err, name)` — `auth` "the API token was refused", `timeout` "it did not answer within a minute", `protocol` "the Jira plugin gave an answer Worca could not read", a `network` / `rate-limit` / `plugin` message that is product copy (one line, at most 300 characters, no stack frame, path or JS error: the connector's own sentences such as "Jira refused the request: …") that message without its final period, anything else "the Jira plugin stopped unexpectedly". No import phrase table of its own. Download (per file, design D16 adjusted for the build): "Worca could not get this file from Jira: <reason>." with "it did not answer within 2 minutes" (`timeout`), "the API token was refused" (`auth`), "the network connection failed" (`network`), "it asked Worca to slow down" (`rate-limit`), "this connection may not see it" (403), "it is no longer on SHOP-124" (gone), "Jira did not send it" (nothing usable at `dest`), "Worca could not store it" (the host's own folder, write or queue failed), else "it answered with an error" — never the plugin's text. `Jira` is always the source's `displayName`; the Requirements code never names Jira.
 - **No real person's names** in fixtures, mocks, tests or screenshots: authors are "Ann Example", "Bo Example", "Cy Example", and the app author "Jira Automation". The fake secret in a comment is `ghp_abcdefghijklmnopqrstuvwxyz0123456789` (the repo's existing test token).
 - `ui/public/style.css`: tokens only (no hex, no `rgba(`); font sizes from the type scale (`var(--fs-caption)` 11, `var(--fs-meta)` 12, `var(--fs-body)` 13, 15px for a section heading, 18px for a dialog title — never 11.5, 12.5 or 14px); radii `var(--r-xs|sm|md)` or 0, never 12px or 999px; never `min-height:44px` on `.btn` (44 is off the control scale) — a phone tap area is an absolutely placed `::after` hit area, as A6's `.req-export .req-dlg-btns .btn::after`; shared icons (`icon(ICONS.remove)`, `icon(ICONS.file)`, `icon(ICONS.image)`, `icon(ICONS.info)`, `sharedIcon(document, 'external', 12)`, `sharedIcon(document, 'search', 14)`), never a text glyph such as ×, ✓ or ↗; a picked row or a checkbox is never green-filled (a picked ticket row has an ink border, as A6's `.req-export-mode:has(input:checked)`). Every new rule is a `req-import-*` rule (or extends an existing `req-file*` / `req-history*` rule) inside the Requirements block, which ends right before `/* ── marketplace P3 ── */`. `style.css` and `requirements-view.mjs` are checked out with CRLF line endings on Windows (`git ls-files --eol` shows `w/crlf`): keep them; after an edit `git diff --stat` shows only the lines you changed, never the whole file.
 - Dialogs (D19): `role="dialog"` `aria-modal="true"`, labelled by their `h2` (`tabindex="-1"`), opened through the page's `openModal(card, { trigger, first: title, page: true })`, so the focus moves to the title the moment the dialog opens and every other child of `<body>` is inert at every width; the inert page is released on every close path (Cancel, Escape, Back, Use this ticket, a failure that closes) and on the view's `leave()` (already wired to `releaseExport()`); the focus returns to **From a ticket…** on close. Every async answer checks the dialog's generation (`live(g)`, A6's `dlgGen`) and, for a search, its own request number (`st.seq`): an answer for a closed dialog or a superseded search is dropped. No double posts: a button whose request is in flight ignores presses (a `busy` flag set before the first await). Live regions (`role="status"`, `role="alert"`) are persistent nodes whose text changes; they are never rebuilt by an unrelated repaint.
 - Phone (D19): at 900 px and narrower both dialogs are full-screen sheets: `.req-dlg-wrap.req-dlg-sheet .card.req-dialog.req-export` (A6's rule: `position:fixed; inset:0`, the viewport's size, never the content's, scrolling inside), so each import dialog carries the classes `req-dialog req-export req-import`; **← New feature** (`aria-label="Back to New feature"`) first; sections stacked; every row and button reaching 44 px through `::after`; buttons full width. The sheet fits a 390 × 844 viewport with its buttons visible.
-- Task sizing: every UI task brief is at most about 400 lines of new code; a task that grows past that is split before it starts (A6's Task 10 stalled twice when it was too big).
+- Task sizing: every task brief stays under about 450 lines (tests, code and steps together); a task that grows past that is split before it starts (A6's Task 10 stalled twice when it was too big, which is why the review split this plan's downloads and its two dialogs into two tasks each).
 - User-facing copy, verbatim (design §2, §7, boards 32–36; `Jira` is the tracker's `displayName`, `SHOP` the tracker project, `SHOP-124` the ticket, `FEAT-8` the new feature, `FEAT-7` another feature, server-local dates as `27 Oct`):
   - New feature (board 32): button "From a ticket…" (`aria-haspopup="dialog"`) at the right of the Describe it label · strip "Starting from" · chip "SHOP-124" with the external icon, named "SHOP-124, opens the ticket in Jira in a new tab" · " · Story · In progress" · "Change ticket…" · × named "Stop using SHOP-124" · "acme.atlassian.net (Cloud) · The new feature stays linked to SHOP-124: Export updates it, and a run can report back to it." (D12, a ticket another feature follows: "acme.atlassian.net (Cloud) · SHOP-123 follows FEAT-7, so the new feature stays unlinked.") · Describe it hint "From SHOP-124's description. Change it as you like: the interview starts from what is here." · empty description hint "SHOP-124 has no description. Describe it in a few sentences." · long description "SHOP-124's description is longer than 20,000 characters. The form keeps the start; the whole text goes along as SHOP-124 description.md." · field "Acceptance criteria" "from SHOP-124" · "They start the spec as your criteria. Edit or remove them on the feature page." · a ticket file chip: name, "Text · 3 KB", chip "SHOP-124", × "Remove <name>" · "Worca gets the SHOP-124 files from Jira when you start the interview." · Replace prompt "Replace the title and description with SHOP-131's?" "Replace" "Keep mine" · create failure (board 36, 8): the server's sentence, then "Nothing was created, and the form keeps what you entered. Try again, or stop using SHOP-124 to start without it."
   - Pick (board 33): "Start from a ticket" · "Pick the ticket this feature starts from. Worca reads it through your Jira connection and changes nothing in Jira." · "Connection" (only with several; option "<profile label>", led by "Jira · " when several trackers can import) · "Jira project" (first option "All projects", then "SHOP — Shop web") · "Find a ticket" · placeholder "Search by key or words" · "Paste a ticket's key or link to find it in any project." · status "Searching SHOP…" / "Searching all projects…" (blue badge) · "Recently updated in SHOP" / "Recently updated" · "4 tickets in SHOP match “cancel”." / "1 ticket in SHOP matches “cancel”." / "4 tickets match “cancel”." · a row: "SHOP-124" "Partial cancel for multi-item orders" "Story · In progress · updated 25 Oct", neutral chip "Linked to FEAT-7" · radio group "Tickets" · "Show more" · "Cancel" · "Continue" · board 36: "No ticket in SHOP matches “partial refund”." / "No ticket matches “partial refund”." with "Try other words, or paste the ticket's key or link." · "SHOP-999 was not found in Jira, or this connection cannot see it." · a failure: the server's sentence, "Nothing was changed." and, at the Advanced level only, " Fix the connection on the Marketplace page (Installed › Jira), then try again." · "Try again".
   - Preview (board 34): "Start from SHOP-124" · "This is what the new feature takes from SHOP-124. Untick what it should not start with. Nothing changes in Jira." · meta "Story · In progress · Medium · acme.atlassian.net (Cloud)" · "Title" · "Description" (region "Description preview") · "Without its Acceptance criteria section, which becomes the criteria below." · "SHOP-124 has no description." · "Worca hid 1 thing that looked like a key or password." / "Worca hid 3 things that looked like keys or passwords." · "Acceptance criteria · 3" / "Acceptance criteria · none" · "found under “Acceptance criteria” in the description" / "found in the Jira field “Acceptance Criteria”" · "Ticked criteria start the spec as R-po-1 to R-po-3, kept as your own edits and marked “from SHOP-124”. Unticked ones are left out; they stay in Jira." (one ticked: "Ticked criteria start the spec as R-po-1, …") · "None found in SHOP-124. Round 1 asks for them." · checkbox names "Use R-po-1: <text>" · "Comments · 5 of 6" / "Comments · none" · "Context for the interview, not spec text. Worca puts the picked ones in one file, SHOP-124 comments.md, and reads it like your other files. Authors are shown by name only." · "Use the comment by Ann Example, 21 Oct" · "1 comment visible only to a Jira group or role is left out." / "2 comments visible only to a Jira group or role are left out." · "and 3 older comments" / "and 1 older comment" · phone "Show all 6 comments" · "Attachments · 3 of 5" / "Attachments · none" · "Picked files become feature files. Worca gets them from Jira when you start the interview and reads each once, like a file you add." · "Add packing-slip.png as a feature file" · "Image · 840 KB" · refused: "Not offered: Worca reads text, images and PDF. Save it as PDF to attach it here." / "Not offered: Worca reads text, images and PDF." / "Not offered: it is over 25 MB." · caps: "A feature takes up to 10 files; 10 are picked." / "Picked files are at 100 MB, a new feature's limit. Add more on the feature page." · D12 (role=alert, amber): "SHOP-123 is linked to FEAT-7 · Cancel an order before it ships. The new feature can start from it but stays unlinked: one ticket follows one feature." · footer "Nothing is sent to Jira." · "Back" · "Use this ticket" · phone "← New feature" named "Back to New feature".
-  - Feature page (board 35): working line "Getting 3 files from SHOP-124…" (blue badge, `role="status"`) with "Worca gets the files from Jira and reads them first, then shows round 1."; then A8's "Reading 4 files…" · Files card meta "Text · 3 KB · from SHOP-124" (and " · read for $0.02") · badge "Downloading…" (blue) with "Worca is getting it from SHOP-124. Then it reads it (about $0.10)." (no estimate: "Worca is getting it from SHOP-124. Then it reads it.") · a downloaded file being read: "Downloaded from SHOP-124. Worca is reading it (about $0.06). The next round uses it." · board 36: "Worca could not get this file from Jira: it did not answer within 2 minutes. The interview lists it by name only." with "Try again" · "Worca restarted before it got this file from Jira." with "Try again" · "Worca could not use this file: it is already attached as call-notes.pdf." with no Try again · the page's line after a create: "packing-slip.png was not added: it is no longer on SHOP-124." / "The comment by Ann Example (21 Oct) was not added: it is no longer on SHOP-124." / "refund-matrix.xlsx was not added: Worca reads text, images and PDF." · the criterion tag "SHOP-124" linking to the ticket, named "SHOP-124, opens the ticket in Jira in a new tab" · History "Imported SHOP-124 from Jira · 27 Oct, 09:12" and the name; unlinked: "Started from SHOP-123 in Jira, not linked: FEAT-7 is. · 27 Oct, 09:12".
+  - Feature page (board 35): working line "Getting 3 files from SHOP-124…" (blue badge, `role="status"`) with "Worca gets the files from Jira and reads them first, then shows round 1."; then A8's "Reading 4 files…" · Files card meta "Text · 3 KB · from SHOP-124" (and " · read for $0.02") · badge "Downloading…" (blue) with "Worca is getting it from SHOP-124. Then it reads it (about $0.10)." (no estimate: "Worca is getting it from SHOP-124. Then it reads it.") · a downloaded file being read: "Downloaded from SHOP-124. Worca is reading it (about $0.06). The next round uses it." · board 36: "Worca could not get this file from Jira: it did not answer within 2 minutes. The interview lists it by name only." with "Try again" · "Worca restarted before it got this file from Jira." with "Try again" · "Worca could not use this file: it is already attached as call-notes.pdf." with no Try again · the page's line after a create: "packing-slip.png was not added: it is no longer on SHOP-124." / "The comment by Ann Example (21 Oct) was not added: it is no longer on SHOP-124." / "refund-matrix.xlsx was not added: Worca reads text, images and PDF. Save it as PDF to attach it here." (an Office file; any other type ends at "… images and PDF.") · the criterion tag "SHOP-124" linking to the ticket, named "SHOP-124, opens the ticket in Jira in a new tab" · History "Imported SHOP-124 from Jira · 27 Oct, 09:12" and the name; unlinked: "Started from SHOP-123 in Jira, not linked: FEAT-7 is. · 27 Oct, 09:12".
   - Export with an imported link (board 35, D11): before the first export "Export FEAT-8 to Jira" · "FEAT-8 started from SHOP-124 on 27 Oct. The spec has changed since. What should happen?" (nothing changed: "FEAT-8 started from SHOP-124 on 27 Oct. The spec has not changed since the import.") · Update hint "Rewrites its summary, description and fields. Its description was written in Jira; Jira keeps the old text in the ticket's history." · comment hint "Lists what changed since the import. The description stays." · "What changed since the import (27 Oct)" · the comment's first line "Updated in Worca since the import (27 Oct)"; after the first export A6's "Export FEAT-8 again" with "SHOP-124 was imported on 27 Oct. The spec has changed since. What should happen?" (nothing changed: "SHOP-124 was imported on 27 Oct. The spec has not changed since the last export (28 Oct).").
   - Server refusals (this plan adds where the design names none): "Choose a connection from the list." · "key must be a ticket key such as SHOP-124" · "fromTicket must be an object" · "Jira cannot import any more." · "Worca is still getting this file from Jira." · "Worca cannot use this file. Remove it from the ⋯ menu." · the A8 caps on a create: "<name> was not added: a feature takes up to 10 files." / "<name> was not added: a new feature's files can be up to 100 MB in all; add more on the feature page." · the refused tails after "Worca could not use this file: ": "it is over 25 MB", "it is not the file Jira described", "its content does not match its type", "Worca reads text, images and PDF", "it is already attached as <name>".
   - Thread line (D14, sent to the model as data): "The product owner started this feature from Jira ticket SHOP-124. Its acceptance criteria are R-po-1 to R-po-3; its comments are in “SHOP-124 comments.md”." · one criterion: "Its acceptance criterion is R-po-1" · none: "It had no acceptance criteria" · without a comments file the part from ";" is left out.
 
 ## Review Focus
 
-0. **No tracker call from the browser, no secret out, nothing written to the tracker.** Every op goes through `import.mjs` or `attachment-fetch.mjs` → `callSource`; `/api/sources/call`'s allowlist is unchanged; the import calls no write op (Tasks 3, 6, 7, 8).
-1. **The downloaded file is trusted only after the host's checks.** Fresh 0700 folder, fixed `body.part`, `lstat` regular file, size equal to the answer and at most 25 MB, A8's type, sniff, UTF-8 and duplicate rules; the folder removed on every path; a removed file's late download thrown away (Tasks 5, 7).
-2. **Ticket text is data.** Redacted at the import, escaped by the prompts' `asData`, rendered with `textContent`; the import line is the only new thread line and every other feature's prompts stay byte-identical (Tasks 2, 9, 11).
-3. **The create answers at once.** No download is awaited before the 201; round 1 waits for downloads and reads up to `ROUND1_WAIT_MS` without holding a `MAX_JOBS` slot; a failed download marks only its file (Tasks 7, 8).
-4. **One ticket follows one feature; an imported link behaves as A6's.** D12's unlinked create; Update keeps the ticket's issue type and priority; the comment is "since the import" until the first export; the edited check compares with the import's fingerprint (Tasks 8, 9, 14).
-5. **Accessibility and phone.** Dialog roles and names, focus on the title and back to From a ticket…, the page inert while open and released on leave, the radio group, named checkboxes with their reasons, persistent live regions, the 390 px sheet (Tasks 10–14, 15).
+0. **No tracker call from the browser, no secret out, nothing written to the tracker.** Every op goes through `import.mjs` or `attachment-fetch.mjs` → `callSource`; `/api/sources/call`'s allowlist is unchanged; the import calls no write op (Tasks 3, 6, 7, 9).
+1. **The downloaded file is trusted only after the host's checks.** Fresh 0700 folder, fixed `body.part`, `lstat` regular file, size equal to the answer and at most 25 MB, A8's type, sniff, UTF-8 and duplicate rules; the folder removed on every path; a removed file's late download thrown away; the bytes stored are the bytes checked (Tasks 5, 7).
+2. **Ticket text is data.** Redacted at the import, escaped by the prompts' `asData`, rendered with `textContent`; the import line is the only new thread line and every other feature's prompts stay byte-identical (Tasks 2, 10, 12).
+3. **The create answers at once.** No download is awaited before the 201; round 1 waits for downloads and reads up to `ROUND1_WAIT_MS` without holding a `MAX_JOBS` slot; a failed download marks only its file, and every failure marks it (Tasks 7, 8, 9).
+4. **One ticket follows one feature; an imported link behaves as A6's.** D12's unlinked create; Update keeps the ticket's issue type and priority; the comment is "since the import" until the first export; the edited check compares with the import's fingerprint (Tasks 9, 10, 16).
+5. **Accessibility and phone.** Dialog roles and names, focus on the title and back to From a ticket…, the page inert while open and released on leave, the radio group, named checkboxes with their reasons, persistent live regions, the 390 px sheet (Tasks 11–17).
 
 ## File Structure
 
@@ -56,27 +56,28 @@
 | `src/core/db.mjs` | Modify (Task 1) | v80: two `INCREMENTAL_COLUMNS`, the rung |
 | `src/core/requirements/store.mjs` | Modify (Task 1) | `createFeature`'s `criteria`; `saveExportLink`'s `origin`, `toLink`; `linkByTicket`; the `downloading` status, `fetch` on a row, `listDownloadingAttachments` |
 | `src/core/requirements/ticket-import.mjs` | Create (Task 2) | pure: `IMPORT_LIMITS`, `splitCriteria`, `clipDescription`, `redactCounted`, `commentsFileName`, `descriptionFileName`, `commentsMarkdown`, `importReason`, `importThreadLine`, `processTicket`, `pickDefaults`, `CAP_FILES`, `CAP_BYTES` |
-| `src/core/requirements/export.mjs` | Modify (Tasks 3, 9) | the probe keeps `export` and `import` (`trackersWith`), `connectionLabel` and `sameConn` exported; the imported link in `planExport`, `linkDates`, `exportView` |
+| `src/core/requirements/export.mjs` | Modify (Tasks 3, 10) | the probe keeps `export` and `import` (`trackersWith`), `connectionLabel`, `sameConn` and `firstLine` exported; the imported link in `planExport`, `linkDates`, `exportView` |
 | `src/core/plugin-shim.mjs` | Modify (Task 3) | `MOCK_DEFAULTS`: `capabilities` with `import: true` and the four import ops |
 | `src/core/plugin-api.mjs` | Modify (Task 3) | the comment line on the optional import ops |
 | `.claude/skills/creating-worca-cc-plugins/SKILL.md` | Modify (Task 3) | the contract table's four rows and a paragraph |
 | `plugins/jira-source/connector/index.mjs` | Modify (Tasks 4, 5) | `capabilities().import`, `importOptions`, `searchTickets`, `importTicket`, `downloadAttachment` |
-| `plugins/jira-source/connector/markup.mjs` | Modify (Task 4) | `htmlToMarkdown`: images, table rows, profile links |
+| `plugins/jira-source/connector/markup.mjs` | Modify (Task 4) | `htmlToMarkdown`: images, table rows, profile links; `plainWiki` (the raw wiki fallback) |
 | `plugins/jira-source/connector/jira-api.mjs` | Modify (Task 5) | `jiraDownload` |
 | `plugins/jira-source/README.md` | Modify (Task 5) | an Import section |
-| `src/core/requirements/import.mjs` | Create (Task 6), grows in Task 8 | `IMPORT_TIMEOUT_MS`, `importSources`, `importDefaults`, `importView`, `importOptions`, `searchTickets`, `previewImport`; then `prepareImport`, `createImported` |
+| `src/core/requirements/import.mjs` | Create (Task 6), grows in Task 9 | `IMPORT_TIMEOUT_MS`, `importSources`, `importDefaults`, `importView`, `importOptions`, `searchTickets`, `previewImport`; then `prepareImport`, `createImported` |
 | `src/core/requirements/attachment-fetch.mjs` | Create (Task 7) | `DOWNLOAD_TIMEOUT_MS`, `MAX_DOWNLOAD_JOBS`, `insertDownloadRow`, `queueDownloads`, `isDownloading`, `downloadsPending`, `cancelDownload`, `redownload`, `makeFetchFolder`, `checkFetched`, `recoverDownloads` |
-| `src/core/requirements/attachment-job.mjs` | Modify (Task 7) | `readsSettled` waits for downloads; `enqueueRead`, `settleOwner`; `addAttachments`' `from`; Try again, Remove, the edits on a downloading file; boot recovery; the `att-get-*` sweep |
-| `src/core/requirements/attachments.mjs` | Modify (Task 7) | the prompt's "being downloaded from <key>"; `fileOrigins` |
-| `src/core/requirements/interview.mjs` | Modify (Task 7) | round 1 also waits when a file is downloading |
-| `src/core/requirements/routes.mjs` | Modify (Tasks 7, 8) | `fileView`'s `from`; the four import routes; `POST /api/requirements` with `fromTicket` |
-| `src/core/requirements/ticket.mjs`, `markdown.mjs`, `round.mjs` | Modify (Task 9) | the ticket's own key left out of a criterion's source; "since the import"; the import thread line |
-| `ui/public/requirements-view.mjs` | Modify (Tasks 10–14) | the button, the pick and preview dialogs, the filled form, the Files card's download states, the working line, the criterion tag, History, the imported link's export copy |
-| `ui/public/style.css` | Modify (Tasks 10–14) | `req-import-*` rules inside the Requirements block |
-| `tools/verify-requirements-cdp.mjs` | Modify (Task 15) | the A6.1 section (light, dark, 390 px), runnable alone with `--only=a61` |
-| `docs/requirements.md`, `docs/storage.md`, `docs/ui-levels.md`, `docs/changelog/unreleased.md` | Modify (Task 15) | Start from a ticket, the two columns and `att-get-*`, the levels, the changelog |
+| `src/core/requirements/attachment-job.mjs` | Modify (Tasks 7, 8) | `readsSettled` waits for downloads; `enqueueRead`, `settleOwner` (Task 7); `addAttachments`' `from`; Try again, Remove, the edits on a downloading file; boot recovery; the `att-get-*` sweep |
+| `src/core/requirements/attachments.mjs` | Modify (Task 8) | the prompt's "being downloaded from <key>"; `fileOrigins` |
+| `src/core/requirements/interview.mjs` | Modify (Task 8) | round 1 also waits when a file is downloading |
+| `src/core/requirements/ready.mjs` | Modify (Task 8) | a file still downloading counts as one still being read (to ask about; the reading hint) |
+| `src/core/requirements/routes.mjs` | Modify (Tasks 8, 9) | `fileView`'s `from`; the four import routes; `POST /api/requirements` with `fromTicket` |
+| `src/core/requirements/ticket.mjs`, `markdown.mjs`, `round.mjs` | Modify (Task 10) | the ticket's own key left out of a criterion's source; "since the import"; the import thread line |
+| `ui/public/requirements-view.mjs` | Modify (Tasks 11–16) | the button, the pick and preview dialogs, the filled form, the Files card's download states, the working line, the criterion tag, History, the imported link's export copy |
+| `ui/public/style.css` | Modify (Tasks 11–15) | `req-import-*` rules inside the Requirements block |
+| `tools/verify-requirements-cdp.mjs` | Modify (Task 17) | the A6.1 section (light, dark, 390 px), runnable alone with `--only=a61` |
+| `docs/requirements.md`, `docs/storage.md`, `docs/ui-levels.md`, `docs/changelog/unreleased.md` | Modify (Task 17) | Start from a ticket, the two columns and `att-get-*`, the levels, the changelog |
 | Tests (Create) | | `test/db-migrate-v80.test.mjs`, `test/requirements-import-store.test.mjs`, `test/requirements-ticket-import.test.mjs`, `test/jira-source-import.test.mjs`, `test/jira-source-download.test.mjs`, `test/requirements-import.test.mjs`, `test/requirements-attachment-fetch.test.mjs`, `test/requirements-import-api.test.mjs`, `test/requirements-view-import.test.mjs`, `test/requirements-view-imported.test.mjs` |
-| Tests (Modify) | | `test/db-migrate-v79.test.mjs`, `test/db-migrate-v77.test.mjs` (the new columns), `test/plugin-shim.test.mjs`, `test/requirements-export-trackers.test.mjs`, `test/jira-source-export.test.mjs` (capabilities), `test/helpers/fake-jira.mjs` (seeded issues, attachments, the media server), `test/requirements-export.test.mjs`, `test/requirements-ticket.test.mjs`, `test/requirements-round.test.mjs` (Task 9) |
+| Tests (Modify) | | `test/db-migrate-v79.test.mjs`, `test/db-migrate-v77.test.mjs` (the new columns), `test/plugin-shim.test.mjs`, `test/requirements-export-trackers.test.mjs`, `test/jira-source-export.test.mjs` (capabilities), `test/helpers/fake-jira.mjs` (seeded issues, attachments, the media server), `test/requirements-export.test.mjs`, `test/requirements-ticket.test.mjs`, `test/requirements-round.test.mjs` (Task 10), `test/requirements-ready.test.mjs` (Task 8) |
 
 The spec puts the Jira tests in `test/jira-source-connector.test.mjs` (its fake `fetch`); this plan follows A6 instead and tests the new ops over real HTTP against `test/helpers/fake-jira.mjs` in two new files, so Cloud's redirect and the stream cap are real.
 
@@ -750,7 +751,7 @@ git commit -m "Requirements: what Worca takes from a ticket (pure)" -m "Co-Autho
 ### Task 3: The shared contract — the import capability, the mock answers, the plugin skill
 
 **Files:**
-- Modify: `src/core/requirements/export.mjs` (the probe at lines ~42–98; export `connectionLabel` and `sameConn`)
+- Modify: `src/core/requirements/export.mjs` (the probe at lines ~42–98; export `connectionLabel` and `sameConn`; `firstLine` out of `trackerCall`)
 - Modify: `src/core/plugin-shim.mjs` (`MOCK_DEFAULTS`, the `node:fs` import)
 - Modify: `src/core/plugin-api.mjs` (the comment above `WORCA_PLUGIN_API`)
 - Modify: `.claude/skills/creating-worca-cc-plugins/SKILL.md` (the connector contract table and the paragraph after it)
@@ -760,7 +761,7 @@ git commit -m "Requirements: what Worca takes from a ticket (pure)" -m "Co-Autho
 - Consumes: A6's `exportTrackers`, `defaultConnection`, `_resetExportCaches` (`export.mjs`); `setMockSourceResponses` (`plugin-shim.mjs`).
 - Produces (`export.mjs`):
   - `trackersWith(cap: 'export' | 'import', d = {}) → Promise<[{ plugin, sourceId, name, multiProfile, profiles: [{ id, label }] }]>` — one cached `capabilities()` probe per plugin, source id and installed version answers both; `exportTrackers(d)` is `trackersWith('export', d)`.
-  - `connectionLabel(conn) → string` (now exported); `sameConn(a, b) → boolean` (now exported).
+  - `connectionLabel(conn) → string` (now exported); `sameConn(a, b) → boolean` (now exported); `firstLine(err) → string` (new, the log line's first 200 characters; A6's `trackerCall` uses it).
 - Produces (the mock shim, `WORCA_MOCK=1`):
   - `capabilities` → `{ writeBack: true, export: true, import: true }`
   - `importOptions` → `{ projects: [{ value: 'SHOP', label: 'SHOP — Shop web' }, { value: 'OPS', label: 'OPS — Operations' }] }`
@@ -873,7 +874,13 @@ export async function trackersWith(cap, d = {}) {
 export const exportTrackers = (d = {}) => trackersWith('export', d);
 ```
 
-Change `const sameConn = …` to `export const sameConn = …` and `function connectionLabel(conn)` to `export function connectionLabel(conn)`.
+Change `const sameConn = …` to `export const sameConn = …` and `function connectionLabel(conn)` to `export function connectionLabel(conn)`. Above `trackerCall` add the log helper A6's `trackerCall` already inlines, and make `trackerCall` use it (`console.error(\`…failed (${kind}):\`, firstLine(err));` in place of its local `const firstLine = …`):
+
+```js
+/** What the server log may keep of a failure: its first line, at most 200 characters — never a plugin's whole stdout/stderr,
+ *  which can carry config or environment fragments (A6's final review; A6.1 uses it for every import and download log line). */
+export const firstLine = (err) => String((err && err.message) || err).split(/\r?\n/)[0].slice(0, 200);
+```
 
 - [ ] **Step 4: The mock answers.** In `src/core/plugin-shim.mjs` change the fs import to `import { readFileSync, writeFileSync } from 'node:fs';`. Right after `const mockUrl = …` add:
 
@@ -1012,7 +1019,7 @@ git commit -m "Requirements: the import capability in the task-source contract, 
 **Interfaces:**
 - Consumes: the connector's own `jiraFetch`, `issue`, `projectList`, `deployment`, `pastedKey`, `buildJql`, `fingerprintOf`, `exportOp`, `browse`, `requireKey`, `log`.
 - Produces (connector ops, all through `exportOp`): `capabilities({ inputs }) → { writeBack, incrementalSync: false, export: true, import: true }`; `importOptions({}) → { projects: [{ value: key, label: '<key> — <name>' }] }`; `searchTickets({ project?, search?, cursor? }) → { tickets: [{ key, title, url, type, status, updatedAt }], cursor? }` (20 a page; never the user's saved JQL); `importTicket({ key, criteriaField? }) → §4's answer | { gone: true }`.
-- Produces (`markup.mjs`): `htmlToMarkdown` turns `<img alt>` into `(image: <alt>)` (an image without alt text disappears), each table row into one `| a | b |` line, and a link to a person (`/secure/ViewProfile`, `/jira/people/`, `/people/`) into the plain name.
+- Produces (`markup.mjs`): `htmlToMarkdown` turns `<img alt>` into `(image: <alt>)` (an image without alt text disappears), each table row into one `| a | b |` line, and a link to a person (`/secure/ViewProfile`, `/jira/people/`, `/people/`) into the plain name; `plainWiki(text) → string` (new: the raw wiki fallback, a mention as "someone", `[text|url]` as "text (url)" for http(s) only).
 - Produces (`test/helpers/fake-jira.mjs`): `startFakeJira({ seed: [SeededIssue], forbid: [key] })`; `SeededIssue = { key, project, projectName, summary, description (wiki), rendered (HTML), type: { id, name }, status, priority: { id, name } | null, updated, comments: [{ id, author, created, body, rendered, visibility? }], embedded?: number, attachments: [{ id, filename, mimeType, size, created, body?: Buffer }], custom: { [fieldId]: { name, value, rendered } } }`.
 
 - [ ] **Step 1: Extend the fake Jira.** In `test/helpers/fake-jira.mjs`:
@@ -1247,6 +1254,20 @@ test('importTicket: comments past the embedded page are read newest 50 first and
   }
 });
 
+test('importTicket (D8, D15): a site that renders nothing gives the wiki text as plain text; a mention is "someone", never its account id', async () => {
+  for (const deployment of BOTH) {
+    const wiki = ISSUE({ rendered: null, custom: {},
+      description: 'Ask [~accountid:acc-ann] or [~bo.example]; see [the flow|https://docs.acme.test/flow] and [Cy|~accountid:acc-cy].',
+      comments: [{ id: '1', author: person('Ann Example', 'acc-ann'), created: '2026-10-21T12:00:00.000+0000', body: 'Thanks [~accountid:acc-ann], done.' }] });
+    const { src } = await site({ deployment, seed: [wiki] });
+    const t = await src.importTicket({ key: 'SHOP-124' });
+    assert.equal(t.description, 'Ask someone or someone; see the flow (https://docs.acme.test/flow) and Cy.', deployment);
+    assert.equal(t.comments[0].body, 'Thanks someone, done.', 'a comment without renderedBody falls back to its wiki text');
+    const json = JSON.stringify(t);
+    for (const secret of ['acc-ann', 'acc-cy', 'bo.example']) assert.ok(!json.includes(secret), `${deployment}: no ${secret}`);
+  }
+});
+
 test("importTicket: a missing ticket is gone on both; Data Center's 403 is gone too; a Cloud 403 throws Jira's words, never a status or path", async () => {
   for (const deployment of BOTH) {
     const { src } = await site({ deployment, seed: [ISSUE()] });
@@ -1289,7 +1310,25 @@ and right before the general `<a …href…>` rule:
     .replace(/<a [^>]*href="[^"]*(?:\/secure\/ViewProfile|\/jira\/people\/|\/people\/)[^"]*"[^>]*>([\s\S]*?)<\/a>/gi, '$1')
 ```
 
-Extend the file's header comment: "A6.1: images by their alt text, table rows as `| a | b |` lines, people's links as their names."
+At the end of `markup.mjs` add the fallback for a site that renders nothing (M2 of the plan review: the raw v2 wiki holds a mention as `[~accountid:5b10…]` on Cloud and `[~name]` on Data Center, and D8/D15 let no account id leave the connector):
+
+```js
+/** A6.1 (D8, D15): Jira wiki text as plain text, used when a site renders nothing. A mention ([~accountid:…] on Cloud, [~name] on
+ *  Data Center) becomes "someone" (the wiki text holds no display name); a link [text|url] becomes "text (url)" for http(s) only, else
+ *  its text alone (so [Ann|~accountid:…] is "Ann"). Nothing else is converted: the text stays as Jira holds it. */
+export function plainWiki(text) {
+  return String(text || '')
+    .replace(/\[~[^\]\n]*\]/g, 'someone')
+    .replace(/\[([^|\]\n]*)\|([^\]\n]*)\]/g, (_, t, u) => {
+      const href = safeHref(u);
+      const label = t.trim();
+      return href ? (label ? `${label} (${href})` : href) : label;
+    })
+    .trim();
+}
+```
+
+Extend the file's header comment: "A6.1: images by their alt text, table rows as `| a | b |` lines, people's links as their names; `plainWiki` for a site that renders nothing." In `index.mjs` import `plainWiki` beside `htmlToMarkdown`.
 
 - [ ] **Step 5: The connector.** In `plugins/jira-source/connector/index.mjs` change `capabilities` to `return { writeBack: yes(inputs?.writeBack), incrementalSync: false, export: true, import: true };`. Above `export default function createTaskSource` add:
 
@@ -1314,11 +1353,13 @@ Inside `createTaskSource`, after `lastLine`, add:
   };
   // A6.1 D16: Jira answers 404 for a ticket that does not exist and for one this connection may not see; a Data Center may answer 403
   const notVisible = async (e) => e.status === 404 || (e.status === 403 && (await deployment()) === 'datacenter');
-  // D7: the multi-line text field named "Acceptance Criteria", when no criteria field is given
+  // D7: the multi-line text field named "Acceptance Criteria", when no criteria field is given (multi-line: a textarea custom
+  // field, as exportOptions' criteriaFields filters them)
   async function criteriaFieldId() {
     try {
       const all = await jiraFetch(jira, '/rest/api/2/field');
-      const f = (Array.isArray(all) ? all : []).find((x) => x && x.custom && String(x.name || '').trim().toLowerCase() === 'acceptance criteria');
+      const f = (Array.isArray(all) ? all : []).find((x) => x && x.custom && /:textarea$/.test(String(x.schema?.custom || ''))
+        && String(x.name || '').trim().toLowerCase() === 'acceptance criteria');
       return f ? String(f.id) : null;
     } catch (e) { log('warn', `the field list could not be read: ${e?.message || e}`); return null; }
   }
@@ -1356,8 +1397,9 @@ and after the `findTicket` op:
       catch (e) { if (await notVisible(e)) return { gone: true }; throw e; }
       const f = i.fields || {};
       const r = i.renderedFields || {};
-      // the rendered HTML (the same on Cloud and Data Center) as Markdown; the raw wiki text as plain text when a site renders nothing
-      const description = r.description ? htmlToMarkdown(r.description) : String(f.description || '').trim();
+      // the rendered HTML (the same on Cloud and Data Center) as Markdown; the raw wiki text as plain text when a site renders
+      // nothing, through plainWiki so a mention's account id never leaves the connector (D8, D15)
+      const description = r.description ? htmlToMarkdown(r.description) : plainWiki(f.description);
       let criteria = null;
       if (named && (r[named] || f[named])) {
         const items = listItems(r[named] ? htmlToMarkdown(r[named]) : String(f[named]));
@@ -1365,7 +1407,8 @@ and after the `findTicket` op:
       }
       let raw = Array.isArray(f.comment?.comments) ? f.comment.comments : [];
       const total = Number.isFinite(Number(f.comment?.total)) ? Number(f.comment.total) : raw.length;
-      const rendered = new Map((r.comment?.comments || []).map((c) => [String(c.id), c.body]));
+      // only a comment Jira rendered: one without (null or absent) falls back to its wiki text below
+      const rendered = new Map((r.comment?.comments || []).filter((c) => c && c.body).map((c) => [String(c.id), c.body]));
       if (total > raw.length) {
         const page = await jiraFetch(jira, `/rest/api/2/issue/${enc(k)}/comment?orderBy=-created&maxResults=${IMPORT_COMMENTS}&expand=renderedBody`);
         raw = [...(Array.isArray(page?.comments) ? page.comments : [])].reverse();   // the newest 50, oldest first
@@ -1373,7 +1416,7 @@ and after the `findTicket` op:
       }
       const visible = raw.filter((c) => !c.visibility);   // a comment restricted to a group or role is never offered (D8)
       const comments = visible.slice(-IMPORT_COMMENTS).map((c) => ({ id: String(c.id), author: c.author?.displayName || 'Someone', authorKind: authorKind(c.author),
-        created: c.created || null, body: rendered.has(String(c.id)) ? htmlToMarkdown(rendered.get(String(c.id))) : String(c.body || '').trim() }));
+        created: c.created || null, body: rendered.has(String(c.id)) ? htmlToMarkdown(rendered.get(String(c.id))) : plainWiki(c.body) }));
       return {
         key: i.key, url: browse(i.key), title: f.summary || i.key, description, criteria, comments, commentsTotal: total,
         restrictedComments: raw.length - visible.length,
@@ -1574,7 +1617,9 @@ test('401 throws auth; 403 is gone and forbidden; 404 and an attachment not on t
  * A6.1 (plans/requirements-a61-design.md D9, D15, §5): one attachment's body streamed into `dest`, a path the host made. Only the
  * site's own content address, with the profile's auth and `redirect: 'manual'`; one redirect at most, to the site with the header,
  * elsewhere only over https: (or plain http when a test allows it) and without it. The size is checked on the response and while
- * it streams; `dest` is created exclusively and deleted on any failure, never a file this call did not create.
+ * it streams; `dest` is created exclusively and deleted on any failure, never a file this call did not create. It has no timeout
+ * of its own: the host's callSource kills the child at DOWNLOAD_TIMEOUT_MS (120 s), and a partial body.part left by that kill is
+ * removed with the host's single-use folder (the contract, D9).
  */
 export async function jiraDownload(jira, content, { dest, maxBytes, allowHttpRedirect = false } = {}) {
   const site = new URL(jira.base).origin;
@@ -1690,18 +1735,18 @@ git commit -m "Requirements: jira-source downloads a picked attachment into the 
 - Create: `test/requirements-import.test.mjs`
 
 **Interfaces:**
-- Consumes: `trackersWith`, `defaultConnection`, `connectionLabel`, `sameConn` (`export.mjs`, Task 3); `getExportSetup`, `linkByTicket` (`store.mjs`, Task 1); `processTicket`, `pickDefaults`, `IMPORT_LIMITS` (`ticket-import.mjs`, Task 2); `exportDate` (`ticket.mjs`); `callSource` (`plugin-shim.mjs`, or `d.callSource`).
+- Consumes: `trackersWith`, `defaultConnection`, `connectionLabel`, `sameConn`, `firstLine` (`export.mjs`, Task 3) and A6's `reachSentence` (`export.mjs`, already exported); `getExportSetup`, `linkByTicket` (`store.mjs`, Task 1); `processTicket`, `pickDefaults`, `IMPORT_LIMITS` (`ticket-import.mjs`, Task 2); `exportDate` (`ticket.mjs`); `callSource` (`plugin-shim.mjs`, or `d.callSource`).
 - Produces (`import.mjs`):
   - `IMPORT_TIMEOUT_MS = 60_000`
   - `importSources(d) → Promise<Source[]>` (= `trackersWith('import', d)`)
-  - `importReachSentence(name, err) → 'Worca could not reach <name>: <reason>.'` (Global Constraints' fixed reasons)
+  - No reach wording of its own (design U1): a tracker failure is A6's `reachSentence(name, err)`, so Import and Export read alike for the same connection.
   - `importDefaults(scope, sources, { memberKeys }) → { defaultConnection: Conn | null, defaultProject: string | null }`
   - `importView(scope, { memberKeys }, d) → { sources: [{ plugin, sourceId, name, profiles: [{ id, label }] }], defaultConnection, defaultProject }`
   - `importOptions(scope, { plugin, sourceId, profile }, d) → { projects: [{ value, label }] }`
   - `searchTickets(scope, { plugin, sourceId, profile, project?, search?, cursor? }, d) → { tickets: [{ key, title, url, type, status, updatedOn, linkedTo: { id, title } | null }], cursor? }`
   - `previewImport(scope, { plugin, sourceId, profile, key, formFiles?: { count, bytes } }, d) → Preview` where `Preview` is `pickDefaults(processTicket(…))` without `fingerprint`, with `descriptionFile: { name, bytes } | null`, `connection` (the profile's label) and `linkedTo`.
-  - Internal, used again by Task 8: `sourceFor(body, d)`, `keyOf(v)`, `readTicket(d, t, conn, key, scope)`.
-  - Errors: `BAD_REQUEST` "Choose a connection from the list." / "key must be a ticket key such as SHOP-124"; `NOT_FOUND` with `data.gone: true` "SHOP-999 was not found in Jira, or this connection cannot see it."; `TRACKER` with `data.kind` and the fixed sentence, or "Jira cannot import any more." (`unimplemented`).
+  - Internal, used again by Task 9: `sourceFor(body, d)`, `keyOf(v)`, `readTicket(d, t, conn, key, scope)`.
+  - Errors: `BAD_REQUEST` "Choose a connection from the list." / "key must be a ticket key such as SHOP-124"; `NOT_FOUND` with `data.gone: true` "SHOP-999 was not found in Jira, or this connection cannot see it."; `TRACKER` with `data.kind` and A6's `reachSentence`, or "Jira cannot import any more." (`unimplemented`). The log keeps `firstLine(err)` only.
 
 - [ ] **Step 1: Write the failing test** `test/requirements-import.test.mjs`:
 
@@ -1775,19 +1820,27 @@ test("importOptions and searchTickets (D4, D12): the connection's projects; the 
   await assert.rejects(searchTickets(SCOPE, { ...ACME, profile: 'gamma' }, d), (e) => e.code === 'BAD_REQUEST' && e.message === 'Choose a connection from the list.');
 });
 
-test('a tracker failure (D16): a fixed sentence by its kind, the raw text only in the log; an op the connector lost says it cannot import', async () => {
+test("a tracker failure (D16, U1): A6's reach sentence — fixed phrases for auth and timeout, the connector's own sentence when it is product copy, else \"the Jira plugin stopped unexpectedly\"; the log keeps the first line only; an op the connector lost says it cannot import", async () => {
   reset();
   const logged = [];
   const was = console.error;
   console.error = (...a) => { logged.push(a.join(' ')); };
   try {
-    for (const [kind, reason] of [['auth', 'the API token was refused'], ['timeout', 'it did not answer within a minute'], ['network', 'the network connection failed'],
-      ['rate-limit', 'it asked Worca to slow down'], ['plugin', 'it answered with an error']]) {
-      setMockSourceResponses({ searchTickets: () => { throw new PluginOpError(kind, 'Jira 500: secret detail (GET /rest/api/2/search)'); } });
+    for (const [kind, message, reason] of [
+      ['auth', 'Jira token invalid or expired', 'the API token was refused'],
+      ['timeout', 'plugin "jira-source" op "searchTickets" exceeded 60000ms', 'it did not answer within a minute'],
+      ['network', 'Jira unreachable: fetch failed.', 'Jira unreachable: fetch failed'],
+      ['plugin', 'Jira refused the request: The value \'SHOP\' does not exist for the field \'project\'.',
+        "Jira refused the request: The value 'SHOP' does not exist for the field 'project'"],
+      ['plugin', 'Jira 500: secret detail (GET /rest/api/2/search)', 'the Jira plugin stopped unexpectedly'],
+      ['plugin', 'TypeError: x is not a function\n    at run (file:///plugin/index.mjs:1:1)\nTOKEN=abc123', 'the Jira plugin stopped unexpectedly']]) {
+      setMockSourceResponses({ searchTickets: () => { throw new PluginOpError(kind, message); } });
       await assert.rejects(searchTickets(SCOPE, ACME, d), (e) => e.code === 'TRACKER' && e.message === `Worca could not reach Jira: ${reason}.`
-        && e.data.kind === kind && !/secret|rest\//.test(e.message), kind);
+        && e.data.kind === kind && !/secret|rest\/|TOKEN/.test(e.message), `${kind}: ${reason}`);
     }
-    assert.ok(logged.some((l) => /secret detail/.test(l)), 'the raw text goes to the log');
+    assert.ok(logged.some((l) => /secret detail/.test(l)), 'the raw first line goes to the log');
+    assert.ok(logged.some((l) => /TypeError: x is not a function/.test(l)), 'the first line of a multi-line message is logged');
+    assert.ok(!logged.some((l) => /TOKEN=|file:\/\/\/plugin/.test(l)), 'never the lines after it (M3: no plugin stderr in the log)');
     setMockSourceResponses({ searchTickets: undefined });
     await assert.rejects(searchTickets(SCOPE, ACME, d), (e) => e.code === 'TRACKER' && e.message === 'Jira cannot import any more.');
   } finally { console.error = was; setMockSourceResponses(null); }
@@ -1837,11 +1890,11 @@ test("previewImport: the caps count the form's own files (D9); a ticket another 
 // Start a feature from a tracker ticket (plans/requirements-a61-design.md): the sources that can import, where the picker starts,
 // the projects and the search, the preview (D5–D9) and the create (D10–D12, below). The Requirements code knows only "a source that
 // can import" (D2): every call runs here, server-side, through callSource with the connection's profile (D15). Nothing is written to
-// the tracker. A failure is a fixed sentence by its kind; the raw text goes to the log only.
+// the tracker. A failure is A6's reach sentence (design U1: Import and Export read alike); the log keeps its first line only.
 import { callSource as shimCallSource } from '../plugin-shim.mjs';
 import { RequirementsError } from './spec.mjs';
 import { getExportSetup, linkByTicket } from './store.mjs';
-import { trackersWith, defaultConnection, connectionLabel, sameConn } from './export.mjs';
+import { trackersWith, defaultConnection, connectionLabel, sameConn, reachSentence, firstLine } from './export.mjs';
 import { exportDate } from './ticket.mjs';
 import { IMPORT_LIMITS, processTicket, pickDefaults } from './ticket-import.mjs';
 
@@ -1857,18 +1910,16 @@ const KEY_RE = /^[A-Z][A-Z0-9_]*-\d+$/i;
 /** D2: the sources that can import (A6's probe, its `import` answer). */
 export const importSources = (d = {}) => trackersWith('import', d);
 
-const REACH = Object.freeze({ auth: 'the API token was refused', timeout: 'it did not answer within a minute', network: 'the network connection failed',
-  'rate-limit': 'it asked Worca to slow down' });
-/** D16 (Global Constraints): why a tracker could not be reached, by kind only. */
-export const importReachSentence = (name, err) => `Worca could not reach ${name || 'the tracker'}: ${REACH[err && err.kind] || 'it answered with an error'}.`;
-
+/** One import op through the connection, in IMPORT_TIMEOUT_MS. Any failure is A6's sentence (D16, U1: reachSentence turns a
+ *  message that is not product copy into a fixed phrase); the log keeps the first line only (M3: never a plugin's stderr). */
 async function trackerCall(d, name, conn, op, args) {
   try {
     return await callOf(d)({ plugin: conn.plugin, sourceId: conn.sourceId, profile: conn.profile || undefined, op, args, timeoutMs: IMPORT_TIMEOUT_MS });
   } catch (err) {
-    console.error(`requirements: ${op} through ${conn.plugin}/${conn.sourceId} failed (${(err && err.kind) || 'plugin'}):`, err && err.message ? err.message : err);
-    if (err && err.kind === 'unimplemented') throw new RequirementsError('TRACKER', `${name || 'The tracker'} cannot import any more.`, { kind: 'unimplemented' });
-    throw new RequirementsError('TRACKER', importReachSentence(name, err), { kind: (err && err.kind) || 'plugin' });
+    const kind = (err && err.kind) || 'plugin';
+    console.error(`requirements: import op ${op} via ${conn.plugin}/${conn.sourceId} failed (${kind}):`, firstLine(err));
+    if (kind === 'unimplemented') throw new RequirementsError('TRACKER', `${name || 'The tracker'} cannot import any more.`, { kind: 'unimplemented' });
+    throw new RequirementsError('TRACKER', reachSentence(name, { kind, message: err && err.message }), { kind });
   }
 }
 
@@ -1940,7 +1991,7 @@ export async function readTicket(d, t, conn, key, scope) {
   if (!r || r.gone === true) throw new RequirementsError('NOT_FOUND', `${key} was not found in ${t.name}, or this connection cannot see it.`, { gone: true });
   if (typeof r.key !== 'string' || !KEY_RE.test(r.key)) {
     console.error(`requirements: importTicket for ${key} answered without a ticket key`);
-    throw new RequirementsError('TRACKER', importReachSentence(t.name, { kind: 'protocol' }), { kind: 'protocol' });
+    throw new RequirementsError('TRACKER', reachSentence(t.name, { kind: 'protocol' }), { kind: 'protocol' });
   }
   return { ...r, key: r.key.toUpperCase(), url: httpUrl(r.url) };
 }
@@ -1968,30 +2019,26 @@ git commit -m "Requirements: the import service — sources, search and the prev
 
 ---
 
-### Task 7: Downloads — the queue, the private folder, the checks, then A8's read
+### Task 7: Downloads — the private folder, the checks and the queue (`attachment-fetch.mjs`)
 
 **Files:**
 - Create: `src/core/requirements/attachment-fetch.mjs`
-- Modify: `src/core/requirements/attachment-job.mjs` (`pendingFor`, `enqueueRead`, `settleOwner`, `addAttachments`' `from`, `removeAttachment`, `notIdle`, `editSummary`, `readAgain`, `recoverAttachmentReads`, `sweepReadFolders`, `fileView`)
-- Modify: `src/core/requirements/attachments.mjs` (`stateNote`; `fileOrigins`)
-- Modify: `src/core/requirements/interview.mjs` (`startOrientation`'s `waits`)
-- Modify: `src/core/requirements/routes.mjs` (`featureView` passes each file's `from`)
+- Modify: `src/core/requirements/attachment-job.mjs` (only what this module needs: `pendingFor` counts downloads; `enqueueRead`, `settleOwner`)
 - Create: `test/requirements-attachment-fetch.test.mjs`
 
 **Interfaces:**
-- Consumes: `callSource` (or `d.callSource`); `validateAttachmentUploads` (`../attachment-upload.mjs`); `classifyExtension` (`../ask/attachment-kind.mjs`); `REQ_ATTACH_LIMITS`, `displayName`, `uniqueName` (`attachments.mjs`); `mintAttachmentId`, `insertAttachment`, `getAttachment`, `listAttachments`, `updateAttachment`, `appendTurn`, `listDownloadingAttachments` (`store.mjs`).
+- Consumes: `callSource` (or `d.callSource`); `firstLine` is copied here (not imported from `export.mjs`, which would pull `export.mjs` into this module's import cycle with `attachment-job.mjs`); `validateAttachmentUploads` (`../attachment-upload.mjs`); `classifyExtension` (`../ask/attachment-kind.mjs`); `REQ_ATTACH_LIMITS`, `displayName`, `uniqueName` (`attachments.mjs`); `mintAttachmentId`, `insertAttachment`, `getAttachment`, `listAttachments`, `updateAttachment`, `appendTurn`, `listDownloadingAttachments` (`store.mjs`); A8's `attachmentsDir`, `attachmentFile` (`attachment-job.mjs`).
 - Produces (`attachment-fetch.mjs`):
   - `DOWNLOAD_TIMEOUT_MS = 120_000`, `MAX_DOWNLOAD_JOBS = 2`
   - `insertDownloadRow(owner, { conn, tracker, key, id, name, bytes, from = null }, { by }) → Attachment` — inside the caller's transaction: the `downloading` row (name unique within the owner, kind and mime from the extension, `sha256: 'pending:<id>'`, `fetch` = `{ plugin, sourceId, profile, tracker, key, id, name, bytes }`) and, for a feature, the `file` turn `added` with `from`.
-  - `queueDownloads(owner, ids, { by }, deps)`; `isDownloading(id)`; `downloadsPending(ownerKey)`; `cancelDownload(id)`; `redownload(owner, row, { by }, deps)`
+  - `queueDownloads(owner, ids, { by }, deps)` — `deps` as any A8 job's, plus `callSource`, `downloadTimeoutMs` and `writeBody(target, body)` (how the checked body is written into A8's store; a test makes it fail, as A8's `renameBody`/`copyBody`); `isDownloading(id)`; `downloadsPending(ownerKey)`; `cancelDownload(id)`; `redownload(owner, row, { by }, deps)`
   - `makeFetchFolder(base?) → { dir, dest }` (`<base>/att-get-<8 hex>/body.part`, the folder 0700)
-  - `checkFetched(dir, dest, answer, maxBytes = 25 MB) → { ok: true, size } | { ok: false, why: 'path' | 'missing' | 'not-a-file' | 'empty' | 'too-large' | 'size' }`
+  - `checkFetched(dir, dest, answer, maxBytes = 25 MB) → { ok: true, size, body } | { ok: false, why: 'path' | 'missing' | 'not-a-file' | 'empty' | 'too-large' | 'size' }` — `dest` opened once (POSIX `O_NOFOLLOW`), checked with `fstat` against the `lstat` taken before (same inode and size) and read through that one descriptor, so the bytes Worca validates and stores are the bytes it checked.
   - `recoverDownloads() → number`
-  - A failed file: `status: 'failed'`, `error: { code: 'DOWNLOAD' | 'REFUSED' | 'INTERRUPTED', message, reason?, job: 'download', at }` with the messages of Global Constraints ("Worca could not get this file from Jira: <reason>.", "Worca could not use this file: <reason>.", "Worca restarted before it got this file from Jira.").
-- Produces (`attachment-job.mjs`): `enqueueRead(owner, id, name, by, deps)`; `settleOwner(owner, deps)`; `addAttachments(owner, files, { by, from = null }, deps)` (the `added` turn carries `from`); `readAgain` re-downloads a failed download (`CONFLICT` "Worca cannot use this file. Remove it from the ⋯ menu." for `REFUSED`); a downloading file refuses edits, asks and Read again with `CONFLICT` "Worca is still getting this file from Jira."; `recoverAttachmentReads()` also recovers downloads; `sweepReadFolders` also removes `att-get-*`; `fileView(row, { …, from = null })` carries `from` and `fetched: !!row.fetch`.
-- Produces (`attachments.mjs`): `renderAttachmentsForPrompt` says "<name> (<kind>, <size>): being downloaded from SHOP-124; known by name only."; `fileOrigins(turns) → Map<id, { tracker, key } | null>`.
+  - A failed file: `status: 'failed'`, `error: { code: 'DOWNLOAD' | 'REFUSED' | 'INTERRUPTED', message, reason?, job: 'download', at }` with the messages of Global Constraints ("Worca could not get this file from Jira: <reason>.", "Worca could not use this file: <reason>.", "Worca restarted before it got this file from Jira."). Any failure after the connector answered — the folder, A8's store folder, the write, the validator, the read queue — is `DOWNLOAD` "Worca could not store it" with Try again: a row is never left `downloading` without a job.
+- Produces (`attachment-job.mjs`): `enqueueRead(owner, id, name, by, deps)`; `settleOwner(owner, deps)`; `pendingFor` (so `readsSettled` and `filesPending`) also counts the owner's downloads.
 
-- [ ] **Step 1: Write the failing test** `test/requirements-attachment-fetch.test.mjs`:
+- [ ] **Step 1: Write the failing test** `test/requirements-attachment-fetch.test.mjs` (Task 8 appends to it):
 
 ```js
 // test/requirements-attachment-fetch.test.mjs — a picked tracker attachment becomes an A8 file (plans/requirements-a61-design.md D9, D10,
@@ -2010,7 +2057,6 @@ import { tx } from '../src/core/db.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { callSource, setMockSourceResponses, PluginOpError } from '../src/core/plugin-shim.mjs';
 import { createFeature, getFeature, getAttachment, listAttachments, listTurns } from '../src/core/requirements/store.mjs';
-import { fileOrigins } from '../src/core/requirements/attachments.mjs';
 
 useTempHome(after, 'worca-req-fetch-');
 const prevMock = process.env.WORCA_MOCK;
@@ -2050,7 +2096,7 @@ test('insertDownloadRow (D10, D14): a downloading row named, typed and sized fro
   assert.equal(row(f, '10050').name, 'partial-cancel-flow (2).pdf', 'a name already used is made unique');
 });
 
-test('a download (D9): a fresh att-get folder and body.part; the body moved into the store under the row id; the file read; the folder gone', async () => {
+test('a download (D9): a fresh att-get folder and body.part; the body written into the store under the row id; the file read; the folder gone', async () => {
   setMockSourceResponses(null);
   const f = feature();
   const r = row(f, '10041', 'packing-slip.png', 860160);
@@ -2079,6 +2125,7 @@ test('at most two downloads at a time across features; the others wait as downlo
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(h.waiting.length, 2, 'the third waits for a slot');
   assert.ok(rows.every((x) => fetchJob.isDownloading(x.id) && getAttachment(x.id).status === 'downloading'));
+  assert.equal(job.filesPending(own(a)), true, "A8's pending check counts a download");
   h.release(0);
   await waitFor(() => h.waiting.length === 2, 3000);
   h.release(0);
@@ -2088,7 +2135,7 @@ test('at most two downloads at a time across features; the others wait as downlo
   assert.deepEqual(rows.map((x) => getAttachment(x.id).status), ['done', 'done', 'done']);
 });
 
-test('a failed download marks only that file (D10, D16): a fixed reason by kind, gone, forbidden, nothing sent; Try again downloads it again', async () => {
+test('a failed download marks only that file (D10, D16): a fixed reason by kind, gone, forbidden, nothing sent; downloading again works', async () => {
   const f = feature();
   const cases = [
     [() => { throw new PluginOpError('timeout', 'plugin "jira-source" op "downloadAttachment" exceeded 120000ms'); }, 'it did not answer within 2 minutes'],
@@ -2108,13 +2155,35 @@ test('a failed download marks only that file (D10, D16): a fixed reason by kind,
   setMockSourceResponses({ downloadAttachment: () => { throw new PluginOpError('timeout', 'x'); } });
   const r = await queue(f, row(f, '10042'));
   setMockSourceResponses(null);
-  assert.equal(job.readAgain(own(f), r.id, {}, d).status, 'downloading');
+  assert.equal(fetchJob.redownload(own(f), r, {}, d).status, 'downloading');
   await job.readsSettled(own(f));
   assert.equal(getAttachment(r.id).status, 'done');
   assert.deepEqual(getDirs(), []);
 });
 
-test('a file that arrived but A8 cannot use is refused without Try again (D10): too large, a size that lied, not its type, a duplicate', async () => {
+test('a body Worca cannot store (plan review M1): the file fails with Try again, never stays downloading; nothing in the store, no folder left; the log keeps one line', async () => {
+  setMockSourceResponses(null);
+  const f = feature();
+  const r = row(f, '10041', 'packing-slip.png', 860160);
+  const boom = () => { throw Object.assign(new Error('EBUSY: resource busy or locked\nsecond line'), { code: 'EBUSY' }); };
+  const logged = [];
+  const was = console.error;
+  console.error = (...a) => { logged.push(a.join(' ')); };
+  try {
+    fetchJob.queueDownloads(own(f), [r.id], { by: 'po' }, { ...d, writeBody: boom });
+    await job.readsSettled(own(f));
+  } finally { console.error = was; }
+  const now = getAttachment(r.id);
+  assert.deepEqual([now.status, now.error.code, now.error.job, now.error.message],
+    ['failed', 'DOWNLOAD', 'download', 'Worca could not get this file from Jira: Worca could not store it.']);
+  assert.deepEqual([bodies(r.id), getDirs(), fetchJob.isDownloading(r.id)], [[], [], false]);
+  assert.ok(logged.some((l) => /EBUSY/.test(l)) && !logged.some((l) => /second line/.test(l)), 'the first line only (M3)');
+  assert.equal(fetchJob.redownload(own(f), now, {}, d).status, 'downloading');
+  await job.readsSettled(own(f));
+  assert.equal(getAttachment(r.id).status, 'done');
+});
+
+test('a file that arrived but A8 cannot use is refused (D10): too large, a size that lied, not its type, a duplicate', async () => {
   const f = feature();
   const cases = [
     [() => ({ tooLarge: true, bytes: 30 * 1024 * 1024 }), 'it is over 25 MB'],
@@ -2125,7 +2194,6 @@ test('a file that arrived but A8 cannot use is refused without Try again (D10): 
     setMockSourceResponses({ downloadAttachment: answer });
     const now = await queue(f, row(f, '10042'));
     assert.deepEqual([now.status, now.error.code, now.error.message], ['failed', 'REFUSED', `Worca could not use this file: ${reason}.`], reason);
-    assert.throws(() => job.readAgain(own(f), now.id, {}, d), (e) => e.code === 'CONFLICT' && e.message === 'Worca cannot use this file. Remove it from the ⋯ menu.');
     assert.deepEqual(bodies(now.id), [], 'nothing stored');
     job.removeAttachment(own(f), now.id, {}, d);
   }
@@ -2137,13 +2205,14 @@ test('a file that arrived but A8 cannot use is refused without Try again (D10): 
   assert.deepEqual(getDirs(), []);
 });
 
-test('checkFetched (D9, D15): inside the folder, a regular file and no link, at most the cap, the answered size; the folder is 0700', () => {
+test('checkFetched (D9, D15, S7): inside the folder, a regular file and no link, at most the cap, the answered size, read through one descriptor; the folder is 0700', () => {
   const { dir, dest } = fetchJob.makeFetchFolder();
   const other = mkdtempSync(join(tmpdir(), 'worca-other-'));
   try {
     assert.deepEqual(fetchJob.checkFetched(dir, dest, { bytes: 3 }), { ok: false, why: 'missing' });
     writeFileSync(dest, 'abc');
-    assert.deepEqual(fetchJob.checkFetched(dir, dest, { bytes: 3 }), { ok: true, size: 3 });
+    const ok = fetchJob.checkFetched(dir, dest, { bytes: 3 });
+    assert.deepEqual([ok.ok, ok.size, String(ok.body)], [true, 3, 'abc'], 'the bytes it checked come back with it');
     assert.deepEqual(fetchJob.checkFetched(dir, dest, { bytes: 4 }), { ok: false, why: 'size' });
     assert.deepEqual(fetchJob.checkFetched(dir, dest, { bytes: 3 }, 2), { ok: false, why: 'too-large' });
     writeFileSync(join(other, 'body.part'), 'abc');
@@ -2155,6 +2224,292 @@ test('checkFetched (D9, D15): inside the folder, a regular file and no link, at 
       assert.deepEqual(fetchJob.checkFetched(dir, dest, { bytes: 3 }), { ok: false, why: 'not-a-file' });
     }
   } finally { rmSync(dir, { recursive: true, force: true }); rmSync(other, { recursive: true, force: true }); }
+});
+
+
+```
+
+- [ ] **Step 2: Run it to see it fail.** `node tools/test.mjs test/requirements-attachment-fetch.test.mjs` → FAIL (`Cannot find module …/attachment-fetch.mjs`).
+
+- [ ] **Step 3: Write** `src/core/requirements/attachment-fetch.mjs`:
+
+```js
+// src/core/requirements/attachment-fetch.mjs
+// A picked tracker attachment arrives as an A8 file (plans/requirements-a61-design.md D9, D10, D15–D17). Its row waits as `downloading`
+// (fetch_json says where from) until this queue — MAX_DOWNLOAD_JOBS across every feature, apart from A8's read queue — has the
+// connector stream the body to `dest`, a fixed name in a fresh private folder. Worca trusts nothing there until its own checks pass;
+// then the bytes it checked are written into A8's store under the row's id and the file joins A8's read queue. A failure marks only
+// that file, and every failure marks it: a row is never left `downloading` without a job.
+// attachment-job.mjs and this module import each other: neither uses the other's bindings at module top level.
+import { chmodSync, closeSync, constants as fsConstants, fstatSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { basename, dirname, join } from 'node:path';
+import { worcaHome } from '../projects.mjs';
+import { callSource as shimCallSource } from '../plugin-shim.mjs';
+import { validateAttachmentUploads } from '../attachment-upload.mjs';
+import { classifyExtension } from '../ask/attachment-kind.mjs';
+import { RequirementsError } from './spec.mjs';
+import { REQ_ATTACH_LIMITS, displayName, uniqueName } from './attachments.mjs';
+import { mintAttachmentId, insertAttachment, getAttachment, listAttachments, updateAttachment, appendTurn, listDownloadingAttachments } from './store.mjs';
+import { attachmentsDir, attachmentFile, enqueueRead, settleOwner } from './attachment-job.mjs';
+
+/** D17: one download (25 MB over a slow link); the op's answer is a few fields, the body is on disk. */
+export const DOWNLOAD_TIMEOUT_MS = 120_000;
+export const MAX_DOWNLOAD_JOBS = 2;
+const DIR_MODE = 0o700;
+const FILE_MODE = 0o600;
+const L = REQ_ATTACH_LIMITS;
+const iso = () => new Date().toISOString();
+/** What the log may keep of a failure (export.mjs's firstLine, copied: importing export.mjs here would join its import cycle). */
+const firstLine = (err) => String((err && err.message) || err).split(/\r?\n/)[0].slice(0, 200);
+const ownerKey = (o) => `${o.type}:${o.id}`;
+const extOf = (name) => { const i = String(name).lastIndexOf('.'); return i > 0 ? String(name).slice(i).toLowerCase() : ''; };
+const callOf = (d) => (d && typeof d.callSource === 'function' ? d.callSource : shimCallSource);
+const trackerOf = (row) => (row && row.fetch && row.fetch.tracker) || 'the tracker';
+/** How the checked body goes into A8's store (a test makes it fail). 'w': a leftover of this row's own earlier attempt is replaced. */
+const FETCH_DEFAULTS = Object.freeze({ writeBody: (target, body) => writeFileSync(target, body, { mode: FILE_MODE }) });
+
+/** D10: a picked attachment's row before its body exists, inside the caller's transaction: named (unique within the owner), typed
+ *  by its extension and sized as the tracker says; `sha256` holds `pending:<id>` (unique) until the body's real hash replaces it. */
+export function insertDownloadRow(owner, { conn, tracker, key, id, name, bytes, from = null } = {}, { by = null } = {}) {
+  const shown = uniqueName(displayName(name), listAttachments(owner.type, owner.id).map((r) => r.name));
+  const cls = classifyExtension(extOf(shown));
+  if (!cls) throw new RequirementsError('BAD_REQUEST', `${shown} was not added: Worca reads text, images and PDF.`);
+  const size = Math.max(0, Number(bytes) || 0);
+  const rowId = mintAttachmentId();
+  const row = insertAttachment({ id: rowId, ownerType: owner.type, ownerId: owner.id, name: shown, kind: cls.kind, mime: cls.mime, bytes: size,
+    sha256: `pending:${rowId}`, status: 'downloading',
+    fetch: { plugin: conn.plugin, sourceId: conn.sourceId, profile: conn.profile || null, tracker, key, id: String(id), name: String(name), bytes: size } }, { by });
+  if (owner.type === 'feature') appendTurn(owner.id, { kind: 'file', payload: { action: 'added', id: rowId, name: shown, ...(from ? { from } : {}) } }, { by });
+  return row;
+}
+
+// ---------------------------------------------------------------- the queue (D10, D17)
+
+const queue = [];          // waiting downloads, in order: { id, owner, by, d }
+const running = new Map(); // attachment id → its running download (`cancelled` once its row is removed)
+export const isDownloading = (id) => queue.some((e) => e.id === id) || running.has(id);
+/** Whether an owner ('feature:<seq>') has a download queued or running (A8's readsSettled waits for these too). */
+export const downloadsPending = (key) => queue.some((e) => ownerKey(e.owner) === key) || [...running.values()].some((e) => ownerKey(e.owner) === key);
+
+export function queueDownloads(owner, ids, { by = null } = {}, deps = {}) {
+  for (const id of ids || []) if (!isDownloading(id)) queue.push({ id, owner, by, d: deps });
+  pump();
+}
+/** A removed file (D10): a queued download goes; a running one's result is thrown away when it ends. */
+export function cancelDownload(id) {
+  for (let i = queue.length - 1; i >= 0; i -= 1) if (queue[i].id === id) queue.splice(i, 1);
+  const r = running.get(id);
+  if (r) r.cancelled = true;
+}
+/** Try again on a failed download (D10): the row waits again and is queued. */
+export function redownload(owner, row, { by = null } = {}, deps = {}) {
+  const out = updateAttachment(row.id, { status: 'downloading', error: null }, { by });
+  queueDownloads(owner, [row.id], { by }, deps);
+  return out;
+}
+function pump() {
+  while (running.size < MAX_DOWNLOAD_JOBS && queue.length) {
+    const e = queue.shift();
+    running.set(e.id, e);
+    void runDownload(e).catch((err) => console.error(`requirements: downloading file ${e.id} failed:`, firstLine(err)))
+      .finally(() => { running.delete(e.id); settleOwner(e.owner, e.d); pump(); });
+  }
+}
+
+// ---------------------------------------------------------------- the folder and the checks (D9, D15)
+
+export const fetchBase = () => join(worcaHome(), 'tmp', 'requirements');
+/** A fresh single-use folder for one download (0700, as A8's att-read-* copies) and the fixed name the connector writes. */
+export function makeFetchFolder(base = fetchBase()) {
+  mkdirSync(base, { recursive: true, mode: DIR_MODE });
+  const dir = join(base, `att-get-${randomBytes(4).toString('hex')}`);
+  mkdirSync(dir, { mode: DIR_MODE });
+  try { chmodSync(dir, DIR_MODE); } catch { /* no POSIX modes on Windows */ }
+  return { dir, dest: join(dir, 'body.part') };
+}
+
+// POSIX: open never follows a link at dest. Windows has no O_NOFOLLOW: the lstat before and the fstat after (same inode, same
+// size) tell a swapped file apart there.
+const OPEN_FLAGS = fsConstants.O_RDONLY | (process.platform !== 'win32' && typeof fsConstants.O_NOFOLLOW === 'number' ? fsConstants.O_NOFOLLOW : 0);
+
+/** D9: `dest` is still the file the host named inside the folder it created: no link, a regular file, not empty, at most the cap,
+ *  the size the connector answered. Opened once and read through that descriptor (plan review S7), so the connector cannot swap
+ *  the file between the check and the read; the bytes come back with the answer and are the only ones Worca uses. */
+export function checkFetched(dir, dest, answer, maxBytes = L.fileBytes) {
+  if (dirname(dest) !== dir || basename(dest) !== 'body.part') return { ok: false, why: 'path' };
+  let pre;
+  try { pre = lstatSync(dest); } catch { return { ok: false, why: 'missing' }; }
+  if (pre.isSymbolicLink() || !pre.isFile()) return { ok: false, why: 'not-a-file' };
+  try { if (dirname(realpathSync(dest)) !== realpathSync(dir)) return { ok: false, why: 'path' }; } catch { return { ok: false, why: 'missing' }; }
+  let fd;
+  try { fd = openSync(dest, OPEN_FLAGS); } catch (err) { return { ok: false, why: err && err.code === 'ELOOP' ? 'not-a-file' : 'missing' }; }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.ino !== pre.ino || st.size !== pre.size) return { ok: false, why: 'not-a-file' };   // swapped after the lstat
+    if (st.size === 0) return { ok: false, why: 'empty' };
+    if (st.size > maxBytes) return { ok: false, why: 'too-large' };
+    if (Number(answer && answer.bytes) !== st.size) return { ok: false, why: 'size' };
+    const body = Buffer.alloc(st.size);
+    let off = 0;
+    while (off < st.size) { const n = readSync(fd, body, off, st.size - off, off); if (n <= 0) break; off += n; }
+    if (off !== st.size) return { ok: false, why: 'size' };
+    return { ok: true, size: st.size, body };
+  } finally { closeSync(fd); }
+}
+
+// A8's upload rules (validateAttachmentUploads) on the downloaded body, with codes for messages; each code's tail for "Worca could not use this file: …"
+const VALIDATE = Object.freeze({ maxFiles: 1, maxBytesPerFile: L.fileBytes, maxBytesPerBinaryFile: L.fileBytes, maxBytesTotal: L.fileBytes,
+  notAllowed: () => 'type', messages: { tooBig: () => 'size', totalTooBig: () => 'size', empty: () => 'content', mismatch: () => 'content',
+    notUtf8: () => 'content', nul: () => 'content' } });
+const CHECK_TAIL = Object.freeze({ type: 'Worca reads text, images and PDF', size: 'it is over 25 MB', content: 'its content does not match its type' });
+// Per-file download reasons: fixed phrases, never the plugin's text (design D16, adjusted for the build)
+const REASON = Object.freeze({ timeout: 'it did not answer within 2 minutes', auth: 'the API token was refused', network: 'the network connection failed',
+  'rate-limit': 'it asked Worca to slow down' });
+
+/** The file's failure (D10, D16): DOWNLOAD (Try again) or REFUSED (none); a removed file is left alone. */
+function fail(row, code, reason, by) {
+  if (!getAttachment(row.id)) return;
+  const msg = code === 'REFUSED' ? `Worca could not use this file: ${reason}.` : `Worca could not get this file from ${trackerOf(row)}: ${reason}.`;
+  updateAttachment(row.id, { status: 'failed', error: { code, message: msg, reason, job: 'download', at: iso() } }, { by });
+}
+
+async function runDownload(e) {
+  await null;
+  const row = getAttachment(e.id);
+  if (!row || row.status !== 'downloading' || !row.fetch) return;
+  const f = row.fetch;
+  const d = { ...FETCH_DEFAULTS, ...(e.d || {}) };
+  let dir = null;
+  let target = null;   // a body this download wrote into A8's store, until the row owns it (then null)
+  try {
+    const folder = makeFetchFolder();   // inside the try (M1): a folder that cannot be made fails the file
+    dir = folder.dir;
+    let r;
+    try {
+      r = await callOf(d)({ plugin: f.plugin, sourceId: f.sourceId, profile: f.profile || undefined, op: 'downloadAttachment',
+        args: { key: f.key, id: f.id, maxBytes: L.fileBytes, dest: folder.dest }, timeoutMs: d.downloadTimeoutMs || DOWNLOAD_TIMEOUT_MS });
+    } catch (err) {
+      console.error(`requirements: the download of file ${row.id} from ${f.key} failed (${(err && err.kind) || 'plugin'}):`, firstLine(err));
+      if (!e.cancelled) fail(row, 'DOWNLOAD', REASON[err && err.kind] || 'it answered with an error', e.by);
+      return;
+    }
+    if (e.cancelled || !getAttachment(row.id)) return;   // removed meanwhile: the result is thrown away (the folder goes below)
+    if (r && r.gone) { fail(row, 'DOWNLOAD', r.forbidden ? 'this connection may not see it' : `it is no longer on ${f.key}`, e.by); return; }
+    if (r && r.tooLarge) { fail(row, 'REFUSED', 'it is over 25 MB', e.by); return; }
+    const c = checkFetched(dir, folder.dest, r);
+    if (!c.ok) {
+      const unsent = c.why === 'missing' || c.why === 'empty';
+      fail(row, unsent ? 'DOWNLOAD' : 'REFUSED', unsent ? `${trackerOf(row)} did not send it` : c.why === 'too-large' ? 'it is over 25 MB'
+        : `it is not the file ${trackerOf(row)} described`, e.by);
+      return;
+    }
+    // A8's upload rules on the bytes checkFetched read. Synchronous (base64 out and back, up to 25 MB): acceptable at two downloads at
+    // a time, the same cost as an upload of that size (plan review, Minor 9).
+    const v = validateAttachmentUploads([{ name: row.name, dataBase64: c.body.toString('base64') }], VALIDATE);
+    if (!v.ok) { fail(row, 'REFUSED', CHECK_TAIL[v.error] || CHECK_TAIL.content, e.by); return; }
+    const file = v.files[0];
+    const twin = listAttachments(row.ownerType, row.ownerId).find((x) => x.id !== row.id && x.sha256 === file.sha256);
+    if (twin) { fail(row, 'REFUSED', `it is already attached as ${twin.name}`, e.by); return; }
+    mkdirSync(attachmentsDir(), { recursive: true, mode: DIR_MODE });
+    target = attachmentFile({ id: row.id, kind: file.kind, mime: file.mime });
+    d.writeBody(target, c.body);   // the checked bytes; never a rename of dest, which could have changed after the check (S7)
+    try { chmodSync(target, FILE_MODE); } catch { /* no POSIX modes on Windows */ }
+    if (e.cancelled || !getAttachment(row.id)) return;   // removed meanwhile: the body goes below
+    try {
+      updateAttachment(row.id, { kind: file.kind, mime: file.mime, bytes: file.bytes, sha256: file.sha256, status: 'reading', error: null }, { by: e.by });
+    } catch (err) {   // a twin stored in the same moment (the per-owner hash index)
+      console.error(`requirements: storing downloaded file ${row.id} failed:`, firstLine(err));
+      fail(row, 'REFUSED', 'it is already attached', e.by);
+      return;   // the body goes below
+    }
+    enqueueRead(e.owner, row.id, row.name, e.by, d);   // then exactly an A8 file (D9)
+    target = null;   // the row owns its body now
+  } catch (err) {
+    // M1: anything else (the folder, A8's store folder, the write, the validator, the read queue) fails the file with Try again
+    console.error(`requirements: storing downloaded file ${row.id} failed:`, firstLine(err));
+    if (!e.cancelled) fail(row, 'DOWNLOAD', 'Worca could not store it', e.by);
+  } finally {
+    if (target) { try { rmSync(target, { force: true }); } catch (x) { console.error('requirements: could not remove a stored body:', firstLine(x)); } }
+    if (dir) { try { rmSync(dir, { recursive: true, force: true }); } catch (x) { console.error('requirements: could not remove a download folder:', firstLine(x)); } }
+  }
+}
+
+/** D10: a row left `downloading` by a restart (its download not queued or running) fails with INTERRUPTED; Try again fetches it. */
+export function recoverDownloads() {
+  let n = 0;
+  for (const r of listDownloadingAttachments()) {
+    if (isDownloading(r.id)) continue;
+    updateAttachment(r.id, { status: 'failed', error: { code: 'INTERRUPTED', message: `Worca restarted before it got this file from ${trackerOf(r)}.`,
+      job: 'download', at: iso() } });
+    n += 1;
+  }
+  return n;
+}
+```
+
+- [ ] **Step 4: `attachment-job.mjs` — the hook only.** Add the import `import { downloadsPending } from './attachment-fetch.mjs';` (below the `./interview.mjs` import; Task 8 adds the other names). Then:
+  - `const pendingFor = (key) => queue.some(…) || [...running.values()].some(…) || downloadsPending(key);`
+  - after `function enqueue(e) { … }` add:
+
+```js
+/** A6.1: a downloaded file joins the read queue (attachment-fetch.mjs); `deps` as any other job's. */
+export function enqueueRead(owner, id, name, by = null, deps = {}) { enqueue({ id, name, owner, kind: 'read', by, d: { ...DEFAULTS, ...deps } }); }
+/** A6.1: a download ended (in any way): the owner's frame, and readsSettled and the follow-up once nothing is left (as settle). */
+export function settleOwner(owner, deps = {}) {
+  const d = { ...DEFAULTS, ...deps };
+  notifyOwner(owner, d);
+  if (release(ownerKey(owner)) && owner.type === 'feature') maybeFollowUpFiles(owner.id, d);
+}
+```
+
+- [ ] **Step 5: Run the tests.** One at a time: `node tools/test.mjs test/requirements-attachment-fetch.test.mjs`, then A8's `test/requirements-attachment-job.test.mjs` and `test/requirements-attachments.test.mjs` → all PASS (compare any failure with `<baseline>` by test name before calling it pre-existing).
+
+- [ ] **Step 6: Commit.**
+
+```bash
+git add src/core/requirements/attachment-fetch.mjs src/core/requirements/attachment-job.mjs test/requirements-attachment-fetch.test.mjs
+git commit -m "Requirements: download a ticket's picked attachments into a private folder, check them, store them" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 8: Downloads in A8 — Remove, Try again, round 1's wait, readiness, the restart and the Files view
+
+**Files:**
+- Modify: `src/core/requirements/attachment-job.mjs` (`addAttachments`' `from`, `removeAttachment`, `notIdle`, `editSummary`, `readAgain`, `recoverAttachmentReads`, `sweepReadFolders`, `fileView`)
+- Modify: `src/core/requirements/attachments.mjs` (`stateNote`; `fileOrigins`)
+- Modify: `src/core/requirements/ready.mjs` (`unaskedFiles`, `readingF`)
+- Modify: `src/core/requirements/interview.mjs` (`startOrientation`'s `waits`)
+- Modify: `src/core/requirements/routes.mjs` (`featureView` passes each file's `from`)
+- Modify: `test/requirements-attachment-fetch.test.mjs` (appended), `test/requirements-ready.test.mjs` (appended)
+
+**Interfaces:**
+- Consumes: Task 7's `isDownloading`, `downloadsPending`, `cancelDownload`, `recoverDownloads`, `redownload`, `insertDownloadRow`, `queueDownloads`; A8's `notIdle`, `readAgain`, `removeAttachment`, `recoverAttachmentReads`, `sweepReadFolders`, `fileView`, `featureOwner` → `editable()`.
+- Produces (`attachment-job.mjs`): `addAttachments(owner, files, { by, from = null }, deps)` (the `added` turn carries `from`); `readAgain` re-downloads a failed download (`CONFLICT` "Worca cannot use this file. Remove it from the ⋯ menu." for `REFUSED`); a downloading file refuses edits, asks and Read again with `CONFLICT` "Worca is still getting this file from Jira."; `removeAttachment` on a downloading file deletes its row at once and throws its download's result away; `recoverAttachmentReads()` also recovers downloads; `sweepReadFolders` also removes `att-get-*`; `fileView(row, { …, from = null })` carries `from` and `fetched: !!row.fetch`.
+- Produces (`attachments.mjs`): `renderAttachmentsForPrompt` says "<name> (<kind>, <size>): being downloaded from SHOP-124; known by name only."; `fileOrigins(turns) → Map<id, { tracker, key } | null>`.
+- Produces (`ready.mjs`, plan review M4): a file still `downloading` counts as one still being read — it is in `unaskedFiles` (to ask about, A8-D8) and in the interview check's "Reading <n> files…" hint — so readiness never passes "Interview finished" while a ticket's file is on its way.
+- Not changed (design D10, U2): the file routes keep A8's rule (`featureOwner` → `editable()`). While round 1 waits for the ticket's files the feature is busy, so Remove and Try again on those files answer A8's busy refusal and the page disables them (`ctx.locked`) until round 1 has started; a file still downloading or failed when round 1 starts is listed by name only. No exception code.
+
+- [ ] **Step 1: Write the failing tests.** Add `fileOrigins` to `test/requirements-attachment-fetch.test.mjs`'s imports (`import { fileOrigins } from '../src/core/requirements/attachments.mjs';`) and append:
+
+```js
+test("A8's Try again on a failed download fetches it again; a file Worca refused cannot be tried again; a restart fails a file left downloading (D10)", async () => {
+  const f = feature();
+  setMockSourceResponses({ downloadAttachment: () => { throw new PluginOpError('timeout', 'x'); } });
+  const r = await queue(f, row(f, '10042'));
+  setMockSourceResponses(null);
+  assert.equal(job.readAgain(own(f), r.id, {}, d).status, 'downloading');
+  await job.readsSettled(own(f));
+  assert.equal(getAttachment(r.id).status, 'done');
+  setMockSourceResponses({ downloadAttachment: () => ({ tooLarge: true, bytes: 30 * 1024 * 1024 }) });
+  const big = await queue(f, row(f, '10045', 'pick-route-scan.pdf', 30 * 1024 * 1024));
+  assert.throws(() => job.readAgain(own(f), big.id, {}, d), (e) => e.code === 'CONFLICT' && e.message === 'Worca cannot use this file. Remove it from the ⋯ menu.');
+  setMockSourceResponses(null);
+  const left = row(f, '10043', 'support-macro.txt', 4096);   // nobody queued it: as after a restart
+  assert.ok(job.recoverAttachmentReads() >= 1);
+  const now = getAttachment(left.id);
+  assert.deepEqual([now.status, now.error.code, now.error.job, now.error.message], ['failed', 'INTERRUPTED', 'download', 'Worca restarted before it got this file from Jira.']);
 });
 
 test('a link left at dest is refused and never followed (POSIX)', { skip: process.platform === 'win32' ? 'symlinks need privileges on Windows' : false }, async () => {
@@ -2202,15 +2557,6 @@ test('round 1 waits for downloads and reads (D10): readsSettled holds while one 
   assert.equal(getAttachment(r.id).status, 'done');
 });
 
-test('a restart: a file left downloading is failed, "Worca restarted before it got this file from Jira." (D10)', () => {
-  setMockSourceResponses(null);
-  const f = feature();
-  const r = row(f, '10042');   // nobody queued it: as after a restart
-  assert.ok(job.recoverAttachmentReads() >= 1);
-  const now = getAttachment(r.id);
-  assert.deepEqual([now.status, now.error.code, now.error.job, now.error.message], ['failed', 'INTERRUPTED', 'download', 'Worca restarted before it got this file from Jira.']);
-});
-
 test("the boot sweep removes att-get folders older than an hour, as A8's att-read ones", () => {
   const base = join(worcaHome(), 'tmp', 'requirements');
   mkdirSync(join(base, 'att-get-0123abcd'), { recursive: true });
@@ -2235,210 +2581,21 @@ test("fileOrigins (D14): an import's added file names its ticket; a replaced fil
 });
 ```
 
-- [ ] **Step 2: Run it to see it fail.** `node tools/test.mjs test/requirements-attachment-fetch.test.mjs` → FAIL (`Cannot find module …/attachment-fetch.mjs`).
-
-- [ ] **Step 3: Write** `src/core/requirements/attachment-fetch.mjs`:
+Append to `test/requirements-ready.test.mjs` (it has `fileTurn`, `roundTurn` and `file` already):
 
 ```js
-// src/core/requirements/attachment-fetch.mjs
-// A picked tracker attachment arrives as an A8 file (plans/requirements-a61-design.md D9, D10, D15–D17). Its row waits as `downloading`
-// (fetch_json says where from) until this queue — MAX_DOWNLOAD_JOBS across every feature, apart from A8's read queue — has the
-// connector stream the body to `dest`, a fixed name in a fresh private folder. Worca trusts nothing there until its own checks pass;
-// then the body moves into A8's store under the row's id and the file joins A8's read queue. A failure marks only that file.
-// attachment-job.mjs and this module import each other: neither uses the other's bindings at module top level.
-import { chmodSync, copyFileSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
-import { basename, dirname, join } from 'node:path';
-import { worcaHome } from '../projects.mjs';
-import { callSource as shimCallSource } from '../plugin-shim.mjs';
-import { validateAttachmentUploads } from '../attachment-upload.mjs';
-import { classifyExtension } from '../ask/attachment-kind.mjs';
-import { RequirementsError } from './spec.mjs';
-import { REQ_ATTACH_LIMITS, displayName, uniqueName } from './attachments.mjs';
-import { mintAttachmentId, insertAttachment, getAttachment, listAttachments, updateAttachment, appendTurn, listDownloadingAttachments } from './store.mjs';
-import { attachmentsDir, attachmentFile, enqueueRead, settleOwner } from './attachment-job.mjs';
-
-/** D17: one download (25 MB over a slow link); the op's answer is a few fields, the body is on disk. */
-export const DOWNLOAD_TIMEOUT_MS = 120_000;
-export const MAX_DOWNLOAD_JOBS = 2;
-const DIR_MODE = 0o700;
-const FILE_MODE = 0o600;
-const L = REQ_ATTACH_LIMITS;
-const iso = () => new Date().toISOString();
-const message = (err) => (err && err.message ? err.message : String(err));
-const ownerKey = (o) => `${o.type}:${o.id}`;
-const extOf = (name) => { const i = String(name).lastIndexOf('.'); return i > 0 ? String(name).slice(i).toLowerCase() : ''; };
-const callOf = (d) => (d && typeof d.callSource === 'function' ? d.callSource : shimCallSource);
-const trackerOf = (row) => (row && row.fetch && row.fetch.tracker) || 'the tracker';
-
-/** D10: a picked attachment's row before its body exists, inside the caller's transaction: named (unique within the owner), typed
- *  by its extension and sized as the tracker says; `sha256` holds `pending:<id>` (unique) until the body's real hash replaces it. */
-export function insertDownloadRow(owner, { conn, tracker, key, id, name, bytes, from = null } = {}, { by = null } = {}) {
-  const shown = uniqueName(displayName(name), listAttachments(owner.type, owner.id).map((r) => r.name));
-  const cls = classifyExtension(extOf(shown));
-  if (!cls) throw new RequirementsError('BAD_REQUEST', `${shown} was not added: Worca reads text, images and PDF.`);
-  const size = Math.max(0, Number(bytes) || 0);
-  const rowId = mintAttachmentId();
-  const row = insertAttachment({ id: rowId, ownerType: owner.type, ownerId: owner.id, name: shown, kind: cls.kind, mime: cls.mime, bytes: size,
-    sha256: `pending:${rowId}`, status: 'downloading',
-    fetch: { plugin: conn.plugin, sourceId: conn.sourceId, profile: conn.profile || null, tracker, key, id: String(id), name: String(name), bytes: size } }, { by });
-  if (owner.type === 'feature') appendTurn(owner.id, { kind: 'file', payload: { action: 'added', id: rowId, name: shown, ...(from ? { from } : {}) } }, { by });
-  return row;
-}
-
-// ---------------------------------------------------------------- the queue (D10, D17)
-
-const queue = [];          // waiting downloads, in order: { id, owner, by, d }
-const running = new Map(); // attachment id → its running download (`cancelled` once its row is removed)
-export const isDownloading = (id) => queue.some((e) => e.id === id) || running.has(id);
-/** Whether an owner ('feature:<seq>') has a download queued or running (A8's readsSettled waits for these too). */
-export const downloadsPending = (key) => queue.some((e) => ownerKey(e.owner) === key) || [...running.values()].some((e) => ownerKey(e.owner) === key);
-
-export function queueDownloads(owner, ids, { by = null } = {}, deps = {}) {
-  for (const id of ids || []) if (!isDownloading(id)) queue.push({ id, owner, by, d: deps });
-  pump();
-}
-/** A removed file (D10): a queued download goes; a running one's result is thrown away when it ends. */
-export function cancelDownload(id) {
-  for (let i = queue.length - 1; i >= 0; i -= 1) if (queue[i].id === id) queue.splice(i, 1);
-  const r = running.get(id);
-  if (r) r.cancelled = true;
-}
-/** Try again on a failed download (D10): the row waits again and is queued. */
-export function redownload(owner, row, { by = null } = {}, deps = {}) {
-  const out = updateAttachment(row.id, { status: 'downloading', error: null }, { by });
-  queueDownloads(owner, [row.id], { by }, deps);
-  return out;
-}
-function pump() {
-  while (running.size < MAX_DOWNLOAD_JOBS && queue.length) {
-    const e = queue.shift();
-    running.set(e.id, e);
-    void runDownload(e).catch((err) => console.error(`requirements: downloading file ${e.id} failed:`, message(err)))
-      .finally(() => { running.delete(e.id); settleOwner(e.owner, e.d); pump(); });
-  }
-}
-
-// ---------------------------------------------------------------- the folder and the checks (D9, D15)
-
-export const fetchBase = () => join(worcaHome(), 'tmp', 'requirements');
-/** A fresh single-use folder for one download (0700, as A8's att-read-* copies) and the fixed name the connector writes. */
-export function makeFetchFolder(base = fetchBase()) {
-  mkdirSync(base, { recursive: true, mode: DIR_MODE });
-  const dir = join(base, `att-get-${randomBytes(4).toString('hex')}`);
-  mkdirSync(dir, { mode: DIR_MODE });
-  try { chmodSync(dir, DIR_MODE); } catch { /* no POSIX modes on Windows */ }
-  return { dir, dest: join(dir, 'body.part') };
-}
-
-/** D9: `dest` is still the file the host named inside the folder it created: no link, a regular file, not empty, at most the cap,
- *  the size the connector answered. */
-export function checkFetched(dir, dest, answer, maxBytes = L.fileBytes) {
-  if (dirname(dest) !== dir || basename(dest) !== 'body.part') return { ok: false, why: 'path' };
-  let st;
-  try { st = lstatSync(dest); } catch { return { ok: false, why: 'missing' }; }
-  if (st.isSymbolicLink() || !st.isFile()) return { ok: false, why: 'not-a-file' };
-  try { if (dirname(realpathSync(dest)) !== realpathSync(dir)) return { ok: false, why: 'path' }; } catch { return { ok: false, why: 'missing' }; }
-  if (st.size === 0) return { ok: false, why: 'empty' };
-  if (st.size > maxBytes) return { ok: false, why: 'too-large' };
-  if (Number(answer && answer.bytes) !== st.size) return { ok: false, why: 'size' };
-  return { ok: true, size: st.size };
-}
-
-// A8's upload rules (validateAttachmentUploads) on the downloaded body, with codes for messages; each code's tail for "Worca could not use this file: …"
-const VALIDATE = Object.freeze({ maxFiles: 1, maxBytesPerFile: L.fileBytes, maxBytesPerBinaryFile: L.fileBytes, maxBytesTotal: L.fileBytes,
-  notAllowed: () => 'type', messages: { tooBig: () => 'size', totalTooBig: () => 'size', empty: () => 'content', mismatch: () => 'content',
-    notUtf8: () => 'content', nul: () => 'content' } });
-const CHECK_TAIL = Object.freeze({ type: 'Worca reads text, images and PDF', size: 'it is over 25 MB', content: 'its content does not match its type' });
-const REASON = Object.freeze({ timeout: 'it did not answer within 2 minutes', auth: 'the API token was refused', network: 'the network connection failed',
-  'rate-limit': 'it asked Worca to slow down' });
-
-/** The file's failure (D10, D16): DOWNLOAD (Try again) or REFUSED (none); a removed file is left alone. */
-function fail(row, code, reason, by) {
-  if (!getAttachment(row.id)) return;
-  const msg = code === 'REFUSED' ? `Worca could not use this file: ${reason}.` : `Worca could not get this file from ${trackerOf(row)}: ${reason}.`;
-  updateAttachment(row.id, { status: 'failed', error: { code, message: msg, reason, job: 'download', at: iso() } }, { by });
-}
-
-async function runDownload(e) {
-  await null;
-  const row = getAttachment(e.id);
-  if (!row || row.status !== 'downloading' || !row.fetch) return;
-  const f = row.fetch;
-  const d = e.d || {};
-  const { dir, dest } = makeFetchFolder();
-  try {
-    let r;
-    try {
-      r = await callOf(d)({ plugin: f.plugin, sourceId: f.sourceId, profile: f.profile || undefined, op: 'downloadAttachment',
-        args: { key: f.key, id: f.id, maxBytes: L.fileBytes, dest }, timeoutMs: d.downloadTimeoutMs || DOWNLOAD_TIMEOUT_MS });
-    } catch (err) {
-      console.error(`requirements: the download of file ${row.id} from ${f.key} failed (${(err && err.kind) || 'plugin'}):`, message(err));
-      if (!e.cancelled) fail(row, 'DOWNLOAD', REASON[err && err.kind] || 'it answered with an error', e.by);
-      return;
-    }
-    if (e.cancelled || !getAttachment(row.id)) return;   // removed meanwhile: the result is thrown away (the folder goes below)
-    if (r && r.gone) { fail(row, 'DOWNLOAD', r.forbidden ? 'this connection may not see it' : `it is no longer on ${f.key}`, e.by); return; }
-    if (r && r.tooLarge) { fail(row, 'REFUSED', 'it is over 25 MB', e.by); return; }
-    const c = checkFetched(dir, dest, r);
-    if (!c.ok) {
-      const unsent = c.why === 'missing' || c.why === 'empty';
-      fail(row, unsent ? 'DOWNLOAD' : 'REFUSED', unsent ? `${trackerOf(row)} did not send it` : c.why === 'too-large' ? 'it is over 25 MB'
-        : `it is not the file ${trackerOf(row)} described`, e.by);
-      return;
-    }
-    const v = validateAttachmentUploads([{ name: row.name, dataBase64: readFileSync(dest).toString('base64') }], VALIDATE);
-    if (!v.ok) { fail(row, 'REFUSED', CHECK_TAIL[v.error] || CHECK_TAIL.content, e.by); return; }
-    const file = v.files[0];
-    const twin = listAttachments(row.ownerType, row.ownerId).find((x) => x.id !== row.id && x.sha256 === file.sha256);
-    if (twin) { fail(row, 'REFUSED', `it is already attached as ${twin.name}`, e.by); return; }
-    const target = attachmentFile({ id: row.id, kind: file.kind, mime: file.mime });
-    mkdirSync(attachmentsDir(), { recursive: true, mode: DIR_MODE });
-    try { renameSync(dest, target); } catch { copyFileSync(dest, target); rmSync(dest, { force: true }); }   // another volume: copy, then unlink
-    try { chmodSync(target, FILE_MODE); } catch { /* no POSIX modes on Windows */ }
-    if (e.cancelled || !getAttachment(row.id)) { rmSync(target, { force: true }); return; }
-    try {
-      updateAttachment(row.id, { kind: file.kind, mime: file.mime, bytes: file.bytes, sha256: file.sha256, status: 'reading', error: null }, { by: e.by });
-    } catch (err) {   // a twin stored in the same moment (the per-owner hash index)
-      console.error(`requirements: storing downloaded file ${row.id} failed:`, message(err));
-      rmSync(target, { force: true });
-      fail(row, 'REFUSED', 'it is already attached', e.by);
-      return;
-    }
-    enqueueRead(e.owner, row.id, row.name, e.by, d);   // then exactly an A8 file (D9)
-  } finally {
-    try { rmSync(dir, { recursive: true, force: true }); } catch (x) { console.error('requirements: could not remove a download folder:', message(x)); }
-  }
-}
-
-/** D10: a row left `downloading` by a restart (its download not queued or running) fails with INTERRUPTED; Try again fetches it. */
-export function recoverDownloads() {
-  let n = 0;
-  for (const r of listDownloadingAttachments()) {
-    if (isDownloading(r.id)) continue;
-    updateAttachment(r.id, { status: 'failed', error: { code: 'INTERRUPTED', message: `Worca restarted before it got this file from ${trackerOf(r)}.`,
-      job: 'download', at: iso() } });
-    n += 1;
-  }
-  return n;
-}
+test('A6.1 D10 (plan review M4): a ticket file still downloading counts as one still being read: to ask about, and the reading hint', () => {
+  const f = { spec: { goal: { text: 'g', measure: 'm' }, criteria: [{ id: 'R-po-1', text: 'c' }], assumptions: [], openQuestions: [] } };
+  const turns = [fileTurn(1, 'added', 'a'), roundTurn(2)];   // round 1 ran after its wait, without the file in payload.files
+  assert.deepEqual(unaskedFiles([file('a', 'downloading')], turns), ['a']);
+  const c = readiness(f, { turns, files: [file('a', 'downloading')] }).checks.find((x) => x.key === 'interview');
+  assert.deepEqual([c.ok, c.hint], [false, 'Reading 1 file…']);
+});
 ```
 
-- [ ] **Step 4: `attachment-job.mjs`.** Add the import `import { isDownloading, downloadsPending, cancelDownload, recoverDownloads, redownload } from './attachment-fetch.mjs';` (below the `./interview.mjs` import). Then:
-  - `const pendingFor = (key) => queue.some(…) || [...running.values()].some(…) || downloadsPending(key);`
-  - after `function enqueue(e) { … }` add:
+- [ ] **Step 2: Run them to see them fail.** `node tools/test.mjs test/requirements-attachment-fetch.test.mjs` → the whole file FAILS (no `fileOrigins` export yet; after Step 4, A8's `readAgain` still reads a file with no body). The POSIX link test is Task 7's behaviour, kept here only for Task 7's size: it passes once the file loads. `node tools/test.mjs test/requirements-ready.test.mjs` → the new test FAILS (`unaskedFiles` skips `downloading`).
 
-```js
-/** A6.1: a downloaded file joins the read queue (attachment-fetch.mjs); `deps` as any other job's. */
-export function enqueueRead(owner, id, name, by = null, deps = {}) { enqueue({ id, name, owner, kind: 'read', by, d: { ...DEFAULTS, ...deps } }); }
-/** A6.1: a download ended (in any way): the owner's frame, and readsSettled and the follow-up once nothing is left (as settle). */
-export function settleOwner(owner, deps = {}) {
-  const d = { ...DEFAULTS, ...deps };
-  notifyOwner(owner, d);
-  if (release(ownerKey(owner)) && owner.type === 'feature') maybeFollowUpFiles(owner.id, d);
-}
-```
-
+- [ ] **Step 3: `attachment-job.mjs`.** Extend Task 7's import to `import { isDownloading, downloadsPending, cancelDownload, recoverDownloads, redownload } from './attachment-fetch.mjs';`. Then:
   - `addAttachments(owner, files, { by = null, from = null } = {}, deps = {})`, and its turn payload `{ action: 'added', id: p.id, name: p.name, ...(from ? { from } : {}) }`.
   - `removeAttachment`: after `stopJobs([row.id]);` add `cancelDownload(row.id);   // A6.1 D10: a download in flight is thrown away`.
   - above `notIdle` add `const gettingOf = (row) => \`Worca is still getting this file from ${(row.fetch && row.fetch.tracker) || 'the tracker'}.\`;` and `const CANNOT_USE = 'Worca cannot use this file. Remove it from the ⋯ menu.';`; `notIdle` begins with `if (row.status === 'downloading' || isDownloading(row.id)) throw new RequirementsError('CONFLICT', gettingOf(row));`
@@ -2459,7 +2616,7 @@ export function settleOwner(owner, deps = {}) {
   - `sweepReadFolders`: the name test becomes `/^att-(?:read|get)-[0-9a-f]{8}$/` and its comment "D5, A6.1 D9: read and download folders a restart left behind, older than an hour."
   - `fileView(row, { spec = null, href, doc = false, estimates = null, from = null } = {})` gains `from, fetched: !!row.fetch,` after `asking: …`.
 
-- [ ] **Step 5: `attachments.mjs`.** Replace `stateNote`:
+- [ ] **Step 4: `attachments.mjs`.** Replace `stateNote`:
 
 ```js
 const stateNote = (r) => (r.status === 'downloading' ? `being downloaded from ${(r.fetch && r.fetch.key) || 'the tracker'}`   // A6.1 D10
@@ -2483,22 +2640,24 @@ export function fileOrigins(turns = []) {
 }
 ```
 
+- [ ] **Step 5: `ready.mjs` (M4).** In `unaskedFiles` the status test becomes `if (!f || (f.status !== 'reading' && f.status !== 'downloading' && f.status !== 'done')) continue;` and its doc comment gains "A6.1 D10: a file still being downloaded counts as one being read."; in `readiness`, `readingF` becomes `unaskedF.filter((id) => ['reading', 'downloading'].includes(((files || []).find((x) => x && x.id === id) || {}).status));` with the comment "(A6.1: a ticket file still downloading too)".
+
 - [ ] **Step 6: `interview.mjs`.** Import `isDownloading` (`import { isDownloading } from './attachment-fetch.mjs';`) and in `startOrientation` change `waits` to `thenRound && listAttachments('feature', f.seq).some((r) => isReading(r.id) || isDownloading(r.id))`; extend the comment above it: "A6.1 D10: a file still being downloaded counts as one being read."
 
 - [ ] **Step 7: `routes.mjs`.** Import `fileOrigins` from `./attachments.mjs`. In `featureView`, after `const files = …` add `const origins = fileOrigins(turns);   // A6.1 D14: "from SHOP-124"` and the feature files' map becomes `files.map((r) => fileView(r, { spec: f.spec, href: …, estimates, from: origins.get(r.id) || null }))`.
 
-- [ ] **Step 8: Run the tests.** One at a time: `node tools/test.mjs test/requirements-attachment-fetch.test.mjs`, then the A8 files `test/requirements-attachment-job.test.mjs`, `test/requirements-attachments.test.mjs`, `test/requirements-attachments-api.test.mjs`, `test/requirements-interview.test.mjs`, `test/requirements-round.test.mjs` → all PASS (compare any failure with `<baseline>` by test name before calling it pre-existing).
+- [ ] **Step 8: Run the tests.** One at a time: `node tools/test.mjs test/requirements-attachment-fetch.test.mjs`, `test/requirements-ready.test.mjs`, then the A8 files `test/requirements-attachment-job.test.mjs`, `test/requirements-attachments.test.mjs`, `test/requirements-attachments-api.test.mjs`, `test/requirements-interview.test.mjs`, `test/requirements-round.test.mjs` → all PASS (compare any failure with `<baseline>` by test name before calling it pre-existing).
 
 - [ ] **Step 9: Commit.**
 
 ```bash
-git add src/core/requirements/attachment-fetch.mjs src/core/requirements/attachment-job.mjs src/core/requirements/attachments.mjs src/core/requirements/interview.mjs src/core/requirements/routes.mjs test/requirements-attachment-fetch.test.mjs
-git commit -m "Requirements: download a ticket's picked attachments into a private folder, check them, read them as files" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git add src/core/requirements/attachment-job.mjs src/core/requirements/attachments.mjs src/core/requirements/ready.mjs src/core/requirements/interview.mjs src/core/requirements/routes.mjs test/requirements-attachment-fetch.test.mjs test/requirements-ready.test.mjs
+git commit -m "Requirements: a ticket's files in A8 — Remove, Try again, round 1's wait and readiness" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 8: The create from a ticket and the import routes
+### Task 9: The create from a ticket and the import routes
 
 **Files:**
 - Modify: `src/core/requirements/import.mjs` (`prepareImport`, `createImported`)
@@ -2507,7 +2666,7 @@ git commit -m "Requirements: download a ticket's picked attachments into a priva
 - Create: `test/requirements-import-api.test.mjs`
 
 **Interfaces:**
-- Consumes: Task 6's `sourceFor`, `keyOf`, `readTicket`, `importView`, `importOptions`, `searchTickets`, `previewImport`; Task 2's `processTicket`, `commentsMarkdown`, `commentsFileName`; Task 1's `createFeature`, `saveExportLink`, `linkByTicket`; Task 7's `insertDownloadRow`, `queueDownloads`, `addAttachments`; A8's `checkNewFiles`, `REQ_ATTACH_LIMITS`, `displayName`; A1's `assertCapacity`, `startOrientation`.
+- Consumes: Task 6's `sourceFor`, `keyOf`, `readTicket`, `importView`, `importOptions`, `searchTickets`, `previewImport`; Task 2's `processTicket`, `commentsMarkdown`, `commentsFileName`; Task 1's `createFeature`, `saveExportLink`, `linkByTicket`; Task 7's `insertDownloadRow`, `queueDownloads`, `isDownloading`; Task 8's `addAttachments` with `from`; A8's `checkNewFiles`, `REQ_ATTACH_LIMITS`, `displayName`; A1's `assertCapacity`, `startOrientation`.
 - Produces (`import.mjs`):
   - `prepareImport(scope, fromTicket, { diskFiles = [] }, d) → Plan` — the second read (D10); `Plan = { conn, tracker, key, url, meta, fingerprint, criteriaField: { id, name } | null, criteria: [{ text, source }], comments: number, generated: [Upload], diskFiles: [Upload], downloads: [{ id, name, kind, mime, bytes }], notOnTicket: { key, comments: [id], attachments: [{ id, reason: string | null }] } }`; refuses A8's caps over the form's files, the generated files and the downloads together (`BAD_REQUEST`), the ticket gone (`NOT_FOUND` with `gone`), the tracker (`TRACKER`). Writes nothing.
   - `createImported(scope, { title, description }, plan, { by }, d) → { seq, filesNotStored: [name], notOnTicket }` — one transaction for the feature with its criteria, A6's link (`origin: 'import'`, unless another feature follows the ticket, D12) and the `export` turn `imported`; then the generated files (A8's `addAttachments` with `from`), the `downloading` rows (one transaction) and their queue, then the form's own files. Never awaits a download.
@@ -2522,7 +2681,7 @@ git commit -m "Requirements: download a ticket's picked attachments into a priva
 // the criteria, the link, the turn, the comments file, the second read, D12's unlinked create, the caps, Try again and Remove.
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -2534,6 +2693,8 @@ import { setMockSourceResponses, PluginOpError } from '../src/core/plugin-shim.m
 import { createFeature, getFeature, getExportLink, saveExportLink, listAttachments, listFeatures, listTurns } from '../src/core/requirements/store.mjs';
 import { settled } from '../src/core/requirements/interview.mjs';
 import { attachmentFile } from '../src/core/requirements/attachment-job.mjs';
+import { isDownloading } from '../src/core/requirements/attachment-fetch.mjs';
+import { worcaHome } from '../src/core/projects.mjs';
 import { registerRequirementsRoutes, REQUIREMENTS_ROUTES } from '../src/core/requirements/routes.mjs';
 import { _resetExportCaches } from '../src/core/requirements/export.mjs';
 
@@ -2584,6 +2745,7 @@ const create = (over = {}, ft = FROM()) => call('POST', P, { scopeType: 'project
   description: 'Customers cancel the items not picked up yet.', fromTicket: ft, ...over });
 const waitFor = async (pred, ms = 8000) => { const end = Date.now() + ms; while (!(await pred())) { if (Date.now() > end) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 20)); } };
 const BODY = { 10041: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]), 10042: Buffer.from('%PDF-1.7\nx\n'), 10043: Buffer.from('Macro text.\n') };
+const getDirs = () => { try { return readdirSync(join(worcaHome(), 'tmp', 'requirements')).filter((x) => x.startsWith('att-get-')); } catch { return []; } };
 /** Downloads answered by hand: `drain()` answers every one, also those that start after a slot freed. */
 function hold() {
   const waiting = [];
@@ -2624,7 +2786,7 @@ test('Start the interview with a ticket (D10, D11, D14): 201 at once; R-po-1… 
   assert.equal(r.status, 201);
   const f = r.json.feature;
   assert.deepEqual(f.spec.criteria.map((c) => [c.id, c.text, c.edited, c.source]), CRITERIA.map((t, i) => [`R-po-${i + 1}`, t, true, 'SHOP-124']));
-  assert.equal(f.export.link.key, 'SHOP-124', 'the chip from the start (the view carries the origin from Task 9 on)');
+  assert.equal(f.export.link.key, 'SHOP-124', 'the chip from the start (the view carries the origin from Task 10 on)');
   assert.deepEqual(f.attachments.map((a) => a.name), ['SHOP-124 comments.md', 'packing-slip.png', 'partial-cancel-flow.pdf', 'support-macro.txt']);
   assert.ok(['reading', 'done'].includes(f.attachments[0].status));
   assert.deepEqual(f.attachments.slice(1).map((a) => a.status), ['downloading', 'downloading', 'downloading']);
@@ -2713,13 +2875,16 @@ test('Try again on a failed download fetches it again (A8 read-again); Remove on
   assert.equal((await call('DELETE', `${P}/${seq2}/attachments/${txt.id}`)).status, 200);
   assert.equal(listAttachments('feature', seq2).length, 0);
   while (h.waiting.length) h.waiting.shift()();
+  // the released download of the removed file ends now: wait for it, so it never finishes after this test (or after useTempHome's cleanup)
+  await waitFor(() => !isDownloading(txt.id));
+  assert.deepEqual(getDirs(), [], 'its folder is gone');
 });
 ```
 
 Add to `test/requirements-run-link.test.mjs`, after the export allowlist test:
 
 ```js
-test('server: the browser cannot drive an import op (A6.1 D2): /api/sources/call refuses all four', async () => {
+test('server (a guard: it passes before A6.1 too): the browser cannot drive an import op (A6.1 D2): /api/sources/call refuses all four', async () => {
   for (const op of ['importOptions', 'searchTickets', 'importTicket', 'downloadAttachment']) {
     const r = await call('POST', '/api/sources/call', { plugin: 'jira-source', sourceId: 'jira', op, profile: 'acme', args: {} });
     assert.deepEqual([r.status, r.json.error], [400, `op "${op}" is not allowed for this source`], op);
@@ -2727,7 +2892,7 @@ test('server: the browser cannot drive an import op (A6.1 D2): /api/sources/call
 });
 ```
 
-- [ ] **Step 2: Run them to see them fail.** `node tools/test.mjs test/requirements-import-api.test.mjs` → FAIL (the import routes are not in the table). `node tools/test.mjs test/requirements-run-link.test.mjs` → the new test PASSES already (the allowlist never named these ops); it guards the rule.
+- [ ] **Step 2: Run them to see them fail.** `node tools/test.mjs test/requirements-import-api.test.mjs` → FAIL (the import routes are not in the table). `node tools/test.mjs test/requirements-run-link.test.mjs` → the new test PASSES already (the allowlist never named these ops): it is a guard that keeps the rule, not a failing-first test, and does not count as one.
 
 - [ ] **Step 3: `import.mjs`: the second read and the create.** Add to the imports:
 
@@ -2748,15 +2913,20 @@ import { commentsFileName, commentsMarkdown } from './ticket-import.mjs';
 ```js
 // ---- the create (D10–D12): the ticket read again, then the feature at once; downloads run afterwards ----
 
+/** A generated text file (the comments, the long description): A8's text rules hold for it as for an upload (plan review S9):
+ *  no NUL (it would be inlined into a prompt) and well-formed UTF-8 (a lone surrogate from the tracker becomes U+FFFD). */
 const textFile = (name, body) => {
-  const data = Buffer.from(body, 'utf8');
-  return { name, kind: 'text', mime: 'text/markdown', data, text: body, bytes: data.length, sha256: createHash('sha256').update(data).digest('hex') };
+  const text = String(body).replace(/\u0000/g, '').toWellFormed();
+  const data = Buffer.from(text, 'utf8');
+  return { name, kind: 'text', mime: 'text/markdown', data, text, bytes: data.length, sha256: createHash('sha256').update(data).digest('hex') };
 };
 const ids = (v) => [...new Set((Array.isArray(v) ? v : []).map((x) => String(x)).slice(0, 200))];
 
 /** D10: the second read. The form's title, description and criteria are the product owner's; the comments and attachments are taken
  *  by id from this fresh read (one no longer there is named in notOnTicket). A8's caps for the New feature form count the form's own
- *  files, the generated ones and the downloads (D9, on the tracker's sizes). Writes nothing. */
+ *  files, the generated ones and the downloads (D9, on the tracker's sizes). Writes nothing. The read keeps the newest 50 comments
+ *  (D8), so a comment the product owner picked that newer comments pushed out between the preview and Start is reported as "no
+ *  longer on SHOP-124" too (rare; accepted, plan review Minor 6). */
 export async function prepareImport(scope, ft, { diskFiles = [] } = {}, d = {}) {
   if (!ft || typeof ft !== 'object' || Array.isArray(ft)) throw new RequirementsError('BAD_REQUEST', 'fromTicket must be an object');
   const { conn, t } = await sourceFor(ft, d);
@@ -2800,7 +2970,9 @@ const importFields = (plan) => ({
 
 /** D10–D12: the feature, its criteria, A6's link (unless another feature follows the ticket) and the `imported` turn in one transaction;
  *  then the generated files (read at once), the downloading rows and their queue, then the form's own files. Nothing awaits a download.
- *  A file that cannot be stored never undoes the feature (A8): its name goes to filesNotStored. */
+ *  A file that cannot be stored never undoes the feature (A8): its name goes to filesNotStored. Accepted (plan review Minor 5): the
+ *  turn's `comments` count (D14's "its comments are in …") is written with the feature, before the comments file is stored, so in the
+ *  rare case that file lands in filesNotStored the thread line still names it and the round's <attachments> simply lacks it. */
 export function createImported(scope, { title, description } = {}, plan, { by = null } = {}, d = {}) {
   const linked = linkByTicket({ ...plan.conn, key: plan.key });   // D12: one ticket follows one feature
   const at = new Date().toISOString();
@@ -2906,7 +3078,7 @@ git commit -m "Requirements: start the interview from a ticket, and the import r
 
 ---
 
-### Task 9: An imported link in Export, and the import's thread line
+### Task 10: An imported link in Export, and the import's thread line
 
 **Files:**
 - Modify: `src/core/requirements/markdown.mjs` (`criterionLine`, `renderTicketMarkdown`)
@@ -2946,7 +3118,7 @@ test('A6.1 D11: the comment after an import says "since the import"', () => {
 });
 ```
 
-Append to `test/requirements-round.test.mjs` (add `threadText` to its import from `round.mjs`):
+Append to `test/requirements-round.test.mjs` (add `threadText` to its import from `round.mjs`, and `import { renderAttachmentsForPrompt } from '../src/core/requirements/attachments.mjs';`):
 
 ```js
 test("A6.1 D14: an import writes one thread line, as data; A6's other export turns write none, so a feature that was not imported keeps its thread byte for byte", () => {
@@ -2957,6 +3129,24 @@ test("A6.1 D14: an import writes one thread line, as data; A6's other export tur
   assert.equal(threadText([imported]),
     'The product owner started this feature from Jira ticket SHOP-124. Its acceptance criteria are R-po-1 to R-po-3; its comments are in “SHOP-124 comments.md”.');
   assert.ok(!threadText([{ ...imported, payload: { ...imported.payload, key: 'SHOP-1<b>' } }]).includes('<b>'), 'asData escapes it');
+});
+
+test("A6.1 §9 (Prompts): an imported feature's round 1 prompt has the import line in <thread>, the comments file's full text in <attachments>, and a file still downloading by name only", () => {
+  const comments = '# Comments on SHOP-124\n\n**Ann Example** · 21 Oct 2026\nWarehouse confirms items are picked per parcel.\n';
+  const rows = [
+    { id: 'ratt_000000000001', name: 'SHOP-124 comments.md', kind: 'text', bytes: Buffer.byteLength(comments), status: 'done', summary: 'Items are picked per parcel.',
+      summaryEdited: false, asks: [] },
+    { id: 'ratt_000000000002', name: 'partial-cancel-flow.pdf', kind: 'binary', bytes: 1258291, status: 'downloading', summary: '', summaryEdited: false, asks: [],
+      fetch: { tracker: 'Jira', key: 'SHOP-124' } },
+  ];
+  const attachments = renderAttachmentsForPrompt(rows, { texts: new Map([['ratt_000000000001', comments]]) });
+  const turns = [{ id: 1, kind: 'export', payload: { action: 'imported', tracker: 'Jira', key: 'SHOP-124', criteria: ['R-po-1', 'R-po-2', 'R-po-3'], comments: 1 } }];
+  const p = buildRoundPrompt({ feature: { id: 'FEAT-8', title: 'Partial cancel', description: 'd', spec: emptySpec() }, turns, attachments, round: 1 });
+  const block = (tag) => (new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`).exec(p) || [])[1];
+  assert.equal(block('thread'),
+    'The product owner started this feature from Jira ticket SHOP-124. Its acceptance criteria are R-po-1 to R-po-3; its comments are in “SHOP-124 comments.md”.');
+  assert.ok(block('attachments').includes(`SHOP-124 comments.md (text, ${Buffer.byteLength(comments)} B)\nWhat Worca took from it:\nItems are picked per parcel.\nFull text:\n${comments}`));
+  assert.ok(block('attachments').includes('partial-cancel-flow.pdf (PDF, 1.2 MB): being downloaded from SHOP-124; known by name only.'));
 });
 ```
 
@@ -3027,7 +3217,7 @@ test("A6.1: the feature's export view carries the origin and the import's Histor
 });
 ```
 
-- [ ] **Step 2: Run them to see them fail.** `node tools/test.mjs test/requirements-ticket.test.mjs` → FAIL ("(from SHOP-124)" still there). `node tools/test.mjs test/requirements-round.test.mjs` → FAIL (no import line). `node tools/test.mjs test/requirements-export.test.mjs` → FAIL (`p.ticket.issueType` is the setup's `10001`).
+- [ ] **Step 2: Run them to see them fail.** `node tools/test.mjs test/requirements-ticket.test.mjs` → FAIL ("(from SHOP-124)" still there). `node tools/test.mjs test/requirements-round.test.mjs` → FAIL (no import line; the prompt test's `<thread>` is empty). `node tools/test.mjs test/requirements-export.test.mjs` → FAIL (`p.ticket.issueType` is the setup's `10001`).
 
 - [ ] **Step 3: `markdown.mjs`.**
 
@@ -3037,7 +3227,7 @@ test("A6.1: the feature's export view carries the origin and the import's Histor
 export const criterionLine = (c, ownKey = null) => `${c.id} ${c.text}${ownKey && c.source === ownKey ? '' : from(c)}`;
 ```
 
-and `renderTicketMarkdown(f, { reason = null, exportedOn, criteriaInDescription = true, mentionedFiles = [], ownKey = null } = {})` with its criteria line `section('Acceptance criteria', s.criteria.length ? bullets(s.criteria.map((c) => criterionLine(c, ownKey))) : '');`.
+and `renderTicketMarkdown(f, { reason = null, exportedOn, criteriaInDescription = true, mentionedFiles = [], ownKey = null } = {})` with its criteria line `section('Acceptance criteria', s.criteria.length ? bullets(s.criteria.map((c) => criterionLine(c, ownKey))) : '');`. (The two callers that passed `criterionLine` point-free, `markdown.mjs` here and `ticket.mjs` below, are the only ones in the code; after this task none is left, so `.map` can never hand its index in as `ownKey`. Keep any new caller an arrow.)
 
 - [ ] **Step 4: `ticket.mjs`.** `buildTicket(f, { …, mentionedFiles = [], ownKey = null } = {})`: pass `ownKey` to `renderTicketMarkdown` and use `items: f.spec.criteria.map((c) => criterionLine(c, ownKey))`. `renderExportComment(f, changes, { since, reason = null, after = 'export' } = {})` starts with `const out = [\`Updated in Worca since the ${after === 'import' ? 'import' : 'last export'} (${since})\`];` and its comment adds "A6.1 D11: 'since the import' until the first export of an imported link."
 
@@ -3075,23 +3265,22 @@ git commit -m "Requirements: an imported link in Export, and the import's thread
 
 Every UI task below edits `ui/public/requirements-view.mjs` (CRLF on Windows: keep it) and adds CSS inside the Requirements block of `ui/public/style.css`, right before `/* ── marketplace P3 ── */`. Run `node --check ui/public/requirements-view.mjs` before the tests; after the commit `git diff HEAD~1 --stat` must show only the lines the task changed.
 
-### Task 10: The page — From a ticket…, the pick and the preview (boards 32–34)
+### Task 11: The page — From a ticket… and the pick (boards 32, 33)
 
 **Files:**
 - Modify: `ui/public/requirements-view.mjs` (`paintNew`: the button and its label row; new functions after `historyCard`)
-- Modify: `ui/public/style.css` (the A6.1 block, desktop)
+- Modify: `ui/public/style.css` (the A6.1 block: the pick, desktop)
 - Create: `test/requirements-view-import.test.mjs`
 
 **Interfaces:**
-- Consumes: Task 8's routes (`GET /api/requirements/import/:scopeType/:scopeKey`, `POST …/options`, `…/search`, `…/preview`); A6's page helpers `openModal`, `closeDialog`, `dlgGen`, `live`, `stateBox`, `mdBlocks`, `exportSelect`, `exportField`, `syncSelect`, `connValue`, `connFrom`, `errText`; A8's `KIND_TITLE`, `sizeText`, `ICONS`, `icon`; `sharedIcon`.
-- Produces (inside `createRequirementsView`):
+- Consumes: Task 9's routes (`GET /api/requirements/import/:scopeType/:scopeKey`, `POST …/options`, `…/search`); A6's page helpers `openModal`, `closeDialog`, `dlgGen`, `live`, `exportSelect`, `syncSelect`, `connValue`, `connFrom`, `errText`; `sharedIcon`.
+- Produces (inside `createRequirementsView`; Task 12 consumes exactly these names):
   - `importPrefs` — `{ conn, project } | null`, the page session's last connection and project (D3).
-  - `importUrl(scope, path = '') → '/api/requirements/import/<type>/<key><path>'`; `importErr(err) → string` (a gone ticket's 404 says its own sentence); `pickTracker(pickState) → string`.
-  - `openPick(ctx, keep = null)` — `ctx = { scope: () => ({ scopeType, scopeKey }), trigger: HTMLElement, formFiles: () => ({ count, bytes }), onUse: (ticket, pick) => void }`; `keep` is the pick state Back returns to: `{ info, conn, project, projects, search, searched, tickets, cursor, chosen, seq }`.
-  - `openImportPreview(ctx, pick)` — calls `ctx.onUse(ticket, pick)` on **Use this ticket** after closing itself, with `ticket = { conn, tracker, key, url, meta, connection, linkedTo, title, description, clipped, descriptionFile: { name, bytes } | null, criteria: [text], comments: [{ id, author, when, bytes }], commentsFile: { name, bytes } | null, attachments: [{ id, name, kind, bytes }] }`.
-  - `paintNew`: `fromBtn` (`data-ui="import-open"`), `importCtx`, and `useTicket(ticket, pick)` which (in this task) writes the title and description and focuses **From a ticket…**. Task 12 grows `useTicket`.
+  - `importUrl(scope, path = '') → '/api/requirements/import/<type>/<key><path>'`; `importErr(err) → string` (a gone ticket's 404 says its own sentence); `pickTracker(pickState) → string`; `importBack() → HTMLElement` (the sheet's **← New feature**).
+  - `openPick(ctx, keep = null)` — `ctx = { scope: () => ({ scopeType, scopeKey }), trigger: HTMLElement, formFiles: () => ({ count, bytes }), onUse: (ticket, pick) => void }` (`onUse` from Task 12); `keep` is the pick state Back returns to: `{ info, conn, project, projects, search, searched, tickets, cursor, chosen, seq, projSeq }`. **Continue** calls `openImportPreview(ctx, st)`, a stand-in here that Task 12 replaces.
+  - `paintNew`: `fromBtn` (`data-ui="import-open"`), `importCtx` (without `onUse` until Task 12).
 
-- [ ] **Step 1: Write the failing test** `test/requirements-view-import.test.mjs`:
+- [ ] **Step 1: Write the failing test** `test/requirements-view-import.test.mjs` (Tasks 12, 13 and 14 append to it):
 
 ```js
 // test/requirements-view-import.test.mjs — New feature › From a ticket… in jsdom with a fake API (plans/requirements-a61-design.md §7,
@@ -3172,7 +3361,6 @@ const q = (ui, root = document) => root.querySelector(`[data-ui="${ui}"]`);
 const optionTexts = (sel) => [...sel.options].map((o) => o.textContent);
 const others = () => [...document.body.children].filter((el) => !el.classList.contains('req-dlg-wrap'));
 const typeSearch = async (value) => { const s = q('pick-search'); s.value = value; s.dispatchEvent(new window.Event('input')); await new Promise((r) => setTimeout(r, 350)); await settle(); };
-const toPreview = async (m) => { q('import-open', m.host).click(); await settle(); await typeSearch('cancel'); q('pick-SHOP-124').click(); q('pick-continue').click(); await settle(); };
 
 test('D1 (board 32): From a ticket… sits at the right of Describe it once a connection can import; without one it is absent', async () => {
   const none = await openNew(ROUTES({ [`GET ${IMP}`]: { sources: [], defaultConnection: null, defaultProject: null } }));
@@ -3255,58 +3443,6 @@ test('D3, D4: Show more adds the next page with its cursor; several connections:
   m.view.destroy();
 });
 
-test('board 34: Continue opens Start from SHOP-124: its title focused; the description as text; criteria renumbered; ticks; reasons; notices; Back keeps the search', async () => {
-  const m = await openNew();
-  await toPreview(m);
-  const dl = dlg();
-  assert.equal(text(dl.querySelector('h2')), 'Start from SHOP-124');
-  assert.equal(document.activeElement, dl.querySelector('h2'));
-  assert.equal(text(dl.querySelector('#req-ipv-desc')), 'This is what the new feature takes from SHOP-124. Untick what it should not start with. Nothing changes in Jira.');
-  assert.deepEqual(m.calls.find((c) => c.url === `${IMP}/preview`).body, { ...CONN, key: 'SHOP-124', formFiles: { count: 0, bytes: 0 } });
-  assert.equal(text(dl.querySelector('.req-import-meta')), 'Story · In progress · Medium · acme.atlassian.net (Cloud)');
-  const desc = dl.querySelector('[aria-label="Description preview"]');
-  assert.ok(desc.textContent.includes('<img src=x onerror=alert(1)> stays text'));
-  assert.equal(desc.querySelector('img'), null, 'ticket text is never HTML');
-  assert.ok(text(dl).includes('Without its Acceptance criteria section, which becomes the criteria below.'));
-  assert.ok(text(dl).includes('Worca hid 1 thing that looked like a key or password.'));
-  assert.ok(text(dl).includes('1 comment visible only to a Jira group or role is left out.'));
-  assert.ok(text(dl).includes('found under “Acceptance criteria” in the description'));
-  const crits = () => [...dl.querySelectorAll('[data-ui^="ipv-crit-"]')].map((b) => b.getAttribute('aria-label'));
-  assert.deepEqual(crits(), ['Use R-po-1: A customer can cancel the items not picked up.', 'Use R-po-2: Shipped items stay on the order.',
-    'Use R-po-3: The refund covers only the cancelled items.']);
-  q('ipv-crit-0').click();
-  assert.deepEqual([...dl.querySelectorAll('.req-import-code')].map((c) => c.textContent), ['', 'R-po-1', 'R-po-2']);
-  assert.ok(text(dl).includes('Ticked criteria start the spec as R-po-1 to R-po-2, kept as your own edits and marked “from SHOP-124”. Unticked ones are left out; they stay in Jira.'));
-  assert.deepEqual([q('ipv-com-10231').checked, q('ipv-com-10234').checked, q('ipv-com-10236').checked], [true, false, true]);
-  assert.equal(q('ipv-com-10231').getAttribute('aria-label'), 'Use the comment by Ann Example, 21 Oct');
-  assert.ok(text(dl).includes('Comments · 2 of 3'));
-  const xlsx = q('ipv-att-10044');
-  assert.deepEqual([xlsx.disabled, xlsx.checked, text(document.getElementById(xlsx.getAttribute('aria-describedby')))],
-    [true, false, 'Not offered: Worca reads text, images and PDF. Save it as PDF to attach it here.']);
-  assert.equal(q('ipv-att-10041').getAttribute('aria-label'), 'Add packing-slip.png as a feature file');
-  assert.ok(text(dl).includes('Attachments · 2 of 3'));
-  assert.ok(text(dl).includes('Nothing is sent to Jira.'));
-  q('ipv-back').click();
-  await settle();
-  assert.equal(text(dlg().querySelector('h2')), 'Start from a ticket');
-  assert.deepEqual([q('pick-search').value, q('pick-SHOP-124').checked, q('pick-continue').disabled], ['cancel', true, false]);
-  m.view.destroy();
-});
-
-test('D1, D5: Use this ticket only fills the form: the title and the description; the dialog closes, the page is released, the focus on From a ticket…; nothing is posted', async () => {
-  const m = await openNew();
-  await toPreview(m);
-  q('ipv-use').click();
-  await settle();
-  assert.equal(dlg(), null);
-  assert.equal(m.host.querySelector('#req-new-title').value, 'Partial cancel for multi-item orders');
-  assert.equal(m.host.querySelector('#req-new-desc').value, PREVIEW().description);
-  assert.equal(document.activeElement, q('import-open', m.host));
-  assert.ok([...document.body.children].every((el) => !el.hasAttribute('inert')));
-  assert.equal(m.calls.filter((c) => c.method === 'POST' && c.url === '/api/requirements').length, 0, 'nothing created');
-  m.view.destroy();
-});
-
 test('a search that fails says why with Try again; Try again searches again', async () => {
   let fail = true;
   const m = await openNew(ROUTES({ [`POST ${IMP}/search`]: (b) => (fail ? { __status: 502, body: { error: 'Worca could not reach Jira: the API token was refused.', kind: 'auth' } } : searchAnswer(b)) }));
@@ -3320,11 +3456,11 @@ test('a search that fails says why with Try again; Try again searches again', as
   m.view.destroy();
 });
 
-test('CSS: the A6.1 rules sit inside the Requirements block, use tokens only, and a picked ticket row is an ink border', () => {
+test('CSS: the pick\'s rules sit inside the Requirements block, use tokens only, and a picked ticket row is an ink border', () => {
   const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
   const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
   const end = css.indexOf('/* ── marketplace P3 ── */');
-  for (const sel of ['.req-import-labrow', '.req-import-ticket', '.req-import-cols', '.req-import-check', '.req-import-why']) {
+  for (const sel of ['.req-import-labrow', '.req-import-search', '.req-import-ticket', '.req-import-results']) {
     const at = css.indexOf(sel);
     assert.ok(at > start && at < end, `${sel} inside the Requirements block`);
   }
@@ -3344,15 +3480,8 @@ test('CSS: the A6.1 rules sit inside the Requirements block, use tokens only, an
     const scopeNow = () => { const [scopeType, ...rest] = select.value.split(':'); return { scopeType, scopeKey: rest.join(':') }; };
     const fromBtn = h('button', { type: 'button', class: 'btn btn-sm req-import-open', 'data-ui': 'import-open', 'aria-haspopup': 'dialog', hidden: true,
       onclick: () => openPick(importCtx, null) }, 'From a ticket…');
-    // the preview's caps count the files already picked on this form (D9)
-    const importCtx = { scope: scopeNow, trigger: fromBtn, formFiles: () => ({ count: picked.length, bytes: picked.reduce((n, p) => n + p.size, 0) }),
-      onUse: (t, pick) => useTicket(t, pick) };
-    /** Use this ticket (D1): it only fills the form; nothing is created until Start the interview. */
-    function useTicket(t) {
-      title.value = t.title;
-      desc.value = t.description;
-      fromBtn.focus();
-    }
+    // the preview's caps count the files already picked on this form (D9); Task 12 adds `onUse` (Use this ticket)
+    const importCtx = { scope: scopeNow, trigger: fromBtn, formFiles: () => ({ count: picked.length, bytes: picked.reduce((n, p) => n + p.size, 0) }) };
     if (select.value) {
       const mine = paintNo;
       api('GET', importUrl(scopeNow())).then((r) => { if (mine === paintNo && r && Array.isArray(r.sources) && r.sources.length) fromBtn.hidden = false; }, () => {});
@@ -3368,7 +3497,7 @@ Replace the Describe it field in `paintHost(…)`, `field('req-new-desc', ['Desc
           desc),
 ```
 
-- [ ] **Step 4: The two dialogs.** After `historyCard` and before `// A repaint from the feature on screen, without a fetch`, add:
+- [ ] **Step 4: The pick.** After `historyCard` and before `// A repaint from the feature on screen, without a fetch`, add:
 
 ```js
   // ---- A6.1: start from a ticket (plans/requirements-a61-design.md §7, boards 32–36). Both dialogs are the page's modal with the page
@@ -3399,7 +3528,7 @@ Replace the Describe it field in `paintHost(…)`, `field('req-new-desc', ['Desc
   function openPick(ctx, keep = null) {
     closeDialog(false);
     const s = ctx.scope();
-    const st = keep || { info: null, conn: null, project: '', projects: [], search: '', searched: '', tickets: [], cursor: null, chosen: null, seq: 0 };
+    const st = keep || { info: null, conn: null, project: '', projects: [], search: '', searched: '', tickets: [], cursor: null, chosen: null, seq: 0, projSeq: 0 };
     let timer = null;
     const title = h('h2', { id: 'req-pick-title', tabindex: '-1', text: 'Start from a ticket' });
     const lead = h('p', { class: 'req-dlg-lead', id: 'req-pick-desc' });
@@ -3486,12 +3615,18 @@ Replace the Describe it field in `paintHost(…)`, `field('req-new-desc', ['Desc
         render();
       } catch (err) { if (live(g) && n === st.seq) showFail(err); }
     }
+    // The connection's projects. Its own request number (plan review S8): after two quick Connection changes only the last one's
+    // answer fills the select; an earlier one (also an earlier failure) is dropped. Answers whether this answer was used.
     async function loadProjects() {
-      const r = await api('POST', importUrl(s, '/options'), { ...st.conn });
-      if (!live(g)) return;
+      const n = ++st.projSeq;
+      let r;
+      try { r = await api('POST', importUrl(s, '/options'), { ...st.conn }); }
+      catch (err) { if (live(g) && n === st.projSeq) throw err; return false; }
+      if (!live(g) || n !== st.projSeq) return false;
       st.projects = r.projects || [];
       if (st.project && !st.projects.some((p) => p.value === st.project)) st.project = '';
       syncSelect(projSel, [{ value: '', label: 'All projects' }, ...st.projects], st.project);
+      return true;
     }
     async function load() {
       clearFail();
@@ -3520,7 +3655,7 @@ Replace the Describe it field in `paintHost(…)`, `field('req-new-desc', ['Desc
                 st.project = '';
                 st.chosen = null;
                 importPrefs = { conn: st.conn, project: '' };
-                void loadProjects().then(() => run(), (err) => { if (live(g)) showFail(err); });
+                void loadProjects().then((used) => (used ? run() : undefined), (err) => { if (live(g)) showFail(err); });
               } }));
           connField.hidden = false;
         }
@@ -3538,6 +3673,144 @@ Replace the Describe it field in `paintHost(…)`, `field('req-new-desc', ['Desc
     void load();
   }
 
+  // Task 12 replaces this stand-in with the preview (Continue calls it)
+  function openImportPreview() {}
+```
+
+- [ ] **Step 5: CSS.** Inside the Requirements block, right before `/* ── marketplace P3 ── */`, add:
+
+```css
+/* A6.1 (plans/requirements-a61-design.md §7, boards 32–34): Start from a ticket. Both dialogs are A6's .req-dialog.req-export cards, so its
+   900 px sheet rules apply; the pick is 560 px, the preview 880 px in two columns. A picked ticket row has an ink border, never a fill. */
+.req-import-labrow{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.req-import-labrow > label{margin:0}
+.req-import-open[hidden]{display:none}
+.req-import-search{display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);color:var(--ink-2)}
+.req-import-search input{flex:1;min-width:0;border:0;background:transparent;padding:7px 0;font-size:var(--fs-body);color:var(--ink)}
+.req-import-search input:focus{outline:none}
+.req-import-search:focus-within{outline:2px solid var(--ink);outline-offset:1px}
+.req-import-status{margin:0;font-size:var(--fs-meta);color:var(--ink-2)}
+.req-import-empty,.req-import-note{margin:0}
+.req-import-note[hidden],.req-import-empty[hidden]{display:none}
+.req-import-results{display:flex;flex-direction:column;gap:6px;max-height:min(46vh,420px);overflow-y:auto}
+.req-import-ticket{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-md);cursor:pointer}
+.req-import-ticket:has(input:checked){border-color:var(--ink)}
+.req-import-ticket input{margin:3px 0 0;flex:none}
+.req-import-ticket-txt{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;font-size:var(--fs-body)}
+.req-import-ticket-txt .hint{margin:0}
+.req-import-linkchip{flex:none;align-self:center}
+.req-import-more{align-self:flex-start}
+.req-import-more[hidden]{display:none}
+```
+
+- [ ] **Step 6: Run the tests.** `node --check ui/public/requirements-view.mjs`, then one at a time `node tools/test.mjs test/requirements-view-import.test.mjs`, `node tools/test.mjs test/requirements-view.test.mjs`, `node tools/test.mjs test/requirements-view-files.test.mjs`, `node tools/test.mjs test/requirements-view-export.test.mjs`, `node tools/test.mjs test/ui-design-language.test.mjs`, `node tools/test.mjs test/dialog-layout.test.mjs` → all PASS.
+
+- [ ] **Step 7: Commit.**
+
+```bash
+git add ui/public/requirements-view.mjs ui/public/style.css test/requirements-view-import.test.mjs
+git commit -m "Requirements: From a ticket… on New feature, and the pick" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 12: The page — the preview, and Use this ticket (board 34)
+
+**Files:**
+- Modify: `ui/public/requirements-view.mjs` (`openImportPreview` in place of Task 11's stand-in; `paintNew`'s `importCtx.onUse` and a minimal `useTicket`)
+- Modify: `ui/public/style.css` (the A6.1 block: the preview, desktop)
+- Modify: `test/requirements-view-import.test.mjs`
+
+**Interfaces:**
+- Consumes: Task 11's `importPrefs`, `importUrl`, `importErr`, `pickTracker`, `importBack`, `openPick`, `fromBtn`, `importCtx`; Task 9's `POST …/preview`; A6's `openModal`, `closeDialog`, `dlgGen`, `live`, `stateBox`, `mdBlocks`, `exportField`; A8's `KIND_TITLE`, `sizeText`, `ICONS`, `icon`.
+- Produces:
+  - `openImportPreview(ctx, pick)` — calls `ctx.onUse(ticket, pick)` on **Use this ticket** after closing itself, with `ticket = { conn, tracker, key, url, meta, connection, linkedTo, title, description, clipped, descriptionFile: { name, bytes } | null, criteria: [text], comments: [{ id, author, when, bytes }], commentsFile: { name, bytes } | null, attachments: [{ id, name, kind, bytes }] }`; a 502 also shows "Nothing was changed." and, at the Advanced level, the Marketplace line (D16, as the pick).
+  - `paintNew`: `importCtx.onUse` and `useTicket(ticket, pick)` which (in this task) writes the title and description and focuses **From a ticket…**. Task 14 grows `useTicket`.
+
+- [ ] **Step 1: Write the failing tests.** Append to `test/requirements-view-import.test.mjs`:
+
+```js
+const toPreview = async (m) => { q('import-open', m.host).click(); await settle(); await typeSearch('cancel'); q('pick-SHOP-124').click(); q('pick-continue').click(); await settle(); };
+
+test('board 34: Continue opens Start from SHOP-124: its title focused; the description as text; criteria renumbered; ticks; reasons; notices; Back keeps the search', async () => {
+  const m = await openNew();
+  await toPreview(m);
+  const dl = dlg();
+  assert.equal(text(dl.querySelector('h2')), 'Start from SHOP-124');
+  assert.equal(document.activeElement, dl.querySelector('h2'));
+  assert.equal(text(dl.querySelector('#req-ipv-desc')), 'This is what the new feature takes from SHOP-124. Untick what it should not start with. Nothing changes in Jira.');
+  assert.deepEqual(m.calls.find((c) => c.url === `${IMP}/preview`).body, { ...CONN, key: 'SHOP-124', formFiles: { count: 0, bytes: 0 } });
+  assert.equal(text(dl.querySelector('.req-import-meta')), 'Story · In progress · Medium · acme.atlassian.net (Cloud)');
+  const desc = dl.querySelector('[aria-label="Description preview"]');
+  assert.ok(desc.textContent.includes('<img src=x onerror=alert(1)> stays text'));
+  assert.equal(desc.querySelector('img'), null, 'ticket text is never HTML');
+  assert.ok(text(dl).includes('Without its Acceptance criteria section, which becomes the criteria below.'));
+  assert.ok(text(dl).includes('Worca hid 1 thing that looked like a key or password.'));
+  assert.ok(text(dl).includes('1 comment visible only to a Jira group or role is left out.'));
+  assert.ok(text(dl).includes('found under “Acceptance criteria” in the description'));
+  const crits = () => [...dl.querySelectorAll('[data-ui^="ipv-crit-"]')].map((b) => b.getAttribute('aria-label'));
+  assert.deepEqual(crits(), ['Use R-po-1: A customer can cancel the items not picked up.', 'Use R-po-2: Shipped items stay on the order.',
+    'Use R-po-3: The refund covers only the cancelled items.']);
+  q('ipv-crit-0').click();
+  assert.deepEqual([...dl.querySelectorAll('.req-import-code')].map((c) => c.textContent), ['', 'R-po-1', 'R-po-2']);
+  assert.ok(text(dl).includes('Ticked criteria start the spec as R-po-1 to R-po-2, kept as your own edits and marked “from SHOP-124”. Unticked ones are left out; they stay in Jira.'));
+  assert.deepEqual([q('ipv-com-10231').checked, q('ipv-com-10234').checked, q('ipv-com-10236').checked], [true, false, true]);
+  assert.equal(q('ipv-com-10231').getAttribute('aria-label'), 'Use the comment by Ann Example, 21 Oct');
+  assert.ok(text(dl).includes('Comments · 2 of 3'));
+  const xlsx = q('ipv-att-10044');
+  assert.deepEqual([xlsx.disabled, xlsx.checked, text(document.getElementById(xlsx.getAttribute('aria-describedby')))],
+    [true, false, 'Not offered: Worca reads text, images and PDF. Save it as PDF to attach it here.']);
+  assert.equal(q('ipv-att-10041').getAttribute('aria-label'), 'Add packing-slip.png as a feature file');
+  assert.ok(text(dl).includes('Attachments · 2 of 3'));
+  assert.ok(text(dl).includes('Nothing is sent to Jira.'));
+  q('ipv-back').click();
+  await settle();
+  assert.equal(text(dlg().querySelector('h2')), 'Start from a ticket');
+  assert.deepEqual([q('pick-search').value, q('pick-SHOP-124').checked, q('pick-continue').disabled], ['cancel', true, false]);
+  m.view.destroy();
+});
+
+test('D1, D5: Use this ticket only fills the form: the title and the description; the dialog closes, the page is released, the focus on From a ticket…; nothing is posted', async () => {
+  const m = await openNew();
+  await toPreview(m);
+  q('ipv-use').click();
+  await settle();
+  assert.equal(dlg(), null);
+  assert.equal(m.host.querySelector('#req-new-title').value, 'Partial cancel for multi-item orders');
+  assert.equal(m.host.querySelector('#req-new-desc').value, PREVIEW().description);
+  assert.equal(document.activeElement, q('import-open', m.host));
+  assert.ok([...document.body.children].every((el) => !el.hasAttribute('inert')));
+  assert.equal(m.calls.filter((c) => c.method === 'POST' && c.url === '/api/requirements').length, 0, 'nothing created');
+  m.view.destroy();
+});
+
+test("CSS: the preview's rules sit inside the Requirements block", () => {
+  const css = readFileSync(new URL('../ui/public/style.css', import.meta.url), 'utf8');
+  const start = css.indexOf('/* Requirements page (plans/requirements-design.md section 6). Tokens only. */');
+  const end = css.indexOf('/* ── marketplace P3 ── */');
+  for (const sel of ['.req-import-cols', '.req-import-check', '.req-import-why', '.req-import-linked']) {
+    const at = css.indexOf(sel);
+    assert.ok(at > start && at < end, `${sel} inside the Requirements block`);
+  }
+});
+```
+
+- [ ] **Step 2: Run them to see them fail.** `node tools/test.mjs test/requirements-view-import.test.mjs` → the new tests FAIL (Continue opens nothing: Task 11's stand-in).
+
+- [ ] **Step 3: `paintNew` — Use this ticket.** In Task 11's `importCtx` add `onUse: (t, pick) => useTicket(t, pick),` and right after it:
+
+```js
+    /** Use this ticket (D1): it only fills the form; nothing is created until Start the interview. */
+    function useTicket(t) {
+      title.value = t.title;
+      desc.value = t.description;
+      fromBtn.focus();
+    }
+```
+
+- [ ] **Step 4: The preview.** Replace Task 11's stand-in `function openImportPreview() {}` (and its comment) with:
+
+```js
   /** Start from SHOP-124 (board 34; D5–D9, D12, D19): what the new feature takes, each part with a checkbox. Nothing is imported
    *  until Start the interview; Use this ticket only fills the form. */
   function openImportPreview(ctx, pick) {
@@ -3550,6 +3823,9 @@ Replace the Describe it field in `paintHost(…)`, `field('req-new-desc', ['Desc
     const title = h('h2', { id: 'req-ipv-title', tabindex: '-1', text: `Start from ${key}` });
     const box = stateBox();
     const body = h('div', { class: 'req-import-body' });
+    // D16 (plan review S2): a tracker that could not be reached also says nothing changed and, at the Advanced level, where the
+    // connection is fixed — the same persistent line as the pick's
+    const note = h('p', { class: 'hint req-import-note', hidden: true }, 'Nothing was changed.', h('span', { 'data-min-level': 'advanced' }));
     const retry = h('button', { type: 'button', class: 'btn btn-sm', 'data-ui': 'ipv-retry', onclick: () => { void load(); } }, 'Try again');
     const use = h('button', { type: 'button', class: 'btn btn-primary', 'data-ui': 'ipv-use', disabled: true,
       onclick: () => { if (!data) return; const t = chosen(); closeDialog(false); ctx.onUse(t, pick); } }, 'Use this ticket');
@@ -3557,7 +3833,7 @@ Replace the Describe it field in `paintHost(…)`, `field('req-new-desc', ['Desc
       'aria-labelledby': 'req-ipv-title', 'aria-describedby': 'req-ipv-desc' },
       importBack(), title,
       h('p', { class: 'req-dlg-lead', id: 'req-ipv-desc', text: `This is what the new feature takes from ${key}. Untick what it should not start with. Nothing changes in ${name}.` }),
-      ...box.els, body,
+      ...box.els, note, body,
       h('div', { class: 'req-export-foot' }, h('p', { class: 'hint', text: `Nothing is sent to ${name}.` }),
         h('div', { class: 'req-dlg-btns' }, h('button', { type: 'button', class: 'btn', 'data-ui': 'ipv-back', onclick: () => openPick(ctx, pick) }, 'Back'), use)));
     openModal(card, { trigger: ctx.trigger, first: title, page: true });
@@ -3679,40 +3955,24 @@ Replace the Describe it field in `paintHost(…)`, `field('req-new-desc', ['Desc
         if (!live(g)) return;   // Back, Cancel or Escape came first
         data = answer;
         box.clear();
+        note.hidden = true;
         render();
         use.disabled = false;
       } catch (err) {
-        if (live(g)) box.show(importErr(err), { buttons: err && err.data && err.data.gone ? [] : [retry] });
+        if (!live(g)) return;
+        box.show(importErr(err), { buttons: err && err.data && err.data.gone ? [] : [retry] });
+        note.lastChild.textContent = ` Fix the connection on the Marketplace page (Installed › ${name}), then try again.`;
+        note.hidden = !(err && err.status === 502);
       } finally { loading = false; }
     }
     void load();
   }
 ```
 
-- [ ] **Step 5: CSS.** Inside the Requirements block, right before `/* ── marketplace P3 ── */`, add:
+- [ ] **Step 5: CSS.** After Task 11's block (still before the marketplace marker) add:
 
 ```css
-/* A6.1 (plans/requirements-a61-design.md §7, boards 32–34): Start from a ticket. Both dialogs are A6's .req-dialog.req-export cards, so its
-   900 px sheet rules apply; the pick is 560 px, the preview 880 px in two columns. A picked ticket row has an ink border, never a fill. */
-.req-import-labrow{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.req-import-labrow > label{margin:0}
-.req-import-open[hidden]{display:none}
-.req-import-search{display:flex;align-items:center;gap:8px;padding:0 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);color:var(--ink-2)}
-.req-import-search input{flex:1;min-width:0;border:0;background:transparent;padding:7px 0;font-size:var(--fs-body);color:var(--ink)}
-.req-import-search input:focus{outline:none}
-.req-import-search:focus-within{outline:2px solid var(--ink);outline-offset:1px}
-.req-import-status{margin:0;font-size:var(--fs-meta);color:var(--ink-2)}
-.req-import-empty,.req-import-note{margin:0}
-.req-import-note[hidden],.req-import-empty[hidden]{display:none}
-.req-import-results{display:flex;flex-direction:column;gap:6px;max-height:min(46vh,420px);overflow-y:auto}
-.req-import-ticket{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-md);cursor:pointer}
-.req-import-ticket:has(input:checked){border-color:var(--ink)}
-.req-import-ticket input{margin:3px 0 0;flex:none}
-.req-import-ticket-txt{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0;font-size:var(--fs-body)}
-.req-import-ticket-txt .hint{margin:0}
-.req-import-linkchip{flex:none;align-self:center}
-.req-import-more{align-self:flex-start}
-.req-import-more[hidden]{display:none}
+/* A6.1 (board 34): the preview, two columns of checkboxes; a refused row says why under it. */
 .req-dlg-wrap .card.req-dialog.req-import-preview{width:min(880px,100%)}
 .req-import-body{display:flex;flex-direction:column;gap:12px;min-width:0}
 .req-import-meta{margin:0}
@@ -3735,18 +3995,18 @@ Replace the Describe it field in `paintHost(…)`, `field('req-new-desc', ['Desc
 .req-import-why[hidden]{display:none}
 ```
 
-- [ ] **Step 6: Run the tests.** `node --check ui/public/requirements-view.mjs`, then one at a time `node tools/test.mjs test/requirements-view-import.test.mjs`, `node tools/test.mjs test/requirements-view.test.mjs`, `node tools/test.mjs test/requirements-view-files.test.mjs`, `node tools/test.mjs test/requirements-view-export.test.mjs`, `node tools/test.mjs test/ui-design-language.test.mjs`, `node tools/test.mjs test/dialog-layout.test.mjs` → all PASS.
+- [ ] **Step 6: Run the tests.** `node --check ui/public/requirements-view.mjs`, then `node tools/test.mjs test/requirements-view-import.test.mjs`, `node tools/test.mjs test/requirements-view.test.mjs`, `node tools/test.mjs test/ui-design-language.test.mjs`, `node tools/test.mjs test/dialog-layout.test.mjs` → all PASS.
 
 - [ ] **Step 7: Commit.**
 
 ```bash
 git add ui/public/requirements-view.mjs ui/public/style.css test/requirements-view-import.test.mjs
-git commit -m "Requirements: From a ticket… on New feature, with the pick and the preview" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+git commit -m "Requirements: the import preview, and Use this ticket" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 11: The page — the caps, the states and the phone sheet (boards 34, 36)
+### Task 13: The page — the caps, the states and the phone sheet (boards 34, 36)
 
 **Files:**
 - Modify: `ui/public/requirements-view.mjs` (module constants; `openImportPreview`'s `commentsSection` and `sync`)
@@ -3754,7 +4014,7 @@ git commit -m "Requirements: From a ticket… on New feature, with the pick and 
 - Modify: `test/requirements-view-import.test.mjs`
 
 **Interfaces:**
-- Consumes: Task 10's `openImportPreview` (`ui.atts` entries `{ cb, why, a }`, `ctx.formFiles()`), A8's `REQ_ATTACH` (`maxFiles: 10`, `maxRequestBytes: 100 MB`).
+- Consumes: Task 12's `openImportPreview` (`ui.atts` entries `{ cb, why, a }`, `ctx.formFiles()`, its `note` line), A8's `REQ_ATTACH` (`maxFiles: 10`, `maxRequestBytes: 100 MB`).
 - Produces: `CAP_FILES_UI = 'A feature takes up to 10 files; 10 are picked.'`, `CAP_BYTES_UI = "Picked files are at 100 MB, a new feature's limit. Add more on the feature page."` (module constants); an unticked attachment whose tick would pass a cap is disabled and `aria-describedby` that line, recomputed on every tick; past three comments the rest carry `.folded` and a `Show all <n> comments` button (`data-ui="ipv-showall"`) that CSS shows only at 900 px and narrower.
 
 - [ ] **Step 1: Write the failing tests.** Append to `test/requirements-view-import.test.mjs`:
@@ -3823,13 +4083,22 @@ test('board 36 (4, 5, 7): the ticket another feature follows (an amber alert abo
   m.view.destroy();
 });
 
-test('the preview of a ticket that is gone says its sentence (not the flag text) and offers no Try again; a 502 offers Try again; a late answer after Back is dropped', async () => {
+test('the preview of a ticket that is gone says its sentence (not the flag text) and offers no Try again; a 502 offers Try again and says nothing changed (D16); a late answer after Back is dropped', async () => {
   const gone = await openNew(ROUTES({ [`POST ${IMP}/preview`]: { __status: 404, body: { gone: true, error: 'SHOP-124 was not found in Jira, or this connection cannot see it.' } } }));
   await toPreview(gone);
   assert.equal(text(dlg().querySelector('.req-export-alert')), 'SHOP-124 was not found in Jira, or this connection cannot see it.');
   assert.equal(q('ipv-retry'), null);
   assert.equal(q('ipv-use').disabled, true);
+  assert.equal(dlg().querySelector('.req-import-note').hidden, true, 'a gone ticket is not a connection to fix');
   gone.view.destroy();
+  const down = await openNew(ROUTES({ [`POST ${IMP}/preview`]: { __status: 502, body: { error: 'Worca could not reach Jira: the API token was refused.', kind: 'auth' } } }));
+  await toPreview(down);
+  const note = dlg().querySelector('.req-import-note');
+  assert.deepEqual([text(dlg().querySelector('.req-export-alert')), note.hidden, text(note), !!q('ipv-retry')],
+    ['Worca could not reach Jira: the API token was refused.', false,
+      'Nothing was changed. Fix the connection on the Marketplace page (Installed › Jira), then try again.', true]);
+  assert.equal(note.querySelector('[data-min-level="advanced"]').textContent, ' Fix the connection on the Marketplace page (Installed › Jira), then try again.');
+  down.view.destroy();
   let release = null;
   const late = await openNew(ROUTES({ [`POST ${IMP}/preview`]: () => new Promise((r) => { release = () => r(PREVIEW()); }) }));
   await toPreview(late);
@@ -3916,7 +4185,9 @@ At the end of `sync()` add:
 
 (`count` and `bytes` are `let` only for readability; `const` is fine too.)
 
-- [ ] **Step 4: The phone CSS.** After the Task 10 block (still before the marketplace marker) add:
+Not built (design §7 does not ask for it; plan review Minor 7): board 36's phone sheet also clamps the description behind **Show all** and lists attachments by size only. Here the description region scrolls inside the sheet and the attachments keep their kind and size, as on the desktop.
+
+- [ ] **Step 4: The phone CSS.** After Task 12's block (still before the marketplace marker) add:
 
 ```css
 /* A6.1 (board 36, D19): at 900 px and narrower both dialogs are A6's full-screen sheets (← New feature first, full-width buttons); the
@@ -3950,7 +4221,7 @@ git commit -m "Requirements: the import preview's caps, its states and the phone
 
 ---
 
-### Task 12: The page — the form a ticket filled, and Start the interview with it (board 32, board 36's 8)
+### Task 14: The page — the form a ticket filled, and Start the interview with it (board 32, board 36's 8)
 
 **Files:**
 - Modify: `ui/public/requirements-view.mjs` (`paintNew`)
@@ -3958,7 +4229,7 @@ git commit -m "Requirements: the import preview's caps, its states and the phone
 - Modify: `test/requirements-view-import.test.mjs`
 
 **Interfaces:**
-- Consumes: Task 10's `useTicket`, `importCtx`, `fromBtn`, `openPick`, `importErr`; the create route's `fromTicket` and its answer's `filesNotStored` and `notOnTicket` (Task 8); A8's `sync`, `addPicked`, `choose`, `cost`, `note`, `picked`, `create`, `carry`.
+- Consumes: Task 12's `useTicket`; Task 11's `importCtx`, `fromBtn`, `openPick`, `importErr`; A6's `webHref`; the create route's `fromTicket` and its answer's `filesNotStored` and `notOnTicket` (Task 9); A8's `sync`, `addPicked`, `choose`, `cost`, `note`, `picked`, `create`, `carry`.
 - Produces (inside `paintNew`): `imp` (the ticket the form starts from, as `onUse` hands it, or null), `filled` (`{ title, description }` the last fill wrote), `lastPick`; `renderImport()`, `useTicket(t, pick)`, `stopUsing()`, `removeTicketFile(key)`, `ticketFiles() → [{ key, name, kind, bytes }]`, `notOnTicketLines(gone) → string[]`. The create posts `fromTicket: { plugin, sourceId, profile, key, criteria, comments: [id], attachments: [id], descriptionFile }`.
 
 - [ ] **Step 1: Write the failing tests.** Append to `test/requirements-view-import.test.mjs`:
@@ -4090,7 +4361,7 @@ test('D12 and D6 on the form: a ticket another feature follows says the feature 
 
 - [ ] **Step 2: Run them to see them fail.** `node tools/test.mjs test/requirements-view-import.test.mjs` → the new tests FAIL (no `.req-import-strip`).
 
-- [ ] **Step 3: `paintNew` — the ticket on the form.** Replace Task 10's `useTicket` with:
+- [ ] **Step 3: `paintNew` — the ticket on the form.** Replace Task 12's minimal `useTicket` with:
 
 ```js
     // A6.1 (board 32): the ticket the form starts from (Use this ticket) or null, the title and description its fill wrote (Change ticket…
@@ -4124,7 +4395,8 @@ test('D12 and D6 on the form: a ticket another feature follows says the feature 
       strip.replaceChildren(
         h('div', { class: 'req-import-strip-top' },
           h('span', { class: 'hint', text: 'Starting from' }),
-          imp.url ? h('a', { class: 'chip req-export-chip', 'data-ui': 'import-chip', href: imp.url, target: '_blank', rel: 'noopener',
+          // the page's one guard for ticket links (A6's webHref, as exportChip): only an http(s) URL is a link (plan review S4)
+          webHref(imp.url) ? h('a', { class: 'chip req-export-chip', 'data-ui': 'import-chip', href: webHref(imp.url), target: '_blank', rel: 'noopener',
             'aria-label': `${imp.key}, opens the ticket in ${imp.tracker} in a new tab` }, h('span', { text: imp.key }), sharedIcon(document, 'external', 12))
             : h('span', { class: 'chip', 'data-ui': 'import-chip', text: imp.key }),
           meta ? h('span', { class: 'hint', text: `· ${meta}` }) : null,
@@ -4241,7 +4513,7 @@ Replace `create` with:
 
 In `paintHost(…)`: the form card starts with `strip,` (before the Title field); the Describe it field becomes `…, fromBtn), desc, descFrom, descClip),` followed by `critField,`; the Files field's children become `input, zone, privacyNote(interview, 'req-new-files-privacy'), ticketChips, chips, ticketNote, refused`; `createFail` goes right before `actions`.
 
-- [ ] **Step 4: CSS.** After the Task 11 block add:
+- [ ] **Step 4: CSS.** After the Task 13 block add:
 
 ```css
 /* A6.1 (board 32): the form a ticket filled: the strip at its top, the criteria, the ticket's files as chips with the key, the Replace
@@ -4263,6 +4535,10 @@ In `paintHost(…)`: the form card starts with `strip,` (before the Title field)
 @media (max-width:900px){
   .req-import-x,.req-import-chip-x{position:relative}
   .req-import-x::after,.req-import-chip-x::after{content:"";position:absolute;left:50%;top:50%;width:44px;height:44px;transform:translate(-50%,-50%)}
+  /* the form's new controls reach 44 px too (plan review Minor 8): From a ticket… is a 28 px .btn-sm, Change ticket… an 18 px line */
+  .req-import-open,.req-import-strip .link-btn{position:relative}
+  .req-import-open::after{content:"";position:absolute;inset:-8px 0}
+  .req-import-strip .link-btn::after{content:"";position:absolute;inset:-13px 0}
 }
 ```
 
@@ -4277,7 +4553,7 @@ git commit -m "Requirements: the New feature form a ticket filled, and Start the
 
 ---
 
-### Task 13: The page — the Files card while files come from the tracker (board 35, board 36's 9–11)
+### Task 15: The page — the Files card while files come from the tracker (board 35, board 36's 9–11)
 
 **Files:**
 - Modify: `ui/public/requirements-view.mjs` (`readingLine`, `fileNode`, `fileRow`, `failedLine`, `fileMenu`; a new `downloadingBadge`)
@@ -4285,8 +4561,8 @@ git commit -m "Requirements: the New feature form a ticket filled, and Start the
 - Create: `test/requirements-view-imported.test.mjs`
 
 **Interfaces:**
-- Consumes: the feature view's files (Task 7): `status: 'downloading'`, `from: { tracker, key } | null`, `fetched`, `error: { code: 'DOWNLOAD' | 'REFUSED' | 'INTERRUPTED', message, job: 'download' }`, `estimateUsd`; A8's `read-again` and `DELETE` routes.
-- Produces: the working line "Getting <n> files from <key>…" (the same persistent `role="status"` node as A8's "Reading <n> files…"); per file a persistent **Downloading…** badge (`role="status"`), the state lines of board 35, the failure lines of board 36 with **Try again** (none for `REFUSED`), "from <key>" in the meta line, no switch, no Open and no Read again while a file is not there yet.
+- Consumes: the feature view's files (Task 8): `status: 'downloading'`, `from: { tracker, key } | null`, `fetched`, `error: { code: 'DOWNLOAD' | 'REFUSED' | 'INTERRUPTED', message, job: 'download' }`, `estimateUsd`; A8's `read-again` and `DELETE` routes.
+- Produces: the working line "Getting <n> files from <key>…" (the same persistent `role="status"` node as A8's "Reading <n> files…"); per file a persistent **Downloading…** badge (`role="status"`), the state lines of board 35, the failure lines of board 36 with **Try again** (none for `REFUSED`), "from <key>" in the meta line, no switch, no Open, no Read again and no link on the file's name while a file has no body (plan review S3: its `href` would answer 404).
 
 - [ ] **Step 1: Write the failing test** `test/requirements-view-imported.test.mjs`:
 
@@ -4383,6 +4659,10 @@ test('board 35: each file says where it came from and where it is: Downloading�
   assert.equal(text(pdf.querySelector('.req-file-state')), 'Worca is getting it from SHOP-124. Then it reads it (about $0.10).');
   assert.equal(text(row(m.host, 'ratt_000000000004').querySelector('.req-file-state')), 'Worca is getting it from SHOP-124. Then it reads it.');
   assert.equal(pdf.querySelector('.req-file-send'), null, 'no Send with the run before it is there');
+  const nameEl = q('file-name-ratt_000000000003', m.host);
+  assert.deepEqual([nameEl.tagName, nameEl.hasAttribute('href'), nameEl.getAttribute('tabindex'), text(nameEl)], ['SPAN', false, '-1', 'partial-cancel-flow.pdf'],
+    'no link to a body that is not there yet; still a focus target');
+  assert.equal(q('file-name-ratt_000000000002', m.host).tagName, 'A', 'a downloaded file links its body');
   q('file-more-ratt_000000000003', m.host).click();
   assert.deepEqual([q('fmi-open-ratt_000000000003', m.host), q('fmi-again-ratt_000000000003', m.host)], [null, null]);
   assert.ok(q('fmi-remove-ratt_000000000003', m.host), 'Remove stays');
@@ -4460,7 +4740,8 @@ test('board 36 (9–11): a download that failed (Try again, one post per press),
 ```
 
 In `fileRow`:
-  - after `const reading = a.status === 'reading';` add `const downloading = a.status === 'downloading';   // A6.1 D10: its body is on its way` and `const waiting = reading || downloading;`; after `if (!reading) n.badge = null;` add `if (!downloading) n.dl = null;`;
+  - after `const reading = a.status === 'reading';` add `const downloading = a.status === 'downloading';   // A6.1 D10: its body is on its way`, `const waiting = reading || downloading;` and `const absent = downloading || (!!a.error && a.error.job === 'download');   // A6.1: no body yet (downloading, or a download that failed or was refused)`; after `if (!reading) n.badge = null;` add `if (!downloading) n.dl = null;`;
+  - the name (plan review S3): `absent ? h('span', { class: 'req-file-name', 'data-ui': \`file-name-${a.id}\`, tabindex: '-1', text: a.name }) : h('a', { class: 'req-file-name', href: a.href, … })` — the same `data-ui` and a `tabindex`, so `ctx.focus('file-name-…')` still lands;
   - `const asking = !waiting && !!a.asking;`;
   - the meta line: `const meta = [\`${KIND_TITLE[a.kind] || 'Text'} · ${sizeText(a.bytes)}\`, a.from ? \`from ${a.from.key}\` : null, a.costUsd > 0 ? \`read for ${usd(a.costUsd)}\` : null].filter(Boolean).join(' · ');`
   - in `top`: `downloading ? downloadingBadge(a) : reading ? readingBadge(a) : null,` in place of `reading ? readingBadge(a) : null,`, and the pencil's condition `hasText && !waiting && !asking`;
@@ -4512,14 +4793,14 @@ git commit -m "Requirements: the Files card while a ticket's files are downloade
 
 ---
 
-### Task 14: The page — the imported link: the criterion tag, History and Export (board 35, D11)
+### Task 16: The page — the imported link: the criterion tag, History and Export (board 35, D11)
 
 **Files:**
 - Modify: `ui/public/requirements-view.mjs` (`srcTag`, `historyCard`, `startExport`, `openAgain`)
 - Modify: `test/requirements-view-imported.test.mjs`
 
 **Interfaces:**
-- Consumes: the feature view's `export.link` (`origin`, `importedOn`, `sinceImport`) and `export.history` (`imported`, `linked`, `linkedTo`) from Task 9; A6's `openSetup`, `openPreview`, `openComment`, `linkOf`, `xOf`.
+- Consumes: the feature view's `export.link` (`origin`, `importedOn`, `sinceImport`) and `export.history` (`imported`, `linked`, `linkedTo`) from Task 10; A6's `openSetup`, `openPreview`, `openComment`, `linkOf`, `xOf`, `webHref`.
 - Produces: a criterion whose source is the link's key shows a link tag to the ticket; History's lines "Imported SHOP-124 from Jira · 27 Oct, 09:12" and "Started from SHOP-123 in Jira, not linked: FEAT-7 is. · 27 Oct, 09:12"; Export to Jira… on a linked feature opens the again dialog also without a setup; until the first export the dialog is "Export FEAT-8 to Jira" with D11's copy; **Create a new ticket** without a setup opens the setup first, then the preview of a new ticket.
 
 - [ ] **Step 1: Write the failing tests.** Append to `test/requirements-view-imported.test.mjs`:
@@ -4605,10 +4886,12 @@ test('D11: Create a new ticket without a setup opens Set up export first, then t
 - [ ] **Step 3: The criterion tag.** At the start of `srcTag`, after `if (!source) return null;`, add:
 
 ```js
-    // A6.1 D7, D19: a criterion from the feature's own ticket links to it (the tag names the key; a key is not a file name)
+    // A6.1 D7, D19: a criterion from the feature's own ticket links to it (the tag names the key; a key is not a file name). The link
+    // goes through the page's webHref guard, as exportChip (plan review S4); a URL it refuses leaves the plain tag below.
     const l = linkOf(f);
-    if (l && l.url && String(source).toUpperCase() === String(l.key).toUpperCase()) {
-      return h('a', { class: 'req-src-tag req-src-ticket', href: l.url, target: '_blank', rel: 'noopener',
+    const ticketHref = l ? webHref(l.url) : null;
+    if (ticketHref && String(source).toUpperCase() === String(l.key).toUpperCase()) {
+      return h('a', { class: 'req-src-tag req-src-ticket', href: ticketHref, target: '_blank', rel: 'noopener',
         'aria-label': `${l.key}, opens the ticket in ${l.tracker || 'the tracker'} in a new tab` }, l.key, sharedIcon(document, 'external', 11));
     }
 ```
@@ -4677,14 +4960,14 @@ git commit -m "Requirements: an imported feature's ticket tag, History line and 
 
 ---
 
-### Task 15: The browser proof (light, dark, 390 px, runnable alone) and the docs
+### Task 17: The browser proof (light, dark, 390 px, runnable alone) and the docs
 
 **Files:**
 - Modify: `tools/verify-requirements-cdp.mjs`
 - Modify: `docs/requirements.md`, `docs/storage.md`, `docs/ui-levels.md`, `docs/changelog/unreleased.md`
 
 **Interfaces:**
-- Consumes: everything above, through the real app in mock mode (`WORCA_MOCK=1`): the shim's canned import answers (Task 3), the real routes, the download folder, its checks and the move (Task 7), A8's mock reads.
+- Consumes: everything above, through the real app in mock mode (`WORCA_MOCK=1`): the shim's canned import answers (Task 3), the real routes, the download folder, its checks and the write into the store (Task 7), A8's mock reads.
 - Produces: `node --disable-warning=ExperimentalWarning tools/verify-requirements-cdp.mjs --only=a61` runs the boot, the flag and the A6.1 section alone; `npm run verify:requirements` runs every section, A6.1 last.
 
 - [ ] **Step 1: Make the A6 helpers shared and add the switch.** In `tools/verify-requirements-cdp.mjs`:
@@ -4879,7 +5162,7 @@ and after the `tmp/requirements/att-read-<8 hex>/` entry add:
 
 ```text
   tmp/requirements/att-get-<8 hex>/     one tracker download's folder, mode 0700: the connector writes the body to
-                                        body.part, Worca checks it and moves it into requirements/att/; removed when the
+                                        body.part, Worca checks it and writes it into requirements/att/; removed when the
                                         download ends (a restart's leftovers older than an hour are swept at boot)
 ```
 
@@ -4901,7 +5184,7 @@ git commit -m "Requirements: the start-from-a-ticket browser proof and docs" -m 
 
 ---
 
-### Task 16: Whole-branch check
+### Task 18: Whole-branch check
 
 **Files:** whatever the merge and the comparison show; nothing new by plan.
 
@@ -4940,39 +5223,41 @@ Every file passes, or its failure is compared by test name with the same run of 
 
 | Spec point | Task(s) |
 |---|---|
-| D1 the entry on New feature; it fills the form; shown only with an importing connection | 10, 12 |
-| D2 four optional ops, `capabilities().import`, A6's cached probe, API 5, not in `/api/sources/call` | 3, 4, 5, 6, 8 |
-| D3 connection and project as A6 chooses them; the page session's last choice | 6, 10 |
-| D4 one search box, recently updated first, 300 ms, 20 a page, Show more, Linked to FEAT-7, the radio group | 4, 6, 10 |
-| D5 the preview shows exactly what will be imported; default ticks; Back keeps the search; nothing sent | 2, 6, 10, 11 |
-| D6 title and description; empty; longer than 20,000 → the description file | 2, 8, 10, 11, 12 |
-| D7 criteria as R-po (edited, from SHOP-124): field, else a section; 30 × 500; the tag links the ticket; "(from SHOP-124)" in Markdown, not in SHOP-124's own ticket | 1, 2, 4, 8, 9, 14 |
-| D8 comments as one file Worca reads; names only; apps unticked; restricted left out; newest 50; 4,000 characters | 2, 4, 8, 10 |
-| D9 attachments: offered with reasons; caps over the whole form; downloaded server-side into a 0700 folder; the host's checks; the move into A8's store | 2, 5, 7, 8, 11, 12 |
-| D10 Start the interview: second read, the feature at once, downloads afterwards (two at a time), round 1 waits, per-file failures, Try again, a refused file, removal, restart | 7, 8, 12, 13 |
-| D11 A6's link with `origin = 'import'`; Export straight to the again dialog, its copy; issue type and priority kept; edited check vs the import; Report back on; Create a new ticket makes an export link | 1, 8, 9, 14 |
-| D12 one ticket follows one feature: the preview's alert, the unlinked create, History's line | 1, 6, 8, 11, 12, 14 |
+| D1 the entry on New feature; it fills the form; shown only with an importing connection | 11, 12, 14 |
+| D2 four optional ops, `capabilities().import`, A6's cached probe, API 5, not in `/api/sources/call` | 3, 4, 5, 6, 9 |
+| D3 connection and project as A6 chooses them; the page session's last choice | 6, 11 |
+| D4 one search box, recently updated first, 300 ms, 20 a page, Show more, Linked to FEAT-7, the radio group | 4, 6, 11 |
+| D5 the preview shows exactly what will be imported; default ticks; Back keeps the search; nothing sent | 2, 6, 12, 13 |
+| D6 title and description; empty; longer than 20,000 → the description file | 2, 9, 12, 13, 14 |
+| D7 criteria as R-po (edited, from SHOP-124): field, else a section; 30 × 500; the tag links the ticket; "(from SHOP-124)" in Markdown, not in SHOP-124's own ticket | 1, 2, 4, 9, 10, 16 |
+| D8 comments as one file Worca reads; names only (also the raw wiki fallback); apps unticked; restricted left out; newest 50; 4,000 characters | 2, 4, 9, 12 |
+| D9 attachments: offered with reasons; caps over the whole form; downloaded server-side into a 0700 folder; the host's checks; the checked bytes into A8's store | 2, 5, 7, 9, 13, 14 |
+| D10 Start the interview: second read, the feature at once, downloads afterwards (two at a time), round 1 waits, readiness counts a downloading file, per-file failures, Try again, a refused file, removal, restart | 7, 8, 9, 14, 15 |
+| D11 A6's link with `origin = 'import'`; Export straight to the again dialog, its copy; issue type and priority kept; edited check vs the import; Report back on; Create a new ticket makes an export link | 1, 9, 10, 16 |
+| D12 one ticket follows one feature: the preview's alert, the unlinked create, History's line | 1, 6, 9, 12, 13, 14, 16 |
 | D13 schema v80, two columns | 1 |
-| D14 the import's thread line; `from` on the file turn; "from SHOP-124" in the Files card | 2, 7, 8, 9, 13 |
-| D15 server-side calls; data rules; redaction at the import; the download's address, redirect and size rules; `dest` and the host's checks; names | 2, 4, 5, 6, 7 |
-| D16 the errors (fixed phrases by kind; gone; cannot import; no result; per-file reasons; the restart) | 6, 7, 8, 10, 11, 12, 13 |
+| D14 the import's thread line; `from` on the file turn; "from SHOP-124" in the Files card | 2, 7, 8, 9, 10, 15 |
+| D15 server-side calls; data rules; redaction at the import; no account id (rendered or raw); the download's address, redirect and size rules; `dest` and the host's checks; names; the log's first line only | 2, 3, 4, 5, 6, 7 |
+| D16 the errors (A6's reach sentence; gone; cannot import; no result; per-file reasons; the restart) | 6, 7, 9, 11, 12, 13, 14, 15 |
 | D17 limits and timeouts | 2, 6, 7 |
-| D18 flag, routes in `REQUIREMENTS_ROUTES`, no booking, mock answers | 3, 8, 15 |
-| D19 dialogs (modal, title focus, focus back, inert), the search's names, checkbox names, the reasons, the strip's ×, the links; the 900 px sheets | 10, 11, 12, 14, 15 |
-| D20 levels (S; the Marketplace hint A) | 10, 15 |
+| D18 flag, routes in `REQUIREMENTS_ROUTES`, no booking, mock answers | 3, 9, 17 |
+| D19 dialogs (modal, title focus, focus back, inert), the search's names, checkbox names, the reasons, the strip's ×, the links; the 900 px sheets; 44 px targets on the form's new controls | 11, 12, 13, 14, 16, 17 |
+| D20 levels (S; the Marketplace hint A) | 11, 12, 17 |
+| U1 (user decision) import failures in A6's wording; `firstLine` | 3, 6 |
+| U2 (user decision) Remove / Try again while round 1 waits follow A8's busy rule | 8 |
 | §3 data | 1, 7 |
 | §4 the contract, the comments file, the mock answers | 2, 3, 4, 5 |
 | §5 the Jira connector | 4, 5 |
-| §6 API | 6, 7, 8 |
-| §7 boards 32–36 and "Not on the boards" | 10–14, 15 |
-| §8 code changes | 1–14 |
-| §9 testing (pure, service, downloads, export, prompts, migration, Jira, shim, API, UI, real browser, Linux, docs; real Jira only with the user's OK) | 1–16 |
-| §10 where A6.1 meets A6, A8, A3 | 7, 9, 16 |
+| §6 API | 6, 8, 9 |
+| §7 boards 32–36 and "Not on the boards" | 11–17 |
+| §8 code changes | 1–16 |
+| §9 testing (pure, service, downloads, export, prompts, migration, Jira, shim, API, UI, real browser, Linux, docs; real Jira only with the user's OK) | 1–18 |
+| §10 where A6.1 meets A6, A8, A3 | 7, 8, 10, 18 |
 | §11 out of scope | not built |
 
 ## Self-review notes
 
 - Code-forced placements and additions, each the smallest the code needs: the preview's body takes `formFiles: { count, bytes }` (D9's caps count the files already on the form, which the server cannot know otherwise); the create answers `notOnTicket: { key, comments: [id], attachments: [{ id, reason }] }` beside A8's `filesNotStored` (whose names keep meaning "could not store it"), and the page words both; `fetch_json` also holds the tracker's display name (a download's failure line and the restart line name it after a restart); `downloadAttachment` answers `{ gone: true, forbidden: true }` for a 403 (D16 tells "may not see it" apart from "no longer on SHOP-124"); the `imported` turn carries `linkedTo` (History's unlinked line names the feature that follows the ticket); "from SHOP-124" is derived from the file turns (`fileOrigins`) rather than stored on the row; jira-source finds the "Acceptance Criteria" field through `/rest/api/2/field` so the issue read keeps §5's explicit field list; `insertDownloadRow` lives in `attachment-fetch.mjs` and A8's `sweepReadFolders` also removes `att-get-*` (one boot sweep); `round.mjs` imports `ticket-import.mjs`, which reaches `round.mjs` back through `attachments.mjs` (no top-level use either way).
-- Deviations from the spec, said once: D16's "else the plugin's message without a final period" is replaced by fixed phrases by kind (Global Constraints: no raw plugin text in product copy; the raw text goes to the log). §8's "the generated files … in one transaction" is two steps: the feature, its link, its turn and (separately) the downloading rows are transactions; the generated files go through A8's `addAttachments` (body first, then row), as A8's create stores its files, and a store failure never undoes the feature. §9's browser step "untick the automation comment" contradicts D8 (app comments are unticked by default): the proof checks it is unticked and unticks a person's comment. §9's "two files Downloading… and two Reading…" depends on timing: the proof checks a Downloading… badge, the working line and then every file read. The Jira tests are two new files over real HTTP instead of `test/jira-source-connector.test.mjs`'s fake `fetch` (A6's precedent). The preview's redaction line sits under the description (§7) where board 34 shows it under the comments (the doc wins). Only attachments are disabled by the preview's caps; the comments file's first tick is checked again by the server's caps at the create.
+- Deviations from the spec, said once (each recorded in the design as "adjusted for the build" or a user decision): search, preview and create failures use A6's own `reachSentence` (design U1, user decision 2026-10-28), and a download's per-file reasons are fixed phrases, never the plugin's text (D16 adjusted); the log keeps a failure's first line only. A downloaded body is read once through a descriptor and those checked bytes are written into A8's store, instead of a rename of `dest` (D9 adjusted; plan review S7 and M1). §8's "the generated files … in one transaction" is two steps: the feature, its link, its turn and (separately) the downloading rows are transactions; the generated files go through A8's `addAttachments` (body first, then row), as A8's create stores its files, and a store failure never undoes the feature. §9's browser step "untick the automation comment" contradicts D8 (app comments are unticked by default): the proof checks it is unticked and unticks a person's comment. §9's "two files Downloading… and two Reading…" depends on timing: the proof checks a Downloading… badge, the working line and then every file read. The Jira tests are two new files over real HTTP instead of `test/jira-source-connector.test.mjs`'s fake `fetch` (A6's precedent). The preview's redaction line sits under the description (§7) where board 34 shows it under the comments (the doc wins). Only attachments are disabled by the preview's caps; the comments file's first tick is checked again by the server's caps at the create.
 - Copy this plan adds where the design names none is listed once in Global Constraints (the server refusals, the one-criterion and no-criteria thread lines, "1 ticket … matches", "No ticket matches …", "SHOP-124 has no description.", the D12 strip line, the comment-gone line, "Downloaded from SHOP-124." from board 35, the refused tails "it is not the file Jira described" and "its content does not match its type").
-- Task sizes: Tasks 10–14 each stay near or under 400 lines of new code; Task 10 is the largest (both dialogs) and Task 11 holds the states, the caps and the phone CSS so neither grows past it.
+- Task sizes: every task brief stays under about 450 lines. The plan review split the downloads (Task 7, `attachment-fetch.mjs`; Task 8, the A8 integration and readiness) and the two dialogs (Task 11, the button and the pick; Task 12, the preview); Task 13 holds the states, the caps and the phone CSS.
