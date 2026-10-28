@@ -169,4 +169,5 @@ with `import: true` and implements the optional import ops:
   address with the connection's auth; Jira Cloud's one redirect to its signed media address is followed over https without
   the token. The size is checked before and during the download (25 MB), and a partial file is deleted.
 
-A 404 (and a Data Center 403) is "not found, or this connection cannot see it".
+A 404 (and a Data Center 403) is "not found, or this connection cannot see it". A 403 on a download is "this connection
+may not see it", on Jira Cloud too.

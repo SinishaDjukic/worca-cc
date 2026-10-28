@@ -135,6 +135,7 @@ Worca; it does not reach Claude Code's logs. Where the files are kept: [storage.
 
 **Testing.** In mock mode (`WORCA_MOCK=1`) nothing is sent: a read writes a `[mock]` summary at once, or after
 `WORCA_MOCK_READ_MS` milliseconds when that is set (the browser proof uses it to see "Reading N files…").
+A mock download from a ticket waits `WORCA_MOCK_DOWNLOAD_MS` milliseconds when that is set (the proof sees "Downloading…").
 
 **When a file changes the interview.** During the interview the next round uses a new or replaced file. After the
 interview finished, Worca asks about it in one short follow-up round; until that round has run, the feature shows
@@ -285,8 +286,9 @@ anything.
 
 **New feature › From a ticket…** starts a feature from a ticket your team already wrote in its tracker (Jira today; other
 trackers add the same steps in their own plugins). The button shows once a tracker connection can import; trackers are
-connected on the Marketplace page (**Installed › Jira**, Advanced mode). Importing costs nothing and never changes the
-ticket: nothing is sent to Jira.
+connected on the Marketplace page (**Installed › Jira**, Advanced mode). Importing never changes the ticket: nothing is
+sent to Jira. The import itself costs nothing. Reading the picked comments file and attachments costs what any file read
+costs, through the interview model.
 
 - **Find the ticket.** Pick the connection (only with several) and the Jira project, then search by words, or paste the
   ticket's key or link to find it in any project. An empty search lists the project's most recently updated tickets. On
