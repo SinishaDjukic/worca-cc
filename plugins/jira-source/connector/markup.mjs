@@ -12,6 +12,19 @@ const entity = (m, e) => {
 };
 /** The URL itself when it is http(s), else null: no javascript:/data: links in either direction. */
 export const safeHref = (u) => (/^https?:\/\//i.test(String(u || '').trim()) ? String(u).trim() : null);
+/** A6.1 (D8, D15): a link to a person (a profile, a mention): Cloud's and Data Center's profile pages, Cloud's people pages. */
+const isPersonHref = (u) => /\/secure\/ViewProfile|\/jira\/people\/|\/people\//i.test(String(u || ''));
+// Lists tag by tag, not item by item: an item's own text ends where a nested list or the next item starts, so a nested list
+// never merges into its parent item; a nested item is indented two spaces a level.
+function listsToMarkdown(s) {
+  let depth = 0;
+  return s.replace(/<(\/?)(ul|ol|li)(?=[\s>/])[^>]*>/gi, (_, close, tag) => {
+    if (tag.toLowerCase() === 'li') return close ? '' : `\n${'  '.repeat(Math.max(0, depth - 1))}- `;
+    if (!close) { depth += 1; return ''; }
+    depth = Math.max(0, depth - 1);
+    return depth ? '' : '\n\n';
+  });
+}
 
 export function htmlToMarkdown(html) {
   let s = String(html || '');
@@ -25,15 +38,14 @@ export function htmlToMarkdown(html) {
       .map((c) => c[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()).join(' | ')} |\n`)
     .replace(/<\/table>/gi, '\n\n')
     .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, n, t) => `\n\n${'#'.repeat(Number(n))} ${t}\n\n`)
-    .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '\n- $1')
-    .replace(/<\/(ul|ol)>/gi, '\n\n')
+    .replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, n, t) => `\n\n${'#'.repeat(Number(n))} ${t}\n\n`);
+  s = listsToMarkdown(s)
     .replace(/<(b|strong)(?=[\s>])[^>]*>([\s\S]*?)<\/\1>/gi, '**$2**')
     .replace(/<(i|em)(?=[\s>])[^>]*>([\s\S]*?)<\/\1>/gi, '_$2_')
     .replace(/<(code|tt)(?=[\s>])[^>]*>([\s\S]*?)<\/\1>/gi, '`$2`')
-    // A6.1 (D8, D15): a link to a person (a profile, a mention) is their name only: no account id leaves the connector
-    .replace(/<a [^>]*href="[^"]*(?:\/secure\/ViewProfile|\/jira\/people\/|\/people\/)[^"]*"[^>]*>([\s\S]*?)<\/a>/gi, '$1')
     .replace(/<a [^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (_, href, text) => {
+      // A6.1 (D8, D15): a link to a person (a profile, a mention) is their name only: no account id leaves the connector
+      if (isPersonHref(href)) return text;
       const h = safeHref(href.replace(/&amp;/g, '&'));
       return h ? `[${text}](${h})` : text;
     })
@@ -75,13 +87,16 @@ export function markdownToWiki(md) {
 
 /** A6.1 (D8, D15): Jira wiki text as plain text, used when a site renders nothing. A mention ([~accountid:…] on Cloud, [~name] on
  *  Data Center) becomes "someone" (the wiki text holds no display name); a link [text|url] becomes "text (url)" for http(s) only, else
- *  its text alone (so [Ann|~accountid:…] is "Ann"). Nothing else is converted: the text stays as Jira holds it. */
+ *  its text alone (so [Ann|~accountid:…] is "Ann"); a link to a person's profile is its text alone too (or "someone"), as the
+ *  rendered path does, and a link's tip ([text|url|tip]) is dropped. Nothing else is converted: the text stays as Jira holds it. */
 export function plainWiki(text) {
   return String(text || '')
     .replace(/\[~[^\]\n]*\]/g, 'someone')
-    .replace(/\[([^|\]\n]*)\|([^\]\n]*)\]/g, (_, t, u) => {
-      const href = safeHref(u);
+    .replace(/\[([^|\]\n]*)\|([^\]\n]*)\]/g, (_, t, rest) => {
+      const u = rest.split('|')[0];
       const label = t.trim();
+      if (isPersonHref(u) || /^\s*~/.test(u)) return label || 'someone';
+      const href = safeHref(u);
       return href ? (label ? `${label} (${href})` : href) : label;
     })
     .trim();

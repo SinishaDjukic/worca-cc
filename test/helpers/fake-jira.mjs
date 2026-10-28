@@ -51,11 +51,13 @@ export async function startFakeJira(o = {}) {
   // version: what serverInfo says (Data Center 8.4 added create metadata per project); hangPropertyPut / hangReadBack: that
   // request never gets an answer; staleSearch: a search answers a description that differs from the issue's own;
   // brokenReadBack: a description read answers 200 with a body that is not JSON; noVersionNumbers: serverInfo names only `version`.
-  // A6.1: seed — issues the import ops read (SeededIssue in the A6.1 plan); forbid — keys whose read answers 403.
+  // A6.1: seed — issues the import ops read (SeededIssue in the A6.1 plan); forbid — keys whose read answers 403;
+  // extraFields — more entries for /rest/api/2/field (same shape as BASE_FIELDS). Cloud's /search/jql refuses a JQL with no clause
+  // before ORDER BY, as Jira Cloud does ("Unbounded JQL queries are not allowed here").
   const opt = { deployment: 'cloud', token: 'tok', email: 'ann@acme.test', refuseToken: false, refuseProperties: false, refusePropertyPut: false,
     failReadBack: false, refuseIssuetypeEdit: false, fail: null, oldCreatemeta: false, requiredField: null, refuseOnUpdate: null, storeCrlf: false,
     version: o.deployment === 'datacenter' ? '9.12.0' : '1001.0.0-SNAPSHOT', hangPropertyPut: false, hangReadBack: false, staleSearch: false,
-    brokenReadBack: false, noVersionNumbers: false, seed: [], forbid: [], ...o };
+    brokenReadBack: false, noVersionNumbers: false, seed: [], forbid: [], extraFields: [], ...o };
   const cloud = opt.deployment === 'cloud';
   const auth = cloud ? `Basic ${Buffer.from(`${opt.email}:${opt.token}`).toString('base64')}` : `Bearer ${opt.token}`;
   const fields = [...BASE_FIELDS, ...(opt.requiredField ? [{ fieldId: opt.requiredField.id, name: opt.requiredField.name, required: true,
@@ -86,7 +88,7 @@ export async function startFakeJira(o = {}) {
     if (cloud && p === '/rest/api/2/project/search') return send(res, 200, { values: PROJECTS, isLast: true });
     if (!cloud && p === '/rest/api/2/project') return send(res, 200, PROJECTS);
     if (p === '/rest/api/2/field') {
-      return send(res, 200, BASE_FIELDS.map((f) => ({ id: f.fieldId, name: f.name, custom: /^customfield_/.test(f.fieldId), schema: f.schema })));
+      return send(res, 200, [...BASE_FIELDS, ...(opt.extraFields || [])].map((f) => ({ id: f.fieldId, name: f.name, custom: /^customfield_/.test(f.fieldId), schema: f.schema })));
     }
     let m = /^\/rest\/api\/2\/issue\/createmeta\/([^/]+)\/issuetypes(?:\/([^/]+))?$/.exec(p);
     if (m) {
@@ -160,6 +162,9 @@ export async function startFakeJira(o = {}) {
         issuetype: i.fields.issuetype } });
     }
     if ((cloud && p === '/rest/api/2/search/jql') || (!cloud && p === '/rest/api/2/search')) {
+      if (cloud && !/\S/.test((url.searchParams.get('jql') || '').replace(/\bORDER\s+BY\b[\s\S]*$/i, ''))) {
+        return send(res, 400, { errorMessages: ['Unbounded JQL queries are not allowed here. Please add a search restriction to your query.'], errors: {} });
+      }
       if (seeded.size) {
         const q = url.searchParams.get('jql') || '';
         const project = (/project = "([^"]+)"/.exec(q) || [])[1];

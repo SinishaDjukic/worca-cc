@@ -71,10 +71,14 @@ const IMPORT_SEARCH_FIELDS = ['summary', 'status', 'issuetype', 'updated'];
 const IMPORT_PAGE = 20;
 const IMPORT_COMMENTS = 50;
 const emailish = (s) => /^[^@\s]+@[^@\s]+$/.test(String(s || ''));
-/** D8: an app or automation author: Cloud's accountType, or Data Center's inactive user without an email-shaped name. */
-const authorKind = (a) => (a && (a.accountType === 'app' || (a.active === false && !emailish(a.name))) ? 'app' : 'person');
-/** A criteria field's text as items: one per list item, else one per line. */
-const listItems = (md) => String(md || '').split('\n').map((l) => l.replace(/^\s*(?:[-*+#]|\d+[.)])\s+/, '').trim()).filter(Boolean);
+/** D8: an app or automation author: Cloud's accountType when the author has one (a deactivated Cloud person stays a person),
+ *  else Data Center's inactive user without an email-shaped name. */
+const authorKind = (a) => (a && (a.accountType ? a.accountType === 'app' : (a.active === false && !emailish(a.name))) ? 'app' : 'person');
+/** A criteria field's text as items: one per list item (nested ones too: `- `, `  - `, wiki `**`, `##`), else one per line. */
+const listItems = (md) => String(md || '').split('\n').map((l) => l.replace(/^\s*(?:[-*+#]+|\d+[.)])\s+/, '').trim()).filter(Boolean);
+/** Jira Cloud refuses a search with no clause before ORDER BY ("Unbounded JQL queries are not allowed here"): the import's
+ *  "All projects, recently updated" asks for the tickets updated within this window. */
+const CLOUD_RECENT = 'updated >= -365d';
 
 export default function createTaskSource(ctx, deps = {}) {
   const base = String(ctx.config?.baseUrl || '').trim().replace(/\/+$/, '');
@@ -211,15 +215,15 @@ export default function createTaskSource(ctx, deps = {}) {
   };
   // A6.1 D16: Jira answers 404 for a ticket that does not exist and for one this connection may not see; a Data Center may answer 403
   const notVisible = async (e) => e.status === 404 || (e.status === 403 && (await deployment()) === 'datacenter');
-  // D7: the multi-line text field named "Acceptance Criteria", when no criteria field is given (multi-line: a textarea custom
-  // field, as exportOptions' criteriaFields filters them)
-  async function criteriaFieldId() {
+  // D7: the multi-line text fields named "Acceptance Criteria", when no criteria field is given (multi-line: a textarea custom
+  // field, as exportOptions' criteriaFields filters them). A site may have several; importTicket reads them all and takes the
+  // first with a value.
+  async function criteriaFieldIds() {
     try {
       const all = await jiraFetch(jira, '/rest/api/2/field');
-      const f = (Array.isArray(all) ? all : []).find((x) => x && x.custom && /:textarea$/.test(String(x.schema?.custom || ''))
-        && String(x.name || '').trim().toLowerCase() === 'acceptance criteria');
-      return f ? String(f.id) : null;
-    } catch (e) { log('warn', `the field list could not be read: ${String(e?.message || e).split('\n')[0].slice(0, 200)}`); return null; }
+      return (Array.isArray(all) ? all : []).filter((x) => x && x.custom && /:textarea$/.test(String(x.schema?.custom || ''))
+        && String(x.name || '').trim().toLowerCase() === 'acceptance criteria').map((x) => String(x.id));
+    } catch (e) { log('warn', `the field list could not be read: ${String(e?.message || e).split('\n')[0].slice(0, 200)}`); return []; }
   }
 
   return {
@@ -427,9 +431,12 @@ export default function createTaskSource(ctx, deps = {}) {
         try { return { tickets: [ticketOf(await issue(key, IMPORT_SEARCH_FIELDS))] }; }
         catch (e) { if (await notVisible(e)) return { tickets: [] }; throw e; }
       }
-      const jql = buildJql({ project, jql: '', search });   // never the user's saved filter: the import searches the whole project
+      const cloud = (await deployment()) === 'cloud';
+      const bounded = Boolean(String(project || '').trim() || String(search || '').trim());
+      // never the user's saved filter: the import searches the whole project; on Cloud an otherwise unbounded search gets a window
+      const jql = buildJql({ project, jql: cloud && !bounded ? CLOUD_RECENT : '', search });
       const q = `jql=${enc(jql)}&fields=${IMPORT_SEARCH_FIELDS.join(',')}&maxResults=${IMPORT_PAGE}`;
-      if ((await deployment()) === 'cloud') {
+      if (cloud) {
         const j = await jiraFetch(jira, `/rest/api/2/search/jql?${q}${cursor ? `&nextPageToken=${enc(cursor)}` : ''}`);
         return { tickets: (j?.issues || []).map(ticketOf), ...(j?.nextPageToken && j?.isLast !== true ? { cursor: j.nextPageToken } : {}) };
       }
@@ -441,8 +448,8 @@ export default function createTaskSource(ctx, deps = {}) {
     }),
     importTicket: exportOp(async ({ key, criteriaField } = {}) => {
       const k = requireKey(key);
-      const named = /^customfield_\d+$/.test(String(criteriaField || '')) ? String(criteriaField) : await criteriaFieldId();
-      const fields = ['summary', 'description', 'issuetype', 'priority', 'status', 'project', 'attachment', 'comment', ...(named ? [named] : [])];
+      const candidates = /^customfield_\d+$/.test(String(criteriaField || '')) ? [String(criteriaField)] : await criteriaFieldIds();
+      const fields = ['summary', 'description', 'issuetype', 'priority', 'status', 'project', 'attachment', 'comment', ...candidates];
       let i;
       try { i = await issue(k, fields, 'renderedFields,names'); }
       catch (e) { if (await notVisible(e)) return { gone: true }; throw e; }
@@ -451,10 +458,11 @@ export default function createTaskSource(ctx, deps = {}) {
       // the rendered HTML (the same on Cloud and Data Center) as Markdown; the raw wiki text as plain text when a site renders
       // nothing, through plainWiki so a mention's account id never leaves the connector (D8, D15)
       const description = r.description ? htmlToMarkdown(r.description) : plainWiki(f.description);
+      // the first candidate field with items; its unrendered value goes through plainWiki like the description (D8, D15)
       let criteria = null;
-      if (named && (r[named] || f[named])) {
-        const items = listItems(r[named] ? htmlToMarkdown(r[named]) : String(f[named]));
-        if (items.length) criteria = { field: { id: named, name: (i.names && i.names[named]) || named }, items };
+      for (const id of candidates) {
+        const items = listItems(r[id] ? htmlToMarkdown(r[id]) : plainWiki(f[id]));
+        if (items.length) { criteria = { field: { id, name: (i.names && i.names[id]) || id }, items }; break; }
       }
       let raw = Array.isArray(f.comment?.comments) ? f.comment.comments : [];
       const total = Number.isFinite(Number(f.comment?.total)) ? Number(f.comment.total) : raw.length;

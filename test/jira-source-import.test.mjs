@@ -4,7 +4,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import createTaskSource, { fingerprintOf } from '../plugins/jira-source/connector/index.mjs';
-import { htmlToMarkdown } from '../plugins/jira-source/connector/markup.mjs';
+import { htmlToMarkdown, plainWiki } from '../plugins/jira-source/connector/markup.mjs';
 import { startFakeJira } from './helpers/fake-jira.mjs';
 
 const open = [];
@@ -178,4 +178,79 @@ test('htmlToMarkdown (§5): a picture by its alt text, table rows as "| a | b |"
   assert.equal(htmlToMarkdown('<p>Ask <a href="https://acme.test/secure/ViewProfile.jspa?accountId=5b10" class="user-hover">Ann Example</a>, '
     + '<a href="/jira/people/5b11">Bo Example</a> or <a href="https://acme.test/people/5b12">Cy Example</a>.</p>'), 'Ask Ann Example, Bo Example or Cy Example.');
   assert.equal(htmlToMarkdown('<p>See <a href="https://docs.acme.test/refunds">refunds</a>.</p>'), 'See [refunds](https://docs.acme.test/refunds).');
+  // a nested list keeps each item apart (review fix 3)
+  assert.equal(htmlToMarkdown('<ul><li>A<ul><li>B</li><li>C</li></ul></li><li>D</li></ul>'), '- A\n  - B\n  - C\n- D');
+  assert.equal(htmlToMarkdown('<p>Steps</p><ol><li>One</li><li>Two</li></ol><p>After</p>'), 'Steps\n\n- One\n- Two\n\nAfter');
+});
+
+// ---- Fix round 1 (Task 4 review) ----
+
+test('importTicket: a criteria field Jira did not render is read through plainWiki: mentions are "someone", never an account id or username', async () => {
+  for (const deployment of BOTH) {
+    const { src } = await site({ deployment, seed: [ISSUE({ custom: { customfield_10070: { name: 'Acceptance Criteria', rendered: null,
+      value: '* Ask [~accountid:acc-ann] first\n* Check with [Bo|~accountid:acc-bo]\n* Ping [~cy.example]' } } })] });
+    const t = await src.importTicket({ key: 'SHOP-124' });
+    assert.deepEqual(t.criteria.items, ['Ask someone first', 'Check with Bo', 'Ping someone'], deployment);
+    const json = JSON.stringify(t);
+    for (const secret of ['acc-ann', 'acc-bo', 'cy.example', 'accountid']) assert.ok(!json.includes(secret), `${deployment}: no ${secret}`);
+  }
+});
+
+test('importTicket: a nested criteria list gives one item per list item', async () => {
+  const { src } = await site({ seed: [ISSUE({ custom: { customfield_10070: { name: 'Acceptance Criteria', value: '* A\n** B\n** C\n* D',
+    rendered: '<ul><li>A<ul><li>B</li><li>C</li></ul></li><li>D</li></ul>' } } })] });
+  assert.deepEqual((await src.importTicket({ key: 'SHOP-124' })).criteria.items, ['A', 'B', 'C', 'D']);
+});
+
+test('searchTickets: all projects with no words lists the recently updated tickets (Cloud bounds the JQL, as Jira Cloud requires)', async () => {
+  for (const deployment of BOTH) {
+    const { jira, src } = await site({ deployment, seed: [ISSUE(), ...OTHERS] });
+    assert.deepEqual((await src.searchTickets({})).tickets.map((t) => t.key), ['SHOP-123', 'SHOP-124', 'OPS-7'], deployment);
+    const jql = jira.requests.filter((r) => /\/search/.test(r.path)).at(-1).query.jql;
+    if (deployment === 'cloud') assert.equal(jql, '(updated >= -365d) ORDER BY updated DESC');
+    else assert.equal(jql, 'ORDER BY updated DESC');
+    // a project or words bound it already: no extra clause
+    await src.searchTickets({ project: 'SHOP' });
+    assert.equal(jira.requests.filter((r) => /\/search/.test(r.path)).at(-1).query.jql, 'project = "SHOP" ORDER BY updated DESC', deployment);
+  }
+});
+
+test('importTicket: a deactivated Cloud person is a person; an app is an app; a Data Center inactive non-email user is an app', async () => {
+  const comments = [
+    { id: '1', author: { ...person('Cy Example', 'acc-cy'), active: false }, created: '2026-10-21T12:00:00.000+0000', body: 'Gone now.', rendered: '<p>Gone now.</p>' },
+    { id: '2', author: { displayName: 'Jira Automation', accountType: 'app', active: true }, created: '2026-10-22T12:00:00.000+0000', body: 'x', rendered: '<p>x</p>' },
+    { id: '3', author: { displayName: 'Release Bot', active: false, name: 'releasebot' }, created: '2026-10-23T12:00:00.000+0000', body: 'y', rendered: '<p>y</p>' },
+    { id: '4', author: { displayName: 'Bo Example', active: false, name: 'bo@example.test' }, created: '2026-10-24T12:00:00.000+0000', body: 'z', rendered: '<p>z</p>' },
+  ];
+  const { src } = await site({ seed: [ISSUE({ comments })] });
+  assert.deepEqual((await src.importTicket({ key: 'SHOP-124' })).comments.map((c) => c.authorKind), ['person', 'app', 'app', 'person']);
+});
+
+test('plainWiki: a profile link is its text only; a link tip is dropped; other links keep their address', () => {
+  assert.equal(plainWiki('Ask [Ann|https://acme.test/secure/ViewProfile.jspa?accountId=5b10] or [Bo|https://jira.acme.test/secure/ViewProfile.jspa?name=bo.example].'),
+    'Ask Ann or Bo.');
+  assert.equal(plainWiki('See [the flow|https://docs.acme.test/flow|Open the flow].'), 'See the flow (https://docs.acme.test/flow).');
+  assert.equal(plainWiki('[|https://acme.test/secure/ViewProfile.jspa?accountId=5b10] said so'), 'someone said so');
+});
+
+test('importTicket: of several fields named "Acceptance Criteria", the one with a value is read', async () => {
+  const extraFields = [{ fieldId: 'customfield_10090', name: 'Acceptance criteria', schema: { type: 'string', custom: 'com.atlassian.jira.plugin.system.customfieldtypes:textarea' } }];
+  const { jira, src } = await site({ extraFields, seed: [ISSUE({ custom: {
+    customfield_10070: { name: 'Acceptance Criteria', value: null, rendered: '' },
+    customfield_10090: { name: 'Acceptance criteria', value: '* The real one', rendered: '<ul><li>The real one</li></ul>' } } })] });
+  const t = await src.importTicket({ key: 'SHOP-124' });
+  assert.deepEqual(t.criteria, { field: { id: 'customfield_10090', name: 'Acceptance criteria' }, items: ['The real one'] });
+  assert.equal(jira.requests.find((r) => r.path === '/rest/api/2/issue/SHOP-124').query.fields,
+    'summary,description,issuetype,priority,status,project,attachment,comment,customfield_10070,customfield_10090');
+});
+
+test('importTicket (Data Center): a rendered mention links ViewProfile.jspa?name=…; only the name is kept, in the description and the comments', async () => {
+  const mention = '<a href="https://jira.acme.test/secure/ViewProfile.jspa?name=bo.example" class="user-hover" rel="bo.example" id="user_bo.example">Bo Example</a>';
+  const { src } = await site({ deployment: 'datacenter', seed: [ISSUE({ custom: {}, rendered: `<p>Ask ${mention}.</p>`,
+    comments: [{ id: '1', author: person('Ann Example', 'acc-ann'), created: '2026-10-21T12:00:00.000+0000', body: 'Thanks [~bo.example].',
+      rendered: `<p>Thanks ${mention}.</p>` }] })] });
+  const t = await src.importTicket({ key: 'SHOP-124' });
+  assert.equal(t.description, 'Ask Bo Example.');
+  assert.equal(t.comments[0].body, 'Thanks Bo Example.');
+  assert.ok(!JSON.stringify(t).includes('bo.example'));
 });
