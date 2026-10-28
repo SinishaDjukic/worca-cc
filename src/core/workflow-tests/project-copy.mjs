@@ -5,12 +5,12 @@
 // rev-list, ls-tree, cat-file, show, grep <tree>, for-each-ref and symbolic-ref, and uncommitted changes are read with
 // uncommittedPatch's scratch objects.
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { lstat, mkdir, mkdtemp, readdir, readFile, rm, statfs, writeFile } from 'node:fs/promises';
+import { existsSync, realpathSync } from 'node:fs';
+import { lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, statfs, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { worcaHome } from '../projects.mjs';
-import { testCopiesRoot, testCopyDirFor, PROJECT_KEY_RE } from '../store.mjs';
+import { testCopiesRoot, testCopyDirFor, testCopyKeyOf, PROJECT_KEY_RE } from '../store.mjs';
 import { uncommittedPatch } from '../git-info.mjs';
 import { isSafeBranchName } from '../git-sync.mjs';
 import { rmGuarded } from '../run-manifest.mjs';
@@ -30,10 +30,43 @@ function git(cwd, args, { env = null } = {}) {
   if (!env) for (const k of GIT_DIR_ENV) delete e[k];
   return new Promise((done) => {
     execFile('git', args, { cwd, env: e, timeout: GIT_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
-      done({ ok: !err, stdout: String(stdout || ''), stderr: String(stderr || '') });
+      done({ ok: !err, code: err ? (typeof err.code === 'number' ? err.code : -1) : 0, stdout: String(stdout || ''), stderr: String(stderr || '') });
     });
   });
 }
+
+/**
+ * git in Worca's copy (or a folder being made into one). GIT_CEILING_DIRECTORIES stops git's walk up at testCopiesRoot():
+ * a copy whose .git is missing or broken must fail, never act on an enclosing repository (a worcaHome inside a repo).
+ */
+function copyGit(dir, args, { env = null } = {}) {
+  const e = { ...(env || process.env) };
+  if (!env) for (const k of GIT_DIR_ENV) delete e[k];
+  e.GIT_CEILING_DIRECTORIES = resolve(testCopiesRoot());
+  return git(dir, args, { env: e });
+}
+
+const samePath = (a, b) => {
+  const fold = (p) => (process.platform === 'win32' ? resolve(p).toLowerCase() : resolve(p));
+  if (fold(a) === fold(b)) return true;
+  try { return fold(realpathSync(a)) === fold(realpathSync(b)); } catch { return false; }   // macOS /var ↔ /private/var
+};
+
+/** `dir` is a repository of its own: its git dir is exactly `<dir>/.git` (not an enclosing repo's, not a gitfile's target). */
+async function ownRepo(dir) {
+  if (!existsSync(join(dir, '.git'))) return false;
+  const r = await copyGit(dir, ['rev-parse', '--absolute-git-dir']);
+  return r.ok && !!r.stdout.trim() && samePath(r.stdout.trim(), join(dir, '.git'));
+}
+
+/** A healthy copy: a repository of its own with no remote (a remote would point back at the person's repository). */
+async function healthyCopy(dir) {
+  if (!(await ownRepo(dir))) return false;
+  const r = await copyGit(dir, ['remote']);
+  return r.ok && !r.stdout.trim();
+}
+
+const notACopy = (dir) => `${dir} is not a usable copy of the project (no git repository of its own): skipped`;
 
 const LOCKS = new Map();
 /** One job at a time writes a copy (a clone, a fetch, a start commit): three tries start at once (D36). */
@@ -46,26 +79,63 @@ export function withKeyLock(key, fn) {
   return next;
 }
 
-/** The copy of `key`, made from `projectDir` when it is missing or half made (D54). */
-export async function ensureTestCopy(key, { projectDir }) {
+/** Rename, riding out a Windows lock on a folder git just let go of. */
+async function renameRetry(from, to, attempts = 10) {
+  for (let i = 1; ; i += 1) {
+    try { await rename(from, to); return; }
+    catch (e) {
+      if (i >= attempts || !RETRY_CODES.has(e && e.code)) throw e;
+      await new Promise((r) => setTimeout(r, 100 * i));
+    }
+  }
+}
+
+/**
+ * The copy of `key`; call it inside the key's lock. Anything but a healthy copy (missing; a .git that is empty, a gitfile,
+ * or resolves to an enclosing repository; or a copy that has a remote) is removed and made again from `projectDir` (D54).
+ * The clone is made and set up in a temporary sibling folder and renamed into place only when every step worked, so a
+ * copy is never left half set up (with `origin` still pointing at the person's repository).
+ */
+async function ensureTestCopyLocked(key, { projectDir }) {
   const dir = testCopyDirFor(key);
-  if (existsSync(join(dir, '.git')) && (await git(dir, ['rev-parse', '--git-dir'])).ok) return { dir, created: false };
+  if (await healthyCopy(dir)) return { dir, created: false };
   await rm(dir, RM);
   await mkdir(testCopiesRoot(), { recursive: true });
-  const c = await git(testCopiesRoot(), ['clone', '--quiet', '--local', '--no-checkout', '--no-tags', '--', resolve(projectDir), dir]);
-  if (!c.ok) throw testError(`Worca could not copy the project: ${firstLine(c.stderr)}`, 'NOT_READY');
-  for (const args of [['remote', 'remove', 'origin'], ['config', 'core.longpaths', 'true'], ['config', 'gc.auto', '0'], ['config', 'maintenance.auto', 'false']]) {
-    const r = await git(dir, args);
-    if (!r.ok) throw testError(`Worca could not set up its copy of the project: ${firstLine(r.stderr)}`, 'NOT_READY');
+  const tmp = await mkdtemp(join(testCopiesRoot(), `.clone-${key}-`));   // never matches PROJECT_KEY_RE: the sweep skips it
+  try {
+    // --local hardlinks the project's object files on purpose: cheap, and git never rewrites an object file in place.
+    const c = await copyGit(testCopiesRoot(), ['clone', '--quiet', '--local', '--no-checkout', '--no-tags', '--', resolve(projectDir), tmp]);
+    if (!c.ok) throw testError(`Worca could not copy the project: ${firstLine(c.stderr)}`, 'NOT_READY');
+    for (const args of [['remote', 'remove', 'origin'], ['config', 'core.longpaths', 'true'], ['config', 'gc.auto', '0'], ['config', 'maintenance.auto', 'false']]) {
+      const r = await copyGit(tmp, args);
+      if (!r.ok) throw testError(`Worca could not set up its copy of the project: ${firstLine(r.stderr)}`, 'NOT_READY');
+    }
+    await renameRetry(tmp, dir);
+  } catch (e) {
+    await rm(tmp, RM).catch(() => {});
+    throw e.code === 'NOT_READY' ? e : testError(`Worca could not set up its copy of the project: ${e.message}`, 'NOT_READY');
   }
   return { dir, created: true };
 }
 
-/** D54: what the copy could not hold. Read only (cat-file, grep on the tree). */
+/** The copy of `key`, made from `projectDir` when it is missing or not healthy (D54). Takes the key's lock. */
+export function ensureTestCopy(key, { projectDir }) {
+  return withKeyLock(key, () => ensureTestCopyLocked(key, { projectDir }));
+}
+
+/**
+ * D54: what the copy could not hold. Read only (ls-tree, grep on the tree). A `.gitattributes` at any depth counts; a
+ * commented line does not. A git error throws (NOT_READY): it never passes as "supported".
+ */
 export async function projectUnsupported({ projectDir, sha }) {
-  if ((await git(projectDir, ['cat-file', '-e', `${sha}:.gitmodules`])).ok) return 'submodules';
-  const g = await git(projectDir, ['grep', '-q', '-I', '-e', 'filter=lfs', sha, '--', '.gitattributes', '*/.gitattributes']);
-  return g.ok ? 'lfs' : null;
+  const unreadable = (r) => testError(`Worca could not read the project: ${firstLine(r.stderr)}`, 'NOT_READY');
+  const m = await git(projectDir, ['ls-tree', '--name-only', sha, '--', '.gitmodules']);
+  if (!m.ok) throw unreadable(m);
+  if (m.stdout.trim()) return 'submodules';
+  const g = await git(projectDir, ['grep', '-q', '-I', '-E', '-e', '^[^#]*filter=lfs', sha, '--', '.gitattributes', '*/.gitattributes']);
+  if (g.code === 0) return 'lfs';
+  if (g.code === 1) return null;
+  throw unreadable(g);
 }
 
 async function resolveStart(projectDir, { ref, sha }) {
@@ -93,8 +163,8 @@ async function readChanges(projectDir, base) {
 }
 
 async function fetchInto(dir, projectDir, sha) {
-  if ((await git(dir, ['cat-file', '-e', `${sha}^{commit}`])).ok) return;
-  const f = await git(dir, ['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', '--', resolve(projectDir), sha]);
+  if ((await copyGit(dir, ['cat-file', '-e', `${sha}^{commit}`])).ok) return;
+  const f = await copyGit(dir, ['fetch', '--quiet', '--no-tags', '--no-write-fetch-head', '--', resolve(projectDir), sha]);
   if (!f.ok) throw testError(START_GONE_TEXT, 'NOT_READY');
 }
 
@@ -104,20 +174,27 @@ async function commitChanges(dir, base, patch, at) {
   try {
     const env = { ...process.env, ...WORCA_ID, GIT_INDEX_FILE: join(tmp, 'index'), GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at };
     for (const k of GIT_DIR_ENV) if (k !== 'GIT_INDEX_FILE') delete env[k];
+    env.GIT_CEILING_DIRECTORIES = resolve(testCopiesRoot());
     const file = join(tmp, 'changes.patch');
     await writeFile(file, patch);
     for (const args of [['read-tree', base], ['apply', '--cached', '--binary', '--whitespace=nowarn', file]]) {
-      const r = await git(dir, args, { env });
+      const r = await copyGit(dir, args, { env });
       if (!r.ok) throw testError(`Worca could not apply your changes that are not committed: ${firstLine(r.stderr)}`, 'BAD_REQUEST');
     }
-    const tree = (await git(dir, ['write-tree'], { env })).stdout.trim();
-    const c = await git(dir, ['commit-tree', '--no-gpg-sign', tree, '-p', base, '-m', 'Worca test start: changes that were not committed yet'], { env });
+    const w = await copyGit(dir, ['write-tree'], { env });
+    const tree = w.stdout.trim();
+    if (!w.ok || !tree) throw testError(`Worca could not make the start point: ${firstLine(w.stderr)}`, 'NOT_READY');
+    const c = await copyGit(dir, ['commit-tree', '--no-gpg-sign', tree, '-p', base, '-m', 'Worca test start: changes that were not committed yet'], { env });
     if (!c.ok || !c.stdout.trim()) throw testError(`Worca could not make the start point: ${firstLine(c.stderr)}`, 'NOT_READY');
     return c.stdout.trim();
   } finally { await rm(tmp, RM).catch(() => {}); }
 }
 
-const pinRef = (dir, sha) => git(dir, ['update-ref', `refs/worca-tests/${sha}`, sha]);
+/** Keep `sha` in the copy as refs/worca-tests/<sha>, so no gc or branch removal drops it. */
+async function pinRef(dir, sha) {
+  const r = await copyGit(dir, ['update-ref', `refs/worca-tests/${sha}`, sha]);
+  if (!r.ok) throw testError(`Worca could not keep the start point in its copy of the project: ${firstLine(r.stderr)}`, 'NOT_READY');
+}
 
 /**
  * Pin a start point (D41, D53): the newest commit of `ref` (default: the branch the folder is on), or exactly `sha` (a past
@@ -128,17 +205,21 @@ export async function pinStart({ key, name = key, projectDir, ref = null, sha = 
   const { commit, startRef, current } = await resolveStart(projectDir, { ref, sha });
   const why = await projectUnsupported({ projectDir, sha: commit });
   if (why) throw testError(why === 'lfs' ? lfsText(name) : submodulesText(name), 'NOT_READY');
-  const startAt = new Date((await git(projectDir, ['show', '-s', '--format=%cI', commit])).stdout.trim()).toISOString();
+  const shown = await git(projectDir, ['show', '-s', '--format=%cI', commit]);
+  const at = Date.parse(shown.stdout.trim());
+  if (!shown.ok || !Number.isFinite(at)) throw testError(`Worca could not read the start point: ${firstLine(shown.stderr)}`, 'NOT_READY');
+  const startAt = new Date(at).toISOString();
   let changes = null;
   if (includeChanges) {
     if (sha || !startRef || startRef !== current) throw testError('uncommitted changes can be kept only for the branch your project folder is on', 'BAD_REQUEST');
     changes = await readChanges(projectDir, commit);
   }
   return withKeyLock(key, async () => {
-    const { dir } = await ensureTestCopy(key, { projectDir });
+    const { dir } = await ensureTestCopyLocked(key, { projectDir });
     await fetchInto(dir, projectDir, commit);
     const startCommit = changes ? await commitChanges(dir, commit, changes, startAt) : commit;
-    await pinRef(dir, startCommit);
+    await pinRef(dir, commit);   // D53: both are pinned, the start SHA and (with changes) Worca's start commit on top
+    if (startCommit !== commit) await pinRef(dir, startCommit);
     return { key, startSha: commit, startRef, startAt, startCommit, changes, setupCmd: null };
   });
 }
@@ -146,12 +227,13 @@ export async function pinStart({ key, name = key, projectDir, ref = null, sha = 
 /** Before a try: the example's start commit is in the copy; a copy removed meanwhile is made again (same SHA, D53). */
 export async function ensureStartCommit({ key, projectDir, project, changes = null }) {
   return withKeyLock(key, async () => {
-    const { dir } = await ensureTestCopy(key, { projectDir });
-    if (!(await git(dir, ['cat-file', '-e', `${project.startCommit}^{commit}`])).ok) {
+    const { dir } = await ensureTestCopyLocked(key, { projectDir });
+    if (!(await copyGit(dir, ['cat-file', '-e', `${project.startCommit}^{commit}`])).ok) {
       await fetchInto(dir, projectDir, project.startSha);
       const again = changes ? await commitChanges(dir, project.startSha, changes, project.startAt) : project.startSha;
       if (again !== project.startCommit) throw testError(START_GONE_TEXT, 'NOT_READY');
     }
+    if (project.startSha && project.startSha !== project.startCommit) await pinRef(dir, project.startSha);   // D53: both
     await pinRef(dir, project.startCommit);
     return { copyDir: dir, startCommit: project.startCommit };
   });
@@ -234,18 +316,28 @@ export async function removeTree(dir, { rmImpl = rm, attempts = 5, waitMs = 500 
 /**
  * D61: after a try's checks, or on any other end: its checkout, its branch in the copy and its run root. Node's rm removes
  * the checkout first (it never follows a junction, as the test proves); `git worktree prune` then drops the registration.
- * `git worktree remove` is not used: its own walk is not proved junction-safe on Windows.
+ * This rm-then-prune intentionally replaces `git worktree remove --force`, whose own walk is not proved junction-safe.
+ * The copy is written under its key's lock; a copy that is not a repository of its own is skipped and reported.
  */
 export async function removeTryCheckout({ copyDir, worktreeDir = null, branch = null, runRoot = null, pipelineId = null, rmImpl } = {}) {
   const errors = [];
-  if (worktreeDir && existsSync(worktreeDir)) {
-    const e = await removeTree(worktreeDir, rmImpl ? { rmImpl } : {});
-    if (e) errors.push(e);
-  }
-  if (copyDir && existsSync(copyDir)) {
-    await git(copyDir, ['worktree', 'prune']);
-    if (branch && /^[^-]/.test(branch)) await git(copyDir, ['branch', '-D', branch]);
-  }
+  const inCopy = async () => {
+    if (worktreeDir && existsSync(worktreeDir)) {
+      const e = await removeTree(worktreeDir, rmImpl ? { rmImpl } : {});
+      if (e) errors.push(e);
+    }
+    if (!copyDir || !existsSync(copyDir)) return;
+    if (!(await ownRepo(copyDir))) { errors.push(notACopy(copyDir)); return; }
+    await copyGit(copyDir, ['worktree', 'prune']);
+    if (branch && /^[^-]/.test(branch) && (await copyGit(copyDir, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])).ok) {
+      const d = await copyGit(copyDir, ['branch', '-D', branch]);
+      if (!d.ok) errors.push(`Worca could not delete the branch ${branch} in its copy of the project: ${firstLine(d.stderr)}`);
+    }
+  };
+  const key = copyDir ? testCopyKeyOf(copyDir) : null;
+  if (key) await withKeyLock(key, inCopy);
+  else if (copyDir && existsSync(copyDir)) errors.push(notACopy(copyDir));   // not under testCopiesRoot(): never touched
+  else await inCopy();
   if (runRoot && pipelineId && existsSync(runRoot)) {
     const r = await rmGuarded(runRoot, { worcaHome: worcaHome(), pipelineId });
     if (!r.removed && existsSync(runRoot)) errors.push(r.reason || 'the run folder stayed');
@@ -261,16 +353,19 @@ export async function sweepTestCopies({ log = () => {} } = {}) {
   catch { return out; }
   for (const name of names) {
     const dir = join(testCopiesRoot(), name);
-    if (!(await git(dir, ['rev-parse', '--git-dir'])).ok) continue;
-    out.copies += 1;
-    await git(dir, ['worktree', 'prune']);
-    const held = new Set((await git(dir, ['worktree', 'list', '--porcelain'])).stdout.split('\n')
-      .filter((l) => l.startsWith('branch refs/heads/')).map((l) => l.slice('branch refs/heads/'.length)));
-    const r = await git(dir, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/worca-cc/']);
-    for (const b of r.stdout.split('\n').filter(Boolean)) {
-      if (held.has(b)) continue;
-      if ((await git(dir, ['branch', '-D', b])).ok) out.branches += 1;
-    }
+    await withKeyLock(name, async () => {
+      if (!(await ownRepo(dir))) { log('warn', `workflow tests: ${notACopy(dir)}`); return; }
+      out.copies += 1;
+      await copyGit(dir, ['worktree', 'prune']);
+      const held = new Set((await copyGit(dir, ['worktree', 'list', '--porcelain'])).stdout.split('\n')
+        .filter((l) => l.startsWith('branch refs/heads/')).map((l) => l.slice('branch refs/heads/'.length)));
+      const r = await copyGit(dir, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/worca-cc/']);
+      for (const b of r.stdout.split('\n').filter(Boolean)) {
+        if (held.has(b)) continue;
+        if ((await copyGit(dir, ['branch', '-D', b])).ok) out.branches += 1;
+        else log('warn', `workflow tests: could not delete the leftover branch ${b} in ${dir}`);
+      }
+    });
   }
   if (out.branches) log('info', `workflow tests: removed ${out.branches} leftover try branch(es) in ${out.copies} copy(ies) of a project`);
   return out;

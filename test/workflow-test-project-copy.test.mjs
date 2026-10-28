@@ -4,9 +4,9 @@
 import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
 import { templateRepo } from './helpers/git-dir.mjs';
 import { repoSnapshot } from './helpers/repo-snapshot.mjs';
@@ -62,12 +62,14 @@ test('uncommitted changes: one start commit on top, the same every time, and not
   assert.equal(git(dir, 'rev-parse', `${p.startCommit}^`), head, 'its parent is the start commit');
   assert.equal(git(dir, 'show', `${p.startCommit}:src/a.mjs`), 'export const a = 2;');
   assert.equal(git(dir, 'show', `${p.startCommit}:notes.md`), 'new file');
+  assert.equal(git(dir, 'rev-parse', `refs/worca-tests/${p.startCommit}`), p.startCommit, 'the start commit is pinned');
+  assert.equal(git(dir, 'rev-parse', `refs/worca-tests/${head}`), head, 'and so is the commit it sits on (D53: both)');
   const again = await copy.pinStart({ key, name: 'real', projectDir: real, includeChanges: true });
   assert.equal(again.startCommit, p.startCommit, 'deterministic (D53)');
   assert.equal(repoSnapshot(real), was, 'scratch objects: the project gets no new object');
 });
 
-test('the brief was wrong: without scratch objects, reading the changes writes objects into the project', async () => {
+test('uncommitted changes: scratch objects leave the project\'s object store unchanged (without them, blobs land there)', async () => {
   writeFileSync(join(real, 'brand-new.md'), 'x\n');
   const out = join(home, 'p.patch');
   const before = repoSnapshot(real);
@@ -94,6 +96,15 @@ test('LFS and submodules are refused with the board 39 sentences; changes only o
   await assert.rejects(copy.pinStart({ key, name: 'design-assets', projectDir: real }),
     { code: 'NOT_READY', message: "design-assets keeps large files with Git LFS. Worca's own copy of the project would not have them, so tries could go wrong." });
   git(real, 'rm', '-q', '.gitattributes'); commit(real, 'no lfs');
+  mkdirSync(join(real, 'art', 'psd'), { recursive: true });
+  writeFileSync(join(real, 'art', 'psd', '.gitattributes'), '# not lfs: *.txt filter=lfs\n*.psd filter=lfs diff=lfs merge=lfs -text\n');
+  git(real, 'add', 'art'); commit(real, 'nested lfs');
+  await assert.rejects(copy.pinStart({ key, name: 'design-assets', projectDir: real }), { code: 'NOT_READY', message: /Git LFS/ }, 'a nested .gitattributes counts');
+  writeFileSync(join(real, 'art', 'psd', '.gitattributes'), '# *.psd filter=lfs diff=lfs merge=lfs -text\n  #*.ai filter=lfs\n');
+  commit(real, 'lfs commented out');
+  assert.equal(await copy.projectUnsupported({ projectDir: real, sha: git(real, 'rev-parse', 'HEAD') }), null, 'a commented line is not LFS');
+  await assert.rejects(copy.projectUnsupported({ projectDir: real, sha: 'f'.repeat(40) }), { code: 'NOT_READY' }, 'a git error is not "supported"');
+  git(real, 'rm', '-q', '-r', 'art'); commit(real, 'no art');
   writeFileSync(join(real, '.gitmodules'), '[submodule "x"]\n\tpath = x\n\turl = ../x\n');
   git(real, 'add', '.gitmodules'); commit(real, 'sub');
   await assert.rejects(copy.pinStart({ key, name: 'mobile-app', projectDir: real }),
@@ -167,4 +178,92 @@ test('the boot sweep prunes leftover worktrees and deletes leftover try branches
   rmSync(join(wh, 'runs'), { recursive: true, force: true });   // a restart's run-root sweep took the folder
   assert.deepEqual(await copy.sweepTestCopies(), { copies: 1, branches: 1 });
   assert.throws(() => git(dir, 'rev-parse', '--verify', '--quiet', 'refs/heads/worca-cc/left-feed0001'));
+});
+
+// Review fix 1 (items 1, 2, 7, 9).
+const fold = (p) => (process.platform === 'win32' ? resolve(p).toLowerCase() : resolve(p));
+
+test('an enclosing repository is never written: a copy whose .git is an empty folder is made again; removal and the sweep skip a broken copy', async () => {
+  // The test's worcaHome sits inside a scratch repository, so git run in a broken copy would walk up into it.
+  git(home, 'init', '-q', '-b', 'main');
+  writeFileSync(join(home, '.gitignore'), '.worca-cc/\n');
+  git(home, 'add', '.gitignore'); git(home, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'outer');
+  const outer = repoSnapshot(home);
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  mkdirSync(join(dir, '.git'), { recursive: true });
+  assert.equal(fold(git(dir, 'rev-parse', '--absolute-git-dir')), fold(join(home, '.git')), 'the trap: plain git walks up');
+  assert.throws(() => execFileSync('git', ['rev-parse', '--git-dir'], { cwd: dir, stdio: 'pipe',
+    env: { ...process.env, GIT_CEILING_DIRECTORIES: join(wh, 'workflow-tests', 'repos') } }), 'the ceiling stops the walk on this platform');
+  const head = git(real, 'rev-parse', 'HEAD');
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  assert.equal(fold(git(dir, 'rev-parse', '--absolute-git-dir')), fold(join(dir, '.git')), 'made again as a repository of its own');
+  assert.equal(git(dir, 'rev-parse', `refs/worca-tests/${head}`), head);
+  const wt = join(wh, 'runs', 'cafe0001', 'repos', key);
+  mkdirSync(dirname(wt), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/try-cafe0001', '--', wt, p.startCommit);
+  assert.deepEqual(await copy.removeTryCheckout({ copyDir: dir, worktreeDir: wt, branch: 'worca-cc/try-cafe0001',
+    runRoot: join(wh, 'runs', 'cafe0001'), pipelineId: 'cafe0001' }), { removed: true, error: null });
+  assert.deepEqual(await copy.sweepTestCopies(), { copies: 1, branches: 0 });
+  rmSync(join(dir, '.git'), { recursive: true, force: true }); mkdirSync(join(dir, '.git'));   // broken again
+  const r = await copy.removeTryCheckout({ copyDir: dir, branch: 'worca-cc/try-cafe0002' });
+  assert.equal(r.removed, false);
+  assert.match(r.error, /not a usable copy/);
+  const logged = [];
+  assert.deepEqual(await copy.sweepTestCopies({ log: (...a) => logged.push(a) }), { copies: 0, branches: 0 });
+  assert.ok(logged.some(([level, msg]) => level === 'warn' && msg.includes(key)), 'the skipped copy is reported');
+  assert.equal(repoSnapshot(home), outer, 'the enclosing repository got nothing');
+});
+
+test('a copy that kept a remote is replaced by a clean one; a failed clone leaves nothing behind', async () => {
+  const a = await copy.ensureTestCopy(key, { projectDir: real });
+  git(a.dir, 'remote', 'add', 'origin', real);
+  const b = await copy.ensureTestCopy(key, { projectDir: real });
+  assert.equal(b.created, true, 'a remote makes it unhealthy');
+  assert.equal(git(b.dir, 'remote'), '');
+  assert.equal(git(b.dir, 'config', 'core.longpaths'), 'true');
+  const bad = mkdtempSync(join(tmpdir(), 'worca-cc-wftnotrepo-'));
+  dirs.push(bad);
+  await assert.rejects(copy.ensureTestCopy('not-a-repo-0badc0de', { projectDir: bad }), { code: 'NOT_READY' });
+  assert.deepEqual(readdirSync(join(wh, 'workflow-tests', 'repos')), [key], 'no temporary clone folder is left');
+});
+
+test('a start point the copy does not have yet is fetched; a start SHA is pinned exactly; ensureStartCommit without changes', async () => {
+  await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  writeFileSync(join(real, 'README.md'), '# one\n'); commit(real, 'one');
+  const mid = git(real, 'rev-parse', 'HEAD');
+  writeFileSync(join(real, 'README.md'), '# two\n'); commit(real, 'two');
+  const tip = git(real, 'rev-parse', 'HEAD');
+  const was = repoSnapshot(real);
+  assert.throws(() => execFileSync('git', ['cat-file', '-e', `${tip}^{commit}`], { cwd: dir, stdio: 'pipe' }), 'not in the copy yet');
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  assert.deepEqual([p.startSha, p.startCommit, p.startRef], [tip, tip, 'main']);
+  assert.equal(git(dir, 'rev-parse', `refs/worca-tests/${tip}`), tip);
+  const bySha = await copy.pinStart({ key, name: 'real', projectDir: real, sha: mid });
+  assert.deepEqual([bySha.startSha, bySha.startCommit, bySha.startRef, bySha.changes], [mid, mid, null, null]);
+  assert.equal(git(dir, 'rev-parse', `refs/worca-tests/${mid}`), mid);
+  await assert.rejects(copy.pinStart({ key, name: 'real', projectDir: real, sha: 'a'.repeat(40) }), { code: 'NOT_READY', message: /no longer in the project/ });
+  rmSync(join(wh, 'workflow-tests'), { recursive: true, force: true });
+  assert.deepEqual(await copy.ensureStartCommit({ key, projectDir: real, project: bySha }), { copyDir: dir, startCommit: mid });
+  assert.equal(git(dir, 'rev-parse', `refs/worca-tests/${mid}`), mid);
+  assert.equal(repoSnapshot(real), was);
+});
+
+test('removal waits for the job that holds the copy, and a branch that cannot be deleted is reported', async () => {
+  const p = await copy.pinStart({ key, name: 'real', projectDir: real });
+  const dir = join(wh, 'workflow-tests', 'repos', key);
+  const wt = join(wh, 'runs', 'beef0001', 'repos', key);
+  mkdirSync(dirname(wt), { recursive: true });
+  git(dir, 'worktree', 'add', '-q', '-b', 'worca-cc/held-beef0001', '--', wt, p.startCommit);   // a branch git refuses to delete
+  let release;
+  const held = copy.withKeyLock(key, () => new Promise((r) => { release = r; }));
+  let done = false;
+  const removing = copy.removeTryCheckout({ copyDir: dir, branch: 'worca-cc/held-beef0001' }).then((r) => { done = true; return r; });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(done, false, 'it waits for the lock');
+  release(); await held;
+  const r = await removing;
+  assert.equal(r.removed, false);
+  assert.match(r.error, /worca-cc\/held-beef0001/);
+  assert.equal(git(dir, 'rev-parse', '--verify', '-q', 'refs/heads/worca-cc/held-beef0001'), p.startCommit);
 });
